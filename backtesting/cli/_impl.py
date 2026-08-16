@@ -190,6 +190,63 @@ def _apply_idio_gate(
     return preds.drop(columns=['_pidx', '_dt', '_keep'], errors='ignore')
 
 
+def _load_batch_training_universe_scope(
+    engine: object,
+    batch_id: str | None,
+    trade_dates,
+) -> pd.DataFrame | None:
+    """Univers du backtest pipeline = univers d'ENTRAÎNEMENT du batch.
+
+    Lit ``model_training_batch.symbols`` (la liste exacte sur laquelle le batch
+    a été entraîné) et construit le scope symbole×session pour le gate de
+    couverture ML — au lieu de l'univers tradable PIT historique, qui ne
+    correspond pas à l'univers du modèle sur les fenêtres anciennes.
+
+    Retourne None si le batch/la liste est indisponible (→ fallback tradable).
+    """
+    if not batch_id:
+        return None
+    import pandas as pd
+
+    try:
+        from sqlalchemy import text as _text
+
+        with engine.connect() as conn:  # type: ignore[union-attr]
+            row = conn.execute(
+                _text("SELECT symbols FROM model_training_batch WHERE batch_id=:b"),
+                {"b": str(batch_id)},
+            ).fetchone()
+        if not row or not row[0]:
+            return None
+        _syms = [
+            s.strip().upper()
+            for s in str(row[0]).replace(";", ",").split(",")
+            if s.strip()
+        ]
+        if not _syms:
+            return None
+    except Exception:
+        LOGGER.warning(
+            "_load_batch_training_universe_scope: batch %s indisponible — fallback tradable PIT",
+            batch_id,
+            exc_info=True,
+        )
+        return None
+    _dates = sorted(
+        {
+            pd.Timestamp(d).date()
+            for d in pd.to_datetime(trade_dates, errors="coerce")
+            if not pd.isna(d)
+        }
+    )
+    _rows = [
+        {"symbol": s, "trade_date": pd.Timestamp(d), "universe_run_id": f"batch_training_universe:{batch_id}"}
+        for d in _dates
+        for s in _syms
+    ]
+    return pd.DataFrame(_rows)
+
+
 def _parse_sector_multipliers_json(raw: str | None) -> dict[str, float] | None:
     """Parse ``--sector-multipliers-json`` (JSON {secteur: facteur} ou @fichier)."""
     if not raw or not raw.strip():
@@ -2585,15 +2642,32 @@ def _run_backtest(args: argparse.Namespace) -> None:
         (universe_trade_dates >= pd.Timestamp(start))
         & (universe_trade_dates <= pd.Timestamp(end))
     ]
-    try:
-        universe_scope_df = load_tradable_universe_scope(
-            engine,
-            universe_trade_dates.dropna().unique(),
-            capital_preset_key=effective_preset.key,
+    _universe_dates = pd.to_datetime(universe_trade_dates.dropna().unique())
+    universe_scope_df = None
+    if engine_mode == "pipeline":
+        # Pipeline : l'univers = celui de l'entraînement du batch (couverture ML
+        # mesurée contre l'univers réel du modèle, pas l'univers tradable PIT).
+        universe_scope_df = _load_batch_training_universe_scope(
+            engine, args.ml_batch_id, _universe_dates,
         )
-    except Exception as exc:
-        _safe_print(f"❌ Univers tradable PIT indisponible: {exc}")
-        sys.exit(1)
+        if universe_scope_df is not None and not universe_scope_df.empty:
+            _safe_print(
+                "   universe_scope=batch_training_universe symbols={} sessions={} (batch={})\n".format(
+                    int(universe_scope_df["symbol"].nunique()),
+                    int(universe_scope_df["trade_date"].nunique()),
+                    args.ml_batch_id,
+                )
+            )
+    if universe_scope_df is None or universe_scope_df.empty:
+        try:
+            universe_scope_df = load_tradable_universe_scope(
+                engine,
+                _universe_dates,
+                capital_preset_key=effective_preset.key,
+            )
+        except Exception as exc:
+            _safe_print(f"❌ Univers tradable PIT indisponible: {exc}")
+            sys.exit(1)
     if universe_scope_df.empty:
         _safe_print("❌ Univers tradable PIT vide sur la période demandée.")
         sys.exit(1)
