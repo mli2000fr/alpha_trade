@@ -151,6 +151,62 @@ Runs m8 : 2022 +25.25 % (236 trades), 2024 −5.89 % (82), 2025 +45.95 % (191),
 
 ---
 
+## ⚠️ AUDIT COMPTABLE DES COÛTS (post-Test 1) — découverte critique
+
+À la demande de revue : que multiplie réellement `cost_multiplier` et combien le
+moteur débite-t-il réellement par trade ?
+
+### Code exact du calcul de coût (`backtesting/simulator.py`)
+
+- **Entrée** (ligne ~1451) : `slippage_bps = 5.0 * cost_multiplier + spread/2`
+  (le spread est déjà multiplié par `cost_multiplier` dans `_get_spread_bps`).
+  → prix d'exécution = prix ± `slippage_bps/10000`.
+- **Sortie** (ligne ~2124) : `fees_rate = _effective_fees_pct + spread/2`
+  avec `_effective_fees_pct` = (comm 1 + slip 2 bps) × `cost_multiplier`.
+- Donc `cost_multiplier` multiplie bien **tout le coût** (spread + 5 bps d'entrée
+  + comm + slippage). Le test ×3 est un vrai triple du coût de transaction.
+
+### Coût réellement débité (audit par différence ×3−×1, 77 trades identiques)
+
+| métrique | valeur |
+|---|---|
+| Coût total mesuré (77 trades) | **924.90 $** |
+| Coût moyen / trade | 12.01 $ |
+| **Coût round-trip en bps** (coût/notional moyen) | **10.32 bps** |
+| Notional entrée total | 904 892 $ (moy 11 639 $/trade) |
+
+**Votre intuition était correcte : le moteur ne débite PAS 44-49 bps par trade.**
+Il débite ~10 bps round-trip. Pourquoi :
+- Les **titres tradés** (top 10 % global rank) sont des large caps liquides :
+  spreads réels ~6-16 bps (CAG 6.4, VTRS 7.4, LBRDK 7.8, BSY 8.8, VRNS 12.7, KD 16.2).
+- La **médiane globale de 44 bps est trompeuse** : elle est tirée par 37.6 % de
+  données CORROMPUES (>300 bps, ex: MNDY 2782 bps, GDDY 841, FMC 357, QFIN 11902)
+  qui sont filtrées par `MAX_REALISTIC_SPREAD_BPS=300` → **fallback 5 bps**.
+- 43.5 % des trades utilisent le fallback 5 bps (données absentes ou corrompues).
+
+### Conséquences
+
+1. **Le coût de base réel est ~10 bps round-trip**, pas 44-49 bps. Le test ×3
+   (≈30 bps round-trip) est donc une marge réaliste par rapport au coût actuel,
+   mais pas une preuve de robustesse à 44-49 bps.
+2. **Marge absolue** : chaque bps round-trip coûte ~90 $ (≈0.09 pt de rendement).
+   Le point de non-rentabilité ≈ 300 bps round-trip. Même un scénario pessimiste
+   à 44 bps round-trip donnerait ~+24 % (PF ~2). Le système reste donc très
+   robuste MÊME si le vrai coût était 44 bps.
+3. **⚠️ Faiblesse des données** : 37.6 % des snapshots >300 bps sont corrompues.
+   Le filtre 300 bps est trop permissif (un spread de 100-300 bps sur large cap
+   est quasi certainement corrompu et est APPLIQUÉ — ex: CLX 126.5 bps le 21/01
+   alors que le vrai spread est 3.6 bps). Il y a à la fois des trades surpayés
+   (spreads 100-300 corrompus appliqués) et des trades sous-payés (fallback 5).
+4. **Recommandation** : avant de conclure sur la robustesse, nettoyer les
+   données de spread (médiane mobile / winsorisation) ou refaire le test avec un
+   fallback plus conservateur (10-20 bps) pour mesurer le coût pessimiste réaliste.
+
+Scripts : `scripts/audit_costs.py`, `scripts/audit_spread_data.py`,
+`scripts/check_traded_spreads.py`.
+
+---
+
 ## Synthèse
 
 1. **Coûts** : marge d'erreur très large (rentabilité jusqu'à ~28× le coût actuel

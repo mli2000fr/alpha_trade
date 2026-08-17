@@ -148,6 +148,16 @@ class BacktestConfig:
     # (ex: 1.25, 1.5, 2.0, 3.0). Outil de diagnostic uniquement — n'affecte
     # ni les signaux, ni la sélection, ni la gestion des positions.
     cost_multiplier: float = 1.0
+    # Stress test coûts (2026-08-17) : FORCE un coût round-trip ABSOLU fixe
+    # en bps par trade (entrée C/2 + sortie C/2), indépendamment du spread
+    # réel chargé. 0 = désactivé (coût variable canonique). Outil de
+    # diagnostic pour scénarios « coût réel » (10/20/30/44/60 bps RT).
+    cost_round_trip_bps: float = 0.0
+    # Stress test coûts (2026-08-17) : écrase le fallback de spread utilisé
+    # quand la donnée réelle est absente OU corrompue (> MAX_REALISTIC).
+    # None = défaut (5.0 canonique). Teste « si les titres sans données ont
+    # un vrai spread de 10/15/20 bps ». Outil de diagnostic uniquement.
+    fallback_spread_bps: float | None = None
     trading_constraints: TradingConstraintConfig = field(default_factory=TradingConstraintConfig)
     execution_timing: str = "next_open"
     execution_replay_mode: str = "off"
@@ -499,6 +509,17 @@ class BacktestEngine:
         # pénalité d'exécution d'entrée (5 bps) dans le calcul du slippage.
         # cost_multiplier=1.0 → aucun changement (multiplication exacte).
         self._effective_fees_pct *= float(getattr(config, "cost_multiplier", 1.0))
+        # Stress test coûts : coût round-trip ABSOLU forcé (C/2 par jambe).
+        # Écrase _effective_fees_pct (sortie) ; l'entrée et _get_spread_bps
+        # sont gérés séparément pour retomber exactement sur C bps round-trip.
+        _rt_bps = float(getattr(config, "cost_round_trip_bps", 0.0) or 0.0)
+        if _rt_bps > 0:
+            self._effective_fees_pct = _rt_bps / 2.0 / 10_000.0
+        # Stress test coûts : fallback de spread surchargé (données absentes
+        # ou corrompues). None = défaut.
+        _fb = getattr(config, "fallback_spread_bps", None)
+        if _fb is not None and float(_fb) > 0:
+            self._spread_fallback_bps = float(_fb)
         # P2-4 (2026-08-14) : accumulateur d'intérêts de marge du run.
         self._margin_interest_total = 0.0
         # Concentration filters (Priorité 4)
@@ -1463,10 +1484,18 @@ class BacktestEngine:
             trade_spread_bps = self._get_spread_bps(
                 spread_df, trade_day, symbol, fallback_bps=self._spread_fallback_bps
             )
-            # Stress test coûts : la pénalité d'exécution de base (5 bps) est
-            # scalée par cost_multiplier (le spread/2 l'est déjà via
-            # ``_get_spread_bps``). 1.0 → 5.0 inchangé.
-            slippage_bps = 5.0 * float(getattr(self.config, "cost_multiplier", 1.0)) + trade_spread_bps / 2.0
+            # Stress test coûts : si un coût round-trip absolu est forcé, la
+            # moitié est facturée à l'entrée (C/2) au lieu de la pénalité
+            # d'exécution variable (5 bps + spread/2). Le spread réel est déjà
+            # neutralisé (retourne 0 dans _get_spread_bps).
+            _rt = float(getattr(self.config, "cost_round_trip_bps", 0.0) or 0.0)
+            if _rt > 0:
+                slippage_bps = _rt / 2.0
+            else:
+                # Stress test coûts : la pénalité d'exécution de base (5 bps) est
+                # scalée par cost_multiplier (le spread/2 l'est déjà via
+                # ``_get_spread_bps``). 1.0 → 5.0 inchangé.
+                slippage_bps = 5.0 * float(getattr(self.config, "cost_multiplier", 1.0)) + trade_spread_bps / 2.0
             if is_short_side(side):
                 entry_price = entry_price * (1.0 - slippage_bps / 10_000.0)
             else:
@@ -2298,8 +2327,12 @@ class BacktestEngine:
         Stress test coûts (2026-08-17) : la valeur est multipliée par
         ``config.cost_multiplier`` (défaut 1.0 → aucun changement). Le
         multiplicateur s'applique à la donnée réelle ET au fallback pour
-        conserver une échelle cohérente du coût aller-retour.
+        conserver une échelle cohérente du coût aller-retour. Si
+        ``config.cost_round_trip_bps`` est défini (>0), le spread réel est
+        ignoré (retourne 0) car le coût est forcé en absolu.
         """
+        if float(getattr(self.config, "cost_round_trip_bps", 0.0) or 0.0) > 0:
+            return 0.0
         multiplier = float(getattr(self.config, "cost_multiplier", 1.0))
         if spread_df is None or spread_df.empty:
             return max(float(fallback_bps), 0.0) * multiplier
