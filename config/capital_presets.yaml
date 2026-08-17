@@ -150,7 +150,7 @@ presets:
     risk_max_position_weight: 0.25
     risk_max_sector_weight: 0.5
     risk_min_position_notional: 155.0
-    risk_max_drawdown_pct: 0.15
+    risk_max_drawdown_pct: 0.20
     risk_max_daily_loss_pct: 0.03
     risk_drawdown_rolling_peak_window_days: 252
     risk_degraded_entry_allocation_pct: 0.06
@@ -183,7 +183,7 @@ presets:
     execution_entry_order_type: limit
     execution_limit_price_buffer_bps: -100
     backtesting_commission_bps_stress: 1.0
-    backtesting_slippage_bps_stress: 2.0
+    backtesting_slippage_bps_stress: 9.0
     # P2 — microstructure slippage volume-aware (Alpaca = pas de surcoût retail)
     backtesting_slippage_base_bps: 0.0
     backtesting_slippage_impact_coef: 0.0
