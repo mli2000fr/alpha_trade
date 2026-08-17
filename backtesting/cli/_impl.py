@@ -1483,6 +1483,21 @@ def _build_parser() -> argparse.ArgumentParser:
              "top_pct. Transmis à apply_cascade_to_predictions(top_pct=...). None = config.yaml.",
     )
     run_p.add_argument(
+        "--cascade-rank-mode",
+        type=str,
+        default="ml",
+        choices=["ml", "random"],
+        help="Ablation ML-vs-Random : 'ml' = rangs globaux réels (défaut), "
+             "'random' = rangs globaux aléatoires (mêmes per-symbol, min_prob, cascade). "
+             "Permet de mesurer la valeur du ranking ML après la mécanique complète.",
+    )
+    run_p.add_argument(
+        "--cascade-rank-seed",
+        type=int,
+        default=42,
+        help="Graine aléatoire pour --cascade-rank-mode random (reproductibilité).",
+    )
+    run_p.add_argument(
         "--bull-strict-sma-window",
         type=int,
         default=200,
@@ -2487,6 +2502,14 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 "max_long_positions": 0 if getattr(args, "no_longs", False) else None,
                 "short_min_score": 0.0,
                 "short_rotation_required": True,
+                # V1 Multi-Horizon : --best-horizon pilote AUSSI RiskConfig.best_horizon
+                # (maps stop/TP) — aligné pipeline live (pipeline_runner). Inactif si
+                # le flag n'est pas passé (le RiskConfig garde le best_horizon du batch).
+                **(
+                    {"best_horizon": int(args.best_horizon)}
+                    if getattr(args, "best_horizon", None) is not None
+                    else {}
+                ),
             },
         )
 
@@ -3029,6 +3052,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 preds_df, _cascade_batch_id, engine=engine,
                 best_h=_best_h_flag,
                 top_pct=getattr(args, "cascade_top_pct", None),
+                rank_mode=getattr(args, "cascade_rank_mode", "ml"),
+                rank_seed=getattr(args, "cascade_rank_seed", 42),
                 short_momentum_filter=(None if _sm_filter_flag == "none" else _sm_filter_flag),
                 short_momentum_max_pct=_sm_max_flag,
             )

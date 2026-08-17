@@ -2512,20 +2512,25 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         if account_id:
             command.extend(["--account", account_id])
         # ── V1 Multi-Horizon : injecter best_horizon (SIZING only) ──
-        # ⚠️ Ce --best-horizon alimente RiskConfig.best_horizon → maps stop/TP
-        # multi-horizon du sizing LIVE. Il ne doit PAS être dérivé de
-        # live_horizon (cascade), sinon le sizing casserait la parité avec le
-        # benchmark (H10 = stop 2.5/TP 7% gelés). On garde le best_horizon du
-        # batch (metadata) pour le sizing = comportement d'origine.
-        _risk_bid = options.ml_predict_batch_id or options.ml_live_predict_batch_id
-        if _risk_bid:
+        # --best-horizon alimente RiskConfig.best_horizon → maps stop/TP.
+        # Par défaut on utilise `batch_diagnostics.live_horizon` (config.yaml,
+        # gelé H20 pour B25) — décision 2026-08-17 : Test B (H20 risk) validé
+        # PF 1.52 vs 1.06 en H10. Fallback : best_horizon du batch (metadata).
+        from common.config_loader import load_config
+        _live_h = (load_config() or {}).get("batch_diagnostics", {}).get("live_horizon")
+        _best_h = None
+        if _live_h not in (None, "", 0):
+            _best_h = int(_live_h)
+        elif (options.ml_predict_batch_id or options.ml_live_predict_batch_id):
             try:
                 from modelFactory.predictor import _load_best_horizon_for_batch
-                _best_h = _load_best_horizon_for_batch(_risk_bid)
-                if _best_h is not None:
-                    command.extend(["--best-horizon", str(_best_h)])
+                _best_h = _load_best_horizon_for_batch(
+                    options.ml_predict_batch_id or options.ml_live_predict_batch_id
+                )
             except Exception:
-                pass  # best-effort : le fallback H10 dans RiskConfig suffit
+                pass  # best-effort : fallback H10 du dataclass
+        if _best_h is not None:
+            command.extend(["--best-horizon", str(_best_h)])
         return command
 
     if step_key == "execution":
