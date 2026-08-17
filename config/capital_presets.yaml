@@ -183,7 +183,7 @@ presets:
     execution_entry_order_type: limit
     execution_limit_price_buffer_bps: -100
     backtesting_commission_bps_stress: 1.0
-    backtesting_slippage_bps_stress: 9.0
+    backtesting_slippage_bps_stress: 20.0
     # P2 — microstructure slippage volume-aware (Alpaca = pas de surcoût retail)
     backtesting_slippage_base_bps: 0.0
     backtesting_slippage_impact_coef: 0.0
