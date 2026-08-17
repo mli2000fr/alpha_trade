@@ -2487,6 +2487,14 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 "max_long_positions": 0 if getattr(args, "no_longs", False) else None,
                 "short_min_score": 0.0,
                 "short_rotation_required": True,
+                # V1 Multi-Horizon : --best-horizon pilote AUSSI RiskConfig.best_horizon
+                # (maps stop/TP) — aligné pipeline live (pipeline_runner). Inactif si
+                # le flag n'est pas passé (le RiskConfig garde le best_horizon du batch).
+                **(
+                    {"best_horizon": int(args.best_horizon)}
+                    if getattr(args, "best_horizon", None) is not None
+                    else {}
+                ),
             },
         )
 

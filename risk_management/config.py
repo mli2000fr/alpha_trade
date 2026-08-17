@@ -642,6 +642,16 @@ def load_risk_config(
     yaml_risk = full_cfg.get("risk_management", {})
     if not isinstance(yaml_risk, dict):
         yaml_risk = {}
+    # ── V1 Multi-Horizon : best_horizon par défaut depuis config.yaml ──
+    # Le sizing/TP utilise RiskConfig.best_horizon (maps stop/TP multi-horizon).
+    # Par défaut on le prend depuis `batch_diagnostics.backtest_horizon` /
+    # `live_horizon` (config.yaml, gelé H20 pour B25), au lieu du défaut codé
+    # en dur (10). Priorité conservée : cli_overrides > preset > config.yaml >
+    # défaut du dataclass. Décision 2026-08-17 (Test B validé : PF 1.52 vs 1.06).
+    _bd = full_cfg.get("batch_diagnostics") or {}
+    _cfg_h = _bd.get("backtest_horizon") or _bd.get("live_horizon")
+    if _cfg_h not in (None, "", 0) and "best_horizon" not in yaml_risk:
+        yaml_risk["best_horizon"] = int(_cfg_h)
     _map_defaults: dict[str, dict[int, float]] = {
         "_atr_stop_multiple_map": {3: 1.5, 5: 2.0, 10: 2.5, 15: 3.0, 20: 3.5},
         "_tp_atr_multiple_map": {3: 2.0, 5: 2.5, 10: 3.0, 15: 3.5, 20: 4.0},
