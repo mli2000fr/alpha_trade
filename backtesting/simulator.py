@@ -213,8 +213,12 @@ class BacktestConfig:
     min_breakout_days: int = 1
 
     # Quick Win 2+3 — score minimum + pullback entry
+    # P14 fix (2026-08-17) : pullback désactivé PAR DÉFAUT (0.0 = exécution au
+    # marché, réaliste vs production). L'ancien défaut 0.01 (pullback 1%) gonflait
+    # les prix d'entrée de ±1% (et le remplissage short était inconditionnel).
+    # Réactivable via --entry-limit-offset-pct > 0 (reproduction des runs historiques).
     min_score_threshold: float = 0.7
-    entry_limit_offset_pct: float = 0.01  # 1% sous le prix signal
+    entry_limit_offset_pct: float = 0.0  # 0 = marché ; >0 = pullback limit (anc. 0.01)
 
     def __post_init__(self) -> None:
         if self.risk_config:
@@ -1504,9 +1508,24 @@ class BacktestEngine:
             if cfg.entry_limit_offset_pct > 0:
                 limit_price = compute_pullback_limit_price(side, signal_price, float(cfg.entry_limit_offset_pct))
                 if is_short_side(side):
-                    # TODO(Sprint 3) : pour le short, vérifier day_high >= limit_price (nécessite high_df)
-                    # Pour l'instant, short_selling_enabled=false donc ce chemin n'est pas emprunté.
-                    entry_price = limit_price
+                    # P14 fix (2026-08-17) : remplissage symétrique au long.
+                    # Un ordre limit short à open+offset n'est rempli QUE si le
+                    # plus haut du jour atteint le niveau (day_high >= limit_price).
+                    # Avant : remplissage INCONDITIONNEL → vendait 1% au-dessus de
+                    # l'open même si le prix n'atteignait jamais la limite (biais).
+                    day_high = float(high_df.at[trade_day, symbol]) if high_df is not None and symbol in high_df.columns else None
+                    if day_high is not None and np.isfinite(day_high) and day_high >= limit_price:
+                        entry_price = limit_price
+                    else:
+                        self._record_trade_event(
+                            state, "entry_rejected",
+                            event_date=trade_day, symbol=symbol,
+                            rejection_reason="pullback_limit_not_reached",
+                            attempted_entry_price=signal_price,
+                            limit_price=limit_price, side=side,
+                            **signal_context,
+                        )
+                        continue
                 else:
                     day_low = float(low_df.at[trade_day, symbol]) if symbol in low_df.columns else None
                     if day_low is not None and np.isfinite(day_low) and day_low <= limit_price:
