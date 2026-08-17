@@ -1256,14 +1256,14 @@ def _build_run_options() -> BacktestRunOptions:
     with col1:
         start = st.text_input(
             "Date de début",
-            value=cast(str, st.session_state.get("bt_run_start", "2020-01-01")),
+            value=cast(str, st.session_state.get("bt_run_start", "2025-01-01")),
             key="bt_run_start",
             help="Format YYYY-MM-DD. C'est la borne basse du backtest.",
         )
     with col2:
         end = st.text_input(
             "Date de fin",
-            value=cast(str, st.session_state.get("bt_run_end", "2025-12-31")),
+            value=cast(str, st.session_state.get("bt_run_end", "2026-05-31")),
             key="bt_run_end",
             help="Format YYYY-MM-DD. Laissez une date future si vous voulez aller jusqu'au dernier bar dispo.",
         )
@@ -2030,7 +2030,22 @@ def _build_run_options() -> BacktestRunOptions:
         else:
             labels = list(batch_options.keys())
             requested_batch = str(st.session_state.get("bt_run_ml_batch_id", "") or "")
-            # Retrouver le label correspondant au batch_id stocké
+            # ── Défaut : backtest_batch_id du config.yaml ──
+            # Premier rendu uniquement (session state vide) : on part de la
+            # campagne configurée (batch_diagnostics.backtest_batch_id) plutôt
+            # que du batch le plus récent. Une fois que l'opérateur a choisi,
+            # son choix est conservé en session state et reste prioritaire.
+            if not requested_batch:
+                try:
+                    import yaml as _yaml
+                    with open(PROJECT_ROOT / "config.yaml", encoding="utf-8") as _fh:
+                        _raw = _yaml.safe_load(_fh) or {}
+                    requested_batch = str(
+                        ((_raw.get("batch_diagnostics") or {}).get("backtest_batch_id") or "")
+                    ).strip()
+                except Exception:
+                    requested_batch = ""
+            # Retrouver le label correspondant au batch_id stocké (ou configuré)
             default_label = labels[0]
             for lbl, bid in batch_options.items():
                 if bid == requested_batch:

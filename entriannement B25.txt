@@ -1,0 +1,317 @@
+avant de passer B25 en production, il est logique de réentraîner avec les données disponibles jusqu'à la date la plus récente possible, mais pas simplement parce que “plus de données = meilleur modèle”.
+
+Dans ton cas, je ferais même une distinction importante :
+
+1. Ton B25 actuel est déjà dans une situation particulière
+
+Si B25 a été entraîné jusqu'à fin 2024, puis que 2025 a servi de validation, alors tu as volontairement gardé 2025 hors entraînement.
+
+Mais maintenant que ta décision de production est prise, 2025 n'a plus besoin de rester une période de validation pour le modèle final.
+
+Tu peux donc faire :
+
+B25 production candidate
+
+Train : 2016 → fin 2025
+Validation / sélection : 2026
+Production : après 2026
+
+Et idéalement, si tes données sont disponibles :
+
+Train : 2016 → date la plus récente possible
+OOS final : une fenêtre récente jamais utilisée pour choisir le modèle
+
+Le principe est celui du final refit : une fois l'architecture/hyperparamètres/politique choisis, on réentraîne sur toutes les données historiques admissibles.
+
+2. Mais est-ce que ça va améliorer les résultats ?
+
+Impossible de le garantir.
+
+Et c'est justement là que ton expérience B41 est très instructive.
+
+B41 avait un signal intrinsèque nettement meilleur que B25 :
+
+IC global : 0.066 vs 0.034
+IC 2026 : +0.007 vs −0.040
+within-universe 2026 : +0.060 vs +0.033
+
+Et pourtant :
+
+2026 production-parity	B25	B41
+P&L	+9 489 $	−468 $
+PF	2.21	0.97
+DD	3.4%	5.2%
+LONG	+4 043 $	−1 120 $
+SHORT	+5 446 $	+653 $
+
+Donc “réentraîner avec plus de données récentes” n'est absolument pas une garantie d'amélioration du portefeuille.
+
+3. Le vrai risque : intégrer 2025 peut changer le modèle
+
+Il y a deux effets opposés.
+
+Effet positif
+
+Ajouter 2025 peut permettre au modèle de mieux apprendre :
+
+les relations récentes entre features et rendement ;
+les nouveaux comportements de marché ;
+les changements de volatilité ;
+les nouvelles distributions de volume/liquidité ;
+les régimes récents.
+
+C'est particulièrement intéressant pour toi parce que 2025 est assez différent des années anciennes.
+
+Effet négatif
+
+Mais tu peux aussi avoir :
+
+plus de données ≠ plus de signal.
+
+Si 2025 contient des relations temporaires, le modèle peut les apprendre et devenir moins robuste en 2026/2027.
+
+Et surtout, tu risques de faire une sorte de sur-ajustement au passé récent.
+
+4. Dans ton cas, je ne remplacerais surtout pas B25 directement
+
+Je créerais un B25-R ou équivalent :
+
+B25 actuel
+Train : 2016 → 2024
+Nouveau modèle candidat
+Train : 2016 → 2025
+
+Même architecture.
+
+Même features.
+
+Même target.
+
+Même hyperparamètres.
+
+Même preprocessing.
+
+Même global rank.
+
+Pas de modification supplémentaire.
+
+Ensuite tu compares les deux sur une période totalement hors entraînement.
+
+Et c'est là que ton protocole doit être très strict.
+
+5. Le problème : 2026 a déjà été utilisé
+
+C'est important.
+
+Tu as déjà utilisé 2026 pour :
+
+P19 ;
+P20 ;
+P21 ;
+P22 ;
+choisir B25 contre B41 ;
+analyser la protection ;
+valider la stratégie.
+
+Donc 2026 n'est plus un vrai holdout vierge.
+
+Tu ne dois donc pas faire :
+
+“B25 entraîné jusqu'en 2025 gagne sur 2026 → production.”
+
+comme si 2026 était encore complètement OOS.
+
+Il faut maintenant considérer 2026 comme une période de recherche/validation historique.
+
+6. Ce que je ferais avant le passage production
+
+Je ferais un dernier test très simple :
+
+B25-R
+
+Train :
+
+2016 → 2025-12-31
+
+Puis comparer à B25 actuel :
+
+B25 : train 2016 → 2024
+B25-R : train 2016 → 2025
+
+Sur les périodes historiques suivantes :
+
+A. 2022
+
+Pas idéal pour arbitrer.
+
+B. 2025
+
+Très intéressant pour regarder le comportement du refit, mais B25-R l'aura appris → pas OOS.
+
+C. 2026
+
+Très intéressant pour diagnostic, mais plus considéré comme holdout vierge.
+
+Et surtout regarder :
+
+IC ;
+ICIR ;
+TOP-BOTTOM ;
+LONG ;
+SHORT ;
+within-universe ;
+nombre de trades ;
+distribution des scores ;
+stabilité du rank ;
+turnover.
+
+Mais je ne choisirais pas le modèle uniquement sur le P&L 2026.
+
+7. Le test vraiment important pour la production future
+
+La meilleure méthodologie serait désormais un walk-forward rolling.
+
+Par exemple :
+
+Train 2016 → 2021
+        ↓
+OOS 2022
+
+
+Train 2016 → 2022
+        ↓
+OOS 2023
+
+
+Train 2016 → 2023
+        ↓
+OOS 2024
+
+
+Train 2016 → 2024
+        ↓
+OOS 2025
+
+
+Train 2016 → 2025
+        ↓
+OOS 2026
+
+Et tu regardes :
+
+Est-ce que l'ajout d'une année de données améliore systématiquement le comportement OOS de l'année suivante ?
+
+C'est beaucoup plus informatif que :
+
+“Le modèle entraîné jusqu'en 2025 fait-il mieux sur 2026 ?”
+
+8. Et il y a une autre question encore plus importante pour toi
+
+La quantité de données n'est probablement pas ton problème principal.
+
+Ton P19/P21/P22 montre quelque chose de beaucoup plus subtil.
+
+B25 :
+
+signal brut global       modeste
+        ↓
+univers tradable         amélioration
+        ↓
+sélection                amélioration
+        ↓
+risk layer               amélioration
+        ↓
+protection P14           énorme amélioration
+        ↓
+portefeuille             très bon
+
+Ton résultat 2026 final :
+
++9 489 $, PF 2.21, DD 3.4%
+
+avec seulement ~0.66× de gross réellement déployé.
+
+Donc je serais beaucoup plus prudent avant de toucher au modèle que de toucher à la politique de sortie.
+
+Tu viens justement de démontrer expérimentalement que B41, malgré un meilleur signal statistique, produit un portefeuille inférieur.
+
+9. Ma recommandation concrète
+
+Je ferais un seul modèle supplémentaire avant production :
+
+B25-final
+Train : 2016 → 2025-12-31
+
+Mais aucune modification du modèle.
+
+Puis :
+
+Étape 1 — comparaison signal
+
+B25 vs B25-final :
+
+IC
+ICIR
+hit rate
+TOP/BOTTOM
+LONG
+SHORT
+within-universe
+Étape 2 — production-parity
+
+Même moteur que P18 :
+
+H20
+top 10%
+même universe
+max_positions = 4
+même sizing
+mêmes coûts
+P14
+LONG trailing 7%
+SHORT risk-based
+activation 0R
+Étape 3 — décision
+
+Si B25-final est meilleur ou comparable → je prendrais B25-final pour la production.
+
+S'il est nettement pire → je garderais B25.
+
+Et surtout :
+
+ne change aucun hyperparamètre en fonction du résultat.
+
+Sinon tu transformes ce test en nouvelle optimisation.
+
+Et concernant ta question “plus récent = plus réaliste ?”
+
+Oui, pour le modèle final de production, en principe.
+
+Un modèle qui sera utilisé demain devrait normalement avoir accès aux informations historiques disponibles jusqu'à aujourd'hui.
+
+Mais :
+
+réentraînement plus récent = modèle plus informé, pas nécessairement modèle plus performant.
+
+Le gain attendu est surtout une meilleure adaptation à la distribution récente. Le risque est d'apprendre davantage de bruit/régimes temporaires.
+
+Dans ton cas, je résumerais ainsi :
+
+B25 actuel
+→ excellent candidat validé.
+
+B25 entraîné jusqu'à 2025
+→ candidat naturel pour le final refit.
+
+B41
+→ rejeté comme champion malgré son meilleur IC.
+
+P14/P18
+→ on ne touche plus.
+
+Avant production
+→ faire B25-final 2016→2025, puis un A/B strict contre B25 sans retuning.
+
+Et si les deux sont proches, je privilégierais le modèle réentraîné jusqu'à 2025, car il utilise davantage d'information historique récente.
+
+Le point essentiel est que tu n'as pas besoin de “réinventer” B25. Tu peux simplement faire le refit final de la recette déjà validée.

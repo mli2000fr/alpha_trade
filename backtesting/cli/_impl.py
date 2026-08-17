@@ -2978,9 +2978,21 @@ def _run_backtest(args: argparse.Namespace) -> None:
             # même si la config garde un max_pct (ex: 2.0).
             if _sm_filter_flag == "none":
                 _sm_max_flag = None
+            # ── Horizon cascade : priorité CLI flag > config backtest_horizon > batch metadata ──
+            _best_h_flag = getattr(args, "best_horizon", None)
+            if _best_h_flag is None:
+                # GO 2026-08-17 : gel H20 par défaut via batch_diagnostics.backtest_horizon
+                _cfg_backtest_horizon = (
+                    (_cfg_cas.get("batch_diagnostics") or {}).get("backtest_horizon")
+                )
+                if _cfg_backtest_horizon not in (None, "", 0):
+                    try:
+                        _best_h_flag = int(_cfg_backtest_horizon)
+                    except (TypeError, ValueError):
+                        pass
             preds_df = apply_cascade_to_predictions(
                 preds_df, _cascade_batch_id, engine=engine,
-                best_h=getattr(args, "best_horizon", None),
+                best_h=_best_h_flag,
                 top_pct=getattr(args, "cascade_top_pct", None),
                 short_momentum_filter=(None if _sm_filter_flag == "none" else _sm_filter_flag),
                 short_momentum_max_pct=_sm_max_flag,

@@ -2511,7 +2511,12 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--trade-date", trade_date])
         if account_id:
             command.extend(["--account", account_id])
-        # ── V1 Multi-Horizon : injecter best_horizon depuis le batch ML ──
+        # ── V1 Multi-Horizon : injecter best_horizon (SIZING only) ──
+        # ⚠️ Ce --best-horizon alimente RiskConfig.best_horizon → maps stop/TP
+        # multi-horizon du sizing LIVE. Il ne doit PAS être dérivé de
+        # live_horizon (cascade), sinon le sizing casserait la parité avec le
+        # benchmark (H10 = stop 2.5/TP 7% gelés). On garde le best_horizon du
+        # batch (metadata) pour le sizing = comportement d'origine.
         _risk_bid = options.ml_predict_batch_id or options.ml_live_predict_batch_id
         if _risk_bid:
             try:

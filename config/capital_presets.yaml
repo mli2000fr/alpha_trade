@@ -145,7 +145,7 @@ presets:
   values:
     risk_account_equity: __DETECTED_EQUITY__
     risk_per_trade_pct: 0.0125
-    risk_max_positions: 4
+    risk_max_positions: 8 
     risk_max_position_weight: 0.25
     risk_max_sector_weight: 0.5
     risk_min_position_notional: 155.0
