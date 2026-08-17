@@ -1078,6 +1078,16 @@ def _build_parser() -> argparse.ArgumentParser:
              "Ex: 10, 15, 20. Diagnostic uniquement.",
     )
     run_p.add_argument(
+        "--entry-limit-offset-pct",
+        type=float,
+        default=0.0,
+        help="Pullback limit à l'entrée : fraction sous/sur le prix signal où placer "
+             "l'ordre limit. 0 (défaut) = exécution au marché (open), réaliste. "
+             "0.01 = pullback 1%% (ancien défaut historique, gonflait l'entrée de ±1%% ; "
+             "réservé à la reproduction des runs d'avant 2026-08-17). "
+             "P14 fix : remplissage conditionnel des deux côtés (day_low/day_high).",
+    )
+    run_p.add_argument(
         "--profile",
         choices=["strict_swing_cash", "swing_cash_aggressive", "production-parity", "custom"],
         default="custom",
@@ -3480,6 +3490,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         commission_bps=float(args.commission_bps),
         slippage_bps=float(args.slippage_bps),
         use_tiered_commission=bool(getattr(args, "use_tiered_commission", False)),
+        entry_limit_offset_pct=float(getattr(args, "entry_limit_offset_pct", 0.0) or 0.0),
         exec_config=execution_config,
         trading_constraints=trading_constraints,
         microstructure=microstructure_cfg,
