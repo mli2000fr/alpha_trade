@@ -1053,6 +1053,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Slippage simulé par trade en bps (défaut: 2.0 canonique Alpaca).",
     )
     run_p.add_argument(
+        "--cost-multiplier",
+        type=float,
+        default=1.0,
+        help="Stress test coûts (2026-08-17) : multiplie le coût de transaction "
+             "total (spread réel + commission + slippage + pénalité d'exécution). "
+             "1.0 = parité bit-for-bit. Ex: 1.25, 1.5, 2.0, 3.0. Diagnostic uniquement.",
+    )
+    run_p.add_argument(
         "--profile",
         choices=["strict_swing_cash", "swing_cash_aggressive", "production-parity", "custom"],
         default="custom",
@@ -3444,6 +3452,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         tp_max_pct=float(getattr(args, "tp_max_pct", 0.0) or 0.0),
         use_canonical_costs=bool(getattr(args, "use_canonical_costs", False)),
         margin_interest_rate_annual=float(getattr(args, "margin_interest_rate", 0.0) or 0.0),
+        cost_multiplier=float(getattr(args, "cost_multiplier", 1.0) or 1.0),
         atr_trailing_stop_multiplier=float(getattr(args, "atr_ts", 0.0) or 0.0),
         use_live_protection_logic=bool(getattr(args, "use_live_protection_logic", True)),
         max_positions=args.max_positions,

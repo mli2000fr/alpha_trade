@@ -141,6 +141,13 @@ class BacktestConfig:
     # Débité quotidiennement quand ``settled_cash`` < 0 (longs financés à
     # crédit). 0 = désactivé (rétrocompatibilité bit-à-bit des runs legacy).
     margin_interest_rate_annual: float = 0.0
+    # Stress test coûts (2026-08-17) : multiplicateur du coût de transaction
+    # (spread réel + commission + slippage + pénalité d'exécution d'entrée).
+    # 1.0 = parité bit-for-bit avec le run non stressé (x*1.0 exact en IEEE
+    # 754). Utilisé pour mesurer la marge d'erreur économique avant go-live
+    # (ex: 1.25, 1.5, 2.0, 3.0). Outil de diagnostic uniquement — n'affecte
+    # ni les signaux, ni la sélection, ni la gestion des positions.
+    cost_multiplier: float = 1.0
     trading_constraints: TradingConstraintConfig = field(default_factory=TradingConstraintConfig)
     execution_timing: str = "next_open"
     execution_replay_mode: str = "off"
@@ -487,6 +494,11 @@ class BacktestEngine:
         else:
             self._effective_fees_pct = float(config.fees_pct)
             self._spread_fallback_bps = float(config.slippage_bps)
+        # Stress test coûts : scale le coût effectif (commission + slippage).
+        # Le spread réel/fallback est scalé dans ``_get_spread_bps`` et la
+        # pénalité d'exécution d'entrée (5 bps) dans le calcul du slippage.
+        # cost_multiplier=1.0 → aucun changement (multiplication exacte).
+        self._effective_fees_pct *= float(getattr(config, "cost_multiplier", 1.0))
         # P2-4 (2026-08-14) : accumulateur d'intérêts de marge du run.
         self._margin_interest_total = 0.0
         # Concentration filters (Priorité 4)
@@ -1451,7 +1463,10 @@ class BacktestEngine:
             trade_spread_bps = self._get_spread_bps(
                 spread_df, trade_day, symbol, fallback_bps=self._spread_fallback_bps
             )
-            slippage_bps = 5.0 + trade_spread_bps / 2.0
+            # Stress test coûts : la pénalité d'exécution de base (5 bps) est
+            # scalée par cost_multiplier (le spread/2 l'est déjà via
+            # ``_get_spread_bps``). 1.0 → 5.0 inchangé.
+            slippage_bps = 5.0 * float(getattr(self.config, "cost_multiplier", 1.0)) + trade_spread_bps / 2.0
             if is_short_side(side):
                 entry_price = entry_price * (1.0 - slippage_bps / 10_000.0)
             else:
@@ -2279,11 +2294,17 @@ class BacktestEngine:
         2. Fallback à ``fallback_bps`` si la donnée est absente.
 
         La valeur retournée est toujours >= 0.
+
+        Stress test coûts (2026-08-17) : la valeur est multipliée par
+        ``config.cost_multiplier`` (défaut 1.0 → aucun changement). Le
+        multiplicateur s'applique à la donnée réelle ET au fallback pour
+        conserver une échelle cohérente du coût aller-retour.
         """
+        multiplier = float(getattr(self.config, "cost_multiplier", 1.0))
         if spread_df is None or spread_df.empty:
-            return max(float(fallback_bps), 0.0)
+            return max(float(fallback_bps), 0.0) * multiplier
         if symbol not in spread_df.columns or trade_day not in spread_df.index:
-            return max(float(fallback_bps), 0.0)
+            return max(float(fallback_bps), 0.0) * multiplier
         try:
             value = float(spread_df.at[trade_day, symbol])
             if np.isfinite(value) and value >= 0:
@@ -2298,11 +2319,11 @@ class BacktestEngine:
                         "P8 spread corrompu: %s/%s spread_bps=%.0f > %.0f → fallback %.0f bps",
                         trade_day.date(), symbol, value, MAX_REALISTIC_SPREAD_BPS, fallback_bps,
                     )
-                    return max(float(fallback_bps), 0.0)
-                return value
-            return max(float(fallback_bps), 0.0)
+                    return max(float(fallback_bps), 0.0) * multiplier
+                return value * multiplier
+            return max(float(fallback_bps), 0.0) * multiplier
         except (KeyError, ValueError):
-            return max(float(fallback_bps), 0.0)
+            return max(float(fallback_bps), 0.0) * multiplier
 
     @staticmethod
     def _get_adv_usd(
