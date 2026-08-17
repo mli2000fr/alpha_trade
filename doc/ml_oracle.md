@@ -1,454 +1,654 @@
-# ML + Oracle : mesurer l'écart et apprendre les patterns du TOP
+# Spécification — Oracle Layer au-dessus du Global Model
 
-> **Statut** : 💡 Proposition / expérimentation à étudier (2026-08-17)
-> **Contexte** : analyse oracle du run `20260817_205031_2a2836d1`
-> (LONG 16,7 % vs 10 % hasard · SHORT 8,2 % vs 10 % · déciles monotones · capture ≈ 12 %)
-> **Principe directeur** : l'oracle est un **professeur historique** — jamais une
-> information disponible au moment de la prédiction. **Zéro look-ahead.**
-
----
-
-## 0. Le problème exact (formulation)
-
-Le Global Model apprend à **prédire / ranker le rendement futur**, alors que la
-**décision de trading réelle** est différente :
-
-> **On veut surtout que les titres sélectionnés tombent dans le vrai TOP 10 %
-> ou BOTTOM 10 %.**
-
-État actuel sur H20 (univers ~399/jour) :
-
-| Sélection | % dans le vrai TOP 10 % |
-|---|---|
-| Random | 10 % |
-| **B25** | **~16,7 %** |
-| Oracle | 100 % |
-
-→ Le modèle a déjà un signal, mais il ne capture qu'une petite partie des vrais extrêmes.
-
-> 🛡️ **Principe cardinal** : l'oracle est un **label / une cible d'apprentissage**,
-> **jamais une feature**.
-> ❌ `features + oracle_rank → modèle` (look-ahead)
-> ✅ `features D → modèle → prédiction` puis, *après réalisation*,
-> `rendement réalisé → oracle → label pour les périodes futures`
+> **Statut** : 📐 Spécification (2026-08-18) — remplace la version précédente
+> **Contexte** : analyse Oracle du run `20260817_205031_2a2836d1`
+> **Objectif** : construire une **Oracle Layer** (TOP / BOTTOM) qui apprend, sur
+> l'historique, dans quelles configurations le Global Model réussit ou échoue à
+> identifier les vrais extrêmes cross-sectionnels.
+> **Règle cardinale** : l'Oracle est un **TARGET**, jamais une **FEATURE**. B25 reste
+> **intact** pendant toute la 1ʳᵉ expérimentation.
 
 ---
 
-## 1. Pourquoi c'est faisable (et le piège à éviter)
+## Sommaire
 
-L'idée : utiliser l'oracle **pendant le walk-forward** pour mesurer l'écart
-ML ↔ oracle et adapter l'apprentissage — mais l'adaptation de la période suivante
-n'utilise **que les informations déjà réalisées**.
-
-```mermaid
-flowchart LR
-    subgraph Fenêtre WF
-        A[TRAIN] --> B[Modèle ML] --> C[Prédit TOP/BOTTOM]
-        C --> D[Période validation] --> E[Vrais rendements observés]
-        E --> F[ORACLE]
-        B -.-> G[Comparaison ML vs Oracle]
-        F --> G --> H[Apprentissage / adaptation]
-    end
-    H --> I[Fenêtre WF suivante]
-```
-
-> ⚠️ **NE PAS FAIRE** (leakage) :
-> ```
-> 2025 → je regarde l'oracle 2025 → je modifie le modèle → je reparcours 2025
-> ```
-> L'oracle d'une période ne peut influencer **que les périodes suivantes**.
-
----
-
-## 2. L'objectif : apprendre le "gap" avec l'oracle
-
-Actuellement le modèle apprend :
-> « Quel titre aura le meilleur rendement futur ? »
-
-On veut lui ajouter indirectement :
-> « **Quelles caractéristiques permettent d'être dans le vrai TOP 10 %** plutôt que
-> simplement d'avoir un bon score ? »
-
-C'est beaucoup plus proche de l'objectif réel.
-
-### Exemple d'analyse post-validation
-
-```
-                 ML TOP       ORACLE TOP
-AAPL             ✓             ✓
-MSFT             ✓             ✓
-XYZ              ✓             ✗
-ABC              ✓             ✗
-```
-
-Puis la question clé :
-
-> **Qu'est-ce qui différencie les vrais gagnants que le modèle rate des gagnants qu'il trouve ?**
+1. [Objectif](#1-objectif)
+2. [Principe fondamental : Oracle = Target, jamais Feature](#2-principe-fondamental)
+3. [Table Oracle historique](#3-table-oracle-historique)
+4. [Univers Oracle = univers Global Model](#4-univers-oracle)
+5. [B25 intouchable](#5-b25-intouchable)
+6. [Architecture des deux modèles Oracle](#6-architecture-des-deux-modèles-oracle)
+7. [Features des modèles Oracle](#7-features-des-modèles-oracle)
+8. [Features PIT obligatoires](#8-features-pit-obligatoires)
+9. [Anti-leakage des labels Oracle](#9-anti-leakage-des-labels-oracle)
+10. [Pré-calcul des Oracle historiques](#10-pré-calcul-des-oracle-historiques)
+11. [Walk-forward causal](#11-walk-forward-causal)
+12. [Taille du dataset](#12-taille-du-dataset)
+13. [Quelle cible utiliser](#13-quelle-cible-utiliser)
+14. [Architecture recommandée phase 1](#14-architecture-recommandée-phase-1)
+15. [Combinaison des scores](#15-combinaison-des-scores)
+16. [Calibration](#16-calibration)
+17. [Métriques ML obligatoires](#17-métriques-ml-obligatoires)
+18. [Décile monotonicity](#18-décile-monotonicity)
+19. [Métriques trading obligatoires](#19-métriques-trading-obligatoires)
+20. [Métriques trading](#20-métriques-trading)
+21. [Le résultat le plus important](#21-le-résultat-le-plus-important)
+22. [Tester d'abord LONG uniquement](#22-tester-dabord-long-uniquement)
+23. [Comparaison des architectures](#23-comparaison-des-architectures)
+24. [Ne pas remplacer B25 prématurément](#24-ne-pas-remplacer-b25-prématurément)
+25. [Version avancée : Residual Model](#25-version-avancée-residual-model)
+26. [Version avancée : distillation / ranking](#26-version-avancée-distillation--ranking)
+27. [Anti-leakage tests automatisés](#27-anti-leakage-tests-automatisés)
+28. [Réutiliser les prédictions B25 historiques](#28-réutiliser-les-prédictions-b25-historiques)
+29. [Dataset final du Oracle Model](#29-dataset-final-du-oracle-model)
+30. [Plan d'implémentation (Étape 1 → 7)](#30-plan-dimplémentation-étape-1--7)
+31. [Critère de réussite](#31-critère-de-réussite)
+32. [Architecture cible finale](#32-architecture-cible-finale)
 
 ---
 
-## 3. Trois niveaux d'implémentation
+## 1. Objectif
 
-### 🟢 Niveau 1 — Oracle-aware loss (le plus simple, mais peu nouveau)
-
-> **= Version A de la reformulation GPT.**
-
-```python
-loss = erreur_normale + λ × erreur_TOP + λ × erreur_BOTTOM
-```
-
-- ✅ Simple, conserve le Global Model actuel et son architecture.
-- ❌ **Pas vraiment nouveau** : le target contient déjà le rendement futur → on
-  réinvente un ranking pondéré.
-- → **Ne pas commencer par là.**
-
-### 🟢 Niveau 2 — Oracle Residual Model (à tester en premier)
+Le Global Model est entraîné pour produire un **ranking cross-sectionnel** des
+~400 symboles disponibles chaque jour. La cascade de production utilise ensuite :
 
 ```
-global_rank_20 ─┐
-oracle_rank_20 ─┴─> oracle_gap = oracle_rank − predicted_rank
+global_rank_20
+      ↓
+TOP 10%     → candidats LONG
+BOTTOM 10%  → candidats SHORT
 ```
 
-| Titre | ML rank | Oracle rank | Gap |
-|---|---|---|---|
-| A | 0.92 | 0.97 | +0.05 |
-| B | 0.88 | 0.42 | −0.46 |
-| C | 0.73 | 0.91 | +0.18 |
-| D | 0.65 | 0.08 | −0.57 |
+L'analyse Oracle récente montre :
 
-Un **second modèle** apprend :
-> « À partir des informations disponibles à D, pourquoi le modèle principal a-t-il
-> sous-estimé / surestimé certains titres ? »
+| | Random | B25 |
+|---|---|---|
+| Vrai TOP 10 % capturé | 10 % | **16.7 %** |
+| Vrai BOTTOM 10 % capturé | 10 % | **8.2 %** |
 
-```mermaid
-flowchart LR
-    A[Features PIT] --> B[Residual model] --> C[Correction du rank]
-    C --> D[adjusted_rank] --> E[TOP/BOTTOM 10%]
-```
+Donc :
+- le Global Model possède un **signal réel côté LONG** ;
+- le signal SHORT est actuellement **faible voire nul** ;
+- une **partie importante des vrais TOP/BOTTOM n'est pas capturée** par le ranking actuel.
 
-**En production** : `global_rank_B25 + correction_model → adjusted_rank → TOP/BOTTOM 10%`
+**Objectif du projet** : construire une **Oracle Layer** capable d'apprendre, à partir
+de l'historique, **dans quelles configurations le Global Model réussit ou échoue** à
+identifier les vrais extrêmes cross-sectionnels.
 
-- ✅ Le residual model est entraîné **uniquement sur les erreurs des périodes passées**
-  → **pas de fuite**.
-
-> ⭐ **Retour GPT + contre-analyse : c'est LA première expérience à faire.**
-> Principe clé confirmé :
-> **« L'Oracle ne va pas créer de l'information nouvelle. Il peut seulement aider le
-> modèle à mieux exploiter l'information déjà contenue dans ses features. »**
-> → On n'« apprend pas l'Oracle », on **apprend systématiquement les erreurs de ranking
-> du Global Model par rapport à l'Oracle historique** :
-> « Quand B25 donne un rank de 0.82, dans quelles configurations de features ce rank
-> est-il historiquement trop bas ou trop haut ? »
-
-**Architecture recommandée (endossée par GPT) :**
+> ⚠️ **L'Oracle Layer ne remplace PAS B25 dans la première expérimentation.**
 
 ```mermaid
 flowchart TB
-    A[B25 Global Model] --> B[global_rank_H20]
-    B --> C[ML ranking]
-    B --> D[Oracle historique]
-    C --> E[Erreurs historiques]
-    D --> E
-    E --> F[Residual Model] --> G[correction rank]
-    G --> H[adjusted_rank_H20]
-    H --> I[TOP 10% / BOTTOM 10%]
-    I --> J[Moteur de backtest]
+    A[GLOBAL MODEL B25] --> B[global_rank_20]
+    B --> C1[ORACLE-TOP MODEL<br/>P real TOP 10%]
+    B --> C2[ORACLE-BOTTOM MODEL<br/>P real BOTTOM 10%]
+    C1 --> D[score combiné]
+    C2 --> D
+    D --> E[final ranking] --> F[TOP/BOTTOM 10%]
 ```
-
-**Design d'expérience propre (comparaison strictement OOS, B25 intouchable) :**
-
-| Métrique | B25 (baseline) | B25 + Oracle residual |
-|---|---|---|
-| Capture TOP 10 % H20 | 16.7 % | ? |
-| Capture BOTTOM 10 % H20 | 8.2 % | ? |
-| Monotonicité D1→D10 | ? | ? |
-| IC Rank | 0.02 | ? |
-| PF (OOS 2026) | 1.76 | ? |
-| DD (OOS 2026) | 3.04 % | ? |
-| Rendement (OOS 2026) | +14.37 % | ? |
-
-**Aucune modification de B25 production tant que l'expérience n'a pas gagné sur un vrai OOS.**
-
-### 🟢 Niveau 3 — Oracle Distillation (le plus puissant)
-
-> **= Version B de la reformulation GPT (objectif secondaire Oracle / multi-task).**
-
-Au lieu d'apprendre le rendement futur exact, on entraîne le modèle à reproduire le
-comportement d'un **oracle historique** (utilisé uniquement pour créer les labels
-après que la période est terminée).
-
-```mermaid
-flowchart LR
-    A[Features à D] --> B[ML] --> C[predicted ranking]
-    D[H+20 : actual return] --> E[oracle ranking] --> F[label]
-```
-
-**Multi-targets** :
-
-```
-oracle_top10    =  1
-oracle_bottom10 = −1
-oracle_middle   =  0
-```
-
-Modèles entraînés :
-- `P(oracle_top10 | features)`
-- `P(oracle_bottom10 | features)`
-
-→ Cela ressemble beaucoup plus directement à **ce que le système veut réellement faire**.
-
-### Combinaison en production (apprentissage multi-task)
-
-Le Global Model apprend **simultanément** :
-
-```
-                    ┌── rendement futur
-Features ───────────┼── Oracle TOP probability
-                    └── Oracle BOTTOM probability
-```
-
-Puis produit un score composite :
-
-```
-global_score = rendement_score + poids × oracle_top_score − poids × oracle_bottom_score
-```
-
-> ⚠️ **Les poids doivent être appris / calibrés UNIQUEMENT dans le walk-forward**
-> (sur les périodes passées), **jamais sur l'OOS final** — sinon fuite de sélection.
-
-### 🟢 Évolution (complément GPT) — Trois objectifs en parallèle (A / B / C)
-
-Plutôt que « Oracle vs ML → pénalité arbitraire », tester **trois designs d'objectif
-en parallèle** (mêmes features, mêmes données PIT, mêmes fenêtres WF) :
-
-| Design | Target | Nature |
-|---|---|---|
-| **A — B25 actuel** | `rendement H20` | régression continue (baseline) |
-| **B — Oracle TOP/BOTTOM** | `TOP 10 % / MIDDLE / BOTTOM 10 %` | classification cross-sectionnelle directe : le modèle apprend la position future dans le cross-section |
-| **C — Multi-task** | `rendement H20` + `P(TOP 10 %)` + `P(BOTTOM 10 %)` | objectifs partagés sur features communes |
-
-```mermaid
-flowchart LR
-    A[Features] --> M[Multi-task]
-    M --> R[rendement H20]
-    M --> T[probabilité TOP 10%]
-    M --> B[probabilité BOTTOM 10%]
-    R --> S[ranking combiné]
-    T --> S
-    B --> S
-```
-
-- **C (multi-task)** est l'approche présente dans la littérature de stock ranking :
-  on optimise conjointement le rendement et la position dans les extrêmes → le
-  ranking combiné bénéficie des deux signaux.
-- ⚠️ Ne pas confondre avec le **test offline A/B/C du §7** (qui, lui, compare
-  B25 vs classification oracle vs calibration sur un même backtest).
 
 ---
 
-## 4. Idée clé : séparer LONG et SHORT
+## 2. Principe fondamental
 
-L'analyse oracle montre une **asymétrie** :
+**L'Oracle est un TARGET, jamais une FEATURE.**
 
-| | Dans l'oracle | Hasard |
-|---|---|---|
-| LONG (top 10 %) | **16,7 %** | 10 % |
-| SHORT (bottom 10 %) | **8,2 %** | 10 % |
+L'Oracle est calculé à partir du rendement futur réel (ex. H20) :
 
-→ Pourquoi entraîner symétriquement LONG et SHORT ? **Créer deux objectifs séparés** :
-
-### Modèle LONG
 ```
-target = 1  si  futur_return ∈ TOP 10%
+future_return_20 = adj_close[D+20] / adj_close[D] − 1
 ```
 
-### Modèle SHORT
+Puis, pour chaque date D, sur l'univers réellement disponible :
+`TOP 10% = 1` / `BOTTOM 10% = 1`.
+
+Ces informations ne sont disponibles **qu'après réalisation du futur** :
+
 ```
-target = 1  si  futur_return ∈ BOTTOM 10%
+D
+│
+├── Features disponibles à D
+├── B25 prediction à D
+│   >>> aucune information Oracle disponible
+└────────────────────────────→ D+20
+                                 │
+                                 └── Oracle(D) devient connu
 ```
 
-- **Pas forcément les mêmes features ni la même pondération.**
-- Le résultat dit clairement : capacité de sélection **long > short**.
-- → Ne pas chercher à « réparer » le short en forçant la symétrie.
+Définitions :
+```
+oracle_exit_date      = D + H
+oracle_available_date = oracle_exit_date + 1 trading day
+```
+
+> La colonne **`oracle_available_date`** doit être stockée explicitement.
 
 ---
 
-## 5. Apprendre les patterns du TOP (classification oracle)
+## 3. Table Oracle historique
+
+Créer une table dédiée, par exemple **`global_oracle_labels`** (ou nom équivalent).
+
+**Minimum recommandé** :
+
+| Colonne | Description |
+|---|---|
+| `prediction_date` | Date D de la prédiction |
+| `symbol` | Symbole |
+| `id_batch` | Batch du Global Model |
+| `horizon` | H (ex. 20) |
+| `future_return` | Rendement futur réalisé |
+| `oracle_pct_rank` | Percentile cross-sectionnel |
+| `oracle_decile` | Décile (1–10) |
+| `oracle_top10` | 1 si TOP 10 % |
+| `oracle_bottom10` | 1 si BOTTOM 10 % |
+| `oracle_exit_date` | D + H |
+| `oracle_available_date` | exit + 1 jour ouvrés |
+
+**Idéalement**, conserver aussi les sorties du Global Model au moment de la prédiction :
+`global_rank_20`, `global_score_20`, `global_rank_10`, …
+
+**Exemple** :
+
+| prediction_date | symbol | id_batch | horizon | future_return | pct_rank | décile | top10 | bottom10 | exit_date | available_date |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 2022-01-03 | AAPL | batch_123456 | H20 | +0.143 | 0.96 | 10 | 1 | 0 | 2022-01-31 | 2022-02-01 |
+
+---
+
+## 4. Univers Oracle
+
+**Impératif : le même univers que le Global Model.**
+
+- L'Oracle **ne doit PAS** être calculé sur un univers différent.
+- Utiliser les **~399 symboles/jour** réellement présents dans `model_predictions` et
+  disponibles pour le Global Model à cette date.
+- `Global universe(D) = Oracle universe(D)`.
+- Le TOP 10 % = les 10 % meilleurs rendements futurs **parmi les titres que le Global
+  Model pouvait réellement sélectionner ce jour-là**.
+- ⛔ **Jamais** d'univers survivorship-biased ou d'un autre pool.
+
+---
+
+## 5. B25 intouchable
+
+B25 doit rester **strictement identique**. Ne pas modifier :
+- ses features ;
+- son target ;
+- son entraînement ;
+- ses hyperparamètres ;
+- son ranking ;
+- son modèle ;
+- son pipeline de production.
+
+On ajoute **uniquement** :
 
 ```
-features PIT
-├── momentum
-├── volatility
-├── volume
-├── fundamentals
-├── market regime
-├── sector
-├── relative strength
-└── etc.
+B25
+ +
+Oracle Layer
+```
+
+→ pour répondre objectivement : *« Est-ce que l'Oracle Layer apporte réellement quelque
+chose ? »*
+
+---
+
+## 6. Architecture des deux modèles Oracle
+
+Construire **deux modèles indépendants** (pas de symétrie forcée).
+
+### Oracle TOP Model
+```
+target : oracle_top10 = 1  si rendement futur ∈ TOP 10% cross-sectionnel du jour
+                        0  sinon
+objectif : P(real TOP 10% | information disponible à D)
+```
+
+### Oracle BOTTOM Model
+```
+target : oracle_bottom10 = 1  si rendement futur ∈ BOTTOM 10%
+                          0  sinon
+objectif : P(real BOTTOM 10% | information disponible à D)
+```
+
+> Les résultats actuels (TOP 16.7 % vs BOTTOM 8.2 %) montrent que les deux problèmes
+> ont des patterns très différents → **entraînés séparément**.
+
+---
+
+## 7. Features des modèles Oracle
+
+Trois catégories.
+
+### A. Features du Global Model (disponibles à D)
+`momentum`, `returns`, `volatilité`, `volume`, `relative strength`, `fundamentals PIT`,
+`secteur`, `market regime`, etc. — **ne pas recréer artificiellement une information future**.
+
+### B. Informations produites par le Global Model
+Le Oracle Model peut recevoir `global_rank_20`, `global_score_20` (+ autres outputs).
+Exemple : quand B25 donne 0.93, dans quelles configurations ce titre devient
+réellement TOP 10 % ? → **seconde couche de décision**.
+
+### C. Features spécifiques Oracle (orientées extrêmes)
+- accélération du momentum ;
+- momentum court vs long ;
+- variation de volatilité ;
+- volume expansion ;
+- relative strength ;
+- distance aux highs/lows ;
+- drawdown récent ;
+- dispersion cross-sectionnelle ;
+- force/faiblesse sectorielle ;
+- interactions momentum × volume / momentum × volatilité.
+
+> Ne pas ajouter aveuglément des features. **Faire des ablations** :
+> - `O0` = features B25
+> - `O1` = O0 + `global_rank`
+> - `O2` = O1 + nouvelles features
+> - `O3` = TOP/BOTTOM features spécialisées
+
+---
+
+## 8. Features PIT obligatoires
+
+Toutes les features doivent respecter :
+```
+feature timestamp <= prediction_date D
+```
+
+⛔ **Jamais** comme feature :
+```
+future_return · future_volatility · oracle_rank · oracle_decile ·
+future_price · future_volume
+```
+Ces informations servent **uniquement** à créer les **targets historiques**.
+
+---
+
+## 9. Anti-leakage des labels Oracle
+
+Exemple — `prediction_date = 2022-01-03`, H20 → Oracle connu le **2022-02-01**
+(`oracle_available_date`).
+
+- ❌ Prédiction le 2022-01-15 avec Oracle(2022-01-03) : **interdite** (pas encore disponible).
+- ✅ Prédiction le 2022-02-02 : **autorisée**.
+
+**Règle absolue d'entraînement :**
+```sql
+WHERE oracle_available_date <= training_cutoff_date
+```
+
+---
+
+## 10. Pré-calcul des Oracle historiques
+
+Il est **recommandé** de pré-calculer les Oracle historiques (ex. 2016 → 2025) pour
+chaque `date × symbol × horizon`, puis stocker `oracle_available_date`.
+
+- Connaître aujourd'hui l'Oracle de 2018 **n'est pas du leakage**.
+- Le leakage n'existe que si une **simulation du passé** utilise une information non
+  disponible à cette date.
+- Oracle 2018 (available 2018 + 20 j) → utilisable pour apprendre une prédiction de
+  **2019**, jamais pour modifier rétroactivement une prédiction de 2018.
+
+---
+
+## 11. Walk-forward causal
+
+Le pipeline doit être **strictement temporel** :
+
+```
+TRAIN 2016 → 2020  (Oracle labels disponibles avant cutoff)
         ↓
-  P(TOP 10% H20)
+Train Oracle-TOP / Oracle-BOTTOM
+        ↓
+VALIDATION 2021
+
+2016 → 2021 (nouveaux Oracle disponibles)
+        ↓
+retrain Oracle models
+        ↓
+VALIDATION 2022
+… (etc.)
 ```
+
+> Le modèle de 2021 ne doit **jamais** voir Oracle 2021 si cet Oracle n'était pas
+> encore disponible au moment de la prédiction 2021.
+
+---
+
+## 12. Taille du dataset
+
+Ne pas sous-estimer le volume : chaque journée contient **~400 symboles**.
+
+```
+1 année ≈ 250 × 400 ≈ 100 000 observations
+```
+
+Le délai H20 **ne limite pas le nombre d'observations** ; il limite uniquement leur
+**date de disponibilité**.
+
+---
+
+## 13. Quelle cible utiliser
+
+**Première version recommandée** : TOP = classification, BOTTOM = classification.
+
+Conserver aussi `oracle_pct_rank` et `oracle_decile` **pour les analyses**.
+
+**Deuxième expérience** : target continu = `oracle_rank − global_rank`
+(le *Residual Model*) — **pas la première implémentation à privilégier**.
+
+---
+
+## 14. Architecture recommandée phase 1
+
+```mermaid
+flowchart TB
+    A[FEATURES PIT] --> B[B25 GLOBAL] --> C[global_rank_20]
+    C --> D1[ORACLE TOP MODEL<br/>target = top10]
+    C --> D2[ORACLE BOTTOM MODEL<br/>target = bottom10]
+    D1 --> E1[P_top]
+    D2 --> E2[P_bottom]
+    E1 --> F[COMBINATION LAYER]
+    E2 --> F
+    F --> G[final scores] --> H[TOP/BOTTOM 10%]
+```
+
+---
+
+## 15. Combinaison des scores
+
+Ne pas commencer avec une formule compliquée. Tester d'abord des combinaisons simples.
+
+**Baseline**
+```
+long_score  = global_rank_20
+short_score = 1 − global_rank_20
+```
+
+**Variante 1**
+```
+long_score  = global_rank_20 × P_top
+short_score = (1 − global_rank_20) × P_bottom
+```
+
+**Variante 2** (pondérée)
+```
+long_score  = α × global_rank_20 + (1 − α) × P_top
+short_score = α × (1 − global_rank_20) + (1 − α) × P_bottom
+```
+
+> Tester plusieurs `α` **uniquement via calibration WF**, jamais sur l'OOS final.
+
+---
+
+## 16. Calibration
+
+`P_top` / `P_bottom` ne doivent pas être supposées parfaitement calibrées. Tester :
+- isotonic calibration ;
+- Platt / logistic calibration ;
+- ranking percentile plutôt que probabilité brute.
+
+Garder une **version sans calibration comme baseline**.
+
+---
+
+## 17. Métriques ML obligatoires
+
+Le 1ᵉʳ objectif n'est pas uniquement le P&L.
+
+**Capture Oracle (TOP)**
+```
+Random        10%
+B25          16.7%
+Oracle layer   ?
+```
+Objectif expérimental : **16.7 % → 20 %+** (sans garantir 20-25 %).
+
+**Bottom capture**
+```
+Random        10%
+B25           8.2%
+Oracle layer   ?
+```
+Objectif : **≥ 10 %**, puis éventuellement mieux.
+
+---
+
+## 18. Décile monotonicity
+
+Métrique essentielle. Pour chaque modèle, calculer par décile `D1…D10` :
+```
+mean future return
+median future return
+```
+
+On veut : `D1 < D2 < … < D10` (ou au minimum une relation **beaucoup plus monotone
+que B25**). L'analyse actuelle montre une distribution en **U** — le but est de
+transformer « score élevé → parfois gagnant / parfois perdant » en
+« score élevé → plus probablement gagnant ».
+
+---
+
+## 19. Métriques trading obligatoires
+
+Une amélioration de capture **ne suffit pas**. Évaluer avec le **moteur de backtest
+réel**, même configuration que le candidat production :
+- H20 cascade · H20 risk · stop 3.5×ATR · TP min(4×ATR, 13 %) · market entry · P14 ·
+  m8 · coûts réels · overlays production.
+
+Comparer **B25** vs **B25 + Oracle Layer** sur **exactement les mêmes dates**.
+
+---
+
+## 20. Métriques trading
+
+Au minimum :
+`rendement · PF · Sharpe · Sortino · max DD · win rate · trades · holding moyen ·
+turnover · LONG P&L · SHORT P&L · contribution TOP/BOTTOM · frais · slippage ·
+taux de rejet · exposition moyenne · gross exposure`.
+
+---
+
+## 21. Le résultat le plus important
+
+On veut **éviter** :
+```
+Oracle capture : 16.7% → 25%   mais   PF : 1.76 → 1.20   ⇒  ÉCHEC trading
+```
+
+**Critère final** :
+> **Oracle capture améliorée + ranking plus monotone + P&L OOS amélioré.**
+
+---
+
+## 22. Tester d'abord LONG uniquement
+
+Vu les résultats (TOP 16.7 % / BOTTOM 8.2 %) :
+1. Première expérience : **B25 + Oracle TOP** — sans toucher au SHORT.
+2. Ensuite seulement : **B25 + Oracle TOP + Oracle BOTTOM**.
+
+---
+
+## 23. Comparaison des architectures
+
+À terme, tester trois architectures.
+
+**A — B25 actuel (baseline)**
+```
+B25 → rank → cascade
+```
+
+**B — B25 + Oracle (recommandée initialement)**
+```
+B25 → Oracle TOP/BOTTOM → adjusted rank → cascade
+```
+
+**C — Oracle models seuls (expérience secondaire)**
+```
+features → Oracle TOP/BOTTOM → cascade
+```
+→ permet de savoir si le Global Model est réellement indispensable.
+
+---
+
+## 24. Ne pas remplacer B25 prématurément
+
+Même si les Oracle Models seuls fonctionnent mieux sur une période, **ne pas remplacer
+B25 immédiatement**. Vérifier d'abord **2025**, **2026**, puis idéalement **plusieurs
+fenêtres OOS**. Démontrer que l'amélioration est **robuste**.
+
+---
+
+## 25. Version avancée : Residual Model
+
+Une fois la classification TOP/BOTTOM validée, tester :
+```
+residual = oracle_pct_rank − global_rank_20
+```
+Exemple : B25 = 0.62, Oracle = 0.94 → residual = **+0.32**.
 
 Le modèle apprend :
-> **quelles configurations observables aujourd'hui ont historiquement conduit à une
-> appartenance au TOP 10 %.**
-
-→ Plus directement aligné avec l'objectif que : prédire un rendement continu puis
-transformer en décile.
+```
+features PIT + global_rank_20  →  predicted residual
+adjusted_rank = global_rank_20 + predicted_residual
+```
+> Plus élégant si la classification Oracle fonctionne — **ne pas commencer par là**.
 
 ---
 
-## 6. Protocole walk-forward anti-leakage
+## 26. Version avancée : distillation / ranking
 
-```
-Train 2016–2021 → Validation 2022 → Oracle 2022 → adaptation
-Train 2016–2022 → Validation 2023 → Oracle 2023 → adaptation
-Train 2016–2023 → Validation 2024 → Oracle 2024 → adaptation
-Train 2016–2024 → Validation 2025 → Oracle 2025
-…
-```
+Si les expériences précédentes sont positives, tester ensuite :
+`LambdaRank · RankNet · ListNet · pairwise ranking · NDCG-oriented objective`.
 
-L'oracle d'une période n'influence **que les périodes suivantes**.
+L'objectif devient : apprendre un ranking qui ressemble davantage au ranking Oracle.
+**Après validation de l'idée fondamentale.**
 
 ---
 
-## 7. Test offline A / B / C avant de toucher B25
+## 27. Anti-leakage tests automatisés
 
-### Test A — modèle actuel (baseline)
-```
-B25 → global_rank_20 → TOP/BOTTOM 10%
-```
-
-### Test B — Oracle classification
-Mêmes features, mêmes données PIT :
-```
-target_top10 = 1 si futur H20 ∈ TOP 10%, 0 sinon
-```
-
-### Test C — Oracle classification + calibration
-```
-P(TOP 10%)  /  P(BOTTOM 10%)
-LONG  si P(top)    > seuil
-SHORT si P(bottom) > seuil
-```
-
-Puis **backtest complet** avec : même H20 risk · même P14 · même m8 · mêmes coûts ·
-marché · mêmes dates.
+| Test | Vérification |
+|---|---|
+| **Test 1** | `oracle_available_date > prediction_date` pour toutes les observations |
+| **Test 2** | Modèle entraîné au cutoff D → `max(oracle_available_date) <= D` |
+| **Test 3** | Aucune feature issue de D+1 ou plus |
+| **Test 4** | `oracle_rank`, `oracle_decile`, `future_return` jamais en feature |
+| **Test 5** | La production ne lit jamais une ligne Oracle avec `oracle_available_date > today` |
 
 ---
 
-## 8. Métriques à mesurer (pas seulement le rendement)
+## 28. Réutiliser les prédictions B25 historiques
 
-### 1. Oracle capture (LONG)
+Pour l'apprentissage du second niveau, conserver les **sorties historiques du Global
+Model telles qu'elles auraient été produites à l'époque** :
 ```
-Random   10 %
-B25     16,7 %   ← aujourd'hui
-Oracle  100 %
+prediction_date · symbol · global_rank_20 · global_score
 ```
-Objectif : faire passer **16,7 → 20 → 25 %**. Même **16,7 → 22 %** serait
-extrêmement intéressant.
 
-### 2. Bottom capture (SHORT)
-```
-Random   10 %
-B25       8,2 %   ← aujourd'hui (sous le hasard)
-```
-Objectif : au minimum revenir à **10 %**, idéalement **15–20 %**.
-
-### 3. Décile monotonicity ⭐ (le test le plus important)
-Aujourd'hui (forme en U) :
-```
-D1 █████   D6 ████
-D2 ███     D7 ████
-D3 ███     D8 ████
-D4 ███     D9 ████
-D5 ███     D10 ██████
-```
-Cible :
-```
-D1 █       D6 ████
-D2 ██      D7 ████
-D3 ██      D8 █████
-D4 ███     D9 █████
-D5 ███     D10 ██████
-```
-> **Plus le score ML est élevé, plus le rendement futur moyen doit augmenter.**
-
-### 4. ⚠️ Capture ≠ succès — le critère final est le trading réel
-
-> ⚠️ Retour GPT : **ne pas fixer « 16,7 → 25 % » comme contrainte.** C'est un objectif
-> de recherche intéressant, pas un critère de validation.
-
-Le véritable critère :
-> **« Est-ce que le nouveau ranking améliore significativement la qualité du classement
-> ET améliore le trading réel ? »**
-
-| Cas | Capture TOP | PF | Verdict |
-|---|---|---|---|
-| 1 | **22.0 %** (mieux) | **1.30** (pire) | 🔴 **régression** malgré une meilleure capture |
-| 2 | **18.5 %** (mieux) | **2.05** (mieux) | 🟢 très intéressant |
-
-→ La capture seule peut tromper. **Toujours vérifier capture ET PF/DD/rendement OOS.**
+⛔ **Ne pas recalculer aujourd'hui un B25 différent** et prétendre que c'était le score
+historique. Le second modèle doit apprendre les **erreurs réelles** du Global Model
+historique.
 
 ---
 
-## 9. Choix recommandé pour AlphaTrade
+## 29. Dataset final du Oracle Model
 
-- **Ne pas modifier B25** (baseline intouchable : +14,37 % OOS 2026 / PF 1,76).
-- Créer une expérimentation **B25-Oracle en parallèle** :
+Chaque ligne contient conceptuellement :
+
+```
+prediction_date
+symbol
+
+# Global outputs
+global_rank_20 · global_score_20 · global_rank_10 …
+
+# Features PIT
+momentum_5 · momentum_20 · volatility_20 · volume_ratio ·
+relative_strength · sector_strength …
+
+# Oracle targets
+oracle_pct_rank · oracle_decile · oracle_top10 · oracle_bottom10
+
+# Availability
+oracle_exit_date · oracle_available_date
+```
+
+Avec la règle : `training_cutoff >= oracle_available_date`.
+
+---
+
+## 30. Plan d'implémentation (Étape 1 → 7)
+
+Ne pas coder directement toute la version finale. Étapes séquentielles.
+
+- [ ] **Étape 1 — Oracle dataset** : créer `global_oracle_labels` H20. Vérifier :
+      univers identique à `model_predictions` ; top/bottom 10 % corrects ; dates
+      correctes ; `oracle_available_date` correcte.
+- [ ] **Étape 2 — Audit Oracle** : reproduire exactement B25 TOP capture, BOTTOM
+      capture, déciles, monotonicité → vérifier que la nouvelle infrastructure
+      reproduit les résultats existants.
+- [ ] **Étape 3 — Oracle TOP Model** : premier modèle simple, `features B25 +
+      global_rank_20`, target `oracle_top10`.
+- [ ] **Étape 4 — Walk-forward strict** : respecter `oracle_available_date <=
+      training_cutoff`.
+- [ ] **Étape 5 — Combinaison** : tester `global_rank` contre `global_rank × P_top`.
+- [ ] **Étape 6 — Backtest complet** : même moteur, mêmes coûts, mêmes paramètres.
+- [ ] **Étape 7 — seulement si positif** : ajouter `Oracle BOTTOM`.
+
+---
+
+## 31. Critère de réussite
+
+L'expérience n'est intéressante que si elle améliore **plusieurs dimensions simultanément** :
+
+| Dimension | Exigence |
+|---|---|
+| **ML** : TOP capture | ↑ |
+| **ML** : décile monotonicité | ↑ |
+| **Trading** : PF | ↑ |
+| **Trading** : Sharpe | ↑ |
+| **Trading** : DD | stable ou ↓ |
+| **Trading** : P&L | ↑ |
+| **Robustesse** : 2025 OOS / 2026 OOS / stress coûts / bootstrap | validés |
+
+> **Et surtout** : aucune amélioration ne doit dépendre d'un réglage effectué sur
+> l'OOS final.
+
+---
+
+## 32. Architecture cible finale
+
+Si tout fonctionne, le système pourrait devenir :
 
 ```mermaid
-flowchart LR
-    A[B25 actuel] --> B[Production candidate]
-    A --> C[Oracle analysis]
-    C --> D[Oracle-top classifier]
-    C --> E[Oracle-bottom classifier]
-    D --> F[Calibration]
-    E --> F --> G[Backtest OOS]
+flowchart TB
+    A[DATA PIT] --> B[GLOBAL MODEL B25] --> C[global_rank_20]
+    C --> D1[ORACLE TOP MODEL<br/>P real TOP 10%]
+    C --> D2[ORACLE BOTTOM MODEL<br/>P real BOTTOM 10%]
+    D1 --> E[CALIBRATION LAYER]
+    D2 --> E
+    E --> F[ADJUSTED RANK] --> G[TOP/BOTTOM 10%]
+    G --> H[P14 + m8] --> I[H20 RISK] --> J[TRADE]
 ```
 
-- **Commencer par le LONG** : le signal TOP existe déjà (16,7 % vs 10 %) mais il est
-  bruité → transformer le « détecteur imparfait de gros mouvements » en « détecteur
-  plus précis des vrais TOP 10 % ».
+### La philosophie du système
+
+- **Global Model** répond : *« Comment classer les ~400 titres ? »*
+- **Oracle-TOP** répond : *« Parmi ces titres, lesquels ressemblent historiquement aux
+  vrais TOP 10 % ? »*
+- **Oracle-BOTTOM** répond : *« Parmi ces titres, lesquels ressemblent historiquement
+  aux vrais BOTTOM 10 % ? »*
+- **Couche finale** répond : *« Comment combiner ces informations pour obtenir le
+  meilleur ranking tradable ? »*
+
+> **B25 reste intact pendant toute la première expérimentation.** Si Oracle-TOP/BOTTOM
+> apporte réellement de l'alpha, on pourra ensuite envisager une intégration plus
+> profonde dans le Global Model — **mais seulement après avoir prouvé que la couche
+> séparée fonctionne en OOS**.
 
 ---
-
-## 10. Résumé des décisions
-
-| # | Décision | Priorité |
-|---|---|---|
-| 1 | Ne pas modifier B25 | 🔒 |
-| 2 | Tester le **Residual Model** (niveau 2) en premier | 🥇 |
-| 3 | Explorer **Oracle Distillation** (niveau 3) | 🥈 |
-| 4 | Séparer les objectifs LONG et SHORT | 🥉 |
-| 5 | Commencer par le **LONG** | ✅ |
-| 6 | Mesurer : oracle capture / bottom capture / **décile monotonicity** | 📏 |
-| 7 | Protocole WF anti-leakage strict | ⚠️ |
-| 8 | **Residual Model = 1ʳᵉ expérience** (avant LambdaRank / classification) | 🥇 |
-| 9 | Critère final = **qualité du ranking ET trading réel (PF/DD)**, pas la capture brute | 🎯 |
-| 10 | Commencer par un **Residual Model LONG-only** (le short n'est pas forcé) | ✅ |
-| 11 | Nommer l'approche : **Oracle-Guided Residual Learning for Cross-Sectional Ranking** | 🏷️ |
-
----
-
-## 11. Verdict final (retour GPT + contre-analyse)
-
-**Oui, l'idée est gardée** — reformulée et resserrée :
-
-> ### **Oracle-Guided Residual Learning for Cross-Sectional Ranking**
->
-> **Oracle passé → détecte les erreurs systématiques du ranking → Residual Model apprend
-> ces erreurs avec uniquement les features PIT → correction du ranking futur → validation OOS.**
-
-Points de convergence (GPT + contre-analyse) :
-
-1. **L'oracle ne crée pas d'information** : il ne fait qu'aider à mieux exploiter
-   l'information déjà dans les features → plafond réel = IC des features, pas 100 %.
-2. **Le Residual Model (Niveau 2) est la 1ʳᵉ expérience à faire**, avant de remplacer
-   B25 par une LambdaRank ou une classification TOP/BOTTOM.
-3. **Critère = qualité du classement ET trading réel (PF/DD/rendement OOS)**, pas la
-   capture brute (ex. capture 22 % avec PF 1.30 = régression).
-4. **LONG-only d'abord** (signal 16,7 % vs 10 % réel) ; ne pas forcer le short.
-5. **B25 reste la baseline intouchable** ; comparaison strictement OOS.
-6. Si le LONG fonctionne, se demander *pourquoi le même mécanisme ne marche pas pour
-   le short* — plutôt que de supposer la symétrie.
+*Fichier : `doc/ml_oracle.md` — lié à `doc/ml_oracle_todo.md` et `doc/backtest_audit.md` §19.*
