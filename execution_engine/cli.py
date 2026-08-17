@@ -41,7 +41,7 @@ def _add_run_arguments(p: argparse.ArgumentParser) -> None:
     p.add_argument("--profit-taker-pct", type=float, default=0.08)
     p.add_argument("--trailing-stop-pct", type=float, default=0.05)
     p.add_argument("--trailing-activation-trigger", type=str, default="multiple_r", choices=["multiple_r", "profit_pct"])
-    p.add_argument("--trailing-activation-r-multiple", type=float, default=1.0)
+    p.add_argument("--trailing-activation-r-multiple", type=float, default=0.0)
     p.add_argument("--trailing-activation-profit-pct", type=float, default=0.03)
     p.add_argument("--protection-transition-timeout-seconds", type=int, default=30)
     p.add_argument("--protection-transition-poll-interval-seconds", type=float, default=2.0)

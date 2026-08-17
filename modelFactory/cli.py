@@ -40,6 +40,48 @@ from modelFactory.reproducibility import apply_reproducibility
 from modelFactory.runtime_status import increment_runtime_counter, reset_runtime_status, snapshot_runtime_status, update_runtime_status
 
 
+def _resolve_synth_best_h(opts, batch_id: str | None) -> int:
+    """Résout l'horizon de synthèse des probas per-sector (cascade rank).
+
+    Priorité :
+      1. Flag CLI explicite (--synth-best-h) si fourni
+      2. config.yaml batch_diagnostics.live_horizon (gel production)
+      3. best_horizon du batch (metadata, calculé à l'entraînement)
+      4. 10 (défaut historique)
+
+    NB : cet horizon détermine la colonne global_rank_{H} qui fige
+    `predicted_side` (long/short/flat) dans model_predictions pour le LIVE.
+    Pour B25, la config gèle H20 (live_horizon: 20) même si la metadata
+    stocke best_horizon=10.
+    """
+    # 1. Flag CLI explicite
+    if opts is not None and getattr(opts, "synth_best_h", None) is not None:
+        try:
+            return int(opts.synth_best_h)
+        except (TypeError, ValueError):
+            pass
+    # 2. config.yaml batch_diagnostics.live_horizon
+    try:
+        from common.config_loader import load_config as _load_cfg_sh
+        _cfg_sh = _load_cfg_sh() or {}
+        _live_h = (_cfg_sh.get("batch_diagnostics") or {}).get("live_horizon")
+        if _live_h not in (None, "", 0):
+            return int(_live_h)
+    except Exception:
+        pass
+    # 3. best_horizon du batch (metadata)
+    if batch_id:
+        try:
+            from modelFactory.predictor import _load_best_horizon_for_batch as _bhb
+            _bh = _bhb(batch_id, engine=None)
+            if _bh is not None:
+                return int(_bh)
+        except Exception:
+            pass
+    # 4. défaut
+    return 10
+
+
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 ML_MODES = ("rebuild-all", "rebuild-missing", "refresh-stale")
@@ -439,6 +481,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--target-mode", type=str, default="binary", choices=["binary", "swing_cash", "ternary", "regression"])
     p.add_argument("--training-mode", type=str, default="per_symbol", choices=["per_symbol", "per_sector"],
                    help="Mode d'entraînement : per_symbol (1 modèle par symbole) ou per_sector (1 modèle par secteur GICS)")
+    p.add_argument(
+        "--sector-symbol-feature",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="D1 (ablation symbol) : per-sector, inclure la feature catégorielle 'symbol' (--no-sector-symbol-feature = ablation A0).",
+    )
     p.add_argument("--label-method", type=str, default="fixed_horizon", choices=["fixed_horizon", "triple_barrier"])
     p.add_argument("--triple-barrier-stop-atr-mult", type=float, default=2.0)
     p.add_argument("--triple-barrier-tp-atr-mult", type=float, default=3.0)
@@ -611,6 +659,7 @@ def main(args: list[str] | None = None) -> None:
             include_score_components=opts.include_score_components,
             include_volume_features=opts.include_volume_features,
             global_model_only=opts.global_model_only,
+            sector_use_symbol_feature=opts.sector_symbol_feature,
             enable_cross_sectional_features=opts.enable_cross_sectional,
             cross_sectional_min_universe=opts.cross_sectional_min_universe,
             feature_set=opts.feature_set,
@@ -1066,7 +1115,10 @@ def main(args: list[str] | None = None) -> None:
             if _per_sector:
                 from modelFactory.synthesize_global_rank_predictions import synthesize
 
-                _synth_out = synthesize(_batch_id, best_h=int(getattr(opts, "synth_best_h", 10) or 10))
+                _synth_out = synthesize(
+                    _batch_id,
+                    best_h=_resolve_synth_best_h(opts, _batch_id),
+                )
                 LOGGER.info("predict per_sector synthèse batch=%s: %s", _batch_id, _synth_out)
                 preds = _load_synth_frame_for_range(engine, _batch_id, prediction_dates)
             else:
@@ -1113,7 +1165,10 @@ def main(args: list[str] | None = None) -> None:
                     engine=engine,
                 )
                 LOGGER.info("predict per_sector live ranks %s: %s", _day_str, _ranks)
-                _synth_out = synthesize(_batch_id, best_h=int(getattr(opts, "synth_best_h", 10) or 10))
+                _synth_out = synthesize(
+                    _batch_id,
+                    best_h=_resolve_synth_best_h(opts, _batch_id),
+                )
                 LOGGER.info("predict per_sector live synthèse batch=%s: %s", _batch_id, _synth_out)
                 persisted_incrementally = True
                 preds = _load_synth_frame_for_range(engine, _batch_id, [_live_day])

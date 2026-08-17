@@ -84,10 +84,14 @@ RUNTIME_CENTER_AUTO_UPDATE_KEY = "ihm_backtesting_runtime_center_auto_update"
 # (spread 5bps, commission 1bps, slippage 2bps, borrow shorts 0.3 %/an).
 BT_RUN_ATR_RISK_STOP_MULTIPLE_DEFAULT = 2.5
 BT_RUN_TP_ATR_MULTIPLE_DEFAULT = 3.0
+# TP plafond affiché en % du prix (UI ergonomique), MAIS le CLI attend une
+# fraction (0.07 = 7%). La conversion /100 est faite à la transmission.
 BT_RUN_TP_MAX_PCT_DEFAULT = 7.0
 BT_RUN_TS_LONG_DEFAULT = 0.0
 BT_RUN_TS_SHORT_DEFAULT = 0.0
 BT_RUN_USE_CANONICAL_COSTS_DEFAULT = True
+# Intérêt marge affiché en % annuel (UI), MAIS le CLI attend une fraction
+# (0.075 = 7.5%). La conversion /100 est faite à la transmission.
 BT_RUN_MARGIN_INTEREST_DEFAULT = 7.5
 
 RUN_CONFIGURATION_PRESETS: dict[str, dict[str, object]] = {
@@ -253,11 +257,24 @@ def _resolve_default_capital_preset_key(equity: float | None) -> str:
     return DEFAULT_CAPITAL_PRESET_KEY
 
 
-def _ensure_capital_preset_session_key(session_key: str, equity: float | None) -> str:
+def _ensure_capital_preset_session_key(
+    session_key: str,
+    equity: float | None,
+    *,
+    default_key: str | None = None,
+) -> str:
+    """Initialise la sélection de preset capital si absente.
+
+    ``default_key`` explicite (ex: ``capital_2001_5000`` pour la page backtest)
+    prioritaire sur la résolution automatique depuis l'equity.
+    """
     options = _get_capital_preset_options()
     current = str(st.session_state.get(session_key, "") or "")
     if current not in options:
-        current = _resolve_default_capital_preset_key(equity)
+        if default_key and default_key in options:
+            current = default_key
+        else:
+            current = _resolve_default_capital_preset_key(equity)
         st.session_state[session_key] = current
     return current
 
@@ -281,6 +298,13 @@ def _apply_run_capital_preset(selected_preset_key: str, equity: float) -> Capita
     st.session_state["bt_run_max_positions"] = _to_int(
         values.get("risk_max_positions", st.session_state.get("bt_run_max_positions", 20)),
         20,
+    )
+    # P1 — ATR trailing stop : défaut depuis le preset (backtesting_atr_ts).
+    # 0.0 = désactivé → trailing % fixe P14 (benchmark B25+P14). Le preset peut
+    # le forcer > 0 (ex: 2.0) si une branche le souhaite.
+    st.session_state["bt_run_atr_ts"] = _to_float(
+        values.get("backtesting_atr_ts", st.session_state.get("bt_run_atr_ts", 0.0)),
+        0.0,
     )
     # Appliquer aussi le DD breaker et les paramètres de recovery du preset
     st.session_state["bt_run_max_portfolio_dd_pct"] = _to_float(
@@ -1256,14 +1280,14 @@ def _build_run_options() -> BacktestRunOptions:
     with col1:
         start = st.text_input(
             "Date de début",
-            value=cast(str, st.session_state.get("bt_run_start", "2020-01-01")),
+            value=cast(str, st.session_state.get("bt_run_start", "2025-01-01")),
             key="bt_run_start",
             help="Format YYYY-MM-DD. C'est la borne basse du backtest.",
         )
     with col2:
         end = st.text_input(
             "Date de fin",
-            value=cast(str, st.session_state.get("bt_run_end", "2025-12-31")),
+            value=cast(str, st.session_state.get("bt_run_end", "2026-05-31")),
             key="bt_run_end",
             help="Format YYYY-MM-DD. Laissez une date future si vous voulez aller jusqu'au dernier bar dispo.",
         )
@@ -1271,14 +1295,21 @@ def _build_run_options() -> BacktestRunOptions:
         equity = st.number_input(
             "Capital initial ($)",
             min_value=1_000.0,
+            # Défaut aligné benchmark P23/P24 : 100 000 $ (run de parité B25+P14+m8).
             value=float(st.session_state.get("bt_run_equity", 4_000.0)),
             step=1_000.0,
             key="bt_run_equity",
-            help="Capital de départ simulé du portefeuille.",
+            help="Capital de départ simulé du portefeuille. Benchmark OOS 2026 : 100 000 $.",
         )
 
     run_preset_options = _get_capital_preset_options()
-    _ensure_capital_preset_session_key(BT_RUN_CAPITAL_PRESET_KEY, float(equity))
+    # Défaut aligné benchmark B25+P14+m8 : preset capital_2001_5000 (listé
+    # par défaut), indépendamment de l'equity saisie.
+    _ensure_capital_preset_session_key(
+        BT_RUN_CAPITAL_PRESET_KEY,
+        float(equity),
+        default_key=DEFAULT_CAPITAL_PRESET_KEY,
+    )
     run_preset_col1, run_preset_col2 = st.columns([1.4, 2.6])
     with run_preset_col1:
         selected_run_preset_key = cast(
@@ -1413,7 +1444,9 @@ def _build_run_options() -> BacktestRunOptions:
             "ATR trailing stop (multiplicateur)",
             min_value=0.0,
             max_value=10.0,
-            value=float(st.session_state.get("bt_run_atr_ts", 2.5)),
+            # Défaut depuis le preset capital (backtesting_atr_ts), pas hardcodé.
+            # 0.0 = désactivé → trailing % fixe P14 (benchmark B25+P14).
+            value=float(st.session_state.get("bt_run_atr_ts", 0.0)),
             step=0.5,
             format="%.1f",
             key="bt_run_atr_ts",
@@ -1422,7 +1455,7 @@ def _build_run_options() -> BacktestRunOptions:
     with col5b:
         disable_walk_forward = st.checkbox(
             "Désactiver l'overlay walk-forward",
-            value=bool(st.session_state.get("bt_run_disable_walk_forward", False)),
+            value=bool(st.session_state.get("bt_run_disable_walk_forward", True)),
             key="bt_run_disable_walk_forward",
             help="Si coché, le --walk-forward-artifacts-dir n'est PAS passé → le score brut (final_score ou autre) est utilisé sans overlay.",
         )
@@ -2030,7 +2063,22 @@ def _build_run_options() -> BacktestRunOptions:
         else:
             labels = list(batch_options.keys())
             requested_batch = str(st.session_state.get("bt_run_ml_batch_id", "") or "")
-            # Retrouver le label correspondant au batch_id stocké
+            # ── Défaut : backtest_batch_id du config.yaml ──
+            # Premier rendu uniquement (session state vide) : on part de la
+            # campagne configurée (batch_diagnostics.backtest_batch_id) plutôt
+            # que du batch le plus récent. Une fois que l'opérateur a choisi,
+            # son choix est conservé en session state et reste prioritaire.
+            if not requested_batch:
+                try:
+                    import yaml as _yaml
+                    with open(PROJECT_ROOT / "config.yaml", encoding="utf-8") as _fh:
+                        _raw = _yaml.safe_load(_fh) or {}
+                    requested_batch = str(
+                        ((_raw.get("batch_diagnostics") or {}).get("backtest_batch_id") or "")
+                    ).strip()
+                except Exception:
+                    requested_batch = ""
+            # Retrouver le label correspondant au batch_id stocké (ou configuré)
             default_label = labels[0]
             for lbl, bid in batch_options.items():
                 if bid == requested_batch:
@@ -2039,13 +2087,33 @@ def _build_run_options() -> BacktestRunOptions:
             selected_label = cast(
                 str,
                 st.selectbox(
-                    "Campagne ML utilisée par le backtest",
+                    "Campagne ML du backtest (prédictions + cascade + diagnostics §7)",
                     options=labels,
                     index=labels.index(default_label) if default_label in labels else 0,
                     key="bt_run_ml_batch_id",
                 ),
             )
             selected_ml_batch_id = batch_options[selected_label]
+
+    # ── P5.2 — Seuil top/bottom de la cascade ML (fraction) ──
+    # Aligné benchmark B25 : 0.10 (top 10% LONG / bottom 10% SHORT).
+    # Transmis à --cascade-top-pct ; None = config.yaml cascade.top_pct.
+    cascade_top_col1, cascade_top_col2 = st.columns(2)
+    with cascade_top_col1:
+        cascade_top_pct = st.number_input(
+            "Cascade top/bottom % (fraction)",
+            min_value=0.0,
+            max_value=0.50,
+            value=float(st.session_state.get("bt_run_cascade_top_pct", 0.10) or 0.10),
+            step=0.01,
+            format="%.2f",
+            key="bt_run_cascade_top_pct",
+            help="0.10 = top 10% (LONG) / bottom 10% (SHORT) du rang global. Benchmark B25 = 0.10.",
+        )
+    with cascade_top_col2:
+        st.caption(
+            "Seuil de la cascade Global Rank → Per-Symbol. `0.10` = config benchmark B25."
+        )
 
     extra_col1, extra_col2 = st.columns(2)
     with extra_col1:
@@ -2140,9 +2208,14 @@ def _build_run_options() -> BacktestRunOptions:
         ts_short=(float(st.session_state.get("bt_run_ts_short", BT_RUN_TS_SHORT_DEFAULT)) or None),
         atr_risk_stop_multiple=float(st.session_state.get("bt_run_atr_risk_stop_multiple", BT_RUN_ATR_RISK_STOP_MULTIPLE_DEFAULT) or 0.0),
         tp_atr_multiple=float(st.session_state.get("bt_run_tp_atr_multiple", BT_RUN_TP_ATR_MULTIPLE_DEFAULT) or 0.0),
-        tp_max_pct=float(st.session_state.get("bt_run_tp_max_pct", BT_RUN_TP_MAX_PCT_DEFAULT) or 0.0),
+        # P2-4 : l'UI saisit le TP plafond en % du prix (7.0 = 7%) mais le CLI
+        # attend une fraction (0.07). Conversion /100 à la transmission pour
+        # aligner sur le benchmark (--tp-max-pct 0.07).
+        tp_max_pct=float(st.session_state.get("bt_run_tp_max_pct", BT_RUN_TP_MAX_PCT_DEFAULT) or 0.0) / 100.0,
         use_canonical_costs=bool(st.session_state.get("bt_run_use_canonical_costs", BT_RUN_USE_CANONICAL_COSTS_DEFAULT)),
-        margin_interest_rate=float(st.session_state.get("bt_run_margin_interest_rate", BT_RUN_MARGIN_INTEREST_DEFAULT) or 0.0),
+        # P2-4 : l'UI saisit l'intérêt marge en % annuel (7.5 = 7.5%) mais le CLI
+        # attend une fraction (0.075). Conversion /100 à la transmission.
+        margin_interest_rate=float(st.session_state.get("bt_run_margin_interest_rate", BT_RUN_MARGIN_INTEREST_DEFAULT) or 0.0) / 100.0,
         use_live_protection_logic=bool(use_live_protection_logic),
         max_positions=int(max_positions),
         fees=None,
@@ -2169,6 +2242,9 @@ def _build_run_options() -> BacktestRunOptions:
         fidelity_baseline_catalog=fidelity_baseline_catalog.strip() or None,
         artifacts_dir=artifacts_dir.strip() or "artifacts/models",
         ml_batch_id=selected_ml_batch_id,
+        cascade_batch_id=selected_ml_batch_id,
+        batch_diagnostics_batch_id=selected_ml_batch_id,
+        cascade_top_pct=float(st.session_state.get("bt_run_cascade_top_pct", 0.10) or 0.10),
         score_column=cast(Any, score_column),
         walk_forward_artifacts_dir=walk_forward_artifacts_dir.strip() or None,
         disable_walk_forward=bool(st.session_state.get("bt_run_disable_walk_forward", False)),

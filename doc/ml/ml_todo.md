@@ -72,6 +72,7 @@
 | B35 | B25 + symbols 196 | 0.0154 | 0.51 | H3 | −9.7% | lgbm 7/9 | ❌ −36% vs B25 — 196 symboles boostent H3 (0.0283, IR 1.46) mais tuent H10-H20. **Garder la liste 400.** |
 | B36 | B20 + symbols 196 | 0.0148 | 0.45 | H3 | −15.0% | lgbm 7/9 | ❌ −38% vs B20 — confirme B35 : 196 symboles tuent H10-H20, le CAPM n'y change rien |
 | **B37** | **B25 + symbols 393 (swing score)** | 0.0123 | 0.89 | H3 | — | — | ❌ **−49% vs B25** — univers sélectionné par swing score : H10 0.0116, **H20 mort** (0.0035, decile spread −0.0003). Pire que B35 (0.0154) → la composition prime sur la taille : **garder l'univers liquidité 400** |
+| **B44** | **B41 config, `--global-model-only`, train→2024-12-31** (T1 OOS) | 0.0199 | 1.55 | H15 | V1 🏆 (V2 −8.4%, V3 −36.5%, V4 −25.1%) | — | 🔬 **Batch de validation OOS** : IC stable (H10 0.0226/IR 1.81, H15 0.0217/IR 2.00) ; **OOS 2025 spreads 4/4 positifs (+0.32/+0.79/+1.50/+0.73), déciles monotones → le Global Ranking généralise** (cf. dossier `logs/analyse_oos.txt` §11) |
 
 ### 🏆 Podium B0-B20
 

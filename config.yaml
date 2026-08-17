@@ -442,13 +442,25 @@ batch_diagnostics:
   # Batch de diagnostics à utiliser pour le live (étape 11 Risk).
   # Laisser vide (ou absent) pour utiliser automatiquement le dernier batch.
   # Renseigner un batch_id explicite permet de figer les filtres (ex: batch promu).
-  live_batch_id: "model-factory-20260811223551-ef2cd0"  # B25 = CAPM + YetiRank (champion promu 2026-08-13)
+  live_batch_id: "model-factory-20260811223551-ef2cd0"
+
+  # Horizon de la cascade ML à utiliser en LIVE (colonne global_rank_{H} du
+  # filtre TOP/BOTTOM). null/vide = best_horizon du batch (metadata, calculé à
+  # l'entraînement) ; valeur explicite = force H (ex: 20 pour geler H20 même si
+  # le best_horizon du batch est 10). NE change PAS le sizing stop/TP (maps
+  # multi-horizon du risk_management, figées séparément).
+  live_horizon: 20
 
   # Batch de diagnostics à utiliser pour le backtest.
   # Laisser vide pour utiliser automatiquement le dernier batch (⚠️ look-ahead
   # si le dernier batch est postérieur à la période backtestée).
   # Renseigner un batch_id explicite pour un backtest PIT-safe.
-  backtest_batch_id: "model-factory-20260811223551-ef2cd0"  # B25 = CAPM + YetiRank (P1-4)
+  backtest_batch_id: "model-factory-20260811223551-ef2cd0"
+
+  # Horizon de la cascade ML à utiliser en BACKTEST (même logique que
+  # live_horizon). null/vide = best_horizon du batch ; explicite = force H.
+  # Gèle H20 pour B25 (le batch stocke best_horizon=10).
+  backtest_horizon: 20
 
   # Garde-fou « breadth » : part minimale de l'univers de référence
   # (config/ticket_recherche.txt, 400 symboles) requise pour générer les
@@ -505,6 +517,18 @@ cascade:
   # Deux seuils distincts : classification (probas 0-1) vs regression (scores continus).
   min_prob_classification: 0.55
   min_prob_regression: 0.10
+
+  # Filtre momentum côté SHORT uniquement (GO production 2026-08-15, dossier
+  # logs/analyse_oos.txt sections 19-25 — arbitrage GPT).
+  # Le bottom-rank (faiblesse RELATIVE) n'est converti en short que si la
+  # faiblesse ABSOLUE est confirmée : mom20 < short_momentum_max_pct.
+  # Valeurs : none | loose | strict | confirm | inverted (inverted = placebo).
+  # short_momentum_max_pct prioritaire sur le seuil par défaut du mode.
+  # NB P4 (2026-08-17) : mis à null pour que le MODE (loose/strict/confirm)
+  # détermine seul la règle. Sinon max_pct=2.0 court-circuite confirm/strict
+  # (branche `elif short_momentum_max_pct is not None` avant les modes).
+  short_momentum_filter: none
+  short_momentum_max_pct: null
 
 
 # Sprint S8 - Calibration formelle des poids de conviction (cf. core/conviction.py)

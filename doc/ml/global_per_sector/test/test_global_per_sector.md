@@ -49,6 +49,7 @@
 | **B40** | `model-factory-20260813230529-ca6dd8` | B4 + volume features (P3-5) | catboost (candidat unique) | lightgbm 6 / catboost 5 | ❌ 0.0178 | 1.13 | H10 |
 | **B41** | `model-factory-20260813231851-bb2e76` | **B25 + volume features (P3-5)** 🔥🔥 | catboost (candidat unique) | lightgbm 7 / catboost 4 | 🏆 **0.0260** | 🏆 **1.55** | H15 |
 | **B42** | `model-factory-20260814003436-7d8e60` | **B20 + volume features (P3-5, sans CAPM)** 🔥 | catboost (candidat unique) | lightgbm 6 / catboost 5 | ⚠️ **0.0250** | 1.46 | H20 |
+| **B44** | `model-factory-20260814204243-9535a3` | **B41 config, `--global-model-only`, train→2024-12-31** (T1 OOS) | catboost 5/5 (155 feat.) | — (global-only) | 0.0199 | 1.55 | H15 |
 
 ---
 
@@ -253,6 +254,11 @@
 | B42  | H10     | 0.0282  | 1.60  | 0.0307        | 154         | catboost   | 0.967           |
 | B42  | H15     | 0.0258  | 1.62  | 0.0320        | 154         | catboost   | 0.898           |
 | B42  | H20     | 0.0271  | 1.80  | 0.0321        | 154         | catboost   | 0.979           |
+| B44  | H3      | 0.0174  | 1.37  | 0.0168        | 155         | catboost   | 0.981           |
+| B44  | H5      | 0.0190  | 1.15  | 0.0231        | 155         | catboost   | 0.981           |
+| B44  | H10     | 0.0226  | 1.81  | 0.0212        | 155         | catboost   | 1.000           |
+| B44  | H15     | 0.0217  | 2.00  | 0.0269        | 155         | catboost   | 1.000           |
+| B44  | H20     | 0.0190  | 1.85  | 0.0224        | 155         | catboost   | 0.975           |
 
 > 🏆 **Meilleur horizon : H3 pour B37/B36/B35, H10 pour B40/B34/B32/B30/B25/B4/B10, H15 pour B41/B39/B20/B38, H20 pour B42, H5 pour B33/B31/B18/B19/B22/B26/B27** | **B25 = CAPM+YetiRank IC 0.0241. B30 = P1-3 raw rank ❌ (0.0153, −36% vs B20). B31 = fondamentaux+YetiRank ❌ (0.0146, −39% vs B25). B32 = score components+YetiRank ⚠️ (0.0224, 3ᵉ, +11% vs B4, −7% vs B25). B33 = cross-sectional+YetiRank ❌ (0.0138, −43% vs B25). B34 = screener+YetiRank ❌ (0.0151, −37% vs B25). B35/B36 = B25/B20 sur 196 symboles ❌ (0.0154/0.0148, −36%/−38% — le petit univers tue H10-H20). B37 = B25 sur 393 symboles swing ❌ (0.0123, −49% — la composition swing est toxique, pire que B35). **B38 = B25 sur 300 symboles (parmi les 400) ⚠️ 0.0229 (−5% vs B25), IR record 1.14 (+7%) — la réduction 400→300 à composition égale est quasi indolore et conforte le garde-fou breadth 75 % (= 300).**
 
@@ -440,6 +446,11 @@
 | B38  | H10     | 0.0253      | 1.28        | 0.0047      | 0.16        | catboost   |
 | B38  | H15     | 0.0255      | 1.54        | 0.0293      | 0.72        | catboost   |
 | B38  | H20     | 0.0252      | 1.11        | 0.0033      | 0.14        | catboost   |
+| B44  | H3      | 0.0174      | 1.37        | 0.0058      | 0.33        | catboost   |
+| B44  | H5      | 0.0190      | 1.15        | 0.0051      | 0.66        | catboost   |
+| B44  | H10     | 0.0226      | 1.81        | 0.0156      | 0.59        | catboost   |
+| B44  | H15     | 0.0217      | 2.00        | 0.0147      | 0.46        | catboost   |
+| B44  | H20     | 0.0190      | 1.85        | 0.0193      | 0.74        | catboost   |
 
 ## 1.3 Détail IC par split — Champion (Global)
 
@@ -640,6 +651,13 @@
 | B42  | H10     | 0.0360  | 0.0379  | 0.0028  | 0.0049  | 0.0404  | 0.0472  | 0.0176 | 0.0028 | 0.0472 |
 | B42  | H15     | 0.0297  | 0.0220  | -0.0032 | 0.0203  | 0.0391  | 0.0467  | 0.0159 |-0.0032 | 0.0467 |
 | B42  | H20     | 0.0327  | 0.0328  | 0.0009  | 0.0136  | 0.0383  | 0.0442  | 0.0150 | 0.0009 | 0.0442 |
+| B44  | H3      | 0.0156  | 0.0198  | 0.0414  | 0.0221  | 0.0181  | 0.0124  | 0.0127 |-0.0083 | 0.0414 |
+| B44  | H5      | 0.0316  | 0.0337  | 0.0468  | 0.0105  | 0.0063  | 0.0144  | 0.0165 |-0.0089 | 0.0468 |
+| B44  | H10     | 0.0382  | 0.0214  | 0.0357  | 0.0125  | 0.0062  | 0.0146  | 0.0124 | 0.0062 | 0.0395 |
+| B44  | H15     | 0.0306  | 0.0167  | 0.0274  | 0.0203  | 0.0005  | 0.0190  | 0.0109 | 0.0005 | 0.0401 |
+| B44  | H20     | 0.0267  | 0.0151  | 0.0201  | 0.0163  |-0.0003  | 0.0145  | 0.0103 |-0.0003 | 0.0380 |
+
+> ⚠️ **B44 a 8 splits** (tableau limité à 6 colonnes) — splits 7/8 : H3 −0.0083/+0.0181 · H5 −0.0089/+0.0173 · H10 +0.0124/+0.0395 · H15 +0.0189/+0.0401 · H20 +0.0219/+0.0380. Split 7 (2022H1) négatif sur H3/H5 uniquement ; H10-H20 tous positifs sur 8/8 splits.
 
 ## 1.4 Comparatif Backtest Stratégies — Global Rank
 
@@ -686,7 +704,8 @@
 | B39  | H15        | 🏆 | -8.8%           | -40.8%           | -23.9%       | H15,H20,H10 |
 | B40  | H10        | 🏆 | -10.6%          | -34.4%           | -20.6%       | H10,H3,H5   |
 | B41  | H15        | 🏆 | -11.6%          | -55.3%           | -26.7%       | H15,H20,H10 |
-| B42  | H20        | 🏆 | -9.7%           | -29.6%           | -24.8%       | H20,H10,H15 |
+| B42  | H20        | -9.7%           | -29.6%           | -24.8%       | H20,H10,H15 |
+| **B44** | **H15**  | 🏆 | -8.4% | -36.5% | -25.1% (H15,H10,H20) | **OOS 2025 T1 : spreads H5-H20 +0.32/+0.79/+1.50/+0.73 — 4/4 positifs, déciles monotones ✅ (modèle validé OOS)** |
 
 ## 1.5 🏆 Champion par horizon — Meilleur IC (B0-B41)
 
@@ -712,6 +731,7 @@
 > **B40 (B4 + volume features) n'améliore aucun horizon** — H10 0.0220 < B25 0.0279 ; H3 0.0146 < B20 0.0171. Mais IR H3 1.77 = record. Verdict P3-5 (B40) : ❌ vs B4 (−12 %), le décisif attend B41.
 > **B41 (B25 + volume features) = NOUVEAU CHAMPION 4/5 horizons** (H3/H5/H15/H20). ⚠️ In-sample : OOS 2025 + backtest obligatoires avant promotion.
 > **B42 (B20 + volume features, sans CAPM ni include-factors) = champion H10** — IC 0.0282 (record H10 historique, +1% vs B25 0.0279, +6.4% vs B41 0.0265) à IR quasi égal (1.60 vs 1.61). Sur H10, le CAPM n'aide pas quand le volume est présent.
+> **B44 (B41 config, global-only, train→2024-12-31) = batch de VALIDATION OOS (T1)** : IC 0.0199/IR 1.55 (H15 2.00), champion catboost 5/5, 155 feat. **OOS 2025 propre : spreads +0.32/+0.79/+1.50/+0.73 (H5-H20), déciles monotones → le Global Ranking généralise OOS** (aucun champion d'horizon — rôle : preuve d'intégrité du pipeline, pas de record IC). Inversion Q1 2026 résiduelle aux horizons longs (H10 −0.67, H15 −1.10, H20 −2.97) → traitée par le filtre short-side momentum (dossier `logs/analyse_oos.txt` sections 19-23).
 
 ---
 
@@ -720,6 +740,7 @@
 > **B39** : per-sector = même config que B25 (lgbm + catboost, flags identiques) — le backend xgboost ne concerne que le Global Ranking. Toutes les sections 2.1-2.9 sont renseignées.
 > **B40** : per-sector renseigné (2.1-2.9) — le flag volume n'est pas propagé au per-sector de ce run (identique au pattern B4).
 > **B41** : per-sector AVEC volume features (flag propagé à `trainer_sector`) → léger changement vs B25 (lightgbm 7 / catboost 4), sections 2.1-2.9 renseignées.
+> **B44** : `--global-model-only` → AUCUN per-sector entraîné (toutes les sections 2.x vides). Le batch sert uniquement à la validation OOS du Global Ranking (T1).
 
 ## 2.1 Comparatif Métriques par Horizon (WF)
 

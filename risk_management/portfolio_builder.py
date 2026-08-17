@@ -343,8 +343,11 @@ class PortfolioBuilder:
         # Factor risk model (Priorité 3)
         factor_exposures: dict[str, object] | None = None,
         factor_covariance: object | None = None,
+        # Mapping symbole → secteur (fix max_tickers_per_sector sur "Unknown")
+        sector_map: dict[str, str] | None = None,
     ) -> None:
         self._cfg = config
+        self._sector_map: dict[str, str] = sector_map or {}
         self._sizer = PositionSizer(config)
         self._kelly_sizer = KellySizer(config) if config.enable_kelly_sizing else None
         self._pnl = pnl
@@ -584,7 +587,7 @@ class PortfolioBuilder:
             enriched.append(
                 EnrichedSelection(
                     symbol=c.symbol,
-                    sector="Unknown",  # ML-first: no sector from selector
+                    sector=self._sector_map.get(c.symbol, "Unknown"),  # fix: mapping GICS réel
                     score_used=c.p_side,  # ML probability becomes the score
                     score_source="ml_p_side",
                     predicted_proba=effective_proba,
@@ -645,7 +648,11 @@ class PortfolioBuilder:
         candidates: list[SelectionScore] = []
         predictions: dict[str, PredictionInfo] = {}
         for c in ml_candidates:
-            candidates.append(_to_ss(c, sector="Unknown", snapshot_date=trade_date))
+            candidates.append(_to_ss(
+                c,
+                sector=self._sector_map.get(c.symbol, "Unknown"),  # fix: mapping GICS réel
+                snapshot_date=trade_date,
+            ))
             predictions[c.symbol] = PredictionInfo(
                 symbol=c.symbol,
                 predicted_proba=c.p_side,

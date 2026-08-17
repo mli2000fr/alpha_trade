@@ -1357,6 +1357,17 @@ def main(args: list[str] | None = None) -> None:
     resolved_account_scope = raw_account_id or "default"
 
     repo = RiskRepository()
+    # Mapping symbole → secteur GICS (fix : candidats ML-first sector="Unknown"
+    # → max_tickers_per_sector s'appliquait sur un bucket unique et rejetait ~63%
+    # des candidats à tort). Chargé une fois, réutilisé pour les builders.
+    _sector_map_for_builder: dict[str, str] = {}
+    try:
+        from modelFactory.cross_sectional import load_sector_groups as _load_gics_builder
+        for _gics_b, _members_b in _load_gics_builder(repo.engine).items():
+            for _sym_b in _members_b:
+                _sector_map_for_builder[str(_sym_b)] = _gics_b
+    except Exception:
+        _sector_map_for_builder = {}
     account_snapshot = repo.load_account_risk_snapshot(requested_account_id, trade_date)
     effective_account_id = account_snapshot.account_id if account_snapshot is not None else requested_account_id
     equity_breakdown = repo.load_account_equity_breakdown(effective_account_id, trade_date)
@@ -1843,6 +1854,52 @@ def main(args: list[str] | None = None) -> None:
                 candidates.append(candidate)
         # Apply ML rankings (longs then shorts, each by p_side descending)
         longs, shorts = _ml_rank(candidates)
+
+        # ── GO production 2026-08-15 : filtre momentum côté SHORT (dossier
+        #    logs/analyse_oos.txt sections 19-25, arbitrage GPT) — parité live ──
+        try:
+            from common.config_loader import load_config as _load_live_cfg
+            _live_cascade = (_load_live_cfg() or {}).get("cascade") or {}
+        except Exception:
+            _live_cascade = {}
+        _live_sm_filter = str(_live_cascade.get("short_momentum_filter") or "none").strip().lower()
+        if _live_sm_filter != "none" and shorts:
+            _live_sm_max = _live_cascade.get("short_momentum_max_pct")
+            try:
+                from modelFactory.predictor import _load_momentum_for_symbols
+                _live_engine = getattr(repo, "engine", None)
+                _mom_map = _load_momentum_for_symbols(
+                    str(trade_date), [c.symbol for c in shorts], engine=_live_engine,
+                ) or {}
+                _threshold = (
+                    float(_live_sm_max) / 100.0
+                    if _live_sm_max is not None
+                    else (0.02 if _live_sm_filter == "loose" else 0.0)
+                )
+                _kept_shorts: list[MLRankedCandidate] = []
+                for _c in shorts:
+                    _m = _mom_map.get(_c.symbol)
+                    if _m is None:
+                        continue  # pas de barres momentum → short rejeté (parité backtest)
+                    _m20, _m60 = _m
+                    if _live_sm_filter == "strict":
+                        _keep = _m20 is not None and _m20 < _threshold
+                    elif _live_sm_filter == "confirm":
+                        _keep = _m20 is not None and _m60 is not None and _m20 < 0 and _m60 < 0
+                    elif _live_sm_filter == "inverted":
+                        _keep = _m20 is not None and _m20 > _threshold
+                    else:  # loose
+                        _keep = _m20 is not None and _m20 < _threshold
+                    if _keep:
+                        _kept_shorts.append(_c)
+                LOGGER.info(
+                    "Filtre momentum short (mode=%s seuil=%.2f): %d/%d shorts retenus",
+                    _live_sm_filter, _threshold, len(_kept_shorts), len(shorts),
+                )
+                shorts = _kept_shorts
+            except Exception:
+                LOGGER.exception("Filtre momentum short live: erreur — filtrage désactivé pour cette séance")
+
         candidates = [*longs, *shorts]
         LOGGER.info("MLRankedCandidate construits: %d longs + %d shorts", len(longs), len(shorts))
 
@@ -1979,6 +2036,7 @@ def main(args: list[str] | None = None) -> None:
             regime_transition=regime_transition,
             rotation_state=rotation_state,
             breakout_tracker=breakout_tracker,
+            sector_map=_sector_map_for_builder,
         )
         # ── Section 17 Point 8 : injecter le snapshot opérationnel ──────
         # Enrichir avec les données PIT borrow/spread/quote si disponibles
@@ -2053,6 +2111,7 @@ def main(args: list[str] | None = None) -> None:
                             breakout_tracker=breakout_tracker,
                             factor_exposures=factor_exposures_live,
                             factor_covariance=factor_cov_live,
+                            sector_map=_sector_map_for_builder,
                         )
                         if operational_snapshot is not None and hasattr(builder, "set_operational_snapshot"):
                             builder.set_operational_snapshot(operational_snapshot)

@@ -40,6 +40,11 @@ _MIN_REQUEST_INTERVAL_S = 0.12  # ~8 req/s, well under 10/s limit
 _LAST_REQUEST_TS: float = 0.0
 _CIK_MAPPING: dict[str, str] | None = None  # ticker → CIK (10-digit padded)
 
+# Tickers absents de company_tickers.json (vérifiés via submissions API).
+_TICKER_CIK_OVERRIDES: dict[str, str] = {
+    "TMHC": "0001562476",  # Taylor Morrison Home Corp
+}
+
 
 class EdgarError(RuntimeError):
     """Base error for SEC EDGAR API issues."""
@@ -119,7 +124,7 @@ def ticker_to_cik(ticker: str) -> str:
         EdgarSymbolNotFound: if ticker not found in SEC mapping.
     """
     mapping = _load_cik_mapping()
-    cik = mapping.get(ticker.upper())
+    cik = mapping.get(ticker.upper()) or _TICKER_CIK_OVERRIDES.get(ticker.upper())
     if not cik:
         raise EdgarSymbolNotFound(f"Ticker '{ticker}' not found in SEC CIK mapping")
     return cik

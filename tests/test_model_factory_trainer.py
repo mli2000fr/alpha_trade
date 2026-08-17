@@ -23,6 +23,62 @@ def _training_config(tmp_path: Path, *, min_history_days: int = 10) -> TrainingC
     )
 
 
+def test_run_training_registry_writes_lstm_multi_horizon(monkeypatch, tmp_path: Path) -> None:
+    """Option B (2026-08-15) : en multi-horizon, les métriques LSTM sont
+    persistées avec horizon=h (comme les tabulaires) ; les horizons en échec
+    sont ignorés et aucune ligne legacy sans horizon n'est écrite."""
+    inserts: list[tuple[str, str, object]] = []
+    monkeypatch.setattr(trainer, "update_training_run", lambda engine, run_id, **kwargs: None)
+    monkeypatch.setattr(
+        trainer, "insert_metrics",
+        lambda engine, run_id, symbol, split_name, metrics,
+        model_name="lstm_attention", horizon=None:
+        inserts.append((model_name, split_name, horizon)),
+    )
+    monkeypatch.setattr(trainer, "upsert_metrics_full", lambda *args, **kwargs: None)
+    monkeypatch.setattr(trainer, "replace_model_governance", lambda *args, **kwargs: None)
+    monkeypatch.setattr(trainer, "upsert_directional_oos_metrics", lambda *args, **kwargs: None)
+
+    lstm_horizons = {
+        "h3": {"status": "completed", "horizon": 3,
+               "val": {"f1_macro": 0.30}, "wf": {"f1_macro": 0.31}},
+        "h20": {"status": "completed", "horizon": 20,
+                "val": {"f1_macro": 0.33}, "test": {}, "wf": {"f1_macro": 0.34}},
+        "h10": {"status": "failed", "reason": "boom"},
+    }
+
+    trainer._run_training_registry_writes(
+        engine=cast(Engine, object()),
+        run_id="r1",
+        symbol="AAPL",
+        trainer=cast(object, type("T", (), {"current_epoch": 1})()),
+        best_ckpt=tmp_path / "missing.ckpt",
+        scaler_path=tmp_path / "scaler.pkl",
+        config_path=tmp_path / "config.json",
+        val_metrics={"f1_macro": 0.33},
+        test_metrics={"f1_macro": 0.32},
+        walk_forward_metrics={"mean": {"f1_macro": 0.34}},
+        all_metrics={},
+        challengers={},
+        artifact_routes_models={},
+        selected_architecture="lstm_attention",
+        selection_mode="auto",
+        selection_metric="f1_macro",
+        challenger_ranking=[],
+        lstm_horizons=lstm_horizons,
+    )
+
+    lstm_rows = [(m, s, h) for m, s, h in inserts if m == "lstm_attention"]
+    assert ("lstm_attention", "val", 3) in lstm_rows
+    assert ("lstm_attention", "wf", 3) in lstm_rows
+    assert ("lstm_attention", "val", 20) in lstm_rows
+    assert ("lstm_attention", "wf", 20) in lstm_rows
+    # L'horizon en échec n'est pas persisté
+    assert not any(h == 10 for _, _, h in lstm_rows)
+    # Pas de ligne legacy sans horizon en multi-horizon
+    assert not any(h is None for _, _, h in lstm_rows)
+
+
 def test_compute_metrics_persists_ternary_directional_oos_statistics() -> None:
     outputs = {
         "labels": np.array([-1, 1, -1]),

@@ -65,6 +65,11 @@ class BacktestRunOptions:
     fidelity_baseline_catalog: str | None = None
     artifacts_dir: str = "artifacts/models"
     ml_batch_id: str | None = None
+    cascade_batch_id: str | None = None
+    batch_diagnostics_batch_id: str | None = None
+    # P5.2 — seuil top/bottom de la cascade ML (fraction). None = config.yaml
+    # (cascade.top_pct). Défaut aligné benchmark B25 : 0.10.
+    cascade_top_pct: float | None = 0.10
     score_column: Literal["auto", "final_score_walk_forward", "final_score_sentiment", "final_score"] = "auto"
     walk_forward_artifacts_dir: str | None = None
     disable_walk_forward: bool = False
@@ -274,6 +279,13 @@ def build_backtesting_command(
         ])
         if options.ml_batch_id:
             command.extend(["--ml-batch-id", options.ml_batch_id])
+        if options.cascade_batch_id:
+            command.extend(["--cascade-batch-id", options.cascade_batch_id])
+        if options.batch_diagnostics_batch_id:
+            command.extend(["--batch-diagnostics-batch-id", options.batch_diagnostics_batch_id])
+        # P5.2 — seuil top/bottom cascade ML (aligné benchmark : 0.10)
+        if options.cascade_top_pct is not None and float(options.cascade_top_pct) > 0:
+            command.extend(["--cascade-top-pct", str(options.cascade_top_pct)])
         if options.use_live_protection_logic:
             command.append("--use-live-protection-logic")
         else:

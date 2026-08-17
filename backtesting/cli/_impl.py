@@ -78,6 +78,175 @@ def _coerce_date_value(value: object) -> date | None:
     return date(int(ts.year), int(ts.month), int(ts.day))
 
 
+def _apply_idio_gate(
+    engine,
+    preds_df,
+    gate: str,
+    seed: int,
+    *,
+    start_date,
+    end_date,
+):
+    """FINAL-GATE-PROD-PARITY (recherche per-sector) — filtre side-agnostique idio_vol60 PIT.
+
+    Met ``predicted_side='flat'`` (et probas à 0) pour les symboles dont le
+    percentile intra-date de ``idio_vol60`` est sous le seuil. Définition
+    identique au harness recherche : écart-type 60 j annualisé du résidu de la
+    régression roulante ret_symbole ~ ret_secteur (ret_1 journalier).
+    ``random70`` = gate aléatoire au même taux de sélection (contrôle, seed fixe).
+    """
+    import numpy as np
+    import pandas as pd
+
+    threshold = {"p70": 0.70, "p80": 0.80}.get(gate)
+    if threshold is None and gate != "random70":
+        return preds_df
+    if preds_df is None or preds_df.empty:
+        return preds_df
+    date_col = "trade_date" if "trade_date" in preds_df.columns else "prediction_date"
+    if date_col not in preds_df.columns:
+        LOGGER.warning("idio-gate %s : colonne date introuvable dans preds_df — filtre ignoré", gate)
+        return preds_df
+
+    from backtesting.data_loader import load_ohlcv
+    from modelFactory.cross_sectional import load_sector_groups
+
+    # Historique dédié : 200 j calendaires de warm-up (~130 séances) pour le rolling 60.
+    gate_start = pd.Timestamp(start_date).date() - timedelta(days=200)
+    try:
+        bars = load_ohlcv(engine, gate_start, pd.Timestamp(end_date).date())
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("idio-gate %s : OHLCV indisponible (%s) — filtre ignoré", gate, exc)
+        return preds_df
+    if bars is None or bars.empty or "close" not in bars.columns:
+        LOGGER.warning("idio-gate %s : OHLCV vide — filtre ignoré", gate)
+        return preds_df
+    bars = bars[['trade_date', 'symbol', 'close']].copy()
+    bars['trade_date'] = pd.to_datetime(bars['trade_date'])
+    bars = bars.sort_values(['symbol', 'trade_date']).reset_index(drop=True)
+
+    sector_map: dict[str, str] = {}
+    try:
+        for gics, syms in load_sector_groups(engine).items():
+            for sym in syms:
+                sector_map[str(sym)] = gics
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("idio-gate %s : mapping secteur indisponible (%s) — filtre ignoré", gate, exc)
+        return preds_df
+    bars['sector'] = bars['symbol'].map(sector_map)
+    bars = bars.dropna(subset=['sector'])
+    if bars.empty:
+        return preds_df
+
+    grp = bars.groupby('symbol', sort=False)
+    bars['ret_1'] = grp['close'].transform(lambda s: s.pct_change(fill_method=None))
+    bars['sector_ret'] = bars.groupby(['trade_date', 'sector'])['ret_1'].transform('mean')
+
+    def _beta_idio(grp_df: pd.DataFrame) -> pd.DataFrame:
+        r = grp_df['ret_1']
+        sr = grp_df['sector_ret']
+        cov = r.rolling(60).cov(sr)
+        var = sr.rolling(60).var()
+        beta = (cov / var.clip(lower=1e-12)).fillna(0.0)
+        resid = r - beta * sr
+        idio60 = resid.rolling(60).std() * np.sqrt(252.0)
+        return pd.DataFrame({'idio60': idio60})
+
+    reg = bars.groupby('symbol', group_keys=False).apply(_beta_idio, include_groups=False)
+    bars = bars.join(reg)
+    idio = bars[['symbol', 'trade_date', 'idio60']].dropna() \
+        .sort_values('trade_date').reset_index(drop=True)
+
+    preds = preds_df.copy().reset_index(drop=True)
+    preds['_pidx'] = preds.index
+    preds['_dt'] = pd.to_datetime(preds[date_col])
+    preds = preds.sort_values('_dt').reset_index(drop=True)
+
+    merged = pd.merge_asof(
+        preds,
+        idio,
+        left_on='_dt',
+        right_on='trade_date',
+        by='symbol',
+        direction='backward',
+        allow_exact_matches=True,
+    )
+    if gate == 'random70':
+        rng = np.random.default_rng(int(seed))
+        merged['_rand'] = rng.random(len(merged))
+        merged['_pct'] = merged.groupby('_dt')['_rand'].rank(pct=True)
+    else:
+        merged['_pct'] = merged.groupby('_dt')['idio60'].rank(pct=True)
+    effective_threshold = float(threshold if threshold is not None else 0.70)
+    merged['_keep'] = (merged['_pct'] >= effective_threshold).fillna(False)
+    keep_map = dict(zip(merged['_pidx'].tolist(), merged['_keep'].tolist()))
+    preds['_keep'] = preds['_pidx'].map(keep_map).fillna(False).astype(bool)
+    drop_mask = ~preds['_keep']
+    if 'predicted_side' in preds.columns:
+        preds.loc[drop_mask, 'predicted_side'] = 'flat'
+    for col in ('proba_long', 'proba_short', 'predicted_proba'):
+        if col in preds.columns:
+            preds.loc[drop_mask, col] = 0.0
+    return preds.drop(columns=['_pidx', '_dt', '_keep'], errors='ignore')
+
+
+def _load_batch_training_universe_scope(
+    engine: object,
+    batch_id: str | None,
+    trade_dates,
+) -> pd.DataFrame | None:
+    """Univers du backtest pipeline = univers d'ENTRAÎNEMENT du batch.
+
+    Lit ``model_training_batch.symbols`` (la liste exacte sur laquelle le batch
+    a été entraîné) et construit le scope symbole×session pour le gate de
+    couverture ML — au lieu de l'univers tradable PIT historique, qui ne
+    correspond pas à l'univers du modèle sur les fenêtres anciennes.
+
+    Retourne None si le batch/la liste est indisponible (→ fallback tradable).
+    """
+    if not batch_id:
+        return None
+    import pandas as pd
+
+    try:
+        from sqlalchemy import text as _text
+
+        with engine.connect() as conn:  # type: ignore[union-attr]
+            row = conn.execute(
+                _text("SELECT symbols FROM model_training_batch WHERE batch_id=:b"),
+                {"b": str(batch_id)},
+            ).fetchone()
+        if not row or not row[0]:
+            return None
+        _syms = [
+            s.strip().upper()
+            for s in str(row[0]).replace(";", ",").split(",")
+            if s.strip()
+        ]
+        if not _syms:
+            return None
+    except Exception:
+        LOGGER.warning(
+            "_load_batch_training_universe_scope: batch %s indisponible — fallback tradable PIT",
+            batch_id,
+            exc_info=True,
+        )
+        return None
+    _dates = sorted(
+        {
+            pd.Timestamp(d).date()
+            for d in pd.to_datetime(trade_dates, errors="coerce")
+            if not pd.isna(d)
+        }
+    )
+    _rows = [
+        {"symbol": s, "trade_date": pd.Timestamp(d), "universe_run_id": f"batch_training_universe:{batch_id}"}
+        for d in _dates
+        for s in _syms
+    ]
+    return pd.DataFrame(_rows)
+
+
 def _parse_sector_multipliers_json(raw: str | None) -> dict[str, float] | None:
     """Parse ``--sector-multipliers-json`` (JSON {secteur: facteur} ou @fichier)."""
     if not raw or not raw.strip():
@@ -798,6 +967,23 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     run_p.add_argument("--tp", type=float, default=0.12, help="Take-profit %% (défaut 0.12)")
     run_p.add_argument("--ts", type=float, default=0.07, help="Trailing stop %% (défaut 0.07)")
+    # P13 expérimental (temporaire) — ne change rien par défaut.
+    run_p.add_argument(
+        "--trailing-activation-r", type=float, default=None,
+        help="P13 : multiplicateur d'activation du trailing (0 = armement immédiat dès J+1). None = politique prod actuelle (2.0).",
+    )
+    run_p.add_argument(
+        "--trailing-pct-override", type=float, default=None,
+        help="P13 : surcharge le trailing pct (ex 0.07) au lieu du risk-based (= distance du stop). None = risk-based (prod actuelle).",
+    )
+    run_p.add_argument(
+        "--trailing-pct-long", type=float, default=None,
+        help="P14 : surcharge le trailing pct pour les LONGS uniquement (ex 0.07). None = risk-based (prod actuelle).",
+    )
+    run_p.add_argument(
+        "--trailing-pct-short", type=float, default=None,
+        help="P14 : surcharge le trailing pct pour les SHORTS uniquement (ex 0.07). None = risk-based (prod actuelle).",
+    )
     run_p.add_argument(
         "--ts-long", type=float, default=None,
         help="Trailing stop %% pour les LONGS uniquement (None = --ts). Plancher : n'élargit jamais l'autre jambe (P2-4).",
@@ -898,9 +1084,35 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--sentiment-lookback", type=int, default=365, help="Lookback sentiment (jours)")
     run_p.add_argument("--no-save", action="store_true", help="Ne pas sauvegarder les artefacts")
     run_p.add_argument(
+        "--no-shorts",
+        action="store_true",
+        help="P5 LONG-only : force short_selling_enabled=False dans le risk config "
+             "(aucun short n'est exécuté, quel que soit le preset/filtre momentum).",
+    )
+    run_p.add_argument(
+        "--no-longs",
+        action="store_true",
+        help="P9 SHORT-only : bloque les LONG (max_long_positions=0), symétrique de "
+             "--no-shorts. Fonctionne en phase2=off (replay_signals) et phase2=risk.",
+    )
+    run_p.add_argument(
         "--filter-no-ml",
         action="store_true",
         help="Exclure les candidats sans modèle ML entraîné (pas de predicted_proba dans model_predictions).",
+    )
+    run_p.add_argument(
+        "--idio-gate",
+        choices=["off", "p70", "p80", "random70"],
+        default="off",
+        help="FINAL-GATE-PROD-PARITY (recherche per-sector) : filtre de sélection idio_vol60 PIT. "
+             "off = production intacte ; p70/p80 = garder seulement les prédictions dont le percentile "
+             "intra-date idio_vol60 >= seuil ; random70 = gate aléatoire au même taux (contrôle).",
+    )
+    run_p.add_argument(
+        "--idio-gate-seed",
+        type=int,
+        default=42,
+        help="Seed du gate aléatoire (--idio-gate random70).",
     )
     run_p.add_argument(
         "--ml-mode",
@@ -1214,6 +1426,28 @@ def _build_parser() -> argparse.ArgumentParser:
              "no_shorts = bloque les shorts ; no_trades = bloque tout.",
     )
     run_p.add_argument(
+        "--short-momentum-filter",
+        choices=["none", "loose", "strict", "confirm", "inverted"],
+        default="none",
+        help="Test GPT section 19 : filtre momentum côté SHORT uniquement dans la cascade. "
+             "loose=mom20<+2%% ; strict=mom20<0 ; confirm=mom20<0 ET mom60<0 ; "
+             "inverted=mom20>+2%% (placebo).",
+    )
+    run_p.add_argument(
+        "--short-momentum-max-pct",
+        type=float,
+        default=None,
+        help="Seuil custom mom20 < X%% pour le filtre short (prioritaire sur --short-momentum-filter ; "
+             "stress test des seuils GPT section 21 : 0.01 / 0.03 / 0.05).",
+    )
+    run_p.add_argument(
+        "--cascade-top-pct",
+        type=float,
+        default=None,
+        help="P5.2 : override cascade.top_pct (ex 0.02/0.05/0.10/0.15) — courbe de capacité "
+             "top_pct. Transmis à apply_cascade_to_predictions(top_pct=...). None = config.yaml.",
+    )
+    run_p.add_argument(
         "--bull-strict-sma-window",
         type=int,
         default=200,
@@ -1290,6 +1524,25 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="Seuil minimal de couverture ML autorisé en mode pipeline (0.80 = 80%%). 0 ou None = désactivé.",
+    )
+    run_p.add_argument(
+        "--cascade-batch-id",
+        default=None,
+        help="Batch Global Ranking à utiliser pour la cascade ML en backtest. "
+             "Défaut : batch_diagnostics.backtest_batch_id de config.yaml.",
+    )
+    run_p.add_argument(
+        "--batch-diagnostics-batch-id",
+        default=None,
+        help="Batch à utiliser pour les filtres batch_diagnostics (§7) en backtest. "
+             "Défaut : batch_diagnostics.backtest_batch_id de config.yaml.",
+    )
+    run_p.add_argument(
+        "--best-horizon",
+        type=int,
+        default=None,
+        help="Override du best_horizon pour la cascade ML en backtest (ex: 10 pour forcer B41 sur H10). "
+             "Défaut : best_horizon du batch (metadata).",
     )
     run_p.add_argument(
         "--conviction-calibration-mode",
@@ -1642,6 +1895,11 @@ def _explicit_flags(argv: list[str]) -> set[str]:
         "--min-ml-coverage-ratio": "min_ml_coverage_ratio",
         "--max-sector-exposure-pct": "max_sector_exposure_pct",
         "--max-entry-gap-pct": "max_entry_gap_pct",
+        "--short-momentum-filter": "short_momentum_filter",
+        "--short-momentum-max-pct": "short_momentum_max_pct",
+        "--cascade-top-pct": "cascade_top_pct",
+        "--no-shorts": "no_shorts",
+        "--no-longs": "no_longs",
     }
     for token in argv:
         key = token.split("=", 1)[0]
@@ -2179,11 +2437,19 @@ def _run_backtest(args: argparse.Namespace) -> None:
 
         phase2_risk_config = load_risk_config(
             equity=float(args.equity),
+            preset_key=str(getattr(effective_preset, "key", "") or "") or None,
             cli_overrides={
                 "account_equity": float(args.equity),
                 "max_positions": int(args.max_positions),
-                "short_selling_enabled": _preset_has_short_threshold,
-                "max_short_positions": 2,
+                "short_selling_enabled": (
+                    False if getattr(args, "no_shorts", False) else _preset_has_short_threshold
+                ),
+                # P5 LONG-only : max_short_positions=0 est LE consommateur réel du
+                # blocage (constraints.py) — short_selling_enabled n'a pas de
+                # consommateur dans risk_management.
+                "max_short_positions": 0 if getattr(args, "no_shorts", False) else 2,
+                # P9 SHORT-only : max_long_positions=0 bloque les longs.
+                "max_long_positions": 0 if getattr(args, "no_longs", False) else None,
                 "short_min_score": 0.0,
                 "short_rotation_required": True,
             },
@@ -2441,15 +2707,32 @@ def _run_backtest(args: argparse.Namespace) -> None:
         (universe_trade_dates >= pd.Timestamp(start))
         & (universe_trade_dates <= pd.Timestamp(end))
     ]
-    try:
-        universe_scope_df = load_tradable_universe_scope(
-            engine,
-            universe_trade_dates.dropna().unique(),
-            capital_preset_key=effective_preset.key,
+    _universe_dates = pd.to_datetime(universe_trade_dates.dropna().unique())
+    universe_scope_df = None
+    if engine_mode == "pipeline":
+        # Pipeline : l'univers = celui de l'entraînement du batch (couverture ML
+        # mesurée contre l'univers réel du modèle, pas l'univers tradable PIT).
+        universe_scope_df = _load_batch_training_universe_scope(
+            engine, args.ml_batch_id, _universe_dates,
         )
-    except Exception as exc:
-        _safe_print(f"❌ Univers tradable PIT indisponible: {exc}")
-        sys.exit(1)
+        if universe_scope_df is not None and not universe_scope_df.empty:
+            _safe_print(
+                "   universe_scope=batch_training_universe symbols={} sessions={} (batch={})\n".format(
+                    int(universe_scope_df["symbol"].nunique()),
+                    int(universe_scope_df["trade_date"].nunique()),
+                    args.ml_batch_id,
+                )
+            )
+    if universe_scope_df is None or universe_scope_df.empty:
+        try:
+            universe_scope_df = load_tradable_universe_scope(
+                engine,
+                _universe_dates,
+                capital_preset_key=effective_preset.key,
+            )
+        except Exception as exc:
+            _safe_print(f"❌ Univers tradable PIT indisponible: {exc}")
+            sys.exit(1)
     if universe_scope_df.empty:
         _safe_print("❌ Univers tradable PIT vide sur la période demandée.")
         sys.exit(1)
@@ -2542,16 +2825,19 @@ def _run_backtest(args: argparse.Namespace) -> None:
         from modelFactory.batch_diagnostics import get_batch_filters, filter_predictions
         # Utilise le batch_id configuré pour le backtest (config.yaml → backtest_batch_id).
         # Si vide, get_batch_filters utilise automatiquement le dernier batch.
-        _bt_batch_id: str | None = None
-        try:
-            import yaml as _yaml_bt_cfg
-            with open("config.yaml", encoding="utf-8") as _fh_bt_cfg:
-                _cfg_bt_cfg = _yaml_bt_cfg.safe_load(_fh_bt_cfg) or {}
-            _bt_batch_id = str(
-                (_cfg_bt_cfg.get("batch_diagnostics") or {}).get("backtest_batch_id", "") or ""
-            ).strip() or None
-        except Exception:
-            pass
+        _bt_batch_id: str | None = str(
+            getattr(args, "batch_diagnostics_batch_id", "") or ""
+        ).strip() or None
+        if not _bt_batch_id:
+            try:
+                import yaml as _yaml_bt_cfg
+                with open("config.yaml", encoding="utf-8") as _fh_bt_cfg:
+                    _cfg_bt_cfg = _yaml_bt_cfg.safe_load(_fh_bt_cfg) or {}
+                _bt_batch_id = str(
+                    (_cfg_bt_cfg.get("batch_diagnostics") or {}).get("backtest_batch_id", "") or ""
+                ).strip() or None
+            except Exception:
+                pass
         _bt_filters = get_batch_filters(engine, batch_id=_bt_batch_id)
         if _bt_filters.batch_id and not preds_df.empty:
             # ── Étape 1 : exclure ──
@@ -2652,9 +2938,13 @@ def _run_backtest(args: argparse.Namespace) -> None:
             _cfg_cas = _yaml_cas.safe_load(_fh_cas) or {}
         _cas_cfg = _cfg_cas.get("cascade") or {}
         _cascade_enabled = bool(_cas_cfg.get("enabled", True))
-        _cascade_batch_id = str(
-            (_cfg_cas.get("batch_diagnostics") or {}).get("backtest_batch_id", "") or ""
-        ).strip() or None
+        _cascade_batch_id = (
+            str(getattr(args, "cascade_batch_id", "") or "").strip() or None
+        )
+        if not _cascade_batch_id:
+            _cascade_batch_id = str(
+                (_cfg_cas.get("batch_diagnostics") or {}).get("backtest_batch_id", "") or ""
+            ).strip() or None
 
         if not _cascade_enabled:
             pass  # cascade désactivée → rien à faire
@@ -2672,8 +2962,40 @@ def _run_backtest(args: argparse.Namespace) -> None:
         else:
             from modelFactory.predictor import apply_cascade_to_predictions
             _cas_before = len(preds_df)
+            # GO production 2026-08-15 : défaut depuis config.yaml (cascade.short_momentum_filter),
+            # override possible par le flag CLI explicite.
+            _sm_filter_flag = str(getattr(args, "short_momentum_filter", "none") or "none").strip().lower()
+            if "short_momentum_filter" not in explicit_flags:
+                _sm_cfg_val = _cas_cfg.get("short_momentum_filter")
+                if _sm_cfg_val is not None:
+                    _sm_filter_flag = str(_sm_cfg_val).strip().lower()
+            _sm_max_flag = getattr(args, "short_momentum_max_pct", None)
+            if _sm_max_flag is None and "short_momentum_max_pct" not in explicit_flags:
+                _sm_cfg_max = _cas_cfg.get("short_momentum_max_pct")
+                if _sm_cfg_max is not None:
+                    _sm_max_flag = float(_sm_cfg_max)
+            # Garde symétrique (leak A) : "none" doit désactiver le filtre,
+            # même si la config garde un max_pct (ex: 2.0).
+            if _sm_filter_flag == "none":
+                _sm_max_flag = None
+            # ── Horizon cascade : priorité CLI flag > config backtest_horizon > batch metadata ──
+            _best_h_flag = getattr(args, "best_horizon", None)
+            if _best_h_flag is None:
+                # GO 2026-08-17 : gel H20 par défaut via batch_diagnostics.backtest_horizon
+                _cfg_backtest_horizon = (
+                    (_cfg_cas.get("batch_diagnostics") or {}).get("backtest_horizon")
+                )
+                if _cfg_backtest_horizon not in (None, "", 0):
+                    try:
+                        _best_h_flag = int(_cfg_backtest_horizon)
+                    except (TypeError, ValueError):
+                        pass
             preds_df = apply_cascade_to_predictions(
                 preds_df, _cascade_batch_id, engine=engine,
+                best_h=_best_h_flag,
+                top_pct=getattr(args, "cascade_top_pct", None),
+                short_momentum_filter=(None if _sm_filter_flag == "none" else _sm_filter_flag),
+                short_momentum_max_pct=_sm_max_flag,
             )
             _cas_passed = int(preds_df.loc[preds_df["predicted_side"] != "flat"].shape[0]) if "predicted_side" in preds_df.columns else 0
             _cascade_filtered_count = _cas_before - _cas_passed
@@ -2718,6 +3040,30 @@ def _run_backtest(args: argparse.Namespace) -> None:
         ml_mode=str(args.ml_mode or "auto"),
         ml_diagnostics=ml_diagnostics,
     )
+    # ── FINAL-GATE-PROD-PARITY : filtre idio_vol60 (recherche per-sector) ──
+    _idio_gate = str(getattr(args, "idio_gate", "off") or "off").strip().lower()
+    if _idio_gate != "off" and preds_df is not None and not preds_df.empty:
+        _gate_before = (
+            int(preds_df.loc[preds_df["predicted_side"] != "flat"].shape[0])
+            if "predicted_side" in preds_df.columns else len(preds_df)
+        )
+        preds_df = _apply_idio_gate(
+            engine,
+            preds_df,
+            _idio_gate,
+            int(getattr(args, "idio_gate_seed", 42) or 42),
+            start_date=start,
+            end_date=end,
+        )
+        _gate_after = (
+            int(preds_df.loc[preds_df["predicted_side"] != "flat"].shape[0])
+            if "predicted_side" in preds_df.columns else len(preds_df)
+        )
+        _safe_print(
+            "   🎯 idio-gate={}: {} predictions → flat, {} kept\n".format(
+                _idio_gate, _gate_before - _gate_after, _gate_after,
+            )
+        )
     ml_coverage_gate = _enforce_ml_coverage_gate(
         engine_mode=engine_mode,
         ml_mode=str(args.ml_mode or "auto"),
@@ -2782,6 +3128,27 @@ def _run_backtest(args: argparse.Namespace) -> None:
         simulated_account_equity=float(args.equity),
         profit_taker_pct=float(args.tp),
         trailing_stop_pct=float(args.ts),
+        # P17 (freeze) : défaut = politique validée (0R + LONG 7% + SHORT risk-based).
+        trailing_activation_r_multiple=(
+            float(args.trailing_activation_r)
+            if getattr(args, "trailing_activation_r", None) is not None
+            else 0.0
+        ),
+        trailing_pct_override=(
+            float(args.trailing_pct_override)
+            if getattr(args, "trailing_pct_override", None) is not None
+            else None
+        ),
+        trailing_pct_long_override=(
+            float(args.trailing_pct_long)
+            if getattr(args, "trailing_pct_long", None) is not None
+            else 0.07
+        ),
+        trailing_pct_short_override=(
+            float(args.trailing_pct_short)
+            if getattr(args, "trailing_pct_short", None) is not None
+            else None
+        ),
         leverage=load_leverage_config_from_yaml(),
         time_stop=load_time_stop_config_from_yaml(),
     )
@@ -2791,6 +3158,11 @@ def _run_backtest(args: argparse.Namespace) -> None:
             scores_df,
             score_column=None if args.score_column == "auto" else args.score_column,
             max_positions=args.max_positions,
+            # P7 : --no-shorts doit bloquer les shorts AUSSI en phase2=off
+            # (replay_signals est la source de portée en mode research).
+            max_short_positions=0 if getattr(args, "no_shorts", False) else None,
+            # P9 : --no-longs bloque les longs (SHORT-only) en phase2=off.
+            max_long_positions=0 if getattr(args, "no_longs", False) else None,
         )
         signals_df = research_signals_df
     else:
@@ -2843,6 +3215,18 @@ def _run_backtest(args: argparse.Namespace) -> None:
             args.macro_missing_policy = str(getattr(args, "macro_missing_policy", None) or "disabled")
 
         try:
+            # Mapping symbole → secteur GICS pour les contraintes de concentration
+            # (fix : les candidats ML-first étaient tous sector="Unknown" → max_tickers_per_sector
+            #  s'appliquait sur un bucket unique et rejetait ~63% des candidats à tort).
+            _sector_map_for_risk: dict[str, str] = {}
+            try:
+                from modelFactory.cross_sectional import load_sector_groups as _load_gics
+                for _gics, _members in _load_gics(engine).items():
+                    for _sym in _members:
+                        _sector_map_for_risk[str(_sym)] = _gics
+            except Exception:
+                _sector_map_for_risk = {}
+
             phase2_risk_result = build_phase2_risk_result(
                 scores_df=scores_df,
                 predictions_df=preds_df if isinstance(preds_df, pd.DataFrame) else pd.DataFrame(),
@@ -2854,6 +3238,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 score_column=None if args.score_column == "auto" else args.score_column,
                 market_regimes_config=_mr_cfg_for_bt,
                 macro_provider=_macro_provider_for_bt,
+                sector_map=_sector_map_for_risk,
             )
         except MacroDataUnavailableError as exc:
             _safe_print(f"❌ {exc}")
@@ -2897,6 +3282,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
                         phase5_watcher_replay_result = build_phase5_watcher_replay(
                             phase4_protection_replay_result,
                             high_df=execution_pivoted["high"],
+                            low_df=execution_pivoted["low"],
                         )
                         signals_df = phase5_watcher_replay_result.signals_df
                         if phase7_mode == "exit_lifecycle_replay":

@@ -681,13 +681,25 @@ def build_trailing_stop_intent(
     exit_side = "buy" if short else "sell"
 
     reference_price = avg_fill_price or parent.decision_price
-    risk_based_trail_pct = None
-    if target is not None:
-        if target.stop_price_initial is not None and reference_price > 0:
-            risk_based_trail_pct = abs(reference_price - target.stop_price_initial) / reference_price
-        elif target.risk_per_share is not None and target.risk_per_share > 0 and reference_price > 0:
-            risk_based_trail_pct = target.risk_per_share / reference_price
-    trail_pct = round((risk_based_trail_pct if risk_based_trail_pct is not None else config.trailing_stop_pct) * 100, 2)
+    # P13/P14 expérimental : override global, sinon override side-spécifique.
+    trail_pct_override = getattr(config, "trailing_pct_override", None)
+    if trail_pct_override is None:
+        trail_pct_override = (
+            getattr(config, "trailing_pct_short_override", None)
+            if short
+            else getattr(config, "trailing_pct_long_override", None)
+        )
+    if trail_pct_override is not None:
+        # P13/P14 : trailing fixe (parité recherche) au lieu du risk-based.
+        trail_pct = round(float(trail_pct_override) * 100, 2)
+    else:
+        risk_based_trail_pct = None
+        if target is not None:
+            if target.stop_price_initial is not None and reference_price > 0:
+                risk_based_trail_pct = abs(reference_price - target.stop_price_initial) / reference_price
+            elif target.risk_per_share is not None and target.risk_per_share > 0 and reference_price > 0:
+                risk_based_trail_pct = target.risk_per_share / reference_price
+        trail_pct = round((risk_based_trail_pct if risk_based_trail_pct is not None else config.trailing_stop_pct) * 100, 2)
     intent_id = _make_id()
     return OrderIntent(
         intent_id=intent_id,

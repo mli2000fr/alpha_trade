@@ -111,7 +111,7 @@ Le workflow sépare deux familles d'actions :
 
 | Mode | Workflow applicable ? | Note |
 |------|----------------------|------|
-| **Global + per-symbol** | ✅ **Oui, intégralement** | Mode de production (B25). Toutes les étapes 0→11 sont validées dessus. |
+| **Global + per-symbol** | ✅ **Oui, intégralement** | Mode de production (B25). Toutes les étapes 0→11 sont validées dessus. **Pivot 2026-08-14 : les modèles per-symbol sont retravaillés (nouveau batch en préparation) — le workflow reste identique.** |
 | **Global + per-sector** | ⚠️ **Mécaniquement oui, non recommandé** | Le dispatch de prédiction et le backfill des rangs synth gèrent les deux modes, mais le per-sector est **suspendu comme signal de trading** (F1 macro ≈ 0.33 = pile ou face, DirAcc ≈ 50 %, campagne 2026-08-05 sans alpha WF exploitable). Lancer le workflow complet produirait des backtests sans alpha (étapes 5-11 = bruit). Exception : un futur batch per-sector avec F1 WF > 0.35 et DirAcc > 0.53 redeviendrait éligible. |
 
 > En production, la gate `research_only` interdit l'exécution paper/live depuis un
@@ -342,7 +342,7 @@ Les 3 actions de mise en production se font uniquement depuis l'IHM (aucun termi
 ### Entraînement (étape 0)
 
 ```powershell
-.venv\Scripts\python.exe -m modelFactory --mode train --training-mode per_sector `
+.venv\Scripts\python.exe -m modelFactory --mode train --training-mode per_symbol `
   --target-mode regression --forecast-horizons 3,5,10,15,20 `
   --feature-set expert --benchmark-symbol SPY `
   --training-start-date 2016-01-01 --symbol-source ticket-recherche `
@@ -351,6 +351,9 @@ Les 3 actions de mise en production se font uniquement depuis l'IHM (aucun termi
   --enable-global-model --global-model-name catboost --global-champion `
   --select-champion --walkforward --wf-max-splits 8 `
   --comment "B39 ma description"
+
+> ⚠️ **Pivot 2026-08-14** : `--training-mode per_symbol` (reprise de la piste per-symbol).
+> Les flags B25 sont conservés tels quels pour le Global Ranking ; les modèles per-sector restent research-only.
 ```
 
 ### Backtest canonique (étapes 2 et 5)

@@ -33,6 +33,8 @@ def _find_trigger_date(
     execution_date: pd.Timestamp,
     trigger_price: float,
     high_df: pd.DataFrame,
+    low_df: pd.DataFrame,
+    short: bool,
 ) -> pd.Timestamp | None:
     if symbol not in high_df.columns:
         return None
@@ -41,11 +43,16 @@ def _find_trigger_date(
     for idx in range(start_idx, len(trading_days)):
         trade_day = pd.Timestamp(trading_days[idx])
         try:
-            day_high = float(high_df.at[trade_day, symbol])
+            if short:
+                day_low = float(low_df.at[trade_day, symbol])
+                if pd.notna(day_low) and day_low <= trigger_price:
+                    return trade_day
+            else:
+                day_high = float(high_df.at[trade_day, symbol])
+                if pd.notna(day_high) and day_high >= trigger_price:
+                    return trade_day
         except (KeyError, TypeError, ValueError):
             continue
-        if pd.notna(day_high) and day_high >= trigger_price:
-            return trade_day
     return None
 
 
@@ -60,6 +67,7 @@ def build_phase5_watcher_replay(
     protection_replay_result: ProtectionReplayResult,
     *,
     high_df: pd.DataFrame,
+    low_df: pd.DataFrame,
 ) -> ProtectionWatcherReplayResult:
     trading_days = pd.DatetimeIndex(high_df.index)
     lifecycle_rows: list[dict[str, object]] = []
@@ -87,6 +95,8 @@ def build_phase5_watcher_replay(
         watcher_state = "not_applicable"
         trigger_date = None
         effective_date = None
+        side = str(row.get("side") or "buy").strip().lower()
+        short = side == "sell"
         if execution_date is not None and trigger_price_raw is not None and pd.notna(trigger_price_raw):
             trigger_price = float(trigger_price_raw)
             trigger_date = _find_trigger_date(
@@ -94,6 +104,8 @@ def build_phase5_watcher_replay(
                 execution_date=execution_date,
                 trigger_price=trigger_price,
                 high_df=high_df,
+                low_df=low_df,
+                short=short,
             )
             if trigger_date is None:
                 watcher_state = "pending"

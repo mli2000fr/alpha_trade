@@ -1,6 +1,6 @@
 # Module ModelFactory — Documentation Complète
 
-> **Version** : Sprint 2026-08-04 (batch f82ab5, per-sector + global ranking)  
+> **Version** : Sprint 2026-08-04 (batch f82ab5, per-sector + global ranking) — mise à jour 2026-08-14 (pivot per-symbol)
 > **Auteur** : Généré automatiquement depuis le code source
 
 ---
@@ -31,8 +31,10 @@ Le module `modelFactory` est le cœur ML du système α-Trade. Il supporte **deu
 
 | Mode | Description | Usage |
 |------|-------------|-------|
-| **Per-Symbol** | 1 modèle par symbole (LSTM + LightGBM + CatBoost) | ~500 symboles, patterns individuels |
-| **Per-Sector** | 1 modèle par secteur GICS × horizon (LightGBM + CatBoost) | 11 secteurs × 5 horizons = 55 modèles |
+| **Per-Symbol** | 1 modèle par symbole (LSTM + LightGBM + CatBoost) | ~400 symboles, patterns individuels (**pivot 2026-08-14**) |
+| **Per-Sector** | 1 modèle par secteur GICS × horizon (LightGBM + CatBoost) | 11 secteurs × 5 horizons = 55 modèles (research-only) |
+
+> 📌 **Mise à jour 2026-08-14** : pivot vers le **per-symbol**. Le per-sector reste research-only (F1 WF ≈ 0.33, DirAcc ≈ 50 % — aucun alpha exploitable). Le per-symbol sera retravaillé (ablation F0-F4, protocole `prompt/ml/ml_analyse_per_symbol.md`).
 
 Il assure :
 
@@ -61,7 +63,7 @@ Entraînement :
   Diagnostics batch → top/bottom N, weak, S7
 
 Inférence (Live/Backtest) :
-  global_rank × proba_long → cascade_select → trades filtrés
+  global_rank × proba_long → cascade_select → filtre momentum short-side (mom20 < +2 %) → trades filtrés (voir analyse_oos.txt)
 ```
 
 ---
@@ -245,7 +247,7 @@ Pour **chaque symbole** de l'univers, entraîner un modèle qui prédit la direc
 
 | Composant | Single-horizon | Multi-horizon |
 |---|---|---|
-| **LSTM** | 1 modèle, horizon max | 1 modèle, horizon max (inchangé) |
+| **LSTM** | 1 modèle, horizon max | **5 modèles (H3/H5/H10/H15/H20) — option B, 2026-08-15** |
 | **LightGBM** | 1 modèle, horizon configuré | 5 modèles (H3/H5/H10/H15/H20) |
 | **CatBoost** | 1 modèle, horizon configuré | 5 modèles (H3/H5/H10/H15/H20) |
 
@@ -363,10 +365,9 @@ Pour chaque symbole :
 
 #### Limitation
 
-Le LSTM n'est **pas** multi-horizon — il reste sur l'horizon max pour :
-- Rétrocompatibilité avec l'inférence existante
-- Éviter la complexité d'un LSTM multi-output (5 têtes de sortie)
-- Le LSTM est le fallback ; les baselines tabulaires sont les modèles primaires
+> **Mise à jour 2026-08-15 (option B)** : le LSTM est désormais entraîné **en multi-horizon** quand `--forecast-horizons` est spécifié — 1 LSTM par horizon (purge dynamique, artefacts dans `h{h}/best.ckpt`, métriques persistées avec `horizon=h`). L'horizon primaire (max) reste à la racine du dossier symbole pour la rétrocompatibilité de l'inférence. Le **routage multi-horizon LSTM côté prédicteur n'est pas encore branché** : la cascade sert toujours l'horizon primaire.
+
+Historique : le LSTM restait sur l'horizon max pour la rétrocompatibilité avec l'inférence existante et pour éviter la complexité d'un LSTM multi-output (5 têtes de sortie) ; le LSTM est le fallback, les baselines tabulaires sont les modèles primaires.
 
 ### 4.8 Limitation per-symbol (test rapide)
 
@@ -501,9 +502,24 @@ Mêmes features que le Per-Symbol (mode `expert`), plus :
 
 ### 5.9 Lancement
 
+Per-sector (research-only) :
+
 ```bash
 python -m modelFactory --mode train \
   --training-mode per_sector \
+  --target-mode regression \
+  --forecast-horizons 3,5,10,15,20 \
+  --feature-set expert \
+  --symbol-source ticket-recherche \
+  --compare-lightgbm --enable-catboost \
+  --select-champion --walkforward
+```
+
+Per-symbol (pivot 2026-08-14) :
+
+```bash
+python -m modelFactory --mode train \
+  --training-mode per_symbol \
   --target-mode regression \
   --forecast-horizons 3,5,10,15,20 \
   --feature-set expert \
@@ -732,7 +748,19 @@ Le Global Model n'est pas dans cette cascade — il est utilisé séparément vi
 
 ### 8.2 Cascade de trading (cascade_ml.md)
 
-Combine **rang global** et **prédiction per-symbol** pour décider quels trades prendre :
+Combine **rang global** et **probabilité directionnelle** pour décider quels trades prendre.
+
+> ⚠️ **Deux sources de probas possibles (ne pas confondre)** :
+> - **État initial (architecture de référence)** : `proba_long`/`proba_short` viennent des
+>   **prédictions réelles** des modèles directionnels **per-symbol** (ou per-sector, research-only).
+>   Le rang global ne sert que de **filtre d'univers** (top/bottom).
+> - **État temporaire (B25 per-sector, en place depuis 2026-08-13)** : le batch per-sector
+>   n'a pas de modèles per-symbol → les probas sont **dérivées des rangs eux-mêmes**
+>   (`proba_long = global_rank_{best_h}`, `proba_short = 1 − global_rank_{best_h}`) via
+>   `modelFactory/synthesize_global_rank_predictions.py` (run `{batch}_globalrank_synth`).
+>   Cascade purement rank-driven : permet de tester le modèle global **isolé** des
+>   per-symbol/per-sector. Revenir à l'état initial dès qu'un batch per-symbol validé
+>   fournit de vraies probas (dossier OOS §1).
 
 ```
 Pour chaque symbole avec global_rank ET per-symbol prediction :
@@ -741,9 +769,48 @@ Pour chaque symbole avec global_rank ET per-symbol prediction :
    → fallback H20 → H15 → H10 → H5 → H3 si indisponible
 2. Si global_rank_best > 0.80 (top 20%) ET proba_long > seuil → candidat LONG
 3. Si global_rank_best < 0.20 (bottom 20%) ET proba_short > seuil → candidat SHORT
+   → si le filtre momentum short-side est actif : candidat SHORT seulement si mom20 < seuil (§8.2bis)
 4. Score = rank × proba_long (ou (1-rank) × proba_short)
 5. Trié par score décroissant
 ```
+
+### 8.2bis Filtre momentum short-side — « ne shorte pas la force relative » (NEW — GO production 2026-08-15)
+
+**Objectif** : le bottom-rank global est une faiblesse **RELATIVE** (classement cross-sectionnel). Sa conversion en SHORT n'est autorisée que si la faiblesse **ABSOLUE** est confirmée : `mom20 < seuil`. La jambe LONG n'est **pas** filtrée (le reversal est l'alpha du long en reprise).
+
+**Règle** :
+```
+SHORT autorisé ⟺ bottom-rank ET proba_short > seuil ET mom20 < short_momentum_max_pct
+```
+- `mom20` / `mom60` = retours sur 20/60 jours de trading, calculés depuis `stock_bars_daily` (`LAG(close, 20/60)` as-of trade_date, zéro look-ahead) — helper `modelFactory/predictor.py::_load_momentum_for_symbols`.
+- Un symbole sans barres de momentum est **rejeté** quand le filtre est actif.
+
+**Modes** (`cascade.short_momentum_filter`) :
+
+| Mode | Condition short | Usage |
+|------|----------------|-------|
+| `none` | aucun filtre | override explicite (reproduire les runs historiques) |
+| **`loose`** ✅ défaut | `mom20 < +2 %` | production (arbitrage GPT sections 19-26 du dossier OOS) |
+| `strict` | `mom20 < 0` | variante plus dure |
+| `confirm` | `mom20 < 0 ET mom60 < 0` | protection maximale (quasi inactif hors crises) |
+| `inverted` | `mom20 > +2 %` | placebo (validation de direction) |
+
+`cascade.short_momentum_max_pct` (défaut 2.0) est prioritaire sur le seuil du mode.
+
+⚠️ **Unités** : `short_momentum_max_pct` est exprimé en **%** (2.0 = +2 %) alors que `mom20` est une fraction — bug d'unités neutralisant le filtre corrigé le 2026-08-16 (dossier OOS §27).
+
+**Validation (dossier `logs/analyse_oos.txt` §19-26, arbitrage GPT 🟢)** :
+- Naked 2026 : −53.02 % → −13.41 % (loose) ; placebo inverted −43.91 % → la direction compte.
+- Historique naked : 2020Q1 −5.8 pts (DD 13.9→7.5), 2022 −6.0 pts (mais short P&L AMÉLIORÉ), 2025 **+3.4 pts**.
+- **Production parity** : 2026 −1.22 % → **+5.13 %** (+6.35 pts, win 41→75 %, DD 7.4→1.4) ; 2022 −17.67 % → −16.18 % (+1.49 pts, DD 21.1→17.1, short P&L −12.9k→−6.2k) → **additif par-dessus la pile de risque** (scénario C).
+- Conclusion : règle de **qualité de sélection** (complémentaire à la risk stack qui gère exposition/sizing/protection), pas un airbag.
+
+**Où le filtre s'applique** :
+- Backtest research ET pipeline (cascade Étape 7, `backtesting/cli/_impl.py`) — défaut depuis `config.yaml`.
+- **Live** : `risk_management/cli.py` post-`_ml_rank` (parité live/backtest).
+- Override CLI : `--short-momentum-filter {none,loose,strict,confirm,inverted}` / `--short-momentum-max-pct X` (prioritaires s'ils sont explicites).
+
+⚠️ **Reproductibilité** : tout run sans flag explicite est désormais filtré `loose`. Les baselines historiques (ex. naked 2026 −53 %) se reproduisent avec `--short-momentum-filter none`.
 
 ### 8.3 Conversion proba/score → décision
 
@@ -893,6 +960,16 @@ batch_diagnostics:
     flat_min_threshold: 0.10
     exclude_long_max_threshold: 0.30
     exclude_short_max_threshold: 0.30
+
+# Cascade ML — filtre Global Ranking → Per-Symbol (backtest ET live)
+cascade:
+  enabled: true
+  top_pct: 0.10
+  min_prob_classification: 0.55
+  min_prob_regression: 0.10
+  # GO production 2026-08-15 (§8.2bis) : éligibilité SHORT = faiblesse absolue minimale
+  short_momentum_filter: loose      # none | loose | strict | confirm | inverted
+  short_momentum_max_pct: 2.0       # seuil mom20 prioritaire sur le mode
 ```
 
 ---
@@ -1116,12 +1193,18 @@ stock_fundamentals_daily
 > 🔴 **Écart f82ab5 vs 7e4cf8** : IC global divisé par ~1.7 (0.0115 vs 0.0190). H15/H20 particulièrement touchés (÷2).
 > Hypothèses : splits effectifs (6 vs 8), univers élargi (939 vs 928), ou régression liée aux fixes data leakage.
 
+#### Batches récents (2026-08-14)
+
+- **B41** (B25 + volume, YetiRank) : IC Rank **0.0260**, IR **1.55** — records de la série.
+- **B42** (B20 + volume, sans CAPM) : IC Rank 0.0250, **H10 = 0.0282 (IR 1.60)** — record H10.
+- **B43** (config B41, train → 2024-12-31) : ic_rank 0.0224 — entraîné pour un OOS propre 2025+2026 (abandonné avec le pivot per-symbol du 2026-08-14).
+
 ### 12.5 Leçons apprises
 
 1. **Target sector-neutral** est le levier #1 (+84% IC). Sans cela, on fait du sector-riding, pas du stock-picking.
 2. **CatBoost RMSE > LightGBM LambdaRank** pour le ranking financier faible signal.
 3. **756j** est le sweet spot de fenêtre train (504 trop court, 1008 diminishing).
-4. **13 splits > 8 splits** — granularité fine → adaptation au régime.
+4. **8 splits > 13 splits** — fenêtres 252j, moins de chevauchement → meilleure généralisation (+40 % IC).
 5. **Smoothing + 8 splits sont complémentaires** — +31% H10 vs sans. Le smoothing seul (13 splits) diluait.
 6. **Moins de features ≠ meilleur** — les arbres excellent à combiner des signaux faibles.
 7. **Le vol scaling est indispensable** (testé OFF : -27%).
@@ -1669,3 +1752,32 @@ Et surtout : **F1 train ≈ F1 val ≈ F1 test ≈ F1 WF** (pas d'effondrement).
 │  5. Sortie : liste de trades (symbol, side, score)                  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
+### Protocole de promotion de batch Global Ranking (2026-08-16)
+
+**Leçon fondatrice** : B41 était le **meilleur batch sur papier** (IC 0.0260 vs 0.0241, IR 1.55 vs 1.07, decile spread +50 %, 6/6 splits positifs) et a **échoué en production-parity** (−8.61 % vs +1.93 % sur 2026, négatif partout en 2025). **La promotion n'est PAS un screening** : les métriques WF (2019-2024) ne prédisent pas le P&L OOS. Tout test de production de N batchs à la fois = sélection sur le test = verdict invalide.
+
+**Étape 0 — Screening papier (automatique, tous les batchs)** :
+- Métriques lues dans `model_training_batch.metadata_json` (global_ranking) : `ic_rank`, `ic_rank_std`, decile spreads H3-H20, IC par split, `best_horizon`.
+- Aucun batch n'est promu sur ces métriques — elles servent uniquement à **désigner UN candidat**.
+
+**Étape 1 — Éligibilité minimale du candidat (pré-enregistrée)** :
+- `ic_rank` ≥ champion en place + 0.002 **ET** IR ≥ 1.2 **ET** tous les splits positifs **ET** decile spread du best_horizon ≥ champion × 1.2.
+- Un batch qui ne remplit pas ces conditions est **rejeté sans production-parity** (cela élimine mécaniquement ~tous les B1-B40 face à B25).
+- Résultat B41 : éligible sur papier → testé → **échoué**.
+
+**Étape 2 — UN seul candidat à la fois** :
+- Désigné sur validation uniquement, avant toute lecture OOS. Interdit de tester « le suivant » immédiatement après un échec pour contourner la règle (quarantaine : nouvelle information requise).
+
+**Étape 3 — Production-parity unique (protocole figé)** :
+- Fenêtres : **2025 complet** (2025-01-02 → 2025-12-31) et **2026 Q1** (2026-01-02 → 2026-05-31) — les deux OOS strict.
+- Flags identiques champion vs candidat (le défaut prod, sans `--max-positions` explicite) :
+  - pile pipeline (phases 2-7, `use-persisted`), `--capital-preset-key capital_2001_5000`, `--use-canonical-costs`, ATR stop 2.5, TP 3.0 ATR / 7 %, loose 2.0
+  - `--ml-batch-id --cascade-batch-id --batch-diagnostics-batch-id` = batch testé (100 % batch)
+  - `--min-ml-coverage-ratio 0.90` (seuil documenté, preset prod intact à 0.95)
+- Prérequis données AVANT lancement : rangs `global_rank_history` complets (400 symboles/jour) + synth `model_predictions` du batch — vérifier par SQL, ne jamais lancer un run dont la couverture est < 90 % (ex. B25 2025 = 205/261 jours → gap-fill obligatoire).
+
+**Étape 4 — Critères de promotion** :
+- **PROMU** si le candidat bat le champion sur **les deux fenêtres** (retour ET Sharpe ET DD) ; un simple match nul n'est pas une promotion.
+- **REJET** si défaite sur au moins une fenêtre → le champion en place est conservé, le candidat est archivé avec son verdict.
+
+**État actuel** : B25 = champion en prod · B41 = candidat testé → **REJETÉ** (défait sur 2026 ; 2025 en cours de confirmation). Aucun autre batch B1-B40 n'est éligible (tous papier-inférieurs à B41). Infra de test prête et réutilisable en ~30 min par fenêtre.

@@ -611,6 +611,7 @@ class PipelineLaunchOptions:
     data_integrity_earnings_symbol_source: DataIntegritySymbolSource | None = None
     data_integrity_earnings_from_date: str | None = None
     data_integrity_earnings_to_date: str | None = None
+    data_integrity_earnings_provider: str | None = None
     data_integrity_earnings_limit: int | None = None
     data_integrity_earnings_sleep_seconds: float = DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS
     data_integrity_earnings_log_every: int = DEFAULT_DATA_INTEGRITY_EARNINGS_LOG_EVERY
@@ -1849,6 +1850,9 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--to-date", earnings_to_date])
         if earnings_limit is not None:
             command.extend(["--limit", str(earnings_limit)])
+        earnings_provider = str(options.data_integrity_earnings_provider or "finnhub").strip().lower()
+        if earnings_provider == "sec":
+            command.extend(["--provider", "sec"])
         command.append("--resume" if options.data_integrity_earnings_resume else "--no-resume")
         return command
 
@@ -2507,7 +2511,12 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--trade-date", trade_date])
         if account_id:
             command.extend(["--account", account_id])
-        # ── V1 Multi-Horizon : injecter best_horizon depuis le batch ML ──
+        # ── V1 Multi-Horizon : injecter best_horizon (SIZING only) ──
+        # ⚠️ Ce --best-horizon alimente RiskConfig.best_horizon → maps stop/TP
+        # multi-horizon du sizing LIVE. Il ne doit PAS être dérivé de
+        # live_horizon (cascade), sinon le sizing casserait la parité avec le
+        # benchmark (H10 = stop 2.5/TP 7% gelés). On garde le best_horizon du
+        # batch (metadata) pour le sizing = comportement d'origine.
         _risk_bid = options.ml_predict_batch_id or options.ml_live_predict_batch_id
         if _risk_bid:
             try:
