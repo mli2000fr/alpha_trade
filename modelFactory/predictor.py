@@ -2570,6 +2570,8 @@ def cascade_select(
     best_h: int | None = None,
     short_momentum_filter: str | None = None,
     short_momentum_max_pct: float | None = None,
+    rank_mode: str = "ml",
+    rank_seed: int = 42,
 ) -> list[tuple[str, str, float]]:
     """Filtre cascade : Global Rank → Per-Symbol → trades ordonnancés.
 
@@ -2624,6 +2626,20 @@ def cascade_select(
     if _rank_col is None:
         LOGGER.warning("cascade_select: no rank column found in %s", list(ranks_df.columns))
         return []
+
+    # ── Ablation ML-vs-Random (2026-08-17) : rangs globaux aléatoires ──
+    # Randomise UNIQUEMENT le ranking global (top/bottom band). Les prédictions
+    # per-symbol (long_prob/short_prob), min_prob, score et cascade restent
+    # identiques → isole la contribution du ranking ML à la sélection.
+    if rank_mode == "random":
+        _date_seed = (rank_seed * 1000003) + int(trade_date.replace("-", ""))
+        _rng = np.random.default_rng(_date_seed)
+        ranks_df = ranks_df.copy()
+        ranks_df[_rank_col] = _rng.uniform(0.0, 1.0, size=len(ranks_df))
+        LOGGER.info(
+            "cascade_select: RANDOM ranks (seed_base=%d, date=%s) — %d symbols",
+            rank_seed, trade_date, len(ranks_df),
+        )
 
     # ── Filtre momentum short-side (GPT section 19) : chargé une fois par date ──
     _mom_map: dict[str, tuple[float | None, float | None]] = {}
@@ -2707,6 +2723,8 @@ def apply_cascade_to_predictions(
     best_h: int | None = None,
     short_momentum_filter: str | None = None,
     short_momentum_max_pct: float | None = None,
+    rank_mode: str = "ml",
+    rank_seed: int = 42,
 ) -> pd.DataFrame:
     """Filtre les prédictions per-symbol via la cascade Global Rank.
 
@@ -2810,6 +2828,8 @@ def apply_cascade_to_predictions(
             best_h=best_h,
             short_momentum_filter=short_momentum_filter,
             short_momentum_max_pct=short_momentum_max_pct,
+            rank_mode=rank_mode,
+            rank_seed=rank_seed,
         )
 
         # Symbols retenus par la cascade
