@@ -1061,6 +1061,23 @@ def _build_parser() -> argparse.ArgumentParser:
              "1.0 = parité bit-for-bit. Ex: 1.25, 1.5, 2.0, 3.0. Diagnostic uniquement.",
     )
     run_p.add_argument(
+        "--cost-round-trip-bps",
+        type=float,
+        default=0.0,
+        help="Stress test coûts (2026-08-17) : FORCE un coût round-trip absolu fixe "
+             "en bps par trade (C/2 entrée + C/2 sortie), indépendamment du spread "
+             "réel chargé. 0 = désactivé (coût variable canonique). Ex: 10, 20, 30, "
+             "44, 60. Diagnostic uniquement.",
+    )
+    run_p.add_argument(
+        "--fallback-spread-bps",
+        type=float,
+        default=None,
+        help="Stress test coûts (2026-08-17) : écrase le fallback de spread quand la "
+             "donnée réelle est absente/corrompue (>300 bps). Défaut 5.0 canonique. "
+             "Ex: 10, 15, 20. Diagnostic uniquement.",
+    )
+    run_p.add_argument(
         "--profile",
         choices=["strict_swing_cash", "swing_cash_aggressive", "production-parity", "custom"],
         default="custom",
@@ -3453,6 +3470,9 @@ def _run_backtest(args: argparse.Namespace) -> None:
         use_canonical_costs=bool(getattr(args, "use_canonical_costs", False)),
         margin_interest_rate_annual=float(getattr(args, "margin_interest_rate", 0.0) or 0.0),
         cost_multiplier=float(getattr(args, "cost_multiplier", 1.0) or 1.0),
+        cost_round_trip_bps=float(getattr(args, "cost_round_trip_bps", 0.0) or 0.0),
+        fallback_spread_bps=float(getattr(args, "fallback_spread_bps", 0.0) or 0.0)
+        if float(getattr(args, "fallback_spread_bps", 0.0) or 0.0) > 0 else None,
         atr_trailing_stop_multiplier=float(getattr(args, "atr_ts", 0.0) or 0.0),
         use_live_protection_logic=bool(getattr(args, "use_live_protection_logic", True)),
         max_positions=args.max_positions,

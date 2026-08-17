@@ -1195,7 +1195,8 @@ stock_fundamentals_daily
 
 #### Batches récents (2026-08-14)
 
-- **B41** (B25 + volume, YetiRank) : IC Rank **0.0260**, IR **1.55** — records de la série.
+- **B25** 🏆 **(champion en prod)** = `model-factory-20260811223551-ef2cd0` (B21 Short+SPY+CAPM+YetiRank, train 2016-01-01 → 2025-12-31). Stocke `best_horizon = 10` dans son metadata. Champion depuis le 2026-08-13 ; **validé robustesse 2026-08-17** (voir §12.7).
+- **B41** (B25 + volume, YetiRank) : IC Rank **0.0260**, IR **1.55** — records de la série → **testé en production-parity et REJETÉ** (2026-08-17, voir protocole en fin de doc).
 - **B42** (B20 + volume, sans CAPM) : IC Rank 0.0250, **H10 = 0.0282 (IR 1.60)** — record H10.
 - **B43** (config B41, train → 2024-12-31) : ic_rank 0.0224 — entraîné pour un OOS propre 2025+2026 (abandonné avec le pivot per-symbol du 2026-08-14).
 
@@ -1249,6 +1250,51 @@ Purge = 1j (marge de sécurité résiduelle uniquement).
 | Factor-neutral target | OLS par date, résidus intra-date | ✅ |
 | XS rank features | `groupby("date").rank(pct=True)` intra-date | ✅ |
 | Sample weights | `exp(-days_diff/360)` dates train uniquement | ✅ |
+
+---
+
+### 12.7 Validation de robustesse du champion B25 (2026-08-17) — GO paper
+
+La pile **gelée** `B25 → H20 → top 10 % → P14 → m8` (benchmark OOS 2026 archivé :
++27.09 % / DD 3.10 % / PF 2.22 / 77 trades) a été soumise à une batterie de stress
+ciblés avant go-live. Enseignements pour le module :
+
+**Stress des coûts** (nouveau flag `--cost-multiplier`, multiplie le coût de
+transaction total, 1.0 = parité bit-for-bit) :
+- Coûts ×1.25 → ×3 : rendement 27.09 → 26.86 → 26.62 → 26.14 → 25.20 %,
+  PF 2.22 → 2.06. Les 77 trades restent **identiques** : la sélection
+  (Global Ranking → cascade) est insensible au niveau de coût.
+  Point de non-rentabilité ≈ 28× le coût actuel.
+
+**Audit comptable des coûts** (découverte) :
+- Le moteur débite réellement **~10 bps round-trip** par trade (924 $ / 77 trades),
+  pas la médiane globale de 44 bps.
+- Les titres sélectionnés (top 10 % du rank) sont des large caps liquides avec des
+  spreads réels ~6-16 bps → le coût est réaliste pour l'univers effectivement tradé.
+- ⚠️ Qualité des données : 37.6 % des snapshots de spread sont corrompues (>300 bps,
+  ex: MNDY 2782 bps) et filtrées vers le fallback 5 bps. Le filtre
+  `MAX_REALISTIC_SPREAD_BPS=300` est trop permissif pour les valeurs 100-300 bps.
+- Même au scénario pessimiste 44 bps RT, le système resterait ~+24 % (PF ~2).
+
+**Stress fills / slippage** : impact volume 200 bps → +26.6 % (PF 2.18) ; latence
+systématique + impact → +25.9 % (PF 2.12). Sélection inchangée.
+
+**Concentration** : 8 positions max (plafond atteint 50 % des jours), poids symbole
+≤ 25 %, secteur/jour ≤ 45 %. ⚠️ PnL concentré : top 3 trades = 43 % du PnL, top 10 =
+121 % (les autres trades nets négatifs) — principale caractéristique de risque.
+
+**Bootstrap (2022/2024/2025/2026)** : P(DD > 15 %) ≈ 9 % sur 4 ans consécutifs,
+P(DD > 20 %) < 1 %, P(rendement < 0) = 0 %.
+
+**Décision** : la pile est suffisamment validée → **GO paper Alpaca directement**
+(le paper trading rend un shadow mode redondant : il teste la chaîne complète avec
+des ordres réels simulés). Détails : `doc/robustesse_4tests_2026-08-17.md`.
+
+**Gel H20** : le batch B25 stocke `best_horizon = 10`, mais la production gèle la
+cascade sur **H20** via `config.yaml` (`backtest_horizon: 20` / `live_horizon: 20`).
+Le sizing stop/TP reste piloté par le `best_horizon` du batch (10) — maps
+multi-horizon inchangées (stop 2.5 ATR / TP 7 %). La synthèse `{batch}_globalrank_synth`
+génère `predicted_side` depuis `global_rank_20` pour le live.
 
 ---
 
@@ -1780,4 +1826,6 @@ Et surtout : **F1 train ≈ F1 val ≈ F1 test ≈ F1 WF** (pas d'effondrement).
 - **PROMU** si le candidat bat le champion sur **les deux fenêtres** (retour ET Sharpe ET DD) ; un simple match nul n'est pas une promotion.
 - **REJET** si défaite sur au moins une fenêtre → le champion en place est conservé, le candidat est archivé avec son verdict.
 
-**État actuel** : B25 = champion en prod · B41 = candidat testé → **REJETÉ** (défait sur 2026 ; 2025 en cours de confirmation). Aucun autre batch B1-B40 n'est éligible (tous papier-inférieurs à B41). Infra de test prête et réutilisable en ~30 min par fenêtre.
+**État actuel (2026-08-17)** : B25 = champion en prod · B41 = candidat testé → **REJETÉ** (défait sur 2026 ; 2025 en cours de confirmation). Aucun autre batch B1-B40 n'est éligible (tous papier-inférieurs à B41). Infra de test prête et réutilisable en ~30 min par fenêtre.
+
+**Validation finale du champion (2026-08-17)** : la pile gelée `B25 → H20 → top 10 % → P14 → m8` a passé les 4 tests de robustesse (coûts, fills, concentration, bootstrap, §12.7) → décision **GO paper Alpaca**. Le champion en place n'est plus challengé ; la promotion d'un futur batch devra battre B25 sur les deux fenêtres OOS selon ce protocole.
