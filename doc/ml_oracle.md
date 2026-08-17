@@ -706,3 +706,7 @@ flowchart TB
 
 > Ces backtests complets **sans oracle** servent de référence pour mesurer l'apport
 > de l'Oracle Layer (Étape 6) et de golden pour l'audit (Étape 2).
+
+
+Note:
+fillabck label : python.exe -u -m modelFactory.oracle.build_labels --batch-id model-factory-20260811223551-ef2cd0
