@@ -207,11 +207,82 @@ Scripts : `scripts/audit_costs.py`, `scripts/audit_spread_data.py`,
 
 ---
 
+## Test 1b — Coût round-trip ABSOLU + fallback (résultats)
+
+Pour lever l'ambiguïté « coût relatif ×N vs coût absolu », deux nouvelles séries
+forcent directement le coût (nouveaux flags `--cost-round-trip-bps` = coût RT
+absolu C/2 par jambe, et `--fallback-spread-bps` = fallback relevé).
+
+### Série A — coût round-trip ABSOLU forcé (2026)
+
+| Coût RT | Rendement | DD | PF | trades |
+|---------|-----------|-----|-----|--------|
+| 10 bps (contrôle ≈ actuel) | +27.11 % | 3.08 % | 2.225 | 77 |
+| 20 bps (prudent) | +26.17 % | 3.19 % | 2.140 | 77 |
+| 30 bps (très prudent) | +25.23 % | 3.29 % | 2.060 | 77 |
+| **44 bps (pessimiste)** | **+23.93 %** | **3.43 %** | **1.953** ✅ | 77 |
+| 60 bps (extrême) | +22.43 % | 3.60 % | 1.840 | 77 |
+
+**Verdict 44 bps RT : PF = 1.95 > 1.5 ET DD = 3.43 % < 10 % → ✅ risque coûts CLOS.**
+Même à 60 bps RT (6× le coût actuel), le système reste à +22.4 % / PF 1.84.
+Chaque +10 bps RT coûte ≈ 0.94 pt de rendement (cohérent avec l'audit : ~0.09 pt/bps).
+
+### Série B — fallback relevé (données absentes/corrompues rejetées)
+
+| Fallback | Rendement | DD | PF | trades |
+|----------|-----------|-----|-----|--------|
+| 10 bps | +27.00 % | 3.10 % | 2.215 | 77 |
+| 15 bps | +26.92 % | 3.10 % | 2.206 | 77 |
+| 20 bps | +26.83 % | 3.11 % | 2.197 | 77 |
+
+Impact **quasi nul** : les titres tradés ont déjà des spreads réels ~6-16 bps, donc
+relever le fallback de 5 → 20 bps ne change presque rien. Confirme que le coût
+actuel (~10 bps RT) n'est pas sous-estimé de façon significative pour l'univers tradé.
+
+### Audit de prise en compte des coûts sur TOUS les stress tests
+
+Vérification que chaque run débite bien son coût cible (méthode : P&L brut estimé
+constant, coût = P&L brut − P&L net du run ; tous les runs ont les 77 mêmes trades).
+
+| run | type | cible bps | P&L net $ | coût $ | coût bps | ratio |
+|-----|------|-----------|-----------|--------|----------|-------|
+| benchmark | baseline | 10.32 | 20 175 | 925 | 10.32 | 1.00 |
+| stress_cost_m125 | multiplier ×1.25 | 12.90 | 19 943 | 1 156 | 12.90 | 1.00 ✅ |
+| stress_cost_m15 | multiplier ×1.5 | 15.48 | 19 712 | 1 387 | 15.48 | 1.00 ✅ |
+| stress_cost_m20 | multiplier ×2 | 20.64 | 19 250 | 1 850 | 20.64 | 1.00 ✅ |
+| stress_cost_m30 | multiplier ×3 | 30.96 | 18 325 | 2 775 | 30.96 | 1.00 ✅ |
+| cost_rt10 | RT absolu 10 | 10.00 | 20 203 | 896 | 10.00 | 1.00 ✅ |
+| cost_rt20 | RT absolu 20 | 20.00 | 19 307 | 1 792 | 20.00 | 1.00 ✅ |
+| cost_rt30 | RT absolu 30 | 30.00 | 18 411 | 2 689 | 30.00 | 1.00 ✅ |
+| cost_rt44 | RT absolu 44 | 44.00 | 17 156 | 3 943 | 44.00 | 1.00 ✅ |
+| cost_rt60 | RT absolu 60 | 60.00 | 15 722 | 5 377 | 60.00 | 1.00 ✅ |
+| fb10 | fallback 10 | 10.32 | 20 087 | 1 013 | 11.30 | 1.10 |
+| fb15 | fallback 15 | 10.32 | 19 999 | 1 101 | 12.28 | 1.19 |
+| fb20 | fallback 20 | 10.32 | 19 911 | 1 189 | 13.26 | 1.29 |
+| fills_imp50 | impact 50 | 10.32 | 20 060 | 1 039 | 11.60 | 1.12 |
+| fills_imp100 | impact 100 | 10.32 | 19 946 | 1 154 | 12.87 | 1.25 |
+| fills_imp200 | impact 200 | 10.32 | 19 717 | 1 383 | 15.43 | 1.50 |
+| fills_lat5 | base5+impact100 | 10.32 | 19 049 | 2 050 | 22.87 | 2.22 |
+
+**Lecture** :
+- **Ratio = 1.00 sur les scénarios à cible exacte** (multiplier ×m et RT absolu C) →
+  le moteur débite **exactement** le coût cible annoncé. Les mécanismes
+  `--cost-multiplier` et `--cost-round-trip-bps` sont fidèles.
+- **Fallback / fills** : ratio > 1 = le surcoût attendu PAR-DESSUS la baseline
+  (cible = baseline 10.32). Relever le fallback 5→20 bps ajoute 1-3 bps RT ;
+  l'impact volume 50→200 bps ajoute 1.3→5.1 bps RT ; la latence (base5+impact100)
+  ajoute 12.5 bps RT. Tous cohérents avec les modèles.
+
+Script : `scripts/audit_stress_costs.py`.
+
+---
+
 ## Synthèse
 
-1. **Coûts** : marge d'erreur très large (rentabilité jusqu'à ~28× le coût actuel
-   sur 2026). ✅
-2. **Fills** : en cours (impact volume + latence).
+1. **Coûts** : marge très large. Coût réellement débité ~10 bps RT. Scénario
+   pessimiste **44 bps RT → +23.9 % / DD 3.4 % / PF 1.95** (critère PF>1.5 & DD<10%
+   satisfait). Extrême 60 bps RT → +22.4 % / PF 1.84. **✅ risque coûts CLOS.**
+2. **Fills** : ✅ robuste aux fills dégradés (PF > 2.1 même à impact 200 bps + latence).
 3. **Concentration** : 8 positions max (plafond atteint 50 % des jours), poids
    symbole ≤ 25 %, secteur/jour ≤ 45 % (jamais > 50 %). Le risque principal est
    la **concentration du PnL** : top3 = 43 % du PnL, top10 = 121 % (les 67 autres
@@ -219,9 +290,8 @@ Scripts : `scripts/audit_costs.py`, `scripts/audit_spread_data.py`,
 4. **Bootstrap** : P(DD > 15 %) ≈ 9 % sur 4 ans, P(DD > 20 %) < 1 %, P(ret<0) sur
    4 ans = 0 %. ✅
 
-Décision proposée : si Test 2 passe (PF reste > ~1.5 à impact 200 bps), la pile
-est suffisamment testée pour un **shadow/live très petit** (conformément au
-plan) — pas besoin de P25/P26/P27.
+Décision : la pile est suffisamment validée → **GO paper Alpaca directement**
+(le paper rend le shadow mode redondant). Pas besoin de P25/P26/P27.
 
 Scripts : `scripts/stress_cost_multiplier.py`, `scripts/stress_cost_multiplier_rerun.py`,
 `scripts/stress_fills.py`, `scripts/analyze_concentration_m8.py`, `scripts/bootstrap_m8.py`.
