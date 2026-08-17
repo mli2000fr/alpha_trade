@@ -499,6 +499,9 @@ def apply_backtest_defaults_from_preset(
         "max_entry_gap_pct": ("backtesting_max_entry_gap_pct", float),
         "dd_rolling_peak_window_days": ("backtesting_dd_rolling_peak_window_days", int),
         "dd_degraded_allocation_pct": ("backtesting_dd_degraded_allocation_pct", float),
+        # P1 — ATR trailing stop (0 = désactivé → trailing % fixe P14).
+        # Défaut 0.0 partout pour aligner sur le benchmark B25+P14 (trailing %).
+        "atr_ts": ("backtesting_atr_ts", float),
     }
     for target_key, (preset_key, cast_fn) in mapping.items():
         if target_key in explicit_flags:
