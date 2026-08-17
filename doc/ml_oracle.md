@@ -1,12 +1,19 @@
 # Spécification — Oracle Layer au-dessus du Global Model
 
-> **Statut** : 📐 Spécification (2026-08-18) — remplace la version précédente
+> **Statut** : 📐 Spécification (2026-08-18) — révisée suite au retour opérateur (même jour)
 > **Contexte** : analyse Oracle du run `20260817_205031_2a2836d1`
 > **Objectif** : construire une **Oracle Layer** (TOP / BOTTOM) qui apprend, sur
 > l'historique, dans quelles configurations le Global Model réussit ou échoue à
 > identifier les vrais extrêmes cross-sectionnels.
 > **Règle cardinale** : l'Oracle est un **TARGET**, jamais une **FEATURE**. B25 reste
 > **intact** pendant toute la 1ʳᵉ expérimentation.
+>
+> **Décisions actées (retour opérateur)** :
+> - Target = **brut cross-sectionnel** (top ~40/~399 du jour), **H20 seul** ;
+> - Univers = `global_rank_history`, **bit-for-bit** contre `model_predictions` ;
+> - Oracle TOP = **second signal** (`adjusted_score = f(global_rank_20, P_top)`), B25 intouchable ;
+> - **Anti-leakage non négociable** ; α/seuils/hyperparams **gelés avant l'OOS final** ;
+> - Métrique principale = **TOP capture + monotonicité** ; le **backtest (niveau 3) décide**.
 
 ---
 
@@ -44,6 +51,7 @@
 30. [Plan d'implémentation (Étape 1 → 7)](#30-plan-dimplémentation-étape-1--7)
 31. [Critère de réussite](#31-critère-de-réussite)
 32. [Architecture cible finale](#32-architecture-cible-finale)
+33. [Baselines « sans oracle »](#33-baselines-sans-oracle)
 
 ---
 
@@ -242,11 +250,13 @@ réellement TOP 10 % ? → **seconde couche de décision**.
 - force/faiblesse sectorielle ;
 - interactions momentum × volume / momentum × volatilité.
 
-> Ne pas ajouter aveuglément des features. **Faire des ablations** :
-> - `O0` = features B25
-> - `O1` = O0 + `global_rank`
-> - `O2` = O1 + nouvelles features
-> - `O3` = TOP/BOTTOM features spécialisées
+> Ne pas ajouter aveuglément des features. **Faire des ablations** — la question
+> scientifique : *« B25 rate-t-il des gagnants parce que son **objectif** est mauvais,
+> ou parce que ses **features** n'ont pas l'information ? »*
+> - `O0` = features **exactes** de B25, **sans** `global_rank` → isole l'effet de l'objectif ;
+> - `O1` = O0 + `global_rank_20` + features Oracle spécialisées (catégorie C) ;
+> - `O2` = **seulement** certaines familles : momentum / volume / volatility / market
+>   regime (sans le set complet B25) → teste si un set allégé suffit.
 
 ---
 
@@ -335,10 +345,21 @@ Le délai H20 **ne limite pas le nombre d'observations** ; il limite uniquement 
 
 **Première version recommandée** : TOP = classification, BOTTOM = classification.
 
+Le target est **cross-sectionnel à l'intérieur de l'univers du jour** :
+`oracle_top10 = 1` si le titre fait partie des **~40 meilleurs (~10 % de ~399)**
+titres de ce jour-là. **Jamais** un seuil de rendement absolu (« > +5 % ») : la
+question réelle est *« ce titre fait-il partie des meilleurs du jour ? »*, pas
+*« ce titre gagne-t-il plus de X % ? »*.
+
 Conserver aussi `oracle_pct_rank` et `oracle_decile` **pour les analyses**.
 
 **Deuxième expérience** : target continu = `oracle_rank − global_rank`
 (le *Residual Model*) — **pas la première implémentation à privilégier**.
+
+> **Horizon canonique** : **H20 uniquement** pour la 1ʳᵉ expérience (H10 viendra
+> ensuite si H20 valide). Le target de la 1ʳᵉ expérience est **brut** (rendement
+> futur non neutralisé) ; la variante **neutralisée** (vol-scaled / sector / factor)
+> sera testée en ablation après.
 
 ---
 
@@ -355,6 +376,10 @@ flowchart TB
     E2 --> F
     F --> G[final scores] --> H[TOP/BOTTOM 10%]
 ```
+
+> **Précision (retour opérateur)** : l'Oracle TOP **ne remplace pas B25** — c'est un
+> **second signal spécialisé**. On calcule `adjusted_score = f(global_rank_20, P_top)`,
+> puis on applique le TOP 10 % sur `adjusted_score`. B25 reste intouchable.
 
 ---
 
@@ -426,9 +451,10 @@ median future return
 ```
 
 On veut : `D1 < D2 < … < D10` (ou au minimum une relation **beaucoup plus monotone
-que B25**). L'analyse actuelle montre une distribution en **U** — le but est de
-transformer « score élevé → parfois gagnant / parfois perdant » en
-« score élevé → plus probablement gagnant ».
+que B25**). L'objectif réel n'est **pas** de « corriger une forme en U » (la courbe
+rendement/décile est déjà monotone — cf. audit §19) mais d'obtenir :
+`score élevé → probabilité plus élevée d'être dans le vrai TOP 10 %`.
+La métrique principale reste **Oracle Top-10 Capture + monotonicité par déciles**.
 
 ---
 
@@ -440,6 +466,10 @@ réel**, même configuration que le candidat production :
   m8 · coûts réels · overlays production.
 
 Comparer **B25** vs **B25 + Oracle Layer** sur **exactement les mêmes dates**.
+
+**Baselines « sans oracle » de référence** (déjà disponibles) :
+- `20260817_211221_da7eb061` — backtest complet **2026** ;
+- `20260817_205031_2a2836d1` — backtest complet **2025-2026**.
 
 ---
 
@@ -469,6 +499,10 @@ Oracle capture : 16.7% → 25%   mais   PF : 1.76 → 1.20   ⇒  ÉCHEC trading
 Vu les résultats (TOP 16.7 % / BOTTOM 8.2 %) :
 1. Première expérience : **B25 + Oracle TOP** — sans toucher au SHORT.
 2. Ensuite seulement : **B25 + Oracle TOP + Oracle BOTTOM**.
+
+> **Asymétrie autorisée** : il est parfaitement possible que la meilleure architecture
+> finale soit `B25 → Oracle TOP (LONG) + B25 original (SHORT)`, sans Oracle BOTTOM.
+> **Le backtest décide.**
 
 ---
 
@@ -585,19 +619,25 @@ Avec la règle : `training_cutoff >= oracle_available_date`.
 
 Ne pas coder directement toute la version finale. Étapes séquentielles.
 
-- [ ] **Étape 1 — Oracle dataset** : créer `global_oracle_labels` H20. Vérifier :
-      univers identique à `model_predictions` ; top/bottom 10 % corrects ; dates
-      correctes ; `oracle_available_date` correcte.
-- [ ] **Étape 2 — Audit Oracle** : reproduire exactement B25 TOP capture, BOTTOM
-      capture, déciles, monotonicité → vérifier que la nouvelle infrastructure
-      reproduit les résultats existants.
-- [ ] **Étape 3 — Oracle TOP Model** : premier modèle simple, `features B25 +
-      global_rank_20`, target `oracle_top10`.
+- [ ] **Étape 1 — Oracle dataset** : créer `global_oracle_labels` **H20**. Vérifier :
+      univers **bit-for-bit** identique au pool consommé par la cascade
+      (`global_rank_history` ↔ `model_predictions`) ; top/bottom 10 % corrects ;
+      dates correctes ; `oracle_available_date` correcte.
+- [ ] **Étape 2 — Audit Oracle** : reproduire exactement B25 TOP capture (16.7 %),
+      BOTTOM capture (8.2 %), déciles, monotonicité → vérifier que la nouvelle
+      infrastructure reproduit les résultats existants (baselines « sans oracle »
+      `20260817_211221_da7eb061` et `20260817_205031_2a2836d1`).
+- [ ] **Étape 3 — Oracle TOP Model (second signal)** : premier modèle simple,
+      `features B25 + global_rank_20`, target `oracle_top10` ; ablations O0/O1/O2.
+      Il **ne remplace pas** B25.
 - [ ] **Étape 4 — Walk-forward strict** : respecter `oracle_available_date <=
-      training_cutoff`.
-- [ ] **Étape 5 — Combinaison** : tester `global_rank` contre `global_rank × P_top`.
-- [ ] **Étape 6 — Backtest complet** : même moteur, mêmes coûts, mêmes paramètres.
-- [ ] **Étape 7 — seulement si positif** : ajouter `Oracle BOTTOM`.
+      training_cutoff` (anti-leakage **non négociable**).
+- [ ] **Étape 5 — Combinaison** : `adjusted_score = f(global_rank_20, P_top)` ;
+      tester `global_rank` contre `global_rank × P_top` ; α/calibration gelés avant OOS.
+- [ ] **Étape 6 — Backtest complet** : même moteur, mêmes coûts, mêmes paramètres,
+      hiérarchie 3 niveaux (ML → ranking → trading ; le trading décide).
+- [ ] **Étape 7 — seulement si positif** : ajouter `Oracle BOTTOM`, **sans symétrie
+      forcée** (asymétrie possible : TOP pour LONG, B25 pour SHORT).
 
 ---
 
@@ -617,6 +657,11 @@ L'expérience n'est intéressante que si elle améliore **plusieurs dimensions s
 
 > **Et surtout** : aucune amélioration ne doit dépendre d'un réglage effectué sur
 > l'OOS final.
+
+**Hiérarchie du test (le niveau 3 décide)** :
+1. **Niveau 1 — ML** : TOP capture ↑ ;
+2. **Niveau 2 — Ranking** : monotonicité déciles ↑ ;
+3. **Niveau 3 — Trading** : PF / Sharpe / P&L ↑, DD stable/↓ — **c'est ce niveau qui décide**.
 
 ---
 
@@ -651,4 +696,13 @@ flowchart TB
 > séparée fonctionne en OOS**.
 
 ---
-*Fichier : `doc/ml_oracle.md` — lié à `doc/ml_oracle_todo.md` et `doc/backtest_audit.md` §19.*
+
+## 33. Baselines « sans oracle » (références de comparaison)
+
+| Run | Période |
+|---|---|
+| `20260817_211221_da7eb061` | 2026 |
+| `20260817_205031_2a2836d1` | 2025-2026 |
+
+> Ces backtests complets **sans oracle** servent de référence pour mesurer l'apport
+> de l'Oracle Layer (Étape 6) et de golden pour l'audit (Étape 2).
