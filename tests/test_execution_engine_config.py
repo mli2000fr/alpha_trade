@@ -22,7 +22,7 @@ from execution_engine.config import (
         ({"profit_taker_pct": 0}, "profit_taker_pct"),
         ({"trailing_stop_pct": 1}, "trailing_stop_pct"),
         ({"trailing_activation_trigger": "unknown"}, "trailing_activation_trigger"),
-        ({"trailing_activation_r_multiple": 0}, "trailing_activation_r_multiple"),
+        ({"trailing_activation_r_multiple": -1}, "trailing_activation_r_multiple"),
         ({"trailing_activation_profit_pct": 1}, "trailing_activation_profit_pct"),
         ({"max_slippage_bps": 600}, "max_slippage_bps"),
         ({"max_order_retries": -1}, "max_order_retries"),

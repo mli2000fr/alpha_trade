@@ -284,23 +284,39 @@ def _build_ml_selection_inputs_from_day(
 ) -> list[MLRankedCandidate]:
     """Build ML-first candidates from predictions (Sprint Maître 5).
 
+    P10 (2026-08-17) — FIX STRUCTUREL : la cascade ML est l'AUTORITÉ de la
+    sélection. Un candidat ML ne doit plus disparaître simplement parce qu'il
+    n'est pas présent dans les ~55 symboles scorés PIT du preset.
+
+    Avant : on itérait sur ``day_scores`` (scores PIT) et on exigeait une
+    prédiction cascade → intersection day_scores∩cascade ~1.5-5/jour (famine
+    2026, l'alpha LONG n'atteignait jamais le risk).
+
+    Après : on itère sur les prédictions cascade (tous les candidats non-flat
+    du jour). ``day_scores`` ne sert plus que d'ENRICHISSEMENT OPTIONNEL
+    (earnings blackout) — jamais de filtre préalable.
+
     Side, ranking and probabilities are derived solely from ML predictions.
     Returns ``MLRankedCandidate`` directly — no ``SelectionScore`` adapter.
     """
     from risk_management.selection_contract import MLRankedCandidate
 
+    # day_scores = enrichissement optionnel (index par symbol), pas un filtre.
+    day_row_map: dict[str, pd.Series] = {}
+    if day_scores is not None and not day_scores.empty:
+        for _, row in day_scores.iterrows():
+            sym = str(row.get("symbol") or "").strip().upper()
+            if sym:
+                day_row_map[sym] = row
+
     candidates_by_symbol: dict[str, MLRankedCandidate] = {}
-    rows_by_symbol: dict[str, pd.Series] = {}
-    for _, row in day_scores.iterrows():
-        symbol = str(row.get("symbol") or "").strip().upper()
-        prediction = predictions.get(symbol)
-        if not symbol or prediction is None:
+    for symbol, prediction in predictions.items():
+        if prediction is None or not prediction.run_id:
             continue
         if (
             prediction.proba_long is None
             or prediction.proba_flat is None
             or prediction.proba_short is None
-            or not prediction.run_id
         ):
             LOGGER.warning("ML_FIRST_REJECT missing_ml_prediction symbol=%s date=%s", symbol, snapshot_date)
             continue
@@ -320,13 +336,13 @@ def _build_ml_selection_inputs_from_day(
             continue
         if candidate.is_actionable():
             candidates_by_symbol[symbol] = candidate
-            rows_by_symbol[symbol] = row
 
     long_ranked, short_ranked = build_rankings(list(candidates_by_symbol.values()))
-    # ── Earnings blackout vetos (selector context only, no side/rank change) ──
+    # ── Earnings blackout vetos (OPTIONNEL : seulement si la ligne PIT existe
+    #    et porte le flag blackout — ne filtre plus les candidats sans score) ──
     inputs: list[MLRankedCandidate] = []
     for candidate in [*long_ranked, *short_ranked]:
-        row = rows_by_symbol.get(candidate.symbol)
+        row = day_row_map.get(candidate.symbol)
         if row is not None and bool(row.get("selector_earnings_blackout") or row.get("earnings_blackout")):
             LOGGER.info("ML_FIRST_VETO earnings_blackout symbol=%s", candidate.symbol)
             continue
@@ -419,6 +435,7 @@ def build_phase2_risk_result(
     macro_provider: object | None = None,
     sentiment_score_provider: Callable[[int], float | None] | None = None,
     earnings_lookup: Callable[[date, int, int], dict[str, date]] | None = None,
+    sector_map: dict[str, str] | None = None,
 ) -> RiskBridgeResult:
     """Construit les résultats phase 2 ``risk_execution``.
 
@@ -631,6 +648,7 @@ def build_phase2_risk_result(
             rotation_state=rotation_state,
             factor_exposures=factor_exposures if factor_exposures else None,
             factor_covariance=factor_covariance,
+            sector_map=sector_map,
         )
         # ── Section 17 Point 8.5 : snapshot opérationnel backtest ──────
         try:

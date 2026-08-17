@@ -512,8 +512,11 @@ cascade:
   # faiblesse ABSOLUE est confirmée : mom20 < short_momentum_max_pct.
   # Valeurs : none | loose | strict | confirm | inverted (inverted = placebo).
   # short_momentum_max_pct prioritaire sur le seuil par défaut du mode.
-  short_momentum_filter: loose
-  short_momentum_max_pct: 2.0
+  # NB P4 (2026-08-17) : mis à null pour que le MODE (loose/strict/confirm)
+  # détermine seul la règle. Sinon max_pct=2.0 court-circuite confirm/strict
+  # (branche `elif short_momentum_max_pct is not None` avant les modes).
+  short_momentum_filter: none
+  short_momentum_max_pct: null
 
 
 # Sprint S8 - Calibration formelle des poids de conviction (cf. core/conviction.py)

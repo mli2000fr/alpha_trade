@@ -42,7 +42,7 @@ def _build_watcher_handoff_rows(
     trailing_stop_pct: float = 0.05,
     manual_buy_stop_loss_pct: float = 0.05,
     trailing_trigger: str = "multiple_r",
-    trailing_r_multiple: float = 1.0,
+    trailing_r_multiple: float = 0.0,
     trailing_profit_pct: float = 0.03,
 ) -> list[dict[str, str]]:
     effective_account = (account_id or "default").strip() or "default"

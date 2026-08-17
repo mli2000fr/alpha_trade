@@ -79,7 +79,7 @@ def build_watcher_command(
     trailing_stop_pct: float = 0.05,
     manual_buy_stop_loss_pct: float = 0.05,
     trailing_activation_trigger: str = "multiple_r",
-    trailing_activation_r_multiple: float = 1.0,
+    trailing_activation_r_multiple: float = 0.0,
     trailing_activation_profit_pct: float = 0.03,
     service_interval_seconds: float = DEFAULT_SERVICE_INTERVAL_SECONDS,
     idle_interval_seconds: float = DEFAULT_IDLE_INTERVAL_SECONDS,
@@ -233,7 +233,7 @@ def launch_watcher_once(
     trailing_stop_pct: float = 0.05,
     manual_buy_stop_loss_pct: float = 0.05,
     trailing_activation_trigger: str = "multiple_r",
-    trailing_activation_r_multiple: float = 1.0,
+    trailing_activation_r_multiple: float = 0.0,
     trailing_activation_profit_pct: float = 0.03,
     log_level: str = "INFO",
 ) -> PipelineRunRecord:
@@ -277,7 +277,7 @@ def start_local_watcher_service(
     trailing_stop_pct: float = 0.05,
     manual_buy_stop_loss_pct: float = 0.05,
     trailing_activation_trigger: str = "multiple_r",
-    trailing_activation_r_multiple: float = 1.0,
+    trailing_activation_r_multiple: float = 0.0,
     trailing_activation_profit_pct: float = 0.03,
     log_level: str = "INFO",
 ) -> PipelineRunRecord:
@@ -336,7 +336,7 @@ def restart_local_watcher_service(
     trailing_stop_pct: float = 0.05,
     manual_buy_stop_loss_pct: float = 0.05,
     trailing_activation_trigger: str = "multiple_r",
-    trailing_activation_r_multiple: float = 1.0,
+    trailing_activation_r_multiple: float = 0.0,
     trailing_activation_profit_pct: float = 0.03,
     log_level: str = "INFO",
 ) -> PipelineRunRecord:

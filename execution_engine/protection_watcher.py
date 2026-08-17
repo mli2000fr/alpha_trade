@@ -1906,7 +1906,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument("--trailing-activation-trigger", type=str, default="multiple_r", choices=["multiple_r", "profit_pct"])
-    parser.add_argument("--trailing-activation-r-multiple", type=float, default=1.0)
+    parser.add_argument("--trailing-activation-r-multiple", type=float, default=0.0)
     parser.add_argument("--trailing-activation-profit-pct", type=float, default=0.03)
     parser.add_argument("--service-interval-seconds", type=float, default=30.0)
     parser.add_argument("--idle-interval-seconds", type=float, default=120.0)

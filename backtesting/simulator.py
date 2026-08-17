@@ -47,6 +47,14 @@ from risk_management.concentration import (
 
 LOGGER = logging.getLogger(__name__)
 
+# P8 (2026-08-17) : borne anti-données-corrompues pour les spreads bid-ask.
+# Les quotes EODHD (`stock_quote_snapshots`) contiennent des ask/bid aberrants
+# (ex: QFIN ask=48.50 vs prix ~18$), produisant des spreads de 10-90% appliqués
+# en frais de sortie. Pour un univers mid/large-cap US, un spread EOD > 3% est
+# incohérent → la quote est traitée comme absente (fallback) dans
+# ``SimulatorEngine._get_spread_bps``.
+MAX_REALISTIC_SPREAD_BPS = 300.0  # 3 %
+
 
 def _effective_trailing_pct(cfg: "BacktestConfig", short: bool, derived_pct: float) -> float:
     """P2-4 — trailing stop par côté.
@@ -2279,6 +2287,18 @@ class BacktestEngine:
         try:
             value = float(spread_df.at[trade_day, symbol])
             if np.isfinite(value) and value >= 0:
+                # P8 (2026-08-17) : borne anti-données-corrompues. Les quotes
+                # EODHD contiennent des ask/bid aberrants (ex: QFIN ask=48.50
+                # alors que le prix est ~18$), produisant des spreads de 10-90%.
+                # Pour un univers mid/large-cap US, un spread EOD > 3% est
+                # incohérent → la quote est traitée comme absente (fallback),
+                # sinon un seul tick corrompu facturerait ~45% du notionnel.
+                if value > MAX_REALISTIC_SPREAD_BPS:
+                    LOGGER.debug(
+                        "P8 spread corrompu: %s/%s spread_bps=%.0f > %.0f → fallback %.0f bps",
+                        trade_day.date(), symbol, value, MAX_REALISTIC_SPREAD_BPS, fallback_bps,
+                    )
+                    return max(float(fallback_bps), 0.0)
                 return value
             return max(float(fallback_bps), 0.0)
         except (KeyError, ValueError):

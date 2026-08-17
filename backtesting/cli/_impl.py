@@ -967,6 +967,23 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     run_p.add_argument("--tp", type=float, default=0.12, help="Take-profit %% (défaut 0.12)")
     run_p.add_argument("--ts", type=float, default=0.07, help="Trailing stop %% (défaut 0.07)")
+    # P13 expérimental (temporaire) — ne change rien par défaut.
+    run_p.add_argument(
+        "--trailing-activation-r", type=float, default=None,
+        help="P13 : multiplicateur d'activation du trailing (0 = armement immédiat dès J+1). None = politique prod actuelle (2.0).",
+    )
+    run_p.add_argument(
+        "--trailing-pct-override", type=float, default=None,
+        help="P13 : surcharge le trailing pct (ex 0.07) au lieu du risk-based (= distance du stop). None = risk-based (prod actuelle).",
+    )
+    run_p.add_argument(
+        "--trailing-pct-long", type=float, default=None,
+        help="P14 : surcharge le trailing pct pour les LONGS uniquement (ex 0.07). None = risk-based (prod actuelle).",
+    )
+    run_p.add_argument(
+        "--trailing-pct-short", type=float, default=None,
+        help="P14 : surcharge le trailing pct pour les SHORTS uniquement (ex 0.07). None = risk-based (prod actuelle).",
+    )
     run_p.add_argument(
         "--ts-long", type=float, default=None,
         help="Trailing stop %% pour les LONGS uniquement (None = --ts). Plancher : n'élargit jamais l'autre jambe (P2-4).",
@@ -1066,6 +1083,18 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     run_p.add_argument("--sentiment-lookback", type=int, default=365, help="Lookback sentiment (jours)")
     run_p.add_argument("--no-save", action="store_true", help="Ne pas sauvegarder les artefacts")
+    run_p.add_argument(
+        "--no-shorts",
+        action="store_true",
+        help="P5 LONG-only : force short_selling_enabled=False dans le risk config "
+             "(aucun short n'est exécuté, quel que soit le preset/filtre momentum).",
+    )
+    run_p.add_argument(
+        "--no-longs",
+        action="store_true",
+        help="P9 SHORT-only : bloque les LONG (max_long_positions=0), symétrique de "
+             "--no-shorts. Fonctionne en phase2=off (replay_signals) et phase2=risk.",
+    )
     run_p.add_argument(
         "--filter-no-ml",
         action="store_true",
@@ -1410,6 +1439,13 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Seuil custom mom20 < X%% pour le filtre short (prioritaire sur --short-momentum-filter ; "
              "stress test des seuils GPT section 21 : 0.01 / 0.03 / 0.05).",
+    )
+    run_p.add_argument(
+        "--cascade-top-pct",
+        type=float,
+        default=None,
+        help="P5.2 : override cascade.top_pct (ex 0.02/0.05/0.10/0.15) — courbe de capacité "
+             "top_pct. Transmis à apply_cascade_to_predictions(top_pct=...). None = config.yaml.",
     )
     run_p.add_argument(
         "--bull-strict-sma-window",
@@ -1861,6 +1897,9 @@ def _explicit_flags(argv: list[str]) -> set[str]:
         "--max-entry-gap-pct": "max_entry_gap_pct",
         "--short-momentum-filter": "short_momentum_filter",
         "--short-momentum-max-pct": "short_momentum_max_pct",
+        "--cascade-top-pct": "cascade_top_pct",
+        "--no-shorts": "no_shorts",
+        "--no-longs": "no_longs",
     }
     for token in argv:
         key = token.split("=", 1)[0]
@@ -2402,8 +2441,15 @@ def _run_backtest(args: argparse.Namespace) -> None:
             cli_overrides={
                 "account_equity": float(args.equity),
                 "max_positions": int(args.max_positions),
-                "short_selling_enabled": _preset_has_short_threshold,
-                "max_short_positions": 2,
+                "short_selling_enabled": (
+                    False if getattr(args, "no_shorts", False) else _preset_has_short_threshold
+                ),
+                # P5 LONG-only : max_short_positions=0 est LE consommateur réel du
+                # blocage (constraints.py) — short_selling_enabled n'a pas de
+                # consommateur dans risk_management.
+                "max_short_positions": 0 if getattr(args, "no_shorts", False) else 2,
+                # P9 SHORT-only : max_long_positions=0 bloque les longs.
+                "max_long_positions": 0 if getattr(args, "no_longs", False) else None,
                 "short_min_score": 0.0,
                 "short_rotation_required": True,
             },
@@ -2935,6 +2981,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
             preds_df = apply_cascade_to_predictions(
                 preds_df, _cascade_batch_id, engine=engine,
                 best_h=getattr(args, "best_horizon", None),
+                top_pct=getattr(args, "cascade_top_pct", None),
                 short_momentum_filter=(None if _sm_filter_flag == "none" else _sm_filter_flag),
                 short_momentum_max_pct=_sm_max_flag,
             )
@@ -3069,6 +3116,27 @@ def _run_backtest(args: argparse.Namespace) -> None:
         simulated_account_equity=float(args.equity),
         profit_taker_pct=float(args.tp),
         trailing_stop_pct=float(args.ts),
+        # P17 (freeze) : défaut = politique validée (0R + LONG 7% + SHORT risk-based).
+        trailing_activation_r_multiple=(
+            float(args.trailing_activation_r)
+            if getattr(args, "trailing_activation_r", None) is not None
+            else 0.0
+        ),
+        trailing_pct_override=(
+            float(args.trailing_pct_override)
+            if getattr(args, "trailing_pct_override", None) is not None
+            else None
+        ),
+        trailing_pct_long_override=(
+            float(args.trailing_pct_long)
+            if getattr(args, "trailing_pct_long", None) is not None
+            else 0.07
+        ),
+        trailing_pct_short_override=(
+            float(args.trailing_pct_short)
+            if getattr(args, "trailing_pct_short", None) is not None
+            else None
+        ),
         leverage=load_leverage_config_from_yaml(),
         time_stop=load_time_stop_config_from_yaml(),
     )
@@ -3078,6 +3146,11 @@ def _run_backtest(args: argparse.Namespace) -> None:
             scores_df,
             score_column=None if args.score_column == "auto" else args.score_column,
             max_positions=args.max_positions,
+            # P7 : --no-shorts doit bloquer les shorts AUSSI en phase2=off
+            # (replay_signals est la source de portée en mode research).
+            max_short_positions=0 if getattr(args, "no_shorts", False) else None,
+            # P9 : --no-longs bloque les longs (SHORT-only) en phase2=off.
+            max_long_positions=0 if getattr(args, "no_longs", False) else None,
         )
         signals_df = research_signals_df
     else:
@@ -3130,6 +3203,18 @@ def _run_backtest(args: argparse.Namespace) -> None:
             args.macro_missing_policy = str(getattr(args, "macro_missing_policy", None) or "disabled")
 
         try:
+            # Mapping symbole → secteur GICS pour les contraintes de concentration
+            # (fix : les candidats ML-first étaient tous sector="Unknown" → max_tickers_per_sector
+            #  s'appliquait sur un bucket unique et rejetait ~63% des candidats à tort).
+            _sector_map_for_risk: dict[str, str] = {}
+            try:
+                from modelFactory.cross_sectional import load_sector_groups as _load_gics
+                for _gics, _members in _load_gics(engine).items():
+                    for _sym in _members:
+                        _sector_map_for_risk[str(_sym)] = _gics
+            except Exception:
+                _sector_map_for_risk = {}
+
             phase2_risk_result = build_phase2_risk_result(
                 scores_df=scores_df,
                 predictions_df=preds_df if isinstance(preds_df, pd.DataFrame) else pd.DataFrame(),
@@ -3141,6 +3226,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 score_column=None if args.score_column == "auto" else args.score_column,
                 market_regimes_config=_mr_cfg_for_bt,
                 macro_provider=_macro_provider_for_bt,
+                sector_map=_sector_map_for_risk,
             )
         except MacroDataUnavailableError as exc:
             _safe_print(f"❌ {exc}")

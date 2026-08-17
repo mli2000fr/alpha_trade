@@ -203,8 +203,18 @@ class ExecutionConfig:
     trailing_stop_type: str = "percent"
     enable_dynamic_trailing_transition: bool = True
     trailing_activation_trigger: Literal["multiple_r", "profit_pct"] = "multiple_r"
-    trailing_activation_r_multiple: float = 2.0
+    # P17 (freeze 2026-08-17) : armement du trailing IMMÉDIAT dès l'entrée (0R).
+    # Validé OOS (2022/2025/2026) : le gate 2R (ancien défaut) laissait le stop
+    # initial large absorber des drawdowns massifs (P12→P15). 0R = armement J+1.
+    trailing_activation_r_multiple: float = 0.0
     trailing_activation_profit_pct: float = 0.03
+    # Override global du trailing pct (les deux sides). None = comportement défaut.
+    trailing_pct_override: float | None = None
+    # P17 (freeze) : trailing LONG par défaut = 7% fixe (protection rapprochée) ;
+    # SHORT = risk-based (distance du stop, laisse courir les moves baissiers).
+    # Priorité : trailing_pct_override > side-spécifique > risk-based historique.
+    trailing_pct_long_override: float | None = 0.07
+    trailing_pct_short_override: float | None = None
     protection_transition_timeout_seconds: int = 0
     protection_transition_poll_interval_seconds: float = 2.0
 
@@ -282,8 +292,8 @@ class ExecutionConfig:
             raise ValueError("manual_buy_stop_loss_pct doit être dans ]0, 1[.")
         if self.trailing_activation_trigger not in ("multiple_r", "profit_pct"):
             raise ValueError("trailing_activation_trigger doit être 'multiple_r' ou 'profit_pct'.")
-        if self.trailing_activation_r_multiple <= 0:
-            raise ValueError("trailing_activation_r_multiple doit être > 0.")
+        if self.trailing_activation_r_multiple < 0:
+            raise ValueError("trailing_activation_r_multiple doit être >= 0 (0 = armement immédiat dès l'entrée).")
         if not (0 < self.trailing_activation_profit_pct < 1):
             raise ValueError("trailing_activation_profit_pct doit être dans ]0, 1[.")
         if not (0 <= self.max_slippage_bps <= 500):

@@ -15,3 +15,8 @@ Le diagnostic est limpide. Le problème du long est mécanique, pas de signal :
 TP +12 % fonctionne des 2 côtés : LONG +280k / SHORT +397k (scores quasi identiques).
 Le trailing stop tue le long en 0-3 jours : 71 trades longs stoppés en ≤3j, −172.7k, win 18.3 % (vs 30 shorts seulement). C'est LA totalité du problème long.
 Les longs qui survivent gagnent : 12-20j win 63.6 %, 20j+ win 83.3 %.
+
+
+
+
+lag CLI temporaire (recommandé) - --trailing-activation-r et --trailing-pct-override, défauts = comportement actuel, non définitif.

@@ -181,6 +181,79 @@ class TestPhaseB:
 
 
 # ---------------------------------------------------------------------------
+# P8 — Invariants du moteur (bug QFIN / spreads corrompus, 2026-08-17)
+# ---------------------------------------------------------------------------
+
+
+class TestP8FillSpreadInvariants:
+    """Invariants issus de l'audit P8.
+
+    Le fill d'un stop déclenché doit rester compatible avec la trajectoire
+    OHLC de la barre (long : bar.low <= stop -> fill >= bar.low) ; et un spread
+    bid-ask corrompu (> MAX_REALISTIC_SPREAD_BPS) doit retomber sur le fallback
+    au lieu de facturer 10-90% du notionnel.
+    """
+
+    def test_long_trailing_fill_never_below_bar_low(self):
+        from backtesting.microstructure import resolve_intrabar_exit
+
+        # Long : stop touché (day_low 18.37 <= stop 18.40) → fill = stop (18.40),
+        # jamais inférieur au low de la barre.
+        res = resolve_intrabar_exit(
+            day_high=19.13, day_low=18.37,
+            take_profit_price=20.25, trailing_stop_price=18.40,
+            initial_stop_price=None, priority="conservative",
+        )
+        assert res.triggered
+        assert res.exit_reason == "trailing_stop"
+        assert res.exit_price == pytest.approx(18.40)
+        assert res.exit_price >= 18.37  # >= bar.low
+
+    def test_short_trailing_fill_never_above_bar_high(self):
+        from backtesting.microstructure import resolve_intrabar_exit
+
+        # Short : stop touché (day_high 19.13 >= stop 19.00) → fill = stop (19.00),
+        # jamais supérieur au high de la barre.
+        res = resolve_intrabar_exit(
+            day_high=19.13, day_low=18.37,
+            take_profit_price=17.50, trailing_stop_price=19.00,
+            initial_stop_price=None, priority="conservative", side="sell",
+        )
+        assert res.triggered
+        assert res.exit_reason == "trailing_stop"
+        assert res.exit_price == pytest.approx(19.00)
+        assert res.exit_price <= 19.13  # <= bar.high
+
+    def test_corrupted_spread_falls_back_to_model_prior(self):
+        from datetime import date
+
+        from backtesting.simulator import (
+            MAX_REALISTIC_SPREAD_BPS,
+            BacktestConfig,
+            BacktestEngine,
+        )
+
+        engine = BacktestEngine(
+            BacktestConfig(start_date=date(2025, 1, 1), end_date=date(2025, 1, 2))
+        )
+        idx = pd.DatetimeIndex([pd.Timestamp("2025-01-02")])
+
+        # Spread corrompu (QFIN réel : ask=48.50 vs prix ~18 → ~8990 bps).
+        corrupted = pd.DataFrame({"QFIN": [8990.0]}, index=idx)
+        val = engine._get_spread_bps(corrupted, idx[0], "QFIN", fallback_bps=27.0)
+        assert val == pytest.approx(27.0)  # fallback modèle
+        assert 8990.0 > MAX_REALISTIC_SPREAD_BPS
+
+        # Spread sain conservé.
+        healthy = pd.DataFrame({"QFIN": [30.0]}, index=idx)
+        assert engine._get_spread_bps(healthy, idx[0], "QFIN", fallback_bps=27.0) == pytest.approx(30.0)
+
+        # Valeur absente → fallback.
+        empty = pd.DataFrame(index=idx)
+        assert engine._get_spread_bps(empty, idx[0], "MISSING", fallback_bps=27.0) == pytest.approx(27.0)
+
+
+# ---------------------------------------------------------------------------
 # Phase C
 # ---------------------------------------------------------------------------
 

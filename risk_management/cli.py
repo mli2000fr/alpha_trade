@@ -1357,6 +1357,17 @@ def main(args: list[str] | None = None) -> None:
     resolved_account_scope = raw_account_id or "default"
 
     repo = RiskRepository()
+    # Mapping symbole → secteur GICS (fix : candidats ML-first sector="Unknown"
+    # → max_tickers_per_sector s'appliquait sur un bucket unique et rejetait ~63%
+    # des candidats à tort). Chargé une fois, réutilisé pour les builders.
+    _sector_map_for_builder: dict[str, str] = {}
+    try:
+        from modelFactory.cross_sectional import load_sector_groups as _load_gics_builder
+        for _gics_b, _members_b in _load_gics_builder(repo.engine).items():
+            for _sym_b in _members_b:
+                _sector_map_for_builder[str(_sym_b)] = _gics_b
+    except Exception:
+        _sector_map_for_builder = {}
     account_snapshot = repo.load_account_risk_snapshot(requested_account_id, trade_date)
     effective_account_id = account_snapshot.account_id if account_snapshot is not None else requested_account_id
     equity_breakdown = repo.load_account_equity_breakdown(effective_account_id, trade_date)
@@ -2025,6 +2036,7 @@ def main(args: list[str] | None = None) -> None:
             regime_transition=regime_transition,
             rotation_state=rotation_state,
             breakout_tracker=breakout_tracker,
+            sector_map=_sector_map_for_builder,
         )
         # ── Section 17 Point 8 : injecter le snapshot opérationnel ──────
         # Enrichir avec les données PIT borrow/spread/quote si disponibles
@@ -2099,6 +2111,7 @@ def main(args: list[str] | None = None) -> None:
                             breakout_tracker=breakout_tracker,
                             factor_exposures=factor_exposures_live,
                             factor_covariance=factor_cov_live,
+                            sector_map=_sector_map_for_builder,
                         )
                         if operational_snapshot is not None and hasattr(builder, "set_operational_snapshot"):
                             builder.set_operational_snapshot(operational_snapshot)

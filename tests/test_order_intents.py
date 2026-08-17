@@ -244,7 +244,9 @@ class TestBuildChildren:
         assert tp.parent_intent_id == parent.intent_id
 
     def test_trailing_stop(self) -> None:
-        cfg = ExecutionConfig(trailing_stop_pct=0.05)
+        # P17 : long_override=None pour tester le fallback trailing_stop_pct
+        # (le défaut LONG est désormais 7% via trailing_pct_long_override).
+        cfg = ExecutionConfig(trailing_stop_pct=0.05, trailing_pct_long_override=None)
         parent = build_entry_intents([_target()], cfg, "run1")[0]
         ts = build_trailing_stop_intent(parent, 100.0, 150.0, cfg)
         assert ts.side == "sell"
@@ -284,7 +286,8 @@ class TestBuildChildren:
         assert tp.limit_price == pytest.approx(170.0, abs=0.01)
 
     def test_trailing_stop_uses_stop_price_initial_when_available(self) -> None:
-        cfg = ExecutionConfig(trailing_stop_pct=0.05)
+        # P17 : long_override=None pour tester le chemin risk-based (défaut LONG = 7%).
+        cfg = ExecutionConfig(trailing_stop_pct=0.05, trailing_pct_long_override=None)
         target = _target(price=150.0)
         parent = build_entry_intents([target], cfg, "run1")[0]
         ts = build_trailing_stop_intent(parent, 100.0, 150.0, cfg, target=target)
@@ -396,7 +399,8 @@ class TestIntentToPayload:
         assert payload["time_in_force"] == "day"
 
     def test_trailing_stop_payload(self) -> None:
-        cfg = ExecutionConfig(trailing_stop_pct=0.05)
+        # P17 : long_override=None pour tester le payload risk-based (defaut LONG = 7%).
+        cfg = ExecutionConfig(trailing_stop_pct=0.05, trailing_pct_long_override=None)
         target = _target()
         parent = build_entry_intents([target], cfg, "run1")[0]
         ts = build_trailing_stop_intent(parent, 100.0, 150.0, cfg, target=target)
