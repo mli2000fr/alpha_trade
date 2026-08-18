@@ -1486,10 +1486,26 @@ def _build_parser() -> argparse.ArgumentParser:
         "--cascade-rank-mode",
         type=str,
         default="ml",
-        choices=["ml", "random", "oracle"],
+        choices=["ml", "random", "oracle", "oracle_filter", "oracle_rerank", "oracle_pool"],
         help="Ablation ML-vs-Random-vs-Oracle : 'ml' = rangs globaux réels (défaut), "
              "'random' = rangs aléatoires (placebo), 'oracle' = P(top10) du modèle Oracle TOP "
-             "(via --oracle-oos-path). Mesure la valeur du ranking après la mécanique complète.",
+             "remplace le rang global (via --oracle-oos-path). Politiques S6.1 : "
+             "'oracle_filter' = B25 sélectionne + Oracle filtre la qualité ; "
+             "'oracle_rerank' = pool B25 identique + Oracle réordonne (même exposition) ; "
+             "'oracle_pool' = pool B25 élargi (--cascade-oracle-pool-pct) + Oracle sélectionne le top P pct.",
+    )
+    run_p.add_argument(
+        "--cascade-oracle-filter-pct",
+        type=float,
+        default=None,
+        help="S6.1-B : seuil du percentile P_top pour oracle_filter (défaut 0.80). "
+             "LONG ⇔ P_top ≥ seuil ; SHORT ⇔ P_top ≤ 1-seuil.",
+    )
+    run_p.add_argument(
+        "--cascade-oracle-pool-pct",
+        type=float,
+        default=None,
+        help="S6.1-C : largeur du pool B25 pour oracle_pool (défaut 0.20).",
     )
     run_p.add_argument(
         "--cascade-rank-seed",
@@ -3054,9 +3070,9 @@ def _run_backtest(args: argparse.Namespace) -> None:
                         _best_h_flag = int(_cfg_backtest_horizon)
                     except (TypeError, ValueError):
                         pass
-            # ── Ablation Oracle (S6) : charger P(top10) depuis le parquet OOS ──
+            # ── Ablation Oracle (S6/S6.1) : charger P(top10) depuis le parquet OOS ──
             _oracle_rank_map = None
-            if getattr(args, "cascade_rank_mode", "ml") == "oracle":
+            if getattr(args, "cascade_rank_mode", "ml") in ("oracle", "oracle_filter", "oracle_rerank", "oracle_pool"):
                 import pandas as pd
                 _oos_path = getattr(args, "oracle_oos_path", None)
                 if not _oos_path:
@@ -3080,6 +3096,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 short_momentum_filter=(None if _sm_filter_flag == "none" else _sm_filter_flag),
                 short_momentum_max_pct=_sm_max_flag,
                 oracle_rank_map=_oracle_rank_map,
+                oracle_filter_pct=getattr(args, "cascade_oracle_filter_pct", None),
+                oracle_pool_pct=getattr(args, "cascade_oracle_pool_pct", None),
             )
             _cas_passed = int(preds_df.loc[preds_df["predicted_side"] != "flat"].shape[0]) if "predicted_side" in preds_df.columns else 0
             _cascade_filtered_count = _cas_before - _cas_passed

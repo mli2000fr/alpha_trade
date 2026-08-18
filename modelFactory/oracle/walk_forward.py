@@ -24,6 +24,7 @@ import pandas as pd
 from database.connection import get_sqlalchemy_engine
 from modelFactory.oracle.config import resolve_oracle_batch_id
 from modelFactory.oracle.dataset import (
+    BOTTOM_TARGET_COL,
     GUARD_COL,
     TARGET_COL,
     ablation_features,
@@ -89,8 +90,15 @@ def run_walk_forward(
     *,
     test_windows: list[tuple[str, str]],
     ablation: str = "O1",
+    target: str = "top",
 ) -> dict[str, Any]:
-    """Retrain par fold + prédictions OOS + métriques par fold et globales."""
+    """Retrain par fold + prédictions OOS + métriques par fold et globales.
+
+    ``target`` = "top" (``oracle_top10``) ou "bottom" (``oracle_bottom10``).
+    """
+    _target_col = TARGET_COL if target == "top" else BOTTOM_TARGET_COL
+    _proba_col = "proba_top" if target == "top" else "proba_bottom"
+
     folds = build_folds(dataset, test_windows)
     if not folds:
         return {"status": "error", "reason": "no_folds"}
@@ -101,9 +109,9 @@ def run_walk_forward(
 
     for fold in folds:
         X_tr = fold["train"][cols].astype(float)
-        y_tr = fold["train"][TARGET_COL].astype(int)
+        y_tr = fold["train"][_target_col].astype(int)
         X_te = fold["test"][cols].astype(float)
-        y_te = fold["test"][TARGET_COL].astype(int)
+        y_te = fold["test"][_target_col].astype(int)
         if y_tr.nunique() < 2 or y_te.nunique() < 2:
             LOGGER.warning("fold %s: target constant — skipped", fold["t_start"])
             continue
@@ -111,13 +119,13 @@ def run_walk_forward(
         model = train_lightgbm(X_tr, y_tr, X_te, y_te)
         proba = model.predict(X_te)
 
-        oos = fold["test"][["date", "symbol", TARGET_COL, "future_return", "global_rank_20"]].copy()
-        oos["proba_top"] = proba
+        oos = fold["test"][["date", "symbol", _target_col, "future_return", "global_rank_20"]].copy()
+        oos[_proba_col] = proba
         oos["fold_start"] = fold["t_start"]
         oos_parts.append(oos)
 
-        pr = precision_recall_at_top_pct(oos, "proba_top")
-        baseline_pr = precision_recall_at_top_pct(oos, "global_rank_20")
+        pr = precision_recall_at_top_pct(oos, _proba_col, target_col=_target_col)
+        baseline_pr = precision_recall_at_top_pct(oos, "global_rank_20", target_col=_target_col)
         per_fold.append({
             "fold_start": fold["t_start"],
             "n_train": int(len(fold["train"])),
@@ -126,15 +134,15 @@ def run_walk_forward(
             "recall_at_10pct": pr["recall"],
             "baseline_precision_at_10pct": baseline_pr["precision"],
             "auc": roc_auc(y_te.to_numpy(), proba),
-            "decile_monotonicity": decile_monotonicity(oos, "proba_top")[0],
+            "decile_monotonicity": decile_monotonicity(oos, _proba_col)[0],
         })
 
     if not oos_parts:
         return {"status": "error", "reason": "no_oos"}
 
     oos = pd.concat(oos_parts, ignore_index=True)
-    pr_overall = precision_recall_at_top_pct(oos, "proba_top")
-    baseline_overall = precision_recall_at_top_pct(oos, "global_rank_20")
+    pr_overall = precision_recall_at_top_pct(oos, _proba_col, target_col=_target_col)
+    baseline_overall = precision_recall_at_top_pct(oos, "global_rank_20", target_col=_target_col)
 
     # Stabilité : fraction des folds où le modèle bat la baseline global_rank_20.
     n_folds = len(per_fold)
@@ -148,14 +156,15 @@ def run_walk_forward(
     return {
         "status": "completed",
         "ablation": ablation,
+        "target": target,
         "n_folds": n_folds,
         "folds": per_fold,
         "overall": {
             "precision_at_10pct": pr_overall["precision"],
             "recall_at_10pct": pr_overall["recall"],
             "baseline_precision_at_10pct": baseline_overall["precision"],
-            "auc": roc_auc(oos[TARGET_COL].to_numpy(), oos["proba_top"].to_numpy()),
-            "decile_monotonicity": decile_monotonicity(oos, "proba_top")[0],
+            "auc": roc_auc(oos[_target_col].to_numpy(), oos[_proba_col].to_numpy()),
+            "decile_monotonicity": decile_monotonicity(oos, _proba_col)[0],
         },
         "fold_stability_pct": 100.0 * n_beat_baseline / n_folds if n_folds else None,
         "oos": oos,
@@ -177,7 +186,7 @@ def format_report(result: dict[str, Any]) -> str:
     """Rapport lisible."""
     if result.get("status") != "completed":
         return f"Walk-forward: {result}"
-    lines = [f"=== WALK-FORWARD CAUSAL ({result['ablation']}) — {result['n_folds']} folds ==="]
+    lines = [f"=== WALK-FORWARD CAUSAL ({result['ablation']}, target={result.get('target','top')}) — {result['n_folds']} folds ==="]
     for f in result["folds"]:
         lines.append(
             f"  {f['fold_start']}: train={f['n_train']} test={f['n_test']} "
@@ -199,6 +208,8 @@ def main() -> None:
     parser.add_argument("--batch-id", default=None)
     parser.add_argument("--horizon", type=int, default=20)
     parser.add_argument("--ablation", choices=["O0", "O1", "O2"], default="O1")
+    parser.add_argument("--target", choices=["top", "bottom"], default="top",
+                        help="top = oracle_top10 ; bottom = oracle_bottom10 (Oracle BOTTOM, Exp B).")
     parser.add_argument("--start-date", default="2020-01-01")
     parser.add_argument("--end-date", default="2026-05-29")
     parser.add_argument("--symbols", type=int, default=None, help="Limite le nb de symboles (smoke test).")
@@ -221,7 +232,12 @@ def main() -> None:
     if dataset.empty:
         raise SystemExit("Dataset vide.")
 
-    result = run_walk_forward(dataset, feature_columns, test_windows=DEFAULT_TEST_WINDOWS, ablation=args.ablation)
+    result = run_walk_forward(
+        dataset, feature_columns,
+        test_windows=DEFAULT_TEST_WINDOWS,
+        ablation=args.ablation,
+        target=args.target,
+    )
     if result.get("status") == "completed":
         run_id = f"oracle-wf-{datetime.now():%Y%m%d%H%M%S}"
         path = persist_oos(result["oos"], run_id)

@@ -52,6 +52,7 @@
 31. [Critère de réussite](#31-critère-de-réussite)
 32. [Architecture cible finale](#32-architecture-cible-finale)
 33. [Baselines « sans oracle »](#33-baselines-sans-oracle)
+34. [Bilan des expériences testées (S6 → S7) — toutes NO-GO](#34-bilan-des-expériences-testées-s6--s7--toutes-no-go)
 
 ---
 
@@ -712,3 +713,195 @@ Note:
 fillabck label : python.exe -u -m modelFactory.oracle.build_labels --batch-id model-factory-20260811223551-ef2cd0
 
 S6 Le score cascade = rank × proba per-symbol. En mode oracle, rank = P_top et proba per-symbol = global_rank (run synthétique) → le score final est P_top × global_rank (= « variante 1 » de S5), pas P_top pur. C'est l'architecture B de la spec (§23), cohérente. S5 avait montré que P_top pur (23.2 %) devance légèrement P_top × rank (22.2 %) — nuance à garder en tête dans l'interprétation.
+
+---
+
+# 34. Bilan des expériences testées (S6 → S7) — toutes NO-GO
+
+> **Statut** : investigation **clôturée** (2026-08-18). L'Oracle Layer ne peut pas
+> améliorer la sélection B25 à partir des données disponibles. **B25 reste intact**
+> et est le champion de production. Cette section documente, pour chaque expérience
+> testée, l'hypothèse, le résultat, la raison de l'échec et la **preuve** chiffrée.
+
+## 34.1 Tableau de synthèse
+
+| # | Expérience | Hypothèse | Résultat | Verdict | Preuve |
+|---|---|---|---|---|---|
+| S6 | Oracle TOP (ranking) | P(top10) remplace le rang B25 | capture 22.5 % vs 18.5 % (ML ✅) mais trading 27.81 % vs 29.52 % | **NO-GO** | §34.2 |
+| S6.1-B | Oracle = filtre τ=0.80 | B25 sélectionne, Oracle filtre | 26.61 %, PF 1.42, 303 trades | **NO-GO** | §34.3 |
+| S6.1-C | pool B25 20 % → Oracle top 10 % | reranking local | 25.60 %, PF 1.38 | **NO-GO** | §34.3 |
+| S6.1-D | rerank pool B25 identique | même exposition | **no-op** (score de cascade non consommé) | **NO-GO** | §34.3 |
+| S6.1bis | Oracle BOTTOM | P(bottom10) sépare les extrêmes | corr(Ptop,Pbottom)=0.83, déciles identiques | **NO-GO** | §34.4 |
+| S6.2 | Hard negatives 2/4/8× | sur-pondérer les faux top→bottom | corr 0.83→0.71 mais capture 21.4→16.7 %, contam ~inchangée | **NO-GO** | §34.5 |
+| S6.4 | Error severity (SEV/REG) | cible distance au top | SEV sans effet ; REG capture 11.7 % ≈ aléatoire | **NO-GO** | §34.6 |
+| S6.5 | Features directionnelles signées | momentum/trend/RS/volume signé | corr_ret ≈ 0 pour les 22 features | **NO-GO** | §34.7 |
+| S6.6-A | Fondamentaux + sentiment | surprise/growth/sentiment | corr_ret ≈ 0 ; AUC détection ≈ 0.5 | **NO-GO** | §34.8 |
+| S6.6-B | Catastrophic TOP Detector | valorisation → faux TOP | AUC 0.49–0.55 ; pe_ratio « AUC 0.70 » = faux positif | **NO-GO** | §34.9 |
+| S6.6-C | Validation confound-free PE | PE vs random même univers | pe_ratio dispo sur 1 % des candidats ; PE = bruit | **NO-GO** | §34.10 |
+| S7 | Per-symbol directional veto | hétérogénéité des 400 symboles | acc champion val 0.59 / WF 0.50 ; persistance corr ≈ 0 | **NO-GO** | §34.11 |
+
+## 34.2 S6 — Oracle TOP (rank_mode=oracle)
+
+- **Hypothèse** : P(vrai top10 H20) comme 2ᵉ signal remplace le rang B25 dans la cascade.
+- **Résultat ML (OOS WF 2022-2026)** :
+  - Niveau 1 — TOP capture : Oracle **22.5 %** vs B25 `global_rank_20` **18.5 %** (aléatoire 10 %) ✅
+  - Niveau 2 — monotonicité déciles : Oracle **0.868** vs B25 0.832 ✅
+  - Niveau 3 — backtest 2025-2026 : **27.81 %** (Sharpe 1.82, PF 1.44, win 43.4 %, 316 trades) vs B25 **29.52 %** (2.08, 1.52, 48.9 %, 237 trades) ❌
+- **Raison** : l'Oracle **élargit** la sélection (316 vs 237 trades) avec des trades ajoutés de mauvaise qualité (PF 1.16, win 39 %, dont 50 shorts → −$23). Le score `P_top × global_rank` dilue l'edge B25.
+- **Preuve** (décomposition P&L par groupe, `exit_closed`) :
+
+| Groupe | n | win % | PnL | PF |
+|---|---|---|---|---|
+| B25 ∩ Oracle (accord) | 75 | 57.3 % | +$741 | **3.22** |
+| B25 rejeté par Oracle | 162 | 45.1 % | +$424 | 1.22 |
+| Oracle ajouté | 241 | 39.0 % | +$334 | 1.16 |
+
+## 34.3 S6.1 — Variantes de combinaison (B / C / D)
+
+Backtests 2025-2026, B25 intact, même moteur :
+
+| Variante | Rendement | Sharpe | PF | Win | Trades | DD |
+|---|---|---|---|---|---|---|
+| A — B25 (baseline) | **29.52 %** | **2.08** | **1.52** | 48.9 % | 237 | 10.67 % |
+| S6 — oracle ranking | 27.81 % | 1.82 | 1.44 | 43.4 % | 316 | 5.57 % |
+| B — filter τ=0.80 | 26.61 % | 1.77 | 1.42 | 42.2 % | 303 | 8.70 % |
+| C — pool 20 %→10 % | 25.60 % | 1.65 | 1.38 | 43.3 % | 323 | 5.40 % |
+| D — rerank pool identique | 29.52 % (no-op) | 2.08 | 1.52 | 48.9 % | 237 | 10.67 % |
+
+- **B (filtre)** : retirer des candidats B25 libère la capacité (`max_positions=8`) qui est
+  **re-remplie par de moins bons titres** → 303 trades, turnover 30.8×, win 42 %.
+- **C (pool)** : même mécanisme, 323 trades.
+- **D (rerank)** : **no-op** — la cascade ne fait que **filtrer** ; `cascade_score` n'est
+  jamais consommé en aval. L'ordre d'entrée est recalculé par `build_rankings()` qui trie
+  uniquement par `p_side` B25 (le « ML est la seule autorité »). → D/E exigeraient d'injecter
+  le score Oracle dans `build_rankings()`, pas dans la cascade.
+
+## 34.4 Oracle BOTTOM (P(bottom10))
+
+- **Résultat** : capture BOTTOM 20.1 % vs baseline 15.0 %, mais **monotonicité +0.891**
+  (positive alors qu'un modèle bottom devrait être négatif) et **corr(Ptop, Pbottom) = 0.83**
+  (rang intra-date).
+- **Déciles de rendement identiques** entre P(top) et P(bottom) : D10 = +2.16 % (top) et
+  +1.82 % (bottom) → **les deux modèles apprennent la même chose**.
+- **Raison** : le modèle apprend « mouvement extrême » (amplitude), pas le signe. Les features
+  ne permettent pas de distinguer top et bottom.
+
+## 34.5 S6.2 — Hard negatives (conditionnels, poids 2/4/8×)
+
+- Hard negatives = {vrai bottom10} ∩ {P(top) in-sample top 10 %}, sur-pondérés au train.
+- Résultat (valid 2025-2026) :
+
+| Variante | corr(Ptop,Pbot) | capture TOP | contamination | FP→bottom |
+|---|---|---|---|---|
+| catboost_H0 | 0.906 | 21.7 % | 16.6 % | 20.9 % |
+| lightgbm_H0 | 0.825 | 21.4 % | 17.1 % | 21.5 % |
+| lightgbm_HN8× | 0.713 | 16.7 % | 16.0 % | 19.0 % |
+
+- **Raison** : les hard negatives **décorellent** (0.83→0.71) mais au prix de −5 pts de
+  capture TOP pour ~1 pt de contamination en moins → **mauvais compromis**. La re-pondération
+  ne suffit pas : le goulot est en amont (features).
+
+## 34.6 S6.4 — Error severity (cible distance au top)
+
+- **SEV** (binaire pondéré par `(0.90−r)²`) : quasi aucun effet (contamination <10 % : 16.4→16.1).
+- **REG** (régression sur `oracle_pct_rank`) : capture 21.7→**11.7 %** (≈ aléatoire),
+  `|corr|` magnitude → 0.00 → le modèle régressé ne trouve aucune information.
+- **Raison** : l'objectif n'est PAS le problème ; les features n'ont aucune direction.
+
+## 34.7 S6.5 — Features directionnelles signées (22 features)
+
+- ret_1..120j, close/SMA−1, pente SMA, croisements, force relative vs SPY, volume directionnel,
+  breakout/breakdown.
+- **Résultat** : `corr_ret ≈ 0` pour TOUTES (|corr| < 0.02) ; ex. `sma50_above_sma200` = +0.010,
+  `ret_10d` = −0.020. Le meilleur signal reste l'**amplitude** (`corr_abs ≈ 0.28` pour la volatilité).
+- **Raison** : le momentum/tendance/RS ne prédit pas le rendement H20 cross-sectionnel.
+
+## 34.8 S6.6-A — Fondamentaux + sentiment
+
+- `eps_surprise` / `rev_surprise` (PIT), `eps_growth_yoy`, `forward_pe`, `peg_ratio`, sentiment.
+- **Résultat** : `corr_ret ≈ 0` partout ; AUC de détection des catastrophes ≈ 0.5
+  (`eps_surprise` 0.49, sentiment 0.50). Seuls `pe_ratio`/`ev_to_ebitda` semblent utiles (voir 34.10).
+
+## 34.9 S6.6-B — Catastrophic TOP Detector (WF)
+
+- Cible `cat10` (Oracle < 10 %) / `cat20` (< 20 %) parmi les B25 TOP, WF 5 folds.
+- **Résultat** : CatBoost AUC 0.537–0.553, LightGBM 0.486–0.546 (cat10 : 0.55 ; cat20 : ~0.5).
+  Rejeter 30 % ne réduit cat10 que de 14.0 → 12.7 %.
+- **Raison** : les features de valorisation/croissance **diluent** le peu de signal ; le modèle
+  ML est pire que `pe_ratio` seul (AUC 0.70) — ce qui s'est révélé être un artefact (34.10).
+
+## 34.10 S6.6-C — Validation confound-free de PE (décisif)
+
+- Sur le **même sous-ensemble** (candidats B25 TOP avec `pe_ratio`) : seulement **241 / 23 215
+  candidats** (≈ **1 %**). L'« AUC 0.70 » de PE était un **artefact d'éparsité**.
+- PE vs RANDOM sur le même univers : ratio catastrophes évitées/TOP sacrifiés **dans le bruit**
+  (PE 0.86–1.29 vs random 0.59–0.67).
+- **Cause** : `stock_fundamentals_daily` éparse (~47 lignes/symbole/10 ans) ; sentiment riche
+  mais AUC 0.50 ; surprise SEC AUC 0.49.
+- **Leçon** : un AUC calculé sur un sous-ensemble éparse est non représentatif. Validation
+  « même sous-ensemble + baseline random » obligatoire avant de conclure.
+
+## 34.11 S7 — Per-symbol directional veto
+
+- **Hypothèse** : certains des 393 modèles per-symbol ont une vraie capacité directionnelle.
+- **Résultat** (champion par symbole, batch f62322) :
+
+| Split | Acc directionnelle moy. | > 0.52 | > 0.60 |
+|---|---|---|---|
+| val | 0.593 | 90 % | 39 % |
+| test | 0.498 | 39 % | 8 % |
+| **WF (OOS)** | **0.504** | **35 %** | **6 %** |
+
+- **Persistance ≈ nulle** : corr(val→test) = −0.05, corr(val→WF) = 0.07, corr(test→WF) = 0.10.
+- **Raison** : **multiple testing** (400 symboles × 3 modèles × 5 horizons ≈ 6 000 combinaisons)
+  → des « champions » excellents sur validation par hasard, qui ne généralisent pas.
+- **Conséquence** : S7.3 (génération des prédictions per-symbol) non lancé — pré-requis absent.
+
+## 34.12 Diagnostic des erreurs (FP/FN) — pourquoi l'Oracle se trompe
+
+- **Faux positifs** (prédit top, pas vrai top) : distribution **bimodale** — ~22 % dans le
+  **vrai bottom 0–10 %** + ~13 % quasi-top (80–90 %). Le modèle confond les futurs losers
+  avec les futurs gagnants.
+- **Faux négatifs** (vrai top raté) : concentrés en 70–90 % du rang prédit (20 %) → quasi-ratés
+  propres. L'erreur est **asymétrique** : le modèle détecte l'**amplitude**, pas la **direction**.
+
+## 34.13 Conclusion finale
+
+> **Les données disponibles (techniques, fondamentales, sentiment, per-symbol) ne contiennent
+> pas assez d'information directionnelle H20 cross-sectionnelle.** Aucune transformation
+> d'objectif, d'algo (LightGBM/CatBoost), de pondération ou d'architecture ne peut créer une
+> direction qui n'existe pas dans les features.
+
+- **B25 reste le champion** : 29.52 %, Sharpe 2.08, PF 1.52, 237 trades, DD 10.67 %.
+- **L'edge de B25 vient du moteur risque/exécution, pas de la sélection** : décomposition du
+  P&L → tout le profit vient des **take_profit** (+$3 212, 32 % des sorties) ; les
+  **trailing_stop** (68 %) sont un drag (−$2 058). L'asymétrie TP 12 % / trailing 7 % est le
+  vrai moteur (voir §34.14).
+- Pour un jour : **nouvelles données externes** (consensus analyste réel, révisions, flux
+  d'initiés) — pas les données actuelles.
+
+## 34.14 Point 8 — Décomposition du P&L de B25 (edge = exécution)
+
+| Sortie | n | Win | PnL | Retour moyen |
+|---|---|---|---|---|
+| take_profit | 76 | 100 % | **+$3 212** | +12.5 % |
+| trailing_stop | 160 | 24.4 % | **−$2 058** | −3.5 % |
+| time_stop | 1 | 100 % | +$12 | +3.5 % |
+
+- Edge LONG (PF 1.85, +$765) > SHORT (PF 1.29, +$400).
+- Durée 5–20 j = le cœur du profit (PF ~1.8) ; 0–5 j = perdant (PF 0.70).
+- **Leviers** (sans toucher B25) : taux de capture du TP (`tp-atr-multiple`, `tp-max-pct`),
+  gestion du trailing (activation/largeur), durée.
+
+---
+
+## Fichiers / modules des expériences (trace)
+
+- `modelFactory/oracle/` : `config.py`, `leakage.py`, `build_labels.py`, `audit.py`,
+  `dataset.py`, `train.py` (LightGBM + CatBoost), `walk_forward.py`, `combine.py`,
+  `hard_negatives.py`, `feature_diagnostic.py`, `directional_features.py`,
+  `fundamental_diagnostic.py`, `catastrophic_detector.py`, `confound_validation.py`.
+- `modelFactory/predictor.py` : modes cascade `oracle` / `oracle_filter` / `oracle_rerank` / `oracle_pool`.
+- Artifacts : `artifacts/models/oracle/*_report.json`.
+- Mémoire projet : `/memories/repo/oracle_s6_backtest_2026-08-18.md`,
+  `/memories/repo/oracle_s62_hard_negatives_2026-08-18.md`.

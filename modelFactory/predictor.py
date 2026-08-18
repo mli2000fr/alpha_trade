@@ -2573,6 +2573,8 @@ def cascade_select(
     rank_mode: str = "ml",
     rank_seed: int = 42,
     oracle_rank_map: dict[str, dict[str, float]] | None = None,
+    oracle_filter_pct: float | None = None,
+    oracle_pool_pct: float | None = None,
 ) -> list[tuple[str, str, float]]:
     """Filtre cascade : Global Rank → Per-Symbol → trades ordonnancés.
 
@@ -2628,8 +2630,14 @@ def cascade_select(
         LOGGER.warning("cascade_select: no rank column found in %s", list(ranks_df.columns))
         return []
 
-    # ── Ablation Oracle (S6) : le rang global est remplacé par P(top10) ──
-    if rank_mode == "oracle":
+    # ── Ablation Oracle (S6/S6.1) : politiques d'utilisation du second signal ──
+    #   oracle        = P_top REMPLACE le rang global (test S6 initial)
+    #   oracle_filter = B25 sélectionne, Oracle FILTRE la qualité        [S6.1-B]
+    #   oracle_rerank = pool B25 identique, Oracle réordonne (même exposition) [S6.1-D]
+    #   oracle_pool   = pool B25 élargi (top N%), Oracle sélectionne le top P%  [S6.1-C]
+    _oracle_pct_map: dict[str, float] = {}
+    _oracle_modes = ("oracle", "oracle_filter", "oracle_rerank", "oracle_pool")
+    if rank_mode in _oracle_modes:
         if not oracle_rank_map or trade_date not in oracle_rank_map:
             LOGGER.warning("cascade_select: no oracle ranks for %s", trade_date)
             return []
@@ -2637,12 +2645,21 @@ def cascade_select(
         _oracle_symbols = list(_oracle_ranks.keys())
         _oracle_values = np.asarray([float(_oracle_ranks[s]) for s in _oracle_symbols], dtype=float)
         # P(top10) est une probabilité, PAS un percentile. On la transforme en
-        # rang percentile intra-date (1.0 = meilleur) pour que le seuil
-        # `rank > 1 - top_pct` de la cascade sélectionne bien le top N% par P_top.
-        _oracle_pct = pd.Series(_oracle_values).rank(pct=True).to_numpy()
-        ranks_df = pd.DataFrame({"symbol": _oracle_symbols, "proba_top": _oracle_pct})
-        _rank_col = "proba_top"
-        LOGGER.info("cascade_select: ORACLE ranks (%d symbols)", len(ranks_df))
+        # rang percentile intra-date (1.0 = meilleur) pour que les seuils de la
+        # cascade (`> 1 - top_pct`) sélectionnent bien le top N% par P_top.
+        _oracle_pct = pd.Series(_oracle_values).rank(pct=True)
+        _oracle_pct_map = dict(zip(_oracle_symbols, _oracle_pct.to_numpy()))
+        if rank_mode == "oracle":
+            ranks_df = pd.DataFrame({"symbol": _oracle_symbols, "proba_top": _oracle_pct.to_numpy()})
+            _rank_col = "proba_top"
+            LOGGER.info("cascade_select: ORACLE ranks (%d symbols)", len(ranks_df))
+        else:
+            ranks_df = ranks_df.copy()
+            ranks_df["_oracle_pct"] = ranks_df["symbol"].map(_oracle_pct_map)
+            LOGGER.info(
+                "cascade_select: ORACLE %s (%d symbols, %d avec P_top)",
+                rank_mode, len(ranks_df), ranks_df["_oracle_pct"].notna().sum(),
+            )
 
     # ── Ablation ML-vs-Random (2026-08-17) : rangs globaux aléatoires ──
     # Randomise UNIQUEMENT le ranking global (top/bottom band). Les prédictions
@@ -2672,6 +2689,15 @@ def cascade_select(
 
     candidates: list[tuple[str, str, float]] = []
 
+    # ── Politiques Oracle S6.1 ──
+    _mode_oracle_filter = rank_mode == "oracle_filter"
+    _mode_oracle_rerank = rank_mode == "oracle_rerank"
+    _mode_oracle_pool = rank_mode == "oracle_pool"
+    _oracle_filter_pct = oracle_filter_pct if oracle_filter_pct is not None else 0.80
+    _pool_top_pct = _top_pct
+    if _mode_oracle_pool:
+        _pool_top_pct = oracle_pool_pct if oracle_pool_pct is not None else 0.20
+
     for _, row in ranks_df.iterrows():
         symbol = str(row["symbol"])
         rank = float(row[_rank_col]) if pd.notna(row[_rank_col]) else None
@@ -2679,9 +2705,17 @@ def cascade_select(
         if rank is None:
             continue
 
-        # Filtre top/bottom N%
-        is_top = rank > (1.0 - _top_pct)
-        is_bottom = rank < _top_pct
+        _oracle_pct = _oracle_pct_map.get(symbol)
+
+        # Filtre top/bottom N% (pool B25 élargi si oracle_pool)
+        if _mode_oracle_pool:
+            _in_top_pool = rank > (1.0 - _pool_top_pct)
+            _in_bottom_pool = rank < _pool_top_pct
+            is_top = _in_top_pool and _oracle_pct is not None and _oracle_pct > (1.0 - _top_pct)
+            is_bottom = _in_bottom_pool and _oracle_pct is not None and _oracle_pct < _top_pct
+        else:
+            is_top = rank > (1.0 - _top_pct)
+            is_bottom = rank < _top_pct
 
         if not (is_top or is_bottom):
             continue
@@ -2692,7 +2726,13 @@ def cascade_select(
             continue
 
         if is_top and pred.long_prob > _min_prob:
-            rank_dir = rank  # déjà proche de 1.0
+            # Oracle comme FILTRE de qualité (S6.1-B) : ne garder que P_top élevé.
+            if _mode_oracle_filter and (_oracle_pct is None or _oracle_pct < _oracle_filter_pct):
+                continue
+            if _mode_oracle_rerank or _mode_oracle_pool:
+                rank_dir = _oracle_pct
+            else:
+                rank_dir = rank  # déjà proche de 1.0
             score = rank_dir * pred.long_prob
             candidates.append(("LONG", symbol, score))
 
@@ -2716,7 +2756,13 @@ def cascade_select(
                     _m20 is not None and _m60 is not None and _m20 < 0.0 and _m60 < 0.0
                 ):
                     continue
-            rank_dir = 1.0 - rank  # inverse : 0.05 → 0.95
+            # Oracle comme FILTRE de qualité (S6.1-B) : short ⇔ P_top FAIBLE.
+            if _mode_oracle_filter and (_oracle_pct is None or _oracle_pct > (1.0 - _oracle_filter_pct)):
+                continue
+            if _mode_oracle_rerank or _mode_oracle_pool:
+                rank_dir = 1.0 - _oracle_pct
+            else:
+                rank_dir = 1.0 - rank  # inverse : 0.05 → 0.95
             score = rank_dir * pred.short_prob
             candidates.append(("SHORT", symbol, score))
 
@@ -2743,6 +2789,8 @@ def apply_cascade_to_predictions(
     rank_mode: str = "ml",
     rank_seed: int = 42,
     oracle_rank_map: dict[str, dict[str, float]] | None = None,
+    oracle_filter_pct: float | None = None,
+    oracle_pool_pct: float | None = None,
 ) -> pd.DataFrame:
     """Filtre les prédictions per-symbol via la cascade Global Rank.
 
@@ -2849,6 +2897,8 @@ def apply_cascade_to_predictions(
             rank_mode=rank_mode,
             rank_seed=rank_seed,
             oracle_rank_map=oracle_rank_map,
+            oracle_filter_pct=oracle_filter_pct,
+            oracle_pool_pct=oracle_pool_pct,
         )
 
         # Symbols retenus par la cascade

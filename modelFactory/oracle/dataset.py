@@ -27,6 +27,7 @@ from modelFactory.global_ranking import _XS_RANK_SOURCE_FEATURES, _xs_rank_colum
 
 # ── Colonnes de target / garde ──
 TARGET_COL = "oracle_top10"
+BOTTOM_TARGET_COL = "oracle_bottom10"
 GUARD_COL = "oracle_available_date"
 GLOBAL_RANK_COL = "global_rank_20"
 
@@ -115,7 +116,7 @@ def load_global_rank_feature(engine: Any, batch_id: str) -> pd.DataFrame:
 def load_oracle_targets(engine: Any, batch_id: str, horizon: int = 20) -> pd.DataFrame:
     """Relit les targets Oracle depuis ``global_oracle_labels``."""
     query = text(
-        "SELECT prediction_date, symbol, oracle_top10, oracle_pct_rank, oracle_decile, "
+        "SELECT prediction_date, symbol, oracle_top10, oracle_bottom10, oracle_pct_rank, oracle_decile, "
         "future_return, oracle_available_date FROM global_oracle_labels "
         "WHERE batch_id = :bid AND horizon = :h"
     )

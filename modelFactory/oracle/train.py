@@ -70,18 +70,22 @@ def precision_recall_at_top_pct(
     score_col: str,
     pct: float = 0.10,
     min_universe: int = 20,
+    target_col: str = TARGET_COL,
 ) -> dict[str, float | None]:
-    """Précision/rappel cross-sectionnel du TOP pct (par date, moyenné)."""
+    """Précision/rappel cross-sectionnel du TOP pct (par date, moyenné).
+
+    ``target_col`` est la cible binaire (``oracle_top10`` ou ``oracle_bottom10``).
+    """
     rows: list[dict[str, float]] = []
     for _, g in df.groupby("date"):
-        g = g.dropna(subset=[score_col, TARGET_COL])
+        g = g.dropna(subset=[score_col, target_col])
         if len(g) < min_universe:
             continue
         n_top = max(1, int(np.ceil(len(g) * pct)))
         top = g.nlargest(n_top, score_col)
-        prec = float(top[TARGET_COL].mean())
-        n_actual = int(g[TARGET_COL].sum())
-        recall = float(top[TARGET_COL].sum() / n_actual) if n_actual > 0 else None
+        prec = float(top[target_col].mean())
+        n_actual = int(g[target_col].sum())
+        recall = float(top[target_col].sum() / n_actual) if n_actual > 0 else None
         rows.append({"precision": prec, "recall": recall})
     if not rows:
         return {"precision": None, "recall": None, "n_dates": 0}
@@ -114,8 +118,13 @@ def train_lightgbm(
     X_valid: pd.DataFrame,
     y_valid: pd.Series,
     num_boost_round: int = 400,
+    sample_weight: np.ndarray | None = None,
 ) -> Any:
-    """Classifieur binaire LightGBM avec early stopping (validation)."""
+    """Classifieur binaire LightGBM avec early stopping (validation).
+
+    ``sample_weight`` (optionnel) pondère les exemples d'entraînement
+    (hard negatives S6.2).
+    """
     import lightgbm as lgb
 
     scale_pos_weight = float((y_train == 0).sum() / max(1, (y_train == 1).sum()))
@@ -132,6 +141,83 @@ def train_lightgbm(
         "scale_pos_weight": scale_pos_weight,
         "seed": 42,
     }
+    dtrain = lgb.Dataset(X_train, label=y_train, weight=sample_weight)
+    dvalid = lgb.Dataset(X_valid, label=y_valid, reference=dtrain)
+    model = lgb.train(
+        params,
+        dtrain,
+        num_boost_round=num_boost_round,
+        valid_sets=[dvalid],
+        callbacks=[lgb.early_stopping(20, verbose=False)],
+    )
+    return model
+
+
+def train_catboost(
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    X_valid: pd.DataFrame,
+    y_valid: pd.Series,
+    num_boost_round: int = 300,
+    sample_weight: np.ndarray | None = None,
+) -> Any:
+    """Classifieur binaire CatBoost avec early stopping (validation).
+
+    ``sample_weight`` (optionnel) pondère les exemples d'entraînement
+    (hard negatives S6.2). ``allow_writing_files=False`` évite ``catboost_info/``.
+    """
+    from catboost import CatBoostClassifier
+
+    scale_pos_weight = float((y_train == 0).sum() / max(1, (y_train == 1).sum()))
+    model = CatBoostClassifier(
+        iterations=num_boost_round,
+        learning_rate=0.05,
+        depth=6,
+        loss_function="Logloss",
+        eval_metric="AUC",
+        scale_pos_weight=scale_pos_weight,
+        early_stopping_rounds=20,
+        random_seed=42,
+        verbose=False,
+        allow_writing_files=False,
+    )
+    model.fit(
+        X_train,
+        y_train,
+        eval_set=(X_valid, y_valid),
+        sample_weight=sample_weight,
+        use_best_model=True,
+    )
+    return model
+
+
+def _proba_catboost(model: Any, X: pd.DataFrame) -> np.ndarray:
+    """Probabilité de la classe 1 (CatBoost)."""
+    return model.predict_proba(X)[:, 1]
+
+
+def train_lightgbm_regressor(
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    X_valid: pd.DataFrame,
+    y_valid: pd.Series,
+    num_boost_round: int = 400,
+) -> Any:
+    """Régresseur LightGBM (cible continue, ex. ``oracle_pct_rank``)."""
+    import lightgbm as lgb
+
+    params = {
+        "objective": "regression",
+        "metric": "rmse",
+        "verbosity": -1,
+        "learning_rate": 0.05,
+        "num_leaves": 31,
+        "min_data_in_leaf": 50,
+        "feature_fraction": 0.8,
+        "bagging_fraction": 0.8,
+        "bagging_freq": 1,
+        "seed": 42,
+    }
     dtrain = lgb.Dataset(X_train, label=y_train)
     dvalid = lgb.Dataset(X_valid, label=y_valid, reference=dtrain)
     model = lgb.train(
@@ -140,6 +226,36 @@ def train_lightgbm(
         num_boost_round=num_boost_round,
         valid_sets=[dvalid],
         callbacks=[lgb.early_stopping(20, verbose=False)],
+    )
+    return model
+
+
+def train_catboost_regressor(
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    X_valid: pd.DataFrame,
+    y_valid: pd.Series,
+    num_boost_round: int = 300,
+) -> Any:
+    """Régresseur CatBoost (cible continue, ex. ``oracle_pct_rank``)."""
+    from catboost import CatBoostRegressor
+
+    model = CatBoostRegressor(
+        iterations=num_boost_round,
+        learning_rate=0.05,
+        depth=6,
+        loss_function="RMSE",
+        eval_metric="RMSE",
+        early_stopping_rounds=20,
+        random_seed=42,
+        verbose=False,
+        allow_writing_files=False,
+    )
+    model.fit(
+        X_train,
+        y_train,
+        eval_set=(X_valid, y_valid),
+        use_best_model=True,
     )
     return model
 

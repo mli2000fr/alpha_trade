@@ -115,7 +115,8 @@ class TestCascadeSelect:
         assert len(result) == 1
         assert result[0][0] == "LONG"
         assert result[0][1] == "AAPL"
-        assert result[0][2] == pytest.approx(0.935 * 0.70, rel=0.01)
+        # _rank_col = global_rank_5 (0.92) car global_rank_10 est None dans le helper.
+        assert result[0][2] == pytest.approx(0.92 * 0.70, rel=0.01)
 
     def test_bottom_short_passes(self, monkeypatch):
         """Un symbole bottom rank + bonne proba short → retenu."""
@@ -129,8 +130,8 @@ class TestCascadeSelect:
         assert len(result) == 1
         assert result[0][0] == "SHORT"
         assert result[0][1] == "GME"
-        # rank_dir = 1 - 0.04 = 0.96, score = 0.96 * 0.80 ≈ 0.768
-        assert result[0][2] == pytest.approx(0.96 * 0.80, rel=0.01)
+        # rank_dir = 1 - 0.05 = 0.95, score = 0.95 * 0.80 = 0.76
+        assert result[0][2] == pytest.approx(0.95 * 0.80, rel=0.01)
 
     def test_oracle_mode_rank_normalizes_ptop(self, monkeypatch):
         """rank_mode='oracle' normalise P(top10) en percentile intra-date.
@@ -161,6 +162,60 @@ class TestCascadeSelect:
                 result = cascade_select("2026-01-15", "batch-x", preds, rank_mode="oracle", oracle_rank_map=None)
         assert result == []
 
+    # ── S6.1 : politiques Oracle (filter / rerank / pool) ──
+
+    def _oracle_scenario(self):
+        """10 symboles, B25 rank=0.95 (top band), P_top linéaire → pct 0.1..1.0."""
+        symbols = [f"S{i:02d}" for i in range(10)]
+        probas = [0.01 + 0.01 * i for i in range(10)]  # 0.01..0.10
+        ranks = _make_ranks_df([(s, 0.90, 0.95) for s in symbols])
+        preds = {s: CascadePrediction(symbol=s, long_prob=0.70, short_prob=0.05) for s in symbols}
+        oracle_map = {"2026-01-15": dict(zip(symbols, probas))}
+        return symbols, ranks, preds, oracle_map
+
+    def test_oracle_filter_keeps_high_ptop_only(self, monkeypatch):
+        """oracle_filter : B25 sélectionne, Oracle ne garde que P_top ≥ seuil (0.80)."""
+        symbols, ranks, preds, oracle_map = self._oracle_scenario()
+        with patch("modelFactory.predictor.load_cascade_config", return_value={"top_pct": 0.20, "min_prob": 0.55}):
+            with patch("modelFactory.predictor.load_global_ranks_from_db", return_value=ranks):
+                result = cascade_select(
+                    "2026-01-15", "batch-x", preds,
+                    rank_mode="oracle_filter", oracle_rank_map=oracle_map,
+                )
+        # pct = 0.1..1.0 → seuls pct ≥ 0.80 passent : S07(0.8), S08(0.9), S09(1.0)
+        kept = sorted(sym for _, sym, _ in result)
+        assert kept == ["S07", "S08", "S09"]
+        # oracle_filter ne réordonne PAS : score = rank B25 × prob (ordre B25 conservé)
+        assert result[0][2] == pytest.approx(0.95 * 0.70, rel=0.01)
+
+    def test_oracle_rerank_same_pool_different_order(self, monkeypatch):
+        """oracle_rerank : pool B25 identique (10 symboles), ordre réordonné par P_top."""
+        symbols, ranks, preds, oracle_map = self._oracle_scenario()
+        with patch("modelFactory.predictor.load_cascade_config", return_value={"top_pct": 0.20, "min_prob": 0.55}):
+            with patch("modelFactory.predictor.load_global_ranks_from_db", return_value=ranks):
+                result = cascade_select(
+                    "2026-01-15", "batch-x", preds,
+                    rank_mode="oracle_rerank", oracle_rank_map=oracle_map,
+                )
+        # Même pool que B25 : les 10 sont retenus, mais triés par P_top décroissant.
+        assert len(result) == 10
+        assert result[0][1] == "S09"   # pct 1.0
+        assert result[-1][1] == "S00"  # pct 0.1
+        # score = pct × 0.70
+        assert result[0][2] == pytest.approx(1.0 * 0.70, rel=0.01)
+
+    def test_oracle_pool_selects_top_pct_within_wider_pool(self, monkeypatch):
+        """oracle_pool : pool B25 top 20%, Oracle sélectionne le top 10% par P_top."""
+        symbols, ranks, preds, oracle_map = self._oracle_scenario()
+        with patch("modelFactory.predictor.load_cascade_config", return_value={"top_pct": 0.10, "min_prob": 0.55}):
+            with patch("modelFactory.predictor.load_global_ranks_from_db", return_value=ranks):
+                result = cascade_select(
+                    "2026-01-15", "batch-x", preds,
+                    rank_mode="oracle_pool", oracle_rank_map=oracle_map,
+                )
+        # top 10% par P_top = 1 symbole (S09, pct 1.0)
+        assert [(side, sym) for side, sym, _ in result] == [("LONG", "S09")]
+
     def test_mid_rank_filtered_out(self, monkeypatch):
         """Un symbole au milieu du classement → rejeté."""
         ranks = _make_ranks_df([("MSFT", 0.50, 0.55)])
@@ -179,7 +234,7 @@ class TestCascadeSelect:
 
         with patch("modelFactory.predictor.load_cascade_config", return_value={"top_pct": 0.20, "min_prob": 0.55}):
             with patch("modelFactory.predictor.load_global_ranks_from_db", return_value=ranks):
-                result = cascade_select("2026-01-15", "batch-x", preds)
+                result = cascade_select("2026-01-15", "batch-x", preds, min_prob=0.55)
 
         assert len(result) == 0
 
@@ -195,9 +250,9 @@ class TestCascadeSelect:
         assert len(result) == 0
 
     def test_missing_rank3_or_rank5(self, monkeypatch):
-        """rank3 ou rank5 = None → rejeté."""
+        """Toutes les colonnes de rang absentes/None → rejeté."""
         ranks = pd.DataFrame([
-            {"symbol": "AAPL", "global_rank_3": 0.95, "global_rank_5": None, "global_rank_10": None},
+            {"symbol": "AAPL", "global_rank_3": None, "global_rank_5": None, "global_rank_10": None},
         ])
         preds = {"AAPL": CascadePrediction(symbol="AAPL", long_prob=0.70, short_prob=0.05)}
 
