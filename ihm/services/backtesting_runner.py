@@ -70,6 +70,9 @@ class BacktestRunOptions:
     # P5.2 — seuil top/bottom de la cascade ML (fraction). None = config.yaml
     # (cascade.top_pct). Défaut aligné benchmark B25 : 0.10.
     cascade_top_pct: float | None = 0.10
+    # S6 (Oracle Layer) — mode de rang cascade : ml | random | oracle (P_top).
+    cascade_rank_mode: Literal["ml", "random", "oracle"] = "ml"
+    oracle_oos_path: str | None = None
     score_column: Literal["auto", "final_score_walk_forward", "final_score_sentiment", "final_score"] = "auto"
     walk_forward_artifacts_dir: str | None = None
     disable_walk_forward: bool = False
@@ -286,6 +289,11 @@ def build_backtesting_command(
         # P5.2 — seuil top/bottom cascade ML (aligné benchmark : 0.10)
         if options.cascade_top_pct is not None and float(options.cascade_top_pct) > 0:
             command.extend(["--cascade-top-pct", str(options.cascade_top_pct)])
+        # S6 (Oracle Layer) — rang cascade remplacé par P(top10)
+        if options.cascade_rank_mode and options.cascade_rank_mode != "ml":
+            command.extend(["--cascade-rank-mode", options.cascade_rank_mode])
+        if options.oracle_oos_path:
+            command.extend(["--oracle-oos-path", options.oracle_oos_path])
         if options.use_live_protection_logic:
             command.append("--use-live-protection-logic")
         else:

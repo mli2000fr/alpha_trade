@@ -132,27 +132,26 @@ class TestCascadeSelect:
         # rank_dir = 1 - 0.04 = 0.96, score = 0.96 * 0.80 ≈ 0.768
         assert result[0][2] == pytest.approx(0.96 * 0.80, rel=0.01)
 
-    def test_oracle_mode_replaces_rank_with_ptop(self, monkeypatch):
-        """rank_mode='oracle' remplace le rang global par P(top10)."""
-        ranks = _make_ranks_df([("AAPL", 0.95, 0.92), ("MSFT", 0.10, 0.10), ("NVDA", 0.50, 0.50)])
-        preds = {
-            "AAPL": CascadePrediction(symbol="AAPL", long_prob=0.70, short_prob=0.05),
-            "MSFT": CascadePrediction(symbol="MSFT", long_prob=0.05, short_prob=0.80),
-            "NVDA": CascadePrediction(symbol="NVDA", long_prob=0.70, short_prob=0.05),
-        }
-        oracle_map = {"2026-01-15": {"AAPL": 0.95, "MSFT": 0.05, "NVDA": 0.50}}
+    def test_oracle_mode_rank_normalizes_ptop(self, monkeypatch):
+        """rank_mode='oracle' normalise P(top10) en percentile intra-date.
 
-        with patch("modelFactory.predictor.load_cascade_config", return_value={"top_pct": 0.20, "min_prob": 0.55}):
+        Sans normalisation, proba_top=0.10 ne serait jamais > 0.90 → 0 candidats.
+        """
+        symbols = [f"S{i:02d}" for i in range(10)]
+        probas = [0.01 + 0.01 * i for i in range(10)]  # 0.01 .. 0.10 (tous < 0.5)
+        ranks = _make_ranks_df([(s, 0.5, 0.5) for s in symbols])
+        preds = {s: CascadePrediction(symbol=s, long_prob=0.70, short_prob=0.05) for s in symbols}
+        oracle_map = {"2026-01-15": dict(zip(symbols, probas))}
+
+        with patch("modelFactory.predictor.load_cascade_config", return_value={"top_pct": 0.10, "min_prob": 0.55}):
             with patch("modelFactory.predictor.load_global_ranks_from_db", return_value=ranks):
                 result = cascade_select(
                     "2026-01-15", "batch-x", preds,
                     rank_mode="oracle", oracle_rank_map=oracle_map,
                 )
 
-        # top_pct=0.20 → top = P(top10) > 0.80 ; bottom = P(top10) < 0.20
-        # AAPL 0.95 → LONG, MSFT 0.05 → SHORT, NVDA 0.50 → rejeté.
-        sides = {sym: side for side, sym, _ in result}
-        assert sides == {"AAPL": "LONG", "MSFT": "SHORT"}
+        # top 10% = 1 symbole (proba_top max = S09, rang pct 1.0) → LONG.
+        assert [(side, sym) for side, sym, _ in result] == [("LONG", "S09")]
 
     def test_oracle_mode_missing_map_returns_empty(self, monkeypatch):
         ranks = _make_ranks_df([("AAPL", 0.95, 0.92)])

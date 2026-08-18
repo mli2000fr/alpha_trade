@@ -2634,9 +2634,13 @@ def cascade_select(
             LOGGER.warning("cascade_select: no oracle ranks for %s", trade_date)
             return []
         _oracle_ranks = oracle_rank_map[trade_date]
-        ranks_df = pd.DataFrame(
-            [{"symbol": str(s), "proba_top": float(p)} for s, p in _oracle_ranks.items()]
-        )
+        _oracle_symbols = list(_oracle_ranks.keys())
+        _oracle_values = np.asarray([float(_oracle_ranks[s]) for s in _oracle_symbols], dtype=float)
+        # P(top10) est une probabilité, PAS un percentile. On la transforme en
+        # rang percentile intra-date (1.0 = meilleur) pour que le seuil
+        # `rank > 1 - top_pct` de la cascade sélectionne bien le top N% par P_top.
+        _oracle_pct = pd.Series(_oracle_values).rank(pct=True).to_numpy()
+        ranks_df = pd.DataFrame({"symbol": _oracle_symbols, "proba_top": _oracle_pct})
         _rank_col = "proba_top"
         LOGGER.info("cascade_select: ORACLE ranks (%d symbols)", len(ranks_df))
 
