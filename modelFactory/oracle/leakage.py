@@ -107,20 +107,35 @@ def assert_training_cutoff_valid(
     training_cutoff: Any,
     max_oracle_available_date: Any,
 ) -> None:
-    """T2 — cutoff d'entraînement ≥ max(oracle_available_date).
+    """T2 — le cutoff d'entraînement doit couvrir toutes les labels utilisées.
 
-    ⚠️ Stub S0 — sera câblé dans S4 (walk-forward causal).
+    Vérifie ``max(oracle_available_date) <= training_cutoff`` : aucun fold
+    d'entraînement ne peut « voir » une ligne Oracle dont l'horizon n'était pas
+    encore réalisé au moment du cutoff.
     """
-    raise NotImplementedError(
-        "T2 (cutoff d'entraînement) sera câblé en S4 — walk-forward causal"
-    )
+    if max_oracle_available_date is None:
+        return
+    cutoff = pd.Timestamp(training_cutoff)
+    max_available = pd.Timestamp(max_oracle_available_date)
+    if max_available > cutoff:
+        raise ValueError(
+            f"T2: leakage — max(oracle_available_date)={max_available.date()} "
+            f"> training_cutoff={cutoff.date()}"
+        )
 
 
 def assert_no_future_oracle_read(*, today: Any, oracle_available_date: Any) -> None:
     """T5 — la prod ne lit jamais une ligne Oracle pas encore disponible.
 
-    ⚠️ Stub S0 — sera câblé dans S4 (garde de lecture production).
+    Vérifie ``oracle_available_date <= today`` : interdiction de consommer un
+    label dont l'horizon n'est pas encore réalisé.
     """
-    raise NotImplementedError(
-        "T5 (garde de lecture production) sera câblé en S4"
-    )
+    if oracle_available_date is None:
+        return
+    today_ts = pd.Timestamp(today)
+    available_ts = pd.Timestamp(oracle_available_date)
+    if available_ts > today_ts:
+        raise ValueError(
+            f"T5: lecture Oracle future — oracle_available_date={available_ts.date()} "
+            f"> today={today_ts.date()}"
+        )

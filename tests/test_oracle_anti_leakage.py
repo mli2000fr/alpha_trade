@@ -18,6 +18,8 @@ from modelFactory.oracle.leakage import (
     assert_availability_after_prediction,
     assert_no_forbidden_features,
     assert_no_future_features,
+    assert_no_future_oracle_read,
+    assert_training_cutoff_valid,
 )
 
 
@@ -97,23 +99,40 @@ class TestNoFutureFeatures:
 # T2 / T5 — câblés en S4 (walk-forward)
 # ═══════════════════════════════════════════════════════════════════
 
-@pytest.mark.skip(reason="T2 — cutoff d'entraînement câblé en S4 (walk-forward causal)")
-def test_training_cutoff_stub():
-    from modelFactory.oracle.leakage import assert_training_cutoff_valid
-
-    with pytest.raises(NotImplementedError):
+class TestTrainingCutoff:
+    def test_ok_when_cutoff_covers_labels(self):
         assert_training_cutoff_valid(
             training_cutoff=date(2022, 1, 1),
-            max_oracle_available_date=date(2022, 1, 1),
+            max_oracle_available_date=date(2021, 12, 31),
+        )
+
+    def test_raises_on_leakage(self):
+        with pytest.raises(ValueError, match="T2"):
+            assert_training_cutoff_valid(
+                training_cutoff=date(2022, 1, 1),
+                max_oracle_available_date=date(2022, 2, 1),
+            )
+
+    def test_none_is_noop(self):
+        assert_training_cutoff_valid(
+            training_cutoff=date(2022, 1, 1),
+            max_oracle_available_date=None,
         )
 
 
-@pytest.mark.skip(reason="T5 — garde de lecture production câblée en S4")
-def test_production_read_guard_stub():
-    from modelFactory.oracle.leakage import assert_no_future_oracle_read
-
-    with pytest.raises(NotImplementedError):
+class TestNoFutureOracleRead:
+    def test_ok_when_available_before_today(self):
         assert_no_future_oracle_read(
-            today=date(2022, 1, 1),
-            oracle_available_date=date(2022, 2, 1),
+            today=date(2022, 2, 1),
+            oracle_available_date=date(2022, 1, 31),
         )
+
+    def test_raises_on_future_label(self):
+        with pytest.raises(ValueError, match="T5"):
+            assert_no_future_oracle_read(
+                today=date(2022, 1, 1),
+                oracle_available_date=date(2022, 2, 1),
+            )
+
+    def test_none_is_noop(self):
+        assert_no_future_oracle_read(today=date(2022, 1, 1), oracle_available_date=None)
