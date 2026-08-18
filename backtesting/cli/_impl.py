@@ -1486,16 +1486,22 @@ def _build_parser() -> argparse.ArgumentParser:
         "--cascade-rank-mode",
         type=str,
         default="ml",
-        choices=["ml", "random"],
-        help="Ablation ML-vs-Random : 'ml' = rangs globaux réels (défaut), "
-             "'random' = rangs globaux aléatoires (mêmes per-symbol, min_prob, cascade). "
-             "Permet de mesurer la valeur du ranking ML après la mécanique complète.",
+        choices=["ml", "random", "oracle"],
+        help="Ablation ML-vs-Random-vs-Oracle : 'ml' = rangs globaux réels (défaut), "
+             "'random' = rangs aléatoires (placebo), 'oracle' = P(top10) du modèle Oracle TOP "
+             "(via --oracle-oos-path). Mesure la valeur du ranking après la mécanique complète.",
     )
     run_p.add_argument(
         "--cascade-rank-seed",
         type=int,
         default=42,
         help="Graine aléatoire pour --cascade-rank-mode random (reproductibilité).",
+    )
+    run_p.add_argument(
+        "--oracle-oos-path",
+        type=str,
+        default=None,
+        help="Parquet des prédictions OOS Oracle (sortie S4) pour --cascade-rank-mode oracle.",
     )
     run_p.add_argument(
         "--bull-strict-sma-window",
@@ -3048,6 +3054,23 @@ def _run_backtest(args: argparse.Namespace) -> None:
                         _best_h_flag = int(_cfg_backtest_horizon)
                     except (TypeError, ValueError):
                         pass
+            # ── Ablation Oracle (S6) : charger P(top10) depuis le parquet OOS ──
+            _oracle_rank_map = None
+            if getattr(args, "cascade_rank_mode", "ml") == "oracle":
+                import pandas as pd
+                _oos_path = getattr(args, "oracle_oos_path", None)
+                if not _oos_path:
+                    _safe_print(
+                        "❌ --cascade-rank-mode oracle nécessite --oracle-oos-path "
+                        "(parquet des prédictions OOS Oracle, sortie S4).\n"
+                    )
+                    raise SystemExit(2)
+                _oos_df = pd.read_parquet(_oos_path)
+                _oos_df["_d"] = pd.to_datetime(_oos_df["date"]).dt.strftime("%Y-%m-%d")
+                _oracle_rank_map = {
+                    d: dict(zip(g["symbol"], g["proba_top"]))
+                    for d, g in _oos_df.groupby("_d")
+                }
             preds_df = apply_cascade_to_predictions(
                 preds_df, _cascade_batch_id, engine=engine,
                 best_h=_best_h_flag,
@@ -3056,6 +3079,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 rank_seed=getattr(args, "cascade_rank_seed", 42),
                 short_momentum_filter=(None if _sm_filter_flag == "none" else _sm_filter_flag),
                 short_momentum_max_pct=_sm_max_flag,
+                oracle_rank_map=_oracle_rank_map,
             )
             _cas_passed = int(preds_df.loc[preds_df["predicted_side"] != "flat"].shape[0]) if "predicted_side" in preds_df.columns else 0
             _cascade_filtered_count = _cas_before - _cas_passed

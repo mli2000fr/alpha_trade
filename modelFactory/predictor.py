@@ -2572,6 +2572,7 @@ def cascade_select(
     short_momentum_max_pct: float | None = None,
     rank_mode: str = "ml",
     rank_seed: int = 42,
+    oracle_rank_map: dict[str, dict[str, float]] | None = None,
 ) -> list[tuple[str, str, float]]:
     """Filtre cascade : Global Rank → Per-Symbol → trades ordonnancés.
 
@@ -2626,6 +2627,18 @@ def cascade_select(
     if _rank_col is None:
         LOGGER.warning("cascade_select: no rank column found in %s", list(ranks_df.columns))
         return []
+
+    # ── Ablation Oracle (S6) : le rang global est remplacé par P(top10) ──
+    if rank_mode == "oracle":
+        if not oracle_rank_map or trade_date not in oracle_rank_map:
+            LOGGER.warning("cascade_select: no oracle ranks for %s", trade_date)
+            return []
+        _oracle_ranks = oracle_rank_map[trade_date]
+        ranks_df = pd.DataFrame(
+            [{"symbol": str(s), "proba_top": float(p)} for s, p in _oracle_ranks.items()]
+        )
+        _rank_col = "proba_top"
+        LOGGER.info("cascade_select: ORACLE ranks (%d symbols)", len(ranks_df))
 
     # ── Ablation ML-vs-Random (2026-08-17) : rangs globaux aléatoires ──
     # Randomise UNIQUEMENT le ranking global (top/bottom band). Les prédictions
@@ -2725,6 +2738,7 @@ def apply_cascade_to_predictions(
     short_momentum_max_pct: float | None = None,
     rank_mode: str = "ml",
     rank_seed: int = 42,
+    oracle_rank_map: dict[str, dict[str, float]] | None = None,
 ) -> pd.DataFrame:
     """Filtre les prédictions per-symbol via la cascade Global Rank.
 
@@ -2830,6 +2844,7 @@ def apply_cascade_to_predictions(
             short_momentum_max_pct=short_momentum_max_pct,
             rank_mode=rank_mode,
             rank_seed=rank_seed,
+            oracle_rank_map=oracle_rank_map,
         )
 
         # Symbols retenus par la cascade
