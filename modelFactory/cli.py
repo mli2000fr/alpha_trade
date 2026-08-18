@@ -206,6 +206,10 @@ def _build_training_batch_metadata(opts: argparse.Namespace, cfg: TrainingConfig
         include_fundamentals=cfg.data.include_fundamentals_features,
         include_factors=cfg.data.include_factors_features,
         include_macro_regime=cfg.data.include_macro_regime_features,
+        include_score_components=cfg.data.include_score_components,
+        include_volume_features=(cfg.data.include_volume_features and cfg.data.feature_whitelist_enabled),
+        feature_whitelist_enabled=cfg.data.feature_whitelist_enabled,
+        feature_whitelist=cfg.data.feature_whitelist,
     )
     return json.dumps(
         {
@@ -423,6 +427,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="P3-5 : inclure le profil volume/liquidité (10 features : dollar volume, Amihud, OBV, skew...)")
     p.add_argument("--include-macro-regime", action="store_true", default=False,
                    help="Inclure les indicateurs de régime macro (SPY_SMA_200_slope + VIX_zscore)")
+    p.add_argument("--feature-whitelist-enabled", action="store_true", default=False,
+                   help="S7 : activer la feature whitelist per-symbol (seules les features listées par --feature-whitelist sont utilisées comme X). Opt-in, désactivé par défaut (comportement legacy inchangé).")
+    p.add_argument("--feature-whitelist", type=str, default="",
+                   help="S7 : liste de features séparées par des virgules à utiliser comme X (ex. \"momentum_20,momentum_60,selector_short_score\"). Vide = legacy. Ignoré si --feature-whitelist-enabled absent.")
+    p.add_argument("--no-force-v1-lstm", dest="force_v1_lstm", action="store_false", default=True,
+                   help="S7 : NE PAS forcer feature_set=v1 pour le LSTM per-symbol (utilise le feature_set demandé, ex. expert). Opt-in ; par défaut le LSTM force v1 (comportement prod inchangé).")
     p.add_argument("--target-skip-vol-scaling", action="store_true", default=False,
                    help="T1 experiment: désactiver le vol-scaling dans la target regression (target = future_return brut)")
     p.add_argument("--target-excess-vs-spy", action="store_true", default=False,
@@ -658,6 +668,11 @@ def main(args: list[str] | None = None) -> None:
             include_macro_regime_features=opts.include_macro_regime,
             include_score_components=opts.include_score_components,
             include_volume_features=opts.include_volume_features,
+            feature_whitelist_enabled=opts.feature_whitelist_enabled,
+            feature_whitelist=tuple(
+                f.strip() for f in (opts.feature_whitelist or "").split(",") if f.strip()
+            ),
+            force_v1_lstm=opts.force_v1_lstm,
             global_model_only=opts.global_model_only,
             sector_use_symbol_feature=opts.sector_symbol_feature,
             enable_cross_sectional_features=opts.enable_cross_sectional,
@@ -1335,6 +1350,10 @@ def _build_run_summary(
             include_fundamentals=cfg.data.include_fundamentals_features,
             include_factors=cfg.data.include_factors_features,
             include_macro_regime=cfg.data.include_macro_regime_features,
+            include_score_components=cfg.data.include_score_components,
+            include_volume_features=(cfg.data.include_volume_features and cfg.data.feature_whitelist_enabled),
+            feature_whitelist_enabled=cfg.data.feature_whitelist_enabled,
+            feature_whitelist=cfg.data.feature_whitelist,
         )),
         "champion_min_runs": int(getattr(opts, "champion_min_runs", 0)),
         "champion_min_days": int(getattr(opts, "champion_min_days", 0)),

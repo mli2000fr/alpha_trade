@@ -28,12 +28,14 @@ CROSS_SECTIONAL_FEATURE_COLUMNS: list[str] = [
 ]
 
 SECTOR_FEATURE_COLUMNS: list[str] = [
+    "sector_ret_5",
     "sector_ret_20",
     "sector_ret_60",
     "sector_vol_20",
     "sector_relative_strength_20",
     "sector_dollar_volume_20",
     "sector_symbol_count",
+    "stock_vs_sector_ret_5",
     "stock_vs_sector_ret_20",
     "stock_vs_sector_ret_60",
 ]
@@ -139,6 +141,7 @@ def _compute_symbol_raw_values(
         {
             "symbol": sym_sorted["symbol"].iloc[0] if "symbol" in sym_sorted.columns else "?",
             "date": pd.to_datetime(sym_sorted["date"]),
+            "ret_5": close / close.shift(5) - 1.0,
             "ret_20": close / close.shift(20) - 1.0,
             "ret_60": close / close.shift(60) - 1.0,
             "volatility_20": daily_return.rolling(20).std(),
@@ -362,6 +365,7 @@ def _compute_sector_features(
 
     # Agrégats sectoriels par (date, secteur)
     agg_map: dict[str, str | callable] = {
+        "ret_5": "mean",
         "ret_20": "mean",
         "ret_60": "mean",
         "volatility_20": "mean",
@@ -371,6 +375,7 @@ def _compute_sector_features(
     sector_agg = panel.groupby(["date", "sector"], sort=False).agg(available_aggs).reset_index()
     sector_agg.rename(
         columns={
+            "ret_5": "sector_ret_5",
             "ret_20": "sector_ret_20",
             "ret_60": "sector_ret_60",
             "volatility_20": "sector_vol_20",
@@ -394,11 +399,15 @@ def _compute_sector_features(
     sector_agg = sector_agg.merge(symbol_counts, on=["date", "sector"], how="left")
 
     # Merge back to per-symbol level
-    result = panel[["symbol", "date", "sector", "ret_20", "ret_60"]].merge(
+    result = panel[["symbol", "date", "sector"] + [c for c in ("ret_5", "ret_20", "ret_60") if c in panel.columns]].merge(
         sector_agg, on=["date", "sector"], how="left"
     )
 
     # Stock vs secteur (alpha individuel)
+    if "ret_5" in result.columns and "sector_ret_5" in result.columns:
+        result["stock_vs_sector_ret_5"] = result["ret_5"] - result["sector_ret_5"]
+    else:
+        result["stock_vs_sector_ret_5"] = 0.0
     result["stock_vs_sector_ret_20"] = result["ret_20"] - result["sector_ret_20"]
     result["stock_vs_sector_ret_60"] = result["ret_60"] - result["sector_ret_60"]
 
@@ -413,9 +422,12 @@ def _compute_sector_features(
     fill_cols = [c for c in SECTOR_FEATURE_COLUMNS if c in result.columns]
     result[fill_cols] = result.groupby("symbol", sort=False)[fill_cols].ffill()
 
-    # Remplir les NaN restants par 0 (début de série sans historique sectoriel)
+    # Remplir les NaN restants par 0 (début de série sans historique sectoriel),
+    # et créer les colonnes sectorielles absentes (ex: ret_5 non fourni).
     for col in SECTOR_FEATURE_COLUMNS:
-        if col in result.columns:
+        if col not in result.columns:
+            result[col] = 0.0
+        else:
             result[col] = result[col].fillna(0.0)
 
     return result[["symbol", "date", *SECTOR_FEATURE_COLUMNS]].copy()

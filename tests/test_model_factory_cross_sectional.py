@@ -90,12 +90,14 @@ def _make_raw_panel() -> pd.DataFrame:
 def test_sector_feature_columns_defined() -> None:
     """SECTOR_FEATURE_COLUMNS must contain the expected columns."""
     expected = [
+        "sector_ret_5",
         "sector_ret_20",
         "sector_ret_60",
         "sector_vol_20",
         "sector_relative_strength_20",
         "sector_dollar_volume_20",
         "sector_symbol_count",
+        "stock_vs_sector_ret_5",
         "stock_vs_sector_ret_20",
         "stock_vs_sector_ret_60",
     ]

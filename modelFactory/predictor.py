@@ -649,6 +649,9 @@ def _check_feature_contract(cfg_data: dict, *, symbol: str, config_path: Path) -
             include_factors=bool(data_cfg.get("include_factors_features", False)),
             include_macro_regime=bool(data_cfg.get("include_macro_regime_features", False)),
             include_score_components=bool(data_cfg.get("include_score_components", False)),
+            include_volume_features=bool(data_cfg.get("include_volume_features", False) and data_cfg.get("feature_whitelist_enabled", False)),
+            feature_whitelist_enabled=bool(data_cfg.get("feature_whitelist_enabled", False)),
+            feature_whitelist=tuple(data_cfg.get("feature_whitelist") or ()),
             persisted_feature_columns=cfg_data.get("feature_columns"),
             persisted_feature_fingerprint=cfg_data.get("feature_fingerprint"),
             allow_legacy_missing_contract=False,
@@ -991,6 +994,7 @@ def _load_data_cfg_from_payload(
         include_factors_features=_primary.get("include_factors_features", _fallback.get("include_factors", False)),
         include_macro_regime_features=_primary.get("include_macro_regime_features", _fallback.get("include_macro_regime", False)),
         include_score_components=_primary.get("include_score_components", _fallback.get("include_score_components", False)),
+        include_volume_features=_primary.get("include_volume_features", _fallback.get("include_volume_features", False)),
         enable_cross_sectional_features=_primary.get("enable_cross_sectional_features", _fallback.get("enable_cross_sectional", False)),
         cross_sectional_min_universe=_primary.get("cross_sectional_min_universe", 20),
         feature_set=_primary.get("feature_set", _fallback.get("feature_set", "v1")),
@@ -999,6 +1003,8 @@ def _load_data_cfg_from_payload(
         target_up_threshold=_primary.get("target_up_threshold", 0.0),
         target_down_threshold=_primary.get("target_down_threshold", 0.0),
         decision_threshold=_primary.get("decision_threshold", cfg_data.get("selected_decision_threshold", 0.5)),
+        feature_whitelist_enabled=_primary.get("feature_whitelist_enabled", _fallback.get("feature_whitelist_enabled", False)),
+        feature_whitelist=tuple(_primary.get("feature_whitelist") or _fallback.get("feature_whitelist") or ()),
     )
 
 
@@ -1073,6 +1079,7 @@ def _prepare_prediction_frame(
             include_factors=data_cfg.include_factors_features,
             include_macro_regime=data_cfg.include_macro_regime_features,
             include_score_components=data_cfg.include_score_components,
+            include_volume_features=(data_cfg.include_volume_features and data_cfg.feature_whitelist_enabled),
         )
     except Exception as exc:  # noqa: BLE001
         LOGGER.warning("predict_symbol feature_build_failed symbol=%s error=%s", symbol, exc)
@@ -1110,6 +1117,9 @@ def _prepare_prediction_frame(
             include_macro_move=data_cfg.include_macro_move_features,
             include_global_stacking=include_global_stacking,
             include_score_components=data_cfg.include_score_components,
+            include_volume_features=(data_cfg.include_volume_features and data_cfg.feature_whitelist_enabled),
+            feature_whitelist_enabled=data_cfg.feature_whitelist_enabled,
+            feature_whitelist=data_cfg.feature_whitelist,
         )
         # ── Fallback global_rank : si attendu mais absent → chercher dans le cache ──
         if include_global_stacking and "global_rank" not in df.columns and "global_rank_3" not in df.columns:
@@ -1217,6 +1227,9 @@ def _predict_with_tabular_model(
         include_factors=data_cfg.include_factors_features,
         include_macro_regime=data_cfg.include_macro_regime_features,
         include_score_components=data_cfg.include_score_components,
+        include_volume_features=(data_cfg.include_volume_features and data_cfg.feature_whitelist_enabled),
+        feature_whitelist_enabled=data_cfg.feature_whitelist_enabled,
+        feature_whitelist=data_cfg.feature_whitelist,
     ))
     if df.empty or len(df) == 0:
         return None
@@ -1254,6 +1267,9 @@ def _predict_with_tabular_model(
         include_factors=data_cfg.include_factors_features,
         include_macro_regime=data_cfg.include_macro_regime_features,
         include_score_components=data_cfg.include_score_components,
+        include_volume_features=(data_cfg.include_volume_features and data_cfg.feature_whitelist_enabled),
+        feature_whitelist_enabled=data_cfg.feature_whitelist_enabled,
+        feature_whitelist=data_cfg.feature_whitelist,
         persisted_feature_columns=cfg_data.get("feature_columns"),
         persisted_feature_fingerprint=cfg_data.get("feature_fingerprint"),
         route_feature_columns=resolved_feature_columns,
@@ -1728,6 +1744,18 @@ def predict_symbol(
         include_cross_sectional=data_cfg.enable_cross_sectional_features,
         include_screener_scores=data_cfg.include_screener_scores,
         include_short_score=data_cfg.include_short_score_features,
+        include_macro_vix=data_cfg.include_macro_vix_features,
+        include_macro_vxn=data_cfg.include_macro_vxn_features,
+        include_macro_vix3m=data_cfg.include_macro_vix3m_features,
+        include_macro_move=data_cfg.include_macro_move_features,
+        include_global_stacking=bool((cfg_data.get("global_model") or {}).get("stacking_enabled", False)),
+        include_fundamentals=data_cfg.include_fundamentals_features,
+        include_factors=data_cfg.include_factors_features,
+        include_macro_regime=data_cfg.include_macro_regime_features,
+        include_score_components=data_cfg.include_score_components,
+        include_volume_features=(data_cfg.include_volume_features and data_cfg.feature_whitelist_enabled),
+        feature_whitelist_enabled=data_cfg.feature_whitelist_enabled,
+        feature_whitelist=data_cfg.feature_whitelist,
         persisted_feature_columns=cfg_data.get("feature_columns"),
         persisted_feature_fingerprint=cfg_data.get("feature_fingerprint"),
         scaler_feature_names=list(getattr(scaler, "feature_names", [])),

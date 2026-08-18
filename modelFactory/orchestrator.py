@@ -233,6 +233,9 @@ def _filter_symbols_by_mode(
         include_macro_vix3m=cfg.data.include_macro_vix3m_features,
         include_macro_move=cfg.data.include_macro_move_features,
         include_global_stacking=cfg.global_model.stacking_enabled,
+        include_volume_features=(cfg.data.include_volume_features and cfg.data.feature_whitelist_enabled),
+        feature_whitelist_enabled=cfg.data.feature_whitelist_enabled,
+        feature_whitelist=cfg.data.feature_whitelist,
     )
     current_contract = build_feature_contract(
         include_sentiment=cfg.data.include_sentiment_features,
@@ -245,6 +248,9 @@ def _filter_symbols_by_mode(
         include_macro_vix3m=cfg.data.include_macro_vix3m_features,
         include_macro_move=cfg.data.include_macro_move_features,
         include_global_stacking=cfg.global_model.stacking_enabled,
+        include_volume_features=(cfg.data.include_volume_features and cfg.data.feature_whitelist_enabled),
+        feature_whitelist_enabled=cfg.data.feature_whitelist_enabled,
+        feature_whitelist=cfg.data.feature_whitelist,
     )
 
     def _parse_iso_date(value: object) -> date | None:
@@ -930,6 +936,9 @@ def run_training_batch(
         include_factors=cfg.data.include_factors_features,
         include_macro_regime=cfg.data.include_macro_regime_features,
         include_score_components=False,  # P0-6 : composants score reservés per-sector + global
+        include_volume_features=(cfg.data.include_volume_features and cfg.data.feature_whitelist_enabled),
+        feature_whitelist_enabled=cfg.data.feature_whitelist_enabled,
+        feature_whitelist=cfg.data.feature_whitelist,
     )
     _ps_features = {
         "feature_columns": _ps_feature_columns,
@@ -947,6 +956,8 @@ def run_training_batch(
         "include_score_components": False,  # P0-6 : réservé per-sector + global
         "enable_cross_sectional": cfg.data.enable_cross_sectional_features,
         "global_stacking_enabled": cfg.global_model.stacking_enabled,
+        "feature_whitelist_enabled": cfg.data.feature_whitelist_enabled,
+        "feature_whitelist": list(cfg.data.feature_whitelist),
     }
     _model_dir = Path(cfg.artifacts_dir)
     _model_dir.mkdir(parents=True, exist_ok=True)

@@ -409,6 +409,9 @@ def run_tabular_baseline(
 			include_fundamentals=cfg.data.include_fundamentals_features,
 			include_factors=cfg.data.include_factors_features,
 			include_macro_regime=cfg.data.include_macro_regime_features,
+			include_volume_features=(cfg.data.include_volume_features and cfg.data.feature_whitelist_enabled),
+			feature_whitelist_enabled=cfg.data.feature_whitelist_enabled,
+			feature_whitelist=cfg.data.feature_whitelist,
 		)
 	train_df, val_df, test_df = tabular_split(
 		prepared_df,

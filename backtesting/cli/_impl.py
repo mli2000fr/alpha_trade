@@ -2364,6 +2364,43 @@ def _enforce_ml_coverage_gate(
     return gate
 
 
+def _risk_tp_overrides(args: argparse.Namespace) -> dict:
+    """Câble --tp-atr-multiple / --tp-max-pct / --atr-risk-stop-multiple dans les
+    maps multi-horizon du RiskConfig (par best_horizon du batch).
+
+    Correction S6.8 : ces flags étaient parsés mais jamais appliqués au risk
+    config du pipeline (le TP venait des maps config.yaml par défaut :
+    H20 → min(ATR×4.0, 13 %) — incohérent avec les flags annoncés).
+    """
+    out: dict = {}
+    h: int | None = None
+    bh = getattr(args, "best_horizon", None)
+    if bh:
+        h = int(bh)
+    else:
+        try:
+            import yaml as _yaml
+            _full = _yaml.safe_load(open("config.yaml", encoding="utf-8")) or {}
+            _bd = _full.get("batch_diagnostics") or {}
+            _cfg_h = _bd.get("backtest_horizon") or _bd.get("live_horizon")
+            if _cfg_h not in (None, "", 0):
+                h = int(_cfg_h)
+        except Exception:  # noqa: BLE001
+            h = None
+    if h is None:
+        h = 20
+    ta = float(getattr(args, "tp_atr_multiple", 0.0) or 0.0)
+    tm = float(getattr(args, "tp_max_pct", 0.0) or 0.0)
+    st = float(getattr(args, "atr_risk_stop_multiple", 0.0) or 0.0)
+    if ta > 0:
+        out["_tp_atr_multiple_map"] = {h: ta}
+    if tm > 0:
+        out["_tp_max_pct_map"] = {h: tm}
+    if st > 0:
+        out["_atr_stop_multiple_map"] = {h: st}
+    return out
+
+
 def _run_backtest(args: argparse.Namespace) -> None:
     """Exécute le backtest complet."""
     from datetime import datetime
@@ -2532,10 +2569,10 @@ def _run_backtest(args: argparse.Namespace) -> None:
                     if getattr(args, "best_horizon", None) is not None
                     else {}
                 ),
+                # S6.8 — câbler les flags TP/stop dans les maps multi-horizon
+                **_risk_tp_overrides(args),
             },
         )
-
-        _safe_print(f"   short_selling_enabled={_preset_has_short_threshold} (preset={effective_preset.key})")
 
         # Flag CLI pour exclure les sélections sans ML.
         if getattr(args, "filter_no_ml", False):
