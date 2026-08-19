@@ -30,7 +30,6 @@ import pandas as pd
 from database.connection import get_sqlalchemy_engine
 from modelFactory.oracle.config import resolve_oracle_batch_id
 from modelFactory.oracle.dataset import (
-    BOTTOM_TARGET_COL,
     ORACLE_EXTRA_FEATURES,
     TARGET_COL,
     build_dataset,
@@ -39,7 +38,7 @@ from modelFactory.oracle.dataset import (
 LOGGER = logging.getLogger(__name__)
 
 _TARGET_LABEL_COLS = {
-    TARGET_COL, BOTTOM_TARGET_COL, "oracle_pct_rank", "oracle_decile",
+    TARGET_COL, "oracle_pct_rank", "oracle_decile",
     "future_return", "oracle_available_date", "prediction_date", "date", "symbol",
 }
 
@@ -87,14 +86,18 @@ def run_feature_diagnostic(batch_id: str, *, horizon: int = 20, start: str = "20
 
     df = dataset[dataset["date"] >= pd.Timestamp(start)].copy()
     df["abs_return"] = df["future_return"].abs()
+    # top/bottom dérivés localement depuis pct_rank (la table n'expose plus que
+    # oracle_extreme10 = TOP ∪ BOTTOM, target du modèle Oracle Extreme)
+    df["_top10"] = (df["oracle_pct_rank"] >= 0.90).astype(int)
+    df["_bottom10"] = (df["oracle_pct_rank"] <= 0.10).astype(int)
     feats = _feature_columns(df, feature_columns)
     LOGGER.info("dates=%d features=%d", df["date"].nunique(), len(feats))
 
     targets = {
         "future_return": "future_return",
         "abs_return": "abs_return",
-        "oracle_top10": TARGET_COL,
-        "oracle_bottom10": BOTTOM_TARGET_COL,
+        "oracle_top10": "_top10",
+        "oracle_bottom10": "_bottom10",
     }
 
     rows: list[dict[str, Any]] = []

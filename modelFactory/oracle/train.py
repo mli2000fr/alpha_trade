@@ -1,7 +1,10 @@
-"""modelFactory/oracle/train.py — Oracle TOP Model + ablations O0/O1/O2 (S3).
+"""modelFactory/oracle/train.py — Oracle Extreme Model + ablations O0/O1/O2 (S3).
 
-Entraîne un classifieur binaire ``P(vrai TOP 10 % | info à D)`` (second signal
-au-dessus de B25) et compare 3 ablations de features (spec §7) :
+Entraîne un classifieur binaire ``P(gros mouvement H20 | info à D)`` où la cible
+est ``oracle_extreme10 = oracle_top10 OR oracle_bottom10`` (TOP/BOTTOM 10 %
+cross-sectionnel du jour) — second signal au-dessus de B25. Le modèle Oracle
+Extreme (ex-« Oracle TOP ») détecte les extrêmes, PAS la direction.
+Compare 3 ablations de features (spec §7) :
 
 - ``O0`` = features B25 (expert + xs_ranks), sans ``global_rank_20`` ;
 - ``O1`` = O0 + ``global_rank_20`` + features Oracle spécialisées ;
@@ -74,7 +77,7 @@ def precision_recall_at_top_pct(
 ) -> dict[str, float | None]:
     """Précision/rappel cross-sectionnel du TOP pct (par date, moyenné).
 
-    ``target_col`` est la cible binaire (``oracle_top10`` ou ``oracle_bottom10``).
+    ``target_col`` est la cible binaire (``oracle_extreme10``).
     """
     rows: list[dict[str, float]] = []
     for _, g in df.groupby("date"):
@@ -334,7 +337,7 @@ def run_ablation(
 
 def format_report(report: dict[str, Any]) -> str:
     """Rapport lisible."""
-    lines = ["=== ORACLE TOP MODEL — ablations O0/O1/O2 ==="]
+    lines = ["=== ORACLE EXTREME MODEL — ablations O0/O1/O2 ==="]
     b = report.get("baseline_global_rank20") or {}
     lines.append(
         f"baseline global_rank_20 (top-10% band) : precision={b.get('precision')} "
@@ -356,7 +359,7 @@ def format_report(report: dict[str, Any]) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Oracle TOP Model + ablations (S3).")
+    parser = argparse.ArgumentParser(description="Oracle Extreme Model + ablations (S3).")
     parser.add_argument("--batch-id", default=None)
     parser.add_argument("--horizon", type=int, default=20)
     parser.add_argument("--start-date", default="2020-01-01")

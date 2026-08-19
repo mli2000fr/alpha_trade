@@ -1,7 +1,12 @@
 """modelFactory/oracle/config.py — Configuration dédiée à la couche Oracle.
 
 Ne touche **pas** ``TrainingConfig`` (B25 reste intouchable). Cette config pilote
-uniquement la couche Oracle (labels, modèles TOP/BOTTOM, combinaison).
+uniquement la couche Oracle (labels, modèle Extreme, combinaison).
+
+Le modèle Oracle Extreme (ex-« Oracle TOP ») apprend la **détection d'extrêmes** :
+``oracle_extreme10 = oracle_top10 OR oracle_bottom10`` (gros mouvement H20),
+PAS la direction (E0/D0/D1/D1d l'ont établi). L'ancien modèle Oracle BOTTOM
+est supprimé (redondant avec TOP, cf. E0b).
 
 Les valeurs par défaut reflètent les décisions actées (2026-08-18) :
 - horizon canonique **H20** ;

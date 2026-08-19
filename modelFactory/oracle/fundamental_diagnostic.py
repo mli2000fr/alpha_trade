@@ -30,7 +30,6 @@ from sqlalchemy import text
 from database.connection import get_sqlalchemy_engine
 from modelFactory.oracle.config import resolve_oracle_batch_id
 from modelFactory.oracle.dataset import (
-    BOTTOM_TARGET_COL,
     TARGET_COL,
     load_global_rank_feature,
     load_oracle_targets,

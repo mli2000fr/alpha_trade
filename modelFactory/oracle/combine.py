@@ -1,6 +1,6 @@
 """modelFactory/oracle/combine.py — Combinaison + calibration (S5).
 
-Combine ``global_rank_20`` (B25) et ``P(top10)`` (Oracle TOP) en un score ajusté
+Combine ``global_rank_20`` (B25) et ``P(extreme10)`` (Oracle Extreme) en un score ajusté
 (spec §15) et sélectionne la combinaison **uniquement sur les folds WF de
 sélection**, avant de la **geler** pour l'OOS final (spec §16, discipline OOS).
 
@@ -97,25 +97,25 @@ def isotonic_regression(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.nd
     return xs, fitted
 
 
-def calibrate_p_top(
+def calibrate_p_extreme(
     df: pd.DataFrame,
     *,
     method: str = "identity",
     fit_x: np.ndarray | None = None,
     fit_y: np.ndarray | None = None,
 ) -> pd.Series:
-    """Calibration de ``proba_top`` (spec §16)."""
-    proba = df["proba_top"].astype(float)
+    """Calibration de ``proba_extreme`` (spec §16)."""
+    proba = df["proba_extreme"].astype(float)
     if method == "identity":
         return proba
     if method == "rank":
-        return df.groupby("date")["proba_top"].rank(pct=True).astype(float)
+        return df.groupby("date")["proba_extreme"].rank(pct=True).astype(float)
     if method == "isotonic":
         if fit_x is None or fit_y is None:
             raise ValueError("isotonic nécessite fit_x/fit_y (set de calibration)")
         x_sorted, fitted = isotonic_regression(np.asarray(fit_x, dtype=float), np.asarray(fit_y, dtype=float))
         return pd.Series(np.interp(proba.to_numpy(), x_sorted, fitted), index=df.index)
-    raise ValueError(f"calibrate_p_top: méthode inconnue {method}")
+    raise ValueError(f"calibrate_p_extreme: méthode inconnue {method}")
 
 
 def _evaluate_on_folds(

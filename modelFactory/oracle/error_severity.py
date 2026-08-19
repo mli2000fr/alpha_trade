@@ -3,7 +3,7 @@
 Teste si le problème vient de l'OBJECTIF d'apprentissage ou des FEATURES, en
 gardant les mêmes features mais en changeant la façon de définir la cible :
 
-- **BIN**  : classifieur binaire ``oracle_top10`` (baseline, objective actuel).
+- **BIN**  : classifieur binaire ``oracle_extreme10`` (baseline, objective actuel).
 - **SEV**  : classifieur binaire pondéré par la sévérité ``(0.90 − r)²`` pour les
              non-top (pénalise les inclusions catastrophiques, r = oracle_pct_rank).
 - **REG**  : régression sur ``oracle_pct_rank`` (distance continue au TOP).
@@ -29,7 +29,6 @@ import pandas as pd
 from database.connection import get_sqlalchemy_engine
 from modelFactory.oracle.config import resolve_oracle_batch_id
 from modelFactory.oracle.dataset import (
-    BOTTOM_TARGET_COL,
     TARGET_COL,
     ablation_features,
     build_dataset,
@@ -118,7 +117,7 @@ def run_error_severity_experiment(
     r_tr = train["oracle_pct_rank"].astype(float).to_numpy()
     sev = np.where(y_tr_top.to_numpy() == 1, 1.0, 1.0 + _SEV_LAMBDA * np.maximum(0.0, 0.90 - r_tr) ** 2)
 
-    valid_view = valid[["date", "symbol", TARGET_COL, BOTTOM_TARGET_COL,
+    valid_view = valid[["date", "symbol", TARGET_COL,
                         "oracle_pct_rank", "future_return"]].copy()
     report: dict[str, Any] = {"status": "completed", "variants": {}}
 

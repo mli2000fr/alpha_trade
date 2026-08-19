@@ -2659,7 +2659,7 @@ def cascade_select(
         return []
 
     # ── Ablation Oracle (S6/S6.1) : politiques d'utilisation du second signal ──
-    #   oracle        = P_top REMPLACE le rang global (test S6 initial)
+    #   oracle        = P_extreme REMPLACE le rang global (test S6 initial)
     #   oracle_filter = B25 sélectionne, Oracle FILTRE la qualité        [S6.1-B]
     #   oracle_rerank = pool B25 identique, Oracle réordonne (même exposition) [S6.1-D]
     #   oracle_pool   = pool B25 élargi (top N%), Oracle sélectionne le top P%  [S6.1-C]
@@ -2672,20 +2672,20 @@ def cascade_select(
         _oracle_ranks = oracle_rank_map[trade_date]
         _oracle_symbols = list(_oracle_ranks.keys())
         _oracle_values = np.asarray([float(_oracle_ranks[s]) for s in _oracle_symbols], dtype=float)
-        # P(top10) est une probabilité, PAS un percentile. On la transforme en
+        # P(extreme) est une probabilité, PAS un percentile. On la transforme en
         # rang percentile intra-date (1.0 = meilleur) pour que les seuils de la
-        # cascade (`> 1 - top_pct`) sélectionnent bien le top N% par P_top.
+        # cascade (`> 1 - top_pct`) sélectionnent bien le top N% par P_extreme.
         _oracle_pct = pd.Series(_oracle_values).rank(pct=True)
         _oracle_pct_map = dict(zip(_oracle_symbols, _oracle_pct.to_numpy()))
         if rank_mode == "oracle":
-            ranks_df = pd.DataFrame({"symbol": _oracle_symbols, "proba_top": _oracle_pct.to_numpy()})
-            _rank_col = "proba_top"
+            ranks_df = pd.DataFrame({"symbol": _oracle_symbols, "proba_extreme": _oracle_pct.to_numpy()})
+            _rank_col = "proba_extreme"
             LOGGER.info("cascade_select: ORACLE ranks (%d symbols)", len(ranks_df))
         else:
             ranks_df = ranks_df.copy()
             ranks_df["_oracle_pct"] = ranks_df["symbol"].map(_oracle_pct_map)
             LOGGER.info(
-                "cascade_select: ORACLE %s (%d symbols, %d avec P_top)",
+                "cascade_select: ORACLE %s (%d symbols, %d avec P_extreme)",
                 rank_mode, len(ranks_df), ranks_df["_oracle_pct"].notna().sum(),
             )
 

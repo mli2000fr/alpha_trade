@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from modelFactory.oracle.combine import (
-    calibrate_p_top,
+    calibrate_p_extreme,
     combine_scores,
     isotonic_regression,
 )
@@ -57,21 +57,21 @@ class TestIsotonicRegression:
         assert (np.diff(fitted) >= -1e-12).all()
 
 
-class TestCalibratePTop:
+class TestCalibratePExtreme:
     def test_identity(self):
-        df = pd.DataFrame({"date": pd.to_datetime(["2025-01-02"] * 3), "proba_top": [0.2, 0.5, 0.9]})
-        out = calibrate_p_top(df, method="identity")
+        df = pd.DataFrame({"date": pd.to_datetime(["2025-01-02"] * 3), "proba_extreme": [0.2, 0.5, 0.9]})
+        out = calibrate_p_extreme(df, method="identity")
         np.testing.assert_allclose(out.to_numpy(), [0.2, 0.5, 0.9])
 
     def test_rank_is_per_date_percentile(self):
         df = pd.DataFrame({
             "date": pd.to_datetime(["2025-01-02"] * 3 + ["2025-01-03"] * 3),
-            "proba_top": [0.1, 0.5, 0.9, 0.1, 0.5, 0.9],
+            "proba_extreme": [0.1, 0.5, 0.9, 0.1, 0.5, 0.9],
         })
-        out = calibrate_p_top(df, method="rank")
+        out = calibrate_p_extreme(df, method="rank")
         np.testing.assert_allclose(out.to_numpy(), [1/3, 2/3, 1.0, 1/3, 2/3, 1.0])
 
     def test_isotonic_requires_fit(self):
-        df = pd.DataFrame({"date": pd.to_datetime(["2025-01-02"]), "proba_top": [0.5]})
+        df = pd.DataFrame({"date": pd.to_datetime(["2025-01-02"]), "proba_extreme": [0.5]})
         with pytest.raises(ValueError):
-            calibrate_p_top(df, method="isotonic")
+            calibrate_p_extreme(df, method="isotonic")

@@ -1,5 +1,13 @@
 # Plan de sprint — Oracle Layer (TOP / BOTTOM)
 
+> **⚠️ REFACTOR 2026-08-19** : le modèle **Oracle TOP est renommé Oracle Extreme**
+> (cible `oracle_extreme10 = oracle_top10 ∪ oracle_bottom10` = détection de gros
+> mouvement H20, PAS la direction — cf. E0/D0/D1/D1d). Le modèle **Oracle BOTTOM est
+> retiré** (redondant avec TOP, cf. E0b). Renommages : label `oracle_top10` →
+> `oracle_extreme10` (migration DB 0065), `proba_top` → `proba_extreme`, `--target
+> top|bottom` supprimé. `oracle_pct_rank`/`oracle_decile` conservés (dérivation
+> top/bottom locale dans l'audit). Les sections ci-dessous sont le plan HISTORIQUE.
+>
 > **Référence** : `doc/ml_oracle.md` (spécification, 2026-08-18)
 > **Contexte d'analyse** : `doc/backtest_audit.md` §19 — run `20260817_205031_2a2836d1`
 > **Règle cardinale** : l'Oracle est un **TARGET**, jamais une **FEATURE**. **B25 reste intact** pendant toute la 1ʳᵉ expérimentation.

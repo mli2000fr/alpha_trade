@@ -42,13 +42,12 @@ class TestComputeCrossSectionalRanks:
         assert df["oracle_decile"].max() == 10
 
     def test_top10_and_bottom10_thresholds(self):
-        # 10 symboles, top_pct 0.10 → exactement le meilleur = top, le pire = bottom
+        # 10 symboles, top_pct 0.10 → le meilleur = top, le pire = bottom → extreme10=1 pour les deux
         returns = pd.Series(np.arange(1.0, 11.0), index=[f"S{i}" for i in range(10)])
         df = compute_cross_sectional_ranks(returns, top_pct=0.10)
-        assert df.loc["S9", "oracle_top10"] == 1   # rendement max (10.0)
-        assert df.loc["S0", "oracle_bottom10"] == 1  # rendement min (1.0)
-        assert df.loc["S4", "oracle_top10"] == 0   # médiane → ni top ni bottom
-        assert df.loc["S4", "oracle_bottom10"] == 0
+        assert df.loc["S9", "oracle_extreme10"] == 1   # rendement max (10.0)
+        assert df.loc["S0", "oracle_extreme10"] == 1  # rendement min (1.0)
+        assert df.loc["S4", "oracle_extreme10"] == 0   # médiane → ni top ni bottom
 
     def test_nan_ignored(self):
         returns = pd.Series([0.10, 0.20, 0.30, np.nan], index=["A", "B", "C", "D"])
@@ -61,7 +60,7 @@ class TestComputeCrossSectionalRanks:
         df = compute_cross_sectional_ranks(returns, top_pct=0.10)
         assert df.empty
         assert list(df.columns) == [
-            "oracle_pct_rank", "oracle_decile", "oracle_top10", "oracle_bottom10",
+            "oracle_pct_rank", "oracle_decile", "oracle_extreme10",
         ]
 
 

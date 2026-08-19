@@ -9,9 +9,10 @@ Construit la table ``alpha_trade.global_oracle_labels`` (cf. doc/ml_oracle.md §
    (même logique que ``scripts/oracle_selection_audit.py``).
 3. ``future_return_20 = px[D+20] / px[D] − 1``.
 4. Par date : ``oracle_pct_rank`` (fraction de l'univers ≤ rendement, définition
-   identique à l'audit), ``oracle_decile``, ``oracle_top10`` / ``oracle_bottom10``
+   identique à l'audit), ``oracle_decile``, ``oracle_extreme10``
    (TOP/BOTTOM 10 % **cross-sectionnel de l'univers du jour** — jamais de seuil de
-   rendement absolu).
+   rendement absolu). ``oracle_extreme10 = oracle_top10 OR oracle_bottom10`` :
+   le modèle Oracle Extreme détecte les GROS MOUVEMENTS H20, pas la direction.
 5. ``oracle_exit_date = D + H`` ; ``oracle_available_date = exit + offset`` (jours
    ouvrés du calendrier bourse).
 6. Upsert **idempotent + chunké** (``ON DUPLICATE KEY UPDATE``).
@@ -45,19 +46,19 @@ _CHUNK = 2000
 _COLUMNS = [
     "prediction_date", "symbol", "batch_id", "horizon",
     "future_return", "oracle_pct_rank", "oracle_decile",
-    "oracle_top10", "oracle_bottom10", "oracle_exit_date", "oracle_available_date",
+    "oracle_extreme10", "oracle_exit_date", "oracle_available_date",
 ]
 
 _UPSERT = text(
     "INSERT INTO alpha_trade.global_oracle_labels "
     "(prediction_date, symbol, batch_id, horizon, future_return, oracle_pct_rank, "
-    " oracle_decile, oracle_top10, oracle_bottom10, oracle_exit_date, oracle_available_date) "
+    " oracle_decile, oracle_extreme10, oracle_exit_date, oracle_available_date) "
     "VALUES (:prediction_date, :symbol, :batch_id, :horizon, :future_return, :oracle_pct_rank, "
-    " :oracle_decile, :oracle_top10, :oracle_bottom10, :oracle_exit_date, :oracle_available_date) "
+    " :oracle_decile, :oracle_extreme10, :oracle_exit_date, :oracle_available_date) "
     "ON DUPLICATE KEY UPDATE "
     "future_return=VALUES(future_return), oracle_pct_rank=VALUES(oracle_pct_rank), "
-    "oracle_decile=VALUES(oracle_decile), oracle_top10=VALUES(oracle_top10), "
-    "oracle_bottom10=VALUES(oracle_bottom10), oracle_exit_date=VALUES(oracle_exit_date), "
+    "oracle_decile=VALUES(oracle_decile), oracle_extreme10=VALUES(oracle_extreme10), "
+    "oracle_exit_date=VALUES(oracle_exit_date), "
     "oracle_available_date=VALUES(oracle_available_date), created_at=CURRENT_TIMESTAMP"
 )
 
@@ -155,25 +156,26 @@ def compute_cross_sectional_ranks(
     - ``oracle_pct_rank = fraction de l'univers dont le rendement ≤ celui du titre``
       (équivalent à ``(returns <= returns[sym]).mean()``) ;
     - ``oracle_decile = ceil(pct_rank × 10)`` borné [1, 10] ;
-    - ``oracle_top10 = pct_rank >= 1 − top_pct`` ; ``oracle_bottom10 = pct_rank <= top_pct``.
+    - ``oracle_extreme10 = (pct_rank >= 1 − top_pct) OR (pct_rank <= top_pct)``
+      (TOP 10 % ∪ BOTTOM 10 % cross-sectionnel — détection de gros mouvement).
 
     Les NaN d'entrée sont ignorés (retirés avant le calcul).
     """
     returns = pd.Series(returns, dtype=float).dropna()
     if returns.empty:
         return pd.DataFrame(columns=[
-            "oracle_pct_rank", "oracle_decile", "oracle_top10", "oracle_bottom10",
+            "oracle_pct_rank", "oracle_decile", "oracle_extreme10",
         ])
     n = len(returns)
     pct_rank = returns.rank(method="max", ascending=True) / n
     decile = np.ceil(pct_rank * 10.0).clip(1, 10).astype(int)
     top10 = (pct_rank >= 1.0 - top_pct).astype(int)
     bottom10 = (pct_rank <= top_pct).astype(int)
+    extreme10 = np.maximum(top10, bottom10)
     return pd.DataFrame({
         "oracle_pct_rank": pct_rank,
         "oracle_decile": decile,
-        "oracle_top10": top10,
-        "oracle_bottom10": bottom10,
+        "oracle_extreme10": extreme10,
     }, index=returns.index)
 
 
@@ -268,13 +270,11 @@ def build_labels(
             ranked = compute_cross_sectional_ranks(finite_ret, top_pct=0.10)
             pct_s = ranked["oracle_pct_rank"].reindex(uni_syms)
             dec_s = ranked["oracle_decile"].reindex(uni_syms)
-            top_s = ranked["oracle_top10"].reindex(uni_syms)
-            bot_s = ranked["oracle_bottom10"].reindex(uni_syms)
+            ext_s = ranked["oracle_extreme10"].reindex(uni_syms)
         else:
             pct_s = pd.Series(np.nan, index=uni_syms, dtype=float)
             dec_s = pd.Series(np.nan, index=uni_syms, dtype=float)
-            top_s = pd.Series(np.nan, index=uni_syms, dtype=float)
-            bot_s = pd.Series(np.nan, index=uni_syms, dtype=float)
+            ext_s = pd.Series(np.nan, index=uni_syms, dtype=float)
 
         exit_date = close.index[exit_pos].date()
         avail_pos = exit_pos + 1
@@ -283,15 +283,14 @@ def build_labels(
         rets = day_ret.to_numpy(dtype=float)
         pcts = pct_s.to_numpy(dtype=float)
         decs = dec_s.to_numpy(dtype=float)
-        tops = top_s.to_numpy(dtype=float)
-        bots = bot_s.to_numpy(dtype=float)
+        exts = ext_s.to_numpy(dtype=float)
 
         for i, sym in enumerate(uni_syms):
             fr = rets[i]
             if np.isfinite(fr) and np.isfinite(pcts[i]):
                 rows.append((
                     d, sym, batch_id, horizon, float(fr),
-                    float(pcts[i]), int(decs[i]), int(tops[i]), int(bots[i]),
+                    float(pcts[i]), int(decs[i]), int(exts[i]),
                     exit_date, available_date,
                 ))
                 n_labeled += 1
@@ -299,7 +298,7 @@ def build_labels(
                 rows.append((
                     d, sym, batch_id, horizon,
                     float(fr) if np.isfinite(fr) else None,
-                    None, None, None, None,
+                    None, None, None,
                     exit_date, available_date,
                 ))
                 n_unavailable += 1

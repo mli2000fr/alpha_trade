@@ -1,5 +1,12 @@
 """modelFactory/oracle/hard_negatives.py — Expérience Hard Negatives (S6.2).
 
+> **SUPERSEDED (2026-08-19)** : cette expérience visait à décorréler P(top)/P(bottom)
+> en sur-pondérant les « faux TOP directionnels » (vrai BOTTOM mais score TOP élevé).
+> Le modèle Oracle BOTTOM a été retiré et le modèle Oracle TOP renommé Oracle Extreme
+> (cible ``oracle_extreme10 = TOP10 ∪ BOTTOM10``). La branche directionnelle est fermée
+> (D0/D1/D1b/D1d NO-GO). Ce module est conservé pour l'historique scientifique : il
+> dérive ``_bottom10`` localement depuis ``oracle_pct_rank`` (colonne conservée).
+
 Teste si la sur-pondération des « faux TOP directionnels » (vrai BOTTOM mais score
 TOP élevé) permet de décorréler P(top) et P(bottom), i.e. de séparer direction et
 magnitude — l'hypothèse H0 étant « les features encodent l'amplitude, pas le signe ».
@@ -28,7 +35,6 @@ import pandas as pd
 from database.connection import get_sqlalchemy_engine
 from modelFactory.oracle.config import resolve_oracle_batch_id
 from modelFactory.oracle.dataset import (
-    BOTTOM_TARGET_COL,
     TARGET_COL,
     ablation_features,
     build_dataset,
@@ -83,7 +89,7 @@ def _diagnose(valid: pd.DataFrame, ptop_col: str, pbot_col: str) -> dict[str, An
     cap = precision_recall_at_top_pct(v, ptop_col, target_col=TARGET_COL)
 
     pred_top = v[v["_pred_top"]]
-    contam = float((pred_top[BOTTOM_TARGET_COL] == 1).mean()) if len(pred_top) else None
+    contam = float((pred_top["_bottom10"] == 1).mean()) if len(pred_top) else None
 
     # Faux positifs (prédit top, pas vrai top) : où tombent-ils dans le rang réel ?
     fp = v[v["_pred_top"] & (v[TARGET_COL] == 0)]
@@ -138,13 +144,16 @@ def run_hard_negative_experiment(
 
     X_tr = train[cols].astype(float)
     X_va = valid[cols].astype(float)
+    # bottom10 dérivé localement depuis pct_rank (la table n'expose plus oracle_bottom10)
+    train["_bottom10"] = (train["oracle_pct_rank"] <= 0.10).astype(int)
+    valid["_bottom10"] = (valid["oracle_pct_rank"] <= 0.10).astype(int)
     y_tr_top = train[TARGET_COL].astype(int)
-    y_tr_bot = train[BOTTOM_TARGET_COL].astype(int)
+    y_tr_bot = train["_bottom10"].astype(int)
     y_va_top = valid[TARGET_COL].astype(int)
-    y_va_bot = valid[BOTTOM_TARGET_COL].astype(int)
+    y_va_bot = valid["_bottom10"].astype(int)
 
     report: dict[str, Any] = {"status": "completed", "algos": {}, "hn": {}}
-    valid_view = valid[["date", "symbol", TARGET_COL, BOTTOM_TARGET_COL,
+    valid_view = valid[["date", "symbol", TARGET_COL, "_bottom10",
                         "oracle_pct_rank", "future_return"]].copy()
 
     # ── Phase A : modèles de référence (H0) par algo ──

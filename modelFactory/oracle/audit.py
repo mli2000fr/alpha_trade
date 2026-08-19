@@ -34,7 +34,7 @@ _RUN_ROOT = Path("artifacts/ihm_backtesting_runs/run")
 
 _LABEL_COLUMNS = [
     "prediction_date", "symbol", "oracle_pct_rank", "oracle_decile",
-    "oracle_top10", "oracle_bottom10", "future_return",
+    "oracle_extreme10", "future_return",
 ]
 
 
@@ -54,10 +54,16 @@ def load_oracle_labels(
     start: Any = None,
     end: Any = None,
 ) -> pd.DataFrame:
-    """Charge les labels Oracle depuis ``global_oracle_labels``."""
+    """Charge les labels Oracle depuis ``global_oracle_labels``.
+
+    ``oracle_top10`` / ``oracle_bottom10`` sont dérivés localement depuis
+    ``oracle_pct_rank`` (TOP = pct_rank ≥ 0.90, BOTTOM = pct_rank ≤ 0.10) :
+    la colonne de la table est désormais ``oracle_extreme10`` (= TOP ∪ BOTTOM,
+    target du modèle Oracle Extreme).
+    """
     query = (
         "SELECT prediction_date, symbol, oracle_pct_rank, oracle_decile, "
-        "oracle_top10, oracle_bottom10, future_return "
+        "oracle_extreme10, future_return "
         "FROM global_oracle_labels WHERE batch_id = :bid AND horizon = :h"
     )
     params: dict[str, Any] = {"bid": batch_id, "h": horizon}
@@ -70,6 +76,10 @@ def load_oracle_labels(
     with engine.connect() as conn:
         df = pd.read_sql(text(query), conn, params=params)
     df["prediction_date"] = pd.to_datetime(df["prediction_date"]).dt.normalize()
+    # Dérivation locale top/bottom depuis pct_rank (définition cross-sectionnelle identique)
+    if "oracle_pct_rank" in df.columns:
+        df["oracle_top10"] = (df["oracle_pct_rank"] >= 0.90).astype(int)
+        df["oracle_bottom10"] = (df["oracle_pct_rank"] <= 0.10).astype(int)
     return df
 
 

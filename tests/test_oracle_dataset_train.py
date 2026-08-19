@@ -78,7 +78,7 @@ class TestPrecisionRecall:
         # 10 symboles sur 1 date : 1 vrai top10, score max → précision 1.0
         df = pd.DataFrame({
             "date": pd.to_datetime(["2025-01-02"] * 10),
-            "oracle_top10": [1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            "oracle_extreme10": [1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             "score": np.arange(10.0, 0.0, -1.0),
         })
         pr = precision_recall_at_top_pct(df, "score", pct=0.10, min_universe=5)
@@ -89,7 +89,7 @@ class TestPrecisionRecall:
     def test_below_min_universe_skipped(self):
         df = pd.DataFrame({
             "date": pd.to_datetime(["2025-01-02"] * 5),
-            "oracle_top10": [1, 0, 0, 0, 0],
+            "oracle_extreme10": [1, 0, 0, 0, 0],
             "score": [5.0, 4.0, 3.0, 2.0, 1.0],
         })
         pr = precision_recall_at_top_pct(df, "score", pct=0.10, min_universe=10)

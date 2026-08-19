@@ -18,7 +18,7 @@ def _dataset(n_days: int = 100, n_symbols: int = 20) -> pd.DataFrame:
                 "date": d,
                 "symbol": f"S{s:03d}",
                 "oracle_available_date": avail,
-                "oracle_top10": (s + i) % 10 == 0,
+                "oracle_extreme10": (s + i) % 10 == 0,
                 "future_return": 0.01 * ((s + i) % 10),
                 "global_rank_20": (s + i) / (n_symbols + n_days),
             })
@@ -62,7 +62,7 @@ class TestBuildFolds:
             "date": pd.to_datetime(["2021-06-01"]),
             "symbol": ["AAPL"],
             "oracle_available_date": pd.to_datetime(["2021-09-01"]),  # > t_start
-            "oracle_top10": [1],
+            "oracle_extreme10": [1],
             "future_return": [0.1],
             "global_rank_20": [0.9],
         })

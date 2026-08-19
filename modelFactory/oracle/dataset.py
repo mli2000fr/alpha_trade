@@ -1,12 +1,16 @@
-"""modelFactory/oracle/dataset.py — Construction du dataset Oracle TOP (S3).
+"""modelFactory/oracle/dataset.py — Construction du dataset Oracle Extreme (S3).
 
 Construit, pour chaque ``(date, symbol)`` de l'univers Global Model :
 - **features PIT** : réutilise ``compute_features()`` (feature_set ``expert``,
   même moteur que B25) + rangs percentiles cross-sectionnels ;
 - **global_rank_20** : relu depuis ``global_rank_history`` (jamais recalculé — §28) ;
-- **target** ``oracle_top10`` (+ ``oracle_pct_rank``, ``oracle_decile``,
+- **target** ``oracle_extreme10`` (+ ``oracle_pct_rank``, ``oracle_decile``,
   ``future_return``) : jointe depuis ``global_oracle_labels`` ;
 - **colonne de garde** ``oracle_available_date`` (anti-leakage §9).
+
+Le modèle Oracle Extreme apprend « ce titre va faire un gros mouvement » :
+``oracle_extreme10 = oracle_top10 OR oracle_bottom10`` (TOP/BOTTOM 10 %
+cross-sectionnel du jour). Il ne prédit PAS la direction (cf. E0/D0/D1/D1d).
 
 Ablations (spec §7) :
 - ``O0`` = features B25 (expert + xs_ranks), **sans** ``global_rank_20`` ;
@@ -26,8 +30,9 @@ from modelFactory.features import compute_features, get_feature_columns
 from modelFactory.global_ranking import _XS_RANK_SOURCE_FEATURES, _xs_rank_column_name
 
 # ── Colonnes de target / garde ──
-TARGET_COL = "oracle_top10"
-BOTTOM_TARGET_COL = "oracle_bottom10"
+# oracle_extreme10 = 1 si le titre est dans le TOP 10 % OU le BOTTOM 10 %
+# cross-sectionnel du jour (gros mouvement H20). Anciennement oracle_top10.
+TARGET_COL = "oracle_extreme10"
 GUARD_COL = "oracle_available_date"
 GLOBAL_RANK_COL = "global_rank_20"
 
@@ -116,7 +121,7 @@ def load_global_rank_feature(engine: Any, batch_id: str) -> pd.DataFrame:
 def load_oracle_targets(engine: Any, batch_id: str, horizon: int = 20) -> pd.DataFrame:
     """Relit les targets Oracle depuis ``global_oracle_labels``."""
     query = text(
-        "SELECT prediction_date, symbol, oracle_top10, oracle_bottom10, oracle_pct_rank, oracle_decile, "
+        "SELECT prediction_date, symbol, oracle_extreme10, oracle_pct_rank, oracle_decile, "
         "future_return, oracle_available_date FROM global_oracle_labels "
         "WHERE batch_id = :bid AND horizon = :h"
     )

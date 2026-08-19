@@ -24,7 +24,6 @@ import pandas as pd
 from database.connection import get_sqlalchemy_engine
 from modelFactory.oracle.config import resolve_oracle_batch_id
 from modelFactory.oracle.dataset import (
-    BOTTOM_TARGET_COL,
     GUARD_COL,
     TARGET_COL,
     ablation_features,
@@ -90,14 +89,14 @@ def run_walk_forward(
     *,
     test_windows: list[tuple[str, str]],
     ablation: str = "O1",
-    target: str = "top",
 ) -> dict[str, Any]:
     """Retrain par fold + prédictions OOS + métriques par fold et globales.
 
-    ``target`` = "top" (``oracle_top10``) ou "bottom" (``oracle_bottom10``).
+    Cible unique : ``oracle_extreme10`` (détection de gros mouvement H20,
+    TOP 10 % ∪ BOTTOM 10 %). Colonne proba : ``proba_extreme``.
     """
-    _target_col = TARGET_COL if target == "top" else BOTTOM_TARGET_COL
-    _proba_col = "proba_top" if target == "top" else "proba_bottom"
+    _target_col = TARGET_COL
+    _proba_col = "proba_extreme"
 
     folds = build_folds(dataset, test_windows)
     if not folds:
@@ -126,10 +125,12 @@ def run_walk_forward(
 
         pr = precision_recall_at_top_pct(oos, _proba_col, target_col=_target_col)
         baseline_pr = precision_recall_at_top_pct(oos, "global_rank_20", target_col=_target_col)
+        prevalence = float(oos[_target_col].astype(float).mean()) if not oos.empty else None
         per_fold.append({
             "fold_start": fold["t_start"],
             "n_train": int(len(fold["train"])),
             "n_test": int(len(fold["test"])),
+            "prevalence": prevalence,
             "precision_at_10pct": pr["precision"],
             "recall_at_10pct": pr["recall"],
             "baseline_precision_at_10pct": baseline_pr["precision"],
@@ -143,6 +144,7 @@ def run_walk_forward(
     oos = pd.concat(oos_parts, ignore_index=True)
     pr_overall = precision_recall_at_top_pct(oos, _proba_col, target_col=_target_col)
     baseline_overall = precision_recall_at_top_pct(oos, "global_rank_20", target_col=_target_col)
+    prevalence_overall = float(oos[_target_col].astype(float).mean()) if not oos.empty else None
 
     # Stabilité : fraction des folds où le modèle bat la baseline global_rank_20.
     n_folds = len(per_fold)
@@ -156,13 +158,13 @@ def run_walk_forward(
     return {
         "status": "completed",
         "ablation": ablation,
-        "target": target,
         "n_folds": n_folds,
         "folds": per_fold,
         "overall": {
             "precision_at_10pct": pr_overall["precision"],
             "recall_at_10pct": pr_overall["recall"],
             "baseline_precision_at_10pct": baseline_overall["precision"],
+            "prevalence": prevalence_overall,
             "auc": roc_auc(oos[_target_col].to_numpy(), oos[_proba_col].to_numpy()),
             "decile_monotonicity": decile_monotonicity(oos, _proba_col)[0],
         },
@@ -186,20 +188,34 @@ def format_report(result: dict[str, Any]) -> str:
     """Rapport lisible."""
     if result.get("status") != "completed":
         return f"Walk-forward: {result}"
-    lines = [f"=== WALK-FORWARD CAUSAL ({result['ablation']}, target={result.get('target','top')}) — {result['n_folds']} folds ==="]
+    lines = [f"=== WALK-FORWARD CAUSAL ({result['ablation']}) — {result['n_folds']} folds ==="]
     for f in result["folds"]:
+        prev = f.get("prevalence")
+        prev_s = f"{prev*100:.1f}%" if prev is not None else "-"
         lines.append(
             f"  {f['fold_start']}: train={f['n_train']} test={f['n_test']} "
+            f"prev={prev_s} "
             f"precision@10%={f['precision_at_10pct']:.3f} "
-            f"(baseline {f['baseline_precision_at_10pct']:.3f}) AUC={f['auc']:.3f} mono={f['decile_monotonicity']:.3f}"
+            f"(B25 prec@10%={f['baseline_precision_at_10pct']:.3f}) AUC={f['auc']:.3f} "
+            f"mono={f['decile_monotonicity']:.3f}"
         )
     o = result["overall"]
+    prev = o.get("prevalence")
+    prev_s = f"{prev*100:.1f}%" if prev is not None else "-"
+    lift = (o["precision_at_10pct"] / prev) if (prev and o["precision_at_10pct"] is not None) else None
+    lift_s = f"{lift:.2f}x" if lift is not None else "-"
     lines.append(
-        f"OVERALL: precision@10%={o['precision_at_10pct']:.3f} "
-        f"(baseline {o['baseline_precision_at_10pct']:.3f}) AUC={o['auc']:.3f} "
-        f"mono={o['decile_monotonicity']:.3f}"
+        f"OVERALL: prev={prev_s} precision@10%={o['precision_at_10pct']:.3f} "
+        f"(B25 prec@10%={o['baseline_precision_at_10pct']:.3f}) "
+        f"lift_oracle_vs_prev={lift_s} AUC={o['auc']:.3f} mono={o['decile_monotonicity']:.3f}"
     )
-    lines.append(f"fold_stability (bat baseline) = {result['fold_stability_pct']:.1f}%")
+    lines.append(f"fold_stability (bat B25) = {result['fold_stability_pct']:.1f}%")
+    lines.append(
+        "Légende : 'prev' = prévalence de la cible dans le fold test (~20% pour "
+        "oracle_extreme10) ; 'B25 prec@10%' = précision@10% du rang global_rank_20 "
+        "(baseline ranking) ; 'precision@10%' = précision@10% du modèle Oracle Extreme. "
+        "Comparer toujours precision@10% à prev ET à B25 prec@10%."
+    )
     return "\n".join(lines)
 
 
@@ -208,8 +224,6 @@ def main() -> None:
     parser.add_argument("--batch-id", default=None)
     parser.add_argument("--horizon", type=int, default=20)
     parser.add_argument("--ablation", choices=["O0", "O1", "O2"], default="O1")
-    parser.add_argument("--target", choices=["top", "bottom"], default="top",
-                        help="top = oracle_top10 ; bottom = oracle_bottom10 (Oracle BOTTOM, Exp B).")
     parser.add_argument("--start-date", default="2020-01-01")
     parser.add_argument("--end-date", default="2026-05-29")
     parser.add_argument("--symbols", type=int, default=None, help="Limite le nb de symboles (smoke test).")
@@ -236,7 +250,6 @@ def main() -> None:
         dataset, feature_columns,
         test_windows=DEFAULT_TEST_WINDOWS,
         ablation=args.ablation,
-        target=args.target,
     )
     if result.get("status") == "completed":
         run_id = f"oracle-wf-{datetime.now():%Y%m%d%H%M%S}"

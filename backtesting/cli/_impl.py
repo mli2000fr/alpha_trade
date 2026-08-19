@@ -1488,7 +1488,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default="ml",
         choices=["ml", "random", "oracle", "oracle_filter", "oracle_rerank", "oracle_pool"],
         help="Ablation ML-vs-Random-vs-Oracle : 'ml' = rangs globaux réels (défaut), "
-             "'random' = rangs aléatoires (placebo), 'oracle' = P(top10) du modèle Oracle TOP "
+             "'random' = rangs aléatoires (placebo), 'oracle' = P(extreme10) du modèle Oracle Extreme "
              "remplace le rang global (via --oracle-oos-path). Politiques S6.1 : "
              "'oracle_filter' = B25 sélectionne + Oracle filtre la qualité ; "
              "'oracle_rerank' = pool B25 identique + Oracle réordonne (même exposition) ; "
@@ -1498,7 +1498,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--cascade-oracle-filter-pct",
         type=float,
         default=None,
-        help="S6.1-B : seuil du percentile P_top pour oracle_filter (défaut 0.80). "
+        help="S6.1-B : seuil du percentile P_extreme pour oracle_filter (défaut 0.80). "
              "LONG ⇔ P_top ≥ seuil ; SHORT ⇔ P_top ≤ 1-seuil.",
     )
     run_p.add_argument(
@@ -3121,7 +3121,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 _oos_df = pd.read_parquet(_oos_path)
                 _oos_df["_d"] = pd.to_datetime(_oos_df["date"]).dt.strftime("%Y-%m-%d")
                 _oracle_rank_map = {
-                    d: dict(zip(g["symbol"], g["proba_top"]))
+                    d: dict(zip(g["symbol"], g["proba_extreme"]))
                     for d, g in _oos_df.groupby("_d")
                 }
             preds_df = apply_cascade_to_predictions(

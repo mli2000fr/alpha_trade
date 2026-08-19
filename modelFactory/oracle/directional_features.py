@@ -29,7 +29,7 @@ import pandas as pd
 from database.connection import get_sqlalchemy_engine
 from modelFactory.data_loader import load_benchmark_bars, load_universe_bars
 from modelFactory.oracle.config import resolve_oracle_batch_id
-from modelFactory.oracle.dataset import BOTTOM_TARGET_COL, TARGET_COL, load_oracle_targets
+from modelFactory.oracle.dataset import TARGET_COL, load_oracle_targets
 
 LOGGER = logging.getLogger(__name__)
 
@@ -120,9 +120,13 @@ def run_directional_diagnostic(batch_id: str, *, horizon: int = 20, start: str =
     targets = load_oracle_targets(engine, batch_id, horizon)
 
     df = feats.merge(
-        targets[["prediction_date", "symbol", "future_return", TARGET_COL, BOTTOM_TARGET_COL, "oracle_pct_rank"]],
+        targets[["prediction_date", "symbol", "future_return", TARGET_COL, "oracle_pct_rank"]],
         left_on=["date", "symbol"], right_on=["prediction_date", "symbol"], how="inner",
     )
+    # top/bottom dérivés localement depuis pct_rank (colonne conservée ; la table
+    # n'expose plus que oracle_extreme10 = TOP ∪ BOTTOM)
+    df["_top10"] = (df["oracle_pct_rank"] >= 0.90).astype(int)
+    df["_bottom10"] = (df["oracle_pct_rank"] <= 0.10).astype(int)
     df = df[df["date"] >= pd.Timestamp(start)].copy()
     df["abs_return"] = df["future_return"].abs()
     LOGGER.info("dates=%d rows=%d features=%d", df["date"].nunique(), len(df), len(feats.columns) - 2)
@@ -134,8 +138,8 @@ def run_directional_diagnostic(batch_id: str, *, horizon: int = 20, start: str =
             "feature": feat,
             "corr_ret": _cs_spearman(df, feat, "future_return"),
             "corr_abs": _cs_spearman(df, feat, "abs_return"),
-            "corr_top": _cs_spearman(df, feat, TARGET_COL),
-            "corr_bottom": _cs_spearman(df, feat, BOTTOM_TARGET_COL),
+            "corr_top": _cs_spearman(df, feat, "_top10"),
+            "corr_bottom": _cs_spearman(df, feat, "_bottom10"),
         })
     out = pd.DataFrame(rows)
     out["sep"] = out["corr_top"] - out["corr_bottom"]
