@@ -17,6 +17,9 @@ CREATE TABLE IF NOT EXISTS alpha_trade.stock_scores_history (
     symbol                  VARCHAR(20)    NOT NULL,
     sector                  VARCHAR(50)    DEFAULT NULL,
     liquidity_val           DOUBLE         DEFAULT NULL,
+    -- ⚠️ relative_strength_index n'est PAS un RSI 0-100 : ratio de force relative
+    -- vs benchmark = ((1+rendement_titre)/(1+rendement_SPY)) × 100 sur ~6 mois
+    -- (screener/pipeline.py). Non borné (95 → 400+), ~100 = performance égale au SPY.
     relative_strength_index DOUBLE         DEFAULT NULL,
     historical_range_score  DOUBLE         DEFAULT NULL,
     total_score             DOUBLE         DEFAULT NULL,

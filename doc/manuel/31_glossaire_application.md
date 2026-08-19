@@ -31,6 +31,10 @@
 | `parity report` | Comparaison backtest ↔ live. |
 | `reconciliation` | Vérification positions broker ↔ DB. |
 | `account_id` | Identifiant Alpaca du compte. |
+| `relative_strength_index` | ⚠️ **Nom trompeur — ce n'est PAS un RSI 0-100.** Ratio de force relative vs benchmark : `((1 + rendement_titre) / (1 + rendement_SPY)) × 100` sur `lookback_relative_days` (~6 mois), calculé dans `screener/pipeline.py`. Non borné (95 → 400+), centré sur ~100 (= performance égale au SPY), filtre `min_relative_strength_index=100` (défaut). Ne pas l'interpréter comme un RSI Wilder. |
+| `historical_range_score` | Position du prix dans son range de N jours : `(close − low)/(high − low) × 100`, clip [0,100] (`screener/pipeline.py`). Long-only. |
+| `short_score` | Score baissier composite 0-1 : `0.30×(1−trend) + 0.25×(1−RSI/100) + 0.25×(close<SMA50) + 0.20×(close<SMA200)` (`selector/short_score.py`). Haut = bearish. |
+| `oracle_extreme10` | Label Oracle (ex-`oracle_top10`) : 1 si le titre est dans le TOP 10 % **ou** le BOTTOM 10 % cross-sectionnel du jour (gros mouvement H20). Modèle Oracle Extreme. |
 | `trade_date` | Date trading US (ferme à 22h00 heure FR). |
 | `as_of` | Date de référence d'une opération (ex. apply CA). |
 | `artifacts/` | Dossier des sorties (modèles, runs, caches). |
