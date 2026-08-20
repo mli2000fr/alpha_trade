@@ -130,6 +130,8 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_INCLUDE_MACRO_REGIME,
     DEFAULT_ML_INCLUDE_SCORE_COMPONENTS,
     DEFAULT_ML_GLOBAL_MODEL_ONLY,
+    DEFAULT_ML_ENABLE_ORACLE_MODEL,
+    DEFAULT_ML_ORACLE_MODEL_ONLY,
     DEFAULT_ML_TARGET_SKIP_VOL_SCALING,
     DEFAULT_ML_TARGET_EXCESS_VS_SPY,
     DEFAULT_ML_TARGET_INTRA_SECTOR_RANK,
@@ -3632,6 +3634,29 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 help="Ajoute `--global-model-only`. N'entraîne QUE le modèle global, sans entraîner de modèles per-symbol ni per-sector. Le batch s'arrête après le Global Model.",
             )
             st.caption("L'option ci-dessous nécessite que le modèle global soit activé.")
+
+            # ── Oracle Extreme (O0) — 2026-08-20 ──
+            # Le rank B25 (global_rank_20) étant redondant avec les features PIT
+            # (audit O0≈O1), on entraîne l'Oracle en ablation O0 SANS global_rank_20.
+            ml_enable_oracle_model = st.checkbox(
+                "🔮 Entraîner aussi le modèle Oracle Extreme (O0 sans rank global)",
+                value=_session_state_bool("pipeline_ml_enable_oracle_model", DEFAULT_ML_ENABLE_ORACLE_MODEL),
+                key="pipeline_ml_enable_oracle_model",
+                help="Ajoute `--enable-oracle-model`. Entraîne le modèle Oracle Extreme (détection d'extrêmes H20, ablation O0 sans global_rank_20) en fin de séquence, en plus du per-symbol/per-sector et du modèle global (si activé).",
+            )
+            # Auto-décochage : si le 1er checkbox (Oracle Extreme) est décoché,
+            # le 2e (Oracle ONLY) est forcé à False AVANT son instanciation
+            # (sinon il resterait coché dans session_state alors que désactivé).
+            if not ml_enable_oracle_model:
+                st.session_state["pipeline_ml_oracle_model_only"] = False
+            ml_oracle_model_only = st.checkbox(
+                "🔮 Oracle Extreme ONLY — sauter global, per-symbol et per-sector",
+                value=_session_state_bool("pipeline_ml_oracle_model_only", DEFAULT_ML_ORACLE_MODEL_ONLY),
+                key="pipeline_ml_oracle_model_only",
+                disabled=not ml_enable_oracle_model,
+                help="Ajoute `--oracle-model-only`. N'entraîne QUE le modèle Oracle Extreme (O0), sans le Global Model ni les modèles per-symbol/per-sector. Nécessite que l'Oracle Extreme soit activé (case ci-dessus).",
+            )
+
             ml_enable_global_stacking = st.checkbox(
                 "📥 Utiliser le rang global comme feature (Stacking)",
                 value=_session_state_bool("pipeline_ml_enable_global_stacking", DEFAULT_ML_ENABLE_GLOBAL_STACKING),
@@ -4731,6 +4756,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_enable_catboost=bool(ml_enable_catboost),
             ml_enable_global_model=bool(ml_enable_global_model),
             ml_global_model_only=bool(ml_global_model_only),
+            ml_enable_oracle_model=bool(ml_enable_oracle_model),
+            ml_oracle_model_only=bool(ml_oracle_model_only),
             ml_enable_global_stacking=bool(ml_enable_global_stacking),
             ml_global_champion=bool(ml_global_champion),
             ml_global_model_name=cast(Any, ml_global_model_name),

@@ -464,6 +464,101 @@ def _train_worker(
     )
 
 
+def train_oracle_extreme(
+    cfg: TrainingConfig,
+    engine: Engine,
+    batch_id: str,
+    symbols: Optional[list[str]] | None = None,
+) -> dict[str, Any]:
+    """Entraîne la couche Oracle Extreme (ablation O0, SANS global_rank_20).
+
+    2026-08-20 : le rank B25 (`global_rank_20`) étant redondant avec les features
+    PIT (audit O0≈O1, stack leakage sans impact), on entraîne O0 sans `global_rank_20`.
+
+    Pipeline (spec ml_oracle.md) :
+      1. Labels Oracle H20 (global_oracle_labels) via build_labels().
+      2. Dataset Oracle (features PIT + targets) via build_dataset().
+      3. Walk-forward causal strict (anti-leakage T2 : oracle_available_date < test_start)
+         via run_walk_forward(ablation="O0").
+      4. Persistance des prédictions OOS sous artifacts/models/oracle/<run_id>/.
+
+    Returns:
+        dict de synthèse (status, run_id, oos_path, n_folds, métriques).
+    """
+    from modelFactory.oracle.config import resolve_oracle_batch_id
+    from modelFactory.oracle.walk_forward import DEFAULT_TEST_WINDOWS, run_walk_forward
+
+    _batch_id = batch_id or resolve_oracle_batch_id() or "model-factory-unknown"
+
+    LOGGER.info("oracle_extreme start batch_id=%s symbols=%s", _batch_id, (len(symbols) if symbols else "auto"))
+
+    # ── 1. Labels Oracle H20 (idempotent upsert) ──
+    labels_result: dict[str, Any] = {}
+    try:
+        from modelFactory.oracle.build_labels import build_labels
+
+        labels_result = build_labels(
+            _batch_id,
+            horizon=20,
+            start_date=str(cfg.data.training_start_date) if cfg.data.training_start_date else None,
+            end_date=str(cfg.data.training_end_date) if cfg.data.training_end_date else None,
+            engine=engine,
+            dry_run=False,
+        )
+        LOGGER.info("oracle_extreme build_labels status=%s n_labeled=%s", labels_result.get("status"), labels_result.get("n_labeled"))
+    except Exception as exc:
+        LOGGER.warning("oracle_extreme build_labels failed: %s", exc)
+
+    # ── 2. Dataset + walk-forward O0 ──
+    from modelFactory.oracle.dataset import build_dataset
+    from modelFactory.oracle.train import get_universe_symbols
+
+    horizon = 20
+    try:
+        _universe = symbols or get_universe_symbols(engine, _batch_id, horizon)
+        if not _universe:
+            LOGGER.warning("oracle_extreme empty universe — nothing to train")
+            return {"status": "skipped", "reason": "no_universe", "batch_id": _batch_id}
+
+        _start = str(cfg.data.training_start_date) if cfg.data.training_start_date else "2020-01-01"
+        _end = str(cfg.data.training_end_date) if cfg.data.training_end_date else "2026-05-29"
+        dataset, feature_columns = build_dataset(
+            engine, _batch_id, _universe,
+            start_date=_start, end_date=_end, horizon=horizon,
+        )
+        if dataset.empty:
+            LOGGER.warning("oracle_extreme empty dataset — nothing to train")
+            return {"status": "skipped", "reason": "empty_dataset", "batch_id": _batch_id}
+
+        result = run_walk_forward(
+            dataset, feature_columns,
+            test_windows=DEFAULT_TEST_WINDOWS,
+            ablation="O0",
+        )
+        if result.get("status") != "completed":
+            LOGGER.warning("oracle_extreme walk_forward not completed: %s", result.get("status"))
+            return {"status": result.get("status", "error"), "batch_id": _batch_id, **result}
+
+        from datetime import datetime as _dt
+        run_id = f"oracle-wf-{_dt.now():%Y%m%d%H%M%S}"
+        from modelFactory.oracle.walk_forward import persist_oos
+        path = persist_oos(result["oos"], run_id)
+        LOGGER.info("oracle_extreme DONE run_id=%s oos_path=%s", run_id, path)
+        return {
+            "status": "completed",
+            "batch_id": _batch_id,
+            "run_id": run_id,
+            "oos_path": str(path),
+            "ablation": "O0",
+            "n_folds": result.get("n_folds"),
+            "fold_stability_pct": result.get("fold_stability_pct"),
+            "overall": result.get("overall"),
+        }
+    except Exception as exc:
+        LOGGER.exception("oracle_extreme failed: %s", exc)
+        return {"status": "failed", "reason": str(exc), "batch_id": _batch_id}
+
+
 def run_training_batch(
     cfg: TrainingConfig,
     engine: Engine,
@@ -697,6 +792,25 @@ def run_training_batch(
         accelerator=cfg.accelerator,
     )
     results: list[TrainResult] = []
+
+    # ── Oracle Extreme ONLY (2026-08-20) : entraîner UNIQUEMENT l'Oracle,
+    #    skip Global Model, per-symbol et per-sector. ──
+    if cfg.data.oracle_model_only:
+        LOGGER.info("orchestrator oracle_model_only — training Oracle Extreme standalone (O0)")
+        try:
+            update_runtime_status(current_phase="oracle_extreme", progress_item="__ORACLE__")
+            _oracle_result = train_oracle_extreme(cfg, engine, batch_id, symbols=_global_symbols)
+            LOGGER.info("oracle_model_only result: %s", _oracle_result.get("status"))
+            if _oracle_result.get("status") == "completed":
+                results.append(TrainResult("__ORACLE__", batch_id, "completed", metrics=_oracle_result))
+            else:
+                results.append(TrainResult("__ORACLE__", batch_id, "failed", skip_reason=str(_oracle_result.get("reason"))))
+        except Exception as _exc:
+            LOGGER.exception("oracle_model_only failed: %s", _exc)
+            results.append(TrainResult("__ORACLE__", batch_id, "failed", skip_reason=str(_exc)))
+        update_runtime_status(current_phase="batch_completed", progress_current=len(results))
+        LOGGER.info("orchestrator oracle_model_only done — returning early")
+        return results
 
     # Pre-compute cross-sectional features ONCE for all symbols.
     # Each symbol only needs its own (symbol, date) rows, which we look up
@@ -1117,6 +1231,22 @@ def run_training_batch(
                             current_symbol=sym,
                             progress_item=sym,
                         )
+
+    # ── Oracle Extreme en fin de séquence (2026-08-20) : entraîne l'Oracle
+    #    AUSSI (en plus du global / per-symbol / per-sector déjà faits). ──
+    if cfg.data.enable_oracle_model and not cfg.data.oracle_model_only:
+        LOGGER.info("orchestrator enable_oracle_model — training Oracle Extreme (O0) after sequence")
+        try:
+            update_runtime_status(current_phase="oracle_extreme", progress_item="__ORACLE__")
+            _oracle_result = train_oracle_extreme(cfg, engine, batch_id, symbols=_global_symbols)
+            LOGGER.info("enable_oracle_model result: %s", _oracle_result.get("status"))
+            if _oracle_result.get("status") == "completed":
+                results.append(TrainResult("__ORACLE__", batch_id, "completed", metrics=_oracle_result))
+            else:
+                results.append(TrainResult("__ORACLE__", batch_id, "failed", skip_reason=str(_oracle_result.get("reason"))))
+        except Exception as _exc:
+            LOGGER.exception("enable_oracle_model failed: %s", _exc)
+            results.append(TrainResult("__ORACLE__", batch_id, "failed", skip_reason=str(_exc)))
 
     # Summary
     completed = sum(1 for r in results if r.status == "completed")

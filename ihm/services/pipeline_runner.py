@@ -84,6 +84,8 @@ from ihm.services.pipeline_ml_defaults import (
     DEFAULT_ML_INCLUDE_MACRO_REGIME,
     DEFAULT_ML_INCLUDE_SCORE_COMPONENTS,
     DEFAULT_ML_GLOBAL_MODEL_ONLY,
+    DEFAULT_ML_ENABLE_ORACLE_MODEL,
+    DEFAULT_ML_ORACLE_MODEL_ONLY,
     DEFAULT_ML_RANKING_TOP_K_FEATURES,
     DEFAULT_ML_GLOBAL_RANKING_MAX_SYMBOLS,
     DEFAULT_ML_PER_SYMBOL_MAX_SYMBOLS,
@@ -386,6 +388,8 @@ class PipelineLaunchOptions:
     ml_include_macro_regime: bool = DEFAULT_ML_INCLUDE_MACRO_REGIME
     ml_include_score_components: bool = DEFAULT_ML_INCLUDE_SCORE_COMPONENTS  # P0-6
     ml_global_model_only: bool = DEFAULT_ML_GLOBAL_MODEL_ONLY  # P0-6
+    ml_enable_oracle_model: bool = DEFAULT_ML_ENABLE_ORACLE_MODEL  # 2026-08-20 : Oracle Extreme (O0)
+    ml_oracle_model_only: bool = DEFAULT_ML_ORACLE_MODEL_ONLY      # 2026-08-20 : Oracle ONLY
     ml_target_skip_vol_scaling: bool = DEFAULT_ML_TARGET_SKIP_VOL_SCALING
     ml_target_excess_vs_spy: bool = DEFAULT_ML_TARGET_EXCESS_VS_SPY  # P0-7
     ml_target_intra_sector_rank: bool = DEFAULT_ML_TARGET_INTRA_SECTOR_RANK
@@ -2283,6 +2287,12 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         if options.ml_global_model_only:
             command.append("--global-model-only")
             command.append("--enable-global-model")  # P0-6: implicite
+        # Oracle Extreme (O0) — 2026-08-20
+        if options.ml_oracle_model_only:
+            command.append("--oracle-model-only")
+            command.append("--enable-oracle-model")  # implicite
+        elif options.ml_enable_oracle_model:
+            command.append("--enable-oracle-model")
         if options.ml_include_sentiment:
             command.append("--include-sentiment")
         if options.ml_include_screener_scores:

@@ -537,6 +537,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Entraîne aussi un modèle global multi-symboles en comparaison")
     p.add_argument("--global-model-only", action="store_true", default=False,
                    help="Entraîne UNIQUEMENT le modèle global, sans per-symbol ni per-sector. Active implicitement --enable-global-model.")
+    # Oracle Extreme (O0) — 2026-08-20 : détection d'extrêmes H20 SANS global_rank_20
+    p.add_argument("--enable-oracle-model", action="store_true", default=False,
+                   help="Entraîne AUSSI le modèle Oracle Extreme (ablation O0, sans global_rank_20) en fin de séquence globale. Le rank B25 étant redondant avec les features PIT (audit 2026-08-20), on entraîne O0 sans global_rank_20.")
+    p.add_argument("--oracle-model-only", action="store_true", default=False,
+                   help="Entraîne UNIQUEMENT le modèle Oracle Extreme (O0). Skip le Global Model, le per-symbol et le per-sector. Active implicitement --enable-oracle-model.")
     p.add_argument("--enable-global-stacking", action="store_true", default=False,
                    help="Utilise la prédiction du Global Model comme feature (Approche 2 — Stacking)")
     p.add_argument("--enable-global-challenger", action="store_true", default=False,
@@ -643,6 +648,10 @@ def main(args: list[str] | None = None) -> None:
     if opts.global_model_only:
         opts.enable_global_model = True
 
+    # Oracle Extreme (O0) : --oracle-model-only active implicitement l'Oracle
+    if getattr(opts, "oracle_model_only", False):
+        opts.enable_oracle_model = True
+
     _horizons: tuple[int, ...] = ()
     _forecast_horizon = opts.forecast_horizon
     if opts.forecast_horizons:
@@ -674,6 +683,8 @@ def main(args: list[str] | None = None) -> None:
             ),
             force_v1_lstm=opts.force_v1_lstm,
             global_model_only=opts.global_model_only,
+            enable_oracle_model=opts.enable_oracle_model,
+            oracle_model_only=opts.oracle_model_only,
             sector_use_symbol_feature=opts.sector_symbol_feature,
             enable_cross_sectional_features=opts.enable_cross_sectional,
             cross_sectional_min_universe=opts.cross_sectional_min_universe,
@@ -1070,6 +1081,7 @@ def main(args: list[str] | None = None) -> None:
                         batch_id=_batch_id,
                         artifacts_dir=Path(opts.artifacts_dir),
                         engine=engine,
+                        symbols=symbols or None,
                     )
                 # Étape 2 : per-symbol — non applicable aux batches per-sector
                 if _per_sector:

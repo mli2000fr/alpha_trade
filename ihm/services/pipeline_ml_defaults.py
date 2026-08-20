@@ -95,6 +95,8 @@ DEFAULT_ML_INCLUDE_VOLUME_FEATURES = False  # P3-5 : profil volume/liquidité (1
 DEFAULT_ML_INCLUDE_MACRO_REGIME = False      # SPY_SMA_200_slope + VIX_zscore (macro regime indicators)
 DEFAULT_ML_INCLUDE_SCORE_COMPONENTS = False  # P0-6 : composants stock_scores_history (sentiment_net_agg, company_idio_score...)
 DEFAULT_ML_GLOBAL_MODEL_ONLY = False  # P0-6 : skip per-symbol & per-sector, ne faire que le global
+DEFAULT_ML_ENABLE_ORACLE_MODEL = False  # 2026-08-20 : entraîne AUSSI le modèle Oracle Extreme (O0 sans global_rank_20)
+DEFAULT_ML_ORACLE_MODEL_ONLY = False    # 2026-08-20 : entraîne UNIQUEMENT l'Oracle Extreme — skip global, per-symbol, per-sector
 DEFAULT_ML_TARGET_SKIP_VOL_SCALING = False   # T1 experiment: désactiver le vol-scaling (target = future_return brut)
 DEFAULT_ML_TARGET_EXCESS_VS_SPY = True      # P0-7 : target = (future_return - spy_return) / vol20 – centre la distribution
 DEFAULT_ML_TARGET_INTRA_SECTOR_RANK = False  # T2 experiment: target = rang percentile intra-secteur [0,1]

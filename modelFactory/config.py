@@ -42,6 +42,12 @@ class DataConfig:
     # demandé (expert) pour que les features whitelist existent.
     force_v1_lstm: bool = True
     global_model_only: bool = False  # P0-6 : skip per-symbol et per-sector, ne faire que le global
+    # Oracle Extreme (O0) — 2026-08-20 : détection d'extrêmes H20 SANS global_rank_20
+    # (ablation O0 — le rank B25 est redondant avec les features PIT, cf. audit
+    #  oracle_o0_vs_o1_2026-08-20). Le modèle Oracle est entraîné en walk-forward
+    #  strict (anti-leakage T2) après la séquence globale.
+    enable_oracle_model: bool = False  # entraîne AUSSI l'Oracle Extreme (O0) en fin de séquence
+    oracle_model_only: bool = False    # entraîne UNIQUEMENT l'Oracle Extreme — skip global, per-symbol, per-sector
     sector_use_symbol_feature: bool = True  # D1 (2026-08-15) : per-sector, False = ablation de la feature catégorielle 'symbol'
     enable_cross_sectional_features: bool = False  # percentiles + secteur (momentum, alpha intra-secteur)
     cross_sectional_min_universe: int = 20
