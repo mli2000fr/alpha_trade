@@ -2,8 +2,118 @@
 2026 : +12.648%, PF 1.312, Sharpe 2.59, DD −5.05%, 143 trades (93L/50S), L +6 644 / S +5 183
 
 
- le résultat d'E13 (m16/m24 stabilise l'univers Extreme) n'est branché sur rien de production. Si tu veux l'exploiter, il y a un vrai chantier d'intégration à part :
- (1) activer/entraîner l'Oracle O0 en pipeline,
- (2) basculer la sélection LONG sur le gate proba_extreme top20% (au lieu de global_rank_20 top10%),
- (3) passer la capacité à m16/m24 avec sizing equal-weight. C'est un changement de sélection majeur — exactement
- le genre de décision que tu voudras cadrer avant tout branchement (le doc Oracle impose déjà "B25 intouchable", donc ça irait à l'encontre de la règle actuelle).
+$env:PYTHONPATH='f:/projets'
+python.exe -m backtesting run `
+  --start 2025-01-02 `
+  --end 2026-05-29 `
+  --ml-batch-id model-factory-20260811223551-ef2cd0 `
+  --capital-preset-key capital_2001_5000 `
+  --equity 4000 `
+  --use-canonical-costs `
+  --atr-risk-stop-multiple 2.5 `
+  --tp-atr-multiple 3.0 `
+  --tp-max-pct 0.07 `
+  --cascade-top-pct 0.10 `
+  --cascade-rank-mode extreme_gate `
+  --oracle-oos-path oos_predictions.parquet `
+  --extreme-gate-pct 0.20 `
+  --extreme-gate-per-symbol bypass `
+  --output-dir artifacts/backtesting/e17_ext_C_preset4000 *> e17_ext_C_preset4000.log
+
+  Le flag clé
+--extreme-gate-per-symbol bypass — c'est ce qui active le bypass complet :
+
+Variante	Flag	Effet
+A (actuel)	--extreme-gate-per-symbol filter	veto long_prob > 0.55 + rang par long_prob
+B (demi)	--extreme-gate-per-symbol no_filter	pas de veto, rang par long_prob
+C (Oracle pur)	--extreme-gate-per-symbol bypass	pas de veto, rang par percentile O0
+Ce que fait bypass (rappel du câblage)
+cascade_select : score = rank (percentile Oracle O0), le per-symbol est ignoré — ni long_prob > min_prob, ni score = rank × long_prob.
+apply_cascade_to_predictions : proba_long = percentile O0, proba_short = 0, predicted_side = "long" → indispensable pour que replay_signals classe par Oracle et pas par le per-symbol.
+
+
+Maintenant apply_cascade_to_predictions : ajouter le paramètre extreme_gate_shorts et le transmettre, + gérer predicted_side="short" pour les candidats SHORT (sinon replay_signals les verrait comme long).
+
+Maintenant le câblage CLI : flag --extreme-gate-shorts + transmission.
+Le flag --extreme-gate-shorts est bien parsé. Maintenant je lance les runs OOS. D'abord je vérifie si le run B2 (propre) est terminé, puis je lance les 3 nouveaux runs :
+
+EXT short-only (--extreme-gate-shorts + --no-longs)
+B25 short-only (--no-longs, cascade ml par défaut)
+EXT long+short (--extreme-gate-shorts)
+
+
+
+$env:PYTHONPATH='f:/projets'
+python.exe -m backtesting run `
+  --start 2025-01-02 `
+  --end 2026-05-29 `
+  --ml-batch-id model-factory-20260811223551-ef2cd0 `
+  --capital-preset-key capital_2001_5000 `
+  --equity 4000 `
+  --use-canonical-costs `
+  --atr-risk-stop-multiple 2.5 `
+  --tp-atr-multiple 3.0 `
+  --tp-max-pct 0.07 `
+  --cascade-top-pct 0.10 `
+  --cascade-rank-mode extreme_gate `
+  --oracle-oos-path oos_predictions.parquet `
+  --extreme-gate-pct 0.20 `
+  --extreme-gate-shorts `
+  --output-dir artifacts/backtesting/e18_ext_ls_preset4000 *> e18_ext_ls_preset4000.log
+
+  Flag	Rôle
+--cascade-rank-mode extreme_gate	active le gate Oracle O0
+--oracle-oos-path ...	parquet des prédictions OOS Oracle (obligatoire pour extreme_gate)
+--extreme-gate-pct 0.20	top 20% du jour par proba_extreme
+--extreme-gate-shorts	active la branche SHORT (optionnel — défaut LONG-only)
+--capital-preset-key capital_2001_5000 --equity 4000	preset petit compte @ 4000$
+--use-canonical-costs --atr-risk-stop-multiple 2.5 --tp-atr-multiple 3.0 --tp-max-pct 0.07	contrat PROD gelé
+Ce que fait --extreme-gate-shorts
+Dans le gate top20 (rank ≥ 1 − pool_pct) :
+
+LONG si long_prob > 0.55
+SHORT si long_prob ≤ 0.55 et short_prob > 0.55 (le reste du gate)
+sinon NO TRADE
+C'est exactement le schéma : LONG = Extreme ∩ strong long_prob / SHORT = Extreme restants ∩ strong short_prob / REST = NO TRADE.
+
+
+
+
+
+
+
+
+
+
+
+
+cible:
+Architecture que je retiendrais maintenant
+Oracle O0
+   │
+   ├── proba_extreme
+   │
+   ▼
+percentile cross-sectionnel quotidien
+   │
+   ▼
+Extreme TOP20%
+   │
+   │   = définition de l'univers
+   │
+   ▼
+Per-symbol B25
+   │
+   └── long_prob
+          │
+          ▼
+   ranking décroissant
+          │
+          ▼
+   capacité / portefeuille
+          │
+          ▼
+        LONG
+
+
+

@@ -1486,13 +1486,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--cascade-rank-mode",
         type=str,
         default="ml",
-        choices=["ml", "random", "oracle", "oracle_filter", "oracle_rerank", "oracle_pool"],
+        choices=["ml", "random", "oracle", "oracle_filter", "oracle_rerank", "oracle_pool", "extreme_gate"],
         help="Ablation ML-vs-Random-vs-Oracle : 'ml' = rangs globaux réels (défaut), "
              "'random' = rangs aléatoires (placebo), 'oracle' = P(extreme10) du modèle Oracle Extreme "
              "remplace le rang global (via --oracle-oos-path). Politiques S6.1 : "
              "'oracle_filter' = B25 sélectionne + Oracle filtre la qualité ; "
              "'oracle_rerank' = pool B25 identique + Oracle réordonne (même exposition) ; "
-             "'oracle_pool' = pool B25 élargi (--cascade-oracle-pool-pct) + Oracle sélectionne le top P pct.",
+             "'oracle_pool' = pool B25 élargi (--cascade-oracle-pool-pct) + Oracle sélectionne le top P pct. "
+             "'extreme_gate' = gate Extreme LONG-only (Oracle O0, top --extreme-gate-pct, via --oracle-oos-path).",
     )
     run_p.add_argument(
         "--cascade-oracle-filter-pct",
@@ -1506,6 +1507,29 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="S6.1-C : largeur du pool B25 pour oracle_pool (défaut 0.20).",
+    )
+    run_p.add_argument(
+        "--extreme-gate-pct",
+        type=float,
+        default=None,
+        help="E6-E13 : pool_pct du gate Extreme pour --cascade-rank-mode extreme_gate (défaut 0.20).",
+    )
+    run_p.add_argument(
+        "--extreme-gate-per-symbol",
+        choices=["filter", "no_filter", "bypass"],
+        default="filter",
+        help="E17 : rôle du modèle per-symbol dans la branche extreme_gate. "
+             "filter = actuel (veto long_prob>min_prob + score=rank×long_prob) ; "
+             "no_filter = pas de veto, score=rank×long_prob ; "
+             "bypass = Oracle pur (per-symbol ignoré, score=rank, proba_long=percentile O0).",
+    )
+    run_p.add_argument(
+        "--extreme-gate-shorts",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="E18 : active la branche SHORT dans extreme_gate (LONG-only par défaut). "
+             "SHORT = restants du gate (non-LONG) ∩ short_prob > min_prob. "
+             "Réouverture SHORT optionnelle à valider OOS — NO-GO E14/E18 par défaut.",
     )
     run_p.add_argument(
         "--cascade-rank-seed",
@@ -2405,6 +2429,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
     """Exécute le backtest complet."""
     from datetime import datetime
 
+    import numpy as np
     import pandas as pd
 
     from backtesting.fidelity import (
@@ -3107,14 +3132,16 @@ def _run_backtest(args: argparse.Namespace) -> None:
                         _best_h_flag = int(_cfg_backtest_horizon)
                     except (TypeError, ValueError):
                         pass
-            # ── Ablation Oracle (S6/S6.1) : charger P(top10) depuis le parquet OOS ──
+            # ── Ablation Oracle (S6/S6.1) + Extreme Gate (E6-E13) : charger P(extreme) depuis le parquet OOS ──
             _oracle_rank_map = None
-            if getattr(args, "cascade_rank_mode", "ml") in ("oracle", "oracle_filter", "oracle_rerank", "oracle_pool"):
+            _oracle_modes = ("oracle", "oracle_filter", "oracle_rerank", "oracle_pool", "extreme_gate")
+            if getattr(args, "cascade_rank_mode", "ml") in _oracle_modes:
                 import pandas as pd
                 _oos_path = getattr(args, "oracle_oos_path", None)
                 if not _oos_path:
                     _safe_print(
-                        "❌ --cascade-rank-mode oracle nécessite --oracle-oos-path "
+                        "❌ --cascade-rank-mode {} nécessite --oracle-oos-path ".format(
+                            getattr(args, "cascade_rank_mode", "oracle")) +
                         "(parquet des prédictions OOS Oracle, sortie S4).\n"
                     )
                     raise SystemExit(2)
@@ -3135,6 +3162,9 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 oracle_rank_map=_oracle_rank_map,
                 oracle_filter_pct=getattr(args, "cascade_oracle_filter_pct", None),
                 oracle_pool_pct=getattr(args, "cascade_oracle_pool_pct", None),
+                extreme_gate_pct=getattr(args, "extreme_gate_pct", None),
+                extreme_gate_per_symbol=getattr(args, "extreme_gate_per_symbol", "filter"),
+                extreme_gate_shorts=bool(getattr(args, "extreme_gate_shorts", False)),
             )
             _cas_passed = int(preds_df.loc[preds_df["predicted_side"] != "flat"].shape[0]) if "predicted_side" in preds_df.columns else 0
             _cascade_filtered_count = _cas_before - _cas_passed
@@ -3623,6 +3653,46 @@ def _run_backtest(args: argparse.Namespace) -> None:
             bt_engine = BacktestEngine(bt_config)
     else:
         bt_engine = BacktestEngine(bt_config)
+    # ── Fix atr_pct_20 (2026-08-20) ──────────────────────────────────────
+    # Fallback OHLCV : les signaux sans snapshot dans stock_scores_history ont
+    # atr_pct_20=NaN → le simulateur retombait sur TP fixe 12% / trailing 7%
+    # (défauts CLI --tp/--ts) au lieu du TP prod min(3×ATR, 7%) + stop 2.5×ATR.
+    # On calcule ATR20/close à la date du signal (PIT, pas de fuite future).
+    _sd = signals_df
+    if _sd is not None and not _sd.empty and execution_pivoted is not None:
+        _dcol = next((c for c in ("trade_date", "signal_date", "execution_date") if c in _sd.columns), None)
+        if _dcol is not None:
+            if "atr_pct_20" not in _sd.columns:
+                _sd = _sd.copy()
+                _sd["atr_pct_20"] = np.nan
+            _missing = _sd["atr_pct_20"].isna()
+            if _missing.any():
+                try:
+                    _atr_usd = BacktestEngine._compute_atr(
+                        execution_pivoted["high"],
+                        execution_pivoted["low"],
+                        execution_pivoted["close"],
+                        window=20,
+                    )
+                    _atr_pct = _atr_usd / execution_pivoted["close"].replace(0, np.nan)
+                    _syms = set(_sd.loc[_missing, "symbol"].astype(str).unique())
+                    _cols = [c for c in _atr_pct.columns if c in _syms]
+                    if _cols:
+                        _atr_pct = _atr_pct[_cols]
+                        _dates = pd.to_datetime(_sd.loc[_missing, _dcol]).dt.normalize()
+                        _sym = _sd.loc[_missing, "symbol"].astype(str)
+                        _st = _atr_pct.stack()
+                        _st.index = _st.index.set_names(["date", "symbol"])
+                        _lookup = _st.reindex(pd.MultiIndex.from_arrays([_dates, _sym]))
+                        _sd.loc[_missing, "atr_pct_20"] = _lookup.to_numpy()
+                    _filled = int(_sd["atr_pct_20"].notna().sum())
+                    LOGGER.info(
+                        "atr_pct_20 enrichi depuis OHLCV : couverture %d/%d signaux",
+                        _filled, len(_sd),
+                    )
+                except Exception as _exc:  # noqa: BLE001 — non bloquant
+                    LOGGER.warning("atr_pct_20 fallback OHLCV échoué : %s", _exc)
+        signals_df = _sd
     pf = bt_engine.run(
         open=execution_pivoted["open"], close=execution_pivoted["close"], high=execution_pivoted["high"], low=execution_pivoted["low"],
         volume=execution_pivoted.get("volume"),

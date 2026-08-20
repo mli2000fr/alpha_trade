@@ -219,13 +219,36 @@ def replay_signals(
         if "sector" not in context.columns:
             context["sector"] = None
         merge_columns = ["symbol", "trade_date", "score", "score_source", "sector"]
-        if "atr_pct_20" in context.columns:
-            merge_columns.append("atr_pct_20")
         df = df.merge(
             context[merge_columns],
             on=["symbol", "trade_date"],
             how="left",
         )
+        # ── Fix asof atr_pct_20 (2026-08-20) ──────────────────────────────
+        # Les snapshots de scores n'existent que sur une fraction des dates de
+        # trading. Un merge EXACT laissait atr_pct_20=NaN sur ~83% des signaux,
+        # ce qui désactivait le TP de production min(3×ATR, 7%) et le stop ATR
+        # (2.5×ATR) → le simulateur retombait sur TP=12% fixe / trailing=7%
+        # (défauts CLI --tp/--ts). On prend ici le dernier snapshot disponible
+        # ≤ date du signal (point-in-time, pas de fuite future).
+        if "atr_pct_20" in context.columns:
+            atr_lookup = (
+                context[["symbol", "trade_date", "atr_pct_20"]]
+                .dropna(subset=["atr_pct_20"])
+                .sort_values("trade_date")
+            )
+            if not atr_lookup.empty:
+                df_sorted = df.sort_values("trade_date").copy()
+                df_asof = pd.merge_asof(
+                    df_sorted[["symbol", "trade_date"]],
+                    atr_lookup,
+                    on="trade_date",
+                    by="symbol",
+                    direction="backward",
+                    allow_exact_matches=True,
+                )
+                df_sorted["atr_pct_20"] = df_asof["atr_pct_20"].to_numpy()
+                df = df_sorted.sort_index()
 
     df["veto_reason"] = pd.NA
     probability_veto = (

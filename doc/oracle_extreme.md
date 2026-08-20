@@ -1,10 +1,12 @@
 # Oracle Extreme — Gate d'univers LONG (composant officiel E6→E13)
 
 **Statut :** composant intégré au code (config + `cascade_select` + tests ✅ 54/54),
+**câblé au backtest CLI** (`--cascade-rank-mode extreme_gate` + variantes E17/E18),
 **non câblé au pipeline live** (voir [§8 État du câblage](#8-etat-du-cablage-et-to-do)).
 
 **Référence recherche :** `doc/synthese_e6_e13_2026-08-20.md` (branche E6→E13 **FERMÉE**).
 **Baseline research gelée :** Oracle O0 → Extreme TOP20 → LONG-only → PROD lifecycle → **m24** → equal-weight 1/24.
+**Résultats production CLI (E16-D/E17/E18) :** voir [§10 Résultats](#10-resultats-de-reference-recherche-50-seeds--e13-b).
 
 ---
 
@@ -121,6 +123,122 @@ if _mode_extreme_gate:
     is_bottom = False  # LONG-only
 ```
 
+### 5.1 — Flux PRODUCTION complet (`python -m backtesting run --cascade-rank-mode extreme_gate ...`)
+
+Le run CLI (E16-D, preset `capital_2001_5000`) enchaîne **deux filtres successifs** + la pile production :
+
+```mermaid
+flowchart TD
+    A["Oracle O0 (walk-forward OOS)<br/>proba_extreme par (date, symbol)"] --> B["oracle_rank_map<br/>{date: {symbol: proba_extreme}}"]
+    B --> C["percentile cross-sectionnel DU JOUR<br/>rank(pct) de proba_extreme"]
+    C --> D{"GATE : rank >= 1 − pool_pct ?<br/>(top 20% du jour)"}
+    D -- non --> X["Rejeté (flat)"]
+    D -- oui --> E{"Per-symbol B25 :<br/>long_prob > min_prob ?<br/>(0.55 en classification)"}
+    E -- non --> X
+    E -- oui --> F["LONG — score = rank × long_prob<br/>(LONG-only, is_bottom=False)"]
+    F --> G["Pile production :<br/>preset capital_2001_5000 / equity 4000$<br/>risk / sizing / exécution / coûts canoniques"]
+    G --> H["Portefeuille final + report.json"]
+```
+
+- **Le gate** (Étape 1) : filtre Oracle sur `proba_extreme` (mouvement extrême, **pas** P(LONG)), percentile intra-jour, top `pool_pct` — LONG-only.
+- **Le modèle per-symbol** (Étape 2) : `long_prob > min_prob` — c'est la confirmation directionnelle.
+- **La pile production** : le preset capital (petit compte), le sizing, le risque, l'exécution next-open, les coûts canoniques.
+
+> ⚠️ Interprétation : le résultat CLI (ex. +146 % pour EXT sous preset 2001_5000) = **gate + per-symbol + pile production**, pas le gate seul. Le gate seul (recherche, E16-C) donnait ~23 % en médiane — la différence vient du filtre per-symbol et du pipeline.
+
+### 5.2 — Variantes du rôle per-symbol (E17, flag `--extreme-gate-per-symbol`)
+
+Le modèle per-symbol B25 intervient à **2 endroits** dans le flux :
+
+1. **VETO** (sélection) : `long_prob > min_prob` (0.55) — rejette un candidat du top 20 %.
+2. **RANG** (priorité) : `replay_signals` classe par `proba_long` (= long_prob) → c'est **lui** qui décide qui entre dans `max_positions` (pas `cascade_score`, inutilisé en aval).
+
+Trois variantes câblées (`--extreme-gate-per-symbol`) :
+
+| Variante | VETO `long_prob > min_prob` | RANG / priorité |
+|---|---|---|
+| **A `filter`** (actuel) | ✅ oui (0.55) | `long_prob` per-symbol (via `proba_long`) |
+| **B `no_filter`** | ❌ non | `long_prob` per-symbol |
+| **C `bypass`** (Oracle pur) | ❌ non | **percentile Oracle O0** — `proba_long` est écrasé par le score `rank` |
+
+**Câblage de C (`bypass`)** — ne pas juste changer le score en amont :
+
+- `cascade_select` : `score = rank` (percentile O0), per-symbol ignoré (ni veto ni score).
+- `apply_cascade_to_predictions` : `proba_long = score (percentile O0)`, `proba_short = 0`, `predicted_side = "long"` — indispensable car `replay_signals` classe par `proba_long`. Sans cet écrasement, le per-symbol continuerait de classer via `long_prob`.
+
+```python
+# predictor.py — branche extreme_gate (E17)
+if _mode_extreme_gate:
+    if _eg_ps_mode == "bypass":                       # C : Oracle pur
+        candidates.append(("LONG", symbol, rank))
+    else:
+        _eg_pred = per_symbol_preds.get(symbol)
+        if _eg_pred is None:
+            continue
+        if _eg_ps_mode == "no_filter" or _eg_pred.long_prob > _min_prob:  # B / A
+            candidates.append(("LONG", symbol, rank * _eg_pred.long_prob))
+    continue
+```
+
+```python
+# apply_cascade_to_predictions — bypass : proba_long = percentile O0
+if _eg_ps_bypass:
+    _oscore = _score_map.get(_sym)
+    result.loc[_pm, "proba_long"] = float(_oscore) if _oscore is not None else 0.0
+    result.loc[_pm, "proba_short"] = 0.0
+    result.loc[_pm, "predicted_side"] = "long"
+    continue
+```
+
+Utilisation CLI :
+
+```bash
+--cascade-rank-mode extreme_gate \
+--oracle-oos-path artifacts/models/oracle/oracle-wf-20260820025255/oos_predictions.parquet \
+--extreme-gate-pct 0.20 \
+--extreme-gate-per-symbol filter   # | no_filter | bypass
+```
+
+### 5.3 — Branche SHORT optionnelle (E18, flag `--extreme-gate-shorts`)
+
+Le gate Extreme est **LONG-only par défaut**. Le flag `--extreme-gate-shorts` (défaut OFF)
+active une branche SHORT symétrique dans le gate top20 :
+
+```
+LONG  = gate ∩ long_prob > min_prob            (0.55)
+SHORT = gate restants ∩ short_prob > min_prob  (≈ long_prob < 0.45)
+REST  = NO TRADE
+```
+
+> ⚠️ **NO-GO mesuré (E18-A + E18-B)** : le per-symbol B25 est une classification **binaire
+> pure** (`short_prob ≡ 1 − long_prob`, corr = −1.000000, `proba_flat` = 0 constant). La queue
+> basse de `long_prob` est **aussi haussière que le reste du pool** (P(ret<0) H20 ≈ 47 % vs
+> 47.6 % global ; MAE short −10.4 % > MFE short +8.6 %). En backtest réel : **EXT short-only
+> = −54.1 %** (Sharpe −1.25, PF 0.72) et **EXT L+S fait chuter le run de +146 % à +39 %**.
+> → **SHORT reste FERMÉ**, le flag est câblé mais **ne doit pas être activé**.
+
+Code :
+
+```python
+# predictor.py — branche extreme_gate (E18)
+if _eg_ps_mode == "no_filter" or _eg_pred.long_prob > _min_prob:
+    candidates.append(("LONG", symbol, rank * _eg_pred.long_prob))
+elif _eg_shorts and _eg_pred.short_prob > _min_prob:
+    candidates.append(("SHORT", symbol, rank * _eg_pred.short_prob))
+```
+
+```python
+# apply_cascade_to_predictions — forçage du côté (E17 fix + E18)
+_side = _side_map.get(_sym, "LONG")
+if _side == "SHORT":
+    result.loc[_pm, "proba_short"] = _cp.short_prob
+    result.loc[_pm, "proba_long"] = 0.0
+    result.loc[_pm, "predicted_side"] = "short"
+else:
+    result.loc[_pm, "proba_short"] = 0.0
+    result.loc[_pm, "predicted_side"] = "long"
+```
+
 ---
 
 ## 6. Fonctions du module `modelFactory/oracle/extreme_gate.py`
@@ -190,31 +308,36 @@ preds_df = apply_cascade_to_predictions(
 
 ## 8. État du câblage et TO-DO
 
-### ⚠️ Point critique : `enabled: true` ne suffit PAS
+### ✅ Câblage BACKTEST CLI — FAIT (E16-D, E17, E18)
 
-- `load_extreme_gate_config()` (predictor.py L2043) **lit** `enabled`, `pool_pct`,
-  `long_only`, `min_prob` — mais **aucun code ne consomme `enabled`** comme interrupteur.
-- Le vrai interrupteur est le **paramètre** `rank_mode="extreme_gate"` passé à
-  `cascade_select()` / `apply_cascade_to_predictions()` (L2677).
-- `long_only` est **aussi informatif** : la branche est LONG-only en dur (`is_bottom=False`).
+Depuis E16-D, le CLI `python -m backtesting run` câble complètement le gate Extreme :
 
-### Câblage live NON FAIT
+```bash
+python -m backtesting run ... \
+  --cascade-rank-mode extreme_gate \
+  --oracle-oos-path artifacts/models/oracle/oracle-wf-20260820025255/oos_predictions.parquet \
+  --extreme-gate-pct 0.20 \
+  [--extreme-gate-per-symbol filter|no_filter|bypass] \
+  [--extreme-gate-shorts]                    # E18 : branche SHORT optionnelle (NO-GO)
+```
 
-Dans `backtesting/cli/_impl.py` (L3112-3131) :
-- l'`oracle_rank_map` n'est chargé que pour `oracle / oracle_filter / oracle_rerank / oracle_pool`
-  (S6.1) — **pas** pour `"extreme_gate"` ;
-- `extreme_gate_pct` n'est pas transmis.
+- `backtesting/cli/_impl.py` : `oracle_rank_map` chargé pour `"extreme_gate"` (+ oracle_modes),
+  `extreme_gate_pct` / `extreme_gate_per_symbol` / `extreme_gate_shorts` transmis à
+  `apply_cascade_to_predictions`.
+- `modelFactory/predictor.py` : variantes per-symbol (A/B/C, §5.2) + shorts optionnels (§5.3).
 
-→ Passer `rank_mode="extreme_gate"` au CLI aujourd'hui → `oracle_rank_map=None` → warning
-"no oracle ranks" → `return []` (aucun trade).
+### ❌ Câblage LIVE — NON FAIT
 
-### TO-DO pour rendre le composant réellement activable
+Le pipeline de production live (`ihm/services/pipeline_runner.py`, `risk_management/`,
+`execution_engine/`) **n'appelle pas** `cascade_select` / `apply_cascade_to_predictions`.
+Le gate Extreme (LONG et SHORT) est aujourd'hui un composant **backtest/recherche uniquement**.
+
+### TO-DO pour rendre le composant réellement activable en live
 
 | # | Action | Fichier |
 |---|---|---|
-| 1 | Charger l'`oracle_rank_map` aussi pour `rank_mode == "extreme_gate"` (parquet OOS Oracle) | `backtesting/cli/_impl.py` |
-| 2 | Passer `extreme_gate_pct` à `apply_cascade_to_predictions` | `backtesting/cli/_impl.py` |
-| 3 | *(Optionnel)* consommer `enabled`/`long_only` de la config pour piloter le mode | `predictor.py` / call-site |
+| 1 | Brancher `rank_mode="extreme_gate"` + `oracle_rank_map` au call-site live (à partir du parquet OOS Oracle fraîchement généré) | `ihm/services/pipeline_runner.py` |
+| 2 | Rendre `enabled`/`long_only` de la config réellement consommés (interrupteur) | `predictor.py` / call-site |
 
 ---
 

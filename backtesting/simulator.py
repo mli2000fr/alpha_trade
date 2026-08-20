@@ -1341,6 +1341,27 @@ class BacktestEngine:
             for _, row in day_signals.iterrows()
             if str(row["symbol"]) not in state.positions and str(row["symbol"]) in close_columns
         ]
+        # ── Anti-doublon (2026-08-20) : un symbole ne peut être candidat
+        # qu'une seule fois par séance. Si deux signaux d'un même symbole
+        # (ex. signal d'un jour férié + signal d'un jour de trading) tombent
+        # sur la même séance d'exécution (J+1 open), le signal le plus récent
+        # (signal_date max) prime. Sans cette garde, la 2e ligne ouvre une
+        # position qui écrase la 1re dans state.positions mais débite le cash
+        # deux fois (déficit d'equity observé sur B25 long-only 2025-09-02).
+        if filtered_rows:
+            filtered_rows.sort(
+                key=lambda r: (r.get("signal_date") if pd.notna(r.get("signal_date")) else pd.NaT),
+                reverse=True,
+            )
+            seen_symbols: set[str] = set()
+            deduped_rows: list[pd.Series] = []
+            for row in filtered_rows:
+                sym = str(row["symbol"])
+                if sym in seen_symbols:
+                    continue
+                seen_symbols.add(sym)
+                deduped_rows.append(row)
+            filtered_rows = deduped_rows
         breaker_hard_blocked = (not entries_allowed_by_breaker) and drawdown_allocation_scale <= 0.0
         if breaker_hard_blocked or not entries_allowed_by_regime:
             blocked_count = int(max(cfg.max_positions - len(state.positions), 0))
@@ -1423,6 +1444,20 @@ class BacktestEngine:
         for candidate_pos, row in enumerate(candidate_rows):
             symbol = str(row["symbol"])
             signal_context = self._build_signal_context(row)
+
+            # ── Garde-fou anti-doublon (2026-08-20) : si une ligne précédente
+            # du même jour a déjà ouvert ce symbole, on ignore ce signal pour
+            # ne pas débiter le cash deux fois (cf. B25 long-only 2025-09-02).
+            if symbol in state.positions:
+                self._record_trade_event(
+                    state,
+                    "entry_rejected",
+                    event_date=trade_day,
+                    symbol=symbol,
+                    rejection_reason="duplicate_signal_same_day",
+                    **signal_context,
+                )
+                continue
 
             # Sprint 2 — direction
             side = str(row.get("side", "buy") or "buy").strip().lower()

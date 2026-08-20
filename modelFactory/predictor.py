@@ -2634,6 +2634,8 @@ def cascade_select(
     oracle_filter_pct: float | None = None,
     oracle_pool_pct: float | None = None,
     extreme_gate_pct: float | None = None,
+    extreme_gate_per_symbol: str = "filter",
+    extreme_gate_shorts: bool = False,
 ) -> list[tuple[str, str, float]]:
     """Filtre cascade : Global Rank → Per-Symbol → trades ordonnancés.
 
@@ -2675,6 +2677,14 @@ def cascade_select(
     _extreme_gate_pct = extreme_gate_pct if extreme_gate_pct is not None else float(
         _extreme_gate_cfg["pool_pct"])
     _mode_extreme_gate = rank_mode == "extreme_gate"
+    # E17 : rôle du modèle per-symbol dans la branche extreme_gate.
+    #   "filter"    = A actuel : veto long_prob > _min_prob + score = rank × long_prob
+    #   "no_filter" = B demi-bypass : pas de veto, score = rank × long_prob
+    #   "bypass"    = C Oracle pur : per-symbol ignoré, score = rank (percentile O0)
+    _eg_ps_mode = str(extreme_gate_per_symbol or "filter").strip().lower()
+    if _eg_ps_mode not in ("filter", "no_filter", "bypass"):
+        _eg_ps_mode = "filter"
+    _eg_shorts = bool(extreme_gate_shorts)
     if _mode_extreme_gate:
         if not oracle_rank_map or trade_date not in oracle_rank_map:
             LOGGER.warning("cascade_select: extreme_gate — no oracle ranks for %s", trade_date)
@@ -2811,6 +2821,25 @@ def cascade_select(
         if not (is_top or is_bottom):
             continue
 
+        # ── EXTREME GATE (E17) : rôle du per-symbol configurable ──
+        #   A "filter"    : veto long_prob > _min_prob + score = rank × long_prob (actuel)
+        #   B "no_filter" : pas de veto, score = rank × long_prob
+        #   C "bypass"    : Oracle pur — per-symbol ignoré, score = rank (percentile O0)
+        # E18 : --extreme-gate-shorts active la branche SHORT symétrique (LONG-only par défaut).
+        if _mode_extreme_gate:
+            if _eg_ps_mode == "bypass":
+                candidates.append(("LONG", symbol, rank))
+            else:
+                _eg_pred = per_symbol_preds.get(symbol)
+                if _eg_pred is None:
+                    continue
+                if _eg_ps_mode == "no_filter" or _eg_pred.long_prob > _min_prob:
+                    candidates.append(("LONG", symbol, rank * _eg_pred.long_prob))
+                elif _eg_shorts and _eg_pred.short_prob > _min_prob:
+                    # E18 : SHORT = restants du gate (non-LONG) ∩ short_prob > min_prob
+                    candidates.append(("SHORT", symbol, rank * _eg_pred.short_prob))
+            continue
+
         # Prédiction per-symbol
         pred = per_symbol_preds.get(symbol)
         if pred is None:
@@ -2883,6 +2912,8 @@ def apply_cascade_to_predictions(
     oracle_filter_pct: float | None = None,
     oracle_pool_pct: float | None = None,
     extreme_gate_pct: float | None = None,
+    extreme_gate_per_symbol: str = "filter",
+    extreme_gate_shorts: bool = False,
 ) -> pd.DataFrame:
     """Filtre les prédictions per-symbol via la cascade Global Rank.
 
@@ -2942,6 +2973,13 @@ def apply_cascade_to_predictions(
         "apply_cascade_to_predictions: mode=%s min_prob=%.2f top_pct=%.2f",
         "classification" if _has_ternary else "regression", _min_prob, _top_pct,
     )
+    # E17 : variante du rôle per-symbol en mode extreme_gate (bypass = Oracle pur).
+    _eg_ps_mode = str(extreme_gate_per_symbol or "filter").strip().lower()
+    if _eg_ps_mode not in ("filter", "no_filter", "bypass"):
+        _eg_ps_mode = "filter"
+    _eg_ps_extreme = str(rank_mode or "ml").strip().lower() == "extreme_gate"
+    _eg_ps_bypass = _eg_ps_extreme and _eg_ps_mode == "bypass"
+    _eg_shorts = bool(extreme_gate_shorts)
 
     _dates = sorted(result[_date_col].dropna().unique())
     _total_passed = 0
@@ -2992,23 +3030,53 @@ def apply_cascade_to_predictions(
             oracle_filter_pct=oracle_filter_pct,
             oracle_pool_pct=oracle_pool_pct,
             extreme_gate_pct=extreme_gate_pct,
+            extreme_gate_per_symbol=_eg_ps_mode,
+            extreme_gate_shorts=_eg_shorts,
         )
 
         # Symbols retenus par la cascade
         _passed_symbols = {_sym for _, _sym, _ in _candidates}
         _score_map = {_sym: _score for _, _sym, _score in _candidates}
+        _side_map = {_sym: _side for _side, _sym, _ in _candidates}
 
         # P0-5 (2026-08-06) : en mode regression, proba_long/short sont NULL.
         # Après cascade, on les peuple depuis |predicted_proba| pour que
         # replay_signals() puisse les utiliser (il exige notna()).
         for _sym in _passed_symbols:
+            _pm = _mask & (result["symbol"].astype(str) == _sym)
+            if _eg_ps_bypass:
+                # C — Oracle pur : proba_long = percentile Oracle (score) pour que
+                # replay_signals classe par Oracle, PAS par le per-symbol B25.
+                _oscore = _score_map.get(_sym)
+                result.loc[_pm, "proba_long"] = float(_oscore) if _oscore is not None else 0.0
+                result.loc[_pm, "proba_short"] = 0.0
+                result.loc[_pm, "predicted_side"] = "long"
+                continue
             _cp = _pred_dict.get(_sym)
             if _cp is None:
                 continue
-            _pm = _mask & (result["symbol"].astype(str) == _sym)
             if "proba_long" in result.columns and _cp.long_prob > 0:
                 result.loc[_pm, "proba_long"] = _cp.long_prob
-            if "proba_short" in result.columns and _cp.short_prob > 0:
+            if _eg_ps_extreme:
+                # E17 fix (2026-08-20) : le gate extreme_gate est LONG-only par
+                # design (is_bottom=False). En variantes A/B, un per-symbol B25
+                # prédit "short" fuyait en short (bug observé : 68 shorts sur B).
+                # On force predicted_side selon le côté du candidat (E18 : shorts
+                # optionnels) et on purge la proba de l'autre côté.
+                _side = _side_map.get(_sym, "LONG")
+                if _side == "SHORT":
+                    if "proba_short" in result.columns:
+                        result.loc[_pm, "proba_short"] = _cp.short_prob
+                    if "proba_long" in result.columns:
+                        result.loc[_pm, "proba_long"] = 0.0
+                    if "predicted_side" in result.columns:
+                        result.loc[_pm, "predicted_side"] = "short"
+                else:
+                    if "proba_short" in result.columns:
+                        result.loc[_pm, "proba_short"] = 0.0
+                    if "predicted_side" in result.columns:
+                        result.loc[_pm, "predicted_side"] = "long"
+            elif "proba_short" in result.columns and _cp.short_prob > 0:
                 result.loc[_pm, "proba_short"] = _cp.short_prob
 
         # Forcer flat pour les non-retenus
