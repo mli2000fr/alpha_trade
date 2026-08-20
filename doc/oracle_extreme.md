@@ -109,7 +109,7 @@ extreme_gate:
 flowchart TD
     A["Oracle O0<br/>oracle_rank_map {date: {symbol: proba_extreme}}"] --> B["percentile cross-sectionnel du jour<br/>pd.Series(values).rank(pct=True)"]
     B --> C{"rank ≥ 1 − pool_pct ?"}
-    C -- oui (top 20 %) --> D{"per_symbol_preds[symbol] ?<br/>pred.long_prob > min_prob ?"}
+    C -- oui (top 20 %) --> D{"per_symbol_preds[symbol] ?<br/>pred.long_prob (rang global B25 H10) > min_prob ?"}
     C -- non --> X["is_bottom = False<br/>AUCUN SHORT possible"]
     D -- oui --> E["LONG — score = rank × long_prob"]
     D -- non --> X2["Rejeté (flat)"]
