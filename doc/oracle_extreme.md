@@ -10,6 +10,13 @@
 **⚠️ 2026-08-20 :** les +146 % historiques étaient faussés par un bug `atr_pct_20`
 (TP 12 %/SL 7 % au lieu de config prod) — **valeurs corrigées en §13** (EXT A = +113,1 %, B25 long-only = +175,7 %).
 
+> **⚠️ NATURE DU « PER-SYMBOL » (audit DB 2026-08-20)** : le batch B25 est **per_sector**
+> (mode d'entraînement), **sans modèle per-symbol**. Le `long_prob` / `proba_long` consommé
+> par le flux **n'est PAS un vrai modèle per-symbol** : c'est le **rang global H10 synthétisé**
+> (`proba_long = global_rank_10`, corr = 1,0 — `synthesize_global_rank_predictions`). Ni le
+> per-symbol ni le per-sector n'alimentent réellement le signal : tout est **rank-driven**
+> (rang global B25). Les 11 modèles per-sector sont entraînés mais **inutilisés** par la cascade.
+
 ---
 
 ## 1. Rôle
@@ -112,7 +119,7 @@ flowchart TD
 | Étape | Modèle concerné | Comportement |
 |---|---|---|
 | **Global B25** (`global_rank_20`) | ❌ **PAS utilisé** | `load_global_ranks_from_db()` n'est **pas** appelé — le rang vient de l'`oracle_rank_map` seul |
-| **Per-symbol** | ✅ **Oui** | Exigé pour chaque symbole retenu ; filtre `long_prob > min_prob` |
+| **`long_prob` B25** (⚠️ = **rang global H10** synthétisé, PAS un modèle per-symbol) | ✅ **Oui** | Exigé pour chaque symbole retenu ; filtre `long_prob > min_prob` |
 | **Per-sector** | ❌ **Non** | `cascade_select` n'a pas de dimension sectorielle ; sortie = `(side, symbol, score)` |
 | **SHORT** | 🚫 **Jamais** | `is_bottom = False` hardcodé (predictor.py L2800) |
 
@@ -135,7 +142,7 @@ flowchart TD
     B --> C["percentile cross-sectionnel DU JOUR<br/>rank(pct) de proba_extreme"]
     C --> D{"GATE : rank >= 1 − pool_pct ?<br/>(top 20% du jour)"}
     D -- non --> X["Rejeté (flat)"]
-    D -- oui --> E{"Per-symbol B25 :<br/>long_prob > min_prob ?<br/>(0.55 en classification)"}
+    D -- oui --> E{"long_prob B25 = rang global H10 :<br/>long_prob > min_prob ?<br/>(0.55 en classification)"}
     E -- non --> X
     E -- oui --> F["LONG — score = rank × long_prob<br/>(LONG-only, is_bottom=False)"]
     F --> G["Pile production :<br/>preset capital_2001_5000 / equity 4000$<br/>risk / sizing / exécution / coûts canoniques"]
@@ -143,16 +150,16 @@ flowchart TD
 ```
 
 - **Le gate** (Étape 1) : filtre Oracle sur `proba_extreme` (mouvement extrême, **pas** P(LONG)), percentile intra-jour, top `pool_pct` — LONG-only.
-- **Le modèle per-symbol** (Étape 2) : `long_prob > min_prob` — c'est la confirmation directionnelle.
+- **Le `long_prob` B25** (Étape 2) : ⚠️ **= rang global H10 synthétisé** (`proba_long = global_rank_10`), **pas un vrai modèle per-symbol** ; filtre `long_prob > min_prob` — confirmation directionnelle.
 - **La pile production** : le preset capital (petit compte), le sizing, le risque, l'exécution next-open, les coûts canoniques.
 
-> ⚠️ Interprétation : le résultat CLI = **gate + per-symbol + pile production**, pas le gate seul. Le gate seul (recherche, E16-C) donnait ~23 % en médiane — la différence vient du filtre per-symbol et du pipeline.
+> ⚠️ Interprétation : le résultat CLI = **gate + long_prob (rang global B25 H10) + pile production**, pas le gate seul. Le gate seul (recherche, E16-C) donnait ~23 % en médiane — la différence vient du filtre `long_prob` (= rang global B25) et du pipeline.
 >
 > ⚠️ **2026-08-20 — RÉSULTATS CLI PRÉ-FIX INVALIDÉS** : les +146 % (E16-D/E17) étaient **falsifiés par un bug de câblage `atr_pct_20`** (TP tombé à 12 % fixe / SL 7 % fixe au lieu de TP prod `min(3×ATR,7%)` / stop 2,5×ATR). **Valeurs CORRIGÉES (config prod) : EXT A = +113,1 %**, B25 long-only = +175,7 % — cf. §13.
 
 ### 5.2 — Variantes du rôle per-symbol (E17, flag `--extreme-gate-per-symbol`)
 
-Le modèle per-symbol B25 intervient à **2 endroits** dans le flux :
+Le `long_prob` B25 intervient à **2 endroits** dans le flux (⚠️ **`long_prob` = rang global H10 synthétisé**, pas un vrai modèle per-symbol) :
 
 1. **VETO** (sélection) : `long_prob > min_prob` (0.55) — rejette un candidat du top 20 %.
 2. **RANG** (priorité) : `replay_signals` classe par `proba_long` (= long_prob) → c'est **lui** qui décide qui entre dans `max_positions` (pas `cascade_score`, inutilisé en aval).
@@ -161,14 +168,14 @@ Trois variantes câblées (`--extreme-gate-per-symbol`) :
 
 | Variante | VETO `long_prob > min_prob` | RANG / priorité |
 |---|---|---|
-| **A `filter`** (actuel) | ✅ oui (0.55) | `long_prob` per-symbol (via `proba_long`) |
-| **B `no_filter`** | ❌ non | `long_prob` per-symbol |
+| **A `filter`** (actuel) | ✅ oui (0.55) | `long_prob` (= rang global B25 H10, via `proba_long`) |
+| **B `no_filter`** | ❌ non | `long_prob` (= rang global B25 H10) |
 | **C `bypass`** (Oracle pur) | ❌ non | **percentile Oracle O0** — `proba_long` est écrasé par le score `rank` |
 
 **Câblage de C (`bypass`)** — ne pas juste changer le score en amont :
 
-- `cascade_select` : `score = rank` (percentile O0), per-symbol ignoré (ni veto ni score).
-- `apply_cascade_to_predictions` : `proba_long = score (percentile O0)`, `proba_short = 0`, `predicted_side = "long"` — indispensable car `replay_signals` classe par `proba_long`. Sans cet écrasement, le per-symbol continuerait de classer via `long_prob`.
+- `cascade_select` : `score = rank` (percentile O0), `long_prob` ignoré (ni veto ni score).
+- `apply_cascade_to_predictions` : `proba_long = score (percentile O0)`, `proba_short = 0`, `predicted_side = "long"` — indispensable car `replay_signals` classe par `proba_long`. Sans cet écrasement, le `long_prob` (rang global B25) continuerait de classer.
 
 ```python
 # predictor.py — branche extreme_gate (E17)
@@ -214,8 +221,8 @@ SHORT = gate restants ∩ short_prob > min_prob  (≈ long_prob < 0.45)
 REST  = NO TRADE
 ```
 
-> ⚠️ **NO-GO mesuré (E18-A + E18-B)** : le per-symbol B25 est une classification **binaire
-> pure** (`short_prob ≡ 1 − long_prob`, corr = −1.000000, `proba_flat` = 0 constant). La queue
+> ⚠️ **NO-GO mesuré (E18-A + E18-B)** : le `long_prob` B25 (= rang global H10) est une
+> classification **binaire pure** (`short_prob ≡ 1 − long_prob`, corr = −1.000000, `proba_flat` = 0 constant). La queue
 > basse de `long_prob` est **aussi haussière que le reste du pool** (P(ret<0) H20 ≈ 47 % vs
 > 47.6 % global ; MAE short −10.4 % > MFE short +8.6 %). En backtest réel (config corrigée,
 > cf. §13) : **EXT short-only = −57.4 %** (Sharpe −1.43, PF 0.675) et **EXT L+S fait chuter
@@ -470,7 +477,7 @@ avant) et le trailing est **variable** (2,5×ATR). Les DD −28 à −37 % resta
 | Run | Ret % | Sharpe | DD % | PF | Trades | L/S |
 |---|---|---|---|---|---|---|
 | **B25 long-only** 🏆 | **+175,7** | **1,66** | **−28,2** | 1,330 | 396 | 396/0 |
-| **EXT A (long, per-symbol)** | +113,1 | 1,24 | −37,3 | 1,253 | 402 | 402/0 |
+| **EXT A (long, long_prob)** | +113,1 | 1,24 | −37,3 | 1,253 | 402 | 402/0 |
 | EXT long+short | +97,0 | 1,31 | −33,3 | 1,215 | 407 | 348/59 |
 | EXT C (bypass / Oracle pur) | +63,4 | 0,92 | −33,4 | 1,164 | 440 | 440/0 |
 | B25 long+short | +39,1 | 0,98 | −17,1 | 1,110 | 362 | 165/197 |
@@ -479,12 +486,12 @@ avant) et le trailing est **variable** (2,5×ATR). Les DD −28 à −37 % resta
 
 **Verdicts :**
 - 🏆 **B25 long-only +175,7 %** (meilleur retour, Sharpe 1,66, DD le plus faible).
-- **Le per-symbol apporte une vraie valeur** : EXT A (+113,1 %) vs EXT C/Oracle pur
-  (+63,4 %) → **+50 pp** apportés par le ranking `long_prob`, en config prod.
+- **Le `long_prob` apporte une vraie valeur** (⚠️ = rang global B25 H10, pas un vrai per-symbol) :
+  EXT A (+113,1 %) vs EXT C/Oracle pur (+63,4 %) → **+50 pp** apportés par le ranking `long_prob`, en config prod.
 - **SHORT = NO-GO confirmé** : B25 short-only −31,5 %, EXT short-only −57,4 %.
 - **Long-only > L+S** : B25 (+176 vs +39) et EXT (+113 vs +97).
 
-### 13.4 E19 — valeur conditionnelle du per-symbol (protocole complet)
+### 13.4 E19 — valeur conditionnelle du `long_prob` = rang global B25 (protocole complet)
 
 Moteur recherche PROD-contract (même gate/m24/lifecycle/coûts/`atr_pct_20` que B2),
 **aucun seuil tuné**.
@@ -497,9 +504,10 @@ Moteur recherche PROD-contract (même gate/m24/lifecycle/coûts/`atr_pct_20` que
 | **5.** Stabilité semestrielle | spread SEL−REJ : 2025H1 +0,9 · 2025H2 **+3,7** · 2026H1 −0,1 |
 | **6.** VETO 0,55 vs RANKING (`e19_i_veto_vs_ranking.py`) | **veto = NEUTRE** (full 65,0 % = no_veto 65,0 %) · **ranking = +23,2 pp** (65,0 % vs veto_only 41,8 %) |
 
-**Verdict E19 : H1 CONFIRMÉ** — le per-symbol `long_prob` porte une **information
-conditionnelle réelle**, portée par le **ranking** (pas le veto 0,55). Le +113 % / +176 %
-ne vient pas de la variance de sélection du pool Extreme.
+**Verdict E19 : H1 CONFIRMÉ** — le `long_prob` (= rang global B25 H10, **pas un vrai
+per-symbol**) porte une **information conditionnelle réelle**, portée par le **ranking**
+(pas le veto 0,55). Le +113 % / +176 % ne vient pas de la variance de sélection du pool
+Extreme — c'est la **valeur du rang global B25 dans l'univers Oracle**.
 
 **Question TP 12 % vs TP ATR** (2025-2026, marché haussier) : TP fixe 12 % surperforme
 (+33 à +43 pp, meilleur Sharpe) — mais c'est un comportement de régime haussier ; le TP
