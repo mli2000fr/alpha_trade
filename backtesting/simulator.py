@@ -993,14 +993,23 @@ class BacktestEngine:
                     pnl = compute_realized_pnl(pos_side, abs_qty, position.entry_price, close_price)
                     position_pnls.append((symbol, pnl, close_price, pos_side))
                 position_pnls.sort(key=lambda x: x[1])  # pire PnL d'abord
-                
-                n_close = max(1, int(len(position_pnls) * force_pct + 0.5))
-                to_close = position_pnls[:n_close]
-                
-                LOGGER.warning(
-                    "Force-close partiel (%.0f%%): liquidation de %d/%d positions (equity=%.2f)",
-                    force_pct * 100, n_close, len(state.positions), current_equity,
-                )
+
+                if cfg.risk_overlay.drawdown_breaker.force_close_losers_on_breaker:
+                    # E19 — coupe TOUS les symboles perdants (down en long, up en short).
+                    to_close = [p for p in position_pnls if p[1] < 0.0]
+                    LOGGER.warning(
+                        "Force-close losers on breaker: liquidation de %d/%d positions perdantes (equity=%.2f)",
+                        len(to_close), len(state.positions), current_equity,
+                    )
+                else:
+                    force_pct = float(cfg.risk_overlay.drawdown_breaker.force_close_pct)
+                    n_close = max(1, int(len(position_pnls) * force_pct + 0.5))
+                    to_close = position_pnls[:n_close]
+                    LOGGER.warning(
+                        "Force-close partiel (%.0f%%): liquidation de %d/%d positions (equity=%.2f)",
+                        force_pct * 100, n_close, len(state.positions), current_equity,
+                    )
+                n_close = len(to_close)
                 diagnostics.blocked_by_drawdown_breaker += n_close
                 # Sprint 5 — compter force-close par side
                 for symbol, pnl, close_price, pos_side in to_close:

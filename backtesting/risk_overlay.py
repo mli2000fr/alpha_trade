@@ -145,6 +145,9 @@ class DrawdownCircuitBreaker:
     # Force-close : liquide toutes les positions quand le breaker trippe.
     force_close_on_breaker: bool = False
     force_close_pct: float = 0.50  # fraction liquidée (1.0 = tout)
+    # E19 — coupe TOUS les symboles perdants (down en long, up en short) au
+    # déclenchement, au lieu d'une fraction (force_close_pct) des pires PnL.
+    force_close_losers_on_breaker: bool = False
     _tripped: bool = field(default=False, init=False)
     _was_tripped: bool = field(default=False, init=False)
     _equity_window: list[float] = field(default_factory=list, init=False)

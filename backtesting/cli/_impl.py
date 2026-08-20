@@ -1610,6 +1610,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Plafond de l'allocation après ramp-up (ex. 0.40 = 40%% max).",
     )
     run_p.add_argument(
+        "--force-close-losers-on-breaker",
+        action="store_true",
+        default=False,
+        help="E19 : quand le breaker DD trippe (seuil atteint/dépassé), coupe TOUS les symboles perdants (down en long, up en short) au lieu d'une fraction (--force-close-pct).",
+    )
+    run_p.add_argument(
         "--target-annual-vol",
         type=float,
         default=None,
@@ -1996,6 +2002,7 @@ def _explicit_flags(argv: list[str]) -> set[str]:
         "--cascade-top-pct": "cascade_top_pct",
         "--no-shorts": "no_shorts",
         "--no-longs": "no_longs",
+        "--force-close-losers-on-breaker": "force_close_losers_on_breaker",
     }
     for token in argv:
         key = token.split("=", 1)[0]
@@ -3589,6 +3596,14 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 __import__("common.config_loader", fromlist=["load_config"]).load_config()
                 .get("risk_management", {})
                 .get("force_close_pct", 0.50)
+            ),
+            force_close_losers_on_breaker=(
+                bool(getattr(args, "force_close_losers_on_breaker", False))
+                or bool(
+                    __import__("common.config_loader", fromlist=["load_config"]).load_config()
+                    .get("risk_management", {})
+                    .get("force_close_losers_on_breaker", False)
+                )
             ),
         ),
         target_annual_vol=(
