@@ -1,2 +1,9 @@
 2025 : +4.364%, PF 1.037, Sharpe 0.37, DD −12.70%, 284 trades (188L/96S), L +15 846 / S −12 310
 2026 : +12.648%, PF 1.312, Sharpe 2.59, DD −5.05%, 143 trades (93L/50S), L +6 644 / S +5 183
+
+
+ le résultat d'E13 (m16/m24 stabilise l'univers Extreme) n'est branché sur rien de production. Si tu veux l'exploiter, il y a un vrai chantier d'intégration à part :
+ (1) activer/entraîner l'Oracle O0 en pipeline,
+ (2) basculer la sélection LONG sur le gate proba_extreme top20% (au lieu de global_rank_20 top10%),
+ (3) passer la capacité à m16/m24 avec sizing equal-weight. C'est un changement de sélection majeur — exactement
+ le genre de décision que tu voudras cadrer avant tout branchement (le doc Oracle impose déjà "B25 intouchable", donc ça irait à l'encontre de la règle actuelle).

@@ -531,6 +531,31 @@ cascade:
   short_momentum_max_pct: null
 
 
+# ---------------------------------------------------------------------------
+# Extreme Gate (composant officiel E6-E13) — Oracle O0 → univers LONG.
+# Consommé par modelFactory/predictor.py (cascade_select, rank_mode="extreme_gate")
+# et par modelFactory/oracle/extreme_gate.py (compute_extreme_gate).
+# Gate = top `pool_pct` par proba_extreme (percentile cross-sectionnel DU JOUR, PIT).
+# SÉMANTIQUE : proba_extreme ≠ P(LONG). C'est le potentiel de MOUVEMENT EXTRÊME ;
+# l'edge LONG est empirique (univers Extreme, E8-E13). LONG-only, indépendant de B25
+# (global_rank_20). La monétisation = m24 (1/24 du budget de risque), lifecycle PROD.
+# ---------------------------------------------------------------------------
+extreme_gate:
+  # Activation de la branche extreme_gate dans cascade_select.
+  # false par défaut (baseline production candidate — activer explicitement).
+  enabled: false
+
+  # Univers : top `pool_pct` du jour par proba_extreme (percentile >= 1-pool_pct).
+  # 0.20 = top 20% (justifié E9/E10 : TOP10 trop arbitraire, tranche 10-20% porteuse).
+  pool_pct: 0.20
+
+  # LONG-only : pas de SHORT sur cette branche.
+  long_only: true
+
+  # Proba per-symbol minimale (None = défaut cascade min_prob_regression).
+  min_prob: null
+
+
 # Sprint S8 - Calibration formelle des poids de conviction (cf. core/conviction.py)
 conviction:
   # Poids de fusion sentiment (somme = 1.0). Defauts historiques : 0.75 / 0.15 / 0.10.

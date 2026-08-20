@@ -194,6 +194,13 @@ class BacktestConfig:
     # trailing fixe ``trailing_stop_pct``).
     atr_risk_stop_multiple: float = 0.0
 
+    # ── E12-2B — découplage initial stop vs trailing (recherche, opt-in) ──
+    # Si > 0 : élargit UNIQUEMENT le stop initial (entry × atr × initial_stop_atr_multiple),
+    # en gardant le trailing à atr_risk_stop_multiple (risk_per_share inchangé).
+    # 0.0 = comportement historique (couplé : trailing = distance de l'initial stop).
+    # Ne change AUCUN autre chemin (0.0 = bit-for-bit).
+    initial_stop_atr_multiple: float = 0.0
+
     # ── P2-4 — Fidélité live du TP (formule production) ──
     # Si les deux > 0 : TP = entrée ± min(ATR × tp_atr_multiple, prix × tp_max_pct)
     # (miroir de RiskConfig.tp_params_for + portfolio_builder).
@@ -2059,6 +2066,15 @@ class BacktestEngine:
                         else:
                             take_profit_price = percent_target
                     if (
+                        cfg.initial_stop_atr_multiple > 0
+                        and position.risk_per_share is not None
+                        and position.risk_per_share > 0
+                        and position.entry_price > 0
+                    ):
+                        # E12-2B — découplage : trailing sur risk_per_share (atr_risk_stop_multiple),
+                        # PAS sur l'initial stop élargi
+                        trailing_stop_pct = position.risk_per_share / position.entry_price
+                    elif (
                         position.initial_stop_price is not None
                         and position.entry_price > 0
                     ):
@@ -2469,6 +2485,12 @@ class BacktestEngine:
             if risk_per_share is not None and risk_per_share > 0:
                 sign = -1 if short else 1
                 derived_stop = entry_price - sign * risk_per_share
+                # E12-2B — découplage : élargir UNIQUEMENT le stop initial
+                if self.config.initial_stop_atr_multiple > 0:
+                    atr_pct = self._resolve_signal_float(row, "atr_pct_20")
+                    if atr_pct is not None and atr_pct > 0:
+                        stop_dist = entry_price * atr_pct * self.config.initial_stop_atr_multiple
+                        derived_stop = entry_price - sign * stop_dist
                 if (not short and 0 < derived_stop < entry_price) or (short and derived_stop > entry_price):
                     return derived_stop, risk_per_share
             return None, risk_per_share

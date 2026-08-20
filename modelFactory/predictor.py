@@ -2040,6 +2040,36 @@ def load_cascade_config() -> dict[str, Any]:
         return _defaults
 
 
+def load_extreme_gate_config() -> dict[str, Any]:
+    """Charge la config ``extreme_gate`` depuis config.yaml (composant officiel E6-E13).
+
+    Returns:
+        dict avec ``enabled`` (bool, défaut False), ``pool_pct`` (float, défaut 0.20),
+        ``long_only`` (bool, défaut True) et ``min_prob`` (float | None, défaut None =
+        défaut cascade ``min_prob_regression``).
+    """
+    _defaults: dict[str, Any] = {
+        "enabled": False,
+        "pool_pct": 0.20,
+        "long_only": True,
+        "min_prob": None,
+    }
+    try:
+        import yaml as _yaml
+        with open("config.yaml", encoding="utf-8") as _fh:
+            _raw = _yaml.safe_load(_fh) or {}
+        _section = _raw.get("extreme_gate") or {}
+        return {
+            "enabled": bool(_section.get("enabled", _defaults["enabled"])),
+            "pool_pct": float(_section.get("pool_pct", _defaults["pool_pct"])),
+            "long_only": bool(_section.get("long_only", _defaults["long_only"])),
+            "min_prob": (float(_section["min_prob"])
+                         if _section.get("min_prob") is not None else None),
+        }
+    except Exception:
+        return _defaults
+
+
 # ── Per-symbol features (parité entraînement/prédiction) ──
 
 def load_per_symbol_features(artifacts_dir: Path) -> dict[str, Any]:
@@ -2603,6 +2633,7 @@ def cascade_select(
     oracle_rank_map: dict[str, dict[str, float]] | None = None,
     oracle_filter_pct: float | None = None,
     oracle_pool_pct: float | None = None,
+    extreme_gate_pct: float | None = None,
 ) -> list[tuple[str, str, float]]:
     """Filtre cascade : Global Rank → Per-Symbol → trades ordonnancés.
 
@@ -2635,28 +2666,56 @@ def cascade_select(
     _top_pct = top_pct if top_pct is not None else float(_cfg["top_pct"])
     _min_prob = min_prob if min_prob is not None else float(_cfg.get("min_prob_regression", 0.10))
 
-    # ── Charger les rangs globaux depuis la DB ──
-    ranks_df = load_global_ranks_from_db(trade_date, batch_id, engine=engine)
-    if ranks_df.empty:
-        LOGGER.warning("cascade_select: no global ranks for %s / %s", trade_date, batch_id)
-        return []
+    # ── EXTREME GATE (composant officiel E6-E13) : Oracle O0 seul, LONG-only ──
+    # Univers = top ``extreme_gate_pct`` par proba_extreme (percentile cross-sectionnel
+    # DU JOUR, PIT). Indépendant de B25 (global_rank_20) : on ne charge PAS les rangs
+    # globaux. proba_extreme ≠ P(LONG) : potentiel de mouvement extrême ; l'edge LONG
+    # est empirique. La sélection est LONG-only.
+    _extreme_gate_cfg = load_extreme_gate_config()
+    _extreme_gate_pct = extreme_gate_pct if extreme_gate_pct is not None else float(
+        _extreme_gate_cfg["pool_pct"])
+    _mode_extreme_gate = rank_mode == "extreme_gate"
+    if _mode_extreme_gate:
+        if not oracle_rank_map or trade_date not in oracle_rank_map:
+            LOGGER.warning("cascade_select: extreme_gate — no oracle ranks for %s", trade_date)
+            return []
+        _oracle_ranks = oracle_rank_map[trade_date]
+        _oracle_symbols = list(_oracle_ranks.keys())
+        _oracle_values = np.asarray([float(_oracle_ranks[s]) for s in _oracle_symbols], dtype=float)
+        _oracle_pct = pd.Series(_oracle_values).rank(pct=True)  # percentile intra-date (PIT)
+        _oracle_pct_map = dict(zip(_oracle_symbols, _oracle_pct.to_numpy()))
+        ranks_df = pd.DataFrame({"symbol": _oracle_symbols, "proba_extreme": _oracle_pct.to_numpy()})
+        _rank_col = "proba_extreme"
+        if _extreme_gate_cfg.get("min_prob") is not None:
+            _min_prob = float(_extreme_gate_cfg["min_prob"])
+        LOGGER.info(
+            "cascade_select: EXTREME_GATE top %d%% par proba_extreme (%d symbols, percentile du jour)",
+            int(round((1.0 - _extreme_gate_pct) * 100)), len(ranks_df),
+        )
+    else:
+        # ── Charger les rangs globaux depuis la DB ──
+        ranks_df = load_global_ranks_from_db(trade_date, batch_id, engine=engine)
+        if ranks_df.empty:
+            LOGGER.warning("cascade_select: no global ranks for %s / %s", trade_date, batch_id)
+            return []
 
-    # ── Déterminer le meilleur horizon ──
-    # 1. Override explicite (best_h) si fourni (ablation croisée)
-    # 2. Lire best_horizon depuis le metadata du batch (calculé à l'entraînement)
-    # 3. Si indisponible, fallback H20 → H15 → H10 → H5 → H3
-    _best_h = best_h if best_h is not None else _load_best_horizon_for_batch(batch_id, engine=engine)
-    _rank_col = None
-    _fallback_cols = ["global_rank_20", "global_rank_15", "global_rank_10", "global_rank_5", "global_rank_3"]
-    _priority_cols = [f"global_rank_{_best_h}"] + [c for c in _fallback_cols if c != f"global_rank_{_best_h}"] if _best_h else _fallback_cols
-    for _col in _priority_cols:
-        if _col in ranks_df.columns and ranks_df[_col].notna().any():
-            _rank_col = _col
-            LOGGER.info("cascade_select: using horizon %s (best=%s)", _col, f"H{_best_h}" if _best_h else "auto")
-            break
-    if _rank_col is None:
-        LOGGER.warning("cascade_select: no rank column found in %s", list(ranks_df.columns))
-        return []
+        # ── Déterminer le meilleur horizon ──
+        # 1. Override explicite (best_h) si fourni (ablation croisée)
+        # 2. Lire best_horizon depuis le metadata du batch (calculé à l'entraînement)
+        # 3. Si indisponible, fallback H20 → H15 → H10 → H5 → H3
+        _best_h = best_h if best_h is not None else _load_best_horizon_for_batch(batch_id, engine=engine)
+        _rank_col = None
+        _fallback_cols = ["global_rank_20", "global_rank_15", "global_rank_10", "global_rank_5", "global_rank_3"]
+        _priority_cols = ([f"global_rank_{_best_h}"] + [c for c in _fallback_cols if c != f"global_rank_{_best_h}"]
+                          if _best_h else _fallback_cols)
+        for _col in _priority_cols:
+            if _col in ranks_df.columns and ranks_df[_col].notna().any():
+                _rank_col = _col
+                LOGGER.info("cascade_select: using horizon %s (best=%s)", _col, f"H{_best_h}" if _best_h else "auto")
+                break
+        if _rank_col is None:
+            LOGGER.warning("cascade_select: no rank column found in %s", list(ranks_df.columns))
+            return []
 
     # ── Ablation Oracle (S6/S6.1) : politiques d'utilisation du second signal ──
     #   oracle        = P_extreme REMPLACE le rang global (test S6 initial)
@@ -2735,8 +2794,12 @@ def cascade_select(
 
         _oracle_pct = _oracle_pct_map.get(symbol)
 
-        # Filtre top/bottom N% (pool B25 élargi si oracle_pool)
-        if _mode_oracle_pool:
+        # Filtre top/bottom N% — EXTREME GATE : univers = top pool_pct par proba_extreme
+        # (percentile du jour), LONG-only, indépendant de B25.
+        if _mode_extreme_gate:
+            is_top = rank is not None and rank >= (1.0 - _extreme_gate_pct)
+            is_bottom = False  # LONG-only
+        elif _mode_oracle_pool:
             _in_top_pool = rank > (1.0 - _pool_top_pct)
             _in_bottom_pool = rank < _pool_top_pct
             is_top = _in_top_pool and _oracle_pct is not None and _oracle_pct > (1.0 - _top_pct)
@@ -2819,6 +2882,7 @@ def apply_cascade_to_predictions(
     oracle_rank_map: dict[str, dict[str, float]] | None = None,
     oracle_filter_pct: float | None = None,
     oracle_pool_pct: float | None = None,
+    extreme_gate_pct: float | None = None,
 ) -> pd.DataFrame:
     """Filtre les prédictions per-symbol via la cascade Global Rank.
 
@@ -2927,6 +2991,7 @@ def apply_cascade_to_predictions(
             oracle_rank_map=oracle_rank_map,
             oracle_filter_pct=oracle_filter_pct,
             oracle_pool_pct=oracle_pool_pct,
+            extreme_gate_pct=extreme_gate_pct,
         )
 
         # Symbols retenus par la cascade
