@@ -525,6 +525,16 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
                 "Défaut": "False",
             },
             {
+                "Paramètre": "no_shorts",
+                "Explication": "Ne trade que des positions LONG : ignore les signaux short (--no-shorts).",
+                "Défaut": "False",
+            },
+            {
+                "Paramètre": "no_longs",
+                "Explication": "Ne trade que des positions SHORT : ignore les signaux long (--no-longs).",
+                "Défaut": "False",
+            },
+            {
                 "Paramètre": "allow_fractional_shares",
                 "Explication": "Autorise les quantités fractionnaires côté sizing/replay backtest. Dans l'IHM, ce réglage est exposé via un switch persistant activé par défaut.",
                 "Défaut": "False CLI / activé par défaut dans l'IHM",
@@ -1601,6 +1611,22 @@ def _build_run_options() -> BacktestRunOptions:
             key="bt_run_sentiment_lookback",
             help="Paramètre CLI exposé par le backtesting. À conserver cohérent avec vos hypothèses research.",
         )
+    # E19 — restreindre le trading à un seul côté (long only / short only).
+    dir_col1, dir_col2 = st.columns(2)
+    with dir_col1:
+        no_shorts = st.checkbox(
+            "Long only (--no-shorts)",
+            value=bool(st.session_state.get("bt_run_no_shorts", False)),
+            key="bt_run_no_shorts",
+            help="Ne trade que des positions LONG : ignore les signaux short. Équivalent CLI --no-shorts.",
+        )
+    with dir_col2:
+        no_longs = st.checkbox(
+            "Short only (--no-longs)",
+            value=bool(st.session_state.get("bt_run_no_longs", False)),
+            key="bt_run_no_longs",
+            help="Ne trade que des positions SHORT : ignore les signaux long. Équivalent CLI --no-longs.",
+        )
     col12, col13, col14 = st.columns(3)
     with col12:
         ml_mode = cast(
@@ -2223,6 +2249,8 @@ def _build_run_options() -> BacktestRunOptions:
         slippage_bps=float(slippage_bps),
         account_type=cast(Any, account_type),
         swing_only=bool(swing_only),
+        no_shorts=bool(st.session_state.get("bt_run_no_shorts", False)),
+        no_longs=bool(st.session_state.get("bt_run_no_longs", False)),
         allow_fractional_shares=bool(allow_fractional_shares),
         sentiment_lookback=int(sentiment_lookback),
         no_save=bool(no_save),

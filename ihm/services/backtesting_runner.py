@@ -46,6 +46,9 @@ class BacktestRunOptions:
     slippage_bps: float | None = None
     account_type: Literal["margin", "cash"] = "margin"
     swing_only: bool = False
+    # E19 — restreindre le trading à un seul côté (long only / short only).
+    no_shorts: bool = False
+    no_longs: bool = False
     allow_fractional_shares: bool = True
     sentiment_lookback: int = 365
     no_save: bool = False
@@ -355,6 +358,11 @@ def build_backtesting_command(
             command.extend(["--fidelity-baseline-catalog", options.fidelity_baseline_catalog])
         if options.swing_only:
             command.append("--swing-only")
+        # E19 — restreindre le trading à un seul côté (long only / short only).
+        if options.no_shorts:
+            command.append("--no-shorts")
+        if options.no_longs:
+            command.append("--no-longs")
         if options.output_dir:
             command.extend(["--output-dir", options.output_dir])
         if options.no_save:
