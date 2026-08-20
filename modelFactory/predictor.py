@@ -51,6 +51,50 @@ _cross_sectional_frame_cache_lock = Lock()
 # Cache global_rank par cutoff_date (pour éviter de recalculer à chaque symbole)
 _global_rank_prediction_cache: dict[str, pd.DataFrame | None] = {}
 _global_rank_fallback_symbols: list[str] = []  # symboles ayant utilisé le fallback 0.5
+# Cache : le batch contient-il des modèles per-symbol/per-sector entraînés ? (stable par batch)
+_batch_has_models_cache: dict[str, bool] = {}
+
+
+def _batch_has_per_symbol_or_sector(engine: "Engine", batch_id: str | None) -> bool:
+    """True si le batch contient des modèles per-symbol OU per-sector entraînés.
+
+    - OUI : un ``no_model_found`` pour un symbole est une VRAIE anomalie → on garde
+      les logs warning/error par symbole.
+    - NON (batch purement global / rank-driven) : l'absence de modèle per-symbol et
+      per-sector est NORMALE → on affiche UN SEUL message global (proba_long dérivé du
+      rang global) et on ne loggue rien par symbole.
+
+    Détection : on regarde les symboles des runs d'entraînement du batch ; on exclut
+    les sentinelles de synthèse global_rank (``__GLOBAL_RANK...``) qui ne sont pas des
+    modèles per-symbol/per-sector. Résultat mis en cache : stable pour un batch donné.
+    """
+    if not batch_id:
+        # Pas de batch identifiable → on ne peut pas affirmer l'absence de modèles :
+        # comportement prudent (garder les logs par symbole).
+        return True
+    bid = str(batch_id)
+    if bid in _batch_has_models_cache:
+        return _batch_has_models_cache[bid]
+    has_models = True
+    try:
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            syms = conn.execute(
+                text("SELECT DISTINCT symbol FROM model_training_run WHERE batch_id = :bid"),
+                {"bid": bid},
+            ).scalars().all()
+        non_synth = [s for s in syms if s and "__GLOBAL_RANK" not in str(s).upper()]
+        has_models = len(non_synth) > 0
+    except Exception:  # noqa: BLE001 — la détection ne doit jamais faire échouer la prédiction
+        has_models = True
+    _batch_has_models_cache[bid] = has_models
+    if not has_models:
+        LOGGER.info(
+            "predict_per_sector batch=%s — aucun modèle per-symbol ni per-sector entraîné : "
+            "proba_long calculé depuis le rang global (global_rank → proba_long, synthèse)",
+            bid,
+        )
+    return has_models
 # Cache _per_symbol_features.json par artifacts_dir
 _per_symbol_features_cache: dict[str, dict[str, Any]] = {}
 
@@ -549,11 +593,15 @@ def _resolve_artifact_paths(
             )
 
     sym_dir = artifacts_dir / batch_id / symbol if batch_id is not None else artifacts_dir / symbol
-    LOGGER.error(
-        "predict_symbol no_model_found symbol=%s batch=%s — no per-symbol champion, "
-        "no per-sector fallback, and no filesystem artifacts at %s",
-        symbol, batch_id, sym_dir,
-    )
+    # Le batch contient des modèles per-symbol/per-sector ? Si NON (batch purement
+    # global), l'absence de modèle est normale (proba_long depuis le rang global) →
+    # pas de log par symbole. Si OUI, un manque est une anomalie → ERROR.
+    if _batch_has_per_symbol_or_sector(engine, batch_id):
+        LOGGER.error(
+            "predict_symbol no_model_found symbol=%s batch=%s — no per-symbol champion, "
+            "no per-sector fallback, and no filesystem artifacts at %s",
+            symbol, batch_id, sym_dir,
+        )
     return sym_dir / "best.ckpt", sym_dir / "scaler.pkl", sym_dir / "config.json", run_id
 
 
@@ -1550,7 +1598,10 @@ def predict_symbol(
     )
 
     if not config_path.exists():
-        LOGGER.warning("predict_symbol no_artifacts symbol=%s path=%s", symbol, config_path)
+        # Batch sans modèle per-symbol/per-sector : absence de config normale → pas de
+        # log par symbole. Batch avec modèles : manque = anomalie → WARNING.
+        if _batch_has_per_symbol_or_sector(engine, batch_id):
+            LOGGER.warning("predict_symbol no_artifacts symbol=%s path=%s", symbol, config_path)
         _record_artifact_issue(symbol, reason="config_missing", path=config_path)
         return None
 

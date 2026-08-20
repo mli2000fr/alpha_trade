@@ -74,9 +74,11 @@ def compute_factor_features(
     bench_daily = bench_returns.get("daily_return", pd.Series(0.0, index=df.index))
     if isinstance(bench_daily, pd.DataFrame):
         bench_daily = bench_daily.iloc[:, 0] if bench_daily.shape[1] > 0 else pd.Series(0.0, index=df.index)
-    bench_daily = pd.Series(bench_daily).fillna(0.0).astype(float).values
+    # Conversion numérique explicite AVANT fillna : évite le downcasting
+    # implicite object → float déprécié (FutureWarning future.no_silent_downcasting).
+    bench_daily = pd.to_numeric(pd.Series(bench_daily), errors="coerce").fillna(0.0).astype(float).values
 
-    stock_daily = df["daily_return"].fillna(0.0).astype(float).values
+    stock_daily = pd.to_numeric(df["daily_return"], errors="coerce").fillna(0.0).astype(float).values
     n = len(stock_daily)
 
     beta_arr = np.full(n, 1.0)
@@ -118,7 +120,7 @@ def compute_factor_features(
         window=window, min_periods=min_periods
     ).sum()
     df["momentum_252_vs_market"] = stock_mom_252 - market_mom_252
-    df["momentum_252_vs_market"] = df["momentum_252_vs_market"].fillna(0.0)
+    df["momentum_252_vs_market"] = pd.to_numeric(df["momentum_252_vs_market"], errors="coerce").fillna(0.0).astype(float)
 
     return df
 
@@ -129,7 +131,7 @@ def fill_factor_defaults(df: pd.DataFrame) -> pd.DataFrame:
         if col not in df.columns:
             df[col] = default
         else:
-            df[col] = df[col].fillna(default).astype(float)
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(default).astype(float)
             df[col] = df[col].replace([np.inf, -np.inf], default)
     return df
 
