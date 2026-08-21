@@ -1,177 +1,65 @@
-est-il tujorus intéressant de payer eodhd ?
+Oui, certains systèmes quant professionnels savent très bien exploiter le short, y compris sur des horizons de quelques jours à quelques semaines. Mais il y a une différence fondamentale avec ton approche : ils ne cherchent généralement pas à faire du « long inversé ».
 
-Oui — mais je serais maintenant beaucoup plus précis : je paierais EODHD pour 1 mois de recherche, pas encore comme dépendance permanente de production.
+Les meilleurs systèmes short disposent souvent d'éléments que ton B25 n'a pas été spécifiquement entraîné à exploiter : modèles short dédiés, données de prêt de titres/borrow, short interest, options et volatilité implicite, révisions d'analystes, surprises fondamentales, flux, événements, données intraday, facteurs cross-sectionnels spécifiques, etc. Ils peuvent aussi neutraliser une grande partie du risque marché.
 
-La raison principale a changé après ton E4-B1 : ce qui t'intéresse chez EODHD n'est plus tellement leur calendrier earnings ni leur sentiment agrégé. C'est surtout leur Earnings Trends API.
+Un professionnel peut par exemple construire un book :
 
-La documentation actuelle montre des champs particulièrement pertinents :
+Long les actions relativement fortes
+Short les actions relativement faibles
+→ chercher surtout le spread relatif, plutôt que prédire « cette action va perdre 8 % ».
 
-epsTrendCurrent
-epsTrend7daysAgo
-epsTrend30daysAgo
-epsTrend60daysAgo
-epsTrend90daysAgo
+C'est très différent.
 
+Imagine en bear :
 
-epsRevisionsUpLast7days
-epsRevisionsUpLast30days
-epsRevisionsDownLast30days
+SPY : −12 %
+action A : −4 %
+action B : −22 %
 
+Le quant peut être long A et short B. Même si son long baisse, le spread donne environ +18 points avant coûts et effets de sizing. Il n'a pas besoin que le long soit positif.
 
-earningsEstimateAvg
-earningsEstimateLow
-earningsEstimateHigh
-earningsEstimateNumberOfAnalysts
+C'est d'ailleurs une piste différente de celle que vous avez beaucoup testée. E24–E26 demandaient essentiellement :
 
+« Est-ce que B25 peut identifier des actions qui vont réellement baisser et produire un short profitable ? »
 
-revenueEstimateAvg
-revenueEstimateLow
-revenueEstimateHigh
-revenueEstimateNumberOfAnalysts
+Un long/short market-neutral ou beta-neutral demande plutôt :
 
-C'est précisément une information que tu n'as pas réellement testée dans E4-B1.
+« B25 sait-il suffisamment bien identifier les gagnants relatifs et les perdants relatifs pour monétiser le spread TOP−BOTTOM ? »
 
-Pourquoi ça reste intéressant malgré le NO-GO E4-B1
+Et là tes résultats sont intéressants : historiquement ton TOP−BOTTOM H20 était d'environ +2,65 points. Donc il y avait bien de l'information cross-sectionnelle. En revanche, vous avez également observé une inversion en 2026, ce qui interdit d'en déduire automatiquement qu'un book market-neutral serait robuste.
 
-E4-B1 a essentiellement falsifié :
+Pourquoi les professionnels peuvent mieux gérer le short
 
-croissance SEC historique / proximité earnings / réaction post-earnings → direction future.
+Ils ont aussi plusieurs avantages opérationnels : portefeuille beaucoup plus diversifié, optimisation du bêta et des facteurs, limites par secteur/symbole, borrow contrôlé, exécution sophistiquée et capacité à répartir un signal faible sur beaucoup de positions.
 
-Il n'a pas falsifié :
+C'est important parce qu'un quant professionnel n'a pas forcément besoin d'un modèle short à 60–70 % d'accuracy.
 
-évolution des anticipations des analystes AVANT le mouvement → direction future.
+Supposons 200 shorts avec un très petit edge statistique. Individuellement ils sont médiocres. Mais correctement diversifiés et neutralisés, leur agrégation peut devenir exploitable.
 
-Imagine deux titres que ton Oracle Extreme considère comme susceptibles de faire un gros mouvement :
+Ton application, elle, concentre actuellement le short sur deux slots. Chaque erreur individuelle pèse donc beaucoup plus lourd.
 
-                TITRE A             TITRE B
+Et tous les professionnels ne shortent pas
 
+Il ne faut pas non plus imaginer que « quant professionnel = toujours long/short ». Les stratégies professionnelles couvrent un spectre très large : trend following, stat-arb, equity market neutral, factor investing, volatility, managed futures, long-biased, etc.
 
-Momentum          +                 +
-RSI               52                51
-Range             haut              haut
-Volatilité        similaire         similaire
+Certaines utilisent énormément le short ; d'autres beaucoup moins.
 
+Et même les stratégies long/short peuvent avoir une asymétrie importante entre leurs modèles long et short.
 
-EPS consensus
-90j ago           2.00              2.00
-60j ago           2.04              1.96
-30j ago           2.09              1.85
-7j ago            2.15              1.71
-Current           2.18              1.64
+Dans ton cas
 
+Tes recherches ne démontrent pas que « le short quantitatif ne fonctionne pas ».
 
-Revisions          ↑↑                ↓↓↓
+Elles démontrent quelque chose de beaucoup plus précis :
 
-Tes features techniques peuvent considérer A et B comme presque identiques.
+Le signal B25 actuel ne sait pas sélectionner de façon suffisamment robuste les shorts directionnels pour ton lifecycle swing actuel.
 
-Un historique de révisions pourrait permettre de dire :
+C'est très différent.
 
-A = Extreme + pression fondamentale positive → candidat UP
-B = Extreme + pression fondamentale négative → candidat DOWN
+Et ton Oracle avait justement montré qu'il existe énormément de baisse exploitable ex post. C'est le sélecteur qui manque.
 
-C'est exactement le type d'information orthogonale qui manque actuellement à ton système.
+À ce stade, je ne copierais donc pas les professionnels en ajoutant artificiellement davantage de shorts. Je garderais ton système là où les preuves sont les plus fortes :
 
-Mais il y a UNE vérification critique avant de conclure que ça vaut vraiment l'argent
+B25 LONG → C2 → sizing → E34/B4 → cash quand l'environnement devient mauvais.
 
-La documentation appelle l'endpoint « forward-looking and historical earnings trend points », mais les champs 7daysAgo/30daysAgo/... ne suffisent pas à eux seuls à prouver que tu peux reconstruire un backtest PIT complet en 2022-2026.
-
-Par exemple, si tu appelles aujourd'hui :
-
-AAPL
-current = 7.98
-30daysAgo = 7.97
-90daysAgo = 7.81
-
-c'est très utile aujourd'hui.
-
-Mais pour ton backtest, il te faut idéalement pouvoir répondre à :
-
-« Qu'est-ce que l'API aurait retourné le 15 mars 2023 ? »
-
-Sinon tu risques de ne pas pouvoir reconstruire proprement :
-
-Oracle Extreme OOS 2023
-        +
-consensus réellement connu à D
-
-C'est le point que je ferais tester immédiatement après souscription.
-
-Et les news ?
-
-EODHD donne également les articles individuels avec filtrage temporel, plus un endpoint de sentiment quotidien.
-
-Le sentiment quotidien simple m'intéresse beaucoup moins, puisque tu as déjà falsifié ce type d'information.
-
-En revanche, les articles bruts restent intéressants pour E4-B3 :
-
-nouvelle news négative
-nombre de news
-accélération des news
-type d'événement
-nouveauté
-source
-article centré sur le ticker
-pré/post-market
-
-Donc l'abonnement permettrait potentiellement deux expériences, pas une seule :
-
-E4-B2R — Analyst revisions / Earnings Trends
-E4-B3 — News événementielles structurées
-
-Mon ordre maintenant
-
-Je modifierais légèrement ton plan :
-
-E4-B1 Earnings SEC
-        ↓
-      NO-GO
-        ↓
-E4-B2 fundamentals existants
-        ↓
- test rapide
-        ↓
-E4-B2R EODHD Analyst Revisions   ← très intéressant
-        ↓
-E4-B3 News événementielles
-
-Et je ne mélangerais rien au début.
-
-Est-ce que ~20 $ vaut le test ?
-
-EODHD affiche actuellement le package Corporate Events Calendar & News à $19.99/mois, sans engagement long terme obligatoire sur les offres mensuelles.
-
-Pour ton projet, je trouve le ratio coût/information très favorable.
-
-Tu as déjà investi beaucoup d'effort pour démontrer proprement que :
-
-Oracle Extreme détecte réellement l'amplitude ;
-OHLCV ne donne pas le signe ;
-B25 ne donne pas suffisamment le signe ;
-sentiment agrégé ne donne pas le signe ;
-screener ne donne pas le signe ;
-earnings SEC ne donne pas le signe.
-
-Dépenser ~$20 pour tester une nouvelle classe d'information réellement orthogonale est beaucoup plus rationnel que passer encore plusieurs jours à inventer 100 transformations OHLCV.
-
-Donc : oui, je prendrais un mois
-
-Mais avec une règle simple :
-
-On achète de l'information, pas de l'espoir.
-
-Dès l'accès obtenu, ton IA devrait d'abord auditer sans entraîner aucun modèle :
-
-profondeur historique réelle des Earnings Trends sur tes 400 titres ;
-possibilité de reconstruction PIT 2022→2026 ;
-couverture par année ;
-analyst count ;
-disponibilité réelle des 7/30/60/90d;
-stabilité des revisions ;
-seulement ensuite AUC UP/DOWN dans le pool Oracle Extreme.
-
-Si EODHD ne permet pas de reconstruire les revisions historiques PIT, je ne renouvellerais probablement pas l'abonnement pour cette recherche. Les news pourraient encore justifier un mois d'expérience, mais la proposition de valeur serait nettement moins forte.
-
-Documentation EODHD Earnings & Earnings Trends
-Corporate Events Calendar & News package
-
-Donc pour ton problème précis, oui : $19.99 pour un mois = test que je ferais.
+Si un jour tu veux réellement construire une branche short professionnelle, je la considérerais presque comme un second système de trading, avec son propre target, ses propres features, son propre lifecycle et ses propres gates OOS — et non comme 1 - global_rank de ton modèle long. C'est probablement la distinction la plus importante.
