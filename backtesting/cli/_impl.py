@@ -985,6 +985,29 @@ def _build_parser() -> argparse.ArgumentParser:
         help="P14 : surcharge le trailing pct pour les SHORTS uniquement (ex 0.07). None = risk-based (prod actuelle).",
     )
     run_p.add_argument(
+        "--trailing-long-risk-based", action="store_true", default=False,
+        help="E21-B25 (P1) : met le trailing LONG en risk-based (2.5xATR) au lieu du 7%% fixe gelé.",
+    )
+    run_p.add_argument(
+        "--tp-anchor-entry", action="store_true", default=False,
+        help="E21-B25 (P2) : ancre le TP sur le prix d'entrée (fill) au lieu du close de veille.",
+    )
+    run_p.add_argument(
+        "--sl-anchor-entry", action="store_true", default=False,
+        help="E21-B25 (P3) : ancre le SL initial sur le prix d'entrée (fill) au lieu du close de veille.",
+    )
+    run_p.add_argument(
+        "--research-sizing", action="store_true", default=False,
+        help="E21-B25 (P5) : sizing equal-weight x levier (comme recherche) au lieu du sizing ATR-risk pipeline.",
+    )
+    run_p.add_argument(
+        "--regime-trailing-policy", choices=["c0", "c1", "c2", "c3"], default="c2",
+        help="E21-v2 : trailing par-signal selon régime SPY SMA50/SMA200 PIT "
+             "(c0=7%% partout, c1=ATR partout, c2=BULL/REBOUND ATR + CORRECTION/SLIDE 7%%, c3=placebo inverse). "
+             "DEFAUT=c2 (règle gelée prod 2026-08-21 : BULL/REBOUND->2.5xATR, CORRECTION/SLIDE->7%%). "
+             "Si SPY indisponible -> fallback trailing global 7%% (warning).",
+    )
+    run_p.add_argument(
         "--ts-long", type=float, default=None,
         help="Trailing stop %% pour les LONGS uniquement (None = --ts). Plancher : n'élargit jamais l'autre jambe (P2-4).",
     )
@@ -3316,15 +3339,21 @@ def _run_backtest(args: argparse.Namespace) -> None:
             else None
         ),
         trailing_pct_long_override=(
-            float(args.trailing_pct_long)
-            if getattr(args, "trailing_pct_long", None) is not None
-            else 0.07
+            None
+            if bool(getattr(args, "trailing_long_risk_based", False))
+            else (
+                float(args.trailing_pct_long)
+                if getattr(args, "trailing_pct_long", None) is not None
+                else 0.07
+            )
         ),
         trailing_pct_short_override=(
             float(args.trailing_pct_short)
             if getattr(args, "trailing_pct_short", None) is not None
             else None
         ),
+        tp_anchor_entry=bool(getattr(args, "tp_anchor_entry", False)),
+        sl_anchor_entry=bool(getattr(args, "sl_anchor_entry", False)),
         leverage=load_leverage_config_from_yaml(),
         time_stop=load_time_stop_config_from_yaml(),
     )
@@ -3436,11 +3465,47 @@ def _run_backtest(args: argparse.Namespace) -> None:
             if phase3_mode == "execution_replay":
                 from backtesting.execution_replay import simulate_phase3_execution_replay
 
+                # E21-v2 : trailing par-signal selon le régime SPY SMA50/SMA200 (PIT, gelé à l'entrée).
+                # Règle gelée prod : default=c2 (BULL/REBOUND->ATR, CORRECTION/SLIDE->7%).
+                _regime_trailing_map = None
+                if getattr(args, "regime_trailing_policy", None):
+                    from backtesting.regime_trailing import (
+                        build_regime_trailing_map,
+                        regime_distribution,
+                    )
+                    _spy = ohlcv_df[ohlcv_df["symbol"].astype(str).str.upper() == "SPY"][["trade_date", "close"]].dropna().copy()
+                    _spy["trade_date"] = pd.to_datetime(_spy["trade_date"])
+                    _spy = _spy.sort_values("trade_date").drop_duplicates("trade_date").set_index("trade_date")["close"]
+                    if _spy.empty or len(_spy) < 250:
+                        # Dégradation gracieuse prod : pas de crash si SPY absent,
+                        # on retombe sur la politique globale actuelle (trailing 7%).
+                        _safe_print(
+                            "   ⚠️ E21-v2 policy={} : SPY indisponible ou historique insuffisant dans OHLCV "
+                            "(n={}) — fallback trailing global (7%%) actuel.\n".format(
+                                args.regime_trailing_policy, len(_spy),
+                            )
+                        )
+                    else:
+                        _regime_trailing_map = build_regime_trailing_map(_spy, args.regime_trailing_policy)
+                        # Diagnostic AVANT performance : distribution des signaux B25 entre les régimes.
+                        _sig_dates = pd.Series([
+                            pd.Timestamp(getattr(e, "trade_date"))
+                            for e in phase2_risk_result.entries
+                            if getattr(e, "trade_date", None) is not None
+                        ])
+                        _dist = regime_distribution(_sig_dates, _spy)
+                        _safe_print(
+                            "   E21-v2 policy={} : {} dates, distribution signaux B25 = {}\n".format(
+                                args.regime_trailing_policy, len(_sig_dates),
+                                {str(k): int(v) for k, v in _dist.items()},
+                            )
+                        )
                 phase3_execution_replay_result = simulate_phase3_execution_replay(
                     phase2_risk_result.entries,
                     execution_config=execution_config,
                     open_df=execution_pivoted["open"],
                     risk_run_id_prefix=phase2_risk_run_id,
+                    regime_trailing_map=_regime_trailing_map,
                 )
                 phase2_execution_result = phase3_execution_replay_result.execution_result
                 signals_df = phase3_execution_replay_result.signals_df
@@ -3650,6 +3715,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         protection_replay_mode=phase4_mode,
         watcher_replay_mode=phase5_mode,
         exit_lifecycle_replay_mode=phase7_mode,
+        research_sizing=bool(getattr(args, "research_sizing", False)),
     )
     # P2 (2026-06-25) : charger l'état des trackers si un fichier est fourni
     _tracker_state_path: Path | None = None

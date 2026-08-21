@@ -164,6 +164,9 @@ class BacktestConfig:
     protection_replay_mode: str = "off"
     watcher_replay_mode: str = "off"
     exit_lifecycle_replay_mode: str = "off"
+    # E21-B25 (P5) : sizing equal-weight x levier (comme recherche) au lieu du
+    # sizing ATR-risk du pipeline (quantity_override ignoré). Off par défaut.
+    research_sizing: bool = False
     # Phase B (refactor) — micro-structure (slippage volume-aware,
     # initial stop, gap filter, intrabar priority).
     microstructure: MicrostructureConfig = field(default_factory=MicrostructureConfig)
@@ -345,6 +348,8 @@ class _OpenPosition:
     risk_per_share: float | None = None
     # P2-4 — fraction ATR_20/prix au signal (pour le TP de production).
     atr_pct: float | None = None
+    # E21-A — trailing fixe par-signal (override optionnel de la dérivée risk_per_share).
+    trailing_stop_pct: float | None = None
     replay_take_profit_price: float | None = None
     replay_initial_stop_price: float | None = None
     replay_trailing_stop_pct: float | None = None
@@ -1593,9 +1598,13 @@ class BacktestEngine:
                         continue
 
             quantity_override = (
-                self._resolve_signal_quantity_override(row)
-                if cfg.execution_replay_mode == "execution_replay"
-                else None
+                None
+                if cfg.research_sizing
+                else (
+                    self._resolve_signal_quantity_override(row)
+                    if cfg.execution_replay_mode == "execution_replay"
+                    else None
+                )
             )
 
             # Phase B.3 — gap d'ouverture excessif.
@@ -1867,6 +1876,7 @@ class BacktestEngine:
                 initial_stop_price=initial_stop_price,
                 risk_per_share=risk_per_share,
                 atr_pct=self._resolve_signal_float(row, "atr_pct_20"),
+                trailing_stop_pct=self._resolve_signal_float(row, "trailing_stop_pct"),
                 replay_take_profit_price=(
                     self._resolve_signal_float(row, "replay_take_profit_price")
                     if cfg.protection_replay_mode == "protection_replay"
@@ -2109,7 +2119,14 @@ class BacktestEngine:
                             take_profit_price = max(percent_target, risk_based_target) if not short else min(percent_target, risk_based_target)
                         else:
                             take_profit_price = percent_target
+                    # E21-A — override par-signal : trailing fixe demandé (ex. 7% pipeline)
+                    # prime sur la dérivée risk_per_share (2,5×ATR recherche).
                     if (
+                        getattr(position, "trailing_stop_pct", None) is not None
+                        and position.trailing_stop_pct > 0
+                    ):
+                        trailing_stop_pct = position.trailing_stop_pct
+                    elif (
                         cfg.initial_stop_atr_multiple > 0
                         and position.risk_per_share is not None
                         and position.risk_per_share > 0

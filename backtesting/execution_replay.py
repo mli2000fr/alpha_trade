@@ -84,6 +84,8 @@ def _entry_to_target(
     risk_run_id: str,
     execution_date: pd.Timestamp,
     entry_price: float,
+    trailing_stop_pct: float | None = None,
+    trailing_risk_based: bool = False,
 ) -> ExecutionTarget:
     entry_side = str(getattr(entry, "side", "buy") or "buy").strip().lower()
     exec_side = entry_side if entry_side in ("buy", "sell") else "buy"
@@ -113,6 +115,13 @@ def _entry_to_target(
         risk_budget_dollars=entry.risk_budget_dollars,
         initial_risk_dollars=entry.initial_risk_dollars,
         target_notional=entry.target_notional,
+        # E21-B25 (P2/P3) : params TP + close de décision (ré-ancrage sur le prix d'entrée).
+        tp_atr_multiple=entry.tp_atr_multiple,
+        tp_max_pct=entry.tp_max_pct,
+        previous_close=float(entry.entry_price),
+        # E21-v2 : trailing par-signal (régime SPY PIT, gelé à l'entrée).
+        trailing_stop_pct=trailing_stop_pct,
+        trailing_risk_based=trailing_risk_based,
     )
 
 
@@ -358,6 +367,7 @@ def simulate_phase3_execution_replay(
     open_df: pd.DataFrame,
     risk_run_id_prefix: str,
     exec_run_id: str | None = None,
+    regime_trailing_map: dict | None = None,
 ) -> ExecutionReplayResult:
     trading_days = pd.DatetimeIndex(open_df.index)
     effective_exec_run_id = exec_run_id or f"bt_exec_replay_{uuid.uuid4().hex[:12]}"
@@ -412,11 +422,20 @@ def simulate_phase3_execution_replay(
             continue
 
         risk_run_id = f"{risk_run_id_prefix}_{pd.Timestamp(snapshot_date).strftime('%Y%m%d')}"
+        # E21-v2 : trailing par-signal (régime SPY PIT gelé à la date de décision).
+        _tgt_trailing = None
+        _tgt_risk = False
+        if regime_trailing_map is not None and getattr(entry, "trade_date", None) is not None:
+            _t = regime_trailing_map.get(pd.Timestamp(entry.trade_date).date())
+            if _t is not None:
+                _tgt_trailing, _tgt_risk = _t
         target = _entry_to_target(
             entry,
             risk_run_id=risk_run_id,
             execution_date=execution_day,
             entry_price=fill_price,
+            trailing_stop_pct=_tgt_trailing,
+            trailing_risk_based=_tgt_risk,
         )
         intent = build_entry_intents([target], execution_config, effective_exec_run_id)[0]
         attempt_plan = _build_synthetic_fill_attempts(

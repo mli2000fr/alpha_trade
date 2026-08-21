@@ -1267,6 +1267,8 @@ class PortfolioBuilder:
                 stop_price_initial=stop_price_initial,
                 take_profit_price=take_profit_price,  # V1 Multi-Horizon TP
                 risk_per_share=risk_per_share,
+                tp_atr_multiple=_tp_atr_mult,  # E21-B25 (P2) : params TP (ré-ancrage entrée)
+                tp_max_pct=_tp_max_pct,
                 risk_budget_dollars=risk_budget_dollars,
                 initial_risk_dollars=initial_risk_dollars,
                 score_snapshot_date=ec.snapshot_date,
