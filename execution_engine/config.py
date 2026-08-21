@@ -215,6 +215,10 @@ class ExecutionConfig:
     # Priorité : trailing_pct_override > side-spécifique > risk-based historique.
     trailing_pct_long_override: float | None = 0.07
     trailing_pct_short_override: float | None = None
+    # E21-B25 (P2/P3) : ancrage des protections sur le prix d'entrée (fill) au
+    # lieu du close de décision — contrôle d'attribution causale (off par défaut).
+    tp_anchor_entry: bool = False
+    sl_anchor_entry: bool = False
     protection_transition_timeout_seconds: int = 0
     protection_transition_poll_interval_seconds: float = 2.0
 

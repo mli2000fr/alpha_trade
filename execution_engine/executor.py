@@ -285,6 +285,24 @@ class ProductionExecutor:
             # Circuit breaker check (injection)
             if self._circuit_breaker is not None:
                 try:
+                    # E23 — breaker adaptatif (b1-b4) : alimenter régime SPY du jour
+                    # + machine d'état (equity / peak) AVANT is_active()/allocation_scale().
+                    # B0 : no-op (is_adaptive=False), comportement historique intact.
+                    if getattr(self._circuit_breaker, "is_adaptive", False):
+                        try:
+                            _bd = getattr(self._cfg, "trade_date", None) or actual_trade_date
+                            if _bd is None and targets:
+                                _bd = targets[0].trade_date
+                            _pnl = getattr(self._circuit_breaker, "_pnl", None)
+                            _eq_now = float(getattr(_pnl, "portfolio_current_value", 0.0) or 0.0)
+                            _hwm_now = float(getattr(_pnl, "portfolio_high_watermark", 0.0) or 0.0)
+                            _hwm_now = max(_hwm_now, _eq_now)
+                            if hasattr(self._circuit_breaker, "set_spy_regime"):
+                                self._circuit_breaker.set_spy_regime(_bd)
+                            if hasattr(self._circuit_breaker, "update_adaptive"):
+                                self._circuit_breaker.update_adaptive(_eq_now, _hwm_now)
+                        except Exception as exc:  # noqa: BLE001 — best-effort
+                            LOGGER.warning("Adaptive breaker update failed: %s", exc)
                     if self._circuit_breaker.is_active():
                         events.append(make_event(exec_run_id, EventType.CIRCUIT_BREAKER_ACTIVE, "CB active — aborting"))
                         self._repo.update_execution_run_status(exec_run_id, "ABORTED")

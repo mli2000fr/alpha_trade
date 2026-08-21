@@ -61,7 +61,8 @@ class TestLoadCascadeConfig:
         monkeypatch.chdir(tmp_path)
         cfg = load_cascade_config()
         assert cfg["top_pct"] == 0.20
-        assert cfg["min_prob"] == 0.55
+        assert cfg["min_prob_classification"] == 0.55
+        assert cfg["min_prob_regression"] == 0.10
 
     def test_reads_from_yaml(self, tmp_path: Path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -71,7 +72,9 @@ class TestLoadCascadeConfig:
         )
         cfg = load_cascade_config()
         assert cfg["top_pct"] == 0.25
-        assert cfg["min_prob"] == 0.60
+        # rétrocompat : l'ancienne clé "min_prob" alimente les deux nouveaux seuils
+        assert cfg["min_prob_classification"] == 0.60
+        assert cfg["min_prob_regression"] == 0.60
 
     def test_partial_overrides(self, tmp_path: Path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -81,14 +84,16 @@ class TestLoadCascadeConfig:
         )
         cfg = load_cascade_config()
         assert cfg["top_pct"] == 0.15
-        assert cfg["min_prob"] == 0.55  # défaut
+        assert cfg["min_prob_classification"] == 0.55  # défaut
+        assert cfg["min_prob_regression"] == 0.10
 
     def test_missing_section_returns_defaults(self, tmp_path: Path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         (tmp_path / "config.yaml").write_text("other: 42\n", encoding="utf-8")
         cfg = load_cascade_config()
         assert cfg["top_pct"] == 0.20
-        assert cfg["min_prob"] == 0.55
+        assert cfg["min_prob_classification"] == 0.55
+        assert cfg["min_prob_regression"] == 0.10
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -115,7 +120,8 @@ class TestCascadeSelect:
         assert len(result) == 1
         assert result[0][0] == "LONG"
         assert result[0][1] == "AAPL"
-        assert result[0][2] == pytest.approx(0.935 * 0.70, rel=0.01)
+        # _rank_col = global_rank_5 (0.92) car global_rank_10 est None dans le helper.
+        assert result[0][2] == pytest.approx(0.92 * 0.70, rel=0.01)
 
     def test_bottom_short_passes(self, monkeypatch):
         """Un symbole bottom rank + bonne proba short → retenu."""
@@ -129,8 +135,142 @@ class TestCascadeSelect:
         assert len(result) == 1
         assert result[0][0] == "SHORT"
         assert result[0][1] == "GME"
-        # rank_dir = 1 - 0.04 = 0.96, score = 0.96 * 0.80 ≈ 0.768
-        assert result[0][2] == pytest.approx(0.96 * 0.80, rel=0.01)
+        # rank_dir = 1 - 0.05 = 0.95, score = 0.95 * 0.80 = 0.76
+        assert result[0][2] == pytest.approx(0.95 * 0.80, rel=0.01)
+
+    def test_oracle_mode_rank_normalizes_ptop(self, monkeypatch):
+        """rank_mode='oracle' normalise P(top10) en percentile intra-date.
+
+        Sans normalisation, proba_top=0.10 ne serait jamais > 0.90 → 0 candidats.
+        """
+        symbols = [f"S{i:02d}" for i in range(10)]
+        probas = [0.01 + 0.01 * i for i in range(10)]  # 0.01 .. 0.10 (tous < 0.5)
+        ranks = _make_ranks_df([(s, 0.5, 0.5) for s in symbols])
+        preds = {s: CascadePrediction(symbol=s, long_prob=0.70, short_prob=0.05) for s in symbols}
+        oracle_map = {"2026-01-15": dict(zip(symbols, probas))}
+
+        with patch("modelFactory.predictor.load_cascade_config", return_value={"top_pct": 0.10, "min_prob": 0.55}):
+            with patch("modelFactory.predictor.load_global_ranks_from_db", return_value=ranks):
+                result = cascade_select(
+                    "2026-01-15", "batch-x", preds,
+                    rank_mode="oracle", oracle_rank_map=oracle_map,
+                )
+
+        # top 10% = 1 symbole (proba_top max = S09, rang pct 1.0) → LONG.
+        assert [(side, sym) for side, sym, _ in result] == [("LONG", "S09")]
+
+    def test_oracle_mode_missing_map_returns_empty(self, monkeypatch):
+        ranks = _make_ranks_df([("AAPL", 0.95, 0.92)])
+        preds = {"AAPL": CascadePrediction(symbol="AAPL", long_prob=0.70, short_prob=0.05)}
+        with patch("modelFactory.predictor.load_cascade_config", return_value={"top_pct": 0.20, "min_prob": 0.55}):
+            with patch("modelFactory.predictor.load_global_ranks_from_db", return_value=ranks):
+                result = cascade_select("2026-01-15", "batch-x", preds, rank_mode="oracle", oracle_rank_map=None)
+        assert result == []
+
+    # ── S6.1 : politiques Oracle (filter / rerank / pool) ──
+
+    def _oracle_scenario(self):
+        """10 symboles, B25 rank=0.95 (top band), P_top linéaire → pct 0.1..1.0."""
+        symbols = [f"S{i:02d}" for i in range(10)]
+        probas = [0.01 + 0.01 * i for i in range(10)]  # 0.01..0.10
+        ranks = _make_ranks_df([(s, 0.90, 0.95) for s in symbols])
+        preds = {s: CascadePrediction(symbol=s, long_prob=0.70, short_prob=0.05) for s in symbols}
+        oracle_map = {"2026-01-15": dict(zip(symbols, probas))}
+        return symbols, ranks, preds, oracle_map
+
+    def test_oracle_filter_keeps_high_ptop_only(self, monkeypatch):
+        """oracle_filter : B25 sélectionne, Oracle ne garde que P_top ≥ seuil (0.80)."""
+        symbols, ranks, preds, oracle_map = self._oracle_scenario()
+        with patch("modelFactory.predictor.load_cascade_config", return_value={"top_pct": 0.20, "min_prob": 0.55}):
+            with patch("modelFactory.predictor.load_global_ranks_from_db", return_value=ranks):
+                result = cascade_select(
+                    "2026-01-15", "batch-x", preds,
+                    rank_mode="oracle_filter", oracle_rank_map=oracle_map,
+                )
+        # pct = 0.1..1.0 → seuls pct ≥ 0.80 passent : S07(0.8), S08(0.9), S09(1.0)
+        kept = sorted(sym for _, sym, _ in result)
+        assert kept == ["S07", "S08", "S09"]
+        # oracle_filter ne réordonne PAS : score = rank B25 × prob (ordre B25 conservé)
+        assert result[0][2] == pytest.approx(0.95 * 0.70, rel=0.01)
+
+    def test_oracle_rerank_same_pool_different_order(self, monkeypatch):
+        """oracle_rerank : pool B25 identique (10 symboles), ordre réordonné par P_top."""
+        symbols, ranks, preds, oracle_map = self._oracle_scenario()
+        with patch("modelFactory.predictor.load_cascade_config", return_value={"top_pct": 0.20, "min_prob": 0.55}):
+            with patch("modelFactory.predictor.load_global_ranks_from_db", return_value=ranks):
+                result = cascade_select(
+                    "2026-01-15", "batch-x", preds,
+                    rank_mode="oracle_rerank", oracle_rank_map=oracle_map,
+                )
+        # Même pool que B25 : les 10 sont retenus, mais triés par P_top décroissant.
+        assert len(result) == 10
+        assert result[0][1] == "S09"   # pct 1.0
+        assert result[-1][1] == "S00"  # pct 0.1
+        # score = pct × 0.70
+        assert result[0][2] == pytest.approx(1.0 * 0.70, rel=0.01)
+
+    def test_oracle_pool_selects_top_pct_within_wider_pool(self, monkeypatch):
+        """oracle_pool : pool B25 top 20%, Oracle sélectionne le top 10% par P_top."""
+        symbols, ranks, preds, oracle_map = self._oracle_scenario()
+        with patch("modelFactory.predictor.load_cascade_config", return_value={"top_pct": 0.10, "min_prob": 0.55}):
+            with patch("modelFactory.predictor.load_global_ranks_from_db", return_value=ranks):
+                result = cascade_select(
+                    "2026-01-15", "batch-x", preds,
+                    rank_mode="oracle_pool", oracle_rank_map=oracle_map,
+                )
+        # top 10% par P_top = 1 symbole (S09, pct 1.0)
+        assert [(side, sym) for side, sym, _ in result] == [("LONG", "S09")]
+
+    # ── Extreme Gate (composant officiel E6-E13) ──
+
+    def test_extreme_gate_pure_oracle_long_only(self, monkeypatch):
+        """rank_mode='extreme_gate' : univers = top pool_pct par proba_extreme
+        (percentile cross-sectionnel du jour, PIT), LONG-only, SANS B25."""
+        symbols = [f"S{i:02d}" for i in range(10)]
+        probas = [0.01 + 0.01 * i for i in range(10)]  # 0.01..0.10
+        preds = {s: CascadePrediction(symbol=s, long_prob=0.70, short_prob=0.05) for s in symbols}
+        oracle_map = {"2026-01-15": dict(zip(symbols, probas))}
+
+        with patch("modelFactory.predictor.load_cascade_config",
+                   return_value={"top_pct": 0.20, "min_prob": 0.55}):
+            with patch("modelFactory.predictor.load_global_ranks_from_db") as _mock_ranks:
+                result = cascade_select(
+                    "2026-01-15", "batch-x", preds,
+                    rank_mode="extreme_gate", oracle_rank_map=oracle_map,
+                    extreme_gate_pct=0.20,
+                )
+        # top 20% par percentile proba_extreme : pct >= 0.80 → S07(0.8), S08(0.9), S09(1.0).
+        # LONG-only (aucun SHORT). Les rangs globaux B25 ne sont PAS chargés.
+        _mock_ranks.assert_not_called()
+        assert [(side, sym) for side, sym, _ in result] == [
+            ("LONG", "S09"), ("LONG", "S08"), ("LONG", "S07")]
+        # score = percentile × long_prob
+        assert result[0][2] == pytest.approx(1.0 * 0.70, rel=0.01)
+
+    def test_extreme_gate_missing_map_returns_empty(self, monkeypatch):
+        symbols = [f"S{i:02d}" for i in range(3)]
+        preds = {s: CascadePrediction(symbol=s, long_prob=0.70, short_prob=0.05) for s in symbols}
+        with patch("modelFactory.predictor.load_cascade_config",
+                   return_value={"top_pct": 0.20, "min_prob": 0.55}):
+            result = cascade_select("2026-01-15", "batch-x", preds,
+                                    rank_mode="extreme_gate", oracle_rank_map=None)
+        assert result == []
+
+    def test_compute_extreme_gate_pit(self):
+        """compute_extreme_gate : percentile cross-sectionnel PAR DATE, aucun lookahead."""
+        from modelFactory.oracle.extreme_gate import compute_extreme_gate
+        df = pd.DataFrame({
+            "date": pd.to_datetime(["2026-01-15"] * 4 + ["2026-01-16"] * 4),
+            "symbol": ["A", "B", "C", "D", "A", "B", "C", "D"],
+            "proba_extreme": [0.1, 0.2, 0.3, 0.4, 0.4, 0.3, 0.2, 0.1],
+        })
+        out = compute_extreme_gate(df, pool_pct=0.25)
+        # Jour 15 : pct = 0.25/0.5/0.75/1.0 → gate (>=0.75) : C, D
+        g15 = out[out["date"] == "2026-01-15"].set_index("symbol")["extreme_gate"]
+        assert list(g15[g15].index) == ["C", "D"]
+        # Jour 16 : pct = 1.0/0.75/0.5/0.25 → gate : A, B (mêmes symboles, ordre inversé)
+        g16 = out[out["date"] == "2026-01-16"].set_index("symbol")["extreme_gate"]
+        assert list(g16[g16].index) == ["A", "B"]
 
     def test_mid_rank_filtered_out(self, monkeypatch):
         """Un symbole au milieu du classement → rejeté."""
@@ -150,7 +290,7 @@ class TestCascadeSelect:
 
         with patch("modelFactory.predictor.load_cascade_config", return_value={"top_pct": 0.20, "min_prob": 0.55}):
             with patch("modelFactory.predictor.load_global_ranks_from_db", return_value=ranks):
-                result = cascade_select("2026-01-15", "batch-x", preds)
+                result = cascade_select("2026-01-15", "batch-x", preds, min_prob=0.55)
 
         assert len(result) == 0
 
@@ -166,9 +306,9 @@ class TestCascadeSelect:
         assert len(result) == 0
 
     def test_missing_rank3_or_rank5(self, monkeypatch):
-        """rank3 ou rank5 = None → rejeté."""
+        """Toutes les colonnes de rang absentes/None → rejeté."""
         ranks = pd.DataFrame([
-            {"symbol": "AAPL", "global_rank_3": 0.95, "global_rank_5": None, "global_rank_10": None},
+            {"symbol": "AAPL", "global_rank_3": None, "global_rank_5": None, "global_rank_10": None},
         ])
         preds = {"AAPL": CascadePrediction(symbol="AAPL", long_prob=0.70, short_prob=0.05)}
 
@@ -260,7 +400,9 @@ class TestApplyCascadeToPredictions:
         )
         ranks = _make_ranks_df([("AAPL", 0.95, 0.92)])
 
-        with patch("modelFactory.predictor.load_cascade_config", return_value={"top_pct": 0.20, "min_prob": 0.55}):
+        with patch("modelFactory.predictor.load_cascade_config",
+                   return_value={"top_pct": 0.20, "min_prob_classification": 0.55,
+                                 "min_prob_regression": 0.10}):
             with patch("modelFactory.predictor.load_global_ranks_from_db", return_value=ranks):
                 result = apply_cascade_to_predictions(preds, "batch-x")
 
@@ -275,7 +417,9 @@ class TestApplyCascadeToPredictions:
         )
         ranks = _make_ranks_df([("MSFT", 0.50, 0.55)])  # milieu → filtré
 
-        with patch("modelFactory.predictor.load_cascade_config", return_value={"top_pct": 0.20, "min_prob": 0.55}):
+        with patch("modelFactory.predictor.load_cascade_config",
+                   return_value={"top_pct": 0.20, "min_prob_classification": 0.55,
+                                 "min_prob_regression": 0.10}):
             with patch("modelFactory.predictor.load_global_ranks_from_db", return_value=ranks):
                 result = apply_cascade_to_predictions(preds, "batch-x")
 
@@ -298,7 +442,9 @@ class TestApplyCascadeToPredictions:
             ("GME", 0.03, 0.05),    # bottom → SHORT
         ])
 
-        with patch("modelFactory.predictor.load_cascade_config", return_value={"top_pct": 0.20, "min_prob": 0.55}):
+        with patch("modelFactory.predictor.load_cascade_config",
+                   return_value={"top_pct": 0.20, "min_prob_classification": 0.55,
+                                 "min_prob_regression": 0.10}):
             with patch("modelFactory.predictor.load_global_ranks_from_db", return_value=ranks):
                 result = apply_cascade_to_predictions(preds, "batch-x")
 
@@ -315,7 +461,9 @@ class TestApplyCascadeToPredictions:
         )
         ranks = _make_ranks_df([("AAPL", 0.95, 0.92)])
 
-        with patch("modelFactory.predictor.load_cascade_config", return_value={"top_pct": 0.20, "min_prob": 0.55}):
+        with patch("modelFactory.predictor.load_cascade_config",
+                   return_value={"top_pct": 0.20, "min_prob_classification": 0.55,
+                                 "min_prob_regression": 0.10}):
             with patch("modelFactory.predictor.load_global_ranks_from_db", return_value=ranks):
                 result = apply_cascade_to_predictions(preds, "batch-x")
 
@@ -371,12 +519,19 @@ class TestUpsertGlobalRanks:
 
 class TestLoadGlobalRanksFromDb:
     def test_returns_dataframe(self):
+        """Les 2 requêtes (schéma puis données) sont mockées distinctement."""
         mock_engine = MagicMock()
         mock_conn = MagicMock()
         mock_engine.connect.return_value.__enter__.return_value = mock_conn
-        mock_conn.execute.return_value.fetchall.return_value = [
-            ("AAPL", 0.95, 0.92, 0.88),
-            ("MSFT", 0.50, 0.55, 0.48),
+        # 1er execute = introspection du schéma (noms de colonnes), 2e = données.
+        mock_conn.execute.side_effect = [
+            MagicMock(fetchall=MagicMock(return_value=[
+                ("symbol",), ("global_rank_3",), ("global_rank_5",), ("global_rank_10",),
+            ])),
+            MagicMock(fetchall=MagicMock(return_value=[
+                ("AAPL", 0.95, 0.92, 0.88),
+                ("MSFT", 0.50, 0.55, 0.48),
+            ])),
         ]
 
         df = load_global_ranks_from_db("2026-01-15", "batch-x", engine=mock_engine)

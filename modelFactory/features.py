@@ -51,6 +51,49 @@ EXPERT_FEATURE_COLUMNS: list[str] = [
     "regime_risk_off",
 ]
 
+# ── Per-Symbol Directional v2 (2026-08-18) : F1-Core Trend/Volatility ──
+# 7 features directionnelles PIT, normalisées (indépendantes du niveau de prix).
+# Utilisées via la feature whitelist (campagne F1 = uniquement ces 7).
+DIRECTIONAL_FEATURE_COLUMNS: list[str] = [
+    "adx_14",          # ADX 14 (force de tendance)
+    "atr_ratio_5_20",  # ATR5 / ATR20 (compression/expansion de volatilité)
+    "atr20_pct",       # ATR20 / close (volatilité normalisée)
+    "ema20_slope_10",  # pente EMA20 sur 10j (ratio)
+    "ema50_slope_20",  # pente EMA50 sur 20j (ratio)
+    "distance_ema20",  # (close − EMA20) / EMA20
+    "distance_ema50",  # (close − EMA50) / EMA50
+]
+
+# ── Per-Symbol Directional v2 (2026-08-18) : familles F2 / F3a / F3b ──
+# F2 = Momentum / Price Action / Structure (cumulatif avec F1).
+# F3a = Relative Strength (stock − SPY, stock − secteur).
+# F3b = Volume (ratio, z-score, OBV, CMF).
+# Seules les colonnes NOUVELLES sont listées ici ; les colonnes déjà existantes
+# (range_position_20, relative_strength_20/60, stock_vs_sector_ret_20/60,
+# volume_ratio_20, obv_slope_20) restent dans leurs constantes d'origine.
+DIRECTIONAL_F2_FEATURE_COLUMNS: list[str] = [
+    "return_2d",          # retour 2j simple
+    "return_5d",          # retour 5j simple
+    "return_10d",         # retour 10j simple
+    "return_20d",         # retour 20j simple
+    "range_position_50",  # position close dans le range 50j
+    "distance_high_20",   # (high20_précédent − close) / high20_précédent
+    "distance_low_20",    # (close − low20_précédent) / low20_précédent
+    "body_range",         # (close−open)/(high−low) — corps signé
+    "close_location_value",  # (close−low)/(high−low) ∈ [0,1]
+]
+
+DIRECTIONAL_F3A_FEATURE_COLUMNS: list[str] = [
+    "relative_strength_5",     # stock 5j − SPY 5j (20/60 existants)
+    # NB : stock_vs_sector_ret_5 est fourni par cross_sectional.py
+    # (SECTOR_FEATURE_COLUMNS) quand --enable-cross-sectional est actif.
+]
+
+DIRECTIONAL_F3B_FEATURE_COLUMNS: list[str] = [
+    "volume_zscore_20",  # z-score du volume 20j
+    "cmf_20",            # Chaikin Money Flow 20j
+]
+
 # Features sentiment auxiliaires (depuis ticker_daily_sentiment_features)
 SENTIMENT_FEATURE_COLUMNS: list[str] = [
     "sentiment_net_mean_1d",
@@ -302,6 +345,28 @@ _SELECTOR_CONTEXT_DEFAULTS = {
     "selector_total_score_component": 0.0,
     "selector_rsi_component": 0.0,
     "selector_short_score": 0.0,
+    # ── Per-Symbol Directional v2 : F1-Core (2026-08-18) ──
+    "adx_14": 0.0,
+    "atr_ratio_5_20": 1.0,
+    "atr20_pct": 0.0,
+    "ema20_slope_10": 0.0,
+    "ema50_slope_20": 0.0,
+    "distance_ema20": 0.0,
+    "distance_ema50": 0.0,
+    # ── Per-Symbol Directional v2 : F2/F3a/F3b (2026-08-18) ──
+    "return_2d": 0.0,
+    "return_5d": 0.0,
+    "return_10d": 0.0,
+    "return_20d": 0.0,
+    "range_position_50": 0.0,
+    "distance_high_20": 0.0,
+    "distance_low_20": 0.0,
+    "body_range": 0.0,
+    "close_location_value": 0.0,
+    "relative_strength_5": 0.0,
+    "stock_vs_sector_ret_5": 0.0,
+    "volume_zscore_20": 0.0,
+    "cmf_20": 0.0,
     # ── Score components (P0-6, 2026-08-08) ──
     "sentiment_net_agg": 0.0,
     "company_idio_score": 0.0,
@@ -313,6 +378,40 @@ _SELECTOR_CONTEXT_DEFAULTS = {
     "macro_regime_component": 0.0,
     "sector_impact_agg": 0.0,
 }
+
+
+def apply_feature_whitelist(
+    full_columns: list[str],
+    whitelist: object,
+) -> list[str]:
+    """Filtre les colonnes features selon la whitelist (S7, opt-in, per-symbol).
+
+    S'applique APRÈS la construction normale de la liste complète des features
+    (couche de sélection finale des colonnes X). Ne touche jamais aux colonnes
+    structurelles (symbol, date, target, ...).
+
+    - Déduplication déterministe en conservant l'ordre d'origine.
+    - Validation stricte : chaque feature demandée doit exister dans
+      ``full_columns`` sinon ValueError (FAIL FAST, pas de fallback silencieux).
+    - L'ordre du résultat est celui de la whitelist.
+
+    Une whitelist vide n'est pas traitée ici : le mode whitelist est piloté par
+    ``feature_whitelist_enabled`` et ``get_feature_columns`` lève une erreur
+    explicite si enabled + liste vide.
+    """
+    requested = [str(feature) for feature in (whitelist or [])]
+    seen: set[str] = set()
+    result: list[str] = []
+    for feature in requested:
+        if feature not in full_columns:
+            raise ValueError(
+                "Feature whitelist error: requested feature "
+                f"'{feature}' does not exist."
+            )
+        if feature not in seen:
+            seen.add(feature)
+            result.append(feature)
+    return result
 
 
 def get_feature_columns(
@@ -331,8 +430,14 @@ def get_feature_columns(
     include_macro_regime: bool = False,
     include_score_components: bool = False,
     include_volume_features: bool = False,
+    feature_whitelist_enabled: bool = False,
+    feature_whitelist: tuple[str, ...] = (),
 ) -> list[str]:
     """Retourne la liste complète des colonnes features (OHLCV + optionnels).
+
+    Si ``feature_whitelist_enabled`` est vrai, ne conserve que les features
+    explicitement listées dans ``feature_whitelist`` (dans leur ordre), après
+    déduplication et validation stricte. Désactivé par défaut → legacy.
 
     ``include_cross_sectional`` active à la fois les rangs percentiles
     cross-sectionnels ET les features sectorielles dynamiques (momentum,
@@ -355,6 +460,10 @@ def get_feature_columns(
     cols = list(FEATURE_COLUMNS)
     if feature_set == "expert":
         cols.extend(EXPERT_FEATURE_COLUMNS)
+        cols.extend(DIRECTIONAL_FEATURE_COLUMNS)
+        cols.extend(DIRECTIONAL_F2_FEATURE_COLUMNS)
+        cols.extend(DIRECTIONAL_F3A_FEATURE_COLUMNS)
+        cols.extend(DIRECTIONAL_F3B_FEATURE_COLUMNS)
     if include_cross_sectional:
         from modelFactory.cross_sectional import CROSS_SECTIONAL_FEATURE_COLUMNS, SECTOR_FEATURE_COLUMNS, SECTOR_NEUTRAL_FEATURE_COLUMNS, SECTOR_ZSCORE_FEATURE_COLUMNS
 
@@ -412,6 +521,10 @@ def get_feature_columns(
         cols.extend(SCORE_COMPONENT_FEATURE_COLUMNS)
     if include_volume_features:
         cols.extend(VOLUME_LIQUIDITY_FEATURE_COLUMNS)
+    if feature_whitelist_enabled:
+        if not feature_whitelist:
+            raise ValueError("Feature whitelist enabled but empty.")
+        cols = apply_feature_whitelist(cols, feature_whitelist)
     return cols
 
 
@@ -432,6 +545,8 @@ def fingerprint(
     include_macro_regime: bool = False,
     include_score_components: bool = False,
     include_volume_features: bool = False,
+    feature_whitelist_enabled: bool = False,
+    feature_whitelist: tuple[str, ...] = (),
     feature_columns: list[str] | None = None,
 ) -> str:
     """SHA256[:16] du contrat de features actif (Phase 4.2.b).
@@ -457,6 +572,8 @@ def fingerprint(
         include_macro_regime=include_macro_regime,
         include_score_components=include_score_components,
         include_volume_features=include_volume_features,
+        feature_whitelist_enabled=feature_whitelist_enabled,
+        feature_whitelist=feature_whitelist,
     ))
     payload = {
         "columns": columns,
@@ -475,6 +592,8 @@ def fingerprint(
         "include_macro_regime": bool(include_macro_regime),
         "include_score_components": bool(include_score_components),
         "include_volume_features": bool(include_volume_features),
+        "feature_whitelist_enabled": bool(feature_whitelist_enabled),
+        "feature_whitelist": list(feature_whitelist) if feature_whitelist_enabled else [],
     }
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:16]
@@ -505,6 +624,9 @@ def build_feature_contract(
     include_factors: bool = False,
     include_macro_regime: bool = False,
     include_score_components: bool = False,
+    include_volume_features: bool = False,
+    feature_whitelist_enabled: bool = False,
+    feature_whitelist: tuple[str, ...] = (),
     feature_columns: list[str] | None = None,
     scaler_feature_names: list[str] | None = None,
 ) -> dict[str, object]:
@@ -524,6 +646,9 @@ def build_feature_contract(
         include_factors=include_factors,
         include_macro_regime=include_macro_regime,
         include_score_components=include_score_components,
+        include_volume_features=include_volume_features,
+        feature_whitelist_enabled=feature_whitelist_enabled,
+        feature_whitelist=feature_whitelist,
     ))
     contract: dict[str, object] = {
         "schema_version": 1,
@@ -544,10 +669,17 @@ def build_feature_contract(
             include_factors=include_factors,
             include_macro_regime=include_macro_regime,
             include_score_components=include_score_components,
+            include_volume_features=include_volume_features,
+            feature_whitelist_enabled=feature_whitelist_enabled,
+            feature_whitelist=feature_whitelist,
             feature_columns=resolved_columns,
         ),
         "require_exact_order": True,
         "allow_extra_runtime_columns": True,
+        "feature_whitelist": {
+            "enabled": bool(feature_whitelist_enabled),
+            "features": list(feature_whitelist) if feature_whitelist_enabled else [],
+        },
     }
     if scaler_feature_names is not None:
         contract["scaler_feature_names"] = list(scaler_feature_names)
@@ -571,6 +703,9 @@ def validate_feature_contract(
     include_factors: bool = False,
     include_macro_regime: bool = False,
     include_score_components: bool = False,
+    include_volume_features: bool = False,
+    feature_whitelist_enabled: bool = False,
+    feature_whitelist: tuple[str, ...] = (),
     persisted_feature_columns: object = None,
     persisted_feature_fingerprint: object = None,
     scaler_feature_names: object = None,
@@ -594,6 +729,9 @@ def validate_feature_contract(
         include_factors=include_factors,
         include_macro_regime=include_macro_regime,
         include_score_components=include_score_components,
+        include_volume_features=include_volume_features,
+        feature_whitelist_enabled=feature_whitelist_enabled,
+        feature_whitelist=feature_whitelist,
     )
     contract = contract_payload if isinstance(contract_payload, dict) else None
     contract_columns = normalize_feature_columns(contract.get("feature_columns")) if contract is not None else None
@@ -620,6 +758,9 @@ def validate_feature_contract(
         include_factors=include_factors,
         include_macro_regime=include_macro_regime,
         include_score_components=include_score_components,
+        include_volume_features=include_volume_features,
+        feature_whitelist_enabled=feature_whitelist_enabled,
+        feature_whitelist=feature_whitelist,
         feature_columns=expected_columns,
     )
 
@@ -647,6 +788,9 @@ def validate_feature_contract(
             include_factors=include_factors,
             include_macro_regime=include_macro_regime,
             include_score_components=include_score_components,
+            include_volume_features=include_volume_features,
+            feature_whitelist_enabled=feature_whitelist_enabled,
+            feature_whitelist=feature_whitelist,
             feature_columns=contract_columns,
         )
     else:
@@ -938,6 +1082,52 @@ def compute_features(
     # --- is_filled as float ---
     df["is_filled"] = df["is_filled"].astype(float)
 
+    # ── Per-Symbol Directional v2 : F1-Core Trend/Volatility (2026-08-18) ──
+    # 7 features directionnelles PIT, normalisées (indépendantes du niveau de prix).
+    # Disponibles dans le set expert ; utilisées via la feature whitelist (F1).
+    if feature_set == "expert":
+        _atr5 = _atr_value(high, low, close, 5)
+        _atr20 = _atr_value(high, low, close, 20)
+        _ema20 = close.ewm(span=20, adjust=False).mean()
+        _ema50 = close.ewm(span=50, adjust=False).mean()
+        _f1_cols = {
+            "adx_14": _adx(high, low, close, 14),
+            "atr_ratio_5_20": _atr5 / _atr20.clip(lower=1e-8),
+            "atr20_pct": _atr20 / close.clip(lower=1e-8),
+            "ema20_slope_10": _ema20 / _ema20.shift(10).clip(lower=1e-8) - 1.0,
+            "ema50_slope_20": _ema50 / _ema50.shift(20).clip(lower=1e-8) - 1.0,
+            "distance_ema20": (close - _ema20) / _ema20.clip(lower=1e-8),
+            "distance_ema50": (close - _ema50) / _ema50.clip(lower=1e-8),
+        }
+        df = pd.concat([df, pd.DataFrame(_f1_cols, index=df.index)], axis=1)
+
+        # ── F2 : Momentum / Price Action / Structure (per-symbol, PIT) ──
+        _high20_prev = high.rolling(20).max().shift(1)
+        _low20_prev = low.rolling(20).min().shift(1)
+        _range = (high - low).clip(lower=1e-8)
+        _f2_cols = {
+            "return_2d": close / close.shift(2) - 1.0,
+            "return_5d": close / close.shift(5) - 1.0,
+            "return_10d": close / close.shift(10) - 1.0,
+            "return_20d": close / close.shift(20) - 1.0,
+            "range_position_50": _range_position(close, 50),
+            "distance_high_20": (_high20_prev - close) / _high20_prev.clip(lower=1e-8),
+            "distance_low_20": (close - _low20_prev) / _low20_prev.clip(lower=1e-8),
+            "body_range": (close - opn) / _range,
+            "close_location_value": (close - low) / _range,
+        }
+        df = pd.concat([df, pd.DataFrame(_f2_cols, index=df.index)], axis=1)
+
+        # ── F3b : Volume (per-symbol, PIT) — dispo dans le set expert ──
+        _v_ma20 = volume.rolling(20).mean()
+        _v_std20 = volume.rolling(20).std()
+        _mfm = ((close - low) - (high - close)) / _range
+        _f3b_cols = {
+            "volume_zscore_20": (volume - _v_ma20) / _v_std20.clip(lower=1e-8),
+            "cmf_20": (_mfm * volume).rolling(20).sum() / volume.rolling(20).sum().clip(lower=1.0),
+        }
+        df = pd.concat([df, pd.DataFrame(_f3b_cols, index=df.index)], axis=1)
+
     # ── P3-5 : profil volume / liquidité (opt-in) ──
     if include_volume_features:
         _dollar_vol = volume * close
@@ -1021,6 +1211,7 @@ def compute_features(
                     "benchmark_close": bench_prices["close"],
                 }
             )
+            bench["benchmark_return_5"] = bench["benchmark_close"] / bench["benchmark_close"].shift(5) - 1.0
             bench["benchmark_return_20"] = bench["benchmark_close"] / bench["benchmark_close"].shift(20) - 1.0
             bench["benchmark_return_60"] = bench["benchmark_close"] / bench["benchmark_close"].shift(60) - 1.0
             bench_daily_return = bench["benchmark_close"].pct_change(fill_method=None)
@@ -1036,6 +1227,7 @@ def compute_features(
                     [
                         "date",
                         "benchmark_close",
+                        "benchmark_return_5",
                         "benchmark_return_20",
                         "benchmark_return_60",
                         "market_return_20",
@@ -1050,11 +1242,13 @@ def compute_features(
             )
             df["relative_strength_20"] = df["momentum_20"] - df["benchmark_return_20"]
             df["relative_strength_60"] = df["momentum_60"] - df["benchmark_return_60"]
+            df["relative_strength_5"] = df["momentum_5"] - df["benchmark_return_5"]
         else:
             for col in [
                 "market_return_20",
                 "market_volatility_20",
                 "market_trend_strength_50",
+                "relative_strength_5",
                 "relative_strength_20",
                 "relative_strength_60",
                 "regime_bull_market",
@@ -1587,4 +1781,34 @@ def _atr_norm(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 1
     ], axis=1).max(axis=1)
     atr = tr.rolling(period).mean()
     return atr / close.clip(lower=1e-8)
+
+
+def _atr_value(high: pd.Series, low: pd.Series, close: pd.Series, period: int) -> pd.Series:
+    """ATR brut (rolling mean du True Range) sur prix ajustés."""
+    prev_close = close.shift(1)
+    tr = pd.concat([
+        (high - low),
+        (high - prev_close).abs(),
+        (low - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    return tr.rolling(period).mean()
+
+
+def _adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
+    """ADX (Average Directional Index) — lissage Wilder via EWM alpha=1/period."""
+    prev_close = close.shift(1)
+    tr = pd.concat([
+        (high - low),
+        (high - prev_close).abs(),
+        (low - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    up_move = high.diff()
+    down_move = -low.diff()
+    plus_dm = pd.Series(np.where((up_move > down_move) & (up_move > 0), up_move, 0.0), index=high.index)
+    minus_dm = pd.Series(np.where((down_move > up_move) & (down_move > 0), down_move, 0.0), index=high.index)
+    tr_s = tr.ewm(alpha=1 / period, min_periods=period).mean()
+    plus_di = 100.0 * plus_dm.ewm(alpha=1 / period, min_periods=period).mean() / tr_s.clip(lower=1e-10)
+    minus_di = 100.0 * minus_dm.ewm(alpha=1 / period, min_periods=period).mean() / tr_s.clip(lower=1e-10)
+    dx = 100.0 * (plus_di - minus_di).abs() / (plus_di + minus_di).clip(lower=1e-10)
+    return dx.ewm(alpha=1 / period, min_periods=period).mean()
 

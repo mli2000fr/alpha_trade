@@ -303,6 +303,156 @@ def compare_decisions(
 LiveLoader = Callable[[date, str], pd.DataFrame]
 ReplayLoader = Callable[[date, str], pd.DataFrame]
 
+# ───────────────────────────────────────────────────────────────────────────
+# E23 — Couches risk quotidiennes (gate strict : régime C2, allocation B4,
+# état breaker, protections TP/SL/trailing). Discret = égalité stricte ;
+# flottant = tolérance minuscule (aucune tolérance sur les décisions discrètes).
+# ───────────────────────────────────────────────────────────────────────────
+RISK_LAYER_DISCRETE = ("regime", "trailing_policy", "breaker_tripped", "rearm_date", "force_close")
+RISK_LAYER_FLOAT = ("allocation_scale", "episode_peak", "episode_trough", "episode_alloc")
+RISK_PROTECTION_FIELDS = ("tp", "sl", "trailing")
+
+
+def compare_risk_layers(
+    live_ctx: dict | None,
+    replay_ctx: dict | None,
+    *,
+    float_tol: float = 1e-6,
+) -> list[dict[str, Any]]:
+    """Compare les couches risk (régime/trailing/breaker/protections) d'un jour.
+
+    Gate strict : aucune tolérance sur les champs discrets (régime, policy,
+    tripped, rearm_date, force_close) ; tolérance ``float_tol`` (minuscule)
+    sur les flottants (allocation, episode peak/trough/alloc) et les
+    protections (tp/sl/trailing par symbole).
+
+    Format attendu des contextes (dict) ::
+
+        {
+            "regime": "SLIDE", "trailing_policy": "c2",
+            "allocation_scale": 0.10, "breaker_tripped": True,
+            "episode_peak": 4200.0, "episode_trough": 3300.0,
+            "episode_alloc": 0.10, "rearm_date": "2025-05-06" | None,
+            "force_close": False,
+            "protections": {"AAPL": {"tp": 0.07, "sl": 0.025, "trailing": 0.07}},
+        }
+
+    Retourne une liste de divergences ``{"layer": str, "live": Any, "replay": Any}``.
+    Vide = parité.
+    """
+    live_ctx = live_ctx or {}
+    replay_ctx = replay_ctx or {}
+    divergences: list[dict[str, Any]] = []
+
+    def _note(layer: str, live: Any, replay: Any) -> None:
+        divergences.append({"layer": layer, "live": live, "replay": replay})
+
+    # Couches discrètes : égalité stricte.
+    for layer in RISK_LAYER_DISCRETE:
+        lv = live_ctx.get(layer)
+        rv = replay_ctx.get(layer)
+        if lv != rv:
+            _note(layer, lv, rv)
+
+    # Couches flottantes : tolérance minuscule.
+    for layer in RISK_LAYER_FLOAT:
+        lv = live_ctx.get(layer)
+        rv = replay_ctx.get(layer)
+        if lv is None and rv is None:
+            continue
+        if lv is None or rv is None:
+            _note(layer, lv, rv)
+            continue
+        try:
+            if abs(float(lv) - float(rv)) > float_tol:
+                _note(layer, lv, rv)
+        except (TypeError, ValueError):
+            _note(layer, lv, rv)
+
+    # Protections par symbole (TP/SL/trailing).
+    live_prot = live_ctx.get("protections") or {}
+    replay_prot = replay_ctx.get("protections") or {}
+    for sym in sorted(set(live_prot) | set(replay_prot)):
+        lp = live_prot.get(sym) or {}
+        rp = replay_prot.get(sym) or {}
+        for field in RISK_PROTECTION_FIELDS:
+            lf = lp.get(field)
+            rf = rp.get(field)
+            if lf is None and rf is None:
+                continue
+            if lf is None or rf is None:
+                _note(f"protection.{sym}.{field}", lf, rf)
+                continue
+            try:
+                if abs(float(lf) - float(rf)) > float_tol:
+                    _note(f"protection.{sym}.{field}", lf, rf)
+            except (TypeError, ValueError):
+                _note(f"protection.{sym}.{field}", lf, rf)
+
+    return divergences
+
+
+PAPER_COVERAGE_ARTIFACT = "paper_coverage.json"
+
+
+def summarize_paper_coverage(
+    contexts: list[dict],
+    *,
+    min_days: int = 2,
+) -> dict[str, Any]:
+    """Résume la représentativité d'une période paper (gate GO live réel).
+
+    Critères (recommandation E23) :
+    - **obligatoire** : au moins ``min_days`` journées vertes ET au moins un
+      changement de régime entre deux jours consécutifs (sinon on ne teste que
+      le chemin nominal) ;
+    - **idéal** : au moins un jour où l'allocation < 1.0 (épisode non-nominal,
+      contrôle effectif du breaker B4) — rapporté séparément.
+
+    ``contexts`` : contexte LIVE (ou replay, à défaut) d'un jour, au format
+    ``compare_risk_layers``. Retourne un dict de synthèse avec ``representative``.
+    """
+    n = len(contexts)
+    if n == 0:
+        return {"days": 0, "regimes": [], "regime_changes": 0, "non_full_alloc_days": 0,
+                "tripped_days": 0, "min_days": min_days, "representative": False,
+                "missing": ["aucun jour enregistré"]}
+
+    regimes = []
+    allocs = []
+    tripped = 0
+    for ctx in contexts:
+        r = str(ctx.get("regime") or "")
+        if r:
+            regimes.append(r)
+        else:
+            regimes.append("<vide>")
+        try:
+            allocs.append(float(ctx.get("allocation_scale") or 0.0))
+        except (TypeError, ValueError):
+            allocs.append(0.0)
+        if bool(ctx.get("breaker_tripped")):
+            tripped += 1
+
+    distinct = sorted(set(regimes))
+    regime_changes = sum(1 for a, b in zip(regimes, regimes[1:]) if a != b)
+    non_full = sum(1 for a in allocs if a < 0.999)
+
+    missing = []
+    if n < min_days:
+        missing.append(f"{min_days - n} jour(s) vert(s) manquant(s)")
+    if regime_changes < 1:
+        missing.append("aucun changement de régime")
+    if non_full < 1:
+        missing.append("aucun épisode allocation<1.0 (idéal)")
+
+    return {
+        "days": n, "regimes": distinct, "regime_changes": regime_changes,
+        "non_full_alloc_days": non_full, "tripped_days": tripped,
+        "min_days": min_days, "missing": missing,
+        "representative": (n >= min_days) and (regime_changes >= 1),
+    }
+
 
 def write_parity_artifacts(report: ParityReport, output_dir: Path | str) -> dict[str, Path]:
     """Écrit ``parity_summary.json`` + ``rows.csv`` dans ``output_dir``.

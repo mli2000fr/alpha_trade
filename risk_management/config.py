@@ -71,6 +71,17 @@ class RiskConfig:
     # jours de stagnation).
     regime_ramp_up_peak_window_days: int = 5
 
+    # ── E23 — politique breaker adaptative (2026-08-21) ──
+    # "b0" = PROD historique (bit-à-bit inchangé) — ROLLBACK.
+    # "b1/b2/b3/b4/b4a" = politiques adaptatives (même machine d'état, mêmes
+    # seuils, même régime SPY que le backtest). B4 = contrôleur robuste,
+    # ACTIF EN PROD (config.yaml policy: b4, GO live 2026-08-21). Le défaut
+    # b0 ci-dessous reste le fallback sûr si la config est absente.
+    policy: str = "b0"
+    # Carte régime SPY journalière {date: str} — injectée par le moteur live
+    # (PIT, réévaluée chaque jour), jamais sérialisée en YAML.
+    spy_regime_map: dict | None = None
+
     # Concentration / diversification (Priorité 4)
     concentration_max_trades_per_symbol: int = 5
     concentration_window_calendar_days: int = 180
@@ -642,6 +653,16 @@ def load_risk_config(
     yaml_risk = full_cfg.get("risk_management", {})
     if not isinstance(yaml_risk, dict):
         yaml_risk = {}
+    # ── V1 Multi-Horizon : best_horizon par défaut depuis config.yaml ──
+    # Le sizing/TP utilise RiskConfig.best_horizon (maps stop/TP multi-horizon).
+    # Par défaut on le prend depuis `batch_diagnostics.backtest_horizon` /
+    # `live_horizon` (config.yaml, gelé H20 pour B25), au lieu du défaut codé
+    # en dur (10). Priorité conservée : cli_overrides > preset > config.yaml >
+    # défaut du dataclass. Décision 2026-08-17 (Test B validé : PF 1.52 vs 1.06).
+    _bd = full_cfg.get("batch_diagnostics") or {}
+    _cfg_h = _bd.get("backtest_horizon") or _bd.get("live_horizon")
+    if _cfg_h not in (None, "", 0) and "best_horizon" not in yaml_risk:
+        yaml_risk["best_horizon"] = int(_cfg_h)
     _map_defaults: dict[str, dict[int, float]] = {
         "_atr_stop_multiple_map": {3: 1.5, 5: 2.0, 10: 2.5, 15: 3.0, 20: 3.5},
         "_tp_atr_multiple_map": {3: 2.0, 5: 2.5, 10: 3.0, 15: 3.5, 20: 4.0},

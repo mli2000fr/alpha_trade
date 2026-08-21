@@ -84,6 +84,8 @@ from ihm.services.pipeline_ml_defaults import (
     DEFAULT_ML_INCLUDE_MACRO_REGIME,
     DEFAULT_ML_INCLUDE_SCORE_COMPONENTS,
     DEFAULT_ML_GLOBAL_MODEL_ONLY,
+    DEFAULT_ML_ENABLE_ORACLE_MODEL,
+    DEFAULT_ML_ORACLE_MODEL_ONLY,
     DEFAULT_ML_RANKING_TOP_K_FEATURES,
     DEFAULT_ML_GLOBAL_RANKING_MAX_SYMBOLS,
     DEFAULT_ML_PER_SYMBOL_MAX_SYMBOLS,
@@ -386,6 +388,8 @@ class PipelineLaunchOptions:
     ml_include_macro_regime: bool = DEFAULT_ML_INCLUDE_MACRO_REGIME
     ml_include_score_components: bool = DEFAULT_ML_INCLUDE_SCORE_COMPONENTS  # P0-6
     ml_global_model_only: bool = DEFAULT_ML_GLOBAL_MODEL_ONLY  # P0-6
+    ml_enable_oracle_model: bool = DEFAULT_ML_ENABLE_ORACLE_MODEL  # 2026-08-20 : Oracle Extreme (O0)
+    ml_oracle_model_only: bool = DEFAULT_ML_ORACLE_MODEL_ONLY      # 2026-08-20 : Oracle ONLY
     ml_target_skip_vol_scaling: bool = DEFAULT_ML_TARGET_SKIP_VOL_SCALING
     ml_target_excess_vs_spy: bool = DEFAULT_ML_TARGET_EXCESS_VS_SPY  # P0-7
     ml_target_intra_sector_rank: bool = DEFAULT_ML_TARGET_INTRA_SECTOR_RANK
@@ -1692,7 +1696,12 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         "ticket-recherche": "ticket-recherche",
     }.get(str(options.ml_train_symbol_source or "").strip().lower(), "tradable-universe")
     ml_train_start_symbol = _normalize_optional_symbol(options.ml_train_start_symbol)
-    ml_predict_symbol_source = "tradable-universe"
+    ml_predict_symbol_source = {
+        "stock-bars-daily": "stock-bars-daily",
+        "stock_bars_daily": "stock-bars-daily",
+        "tradable-universe": "tradable-universe",
+        "ticket-recherche": "ticket-recherche",
+    }.get(str(options.ml_predict_symbol_source or "").strip().lower(), "tradable-universe")
     if step_key == "import_alpaca_assets":
         return [sys.executable, "-u", "-m", "dataIntegrityEngine.import_alpaca_assets"]
 
@@ -2283,6 +2292,12 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         if options.ml_global_model_only:
             command.append("--global-model-only")
             command.append("--enable-global-model")  # P0-6: implicite
+        # Oracle Extreme (O0) — 2026-08-20
+        if options.ml_oracle_model_only:
+            command.append("--oracle-model-only")
+            command.append("--enable-oracle-model")  # implicite
+        elif options.ml_enable_oracle_model:
+            command.append("--enable-oracle-model")
         if options.ml_include_sentiment:
             command.append("--include-sentiment")
         if options.ml_include_screener_scores:
@@ -2512,20 +2527,25 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         if account_id:
             command.extend(["--account", account_id])
         # ── V1 Multi-Horizon : injecter best_horizon (SIZING only) ──
-        # ⚠️ Ce --best-horizon alimente RiskConfig.best_horizon → maps stop/TP
-        # multi-horizon du sizing LIVE. Il ne doit PAS être dérivé de
-        # live_horizon (cascade), sinon le sizing casserait la parité avec le
-        # benchmark (H10 = stop 2.5/TP 7% gelés). On garde le best_horizon du
-        # batch (metadata) pour le sizing = comportement d'origine.
-        _risk_bid = options.ml_predict_batch_id or options.ml_live_predict_batch_id
-        if _risk_bid:
+        # --best-horizon alimente RiskConfig.best_horizon → maps stop/TP.
+        # Par défaut on utilise `batch_diagnostics.live_horizon` (config.yaml,
+        # gelé H20 pour B25) — décision 2026-08-17 : Test B (H20 risk) validé
+        # PF 1.52 vs 1.06 en H10. Fallback : best_horizon du batch (metadata).
+        from common.config_loader import load_config
+        _live_h = (load_config() or {}).get("batch_diagnostics", {}).get("live_horizon")
+        _best_h = None
+        if _live_h not in (None, "", 0):
+            _best_h = int(_live_h)
+        elif (options.ml_predict_batch_id or options.ml_live_predict_batch_id):
             try:
                 from modelFactory.predictor import _load_best_horizon_for_batch
-                _best_h = _load_best_horizon_for_batch(_risk_bid)
-                if _best_h is not None:
-                    command.extend(["--best-horizon", str(_best_h)])
+                _best_h = _load_best_horizon_for_batch(
+                    options.ml_predict_batch_id or options.ml_live_predict_batch_id
+                )
             except Exception:
-                pass  # best-effort : le fallback H10 dans RiskConfig suffit
+                pass  # best-effort : fallback H10 du dataclass
+        if _best_h is not None:
+            command.extend(["--best-horizon", str(_best_h)])
         return command
 
     if step_key == "execution":

@@ -127,6 +127,14 @@ class DrawdownCircuitBreaker:
     Si le régime est normal mais que l'equity stagne ou baisse, le streak
     est gelé (pas d'incrément, pas de reset). Dès que le régime quitte
     ``normal``, le streak est remis à zéro.
+
+    E23 (2026-08-21) — politiques adaptatives B0-B3 :
+        ``policy="b0"`` = comportement PROD exact (défaut, bit-à-bit).
+        ``policy="b1"`` = recovery depuis le trough par paliers 10/25/50/75/100%.
+        ``policy="b2"`` = régime-aware (ramp rapide BULL/REB, lent CORR/SLIDE).
+        ``policy="b3"`` = combined trough-recovery + régime asymétrique + hystérésis.
+    La map ``spy_regime_map`` ({date: régime SPY}) alimente le régime journalier
+    (réévalué CHAQUE JOUR — contrairement au trailing C2 gelé à l'entrée).
     """
 
     enabled: bool = False
@@ -145,12 +153,38 @@ class DrawdownCircuitBreaker:
     # Force-close : liquide toutes les positions quand le breaker trippe.
     force_close_on_breaker: bool = False
     force_close_pct: float = 0.50  # fraction liquidée (1.0 = tout)
+    # E19 — coupe TOUS les symboles perdants (down en long, up en short) au
+    # déclenchement, au lieu d'une fraction (force_close_pct) des pires PnL.
+    force_close_losers_on_breaker: bool = False
+    # E23 — politique adaptative (b0/b1/b2/b3) + régime SPY journalier.
+    policy: str = "b0"
+    spy_regime_map: dict | None = None
     _tripped: bool = field(default=False, init=False)
     _was_tripped: bool = field(default=False, init=False)
     _equity_window: list[float] = field(default_factory=list, init=False)
     _normal_streak: int = field(default=0, init=False)
     _equity_prev: float = field(default=0.0, init=False)
     _equity_peak_window: list[float] = field(default_factory=list, init=False)
+    # E23 — épisode de drawdown (peak/trough/allocation) pour b1-b3.
+    _episode: object = field(default=None, init=False)
+    _regime_today: str | None = field(default=None, init=False)
+    _alloc_today: float = field(default=1.0, init=False)
+
+    def _ensure_episode(self) -> object:
+        if self._episode is None:
+            from backtesting.adaptive_breaker import BreakerEpisode
+            self._episode = BreakerEpisode()
+        return self._episode
+
+    def set_spy_regime(self, trade_date) -> None:
+        """Enregistre le régime SPY du jour (réévalué chaque jour)."""
+        if self.spy_regime_map:
+            try:
+                self._regime_today = self.spy_regime_map.get(
+                    pd.Timestamp(trade_date).date()
+                )
+            except Exception:
+                self._regime_today = None
 
     def _reference_peak(self, peak_equity: float) -> float:
         if self.rolling_peak_window_days <= 0:
@@ -165,6 +199,8 @@ class DrawdownCircuitBreaker:
         - 1.0 si le breaker n'est pas trippé.
         - ``degraded_entry_allocation_pct`` si trippé sans ramp-up.
         - valeur rampée si trippé + régime normal depuis N séances.
+        - E23 (b1/b2/b3) : allocation calculée par la politique adaptative
+          (trough-recovery / régime / hystérésis).
 
         Sprint 2 — ``side`` permet un scaling différent long/short (réservé).
         Pour l'instant, le même scale s'applique aux deux directions.
@@ -172,6 +208,9 @@ class DrawdownCircuitBreaker:
         _ = side  # reserved for future per-side scaling
         if not self._tripped:
             return 1.0
+        # E23 — politiques adaptatives (sauf b0 = comportement PROD inchangé).
+        if str(self.policy).strip().lower() != "b0":
+            return float(self._alloc_today)
         base = float(np.clip(self.degraded_entry_allocation_pct, 0.0, 1.0))
         if not self.regime_ramp_up_enabled or not entry_mode:
             return base
@@ -197,7 +236,18 @@ class DrawdownCircuitBreaker:
         Si le régime est normal mais que l'equity ne fait pas de nouveau pic,
         le streak reste inchangé (gelé, pas de reset).
         Tout régime non-normal remet le compteur à zéro.
+
+        E23 (b1/b2/b3) : hystérésis du régime SPY journalier (3 séances
+        favorables pour augmenter, reset immédiat si défavorable).
         """
+        # E23 — politiques adaptatives : hystérésis sur le régime SPY du jour
+        # (uniquement quand le breaker est trippé, cohérent avec B0).
+        if str(self.policy).strip().lower() != "b0":
+            from backtesting.adaptive_breaker import is_favorable, update_streak
+            episode = self._ensure_episode()
+            if self._tripped:
+                update_streak(episode, is_favorable(self._regime_today))
+            return
         if not self.regime_ramp_up_enabled or not self._tripped:
             self._normal_streak = 0
             self._equity_peak_window.clear()
@@ -222,6 +272,32 @@ class DrawdownCircuitBreaker:
     def update(self, equity: float, peak_equity: float) -> bool:
         if not self.enabled or peak_equity <= 0:
             return True
+        # E23 — politiques adaptatives : trip/recovery via épisode + allocation.
+        if str(self.policy).strip().lower() != "b0":
+            from backtesting.adaptive_breaker import (
+                allocate, is_favorable, trip_or_recover,
+            )
+            episode = self._ensure_episode()
+            self._was_tripped = self._tripped
+            trip_or_recover(
+                episode, equity, peak_equity,
+                policy=str(self.policy).strip().lower(),
+                max_dd_pct=abs(float(self.max_dd_pct)),
+                recovery_pct=float(self.recovery_pct),
+            )
+            self._tripped = bool(episode.tripped)
+            # Allocation cible calculée AVANT la mise à jour du streak (le streak
+            # du jour vient de la séance d'aujourd'hui, géré par update_regime_streak).
+            episode.allocation = allocate(
+                str(self.policy).strip().lower(), episode, equity,
+                regime=self._regime_today,
+                recovery_pct=float(self.recovery_pct),
+                degraded=float(np.clip(self.degraded_entry_allocation_pct, 0.0, 1.0)),
+                ramp_max=float(self.regime_ramp_up_max_pct),
+            )
+            self._alloc_today = float(episode.allocation)
+            return not self._tripped
+        # ── Comportement PROD (b0) inchangé ──
         # Calculer le pic de référence sur l'historique EXISTANT (avant aujourd'hui)
         reference_peak = self._reference_peak(peak_equity)
         # Enregistrer l'equity du jour pour les prochains appels

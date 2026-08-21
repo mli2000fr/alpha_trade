@@ -1184,9 +1184,11 @@ def _render_ml_predict_scope_block(
     # ── Sélecteur de batch ML ──
     from ihm.services.queries import safe_query
 
+    # Tous les batchs complétés (pas de LIMIT : l'utilisateur veut pouvoir
+    # rejouer un backtest avec un batch ancien, ex. B25 ou plus vieux).
     _batches_df = safe_query(
         "SELECT batch_id, comment, started_at FROM alpha_trade.model_training_batch "
-        "WHERE status = 'completed' ORDER BY started_at DESC LIMIT 30"
+        "WHERE status = 'completed' ORDER BY started_at DESC"
     )
     _batch_options: list[tuple[str, str]] = [("", "⚠️ Auto-détection (config.yaml ou dossier artifacts)")]
     _batch_comments: dict[str, str] = {}
@@ -1392,7 +1394,7 @@ def _render_launchable_step_panel(
                 from ihm.services.queries import safe_query as _safe_query
                 _live_batches_df = _safe_query(
                     "SELECT batch_id, comment, started_at FROM alpha_trade.model_training_batch "
-                    "WHERE status = 'completed' ORDER BY started_at DESC LIMIT 30"
+                    "WHERE status = 'completed' ORDER BY started_at DESC"
                 )
                 _live_options: list[tuple[str, str]] = [("", "⚠️ Auto-détection")]
                 if not _live_batches_df.empty:

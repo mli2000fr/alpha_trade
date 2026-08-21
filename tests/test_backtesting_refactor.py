@@ -396,6 +396,56 @@ class TestPhaseC:
         assert cb.update(equity=85.0, peak_equity=100.0) is False
         assert cb.allocation_scale() == pytest.approx(0.02)
 
+    def test_drawdown_breaker_force_close_losers_only(self):
+        """E19 — quand le breaker DD trippe et `force_close_losers_on_breaker`,
+        seules les positions PERDANTES (down en long / up en short) sont fermées ;
+        les positions gagnantes restent ouvertes."""
+        from backtesting.risk_overlay import RiskOverlayConfig, DrawdownCircuitBreaker
+        from backtesting.simulator import BacktestConfig, BacktestEngine
+
+        idx = pd.date_range("2024-01-02", periods=5, freq="B")
+        # AAA = gagnant (monte), BBB = perdant (plonge) → le DD trippe le jour 3.
+        px = pd.DataFrame({
+            "AAA": [100.0, 102.0, 105.0, 104.0, 107.0],
+            "BBB": [100.0, 98.0, 94.0, 85.0, 90.0],
+        }, index=idx)
+        ohlcv = {"open": px, "close": px, "high": px * 1.01, "low": px * 0.99}
+        signals = pd.DataFrame([
+            {"trade_date": idx[0], "symbol": "AAA", "selected": True, "rank": 1,
+             "signal_date": idx[0], "side": "buy", "score": 0.9},
+            {"trade_date": idx[0], "symbol": "BBB", "selected": True, "rank": 1,
+             "signal_date": idx[0], "side": "buy", "score": 0.9},
+        ])
+        cfg = BacktestConfig(
+            start_date=pd.Timestamp("2024-01-02").date(),
+            end_date=pd.Timestamp("2024-01-08").date(),
+            initial_equity=10_000.0,
+            profit_taker_pct=0.50, trailing_stop_pct=0.20,
+            max_positions=2, fees_pct=0.0, min_score_threshold=0.0,
+            risk_overlay=RiskOverlayConfig(
+                drawdown_breaker=DrawdownCircuitBreaker(
+                    enabled=True,
+                    max_dd_pct=0.05,
+                    recovery_pct=0.90,
+                    force_close_on_breaker=True,
+                    force_close_losers_on_breaker=True,
+                    force_close_pct=0.50,
+                    degraded_entry_allocation_pct=0.0,
+                )
+            ),
+        )
+        result = BacktestEngine(cfg).run(
+            open_df=ohlcv["open"], close=ohlcv["close"],
+            high=ohlcv["high"], low=ohlcv["low"], signals_df=signals,
+        )
+        trades = result.closed_trades_df.to_dict("records")
+        fc = [t for t in trades if t.get("exit_reason") == "force_close_breaker"]
+        # Seul le perdant (BBB) est force-clos.
+        assert [t["symbol"] for t in fc] == ["BBB"]
+        assert all(float(t.get("return_pct", 0)) < 0 for t in fc)
+        # Le gagnant (AAA) n'est pas force-clos (reste ouvert ou sort normalement).
+        assert not any(t.get("exit_reason") == "force_close_breaker" for t in trades if t["symbol"] == "AAA")
+
     def test_regime_filter_blocks_when_below_sma(self):
         from backtesting.risk_overlay import RegimeFilterConfig
 

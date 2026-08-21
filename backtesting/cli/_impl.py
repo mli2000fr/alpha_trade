@@ -985,6 +985,29 @@ def _build_parser() -> argparse.ArgumentParser:
         help="P14 : surcharge le trailing pct pour les SHORTS uniquement (ex 0.07). None = risk-based (prod actuelle).",
     )
     run_p.add_argument(
+        "--trailing-long-risk-based", action="store_true", default=False,
+        help="E21-B25 (P1) : met le trailing LONG en risk-based (2.5xATR) au lieu du 7%% fixe gelé.",
+    )
+    run_p.add_argument(
+        "--tp-anchor-entry", action="store_true", default=False,
+        help="E21-B25 (P2) : ancre le TP sur le prix d'entrée (fill) au lieu du close de veille.",
+    )
+    run_p.add_argument(
+        "--sl-anchor-entry", action="store_true", default=False,
+        help="E21-B25 (P3) : ancre le SL initial sur le prix d'entrée (fill) au lieu du close de veille.",
+    )
+    run_p.add_argument(
+        "--research-sizing", action="store_true", default=False,
+        help="E21-B25 (P5) : sizing equal-weight x levier (comme recherche) au lieu du sizing ATR-risk pipeline.",
+    )
+    run_p.add_argument(
+        "--regime-trailing-policy", choices=["c0", "c1", "c2", "c3"], default="c2",
+        help="E21-v2 : trailing par-signal selon régime SPY SMA50/SMA200 PIT "
+             "(c0=7%% partout, c1=ATR partout, c2=BULL/REBOUND ATR + CORRECTION/SLIDE 7%%, c3=placebo inverse). "
+             "DEFAUT=c2 (règle gelée prod 2026-08-21 : BULL/REBOUND->2.5xATR, CORRECTION/SLIDE->7%%). "
+             "Si SPY indisponible -> fallback trailing global 7%% (warning).",
+    )
+    run_p.add_argument(
         "--ts-long", type=float, default=None,
         help="Trailing stop %% pour les LONGS uniquement (None = --ts). Plancher : n'élargit jamais l'autre jambe (P2-4).",
     )
@@ -1483,6 +1506,67 @@ def _build_parser() -> argparse.ArgumentParser:
              "top_pct. Transmis à apply_cascade_to_predictions(top_pct=...). None = config.yaml.",
     )
     run_p.add_argument(
+        "--cascade-rank-mode",
+        type=str,
+        default="ml",
+        choices=["ml", "random", "oracle", "oracle_filter", "oracle_rerank", "oracle_pool", "extreme_gate"],
+        help="Ablation ML-vs-Random-vs-Oracle : 'ml' = rangs globaux réels (défaut), "
+             "'random' = rangs aléatoires (placebo), 'oracle' = P(extreme10) du modèle Oracle Extreme "
+             "remplace le rang global (via --oracle-oos-path). Politiques S6.1 : "
+             "'oracle_filter' = B25 sélectionne + Oracle filtre la qualité ; "
+             "'oracle_rerank' = pool B25 identique + Oracle réordonne (même exposition) ; "
+             "'oracle_pool' = pool B25 élargi (--cascade-oracle-pool-pct) + Oracle sélectionne le top P pct. "
+             "'extreme_gate' = gate Extreme LONG-only (Oracle O0, top --extreme-gate-pct, via --oracle-oos-path).",
+    )
+    run_p.add_argument(
+        "--cascade-oracle-filter-pct",
+        type=float,
+        default=None,
+        help="S6.1-B : seuil du percentile P_extreme pour oracle_filter (défaut 0.80). "
+             "LONG ⇔ P_top ≥ seuil ; SHORT ⇔ P_top ≤ 1-seuil.",
+    )
+    run_p.add_argument(
+        "--cascade-oracle-pool-pct",
+        type=float,
+        default=None,
+        help="S6.1-C : largeur du pool B25 pour oracle_pool (défaut 0.20).",
+    )
+    run_p.add_argument(
+        "--extreme-gate-pct",
+        type=float,
+        default=None,
+        help="E6-E13 : pool_pct du gate Extreme pour --cascade-rank-mode extreme_gate (défaut 0.20).",
+    )
+    run_p.add_argument(
+        "--extreme-gate-per-symbol",
+        choices=["filter", "no_filter", "bypass"],
+        default="filter",
+        help="E17 : rôle du modèle per-symbol dans la branche extreme_gate. "
+             "filter = actuel (veto long_prob>min_prob + score=rank×long_prob) ; "
+             "no_filter = pas de veto, score=rank×long_prob ; "
+             "bypass = Oracle pur (per-symbol ignoré, score=rank, proba_long=percentile O0).",
+    )
+    run_p.add_argument(
+        "--extreme-gate-shorts",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="E18 : active la branche SHORT dans extreme_gate (LONG-only par défaut). "
+             "SHORT = restants du gate (non-LONG) ∩ short_prob > min_prob. "
+             "Réouverture SHORT optionnelle à valider OOS — NO-GO E14/E18 par défaut.",
+    )
+    run_p.add_argument(
+        "--cascade-rank-seed",
+        type=int,
+        default=42,
+        help="Graine aléatoire pour --cascade-rank-mode random (reproductibilité).",
+    )
+    run_p.add_argument(
+        "--oracle-oos-path",
+        type=str,
+        default=None,
+        help="Parquet des prédictions OOS Oracle (sortie S4) pour --cascade-rank-mode oracle.",
+    )
+    run_p.add_argument(
         "--bull-strict-sma-window",
         type=int,
         default=200,
@@ -1547,6 +1631,21 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.40,
         help="Plafond de l'allocation après ramp-up (ex. 0.40 = 40%% max).",
+    )
+    run_p.add_argument(
+        "--dd-breaker-policy",
+        choices=["b0", "b1", "b2", "b3", "b4", "b4a"],
+        default="b0",
+        help="E23 : politique adaptative du drawdown breaker (b0=PROD actuel bit-a-bit, "
+             "b1=recovery depuis trough par paliers 10/25/50/75/100%%, b2=regime-aware "
+             "ramp rapide BULL/REB + lent CORR/SLIDE, b3=combined trough+regime+hysteresis). "
+             "Le seuil 15%% reste gelee; seul le RECOVERY change.",
+    )
+    run_p.add_argument(
+        "--force-close-losers-on-breaker",
+        action="store_true",
+        default=False,
+        help="E19 : quand le breaker DD trippe (seuil atteint/dépassé), coupe TOUS les symboles perdants (down en long, up en short) au lieu d'une fraction (--force-close-pct).",
     )
     run_p.add_argument(
         "--target-annual-vol",
@@ -1935,6 +2034,7 @@ def _explicit_flags(argv: list[str]) -> set[str]:
         "--cascade-top-pct": "cascade_top_pct",
         "--no-shorts": "no_shorts",
         "--no-longs": "no_longs",
+        "--force-close-losers-on-breaker": "force_close_losers_on_breaker",
     }
     for token in argv:
         key = token.split("=", 1)[0]
@@ -2327,10 +2427,48 @@ def _enforce_ml_coverage_gate(
     return gate
 
 
+def _risk_tp_overrides(args: argparse.Namespace) -> dict:
+    """Câble --tp-atr-multiple / --tp-max-pct / --atr-risk-stop-multiple dans les
+    maps multi-horizon du RiskConfig (par best_horizon du batch).
+
+    Correction S6.8 : ces flags étaient parsés mais jamais appliqués au risk
+    config du pipeline (le TP venait des maps config.yaml par défaut :
+    H20 → min(ATR×4.0, 13 %) — incohérent avec les flags annoncés).
+    """
+    out: dict = {}
+    h: int | None = None
+    bh = getattr(args, "best_horizon", None)
+    if bh:
+        h = int(bh)
+    else:
+        try:
+            import yaml as _yaml
+            _full = _yaml.safe_load(open("config.yaml", encoding="utf-8")) or {}
+            _bd = _full.get("batch_diagnostics") or {}
+            _cfg_h = _bd.get("backtest_horizon") or _bd.get("live_horizon")
+            if _cfg_h not in (None, "", 0):
+                h = int(_cfg_h)
+        except Exception:  # noqa: BLE001
+            h = None
+    if h is None:
+        h = 20
+    ta = float(getattr(args, "tp_atr_multiple", 0.0) or 0.0)
+    tm = float(getattr(args, "tp_max_pct", 0.0) or 0.0)
+    st = float(getattr(args, "atr_risk_stop_multiple", 0.0) or 0.0)
+    if ta > 0:
+        out["_tp_atr_multiple_map"] = {h: ta}
+    if tm > 0:
+        out["_tp_max_pct_map"] = {h: tm}
+    if st > 0:
+        out["_atr_stop_multiple_map"] = {h: st}
+    return out
+
+
 def _run_backtest(args: argparse.Namespace) -> None:
     """Exécute le backtest complet."""
     from datetime import datetime
 
+    import numpy as np
     import pandas as pd
 
     from backtesting.fidelity import (
@@ -2487,10 +2625,18 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 "max_long_positions": 0 if getattr(args, "no_longs", False) else None,
                 "short_min_score": 0.0,
                 "short_rotation_required": True,
+                # V1 Multi-Horizon : --best-horizon pilote AUSSI RiskConfig.best_horizon
+                # (maps stop/TP) — aligné pipeline live (pipeline_runner). Inactif si
+                # le flag n'est pas passé (le RiskConfig garde le best_horizon du batch).
+                **(
+                    {"best_horizon": int(args.best_horizon)}
+                    if getattr(args, "best_horizon", None) is not None
+                    else {}
+                ),
+                # S6.8 — câbler les flags TP/stop dans les maps multi-horizon
+                **_risk_tp_overrides(args),
             },
         )
-
-        _safe_print(f"   short_selling_enabled={_preset_has_short_threshold} (preset={effective_preset.key})")
 
         # Flag CLI pour exclure les sélections sans ML.
         if getattr(args, "filter_no_ml", False):
@@ -3025,12 +3171,39 @@ def _run_backtest(args: argparse.Namespace) -> None:
                         _best_h_flag = int(_cfg_backtest_horizon)
                     except (TypeError, ValueError):
                         pass
+            # ── Ablation Oracle (S6/S6.1) + Extreme Gate (E6-E13) : charger P(extreme) depuis le parquet OOS ──
+            _oracle_rank_map = None
+            _oracle_modes = ("oracle", "oracle_filter", "oracle_rerank", "oracle_pool", "extreme_gate")
+            if getattr(args, "cascade_rank_mode", "ml") in _oracle_modes:
+                import pandas as pd
+                _oos_path = getattr(args, "oracle_oos_path", None)
+                if not _oos_path:
+                    _safe_print(
+                        "❌ --cascade-rank-mode {} nécessite --oracle-oos-path ".format(
+                            getattr(args, "cascade_rank_mode", "oracle")) +
+                        "(parquet des prédictions OOS Oracle, sortie S4).\n"
+                    )
+                    raise SystemExit(2)
+                _oos_df = pd.read_parquet(_oos_path)
+                _oos_df["_d"] = pd.to_datetime(_oos_df["date"]).dt.strftime("%Y-%m-%d")
+                _oracle_rank_map = {
+                    d: dict(zip(g["symbol"], g["proba_extreme"]))
+                    for d, g in _oos_df.groupby("_d")
+                }
             preds_df = apply_cascade_to_predictions(
                 preds_df, _cascade_batch_id, engine=engine,
                 best_h=_best_h_flag,
                 top_pct=getattr(args, "cascade_top_pct", None),
+                rank_mode=getattr(args, "cascade_rank_mode", "ml"),
+                rank_seed=getattr(args, "cascade_rank_seed", 42),
                 short_momentum_filter=(None if _sm_filter_flag == "none" else _sm_filter_flag),
                 short_momentum_max_pct=_sm_max_flag,
+                oracle_rank_map=_oracle_rank_map,
+                oracle_filter_pct=getattr(args, "cascade_oracle_filter_pct", None),
+                oracle_pool_pct=getattr(args, "cascade_oracle_pool_pct", None),
+                extreme_gate_pct=getattr(args, "extreme_gate_pct", None),
+                extreme_gate_per_symbol=getattr(args, "extreme_gate_per_symbol", "filter"),
+                extreme_gate_shorts=bool(getattr(args, "extreme_gate_shorts", False)),
             )
             _cas_passed = int(preds_df.loc[preds_df["predicted_side"] != "flat"].shape[0]) if "predicted_side" in preds_df.columns else 0
             _cascade_filtered_count = _cas_before - _cas_passed
@@ -3175,15 +3348,21 @@ def _run_backtest(args: argparse.Namespace) -> None:
             else None
         ),
         trailing_pct_long_override=(
-            float(args.trailing_pct_long)
-            if getattr(args, "trailing_pct_long", None) is not None
-            else 0.07
+            None
+            if bool(getattr(args, "trailing_long_risk_based", False))
+            else (
+                float(args.trailing_pct_long)
+                if getattr(args, "trailing_pct_long", None) is not None
+                else 0.07
+            )
         ),
         trailing_pct_short_override=(
             float(args.trailing_pct_short)
             if getattr(args, "trailing_pct_short", None) is not None
             else None
         ),
+        tp_anchor_entry=bool(getattr(args, "tp_anchor_entry", False)),
+        sl_anchor_entry=bool(getattr(args, "sl_anchor_entry", False)),
         leverage=load_leverage_config_from_yaml(),
         time_stop=load_time_stop_config_from_yaml(),
     )
@@ -3295,11 +3474,47 @@ def _run_backtest(args: argparse.Namespace) -> None:
             if phase3_mode == "execution_replay":
                 from backtesting.execution_replay import simulate_phase3_execution_replay
 
+                # E21-v2 : trailing par-signal selon le régime SPY SMA50/SMA200 (PIT, gelé à l'entrée).
+                # Règle gelée prod : default=c2 (BULL/REBOUND->ATR, CORRECTION/SLIDE->7%).
+                _regime_trailing_map = None
+                if getattr(args, "regime_trailing_policy", None):
+                    from backtesting.regime_trailing import (
+                        build_regime_trailing_map,
+                        regime_distribution,
+                    )
+                    _spy = ohlcv_df[ohlcv_df["symbol"].astype(str).str.upper() == "SPY"][["trade_date", "close"]].dropna().copy()
+                    _spy["trade_date"] = pd.to_datetime(_spy["trade_date"])
+                    _spy = _spy.sort_values("trade_date").drop_duplicates("trade_date").set_index("trade_date")["close"]
+                    if _spy.empty or len(_spy) < 250:
+                        # Dégradation gracieuse prod : pas de crash si SPY absent,
+                        # on retombe sur la politique globale actuelle (trailing 7%).
+                        _safe_print(
+                            "   ⚠️ E21-v2 policy={} : SPY indisponible ou historique insuffisant dans OHLCV "
+                            "(n={}) — fallback trailing global (7%%) actuel.\n".format(
+                                args.regime_trailing_policy, len(_spy),
+                            )
+                        )
+                    else:
+                        _regime_trailing_map = build_regime_trailing_map(_spy, args.regime_trailing_policy)
+                        # Diagnostic AVANT performance : distribution des signaux B25 entre les régimes.
+                        _sig_dates = pd.Series([
+                            pd.Timestamp(getattr(e, "trade_date"))
+                            for e in phase2_risk_result.entries
+                            if getattr(e, "trade_date", None) is not None
+                        ])
+                        _dist = regime_distribution(_sig_dates, _spy)
+                        _safe_print(
+                            "   E21-v2 policy={} : {} dates, distribution signaux B25 = {}\n".format(
+                                args.regime_trailing_policy, len(_sig_dates),
+                                {str(k): int(v) for k, v in _dist.items()},
+                            )
+                        )
                 phase3_execution_replay_result = simulate_phase3_execution_replay(
                     phase2_risk_result.entries,
                     execution_config=execution_config,
                     open_df=execution_pivoted["open"],
                     risk_run_id_prefix=phase2_risk_run_id,
+                    regime_trailing_map=_regime_trailing_map,
                 )
                 phase2_execution_result = phase3_execution_replay_result.execution_result
                 signals_df = phase3_execution_replay_result.signals_df
@@ -3403,6 +3618,51 @@ def _run_backtest(args: argparse.Namespace) -> None:
     if _needs_benchmark:
         benchmark_close = _load_benchmark_close(engine, start, end)
 
+    # E23 — carte des régimes SPY journaliers pour le breaker adaptatif (b1/b2/b3).
+    # Le régime est réévalué CHAQUE JOUR (contrairement au trailing C2 gelé à l'entrée),
+    # en réutilisant exactement la définition E21-v2 (SMA50/SMA200 PIT).
+    # IMPORTANT : SMA200 exige 200 clôtures AVANT la date de décision → on charge SPY
+    # avec un historique étendu (start - 400 jours calendaires) INDÉPENDANT du warm-up
+    # phase2 (~50j), sinon le régime reste NaN pendant les premiers mois du run
+    # (y compris le crash d'avril 2025).
+    _dd_policy = str(getattr(args, "dd_breaker_policy", "b0") or "b0").strip().lower()
+    _spy_regime_map: dict | None = None
+    if _dd_policy != "b0":
+        try:
+            import sqlalchemy as _sa
+            from backtesting.regime_trailing import compute_regime
+            _spy_start = pd.Timestamp(start) - pd.Timedelta(days=400)
+            with engine.connect() as _conn:
+                _spy_rows = _conn.execute(_sa.text(
+                    "SELECT `date`, COALESCE(adj_close, `close`) "
+                    "FROM stock_bars_daily WHERE symbol='SPY' "
+                    "AND data_source = :ds AND `date` BETWEEN :s AND :e ORDER BY `date`"
+                ), {"ds": "eodhd_eod", "s": _spy_start.date(), "e": end}).fetchall()
+            _spy_series = pd.Series(
+                [float(r[1]) for r in _spy_rows],
+                index=pd.to_datetime([r[0] for r in _spy_rows]),
+            )
+            _spy_series = _spy_series[~_spy_series.index.duplicated(keep="last")].sort_index()
+            _regime_series = compute_regime(_spy_series)
+            _spy_regime_map = {
+                pd.Timestamp(ts).date(): str(r)
+                for ts, r in _regime_series.items()
+                if r is not None and not (isinstance(r, float) and pd.isna(r))
+            }
+            _safe_print(
+                "   E23 dd-breaker-policy={} : carte régime SPY journalière {} dates "
+                "(historique SPY {} -> {})\n".format(
+                    _dd_policy, len(_spy_regime_map),
+                    _spy_start.date(), end,
+                )
+            )
+        except Exception as _spy_exc:  # noqa: BLE001
+            _safe_print(
+                "   ⚠️ E23 : carte régime SPY indisponible ({}) — breaker b1/b2/b3 "
+                "sans régime (fallback).\n".format(_spy_exc)
+            )
+            _spy_regime_map = None
+
     risk_overlay_cfg = RiskOverlayConfig(
         sizing=SizingConfig(
             mode=args.sizing_mode,
@@ -3443,6 +3703,9 @@ def _run_backtest(args: argparse.Namespace) -> None:
             regime_ramp_up_pct_per_day=float(args.dd_regime_ramp_up_pct_per_day),
             regime_ramp_up_max_pct=float(args.dd_regime_ramp_up_max_pct),
             regime_ramp_up_peak_window_days=int(getattr(args, "dd_regime_ramp_up_peak_window_days", 5) or 5),
+            # E23 — politique adaptative + carte régime SPY journalière.
+            policy=_dd_policy,
+            spy_regime_map=_spy_regime_map,
             force_close_on_breaker=(
                 bool(getattr(args, "force_close_on_breaker", False))
                 or bool(
@@ -3455,6 +3718,14 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 __import__("common.config_loader", fromlist=["load_config"]).load_config()
                 .get("risk_management", {})
                 .get("force_close_pct", 0.50)
+            ),
+            force_close_losers_on_breaker=(
+                bool(getattr(args, "force_close_losers_on_breaker", False))
+                or bool(
+                    __import__("common.config_loader", fromlist=["load_config"]).load_config()
+                    .get("risk_management", {})
+                    .get("force_close_losers_on_breaker", False)
+                )
             ),
         ),
         target_annual_vol=(
@@ -3501,6 +3772,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         protection_replay_mode=phase4_mode,
         watcher_replay_mode=phase5_mode,
         exit_lifecycle_replay_mode=phase7_mode,
+        research_sizing=bool(getattr(args, "research_sizing", False)),
     )
     # P2 (2026-06-25) : charger l'état des trackers si un fichier est fourni
     _tracker_state_path: Path | None = None
@@ -3519,6 +3791,46 @@ def _run_backtest(args: argparse.Namespace) -> None:
             bt_engine = BacktestEngine(bt_config)
     else:
         bt_engine = BacktestEngine(bt_config)
+    # ── Fix atr_pct_20 (2026-08-20) ──────────────────────────────────────
+    # Fallback OHLCV : les signaux sans snapshot dans stock_scores_history ont
+    # atr_pct_20=NaN → le simulateur retombait sur TP fixe 12% / trailing 7%
+    # (défauts CLI --tp/--ts) au lieu du TP prod min(3×ATR, 7%) + stop 2.5×ATR.
+    # On calcule ATR20/close à la date du signal (PIT, pas de fuite future).
+    _sd = signals_df
+    if _sd is not None and not _sd.empty and execution_pivoted is not None:
+        _dcol = next((c for c in ("trade_date", "signal_date", "execution_date") if c in _sd.columns), None)
+        if _dcol is not None:
+            if "atr_pct_20" not in _sd.columns:
+                _sd = _sd.copy()
+                _sd["atr_pct_20"] = np.nan
+            _missing = _sd["atr_pct_20"].isna()
+            if _missing.any():
+                try:
+                    _atr_usd = BacktestEngine._compute_atr(
+                        execution_pivoted["high"],
+                        execution_pivoted["low"],
+                        execution_pivoted["close"],
+                        window=20,
+                    )
+                    _atr_pct = _atr_usd / execution_pivoted["close"].replace(0, np.nan)
+                    _syms = set(_sd.loc[_missing, "symbol"].astype(str).unique())
+                    _cols = [c for c in _atr_pct.columns if c in _syms]
+                    if _cols:
+                        _atr_pct = _atr_pct[_cols]
+                        _dates = pd.to_datetime(_sd.loc[_missing, _dcol]).dt.normalize()
+                        _sym = _sd.loc[_missing, "symbol"].astype(str)
+                        _st = _atr_pct.stack()
+                        _st.index = _st.index.set_names(["date", "symbol"])
+                        _lookup = _st.reindex(pd.MultiIndex.from_arrays([_dates, _sym]))
+                        _sd.loc[_missing, "atr_pct_20"] = _lookup.to_numpy()
+                    _filled = int(_sd["atr_pct_20"].notna().sum())
+                    LOGGER.info(
+                        "atr_pct_20 enrichi depuis OHLCV : couverture %d/%d signaux",
+                        _filled, len(_sd),
+                    )
+                except Exception as _exc:  # noqa: BLE001 — non bloquant
+                    LOGGER.warning("atr_pct_20 fallback OHLCV échoué : %s", _exc)
+        signals_df = _sd
     pf = bt_engine.run(
         open=execution_pivoted["open"], close=execution_pivoted["close"], high=execution_pivoted["high"], low=execution_pivoted["low"],
         volume=execution_pivoted.get("volume"),

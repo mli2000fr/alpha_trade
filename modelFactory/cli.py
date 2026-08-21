@@ -206,6 +206,10 @@ def _build_training_batch_metadata(opts: argparse.Namespace, cfg: TrainingConfig
         include_fundamentals=cfg.data.include_fundamentals_features,
         include_factors=cfg.data.include_factors_features,
         include_macro_regime=cfg.data.include_macro_regime_features,
+        include_score_components=cfg.data.include_score_components,
+        include_volume_features=(cfg.data.include_volume_features and cfg.data.feature_whitelist_enabled),
+        feature_whitelist_enabled=cfg.data.feature_whitelist_enabled,
+        feature_whitelist=cfg.data.feature_whitelist,
     )
     return json.dumps(
         {
@@ -423,6 +427,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="P3-5 : inclure le profil volume/liquidité (10 features : dollar volume, Amihud, OBV, skew...)")
     p.add_argument("--include-macro-regime", action="store_true", default=False,
                    help="Inclure les indicateurs de régime macro (SPY_SMA_200_slope + VIX_zscore)")
+    p.add_argument("--feature-whitelist-enabled", action="store_true", default=False,
+                   help="S7 : activer la feature whitelist per-symbol (seules les features listées par --feature-whitelist sont utilisées comme X). Opt-in, désactivé par défaut (comportement legacy inchangé).")
+    p.add_argument("--feature-whitelist", type=str, default="",
+                   help="S7 : liste de features séparées par des virgules à utiliser comme X (ex. \"momentum_20,momentum_60,selector_short_score\"). Vide = legacy. Ignoré si --feature-whitelist-enabled absent.")
+    p.add_argument("--no-force-v1-lstm", dest="force_v1_lstm", action="store_false", default=True,
+                   help="S7 : NE PAS forcer feature_set=v1 pour le LSTM per-symbol (utilise le feature_set demandé, ex. expert). Opt-in ; par défaut le LSTM force v1 (comportement prod inchangé).")
     p.add_argument("--target-skip-vol-scaling", action="store_true", default=False,
                    help="T1 experiment: désactiver le vol-scaling dans la target regression (target = future_return brut)")
     p.add_argument("--target-excess-vs-spy", action="store_true", default=False,
@@ -527,6 +537,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Entraîne aussi un modèle global multi-symboles en comparaison")
     p.add_argument("--global-model-only", action="store_true", default=False,
                    help="Entraîne UNIQUEMENT le modèle global, sans per-symbol ni per-sector. Active implicitement --enable-global-model.")
+    # Oracle Extreme (O0) — 2026-08-20 : détection d'extrêmes H20 SANS global_rank_20
+    p.add_argument("--enable-oracle-model", action="store_true", default=False,
+                   help="Entraîne AUSSI le modèle Oracle Extreme (ablation O0, sans global_rank_20) en fin de séquence globale. Le rank B25 étant redondant avec les features PIT (audit 2026-08-20), on entraîne O0 sans global_rank_20.")
+    p.add_argument("--oracle-model-only", action="store_true", default=False,
+                   help="Entraîne UNIQUEMENT le modèle Oracle Extreme (O0). Skip le Global Model, le per-symbol et le per-sector. Active implicitement --enable-oracle-model.")
     p.add_argument("--enable-global-stacking", action="store_true", default=False,
                    help="Utilise la prédiction du Global Model comme feature (Approche 2 — Stacking)")
     p.add_argument("--enable-global-challenger", action="store_true", default=False,
@@ -633,6 +648,10 @@ def main(args: list[str] | None = None) -> None:
     if opts.global_model_only:
         opts.enable_global_model = True
 
+    # Oracle Extreme (O0) : --oracle-model-only active implicitement l'Oracle
+    if getattr(opts, "oracle_model_only", False):
+        opts.enable_oracle_model = True
+
     _horizons: tuple[int, ...] = ()
     _forecast_horizon = opts.forecast_horizon
     if opts.forecast_horizons:
@@ -658,7 +677,14 @@ def main(args: list[str] | None = None) -> None:
             include_macro_regime_features=opts.include_macro_regime,
             include_score_components=opts.include_score_components,
             include_volume_features=opts.include_volume_features,
+            feature_whitelist_enabled=opts.feature_whitelist_enabled,
+            feature_whitelist=tuple(
+                f.strip() for f in (opts.feature_whitelist or "").split(",") if f.strip()
+            ),
+            force_v1_lstm=opts.force_v1_lstm,
             global_model_only=opts.global_model_only,
+            enable_oracle_model=opts.enable_oracle_model,
+            oracle_model_only=opts.oracle_model_only,
             sector_use_symbol_feature=opts.sector_symbol_feature,
             enable_cross_sectional_features=opts.enable_cross_sectional,
             cross_sectional_min_universe=opts.cross_sectional_min_universe,
@@ -1055,6 +1081,7 @@ def main(args: list[str] | None = None) -> None:
                         batch_id=_batch_id,
                         artifacts_dir=Path(opts.artifacts_dir),
                         engine=engine,
+                        symbols=symbols or None,
                     )
                 # Étape 2 : per-symbol — non applicable aux batches per-sector
                 if _per_sector:
@@ -1131,12 +1158,43 @@ def main(args: list[str] | None = None) -> None:
                     )
                 )
                 if _dates_with_data == 0:
-                    LOGGER.error(
-                        "predict ALL %d DATES SKIPPED — 0 predictions total. "
-                        "model_predictions table will be EMPTY. "
-                        "Verify: batch_id=%s artifacts_dir=%s has champions for symbol_source=%s",
-                        _dates_total, _batch_id, opts.artifacts_dir, opts.symbol_source,
-                    )
+                    # Filet de sécurité : un batch rank-driven (modèle GLOBAL, ex. __GLOBAL__ ou
+                    # secteurs) peut avoir été détecté per_symbol par erreur (entraînement sans
+                    # --training-mode per_sector). Si global_rank_history contient des rangs pour
+                    # ce batch, on retombe automatiquement sur la synthèse au lieu de sortir 0 rows.
+                    _has_ranks = _batch_id is not None
+                    if _has_ranks:
+                        from modelFactory.synthesize_global_rank_predictions import synthesize
+                        try:
+                            _synth_fb = synthesize(
+                                _batch_id,
+                                best_h=_resolve_synth_best_h(opts, _batch_id),
+                            )
+                            _ranks_now = _load_synth_frame_for_range(engine, _batch_id, prediction_dates)
+                            if not _ranks_now.empty:
+                                LOGGER.warning(
+                                    "predict 0 per-symbol rows MAIS rangs globaux présents → "
+                                    "fallback synthèse batch=%s (status=%s rows=%d)",
+                                    _batch_id, _synth_fb.get("status"), len(_ranks_now),
+                                )
+                                preds = _ranks_now
+                                _dates_with_data = 1
+                        except Exception as _fb_exc:  # noqa: BLE001
+                            LOGGER.error(
+                                "predict fallback synthèse échoué batch=%s: %s", _batch_id, _fb_exc,
+                            )
+                    if _dates_with_data == 0:
+                        LOGGER.error(
+                            "predict ALL %d DATES SKIPPED — 0 predictions total. "
+                            "model_predictions table will be EMPTY. "
+                            "Verify: batch_id=%s artifacts_dir=%s has champions for symbol_source=%s",
+                            _dates_total, _batch_id, opts.artifacts_dir, opts.symbol_source,
+                        )
+                    else:
+                        LOGGER.info(
+                            "predict historical done (fallback synthèse): %d total rows",
+                            len(preds),
+                        )
                 else:
                     LOGGER.info(
                         "predict historical done: %d/%d dates with predictions, %d total rows",
@@ -1335,6 +1393,10 @@ def _build_run_summary(
             include_fundamentals=cfg.data.include_fundamentals_features,
             include_factors=cfg.data.include_factors_features,
             include_macro_regime=cfg.data.include_macro_regime_features,
+            include_score_components=cfg.data.include_score_components,
+            include_volume_features=(cfg.data.include_volume_features and cfg.data.feature_whitelist_enabled),
+            feature_whitelist_enabled=cfg.data.feature_whitelist_enabled,
+            feature_whitelist=cfg.data.feature_whitelist,
         )),
         "champion_min_runs": int(getattr(opts, "champion_min_runs", 0)),
         "champion_min_days": int(getattr(opts, "champion_min_days", 0)),

@@ -602,6 +602,9 @@ class SymbolDataModule(L.LightningDataModule):
             include_global_stacking=self._include_global_stacking,
             include_factors=data_cfg.include_factors_features,
             include_macro_regime=data_cfg.include_macro_regime_features,
+            include_volume_features=(data_cfg.include_volume_features and data_cfg.feature_whitelist_enabled),
+            feature_whitelist_enabled=data_cfg.feature_whitelist_enabled,
+            feature_whitelist=data_cfg.feature_whitelist,
         )
         self.scaler = FeatureScaler(feature_names=self._feature_cols)
         self.train_ds: Optional[SequenceDataset] = None
@@ -834,7 +837,23 @@ def prepare_symbol_frame(
         include_global_stacking=include_global_stacking,
         include_factors=data_cfg.include_factors_features,
         include_macro_regime=data_cfg.include_macro_regime_features,
+        include_volume_features=(data_cfg.include_volume_features and data_cfg.feature_whitelist_enabled),
+        feature_whitelist_enabled=data_cfg.feature_whitelist_enabled,
+        feature_whitelist=data_cfg.feature_whitelist,
     )
+    if data_cfg.feature_whitelist_enabled:
+        LOGGER.info(
+            "Feature whitelist: ENABLED — requested=%d final_feature_count=%d — "
+            "selected_features=%s",
+            len(data_cfg.feature_whitelist),
+            len(active_features),
+            active_features,
+        )
+    else:
+        LOGGER.info(
+            "Feature whitelist: DISABLED — feature_count=%d",
+            len(active_features),
+        )
     df = df.dropna(subset=active_features).reset_index(drop=True)
     df.attrs["cross_sectional_diagnostics"] = cross_sectional_diagnostics
     return df

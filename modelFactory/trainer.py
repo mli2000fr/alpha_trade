@@ -453,6 +453,9 @@ def _build_feature_contract_for_columns(cfg: TrainingConfig, feature_columns: li
         include_fundamentals=cfg.data.include_fundamentals_features,
         include_factors=cfg.data.include_factors_features,
         include_macro_regime=cfg.data.include_macro_regime_features,
+        include_volume_features=(cfg.data.include_volume_features and cfg.data.feature_whitelist_enabled),
+        feature_whitelist_enabled=cfg.data.feature_whitelist_enabled,
+        feature_whitelist=cfg.data.feature_whitelist,
         feature_columns=feature_columns,
         scaler_feature_names=feature_columns,
     )
@@ -1055,7 +1058,7 @@ def _run_walk_forward_validation(
     )
     feature_cols = get_feature_columns(
         cfg.data.include_sentiment_features,
-        feature_set="v1",  # LSTM WF : forcer v1 (Cause 2)
+        feature_set=cfg.data.feature_set if (cfg.data.feature_whitelist_enabled or not cfg.data.force_v1_lstm) else "v1",  # LSTM WF : forcer v1 (Cause 2), SAUF whitelist active ou --no-force-v1-lstm (S7)
         include_cross_sectional=cfg.data.enable_cross_sectional_features,
         include_screener_scores=cfg.data.include_screener_scores,
         include_short_score=cfg.data.include_short_score_features,
@@ -1064,6 +1067,12 @@ def _run_walk_forward_validation(
         include_macro_vix3m=cfg.data.include_macro_vix3m_features,
         include_macro_move=cfg.data.include_macro_move_features,
         include_global_stacking=cfg.global_model.stacking_enabled,
+        include_factors=cfg.data.include_factors_features,
+        include_macro_regime=cfg.data.include_macro_regime_features,
+        include_score_components=cfg.data.include_score_components,
+        include_volume_features=(cfg.data.include_volume_features and cfg.data.feature_whitelist_enabled),
+        feature_whitelist_enabled=cfg.data.feature_whitelist_enabled,
+        feature_whitelist=cfg.data.feature_whitelist,
     )
     _has_global_rank = "global_rank" in feature_cols
     LOGGER.info(
@@ -1457,7 +1466,12 @@ def train_symbol(
 
         # LSTM : forcer feature_set="v1" pour limiter l'input dim
         # (Cause 2 — les interactions régime × technique sont inutiles pour le LSTM)
-        _data_kwargs = {"feature_set": "v1"}
+        _data_kwargs: dict[str, Any] = {}
+        # S7 : si la whitelist est active, OU si --no-force-v1-lstm est passé,
+        # la whitelist/le choix utilisateur borne déjà l'input dim → respecter
+        # le feature_set demandé (expert) pour que les features whitelist existent.
+        if effective_cfg.data.force_v1_lstm and not effective_cfg.data.feature_whitelist_enabled:
+            _data_kwargs["feature_set"] = "v1"
         # Rétro-compatibilité : si global_ranking_max_symbols n'existe pas
         # (config d'une version antérieure), utiliser la valeur par défaut 300.
         if hasattr(effective_cfg.data, "global_ranking_max_symbols"):
@@ -1927,6 +1941,9 @@ def train_symbol(
             include_cross_sectional=effective_cfg.data.enable_cross_sectional_features,
             include_screener_scores=effective_cfg.data.include_screener_scores,
             include_short_score=effective_cfg.data.include_short_score_features,
+            include_volume_features=(effective_cfg.data.include_volume_features and effective_cfg.data.feature_whitelist_enabled),
+            feature_whitelist_enabled=effective_cfg.data.feature_whitelist_enabled,
+            feature_whitelist=effective_cfg.data.feature_whitelist,
             feature_columns=list(dm.scaler.feature_names),
             scaler_feature_names=list(dm.scaler.feature_names),
         )

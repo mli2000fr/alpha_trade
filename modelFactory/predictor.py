@@ -51,6 +51,50 @@ _cross_sectional_frame_cache_lock = Lock()
 # Cache global_rank par cutoff_date (pour éviter de recalculer à chaque symbole)
 _global_rank_prediction_cache: dict[str, pd.DataFrame | None] = {}
 _global_rank_fallback_symbols: list[str] = []  # symboles ayant utilisé le fallback 0.5
+# Cache : le batch contient-il des modèles per-symbol/per-sector entraînés ? (stable par batch)
+_batch_has_models_cache: dict[str, bool] = {}
+
+
+def _batch_has_per_symbol_or_sector(engine: "Engine", batch_id: str | None) -> bool:
+    """True si le batch contient des modèles per-symbol OU per-sector entraînés.
+
+    - OUI : un ``no_model_found`` pour un symbole est une VRAIE anomalie → on garde
+      les logs warning/error par symbole.
+    - NON (batch purement global / rank-driven) : l'absence de modèle per-symbol et
+      per-sector est NORMALE → on affiche UN SEUL message global (proba_long dérivé du
+      rang global) et on ne loggue rien par symbole.
+
+    Détection : on regarde les symboles des runs d'entraînement du batch ; on exclut
+    les sentinelles de synthèse global_rank (``__GLOBAL_RANK...``) qui ne sont pas des
+    modèles per-symbol/per-sector. Résultat mis en cache : stable pour un batch donné.
+    """
+    if not batch_id:
+        # Pas de batch identifiable → on ne peut pas affirmer l'absence de modèles :
+        # comportement prudent (garder les logs par symbole).
+        return True
+    bid = str(batch_id)
+    if bid in _batch_has_models_cache:
+        return _batch_has_models_cache[bid]
+    has_models = True
+    try:
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            syms = conn.execute(
+                text("SELECT DISTINCT symbol FROM model_training_run WHERE batch_id = :bid"),
+                {"bid": bid},
+            ).scalars().all()
+        non_synth = [s for s in syms if s and "__GLOBAL_RANK" not in str(s).upper()]
+        has_models = len(non_synth) > 0
+    except Exception:  # noqa: BLE001 — la détection ne doit jamais faire échouer la prédiction
+        has_models = True
+    _batch_has_models_cache[bid] = has_models
+    if not has_models:
+        LOGGER.info(
+            "predict_per_sector batch=%s — aucun modèle per-symbol ni per-sector entraîné : "
+            "proba_long calculé depuis le rang global (global_rank → proba_long, synthèse)",
+            bid,
+        )
+    return has_models
 # Cache _per_symbol_features.json par artifacts_dir
 _per_symbol_features_cache: dict[str, dict[str, Any]] = {}
 
@@ -549,11 +593,15 @@ def _resolve_artifact_paths(
             )
 
     sym_dir = artifacts_dir / batch_id / symbol if batch_id is not None else artifacts_dir / symbol
-    LOGGER.error(
-        "predict_symbol no_model_found symbol=%s batch=%s — no per-symbol champion, "
-        "no per-sector fallback, and no filesystem artifacts at %s",
-        symbol, batch_id, sym_dir,
-    )
+    # Le batch contient des modèles per-symbol/per-sector ? Si NON (batch purement
+    # global), l'absence de modèle est normale (proba_long depuis le rang global) →
+    # pas de log par symbole. Si OUI, un manque est une anomalie → ERROR.
+    if _batch_has_per_symbol_or_sector(engine, batch_id):
+        LOGGER.error(
+            "predict_symbol no_model_found symbol=%s batch=%s — no per-symbol champion, "
+            "no per-sector fallback, and no filesystem artifacts at %s",
+            symbol, batch_id, sym_dir,
+        )
     return sym_dir / "best.ckpt", sym_dir / "scaler.pkl", sym_dir / "config.json", run_id
 
 
@@ -649,6 +697,9 @@ def _check_feature_contract(cfg_data: dict, *, symbol: str, config_path: Path) -
             include_factors=bool(data_cfg.get("include_factors_features", False)),
             include_macro_regime=bool(data_cfg.get("include_macro_regime_features", False)),
             include_score_components=bool(data_cfg.get("include_score_components", False)),
+            include_volume_features=bool(data_cfg.get("include_volume_features", False) and data_cfg.get("feature_whitelist_enabled", False)),
+            feature_whitelist_enabled=bool(data_cfg.get("feature_whitelist_enabled", False)),
+            feature_whitelist=tuple(data_cfg.get("feature_whitelist") or ()),
             persisted_feature_columns=cfg_data.get("feature_columns"),
             persisted_feature_fingerprint=cfg_data.get("feature_fingerprint"),
             allow_legacy_missing_contract=False,
@@ -991,6 +1042,7 @@ def _load_data_cfg_from_payload(
         include_factors_features=_primary.get("include_factors_features", _fallback.get("include_factors", False)),
         include_macro_regime_features=_primary.get("include_macro_regime_features", _fallback.get("include_macro_regime", False)),
         include_score_components=_primary.get("include_score_components", _fallback.get("include_score_components", False)),
+        include_volume_features=_primary.get("include_volume_features", _fallback.get("include_volume_features", False)),
         enable_cross_sectional_features=_primary.get("enable_cross_sectional_features", _fallback.get("enable_cross_sectional", False)),
         cross_sectional_min_universe=_primary.get("cross_sectional_min_universe", 20),
         feature_set=_primary.get("feature_set", _fallback.get("feature_set", "v1")),
@@ -999,6 +1051,8 @@ def _load_data_cfg_from_payload(
         target_up_threshold=_primary.get("target_up_threshold", 0.0),
         target_down_threshold=_primary.get("target_down_threshold", 0.0),
         decision_threshold=_primary.get("decision_threshold", cfg_data.get("selected_decision_threshold", 0.5)),
+        feature_whitelist_enabled=_primary.get("feature_whitelist_enabled", _fallback.get("feature_whitelist_enabled", False)),
+        feature_whitelist=tuple(_primary.get("feature_whitelist") or _fallback.get("feature_whitelist") or ()),
     )
 
 
@@ -1073,6 +1127,7 @@ def _prepare_prediction_frame(
             include_factors=data_cfg.include_factors_features,
             include_macro_regime=data_cfg.include_macro_regime_features,
             include_score_components=data_cfg.include_score_components,
+            include_volume_features=(data_cfg.include_volume_features and data_cfg.feature_whitelist_enabled),
         )
     except Exception as exc:  # noqa: BLE001
         LOGGER.warning("predict_symbol feature_build_failed symbol=%s error=%s", symbol, exc)
@@ -1110,6 +1165,9 @@ def _prepare_prediction_frame(
             include_macro_move=data_cfg.include_macro_move_features,
             include_global_stacking=include_global_stacking,
             include_score_components=data_cfg.include_score_components,
+            include_volume_features=(data_cfg.include_volume_features and data_cfg.feature_whitelist_enabled),
+            feature_whitelist_enabled=data_cfg.feature_whitelist_enabled,
+            feature_whitelist=data_cfg.feature_whitelist,
         )
         # ── Fallback global_rank : si attendu mais absent → chercher dans le cache ──
         if include_global_stacking and "global_rank" not in df.columns and "global_rank_3" not in df.columns:
@@ -1217,6 +1275,9 @@ def _predict_with_tabular_model(
         include_factors=data_cfg.include_factors_features,
         include_macro_regime=data_cfg.include_macro_regime_features,
         include_score_components=data_cfg.include_score_components,
+        include_volume_features=(data_cfg.include_volume_features and data_cfg.feature_whitelist_enabled),
+        feature_whitelist_enabled=data_cfg.feature_whitelist_enabled,
+        feature_whitelist=data_cfg.feature_whitelist,
     ))
     if df.empty or len(df) == 0:
         return None
@@ -1254,6 +1315,9 @@ def _predict_with_tabular_model(
         include_factors=data_cfg.include_factors_features,
         include_macro_regime=data_cfg.include_macro_regime_features,
         include_score_components=data_cfg.include_score_components,
+        include_volume_features=(data_cfg.include_volume_features and data_cfg.feature_whitelist_enabled),
+        feature_whitelist_enabled=data_cfg.feature_whitelist_enabled,
+        feature_whitelist=data_cfg.feature_whitelist,
         persisted_feature_columns=cfg_data.get("feature_columns"),
         persisted_feature_fingerprint=cfg_data.get("feature_fingerprint"),
         route_feature_columns=resolved_feature_columns,
@@ -1534,7 +1598,10 @@ def predict_symbol(
     )
 
     if not config_path.exists():
-        LOGGER.warning("predict_symbol no_artifacts symbol=%s path=%s", symbol, config_path)
+        # Batch sans modèle per-symbol/per-sector : absence de config normale → pas de
+        # log par symbole. Batch avec modèles : manque = anomalie → WARNING.
+        if _batch_has_per_symbol_or_sector(engine, batch_id):
+            LOGGER.warning("predict_symbol no_artifacts symbol=%s path=%s", symbol, config_path)
         _record_artifact_issue(symbol, reason="config_missing", path=config_path)
         return None
 
@@ -1728,6 +1795,18 @@ def predict_symbol(
         include_cross_sectional=data_cfg.enable_cross_sectional_features,
         include_screener_scores=data_cfg.include_screener_scores,
         include_short_score=data_cfg.include_short_score_features,
+        include_macro_vix=data_cfg.include_macro_vix_features,
+        include_macro_vxn=data_cfg.include_macro_vxn_features,
+        include_macro_vix3m=data_cfg.include_macro_vix3m_features,
+        include_macro_move=data_cfg.include_macro_move_features,
+        include_global_stacking=bool((cfg_data.get("global_model") or {}).get("stacking_enabled", False)),
+        include_fundamentals=data_cfg.include_fundamentals_features,
+        include_factors=data_cfg.include_factors_features,
+        include_macro_regime=data_cfg.include_macro_regime_features,
+        include_score_components=data_cfg.include_score_components,
+        include_volume_features=(data_cfg.include_volume_features and data_cfg.feature_whitelist_enabled),
+        feature_whitelist_enabled=data_cfg.feature_whitelist_enabled,
+        feature_whitelist=data_cfg.feature_whitelist,
         persisted_feature_columns=cfg_data.get("feature_columns"),
         persisted_feature_fingerprint=cfg_data.get("feature_fingerprint"),
         scaler_feature_names=list(getattr(scaler, "feature_names", [])),
@@ -2007,6 +2086,36 @@ def load_cascade_config() -> dict[str, Any]:
             "min_prob_regression": float(
                 _section.get("min_prob_regression", _legacy or _defaults["min_prob_regression"])
             ),
+        }
+    except Exception:
+        return _defaults
+
+
+def load_extreme_gate_config() -> dict[str, Any]:
+    """Charge la config ``extreme_gate`` depuis config.yaml (composant officiel E6-E13).
+
+    Returns:
+        dict avec ``enabled`` (bool, défaut False), ``pool_pct`` (float, défaut 0.20),
+        ``long_only`` (bool, défaut True) et ``min_prob`` (float | None, défaut None =
+        défaut cascade ``min_prob_regression``).
+    """
+    _defaults: dict[str, Any] = {
+        "enabled": False,
+        "pool_pct": 0.20,
+        "long_only": True,
+        "min_prob": None,
+    }
+    try:
+        import yaml as _yaml
+        with open("config.yaml", encoding="utf-8") as _fh:
+            _raw = _yaml.safe_load(_fh) or {}
+        _section = _raw.get("extreme_gate") or {}
+        return {
+            "enabled": bool(_section.get("enabled", _defaults["enabled"])),
+            "pool_pct": float(_section.get("pool_pct", _defaults["pool_pct"])),
+            "long_only": bool(_section.get("long_only", _defaults["long_only"])),
+            "min_prob": (float(_section["min_prob"])
+                         if _section.get("min_prob") is not None else None),
         }
     except Exception:
         return _defaults
@@ -2570,6 +2679,14 @@ def cascade_select(
     best_h: int | None = None,
     short_momentum_filter: str | None = None,
     short_momentum_max_pct: float | None = None,
+    rank_mode: str = "ml",
+    rank_seed: int = 42,
+    oracle_rank_map: dict[str, dict[str, float]] | None = None,
+    oracle_filter_pct: float | None = None,
+    oracle_pool_pct: float | None = None,
+    extreme_gate_pct: float | None = None,
+    extreme_gate_per_symbol: str = "filter",
+    extreme_gate_shorts: bool = False,
 ) -> list[tuple[str, str, float]]:
     """Filtre cascade : Global Rank → Per-Symbol → trades ordonnancés.
 
@@ -2602,28 +2719,109 @@ def cascade_select(
     _top_pct = top_pct if top_pct is not None else float(_cfg["top_pct"])
     _min_prob = min_prob if min_prob is not None else float(_cfg.get("min_prob_regression", 0.10))
 
-    # ── Charger les rangs globaux depuis la DB ──
-    ranks_df = load_global_ranks_from_db(trade_date, batch_id, engine=engine)
-    if ranks_df.empty:
-        LOGGER.warning("cascade_select: no global ranks for %s / %s", trade_date, batch_id)
-        return []
+    # ── EXTREME GATE (composant officiel E6-E13) : Oracle O0 seul, LONG-only ──
+    # Univers = top ``extreme_gate_pct`` par proba_extreme (percentile cross-sectionnel
+    # DU JOUR, PIT). Indépendant de B25 (global_rank_20) : on ne charge PAS les rangs
+    # globaux. proba_extreme ≠ P(LONG) : potentiel de mouvement extrême ; l'edge LONG
+    # est empirique. La sélection est LONG-only.
+    _extreme_gate_cfg = load_extreme_gate_config()
+    _extreme_gate_pct = extreme_gate_pct if extreme_gate_pct is not None else float(
+        _extreme_gate_cfg["pool_pct"])
+    _mode_extreme_gate = rank_mode == "extreme_gate"
+    # E17 : rôle du modèle per-symbol dans la branche extreme_gate.
+    #   "filter"    = A actuel : veto long_prob > _min_prob + score = rank × long_prob
+    #   "no_filter" = B demi-bypass : pas de veto, score = rank × long_prob
+    #   "bypass"    = C Oracle pur : per-symbol ignoré, score = rank (percentile O0)
+    _eg_ps_mode = str(extreme_gate_per_symbol or "filter").strip().lower()
+    if _eg_ps_mode not in ("filter", "no_filter", "bypass"):
+        _eg_ps_mode = "filter"
+    _eg_shorts = bool(extreme_gate_shorts)
+    if _mode_extreme_gate:
+        if not oracle_rank_map or trade_date not in oracle_rank_map:
+            LOGGER.warning("cascade_select: extreme_gate — no oracle ranks for %s", trade_date)
+            return []
+        _oracle_ranks = oracle_rank_map[trade_date]
+        _oracle_symbols = list(_oracle_ranks.keys())
+        _oracle_values = np.asarray([float(_oracle_ranks[s]) for s in _oracle_symbols], dtype=float)
+        _oracle_pct = pd.Series(_oracle_values).rank(pct=True)  # percentile intra-date (PIT)
+        _oracle_pct_map = dict(zip(_oracle_symbols, _oracle_pct.to_numpy()))
+        ranks_df = pd.DataFrame({"symbol": _oracle_symbols, "proba_extreme": _oracle_pct.to_numpy()})
+        _rank_col = "proba_extreme"
+        if _extreme_gate_cfg.get("min_prob") is not None:
+            _min_prob = float(_extreme_gate_cfg["min_prob"])
+        LOGGER.info(
+            "cascade_select: EXTREME_GATE top %d%% par proba_extreme (%d symbols, percentile du jour)",
+            int(round((1.0 - _extreme_gate_pct) * 100)), len(ranks_df),
+        )
+    else:
+        # ── Charger les rangs globaux depuis la DB ──
+        ranks_df = load_global_ranks_from_db(trade_date, batch_id, engine=engine)
+        if ranks_df.empty:
+            LOGGER.warning("cascade_select: no global ranks for %s / %s", trade_date, batch_id)
+            return []
 
-    # ── Déterminer le meilleur horizon ──
-    # 1. Override explicite (best_h) si fourni (ablation croisée)
-    # 2. Lire best_horizon depuis le metadata du batch (calculé à l'entraînement)
-    # 3. Si indisponible, fallback H20 → H15 → H10 → H5 → H3
-    _best_h = best_h if best_h is not None else _load_best_horizon_for_batch(batch_id, engine=engine)
-    _rank_col = None
-    _fallback_cols = ["global_rank_20", "global_rank_15", "global_rank_10", "global_rank_5", "global_rank_3"]
-    _priority_cols = [f"global_rank_{_best_h}"] + [c for c in _fallback_cols if c != f"global_rank_{_best_h}"] if _best_h else _fallback_cols
-    for _col in _priority_cols:
-        if _col in ranks_df.columns and ranks_df[_col].notna().any():
-            _rank_col = _col
-            LOGGER.info("cascade_select: using horizon %s (best=%s)", _col, f"H{_best_h}" if _best_h else "auto")
-            break
-    if _rank_col is None:
-        LOGGER.warning("cascade_select: no rank column found in %s", list(ranks_df.columns))
-        return []
+        # ── Déterminer le meilleur horizon ──
+        # 1. Override explicite (best_h) si fourni (ablation croisée)
+        # 2. Lire best_horizon depuis le metadata du batch (calculé à l'entraînement)
+        # 3. Si indisponible, fallback H20 → H15 → H10 → H5 → H3
+        _best_h = best_h if best_h is not None else _load_best_horizon_for_batch(batch_id, engine=engine)
+        _rank_col = None
+        _fallback_cols = ["global_rank_20", "global_rank_15", "global_rank_10", "global_rank_5", "global_rank_3"]
+        _priority_cols = ([f"global_rank_{_best_h}"] + [c for c in _fallback_cols if c != f"global_rank_{_best_h}"]
+                          if _best_h else _fallback_cols)
+        for _col in _priority_cols:
+            if _col in ranks_df.columns and ranks_df[_col].notna().any():
+                _rank_col = _col
+                LOGGER.info("cascade_select: using horizon %s (best=%s)", _col, f"H{_best_h}" if _best_h else "auto")
+                break
+        if _rank_col is None:
+            LOGGER.warning("cascade_select: no rank column found in %s", list(ranks_df.columns))
+            return []
+
+    # ── Ablation Oracle (S6/S6.1) : politiques d'utilisation du second signal ──
+    #   oracle        = P_extreme REMPLACE le rang global (test S6 initial)
+    #   oracle_filter = B25 sélectionne, Oracle FILTRE la qualité        [S6.1-B]
+    #   oracle_rerank = pool B25 identique, Oracle réordonne (même exposition) [S6.1-D]
+    #   oracle_pool   = pool B25 élargi (top N%), Oracle sélectionne le top P%  [S6.1-C]
+    _oracle_pct_map: dict[str, float] = {}
+    _oracle_modes = ("oracle", "oracle_filter", "oracle_rerank", "oracle_pool")
+    if rank_mode in _oracle_modes:
+        if not oracle_rank_map or trade_date not in oracle_rank_map:
+            LOGGER.warning("cascade_select: no oracle ranks for %s", trade_date)
+            return []
+        _oracle_ranks = oracle_rank_map[trade_date]
+        _oracle_symbols = list(_oracle_ranks.keys())
+        _oracle_values = np.asarray([float(_oracle_ranks[s]) for s in _oracle_symbols], dtype=float)
+        # P(extreme) est une probabilité, PAS un percentile. On la transforme en
+        # rang percentile intra-date (1.0 = meilleur) pour que les seuils de la
+        # cascade (`> 1 - top_pct`) sélectionnent bien le top N% par P_extreme.
+        _oracle_pct = pd.Series(_oracle_values).rank(pct=True)
+        _oracle_pct_map = dict(zip(_oracle_symbols, _oracle_pct.to_numpy()))
+        if rank_mode == "oracle":
+            ranks_df = pd.DataFrame({"symbol": _oracle_symbols, "proba_extreme": _oracle_pct.to_numpy()})
+            _rank_col = "proba_extreme"
+            LOGGER.info("cascade_select: ORACLE ranks (%d symbols)", len(ranks_df))
+        else:
+            ranks_df = ranks_df.copy()
+            ranks_df["_oracle_pct"] = ranks_df["symbol"].map(_oracle_pct_map)
+            LOGGER.info(
+                "cascade_select: ORACLE %s (%d symbols, %d avec P_extreme)",
+                rank_mode, len(ranks_df), ranks_df["_oracle_pct"].notna().sum(),
+            )
+
+    # ── Ablation ML-vs-Random (2026-08-17) : rangs globaux aléatoires ──
+    # Randomise UNIQUEMENT le ranking global (top/bottom band). Les prédictions
+    # per-symbol (long_prob/short_prob), min_prob, score et cascade restent
+    # identiques → isole la contribution du ranking ML à la sélection.
+    if rank_mode == "random":
+        _date_seed = (rank_seed * 1000003) + int(trade_date.replace("-", ""))
+        _rng = np.random.default_rng(_date_seed)
+        ranks_df = ranks_df.copy()
+        ranks_df[_rank_col] = _rng.uniform(0.0, 1.0, size=len(ranks_df))
+        LOGGER.info(
+            "cascade_select: RANDOM ranks (seed_base=%d, date=%s) — %d symbols",
+            rank_seed, trade_date, len(ranks_df),
+        )
 
     # ── Filtre momentum short-side (GPT section 19) : chargé une fois par date ──
     _mom_map: dict[str, tuple[float | None, float | None]] = {}
@@ -2639,6 +2837,15 @@ def cascade_select(
 
     candidates: list[tuple[str, str, float]] = []
 
+    # ── Politiques Oracle S6.1 ──
+    _mode_oracle_filter = rank_mode == "oracle_filter"
+    _mode_oracle_rerank = rank_mode == "oracle_rerank"
+    _mode_oracle_pool = rank_mode == "oracle_pool"
+    _oracle_filter_pct = oracle_filter_pct if oracle_filter_pct is not None else 0.80
+    _pool_top_pct = _top_pct
+    if _mode_oracle_pool:
+        _pool_top_pct = oracle_pool_pct if oracle_pool_pct is not None else 0.20
+
     for _, row in ranks_df.iterrows():
         symbol = str(row["symbol"])
         rank = float(row[_rank_col]) if pd.notna(row[_rank_col]) else None
@@ -2646,11 +2853,42 @@ def cascade_select(
         if rank is None:
             continue
 
-        # Filtre top/bottom N%
-        is_top = rank > (1.0 - _top_pct)
-        is_bottom = rank < _top_pct
+        _oracle_pct = _oracle_pct_map.get(symbol)
+
+        # Filtre top/bottom N% — EXTREME GATE : univers = top pool_pct par proba_extreme
+        # (percentile du jour), LONG-only, indépendant de B25.
+        if _mode_extreme_gate:
+            is_top = rank is not None and rank >= (1.0 - _extreme_gate_pct)
+            is_bottom = False  # LONG-only
+        elif _mode_oracle_pool:
+            _in_top_pool = rank > (1.0 - _pool_top_pct)
+            _in_bottom_pool = rank < _pool_top_pct
+            is_top = _in_top_pool and _oracle_pct is not None and _oracle_pct > (1.0 - _top_pct)
+            is_bottom = _in_bottom_pool and _oracle_pct is not None and _oracle_pct < _top_pct
+        else:
+            is_top = rank > (1.0 - _top_pct)
+            is_bottom = rank < _top_pct
 
         if not (is_top or is_bottom):
+            continue
+
+        # ── EXTREME GATE (E17) : rôle du per-symbol configurable ──
+        #   A "filter"    : veto long_prob > _min_prob + score = rank × long_prob (actuel)
+        #   B "no_filter" : pas de veto, score = rank × long_prob
+        #   C "bypass"    : Oracle pur — per-symbol ignoré, score = rank (percentile O0)
+        # E18 : --extreme-gate-shorts active la branche SHORT symétrique (LONG-only par défaut).
+        if _mode_extreme_gate:
+            if _eg_ps_mode == "bypass":
+                candidates.append(("LONG", symbol, rank))
+            else:
+                _eg_pred = per_symbol_preds.get(symbol)
+                if _eg_pred is None:
+                    continue
+                if _eg_ps_mode == "no_filter" or _eg_pred.long_prob > _min_prob:
+                    candidates.append(("LONG", symbol, rank * _eg_pred.long_prob))
+                elif _eg_shorts and _eg_pred.short_prob > _min_prob:
+                    # E18 : SHORT = restants du gate (non-LONG) ∩ short_prob > min_prob
+                    candidates.append(("SHORT", symbol, rank * _eg_pred.short_prob))
             continue
 
         # Prédiction per-symbol
@@ -2659,7 +2897,13 @@ def cascade_select(
             continue
 
         if is_top and pred.long_prob > _min_prob:
-            rank_dir = rank  # déjà proche de 1.0
+            # Oracle comme FILTRE de qualité (S6.1-B) : ne garder que P_top élevé.
+            if _mode_oracle_filter and (_oracle_pct is None or _oracle_pct < _oracle_filter_pct):
+                continue
+            if _mode_oracle_rerank or _mode_oracle_pool:
+                rank_dir = _oracle_pct
+            else:
+                rank_dir = rank  # déjà proche de 1.0
             score = rank_dir * pred.long_prob
             candidates.append(("LONG", symbol, score))
 
@@ -2683,7 +2927,13 @@ def cascade_select(
                     _m20 is not None and _m60 is not None and _m20 < 0.0 and _m60 < 0.0
                 ):
                     continue
-            rank_dir = 1.0 - rank  # inverse : 0.05 → 0.95
+            # Oracle comme FILTRE de qualité (S6.1-B) : short ⇔ P_top FAIBLE.
+            if _mode_oracle_filter and (_oracle_pct is None or _oracle_pct > (1.0 - _oracle_filter_pct)):
+                continue
+            if _mode_oracle_rerank or _mode_oracle_pool:
+                rank_dir = 1.0 - _oracle_pct
+            else:
+                rank_dir = 1.0 - rank  # inverse : 0.05 → 0.95
             score = rank_dir * pred.short_prob
             candidates.append(("SHORT", symbol, score))
 
@@ -2707,6 +2957,14 @@ def apply_cascade_to_predictions(
     best_h: int | None = None,
     short_momentum_filter: str | None = None,
     short_momentum_max_pct: float | None = None,
+    rank_mode: str = "ml",
+    rank_seed: int = 42,
+    oracle_rank_map: dict[str, dict[str, float]] | None = None,
+    oracle_filter_pct: float | None = None,
+    oracle_pool_pct: float | None = None,
+    extreme_gate_pct: float | None = None,
+    extreme_gate_per_symbol: str = "filter",
+    extreme_gate_shorts: bool = False,
 ) -> pd.DataFrame:
     """Filtre les prédictions per-symbol via la cascade Global Rank.
 
@@ -2766,6 +3024,13 @@ def apply_cascade_to_predictions(
         "apply_cascade_to_predictions: mode=%s min_prob=%.2f top_pct=%.2f",
         "classification" if _has_ternary else "regression", _min_prob, _top_pct,
     )
+    # E17 : variante du rôle per-symbol en mode extreme_gate (bypass = Oracle pur).
+    _eg_ps_mode = str(extreme_gate_per_symbol or "filter").strip().lower()
+    if _eg_ps_mode not in ("filter", "no_filter", "bypass"):
+        _eg_ps_mode = "filter"
+    _eg_ps_extreme = str(rank_mode or "ml").strip().lower() == "extreme_gate"
+    _eg_ps_bypass = _eg_ps_extreme and _eg_ps_mode == "bypass"
+    _eg_shorts = bool(extreme_gate_shorts)
 
     _dates = sorted(result[_date_col].dropna().unique())
     _total_passed = 0
@@ -2810,23 +3075,59 @@ def apply_cascade_to_predictions(
             best_h=best_h,
             short_momentum_filter=short_momentum_filter,
             short_momentum_max_pct=short_momentum_max_pct,
+            rank_mode=rank_mode,
+            rank_seed=rank_seed,
+            oracle_rank_map=oracle_rank_map,
+            oracle_filter_pct=oracle_filter_pct,
+            oracle_pool_pct=oracle_pool_pct,
+            extreme_gate_pct=extreme_gate_pct,
+            extreme_gate_per_symbol=_eg_ps_mode,
+            extreme_gate_shorts=_eg_shorts,
         )
 
         # Symbols retenus par la cascade
         _passed_symbols = {_sym for _, _sym, _ in _candidates}
         _score_map = {_sym: _score for _, _sym, _score in _candidates}
+        _side_map = {_sym: _side for _side, _sym, _ in _candidates}
 
         # P0-5 (2026-08-06) : en mode regression, proba_long/short sont NULL.
         # Après cascade, on les peuple depuis |predicted_proba| pour que
         # replay_signals() puisse les utiliser (il exige notna()).
         for _sym in _passed_symbols:
+            _pm = _mask & (result["symbol"].astype(str) == _sym)
+            if _eg_ps_bypass:
+                # C — Oracle pur : proba_long = percentile Oracle (score) pour que
+                # replay_signals classe par Oracle, PAS par le per-symbol B25.
+                _oscore = _score_map.get(_sym)
+                result.loc[_pm, "proba_long"] = float(_oscore) if _oscore is not None else 0.0
+                result.loc[_pm, "proba_short"] = 0.0
+                result.loc[_pm, "predicted_side"] = "long"
+                continue
             _cp = _pred_dict.get(_sym)
             if _cp is None:
                 continue
-            _pm = _mask & (result["symbol"].astype(str) == _sym)
             if "proba_long" in result.columns and _cp.long_prob > 0:
                 result.loc[_pm, "proba_long"] = _cp.long_prob
-            if "proba_short" in result.columns and _cp.short_prob > 0:
+            if _eg_ps_extreme:
+                # E17 fix (2026-08-20) : le gate extreme_gate est LONG-only par
+                # design (is_bottom=False). En variantes A/B, un per-symbol B25
+                # prédit "short" fuyait en short (bug observé : 68 shorts sur B).
+                # On force predicted_side selon le côté du candidat (E18 : shorts
+                # optionnels) et on purge la proba de l'autre côté.
+                _side = _side_map.get(_sym, "LONG")
+                if _side == "SHORT":
+                    if "proba_short" in result.columns:
+                        result.loc[_pm, "proba_short"] = _cp.short_prob
+                    if "proba_long" in result.columns:
+                        result.loc[_pm, "proba_long"] = 0.0
+                    if "predicted_side" in result.columns:
+                        result.loc[_pm, "predicted_side"] = "short"
+                else:
+                    if "proba_short" in result.columns:
+                        result.loc[_pm, "proba_short"] = 0.0
+                    if "predicted_side" in result.columns:
+                        result.loc[_pm, "predicted_side"] = "long"
+            elif "proba_short" in result.columns and _cp.short_prob > 0:
                 result.loc[_pm, "proba_short"] = _cp.short_prob
 
         # Forcer flat pour les non-retenus

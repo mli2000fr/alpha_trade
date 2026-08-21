@@ -164,6 +164,9 @@ class BacktestConfig:
     protection_replay_mode: str = "off"
     watcher_replay_mode: str = "off"
     exit_lifecycle_replay_mode: str = "off"
+    # E21-B25 (P5) : sizing equal-weight x levier (comme recherche) au lieu du
+    # sizing ATR-risk du pipeline (quantity_override ignoré). Off par défaut.
+    research_sizing: bool = False
     # Phase B (refactor) — micro-structure (slippage volume-aware,
     # initial stop, gap filter, intrabar priority).
     microstructure: MicrostructureConfig = field(default_factory=MicrostructureConfig)
@@ -193,6 +196,13 @@ class BacktestConfig:
     # LONGS ET LES SHORTS (direction-aware en aval). 0 = désactivé (legacy,
     # trailing fixe ``trailing_stop_pct``).
     atr_risk_stop_multiple: float = 0.0
+
+    # ── E12-2B — découplage initial stop vs trailing (recherche, opt-in) ──
+    # Si > 0 : élargit UNIQUEMENT le stop initial (entry × atr × initial_stop_atr_multiple),
+    # en gardant le trailing à atr_risk_stop_multiple (risk_per_share inchangé).
+    # 0.0 = comportement historique (couplé : trailing = distance de l'initial stop).
+    # Ne change AUCUN autre chemin (0.0 = bit-for-bit).
+    initial_stop_atr_multiple: float = 0.0
 
     # ── P2-4 — Fidélité live du TP (formule production) ──
     # Si les deux > 0 : TP = entrée ± min(ATR × tp_atr_multiple, prix × tp_max_pct)
@@ -338,6 +348,8 @@ class _OpenPosition:
     risk_per_share: float | None = None
     # P2-4 — fraction ATR_20/prix au signal (pour le TP de production).
     atr_pct: float | None = None
+    # E21-A — trailing fixe par-signal (override optionnel de la dérivée risk_per_share).
+    trailing_stop_pct: float | None = None
     replay_take_profit_price: float | None = None
     replay_initial_stop_price: float | None = None
     replay_trailing_stop_pct: float | None = None
@@ -966,7 +978,11 @@ class BacktestEngine:
                     trade_day.date(), state.settled_cash, state.unsettled_cash, current_market_value,
                 )
             state.peak_equity = max(state.peak_equity, current_equity)
-            entries_allowed_by_breaker = cfg.risk_overlay.drawdown_breaker.update(
+            # E23 — régime SPY journalier pour le breaker adaptatif (réévalué chaque
+            # jour, contrairement au trailing C2 gelé à l'entrée).
+            _brk = cfg.risk_overlay.drawdown_breaker
+            _brk.set_spy_regime(trade_day)
+            entries_allowed_by_breaker = _brk.update(
                 current_equity, state.peak_equity
             )
 
@@ -986,14 +1002,23 @@ class BacktestEngine:
                     pnl = compute_realized_pnl(pos_side, abs_qty, position.entry_price, close_price)
                     position_pnls.append((symbol, pnl, close_price, pos_side))
                 position_pnls.sort(key=lambda x: x[1])  # pire PnL d'abord
-                
-                n_close = max(1, int(len(position_pnls) * force_pct + 0.5))
-                to_close = position_pnls[:n_close]
-                
-                LOGGER.warning(
-                    "Force-close partiel (%.0f%%): liquidation de %d/%d positions (equity=%.2f)",
-                    force_pct * 100, n_close, len(state.positions), current_equity,
-                )
+
+                if cfg.risk_overlay.drawdown_breaker.force_close_losers_on_breaker:
+                    # E19 — coupe TOUS les symboles perdants (down en long, up en short).
+                    to_close = [p for p in position_pnls if p[1] < 0.0]
+                    LOGGER.warning(
+                        "Force-close losers on breaker: liquidation de %d/%d positions perdantes (equity=%.2f)",
+                        len(to_close), len(state.positions), current_equity,
+                    )
+                else:
+                    force_pct = float(cfg.risk_overlay.drawdown_breaker.force_close_pct)
+                    n_close = max(1, int(len(position_pnls) * force_pct + 0.5))
+                    to_close = position_pnls[:n_close]
+                    LOGGER.warning(
+                        "Force-close partiel (%.0f%%): liquidation de %d/%d positions (equity=%.2f)",
+                        force_pct * 100, n_close, len(state.positions), current_equity,
+                    )
+                n_close = len(to_close)
                 diagnostics.blocked_by_drawdown_breaker += n_close
                 # Sprint 5 — compter force-close par side
                 for symbol, pnl, close_price, pos_side in to_close:
@@ -1044,7 +1069,8 @@ class BacktestEngine:
 
             # Diagnostic quotidien breaker (C.5)
             if cfg.risk_overlay.drawdown_breaker.enabled:
-                _ref_peak = cfg.risk_overlay.drawdown_breaker._reference_peak(state.peak_equity)
+                _brk_diag = cfg.risk_overlay.drawdown_breaker
+                _ref_peak = _brk_diag._reference_peak(state.peak_equity)
                 state.breaker_points.append({
                     "trade_date": trade_day,
                     "equity": current_equity,
@@ -1052,8 +1078,14 @@ class BacktestEngine:
                     "dd_pct": round(((current_equity / _ref_peak) - 1.0) * 100.0, 4) if _ref_peak > 0 else None,
                     "tripped": not entries_allowed_by_breaker,
                     "allocation_scale": drawdown_allocation_scale,
-                    "normal_streak": cfg.risk_overlay.drawdown_breaker._normal_streak,
+                    "normal_streak": _brk_diag._normal_streak,
                     "entry_mode": _entry_mode,
+                    # E23 — régime SPY journalier + allocation cible + épisode.
+                    "spy_regime": _brk_diag._regime_today,
+                    "alloc_target": getattr(_brk_diag, "_alloc_today", None),
+                    "episode_peak": _brk_diag._episode.peak if _brk_diag._episode else None,
+                    "episode_trough": _brk_diag._episode.trough if _brk_diag._episode else None,
+                    "favorable_streak": _brk_diag._episode.favorable_streak if _brk_diag._episode else None,
                 })
 
             # Phase C.3 — filtre régime (benchmark).
@@ -1334,6 +1366,27 @@ class BacktestEngine:
             for _, row in day_signals.iterrows()
             if str(row["symbol"]) not in state.positions and str(row["symbol"]) in close_columns
         ]
+        # ── Anti-doublon (2026-08-20) : un symbole ne peut être candidat
+        # qu'une seule fois par séance. Si deux signaux d'un même symbole
+        # (ex. signal d'un jour férié + signal d'un jour de trading) tombent
+        # sur la même séance d'exécution (J+1 open), le signal le plus récent
+        # (signal_date max) prime. Sans cette garde, la 2e ligne ouvre une
+        # position qui écrase la 1re dans state.positions mais débite le cash
+        # deux fois (déficit d'equity observé sur B25 long-only 2025-09-02).
+        if filtered_rows:
+            filtered_rows.sort(
+                key=lambda r: (r.get("signal_date") if pd.notna(r.get("signal_date")) else pd.NaT),
+                reverse=True,
+            )
+            seen_symbols: set[str] = set()
+            deduped_rows: list[pd.Series] = []
+            for row in filtered_rows:
+                sym = str(row["symbol"])
+                if sym in seen_symbols:
+                    continue
+                seen_symbols.add(sym)
+                deduped_rows.append(row)
+            filtered_rows = deduped_rows
         breaker_hard_blocked = (not entries_allowed_by_breaker) and drawdown_allocation_scale <= 0.0
         if breaker_hard_blocked or not entries_allowed_by_regime:
             blocked_count = int(max(cfg.max_positions - len(state.positions), 0))
@@ -1416,6 +1469,20 @@ class BacktestEngine:
         for candidate_pos, row in enumerate(candidate_rows):
             symbol = str(row["symbol"])
             signal_context = self._build_signal_context(row)
+
+            # ── Garde-fou anti-doublon (2026-08-20) : si une ligne précédente
+            # du même jour a déjà ouvert ce symbole, on ignore ce signal pour
+            # ne pas débiter le cash deux fois (cf. B25 long-only 2025-09-02).
+            if symbol in state.positions:
+                self._record_trade_event(
+                    state,
+                    "entry_rejected",
+                    event_date=trade_day,
+                    symbol=symbol,
+                    rejection_reason="duplicate_signal_same_day",
+                    **signal_context,
+                )
+                continue
 
             # Sprint 2 — direction
             side = str(row.get("side", "buy") or "buy").strip().lower()
@@ -1542,9 +1609,13 @@ class BacktestEngine:
                         continue
 
             quantity_override = (
-                self._resolve_signal_quantity_override(row)
-                if cfg.execution_replay_mode == "execution_replay"
-                else None
+                None
+                if cfg.research_sizing
+                else (
+                    self._resolve_signal_quantity_override(row)
+                    if cfg.execution_replay_mode == "execution_replay"
+                    else None
+                )
             )
 
             # Phase B.3 — gap d'ouverture excessif.
@@ -1816,6 +1887,7 @@ class BacktestEngine:
                 initial_stop_price=initial_stop_price,
                 risk_per_share=risk_per_share,
                 atr_pct=self._resolve_signal_float(row, "atr_pct_20"),
+                trailing_stop_pct=self._resolve_signal_float(row, "trailing_stop_pct"),
                 replay_take_profit_price=(
                     self._resolve_signal_float(row, "replay_take_profit_price")
                     if cfg.protection_replay_mode == "protection_replay"
@@ -2058,7 +2130,23 @@ class BacktestEngine:
                             take_profit_price = max(percent_target, risk_based_target) if not short else min(percent_target, risk_based_target)
                         else:
                             take_profit_price = percent_target
+                    # E21-A — override par-signal : trailing fixe demandé (ex. 7% pipeline)
+                    # prime sur la dérivée risk_per_share (2,5×ATR recherche).
                     if (
+                        getattr(position, "trailing_stop_pct", None) is not None
+                        and position.trailing_stop_pct > 0
+                    ):
+                        trailing_stop_pct = position.trailing_stop_pct
+                    elif (
+                        cfg.initial_stop_atr_multiple > 0
+                        and position.risk_per_share is not None
+                        and position.risk_per_share > 0
+                        and position.entry_price > 0
+                    ):
+                        # E12-2B — découplage : trailing sur risk_per_share (atr_risk_stop_multiple),
+                        # PAS sur l'initial stop élargi
+                        trailing_stop_pct = position.risk_per_share / position.entry_price
+                    elif (
                         position.initial_stop_price is not None
                         and position.entry_price > 0
                     ):
@@ -2469,6 +2557,12 @@ class BacktestEngine:
             if risk_per_share is not None and risk_per_share > 0:
                 sign = -1 if short else 1
                 derived_stop = entry_price - sign * risk_per_share
+                # E12-2B — découplage : élargir UNIQUEMENT le stop initial
+                if self.config.initial_stop_atr_multiple > 0:
+                    atr_pct = self._resolve_signal_float(row, "atr_pct_20")
+                    if atr_pct is not None and atr_pct > 0:
+                        stop_dist = entry_price * atr_pct * self.config.initial_stop_atr_multiple
+                        derived_stop = entry_price - sign * stop_dist
                 if (not short and 0 < derived_stop < entry_price) or (short and derived_stop > entry_price):
                     return derived_stop, risk_per_share
             return None, risk_per_share

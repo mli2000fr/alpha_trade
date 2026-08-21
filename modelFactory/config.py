@@ -29,7 +29,25 @@ class DataConfig:
     include_macro_regime_features: bool = False # SPY_SMA_200_slope + VIX_zscore
     include_score_components: bool = True  # composants stock_scores_history (sentiment, idio, macro...)
     include_volume_features: bool = False  # P3-5 : profil volume/liquidité (10 features opt-in)
+    # ── S7 : feature whitelist expérimentale (per-symbol, opt-in) ──
+    # whitelist OFF ou vide = comportement legacy strictement inchangé.
+    # whitelist ON = seules les features explicitement listées sont utilisées
+    # comme X (filtrage final après compute_features, jamais sur les colonnes
+    # structurelles). Désactivée par défaut → aucun impact sur les runs actuels.
+    feature_whitelist_enabled: bool = False
+    feature_whitelist: tuple[str, ...] = ()  # liste ordonnée ; vide = legacy
+    # S7 (opt-in, défaut=True=comportement prod) : le LSTM per-symbol force
+    # feature_set="v1" pour limiter l'input dim (Cause 2). Quand une whitelist
+    # est active, ou que --no-force-v1-lstm est passé, on respecte le feature_set
+    # demandé (expert) pour que les features whitelist existent.
+    force_v1_lstm: bool = True
     global_model_only: bool = False  # P0-6 : skip per-symbol et per-sector, ne faire que le global
+    # Oracle Extreme (O0) — 2026-08-20 : détection d'extrêmes H20 SANS global_rank_20
+    # (ablation O0 — le rank B25 est redondant avec les features PIT, cf. audit
+    #  oracle_o0_vs_o1_2026-08-20). Le modèle Oracle est entraîné en walk-forward
+    #  strict (anti-leakage T2) après la séquence globale.
+    enable_oracle_model: bool = False  # entraîne AUSSI l'Oracle Extreme (O0) en fin de séquence
+    oracle_model_only: bool = False    # entraîne UNIQUEMENT l'Oracle Extreme — skip global, per-symbol, per-sector
     sector_use_symbol_feature: bool = True  # D1 (2026-08-15) : per-sector, False = ablation de la feature catégorielle 'symbol'
     enable_cross_sectional_features: bool = False  # percentiles + secteur (momentum, alpha intra-secteur)
     cross_sectional_min_universe: int = 20

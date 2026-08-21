@@ -1,0 +1,177 @@
+est-il tujorus intéressant de payer eodhd ?
+
+Oui — mais je serais maintenant beaucoup plus précis : je paierais EODHD pour 1 mois de recherche, pas encore comme dépendance permanente de production.
+
+La raison principale a changé après ton E4-B1 : ce qui t'intéresse chez EODHD n'est plus tellement leur calendrier earnings ni leur sentiment agrégé. C'est surtout leur Earnings Trends API.
+
+La documentation actuelle montre des champs particulièrement pertinents :
+
+epsTrendCurrent
+epsTrend7daysAgo
+epsTrend30daysAgo
+epsTrend60daysAgo
+epsTrend90daysAgo
+
+
+epsRevisionsUpLast7days
+epsRevisionsUpLast30days
+epsRevisionsDownLast30days
+
+
+earningsEstimateAvg
+earningsEstimateLow
+earningsEstimateHigh
+earningsEstimateNumberOfAnalysts
+
+
+revenueEstimateAvg
+revenueEstimateLow
+revenueEstimateHigh
+revenueEstimateNumberOfAnalysts
+
+C'est précisément une information que tu n'as pas réellement testée dans E4-B1.
+
+Pourquoi ça reste intéressant malgré le NO-GO E4-B1
+
+E4-B1 a essentiellement falsifié :
+
+croissance SEC historique / proximité earnings / réaction post-earnings → direction future.
+
+Il n'a pas falsifié :
+
+évolution des anticipations des analystes AVANT le mouvement → direction future.
+
+Imagine deux titres que ton Oracle Extreme considère comme susceptibles de faire un gros mouvement :
+
+                TITRE A             TITRE B
+
+
+Momentum          +                 +
+RSI               52                51
+Range             haut              haut
+Volatilité        similaire         similaire
+
+
+EPS consensus
+90j ago           2.00              2.00
+60j ago           2.04              1.96
+30j ago           2.09              1.85
+7j ago            2.15              1.71
+Current           2.18              1.64
+
+
+Revisions          ↑↑                ↓↓↓
+
+Tes features techniques peuvent considérer A et B comme presque identiques.
+
+Un historique de révisions pourrait permettre de dire :
+
+A = Extreme + pression fondamentale positive → candidat UP
+B = Extreme + pression fondamentale négative → candidat DOWN
+
+C'est exactement le type d'information orthogonale qui manque actuellement à ton système.
+
+Mais il y a UNE vérification critique avant de conclure que ça vaut vraiment l'argent
+
+La documentation appelle l'endpoint « forward-looking and historical earnings trend points », mais les champs 7daysAgo/30daysAgo/... ne suffisent pas à eux seuls à prouver que tu peux reconstruire un backtest PIT complet en 2022-2026.
+
+Par exemple, si tu appelles aujourd'hui :
+
+AAPL
+current = 7.98
+30daysAgo = 7.97
+90daysAgo = 7.81
+
+c'est très utile aujourd'hui.
+
+Mais pour ton backtest, il te faut idéalement pouvoir répondre à :
+
+« Qu'est-ce que l'API aurait retourné le 15 mars 2023 ? »
+
+Sinon tu risques de ne pas pouvoir reconstruire proprement :
+
+Oracle Extreme OOS 2023
+        +
+consensus réellement connu à D
+
+C'est le point que je ferais tester immédiatement après souscription.
+
+Et les news ?
+
+EODHD donne également les articles individuels avec filtrage temporel, plus un endpoint de sentiment quotidien.
+
+Le sentiment quotidien simple m'intéresse beaucoup moins, puisque tu as déjà falsifié ce type d'information.
+
+En revanche, les articles bruts restent intéressants pour E4-B3 :
+
+nouvelle news négative
+nombre de news
+accélération des news
+type d'événement
+nouveauté
+source
+article centré sur le ticker
+pré/post-market
+
+Donc l'abonnement permettrait potentiellement deux expériences, pas une seule :
+
+E4-B2R — Analyst revisions / Earnings Trends
+E4-B3 — News événementielles structurées
+
+Mon ordre maintenant
+
+Je modifierais légèrement ton plan :
+
+E4-B1 Earnings SEC
+        ↓
+      NO-GO
+        ↓
+E4-B2 fundamentals existants
+        ↓
+ test rapide
+        ↓
+E4-B2R EODHD Analyst Revisions   ← très intéressant
+        ↓
+E4-B3 News événementielles
+
+Et je ne mélangerais rien au début.
+
+Est-ce que ~20 $ vaut le test ?
+
+EODHD affiche actuellement le package Corporate Events Calendar & News à $19.99/mois, sans engagement long terme obligatoire sur les offres mensuelles.
+
+Pour ton projet, je trouve le ratio coût/information très favorable.
+
+Tu as déjà investi beaucoup d'effort pour démontrer proprement que :
+
+Oracle Extreme détecte réellement l'amplitude ;
+OHLCV ne donne pas le signe ;
+B25 ne donne pas suffisamment le signe ;
+sentiment agrégé ne donne pas le signe ;
+screener ne donne pas le signe ;
+earnings SEC ne donne pas le signe.
+
+Dépenser ~$20 pour tester une nouvelle classe d'information réellement orthogonale est beaucoup plus rationnel que passer encore plusieurs jours à inventer 100 transformations OHLCV.
+
+Donc : oui, je prendrais un mois
+
+Mais avec une règle simple :
+
+On achète de l'information, pas de l'espoir.
+
+Dès l'accès obtenu, ton IA devrait d'abord auditer sans entraîner aucun modèle :
+
+profondeur historique réelle des Earnings Trends sur tes 400 titres ;
+possibilité de reconstruction PIT 2022→2026 ;
+couverture par année ;
+analyst count ;
+disponibilité réelle des 7/30/60/90d;
+stabilité des revisions ;
+seulement ensuite AUC UP/DOWN dans le pool Oracle Extreme.
+
+Si EODHD ne permet pas de reconstruire les revisions historiques PIT, je ne renouvellerais probablement pas l'abonnement pour cette recherche. Les news pourraient encore justifier un mois d'expérience, mais la proposition de valeur serait nettement moins forte.
+
+Documentation EODHD Earnings & Earnings Trends
+Corporate Events Calendar & News package
+
+Donc pour ton problème précis, oui : $19.99 pour un mois = test que je ferais.

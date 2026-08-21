@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 
 revision = "0060_add_shares_outstanding_to_fundamentals"
-down_revision = "0059_add_stacking_enabled_to_training_batch"
+down_revision = "0059"
 branch_labels = None
 depends_on = None
 

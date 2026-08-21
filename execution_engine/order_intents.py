@@ -516,8 +516,21 @@ def build_take_profit_intent(
     exit_side = "buy" if short else "sell"
 
     # ── V1 Multi-Horizon TP (2026-08-09) ──
+    # E21-B25 (P2) : ancrage du TP sur le prix d'entrée (fill) — fidélité recherche.
+    _tp_anchor_entry = bool(getattr(config, "tp_anchor_entry", False))
+    if (
+        _tp_anchor_entry
+        and target is not None and avg_fill_price > 0
+        and target.tp_atr_multiple and target.tp_max_pct
+        and target.atr_20 and target.atr_20 > 0
+        and target.previous_close and target.previous_close > 0
+    ):
+        _atr_pct = float(target.atr_20) / float(target.previous_close)
+        _dist_pct = min(_atr_pct * float(target.tp_atr_multiple), float(target.tp_max_pct))
+        _sign = -1 if short else 1
+        limit_price = round(avg_fill_price + _sign * (avg_fill_price * _dist_pct), 2)
     # Priorité 1 : take_profit_price pré-calculé par PortfolioBuilder
-    if target is not None and target.take_profit_price is not None and target.take_profit_price > 0:
+    elif target is not None and target.take_profit_price is not None and target.take_profit_price > 0:
         limit_price = round(float(target.take_profit_price), 2)
     else:
         # Priorité 2 : risk-based (2× risk_per_share)
@@ -570,7 +583,22 @@ def build_initial_stop_intent(
     exit_side = "buy" if short else "sell"
 
     reference_price = avg_fill_price or parent.decision_price
-    stop_price = resolve_initial_stop_price(reference_price, target, side=parent_side)
+    # E21-B25 (P3) : ancrage du SL initial sur le prix d'entrée (fill) — fidélité recherche.
+    if (
+        bool(getattr(config, "sl_anchor_entry", False))
+        and target is not None and avg_fill_price > 0
+        and target.risk_per_share and target.risk_per_share > 0
+        and target.previous_close and target.previous_close > 0
+    ):
+        _sign = -1 if short else 1
+        _dist = avg_fill_price * float(target.risk_per_share) / float(target.previous_close)
+        _derived = avg_fill_price - _sign * _dist
+        if (not short and 0 < _derived < avg_fill_price) or (short and _derived > avg_fill_price):
+            stop_price = round(_derived, 2)
+        else:
+            stop_price = resolve_initial_stop_price(reference_price, target, side=parent_side)
+    else:
+        stop_price = resolve_initial_stop_price(reference_price, target, side=parent_side)
     if stop_price is None:
         return None
 
@@ -681,9 +709,20 @@ def build_trailing_stop_intent(
     exit_side = "buy" if short else "sell"
 
     reference_price = avg_fill_price or parent.decision_price
+    # E21-v2 : trailing par-signal (régime SPY PIT) — priorité sur la config globale.
+    _tgt_pct = (
+        float(getattr(target, "trailing_stop_pct", None))
+        if (target is not None and getattr(target, "trailing_stop_pct", None) is not None)
+        else None
+    )
+    _tgt_risk = bool(getattr(target, "trailing_risk_based", False)) if target is not None else False
     # P13/P14 expérimental : override global, sinon override side-spécifique.
     trail_pct_override = getattr(config, "trailing_pct_override", None)
-    if trail_pct_override is None:
+    if _tgt_risk:
+        trail_pct_override = None  # force risk-based (2.5xATR)
+    elif _tgt_pct is not None:
+        trail_pct_override = _tgt_pct
+    elif trail_pct_override is None:
         trail_pct_override = (
             getattr(config, "trailing_pct_short_override", None)
             if short

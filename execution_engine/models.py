@@ -114,11 +114,18 @@ class ExecutionTarget:
     atr_asof_date: date | None = None
     stop_price_initial: float | None = None
     take_profit_price: float | None = None  # V1 Multi-Horizon TP (2026-08-09)
+    # E21-B25 (P2) : params TP (ré-ancrage du TP sur le prix d'entrée).
+    tp_atr_multiple: float | None = None
+    tp_max_pct: float | None = None
     risk_per_share: float | None = None
     risk_budget_dollars: float | None = None
     initial_risk_dollars: float | None = None
     target_notional: float | None = None
     previous_close: float | None = None
+    # E21-v2 : trailing par-signal (régime SPY PIT, gelé à l'entrée) — priorité sur la config.
+    # trailing_stop_pct>0 = override pct fixe ; trailing_risk_based=True = 2.5xATR (distance du stop).
+    trailing_stop_pct: float | None = None
+    trailing_risk_based: bool = False
 
 
 @dataclass(frozen=True, slots=True)

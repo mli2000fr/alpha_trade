@@ -61,6 +61,7 @@ def portfolio_entries_to_execution_targets(
 				price_asof_date=entry.price_asof_date,
 				atr_asof_date=entry.atr_asof_date,
 				stop_price_initial=entry.stop_price_initial,
+				take_profit_price=entry.take_profit_price,
 				risk_per_share=entry.risk_per_share,
 				risk_budget_dollars=entry.risk_budget_dollars,
 				initial_risk_dollars=entry.initial_risk_dollars,

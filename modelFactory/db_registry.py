@@ -871,24 +871,43 @@ _SERVING_BATCH_SCOPE = "default"
 def detect_batch_training_mode(engine: Engine, batch_id: str | None) -> str:
     """Détecte le mode d'entraînement d'un batch : ``per_sector`` ou ``per_symbol``.
 
-    Signaux, par ordre de priorité :
+    Sources de vérité, par ordre de priorité (canoniques, aucune convention de
+    nommage de run codée en dur) :
     1. ``model_training_batch.command_argv_json`` / ``command_line`` → ``--training-mode``
-    2. Runs ``model_training_run`` : symbole sentinelle ``__GLOBAL_RANK_SYNTH__``
-       ou symboles aux noms de secteurs GICS → ``per_sector``
-    3. Défaut : ``per_symbol`` (comportement historique conservateur)
+    2. Runs ``model_training_run`` (décision par NATURE des symboles) :
+       - secteurs GICS OU uniquement des pseudo-symboles rank-driven
+         (``__GLOBAL__`` = modèle global unique, ``__GLOBAL_RANK_SYNTH__`` = synthèse)
+         → ``per_sector`` : le batch ne peut PAS produire de prédictions per-symbol
+       - sinon (vrais tickers) → ``per_symbol``
+    3. ``model_training_batch.metadata_json.training_config.training_mode``
+       (enregistré par l'entraînement) — en dernier recours quand aucun run connu
+    4. Défaut : ``per_symbol`` (comportement historique conservateur)
+
+    NB : un batch configuré ``per_symbol`` mais qui n'a en réalité QUE le modèle
+    GLOBAL (ex. 874bea, "model global 2023-06" : runs ``__GLOBAL__`` + synthèse,
+    aucun ticker) est un batch rank-driven : le predict DOIT prendre la branche
+    synthèse, pas prédire per-symbol (sinon 0 rows + spam ``no_model_found``).
     """
     if not batch_id:
         return "per_symbol"
     batch_id = str(batch_id)
+    # Pseudo-symboles : un batch qui n'a QUE ces runs est rank-driven (global-only).
+    _global_only = {"__global__", "__global_rank_synth__"}
+    _sector_names = {
+        "communication services", "consumer discretionary", "consumer staples",
+        "energy", "financials", "health care", "industrials",
+        "information technology", "materials", "real estate", "utilities",
+    }
     try:
         with engine.connect() as conn:
             row = conn.execute(
                 text(
-                    "SELECT command_argv_json, command_line FROM model_training_batch "
+                    "SELECT command_argv_json, command_line, metadata_json FROM model_training_batch "
                     "WHERE batch_id = :bid LIMIT 1"
                 ),
                 {"bid": batch_id},
             ).mappings().first()
+        _meta_mode: str | None = None
         if row is not None:
             raw_argv = str(row.get("command_argv_json") or "") + " "
             raw_line = str(row.get("command_line") or "") + " "
@@ -900,6 +919,7 @@ def detect_batch_training_mode(engine: Engine, batch_id: str | None) -> str:
             except Exception:
                 pass
             blob = (raw_argv + raw_line).lower()
+            # Source 1 : flag explicite d'entraînement (priorité absolue).
             if "--training-mode" in blob:
                 idx = blob.find("--training-mode")
                 token = blob[idx: idx + 60].split()[1] if len(blob[idx: idx + 60].split()) > 1 else ""
@@ -907,22 +927,33 @@ def detect_batch_training_mode(engine: Engine, batch_id: str | None) -> str:
                     return "per_sector"
                 if token.startswith("per_symbol"):
                     return "per_symbol"
-        # Fallback 2 : runs du batch
+            # Source 3 (mémorisée, utilisée en dernier recours) : metadata d'entraînement.
+            try:
+                _meta = _json.loads(str(row.get("metadata_json") or "{}"))
+                _tm = ((_meta.get("training_config") or {}).get("training_mode") or "").strip().lower()
+                if _tm.startswith("per_sector"):
+                    return "per_sector"
+                if _tm.startswith("per_symbol"):
+                    _meta_mode = "per_symbol"
+            except Exception:
+                pass
+        # Source 2 : décision par NATURE des runs du batch (prime sur la metadata
+        # pour le cas "config per_symbol mais modèle global-only").
         with engine.connect() as conn:
             rows = conn.execute(
                 text("SELECT symbol FROM model_training_run WHERE batch_id = :bid"),
                 {"bid": batch_id},
             ).scalars().all()
         symbols = {str(s).strip().lower() for s in rows if s}
-        if "__global_rank_synth__" in symbols:
-            return "per_sector"
-        sector_names = {
-            "communication services", "consumer discretionary", "consumer staples",
-            "energy", "financials", "health care", "industrials",
-            "information technology", "materials", "real estate", "utilities",
-        }
-        if symbols and symbols.issubset(sector_names):
-            return "per_sector"
+        if symbols:
+            if symbols.issubset(_sector_names | _global_only):
+                # Secteurs GICS OU uniquement pseudo-symboles rank-driven :
+                # pas de modèles per-symbol → branche synthèse.
+                return "per_sector"
+            # Au moins un vrai ticker → batch per-symbol classique.
+            return "per_symbol"
+        if _meta_mode == "per_symbol":
+            return "per_symbol"
     except Exception:
         LOGGER.warning("detect_batch_training_mode: échec détection batch=%s → per_symbol", batch_id, exc_info=True)
     return "per_symbol"

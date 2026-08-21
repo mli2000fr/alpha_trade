@@ -1111,6 +1111,43 @@ def test_build_pipeline_command_ml_predict_scoped_historical_uses_period_and_tra
     assert "--selector-universe-exclude-earnings-blackout" not in command
 
 
+def test_build_pipeline_command_ml_predict_respects_selected_symbol_source() -> None:
+    """Le bouton `10. ML Predict` doit refléter le choix "Univers de symboles".
+
+    Régression : `ml_predict_symbol_source` était codé en dur à
+    `tradable-universe` dans build_pipeline_command — sélectionner
+    "Tickets recherche" (ticket-recherche) dans la liste déroulante ne
+    changeait jamais la commande affichée.
+    """
+    command = build_pipeline_command(
+        "ml_predict",
+        PipelineLaunchOptions(
+            ml_accelerator="cpu",
+            ml_predict_symbol_source="ticket-recherche",
+        ),
+    )
+    assert command[command.index("--symbol-source") + 1] == "ticket-recherche"
+
+    command = build_pipeline_command(
+        "ml_predict",
+        PipelineLaunchOptions(
+            ml_accelerator="cpu",
+            ml_predict_symbol_source="stock-bars-daily",
+        ),
+    )
+    assert command[command.index("--symbol-source") + 1] == "stock-bars-daily"
+
+    # Source inconnue/héritée -> fallback canonique tradable-universe (inchangé).
+    command = build_pipeline_command(
+        "ml_predict",
+        PipelineLaunchOptions(
+            ml_accelerator="cpu",
+            ml_predict_symbol_source="stock_scores_all",
+        ),
+    )
+    assert command[command.index("--symbol-source") + 1] == "tradable-universe"
+
+
 def test_build_pipeline_command_ml_train_forces_tradable_universe_over_legacy_source() -> None:
     options = PipelineLaunchOptions(ml_train_symbol_source="stock_bars_daily")
 

@@ -331,6 +331,16 @@ risk_management:
   force_close_on_breaker: true
   force_close_pct: 1.0
 
+  # ── E23 — politique breaker adaptative (2026-08-21) ──
+  # "b0" = PROD historique (comportement bit-à-bit inchangé) — ROLLBACK.
+  # "b4" = contrôleur robuste (regime rearm + equity confirmation + RELAPSE),
+  #        validé backtest + parité logique prod. ACTIF EN PROD depuis le
+  #        2026-08-21 (décision GO live). Fail-safe : sans carte régime SPY,
+  #        l'allocation est plafonnée à 10%.
+  # b1/b2/b3/b4a disponibles. La carte régime SPY journalière PIT est
+  # construite automatiquement à partir de stock_bars_daily quand policy != b0.
+  policy: b4
+
   # ── Liquidité dynamique (LiquiditeDynamique.md P1) ──
   # Position max en % de l'ADV 20j du ticker. null = contrainte désactivée.
   # Ex: 0.01 = une position ne peut pas dépasser 1% du volume quotidien du ticker.
@@ -529,6 +539,31 @@ cascade:
   # (branche `elif short_momentum_max_pct is not None` avant les modes).
   short_momentum_filter: none
   short_momentum_max_pct: null
+
+
+# ---------------------------------------------------------------------------
+# Extreme Gate (composant officiel E6-E13) — Oracle O0 → univers LONG.
+# Consommé par modelFactory/predictor.py (cascade_select, rank_mode="extreme_gate")
+# et par modelFactory/oracle/extreme_gate.py (compute_extreme_gate).
+# Gate = top `pool_pct` par proba_extreme (percentile cross-sectionnel DU JOUR, PIT).
+# SÉMANTIQUE : proba_extreme ≠ P(LONG). C'est le potentiel de MOUVEMENT EXTRÊME ;
+# l'edge LONG est empirique (univers Extreme, E8-E13). LONG-only, indépendant de B25
+# (global_rank_20). La monétisation = m24 (1/24 du budget de risque), lifecycle PROD.
+# ---------------------------------------------------------------------------
+extreme_gate:
+  # Activation de la branche extreme_gate dans cascade_select.
+  # false par défaut (baseline production candidate — activer explicitement).
+  enabled: false
+
+  # Univers : top `pool_pct` du jour par proba_extreme (percentile >= 1-pool_pct).
+  # 0.20 = top 20% (justifié E9/E10 : TOP10 trop arbitraire, tranche 10-20% porteuse).
+  pool_pct: 0.20
+
+  # LONG-only : pas de SHORT sur cette branche.
+  long_only: true
+
+  # Proba per-symbol minimale (None = défaut cascade min_prob_regression).
+  min_prob: null
 
 
 # Sprint S8 - Calibration formelle des poids de conviction (cf. core/conviction.py)
