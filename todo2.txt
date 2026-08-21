@@ -85,35 +85,65 @@ C'est exactement le schéma : LONG = Extreme ∩ strong long_prob / SHORT = Extr
 
 
 
+Voici les résultats OOS avec B4. L'OOS B4 a été fait sur 3 années : 2020, 2022, 2024H1 (en plus de la fenêtre principale 2025→2026H1 utilisée comme référence). Comparaison avec B0 (référence) sur les mêmes fenêtres :
 
+Tableau des résultats OOS — B4 (vs B0)
+Fenêtre	Période	Policy	Ret%	Sharpe	DD%	Trades	PF	Win%
+OOS 2020	2020-01-02 → 2020-12-31	B4	−14.26	−1.25	18.91	178	0.54	47.2
+B0 (réf)	−14.19	−1.25	18.96	178	0.53	47.2
+OOS 2022	2022-01-03 → 2022-12-30	B4	−17.01	−2.44	17.60	454	0.53	42.1
+B0 (réf)	−17.50	−2.34	18.24	454	0.58	42.1
+OOS 2024H1	2024-01-02 → 2024-06-28	B4	−3.86	−0.33	12.14	156	0.89	44.9
+B0 (réf)	−3.86	−0.33	12.14	156	0.89	44.9
+Main (réf)	2025-01-02 → 2026-05-29	B4	+34.61	1.33	16.70	467	1.34	54.8
+(variantes B4a, écartées : 2020 −13.88 · 2022 −17.24 · 2024H1 −3.86)
 
-cible:
-Architecture que je retiendrais maintenant
-Oracle O0
-   │
-   ├── proba_extreme
-   │
-   ▼
-percentile cross-sectionnel quotidien
-   │
-   ▼
-Extreme TOP20%
-   │
-   │   = définition de l'univers
-   │
-   ▼
-Per-symbol B25
-   │
-   └── long_prob
-          │
-          ▼
-   ranking décroissant
-          │
-          ▼
-   capacité / portefeuille
-          │
-          ▼
-        LONG
+Verdict par année
+2020 — Gate ÉCHOUÉ (assumé) : B4 −14.26% vs B0 −14.19% (≈ équivalent). Cause structurelle : l'equity ne récupère que ~16% en 2020 (< seuil RR 25%) → B4 reste bloqué à 50%, ne débloque jamais 75/100%. Optimiser 2020 = sur-apprentissage sur quelques épisodes → refusé volontairement.
+2022 — Robustesse confirmée : B4 mieux que B0 (−17.01 vs −17.50, DD 17.6 vs 18.2). Surtout : B4 élimine le veto 2022 (0 réarmement à 100% en REBOUND ; B2, lui, était veté). La RELAPSE empêche le churn bear-market.
+2024H1 — Neutre : B4 = B0 à l'identique (breaker jamais engagé, allocation nominale — fenêtre calme).
+Main 2025→2026H1 — Le gain : +34.6% / 1.33 / DD 16.7 (c'est le R3 validé).
+En résumé : l'OOS B4 = 2020 (échoué, assumé), 2022 (robuste, veto levé), 2024H1 (neutre). C'est exactement le compromis figé : B4 sacrifie 2020 (qu'on ne peut pas gagner sans le risque qui a veté B2) et gagne la robustesse 2022 + le gain 2025.
+
+Le script d'extraction est dans _e23b4_oos_summary.py (réutilisable).
 
 
 
+Épisode	Oracle LONG	Oracle SHORT	Gagnant
+2018Q4	6.9%	9.3%	SHORT
+2020 COVID	14.5%	18.5%	SHORT
+2022 bear	6.5%	8.1%	SHORT
+2023 CORRECTION	5.4%	8.4%	SHORT
+2024 correction	7.6%	6.2%	LONG
+2025 tariff	8.2%	4.8%	LONG
+Global (2018→2026)	7.60%	8.03%	SHORT
+
+
+todo: calibration pour model global ? les anciens calibrations sont nécessaires ?
+Calibration convaincante : B25 TOP8 C2+B4 2025→2026 = +48.0%, Sharpe 1.08, Sortino 1.59, MaxDD −21.3% vs cible e23b4_main (+34.6%/1.33/1.63/−16.7%) — même ordre de grandeur (écart expliqué : LONG-only TOP8 vs vrai 6L/2S + conviction + filtre capital_preservation). Moteur validé.
+
+
+
+quand le batch n'a aque le model global, comment il calcule le proba_long ?
+quand le batch entréinne de model global + model per sector, le model global et le model sector seront utilsié tous les 2 pour predit, ainsi lur predit sont tous utilisés par le backtest pipeline ?
+quand le batch entréinne de model global + model per symbol, le model global et le model sector seront utilsié tous les 2 pour symbol, ainsi lur predit sont tous utilisés par le backtest pipeline ?
+quand le batch entréinne de model global + model per sector en mode regression, comment il calcule le proba_long ?
+quand le batch entréinne de model global + model per sector en mode ternary, comment il calcule le proba_long ?
+
+
+T B25 model global only 2024–12–31: model-factory-20260821195750-544a47
+    - entrainnement: encours
+    - predit
+    - backtest 2025-2026
+T B25 model global + per symbol 2024–12–31: model-factory-20260821200038-929708
+    - entrainnement: encours
+    - predit
+    - backtest 2025-2026
+T B25 model global + per sector regression 2024–12–31: model-factory-20260821200226-0eb747
+    - entrainnement: encours
+    - predit
+    - backtest 2025-2026
+T B25 model global + per sector ternary 2024–12–31: model-factory-20260821200330-d92160
+    - entrainnement: encours
+    - predit
+    - backtest 2025-2026
