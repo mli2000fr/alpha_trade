@@ -1158,12 +1158,43 @@ def main(args: list[str] | None = None) -> None:
                     )
                 )
                 if _dates_with_data == 0:
-                    LOGGER.error(
-                        "predict ALL %d DATES SKIPPED — 0 predictions total. "
-                        "model_predictions table will be EMPTY. "
-                        "Verify: batch_id=%s artifacts_dir=%s has champions for symbol_source=%s",
-                        _dates_total, _batch_id, opts.artifacts_dir, opts.symbol_source,
-                    )
+                    # Filet de sécurité : un batch rank-driven (modèle GLOBAL, ex. __GLOBAL__ ou
+                    # secteurs) peut avoir été détecté per_symbol par erreur (entraînement sans
+                    # --training-mode per_sector). Si global_rank_history contient des rangs pour
+                    # ce batch, on retombe automatiquement sur la synthèse au lieu de sortir 0 rows.
+                    _has_ranks = _batch_id is not None
+                    if _has_ranks:
+                        from modelFactory.synthesize_global_rank_predictions import synthesize
+                        try:
+                            _synth_fb = synthesize(
+                                _batch_id,
+                                best_h=_resolve_synth_best_h(opts, _batch_id),
+                            )
+                            _ranks_now = _load_synth_frame_for_range(engine, _batch_id, prediction_dates)
+                            if not _ranks_now.empty:
+                                LOGGER.warning(
+                                    "predict 0 per-symbol rows MAIS rangs globaux présents → "
+                                    "fallback synthèse batch=%s (status=%s rows=%d)",
+                                    _batch_id, _synth_fb.get("status"), len(_ranks_now),
+                                )
+                                preds = _ranks_now
+                                _dates_with_data = 1
+                        except Exception as _fb_exc:  # noqa: BLE001
+                            LOGGER.error(
+                                "predict fallback synthèse échoué batch=%s: %s", _batch_id, _fb_exc,
+                            )
+                    if _dates_with_data == 0:
+                        LOGGER.error(
+                            "predict ALL %d DATES SKIPPED — 0 predictions total. "
+                            "model_predictions table will be EMPTY. "
+                            "Verify: batch_id=%s artifacts_dir=%s has champions for symbol_source=%s",
+                            _dates_total, _batch_id, opts.artifacts_dir, opts.symbol_source,
+                        )
+                    else:
+                        LOGGER.info(
+                            "predict historical done (fallback synthèse): %d total rows",
+                            len(preds),
+                        )
                 else:
                     LOGGER.info(
                         "predict historical done: %d/%d dates with predictions, %d total rows",
