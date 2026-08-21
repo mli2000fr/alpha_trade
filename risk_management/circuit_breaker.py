@@ -93,6 +93,65 @@ class CircuitBreaker:
         self._normal_streak: int = 0
         self._equity_prev: float = 0.0
         self._equity_peak_window: list[float] = []
+        # E23 — machine d'état adaptative (b1/b2/b3/b4/b4a), OFF par défaut (b0).
+        self._episode: object | None = None
+        self._regime_today: str | None = None
+        self._alloc_today: float = 1.0
+
+    # ------------------------------------------------------------------
+    # E23 — politiques adaptatives (miroir EXACT du backtest, logique partagée)
+    # ------------------------------------------------------------------
+    @property
+    def is_adaptive(self) -> bool:
+        """True si une politique adaptative (b1-b4) est active (≠ b0)."""
+        return str(getattr(self._cfg, "policy", "b0") or "b0").strip().lower() != "b0"
+
+    def _ensure_episode(self) -> object:
+        if self._episode is None:
+            from backtesting.adaptive_breaker import BreakerEpisode
+            self._episode = BreakerEpisode()
+        return self._episode
+
+    def set_spy_regime(self, trade_date) -> None:
+        """Enregistre le régime SPY du jour (réévalué chaque jour)."""
+        self._regime_today = None
+        regime_map = getattr(self._cfg, "spy_regime_map", None)
+        if regime_map:
+            try:
+                import pandas as pd
+                self._regime_today = regime_map.get(pd.Timestamp(trade_date).date())
+            except Exception:  # noqa: BLE001 — best-effort
+                self._regime_today = None
+
+    def update_adaptive(self, equity: float, peak_equity: float) -> bool:
+        """Pilote la machine d'état adaptative — miroir du simulateur backtest.
+
+        À appeler CHAQUE jour (AVANT ``is_active()``/``allocation_scale()``)
+        avec l'equity courante et le peak roulant (high-watermark). Utilise la
+        MÊME logique pure que le backtest (``backtesting.adaptive_breaker``) :
+        mêmes seuils, mêmes règles PIT, même régime SPY. B0 n'est PAS concerné.
+        """
+        from backtesting.adaptive_breaker import allocate, trip_or_recover
+        policy = str(getattr(self._cfg, "policy", "b0") or "b0").strip().lower()
+        episode = self._ensure_episode()
+        self._was_tripped = self._tripped
+        trip_or_recover(
+            episode, float(equity), float(peak_equity),
+            policy=policy,
+            max_dd_pct=abs(float(self._cfg.max_portfolio_drawdown_pct)),
+            recovery_pct=float(self._cfg.recovery_pct),
+        )
+        self._tripped = bool(episode.tripped)
+        degraded = float(max(0.0, min(1.0, float(self._cfg.degraded_entry_allocation_pct))))
+        episode.allocation = allocate(
+            policy, episode, float(equity),
+            regime=self._regime_today,
+            recovery_pct=float(self._cfg.recovery_pct),
+            degraded=degraded,
+            ramp_max=float(self._cfg.regime_ramp_up_max_pct),
+        )
+        self._alloc_today = float(episode.allocation)
+        return not self._tripped
 
     # ------------------------------------------------------------------
     # Pic de référence roulant (optionnel)
@@ -113,13 +172,17 @@ class CircuitBreaker:
             return hwm
         return float(max(self._peak_window))
 
-    def allocation_scale(self, entry_mode: str | None = None) -> float:
+    def allocation_scale(self, entry_mode: str | None = None, side: str | None = None) -> float:
         """Fraction d'allocation autorisée : 1.0 si normal, dégradé si trippé.
 
         Si le ramp-up régimed est actif, l'allocation dégradée de base est
         augmentée de ``regime_ramp_up_pct_per_day`` par jour où le régime
         est ``normal`` ET l'equity progresse, plafonnée à ``regime_ramp_up_max_pct``.
         """
+        _ = side  # réservé pour un scaling différencié long/short
+        if self.is_adaptive:
+            # Machine d'état pilotée par update_adaptive() ; alloc min > 0 -> scale.
+            return 1.0 if not self._tripped else float(self._alloc_today)
         if not self._tripped:
             return 1.0
         base = float(max(0.0, min(1.0, float(self._cfg.degraded_entry_allocation_pct))))
@@ -133,20 +196,15 @@ class CircuitBreaker:
     def update_regime_streak(self, entry_mode: str | None, current_equity: float = 0.0) -> None:
         """Met à jour le compteur de jours de recovery.
 
-        Le streak n'est incrémenté que si :
-        - le breaker est trippé,
-        - le régime est ``normal``,
-        - l'equity du jour établit un nouveau pic sur la fenêtre glissante
-          des N derniers jours (``regime_ramp_up_peak_window_days``).
-
-        Cela rend le ramp-up résilient aux jours de stagnation : le streak
-        progresse dès que l'equity dépasse le meilleur niveau récent, sans
-        exiger une hausse quotidienne stricte.
-
-        Si le régime est normal mais que l'equity ne fait pas de nouveau pic,
-        le streak reste inchangé (gelé, pas de reset).
-        Tout régime non-normal remet le compteur à zéro.
+        E23 (b1-b4) : hystérésis du régime SPY journalier (3 séances favorables
+        pour augmenter, reset immédiat si défavorable) — miroir du backtest.
         """
+        if self.is_adaptive:
+            from backtesting.adaptive_breaker import is_favorable, update_streak
+            episode = self._ensure_episode()
+            if self._tripped:
+                update_streak(episode, is_favorable(self._regime_today))
+            return
         if not self._cfg.regime_ramp_up_enabled or not self._tripped:
             self._normal_streak = 0
             self._equity_peak_window.clear()
@@ -181,12 +239,12 @@ class CircuitBreaker:
     def is_active(self) -> bool:
         """Retourne True si un circuit breaker est déclenché ET qu'il n'y a pas de mode dégradé.
 
-        En mode dégradé (``degraded_entry_allocation_pct > 0``), le breaker
-        ne bloque jamais l'executor, mais bascule ``_tripped = True`` pour
-        activer l'allocation réduite. Une fois trippé, il ne revient à
-        ``False`` que si l'equity remonte au-dessus de
-        ``recovery_pct * high_watermark`` (hystérésis de réarmement).
+        E23 (b1-b4) : ne bloque JAMAIS (allocation minimale > 0, comme le
+        backtest) — l'état est piloté par ``update_adaptive()`` et le sizing
+        passe par ``allocation_scale()``.
         """
+        if self.is_adaptive:
+            return False
         status = self.status()
         degraded = float(self._cfg.degraded_entry_allocation_pct) > 0.0
         if status.active and degraded:
@@ -213,6 +271,9 @@ class CircuitBreaker:
 
     def just_tripped(self) -> bool:
         """Retourne True si le breaker vient de se déclencher (transition)."""
+        if self.is_adaptive:
+            # miroir backtest : lecture seule, _was_tripped maintenu par update_adaptive()
+            return self._tripped and not self._was_tripped
         result = self._tripped and not self._was_tripped
         self._was_tripped = self._tripped
         return result

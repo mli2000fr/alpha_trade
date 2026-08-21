@@ -978,7 +978,11 @@ class BacktestEngine:
                     trade_day.date(), state.settled_cash, state.unsettled_cash, current_market_value,
                 )
             state.peak_equity = max(state.peak_equity, current_equity)
-            entries_allowed_by_breaker = cfg.risk_overlay.drawdown_breaker.update(
+            # E23 — régime SPY journalier pour le breaker adaptatif (réévalué chaque
+            # jour, contrairement au trailing C2 gelé à l'entrée).
+            _brk = cfg.risk_overlay.drawdown_breaker
+            _brk.set_spy_regime(trade_day)
+            entries_allowed_by_breaker = _brk.update(
                 current_equity, state.peak_equity
             )
 
@@ -1065,7 +1069,8 @@ class BacktestEngine:
 
             # Diagnostic quotidien breaker (C.5)
             if cfg.risk_overlay.drawdown_breaker.enabled:
-                _ref_peak = cfg.risk_overlay.drawdown_breaker._reference_peak(state.peak_equity)
+                _brk_diag = cfg.risk_overlay.drawdown_breaker
+                _ref_peak = _brk_diag._reference_peak(state.peak_equity)
                 state.breaker_points.append({
                     "trade_date": trade_day,
                     "equity": current_equity,
@@ -1073,8 +1078,14 @@ class BacktestEngine:
                     "dd_pct": round(((current_equity / _ref_peak) - 1.0) * 100.0, 4) if _ref_peak > 0 else None,
                     "tripped": not entries_allowed_by_breaker,
                     "allocation_scale": drawdown_allocation_scale,
-                    "normal_streak": cfg.risk_overlay.drawdown_breaker._normal_streak,
+                    "normal_streak": _brk_diag._normal_streak,
                     "entry_mode": _entry_mode,
+                    # E23 — régime SPY journalier + allocation cible + épisode.
+                    "spy_regime": _brk_diag._regime_today,
+                    "alloc_target": getattr(_brk_diag, "_alloc_today", None),
+                    "episode_peak": _brk_diag._episode.peak if _brk_diag._episode else None,
+                    "episode_trough": _brk_diag._episode.trough if _brk_diag._episode else None,
+                    "favorable_streak": _brk_diag._episode.favorable_streak if _brk_diag._episode else None,
                 })
 
             # Phase C.3 — filtre régime (benchmark).

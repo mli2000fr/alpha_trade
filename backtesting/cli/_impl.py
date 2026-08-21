@@ -1633,6 +1633,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Plafond de l'allocation après ramp-up (ex. 0.40 = 40%% max).",
     )
     run_p.add_argument(
+        "--dd-breaker-policy",
+        choices=["b0", "b1", "b2", "b3", "b4", "b4a"],
+        default="b0",
+        help="E23 : politique adaptative du drawdown breaker (b0=PROD actuel bit-a-bit, "
+             "b1=recovery depuis trough par paliers 10/25/50/75/100%%, b2=regime-aware "
+             "ramp rapide BULL/REB + lent CORR/SLIDE, b3=combined trough+regime+hysteresis). "
+             "Le seuil 15%% reste gelee; seul le RECOVERY change.",
+    )
+    run_p.add_argument(
         "--force-close-losers-on-breaker",
         action="store_true",
         default=False,
@@ -3609,6 +3618,51 @@ def _run_backtest(args: argparse.Namespace) -> None:
     if _needs_benchmark:
         benchmark_close = _load_benchmark_close(engine, start, end)
 
+    # E23 — carte des régimes SPY journaliers pour le breaker adaptatif (b1/b2/b3).
+    # Le régime est réévalué CHAQUE JOUR (contrairement au trailing C2 gelé à l'entrée),
+    # en réutilisant exactement la définition E21-v2 (SMA50/SMA200 PIT).
+    # IMPORTANT : SMA200 exige 200 clôtures AVANT la date de décision → on charge SPY
+    # avec un historique étendu (start - 400 jours calendaires) INDÉPENDANT du warm-up
+    # phase2 (~50j), sinon le régime reste NaN pendant les premiers mois du run
+    # (y compris le crash d'avril 2025).
+    _dd_policy = str(getattr(args, "dd_breaker_policy", "b0") or "b0").strip().lower()
+    _spy_regime_map: dict | None = None
+    if _dd_policy != "b0":
+        try:
+            import sqlalchemy as _sa
+            from backtesting.regime_trailing import compute_regime
+            _spy_start = pd.Timestamp(start) - pd.Timedelta(days=400)
+            with engine.connect() as _conn:
+                _spy_rows = _conn.execute(_sa.text(
+                    "SELECT `date`, COALESCE(adj_close, `close`) "
+                    "FROM stock_bars_daily WHERE symbol='SPY' "
+                    "AND data_source = :ds AND `date` BETWEEN :s AND :e ORDER BY `date`"
+                ), {"ds": "eodhd_eod", "s": _spy_start.date(), "e": end}).fetchall()
+            _spy_series = pd.Series(
+                [float(r[1]) for r in _spy_rows],
+                index=pd.to_datetime([r[0] for r in _spy_rows]),
+            )
+            _spy_series = _spy_series[~_spy_series.index.duplicated(keep="last")].sort_index()
+            _regime_series = compute_regime(_spy_series)
+            _spy_regime_map = {
+                pd.Timestamp(ts).date(): str(r)
+                for ts, r in _regime_series.items()
+                if r is not None and not (isinstance(r, float) and pd.isna(r))
+            }
+            _safe_print(
+                "   E23 dd-breaker-policy={} : carte régime SPY journalière {} dates "
+                "(historique SPY {} -> {})\n".format(
+                    _dd_policy, len(_spy_regime_map),
+                    _spy_start.date(), end,
+                )
+            )
+        except Exception as _spy_exc:  # noqa: BLE001
+            _safe_print(
+                "   ⚠️ E23 : carte régime SPY indisponible ({}) — breaker b1/b2/b3 "
+                "sans régime (fallback).\n".format(_spy_exc)
+            )
+            _spy_regime_map = None
+
     risk_overlay_cfg = RiskOverlayConfig(
         sizing=SizingConfig(
             mode=args.sizing_mode,
@@ -3649,6 +3703,9 @@ def _run_backtest(args: argparse.Namespace) -> None:
             regime_ramp_up_pct_per_day=float(args.dd_regime_ramp_up_pct_per_day),
             regime_ramp_up_max_pct=float(args.dd_regime_ramp_up_max_pct),
             regime_ramp_up_peak_window_days=int(getattr(args, "dd_regime_ramp_up_peak_window_days", 5) or 5),
+            # E23 — politique adaptative + carte régime SPY journalière.
+            policy=_dd_policy,
+            spy_regime_map=_spy_regime_map,
             force_close_on_breaker=(
                 bool(getattr(args, "force_close_on_breaker", False))
                 or bool(

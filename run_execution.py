@@ -28,7 +28,7 @@ import os
 import subprocess
 import sys
 from collections.abc import Iterable
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal, cast
 
@@ -36,7 +36,7 @@ from common.capital_presets import (
     build_risk_config_kwargs_from_preset,
     resolve_capital_preset_for_equity,
 )
-from common.config_loader import override_config_path
+from common.config_loader import load_config, override_config_path
 from common.utils import configure_root_logging
 from database.macro_indicators import persist_market_macro_snapshot_daily
 from database.run_business_summaries import emit_run_summary, persist_run_business_summary
@@ -1172,9 +1172,52 @@ def run(
         if resolved_capital_preset is not None
         else {}
     )
+    # E23 — politique breaker adaptative (OFF par défaut = b0, comportement
+    # historique intact). Activation TEST-ONLY via la variable d'environnement
+    # ALPHA_TRADE_CB_POLICY (jamais le défaut global) ; sinon config.yaml
+    # ``risk_management.policy`` ; sinon b0. Quand elle est adaptative, on
+    # construit la carte régime SPY journalière PIT (lookback 400j) — même
+    # logique que le backtest (SMA50/SMA200), injectée dans le breaker live.
+    _cb_policy = str(
+        os.environ.get("ALPHA_TRADE_CB_POLICY")
+        or ((load_config() or {}).get("risk_management") or {}).get("policy", "b0")
+        or "b0"
+    ).strip().lower()
+    _spy_regime_map: dict | None = None
+    if _cb_policy != "b0":
+        try:
+            import sqlalchemy as _sa
+            from backtesting.regime_trailing import compute_regime
+            from database.connection import get_sqlalchemy_engine as _get_engine
+            _eng = _get_engine()
+            _spy_start = datetime.now() - timedelta(days=400)
+            with _eng.connect() as _conn:
+                _spy_rows = _conn.execute(_sa.text(
+                    "SELECT `date`, COALESCE(adj_close, `close`) "
+                    "FROM stock_bars_daily WHERE symbol='SPY' "
+                    "AND data_source = :ds AND `date` >= :s ORDER BY `date`"
+                ), {"ds": "eodhd_eod", "s": _spy_start.date()}).fetchall()
+            import pandas as _pd
+            _spy_series = _pd.Series(
+                [float(r[1]) for r in _spy_rows],
+                index=_pd.to_datetime([r[0] for r in _spy_rows]),
+            )
+            _spy_series = _spy_series[~_spy_series.index.duplicated(keep="last")].sort_index()
+            _regime_series = compute_regime(_spy_series)
+            _spy_regime_map = {
+                _pd.Timestamp(ts).date(): str(r)
+                for ts, r in _regime_series.items()
+                if r is not None and not (isinstance(r, float) and _pd.isna(r))
+            }
+            print(f"[E23] breaker policy={_cb_policy} : carte régime SPY {len(_spy_regime_map)} dates")
+        except Exception as exc:  # noqa: BLE001 — best-effort, on reste sur b0 implicite
+            print(f"[E23] ⚠️ carte régime SPY indisponible ({exc}) — breaker adaptatif sans régime")
+            _spy_regime_map = None
     cb = CircuitBreaker(
         RiskConfig(
             account_equity=max(equity, 1.0),
+            policy=_cb_policy,
+            spy_regime_map=_spy_regime_map,
             max_portfolio_drawdown_pct=float(
                 preset_risk_kwargs.get(
                     "max_portfolio_drawdown_pct",

@@ -1696,7 +1696,12 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         "ticket-recherche": "ticket-recherche",
     }.get(str(options.ml_train_symbol_source or "").strip().lower(), "tradable-universe")
     ml_train_start_symbol = _normalize_optional_symbol(options.ml_train_start_symbol)
-    ml_predict_symbol_source = "tradable-universe"
+    ml_predict_symbol_source = {
+        "stock-bars-daily": "stock-bars-daily",
+        "stock_bars_daily": "stock-bars-daily",
+        "tradable-universe": "tradable-universe",
+        "ticket-recherche": "ticket-recherche",
+    }.get(str(options.ml_predict_symbol_source or "").strip().lower(), "tradable-universe")
     if step_key == "import_alpaca_assets":
         return [sys.executable, "-u", "-m", "dataIntegrityEngine.import_alpaca_assets"]
 

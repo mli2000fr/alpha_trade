@@ -71,6 +71,16 @@ class RiskConfig:
     # jours de stagnation).
     regime_ramp_up_peak_window_days: int = 5
 
+    # ── E23 — politique breaker adaptative (2026-08-21) ──
+    # "b0" = PROD historique (défaut, bit-à-bit inchangé).
+    # "b1/b2/b3/b4/b4a" = politiques adaptatives (même machine d'état, mêmes
+    # seuils, même régime SPY que le backtest). B4 = contrôleur robuste.
+    # OFF par défaut : passer à "b4" explicitement pour activer.
+    policy: str = "b0"
+    # Carte régime SPY journalière {date: str} — injectée par le moteur live
+    # (PIT, réévaluée chaque jour), jamais sérialisée en YAML.
+    spy_regime_map: dict | None = None
+
     # Concentration / diversification (Priorité 4)
     concentration_max_trades_per_symbol: int = 5
     concentration_window_calendar_days: int = 180

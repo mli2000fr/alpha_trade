@@ -30,6 +30,7 @@ from backtesting.parity import (
     DEFAULT_DIVERGENCE_THRESHOLD,
     DEFAULT_QTY_TOLERANCE_ABS,
     DEFAULT_QTY_TOLERANCE_PCT,
+    compare_risk_layers,
     run_daily_parity,
 )
 from common.utils import configure_root_logging
@@ -64,6 +65,56 @@ def _stub_replay_loader(trade_date: date, account_id: str) -> pd.DataFrame:
     return out
 
 
+def build_replay_risk_context(tag: str, trade_date: date) -> dict:
+    """Contexte risk ATTENDU d'un run backtest B4 pour une date donnée.
+
+    Lit ``drawdown_breaker_daily.csv`` de l'artefact : régime SPY, allocation
+    B4, état breaker (tripped, episode peak/trough/alloc), date du dernier
+    réarmement <= date. Couvre le gate quotidien strict (régime C2 + allocation
+    B4 + état breaker + rearm).
+    """
+    from pathlib import Path
+
+    path = Path(f"f:/projets/artifacts/backtesting/{tag}/drawdown_breaker_daily.csv")
+    if not path.exists():
+        return {}
+    df = pd.read_csv(path)
+    df["trade_date"] = pd.to_datetime(df["trade_date"])
+    target = pd.Timestamp(trade_date)
+    sub = df[df["trade_date"] <= target].copy()
+    if sub.empty:
+        return {}
+    row = sub.iloc[-1]
+    sub2 = sub.copy()
+    sub2["prev_alloc"] = sub2["allocation_scale"].shift(1).fillna(1.0)
+    re = sub2[(sub2["tripped"] == True) & (sub2["allocation_scale"] - sub2["prev_alloc"] >= 0.09)]
+    rearm_date = str(re["trade_date"].iloc[-1].date()) if len(re) else None
+
+    def _f(col):
+        v = row.get(col)
+        try:
+            f = float(v)
+            return None if f != f else f  # NaN -> None
+        except (TypeError, ValueError):
+            return None
+
+    alloc_target = _f("alloc_target")
+    if alloc_target is None:
+        alloc_target = _f("allocation_scale")
+    return {
+        "regime": str(row.get("spy_regime") or ""),
+        "trailing_policy": "c2",
+        "allocation_scale": _f("allocation_scale") or 0.0,
+        "breaker_tripped": bool(row.get("tripped")),
+        "episode_peak": _f("episode_peak"),
+        "episode_trough": _f("episode_trough"),
+        "episode_alloc": alloc_target,
+        "rearm_date": rearm_date,
+        "force_close": False,
+        "protections": {},
+    }
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     today = date.today()
     p = argparse.ArgumentParser(description="Job quotidien de parité backtest ↔ live (Sprint S9).")
@@ -81,6 +132,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-alert", action="store_true", help="Désactive l'envoi d'alerte.")
     p.add_argument("--use-stub-replay", action="store_true",
                    help="Utilise un replay stub (live recopié) — utile en CI.")
+    # E23 — gate quotidien des couches risk (régime C2 + allocation B4 + état breaker)
+    p.add_argument("--replay-tag", default="e23b4_main",
+                   help="Tag de l'artefact backtest de référence pour le contexte risk (défaut: e23b4_main).")
+    p.add_argument("--live-risk-context", default=None, metavar="PATH_JSON",
+                   help="Chemin vers le JSON du contexte risk LIVE (émit par le flux paper/live). "
+                        "Si absent, on se limite au contexte replay (référence) sans comparaison.")
+    p.add_argument("--risk-float-tol", type=float, default=1e-6,
+                   help="Tolérance flottante (minuscule) sur allocation/épisode/protections.")
     return p
 
 
@@ -118,7 +177,57 @@ def main(argv: Optional[list[str]] = None) -> int:
         report.trade_date, report.account_id, report.n_matched, report.n_divergent,
         report.divergence_score, report.live_run_id, report.replay_run_id,
     )
-    return 2 if report.divergence_score > float(args.threshold) else 0
+
+    # ── E23 — gate quotidien des couches risk (régime C2 / allocation B4 / état breaker) ──
+    exit_code = 2 if report.divergence_score > float(args.threshold) else 0
+    replay_ctx = build_replay_risk_context(str(args.replay_tag), trade_date_value)
+    if replay_ctx and args.live_risk_context:
+        from pathlib import Path as _P
+        import json as _json
+
+        live_path = _P(args.live_risk_context)
+        if live_path.exists():
+            try:
+                live_ctx = _json.loads(live_path.read_text(encoding="utf-8"))
+                divergences = compare_risk_layers(live_ctx, replay_ctx, float_tol=float(args.risk_float_tol))
+                if divergences:
+                    LOGGER.error(
+                        "[parity] RISK_LAYERS divergence (%d) | date=%s\n%s",
+                        len(divergences), trade_date_value,
+                        "\n".join(
+                            f"  {d['layer']}: live={d['live']!r} replay={d['replay']!r}"
+                            for d in divergences
+                        ),
+                    )
+                    exit_code = 2
+                    if notifier is not None:
+                        try:
+                            notifier(
+                                f"RISK_LAYERS divergence {trade_date_value}",
+                                "\n".join(
+                                    f"{d['layer']}: live={d['live']!r} replay={d['replay']!r}"
+                                    for d in divergences[:25]
+                                ),
+                            )
+                        except Exception:  # noqa: BLE001
+                            LOGGER.warning("[parity] envoi alerte risk_layers échoué", exc_info=True)
+                else:
+                    LOGGER.info("[parity] RISK_LAYERS ok | date=%s régime=%s alloc=%.4f tripped=%s",
+                                trade_date_value, replay_ctx.get("regime"),
+                                float(replay_ctx.get("allocation_scale") or 0.0),
+                                replay_ctx.get("breaker_tripped"))
+            except Exception:  # noqa: BLE001
+                LOGGER.exception("[parity] comparaison risk_layers échouée")
+        else:
+            LOGGER.warning("[parity] --live-risk-context introuvable: %s", args.live_risk_context)
+    elif replay_ctx:
+        LOGGER.info(
+            "[parity] contexte risk replay dispo (régime=%s alloc=%.4f tripped=%s) — "
+            "fournir --live-risk-context pour activer la comparaison",
+            replay_ctx.get("regime"), float(replay_ctx.get("allocation_scale") or 0.0),
+            replay_ctx.get("breaker_tripped"),
+        )
+    return exit_code
 
 
 def _default_replay_loader(trade_date: date, account_id: str) -> pd.DataFrame:
