@@ -392,6 +392,68 @@ def compare_risk_layers(
     return divergences
 
 
+PAPER_COVERAGE_ARTIFACT = "paper_coverage.json"
+
+
+def summarize_paper_coverage(
+    contexts: list[dict],
+    *,
+    min_days: int = 2,
+) -> dict[str, Any]:
+    """Résume la représentativité d'une période paper (gate GO live réel).
+
+    Critères (recommandation E23) :
+    - **obligatoire** : au moins ``min_days`` journées vertes ET au moins un
+      changement de régime entre deux jours consécutifs (sinon on ne teste que
+      le chemin nominal) ;
+    - **idéal** : au moins un jour où l'allocation < 1.0 (épisode non-nominal,
+      contrôle effectif du breaker B4) — rapporté séparément.
+
+    ``contexts`` : contexte LIVE (ou replay, à défaut) d'un jour, au format
+    ``compare_risk_layers``. Retourne un dict de synthèse avec ``representative``.
+    """
+    n = len(contexts)
+    if n == 0:
+        return {"days": 0, "regimes": [], "regime_changes": 0, "non_full_alloc_days": 0,
+                "tripped_days": 0, "min_days": min_days, "representative": False,
+                "missing": ["aucun jour enregistré"]}
+
+    regimes = []
+    allocs = []
+    tripped = 0
+    for ctx in contexts:
+        r = str(ctx.get("regime") or "")
+        if r:
+            regimes.append(r)
+        else:
+            regimes.append("<vide>")
+        try:
+            allocs.append(float(ctx.get("allocation_scale") or 0.0))
+        except (TypeError, ValueError):
+            allocs.append(0.0)
+        if bool(ctx.get("breaker_tripped")):
+            tripped += 1
+
+    distinct = sorted(set(regimes))
+    regime_changes = sum(1 for a, b in zip(regimes, regimes[1:]) if a != b)
+    non_full = sum(1 for a in allocs if a < 0.999)
+
+    missing = []
+    if n < min_days:
+        missing.append(f"{min_days - n} jour(s) vert(s) manquant(s)")
+    if regime_changes < 1:
+        missing.append("aucun changement de régime")
+    if non_full < 1:
+        missing.append("aucun épisode allocation<1.0 (idéal)")
+
+    return {
+        "days": n, "regimes": distinct, "regime_changes": regime_changes,
+        "non_full_alloc_days": non_full, "tripped_days": tripped,
+        "min_days": min_days, "missing": missing,
+        "representative": (n >= min_days) and (regime_changes >= 1),
+    }
+
+
 def write_parity_artifacts(report: ParityReport, output_dir: Path | str) -> dict[str, Path]:
     """Écrit ``parity_summary.json`` + ``rows.csv`` dans ``output_dir``.
 

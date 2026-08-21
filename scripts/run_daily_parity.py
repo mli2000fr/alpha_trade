@@ -115,6 +115,79 @@ def build_replay_risk_context(tag: str, trade_date: date) -> dict:
     }
 
 
+def _persist_risk_layer_artifacts(
+    trade_date: date,
+    live_ctx: dict,
+    replay_ctx: dict,
+    divergences: list[dict],
+) -> dict:
+    """Persiste les contextes risk (live + replay) et les divergences du jour.
+
+    Écrit sous ``artifacts/parity_runs/<date>/`` :
+    - ``risk_layers_live.json`` / ``risk_layers_replay.json`` : contexte complet
+      utilisé par le gate (régime, allocation, peak/trough, protections,
+      force-close) — permet de REJOUER une divergence a posteriori ;
+    - ``risk_layers_divergences.json`` : liste des divergences du jour ;
+    - met à jour ``paper_coverage.json`` (accumulation des journées vertes).
+
+    Retourne le dict des chemins écrits (vide si erreur d'écriture).
+    """
+    import json as _json
+
+    day_dir = Path(f"f:/projets/artifacts/parity_runs/{trade_date.isoformat()}")
+    day_dir.mkdir(parents=True, exist_ok=True)
+
+    def _safe(v):
+        try:
+            _json.dumps(v)
+            return v
+        except (TypeError, ValueError):
+            return str(v)
+
+    paths: dict[str, Path] = {}
+    try:
+        paths["live"] = day_dir / "risk_layers_live.json"
+        paths["live"].write_text(_json.dumps(_safe(live_ctx), indent=2, ensure_ascii=False), encoding="utf-8")
+        paths["replay"] = day_dir / "risk_layers_replay.json"
+        paths["replay"].write_text(_json.dumps(_safe(replay_ctx), indent=2, ensure_ascii=False), encoding="utf-8")
+        paths["divergences"] = day_dir / "risk_layers_divergences.json"
+        paths["divergences"].write_text(_json.dumps(_safe(divergences), indent=2, ensure_ascii=False), encoding="utf-8")
+
+        # Accumulation du coverage paper (jours verts uniquement).
+        from backtesting.parity import summarize_paper_coverage
+
+        cov_path = Path("f:/projets/artifacts/parity_runs/paper_coverage.json")
+        cov: dict = {}
+        if cov_path.exists():
+            try:
+                cov = _json.loads(cov_path.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001
+                cov = {}
+        green = cov.get("green_days", [])
+        if not divergences and trade_date.isoformat() not in green:
+            green.append(trade_date.isoformat())
+        contexts = cov.get("contexts", [])
+        if not divergences:
+            contexts = [c for c in contexts if c.get("date") != trade_date.isoformat()]
+            contexts.append({"date": trade_date.isoformat(), **live_ctx})
+        summary = summarize_paper_coverage([c for c in contexts if c.get("date") in green])
+        cov.update({
+            "green_days": sorted(green),
+            "contexts": contexts,
+            "summary": summary,
+        })
+        paths["coverage"] = cov_path
+        cov_path.write_text(_json.dumps(cov, indent=2, ensure_ascii=False), encoding="utf-8")
+        LOGGER.info(
+            "[parity] risk layers persistés | date=%s live=%s replay=%s divergences=%d coverage=%s",
+            trade_date, paths["live"].name, paths["replay"].name, len(divergences),
+            "représentative" if summary.get("representative") else "pas encore représentative",
+        )
+    except Exception:  # noqa: BLE001
+        LOGGER.warning("[parity] persistance risk_layers échouée", exc_info=True)
+    return {k: v for k, v in paths.items() if v.exists()}
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     today = date.today()
     p = argparse.ArgumentParser(description="Job quotidien de parité backtest ↔ live (Sprint S9).")
@@ -190,6 +263,9 @@ def main(argv: Optional[list[str]] = None) -> int:
             try:
                 live_ctx = _json.loads(live_path.read_text(encoding="utf-8"))
                 divergences = compare_risk_layers(live_ctx, replay_ctx, float_tol=float(args.risk_float_tol))
+                # Persister le contexte live/replay complet + divergences pour rejouer
+                # toute anomalie a posteriori (gate paper : nécessaire au coverage check).
+                _persist_risk_layer_artifacts(trade_date_value, live_ctx, replay_ctx, divergences)
                 if divergences:
                     LOGGER.error(
                         "[parity] RISK_LAYERS divergence (%d) | date=%s\n%s",

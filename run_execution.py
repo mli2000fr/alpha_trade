@@ -1172,10 +1172,10 @@ def run(
         if resolved_capital_preset is not None
         else {}
     )
-    # E23 — politique breaker adaptative (OFF par défaut = b0, comportement
-    # historique intact). Activation TEST-ONLY via la variable d'environnement
-    # ALPHA_TRADE_CB_POLICY (jamais le défaut global) ; sinon config.yaml
-    # ``risk_management.policy`` ; sinon b0. Quand elle est adaptative, on
+    # E23 — politique breaker adaptative (GO live PROD 2026-08-21). La policy
+    # vient de config.yaml ``risk_management.policy`` (b4 = contrôleur robuste
+    # actif) ; la variable d'environnement ALPHA_TRADE_CB_POLICY reste un
+    # OVERRIDE (test / rollback b0) ; sinon b0. Quand elle est adaptative, on
     # construit la carte régime SPY journalière PIT (lookback 400j) — même
     # logique que le backtest (SMA50/SMA200), injectée dans le breaker live.
     _cb_policy = str(

@@ -72,10 +72,11 @@ class RiskConfig:
     regime_ramp_up_peak_window_days: int = 5
 
     # ── E23 — politique breaker adaptative (2026-08-21) ──
-    # "b0" = PROD historique (défaut, bit-à-bit inchangé).
+    # "b0" = PROD historique (bit-à-bit inchangé) — ROLLBACK.
     # "b1/b2/b3/b4/b4a" = politiques adaptatives (même machine d'état, mêmes
-    # seuils, même régime SPY que le backtest). B4 = contrôleur robuste.
-    # OFF par défaut : passer à "b4" explicitement pour activer.
+    # seuils, même régime SPY que le backtest). B4 = contrôleur robuste,
+    # ACTIF EN PROD (config.yaml policy: b4, GO live 2026-08-21). Le défaut
+    # b0 ci-dessous reste le fallback sûr si la config est absente.
     policy: str = "b0"
     # Carte régime SPY journalière {date: str} — injectée par le moteur live
     # (PIT, réévaluée chaque jour), jamais sérialisée en YAML.

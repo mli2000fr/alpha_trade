@@ -332,9 +332,11 @@ risk_management:
   force_close_pct: 1.0
 
   # ── E23 — politique breaker adaptative (2026-08-21) ──
-  # "b0" = PROD historique (DÉFAUT, comportement bit-à-bit inchangé).
+  # "b0" = PROD historique (comportement bit-à-bit inchangé) — ROLLBACK.
   # "b4" = contrôleur robuste (regime rearm + equity confirmation + RELAPSE),
-  #        validé en backtest, porté en PROD mais DÉSACTIVÉ par défaut.
+  #        validé backtest + parité logique prod. ACTIF EN PROD depuis le
+  #        2026-08-21 (décision GO live). Fail-safe : sans carte régime SPY,
+  #        l'allocation est plafonnée à 10%.
   # b1/b2/b3/b4a disponibles. La carte régime SPY journalière PIT est
   # construite automatiquement à partir de stock_bars_daily quand policy != b0.
   policy: b4
