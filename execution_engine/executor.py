@@ -515,8 +515,9 @@ class ProductionExecutor:
             _exposure_mult_live = 1.0
             try:
                 from common.config_loader import load_config as _lc_live
+                _rm_live = (_lc_live().get("risk_management") or {})
                 _exposure_mult_live = float(
-                    ((_lc_live().get("risk_management") or {}).get("exposure_multiplier", 1.0)) or 1.0
+                    _rm_live.get("prod_exposure_multiplier", _rm_live.get("exposure_multiplier", 1.0)) or 1.0
                 )
             except Exception:
                 _exposure_mult_live = 1.0

@@ -2338,12 +2338,23 @@ def _apply_pipeline_defensive_defaults_from_preset(
         "max_portfolio_dd_pct" not in explicit_flags
         and float(getattr(args, "max_portfolio_dd_pct", 0.0) or 0.0) <= 0.0
     ):
-        args.max_portfolio_dd_pct = _resolve_pipeline_preset_float(
-            effective_preset,
-            "backtesting_max_portfolio_dd_pct",
-            "risk_max_drawdown_pct",
-            default=0.12,
-        )
+        # E46 : défaut backtest piloté par config.yaml risk.backtest_max_drawdown
+        # (sinon preset IHM, sinon 0.12). CLI --max-portfolio-dd-pct reste prioritaire.
+        _bt_dd_cfg = 0.0
+        try:
+            from common.config_loader import load_config as _lc_dd
+            _bt_dd_cfg = float((_lc_dd().get("risk") or {}).get("backtest_max_drawdown", 0.0) or 0.0)
+        except Exception:
+            _bt_dd_cfg = 0.0
+        if _bt_dd_cfg > 0.0:
+            args.max_portfolio_dd_pct = _bt_dd_cfg
+        else:
+            args.max_portfolio_dd_pct = _resolve_pipeline_preset_float(
+                effective_preset,
+                "backtesting_max_portfolio_dd_pct",
+                "risk_max_drawdown_pct",
+                default=0.12,
+            )
 
     if (
         "max_sector_exposure_pct" not in explicit_flags
@@ -3717,14 +3728,16 @@ def _run_backtest(args: argparse.Namespace) -> None:
             _spy_regime_map = None
 
     def _resolve_exposure_multiplier() -> float:
-        """E46 : exposure_multiplier = CLI si fourni, sinon config (risk_management.exposure_multiplier), sinon 1.0."""
+        """E46 : exposure_multiplier = CLI si fourni, sinon config
+        (risk_management.backtest_exposure_multiplier, fallback exposure_multiplier), sinon 1.0."""
         _cli = getattr(args, "exposure_multiplier", None)
         if _cli is not None:
             return float(_cli)
         try:
             from common.config_loader import load_config as _lc
             _cfg = _lc(getattr(args, "config_path", None))
-            return float((_cfg.get("risk_management") or {}).get("exposure_multiplier", 1.0) or 1.0)
+            _rm = _cfg.get("risk_management") or {}
+            return float(_rm.get("backtest_exposure_multiplier", _rm.get("exposure_multiplier", 1.0)) or 1.0)
         except Exception:
             return 1.0
 
@@ -3778,7 +3791,9 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 else bool(
                     __import__("common.config_loader", fromlist=["load_config"]).load_config()
                     .get("risk_management", {})
-                    .get("force_close_on_breaker", False)
+                    .get("backtest_force_close_on_breaker",
+                         __import__("common.config_loader", fromlist=["load_config"]).load_config()
+                         .get("risk_management", {}).get("force_close_on_breaker", False))
                 )
             ),
             force_close_pct=float(
@@ -3786,7 +3801,9 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 if getattr(args, "force_close_pct", None) is not None
                 else __import__("common.config_loader", fromlist=["load_config"]).load_config()
                     .get("risk_management", {})
-                    .get("force_close_pct", 0.50)
+                    .get("backtest_force_close_pct",
+                         __import__("common.config_loader", fromlist=["load_config"]).load_config()
+                         .get("risk_management", {}).get("force_close_pct", 0.50))
             ),
             force_close_losers_on_breaker=(
                 bool(getattr(args, "force_close_losers_on_breaker", False))

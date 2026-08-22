@@ -45,6 +45,13 @@ alpaca:
     #   mode: live
 
 risk:
+  # ── E46 (2026-08-22) : seuils distingués PROD vs BACKTEST ──
+  # prod_* = live (RiskConfig) ; backtest_* = backtests (default --max-portfolio-dd-pct).
+  prod_max_drawdown: 0.15
+  prod_max_daily_loss: 0.025
+  backtest_max_drawdown: 0.15
+  backtest_max_daily_loss: 0.025
+  # legacy fallback (si les clés _prod/_backtest sont absentes) :
   max_drawdown: 0.15
   max_daily_loss: 0.05
 
@@ -321,13 +328,14 @@ risk_management:
   # (JSON {secteur: facteur}, cf. config/p21_sector_multipliers.json).
   sizing_mode: "atr"
   # sector_multipliers_path: "config/p21_sector_multipliers.json"
-  # ── E46 (2026-08-22) : multiplicateur d'exposition PUR (freeze calibrage).
+  # ── E46 (2026-08-22) : multiplicateur d'exposition PUR — PROD vs BACKTEST ──
   # Scale le sizing des entrées LONG et SHORT SANS toucher CP-V2 / B4 / WORST_50 / 6L/2S.
-  #   1.0  = comportement PROD inchangé (rollback).
-  #   1.46 = niveau retenu (candidat PROD E46) — à activer explicitement.
+  #   1.0  = comportement inchangé (rollback).
+  #   1.46 = niveau retenu E46.
   #   1.69 = profil agressif non promu (candidat futur).
-  # Backtest : lu par défaut ; --exposure-multiplier <CLI> surcharge la config.
-  exposure_multiplier: 1.46
+  # prod_* = live (executor) ; backtest_* = backtest (--exposure-multiplier CLI surcharge).
+  prod_exposure_multiplier: 1.46
+  backtest_exposure_multiplier: 1.46
   trailing_stop:
     enabled: false
     mode: dynamic_atr            # fixed | dynamic_atr
@@ -349,8 +357,14 @@ risk_management:
   # perdantes quand le drawdown atteint max_portfolio_drawdown_pct.
   # force_close_on_breaker: true  = active la liquidation
   # force_close_pct: 0.50         = fraction des positions liquidées
-  force_close_on_breaker: true
-  force_close_pct: 0.5
+  # Force-close sur circuit breaker (PROD vs BACKTEST).
+  prod_force_close_on_breaker: true
+  prod_force_close_pct: 0.5
+  backtest_force_close_on_breaker: true
+  backtest_force_close_pct: 0.5
+  # legacy fallback :
+  # force_close_on_breaker: true
+  # force_close_pct: 0.5
 
   # ── E23 — politique breaker adaptative (2026-08-21) ──
   # "b0" = PROD historique (comportement bit-à-bit inchangé) — ROLLBACK.

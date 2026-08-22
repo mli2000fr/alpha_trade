@@ -77,12 +77,20 @@ Sharpe / Sortino / PF restent **constants** à travers 1.00→1.46→1.69 dans C
 > - **1.69 = profil agressif NON promu** — documenté, candidat futur (re-calibration uniquement sur données réellement indépendantes ou changement majeur modèle/univers).
 > - **B4 reste à −15 %** ; **WORST_50 inchangé** ; **CP-V2 inchangé** ; **6L/2S inchangé**.
 
-## Paramétrage config.yaml (implémenté backtest + live)
+## Paramétrage config.yaml — SPLIT PROD vs BACKTEST (implémenté)
 
-- Nouvelle clé : `config.yaml` → `risk_management.exposure_multiplier` (défaut **1.0** = aucun changement de comportement).
-- **Backtest** : lu par défaut ; `--exposure-multiplier <CLI>` surcharge la config.
-- **Live (executor)** : lu via `apply_live_leverage_to_targets(..., exposure_multiplier=...)` — scale les entrées LONG **et** SHORT (les shorts n'étaient pas scalés par le levier, ils le sont par l'exposure multiplier ; avec 1.0, comportement identique à avant).
-- Pour **activer 1.46** : mettre `exposure_multiplier: 1.46` dans `config.yaml` (action PROD = décision séparée, pas faite ici).
+5 paramètres désormais distingués **prod vs backtest** dans `config.yaml` (clés `_prod` pour le live, `_backtest` pour les backtests ; fallback automatique vers les clés legacy si les nouvelles sont absentes) :
+
+| Paramètre | PROD (live) | BACKTEST |
+|---|---|---|
+| Exposition | `risk_management.prod_exposure_multiplier` (1.46) | `risk_management.backtest_exposure_multiplier` (1.46) |
+| Force-close breaker | `risk_management.prod_force_close_on_breaker` (true) / `prod_force_close_pct` (0.5) | `risk_management.backtest_force_close_on_breaker` (true) / `backtest_force_close_pct` (0.5) |
+| DD max | `risk.prod_max_drawdown` (0.15) | `risk.backtest_max_drawdown` (0.15) → défaut `--max-portfolio-dd-pct` |
+| Perte journalière max | `risk.prod_max_daily_loss` (0.05) | `risk.backtest_max_daily_loss` (0.05, réservé — pas de daily-loss breaker côté backtest) |
+
+- **Backtest** : `backtesting/cli/_impl.py` lit `backtest_*` (exposure via `_resolve_exposure_multiplier` ; force-close via la config ; DD par défaut via `risk.backtest_max_drawdown`). CLI (`--exposure-multiplier`, `--max-portfolio-dd-pct`, `--force-close-on-breaker/--force-close-pct`) reste prioritaire.
+- **Live** : `execution_engine/cli.py` (force-close `prod_*`), `execution_engine/executor.py` (exposure `prod_*`), `run_execution.py` (RiskConfig `risk.prod_max_drawdown` / `prod_max_daily_loss`).
+- Les clés legacy (`exposure_multiplier`, `force_close_*`, `max_drawdown`, `max_daily_loss`) restent **documentées en fallback** — comportement identique si les clés `_prod`/`_backtest` sont absentes.
 
 ## FREEZE du calibrage exposition
 
