@@ -321,6 +321,13 @@ risk_management:
   # (JSON {secteur: facteur}, cf. config/p21_sector_multipliers.json).
   sizing_mode: "atr"
   # sector_multipliers_path: "config/p21_sector_multipliers.json"
+  # ── E46 (2026-08-22) : multiplicateur d'exposition PUR (freeze calibrage).
+  # Scale le sizing des entrées LONG et SHORT SANS toucher CP-V2 / B4 / WORST_50 / 6L/2S.
+  #   1.0  = comportement PROD inchangé (rollback).
+  #   1.46 = niveau retenu (candidat PROD E46) — à activer explicitement.
+  #   1.69 = profil agressif non promu (candidat futur).
+  # Backtest : lu par défaut ; --exposure-multiplier <CLI> surcharge la config.
+  exposure_multiplier: 1.46
   trailing_stop:
     enabled: false
     mode: dynamic_atr            # fixed | dynamic_atr

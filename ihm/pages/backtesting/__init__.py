@@ -3667,6 +3667,56 @@ def _render_report_summary(run_record: dict[str, object]) -> bool:
     )
     extra_col8.metric("Capital initial", f"${_to_float(summary.get('initial_equity')):,.0f}")
 
+    # ── E46 — Répartition LONG / SHORT (2026-08-22) ──
+    _long_trades = _to_int(summary.get("long_trades"))
+    _short_trades = _to_int(summary.get("short_trades"))
+    _total_trades = _to_int(summary.get("total_trades"))
+    _long_pnl = _to_float(summary.get("long_pnl_total"))
+    _short_pnl = _to_float(summary.get("short_pnl_total"))
+    _pnl_net = _to_float(summary.get("pnl_net")) if summary.get("pnl_net") is not None else _long_pnl + _short_pnl
+    _init_eq = _to_float(summary.get("initial_equity"))
+    if _total_trades > 0 and _short_trades == 0:
+        st.markdown("**📊 Répartition LONG / SHORT**")
+        st.info(
+            f"Run **long only** — aucun short ({_long_trades} trades longs, "
+            f"PnL {_long_pnl:+,.2f} $)."
+        )
+    elif _total_trades > 0:
+        st.markdown("**📊 Répartition LONG / SHORT**")
+
+        def _pct(num: float, den: float) -> str:
+            return f"{num / den * 100.0:.1f}%" if den else "—"
+
+        def _fmt_pnl(v: float) -> str:
+            return f"{v:+,.2f} $"
+
+        rows: list[dict[str, object]] = [
+            {"Indicateur": "Nombre de trades", "LONG": _long_trades, "SHORT": _short_trades, "Ensemble": _total_trades},
+            {"Indicateur": "Part des trades", "LONG": _pct(float(_long_trades), float(_total_trades)),
+             "SHORT": _pct(float(_short_trades), float(_total_trades)), "Ensemble": "100 %"},
+            {"Indicateur": "PnL total", "LONG": _fmt_pnl(_long_pnl), "SHORT": _fmt_pnl(_short_pnl), "Ensemble": _fmt_pnl(_pnl_net)},
+            {"Indicateur": "Part du PnL net", "LONG": _pct(_long_pnl, _pnl_net) if _pnl_net else "—",
+             "SHORT": _pct(_short_pnl, _pnl_net) if _pnl_net else "—", "Ensemble": "100 %"},
+            {"Indicateur": "PnL moyen / trade", "LONG": _fmt_pnl(_long_pnl / _long_trades) if _long_trades else "—",
+             "SHORT": _fmt_pnl(_short_pnl / _short_trades) if _short_trades else "—",
+             "Ensemble": _fmt_pnl(_pnl_net / _total_trades) if _total_trades else "—"},
+            {"Indicateur": "Win rate", "LONG": f"{_to_float(summary.get('long_win_rate_pct')):.1f}%",
+             "SHORT": f"{_to_float(summary.get('short_win_rate_pct')):.1f}%",
+             "Ensemble": f"{_to_float(summary.get('win_rate_pct')):.1f}%"},
+        ]
+        if summary.get("force_close_exits_long") is not None or summary.get("force_close_exits_short") is not None:
+            rows.append({
+                "Indicateur": "Force-close (breaker)", "LONG": _to_int(summary.get("force_close_exits_long")),
+                "SHORT": _to_int(summary.get("force_close_exits_short")), "Ensemble": _to_int(summary.get("force_close_exits")),
+            })
+        rows.append({
+            "Indicateur": "Rendement attribué*", "LONG": f"{_long_pnl / _init_eq * 100.0:+.2f}%" if _init_eq else "—",
+            "SHORT": f"{_short_pnl / _init_eq * 100.0:+.2f}%" if _init_eq else "—",
+            "Ensemble": f"{_to_float(summary.get('total_return_pct')):.2f}%",
+        })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.caption("* Rendement attribué = PnL / capital initial (approximation — le rendement exact dépend du timing/exposition).")
+
     phase2_risk_summary = _resolve_phase2_risk_summary(params, artifacts)
     if phase2_risk_summary:
         st.markdown("**🛡️ Phase 2 — régime / macro**")

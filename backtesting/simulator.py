@@ -167,6 +167,9 @@ class BacktestConfig:
     # E21-B25 (P5) : sizing equal-weight x levier (comme recherche) au lieu du
     # sizing ATR-risk du pipeline (quantity_override ignoré). Off par défaut.
     research_sizing: bool = False
+    # E46 (2026-08-22) — multiplicateur d'exposition pur (scaling du sizing).
+    # 1.0 = comportement PROD inchangé. Ne touche ni CP-V2, ni B4, ni force-close.
+    exposure_multiplier: float = 1.0
     # Phase B (refactor) — micro-structure (slippage volume-aware,
     # initial stop, gap filter, intrabar priority).
     microstructure: MicrostructureConfig = field(default_factory=MicrostructureConfig)
@@ -1785,6 +1788,10 @@ class BacktestEngine:
             else:
                 quantity = self._normalize_trade_quantity(candidate_budget / effective_unit_cost)
             quantity = self._normalize_trade_quantity(quantity)
+            # E46 — multiplicateur d'exposition (scaling pur de la quantité, PROD inchangé à 1.0).
+            # Appliqué APRÈS le sizing (ATR comme research), AVANT le cap de gross (borne = levier).
+            if cfg.exposure_multiplier != 1.0:
+                quantity = self._normalize_trade_quantity(quantity * cfg.exposure_multiplier)
             quantity_before_gross_exposure_cap = quantity
             gross_exposure_cap_binds = False
 

@@ -1001,6 +1001,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="E21-B25 (P5) : sizing equal-weight x levier (comme recherche) au lieu du sizing ATR-risk pipeline.",
     )
     run_p.add_argument(
+        "--exposure-multiplier", type=float, default=None,
+        help="E46 : multiplicateur d'exposition pur (scaling du sizing, ex 1.23 = +23%% de gross). "
+             "1.0 = comportement PROD inchangé. Par défaut : config.yaml "
+             "(risk_management.exposure_multiplier). Ne touche ni CP-V2, ni B4, ni force-close.",
+    )
+    run_p.add_argument(
         "--regime-trailing-policy", choices=["c0", "c1", "c2", "c3"], default="c2",
         help="E21-v2 : trailing par-signal selon régime SPY SMA50/SMA200 PIT "
              "(c0=7%% partout, c1=ATR partout, c2=BULL/REBOUND ATR + CORRECTION/SLIDE 7%%, c3=placebo inverse). "
@@ -3710,6 +3716,18 @@ def _run_backtest(args: argparse.Namespace) -> None:
             )
             _spy_regime_map = None
 
+    def _resolve_exposure_multiplier() -> float:
+        """E46 : exposure_multiplier = CLI si fourni, sinon config (risk_management.exposure_multiplier), sinon 1.0."""
+        _cli = getattr(args, "exposure_multiplier", None)
+        if _cli is not None:
+            return float(_cli)
+        try:
+            from common.config_loader import load_config as _lc
+            _cfg = _lc(getattr(args, "config_path", None))
+            return float((_cfg.get("risk_management") or {}).get("exposure_multiplier", 1.0) or 1.0)
+        except Exception:
+            return 1.0
+
     risk_overlay_cfg = RiskOverlayConfig(
         sizing=SizingConfig(
             mode=args.sizing_mode,
@@ -3827,6 +3845,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         watcher_replay_mode=phase5_mode,
         exit_lifecycle_replay_mode=phase7_mode,
         research_sizing=bool(getattr(args, "research_sizing", False)),
+        exposure_multiplier=_resolve_exposure_multiplier(),
     )
     # P2 (2026-06-25) : charger l'état des trackers si un fichier est fourni
     _tracker_state_path: Path | None = None

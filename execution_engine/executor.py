@@ -512,11 +512,20 @@ class ProductionExecutor:
             except Exception:
                 LOGGER.debug("Cash ledger guard indisponible.", exc_info=True)
 
+            _exposure_mult_live = 1.0
+            try:
+                from common.config_loader import load_config as _lc_live
+                _exposure_mult_live = float(
+                    ((_lc_live().get("risk_management") or {}).get("exposure_multiplier", 1.0)) or 1.0
+                )
+            except Exception:
+                _exposure_mult_live = 1.0
             targets, leverage_target_summary = apply_live_leverage_to_targets(
                 targets=targets,
                 effective_leverage=account_state.effective_leverage,
                 active=account_state.leverage_active,
                 allow_fractional_shares=self._cfg.allow_fractional_shares,
+                exposure_multiplier=_exposure_mult_live,
             )
             metrics["leverage_target_scale"] = round(float(leverage_target_summary["target_scale"]), 4)
             metrics["targets_scaled_for_leverage"] = int(leverage_target_summary["scaled_targets"])

@@ -170,6 +170,7 @@ def apply_live_leverage_to_targets(
     effective_leverage: float,
     active: bool,
     allow_fractional_shares: bool,
+    exposure_multiplier: float = 1.0,
 ) -> tuple[list[ExecutionTarget], dict[str, float | int | bool]]:
     """Scale explicitement les cibles live pour consommer le buying power levier.
 
@@ -177,8 +178,16 @@ def apply_live_leverage_to_targets(
     1.0x d'equity. Quand le levier live est actif, on doit multiplier les
     quantités / notionnels visés, sinon l'exécuteur ne fait qu'autoriser un
     budget supérieur sans jamais l'utiliser réellement.
+
+    E46 (2026-08-22) : ``exposure_multiplier`` (config.yaml
+    ``risk_management.exposure_multiplier``, défaut 1.0) scale le sizing des
+    entrées LONG **et** SHORT (multiplicatif) SANS toucher CP-V2 / B4 /
+    WORST_50 / 6L/2S. 1.0 = comportement PROD inchangé (les shorts restent
+    non-scalés par le levier, comme avant).
     """
     normalized_leverage = max(float(effective_leverage or 1.0), 1.0)
+    exp_mult = max(float(exposure_multiplier or 1.0), 0.0)
+    buy_scale = normalized_leverage * exp_mult
     gross_before = round(
         sum(max(float(getattr(target, "target_weight", 0.0) or 0.0), 0.0) for target in targets),
         6,
@@ -187,7 +196,7 @@ def apply_live_leverage_to_targets(
         sum(float(target.target_notional or (target.target_shares * target.entry_price) or 0.0) for target in targets),
         2,
     )
-    if not active or normalized_leverage <= 1.0 + 1e-12 or not targets:
+    if not targets or ((not active or normalized_leverage <= 1.0 + 1e-12) and abs(exp_mult - 1.0) < 1e-12):
         return list(targets), {
             "leverage_active": bool(active),
             "effective_leverage": round(normalized_leverage, 6),
@@ -206,25 +215,27 @@ def apply_live_leverage_to_targets(
 
     for target in targets:
         side = _normalized_target_side(target)
-        if side in {"sell", "short"} or float(target.target_shares) <= 0.0:
+        is_buy = side not in {"sell", "short"} and float(target.target_shares) > 0.0
+        scale = buy_scale if is_buy else exp_mult
+        if abs(scale - 1.0) < 1e-12:
             scaled_targets.append(target)
             gross_after += max(float(getattr(target, "target_weight", 0.0) or 0.0), 0.0)
             notional_after += float(target.target_notional or (target.target_shares * target.entry_price) or 0.0)
             continue
 
-        scaled_shares = normalize_share_quantity(float(target.target_shares) * normalized_leverage)
+        scaled_shares = normalize_share_quantity(float(target.target_shares) * scale)
         if not allow_fractional_shares and is_effectively_integer_quantity(target.target_shares):
             scaled_shares = float(int(scaled_shares))
 
         scaled_notional = scaled_shares * float(target.entry_price)
-        scaled_weight = max(float(getattr(target, "target_weight", 0.0) or 0.0), 0.0) * normalized_leverage
+        scaled_weight = max(float(getattr(target, "target_weight", 0.0) or 0.0), 0.0) * scale
         scaled_risk_budget = (
-            float(target.risk_budget_dollars) * normalized_leverage
+            float(target.risk_budget_dollars) * scale
             if target.risk_budget_dollars is not None
             else None
         )
         scaled_initial_risk = (
-            float(target.initial_risk_dollars) * normalized_leverage
+            float(target.initial_risk_dollars) * scale
             if target.initial_risk_dollars is not None
             else None
         )
@@ -277,7 +288,7 @@ def apply_live_leverage_to_targets(
     return scaled_targets, {
         "leverage_active": True,
         "effective_leverage": round(normalized_leverage, 6),
-        "target_scale": round(normalized_leverage, 6),
+        "target_scale": round(buy_scale, 6),
         "scaled_targets": int(scaled_count),
         "gross_exposure_before": round(gross_before, 6),
         "gross_exposure_after": round(gross_after, 6),
