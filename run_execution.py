@@ -1213,6 +1213,17 @@ def run(
         except Exception as exc:  # noqa: BLE001 — best-effort, on reste sur b0 implicite
             print(f"[E23] ⚠️ carte régime SPY indisponible ({exc}) — breaker adaptatif sans régime")
             _spy_regime_map = None
+
+    def _live_risk_cfg_default(cfg_key: str, legacy_key: str, dataclass_default: float) -> float:
+        """E46 : défaut live piloté par config.yaml risk.{cfg_key}, fallback legacy puis dataclass."""
+        try:
+            from common.config_loader import load_config as _lc_live
+            _risk_cfg = _lc_live().get("risk") or {}
+            val = _risk_cfg.get(cfg_key, _risk_cfg.get(legacy_key, dataclass_default))
+            return float(val or dataclass_default)
+        except Exception:
+            return float(dataclass_default)
+
     cb = CircuitBreaker(
         RiskConfig(
             account_equity=max(equity, 1.0),
@@ -1221,13 +1232,19 @@ def run(
             max_portfolio_drawdown_pct=float(
                 preset_risk_kwargs.get(
                     "max_portfolio_drawdown_pct",
-                    RiskConfig.__dataclass_fields__["max_portfolio_drawdown_pct"].default,
+                    _live_risk_cfg_default(
+                        "prod_max_drawdown", "max_drawdown",
+                        RiskConfig.__dataclass_fields__["max_portfolio_drawdown_pct"].default,
+                    ),
                 )
             ),
             max_daily_loss_pct=float(
                 preset_risk_kwargs.get(
                     "max_daily_loss_pct",
-                    RiskConfig.__dataclass_fields__["max_daily_loss_pct"].default,
+                    _live_risk_cfg_default(
+                        "prod_max_daily_loss", "max_daily_loss",
+                        RiskConfig.__dataclass_fields__["max_daily_loss_pct"].default,
+                    ),
                 )
             ),
             rolling_peak_window_days=int(

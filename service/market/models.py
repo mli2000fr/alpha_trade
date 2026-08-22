@@ -41,6 +41,7 @@ class MarketRegimeState:
     soft_exit_streak: int = 0
     hard_calm_streak: int = 0
     days_in_current_mode: int = 0
+    release_remaining_days: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -54,6 +55,7 @@ class MarketRegimeState:
             "soft_exit_streak": self.soft_exit_streak,
             "hard_calm_streak": self.hard_calm_streak,
             "days_in_current_mode": self.days_in_current_mode,
+            "release_remaining_days": self.release_remaining_days,
         }
 
     @classmethod
@@ -74,6 +76,7 @@ class MarketRegimeState:
             soft_exit_streak=int(payload.get("soft_exit_streak", 0) or 0),
             hard_calm_streak=int(payload.get("hard_calm_streak", 0) or 0),
             days_in_current_mode=int(payload.get("days_in_current_mode", 0) or 0),
+            release_remaining_days=int(payload.get("release_remaining_days", 0) or 0),
         )
 
 
@@ -96,6 +99,9 @@ class MarketRegimeSnapshot:
     max_position_weight: float | None = None
     max_sector_weight: float | None = None
     max_gross_exposure: float | None = None
+    # CP-V2 — budgets par side pendant capital_preservation
+    max_long_exposure: float | None = None
+    max_short_exposure: float | None = None
 
     blocked_sectors: tuple[str, ...] = ()
     blocked_symbols: tuple[str, ...] = ()
@@ -184,6 +190,8 @@ class MarketRegimeSnapshot:
             "max_position_weight": self.max_position_weight,
             "max_sector_weight": self.max_sector_weight,
             "max_gross_exposure": self.max_gross_exposure,
+            "max_long_exposure": self.max_long_exposure,
+            "max_short_exposure": self.max_short_exposure,
             "blocked_sectors": list(self.blocked_sectors),
             "blocked_symbols": list(self.blocked_symbols),
             "block_high_beta": self.block_high_beta,

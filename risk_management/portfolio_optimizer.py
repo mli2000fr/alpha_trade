@@ -402,6 +402,9 @@ class PortfolioOptimizer:
     max_gross_exposure: float = 1.0
     max_net_exposure: float = 0.30
     max_position_weight: float = 0.10
+    # CP-V2 — budgets par side (actifs seulement si non-None)
+    max_long_exposure: float | None = None
+    max_short_exposure: float | None = None
     no_trade_band: NoTradeBand = field(default_factory=NoTradeBand)
     turnover_costs: TurnoverCosts = field(default_factory=TurnoverCosts)
 
@@ -445,6 +448,8 @@ class PortfolioOptimizer:
         portfolio: dict[str, dict[str, Any]] = {}
         total_gross = 0.0
         total_net = 0.0
+        total_long_gross = 0.0
+        total_short_gross = 0.0
 
         for h in holdings:
             weight = h.signed_notional / account_equity if account_equity > 0 else 0.0
@@ -462,6 +467,10 @@ class PortfolioOptimizer:
             }
             total_gross += abs(h.signed_notional)
             total_net += h.signed_notional
+            if h.signed_notional >= 0:
+                total_long_gross += abs(h.signed_notional)
+            else:
+                total_short_gross += abs(h.signed_notional)
 
         audit.append(f"holdings_init: {len(holdings)} positions, gross={total_gross/account_equity:.1%}, net={total_net/account_equity:.1%}")
 
@@ -546,6 +555,29 @@ class PortfolioOptimizer:
                 proposed_notional = proposed_qty * price
                 audit.append(f"reduce:{symbol} gross_exposure: {candidate.get('proposed_quantity')}→{reduced_qty}")
 
+            # CP-V2 — budget par side (réserve SHORT / cap LONG) — actif si défini
+            _side_limit = self.max_short_exposure if side == "short" else self.max_long_exposure
+            if _side_limit is not None:
+                _existing_on_side = existing_target is not None and existing_target["side"] == side
+                _side_total = total_short_gross if side == "short" else total_long_gross
+                _side_without = _side_total - (existing_notional if _existing_on_side else 0.0)
+                _side_remaining = _side_limit * account_equity - _side_without
+                _side_reason = "max_short_exposure" if side == "short" else "max_long_exposure"
+                if _side_remaining <= 0:
+                    rejected[symbol] = f"{_side_reason}_atteint"
+                    audit.append(f"reject:{symbol} {_side_reason} full side={side}")
+                    continue
+                _side_qty = math.floor(_side_remaining / price)
+                if _side_qty < 1:
+                    rejected[symbol] = f"{_side_reason}_atteint"
+                    audit.append(f"reject:{symbol} {_side_reason} qty<1")
+                    continue
+                if _side_qty < proposed_qty:
+                    reduced[symbol] = (float(_side_qty), _side_reason)
+                    proposed_qty = float(_side_qty)
+                    proposed_notional = proposed_qty * price
+                    audit.append(f"reduce:{symbol} {_side_reason}: {candidate.get('proposed_quantity')}→{_side_qty}")
+
             # Max position weight
             max_notional_by_weight = self.max_position_weight * account_equity
             if proposed_notional > max_notional_by_weight:
@@ -604,6 +636,11 @@ class PortfolioOptimizer:
             }
             total_gross = gross_without_symbol + proposed_notional
             total_net = net_without_symbol + sign * proposed_notional
+            _existing_on_side_acc = existing_target is not None and existing_target["side"] == side
+            if side == "short":
+                total_short_gross = total_short_gross - (existing_notional if _existing_on_side_acc else 0.0) + proposed_notional
+            else:
+                total_long_gross = total_long_gross - (existing_notional if _existing_on_side_acc else 0.0) + proposed_notional
             audit.append(f"accept:{symbol} side={side} qty={proposed_qty} edge={edge:.4f}")
 
         # ── 5. Calculer les trades ──────────────────────────────────────

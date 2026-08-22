@@ -377,6 +377,8 @@ def _wire_covariance_to_optimizer(
             max_gross_exposure=float(getattr(config, "max_gross_exposure", 1.0) or 1.0),
             max_net_exposure=float(getattr(config, "max_net_exposure", 0.30) or 0.30),
             max_position_weight=float(getattr(config, "max_position_weight", 0.10) or 0.10),
+            max_long_exposure=getattr(config, "max_long_exposure", None),
+            max_short_exposure=getattr(config, "max_short_exposure", None),
         )
 
         set_opt(
@@ -1356,6 +1358,22 @@ def main(args: list[str] | None = None) -> None:
     requested_account_id = None if (raw_account_id is None or raw_account_id.lower() == "default") else raw_account_id
     resolved_account_scope = raw_account_id or "default"
 
+    # ── long_only par compte (config.yaml → alpaca.accounts) ──────────
+    # Si le compte est en long-only, on force max_short_positions=0 : le blocage
+    # se fait au niveau risque (constraints.py rejette toute entrée short).
+    account_long_only = False
+    try:
+        from service.alpaca.accounts import AccountRegistry
+        _broker_account = AccountRegistry.get().resolve(requested_account_id or "default")
+        account_long_only = bool(getattr(_broker_account, "long_only", False))
+    except Exception:  # noqa: BLE001
+        account_long_only = False
+    if account_long_only:
+        LOGGER.info(
+            "Compte %s : long_only=TRUE → max_short_positions=0 (aucune nouvelle entrée short au niveau risque).",
+            requested_account_id or "default",
+        )
+
     repo = RiskRepository()
     # Mapping symbole → secteur GICS (fix : candidats ML-first sector="Unknown"
     # → max_tickers_per_sector s'appliquait sur un bucket unique et rejetait ~63%
@@ -1561,6 +1579,11 @@ def main(args: list[str] | None = None) -> None:
             } if args.target_annual_vol is not None and float(args.target_annual_vol) > 0 else {}),
             "vol_target_lookback_days": int(args.vol_target_lookback_days),
             **({"best_horizon": int(args.best_horizon)} if args.best_horizon is not None else {}),
+            **(
+                {"max_short_positions": 0, "short_selling_enabled": False}
+                if account_long_only
+                else {}
+            ),
         },
     )
 
@@ -1583,13 +1606,22 @@ def main(args: list[str] | None = None) -> None:
     except Exception:
         LOGGER.warning("Chargement de la configuration market_regimes impossible côté risk_management.", exc_info=True)
 
-    from risk_management.regime_apply import apply_snapshot, apply_structural_market_guards, apply_transition
+    from risk_management.regime_apply import (
+        apply_account_cp_policy,
+        apply_snapshot,
+        apply_structural_market_guards,
+        apply_transition,
+    )
 
     config = apply_structural_market_guards(
         config,
         market_regimes_config=market_regimes_cfg,
         equity=effective_equity,
     )
+    # Ré-assert long_only APRÈS les guards structurels : aucun chemin ne doit
+    # réactiver les shorts pour un compte configuré long-only.
+    if account_long_only:
+        config = config.with_overrides(max_short_positions=0, short_selling_enabled=False)
     regime_snapshot = _resolve_market_regime_snapshot(trade_date, effective_equity, repo)
     regime_snapshot_payload = _serialize_market_regime_snapshot(regime_snapshot)
     regime_transition = _evaluate_regime_transition(regime_snapshot)
@@ -1602,6 +1634,11 @@ def main(args: list[str] | None = None) -> None:
 
         config = apply_snapshot(config, regime_snapshot)
     config = apply_transition(config, regime_transition)
+    # Politique CP par type de compte (variante B, E42) : un compte long-only
+    # n'a pas de sleeve short → on retire les budgets par side CP-V2 (cap LONG /
+    # réserve SHORT), on garde la release J+6 + gross 0.65. Comptes short-capables
+    # inchangés (CP-V2 complet).
+    config = apply_account_cp_policy(config, account_long_only=account_long_only)
     # ── Section 17 Point 8 : construire le plan de transition si destructif ──
     transition_plan = None
     if (

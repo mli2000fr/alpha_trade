@@ -829,6 +829,29 @@ def _build_live_risk_guard_banner_payload(options: PipelineLaunchOptions) -> tup
     )
 
 
+def _build_long_only_banner_payload(options: PipelineLaunchOptions) -> tuple[str, str] | None:
+    """Bandeau long_only du compte actif (config.yaml → alpaca.accounts)."""
+    account_id = str(options.account_id or "default")
+    long_only = False
+    try:
+        from service.alpaca.accounts import AccountRegistry
+        acct = AccountRegistry.get().resolve(account_id)
+        long_only = bool(getattr(acct, "long_only", False))
+    except Exception:  # noqa: BLE001
+        return None
+    if long_only:
+        return (
+            "warning",
+            f"🔒 **MODE LONG-ONLY ACTIF** — le compte `{account_id}` est en `long_only = true` : "
+            "aucune nouvelle entrée short (bloqué au niveau risque, `max_short_positions = 0`).",
+        )
+    return (
+        "info",
+        f"ℹ️ **MODE LONG+SHORT** — le compte `{account_id}` est en `long_only = false` : "
+        "les entrées long **et** short sont autorisées.",
+    )
+
+
 def _build_pipeline_scope_alert_lines() -> tuple[str, str]:
     return (
         "⚠️ Les étapes **3→10** recalculent des données globales partagées entre comptes.",
@@ -852,6 +875,10 @@ def _render_execution_mode_banner(options: PipelineLaunchOptions) -> None:
         detected_equity = None
     severity, message = _build_execution_mode_banner_payload(options, detected_broker_mode=detected_mode)
     getattr(st, severity)(message)
+    long_only_banner = _build_long_only_banner_payload(options)
+    if long_only_banner is not None:
+        lo_severity, lo_message = long_only_banner
+        getattr(st, lo_severity)(lo_message)
     capital_preset_banner = _build_capital_preset_banner_payload(
         selected_capital_preset,
         detected_preset_key=detected_capital_preset,

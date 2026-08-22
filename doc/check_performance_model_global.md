@@ -233,6 +233,55 @@ Le GO fort n'est **pas un artefact du proxy TOP8 long** : le même test rejoué 
 
 ---
 
+## 8bis. E32 — Audit drawdown / force-close B4 (**exécuté, audit causal — aucune règle modifiée**)
+
+**Question** (spec user) : au moment où B4 trippe, **liquider les positions ouvertes protège-t-il réellement**, ou coupe-t-on des positions qui auraient récupéré ? Audit causal KEEP vs LIQUIDATE, sans toucher au code de décision (`scripts/e32_b4_trip_attribution.py`).
+
+**Méthode** : rejeu B25 6L/2S 2018-2026 ; détection des **épisodes de drawdown ≥ 15 %** (pic → trip → trough) ; pour chaque épisode, snapshot des positions ouvertes **au trip** (spéc user) **et au pic local** (début du drawdown, plus informatif) ; chaque position rejouée en **KEEP** (lifecycle normal : trailing/TP/stop/time stop précalculés) vs **LIQUIDATE** (sortie immédiate au prix du jour, coûts inclus) ; Δ = KEEP − LIQ ; horizons J+1/5/10/20 ; concentration top-2/5/10 sur le DD.
+
+**Résultat — 1 seul épisode ≥ 15 % : le bear 2022** (pic 2021-03-15 → trip 2022-01-05 → trough 2022-11-28, dd 26 %). ⚠️ **Ni 2020 ni avril 2025 ne déclenchent B4** dans ce replay (shorts 6L/2S + B4 les absorbent, DD < 15 %) → **pas de cas V-recovery disponible** pour comparer.
+
+**Au TRIP (19 positions)** : PnL trip −5 189 $ · KEEP −6 470 $ · LIQ −5 222 $ · **Δ = −1 247 $** (LIQ légèrement mieux) ; rec 4/19, TP 2, stop 17, BE@J20 4/19. → Le gros du DD (5,2 k$ des 27,8 k$) est **déjà réalisé** par les stops : **liquider au trip est trop tardif**.
+
+**Au PIC local (52 positions, début du drawdown)** : PnL au pic −1 915 $ · KEEP final **−9 831 $** · LIQ@pic **−1 953 $** · **Δ = −7 878 $** (LIQ nettement mieux) ; rec 8/52, TP 2, stop 50, BE@J20 8/52. → Liquider **au début du drawdown** aurait évité ~7,9 k$ de pertes.
+
+**Horizons (bear prolongé)** : J+1 89 % encore en perte · J+5 95 % · J+20 **79 % encore en perte, BE@J20 21 %** → **pas de recovery** → pas de coût d'opportunité à liquider.
+
+**Concentration au trip** : top-2 = 35 % des pertes (RVLV −1 198 $, REXR −644 $), top-5 = 59 %, top-10 = 87 %. **RVLV apparaît 3× dans le top-10 (cluster multi-positions)** → un **cap de concentration par symbole** est un levier distinct du force-close global.
+
+**Verdict (règle préfixée user)** :
+- Liquider **au TRIP 15 % est trop tardif** (DD déjà réalisé, Δ marginal −1,2 k$) ;
+- Liquider **au début du drawdown protège nettement** (Δ −7,9 k$) avec **zéro coût de recovery** (bear prolongé) → **une force-close (ou liquidation partielle) déclenchée au début du drawdown mérite un test moteur** ;
+- le **cluster RVLV** suggère d'ajouter en parallèle un **cap de concentration par symbole** ;
+- ⚠️ **portée limitée** : un seul épisode (2022), pas de V-recovery pour vérifier le cas où KEEP récupère.
+
+---
+
+## 8ter. E33 — Concentration Risk Control (**exécuté, gate OK pour un cap modéré**)
+
+E32 a montré que le bear 2022 commençait **avant** le trip B4 et qu'une partie des pertes venait de positions concentrées (RVLV ×3). Avant tout force-close, on teste des **caps de concentration** (mêmes signaux, mêmes C2+B4, mêmes coûts, même lifecycle — `scripts/e33_concentration_cap.py`).
+
+**Résultat (full 2018-2026)** :
+
+| variant | ret | Sharpe | MaxDD | worst6 | PF | maxSym |
+|---|---|---|---|---|---|---|
+| V0 baseline | +108.6% | 0.55 | −26.0% | −18.8% | 1.14 | **19 ⚠️** |
+| V1 max2/sym | +72.9% | 0.44 | −32.4% | −22.9% | 1.11 | 2 |
+| V2 max3/sym | +95.9% | 0.52 | −26.5% | −17.3% | 1.14 | 3 |
+| V3 max5/sym | +97.0% | 0.53 | −26.9% | −18.1% | 1.13 | 5 |
+| **V4 max3/sym + secteur 50 %** | **+98.7 %** | **0.53** | −26.5 % | **−17.3 %** | **1.15** | 3 |
+
+**Gate (spec user)** : **V4 (max 3/sym + secteur 50 %) → GATE OK** — worst6 **+1.5 pp**, rendement **−9.1 %** (≤ 10 %), Sharpe −0.02, PF +0.01. V1 (max2) KO (−33 % rendement, MaxDD pire) ; V2/V3 KO (−11.7 %/−10.7 %).
+
+**Lecture honnête** :
+1. **Concentration du replay extrême (maxSym=19)** — en partie un **artefact du proxy TOP8-by-rank** (la prod a `concentration_max_trades_per_symbol=5`). Un cap est une **hygiène** utile.
+2. **⚠️ Les caps ne réduisent PAS le MaxDD** (≈ −26 % pour tous) : le bear 2022 a frappé **tout le livre** → **la concentration n'est pas le moteur principal du drawdown** (le MaxDD est le prix de l'alpha momentum).
+3. **La concentration est un moteur de rendement** : la restreindre trop (max1/2) coûte cher — les top-noms répétés sont la source de l'alpha.
+
+**Conclusion E33** : cap modéré (3/sym + secteur 50 %) **recommandable comme règle d'hygiène production** (safe, gate OK, worst6 amélioré), mais il ne résout pas le MaxDD → pour le bear 2022 généralisé, le levier est l'**E34 (réduction partielle d'exposition pré-breaker)**, pas la concentration ni un force-close global.
+
+---
+
 ## 9. Limites et mises en garde
 
 1. **Rank pur OOS négatif (Test A–D)** : le seul vrai test hors-échantillon du RANK est mauvais (2026 IC −0.042). Ne pas conclure « le rank marche » sur le seul agrégat 2018-2025.

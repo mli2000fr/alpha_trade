@@ -31,6 +31,7 @@ class BrokerAccount:
     api_key: str
     secret_key: str
     mode: str = "paper"  # paper | live
+    long_only: bool = False
 
     def __post_init__(self) -> None:
         if not self.api_key or not self.secret_key:
@@ -154,6 +155,7 @@ class AccountRegistry:
                     api_key=api_key,
                     secret_key=secret_key,
                     mode=str(entry.get("mode", "paper")),
+                    long_only=bool(entry.get("long_only", False)),
                 )
             except ValueError as exc:
                 LOGGER.warning("Compte Alpaca invalide dans config.yaml : %s", exc)
@@ -178,6 +180,8 @@ class AccountRegistry:
                     continue
                 mode = os.getenv(f"ALPACA_{mid}_MODE", "paper").lower()
                 label = os.getenv(f"ALPACA_{mid}_LABEL", account_id)
+                long_only_raw = str(os.getenv(f"ALPACA_{mid}_LONG_ONLY", "") or "").strip().lower()
+                long_only = long_only_raw in {"1", "true", "yes", "on"}
                 try:
                     self._accounts[account_id] = BrokerAccount(
                         account_id=account_id,
@@ -185,6 +189,7 @@ class AccountRegistry:
                         api_key=api_key,
                         secret_key=secret_key,
                         mode=mode,
+                        long_only=long_only,
                     )
                 except ValueError:
                     pass

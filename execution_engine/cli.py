@@ -246,12 +246,16 @@ def _run_execution(args: argparse.Namespace) -> None:
         force_close_on_breaker=bool(
             __import__("common.config_loader", fromlist=["load_config"]).load_config()
             .get("risk_management", {})
-            .get("force_close_on_breaker", False)
+            .get("prod_force_close_on_breaker",
+                 __import__("common.config_loader", fromlist=["load_config"]).load_config()
+                 .get("risk_management", {}).get("force_close_on_breaker", False))
         ),
         force_close_pct=float(
             __import__("common.config_loader", fromlist=["load_config"]).load_config()
             .get("risk_management", {})
-            .get("force_close_pct", 0.50)
+            .get("prod_force_close_pct",
+                 __import__("common.config_loader", fromlist=["load_config"]).load_config()
+                 .get("risk_management", {}).get("force_close_pct", 0.50))
         ),
     )
 

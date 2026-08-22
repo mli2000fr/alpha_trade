@@ -25,16 +25,19 @@ alpaca:
       api_key: "${ALPACA_API_KEY}"
       secret_key: "${ALPACA_SECRET_KEY}"
       mode: paper
+      long_only: false
     - id: test1
       label: "Compte test 1 (paper)"
       api_key: "${ALPACA_KEY_CPT_1}"
       secret_key: "${ALPACA_SECRET_CPT_1}"
       mode: paper
+      long_only: true
     - id: test2
       label: "Compte test 2 (paper)"
       api_key: "${ALPACA_KEY_CPT_2}"
       secret_key: "${ALPACA_SECRET_CPT_2}"
       mode: paper
+      long_only: false
     # - id: live1
     #   label: "Compte live"
     #   api_key: "${ALPACA_LIVE1_API_KEY}"
@@ -42,6 +45,13 @@ alpaca:
     #   mode: live
 
 risk:
+  # ── E46 (2026-08-22) : seuils distingués PROD vs BACKTEST ──
+  # prod_* = live (RiskConfig) ; backtest_* = backtests (default --max-portfolio-dd-pct).
+  prod_max_drawdown: 0.15
+  prod_max_daily_loss: 0.025
+  backtest_max_drawdown: 0.15
+  backtest_max_daily_loss: 0.025
+  # legacy fallback (si les clés _prod/_backtest sont absentes) :
   max_drawdown: 0.15
   max_daily_loss: 0.05
 
@@ -141,10 +151,10 @@ market_regimes:
     enter_soft_signals_required: 1
     enter_confirm_days: 2
     exit_soft_signals_max: 0
-    exit_confirm_days: 3
-    min_hold_days_defensive: 5
+    exit_confirm_days: 1
+    min_hold_days_defensive: 1
     hard_trigger_immediate: true
-    hard_exit_confirm_days: 2
+    hard_exit_confirm_days: 1
     gate_soft_constraints_on_confirmed_entry: true
 
   vix:
@@ -181,6 +191,17 @@ market_regimes:
     high_threshold: 30.0
 
   capital_preservation_max_gross_exposure: 0.65
+
+  # ── CP-V2 (2026-08-22) — capital_preservation side-aware + release fixe ──
+  # policy: prod_legacy | cp_v2.
+  # cp_v2 : LONG plafonné à 0.40 ; SHORT = capacité normale du sleeve 2-short
+  # réservée (0.25) à l'intérieur du gross CP 0.65 ; release fixe = 5 séances
+  # après le dernier signal CP (retour normal à J+6). Hystérésis de sortie
+  # resserrée ci-dessus (exit_confirm 1j / min_hold 1 / hard_exit_confirm 1j).
+  capital_preservation_policy: cp_v2
+  capital_preservation_max_long_exposure: 0.40
+  capital_preservation_reserved_short_exposure: 0.25
+  capital_preservation_release_sessions: 5
 
   yields:
     enabled: true
@@ -307,6 +328,14 @@ risk_management:
   # (JSON {secteur: facteur}, cf. config/p21_sector_multipliers.json).
   sizing_mode: "atr"
   # sector_multipliers_path: "config/p21_sector_multipliers.json"
+  # ── E46 (2026-08-22) : multiplicateur d'exposition PUR — PROD vs BACKTEST ──
+  # Scale le sizing des entrées LONG et SHORT SANS toucher CP-V2 / B4 / WORST_50 / 6L/2S.
+  #   1.0  = comportement inchangé (rollback).
+  #   1.46 = niveau retenu E46.
+  #   1.69 = profil agressif non promu (candidat futur).
+  # prod_* = live (executor) ; backtest_* = backtest (--exposure-multiplier CLI surcharge).
+  prod_exposure_multiplier: 1.46
+  backtest_exposure_multiplier: 1.46
   trailing_stop:
     enabled: false
     mode: dynamic_atr            # fixed | dynamic_atr
@@ -328,8 +357,14 @@ risk_management:
   # perdantes quand le drawdown atteint max_portfolio_drawdown_pct.
   # force_close_on_breaker: true  = active la liquidation
   # force_close_pct: 0.50         = fraction des positions liquidées
-  force_close_on_breaker: true
-  force_close_pct: 1.0
+  # Force-close sur circuit breaker (PROD vs BACKTEST).
+  prod_force_close_on_breaker: true
+  prod_force_close_pct: 0.5
+  backtest_force_close_on_breaker: true
+  backtest_force_close_pct: 0.5
+  # legacy fallback :
+  # force_close_on_breaker: true
+  # force_close_pct: 0.5
 
   # ── E23 — politique breaker adaptative (2026-08-21) ──
   # "b0" = PROD historique (comportement bit-à-bit inchangé) — ROLLBACK.
@@ -354,7 +389,7 @@ risk_management:
   short_selling_enabled: true
 
   # Sprint 2 — Option C : short via MomentumRotationState
-  max_short_positions: 2            # nombre max de shorts simultanés
+  max_short_positions: 5            # nombre max de shorts simultanés
   short_min_score: 0                # 0 = laisser ML dominer la sélection short
   short_rotation_required: true     # exiger rotation_state.should_rotate()
   short_tp_pct: 0.08                # TP short (8% de baisse)

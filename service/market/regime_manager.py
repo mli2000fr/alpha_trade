@@ -181,6 +181,7 @@ def _state_cache_key(previous_state: MarketRegimeState | None) -> tuple[Any, ...
         previous_state.soft_exit_streak,
         previous_state.hard_calm_streak,
         previous_state.days_in_current_mode,
+        previous_state.release_remaining_days,
     )
 
 
@@ -222,6 +223,7 @@ def _transition_without_hysteresis(
         soft_exit_streak=0,
         hard_calm_streak=0 if hard_triggered else (previous_state.hard_calm_streak + 1 if previous_state and previous_state.last_hard_trigger_at else 0),
         days_in_current_mode=days_in_current_mode,
+        release_remaining_days=previous_state.release_remaining_days if previous_state is not None else 0,
     )
     return raw_mode, next_state, "hysteresis_disabled", days_in_current_mode
 
@@ -1019,6 +1021,31 @@ def build_snapshot(
         hard_triggered=hard_triggered,
         config=config,
     )
+    # CP-V2 — fenêtre de release post-CP (point unique, appliqué aux deux chemins d'hystérésis).
+    # Sémantique : après le dernier jour de signal CP, on MAINTIENT les restrictions CP pendant
+    # `capital_preservation_release_sessions` séances, puis retour aux règles normales. Le compteur
+    # est réarmé à chaque nouveau signal CP (raw_mode == capital_preservation).
+    _release_sessions = int(getattr(config, "capital_preservation_release_sessions", 0) or 0)
+    if _release_sessions > 0 and config.capital_preservation_policy == "cp_v2" and previous_state is not None:
+        from dataclasses import replace as _replace_state
+        if raw_mode == "capital_preservation":
+            next_state = _replace_state(next_state, release_remaining_days=_release_sessions)
+        elif mode == "normal" and previous_state.current_mode == "capital_preservation" and previous_state.release_remaining_days > 0:
+            _release_left = max(0, previous_state.release_remaining_days - 1)
+            mode = "capital_preservation"
+            transition_action = "cp_release_hold"
+            next_state = _replace_state(
+                next_state,
+                current_mode="capital_preservation",
+                previous_mode=previous_state.previous_mode,
+                entered_at=previous_state.entered_at,
+                release_remaining_days=_release_left,
+            )
+        elif mode == "capital_preservation":
+            next_state = _replace_state(
+                next_state,
+                release_remaining_days=max(0, previous_state.release_remaining_days - 1),
+            )
     _push_trace(
         decision_trace,
         source="hysteresis",
@@ -1178,15 +1205,26 @@ def build_snapshot(
 
     capital_preservation_max_gross_exposure = config.capital_preservation_max_gross_exposure
     capital_preservation_gross_exposure_triggered = False
-    if mode == "capital_preservation" and capital_preservation_max_gross_exposure is not None:
-        previous_max_gross_exposure = max_gross_exposure
-        max_gross_exposure = cast(
-            float | None,
-            _tighten_numeric_limit(max_gross_exposure, capital_preservation_max_gross_exposure),
-        )
-        capital_preservation_gross_exposure_triggered = max_gross_exposure != previous_max_gross_exposure
-        if capital_preservation_gross_exposure_triggered:
-            reasons.append("capital_preservation_max_gross_exposure")
+    # CP-V2 — budgets par side pendant capital_preservation (activés seulement si policy='cp_v2')
+    max_long_exposure: float | None = None
+    max_short_exposure: float | None = None
+    if mode == "capital_preservation":
+        if config.capital_preservation_policy == "cp_v2":
+            if config.capital_preservation_max_long_exposure is not None:
+                max_long_exposure = float(config.capital_preservation_max_long_exposure)
+                reasons.append("cp_v2_max_long_exposure")
+            if config.capital_preservation_reserved_short_exposure is not None:
+                max_short_exposure = float(config.capital_preservation_reserved_short_exposure)
+                reasons.append("cp_v2_reserved_short_exposure")
+        if capital_preservation_max_gross_exposure is not None:
+            previous_max_gross_exposure = max_gross_exposure
+            max_gross_exposure = cast(
+                float | None,
+                _tighten_numeric_limit(max_gross_exposure, capital_preservation_max_gross_exposure),
+            )
+            capital_preservation_gross_exposure_triggered = max_gross_exposure != previous_max_gross_exposure
+            if capital_preservation_gross_exposure_triggered:
+                reasons.append("capital_preservation_max_gross_exposure")
     _push_trace(
         decision_trace,
         source="capital_preservation_gross_exposure",
@@ -1220,6 +1258,8 @@ def build_snapshot(
         max_position_weight=max_position_weight,
         max_sector_weight=max_sector_weight,
         max_gross_exposure=max_gross_exposure,
+        max_long_exposure=max_long_exposure,
+        max_short_exposure=max_short_exposure,
         blocked_sectors=tuple(dict.fromkeys(blocked_sectors)),
         block_high_beta=block_high_beta,
         high_beta_threshold=high_beta_threshold,

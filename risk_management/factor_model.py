@@ -383,7 +383,7 @@ def build_factor_returns(
     if close_prices.empty:
         return None
 
-    daily_returns = close_prices.pct_change().dropna(how="all")
+    daily_returns = close_prices.ffill().pct_change(fill_method=None).dropna(how="all")
     if daily_returns.empty:
         return None
 
@@ -398,7 +398,7 @@ def build_factor_returns(
                 break
         if spy_col is None:
             spy_col = benchmark_prices.columns[0]
-        spy_returns = benchmark_prices[spy_col].pct_change().dropna()
+        spy_returns = benchmark_prices[spy_col].ffill().pct_change(fill_method=None).dropna()
         factor_data["market"] = spy_returns
     else:
         # Fallback : rendement équipondéré de l'univers

@@ -118,11 +118,14 @@ Le script d'extraction est dans _e23b4_oos_summary.py (réutilisable).
 2025 tariff	8.2%	4.8%	LONG
 Global (2018→2026)	7.60%	8.03%	SHORT
 
-
+-------------------------------------------------------------------
 todo: calibration pour model global ? les anciens calibrations sont nécessaires ?
 Calibration convaincante : B25 TOP8 C2+B4 2025→2026 = +48.0%, Sharpe 1.08, Sortino 1.59, MaxDD −21.3% vs cible e23b4_main (+34.6%/1.33/1.63/−16.7%) — même ordre de grandeur (écart expliqué : LONG-only TOP8 vs vrai 6L/2S + conviction + filtre capital_preservation). Moteur validé.
 
-
+Pire année: 2020, 2026
+Alpha fort en REBOUND (+5.42pp, TOP−BOT +6.85) et bon en BULL (+1.82pp).
+Correct en SLIDE (+1.50pp).
+Quasi nul en CORRECTION (+0.20pp).
 
 quand le batch n'a aque le model global, comment il calcule le proba_long ?
 quand le batch entréinne de model global + model per sector, le model global et le model sector seront utilsié tous les 2 pour predit, ainsi lur predit sont tous utilisés par le backtest pipeline ?
@@ -130,20 +133,23 @@ quand le batch entréinne de model global + model per symbol, le model global et
 quand le batch entréinne de model global + model per sector en mode regression, comment il calcule le proba_long ?
 quand le batch entréinne de model global + model per sector en mode ternary, comment il calcule le proba_long ?
 
-
-T B25 model global only 2024–12–31: model-factory-20260821195750-544a47
-    - entrainnement: encours
-    - predit
+T B41 model global only 2016-01-01 au 2024–12–31:
+    - entrainnement: fait
+    - predit: encours
     - backtest 2025-2026
-T B25 model global + per symbol 2024–12–31: model-factory-20260821200038-929708
-    - entrainnement: encours
-    - predit
+T B25 model global only 2016-01-01 au 2026–06–30python : model-factory-20260821195750-544a47
+    - entrainnement: fait
+    - predit: encours
     - backtest 2025-2026
-T B25 model global + per sector regression 2024–12–31: model-factory-20260821200226-0eb747
-    - entrainnement: encours
-    - predit
+T B25 model global only 2016-01-01 au 2024–12–31: model-factory-20260821195750-544a47
+    - entrainnement: fait
+    - predit: encours
     - backtest 2025-2026
-T B25 model global + per sector ternary 2024–12–31: model-factory-20260821200330-d92160
-    - entrainnement: encours
-    - predit
+T B25 model global + per symbol 2016-01-01 au 2024–12–31: model-factory-20260821200038-929708
+    - entrainnement: fait
+    - predit: encours
+    - backtest 2025-2026
+T B25 model global + per sector regression 2016-01-01 au 2024–12–31: model-factory-20260821200226-0eb747
+    - entrainnement: fait
+    - predit: encours
     - backtest 2025-2026

@@ -1001,6 +1001,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="E21-B25 (P5) : sizing equal-weight x levier (comme recherche) au lieu du sizing ATR-risk pipeline.",
     )
     run_p.add_argument(
+        "--exposure-multiplier", type=float, default=None,
+        help="E46 : multiplicateur d'exposition pur (scaling du sizing, ex 1.23 = +23%% de gross). "
+             "1.0 = comportement PROD inchangé. Par défaut : config.yaml "
+             "(risk_management.exposure_multiplier). Ne touche ni CP-V2, ni B4, ni force-close.",
+    )
+    run_p.add_argument(
         "--regime-trailing-policy", choices=["c0", "c1", "c2", "c3"], default="c2",
         help="E21-v2 : trailing par-signal selon régime SPY SMA50/SMA200 PIT "
              "(c0=7%% partout, c1=ATR partout, c2=BULL/REBOUND ATR + CORRECTION/SLIDE 7%%, c3=placebo inverse). "
@@ -1642,10 +1648,53 @@ def _build_parser() -> argparse.ArgumentParser:
              "Le seuil 15%% reste gelee; seul le RECOVERY change.",
     )
     run_p.add_argument(
+        "--research-force-close-at-dd-pct",
+        type=float,
+        default=None,
+        help="E44 RESEARCH ONLY : force-close side-aware quand DD >= ce niveau (ex 0.08). "
+             "Absent/None en PROD = désactivé. Ne modifie pas le seuil 15%% ni B4.",
+    )
+    run_p.add_argument(
+        "--research-force-close-side",
+        choices=["all", "longs"],
+        default=None,
+        help="E44 RESEARCH ONLY : side à liquider à l'événement ('all' = LONG+SHORT, "
+             "'longs' = LONG seuls, les SHORT sont conservés).",
+    )
+    run_p.add_argument(
         "--force-close-losers-on-breaker",
         action="store_true",
         default=False,
         help="E19 : quand le breaker DD trippe (seuil atteint/dépassé), coupe TOUS les symboles perdants (down en long, up en short) au lieu d'une fraction (--force-close-pct).",
+    )
+    # E45 (2026-08-22) — crash-test catastrophe au VRAI seuil −15% (B4) : overrides
+    # par run de la liquidation forcée. Sans flag : comportement config.yaml (PROD inchangé).
+    #   KEEP      : --no-force-close-on-breaker
+    #   WORST_50  : --force-close-on-breaker --force-close-pct 0.5
+    #   ALL       : --force-close-on-breaker --force-close-pct 1.0
+    # Ne modifie PAS le seuil −15% (--max-portfolio-dd-pct) ni la politique b4.
+    run_p.add_argument(
+        "--force-close-on-breaker",
+        dest="force_close_on_breaker",
+        action="store_true",
+        default=None,
+        help="E45 : force la liquidation au trip du breaker DD (−15%%). "
+             "Par défaut : config.yaml (risk_management.force_close_on_breaker). "
+             "Utiliser --no-force-close-on-breaker pour KEEP (aucune liquidation).",
+    )
+    run_p.add_argument(
+        "--no-force-close-on-breaker",
+        dest="force_close_on_breaker",
+        action="store_false",
+        default=None,
+        help="E45 : désactive la liquidation forcée au trip du breaker (KEEP).",
+    )
+    run_p.add_argument(
+        "--force-close-pct",
+        type=float,
+        default=None,
+        help="E45 : fraction des positions liquidées au trip (0.5 = pires 50%% en PnL, "
+             "1.0 = tout). Par défaut : config.yaml (risk_management.force_close_pct).",
     )
     run_p.add_argument(
         "--target-annual-vol",
@@ -2289,12 +2338,23 @@ def _apply_pipeline_defensive_defaults_from_preset(
         "max_portfolio_dd_pct" not in explicit_flags
         and float(getattr(args, "max_portfolio_dd_pct", 0.0) or 0.0) <= 0.0
     ):
-        args.max_portfolio_dd_pct = _resolve_pipeline_preset_float(
-            effective_preset,
-            "backtesting_max_portfolio_dd_pct",
-            "risk_max_drawdown_pct",
-            default=0.12,
-        )
+        # E46 : défaut backtest piloté par config.yaml risk.backtest_max_drawdown
+        # (sinon preset IHM, sinon 0.12). CLI --max-portfolio-dd-pct reste prioritaire.
+        _bt_dd_cfg = 0.0
+        try:
+            from common.config_loader import load_config as _lc_dd
+            _bt_dd_cfg = float((_lc_dd().get("risk") or {}).get("backtest_max_drawdown", 0.0) or 0.0)
+        except Exception:
+            _bt_dd_cfg = 0.0
+        if _bt_dd_cfg > 0.0:
+            args.max_portfolio_dd_pct = _bt_dd_cfg
+        else:
+            args.max_portfolio_dd_pct = _resolve_pipeline_preset_float(
+                effective_preset,
+                "backtesting_max_portfolio_dd_pct",
+                "risk_max_drawdown_pct",
+                default=0.12,
+            )
 
     if (
         "max_sector_exposure_pct" not in explicit_flags
@@ -2620,7 +2680,11 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 # P5 LONG-only : max_short_positions=0 est LE consommateur réel du
                 # blocage (constraints.py) — short_selling_enabled n'a pas de
                 # consommateur dans risk_management.
-                "max_short_positions": 0 if getattr(args, "no_shorts", False) else 2,
+                # Parité backtest/live (2026-08-22) : on ne force PLUS 2 en dur.
+                # Quand no_shorts → 0 ; sinon la clé est omise des overrides et
+                # load_risk_config lit `risk_management.max_short_positions` de
+                # config.yaml (même source que le live).
+                **({"max_short_positions": 0} if getattr(args, "no_shorts", False) else {}),
                 # P9 SHORT-only : max_long_positions=0 bloque les longs.
                 "max_long_positions": 0 if getattr(args, "no_longs", False) else None,
                 "short_min_score": 0.0,
@@ -3663,6 +3727,20 @@ def _run_backtest(args: argparse.Namespace) -> None:
             )
             _spy_regime_map = None
 
+    def _resolve_exposure_multiplier() -> float:
+        """E46 : exposure_multiplier = CLI si fourni, sinon config
+        (risk_management.backtest_exposure_multiplier, fallback exposure_multiplier), sinon 1.0."""
+        _cli = getattr(args, "exposure_multiplier", None)
+        if _cli is not None:
+            return float(_cli)
+        try:
+            from common.config_loader import load_config as _lc
+            _cfg = _lc(getattr(args, "config_path", None))
+            _rm = _cfg.get("risk_management") or {}
+            return float(_rm.get("backtest_exposure_multiplier", _rm.get("exposure_multiplier", 1.0)) or 1.0)
+        except Exception:
+            return 1.0
+
     risk_overlay_cfg = RiskOverlayConfig(
         sizing=SizingConfig(
             mode=args.sizing_mode,
@@ -3706,18 +3784,26 @@ def _run_backtest(args: argparse.Namespace) -> None:
             # E23 — politique adaptative + carte régime SPY journalière.
             policy=_dd_policy,
             spy_regime_map=_spy_regime_map,
+            # E45 — override par run (None = config.yaml). PROD inchangé sans flag.
             force_close_on_breaker=(
-                bool(getattr(args, "force_close_on_breaker", False))
-                or bool(
+                bool(getattr(args, "force_close_on_breaker", None))
+                if getattr(args, "force_close_on_breaker", None) is not None
+                else bool(
                     __import__("common.config_loader", fromlist=["load_config"]).load_config()
                     .get("risk_management", {})
-                    .get("force_close_on_breaker", False)
+                    .get("backtest_force_close_on_breaker",
+                         __import__("common.config_loader", fromlist=["load_config"]).load_config()
+                         .get("risk_management", {}).get("force_close_on_breaker", False))
                 )
             ),
             force_close_pct=float(
-                __import__("common.config_loader", fromlist=["load_config"]).load_config()
-                .get("risk_management", {})
-                .get("force_close_pct", 0.50)
+                getattr(args, "force_close_pct", None)
+                if getattr(args, "force_close_pct", None) is not None
+                else __import__("common.config_loader", fromlist=["load_config"]).load_config()
+                    .get("risk_management", {})
+                    .get("backtest_force_close_pct",
+                         __import__("common.config_loader", fromlist=["load_config"]).load_config()
+                         .get("risk_management", {}).get("force_close_pct", 0.50))
             ),
             force_close_losers_on_breaker=(
                 bool(getattr(args, "force_close_losers_on_breaker", False))
@@ -3727,6 +3813,9 @@ def _run_backtest(args: argparse.Namespace) -> None:
                     .get("force_close_losers_on_breaker", False)
                 )
             ),
+            # E44 RESEARCH ONLY — force-close side-aware à DD < 15% (None en PROD = off)
+            research_force_close_at_dd_pct=getattr(args, "research_force_close_at_dd_pct", None),
+            research_force_close_side=getattr(args, "research_force_close_side", None),
         ),
         target_annual_vol=(
             float(args.target_annual_vol) if args.target_annual_vol is not None else None
@@ -3773,6 +3862,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         watcher_replay_mode=phase5_mode,
         exit_lifecycle_replay_mode=phase7_mode,
         research_sizing=bool(getattr(args, "research_sizing", False)),
+        exposure_multiplier=_resolve_exposure_multiplier(),
     )
     # P2 (2026-06-25) : charger l'état des trackers si un fichier est fourni
     _tracker_state_path: Path | None = None

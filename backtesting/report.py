@@ -594,7 +594,7 @@ def generate_report(
         n_years = max(n_days / trading_days_per_year, 0.01)
         cagr = ((final_val / initial_equity) ** (1 / n_years) - 1) * 100 if initial_equity > 0 else 0.0
 
-        daily_returns = equity.pct_change().dropna()
+        daily_returns = equity.ffill().pct_change(fill_method=None).dropna()
         excess_returns = daily_returns - rf_daily
         sharpe = 0.0
         sortino = 0.0

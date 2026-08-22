@@ -564,6 +564,39 @@ GLOBAL_RANK_DATES_FOR_BATCH_QUERY = """
     ORDER BY date DESC
 """
 
+# ── Couverture prédictions par type de modèle (diagnostic UI, hors rapport) ──
+
+GLOBAL_RANK_COVERAGE_QUERY = """
+    SELECT MIN(date) AS min_date, MAX(date) AS max_date,
+           COUNT(DISTINCT date) AS nb_dates, COUNT(DISTINCT symbol) AS nb_symbols
+    FROM alpha_trade.global_rank_history
+    WHERE batch_id = :batch_id
+"""
+
+PRED_RUNS_FOR_BATCH_QUERY = """
+    SELECT
+        mp.run_id AS run_id,
+        r.symbol AS run_symbol,
+        COUNT(mp.prediction_date) AS n_rows,
+        COUNT(DISTINCT mp.symbol) AS nb_symbols,
+        MIN(mp.prediction_date) AS min_date,
+        MAX(mp.prediction_date) AS max_date,
+        COUNT(DISTINCT mp.prediction_date) AS nb_dates
+    FROM alpha_trade.model_predictions AS mp
+    JOIN alpha_trade.model_training_run AS r
+        ON r.run_id = mp.run_id
+    WHERE r.batch_id = :batch_id
+      AND r.status = 'completed'
+    GROUP BY mp.run_id, r.symbol
+    ORDER BY mp.run_id
+"""
+
+_GICS_SECTORS = {
+    "Communication Services", "Consumer Discretionary", "Consumer Staples",
+    "Energy", "Financials", "Health Care", "Industrials",
+    "Information Technology", "Materials", "Real Estate", "Utilities",
+}
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -992,6 +1025,187 @@ def _render_delete_batch_button(selected_batch: str, artifacts_dir: Path) -> Non
                 st.rerun()
 
 
+def _batch_trains_oracle(batch: pd.Series) -> bool:
+    """Détecte si le batch a entraîné la couche Oracle Extreme (O0)."""
+    try:
+        _meta = _json.loads(str(batch.get("metadata_json") or "")) if batch.get("metadata_json") else {}
+    except Exception:
+        _meta = {}
+    if not isinstance(_meta, dict):
+        return False
+    if _meta.get("oracle") or _meta.get("oracle_extreme"):
+        return True
+    _co = _meta.get("cli_options") or {}
+    if isinstance(_co, dict) and bool(_co.get("enable_oracle_model")):
+        return True
+    return False
+
+
+def _oracle_periods() -> list[dict[str, Any]]:
+    """Périodes des prédictions Oracle Extreme depuis les artefacts disque."""
+    odir = Path(get_model_artifacts_dir()) / "oracle"
+    out: list[dict[str, Any]] = []
+    if not odir.exists():
+        return out
+    for d in sorted(odir.glob("oracle-wf-*")):
+        det = f"artefacts/models/oracle/{d.name}"
+        pf = d / "oos_predictions.parquet"
+        if not pf.exists():
+            out.append({"Type": "🔥 Oracle extreme", "Période": "—", "Jours": "", "Symboles": "", "Détail": det})
+            continue
+        try:
+            df = pd.read_parquet(pf)
+            dc = next((c for c in ("prediction_date", "date", "entry_date", "asof_date") if c in df.columns), None)
+            if dc is None:
+                dc = next((c for c in df.columns if "date" in str(c).lower()), None)
+            if dc is None:
+                out.append({"Type": "🔥 Oracle extreme", "Période": "—", "Jours": "", "Symboles": "", "Détail": det})
+                continue
+            s = pd.to_datetime(df[dc], errors="coerce").dropna()
+            if s.empty:
+                out.append({"Type": "🔥 Oracle extreme", "Période": "—", "Jours": "", "Symboles": "", "Détail": det})
+                continue
+            syms = int(df["symbol"].nunique()) if "symbol" in df.columns else ""
+            out.append({"Type": "🔥 Oracle extreme",
+                        "Période": f"{s.min().date()} → {s.max().date()}",
+                        "Jours": int(s.nunique()), "Symboles": syms, "Détail": det})
+        except Exception:
+            out.append({"Type": "🔥 Oracle extreme", "Période": "—", "Jours": "", "Symboles": "", "Détail": det})
+    return out
+
+
+def _render_prediction_periods(batch_id: str, batch: pd.Series) -> None:
+    """Bouton « Périodes de prédictions » au-dessus du Modèle global.
+
+    Affiche, pour le batch sélectionné, les périodes où il existe des
+    prédictions selon le type de modèle entraîné : global / per-symbol /
+    per-sector / oracle extreme. Les 4 types sont optionnels, ≥1 présent.
+    Info purement diagnostique — non incluse dans le rapport téléchargé.
+    """
+    _key = f"ml_diag_pred_periods_{batch_id}"
+    if not st.button(
+        "🔍 Périodes de prédictions du batch", key=_key,
+        help="Affiche les périodes où ce batch a des prédictions (global / per-symbol / per-sector / oracle extreme).",
+    ):
+        return
+
+    def _fmt(d) -> str:
+        if d is None:
+            return "—"
+        try:
+            return str(pd.Timestamp(d).date())
+        except Exception:
+            return str(d)
+
+    summary: list[dict[str, Any]] = []
+    sector_rows: list[dict[str, Any]] = []
+
+    # ── 1. Modèle global (Global Ranking) ──
+    gr = safe_query(GLOBAL_RANK_COVERAGE_QUERY, {"batch_id": batch_id})
+    if not gr.empty and gr.iloc[0].get("min_date") is not None:
+        g = gr.iloc[0]
+        summary.append({
+            "Type": "🌐 Modèle global (Global Ranking)",
+            "Période": f"{_fmt(g['min_date'])} → {_fmt(g['max_date'])}",
+            "Jours": int(g["nb_dates"] or 0),
+            "Symboles": int(g["nb_symbols"] or 0),
+            "Détail": "global_rank_history (rangs H3→H20)",
+        })
+
+    # ── 2. model_predictions par run (synth / per-symbol / per-sector) ──
+    runs = safe_query(PRED_RUNS_FOR_BATCH_QUERY, {"batch_id": batch_id})
+    synth = None
+    sym_min: Any = None
+    sym_max: Any = None
+    sym_days = 0
+    sym_syms = 0
+    sym_n = 0
+    if not runs.empty:
+        for _, r in runs.iterrows():
+            rsym = str(r["run_symbol"] or "").strip()
+            rid = str(r["run_id"] or "")
+            dmin = pd.Timestamp(r["min_date"]) if r["min_date"] is not None else None
+            dmax = pd.Timestamp(r["max_date"]) if r["max_date"] is not None else None
+            jours = int(r["nb_dates"] or 0)
+            syms = int(r["nb_symbols"] or 0)
+            if rsym == "__GLOBAL_RANK_SYNTH__" or rid.endswith("_globalrank_synth"):
+                synth = {"Période": f"{_fmt(dmin)} → {_fmt(dmax)}", "Jours": jours, "Symboles": syms}
+            elif rsym in _GICS_SECTORS:
+                sector_rows.append({"Secteur": rsym, "Période": f"{_fmt(dmin)} → {_fmt(dmax)}",
+                                    "Jours": jours, "Symboles": syms})
+            else:
+                sym_n += 1
+                if dmin is not None and (sym_min is None or dmin < sym_min):
+                    sym_min = dmin
+                if dmax is not None and (sym_max is None or dmax > sym_max):
+                    sym_max = dmax
+                sym_days = max(sym_days, jours)
+                sym_syms += syms
+
+    if synth is not None:
+        _g = next((s for s in summary if s["Type"].startswith("🌐")), None)
+        if _g is not None:
+            _g["Détail"] = _g["Détail"] + f" + cascade synth ({synth['Jours']}j)"
+        else:
+            summary.append({"Type": "🌐 Modèle global (cascade)", "Période": synth["Période"],
+                            "Jours": synth["Jours"], "Symboles": synth["Symboles"],
+                            "Détail": f"run {batch_id}_globalrank_synth"})
+
+    if sym_n > 0:
+        summary.append({"Type": "📈 Per-symbol",
+                        "Période": f"{_fmt(sym_min)} → {_fmt(sym_max)}",
+                        "Jours": sym_days, "Symboles": sym_syms,
+                        "Détail": f"{sym_n} modèles par ticker"})
+    else:
+        summary.append({"Type": "📈 Per-symbol", "Période": "—", "Jours": "", "Symboles": "",
+                        "Détail": "non entraîné dans ce batch"})
+
+    if sector_rows:
+        s_min = min(pd.Timestamp(r["Période"].split(" → ")[0]) for r in sector_rows)
+        s_max = max(pd.Timestamp(r["Période"].split(" → ")[1]) for r in sector_rows)
+        summary.append({"Type": "🗂️ Per-sector",
+                        "Période": f"{s_min.date()} → {s_max.date()}",
+                        "Jours": max(r["Jours"] for r in sector_rows),
+                        "Symboles": sum(r["Symboles"] for r in sector_rows),
+                        "Détail": f"{len(sector_rows)} secteurs (voir détail)"})
+    else:
+        summary.append({"Type": "🗂️ Per-sector", "Période": "—", "Jours": "", "Symboles": "",
+                        "Détail": "non entraîné dans ce batch"})
+
+    # ── 3. Oracle extreme (artefacts disque) ──
+    # Uniquement si le batch a réellement entraîné la couche Oracle Extreme :
+    # sinon les artefacts sont globaux et ne concernent pas ce batch.
+    oracle_trained = _batch_trains_oracle(batch)
+    oracle_rows = _oracle_periods() if oracle_trained else []
+    if oracle_rows:
+        _valid = [o for o in oracle_rows if "→" in o["Période"] and not o["Période"].startswith(("—", "?"))]
+        if _valid:
+            o_min = min(pd.Timestamp(o["Période"].split(" → ")[0]) for o in _valid)
+            o_max = max(pd.Timestamp(o["Période"].split(" → ")[1]) for o in _valid)
+            summary.append({"Type": "🔥 Oracle extreme",
+                            "Période": f"{o_min.date()} → {o_max.date()}",
+                            "Jours": "", "Symboles": "",
+                            "Détail": f"{len(oracle_rows)} run(s) (voir détail)"})
+        else:
+            summary.append({"Type": "🔥 Oracle extreme", "Période": "—", "Jours": "", "Symboles": "",
+                            "Détail": "artefacts sans période exploitable"})
+    else:
+        summary.append({"Type": "🔥 Oracle extreme", "Période": "—", "Jours": "", "Symboles": "",
+                        "Détail": "non entraîné dans ce batch" if not oracle_trained else "aucun artefact"})
+
+    # ── Rendu ──
+    cols = ["Type", "Période", "Jours", "Symboles", "Détail"]
+    st.caption("Périodes de prédictions disponibles par type de modèle — info purement diagnostique (hors rapport).")
+    st.dataframe(pd.DataFrame(summary, columns=cols).fillna(""), use_container_width=True, hide_index=True)
+    if sector_rows:
+        with st.expander("🗂️ Détail par secteur"):
+            st.dataframe(pd.DataFrame(sector_rows, columns=["Secteur", "Période", "Jours", "Symboles"]),
+                         use_container_width=True, hide_index=True)
+    if oracle_rows:
+        with st.expander("🔥 Détail Oracle extreme (runs)"):
+            st.dataframe(pd.DataFrame(oracle_rows, columns=cols), use_container_width=True, hide_index=True)
+
+
 def _render_batch_detail(batch: pd.Series) -> None:
     """Affiche le détail complet d'un batch."""
     batch_id = str(batch["batch_id"])
@@ -1142,6 +1356,10 @@ def _render_batch_detail(batch: pd.Series) -> None:
     # ═══════════════════════════════════════════════════════════════
     # 🟢 GLOBAL MODEL — Ranking, Backtest, Champion
     # ═══════════════════════════════════════════════════════════════
+
+    # ── Bouton « Périodes de prédictions » (diagnostic UI, hors rapport) ──
+    _render_prediction_periods(batch_id, row)
+    st.markdown("")
 
     st.subheader("🔵 Modèle global — Métriques")
 

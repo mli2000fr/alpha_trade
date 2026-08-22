@@ -1,0 +1,293 @@
+database:
+  host: localhost
+  port: 3306
+  user: ${LOGIN_DB}
+  password: ${PASSWORD_DB}
+  name: alpha_trade
+alpaca:
+  accounts:
+  - id: default
+    label: Compte principal (paper)
+    api_key: ${ALPACA_API_KEY}
+    secret_key: ${ALPACA_SECRET_KEY}
+    mode: paper
+    long_only: false
+  - id: test1
+    label: Compte test 1 (paper)
+    api_key: ${ALPACA_KEY_CPT_1}
+    secret_key: ${ALPACA_SECRET_CPT_1}
+    mode: paper
+    long_only: true
+  - id: test2
+    label: Compte test 2 (paper)
+    api_key: ${ALPACA_KEY_CPT_2}
+    secret_key: ${ALPACA_SECRET_CPT_2}
+    mode: paper
+    long_only: false
+risk:
+  max_drawdown: 0.15
+  max_daily_loss: 0.05
+leverage:
+  enabled: true
+  mode: regt_swing
+  max_leverage: 2.0
+  min_equity_usd: 2000
+  require_margin_account: true
+  only_in_entry_mode: normal
+  disable_in_capital_preservation: true
+  disable_if_buying_power_field_missing: false
+  buying_power_field_priority:
+  - regt_buying_power
+  - buying_power
+  dry_run_simulated_leverage: 2.0
+  audit_log: true
+market_regimes:
+  enabled: true
+  cache_ttl_seconds: 300
+  enforce_min_notional: 155
+  allow_neutral_fallback_on_missing_macro_data: true
+  macro_pit_mode_backtest: asof_inclusive
+  macro_provider: eodhd
+  sentinel:
+    enabled: true
+    preflight_summary: true
+  hysteresis:
+    enabled: true
+    enter_soft_signals_required: 1
+    enter_confirm_days: 2
+    exit_soft_signals_max: 0
+    exit_confirm_days: 1
+    min_hold_days_defensive: 1
+    hard_trigger_immediate: true
+    hard_exit_confirm_days: 1
+    gate_soft_constraints_on_confirmed_entry: true
+  vix:
+    enabled: true
+    symbol: VIX.INDX
+    short_symbol: VIX9D.INDX
+    high_threshold: 30.0
+    inverted_curve_mode: capital_preservation
+    inverted_curve_min_spread: 1.5
+    inverted_curve_min_ratio: 1.03
+  vxn:
+    enabled: true
+    symbol: VXN.INDX
+    high_threshold: 23.0
+  vix3m:
+    enabled: true
+    symbol: VIX3M.INDX
+    backwardation_threshold: 1.0
+  move:
+    enabled: true
+    symbol: MOVE.INDX
+    high_threshold: 120.0
+  rvx:
+    enabled: false
+    symbol: RVX.INDX
+    high_threshold: 30.0
+  capital_preservation_max_gross_exposure: 0.65
+  capital_preservation_policy: cp_v2
+  capital_preservation_max_long_exposure: 0.4
+  capital_preservation_reserved_short_exposure: 0.25
+  capital_preservation_release_sessions: 5
+  yields:
+    enabled: true
+    provider: fred
+    symbol_10y: US10Y
+    fred_series_10y: DGS10
+    lookback_days: 5
+    relative_spike_threshold: 0.07
+    block_sectors:
+    - Technology
+    - Tech
+    - Growth
+    - Real Estate
+    - Consumer Cyclical
+    - Financial Services
+    block_high_beta: true
+    high_beta_threshold: 1.2
+    risk_mult: 0.85
+    soft_max_positions: 3
+    soft_max_position_weight: 0.25
+    soft_max_sector_weight: 0.3
+    soft_max_gross_exposure: 0.65
+    hard_relative_spike_threshold: 0.1
+    hard_block_sectors:
+    - Technology
+    - Tech
+    - Growth
+    - Real Estate
+    - Consumer Cyclical
+    - Financial Services
+    hard_risk_mult: 0.3
+    hard_mode_live: capital_preservation
+    hard_mode_backtest: capital_preservation
+    hard_requires_vix_high: true
+    hard_requires_sentiment_warning: false
+    hard_max_positions: 1
+    hard_max_position_weight: 0.15
+    hard_max_sector_weight: 0.2
+    hard_max_gross_exposure: 0.35
+  sentiment_circuit_breaker:
+    enabled: true
+    lookback_days: 7
+    warning_threshold: -0.2
+    critical_threshold: -0.4
+    warning_max_positions: 3
+    critical_mode_live: capital_preservation
+    critical_mode_backtest: capital_preservation
+  sector_limits:
+    enabled: true
+    max_tickers_per_sector: 2
+  earnings_shield:
+    enabled: false
+    days_before: 2
+    days_after: 2
+    mode: strict_block
+    negative_score_value: -1.0
+  buyback_blackout:
+    enabled: false
+    days_before_earnings: 14
+    ml_score_multiplier: 0.7
+  patterns:
+    tax_day:
+      enabled: false
+      start: 04-10
+      end: 04-20
+      risk_mult: 0.4
+    sept_slump:
+      enabled: false
+      start: 09-15
+      end: 10-15
+      risk_mult: 0.4
+    santa_rally:
+      enabled: false
+      start: 12-20
+      end: 12-31
+      risk_mult: 1.15
+      screener_expansion_pct: 0.1
+    january_effect:
+      enabled: false
+      start: 01-02
+      end: 01-15
+      risk_mult: 1.1
+      screener_expansion_pct: 0.1
+    institutional_opex:
+      enabled: false
+      rule: 3rd_friday
+      mode: sentiment_hardening
+      sentiment_threshold_addon: 0.2
+    month_end:
+      enabled: false
+      business_days_from_month_end: 2
+      sentiment_threshold_addon: 0.1
+fred:
+  api_key_env: KEY_FRED
+  series_10y: DGS10
+selector:
+  selection_size: 100
+  short_selection_size: 100
+risk_management:
+  empirical_calibration:
+    fallback_levels:
+    - exact_segment
+    - regime_all
+    - same_regime_nearest_window
+    - regime_all_nearest_window
+    - same_regime_nearest_horizon
+    - regime_all_nearest_horizon
+    - same_regime_nearest_segment
+    - regime_all_nearest_segment
+  sizing_mode: atr
+  trailing_stop:
+    enabled: false
+    mode: dynamic_atr
+    atr_period: 14
+    atr_multiplier: 2.5
+    fallback_fixed_pct: 5.0
+    break_even_after_atr_multiple: 2.0
+    eod_check_time_est: '15:50'
+    apply_to_manual_orphan_buys: true
+  time_stop:
+    enabled: true
+    max_business_days: 20
+    min_tp_progress_ratio: 0.5
+    near_zero_return_pct: 0.005
+  force_close_on_breaker: true
+  force_close_pct: 1.0
+  policy: b4
+  max_position_pct_of_adv: null
+  short_selling_enabled: true
+  max_short_positions: 5
+  short_min_score: 0
+  short_rotation_required: true
+  short_tp_pct: 0.08
+  short_trailing_pct: 0.1
+  short_time_stop_days: 20
+  enable_factor_model: true
+  use_factor_correlation_filter: true
+  factor_correlation_threshold: 0.7
+  max_portfolio_beta: 1.2
+  max_factor_concentration_pct: 0.6
+  min_factor_diversification: 2
+  factor_ewma_half_life: 60
+  factor_lookback_days: 252
+screener:
+  custom_universe_file: config/ticket_mid_cap_400.txt
+market_data:
+  bars_provider: eodhd
+  quotes_provider_live: yahoo
+  quotes_provider_live_second: alpaca
+eodhd:
+  api_token_env: EODHD_API_TOKEN
+  exchange: US
+  cache_dir: artifacts/eodhd_cache
+  daily_quota: 100000
+  soft_quota_warn: 80000
+  bulk_publish_offset_hours: 2
+  splits_cache_ttl_days: 7
+  circuit_breaker:
+    consecutive_failures: 5
+    cooldown_minutes: 30
+batch_diagnostics:
+  top_n: 10
+  bottom_n: 10
+  weak_long_threshold: 0.25
+  weak_short_threshold: 0.25
+  prefer_sizing_multiplier: 1.2
+  prefer_top_n: 10
+  live_batch_id: model-factory-20260811223551-ef2cd0
+  live_horizon: 20
+  backtest_batch_id: model-factory-20260811223551-ef2cd0
+  backtest_horizon: 20
+  ml_min_universe_pct: 75
+  section7:
+    enabled: true
+    long_good_threshold: 0.35
+    short_good_threshold: 0.3
+    long_only_min_threshold: 0.4
+    short_only_min_threshold: 0.4
+    weak_max_threshold: 0.2
+    flat_min_threshold: 0.1
+    exclude_long_max_threshold: 0.3
+    exclude_short_max_threshold: 0.3
+global_ranking:
+  prediction_lookback_days: 365
+cascade:
+  enabled: true
+  top_pct: 0.1
+  min_prob_classification: 0.55
+  min_prob_regression: 0.1
+  short_momentum_filter: none
+  short_momentum_max_pct: null
+extreme_gate:
+  enabled: false
+  pool_pct: 0.2
+  long_only: true
+  min_prob: null
+conviction:
+  quant_weight: 0.75
+  sentiment_weight: 0.15
+  macro_weight: 0.1
+backtest:
+  min_rising_horizons: 3

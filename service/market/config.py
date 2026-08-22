@@ -156,7 +156,14 @@ class MarketRegimesConfig:
     enabled: bool = False
     cache_ttl_seconds: int = 300
     enforce_min_notional: float = 155.0
+    # Politique capital_preservation : 'prod_legacy' (défaut, inchangée) | 'cp_v2' (side-aware + release).
+    # Rien de CP-V2 ne s'active tant que policy != 'cp_v2'.
+    capital_preservation_policy: str = "prod_legacy"
     capital_preservation_max_gross_exposure: float | None = None
+    # CP-V2 (side-aware + release) : budgets par side pendant CP + fenêtre de release post-CP
+    capital_preservation_max_long_exposure: float | None = None
+    capital_preservation_reserved_short_exposure: float | None = None
+    capital_preservation_release_sessions: int = 0
     allow_neutral_fallback_on_missing_macro_data: bool = True
     macro_pit_mode_backtest: str = "asof_inclusive"
 
@@ -229,11 +236,23 @@ def parse_market_regimes(raw: Mapping[str, Any] | None) -> MarketRegimesConfig:
         enabled=bool(raw.get("enabled", False)),
         cache_ttl_seconds=int(raw.get("cache_ttl_seconds", 300)),
         enforce_min_notional=float(raw.get("enforce_min_notional", 155.0)),
+        capital_preservation_policy=str(raw.get("capital_preservation_policy", "prod_legacy") or "prod_legacy"),
         capital_preservation_max_gross_exposure=(
             float(raw["capital_preservation_max_gross_exposure"])
             if raw.get("capital_preservation_max_gross_exposure") not in {None, ""}
             else None
         ),
+        capital_preservation_max_long_exposure=(
+            float(raw["capital_preservation_max_long_exposure"])
+            if raw.get("capital_preservation_max_long_exposure") not in {None, ""}
+            else None
+        ),
+        capital_preservation_reserved_short_exposure=(
+            float(raw["capital_preservation_reserved_short_exposure"])
+            if raw.get("capital_preservation_reserved_short_exposure") not in {None, ""}
+            else None
+        ),
+        capital_preservation_release_sessions=int(raw.get("capital_preservation_release_sessions", 0) or 0),
         allow_neutral_fallback_on_missing_macro_data=bool(
             raw.get("allow_neutral_fallback_on_missing_macro_data", True)
         ),
