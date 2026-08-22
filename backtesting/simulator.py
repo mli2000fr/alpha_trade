@@ -1449,7 +1449,7 @@ class BacktestEngine:
         if risk.target_annual_vol is not None and float(risk.target_annual_vol) > 0.0:
             equity_history = pd.Series(state.equity_points, dtype=float)
             vol_target_scaler = compute_portfolio_vol_scaler(
-                equity_history.pct_change().dropna(),
+                equity_history.ffill().pct_change(fill_method=None).dropna(),
                 target_annual_vol=float(risk.target_annual_vol),
             )
 
@@ -1465,6 +1465,16 @@ class BacktestEngine:
             )
         gross_exposure_limit = self._resolve_max_gross_exposure_limit(float(current_equity))
         current_gross_notional = self._compute_gross_notional(state.positions, close, trade_day)
+        # CP-V2 — budgets par side (long <= cap_long, short <= capacité réservée)
+        _risk_cfg = getattr(self.config, "risk_config", None)
+        max_long_exposure = getattr(_risk_cfg, "max_long_exposure", None) if _risk_cfg is not None else None
+        max_short_exposure = getattr(_risk_cfg, "max_short_exposure", None) if _risk_cfg is not None else None
+        current_long_gross_notional = self._compute_gross_notional_by_side(
+            state.positions, close, trade_day, short=False
+        )
+        current_short_gross_notional = self._compute_gross_notional_by_side(
+            state.positions, close, trade_day, short=True
+        )
 
         for candidate_pos, row in enumerate(candidate_rows):
             symbol = str(row["symbol"])
@@ -1780,8 +1790,25 @@ class BacktestEngine:
                 )
                 max_quantity_for_gross_exposure = self._normalize_trade_quantity(remaining_gross_notional / entry_price)
                 quantity = min(quantity, max_quantity_for_gross_exposure)
-                quantity = self._normalize_trade_quantity(quantity)
-                gross_exposure_cap_binds = quantity < quantity_before_gross_exposure_cap
+                # CP-V2 — budget par side : la capacité SHORT est réservée à l'intérieur du
+                # gross total (les longs existants ne peuvent pas la consommer) ; les longs
+                # sont plafonnés à leur budget. Le gross total reste la borne dure.
+                side_exposure_limit = max_short_exposure if short else max_long_exposure
+                if side_exposure_limit is not None and current_equity > 0 and entry_price > 0:
+                    current_side_gross = (
+                        current_short_gross_notional if short else current_long_gross_notional
+                    )
+                    remaining_side_notional = max(
+                        (side_exposure_limit * current_equity) - current_side_gross,
+                        0.0,
+                    )
+                    max_quantity_for_gross_exposure = min(
+                        max_quantity_for_gross_exposure,
+                        self._normalize_trade_quantity(remaining_side_notional / entry_price),
+                    )
+                    quantity = min(quantity, max_quantity_for_gross_exposure)
+                    quantity = self._normalize_trade_quantity(quantity)
+                    gross_exposure_cap_binds = quantity < quantity_before_gross_exposure_cap
 
             if quantity <= QUANTITY_EPSILON:
                 if gross_exposure_cap_binds:
@@ -1959,6 +1986,10 @@ class BacktestEngine:
             if risk.sectoral_cap.enabled:
                 sector_exposure_pct[sector] += target_weight_pct
             current_gross_notional += quantity * entry_price
+            if short:
+                current_short_gross_notional += quantity * entry_price
+            else:
+                current_long_gross_notional += quantity * entry_price
             self._record_trade_event(
                 state,
                 "entry_opened",
@@ -2691,6 +2722,29 @@ class BacktestEngine:
             return 0.0
         total = 0.0
         for position in positions.values():
+            try:
+                px = float(close.at[trade_day, position.symbol])
+                if np.isfinite(px):
+                    total += abs(position.quantity) * px
+            except (KeyError, ValueError):
+                continue
+        return total
+
+    @staticmethod
+    def _compute_gross_notional_by_side(
+        positions: dict[str, _OpenPosition],
+        close: pd.DataFrame,
+        trade_day: pd.Timestamp,
+        *,
+        short: bool,
+    ) -> float:
+        """CP-V2 — exposition brute d'un seul side (long ou short)."""
+        if not positions:
+            return 0.0
+        total = 0.0
+        for position in positions.values():
+            if is_short_side(getattr(position, "side", "buy") or "buy") != short:
+                continue
             try:
                 px = float(close.at[trade_day, position.symbol])
                 if np.isfinite(px):

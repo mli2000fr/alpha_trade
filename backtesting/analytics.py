@@ -132,8 +132,8 @@ def compute_benchmark_analytics(
     ).dropna()
     if len(aligned) < 5:
         return BenchmarkAnalytics(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-    pf_ret = aligned["pf"].pct_change().dropna()
-    bm_ret = aligned["bm"].pct_change().dropna()
+    pf_ret = aligned["pf"].ffill().pct_change(fill_method=None).dropna()
+    bm_ret = aligned["bm"].ffill().pct_change(fill_method=None).dropna()
     common = pf_ret.index.intersection(bm_ret.index)
     pf_ret = pf_ret.loc[common]
     bm_ret = bm_ret.loc[common]
@@ -195,7 +195,7 @@ def monthly_returns_table(equity: pd.Series) -> pd.DataFrame:
     """Pivot table année × mois des returns mensuels (% )."""
     if equity.empty:
         return pd.DataFrame()
-    monthly = equity.resample("M").last().pct_change().dropna() * 100.0
+    monthly = equity.resample("M").last().ffill().pct_change(fill_method=None).dropna() * 100.0
     if monthly.empty:
         return pd.DataFrame()
     df = pd.DataFrame({"year": monthly.index.year, "month": monthly.index.month, "ret_pct": monthly.values})
@@ -232,7 +232,7 @@ class TailAnalytics:
 def compute_tail_analytics(equity: pd.Series, *, alpha: float = 0.05) -> TailAnalytics:
     if equity.empty:
         return TailAnalytics(0.0, 0.0, 0.0, 0.0)
-    rets = equity.pct_change().dropna()
+    rets = equity.ffill().pct_change(fill_method=None).dropna()
     if rets.empty:
         return TailAnalytics(0.0, 0.0, 0.0, 0.0)
     var_q = float(np.quantile(rets, alpha)) * 100.0

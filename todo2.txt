@@ -134,8 +134,8 @@ quand le batch entréinne de model global + model per sector en mode regression,
 quand le batch entréinne de model global + model per sector en mode ternary, comment il calcule le proba_long ?
 
 T B41 model global only 2016-01-01 au 2024–12–31:
-    - entrainnement: encours
-    - predit
+    - entrainnement: fait
+    - predit: encours
     - backtest 2025-2026
 T B25 model global only 2016-01-01 au 2026–06–30python : model-factory-20260821195750-544a47
     - entrainnement: fait

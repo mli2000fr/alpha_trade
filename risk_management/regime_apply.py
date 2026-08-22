@@ -102,6 +102,13 @@ def apply_snapshot(
     if snapshot.max_gross_exposure is not None:
         updates["max_gross_exposure"] = float(snapshot.max_gross_exposure)
 
+    # CP-V2 — budgets par side (seulement définis en capital_preservation ; reset sinon
+    # car cfg est reconstruit chaque jour depuis la config de base)
+    if snapshot.max_long_exposure is not None:
+        updates["max_long_exposure"] = float(snapshot.max_long_exposure)
+    if snapshot.max_short_exposure is not None:
+        updates["max_short_exposure"] = float(snapshot.max_short_exposure)
+
     if not updates:
         return cfg
 
@@ -111,6 +118,24 @@ def apply_snapshot(
         snapshot.trade_date, snapshot.mode, updates,
     )
     return new_cfg
+
+
+def apply_account_cp_policy(
+    cfg: RiskConfig,
+    *,
+    account_long_only: bool,
+) -> RiskConfig:
+    """Politique CP par type de compte (variante B, validée E42 — 2026-08-22).
+
+    Un compte long-only n'a pas de sleeve short : les budgets par side CP-V2
+    (cap LONG 0.40, réserve SHORT 0.25) sont conçus pour 6L/2S. On les retire
+    (max_long_exposure=None / max_short_exposure=None) — il reste la release
+    J+6 + le gross cap 0.65 (variante B). Les comptes short-capables gardent
+    CP-V2 complet. `with_overrides` propage bien `None` (pas de cap).
+    """
+    if not account_long_only:
+        return cfg
+    return cfg.with_overrides(max_long_exposure=None, max_short_exposure=None)
 
 
 def apply_transition(

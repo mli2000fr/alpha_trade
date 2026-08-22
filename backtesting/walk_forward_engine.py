@@ -472,7 +472,7 @@ def _simulate_fold_execution(
     if hasattr(sim_result, "equity_curve") and sim_result.equity_curve is not None:
         eq = sim_result.equity_curve
         if isinstance(eq, pd.Series):
-            daily_rets = eq.pct_change().dropna().to_numpy()
+            daily_rets = eq.ffill().pct_change(fill_method=None).dropna().to_numpy()
         else:
             daily_rets = np.array([])
     else:

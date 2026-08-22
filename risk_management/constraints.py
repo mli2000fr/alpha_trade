@@ -170,7 +170,7 @@ class ConstraintChecker:
         notional = proposed_shares * price
         original_notional = notional
 
-        # max gross exposure
+        # max gross exposure (total) — borne dure
         if (state.gross_notional + notional) / equity > self._cfg.max_gross_exposure:
             max_notional = equity * self._cfg.max_gross_exposure - state.gross_notional
             if max_notional <= 0:
@@ -180,6 +180,23 @@ class ConstraintChecker:
             if proposed_shares < minimum_viable_shares:
                 return 0.0, "max_gross_exposure atteint"
             reduction_reason = "max_gross_exposure atteint"
+
+        # CP-V2 — budget par side (réserve SHORT / cap LONG) pendant capital_preservation.
+        # La capacité SHORT est réservée à l'intérieur du gross total : les longs existants
+        # ne peuvent pas la consommer. Inactif si les champs ne sont pas définis (prod_legacy).
+        _side_limit = self._cfg.max_short_exposure if is_short else self._cfg.max_long_exposure
+        if _side_limit is not None:
+            _current_side = state.short_notional if is_short else state.long_notional
+            _side_remaining = equity * _side_limit - _current_side
+            if _side_remaining <= 0:
+                return 0.0, ("max_short_exposure atteint" if is_short else "max_long_exposure atteint")
+            _side_shares = self._normalize_approved_shares(_side_remaining / price)
+            if _side_shares < minimum_viable_shares:
+                return 0.0, ("max_short_exposure atteint" if is_short else "max_long_exposure atteint")
+            if _side_shares < proposed_shares:
+                proposed_shares = _side_shares
+                notional = proposed_shares * price
+                reduction_reason = "max_short_exposure atteint" if is_short else "max_long_exposure atteint"
 
         # max position weight
         max_pos_notional = equity * self._cfg.max_position_weight
@@ -286,6 +303,20 @@ class ConstraintChecker:
             violations.append(
                 f"gross_exposure_exceeded:{gross_pct:.3f}>{self._cfg.max_gross_exposure}"
             )
+
+        # 3bis. CP-V2 — budgets par side (actifs seulement si définis)
+        if self._cfg.max_long_exposure is not None and equity > 0:
+            long_pct = state.long_notional / equity
+            if long_pct > self._cfg.max_long_exposure + 1e-8:
+                violations.append(
+                    f"long_exposure_exceeded:{long_pct:.3f}>{self._cfg.max_long_exposure}"
+                )
+        if self._cfg.max_short_exposure is not None and equity > 0:
+            short_pct = state.short_notional / equity
+            if short_pct > self._cfg.max_short_exposure + 1e-8:
+                violations.append(
+                    f"short_exposure_exceeded:{short_pct:.3f}>{self._cfg.max_short_exposure}"
+                )
 
         # 4. Net exposure (si enforce_net_exposure)
         if self._cfg.enforce_net_exposure:

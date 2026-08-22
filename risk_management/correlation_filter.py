@@ -37,7 +37,7 @@ def build_return_matrix(
     if prepared_close.empty:
         return prepared_close.copy()
     if convention == CORRELATION_CONVENTION_PRICE_ONLY:
-        returns = prepared_close.pct_change()
+        returns = prepared_close.ffill().pct_change(fill_method=None)
     elif convention == CORRELATION_CONVENTION_TOTAL_RETURN:
         aligned_dividends = (
             cash_dividends.reindex(index=prepared_close.index, columns=prepared_close.columns, fill_value=0.0)

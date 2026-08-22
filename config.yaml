@@ -144,10 +144,10 @@ market_regimes:
     enter_soft_signals_required: 1
     enter_confirm_days: 2
     exit_soft_signals_max: 0
-    exit_confirm_days: 3
-    min_hold_days_defensive: 5
+    exit_confirm_days: 1
+    min_hold_days_defensive: 1
     hard_trigger_immediate: true
-    hard_exit_confirm_days: 2
+    hard_exit_confirm_days: 1
     gate_soft_constraints_on_confirmed_entry: true
 
   vix:
@@ -184,6 +184,17 @@ market_regimes:
     high_threshold: 30.0
 
   capital_preservation_max_gross_exposure: 0.65
+
+  # ── CP-V2 (2026-08-22) — capital_preservation side-aware + release fixe ──
+  # policy: prod_legacy | cp_v2.
+  # cp_v2 : LONG plafonné à 0.40 ; SHORT = capacité normale du sleeve 2-short
+  # réservée (0.25) à l'intérieur du gross CP 0.65 ; release fixe = 5 séances
+  # après le dernier signal CP (retour normal à J+6). Hystérésis de sortie
+  # resserrée ci-dessus (exit_confirm 1j / min_hold 1 / hard_exit_confirm 1j).
+  capital_preservation_policy: cp_v2
+  capital_preservation_max_long_exposure: 0.40
+  capital_preservation_reserved_short_exposure: 0.25
+  capital_preservation_release_sessions: 5
 
   yields:
     enabled: true

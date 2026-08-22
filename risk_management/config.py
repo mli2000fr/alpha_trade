@@ -40,6 +40,9 @@ class RiskConfig:
     max_position_weight: float = 0.10
     max_sector_weight: float = 0.30
     max_gross_exposure: float = 1.0
+    # CP-V2 — budgets par side appliqués pendant capital_preservation (via apply_snapshot)
+    max_long_exposure: float | None = None
+    max_short_exposure: float | None = None
     min_position_notional: float = 500.0
 
     # ── P2-1 sizing live (2026-08-13) ──

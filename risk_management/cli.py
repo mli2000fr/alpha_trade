@@ -377,6 +377,8 @@ def _wire_covariance_to_optimizer(
             max_gross_exposure=float(getattr(config, "max_gross_exposure", 1.0) or 1.0),
             max_net_exposure=float(getattr(config, "max_net_exposure", 0.30) or 0.30),
             max_position_weight=float(getattr(config, "max_position_weight", 0.10) or 0.10),
+            max_long_exposure=getattr(config, "max_long_exposure", None),
+            max_short_exposure=getattr(config, "max_short_exposure", None),
         )
 
         set_opt(
@@ -1604,7 +1606,12 @@ def main(args: list[str] | None = None) -> None:
     except Exception:
         LOGGER.warning("Chargement de la configuration market_regimes impossible côté risk_management.", exc_info=True)
 
-    from risk_management.regime_apply import apply_snapshot, apply_structural_market_guards, apply_transition
+    from risk_management.regime_apply import (
+        apply_account_cp_policy,
+        apply_snapshot,
+        apply_structural_market_guards,
+        apply_transition,
+    )
 
     config = apply_structural_market_guards(
         config,
@@ -1627,6 +1634,11 @@ def main(args: list[str] | None = None) -> None:
 
         config = apply_snapshot(config, regime_snapshot)
     config = apply_transition(config, regime_transition)
+    # Politique CP par type de compte (variante B, E42) : un compte long-only
+    # n'a pas de sleeve short → on retire les budgets par side CP-V2 (cap LONG /
+    # réserve SHORT), on garde la release J+6 + gross 0.65. Comptes short-capables
+    # inchangés (CP-V2 complet).
+    config = apply_account_cp_policy(config, account_long_only=account_long_only)
     # ── Section 17 Point 8 : construire le plan de transition si destructif ──
     transition_plan = None
     if (
