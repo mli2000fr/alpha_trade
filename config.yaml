@@ -25,16 +25,19 @@ alpaca:
       api_key: "${ALPACA_API_KEY}"
       secret_key: "${ALPACA_SECRET_KEY}"
       mode: paper
+      long_only: false
     - id: test1
       label: "Compte test 1 (paper)"
       api_key: "${ALPACA_KEY_CPT_1}"
       secret_key: "${ALPACA_SECRET_CPT_1}"
       mode: paper
+      long_only: true
     - id: test2
       label: "Compte test 2 (paper)"
       api_key: "${ALPACA_KEY_CPT_2}"
       secret_key: "${ALPACA_SECRET_CPT_2}"
       mode: paper
+      long_only: false
     # - id: live1
     #   label: "Compte live"
     #   api_key: "${ALPACA_LIVE1_API_KEY}"
@@ -354,7 +357,7 @@ risk_management:
   short_selling_enabled: true
 
   # Sprint 2 — Option C : short via MomentumRotationState
-  max_short_positions: 2            # nombre max de shorts simultanés
+  max_short_positions: 5            # nombre max de shorts simultanés
   short_min_score: 0                # 0 = laisser ML dominer la sélection short
   short_rotation_required: true     # exiger rotation_state.should_rotate()
   short_tp_pct: 0.08                # TP short (8% de baisse)

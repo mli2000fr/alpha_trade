@@ -2620,7 +2620,11 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 # P5 LONG-only : max_short_positions=0 est LE consommateur réel du
                 # blocage (constraints.py) — short_selling_enabled n'a pas de
                 # consommateur dans risk_management.
-                "max_short_positions": 0 if getattr(args, "no_shorts", False) else 2,
+                # Parité backtest/live (2026-08-22) : on ne force PLUS 2 en dur.
+                # Quand no_shorts → 0 ; sinon la clé est omise des overrides et
+                # load_risk_config lit `risk_management.max_short_positions` de
+                # config.yaml (même source que le live).
+                **({"max_short_positions": 0} if getattr(args, "no_shorts", False) else {}),
                 # P9 SHORT-only : max_long_positions=0 bloque les longs.
                 "max_long_positions": 0 if getattr(args, "no_longs", False) else None,
                 "short_min_score": 0.0,

@@ -43,7 +43,7 @@ from ihm.services.backtesting_runner import (
     build_backtesting_command,
     format_command_for_display,
 )
-from ihm.services.db import get_runtime_db_config
+from ihm.services.db import get_runtime_db_config, safe_query
 from ihm.services.fractional_trading_preferences import (
     FractionalTradingPreferences,
     load_persisted_fractional_trading_preferences,
@@ -446,6 +446,94 @@ def _status_badge(status: str) -> str:
         "timeout": "🟠 Timeout",
         "stopped": "⏹️ Arrêté",
     }.get(status, status)
+
+
+def _extract_run_batch_id(run: dict[str, object]) -> str | None:
+    """Extrait l'id de batch ML d'un run backtest (--ml-batch-id, fallback --cascade-batch-id)."""
+    raw = run.get("command")
+    if isinstance(raw, list):
+        tokens = [str(x) for x in raw]
+        for flag in ("--ml-batch-id", "--cascade-batch-id", "--batch-diagnostics-batch-id"):
+            if flag in tokens:
+                idx = tokens.index(flag)
+                if idx + 1 < len(tokens):
+                    nxt = tokens[idx + 1]
+                    if nxt and not nxt.startswith("--"):
+                        return nxt
+    text_ = str(run.get("command_display") or "").strip()
+    for flag in ("--ml-batch-id", "--cascade-batch-id", "--batch-diagnostics-batch-id"):
+        pos = text_.find(flag)
+        if pos != -1:
+            rest = text_[pos + len(flag):].lstrip()
+            tok = rest.split(None, 1)[0] if rest.split(None, 1) else ""
+            if tok and not tok.startswith("--"):
+                return tok
+    return None
+
+
+def _extract_run_dates(run: dict[str, object]) -> tuple[str | None, str | None]:
+    """Extrait les dates --start/--end de la commande du run (list ou command_display)."""
+    start = end = None
+    raw = run.get("command")
+    if isinstance(raw, list):
+        tokens = [str(x) for x in raw]
+        for flag in ("--start", "--end"):
+            if flag in tokens:
+                idx = tokens.index(flag)
+                if idx + 1 < len(tokens) and tokens[idx + 1] and not tokens[idx + 1].startswith("--"):
+                    if flag == "--start":
+                        start = tokens[idx + 1]
+                    else:
+                        end = tokens[idx + 1]
+    if not start and not end:
+        text_ = str(run.get("command_display") or "").strip()
+        for flag in ("--start", "--end"):
+            pos = text_.find(flag)
+            if pos != -1:
+                rest = text_[pos + len(flag):].lstrip()
+                tok = rest.split(None, 1)[0] if rest.split(None, 1) else ""
+                if tok and not tok.startswith("--"):
+                    if flag == "--start":
+                        start = tok
+                    else:
+                        end = tok
+    return start, end
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _load_batch_comments(batch_ids: tuple[str, ...]) -> dict[str, str]:
+    """Commentaire de `model_training_batch` pour les batch_id donnés (vide si DB indisponible)."""
+    ids = tuple(dict.fromkeys(b for b in batch_ids if b))
+    if not ids:
+        return {}
+    placeholders = ",".join(f":b{i}" for i in range(len(ids)))
+    query = (
+        "SELECT batch_id, comment FROM model_training_batch "
+        f"WHERE batch_id IN ({placeholders})"
+    )
+    df = safe_query(query, {f"b{i}": bid for i, bid in enumerate(ids)})
+    if df.empty:
+        return {}
+    return {str(row["batch_id"]): str(row.get("comment") or "").strip() for _, row in df.iterrows()}
+
+
+def _format_run_inspect_label(run: dict[str, object], batch_comments: dict[str, str]) -> str:
+    start, end = _extract_run_dates(run)
+    if start and end:
+        prefix = f"{start} -- {end}"
+    else:
+        prefix = str(run.get("run_label", run.get("run_kind", "")))
+    base = (
+        f"{prefix} | {run.get('run_id')} | "
+        f"{_status_badge(str(run.get('status', '')))} | {run.get('executed_at', '')}"
+    )
+    batch_id = _extract_run_batch_id(run)
+    if not batch_id:
+        return base
+    comment = batch_comments.get(batch_id, "")
+    if comment:
+        return f"{base} --- {comment} | {batch_id}"
+    return f"{base} --- {batch_id}"
 
 
 def _merge_runs() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
@@ -4732,17 +4820,46 @@ def _render_runtime_center_body(*, auto_refresh_enabled: bool) -> None:
         st.info("Aucun run backtesting historisé pour le moment.")
         return
 
+    _batch_ids = tuple(
+        dict.fromkeys(_extract_run_batch_id(run) for run in all_runs if _extract_run_batch_id(run))
+    )
+    _batch_comments = _load_batch_comments(_batch_ids)
     labels = {
-        str(run["run_id"]): (
-            f"{run.get('run_label', run.get('run_kind', ''))} | {run.get('run_id')} | "
-            f"{_status_badge(str(run.get('status', '')))} | {run.get('executed_at', '')}"
-        )
+        str(run["run_id"]): _format_run_inspect_label(run, _batch_comments)
         for run in all_runs
     }
     run_ids = list(labels.keys())
     _prime_runtime_center_state(run_ids, labels)
 
-    control_col1, control_col2 = st.columns([2, 4])
+    st.markdown(
+        """
+        <style>
+        /* Élargir le selectbox "Run à inspecter" + son menu déroulant */
+        div[data-testid="stSelectbox"] {
+            min-width: 100%;
+        }
+        div[data-testid="stSelectbox"] [data-baseweb="select"] > div {
+            min-width: 100%;
+        }
+        div[data-baseweb="popover"] {
+            min-width: 900px !important;
+            max-width: 95vw !important;
+        }
+        div[data-baseweb="popover"] [data-baseweb="menu"],
+        ul[data-testid="stSelectboxVirtualDropdown"] {
+            min-width: 100% !important;
+        }
+        div[data-baseweb="popover"] li,
+        ul[data-testid="stSelectboxVirtualDropdown"] li {
+            white-space: normal !important;
+            word-break: break-word;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    control_col1, control_col2 = st.columns([1, 5])
     with control_col1:
         log_filter = cast(
             str,
