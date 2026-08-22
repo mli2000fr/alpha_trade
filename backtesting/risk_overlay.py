@@ -159,6 +159,16 @@ class DrawdownCircuitBreaker:
     # E23 — politique adaptative (b0/b1/b2/b3) + régime SPY journalier.
     policy: str = "b0"
     spy_regime_map: dict | None = None
+    # E44 RESEARCH ONLY (2026-08-22) — force-close side-aware à DD < 15%.
+    # Jamais actif en PROD (None par défaut). Déclenche UNE liquidation par épisode
+    # quand DD >= research_force_close_at_dd_pct, sur le side demandé :
+    #   "all"  = LONG + SHORT (CLOSE_ALL), "longs" = LONG seuls (CLOSE_LONGS).
+    # Objectif : étudier CLOSE_ALL vs CLOSE_LONGS vs KEEP (protocole B4 catastrophe).
+    # Ne modifie pas le seuil PROD (15%) ni B4. Re-arm après recovery (multi-épisodes).
+    research_force_close_at_dd_pct: float | None = None
+    research_force_close_side: str | None = None
+    _research_peak_episode: float = field(default=0.0, init=False)
+    _research_fired_in_episode: bool = field(default=False, init=False)
     _tripped: bool = field(default=False, init=False)
     _was_tripped: bool = field(default=False, init=False)
     _equity_window: list[float] = field(default_factory=list, init=False)

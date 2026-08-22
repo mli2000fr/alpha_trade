@@ -1642,10 +1642,53 @@ def _build_parser() -> argparse.ArgumentParser:
              "Le seuil 15%% reste gelee; seul le RECOVERY change.",
     )
     run_p.add_argument(
+        "--research-force-close-at-dd-pct",
+        type=float,
+        default=None,
+        help="E44 RESEARCH ONLY : force-close side-aware quand DD >= ce niveau (ex 0.08). "
+             "Absent/None en PROD = désactivé. Ne modifie pas le seuil 15%% ni B4.",
+    )
+    run_p.add_argument(
+        "--research-force-close-side",
+        choices=["all", "longs"],
+        default=None,
+        help="E44 RESEARCH ONLY : side à liquider à l'événement ('all' = LONG+SHORT, "
+             "'longs' = LONG seuls, les SHORT sont conservés).",
+    )
+    run_p.add_argument(
         "--force-close-losers-on-breaker",
         action="store_true",
         default=False,
         help="E19 : quand le breaker DD trippe (seuil atteint/dépassé), coupe TOUS les symboles perdants (down en long, up en short) au lieu d'une fraction (--force-close-pct).",
+    )
+    # E45 (2026-08-22) — crash-test catastrophe au VRAI seuil −15% (B4) : overrides
+    # par run de la liquidation forcée. Sans flag : comportement config.yaml (PROD inchangé).
+    #   KEEP      : --no-force-close-on-breaker
+    #   WORST_50  : --force-close-on-breaker --force-close-pct 0.5
+    #   ALL       : --force-close-on-breaker --force-close-pct 1.0
+    # Ne modifie PAS le seuil −15% (--max-portfolio-dd-pct) ni la politique b4.
+    run_p.add_argument(
+        "--force-close-on-breaker",
+        dest="force_close_on_breaker",
+        action="store_true",
+        default=None,
+        help="E45 : force la liquidation au trip du breaker DD (−15%%). "
+             "Par défaut : config.yaml (risk_management.force_close_on_breaker). "
+             "Utiliser --no-force-close-on-breaker pour KEEP (aucune liquidation).",
+    )
+    run_p.add_argument(
+        "--no-force-close-on-breaker",
+        dest="force_close_on_breaker",
+        action="store_false",
+        default=None,
+        help="E45 : désactive la liquidation forcée au trip du breaker (KEEP).",
+    )
+    run_p.add_argument(
+        "--force-close-pct",
+        type=float,
+        default=None,
+        help="E45 : fraction des positions liquidées au trip (0.5 = pires 50%% en PnL, "
+             "1.0 = tout). Par défaut : config.yaml (risk_management.force_close_pct).",
     )
     run_p.add_argument(
         "--target-annual-vol",
@@ -3710,18 +3753,22 @@ def _run_backtest(args: argparse.Namespace) -> None:
             # E23 — politique adaptative + carte régime SPY journalière.
             policy=_dd_policy,
             spy_regime_map=_spy_regime_map,
+            # E45 — override par run (None = config.yaml). PROD inchangé sans flag.
             force_close_on_breaker=(
-                bool(getattr(args, "force_close_on_breaker", False))
-                or bool(
+                bool(getattr(args, "force_close_on_breaker", None))
+                if getattr(args, "force_close_on_breaker", None) is not None
+                else bool(
                     __import__("common.config_loader", fromlist=["load_config"]).load_config()
                     .get("risk_management", {})
                     .get("force_close_on_breaker", False)
                 )
             ),
             force_close_pct=float(
-                __import__("common.config_loader", fromlist=["load_config"]).load_config()
-                .get("risk_management", {})
-                .get("force_close_pct", 0.50)
+                getattr(args, "force_close_pct", None)
+                if getattr(args, "force_close_pct", None) is not None
+                else __import__("common.config_loader", fromlist=["load_config"]).load_config()
+                    .get("risk_management", {})
+                    .get("force_close_pct", 0.50)
             ),
             force_close_losers_on_breaker=(
                 bool(getattr(args, "force_close_losers_on_breaker", False))
@@ -3731,6 +3778,9 @@ def _run_backtest(args: argparse.Namespace) -> None:
                     .get("force_close_losers_on_breaker", False)
                 )
             ),
+            # E44 RESEARCH ONLY — force-close side-aware à DD < 15% (None en PROD = off)
+            research_force_close_at_dd_pct=getattr(args, "research_force_close_at_dd_pct", None),
+            research_force_close_side=getattr(args, "research_force_close_side", None),
         ),
         target_annual_vol=(
             float(args.target_annual_vol) if args.target_annual_vol is not None else None

@@ -343,7 +343,7 @@ risk_management:
   # force_close_on_breaker: true  = active la liquidation
   # force_close_pct: 0.50         = fraction des positions liquidées
   force_close_on_breaker: true
-  force_close_pct: 1.0
+  force_close_pct: 0.5
 
   # ── E23 — politique breaker adaptative (2026-08-21) ──
   # "b0" = PROD historique (comportement bit-à-bit inchangé) — ROLLBACK.

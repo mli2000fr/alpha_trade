@@ -1061,6 +1061,11 @@ class BacktestEngine:
                 current_equity = state.settled_cash + state.unsettled_cash + current_market_value
                 state.peak_equity = max(state.peak_equity, current_equity)
 
+            # E44 RESEARCH ONLY — force-close side-aware à DD < 15% (CLOSE_ALL / CLOSE_LONGS)
+            current_equity = self._research_force_close_side_aware(
+                cfg, state, trade_day, close, mtm_close, diagnostics, current_equity,
+            )
+
             _entry_mode = cfg.exec_config.entry_mode if cfg.exec_config is not None else None
             cfg.risk_overlay.drawdown_breaker.update_regime_streak(_entry_mode, float(current_equity))
             drawdown_allocation_scale = cfg.risk_overlay.drawdown_breaker.allocation_scale(
@@ -2666,6 +2671,101 @@ class BacktestEngine:
                 if exec_limit > 0:
                     limit = min(limit, exec_limit) if limit is not None else exec_limit
         return limit
+
+    def _research_force_close_side_aware(
+        self,
+        cfg,
+        state,
+        trade_day: pd.Timestamp,
+        close: pd.DataFrame,
+        mtm_close: pd.DataFrame,
+        diagnostics,
+        current_equity: float,
+    ) -> float:
+        """E44 (RESEARCH ONLY) — liquidation side-aware quand DD >= niveau research.
+
+        Protocole B4 catastrophe : comparer KEEP / CLOSE_ALL / CLOSE_LONGS.
+        - Jamais actif en PROD (research_force_close_at_dd_pct est None par défaut).
+        - Déclenche UNE liquidation par épisode (re-arm quand DD revient sous le
+          niveau/2 ou nouveau peak) sur le side demandé.
+        - Après l'intervention : AUCUNE règle spéciale, le pipeline continue normalement.
+        """
+        brk = cfg.risk_overlay.drawdown_breaker
+        level = brk.research_force_close_at_dd_pct
+        side = brk.research_force_close_side
+        if level is None or not side or not state.positions or state.peak_equity <= 0:
+            return current_equity
+        dd = 1.0 - current_equity / state.peak_equity
+        # re-arm : l'épisode est fini quand on repasse au-dessus du niveau/2 (recovery)
+        if dd <= level / 2.0 or state.peak_equity >= brk._research_peak_episode:
+            brk._research_peak_episode = state.peak_equity
+            brk._research_fired_in_episode = False
+        if dd < level - 1e-9 or brk._research_fired_in_episode:
+            return current_equity
+        brk._research_fired_in_episode = True
+        brk._research_peak_episode = state.peak_equity
+        positions = list(state.positions.items())
+        if side == "longs":
+            to_close = [(s, p) for s, p in positions
+                        if not is_short_side(getattr(p, "side", "buy") or "buy")]
+        else:  # "all"
+            to_close = positions
+        if not to_close:
+            return current_equity
+        LOGGER.warning(
+            "RESEARCH force-close side=%s dd=%.4f : liquidation de %d/%d positions (equity=%.2f)",
+            side, dd, len(to_close), len(positions), current_equity,
+        )
+        for symbol, position in to_close:
+            close_price = float(close.at[trade_day, symbol]) if symbol in close.columns else position.entry_price
+            pos_side = getattr(position, "side", "buy") or "buy"
+            abs_qty = abs(position.quantity)
+            return_pct = compute_return_pct(pos_side, position.entry_price, close_price)
+            if is_short_side(pos_side):
+                exit_cash_flow = -abs_qty * close_price
+                state.settled_cash -= abs_qty * close_price
+                diagnostics.force_close_exits_short += 1
+            else:
+                exit_cash_flow = abs_qty * close_price
+                state.settled_cash += abs_qty * close_price
+                diagnostics.force_close_exits_long += 1
+            pnl = position.entry_cash_flow + exit_cash_flow
+            state.closed_trades.append({
+                "symbol": symbol,
+                "side": pos_side,
+                "quantity": position.quantity,
+                "entry_date": position.entry_date,
+                "entry_price": position.entry_price,
+                "exit_date": trade_day,
+                "exit_price": close_price,
+                "pnl": pnl,
+                "return_pct": return_pct,
+                "holding_days": (trade_day - position.entry_date).days,
+                "exit_reason": "research_force_close",
+                "sector": position.sector,
+            })
+            # E44 — rendre la liquidation visible dans l'audit log (attribution par position)
+            self._record_trade_event(
+                state, "exit_closed",
+                symbol=symbol,
+                side=pos_side,
+                event_date=trade_day,
+                entry_date=position.entry_date,
+                entry_price=position.entry_price,
+                quantity=position.quantity,
+                exit_price=close_price,
+                exit_reason="research_force_close",
+                exit_source="research_force_close",
+                proceeds=exit_cash_flow,
+                pnl=pnl,
+                return_pct=return_pct,
+                holding_days=(trade_day - position.entry_date).days,
+            )
+            del state.positions[symbol]
+        current_market_value = self._mark_to_market(state.positions, mtm_close, trade_day)
+        current_equity = state.settled_cash + state.unsettled_cash + current_market_value
+        state.peak_equity = max(state.peak_equity, current_equity)
+        return current_equity
 
     @staticmethod
     def _mark_to_market(
