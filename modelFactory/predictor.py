@@ -882,6 +882,8 @@ def _load_cross_sectional_features_cached(
     benchmark_symbol: str,
     benchmark_df: pd.DataFrame | None,
     min_universe_size: int,
+    feature_subset: list[str] | None = None,
+    sector_map: dict[str, str] | None = None,
 ) -> pd.DataFrame:
     """Construit une fois le snapshot cross-sectionnel PIT d'une séance.
 
@@ -890,12 +892,18 @@ def _load_cross_sectional_features_cached(
     recalculer ses rangs pour chaque ``predict_symbol``. La clé inclut le
     cutoff, le benchmark et le seuil de l'univers, ce qui préserve le contrat
     PIT et sépare les configurations pouvant produire des rangs différents.
+
+    ``feature_subset`` (ex. ``DIRECTIONAL_FEATURES``) : ne retourne que les
+    features de la liste (mode direction 2026-08-23). ``sector_map`` requis
+    pour les features sectorielles de la liste direction.
     """
     cache_key: tuple[object, ...] = (
         id(engine),
         cutoff_date.isoformat() if cutoff_date else None,
         benchmark_symbol.upper(),
         int(min_universe_size),
+        tuple(feature_subset) if feature_subset else None,
+        id(sector_map) if sector_map else None,
     )
     with _cross_sectional_frame_cache_lock:
         cached = _cross_sectional_frame_cache.get(cache_key)
@@ -917,6 +925,8 @@ def _load_cross_sectional_features_cached(
             universe_df,
             benchmark_df=benchmark_df,
             min_universe_size=min_universe_size,
+            sector_map=sector_map,
+            feature_subset=feature_subset,
         )
         _cross_sectional_frame_cache[cache_key] = cross_sectional_df.copy(deep=True)
         _cross_sectional_frame_cache.move_to_end(cache_key)
@@ -1044,6 +1054,7 @@ def _load_data_cfg_from_payload(
         include_score_components=_primary.get("include_score_components", _fallback.get("include_score_components", False)),
         include_volume_features=_primary.get("include_volume_features", _fallback.get("include_volume_features", False)),
         enable_cross_sectional_features=_primary.get("enable_cross_sectional_features", _fallback.get("enable_cross_sectional", False)),
+        include_directional_features=_primary.get("include_directional_features", _fallback.get("include_directional_features", False)),
         cross_sectional_min_universe=_primary.get("cross_sectional_min_universe", 20),
         feature_set=_primary.get("feature_set", _fallback.get("feature_set", "v1")),
         benchmark_symbol=_primary.get("benchmark_symbol", "SPY"),
@@ -1090,7 +1101,11 @@ def _prepare_prediction_frame(
             _record_db_issue(operation="load_symbol_sentiment", symbol=symbol, reason=f"db_read_failed:{type(exc).__name__}")
             return pd.DataFrame()
     benchmark_df = None
-    if data_cfg.feature_set == "expert" or data_cfg.enable_cross_sectional_features:
+    if (
+        data_cfg.feature_set == "expert"
+        or data_cfg.enable_cross_sectional_features
+        or getattr(data_cfg, "include_directional_features", False)
+    ):
         try:
             benchmark_df = _load_benchmark_bars_cached(
                 engine,
@@ -1133,8 +1148,18 @@ def _prepare_prediction_frame(
         LOGGER.warning("predict_symbol feature_build_failed symbol=%s error=%s", symbol, exc)
         _record_db_issue(operation="compute_features", symbol=symbol, reason=f"feature_build_failed:{type(exc).__name__}")
         return pd.DataFrame()
-    if data_cfg.enable_cross_sectional_features:
+    _directional = getattr(data_cfg, "include_directional_features", False)
+    if data_cfg.enable_cross_sectional_features or _directional:
         try:
+            _subset = None
+            _smap = None
+            if _directional:
+                from modelFactory.cross_sectional import DIRECTIONAL_FEATURES, _load_sector_mapping
+                _subset = list(DIRECTIONAL_FEATURES)
+                try:
+                    _smap = _load_sector_mapping(engine)
+                except Exception:
+                    _smap = None
             cross_sectional_df = _load_cross_sectional_features_cached(
                 engine,
                 required_symbol=symbol,
@@ -1142,6 +1167,8 @@ def _prepare_prediction_frame(
                 benchmark_symbol=data_cfg.benchmark_symbol,
                 benchmark_df=benchmark_df,
                 min_universe_size=data_cfg.cross_sectional_min_universe,
+                feature_subset=_subset,
+                sector_map=_smap,
             )
         except Exception as exc:  # noqa: BLE001
             LOGGER.warning("predict_symbol db_read_failed symbol=%s stage=load_cross_sectional_inputs error=%s", symbol, exc)
@@ -1156,7 +1183,7 @@ def _prepare_prediction_frame(
         active_features = get_feature_columns(
             data_cfg.include_sentiment_features,
             feature_set=data_cfg.feature_set,
-            include_cross_sectional=True,
+            include_cross_sectional=(not _directional),
             include_screener_scores=data_cfg.include_screener_scores,
             include_short_score=data_cfg.include_short_score_features,
             include_macro_vix=data_cfg.include_macro_vix_features,
@@ -1169,6 +1196,9 @@ def _prepare_prediction_frame(
             feature_whitelist_enabled=data_cfg.feature_whitelist_enabled,
             feature_whitelist=data_cfg.feature_whitelist,
         )
+        if _directional:
+            from modelFactory.cross_sectional import DIRECTIONAL_FEATURES
+            active_features = list(dict.fromkeys(list(active_features) + list(DIRECTIONAL_FEATURES)))
         # ── Fallback global_rank : si attendu mais absent → chercher dans le cache ──
         if include_global_stacking and "global_rank" not in df.columns and "global_rank_3" not in df.columns:
             _cache_key = str(cutoff_date) if cutoff_date else "__today__"
@@ -1193,6 +1223,11 @@ def _prepare_prediction_frame(
                 )
                 df["global_rank"] = 0.5
                 _global_rank_fallback_symbols.append(symbol)
+        # Mode direction : garantir la présence des colonnes de la liste
+        # (les *_xs_rank notamment ne sont pas créées par merge_cross_sectional_features).
+        for _af in active_features:
+            if _af not in df.columns:
+                df[_af] = 0.5 if _af.endswith("_rank") or _af.startswith("global_rank") else 0.0
         df = df.dropna(subset=active_features).reset_index(drop=True)
     return df
 

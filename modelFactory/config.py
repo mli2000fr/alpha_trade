@@ -50,6 +50,7 @@ class DataConfig:
     oracle_model_only: bool = False    # entraîne UNIQUEMENT l'Oracle Extreme — skip global, per-symbol, per-sector
     sector_use_symbol_feature: bool = True  # D1 (2026-08-15) : per-sector, False = ablation de la feature catégorielle 'symbol'
     enable_cross_sectional_features: bool = False  # percentiles + secteur (momentum, alpha intra-secteur)
+    include_directional_features: bool = False  # 2026-08-23 : liste restreinte 'direction' (sous-ensemble des features cross-sectionnelles/sectorielles)
     cross_sectional_min_universe: int = 20
     feature_set: str = "v1"  # v1 | expert
     benchmark_symbol: str = "SPY"

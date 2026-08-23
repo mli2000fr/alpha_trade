@@ -79,6 +79,32 @@ SECTOR_NEUTRAL_FEATURE_COLUMNS: list[str] = [
     _sector_neutral_column_name(c) for c in SECTOR_NEUTRAL_SOURCE_FEATURES
 ]
 
+# ── Features "direction" (2026-08-23) ──
+# Liste restreinte de features cross-sectionnelles/sectorielles demandée par
+# l'IHM (checkbox "ajouter features directionnel"). Quand le flag est actif,
+# seules ces features sont calculées/injectées (au lieu des ~49 features
+# cross-sectionnelles complètes). Chaque feature est vérifiée contre cette
+# liste : si elle y est, on la calcule ; sinon on l'ignore.
+DIRECTIONAL_FEATURES: list[str] = [
+    "stock_vs_sector_ret_20",
+    "stock_vs_sector_ret_60",
+    "momentum_20_sector_neutral",
+    "relative_strength_20_sector_neutral",
+    "stock_vs_sector_ret_5",
+    "sector_relative_strength_20",
+    "sector_ret_20",
+    "sector_ret_60",
+    "sector_ret_5",
+    "relative_strength_20_xs_rank",
+    "relative_strength_60_xs_rank",
+    "momentum_20_xs_rank",
+    "momentum_60_xs_rank",
+    "momentum_10_xs_rank",
+    "momentum_5_xs_rank",
+    "momentum_120_xs_rank",
+    "range_position_20_xs_rank",
+]
+
 # ── Sprint 2026-08-02 : Z-score sectoriel pour fondamentales ──
 # Normalisation (valeur − médiane secteur) / MAD secteur → échelle comparable
 # entre secteurs. Un PE de 25 dans la Tech (Z≈−1) vs Utilities (Z≈+3).
@@ -618,8 +644,14 @@ def build_cross_sectional_features_from_db(
     end_date=None,
     sector_map: dict[str, str] | None = None,
     min_symbols_per_sector: int = 3,
+    feature_subset: list[str] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """Build cross-sectional (+ optional sector) features by loading bars symbol-by-symbol.
+
+    ``feature_subset`` (ex. ``DIRECTIONAL_FEATURES``) : si fourni, seules les
+    colonnes de cette liste sont retournées (les autres sont ignorées). Chaque
+    feature est vérifiée contre la liste : si elle y est, on la garde, sinon
+    on l'ignore.
 
     Avoids loading all symbols at once -- queries one symbol's bars at a time,
     accumulates raw values, then computes percentile ranks per date.
@@ -745,6 +777,14 @@ def build_cross_sectional_features_from_db(
         diagnostics["sector_neutral_feature_count"] = len(SECTOR_NEUTRAL_FEATURE_COLUMNS)
         diagnostics["feature_columns"] = list(feature_frame.columns)
 
+    # ── feature_subset : ne garder que les features demandées (ex. direction) ──
+    if feature_subset:
+        _subset_set = set(feature_subset)
+        _keep = ["symbol", "date"] + [c for c in feature_frame.columns if c in _subset_set]
+        feature_frame = feature_frame[_keep]
+        diagnostics["feature_subset"] = list(feature_subset)
+        diagnostics["feature_columns"] = list(feature_frame.columns)
+
     return feature_frame, diagnostics
 
 
@@ -757,11 +797,21 @@ def build_cross_sectional_features(
     *,
     benchmark_df: pd.DataFrame | None = None,
     min_universe_size: int = 20,
+    sector_map: dict[str, str] | None = None,
+    min_symbols_per_sector: int = 3,
+    feature_subset: list[str] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """Build cross-sectional features from a pre-loaded DataFrame.
 
     Prefer ``build_cross_sectional_features_from_db`` which loads bars
     symbol-by-symbol and avoids massive MySQL queries.
+
+    Si ``sector_map`` est fourni, calcule aussi les features sectorielles
+    + sector-neutral (même logique que ``build_cross_sectional_features_from_db``).
+
+    Si ``feature_subset`` est fourni (ex. ``DIRECTIONAL_FEATURES``), seules
+    les colonnes de cette liste sont retournées — chaque feature est vérifiée
+    contre la liste : si elle y est, on la garde, sinon on l'ignore.
     """
     if universe_df is None or universe_df.empty:
         return pd.DataFrame(columns=["symbol", "date", *CROSS_SECTIONAL_FEATURE_COLUMNS]), {
@@ -798,15 +848,43 @@ def build_cross_sectional_features(
         raw_panel[rank_col] = rank_series.astype(float)
 
     feature_frame = raw_panel[["symbol", "date", *CROSS_SECTIONAL_FEATURE_COLUMNS]].copy()
+
+    # ── Sector features (optional) ──
+    if sector_map:
+        sector_frame = _compute_sector_features(
+            raw_panel, sector_map, min_symbols_per_sector=min_symbols_per_sector,
+        )
+        if not sector_frame.empty:
+            feature_frame = feature_frame.merge(sector_frame, on=["symbol", "date"], how="left")
+        for col in SECTOR_FEATURE_COLUMNS:
+            if col not in feature_frame.columns:
+                feature_frame[col] = 0.0
+        # ── Sector-neutral features (Sprint 2026-07-25) ──
+        _sn_frame = _compute_sector_neutral_features(
+            raw_panel, sector_map, min_symbols_per_sector=min_symbols_per_sector,
+        )
+        if not _sn_frame.empty:
+            feature_frame = feature_frame.merge(_sn_frame, on=["symbol", "date"], how="left")
+        for col in SECTOR_NEUTRAL_FEATURE_COLUMNS:
+            if col not in feature_frame.columns:
+                feature_frame[col] = 0.0
+
+    # ── feature_subset : ne garder que les features demandées (ex. direction) ──
+    if feature_subset:
+        _subset_set = set(feature_subset)
+        _keep = ["symbol", "date"] + [c for c in feature_frame.columns if c in _subset_set]
+        feature_frame = feature_frame[_keep]
+
     diagnostics = {
         "enabled": True,
-        "feature_columns": list(CROSS_SECTIONAL_FEATURE_COLUMNS),
+        "feature_columns": list(feature_frame.columns),
         "input_rows": int(len(universe_df)),
         "output_rows": int(len(feature_frame)),
         "unique_symbols": int(panel["symbol"].nunique()),
         "unique_dates": int(panel["date"].nunique()),
         "min_universe_size": int(min_universe_size),
         "dates_below_min_universe": int((raw_panel.groupby("date")["universe_symbol_count"].first() < min_universe_size).sum()),
+        "feature_subset": list(feature_subset) if feature_subset else None,
     }
     return feature_frame, diagnostics
 

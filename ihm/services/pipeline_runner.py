@@ -97,6 +97,7 @@ from ihm.services.pipeline_ml_defaults import (
     DEFAULT_ML_GLOBAL_CHAMPION,
     DEFAULT_ML_GLOBAL_MODEL_NAME,
     DEFAULT_ML_ENABLE_CROSS_SECTIONAL,
+    DEFAULT_ML_INCLUDE_DIRECTIONAL_FEATURES,
     DEFAULT_ML_SELECT_CHAMPION,
     DEFAULT_ML_OPTIMIZE_THRESHOLDS,
     DEFAULT_ML_OPTIMIZE_TARGET,
@@ -410,6 +411,7 @@ class PipelineLaunchOptions:
     ml_global_champion: bool = DEFAULT_ML_GLOBAL_CHAMPION  # FLAG D : champion CatBoost vs LightGBM
     ml_global_model_name: MLGlobalModelName = DEFAULT_ML_GLOBAL_MODEL_NAME  # type: ignore[assignment]
     ml_enable_cross_sectional: bool = DEFAULT_ML_ENABLE_CROSS_SECTIONAL
+    ml_include_directional_features: bool = DEFAULT_ML_INCLUDE_DIRECTIONAL_FEATURES  # 2026-08-23 : liste restreinte 'direction'
     ml_select_champion: bool = DEFAULT_ML_SELECT_CHAMPION
     ml_optimize_thresholds: bool = DEFAULT_ML_OPTIMIZE_THRESHOLDS
     ml_optimize_target: bool = DEFAULT_ML_OPTIMIZE_TARGET
@@ -2363,6 +2365,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.append("--enable-global-stacking")
         if options.ml_enable_cross_sectional:
             command.append("--enable-cross-sectional")
+        if getattr(options, "ml_include_directional_features", False):
+            command.append("--include-directional-features")
         if options.ml_enable_liquidity_filter:
             command.extend([
                 "--enable-liquidity-filter",

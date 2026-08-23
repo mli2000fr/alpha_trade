@@ -126,6 +126,17 @@ def _xs_rank_column_name(source_col: str) -> str:
     return f"{source_col}_xs_rank"
 
 
+def _directional_features_subset() -> list[str] | None:
+    """Retourne la liste 'direction' si le mode directionnel est actif, sinon None.
+
+    La liste 'direction' (2026-08-23) est un sous-ensemble des features
+    cross-sectionnelles/sectorielles : seules ces features sont calculées et
+    injectées dans l'entraînement (les autres ~40 sont ignorées).
+    """
+    from modelFactory.cross_sectional import DIRECTIONAL_FEATURES
+    return list(DIRECTIONAL_FEATURES)
+
+
 # ────────────────────────────────────────────────────────────────────
 # Helpers
 # ────────────────────────────────────────────────────────────────────
@@ -259,7 +270,7 @@ def _prepare_global_ranking_frame(
         include_score_components=cfg.data.include_score_components,
         include_volume_features=cfg.data.include_volume_features,
     )
-    if cfg.data.enable_cross_sectional_features and cross_sectional_df is not None:
+    if (cfg.data.enable_cross_sectional_features or getattr(cfg.data, "include_directional_features", False)) and cross_sectional_df is not None:
         df = merge_cross_sectional_features(df, cross_sectional_df)
 
     return df
@@ -272,11 +283,18 @@ def _get_ranking_feature_columns(cfg: TrainingConfig) -> list[str]:
     à une date donnée) car elles ne peuvent pas discriminer le classement
     cross-sectionnel. Ces features restent disponibles pour les modèles
     per-symbol (Phase 2) qui en ont besoin pour le contexte de régime.
+
+    Mode ``include_directional_features`` (2026-08-23) : on active les
+    features cross-sectionnelles/sectorielles (pour que le calcul ait lieu),
+    mais on ne conserve QUE les features de ``DIRECTIONAL_FEATURES`` parmi
+    cette famille (les autres ~40 sont ignorées). Les features blacklistées
+    qui font partie de la liste direction sont ré-injectées.
     """
+    _directional = getattr(cfg.data, "include_directional_features", False)
     all_cols = get_feature_columns(
         include_sentiment=False,  # sentiment → per-symbol uniquement (sparse, noyé dans 177 features)
         feature_set=cfg.data.feature_set,
-        include_cross_sectional=cfg.data.enable_cross_sectional_features,
+        include_cross_sectional=cfg.data.enable_cross_sectional_features or _directional,
         include_screener_scores=cfg.data.include_screener_scores,
         include_short_score=cfg.data.include_short_score_features,
         include_macro_vix=cfg.data.include_macro_vix_features,
@@ -357,6 +375,28 @@ def _get_ranking_feature_columns(cfg: TrainingConfig) -> list[str]:
         _xsc = _xs_rank_column_name(_src)
         if _src in cols and _xsc not in cols:
             cols.append(_xsc)
+    # ── Mode direction (2026-08-23) ──
+    # Ne conserver que la liste restreinte 'direction' parmi la famille
+    # cross-sectionnelle/sectorielle (les autres ~40 features sont ignorées).
+    # Les features de la liste direction blacklistées ci-dessus sont ré-injectées.
+    if _directional:
+        from modelFactory.cross_sectional import (
+            CROSS_SECTIONAL_FEATURE_COLUMNS,
+            DIRECTIONAL_FEATURES,
+            SECTOR_FEATURE_COLUMNS,
+            SECTOR_NEUTRAL_FEATURE_COLUMNS,
+            SECTOR_ZSCORE_FEATURE_COLUMNS,
+        )
+        _family = set(CROSS_SECTIONAL_FEATURE_COLUMNS) | set(SECTOR_FEATURE_COLUMNS) | set(SECTOR_NEUTRAL_FEATURE_COLUMNS) | set(SECTOR_ZSCORE_FEATURE_COLUMNS)
+        _dir_set = set(DIRECTIONAL_FEATURES)
+        # Garder les features hors famille (base) + celles de la liste direction.
+        # Les *_xs_rank (rangs cross-sectionnels des features brutes) qui ne
+        # sont pas dans la liste direction sont aussi retirés.
+        cols = [c for c in cols if (c not in _family and not c.endswith("_xs_rank")) or c in _dir_set]
+        # Garantir la présence de toutes les features direction (même blacklistées)
+        for _df in DIRECTIONAL_FEATURES:
+            if _df not in cols:
+                cols.append(_df)
     return cols
 
 
@@ -874,10 +914,22 @@ def train_global_ranking_wf(
             engine, symbols, end_date=history_end_date, start_date=history_start_date,
         )
     cross_sectional_df = None
-    if cfg.data.enable_cross_sectional_features:
+    _directional_mode = getattr(cfg.data, "include_directional_features", False)
+    if cfg.data.enable_cross_sectional_features or _directional_mode:
+        _smap = None
+        if _directional_mode:
+            # Les features 'direction' sectorielles (sector_ret_*, stock_vs_sector_ret_*,
+            # *_sector_neutral) nécessitent le mapping secteur.
+            from modelFactory.cross_sectional import _load_sector_mapping as _load_smap
+            try:
+                _smap = _load_smap(engine)
+            except Exception as _exc:
+                LOGGER.warning("global_ranking_wf directional sector_map failed: %s", _exc)
         cross_sectional_df, _ = build_cross_sectional_features(
             universe_df, benchmark_df=benchmark_df,
             min_universe_size=cfg.data.cross_sectional_min_universe,
+            sector_map=_smap,
+            feature_subset=(_directional_features_subset() if _directional_mode else None),
         )
 
     # ── Préparation du DataFrame poolé (features communes à tous les horizons) ──
@@ -985,7 +1037,7 @@ def train_global_ranking_wf(
     # (momentum, RSI, volatilité, etc.) en soustrayant la médiane du secteur
     # à chaque date.  Isole l'alpha spécifique au titre vs son secteur.
     _sn_cols_in = [c for c in SECTOR_NEUTRAL_FEATURE_COLUMNS if c in feature_columns]
-    if _sn_cols_in and cfg.data.enable_cross_sectional_features:
+    if _sn_cols_in and (cfg.data.enable_cross_sectional_features or _directional_mode):
         _compute_sector_neutral_inplace(base_df, feature_columns, engine)
 
     base_df = base_df.dropna(subset=feature_columns).reset_index(drop=True)
@@ -1795,6 +1847,7 @@ def train_global_ranking_wf(
             "horizons": list(_active_horizons),
             "saved_models": _saved_models,
             "feature_set": cfg.data.feature_set,
+            "benchmark_symbol": cfg.data.benchmark_symbol,
             "include_sentiment": cfg.data.include_sentiment_features,
             "include_screener_scores": cfg.data.include_screener_scores,
             "include_short_score": cfg.data.include_short_score_features,
@@ -1808,6 +1861,7 @@ def train_global_ranking_wf(
             "include_score_components": cfg.data.include_score_components,
             "include_volume_features": cfg.data.include_volume_features,
             "enable_cross_sectional": cfg.data.enable_cross_sectional_features,
+            "include_directional_features": getattr(cfg.data, "include_directional_features", False),
             "horizon_features": {str(h): feats for h, feats in _horizon_features.items()},
             "horizon_details": _horizon_details,
             "ic_by_horizon": {str(h): float(v) for h, v in all_ic_means.items()} if all_ic_means else {},
@@ -1880,19 +1934,60 @@ def predict_global_rank(
         _model_name: str = _meta.get("model_name", "lightgbm")
         _horizons: list[int] = _meta.get("horizons", [10])
         _feature_set: str = _meta.get("feature_set", "expert")
+        _benchmark_symbol: str = _meta.get("benchmark_symbol", "SPY")
         _include_cross_sectional: bool = _meta.get("enable_cross_sectional", True)
+        _include_directional: bool = bool(_meta.get("include_directional_features", False))
         # Features spécifiques par horizon (post feature selection)
         _horizon_features_meta: dict[str, list[str]] = _meta.get("horizon_features", {})
     except Exception as exc:
         LOGGER.warning("predict_global_rank: failed to load features metadata: %s", exc)
         return None
 
+    # ── Benchmark (parité entraînement/prédiction) ──
+    # L'entraînement charge le benchmark quand feature_set=="expert" (relative_strength_*,
+    # regime_*, market_* sont calculés vs le benchmark). Sans lui, ces features seraient
+    # à 0.0 en prédiction → rupture de parité. Les appelants (predict_global_rank_history,
+    # _try_compute_global_rank) ne passent PAS benchmark_df → on le charge ici si besoin.
+    if benchmark_df is None and engine is not None and (
+        _feature_set == "expert" or _include_cross_sectional or _include_directional
+    ):
+        try:
+            _udf = universe_df.copy()
+            if "date" in _udf.columns:
+                _udf["date"] = pd.to_datetime(_udf["date"])
+                _start_b = _udf["date"].min().date()
+                _end_b = _udf["date"].max().date()
+            else:
+                _start_b = None
+                _end_b = None
+            benchmark_df = load_benchmark_bars(
+                engine, _benchmark_symbol,
+                end_date=_end_b, start_date=_start_b,
+            )
+            LOGGER.info(
+                "predict_global_rank loaded benchmark %s rows=%d start=%s end=%s",
+                _benchmark_symbol, len(benchmark_df), _start_b, _end_b,
+            )
+        except Exception as _exc:
+            LOGGER.warning("predict_global_rank failed to load benchmark: %s", _exc)
+            benchmark_df = None
+
     # ── Construire les features (communes à tous les horizons) ──
     from modelFactory.cross_sectional import build_cross_sectional_features, merge_cross_sectional_features
     cross_sectional_df: pd.DataFrame | None = None
-    if _include_cross_sectional:
+    if _include_cross_sectional or _include_directional:
+        _smap = None
+        if _include_directional:
+            # Les features 'direction' sectorielles nécessitent le mapping secteur.
+            from modelFactory.cross_sectional import _load_sector_mapping as _load_smap
+            try:
+                _smap = _load_smap(engine) if engine is not None else None
+            except Exception as _exc:
+                LOGGER.warning("predict_global_rank directional sector_map failed: %s", _exc)
         cross_sectional_df, _cs_diag = build_cross_sectional_features(
             universe_df, benchmark_df=benchmark_df, min_universe_size=5,
+            sector_map=_smap,
+            feature_subset=(_directional_features_subset() if _include_directional else None),
         )
 
     # Extraire les flags include_* du metadata pour reproduire le feature set d'entraînement

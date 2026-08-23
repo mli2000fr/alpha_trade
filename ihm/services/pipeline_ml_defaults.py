@@ -111,6 +111,7 @@ DEFAULT_ML_ENABLE_GLOBAL_CHALLENGER = False  # DÉSACTIVÉ — le ranking ne par
 DEFAULT_ML_GLOBAL_CHAMPION = True           # Entraîne CatBoost + LightGBM → sélection champion (IC rank WF)
 DEFAULT_ML_GLOBAL_MODEL_NAME = "catboost"     # Sprint 2026-08-01 v4 : CatBoost RMSE continu (pas de discrétisation)
 DEFAULT_ML_ENABLE_CROSS_SECTIONAL = False     # features cross-sectionnelles + sectorielles
+DEFAULT_ML_INCLUDE_DIRECTIONAL_FEATURES = False  # 2026-08-23 : liste restreinte 'direction' (sous-ensemble des features cross-sectionnelles/sectorielles, ~17 features au lieu de ~49)
 DEFAULT_ML_SELECT_CHAMPION = True             # champion selection activée
 DEFAULT_ML_OPTIMIZE_THRESHOLDS = False         # optimization des seuils de décision
 DEFAULT_ML_OPTIMIZE_TARGET = False            # target optimization (supervisée)
