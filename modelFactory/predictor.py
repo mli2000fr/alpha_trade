@@ -1101,7 +1101,11 @@ def _prepare_prediction_frame(
             _record_db_issue(operation="load_symbol_sentiment", symbol=symbol, reason=f"db_read_failed:{type(exc).__name__}")
             return pd.DataFrame()
     benchmark_df = None
-    if data_cfg.feature_set == "expert" or data_cfg.enable_cross_sectional_features:
+    if (
+        data_cfg.feature_set == "expert"
+        or data_cfg.enable_cross_sectional_features
+        or getattr(data_cfg, "include_directional_features", False)
+    ):
         try:
             benchmark_df = _load_benchmark_bars_cached(
                 engine,

@@ -1847,6 +1847,7 @@ def train_global_ranking_wf(
             "horizons": list(_active_horizons),
             "saved_models": _saved_models,
             "feature_set": cfg.data.feature_set,
+            "benchmark_symbol": cfg.data.benchmark_symbol,
             "include_sentiment": cfg.data.include_sentiment_features,
             "include_screener_scores": cfg.data.include_screener_scores,
             "include_short_score": cfg.data.include_short_score_features,
@@ -1933,6 +1934,7 @@ def predict_global_rank(
         _model_name: str = _meta.get("model_name", "lightgbm")
         _horizons: list[int] = _meta.get("horizons", [10])
         _feature_set: str = _meta.get("feature_set", "expert")
+        _benchmark_symbol: str = _meta.get("benchmark_symbol", "SPY")
         _include_cross_sectional: bool = _meta.get("enable_cross_sectional", True)
         _include_directional: bool = bool(_meta.get("include_directional_features", False))
         # Features spécifiques par horizon (post feature selection)
@@ -1940,6 +1942,35 @@ def predict_global_rank(
     except Exception as exc:
         LOGGER.warning("predict_global_rank: failed to load features metadata: %s", exc)
         return None
+
+    # ── Benchmark (parité entraînement/prédiction) ──
+    # L'entraînement charge le benchmark quand feature_set=="expert" (relative_strength_*,
+    # regime_*, market_* sont calculés vs le benchmark). Sans lui, ces features seraient
+    # à 0.0 en prédiction → rupture de parité. Les appelants (predict_global_rank_history,
+    # _try_compute_global_rank) ne passent PAS benchmark_df → on le charge ici si besoin.
+    if benchmark_df is None and engine is not None and (
+        _feature_set == "expert" or _include_cross_sectional or _include_directional
+    ):
+        try:
+            _udf = universe_df.copy()
+            if "date" in _udf.columns:
+                _udf["date"] = pd.to_datetime(_udf["date"])
+                _start_b = _udf["date"].min().date()
+                _end_b = _udf["date"].max().date()
+            else:
+                _start_b = None
+                _end_b = None
+            benchmark_df = load_benchmark_bars(
+                engine, _benchmark_symbol,
+                end_date=_end_b, start_date=_start_b,
+            )
+            LOGGER.info(
+                "predict_global_rank loaded benchmark %s rows=%d start=%s end=%s",
+                _benchmark_symbol, len(benchmark_df), _start_b, _end_b,
+            )
+        except Exception as _exc:
+            LOGGER.warning("predict_global_rank failed to load benchmark: %s", _exc)
+            benchmark_df = None
 
     # ── Construire les features (communes à tous les horizons) ──
     from modelFactory.cross_sectional import build_cross_sectional_features, merge_cross_sectional_features
