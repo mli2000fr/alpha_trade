@@ -462,6 +462,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Exclure les symboles listés dans config/ticket_exclude.txt (séparés par virgule)")
     p.add_argument("--enable-cross-sectional", action="store_true", default=False,
                    help="Active les features cross-sectionnelles PIT-safe (rangs percentiles + features sectorielles dynamiques)")
+    p.add_argument("--include-directional-features", action="store_true", default=False,
+                   help="2026-08-23 : injecter uniquement la liste restreinte de features 'direction' (sous-ensemble des features cross-sectionnelles/sectorielles). Chaque feature est vérifiée contre la liste : si elle y est, on la calcule, sinon on l'ignore. Ne calcule PAS les ~49 features cross-sectionnelles complètes.")
     p.add_argument("--cross-sectional-min-universe", type=int, default=20,
                    help="Nombre minimum de symboles disponibles par date pour calculer des ranks cross-sectionnels fiables")
     # ── Filtrage liquidité (Sprint 2026-07-24) ──
@@ -687,6 +689,7 @@ def main(args: list[str] | None = None) -> None:
             oracle_model_only=opts.oracle_model_only,
             sector_use_symbol_feature=opts.sector_symbol_feature,
             enable_cross_sectional_features=opts.enable_cross_sectional,
+            include_directional_features=getattr(opts, "include_directional_features", False),
             cross_sectional_min_universe=opts.cross_sectional_min_universe,
             feature_set=opts.feature_set,
             benchmark_symbol=opts.benchmark_symbol,

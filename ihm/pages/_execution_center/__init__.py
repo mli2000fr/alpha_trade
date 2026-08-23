@@ -157,6 +157,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_GLOBAL_CHAMPION,
     DEFAULT_ML_GLOBAL_MODEL_NAME,
     DEFAULT_ML_ENABLE_CROSS_SECTIONAL,
+    DEFAULT_ML_INCLUDE_DIRECTIONAL_FEATURES,
     DEFAULT_ML_SELECT_CHAMPION,
     DEFAULT_ML_OPTIMIZE_THRESHOLDS,
     DEFAULT_ML_OPTIMIZE_TARGET,
@@ -3686,6 +3687,15 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_ml_enable_cross_sectional",
                 help="Ajoute `--enable-cross-sectional`. Calcule les rangs percentiles PIT-safe ET les features sectorielles dynamiques (momentum, volatilité, alpha intra-secteur GICS).",
             )
+            # 2026-08-23 : liste restreinte 'direction' — injecte uniquement les
+            # features de la liste direction (sous-ensemble), sans calculer les ~49
+            # features cross-sectionnelles complètes.
+            ml_include_directional_features = st.checkbox(
+                "🎯 Ajouter les features directionnels (liste restreinte 'direction')",
+                value=_session_state_bool("pipeline_ml_include_directional_features", DEFAULT_ML_INCLUDE_DIRECTIONAL_FEATURES),
+                key="pipeline_ml_include_directional_features",
+                help="Ajoute `--include-directional-features`. Injecte dans l'entraînement uniquement les features de la liste 'direction' (stock_vs_sector_ret_5/20/60, momentum_20_sector_neutral, relative_strength_20_sector_neutral, sector_ret_5/20/60, sector_relative_strength_20, *_xs_rank...). Pour les features déjà présentes dans la liste d'entraînement, on les ignore (aucun doublon). Transparent pour la prédiction (les features d'entraînement sont sauvegardées et réutilisées).",
+            )
 
         ml_adv_col1, ml_adv_col2 = st.columns(2)
         with ml_adv_col1:
@@ -4762,6 +4772,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_global_champion=bool(ml_global_champion),
             ml_global_model_name=cast(Any, ml_global_model_name),
             ml_enable_cross_sectional=bool(ml_enable_cross_sectional),
+            ml_include_directional_features=bool(ml_include_directional_features),
             ml_select_champion=bool(ml_select_champion),
             ml_optimize_thresholds=bool(ml_optimize_thresholds),
             ml_optimize_target=bool(ml_optimize_target),
