@@ -1030,7 +1030,8 @@ def test_build_pipeline_command_ml_train_xgboost_champion_three_candidates() -> 
 
     train_cmd = build_pipeline_command("ml_train", options)
 
-    assert train_cmd[train_cmd.index("--global-model-name") + 1] == "xgboost"
+    # P3-3 : champion auto → 3 candidats ; --global-model-name redondant et omis.
+    assert "--global-model-name" not in train_cmd
     assert "--global-champion" in train_cmd
     assert "--ranking-include-xgboost" not in train_cmd
 
@@ -1060,7 +1061,26 @@ def test_build_pipeline_command_ml_train_champion_ignores_selected_backend() -> 
     train_cmd = build_pipeline_command("ml_train", options)
 
     assert "--global-champion" in train_cmd
-    assert train_cmd[train_cmd.index("--global-model-name") + 1] == "catboost"
+    # P3-3 : champion → backend du dropdown ignoré, --global-model-name non émis.
+    assert "--global-model-name" not in train_cmd
+
+
+def test_build_pipeline_command_ml_train_global_model_only_no_duplicate() -> None:
+    """Régression : global-model-only n'émet qu'une fois (voire zéro fois) --enable-global-model
+    (implicite côté cli) et omet --global-model-name en mode champion."""
+    options = PipelineLaunchOptions(
+        ml_global_model_only=True,
+        ml_enable_global_model=True,
+        ml_global_champion=True,
+        ml_global_model_name="catboost",
+    )
+
+    train_cmd = build_pipeline_command("ml_train", options)
+
+    assert train_cmd.count("--enable-global-model") == 0  # implicite via --global-model-only
+    assert "--global-model-only" in train_cmd
+    assert "--global-champion" in train_cmd
+    assert "--global-model-name" not in train_cmd
 
 
 def test_build_pipeline_command_ml_train_propagates_training_end_date() -> None:
