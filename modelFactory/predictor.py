@@ -37,6 +37,7 @@ from modelFactory.data_loader import (
 from modelFactory.dataset import FeatureScaler
 from modelFactory.db_registry import insert_predictions, load_tradable_universe_symbols, load_training_run
 from modelFactory.features import compute_features, get_feature_columns, validate_feature_contract
+from modelFactory.feature_logging import log_feature_values
 from modelFactory.model import LSTMAttentionModule
 from modelFactory.runtime_status import increment_runtime_counter, update_runtime_status
 
@@ -53,6 +54,8 @@ _global_rank_prediction_cache: dict[str, pd.DataFrame | None] = {}
 _global_rank_fallback_symbols: list[str] = []  # symboles ayant utilisé le fallback 0.5
 # Cache : le batch contient-il des modèles per-symbol/per-sector entraînés ? (stable par batch)
 _batch_has_models_cache: dict[str, bool] = {}
+# Audit features live (global model) : une seule fois par process pour éviter le spam journalier.
+_global_model_feature_audit_done = False
 
 
 def _batch_has_per_symbol_or_sector(engine: "Engine", batch_id: str | None) -> bool:
@@ -1398,6 +1401,14 @@ def _predict_with_tabular_model(
             cutoff_date,
         )
         return None
+    # ── Audit live (une seule fois par run) des features du global model ──
+    global _global_model_feature_audit_done
+    if selected_model == "global_model" and not _global_model_feature_audit_done:
+        log_feature_values(
+            last_row, _numeric_cols,
+            label=f"global_model_live_predict symbol={symbol} cutoff={cutoff_date}",
+        )
+        _global_model_feature_audit_done = True
     try:
         model = load_tabular_model_cached(model_path, selected_model=selected_model)
     except Exception as exc:  # noqa: BLE001

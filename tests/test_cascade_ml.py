@@ -710,6 +710,7 @@ class TestSectorNeutralNotBlacklisted:
         mock_cfg.data.include_fundamentals_features = False
         mock_cfg.data.include_factors_features = False
         mock_cfg.data.enable_cross_sectional_features = True
+        mock_cfg.data.include_directional_features = False
 
         cols = _get_ranking_feature_columns(mock_cfg)
         for sn_col in self._CONSERVED_SECTOR_NEUTRAL:
@@ -733,6 +734,7 @@ class TestSectorNeutralNotBlacklisted:
         mock_cfg.data.include_fundamentals_features = False
         mock_cfg.data.include_factors_features = False
         mock_cfg.data.enable_cross_sectional_features = True
+        mock_cfg.data.include_directional_features = False
 
         cols = _get_ranking_feature_columns(mock_cfg)
         for bl_col in self._BLACKLISTED_AGAIN:

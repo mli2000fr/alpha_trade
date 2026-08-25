@@ -37,6 +37,7 @@ from modelFactory.oracle.train import (
     roc_auc,
     train_lightgbm,
 )
+from modelFactory.feature_logging import log_feature_duplicates, log_feature_values, log_feature_weights
 
 LOGGER = logging.getLogger(__name__)
 
@@ -103,8 +104,13 @@ def run_walk_forward(
         return {"status": "error", "reason": "no_folds"}
 
     cols = [c for c in ablation_features(feature_columns, **_ABLATIONS[ablation]) if c in dataset.columns]
+    # ── Audit : toutes les features sont-elles alimentées ? (une ligne par feature) ──
+    log_feature_values(dataset, cols, label="oracle_extreme_train_features")
+    log_feature_duplicates(dataset, cols, label="oracle_extreme_train_features")
+
     oos_parts: list[pd.DataFrame] = []
     per_fold: list[dict[str, Any]] = []
+    _test_feature_parts: list[pd.DataFrame] = []
 
     for fold in folds:
         X_tr = fold["train"][cols].astype(float)
@@ -116,6 +122,8 @@ def run_walk_forward(
             continue
 
         model = train_lightgbm(X_tr, y_tr, X_te, y_te)
+        log_feature_weights(model, cols, label=f"oracle_extreme fold={fold['t_start']}")
+        _test_feature_parts.append(X_te)
         proba = model.predict(X_te)
 
         oos = fold["test"][["date", "symbol", _target_col, "future_return", "global_rank_20"]].copy()
@@ -140,6 +148,14 @@ def run_walk_forward(
 
     if not oos_parts:
         return {"status": "error", "reason": "no_oos"}
+
+    # ── Audit : valeurs des features au moment de la prédiction (une ligne par feature) ──
+    if _test_feature_parts:
+        log_feature_values(
+            pd.concat(_test_feature_parts, ignore_index=True),
+            cols,
+            label="oracle_extreme_predict_features",
+        )
 
     oos = pd.concat(oos_parts, ignore_index=True)
     pr_overall = precision_recall_at_top_pct(oos, _proba_col, target_col=_target_col)

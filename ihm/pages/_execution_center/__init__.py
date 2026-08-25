@@ -3694,7 +3694,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 "🎯 Ajouter les features directionnels (liste restreinte 'direction')",
                 value=_session_state_bool("pipeline_ml_include_directional_features", DEFAULT_ML_INCLUDE_DIRECTIONAL_FEATURES),
                 key="pipeline_ml_include_directional_features",
-                help="Ajoute `--include-directional-features`. Injecte dans l'entraînement uniquement les features de la liste 'direction' (stock_vs_sector_ret_5/20/60, momentum_20_sector_neutral, relative_strength_20_sector_neutral, sector_ret_5/20/60, sector_relative_strength_20, *_xs_rank...). Pour les features déjà présentes dans la liste d'entraînement, on les ignore (aucun doublon). Transparent pour la prédiction (les features d'entraînement sont sauvegardées et réutilisées).",
+                help="Ajoute `--include-directional-features`. Injecte dans l'entraînement uniquement les features de la liste 'direction' (stock_vs_sector_ret_5/20/60, momentum_20_sector_neutral, sector_ret_5/20/60, sector_relative_strength_20, *_xs_rank...). Pour les features déjà présentes dans la liste d'entraînement, on les ignore (aucun doublon). Transparent pour la prédiction (les features d'entraînement sont sauvegardées et réutilisées).",
             )
 
         ml_adv_col1, ml_adv_col2 = st.columns(2)

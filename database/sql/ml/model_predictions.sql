@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.model_predictions (
     created_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (prediction_id),
     UNIQUE KEY uq_symbol_date_run (symbol, prediction_date, run_id),
+    INDEX idx_run_id (run_id),
     INDEX idx_date (prediction_date),
     INDEX idx_symbol (symbol),
     INDEX idx_selected_model (selected_model),

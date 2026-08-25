@@ -53,6 +53,7 @@ from modelFactory.features import (
     get_feature_columns,
 )
 from modelFactory.features import fingerprint as compute_feature_fingerprint
+from modelFactory.feature_logging import _extract_importance, log_feature_duplicates, log_feature_values
 from modelFactory.reproducibility import apply_reproducibility, derive_seed
 
 LOGGER = logging.getLogger(__name__)
@@ -66,6 +67,8 @@ LOGGER = logging.getLogger(__name__)
 _GLOBAL_RANKING_HORIZONS: tuple[int, ...] = (3, 5, 10, 15, 20)
 # Smoothing : uniquement sur les horizons fiables (H3/H5 trop bruités)
 _SMOOTHING_HORIZONS: tuple[int, ...] = (10, 15, 20)
+# Audit features live (prédiction) : une seule fois par process pour éviter le spam.
+_predict_feature_audit_done = False
 
 # ── Sector group mapping (Sprint 2026-08-01) ──
 # GICS sectors → Cyclical / Defensive
@@ -115,8 +118,10 @@ _XS_RANK_SOURCE_FEATURES: list[str] = [
     # Range / gap / vwap
     "intraday_range", "overnight_gap", "close_to_vwap",
     "atr_14_norm", "range_position_20", "vol_ratio_20_60",
-    # Force relative
-    "relative_strength_20", "relative_strength_60",
+    # Note 2026-08-25 : relative_strength_20/60 = momentum_20/60 − benchmark_return_20
+    # (constante ∀ symboles par date) → leur *_xs_rank (percentile intra-date) est
+    # IDENTIQUE à momentum_20/60_xs_rank. On ne génère donc pas leur *_xs_rank
+    # (doublons exacts). Les versions brutes restent dans le feature set.
     # ── Dynamique temporelle (Niveau 3) ──
     "accel_3_5", "decay_5_10", "rsi_slope",
     "vol_expansion", "meanrev_signal", "gap_fade",
@@ -363,6 +368,13 @@ def _get_ranking_feature_columns(cfg: TrainingConfig) -> list[str]:
         "close_to_vwap_xs_rank",
         "volume_zscore_5d", "volume_zscore_5d_xs_rank",
         "accel_3_5", "accel_3_5_xs_rank",
+        # ── Chirurgie 2026-08-25 : return_* doublons exacts de momentum_* ──
+        # return_Nd = close/close.shift(N) - 1 = momentum_N (même formule)
+        # → information identique, doublon pur.
+        "return_5d", "return_10d", "return_20d",
+        # ── Chirurgie 2026-08-25 : distance_ema* doublons exacts de ema*_distance ──
+        # distance_ema20 = (close−EMA20)/EMA20 = ema20_distance (même formule).
+        "distance_ema20", "distance_ema50",
     }
     # Note 2026-07-28 : les *_sector_neutral de momentum, RSI, SMA distance
     # et volume_ratio sont CONSERVÉS (imp 2.8–28.6 en H3, 4.4–28.6 en H5).
@@ -389,10 +401,12 @@ def _get_ranking_feature_columns(cfg: TrainingConfig) -> list[str]:
         )
         _family = set(CROSS_SECTIONAL_FEATURE_COLUMNS) | set(SECTOR_FEATURE_COLUMNS) | set(SECTOR_NEUTRAL_FEATURE_COLUMNS) | set(SECTOR_ZSCORE_FEATURE_COLUMNS)
         _dir_set = set(DIRECTIONAL_FEATURES)
-        # Garder les features hors famille (base) + celles de la liste direction.
-        # Les *_xs_rank (rangs cross-sectionnels des features brutes) qui ne
-        # sont pas dans la liste direction sont aussi retirés.
-        cols = [c for c in cols if (c not in _family and not c.endswith("_xs_rank")) or c in _dir_set]
+        # Garder les features hors famille (base, y compris les *_xs_rank de base)
+        # + celles de la liste direction. On ne retire QUE la famille
+        # cross-sectionnelle/sectorielle non-direction. Les *_xs_rank sont des
+        # rangs percentiles de features techniques de BASE (générés par le
+        # mécanisme xs_rank), PAS des features cross-sectionnelles → on les garde.
+        cols = [c for c in cols if (c not in _family) or c in _dir_set]
         # Garantir la présence de toutes les features direction (même blacklistées)
         for _df in DIRECTIONAL_FEATURES:
             if _df not in cols:
@@ -1040,6 +1054,10 @@ def train_global_ranking_wf(
     if _sn_cols_in and (cfg.data.enable_cross_sectional_features or _directional_mode):
         _compute_sector_neutral_inplace(base_df, feature_columns, engine)
 
+    # ── Audit : toutes les features sont-elles alimentées ? (une ligne par feature) ──
+    log_feature_values(base_df, feature_columns, label="global_ranking_train_features")
+    log_feature_duplicates(base_df, feature_columns, label="global_ranking_train_features")
+
     base_df = base_df.dropna(subset=feature_columns).reset_index(drop=True)
 
     # ── Résoudre les colonnes facteurs et le secteur mapping une fois ──
@@ -1136,6 +1154,7 @@ def train_global_ranking_wf(
         _split_importances: list[dict[str, float]] = []
         _active_features: list[str] = feature_columns
         _h_split_details: list[dict[str, Any]] = []  # détails par split pour IHM/rapport
+        _predict_audit_logged = False
 
         # ── H3 : exclure les features fondamentales (inefficaces à court terme) ──
         if horizon == 3:
@@ -1195,6 +1214,13 @@ def train_global_ranking_wf(
             _val_orig = _val_with_targets.dropna(subset=_active_features + [_target_col, _label_col])
             if _train_orig.empty or _val_orig.empty:
                 continue
+            if not _predict_audit_logged:
+                # ── Audit : valeurs des features au moment de la prédiction (une ligne par feature) ──
+                log_feature_values(
+                    _val_orig, _active_features,
+                    label=f"global_ranking_predict_features h{horizon}",
+                )
+                _predict_audit_logged = True
 
             # ── P1-6 (2026-08-04) : filtre liquidité + disponibilité par fold ──
             _total_syms = len(symbols)
@@ -1337,13 +1363,17 @@ def train_global_ranking_wf(
                 _candidate_last_model[backend_model_name] = model
                 _candidate_last_name[backend_model_name] = backend_model_name
 
-                # ── Feature importance (LightGBM uniquement) ──
-                if backend_model_name == "lightgbm" and hasattr(model, "booster_"):
-                    try:
-                        _imp = dict(zip(_active_features, model.booster_.feature_importance(importance_type="gain")))
-                        _candidate_importances[backend_model_name].append(_imp)
-                    except Exception:
-                        pass
+                # ── Feature importance (tous les backends) ──
+                try:
+                    _imp_arr = _extract_importance(model)
+                    if _imp_arr is not None:
+                        _imp_arr = np.asarray(_imp_arr, dtype=float).reshape(-1)
+                        if len(_imp_arr) == len(_active_features):
+                            _candidate_importances[backend_model_name].append(
+                                dict(zip(_active_features, _imp_arr))
+                            )
+                except Exception:
+                    pass
 
                 X_val = val_df[_active_features]
                 y_val = val_df[_target_col].to_numpy(dtype=np.float64)
@@ -2057,6 +2087,14 @@ def predict_global_rank(
     _sn_cols_in = [c for c in SECTOR_NEUTRAL_FEATURE_COLUMNS if c in _feature_columns]
     if _sn_cols_in and engine is not None:
         _compute_sector_neutral_inplace(pred_df, _feature_columns, engine)
+
+    # ── Audit rate-limité : valeurs des features au moment de la prédiction ──
+    # (une seule fois par run — la 1ʳᵉ date prédite — pour vérifier que les
+    # features utilisées en prédiction sont bien alimentées, sans spam journalier)
+    global _predict_feature_audit_done
+    if not _predict_feature_audit_done:
+        log_feature_values(pred_df, _feature_columns, label="global_ranking_predict_features")
+        _predict_feature_audit_done = True
 
     X = pred_df[_feature_columns]
     if X.shape[1] != len(_feature_columns):
