@@ -30,6 +30,18 @@ except Exception:
 
 
 # ---------------------------------------------------------------------------
+# Helper — logs d'entraînement d'un batch
+# ---------------------------------------------------------------------------
+
+def _get_batch_training_logs(batch_id: str) -> str:
+    """Récupère les logs d'entraînement du batch : archive persistante
+    (artifacts/rapport_ml/<batch_id>.log) en priorité, sinon scan du log global
+    (log/model_factory.log + rotations)."""
+    from modelFactory.batch_logs import batch_logs_text
+    return batch_logs_text(batch_id)
+
+
+# ---------------------------------------------------------------------------
 # Helper — mise en gras des lignes walk-forward dans les tableaux
 # ---------------------------------------------------------------------------
 
@@ -1042,6 +1054,21 @@ def _render_delete_batch_button(selected_batch: str, artifacts_dir: Path) -> Non
                 except Exception as exc:
                     errors.append(f"Disque: {exc}")
 
+            # ── Nettoyage artifacts/rapport_ml/ (rapport .md + logs .log archivés) ──
+            _safe_r = selected_batch.replace("/", "_").replace("\\", "_")[:100]
+            _rapport_dir = artifacts_dir.parent.parent / "rapport_ml"
+            _removed_report: list[str] = []
+            for _suffix in (".md", ".log"):
+                _rp = _rapport_dir / f"{_safe_r}{_suffix}"
+                try:
+                    if _rp.exists():
+                        _rp.unlink()
+                        _removed_report.append(_rp.name)
+                except OSError as exc:
+                    errors.append(f"rapport_ml: {exc}")
+            if _removed_report:
+                st.success("✅ Rapport/logs archivés supprimés : " + ", ".join(_removed_report))
+
             if errors:
                 st.error("Erreurs : " + "; ".join(errors))
             else:
@@ -1647,13 +1674,24 @@ def _render_batch_detail(batch: pd.Series) -> None:
     if engine is not None:
         col_dl, col_del = st.columns([3, 1])
         with col_dl:
-            st.download_button(
-                label="📥 Télécharger le rapport (.md)",
-                data=generate_batch_report(engine, batch_id),
-                file_name=f"{_dl_name}.md",
-                mime="text/markdown",
-                key=f"dl_{safe_bid}",
-            )
+            col_report, col_logs = st.columns(2)
+            with col_report:
+                st.download_button(
+                    label="📥 Télécharger le rapport (.md)",
+                    data=generate_batch_report(engine, batch_id),
+                    file_name=f"{_dl_name}.md",
+                    mime="text/markdown",
+                    key=f"dl_{safe_bid}",
+                )
+            with col_logs:
+                st.download_button(
+                    label="📄 Logs d'entraînement (.txt)",
+                    data=_get_batch_training_logs(batch_id),
+                    file_name=f"{_dl_name}.logs.txt",
+                    mime="text/plain",
+                    key=f"logs_{safe_bid}",
+                    help="Lignes de log contenant ce batch_id (log/model_factory.log + rotations).",
+                )
         with col_del:
             _current_status = str(batch.get("status", "")).strip().lower()
             if _current_status == "to delete":

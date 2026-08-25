@@ -105,6 +105,16 @@ def _generate_and_save_batch_report(engine: Engine, batch_id: str) -> None:
         report_path = _REPORT_DIR / f"{safe_name}.md"
         report_path.write_text(md_content, encoding="utf-8")
         LOGGER.info("Rapport batch sauvegardé : %s", report_path)
+
+        # ── Archivage persistant des logs d'entraînement du batch ──
+        # log/model_factory.log est purgé par rotation (maxBytes/backupCount) ;
+        # on persiste les lignes du batch dans artifacts/rapport_ml/<batch_id>.log
+        # pour garder l'historique indéfiniment.
+        try:
+            from modelFactory.batch_logs import persist_batch_log
+            persist_batch_log(batch_id)
+        except Exception as _log_exc:
+            LOGGER.warning("Échec archivage logs batch %s : %s", batch_id, _log_exc)
     except Exception as exc:
         LOGGER.warning("Échec génération rapport batch %s : %s", batch_id, exc)
 
