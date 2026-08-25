@@ -17,6 +17,7 @@ from ihm.services.db import db_available, safe_query, get_engine
 from sqlalchemy import text
 from ihm.services.ml_artifacts import get_model_artifacts_dir
 from modelFactory.report import generate_batch_report
+from modelFactory.db_registry import delete_batch_rows
 
 # ── Chargement config (fallback silencieux si absent) ──
 _MIN_RISING_HORIZONS_DEFAULT = 4
@@ -960,8 +961,10 @@ def _render_delete_batch_button(selected_batch: str, artifacts_dir: Path) -> Non
         batch_status = None
 
     if batch_status == "completed":
-        st.caption("✅ Batch complété — suppression impossible.")
-        return
+        st.warning(
+            "⚠️ Batch marqué `completed`. La suppression reste possible — "
+            "vérifie qu'il n'est plus utilisé (serving, backtest, comparaison)."
+        )
 
     confirm_key = f"ml_diag_confirm_delete_batch_{selected_batch}"
     if confirm_key not in st.session_state:
@@ -1019,40 +1022,18 @@ def _render_delete_batch_button(selected_batch: str, artifacts_dir: Path) -> Non
                 pass
 
             # 1. Tables enfants liées par run_id → à supprimer AVANT model_training_run
-            tables_via_run = [
-                "model_metrics",
-                "model_metrics_full",
-                "model_governance",
-                "model_predictions",
-                "model_directional_oos_metrics",
-            ]
             # 2. Tables avec batch_id direct (model_training_run = parent des tables via run_id)
-            tables_direct = [
-                "model_batch_diagnostics",
-                "global_rank_history",
-                "global_oracle_labels",
-                "model_training_run",
-                "model_training_batch",
-            ]
             try:
-                with engine.begin() as conn:
-                    for table in tables_via_run:
-                        conn.execute(
-                            _text(
-                                f"DELETE FROM alpha_trade.{table} "
-                                f"WHERE run_id IN (SELECT run_id FROM alpha_trade.model_training_run WHERE batch_id = :bid)"
-                            ),
-                            {"bid": selected_batch},
-                        )
-                    for table in tables_direct:
-                        conn.execute(
-                            _text(f"DELETE FROM alpha_trade.{table} WHERE batch_id = :bid"),
-                            {"bid": selected_batch},
-                        )
-                total = len(tables_direct) + len(tables_via_run)
-                st.success(f"✅ {total} tables nettoyées en base")
+                deleted = delete_batch_rows(engine, selected_batch)
+                _rows = sum(deleted.values())
+                st.success(
+                    f"✅ {len(deleted)} tables nettoyées en base ({_rows:,} lignes supprimées)"
+                )
             except Exception as exc:
-                errors.append(f"DB: {exc}")
+                errors.append(
+                    f"DB: {exc} — vérifiez qu'aucun entraînement/backtest n'écrit "
+                    f"dans ce batch puis réessayez."
+                )
 
             if artifacts_dir.exists():
                 try:

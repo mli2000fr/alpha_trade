@@ -437,6 +437,140 @@ def update_training_run(engine: Engine, run_id: str, **kwargs: Any) -> None:
         conn.execute(text(f"UPDATE model_training_run SET {set_clause} WHERE run_id = :rid"), params)
 
 
+def _delete_predictions_chunked(conn: Any, run_ids: list[str], chunk_size: int) -> int:
+    """Supprime ``model_predictions`` par petits lots, en COMMITTANT chaque lot.
+
+    Chaque itération supprime au plus ``chunk_size`` lignes (LIMIT) puis commit →
+    transaction courte → moins de risque de ``Lock wait timeout`` (1205) et
+    libération immédiate des verrous. Les run_ids sont découpés en tranches de
+    200 pour garder une clause IN petite.
+    """
+    total = 0
+    _slice = 200
+    for i in range(0, len(run_ids), _slice):
+        chunk = run_ids[i:i + _slice]
+        placeholders = ", ".join(f":r{j}" for j in range(len(chunk)))
+        params = {f"r{j}": rid for j, rid in enumerate(chunk)}
+        while True:
+            result = conn.execute(
+                text(
+                    f"DELETE FROM alpha_trade.model_predictions "
+                    f"WHERE run_id IN ({placeholders}) LIMIT {int(chunk_size)}"
+                ),
+                params,
+            )
+            total += result.rowcount
+            conn.commit()
+            if result.rowcount < chunk_size:
+                break
+    return total
+
+
+def delete_batch_rows(
+    engine: Engine,
+    batch_id: str,
+    *,
+    lock_wait_timeout: int = 60,
+    chunk_size: int = 10000,
+    retries: int = 5,
+) -> dict[str, int]:
+    """Supprime toutes les lignes DB liées à un batch, robuste aux lock waits (1205).
+
+    Stratégie anti-lock :
+    - ``innodb_lock_wait_timeout`` relevé (session) ;
+    - les ``run_id`` du batch sont résolus AVANT suppression (SELECT rapide) ;
+    - ``model_predictions`` (grosse table) est supprimée par lots (LIMIT) avec
+      **commit après chaque lot** (transactions courtes, verrous libérés) ;
+    - chaque table est committée indépendamment ;
+    - retries avec backoff en cas de lock wait.
+
+    Ordre : tables enfants (via run_id) → ``model_training_run`` (parent) →
+    tables ``batch_id`` direct → ``model_training_batch`` en dernier.
+
+    Returns:
+        dict {table: nombre de lignes supprimées}.
+    """
+    import time
+
+    tables_via_run = [
+        "model_metrics",
+        "model_metrics_full",
+        "model_governance",
+        "model_predictions",
+        "model_directional_oos_metrics",
+    ]
+    tables_direct = [
+        "model_batch_diagnostics",
+        "global_rank_history",
+        "global_oracle_labels",
+        "model_training_run",
+        "model_training_batch",
+    ]
+
+    deleted: dict[str, int] = {}
+    last_exc: Exception | None = None
+
+    for attempt in range(1, retries + 1):
+        try:
+            with engine.connect() as conn:
+                conn.execute(
+                    text(f"SET SESSION innodb_lock_wait_timeout = {int(lock_wait_timeout)}")
+                )
+                rows = conn.execute(
+                    text(
+                        "SELECT run_id FROM alpha_trade.model_training_run "
+                        "WHERE batch_id = :bid"
+                    ),
+                    {"bid": batch_id},
+                ).fetchall()
+                run_ids = [str(r[0]) for r in rows]
+
+                # 1. Tables enfants (via run_id) — AVANT model_training_run.
+                #    model_predictions est committée par lot ; les autres tables
+                #    (petites) sont committées une par une.
+                for table in tables_via_run:
+                    if not run_ids:
+                        deleted[table] = 0
+                        continue
+                    if table == "model_predictions":
+                        deleted[table] = _delete_predictions_chunked(conn, run_ids, chunk_size)
+                    else:
+                        result = conn.execute(
+                            text(
+                                f"DELETE FROM alpha_trade.{table} "
+                                f"WHERE run_id IN (SELECT run_id FROM alpha_trade.model_training_run "
+                                f"WHERE batch_id = :bid)"
+                            ),
+                            {"bid": batch_id},
+                        )
+                        deleted[table] = result.rowcount
+                        conn.commit()
+
+                # 2. Tables avec batch_id direct
+                for table in tables_direct:
+                    result = conn.execute(
+                        text(f"DELETE FROM alpha_trade.{table} WHERE batch_id = :bid"),
+                        {"bid": batch_id},
+                    )
+                    deleted[table] = result.rowcount
+                    conn.commit()
+
+            return deleted
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            _msg = str(exc).lower()
+            _is_lock = "lock wait timeout" in _msg or "1205" in _msg
+            LOGGER.warning(
+                "delete_batch_rows batch_id=%s attempt=%d/%d lock=%s err=%s",
+                batch_id, attempt, retries, _is_lock, exc,
+            )
+            if attempt < retries:
+                time.sleep(1.5 * attempt)
+            continue
+
+    raise RuntimeError(f"delete_batch_rows failed after {retries} attempts: {last_exc}")
+
+
 def load_training_run(engine: Engine, symbol: str, run_id: str | None = None, batch_id: str | None = None) -> dict[str, Any] | None:
     """Charge le run demandé, ou le dernier run complété disponible pour un symbole.
 

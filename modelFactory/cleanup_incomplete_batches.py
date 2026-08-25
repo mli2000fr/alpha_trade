@@ -55,62 +55,20 @@ def cleanup_batches(dry_run: bool = False, include_completed: bool = False) -> d
         return {"deleted_batches": len(batch_ids), "deleted_db_rows": 0, "deleted_dirs": 0}
 
     from ihm.services.db import get_engine
-    from sqlalchemy import text
+    from modelFactory.db_registry import delete_batch_rows
     engine = get_engine()
 
-    # ── Tables avec batch_id direct ──
-    tables_direct = [
-        "model_batch_diagnostics",
-        "global_rank_history",
-        "global_oracle_labels",
-    ]
-    # ── Tables qui n'ont que run_id ──
-    tables_via_run = [
-        "model_metrics",
-        "model_metrics_full",
-        "model_governance",
-        "model_predictions",
-        "model_directional_oos_metrics",
-    ]
-
     total_rows = 0
-    with engine.begin() as conn:
-        for bid in batch_ids:
-            # 1. Supprimer les tables liées via run_id (enfants de model_training_run)
-            for table in tables_via_run:
-                result = conn.execute(
-                    text(
-                        f"DELETE FROM alpha_trade.{table} "
-                        f"WHERE run_id IN ("
-                        f"  SELECT run_id FROM alpha_trade.model_training_run "
-                        f"  WHERE batch_id = :bid"
-                        f")"
-                    ),
-                    {"bid": bid},
-                )
-                total_rows += result.rowcount
-
-            # 2. Supprimer model_training_run (parent de model_metrics/governance/predictions)
-            result = conn.execute(
-                text("DELETE FROM alpha_trade.model_training_run WHERE batch_id = :bid"),
-                {"bid": bid},
-            )
-            total_rows += result.rowcount
-
-            # 3. Supprimer les tables avec batch_id direct
-            for table in tables_direct:
-                result = conn.execute(
-                    text(f"DELETE FROM alpha_trade.{table} WHERE batch_id = :bid"),
-                    {"bid": bid},
-                )
-                total_rows += result.rowcount
-
-            # 4. Supprimer le batch lui-même en dernier
-            result = conn.execute(
-                text("DELETE FROM alpha_trade.model_training_batch WHERE batch_id = :bid"),
-                {"bid": bid},
-            )
-            total_rows += result.rowcount
+    deleted_batches = 0
+    failed_batches: list[str] = []
+    for bid in batch_ids:
+        try:
+            deleted = delete_batch_rows(engine, bid)
+            total_rows += sum(deleted.values())
+            deleted_batches += 1
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.error("cleanup_batches batch_id=%s failed: %s", bid, exc)
+            failed_batches.append(bid)
 
     artifacts_base = Path("artifacts") / "models"
     dirs_deleted = 0
@@ -121,9 +79,11 @@ def cleanup_batches(dry_run: bool = False, include_completed: bool = False) -> d
                 shutil.rmtree(batch_dir)
                 dirs_deleted += 1
 
-    LOGGER.info("Nettoyage terminé — %d batch(s), %d lignes DB, %d répertoires",
-                len(batch_ids), total_rows, dirs_deleted)
-    return {"deleted_batches": len(batch_ids), "deleted_db_rows": total_rows, "deleted_dirs": dirs_deleted}
+    LOGGER.info(
+        "Nettoyage terminé — %d/%d batch(s), %d lignes DB, %d répertoires, échecs=%s",
+        deleted_batches, len(batch_ids), total_rows, dirs_deleted, failed_batches or "aucun",
+    )
+    return {"deleted_batches": deleted_batches, "deleted_db_rows": total_rows, "deleted_dirs": dirs_deleted}
 
 
 # ── Rétrocompatibilité ──
