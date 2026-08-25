@@ -50,7 +50,7 @@ from modelFactory.features import (
     get_feature_columns,
 )
 from modelFactory.features import fingerprint as compute_feature_fingerprint
-from modelFactory.feature_logging import log_feature_values, log_feature_weights
+from modelFactory.feature_logging import log_feature_duplicates, log_feature_values, log_feature_weights
 from modelFactory.reproducibility import apply_reproducibility, derive_seed
 from modelFactory.tabular_baseline import apply_tabular_calibration, compute_tabular_metrics, fit_tabular_calibrator
 from modelFactory.calibration import VectorScaler
@@ -459,6 +459,7 @@ def train_global_model(
     feature_columns = _get_global_feature_columns(cfg)
     # ── Audit : valeurs des features d'entraînement / prédiction (une ligne par feature) ──
     log_feature_values(train_df, feature_columns, label="global_model_train_features")
+    log_feature_duplicates(train_df, feature_columns, label="global_model_train_features")
     log_feature_values(val_df, feature_columns, label="global_model_predict_features")
     feature_contract = build_feature_contract(
         include_sentiment=False,
@@ -815,6 +816,7 @@ def train_global_model_wf(
     feature_columns = _get_global_feature_columns(cfg)
     # ── Audit : toutes les features sont-elles alimentées ? (une ligne par feature) ──
     log_feature_values(global_df, feature_columns, label="global_model_train_features")
+    log_feature_duplicates(global_df, feature_columns, label="global_model_train_features")
 
     # ── Walk-Forward splits ──
     wf_splits = generate_walk_forward_splits(

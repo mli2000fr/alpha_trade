@@ -8,6 +8,8 @@ chaque feature.
   pas une ligne par jour d'entraînement). Une seule passe suffit.
 - ``log_feature_weights`` : importances (gain) de toutes les features, triées
   par importance décroissante.
+- ``log_feature_duplicates`` : détecte les paires de features **exactement
+  identiques** (doublons, ex. ``return_20d`` == ``momentum_20``).
 
 Compatible LightGBM (sklearn wrapper / Booster), XGBoost et CatBoost.
 """
@@ -124,3 +126,40 @@ def _extract_importance(model: Any) -> np.ndarray | None:
     if hasattr(model, "get_feature_importance"):
         return model.get_feature_importance()
     return None
+
+
+def log_feature_duplicates(df: pd.DataFrame, feature_columns: list[str], *, label: str) -> None:
+    """Log les paires de features **exactement identiques** (doublons).
+
+    Deux colonnes ayant exactement les mêmes valeurs sur toutes les lignes
+    apportent une information redondante au modèle (ex. ``return_20d`` ==
+    ``momentum_20``, ``distance_ema20`` == ``ema20_distance``). Une seule passe
+    suffit ; ne logue rien de spécial s'il n'y a aucun doublon.
+    """
+    try:
+        cols = [c for c in feature_columns if c in df.columns]
+        if len(cols) < 2:
+            return
+        from pandas.util import hash_pandas_object
+
+        hashes: dict[int, str] = {}
+        dups: list[tuple[str, str]] = []
+        for col in cols:
+            # Empreinte de la colonne (valeurs, ordre conservé)
+            h = int(hash_pandas_object(df[col]).sum())
+            if h in hashes:
+                # Vérifier l'égalité exacte (anti-collision de hash)
+                if df[col].equals(df[hashes[h]]):
+                    dups.append((hashes[h], col))
+            else:
+                hashes[h] = col
+
+        if dups:
+            LOGGER.warning(
+                "feature_duplicates %s: %d paires identiques — %s",
+                label, len(dups), ", ".join(f"{a}=={b}" for a, b in dups),
+            )
+        else:
+            LOGGER.info("feature_duplicates %s: aucun doublon exact", label)
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("feature_duplicates %s failed: %s", label, exc)

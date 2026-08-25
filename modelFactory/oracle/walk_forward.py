@@ -37,7 +37,7 @@ from modelFactory.oracle.train import (
     roc_auc,
     train_lightgbm,
 )
-from modelFactory.feature_logging import log_feature_values, log_feature_weights
+from modelFactory.feature_logging import log_feature_duplicates, log_feature_values, log_feature_weights
 
 LOGGER = logging.getLogger(__name__)
 
@@ -106,6 +106,7 @@ def run_walk_forward(
     cols = [c for c in ablation_features(feature_columns, **_ABLATIONS[ablation]) if c in dataset.columns]
     # ── Audit : toutes les features sont-elles alimentées ? (une ligne par feature) ──
     log_feature_values(dataset, cols, label="oracle_extreme_train_features")
+    log_feature_duplicates(dataset, cols, label="oracle_extreme_train_features")
 
     oos_parts: list[pd.DataFrame] = []
     per_fold: list[dict[str, Any]] = []
