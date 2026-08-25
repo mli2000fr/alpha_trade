@@ -62,12 +62,15 @@ def cleanup_batches(dry_run: bool = False, include_completed: bool = False) -> d
     tables_direct = [
         "model_batch_diagnostics",
         "global_rank_history",
+        "global_oracle_labels",
     ]
     # ── Tables qui n'ont que run_id ──
     tables_via_run = [
         "model_metrics",
+        "model_metrics_full",
         "model_governance",
         "model_predictions",
+        "model_directional_oos_metrics",
     ]
 
     total_rows = 0

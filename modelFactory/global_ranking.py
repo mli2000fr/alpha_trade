@@ -53,6 +53,7 @@ from modelFactory.features import (
     get_feature_columns,
 )
 from modelFactory.features import fingerprint as compute_feature_fingerprint
+from modelFactory.feature_logging import _extract_importance, log_feature_values
 from modelFactory.reproducibility import apply_reproducibility, derive_seed
 
 LOGGER = logging.getLogger(__name__)
@@ -1040,6 +1041,9 @@ def train_global_ranking_wf(
     if _sn_cols_in and (cfg.data.enable_cross_sectional_features or _directional_mode):
         _compute_sector_neutral_inplace(base_df, feature_columns, engine)
 
+    # ── Audit : toutes les features sont-elles alimentées ? (une ligne par feature) ──
+    log_feature_values(base_df, feature_columns, label="global_ranking_train_features")
+
     base_df = base_df.dropna(subset=feature_columns).reset_index(drop=True)
 
     # ── Résoudre les colonnes facteurs et le secteur mapping une fois ──
@@ -1136,6 +1140,7 @@ def train_global_ranking_wf(
         _split_importances: list[dict[str, float]] = []
         _active_features: list[str] = feature_columns
         _h_split_details: list[dict[str, Any]] = []  # détails par split pour IHM/rapport
+        _predict_audit_logged = False
 
         # ── H3 : exclure les features fondamentales (inefficaces à court terme) ──
         if horizon == 3:
@@ -1195,6 +1200,13 @@ def train_global_ranking_wf(
             _val_orig = _val_with_targets.dropna(subset=_active_features + [_target_col, _label_col])
             if _train_orig.empty or _val_orig.empty:
                 continue
+            if not _predict_audit_logged:
+                # ── Audit : valeurs des features au moment de la prédiction (une ligne par feature) ──
+                log_feature_values(
+                    _val_orig, _active_features,
+                    label=f"global_ranking_predict_features h{horizon}",
+                )
+                _predict_audit_logged = True
 
             # ── P1-6 (2026-08-04) : filtre liquidité + disponibilité par fold ──
             _total_syms = len(symbols)
@@ -1337,13 +1349,17 @@ def train_global_ranking_wf(
                 _candidate_last_model[backend_model_name] = model
                 _candidate_last_name[backend_model_name] = backend_model_name
 
-                # ── Feature importance (LightGBM uniquement) ──
-                if backend_model_name == "lightgbm" and hasattr(model, "booster_"):
-                    try:
-                        _imp = dict(zip(_active_features, model.booster_.feature_importance(importance_type="gain")))
-                        _candidate_importances[backend_model_name].append(_imp)
-                    except Exception:
-                        pass
+                # ── Feature importance (tous les backends) ──
+                try:
+                    _imp_arr = _extract_importance(model)
+                    if _imp_arr is not None:
+                        _imp_arr = np.asarray(_imp_arr, dtype=float).reshape(-1)
+                        if len(_imp_arr) == len(_active_features):
+                            _candidate_importances[backend_model_name].append(
+                                dict(zip(_active_features, _imp_arr))
+                            )
+                except Exception:
+                    pass
 
                 X_val = val_df[_active_features]
                 y_val = val_df[_target_col].to_numpy(dtype=np.float64)

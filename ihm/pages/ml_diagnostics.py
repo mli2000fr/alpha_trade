@@ -1001,31 +1001,52 @@ def _render_delete_batch_button(selected_batch: str, artifacts_dir: Path) -> Non
 
         if confirmed:
             errors: list[str] = []
-            # Tables avec batch_id direct
-            tables_direct = [
-                "model_batch_diagnostics",
-                "model_training_run",
-                "model_training_batch",
-            ]
-            # Tables sans batch_id → DELETE via JOIN sur run_id
+            # Avertissement si ce batch est promu comme source de serving.
+            try:
+                with engine.connect() as conn:
+                    served = conn.execute(
+                        _text("SELECT scope FROM alpha_trade.model_serving_batch WHERE batch_id = :bid"),
+                        {"bid": selected_batch},
+                    ).fetchall()
+                if served:
+                    scopes = ", ".join(str(r[0]) for r in served)
+                    st.warning(
+                        f"⚠️ Ce batch est référencé comme batch de serving ({scopes}). "
+                        f"`model_serving_batch` n'est pas supprimé automatiquement "
+                        f"(c'est une configuration de serving, pas une donnée du batch)."
+                    )
+            except Exception:
+                pass
+
+            # 1. Tables enfants liées par run_id → à supprimer AVANT model_training_run
             tables_via_run = [
                 "model_metrics",
                 "model_metrics_full",
                 "model_governance",
+                "model_predictions",
+                "model_directional_oos_metrics",
+            ]
+            # 2. Tables avec batch_id direct (model_training_run = parent des tables via run_id)
+            tables_direct = [
+                "model_batch_diagnostics",
+                "global_rank_history",
+                "global_oracle_labels",
+                "model_training_run",
+                "model_training_batch",
             ]
             try:
                 with engine.begin() as conn:
-                    for table in tables_direct:
-                        conn.execute(
-                            _text(f"DELETE FROM alpha_trade.{table} WHERE batch_id = :bid"),
-                            {"bid": selected_batch},
-                        )
                     for table in tables_via_run:
                         conn.execute(
                             _text(
                                 f"DELETE FROM alpha_trade.{table} "
                                 f"WHERE run_id IN (SELECT run_id FROM alpha_trade.model_training_run WHERE batch_id = :bid)"
                             ),
+                            {"bid": selected_batch},
+                        )
+                    for table in tables_direct:
+                        conn.execute(
+                            _text(f"DELETE FROM alpha_trade.{table} WHERE batch_id = :bid"),
                             {"bid": selected_batch},
                         )
                 total = len(tables_direct) + len(tables_via_run)
