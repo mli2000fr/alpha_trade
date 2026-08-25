@@ -27,7 +27,7 @@ from __future__ import annotations
 import argparse
 import logging
 from datetime import date, datetime
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 import numpy as np
 import pandas as pd
@@ -201,8 +201,17 @@ def build_labels(
     end_date: str | None = None,
     engine: Any | None = None,
     dry_run: bool = False,
+    strict_universe: bool = True,
+    progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> dict[str, Any]:
     """Construit et persiste les labels Oracle H20 pour ``batch_id``.
+
+    Args:
+        strict_universe: si False, tolère une divergence entre
+            ``global_rank_history`` et ``model_predictions`` : l'univers des
+            labels est alors celui de ``global_rank_history`` uniquement.
+        progress_callback: appelée avec ``(current, total, message)`` pendant
+            le calcul (pour afficher une barre de progression).
 
     Returns:
         dict de synthèse (status, batch_id, universe_equal, n_rows, n_labeled, …).
@@ -214,12 +223,16 @@ def build_labels(
     pred_keys = load_universe_from_predictions(engine, batch_id)
     universe_check = check_universe_equality(rank_keys, pred_keys)
     if not universe_check["equal"]:
-        LOGGER.error("Univers divergent: %s", universe_check)
-        raise RuntimeError(
-            "Univers global_rank_history ≠ model_predictions (bit-for-bit) : "
-            f"only_in_ranks={universe_check['only_in_ranks']}, "
-            f"only_in_preds={universe_check['only_in_preds']}. "
-            "Arbitrer la divergence avant de construire les labels Oracle."
+        if strict_universe:
+            LOGGER.error("Univers divergent: %s", universe_check)
+            raise RuntimeError(
+                "Univers global_rank_history ≠ model_predictions (bit-for-bit) : "
+                f"only_in_ranks={universe_check['only_in_ranks']}, "
+                f"only_in_preds={universe_check['only_in_preds']}. "
+                "Arbitrer la divergence avant de construire les labels Oracle."
+            )
+        LOGGER.warning(
+            "Univers divergent toléré (strict_universe=False): %s", universe_check
         )
 
     uni_by_day: dict[date, set[str]] = {}
@@ -238,10 +251,17 @@ def build_labels(
     if not all_dates:
         return {"status": "error", "reason": "empty_window", "universe_check": universe_check}
 
+    n_dates = len(all_dates)
+    if progress_callback is not None:
+        progress_callback(0, n_dates, "chargement de la matrice de prix…")
+
     symbols = sorted({s for _, s in rank_keys})
     close = load_close_matrix(engine, symbols, all_dates[0].isoformat())
     if close.empty:
         return {"status": "error", "reason": "no_bars", "universe_check": universe_check}
+
+    if progress_callback is not None:
+        progress_callback(0, n_dates, "calcul des déciles cross-sectionnels…")
 
     # ── 2. Boucle par date (vectorisée) ──
     rows: list[tuple[Any, ...]] = []
@@ -249,7 +269,9 @@ def build_labels(
     n_unavailable = 0
     skipped_dates = 0
 
-    for d in all_dates:
+    for i, d in enumerate(all_dates):
+        if progress_callback is not None and (i % 5 == 0 or i == n_dates - 1):
+            progress_callback(i + 1, n_dates, f"date {d} ({i + 1}/{n_dates})")
         ts = pd.Timestamp(d)
         pos = close.index.get_indexer([ts])[0]
         if pos < 0:
@@ -316,6 +338,8 @@ def build_labels(
             "skipped_dates": skipped_dates, "n_symbols": len(symbols),
         }
 
+    if progress_callback is not None:
+        progress_callback(n_dates, n_dates, "écriture des labels en base…")
     inserted = _upsert_rows(engine, rows) if rows else 0
     LOGGER.info(
         "build_labels done batch_id=%s rows=%d labeled=%d unavailable=%d skipped_dates=%d",
