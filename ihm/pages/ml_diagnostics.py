@@ -564,16 +564,16 @@ GLOBAL_RANK_DATES_FOR_BATCH_QUERY = """
     ORDER BY date DESC
 """
 
-GLOBAL_RANK_ALL_FOR_BATCH_QUERY = """
-    SELECT
-        `date`,
-        symbol,
-        global_rank_20
-    FROM alpha_trade.global_rank_history
-    WHERE batch_id = :batch_id
-      AND global_rank_20 IS NOT NULL
-    ORDER BY `date`, symbol
-"""
+def _global_rank_all_query(horizon: int) -> str:
+    """Rangs globaux du batch (colonne du meilleur horizon)."""
+    _h = int(horizon)
+    return (
+        "SELECT `date`, symbol, global_rank_%d AS global_rank_best "
+        "FROM alpha_trade.global_rank_history "
+        "WHERE batch_id = :batch_id AND global_rank_%d IS NOT NULL "
+        "ORDER BY `date`, symbol" % (_h, _h)
+    )
+
 
 ORACLE_LABELS_DECILE_QUERY = """
     SELECT
@@ -582,7 +582,7 @@ ORACLE_LABELS_DECILE_QUERY = """
         oracle_decile
     FROM alpha_trade.global_oracle_labels
     WHERE batch_id = :batch_id
-      AND horizon = 20
+      AND horizon = :horizon
       AND oracle_decile IS NOT NULL
     ORDER BY prediction_date, symbol
 """
@@ -1119,6 +1119,24 @@ def _load_latest_oracle_oos() -> tuple[str | None, pd.DataFrame]:
     return None, pd.DataFrame()
 
 
+def _batch_best_horizon(batch_id: str) -> int:
+    """Meilleur horizon du Global Ranking pour ce batch (metadata, défaut H20)."""
+    try:
+        detail = safe_query(BATCH_DETAIL_QUERY, {"batch_id": batch_id})
+        if detail.empty:
+            return 20
+        raw = detail.iloc[0].get("metadata_json")
+        if raw is None or str(raw) in ("None", "nan", ""):
+            return 20
+        data = _json.loads(str(raw))
+        gr = data.get("global_ranking") if isinstance(data, dict) else None
+        h = gr.get("best_horizon") if isinstance(gr, dict) else None
+        h = int(h) if h else 20
+        return h if h in _ALL_HORIZONS else 20
+    except Exception:
+        return 20
+
+
 def _render_build_oracle_labels_button(batch_id: str) -> None:
     """Bouton pour calculer les labels Oracle (vrai Oracle) du batch sélectionné.
 
@@ -1132,6 +1150,8 @@ def _render_build_oracle_labels_button(batch_id: str) -> None:
     if gr_check.empty or not gr_check.iloc[0].get("nb_dates"):
         st.caption("⚠️ Aucun rang global pour ce batch — impossible de calculer le vrai Oracle.")
         return
+
+    best_h = _batch_best_horizon(batch_id)
 
     _confirm_key = f"ml_diag_build_oracle_labels_{batch_id}"
     _force_key = f"ml_diag_build_oracle_force_{batch_id}"
@@ -1157,7 +1177,7 @@ def _render_build_oracle_labels_button(batch_id: str) -> None:
         try:
             result = build_labels(
                 batch_id,
-                horizon=20,
+                horizon=best_h,
                 engine=engine,
                 dry_run=False,
                 strict_universe=strict,
@@ -1192,7 +1212,8 @@ def _render_build_oracle_labels_button(batch_id: str) -> None:
         """Réaligne `model_predictions` (run synthétique) sur `global_rank_history`.
 
         Supprime le run `{batch}_globalrank_synth` puis le régénère depuis les
-        rangs actuels (H20) → les deux univers redeviennent bit-for-bit identiques.
+        rangs actuels (meilleur horizon du batch) → les deux univers redeviennent
+        bit-for-bit identiques.
         """
         from modelFactory.synthesize_global_rank_predictions import synthesize
 
@@ -1209,7 +1230,7 @@ def _render_build_oracle_labels_button(batch_id: str) -> None:
                         text("DELETE FROM alpha_trade.model_predictions WHERE run_id = :rid"),
                         {"rid": f"{batch_id}_globalrank_synth"},
                     )
-                result = synthesize(batch_id, best_h=20)
+                result = synthesize(batch_id, best_h=best_h)
 
             if result.get("status") != "completed":
                 status.error(f"Échec de la réparation : {result}")
@@ -1220,7 +1241,7 @@ def _render_build_oracle_labels_button(batch_id: str) -> None:
                 load_universe_from_predictions,
                 load_universe_from_ranks,
             )
-            rk = load_universe_from_ranks(engine, batch_id, 20)
+            rk = load_universe_from_ranks(engine, batch_id, best_h)
             pk = load_universe_from_predictions(engine, batch_id)
             check = check_universe_equality(rk, pk)
             if check["equal"]:
@@ -1241,7 +1262,7 @@ def _render_build_oracle_labels_button(batch_id: str) -> None:
             key=f"ml_diag_build_oracle_btn_{batch_id}",
             type="primary",
             on_click=lambda: st.session_state.__setitem__(_confirm_key, True),
-            help="Construit `global_oracle_labels` (H20) pour ce batch via `modelFactory.oracle.build_labels`. "
+            help=f"Construit `global_oracle_labels` (H{best_h}) pour ce batch via `modelFactory.oracle.build_labels`. "
                  "Calcule le vrai Oracle (déciles cross-sectionnels) sans utiliser B25 comme référence.",
         )
     elif st.session_state[_force_key]:
@@ -1262,7 +1283,7 @@ def _render_build_oracle_labels_button(batch_id: str) -> None:
             if st.button(
                 "🔧 Réparer la divergence",
                 key=f"ml_diag_build_oracle_repair_btn_{batch_id}",
-                help="Supprime puis régénère le run `{batch}_globalrank_synth` depuis les rangs actuels (H20) pour que les 2 univers redeviennent identiques.",
+                help=f"Supprime puis régénère le run `{batch_id}_globalrank_synth` depuis les rangs actuels (H{best_h}) pour que les 2 univers redeviennent identiques.",
             ):
                 _repair()
         with c3:
@@ -1293,13 +1314,16 @@ def _render_oracle_distribution(batch_id: str, row: pd.Series) -> None:
       - la répartition du TOP 10% du modèle par décile Oracle (D1..D10) ;
       - la répartition du BOTTOM 10% du modèle par décile Oracle (D1..D10).
 
-    Le vrai Oracle = ``global_oracle_labels`` (horizon H20), ``oracle_decile`` :
-    D1 = pire 10% réalisé … D10 = meilleur 10% réalisé.
+    Le vrai Oracle = ``global_oracle_labels`` (meilleur horizon du batch),
+    ``oracle_decile`` : D1 = pire 10% réalisé … D10 = meilleur 10% réalisé.
     """
     st.subheader("🔀 Répartition Oracle — TOP / BOTTOM 10% du modèle")
 
-    # ── Vrai Oracle : labels par décile (H20) ──
-    labels_df = safe_query(ORACLE_LABELS_DECILE_QUERY, {"batch_id": batch_id})
+    # ── Vrai Oracle : labels par décile (meilleur horizon du batch) ──
+    _oracle_horizon = _batch_best_horizon(batch_id)
+    labels_df = safe_query(
+        ORACLE_LABELS_DECILE_QUERY, {"batch_id": batch_id, "horizon": _oracle_horizon}
+    )
     if labels_df.empty:
         st.info(
             "Aucun label Oracle (`global_oracle_labels`) pour ce batch — "
@@ -1309,7 +1333,7 @@ def _render_oracle_distribution(batch_id: str, row: pd.Series) -> None:
         return
 
     # ── Modèle global entraîné ? ──
-    global_df = safe_query(GLOBAL_RANK_ALL_FOR_BATCH_QUERY, {"batch_id": batch_id})
+    global_df = safe_query(_global_rank_all_query(_oracle_horizon), {"batch_id": batch_id})
     has_global = not global_df.empty
 
     # ── Modèle Oracle Extreme entraîné ? ──
@@ -1326,7 +1350,7 @@ def _render_oracle_distribution(batch_id: str, row: pd.Series) -> None:
 
     st.caption(
         "Compare les TOP/BOTTOM 10% du modèle sélectionné aux déciles du vrai Oracle "
-        "(`global_oracle_labels`, H20) : **D1** = pire 10% réalisé … **D10** = meilleur 10% réalisé."
+        f"(`global_oracle_labels`, H{_oracle_horizon}) : **D1** = pire 10% réalisé … **D10** = meilleur 10% réalisé."
     )
 
     # ── Boutons de sélection du modèle ──
@@ -1348,12 +1372,12 @@ def _render_oracle_distribution(batch_id: str, row: pd.Series) -> None:
 
     # ── Construire le DataFrame du modèle : date × symbol × score ──
     if chosen == "global":
-        model_df = global_df[["date", "symbol", "global_rank_20"]].copy()
+        model_df = global_df[["date", "symbol", "global_rank_best"]].copy()
         model_df["date"] = pd.to_datetime(model_df["date"], errors="coerce")
-        model_df["score"] = pd.to_numeric(model_df["global_rank_20"], errors="coerce")
-        # global_rank_20 est déjà un percentile cross-sectionnel [0, 1]
+        model_df["score"] = pd.to_numeric(model_df["global_rank_best"], errors="coerce")
+        # global_rank_best est déjà un percentile cross-sectionnel [0, 1]
         model_df["_pct"] = model_df["score"]
-        kind_label = "🌐 Modèle global (`global_rank_20`)"
+        kind_label = f"🌐 Modèle global (`global_rank_{_oracle_horizon}`)"
         top_caption = "TOP 10% = rang ≥ 0.90 · BOTTOM 10% = rang ≤ 0.10 (percentile cross-sectionnel)"
     else:
         date_col = next(
