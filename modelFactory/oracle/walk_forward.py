@@ -37,6 +37,7 @@ from modelFactory.oracle.train import (
     roc_auc,
     train_lightgbm,
 )
+from modelFactory.feature_logging import log_feature_duplicates, log_feature_values, log_feature_weights
 
 LOGGER = logging.getLogger(__name__)
 
@@ -103,8 +104,13 @@ def run_walk_forward(
         return {"status": "error", "reason": "no_folds"}
 
     cols = [c for c in ablation_features(feature_columns, **_ABLATIONS[ablation]) if c in dataset.columns]
+    # ── Audit : toutes les features sont-elles alimentées ? (une ligne par feature) ──
+    log_feature_values(dataset, cols, label="oracle_extreme_train_features")
+    log_feature_duplicates(dataset, cols, label="oracle_extreme_train_features")
+
     oos_parts: list[pd.DataFrame] = []
     per_fold: list[dict[str, Any]] = []
+    _test_feature_parts: list[pd.DataFrame] = []
 
     for fold in folds:
         X_tr = fold["train"][cols].astype(float)
@@ -116,15 +122,17 @@ def run_walk_forward(
             continue
 
         model = train_lightgbm(X_tr, y_tr, X_te, y_te)
+        log_feature_weights(model, cols, label=f"oracle_extreme fold={fold['t_start']}")
+        _test_feature_parts.append(X_te)
         proba = model.predict(X_te)
 
-        oos = fold["test"][["date", "symbol", _target_col, "future_return", "global_rank_20"]].copy()
+        oos_cols = ["date", "symbol", _target_col, "future_return"]
+        oos = fold["test"][oos_cols].copy()
         oos[_proba_col] = proba
         oos["fold_start"] = fold["t_start"]
         oos_parts.append(oos)
 
         pr = precision_recall_at_top_pct(oos, _proba_col, target_col=_target_col)
-        baseline_pr = precision_recall_at_top_pct(oos, "global_rank_20", target_col=_target_col)
         prevalence = float(oos[_target_col].astype(float).mean()) if not oos.empty else None
         per_fold.append({
             "fold_start": fold["t_start"],
@@ -133,7 +141,6 @@ def run_walk_forward(
             "prevalence": prevalence,
             "precision_at_10pct": pr["precision"],
             "recall_at_10pct": pr["recall"],
-            "baseline_precision_at_10pct": baseline_pr["precision"],
             "auc": roc_auc(y_te.to_numpy(), proba),
             "decile_monotonicity": decile_monotonicity(oos, _proba_col)[0],
         })
@@ -141,19 +148,19 @@ def run_walk_forward(
     if not oos_parts:
         return {"status": "error", "reason": "no_oos"}
 
+    # ── Audit : valeurs des features au moment de la prédiction (une ligne par feature) ──
+    if _test_feature_parts:
+        log_feature_values(
+            pd.concat(_test_feature_parts, ignore_index=True),
+            cols,
+            label="oracle_extreme_predict_features",
+        )
+
     oos = pd.concat(oos_parts, ignore_index=True)
     pr_overall = precision_recall_at_top_pct(oos, _proba_col, target_col=_target_col)
-    baseline_overall = precision_recall_at_top_pct(oos, "global_rank_20", target_col=_target_col)
     prevalence_overall = float(oos[_target_col].astype(float).mean()) if not oos.empty else None
 
-    # Stabilité : fraction des folds où le modèle bat la baseline global_rank_20.
     n_folds = len(per_fold)
-    n_beat_baseline = sum(
-        1 for f in per_fold
-        if f["precision_at_10pct"] is not None
-        and f["baseline_precision_at_10pct"] is not None
-        and f["precision_at_10pct"] > f["baseline_precision_at_10pct"]
-    )
 
     return {
         "status": "completed",
@@ -163,24 +170,28 @@ def run_walk_forward(
         "overall": {
             "precision_at_10pct": pr_overall["precision"],
             "recall_at_10pct": pr_overall["recall"],
-            "baseline_precision_at_10pct": baseline_overall["precision"],
             "prevalence": prevalence_overall,
             "auc": roc_auc(oos[_target_col].to_numpy(), oos[_proba_col].to_numpy()),
             "decile_monotonicity": decile_monotonicity(oos, _proba_col)[0],
         },
-        "fold_stability_pct": 100.0 * n_beat_baseline / n_folds if n_folds else None,
         "oos": oos,
         "feature_columns": cols,
     }
 
 
-def persist_oos(oos: pd.DataFrame, run_id: str) -> Path:
-    """Persiste les prédictions OOS en parquet."""
+def persist_oos(oos: pd.DataFrame, run_id: str, batch_id: str | None = None) -> Path:
+    """Persiste les prédictions OOS en parquet (+ tag batch si fourni)."""
     out_dir = _ARTIFACTS_ROOT / run_id
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / "oos_predictions.parquet"
     oos.to_parquet(path, index=False)
-    LOGGER.info("persisted OOS predictions → %s", path)
+    # Sidecar : tagge le run par son batch d'entraînement (diagnostic IHM).
+    if batch_id:
+        try:
+            (out_dir / "batch_id.txt").write_text(str(batch_id), encoding="utf-8")
+        except OSError:
+            pass
+    LOGGER.info("persisted OOS predictions → %s (batch=%s)", path, batch_id or "?")
     return path
 
 
@@ -196,7 +207,7 @@ def format_report(result: dict[str, Any]) -> str:
             f"  {f['fold_start']}: train={f['n_train']} test={f['n_test']} "
             f"prev={prev_s} "
             f"precision@10%={f['precision_at_10pct']:.3f} "
-            f"(B25 prec@10%={f['baseline_precision_at_10pct']:.3f}) AUC={f['auc']:.3f} "
+            f"recall@10%={f['recall_at_10pct']:.3f} AUC={f['auc']:.3f} "
             f"mono={f['decile_monotonicity']:.3f}"
         )
     o = result["overall"]
@@ -206,15 +217,13 @@ def format_report(result: dict[str, Any]) -> str:
     lift_s = f"{lift:.2f}x" if lift is not None else "-"
     lines.append(
         f"OVERALL: prev={prev_s} precision@10%={o['precision_at_10pct']:.3f} "
-        f"(B25 prec@10%={o['baseline_precision_at_10pct']:.3f}) "
+        f"recall@10%={o['recall_at_10pct']:.3f} "
         f"lift_oracle_vs_prev={lift_s} AUC={o['auc']:.3f} mono={o['decile_monotonicity']:.3f}"
     )
-    lines.append(f"fold_stability (bat B25) = {result['fold_stability_pct']:.1f}%")
     lines.append(
         "Légende : 'prev' = prévalence de la cible dans le fold test (~20% pour "
-        "oracle_extreme10) ; 'B25 prec@10%' = précision@10% du rang global_rank_20 "
-        "(baseline ranking) ; 'precision@10%' = précision@10% du modèle Oracle Extreme. "
-        "Comparer toujours precision@10% à prev ET à B25 prec@10%."
+        "oracle_extreme10) ; 'precision@10%' = précision@10% du modèle Oracle "
+        "Extreme. Comparer toujours precision@10% à prev (lift = precision/prev)."
     )
     return "\n".join(lines)
 
@@ -253,7 +262,7 @@ def main() -> None:
     )
     if result.get("status") == "completed":
         run_id = f"oracle-wf-{datetime.now():%Y%m%d%H%M%S}"
-        path = persist_oos(result["oos"], run_id)
+        path = persist_oos(result["oos"], run_id, batch_id=batch_id)
         result["run_id"] = run_id
         result["oos_path"] = str(path)
     print(format_report(result))

@@ -42,7 +42,6 @@ from modelFactory.db_registry import (
     update_training_batch,
 )
 from common.tradable_universe import load_tradable_universe_for_period
-from modelFactory.global_model import train_global_model, train_global_model_wf
 from modelFactory.runtime_status import update_runtime_status
 from modelFactory.trainer import TrainResult, train_symbol
 from database.selector_reference import filter_symbols_from_start, normalize_start_symbol
@@ -492,39 +491,43 @@ def train_oracle_extreme(
 
     LOGGER.info("oracle_extreme start batch_id=%s symbols=%s", _batch_id, (len(symbols) if symbols else "auto"))
 
+    from modelFactory.oracle.dataset import build_dataset
+    from modelFactory.oracle.train import get_universe_symbols
+
+    horizon = 20
+    _universe = symbols or get_universe_symbols(engine, _batch_id, horizon)
+    if not _universe:
+        LOGGER.warning("oracle_extreme empty universe — nothing to train")
+        return {"status": "skipped", "reason": "no_universe", "batch_id": _batch_id}
+
     # ── 1. Labels Oracle H20 (idempotent upsert) ──
+    # Standalone (--oracle-model-only) : pas de global_rank_history → build_labels
+    # construit l'univers depuis les barres des symboles fournis.
     labels_result: dict[str, Any] = {}
     try:
         from modelFactory.oracle.build_labels import build_labels
 
         labels_result = build_labels(
             _batch_id,
-            horizon=20,
+            horizon=horizon,
             start_date=str(cfg.data.training_start_date) if cfg.data.training_start_date else None,
             end_date=str(cfg.data.training_end_date) if cfg.data.training_end_date else None,
             engine=engine,
             dry_run=False,
+            symbols=_universe,
         )
         LOGGER.info("oracle_extreme build_labels status=%s n_labeled=%s", labels_result.get("status"), labels_result.get("n_labeled"))
     except Exception as exc:
         LOGGER.warning("oracle_extreme build_labels failed: %s", exc)
 
     # ── 2. Dataset + walk-forward O0 ──
-    from modelFactory.oracle.dataset import build_dataset
-    from modelFactory.oracle.train import get_universe_symbols
-
-    horizon = 20
     try:
-        _universe = symbols or get_universe_symbols(engine, _batch_id, horizon)
-        if not _universe:
-            LOGGER.warning("oracle_extreme empty universe — nothing to train")
-            return {"status": "skipped", "reason": "no_universe", "batch_id": _batch_id}
-
         _start = str(cfg.data.training_start_date) if cfg.data.training_start_date else "2020-01-01"
         _end = str(cfg.data.training_end_date) if cfg.data.training_end_date else "2026-05-29"
         dataset, feature_columns = build_dataset(
             engine, _batch_id, _universe,
             start_date=_start, end_date=_end, horizon=horizon,
+            require_global_rank=(not cfg.data.oracle_model_only),
         )
         if dataset.empty:
             LOGGER.warning("oracle_extreme empty dataset — nothing to train")
@@ -542,7 +545,7 @@ def train_oracle_extreme(
         from datetime import datetime as _dt
         run_id = f"oracle-wf-{_dt.now():%Y%m%d%H%M%S}"
         from modelFactory.oracle.walk_forward import persist_oos
-        path = persist_oos(result["oos"], run_id)
+        path = persist_oos(result["oos"], run_id, batch_id=_batch_id)
         LOGGER.info("oracle_extreme DONE run_id=%s oos_path=%s", run_id, path)
         return {
             "status": "completed",
@@ -884,8 +887,9 @@ def run_training_batch(
             _global_symbols, cfg, artifacts_dir=Path(cfg.artifacts_dir), engine=engine,
         )
         LOGGER.info(
-            "run_training_batch global_ranking_wf status=%s ic_rank_mean=%s decile_spreads=%s",
+            "run_training_batch global_ranking_wf status=%s reason=%s ic_rank_mean=%s decile_spreads=%s",
             global_result_wf.get("status"),
+            global_result_wf.get("reason"),
             global_result_wf.get("ic_rank_mean"),
             global_result_wf.get("decile_spreads"),
         )
@@ -1089,51 +1093,14 @@ def run_training_batch(
     )
 
     # ── P0-6 (2026-08-07) : Global Model Only ──
+    # 2026-08-25 : le Global Model de direction/stacking (train_global_model)
+    # n'a aucun consommateur sans modèle per-symbol → on ne l'entraîne pas.
+    # Le Global Ranking (Phase 1) reste utile seul (rank → sélection du portefeuille).
     if cfg.data.global_model_only:
-        LOGGER.info("🏁🏁🏁 orchestrator global_model_only — training Global Model standalone 🏁🏁🏁")
-        if cfg.global_model.enabled and _global_symbols:
-            update_runtime_status(current_phase="global_model_standalone", progress_item="__GLOBAL__")
-            _gm_result = train_global_model(
-                _global_symbols, cfg, artifacts_dir=Path(cfg.artifacts_dir), engine=engine,
-            )
-            LOGGER.info("global_model_standalone result: %s", _gm_result.get("status"))
-            if _gm_result.get("status") == "completed":
-                results.append(TrainResult("__GLOBAL__", batch_id, "completed", metrics=_gm_result))
-                # ── Persist to DB so IHM diagnostics can see it ──
-                _gm_run_id = f"{batch_id}__global__"
-                try:
-                    from modelFactory.db_registry import (
-                        ensure_registry_entry, insert_metrics,
-                        insert_training_run, replace_model_governance,
-                        update_training_run,
-                    )
-                    _registry_id = ensure_registry_entry(engine, "__GLOBAL__")
-                    insert_training_run(engine, _gm_run_id, _registry_id, "__GLOBAL__",
-                                        status="completed", batch_id=batch_id)
-                    update_training_run(engine, _gm_run_id, status="completed",
-                                        finished_at=datetime.now(timezone.utc),
-                                        config_path=str(Path(cfg.artifacts_dir) / "__GLOBAL__" / "config.json"))
-                    _gm_val = _gm_result.get("val_metrics") or _gm_result.get("val") or {}
-                    _gm_test = _gm_result.get("test_metrics") or _gm_result.get("test") or {}
-                    if _gm_val:
-                        insert_metrics(engine, _gm_run_id, "__GLOBAL__", "val", _gm_val, model_name="global_model")
-                    if _gm_test:
-                        insert_metrics(engine, _gm_run_id, "__GLOBAL__", "test", _gm_test, model_name="global_model")
-                    replace_model_governance(
-                        engine, run_id=_gm_run_id, symbol="__GLOBAL__",
-                        challengers={"global_model": _gm_result},
-                        artifact_routes_models={},
-                        selected_model="global_model",
-                        selection_mode="global_model_only",
-                        selection_metric="directional_accuracy",
-                        ranking=[],
-                    )
-                    LOGGER.info("global_model_only persisted to DB: run_id=%s", _gm_run_id)
-                except Exception as _db_exc:
-                    LOGGER.warning("global_model_only DB persist failed: %s", _db_exc)
-        else:
-            LOGGER.warning("global_model_only: enable_global_model=%s symbols=%d — nothing to train",
-                           cfg.global_model.enabled, len(_global_symbols))
+        LOGGER.info(
+            "🏁 orchestrator global_model_only — Global Model (direction/stacking) SKIPPÉ : "
+            "aucun modèle per-symbol pour le consommer (seul le Global Ranking est exploitable)."
+        )
         return results
 
     # ── Per-Sector mode (Sprint 2026-08-03) ──

@@ -1,9 +1,9 @@
 """Tests unitaires — features "direction" (2026-08-23).
 
 Couvre :
-1. La liste ``DIRECTIONAL_FEATURES`` (17 features uniques).
+1. La liste ``DIRECTIONAL_FEATURES`` (14 features uniques).
 2. L'injection dans ``_get_ranking_feature_columns`` : mode direction → seules
-   les 17 features de la liste + les features de base (pas les ~40 autres
+   les 14 features de la liste + les features de base (pas les ~40 autres
    cross-sectionnelles, pas de doublons).
 3. Le filtrage ``feature_subset`` de ``build_cross_sectional_features`` :
    seule la liste direction est calculée/retournée.
@@ -42,18 +42,17 @@ from modelFactory.global_ranking import _get_ranking_feature_columns
 # 1. DIRECTIONAL_FEATURES — la liste
 # ═══════════════════════════════════════════════════════════════════════════
 
-def test_directional_features_list_is_exactly_17_unique() -> None:
-    assert len(DIRECTIONAL_FEATURES) == 17
-    assert len(set(DIRECTIONAL_FEATURES)) == 17, "doublons dans DIRECTIONAL_FEATURES"
+def test_directional_features_list_is_exactly_14_unique() -> None:
+    assert len(DIRECTIONAL_FEATURES) == 14
+    assert len(set(DIRECTIONAL_FEATURES)) == 14, "doublons dans DIRECTIONAL_FEATURES"
 
 
 def test_directional_features_list_matches_requested_subset() -> None:
     requested = [
         "stock_vs_sector_ret_20", "stock_vs_sector_ret_60",
-        "momentum_20_sector_neutral", "relative_strength_20_sector_neutral",
+        "momentum_20_sector_neutral",
         "stock_vs_sector_ret_5", "sector_relative_strength_20",
         "sector_ret_20", "sector_ret_60", "sector_ret_5",
-        "relative_strength_20_xs_rank", "relative_strength_60_xs_rank",
         "momentum_20_xs_rank", "momentum_60_xs_rank", "momentum_10_xs_rank",
         "momentum_5_xs_rank", "momentum_120_xs_rank", "range_position_20_xs_rank",
     ]
@@ -81,15 +80,15 @@ def test_ranking_columns_off_does_not_inject_directional() -> None:
     # Sans mode direction, les features sectorielles/sector-neutral ne sont pas là
     # (les *_xs_rank sont générées par la normalisation xs_rank, indépendantes).
     directional_in = [f for f in DIRECTIONAL_FEATURES if f in cols]
-    # Attention : 8 des 17 sont des *_xs_rank déjà présentes (mécanisme xs_rank).
-    assert len(directional_in) <= 8
+    # Attention : 6 des 14 sont des *_xs_rank déjà présentes (mécanisme xs_rank).
+    assert len(directional_in) <= 6
 
 
-def test_ranking_columns_directional_injects_exactly_17() -> None:
+def test_ranking_columns_directional_injects_exactly_14() -> None:
     cfg = _make_cfg(enable_cross_sectional_features=False, include_directional_features=True)
     cols = _get_ranking_feature_columns(cfg)
 
-    # Toutes les 17 direction présentes
+    # Toutes les 14 direction présentes
     for f in DIRECTIONAL_FEATURES:
         assert f in cols, f"{f} absente en mode direction"
 
@@ -98,9 +97,11 @@ def test_ranking_columns_directional_injects_exactly_17() -> None:
     extra = sorted((family - set(DIRECTIONAL_FEATURES)) & set(cols))
     assert extra == [], f"features cross-sectional non-direction présentes: {extra}"
 
-    # Aucun *_xs_rank non-direction
-    xs_extra = sorted(c for c in cols if c.endswith("_xs_rank") and c not in DIRECTIONAL_FEATURES)
-    assert xs_extra == [], f"*_xs_rank non-direction présentes: {xs_extra}"
+    # Les *_xs_rank de base (rangs percentiles de features techniques) sont
+    # CONSERVÉS : ils ne font pas partie de la famille cross-sectionnelle.
+    # Seule la famille cross/sector/sector-neutral non-direction est retirée.
+    base_xs = sorted(c for c in cols if c.endswith("_xs_rank") and c not in DIRECTIONAL_FEATURES)
+    assert base_xs, "les *_xs_rank de base doivent être conservés en mode direction"
 
     # Pas de doublons
     assert len(cols) == len(set(cols)), "doublons dans les colonnes ranking"
@@ -168,9 +169,9 @@ def test_build_cross_sectional_feature_subset_returns_direction_only() -> None:
         feature_subset=DIRECTIONAL_FEATURES,
     )
     cols = [c for c in out.columns if c not in ("symbol", "date")]
-    # 9 features sectorielles/sector-neutral de la liste direction
+    # 8 features sectorielles/sector-neutral de la liste direction
     # (les *_xs_rank sont générées par le mécanisme xs_rank du global ranking)
-    assert len(cols) == 9
+    assert len(cols) == 8
     for c in cols:
         assert c in DIRECTIONAL_FEATURES, f"{c} hors liste direction"
     assert diag["feature_subset"] == DIRECTIONAL_FEATURES

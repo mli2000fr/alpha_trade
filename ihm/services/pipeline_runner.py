@@ -2292,8 +2292,9 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         if ml_train_start_symbol:
             command.extend(["--start-symbol", ml_train_start_symbol])
         if options.ml_global_model_only:
+            # P0-6 : --global-model-only active déjà --enable-global-model implicitement
+            # côté cli → on ne l'émet pas ici pour éviter le doublon dans la commande.
             command.append("--global-model-only")
-            command.append("--enable-global-model")  # P0-6: implicite
         # Oracle Extreme (O0) — 2026-08-20
         if options.ml_oracle_model_only:
             command.append("--oracle-model-only")
@@ -2355,8 +2356,14 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.append("--compare-lightgbm")
         if options.ml_enable_catboost:
             command.append("--enable-catboost")
-        if options.ml_enable_global_model:
-            command.extend(["--enable-global-model", "--global-model-name", options.ml_global_model_name])
+        if options.ml_enable_global_model and not options.ml_global_model_only:
+            # global-model-only active déjà --enable-global-model (implicite cli).
+            command.append("--enable-global-model")
+        if (options.ml_enable_global_model or options.ml_global_model_only) and not options.ml_global_champion:
+            # P3-3 : en mode champion, --global-model-name est REDONDANT
+            # (--global-champion force les 3 candidats LightGBM/CatBoost/XGBoost
+            # côté core et ignore model_name) → on ne l'émet pas.
+            command.extend(["--global-model-name", options.ml_global_model_name])
         if options.ml_global_champion:
             # P3-3 : --global-champion entraîne les 3 candidats
             # (CatBoost + LightGBM + XGBoost) côté core.

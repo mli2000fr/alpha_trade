@@ -118,6 +118,79 @@ def calibrate_p_extreme(
     raise ValueError(f"calibrate_p_extreme: méthode inconnue {method}")
 
 
+# Folds de sélection pour la calibration isotonique (fit) — même discipline que la
+# combinaison S5 : on ne fitte JAMAIS sur les folds OOS finaux (fuite).
+DEFAULT_CALIBRATION_SELECTION_FOLDS = ["2022-01-01", "2023-01-01", "2024-01-01"]
+
+
+def apply_oracle_calibration(
+    oos_df: pd.DataFrame,
+    method: str = "none",
+    *,
+    selection_folds: list[str] | None = None,
+) -> pd.DataFrame:
+    """Applique une calibration à ``proba_extreme`` sur un DataFrame OOS.
+
+    Retourne une copie avec ``proba_extreme`` calibrée (les autres colonnes
+    sont conservées).
+
+    - ``none`` / ``identity`` : proba brute (inchangée) ;
+    - ``rank`` : percentile cross-sectionnel intra-date (0..1) ;
+    - ``isotonic`` : régression isotonique (PAV), fit sur ``selection_folds``
+      (défaut 2022-2024, jamais les folds OOS finaux) si la cible
+      ``oracle_extreme10`` est disponible, sinon proba inchangée.
+    """
+    df = oos_df.copy()
+    method = str(method or "none").strip().lower()
+    if method in ("", "none", "identity"):
+        return df
+    if method == "rank":
+        df["proba_extreme"] = (
+            df.groupby("date")["proba_extreme"].rank(pct=True).astype(float)
+        )
+        return df
+    if method == "isotonic":
+        if "oracle_extreme10" not in df.columns:
+            LOGGER.warning(
+                "apply_oracle_calibration: isotonic demandé mais cible "
+                "oracle_extreme10 absente → proba inchangée"
+            )
+            return df
+        fit = df
+        folds = selection_folds or DEFAULT_CALIBRATION_SELECTION_FOLDS
+        if "fold_start" in df.columns:
+            fit_sub = df[df["fold_start"].isin(folds)]
+            if not fit_sub.empty:
+                fit = fit_sub
+        fit = fit.dropna(subset=["proba_extreme", "oracle_extreme10"])
+        if fit.empty or len(fit) < 50:
+            LOGGER.warning(
+                "apply_oracle_calibration: set de fit isotonique trop petit "
+                "(%d lignes) → proba inchangée", len(fit),
+            )
+            return df
+        # Binning : isotonic_regression (PAV) est O(n²) — sur des volumes OOS
+        # de ~200k lignes il est impraticable. On réduit le set de fit à
+        # ~1000 bins quantiles (moyenne proba + taux réalisé par bin), PAV
+        # dessus, puis interpolation sur toutes les lignes.
+        _n_bins = min(1000, len(fit))
+        fit = fit.copy()
+        fit["_bin"] = pd.qcut(fit["proba_extreme"].rank(method="first"), _n_bins, labels=False)
+        _binned = fit.groupby("_bin").agg(
+            x=("proba_extreme", "mean"),
+            y=("oracle_extreme10", "mean"),
+        )
+        x_sorted, fitted = isotonic_regression(
+            _binned["x"].to_numpy(dtype=float),
+            _binned["y"].to_numpy(dtype=float),
+        )
+        df["proba_extreme"] = np.interp(
+            df["proba_extreme"].to_numpy(dtype=float), x_sorted, fitted
+        )
+        return df
+    raise ValueError(f"apply_oracle_calibration: méthode inconnue {method}")
+
+
 def _evaluate_on_folds(
     oos_df: pd.DataFrame,
     score: pd.Series,
@@ -146,7 +219,7 @@ def run_combination_search(
 
     candidates: list[dict[str, Any]] = []
     for cal in CALIBRATION_METHODS:
-        p_cal = calibrate_p_top(oos_df, method=cal)
+        p_cal = calibrate_p_extreme(oos_df, method=cal)
         for method in ("mult", "weighted"):
             alphas = alpha_grid if method == "weighted" else (1.0,)
             for alpha in alphas:

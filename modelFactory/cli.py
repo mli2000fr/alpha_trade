@@ -105,6 +105,16 @@ def _generate_and_save_batch_report(engine: Engine, batch_id: str) -> None:
         report_path = _REPORT_DIR / f"{safe_name}.md"
         report_path.write_text(md_content, encoding="utf-8")
         LOGGER.info("Rapport batch sauvegardé : %s", report_path)
+
+        # ── Archivage persistant des logs d'entraînement du batch ──
+        # log/model_factory.log est purgé par rotation (maxBytes/backupCount) ;
+        # on persiste les lignes du batch dans artifacts/rapport_ml/<batch_id>.log
+        # pour garder l'historique indéfiniment.
+        try:
+            from modelFactory.batch_logs import persist_batch_log
+            persist_batch_log(batch_id)
+        except Exception as _log_exc:
+            LOGGER.warning("Échec archivage logs batch %s : %s", batch_id, _log_exc)
     except Exception as exc:
         LOGGER.warning("Échec génération rapport batch %s : %s", batch_id, exc)
 
@@ -993,7 +1003,7 @@ def main(args: list[str] | None = None) -> None:
             insert_predictions,
             load_symbols_for_source,
         )
-        from modelFactory.predictor import predict_batch
+        from modelFactory.predictor import _batch_has_per_symbol_or_sector, predict_batch
         from modelFactory.drift_monitor import compute_drift
         from modelFactory.drift_policy import (
             apply_kill_switch,
@@ -1009,6 +1019,16 @@ def main(args: list[str] | None = None) -> None:
         )
         _batch_mode = detect_batch_training_mode(engine, _batch_id) if _batch_id else "per_symbol"
         _per_sector = _batch_mode == "per_sector"
+        # Le batch contient-il des modèles per-symbol/per-sector ?
+        # Si NON (batch global-only / rank-driven), inutile de tenter le prédit
+        # per-symbol : on le saute entièrement (le global rank reste calculé).
+        _has_ps_models = _batch_has_per_symbol_or_sector(engine, _batch_id) if _batch_id else True
+        if not _has_ps_models and not _per_sector:
+            LOGGER.info(
+                "predict: batch=%s sans modèles per-symbol/per-sector → per-symbol SKIPPÉ "
+                "(flux rank-driven : global_rank → synthèse)",
+                _batch_id,
+            )
         LOGGER.info(
             "predict dispatch: batch=%s training_mode=%s → flux %s",
             _batch_id or "none",
@@ -1087,7 +1107,8 @@ def main(args: list[str] | None = None) -> None:
                         symbols=symbols or None,
                     )
                 # Étape 2 : per-symbol — non applicable aux batches per-sector
-                if _per_sector:
+                # OU aux batches sans modèles per-symbol/per-sector (global-only).
+                if _per_sector or not _has_ps_models:
                     return (_ds, 0)
                 _syms = opts.symbols or load_symbols_for_source(
                     engine, opts.symbol_source, trade_date=pred_date,
@@ -1131,7 +1152,7 @@ def main(args: list[str] | None = None) -> None:
                                 "predict date=%s per_symbol=%d rows → model_predictions (%d/%d dates done)",
                                 _ds, _rows, _dates_with_data, _dates_total,
                             )
-                        else:
+                        elif _has_ps_models:
                             LOGGER.warning(
                                 "predict date=%s ALL SKIPPED — 0 predictions (%d/%d dates done)",
                                 _ds, _dates_with_data, _dates_total,
@@ -1234,7 +1255,13 @@ def main(args: list[str] | None = None) -> None:
                 persisted_incrementally = True
                 preds = _load_synth_frame_for_range(engine, _batch_id, [_live_day])
             else:
-                preds = predict_batch(symbols, Path(opts.artifacts_dir), engine, persist=False, batch_id=_batch_id, accelerator=opts.accelerator)
+                if not _has_ps_models:
+                    # Batch global-only : pas de per-symbol à prédire.
+                    preds = pd.DataFrame(
+                        columns=["symbol", "prediction_date", "predicted_proba", "predicted_class", "run_id"]
+                    )
+                else:
+                    preds = predict_batch(symbols, Path(opts.artifacts_dir), engine, persist=False, batch_id=_batch_id, accelerator=opts.accelerator)
 
         # Sprint S4 (A-021) — drift gate / kill switch ML
         drift_decision = None

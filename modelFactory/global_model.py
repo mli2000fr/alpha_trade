@@ -50,6 +50,7 @@ from modelFactory.features import (
     get_feature_columns,
 )
 from modelFactory.features import fingerprint as compute_feature_fingerprint
+from modelFactory.feature_logging import log_feature_duplicates, log_feature_values, log_feature_weights
 from modelFactory.reproducibility import apply_reproducibility, derive_seed
 from modelFactory.tabular_baseline import apply_tabular_calibration, compute_tabular_metrics, fit_tabular_calibrator
 from modelFactory.calibration import VectorScaler
@@ -456,6 +457,10 @@ def train_global_model(
         return {"status": "skipped", "model_name": "global_model", "reason": "insufficient_rows_after_date_split"}
 
     feature_columns = _get_global_feature_columns(cfg)
+    # ── Audit : valeurs des features d'entraînement / prédiction (une ligne par feature) ──
+    log_feature_values(train_df, feature_columns, label="global_model_train_features")
+    log_feature_duplicates(train_df, feature_columns, label="global_model_train_features")
+    log_feature_values(val_df, feature_columns, label="global_model_predict_features")
     feature_contract = build_feature_contract(
         include_sentiment=False,
         feature_set=cfg.data.feature_set,
@@ -510,6 +515,7 @@ def train_global_model(
         if unique_vals < 2:
             return {"status": "skipped", "model_name": "global_model", "reason": "single_value_target"}
         model.fit(train_df[feature_columns], train_targets)
+        log_feature_weights(model, feature_columns, label=f"global_model {cfg.global_model.model_name} train")
         val_raw = model.predict(val_df[feature_columns])
         test_raw = model.predict(test_df[feature_columns])
         calibrator = None
@@ -552,6 +558,7 @@ def train_global_model(
         if len(unique_classes) < 2:
             return {"status": "skipped", "model_name": "global_model", "reason": f"single_class_target_{unique_classes[0]}"}
         model.fit(train_df[feature_columns], train_targets)
+        log_feature_weights(model, feature_columns, label=f"global_model {cfg.global_model.model_name} train")
         is_ternary = effective_data_cfg.target_mode == "ternary"
         raw_val_all = model.predict_proba(val_df[feature_columns])
         num_val_cols = raw_val_all.shape[1]
@@ -807,6 +814,9 @@ def train_global_model_wf(
 
     # ── Feature columns (cross-symbol uniquement, sans global_pred_long) ──
     feature_columns = _get_global_feature_columns(cfg)
+    # ── Audit : toutes les features sont-elles alimentées ? (une ligne par feature) ──
+    log_feature_values(global_df, feature_columns, label="global_model_train_features")
+    log_feature_duplicates(global_df, feature_columns, label="global_model_train_features")
 
     # ── Walk-Forward splits ──
     wf_splits = generate_walk_forward_splits(
@@ -838,6 +848,7 @@ def train_global_model_wf(
     # ── Accumulateurs ──
     global_pred_parts: list[pd.DataFrame] = []
     fold_metrics_by_symbol: dict[str, list[dict[str, Any]]] = {}
+    _pred_feature_parts: list[pd.DataFrame] = []
 
     for split in wf_splits:
         split_seed = derive_seed(resolved_seed, split.split_index)
@@ -890,6 +901,11 @@ def train_global_model_wf(
 
         # ── Fit ──
         model.fit(train_df[feature_columns], train_targets, sample_weight=_sample_weights)
+        log_feature_weights(
+            model, feature_columns,
+            label=f"global_model_wf split={split.split_index + 1} {backend_model_name}",
+        )
+        _pred_feature_parts.append(val_df_split[feature_columns])
 
         # ── Predict on val (per-symbol, PIT-safe) ──
         raw_val_all = model.predict_proba(val_df_split[feature_columns])
@@ -950,6 +966,14 @@ def train_global_model_wf(
 
     # ── Agrégation WF par symbole ──
     by_symbol = _aggregate_wf_per_symbol_metrics(fold_metrics_by_symbol)
+
+    # ── Audit : valeurs des features au moment de la prédiction (une ligne par feature) ──
+    if _pred_feature_parts:
+        log_feature_values(
+            pd.concat(_pred_feature_parts, ignore_index=True),
+            feature_columns,
+            label="global_model_predict_features",
+        )
 
     # ── Assemblage du global_pred_df ──
     global_pred_df: pd.DataFrame | None = None

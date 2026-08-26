@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json as _json
+import threading
+import time
 
 import numpy as np
 import pandas as pd
@@ -17,6 +19,7 @@ from ihm.services.db import db_available, safe_query, get_engine
 from sqlalchemy import text
 from ihm.services.ml_artifacts import get_model_artifacts_dir
 from modelFactory.report import generate_batch_report
+from modelFactory.db_registry import delete_batch_rows
 
 # ── Chargement config (fallback silencieux si absent) ──
 _MIN_RISING_HORIZONS_DEFAULT = 4
@@ -26,6 +29,18 @@ try:
     _MIN_RISING_HORIZONS = int(_cfg.get("backtest", {}).get("min_rising_horizons", _MIN_RISING_HORIZONS_DEFAULT))
 except Exception:
     _MIN_RISING_HORIZONS = _MIN_RISING_HORIZONS_DEFAULT
+
+
+# ---------------------------------------------------------------------------
+# Helper — logs d'entraînement d'un batch
+# ---------------------------------------------------------------------------
+
+def _get_batch_training_logs(batch_id: str) -> str:
+    """Récupère les logs d'entraînement du batch : archive persistante
+    (artifacts/rapport_ml/<batch_id>.log) en priorité, sinon scan du log global
+    (log/model_factory.log + rotations)."""
+    from modelFactory.batch_logs import batch_logs_text
+    return batch_logs_text(batch_id)
 
 
 # ---------------------------------------------------------------------------
@@ -564,6 +579,29 @@ GLOBAL_RANK_DATES_FOR_BATCH_QUERY = """
     ORDER BY date DESC
 """
 
+def _global_rank_all_query(horizon: int) -> str:
+    """Rangs globaux du batch (colonne du meilleur horizon)."""
+    _h = int(horizon)
+    return (
+        "SELECT `date`, symbol, global_rank_%d AS global_rank_best "
+        "FROM alpha_trade.global_rank_history "
+        "WHERE batch_id = :batch_id AND global_rank_%d IS NOT NULL "
+        "ORDER BY `date`, symbol" % (_h, _h)
+    )
+
+
+ORACLE_LABELS_DECILE_QUERY = """
+    SELECT
+        prediction_date,
+        symbol,
+        oracle_decile
+    FROM alpha_trade.global_oracle_labels
+    WHERE batch_id = :batch_id
+      AND horizon = :horizon
+      AND oracle_decile IS NOT NULL
+    ORDER BY prediction_date, symbol
+"""
+
 # ── Couverture prédictions par type de modèle (diagnostic UI, hors rapport) ──
 
 GLOBAL_RANK_COVERAGE_QUERY = """
@@ -937,8 +975,10 @@ def _render_delete_batch_button(selected_batch: str, artifacts_dir: Path) -> Non
         batch_status = None
 
     if batch_status == "completed":
-        st.caption("✅ Batch complété — suppression impossible.")
-        return
+        st.warning(
+            "⚠️ Batch marqué `completed`. La suppression reste possible — "
+            "vérifie qu'il n'est plus utilisé (serving, backtest, comparaison)."
+        )
 
     confirm_key = f"ml_diag_confirm_delete_batch_{selected_batch}"
     if confirm_key not in st.session_state:
@@ -978,37 +1018,36 @@ def _render_delete_batch_button(selected_batch: str, artifacts_dir: Path) -> Non
 
         if confirmed:
             errors: list[str] = []
-            # Tables avec batch_id direct
-            tables_direct = [
-                "model_batch_diagnostics",
-                "model_training_run",
-                "model_training_batch",
-            ]
-            # Tables sans batch_id → DELETE via JOIN sur run_id
-            tables_via_run = [
-                "model_metrics",
-                "model_metrics_full",
-                "model_governance",
-            ]
+            # Avertissement si ce batch est promu comme source de serving.
             try:
-                with engine.begin() as conn:
-                    for table in tables_direct:
-                        conn.execute(
-                            _text(f"DELETE FROM alpha_trade.{table} WHERE batch_id = :bid"),
-                            {"bid": selected_batch},
-                        )
-                    for table in tables_via_run:
-                        conn.execute(
-                            _text(
-                                f"DELETE FROM alpha_trade.{table} "
-                                f"WHERE run_id IN (SELECT run_id FROM alpha_trade.model_training_run WHERE batch_id = :bid)"
-                            ),
-                            {"bid": selected_batch},
-                        )
-                total = len(tables_direct) + len(tables_via_run)
-                st.success(f"✅ {total} tables nettoyées en base")
+                with engine.connect() as conn:
+                    served = conn.execute(
+                        _text("SELECT scope FROM alpha_trade.model_serving_batch WHERE batch_id = :bid"),
+                        {"bid": selected_batch},
+                    ).fetchall()
+                if served:
+                    scopes = ", ".join(str(r[0]) for r in served)
+                    st.warning(
+                        f"⚠️ Ce batch est référencé comme batch de serving ({scopes}). "
+                        f"`model_serving_batch` n'est pas supprimé automatiquement "
+                        f"(c'est une configuration de serving, pas une donnée du batch)."
+                    )
+            except Exception:
+                pass
+
+            # 1. Tables enfants liées par run_id → à supprimer AVANT model_training_run
+            # 2. Tables avec batch_id direct (model_training_run = parent des tables via run_id)
+            try:
+                deleted = delete_batch_rows(engine, selected_batch)
+                _rows = sum(deleted.values())
+                st.success(
+                    f"✅ {len(deleted)} tables nettoyées en base ({_rows:,} lignes supprimées)"
+                )
             except Exception as exc:
-                errors.append(f"DB: {exc}")
+                errors.append(
+                    f"DB: {exc} — vérifiez qu'aucun entraînement/backtest n'écrit "
+                    f"dans ce batch puis réessayez."
+                )
 
             if artifacts_dir.exists():
                 try:
@@ -1016,6 +1055,21 @@ def _render_delete_batch_button(selected_batch: str, artifacts_dir: Path) -> Non
                     st.success(f"✅ Répertoire supprimé")
                 except Exception as exc:
                     errors.append(f"Disque: {exc}")
+
+            # ── Nettoyage artifacts/rapport_ml/ (rapport .md + logs .log archivés) ──
+            _safe_r = selected_batch.replace("/", "_").replace("\\", "_")[:100]
+            _rapport_dir = artifacts_dir.parent.parent / "rapport_ml"
+            _removed_report: list[str] = []
+            for _suffix in (".md", ".log"):
+                _rp = _rapport_dir / f"{_safe_r}{_suffix}"
+                try:
+                    if _rp.exists():
+                        _rp.unlink()
+                        _removed_report.append(_rp.name)
+                except OSError as exc:
+                    errors.append(f"rapport_ml: {exc}")
+            if _removed_report:
+                st.success("✅ Rapport/logs archivés supprimés : " + ", ".join(_removed_report))
 
             if errors:
                 st.error("Erreurs : " + "; ".join(errors))
@@ -1041,13 +1095,40 @@ def _batch_trains_oracle(batch: pd.Series) -> bool:
     return False
 
 
-def _oracle_periods() -> list[dict[str, Any]]:
-    """Périodes des prédictions Oracle Extreme depuis les artefacts disque."""
+def _oracle_run_batch(run_dir: Path) -> str | None:
+    """Batch_id du run Oracle Extreme (sidecar ``batch_id.txt``), None si non taggé."""
+    try:
+        tag_file = run_dir / "batch_id.txt"
+        if tag_file.exists():
+            val = tag_file.read_text(encoding="utf-8").strip()
+            return val or None
+    except Exception:
+        pass
+    return None
+
+
+def _iter_oracle_runs(batch_id: str) -> list[Path]:
+    """Runs ``oracle-wf-*`` pertinents pour le batch sélectionné, triés croissant.
+
+    - run taggé au batch → inclus ;
+    - run non taggé (legacy) → inclus (fallback historique) ;
+    - run taggé à un AUTRE batch → exclu (évite d'afficher le run d'un autre batch).
+    """
     odir = Path(get_model_artifacts_dir()) / "oracle"
-    out: list[dict[str, Any]] = []
     if not odir.exists():
-        return out
+        return []
+    out: list[Path] = []
     for d in sorted(odir.glob("oracle-wf-*")):
+        tag = _oracle_run_batch(d)
+        if tag is None or tag == batch_id:
+            out.append(d)
+    return out
+
+
+def _oracle_periods(batch_id: str) -> list[dict[str, Any]]:
+    """Périodes des prédictions Oracle Extreme depuis les artefacts disque du batch."""
+    out: list[dict[str, Any]] = []
+    for d in _iter_oracle_runs(batch_id):
         det = f"artefacts/models/oracle/{d.name}"
         pf = d / "oos_predictions.parquet"
         if not pf.exists():
@@ -1072,6 +1153,590 @@ def _oracle_periods() -> list[dict[str, Any]]:
         except Exception:
             out.append({"Type": "🔥 Oracle extreme", "Période": "—", "Jours": "", "Symboles": "", "Détail": det})
     return out
+
+
+def _load_latest_oracle_oos(batch_id: str) -> tuple[str | None, pd.DataFrame]:
+    """Charge les prédictions OOS du run Oracle Extreme le plus récent du batch.
+
+    Les runs sont taggés par ``batch_id.txt`` ; les runs legacy (non taggés)
+    servent de fallback historique.
+    """
+    for d in reversed(_iter_oracle_runs(batch_id)):
+        pf = d / "oos_predictions.parquet"
+        if not pf.exists():
+            continue
+        try:
+            df = pd.read_parquet(pf)
+            if not df.empty:
+                return d.name, df
+        except Exception:
+            continue
+    return None, pd.DataFrame()
+
+
+def _batch_best_horizon(batch_id: str) -> int:
+    """Meilleur horizon du Global Ranking pour ce batch (metadata, défaut H20)."""
+    try:
+        detail = safe_query(BATCH_DETAIL_QUERY, {"batch_id": batch_id})
+        if detail.empty:
+            return 20
+        raw = detail.iloc[0].get("metadata_json")
+        if raw is None or str(raw) in ("None", "nan", ""):
+            return 20
+        data = _json.loads(str(raw))
+        gr = data.get("global_ranking") if isinstance(data, dict) else None
+        h = gr.get("best_horizon") if isinstance(gr, dict) else None
+        h = int(h) if h else 20
+        return h if h in _ALL_HORIZONS else 20
+    except Exception:
+        return 20
+
+
+# ---------------------------------------------------------------------------
+# Calcul des labels Oracle en arrière-plan
+# ---------------------------------------------------------------------------
+# Le calcul est long (plusieurs minutes) : l'exécuter dans le thread du script
+# Streamlit est fragile — si le run est interrompu (déconnexion, rechargement,
+# timeout), rien n'est persisté et la barre de progression disparaît. On lance
+# un thread daemon et on suit la progression par polling (st.rerun).
+_ORACLE_RUNS: dict[str, dict[str, Any]] = {}
+
+
+def _oracle_labels_worker(batch_id: str, horizon: int, strict: bool) -> None:
+    """Worker arrière-plan : exécute build_labels et met à jour ``_ORACLE_RUNS``."""
+    from modelFactory.oracle.build_labels import build_labels
+
+    run = _ORACLE_RUNS.setdefault(batch_id, {"status": "running"})
+    try:
+
+        def _cb(current: int, total: int, message: str) -> None:
+            run["progress"] = (current, total, message)
+
+        result = build_labels(
+            batch_id,
+            horizon=horizon,
+            engine=get_engine(),
+            dry_run=False,
+            strict_universe=strict,
+            progress_callback=_cb,
+        )
+        if result.get("status") == "completed":
+            run.update(status="done", result=result)
+        else:
+            run.update(status="error", error=f"Échec du calcul : {result}")
+    except RuntimeError as exc:  # noqa: BLE001
+        msg = str(exc)
+        if "bit-for-bit" in msg or "Univers" in msg:
+            run.update(status="force_needed", error=msg)
+        else:
+            run.update(status="error", error=msg)
+    except Exception as exc:  # noqa: BLE001
+        run.update(status="error", error=f"{exc}")
+
+
+def _launch_oracle_job(batch_id: str, horizon: int, *, strict: bool) -> None:
+    """Démarre le calcul des labels Oracle en arrière-plan (idempotent)."""
+    if _ORACLE_RUNS.get(batch_id, {}).get("status") in ("running", "done", "force_needed"):
+        return  # déjà en cours ou résultat à afficher
+    t = threading.Thread(
+        target=_oracle_labels_worker,
+        args=(batch_id, horizon, strict),
+        daemon=True,
+        name=f"oracle_labels_{batch_id[:16]}",
+    )
+    _ORACLE_RUNS[batch_id] = {"status": "running", "progress": (0, 1, "démarrage…")}
+    t.start()
+
+
+def _render_build_oracle_labels_button(
+    batch_id: str, horizon: int, *, for_oracle_extreme: bool = False
+) -> None:
+    """Bouton pour calculer les labels Oracle (vrai Oracle) du batch sélectionné.
+
+    Le vrai Oracle (`global_oracle_labels`) n'existe que si `build_labels` a été
+    lancé pour ce batch. Ce bouton le calcule à la demande (upsert idempotent),
+    sans dépendre du batch de référence B25. Une barre de progression suit le
+    calcul ; en cas de divergence d'univers, un second bouton permet de forcer.
+
+    Args:
+        horizon: horizon des labels à calculer (best_h pour le modèle global,
+            H20 pour le modèle Oracle Extreme).
+        for_oracle_extreme: si True, on construit les labels H20 et on ignore
+            la vérification synthétique (le run synth est au best_h du batch).
+    """
+    # ── Prérequis : des rangs globaux pour ce batch ──
+    gr_check = safe_query(GLOBAL_RANK_DATE_RANGE_QUERY, {"batch_id": batch_id})
+    if gr_check.empty or not gr_check.iloc[0].get("nb_dates"):
+        st.caption("⚠️ Aucun rang global pour ce batch — impossible de calculer le vrai Oracle.")
+        return
+
+    best_h = _batch_best_horizon(batch_id)
+    if for_oracle_extreme:
+        st.caption(f"🎯 Horizon Oracle Extreme : H{horizon} (H20 canonique)")
+    else:
+        st.caption(f"🎯 Meilleur horizon du batch (best_horizon) : H{horizon}")
+
+    _confirm_key = f"ml_diag_build_oracle_labels_{batch_id}"
+    _force_key = f"ml_diag_build_oracle_force_{batch_id}"
+    for _k in (_confirm_key, _force_key):
+        if _k not in st.session_state:
+            st.session_state[_k] = False
+
+    # Un calcul en arrière-plan est déjà actif/résolu pour ce batch → suivi
+    # affiché dans _render_oracle_distribution, pas de bouton ici.
+    if _ORACLE_RUNS.get(batch_id, {}).get("status") in ("running", "done", "force_needed"):
+        st.info("⏳ Calcul des labels Oracle en cours ou terminé — voir le suivi ci-dessus.")
+        return
+
+    def _repair() -> None:
+        """Réaligne `model_predictions` (run synthétique) sur `global_rank_history`.
+
+        Supprime le run `{batch}_globalrank_synth` puis le régénère depuis les
+        rangs actuels (meilleur horizon du batch) → les deux univers redeviennent
+        bit-for-bit identiques.
+        """
+        from modelFactory.synthesize_global_rank_predictions import synthesize
+
+        engine = get_engine()
+        if engine is None:
+            st.error("Base de données indisponible.")
+            return
+
+        status = st.empty()
+        try:
+            with st.spinner("Réparation en cours (suppression + re-synthèse du run synthétique)…"):
+                with engine.begin() as conn:
+                    conn.execute(
+                        text("DELETE FROM alpha_trade.model_predictions WHERE run_id = :rid"),
+                        {"rid": f"{batch_id}_globalrank_synth"},
+                    )
+                result = synthesize(batch_id, best_h=best_h)
+
+            if result.get("status") != "completed":
+                status.error(f"Échec de la réparation : {result}")
+                return
+
+            from modelFactory.oracle.build_labels import (
+                check_universe_equality,
+                load_universe_from_predictions,
+                load_universe_from_ranks,
+            )
+            rk = load_universe_from_ranks(engine, batch_id, best_h)
+            pk = load_universe_from_predictions(engine, batch_id)
+            check = check_universe_equality(rk, pk)
+            if check["equal"]:
+                st.success(
+                    f"✅ Divergence réparée : les 2 univers sont identiques ({len(rk):,} lignes). "
+                    "Vous pouvez maintenant relancer le calcul des labels."
+                )
+                st.session_state[_force_key] = False
+                st.rerun()
+            else:
+                status.error(f"Divergence persistante après réparation : {check}")
+        except Exception as exc:
+            status.error(f"Échec de la réparation : {exc}")
+
+    if not st.session_state[_confirm_key]:
+        st.button(
+            "🧮 Calculer les labels Oracle (vrai Oracle) pour ce batch",
+            key=f"ml_diag_build_oracle_btn_{batch_id}",
+            type="primary",
+            on_click=lambda: st.session_state.__setitem__(_confirm_key, True),
+            help=f"Construit `global_oracle_labels` (H{horizon}) pour ce batch via `modelFactory.oracle.build_labels`. "
+                 "Calcule le vrai Oracle (déciles cross-sectionnels) sans utiliser B25 comme référence.",
+        )
+    elif st.session_state[_force_key]:
+        st.warning(
+            "⚠️ Univers `global_rank_history` ≠ `model_predictions` détecté. "
+            "Deux options : forcer le calcul (ignorer la divergence) ou réparer "
+            "la divergence (re-synchroniser le run synthétique sur les rangs actuels)."
+        )
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            if st.button(
+                "⚡ Forcer le calcul",
+                key=f"ml_diag_build_oracle_force_btn_{batch_id}",
+                help="Labellise uniquement l'univers `global_rank_history` ; les lignes de prédictions en trop sont ignorées (sans risque pour le diagnostic).",
+            ):
+                _launch_oracle_job(batch_id, horizon, strict=False)
+                st.rerun()
+        with c2:
+            if st.button(
+                "🔧 Réparer la divergence",
+                key=f"ml_diag_build_oracle_repair_btn_{batch_id}",
+                help=f"Supprime puis régénère le run `{batch_id}_globalrank_synth` depuis les rangs actuels (H{best_h}) pour que les 2 univers redeviennent identiques.",
+            ):
+                _repair()
+        with c3:
+            if st.button("❌ Annuler", key=f"ml_diag_build_oracle_cancel_btn_{batch_id}"):
+                st.session_state[_confirm_key] = False
+                st.session_state[_force_key] = False
+                st.rerun()
+    else:
+        st.warning(
+            "Le calcul charge la matrice de prix puis calcule les déciles cross-sectionnels "
+            "pour toutes les dates du batch. Cela peut prendre plusieurs minutes."
+        )
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("✅ Oui, calculer", key=f"ml_diag_build_oracle_yes_{batch_id}"):
+                _launch_oracle_job(batch_id, horizon, strict=not for_oracle_extreme)
+                st.rerun()
+        with c2:
+            if st.button("❌ Annuler", key=f"ml_diag_build_oracle_no_{batch_id}"):
+                st.session_state[_confirm_key] = False
+                st.rerun()
+
+
+def _render_oracle_distribution(batch_id: str, row: pd.Series) -> None:
+    """Répartition TOP/BOTTOM 10% d'un modèle dans les déciles du vrai Oracle.
+
+    Deux boutons : « Modèle global » (si entraîné) et « Modèle Oracle Extreme »
+    (uniquement si entraîné dans ce batch). Chaque bouton affiche :
+      - la répartition du TOP 10% du modèle par décile Oracle (D1..D10) ;
+      - la répartition du BOTTOM 10% du modèle par décile Oracle (D1..D10).
+
+    Le vrai Oracle = ``global_oracle_labels`` : D1 = pire 10% réalisé … D10 = meilleur 10% réalisé.
+    - **Modèle global** → oracle au meilleur horizon du batch ;
+    - **Modèle Oracle Extreme** → oracle H20 (horizon canonique du modèle).
+    """
+    st.subheader("🔀 Répartition Oracle — TOP / BOTTOM 10% du modèle")
+
+    best_h = _batch_best_horizon(batch_id)
+    st.caption(f"🎯 Horizons du vrai Oracle — 🌐 Modèle global : H{best_h} · 🔥 Oracle Extreme : H20")
+
+    # ── Suivi d'un calcul des labels Oracle en arrière-plan ──
+    _oracle_run = _ORACLE_RUNS.get(batch_id)
+    if _oracle_run is not None:
+        _ostatus = _oracle_run.get("status")
+        if _ostatus == "done":
+            _ores = _oracle_run.get("result") or {}
+            _ORACLE_RUNS.pop(batch_id, None)
+            st.success(
+                f"✅ Labels Oracle calculés : {_ores.get('n_labeled')} lignes labellisées "
+                f"({_ores.get('n_unavailable')} indisponibles, "
+                f"{_ores.get('skipped_dates')} dates sans prix)."
+            )
+            st.rerun()
+        elif _ostatus == "error":
+            _OERR = _oracle_run.get("error", "erreur inconnue")
+            _ORACLE_RUNS.pop(batch_id, None)
+            st.error(f"❌ Échec du calcul des labels Oracle : {_OERR}")
+        elif _ostatus == "force_needed":
+            _OERR = _oracle_run.get("error", "")
+            _ORACLE_RUNS.pop(batch_id, None)
+            st.session_state[f"ml_diag_build_oracle_force_{batch_id}"] = True
+            st.error(f"❌ Univers divergent : {_OERR}")
+            st.rerun()
+        else:  # running
+            _oprog = _oracle_run.get("progress") or (0, 1, "démarrage…")
+            _ocur, _otot, _omsg = _oprog
+            st.progress(min(1.0, _ocur / _otot) if _otot else 0.0)
+            st.info(f"⏳ Calcul des labels Oracle en cours… {_omsg} (page auto-rafraîchie)")
+            time.sleep(1)
+            st.rerun()
+        return
+
+    # ── Modèle global entraîné ? ──
+    global_df = safe_query(_global_rank_all_query(best_h), {"batch_id": batch_id})
+    has_global = not global_df.empty
+
+    # ── Modèle Oracle Extreme entraîné ? ──
+    has_oracle = _batch_trains_oracle(row)
+    oracle_run: str | None = None
+    oracle_oos = pd.DataFrame()
+    if has_oracle:
+        oracle_run, oracle_oos = _load_latest_oracle_oos(batch_id)
+        has_oracle = not oracle_oos.empty
+
+    if not has_global and not has_oracle:
+        st.info("Ni le modèle global ni le modèle Oracle Extreme ne sont disponibles pour ce batch.")
+        return
+
+    # ── Boutons de sélection du modèle ──
+    kinds: list[tuple[str, str]] = []
+    if has_global:
+        kinds.append(("global", "🌐 Modèle global (entraîné)"))
+    if has_oracle:
+        kinds.append(("oracle", "🔥 Modèle Oracle Extreme (entraîné)"))
+
+    # Mémorise le modèle choisi : persiste à travers les reruns (ex: après le
+    # calcul des labels en arrière-plan, les tableaux s'affichent tout seuls).
+    _chosen_key = f"ml_diag_oracle_chosen_{batch_id}"
+    btn_cols = st.columns(len(kinds))
+    chosen: str | None = st.session_state.get(_chosen_key)
+    for i, (kind, label) in enumerate(kinds):
+        with btn_cols[i]:
+            if st.button(label, key=f"oracle_dist_btn_{kind}_{batch_id}", use_container_width=True):
+                chosen = kind
+                st.session_state[_chosen_key] = kind
+
+    if chosen is None:
+        return
+
+    # ── Horizon du vrai Oracle selon le modèle choisi ──
+    horizon = best_h if chosen == "global" else 20
+
+    labels_df = safe_query(
+        ORACLE_LABELS_DECILE_QUERY, {"batch_id": batch_id, "horizon": horizon}
+    )
+    if labels_df.empty:
+        st.info(
+            f"Aucun label Oracle (`global_oracle_labels`, H{horizon}) pour ce batch — "
+            "le vrai Oracle n'a pas été calculé pour ce batch."
+        )
+        _render_build_oracle_labels_button(
+            batch_id, horizon, for_oracle_extreme=(chosen == "oracle")
+        )
+        return
+
+    st.caption(
+        "Compare les TOP/BOTTOM 10% du modèle sélectionné aux déciles du vrai Oracle "
+        f"(`global_oracle_labels`, H{horizon}) : **D1** = pire 10% réalisé … **D10** = meilleur 10% réalisé."
+    )
+
+    # ── Construire le DataFrame du modèle : date × symbol × score ──
+    if chosen == "global":
+        model_df = global_df[["date", "symbol", "global_rank_best"]].copy()
+        model_df["date"] = pd.to_datetime(model_df["date"], errors="coerce")
+        model_df["score"] = pd.to_numeric(model_df["global_rank_best"], errors="coerce")
+        # global_rank_best est déjà un percentile cross-sectionnel [0, 1]
+        kind_label = f"🌐 Modèle global (`global_rank_{best_h}`)"
+        top_caption = "TOP/BOTTOM 10% = les 10% plus hauts / plus bas rangs par date (cross-sectionnel)"
+    else:
+        date_col = next(
+            (c for c in ("prediction_date", "date", "entry_date", "asof_date") if c in oracle_oos.columns),
+            None,
+        )
+        if date_col is None or "symbol" not in oracle_oos.columns or "proba_extreme" not in oracle_oos.columns:
+            st.error("Prédictions Oracle Extreme illisibles (colonnes manquantes).")
+            return
+        model_df = oracle_oos[[date_col, "symbol", "proba_extreme"]].copy()
+        model_df["date"] = pd.to_datetime(model_df[date_col], errors="coerce")
+        model_df["score"] = pd.to_numeric(model_df["proba_extreme"], errors="coerce")
+        model_df = model_df.dropna(subset=["date", "symbol", "score"])
+        kind_label = "🔥 Modèle Oracle Extreme (`proba_extreme`)"
+        top_caption = f"TOP/BOTTOM 10% = les 10% plus hauts / plus bas `proba_extreme` par date · run `{oracle_run}`"
+
+    model_df["symbol"] = model_df["symbol"].astype(str).str.strip()
+
+    # ── Vrai Oracle (déciles) ──
+    labels = labels_df.copy()
+    labels["date"] = pd.to_datetime(labels["prediction_date"], errors="coerce")
+    labels["symbol"] = labels["symbol"].astype(str).str.strip()
+    labels["oracle_decile"] = pd.to_numeric(labels["oracle_decile"], errors="coerce")
+
+    merged = model_df.merge(labels[["date", "symbol", "oracle_decile"]], on=["date", "symbol"], how="inner")
+    merged = merged.dropna(subset=["oracle_decile", "score"])
+    merged["oracle_decile"] = merged["oracle_decile"].astype(int)
+
+    if merged.empty:
+        st.warning("Aucune intersection entre les prédictions du modèle et les labels Oracle de ce batch.")
+        return
+
+    def _split_top_bottom(df: pd.DataFrame, pct: float = 0.10) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Sélection symétrique : k = pct% des lignes par date, top et bottom."""
+        top_parts: list[pd.DataFrame] = []
+        bottom_parts: list[pd.DataFrame] = []
+        for _, g in df.groupby("date", sort=False):
+            k = max(1, int(round(len(g) * pct)))
+            top_parts.append(g.nlargest(k, "score"))
+            bottom_parts.append(g.nsmallest(k, "score"))
+        if not top_parts:
+            return pd.DataFrame(), pd.DataFrame()
+        return pd.concat(top_parts, ignore_index=True), pd.concat(bottom_parts, ignore_index=True)
+
+    top_sel, bottom_sel = _split_top_bottom(merged)
+
+    def _render_dist(sel: pd.DataFrame, title: str, *, is_top: bool) -> None:
+        if sel.empty:
+            st.info(f"{title} : aucune ligne sélectionnée.")
+            return
+        counts = sel["oracle_decile"].value_counts().reindex(range(1, 11), fill_value=0)
+        total = int(len(sel))
+        dist = pd.DataFrame({
+            "Décile Oracle": [f"D{d}" for d in range(1, 11)],
+            "Nb titres": [int(counts[d]) for d in range(1, 11)],
+            "%": [100.0 * int(counts[d]) / total for d in range(1, 11)],
+        })
+        dist.loc[len(dist)] = {"Décile Oracle": "Total", "Nb titres": total, "%": 100.0}
+
+        # Lignes à mettre en évidence : rouge = mal aligné, bleu = bien aligné.
+        red_row = "D1" if is_top else "D10"
+        blue_row = "D10" if is_top else "D1"
+
+        def _row_style(row: pd.Series) -> list[str]:
+            dec = str(row.get("Décile Oracle", ""))
+            if dec == red_row:
+                return ["font-weight: bold; color: #d32f2f;"] * len(row)
+            if dec == blue_row:
+                return ["font-weight: bold; color: #1565c0;"] * len(row)
+            return [""] * len(row)
+
+        styled = dist.style.apply(_row_style, axis=1).format(
+            {"Nb titres": "{:,}", "%": "{:.1f}%"}
+        )
+        st.markdown(f"**{title}** — {total:,} lignes".replace(",", " "))
+        st.dataframe(styled, use_container_width=True, hide_index=True)
+
+    st.markdown(f"Modèle sélectionné : **{kind_label}** — {top_caption}")
+    col_top, col_bottom = st.columns(2)
+    with col_top:
+        _render_dist(top_sel, "🟢 TOP 10% du modèle → déciles Oracle", is_top=True)
+    with col_bottom:
+        _render_dist(bottom_sel, "🔴 BOTTOM 10% du modèle → déciles Oracle", is_top=False)
+
+    with st.expander("ℹ️ Interprétation", expanded=False):
+        st.markdown(
+            """
+- Un modèle **parfaitement aligné** sur le vrai Oracle aurait son TOP 10% concentré en **D10**
+  et son BOTTOM 10% concentré en **D1**.
+- Une répartition **plate** (≈10% dans chaque décile) signifie que les extrêmes du modèle
+  n'apportent aucune information sur les extrêmes réalisés.
+- `oracle_decile` est cross-sectionnel **par jour** : D1 = pire 10% du jour, D10 = meilleur 10% du jour.
+"""
+        )
+
+
+def _render_oracle_quality(batch_id: str, row: pd.Series) -> None:
+    """Métriques de qualité du modèle Oracle Extreme (AUC / IC / precision@10% /
+    lift / calibration / rendement top-décile) depuis les artefacts OOS du batch."""
+    if not _batch_trains_oracle(row):
+        return
+
+    st.subheader("🔥 Oracle Extreme — Qualité du modèle (OOS)")
+
+    oracle_run, oos = _load_latest_oracle_oos(batch_id)
+    if oos.empty:
+        st.info("Aucune prédiction OOS Oracle Extreme disponible pour ce batch.")
+        return
+
+    need = {"date", "symbol", "proba_extreme"}
+    if not need.issubset(oos.columns):
+        st.warning(f"Prédictions Oracle Extreme illisibles (colonnes attendues {sorted(need)}) : {list(oos.columns)}")
+        return
+
+    df = oos.copy()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df["proba_extreme"] = pd.to_numeric(df["proba_extreme"], errors="coerce")
+    df = df.dropna(subset=["date", "symbol", "proba_extreme"])
+    if df.empty:
+        st.info("Aucune ligne exploitable dans les prédictions OOS.")
+        return
+
+    from modelFactory.oracle.train import (
+        decile_monotonicity,
+        precision_recall_at_top_pct,
+        roc_auc,
+    )
+
+    # ── Couverture ──
+    n_dates = int(df["date"].dt.normalize().nunique())
+    n_symbols = int(df["symbol"].nunique())
+    n_rows = len(df)
+    dmin, dmax = df["date"].min(), df["date"].max()
+
+    # ── Cible binaire (extrême réalisé) si présente ──
+    target_col = next((c for c in ("oracle_extreme10", "target", "y") if c in df.columns), None)
+    has_target = target_col is not None and df[target_col].notna().any()
+
+    auc: float | None = None
+    pr: dict[str, float | None] = {"precision": None, "recall": None, "n_dates": 0}
+    prevalence: float | None = None
+    if has_target:
+        y = df[target_col].astype(float)
+        auc = roc_auc(y.to_numpy(), df["proba_extreme"].to_numpy())
+        pr = precision_recall_at_top_pct(df, "proba_extreme", pct=0.10, target_col=target_col)
+        yv = y.dropna()
+        prevalence = float(yv.mean()) if len(yv) else None
+    lift = (pr["precision"] / prevalence) if (pr["precision"] is not None and prevalence) else None
+
+    # ── IC (Spearman) proba_extreme vs future_return, moyen par jour ──
+    ic: float | None = None
+    if "future_return" in df.columns:
+        ics: list[float] = []
+        for _, g in df.groupby(df["date"].dt.normalize()):
+            g = g.dropna(subset=["proba_extreme", "future_return"])
+            if len(g) < 10:
+                continue
+            try:
+                c = g["proba_extreme"].corr(g["future_return"], method="spearman")
+                if pd.notna(c):
+                    ics.append(float(c))
+            except Exception:
+                continue
+        if ics:
+            ic = float(np.mean(ics))
+
+    # ── Calibration : déciles globaux de proba_extreme → taux réalisé ──
+    cal = pd.DataFrame()
+    if has_target:
+        sub = df.dropna(subset=["proba_extreme", target_col]).copy()
+        if not sub.empty and sub[target_col].nunique() > 1:
+            sub["_q"] = pd.qcut(sub["proba_extreme"].rank(method="first"), 10, labels=False) + 1
+            g = sub.groupby("_q").agg(
+                mean_proba=("proba_extreme", "mean"),
+                actual_rate=(target_col, "mean"),
+                n=("proba_extreme", "size"),
+            )
+            g.index = [f"D{i}" for i in g.index]
+            cal = g.reset_index().rename(columns={"_q": "Décile", "mean_proba": "P(extrême) prédite", "actual_rate": "Taux réalisé", "n": "N"})
+
+    # ── Rendement du top décile vs overall (future_return) ──
+    top_ret: float | None = None
+    overall_ret: float | None = None
+    if "future_return" in df.columns:
+        fr = df.dropna(subset=["proba_extreme", "future_return"])
+        overall_ret = float(fr["future_return"].mean()) if not fr.empty else None
+        top_parts: list[pd.DataFrame] = []
+        for _, g in fr.groupby(df["date"].dt.normalize()):
+            k = max(1, int(round(len(g) * 0.10)))
+            top_parts.append(g.nlargest(k, "proba_extreme"))
+        if top_parts:
+            top_ret = float(pd.concat(top_parts, ignore_index=True)["future_return"].mean())
+
+    # ── Monotonicité décile (Spearman future_return) ──
+    mono, _mono_df = decile_monotonicity(df, "proba_extreme")
+
+    # ── Rendu ──
+    st.caption(f"Run : `{oracle_run}` · OOS {dmin.date()} → {dmax.date()} · {n_dates} jours · {n_symbols} symboles · {n_rows:,} lignes".replace(",", " "))
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("🎯 AUC (cible extrême)", f"{auc:.3f}" if auc is not None else "—",
+                  help="AUC de proba_extreme vs oracle_extreme10 (extrême réalisé). 0.5 = hasard.")
+    with c2:
+        st.metric("📈 IC (proba vs rendement)", f"{ic:+.3f}" if ic is not None else "—",
+                  help="Spearman moyen par jour entre proba_extreme et future_return.")
+    with c3:
+        prev_s = f"{prevalence*100:.1f}%" if prevalence is not None else "—"
+        prec_s = f"{pr['precision']*100:.1f}%" if pr.get("precision") is not None else "—"
+        st.metric("Precision@10% (prévalence)", f"{prec_s} ({prev_s})",
+                  help="Précision cross-sectionnelle du top 10% par jour ; prévalence de la cible entre parenthèses.")
+    with c4:
+        st.metric("🚀 Lift top 10%", f"{lift:.2f}x" if lift is not None else "—",
+                  help="precision@10% / prévalence. >1 = le top 10% du modèle est plus extrême que le hasard.")
+    c5, c6 = st.columns(2)
+    with c5:
+        st.metric("📈 Retour top 10% (OOS)", f"{top_ret*100:+.2f}%" if top_ret is not None else "—",
+                  help="future_return moyen du top 10% proba par jour (OOS).")
+    with c6:
+        st.metric("📉 Retour moyen (OOS)", f"{overall_ret*100:+.2f}%" if overall_ret is not None else "—")
+
+    if not cal.empty:
+        st.markdown("**Calibration — déciles de `proba_extreme` → taux d'extrême réalisé**")
+        st.dataframe(
+            cal.style.format({"P(extrême) prédite": "{:.3f}", "Taux réalisé": "{:.1%}", "N": "{:,}"}),
+            use_container_width=True, hide_index=True,
+        )
+        with st.expander("ℹ️ Lecture"):
+            st.markdown(
+                "Une calibration idéale : `Taux réalisé ≈ P(extrême) prédite`. "
+                "Écart systématique = proba mal calibrée (post-traitement utile)."
+            )
+    if mono is not None:
+        st.markdown(f"**Monotonicité décile (rendement futur)** : Spearman = `{mono:+.3f}`")
+    if not has_target:
+        st.caption("ℹ️ Colonne cible (`oracle_extreme10`) absente — AUC/precision/calibration non calculées.")
 
 
 def _render_prediction_periods(batch_id: str, batch: pd.Series) -> None:
@@ -1176,16 +1841,22 @@ def _render_prediction_periods(batch_id: str, batch: pd.Series) -> None:
     # Uniquement si le batch a réellement entraîné la couche Oracle Extreme :
     # sinon les artefacts sont globaux et ne concernent pas ce batch.
     oracle_trained = _batch_trains_oracle(batch)
-    oracle_rows = _oracle_periods() if oracle_trained else []
+    oracle_rows = _oracle_periods(batch_id) if oracle_trained else []
     if oracle_rows:
         _valid = [o for o in oracle_rows if "→" in o["Période"] and not o["Période"].startswith(("—", "?"))]
         if _valid:
-            o_min = min(pd.Timestamp(o["Période"].split(" → ")[0]) for o in _valid)
-            o_max = max(pd.Timestamp(o["Période"].split(" → ")[1]) for o in _valid)
+            # Ligne de synthèse = run le plus récent du batch (celui utilisé
+            # par le bloc « Qualité du modèle »), PAS l'union de tous les runs.
+            # Les anciens runs legacy (non taggés, issus d'autres batchs)
+            # n'étendaient la période que par erreur. Le détail ci-dessous
+            # liste chaque run avec sa propre période.
+            _latest = _valid[-1]
+            _last_run = str(_latest.get("Détail", "")).split("/")[-1]
             summary.append({"Type": "🔥 Oracle extreme",
-                            "Période": f"{o_min.date()} → {o_max.date()}",
-                            "Jours": "", "Symboles": "",
-                            "Détail": f"{len(oracle_rows)} run(s) (voir détail)"})
+                            "Période": _latest["Période"],
+                            "Jours": _latest.get("Jours", ""),
+                            "Symboles": _latest.get("Symboles", ""),
+                            "Détail": f"{len(oracle_rows)} run(s) — dernier : {_last_run}"})
         else:
             summary.append({"Type": "🔥 Oracle extreme", "Période": "—", "Jours": "", "Symboles": "",
                             "Détail": "artefacts sans période exploitable"})
@@ -1227,13 +1898,24 @@ def _render_batch_detail(batch: pd.Series) -> None:
     if engine is not None:
         col_dl, col_del = st.columns([3, 1])
         with col_dl:
-            st.download_button(
-                label="📥 Télécharger le rapport (.md)",
-                data=generate_batch_report(engine, batch_id),
-                file_name=f"{_dl_name}.md",
-                mime="text/markdown",
-                key=f"dl_{safe_bid}",
-            )
+            col_report, col_logs = st.columns(2)
+            with col_report:
+                st.download_button(
+                    label="📥 Télécharger le rapport (.md)",
+                    data=generate_batch_report(engine, batch_id),
+                    file_name=f"{_dl_name}.md",
+                    mime="text/markdown",
+                    key=f"dl_{safe_bid}",
+                )
+            with col_logs:
+                st.download_button(
+                    label="📄 Logs d'entraînement (.txt)",
+                    data=_get_batch_training_logs(batch_id),
+                    file_name=f"{_dl_name}.logs.txt",
+                    mime="text/plain",
+                    key=f"logs_{safe_bid}",
+                    help="Lignes de log contenant ce batch_id (log/model_factory.log + rotations).",
+                )
         with col_del:
             _current_status = str(batch.get("status", "")).strip().lower()
             if _current_status == "to delete":
@@ -1480,7 +2162,14 @@ def _render_batch_detail(batch: pd.Series) -> None:
         _render_global_ranking_horizon_details(row)
 
     # ═══════════════════════════════════════════════════════════════
-    # 🔵 PER-SYMBOL / PER-SECTOR — Métriques d'entraînement
+    # � RÉPARTITION ORACLE — TOP / BOTTOM 10% du modèle dans le vrai Oracle
+    # ═══════════════════════════════════════════════════════════════
+    st.divider()
+    _render_oracle_distribution(batch_id, row)
+    _render_oracle_quality(batch_id, row)
+
+    # ═══════════════════════════════════════════════════════════════
+    # �🔵 PER-SYMBOL / PER-SECTOR — Métriques d'entraînement
     # ═══════════════════════════════════════════════════════════════
     st.divider()
     st.subheader("🔵 Per-Symbol / Per-Sector — Métriques")
@@ -2163,6 +2852,7 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
                     if _has_split_champion:
                         _row["IC LightGBM"] = _sp.get("ic_rank_lightgbm")
                         _row["IC CatBoost"] = _sp.get("ic_rank_catboost")
+                        _row["IC XGBoost"] = _sp.get("ic_rank_xgboost")
                     _split_rows.append(_row)
                 _sp_df = pd.DataFrame(_split_rows)
                 _ic_label = f"🎯 {_ic_col}"
@@ -2177,6 +2867,7 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
                 if _has_split_champion:
                     _sp_col_config["IC LightGBM"] = st.column_config.NumberColumn("IC LightGBM", format="%.4f")
                     _sp_col_config["IC CatBoost"] = st.column_config.NumberColumn("IC CatBoost", format="%.4f")
+                    _sp_col_config["IC XGBoost"] = st.column_config.NumberColumn("IC XGBoost", format="%.4f")
                 st.dataframe(
                     _sp_df,
                     use_container_width=True,
