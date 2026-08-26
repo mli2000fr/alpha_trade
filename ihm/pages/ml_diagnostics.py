@@ -2627,6 +2627,7 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
                     if _has_split_champion:
                         _row["IC LightGBM"] = _sp.get("ic_rank_lightgbm")
                         _row["IC CatBoost"] = _sp.get("ic_rank_catboost")
+                        _row["IC XGBoost"] = _sp.get("ic_rank_xgboost")
                     _split_rows.append(_row)
                 _sp_df = pd.DataFrame(_split_rows)
                 _ic_label = f"🎯 {_ic_col}"
@@ -2641,6 +2642,7 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
                 if _has_split_champion:
                     _sp_col_config["IC LightGBM"] = st.column_config.NumberColumn("IC LightGBM", format="%.4f")
                     _sp_col_config["IC CatBoost"] = st.column_config.NumberColumn("IC CatBoost", format="%.4f")
+                    _sp_col_config["IC XGBoost"] = st.column_config.NumberColumn("IC XGBoost", format="%.4f")
                 st.dataframe(
                     _sp_df,
                     use_container_width=True,
