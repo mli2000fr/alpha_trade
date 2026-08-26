@@ -2150,6 +2150,12 @@ def load_extreme_gate_config() -> dict[str, Any]:
         "pool_pct": 0.20,
         "long_only": True,
         "min_prob": None,
+        # Pénalité directionnelle anti-D1 (2026-08-26).
+        "penalty_enabled": False,
+        "penalty_directional_signal": "long_prob",
+        "penalty_min_directional": 0.60,
+        "penalty_score_floor": 0.2,
+        "penalty_reject_below": 0.0,
     }
     try:
         import yaml as _yaml
@@ -2162,6 +2168,11 @@ def load_extreme_gate_config() -> dict[str, Any]:
             "long_only": bool(_section.get("long_only", _defaults["long_only"])),
             "min_prob": (float(_section["min_prob"])
                          if _section.get("min_prob") is not None else None),
+            "penalty_enabled": bool(_section.get("penalty_enabled", _defaults["penalty_enabled"])),
+            "penalty_directional_signal": str(_section.get("penalty_directional_signal", _defaults["penalty_directional_signal"])).strip().lower(),
+            "penalty_min_directional": float(_section.get("penalty_min_directional", _defaults["penalty_min_directional"])),
+            "penalty_score_floor": float(_section.get("penalty_score_floor", _defaults["penalty_score_floor"])),
+            "penalty_reject_below": float(_section.get("penalty_reject_below", _defaults["penalty_reject_below"])),
         }
     except Exception:
         return _defaults
@@ -2782,6 +2793,11 @@ def cascade_select(
     if _eg_ps_mode not in ("filter", "no_filter", "bypass"):
         _eg_ps_mode = "filter"
     _eg_shorts = bool(extreme_gate_shorts)
+    # ── Pénalité directionnelle anti-D1 (extreme_gate.penalty_*) ──
+    _eg_penalty_enabled = bool(_extreme_gate_cfg.get("penalty_enabled", False))
+    _eg_penalty_min_dir = float(_extreme_gate_cfg.get("penalty_min_directional", 0.60))
+    _eg_penalty_score_floor = float(_extreme_gate_cfg.get("penalty_score_floor", 0.2))
+    _eg_penalty_reject_below = float(_extreme_gate_cfg.get("penalty_reject_below", 0.0))
     if _mode_extreme_gate:
         if not oracle_rank_map or trade_date not in oracle_rank_map:
             LOGGER.warning("cascade_select: extreme_gate — no oracle ranks for %s", trade_date)
@@ -2924,17 +2940,46 @@ def cascade_select(
         #   C "bypass"    : Oracle pur — per-symbol ignoré, score = rank (percentile O0)
         # E18 : --extreme-gate-shorts active la branche SHORT symétrique (LONG-only par défaut).
         if _mode_extreme_gate:
+            _eg_score: float | None = None
+            _eg_dir_signal: float | None = None
             if _eg_ps_mode == "bypass":
-                candidates.append(("LONG", symbol, rank))
+                _eg_score = rank
             else:
                 _eg_pred = per_symbol_preds.get(symbol)
                 if _eg_pred is None:
                     continue
                 if _eg_ps_mode == "no_filter" or _eg_pred.long_prob > _min_prob:
-                    candidates.append(("LONG", symbol, rank * _eg_pred.long_prob))
+                    _eg_score = rank * _eg_pred.long_prob
+                    _eg_dir_signal = float(_eg_pred.long_prob)
                 elif _eg_shorts and _eg_pred.short_prob > _min_prob:
                     # E18 : SHORT = restants du gate (non-LONG) ∩ short_prob > min_prob
                     candidates.append(("SHORT", symbol, rank * _eg_pred.short_prob))
+                    continue
+                else:
+                    continue
+            # ── Pénalité directionnelle anti-D1 (extreme_gate.penalty_*) ──
+            # `proba_extreme` est agnostique à la direction : un candidat extrême
+            # non confirmé LONG (long_prob faible) risque de tomber en D1 (mauvais
+            # long). On dégrade son score, voire on le rejette.
+            if _eg_penalty_enabled and _eg_dir_signal is not None:
+                if _eg_dir_signal < _eg_penalty_reject_below:
+                    continue
+                # Pénalité PROGRESSIVE : interpolation linéaire du multiplicateur
+                # entre 1.0 (au seuil min_directional) et penalty_score_floor (à
+                # signal = reject_below, i.e. le plus "D1"). Plus le signal
+                # directionnel est faible, plus la pénalité est lourde.
+                if _eg_dir_signal < _eg_penalty_min_dir:
+                    _eg_span = float(_eg_penalty_min_dir) - float(_eg_penalty_reject_below)
+                    if _eg_span <= 0.0:
+                        _eg_mult = float(_eg_penalty_score_floor)
+                    else:
+                        _eg_t = ((float(_eg_dir_signal) - float(_eg_penalty_reject_below))
+                                 / _eg_span)
+                        _eg_t = max(0.0, min(1.0, _eg_t))
+                        _eg_mult = (float(_eg_penalty_score_floor)
+                                    + (1.0 - float(_eg_penalty_score_floor)) * _eg_t)
+                    _eg_score = float(_eg_score) * _eg_mult
+            candidates.append(("LONG", symbol, float(_eg_score)))
             continue
 
         # Prédiction per-symbol

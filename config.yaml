@@ -600,6 +600,24 @@ extreme_gate:
   # Proba per-symbol minimale (None = défaut cascade min_prob_regression).
   min_prob: null
 
+  # ── Pénalité directionnelle anti-D1 (2026-08-26) ──
+  # `proba_extreme` est AGNOSTIQUE à la direction : ~23% des picks top 10%
+  # tombent en D1 (bottom 10% réalisé = MAUVAIS long, retour moyen ~-19%).
+  # La pénalité dégrade le score des candidats extrême non confirmés LONG
+  # (long_prob per-symbol faible) pour réduire l'exposition aux D1.
+  #   penalty_enabled          : activer la pénalité
+  #   penalty_directional_signal: long_prob (seul supporté actuellement)
+  #   penalty_min_directional  : long_prob < seuil → pénalité PROGRESSIVE
+  #   penalty_score_floor      : multiplicateur minimum (à signal=0, i.e. le plus
+  #                              "D1"). Interpolation linéaire : 1.0 au seuil
+  #                              min_directional → floor à signal=reject_below.
+  #   penalty_reject_below     : long_prob < seuil → rejet (0 = pas de rejet)
+  penalty_enabled: true
+  penalty_directional_signal: long_prob
+  penalty_min_directional: 0.60
+  penalty_score_floor: 0.2
+  penalty_reject_below: 0.0
+
 
 # ---------------------------------------------------------------------------
 # Calibration de proba_extreme (Oracle O0) à la consommation cascade/backtest.

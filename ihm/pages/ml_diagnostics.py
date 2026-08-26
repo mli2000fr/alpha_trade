@@ -1598,6 +1598,92 @@ def _render_oracle_distribution(batch_id: str, row: pd.Series) -> None:
         )
 
 
+def _oracle_split_table(picks: pd.DataFrame) -> dict[str, Any] | None:
+    """Table D1-D10 pour une sélection de picks (colonnes ``_dec`` + ``future_return``).
+
+    D1 = bottom 10% (MAUVAIS long), D10 = top 10% (BON long).
+    """
+    if picks is None or picks.empty:
+        return None
+    vc = picks["_dec"].value_counts().reindex(range(1, 11), fill_value=0)
+    n = len(picks)
+    g = picks.groupby("_dec")["future_return"].mean()
+    table = pd.DataFrame({
+        "Décile réalisé": [f"D{d}" for d in range(1, 11)],
+        "% des picks": [100.0 * int(vc[d]) / n for d in range(1, 11)],
+        "Retour moyen si LONG": [f"{float(g[d])*100:+.2f}%" if d in g.index else "—" for d in range(1, 11)],
+    })
+    return {
+        "table": table,
+        "d1_pct": 100.0 * int(vc[1]) / n,
+        "d10_pct": 100.0 * int(vc[10]) / n,
+        "d1_ret": float(g[1]) if 1 in g.index else 0.0,
+        "d10_ret": float(g[10]) if 10 in g.index else 0.0,
+        "mean_ret": float(picks["future_return"].mean()) if "future_return" in picks.columns else 0.0,
+        "n": n,
+    }
+
+
+def _oracle_direction_split(df: pd.DataFrame) -> dict[str, Any] | None:
+    """Répartition des picks top 10% proba par décile de rendement réalisé.
+
+    D1 = bottom 10% (MAUVAIS long), D10 = top 10% (BON long). Le déséquilibre
+    D1/D10 mesure l'ampleur de la pénalité directionnelle (anti-D1) potentielle
+    pour un usage LONG du gate Extreme (proba_extreme est agnostique à la direction).
+    """
+    if "future_return" not in df.columns:
+        return None
+    sub = df.dropna(subset=["date", "symbol", "proba_extreme", "future_return"]).copy()
+    if sub.empty:
+        return None
+    sub["_dec"] = (
+        np.floor(sub.groupby("date")["future_return"].rank(pct=True).clip(upper=1 - 1e-9) * 10)
+        .clip(0, 9).astype(int) + 1
+    )
+    top_parts: list[pd.DataFrame] = []
+    for _, g in sub.groupby("date"):
+        k = max(1, int(round(len(g) * 0.10)))
+        top_parts.append(g.nlargest(k, "proba_extreme"))
+    if not top_parts:
+        return None
+    return _oracle_split_table(pd.concat(top_parts, ignore_index=True))
+
+
+# ── Plafond omniscient (anti-D1) : filtre D1 parfait basé sur le RÉEL oracle ──
+
+def _oracle_omniscient_split(df: pd.DataFrame, top_pct: float = 0.10) -> dict[str, Any] | None:
+    """Répartition D1-D10 si on retirait PARFAITEMENT les mauvais tops (D1).
+
+    Sélection = top ``top_pct`` par ``proba_extreme`` par jour, PUIS on retire
+    les picks qui réaliseront D1 (rendement futur connu → LOOKAHEAD). C'est une
+    borne **THÉORIQUE** (non exécutable en live) : le maximum atteignable par
+    toute pénalité ou tout entraînement anti-D1. 100% basé sur le réel oracle
+    (``future_return``), aucun signal per-symbol.
+    """
+    if "future_return" not in df.columns:
+        return None
+    sub = df.dropna(subset=["date", "symbol", "proba_extreme", "future_return"]).copy()
+    if sub.empty:
+        return None
+    sub["date"] = pd.to_datetime(sub["date"], errors="coerce")
+    sub = sub.dropna(subset=["date"])
+    sub["_dec"] = (
+        np.floor(sub.groupby("date")["future_return"].rank(pct=True).clip(upper=1 - 1e-9) * 10)
+        .clip(0, 9).astype(int) + 1
+    )
+    out_parts: list[pd.DataFrame] = []
+    for _, g in sub.groupby("date"):
+        k = max(1, int(round(len(g) * top_pct)))
+        topk = g.nlargest(k, "proba_extreme")
+        kept = topk[topk["_dec"] != 1]  # omniscient : on écarte les D1
+        if kept.empty:
+            continue
+        out_parts.append(kept)
+    if not out_parts:
+        return None
+    return _oracle_split_table(pd.concat(out_parts, ignore_index=True))
+
+
 def _render_oracle_quality(batch_id: str, row: pd.Series) -> None:
     """Métriques de qualité du modèle Oracle Extreme (AUC / IC / precision@10% /
     lift / calibration / rendement top-décile) depuis les artefacts OOS du batch."""
@@ -1735,6 +1821,44 @@ def _render_oracle_quality(batch_id: str, row: pd.Series) -> None:
             )
     if mono is not None:
         st.markdown(f"**Monotonicité décile (rendement futur)** : Spearman = `{mono:+.3f}`")
+    _dir_split = _oracle_direction_split(df)
+    if _dir_split is not None:
+        st.markdown("**🧭 Répartition directionnelle des picks top 10% de `proba_extreme`**")
+        st.dataframe(_dir_split["table"], use_container_width=True, hide_index=True)
+        st.caption(
+            f"Top 10% du modèle : **{_dir_split['d1_pct']:.1f}%** en **D1** (bottom 10% réalisé, "
+            f"MAUVAIS long, retour moyen **{_dir_split['d1_ret']*100:+.1f}%**) vs "
+            f"**{_dir_split['d10_pct']:.1f}%** en **D10** (bon long, **{_dir_split['d10_ret']*100:+.1f}%**). "
+            f"`proba_extreme` est agnostique à la direction → le déséquilibre D1/D10 quantifie la "
+            f"pénalité directionnelle (anti-D1) à appliquer pour un gate LONG."
+        )
+    # ── Plafond omniscient (anti-D1) : brut vs idéal (filtre D1 parfait) ──
+    _ceil = _oracle_omniscient_split(df)
+    if _ceil is not None:
+        st.markdown("**🎯 Plafond omniscient — filtre D1 parfait (brut vs idéal)**")
+        _cmp = pd.DataFrame({
+            "Métrique": ["% en D1 (mauvais long)", "% en D10 (bon long)",
+                         "Retour moyen des picks", "N picks"],
+            "Brut (top 10% proba_extreme)": [
+                f"{_dir_split['d1_pct']:.1f}%", f"{_dir_split['d10_pct']:.1f}%",
+                f"{_dir_split.get('mean_ret', 0)*100:+.2f}%",
+                f"{int(_dir_split.get('n', 0)):,}".replace(",", " "),
+            ],
+            "Plafond (sans D1)": [
+                f"{_ceil['d1_pct']:.1f}%", f"{_ceil['d10_pct']:.1f}%",
+                f"{_ceil.get('mean_ret', 0)*100:+.2f}%",
+                f"{int(_ceil.get('n', 0)):,}".replace(",", " "),
+            ],
+        })
+        st.dataframe(_cmp, use_container_width=True, hide_index=True)
+        _gain = (_ceil.get("mean_ret", 0) - _dir_split.get("mean_ret", 0)) * 100
+        st.caption(
+            f"Plafond omniscient = top 10% par `proba_extreme` en retirant les picks qui "
+            f"RÉALISERONT D1 (rendement futur connu) → borne **THÉORIQUE** (lookahead, "
+            f"non exécutable en live). 100% basé sur le réel oracle (`future_return`), "
+            f"aucun signal per-symbol. Gain de retour moyen = **{_gain:+.2f} pt** : c'est "
+            f"le maximum atteignable par tout entraînement/filtre anti-D1."
+        )
     if not has_target:
         st.caption("ℹ️ Colonne cible (`oracle_extreme10`) absente — AUC/precision/calibration non calculées.")
 
