@@ -73,8 +73,12 @@ class BacktestRunOptions:
     # P5.2 — seuil top/bottom de la cascade ML (fraction). None = config.yaml
     # (cascade.top_pct). Défaut aligné benchmark B25 : 0.10.
     cascade_top_pct: float | None = 0.10
-    # S6 (Oracle Layer) — mode de rang cascade : ml | random | oracle (P_top).
-    cascade_rank_mode: Literal["ml", "random", "oracle"] = "ml"
+    # S6 (Oracle Layer) — mode de rang cascade. Les modes oracle_* / extreme_gate
+    # combinent le rang global (batch sélectionné) et proba_extreme (Oracle Extreme,
+    # via oracle_oos_path).
+    cascade_rank_mode: Literal[
+        "ml", "random", "oracle", "oracle_filter", "oracle_rerank", "oracle_pool", "extreme_gate"
+    ] = "ml"
     oracle_oos_path: str | None = None
     score_column: Literal["auto", "final_score_walk_forward", "final_score_sentiment", "final_score"] = "auto"
     walk_forward_artifacts_dir: str | None = None
@@ -102,6 +106,8 @@ class BacktestRunOptions:
     max_sector_exposure_pct: float = 0.0
     max_portfolio_dd_pct: float = 0.0
     dd_recovery_pct: float = 0.92
+    # E23 — politique du drawdown breaker. None = config.yaml risk_management.policy.
+    dd_breaker_policy: str | None = None
     target_annual_vol: float | None = None
     min_ml_coverage_ratio: float | None = None
     # Conviction/Kelly calibration (opt-in, Phase 2 only)
@@ -289,6 +295,32 @@ def build_backtesting_command(
             command.extend(["--cascade-batch-id", options.cascade_batch_id])
         if options.batch_diagnostics_batch_id:
             command.extend(["--batch-diagnostics-batch-id", options.batch_diagnostics_batch_id])
+        # ── V1 Multi-Horizon : injecter best_horizon (parité live pipeline_runner) ──
+        # --best-horizon alimente la cascade ET RiskConfig.best_horizon (maps
+        # stop/TP). Priorité : backtest_horizon (config.yaml, gel) > best_horizon
+        # du batch (metadata, via cascade/ml batch). Si indisponible → pas de flag
+        # → la CLI retombe sur ses défauts (gel H20 ou dataclass 10).
+        if not any(a == "--best-horizon" for a in command):
+            _bt_h: int | None = None
+            try:
+                from common.config_loader import load_config
+                _bt_h_cfg = (load_config() or {}).get("batch_diagnostics", {}).get("backtest_horizon")
+            except Exception:
+                _bt_h_cfg = None
+            if _bt_h_cfg not in (None, "", 0):
+                _bt_h = int(_bt_h_cfg)
+            elif options.cascade_batch_id or options.ml_batch_id:
+                try:
+                    from modelFactory.predictor import _load_best_horizon_for_batch
+                    from ihm.services.db import get_engine as _get_engine
+                    _bt_h = _load_best_horizon_for_batch(
+                        options.cascade_batch_id or options.ml_batch_id,
+                        engine=_get_engine(),
+                    )
+                except Exception:
+                    pass  # best-effort : pas de flag → défauts CLI
+            if _bt_h is not None:
+                command.extend(["--best-horizon", str(int(_bt_h))])
         # P5.2 — seuil top/bottom cascade ML (aligné benchmark : 0.10)
         if options.cascade_top_pct is not None and float(options.cascade_top_pct) > 0:
             command.extend(["--cascade-top-pct", str(options.cascade_top_pct)])
@@ -402,6 +434,8 @@ def build_backtesting_command(
         if options.max_portfolio_dd_pct:
             command.extend(["--max-portfolio-dd-pct", str(options.max_portfolio_dd_pct)])
             command.extend(["--dd-recovery-pct", str(options.dd_recovery_pct)])
+        if options.dd_breaker_policy:
+            command.extend(["--dd-breaker-policy", options.dd_breaker_policy])
         if options.target_annual_vol is not None:
             command.extend(["--target-annual-vol", str(options.target_annual_vol)])
         if options.min_ml_coverage_ratio is not None:

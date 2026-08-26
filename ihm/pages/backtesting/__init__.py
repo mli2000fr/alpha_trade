@@ -1280,6 +1280,36 @@ def _build_overlay_options(
                 help="Ex 0.15 = cible 15% vol portefeuille. Vide = désactivé.",
             )
 
+        # E23 — politique du drawdown breaker (défaut = config.yaml risk_management.policy).
+        _dd_policy_cfg = "b0"
+        try:
+            from common.config_loader import load_config as _lc_dd_cfg
+            _dd_policy_cfg = str((_lc_dd_cfg().get("risk_management") or {}).get("policy") or "b0").strip().lower()
+        except Exception:
+            pass
+        _DD_POLICY_OPTIONS = {
+            "config": f"⚙️ Config (défaut: {_dd_policy_cfg})",
+            "b0": "b0 — PROD historique (reprise lente, cap 25%)",
+            "b1": "b1 — recovery depuis trough par paliers",
+            "b2": "b2 — régime-aware (ramp rapide BULL/REB)",
+            "b3": "b3 — trough + régime + hystérésis",
+            "b4": "b4 — regime rearm + equity confirmation + RELAPSE",
+            "b4a": "b4a — b4 mais 75% en BULL confirmé",
+        }
+        _dd_sel = st.selectbox(
+            "Politique drawdown breaker (E23)",
+            options=list(_DD_POLICY_OPTIONS.keys()),
+            format_func=lambda k: _DD_POLICY_OPTIONS[k],
+            index=list(_DD_POLICY_OPTIONS.keys()).index(
+                st.session_state.get("bt_run_dd_breaker_policy", "config")
+                if st.session_state.get("bt_run_dd_breaker_policy", "config") in _DD_POLICY_OPTIONS
+                else "config"
+            ),
+            key="bt_run_dd_breaker_policy",
+            help="Politique de reprise du breaker. 'Config' = ne pas passer --dd-breaker-policy → le CLI lit config.yaml (risk_management.policy).",
+        )
+        dd_breaker_policy = None if _dd_sel == "config" else _dd_sel
+
         risk_col11, risk_col12 = st.columns([1.5, 2.5])
         with risk_col11:
             min_ml_coverage_ratio_raw = st.text_input(
@@ -1330,6 +1360,7 @@ def _build_overlay_options(
         "max_sector_exposure_pct": float(max_sector_exposure_pct),
         "max_portfolio_dd_pct": float(max_portfolio_dd_pct),
         "dd_recovery_pct": float(dd_recovery_pct),
+        "dd_breaker_policy": dd_breaker_policy,
         "target_annual_vol": target_annual_vol_value,
         "min_ml_coverage_ratio": min_ml_coverage_ratio_value,
     }
@@ -2229,6 +2260,52 @@ def _build_run_options() -> BacktestRunOptions:
             "Seuil de la cascade Global Rank → Per-Symbol. `0.10` = config benchmark B25."
         )
 
+    # ── Combinaison Oracle × Global Rank (S5/S6.1 + E6-E13) ──
+    st.markdown("**🔀 Mode de cascade — combinaison Oracle × Global Rank**")
+    _cascade_mode_labels = {
+        "ml": "🌐 Global Rank seul (batch sélectionné) — standard",
+        "oracle": "🔥 Oracle seul (P_extreme remplace le rang)",
+        "oracle_filter": "🧪 Global Rank sélectionne → Oracle filtre la qualité (S6.1-B)",
+        "oracle_pool": "🧪 Pool Global Rank élargi → Oracle sélectionne le top % (S6.1-C)",
+        "oracle_rerank": "🧪 Pool Global Rank → Oracle réordonne (S6.1-D)",
+        "extreme_gate": "🚪 Extreme Gate : Oracle seul, LONG-only, top 20% (E6-E13)",
+        "random": "🎲 Rangs aléatoires (placebo)",
+    }
+    _cascade_rank_mode = st.selectbox(
+        "Mode de cascade",
+        options=list(_cascade_mode_labels.keys()),
+        format_func=lambda k: _cascade_mode_labels[k],
+        index=list(_cascade_mode_labels.keys()).index(
+            st.session_state.get("bt_run_cascade_rank_mode", "ml")
+            if st.session_state.get("bt_run_cascade_rank_mode", "ml") in _cascade_mode_labels
+            else "ml"
+        ),
+        key="bt_run_cascade_rank_mode",
+        help="Comment le rang global (Global Ranking) et la proba_extreme (Oracle Extreme) sont combinés.",
+    )
+    oracle_oos_path = ""
+    if _cascade_rank_mode in ("oracle", "oracle_filter", "oracle_rerank", "oracle_pool", "extreme_gate"):
+        oracle_oos_path = st.text_input(
+            "Chemin parquet OOS Oracle (--oracle-oos-path)",
+            value=str(st.session_state.get("bt_run_oracle_oos_path", "") or ""),
+            key="bt_run_oracle_oos_path",
+            help="artifacts/models/oracle/oracle-wf-<run>/oos_predictions.parquet — sortie walk-forward du modèle Oracle.",
+        )
+    with st.expander("ℹ️ Détail des modes de combinaison", expanded=False):
+        st.markdown(
+            """
+- **ml** — cascade standard : top/bottom N% du `global_rank_{H}` du batch sélectionné. Aucun Oracle.
+- **oracle** — `proba_extreme` **remplace** le rang global : Oracle seul (S6).
+- **oracle_filter** (S6.1-B) — le rang global **sélectionne** le top/bottom, puis Oracle **filtre** la qualité (`P_extreme ≥ 0.80`).
+- **oracle_pool** (S6.1-C) — pool du rang global **élargi** (top 20%), puis Oracle **sélectionne** le top 10% dedans.
+- **oracle_rerank** (S6.1-D) — pool du rang global identique, Oracle **réordonne** (score = `P_extreme × proba per-symbol`).
+- **extreme_gate** (E6-E13) — Oracle **seul**, **LONG-only**, top 20% du jour par `proba_extreme` (percentile intra-date). Indépendant du rang global.
+- **random** — rangs aléatoires (placebo, isole l'edge du ranking).
+
+⚠️ Le **rang global** vient de `global_rank_history` du batch sélectionné (étape « Prédire l'univers »), et `proba_extreme` du parquet OOS Oracle. Pour combiner proprement, utilisez un batch ayant entraîné **les deux** modèles (ablation O1) — le rang global utilisé est celui du batch sélectionné, **pas un B25 figé**.
+"""
+        )
+
     extra_col1, extra_col2 = st.columns(2)
     with extra_col1:
         score_column = cast(
@@ -2361,6 +2438,8 @@ def _build_run_options() -> BacktestRunOptions:
         cascade_batch_id=selected_ml_batch_id,
         batch_diagnostics_batch_id=selected_ml_batch_id,
         cascade_top_pct=float(st.session_state.get("bt_run_cascade_top_pct", 0.10) or 0.10),
+        cascade_rank_mode=cast(Any, st.session_state.get("bt_run_cascade_rank_mode", "ml") or "ml"),
+        oracle_oos_path=(oracle_oos_path.strip() if oracle_oos_path else None),
         score_column=cast(Any, score_column),
         walk_forward_artifacts_dir=walk_forward_artifacts_dir.strip() or None,
         disable_walk_forward=bool(st.session_state.get("bt_run_disable_walk_forward", False)),

@@ -140,8 +140,14 @@ def build_dataset(
     start_date: str,
     end_date: str,
     horizon: int = 20,
+    require_global_rank: bool = True,
 ) -> tuple[pd.DataFrame, list[str]]:
     """Assemble features + global_rank_20 + target Oracle.
+
+    Args:
+        require_global_rank: si False (standalone ``--oracle-model-only``, sans
+            ``global_rank_history``), on ne fusionne pas ``global_rank_20`` —
+            l'univers vient alors des targets ``global_oracle_labels``.
 
     Returns:
         ``(dataset, feature_columns)`` — ``feature_columns`` = liste O0 (sans
@@ -157,10 +163,14 @@ def build_dataset(
     xs_cols = [c for c in feats.columns if c.endswith("_xs_rank")]
     feature_columns = base_cols + xs_cols  # O0
 
-    ranks = load_global_rank_feature(engine, batch_id)
     targets = load_oracle_targets(engine, batch_id, horizon)
 
-    df = feats.merge(ranks, on=["date", "symbol"], how="inner")
+    if require_global_rank:
+        ranks = load_global_rank_feature(engine, batch_id)
+        df = feats.merge(ranks, on=["date", "symbol"], how="inner")
+    else:
+        # Standalone O0 : pas de global_rank_history → l'univers = targets.
+        df = feats.copy()
     df = df.merge(
         targets,
         left_on=["date", "symbol"],

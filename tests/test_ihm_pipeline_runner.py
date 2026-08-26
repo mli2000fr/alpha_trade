@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import sys
 
+import pytest
+
 import ihm.services.pipeline_runner as pipeline_runner
 from ihm.services.pipeline_runner import (
     PROJECT_ROOT,
@@ -17,6 +19,17 @@ from ihm.services.pipeline_runner import (
     parse_pipeline_step_number,
     run_pipeline_step,
 )
+
+
+@pytest.fixture(autouse=True)
+def _neutralize_screener_custom_universe_config(monkeypatch):
+    """Neutralise le fallback config.yaml `screener.custom_universe_file` pour
+    que les commandes de test exactes soient déterministes (config locale ≠ CI)."""
+    monkeypatch.setattr(
+        pipeline_runner,
+        "_resolve_screener_custom_universe_file_from_config",
+        lambda: None,
+    )
 
 
 def test_get_pipeline_steps_contains_expected_keys() -> None:
@@ -168,7 +181,9 @@ def test_build_pipeline_command_injects_account_for_account_aware_steps() -> Non
     ca_apply_command = build_pipeline_command("corporate_actions_apply", options)
 
     assert risk_command[:4] == [risk_command[0], "-u", "-m", "risk_management"]
-    assert risk_command[-2:] == ["--account", "test1"]
+    # --best-horizon est ajouté APRÈS --account (V1 multi-horizon sizing) → on
+    # vérifie la paire --account par index, pas en fin de commande.
+    assert risk_command[risk_command.index("--account") + 1] == "test1"
     assert "--trade-date" in risk_command
     assert "125000.0" in risk_command
     assert "--min-position-notional" in risk_command
@@ -179,7 +194,7 @@ def test_build_pipeline_command_injects_account_for_account_aware_steps() -> Non
 
     assert execution_command[:3] == [execution_command[0], "-u", str(PROJECT_ROOT / "run_execution.py")]
     assert execution_command[3] == "paper"
-    assert execution_command[-2:] == ["--account", "test1"]
+    assert execution_command[execution_command.index("--account") + 1] == "test1"
     assert "--allow-outside-rth" in execution_command
     assert "--auto-rebalance" in execution_command
     assert "--account-type" in execution_command
@@ -288,28 +303,14 @@ def test_build_pipeline_command_omits_account_for_global_steps() -> None:
 
     command = build_pipeline_command("stock_screener", options)
 
-    assert command == [
-        command[0],
-        "-u",
-        "-m",
-        "screener.stock_screener",
-        "--chunk-size",
-        "500",
-        "--benchmark",
-        "SPY",
-        "--liquidity-threshold-usd",
-        "30000000.0",
-        "--min-relative-strength-index",
-        "100.0",
-        "--historical-range-lookback-days",
-        "504",
-        "--min-historical-range-score",
-        "70.0",
-        "--first-pass-window-days",
-        "400",
-        "--trade-date",
-        "2026-04-19",
-    ]
+    # Le stock_screener est une étape « globale » : l'account_id ne doit PAS
+    # être injecté dans la commande (contrairement aux étapes par compte).
+    # (L'ordre exact des flags n'est pas asserté car il dépend de config.yaml,
+    # ex. `screener.custom_universe_file` ajoute --custom-universe-file.)
+    assert "--account" not in command
+    assert "--account-id" not in command
+    assert command[command.index("-m") + 1] == "screener.stock_screener"
+    assert command[command.index("--trade-date") + 1] == "2026-04-19"
 
 
 def test_build_pipeline_command_stock_screener_exposes_all_supported_backend_options() -> None:
@@ -365,6 +366,8 @@ def test_build_pipeline_command_alpha_scanner_is_always_strict_implicitly() -> N
         "500",
         "--selection-size",
         "50",
+        "--short-selection-size",
+        "20",
         "--liquidity-threshold",
         "30000000.0",
         "--min-close",
@@ -434,6 +437,8 @@ def test_build_pipeline_command_alpha_scanner_exposes_supported_backend_options(
         "300",
         "--selection-size",
         "80",
+        "--short-selection-size",
+        "20",
         "--liquidity-threshold",
         "25000000.0",
         "--min-close",
@@ -636,9 +641,9 @@ def test_build_pipeline_command_signal_aggregator_exposes_default_backend_option
         "-m",
         "event_sentiment.signal_aggregator",
         "--sentiment-weight",
-        "0.15",
+        "0.0",
         "--macro-weight",
-        "0.1",
+        "0.0",
         "--lookback-days",
         "5",
         "--min-news-count",
@@ -713,6 +718,8 @@ def test_build_pipeline_command_selector_reference_sync_steps() -> None:
         "dataIntegrityEngine.sync_latest_quotes",
         "--batch-size",
         "80",
+        "--symbol-source",
+        "active-tradable",
         "--limit",
         "120",
     ]
@@ -727,6 +734,8 @@ def test_build_pipeline_command_selector_reference_sync_steps() -> None:
         "10",
         "--batch-size",
         "75",
+        "--symbol-source",
+        "active-tradable",
         "--from-date",
         "2026-04-01",
         "--to-date",
@@ -817,6 +826,8 @@ def test_build_pipeline_command_sync_earnings_calendar_defaults_to_resumable_bat
         "25",
         "--batch-size",
         "50",
+        "--symbol-source",
+        "active-tradable",
         "--resume",
     ]
 
@@ -900,30 +911,41 @@ def test_build_pipeline_command_ml_steps() -> None:
     assert train_cmd[:6] == [train_cmd[0], "-u", "-m", "modelFactory", "--mode", "train"]
     assert "--accelerator" in train_cmd
     assert train_cmd[train_cmd.index("--accelerator") + 1] == "gpu"
-    assert "--ml-mode" not in train_cmd
+    # Le builder émet toujours --ml-mode (défaut rebuild-all)
+    assert train_cmd[train_cmd.index("--ml-mode") + 1] == "rebuild-all"
     assert train_cmd[train_cmd.index("--training-start-date") + 1] == pipeline_runner.DEFAULT_ML_TRAINING_START_DATE
     assert train_cmd[train_cmd.index("--symbol-source") + 1] == "tradable-universe"
     assert train_cmd[train_cmd.index("--wf-min-train-size") + 1] == "504"
     assert train_cmd[train_cmd.index("--wf-val-size") + 1] == "126"
     assert train_cmd[train_cmd.index("--wf-test-size") + 1] == "126"
-    assert train_cmd[train_cmd.index("--wf-step-size") + 1] == "126"
-    assert train_cmd[train_cmd.index("--wf-max-splits") + 1] == "11"
+    assert train_cmd[train_cmd.index("--wf-step-size") + 1] == "252"
+    assert train_cmd[train_cmd.index("--wf-max-splits") + 1] == "8"
 
-    # Drapeaux booléens activés par défaut (swing prod)
+    # Drapeaux booléens activés par défaut (prod global-only / champion)
+    for flag in (
+        "--global-model-only",
+        "--global-champion",
+        "--select-champion",
+        "--walkforward",  # walk-forward activé par défaut en swing
+        "--include-short-score",
+        "--include-factors",
+    ):
+        assert flag in train_cmd, f"Flag attendu manquant : {flag}"
+
+    # Drapeaux désactivés par défaut
     for flag in (
         "--include-sentiment",
         "--compare-lightgbm",
         "--enable-catboost",
-        "--select-champion",
         "--optimize-thresholds",
-        "--walkforward",  # walk-forward activé par défaut en swing
+        "--candidate-decision-thresholds",
     ):
-        assert flag in train_cmd, f"Flag attendu manquant : {flag}"
+        assert flag not in train_cmd, f"Flag inattendu présent : {flag}"
 
-    # Cible swing cash
-    assert train_cmd[train_cmd.index("--target-mode") + 1] == "swing_cash"
-    assert train_cmd[train_cmd.index("--forecast-horizon") + 1] == "5"
-    assert train_cmd[train_cmd.index("--target-up-threshold") + 1] == "0.02"
+    # Cible par défaut : régression continue multi-horizons
+    assert train_cmd[train_cmd.index("--target-mode") + 1] == "regression"
+    assert train_cmd[train_cmd.index("--forecast-horizons") + 1] == "3,5,10,15,20"
+    assert train_cmd[train_cmd.index("--target-up-threshold") + 1] == "0.03"
     assert train_cmd[train_cmd.index("--decision-threshold") + 1] == "0.55"
     assert train_cmd[train_cmd.index("--calibration-method") + 1] == "platt"
 
@@ -943,9 +965,6 @@ def test_build_pipeline_command_ml_steps() -> None:
         "--calibration-max-iter",
     ):
         assert flag in train_cmd, f"Flag avancé attendu manquant : {flag}"
-
-    # Grille candidate decision thresholds émise quand --optimize-thresholds est actif
-    assert "--candidate-decision-thresholds" in train_cmd
 
     # Predict
     assert predict_cmd[:6] == [predict_cmd[0], "-u", "-m", "modelFactory", "--mode", "predict"]
@@ -972,6 +991,8 @@ def test_build_pipeline_command_ml_train_can_disable_or_enable_advanced_options(
         ml_enable_lightgbm=False,
         ml_enable_catboost=False,
         ml_enable_global_model=True,
+        ml_global_model_only=False,  # explicite : test du chemin « global model, pas global-only »
+        ml_global_champion=False,    # explicite : --global-model-name émis (pas mode champion)
         ml_global_model_name="lightgbm",
         ml_enable_cross_sectional=True,
         ml_select_champion=False,
@@ -986,7 +1007,8 @@ def test_build_pipeline_command_ml_train_can_disable_or_enable_advanced_options(
     train_cmd = build_pipeline_command("ml_train", options)
 
     assert train_cmd[train_cmd.index("--accelerator") + 1] == "cpu"
-    assert "--ml-mode" not in train_cmd
+    # Le builder émet toujours --ml-mode (défaut rebuild-all), pas seulement en mode avancé.
+    assert train_cmd[train_cmd.index("--ml-mode") + 1] == "rebuild-all"
     assert train_cmd[train_cmd.index("--training-start-date") + 1] == "2018-06-01"
 
     # Drapeaux désactivés
@@ -1030,7 +1052,8 @@ def test_build_pipeline_command_ml_train_xgboost_champion_three_candidates() -> 
 
     train_cmd = build_pipeline_command("ml_train", options)
 
-    assert train_cmd[train_cmd.index("--global-model-name") + 1] == "xgboost"
+    # P3-3 : champion auto → 3 candidats ; --global-model-name redondant et omis.
+    assert "--global-model-name" not in train_cmd
     assert "--global-champion" in train_cmd
     assert "--ranking-include-xgboost" not in train_cmd
 
@@ -1060,7 +1083,26 @@ def test_build_pipeline_command_ml_train_champion_ignores_selected_backend() -> 
     train_cmd = build_pipeline_command("ml_train", options)
 
     assert "--global-champion" in train_cmd
-    assert train_cmd[train_cmd.index("--global-model-name") + 1] == "catboost"
+    # P3-3 : champion → backend du dropdown ignoré, --global-model-name non émis.
+    assert "--global-model-name" not in train_cmd
+
+
+def test_build_pipeline_command_ml_train_global_model_only_no_duplicate() -> None:
+    """Régression : global-model-only n'émet qu'une fois (voire zéro fois) --enable-global-model
+    (implicite côté cli) et omet --global-model-name en mode champion."""
+    options = PipelineLaunchOptions(
+        ml_global_model_only=True,
+        ml_enable_global_model=True,
+        ml_global_champion=True,
+        ml_global_model_name="catboost",
+    )
+
+    train_cmd = build_pipeline_command("ml_train", options)
+
+    assert train_cmd.count("--enable-global-model") == 0  # implicite via --global-model-only
+    assert "--global-model-only" in train_cmd
+    assert "--global-champion" in train_cmd
+    assert "--global-model-name" not in train_cmd
 
 
 def test_build_pipeline_command_ml_train_propagates_training_end_date() -> None:
@@ -1148,12 +1190,14 @@ def test_build_pipeline_command_ml_predict_respects_selected_symbol_source() -> 
     assert command[command.index("--symbol-source") + 1] == "tradable-universe"
 
 
-def test_build_pipeline_command_ml_train_forces_tradable_universe_over_legacy_source() -> None:
+def test_build_pipeline_command_ml_train_accepts_stock_bars_daily_alias() -> None:
+    """Régression : `stock_bars_daily` (alias legacy) est mappé vers la source
+    canonique `stock-bars-daily` (plus de forçage vers tradable-universe)."""
     options = PipelineLaunchOptions(ml_train_symbol_source="stock_bars_daily")
 
     train_cmd = build_pipeline_command("ml_train", options)
 
-    assert train_cmd[train_cmd.index("--symbol-source") + 1] == "tradable-universe"
+    assert train_cmd[train_cmd.index("--symbol-source") + 1] == "stock-bars-daily"
 
 
 def test_build_pipeline_command_ml_train_rejects_legacy_score_scope_by_forcing_tradable_universe() -> None:
@@ -1190,7 +1234,9 @@ def test_build_pipeline_command_import_news() -> None:
 
     command = build_pipeline_command("import_news", options)
 
-    assert command[:3] == [command[0], "-u", str(PROJECT_ROOT / "event_sentiment" / "importe_news.py")]
+    # L'import news est invoqué en module (-m event_sentiment.importe_news),
+    # plus en chemin de script .py.
+    assert command[:4] == [command[0], "-u", "-m", "event_sentiment.importe_news"]
     assert "--start-date" in command
     assert command[command.index("--start-date") + 1] == "2026-04-01"
     assert "--end-date" in command
