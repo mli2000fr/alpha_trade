@@ -179,13 +179,19 @@ def run_walk_forward(
     }
 
 
-def persist_oos(oos: pd.DataFrame, run_id: str) -> Path:
-    """Persiste les prédictions OOS en parquet."""
+def persist_oos(oos: pd.DataFrame, run_id: str, batch_id: str | None = None) -> Path:
+    """Persiste les prédictions OOS en parquet (+ tag batch si fourni)."""
     out_dir = _ARTIFACTS_ROOT / run_id
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / "oos_predictions.parquet"
     oos.to_parquet(path, index=False)
-    LOGGER.info("persisted OOS predictions → %s", path)
+    # Sidecar : tagge le run par son batch d'entraînement (diagnostic IHM).
+    if batch_id:
+        try:
+            (out_dir / "batch_id.txt").write_text(str(batch_id), encoding="utf-8")
+        except OSError:
+            pass
+    LOGGER.info("persisted OOS predictions → %s (batch=%s)", path, batch_id or "?")
     return path
 
 
@@ -256,7 +262,7 @@ def main() -> None:
     )
     if result.get("status") == "completed":
         run_id = f"oracle-wf-{datetime.now():%Y%m%d%H%M%S}"
-        path = persist_oos(result["oos"], run_id)
+        path = persist_oos(result["oos"], run_id, batch_id=batch_id)
         result["run_id"] = run_id
         result["oos_path"] = str(path)
     print(format_report(result))

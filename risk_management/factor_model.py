@@ -335,6 +335,12 @@ def _estimate_ewma_covariance(
         Matrice (K, K) de covariance EWMA.
     """
     T, K = returns.shape
+    # ── Garde-fou : écarter les lignes non-finies (NaN/Inf) pour ne pas
+    # propager de NaN dans la covariance EWMA (Inf possible via pct_change
+    # quand un prix précédent est 0 — warm-up / données incomplètes). ──
+    returns = np.asarray(returns, dtype=float)
+    returns = returns[np.isfinite(returns).all(axis=1)]
+    T, K = returns.shape
     if T < 2 or K < 1:
         if K > 0:
             return np.zeros((K, K), dtype=float)
@@ -415,7 +421,10 @@ def build_factor_returns(
     factor_data["value"] = pd.Series(0.0, index=daily_returns.index, dtype=float)
 
     # Aligner tous les facteurs sur le même index
-    factor_df = pd.DataFrame(factor_data).dropna()
+    factor_df = pd.DataFrame(factor_data)
+    # Garde-fou : remplacer les valeurs non-finies (Inf issu de pct_change
+    # quand un prix précédent est 0) par NaN, puis les retirer.
+    factor_df = factor_df.replace([np.inf, -np.inf], np.nan).dropna()
     if factor_df.empty:
         return None
 

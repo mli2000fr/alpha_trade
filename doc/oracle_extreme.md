@@ -19,6 +19,16 @@
 
 ---
 
+## 📚 Documents liés
+
+- [`doc/mode_cascade.md`](mode_cascade.md) — les **7 modes de cascade** (`ml`, `oracle`,
+  `oracle_filter`, `oracle_pool`, `oracle_rerank`, `extreme_gate`, `random`) et comment
+  combiner Global Rank × Oracle Extreme (dont la clarification « pourquoi B25 »).
+- [`doc/calibration_oracle_exterme.md`](calibration_oracle_exterme.md) — calibration de
+  `proba_extreme` (`none` | `rank` | `isotonic`) et la différence entre les méthodes.
+
+---
+
 ## 1. Rôle
 
 L'Oracle Extreme transforme la probabilité de **mouvement extrême** (`proba_extreme`,

@@ -1573,6 +1573,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Parquet des prédictions OOS Oracle (sortie S4) pour --cascade-rank-mode oracle.",
     )
     run_p.add_argument(
+        "--oracle-calibration",
+        type=str,
+        default=None,
+        choices=["none", "rank", "isotonic"],
+        help="Calibration de proba_extreme (Oracle O0) avant la cascade : none | rank | isotonic. "
+             "Défaut : config.yaml (oracle.calibration). NB : la cascade étant par "
+             "percentile, la sélection ne change pas ; la valeur absolue est fiabilisée.",
+    )
+    run_p.add_argument(
         "--bull-strict-sma-window",
         type=int,
         default=200,
@@ -1641,7 +1650,7 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument(
         "--dd-breaker-policy",
         choices=["b0", "b1", "b2", "b3", "b4", "b4a"],
-        default="b0",
+        default="b4",
         help="E23 : politique adaptative du drawdown breaker (b0=PROD actuel bit-a-bit, "
              "b1=recovery depuis trough par paliers 10/25/50/75/100%%, b2=regime-aware "
              "ramp rapide BULL/REB + lent CORR/SLIDE, b3=combined trough+regime+hysteresis). "
@@ -3249,6 +3258,17 @@ def _run_backtest(args: argparse.Namespace) -> None:
                     )
                     raise SystemExit(2)
                 _oos_df = pd.read_parquet(_oos_path)
+                # ── Calibration optionnelle de proba_extreme (oracle.calibration) ──
+                _cal_flag = str(getattr(args, "oracle_calibration", "none") or "none").strip().lower()
+                if _cal_flag in ("", "none"):
+                    _cal_flag = str((_cfg_cas.get("oracle") or {}).get("calibration") or "none").strip().lower()
+                if _cal_flag not in ("none", "identity"):
+                    try:
+                        from modelFactory.oracle.combine import apply_oracle_calibration
+                        _oos_df = apply_oracle_calibration(_oos_df, method=_cal_flag)
+                        LOGGER.info("oracle calibration appliquée : method=%s", _cal_flag)
+                    except Exception as _cal_exc:
+                        LOGGER.warning("oracle calibration skipped (%s): %s", _cal_flag, _cal_exc)
                 _oos_df["_d"] = pd.to_datetime(_oos_df["date"]).dt.strftime("%Y-%m-%d")
                 _oracle_rank_map = {
                     d: dict(zip(g["symbol"], g["proba_extreme"]))
@@ -3689,7 +3709,17 @@ def _run_backtest(args: argparse.Namespace) -> None:
     # avec un historique étendu (start - 400 jours calendaires) INDÉPENDANT du warm-up
     # phase2 (~50j), sinon le régime reste NaN pendant les premiers mois du run
     # (y compris le crash d'avril 2025).
-    _dd_policy = str(getattr(args, "dd_breaker_policy", "b0") or "b0").strip().lower()
+    _dd_policy = str(getattr(args, "dd_breaker_policy", None) or "").strip().lower()
+    if not _dd_policy:
+        # E23 — politique du breaker : flag CLI prioritaire, sinon config.yaml
+        # risk_management.policy (parité live), sinon b0 (PROD historique).
+        try:
+            from common.config_loader import load_config as _lc_dd
+            _dd_policy = str(
+                ((_lc_dd(getattr(args, "config_path", None)).get("risk_management") or {}).get("policy") or "b0")
+            ).strip().lower()
+        except Exception:
+            _dd_policy = "b0"
     _spy_regime_map: dict | None = None
     if _dd_policy != "b0":
         try:

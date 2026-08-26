@@ -1095,13 +1095,40 @@ def _batch_trains_oracle(batch: pd.Series) -> bool:
     return False
 
 
-def _oracle_periods() -> list[dict[str, Any]]:
-    """Périodes des prédictions Oracle Extreme depuis les artefacts disque."""
+def _oracle_run_batch(run_dir: Path) -> str | None:
+    """Batch_id du run Oracle Extreme (sidecar ``batch_id.txt``), None si non taggé."""
+    try:
+        tag_file = run_dir / "batch_id.txt"
+        if tag_file.exists():
+            val = tag_file.read_text(encoding="utf-8").strip()
+            return val or None
+    except Exception:
+        pass
+    return None
+
+
+def _iter_oracle_runs(batch_id: str) -> list[Path]:
+    """Runs ``oracle-wf-*`` pertinents pour le batch sélectionné, triés croissant.
+
+    - run taggé au batch → inclus ;
+    - run non taggé (legacy) → inclus (fallback historique) ;
+    - run taggé à un AUTRE batch → exclu (évite d'afficher le run d'un autre batch).
+    """
     odir = Path(get_model_artifacts_dir()) / "oracle"
-    out: list[dict[str, Any]] = []
     if not odir.exists():
-        return out
+        return []
+    out: list[Path] = []
     for d in sorted(odir.glob("oracle-wf-*")):
+        tag = _oracle_run_batch(d)
+        if tag is None or tag == batch_id:
+            out.append(d)
+    return out
+
+
+def _oracle_periods(batch_id: str) -> list[dict[str, Any]]:
+    """Périodes des prédictions Oracle Extreme depuis les artefacts disque du batch."""
+    out: list[dict[str, Any]] = []
+    for d in _iter_oracle_runs(batch_id):
         det = f"artefacts/models/oracle/{d.name}"
         pf = d / "oos_predictions.parquet"
         if not pf.exists():
@@ -1128,16 +1155,13 @@ def _oracle_periods() -> list[dict[str, Any]]:
     return out
 
 
-def _load_latest_oracle_oos() -> tuple[str | None, pd.DataFrame]:
-    """Charge les prédictions OOS du run Oracle Extreme le plus récent.
+def _load_latest_oracle_oos(batch_id: str) -> tuple[str | None, pd.DataFrame]:
+    """Charge les prédictions OOS du run Oracle Extreme le plus récent du batch.
 
-    Les artefacts ``oracle-wf-*`` ne sont pas taggés par batch : on prend le
-    run le plus récent (dernier entraînement Oracle Extreme disponible).
+    Les runs sont taggés par ``batch_id.txt`` ; les runs legacy (non taggés)
+    servent de fallback historique.
     """
-    odir = Path(get_model_artifacts_dir()) / "oracle"
-    if not odir.exists():
-        return None, pd.DataFrame()
-    for d in sorted(odir.glob("oracle-wf-*"), reverse=True):
+    for d in reversed(_iter_oracle_runs(batch_id)):
         pf = d / "oos_predictions.parquet"
         if not pf.exists():
             continue
@@ -1422,7 +1446,7 @@ def _render_oracle_distribution(batch_id: str, row: pd.Series) -> None:
     oracle_run: str | None = None
     oracle_oos = pd.DataFrame()
     if has_oracle:
-        oracle_run, oracle_oos = _load_latest_oracle_oos()
+        oracle_run, oracle_oos = _load_latest_oracle_oos(batch_id)
         has_oracle = not oracle_oos.empty
 
     if not has_global and not has_oracle:
@@ -1574,6 +1598,147 @@ def _render_oracle_distribution(batch_id: str, row: pd.Series) -> None:
         )
 
 
+def _render_oracle_quality(batch_id: str, row: pd.Series) -> None:
+    """Métriques de qualité du modèle Oracle Extreme (AUC / IC / precision@10% /
+    lift / calibration / rendement top-décile) depuis les artefacts OOS du batch."""
+    if not _batch_trains_oracle(row):
+        return
+
+    st.subheader("🔥 Oracle Extreme — Qualité du modèle (OOS)")
+
+    oracle_run, oos = _load_latest_oracle_oos(batch_id)
+    if oos.empty:
+        st.info("Aucune prédiction OOS Oracle Extreme disponible pour ce batch.")
+        return
+
+    need = {"date", "symbol", "proba_extreme"}
+    if not need.issubset(oos.columns):
+        st.warning(f"Prédictions Oracle Extreme illisibles (colonnes attendues {sorted(need)}) : {list(oos.columns)}")
+        return
+
+    df = oos.copy()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df["proba_extreme"] = pd.to_numeric(df["proba_extreme"], errors="coerce")
+    df = df.dropna(subset=["date", "symbol", "proba_extreme"])
+    if df.empty:
+        st.info("Aucune ligne exploitable dans les prédictions OOS.")
+        return
+
+    from modelFactory.oracle.train import (
+        decile_monotonicity,
+        precision_recall_at_top_pct,
+        roc_auc,
+    )
+
+    # ── Couverture ──
+    n_dates = int(df["date"].dt.normalize().nunique())
+    n_symbols = int(df["symbol"].nunique())
+    n_rows = len(df)
+    dmin, dmax = df["date"].min(), df["date"].max()
+
+    # ── Cible binaire (extrême réalisé) si présente ──
+    target_col = next((c for c in ("oracle_extreme10", "target", "y") if c in df.columns), None)
+    has_target = target_col is not None and df[target_col].notna().any()
+
+    auc: float | None = None
+    pr: dict[str, float | None] = {"precision": None, "recall": None, "n_dates": 0}
+    prevalence: float | None = None
+    if has_target:
+        y = df[target_col].astype(float)
+        auc = roc_auc(y.to_numpy(), df["proba_extreme"].to_numpy())
+        pr = precision_recall_at_top_pct(df, "proba_extreme", pct=0.10, target_col=target_col)
+        yv = y.dropna()
+        prevalence = float(yv.mean()) if len(yv) else None
+    lift = (pr["precision"] / prevalence) if (pr["precision"] is not None and prevalence) else None
+
+    # ── IC (Spearman) proba_extreme vs future_return, moyen par jour ──
+    ic: float | None = None
+    if "future_return" in df.columns:
+        ics: list[float] = []
+        for _, g in df.groupby(df["date"].dt.normalize()):
+            g = g.dropna(subset=["proba_extreme", "future_return"])
+            if len(g) < 10:
+                continue
+            try:
+                c = g["proba_extreme"].corr(g["future_return"], method="spearman")
+                if pd.notna(c):
+                    ics.append(float(c))
+            except Exception:
+                continue
+        if ics:
+            ic = float(np.mean(ics))
+
+    # ── Calibration : déciles globaux de proba_extreme → taux réalisé ──
+    cal = pd.DataFrame()
+    if has_target:
+        sub = df.dropna(subset=["proba_extreme", target_col]).copy()
+        if not sub.empty and sub[target_col].nunique() > 1:
+            sub["_q"] = pd.qcut(sub["proba_extreme"].rank(method="first"), 10, labels=False) + 1
+            g = sub.groupby("_q").agg(
+                mean_proba=("proba_extreme", "mean"),
+                actual_rate=(target_col, "mean"),
+                n=("proba_extreme", "size"),
+            )
+            g.index = [f"D{i}" for i in g.index]
+            cal = g.reset_index().rename(columns={"_q": "Décile", "mean_proba": "P(extrême) prédite", "actual_rate": "Taux réalisé", "n": "N"})
+
+    # ── Rendement du top décile vs overall (future_return) ──
+    top_ret: float | None = None
+    overall_ret: float | None = None
+    if "future_return" in df.columns:
+        fr = df.dropna(subset=["proba_extreme", "future_return"])
+        overall_ret = float(fr["future_return"].mean()) if not fr.empty else None
+        top_parts: list[pd.DataFrame] = []
+        for _, g in fr.groupby(df["date"].dt.normalize()):
+            k = max(1, int(round(len(g) * 0.10)))
+            top_parts.append(g.nlargest(k, "proba_extreme"))
+        if top_parts:
+            top_ret = float(pd.concat(top_parts, ignore_index=True)["future_return"].mean())
+
+    # ── Monotonicité décile (Spearman future_return) ──
+    mono, _mono_df = decile_monotonicity(df, "proba_extreme")
+
+    # ── Rendu ──
+    st.caption(f"Run : `{oracle_run}` · OOS {dmin.date()} → {dmax.date()} · {n_dates} jours · {n_symbols} symboles · {n_rows:,} lignes".replace(",", " "))
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("🎯 AUC (cible extrême)", f"{auc:.3f}" if auc is not None else "—",
+                  help="AUC de proba_extreme vs oracle_extreme10 (extrême réalisé). 0.5 = hasard.")
+    with c2:
+        st.metric("📈 IC (proba vs rendement)", f"{ic:+.3f}" if ic is not None else "—",
+                  help="Spearman moyen par jour entre proba_extreme et future_return.")
+    with c3:
+        prev_s = f"{prevalence*100:.1f}%" if prevalence is not None else "—"
+        prec_s = f"{pr['precision']*100:.1f}%" if pr.get("precision") is not None else "—"
+        st.metric("Precision@10% (prévalence)", f"{prec_s} ({prev_s})",
+                  help="Précision cross-sectionnelle du top 10% par jour ; prévalence de la cible entre parenthèses.")
+    with c4:
+        st.metric("🚀 Lift top 10%", f"{lift:.2f}x" if lift is not None else "—",
+                  help="precision@10% / prévalence. >1 = le top 10% du modèle est plus extrême que le hasard.")
+    c5, c6 = st.columns(2)
+    with c5:
+        st.metric("📈 Retour top 10% (OOS)", f"{top_ret*100:+.2f}%" if top_ret is not None else "—",
+                  help="future_return moyen du top 10% proba par jour (OOS).")
+    with c6:
+        st.metric("📉 Retour moyen (OOS)", f"{overall_ret*100:+.2f}%" if overall_ret is not None else "—")
+
+    if not cal.empty:
+        st.markdown("**Calibration — déciles de `proba_extreme` → taux d'extrême réalisé**")
+        st.dataframe(
+            cal.style.format({"P(extrême) prédite": "{:.3f}", "Taux réalisé": "{:.1%}", "N": "{:,}"}),
+            use_container_width=True, hide_index=True,
+        )
+        with st.expander("ℹ️ Lecture"):
+            st.markdown(
+                "Une calibration idéale : `Taux réalisé ≈ P(extrême) prédite`. "
+                "Écart systématique = proba mal calibrée (post-traitement utile)."
+            )
+    if mono is not None:
+        st.markdown(f"**Monotonicité décile (rendement futur)** : Spearman = `{mono:+.3f}`")
+    if not has_target:
+        st.caption("ℹ️ Colonne cible (`oracle_extreme10`) absente — AUC/precision/calibration non calculées.")
+
+
 def _render_prediction_periods(batch_id: str, batch: pd.Series) -> None:
     """Bouton « Périodes de prédictions » au-dessus du Modèle global.
 
@@ -1676,16 +1841,22 @@ def _render_prediction_periods(batch_id: str, batch: pd.Series) -> None:
     # Uniquement si le batch a réellement entraîné la couche Oracle Extreme :
     # sinon les artefacts sont globaux et ne concernent pas ce batch.
     oracle_trained = _batch_trains_oracle(batch)
-    oracle_rows = _oracle_periods() if oracle_trained else []
+    oracle_rows = _oracle_periods(batch_id) if oracle_trained else []
     if oracle_rows:
         _valid = [o for o in oracle_rows if "→" in o["Période"] and not o["Période"].startswith(("—", "?"))]
         if _valid:
-            o_min = min(pd.Timestamp(o["Période"].split(" → ")[0]) for o in _valid)
-            o_max = max(pd.Timestamp(o["Période"].split(" → ")[1]) for o in _valid)
+            # Ligne de synthèse = run le plus récent du batch (celui utilisé
+            # par le bloc « Qualité du modèle »), PAS l'union de tous les runs.
+            # Les anciens runs legacy (non taggés, issus d'autres batchs)
+            # n'étendaient la période que par erreur. Le détail ci-dessous
+            # liste chaque run avec sa propre période.
+            _latest = _valid[-1]
+            _last_run = str(_latest.get("Détail", "")).split("/")[-1]
             summary.append({"Type": "🔥 Oracle extreme",
-                            "Période": f"{o_min.date()} → {o_max.date()}",
-                            "Jours": "", "Symboles": "",
-                            "Détail": f"{len(oracle_rows)} run(s) (voir détail)"})
+                            "Période": _latest["Période"],
+                            "Jours": _latest.get("Jours", ""),
+                            "Symboles": _latest.get("Symboles", ""),
+                            "Détail": f"{len(oracle_rows)} run(s) — dernier : {_last_run}"})
         else:
             summary.append({"Type": "🔥 Oracle extreme", "Période": "—", "Jours": "", "Symboles": "",
                             "Détail": "artefacts sans période exploitable"})
@@ -1995,6 +2166,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
     # ═══════════════════════════════════════════════════════════════
     st.divider()
     _render_oracle_distribution(batch_id, row)
+    _render_oracle_quality(batch_id, row)
 
     # ═══════════════════════════════════════════════════════════════
     # �🔵 PER-SYMBOL / PER-SECTOR — Métriques d'entraînement
