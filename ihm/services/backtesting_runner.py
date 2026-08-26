@@ -289,6 +289,32 @@ def build_backtesting_command(
             command.extend(["--cascade-batch-id", options.cascade_batch_id])
         if options.batch_diagnostics_batch_id:
             command.extend(["--batch-diagnostics-batch-id", options.batch_diagnostics_batch_id])
+        # ── V1 Multi-Horizon : injecter best_horizon (parité live pipeline_runner) ──
+        # --best-horizon alimente la cascade ET RiskConfig.best_horizon (maps
+        # stop/TP). Priorité : backtest_horizon (config.yaml, gel) > best_horizon
+        # du batch (metadata, via cascade/ml batch). Si indisponible → pas de flag
+        # → la CLI retombe sur ses défauts (gel H20 ou dataclass 10).
+        if not any(a == "--best-horizon" for a in command):
+            _bt_h: int | None = None
+            try:
+                from common.config_loader import load_config
+                _bt_h_cfg = (load_config() or {}).get("batch_diagnostics", {}).get("backtest_horizon")
+            except Exception:
+                _bt_h_cfg = None
+            if _bt_h_cfg not in (None, "", 0):
+                _bt_h = int(_bt_h_cfg)
+            elif options.cascade_batch_id or options.ml_batch_id:
+                try:
+                    from modelFactory.predictor import _load_best_horizon_for_batch
+                    from ihm.services.db import get_engine as _get_engine
+                    _bt_h = _load_best_horizon_for_batch(
+                        options.cascade_batch_id or options.ml_batch_id,
+                        engine=_get_engine(),
+                    )
+                except Exception:
+                    pass  # best-effort : pas de flag → défauts CLI
+            if _bt_h is not None:
+                command.extend(["--best-horizon", str(int(_bt_h))])
         # P5.2 — seuil top/bottom cascade ML (aligné benchmark : 0.10)
         if options.cascade_top_pct is not None and float(options.cascade_top_pct) > 0:
             command.extend(["--cascade-top-pct", str(options.cascade_top_pct)])

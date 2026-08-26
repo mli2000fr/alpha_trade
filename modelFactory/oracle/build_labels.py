@@ -42,6 +42,10 @@ LOGGER = logging.getLogger(__name__)
 _SYNTH_RUN_SUFFIX = "_globalrank_synth"
 _MIN_RANK_UNIVERSE = 20   # univers cross-sectionnel minimum pour calculer un rang
 _CHUNK = 2000
+# Persistance incrémentale pendant la boucle : si le script est interrompu
+# (timeout websocket, rechargement, …), les labels déjà calculés restent en
+# base au lieu de tout perdre (upsert idempotent via ON DUPLICATE KEY UPDATE).
+_PERSIST_FLUSH_ROWS = 5000
 
 _COLUMNS = [
     "prediction_date", "symbol", "batch_id", "horizon",
@@ -94,6 +98,40 @@ def load_universe_from_predictions(engine: Any, batch_id: str) -> set[tuple[str,
     )
     with engine.connect() as conn:
         rows = conn.execute(query, {"rid": run_id}).fetchall()
+    return {(_iso(d), str(s)) for d, s in rows}
+
+
+def load_universe_from_bars(
+    engine: Any,
+    symbols: list[str],
+    *,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> set[tuple[str, str]]:
+    """Univers = couples ``(date_iso, symbol)`` ayant une barre dans ``stock_bars_daily``.
+
+    Utilisé en mode standalone (``--oracle-model-only``) quand le batch n'a pas
+    de ``global_rank_history`` : l'univers des labels est alors l'ensemble des
+    symboles fournis avec une barre sur la fenêtre demandée.
+    """
+    syms = sorted({str(s).strip().upper() for s in symbols if str(s).strip()})
+    if not syms:
+        return set()
+    query = (
+        "SELECT DISTINCT `date`, symbol FROM stock_bars_daily "
+        "WHERE symbol IN :syms"
+    )
+    params: dict[str, Any] = {"syms": syms}
+    if start_date:
+        query += " AND `date` >= :start"
+        params["start"] = str(start_date)[:10]
+    if end_date:
+        query += " AND `date` <= :end"
+        params["end"] = str(end_date)[:10]
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(query).bindparams(bindparam("syms", expanding=True)), params
+        ).fetchall()
     return {(_iso(d), str(s)) for d, s in rows}
 
 
@@ -202,11 +240,15 @@ def build_labels(
     engine: Any | None = None,
     dry_run: bool = False,
     strict_universe: bool = True,
+    symbols: list[str] | None = None,
     progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> dict[str, Any]:
     """Construit et persiste les labels Oracle H20 pour ``batch_id``.
 
     Args:
+        symbols: liste de symboles optionnelle. En mode standalone
+            (``--oracle-model-only``, sans ``global_rank_history``), l'univers
+            des labels est construit depuis les barres de ces symboles.
         strict_universe: si False, tolère une divergence entre
             ``global_rank_history`` et ``model_predictions`` : l'univers des
             labels est alors celui de ``global_rank_history`` uniquement.
@@ -218,22 +260,40 @@ def build_labels(
     """
     engine = engine or get_sqlalchemy_engine()
 
-    # ── 1. Univers (bit-for-bit) ──
+    # ── 1. Univers ──
     rank_keys = load_universe_from_ranks(engine, batch_id, horizon)
-    pred_keys = load_universe_from_predictions(engine, batch_id)
-    universe_check = check_universe_equality(rank_keys, pred_keys)
-    if not universe_check["equal"]:
-        if strict_universe:
-            LOGGER.error("Univers divergent: %s", universe_check)
-            raise RuntimeError(
-                "Univers global_rank_history ≠ model_predictions (bit-for-bit) : "
-                f"only_in_ranks={universe_check['only_in_ranks']}, "
-                f"only_in_preds={universe_check['only_in_preds']}. "
-                "Arbitrer la divergence avant de construire les labels Oracle."
-            )
-        LOGGER.warning(
-            "Univers divergent toléré (strict_universe=False): %s", universe_check
+    universe_check: dict[str, Any] | None = None
+    if symbols and not rank_keys:
+        # Standalone (--oracle-model-only) : aucun global_rank_history pour ce
+        # batch → l'univers des labels est l'ensemble des symboles fournis ayant
+        # une barre dans la fenêtre (stock_bars_daily).
+        LOGGER.info(
+            "build_labels standalone universe from bars batch_id=%s symbols=%d",
+            batch_id, len(symbols),
         )
+        rank_keys = load_universe_from_bars(
+            engine, symbols, start_date=start_date, end_date=end_date,
+        )
+        universe_check = {
+            "equal": True, "n_ranks": len(rank_keys), "n_preds": len(rank_keys),
+            "only_in_ranks": 0, "only_in_preds": 0,
+            "samples_only_ranks": [], "samples_only_preds": [],
+        }
+    else:
+        pred_keys = load_universe_from_predictions(engine, batch_id)
+        universe_check = check_universe_equality(rank_keys, pred_keys)
+        if not universe_check["equal"]:
+            if strict_universe:
+                LOGGER.error("Univers divergent: %s", universe_check)
+                raise RuntimeError(
+                    "Univers global_rank_history ≠ model_predictions (bit-for-bit) : "
+                    f"only_in_ranks={universe_check['only_in_ranks']}, "
+                    f"only_in_preds={universe_check['only_in_preds']}. "
+                    "Arbitrer la divergence avant de construire les labels Oracle."
+                )
+            LOGGER.warning(
+                "Univers divergent toléré (strict_universe=False): %s", universe_check
+            )
 
     uni_by_day: dict[date, set[str]] = {}
     for d_iso, sym in rank_keys:
@@ -268,10 +328,23 @@ def build_labels(
     n_labeled = 0
     n_unavailable = 0
     skipped_dates = 0
+    inserted_total = 0
 
-    for i, d in enumerate(all_dates):
-        if progress_callback is not None and (i % 5 == 0 or i == n_dates - 1):
-            progress_callback(i + 1, n_dates, f"date {d} ({i + 1}/{n_dates})")
+    def _flush_batch(rows_ref: list[tuple[Any, ...]]) -> int:
+        """Garde T1 (bloquant) + upsert incrémental d'un lot.
+
+        Retourne le nombre de lignes persistées. Appelé périodiquement pendant
+        la boucle (et une fois en fin) pour qu'une interruption du script ne
+        perde pas les labels déjà calculés (upsert idempotent)."""
+        if not rows_ref:
+            return 0
+        chunk_df = pd.DataFrame(rows_ref, columns=_COLUMNS)
+        assert_availability_after_prediction(chunk_df)
+        return _upsert_rows(engine, rows_ref)
+
+    for _di, d in enumerate(all_dates):
+        if progress_callback is not None and (_di % 5 == 0 or _di == n_dates - 1):
+            progress_callback(_di + 1, n_dates, f"date {d} ({_di + 1}/{n_dates})")
         ts = pd.Timestamp(d)
         pos = close.index.get_indexer([ts])[0]
         if pos < 0:
@@ -325,12 +398,18 @@ def build_labels(
                 ))
                 n_unavailable += 1
 
-    labels_df = pd.DataFrame(rows, columns=_COLUMNS)
-    if not labels_df.empty:
-        # ── T1 sur données réelles (bloquant) ──
-        assert_availability_after_prediction(labels_df)
+        # ── Persistance incrémentale (non-dry) : survit à une interruption ──
+        if not dry_run and len(rows) >= _PERSIST_FLUSH_ROWS:
+            if progress_callback is not None:
+                progress_callback(_di + 1, n_dates, f"écriture incrémentale ({len(rows)} lignes)…")
+            inserted_total += _flush_batch(rows)
+            rows = []
 
+    labels_df = pd.DataFrame(rows, columns=_COLUMNS)
     if dry_run:
+        if not labels_df.empty:
+            # ── T1 sur données réelles (bloquant) ──
+            assert_availability_after_prediction(labels_df)
         return {
             "status": "dry_run", "batch_id": batch_id, "horizon": horizon,
             "universe_check": universe_check, "n_rows": len(labels_df),
@@ -338,9 +417,13 @@ def build_labels(
             "skipped_dates": skipped_dates, "n_symbols": len(symbols),
         }
 
-    if progress_callback is not None:
-        progress_callback(n_dates, n_dates, "écriture des labels en base…")
-    inserted = _upsert_rows(engine, rows) if rows else 0
+    if not labels_df.empty:
+        # ── T1 final (reliquat) + persistance ──
+        if progress_callback is not None:
+            progress_callback(n_dates, n_dates, "écriture des labels en base…")
+        inserted_total += _flush_batch(rows)
+
+    inserted = inserted_total
     LOGGER.info(
         "build_labels done batch_id=%s rows=%d labeled=%d unavailable=%d skipped_dates=%d",
         batch_id, inserted, n_labeled, n_unavailable, skipped_dates,

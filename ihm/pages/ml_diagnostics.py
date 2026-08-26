@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json as _json
+import threading
+import time
 
 import numpy as np
 import pandas as pd
@@ -1166,6 +1168,62 @@ def _batch_best_horizon(batch_id: str) -> int:
         return 20
 
 
+# ---------------------------------------------------------------------------
+# Calcul des labels Oracle en arrière-plan
+# ---------------------------------------------------------------------------
+# Le calcul est long (plusieurs minutes) : l'exécuter dans le thread du script
+# Streamlit est fragile — si le run est interrompu (déconnexion, rechargement,
+# timeout), rien n'est persisté et la barre de progression disparaît. On lance
+# un thread daemon et on suit la progression par polling (st.rerun).
+_ORACLE_RUNS: dict[str, dict[str, Any]] = {}
+
+
+def _oracle_labels_worker(batch_id: str, horizon: int, strict: bool) -> None:
+    """Worker arrière-plan : exécute build_labels et met à jour ``_ORACLE_RUNS``."""
+    from modelFactory.oracle.build_labels import build_labels
+
+    run = _ORACLE_RUNS.setdefault(batch_id, {"status": "running"})
+    try:
+
+        def _cb(current: int, total: int, message: str) -> None:
+            run["progress"] = (current, total, message)
+
+        result = build_labels(
+            batch_id,
+            horizon=horizon,
+            engine=get_engine(),
+            dry_run=False,
+            strict_universe=strict,
+            progress_callback=_cb,
+        )
+        if result.get("status") == "completed":
+            run.update(status="done", result=result)
+        else:
+            run.update(status="error", error=f"Échec du calcul : {result}")
+    except RuntimeError as exc:  # noqa: BLE001
+        msg = str(exc)
+        if "bit-for-bit" in msg or "Univers" in msg:
+            run.update(status="force_needed", error=msg)
+        else:
+            run.update(status="error", error=msg)
+    except Exception as exc:  # noqa: BLE001
+        run.update(status="error", error=f"{exc}")
+
+
+def _launch_oracle_job(batch_id: str, horizon: int, *, strict: bool) -> None:
+    """Démarre le calcul des labels Oracle en arrière-plan (idempotent)."""
+    if _ORACLE_RUNS.get(batch_id, {}).get("status") in ("running", "done", "force_needed"):
+        return  # déjà en cours ou résultat à afficher
+    t = threading.Thread(
+        target=_oracle_labels_worker,
+        args=(batch_id, horizon, strict),
+        daemon=True,
+        name=f"oracle_labels_{batch_id[:16]}",
+    )
+    _ORACLE_RUNS[batch_id] = {"status": "running", "progress": (0, 1, "démarrage…")}
+    t.start()
+
+
 def _render_build_oracle_labels_button(
     batch_id: str, horizon: int, *, for_oracle_extreme: bool = False
 ) -> None:
@@ -1200,54 +1258,11 @@ def _render_build_oracle_labels_button(
         if _k not in st.session_state:
             st.session_state[_k] = False
 
-    def _run(strict: bool) -> None:
-        from modelFactory.oracle.build_labels import build_labels
-
-        engine = get_engine()
-        if engine is None:
-            st.error("Base de données indisponible.")
-            return
-
-        progress_bar = st.progress(0.0)
-        status = st.empty()
-
-        def _cb(current: int, total: int, message: str) -> None:
-            progress_bar.progress(min(1.0, current / total) if total else 0.0)
-            status.info(message)
-
-        try:
-            result = build_labels(
-                batch_id,
-                horizon=horizon,
-                engine=engine,
-                dry_run=False,
-                strict_universe=strict,
-                progress_callback=_cb,
-            )
-        except RuntimeError as exc:
-            progress_bar.progress(1.0)
-            status.error(str(exc))
-            if "bit-for-bit" in str(exc) or "Univers" in str(exc):
-                st.session_state[_force_key] = True
-                st.rerun()
-            return
-        except Exception as exc:
-            progress_bar.progress(1.0)
-            status.error(f"Échec du calcul des labels Oracle : {exc}")
-            return
-
-        if result.get("status") == "completed":
-            progress_bar.progress(1.0)
-            status.success(
-                f"✅ Labels Oracle calculés : {result.get('n_labeled')} lignes labellisées "
-                f"({result.get('n_unavailable')} indisponibles, "
-                f"{result.get('skipped_dates')} dates sans prix)."
-            )
-            st.session_state.pop(_confirm_key, None)
-            st.session_state[_force_key] = False
-            st.rerun()
-        else:
-            status.error(f"Échec du calcul : {result}")
+    # Un calcul en arrière-plan est déjà actif/résolu pour ce batch → suivi
+    # affiché dans _render_oracle_distribution, pas de bouton ici.
+    if _ORACLE_RUNS.get(batch_id, {}).get("status") in ("running", "done", "force_needed"):
+        st.info("⏳ Calcul des labels Oracle en cours ou terminé — voir le suivi ci-dessus.")
+        return
 
     def _repair() -> None:
         """Réaligne `model_predictions` (run synthétique) sur `global_rank_history`.
@@ -1319,7 +1334,8 @@ def _render_build_oracle_labels_button(
                 key=f"ml_diag_build_oracle_force_btn_{batch_id}",
                 help="Labellise uniquement l'univers `global_rank_history` ; les lignes de prédictions en trop sont ignorées (sans risque pour le diagnostic).",
             ):
-                _run(strict=False)
+                _launch_oracle_job(batch_id, horizon, strict=False)
+                st.rerun()
         with c2:
             if st.button(
                 "🔧 Réparer la divergence",
@@ -1340,7 +1356,8 @@ def _render_build_oracle_labels_button(
         c1, c2 = st.columns(2)
         with c1:
             if st.button("✅ Oui, calculer", key=f"ml_diag_build_oracle_yes_{batch_id}"):
-                _run(strict=not for_oracle_extreme)
+                _launch_oracle_job(batch_id, horizon, strict=not for_oracle_extreme)
+                st.rerun()
         with c2:
             if st.button("❌ Annuler", key=f"ml_diag_build_oracle_no_{batch_id}"):
                 st.session_state[_confirm_key] = False
@@ -1363,6 +1380,38 @@ def _render_oracle_distribution(batch_id: str, row: pd.Series) -> None:
 
     best_h = _batch_best_horizon(batch_id)
     st.caption(f"🎯 Horizons du vrai Oracle — 🌐 Modèle global : H{best_h} · 🔥 Oracle Extreme : H20")
+
+    # ── Suivi d'un calcul des labels Oracle en arrière-plan ──
+    _oracle_run = _ORACLE_RUNS.get(batch_id)
+    if _oracle_run is not None:
+        _ostatus = _oracle_run.get("status")
+        if _ostatus == "done":
+            _ores = _oracle_run.get("result") or {}
+            _ORACLE_RUNS.pop(batch_id, None)
+            st.success(
+                f"✅ Labels Oracle calculés : {_ores.get('n_labeled')} lignes labellisées "
+                f"({_ores.get('n_unavailable')} indisponibles, "
+                f"{_ores.get('skipped_dates')} dates sans prix)."
+            )
+            st.rerun()
+        elif _ostatus == "error":
+            _OERR = _oracle_run.get("error", "erreur inconnue")
+            _ORACLE_RUNS.pop(batch_id, None)
+            st.error(f"❌ Échec du calcul des labels Oracle : {_OERR}")
+        elif _ostatus == "force_needed":
+            _OERR = _oracle_run.get("error", "")
+            _ORACLE_RUNS.pop(batch_id, None)
+            st.session_state[f"ml_diag_build_oracle_force_{batch_id}"] = True
+            st.error(f"❌ Univers divergent : {_OERR}")
+            st.rerun()
+        else:  # running
+            _oprog = _oracle_run.get("progress") or (0, 1, "démarrage…")
+            _ocur, _otot, _omsg = _oprog
+            st.progress(min(1.0, _ocur / _otot) if _otot else 0.0)
+            st.info(f"⏳ Calcul des labels Oracle en cours… {_omsg} (page auto-rafraîchie)")
+            time.sleep(1)
+            st.rerun()
+        return
 
     # ── Modèle global entraîné ? ──
     global_df = safe_query(_global_rank_all_query(best_h), {"batch_id": batch_id})
@@ -1387,12 +1436,16 @@ def _render_oracle_distribution(batch_id: str, row: pd.Series) -> None:
     if has_oracle:
         kinds.append(("oracle", "🔥 Modèle Oracle Extreme (entraîné)"))
 
+    # Mémorise le modèle choisi : persiste à travers les reruns (ex: après le
+    # calcul des labels en arrière-plan, les tableaux s'affichent tout seuls).
+    _chosen_key = f"ml_diag_oracle_chosen_{batch_id}"
     btn_cols = st.columns(len(kinds))
-    chosen: str | None = None
+    chosen: str | None = st.session_state.get(_chosen_key)
     for i, (kind, label) in enumerate(kinds):
         with btn_cols[i]:
             if st.button(label, key=f"oracle_dist_btn_{kind}_{batch_id}", use_container_width=True):
                 chosen = kind
+                st.session_state[_chosen_key] = kind
 
     if chosen is None:
         return

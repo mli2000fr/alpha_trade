@@ -2035,12 +2035,29 @@ def get_training_runs(limit: int = 20) -> pd.DataFrame:
 
 @st.cache_data(ttl=60, show_spinner=False)
 def get_completed_ml_training_batches(limit: int = 100) -> pd.DataFrame:
+    """Campagnes ML exploitables pour le backtest.
+
+    Retient les batches ``completed`` qui ont soit entraîné des modèles
+    per-symbol (``symbols_completed > 0``), soit produit un Global Ranking
+    seul (``--global-model-only`` : clé ``global_ranking`` dans
+    ``metadata_json``) — les deux sont exploitables pour les prédictions
+    global rank du backtest. Les runs oracle-only (sans per-symbol ni
+    Global Ranking) restent exclus.
+    """
     return safe_query(f"""
         SELECT batch_id, comment, symbol_source, training_start_date, training_end_date,
                finished_at, symbols_completed
         FROM model_training_batch
         WHERE status = 'completed'
-          AND COALESCE(symbols_completed, 0) > 0
+          AND (
+              COALESCE(symbols_completed, 0) > 0
+              OR (
+                  metadata_json IS NOT NULL
+                  AND metadata_json <> ''
+                  AND JSON_VALID(metadata_json)
+                  AND JSON_EXTRACT(metadata_json, '$.global_ranking') IS NOT NULL
+              )
+          )
         ORDER BY finished_at DESC, started_at DESC
         LIMIT {int(limit)}
     """)

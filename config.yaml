@@ -494,7 +494,7 @@ batch_diagnostics:
   # l'entraînement) ; valeur explicite = force H (ex: 20 pour geler H20 même si
   # le best_horizon du batch est 10). NE change PAS le sizing stop/TP (maps
   # multi-horizon du risk_management, figées séparément).
-  live_horizon: 20
+  live_horizon:
 
   # Batch de diagnostics à utiliser pour le backtest.
   # Laisser vide pour utiliser automatiquement le dernier batch (⚠️ look-ahead
@@ -505,7 +505,7 @@ batch_diagnostics:
   # Horizon de la cascade ML à utiliser en BACKTEST (même logique que
   # live_horizon). null/vide = best_horizon du batch ; explicite = force H.
   # Gèle H20 pour B25 (le batch stocke best_horizon=10).
-  backtest_horizon: 20
+  backtest_horizon:
 
   # Garde-fou « breadth » : part minimale de l'univers de référence
   # (config/ticket_recherche.txt, 400 symboles) requise pour générer les

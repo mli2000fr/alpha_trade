@@ -491,39 +491,43 @@ def train_oracle_extreme(
 
     LOGGER.info("oracle_extreme start batch_id=%s symbols=%s", _batch_id, (len(symbols) if symbols else "auto"))
 
+    from modelFactory.oracle.dataset import build_dataset
+    from modelFactory.oracle.train import get_universe_symbols
+
+    horizon = 20
+    _universe = symbols or get_universe_symbols(engine, _batch_id, horizon)
+    if not _universe:
+        LOGGER.warning("oracle_extreme empty universe — nothing to train")
+        return {"status": "skipped", "reason": "no_universe", "batch_id": _batch_id}
+
     # ── 1. Labels Oracle H20 (idempotent upsert) ──
+    # Standalone (--oracle-model-only) : pas de global_rank_history → build_labels
+    # construit l'univers depuis les barres des symboles fournis.
     labels_result: dict[str, Any] = {}
     try:
         from modelFactory.oracle.build_labels import build_labels
 
         labels_result = build_labels(
             _batch_id,
-            horizon=20,
+            horizon=horizon,
             start_date=str(cfg.data.training_start_date) if cfg.data.training_start_date else None,
             end_date=str(cfg.data.training_end_date) if cfg.data.training_end_date else None,
             engine=engine,
             dry_run=False,
+            symbols=_universe,
         )
         LOGGER.info("oracle_extreme build_labels status=%s n_labeled=%s", labels_result.get("status"), labels_result.get("n_labeled"))
     except Exception as exc:
         LOGGER.warning("oracle_extreme build_labels failed: %s", exc)
 
     # ── 2. Dataset + walk-forward O0 ──
-    from modelFactory.oracle.dataset import build_dataset
-    from modelFactory.oracle.train import get_universe_symbols
-
-    horizon = 20
     try:
-        _universe = symbols or get_universe_symbols(engine, _batch_id, horizon)
-        if not _universe:
-            LOGGER.warning("oracle_extreme empty universe — nothing to train")
-            return {"status": "skipped", "reason": "no_universe", "batch_id": _batch_id}
-
         _start = str(cfg.data.training_start_date) if cfg.data.training_start_date else "2020-01-01"
         _end = str(cfg.data.training_end_date) if cfg.data.training_end_date else "2026-05-29"
         dataset, feature_columns = build_dataset(
             engine, _batch_id, _universe,
             start_date=_start, end_date=_end, horizon=horizon,
+            require_global_rank=(not cfg.data.oracle_model_only),
         )
         if dataset.empty:
             LOGGER.warning("oracle_extreme empty dataset — nothing to train")
