@@ -258,8 +258,11 @@ def filter_day_candidates(
         else:
             rejected += 1
     LOGGER.info(
-        "dip_filter: %s → %d/%d symboles passent le DIP (%d rejetés, N=%d X=%.2f)",
-        trade_date, len(keep), len(symbols), rejected, n,
-        float(config.get("dip_pct", 0.02)),
+        "DIP_FILTER rule date=%s col=%s N=%d X=%.2f%% threshold=%.2f "
+        "before=%d after=%d rejected=%d",
+        trade_date, rank_col, n,
+        float(config.get("dip_pct", 0.02)) * 100.0,
+        float(config.get("rank_threshold", 0.90)),
+        len(symbols), len(keep), rejected,
     )
     return ranks_day[ranks_day["symbol"].astype(str).isin(keep)].copy()
