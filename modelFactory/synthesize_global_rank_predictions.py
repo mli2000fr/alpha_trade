@@ -92,6 +92,17 @@ def synthesize(batch_id: str, best_h: int, *, top_pct: float = 0.10,
         _dip_n = int(dip_config.get("persist_days", 4) or 4)
         _dip_threshold = float(dip_config.get("rank_threshold", 0.90) or 0.90)
         _dip_pct = float(dip_config.get("dip_pct", 0.02) or 0.02)
+        # PRUDENCE : reclaim_ratio n'est PAS supporté par le chemin live
+        # (_build_dip_long_set = D0 direct vectorisé). Si activé en prod, le
+        # backtest (selector/dip_filter.filter_day_candidates) appliquerait le
+        # reclaim mais le live pas → divergence. On le refuse ici explicitement.
+        _dip_reclaim = dip_config.get("reclaim_ratio")
+        if _dip_reclaim:
+            LOGGER.warning(
+                "synthesize DIP filter (prod): reclaim_ratio=%s NON supporté live "
+                "(D0 direct uniquement) — reclaim ignoré. Activez-le uniquement en backtest.",
+                _dip_reclaim,
+            )
         dip_long = _build_dip_long_set(
             engine, batch_id, rank_col,
             n=_dip_n, threshold=_dip_threshold, dip_pct=_dip_pct,

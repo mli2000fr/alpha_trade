@@ -1549,6 +1549,21 @@ def _build_parser() -> argparse.ArgumentParser:
         help="DIP : baisse X depuis J-N (0.02 = 2%%). None = config.yaml backtest_dip_pct.",
     )
     run_p.add_argument(
+        "--dip-reclaim-ratio",
+        type=float,
+        default=None,
+        help="DIP reclaim : confirmation de rebond avant entrée. 0/vide = R désactivé (D0 direct) ; "
+             "1.0 = retour au prix pré-DIP, 0.99 = 99%% de ce prix, etc. "
+             "None = config.yaml backtest_reclaim_ratio.",
+    )
+    run_p.add_argument(
+        "--dip-reclaim-max-wait",
+        type=int,
+        default=None,
+        help="DIP reclaim : fenêtre (séances) pour la confirmation de rebond. "
+             "None = config.yaml backtest_reclaim_max_wait.",
+    )
+    run_p.add_argument(
         "--cascade-rank-mode",
         type=str,
         default="ml",
@@ -2162,6 +2177,8 @@ def _explicit_flags(argv: list[str]) -> set[str]:
         "--dip-rank-threshold": "dip_rank_threshold",
         "--dip-persist-days": "dip_persist_days",
         "--dip-pct": "dip_pct",
+        "--dip-reclaim-ratio": "dip_reclaim_ratio",
+        "--dip-reclaim-max-wait": "dip_reclaim_max_wait",
         "--no-shorts": "no_shorts",
         "--no-longs": "no_longs",
         "--force-close-losers-on-breaker": "force_close_losers_on_breaker",
@@ -3377,18 +3394,22 @@ def _run_backtest(args: argparse.Namespace) -> None:
                     "rank_threshold": getattr(args, "dip_rank_threshold", None),
                     "persist_days": getattr(args, "dip_persist_days", None),
                     "dip_pct": getattr(args, "dip_pct", None),
+                    "reclaim_ratio": getattr(args, "dip_reclaim_ratio", None),
+                    "reclaim_max_wait": getattr(args, "dip_reclaim_max_wait", None),
                 }
                 for _dk, _dv in _dip_cli_map.items():
                     if _dv is not None:
                         _dip_cfg_full[_dk] = _dv
                 if bool(_dip_cfg_full.get("enabled", False)):
                     _dip_filter_cfg = _dip_cfg_full
+                    _dip_reclaim = _dip_cfg_full.get("reclaim_ratio")
                     _safe_print(
-                        "   🔻 DIP filter (backtest): N={} X={:.0%} rank>={:.2f} H={} — {} candidats pré-cascade".format(
+                        "   🔻 DIP filter (backtest): N={} X={:.0%} rank>={:.2f} H={} R={} — {} candidats pré-cascade".format(
                             int(_dip_cfg_full.get("persist_days", 4)),
                             float(_dip_cfg_full.get("dip_pct", 0.02)),
                             float(_dip_cfg_full.get("rank_threshold", 0.90)),
                             _dip_cfg_full.get("rank_horizon", "best"),
+                            f"{float(_dip_reclaim):.2f}" if _dip_reclaim else "off",
                             int(preds_df.shape[0]) if preds_df is not None else 0,
                         )
                     )

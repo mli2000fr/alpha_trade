@@ -7,7 +7,14 @@ gelés, diagnostics) et appelée par ``modelFactory.predictor.cascade_select``.
 Règle (validée research 2026-08-27, in-sample + OOS 2025/2026 H1) :
     global_rank_{H} >= rank_threshold  sur `persist_days` séances consécutives
     ET close[J] / close[J - persist_days] - 1 <= -dip_pct
-    → entrée LONG directe (pas de reclaim).
+    → entrée LONG.
+
+Entrée — deux modes via ``reclaim_ratio`` (clé ``reclaim_ratio``) :
+    - vide / None / 0  → entrée directe à J+1 (D0, comportement gelé) ;
+    - > 0 (ex. 1.0 = retour au prix pré-DIP, 0.99 = 99% de ce prix) →
+      entrée au premier T (J < T <= J + reclaim_max_wait) où
+      close[T] >= reclaim_ratio * close[J-N] ET global_rank >= rank_threshold
+      à T (confirmation de rebond avant entrée, research optionnelle).
 
 Config : ``config.yaml → persistent_dip_filter_long``, avec clés **PROD** et
 **BACKTEST** distinctes (pattern ``prod_*`` / ``backtest_*`` déjà utilisé par
@@ -35,6 +42,8 @@ _KEYS = (
     "rank_threshold",
     "persist_days",
     "dip_pct",
+    "reclaim_ratio",
+    "reclaim_max_wait",
 )
 
 _DEFAULTS: dict[str, Any] = {
@@ -43,6 +52,13 @@ _DEFAULTS: dict[str, Any] = {
     "rank_threshold": 0.90,  # = TOP 10%
     "persist_days": 4,       # N
     "dip_pct": 0.02,         # X
+    # Reclaim (confirmation de rebond avant entrée) — OPTION research, défaut OFF.
+    #   reclaim_ratio = None/0  → entrée directe (D0, comportement gelé).
+    #   reclaim_ratio = r (>0)  → attendre close[T] >= r * prix pré-DIP (close[J-N])
+    #                             avec global_rank >= rank_threshold à T, T dans (J, J+max_wait].
+    #                             1.0 = retour au prix d'origine ; 0.99 = 99% de ce prix ; etc.
+    "reclaim_ratio": None,
+    "reclaim_max_wait": 10,
 }
 
 
@@ -92,14 +108,20 @@ def load_rank_history_df(
     trade_date: str,
     persist_days: int,
     rank_col: str,
+    *,
+    extra_days: int = 0,
 ) -> pd.DataFrame:
     """Historique des rangs sur la fenêtre [trade_date - N jours, trade_date].
+
+    Args:
+        extra_days: séances supplémentaires de lookback (reclaim : scan des
+            jours J antérieurs). 0 par défaut (fenêtre D0 inchangée).
 
     Returns:
         DataFrame [date, symbol, rank_col] trié par (symbol, date) — PIT.
     """
     from sqlalchemy import text as _text
-    lb = (pd.Timestamp(trade_date) - pd.Timedelta(days=persist_days * 2 + 7)).date().isoformat()
+    lb = (pd.Timestamp(trade_date) - pd.Timedelta(days=(persist_days + extra_days) * 2 + 7)).date().isoformat()
     query = _text(
         f"SELECT date, symbol, {rank_col} FROM global_rank_history "
         f"WHERE date BETWEEN :lb AND :d AND batch_id = :bid ORDER BY symbol, date"
@@ -122,8 +144,14 @@ def load_price_history_df(
     symbols: list[str],
     trade_date: str,
     persist_days: int,
+    *,
+    extra_days: int = 0,
 ) -> pd.DataFrame:
     """Prix close sur la fenêtre nécessaire ([J-N, J]) pour les symboles donnés.
+
+    Args:
+        extra_days: séances supplémentaires de lookback (reclaim : scan des
+            jours J antérieurs). 0 par défaut (fenêtre D0 inchangée).
 
     Returns:
         DataFrame [date, symbol, close] trié par (symbol, date) — PIT.
@@ -131,7 +159,7 @@ def load_price_history_df(
     from sqlalchemy import text as _text
     if not symbols:
         return pd.DataFrame()
-    lb = (pd.Timestamp(trade_date) - pd.Timedelta(days=persist_days * 2 + 7)).date().isoformat()
+    lb = (pd.Timestamp(trade_date) - pd.Timedelta(days=(persist_days + extra_days) * 2 + 7)).date().isoformat()
     ph = ",".join(["%s"] * len(symbols))
     query = (
         "SELECT date, symbol, close FROM stock_bars_daily "
@@ -163,18 +191,32 @@ def evaluate_dip_filter(
 
     Args:
         symbol: Symbole (uppercase).
-        as_of_date: Date cible (YYYY-MM-DD) — le DIP doit être détecté à J.
+        as_of_date: Date cible (YYYY-MM-DD) — date à laquelle on cherche une
+            entrée (J pour D0 direct, T pour le reclaim).
         rank_history: DataFrame [date, symbol, <rank_col>] sur la fenêtre
-            (>= persist_days séances) pour CE symbole, trié par date croissante.
-        price_history: DataFrame [date, symbol, close] sur la fenêtre
-            (>= persist_days + 1 séances) pour CE symbole, trié par date croissante.
+            (>= persist_days + reclaim_max_wait séances) pour CE symbole.
+        price_history: DataFrame [date, symbol, close] sur la même fenêtre
+            pour CE symbole.
         config: dict de load_dip_filter_config().
         rank_col: colonne de rang à utiliser (ex. global_rank_20). Si None,
             résolue via _rank_column(config) — à fournir quand best_horizon
             diffère du défaut (cohérence avec filter_day_candidates).
 
     Returns:
-        True si le symbole passe le DIP (persistance + baisse).
+        True si le symbole est éligible à l'entrée à as_of_date.
+
+        Sans reclaim (``reclaim_ratio`` vide/None/0) : DIP détecté à J =
+        as_of_date (persistance N séances + baisse >= dip_pct) → entrée
+        directe J+1 (comportement gelé, inchangé).
+
+        Avec reclaim (``reclaim_ratio`` > 0) : entrée au premier T où
+        ``close[T] >= reclaim_ratio * close[J-N]`` pour un DIP antérieur J
+        situé dans les `reclaim_max_wait` séances précédentes, avec
+        ``global_rank >= rank_threshold`` à T. ``1.0`` = retour au prix
+        pré-DIP, ``0.99`` = 99% de ce prix, etc.
+        NOTE : fonction sans état (une éligibilité évaluée par jour, cohérent
+        avec D0) — le re-déclenchement les jours suivants est absorbé en aval
+        par le position management (pas de double entrée).
     """
     if not config.get("enabled"):
         return True
@@ -182,32 +224,76 @@ def evaluate_dip_filter(
     threshold = float(config.get("rank_threshold", 0.90))
     dip_pct = float(config.get("dip_pct", 0.02))
     rank_col = rank_col or _rank_column(config)
+    reclaim_ratio = config.get("reclaim_ratio")
 
-    # ── Persistance : rank >= threshold sur les N dernières séances ──
-    rh = rank_history[rank_history["symbol"].astype(str).str.upper() == str(symbol).upper()]
-    if rh.empty or rank_col not in rh.columns:
+    # ── Séries PIT du symbole (bornées à as_of_date) ──
+    _sym = str(symbol).upper()
+    rh = rank_history[rank_history["symbol"].astype(str).str.upper() == _sym]
+    ph = price_history[price_history["symbol"].astype(str).str.upper() == _sym]
+    if rank_col not in rh.columns or "close" not in ph.columns:
         return False
-    rh = rh.sort_values("date")
-    last_ranks = rh[rank_col].dropna().tail(n)
-    if len(last_ranks) < n:
-        return False
-    if not bool((last_ranks >= threshold).all()):
+    if as_of_date:
+        _cut = pd.Timestamp(as_of_date)
+        rh = rh[pd.to_datetime(rh["date"]) <= _cut]
+        ph = ph[pd.to_datetime(ph["date"]) <= _cut]
+    rh = rh.sort_values("date").dropna(subset=[rank_col])
+    ph = ph.sort_values("date").dropna(subset=["close"])
+    if rh.empty or ph.empty:
         return False
 
-    # ── DIP : close[J] / close[J-N] - 1 <= -dip_pct ──
-    ph = price_history[price_history["symbol"].astype(str).str.upper() == str(symbol).upper()]
-    if ph.empty:
+    # ── Reclaim désactivé (vide/None/0) → D0 direct (comportement gelé) ──
+    if not reclaim_ratio:
+        last_ranks = rh[rank_col].astype(float).tail(n)
+        if len(last_ranks) < n:
+            return False
+        if not bool((last_ranks >= threshold).all()):
+            return False
+        closes = ph["close"].astype(float)
+        if len(closes) < n + 1:
+            return False
+        j = float(closes.iloc[-1])
+        j_n = float(closes.iloc[-n - 1])
+        if j <= 0 or j_n <= 0:
+            return False
+        return bool(j / j_n - 1.0 <= -dip_pct)
+
+    # ── Reclaim activé : entrée au 1er T où close[T] >= ratio * close[J-N] ──
+    ratio = float(reclaim_ratio)
+    max_wait = int(config.get("reclaim_max_wait", 10))
+    r_dates = list(pd.to_datetime(rh["date"]))
+    p_dates = list(pd.to_datetime(ph["date"]))
+    rank_by_date = dict(zip(r_dates, rh[rank_col].astype(float).tolist()))
+    close_by_date = dict(zip(p_dates, ph["close"].astype(float).tolist()))
+    common_dates = sorted(set(p_dates).intersection(r_dates))
+    t = pd.Timestamp(as_of_date) if as_of_date else p_dates[-1]
+    if t not in close_by_date or t not in rank_by_date:
         return False
-    ph = ph.sort_values("date")
-    closes = ph["close"].dropna()
-    if len(closes) < n + 1:
+    close_t = float(close_by_date[t])
+    if close_t <= 0 or float(rank_by_date[t]) < threshold:
         return False
-    j = float(closes.iloc[-1])
-    j_n = float(closes.iloc[-n - 1])
-    if j <= 0 or j_n <= 0:
+    pos = {d: i for i, d in enumerate(common_dates)}
+    if t not in pos:
         return False
-    ret = j / j_n - 1.0
-    return bool(ret <= -dip_pct)
+    idx_t = pos[t]
+    for i in range(max(0, idx_t - max_wait), idx_t):
+        if i < n:
+            continue
+        jd = common_dates[i]
+        # Persistance du rang sur les N séances finissant à J.
+        j_ranks = [float(rank_by_date[common_dates[k]]) for k in range(i - n + 1, i + 1)]
+        if not all(r >= threshold for r in j_ranks):
+            continue
+        # DIP à J : close[J] / close[J-N] - 1 <= -dip_pct.
+        j_close = float(close_by_date[jd])
+        j_n_close = float(close_by_date[common_dates[i - n]])
+        if j_close <= 0 or j_n_close <= 0:
+            continue
+        if j_close / j_n_close - 1.0 > -dip_pct:
+            continue
+        # Reclaim à T : prix >= ratio * prix pré-DIP (close[J-N]).
+        if close_t >= ratio * j_n_close:
+            return True
+    return False
 
 
 def filter_day_candidates(
@@ -237,14 +323,17 @@ def filter_day_candidates(
         return ranks_day
     n = int(config.get("persist_days", 4))
     rank_col = _rank_column(config, best_h)
+    reclaim_ratio = config.get("reclaim_ratio")
+    # Reclaim : scan des J antérieurs → fenêtre élargie de reclaim_max_wait.
+    max_wait = int(config.get("reclaim_max_wait", 10)) if reclaim_ratio else 0
 
     symbols = [str(s) for s in ranks_day["symbol"].unique() if pd.notna(s)]
     if not symbols:
         return ranks_day
 
     # Charger historique rank (fenêtre) + prix (fenêtre) en une passe.
-    rh = load_rank_history_df(engine, batch_id, trade_date, n, rank_col)
-    ph = load_price_history_df(engine, symbols, trade_date, n)
+    rh = load_rank_history_df(engine, batch_id, trade_date, n, rank_col, extra_days=max_wait)
+    ph = load_price_history_df(engine, symbols, trade_date, n, extra_days=max_wait)
     if rh.empty or ph.empty:
         LOGGER.warning("dip_filter: historique vide %s — aucun filtre appliqué", trade_date)
         return ranks_day
@@ -258,11 +347,12 @@ def filter_day_candidates(
         else:
             rejected += 1
     LOGGER.info(
-        "DIP_FILTER rule date=%s col=%s N=%d X=%.2f%% threshold=%.2f "
+        "DIP_FILTER rule date=%s col=%s N=%d X=%.2f%% threshold=%.2f reclaim=%s "
         "before=%d after=%d rejected=%d",
         trade_date, rank_col, n,
         float(config.get("dip_pct", 0.02)) * 100.0,
         float(config.get("rank_threshold", 0.90)),
+        str(reclaim_ratio) if reclaim_ratio else "off",
         len(symbols), len(keep), rejected,
     )
     return ranks_day[ranks_day["symbol"].astype(str).isin(keep)].copy()

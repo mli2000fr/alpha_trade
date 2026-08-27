@@ -44,6 +44,9 @@ class TestLoadDipFilterConfig:
         assert prod["dip_pct"] == 0.02
         assert prod["rank_threshold"] == 0.90
         assert prod["rank_horizon"] == 20
+        # Reclaim désactivé par défaut (vide → R off)
+        assert prod["reclaim_ratio"] is None
+        assert prod["reclaim_max_wait"] == 10
 
     def test_prod_backtest_independent(self, monkeypatch):
         # Simule une config où prod activé mais backtest désactivé
@@ -154,6 +157,78 @@ class TestEvaluateDipFilter:
             [110.0, 108.0, 105.0, 102.0, 100.0],
         )
         assert evaluate_dip_filter("AAA", "2024-06-14", rh, ph, _mk_config(), rank_col="global_rank_10") is True
+
+
+# ═══════════════════════════════════════════════════════════════════
+# evaluate_dip_filter — reclaim_ratio (R) configurable
+# ═══════════════════════════════════════════════════════════════════
+
+# Scénario : N=4, seuil 0.90, dip 2%. DIP à J=D4 (close 90 vs 100 pré-DIP).
+#   dates : 03/04/05/06/07 juin puis 10/11/12/13/14 juin (10 séances).
+_RC_DATES = [
+    "2024-06-03", "2024-06-04", "2024-06-05", "2024-06-06", "2024-06-07",
+    "2024-06-10", "2024-06-11", "2024-06-12", "2024-06-13", "2024-06-14",
+]
+_RC_CLOSES = [100.0, 99.0, 97.0, 94.0, 90.0, 92.0, 96.0, 97.0, 98.0, 99.0]
+_RC_RANKS = [0.80, 0.95, 0.94, 0.92, 0.91, 0.90, 0.91, 0.92, 0.93, 0.94]
+
+
+class TestEvaluateDipFilterReclaim:
+    def _rh(self, ranks=None):
+        return _mk_rank(_RC_DATES, list(ranks or _RC_RANKS))
+
+    def _ph(self, closes=None):
+        return _mk_price(_RC_DATES, list(closes or _RC_CLOSES))
+
+    def test_reclaim_zero_behaves_like_d0(self):
+        # reclaim_ratio=0 (ou vide) → R désactivé : entrée directe dès le DIP à J.
+        cfg = _mk_config(reclaim_ratio=0)
+        assert evaluate_dip_filter("AAA", "2024-06-07", self._rh(), self._ph(), cfg) is True
+        # D0 re-signale tant que la baisse persiste (06-10, encore -7% vs J-4).
+        assert evaluate_dip_filter("AAA", "2024-06-10", self._rh(), self._ph(), cfg) is True
+        # R activé (0.95) attend le rebond : pas d'entrée au jour du DIP (90 < 95).
+        cfg_r = _mk_config(reclaim_ratio=0.95)
+        assert evaluate_dip_filter("AAA", "2024-06-07", self._rh(), self._ph(), cfg_r) is False
+
+    def test_no_entry_before_rebound_then_entry(self):
+        cfg = _mk_config(reclaim_ratio=0.95)
+        # T=D5 (06-10) : close 92 < 0.95*100=95 → pas encore d'entrée.
+        assert evaluate_dip_filter("AAA", "2024-06-10", self._rh(), self._ph(), cfg) is False
+        # T=D6 (06-11) : close 96 >= 95 ET rank 0.91 >= 0.90 → entrée.
+        assert evaluate_dip_filter("AAA", "2024-06-11", self._rh(), self._ph(), cfg) is True
+
+    def test_reclaim_ratio_1p0_requires_full_recovery(self):
+        # Récupération lente non-DIP jusqu'au prix pré-DIP (100). ratio 1.0 :
+        # entrée uniquement quand close revient au prix d'origine (>= 100).
+        closes = [100.0, 99.0, 97.0, 94.0, 90.0, 97.5, 98.0, 98.5, 99.0, 100.0]
+        ranks = [0.80, 0.95, 0.94, 0.92, 0.91, 0.90, 0.91, 0.92, 0.93, 0.91]
+        rh, ph = self._rh(ranks), self._ph(closes)
+        cfg = _mk_config(reclaim_ratio=1.0)
+        # À 99 (06-13) : 99 < 1.0*100 → pas encore (ratio 1.0 = prix pré-DIP).
+        assert evaluate_dip_filter("AAA", "2024-06-13", rh, ph, cfg) is False
+        # Retour au prix d'origine (100) en 06-14 → entrée.
+        assert evaluate_dip_filter("AAA", "2024-06-14", rh, ph, cfg) is True
+
+    def test_reclaim_requires_rank_at_t(self):
+        # Rebond atteint à T mais rang < 0.90 → pas d'entrée.
+        ranks = list(_RC_RANKS)
+        ranks[6] = 0.85  # 06-11 : rang sous le seuil
+        cfg = _mk_config(reclaim_ratio=0.95)
+        assert evaluate_dip_filter("AAA", "2024-06-11", self._rh(ranks), self._ph(), cfg) is False
+
+    def test_reclaim_max_wait_bounds_dip_age(self):
+        # Récupération LENTE vers le prix pré-DIP : DIP unique à D4 (90 vs 100),
+        # puis hausse graduelle non-DIP jusqu'à 100 en D9. ratio 1.0 → entrée
+        # seulement si le DIP D4 est encore dans la fenêtre de scan.
+        closes = [100.0, 99.0, 97.0, 94.0, 90.0, 97.5, 98.0, 98.5, 99.0, 100.0]
+        ranks = [0.80, 0.95, 0.94, 0.92, 0.91, 0.90, 0.91, 0.92, 0.93, 0.91]
+        rh, ph = self._rh(ranks), self._ph(closes)
+        # max_wait=4 : DIP D4 (06-07) hors fenêtre à 06-14 → pas d'entrée.
+        cfg4 = _mk_config(reclaim_ratio=1.0, reclaim_max_wait=4)
+        assert evaluate_dip_filter("AAA", "2024-06-14", rh, ph, cfg4) is False
+        # max_wait=6 : DIP D4 dans la fenêtre → entrée au retour au prix pré-DIP.
+        cfg6 = _mk_config(reclaim_ratio=1.0, reclaim_max_wait=6)
+        assert evaluate_dip_filter("AAA", "2024-06-14", rh, ph, cfg6) is True
 
 
 # ═══════════════════════════════════════════════════════════════════

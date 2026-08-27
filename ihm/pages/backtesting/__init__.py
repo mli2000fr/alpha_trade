@@ -107,6 +107,10 @@ BT_RUN_DIP_RANK_HORIZON_DEFAULT = 20
 BT_RUN_DIP_RANK_THRESHOLD_DEFAULT = 0.90
 BT_RUN_DIP_PERSIST_DAYS_DEFAULT = 4
 BT_RUN_DIP_PCT_DEFAULT = 0.02
+# Reclaim (confirmation de rebond avant entrée) : vide/None = R désactivé
+# (D0 direct, comportement gelé). 1.0 = retour au prix pré-DIP.
+BT_RUN_DIP_RECLAIM_RATIO_DEFAULT = None
+BT_RUN_DIP_RECLAIM_MAX_WAIT_DEFAULT = 10
 
 RUN_CONFIGURATION_PRESETS: dict[str, dict[str, object]] = {
     "pipeline_live_like": {
@@ -394,6 +398,8 @@ def _load_dip_backtest_defaults() -> dict[str, Any]:
         "rank_threshold": _to_float(raw.get("backtest_rank_threshold", BT_RUN_DIP_RANK_THRESHOLD_DEFAULT), BT_RUN_DIP_RANK_THRESHOLD_DEFAULT),
         "persist_days": _to_int(raw.get("backtest_persist_days", BT_RUN_DIP_PERSIST_DAYS_DEFAULT), BT_RUN_DIP_PERSIST_DAYS_DEFAULT),
         "dip_pct": _to_float(raw.get("backtest_dip_pct", BT_RUN_DIP_PCT_DEFAULT), BT_RUN_DIP_PCT_DEFAULT),
+        "reclaim_ratio": raw.get("backtest_reclaim_ratio", BT_RUN_DIP_RECLAIM_RATIO_DEFAULT),
+        "reclaim_max_wait": _to_int(raw.get("backtest_reclaim_max_wait", BT_RUN_DIP_RECLAIM_MAX_WAIT_DEFAULT), BT_RUN_DIP_RECLAIM_MAX_WAIT_DEFAULT),
     }
 
 
@@ -709,6 +715,8 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
             {"Paramètre": "dip_rank_threshold", "Explication": "Seuil de rang minimal (0.90 = TOP 10%) (--dip-rank-threshold).", "Défaut": "config.yaml backtest_rank_threshold (0.90)"},
             {"Paramètre": "dip_persist_days", "Explication": "Persistance N : séances consécutives au-dessus du seuil (--dip-persist-days).", "Défaut": "config.yaml backtest_persist_days (4)"},
             {"Paramètre": "dip_pct", "Explication": "Baisse minimale X sur N séances (0.02 = 2%) (--dip-pct).", "Défaut": "config.yaml backtest_dip_pct (0.02)"},
+            {"Paramètre": "dip_reclaim_ratio", "Explication": "Confirmation de rebond avant entrée (vide/0 = R off ; 1.0 = retour prix pré-DIP, 0.99 = 99% de ce prix) (--dip-reclaim-ratio).", "Défaut": "config.yaml backtest_reclaim_ratio (null = R off)"},
+            {"Paramètre": "dip_reclaim_max_wait", "Explication": "Fenêtre (séances) pour la confirmation de rebond (--dip-reclaim-max-wait).", "Défaut": "config.yaml backtest_reclaim_max_wait (10)"},
         ]
     if kind == "diagnose-screener":
         return [
@@ -2324,7 +2332,8 @@ def _build_run_options() -> BacktestRunOptions:
     with st.expander("🔻 Filtre Persistent Rank DIP (paramétrage backtest)", expanded=False):
         st.caption(
             "Candidats LONG : `global_rank_{H} ≥ seuil` sur `N` séances consécutives "
-            "ET baisse `≥ X%` sur `N` séances. Valeurs par défaut = `config.yaml → "
+            "ET baisse `≥ X%` sur `N` séances. `Reclaim R` (vide = off) : entrée au "
+            "1er rebond `close ≥ R × prix pré-DIP`. Valeurs par défaut = `config.yaml → "
             "persistent_dip_filter_long.backtest_*` (gelées research 2026-08-27)."
         )
         _dip_col1, _dip_col2 = st.columns(2)
@@ -2398,6 +2407,39 @@ def _build_run_options() -> BacktestRunOptions:
                 format="%.2f",
                 key="bt_run_dip_pct",
                 help="Baisse close[J] vs close[J-N] requise (config.yaml backtest_dip_pct).",
+            )
+        _dip_col3, _dip_col4 = st.columns(2)
+        with _dip_col3:
+            dip_reclaim_ratio = st.number_input(
+                "Reclaim R (rebond avant entrée)",
+                min_value=0.0,
+                max_value=1.0,
+                value=st.session_state.get(
+                    "bt_run_dip_reclaim_ratio",
+                    _dip_defaults.get("reclaim_ratio", BT_RUN_DIP_RECLAIM_RATIO_DEFAULT),
+                ),
+                step=0.01,
+                format="%.2f",
+                key="bt_run_dip_reclaim_ratio",
+                help="Vide/0 = R désactivé (D0 direct). 1.0 = entrée seulement au retour au "
+                     "prix pré-DIP ; 0.99 = 99% de ce prix. Entrée au 1er T où "
+                     "close[T] ≥ R × close[J-N] ET rang ≥ seuil (config.yaml backtest_reclaim_ratio).",
+            )
+        with _dip_col4:
+            dip_reclaim_max_wait = st.number_input(
+                "Reclaim max wait (séances)",
+                min_value=1,
+                max_value=60,
+                value=int(
+                    st.session_state.get(
+                        "bt_run_dip_reclaim_max_wait",
+                        _dip_defaults.get("reclaim_max_wait", BT_RUN_DIP_RECLAIM_MAX_WAIT_DEFAULT),
+                    )
+                ),
+                step=1,
+                key="bt_run_dip_reclaim_max_wait",
+                help="Fenêtre de scan des DIP antérieurs pour la confirmation de rebond "
+                     "(config.yaml backtest_reclaim_max_wait).",
             )
         st.caption(
             "⚠️ Le filtre s'applique en amont de la cascade ML (`apply_cascade_to_predictions`). "
@@ -2590,6 +2632,8 @@ def _build_run_options() -> BacktestRunOptions:
         dip_rank_threshold=float(st.session_state.get("bt_run_dip_rank_threshold", _dip_defaults.get("rank_threshold", BT_RUN_DIP_RANK_THRESHOLD_DEFAULT))),
         dip_persist_days=int(st.session_state.get("bt_run_dip_persist_days", _dip_defaults.get("persist_days", BT_RUN_DIP_PERSIST_DAYS_DEFAULT))),
         dip_pct=float(st.session_state.get("bt_run_dip_pct", _dip_defaults.get("dip_pct", BT_RUN_DIP_PCT_DEFAULT))),
+        dip_reclaim_ratio=st.session_state.get("bt_run_dip_reclaim_ratio"),
+        dip_reclaim_max_wait=int(st.session_state.get("bt_run_dip_reclaim_max_wait", _dip_defaults.get("reclaim_max_wait", BT_RUN_DIP_RECLAIM_MAX_WAIT_DEFAULT))),
         cascade_rank_mode=cast(Any, st.session_state.get("bt_run_cascade_rank_mode", "ml") or "ml"),
         oracle_oos_path=(oracle_oos_path.strip() if oracle_oos_path else None),
         score_column=cast(Any, score_column),

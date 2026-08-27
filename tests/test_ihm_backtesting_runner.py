@@ -625,6 +625,8 @@ def test_build_backtesting_run_command_dip_flags_omitted_by_default():
     assert "--dip-rank-threshold" not in command
     assert "--dip-persist-days" not in command
     assert "--dip-pct" not in command
+    assert "--dip-reclaim-ratio" not in command
+    assert "--dip-reclaim-max-wait" not in command
 
 
 def test_build_backtesting_run_command_dip_enabled_on():
@@ -657,6 +659,8 @@ def test_build_backtesting_run_command_dip_full_override():
             dip_rank_threshold=0.85,
             dip_persist_days=5,
             dip_pct=0.03,
+            dip_reclaim_ratio=0.95,
+            dip_reclaim_max_wait=15,
         ),
     )
 
@@ -665,5 +669,7 @@ def test_build_backtesting_run_command_dip_full_override():
     assert command[command.index("--dip-rank-threshold") + 1] == "0.85"
     assert command[command.index("--dip-persist-days") + 1] == "5"
     assert command[command.index("--dip-pct") + 1] == "0.03"
+    assert command[command.index("--dip-reclaim-ratio") + 1] == "0.95"
+    assert command[command.index("--dip-reclaim-max-wait") + 1] == "15"
 
 

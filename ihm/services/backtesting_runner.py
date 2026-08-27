@@ -82,6 +82,10 @@ class BacktestRunOptions:
     dip_rank_threshold: float | None = None
     dip_persist_days: int | None = None
     dip_pct: float | None = None
+    # Reclaim (confirmation de rebond avant entrée). None = config.yaml
+    # (backtest_reclaim_ratio null = R désactivé / D0 direct). 0 = R off.
+    dip_reclaim_ratio: float | None = None
+    dip_reclaim_max_wait: int | None = None
     # S6 (Oracle Layer) — mode de rang cascade. Les modes oracle_* / extreme_gate
     # combinent le rang global (batch sélectionné) et proba_extreme (Oracle Extreme,
     # via oracle_oos_path).
@@ -351,6 +355,10 @@ def build_backtesting_command(
             command.extend(["--dip-persist-days", str(int(options.dip_persist_days))])
         if options.dip_pct is not None:
             command.extend(["--dip-pct", str(float(options.dip_pct))])
+        if options.dip_reclaim_ratio is not None:
+            command.extend(["--dip-reclaim-ratio", str(float(options.dip_reclaim_ratio))])
+        if options.dip_reclaim_max_wait is not None:
+            command.extend(["--dip-reclaim-max-wait", str(int(options.dip_reclaim_max_wait))])
         # S6 (Oracle Layer) — rang cascade remplacé par P(top10)
         if options.cascade_rank_mode and options.cascade_rank_mode != "ml":
             command.extend(["--cascade-rank-mode", options.cascade_rank_mode])

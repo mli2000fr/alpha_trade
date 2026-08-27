@@ -583,9 +583,12 @@ cascade:
 # Périmètre STRICT : branche Global Rank (global_rank_{H}) uniquement — PAS
 # Oracle Extreme (tests : persistance + prix n'apportait rien sur Extreme).
 # Règle : global_rank_{H} >= rank_threshold sur `persist_days` séances
-#         consécutives ET close[J]/close[J-N] - 1 <= -dip_pct → LONG direct.
-# N/X gelés (aucun reclaim : R50/R100 NO-GO). Long only (miroir SHORT futur
-# via une clé *_short dédiée, hors périmètre).
+#         consécutives ET close[J]/close[J-N] - 1 <= -dip_pct → LONG.
+# Entrée : reclaim_ratio vide/0 = directe (D0, gelé). >0 (ex. 1.0 = retour au
+#         prix pré-DIP, 0.99 = 99% de ce prix) = entrée au 1er T (<= max_wait
+#         séances) où close[T] >= reclaim_ratio*close[J-N] ET rank >= seuil à T.
+# N/X gelés (R50/R100 NO-GO ; reclaim_ratio reste vide par défaut = R off).
+# Long only (miroir SHORT futur via une clé *_short dédiée, hors périmètre).
 # Clés PROD et BACKTEST DISTINCTES (pattern prod_*/backtest_* de risk_management).
 # ---------------------------------------------------------------------------
 persistent_dip_filter_long:
@@ -595,12 +598,16 @@ persistent_dip_filter_long:
   prod_rank_threshold: 0.90    # = TOP 10%
   prod_persist_days: 4         # N
   prod_dip_pct: 0.02           # X (2%)
+  prod_reclaim_ratio: null     # vide = R désactivé (D0 direct) ; 1.0 = retour prix pré-DIP
+  prod_reclaim_max_wait: 10    # fenêtre (en séances) pour la confirmation de rebond
   # ---- BACKTEST ----
   backtest_enabled: true
   backtest_rank_horizon: 20
   backtest_rank_threshold: 0.90
   backtest_persist_days: 4
   backtest_dip_pct: 0.02
+  backtest_reclaim_ratio: null # vide = R désactivé (D0 direct)
+  backtest_reclaim_max_wait: 10
 
 
 # ---------------------------------------------------------------------------
