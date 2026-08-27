@@ -1575,9 +1575,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--dip-quality-policy",
         type=str,
         default="none",
-        choices=["none", "rank", "top50", "top25"],
+        choices=["none", "rank", "top50", "top25", "tiebreak"],
         help="Politique dip_quality_score : none (Q0), rank (Q1 = priorité aux DIP de "
-             "meilleure qualité quand slots contraints), top50 (Q2), top25 (Q3).",
+             "meilleure qualité quand slots contraints), top50 (Q2), top25 (Q3), "
+             "tiebreak (Q4 = dq en second critère uniquement entre candidats du même "
+             "bucket de rang ML, décile de la position du jour).",
     )
     run_p.add_argument(
         "--cascade-rank-mode",

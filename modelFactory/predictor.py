@@ -3090,15 +3090,17 @@ def _apply_dip_quality_policy(
     """Applique la politique ``dip_quality_score`` sur les candidats du jour.
 
     Args:
-        policy: "rank" | "top50" | "top25".
+        policy: "rank" | "tiebreak" | "top50" | "top25".
         quality_map: {(date_str, symbol_upper): score}.
         date_key: date du jour (YYYY-MM-DD).
         candidates: [(side, symbol, score)] de cascade_select (déjà triés).
 
     Returns:
         (candidates_filtre, quality_by_symbol).
-        - "rank" : tous les candidats conservés ; quality_by_symbol permet
-          d'écraser ``proba_long`` en aval (ranking du moteur par qualité).
+        - "rank"/"tiebreak" : tous les candidats conservés ; quality_by_symbol
+          permet d'écraser ``proba_long`` en aval (ranking du moteur par
+          qualité pour "rank" ; réordonnancement intra-bucket pour "tiebreak",
+          calculé dans ``apply_cascade_to_predictions``).
         - "top50"/"top25" : seuls les candidats AVEC score au-dessus du
           percentile qualité du jour sont conservés ; les autres sont retirés
           (slots libérés réalloués normalement par le moteur). Les candidats
@@ -3113,7 +3115,7 @@ def _apply_dip_quality_policy(
             scored[str(_sym).upper()] = float(q)
     if not scored:
         return candidates, {}
-    if policy == "rank":
+    if policy in ("rank", "tiebreak"):
         return candidates, scored
     if policy in ("top50", "top25"):
         pct = 0.50 if policy == "top50" else 0.25
@@ -3128,6 +3130,51 @@ def _apply_dip_quality_policy(
         ]
         return filtered, scored
     return candidates, scored
+
+
+def _apply_dip_quality_tiebreak(
+    proba_map: dict[str, float],
+    quality_map: dict,
+    date_key: str,
+) -> dict[str, float]:
+    """Tiebreaker dip_quality : réordonne UNIQUEMENT les candidats du même
+    bucket de rang ML (décile de la position du jour) par ``dip_quality_score``
+    DESC. Hors d'un bucket, l'ordre ML est préservé (aucune traversée de bucket).
+
+    Préserve le multiset des ``proba_long`` (aucune magnitude altérée → sizing /
+    min-proba inchangés) ; ``replay_signals`` (tri par ``proba_long`` DESC)
+    reproduit donc exactement l'ordre retourné. Quand chaque bucket ne contient
+    qu'un candidat (≤ 10 candidats/jour en déciles), le résultat est identique à
+    la baseline (T1 ≡ T0).
+
+    Args:
+        proba_map: {symbol: proba_long} baseline ML des candidats retenus (LONG).
+        quality_map: {(date_str, symbol_upper): dip_quality_score}.
+        date_key: date du jour (YYYY-MM-DD).
+
+    Returns:
+        {symbol: proba_long} réordonné (même multiset) selon
+        ``(bucket ML, dip_quality_score DESC)``.
+    """
+    if not proba_map:
+        return {}
+    order = sorted(proba_map.items(), key=lambda kv: float(kv[1]), reverse=True)
+    n = len(order)
+    bucket: dict[str, int] = {}
+    for _idx, (_sym, _) in enumerate(order):
+        bucket[_sym] = min(9, (_idx * 10) // n) if n else 0
+    # Tri stable : bucket asc → scorés d'abord (dq DESC) → sans score en fin de
+    # bucket (garde l'ordre ML relatif via la stabilité du tri).
+    new_order = sorted(
+        order,
+        key=lambda kv: (
+            bucket[kv[0]],
+            1 if quality_map.get((date_key, str(kv[0]).upper())) is None else 0,
+            -(float(quality_map.get((date_key, str(kv[0]).upper())) or -1.0)),
+        ),
+    )
+    probas = [float(p) for _, p in order]
+    return {sym: probas[i] for i, (sym, _) in enumerate(new_order)}
 
 
 def apply_cascade_to_predictions(
@@ -3151,11 +3198,13 @@ def apply_cascade_to_predictions(
     dip_filter_config: dict[str, Any] | None = None,
     # Research dip_quality_score (chantier dip_quality_static_model, défaut off).
     #   dip_quality_map   : {(date_str, symbol_upper): score} — scores OOF par (J, symbol).
-    #   dip_quality_policy: "none" | "rank" | "top50" | "top25"
+    #   dip_quality_policy: "none" | "rank" | "top50" | "top25" | "tiebreak"
     #       rank   = Q1 : priorité aux DIP de meilleure qualité (écrase proba_long
     #                → replay_signals re-trie par qualité quand slots contraints).
     #       top50/25 = Q2/Q3 : ne garder que les DIP au-dessus du percentile qualité
     #                du jour ; slots libérés réalloués normalement par le moteur.
+    #       tiebreak = Q4 : dq en second critère UNIQUEMENT entre candidats du même
+    #                bucket de rang ML (décile de la position du jour) ; sinon rien.
     dip_quality_map: dict | None = None,
     dip_quality_policy: str = "none",
 ) -> pd.DataFrame:
@@ -3295,6 +3344,22 @@ def apply_cascade_to_predictions(
 
         # Symbols retenus par la cascade
         _passed_symbols = {_sym for _, _sym, _ in _candidates}
+        # ── DIP quality — Tiebreaker (research) : réordonne UNIQUEMENT les
+        #    candidats du même bucket de rang ML (décile de la position du jour)
+        #    par dip_quality_score DESC. Multiset des proba_long préservé →
+        #    sélection identique à la baseline sauf réordonnancement intra-bucket. ──
+        if dip_quality_policy == "tiebreak" and _dip_q:
+            _proba_map = {
+                str(_sym).upper(): float(_pred_dict[_sym].long_prob)
+                for _sym in _passed_symbols
+                if _sym in _pred_dict and (_pred_dict[_sym].long_prob or 0.0) > 0.0
+            }
+            _dip_q = _apply_dip_quality_tiebreak(_proba_map, dip_quality_map, _date_str)
+            if _dip_q:
+                LOGGER.info(
+                    "dip_quality tiebreak date=%s — %d candidats réordonnés (bucket décile ML)",
+                    _date_str, len(_dip_q),
+                )
         _score_map = {_sym: _score for _, _sym, _score in _candidates}
         _side_map = {_sym: _side for _side, _sym, _ in _candidates}
 

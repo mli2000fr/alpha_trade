@@ -11,7 +11,8 @@ sur n'importe quelle période, en écrivant dans ``oracle_extreme_predictions``.
   ``t_start <= D`` (PIT au niveau fold). Si D < premier ``t_start``, on utilise le
   premier fold (entraîné sur données < premier t_start → PIT pour D antérieur).
 - La table ``oracle_extreme_predictions`` est REMPLIE ICI (pas à l'entraînement),
-  avec ``run_id = oracle-pred-<timestamp>`` et filtre batch strict.
+  avec filtre batch strict. PK = ``(prediction_date, symbol, batch_id)`` : toute
+  re-prédiction d'une même plage ÉCRASE les lignes existantes (pas de doublons).
 
 Usage CLI (via walk_forward) :
     python -m modelFactory.oracle.walk_forward --batch-id <batch> \
@@ -21,7 +22,6 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -61,7 +61,6 @@ def predict_oracle_extreme_history(
     end_date: str,
     *,
     horizon: int = 20,
-    run_id: str | None = None,
     symbols: list[str] | None = None,
 ) -> dict[str, Any]:
     """Prédit ``proba_extreme`` sur [start_date, end_date] avec les champions, sans retrain.
@@ -165,20 +164,19 @@ def predict_oracle_extreme_history(
         return {"status": "error", "reason": "no_predictions", "batch_id": batch_id}
 
     _oos = pd.DataFrame(_rows)
-    _pred_run = run_id or f"oracle-pred-{datetime.now():%Y%m%d%H%M%S}"
 
-    # 5. Écrire dans la table (filtre batch strict, idempotent par run)
+    # 5. Écrire dans la table (filtre batch strict ; PK (date, symbol, batch) →
+    #    toute re-prédiction d'une même plage écrase les lignes existantes).
     from modelFactory.oracle.predictions_store import write_oracle_predictions
 
-    _n = write_oracle_predictions(engine, _oos, run_id=_pred_run, batch_id=batch_id)
+    _n = write_oracle_predictions(engine, _oos, batch_id=batch_id)
     LOGGER.info(
-        "predict_oracle_extreme_history batch=%s range=[%s,%s] rows=%d run=%s",
-        batch_id, start_date, end_date, _n, _pred_run,
+        "predict_oracle_extreme_history batch=%s range=[%s,%s] rows=%d",
+        batch_id, start_date, end_date, _n,
     )
     return {
         "status": "completed",
         "batch_id": batch_id,
-        "run_id": _pred_run,
         "n_rows": _n,
         "range": [str(start_date), str(end_date)],
         "n_dates": len(_day_dates),

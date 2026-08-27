@@ -57,8 +57,6 @@ _ABLATIONS: dict[str, dict[str, Any]] = {
     "O2": {"include_global_rank": False, "include_oracle_extras": False, "lean": True},
 }
 
-_ARTIFACTS_ROOT = Path("artifacts/models/oracle")
-
 
 def build_folds(dataset: pd.DataFrame, test_windows: list[tuple[str, str]]) -> list[dict[str, Any]]:
     """Découpe le dataset en folds causaux (T2 bloquant).
@@ -190,24 +188,34 @@ def persist_oos(
     *,
     models: list[dict[str, Any]] | None = None,
     feature_columns: list[str] | None = None,
-) -> Path:
-    """Persiste les prédictions OOS en parquet (+ tag batch si fourni).
+) -> str | None:
+    """Persiste les prédictions OOS dans la TABLE ``oracle_extreme_predictions``.
 
-    N'écrit PAS dans ``oracle_extreme_predictions`` : la table est remplie par la
-    PRÉDICTION STANDARD (``predict_oracle_extreme_history``), même logique que le
-    Global Rank (``predict_global_rank_history``). Ici on persiste aussi les
-    CHAMPIONS (modèles par fold) pour permettre cette prédiction SANS retrain.
+    Stockage TABLE-UNIQUEMENT (plus de parquet ``oos_predictions.parquet``) :
+    PK ``(prediction_date, symbol, batch_id)`` → une ligne par couple, toute
+    ré-écriture écrase. Le walk-forward et la prédiction standard
+    (``predict_oracle_extreme_history``) alimentent la même table, sans doublon.
+
+    Persiste aussi les CHAMPIONS (modèles par fold) pour permettre la prédiction
+    standard SANS retrain.
+
+    Returns:
+        ``batch_id`` écrit en table, ou None si aucun batch (rien à stocker).
     """
-    out_dir = _ARTIFACTS_ROOT / run_id
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / "oos_predictions.parquet"
-    oos.to_parquet(path, index=False)
-    # Sidecar : tagge le run par son batch d'entraînement (diagnostic IHM).
-    if batch_id:
+    if batch_id and not oos.empty:
         try:
-            (out_dir / "batch_id.txt").write_text(str(batch_id), encoding="utf-8")
-        except OSError:
-            pass
+            from modelFactory.oracle.predictions_store import (
+                ensure_oracle_predictions_table,
+                write_oracle_predictions,
+            )
+            _engine = get_sqlalchemy_engine()
+            ensure_oracle_predictions_table(_engine)
+            _n = write_oracle_predictions(_engine, oos, batch_id=str(batch_id))
+            LOGGER.info("persisted OOS → oracle_extreme_predictions n=%d batch=%s", _n, batch_id)
+        except Exception as _tbl_exc:  # noqa: BLE001 — non bloquant
+            LOGGER.warning("oracle OOS table write FAILED: %s", _tbl_exc)
+    else:
+        LOGGER.warning("persist_oos: batch_id absent — OOS non persisté (table-only)")
     # ── Champions : modèles par fold persistés (predict standard sans retrain) ──
     if batch_id and models:
         try:
@@ -233,8 +241,8 @@ def persist_oos(
             )
         except Exception as _champ_exc:  # noqa: BLE001 — non bloquant
             LOGGER.warning("oracle champions persist FAILED: %s", _champ_exc)
-    LOGGER.info("persisted OOS predictions → %s (batch=%s)", path, batch_id or "?")
-    return path
+    LOGGER.info("persist_oos done batch=%s (table oracle_extreme_predictions)", batch_id or "?")
+    return str(batch_id) if batch_id else None
 
 
 def format_report(result: dict[str, Any]) -> str:
@@ -330,13 +338,13 @@ def main() -> None:
     )
     if result.get("status") == "completed":
         run_id = f"oracle-wf-{datetime.now():%Y%m%d%H%M%S}"
-        path = persist_oos(
+        _stored = persist_oos(
             result["oos"], run_id, batch_id=batch_id,
             models=result.get("models"),
             feature_columns=result.get("feature_columns"),
         )
         result["run_id"] = run_id
-        result["oos_path"] = str(path)
+        result["oos_path"] = f"oracle_extreme_predictions:{_stored}"
     print(format_report(result))
 
 

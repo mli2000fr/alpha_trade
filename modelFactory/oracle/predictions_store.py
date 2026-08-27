@@ -36,9 +36,8 @@ _DDL = (
     "  oracle_extreme10 TINYINT      NULL,"
     "  fold_start       DATE         NULL,"
     "  batch_id         VARCHAR(255) NOT NULL,"
-    "  run_id           VARCHAR(255) NOT NULL,"
     "  created_at       TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,"
-    "  PRIMARY KEY (prediction_date, symbol, batch_id, run_id),"
+    "  PRIMARY KEY (prediction_date, symbol, batch_id),"
     "  KEY idx_oracle_extreme_batch_date (batch_id, prediction_date),"
     "  KEY idx_oracle_extreme_batch_symbol (batch_id, symbol)"
     ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
@@ -47,9 +46,9 @@ _DDL = (
 _INSERT = text(
     "INSERT INTO alpha_trade.oracle_extreme_predictions "
     "(prediction_date, symbol, proba_extreme, future_return, oracle_extreme10, "
-    " fold_start, batch_id, run_id) "
+    " fold_start, batch_id) "
     "VALUES (:prediction_date, :symbol, :proba_extreme, :future_return, "
-    " :oracle_extreme10, :fold_start, :batch_id, :run_id) "
+    " :oracle_extreme10, :fold_start, :batch_id) "
     "ON DUPLICATE KEY UPDATE "
     "proba_extreme=VALUES(proba_extreme), future_return=VALUES(future_return), "
     "oracle_extreme10=VALUES(oracle_extreme10), fold_start=VALUES(fold_start)"
@@ -65,10 +64,13 @@ def ensure_oracle_predictions_table(engine: Any) -> None:
 def write_oracle_predictions(
     engine: Any,
     df: pd.DataFrame,
-    run_id: str,
     batch_id: str,
 ) -> int:
-    """Upsert des prédictions OOS dans la table (idempotent par (date, symbol, batch, run)).
+    """Upsert des prédictions OOS dans la table (idempotent par (date, symbol, batch)).
+
+    PK = ``(prediction_date, symbol, batch_id)`` : toute ré-écriture pour le même
+    couple écrase la ligne existante (ON DUPLICATE KEY UPDATE). Pas de ``run_id`` :
+    on ne cumule jamais de doublons entre runs.
 
     ``df`` attendu avec les colonnes du parquet OOS S4 :
     ``date, symbol, proba_extreme, future_return, oracle_extreme10, fold_start``.
@@ -77,8 +79,6 @@ def write_oracle_predictions(
         return 0
     if not (batch_id or "").strip():
         raise ValueError("write_oracle_predictions: batch_id obligatoire.")
-    if not (run_id or "").strip():
-        raise ValueError("write_oracle_predictions: run_id obligatoire.")
 
     ensure_oracle_predictions_table(engine)
 
@@ -97,7 +97,6 @@ def write_oracle_predictions(
             "oracle_extreme10": int(row[_label_col]) if (_label_col and pd.notna(row[_label_col])) else None,
             "fold_start": str(row[_fold_col])[:10] if (_fold_col and pd.notna(row[_fold_col])) else None,
             "batch_id": str(batch_id),
-            "run_id": str(run_id),
         })
 
     inserted = 0
@@ -106,7 +105,7 @@ def write_oracle_predictions(
             conn.execute(_INSERT, p)
             inserted += 1
     LOGGER.info(
-        "oracle_extreme_predictions upserted=%d batch=%s run=%s", inserted, batch_id, run_id,
+        "oracle_extreme_predictions upserted=%d batch=%s", inserted, batch_id,
     )
     return inserted
 
@@ -122,7 +121,7 @@ def load_oracle_predictions(
     """Lit les prédictions OOS Oracle Extreme de la table, filtrées STRICTEMENT par batch.
 
     Retourne un DataFrame avec ``date, symbol, proba_extreme, future_return,
-    oracle_extreme10, fold_start, run_id`` — compatible avec
+    oracle_extreme10, fold_start`` — compatible avec
     ``build_oracle_rank_map`` et le chargement parquet historique de ``_impl.py``.
 
     Paramètres
@@ -139,7 +138,7 @@ def load_oracle_predictions(
 
     sql = (
         "SELECT prediction_date AS `date`, symbol, proba_extreme, future_return, "
-        "       oracle_extreme10, fold_start, run_id "
+        "       oracle_extreme10, fold_start "
         f"FROM {ORACLE_PREDICTIONS_TABLE} WHERE batch_id = :batch_id"
     )
     params: dict[str, Any] = {"batch_id": batch_id}

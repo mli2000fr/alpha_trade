@@ -545,17 +545,17 @@ def train_oracle_extreme(
         from datetime import datetime as _dt
         run_id = f"oracle-wf-{_dt.now():%Y%m%d%H%M%S}"
         from modelFactory.oracle.walk_forward import persist_oos
-        path = persist_oos(
+        _stored = persist_oos(
             result["oos"], run_id, batch_id=_batch_id,
             models=result.get("models"),
             feature_columns=result.get("feature_columns"),
         )
-        LOGGER.info("oracle_extreme DONE run_id=%s oos_path=%s", run_id, path)
+        LOGGER.info("oracle_extreme DONE run_id=%s stored_batch=%s", run_id, _stored)
         return {
             "status": "completed",
             "batch_id": _batch_id,
             "run_id": run_id,
-            "oos_path": str(path),
+            "oos_path": f"oracle_extreme_predictions:{_stored}",
             "ablation": "O0",
             "n_folds": result.get("n_folds"),
             "fold_stability_pct": result.get("fold_stability_pct"),
