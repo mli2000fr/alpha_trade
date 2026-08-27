@@ -6,7 +6,9 @@ gelés, diagnostics) et appelée par ``modelFactory.predictor.cascade_select``.
 
 Règle (validée research 2026-08-27, in-sample + OOS 2025/2026 H1) :
     global_rank_{H} >= rank_threshold  sur `persist_days` séances consécutives
-    ET close[J] / close[J - persist_days] - 1 <= -dip_pct
+    ET condition prix close[J]/close[J-N]-1 selon le SIGNE de `dip_pct` :
+        dip_pct >= 0  →  ret <= -dip_pct  (baisse >= dip_pct, DIP classique)
+        dip_pct <  0  →  ret >= -dip_pct  (hausse >= |dip_pct|, anti-DIP/breakout)
     → entrée LONG.
 
 Entrée — deux modes via ``reclaim_ratio`` (clé ``reclaim_ratio``) :
@@ -51,7 +53,7 @@ _DEFAULTS: dict[str, Any] = {
     "rank_horizon": 20,      # 20 → colonne global_rank_20 ; None/vide → best_horizon
     "rank_threshold": 0.90,  # = TOP 10%
     "persist_days": 4,       # N
-    "dip_pct": 0.02,         # X
+    "dip_pct": 0.02,         # X — signe : >=0 = baisse >= X (DIP) ; <0 = hausse >= |X| (anti-DIP)
     # Reclaim (confirmation de rebond avant entrée) — OPTION research, défaut OFF.
     #   reclaim_ratio = None/0  → entrée directe (D0, comportement gelé).
     #   reclaim_ratio = r (>0)  → attendre close[T] >= r * prix pré-DIP (close[J-N])
@@ -100,6 +102,16 @@ def _rank_column(config: dict[str, Any], best_h: int | None = None) -> str:
         h = 20
     col = f"global_rank_{int(h)}"
     return col if col in ("global_rank_3", "global_rank_5", "global_rank_10", "global_rank_15", "global_rank_20") else "global_rank_20"
+
+
+def _dip_pass(ret: float, dip_pct: float) -> bool:
+    """Condition prix du filtre selon le signe de ``dip_pct``.
+
+    - ``dip_pct >= 0`` : ret <= -dip_pct  (baisse >= dip_pct, DIP classique).
+    - ``dip_pct < 0``  : ret >= -dip_pct  (hausse >= |dip_pct|, anti-DIP/breakout).
+    """
+    threshold = -float(dip_pct)
+    return ret <= threshold if float(dip_pct) >= 0 else ret >= threshold
 
 
 def load_rank_history_df(
@@ -205,9 +217,9 @@ def evaluate_dip_filter(
     Returns:
         True si le symbole est éligible à l'entrée à as_of_date.
 
-        Sans reclaim (``reclaim_ratio`` vide/None/0) : DIP détecté à J =
-        as_of_date (persistance N séances + baisse >= dip_pct) → entrée
-        directe J+1 (comportement gelé, inchangé).
+        Sans reclaim (``reclaim_ratio`` vide/None/0) : condition prix à J =
+        as_of_date (persistance N séances + baisse >= dip_pct si dip_pct ≥ 0,
+        ou hausse >= |dip_pct| si dip_pct < 0) → entrée directe J+1.
 
         Avec reclaim (``reclaim_ratio`` > 0) : entrée au premier T où
         ``close[T] >= reclaim_ratio * close[J-N]`` pour un DIP antérieur J
@@ -255,7 +267,7 @@ def evaluate_dip_filter(
         j_n = float(closes.iloc[-n - 1])
         if j <= 0 or j_n <= 0:
             return False
-        return bool(j / j_n - 1.0 <= -dip_pct)
+        return _dip_pass(j / j_n - 1.0, dip_pct)
 
     # ── Reclaim activé : entrée au 1er T où close[T] >= ratio * close[J-N] ──
     ratio = float(reclaim_ratio)
@@ -283,12 +295,12 @@ def evaluate_dip_filter(
         j_ranks = [float(rank_by_date[common_dates[k]]) for k in range(i - n + 1, i + 1)]
         if not all(r >= threshold for r in j_ranks):
             continue
-        # DIP à J : close[J] / close[J-N] - 1 <= -dip_pct.
+        # DIP à J : condition prix selon le signe de dip_pct.
         j_close = float(close_by_date[jd])
         j_n_close = float(close_by_date[common_dates[i - n]])
         if j_close <= 0 or j_n_close <= 0:
             continue
-        if j_close / j_n_close - 1.0 > -dip_pct:
+        if not _dip_pass(j_close / j_n_close - 1.0, dip_pct):
             continue
         # Reclaim à T : prix >= ratio * prix pré-DIP (close[J-N]).
         if close_t >= ratio * j_n_close:

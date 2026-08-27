@@ -231,8 +231,52 @@ class TestEvaluateDipFilterReclaim:
         assert evaluate_dip_filter("AAA", "2024-06-14", rh, ph, cfg6) is True
 
 
-# ═══════════════════════════════════════════════════════════════════
-# filter_day_candidates — filtre réel (DB), skip si données absentes
+# ═══════════════════════════════════════════════════════════════════# evaluate_dip_filter — dip_pct SIGNÉ (anti-DIP si négatif)
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestEvaluateDipFilterSigned:
+    def test_dip_pct_negative_requires_rise(self):
+        dates = ["2024-06-11", "2024-06-12", "2024-06-13", "2024-06-14"]
+        rh = _mk_rank(dates, [0.95, 0.92, 0.91, 0.93])
+        # dip_pct=-0.02 → exige une HAUSSE >= 2% (anti-DIP / breakout)
+        cfg = _mk_config(dip_pct=-0.02)
+        # +5% sur 4 séances → passe
+        ph_up = _mk_price(
+            ["2024-06-10", "2024-06-11", "2024-06-12", "2024-06-13", "2024-06-14"],
+            [100.0, 101.0, 102.0, 103.0, 105.0],
+        )
+        assert evaluate_dip_filter("AAA", "2024-06-14", rh, ph_up, cfg) is True
+        # +1% (< 2%) → ne passe pas
+        ph_low = _mk_price(
+            ["2024-06-10", "2024-06-11", "2024-06-12", "2024-06-13", "2024-06-14"],
+            [100.0, 100.5, 100.8, 101.0, 101.0],
+        )
+        assert evaluate_dip_filter("AAA", "2024-06-14", rh, ph_low, cfg) is False
+        # -2% (baisse) → ne passe pas (anti-DIP)
+        ph_dn = _mk_price(
+            ["2024-06-10", "2024-06-11", "2024-06-12", "2024-06-13", "2024-06-14"],
+            [100.0, 99.0, 98.5, 98.0, 98.0],
+        )
+        assert evaluate_dip_filter("AAA", "2024-06-14", rh, ph_dn, cfg) is False
+
+    def test_dip_pct_positive_still_drop(self):
+        # Régression : dip_pct > 0 conserve le DIP classique (baisse >= X).
+        dates = ["2024-06-11", "2024-06-12", "2024-06-13", "2024-06-14"]
+        rh = _mk_rank(dates, [0.95, 0.92, 0.91, 0.93])
+        cfg = _mk_config(dip_pct=0.02)
+        ph_dn = _mk_price(
+            ["2024-06-10", "2024-06-11", "2024-06-12", "2024-06-13", "2024-06-14"],
+            [100.0, 99.0, 98.0, 97.0, 96.0],  # -4% → passe
+        )
+        assert evaluate_dip_filter("AAA", "2024-06-14", rh, ph_dn, cfg) is True
+        ph_up = _mk_price(
+            ["2024-06-10", "2024-06-11", "2024-06-12", "2024-06-13", "2024-06-14"],
+            [100.0, 101.0, 102.0, 103.0, 104.0],  # +4% → ne passe PAS en DIP
+        )
+        assert evaluate_dip_filter("AAA", "2024-06-14", rh, ph_up, cfg) is False
+
+
+# ═══════════════════════════════════════════════════════════════════════# filter_day_candidates — filtre réel (DB), skip si données absentes
 # ═══════════════════════════════════════════════════════════════════
 
 class TestFilterDayCandidates:

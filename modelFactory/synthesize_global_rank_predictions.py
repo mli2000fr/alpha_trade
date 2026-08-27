@@ -213,7 +213,13 @@ def _build_dip_long_set(
         lambda x: x / x.shift(n) - 1.0)
 
     m = ranks.merge(prices[["symbol", "date", "_ret_n"]], on=["symbol", "date"], how="left")
-    passed = m[(m["_persist"] == 1) & (m["_ret_n"].notna()) & (m["_ret_n"] <= -dip_pct)]
+    # Condition prix selon le SIGNE de dip_pct — même convention que
+    # selector/dip_filter._dip_pass : >0 = baisse >= X (DIP) ; <0 = hausse >= |X|.
+    _thr = -float(dip_pct)
+    if float(dip_pct) >= 0:
+        passed = m[(m["_persist"] == 1) & (m["_ret_n"].notna()) & (m["_ret_n"] <= _thr)]
+    else:
+        passed = m[(m["_persist"] == 1) & (m["_ret_n"].notna()) & (m["_ret_n"] >= _thr)]
     return {(str(r["symbol"]), str(pd.Timestamp(r["date"]).date())) for _, r in passed.iterrows()}
 
 

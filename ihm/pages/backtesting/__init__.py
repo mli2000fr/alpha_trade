@@ -714,7 +714,7 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
             {"Paramètre": "dip_rank_horizon", "Explication": "Horizon de rang H → colonne global_rank_{H} (--dip-rank-horizon).", "Défaut": "config.yaml backtest_rank_horizon (20)"},
             {"Paramètre": "dip_rank_threshold", "Explication": "Seuil de rang minimal (0.90 = TOP 10%) (--dip-rank-threshold).", "Défaut": "config.yaml backtest_rank_threshold (0.90)"},
             {"Paramètre": "dip_persist_days", "Explication": "Persistance N : séances consécutives au-dessus du seuil (--dip-persist-days).", "Défaut": "config.yaml backtest_persist_days (4)"},
-            {"Paramètre": "dip_pct", "Explication": "Baisse minimale X sur N séances (0.02 = 2%) (--dip-pct).", "Défaut": "config.yaml backtest_dip_pct (0.02)"},
+            {"Paramètre": "dip_pct", "Explication": "Seuil prix signé sur N séances : >0 = baisse ≥ X (DIP) ; <0 = hausse ≥ |X| (anti-DIP/breakout) (--dip-pct).", "Défaut": "config.yaml backtest_dip_pct (0.02)"},
             {"Paramètre": "dip_reclaim_ratio", "Explication": "Confirmation de rebond avant entrée (vide/0 = R off ; 1.0 = retour prix pré-DIP, 0.99 = 99% de ce prix) (--dip-reclaim-ratio).", "Défaut": "config.yaml backtest_reclaim_ratio (null = R off)"},
             {"Paramètre": "dip_reclaim_max_wait", "Explication": "Fenêtre (séances) pour la confirmation de rebond (--dip-reclaim-max-wait).", "Défaut": "config.yaml backtest_reclaim_max_wait (10)"},
         ]
@@ -2332,9 +2332,10 @@ def _build_run_options() -> BacktestRunOptions:
     with st.expander("🔻 Filtre Persistent Rank DIP (paramétrage backtest)", expanded=False):
         st.caption(
             "Candidats LONG : `global_rank_{H} ≥ seuil` sur `N` séances consécutives "
-            "ET baisse `≥ X%` sur `N` séances. `Reclaim R` (vide = off) : entrée au "
-            "1er rebond `close ≥ R × prix pré-DIP`. Valeurs par défaut = `config.yaml → "
-            "persistent_dip_filter_long.backtest_*` (gelées research 2026-08-27)."
+            "ET condition prix sur `N` séances (`X` signé, voir info). `Reclaim R` "
+            "(vide = off) : entrée au 1er rebond `close ≥ R × prix pré-DIP`. Valeurs "
+            "par défaut = `config.yaml → persistent_dip_filter_long.backtest_*` "
+            "(gelées research 2026-08-27)."
         )
         _dip_col1, _dip_col2 = st.columns(2)
         with _dip_col1:
@@ -2394,8 +2395,8 @@ def _build_run_options() -> BacktestRunOptions:
                 help="0.90 = TOP 10% (config.yaml backtest_rank_threshold).",
             )
             dip_pct = st.number_input(
-                "Baisse minimale X (fraction)",
-                min_value=0.0,
+                "Seuil prix X (fraction, signé)",
+                min_value=-0.30,
                 max_value=0.30,
                 value=float(
                     st.session_state.get(
@@ -2406,8 +2407,17 @@ def _build_run_options() -> BacktestRunOptions:
                 step=0.01,
                 format="%.2f",
                 key="bt_run_dip_pct",
-                help="Baisse close[J] vs close[J-N] requise (config.yaml backtest_dip_pct).",
+                help="Signe du seuil close[J] vs close[J-N] (config.yaml backtest_dip_pct) : "
+                     "> 0 = exige une BAISSE ≥ X (DIP classique) ; < 0 = exige une HAUSSE ≥ |X| "
+                     "(anti-DIP / breakout). Ex : 0.02 = baisse ≥ 2%% ; -0.02 = hausse ≥ 2%%. 0 = inopérant.",
             )
+        st.caption(
+            "ℹ️ **Signe de `X`** : `+X` → le ticker doit avoir **baissé** d'au moins `X` sur `N` "
+            "séances (DIP). `-X` → il doit avoir **monté** d'au moins `|X|` (anti-DIP / "
+            "breakout : achat de force, rang top persisté + momentum haussier). `0` → "
+            "seule la persistance du rang compte. Le reclaim `R` s'applique dans les deux "
+            "cas (entrée à la 1re séance où la condition prix est remplie après J)."
+        )
         _dip_col3, _dip_col4 = st.columns(2)
         with _dip_col3:
             dip_reclaim_ratio = st.number_input(

@@ -1546,7 +1546,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "--dip-pct",
         type=float,
         default=None,
-        help="DIP : baisse X depuis J-N (0.02 = 2%%). None = config.yaml backtest_dip_pct.",
+        help="DIP : seuil prix signé sur N séances. >0 = baisse >= X (ex 0.02 = baisse >= 2%%) ; "
+             "<0 = hausse >= |X| (anti-DIP/breakout). None = config.yaml backtest_dip_pct.",
     )
     run_p.add_argument(
         "--dip-reclaim-ratio",
