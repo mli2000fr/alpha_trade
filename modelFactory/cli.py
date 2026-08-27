@@ -82,6 +82,24 @@ def _resolve_synth_best_h(opts, batch_id: str | None) -> int:
     return 10
 
 
+def _load_live_dip_config() -> dict | None:
+    """Config DIP LIVE (clés prod_*) depuis config.yaml → persistent_dip_filter_long.
+
+    Le filtre DIP est appliqué à la PERSISTANCE des prédictions (synthèse Global
+    Rank) pour que ``run_execution`` (live) ne voie que les longs passant
+    persistance + dip. None si désactivé ou config illisible.
+    """
+    try:
+        from selector.dip_filter import load_dip_filter_config
+        cfg = load_dip_filter_config("prod")
+        if bool(cfg.get("enabled", False)):
+            return cfg
+        return None
+    except Exception:
+        LOGGER.exception("_load_live_dip_config: config indisponible — DIP live désactivé")
+        return None
+
+
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 ML_MODES = ("rebuild-all", "rebuild-missing", "refresh-stale")
@@ -1169,6 +1187,7 @@ def main(args: list[str] | None = None) -> None:
                 _synth_out = synthesize(
                     _batch_id,
                     best_h=_resolve_synth_best_h(opts, _batch_id),
+                    dip_config=_load_live_dip_config(),
                 )
                 LOGGER.info("predict per_sector synthèse batch=%s: %s", _batch_id, _synth_out)
                 preds = _load_synth_frame_for_range(engine, _batch_id, prediction_dates)
@@ -1193,6 +1212,7 @@ def main(args: list[str] | None = None) -> None:
                             _synth_fb = synthesize(
                                 _batch_id,
                                 best_h=_resolve_synth_best_h(opts, _batch_id),
+                                dip_config=_load_live_dip_config(),
                             )
                             _ranks_now = _load_synth_frame_for_range(engine, _batch_id, prediction_dates)
                             if not _ranks_now.empty:
@@ -1250,6 +1270,7 @@ def main(args: list[str] | None = None) -> None:
                 _synth_out = synthesize(
                     _batch_id,
                     best_h=_resolve_synth_best_h(opts, _batch_id),
+                    dip_config=_load_live_dip_config(),
                 )
                 LOGGER.info("predict per_sector live synthèse batch=%s: %s", _batch_id, _synth_out)
                 persisted_incrementally = True

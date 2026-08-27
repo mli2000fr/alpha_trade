@@ -25,7 +25,7 @@ alpaca:
       api_key: "${ALPACA_API_KEY}"
       secret_key: "${ALPACA_SECRET_KEY}"
       mode: paper
-      long_only: false
+      long_only: true
     - id: test1
       label: "Compte test 1 (paper)"
       api_key: "${ALPACA_KEY_CPT_1}"
@@ -37,7 +37,7 @@ alpaca:
       api_key: "${ALPACA_KEY_CPT_2}"
       secret_key: "${ALPACA_SECRET_CPT_2}"
       mode: paper
-      long_only: false
+      long_only: true
     # - id: live1
     #   label: "Compte live"
     #   api_key: "${ALPACA_LIVE1_API_KEY}"
@@ -577,6 +577,33 @@ cascade:
 
 
 # ---------------------------------------------------------------------------
+# Persistent Rank DIP filter (Global Rank LONG) — composant research validé
+# 2026-08-27 (in-sample 2022-24 + OOS 2025 / 2026 H1, jamais négatif).
+# Consommé par selector/dip_filter.py, appelé par cascade_select().
+# Périmètre STRICT : branche Global Rank (global_rank_{H}) uniquement — PAS
+# Oracle Extreme (tests : persistance + prix n'apportait rien sur Extreme).
+# Règle : global_rank_{H} >= rank_threshold sur `persist_days` séances
+#         consécutives ET close[J]/close[J-N] - 1 <= -dip_pct → LONG direct.
+# N/X gelés (aucun reclaim : R50/R100 NO-GO). Long only (miroir SHORT futur
+# via une clé *_short dédiée, hors périmètre).
+# Clés PROD et BACKTEST DISTINCTES (pattern prod_*/backtest_* de risk_management).
+# ---------------------------------------------------------------------------
+persistent_dip_filter_long:
+  # ---- PROD (live) ----
+  prod_enabled: true
+  prod_rank_horizon: 20        # 20 → colonne global_rank_20 ; vide = best_horizon du batch
+  prod_rank_threshold: 0.90    # = TOP 10%
+  prod_persist_days: 4         # N
+  prod_dip_pct: 0.02           # X (2%)
+  # ---- BACKTEST ----
+  backtest_enabled: true
+  backtest_rank_horizon: 20
+  backtest_rank_threshold: 0.90
+  backtest_persist_days: 4
+  backtest_dip_pct: 0.02
+
+
+# ---------------------------------------------------------------------------
 # Extreme Gate (composant officiel E6-E13) — Oracle O0 → univers LONG.
 # Consommé par modelFactory/predictor.py (cascade_select, rank_mode="extreme_gate")
 # et par modelFactory/oracle/extreme_gate.py (compute_extreme_gate).
@@ -612,7 +639,7 @@ extreme_gate:
   #                              "D1"). Interpolation linéaire : 1.0 au seuil
   #                              min_directional → floor à signal=reject_below.
   #   penalty_reject_below     : long_prob < seuil → rejet (0 = pas de rejet)
-  penalty_enabled: true
+  penalty_enabled: false
   penalty_directional_signal: long_prob
   penalty_min_directional: 0.60
   penalty_score_floor: 0.2

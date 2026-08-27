@@ -2744,14 +2744,18 @@ def cascade_select(
     extreme_gate_pct: float | None = None,
     extreme_gate_per_symbol: str = "filter",
     extreme_gate_shorts: bool = False,
+    dip_filter_config: dict[str, Any] | None = None,
 ) -> list[tuple[str, str, float]]:
     """Filtre cascade : Global Rank → Per-Symbol → trades ordonnancés.
 
     Pour chaque symbole ayant un rang global ET une prédiction per-symbol :
     1. Filtre top/bottom N% selon ``global_rank_20`` (H20, meilleur horizon)
-    2. Vérifie que la proba per-symbol > ``min_prob``
-    3. Score multiplicatif : ``rank × prob``
-    4. Trie par score décroissant
+    2. [DIP] Si ``dip_filter_config`` fourni (et enabled), ne garde que les
+       symboles passant le filtre Persistent Rank DIP (Global Rank LONG,
+       ``selector/dip_filter.py``) — PAS Oracle Extreme.
+    3. Vérifie que la proba per-symbol > ``min_prob``
+    4. Score multiplicatif : ``rank × prob``
+    5. Trie par score décroissant
 
     Args:
         trade_date: Date de trading (YYYY-MM-DD).
@@ -2839,6 +2843,45 @@ def cascade_select(
         if _rank_col is None:
             LOGGER.warning("cascade_select: no rank column found in %s", list(ranks_df.columns))
             return []
+
+        # ── Persistent Rank DIP filter (Global Rank LONG uniquement) ──
+        # Applicable à la branche Global Rank (B25), PAS à Oracle Extreme.
+        # Ne s'applique que si config fournie ET enabled (désactivé = inchangé).
+        if (
+            dip_filter_config
+            and bool(dip_filter_config.get("enabled", False))
+            and rank_mode not in ("oracle", "oracle_filter", "oracle_rerank", "oracle_pool")
+        ):
+            try:
+                from selector.dip_filter import filter_day_candidates
+                _dip_before = int(ranks_df.shape[0]) if ranks_df is not None else 0
+                ranks_df = filter_day_candidates(
+                    ranks_df, engine, batch_id, trade_date, dip_filter_config,
+                    best_h=_best_h,
+                )
+                _dip_after = int(ranks_df.shape[0]) if ranks_df is not None else 0
+                # Log de passage sur la règle DIP (vérifiable dans les logs backtest).
+                LOGGER.info(
+                    "DIP_FILTER backtest date=%s batch=%s horizon=%s N=%s X=%.4f "
+                    "threshold=%.4f before=%d after=%d rejected=%d",
+                    trade_date, batch_id,
+                    dip_filter_config.get("rank_horizon"),
+                    dip_filter_config.get("persist_days"),
+                    float(dip_filter_config.get("dip_pct", 0.02)),
+                    float(dip_filter_config.get("rank_threshold", 0.90)),
+                    _dip_before, _dip_after, _dip_before - _dip_after,
+                )
+                if ranks_df.empty:
+                    LOGGER.info(
+                        "cascade_select: DIP filter vide pour %s (%s) — aucun candidat",
+                        trade_date, batch_id,
+                    )
+                    return []
+            except Exception:
+                LOGGER.exception(
+                    "cascade_select: DIP filter échoué pour %s — on continue sans filtre",
+                    trade_date,
+                )
 
     # ── Ablation Oracle (S6/S6.1) : politiques d'utilisation du second signal ──
     #   oracle        = P_extreme REMPLACE le rang global (test S6 initial)
@@ -3056,6 +3099,7 @@ def apply_cascade_to_predictions(
     extreme_gate_pct: float | None = None,
     extreme_gate_per_symbol: str = "filter",
     extreme_gate_shorts: bool = False,
+    dip_filter_config: dict[str, Any] | None = None,
 ) -> pd.DataFrame:
     """Filtre les prédictions per-symbol via la cascade Global Rank.
 
@@ -3076,6 +3120,8 @@ def apply_cascade_to_predictions(
         top_pct: Seuil top/bottom (défaut: config.yaml).
         min_prob: Proba minimale (défaut: config.yaml).
         engine: SQLAlchemy engine.
+        dip_filter_config: config DIP (selector/dip_filter.load_dip_filter_config)
+            — appliqué à la branche Global Rank uniquement. None = désactivé.
 
     Returns:
         DataFrame filtré (mêmes colonnes, lignes non-cascade → flat).
@@ -3174,6 +3220,7 @@ def apply_cascade_to_predictions(
             extreme_gate_pct=extreme_gate_pct,
             extreme_gate_per_symbol=_eg_ps_mode,
             extreme_gate_shorts=_eg_shorts,
+            dip_filter_config=dip_filter_config,
         )
 
         # Symbols retenus par la cascade

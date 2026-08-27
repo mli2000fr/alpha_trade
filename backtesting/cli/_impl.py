@@ -3274,6 +3274,30 @@ def _run_backtest(args: argparse.Namespace) -> None:
                     d: dict(zip(g["symbol"], g["proba_extreme"]))
                     for d, g in _oos_df.groupby("_d")
                 }
+
+            # ── Persistent Rank DIP filter — config BACKTEST ──
+            # Le CLI `backtesting run` est le chemin BACKTEST : il lit les clés
+            # `backtest_*` de config.yaml → persistent_dip_filter_long. Le live
+            # (synthèse des prédictions) lit les clés `prod_*` séparément.
+            _dip_filter_cfg = None
+            try:
+                from selector.dip_filter import load_dip_filter_config
+                _dip_cfg_full = load_dip_filter_config("backtest")
+                if bool(_dip_cfg_full.get("enabled", False)):
+                    _dip_filter_cfg = _dip_cfg_full
+                    _safe_print(
+                        "   🔻 DIP filter (backtest): N={} X={:.0%} rank>={:.2f} H={} — {} candidats pré-cascade".format(
+                            int(_dip_cfg_full.get("persist_days", 4)),
+                            float(_dip_cfg_full.get("dip_pct", 0.02)),
+                            float(_dip_cfg_full.get("rank_threshold", 0.90)),
+                            _dip_cfg_full.get("rank_horizon", "best"),
+                            int(preds_df.shape[0]) if preds_df is not None else 0,
+                        )
+                    )
+            except Exception:
+                LOGGER.exception("DIP filter config — désactivé")
+                _dip_filter_cfg = None
+
             preds_df = apply_cascade_to_predictions(
                 preds_df, _cascade_batch_id, engine=engine,
                 best_h=_best_h_flag,
@@ -3283,6 +3307,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 short_momentum_filter=(None if _sm_filter_flag == "none" else _sm_filter_flag),
                 short_momentum_max_pct=_sm_max_flag,
                 oracle_rank_map=_oracle_rank_map,
+                dip_filter_config=_dip_filter_cfg,
                 oracle_filter_pct=getattr(args, "cascade_oracle_filter_pct", None),
                 oracle_pool_pct=getattr(args, "cascade_oracle_pool_pct", None),
                 extreme_gate_pct=getattr(args, "extreme_gate_pct", None),
