@@ -109,3 +109,67 @@ de **mauvaise qualité** : BAD5=0.531, GOOD5=0.469, **mean_fwd=−0.021** (néga
 sur ces mêmes données 2022-24 (le résultat est partiellement en-échantillon par
 construction). Un backtest sur données hors-échantillon est requis avant toute
 décision PROD.
+
+---
+
+# Phase 3 — Audit de parité, reclaim, validation OOS et implémentation (2026-08-27)
+
+## 3.1 Audit de parité PROD (P0_PROD vs P2_PROD)
+
+Vérification du module risque : le comportement PROD bloque les entrées en
+**close_only ET cash_only** (`service/market/regime_manager.py` →
+`allow_new_entries=False`). Avec veto appliqué aux DEUX variantes (parité) :
+
+| Variante | Total ret | CAGR | Sharpe | MaxDD | PF | n trades |
+|---|---|---|---|---|---|---|
+| **P0_PROD** (TOP10 baseline) | +16.2% | 5.0% | 0.40 | −19.2% | 1.11 | 1 342 |
+| **P2_PROD** (DIP N4/X2) | **+51.2%** | **14.5%** | **1.05** | **−11.2%** | **1.33** | 823 |
+
+Attribution de capacité : P0 saturé par `no_slot` (93 945) ; P2 limité par
+`already_open`. CSV `artifacts/persistent_top10_dip_parity.csv`.
+
+## 3.2 Reclaim (R50/R100) — NO-GO
+
+Attendre la confirmation de rebond (close ≥ dip + 50 %/100 % du dip, max_wait 10j)
+**détruit la valeur** : D0 +50.1 % > R50 +30.2 % > R100 +16.2 %. Le reclaim
+consomme 6-9 % du rebond et réduit le remaining (6.2 → 5.2 → 4.2 %) et le nombre
+de trades. **Garder D0 (entrée directe).** CSV `artifacts/persistent_top10_dip_reclaim_backtest.csv`.
+
+## 3.3 Validation OOS (2025 + 2026 H1) — DIP tient
+
+| Période | P0_PROD (baseline) | **P2_PROD / D0 (DIP)** | Régime |
+|---|---|---|---|
+| 2022-24 (découverte) | +16.2% / 0.40 | **+51.2% / 1.05** | veto actif |
+| 2025 (OOS) | −11.5% / −0.90 | **+5.5% / 0.44** | veto actif |
+| **2026 H1 (OOS)** | −1.9% / −0.13 | **+4.3% / 0.54** | normal (pas de veto) |
+
+→ **Jamais négatif, bat la baseline systématiquement, PF > 1 partout.** Edge
+absolu modeste en OOS (CAGR 5-8 %) vs découverte (14.5 %) — le DIP protège et
+surperforme mais ne fait pas de miracles en régime haussier sans dips profonds.
+CSV : `artifacts/persistent_top10_dip_parity_2025.csv`, `..._2026H1.csv`.
+
+## 3.4 Implémentation PROD + backtest
+
+Périmètre STRICT : branche **Global Rank** (`global_rank_{H}`, B25), **PAS**
+Oracle Extreme. N4/X2/0.90/H20 gelés, entrée directe (pas de reclaim).
+
+- **Module** `selector/dip_filter.py` : `load_dip_filter_config(ctx)` (prod/backtest →
+  clés `prod_*`/`backtest_*`), `_rank_column` (rank_horizon → `global_rank_{H}`),
+  `evaluate_dip_filter` (logique pure PIT), `filter_day_candidates`.
+- **Config** `config.yaml → persistent_dip_filter_long` : clés PROD et BACKTEST
+  **distinctes** (`prod_enabled` / `backtest_enabled`), activées.
+- **Backtest** : `cascade_select()` / `apply_cascade_to_predictions()` appliquent
+  le DIP sur la branche Global Rank ; le CLI `backtesting run` charge `backtest_*`.
+- **Live** : le vrai live ne passe PAS par `cascade_select` → le DIP est appliqué
+  au point de **persistance** (`synthesize_global_rank_predictions.py::synthesize`,
+  branche long → `flat` si non-DIP), config `prod_*` via `cli.py::_load_live_dip_config()`.
+- **Logs de vérification** (préfixe `DIP_FILTER`, grepable) :
+  - backtest par date : `DIP_FILTER rule date=... before=... after=... rejected=...`
+    (+ `DIP_FILTER backtest ...` dans cascade_select)
+  - prod agrégé : `DIP_FILTER prod long_brut=... long_retenu=... long_filtre=...`
+
+### Tests
+- `tests/test_dip_filter.py` : 14 tests (config prod/backtest, mapping horizon,
+  logique pure persistance/dip) ✅
+- `tests/test_cascade_ml.py` : 54/54 inchangés (pas de régression) ✅
+- Bout en bout juin 2024 : candidats 948 → 133 (−86 %), sous-ensemble strict ✅
