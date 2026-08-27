@@ -1,4 +1,4 @@
-"""modelFactory/global_direction/persistent_top10_dip.py — persistent_top10_dip_validation.
+"""modelFactory/dip_research/persistent_top10_dip.py — persistent_top10_dip_validation.
 
 Robustesse du signal « GlobalRank TOP10 persistant + baisse récente » (DIP).
 
@@ -21,7 +21,7 @@ Mesures (fenêtre 20 séances après entrée J+1, via bars high/low/close) :
     time-to-recovery, n signals, signals/month — par année, semestre, régime.
 
 Usage :
-    python -m modelFactory.global_direction.persistent_top10_dip --batch-id ...
+    python -m modelFactory.dip_research.persistent_top10_dip --batch-id ...
 """
 from __future__ import annotations
 

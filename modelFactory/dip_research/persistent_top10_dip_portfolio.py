@@ -1,4 +1,4 @@
-"""modelFactory/global_direction/persistent_top10_dip_portfolio.py — Phase 2 portefeuille.
+"""modelFactory/dip_research/persistent_top10_dip_portfolio.py — Phase 2 portefeuille.
 
 Backtest de portefeuille des signaux DIP avec **lifecycle PROD inchangé**
 (sizing / TP / stop / coûts / max_positions / CP / breaker / force-close) :
@@ -22,7 +22,7 @@ NB : P2 ne doit PAS être déclaré « validé OOS » sur 2022-24 (le veto a ét
 découvert sur ces mêmes données).
 
 Usage :
-    python -m modelFactory.global_direction.persistent_top10_dip_portfolio --batch-id ...
+    python -m modelFactory.dip_research.persistent_top10_dip_portfolio --batch-id ...
 """
 from __future__ import annotations
 
@@ -120,10 +120,17 @@ def load_regime_map_db(engine: Any) -> dict[pd.Timestamp, str]:
 
 
 def build_signals(engine: Any, batch_id: str, start_date: str, end_date: str) -> pd.DataFrame:
-    """Signaux par variante : trade_date, symbol, selected, rank + contexte."""
+    """Signaux par variante : trade_date, symbol, selected, rank + contexte.
+
+    NB (2026-08-27) : la requête rank filtre désormais par ``batch_id``.
+    Sans ce filtre, global_rank_history contient ~12 batchs mélangés aux rangs
+    contradictoires (ex: AA 0.864 vs 0.128 selon le batch) -> la persistance
+    N=4 et ret_4 étaient corrompues (+51.2% P2 = artefact multi-batch).
+    """
     rank = pd.read_sql(
-        f"SELECT symbol, date, {RANK_COL} FROM global_rank_history WHERE date BETWEEN %s AND %s",
-        engine, params=(start_date, end_date),
+        f"SELECT symbol, date, {RANK_COL} FROM global_rank_history "
+        "WHERE date BETWEEN %s AND %s AND batch_id = %s",
+        engine, params=(start_date, end_date, batch_id),
     )
     rank["date"] = pd.to_datetime(rank["date"], errors="coerce").dt.normalize()
     rank["symbol"] = rank["symbol"].astype(str).str.upper()

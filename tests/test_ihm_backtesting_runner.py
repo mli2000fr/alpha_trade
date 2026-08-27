@@ -613,4 +613,57 @@ def test_build_backtesting_run_command_rank_weighted_with_sector_multipliers():
     assert command[command.index("--sector-multipliers-json") + 1] == "@config/p21_sector_multipliers.json"
 
 
+def test_build_backtesting_run_command_dip_flags_omitted_by_default():
+    """Aucun flag --dip-* si tous les champs sont None → la CLI lit config.yaml."""
+    from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+    command = build_backtesting_command("run", BacktestRunOptions(start="2025-01-01"))
+
+    assert "--dip-enabled" not in command
+    assert "--no-dip-enabled" not in command
+    assert "--dip-rank-horizon" not in command
+    assert "--dip-rank-threshold" not in command
+    assert "--dip-persist-days" not in command
+    assert "--dip-pct" not in command
+
+
+def test_build_backtesting_run_command_dip_enabled_on():
+    from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+    command = build_backtesting_command("run", BacktestRunOptions(start="2025-01-01", dip_enabled=True))
+
+    assert "--dip-enabled" in command
+    assert "--no-dip-enabled" not in command
+
+
+def test_build_backtesting_run_command_dip_enabled_off():
+    from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+    command = build_backtesting_command("run", BacktestRunOptions(start="2025-01-01", dip_enabled=False))
+
+    assert "--no-dip-enabled" in command
+    assert "--dip-enabled" not in command
+
+
+def test_build_backtesting_run_command_dip_full_override():
+    from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+    command = build_backtesting_command(
+        "run",
+        BacktestRunOptions(
+            start="2025-01-01",
+            dip_enabled=True,
+            dip_rank_horizon=10,
+            dip_rank_threshold=0.85,
+            dip_persist_days=5,
+            dip_pct=0.03,
+        ),
+    )
+
+    assert "--dip-enabled" in command
+    assert command[command.index("--dip-rank-horizon") + 1] == "10"
+    assert command[command.index("--dip-rank-threshold") + 1] == "0.85"
+    assert command[command.index("--dip-persist-days") + 1] == "5"
+    assert command[command.index("--dip-pct") + 1] == "0.03"
+
 

@@ -1511,6 +1511,43 @@ def _build_parser() -> argparse.ArgumentParser:
         help="P5.2 : override cascade.top_pct (ex 0.02/0.05/0.10/0.15) — courbe de capacité "
              "top_pct. Transmis à apply_cascade_to_predictions(top_pct=...). None = config.yaml.",
     )
+    # ── Persistent Rank DIP filter — overrides config.yaml (backtest_*) ──
+    # Chaque flag est optionnel (None = valeur de config.yaml
+    # `persistent_dip_filter_long.backtest_*`). Utile pour paramétrer le filtre
+    # depuis l'IHM sans toucher au fichier de config.
+    run_p.add_argument(
+        "--dip-enabled",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="DIP : active/désactive le filtre Persistent Rank DIP en backtest. "
+             "None = config.yaml persistent_dip_filter_long.backtest_enabled.",
+    )
+    run_p.add_argument(
+        "--dip-rank-horizon",
+        type=int,
+        default=None,
+        help="DIP : horizon de rang (20 → global_rank_20 ; vide → best_horizon). "
+             "None = config.yaml backtest_rank_horizon.",
+    )
+    run_p.add_argument(
+        "--dip-rank-threshold",
+        type=float,
+        default=None,
+        help="DIP : seuil de rang (0.90 = TOP 10%%). None = config.yaml backtest_rank_threshold.",
+    )
+    run_p.add_argument(
+        "--dip-persist-days",
+        type=int,
+        default=None,
+        help="DIP : persistance N (séances consécutives au-dessus du seuil). "
+             "None = config.yaml backtest_persist_days.",
+    )
+    run_p.add_argument(
+        "--dip-pct",
+        type=float,
+        default=None,
+        help="DIP : baisse X depuis J-N (0.02 = 2%%). None = config.yaml backtest_dip_pct.",
+    )
     run_p.add_argument(
         "--cascade-rank-mode",
         type=str,
@@ -2090,6 +2127,12 @@ def _explicit_flags(argv: list[str]) -> set[str]:
         "--short-momentum-filter": "short_momentum_filter",
         "--short-momentum-max-pct": "short_momentum_max_pct",
         "--cascade-top-pct": "cascade_top_pct",
+        "--dip-enabled": "dip_enabled",
+        "--no-dip-enabled": "dip_enabled",
+        "--dip-rank-horizon": "dip_rank_horizon",
+        "--dip-rank-threshold": "dip_rank_threshold",
+        "--dip-persist-days": "dip_persist_days",
+        "--dip-pct": "dip_pct",
         "--no-shorts": "no_shorts",
         "--no-longs": "no_longs",
         "--force-close-losers-on-breaker": "force_close_losers_on_breaker",
@@ -3279,10 +3322,23 @@ def _run_backtest(args: argparse.Namespace) -> None:
             # Le CLI `backtesting run` est le chemin BACKTEST : il lit les clés
             # `backtest_*` de config.yaml → persistent_dip_filter_long. Le live
             # (synthèse des prédictions) lit les clés `prod_*` séparément.
+            # Les flags `--dip-*` (optionnels) écrasent les valeurs config.yaml :
+            # priorité flag explicite > config.yaml > défauts module.
             _dip_filter_cfg = None
             try:
                 from selector.dip_filter import load_dip_filter_config
                 _dip_cfg_full = load_dip_filter_config("backtest")
+                # ── Overrides CLI (--dip-*) ──
+                _dip_cli_map = {
+                    "enabled": getattr(args, "dip_enabled", None),
+                    "rank_horizon": getattr(args, "dip_rank_horizon", None),
+                    "rank_threshold": getattr(args, "dip_rank_threshold", None),
+                    "persist_days": getattr(args, "dip_persist_days", None),
+                    "dip_pct": getattr(args, "dip_pct", None),
+                }
+                for _dk, _dv in _dip_cli_map.items():
+                    if _dv is not None:
+                        _dip_cfg_full[_dk] = _dv
                 if bool(_dip_cfg_full.get("enabled", False)):
                     _dip_filter_cfg = _dip_cfg_full
                     _safe_print(

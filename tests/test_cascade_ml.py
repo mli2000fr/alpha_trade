@@ -483,6 +483,85 @@ class TestApplyCascadeToPredictions:
         # inchangé car colonnes required manquantes
         assert "proba_long" not in result.columns
 
+    # ── FIX 2026-08-27 : cohérence cascade → phase 2 ──
+    # Un candidat retenu par cascade_select (sur le rank, ex: DIP) doit voir son
+    # predicted_side aligné sur le côté décidé, même si la prédiction per-symbol
+    # d'origine était "flat". Avant, la branche ML normale gardait "flat" → phase 2
+    # rejetait le signal (bug générique de contrat cascade→phase2).
+    def test_retained_long_forces_side_long_even_if_pred_flat(self, monkeypatch):
+        """Candidat retenu par le rank (DIP-like) mais prédiction per-symbol 'flat'
+        → predicted_side forcé à 'long' (cohérence cascade→phase2)."""
+        preds = _preds_df_ternary(
+            ["AAPL"], ["flat"], proba_long=[0.84], proba_short=[0.16],
+        )
+        ranks = _make_ranks_df([("AAPL", 0.95, 0.92)])  # top → retenu LONG
+
+        with patch("modelFactory.predictor.load_cascade_config",
+                   return_value={"top_pct": 0.20, "min_prob_classification": 0.55,
+                                 "min_prob_regression": 0.10}):
+            with patch("modelFactory.predictor.load_global_ranks_from_db", return_value=ranks):
+                result = apply_cascade_to_predictions(preds, "batch-x")
+
+        assert len(result) == 1
+        assert result.iloc[0]["predicted_side"] == "long"  # était "flat" avant fix
+        assert result.iloc[0]["proba_long"] == 0.84
+        assert result.iloc[0]["proba_short"] == 0.0
+
+    def test_rejected_stays_flat(self, monkeypatch):
+        """Candidat NON retenu par la cascade → reste 'flat' (inchangé)."""
+        preds = _preds_df_ternary(
+            ["MSFT"], ["flat"], proba_long=[0.70], proba_short=[0.05],
+        )
+        ranks = _make_ranks_df([("MSFT", 0.50, 0.55)])  # milieu → filtré
+
+        with patch("modelFactory.predictor.load_cascade_config",
+                   return_value={"top_pct": 0.20, "min_prob_classification": 0.55,
+                                 "min_prob_regression": 0.10}):
+            with patch("modelFactory.predictor.load_global_ranks_from_db", return_value=ranks):
+                result = apply_cascade_to_predictions(preds, "batch-x")
+
+        assert len(result) == 1
+        assert result.iloc[0]["predicted_side"] == "flat"
+        assert result.iloc[0]["proba_long"] == 0.0
+        assert result.iloc[0]["proba_short"] == 0.0
+
+    def test_retained_short_still_short(self, monkeypatch):
+        """Candidat SHORT retenu par la cascade → predicted_side='short' (logique
+        SHORT non cassée par le fix LONG)."""
+        preds = _preds_df_ternary(
+            ["GME"], ["short"], proba_long=[0.05], proba_short=[0.80],
+        )
+        ranks = _make_ranks_df([("GME", 0.03, 0.05)])  # bottom → SHORT
+
+        with patch("modelFactory.predictor.load_cascade_config",
+                   return_value={"top_pct": 0.20, "min_prob_classification": 0.55,
+                                 "min_prob_regression": 0.10}):
+            with patch("modelFactory.predictor.load_global_ranks_from_db", return_value=ranks):
+                result = apply_cascade_to_predictions(preds, "batch-x")
+
+        assert len(result) == 1
+        assert result.iloc[0]["predicted_side"] == "short"
+        assert result.iloc[0]["proba_short"] == 0.80
+        assert result.iloc[0]["proba_long"] == 0.0
+
+    def test_retained_long_original_long_unchanged(self, monkeypatch):
+        """Candidat LONG retenu avec prédiction 'long' d'origine → inchangé (régression)."""
+        preds = _preds_df_ternary(
+            ["AAPL"], ["long"], proba_long=[0.70], proba_short=[0.05],
+        )
+        ranks = _make_ranks_df([("AAPL", 0.95, 0.92)])  # top → LONG
+
+        with patch("modelFactory.predictor.load_cascade_config",
+                   return_value={"top_pct": 0.20, "min_prob_classification": 0.55,
+                                 "min_prob_regression": 0.10}):
+            with patch("modelFactory.predictor.load_global_ranks_from_db", return_value=ranks):
+                result = apply_cascade_to_predictions(preds, "batch-x")
+
+        assert len(result) == 1
+        assert result.iloc[0]["predicted_side"] == "long"
+        assert result.iloc[0]["proba_long"] == 0.70
+        assert result.iloc[0]["proba_short"] == 0.0  # purge du côté opposé
+
 
 # ═══════════════════════════════════════════════════════════════════
 # upsert_global_ranks

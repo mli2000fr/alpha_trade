@@ -25,7 +25,7 @@ Produit :
 - Attribution de capacité : raw signals, risk eligible, already open,
   no slot, executed, unused slots/day.
 
-Usage : python -m modelFactory.global_direction.persistent_top10_dip_parity
+Usage : python -m modelFactory.dip_research.persistent_top10_dip_parity
 """
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ import pandas as pd
 from database.connection import get_sqlalchemy_engine
 from backtesting.simulator import BacktestEngine
 from modelFactory.global_direction.config import resolve_global_direction_batch_id
-from modelFactory.global_direction.persistent_top10_dip_portfolio import (
+from modelFactory.dip_research.persistent_top10_dip_portfolio import (
     RANK_COL,
     TOP10,
     N_DIP,

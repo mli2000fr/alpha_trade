@@ -1,4 +1,4 @@
-"""modelFactory/global_direction/persistent_tail_price.py — persistent_tail_price_confirmation.
+"""modelFactory/dip_research/persistent_tail_price.py — persistent_tail_price_confirmation.
 
 Expérience DIAGNOSTIQUE (aucun réentraînement, aucun changement risk/PROD).
 
@@ -26,7 +26,7 @@ On compare chaque filtre à sa BASE (queue seule, sans persistance ni prix).
 Sortie : artifacts/persistent_tail_price.csv
 
 Usage :
-    python -m modelFactory.global_direction.persistent_tail_price --batch-id ...
+    python -m modelFactory.dip_research.persistent_tail_price --batch-id ...
 """
 from __future__ import annotations
 

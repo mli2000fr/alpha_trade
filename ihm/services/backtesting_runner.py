@@ -73,6 +73,15 @@ class BacktestRunOptions:
     # P5.2 — seuil top/bottom de la cascade ML (fraction). None = config.yaml
     # (cascade.top_pct). Défaut aligné benchmark B25 : 0.10.
     cascade_top_pct: float | None = 0.10
+    # Persistent Rank DIP filter — overrides config.yaml
+    # (persistent_dip_filter_long.backtest_*). None = lire config.yaml. L'IHM
+    # préremplit ces champs avec les valeurs par défaut du config.yaml (l'utilisateur
+    # ne change rien → pas de flag émis → comportement identique à config.yaml).
+    dip_enabled: bool | None = None
+    dip_rank_horizon: int | None = None
+    dip_rank_threshold: float | None = None
+    dip_persist_days: int | None = None
+    dip_pct: float | None = None
     # S6 (Oracle Layer) — mode de rang cascade. Les modes oracle_* / extreme_gate
     # combinent le rang global (batch sélectionné) et proba_extreme (Oracle Extreme,
     # via oracle_oos_path).
@@ -324,6 +333,18 @@ def build_backtesting_command(
         # P5.2 — seuil top/bottom cascade ML (aligné benchmark : 0.10)
         if options.cascade_top_pct is not None and float(options.cascade_top_pct) > 0:
             command.extend(["--cascade-top-pct", str(options.cascade_top_pct)])
+        # Persistent Rank DIP filter — overrides optionnels du config.yaml.
+        # Aucun flag émis si tous les champs sont None → la CLI lit config.yaml.
+        if options.dip_enabled is not None:
+            command.append("--dip-enabled" if options.dip_enabled else "--no-dip-enabled")
+        if options.dip_rank_horizon is not None:
+            command.extend(["--dip-rank-horizon", str(int(options.dip_rank_horizon))])
+        if options.dip_rank_threshold is not None:
+            command.extend(["--dip-rank-threshold", str(float(options.dip_rank_threshold))])
+        if options.dip_persist_days is not None:
+            command.extend(["--dip-persist-days", str(int(options.dip_persist_days))])
+        if options.dip_pct is not None:
+            command.extend(["--dip-pct", str(float(options.dip_pct))])
         # S6 (Oracle Layer) — rang cascade remplacé par P(top10)
         if options.cascade_rank_mode and options.cascade_rank_mode != "ml":
             command.extend(["--cascade-rank-mode", options.cascade_rank_mode])

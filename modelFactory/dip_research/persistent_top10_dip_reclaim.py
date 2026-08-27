@@ -1,4 +1,4 @@
-"""modelFactory/global_direction/persistent_top10_dip_reclaim.py — reclaim research-only.
+"""modelFactory/dip_research/persistent_top10_dip_reclaim.py — reclaim research-only.
 
 Expérience **research-only** : garder strictement le signal DIP gelé et comparer
 l'entrée directe vs deux variantes de « reclaim » (confirmation de rebond).
@@ -32,7 +32,7 @@ Diagnostics produits :
 Aucun autre seuil de reclaim, aucun autre max_wait, aucun autre N/X.
 
 Usage :
-    python -m modelFactory.global_direction.persistent_top10_dip_reclaim --batch-id ...
+    python -m modelFactory.dip_research.persistent_top10_dip_reclaim --batch-id ...
 """
 from __future__ import annotations
 
@@ -50,10 +50,10 @@ from backtesting.simulator import BacktestEngine
 from modelFactory.global_direction.config import resolve_global_direction_batch_id
 from modelFactory.oracle.dataset import load_oracle_targets
 from modelFactory.global_direction.dataset import DECILE_COL
-from modelFactory.global_direction.persistent_top10_dip_portfolio import (
+from modelFactory.dip_research.persistent_top10_dip_portfolio import (
     RANK_COL, TOP10, N_DIP, X_DIP, build_config, _enrich_atr, _metrics, _load_regime_map,
 )
-from modelFactory.global_direction.persistent_top10_dip_parity import (
+from modelFactory.dip_research.persistent_top10_dip_parity import (
     BLOCKED_REGIMES, _schedule_local, capacity_attribution,
 )
 

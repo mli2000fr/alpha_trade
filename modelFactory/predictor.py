@@ -3246,27 +3246,26 @@ def apply_cascade_to_predictions(
                 continue
             if "proba_long" in result.columns and _cp.long_prob > 0:
                 result.loc[_pm, "proba_long"] = _cp.long_prob
-            if _eg_ps_extreme:
-                # E17 fix (2026-08-20) : le gate extreme_gate est LONG-only par
-                # design (is_bottom=False). En variantes A/B, un per-symbol B25
-                # prédit "short" fuyait en short (bug observé : 68 shorts sur B).
-                # On force predicted_side selon le côté du candidat (E18 : shorts
-                # optionnels) et on purge la proba de l'autre côté.
-                _side = _side_map.get(_sym, "LONG")
-                if _side == "SHORT":
-                    if "proba_short" in result.columns:
-                        result.loc[_pm, "proba_short"] = _cp.short_prob
-                    if "proba_long" in result.columns:
-                        result.loc[_pm, "proba_long"] = 0.0
-                    if "predicted_side" in result.columns:
-                        result.loc[_pm, "predicted_side"] = "short"
-                else:
-                    if "proba_short" in result.columns:
-                        result.loc[_pm, "proba_short"] = 0.0
-                    if "predicted_side" in result.columns:
-                        result.loc[_pm, "predicted_side"] = "long"
-            elif "proba_short" in result.columns and _cp.short_prob > 0:
-                result.loc[_pm, "proba_short"] = _cp.short_prob
+            # FIX 2026-08-27 — cohérence cascade → phase 2 (bug générique, PAS
+            # spécifique au DIP) : un candidat retenu par cascade_select (LONG ou
+            # SHORT) doit voir son ``predicted_side`` aligné sur le côté décidé
+            # par la cascade. Avant, la branche ML normale laissait
+            # ``predicted_side`` à la valeur per-symbol d'origine (souvent "flat"
+            # pour un candidat retenu sur le rank) → phase 2 lisait "flat" et
+            # rejetait le signal. Couvre aussi extreme_gate (E17/E18).
+            _cascade_side = _side_map.get(_sym, "LONG")
+            if _cascade_side == "SHORT":
+                if "proba_short" in result.columns and _cp.short_prob > 0:
+                    result.loc[_pm, "proba_short"] = _cp.short_prob
+                if "proba_long" in result.columns:
+                    result.loc[_pm, "proba_long"] = 0.0
+                if "predicted_side" in result.columns:
+                    result.loc[_pm, "predicted_side"] = "short"
+            else:
+                if "proba_short" in result.columns:
+                    result.loc[_pm, "proba_short"] = 0.0
+                if "predicted_side" in result.columns:
+                    result.loc[_pm, "predicted_side"] = "long"
 
         # Forcer flat pour les non-retenus
         _flat_mask = _mask & (~result["symbol"].astype(str).isin(_passed_symbols))
