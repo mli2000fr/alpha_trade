@@ -31,7 +31,13 @@ python -u -m modelFactory --mode predict --accelerator auto --symbol-source tick
 A6:
 python -u -m modelFactory --mode predict --accelerator auto --symbol-source ticket-recherche --artifacts-dir artifacts/models/model-factory-20260826121232-c876cd --log-level INFO --max-workers 6 --batch-id model-factory-20260826121232-c876cd --training-start-date 2026-01-01 --training-end-date 2026-06-30 --predict-max-date-workers 8
 
-
+Backtest
+A0:
+ augement 2%:
+A5: 
+20260827_203556_8bc7dc88 augement 2%: 22.06% / 11.00%
+A6:
+ augement 2%: 
 
 
 

@@ -3081,6 +3081,55 @@ def cascade_select(
     return candidates
 
 
+def _apply_dip_quality_policy(
+    policy: str,
+    quality_map: dict,
+    date_key: str,
+    candidates: list[tuple[str, str, float]],
+) -> tuple[list[tuple[str, str, float]], dict[str, float]]:
+    """Applique la politique ``dip_quality_score`` sur les candidats du jour.
+
+    Args:
+        policy: "rank" | "top50" | "top25".
+        quality_map: {(date_str, symbol_upper): score}.
+        date_key: date du jour (YYYY-MM-DD).
+        candidates: [(side, symbol, score)] de cascade_select (déjà triés).
+
+    Returns:
+        (candidates_filtre, quality_by_symbol).
+        - "rank" : tous les candidats conservés ; quality_by_symbol permet
+          d'écraser ``proba_long`` en aval (ranking du moteur par qualité).
+        - "top50"/"top25" : seuls les candidats AVEC score au-dessus du
+          percentile qualité du jour sont conservés ; les autres sont retirés
+          (slots libérés réalloués normalement par le moteur). Les candidats
+          sans score sont conservés (qualité inconnue → pas de filtre).
+    """
+    if not quality_map or policy in (None, "", "none"):
+        return candidates, {}
+    scored: dict[str, float] = {}
+    for _side, _sym, _score in candidates:
+        q = quality_map.get((date_key, str(_sym).upper()))
+        if q is not None:
+            scored[str(_sym).upper()] = float(q)
+    if not scored:
+        return candidates, {}
+    if policy == "rank":
+        return candidates, scored
+    if policy in ("top50", "top25"):
+        pct = 0.50 if policy == "top50" else 0.25
+        vals = np.asarray(list(scored.values()), dtype=float)
+        thr = float(np.percentile(vals, (1.0 - pct) * 100.0))
+        keep = {s for s, q in scored.items() if q >= thr}
+        # Conserver : candidats scorés au-dessus du seuil OU candidats sans score
+        # (qualité inconnue → ne pas les filtrer).
+        filtered = [
+            c for c in candidates
+            if str(c[1]).upper() in keep or str(c[1]).upper() not in scored
+        ]
+        return filtered, scored
+    return candidates, scored
+
+
 def apply_cascade_to_predictions(
     preds_df: pd.DataFrame,
     batch_id: str,
@@ -3100,6 +3149,15 @@ def apply_cascade_to_predictions(
     extreme_gate_per_symbol: str = "filter",
     extreme_gate_shorts: bool = False,
     dip_filter_config: dict[str, Any] | None = None,
+    # Research dip_quality_score (chantier dip_quality_static_model, défaut off).
+    #   dip_quality_map   : {(date_str, symbol_upper): score} — scores OOF par (J, symbol).
+    #   dip_quality_policy: "none" | "rank" | "top50" | "top25"
+    #       rank   = Q1 : priorité aux DIP de meilleure qualité (écrase proba_long
+    #                → replay_signals re-trie par qualité quand slots contraints).
+    #       top50/25 = Q2/Q3 : ne garder que les DIP au-dessus du percentile qualité
+    #                du jour ; slots libérés réalloués normalement par le moteur.
+    dip_quality_map: dict | None = None,
+    dip_quality_policy: str = "none",
 ) -> pd.DataFrame:
     """Filtre les prédictions per-symbol via la cascade Global Rank.
 
@@ -3223,6 +3281,18 @@ def apply_cascade_to_predictions(
             dip_filter_config=dip_filter_config,
         )
 
+        # ── DIP quality policy (research Q0-Q3, défaut off) ──
+        _dip_q: dict[str, float] = {}
+        if dip_quality_policy not in (None, "", "none") and dip_quality_map:
+            _candidates, _dip_q = _apply_dip_quality_policy(
+                dip_quality_policy, dip_quality_map, _date_str, _candidates,
+            )
+            if _dip_q:
+                LOGGER.info(
+                    "dip_quality policy=%s date=%s — %d candidats avec score, %d conservés",
+                    dip_quality_policy, _date_str, len(_dip_q), len(_candidates),
+                )
+
         # Symbols retenus par la cascade
         _passed_symbols = {_sym for _, _sym, _ in _candidates}
         _score_map = {_sym: _score for _, _sym, _score in _candidates}
@@ -3246,6 +3316,10 @@ def apply_cascade_to_predictions(
                 continue
             if "proba_long" in result.columns and _cp.long_prob > 0:
                 result.loc[_pm, "proba_long"] = _cp.long_prob
+            # ── DIP quality (Q1 rank) : écraser proba_long par le quality score ──
+            #    pour que replay_signals re-trie les candidats par qualité.
+            if _dip_q.get(_sym) is not None and "proba_long" in result.columns:
+                result.loc[_pm, "proba_long"] = float(_dip_q[_sym])
             # FIX 2026-08-27 — cohérence cascade → phase 2 (bug générique, PAS
             # spécifique au DIP) : un candidat retenu par cascade_select (LONG ou
             # SHORT) doit voir son ``predicted_side`` aligné sur le côté décidé

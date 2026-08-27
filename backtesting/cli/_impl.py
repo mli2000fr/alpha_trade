@@ -1565,6 +1565,21 @@ def _build_parser() -> argparse.ArgumentParser:
              "None = config.yaml backtest_reclaim_max_wait.",
     )
     run_p.add_argument(
+        "--dip-quality-path",
+        type=str,
+        default=None,
+        help="Research dip_quality_score : CSV (signal_date,symbol,dip_quality_score) OOF. "
+             "Active la politique de qualité sur les candidats DIP.",
+    )
+    run_p.add_argument(
+        "--dip-quality-policy",
+        type=str,
+        default="none",
+        choices=["none", "rank", "top50", "top25"],
+        help="Politique dip_quality_score : none (Q0), rank (Q1 = priorité aux DIP de "
+             "meilleure qualité quand slots contraints), top50 (Q2), top25 (Q3).",
+    )
+    run_p.add_argument(
         "--cascade-rank-mode",
         type=str,
         default="ml",
@@ -1624,6 +1639,15 @@ def _build_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="Parquet des prédictions OOS Oracle (sortie S4) pour --cascade-rank-mode oracle.",
+    )
+    run_p.add_argument(
+        "--oracle-batch-id",
+        type=str,
+        default=None,
+        help="Batch_id des prédictions Oracle Extreme (O0) à lire depuis la table "
+             "alpha_trade.oracle_extreme_predictions (filtre STRICT par batch, "
+             "cf. doc/controle_couverture.md). Prioritaire sur --oracle-oos-path "
+             "pour les modes oracle*/extreme_gate. Obligatoire si --oracle-oos-path absent.",
     )
     run_p.add_argument(
         "--oracle-calibration",
@@ -2180,6 +2204,8 @@ def _explicit_flags(argv: list[str]) -> set[str]:
         "--dip-pct": "dip_pct",
         "--dip-reclaim-ratio": "dip_reclaim_ratio",
         "--dip-reclaim-max-wait": "dip_reclaim_max_wait",
+        "--dip-quality-path": "dip_quality_path",
+        "--dip-quality-policy": "dip_quality_policy",
         "--no-shorts": "no_shorts",
         "--no-longs": "no_longs",
         "--force-close-losers-on-breaker": "force_close_losers_on_breaker",
@@ -3347,20 +3373,57 @@ def _run_backtest(args: argparse.Namespace) -> None:
                         _best_h_flag = int(_cfg_backtest_horizon)
                     except (TypeError, ValueError):
                         pass
-            # ── Ablation Oracle (S6/S6.1) + Extreme Gate (E6-E13) : charger P(extreme) depuis le parquet OOS ──
+            # ── Ablation Oracle (S6/S6.1) + Extreme Gate (E6-E13) : charger P(extreme) ──
+            # Source : table oracle_extreme_predictions (--oracle-batch-id, filtre batch
+            # STRICT) OU parquet OOS (--oracle-oos-path, legacy). L'un des deux requis.
             _oracle_rank_map = None
             _oracle_modes = ("oracle", "oracle_filter", "oracle_rerank", "oracle_pool", "extreme_gate")
             if getattr(args, "cascade_rank_mode", "ml") in _oracle_modes:
                 import pandas as pd
+                _oracle_batch_id = str(getattr(args, "oracle_batch_id", "") or "").strip() or None
                 _oos_path = getattr(args, "oracle_oos_path", None)
-                if not _oos_path:
+                # Défaut pratique : si ni batch Oracle ni parquet n'est fourni, on lit la
+                # table pour le MÊME batch que le backtest (--ml-batch-id). Couvre le cas
+                # « un seul batch entraîné B25 + Oracle » (ablation O1) : l'IHM n'a rien à
+                # saisir. Le filtre reste STRICT par batch (jamais "tous batchs confondus").
+                if not _oracle_batch_id and not _oos_path:
+                    _oracle_batch_id = str(getattr(args, "ml_batch_id", "") or "").strip() or None
+                    if _oracle_batch_id:
+                        LOGGER.info(
+                            "oracle: --oracle-batch-id non fourni → défaut ml_batch_id=%s (table)",
+                            _oracle_batch_id,
+                        )
+                if _oracle_batch_id:
+                    # Table oracle_extreme_predictions — filtre strict par batch.
+                    from modelFactory.oracle.predictions_store import load_oracle_predictions
+                    _oos_df = load_oracle_predictions(
+                        engine,
+                        batch_id=_oracle_batch_id,
+                        start_date=str(start),
+                        end_date=str(end),
+                    )
+                    if _oos_df.empty:
+                        _safe_print(
+                            "⚠️ oracle: aucune prédiction en table pour batch={} sur [{}, {}] "
+                            "(rows vides). Vérifier que le walk-forward a persisté ce batch.".format(
+                                _oracle_batch_id, start, end,
+                            )
+                        )
+                    else:
+                        _safe_print(
+                            "   oracle: lecture table oracle_extreme_predictions batch={} rows={} "
+                            "(filtre batch strict)\n".format(_oracle_batch_id, len(_oos_df))
+                        )
+                elif _oos_path:
+                    _oos_df = pd.read_parquet(_oos_path)
+                else:
                     _safe_print(
-                        "❌ --cascade-rank-mode {} nécessite --oracle-oos-path ".format(
-                            getattr(args, "cascade_rank_mode", "oracle")) +
-                        "(parquet des prédictions OOS Oracle, sortie S4).\n"
+                        "❌ --cascade-rank-mode {} nécessite --oracle-batch-id (table) "
+                        "ou --oracle-oos-path (parquet legacy).".format(
+                            getattr(args, "cascade_rank_mode", "oracle")
+                        )
                     )
                     raise SystemExit(2)
-                _oos_df = pd.read_parquet(_oos_path)
                 # ── Calibration optionnelle de proba_extreme (oracle.calibration) ──
                 _cal_flag = str(getattr(args, "oracle_calibration", "none") or "none").strip().lower()
                 if _cal_flag in ("", "none"):
@@ -3418,6 +3481,30 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 LOGGER.exception("DIP filter config — désactivé")
                 _dip_filter_cfg = None
 
+            # ── Research dip_quality_score (Q0-Q3) : chargement de la carte ──
+            _dip_quality_map: dict | None = None
+            _dip_quality_policy = getattr(args, "dip_quality_policy", "none") or "none"
+            _dip_quality_path = getattr(args, "dip_quality_path", None)
+            if _dip_quality_path:
+                try:
+                    import pandas as _pd
+                    _dq = _pd.read_csv(_dip_quality_path, parse_dates=["signal_date"])
+                    _dq["signal_date"] = _pd.to_datetime(_dq["signal_date"]).dt.normalize()
+                    _dq["symbol"] = _dq["symbol"].astype(str).str.upper()
+                    _dip_quality_map = {
+                        (str(_r.signal_date.date()), str(_r.symbol).upper()): float(_r.dip_quality_score)
+                        for _r in _dq.itertuples() if _pd.notna(_r.dip_quality_score)
+                    }
+                    _safe_print(
+                        "   🔻 DIP quality (research): policy={} — {} (date,symbol) scores OOF".format(
+                            _dip_quality_policy, len(_dip_quality_map),
+                        )
+                    )
+                except Exception:
+                    LOGGER.exception("dip_quality_path illisible — politique désactivée")
+                    _dip_quality_map = None
+                    _dip_quality_policy = "none"
+
             preds_df = apply_cascade_to_predictions(
                 preds_df, _cascade_batch_id, engine=engine,
                 best_h=_best_h_flag,
@@ -3433,6 +3520,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 extreme_gate_pct=getattr(args, "extreme_gate_pct", None),
                 extreme_gate_per_symbol=getattr(args, "extreme_gate_per_symbol", "filter"),
                 extreme_gate_shorts=bool(getattr(args, "extreme_gate_shorts", False)),
+                dip_quality_map=_dip_quality_map,
+                dip_quality_policy=_dip_quality_policy,
             )
             _cas_passed = int(preds_df.loc[preds_df["predicted_side"] != "flat"].shape[0]) if "predicted_side" in preds_df.columns else 0
             _cascade_filtered_count = _cas_before - _cas_passed
