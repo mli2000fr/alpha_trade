@@ -31,10 +31,18 @@ class RiskCheckerImpl:
         self._last_decision_reason = "OK"
         self._last_decision_reason_code = DecisionReasonCode.OK
 
+    def set_sector_corr_map(self, corr_map: dict[str, dict[str, float]] | None) -> None:
+        """Injecte la carte de corrélation paire PIT du jour (smart sector cap C2)."""
+        # Réinjecter sur la config (immuable) via une copie avec le champ mis à jour.
+        if corr_map is not None and getattr(self._cfg, "sector_corr_map", None) is not corr_map:
+            from dataclasses import replace
+            self._cfg = replace(self._cfg, sector_corr_map=corr_map)
+            self._constraints = ConstraintChecker(self._cfg)
+
     # --- Protocol RiskChecker -------------------------------------------
     def check_position_size(
         self, symbol: str, proposed_shares: float, price: float,
-        *, side: str = "buy", adv_usd: float | None = None,
+        *, side: str = "buy", adv_usd: float | None = None, selection_rank: int | None = None,
     ) -> float:
         """Retourne le nombre de parts autorisé (<= proposed_shares)."""
         if self._cb.is_active():
@@ -51,6 +59,7 @@ class RiskCheckerImpl:
             state=self._state,
             side=side,
             adv_usd=adv_usd,
+            selection_rank=selection_rank,
         )
         self._last_decision_reason = reason
         self._last_decision_reason_code = self._constraints.reason_to_code(reason)

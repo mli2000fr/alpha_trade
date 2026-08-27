@@ -141,6 +141,7 @@ def build_dataset(
     end_date: str,
     horizon: int = 20,
     require_global_rank: bool = True,
+    need_targets: bool = True,
 ) -> tuple[pd.DataFrame, list[str]]:
     """Assemble features + global_rank_20 + target Oracle.
 
@@ -148,6 +149,12 @@ def build_dataset(
         require_global_rank: si False (standalone ``--oracle-model-only``, sans
             ``global_rank_history``), on ne fusionne pas ``global_rank_20`` —
             l'univers vient alors des targets ``global_oracle_labels``.
+        need_targets: si False (PRÉDICTION standard ``predict_oracle_extreme_history``),
+            les labels Oracle sont OPTIONNELS : LEFT JOIN sur ``global_oracle_labels``.
+            On prédit sur toute date ayant des features, même sans label encore
+            réalisé (même logique que le Global Rank). ``future_return`` et
+            ``oracle_extreme10`` sont alors NULL. L'anti-leakage (``oracle_available_date``)
+            ne s'applique qu'aux lignes labellisées.
 
     Returns:
         ``(dataset, feature_columns)`` — ``feature_columns`` = liste O0 (sans
@@ -169,17 +176,30 @@ def build_dataset(
         ranks = load_global_rank_feature(engine, batch_id)
         df = feats.merge(ranks, on=["date", "symbol"], how="inner")
     else:
-        # Standalone O0 : pas de global_rank_history → l'univers = targets.
+        # Standalone O0 : pas de global_rank_history → l'univers = features.
         df = feats.copy()
-    df = df.merge(
-        targets,
-        left_on=["date", "symbol"],
-        right_on=["prediction_date", "symbol"],
-        how="inner",
-    )
-    df = df.drop(columns=["prediction_date"])
-    # Garde anti-leakage : ne garder que les labels strictement disponibles.
-    df = df[df[GUARD_COL] > df["date"]]
+    if need_targets:
+        df = df.merge(
+            targets,
+            left_on=["date", "symbol"],
+            right_on=["prediction_date", "symbol"],
+            how="inner",
+        )
+        df = df.drop(columns=["prediction_date"])
+        # Garde anti-leakage : ne garder que les labels strictement disponibles.
+        df = df[df[GUARD_COL] > df["date"]]
+    else:
+        # Prédiction standard : labels optionnels (NULL si pas encore réalisés).
+        df = df.merge(
+            targets,
+            left_on=["date", "symbol"],
+            right_on=["prediction_date", "symbol"],
+            how="left",
+        )
+        df = df.drop(columns=["prediction_date"])
+        # Anti-leakage uniquement si un label est présent ; une ligne sans label
+        # (prédiction forward) est conservée telle quelle.
+        df = df[(df[GUARD_COL].isna()) | (df[GUARD_COL] > df["date"])]
     return df, feature_columns
 
 

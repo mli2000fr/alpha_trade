@@ -14,6 +14,7 @@ Usage :
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -55,8 +56,6 @@ _ABLATIONS: dict[str, dict[str, Any]] = {
     "O1": {"include_global_rank": True, "include_oracle_extras": True, "lean": False},
     "O2": {"include_global_rank": False, "include_oracle_extras": False, "lean": True},
 }
-
-_ARTIFACTS_ROOT = Path("artifacts/models/oracle")
 
 
 def build_folds(dataset: pd.DataFrame, test_windows: list[tuple[str, str]]) -> list[dict[str, Any]]:
@@ -111,6 +110,7 @@ def run_walk_forward(
     oos_parts: list[pd.DataFrame] = []
     per_fold: list[dict[str, Any]] = []
     _test_feature_parts: list[pd.DataFrame] = []
+    _models: list[dict[str, Any]] = []
 
     for fold in folds:
         X_tr = fold["train"][cols].astype(float)
@@ -123,6 +123,7 @@ def run_walk_forward(
 
         model = train_lightgbm(X_tr, y_tr, X_te, y_te)
         log_feature_weights(model, cols, label=f"oracle_extreme fold={fold['t_start']}")
+        _models.append({"t_start": str(fold["t_start"]), "model": model})
         _test_feature_parts.append(X_te)
         proba = model.predict(X_te)
 
@@ -176,23 +177,72 @@ def run_walk_forward(
         },
         "oos": oos,
         "feature_columns": cols,
+        "models": _models,
     }
 
 
-def persist_oos(oos: pd.DataFrame, run_id: str, batch_id: str | None = None) -> Path:
-    """Persiste les prédictions OOS en parquet (+ tag batch si fourni)."""
-    out_dir = _ARTIFACTS_ROOT / run_id
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / "oos_predictions.parquet"
-    oos.to_parquet(path, index=False)
-    # Sidecar : tagge le run par son batch d'entraînement (diagnostic IHM).
-    if batch_id:
+def persist_oos(
+    oos: pd.DataFrame,
+    run_id: str,
+    batch_id: str | None = None,
+    *,
+    models: list[dict[str, Any]] | None = None,
+    feature_columns: list[str] | None = None,
+) -> str | None:
+    """Persiste les prédictions OOS dans la TABLE ``oracle_extreme_predictions``.
+
+    Stockage TABLE-UNIQUEMENT (plus de parquet ``oos_predictions.parquet``) :
+    PK ``(prediction_date, symbol, batch_id)`` → une ligne par couple, toute
+    ré-écriture écrase. Le walk-forward et la prédiction standard
+    (``predict_oracle_extreme_history``) alimentent la même table, sans doublon.
+
+    Persiste aussi les CHAMPIONS (modèles par fold) pour permettre la prédiction
+    standard SANS retrain.
+
+    Returns:
+        ``batch_id`` écrit en table, ou None si aucun batch (rien à stocker).
+    """
+    if batch_id and not oos.empty:
         try:
-            (out_dir / "batch_id.txt").write_text(str(batch_id), encoding="utf-8")
-        except OSError:
-            pass
-    LOGGER.info("persisted OOS predictions → %s (batch=%s)", path, batch_id or "?")
-    return path
+            from modelFactory.oracle.predictions_store import (
+                ensure_oracle_predictions_table,
+                write_oracle_predictions,
+            )
+            _engine = get_sqlalchemy_engine()
+            ensure_oracle_predictions_table(_engine)
+            _n = write_oracle_predictions(_engine, oos, batch_id=str(batch_id))
+            LOGGER.info("persisted OOS → oracle_extreme_predictions n=%d batch=%s", _n, batch_id)
+        except Exception as _tbl_exc:  # noqa: BLE001 — non bloquant
+            LOGGER.warning("oracle OOS table write FAILED: %s", _tbl_exc)
+    else:
+        LOGGER.warning("persist_oos: batch_id absent — OOS non persisté (table-only)")
+    # ── Champions : modèles par fold persistés (predict standard sans retrain) ──
+    if batch_id and models:
+        try:
+            from modelFactory.oracle.predictions_store import ensure_oracle_predictions_table
+            ensure_oracle_predictions_table(get_sqlalchemy_engine())
+            _champ_root = Path("artifacts/models/oracle/champions") / str(batch_id)
+            _champ_root.mkdir(parents=True, exist_ok=True)
+            _meta: list[dict[str, Any]] = []
+            for _i, _m in enumerate(models):
+                _t_start = str(_m.get("t_start", f"fold{_i}"))
+                _model_file = f"oracle_champion_{_t_start}.txt"
+                _m["model"].save_model(str(_champ_root / _model_file))
+                _meta.append({
+                    "t_start": _t_start,
+                    "model_file": _model_file,
+                    "feature_columns": feature_columns or [],
+                })
+            (_champ_root / "oracle_champions.json").write_text(
+                json.dumps(_meta, indent=2), encoding="utf-8",
+            )
+            LOGGER.info(
+                "persisted oracle champions n=%d batch=%s dir=%s", len(_meta), batch_id, _champ_root,
+            )
+        except Exception as _champ_exc:  # noqa: BLE001 — non bloquant
+            LOGGER.warning("oracle champions persist FAILED: %s", _champ_exc)
+    LOGGER.info("persist_oos done batch=%s (table oracle_extreme_predictions)", batch_id or "?")
+    return str(batch_id) if batch_id else None
 
 
 def format_report(result: dict[str, Any]) -> str:
@@ -236,6 +286,16 @@ def main() -> None:
     parser.add_argument("--start-date", default="2020-01-01")
     parser.add_argument("--end-date", default="2026-05-29")
     parser.add_argument("--symbols", type=int, default=None, help="Limite le nb de symboles (smoke test).")
+    parser.add_argument(
+        "--predict-range", default=None,
+        help="Prédiction standard sur une période START:END (ex. 2020-01-01:2021-12-31) en "
+             "utilisant les champions persistés (SANS retrain) — remplit oracle_extreme_predictions.",
+    )
+    parser.add_argument(
+        "--no-global-rank", action="store_true",
+        help="Batch oracle-only : ne pas fusionner global_rank_20 dans le dataset "
+             "(build_dataset require_global_rank=False).",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
@@ -244,6 +304,21 @@ def main() -> None:
         raise SystemExit("Aucun batch_id résolu.")
 
     engine = get_sqlalchemy_engine()
+
+    if args.predict_range:
+        _pr = str(args.predict_range).strip()
+        if ":" not in _pr:
+            raise SystemExit("--predict-range doit être au format START:END (ex. 2020-01-01:2021-12-31).")
+        _pr_start, _pr_end = _pr.split(":", 1)
+        from modelFactory.oracle.predict_history import predict_oracle_extreme_history
+        _out = predict_oracle_extreme_history(
+            engine, batch_id, _pr_start.strip(), _pr_end.strip(),
+            horizon=args.horizon,
+        )
+        print("=== PREDICT ORACLE EXTREME (champions, sans retrain) ===")
+        print(_out)
+        return
+
     symbols = get_universe_symbols(engine, batch_id, args.horizon)
     if args.symbols:
         symbols = symbols[:args.symbols]
@@ -251,6 +326,7 @@ def main() -> None:
     dataset, feature_columns = build_dataset(
         engine, batch_id, symbols,
         start_date=args.start_date, end_date=args.end_date, horizon=args.horizon,
+        require_global_rank=not args.no_global_rank,
     )
     if dataset.empty:
         raise SystemExit("Dataset vide.")
@@ -262,9 +338,13 @@ def main() -> None:
     )
     if result.get("status") == "completed":
         run_id = f"oracle-wf-{datetime.now():%Y%m%d%H%M%S}"
-        path = persist_oos(result["oos"], run_id, batch_id=batch_id)
+        _stored = persist_oos(
+            result["oos"], run_id, batch_id=batch_id,
+            models=result.get("models"),
+            feature_columns=result.get("feature_columns"),
+        )
         result["run_id"] = run_id
-        result["oos_path"] = str(path)
+        result["oos_path"] = f"oracle_extreme_predictions:{_stored}"
     print(format_report(result))
 
 

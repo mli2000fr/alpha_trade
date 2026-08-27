@@ -503,6 +503,9 @@ def delete_batch_rows(
         "model_batch_diagnostics",
         "global_rank_history",
         "global_oracle_labels",
+        # Oracle Extreme : table oracle_extreme_predictions (PK (date, symbol, batch)).
+        # 0 ligne si le batch n'a pas de modèle Oracle — DELETE par batch_id inoffensif.
+        "oracle_extreme_predictions",
         "model_training_run",
         "model_training_batch",
     ]

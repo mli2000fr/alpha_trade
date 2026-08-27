@@ -49,7 +49,8 @@ _INSERT_PRED = text(
 _CHUNK = 2000
 
 
-def synthesize(batch_id: str, best_h: int, *, top_pct: float = 0.10) -> dict:
+def synthesize(batch_id: str, best_h: int, *, top_pct: float = 0.10,
+               dip_config: dict | None = None) -> dict:
     engine = get_sqlalchemy_engine()
     run_id = f"{batch_id}{_SYNTH_RUN_SUFFIX}"
     rank_col = f"global_rank_{best_h}"
@@ -78,7 +79,41 @@ def synthesize(batch_id: str, best_h: int, *, top_pct: float = 0.10) -> dict:
     if not rows:
         return {"status": "error", "reason": "no rows in global_rank_history"}
 
+    # ── Persistent Rank DIP filter (LIVE — config prod_*) ──
+    # Appliqué à la branche LONG uniquement : un top-rank n'est marqué `long`
+    # que s'il passe la persistance N + la baisse X. Sinon → `flat` (exclu du
+    # risk/execution live). Même logique que selector/dip_filter.py (cascade
+    # backtest), mais ici au point de PERSISTANCE des prédictions (live).
+    dip_long: set[tuple[str, str]] | None = None
+    _dip_n = 0
+    _dip_threshold = 0.90
+    _dip_pct = 0.02
+    if dip_config and bool(dip_config.get("enabled", False)):
+        _dip_n = int(dip_config.get("persist_days", 4) or 4)
+        _dip_threshold = float(dip_config.get("rank_threshold", 0.90) or 0.90)
+        _dip_pct = float(dip_config.get("dip_pct", 0.02) or 0.02)
+        # PRUDENCE : reclaim_ratio n'est PAS supporté par le chemin live
+        # (_build_dip_long_set = D0 direct vectorisé). Si activé en prod, le
+        # backtest (selector/dip_filter.filter_day_candidates) appliquerait le
+        # reclaim mais le live pas → divergence. On le refuse ici explicitement.
+        _dip_reclaim = dip_config.get("reclaim_ratio")
+        if _dip_reclaim:
+            LOGGER.warning(
+                "synthesize DIP filter (prod): reclaim_ratio=%s NON supporté live "
+                "(D0 direct uniquement) — reclaim ignoré. Activez-le uniquement en backtest.",
+                _dip_reclaim,
+            )
+        dip_long = _build_dip_long_set(
+            engine, batch_id, rank_col,
+            n=_dip_n, threshold=_dip_threshold, dip_pct=_dip_pct,
+        )
+        LOGGER.info(
+            "synthesize DIP filter (prod): N=%d X=%.2f rank>=%.2f — %d (symbol,date) passent",
+            _dip_n, _dip_pct, _dip_threshold, len(dip_long or set()),
+        )
+
     inserted = 0
+    _dip_trace = {"long_brut": 0, "long_retenu": 0, "long_filtre": 0}
     for i in range(0, len(rows), _CHUNK):
         chunk = rows[i:i + _CHUNK]
         params_list = []
@@ -86,6 +121,13 @@ def synthesize(batch_id: str, best_h: int, *, top_pct: float = 0.10) -> dict:
             rank = float(rank)
             if rank >= 1.0 - top_pct:
                 side = "long"
+                _dip_trace["long_brut"] += 1
+                # DIP filter live : persistance + baisse sinon flat
+                if dip_long is not None and (str(symbol), str(d)) not in dip_long:
+                    side = "flat"
+                    _dip_trace["long_filtre"] += 1
+                else:
+                    _dip_trace["long_retenu"] += 1
                 plong, pshort = rank, 1.0 - rank
             elif rank <= top_pct:
                 side = "short"
@@ -115,8 +157,70 @@ def synthesize(batch_id: str, best_h: int, *, top_pct: float = 0.10) -> dict:
         if i % (10 * _CHUNK) == 0:
             LOGGER.info("synthesize progress %d/%d", i, len(rows))
 
+    # Log de passage sur la règle DIP live (vérifiable dans les logs prod).
+    LOGGER.info(
+        "DIP_FILTER prod run_id=%s long_brut=%d long_retenu=%d long_filtre=%d",
+        run_id, _dip_trace["long_brut"], _dip_trace["long_retenu"], _dip_trace["long_filtre"],
+    )
     LOGGER.info("synthesize done run_id=%s rows=%d", run_id, inserted)
     return {"status": "completed", "run_id": run_id, "inserted": inserted}
+
+
+def _build_dip_long_set(
+    engine,
+    batch_id: str,
+    rank_col: str,
+    *,
+    n: int = 4,
+    threshold: float = 0.90,
+    dip_pct: float = 0.02,
+) -> set[tuple[str, str]]:
+    """Construit l'ensemble {(symbol, date)} qui passe la persistance + dip.
+
+    PIT : le DIP à J utilise les rangs J..J-(n-1) (persistance) et le prix
+    close[J] vs close[J-n] (baisse). Rejoue la logique de selector/dip_filter.
+    """
+    import pandas as pd
+    with engine.connect() as conn:
+        ranks = pd.read_sql(
+            text(
+                f"SELECT symbol, `date`, {rank_col} AS rank_val "
+                f"FROM alpha_trade.global_rank_history "
+                f"WHERE batch_id = :bid AND {rank_col} IS NOT NULL ORDER BY symbol, `date`"
+            ),
+            conn, params={"bid": batch_id},
+        )
+        prices = pd.read_sql(
+            text(
+                "SELECT symbol, `date`, close FROM alpha_trade.stock_bars_daily "
+                "ORDER BY symbol, `date`"
+            ),
+            conn,
+        )
+    if ranks.empty or prices.empty:
+        return set()
+    ranks["date"] = pd.to_datetime(ranks["date"]).dt.normalize()
+    prices["date"] = pd.to_datetime(prices["date"]).dt.normalize()
+    ranks["symbol"] = ranks["symbol"].astype(str).str.upper()
+    prices["symbol"] = prices["symbol"].astype(str).str.upper()
+
+    # Persistance : min des rangs sur les n dernières séances (par symbole)
+    ranks["_rank_ok"] = (ranks["rank_val"] >= threshold).astype(int)
+    ranks["_persist"] = ranks.groupby("symbol")["_rank_ok"].transform(
+        lambda x: x.rolling(n, min_periods=n).min())
+    # Prix : close[J] / close[J-n] - 1
+    prices["_ret_n"] = prices.groupby("symbol")["close"].transform(
+        lambda x: x / x.shift(n) - 1.0)
+
+    m = ranks.merge(prices[["symbol", "date", "_ret_n"]], on=["symbol", "date"], how="left")
+    # Condition prix selon le SIGNE de dip_pct — même convention que
+    # selector/dip_filter._dip_pass : >0 = baisse >= X (DIP) ; <0 = hausse >= |X|.
+    _thr = -float(dip_pct)
+    if float(dip_pct) >= 0:
+        passed = m[(m["_persist"] == 1) & (m["_ret_n"].notna()) & (m["_ret_n"] <= _thr)]
+    else:
+        passed = m[(m["_persist"] == 1) & (m["_ret_n"].notna()) & (m["_ret_n"] >= _thr)]
+    return {(str(r["symbol"]), str(pd.Timestamp(r["date"]).date())) for _, r in passed.iterrows()}
 
 
 def neutralize_illiquid(batch_id: str, *, end_date: str = "2018-12-31") -> dict:
@@ -177,12 +281,26 @@ def main() -> None:
                         help="Neutralise les symboles illiquides (filtre production) dans le run synthétique")
     parser.add_argument("--filter-end-date", default="2018-12-31",
                         help="Date de snapshot du filtre liquidité (défaut: 2018-12-31, avant le backtest)")
+    parser.add_argument("--no-dip-filter", action="store_true",
+                        help="Désactive le filtre DIP live même si persistent_dip_filter_long.prod_enabled=true")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+
+    # Config DIP live (clés prod_*) — chargée depuis config.yaml.
+    dip_config = None
+    if not args.no_dip_filter:
+        try:
+            from selector.dip_filter import load_dip_filter_config
+            dip_config = load_dip_filter_config("prod")
+            LOGGER.info("synthesize DIP config (prod): %s", dip_config)
+        except Exception:
+            LOGGER.exception("synthesize DIP config indisponible — DIP désactivé")
+            dip_config = None
+
     if args.apply_liquidity_filter:
         print(neutralize_illiquid(args.batch_id, end_date=args.filter_end_date))
     else:
-        print(synthesize(args.batch_id, args.best_h, top_pct=args.top_pct))
+        print(synthesize(args.batch_id, args.best_h, top_pct=args.top_pct, dip_config=dip_config))
 
 
 if __name__ == "__main__":

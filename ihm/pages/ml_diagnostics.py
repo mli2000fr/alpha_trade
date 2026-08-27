@@ -1056,6 +1056,15 @@ def _render_delete_batch_button(selected_batch: str, artifacts_dir: Path) -> Non
                 except Exception as exc:
                     errors.append(f"Disque: {exc}")
 
+            # ── Nettoyage champions Oracle Extreme (dossier dédié, hors artifacts_dir) ──
+            _oracle_champ_dir = artifacts_dir.parent / "oracle" / "champions" / selected_batch
+            if _oracle_champ_dir.exists():
+                try:
+                    _shutil.rmtree(_oracle_champ_dir)
+                    st.success(f"✅ Champions Oracle supprimés")
+                except Exception as exc:
+                    errors.append(f"Disque (champions): {exc}")
+
             # ── Nettoyage artifacts/rapport_ml/ (rapport .md + logs .log archivés) ──
             _safe_r = selected_batch.replace("/", "_").replace("\\", "_")[:100]
             _rapport_dir = artifacts_dir.parent.parent / "rapport_ml"
@@ -1095,82 +1104,57 @@ def _batch_trains_oracle(batch: pd.Series) -> bool:
     return False
 
 
-def _oracle_run_batch(run_dir: Path) -> str | None:
-    """Batch_id du run Oracle Extreme (sidecar ``batch_id.txt``), None si non taggé."""
-    try:
-        tag_file = run_dir / "batch_id.txt"
-        if tag_file.exists():
-            val = tag_file.read_text(encoding="utf-8").strip()
-            return val or None
-    except Exception:
-        pass
-    return None
-
-
-def _iter_oracle_runs(batch_id: str) -> list[Path]:
-    """Runs ``oracle-wf-*`` pertinents pour le batch sélectionné, triés croissant.
-
-    - run taggé au batch → inclus ;
-    - run non taggé (legacy) → inclus (fallback historique) ;
-    - run taggé à un AUTRE batch → exclu (évite d'afficher le run d'un autre batch).
-    """
-    odir = Path(get_model_artifacts_dir()) / "oracle"
-    if not odir.exists():
-        return []
-    out: list[Path] = []
-    for d in sorted(odir.glob("oracle-wf-*")):
-        tag = _oracle_run_batch(d)
-        if tag is None or tag == batch_id:
-            out.append(d)
-    return out
+ORACLE_TABLE_PERIODS_QUERY = """
+SELECT MIN(prediction_date) AS min_date,
+       MAX(prediction_date) AS max_date,
+       COUNT(DISTINCT prediction_date) AS nb_dates,
+       COUNT(DISTINCT symbol) AS nb_symbols
+FROM alpha_trade.oracle_extreme_predictions
+WHERE batch_id = :batch_id
+"""
 
 
 def _oracle_periods(batch_id: str) -> list[dict[str, Any]]:
-    """Périodes des prédictions Oracle Extreme depuis les artefacts disque du batch."""
+    """Périodes des prédictions Oracle Extreme du batch — TABLE uniquement.
+
+    Source unique : ``oracle_extreme_predictions`` (prédiction standard sans
+    retrain ET OOS du walk-forward, stockage table-only). PK ``(date, symbol,
+    batch)`` → une seule période par batch.
+    """
     out: list[dict[str, Any]] = []
-    for d in _iter_oracle_runs(batch_id):
-        det = f"artefacts/models/oracle/{d.name}"
-        pf = d / "oos_predictions.parquet"
-        if not pf.exists():
-            out.append({"Type": "🔥 Oracle extreme", "Période": "—", "Jours": "", "Symboles": "", "Détail": det})
-            continue
-        try:
-            df = pd.read_parquet(pf)
-            dc = next((c for c in ("prediction_date", "date", "entry_date", "asof_date") if c in df.columns), None)
-            if dc is None:
-                dc = next((c for c in df.columns if "date" in str(c).lower()), None)
-            if dc is None:
-                out.append({"Type": "🔥 Oracle extreme", "Période": "—", "Jours": "", "Symboles": "", "Détail": det})
-                continue
-            s = pd.to_datetime(df[dc], errors="coerce").dropna()
-            if s.empty:
-                out.append({"Type": "🔥 Oracle extreme", "Période": "—", "Jours": "", "Symboles": "", "Détail": det})
-                continue
-            syms = int(df["symbol"].nunique()) if "symbol" in df.columns else ""
+    try:
+        _tbl = safe_query(ORACLE_TABLE_PERIODS_QUERY, {"batch_id": batch_id})
+        if not _tbl.empty:
+            _r = _tbl.iloc[0]
+            _mn = pd.Timestamp(_r["min_date"])
+            _mx = pd.Timestamp(_r["max_date"])
             out.append({"Type": "🔥 Oracle extreme",
-                        "Période": f"{s.min().date()} → {s.max().date()}",
-                        "Jours": int(s.nunique()), "Symboles": syms, "Détail": det})
-        except Exception:
-            out.append({"Type": "🔥 Oracle extreme", "Période": "—", "Jours": "", "Symboles": "", "Détail": det})
+                        "Période": f"{_mn.date()} → {_mx.date()}",
+                        "Jours": int(_r["nb_dates"] or 0),
+                        "Symboles": int(_r["nb_symbols"] or 0),
+                        "Détail": "table oracle_extreme_predictions"})
+    except Exception:
+        pass
     return out
 
 
 def _load_latest_oracle_oos(batch_id: str) -> tuple[str | None, pd.DataFrame]:
-    """Charge les prédictions OOS du run Oracle Extreme le plus récent du batch.
+    """Charge les prédictions OOS du batch depuis la TABLE ``oracle_extreme_predictions``.
 
-    Les runs sont taggés par ``batch_id.txt`` ; les runs legacy (non taggés)
-    servent de fallback historique.
+    Table-uniquement (plus de parquet). Filtre strict par batch.
     """
-    for d in reversed(_iter_oracle_runs(batch_id)):
-        pf = d / "oos_predictions.parquet"
-        if not pf.exists():
-            continue
-        try:
-            df = pd.read_parquet(pf)
-            if not df.empty:
-                return d.name, df
-        except Exception:
-            continue
+    if not (batch_id or "").strip():
+        return None, pd.DataFrame()
+    try:
+        engine = get_engine()
+        if engine is None:
+            return None, pd.DataFrame()
+        from modelFactory.oracle.predictions_store import load_oracle_predictions
+        df = load_oracle_predictions(engine, batch_id=batch_id)
+        if df is not None and not df.empty:
+            return batch_id, df
+    except Exception:
+        pass
     return None, pd.DataFrame()
 
 
@@ -1969,11 +1953,11 @@ def _render_prediction_periods(batch_id: str, batch: pd.Series) -> None:
     if oracle_rows:
         _valid = [o for o in oracle_rows if "→" in o["Période"] and not o["Période"].startswith(("—", "?"))]
         if _valid:
-            # Ligne de synthèse = run le plus récent du batch (celui utilisé
-            # par le bloc « Qualité du modèle »), PAS l'union de tous les runs.
-            # Les anciens runs legacy (non taggés, issus d'autres batchs)
-            # n'étendaient la période que par erreur. Le détail ci-dessous
-            # liste chaque run avec sa propre période.
+            # Ligne de synthèse = run le plus récent du batch (artefact OOS
+            # utilisé par le bloc « Qualité du modèle », ou run de prédiction
+            # standard `oracle-pred-*` de la table s'il est plus récent).
+            # PAS l'union de tous les runs. Le détail ci-dessous liste chaque
+            # run (artefact disque + table) avec sa propre période.
             _latest = _valid[-1]
             _last_run = str(_latest.get("Détail", "")).split("/")[-1]
             summary.append({"Type": "🔥 Oracle extreme",

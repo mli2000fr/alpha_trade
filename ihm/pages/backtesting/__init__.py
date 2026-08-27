@@ -73,6 +73,11 @@ BT_BACKFILL_CAPITAL_PRESET_KEY = "bt_backfill_capital_preset"
 BT_BACKFILL_CAPITAL_PRESET_SIGNATURE_KEY = "bt_backfill_capital_preset_signature"
 BT_BACKFILL_SYMBOL_SOURCE_KEY = "bt_backfill_symbol_source"
 BT_RUN_CONFIGURATION_PRESET_KEY = "bt_run_configuration_preset"
+# Flag : le preset de configuration a déjà été appliqué automatiquement à
+# l'arrivée sur la page (équivalent au clic sur "Préremplir les options du
+# backtest"). Une seule application par session → les ajustements manuels de
+# l'utilisateur sont ensuite préservés aux reruns.
+BT_RUN_CONFIGURATION_PRESET_APPLIED_KEY = "bt_run_configuration_preset_applied"
 BT_RUN_ALLOW_FRACTIONAL_SHARES_KEY = "bt_run_allow_fractional_shares"
 LOAD_GLOBAL_SCREENER_HISTORY_KEY = "ihm_backtesting_load_global_screener_history"
 RUNTIME_CENTER_AUTO_UPDATE_KEY = "ihm_backtesting_runtime_center_auto_update"
@@ -93,6 +98,19 @@ BT_RUN_USE_CANONICAL_COSTS_DEFAULT = True
 # Intérêt marge affiché en % annuel (UI), MAIS le CLI attend une fraction
 # (0.075 = 7.5%). La conversion /100 est faite à la transmission.
 BT_RUN_MARGIN_INTEREST_DEFAULT = 7.5
+# ── Persistent Rank DIP filter (2026-08-27) — paramétrage backtest ──
+# Défauts = miroir de config.yaml `persistent_dip_filter_long.backtest_*`.
+# La page lit d'abord config.yaml (source de vérité) ; ces constantes ne
+# servent que de fallback si config.yaml est illisible/absent.
+BT_RUN_DIP_ENABLED_DEFAULT = True
+BT_RUN_DIP_RANK_HORIZON_DEFAULT = 20
+BT_RUN_DIP_RANK_THRESHOLD_DEFAULT = 0.90
+BT_RUN_DIP_PERSIST_DAYS_DEFAULT = 4
+BT_RUN_DIP_PCT_DEFAULT = -0.02
+# Reclaim (confirmation de rebond avant entrée) : vide/None = R désactivé
+# (D0 direct, comportement gelé). 1.0 = retour au prix pré-DIP.
+BT_RUN_DIP_RECLAIM_RATIO_DEFAULT = None
+BT_RUN_DIP_RECLAIM_MAX_WAIT_DEFAULT = 10
 
 RUN_CONFIGURATION_PRESETS: dict[str, dict[str, object]] = {
     "pipeline_live_like": {
@@ -356,6 +374,32 @@ def _resolve_pipeline_backtest_defaults(
         "dd_recovery_pct": _to_float(values.get("backtesting_dd_recovery_pct", 0.92), 0.92),
         "target_annual_vol": _to_float(values.get("backtesting_target_annual_vol", 0.15), 0.15),
         "min_ml_coverage_ratio": _to_float(values.get("backtesting_min_ml_coverage_ratio", 0.80), 0.80),
+    }
+
+
+def _load_dip_backtest_defaults() -> dict[str, Any]:
+    """Défauts UI du filtre Persistent Rank DIP = config.yaml.
+
+    Lit ``config.yaml → persistent_dip_filter_long.backtest_*`` (source de
+    vérité partagée avec la CLI via ``selector.dip_filter``). Si config.yaml
+    est illisible/absent → retombe sur les constantes ``BT_RUN_DIP_*_DEFAULT``
+    (miroir des valeurs gelées : 20 / 0.90 / 4 / 0.02 / enabled).
+    """
+    raw: dict[str, Any] = {}
+    try:
+        import yaml as _yaml
+        with open(PROJECT_ROOT / "config.yaml", encoding="utf-8") as _fh:
+            raw = (_yaml.safe_load(_fh) or {}).get("persistent_dip_filter_long") or {}
+    except Exception:
+        raw = {}
+    return {
+        "enabled": bool(raw.get("backtest_enabled", BT_RUN_DIP_ENABLED_DEFAULT)),
+        "rank_horizon": _to_int(raw.get("backtest_rank_horizon", BT_RUN_DIP_RANK_HORIZON_DEFAULT), BT_RUN_DIP_RANK_HORIZON_DEFAULT),
+        "rank_threshold": _to_float(raw.get("backtest_rank_threshold", BT_RUN_DIP_RANK_THRESHOLD_DEFAULT), BT_RUN_DIP_RANK_THRESHOLD_DEFAULT),
+        "persist_days": _to_int(raw.get("backtest_persist_days", BT_RUN_DIP_PERSIST_DAYS_DEFAULT), BT_RUN_DIP_PERSIST_DAYS_DEFAULT),
+        "dip_pct": _to_float(raw.get("backtest_dip_pct", BT_RUN_DIP_PCT_DEFAULT), BT_RUN_DIP_PCT_DEFAULT),
+        "reclaim_ratio": raw.get("backtest_reclaim_ratio", BT_RUN_DIP_RECLAIM_RATIO_DEFAULT),
+        "reclaim_max_wait": _to_int(raw.get("backtest_reclaim_max_wait", BT_RUN_DIP_RECLAIM_MAX_WAIT_DEFAULT), BT_RUN_DIP_RECLAIM_MAX_WAIT_DEFAULT),
     }
 
 
@@ -665,6 +709,14 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
             {"Paramètre": "max_sector_exposure_pct", "Explication": "Cap d'exposition par secteur en fraction (Phase C.4).", "Défaut": "0.0"},
             {"Paramètre": "max_portfolio_dd_pct", "Explication": "Drawdown max avant coupe-circuit nouvelles entrées (Phase C.5).", "Défaut": "0.0"},
             {"Paramètre": "target_annual_vol", "Explication": "Cible vol annualisée portefeuille (Phase C.2).", "Défaut": "None"},
+            # Persistent Rank DIP filter (2026-08-27) — config.yaml backtest_*.
+            {"Paramètre": "dip_enabled", "Explication": "Active/coupe le filtre Persistent Rank DIP en backtest (--dip-enabled / --no-dip-enabled).", "Défaut": "config.yaml backtest_enabled (true)"},
+            {"Paramètre": "dip_rank_horizon", "Explication": "Horizon de rang H → colonne global_rank_{H} (--dip-rank-horizon).", "Défaut": "config.yaml backtest_rank_horizon (20)"},
+            {"Paramètre": "dip_rank_threshold", "Explication": "Seuil de rang minimal (0.90 = TOP 10%) (--dip-rank-threshold).", "Défaut": "config.yaml backtest_rank_threshold (0.90)"},
+            {"Paramètre": "dip_persist_days", "Explication": "Persistance N : séances consécutives au-dessus du seuil (--dip-persist-days).", "Défaut": "config.yaml backtest_persist_days (4)"},
+            {"Paramètre": "dip_pct", "Explication": "Seuil prix signé sur N séances : >0 = baisse ≥ X (DIP) ; <0 = hausse ≥ |X| (anti-DIP/breakout) (--dip-pct).", "Défaut": "config.yaml backtest_dip_pct (0.02)"},
+            {"Paramètre": "dip_reclaim_ratio", "Explication": "Confirmation de rebond avant entrée (vide/0 = R off ; 1.0 = retour prix pré-DIP, 0.99 = 99% de ce prix) (--dip-reclaim-ratio).", "Défaut": "config.yaml backtest_reclaim_ratio (null = R off)"},
+            {"Paramètre": "dip_reclaim_max_wait", "Explication": "Fenêtre (séances) pour la confirmation de rebond (--dip-reclaim-max-wait).", "Défaut": "config.yaml backtest_reclaim_max_wait (10)"},
         ]
     if kind == "diagnose-screener":
         return [
@@ -1376,6 +1428,18 @@ def _build_run_options() -> BacktestRunOptions:
     if BT_RUN_ALLOW_FRACTIONAL_SHARES_KEY not in st.session_state:
         st.session_state[BT_RUN_ALLOW_FRACTIONAL_SHARES_KEY] = bool(fractional_prefs.backtest_enabled)
     _ensure_run_configuration_preset_session_key()
+    # ── Auto-application du preset de configuration à l'arrivée sur la page ──
+    # Équivalent au clic sur "Préremplir les options du backtest", mais posé
+    # automatiquement au premier affichage (avant l'instanciation des widgets,
+    # qui affichent alors les valeurs du preset). Appliqué une seule fois par
+    # session : ensuite l'utilisateur peut ajuster librement, et ses modifs ne
+    # sont pas écrasées aux reruns suivants. Le bouton manuel reste disponible
+    # pour ré-appliquer explicitement (ou changer de preset).
+    if not st.session_state.get(BT_RUN_CONFIGURATION_PRESET_APPLIED_KEY):
+        _apply_run_configuration_preset(
+            str(st.session_state.get(BT_RUN_CONFIGURATION_PRESET_KEY, "pipeline_live_like"))
+        )
+        st.session_state[BT_RUN_CONFIGURATION_PRESET_APPLIED_KEY] = True
     preset_col1, preset_col2 = st.columns([1.5, 3.5])
     with preset_col1:
         selected_run_configuration_preset = cast(
@@ -2260,6 +2324,138 @@ def _build_run_options() -> BacktestRunOptions:
             "Seuil de la cascade Global Rank → Per-Symbol. `0.10` = config benchmark B25."
         )
 
+    # ── Persistent Rank DIP filter (2026-08-27) — paramétrage backtest ──
+    # Défauts = config.yaml persistent_dip_filter_long.backtest_* (source de
+    # vérité). Transmis via --dip-* ; si l'utilisateur ne touche à rien, aucun
+    # flag n'est émis → la CLI lit config.yaml directement (comportement gelé).
+    _dip_defaults = _load_dip_backtest_defaults()
+    with st.expander("🔻 Filtre Persistent Rank DIP (paramétrage backtest)", expanded=False):
+        st.caption(
+            "Candidats LONG : `global_rank_{H} ≥ seuil` sur `N` séances consécutives "
+            "ET condition prix sur `N` séances (`X` signé, voir info). `Reclaim R` "
+            "(vide = off) : entrée au 1er rebond `close ≥ R × prix pré-DIP`. Valeurs "
+            "par défaut = `config.yaml → persistent_dip_filter_long.backtest_*` "
+            "(gelées research 2026-08-27)."
+        )
+        _dip_col1, _dip_col2 = st.columns(2)
+        with _dip_col1:
+            dip_enabled = st.checkbox(
+                "Filtre DIP activé (backtest)",
+                value=bool(
+                    st.session_state.get(
+                        "bt_run_dip_enabled",
+                        _dip_defaults.get("enabled", BT_RUN_DIP_ENABLED_DEFAULT),
+                    )
+                ),
+                key="bt_run_dip_enabled",
+                help="Désactiver → la CLI émet --no-dip-enabled (filtre coupé). Sinon défaut config.yaml.",
+            )
+            dip_persist_days = st.number_input(
+                "Persistance N (séances)",
+                min_value=1,
+                max_value=20,
+                value=int(
+                    st.session_state.get(
+                        "bt_run_dip_persist_days",
+                        _dip_defaults.get("persist_days", BT_RUN_DIP_PERSIST_DAYS_DEFAULT),
+                    )
+                ),
+                step=1,
+                key="bt_run_dip_persist_days",
+                help="Nombre de séances consécutives où global_rank ≥ seuil (config.yaml backtest_persist_days).",
+            )
+        with _dip_col2:
+            dip_rank_horizon = st.number_input(
+                "Horizon de rang H",
+                min_value=3,
+                max_value=20,
+                step=1,
+                value=int(
+                    st.session_state.get(
+                        "bt_run_dip_rank_horizon",
+                        _dip_defaults.get("rank_horizon", BT_RUN_DIP_RANK_HORIZON_DEFAULT),
+                    )
+                ),
+                key="bt_run_dip_rank_horizon",
+                help="Colonne global_rank_{H} (config.yaml backtest_rank_horizon).",
+            )
+            dip_rank_threshold = st.number_input(
+                "Seuil de rang (fraction)",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(
+                    st.session_state.get(
+                        "bt_run_dip_rank_threshold",
+                        _dip_defaults.get("rank_threshold", BT_RUN_DIP_RANK_THRESHOLD_DEFAULT),
+                    )
+                ),
+                step=0.01,
+                format="%.2f",
+                key="bt_run_dip_rank_threshold",
+                help="0.90 = TOP 10% (config.yaml backtest_rank_threshold).",
+            )
+            dip_pct = st.number_input(
+                "Seuil prix X (fraction, signé)",
+                min_value=-0.30,
+                max_value=0.30,
+                value=float(
+                    st.session_state.get(
+                        "bt_run_dip_pct",
+                        _dip_defaults.get("dip_pct", BT_RUN_DIP_PCT_DEFAULT),
+                    )
+                ),
+                step=0.01,
+                format="%.2f",
+                key="bt_run_dip_pct",
+                help="Signe du seuil close[J] vs close[J-N] (config.yaml backtest_dip_pct) : "
+                     "> 0 = exige une BAISSE ≥ X (DIP classique) ; < 0 = exige une HAUSSE ≥ |X| "
+                     "(anti-DIP / breakout). Ex : 0.02 = baisse ≥ 2%% ; -0.02 = hausse ≥ 2%%. 0 = inopérant.",
+            )
+        st.caption(
+            "ℹ️ **Signe de `X`** : `+X` → le ticker doit avoir **baissé** d'au moins `X` sur `N` "
+            "séances (DIP). `-X` → il doit avoir **monté** d'au moins `|X|` (anti-DIP / "
+            "breakout : achat de force, rang top persisté + momentum haussier). `0` → "
+            "seule la persistance du rang compte. Le reclaim `R` s'applique dans les deux "
+            "cas (entrée à la 1re séance où la condition prix est remplie après J)."
+        )
+        _dip_col3, _dip_col4 = st.columns(2)
+        with _dip_col3:
+            dip_reclaim_ratio = st.number_input(
+                "Reclaim R (rebond avant entrée)",
+                min_value=0.0,
+                max_value=1.0,
+                value=st.session_state.get(
+                    "bt_run_dip_reclaim_ratio",
+                    _dip_defaults.get("reclaim_ratio", BT_RUN_DIP_RECLAIM_RATIO_DEFAULT),
+                ),
+                step=0.01,
+                format="%.2f",
+                key="bt_run_dip_reclaim_ratio",
+                help="Vide/0 = R désactivé (D0 direct). 1.0 = entrée seulement au retour au "
+                     "prix pré-DIP ; 0.99 = 99% de ce prix. Entrée au 1er T où "
+                     "close[T] ≥ R × close[J-N] ET rang ≥ seuil (config.yaml backtest_reclaim_ratio).",
+            )
+        with _dip_col4:
+            dip_reclaim_max_wait = st.number_input(
+                "Reclaim max wait (séances)",
+                min_value=1,
+                max_value=60,
+                value=int(
+                    st.session_state.get(
+                        "bt_run_dip_reclaim_max_wait",
+                        _dip_defaults.get("reclaim_max_wait", BT_RUN_DIP_RECLAIM_MAX_WAIT_DEFAULT),
+                    )
+                ),
+                step=1,
+                key="bt_run_dip_reclaim_max_wait",
+                help="Fenêtre de scan des DIP antérieurs pour la confirmation de rebond "
+                     "(config.yaml backtest_reclaim_max_wait).",
+            )
+        st.caption(
+            "⚠️ Le filtre s'applique en amont de la cascade ML (`apply_cascade_to_predictions`). "
+            "Modifier ces valeurs change la sélection des candidats DIP (impact direct sur le P&L)."
+        )
+
     # ── Combinaison Oracle × Global Rank (S5/S6.1 + E6-E13) ──
     st.markdown("**🔀 Mode de cascade — combinaison Oracle × Global Rank**")
     _cascade_mode_labels = {
@@ -2438,6 +2634,16 @@ def _build_run_options() -> BacktestRunOptions:
         cascade_batch_id=selected_ml_batch_id,
         batch_diagnostics_batch_id=selected_ml_batch_id,
         cascade_top_pct=float(st.session_state.get("bt_run_cascade_top_pct", 0.10) or 0.10),
+        # Persistent Rank DIP filter — valeurs UI = défauts config.yaml. Seuls
+        # les champs explicitement modifiés génèrent un flag --dip-* ; sinon la
+        # CLI lit config.yaml (comportement gelé inchangé).
+        dip_enabled=bool(st.session_state.get("bt_run_dip_enabled", _dip_defaults.get("enabled", BT_RUN_DIP_ENABLED_DEFAULT))),
+        dip_rank_horizon=int(st.session_state.get("bt_run_dip_rank_horizon", _dip_defaults.get("rank_horizon", BT_RUN_DIP_RANK_HORIZON_DEFAULT))),
+        dip_rank_threshold=float(st.session_state.get("bt_run_dip_rank_threshold", _dip_defaults.get("rank_threshold", BT_RUN_DIP_RANK_THRESHOLD_DEFAULT))),
+        dip_persist_days=int(st.session_state.get("bt_run_dip_persist_days", _dip_defaults.get("persist_days", BT_RUN_DIP_PERSIST_DAYS_DEFAULT))),
+        dip_pct=float(st.session_state.get("bt_run_dip_pct", _dip_defaults.get("dip_pct", BT_RUN_DIP_PCT_DEFAULT))),
+        dip_reclaim_ratio=st.session_state.get("bt_run_dip_reclaim_ratio"),
+        dip_reclaim_max_wait=int(st.session_state.get("bt_run_dip_reclaim_max_wait", _dip_defaults.get("reclaim_max_wait", BT_RUN_DIP_RECLAIM_MAX_WAIT_DEFAULT))),
         cascade_rank_mode=cast(Any, st.session_state.get("bt_run_cascade_rank_mode", "ml") or "ml"),
         oracle_oos_path=(oracle_oos_path.strip() if oracle_oos_path else None),
         score_column=cast(Any, score_column),

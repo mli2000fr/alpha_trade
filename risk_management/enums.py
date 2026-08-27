@@ -39,6 +39,9 @@ class DecisionReasonCode(StrEnum):
     CONSTRAINT_MAX_POSITION_WEIGHT = "constraint_max_position_weight"
     CONSTRAINT_MAX_SECTOR_WEIGHT = "constraint_max_sector_weight"
     CONSTRAINT_MIN_POSITION_NOTIONAL = "constraint_min_position_notional"
+    # ── Chantier research smart_sector_cap (2026-08-27) ────────────────
+    SECTOR_EXPOSURE_CAP = "sector_exposure_cap"
+    SECTOR_CORR_THRESHOLD = "sector_corr_threshold"
     REJECTED_INVALID_PRICE = SizingMethod.REJECTED_INVALID_PRICE
     REJECTED_ATR_MISSING = SizingMethod.REJECTED_ATR_MISSING
     REJECTED_NOTIONAL = SizingMethod.REJECTED_NOTIONAL

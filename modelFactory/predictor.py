@@ -2744,14 +2744,18 @@ def cascade_select(
     extreme_gate_pct: float | None = None,
     extreme_gate_per_symbol: str = "filter",
     extreme_gate_shorts: bool = False,
+    dip_filter_config: dict[str, Any] | None = None,
 ) -> list[tuple[str, str, float]]:
     """Filtre cascade : Global Rank → Per-Symbol → trades ordonnancés.
 
     Pour chaque symbole ayant un rang global ET une prédiction per-symbol :
     1. Filtre top/bottom N% selon ``global_rank_20`` (H20, meilleur horizon)
-    2. Vérifie que la proba per-symbol > ``min_prob``
-    3. Score multiplicatif : ``rank × prob``
-    4. Trie par score décroissant
+    2. [DIP] Si ``dip_filter_config`` fourni (et enabled), ne garde que les
+       symboles passant le filtre Persistent Rank DIP (Global Rank LONG,
+       ``selector/dip_filter.py``) — PAS Oracle Extreme.
+    3. Vérifie que la proba per-symbol > ``min_prob``
+    4. Score multiplicatif : ``rank × prob``
+    5. Trie par score décroissant
 
     Args:
         trade_date: Date de trading (YYYY-MM-DD).
@@ -2839,6 +2843,45 @@ def cascade_select(
         if _rank_col is None:
             LOGGER.warning("cascade_select: no rank column found in %s", list(ranks_df.columns))
             return []
+
+        # ── Persistent Rank DIP filter (Global Rank LONG uniquement) ──
+        # Applicable à la branche Global Rank (B25), PAS à Oracle Extreme.
+        # Ne s'applique que si config fournie ET enabled (désactivé = inchangé).
+        if (
+            dip_filter_config
+            and bool(dip_filter_config.get("enabled", False))
+            and rank_mode not in ("oracle", "oracle_filter", "oracle_rerank", "oracle_pool")
+        ):
+            try:
+                from selector.dip_filter import filter_day_candidates
+                _dip_before = int(ranks_df.shape[0]) if ranks_df is not None else 0
+                ranks_df = filter_day_candidates(
+                    ranks_df, engine, batch_id, trade_date, dip_filter_config,
+                    best_h=_best_h,
+                )
+                _dip_after = int(ranks_df.shape[0]) if ranks_df is not None else 0
+                # Log de passage sur la règle DIP (vérifiable dans les logs backtest).
+                LOGGER.info(
+                    "DIP_FILTER backtest date=%s batch=%s horizon=%s N=%s X=%.4f "
+                    "threshold=%.4f before=%d after=%d rejected=%d",
+                    trade_date, batch_id,
+                    dip_filter_config.get("rank_horizon"),
+                    dip_filter_config.get("persist_days"),
+                    float(dip_filter_config.get("dip_pct", 0.02)),
+                    float(dip_filter_config.get("rank_threshold", 0.90)),
+                    _dip_before, _dip_after, _dip_before - _dip_after,
+                )
+                if ranks_df.empty:
+                    LOGGER.info(
+                        "cascade_select: DIP filter vide pour %s (%s) — aucun candidat",
+                        trade_date, batch_id,
+                    )
+                    return []
+            except Exception:
+                LOGGER.exception(
+                    "cascade_select: DIP filter échoué pour %s — on continue sans filtre",
+                    trade_date,
+                )
 
     # ── Ablation Oracle (S6/S6.1) : politiques d'utilisation du second signal ──
     #   oracle        = P_extreme REMPLACE le rang global (test S6 initial)
@@ -3038,6 +3081,102 @@ def cascade_select(
     return candidates
 
 
+def _apply_dip_quality_policy(
+    policy: str,
+    quality_map: dict,
+    date_key: str,
+    candidates: list[tuple[str, str, float]],
+) -> tuple[list[tuple[str, str, float]], dict[str, float]]:
+    """Applique la politique ``dip_quality_score`` sur les candidats du jour.
+
+    Args:
+        policy: "rank" | "tiebreak" | "top50" | "top25".
+        quality_map: {(date_str, symbol_upper): score}.
+        date_key: date du jour (YYYY-MM-DD).
+        candidates: [(side, symbol, score)] de cascade_select (déjà triés).
+
+    Returns:
+        (candidates_filtre, quality_by_symbol).
+        - "rank"/"tiebreak" : tous les candidats conservés ; quality_by_symbol
+          permet d'écraser ``proba_long`` en aval (ranking du moteur par
+          qualité pour "rank" ; réordonnancement intra-bucket pour "tiebreak",
+          calculé dans ``apply_cascade_to_predictions``).
+        - "top50"/"top25" : seuls les candidats AVEC score au-dessus du
+          percentile qualité du jour sont conservés ; les autres sont retirés
+          (slots libérés réalloués normalement par le moteur). Les candidats
+          sans score sont conservés (qualité inconnue → pas de filtre).
+    """
+    if not quality_map or policy in (None, "", "none"):
+        return candidates, {}
+    scored: dict[str, float] = {}
+    for _side, _sym, _score in candidates:
+        q = quality_map.get((date_key, str(_sym).upper()))
+        if q is not None:
+            scored[str(_sym).upper()] = float(q)
+    if not scored:
+        return candidates, {}
+    if policy in ("rank", "tiebreak"):
+        return candidates, scored
+    if policy in ("top50", "top25"):
+        pct = 0.50 if policy == "top50" else 0.25
+        vals = np.asarray(list(scored.values()), dtype=float)
+        thr = float(np.percentile(vals, (1.0 - pct) * 100.0))
+        keep = {s for s, q in scored.items() if q >= thr}
+        # Conserver : candidats scorés au-dessus du seuil OU candidats sans score
+        # (qualité inconnue → ne pas les filtrer).
+        filtered = [
+            c for c in candidates
+            if str(c[1]).upper() in keep or str(c[1]).upper() not in scored
+        ]
+        return filtered, scored
+    return candidates, scored
+
+
+def _apply_dip_quality_tiebreak(
+    proba_map: dict[str, float],
+    quality_map: dict,
+    date_key: str,
+) -> dict[str, float]:
+    """Tiebreaker dip_quality : réordonne UNIQUEMENT les candidats du même
+    bucket de rang ML (décile de la position du jour) par ``dip_quality_score``
+    DESC. Hors d'un bucket, l'ordre ML est préservé (aucune traversée de bucket).
+
+    Préserve le multiset des ``proba_long`` (aucune magnitude altérée → sizing /
+    min-proba inchangés) ; ``replay_signals`` (tri par ``proba_long`` DESC)
+    reproduit donc exactement l'ordre retourné. Quand chaque bucket ne contient
+    qu'un candidat (≤ 10 candidats/jour en déciles), le résultat est identique à
+    la baseline (T1 ≡ T0).
+
+    Args:
+        proba_map: {symbol: proba_long} baseline ML des candidats retenus (LONG).
+        quality_map: {(date_str, symbol_upper): dip_quality_score}.
+        date_key: date du jour (YYYY-MM-DD).
+
+    Returns:
+        {symbol: proba_long} réordonné (même multiset) selon
+        ``(bucket ML, dip_quality_score DESC)``.
+    """
+    if not proba_map:
+        return {}
+    order = sorted(proba_map.items(), key=lambda kv: float(kv[1]), reverse=True)
+    n = len(order)
+    bucket: dict[str, int] = {}
+    for _idx, (_sym, _) in enumerate(order):
+        bucket[_sym] = min(9, (_idx * 10) // n) if n else 0
+    # Tri stable : bucket asc → scorés d'abord (dq DESC) → sans score en fin de
+    # bucket (garde l'ordre ML relatif via la stabilité du tri).
+    new_order = sorted(
+        order,
+        key=lambda kv: (
+            bucket[kv[0]],
+            1 if quality_map.get((date_key, str(kv[0]).upper())) is None else 0,
+            -(float(quality_map.get((date_key, str(kv[0]).upper())) or -1.0)),
+        ),
+    )
+    probas = [float(p) for _, p in order]
+    return {sym: probas[i] for i, (sym, _) in enumerate(new_order)}
+
+
 def apply_cascade_to_predictions(
     preds_df: pd.DataFrame,
     batch_id: str,
@@ -3056,6 +3195,18 @@ def apply_cascade_to_predictions(
     extreme_gate_pct: float | None = None,
     extreme_gate_per_symbol: str = "filter",
     extreme_gate_shorts: bool = False,
+    dip_filter_config: dict[str, Any] | None = None,
+    # Research dip_quality_score (chantier dip_quality_static_model, défaut off).
+    #   dip_quality_map   : {(date_str, symbol_upper): score} — scores OOF par (J, symbol).
+    #   dip_quality_policy: "none" | "rank" | "top50" | "top25" | "tiebreak"
+    #       rank   = Q1 : priorité aux DIP de meilleure qualité (écrase proba_long
+    #                → replay_signals re-trie par qualité quand slots contraints).
+    #       top50/25 = Q2/Q3 : ne garder que les DIP au-dessus du percentile qualité
+    #                du jour ; slots libérés réalloués normalement par le moteur.
+    #       tiebreak = Q4 : dq en second critère UNIQUEMENT entre candidats du même
+    #                bucket de rang ML (décile de la position du jour) ; sinon rien.
+    dip_quality_map: dict | None = None,
+    dip_quality_policy: str = "none",
 ) -> pd.DataFrame:
     """Filtre les prédictions per-symbol via la cascade Global Rank.
 
@@ -3076,6 +3227,8 @@ def apply_cascade_to_predictions(
         top_pct: Seuil top/bottom (défaut: config.yaml).
         min_prob: Proba minimale (défaut: config.yaml).
         engine: SQLAlchemy engine.
+        dip_filter_config: config DIP (selector/dip_filter.load_dip_filter_config)
+            — appliqué à la branche Global Rank uniquement. None = désactivé.
 
     Returns:
         DataFrame filtré (mêmes colonnes, lignes non-cascade → flat).
@@ -3174,10 +3327,39 @@ def apply_cascade_to_predictions(
             extreme_gate_pct=extreme_gate_pct,
             extreme_gate_per_symbol=_eg_ps_mode,
             extreme_gate_shorts=_eg_shorts,
+            dip_filter_config=dip_filter_config,
         )
+
+        # ── DIP quality policy (research Q0-Q3, défaut off) ──
+        _dip_q: dict[str, float] = {}
+        if dip_quality_policy not in (None, "", "none") and dip_quality_map:
+            _candidates, _dip_q = _apply_dip_quality_policy(
+                dip_quality_policy, dip_quality_map, _date_str, _candidates,
+            )
+            if _dip_q:
+                LOGGER.info(
+                    "dip_quality policy=%s date=%s — %d candidats avec score, %d conservés",
+                    dip_quality_policy, _date_str, len(_dip_q), len(_candidates),
+                )
 
         # Symbols retenus par la cascade
         _passed_symbols = {_sym for _, _sym, _ in _candidates}
+        # ── DIP quality — Tiebreaker (research) : réordonne UNIQUEMENT les
+        #    candidats du même bucket de rang ML (décile de la position du jour)
+        #    par dip_quality_score DESC. Multiset des proba_long préservé →
+        #    sélection identique à la baseline sauf réordonnancement intra-bucket. ──
+        if dip_quality_policy == "tiebreak" and _dip_q:
+            _proba_map = {
+                str(_sym).upper(): float(_pred_dict[_sym].long_prob)
+                for _sym in _passed_symbols
+                if _sym in _pred_dict and (_pred_dict[_sym].long_prob or 0.0) > 0.0
+            }
+            _dip_q = _apply_dip_quality_tiebreak(_proba_map, dip_quality_map, _date_str)
+            if _dip_q:
+                LOGGER.info(
+                    "dip_quality tiebreak date=%s — %d candidats réordonnés (bucket décile ML)",
+                    _date_str, len(_dip_q),
+                )
         _score_map = {_sym: _score for _, _sym, _score in _candidates}
         _side_map = {_sym: _side for _side, _sym, _ in _candidates}
 
@@ -3199,27 +3381,30 @@ def apply_cascade_to_predictions(
                 continue
             if "proba_long" in result.columns and _cp.long_prob > 0:
                 result.loc[_pm, "proba_long"] = _cp.long_prob
-            if _eg_ps_extreme:
-                # E17 fix (2026-08-20) : le gate extreme_gate est LONG-only par
-                # design (is_bottom=False). En variantes A/B, un per-symbol B25
-                # prédit "short" fuyait en short (bug observé : 68 shorts sur B).
-                # On force predicted_side selon le côté du candidat (E18 : shorts
-                # optionnels) et on purge la proba de l'autre côté.
-                _side = _side_map.get(_sym, "LONG")
-                if _side == "SHORT":
-                    if "proba_short" in result.columns:
-                        result.loc[_pm, "proba_short"] = _cp.short_prob
-                    if "proba_long" in result.columns:
-                        result.loc[_pm, "proba_long"] = 0.0
-                    if "predicted_side" in result.columns:
-                        result.loc[_pm, "predicted_side"] = "short"
-                else:
-                    if "proba_short" in result.columns:
-                        result.loc[_pm, "proba_short"] = 0.0
-                    if "predicted_side" in result.columns:
-                        result.loc[_pm, "predicted_side"] = "long"
-            elif "proba_short" in result.columns and _cp.short_prob > 0:
-                result.loc[_pm, "proba_short"] = _cp.short_prob
+            # ── DIP quality (Q1 rank) : écraser proba_long par le quality score ──
+            #    pour que replay_signals re-trie les candidats par qualité.
+            if _dip_q.get(_sym) is not None and "proba_long" in result.columns:
+                result.loc[_pm, "proba_long"] = float(_dip_q[_sym])
+            # FIX 2026-08-27 — cohérence cascade → phase 2 (bug générique, PAS
+            # spécifique au DIP) : un candidat retenu par cascade_select (LONG ou
+            # SHORT) doit voir son ``predicted_side`` aligné sur le côté décidé
+            # par la cascade. Avant, la branche ML normale laissait
+            # ``predicted_side`` à la valeur per-symbol d'origine (souvent "flat"
+            # pour un candidat retenu sur le rank) → phase 2 lisait "flat" et
+            # rejetait le signal. Couvre aussi extreme_gate (E17/E18).
+            _cascade_side = _side_map.get(_sym, "LONG")
+            if _cascade_side == "SHORT":
+                if "proba_short" in result.columns and _cp.short_prob > 0:
+                    result.loc[_pm, "proba_short"] = _cp.short_prob
+                if "proba_long" in result.columns:
+                    result.loc[_pm, "proba_long"] = 0.0
+                if "predicted_side" in result.columns:
+                    result.loc[_pm, "predicted_side"] = "short"
+            else:
+                if "proba_short" in result.columns:
+                    result.loc[_pm, "proba_short"] = 0.0
+                if "predicted_side" in result.columns:
+                    result.loc[_pm, "predicted_side"] = "long"
 
         # Forcer flat pour les non-retenus
         _flat_mask = _mask & (~result["symbol"].astype(str).isin(_passed_symbols))

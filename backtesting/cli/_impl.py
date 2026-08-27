@@ -1511,6 +1511,76 @@ def _build_parser() -> argparse.ArgumentParser:
         help="P5.2 : override cascade.top_pct (ex 0.02/0.05/0.10/0.15) — courbe de capacité "
              "top_pct. Transmis à apply_cascade_to_predictions(top_pct=...). None = config.yaml.",
     )
+    # ── Persistent Rank DIP filter — overrides config.yaml (backtest_*) ──
+    # Chaque flag est optionnel (None = valeur de config.yaml
+    # `persistent_dip_filter_long.backtest_*`). Utile pour paramétrer le filtre
+    # depuis l'IHM sans toucher au fichier de config.
+    run_p.add_argument(
+        "--dip-enabled",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="DIP : active/désactive le filtre Persistent Rank DIP en backtest. "
+             "None = config.yaml persistent_dip_filter_long.backtest_enabled.",
+    )
+    run_p.add_argument(
+        "--dip-rank-horizon",
+        type=int,
+        default=None,
+        help="DIP : horizon de rang (20 → global_rank_20 ; vide → best_horizon). "
+             "None = config.yaml backtest_rank_horizon.",
+    )
+    run_p.add_argument(
+        "--dip-rank-threshold",
+        type=float,
+        default=None,
+        help="DIP : seuil de rang (0.90 = TOP 10%%). None = config.yaml backtest_rank_threshold.",
+    )
+    run_p.add_argument(
+        "--dip-persist-days",
+        type=int,
+        default=None,
+        help="DIP : persistance N (séances consécutives au-dessus du seuil). "
+             "None = config.yaml backtest_persist_days.",
+    )
+    run_p.add_argument(
+        "--dip-pct",
+        type=float,
+        default=None,
+        help="DIP : seuil prix signé sur N séances. >0 = baisse >= X (ex 0.02 = baisse >= 2%%) ; "
+             "<0 = hausse >= |X| (anti-DIP/breakout). None = config.yaml backtest_dip_pct.",
+    )
+    run_p.add_argument(
+        "--dip-reclaim-ratio",
+        type=float,
+        default=None,
+        help="DIP reclaim : confirmation de rebond avant entrée. 0/vide = R désactivé (D0 direct) ; "
+             "1.0 = retour au prix pré-DIP, 0.99 = 99%% de ce prix, etc. "
+             "None = config.yaml backtest_reclaim_ratio.",
+    )
+    run_p.add_argument(
+        "--dip-reclaim-max-wait",
+        type=int,
+        default=None,
+        help="DIP reclaim : fenêtre (séances) pour la confirmation de rebond. "
+             "None = config.yaml backtest_reclaim_max_wait.",
+    )
+    run_p.add_argument(
+        "--dip-quality-path",
+        type=str,
+        default=None,
+        help="Research dip_quality_score : CSV (signal_date,symbol,dip_quality_score) OOF. "
+             "Active la politique de qualité sur les candidats DIP.",
+    )
+    run_p.add_argument(
+        "--dip-quality-policy",
+        type=str,
+        default="none",
+        choices=["none", "rank", "top50", "top25", "tiebreak"],
+        help="Politique dip_quality_score : none (Q0), rank (Q1 = priorité aux DIP de "
+             "meilleure qualité quand slots contraints), top50 (Q2), top25 (Q3), "
+             "tiebreak (Q4 = dq en second critère uniquement entre candidats du même "
+             "bucket de rang ML, décile de la position du jour).",
+    )
     run_p.add_argument(
         "--cascade-rank-mode",
         type=str,
@@ -1573,6 +1643,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Parquet des prédictions OOS Oracle (sortie S4) pour --cascade-rank-mode oracle.",
     )
     run_p.add_argument(
+        "--oracle-batch-id",
+        type=str,
+        default=None,
+        help="Batch_id des prédictions Oracle Extreme (O0) à lire depuis la table "
+             "alpha_trade.oracle_extreme_predictions (filtre STRICT par batch, "
+             "cf. doc/controle_couverture.md). Prioritaire sur --oracle-oos-path "
+             "pour les modes oracle*/extreme_gate. Obligatoire si --oracle-oos-path absent.",
+    )
+    run_p.add_argument(
         "--oracle-calibration",
         type=str,
         default=None,
@@ -1604,6 +1683,32 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.0,
         help="Cap d'exposition par secteur en fraction (Phase C.4). 0.0 = désactivé.",
+    )
+    # Ablation contrôlée du cap sectoriel (2026-08-27) : override de
+    # `risk_management.max_tickers_per_sector` (config.yaml, actuel 2) pour
+    # tester cap=3 / cap=4 / off SANS modifier config.yaml.
+    run_p.add_argument(
+        "--max-tickers-per-sector",
+        type=int,
+        default=None,
+        help="Override du nombre max de tickers par secteur (ablation sector cap). "
+             "None = config.yaml (actuel 2). Ex: 3, 4, 5. Prioritaire sur config.yaml.",
+    )
+    run_p.add_argument(
+        "--no-sector-cap",
+        action="store_true",
+        default=False,
+        help="Ablation : DÉSACTIVE le cap max_tickers_per_sector (None = illimité).",
+    )
+    # Chantier research smart_sector_cap (2026-08-27) : variantes structurelles.
+    # count = C0 (comportement actuel) ; exposure = C1 ; hybrid = C2.
+    run_p.add_argument(
+        "--sector-cap-mode",
+        choices=["count", "exposure", "hybrid"],
+        default=None,
+        help="Smart sector cap (research) : 'count'=C0 actuel, 'exposure'=C1 "
+             "(cap exposition sectorielle 20%%), 'hybrid'=C2 (2 tickers + 3e "
+             "exceptionnel si expo<=20%% ET corr PIT<0.40). Default None=count.",
     )
     run_p.add_argument(
         "--max-portfolio-dd-pct",
@@ -2086,10 +2191,23 @@ def _explicit_flags(argv: list[str]) -> set[str]:
         "--target-annual-vol": "target_annual_vol",
         "--min-ml-coverage-ratio": "min_ml_coverage_ratio",
         "--max-sector-exposure-pct": "max_sector_exposure_pct",
+        "--max-tickers-per-sector": "max_tickers_per_sector",
+        "--no-sector-cap": "no_sector_cap",
+        "--sector-cap-mode": "sector_cap_mode",
         "--max-entry-gap-pct": "max_entry_gap_pct",
         "--short-momentum-filter": "short_momentum_filter",
         "--short-momentum-max-pct": "short_momentum_max_pct",
         "--cascade-top-pct": "cascade_top_pct",
+        "--dip-enabled": "dip_enabled",
+        "--no-dip-enabled": "dip_enabled",
+        "--dip-rank-horizon": "dip_rank_horizon",
+        "--dip-rank-threshold": "dip_rank_threshold",
+        "--dip-persist-days": "dip_persist_days",
+        "--dip-pct": "dip_pct",
+        "--dip-reclaim-ratio": "dip_reclaim_ratio",
+        "--dip-reclaim-max-wait": "dip_reclaim_max_wait",
+        "--dip-quality-path": "dip_quality_path",
+        "--dip-quality-policy": "dip_quality_policy",
         "--no-shorts": "no_shorts",
         "--no-longs": "no_longs",
         "--force-close-losers-on-breaker": "force_close_losers_on_breaker",
@@ -2694,6 +2812,19 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 # load_risk_config lit `risk_management.max_short_positions` de
                 # config.yaml (même source que le live).
                 **({"max_short_positions": 0} if getattr(args, "no_shorts", False) else {}),
+                # Ablation cap sectoriel (2026-08-27) : override config.yaml
+                # (--max-tickers-per-sector N) ou désactivation (--no-sector-cap).
+                **(
+                    {"max_tickers_per_sector": int(args.max_tickers_per_sector)}
+                    if getattr(args, "max_tickers_per_sector", None) is not None
+                    else ({"max_tickers_per_sector": None} if getattr(args, "no_sector_cap", False) else {})
+                ),
+                # Smart sector cap (research) : mode C0/C1/C2 (None = count actuel).
+                **(
+                    {"sector_cap_mode": str(args.sector_cap_mode)}
+                    if getattr(args, "sector_cap_mode", None) is not None
+                    else {}
+                ),
                 # P9 SHORT-only : max_long_positions=0 bloque les longs.
                 "max_long_positions": 0 if getattr(args, "no_longs", False) else None,
                 "short_min_score": 0.0,
@@ -3244,20 +3375,57 @@ def _run_backtest(args: argparse.Namespace) -> None:
                         _best_h_flag = int(_cfg_backtest_horizon)
                     except (TypeError, ValueError):
                         pass
-            # ── Ablation Oracle (S6/S6.1) + Extreme Gate (E6-E13) : charger P(extreme) depuis le parquet OOS ──
+            # ── Ablation Oracle (S6/S6.1) + Extreme Gate (E6-E13) : charger P(extreme) ──
+            # Source : table oracle_extreme_predictions (--oracle-batch-id, filtre batch
+            # STRICT) OU parquet OOS (--oracle-oos-path, legacy). L'un des deux requis.
             _oracle_rank_map = None
             _oracle_modes = ("oracle", "oracle_filter", "oracle_rerank", "oracle_pool", "extreme_gate")
             if getattr(args, "cascade_rank_mode", "ml") in _oracle_modes:
                 import pandas as pd
+                _oracle_batch_id = str(getattr(args, "oracle_batch_id", "") or "").strip() or None
                 _oos_path = getattr(args, "oracle_oos_path", None)
-                if not _oos_path:
+                # Défaut pratique : si ni batch Oracle ni parquet n'est fourni, on lit la
+                # table pour le MÊME batch que le backtest (--ml-batch-id). Couvre le cas
+                # « un seul batch entraîné B25 + Oracle » (ablation O1) : l'IHM n'a rien à
+                # saisir. Le filtre reste STRICT par batch (jamais "tous batchs confondus").
+                if not _oracle_batch_id and not _oos_path:
+                    _oracle_batch_id = str(getattr(args, "ml_batch_id", "") or "").strip() or None
+                    if _oracle_batch_id:
+                        LOGGER.info(
+                            "oracle: --oracle-batch-id non fourni → défaut ml_batch_id=%s (table)",
+                            _oracle_batch_id,
+                        )
+                if _oracle_batch_id:
+                    # Table oracle_extreme_predictions — filtre strict par batch.
+                    from modelFactory.oracle.predictions_store import load_oracle_predictions
+                    _oos_df = load_oracle_predictions(
+                        engine,
+                        batch_id=_oracle_batch_id,
+                        start_date=str(start),
+                        end_date=str(end),
+                    )
+                    if _oos_df.empty:
+                        _safe_print(
+                            "⚠️ oracle: aucune prédiction en table pour batch={} sur [{}, {}] "
+                            "(rows vides). Vérifier que le walk-forward a persisté ce batch.".format(
+                                _oracle_batch_id, start, end,
+                            )
+                        )
+                    else:
+                        _safe_print(
+                            "   oracle: lecture table oracle_extreme_predictions batch={} rows={} "
+                            "(filtre batch strict)\n".format(_oracle_batch_id, len(_oos_df))
+                        )
+                elif _oos_path:
+                    _oos_df = pd.read_parquet(_oos_path)
+                else:
                     _safe_print(
-                        "❌ --cascade-rank-mode {} nécessite --oracle-oos-path ".format(
-                            getattr(args, "cascade_rank_mode", "oracle")) +
-                        "(parquet des prédictions OOS Oracle, sortie S4).\n"
+                        "❌ --cascade-rank-mode {} nécessite --oracle-batch-id (table) "
+                        "ou --oracle-oos-path (parquet legacy).".format(
+                            getattr(args, "cascade_rank_mode", "oracle")
+                        )
                     )
                     raise SystemExit(2)
-                _oos_df = pd.read_parquet(_oos_path)
                 # ── Calibration optionnelle de proba_extreme (oracle.calibration) ──
                 _cal_flag = str(getattr(args, "oracle_calibration", "none") or "none").strip().lower()
                 if _cal_flag in ("", "none"):
@@ -3274,6 +3442,71 @@ def _run_backtest(args: argparse.Namespace) -> None:
                     d: dict(zip(g["symbol"], g["proba_extreme"]))
                     for d, g in _oos_df.groupby("_d")
                 }
+
+            # ── Persistent Rank DIP filter — config BACKTEST ──
+            # Le CLI `backtesting run` est le chemin BACKTEST : il lit les clés
+            # `backtest_*` de config.yaml → persistent_dip_filter_long. Le live
+            # (synthèse des prédictions) lit les clés `prod_*` séparément.
+            # Les flags `--dip-*` (optionnels) écrasent les valeurs config.yaml :
+            # priorité flag explicite > config.yaml > défauts module.
+            _dip_filter_cfg = None
+            try:
+                from selector.dip_filter import load_dip_filter_config
+                _dip_cfg_full = load_dip_filter_config("backtest")
+                # ── Overrides CLI (--dip-*) ──
+                _dip_cli_map = {
+                    "enabled": getattr(args, "dip_enabled", None),
+                    "rank_horizon": getattr(args, "dip_rank_horizon", None),
+                    "rank_threshold": getattr(args, "dip_rank_threshold", None),
+                    "persist_days": getattr(args, "dip_persist_days", None),
+                    "dip_pct": getattr(args, "dip_pct", None),
+                    "reclaim_ratio": getattr(args, "dip_reclaim_ratio", None),
+                    "reclaim_max_wait": getattr(args, "dip_reclaim_max_wait", None),
+                }
+                for _dk, _dv in _dip_cli_map.items():
+                    if _dv is not None:
+                        _dip_cfg_full[_dk] = _dv
+                if bool(_dip_cfg_full.get("enabled", False)):
+                    _dip_filter_cfg = _dip_cfg_full
+                    _dip_reclaim = _dip_cfg_full.get("reclaim_ratio")
+                    _safe_print(
+                        "   🔻 DIP filter (backtest): N={} X={:.0%} rank>={:.2f} H={} R={} — {} candidats pré-cascade".format(
+                            int(_dip_cfg_full.get("persist_days", 4)),
+                            float(_dip_cfg_full.get("dip_pct", 0.02)),
+                            float(_dip_cfg_full.get("rank_threshold", 0.90)),
+                            _dip_cfg_full.get("rank_horizon", "best"),
+                            f"{float(_dip_reclaim):.2f}" if _dip_reclaim else "off",
+                            int(preds_df.shape[0]) if preds_df is not None else 0,
+                        )
+                    )
+            except Exception:
+                LOGGER.exception("DIP filter config — désactivé")
+                _dip_filter_cfg = None
+
+            # ── Research dip_quality_score (Q0-Q3) : chargement de la carte ──
+            _dip_quality_map: dict | None = None
+            _dip_quality_policy = getattr(args, "dip_quality_policy", "none") or "none"
+            _dip_quality_path = getattr(args, "dip_quality_path", None)
+            if _dip_quality_path:
+                try:
+                    import pandas as _pd
+                    _dq = _pd.read_csv(_dip_quality_path, parse_dates=["signal_date"])
+                    _dq["signal_date"] = _pd.to_datetime(_dq["signal_date"]).dt.normalize()
+                    _dq["symbol"] = _dq["symbol"].astype(str).str.upper()
+                    _dip_quality_map = {
+                        (str(_r.signal_date.date()), str(_r.symbol).upper()): float(_r.dip_quality_score)
+                        for _r in _dq.itertuples() if _pd.notna(_r.dip_quality_score)
+                    }
+                    _safe_print(
+                        "   🔻 DIP quality (research): policy={} — {} (date,symbol) scores OOF".format(
+                            _dip_quality_policy, len(_dip_quality_map),
+                        )
+                    )
+                except Exception:
+                    LOGGER.exception("dip_quality_path illisible — politique désactivée")
+                    _dip_quality_map = None
+                    _dip_quality_policy = "none"
+
             preds_df = apply_cascade_to_predictions(
                 preds_df, _cascade_batch_id, engine=engine,
                 best_h=_best_h_flag,
@@ -3283,11 +3516,14 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 short_momentum_filter=(None if _sm_filter_flag == "none" else _sm_filter_flag),
                 short_momentum_max_pct=_sm_max_flag,
                 oracle_rank_map=_oracle_rank_map,
+                dip_filter_config=_dip_filter_cfg,
                 oracle_filter_pct=getattr(args, "cascade_oracle_filter_pct", None),
                 oracle_pool_pct=getattr(args, "cascade_oracle_pool_pct", None),
                 extreme_gate_pct=getattr(args, "extreme_gate_pct", None),
                 extreme_gate_per_symbol=getattr(args, "extreme_gate_per_symbol", "filter"),
                 extreme_gate_shorts=bool(getattr(args, "extreme_gate_shorts", False)),
+                dip_quality_map=_dip_quality_map,
+                dip_quality_policy=_dip_quality_policy,
             )
             _cas_passed = int(preds_df.loc[preds_df["predicted_side"] != "flat"].shape[0]) if "predicted_side" in preds_df.columns else 0
             _cascade_filtered_count = _cas_before - _cas_passed
@@ -3480,6 +3716,27 @@ def _run_backtest(args: argparse.Namespace) -> None:
             )
             _yaml_bt = _load_yaml_bt(getattr(args, "config_path", None))
             _mr_cfg_for_bt = _parse_mr_bt(_yaml_bt.get("market_regimes"))
+            # ── Ablation cap sectoriel (2026-08-27) : override config.yaml
+            # (--max-tickers-per-sector N / --no-sector-cap). Appliqué à
+            # market_regimes.sector_limits = source du snapshot régime qui
+            # écrase RiskConfig via apply_snapshot — sans ça l'override CLI
+            # serait inopérant (le régime réimposerait la valeur config.yaml).
+            _mtp_cli = getattr(args, "max_tickers_per_sector", None)
+            _no_cap_cli = getattr(args, "no_sector_cap", False)
+            if (_mtp_cli is not None or _no_cap_cli) and _mr_cfg_for_bt is not None:
+                from service.market.config import SectorLimitsConfig as _SLC
+                _mr_cfg_for_bt = replace(
+                    _mr_cfg_for_bt,
+                    sector_limits=_SLC(
+                        enabled=False if _no_cap_cli else bool(_mr_cfg_for_bt.sector_limits.enabled),
+                        max_tickers_per_sector=(None if _no_cap_cli else int(_mtp_cli)),
+                    ),
+                )
+                _safe_print(
+                    "   🔻 Ablation sector cap : max_tickers_per_sector={} (config.yaml=2)".format(
+                        "off" if _no_cap_cli else int(_mtp_cli)
+                    )
+                )
             args.effective_macro_pit_mode = _resolve_macro_pit_mode_bt(
                 _yaml_bt,
                 execution_context="backtest",

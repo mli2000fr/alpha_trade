@@ -78,6 +78,11 @@ def cleanup_batches(dry_run: bool = False, include_completed: bool = False) -> d
             if batch_dir.exists():
                 shutil.rmtree(batch_dir)
                 dirs_deleted += 1
+            # Champions Oracle Extreme — dossier dédié (hors artifacts_base/<bid>).
+            _champ_dir = artifacts_base / "oracle" / "champions" / bid
+            if _champ_dir.exists():
+                shutil.rmtree(_champ_dir)
+                dirs_deleted += 1
 
     LOGGER.info(
         "Nettoyage terminé — %d/%d batch(s), %d lignes DB, %d répertoires, échecs=%s",
