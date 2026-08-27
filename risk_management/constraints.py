@@ -27,6 +27,8 @@ _REASON_TO_CODE = {
     "max_gross_exposure atteint": DecisionReasonCode.CONSTRAINT_MAX_GROSS_EXPOSURE,
     "max_position_weight atteint": DecisionReasonCode.CONSTRAINT_MAX_POSITION_WEIGHT,
     "max_sector_weight atteint": DecisionReasonCode.CONSTRAINT_MAX_SECTOR_WEIGHT,
+    "sector_exposure_cap atteint": DecisionReasonCode.SECTOR_EXPOSURE_CAP,
+    "sector_corr_threshold atteint": DecisionReasonCode.SECTOR_CORR_THRESHOLD,
     "min_position_notional non atteint": DecisionReasonCode.CONSTRAINT_MIN_POSITION_NOTIONAL,
     "max_position_pct_of_adv atteint": DecisionReasonCode.CONSTRAINT_MAX_POSITION_PCT_OF_ADV,
     "adv_unavailable": DecisionReasonCode.CONSTRAINT_MAX_POSITION_PCT_OF_ADV,
@@ -49,6 +51,8 @@ class PortfolioState:
     short_notional: float = 0.0
     sector_notional: dict[str, float] = field(default_factory=dict)
     sector_ticker_count: dict[str, int] = field(default_factory=dict)
+    # Smart sector cap (C2) : symboles par secteur pour la corrélation intra.
+    sector_symbols: dict[str, list[str]] = field(default_factory=dict)
 
     @property
     def gross_notional(self) -> float:
@@ -101,6 +105,9 @@ class PortfolioState:
         self.sector_notional[sector] = current_sector_notional + notional
         current_ticker_count = self.sector_ticker_count.get(sector, 0)
         self.sector_ticker_count[sector] = current_ticker_count + 1
+        # Smart sector cap (C2) : mémoriser le symbole pour la corrélation intra.
+        if symbol:
+            self.sector_symbols.setdefault(sector, []).append(symbol)
 
 
 class ConstraintChecker:
@@ -120,6 +127,30 @@ class ConstraintChecker:
     def reason_to_code(reason: str) -> DecisionReasonCode:
         return _REASON_TO_CODE.get(str(reason or "").strip() or "OK", DecisionReasonCode.CONSTRAINT_UNKNOWN)
 
+    def _hybrid_corr_ok(self, state: PortfolioState, sector: str, symbol: str) -> bool:
+        """C2 : corrélation moyenne PIT < seuil avec les positions du secteur.
+
+        S'appuie sur la carte paire PIT injectée par jour (``cfg.sector_corr_map``).
+        Donnée manquante → refuse (fail-closed PIT).
+        """
+        members = state.sector_symbols.get(sector, [])
+        if not members:
+            return True  # pas d'autre position du secteur → sans objet
+        corr_map = getattr(self._cfg, "sector_corr_map", None)
+        if not corr_map:
+            return False  # pas de carte PIT → refuse (sûr)
+        vals: list[float] = []
+        for m in members:
+            v = corr_map.get(symbol, {}).get(m)
+            if v is None:
+                v = corr_map.get(m, {}).get(symbol)
+            if v is None:
+                return False  # donnée corr manquante → refuse (PIT strict)
+            vals.append(float(v))
+        if not vals:
+            return True
+        return (sum(vals) / len(vals)) < float(self._cfg.sector_corr_threshold)
+
     def check(
         self,
         symbol: str,
@@ -130,6 +161,7 @@ class ConstraintChecker:
         *,
         side: str = "long",
         adv_usd: float | None = None,
+        selection_rank: int | None = None,
     ) -> tuple[float, str]:
         """Retourne (approved_shares, reason). reason == 'OK' si aucune réduction.
 
@@ -161,11 +193,40 @@ class ConstraintChecker:
         if state.position_count >= self._cfg.effective_max_positions:
             return 0.0, "max_positions atteint"
 
-        # max tickers / secteur
-        if self._cfg.max_tickers_per_sector is not None:
-            current_n = state.sector_ticker_count.get(sector, 0)
-            if current_n >= self._cfg.max_tickers_per_sector:
+        # ── Smart sector cap (chantier research 2026-08-27) ────────────
+        # Mode "count"    (C0) = comportement actuel (max_tickers_per_sector).
+        # Mode "exposure" (C1) = remplace le ticker-count par une limite
+        #   d'exposition sectorielle post-entrée (refuse, ne réduit pas).
+        # Mode "hybrid"   (C2) = max 2 tickers + un 3e exceptionnel SI
+        #   exposition post-entrée <= cap ET corrélation moyenne PIT avec les
+        #   positions du secteur < seuil ; jamais plus de 3 tickers. Le 3e
+        #   candidat est par construction le meilleur encore disponible du
+        #   secteur (traitement par selection_rank croissant).
+        _cap_mode = str(getattr(self._cfg, "sector_cap_mode", "count") or "count").strip().lower()
+        if _cap_mode == "exposure":
+            _expo_after = (state.sector_notional.get(sector, 0.0) + proposed_shares * price) / equity
+            if _expo_after > float(self._cfg.sector_exposure_cap_pct) + 1e-12:
+                return 0.0, "sector_exposure_cap atteint"
+        elif _cap_mode == "hybrid":
+            _current_n = state.sector_ticker_count.get(sector, 0)
+            if _current_n >= 3:
                 return 0.0, "max_tickers_per_sector atteint"
+            if _current_n == 2:
+                _expo_after = (state.sector_notional.get(sector, 0.0) + proposed_shares * price) / equity
+                if _expo_after > float(self._cfg.sector_exposure_cap_pct) + 1e-12:
+                    return 0.0, "sector_exposure_cap atteint"
+                if not self._hybrid_corr_ok(state, sector, symbol):
+                    return 0.0, "sector_corr_threshold atteint"
+                LOGGER.info(
+                    "smart_sector_cap hybrid: 3e ticker accepté secteur=%s symbol=%s rank=%s",
+                    sector, symbol, selection_rank,
+                )
+        else:
+            # C0 / "count" : comportement actuel inchangé
+            if self._cfg.max_tickers_per_sector is not None:
+                current_n = state.sector_ticker_count.get(sector, 0)
+                if current_n >= self._cfg.max_tickers_per_sector:
+                    return 0.0, "max_tickers_per_sector atteint"
 
         notional = proposed_shares * price
         original_notional = notional

@@ -73,6 +73,11 @@ BT_BACKFILL_CAPITAL_PRESET_KEY = "bt_backfill_capital_preset"
 BT_BACKFILL_CAPITAL_PRESET_SIGNATURE_KEY = "bt_backfill_capital_preset_signature"
 BT_BACKFILL_SYMBOL_SOURCE_KEY = "bt_backfill_symbol_source"
 BT_RUN_CONFIGURATION_PRESET_KEY = "bt_run_configuration_preset"
+# Flag : le preset de configuration a déjà été appliqué automatiquement à
+# l'arrivée sur la page (équivalent au clic sur "Préremplir les options du
+# backtest"). Une seule application par session → les ajustements manuels de
+# l'utilisateur sont ensuite préservés aux reruns.
+BT_RUN_CONFIGURATION_PRESET_APPLIED_KEY = "bt_run_configuration_preset_applied"
 BT_RUN_ALLOW_FRACTIONAL_SHARES_KEY = "bt_run_allow_fractional_shares"
 LOAD_GLOBAL_SCREENER_HISTORY_KEY = "ihm_backtesting_load_global_screener_history"
 RUNTIME_CENTER_AUTO_UPDATE_KEY = "ihm_backtesting_runtime_center_auto_update"
@@ -1415,6 +1420,18 @@ def _build_run_options() -> BacktestRunOptions:
     if BT_RUN_ALLOW_FRACTIONAL_SHARES_KEY not in st.session_state:
         st.session_state[BT_RUN_ALLOW_FRACTIONAL_SHARES_KEY] = bool(fractional_prefs.backtest_enabled)
     _ensure_run_configuration_preset_session_key()
+    # ── Auto-application du preset de configuration à l'arrivée sur la page ──
+    # Équivalent au clic sur "Préremplir les options du backtest", mais posé
+    # automatiquement au premier affichage (avant l'instanciation des widgets,
+    # qui affichent alors les valeurs du preset). Appliqué une seule fois par
+    # session : ensuite l'utilisateur peut ajuster librement, et ses modifs ne
+    # sont pas écrasées aux reruns suivants. Le bouton manuel reste disponible
+    # pour ré-appliquer explicitement (ou changer de preset).
+    if not st.session_state.get(BT_RUN_CONFIGURATION_PRESET_APPLIED_KEY):
+        _apply_run_configuration_preset(
+            str(st.session_state.get(BT_RUN_CONFIGURATION_PRESET_KEY, "pipeline_live_like"))
+        )
+        st.session_state[BT_RUN_CONFIGURATION_PRESET_APPLIED_KEY] = True
     preset_col1, preset_col2 = st.columns([1.5, 3.5])
     with preset_col1:
         selected_run_configuration_preset = cast(

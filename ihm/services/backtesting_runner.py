@@ -113,6 +113,12 @@ class BacktestRunOptions:
     regime_sma_window: int = 200
     regime_bear_threshold: float = -0.02
     max_sector_exposure_pct: float = 0.0
+    # Ablation cap sectoriel (2026-08-27) : override config.yaml
+    # (--max-tickers-per-sector / --no-sector-cap). None = config.yaml.
+    max_tickers_per_sector: int | None = None
+    no_sector_cap: bool = False
+    # Smart sector cap (research 2026-08-27) : C0=count, C1=exposure, C2=hybrid.
+    sector_cap_mode: Literal["count", "exposure", "hybrid"] | None = None
     max_portfolio_dd_pct: float = 0.0
     dd_recovery_pct: float = 0.92
     # E23 — politique du drawdown breaker. None = config.yaml risk_management.policy.
@@ -452,6 +458,12 @@ def build_backtesting_command(
             command.extend(["--regime-bear-threshold", str(options.regime_bear_threshold)])
         if options.max_sector_exposure_pct:
             command.extend(["--max-sector-exposure-pct", str(options.max_sector_exposure_pct)])
+        if options.max_tickers_per_sector is not None:
+            command.extend(["--max-tickers-per-sector", str(int(options.max_tickers_per_sector))])
+        if options.no_sector_cap:
+            command.append("--no-sector-cap")
+        if options.sector_cap_mode is not None:
+            command.extend(["--sector-cap-mode", options.sector_cap_mode])
         if options.max_portfolio_dd_pct:
             command.extend(["--max-portfolio-dd-pct", str(options.max_portfolio_dd_pct)])
             command.extend(["--dd-recovery-pct", str(options.dd_recovery_pct)])
