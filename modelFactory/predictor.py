@@ -3104,6 +3104,8 @@ def cascade_select(
             if _mode_oracle_filter and (_oracle_pct is None or _oracle_pct < _oracle_filter_pct):
                 continue
             if _mode_oracle_rerank or _mode_oracle_pool:
+                if _oracle_pct is None:
+                    continue  # pas de P_extreme → pas réordonnable (cohérent audit inner-join)
                 rank_dir = _oracle_pct
             else:
                 rank_dir = rank  # déjà proche de 1.0
@@ -3134,6 +3136,8 @@ def cascade_select(
             if _mode_oracle_filter and (_oracle_pct is None or _oracle_pct > (1.0 - _oracle_filter_pct)):
                 continue
             if _mode_oracle_rerank or _mode_oracle_pool:
+                if _oracle_pct is None:
+                    continue  # pas de P_extreme → pas réordonnable (cohérent audit inner-join)
                 rank_dir = 1.0 - _oracle_pct
             else:
                 rank_dir = 1.0 - rank  # inverse : 0.05 → 0.95

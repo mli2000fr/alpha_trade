@@ -485,7 +485,7 @@ def train_oracle_extreme(
         dict de synthèse (status, run_id, oos_path, n_folds, métriques).
     """
     from modelFactory.oracle.config import resolve_oracle_batch_id
-    from modelFactory.oracle.walk_forward import DEFAULT_TEST_WINDOWS, run_walk_forward
+    from modelFactory.oracle.walk_forward import build_folds_adaptive, run_walk_forward
 
     _batch_id = batch_id or resolve_oracle_batch_id() or "model-factory-unknown"
 
@@ -533,9 +533,33 @@ def train_oracle_extreme(
             LOGGER.warning("oracle_extreme empty dataset — nothing to train")
             return {"status": "skipped", "reason": "empty_dataset", "batch_id": _batch_id}
 
+        # ── Fenêtres ADAPTATIVES (comme le Global Ranking) : les folds de test
+        #    sont dérivés des dates réellement présentes via
+        #    generate_walk_forward_splits_by_dates (cfg.walk_forward), au lieu des
+        #    bornes fixes DEFAULT_TEST_WINDOWS (2022→2026). Un batch entraîné
+        #    ex. 2012→2019 produit donc des folds OOS sur les dernières dates
+        #    disponibles ; fenêtre trop courte → skipped proprement. ──
+        folds = build_folds_adaptive(
+            dataset,
+            min_train_dates=cfg.walk_forward.min_train_size,
+            val_dates=cfg.walk_forward.val_size,
+            test_dates=cfg.walk_forward.test_size,
+            step_dates=cfg.walk_forward.step_size,
+            max_splits=cfg.walk_forward.max_splits,
+            forecast_horizon=horizon,
+        )
+        if not folds:
+            LOGGER.warning(
+                "oracle_extreme no valid adaptive WF split (fenêtre trop courte pour "
+                "min_train=%d/val=%d/test=%d) — skipped",
+                cfg.walk_forward.min_train_size, cfg.walk_forward.val_size,
+                cfg.walk_forward.test_size,
+            )
+            return {"status": "skipped", "reason": "no_valid_wf_split", "batch_id": _batch_id}
+
         result = run_walk_forward(
             dataset, feature_columns,
-            test_windows=DEFAULT_TEST_WINDOWS,
+            folds=folds,
             ablation="O0",
         )
         if result.get("status") != "completed":
