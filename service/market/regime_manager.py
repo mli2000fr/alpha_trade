@@ -813,7 +813,13 @@ def build_snapshot(
             ),
             details={"missing_data_quality": dict(missing_macro_data_quality)},
         )
-        if not config.allow_neutral_fallback_on_missing_macro_data:
+        if config.allow_neutral_fallback_on_missing_macro_data:
+            LOGGER.warning(
+                "macro_availability: %s — fallback neutre, séance marquée data_quality=missing (mode tolérant)",
+                missing_macro_message,
+            )
+        else:
+            LOGGER.error("macro_availability: %s — échec strict du snapshot", missing_macro_message)
             raise MacroDataUnavailableError(missing_macro_message)
 
     # 4. Sentiment circuit breaker

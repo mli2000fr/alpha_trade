@@ -2830,6 +2830,40 @@ def cascade_select(
             "cascade_select: EXTREME_GATE top %d%% par proba_extreme (%d symbols, percentile du jour)",
             int(round((1.0 - _extreme_gate_pct) * 100)), len(ranks_df),
         )
+        # ── DIP filter sur la source Oracle (persistance proba_extreme + prix) ──
+        # Même squelette que le DIP Global Rank N4X2, mais le « rang » est le
+        # percentile intra-date de proba_extreme (oracle_extreme_predictions),
+        # pas global_rank_history → compatible batch oracle-only. Activé quand
+        # dip_filter_config.enabled (flags --dip-* / config.yaml persistent_*).
+        if dip_filter_config and bool(dip_filter_config.get("enabled", False)):
+            try:
+                from selector.dip_filter import filter_day_candidates as _oracle_dip_filter
+                _dip_before = int(ranks_df.shape[0]) if ranks_df is not None else 0
+                ranks_df = _oracle_dip_filter(
+                    ranks_df, engine, batch_id, trade_date, dip_filter_config,
+                    best_h=None, rank_source="oracle",
+                )
+                _dip_after = int(ranks_df.shape[0]) if ranks_df is not None else 0
+                LOGGER.info(
+                    "DIP_FILTER backtest date=%s batch=%s source=oracle N=%s X=%.4f "
+                    "threshold=%.4f before=%d after=%d rejected=%d",
+                    trade_date, batch_id,
+                    dip_filter_config.get("persist_days"),
+                    float(dip_filter_config.get("dip_pct", 0.02)),
+                    float(dip_filter_config.get("rank_threshold", 0.90)),
+                    _dip_before, _dip_after, _dip_before - _dip_after,
+                )
+                if ranks_df.empty:
+                    LOGGER.info(
+                        "cascade_select: ORACLE DIP filter vide pour %s (%s) — aucun candidat",
+                        trade_date, batch_id,
+                    )
+                    return []
+            except Exception:  # noqa: BLE001
+                LOGGER.exception(
+                    "cascade_select: ORACLE DIP filter échoué pour %s — on continue sans filtre",
+                    trade_date,
+                )
     else:
         # ── Charger les rangs globaux depuis la DB ──
         ranks_df = load_global_ranks_from_db(trade_date, batch_id, engine=engine)

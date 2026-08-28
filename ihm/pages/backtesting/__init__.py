@@ -208,6 +208,26 @@ def _parse_optional_float(raw_value: str, *, label: str) -> float | None:
         return None
 
 
+def _to_date_value(value: object, default: str):
+    """Convertit une valeur de session state (str YYYY-MM-DD ou date) en ``date``.
+
+    Utilisé pour les widgets ``st.date_input`` (start/end) : la session state peut
+    contenir un str (ancien text_input) ou un ``datetime.date`` (date_input).
+    """
+    from datetime import date as _date, datetime as _datetime
+    if isinstance(value, _date):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            return _datetime.strptime(value.strip()[:10], "%Y-%m-%d").date()
+        except ValueError:
+            pass
+    try:
+        return _datetime.strptime(default[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return _date(2025, 1, 1)
+
+
 def _get_capital_presets() -> tuple[CapitalPreset, ...]:
     try:
         return load_capital_presets()
@@ -1472,19 +1492,21 @@ def _build_run_options() -> BacktestRunOptions:
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        start = st.text_input(
+        start = st.date_input(
             "Date de début",
-            value=cast(str, st.session_state.get("bt_run_start", "2025-01-01")),
+            value=_to_date_value(st.session_state.get("bt_run_start", "2025-01-01"), "2025-01-01"),
             key="bt_run_start",
-            help="Format YYYY-MM-DD. C'est la borne basse du backtest.",
+            help="Borne basse du backtest (calendrier).",
         )
+        start = start.isoformat()
     with col2:
-        end = st.text_input(
+        end = st.date_input(
             "Date de fin",
-            value=cast(str, st.session_state.get("bt_run_end", "2026-05-31")),
+            value=_to_date_value(st.session_state.get("bt_run_end", "2026-06-30"), "2026-06-30"),
             key="bt_run_end",
-            help="Format YYYY-MM-DD. Laissez une date future si vous voulez aller jusqu'au dernier bar dispo.",
+            help="Borne haute du backtest (calendrier). Date future = jusqu'au dernier bar dispo.",
         )
+        end = end.isoformat()
     with col3:
         equity = st.number_input(
             "Capital initial ($)",
@@ -2232,7 +2254,7 @@ def _build_run_options() -> BacktestRunOptions:
     with macro_col1:
         allow_neutral_fallback_on_missing_macro_data = st.checkbox(
             "Tolérer macro indisponible (`data_quality=missing`)",
-            value=bool(st.session_state.get("bt_run_allow_missing_macro_data", False)),
+            value=bool(st.session_state.get("bt_run_allow_missing_macro_data", True)),
             key="bt_run_allow_missing_macro_data",
             help=(
                 "Si coché, une séance sans macro requise (VIX / 10Y selon votre config) continue en mode dégradé "
@@ -2515,6 +2537,8 @@ def _build_run_options() -> BacktestRunOptions:
 - **oracle_rerank** (S6.1-D) — pool du rang global identique, Oracle **réordonne** (score = `P_extreme × proba per-symbol`).
 - **extreme_gate** (E6-E13) — Oracle **seul**, **LONG-only**, top 20% du jour par `proba_extreme` (percentile intra-date). Indépendant du rang global.
 - **random** — rangs aléatoires (placebo, isole l'edge du ranking).
+
+🤖 **Auto-détection Extreme Gate** : si le batch sélectionné est **oracle-only** (aucun rang global dans `global_rank_history`, mais des prédictions dans `oracle_extreme_predictions`), le mode cascade passe **automatiquement** en `extreme_gate`, ce batch étant la source oracle. Dans ce cas, pas besoin de sélectionner Extreme Gate ni de renseigner le batch Oracle ci-dessus.
 
 ⚠️ Le **rang global** vient de `global_rank_history` du batch sélectionné (étape « Prédire l'univers »), et `proba_extreme` de la table `oracle_extreme_predictions` (batch sélectionné ci-dessus). Pour combiner proprement, utilisez un batch ayant entraîné **les deux** modèles (ablation O1) — le rang global utilisé est celui du batch sélectionné, **pas un B25 figé**.
 """

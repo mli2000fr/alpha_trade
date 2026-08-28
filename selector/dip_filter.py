@@ -151,6 +151,45 @@ def load_rank_history_df(
     return df.dropna(subset=[rank_col])
 
 
+def load_oracle_rank_history_df(
+    engine: Any,
+    batch_id: str,
+    trade_date: str,
+    persist_days: int,
+    *,
+    extra_days: int = 0,
+) -> pd.DataFrame:
+    """Historique « rang » Oracle : percentile intra-date de ``proba_extreme``.
+
+    Source : ``oracle_extreme_predictions`` (filtre batch strict). On convertit
+    ``proba_extreme`` en percentile cross-sectionnel intra-date (PIT, par jour) —
+    même normalisation que la cascade oracle/extreme_gate — pour que le seuil
+    ``rank_threshold`` (ex. 0.90 = TOP 10%) ait du sens.
+
+    Retourne ``[date, symbol, oracle_rank_pct]`` trié par (symbol, date) — PIT.
+    """
+    from sqlalchemy import text as _text
+    lb = (pd.Timestamp(trade_date) - pd.Timedelta(days=(persist_days + extra_days) * 2 + 7)).date().isoformat()
+    query = _text(
+        "SELECT prediction_date, symbol, proba_extreme FROM oracle_extreme_predictions "
+        "WHERE prediction_date BETWEEN :lb AND :d AND batch_id = :bid "
+        "ORDER BY symbol, prediction_date"
+    )
+    try:
+        with engine.connect() as conn:
+            df = pd.read_sql(query, conn, params={"lb": lb, "d": trade_date, "bid": batch_id})
+    except Exception:
+        LOGGER.exception("dip_filter: load_oracle_rank_history échoué %s / %s", trade_date, batch_id)
+        return pd.DataFrame()
+    if df.empty:
+        return df
+    df["date"] = pd.to_datetime(df["prediction_date"], errors="coerce").dt.normalize()
+    df["symbol"] = df["symbol"].astype(str).str.upper()
+    # Percentile intra-date (PIT) — même convention que cascade_select oracle/extreme_gate.
+    df["oracle_rank_pct"] = df.groupby("date")["proba_extreme"].rank(pct=True)
+    return df[["date", "symbol", "oracle_rank_pct"]].dropna(subset=["oracle_rank_pct"])
+
+
 def load_price_history_df(
     engine: Any,
     symbols: list[str],
@@ -316,6 +355,7 @@ def filter_day_candidates(
     config: dict[str, Any],
     *,
     best_h: int | None = None,
+    rank_source: str = "global",
 ) -> pd.DataFrame:
     """Filtre les rangs du jour : ne garde que les symboles passant le DIP.
 
@@ -324,6 +364,9 @@ def filter_day_candidates(
         engine, batch_id, trade_date: contexte DB.
         config: dict de load_dip_filter_config().
         best_h: horizon du batch (si rank_horizon vide).
+        rank_source: "global" (global_rank_history, défaut) | "oracle"
+            (oracle_extreme_predictions → percentile intra-date de proba_extreme,
+            pour les batchs oracle-only sans global_rank_history).
 
     Returns:
         DataFrame filtré (symboles non-DIP retirés). Si config.enabled=False,
@@ -334,7 +377,10 @@ def filter_day_candidates(
     if ranks_day.empty:
         return ranks_day
     n = int(config.get("persist_days", 4))
+    _oracle_source = str(rank_source or "global").strip().lower() == "oracle"
     rank_col = _rank_column(config, best_h)
+    if _oracle_source:
+        rank_col = "oracle_rank_pct"
     reclaim_ratio = config.get("reclaim_ratio")
     # Reclaim : scan des J antérieurs → fenêtre élargie de reclaim_max_wait.
     max_wait = int(config.get("reclaim_max_wait", 10)) if reclaim_ratio else 0
@@ -344,7 +390,10 @@ def filter_day_candidates(
         return ranks_day
 
     # Charger historique rank (fenêtre) + prix (fenêtre) en une passe.
-    rh = load_rank_history_df(engine, batch_id, trade_date, n, rank_col, extra_days=max_wait)
+    if _oracle_source:
+        rh = load_oracle_rank_history_df(engine, batch_id, trade_date, n, extra_days=max_wait)
+    else:
+        rh = load_rank_history_df(engine, batch_id, trade_date, n, rank_col, extra_days=max_wait)
     ph = load_price_history_df(engine, symbols, trade_date, n, extra_days=max_wait)
     if rh.empty or ph.empty:
         LOGGER.warning("dip_filter: historique vide %s — aucun filtre appliqué", trade_date)
