@@ -23,6 +23,7 @@ import streamlit as st
 from ihm.components.ops_command_panel import render_ops_command_panel
 from ihm.pages import run_page_if_standalone
 from ihm.services.db import get_runtime_db_config
+from ihm.services.ml_reset import build_reset_explanation, reset_ml_data
 
 # ---------------------------------------------------------------------------
 # Constantes session_state
@@ -39,6 +40,9 @@ BACKUP_DB_NAME_KEY = f"{_PREFIX}backup_db_name"
 BACKUP_DB_DEST_KEY = f"{_PREFIX}backup_db_dest"
 BACKUP_DB_KEEP_KEY = f"{_PREFIX}backup_db_keep"
 BACKUP_DB_DRY_RUN_KEY = f"{_PREFIX}backup_db_dry_run"
+
+# T5.5 — Reset ML (flag de confirmation, clé dédiée ≠ clés des widgets)
+RESET_ML_PENDING_KEY = f"{_PREFIX}reset_ml_pending"
 
 
 # ---------------------------------------------------------------------------
@@ -449,6 +453,75 @@ python scripts/restore_from_backup.py \\
 
 
 # ---------------------------------------------------------------------------
+# Section T5.5 — Reset ML
+# ---------------------------------------------------------------------------
+
+
+def _render_reset_ml_panel() -> None:
+    """Panneau de reset complet des données ML + backtests (T5.5).
+
+    Bouton rouge « RESET toutes les données ML » avec double confirmation :
+    - 1er clic → affiche la liste des tables / répertoires concernés + boutons
+      « Confirmer » / « Annuler » ;
+    - confirmation → appelle ``reset_ml_data`` (vide les tables, supprime les
+      répertoires backtests et modèles, réinitialise l'index).
+    """
+    st.subheader("🔴 T5.5 — Reset ML")
+    st.caption(
+        "Vide **tous** les batchs d'entraînement, toutes les prédictions "
+        "(per-symbol, per-sector, Oracle Extreme, Global Rank) et **tous** les "
+        "backtests — tables et répertoires/fichiers inclus. "
+        "**Action destructive et irréversible.**"
+    )
+
+    with st.expander("ℹ️ Tables et répertoires concernés", expanded=False):
+        st.markdown(build_reset_explanation())
+
+    if not st.session_state.get(RESET_ML_PENDING_KEY):
+        if st.button(
+            "🔴 RESET toutes les données ML",
+            key=f"{_PREFIX}reset_ml_trigger",
+            use_container_width=True,
+            help="Vide toutes les tables ML (batchs, prédictions, métadonnées) "
+            "et supprime tous les répertoires backtests / modèles. Irréversible.",
+        ):
+            st.session_state[RESET_ML_PENDING_KEY] = True
+            st.rerun()
+    else:
+        st.warning(
+            "⚠️ Vous êtes sur le point d'effacer **toutes les données ML et tous les backtests** :\n\n"
+            f"{build_reset_explanation()}"
+        )
+        confirm_col1, confirm_col2 = st.columns(2)
+        if confirm_col1.button(
+            "✅ Oui, tout supprimer",
+            key=f"{_PREFIX}reset_ml_confirm",
+            use_container_width=True,
+        ):
+            result = reset_ml_data(stop_active=True, dry_run=False)
+            st.session_state.pop(RESET_ML_PENDING_KEY, None)
+            if result.get("errors"):
+                st.error(
+                    f"Reset partiel — tables : {len(result.get('tables_cleared', []))}, "
+                    f"répertoires : {len(result.get('dirs_deleted', []))}, "
+                    f"erreurs : {' ; '.join(result['errors'][:5])}"
+                )
+            else:
+                st.success(
+                    f"✅ Reset ML terminé — {len(result.get('tables_cleared', []))} tables vidées, "
+                    f"{len(result.get('dirs_deleted', []))} répertoires supprimés."
+                )
+            st.rerun()
+        if confirm_col2.button(
+            "❌ Annuler",
+            key=f"{_PREFIX}reset_ml_cancel",
+            use_container_width=True,
+        ):
+            st.session_state.pop(RESET_ML_PENDING_KEY, None)
+            st.rerun()
+
+
+# ---------------------------------------------------------------------------
 # Render principal
 # ---------------------------------------------------------------------------
 
@@ -476,6 +549,10 @@ def render() -> None:
     # ── T5.4 — Backup DB ──────────────────────────────────────────────────────
     with st.container(border=True):
         _render_backup_db_panel(db_config=db_config)
+
+    # ── T5.5 — Reset ML ──────────────────────────────────────────────────────
+    with st.container(border=True):
+        _render_reset_ml_panel()
 
     # ── Guide rapide opérateur ────────────────────────────────────────────────
     with st.expander("📋 Guide rapide opérateur — automatisation quotidienne", expanded=False):

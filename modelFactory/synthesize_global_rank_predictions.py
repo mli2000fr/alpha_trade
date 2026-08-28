@@ -36,14 +36,15 @@ _INSERT_PRED = text(
     "INSERT INTO alpha_trade.model_predictions "
     "(symbol, prediction_date, predicted_proba, predicted_class, run_id, "
     " selected_model, decision_threshold, signal_label, calibration_method, "
-    " predicted_side, proba_long, proba_flat, proba_short) "
+    " predicted_side, proba_long, proba_flat, proba_short, source) "
     "VALUES (:symbol, :prediction_date, :predicted_proba, :predicted_class, :run_id, "
     " :selected_model, :decision_threshold, :signal_label, :calibration_method, "
-    " :predicted_side, :proba_long, :proba_flat, :proba_short) "
+    " :predicted_side, :proba_long, :proba_flat, :proba_short, :source) "
     "ON DUPLICATE KEY UPDATE "
     "predicted_proba=VALUES(predicted_proba), predicted_class=VALUES(predicted_class), "
     "predicted_side=VALUES(predicted_side), proba_long=VALUES(proba_long), "
-    "proba_flat=VALUES(proba_flat), proba_short=VALUES(proba_short)"
+    "proba_flat=VALUES(proba_flat), proba_short=VALUES(proba_short), "
+    "source=VALUES(source)"
 )
 
 _CHUNK = 2000
@@ -149,6 +150,7 @@ def synthesize(batch_id: str, best_h: int, *, top_pct: float = 0.10,
                 "proba_long": plong,
                 "proba_flat": 0.0,
                 "proba_short": pshort,
+                "source": "global_rank_synth",
             })
         with engine.begin() as conn:
             for p in params_list:

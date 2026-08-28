@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.model_predictions (
     decision_threshold  DOUBLE          DEFAULT NULL COMMENT 'Seuil utilisé pour convertir la probabilité en classe',
     signal_label        VARCHAR(32)     DEFAULT NULL COMMENT 'Signal dérivé: long|no_trade',
     calibration_method  VARCHAR(32)     DEFAULT NULL COMMENT 'Méthode de calibration appliquée à la probabilité',
+    source              VARCHAR(32)     DEFAULT NULL COMMENT 'Origine de la prédiction: per_symbol|per_sector|global_rank_synth|oracle_synth',
     created_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (prediction_id),
     UNIQUE KEY uq_symbol_date_run (symbol, prediction_date, run_id),
@@ -20,7 +21,8 @@ CREATE TABLE IF NOT EXISTS alpha_trade.model_predictions (
     INDEX idx_date (prediction_date),
     INDEX idx_symbol (symbol),
     INDEX idx_selected_model (selected_model),
-    INDEX idx_predicted_side (predicted_side)
+    INDEX idx_predicted_side (predicted_side),
+    INDEX idx_source (source)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Predictions quotidiennes du module ML';
 
 

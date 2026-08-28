@@ -35,7 +35,15 @@ from modelFactory.data_loader import (
     load_universe_bars,
 )
 from modelFactory.dataset import FeatureScaler
-from modelFactory.db_registry import insert_predictions, load_tradable_universe_symbols, load_training_run
+from modelFactory.db_registry import (
+    PREDICTION_SOURCE_GLOBAL_RANK_SYNTH,
+    PREDICTION_SOURCE_ORACLE_SYNTH,
+    PREDICTION_SOURCE_PER_SECTOR,
+    PREDICTION_SOURCE_PER_SYMBOL,
+    insert_predictions,
+    load_tradable_universe_symbols,
+    load_training_run,
+)
 from modelFactory.features import compute_features, get_feature_columns, validate_feature_contract
 from modelFactory.feature_logging import log_feature_values
 from modelFactory.model import LSTMAttentionModule
@@ -396,6 +404,8 @@ def _build_prediction_result(
     # Sprint Maître 2 — PIT
     data_availability: DataAvailabilityInfo | None = None,
     data_quality: QualityState = QualityState.PRESENT,
+    # 0067 — origine de la prédiction (per_symbol | per_sector)
+    source: str | None = None,
 ) -> pd.DataFrame:
     row: dict[str, object] = {
         "symbol": symbol,
@@ -410,6 +420,8 @@ def _build_prediction_result(
         "selected_model": selected_model,
         "decision_policy_version": decision_policy_version,
     }
+    if source is not None:
+        row["source"] = source
     if decision_reason is not None:
         row["decision_reason"] = decision_reason
     # ── Sprint Maître 2 : qualité PIT ──────────────────────────────────
@@ -617,6 +629,41 @@ def _resolve_artifact_paths(
             symbol, batch_id, sym_dir,
         )
     return sym_dir / "best.ckpt", sym_dir / "scaler.pkl", sym_dir / "config.json", run_id
+
+
+_run_source_cache: dict[str, str] = {}
+
+
+def _classify_prediction_source(
+    engine: "Engine",  # type: ignore[name-defined]
+    symbol: str,
+    selected_run_id: str | None,
+) -> str:
+    """Classe l'origine d'une prédiction : ``per_symbol`` | ``per_sector``.
+
+    La décision est basée sur le run d'entraînement résolu : si son symbole
+    est le ticker lui-même → per-symbol ; sinon (run sectoriel, symbole =
+    secteur GICS) → per-sector. Cache par run_id (stable par run).
+    """
+    if not selected_run_id:
+        return PREDICTION_SOURCE_PER_SYMBOL
+    rid = str(selected_run_id)
+    if rid in _run_source_cache:
+        return _run_source_cache[rid]
+    source = PREDICTION_SOURCE_PER_SYMBOL
+    try:
+        from sqlalchemy import text as _sa_text
+        with engine.connect() as conn:
+            run_sym = conn.execute(
+                _sa_text("SELECT symbol FROM model_training_run WHERE run_id = :r LIMIT 1"),
+                {"r": rid},
+            ).scalar()
+        if run_sym and str(run_sym).strip().upper() != str(symbol).strip().upper():
+            source = PREDICTION_SOURCE_PER_SECTOR
+    except Exception:  # noqa: BLE001 — la classification ne doit jamais bloquer
+        source = PREDICTION_SOURCE_PER_SYMBOL
+    _run_source_cache[rid] = source
+    return source
 
 
 def _resolve_sector_run(
@@ -1258,6 +1305,7 @@ def _predict_with_global_model(
     as_of_date: date | None,
     persist: bool,
     ps_features: dict[str, Any] | None = None,
+    source: str | None = None,
 ) -> Optional[pd.DataFrame]:
     return _predict_with_tabular_model(
         symbol,
@@ -1273,6 +1321,7 @@ def _predict_with_global_model(
         decision_threshold=cfg_data.get("selected_decision_threshold"),
         config_path=config_path,
         ps_features=ps_features,
+        source=source,
     )
 
 
@@ -1293,6 +1342,7 @@ def _predict_with_tabular_model(
     route_feature_fingerprint: object = None,
     route_feature_contract: object = None,
     ps_features: dict[str, Any] | None = None,
+    source: str | None = None,
 ) -> Optional[pd.DataFrame]:
     if not model_path.exists():
         reason = f"tabular_model_missing:{selected_model}"
@@ -1603,6 +1653,7 @@ def _predict_with_tabular_model(
         decision_reason=decision_reason,
         data_availability=pit_avail,
         data_quality=QualityState.PRESENT if pit_avail is not None else QualityState.MISSING_NO_SOURCE,
+        source=source,
     )
     update_runtime_status(
         last_prediction_symbol=symbol,
@@ -1653,6 +1704,8 @@ def predict_symbol(
         run_id,
         batch_id=batch_id,
     )
+    # 0067 — origine de la prédiction (per_symbol vs per_sector) selon le run résolu
+    _pred_source = _classify_prediction_source(engine, symbol, selected_run_id)
 
     if not config_path.exists():
         # Batch sans modèle per-symbol/per-sector : absence de config normale → pas de
@@ -1720,6 +1773,7 @@ def predict_symbol(
                     as_of_date=as_of_date,
                     persist=persist,
                     ps_features=_ps_features,
+                    source=_pred_source,
                 )
             except ArtifactIntegrityError as exc:
                 route = _build_lstm_fallback_route(
@@ -1772,6 +1826,7 @@ def predict_symbol(
                     route_feature_fingerprint=route.get("feature_fingerprint"),
                     route_feature_contract=route.get("feature_contract"),
                     ps_features=_ps_features,
+                    source=_pred_source,
                 )
             except ArtifactIntegrityError as exc:
                 route = _build_lstm_fallback_route(
@@ -2082,6 +2137,7 @@ def predict_symbol(
         proba_long=proba_long_val,
         proba_flat=proba_flat_val,
         proba_short=proba_short_val,
+        source=_pred_source,
     )
     update_runtime_status(
         last_prediction_symbol=symbol,
@@ -3395,6 +3451,53 @@ def apply_cascade_to_predictions(
     result = preds_df.copy()
     # Initialiser la colonne cascade_score
     result["cascade_score"] = 0.0
+
+    # ── 0067 : dédup DÉTERMINISTE par source (colonne `source`) ────────────
+    # Fix bug contamination 2026 : quand plusieurs runs du même batch couvrent
+    # la même (date, symbol) — ex. synthèse global_rank (probas ternaires) ET
+    # runs per-sector (regression, proba_long NULL) — le "last-wins" selon
+    # l'ordre de retour SQL était non déterministe et faisait gagner le
+    # per-sector dans ~90% des cas. On retient désormais TOUJOURS la source la
+    # plus fiable pour le mode cascade (per_symbol > global_rank_synth >
+    # oracle_synth > per_sector ; en mode oracle/extreme_gate, oracle_synth
+    # passe devant global_rank_synth car c'est la couche per-symbol attendue).
+    _src_col = "source" if "source" in result.columns else None
+    if _src_col is not None:
+        _dedup_before = len(result)
+        _rank_mode_low = str(rank_mode or "ml").strip().lower()
+        _oracle_first = _rank_mode_low in ("oracle", "extreme_gate")
+
+        def _prio(row_source: object) -> tuple[int, int]:
+            _s = str(row_source or "").strip().lower()
+            if _oracle_first and _s == PREDICTION_SOURCE_ORACLE_SYNTH:
+                return (0, 1)
+            if _oracle_first and _s == PREDICTION_SOURCE_GLOBAL_RANK_SYNTH:
+                return (1, 2)
+            _order = {
+                PREDICTION_SOURCE_PER_SYMBOL: (0, 0),
+                PREDICTION_SOURCE_GLOBAL_RANK_SYNTH: (1, 2),
+                PREDICTION_SOURCE_ORACLE_SYNTH: (2, 1),
+                PREDICTION_SOURCE_PER_SECTOR: (3, 3),
+            }
+            return _order.get(_s, (4, 4))
+
+        _sort_cols = [_date_col, "symbol"]
+        _key_sorted = result.copy()
+        _key_sorted["_prio"] = result[_src_col].map(_prio) if _src_col in result.columns else 0
+        _key_sorted[["_prio_a", "_prio_b"]] = pd.DataFrame(
+            _key_sorted["_prio"].tolist(), index=_key_sorted.index, columns=["_prio_a", "_prio_b"],
+        )
+        _key_sorted = _key_sorted.sort_values([*_sort_cols, "_prio_a", "_prio_b"], kind="mergesort")
+        _key_sorted = _key_sorted.drop_duplicates(subset=[_date_col, "symbol"], keep="first")
+        _key_sorted = _key_sorted.drop(columns=["_prio", "_prio_a", "_prio_b"])
+        result = _key_sorted.reset_index(drop=True)
+        _dedup_after = len(result)
+        if _dedup_after != _dedup_before:
+            LOGGER.info(
+                "apply_cascade_to_predictions: dedup par source (colonne source) "
+                "%d → %d lignes (mode=%s)",
+                _dedup_before, _dedup_after, _rank_mode_low,
+            )
 
     # ── P0-5 (2026-08-06) : détecter le mode (regression vs classification) ──
     _has_ternary = (

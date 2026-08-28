@@ -511,12 +511,17 @@ class RiskRepository:
 
     def load_predictions_asof(
         self, symbols: list[str], trade_date: date, *, batch_id: str | None = None,
+        sources: list[str] | None = None,
     ) -> dict[str, PredictionInfo]:
         """Charge la dernière prédiction ML par symbole à la date de trade.
 
         Une prédiction exploitable expose obligatoirement la direction ternaire
         et ses trois probabilités. Le score quantitatif n'est pas un fallback
         de sélection.
+
+        0067 : ``sources`` restreint par ORIGINE (colonne ``source``) —
+        ``per_symbol`` | ``per_sector`` | ``global_rank_synth`` | ``oracle_synth``.
+        None = toutes (rétro-compatible).
         """
         if not symbols:
             return {}
@@ -550,12 +555,25 @@ class RiskRepository:
             """
             batch_condition = "AND training_run.batch_id = :batch_id"
             params["batch_id"] = batch_id
+        _pred_columns = self._get_table_columns("model_predictions")
+        _has_source = "source" in _pred_columns
+        _inner_source_select = "prediction.source AS source" if _has_source else "NULL AS source"
+        _outer_source_select = ", ranked.source AS source" if _has_source else ", NULL AS source"
+        source_condition = ""
+        if sources:
+            unique_sources = sorted({str(s).strip().lower() for s in sources if s})
+            if unique_sources:
+                src_placeholders = ", ".join(f":src{i}" for i in range(len(unique_sources)))
+                source_condition = f" AND prediction.source IN ({src_placeholders})"
+                params.update({f"src{i}": s for i, s in enumerate(unique_sources)})
         query = text(f"""
                  SELECT ranked.symbol, ranked.predicted_proba, ranked.predicted_class, ranked.predicted_side,
                      ranked.proba_long, ranked.proba_flat, ranked.proba_short, ranked.run_id, ranked.prediction_date
+                     {_outer_source_select}
             FROM (
                   SELECT prediction.symbol, prediction.predicted_proba, prediction.predicted_class, prediction.predicted_side,
                       prediction.proba_long, prediction.proba_flat, prediction.proba_short, prediction.run_id, prediction.prediction_date,
+                      {_inner_source_select},
                        ROW_NUMBER() OVER (
                            PARTITION BY prediction.symbol
                            ORDER BY prediction.prediction_date DESC, prediction.created_at DESC, prediction.run_id DESC
@@ -570,6 +588,7 @@ class RiskRepository:
                   AND prediction.proba_flat IS NOT NULL
                   AND prediction.proba_short IS NOT NULL
                                     {batch_condition}
+                                    {source_condition}
             ) ranked
             WHERE rn = 1
         """)
