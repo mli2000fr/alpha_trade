@@ -3620,6 +3620,15 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_ml_enable_global_model",
                 help="Ajoute `--enable-global-model`. Entraîne un modèle tabulaire (CatBoost/LightGBM) sur tous les symboles en walk-forward pour produire `global_pred_long` PIT-safe.",
             )
+            # Auto-décochage : si le modèle global est décoché, le champion Global
+            # Ranking, le Global Model ONLY et le Stacking sont forcés à False
+            # AVANT leur instanciation (sinon ils resteraient cochés dans
+            # session_state alors que le modèle global est désactivé — même
+            # pattern que l'Oracle ONLY).
+            if not ml_enable_global_model:
+                st.session_state["pipeline_ml_global_champion"] = False
+                st.session_state["pipeline_ml_global_model_only"] = False
+                st.session_state["pipeline_ml_enable_global_stacking"] = False
             ml_global_champion = st.checkbox(
                 "🏆 Champion automatique CatBoost vs LightGBM vs XGBoost pour le Global Ranking",
                 value=_session_state_bool("pipeline_ml_global_champion", DEFAULT_ML_GLOBAL_CHAMPION),
