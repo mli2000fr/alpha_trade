@@ -2063,6 +2063,28 @@ def get_completed_ml_training_batches(limit: int = 100) -> pd.DataFrame:
     """)
 
 
+def get_oracle_prediction_batches(limit: int = 50) -> pd.DataFrame:
+    """Batches ayant persisté des prédictions Oracle Extreme dans la table.
+
+    Liste les ``batch_id`` présents dans ``oracle_extreme_predictions`` (stockage
+    table-uniquement) avec leur plage de dates et leur commentaire — pour le
+    sélecteur ``--oracle-batch-id`` de la page backtest.
+    """
+    return safe_query(f"""
+        SELECT op.batch_id,
+               COUNT(*)            AS n_predictions,
+               MIN(op.prediction_date) AS min_date,
+               MAX(op.prediction_date) AS max_date,
+               mb.comment,
+               mb.finished_at
+        FROM oracle_extreme_predictions op
+        LEFT JOIN model_training_batch mb ON mb.batch_id = op.batch_id
+        GROUP BY op.batch_id, mb.comment, mb.finished_at
+        ORDER BY MAX(op.prediction_date) DESC, MIN(op.prediction_date) DESC
+        LIMIT {int(limit)}
+    """)
+
+
 def get_ml_batch_comments(batch_ids: list[str]) -> dict[str, str]:
     """Retourne ``{batch_id: commentaire}`` pour les campagnes d'artefacts.
 

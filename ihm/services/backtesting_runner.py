@@ -88,11 +88,13 @@ class BacktestRunOptions:
     dip_reclaim_max_wait: int | None = None
     # S6 (Oracle Layer) — mode de rang cascade. Les modes oracle_* / extreme_gate
     # combinent le rang global (batch sélectionné) et proba_extreme (Oracle Extreme,
-    # via oracle_oos_path).
+    # source table oracle_extreme_predictions).
     cascade_rank_mode: Literal[
         "ml", "random", "oracle", "oracle_filter", "oracle_rerank", "oracle_pool", "extreme_gate"
     ] = "ml"
-    oracle_oos_path: str | None = None
+    # Source Oracle Extreme : table oracle_extreme_predictions (filtre batch strict).
+    # None = défaut CLI (ml_batch_id si parquet absent).
+    oracle_batch_id: str | None = None
     score_column: Literal["auto", "final_score_walk_forward", "final_score_sentiment", "final_score"] = "auto"
     walk_forward_artifacts_dir: str | None = None
     disable_walk_forward: bool = False
@@ -362,8 +364,8 @@ def build_backtesting_command(
         # S6 (Oracle Layer) — rang cascade remplacé par P(top10)
         if options.cascade_rank_mode and options.cascade_rank_mode != "ml":
             command.extend(["--cascade-rank-mode", options.cascade_rank_mode])
-        if options.oracle_oos_path:
-            command.extend(["--oracle-oos-path", options.oracle_oos_path])
+        if options.oracle_batch_id:
+            command.extend(["--oracle-batch-id", options.oracle_batch_id])
         if options.use_live_protection_logic:
             command.append("--use-live-protection-logic")
         else:
