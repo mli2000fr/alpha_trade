@@ -95,6 +95,11 @@ class BacktestRunOptions:
     # Source Oracle Extreme : table oracle_extreme_predictions (filtre batch strict).
     # None = défaut CLI (ml_batch_id si parquet absent).
     oracle_batch_id: str | None = None
+    # E-recherche — priorité N4X2 jours saturés (pool Oracle TOP20 intact) :
+    # réordonnancement lexicographique (bande de rang Oracle → N4X2 → score)
+    # UNIQUEMENT quand candidats > slots disponibles. Défaut off (gate dur actuel).
+    extreme_gate_dip_saturated: bool = False
+    extreme_gate_dip_band: float = 0.02
     score_column: Literal["auto", "final_score_walk_forward", "final_score_sentiment", "final_score"] = "auto"
     walk_forward_artifacts_dir: str | None = None
     disable_walk_forward: bool = False
@@ -366,6 +371,10 @@ def build_backtesting_command(
             command.extend(["--cascade-rank-mode", options.cascade_rank_mode])
         if options.oracle_batch_id:
             command.extend(["--oracle-batch-id", options.oracle_batch_id])
+        # E-recherche — priorité N4X2 jours saturés (pool Oracle TOP20 intact).
+        if options.extreme_gate_dip_saturated:
+            command.append("--extreme-gate-dip-saturated")
+            command.extend(["--extreme-gate-dip-band", str(float(options.extreme_gate_dip_band or 0.02))])
         if options.use_live_protection_logic:
             command.append("--use-live-protection-logic")
         else:

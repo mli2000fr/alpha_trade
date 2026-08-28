@@ -2527,6 +2527,39 @@ def _build_run_options() -> BacktestRunOptions:
                  "oracle (un seul batch B25+Oracle). Source table uniquement (parquet supprimé).",
         ))
         oracle_batch_id = _oracle_batch_labels[_sel_oracle_label]
+
+    # ── Priorité N4X2 jours saturés (recherche E, extreme_gate uniquement) ──
+    extreme_gate_dip_saturated = bool(st.session_state.get("bt_run_extreme_gate_dip_saturated", False))
+    extreme_gate_dip_band = float(st.session_state.get("bt_run_extreme_gate_dip_band", 0.02) or 0.02)
+    if _cascade_rank_mode == "extreme_gate":
+        st.markdown("**🥇 Priorité N4X2 jours saturés (recherche)**")
+        _eg_sat_c1, _eg_sat_c2 = st.columns(2)
+        with _eg_sat_c1:
+            extreme_gate_dip_saturated = st.checkbox(
+                "Activer la priorité N4X2 jours saturés",
+                value=extreme_gate_dip_saturated,
+                key="bt_run_extreme_gate_dip_saturated",
+                help="--extreme-gate-dip-saturated : pool Oracle TOP20 intact, N4X2 réordonne "
+                     "lexicographiquement (bande de rang Oracle → N4X2 → score) UNIQUEMENT quand "
+                     "candidats > slots disponibles. Jour non saturé = ordre inchangé.",
+            )
+        with _eg_sat_c2:
+            extreme_gate_dip_band = st.number_input(
+                "Bande de rang Oracle (fraction)",
+                min_value=0.005,
+                max_value=0.20,
+                value=extreme_gate_dip_band,
+                step=0.005,
+                format="%.3f",
+                key="bt_run_extreme_gate_dip_band",
+                help="--extreme-gate-dip-band : largeur de bande du percentile Oracle pour le "
+                     "groupement lexicographique (défaut 0.02).",
+            )
+        st.caption(
+            "Ne prend effet que si le **filtre DIP est activé** (case DIP ci-dessus). "
+            "Le DIP ne filtre plus : il ne fait que prioriser N4X2 dans sa bande de rang "
+            "sur les jours où il y a plus de candidats que de positions."
+        )
     with st.expander("ℹ️ Détail des modes de combinaison", expanded=False):
         st.markdown(
             """
@@ -2688,6 +2721,8 @@ def _build_run_options() -> BacktestRunOptions:
         dip_reclaim_max_wait=int(st.session_state.get("bt_run_dip_reclaim_max_wait", _dip_defaults.get("reclaim_max_wait", BT_RUN_DIP_RECLAIM_MAX_WAIT_DEFAULT))),
         cascade_rank_mode=cast(Any, st.session_state.get("bt_run_cascade_rank_mode", "ml") or "ml"),
         oracle_batch_id=(oracle_batch_id or None),
+        extreme_gate_dip_saturated=bool(extreme_gate_dip_saturated),
+        extreme_gate_dip_band=float(extreme_gate_dip_band or 0.02),
         score_column=cast(Any, score_column),
         walk_forward_artifacts_dir=walk_forward_artifacts_dir.strip() or None,
         disable_walk_forward=bool(st.session_state.get("bt_run_disable_walk_forward", False)),
