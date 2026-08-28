@@ -347,11 +347,11 @@ flowchart LR
 | Mode de cascade | A besoin du rang global ? | A besoin de `proba_extreme` ? | Batch d'entraînement requis |
 |---|---|---|---|
 | `ml` | ✅ | ❌ | Global Ranking seul (predict fait) |
-| `oracle` | ❌ | ✅ | **Standalone** (`--oracle-model-only`) |
+| `oracle` | ❌ | ✅ | **Standalone** (`--oracle-model-only`) **OU** combiné |
 | `oracle_filter` | ✅ | ✅ | **Non-standalone** (Global Ranking + Oracle) |
 | `oracle_pool` | ✅ | ✅ | **Non-standalone** (Global Ranking + Oracle) |
 | `oracle_rerank` | ✅ | ✅ | **Non-standalone** (Global Ranking + Oracle) |
-| `extreme_gate` | ❌ | ✅ | **Standalone** (`--oracle-model-only`) |
+| `extreme_gate` | ❌ | ✅ | **Standalone** (`--oracle-model-only`) **OU** combiné |
 | `random` | ❌ (aléatoire) | ❌ | aucun |
 
 ```mermaid
@@ -359,8 +359,23 @@ flowchart TD
     MODE{"Mode de cascade à tester ?"} --> A{"A besoin du rang global ?"}
 
     A -- "OUI<br/>(oracle_filter / oracle_pool / oracle_rerank)" --> NSTD["🎯 Batch NON-STANDALONE :<br/>--enable-global-model --enable-oracle-model<br/>puis ML PREDICT pour remplir<br/>global_rank_history"]
-    A -- "NON<br/>(oracle / extreme_gate)" --> STD["🔮 Batch STANDALONE :<br/>--oracle-model-only<br/>(parquet OOS suffit)"]
+    A -- "NON<br/>(oracle / extreme_gate)" --> STD["🔮 Batch STANDALONE :<br/>--oracle-model-only<br/>(parquet OOS suffit)<br/><b>OU batch combiné</b> (les 2 sources)"]
 ```
+
+### 9.2.1 Le batch combiné est le plus polyvalent
+
+Un batch **combiné** (Global Ranking + Oracle) produit les **deux** sources → il alimente
+**tous** les modes Oracle :
+
+| Batch disponible | `oracle` | `extreme_gate` | `oracle_filter` / `oracle_pool` / `oracle_rerank` |
+|---|---|---|---|
+| **Standalone** (`--oracle-model-only`, O0) | ✅ | ✅ | ❌ (pas de `global_rank_history`) |
+| **Combiné** (Global + Oracle) | ✅ | ✅ | ✅ |
+| **Global seul** (sans Oracle) | ❌ | ❌ | ❌ (pas de `proba_extreme`) |
+
+**Pourquoi** : `oracle` et `extreme_gate` ne consomment que `proba_extreme` — le rang global
+est ignoré (`oracle` remplace `ranks_df` par `proba_extreme` ; `extreme_gate` n'appelle
+jamais `load_global_ranks_from_db`). La présence du Global Ranking dans le batch ne gêne pas.
 
 ### 9.3 Piège à éviter (recoupe §5 de `mode_cascade.md`)
 
@@ -375,10 +390,14 @@ flowchart TD
     D --> E["aucun trade — test invalide"]
 ```
 
-**Bonne pratique** : pour les 3 modes de combinaison, utiliser un **batch non-standalone**
-ayant entraîné **les deux** modèles (Global Ranking + Oracle), avec le **predict** du Global
-Ranking fait sur la période du backtest. Pour `oracle` / `extreme_gate`, un batch
-**standalone** suffit.
+**Bonne pratique** :
+- Pour les 3 modes de combinaison (`oracle_filter`/`oracle_pool`/`oracle_rerank`) → **batch
+  non-standalone** ayant entraîné les deux modèles + predict du Global Ranking.
+- Pour `oracle` / `extreme_gate` → un batch **standalone** suffit, **mais** un batch
+  **combiné** fonctionne aussi (et permet de réutiliser la même source `proba_extreme` pour
+  les 5 modes dans une même campagne de tests).
+- Nuance couverture : pour backtester sur une période hors de l'entraînement (ex. 2023→2024),
+  il faut le **predict standard Oracle** (`--predict-range`) avec les champions persistés.
 
 ---
 

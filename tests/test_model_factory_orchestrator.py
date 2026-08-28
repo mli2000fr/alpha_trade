@@ -663,3 +663,90 @@ def test_filter_symbols_by_mode_refresh_stale_rebuilds_when_training_end_date_ch
     assert kept == ["AAPL"]
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# POINT 1 (2026-08-29) : remplir global_rank_history AVANT la jointure Oracle
+# pendant l'entraînement (mode combiné). Sans ce pré-remplissage, build_dataset
+# (merge INNER sur global_rank_history) produit un dataset vide → Oracle skipped.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_train_oracle_extreme_prefills_global_rank_history_before_dataset(monkeypatch, tmp_path) -> None:
+    """POINT 1 : en mode combiné (require_global_rank=True), predict_global_rank_history
+    est appelé AVANT build_dataset pour remplir global_rank_history (sinon dataset vide)."""
+    import modelFactory.oracle.dataset as oracle_dataset_mod
+    import modelFactory.oracle.build_labels as oracle_build_labels_mod
+    import modelFactory.predictor as predictor_mod
+
+    call_order: list[str] = []
+    pgrh_kwargs: dict = {}
+
+    def _fake_pgrh(start, end, batch_id, *, artifacts_dir=None, engine=None, symbols=None):
+        call_order.append("predict_global_rank_history")
+        pgrh_kwargs.update(start=start, end=end, batch_id=batch_id, artifacts_dir=artifacts_dir, symbols=symbols)
+        return {"2022-01-03": 2}
+
+    def _fake_build_dataset(*a, **k):
+        call_order.append("build_dataset")
+        return pd.DataFrame(), []  # dataset vide → skipped proprement
+
+    monkeypatch.setattr(oracle_build_labels_mod, "build_labels", lambda *a, **k: {"status": "ok"})
+    monkeypatch.setattr(predictor_mod, "predict_global_rank_history", _fake_pgrh)
+    monkeypatch.setattr(oracle_dataset_mod, "build_dataset", _fake_build_dataset)
+
+    cfg = TrainingConfig(
+        data=DataConfig(
+            training_start_date=date(2022, 1, 1),
+            training_end_date=date(2022, 1, 31),
+            oracle_model_only=False,
+        ),
+        model=ModelConfig(max_epochs=1),
+        artifacts_dir=tmp_path,
+    )
+    result = orchestrator.train_oracle_extreme(
+        cfg, engine=object(), batch_id="batch-1", symbols=["AAPL", "MSFT"],
+    )
+
+    assert result["status"] == "skipped"  # dataset vide → skipped proprement
+    assert call_order == ["predict_global_rank_history", "build_dataset"]
+    assert pgrh_kwargs["start"] == "2022-01-01"
+    assert pgrh_kwargs["end"] == "2022-01-31"
+    assert pgrh_kwargs["batch_id"] == "batch-1"
+    assert pgrh_kwargs["artifacts_dir"] == tmp_path
+    assert pgrh_kwargs["symbols"] == ["AAPL", "MSFT"]
+
+
+def test_train_oracle_extreme_skips_global_rank_prefill_when_oracle_only(monkeypatch, tmp_path) -> None:
+    """POINT 1 : en mode oracle_model_only (require_global_rank=False), le pré-remplissage
+    de global_rank_history est SKIPPÉ (pas de jointure global_rank attendue)."""
+    import modelFactory.oracle.dataset as oracle_dataset_mod
+    import modelFactory.oracle.build_labels as oracle_build_labels_mod
+    import modelFactory.predictor as predictor_mod
+
+    call_order: list[str] = []
+    monkeypatch.setattr(oracle_build_labels_mod, "build_labels", lambda *a, **k: {"status": "ok"})
+    monkeypatch.setattr(
+        predictor_mod, "predict_global_rank_history",
+        lambda *a, **k: call_order.append("predict_global_rank_history") or {},
+    )
+    monkeypatch.setattr(
+        oracle_dataset_mod, "build_dataset",
+        lambda *a, **k: call_order.append("build_dataset") or (pd.DataFrame(), []),
+    )
+
+    cfg = TrainingConfig(
+        data=DataConfig(
+            training_start_date=date(2022, 1, 1),
+            training_end_date=date(2022, 1, 31),
+            oracle_model_only=True,
+        ),
+        model=ModelConfig(max_epochs=1),
+        artifacts_dir=tmp_path,
+    )
+    result = orchestrator.train_oracle_extreme(
+        cfg, engine=object(), batch_id="batch-1", symbols=["AAPL"],
+    )
+
+    assert result["status"] == "skipped"
+    assert call_order == ["build_dataset"]  # pas de prefill
+
+

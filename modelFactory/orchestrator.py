@@ -524,10 +524,38 @@ def train_oracle_extreme(
     try:
         _start = str(cfg.data.training_start_date) if cfg.data.training_start_date else "2020-01-01"
         _end = str(cfg.data.training_end_date) if cfg.data.training_end_date else "2026-05-29"
+        # ── POINT 1 (2026-08-29) : remplir global_rank_history AVANT la jointure
+        #    Oracle. En mode combiné (after-sequence), le Global Ranking vient d'être
+        #    entraîné (modèles dispo dans cfg.artifacts_dir) MAIS global_rank_history
+        #    est encore VIDE pendant le train (seul le predict le remplit) →
+        #    build_dataset (merge INNER sur global_rank_history) produirait un
+        #    dataset vide → Oracle skipped/failed. On re-prédit le Global Ranking du
+        #    batch courant sur TOUTE la période d'entraînement (in-sample OK ; l'OOS
+        #    est géré par le walk-forward de l'Oracle lui-même). Idempotent (upsert) ;
+        #    non-bloquant : en cas d'échec, l'Oracle sera skipped proprement. ──
+        _require_gr = not cfg.data.oracle_model_only
+        if _require_gr:
+            try:
+                from modelFactory.predictor import predict_global_rank_history as _pgrh
+                _gr_fill = _pgrh(
+                    _start, _end, _batch_id,
+                    artifacts_dir=Path(cfg.artifacts_dir),
+                    engine=engine,
+                    symbols=_universe,
+                )
+                LOGGER.info(
+                    "oracle_extreme prefill global_rank_history batch=%s period=%s..%s dates=%d",
+                    _batch_id, _start, _end, len(_gr_fill),
+                )
+            except Exception as _gr_exc:  # noqa: BLE001
+                LOGGER.warning(
+                    "oracle_extreme prefill global_rank_history FAILED (non-bloquant): %s",
+                    _gr_exc,
+                )
         dataset, feature_columns = build_dataset(
             engine, _batch_id, _universe,
             start_date=_start, end_date=_end, horizon=horizon,
-            require_global_rank=(not cfg.data.oracle_model_only),
+            require_global_rank=_require_gr,
         )
         if dataset.empty:
             LOGGER.warning("oracle_extreme empty dataset — nothing to train")

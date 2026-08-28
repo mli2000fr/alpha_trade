@@ -299,18 +299,62 @@ modes de combinaison (`oracle_filter`/`oracle_pool`/`oracle_rerank`) ne trouvent
 
 ### 5.2 Choix du mode d'entraînement (lien avec `model_extreme_mode.md`)
 
+Le critère décisif est : **quelles sources de prédiction le batch produit-il** ?
+
 | Mode de cascade | Rang global requis ? | `proba_extreme` requis ? | Batch d'entraînement conseillé |
 |---|---|---|---|
-| `oracle` | non | oui | **standalone** (`--oracle-model-only`) |
+| `oracle` | non | oui | **standalone** (`--oracle-model-only`) **OU** combiné |
 | `oracle_filter` | oui | oui | **non-standalone** (Global + Oracle) |
 | `oracle_pool` | oui | oui | **non-standalone** (Global + Oracle) |
 | `oracle_rerank` | oui | oui | **non-standalone** (Global + Oracle) |
-| `extreme_gate` | non | oui | **standalone** (`--oracle-model-only`) |
+| `extreme_gate` | non | oui | **standalone** (`--oracle-model-only`) **OU** combiné |
 
 > ⚠️ Un batch `--oracle-model-only` (O0) ne produit **pas** de `global_rank_history` → il ne
 > peut alimenter QUE `oracle` / `extreme_gate`. Pour `oracle_filter`/`oracle_pool`/
 > `oracle_rerank`, il faut un batch **non-standalone** + le **predict** du Global Ranking.
 > Détail complet : [`doc/model_extreme_mode.md`](model_extreme_mode.md) §9.
+
+#### 5.2.1 Tableau complet : quel batch pour quel mode ?
+
+Un batch **combiné** (Global Ranking + Oracle) est le **plus polyvalent** : il produit les
+**deux** sources → il peut alimenter **tous** les modes Oracle.
+
+| Batch disponible | `oracle` | `extreme_gate` | `oracle_filter` / `oracle_pool` / `oracle_rerank` |
+|---|---|---|---|
+| **Standalone** (`--oracle-model-only`, O0) | ✅ | ✅ | ❌ (pas de `global_rank_history`) |
+| **Combiné** (Global + Oracle) | ✅ | ✅ | ✅ |
+| **Global seul** (sans Oracle) | ❌ | ❌ | ❌ (pas de `proba_extreme`) |
+| **Aucun** | ❌ | ❌ | ❌ |
+
+```mermaid
+flowchart LR
+    subgraph COMBINED["🎯 Batch combiné (ranking + oracle)"]
+        GR["global_rank_history ✅"]
+        OX["oracle_extreme_predictions ✅<br/>(proba_extreme)"]
+    end
+    subgraph MODES["Modes de cascade"]
+        M1["oracle (Oracle seul)"] --> NEED1["proba_extreme seul ✅"]
+        M2["extreme_gate (Oracle seul, LONG)"] --> NEED1
+        M3["oracle_filter / oracle_pool / oracle_rerank"] --> NEED2["global_rank + proba_extreme ✅"]
+    end
+    COMBINED --> MODES
+```
+
+**Pourquoi le batch combiné marche aussi pour `oracle` / `extreme_gate`** : ces modes ne
+consomment que `proba_extreme` — le rang global est **ignoré** (pour `oracle`, `ranks_df`
+est remplacé par `proba_extreme` ; pour `extreme_gate`, `load_global_ranks_from_db` n'est
+jamais appelé). La présence d'un Global Ranking en plus dans le batch **ne gêne pas**.
+
+#### 5.2.2 Nuance : la couverture des dates de `proba_extreme`
+
+Ce n'est pas « quel batch » mais « **quelles dates** couvre `proba_extreme` » qui décide si
+un backtest Oracle fonctionne :
+
+- Les prédictions Oracle issues du **walk-forward** ne couvrent que les **folds de test**
+  (fin de période d'entraînement).
+- Pour backtester sur une période **différente** (ex. 2023→2024) avec un batch entraîné
+  2016→2022, il faut le **predict standard Oracle** (`--predict-range 2023-01-01:2024-12-31`)
+  avec les champions persistés — même exigence pour tous les modes Oracle.
 
 ---
 

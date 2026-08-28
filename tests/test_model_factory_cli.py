@@ -429,3 +429,54 @@ def test_cli_train_persists_one_batch_record_with_command_and_final_counts(monke
     assert emitted_summaries[-1]["symbols_completed"] == 1
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# POINT 2 (2026-08-29) : enchaîner la prédiction Oracle standard pour un batch
+# COMBINÉ (Global Ranking + Oracle). La détection des champions est indépendante
+# du mode oracle-only : même quand global_rank_history est rempli (flux
+# rank-driven), predict_oracle_extreme_history doit être appelé pour remplir
+# oracle_extreme_predictions.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_cli_predict_combined_batch_chains_oracle_predict(monkeypatch) -> None:
+    """POINT 2 : un batch combiné (has_oracle_champions=True, global_rank_history
+    présent) garde le flux rank-driven MAIS enchaîne predict_oracle_extreme_history."""
+    import modelFactory.db_registry as db_registry
+    import modelFactory.predictor as predictor
+    import modelFactory.oracle.predict_history as oracle_ph
+    import modelFactory.synthesize_global_rank_predictions as synth_mod
+
+    oracle_calls: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(cli, "configure_root_logging", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "apply_reproducibility", lambda *args, **kwargs: {"seed": 42, "deterministic_applied": True, "deterministic_requested": True})
+    monkeypatch.setattr(cli, "get_sqlalchemy_engine", lambda: object())
+    monkeypatch.setattr(cli, "load_available_trading_dates", lambda engine, **kwargs: [date(2022, 1, 3)])
+    monkeypatch.setattr(
+        db_registry,
+        "load_symbols_for_source",
+        lambda engine, source, *, trade_date: ["AAPL", "MSFT"],
+    )
+    monkeypatch.setattr(db_registry, "insert_predictions", lambda engine, preds: len(preds))
+    monkeypatch.setattr(predictor, "_batch_has_per_symbol_or_sector", lambda engine, batch_id: False)
+    monkeypatch.setattr(predictor, "predict_global_rank_history", lambda *args, **kwargs: {})
+    monkeypatch.setattr(oracle_ph, "has_oracle_champions", lambda batch_id: True)
+    monkeypatch.setattr(
+        oracle_ph,
+        "predict_oracle_extreme_history",
+        lambda engine, batch_id, start_date, end_date, **kwargs: oracle_calls.append((batch_id, start_date, end_date)) or {"status": "completed", "n_rows": 2},
+    )
+    monkeypatch.setattr(synth_mod, "synthesize", lambda *args, **kwargs: {"status": "ok"})
+    monkeypatch.setattr(cli, "_load_synth_frame_for_range", lambda engine, batch_id, dates: pd.DataFrame())
+    monkeypatch.setattr(cli, "_emit_run_summary", lambda summary: None)
+
+    cli.main([
+        "--mode", "predict",
+        "--batch-id", "test-combined",
+        "--training-start-date", "2022-01-01",
+        "--training-end-date", "2022-01-04",
+    ])
+
+    assert oracle_calls
+    assert oracle_calls[0] == ("test-combined", "2022-01-01", "2022-01-04")
+
+
