@@ -42,6 +42,11 @@ class DataConfig:
     # demandé (expert) pour que les features whitelist existent.
     force_v1_lstm: bool = True
     global_model_only: bool = False  # P0-6 : skip per-symbol et per-sector, ne faire que le global
+    # 2026-08-28 : exclude_per_symbol_per_sector — saute l'entraînement
+    # per-symbol ET per-sector, mais GARDE le Global Ranking et l'Oracle Extreme
+    # (contrairement à global_model_only qui fait un return tôt et les skip aussi).
+    # Défaut False côté core (opt-in CLI) ; l'IHM le coche par défaut.
+    exclude_per_symbol_per_sector: bool = False
     # Oracle Extreme (O0) — 2026-08-20 : détection d'extrêmes H20 SANS global_rank_20
     # (ablation O0 — le rank B25 est redondant avec les features PIT, cf. audit
     #  oracle_o0_vs_o1_2026-08-20). Le modèle Oracle est entraîné en walk-forward

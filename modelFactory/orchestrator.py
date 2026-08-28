@@ -1131,31 +1131,48 @@ def run_training_batch(
         )
         return results
 
+    # ── 2026-08-28 : Exclude per-symbol & per-sector ──
+    # Saute l'entraînement per-symbol ET per-sector, mais CONTINUE vers l'Oracle
+    # Extreme (ligne suivante) si activé. À la différence de global_model_only
+    # (return tôt ci-dessus), on ne retourne PAS ici : le Global Ranking (déjà
+    # fait) et l'Oracle restent entraînés.
+    _exclude_ps = bool(cfg.data.exclude_per_symbol_per_sector)
+    if _exclude_ps:
+        LOGGER.info(
+            "🏁 orchestrator exclude_per_symbol_per_sector — entraînement per-symbol "
+            "ET per-sector SAUTÉ (le Global Ranking et l'Oracle Extreme restent actifs si activés)."
+        )
+
     # ── Per-Sector mode (Sprint 2026-08-03) ──
     if cfg.training_mode == "per_sector":
-        from modelFactory.trainer_sector import run_per_sector_batch
+        if _exclude_ps:
+            LOGGER.info("orchestrator per_sector skipped (exclude_per_symbol_per_sector)")
+        else:
+            from modelFactory.trainer_sector import run_per_sector_batch
 
-        sector_results = run_per_sector_batch(
-            symbols,
-            engine,
-            cfg,
-            batch_id=batch_id,
-        )
-        # Convert sector results to TrainResult format for compatibility
-        for sr in sector_results:
-            results.append(TrainResult(
-                sr.get("sector", "unknown"),
-                batch_id or "N/A",
-                sr.get("status", "failed"),
-                skip_reason=sr.get("reason"),
-            ))
-        LOGGER.info("orchestrator per_sector done sectors=%d statuses=%s",
-                     len(sector_results),
-                     {r.get("sector"): r.get("status") for r in sector_results})
-        LOGGER.info("🏁🏁🏁 orchestrator per_sector ALL DONE — moving to summary 🏁🏁🏁")
+            sector_results = run_per_sector_batch(
+                symbols,
+                engine,
+                cfg,
+                batch_id=batch_id,
+            )
+            # Convert sector results to TrainResult format for compatibility
+            for sr in sector_results:
+                results.append(TrainResult(
+                    sr.get("sector", "unknown"),
+                    batch_id or "N/A",
+                    sr.get("status", "failed"),
+                    skip_reason=sr.get("reason"),
+                ))
+            LOGGER.info("orchestrator per_sector done sectors=%d statuses=%s",
+                         len(sector_results),
+                         {r.get("sector"): r.get("status") for r in sector_results})
+            LOGGER.info("🏁🏁🏁 orchestrator per_sector ALL DONE — moving to summary 🏁🏁🏁")
     else:
         # ── Per-Symbol mode (legacy) ──
-        if effective_workers == 1:
+        if _exclude_ps:
+            LOGGER.info("orchestrator per_symbol skipped (exclude_per_symbol_per_sector)")
+        elif effective_workers == 1:
             for index, sym in enumerate(symbols, start=1):
                 try:
                     update_runtime_status(

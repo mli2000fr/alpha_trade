@@ -1,5 +1,35 @@
-Q1 : 34%, mean −3.4%
-Q2 : 79%, +8.7%
-Q3 : 63%, +4.9%
-Q4 : 55%, +1.1%
-oos 2025 taux rebond
+
+batch d'entrainnement 2014-2018
+- prediction 2019 - 2020
+- backtest 2019 - 2020
+
+batch d'entrainnement 2016-2020
+- prediction 2021 - 2022
+- backtest 2021 - 2022
+
+batch d'entrainnement 2018-2022
+- prediction 2023 - 2024
+- backtest 2023 - 2024
+
+batch d'entrainnement 2018-2024
+- prediction 2025 - 2026
+- backtest 2025 - 2026
+
+------------------------------------------------------------------------
+batch d'entrainnement 2014-2018
+- prediction 2019 - 2020
+- backtest 2019 - 2020
+
+batch d'entrainnement 2016-2020
+- prediction 2021 - 2022
+- backtest 2021 - 2022
+
+batch d'entrainnement 2018-2022
+- prediction 2023 - 2024
+- backtest 2023 - 2024
+
+batch d'entrainnement 2018-2024
+- prediction 2025 - 2026
+- backtest 2025 - 2026
+
+

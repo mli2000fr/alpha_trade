@@ -567,6 +567,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Entraîne aussi un modèle global multi-symboles en comparaison")
     p.add_argument("--global-model-only", action="store_true", default=False,
                    help="Entraîne UNIQUEMENT le modèle global, sans per-symbol ni per-sector. Active implicitement --enable-global-model.")
+    p.add_argument("--exclude-per-symbol-per-sector", action="store_true", default=False,
+                   help="Saute l'entraînement per-symbol ET per-sector, mais GARDE le Global Ranking et l'Oracle Extreme (si activés). "
+                        "À la différence de --global-model-only qui fait un return tôt et skip aussi l'Oracle, ce flag ne skip que les modèles par ticker/secteur.")
     # Oracle Extreme (O0) — 2026-08-20 : détection d'extrêmes H20 SANS global_rank_20
     p.add_argument("--enable-oracle-model", action="store_true", default=False,
                    help="Entraîne AUSSI le modèle Oracle Extreme (ablation O0, sans global_rank_20) en fin de séquence globale. Le rank B25 étant redondant avec les features PIT (audit 2026-08-20), on entraîne O0 sans global_rank_20.")
@@ -713,6 +716,7 @@ def main(args: list[str] | None = None) -> None:
             ),
             force_v1_lstm=opts.force_v1_lstm,
             global_model_only=opts.global_model_only,
+            exclude_per_symbol_per_sector=opts.exclude_per_symbol_per_sector,
             enable_oracle_model=opts.enable_oracle_model,
             oracle_model_only=opts.oracle_model_only,
             sector_use_symbol_feature=opts.sector_symbol_feature,
