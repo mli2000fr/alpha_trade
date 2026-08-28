@@ -2584,11 +2584,29 @@ def _enforce_ml_coverage_gate(
     ml_mode: str,
     ml_diagnostics,
     min_ml_coverage_ratio: float | None,
+    skip_ml_coverage: bool = False,
 ) -> dict[str, object]:
     from backtesting.fidelity import evaluate_ml_coverage_gate
 
     def _as_float(value: object) -> float:
         return float(value) if value not in {None, ""} else 0.0
+
+    # Extreme Gate oracle-only : le signal vient de oracle_extreme_predictions,
+    # pas de model_predictions → la couverture ML (model_predictions) n'est pas
+    # pertinente pour ce run. On désactive le gate (run autorisé).
+    if skip_ml_coverage:
+        _safe_print(
+            "   ml_coverage_gate=skipped (extreme_gate oracle-only : signal oracle_extreme_predictions)\n"
+        )
+        return {
+            "enabled": False,
+            "allowed": True,
+            "required_ratio": _as_float(min_ml_coverage_ratio),
+            "coverage_ratio": None,
+            "expected_symbol_dates": 0,
+            "missing_prediction_keys_after": 0,
+            "reason": "skipped_extreme_gate_oracle_only",
+        }
 
     gate = evaluate_ml_coverage_gate(
         engine_mode=engine_mode,
@@ -3317,6 +3335,9 @@ def _run_backtest(args: argparse.Namespace) -> None:
     _cascade_batch_id: str | None = None
     _cascade_filtered_count = 0
     _cascade_enabled = False
+    # Mode cascade effectif (peut être auto-détecté → extreme_gate) — hoisté ici
+    # pour rester accessible après le bloc try (gate de couverture ML).
+    _rank_mode_eff = "ml"
     try:
         import yaml as _yaml_cas
         with open("config.yaml", encoding="utf-8") as _fh_cas:
@@ -3380,10 +3401,59 @@ def _run_backtest(args: argparse.Namespace) -> None:
             # STRICT) OU parquet OOS (--oracle-oos-path, legacy). L'un des deux requis.
             _oracle_rank_map = None
             _oracle_modes = ("oracle", "oracle_filter", "oracle_rerank", "oracle_pool", "extreme_gate")
-            if getattr(args, "cascade_rank_mode", "ml") in _oracle_modes:
+            _rank_mode_eff = str(getattr(args, "cascade_rank_mode", "ml") or "ml").strip().lower()
+            # ── Auto-détection Extreme Gate (2026-08-28) ──
+            # Un batch oracle-only n'a AUCUN rang global (global_rank_history vide) mais
+            # possède des oracle_extreme_predictions. Si l'utilisateur laisse le mode cascade
+            # à "ml" (défaut) avec un tel batch, Global Rank est impossible (0 rangs →
+            # warnings "no global ranks" + 0 candidat). On bascule donc automatiquement sur
+            # extreme_gate, le batch étant déjà la source oracle — plus besoin de passer
+            # --cascade-rank-mode extreme_gate ni --oracle-batch-id à la main.
+            _auto_extreme_gate = False
+            if _rank_mode_eff == "ml" and _cascade_batch_id:
+                try:
+                    from sqlalchemy import text as _sa_text
+                    with engine.connect() as _conn:
+                        _auto_oracle_rows = int(
+                            _conn.execute(
+                                _sa_text(
+                                    "SELECT COUNT(*) FROM alpha_trade.oracle_extreme_predictions "
+                                    "WHERE batch_id = :b"
+                                ),
+                                {"b": _cascade_batch_id},
+                            ).scalar() or 0
+                        )
+                        _auto_rank_rows = int(
+                            _conn.execute(
+                                _sa_text(
+                                    "SELECT COUNT(*) FROM global_rank_history "
+                                    "WHERE batch_id = :b"
+                                ),
+                                {"b": _cascade_batch_id},
+                            ).scalar() or 0
+                        )
+                    if _auto_oracle_rows > 0 and _auto_rank_rows == 0:
+                        _auto_extreme_gate = True
+                        _rank_mode_eff = "extreme_gate"
+                        _safe_print(
+                            "   🔀 Auto-détection : batch {} oracle-only "
+                            "(0 rang global, {} prédictions oracle) → cascade extreme_gate\n".format(
+                                _cascade_batch_id, _auto_oracle_rows,
+                            )
+                        )
+                        LOGGER.info(
+                            "cascade: auto-extreme_gate batch=%s oracle_rows=%d global_ranks=0",
+                            _cascade_batch_id, _auto_oracle_rows,
+                        )
+                except Exception as _auto_exc:
+                    LOGGER.warning("cascade: auto-détection oracle-only échouée (%s)", _auto_exc)
+            if _rank_mode_eff in _oracle_modes:
                 import pandas as pd
                 _oracle_batch_id = str(getattr(args, "oracle_batch_id", "") or "").strip() or None
                 _oos_path = getattr(args, "oracle_oos_path", None)
+                # Auto-détection : le batch du backtest EST la source oracle.
+                if not _oracle_batch_id and _auto_extreme_gate:
+                    _oracle_batch_id = _cascade_batch_id
                 # Défaut pratique : si ni batch Oracle ni parquet n'est fourni, on lit la
                 # table pour le MÊME batch que le backtest (--ml-batch-id). Couvre le cas
                 # « un seul batch entraîné B25 + Oracle » (ablation O1) : l'IHM n'a rien à
@@ -3422,7 +3492,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
                     _safe_print(
                         "❌ --cascade-rank-mode {} nécessite --oracle-batch-id (table) "
                         "ou --oracle-oos-path (parquet legacy).".format(
-                            getattr(args, "cascade_rank_mode", "oracle")
+                            _rank_mode_eff
                         )
                     )
                     raise SystemExit(2)
@@ -3511,7 +3581,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 preds_df, _cascade_batch_id, engine=engine,
                 best_h=_best_h_flag,
                 top_pct=getattr(args, "cascade_top_pct", None),
-                rank_mode=getattr(args, "cascade_rank_mode", "ml"),
+                rank_mode=_rank_mode_eff,
                 rank_seed=getattr(args, "cascade_rank_seed", 42),
                 short_momentum_filter=(None if _sm_filter_flag == "none" else _sm_filter_flag),
                 short_momentum_max_pct=_sm_max_flag,
@@ -3597,6 +3667,10 @@ def _run_backtest(args: argparse.Namespace) -> None:
         ml_mode=str(args.ml_mode or "auto"),
         ml_diagnostics=ml_diagnostics,
         min_ml_coverage_ratio=getattr(args, "min_ml_coverage_ratio", None),
+        # Extreme Gate oracle-only : le signal vient de oracle_extreme_predictions,
+        # pas de model_predictions → la couverture ML (model_predictions) n'est pas
+        # pertinente et bloquerait chaque run oracle-only. On saute le gate.
+        skip_ml_coverage=(_rank_mode_eff == "extreme_gate"),
     )
 
     # 2. Pivoter OHLCV
@@ -3811,6 +3885,14 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 phase2_risk_result.diagnostics.get("signals_generated", 0),
             )
         )
+        _phase2_macro_missing = phase2_risk_result.diagnostics.get("macro_missing_dates", [])
+        if _phase2_macro_missing:
+            _safe_print(
+                "   ⚠️ Macro tolérée : {} séance(s) en `data_quality=missing` (ex: {}…)\n".format(
+                    len(_phase2_macro_missing),
+                    ", ".join(str(_d) for _d in _phase2_macro_missing[:5]),
+                )
+            )
         if phase2_mode == "risk_execution":
             if phase3_mode == "execution_replay":
                 from backtesting.execution_replay import simulate_phase3_execution_replay
