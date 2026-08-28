@@ -68,8 +68,9 @@ def _batch_has_per_symbol_or_sector(engine: "Engine", batch_id: str | None) -> b
       rang global) et on ne loggue rien par symbole.
 
     Détection : on regarde les symboles des runs d'entraînement du batch ; on exclut
-    les sentinelles de synthèse global_rank (``__GLOBAL_RANK...``) qui ne sont pas des
-    modèles per-symbol/per-sector. Résultat mis en cache : stable pour un batch donné.
+    les sentinelles de synthèse global_rank (``__GLOBAL_RANK...``) et de synchro
+    oracle (``__ORACLE_SYNTH...``) qui ne sont pas des modèles per-symbol/per-sector.
+    Résultat mis en cache : stable pour un batch donné.
     """
     if not batch_id:
         # Pas de batch identifiable → on ne peut pas affirmer l'absence de modèles :
@@ -86,7 +87,17 @@ def _batch_has_per_symbol_or_sector(engine: "Engine", batch_id: str | None) -> b
                 text("SELECT DISTINCT symbol FROM model_training_run WHERE batch_id = :bid"),
                 {"bid": bid},
             ).scalars().all()
-        non_synth = [s for s in syms if s and "__GLOBAL_RANK" not in str(s).upper()]
+        # Sentinelles exclues : __GLOBAL_RANK_SYNTH__ (synthèse global rank) ET
+        # __ORACLE_SYNTH__ (synchro oracle → model_predictions). Un batch qui n'a
+        # QUE ces sentinelles n'a AUCUN modèle per-symbol/per-sector → oracle-only
+        # ou rank-driven (sinon le dispatch predict partirait en per-symbol et
+        # rechargerait le mapping sectoriel complet pour chaque symbole).
+        non_synth = [
+            s for s in syms
+            if s
+            and "__GLOBAL_RANK" not in str(s).upper()
+            and "__ORACLE_SYNTH" not in str(s).upper()
+        ]
         has_models = len(non_synth) > 0
     except Exception:  # noqa: BLE001 — la détection ne doit jamais faire échouer la prédiction
         has_models = True

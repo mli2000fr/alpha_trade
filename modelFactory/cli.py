@@ -1135,6 +1135,27 @@ def main(args: list[str] | None = None) -> None:
                 horizon=int(getattr(opts, "horizon", 20) or 20),
             )
             LOGGER.info("predict oracle-only batch=%s result=%s", _batch_id, _oracle_out)
+            # ── Synchro Oracle → model_predictions (même logique que le Global Rank
+            # synth) : peuple model_predictions pour que la couverture ML du backtest
+            # pipeline soit satisfaite et que le signal Oracle soit consommable comme
+            # univers per-symbol (--ml-batch-id). Idempotent ; échec non bloquant. ──
+            if _oracle_out and _oracle_out.get("status") == "completed" and int(_oracle_out.get("n_rows", 0) or 0) > 0:
+                try:
+                    from modelFactory.synthesize_oracle_predictions import synthesize as _synth_oracle
+                    _synth_res = _synth_oracle(
+                        _batch_id,
+                        start=_oracle_start if historical_predict_enabled else None,
+                        end=_oracle_end if historical_predict_enabled else None,
+                    )
+                    LOGGER.info(
+                        "predict oracle-only batch=%s sync model_predictions result=%s",
+                        _batch_id, _synth_res,
+                    )
+                except Exception as _synth_exc:  # noqa: BLE001
+                    LOGGER.warning(
+                        "predict oracle-only batch=%s sync model_predictions FAILED (non-bloquant): %s",
+                        _batch_id, _synth_exc,
+                    )
             from modelFactory.oracle.predictions_store import load_oracle_predictions
             preds = load_oracle_predictions(
                 engine, batch_id=_batch_id,

@@ -54,6 +54,7 @@ from ihm.services.queries import (
     get_backtesting_pit_history_diagnostic,
     get_batch_diagnostics_summary,
     get_completed_ml_training_batches,
+    get_oracle_prediction_batches,
 )
 from ihm.services.screener_artifact_history import (
     build_global_screener_artifact_history,
@@ -2479,14 +2480,31 @@ def _build_run_options() -> BacktestRunOptions:
         key="bt_run_cascade_rank_mode",
         help="Comment le rang global (Global Ranking) et la proba_extreme (Oracle Extreme) sont combinés.",
     )
-    oracle_oos_path = ""
+    oracle_batch_id: str | None = None
     if _cascade_rank_mode in ("oracle", "oracle_filter", "oracle_rerank", "oracle_pool", "extreme_gate"):
-        oracle_oos_path = st.text_input(
-            "Chemin parquet OOS Oracle (--oracle-oos-path)",
-            value=str(st.session_state.get("bt_run_oracle_oos_path", "") or ""),
-            key="bt_run_oracle_oos_path",
-            help="artifacts/models/oracle/oracle-wf-<run>/oos_predictions.parquet — sortie walk-forward du modèle Oracle.",
-        )
+        oracle_batches = get_oracle_prediction_batches()
+        _oracle_batch_labels: dict[str, str | None] = {"— (défaut : campagne ML)": None}
+        if not oracle_batches.empty:
+            for _, r in oracle_batches.iterrows():
+                _label = f"{r['batch_id']} | {int(r['n_predictions']):,} préd | {r['min_date']}→{r['max_date']}"
+                if r.get("comment"):
+                    _label += f" | {str(r['comment'])[:50]}"
+                _oracle_batch_labels[_label] = str(r["batch_id"])
+        _all_oracle_labels = list(_oracle_batch_labels.keys())
+        _default_oracle_idx = 0
+        _prev_oracle_label = str(st.session_state.get("bt_run_oracle_batch_id", "") or "")
+        if _prev_oracle_label in _all_oracle_labels:
+            _default_oracle_idx = _all_oracle_labels.index(_prev_oracle_label)
+        _sel_oracle_label = cast(str, st.selectbox(
+            "Batch Oracle Extreme (table --oracle-batch-id)",
+            options=_all_oracle_labels,
+            index=_default_oracle_idx,
+            key="bt_run_oracle_batch_id",
+            help="Source des proba_extreme depuis oracle_extreme_predictions (filtre batch strict). "
+                 "« Défaut : campagne ML » = le batch sélectionné comme Campagne ML est aussi la source "
+                 "oracle (un seul batch B25+Oracle). Source table uniquement (parquet supprimé).",
+        ))
+        oracle_batch_id = _oracle_batch_labels[_sel_oracle_label]
     with st.expander("ℹ️ Détail des modes de combinaison", expanded=False):
         st.markdown(
             """
@@ -2498,7 +2516,7 @@ def _build_run_options() -> BacktestRunOptions:
 - **extreme_gate** (E6-E13) — Oracle **seul**, **LONG-only**, top 20% du jour par `proba_extreme` (percentile intra-date). Indépendant du rang global.
 - **random** — rangs aléatoires (placebo, isole l'edge du ranking).
 
-⚠️ Le **rang global** vient de `global_rank_history` du batch sélectionné (étape « Prédire l'univers »), et `proba_extreme` du parquet OOS Oracle. Pour combiner proprement, utilisez un batch ayant entraîné **les deux** modèles (ablation O1) — le rang global utilisé est celui du batch sélectionné, **pas un B25 figé**.
+⚠️ Le **rang global** vient de `global_rank_history` du batch sélectionné (étape « Prédire l'univers »), et `proba_extreme` de la table `oracle_extreme_predictions` (batch sélectionné ci-dessus). Pour combiner proprement, utilisez un batch ayant entraîné **les deux** modèles (ablation O1) — le rang global utilisé est celui du batch sélectionné, **pas un B25 figé**.
 """
         )
 
@@ -2645,7 +2663,7 @@ def _build_run_options() -> BacktestRunOptions:
         dip_reclaim_ratio=st.session_state.get("bt_run_dip_reclaim_ratio"),
         dip_reclaim_max_wait=int(st.session_state.get("bt_run_dip_reclaim_max_wait", _dip_defaults.get("reclaim_max_wait", BT_RUN_DIP_RECLAIM_MAX_WAIT_DEFAULT))),
         cascade_rank_mode=cast(Any, st.session_state.get("bt_run_cascade_rank_mode", "ml") or "ml"),
-        oracle_oos_path=(oracle_oos_path.strip() if oracle_oos_path else None),
+        oracle_batch_id=(oracle_batch_id or None),
         score_column=cast(Any, score_column),
         walk_forward_artifacts_dir=walk_forward_artifacts_dir.strip() or None,
         disable_walk_forward=bool(st.session_state.get("bt_run_disable_walk_forward", False)),
