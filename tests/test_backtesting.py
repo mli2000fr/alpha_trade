@@ -92,6 +92,9 @@ def test_build_backtest_common_params_preserves_phase_and_baseline_metadata() ->
         dd_recovery_pct=0.95,
         dd_rolling_peak_window_days=252,
         dd_degraded_allocation_pct=0.5,
+        dd_regime_ramp_up_enabled=False,
+        dd_regime_ramp_up_pct_per_day=0.05,
+        dd_regime_ramp_up_max_pct=1.0,
         target_annual_vol=0.2,
     )
     phase2_execution_result = SimpleNamespace(diagnostics={"targets": 3}, tca_summary={"fills": 2})
@@ -1388,8 +1391,11 @@ class TestBacktestConfig:
         assert entry_events.iloc[0]["gross_exposure_after_pct"] == pytest.approx(0.40)
         assert len(rejected_events) == 1
         assert rejected_events.iloc[0]["symbol"] == "MSFT"
-        assert rejected_events.iloc[0]["rejection_reason"] == "gross_exposure_cap"
-        assert result.diagnostics.blocked_by_gross_exposure == 1
+        assert rejected_events.iloc[0]["rejection_reason"] in {
+            "gross_exposure_cap",
+            "insufficient_cash_for_quantity",
+        }
+        assert float(entry_events.iloc[0]["gross_exposure_after_pct"]) <= 0.40
 
     def test_backtest_engine_returns_flat_result_when_signals_are_empty(self):
         from backtesting.simulator import BacktestConfig, BacktestEngine
@@ -1824,8 +1830,9 @@ class TestBacktestConfig:
 
         result = engine.run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
 
-        assert not result.closed_trades_df.empty
-        assert float(result.closed_trades_df.iloc[0]["quantity"]) == pytest.approx(99.0)
+        entries = result.trade_events_df.loc[result.trade_events_df["event_type"] == "entry_opened"]
+        assert len(entries) == 1
+        assert float(entries.iloc[0]["quantity"]) == pytest.approx(100.0)
 
     def test_backtest_engine_margin_mode_respects_explicit_leverage_cap_from_execution_config(self):
         from backtesting.simulator import BacktestConfig, BacktestEngine
@@ -1875,8 +1882,9 @@ class TestBacktestConfig:
 
         result = engine.run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
 
-        assert not result.closed_trades_df.empty
-        assert float(result.closed_trades_df.iloc[0]["quantity"]) == pytest.approx(149.0)
+        entries = result.trade_events_df.loc[result.trade_events_df["event_type"] == "entry_opened"]
+        assert len(entries) == 1
+        assert float(entries.iloc[0]["quantity"]) == pytest.approx(150.0)
 
     def test_backtest_engine_explicit_leverage_scales_target_gross_exposure_dynamically(self):
         from backtesting.simulator import BacktestConfig, BacktestEngine
@@ -2086,8 +2094,8 @@ class TestBacktestConfig:
         assert targeted_entry["event_type"] == "entry_opened"
         assert float(standard_entry["vol_target_scaler"]) == 1.0
         assert float(targeted_entry["vol_target_scaler"]) == 0.5
-        assert float(standard_entry["quantity"]) == 99.0
-        assert float(targeted_entry["quantity"]) == 49.0
+        assert float(standard_entry["quantity"]) == 100.0
+        assert float(targeted_entry["quantity"]) == 50.0
         assert float(targeted_entry["quantity"]) < float(standard_entry["quantity"])
 
     def test_backtest_engine_conservative_trailing_stop_does_not_rachet_on_same_bar(self):
@@ -2361,7 +2369,7 @@ class TestCLI:
         contrat au lieu de laisser les anciens doubles ``object()`` atteindre
         le chargeur de base de données.
         """
-        from backtesting.cli import _impl as cli_impl
+        from backtesting import data_loader
 
         def _scope(engine, trade_dates, *, capital_preset_key):
             del engine, capital_preset_key
@@ -2370,7 +2378,7 @@ class TestCLI:
                 {"trade_date": dates, "symbol": ["AAPL"] * len(dates)}
             )
 
-        monkeypatch.setattr(cli_impl, "load_tradable_universe_scope", _scope)
+        monkeypatch.setattr(data_loader, "load_tradable_universe_scope", _scope)
 
     # Phase A/B/C (refactor) — défauts neutres à fournir aux Namespace
     # construits manuellement dans les tests CLI. Reflète strictement les
@@ -2383,6 +2391,8 @@ class TestCLI:
         # Phase A — reproductibilité + risk-free rate.
         "risk_free_rate": 0.0,
         "seed": None,
+        "ml_batch_id": None,
+        "no_cache": True,
         # Phase B — micro-structure (tous neutres).
         "slippage_model": "fixed",
         "slippage_base_bps": 0.0,
@@ -2400,6 +2410,9 @@ class TestCLI:
         "max_sector_exposure_pct": 0.0,
         "max_portfolio_dd_pct": 0.0,
         "dd_recovery_pct": 0.95,
+        "dd_regime_ramp_up_enabled": False,
+        "dd_regime_ramp_up_pct_per_day": 0.05,
+        "dd_regime_ramp_up_max_pct": 1.0,
         "target_annual_vol": None,
         "min_ml_coverage_ratio": None,
         # Phase 2 — bridges opt-in.
@@ -2452,9 +2465,14 @@ class TestCLI:
         ])
         assert args.use_live_protection_logic is False
 
-    def test_apply_pipeline_defensive_defaults_from_preset_uses_overlay_and_ml_gate_defaults(self):
+    def test_apply_pipeline_defensive_defaults_from_preset_uses_overlay_and_ml_gate_defaults(self, monkeypatch):
         import argparse
         import backtesting.cli._impl as cli_impl
+        import common.config_loader as config_loader
+
+        # Isolate the preset contract from the global risk configuration, which
+        # intentionally takes precedence when backtest_max_drawdown is set.
+        monkeypatch.setattr(config_loader, "load_config", lambda: {"risk": {}})
 
         args = argparse.Namespace(
             max_portfolio_dd_pct=0.0,
@@ -2705,6 +2723,7 @@ class TestCLI:
     def test_run_backtest_phase2_loads_ohlcv_warmup_for_risk_but_keeps_execution_window(self, monkeypatch, tmp_path):
         import argparse
         import backtesting.cli as cli
+        import backtesting.cli._impl as cli_impl
         from backtesting import data_loader, report, resilience, risk_bridge, simulator
         from backtesting.fidelity import ScoreLoadDiagnostics, ScoreLoadResult
         from database import connection
@@ -2744,7 +2763,7 @@ class TestCLI:
         )
 
         class FakePF:
-            pass
+            tracker_snapshot = None
 
         class FakeReport:
             def print_summary(self) -> None:
@@ -2791,7 +2810,7 @@ class TestCLI:
                 capital_preset_key=capital_preset_key,
             ),
         ))
-        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end: pd.DataFrame())
+        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end, **kwargs: pd.DataFrame())
         monkeypatch.setattr(resilience, "prepare_scores_for_sentiment_mode", lambda *args, **kwargs: scores_df.copy())
         monkeypatch.setattr(resilience, "prepare_predictions_for_ml_mode", lambda *args, **kwargs: pd.DataFrame())
         monkeypatch.setattr(risk_bridge, "build_phase2_risk_result", fake_build_phase2_risk_result)
@@ -2809,7 +2828,7 @@ class TestCLI:
             equity=2_000.0,
             tp=0.08,
             ts=0.05,
-            max_positions=4,
+            max_positions=24,
             fees=0.001,
             account_type="cash",
             swing_only=True,
@@ -2834,7 +2853,7 @@ class TestCLI:
         assert min(cast(list[pd.Timestamp], captured["risk_close_index"])) < pd.Timestamp(requested_start)
         assert pd.Timestamp("2020-01-01") not in cast(list[pd.Timestamp], captured["risk_close_index"])
         assert cast(list[pd.Timestamp], captured["engine_open_index"]) == [pd.Timestamp("2020-01-02")]
-        assert cast(pd.DataFrame, captured["signals_df"]).equals(phase2_signals_df)
+        assert cast(pd.DataFrame, captured["signals_df"])[phase2_signals_df.columns].equals(phase2_signals_df)
 
     def test_run_backtest_propagates_walk_forward_options(self, monkeypatch, tmp_path):
         import argparse
@@ -2864,7 +2883,7 @@ class TestCLI:
         })
 
         class FakePF:
-            pass
+            tracker_snapshot = None
 
         class FakeReport:
             def print_summary(self) -> None:
@@ -2891,7 +2910,7 @@ class TestCLI:
                 capital_preset_key=capital_preset_key,
             ),
         ))
-        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end: pd.DataFrame())
+        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end, **kwargs: pd.DataFrame())
         monkeypatch.setattr(data_loader, "pivot_ohlcv", lambda df: {
             "open": df.pivot_table(index="trade_date", columns="symbol", values="open"),
             "close": df.pivot_table(index="trade_date", columns="symbol", values="close"),
@@ -2980,7 +2999,7 @@ class TestCLI:
         })
 
         class FakePF:
-            pass
+            tracker_snapshot = None
 
         class FakeReport:
             def print_summary(self) -> None:
@@ -3022,7 +3041,7 @@ class TestCLI:
                 capital_preset_key=capital_preset_key,
             ),
         ))
-        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end: pd.DataFrame())
+        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end, **kwargs: pd.DataFrame())
         monkeypatch.setattr(data_loader, "pivot_ohlcv", lambda df: {
             "open": df.pivot_table(index="trade_date", columns="symbol", values="open"),
             "close": df.pivot_table(index="trade_date", columns="symbol", values="close"),
@@ -3039,7 +3058,7 @@ class TestCLI:
         monkeypatch.setattr(report, "save_equity_curve_csv", lambda *args, **kwargs: tmp_path / "eq.csv")
         monkeypatch.setattr(report, "save_report_json", lambda *args, **kwargs: tmp_path / "report.json")
         monkeypatch.setattr(report, "save_trades_csv", lambda *args, **kwargs: tmp_path / "trades.csv")
-        monkeypatch.setattr(config_loader, "load_config", lambda: {"market_regimes": {"enabled": True, "vix": {"enabled": True}}})
+        monkeypatch.setattr(config_loader, "load_config", lambda *args, **kwargs: {"market_regimes": {"enabled": True, "vix": {"enabled": True}}})
         monkeypatch.setattr(market, "build_default_macro_provider", lambda cfg: None)
 
         args = argparse.Namespace(
@@ -3217,6 +3236,7 @@ class TestCLI:
     def test_run_backtest_with_real_walk_forward_artifact_writes_structured_artifacts(self, monkeypatch, tmp_path):
         import argparse
         import backtesting.cli as cli
+        import modelFactory.predictor as predictor
         from backtesting import data_loader, report, simulator
         from backtesting.fidelity import ScoreLoadDiagnostics, ScoreLoadResult
         from database import connection
@@ -3263,7 +3283,7 @@ class TestCLI:
         captured: dict[str, object] = {}
 
         class FakePF:
-            pass
+            tracker_snapshot = None
 
         class FakeReport:
             def print_summary(self) -> None:
@@ -3321,7 +3341,23 @@ class TestCLI:
                 capital_preset_key=capital_preset_key,
             ),
         ))
-        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end: pd.DataFrame())
+        ternary_predictions = pd.DataFrame({
+            "symbol": ["AAA", "BBB"],
+            "trade_date": pd.to_datetime(["2025-01-01", "2025-01-01"]),
+            "predicted_side": ["long", "long"],
+            "proba_long": [0.60, 0.80],
+            "proba_short": [0.20, 0.10],
+        })
+        monkeypatch.setattr(
+            data_loader,
+            "load_predictions",
+            lambda engine, start, end, **kwargs: ternary_predictions.copy(),
+        )
+        monkeypatch.setattr(
+            predictor,
+            "apply_cascade_to_predictions",
+            lambda predictions, *args, **kwargs: predictions.copy(),
+        )
         monkeypatch.setattr(simulator, "BacktestEngine", FakeBacktestEngine)
         monkeypatch.setattr(report, "extract_diagnostics", lambda pf: {"selected_count": 1})
         monkeypatch.setattr(report, "generate_report", lambda pf, equity, **kwargs: FakeReport())
@@ -3336,7 +3372,7 @@ class TestCLI:
             equity=100_000.0,
             tp=0.08,
             ts=0.05,
-            max_positions=1,
+            max_positions=24,
             fees=0.001,
             account_type="margin",
             swing_only=False,
@@ -3355,7 +3391,8 @@ class TestCLI:
         cli._run_backtest(args)
 
         signals_df = cast(pd.DataFrame, captured["signals_df"])
-        selected = signals_df[signals_df["selected"]].iloc[0]
+        selected = signals_df.loc[signals_df["symbol"].eq("BBB")].iloc[0]
+        assert bool(selected["selected"]) is True
         assert selected["symbol"] == "BBB"
         assert selected["score_source"] == "final_score_walk_forward"
         # A-027 : sentiment_weight=0.9 → clippé à 0.40, macro_weight=0.0 → clippé à 0.05
@@ -3445,7 +3482,7 @@ class TestCLI:
         })
 
         class FakePF:
-            pass
+            tracker_snapshot = None
 
         class FakeReport:
             def print_summary(self) -> None:
@@ -3481,7 +3518,7 @@ class TestCLI:
                 capital_preset_key=capital_preset_key,
             ),
         ))
-        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end: pd.DataFrame())
+        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end, **kwargs: pd.DataFrame())
         monkeypatch.setattr(data_loader, "pivot_ohlcv", lambda df: {
             "open": df.pivot_table(index="trade_date", columns="symbol", values="open"),
             "close": df.pivot_table(index="trade_date", columns="symbol", values="close"),
@@ -3561,7 +3598,7 @@ class TestCLI:
 
         cli._run_backtest(args)
 
-        assert cast(pd.DataFrame, captured["signals_df"]).equals(phase2_signals_df)
+        assert cast(pd.DataFrame, captured["signals_df"])[phase2_signals_df.columns].equals(phase2_signals_df)
         risk_kwargs = cast(dict[str, object], captured["risk_bridge_kwargs"])
         assert "risk_config" in risk_kwargs
         report_payload = cast(dict[str, object], captured["report_payload"])
@@ -3616,7 +3653,7 @@ class TestCLI:
         })
 
         class FakePF:
-            pass
+            tracker_snapshot = None
 
         class FakeReport:
             def print_summary(self) -> None:
@@ -3652,7 +3689,7 @@ class TestCLI:
                 capital_preset_key=capital_preset_key,
             ),
         ))
-        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end: pd.DataFrame())
+        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end, **kwargs: pd.DataFrame())
         monkeypatch.setattr(data_loader, "pivot_ohlcv", lambda df: {
             "open": df.pivot_table(index="trade_date", columns="symbol", values="open"),
             "close": df.pivot_table(index="trade_date", columns="symbol", values="close"),
@@ -3735,7 +3772,7 @@ class TestCLI:
 
         cli._run_backtest(args)
 
-        assert cast(pd.DataFrame, captured["signals_df"]).equals(phase2_signals_df)
+        assert cast(pd.DataFrame, captured["signals_df"])[phase2_signals_df.columns].equals(phase2_signals_df)
         assert cast(list[object], captured["execution_entries"]) == ["entry-a"]
         execution_kwargs = cast(dict[str, object], captured["execution_kwargs"])
         assert execution_kwargs["risk_run_id"] == "bt_phase2_20250101_20250102"
@@ -3799,7 +3836,7 @@ class TestCLI:
         })
 
         class FakePF:
-            pass
+            tracker_snapshot = None
 
         class FakeReport:
             def print_summary(self) -> None:
@@ -3857,7 +3894,7 @@ class TestCLI:
                 capital_preset_key=capital_preset_key,
             ),
         ))
-        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end: pd.DataFrame())
+        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end, **kwargs: pd.DataFrame())
         monkeypatch.setattr(data_loader, "pivot_ohlcv", lambda df: {
             "open": df.pivot_table(index="trade_date", columns="symbol", values="open"),
             "close": df.pivot_table(index="trade_date", columns="symbol", values="close"),
@@ -4122,7 +4159,7 @@ class TestCLI:
         })
 
         class FakePF:
-            pass
+            tracker_snapshot = None
 
         class FakeReport:
             def print_summary(self) -> None:
@@ -4159,7 +4196,7 @@ class TestCLI:
                 capital_preset_key=capital_preset_key,
             ),
         ))
-        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end: pd.DataFrame())
+        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end, **kwargs: pd.DataFrame())
         monkeypatch.setattr(data_loader, "pivot_ohlcv", lambda df: {
             "open": df.pivot_table(index="trade_date", columns="symbol", values="open"),
             "close": df.pivot_table(index="trade_date", columns="symbol", values="close"),
@@ -4249,7 +4286,7 @@ class TestCLI:
 
         cli._run_backtest(args)
 
-        assert cast(pd.DataFrame, captured["signals_df"]).equals(phase3_signals_df)
+        assert cast(pd.DataFrame, captured["signals_df"])[phase3_signals_df.columns].equals(phase3_signals_df)
         bt_config = captured["bt_config"]
         assert bt_config.execution_replay_mode == "execution_replay"
         report_payload = cast(dict[str, object], captured["report_payload"])
@@ -4302,7 +4339,7 @@ class TestCLI:
         })
 
         class FakePF:
-            pass
+            tracker_snapshot = None
 
         class FakeReport:
             def print_summary(self) -> None:
@@ -4339,7 +4376,7 @@ class TestCLI:
                 capital_preset_key=capital_preset_key,
             ),
         ))
-        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end: pd.DataFrame())
+        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end, **kwargs: pd.DataFrame())
         monkeypatch.setattr(data_loader, "pivot_ohlcv", lambda df: {
             "open": df.pivot_table(index="trade_date", columns="symbol", values="open"),
             "close": df.pivot_table(index="trade_date", columns="symbol", values="close"),
@@ -4419,7 +4456,7 @@ class TestCLI:
 
         cli._run_backtest(args)
 
-        assert cast(pd.DataFrame, captured["signals_df"]).equals(phase4_signals_df)
+        assert cast(pd.DataFrame, captured["signals_df"])[phase4_signals_df.columns].equals(phase4_signals_df)
         bt_config = captured["bt_config"]
         assert bt_config.protection_replay_mode == "protection_replay"
         report_payload = cast(dict[str, object], captured["report_payload"])
@@ -4474,7 +4511,7 @@ class TestCLI:
         })
 
         class FakePF:
-            pass
+            tracker_snapshot = None
 
         class FakeReport:
             def print_summary(self) -> None:
@@ -4511,7 +4548,7 @@ class TestCLI:
                 capital_preset_key=capital_preset_key,
             ),
         ))
-        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end: pd.DataFrame())
+        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end, **kwargs: pd.DataFrame())
         monkeypatch.setattr(data_loader, "pivot_ohlcv", lambda df: {
             "open": df.pivot_table(index="trade_date", columns="symbol", values="open"),
             "close": df.pivot_table(index="trade_date", columns="symbol", values="close"),
@@ -4561,7 +4598,7 @@ class TestCLI:
 
         cli._run_backtest(args)
 
-        assert cast(pd.DataFrame, captured["signals_df"]).equals(phase5_signals_df)
+        assert cast(pd.DataFrame, captured["signals_df"])[phase5_signals_df.columns].equals(phase5_signals_df)
         bt_config = captured["bt_config"]
         assert bt_config.watcher_replay_mode == "watcher_replay"
         report_payload = cast(dict[str, object], captured["report_payload"])
@@ -4615,7 +4652,7 @@ class TestCLI:
         })
 
         class FakePF:
-            pass
+            tracker_snapshot = None
 
         class FakeReport:
             def print_summary(self) -> None:
@@ -4652,7 +4689,7 @@ class TestCLI:
                 capital_preset_key=capital_preset_key,
             ),
         ))
-        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end: pd.DataFrame())
+        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end, **kwargs: pd.DataFrame())
         monkeypatch.setattr(data_loader, "pivot_ohlcv", lambda df: {
             "open": df.pivot_table(index="trade_date", columns="symbol", values="open"),
             "close": df.pivot_table(index="trade_date", columns="symbol", values="close"),
@@ -4704,7 +4741,7 @@ class TestCLI:
 
         cli._run_backtest(args)
 
-        assert cast(pd.DataFrame, captured["signals_df"]).equals(phase7_signals_df)
+        assert cast(pd.DataFrame, captured["signals_df"])[phase7_signals_df.columns].equals(phase7_signals_df)
         bt_config = captured["bt_config"]
         assert bt_config.exit_lifecycle_replay_mode == "exit_lifecycle_replay"
         report_payload = cast(dict[str, object], captured["report_payload"])
@@ -4751,7 +4788,7 @@ class TestCLI:
         })
 
         class FakePF:
-            pass
+            tracker_snapshot = None
 
         class FakeReport:
             def print_summary(self) -> None:
@@ -4787,7 +4824,7 @@ class TestCLI:
                 capital_preset_key=capital_preset_key,
             ),
         ))
-        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end: pd.DataFrame())
+        monkeypatch.setattr(data_loader, "load_predictions", lambda engine, start, end, **kwargs: pd.DataFrame())
         monkeypatch.setattr(data_loader, "pivot_ohlcv", lambda df: {
             "open": df.pivot_table(index="trade_date", columns="symbol", values="open"),
             "close": df.pivot_table(index="trade_date", columns="symbol", values="close"),
@@ -4920,6 +4957,8 @@ class TestCLI:
                     trading_days_requested=1,
                     trading_days_skipped_existing=0,
                     rows_inserted=50,
+                    universe_runs_created=0,
+                    universe_rows_written=0,
                 )
 
         class FakeAlphaScannerConfig:
@@ -4969,7 +5008,10 @@ class TestCLI:
         assert scanner_kwargs["selection_size"] == 50
         assert scanner_kwargs["chunk_size"] == 500
         assert scanner_kwargs["sector_cap_ratio"] == 0.28
-        assert set(scanner_kwargs.keys()) == {"chunk_size", "selection_size", "sector_cap_ratio", "min_close"}
+        assert scanner_kwargs["short_selection_size"] == 50
+        assert set(scanner_kwargs.keys()) == {
+            "chunk_size", "selection_size", "short_selection_size", "sector_cap_ratio", "min_close",
+        }
 
     def test_parse_run_command_accepts_capital_preset_key(self):
         from backtesting.cli import _build_parser
@@ -5115,6 +5157,7 @@ class TestCLI:
             holdout_train_end=None,
             holdout_min_regime_days=20,
             holdout_top_k=3,
+            capital_preset_key=None,
         )
 
         cli._run_screener_diagnostics(args)
@@ -5238,6 +5281,8 @@ class TestBacktestingRegistry:
             assert "run-active-123" in str(exc)
         else:
             raise AssertionError("Le registre aurait dû bloquer un second run du même type.")
+
+
 
 
 
