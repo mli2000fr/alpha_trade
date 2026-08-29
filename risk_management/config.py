@@ -274,10 +274,20 @@ class RiskConfig:
             if self.max_long_positions is None
             else self.max_long_positions
         )
+        # Normalisation : les caps long/short ne peuvent pas dépasser le total.
+        # Sans clamp, `RiskConfig(max_positions=1)` (ex. CLI `--max-positions 1`)
+        # avec le défaut `max_short_positions=2` lève à la construction
+        # (ValueError de SelectionCapacity) → backtest impossible.
+        resolved_max_long_positions = min(resolved_max_long_positions, self.max_positions)
+        resolved_max_short_positions = min(self.max_short_positions, self.max_positions)
+        if self.max_long_positions is not None and resolved_max_long_positions != self.max_long_positions:
+            object.__setattr__(self, "max_long_positions", resolved_max_long_positions)
+        if resolved_max_short_positions != self.max_short_positions:
+            object.__setattr__(self, "max_short_positions", resolved_max_short_positions)
         SelectionCapacity(
             max_positions=self.max_positions,
             max_long_positions=resolved_max_long_positions,
-            max_short_positions=self.max_short_positions,
+            max_short_positions=resolved_max_short_positions,
         )
         # --- V2 validations ---
         if not (0 < self.correlation_threshold <= 1):
