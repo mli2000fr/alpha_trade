@@ -44,6 +44,9 @@ BACKUP_DB_DRY_RUN_KEY = f"{_PREFIX}backup_db_dry_run"
 # T5.5 — Reset ML (flag de confirmation, clé dédiée ≠ clés des widgets)
 RESET_ML_PENDING_KEY = f"{_PREFIX}reset_ml_pending"
 
+# T5.5 — Rapport du dernier reset (journal + synthèse), persistant après rerun
+RESET_ML_LAST_REPORT_KEY = f"{_PREFIX}reset_ml_last_report"
+
 
 # ---------------------------------------------------------------------------
 # Section T5.1 — Métriques Prometheus pipeline
@@ -463,8 +466,13 @@ def _render_reset_ml_panel() -> None:
     Bouton rouge « RESET toutes les données ML » avec double confirmation :
     - 1er clic → affiche la liste des tables / répertoires concernés + boutons
       « Confirmer » / « Annuler » ;
-    - confirmation → appelle ``reset_ml_data`` (vide les tables, supprime les
-      répertoires backtests et modèles, réinitialise l'index).
+    - confirmation → exécute ``reset_ml_data`` avec **journal temps réel** :
+      chaque étape (arrêt des runs, DELETE par table, suppression des
+      répertoires) est affichée dans un ``st.status`` dépliable.
+
+    Le journal du dernier reset est conservé dans le session_state
+    (``RESET_ML_LAST_REPORT_KEY``) et re-affiché après chaque rerun, pour
+    garder la visibilité sur l'avancement et les éventuelles erreurs.
     """
     st.subheader("🔴 T5.5 — Reset ML")
     st.caption(
@@ -498,20 +506,8 @@ def _render_reset_ml_panel() -> None:
             key=f"{_PREFIX}reset_ml_confirm",
             use_container_width=True,
         ):
-            result = reset_ml_data(stop_active=True, dry_run=False)
-            st.session_state.pop(RESET_ML_PENDING_KEY, None)
-            if result.get("errors"):
-                st.error(
-                    f"Reset partiel — tables : {len(result.get('tables_cleared', []))}, "
-                    f"répertoires : {len(result.get('dirs_deleted', []))}, "
-                    f"erreurs : {' ; '.join(result['errors'][:5])}"
-                )
-            else:
-                st.success(
-                    f"✅ Reset ML terminé — {len(result.get('tables_cleared', []))} tables vidées, "
-                    f"{len(result.get('dirs_deleted', []))} répertoires supprimés."
-                )
-            st.rerun()
+            # Phase 1 : tout ce qui est possible SANS arrêter les runs actifs.
+            _run_reset_ml_with_logs(stop_active=False)
         if confirm_col2.button(
             "❌ Annuler",
             key=f"{_PREFIX}reset_ml_cancel",
@@ -519,6 +515,137 @@ def _render_reset_ml_panel() -> None:
         ):
             st.session_state.pop(RESET_ML_PENDING_KEY, None)
             st.rerun()
+
+    # ── Rapport du dernier reset (persistant après rerun) ───────────────────
+    last_report = st.session_state.get(RESET_ML_LAST_REPORT_KEY)
+    if last_report:
+        _render_reset_ml_report(last_report)
+
+
+def _run_reset_ml_with_logs(*, stop_active: bool = False, runs_only: bool = False) -> None:
+    """Exécute ``reset_ml_data`` avec un journal temps réel (st.status).
+
+    - ``stop_active=False`` (phase 1, par défaut) : tout est exécuté sans
+      arrêter les runs actifs ; les répertoires de runs encore utilisés sont
+      reportés (``blocked_dirs`` / ``blocked_runs``).
+    - ``stop_active=True, runs_only=True`` (phase 2) : arrête les runs actifs
+      puis supprime les répertoires de runs restants.
+
+    Chaque étape est streamée ligne à ligne pendant l'exécution, puis le
+    rapport complet (journal + synthèse + erreurs + phase 2 éventuelle) est
+    conservé dans le session_state pour être ré-affiché après le rerun.
+    """
+    log_lines: list[str] = []
+
+    with st.status("🔄 Reset ML en cours…", expanded=True) as status:
+        log_area = st.empty()
+
+        def _log(line: str) -> None:
+            log_lines.append(line)
+            log_area.markdown("```\n" + "\n".join(log_lines) + "\n```")
+
+        result: dict[str, object] = {
+            "tables_cleared": [],
+            "dirs_deleted": [],
+            "errors": [],
+            "log": [],
+            "blocked_dirs": [],
+            "blocked_runs": [],
+        }
+        try:
+            result = reset_ml_data(
+                stop_active=stop_active,
+                dry_run=False,
+                runs_only=runs_only,
+                on_step=_log,
+            )
+        except Exception as exc:  # noqa: BLE001
+            _log(f"✗ Erreur fatale : {exc}")
+            result = {
+                "tables_cleared": [],
+                "dirs_deleted": [],
+                "errors": [f"reset fatal: {exc}"],
+                "log": list(log_lines),
+                "blocked_dirs": [],
+                "blocked_runs": [],
+            }
+
+        # Invalide les caches Streamlit (ex. historique des runs pipeline mis
+        # en cache @st.cache_data) pour que la liste disparaisse immédiatement.
+        try:
+            st.cache_data.clear()
+        except Exception:  # noqa: BLE001
+            pass
+
+        errors = result.get("errors") or []
+        blocked = result.get("blocked_dirs") or []
+        blocked_runs = result.get("blocked_runs") or []
+        phase2_pending = bool(blocked) and not stop_active and not runs_only
+
+        if errors:
+            status.update(label="⚠️ Reset ML terminé avec erreurs", state="error")
+        elif phase2_pending:
+            status.update(
+                label="⏸️ Reset partiel — arrêter les runs actifs pour terminer",
+                state="running",
+            )
+        else:
+            status.update(label="✅ Reset ML terminé", state="complete")
+
+    st.session_state[RESET_ML_LAST_REPORT_KEY] = {
+        "ok": not errors and not phase2_pending,
+        "result": result,
+        "log": "\n".join(log_lines),
+        "phase2_pending": phase2_pending,
+        "blocked_runs": blocked_runs,
+    }
+    st.session_state.pop(RESET_ML_PENDING_KEY, None)
+    st.rerun()
+
+
+def _render_reset_ml_report(report: dict[str, object]) -> None:
+    """Affiche la synthèse + le journal du dernier reset ML (T5.5)."""
+    result = report.get("result") or {}
+    log = str(report.get("log") or "")
+    ok = bool(report.get("ok"))
+    errors = result.get("errors") or []
+    phase2_pending = bool(report.get("phase2_pending"))
+    blocked_runs = report.get("blocked_runs") or []
+
+    if phase2_pending:
+        st.warning(
+            "⏸️ **Reset ML partiel** — les tables et les répertoires non bloqués "
+            "ont été vidés, mais des runs actifs empêchent la suppression des "
+            "répertoires de runs. Arrêtez-les pour terminer."
+        )
+        for run in blocked_runs:
+            st.markdown(
+                f"- `{run.get('run_id')}` — {run.get('label')} "
+                f"({run.get('registry')})"
+            )
+        if st.button(
+            f"⏹️ Arrêter les {len(blocked_runs)} runs et terminer le reset",
+            key=f"{_PREFIX}reset_ml_phase2",
+            use_container_width=True,
+        ):
+            # Phase 2 : arrête les runs puis supprime les répertoires de runs.
+            _run_reset_ml_with_logs(stop_active=True, runs_only=True)
+    elif ok:
+        st.success(
+            f"✅ Reset ML terminé — {len(result.get('tables_cleared', []))} tables vidées, "
+            f"{len(result.get('dirs_deleted', []))} répertoires supprimés."
+        )
+    else:
+        error_lines = "\n".join(f"- `{e}`" for e in errors[:10])
+        st.error(
+            f"⚠️ Reset ML terminé avec **{len(errors)} erreur(s)** — "
+            f"{len(result.get('tables_cleared', []))} tables vidées, "
+            f"{len(result.get('dirs_deleted', []))} répertoires supprimés.\n\n"
+            f"**Détail des erreurs :**\n{error_lines}"
+        )
+
+    with st.expander("🕹️ Journal du dernier reset ML", expanded=not ok):
+        st.markdown("```\n" + log + "\n```")
 
 
 # ---------------------------------------------------------------------------
