@@ -459,6 +459,23 @@ eodhd:
     cooldown_minutes: 30
 
 # ---------------------------------------------------------------------------
+# Synchronisation calendrier earnings — job planifié (scripts/windows)
+# La tâche planifiée Windows exécute automatiquement aux heures listées dans
+# `run_hours` :
+#   python -u -m dataIntegrityEngine.sync_earnings_calendar
+#     --sleep-seconds 1.1 --log-every 25 --batch-size 50
+#     --symbol-source active-tradable --resume
+# et ajoute une ligne de statut (START / OK / ERROR) dans `log_file`.
+# powershell -ExecutionPolicy Bypass -File .\scripts\windows\install_earnings_calendar_task.ps1
+
+#  Get-ScheduledTask -TaskName AlphaTrade-EarningsCalendarSync | Select-Object State
+#  (Get-ScheduledTask -TaskName AlphaTrade-EarningsCalendarSync).Triggers | Select-Object StartBoundary
+# ---------------------------------------------------------------------------
+earnings_calendar_sync:
+  run_hours: "3,14"                             # Heures de la journée (0-23) séparées par des virgules : "3" = 3h du matin, "4,9" = 4h et 9h.
+  log_file: log/batch/earnings_calendar.txt  # Ligne de statut ajoutée à chaque exécution.
+
+# ---------------------------------------------------------------------------
 # Diagnostics batch ML — stockés dans model_batch_diagnostics à la fin de
 # chaque campagne d'entraînement.  Consommés par le live et le backtest pour
 # filtrer les symboles peu prédictibles ou incapables de shorter/longer.

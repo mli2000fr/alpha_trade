@@ -1,203 +1,141 @@
-2025 : +4.364%, PF 1.037, Sharpe 0.37, DD −12.70%, 284 trades (188L/96S), L +15 846 / S −12 310
-2026 : +12.648%, PF 1.312, Sharpe 2.59, DD −5.05%, 143 trades (93L/50S), L +6 644 / S +5 183
+P1 — La parité backtest/live n’est plus validée
+Le fichier [test_backtest_live_parity.py](F:\\projets\\tests\\test_backtest_live_parity.py) importe encore des contrats supprimés ou déplacés, notamment d’anciennes classes Simulator, ExecutionReplay et un ancien objet Order.
+D’autres tests du moteur de backtest échouent sur :
+- création des trades ;
+- protections ;
+- cash settlement ;
+- exposition brute ;
+- parts entières ;
+- time-stop ;
+- replay du watcher ;
+- overrides d’exécution ;
+- règles swing/day trade.
+Une partie peut être constituée de tests obsolètes, mais le résultat pratique reste le même :
+La propriété « le backtest reproduit fidèlement la production » n’est actuellement pas démontrée automatiquement.
+
+C’est particulièrement important parce que les expériences E11/E12 ont déjà montré qu’un petit écart de lifecycle pouvait inverser complètement une conclusion.
+P1 — Contrat public API cassé par le déplacement documentaire
+Le contrôle de stabilité attend toujours :
+doc/api_v1_public_symbols.txt
+dans [audit_private_api_exposure.py](F:\\projets\\scripts\\audit_private_api_exposure.py).
+Le fichier se trouve maintenant ici :
+doc/sources_historiques/backup/general/api_v1_public_symbols.txt
+Le test [test_api_v1_stability.py](F:\\projets\\tests\\test_api_v1_stability.py) échoue donc avant même de pouvoir vérifier correctement les ajouts et suppressions d’API publique.
+Ce fichier n’est pas une simple documentation historique : c’est un golden file actif utilisé par la non-régression. Il ne devrait pas être classé dans sources_historiques.
 
 
-$env:PYTHONPATH='f:/projets'
-python.exe -m backtesting run `
-  --start 2025-01-02 `
-  --end 2026-05-29 `
-  --ml-batch-id model-factory-20260811223551-ef2cd0 `
-  --capital-preset-key capital_2001_5000 `
-  --equity 4000 `
-  --use-canonical-costs `
-  --atr-risk-stop-multiple 2.5 `
-  --tp-atr-multiple 3.0 `
-  --tp-max-pct 0.07 `
-  --cascade-top-pct 0.10 `
-  --cascade-rank-mode extreme_gate `
-  --oracle-oos-path oos_predictions.parquet `
-  --extreme-gate-pct 0.20 `
-  --extreme-gate-per-symbol bypass `
-  --output-dir artifacts/backtesting/e17_ext_C_preset4000 *> e17_ext_C_preset4000.log
+---------------------
 
-  Le flag clé
---extreme-gate-per-symbol bypass — c'est ce qui active le bypass complet :
+Nombre élevé de captures génériques
+Les chemins production, watcher, risque, ML et IHM contiennent beaucoup de except Exception.
+Cela peut être acceptable aux frontières opératoires, mais devient dangereux lorsque l’exception :
+- déclenche un fallback silencieux ;
+- conserve un run en statut réussi ;
+- remplace une donnée PIT absente par une donnée dégradée ;
+- masque l’absence d’une protection ;
+- transforme une erreur métier en univers vide.
 
-Variante	Flag	Effet
-A (actuel)	--extreme-gate-per-symbol filter	veto long_prob > 0.55 + rang par long_prob
-B (demi)	--extreme-gate-per-symbol no_filter	pas de veto, rang par long_prob
-C (Oracle pur)	--extreme-gate-per-symbol bypass	pas de veto, rang par percentile O0
-Ce que fait bypass (rappel du câblage)
-cascade_select : score = rank (percentile Oracle O0), le per-symbol est ignoré — ni long_prob > min_prob, ni score = rank × long_prob.
-apply_cascade_to_predictions : proba_long = percentile O0, proba_short = 0, predicted_side = "long" → indispensable pour que replay_signals classe par Oracle et pas par le per-symbol.
+-----------------------
+Un modèle directionnel dédié existe déjà
+Le module [global_direction](F:\\projets\\modelFactory\\global_direction) définit exactement le problème :
+direction_score = P(D10 | D1 ou D10)
+Il propose trois cibles :
+- binaire D1 contre D10 ;
+- ordinale D1 / milieu / D10 ;
+- ranking continu du rendement futur.
+Le dataset exclut volontairement proba_extreme et global_rank_20 des premières expériences, avec des contrôles anti-fuite dans [dataset.py](F:\\projets\\modelFactory\\global_direction\\dataset.py).
+Cependant, ce module est aujourd’hui un module de recherche. La recherche des consommateurs de direction_score ne montre pas d’intégration réelle dans le pipeline de production.
+Résultats déjà obtenus
+Les anciennes expériences, cohérentes avec le code actuel, concluent :
+- 182 features analysées dans le pool Oracle TOP20 ;
+- meilleure AUC directionnelle univariée autour de 0,515 ;
+- aucune feature au-dessus du seuil 0,53 ;
+- features sectorielles : NO-GO ;
+- cible binaire : NO-GO ;
+- cible ordinale : tendance à reconcentrer simultanément D1 et D10 ;
+- cible rank : NO-GO ;
+- trajectoires temporelles : NO-GO ou couverture insuffisante ;
+- news sentiment : AUC voisine de 0,50 ;
+- short interest/volume : AUC maximale 0,501 ;
+- features fondamentales disponibles : pas de signal exploitable ;
+- précédent earnings surprise EPS : meilleur candidat, mais seulement AUC 0,519, sans lift économique top-décile ;
+- TRUE_BAD à l’entrée : non séparable avec les features disponibles ;
+- Y3 directionnel : AUC ML acceptable, mais portefeuille fortement dégradé ;
+- short direct : catastrophique dans les expériences historiques.
+La conclusion importante est donc :
+Avec les données actuellement présentes, D1/D10 ne paraît pas suffisamment observable. Changer CatBoost pour un autre modèle a peu de chances de résoudre le problème.
+------------------------------------
 
-
-Maintenant apply_cascade_to_predictions : ajouter le paramètre extreme_gate_shorts et le transmettre, + gérer predicted_side="short" pour les candidats SHORT (sinon replay_signals les verrait comme long).
-
-Maintenant le câblage CLI : flag --extreme-gate-shorts + transmission.
-Le flag --extreme-gate-shorts est bien parsé. Maintenant je lance les runs OOS. D'abord je vérifie si le run B2 (propre) est terminé, puis je lance les 3 nouveaux runs :
-
-EXT short-only (--extreme-gate-shorts + --no-longs)
-B25 short-only (--no-longs, cascade ml par défaut)
-EXT long+short (--extreme-gate-shorts)
-
-
-
-$env:PYTHONPATH='f:/projets'
-python.exe -m backtesting run `
-  --start 2025-01-02 `
-  --end 2026-05-29 `
-  --ml-batch-id model-factory-20260811223551-ef2cd0 `
-  --capital-preset-key capital_2001_5000 `
-  --equity 4000 `
-  --use-canonical-costs `
-  --atr-risk-stop-multiple 2.5 `
-  --tp-atr-multiple 3.0 `
-  --tp-max-pct 0.07 `
-  --cascade-top-pct 0.10 `
-  --cascade-rank-mode extreme_gate `
-  --oracle-oos-path oos_predictions.parquet `
-  --extreme-gate-pct 0.20 `
-  --extreme-gate-shorts `
-  --output-dir artifacts/backtesting/e18_ext_ls_preset4000 *> e18_ext_ls_preset4000.log
-
-  Flag	Rôle
---cascade-rank-mode extreme_gate	active le gate Oracle O0
---oracle-oos-path ...	parquet des prédictions OOS Oracle (obligatoire pour extreme_gate)
---extreme-gate-pct 0.20	top 20% du jour par proba_extreme
---extreme-gate-shorts	active la branche SHORT (optionnel — défaut LONG-only)
---capital-preset-key capital_2001_5000 --equity 4000	preset petit compte @ 4000$
---use-canonical-costs --atr-risk-stop-multiple 2.5 --tp-atr-multiple 3.0 --tp-max-pct 0.07	contrat PROD gelé
-Ce que fait --extreme-gate-shorts
-Dans le gate top20 (rank ≥ 1 − pool_pct) :
-
-LONG si long_prob > 0.55
-SHORT si long_prob ≤ 0.55 et short_prob > 0.55 (le reste du gate)
-sinon NO TRADE
-C'est exactement le schéma : LONG = Extreme ∩ strong long_prob / SHORT = Extreme restants ∩ strong short_prob / REST = NO TRADE.
-
-
-
-
-
-
-
-
-
-
-Voici les résultats OOS avec B4. L'OOS B4 a été fait sur 3 années : 2020, 2022, 2024H1 (en plus de la fenêtre principale 2025→2026H1 utilisée comme référence). Comparaison avec B0 (référence) sur les mêmes fenêtres :
-
-Tableau des résultats OOS — B4 (vs B0)
-Fenêtre	Période	Policy	Ret%	Sharpe	DD%	Trades	PF	Win%
-OOS 2020	2020-01-02 → 2020-12-31	B4	−14.26	−1.25	18.91	178	0.54	47.2
-B0 (réf)	−14.19	−1.25	18.96	178	0.53	47.2
-OOS 2022	2022-01-03 → 2022-12-30	B4	−17.01	−2.44	17.60	454	0.53	42.1
-B0 (réf)	−17.50	−2.34	18.24	454	0.58	42.1
-OOS 2024H1	2024-01-02 → 2024-06-28	B4	−3.86	−0.33	12.14	156	0.89	44.9
-B0 (réf)	−3.86	−0.33	12.14	156	0.89	44.9
-Main (réf)	2025-01-02 → 2026-05-29	B4	+34.61	1.33	16.70	467	1.34	54.8
-(variantes B4a, écartées : 2020 −13.88 · 2022 −17.24 · 2024H1 −3.86)
-
-Verdict par année
-2020 — Gate ÉCHOUÉ (assumé) : B4 −14.26% vs B0 −14.19% (≈ équivalent). Cause structurelle : l'equity ne récupère que ~16% en 2020 (< seuil RR 25%) → B4 reste bloqué à 50%, ne débloque jamais 75/100%. Optimiser 2020 = sur-apprentissage sur quelques épisodes → refusé volontairement.
-2022 — Robustesse confirmée : B4 mieux que B0 (−17.01 vs −17.50, DD 17.6 vs 18.2). Surtout : B4 élimine le veto 2022 (0 réarmement à 100% en REBOUND ; B2, lui, était veté). La RELAPSE empêche le churn bear-market.
-2024H1 — Neutre : B4 = B0 à l'identique (breaker jamais engagé, allocation nominale — fenêtre calme).
-Main 2025→2026H1 — Le gain : +34.6% / 1.33 / DD 16.7 (c'est le R3 validé).
-En résumé : l'OOS B4 = 2020 (échoué, assumé), 2022 (robuste, veto levé), 2024H1 (neutre). C'est exactement le compromis figé : B4 sacrifie 2020 (qu'on ne peut pas gagner sans le risque qui a veté B2) et gagne la robustesse 2022 + le gain 2025.
-
-Le script d'extraction est dans _e23b4_oos_summary.py (réutilisable).
-
-
-
-Épisode	Oracle LONG	Oracle SHORT	Gagnant
-2018Q4	6.9%	9.3%	SHORT
-2020 COVID	14.5%	18.5%	SHORT
-2022 bear	6.5%	8.1%	SHORT
-2023 CORRECTION	5.4%	8.4%	SHORT
-2024 correction	7.6%	6.2%	LONG
-2025 tariff	8.2%	4.8%	LONG
-Global (2018→2026)	7.60%	8.03%	SHORT
-
--------------------------------------------------------------------
-todo: calibration pour model global ? les anciens calibrations sont nécessaires ?
-Calibration convaincante : B25 TOP8 C2+B4 2025→2026 = +48.0%, Sharpe 1.08, Sortino 1.59, MaxDD −21.3% vs cible e23b4_main (+34.6%/1.33/1.63/−16.7%) — même ordre de grandeur (écart expliqué : LONG-only TOP8 vs vrai 6L/2S + conviction + filtre capital_preservation). Moteur validé.
-
-Pire année: 2020, 2026
-Alpha fort en REBOUND (+5.42pp, TOP−BOT +6.85) et bon en BULL (+1.82pp).
-Correct en SLIDE (+1.50pp).
-Quasi nul en CORRECTION (+0.20pp).
-
-quand le batch n'a aque le model global, comment il calcule le proba_long ?
-quand le batch entréinne de model global + model per sector, le model global et le model sector seront utilsié tous les 2 pour predit, ainsi lur predit sont tous utilisés par le backtest pipeline ?
-quand le batch entréinne de model global + model per symbol, le model global et le model sector seront utilsié tous les 2 pour symbol, ainsi lur predit sont tous utilisés par le backtest pipeline ?
-quand le batch entréinne de model global + model per sector en mode regression, comment il calcule le proba_long ?
-quand le batch entréinne de model global + model per sector en mode ternary, comment il calcule le proba_long ?
-
-T B41 model global only 2016-01-01 au 2024–12–31:
-    - entrainnement: fait
-    - predit: fait
-    - backtest 2025-2026
-T B25 model global only 2016-01-01 au 2026–06–30 : model-factory-20260821195750-544a47
-    - entrainnement: fait
-    - predit: fait
-    - backtest 2025-2026
-T B25 model global only 2016-01-01 au 2024–12–31: model-factory-20260821195750-544a47
-    - entrainnement: fait
-    - predit: fait
-    - backtest 2025-2026
-T B25 model global + per symbol 2016-01-01 au 2024–12–31: model-factory-20260821200038-929708
-    - entrainnement: fait
-    - predit: encours
-    - backtest 2025-2026
-T B25 model global + per sector regression 2016-01-01 au 2024–12–31: model-factory-20260821200226-0eb747
-    - entrainnement: fait
-    - predit: fait
-    - backtest 2025-2026
-
-A1 B25 2019-12-31 model-factory-20260822225648-894789
-    - entrainnement: fait
-    - predit: fait
-    - backtest 2020
-A2 B25 2020-12-31 model-factory-20260822225720-db6662
-    - entrainnement: fait
-    - predit: fait
-    - backtest 2021
-A3 B25 2021-12-31 model-factory-20260822225736-f22e40
-    - entrainnement: fait
-    - predit: fait
-    - backtest 2022
-A4 B25 2022-12-31 model-factory-20260822225808-b10aa9
-    - entrainnement: fait
-    - predit: fait
-    - backtest 2023
-A5 B25 2023-12-31 model-factory-20260822225836-bc6c92
-    - entrainnement: fait
-    - predit: fait
-    - backtest 2024
-A6 B25 2024-12-31 model-factory-20260822225904-c68b36
-    - entrainnement: fait
-    - predit: fait
-    - backtest 2025
-A7 B25 2025-12-31 model-factory-20260822225935-06a3a9
-    - entrainnement: fait
-    - predit: fait
-    - backtest 2026
-
-TODO: IMPORTANT avec --enable-cross-sectional, comparer les A1-A7:
-python -u -m modelFactory --mode train --accelerator auto --target-mode regression --num-classes 1 --forecast-horizons 3,5,10,15,20 --target-up-threshold 0.03 --target-down-threshold -0.03 --decision-threshold 0.55 --calibration-method platt --calibration-min-samples 64 --calibration-max-iter 100 --feature-set expert --benchmark-symbol SPY --sequence-length 40 --batch-size 32 --hidden-size 256 --ml-mode rebuild-all --training-start-date 2014-01-01 --symbol-source ticket-recherche --artifacts-dir artifacts/models --max-workers 6 --max-epochs 50 --patience 5 --cross-sectional-min-universe 20 --lgbm-max-depth 5 --lgbm-n-estimators 200 --lgbm-learning-rate 0.03 --catboost-depth 6 --catboost-iterations 300 --catboost-learning-rate 0.03 --lgbm-reg-alpha 0.1 --lgbm-reg-lambda 0.1 --lgbm-min-child-samples 150 --lgbm-subsample 0.8 --lgbm-colsample-bytree 0.7 --catboost-l2-leaf-reg 3.0 --catboost-border-count 128 --catboost-random-strength 1.0 --catboost-bagging-temperature 1.0 --catboost-od-type IncToDec --catboost-od-wait 20 --catboost-loss-function YetiRank --default-champion lstm_attention --heartbeat-interval-seconds 60.0 --log-level INFO --training-end-date 2019-12-31 --global-model-only --enable-global-model --include-short-score --include-factors --enable-cross-sectional --no-include-score-components --target-excess-vs-spy --compare-lightgbm --enable-catboost --enable-global-model --global-model-name catboost --global-champion --select-champion --walkforward --wf-min-train-size 504 --wf-val-size 126 --wf-test-size 126 --wf-step-size 252 --wf-max-splits 8 --comment "A1 B25 2019-12-31"
-python -u -m modelFactory --mode train --accelerator auto --target-mode regression --num-classes 1 --forecast-horizons 3,5,10,15,20 --target-up-threshold 0.03 --target-down-threshold -0.03 --decision-threshold 0.55 --calibration-method platt --calibration-min-samples 64 --calibration-max-iter 100 --feature-set expert --benchmark-symbol SPY --sequence-length 40 --batch-size 32 --hidden-size 256 --ml-mode rebuild-all --training-start-date 2014-01-01 --symbol-source ticket-recherche --artifacts-dir artifacts/models --max-workers 6 --max-epochs 50 --patience 5 --cross-sectional-min-universe 20 --lgbm-max-depth 5 --lgbm-n-estimators 200 --lgbm-learning-rate 0.03 --catboost-depth 6 --catboost-iterations 300 --catboost-learning-rate 0.03 --lgbm-reg-alpha 0.1 --lgbm-reg-lambda 0.1 --lgbm-min-child-samples 150 --lgbm-subsample 0.8 --lgbm-colsample-bytree 0.7 --catboost-l2-leaf-reg 3.0 --catboost-border-count 128 --catboost-random-strength 1.0 --catboost-bagging-temperature 1.0 --catboost-od-type IncToDec --catboost-od-wait 20 --catboost-loss-function YetiRank --default-champion lstm_attention --heartbeat-interval-seconds 60.0 --log-level INFO --training-end-date 2020-12-31 --global-model-only --enable-global-model --include-short-score --include-factors --enable-cross-sectional --no-include-score-components --target-excess-vs-spy --compare-lightgbm --enable-catboost --enable-global-model --global-model-name catboost --global-champion --select-champion --walkforward --wf-min-train-size 504 --wf-val-size 126 --wf-test-size 126 --wf-step-size 252 --wf-max-splits 8 --comment "A2 B25 2020-12-31"
-python -u -m modelFactory --mode train --accelerator auto --target-mode regression --num-classes 1 --forecast-horizons 3,5,10,15,20 --target-up-threshold 0.03 --target-down-threshold -0.03 --decision-threshold 0.55 --calibration-method platt --calibration-min-samples 64 --calibration-max-iter 100 --feature-set expert --benchmark-symbol SPY --sequence-length 40 --batch-size 32 --hidden-size 256 --ml-mode rebuild-all --training-start-date 2015-01-01 --symbol-source ticket-recherche --artifacts-dir artifacts/models --max-workers 6 --max-epochs 50 --patience 5 --cross-sectional-min-universe 20 --lgbm-max-depth 5 --lgbm-n-estimators 200 --lgbm-learning-rate 0.03 --catboost-depth 6 --catboost-iterations 300 --catboost-learning-rate 0.03 --lgbm-reg-alpha 0.1 --lgbm-reg-lambda 0.1 --lgbm-min-child-samples 150 --lgbm-subsample 0.8 --lgbm-colsample-bytree 0.7 --catboost-l2-leaf-reg 3.0 --catboost-border-count 128 --catboost-random-strength 1.0 --catboost-bagging-temperature 1.0 --catboost-od-type IncToDec --catboost-od-wait 20 --catboost-loss-function YetiRank --default-champion lstm_attention --heartbeat-interval-seconds 60.0 --log-level INFO --training-end-date 2021-12-31 --global-model-only --enable-global-model --include-short-score --include-factors --enable-cross-sectional --no-include-score-components --target-excess-vs-spy --compare-lightgbm --enable-catboost --enable-global-model --global-model-name catboost --global-champion --select-champion --walkforward --wf-min-train-size 504 --wf-val-size 126 --wf-test-size 126 --wf-step-size 252 --wf-max-splits 8 --comment "A3 B25 2021-12-31"
-python -u -m modelFactory --mode train --accelerator auto --target-mode regression --num-classes 1 --forecast-horizons 3,5,10,15,20 --target-up-threshold 0.03 --target-down-threshold -0.03 --decision-threshold 0.55 --calibration-method platt --calibration-min-samples 64 --calibration-max-iter 100 --feature-set expert --benchmark-symbol SPY --sequence-length 40 --batch-size 32 --hidden-size 256 --ml-mode rebuild-all --training-start-date 2015-01-01 --symbol-source ticket-recherche --artifacts-dir artifacts/models --max-workers 6 --max-epochs 50 --patience 5 --cross-sectional-min-universe 20 --lgbm-max-depth 5 --lgbm-n-estimators 200 --lgbm-learning-rate 0.03 --catboost-depth 6 --catboost-iterations 300 --catboost-learning-rate 0.03 --lgbm-reg-alpha 0.1 --lgbm-reg-lambda 0.1 --lgbm-min-child-samples 150 --lgbm-subsample 0.8 --lgbm-colsample-bytree 0.7 --catboost-l2-leaf-reg 3.0 --catboost-border-count 128 --catboost-random-strength 1.0 --catboost-bagging-temperature 1.0 --catboost-od-type IncToDec --catboost-od-wait 20 --catboost-loss-function YetiRank --default-champion lstm_attention --heartbeat-interval-seconds 60.0 --log-level INFO --training-end-date 2022-12-31 --global-model-only --enable-global-model --include-short-score --include-factors --enable-cross-sectional --no-include-score-components --target-excess-vs-spy --compare-lightgbm --enable-catboost --enable-global-model --global-model-name catboost --global-champion --select-champion --walkforward --wf-min-train-size 504 --wf-val-size 126 --wf-test-size 126 --wf-step-size 252 --wf-max-splits 8 --comment "A4 B25 2022-12-31"
-python -u -m modelFactory --mode train --accelerator auto --target-mode regression --num-classes 1 --forecast-horizons 3,5,10,15,20 --target-up-threshold 0.03 --target-down-threshold -0.03 --decision-threshold 0.55 --calibration-method platt --calibration-min-samples 64 --calibration-max-iter 100 --feature-set expert --benchmark-symbol SPY --sequence-length 40 --batch-size 32 --hidden-size 256 --ml-mode rebuild-all --training-start-date 2016-01-01 --symbol-source ticket-recherche --artifacts-dir artifacts/models --max-workers 6 --max-epochs 50 --patience 5 --cross-sectional-min-universe 20 --lgbm-max-depth 5 --lgbm-n-estimators 200 --lgbm-learning-rate 0.03 --catboost-depth 6 --catboost-iterations 300 --catboost-learning-rate 0.03 --lgbm-reg-alpha 0.1 --lgbm-reg-lambda 0.1 --lgbm-min-child-samples 150 --lgbm-subsample 0.8 --lgbm-colsample-bytree 0.7 --catboost-l2-leaf-reg 3.0 --catboost-border-count 128 --catboost-random-strength 1.0 --catboost-bagging-temperature 1.0 --catboost-od-type IncToDec --catboost-od-wait 20 --catboost-loss-function YetiRank --default-champion lstm_attention --heartbeat-interval-seconds 60.0 --log-level INFO --training-end-date 2023-12-31 --global-model-only --enable-global-model --include-short-score --include-factors --enable-cross-sectional --no-include-score-components --target-excess-vs-spy --compare-lightgbm --enable-catboost --enable-global-model --global-model-name catboost --global-champion --select-champion --walkforward --wf-min-train-size 504 --wf-val-size 126 --wf-test-size 126 --wf-step-size 252 --wf-max-splits 8 --comment "A5 B25 2023-12-31"
-python -u -m modelFactory --mode train --accelerator auto --target-mode regression --num-classes 1 --forecast-horizons 3,5,10,15,20 --target-up-threshold 0.03 --target-down-threshold -0.03 --decision-threshold 0.55 --calibration-method platt --calibration-min-samples 64 --calibration-max-iter 100 --feature-set expert --benchmark-symbol SPY --sequence-length 40 --batch-size 32 --hidden-size 256 --ml-mode rebuild-all --training-start-date 2016-01-01 --symbol-source ticket-recherche --artifacts-dir artifacts/models --max-workers 6 --max-epochs 50 --patience 5 --cross-sectional-min-universe 20 --lgbm-max-depth 5 --lgbm-n-estimators 200 --lgbm-learning-rate 0.03 --catboost-depth 6 --catboost-iterations 300 --catboost-learning-rate 0.03 --lgbm-reg-alpha 0.1 --lgbm-reg-lambda 0.1 --lgbm-min-child-samples 150 --lgbm-subsample 0.8 --lgbm-colsample-bytree 0.7 --catboost-l2-leaf-reg 3.0 --catboost-border-count 128 --catboost-random-strength 1.0 --catboost-bagging-temperature 1.0 --catboost-od-type IncToDec --catboost-od-wait 20 --catboost-loss-function YetiRank --default-champion lstm_attention --heartbeat-interval-seconds 60.0 --log-level INFO --training-end-date 2024-12-31 --global-model-only --enable-global-model --include-short-score --include-factors --enable-cross-sectional --no-include-score-components --target-excess-vs-spy --compare-lightgbm --enable-catboost --enable-global-model --global-model-name catboost --global-champion --select-champion --walkforward --wf-min-train-size 504 --wf-val-size 126 --wf-test-size 126 --wf-step-size 252 --wf-max-splits 8 --comment "A6 B25 2024-12-31"
-python -u -m modelFactory --mode train --accelerator auto --target-mode regression --num-classes 1 --forecast-horizons 3,5,10,15,20 --target-up-threshold 0.03 --target-down-threshold -0.03 --decision-threshold 0.55 --calibration-method platt --calibration-min-samples 64 --calibration-max-iter 100 --feature-set expert --benchmark-symbol SPY --sequence-length 40 --batch-size 32 --hidden-size 256 --ml-mode rebuild-all --training-start-date 2016-01-01 --symbol-source ticket-recherche --artifacts-dir artifacts/models --max-workers 6 --max-epochs 50 --patience 5 --cross-sectional-min-universe 20 --lgbm-max-depth 5 --lgbm-n-estimators 200 --lgbm-learning-rate 0.03 --catboost-depth 6 --catboost-iterations 300 --catboost-learning-rate 0.03 --lgbm-reg-alpha 0.1 --lgbm-reg-lambda 0.1 --lgbm-min-child-samples 150 --lgbm-subsample 0.8 --lgbm-colsample-bytree 0.7 --catboost-l2-leaf-reg 3.0 --catboost-border-count 128 --catboost-random-strength 1.0 --catboost-bagging-temperature 1.0 --catboost-od-type IncToDec --catboost-od-wait 20 --catboost-loss-function YetiRank --default-champion lstm_attention --heartbeat-interval-seconds 60.0 --log-level INFO --training-end-date 2025-12-31 --global-model-only --enable-global-model --include-short-score --include-factors --enable-cross-sectional --no-include-score-components --target-excess-vs-spy --compare-lightgbm --enable-catboost --enable-global-model --global-model-name catboost --global-champion --select-champion --walkforward --wf-min-train-size 504 --wf-val-size 126 --wf-test-size 126 --wf-step-size 252 --wf-max-splits 8 --comment "A7 B25 2025-12-31"
-
-python -u -m modelFactory --mode predict --accelerator auto --symbol-source ticket-recherche --artifacts-dir artifacts/models/model-factory-20260822225648-894789 --log-level INFO --max-workers 6 --batch-id model-factory-20260822225648-894789 --training-start-date 2020-01-01 --training-end-date 2020-12-31 --predict-max-date-workers 8
-python -u -m modelFactory --mode predict --accelerator auto --symbol-source ticket-recherche --artifacts-dir artifacts/models/model-factory-20260822225720-db6662 --log-level INFO --max-workers 6 --batch-id model-factory-20260822225720-db6662 --training-start-date 2021-01-01 --training-end-date 2021-12-31 --predict-max-date-workers 8
-python -u -m modelFactory --mode predict --accelerator auto --symbol-source ticket-recherche --artifacts-dir artifacts/models/model-factory-20260822225736-f22e40 --log-level INFO --max-workers 6 --batch-id model-factory-20260822225736-f22e40 --training-start-date 2022-01-01 --training-end-date 2022-12-31 --predict-max-date-workers 8
-python -u -m modelFactory --mode predict --accelerator auto --symbol-source ticket-recherche --artifacts-dir artifacts/models/model-factory-20260822225808-b10aa9 --log-level INFO --max-workers 6 --batch-id model-factory-20260822225808-b10aa9 --training-start-date 2023-01-01 --training-end-date 2023-12-31 --predict-max-date-workers 8
-python -u -m modelFactory --mode predict --accelerator auto --symbol-source ticket-recherche --artifacts-dir artifacts/models/model-factory-20260822225836-bc6c92 --log-level INFO --max-workers 6 --batch-id model-factory-20260822225836-bc6c92 --training-start-date 2024-01-01 --training-end-date 2024-12-31 --predict-max-date-workers 8
-python -u -m modelFactory --mode predict --accelerator auto --symbol-source ticket-recherche --artifacts-dir artifacts/models/model-factory-20260822225904-c68b36 --log-level INFO --max-workers 6 --batch-id model-factory-20260822225904-c68b36 --training-start-date 2025-01-01 --training-end-date 2025-12-31 --predict-max-date-workers 8
-python -u -m modelFactory --mode predict --accelerator auto --symbol-source ticket-recherche --artifacts-dir artifacts/models/model-factory-20260822225935-06a3a9 --log-level INFO --max-workers 6 --batch-id model-factory-20260822225935-06a3a9 --training-start-date 2026-01-01 --training-end-date 2026-06-30 --predict-max-date-workers 8
-
-python  -u -m dataIntegrityEngine.sync_latest_quotes --batch-size 200 --symbol-source active-tradable --from-date 2020-07-22 --to-date 2026-08-19 --start-symbol CBIO
+6. Pistes réellement crédibles pour D1/D10
+Priorité 1 — Exploiter proprement long_prob dans le pool Extreme
+C’est aujourd’hui le signal le plus concret.
+L’expérience E17 indique que, dans le pool Extreme, le ranking par long_prob per-symbol apporte de la valeur, alors que le veto seul est presque inopérant.
+La configuration possède déjà une pénalité progressive anti-D1, mais elle est désactivée dans [config.yaml](F:\\projets\\config.yaml).
+Je ne recommande pas de l’activer directement. Il faut comparer en walk-forward :
+A. Oracle pur
+B. Oracle + ranking long_prob
+C. Oracle + pénalité progressive long_prob
+D. Oracle + abstention sous forte incertitude directionnelle
+avec :
+- mêmes dates ;
+- mêmes candidats ;
+- lifecycle PROD ;
+- m24 ;
+- plusieurs seeds ;
+- coûts et capacité constants ;
+- résultats par semestre et régime ;
+- D1%, D10%, rendement, drawdown et expected shortfall.
+Le résultat déterministe +146 % d’E17 n’est pas suffisant seul.
+Priorité 2 — Reformuler la cible selon le trade réel
+D1 contre D10 à H20 est une cible académique propre, mais pas nécessairement la meilleure cible économique.
+Le portefeuille ne détient pas mécaniquement chaque titre pendant 20 jours jusqu’au close. Il utilise :
+- entrée next-open ;
+- take profit ;
+- stop initial ;
+- trailing ;
+- gaps ;
+- capacité ;
+- concurrence entre positions.
+Une cible plus fidèle serait par exemple :
+P(TP atteint avant stop | candidat Extreme)
+ou une cible multi-tâche :
+P(extreme)
+P(TP avant stop | extreme)
+P(perte sévère avant MFE | extreme)
+EV net selon lifecycle PROD
+Attention : Y3 a déjà échoué économiquement. Cette piste ne mérite un nouveau test que si la cible reproduit exactement le lifecycle PROD et si l’évaluation finale reste portefeuille-first.
+Priorité 3 — Ajouter de l’information véritablement signée
+Les OHLCV et indicateurs techniques semblent avoir atteint leur plafond informationnel.
+Les familles encore crédibles sont :
+- révisions de consensus EPS/revenue réellement historisées ;
+- upgrades/downgrades d’analystes avec timestamp PIT ;
+- variation de target price ;
+- dispersion et accélération des révisions ;
+- options : skew put/call, volatilité implicite signée, évolution de skew ;
+- flux et imbalance ;
+- short availability/borrow fee plutôt que simple short volume ;
+- insiders, à condition d’obtenir une couverture suffisante ;
+- guidance d’entreprise et surprises de guidance ;
+- sentiment événementiel ciblé, pas seulement sentiment moyen des news.
+Le meilleur petit signal existant est earn_surprise_eps_prev, mais il reste trop faible pour un GO.
+Priorité 4 — Modèle conditionnel par régime
+Un signal directionnel faible peut disparaître en moyenne tout en étant utile dans certains contextes :
+direction_score
+  conditionné par
+    régime marché
+    secteur
+    volatilité
+    gap
+    proximité earnings
+    type de mouvement
+Il faut toutefois imposer des tailles minimales et une validation réellement OOS. Sinon, le découpage en régimes devient une optimisation rétrospective.
+Priorité 5 — Abstention plutôt que classification forcée
+Le système ne doit pas nécessairement décider LONG ou SHORT pour tous les extrêmes.
+Une sortie plus réaliste serait :
+LONG probable
+DIRECTION INCERTAINE
+SHORT probable
+avec sélection uniquement lorsque :
+P(D10) - P(D1)
+est suffisamment éloigné de zéro et stable entre modèles/folds.
+Dans un univers où l’AUC globale est proche de 0,50, l’objectif raisonnable peut être de trouver un sous-ensemble rare mais fiable, pas de classifier tous les candidats.

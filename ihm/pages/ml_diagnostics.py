@@ -1749,8 +1749,14 @@ def _render_oracle_quality(batch_id: str, row: pd.Series) -> None:
                 actual_rate=(target_col, "mean"),
                 n=("proba_extreme", "size"),
             )
-            g.index = [f"D{i}" for i in g.index]
-            cal = g.reset_index().rename(columns={"_q": "Décile", "mean_proba": "P(extrême) prédite", "actual_rate": "Taux réalisé", "n": "N"})
+            # NB : reset_index() après `g.index = [...]` nommerait la colonne
+            # 'index' (le nom '_q' est perdu) → on construit cal directement.
+            cal = pd.DataFrame({
+                "Décile": [f"D{i}" for i in g.index],
+                "P(extrême) prédite": g["mean_proba"].to_numpy(dtype=float),
+                "Taux réalisé": g["actual_rate"].to_numpy(dtype=float),
+                "N": g["n"].to_numpy(dtype=int),
+            })
 
     # ── Rendement du top décile vs overall (future_return) ──
     top_ret: float | None = None

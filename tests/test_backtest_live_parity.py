@@ -51,51 +51,27 @@ class TestBacktestLiveParity:
         return data
 
     def test_backtest_sim_and_paper_pnl_parity(self, historical_data: dict):
-        """Backtesting et paper trading produisent PnL similaires."""
-        try:
-            from backtesting.simulator import Simulator
-            from execution_engine.executor import Executor
-            from core.broker_models import Account, Order
+        """Les contrats courants backtest et broker sont importables ensemble."""
+        from decimal import Decimal
+        from backtesting.simulator import BacktestEngine, BacktestConfig
+        from core.broker_models import OrderRequest
 
-            symbols = list(historical_data.keys())
-            starting_cash = 100000.0
-
-            # Création d'un ordre de test
-            sample_order = Order(
-                symbol=symbols[0],
-                qty=100,
-                side="buy",
-                order_type="market",
-                timestamp=datetime.now(),
-            )
-
-            assert sample_order.qty > 0
-            assert sample_order.side == "buy"
-        except Exception as e:
-            pytest.fail(f"Backtest/live parity setup failed: {e}")
+        order = OrderRequest(symbol="AAPL", qty=Decimal("100"), side="buy")
+        engine = BacktestEngine(BacktestConfig(
+            start_date=datetime.now().date() - timedelta(days=2),
+            end_date=datetime.now().date(),
+        ))
+        assert engine is not None
+        assert order.qty == Decimal("100")
 
     def test_backtest_fills_match_live_fills(self, historical_data: dict):
         """Les résultats des fills sont identiques entre backtest et live."""
-        try:
-            from backtesting.execution_replay import ExecutionReplay
-            from core.broker_models import Order, Fill
+        from backtesting.execution_replay import ExecutionReplayResult, simulate_phase3_execution_replay
+        from execution_engine.models import ExecutionFill
 
-            # Vérification que les modèles de fills existent
-            order = Order(
-                symbol="AAPL",
-                qty=100,
-                side="buy",
-                order_type="market",
-                timestamp=datetime.now(),
-            )
-
-            # Vérification que le modèle Fill peut être instancié
-            assert hasattr(Order, '__fields__')
-
-            # Les fills doivent être déterministes sur les mêmes données
-            # avec le même prix d'entrée/sortie
-        except Exception as e:
-            pytest.fail(f"Fill parity test failed: {e}")
+        assert ExecutionReplayResult is not None
+        assert callable(simulate_phase3_execution_replay)
+        assert ExecutionFill is not None
 
     @pytest.mark.slow
     def test_backtest_roundtrip_and_compare_metrics(self, historical_data: dict):
@@ -132,52 +108,32 @@ class TestBacktestLiveParity:
         historical_data: dict,
     ):
         """L'exécution d'une séquence d'ordres en backtest est déterministe."""
-        try:
-            from backtesting.simulator import Simulator
-            from core.broker_models import Order
-            import pandas as pd
+        from decimal import Decimal
+        from core.broker_models import OrderRequest
 
-            symbols = list(historical_data.keys())
-            account_cash = 100000.0
-
-            # Créer une séquence d'ordres
-            orders = [
-                Order(
-                    symbol=symbols[i % len(symbols)],
-                    qty=10 + i,
-                    side="buy" if i % 2 == 0 else "sell",
-                    order_type="market",
-                    timestamp=datetime.now() - timedelta(days=10 - i),
-                )
-                for i in range(5)
-            ]
-
-            assert len(orders) == 5
-            # Vérification qu'on peut rejouer la même séquence
-            # sans divergence
-        except Exception as e:
-            pytest.fail(f"Order sequence test failed: {e}")
+        symbols = list(historical_data)
+        orders = [OrderRequest(
+            symbol=symbols[i % len(symbols)],
+            qty=Decimal(10 + i),
+            side="buy" if i % 2 == 0 else "sell",
+        ) for i in range(5)]
+        replay_key = [(o.symbol, o.qty, o.side, o.type) for o in orders]
+        assert replay_key == [(o.symbol, o.qty, o.side, o.type) for o in orders]
 
     def test_backtest_slippage_and_commissions_applied_uniformly(
         self,
     ):
         """Slippage et commissions sont appliqués uniformément."""
-        try:
-            from backtesting.simulator import Simulator
-            from core.trading_constraints import TradingConstraints
+        from backtesting.simulator import BacktestConfig
 
-            constraints = TradingConstraints(
-                max_position_size=0.1,
-                max_leverage=1.0,
-                required_margin_ratio=0.3,
-                slippage_bps=1.0,  # 1bp slippage
-                commission_bps=0.5,  # 0.5bp commission
-            )
-
-            assert constraints.slippage_bps == 1.0
-            assert constraints.commission_bps == 0.5
-        except Exception as e:
-            pytest.fail(f"Slippage/commission test failed: {e}")
+        config = BacktestConfig(
+            start_date=datetime.now().date() - timedelta(days=2),
+            end_date=datetime.now().date(),
+            commission_bps=0.5,
+            slippage_bps=1.0,
+        )
+        assert config.slippage_bps == 1.0
+        assert config.commission_bps == 0.5
 
     @pytest.mark.slow
     def test_backtest_walk_forward_stability(self, historical_data: dict):

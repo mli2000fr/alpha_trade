@@ -1,0 +1,71 @@
+{
+  "title": "Alpha Trade - Runtime Safety",
+  "tags": ["alpha-trade", "observability", "runtime"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Watcher heartbeat stale",
+      "gridPos": {"h": 6, "w": 8, "x": 0, "y": 0},
+      "targets": [
+        {
+          "expr": "alpha_trade_heartbeat_stale",
+          "legendFormat": "stale (0/1)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Kill switch actif",
+      "gridPos": {"h": 6, "w": 8, "x": 8, "y": 0},
+      "targets": [
+        {
+          "expr": "alpha_trade_kill_switch_active",
+          "legendFormat": "kill switch (0/1)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Cash ledger aligné",
+      "gridPos": {"h": 6, "w": 8, "x": 16, "y": 0},
+      "targets": [
+        {
+          "expr": "alpha_trade_cash_ledger_aligned",
+          "legendFormat": "aligned (0/1)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Erreurs API par service (24 h)",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
+      "targets": [
+        {
+          "expr": "sum by (service) (increase(alpha_trade_api_errors_total[24h]))",
+          "legendFormat": "{{service}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Runs d'exécution (24 h)",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
+      "targets": [
+        {
+          "expr": "increase(alpha_trade_execution_runs_total[24h])",
+          "legendFormat": "execution runs",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}
+

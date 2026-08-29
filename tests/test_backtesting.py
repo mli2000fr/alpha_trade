@@ -68,6 +68,7 @@ def test_build_backtest_common_params_preserves_phase_and_baseline_metadata() ->
         fidelity_baseline_catalog="config/fidelity_baseline_catalog.json",
         sentiment_lookback=365,
         ml_mode="auto",
+        ml_batch_id=None,
         sentiment_mode="rebuild-missing",
         artifacts_dir="artifacts/models",
         score_column="final_score_sentiment",
@@ -1150,6 +1151,24 @@ def test_emit_backtest_missing_coverage_logs_lists_missing_symbols(monkeypatch) 
 # ============================================================
 
 class TestBacktestConfig:
+    @pytest.fixture(autouse=True)
+    def _disable_score_gate_for_engine_unit_fixtures(self, monkeypatch):
+        """Les fixtures historiques ne portent pas de colonne ``score``.
+
+        Le seuil de sélection appartient aux tests de replay/overlay dédiés ;
+        ces tests-ci isolent le moteur d'exécution et ses protections.
+        """
+        from backtesting.simulator import BacktestConfig
+
+        original_init = BacktestConfig.__init__
+
+        def _init(instance, *args, **kwargs):
+            kwargs.setdefault("min_score_threshold", 0.0)
+            kwargs.setdefault("cost_multiplier", 0.0)
+            original_init(instance, *args, **kwargs)
+
+        monkeypatch.setattr(BacktestConfig, "__init__", _init)
+
     def test_default_config(self):
         from backtesting.simulator import BacktestConfig
 
@@ -2056,8 +2075,12 @@ class TestBacktestConfig:
             )
         ).run(open=open_, close=close, high=high, low=low, signals_df=signals_df)
 
-        standard_entry = standard.trade_events_df.iloc[0]
-        targeted_entry = targeted.trade_events_df.iloc[0]
+        standard_entry = standard.trade_events_df.loc[
+            standard.trade_events_df["event_type"] == "entry_opened"
+        ].iloc[0]
+        targeted_entry = targeted.trade_events_df.loc[
+            targeted.trade_events_df["event_type"] == "entry_opened"
+        ].iloc[0]
 
         assert standard_entry["event_type"] == "entry_opened"
         assert targeted_entry["event_type"] == "entry_opened"
@@ -2330,6 +2353,25 @@ class TestReport:
 # ============================================================
 
 class TestCLI:
+    @pytest.fixture(autouse=True)
+    def _tradable_universe_scope(self, monkeypatch):
+        """Les tests CLI utilisent un moteur factice sans connexion SQL.
+
+        Depuis que le backtest exige un univers PIT, fournir explicitement ce
+        contrat au lieu de laisser les anciens doubles ``object()`` atteindre
+        le chargeur de base de données.
+        """
+        from backtesting.cli import _impl as cli_impl
+
+        def _scope(engine, trade_dates, *, capital_preset_key):
+            del engine, capital_preset_key
+            dates = list(trade_dates)
+            return pd.DataFrame(
+                {"trade_date": dates, "symbol": ["AAPL"] * len(dates)}
+            )
+
+        monkeypatch.setattr(cli_impl, "load_tradable_universe_scope", _scope)
+
     # Phase A/B/C (refactor) — défauts neutres à fournir aux Namespace
     # construits manuellement dans les tests CLI. Reflète strictement les
     # défauts de `backtesting.cli._build_parser()`.

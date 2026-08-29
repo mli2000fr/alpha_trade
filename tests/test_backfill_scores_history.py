@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from backtesting.backfill_scores_history import BackfillScoresHistoryService, SELECTOR_FILTER_STAT_KEYS
+from common.capital_presets import DEFAULT_CAPITAL_PRESET_KEY
 from screener.models import ScreenerConfig
 
 
@@ -61,11 +62,11 @@ def test_list_trading_dates_skips_existing_days() -> None:
             ],
         )
         conn.execute(
-            text("INSERT INTO stock_scores_history(snapshot_date, symbol) VALUES (:d, :s)"),
-            [{"d": date(2026, 4, 16), "s": "AAPL"}],
+            text("INSERT INTO stock_scores_history(snapshot_date, capital_preset_key, symbol) VALUES (:d, :p, :s)"),
+            [{"d": date(2026, 4, 16), "p": DEFAULT_CAPITAL_PRESET_KEY, "s": "AAPL"}],
         )
 
-    service = BackfillScoresHistoryService(engine=engine, screener_max_workers=1)
+    service = BackfillScoresHistoryService(engine=engine, screener_max_workers=1, symbol_source=None)
     dates = service.list_trading_dates(date(2026, 4, 15), date(2026, 4, 17), overwrite_existing=False)
     assert dates == [date(2026, 4, 15), date(2026, 4, 17)]
 
@@ -520,7 +521,7 @@ def test_compute_selector_snapshot_disables_spread_filter_when_quote_coverage_is
 
 def test_get_symbol_chunks_caches_iterated_universe(monkeypatch) -> None:
     engine = _build_sqlite_engine()
-    service = BackfillScoresHistoryService(engine=engine, screener_max_workers=1)
+    service = BackfillScoresHistoryService(engine=engine, screener_max_workers=1, symbol_source=None)
     calls: list[int] = []
 
     monkeypatch.setattr(
@@ -605,7 +606,7 @@ def test_compute_selector_snapshot_prefetches_metadata_and_overlays_once_per_day
 
 def test_backfill_reuses_single_screener_pool_across_trading_days(monkeypatch) -> None:
     engine = _build_sqlite_engine()
-    service = BackfillScoresHistoryService(engine=engine, screener_max_workers=2)
+    service = BackfillScoresHistoryService(engine=engine, screener_max_workers=2, symbol_source=None)
     created_executors: list[object] = []
     shutdown_calls: list[bool] = []
 
@@ -699,5 +700,45 @@ def test_backfill_closes_screener_pool_when_snapshot_build_fails(monkeypatch) ->
         raise AssertionError("Une interruption était attendue")
 
     assert shutdown_calls == [True]
+
+
+def test_resolve_symbols_from_source_filters_by_bars_with_expanded_in(monkeypatch) -> None:
+    """Régression : `IN :symbols` doit être expansé (bindparam expanding=True).
+
+    Sans ``expanding``, un tuple est bindé tel quel (``WHERE symbol IN ?``) →
+    erreur SQL sur SQLite. Le chemin ``_resolve_symbols_from_source`` doit
+    filtrer les symboles ayant des barres daily sans planter.
+    """
+    engine = _build_sqlite_engine()
+    with engine.begin() as conn:
+        conn.execute(
+            text("INSERT INTO stock_bars_daily(symbol, `date`) VALUES (:s, :d)"),
+            [
+                {"s": "AAPL", "d": date(2026, 4, 15)},
+                {"s": "MSFT", "d": date(2026, 4, 15)},
+                {"s": "NVDA", "d": date(2026, 4, 15)},
+            ],
+        )
+
+    # `load_symbols_for_source` est importé localement dans la méthode →
+    # on patch la fonction sur son module source (modelFactory.db_registry).
+    import modelFactory.db_registry as _dbr
+
+    monkeypatch.setattr(
+        _dbr,
+        "load_symbols_for_source",
+        lambda engine, source, trade_date=None, capital_preset_key=None: ["AAPL", "MSFT", "NVDA", "TSLA", "META"],
+    )
+
+    service = BackfillScoresHistoryService(
+        engine=engine,
+        screener_max_workers=1,
+        capital_preset_key=DEFAULT_CAPITAL_PRESET_KEY,
+        symbol_source="tradable-universe",
+    )
+    chunks = service._get_symbol_chunks()
+    flat = sorted(s for chunk in chunks for s in chunk)
+    # Seuls les symboles ayant des barres daily sont retenus (TSLA/META exclus).
+    assert flat == ["AAPL", "MSFT", "NVDA"]
 
 
