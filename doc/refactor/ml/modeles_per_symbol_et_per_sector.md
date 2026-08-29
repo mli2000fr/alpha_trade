@@ -1,5 +1,11 @@
 # Modèles per-symbol, per-sector et modèle global
 
+Documentation exhaustive :
+
+- [modèle per-symbol](per_symbol/README.md) ;
+- [modèle per-sector](per_sector/README.md) ;
+- [Global Ranking](global_ranking/README.md).
+
 ## Trois granularités
 
 - global : mutualise les observations et généralise aux symboles couverts ;
@@ -41,4 +47,3 @@ Les campagnes historiques B0–B44 ont testé de nombreuses combinaisons ; leurs
 enseignements sont synthétisés dans
 [Global Ranking et per-sector](../experiences/global_ranking_et_per_sector.md).
 Le modèle courant doit être déduit des manifests et chemins de serving.
-

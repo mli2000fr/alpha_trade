@@ -1,5 +1,7 @@
 # Supervision, notifications et sécurité
 
+Voir aussi [failover broker](broker_failover.md), [pré-live](pre_live_et_progression.md) et [sandbox health](sandbox_health.md).
+
 Retour : [IHM et opérations](../16_ihm_et_operations.md)
 
 ## Modèle de supervision
@@ -87,4 +89,3 @@ La sécurité couvre token absent/présent/invalide, session validée, loopback 
 5. En live, confirmer compte, watcher et préflight.
 6. Rapprocher ordres, fills, positions, cash et TCA.
 7. Traiter les incidents d’observabilité séparément du statut métier.
-

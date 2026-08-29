@@ -25,12 +25,12 @@ devenir une référence courante.
 | `controle_couverture.md` | [Qualité et couverture ML](ml/qualite_couverture_et_fallbacks.md) | référence dédiée |
 | `alpha_trade_recalibration_guide.md` | [Recalibration](ml/recalibration_et_promotion.md), [calibrations IHM](guide_utilisateur/09_supervision_parite.md) | réécrit |
 | `alpha_trade_anti_overfitting_oos_protocol_2026-08-22.md` | [Validation et gouvernance](ml/validation_et_gouvernance.md) | protocole durable extrait |
-| `per_sector.md`, `per_sector_todo.md` | [Per-sector/per-symbol](ml/modeles_per_symbol_et_per_sector.md), [synthèse historique](experiences/global_ranking_et_per_sector.md) | état courant + synthèse |
+| `per_sector.md`, `per_sector_todo.md` | [Per-sector détaillé](ml/per_sector/README.md), [Global Ranking détaillé](ml/global_ranking/README.md), [synthèse historique](experiences/global_ranking_et_per_sector.md) | état courant + synthèse |
 | `mode_cascade.md` | [Cascade et fallback](ml/cascade_et_fallbacks.md) | réécrit |
 | `model_extreme_mode.md`, `oracle_extreme.md` | [Oracle Extreme](ml/oracle/README.md) | remplacé par dossier détaillé |
 | `ml_oracle.md`, `ml_oracle_sprint.md`, `calibration_oracle_exterme.md` | [Oracle architecture à diagnostics](ml/oracle/README.md), [expériences Oracle](experiences/oracle_extreme.md) | référence et historique séparés |
 | `persistent_tail_price.md`, `persistent_top10_dip.md` | [Filtres persistants](signals/filtres_persistants.md), [expériences filtres](experiences/filtres_et_direction.md) | contrat actuel + synthèse |
-| `Tiebreaker.md` | [Ranking et tie-break](07_ml_global_ranking.md) | intégré |
+| `Tiebreaker.md` | [Championnat et tie-break](ml/global_ranking/04_train_walk_forward_et_championnat.md) | intégré |
 | `directional_data_research.md`, `global_direction_h20.md`, `global_direction_temporal.md` | [Expériences direction](experiences/filtres_et_direction.md) | synthèse uniquement |
 | `check_performance_model_global.md`, `check_performance_model_global ask.md` | [Diagnostic global ranking](07_ml_global_ranking.md), [expériences](experiences/global_ranking_et_per_sector.md) | synthèse |
 | `ml_calivraiton_important.md` | [Recalibration et promotion](ml/recalibration_et_promotion.md) | règles mises à jour |
@@ -78,10 +78,10 @@ active.
 | `ml/ordre_execution_ml.md` | [Pipeline ML](ml/ordre_execution_et_dependances.md) |
 | `ml/ml_todo.md` | backlog historique, sujets réalisés documentés par [ML](ml/README.md) |
 | `ml/synthese_long_short.md` | [Expériences filtres/direction](experiences/filtres_et_direction.md) |
-| `ml/synthese_per_symbol_v2_2026-08-19.md` | [Modèles per-symbol/per-sector](ml/modeles_per_symbol_et_per_sector.md), [expériences](experiences/global_ranking_et_per_sector.md) |
+| `ml/synthese_per_symbol_v2_2026-08-19.md` | [Per-symbol détaillé](ml/per_symbol/README.md), [expériences](experiences/global_ranking_et_per_sector.md) |
 | `ml/synthese_s7_feature_whitelist_2026-08-18.md` | [Features/dataset](ml/features_et_dataset.md), [validation historique](experiences/validation_et_recalibration.md) |
 | `ml/synthese_tp_risk_execution_2026-08-18.md` | [Expériences lifecycle](experiences/risque_execution_lifecycle.md) |
-| `ml/global_per_symbol/test/test_global_per_symbol.md` | [Expériences ranking/per-symbol](experiences/global_ranking_et_per_sector.md) |
+| `ml/global_per_symbol/test/test_global_per_symbol.md` | [Per-symbol détaillé](ml/per_symbol/README.md), [expériences ranking/per-symbol](experiences/global_ranking_et_per_sector.md) |
 | `ml_old/filtre_ml.md`, `ml_old/ml_hybride.md`, `ml_old/ml_refactor_1.md` | archives de conception ; concepts encore actifs couverts par [ML](ml/README.md) |
 
 ## Campagnes B0–B44 Global/Per-Sector (41 fichiers)
@@ -96,7 +96,7 @@ Tous les fichiers sous `ml/global_per_sector/test/` — `B0`, `B1`, `B2`, `B3`,
 Leur enseignement est condensé dans
 [Expériences Global Ranking et per-sector](experiences/global_ranking_et_per_sector.md).
 Le contrat exécutable actuel est documenté dans
-[Global Ranking](07_ml_global_ranking.md), [features](ml/features_et_dataset.md) et
+[Global Ranking détaillé](ml/global_ranking/README.md), [features](ml/features_et_dataset.md) et
 [entraînement/serving](ml/entrainement_serving_et_gouvernance.md). Les noms de
 campagnes ne sont pas assimilés à des modèles actifs.
 

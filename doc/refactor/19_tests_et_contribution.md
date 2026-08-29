@@ -1,5 +1,7 @@
 # Tests, qualité et contribution
 
+Référence spécialisée : [fuzzing, mutation et vérification formelle](operations/qualite_avancee_fuzz_mutation_formel.md).
+
 ## Suites
 
 `tests/` couvre unités, contrats, intégrations DB, CLI, parité, risk/execution, ML et IHM. `formal/` contient des vérifications Z3/TLA+ ou invariants institutionnels. Les tests de mutation ciblent surtout risque, exécution et corporate actions.

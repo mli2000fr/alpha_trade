@@ -1,5 +1,8 @@
 # ML — Global Ranking
 
+> Point d'entrée détaillé :
+> [dossier technique Global Ranking](ml/global_ranking/README.md).
+
 ## Finalité
 
 `modelFactory/global_ranking.py` classe les titres entre eux à une date donnée. Il remplace le classifieur global ternaire historique pour le stacking/ranking. Sa question est relative : « quels titres sont les meilleurs dans l'univers du jour ? »
@@ -50,4 +53,3 @@ Le batch configuré et `live_horizon` déterminent le rang utilisé pour synthé
 - un rang OOS ne peut être reconstruit avec l'univers futur complet ;
 - l'horizon du ranking n'est pas nécessairement la durée exacte de détention ;
 - Global Ranking et Oracle Extreme répondent à deux questions différentes.
-

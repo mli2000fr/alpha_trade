@@ -1,6 +1,9 @@
 # Expériences Global Ranking et per-sector — synthèse
 
-Retour : [Global Ranking](../ml/global_ranking_reference.md)
+Retour : [dossier technique Global Ranking](../ml/global_ranking/README.md)
+
+Références courantes : [per-symbol](../ml/per_symbol/README.md) ·
+[per-sector](../ml/per_sector/README.md)
 
 ## Sources regroupées
 
@@ -30,4 +33,3 @@ Le code courant conserve un Global Ranking multi-horizons et des capacités de f
 ## Règles pour une nouvelle campagne
 
 Geler univers PIT, folds, horizons, target, baseline et budget d’essais. Publier IC par date, déciles, couverture, turnover et coûts. Réserver un holdout et comparer le batch candidat en production parity avant promotion.
-

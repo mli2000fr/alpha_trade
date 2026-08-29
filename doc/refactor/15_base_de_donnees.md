@@ -3,6 +3,8 @@
 ## Documents spécialisés
 
 - [Schéma métier et ownership des tables](database/schema_metier.md)
+- [Accès asynchrone expérimental](database/async_db_poc.md)
+- [Ajouter ou faire évoluer une table](database/ajouter_une_table.md)
 - [Migrations, transactions et idempotence](database/migrations_et_transactions.md)
 
 ## Architecture

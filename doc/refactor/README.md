@@ -1,5 +1,7 @@
 # Documentation Alpha Trade — référentiel refactorisé
 
+Suivi exhaustif des archives : [migration de `doc/backup`](MIGRATION_BACKUP.md).
+
 Cette arborescence documente l'application telle qu'elle existe dans le code source au 29 août 2026. Les documents historiques de `doc/` ont servi de contexte, mais ne constituent pas la source de vérité. En cas d'écart, l'ordre d'autorité est : code exécutable, migrations et schéma SQL, `config.yaml`, tests contractuels, puis cette documentation.
 
 ## Parcours conseillé pour un nouvel arrivant
@@ -24,6 +26,9 @@ Cette arborescence documente l'application telle qu'elle existe dans le code sou
 | Données, qualité, PIT | [05](05_donnees_et_univers_pit.md) | `dataIntegrityEngine/`, `common/tradable_universe.py` |
 | ML général | [06](06_ml_vue_ensemble.md) | `modelFactory/` |
 | Global Ranking | [07](07_ml_global_ranking.md) | `modelFactory/global_ranking.py` |
+| Global Ranking détaillé | [Dossier](ml/global_ranking/README.md) | univers, targets PIT, championnat, inférence, persistance et cascade |
+| Modèle per-symbol détaillé | [Dossier](ml/per_symbol/README.md) | dataset séquentiel, challengers, champion, artefacts et serving |
+| Modèle per-sector détaillé | [Dossier](ml/per_sector/README.md) | pooling sectoriel, targets, champions tabulaires et fallback |
 | Oracle Extreme | [08](08_ml_oracle_extreme.md) | `modelFactory/oracle/` |
 | Oracle Extreme détaillé | [Dossier Oracle](ml/oracle/README.md) | labels, tables, anti-fuite, walk-forward, inférence et gate |
 | Risque | [09](09_risque_et_portefeuille.md) | `risk_management/` |

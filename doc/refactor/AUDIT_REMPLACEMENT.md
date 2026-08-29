@@ -36,10 +36,11 @@ Au contrôle final du 29 août 2026 :
 
 | Contrôle | Résultat |
 |---|---:|
-| fichiers Markdown sous `doc/refactor` | 124 |
-| lignes documentaires | 8 797 |
-| volume | 695 023 octets |
+| fichiers Markdown sous `doc/refactor` | 145 |
+| lignes documentaires | 9 715 |
+| volume | 747 164 octets |
 | liens Markdown internes cassés | 0 |
+| liens relatifs sortant de `doc/refactor` | 0 |
 | anciens Markdown inventoriés | 178 |
 | modifications détectées hors `doc/refactor` dans `doc/` | 0 |
 

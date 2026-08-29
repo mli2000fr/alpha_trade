@@ -1,5 +1,7 @@
 # Global Ranking — référence technique
 
+Version exhaustive : [dossier Global Ranking](global_ranking/README.md).
+
 Retour : [références ML](README.md) · [présentation](../07_ml_global_ranking.md)
 
 ## Question modélisée

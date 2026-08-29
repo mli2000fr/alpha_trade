@@ -13,5 +13,6 @@ Ces inventaires complètent les guides explicatifs. Ils sont dérivés des décl
 - [Services](service.md)
 - [IHM](ihm.md)
 - [Corporate Actions](corporate_actions.md)
+- [Stabilité v1 et dépréciation](stabilite_v1_et_deprecation.md)
 
 Un symbole privé `_...` est documenté uniquement pour faciliter la maintenance ; il ne constitue pas une API publique stable.
