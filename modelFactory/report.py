@@ -1372,6 +1372,10 @@ def _append_prediction_periods(
             elif rsym in _GICS_SECTORS:
                 sector_rows.append({"Secteur": rsym, "Période": f"{_fmt(dmin)} → {_fmt(dmax)}",
                                     "Jours": jours, "Symboles": syms})
+            elif rsym == "__ORACLE_SYNTH__" or rid.endswith("_oracle_synth"):
+                # Run miroir Oracle → model_predictions (oracle_synth) : déjà couvert
+                # par la section « Oracle extreme » — NE PAS compter comme per-symbol.
+                pass
             else:
                 sym_n += 1
                 if dmin is not None and (sym_min is None or dmin < sym_min):
