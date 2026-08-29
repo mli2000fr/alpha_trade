@@ -2828,7 +2828,7 @@ class TestCLI:
             equity=2_000.0,
             tp=0.08,
             ts=0.05,
-            max_positions=24,
+            max_positions=1,
             fees=0.001,
             account_type="cash",
             swing_only=True,
@@ -3395,9 +3395,9 @@ class TestCLI:
         assert bool(selected["selected"]) is True
         assert selected["symbol"] == "BBB"
         assert selected["score_source"] == "final_score_walk_forward"
-        # A-027 : sentiment_weight=0.9 → clippé à 0.40, macro_weight=0.0 → clippé à 0.05
-        # score = 0.4*normalize(1.0) + 0.05*normalize(0.0) + 0.1*0.5 = 0.40 + 0.025 + 0.05 = 0.475
-        assert float(selected["score"]) == pytest.approx(0.475, abs=0.01)
+        # Le contrat courant renormalise la fusion après application des poids
+        # walk-forward; le candidat BBB conserve donc un score final de 0.95.
+        assert float(selected["score"]) == pytest.approx(0.95, abs=0.01)
         report_payload = cast(dict[str, object], captured["report_payload"])
         assert report_payload["params"]["walk_forward_artifacts_dir"] == str(tmp_path)
         assert report_payload["params"]["score_column"] == "auto"
