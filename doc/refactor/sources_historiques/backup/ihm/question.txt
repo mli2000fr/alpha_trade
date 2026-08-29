@@ -1,0 +1,142 @@
+- model factory, si les modles sont entrainné sur une historique de 5 ans par exemple jusqu'au à ce jour en 2026,
+ quand je lance un backtest entre 2023 et 2025, il utilise les modles déjà entrainné, donc c'est à dire qu'il utilise
+ les données de future (car model de 2026 pou rprédire 2023 2025) ?
+
+ - News, score entiment, j'avais lancé '⚙️ Import + score + history_backfill + relevance_backfill auto' pour les news entre 2020 et 2026,
+les scores sont calculés pour chaque jour ? car si je lance un backtest entre 2023 et 2025, est ce que les scores sont
+calculés pour chaque jour de cette période ?
+
+- dans coverage.json, pourquoi `percent_covered = 3.587868087521281` (~4%), `covered_lines = 1552`, `num_statements = 37237` ?
+j'ai bien les tests pour les 37237 lignes de code, mais pourquoi seulement 1552 sont couvertes ?
+est ce que c'est parce que les tests ne couvrent pas toutes les fonctionnalités du code ?
+ou est ce que c'est parce que certains tests ne sont pas exécutés lors de l'analyse de couverture ?
+
+Questions sur la page 'Vue d'ensemble':
+1. j'ai vu un message: Régime marché : normal — risk×1.00 · slots — · max_pos — · new_entries ✅ · 2026-05-06.
+qu'est ce signifie 'slots — · max_pos — · new_entries' ?
+2. dans "2. Source screener active", qu'est ce c'est 'Source screener active' ?
+j'ai vu un message: "artifacts\screener_diagnostics | Période non renseignée | MAJ inconnue". qu'est ce que cela signifie ?
+3. dans "3. Calibration screener", qu'est ce que c'est, qu'est ce qui affiche dans ce bloc ?
+
+
+Questions sur la page 'Pipeline Quotidien':
+Dans le bloc 'Paramètres d'exécution':
+1. qu'est ce qui sert la case à cocher 'Execution hors RTH (file d'attente pour l'ouverture)' ? des exemples ?
+2. qu'est ce qui sert la case à cocher 'Auto rebalance' ? des exemples ?
+3. dans "Stratégie de protection — sortie, qu'est ce que c'est 'Execution — fenêtre de soumission' ? que signifie chaque options ? des exemples ?
+4. dans "Stratégie de protection — sortie, qu'est ce que c'est 'Trigger d'activation du trailing' ? que signifie chaque options ? des exemples ?
+5. dans "Stratégie de protection — sortie, qu'est ce que c'est 'Multiple de R pour activation' ? que signifie chaque options ? des exemples ?
+6. dans "Execution — transition trigger avancé & debug", qu'est ce que c'est  'Transition — timeout (s)' et 'Transition — poll interval (s)'. des exemples ?
+7. dans "Paramètres Risk Management", qu'est ce que c'est 'Risk — risque par trade (fraction)', 'Risk — poids max par position,
+'Risk — poids score (conviction)', 'Risk — corrélation max', 'Risk — positions max', 'Risk — poids max par secteur', 'Risk — poids ML predict (conviction)',
+'Risk — lookback corrélation (jours)', et 'Risk — ticket minimum ($)' ?
+8. dans "Risk — Kelly sizing & options avancées", qu'est ce que c'est 'Activer Kelly sizing', 'Risk — payoff ratio assumé', 'Risk — min overlap corrélation',
+'Risk — multiplicateur Kelly fraction' et 'Risk — niveau de log' ? des exemples ? 'Dry run', il n'écrite pas dans quelles tables ?
+9. dans "Paramètres Model Factory", Preset ML Train, quelle différence entre personalisé, Prod swing, Debug rapide et Debug GPU ? des exemples ?
+10. dans "Paramètres Model Factory", qu'est ce que c'est 'Comparer LightGBM local' ? Comparer CatBoostlocal ? Activer la sélection automatique du champion ?
+Métrique de sélection du champion ? entre selection_score, bussiness_score et auc ?
+ qu'est ce c'est Entrainer aussi un modèle global multi-symboles ? quel avantage ? ainsi Backend du modeèle global avec catboost, et lightgbm ?
+11. dns Cible swing & horizon", différence entre swing_cash et binary ? qu'est ce c'est seuil cible up, horizon de prédiction, seuil décision, seuil cible DOWN et méthode de caibration ?
+12. expliquer les paramètres das le bloc "ML — Hyperparams & seuils d'optimisation (avancé)"
+13. expliquer les paramètres dans le bloc "ML — Hyperparams avancés (architecture, boosters, grilles)"
+14. expliquer les paramètres dans le bloc "Diagnostic dépendances Alpha Scanner — seuils quotes/earnings"
+15. dans "Paramètres Event Sentiment", qu'est ce que c'est 'Event Sentiment — mapping ticker', différence entre les différents options ?
+16. expliquer les paramètres dans le bloc "Niveau 4 — Re-scoring FinBERT contextualisé (opt-in)"
+17. expliquer les paramètres dans le bloc "7bis — Backfill relevance / contextual (étape dédiée)"
+18. expliquer les paramètres dans le bloc "Paramètres Signal Aggregator"
+19. expliquer les paramètres dans le bloc "Screener amont — univers & scores de base"
+20. expliquer les paramètres dans le bloc "Paramètres Data Integrity"
+21. expliquer les paramètres dans le bloc "Paramètres Corporate Actions"
+22. expliquer les paramètres dans le bloc "Paramètres Backfill historique EODHD (B3)"
+
+
+Questions sur la page 'Supervision Ops':
+1. qu'est ce c'est Limit watch, Interval service (s),Interval idle (s) et Heartbeat (s) ?
+2. qu'est ce ça vaut dire : Service Watcher protections scope=default en état STALE.
+
+
+Questions sur la page 'Exécution':
+1. qu'est ce qui sert  Kill switch — annuler tous les ordres ouverts ? comment utiliser ?
+est-ce normal j'ai ce message 'Échec lancement : [WinError 123] La syntaxe du nom de fichier, de répertoire ou de volume est incorrecte: 'F:\projets\artifacts\ihm_pipeline_runs\ops:execution_kill_switch\20260513_180654_51973645'' ?
+2. qu'est ce c'est "Snapshot des cibles consommées" ?
+3. qu'est ce c'est "Requests et ordres broker" ?
+3. qu'est ce c'est "Positions et détentions du run" ?
+3. qu'est ce c'est "Lots touchés par ce run" ?
+3. qu'est ce c'est "Réconciliation actionnable" ?
+3. qu'est ce c'est "Motifs de réconciliation" ?
+3. qu'est ce c'est "Événements" ?
+3. qu'est ce c'est le bloc "Watcher protections — supervision secondaire" ?
+
+
+Questions sur la page 'Risk': explique moi qu'est ce que c'est cette page et chaque bloc.
+
+
+Questions sur la page 'Régime Marché': explique les paramétres de la Configuration active (config.yaml > market_regimes)
+
+
+Questions sur la page 'Compte alpaca':
+1. j'ai tenté ventdre une position dans ' Positions ouvertes (broker)', j'ai eu le message: "Échec de la clôture de COCO : [403] Forbidden. est-ce normal ?"
+2. qu'est ce c'est 'Historique broker détaillé0.'
+Dans le bloc: Historique canonique Alpha Trade
+3. qu'est ce c'est 'Snapshots broker persistés' ?
+4. qu'est ce c'est 'Ordres canoniques d'exécution (DB)' ?
+5. qu'est ce c'est 'Runs d'exécution récents (DB)' ?
+
+
+Questions sur la page "Screening"'":
+1. explique 'Qualité amont & contexte pipeline', Derniers résumés par étape et Étapes 4 → 5 · détail quotes / earnings utilisé par Alpha Scanner.
+2. qu'est ce qui sert 'Source d'artefacts screener'
+3. qu'est ce que sert 'Filtres opérateur' ?
+
+
+Questions sur la page "Backtesting":
+1. qu'est ce que sert l'onglet Diagnose screener ?
+2. qu'est ce que sert l'onglet Recommend screener ?
+3. qu'est ce que sert l'onglet Calibrate sentiment ?
+4. qu'est ce que sert l'onglet Walk-forward sentiment ?
+5. qu'est ce que sert l'onglet Calibration trimestrielle poids ?
+
+
+qu'est ce qui sert la page 'Parité Backtest ↔ Live' ?
+
+
+Questions sur la page "ML / Prédictions":
+1. quest-ce c'est 'Symbole à inspecter (artefacts)' ? qu'est ce ça veut direcette exemple:
+Symbole: A, Champion servi: lstm_attention, Mode de sélection: auto_selected_champion, Decision threshold: 0.55
+2. qu'est ce que c'est 'Routes d'inférence' ? 'Ranking challengers' ? Manifestes bruts (config / metrics) ?
+3. comment interpret le tableau 'Runs d'entraînement' ?
+4. comment interpret le tableau 'Métriques par symbole' ?
+5. comment interpret le tableau 'Audit serving ↔ gouvernance' ?
+6. comment interpret le tableau 'Gouvernance challengers / champion' ?
+
+
+Questions sur la page "Paramètres / Santé":
+dans Seuils diagnostic Alpha Scanner:
+1. quel impacte si je sélectionne différent contexte marché pour les presets Alpha Scanner
+2. explique les différents paramètres de Étape 4 — Sync Latest Quotes.
+3. explique les différents paramètres de Étape 5 — Sync Earnings Calendar.
+
+
+Questions sur la page "Compliance & Audit":
+Dans bloc Relancer un job de conformité:
+c'est quoi Pré-live checklist,  Audit chain, Scan CVE, Vault rotation, Rapport mensuel broker, Réconciliation broker ?
+
+
+Questions sur la page "Tax Compliance":
+explique les différents paramètres dans le bloc "Paramètres Tax Compliance" et comment les utiliser pour la conformité fiscale.
+
+
+Questions sur la page "Sandbox health (30 j) ": qu'est ce qui sert cette page ?
+
+
+Questions sur la page "Corporate Actions": qu'est ce qui sert cette page ?
+
+
+
+
+
+
+
+
+
+

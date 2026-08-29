@@ -1,0 +1,53 @@
+groups:
+  - name: alpha_trade_runtime
+    rules:
+      - alert: AlphaTradeCircuitBreakerActive
+        expr: alpha_trade_circuit_breaker_active == 1
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "Circuit breaker broker actif"
+          description: "Les écritures peuvent être suspendues ; appliquer le runbook failover."
+      - alert: AlphaTradeWatcherHeartbeatStale
+        expr: alpha_trade_heartbeat_stale == 1
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "Heartbeat watcher périmé"
+          description: "Vérifier immédiatement le watcher et les protections broker."
+      - alert: AlphaTradeEmptyUniverse
+        expr: alpha_trade_empty_universe == 1
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Univers de trading vide"
+          description: "Contrôler données, filtres et run summaries."
+      - alert: AlphaTradeKillSwitchActive
+        expr: alpha_trade_kill_switch_active == 1
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "Kill switch d'exécution actif"
+          description: "Conserver le blocage jusqu'à réconciliation et validation humaine."
+      - alert: AlphaTradeModelDriftActive
+        expr: alpha_trade_model_drift_active == 1
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Gate de drift ML active"
+          description: "Vérifier le dernier rapport ML et la décision de serving."
+      - alert: AlphaTradeCashLedgerMisaligned
+        expr: alpha_trade_cash_ledger_aligned == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "Cash ledger non aligné"
+          description: "Suspendre les écritures et réconcilier broker, fills et cash."
+      - alert: AlphaTradeApiErrorBurst
+        expr: sum by (service) (increase(alpha_trade_api_errors_total[10m])) > 5
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Rafale d'erreurs API"
+          description: "Le service {{ $labels.service }} dépasse cinq erreurs en dix minutes."
+
