@@ -29,4 +29,11 @@ A1:
 python  -u -m modelFactory --mode train --accelerator auto --target-mode regression --num-classes 1 --forecast-horizons 3,5,10,15,20 --target-up-threshold 0.03 --target-down-threshold -0.03 --decision-threshold 0.55 --calibration-method platt --calibration-min-samples 64 --calibration-max-iter 100 --feature-set expert --benchmark-symbol SPY --sequence-length 40 --batch-size 32 --hidden-size 256 --ml-mode rebuild-all --training-start-date 2020-01-01 --symbol-source ticket-recherche --artifacts-dir artifacts/models --max-workers 6 --max-epochs 50 --patience 5 --cross-sectional-min-universe 20 --lgbm-max-depth 5 --lgbm-n-estimators 200 --lgbm-learning-rate 0.03 --catboost-depth 6 --catboost-iterations 300 --catboost-learning-rate 0.03 --lgbm-reg-alpha 0.1 --lgbm-reg-lambda 0.1 --lgbm-min-child-samples 150 --lgbm-subsample 0.8 --lgbm-colsample-bytree 0.7 --catboost-l2-leaf-reg 3.0 --catboost-border-count 128 --catboost-random-strength 1.0 --catboost-bagging-temperature 1.0 --catboost-od-type IncToDec --catboost-od-wait 20 --catboost-loss-function YetiRank --default-champion lstm_attention --heartbeat-interval-seconds 60.0 --log-level INFO --training-end-date 2025-12-31 --exclude-per-symbol-per-sector --enable-oracle-model --include-short-score --include-factors --no-include-score-components --target-excess-vs-spy --enable-global-model --global-champion --include-directional-features --walkforward --wf-min-train-size 504 --wf-val-size 126 --wf-test-size 126 --wf-step-size 252 --wf-max-splits 8 --comment "A4 rank + oracle 2020-2025"
 
 
-
+------------------------------------------------------------------------------
+consigne de tests:
+afin de garantie oos et la cohérence des données, les backtest peut etes fait uniquement en palier:
+- entre 01/01/2019 et 31/12/2020: utiliser le batch model-factory-20260829001107-7e4c98
+- entre 01/01/2021 et 31/12/2022: utiliser le batch model-factory-20260829001135-ec6755
+- entre 01/01/2023 et 31/12/2024: utiliser le batch model-factory-20260829001152-015a1a
+- entre 01/01/2025 et 31/12/2026: utiliser le batch model-factory-20260829001206-035b52
+bien respecter ces paliers.
