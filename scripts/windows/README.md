@@ -221,3 +221,69 @@ puis renseigner `LOGIN_DB` / `PASSWORD_DB` dans `earnings_calendar.env`.
 - Détail de la synchronisation : `log/sync_earnings_calendar.log`
   (écrit par le module Python).
 
+---
+
+## Job planifié — Collecte Yahoo analyst (B4, RESEARCH ONLY)
+
+La tâche planifiée **`AlphaTrade-AnalystSnapshot`** exécute automatiquement la
+collecte prospective d’analyst data Yahoo (estimates EPS/revenue, price targets,
+recommendations) — **RESEARCH ONLY**, append-only PIT dans MySQL — aux heures
+définies dans `config.yaml` → `analyst_snapshot_collection.run_hours`.
+
+### Scripts
+
+- `analyst_snapshot_launcher.ps1` : lanceur commun — exécute
+  `python -u scripts/collect_yahoo_analyst_snapshots.py --universe analyst_research --write-db --resume`
+  et ajoute une ligne de statut (`START` / `OK` / `ERROR`) dans
+  `log/batch/analyst_snapshots.txt` (chemin piloté par `config.yaml` → `analyst_snapshot_collection.log_file`).
+  Le `--resume` rend le run idempotent (les symboles déjà collectés le jour même sont sautés).
+- `install_analyst_snapshot_task.ps1` : installe la tâche planifiée Windows.
+- `uninstall_analyst_snapshot_task.ps1` : supprime la tâche.
+
+### Configurer les heures (`config.yaml`)
+
+```yaml
+analyst_snapshot_collection:
+  run_hours: "18"        # "18" = 18h après clôture US ; "3,14" = 3h et 14h
+  log_file: log/batch/analyst_snapshots.txt
+```
+
+`run_hours` = liste d’heures (0-23) séparées par des virgules. Chaque heure
+devient un déclencheur quotidien de la tâche planifiée. ⚠️ L’heure est exprimée
+**en America/New_York** (la collecte doit se faire après la clôture US) ; le
+planificateur Windows suit la timezone de la machine — régler `run_hours` en
+conséquence (jamais d’heure de Paris fixe).
+
+### Installer
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\install_analyst_snapshot_task.ps1
+```
+
+- Par défaut la tâche tourne en session **Interactive** (utilisateur courant).
+- Pour qu’elle s’exécute même quand personne n’est connecté :
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File .\scripts\windows\install_analyst_snapshot_task.ps1 -RunAs System
+  ```
+
+### Désinstaller
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\uninstall_analyst_snapshot_task.ps1
+```
+
+### Credentials (`LOGIN_DB` / `PASSWORD_DB`)
+
+Même mécanisme que la sync earnings : le launcher charge automatiquement
+`analyst_snapshot.env` (ou `.env`) pour que la tâche planifiée ait accès aux
+credentials MySQL sans reprendre l’environnement du shell.
+
+### Logs
+
+- Statut par exécution : `log/batch/analyst_snapshots.txt`
+  (une ligne **`DÉBUT DE TRAITEMENT`** dès le lancement, puis **`FIN TRAITEMENT
+  OK`** / **`FIN TRAITEMENT ERROR`** avec code de sortie et durée).
+- Détail de la collecte (couverture, compteurs, runtime) : la commande Python
+  logge dans `log/batch/analyst_snapshots.log` et trace chaque run dans la table
+  `alpha_trade.analyst_snapshot_collection_run`.
+

@@ -80,7 +80,6 @@ def upgrade() -> None:
             "model_predictions",
             [_COLUMN_NAME],
             schema="alpha_trade",
-            mysql_engine="InnoDB",
         )
 
 

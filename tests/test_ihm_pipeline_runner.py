@@ -94,7 +94,31 @@ def test_get_pipeline_workflow_steps_ignores_removed_7bis_when_explicitly_select
 
 def test_get_pipeline_auxiliary_steps_contains_expected_keys() -> None:
     keys = [step.key for step in get_pipeline_auxiliary_steps()]
-    assert keys == ["import_alpaca_assets", "update_sector", "eodhd_backfill_history"]
+    assert keys == [
+        "import_alpaca_assets", "update_sector", "eodhd_backfill_history",
+        "analyst_snapshot_collect",
+    ]
+
+
+def test_build_pipeline_command_analyst_snapshot_collect() -> None:
+    """B4 — la commande IHM correspond au CLI `collect_yahoo_analyst_snapshots.py`."""
+    # Défaut → write-db (collection réelle, univers figé analyst_research)
+    cmd = build_pipeline_command("analyst_snapshot_collect", PipelineLaunchOptions())
+    assert cmd[1] == "-u"
+    assert cmd[2].replace("\\", "/").endswith("scripts/collect_yahoo_analyst_snapshots.py")
+    assert cmd[3] == "--universe"
+    assert cmd[4] == "analyst_research"
+    assert "--write-db" in cmd
+    # dry-run + resume + symboles (surcharge univers)
+    opts = PipelineLaunchOptions(
+        analyst_snapshot_write_db=False,
+        analyst_snapshot_resume=True,
+        analyst_snapshot_symbols="AAPL, MSFT",
+    )
+    cmd2 = build_pipeline_command("analyst_snapshot_collect", opts)
+    assert "--write-db" not in cmd2
+    assert "--resume" in cmd2
+    assert cmd2[cmd2.index("--symbols") + 1] == "AAPL,MSFT"
 
 
 def test_get_pipeline_workflow_steps_defaults_to_live_ml_first_without_training() -> None:

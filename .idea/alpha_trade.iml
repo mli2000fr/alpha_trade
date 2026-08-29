@@ -12,6 +12,7 @@
       <excludeFolder url="file://$MODULE_DIR$/.test_pycache_fresh2/projets/.venv" />
       <excludeFolder url="file://$MODULE_DIR$/.test_pycache_fresh3/projets/.venv" />
       <excludeFolder url="file://$MODULE_DIR$/.test_pycache_logs/projets/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/.test_pycache_mlfixcheck/projets/.venv" />
       <excludeFolder url="file://$MODULE_DIR$/.test_pycache_mlwave/projets/.venv" />
       <excludeFolder url="file://$MODULE_DIR$/.test_pycache_mlwave2/projets/.venv" />
       <excludeFolder url="file://$MODULE_DIR$/.test_pycache_mlwave3/projets/.venv" />

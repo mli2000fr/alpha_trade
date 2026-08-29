@@ -643,6 +643,10 @@ class PipelineLaunchOptions:
     eodhd_backfill_symbols: str | None = None
     eodhd_backfill_resume: bool = True
     eodhd_backfill_write: bool = True
+    # Collecte prospective Yahoo analyst (RESEARCH ONLY, todo3.txt) — étape auxiliaire B4
+    analyst_snapshot_write_db: bool = True
+    analyst_snapshot_resume: bool = False
+    analyst_snapshot_symbols: str | None = None
 
     def __post_init__(self) -> None:
         """Validation post-initialisation : cohérence avec les presets et la réglementation.
@@ -915,6 +919,20 @@ PIPELINE_AUXILIARY_STEPS: tuple[PipelineStepDefinition, ...] = (
              "Utile au démarrage initial post-cutover `bars_provider=eodhd`.",
         tables="stock_bars, stock_bars_daily",
         deps="import_alpaca_assets (univers requis)",
+    ),
+    PipelineStepDefinition(
+        key="analyst_snapshot_collect",
+        num="B4",
+        name="Collecte Analyst Yahoo (directionnel)",
+        desc="Collecte prospective PIT d'analyst data Yahoo (EPS/revenue estimates, price targets, "
+             "recommendations) dans les tables append-only `stock_analyst_*_history`. "
+             "RESEARCH ONLY — aucune intégration PROD (ni Global Rank, ni Oracle, ni cascade, ni live). "
+             "Univers figé ~400 symboles (`config.yaml` → `analyst_snapshot_collection.symbols_file`), "
+             "explicite et jamais recalculé. Aucun stockage fichier : MySQL = source de vérité "
+             "(`raw_payload_json` + `raw_hash` conservés). Idempotent : relancer ne crée aucun doublon. "
+             "Contrat PIT : `available_at` = prochaine séance après observation.",
+        tables="stock_analyst_estimate_history, stock_analyst_target_history, stock_analyst_recommendation_history, analyst_snapshot_collection_run",
+        deps="— (univers figé ; réseau Yahoo requis)",
     ),
 )
 
@@ -1766,6 +1784,24 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             if symbols:
                 command.append("--symbols")
                 command.extend(symbols)
+        return command
+
+    if step_key == "analyst_snapshot_collect":
+        # Collecte prospective Yahoo analyst (RESEARCH ONLY, todo3.txt)
+        command = [
+            sys.executable, "-u",
+            str(PROJECT_ROOT / "scripts" / "collect_yahoo_analyst_snapshots.py"),
+            "--universe", "analyst_research",
+        ]
+        if options.analyst_snapshot_write_db:
+            command.append("--write-db")
+        if options.analyst_snapshot_resume:
+            command.append("--resume")
+        if options.analyst_snapshot_symbols:
+            symbols = [s.strip().upper() for s in options.analyst_snapshot_symbols.split(",") if s.strip()]
+            if symbols:
+                command.append("--symbols")
+                command.append(",".join(symbols))
         return command
 
     if step_key == "corporate_actions_sync":

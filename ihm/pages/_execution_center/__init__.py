@@ -2601,6 +2601,46 @@ def _render_corporate_actions_block(trade_date: str) -> dict[str, Any]:
         else:
             st.warning("B3 sera lancé en mode `dry-run` : appels API réels, mais 0 insert DB.")
 
+    st.markdown("#### Paramètres Collecte Analyst Yahoo (B4)")
+    st.caption(
+        "Collecte prospective PIT (RESEARCH ONLY) : snapshots quotidiens EPS/revenue estimates, "
+        "price targets et recommendations Yahoo, append-only dans les tables `stock_analyst_*_history`. "
+        "Univers figé ~400 symboles (`config.yaml` → `analyst_snapshot_collection.symbols_file`). "
+        "Aucun stockage fichier : MySQL = source de vérité (`raw_payload_json` conservé). "
+        "Le bouton de la page Pipeline (B4) lance la commande ci-dessous."
+    )
+    st.code(
+        "python scripts/collect_yahoo_analyst_snapshots.py --universe analyst_research --write-db",
+        language="bash",
+    )
+    b4_col1, b4_col2 = st.columns([1, 2])
+    with b4_col1:
+        analyst_snapshot_write_db = st.checkbox(
+            "B4 — mode écriture (insert DB append-only)",
+            value=_session_state_bool("pipeline_analyst_snapshot_write_db", True),
+            key="pipeline_analyst_snapshot_write_db",
+            help="Coché = ajoute `--write-db` et persiste dans MySQL (idempotent : pas de doublon). Décoché = dry-run (aucune écriture).",
+        )
+        analyst_snapshot_resume = st.checkbox(
+            "B4 — reprendre (saute déjà collectés aujourd'hui)",
+            value=_session_state_bool("pipeline_analyst_snapshot_resume", False),
+            key="pipeline_analyst_snapshot_resume",
+            help="Coché = ajoute `--resume` et saute les symboles déjà collectés aujourd'hui.",
+        )
+    with b4_col2:
+        analyst_snapshot_symbols = str(
+            st.text_input(
+                "B4 — symboles (CSV, optionnel)",
+                value=str(st.session_state.get("pipeline_analyst_snapshot_symbols", "")),
+                key="pipeline_analyst_snapshot_symbols",
+                help="Laisser vide = univers figé ~400 (analyst_research). Exemple : AAPL,MSFT,NVDA",
+            )
+        ).strip().upper()
+        if analyst_snapshot_write_db:
+            st.success("B4 sera lancé en mode `write` (insert DB append-only).")
+        else:
+            st.warning("B4 sera lancé en mode `dry-run` : appels Yahoo réels, 0 insert DB.")
+
     return {
         "corporate_actions_skip_existing": corporate_actions_skip_existing,
         "corporate_actions_batch_size": corporate_actions_batch_size,
@@ -2611,6 +2651,9 @@ def _render_corporate_actions_block(trade_date: str) -> dict[str, Any]:
         "eodhd_backfill_resume": eodhd_backfill_resume,
         "eodhd_backfill_symbols": eodhd_backfill_symbols,
         "eodhd_backfill_write": eodhd_backfill_write,
+        "analyst_snapshot_write_db": analyst_snapshot_write_db,
+        "analyst_snapshot_resume": analyst_snapshot_resume,
+        "analyst_snapshot_symbols": analyst_snapshot_symbols,
     }
 
 
@@ -4727,6 +4770,9 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         eodhd_backfill_resume = _ca_vars["eodhd_backfill_resume"]
         eodhd_backfill_symbols = _ca_vars["eodhd_backfill_symbols"]
         eodhd_backfill_write = _ca_vars["eodhd_backfill_write"]
+        analyst_snapshot_write_db = _ca_vars["analyst_snapshot_write_db"]
+        analyst_snapshot_resume = _ca_vars["analyst_snapshot_resume"]
+        analyst_snapshot_symbols = _ca_vars["analyst_snapshot_symbols"]
 
 
     return (
@@ -4998,6 +5044,9 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             eodhd_backfill_symbols=eodhd_backfill_symbols or None,
             eodhd_backfill_resume=bool(eodhd_backfill_resume),
             eodhd_backfill_write=bool(eodhd_backfill_write),
+            analyst_snapshot_write_db=bool(analyst_snapshot_write_db),
+            analyst_snapshot_resume=bool(analyst_snapshot_resume),
+            analyst_snapshot_symbols=analyst_snapshot_symbols or None,
         ),
         live_confirmed,
     )
