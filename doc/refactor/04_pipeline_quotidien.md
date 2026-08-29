@@ -2,6 +2,8 @@
 
 Le workflow exposé par `ihm/services/pipeline_runner.py` contient 14 étapes. L'entraînement T1 est volontairement hors pipeline quotidien.
 
+Le dépôt contient aussi `flows/daily_pipeline.py`, orchestrateur Python/Prefect opt-in à cinq étapes avec imports lazy historiques. Il ne correspond pas au pipeline canonique IHM et plusieurs chemins qu’il tente d’importer peuvent être absents. Le considérer comme intégration auxiliaire/legacy ou support de tests, pas comme définition de production. `ALPHA_TRADE_USE_PREFECT=1` active Prefect si installé ; sinon les décorateurs sont pass-through.
+
 ## Graphe
 
 ```mermaid
@@ -58,4 +60,3 @@ python -m modelFactory --mode train --symbol-source tradable-universe
 ```
 
 Le champion n'est publié qu'après évaluation, gouvernance et contrôles de compatibilité. Le predict quotidien le consomme ensuite.
-

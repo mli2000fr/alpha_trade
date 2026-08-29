@@ -27,7 +27,7 @@ $env:EODHD_API_TOKEN = "..."       # si provider EODHD
 $env:FINNHUB_API_KEY = "..."       # selon calendrier/fondamentaux
 ```
 
-Ne jamais remplacer les placeholders de `config.yaml` par des secrets en clair. `core.secrets` scanne les YAML et rejette les valeurs faibles ou sentinelles.
+Ne jamais remplacer les placeholders de `config.yaml` par des secrets en clair. `core.secrets` contrôle les valeurs faibles ou sentinelles selon le contexte. La connexion DB rejette plusieurs sentinelles explicites, mais le code actuel tolère encore les valeurs historiques `user` et `pass` : cette tolérance de compatibilité n’en fait pas des credentials acceptables en production.
 
 ## Base de données
 
@@ -75,4 +75,3 @@ mypy .
 ```
 
 Les tests peuvent nécessiter une base dédiée et des variables d'environnement de test. Lire `pytest.ini`, `docker-compose.test.yml` et les fixtures avant d'exécuter une suite d'intégration.
-

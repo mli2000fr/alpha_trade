@@ -55,10 +55,9 @@ Les dépendances institutionnelles importantes sont matérialisées par `.import
 - Dates de trading séparées des timestamps UTC ; le calendrier de marché est centralisé.
 - Les prix canoniques sont ajustés des splits. Les dividendes passent par `portfolio_cash_ledger`.
 - Les run summaries utilisent un schéma versionné et des compteurs de qualité.
-- Les secrets sont résolus depuis des placeholders d'environnement ; les valeurs sentinelles sont rejetées.
+- Les secrets sont résolus depuis l’environnement ou Vault selon le composant ; les contrôles de sentinelles dépendent du consommateur et ne remplacent pas une gestion de secrets.
 - Les artefacts de modèle et rapports sont hors base, tandis que registry, prédictions, décisions et exécution sont persistés.
 
 ## Deux orchestrateurs à ne pas confondre
 
 `ihm/services/pipeline_runner.py` décrit et pilote le workflow opérateur complet en 14 étapes. `flows/daily_pipeline.py` est un orchestrateur Python/Prefect opt-in plus ancien et minimal, dont les chemins de fonctions sont résolus dynamiquement et peuvent être absents. Pour comprendre la production locale actuelle, le pipeline IHM et les CLI de chaque module font autorité.
-
