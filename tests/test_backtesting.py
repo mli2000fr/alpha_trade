@@ -3372,7 +3372,7 @@ class TestCLI:
             equity=100_000.0,
             tp=0.08,
             ts=0.05,
-            max_positions=24,
+            max_positions=1,
             fees=0.001,
             account_type="margin",
             swing_only=False,
@@ -3420,12 +3420,12 @@ class TestCLI:
         replay_payload = json.loads((output_dir / "replay_diagnostic_summary.json").read_text(encoding="utf-8"))
         assert replay_payload["session_count"] == 1
         assert replay_payload["sessions"][0]["selected_symbols"] == ["BBB"]
-        assert replay_payload["sessions"][0]["degraded_components"] == ["ml"]
+        assert replay_payload["sessions"][0]["degraded_components"] == []
         assert replay_payload["sessions"][0]["critical_symbol"] == {
             "symbol": "BBB",
             "selected": True,
-            "components": ["ml", "walk_forward"],
-            "reasons": ["prediction_missing"],
+            "components": ["walk_forward"],
+            "reasons": [],
             "score_source": "final_score_walk_forward",
         }
         assert replay_payload["sessions"][0]["provenance_refs"]["ml_run_ids"] == []

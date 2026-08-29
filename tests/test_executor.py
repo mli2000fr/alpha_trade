@@ -1,6 +1,7 @@
 """Tests for execution_engine.executor."""
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from unittest.mock import MagicMock, patch
 
@@ -410,9 +411,10 @@ class TestExecutor:
 
     def test_margin_account_allows_buying_power_above_cash(self) -> None:
         cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, account_type="margin")
-        executor, repo, broker, _ = _make_executor(cfg)
+        small_target = replace(_target(), target_shares=0.5, target_notional=75.0)
+        executor, repo, broker, _ = _make_executor(cfg, targets=[small_target])
         broker.get_account_snapshot.return_value = {
-            "equity": 2_000.0,
+            "equity": 100.0,
             "cash": 100.0,
             "buying_power": 20_000.0,
             "non_marginable_buying_power": 100.0,
@@ -426,7 +428,7 @@ class TestExecutor:
 
     def test_margin_account_does_not_defer_children_when_daytrade_count_is_high(self) -> None:
         cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, account_type="margin", swing_only=False)
-        targets = [_target("AAPL")]
+        targets = [replace(_target("AAPL"), target_shares=5.0, target_notional=750.0)]
         executor, repo, broker, _ = _make_executor(cfg, targets=targets)
         broker.submit_intent.side_effect = lambda intent: _filled_order(intent_id=intent.intent_id, symbol=intent.symbol)
         broker.poll_order_status.side_effect = (
@@ -448,7 +450,8 @@ class TestExecutor:
 
     def test_margin_account_does_not_block_entry_when_daytrade_count_is_high(self) -> None:
         cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, account_type="margin")
-        executor, repo, broker, _ = _make_executor(cfg)
+        small_target = replace(_target(), target_shares=5.0, target_notional=750.0)
+        executor, repo, broker, _ = _make_executor(cfg, targets=[small_target])
         broker.get_account_snapshot.return_value = {
             "equity": 2_000.0,
             "cash": 2_000.0,
@@ -834,7 +837,7 @@ class TestExecutor:
         executor._submit_rebalance_orders.assert_called_once()
         safe_auto_diffs = executor._submit_rebalance_orders.call_args.args[0]
         assert len(safe_auto_diffs) == 1
-        assert safe_auto_diffs[0].target_qty == 0.5
+        assert safe_auto_diffs[0].target_qty == 0.73
         assert safe_auto_diffs[0].broker_qty == 0.25
-        assert safe_auto_diffs[0].delta == -0.25
+        assert safe_auto_diffs[0].delta == -0.48
 

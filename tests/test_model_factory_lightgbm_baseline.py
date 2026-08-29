@@ -14,7 +14,7 @@ class FakePickleableLGBMClassifier:
         # Phase 4.2.c — un Booster natif (fake) accessible via .booster_
         self.booster_ = _FakeBooster()
 
-    def fit(self, X, y):
+    def fit(self, X, y, sample_weight=None):
         return self
 
     def predict_proba(self, X):
@@ -55,7 +55,7 @@ def _prepared_df(n: int = 120) -> pd.DataFrame:
 
 def test_run_lightgbm_baseline_returns_metrics(monkeypatch) -> None:
     class FakeModel:
-        def fit(self, X, y):
+        def fit(self, X, y, sample_weight=None):
             return self
 
         def predict_proba(self, X):
@@ -67,7 +67,7 @@ def test_run_lightgbm_baseline_returns_metrics(monkeypatch) -> None:
             def __init__(self, **kwargs):
                 self.model = FakeModel()
 
-            def fit(self, X, y):
+            def fit(self, X, y, sample_weight=None):
                 return self.model.fit(X, y)
 
             def predict_proba(self, X):

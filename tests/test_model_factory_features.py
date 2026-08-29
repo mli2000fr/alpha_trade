@@ -176,9 +176,9 @@ def test_get_feature_columns_global_stacking_adds_column() -> None:
     assert "sector_ret_20" in cols
 
 
-def test_get_feature_columns_global_stacking_requires_cross_sectional() -> None:
+def test_get_feature_columns_global_stacking_is_independent_from_cross_sectional() -> None:
     cols = features.get_feature_columns(include_global_stacking=True)
-    assert "global_rank" not in cols
+    assert "global_rank" in cols
 
 
 def test_get_feature_columns_global_stacking_default_off() -> None:
@@ -417,9 +417,9 @@ def test_baseline_config_defaults_regularized():
     """Vérifie que les nouveaux défauts de régularisation sont bien appliqués."""
     from modelFactory.config import BaselineConfig
     cfg = BaselineConfig()
-    assert cfg.max_depth == 4
+    assert cfg.max_depth == 5
     assert cfg.lgbm_num_leaves == 15
-    assert cfg.lgbm_min_child_samples == 30
+    assert cfg.lgbm_min_child_samples == 150
     assert cfg.lgbm_subsample == 0.8
     assert cfg.lgbm_colsample_bytree == 0.7
     assert cfg.lgbm_reg_alpha == 0.1

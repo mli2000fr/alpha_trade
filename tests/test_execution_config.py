@@ -11,8 +11,8 @@ class TestExecutionConfig:
         assert cfg.broker_mode == "paper"
         assert cfg.dry_run is False
         assert cfg.entry_order_type == "market"
-        assert cfg.profit_taker_pct == 0.08
-        assert cfg.trailing_stop_pct == 0.05
+        assert cfg.profit_taker_pct == 0.12
+        assert cfg.trailing_stop_pct == 0.10
         assert cfg.trailing_activation_trigger == "multiple_r"
         assert cfg.protection_transition_timeout_seconds == 0
         assert cfg.time_stop.enabled is False

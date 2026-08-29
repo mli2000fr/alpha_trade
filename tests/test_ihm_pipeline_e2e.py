@@ -291,10 +291,10 @@ def test_build_launch_options_returns_default_swing_options_under_apptest() -> N
     at = AppTest.from_function(_runner).run(timeout=20)
     assert not at.exception, f"Exception remontée par AppTest : {at.exception}"
 
-    # Défauts swing cash conformes à l'audit IHM (cf. doc IHM + S2).
+    # Le mode cash reste sélectionné, sans forcer le profil swing.
     assert at.session_state["__test_options_execution_mode"] == "simulate"
     assert at.session_state["__test_options_account_type"] == "cash"
-    assert at.session_state["__test_options_swing_only"] is True
+    assert at.session_state["__test_options_swing_only"] is False
     assert at.session_state["__test_options_sentiment_news_provider"] == "eodhd"
     assert at.session_state["__test_options_sentiment_pending_max_batches"] == 0
     assert at.session_state["__test_options_fundamentals_provider"] == "yahoo_finance"

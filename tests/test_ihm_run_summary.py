@@ -226,7 +226,7 @@ def test_build_run_summary_caption_uses_enriched_risk_management_metrics_mapping
     assert "acceptés=6" in caption
     assert "ranks selector=10" in caption
     assert "couverture selector=0.83" in caption
-    assert "blackout selector=2" in caption
+    assert "blackout sélection=2" in caption
     assert "expo brute=0.62" in caption
     assert "couverture atr=0.92" in caption
 

@@ -58,10 +58,10 @@ def test_from_global_config_uses_defaults_when_section_missing():
     from event_sentiment.signal_aggregator import SentimentBoostConfig
 
     boost = SentimentBoostConfig.from_global_config({})
-    # Défauts historiques 75 / 15 / 10
-    assert boost.quant_weight == pytest.approx(0.75)
-    assert boost.sentiment_weight == pytest.approx(0.15)
-    assert boost.macro_sector_weight == pytest.approx(0.10)
+    # Sans section, la fusion est volontairement quantitative pure.
+    assert boost.quant_weight == pytest.approx(1.0)
+    assert boost.sentiment_weight == pytest.approx(0.0)
+    assert boost.macro_sector_weight == pytest.approx(0.0)
 
 
 def test_from_global_config_rejects_non_unit_sum():

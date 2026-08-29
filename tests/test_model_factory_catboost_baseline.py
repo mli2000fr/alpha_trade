@@ -12,7 +12,7 @@ class FakePickleableCatBoostModel:
 	def __init__(self, **kwargs):
 		self.kwargs = kwargs
 
-	def fit(self, X, y):
+	def fit(self, X, y, sample_weight=None):
 		return self
 
 	def predict_proba(self, X):
@@ -72,14 +72,14 @@ def test_run_catboost_baseline_returns_unavailable_when_package_missing(monkeypa
 
 def test_run_catboost_baseline_returns_metrics(monkeypatch) -> None:
 	class FakeModel:
-		def fit(self, X, y):
+		def fit(self, X, y, sample_weight=None):
 			return self
 
 		def predict_proba(self, X):
 			p = np.clip(np.asarray(X["daily_return"], dtype=float), 0.05, 0.95)
 			return np.column_stack([1.0 - p, p])
 
-	monkeypatch.setattr("modelFactory.catboost_baseline._import_catboost", lambda: lambda **kwargs: FakeModel())
+	monkeypatch.setattr("modelFactory.catboost_baseline._import_catboost", lambda: (lambda **kwargs: FakeModel(), lambda **kwargs: FakeModel()))
 
 	cfg = TrainingConfig(
 		data=DataConfig(),
@@ -106,7 +106,7 @@ def test_run_catboost_baseline_can_persist_local_artifacts(monkeypatch, tmp_path
 		created_models.append(model)
 		return model
 
-	monkeypatch.setattr("modelFactory.catboost_baseline._import_catboost", lambda: build_model)
+	monkeypatch.setattr("modelFactory.catboost_baseline._import_catboost", lambda: (build_model, build_model))
 
 	cfg = TrainingConfig(
 		data=DataConfig(),

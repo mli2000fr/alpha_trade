@@ -1265,7 +1265,7 @@ def test_run_end_to_end_returns_ranked_top_selection_and_updates_database() -> N
     assert len(selection_rows) == 4
     assert {row[0] for row in selection_rows} == set(result["symbol"])
     assert all(row[1] is not None and row[2] is not None and row[3] is not None for row in persisted_rows)
-    assert legacy_row == ("ZZZ", None, None, None, 0)
+    assert legacy_row == ("ZZZ", None, None, None, None)
 
 
 def test_iter_eligible_symbol_chunks_excludes_blocked_history_statuses_in_sql() -> None:

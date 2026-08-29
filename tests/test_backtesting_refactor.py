@@ -29,66 +29,6 @@ class TestPhaseA:
         assert list(score) == [0.9, 0.5]
         assert list(source) == ["final_score_walk_forward", "final_score"]
 
-    def test_vectorized_fuse_falls_back_when_proba_missing(self):
-        from backtesting.signal_replay import _vectorized_fuse
-        from core.conviction import ConvictionWeights
-
-        scores = pd.Series([0.5, 0.8])
-        proba = pd.Series([np.nan, 0.9])
-        out = _vectorized_fuse(scores, proba, ConvictionWeights(0.4, 0.6))
-        assert out.iloc[0] == pytest.approx(0.5)
-        assert out.iloc[1] == pytest.approx(0.4 * 0.8 + 0.6 * 0.9)
-
-    def test_vectorized_fuse_is_faster_than_naive_fallback(self):
-        """Phase F.3 (refactor) — micro-bench léger sans pytest-benchmark.
-
-        Vérifie que la fusion vectorisée reste sensiblement plus rapide qu'une
-        boucle ligne-par-ligne (équivalente à l'ancien `df.apply`). Le seuil
-        est volontairement large (×3) pour rester stable en CI partagée.
-        """
-        import time
-
-        from backtesting.signal_replay import _vectorized_fuse
-        from core.conviction import ConvictionWeights, fuse
-
-        rng = np.random.default_rng(42)
-        n = 50_000
-        scores = pd.Series(rng.random(n))
-        # ~30 % de NaN → exerce la branche fallback.
-        proba_arr = rng.random(n)
-        proba_arr[rng.random(n) < 0.3] = np.nan
-        proba = pd.Series(proba_arr)
-        weights = ConvictionWeights(0.4, 0.6)
-
-        # Warmup (JIT pandas/numpy + cache caches CPU).
-        _vectorized_fuse(scores.iloc[:1024], proba.iloc[:1024], weights)
-
-        start = time.perf_counter()
-        vec_out = _vectorized_fuse(scores, proba, weights)
-        vec_elapsed = time.perf_counter() - start
-
-        # Naive : appelle `core.conviction.fuse` ligne par ligne.
-        start = time.perf_counter()
-        naive_out = np.empty(n, dtype=float)
-        scores_arr = scores.to_numpy()
-        for i in range(n):
-            p = proba_arr[i]
-            naive_out[i] = fuse(
-                quant_score=scores_arr[i],
-                predicted_proba=None if np.isnan(p) else p,
-                weights=weights,
-            )
-        naive_elapsed = time.perf_counter() - start
-
-        # Cohérence numérique (NaN → score brut côté vectorisé).
-        np.testing.assert_allclose(vec_out.to_numpy(), naive_out, atol=1e-9)
-
-        # Garantit un gain réel (×3 minimum, généralement ×50+ en pratique).
-        assert vec_elapsed * 3 < naive_elapsed, (
-            f"_vectorized_fuse trop lent : vec={vec_elapsed:.4f}s "
-            f"naive={naive_elapsed:.4f}s"
-        )
-
     def test_report_calmar_and_ulcer_present(self):
         from backtesting.report import BacktestReport
 

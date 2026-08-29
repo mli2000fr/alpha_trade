@@ -78,7 +78,7 @@ class TestDataConfig:
     def test_defaults(self):
         cfg = DataConfig()
         assert cfg.sequence_length == 60
-        assert cfg.forecast_horizon == 5
+        assert cfg.forecast_horizon == 10
         assert cfg.training_start_date == date(2020, 1, 1)
 
     def test_invalid_sequence_length(self):
@@ -97,7 +97,7 @@ class TestDataConfig:
 class TestModelConfig:
     def test_defaults(self):
         cfg = ModelConfig()
-        assert cfg.hidden_size == 128
+        assert cfg.hidden_size == 256
 
     def test_invalid_hidden_size(self):
         with pytest.raises(ValueError):

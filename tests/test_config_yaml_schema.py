@@ -30,6 +30,8 @@ ALLOWED_EODHD_KEYS = {
 
 ALLOWED_MARKET_DATA_KEYS = {
     "bars_provider",
+    "quotes_provider_live",
+    "quotes_provider_live_second",
 }
 
 ALLOWED_RISK_MANAGEMENT_EMPIRICAL_CALIBRATION_KEYS = {

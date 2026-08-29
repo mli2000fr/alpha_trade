@@ -24,8 +24,8 @@ def test_run_training_batch_loads_tradable_universe_symbols(monkeypatch, tmp_pat
 
     monkeypatch.setattr(
         orchestrator,
-        "load_symbols_for_source",
-        lambda engine, symbol_source, *, trade_date: ["AAPL", "MSFT"],
+        "load_tradable_universe_for_period",
+        lambda engine, start_date, end_date: ["AAPL", "MSFT"],
     )
     monkeypatch.setattr(
         orchestrator,
@@ -100,7 +100,7 @@ def test_run_training_batch_requires_pit_date_without_explicit_symbols(tmp_path)
 
     import pytest
 
-    with pytest.raises(ValueError, match="universe_date est obligatoire"):
+    with pytest.raises(ValueError, match="training_start_date et training_end_date ou universe_date"):
         orchestrator.run_training_batch(cfg, engine=object(), symbols=None)
 
 
@@ -130,6 +130,7 @@ def test_train_worker_loads_universe_when_cross_sectional_enabled(monkeypatch) -
         selector_df=None,
         cross_sectional_df=None,
         batch_id=None,
+        **kwargs,
     ):
         captured["symbol"] = symbol
         captured["cross_sectional_df"] = cross_sectional_df
@@ -178,6 +179,7 @@ def test_train_worker_loads_selector_context_when_enabled(monkeypatch) -> None:
         selector_df=None,
         cross_sectional_df=None,
         batch_id=None,
+        **kwargs,
     ):
         captured["symbol"] = symbol
         captured["selector_df"] = selector_df
@@ -379,7 +381,7 @@ def test_inject_global_model_persists_model_governance(monkeypatch, tmp_path) ->
     assert len(governance_calls) == 1
     governance_call = governance_calls[0]
     assert governance_call["run_id"] == "run-AAPL"
-    assert governance_call["selected_model"] == "global_model"
+    assert governance_call["selected_model"] == "lstm_attention"
     assert any(row["model_name"] == "global_model" for row in governance_call["ranking"])
 
 
@@ -450,8 +452,8 @@ def test_inject_global_model_tolerates_governance_write_failure(monkeypatch, tmp
     with open(symbol_dir / "metrics.json", encoding="utf-8") as fh:
         metrics = json.load(fh)
 
-    assert config_data["artifact_routes"]["selected_model"] == "global_model"
-    assert metrics["champion"]["model_name"] == "global_model"
+    assert config_data["artifact_routes"]["selected_model"] == "lstm_attention"
+    assert metrics["champion"]["model_name"] == "lstm_attention"
 
 
 def test_filter_symbols_by_mode_rebuild_missing_keeps_only_absent_artifacts(monkeypatch, tmp_path) -> None:
