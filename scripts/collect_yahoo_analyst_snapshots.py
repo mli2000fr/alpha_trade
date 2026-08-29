@@ -24,8 +24,18 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from datetime import datetime
+from pathlib import Path
+
+# Bootstrap : rend la racine du dépôt importable même quand le script est
+# lancé PAR CHEMIN (`python scripts/collect_yahoo_analyst_snapshots.py`) —
+# sinon sys.path[0] = scripts/ et les packages racine (`analyst_research`,
+# `common`, `database`) ne sont pas résolus.
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 from analyst_research.available_at import snapshot_date_of
 from analyst_research.collector import run_collection
