@@ -4,10 +4,13 @@
 
 - [Architecture IHM et services](operations/ihm_reference.md)
 - [Supervision, notifications et sécurité](operations/supervision_et_securite.md)
+- [Reporting, lineage et vérification formelle](operations/reporting_lineage_formal.md)
 
 ## Structure
 
 `ihm/app.py` est le point d'entrée Streamlit. `ihm/pages/` contient les pages métier ; `ihm/components/` les composants de rendu ; `ihm/services/` les requêtes, commandes et états ; `ihm/theme/` la présentation.
+
+La couche thème sépare palette, badges, icônes et `typography.py`. Elle ne porte aucune décision métier.
 
 ## Pages principales
 

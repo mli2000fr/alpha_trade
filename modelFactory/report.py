@@ -720,6 +720,749 @@ def _append_backtest_results(
         pass
 
 
+# ---------------------------------------------------------------------------
+# 🔥 Oracle Extreme — Qualité du modèle (OOS)
+# Miroir de la section « Oracle Extreme » de la page IHM Diagnostic ML
+# (ihm/pages/ml_diagnostics.py). Helpers dupliqués (purs, sans streamlit) pour
+# éviter une dépendance circulaire, comme les requêtes en tête de fichier.
+# ---------------------------------------------------------------------------
+
+
+def _oracle_split_table(picks: pd.DataFrame) -> dict | None:
+    """Table D1-D10 pour une sélection de picks (colonnes ``_dec`` + ``future_return``).
+
+    D1 = bottom 10% (MAUVAIS long), D10 = top 10% (BON long).
+    """
+    if picks is None or picks.empty:
+        return None
+    vc = picks["_dec"].value_counts().reindex(range(1, 11), fill_value=0)
+    n = len(picks)
+    g = picks.groupby("_dec")["future_return"].mean()
+    table = pd.DataFrame({
+        "Décile réalisé": [f"D{d}" for d in range(1, 11)],
+        "% des picks": [100.0 * int(vc[d]) / n for d in range(1, 11)],
+        "Retour moyen si LONG": [f"{float(g[d])*100:+.2f}%" if d in g.index else "—" for d in range(1, 11)],
+    })
+    return {
+        "table": table,
+        "d1_pct": 100.0 * int(vc[1]) / n,
+        "d10_pct": 100.0 * int(vc[10]) / n,
+        "d1_ret": float(g[1]) if 1 in g.index else 0.0,
+        "d10_ret": float(g[10]) if 10 in g.index else 0.0,
+        "mean_ret": float(picks["future_return"].mean()) if "future_return" in picks.columns else 0.0,
+        "n": n,
+    }
+
+
+def _oracle_direction_split(df: pd.DataFrame) -> dict | None:
+    """Répartition des picks top 10% proba par décile de rendement réalisé.
+
+    D1 = bottom 10% (MAUVAIS long), D10 = top 10% (BON long). Le déséquilibre
+    D1/D10 mesure l'ampleur de la pénalité directionnelle (anti-D1) potentielle
+    pour un usage LONG du gate Extreme (proba_extreme est agnostique à la direction).
+    """
+    if "future_return" not in df.columns:
+        return None
+    sub = df.dropna(subset=["date", "symbol", "proba_extreme", "future_return"]).copy()
+    if sub.empty:
+        return None
+    sub["_dec"] = (
+        np.floor(sub.groupby("date")["future_return"].rank(pct=True).clip(upper=1 - 1e-9) * 10)
+        .clip(0, 9).astype(int) + 1
+    )
+    top_parts: list[pd.DataFrame] = []
+    for _, g in sub.groupby("date"):
+        k = max(1, int(round(len(g) * 0.10)))
+        top_parts.append(g.nlargest(k, "proba_extreme"))
+    if not top_parts:
+        return None
+    return _oracle_split_table(pd.concat(top_parts, ignore_index=True))
+
+
+def _oracle_omniscient_split(df: pd.DataFrame, top_pct: float = 0.10) -> dict | None:
+    """Répartition D1-D10 si on retirait PARFAITEMENT les mauvais tops (D1).
+
+    Sélection = top ``top_pct`` par ``proba_extreme`` par jour, PUIS on retire
+    les picks qui réaliseront D1 (rendement futur connu → LOOKAHEAD). C'est une
+    borne **THÉORIQUE** (non exécutable en live) : le maximum atteignable par
+    toute pénalité ou tout entraînement anti-D1. 100% basé sur le réel oracle
+    (``future_return``), aucun signal per-symbol.
+    """
+    if "future_return" not in df.columns:
+        return None
+    sub = df.dropna(subset=["date", "symbol", "proba_extreme", "future_return"]).copy()
+    if sub.empty:
+        return None
+    sub["date"] = pd.to_datetime(sub["date"], errors="coerce")
+    sub = sub.dropna(subset=["date"])
+    sub["_dec"] = (
+        np.floor(sub.groupby("date")["future_return"].rank(pct=True).clip(upper=1 - 1e-9) * 10)
+        .clip(0, 9).astype(int) + 1
+    )
+    out_parts: list[pd.DataFrame] = []
+    for _, g in sub.groupby("date"):
+        k = max(1, int(round(len(g) * top_pct)))
+        topk = g.nlargest(k, "proba_extreme")
+        kept = topk[topk["_dec"] != 1]  # omniscient : on écarte les D1
+        if kept.empty:
+            continue
+        out_parts.append(kept)
+    if not out_parts:
+        return None
+    return _oracle_split_table(pd.concat(out_parts, ignore_index=True))
+
+
+def _append_oracle_extreme_quality(
+    lines: list[str], engine: Engine, batch_id: str
+) -> None:
+    """Ajoute la section 🔥 Oracle Extreme — Qualité du modèle (OOS).
+
+    Miroir de la section « Oracle Extreme — Qualité du modèle (OOS) » de la page
+    IHM Diagnostic ML (``ihm/pages/ml_diagnostics.py``). Source unique : la table
+    ``oracle_extreme_predictions``. Ne rend rien si le batch n'a pas entraîné la
+    couche Oracle Extreme (O0) ou si aucune prédiction OOS n'existe.
+    """
+    # ── Le batch a-t-il entraîné la couche Oracle Extreme (O0) ? ──
+    _detail = _safe_query(engine, BATCH_DETAIL_QUERY, {"batch_id": batch_id})
+    if _detail.empty:
+        return
+    _meta_raw = _detail.iloc[0].get("metadata_json")
+    try:
+        _meta = json.loads(str(_meta_raw)) if _meta_raw and str(_meta_raw) not in ("None", "nan", "") else {}
+    except Exception:
+        _meta = {}
+    if not isinstance(_meta, dict):
+        return
+    if not (_meta.get("oracle") or _meta.get("oracle_extreme")):
+        _co = _meta.get("cli_options") or {}
+        if not (isinstance(_co, dict) and bool(_co.get("enable_oracle_model"))):
+            return
+
+    # ── Prédictions OOS depuis la table oracle_extreme_predictions ──
+    try:
+        from modelFactory.oracle.predictions_store import load_oracle_predictions
+        oos = load_oracle_predictions(engine, batch_id=batch_id)
+    except Exception:
+        oos = pd.DataFrame()
+    if oos is None or oos.empty:
+        return
+
+    need = {"date", "symbol", "proba_extreme"}
+    if not need.issubset(oos.columns):
+        return
+
+    df = oos.copy()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df["proba_extreme"] = pd.to_numeric(df["proba_extreme"], errors="coerce")
+    df = df.dropna(subset=["date", "symbol", "proba_extreme"])
+    if df.empty:
+        return
+
+    from modelFactory.oracle.train import (
+        decile_monotonicity,
+        precision_recall_at_top_pct,
+        roc_auc,
+    )
+
+    # ── Couverture ──
+    n_dates = int(df["date"].dt.normalize().nunique())
+    n_symbols = int(df["symbol"].nunique())
+    n_rows = len(df)
+    dmin, dmax = df["date"].min(), df["date"].max()
+
+    # ── Cible binaire (extrême réalisé) si présente ──
+    target_col = next((c for c in ("oracle_extreme10", "target", "y") if c in df.columns), None)
+    has_target = target_col is not None and df[target_col].notna().any()
+
+    auc: float | None = None
+    pr: dict[str, float | None] = {"precision": None, "recall": None, "n_dates": 0}
+    prevalence: float | None = None
+    if has_target:
+        y = df[target_col].astype(float)
+        auc = roc_auc(y.to_numpy(), df["proba_extreme"].to_numpy())
+        pr = precision_recall_at_top_pct(df, "proba_extreme", pct=0.10, target_col=target_col)
+        yv = y.dropna()
+        prevalence = float(yv.mean()) if len(yv) else None
+    lift = (pr["precision"] / prevalence) if (pr["precision"] is not None and prevalence) else None
+
+    # ── IC (Spearman) proba_extreme vs future_return, moyen par jour ──
+    ic: float | None = None
+    if "future_return" in df.columns:
+        ics: list[float] = []
+        for _, g in df.groupby(df["date"].dt.normalize()):
+            g = g.dropna(subset=["proba_extreme", "future_return"])
+            if len(g) < 10:
+                continue
+            try:
+                c = g["proba_extreme"].corr(g["future_return"], method="spearman")
+                if pd.notna(c):
+                    ics.append(float(c))
+            except Exception:
+                continue
+        if ics:
+            ic = float(np.mean(ics))
+
+    # ── Calibration : déciles globaux de proba_extreme → taux réalisé ──
+    cal = pd.DataFrame()
+    if has_target:
+        sub = df.dropna(subset=["proba_extreme", target_col]).copy()
+        if not sub.empty and sub[target_col].nunique() > 1:
+            sub["_q"] = pd.qcut(sub["proba_extreme"].rank(method="first"), 10, labels=False) + 1
+            g = sub.groupby("_q").agg(
+                mean_proba=("proba_extreme", "mean"),
+                actual_rate=(target_col, "mean"),
+                n=("proba_extreme", "size"),
+            )
+            # NB : reset_index() après `g.index = [...]` nommerait la colonne
+            # 'index' (le nom '_q' est perdu) → on construit cal directement.
+            cal = pd.DataFrame({
+                "Décile": [f"D{i}" for i in g.index],
+                "P(extrême) prédite": g["mean_proba"].to_numpy(dtype=float),
+                "Taux réalisé": g["actual_rate"].to_numpy(dtype=float),
+                "N": g["n"].to_numpy(dtype=int),
+            })
+
+    # ── Rendement du top décile vs overall (future_return) ──
+    top_ret: float | None = None
+    overall_ret: float | None = None
+    if "future_return" in df.columns:
+        fr = df.dropna(subset=["proba_extreme", "future_return"])
+        overall_ret = float(fr["future_return"].mean()) if not fr.empty else None
+        top_parts: list[pd.DataFrame] = []
+        for _, g in fr.groupby(df["date"].dt.normalize()):
+            k = max(1, int(round(len(g) * 0.10)))
+            top_parts.append(g.nlargest(k, "proba_extreme"))
+        if top_parts:
+            top_ret = float(pd.concat(top_parts, ignore_index=True)["future_return"].mean())
+
+    # ── Monotonicité décile (Spearman future_return) ──
+    mono, _mono_df = decile_monotonicity(df, "proba_extreme")
+
+    # ── Rendu markdown ──
+    lines.append("---")
+    lines.append("")
+    lines.append("## 🔥 Oracle Extreme — Qualité du modèle (OOS)")
+    lines.append("")
+    lines.append(
+        f"_Run : `{batch_id}` · OOS {dmin.date()} → {dmax.date()} · "
+        f"{n_dates} jours · {n_symbols} symboles · {n_rows:,} lignes_".replace(",", " ")
+    )
+    lines.append("")
+    lines.append("| Métrique | Valeur |")
+    lines.append("|:---|:---|")
+    lines.append(f"| 🎯 AUC (cible extrême) | `{auc:.3f}` |" if auc is not None else "| 🎯 AUC (cible extrême) | — |")
+    lines.append(f"| 📈 IC (proba vs rendement) | `{ic:+.3f}` |" if ic is not None else "| 📈 IC (proba vs rendement) | — |")
+    _prev_s = f"{prevalence*100:.1f}%" if prevalence is not None else "—"
+    _prec_s = f"{pr['precision']*100:.1f}%" if pr.get("precision") is not None else "—"
+    lines.append(f"| Precision@10% (prévalence) | {_prec_s} ({_prev_s}) |")
+    lines.append(f"| 🚀 Lift top 10% | `{lift:.2f}x` |" if lift is not None else "| 🚀 Lift top 10% | — |")
+    lines.append(f"| 📈 Retour top 10% (OOS) | `{top_ret*100:+.2f}%` |" if top_ret is not None else "| 📈 Retour top 10% (OOS) | — |")
+    lines.append(f"| 📉 Retour moyen (OOS) | `{overall_ret*100:+.2f}%` |" if overall_ret is not None else "| 📉 Retour moyen (OOS) | — |")
+    lines.append("")
+
+    if not cal.empty:
+        lines.append("**Calibration — déciles de `proba_extreme` → taux d'extrême réalisé**")
+        lines.append("")
+        lines.append("| Décile | P(extrême) prédite | Taux réalisé | N |")
+        lines.append("|:---|:---|:---|:---|")
+        for _, _r in cal.iterrows():
+            lines.append(
+                f"| {_r['Décile']} | {float(_r['P(extrême) prédite']):.3f} | "
+                f"{float(_r['Taux réalisé']):.1%} | {int(_r['N']):,} |".replace(",", " ")
+            )
+        lines.append("")
+
+    if mono is not None:
+        lines.append(f"**Monotonicité décile (rendement futur)** : Spearman = `{mono:+.3f}`")
+        lines.append("")
+
+    _dir_split = _oracle_direction_split(df)
+    if _dir_split is not None:
+        lines.append("**🧭 Répartition directionnelle des picks top 10% de `proba_extreme`**")
+        lines.append("")
+        lines.append(_df_to_md(_dir_split["table"]))
+        lines.append("")
+        lines.append(
+            f"_Top 10% du modèle : **{_dir_split['d1_pct']:.1f}%** en **D1** "
+            f"(bottom 10% réalisé, MAUVAIS long, retour moyen **{_dir_split['d1_ret']*100:+.1f}%**) vs "
+            f"**{_dir_split['d10_pct']:.1f}%** en **D10** (bon long, **{_dir_split['d10_ret']*100:+.1f}%**). "
+            f"`proba_extreme` est agnostique à la direction → le déséquilibre D1/D10 quantifie la "
+            f"pénalité directionnelle (anti-D1) à appliquer pour un gate LONG._"
+        )
+        lines.append("")
+
+    # ── Plafond omniscient (anti-D1) : brut vs idéal (filtre D1 parfait) ──
+    _ceil = _oracle_omniscient_split(df)
+    if _ceil is not None and _dir_split is not None:
+        lines.append("**🎯 Plafond omniscient — filtre D1 parfait (brut vs idéal)**")
+        lines.append("")
+        lines.append("| Métrique | Brut (top 10% proba_extreme) | Plafond (sans D1) |")
+        lines.append("|:---|:---|:---|")
+        lines.append(f"| % en D1 (mauvais long) | {_dir_split['d1_pct']:.1f}% | {_ceil['d1_pct']:.1f}% |")
+        lines.append(f"| % en D10 (bon long) | {_dir_split['d10_pct']:.1f}% | {_ceil['d10_pct']:.1f}% |")
+        lines.append(f"| Retour moyen des picks | {_dir_split.get('mean_ret', 0)*100:+.2f}% | {_ceil.get('mean_ret', 0)*100:+.2f}% |")
+        lines.append(f"| N picks | {int(_dir_split.get('n', 0)):,} | {int(_ceil.get('n', 0)):,} |".replace(",", " "))
+        lines.append("")
+        _gain = (_ceil.get("mean_ret", 0) - _dir_split.get("mean_ret", 0)) * 100
+        lines.append(
+            f"_Plafond omniscient = top 10% par `proba_extreme` en retirant les picks qui "
+            f"RÉALISERONT D1 (rendement futur connu) → borne **THÉORIQUE** (lookahead, "
+            f"non exécutable en live). 100% basé sur le réel oracle (`future_return`), "
+            f"aucun signal per-symbol. Gain de retour moyen = **{_gain:+.2f} pt** : c'est "
+            f"le maximum atteignable par tout entraînement/filtre anti-D1._"
+        )
+        lines.append("")
+
+    if not has_target:
+        lines.append("_ℹ️ Colonne cible (`oracle_extreme10`) absente — AUC/precision/calibration non calculées._")
+        lines.append("")
+
+
+# ---------------------------------------------------------------------------
+# 🔀 Répartition Oracle — TOP / BOTTOM 10% du modèle dans le vrai Oracle
+# Miroir de la page IHM Diagnostic ML (``_render_oracle_distribution``).
+# ---------------------------------------------------------------------------
+
+ORACLE_LABELS_DECILE_QUERY = """
+    SELECT
+        prediction_date,
+        symbol,
+        oracle_decile
+    FROM alpha_trade.global_oracle_labels
+    WHERE batch_id = :batch_id
+      AND horizon = :horizon
+      AND oracle_decile IS NOT NULL
+    ORDER BY prediction_date, symbol
+"""
+
+
+def _global_rank_all_query_report(horizon: int) -> str:
+    """Rangs globaux du batch (colonne du meilleur horizon), miroir page IHM."""
+    _h = int(horizon)
+    return (
+        "SELECT `date`, symbol, global_rank_%d AS global_rank_best "
+        "FROM alpha_trade.global_rank_history "
+        "WHERE batch_id = :batch_id AND global_rank_%d IS NOT NULL "
+        "ORDER BY `date`, symbol" % (_h, _h)
+    )
+
+
+def _report_best_horizon(detail_df: pd.DataFrame) -> int:
+    """Meilleur horizon du Global Ranking pour ce batch (metadata, défaut H20)."""
+    if detail_df.empty:
+        return 20
+    raw = detail_df.iloc[0].get("metadata_json")
+    if raw is None or str(raw) in ("None", "nan", ""):
+        return 20
+    try:
+        data = json.loads(str(raw))
+        gr = data.get("global_ranking") if isinstance(data, dict) else None
+        h = gr.get("best_horizon") if isinstance(gr, dict) else None
+        h = int(h) if h else 20
+        return h if h in (3, 5, 10, 15, 20) else 20
+    except Exception:
+        return 20
+
+
+def _oracle_distribution_md(sel: pd.DataFrame, title: str) -> list[str]:
+    """Tableau markdown D1..D10 + Total pour une sélection (colonne ``oracle_decile``)."""
+    out: list[str] = []
+    if sel.empty:
+        out.append(f"**{title}** — aucune ligne sélectionnée.")
+        return out
+    counts = sel["oracle_decile"].value_counts().reindex(range(1, 11), fill_value=0)
+    total = int(len(sel))
+    out.append(f"**{title}** — {total:,} lignes".replace(",", " "))
+    out.append("")
+    out.append("| Décile Oracle | Nb titres | % |")
+    out.append("|:---|:---|:---|")
+    for d in range(1, 11):
+        _n = int(counts[d])
+        out.append(f"| D{d} | {_n:,} | {100.0 * _n / total:.1f}% |".replace(",", " "))
+    out.append(f"| **Total** | **{total:,}** | **100.0%** |".replace(",", " "))
+    return out
+
+
+def _append_one_oracle_distribution(
+    lines: list[str],
+    engine: Engine,
+    batch_id: str,
+    model_df: pd.DataFrame,
+    *,
+    horizon: int,
+    label: str,
+) -> None:
+    """Croise TOP/BOTTOM 10% d'un modèle avec les déciles du vrai Oracle (H{horizon}).
+
+    ``model_df`` doit avoir les colonnes ``date``, ``symbol``, ``score``.
+    """
+    labels_df = _safe_query(
+        engine, ORACLE_LABELS_DECILE_QUERY,
+        {"batch_id": batch_id, "horizon": int(horizon)},
+    )
+    if labels_df.empty:
+        lines.append(
+            f"_ℹ️ Vrai Oracle non calculé (H{horizon}) pour ce batch — répartition indisponible._"
+        )
+        lines.append("")
+        return
+
+    labels = labels_df.copy()
+    labels["date"] = pd.to_datetime(labels["prediction_date"], errors="coerce")
+    labels["symbol"] = labels["symbol"].astype(str).str.strip()
+    labels["oracle_decile"] = pd.to_numeric(labels["oracle_decile"], errors="coerce")
+
+    m = model_df.copy()
+    m["date"] = pd.to_datetime(m["date"], errors="coerce")
+    m["symbol"] = m["symbol"].astype(str).str.strip()
+    m["score"] = pd.to_numeric(m["score"], errors="coerce")
+    merged = m.merge(labels[["date", "symbol", "oracle_decile"]], on=["date", "symbol"], how="inner")
+    merged = merged.dropna(subset=["oracle_decile", "score"])
+    merged["oracle_decile"] = merged["oracle_decile"].astype(int)
+
+    if merged.empty:
+        lines.append(
+            f"_ℹ️ Aucune intersection entre les prédictions {label} et les labels Oracle (H{horizon})._"
+        )
+        lines.append("")
+        return
+
+    def _split_top_bottom(df: pd.DataFrame, pct: float = 0.10) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Sélection symétrique : k = pct% des lignes par date, top et bottom."""
+        top_parts: list[pd.DataFrame] = []
+        bottom_parts: list[pd.DataFrame] = []
+        for _, g in df.groupby("date", sort=False):
+            k = max(1, int(round(len(g) * pct)))
+            top_parts.append(g.nlargest(k, "score"))
+            bottom_parts.append(g.nsmallest(k, "score"))
+        if not top_parts:
+            return pd.DataFrame(), pd.DataFrame()
+        return pd.concat(top_parts, ignore_index=True), pd.concat(bottom_parts, ignore_index=True)
+
+    top_sel, bottom_sel = _split_top_bottom(merged)
+
+    lines.append(
+        f"_Croisé avec le vrai Oracle (`global_oracle_labels`, H{horizon}) : "
+        f"**D1** = pire 10% réalisé … **D10** = meilleur 10% réalisé._"
+    )
+    lines.append("")
+    lines.extend(_oracle_distribution_md(top_sel, "🟢 TOP 10% du modèle → déciles Oracle"))
+    lines.append("")
+    lines.extend(_oracle_distribution_md(bottom_sel, "🔴 BOTTOM 10% du modèle → déciles Oracle"))
+    lines.append("")
+
+
+def _append_oracle_distribution(
+    lines: list[str], engine: Engine, batch_id: str
+) -> None:
+    """Ajoute la section 🔀 Répartition Oracle — TOP / BOTTOM 10% du modèle.
+
+    Miroir de la page IHM Diagnostic ML (``_render_oracle_distribution``) : pour
+    chaque modèle disponible du batch (Global Ranking puis Oracle Extreme), on
+    croise ses TOP/BOTTOM 10% avec les déciles du vrai Oracle
+    (``global_oracle_labels``) et on rend la répartition D1..D10. Dans le rapport
+    (statique), on affiche les deux modèles au lieu de boutons interactifs.
+    """
+    _detail = _safe_query(engine, BATCH_DETAIL_QUERY, {"batch_id": batch_id})
+    if _detail.empty:
+        return
+    best_h = _report_best_horizon(_detail)
+
+    # ── Modèles disponibles ──
+    global_df = _safe_query(
+        engine, _global_rank_all_query_report(best_h), {"batch_id": batch_id}
+    )
+    has_global = not global_df.empty
+
+    _meta_raw = _detail.iloc[0].get("metadata_json")
+    try:
+        _meta = json.loads(str(_meta_raw)) if _meta_raw and str(_meta_raw) not in ("None", "nan", "") else {}
+    except Exception:
+        _meta = {}
+    has_oracle = False
+    if isinstance(_meta, dict) and (_meta.get("oracle") or _meta.get("oracle_extreme")):
+        has_oracle = True
+    elif isinstance(_meta, dict):
+        _co = _meta.get("cli_options") or {}
+        has_oracle = isinstance(_co, dict) and bool(_co.get("enable_oracle_model"))
+    oracle_oos = pd.DataFrame()
+    if has_oracle:
+        try:
+            from modelFactory.oracle.predictions_store import load_oracle_predictions
+            oracle_oos = load_oracle_predictions(engine, batch_id=batch_id)
+        except Exception:
+            oracle_oos = pd.DataFrame()
+        has_oracle = oracle_oos is not None and not oracle_oos.empty
+
+    if not has_global and not has_oracle:
+        return
+
+    lines.append("---")
+    lines.append("")
+    lines.append("## 🔀 Répartition Oracle — TOP / BOTTOM 10% du modèle")
+    lines.append("")
+    lines.append(f"_Horizons du vrai Oracle — 🌐 Modèle global : H{best_h} · 🔥 Oracle Extreme : H20_")
+    lines.append("")
+
+    # ── Modèle global ──
+    if has_global:
+        lines.append("### 🌐 Modèle global")
+        lines.append("")
+        _g = global_df[["date", "symbol", "global_rank_best"]].copy()
+        _g["score"] = _g["global_rank_best"]
+        _append_one_oracle_distribution(
+            lines, engine, batch_id, _g, horizon=best_h, label="Modèle global"
+        )
+        lines.append("")
+
+    # ── Modèle Oracle Extreme ──
+    if has_oracle:
+        lines.append("### 🔥 Modèle Oracle Extreme")
+        lines.append("")
+        date_col = next(
+            (c for c in ("prediction_date", "date", "entry_date", "asof_date") if c in oracle_oos.columns),
+            None,
+        )
+        if date_col is not None and "symbol" in oracle_oos.columns and "proba_extreme" in oracle_oos.columns:
+            _o = oracle_oos[[date_col, "symbol", "proba_extreme"]].copy()
+            _o["date"] = pd.to_datetime(_o[date_col], errors="coerce")
+            _o["score"] = pd.to_numeric(_o["proba_extreme"], errors="coerce")
+            _o = _o.dropna(subset=["date", "symbol", "score"])
+            _append_one_oracle_distribution(
+                lines, engine, batch_id, _o, horizon=20, label="Modèle Oracle Extreme"
+            )
+        lines.append("")
+
+
+# ---------------------------------------------------------------------------
+# 📅 Périodes de prédictions du batch
+# Miroir de la page IHM Diagnostic ML (``_render_prediction_periods``).
+# ---------------------------------------------------------------------------
+
+GLOBAL_RANK_COVERAGE_QUERY = """
+    SELECT MIN(date) AS min_date, MAX(date) AS max_date,
+           COUNT(DISTINCT date) AS nb_dates, COUNT(DISTINCT symbol) AS nb_symbols
+    FROM alpha_trade.global_rank_history
+    WHERE batch_id = :batch_id
+"""
+
+PRED_RUNS_FOR_BATCH_QUERY = """
+    SELECT
+        mp.run_id AS run_id,
+        r.symbol AS run_symbol,
+        COUNT(mp.prediction_date) AS n_rows,
+        COUNT(DISTINCT mp.symbol) AS nb_symbols,
+        MIN(mp.prediction_date) AS min_date,
+        MAX(mp.prediction_date) AS max_date,
+        COUNT(DISTINCT mp.prediction_date) AS nb_dates
+    FROM alpha_trade.model_predictions AS mp
+    JOIN alpha_trade.model_training_run AS r
+        ON r.run_id = mp.run_id
+    WHERE r.batch_id = :batch_id
+      AND r.status = 'completed'
+    GROUP BY mp.run_id, r.symbol
+    ORDER BY mp.run_id
+"""
+
+ORACLE_TABLE_PERIODS_QUERY = """
+    SELECT MIN(prediction_date) AS min_date,
+           MAX(prediction_date) AS max_date,
+           COUNT(DISTINCT prediction_date) AS nb_dates,
+           COUNT(DISTINCT symbol) AS nb_symbols
+    FROM alpha_trade.oracle_extreme_predictions
+    WHERE batch_id = :batch_id
+"""
+
+_GICS_SECTORS = {
+    "Communication Services", "Consumer Discretionary", "Consumer Staples",
+    "Energy", "Financials", "Health Care", "Industrials",
+    "Information Technology", "Materials", "Real Estate", "Utilities",
+}
+
+
+def _report_trains_oracle(detail_df: pd.DataFrame) -> bool:
+    """Détecte si le batch a entraîné la couche Oracle Extreme (O0)."""
+    if detail_df.empty:
+        return False
+    raw = detail_df.iloc[0].get("metadata_json")
+    try:
+        _meta = json.loads(str(raw)) if raw and str(raw) not in ("None", "nan", "") else {}
+    except Exception:
+        _meta = {}
+    if not isinstance(_meta, dict):
+        return False
+    if _meta.get("oracle") or _meta.get("oracle_extreme"):
+        return True
+    _co = _meta.get("cli_options") or {}
+    return isinstance(_co, dict) and bool(_co.get("enable_oracle_model"))
+
+
+def _oracle_periods_report(engine: Engine, batch_id: str) -> list[dict]:
+    """Périodes des prédictions Oracle Extreme du batch — TABLE uniquement."""
+    out: list[dict] = []
+    try:
+        _tbl = _safe_query(engine, ORACLE_TABLE_PERIODS_QUERY, {"batch_id": batch_id})
+        if not _tbl.empty:
+            _r = _tbl.iloc[0]
+            _mn = pd.Timestamp(_r["min_date"])
+            _mx = pd.Timestamp(_r["max_date"])
+            out.append({"Type": "🔥 Oracle extreme",
+                        "Période": f"{_mn.date()} → {_mx.date()}",
+                        "Jours": int(_r["nb_dates"] or 0),
+                        "Symboles": int(_r["nb_symbols"] or 0),
+                        "Détail": "table oracle_extreme_predictions"})
+    except Exception:
+        pass
+    return out
+
+
+def _append_prediction_periods(
+    lines: list[str], engine: Engine, batch_id: str
+) -> None:
+    """Ajoute la section 📅 Périodes de prédictions du batch.
+
+    Miroir de la page IHM Diagnostic ML (``_render_prediction_periods``) : résume
+    les périodes où le batch a des prédictions par type de modèle
+    (global / per-symbol / per-sector / oracle extreme), avec détail par
+    secteur et par run Oracle si disponible.
+    """
+
+    def _fmt(d) -> str:
+        if d is None:
+            return "—"
+        try:
+            return str(pd.Timestamp(d).date())
+        except Exception:
+            return str(d)
+
+    summary: list[dict] = []
+    sector_rows: list[dict] = []
+    oracle_rows: list[dict] = []
+
+    # ── 1. Modèle global (Global Ranking) ──
+    gr = _safe_query(engine, GLOBAL_RANK_COVERAGE_QUERY, {"batch_id": batch_id})
+    if not gr.empty and gr.iloc[0].get("min_date") is not None:
+        g = gr.iloc[0]
+        summary.append({
+            "Type": "🌐 Modèle global (Global Ranking)",
+            "Période": f"{_fmt(g['min_date'])} → {_fmt(g['max_date'])}",
+            "Jours": int(g["nb_dates"] or 0),
+            "Symboles": int(g["nb_symbols"] or 0),
+            "Détail": "global_rank_history (rangs H3→H20)",
+        })
+
+    # ── 2. model_predictions par run (synth / per-symbol / per-sector) ──
+    runs = _safe_query(engine, PRED_RUNS_FOR_BATCH_QUERY, {"batch_id": batch_id})
+    synth = None
+    sym_min = None
+    sym_max = None
+    sym_days = 0
+    sym_syms = 0
+    sym_n = 0
+    if not runs.empty:
+        for _, r in runs.iterrows():
+            rsym = str(r["run_symbol"] or "").strip()
+            rid = str(r["run_id"] or "")
+            dmin = pd.Timestamp(r["min_date"]) if r["min_date"] is not None else None
+            dmax = pd.Timestamp(r["max_date"]) if r["max_date"] is not None else None
+            jours = int(r["nb_dates"] or 0)
+            syms = int(r["nb_symbols"] or 0)
+            if rsym == "__GLOBAL_RANK_SYNTH__" or rid.endswith("_globalrank_synth"):
+                synth = {"Période": f"{_fmt(dmin)} → {_fmt(dmax)}", "Jours": jours, "Symboles": syms}
+            elif rsym in _GICS_SECTORS:
+                sector_rows.append({"Secteur": rsym, "Période": f"{_fmt(dmin)} → {_fmt(dmax)}",
+                                    "Jours": jours, "Symboles": syms})
+            else:
+                sym_n += 1
+                if dmin is not None and (sym_min is None or dmin < sym_min):
+                    sym_min = dmin
+                if dmax is not None and (sym_max is None or dmax > sym_max):
+                    sym_max = dmax
+                sym_days = max(sym_days, jours)
+                sym_syms += syms
+
+    if synth is not None:
+        _g = next((s for s in summary if s["Type"].startswith("🌐")), None)
+        if _g is not None:
+            _g["Détail"] = _g["Détail"] + f" + cascade synth ({synth['Jours']}j)"
+        else:
+            summary.append({"Type": "🌐 Modèle global (cascade)", "Période": synth["Période"],
+                            "Jours": synth["Jours"], "Symboles": synth["Symboles"],
+                            "Détail": f"run {batch_id}_globalrank_synth"})
+
+    if sym_n > 0:
+        summary.append({"Type": "📈 Per-symbol",
+                        "Période": f"{_fmt(sym_min)} → {_fmt(sym_max)}",
+                        "Jours": sym_days, "Symboles": sym_syms,
+                        "Détail": f"{sym_n} modèles par ticker"})
+    else:
+        summary.append({"Type": "📈 Per-symbol", "Période": "—", "Jours": "", "Symboles": "",
+                        "Détail": "non entraîné dans ce batch"})
+
+    if sector_rows:
+        s_min = min(pd.Timestamp(r["Période"].split(" → ")[0]) for r in sector_rows)
+        s_max = max(pd.Timestamp(r["Période"].split(" → ")[1]) for r in sector_rows)
+        summary.append({"Type": "🗂️ Per-sector",
+                        "Période": f"{s_min.date()} → {s_max.date()}",
+                        "Jours": max(r["Jours"] for r in sector_rows),
+                        "Symboles": sum(r["Symboles"] for r in sector_rows),
+                        "Détail": f"{len(sector_rows)} secteurs (voir détail)"})
+    else:
+        summary.append({"Type": "🗂️ Per-sector", "Période": "—", "Jours": "", "Symboles": "",
+                        "Détail": "non entraîné dans ce batch"})
+
+    # ── 3. Oracle extreme ──
+    _detail = _safe_query(engine, BATCH_DETAIL_QUERY, {"batch_id": batch_id})
+    oracle_trained = _report_trains_oracle(_detail)
+    if oracle_trained:
+        oracle_rows = _oracle_periods_report(engine, batch_id)
+    if oracle_rows:
+        _valid = [o for o in oracle_rows if "→" in o["Période"] and not o["Période"].startswith(("—", "?"))]
+        if _valid:
+            _latest = _valid[-1]
+            _last_run = str(_latest.get("Détail", "")).split("/")[-1]
+            summary.append({"Type": "🔥 Oracle extreme",
+                            "Période": _latest["Période"],
+                            "Jours": _latest.get("Jours", ""),
+                            "Symboles": _latest.get("Symboles", ""),
+                            "Détail": f"{len(oracle_rows)} run(s) — dernier : {_last_run}"})
+        else:
+            summary.append({"Type": "🔥 Oracle extreme", "Période": "—", "Jours": "", "Symboles": "",
+                            "Détail": "artefacts sans période exploitable"})
+    else:
+        summary.append({"Type": "🔥 Oracle extreme", "Période": "—", "Jours": "", "Symboles": "",
+                        "Détail": "non entraîné dans ce batch" if not oracle_trained else "aucun artefact"})
+
+    # ── Rendu markdown ──
+    lines.append("---")
+    lines.append("")
+    lines.append("## 📅 Périodes de prédictions du batch")
+    lines.append("")
+    lines.append("| Type | Période | Jours | Symboles | Détail |")
+    lines.append("|:---|:---|:---|:---|:---|")
+    for row in summary:
+        lines.append(
+            f"| {row['Type']} | {row['Période']} | {row['Jours']} | {row['Symboles']} | {row['Détail']} |"
+        )
+    lines.append("")
+    if sector_rows:
+        lines.append("### 🗂️ Détail par secteur")
+        lines.append("")
+        lines.append("| Secteur | Période | Jours | Symboles |")
+        lines.append("|:---|:---|:---|:---|")
+        for r in sector_rows:
+            lines.append(f"| {r['Secteur']} | {r['Période']} | {r['Jours']} | {r['Symboles']} |")
+        lines.append("")
+    if oracle_rows:
+        lines.append("### 🔥 Détail Oracle extreme (runs)")
+        lines.append("")
+        lines.append("| Type | Période | Jours | Symboles | Détail |")
+        lines.append("|:---|:---|:---|:---|:---|")
+        for r in oracle_rows:
+            lines.append(f"| {r['Type']} | {r['Période']} | {r['Jours']} | {r['Symboles']} | {r['Détail']} |")
+        lines.append("")
+
+
 def _build_regime_table(engine: Engine, batch_id: str) -> pd.DataFrame:
     """Construit le tableau diagnostic par régime de marché pour un batch.
 
@@ -988,6 +1731,9 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
             lines.append("```")
     lines.append("")
 
+    # ── Périodes de prédictions du batch ──
+    _append_prediction_periods(lines, engine, batch_id)
+
     # ═══════════════════════════════════════════════════════════════
     # 🟢 GLOBAL MODEL — Ranking, Backtest, Champion
     # ═══════════════════════════════════════════════════════════════
@@ -999,6 +1745,12 @@ def generate_batch_report(engine: Engine, batch_id: str) -> str:
     # ── Backtest Stratégies Global Rank ──
     _batch_id = detail_df.iloc[0].get("batch_id") if not detail_df.empty else None
     _append_backtest_results(lines, str(_batch_id) if _batch_id is not None else None, str(_meta_raw) if _meta_raw is not None else None)
+
+    # ── Répartition Oracle — TOP / BOTTOM 10% du modèle ──
+    _append_oracle_distribution(lines, engine, batch_id)
+
+    # ── Oracle Extreme — Qualité du modèle (OOS) ──
+    _append_oracle_extreme_quality(lines, engine, batch_id)
 
     # ── Per-Symbol Cross-Sectional IC — retiré ──
 

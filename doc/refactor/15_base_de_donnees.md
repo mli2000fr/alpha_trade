@@ -44,6 +44,8 @@ Les imports utilisent upsert, clés naturelles et bookmarks. Les runs utilisent 
 
 `database/audit_chain.py` maintient une chaîne d'audit. `run_business_summaries.py` et repositories de summaries stockent les résultats structurés. Les contraintes de prix matérialisent la convention split-adjusted. Les transactions doivent entourer une publication atomique ou une application financière.
 
+`database/sanitizer_db_ops.py` concentre les lectures/écritures du sanitizer. `database/cleaning_audits.py` expose les audits de nettoyage. `database/repositories/run_summaries.py` fournit l'accès repository aux résumés structurés, distinct de la vue métier portée par `run_business_summaries.py`.
+
 ## Performance
 
 Charger par plages/chunks, utiliser les index date/symbol/run, éviter les requêtes par ligne et privilégier les repositories. `async_engine.py` et `async_loaders.py` sont optionnels ; leur usage ne change pas le contrat transactionnel.

@@ -39,6 +39,9 @@ Cette arborescence documente l'application telle qu'elle existe dans le code sou
 | Glossaire | [20](20_glossaire.md) | contrats transverses |
 | Catalogue du code | [21](21_catalogue_modules.md) | tous les packages Python |
 | Runbook opérateur | [22](22_runbook_exploitation.md) | pipeline, risque, exécution, reprise |
+| Recherche quantitative | [Recherche](research/README.md) | branches non automatiquement promues |
+| Inventaires API | [API](api/README.md) | classes et fonctions extraites du code courant |
+| Couverture du code | [Matrice](COVERAGE_CODE.md) | contrôle code → documentation |
 
 ## Règles de lecture importantes
 
@@ -47,3 +50,9 @@ Cette arborescence documente l'application telle qu'elle existe dans le code sou
 - **ML-first.** Le scope nominal vient de l'univers tradable complet ; le ML décide le côté et le rang. Les scores scanner/selector servent de features, diagnostics ou vetos, pas de fallback autonome.
 - **Train n'est pas quotidien.** Le pipeline quotidien consomme un champion déjà publié.
 - **La configuration effective est composée.** Les valeurs par défaut Python, `config.yaml`, options CLI et préférences IHM peuvent se superposer ; les priorités sont détaillées dans [18](18_reference_configuration.md).
+
+## Politique concernant les anciens documents d'expérience
+
+Les comptes rendus d'expériences historiques ne sont pas migrés intégralement dans ce référentiel. Ils restent disponibles dans l'ancien `doc/` comme archives de recherche. La refonte ne conserve que leurs enseignements durables sous forme de synthèses : question testée, protocole général, verdict, limites et statut actuel dans le code.
+
+Ne sont volontairement pas reproduits : tableaux détaillés par batch, listes de seeds, journaux d'itérations, prompts d'analyse, variantes abandonnées et métriques intermédiaires. Une expérience n'est décrite comme fonctionnalité que si le code actuel l'intègre effectivement et que la configuration permet de l'activer.

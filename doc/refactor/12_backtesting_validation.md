@@ -136,6 +136,8 @@ Pour analyser MFE/MAE et post-exit, reconstruire depuis les OHLC du chemin réel
 
 `generate_report` assemble métriques, diagnostics, risk overlay et microstructure. Les exports comprennent report JSON, equity CSV/HTML, trades et audit détaillé. Le schéma est validé par `report_schema.py`/Pydantic ; le mode strict refuse types/champs incompatibles.
 
+`report_schema_pydantic.py` porte la variante Pydantic lorsque la dépendance est disponible ; `report_schema.py` conserve le contrat léger. Les deux doivent rester cohérents sur champs obligatoires, types et sémantique.
+
 Analyses disponibles : benchmark, rendement mensuel, secteurs, tail/VaR-like, ulcer index, Calmar, Brinson-Fachler, scénarios d'attribution et IC. L'attribution doit utiliser des groupes mutuellement compréhensibles et somme réconciliée au total.
 
 ## Validation statistique

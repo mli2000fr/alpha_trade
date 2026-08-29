@@ -25,3 +25,6 @@ La refonte a inventorié l'ensemble de `doc/` (184 fichiers au démarrage) puis 
 
 La documentation décrit les contrats visibles dans le dépôt, pas l'état d'un broker, d'une base ou d'artefacts absents de l'espace de travail. Les valeurs expérimentales changent fréquemment : pour reproduire un run, conserver sa commande, sa configuration effective, son batch, ses fingerprints et son commit.
 
+### Traitement des documents expérimentaux historiques
+
+Les documents de type benchmark B0–B44, campagnes Oracle, diagnostics semestriels, recherches DIP, ablations, calibration et essais de paramètres ont été lus comme archives. Ils ne sont pas incorporés intégralement. Seuls les sujets encore représentés dans le code courant sont cités dans `research/`, sous forme de synthèse sans reprendre les résultats détaillés. Les verdicts historiques ne priment jamais sur le comportement du code et de la configuration actuels.
