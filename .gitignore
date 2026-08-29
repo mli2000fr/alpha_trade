@@ -5,6 +5,7 @@ artifacts/
 checkpoints/
 log/
 logs/
+tmp/
 scripts/
 catboost_info/
 ./*.ckpt
