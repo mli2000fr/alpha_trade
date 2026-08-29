@@ -72,15 +72,10 @@ class TestSlackNotifier:
 class TestCircuitBreakerSlackIntegration:
     """Tests d'intégration circuit breaker + Slack."""
 
-    @patch("requests.post")
     @patch("ihm.services.email_notifier.send_notification")
-    def test_circuit_breaker_sends_to_slack(self, mock_email, mock_slack_post):
-        """Vérifie que le circuit breaker envoie une alerte Slack."""
+    def test_circuit_breaker_sends_to_slack(self, mock_email):
+        """Vérifie la délégation au routeur multi-canaux courant."""
         from risk_management.circuit_breaker import _try_send_alert
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_slack_post.return_value = mock_response
 
         payload = {
             "trigger": "drawdown",
@@ -90,11 +85,14 @@ class TestCircuitBreakerSlackIntegration:
             "portfolio_current_value": 87500.0,
         }
 
-        _try_send_alert("circuit_breaker_fired", payload)
-
-        # Email notification devrait être appelé
-        mock_email.assert_called_once()
-        mock_slack_post.assert_called_once()
+        # L'import de send_system_alert est local à la fonction : le patch du
+        # symbole source est donc le contrat stable à vérifier.
+        with patch("service.alerting.send_system_alert") as routed_alert:
+            _try_send_alert("circuit_breaker_fired", payload)
+            mock_email.assert_called_once()
+            routed_alert.assert_called_once_with(
+                event="CIRCUIT_BREAKER_FIRED", payload=payload, severity="critical"
+            )
 
 
 class TestAlertingBroadcast:

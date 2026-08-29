@@ -368,11 +368,15 @@ class BackfillScoresHistoryService:
             return ()
 
         # Filtrer pour ne garder que les symboles ayant des barres daily
+        # NB : bindparam expanding=True obligatoire — sans lui, un tuple est
+        # bindé tel quel (`WHERE symbol IN ?`) → erreur SQL sur SQLite/MySQL.
         with self.engine.connect() as conn:
             existing = {
                 row[0]
                 for row in conn.execute(
-                    text("SELECT DISTINCT symbol FROM stock_bars_daily WHERE symbol IN :symbols"),
+                    text("SELECT DISTINCT symbol FROM stock_bars_daily WHERE symbol IN :symbols").bindparams(
+                        bindparam("symbols", expanding=True)
+                    ),
                     {"symbols": tuple(symbols)},
                 ).fetchall()
             }

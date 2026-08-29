@@ -4525,6 +4525,154 @@ def _render_report_summary(run_record: dict[str, object]) -> bool:
     return True
 
 
+# ---------------------------------------------------------------------------
+# 🎯 Répartition des trades du run dans le vrai Oracle (D1–D10), par long/short
+# ---------------------------------------------------------------------------
+
+_RUN_ORACLE_LABELS_QUERY = """
+    SELECT prediction_date, symbol, oracle_decile
+    FROM alpha_trade.global_oracle_labels
+    WHERE batch_id = :batch_id
+      AND horizon = :horizon
+      AND oracle_decile IS NOT NULL
+    ORDER BY prediction_date, symbol
+"""
+
+
+def _batch_oracle_horizon(batch_id: str) -> int:
+    """Meilleur horizon du batch (metadata ``global_ranking.best_horizon``), défaut H20."""
+    try:
+        df = safe_query(
+            "SELECT metadata_json FROM model_training_batch WHERE batch_id = :batch_id",
+            {"batch_id": batch_id},
+        )
+        if df.empty:
+            return 20
+        raw = df.iloc[0].get("metadata_json")
+        if raw is None or str(raw) in ("None", "nan", ""):
+            return 20
+        data = json.loads(str(raw))
+        gr = data.get("global_ranking") if isinstance(data, dict) else None
+        h = gr.get("best_horizon") if isinstance(gr, dict) else None
+        h = int(h) if h else 20
+        return h if h in (3, 5, 10, 15, 20) else 20
+    except Exception:
+        return 20
+
+
+def _render_run_oracle_deciles(run_record: dict[str, object]) -> None:
+    """Répartition des trades du run dans le vrai Oracle (D1–D10), par long/short.
+
+    Bloc pliable avec un bouton : au clic, charge les trades du run
+    (``trades.csv``), les croise avec le vrai Oracle (``global_oracle_labels``)
+    du batch ML utilisé par le run, puis affiche la répartition par décile
+    (D1 = pire 10% réalisé … D10 = meilleur 10% réalisé) pour les longs et
+    pour les shorts.
+    """
+    run_id = str(run_record.get("run_id", "") or "")
+    with st.expander("🎯 Répartition des trades dans le réel Oracle (D1–D10)", expanded=False):
+        if not st.button(
+            "📥 Charger la répartition par long / short",
+            key=f"bt_oracle_deciles_load_{run_id}",
+            help=(
+                "Charge les trades du run et les croise avec les déciles du vrai "
+                "Oracle du batch (D1 = pire 10% réalisé … D10 = meilleur 10% réalisé)."
+            ),
+        ):
+            return
+
+        trades_df = _load_run_trades_df(run_record)
+        if trades_df.empty:
+            st.info("Aucun `trades.csv` disponible pour ce run.")
+            return
+
+        batch_id = _extract_run_batch_id(run_record)
+        if not batch_id:
+            st.warning(
+                "Impossible de déterminer le batch ML de ce run "
+                "(aucun `--ml-batch-id` dans la commande)."
+            )
+            return
+
+        horizon = _batch_oracle_horizon(batch_id)
+        labels_df = safe_query(
+            _RUN_ORACLE_LABELS_QUERY,
+            {"batch_id": batch_id, "horizon": horizon},
+        )
+        if labels_df.empty:
+            st.info(
+                f"Le vrai Oracle (`global_oracle_labels`, H{horizon}) n'est pas calculé "
+                f"pour le batch `{batch_id}`."
+            )
+            return
+
+        date_col = next(
+            (c for c in ("trade_date", "signal_date", "execution_date", "entry_date") if c in trades_df.columns),
+            None,
+        )
+        if date_col is None or "symbol" not in trades_df.columns:
+            st.warning("Trades illisibles (colonnes date/symbole manquantes).")
+            return
+
+        trades = trades_df[["symbol", date_col]].copy()
+        trades["symbol"] = trades["symbol"].astype(str).str.strip()
+        trades["date"] = pd.to_datetime(trades[date_col], errors="coerce")
+        _side_raw = trades_df.get("side", pd.Series("buy", index=trades_df.index))
+        trades["side"] = _side_raw.astype(str).str.strip().str.lower()
+        trades = trades.dropna(subset=["date", "symbol"])
+        _side_map = {"buy": "Long", "long": "Long", "sell": "Short", "short": "Short"}
+        trades["side"] = trades["side"].map(_side_map).fillna("Autre")
+
+        labels = labels_df.copy()
+        labels["date"] = pd.to_datetime(labels["prediction_date"], errors="coerce")
+        labels["symbol"] = labels["symbol"].astype(str).str.strip()
+        labels["oracle_decile"] = pd.to_numeric(labels["oracle_decile"], errors="coerce")
+
+        merged = trades.merge(
+            labels[["date", "symbol", "oracle_decile"]],
+            on=["date", "symbol"],
+            how="inner",
+        )
+        merged = merged.dropna(subset=["oracle_decile", "side"])
+        merged["oracle_decile"] = merged["oracle_decile"].astype(int)
+
+        if merged.empty:
+            st.warning(
+                "Aucune intersection entre les trades du run et le vrai Oracle "
+                f"(`global_oracle_labels`, H{horizon}) de ce batch."
+            )
+            return
+
+        st.caption(
+            f"Vrai Oracle : `global_oracle_labels` (H{horizon}) — D1 = pire 10% réalisé, "
+            "D10 = meilleur 10% réalisé. Croisement par date + symbole."
+        )
+        for side_label in ("Long", "Short"):
+            sub = merged[merged["side"] == side_label]
+            if sub.empty:
+                continue
+            counts = sub["oracle_decile"].value_counts().reindex(range(1, 11), fill_value=0)
+            total = int(len(sub))
+            dist = pd.DataFrame({
+                "Décile Oracle": [f"D{d}" for d in range(1, 11)],
+                "Nb trades": [int(counts[d]) for d in range(1, 11)],
+                "%": [100.0 * int(counts[d]) / total for d in range(1, 11)],
+            })
+            dist.loc[len(dist)] = {"Décile Oracle": "Total", "Nb trades": total, "%": 100.0}
+            _emoji = "🔴" if side_label == "Short" else "🟢"
+            st.markdown(f"**{_emoji} {side_label}** — {total:,} trades".replace(",", " "))
+            st.dataframe(
+                dist.style.format({"Nb trades": "{:,}", "%": "{:.1f}%"}),
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.markdown("")
+
+        _autres = int((merged["side"] == "Autre").sum())
+        if _autres:
+            st.caption(f"ℹ️ {_autres} trade(s) sans side reconnu (hors répartition).")
+
+
 def _render_live_artifacts(run_record: dict[str, object]) -> bool:
     equity_curve_df = _load_equity_curve_df(run_record)
     trades_df = _load_run_trades_df(run_record)
@@ -5433,6 +5581,7 @@ def _render_runtime_center_body(*, auto_refresh_enabled: bool) -> None:
         if str(selected_run.get("run_kind", "")) == "run":
             has_report = _render_report_summary(selected_run)
             has_live_artifacts = _render_live_artifacts(selected_run)
+            _render_run_oracle_deciles(selected_run)
             if status == "completed" and not (has_report or has_live_artifacts):
                 _render_latest_artifacts()
         else:

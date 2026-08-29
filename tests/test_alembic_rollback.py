@@ -62,7 +62,9 @@ def test_revision_chain_is_consistent(revisions):
         dr = getattr(m, "down_revision", None)
         if dr is None:
             continue
-        assert dr in by_rev, f"{m.revision}: down_revision '{dr}' inconnu"
+        parents = dr if isinstance(dr, (tuple, list, set)) else (dr,)
+        for parent in parents:
+            assert parent in by_rev, f"{m.revision}: down_revision '{parent}' inconnu"
 
 
 @pytest.mark.integration

@@ -1,0 +1,141 @@
+P1 — La parité backtest/live n’est plus validée
+Le fichier [test_backtest_live_parity.py](F:\\projets\\tests\\test_backtest_live_parity.py) importe encore des contrats supprimés ou déplacés, notamment d’anciennes classes Simulator, ExecutionReplay et un ancien objet Order.
+D’autres tests du moteur de backtest échouent sur :
+- création des trades ;
+- protections ;
+- cash settlement ;
+- exposition brute ;
+- parts entières ;
+- time-stop ;
+- replay du watcher ;
+- overrides d’exécution ;
+- règles swing/day trade.
+Une partie peut être constituée de tests obsolètes, mais le résultat pratique reste le même :
+La propriété « le backtest reproduit fidèlement la production » n’est actuellement pas démontrée automatiquement.
+
+C’est particulièrement important parce que les expériences E11/E12 ont déjà montré qu’un petit écart de lifecycle pouvait inverser complètement une conclusion.
+P1 — Contrat public API cassé par le déplacement documentaire
+Le contrôle de stabilité attend toujours :
+doc/api_v1_public_symbols.txt
+dans [audit_private_api_exposure.py](F:\\projets\\scripts\\audit_private_api_exposure.py).
+Le fichier se trouve maintenant ici :
+doc/sources_historiques/backup/general/api_v1_public_symbols.txt
+Le test [test_api_v1_stability.py](F:\\projets\\tests\\test_api_v1_stability.py) échoue donc avant même de pouvoir vérifier correctement les ajouts et suppressions d’API publique.
+Ce fichier n’est pas une simple documentation historique : c’est un golden file actif utilisé par la non-régression. Il ne devrait pas être classé dans sources_historiques.
+
+
+---------------------
+
+Nombre élevé de captures génériques
+Les chemins production, watcher, risque, ML et IHM contiennent beaucoup de except Exception.
+Cela peut être acceptable aux frontières opératoires, mais devient dangereux lorsque l’exception :
+- déclenche un fallback silencieux ;
+- conserve un run en statut réussi ;
+- remplace une donnée PIT absente par une donnée dégradée ;
+- masque l’absence d’une protection ;
+- transforme une erreur métier en univers vide.
+
+-----------------------
+Un modèle directionnel dédié existe déjà
+Le module [global_direction](F:\\projets\\modelFactory\\global_direction) définit exactement le problème :
+direction_score = P(D10 | D1 ou D10)
+Il propose trois cibles :
+- binaire D1 contre D10 ;
+- ordinale D1 / milieu / D10 ;
+- ranking continu du rendement futur.
+Le dataset exclut volontairement proba_extreme et global_rank_20 des premières expériences, avec des contrôles anti-fuite dans [dataset.py](F:\\projets\\modelFactory\\global_direction\\dataset.py).
+Cependant, ce module est aujourd’hui un module de recherche. La recherche des consommateurs de direction_score ne montre pas d’intégration réelle dans le pipeline de production.
+Résultats déjà obtenus
+Les anciennes expériences, cohérentes avec le code actuel, concluent :
+- 182 features analysées dans le pool Oracle TOP20 ;
+- meilleure AUC directionnelle univariée autour de 0,515 ;
+- aucune feature au-dessus du seuil 0,53 ;
+- features sectorielles : NO-GO ;
+- cible binaire : NO-GO ;
+- cible ordinale : tendance à reconcentrer simultanément D1 et D10 ;
+- cible rank : NO-GO ;
+- trajectoires temporelles : NO-GO ou couverture insuffisante ;
+- news sentiment : AUC voisine de 0,50 ;
+- short interest/volume : AUC maximale 0,501 ;
+- features fondamentales disponibles : pas de signal exploitable ;
+- précédent earnings surprise EPS : meilleur candidat, mais seulement AUC 0,519, sans lift économique top-décile ;
+- TRUE_BAD à l’entrée : non séparable avec les features disponibles ;
+- Y3 directionnel : AUC ML acceptable, mais portefeuille fortement dégradé ;
+- short direct : catastrophique dans les expériences historiques.
+La conclusion importante est donc :
+Avec les données actuellement présentes, D1/D10 ne paraît pas suffisamment observable. Changer CatBoost pour un autre modèle a peu de chances de résoudre le problème.
+------------------------------------
+
+6. Pistes réellement crédibles pour D1/D10
+Priorité 1 — Exploiter proprement long_prob dans le pool Extreme
+C’est aujourd’hui le signal le plus concret.
+L’expérience E17 indique que, dans le pool Extreme, le ranking par long_prob per-symbol apporte de la valeur, alors que le veto seul est presque inopérant.
+La configuration possède déjà une pénalité progressive anti-D1, mais elle est désactivée dans [config.yaml](F:\\projets\\config.yaml).
+Je ne recommande pas de l’activer directement. Il faut comparer en walk-forward :
+A. Oracle pur
+B. Oracle + ranking long_prob
+C. Oracle + pénalité progressive long_prob
+D. Oracle + abstention sous forte incertitude directionnelle
+avec :
+- mêmes dates ;
+- mêmes candidats ;
+- lifecycle PROD ;
+- m24 ;
+- plusieurs seeds ;
+- coûts et capacité constants ;
+- résultats par semestre et régime ;
+- D1%, D10%, rendement, drawdown et expected shortfall.
+Le résultat déterministe +146 % d’E17 n’est pas suffisant seul.
+Priorité 2 — Reformuler la cible selon le trade réel
+D1 contre D10 à H20 est une cible académique propre, mais pas nécessairement la meilleure cible économique.
+Le portefeuille ne détient pas mécaniquement chaque titre pendant 20 jours jusqu’au close. Il utilise :
+- entrée next-open ;
+- take profit ;
+- stop initial ;
+- trailing ;
+- gaps ;
+- capacité ;
+- concurrence entre positions.
+Une cible plus fidèle serait par exemple :
+P(TP atteint avant stop | candidat Extreme)
+ou une cible multi-tâche :
+P(extreme)
+P(TP avant stop | extreme)
+P(perte sévère avant MFE | extreme)
+EV net selon lifecycle PROD
+Attention : Y3 a déjà échoué économiquement. Cette piste ne mérite un nouveau test que si la cible reproduit exactement le lifecycle PROD et si l’évaluation finale reste portefeuille-first.
+Priorité 3 — Ajouter de l’information véritablement signée
+Les OHLCV et indicateurs techniques semblent avoir atteint leur plafond informationnel.
+Les familles encore crédibles sont :
+- révisions de consensus EPS/revenue réellement historisées ;
+- upgrades/downgrades d’analystes avec timestamp PIT ;
+- variation de target price ;
+- dispersion et accélération des révisions ;
+- options : skew put/call, volatilité implicite signée, évolution de skew ;
+- flux et imbalance ;
+- short availability/borrow fee plutôt que simple short volume ;
+- insiders, à condition d’obtenir une couverture suffisante ;
+- guidance d’entreprise et surprises de guidance ;
+- sentiment événementiel ciblé, pas seulement sentiment moyen des news.
+Le meilleur petit signal existant est earn_surprise_eps_prev, mais il reste trop faible pour un GO.
+Priorité 4 — Modèle conditionnel par régime
+Un signal directionnel faible peut disparaître en moyenne tout en étant utile dans certains contextes :
+direction_score
+  conditionné par
+    régime marché
+    secteur
+    volatilité
+    gap
+    proximité earnings
+    type de mouvement
+Il faut toutefois imposer des tailles minimales et une validation réellement OOS. Sinon, le découpage en régimes devient une optimisation rétrospective.
+Priorité 5 — Abstention plutôt que classification forcée
+Le système ne doit pas nécessairement décider LONG ou SHORT pour tous les extrêmes.
+Une sortie plus réaliste serait :
+LONG probable
+DIRECTION INCERTAINE
+SHORT probable
+avec sélection uniquement lorsque :
+P(D10) - P(D1)
+est suffisamment éloigné de zéro et stable entre modèles/folds.
+Dans un univers où l’AUC globale est proche de 0,50, l’objectif raisonnable peut être de trouver un sous-ensemble rare mais fiable, pas de classifier tous les candidats.
