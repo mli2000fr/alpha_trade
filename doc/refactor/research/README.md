@@ -8,5 +8,6 @@ Cette section est volontairement synthétique. Elle ne remplace pas les journaux
 - [Persistent Top10 DIP et dip filter](persistent_dip.md)
 - [Recherche de données directionnelles](directional_data.md)
 - [Cascade de sélection et modes de ranking](cascade_selection.md)
+- [Recherche, validation et production](recherche_vs_production.md)
 
 Retour : [index général](../README.md).

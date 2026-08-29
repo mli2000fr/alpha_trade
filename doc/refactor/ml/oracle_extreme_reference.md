@@ -1,5 +1,7 @@
 # Oracle Extreme O0 — référence technique
 
+Contrats détaillés : [dossier Oracle Extreme complet](oracle/README.md).
+
 Retour : [références ML](README.md) · [présentation](../08_ml_oracle_extreme.md)
 
 ## Sémantique

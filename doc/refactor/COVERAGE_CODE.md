@@ -15,6 +15,8 @@ La complétude est contrôlée en partant du code actuel. Chaque package possèd
 | `corporate_actions` | dividendes/splits/réconciliation |
 | `service` | providers et adaptateurs |
 | `ihm` | architecture, supervision et sécurité |
-| `flows`, `lineage`, `reporting`, `formal`, `tax` | architecture et opérations spécialisées |
+| `flows` | pipeline : distinction explicite entre orchestrateur auxiliaire 5 étapes et canonique IHM |
+| `lineage`, `reporting`, `formal` | reporting signé, capture lineage, portée des preuves |
+| `tax` | référence wash-sale, algorithme et limites |
 
 À chaque nouveau fichier ou point d'entrée, ajouter son rôle. À chaque nouveau contrat complexe, créer une référence autonome et la lier depuis le guide global. Les anciens documents ne sont jamais utilisés pour conclure qu'une fonctionnalité actuelle est couverte.

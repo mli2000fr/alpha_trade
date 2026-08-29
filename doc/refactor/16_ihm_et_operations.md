@@ -4,6 +4,7 @@
 
 - [Architecture IHM et services](operations/ihm_reference.md)
 - [Supervision, notifications et sécurité](operations/supervision_et_securite.md)
+- [Alerting multicanal et métriques](operations/alerting_et_metriques.md)
 - [Reporting, lineage et vérification formelle](operations/reporting_lineage_formal.md)
 - [Fiscalité et wash sale](operations/fiscalite_wash_sale.md)
 

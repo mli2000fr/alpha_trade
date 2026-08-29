@@ -214,9 +214,10 @@ puis renseigner `LOGIN_DB` / `PASSWORD_DB` dans `earnings_calendar.env`.
 ### Logs
 
 - Statut par exécution : `log/batch/earnings_calendar.txt`
-  (une ligne `START` en début, une ligne `OK` ou `ERROR` en fin d’exécution,
-  avec code de sortie et durée → permet de savoir si ça tourne, si tout va bien,
-  ou si c’est bloqué en erreur).
+  (une ligne **`DÉBUT DE TRAITEMENT`** écrite dès le lancement — pour savoir
+  immédiatement que le batch tourne — puis une ligne **`FIN TRAITEMENT OK`** ou
+  **`FIN TRAITEMENT ERROR`** en fin d’exécution, avec code de sortie et durée →
+  permet de savoir si tout va bien, ou si c’est bloqué en erreur).
 - Détail de la synchronisation : `log/sync_earnings_calendar.log`
   (écrit par le module Python).
 

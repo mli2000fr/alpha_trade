@@ -1,5 +1,7 @@
 # ML — Oracle Extreme O0
 
+Documentation approfondie : [dossier Oracle Extreme complet](ml/oracle/README.md).
+
 ## But
 
 L'Oracle Extreme estime si un titre appartient aux mouvements cross-sectionnels extrêmes à horizon configuré, généralement H20. Il sert à étudier ou filtrer un univers à fort potentiel de mouvement. Il ne prédit pas le sens.
@@ -54,4 +56,3 @@ Un batch Oracle-only peut remplir la table spécialisée puis synthétiser `mode
 ## Contrat lifecycle
 
 Les labels Oracle et les backtests E6–E13 ont pu utiliser un lifecycle de recherche différent. Toute promotion exige un replay avec stop, TP, trailing, time-stop, gap filter, entry timing et résolution intrabar exactement identiques à PROD.
-

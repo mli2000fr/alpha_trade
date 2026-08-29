@@ -25,6 +25,7 @@ Cette arborescence documente l'application telle qu'elle existe dans le code sou
 | ML général | [06](06_ml_vue_ensemble.md) | `modelFactory/` |
 | Global Ranking | [07](07_ml_global_ranking.md) | `modelFactory/global_ranking.py` |
 | Oracle Extreme | [08](08_ml_oracle_extreme.md) | `modelFactory/oracle/` |
+| Oracle Extreme détaillé | [Dossier Oracle](ml/oracle/README.md) | labels, tables, anti-fuite, walk-forward, inférence et gate |
 | Risque | [09](09_risque_et_portefeuille.md) | `risk_management/` |
 | Régimes | [10](10_regime_marche.md) | `service/market/`, `risk_management/regime_*` |
 | Exécution | [11](11_execution_et_protections.md) | `run_execution.py`, `execution_engine/` |
@@ -33,15 +34,21 @@ Cette arborescence documente l'application telle qu'elle existe dans le code sou
 | Services externes | [14](14_services_externes.md) | `service/` |
 | Base de données | [15](15_base_de_donnees.md) | `database/`, `alembic/` |
 | IHM et opérations | [16](16_ihm_et_operations.md) | `ihm/`, `reporting/`, `lineage/` |
+| Alerting et métriques | [Notifications](operations/alerting_et_metriques.md) | `service/alerting.py`, Prometheus, notifications IHM |
 | Corporate actions | [17](17_corporate_actions.md) | `corporate_actions/` |
 | Configuration | [18](18_reference_configuration.md) | `config.yaml`, classes de configuration |
 | Tests et contribution | [19](19_tests_et_contribution.md) | `tests/`, `formal/` |
 | Glossaire | [20](20_glossaire.md) | contrats transverses |
 | Catalogue du code | [21](21_catalogue_modules.md) | tous les packages Python |
 | Runbook opérateur | [22](22_runbook_exploitation.md) | pipeline, risque, exécution, reprise |
+| Fiscalité | [Wash sale](operations/fiscalite_wash_sale.md) | `tax/wash_sale.py` |
 | Recherche quantitative | [Recherche](research/README.md) | branches non automatiquement promues |
+| Expériences historiques | [Synthèses](experiences/README.md) | enseignements durables, séparés des contrats courants |
+| Guide utilisateur | [Manuel complet](guide_utilisateur/README.md) | navigation et procédures issues des pages actuelles |
+| Couverture historique | [Matrice des 178 anciens Markdown](COUVERTURE_DOCUMENTS_HISTORIQUES.md) | référence, synthèse ou archive pour chaque ancien sujet |
 | Inventaires API | [API](api/README.md) | classes et fonctions extraites du code courant |
 | Couverture du code | [Matrice](COVERAGE_CODE.md) | contrôle code → documentation |
+| Audit de remplacement | [Audit](AUDIT_REMPLACEMENT.md) | autonomie vis-à-vis des anciens documents |
 
 ## Règles de lecture importantes
 
