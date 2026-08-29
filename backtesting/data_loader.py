@@ -624,12 +624,18 @@ def load_predictions(
     *,
     symbols: list[str] | None = None,
     batch_id: str | None = None,
+    sources: list[str] | None = None,
 ) -> pd.DataFrame:
     """Charge les prédictions ML.
 
     Phase E.2 (refactor) : ``symbols`` permet de restreindre l'I/O à un
     sous-ensemble (typiquement les candidats déjà chargés) — gain x10 à x100
     sur des univers larges.
+
+    0067 : ``sources`` filtre par ORIGINE de la prédiction (colonne ``source``) :
+    ``per_symbol`` | ``per_sector`` | ``global_rank_synth`` | ``oracle_synth``.
+    Utile pour savoir quelle source chercher selon le besoin (ex. mode cascade :
+    Global Rank × Oracle ne cherchent pas toujours la même source). None = toutes.
     """
     columns = _get_table_columns(engine, "model_predictions")
     if not columns:
@@ -663,6 +669,14 @@ def load_predictions(
         batch_condition = " AND training_run.batch_id = :batch_id"
         params["batch_id"] = batch_id
 
+    source_condition = ""
+    if sources:
+        unique_sources = sorted({str(s).strip().lower() for s in sources if s})
+        if unique_sources:
+            src_placeholders = ",".join(f":src_{i}" for i in range(len(unique_sources)))
+            source_condition = f" AND prediction.source IN ({src_placeholders})"
+            params.update({f"src_{i}": s for i, s in enumerate(unique_sources)})
+
     def _optional_select(columns: set[str], column: str) -> str:  # noqa: redefinition-ok
         return f"prediction.{column}" if column in columns else f"NULL AS {column}"
 
@@ -679,10 +693,11 @@ def load_predictions(
                {_optional_select(columns, 'proba_short')},
                {_optional_select(columns, 'run_id')},
                {_optional_select(columns, 'created_at')},
+               {_optional_select(columns, 'source')},
                {selected_batch}
         FROM model_predictions prediction
         {batch_join}
-        WHERE prediction.{date_col} BETWEEN :start AND :end{where_symbols}{batch_condition}
+        WHERE prediction.{date_col} BETWEEN :start AND :end{where_symbols}{batch_condition}{source_condition}
         ORDER BY prediction.{date_col}, prediction.symbol
     """)
     with engine.connect() as conn:
@@ -691,10 +706,11 @@ def load_predictions(
             parse_dates.append("created_at")
         df = pd.read_sql(query, conn, params=params, parse_dates=parse_dates)
     LOGGER.info(
-        "Prédictions ML chargées : %d lignes (filter symbols=%s batch_id=%s)",
+        "Prédictions ML chargées : %d lignes (filter symbols=%s batch_id=%s sources=%s)",
         len(df),
         bool(symbols),
         batch_id or "none",
+        sources or "all",
     )
     return df
 

@@ -25,7 +25,7 @@ alpaca:
       api_key: "${ALPACA_API_KEY}"
       secret_key: "${ALPACA_SECRET_KEY}"
       mode: paper
-      long_only: false
+      long_only: true
     - id: test1
       label: "Compte test 1 (paper)"
       api_key: "${ALPACA_KEY_CPT_1}"
@@ -37,7 +37,7 @@ alpaca:
       api_key: "${ALPACA_KEY_CPT_2}"
       secret_key: "${ALPACA_SECRET_CPT_2}"
       mode: paper
-      long_only: false
+      long_only: true
     # - id: live1
     #   label: "Compte live"
     #   api_key: "${ALPACA_LIVE1_API_KEY}"
@@ -577,6 +577,41 @@ cascade:
 
 
 # ---------------------------------------------------------------------------
+# Persistent Rank DIP filter (Global Rank LONG) — composant research validé
+# 2026-08-27 (in-sample 2022-24 + OOS 2025 / 2026 H1, jamais négatif).
+# Consommé par selector/dip_filter.py, appelé par cascade_select().
+# Périmètre STRICT : branche Global Rank (global_rank_{H}) uniquement — PAS
+# Oracle Extreme (tests : persistance + prix n'apportait rien sur Extreme).
+# Règle : global_rank_{H} >= rank_threshold sur `persist_days` séances
+#         consécutives ET condition prix close[J]/close[J-N] - 1 selon le SIGNE
+#         de dip_pct : >0 = baisse >= X (DIP) ; <0 = hausse >= |X| (anti-DIP).
+# Entrée : reclaim_ratio vide/0 = directe (D0, gelé). >0 (ex. 1.0 = retour au
+#         prix pré-DIP, 0.99 = 99% de ce prix) = entrée au 1er T (<= max_wait
+#         séances) où close[T] >= reclaim_ratio*close[J-N] ET rank >= seuil à T.
+# N/X gelés (R50/R100 NO-GO ; reclaim_ratio reste vide par défaut = R off).
+# Long only (miroir SHORT futur via une clé *_short dédiée, hors périmètre).
+# Clés PROD et BACKTEST DISTINCTES (pattern prod_*/backtest_* de risk_management).
+# ---------------------------------------------------------------------------
+persistent_dip_filter_long:
+  # ---- PROD (live) ----
+  prod_enabled: true
+  prod_rank_horizon: 20        # 20 → colonne global_rank_20 ; vide = best_horizon du batch
+  prod_rank_threshold: 0.90    # = TOP 10%
+  prod_persist_days: 4         # N
+  prod_dip_pct: 0.02           # X signé : >0 = baisse >= X (DIP) ; <0 = hausse >= |X| (anti-DIP)
+  prod_reclaim_ratio: null     # vide = R désactivé (D0 direct) ; 1.0 = retour prix pré-DIP
+  prod_reclaim_max_wait: 10    # fenêtre (en séances) pour la confirmation de rebond
+  # ---- BACKTEST ----
+  backtest_enabled: true
+  backtest_rank_horizon: 20
+  backtest_rank_threshold: 0.90
+  backtest_persist_days: 4
+  backtest_dip_pct: 0.02        # X signé : >0 = baisse >= X (DIP) ; <0 = hausse >= |X| (anti-DIP)
+  backtest_reclaim_ratio: null # vide = R désactivé (D0 direct)
+  backtest_reclaim_max_wait: 10
+
+
+# ---------------------------------------------------------------------------
 # Extreme Gate (composant officiel E6-E13) — Oracle O0 → univers LONG.
 # Consommé par modelFactory/predictor.py (cascade_select, rank_mode="extreme_gate")
 # et par modelFactory/oracle/extreme_gate.py (compute_extreme_gate).
@@ -599,6 +634,24 @@ extreme_gate:
 
   # Proba per-symbol minimale (None = défaut cascade min_prob_regression).
   min_prob: null
+
+  # ── Pénalité directionnelle anti-D1 (2026-08-26) ──
+  # `proba_extreme` est AGNOSTIQUE à la direction : ~23% des picks top 10%
+  # tombent en D1 (bottom 10% réalisé = MAUVAIS long, retour moyen ~-19%).
+  # La pénalité dégrade le score des candidats extrême non confirmés LONG
+  # (long_prob per-symbol faible) pour réduire l'exposition aux D1.
+  #   penalty_enabled          : activer la pénalité
+  #   penalty_directional_signal: long_prob (seul supporté actuellement)
+  #   penalty_min_directional  : long_prob < seuil → pénalité PROGRESSIVE
+  #   penalty_score_floor      : multiplicateur minimum (à signal=0, i.e. le plus
+  #                              "D1"). Interpolation linéaire : 1.0 au seuil
+  #                              min_directional → floor à signal=reject_below.
+  #   penalty_reject_below     : long_prob < seuil → rejet (0 = pas de rejet)
+  penalty_enabled: false
+  penalty_directional_signal: long_prob
+  penalty_min_directional: 0.60
+  penalty_score_floor: 0.2
+  penalty_reject_below: 0.0
 
 
 # ---------------------------------------------------------------------------

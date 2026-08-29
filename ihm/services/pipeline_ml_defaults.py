@@ -94,8 +94,11 @@ DEFAULT_ML_INCLUDE_FACTORS = True          # CAPM factor exposures (beta, alpha,
 DEFAULT_ML_INCLUDE_VOLUME_FEATURES = False  # P3-5 : profil volume/liquidité (10 features opt-in)
 DEFAULT_ML_INCLUDE_MACRO_REGIME = False      # SPY_SMA_200_slope + VIX_zscore (macro regime indicators)
 DEFAULT_ML_INCLUDE_SCORE_COMPONENTS = False  # P0-6 : composants stock_scores_history (sentiment_net_agg, company_idio_score...)
-DEFAULT_ML_GLOBAL_MODEL_ONLY = True  # P0-6 : skip per-symbol & per-sector, ne faire que le global
-DEFAULT_ML_ENABLE_ORACLE_MODEL = False  # 2026-08-20 : entraîne AUSSI le modèle Oracle Extreme (O0 sans global_rank_20)
+DEFAULT_ML_GLOBAL_MODEL_ONLY = False  # P0-6 : skip per-symbol & per-sector, ne faire que le global
+# 2026-08-28 : Exclude per-symbol & per-sector — saute l'entraînement par ticker/secteur
+# mais GARDE le Global Ranking et l'Oracle Extreme si activés. COCHÉ PAR DÉFAUT.
+DEFAULT_ML_EXCLUDE_PER_SYMBOL_PER_SECTOR = True
+DEFAULT_ML_ENABLE_ORACLE_MODEL = True  # 2026-08-20 : entraîne AUSSI le modèle Oracle Extreme (O0 sans global_rank_20)
 DEFAULT_ML_ORACLE_MODEL_ONLY = False    # 2026-08-20 : entraîne UNIQUEMENT l'Oracle Extreme — skip global, per-symbol, per-sector
 DEFAULT_ML_TARGET_SKIP_VOL_SCALING = False   # T1 experiment: désactiver le vol-scaling (target = future_return brut)
 DEFAULT_ML_TARGET_EXCESS_VS_SPY = True      # P0-7 : target = (future_return - spy_return) / vol20 – centre la distribution
@@ -112,7 +115,7 @@ DEFAULT_ML_GLOBAL_CHAMPION = True           # Entraîne CatBoost + LightGBM → 
 DEFAULT_ML_GLOBAL_MODEL_NAME = "catboost"     # Sprint 2026-08-01 v4 : CatBoost RMSE continu (pas de discrétisation)
 DEFAULT_ML_ENABLE_CROSS_SECTIONAL = False     # features cross-sectionnelles + sectorielles
 DEFAULT_ML_INCLUDE_DIRECTIONAL_FEATURES = True  # 2026-08-23 : liste restreinte 'direction' (sous-ensemble des features cross-sectionnelles/sectorielles, ~17 features au lieu de ~49)
-DEFAULT_ML_SELECT_CHAMPION = True             # champion selection activée
+DEFAULT_ML_SELECT_CHAMPION = False             # champion selection activée
 DEFAULT_ML_OPTIMIZE_THRESHOLDS = False         # optimization des seuils de décision
 DEFAULT_ML_OPTIMIZE_TARGET = False            # target optimization (supervisée)
 DEFAULT_ML_CROSS_SECTIONAL_MIN_UNIVERSE = 20

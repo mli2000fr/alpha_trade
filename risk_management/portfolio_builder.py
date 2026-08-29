@@ -8,6 +8,7 @@ from datetime import date
 
 from pandas import DataFrame
 import numpy as np
+import pandas as pd  # noqa: F401 — utilisé par le smart sector cap (corr PIT) et ailleurs
 
 from common.quantity_utils import QUANTITY_EPSILON, normalize_share_quantity
 from core.conviction import fuse as _fuse_conviction_long
@@ -933,6 +934,27 @@ class PortfolioBuilder:
             sector_map=sector_map,
             circuit_breaker=self._circuit_breaker,
         )
+        # ── Smart sector cap (C2) : carte de corrélation PIT du jour ──
+        # return_matrix est déjà PIT (slice <= decision_date, voir risk_bridge).
+        # On l'affirme ici pour interdire tout leakage futur (exigence chantier).
+        _decision_date = trade_date or date.today()  # même valeur que decision_date plus bas
+        _cap_mode = str(getattr(self._cfg, "sector_cap_mode", "count") or "count").strip().lower()
+        if _cap_mode == "hybrid" and return_matrix is not None and not return_matrix.empty:
+            if return_matrix.index.max() > pd.Timestamp(_decision_date):
+                raise AssertionError(
+                    f"smart_sector_cap PIT violation: return_matrix max "
+                    f"{return_matrix.index.max()} > decision_date {_decision_date}"
+                )
+            _corr = return_matrix.corr()
+            _corr_map = {
+                sym: {
+                    o: float(_corr.loc[sym, o])
+                    for o in _corr.columns
+                    if o != sym and not (isinstance(_corr.loc[sym, o], float) and pd.isna(_corr.loc[sym, o]))
+                }
+                for sym in _corr.columns
+            }
+            checker.set_sector_corr_map(_corr_map)
         equity = self._cfg.account_equity
         # ── P2-1 : facteurs d'allocation (rank_weighted + multiplicateurs sectoriels) ──
         allocation_factors: dict[str, float] = {}
@@ -1140,6 +1162,7 @@ class PortfolioBuilder:
                     pi.last_close,
                     side=ec.side,
                     adv_usd=pi.adv_usd,
+                    selection_rank=getattr(ec, "selection_rank", None),
                 )
             )
             if approved < minimum_viable_shares:

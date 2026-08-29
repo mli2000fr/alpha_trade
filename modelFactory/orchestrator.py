@@ -485,7 +485,7 @@ def train_oracle_extreme(
         dict de synthèse (status, run_id, oos_path, n_folds, métriques).
     """
     from modelFactory.oracle.config import resolve_oracle_batch_id
-    from modelFactory.oracle.walk_forward import DEFAULT_TEST_WINDOWS, run_walk_forward
+    from modelFactory.oracle.walk_forward import build_folds_adaptive, run_walk_forward
 
     _batch_id = batch_id or resolve_oracle_batch_id() or "model-factory-unknown"
 
@@ -524,18 +524,70 @@ def train_oracle_extreme(
     try:
         _start = str(cfg.data.training_start_date) if cfg.data.training_start_date else "2020-01-01"
         _end = str(cfg.data.training_end_date) if cfg.data.training_end_date else "2026-05-29"
+        # ── POINT 1 (2026-08-29) : remplir global_rank_history AVANT la jointure
+        #    Oracle. En mode combiné (after-sequence), le Global Ranking vient d'être
+        #    entraîné (modèles dispo dans cfg.artifacts_dir) MAIS global_rank_history
+        #    est encore VIDE pendant le train (seul le predict le remplit) →
+        #    build_dataset (merge INNER sur global_rank_history) produirait un
+        #    dataset vide → Oracle skipped/failed. On re-prédit le Global Ranking du
+        #    batch courant sur TOUTE la période d'entraînement (in-sample OK ; l'OOS
+        #    est géré par le walk-forward de l'Oracle lui-même). Idempotent (upsert) ;
+        #    non-bloquant : en cas d'échec, l'Oracle sera skipped proprement. ──
+        _require_gr = not cfg.data.oracle_model_only
+        if _require_gr:
+            try:
+                from modelFactory.predictor import predict_global_rank_history as _pgrh
+                _gr_fill = _pgrh(
+                    _start, _end, _batch_id,
+                    artifacts_dir=Path(cfg.artifacts_dir),
+                    engine=engine,
+                    symbols=_universe,
+                )
+                LOGGER.info(
+                    "oracle_extreme prefill global_rank_history batch=%s period=%s..%s dates=%d",
+                    _batch_id, _start, _end, len(_gr_fill),
+                )
+            except Exception as _gr_exc:  # noqa: BLE001
+                LOGGER.warning(
+                    "oracle_extreme prefill global_rank_history FAILED (non-bloquant): %s",
+                    _gr_exc,
+                )
         dataset, feature_columns = build_dataset(
             engine, _batch_id, _universe,
             start_date=_start, end_date=_end, horizon=horizon,
-            require_global_rank=(not cfg.data.oracle_model_only),
+            require_global_rank=_require_gr,
         )
         if dataset.empty:
             LOGGER.warning("oracle_extreme empty dataset — nothing to train")
             return {"status": "skipped", "reason": "empty_dataset", "batch_id": _batch_id}
 
+        # ── Fenêtres ADAPTATIVES (comme le Global Ranking) : les folds de test
+        #    sont dérivés des dates réellement présentes via
+        #    generate_walk_forward_splits_by_dates (cfg.walk_forward), au lieu des
+        #    bornes fixes DEFAULT_TEST_WINDOWS (2022→2026). Un batch entraîné
+        #    ex. 2012→2019 produit donc des folds OOS sur les dernières dates
+        #    disponibles ; fenêtre trop courte → skipped proprement. ──
+        folds = build_folds_adaptive(
+            dataset,
+            min_train_dates=cfg.walk_forward.min_train_size,
+            val_dates=cfg.walk_forward.val_size,
+            test_dates=cfg.walk_forward.test_size,
+            step_dates=cfg.walk_forward.step_size,
+            max_splits=cfg.walk_forward.max_splits,
+            forecast_horizon=horizon,
+        )
+        if not folds:
+            LOGGER.warning(
+                "oracle_extreme no valid adaptive WF split (fenêtre trop courte pour "
+                "min_train=%d/val=%d/test=%d) — skipped",
+                cfg.walk_forward.min_train_size, cfg.walk_forward.val_size,
+                cfg.walk_forward.test_size,
+            )
+            return {"status": "skipped", "reason": "no_valid_wf_split", "batch_id": _batch_id}
+
         result = run_walk_forward(
             dataset, feature_columns,
-            test_windows=DEFAULT_TEST_WINDOWS,
+            folds=folds,
             ablation="O0",
         )
         if result.get("status") != "completed":
@@ -545,13 +597,17 @@ def train_oracle_extreme(
         from datetime import datetime as _dt
         run_id = f"oracle-wf-{_dt.now():%Y%m%d%H%M%S}"
         from modelFactory.oracle.walk_forward import persist_oos
-        path = persist_oos(result["oos"], run_id, batch_id=_batch_id)
-        LOGGER.info("oracle_extreme DONE run_id=%s oos_path=%s", run_id, path)
+        _stored = persist_oos(
+            result["oos"], run_id, batch_id=_batch_id,
+            models=result.get("models"),
+            feature_columns=result.get("feature_columns"),
+        )
+        LOGGER.info("oracle_extreme DONE run_id=%s stored_batch=%s", run_id, _stored)
         return {
             "status": "completed",
             "batch_id": _batch_id,
             "run_id": run_id,
-            "oos_path": str(path),
+            "oos_path": f"oracle_extreme_predictions:{_stored}",
             "ablation": "O0",
             "n_folds": result.get("n_folds"),
             "fold_stability_pct": result.get("fold_stability_pct"),
@@ -1103,31 +1159,48 @@ def run_training_batch(
         )
         return results
 
+    # ── 2026-08-28 : Exclude per-symbol & per-sector ──
+    # Saute l'entraînement per-symbol ET per-sector, mais CONTINUE vers l'Oracle
+    # Extreme (ligne suivante) si activé. À la différence de global_model_only
+    # (return tôt ci-dessus), on ne retourne PAS ici : le Global Ranking (déjà
+    # fait) et l'Oracle restent entraînés.
+    _exclude_ps = bool(cfg.data.exclude_per_symbol_per_sector)
+    if _exclude_ps:
+        LOGGER.info(
+            "🏁 orchestrator exclude_per_symbol_per_sector — entraînement per-symbol "
+            "ET per-sector SAUTÉ (le Global Ranking et l'Oracle Extreme restent actifs si activés)."
+        )
+
     # ── Per-Sector mode (Sprint 2026-08-03) ──
     if cfg.training_mode == "per_sector":
-        from modelFactory.trainer_sector import run_per_sector_batch
+        if _exclude_ps:
+            LOGGER.info("orchestrator per_sector skipped (exclude_per_symbol_per_sector)")
+        else:
+            from modelFactory.trainer_sector import run_per_sector_batch
 
-        sector_results = run_per_sector_batch(
-            symbols,
-            engine,
-            cfg,
-            batch_id=batch_id,
-        )
-        # Convert sector results to TrainResult format for compatibility
-        for sr in sector_results:
-            results.append(TrainResult(
-                sr.get("sector", "unknown"),
-                batch_id or "N/A",
-                sr.get("status", "failed"),
-                skip_reason=sr.get("reason"),
-            ))
-        LOGGER.info("orchestrator per_sector done sectors=%d statuses=%s",
-                     len(sector_results),
-                     {r.get("sector"): r.get("status") for r in sector_results})
-        LOGGER.info("🏁🏁🏁 orchestrator per_sector ALL DONE — moving to summary 🏁🏁🏁")
+            sector_results = run_per_sector_batch(
+                symbols,
+                engine,
+                cfg,
+                batch_id=batch_id,
+            )
+            # Convert sector results to TrainResult format for compatibility
+            for sr in sector_results:
+                results.append(TrainResult(
+                    sr.get("sector", "unknown"),
+                    batch_id or "N/A",
+                    sr.get("status", "failed"),
+                    skip_reason=sr.get("reason"),
+                ))
+            LOGGER.info("orchestrator per_sector done sectors=%d statuses=%s",
+                         len(sector_results),
+                         {r.get("sector"): r.get("status") for r in sector_results})
+            LOGGER.info("🏁🏁🏁 orchestrator per_sector ALL DONE — moving to summary 🏁🏁🏁")
     else:
         # ── Per-Symbol mode (legacy) ──
-        if effective_workers == 1:
+        if _exclude_ps:
+            LOGGER.info("orchestrator per_symbol skipped (exclude_per_symbol_per_sector)")
+        elif effective_workers == 1:
             for index, sym in enumerate(symbols, start=1):
                 try:
                     update_runtime_status(

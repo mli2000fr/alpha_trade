@@ -683,3 +683,173 @@ def build_backtesting_log_download_name(run_id: str, stream: Literal["stdout", "
     run_kind = str(record.get("run_kind", "backtesting")) if record else "backtesting"
     return f"{run_kind}_{run_id}_{stream}.log"
 
+
+# ───────────────────────────────────────────────────────────────────────────
+# Purge des runs backtesting (bouton IHM « supprimer les non-terminés »)
+# ───────────────────────────────────────────────────────────────────────────
+
+def delete_backtesting_runs_except(
+    keep_statuses: set[str] | tuple[str, ...] | frozenset[str] | None = None,
+    *,
+    stop_active: bool = True,
+) -> dict[str, object]:
+    """Supprime les runs backtesting dont le statut n'est PAS dans ``keep_statuses``.
+
+    Supprime à la fois :
+    - l'entrée de ``history_index.json`` (la « table » de l'historique) ;
+    - le répertoire ``RUNS_DIR/<run_kind>/<run_id>/`` et tout son contenu.
+
+    Par défaut on ne conserve que les runs ``completed``
+    (``keep_statuses=None`` → ``{"completed"}``), conformément au bouton
+    « supprimer tous les backtests sauf les terminés ».
+
+    Les runs encore ``running`` / ``starting`` sont arrêtés d'abord
+    (kill process + libération du verrou) si ``stop_active=True``, puis
+    supprimés eux aussi (ils ne sont pas « terminés »).
+
+    Retourne un résumé :
+    ``{"deleted": [...], "kept": [...], "errors": [...]}``
+    """
+    keep = frozenset(keep_statuses) if keep_statuses is not None else frozenset({"completed"})
+    keep = {str(s).strip().lower() for s in keep}
+
+    index = _read_history_index()
+    deleted: list[str] = []
+    kept: list[str] = []
+    errors: list[str] = []
+
+    # 1. Arrêter les runs actifs non conservés (pour libérer fichiers/verrous)
+    if stop_active:
+        active_snapshots = list_active_backtesting_runs()
+        for snapshot in active_snapshots:
+            run_id = str(snapshot.get("run_id") or "")
+            status = str(snapshot.get("status") or "").strip().lower()
+            if run_id and status not in keep:
+                try:
+                    stop_backtesting_run(run_id)
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"{run_id}: stop failed ({exc})")
+
+    # 2. Purge index + répertoires
+    for run_id, record in list(index.items()):
+        status = str(record.get("status") or "").strip().lower()
+        if status in keep:
+            kept.append(run_id)
+            continue
+        # Ne jamais supprimer un run qui est encore vivant si on n'a pas arrêté.
+        if not stop_active and status in {"running", "starting"}:
+            kept.append(run_id)
+            continue
+        try:
+            _purge_run_artifacts(run_id, record)
+            deleted.append(run_id)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{run_id}: {exc}")
+
+    # 3. Réécrire l'index sans les runs supprimés
+    remaining = {rid: rec for rid, rec in index.items() if rid not in set(deleted)}
+    if set(remaining) != set(index):
+        _write_history_index(remaining)
+
+    return {"deleted": deleted, "kept": kept, "errors": errors}
+
+
+def _purge_run_artifacts(run_id: str, record: dict[str, object]) -> None:
+    """Supprime le répertoire du run (et ses logs/artefacts) si présent."""
+    removed_dir = False
+    run_kind = str(record.get("run_kind") or "")
+    run_dir = _find_backtesting_run_dir(run_id, run_kind=run_kind or None)
+    if run_dir is not None and run_dir.exists():
+        import shutil
+
+        shutil.rmtree(run_dir, ignore_errors=True)
+        removed_dir = not run_dir.exists()
+
+    # Nettoyage des fichiers de log référencés en dehors du répertoire (rare)
+    for key in ("stdout_path", "stderr_path", "combined_path"):
+        raw = str(record.get(key) or "").strip()
+        if not raw:
+            continue
+        try:
+            path = Path(raw)
+            if path.exists() and path.is_file():
+                path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    # Retire le run des runs actifs en mémoire s'il y traîne
+    with _REGISTRY_LOCK:
+        _ACTIVE_RUNS.pop(run_id, None)
+
+
+def count_backtesting_runs_by_status() -> dict[str, int]:
+    """Compte les runs par statut (pour afficher un aperçu avant suppression)."""
+    counts: dict[str, int] = {}
+    for record in _read_history_index().values():
+        status = str(record.get("status") or "unknown").strip().lower()
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def delete_backtesting_runs(
+    run_ids: list[str] | tuple[str, ...] | set[str],
+    *,
+    stop_active: bool = True,
+) -> dict[str, object]:
+    """Supprime des runs backtesting précis (index + répertoires).
+
+    Utilisé par le bouton « supprimer les backtests sélectionnés » de
+    l'historique IHM. Les runs encore actifs (running/starting) sont arrêtés
+    d'abord si ``stop_active=True``.
+
+    Retourne ``{"deleted": [...], "kept": [...], "errors": [...]}``.
+    """
+    requested = {str(r).strip() for r in run_ids if str(r).strip()}
+    if not requested:
+        return {"deleted": [], "kept": [], "errors": []}
+
+    # 1. Arrêter les runs actifs sélectionnés (libère fichiers + verrous)
+    if stop_active:
+        for snapshot in list_active_backtesting_runs():
+            run_id = str(snapshot.get("run_id") or "")
+            if run_id in requested:
+                try:
+                    stop_backtesting_run(run_id)
+                except Exception as exc:  # noqa: BLE001
+                    LOGGER.warning("delete_backtesting_runs stop failed run_id=%s err=%s", run_id, exc)
+
+    index = _read_history_index()
+    deleted: list[str] = []
+    kept: list[str] = []
+    errors: list[str] = []
+    for run_id in sorted(requested):
+        record = index.get(run_id)
+        if record is None:
+            # run connu du répertoire mais absent de l'index → on supprime quand même le dossier
+            run_dir = _find_backtesting_run_dir(run_id)
+            if run_dir is not None and run_dir.exists():
+                try:
+                    _purge_run_artifacts(run_id, {})
+                    deleted.append(run_id)
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"{run_id}: {exc}")
+                continue
+            kept.append(run_id)
+            continue
+        status = str(record.get("status") or "").strip().lower()
+        if not stop_active and status in {"running", "starting"}:
+            kept.append(run_id)
+            continue
+        try:
+            _purge_run_artifacts(run_id, record)
+            deleted.append(run_id)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{run_id}: {exc}")
+
+    if deleted:
+        remaining = {rid: rec for rid, rec in index.items() if rid not in set(deleted)}
+        _write_history_index(remaining)
+
+    return {"deleted": deleted, "kept": kept, "errors": errors}
+
+

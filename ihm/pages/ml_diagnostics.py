@@ -1056,6 +1056,15 @@ def _render_delete_batch_button(selected_batch: str, artifacts_dir: Path) -> Non
                 except Exception as exc:
                     errors.append(f"Disque: {exc}")
 
+            # ── Nettoyage champions Oracle Extreme (dossier dédié, hors artifacts_dir) ──
+            _oracle_champ_dir = artifacts_dir.parent / "oracle" / "champions" / selected_batch
+            if _oracle_champ_dir.exists():
+                try:
+                    _shutil.rmtree(_oracle_champ_dir)
+                    st.success(f"✅ Champions Oracle supprimés")
+                except Exception as exc:
+                    errors.append(f"Disque (champions): {exc}")
+
             # ── Nettoyage artifacts/rapport_ml/ (rapport .md + logs .log archivés) ──
             _safe_r = selected_batch.replace("/", "_").replace("\\", "_")[:100]
             _rapport_dir = artifacts_dir.parent.parent / "rapport_ml"
@@ -1095,82 +1104,57 @@ def _batch_trains_oracle(batch: pd.Series) -> bool:
     return False
 
 
-def _oracle_run_batch(run_dir: Path) -> str | None:
-    """Batch_id du run Oracle Extreme (sidecar ``batch_id.txt``), None si non taggé."""
-    try:
-        tag_file = run_dir / "batch_id.txt"
-        if tag_file.exists():
-            val = tag_file.read_text(encoding="utf-8").strip()
-            return val or None
-    except Exception:
-        pass
-    return None
-
-
-def _iter_oracle_runs(batch_id: str) -> list[Path]:
-    """Runs ``oracle-wf-*`` pertinents pour le batch sélectionné, triés croissant.
-
-    - run taggé au batch → inclus ;
-    - run non taggé (legacy) → inclus (fallback historique) ;
-    - run taggé à un AUTRE batch → exclu (évite d'afficher le run d'un autre batch).
-    """
-    odir = Path(get_model_artifacts_dir()) / "oracle"
-    if not odir.exists():
-        return []
-    out: list[Path] = []
-    for d in sorted(odir.glob("oracle-wf-*")):
-        tag = _oracle_run_batch(d)
-        if tag is None or tag == batch_id:
-            out.append(d)
-    return out
+ORACLE_TABLE_PERIODS_QUERY = """
+SELECT MIN(prediction_date) AS min_date,
+       MAX(prediction_date) AS max_date,
+       COUNT(DISTINCT prediction_date) AS nb_dates,
+       COUNT(DISTINCT symbol) AS nb_symbols
+FROM alpha_trade.oracle_extreme_predictions
+WHERE batch_id = :batch_id
+"""
 
 
 def _oracle_periods(batch_id: str) -> list[dict[str, Any]]:
-    """Périodes des prédictions Oracle Extreme depuis les artefacts disque du batch."""
+    """Périodes des prédictions Oracle Extreme du batch — TABLE uniquement.
+
+    Source unique : ``oracle_extreme_predictions`` (prédiction standard sans
+    retrain ET OOS du walk-forward, stockage table-only). PK ``(date, symbol,
+    batch)`` → une seule période par batch.
+    """
     out: list[dict[str, Any]] = []
-    for d in _iter_oracle_runs(batch_id):
-        det = f"artefacts/models/oracle/{d.name}"
-        pf = d / "oos_predictions.parquet"
-        if not pf.exists():
-            out.append({"Type": "🔥 Oracle extreme", "Période": "—", "Jours": "", "Symboles": "", "Détail": det})
-            continue
-        try:
-            df = pd.read_parquet(pf)
-            dc = next((c for c in ("prediction_date", "date", "entry_date", "asof_date") if c in df.columns), None)
-            if dc is None:
-                dc = next((c for c in df.columns if "date" in str(c).lower()), None)
-            if dc is None:
-                out.append({"Type": "🔥 Oracle extreme", "Période": "—", "Jours": "", "Symboles": "", "Détail": det})
-                continue
-            s = pd.to_datetime(df[dc], errors="coerce").dropna()
-            if s.empty:
-                out.append({"Type": "🔥 Oracle extreme", "Période": "—", "Jours": "", "Symboles": "", "Détail": det})
-                continue
-            syms = int(df["symbol"].nunique()) if "symbol" in df.columns else ""
+    try:
+        _tbl = safe_query(ORACLE_TABLE_PERIODS_QUERY, {"batch_id": batch_id})
+        if not _tbl.empty:
+            _r = _tbl.iloc[0]
+            _mn = pd.Timestamp(_r["min_date"])
+            _mx = pd.Timestamp(_r["max_date"])
             out.append({"Type": "🔥 Oracle extreme",
-                        "Période": f"{s.min().date()} → {s.max().date()}",
-                        "Jours": int(s.nunique()), "Symboles": syms, "Détail": det})
-        except Exception:
-            out.append({"Type": "🔥 Oracle extreme", "Période": "—", "Jours": "", "Symboles": "", "Détail": det})
+                        "Période": f"{_mn.date()} → {_mx.date()}",
+                        "Jours": int(_r["nb_dates"] or 0),
+                        "Symboles": int(_r["nb_symbols"] or 0),
+                        "Détail": "table oracle_extreme_predictions"})
+    except Exception:
+        pass
     return out
 
 
 def _load_latest_oracle_oos(batch_id: str) -> tuple[str | None, pd.DataFrame]:
-    """Charge les prédictions OOS du run Oracle Extreme le plus récent du batch.
+    """Charge les prédictions OOS du batch depuis la TABLE ``oracle_extreme_predictions``.
 
-    Les runs sont taggés par ``batch_id.txt`` ; les runs legacy (non taggés)
-    servent de fallback historique.
+    Table-uniquement (plus de parquet). Filtre strict par batch.
     """
-    for d in reversed(_iter_oracle_runs(batch_id)):
-        pf = d / "oos_predictions.parquet"
-        if not pf.exists():
-            continue
-        try:
-            df = pd.read_parquet(pf)
-            if not df.empty:
-                return d.name, df
-        except Exception:
-            continue
+    if not (batch_id or "").strip():
+        return None, pd.DataFrame()
+    try:
+        engine = get_engine()
+        if engine is None:
+            return None, pd.DataFrame()
+        from modelFactory.oracle.predictions_store import load_oracle_predictions
+        df = load_oracle_predictions(engine, batch_id=batch_id)
+        if df is not None and not df.empty:
+            return batch_id, df
+    except Exception:
+        pass
     return None, pd.DataFrame()
 
 
@@ -1598,6 +1582,92 @@ def _render_oracle_distribution(batch_id: str, row: pd.Series) -> None:
         )
 
 
+def _oracle_split_table(picks: pd.DataFrame) -> dict[str, Any] | None:
+    """Table D1-D10 pour une sélection de picks (colonnes ``_dec`` + ``future_return``).
+
+    D1 = bottom 10% (MAUVAIS long), D10 = top 10% (BON long).
+    """
+    if picks is None or picks.empty:
+        return None
+    vc = picks["_dec"].value_counts().reindex(range(1, 11), fill_value=0)
+    n = len(picks)
+    g = picks.groupby("_dec")["future_return"].mean()
+    table = pd.DataFrame({
+        "Décile réalisé": [f"D{d}" for d in range(1, 11)],
+        "% des picks": [100.0 * int(vc[d]) / n for d in range(1, 11)],
+        "Retour moyen si LONG": [f"{float(g[d])*100:+.2f}%" if d in g.index else "—" for d in range(1, 11)],
+    })
+    return {
+        "table": table,
+        "d1_pct": 100.0 * int(vc[1]) / n,
+        "d10_pct": 100.0 * int(vc[10]) / n,
+        "d1_ret": float(g[1]) if 1 in g.index else 0.0,
+        "d10_ret": float(g[10]) if 10 in g.index else 0.0,
+        "mean_ret": float(picks["future_return"].mean()) if "future_return" in picks.columns else 0.0,
+        "n": n,
+    }
+
+
+def _oracle_direction_split(df: pd.DataFrame) -> dict[str, Any] | None:
+    """Répartition des picks top 10% proba par décile de rendement réalisé.
+
+    D1 = bottom 10% (MAUVAIS long), D10 = top 10% (BON long). Le déséquilibre
+    D1/D10 mesure l'ampleur de la pénalité directionnelle (anti-D1) potentielle
+    pour un usage LONG du gate Extreme (proba_extreme est agnostique à la direction).
+    """
+    if "future_return" not in df.columns:
+        return None
+    sub = df.dropna(subset=["date", "symbol", "proba_extreme", "future_return"]).copy()
+    if sub.empty:
+        return None
+    sub["_dec"] = (
+        np.floor(sub.groupby("date")["future_return"].rank(pct=True).clip(upper=1 - 1e-9) * 10)
+        .clip(0, 9).astype(int) + 1
+    )
+    top_parts: list[pd.DataFrame] = []
+    for _, g in sub.groupby("date"):
+        k = max(1, int(round(len(g) * 0.10)))
+        top_parts.append(g.nlargest(k, "proba_extreme"))
+    if not top_parts:
+        return None
+    return _oracle_split_table(pd.concat(top_parts, ignore_index=True))
+
+
+# ── Plafond omniscient (anti-D1) : filtre D1 parfait basé sur le RÉEL oracle ──
+
+def _oracle_omniscient_split(df: pd.DataFrame, top_pct: float = 0.10) -> dict[str, Any] | None:
+    """Répartition D1-D10 si on retirait PARFAITEMENT les mauvais tops (D1).
+
+    Sélection = top ``top_pct`` par ``proba_extreme`` par jour, PUIS on retire
+    les picks qui réaliseront D1 (rendement futur connu → LOOKAHEAD). C'est une
+    borne **THÉORIQUE** (non exécutable en live) : le maximum atteignable par
+    toute pénalité ou tout entraînement anti-D1. 100% basé sur le réel oracle
+    (``future_return``), aucun signal per-symbol.
+    """
+    if "future_return" not in df.columns:
+        return None
+    sub = df.dropna(subset=["date", "symbol", "proba_extreme", "future_return"]).copy()
+    if sub.empty:
+        return None
+    sub["date"] = pd.to_datetime(sub["date"], errors="coerce")
+    sub = sub.dropna(subset=["date"])
+    sub["_dec"] = (
+        np.floor(sub.groupby("date")["future_return"].rank(pct=True).clip(upper=1 - 1e-9) * 10)
+        .clip(0, 9).astype(int) + 1
+    )
+    out_parts: list[pd.DataFrame] = []
+    for _, g in sub.groupby("date"):
+        k = max(1, int(round(len(g) * top_pct)))
+        topk = g.nlargest(k, "proba_extreme")
+        kept = topk[topk["_dec"] != 1]  # omniscient : on écarte les D1
+        if kept.empty:
+            continue
+        out_parts.append(kept)
+    if not out_parts:
+        return None
+    return _oracle_split_table(pd.concat(out_parts, ignore_index=True))
+
+
 def _render_oracle_quality(batch_id: str, row: pd.Series) -> None:
     """Métriques de qualité du modèle Oracle Extreme (AUC / IC / precision@10% /
     lift / calibration / rendement top-décile) depuis les artefacts OOS du batch."""
@@ -1735,6 +1805,44 @@ def _render_oracle_quality(batch_id: str, row: pd.Series) -> None:
             )
     if mono is not None:
         st.markdown(f"**Monotonicité décile (rendement futur)** : Spearman = `{mono:+.3f}`")
+    _dir_split = _oracle_direction_split(df)
+    if _dir_split is not None:
+        st.markdown("**🧭 Répartition directionnelle des picks top 10% de `proba_extreme`**")
+        st.dataframe(_dir_split["table"], use_container_width=True, hide_index=True)
+        st.caption(
+            f"Top 10% du modèle : **{_dir_split['d1_pct']:.1f}%** en **D1** (bottom 10% réalisé, "
+            f"MAUVAIS long, retour moyen **{_dir_split['d1_ret']*100:+.1f}%**) vs "
+            f"**{_dir_split['d10_pct']:.1f}%** en **D10** (bon long, **{_dir_split['d10_ret']*100:+.1f}%**). "
+            f"`proba_extreme` est agnostique à la direction → le déséquilibre D1/D10 quantifie la "
+            f"pénalité directionnelle (anti-D1) à appliquer pour un gate LONG."
+        )
+    # ── Plafond omniscient (anti-D1) : brut vs idéal (filtre D1 parfait) ──
+    _ceil = _oracle_omniscient_split(df)
+    if _ceil is not None:
+        st.markdown("**🎯 Plafond omniscient — filtre D1 parfait (brut vs idéal)**")
+        _cmp = pd.DataFrame({
+            "Métrique": ["% en D1 (mauvais long)", "% en D10 (bon long)",
+                         "Retour moyen des picks", "N picks"],
+            "Brut (top 10% proba_extreme)": [
+                f"{_dir_split['d1_pct']:.1f}%", f"{_dir_split['d10_pct']:.1f}%",
+                f"{_dir_split.get('mean_ret', 0)*100:+.2f}%",
+                f"{int(_dir_split.get('n', 0)):,}".replace(",", " "),
+            ],
+            "Plafond (sans D1)": [
+                f"{_ceil['d1_pct']:.1f}%", f"{_ceil['d10_pct']:.1f}%",
+                f"{_ceil.get('mean_ret', 0)*100:+.2f}%",
+                f"{int(_ceil.get('n', 0)):,}".replace(",", " "),
+            ],
+        })
+        st.dataframe(_cmp, use_container_width=True, hide_index=True)
+        _gain = (_ceil.get("mean_ret", 0) - _dir_split.get("mean_ret", 0)) * 100
+        st.caption(
+            f"Plafond omniscient = top 10% par `proba_extreme` en retirant les picks qui "
+            f"RÉALISERONT D1 (rendement futur connu) → borne **THÉORIQUE** (lookahead, "
+            f"non exécutable en live). 100% basé sur le réel oracle (`future_return`), "
+            f"aucun signal per-symbol. Gain de retour moyen = **{_gain:+.2f} pt** : c'est "
+            f"le maximum atteignable par tout entraînement/filtre anti-D1."
+        )
     if not has_target:
         st.caption("ℹ️ Colonne cible (`oracle_extreme10`) absente — AUC/precision/calibration non calculées.")
 
@@ -1845,11 +1953,11 @@ def _render_prediction_periods(batch_id: str, batch: pd.Series) -> None:
     if oracle_rows:
         _valid = [o for o in oracle_rows if "→" in o["Période"] and not o["Période"].startswith(("—", "?"))]
         if _valid:
-            # Ligne de synthèse = run le plus récent du batch (celui utilisé
-            # par le bloc « Qualité du modèle »), PAS l'union de tous les runs.
-            # Les anciens runs legacy (non taggés, issus d'autres batchs)
-            # n'étendaient la période que par erreur. Le détail ci-dessous
-            # liste chaque run avec sa propre période.
+            # Ligne de synthèse = run le plus récent du batch (artefact OOS
+            # utilisé par le bloc « Qualité du modèle », ou run de prédiction
+            # standard `oracle-pred-*` de la table s'il est plus récent).
+            # PAS l'union de tous les runs. Le détail ci-dessous liste chaque
+            # run (artefact disque + table) avec sa propre période.
             _latest = _valid[-1]
             _last_run = str(_latest.get("Détail", "")).split("/")[-1]
             summary.append({"Type": "🔥 Oracle extreme",
@@ -2891,6 +2999,25 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
                     st.metric("IC Max", f"{_arr.max():.4f}")
 
 
+def _split_group_from_comment(comment: str) -> tuple[str, str]:
+    """Extrait le groupe '[nom] ' en tête d'un commentaire de batch.
+
+    Ex. '[Oracle Test] ranking + orale 2026' → ('Oracle Test', 'ranking + orale 2026').
+    Retourne ('', comment) si le commentaire ne commence pas par '[…]'.
+    """
+    if not comment:
+        return "", comment
+    stripped = comment.lstrip()
+    if not stripped.startswith("["):
+        return "", comment
+    end = stripped.find("]")
+    if end < 0:
+        return "", comment
+    group = stripped[1:end].strip()
+    rest = stripped[end + 1 :].lstrip()
+    return group, rest
+
+
 # ---------------------------------------------------------------------------
 # Page principale
 # ---------------------------------------------------------------------------
@@ -2923,10 +3050,26 @@ def render() -> None:
             axis=1,
         )
     if "comment" in display_df.columns:
-        display_df["comment"] = display_df["comment"].fillna("—")
-        display_df["comment"] = display_df["comment"].apply(
-            lambda x: (str(x)[:60] + "…") if str(x) != "—" and len(str(x)) > 60 else str(x)
-        )
+        # Colonne 'group' : extraite du préfixe '[nom] ' du commentaire.
+        # Ex. '[Oracle Test] ranking + orale 2026' → group='Oracle Test' et
+        # comment='ranking + orale 2026' (le préfixe est retiré du commentaire,
+        # l'info étant déjà portée par la colonne group).
+        groups: list[str] = []
+        cleaned_comments: list[str] = []
+        for _raw in display_df["comment"].fillna(""):
+            _group_tag, _rest = _split_group_from_comment(str(_raw))
+            groups.append(_group_tag if _group_tag else "—")
+            cleaned_comments.append(_rest if _rest else "—")
+        display_df["group"] = groups
+        display_df["comment"] = [
+            (c[:60] + "…") if c != "—" and len(c) > 60 else c for c in cleaned_comments
+        ]
+        # Réordonne les colonnes : batch_id, group, status, puis le reste.
+        _ordered = ["batch_id", "group", "status"]
+        display_df = display_df[
+            [c for c in _ordered if c in display_df.columns]
+            + [c for c in display_df.columns if c not in _ordered]
+        ]
 
     # Sélection d'un batch via dataframe
     st.dataframe(

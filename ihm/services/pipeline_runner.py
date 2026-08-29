@@ -84,6 +84,7 @@ from ihm.services.pipeline_ml_defaults import (
     DEFAULT_ML_INCLUDE_MACRO_REGIME,
     DEFAULT_ML_INCLUDE_SCORE_COMPONENTS,
     DEFAULT_ML_GLOBAL_MODEL_ONLY,
+    DEFAULT_ML_EXCLUDE_PER_SYMBOL_PER_SECTOR,
     DEFAULT_ML_ENABLE_ORACLE_MODEL,
     DEFAULT_ML_ORACLE_MODEL_ONLY,
     DEFAULT_ML_RANKING_TOP_K_FEATURES,
@@ -389,6 +390,7 @@ class PipelineLaunchOptions:
     ml_include_macro_regime: bool = DEFAULT_ML_INCLUDE_MACRO_REGIME
     ml_include_score_components: bool = DEFAULT_ML_INCLUDE_SCORE_COMPONENTS  # P0-6
     ml_global_model_only: bool = DEFAULT_ML_GLOBAL_MODEL_ONLY  # P0-6
+    ml_exclude_per_symbol_per_sector: bool = DEFAULT_ML_EXCLUDE_PER_SYMBOL_PER_SECTOR  # 2026-08-28
     ml_enable_oracle_model: bool = DEFAULT_ML_ENABLE_ORACLE_MODEL  # 2026-08-20 : Oracle Extreme (O0)
     ml_oracle_model_only: bool = DEFAULT_ML_ORACLE_MODEL_ONLY      # 2026-08-20 : Oracle ONLY
     ml_target_skip_vol_scaling: bool = DEFAULT_ML_TARGET_SKIP_VOL_SCALING
@@ -2294,7 +2296,13 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         if options.ml_global_model_only:
             # P0-6 : --global-model-only active déjà --enable-global-model implicitement
             # côté cli → on ne l'émet pas ici pour éviter le doublon dans la commande.
+            # 2026-08-28 : si exclude_per_symbol_per_sector est coché, on ne l'émet
+            # PAS — ce flag fait un return tôt côté orchestrator et tuerait l'Oracle
+            # qu'on veut justement conserver avec le nouveau flag.
             command.append("--global-model-only")
+        # 2026-08-28 : Exclude per-symbol & per-sector (garde Global Ranking + Oracle)
+        if options.ml_exclude_per_symbol_per_sector and not options.ml_global_model_only:
+            command.append("--exclude-per-symbol-per-sector")
         # Oracle Extreme (O0) — 2026-08-20
         if options.ml_oracle_model_only:
             command.append("--oracle-model-only")

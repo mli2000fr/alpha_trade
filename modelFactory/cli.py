@@ -82,6 +82,24 @@ def _resolve_synth_best_h(opts, batch_id: str | None) -> int:
     return 10
 
 
+def _load_live_dip_config() -> dict | None:
+    """Config DIP LIVE (clés prod_*) depuis config.yaml → persistent_dip_filter_long.
+
+    Le filtre DIP est appliqué à la PERSISTANCE des prédictions (synthèse Global
+    Rank) pour que ``run_execution`` (live) ne voie que les longs passant
+    persistance + dip. None si désactivé ou config illisible.
+    """
+    try:
+        from selector.dip_filter import load_dip_filter_config
+        cfg = load_dip_filter_config("prod")
+        if bool(cfg.get("enabled", False)):
+            return cfg
+        return None
+    except Exception:
+        LOGGER.exception("_load_live_dip_config: config indisponible — DIP live désactivé")
+        return None
+
+
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 ML_MODES = ("rebuild-all", "rebuild-missing", "refresh-stale")
@@ -549,6 +567,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Entraîne aussi un modèle global multi-symboles en comparaison")
     p.add_argument("--global-model-only", action="store_true", default=False,
                    help="Entraîne UNIQUEMENT le modèle global, sans per-symbol ni per-sector. Active implicitement --enable-global-model.")
+    p.add_argument("--exclude-per-symbol-per-sector", action="store_true", default=False,
+                   help="Saute l'entraînement per-symbol ET per-sector, mais GARDE le Global Ranking et l'Oracle Extreme (si activés). "
+                        "À la différence de --global-model-only qui fait un return tôt et skip aussi l'Oracle, ce flag ne skip que les modèles par ticker/secteur.")
     # Oracle Extreme (O0) — 2026-08-20 : détection d'extrêmes H20 SANS global_rank_20
     p.add_argument("--enable-oracle-model", action="store_true", default=False,
                    help="Entraîne AUSSI le modèle Oracle Extreme (ablation O0, sans global_rank_20) en fin de séquence globale. Le rank B25 étant redondant avec les features PIT (audit 2026-08-20), on entraîne O0 sans global_rank_20.")
@@ -695,6 +716,7 @@ def main(args: list[str] | None = None) -> None:
             ),
             force_v1_lstm=opts.force_v1_lstm,
             global_model_only=opts.global_model_only,
+            exclude_per_symbol_per_sector=opts.exclude_per_symbol_per_sector,
             enable_oracle_model=opts.enable_oracle_model,
             oracle_model_only=opts.oracle_model_only,
             sector_use_symbol_feature=opts.sector_symbol_feature,
@@ -1029,6 +1051,48 @@ def main(args: list[str] | None = None) -> None:
                 "(flux rank-driven : global_rank → synthèse)",
                 _batch_id,
             )
+        # ── Oracle Extreme : détection des champions Oracle (POINT 2, 2026-08-29).
+        # On détecte les champions INDÉPENDAMMENT du mode : un batch COMBINÉ
+        # (Global Ranking + Oracle, ablation O1) garde le flux rank-driven MAIS doit
+        # aussi remplir oracle_extreme_predictions via predict_oracle_extreme_history
+        # (bloc d'enchaînement ajouté après le dispatch). Le mode _oracle_only
+        # (batch sans per-symbol/sector et sans global_rank_history) conserve le flux
+        # exclusivement Oracle existant. ──
+        _has_oracle_champions = False
+        if _batch_id:
+            try:
+                from modelFactory.oracle.predict_history import has_oracle_champions
+                _has_oracle_champions = has_oracle_champions(_batch_id)
+            except Exception:  # noqa: BLE001
+                _has_oracle_champions = False
+        _oracle_only = bool(_batch_id) and (not _has_ps_models) and (not _per_sector)
+        if _oracle_only:
+            _oracle_only = _has_oracle_champions
+            if _oracle_only:
+                try:
+                    from sqlalchemy import text as _sql_text
+                    with engine.connect() as _conn:
+                        _gr_count = _conn.execute(
+                            _sql_text(
+                                "SELECT COUNT(*) FROM alpha_trade.global_rank_history "
+                                "WHERE batch_id = :bid"
+                            ),
+                            {"bid": str(_batch_id)},
+                        ).scalar()
+                    if _gr_count:
+                        _oracle_only = False
+                        LOGGER.info(
+                            "predict: batch=%s a global_rank_history → flux rank-driven (pas oracle-only)",
+                            _batch_id,
+                        )
+                except Exception:  # noqa: BLE001
+                    _oracle_only = False
+            if _oracle_only:
+                LOGGER.info(
+                    "predict: batch=%s Oracle-only détecté (champions, sans global_rank) → "
+                    "predict standard Oracle (remplit oracle_extreme_predictions)",
+                    _batch_id,
+                )
         LOGGER.info(
             "predict dispatch: batch=%s training_mode=%s → flux %s",
             _batch_id or "none",
@@ -1066,7 +1130,52 @@ def main(args: list[str] | None = None) -> None:
             opts.symbol_source,
             trade_date=universe_date,
         )
-        if historical_predict_enabled:
+        if _oracle_only:
+            # Prédiction standard Oracle (champions, sans retrain) → table
+            # oracle_extreme_predictions. Période : historique (start/end) ou live (jour).
+            _oracle_start = (
+                str(cfg.data.training_start_date or "2020-01-01")
+                if historical_predict_enabled else str(universe_date)
+            )
+            _oracle_end = (
+                str(cfg.data.training_end_date)
+                if historical_predict_enabled else _oracle_start
+            )
+            from modelFactory.oracle.predict_history import predict_oracle_extreme_history
+            _oracle_out = predict_oracle_extreme_history(
+                engine, _batch_id, _oracle_start, _oracle_end,
+                horizon=int(getattr(opts, "horizon", 20) or 20),
+            )
+            LOGGER.info("predict oracle-only batch=%s result=%s", _batch_id, _oracle_out)
+            # ── Synchro Oracle → model_predictions (même logique que le Global Rank
+            # synth) : peuple model_predictions pour que la couverture ML du backtest
+            # pipeline soit satisfaite et que le signal Oracle soit consommable comme
+            # univers per-symbol (--ml-batch-id). Idempotent ; échec non bloquant. ──
+            if _oracle_out and _oracle_out.get("status") == "completed" and int(_oracle_out.get("n_rows", 0) or 0) > 0:
+                try:
+                    from modelFactory.synthesize_oracle_predictions import synthesize as _synth_oracle
+                    _synth_res = _synth_oracle(
+                        _batch_id,
+                        start=_oracle_start if historical_predict_enabled else None,
+                        end=_oracle_end if historical_predict_enabled else None,
+                    )
+                    LOGGER.info(
+                        "predict oracle-only batch=%s sync model_predictions result=%s",
+                        _batch_id, _synth_res,
+                    )
+                except Exception as _synth_exc:  # noqa: BLE001
+                    LOGGER.warning(
+                        "predict oracle-only batch=%s sync model_predictions FAILED (non-bloquant): %s",
+                        _batch_id, _synth_exc,
+                    )
+            from modelFactory.oracle.predictions_store import load_oracle_predictions
+            preds = load_oracle_predictions(
+                engine, batch_id=_batch_id,
+                start_date=_oracle_start, end_date=_oracle_end,
+            )
+            persisted_incrementally = True
+            _dates_with_data = 1 if not preds.empty else 0
+        elif historical_predict_enabled:
             prediction_dates = load_available_trading_dates(
                 engine,
                 symbols=symbols,
@@ -1169,6 +1278,7 @@ def main(args: list[str] | None = None) -> None:
                 _synth_out = synthesize(
                     _batch_id,
                     best_h=_resolve_synth_best_h(opts, _batch_id),
+                    dip_config=_load_live_dip_config(),
                 )
                 LOGGER.info("predict per_sector synthèse batch=%s: %s", _batch_id, _synth_out)
                 preds = _load_synth_frame_for_range(engine, _batch_id, prediction_dates)
@@ -1193,6 +1303,7 @@ def main(args: list[str] | None = None) -> None:
                             _synth_fb = synthesize(
                                 _batch_id,
                                 best_h=_resolve_synth_best_h(opts, _batch_id),
+                                dip_config=_load_live_dip_config(),
                             )
                             _ranks_now = _load_synth_frame_for_range(engine, _batch_id, prediction_dates)
                             if not _ranks_now.empty:
@@ -1250,18 +1361,79 @@ def main(args: list[str] | None = None) -> None:
                 _synth_out = synthesize(
                     _batch_id,
                     best_h=_resolve_synth_best_h(opts, _batch_id),
+                    dip_config=_load_live_dip_config(),
                 )
                 LOGGER.info("predict per_sector live synthèse batch=%s: %s", _batch_id, _synth_out)
                 persisted_incrementally = True
                 preds = _load_synth_frame_for_range(engine, _batch_id, [_live_day])
             else:
                 if not _has_ps_models:
-                    # Batch global-only : pas de per-symbol à prédire.
-                    preds = pd.DataFrame(
-                        columns=["symbol", "prediction_date", "predicted_proba", "predicted_class", "run_id"]
+                    # Batch global-only (rank-driven) : pas de per-symbol à prédire.
+                    # Complément live quotidien : calculer les rangs du jour puis
+                    # synthétiser model_predictions. Sans cela, global_rank_history et
+                    # model_predictions restent vides ce jour → gate de couverture KO.
+                    from modelFactory.predictor import predict_global_rank_history as _pgrh_live
+                    from modelFactory.synthesize_global_rank_predictions import synthesize as _synth_live
+
+                    _live_day = _resolve_last_bar_date(engine) or universe_date
+                    from modelFactory.universe_guard import current_universe_size, enforce_min_universe_breadth
+
+                    _breadth = current_universe_size(engine, _live_day)
+                    try:
+                        enforce_min_universe_breadth(_breadth, trade_date=_live_day, batch_id=_batch_id)
+                    except RuntimeError as exc:
+                        _safe_print(f"❌ {exc}")
+                        raise SystemExit(1) from exc
+                    _day_str = _live_day.isoformat()
+                    _ranks = _pgrh_live(
+                        _day_str,
+                        _day_str,
+                        _batch_id,
+                        artifacts_dir=Path(opts.artifacts_dir),
+                        engine=engine,
                     )
+                    LOGGER.info("predict global-only live ranks %s: %s", _day_str, _ranks)
+                    _synth_out = _synth_live(
+                        _batch_id,
+                        best_h=_resolve_synth_best_h(opts, _batch_id),
+                        dip_config=_load_live_dip_config(),
+                    )
+                    LOGGER.info("predict global-only live synthèse batch=%s: %s", _batch_id, _synth_out)
+                    persisted_incrementally = True
+                    preds = _load_synth_frame_for_range(engine, _batch_id, [_live_day])
                 else:
                     preds = predict_batch(symbols, Path(opts.artifacts_dir), engine, persist=False, batch_id=_batch_id, accelerator=opts.accelerator)
+
+        # ── POINT 2 (2026-08-29) : batch COMBINÉ (Global Ranking + Oracle) →
+        #    enchaîner la prédiction Oracle standard pour remplir
+        #    oracle_extreme_predictions même si le flux principal est rank-driven.
+        #    Détection indépendante : _has_oracle_champions (le bloc _oracle_only
+        #    ci-dessus exclut déjà les batchs oracle-only via global_rank_history).
+        #    Idempotent (PK batch strict) ; non-bloquant. ──
+        if (not _oracle_only) and _has_oracle_champions and _batch_id:
+            _oc_start = (
+                str(cfg.data.training_start_date or "2020-01-01")
+                if historical_predict_enabled else str(universe_date)
+            )
+            _oc_end = (
+                str(cfg.data.training_end_date)
+                if historical_predict_enabled else _oc_start
+            )
+            try:
+                from modelFactory.oracle.predict_history import predict_oracle_extreme_history
+                _oc_out = predict_oracle_extreme_history(
+                    engine, _batch_id, _oc_start, _oc_end,
+                    horizon=int(getattr(opts, "horizon", 20) or 20),
+                )
+                LOGGER.info(
+                    "predict combined batch=%s oracle predict result=%s",
+                    _batch_id, _oc_out,
+                )
+            except Exception as _oc_exc:  # noqa: BLE001
+                LOGGER.warning(
+                    "predict combined batch=%s oracle predict FAILED (non-bloquant): %s",
+                    _batch_id, _oc_exc,
+                )
 
         # Sprint S4 (A-021) — drift gate / kill switch ML
         drift_decision = None

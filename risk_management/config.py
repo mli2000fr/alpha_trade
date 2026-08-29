@@ -213,6 +213,25 @@ class RiskConfig:
     # Maximum 2 tickers par secteur (en complément de ``max_sector_weight``).
     max_tickers_per_sector: int | None = None
     allow_fractional_shares: bool = False
+    # ── Chantier research smart_sector_cap (2026-08-27) ────────────────
+    # Variantes structurelles du cap sectoriel, derrière un mode (défaut
+    # "count" = comportement actuel inchangé). Research only, seuils GELÉS
+    # (pas de sweep) : exposition 20%, corrélation 0.40.
+    #   "count"    (C0) : max_tickers_per_sector actuel (comportement inchangé)
+    #   "exposure" (C1) : remplace le ticker-count par une limite d'exposition
+    #                     sectorielle (sector_notional / equity <= cap_pct).
+    #   "hybrid"   (C2) : max 2 tickers, un 3e exceptionnel SI
+    #                     exposition secteur <= cap_pct ET corrélation moyenne
+    #                     avec les positions du secteur < corr_threshold.
+    #                     Jamais plus de 3 tickers. Priorité au meilleur rang
+    #                     (ordre de traitement par selection_rank).
+    sector_cap_mode: str = "count"
+    sector_exposure_cap_pct: float = 0.20
+    sector_corr_threshold: float = 0.40
+    # Carte de corrélation paire PIT injectée par jour (mode hybrid) :
+    # {symbol: {other_symbol: corr}}. None = corrélation non dispo → pas
+    # d'exception 3e ticker (comportement sûr : refuse).
+    sector_corr_map: dict[str, dict[str, float]] | None = None
 
     # --- Liquidité dynamique (LiquiditeDynamique.md P1) ---
     # Position max en % de l'ADV 20j du ticker. None = contrainte désactivée.

@@ -22,6 +22,9 @@ from ihm.pages import run_page_if_standalone
 from ihm.services.backtesting_registry import (
     backtesting_log_available,
     build_backtesting_log_download_name,
+    count_backtesting_runs_by_status,
+    delete_backtesting_runs,
+    delete_backtesting_runs_except,
     get_backtesting_run_record,
     list_active_backtesting_runs,
     list_active_backtesting_runs_by_kind,
@@ -54,6 +57,7 @@ from ihm.services.queries import (
     get_backtesting_pit_history_diagnostic,
     get_batch_diagnostics_summary,
     get_completed_ml_training_batches,
+    get_oracle_prediction_batches,
 )
 from ihm.services.screener_artifact_history import (
     build_global_screener_artifact_history,
@@ -73,6 +77,11 @@ BT_BACKFILL_CAPITAL_PRESET_KEY = "bt_backfill_capital_preset"
 BT_BACKFILL_CAPITAL_PRESET_SIGNATURE_KEY = "bt_backfill_capital_preset_signature"
 BT_BACKFILL_SYMBOL_SOURCE_KEY = "bt_backfill_symbol_source"
 BT_RUN_CONFIGURATION_PRESET_KEY = "bt_run_configuration_preset"
+# Flag : le preset de configuration a déjà été appliqué automatiquement à
+# l'arrivée sur la page (équivalent au clic sur "Préremplir les options du
+# backtest"). Une seule application par session → les ajustements manuels de
+# l'utilisateur sont ensuite préservés aux reruns.
+BT_RUN_CONFIGURATION_PRESET_APPLIED_KEY = "bt_run_configuration_preset_applied"
 BT_RUN_ALLOW_FRACTIONAL_SHARES_KEY = "bt_run_allow_fractional_shares"
 LOAD_GLOBAL_SCREENER_HISTORY_KEY = "ihm_backtesting_load_global_screener_history"
 RUNTIME_CENTER_AUTO_UPDATE_KEY = "ihm_backtesting_runtime_center_auto_update"
@@ -93,6 +102,19 @@ BT_RUN_USE_CANONICAL_COSTS_DEFAULT = True
 # Intérêt marge affiché en % annuel (UI), MAIS le CLI attend une fraction
 # (0.075 = 7.5%). La conversion /100 est faite à la transmission.
 BT_RUN_MARGIN_INTEREST_DEFAULT = 7.5
+# ── Persistent Rank DIP filter (2026-08-27) — paramétrage backtest ──
+# Défauts = miroir de config.yaml `persistent_dip_filter_long.backtest_*`.
+# La page lit d'abord config.yaml (source de vérité) ; ces constantes ne
+# servent que de fallback si config.yaml est illisible/absent.
+BT_RUN_DIP_ENABLED_DEFAULT = True
+BT_RUN_DIP_RANK_HORIZON_DEFAULT = 20
+BT_RUN_DIP_RANK_THRESHOLD_DEFAULT = 0.90
+BT_RUN_DIP_PERSIST_DAYS_DEFAULT = 4
+BT_RUN_DIP_PCT_DEFAULT = -0.02
+# Reclaim (confirmation de rebond avant entrée) : vide/None = R désactivé
+# (D0 direct, comportement gelé). 1.0 = retour au prix pré-DIP.
+BT_RUN_DIP_RECLAIM_RATIO_DEFAULT = None
+BT_RUN_DIP_RECLAIM_MAX_WAIT_DEFAULT = 10
 
 RUN_CONFIGURATION_PRESETS: dict[str, dict[str, object]] = {
     "pipeline_live_like": {
@@ -187,6 +209,26 @@ def _parse_optional_float(raw_value: str, *, label: str) -> float | None:
     except ValueError:
         st.warning(f"Valeur invalide pour `{label}` : `{raw_value}`. Le champ est ignoré.")
         return None
+
+
+def _to_date_value(value: object, default: str):
+    """Convertit une valeur de session state (str YYYY-MM-DD ou date) en ``date``.
+
+    Utilisé pour les widgets ``st.date_input`` (start/end) : la session state peut
+    contenir un str (ancien text_input) ou un ``datetime.date`` (date_input).
+    """
+    from datetime import date as _date, datetime as _datetime
+    if isinstance(value, _date):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            return _datetime.strptime(value.strip()[:10], "%Y-%m-%d").date()
+        except ValueError:
+            pass
+    try:
+        return _datetime.strptime(default[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return _date(2025, 1, 1)
 
 
 def _get_capital_presets() -> tuple[CapitalPreset, ...]:
@@ -356,6 +398,32 @@ def _resolve_pipeline_backtest_defaults(
         "dd_recovery_pct": _to_float(values.get("backtesting_dd_recovery_pct", 0.92), 0.92),
         "target_annual_vol": _to_float(values.get("backtesting_target_annual_vol", 0.15), 0.15),
         "min_ml_coverage_ratio": _to_float(values.get("backtesting_min_ml_coverage_ratio", 0.80), 0.80),
+    }
+
+
+def _load_dip_backtest_defaults() -> dict[str, Any]:
+    """Défauts UI du filtre Persistent Rank DIP = config.yaml.
+
+    Lit ``config.yaml → persistent_dip_filter_long.backtest_*`` (source de
+    vérité partagée avec la CLI via ``selector.dip_filter``). Si config.yaml
+    est illisible/absent → retombe sur les constantes ``BT_RUN_DIP_*_DEFAULT``
+    (miroir des valeurs gelées : 20 / 0.90 / 4 / 0.02 / enabled).
+    """
+    raw: dict[str, Any] = {}
+    try:
+        import yaml as _yaml
+        with open(PROJECT_ROOT / "config.yaml", encoding="utf-8") as _fh:
+            raw = (_yaml.safe_load(_fh) or {}).get("persistent_dip_filter_long") or {}
+    except Exception:
+        raw = {}
+    return {
+        "enabled": bool(raw.get("backtest_enabled", BT_RUN_DIP_ENABLED_DEFAULT)),
+        "rank_horizon": _to_int(raw.get("backtest_rank_horizon", BT_RUN_DIP_RANK_HORIZON_DEFAULT), BT_RUN_DIP_RANK_HORIZON_DEFAULT),
+        "rank_threshold": _to_float(raw.get("backtest_rank_threshold", BT_RUN_DIP_RANK_THRESHOLD_DEFAULT), BT_RUN_DIP_RANK_THRESHOLD_DEFAULT),
+        "persist_days": _to_int(raw.get("backtest_persist_days", BT_RUN_DIP_PERSIST_DAYS_DEFAULT), BT_RUN_DIP_PERSIST_DAYS_DEFAULT),
+        "dip_pct": _to_float(raw.get("backtest_dip_pct", BT_RUN_DIP_PCT_DEFAULT), BT_RUN_DIP_PCT_DEFAULT),
+        "reclaim_ratio": raw.get("backtest_reclaim_ratio", BT_RUN_DIP_RECLAIM_RATIO_DEFAULT),
+        "reclaim_max_wait": _to_int(raw.get("backtest_reclaim_max_wait", BT_RUN_DIP_RECLAIM_MAX_WAIT_DEFAULT), BT_RUN_DIP_RECLAIM_MAX_WAIT_DEFAULT),
     }
 
 
@@ -589,6 +657,63 @@ def _resolve_history_selected_run_id(
     return run_id or None
 
 
+def _resolve_history_selected_run_ids(
+    history_df: pd.DataFrame,
+    *,
+    table_key: str = BACKTESTING_HISTORY_TABLE_KEY,
+) -> list[str]:
+    """Retourne les run_id de TOUTES les lignes sélectionnées (multi-row)."""
+    if history_df.empty or "run_id" not in history_df.columns:
+        return []
+    state = st.session_state.get(table_key)
+    if state is None:
+        return []
+    selection = getattr(state, "selection", None) or (state.get("selection") if isinstance(state, dict) else None)
+    if not selection:
+        return []
+    rows = getattr(selection, "rows", None) or (selection.get("rows") if isinstance(selection, dict) else None)
+    if not rows:
+        return []
+    selected_run_ids: list[str] = []
+    for row_index in rows:
+        try:
+            row_index = int(row_index)
+        except (TypeError, ValueError):
+            continue
+        if row_index < 0 or row_index >= len(history_df):
+            continue
+        run_id = str(history_df.iloc[row_index].get("run_id") or "").strip()
+        if run_id and run_id not in selected_run_ids:
+            selected_run_ids.append(run_id)
+    return selected_run_ids
+
+
+def _clear_history_selection(*, table_key: str = BACKTESTING_HISTORY_TABLE_KEY) -> None:
+    """Réinitialise la sélection du dataframe d'historique.
+
+    Après une suppression, les indices de lignes sélectionnés restent dans
+    ``st.session_state`` et se réappliquent aux NOUVELLES lignes aux mêmes
+    positions → il faut vider ``selection.rows`` avant le rerun.
+    """
+    state = st.session_state.get(table_key)
+    if state is None:
+        return
+    selection = getattr(state, "selection", None) or (state.get("selection") if isinstance(state, dict) else None)
+    if selection is None:
+        return
+    if hasattr(selection, "rows"):
+        try:
+            selection.rows = []
+            return
+        except Exception:
+            pass
+    if isinstance(selection, dict):
+        try:
+            selection["rows"] = []
+        except Exception:
+            pass
+
+
 def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
     if kind == "run":
         return [
@@ -665,6 +790,14 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
             {"Paramètre": "max_sector_exposure_pct", "Explication": "Cap d'exposition par secteur en fraction (Phase C.4).", "Défaut": "0.0"},
             {"Paramètre": "max_portfolio_dd_pct", "Explication": "Drawdown max avant coupe-circuit nouvelles entrées (Phase C.5).", "Défaut": "0.0"},
             {"Paramètre": "target_annual_vol", "Explication": "Cible vol annualisée portefeuille (Phase C.2).", "Défaut": "None"},
+            # Persistent Rank DIP filter (2026-08-27) — config.yaml backtest_*.
+            {"Paramètre": "dip_enabled", "Explication": "Active/coupe le filtre Persistent Rank DIP en backtest (--dip-enabled / --no-dip-enabled).", "Défaut": "config.yaml backtest_enabled (true)"},
+            {"Paramètre": "dip_rank_horizon", "Explication": "Horizon de rang H → colonne global_rank_{H} (--dip-rank-horizon).", "Défaut": "config.yaml backtest_rank_horizon (20)"},
+            {"Paramètre": "dip_rank_threshold", "Explication": "Seuil de rang minimal (0.90 = TOP 10%) (--dip-rank-threshold).", "Défaut": "config.yaml backtest_rank_threshold (0.90)"},
+            {"Paramètre": "dip_persist_days", "Explication": "Persistance N : séances consécutives au-dessus du seuil (--dip-persist-days).", "Défaut": "config.yaml backtest_persist_days (4)"},
+            {"Paramètre": "dip_pct", "Explication": "Seuil prix signé sur N séances : >0 = baisse ≥ X (DIP) ; <0 = hausse ≥ |X| (anti-DIP/breakout) (--dip-pct).", "Défaut": "config.yaml backtest_dip_pct (0.02)"},
+            {"Paramètre": "dip_reclaim_ratio", "Explication": "Confirmation de rebond avant entrée (vide/0 = R off ; 1.0 = retour prix pré-DIP, 0.99 = 99% de ce prix) (--dip-reclaim-ratio).", "Défaut": "config.yaml backtest_reclaim_ratio (null = R off)"},
+            {"Paramètre": "dip_reclaim_max_wait", "Explication": "Fenêtre (séances) pour la confirmation de rebond (--dip-reclaim-max-wait).", "Défaut": "config.yaml backtest_reclaim_max_wait (10)"},
         ]
     if kind == "diagnose-screener":
         return [
@@ -1376,6 +1509,18 @@ def _build_run_options() -> BacktestRunOptions:
     if BT_RUN_ALLOW_FRACTIONAL_SHARES_KEY not in st.session_state:
         st.session_state[BT_RUN_ALLOW_FRACTIONAL_SHARES_KEY] = bool(fractional_prefs.backtest_enabled)
     _ensure_run_configuration_preset_session_key()
+    # ── Auto-application du preset de configuration à l'arrivée sur la page ──
+    # Équivalent au clic sur "Préremplir les options du backtest", mais posé
+    # automatiquement au premier affichage (avant l'instanciation des widgets,
+    # qui affichent alors les valeurs du preset). Appliqué une seule fois par
+    # session : ensuite l'utilisateur peut ajuster librement, et ses modifs ne
+    # sont pas écrasées aux reruns suivants. Le bouton manuel reste disponible
+    # pour ré-appliquer explicitement (ou changer de preset).
+    if not st.session_state.get(BT_RUN_CONFIGURATION_PRESET_APPLIED_KEY):
+        _apply_run_configuration_preset(
+            str(st.session_state.get(BT_RUN_CONFIGURATION_PRESET_KEY, "pipeline_live_like"))
+        )
+        st.session_state[BT_RUN_CONFIGURATION_PRESET_APPLIED_KEY] = True
     preset_col1, preset_col2 = st.columns([1.5, 3.5])
     with preset_col1:
         selected_run_configuration_preset = cast(
@@ -1407,19 +1552,21 @@ def _build_run_options() -> BacktestRunOptions:
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        start = st.text_input(
+        start = st.date_input(
             "Date de début",
-            value=cast(str, st.session_state.get("bt_run_start", "2025-01-01")),
+            value=_to_date_value(st.session_state.get("bt_run_start", "2025-01-01"), "2025-01-01"),
             key="bt_run_start",
-            help="Format YYYY-MM-DD. C'est la borne basse du backtest.",
+            help="Borne basse du backtest (calendrier).",
         )
+        start = start.isoformat()
     with col2:
-        end = st.text_input(
+        end = st.date_input(
             "Date de fin",
-            value=cast(str, st.session_state.get("bt_run_end", "2026-05-31")),
+            value=_to_date_value(st.session_state.get("bt_run_end", "2026-06-30"), "2026-06-30"),
             key="bt_run_end",
-            help="Format YYYY-MM-DD. Laissez une date future si vous voulez aller jusqu'au dernier bar dispo.",
+            help="Borne haute du backtest (calendrier). Date future = jusqu'au dernier bar dispo.",
         )
+        end = end.isoformat()
     with col3:
         equity = st.number_input(
             "Capital initial ($)",
@@ -1735,7 +1882,7 @@ def _build_run_options() -> BacktestRunOptions:
     with dir_col1:
         no_shorts = st.checkbox(
             "Long only (--no-shorts)",
-            value=bool(st.session_state.get("bt_run_no_shorts", False)),
+            value=bool(st.session_state.get("bt_run_no_shorts", True)),
             key="bt_run_no_shorts",
             help="Ne trade que des positions LONG : ignore les signaux short. Équivalent CLI --no-shorts.",
         )
@@ -2167,7 +2314,7 @@ def _build_run_options() -> BacktestRunOptions:
     with macro_col1:
         allow_neutral_fallback_on_missing_macro_data = st.checkbox(
             "Tolérer macro indisponible (`data_quality=missing`)",
-            value=bool(st.session_state.get("bt_run_allow_missing_macro_data", False)),
+            value=bool(st.session_state.get("bt_run_allow_missing_macro_data", True)),
             key="bt_run_allow_missing_macro_data",
             help=(
                 "Si coché, une séance sans macro requise (VIX / 10Y selon votre config) continue en mode dégradé "
@@ -2260,6 +2407,138 @@ def _build_run_options() -> BacktestRunOptions:
             "Seuil de la cascade Global Rank → Per-Symbol. `0.10` = config benchmark B25."
         )
 
+    # ── Persistent Rank DIP filter (2026-08-27) — paramétrage backtest ──
+    # Défauts = config.yaml persistent_dip_filter_long.backtest_* (source de
+    # vérité). Transmis via --dip-* ; si l'utilisateur ne touche à rien, aucun
+    # flag n'est émis → la CLI lit config.yaml directement (comportement gelé).
+    _dip_defaults = _load_dip_backtest_defaults()
+    with st.expander("🔻 Filtre Persistent Rank DIP (paramétrage backtest)", expanded=False):
+        st.caption(
+            "Candidats LONG : `global_rank_{H} ≥ seuil` sur `N` séances consécutives "
+            "ET condition prix sur `N` séances (`X` signé, voir info). `Reclaim R` "
+            "(vide = off) : entrée au 1er rebond `close ≥ R × prix pré-DIP`. Valeurs "
+            "par défaut = `config.yaml → persistent_dip_filter_long.backtest_*` "
+            "(gelées research 2026-08-27)."
+        )
+        _dip_col1, _dip_col2 = st.columns(2)
+        with _dip_col1:
+            dip_enabled = st.checkbox(
+                "Filtre DIP activé (backtest)",
+                value=bool(
+                    st.session_state.get(
+                        "bt_run_dip_enabled",
+                        _dip_defaults.get("enabled", BT_RUN_DIP_ENABLED_DEFAULT),
+                    )
+                ),
+                key="bt_run_dip_enabled",
+                help="Désactiver → la CLI émet --no-dip-enabled (filtre coupé). Sinon défaut config.yaml.",
+            )
+            dip_persist_days = st.number_input(
+                "Persistance N (séances)",
+                min_value=1,
+                max_value=20,
+                value=int(
+                    st.session_state.get(
+                        "bt_run_dip_persist_days",
+                        _dip_defaults.get("persist_days", BT_RUN_DIP_PERSIST_DAYS_DEFAULT),
+                    )
+                ),
+                step=1,
+                key="bt_run_dip_persist_days",
+                help="Nombre de séances consécutives où global_rank ≥ seuil (config.yaml backtest_persist_days).",
+            )
+        with _dip_col2:
+            dip_rank_horizon = st.number_input(
+                "Horizon de rang H",
+                min_value=3,
+                max_value=20,
+                step=1,
+                value=int(
+                    st.session_state.get(
+                        "bt_run_dip_rank_horizon",
+                        _dip_defaults.get("rank_horizon", BT_RUN_DIP_RANK_HORIZON_DEFAULT),
+                    )
+                ),
+                key="bt_run_dip_rank_horizon",
+                help="Colonne global_rank_{H} (config.yaml backtest_rank_horizon).",
+            )
+            dip_rank_threshold = st.number_input(
+                "Seuil de rang (fraction)",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(
+                    st.session_state.get(
+                        "bt_run_dip_rank_threshold",
+                        _dip_defaults.get("rank_threshold", BT_RUN_DIP_RANK_THRESHOLD_DEFAULT),
+                    )
+                ),
+                step=0.01,
+                format="%.2f",
+                key="bt_run_dip_rank_threshold",
+                help="0.90 = TOP 10% (config.yaml backtest_rank_threshold).",
+            )
+            dip_pct = st.number_input(
+                "Seuil prix X (fraction, signé)",
+                min_value=-0.30,
+                max_value=0.30,
+                value=float(
+                    st.session_state.get(
+                        "bt_run_dip_pct",
+                        _dip_defaults.get("dip_pct", BT_RUN_DIP_PCT_DEFAULT),
+                    )
+                ),
+                step=0.01,
+                format="%.2f",
+                key="bt_run_dip_pct",
+                help="Signe du seuil close[J] vs close[J-N] (config.yaml backtest_dip_pct) : "
+                     "> 0 = exige une BAISSE ≥ X (DIP classique) ; < 0 = exige une HAUSSE ≥ |X| "
+                     "(anti-DIP / breakout). Ex : 0.02 = baisse ≥ 2%% ; -0.02 = hausse ≥ 2%%. 0 = inopérant.",
+            )
+        st.caption(
+            "ℹ️ **Signe de `X`** : `+X` → le ticker doit avoir **baissé** d'au moins `X` sur `N` "
+            "séances (DIP). `-X` → il doit avoir **monté** d'au moins `|X|` (anti-DIP / "
+            "breakout : achat de force, rang top persisté + momentum haussier). `0` → "
+            "seule la persistance du rang compte. Le reclaim `R` s'applique dans les deux "
+            "cas (entrée à la 1re séance où la condition prix est remplie après J)."
+        )
+        _dip_col3, _dip_col4 = st.columns(2)
+        with _dip_col3:
+            dip_reclaim_ratio = st.number_input(
+                "Reclaim R (rebond avant entrée)",
+                min_value=0.0,
+                max_value=1.0,
+                value=st.session_state.get(
+                    "bt_run_dip_reclaim_ratio",
+                    _dip_defaults.get("reclaim_ratio", BT_RUN_DIP_RECLAIM_RATIO_DEFAULT),
+                ),
+                step=0.01,
+                format="%.2f",
+                key="bt_run_dip_reclaim_ratio",
+                help="Vide/0 = R désactivé (D0 direct). 1.0 = entrée seulement au retour au "
+                     "prix pré-DIP ; 0.99 = 99% de ce prix. Entrée au 1er T où "
+                     "close[T] ≥ R × close[J-N] ET rang ≥ seuil (config.yaml backtest_reclaim_ratio).",
+            )
+        with _dip_col4:
+            dip_reclaim_max_wait = st.number_input(
+                "Reclaim max wait (séances)",
+                min_value=1,
+                max_value=60,
+                value=int(
+                    st.session_state.get(
+                        "bt_run_dip_reclaim_max_wait",
+                        _dip_defaults.get("reclaim_max_wait", BT_RUN_DIP_RECLAIM_MAX_WAIT_DEFAULT),
+                    )
+                ),
+                step=1,
+                key="bt_run_dip_reclaim_max_wait",
+                help="Fenêtre de scan des DIP antérieurs pour la confirmation de rebond "
+                     "(config.yaml backtest_reclaim_max_wait).",
+            )
+        st.caption(
+            "⚠️ Le filtre s'applique en amont de la cascade ML (`apply_cascade_to_predictions`). "
+            "Modifier ces valeurs change la sélection des candidats DIP (impact direct sur le P&L)."
+        )
+
     # ── Combinaison Oracle × Global Rank (S5/S6.1 + E6-E13) ──
     st.markdown("**🔀 Mode de cascade — combinaison Oracle × Global Rank**")
     _cascade_mode_labels = {
@@ -2283,13 +2562,63 @@ def _build_run_options() -> BacktestRunOptions:
         key="bt_run_cascade_rank_mode",
         help="Comment le rang global (Global Ranking) et la proba_extreme (Oracle Extreme) sont combinés.",
     )
-    oracle_oos_path = ""
+    oracle_batch_id: str | None = None
     if _cascade_rank_mode in ("oracle", "oracle_filter", "oracle_rerank", "oracle_pool", "extreme_gate"):
-        oracle_oos_path = st.text_input(
-            "Chemin parquet OOS Oracle (--oracle-oos-path)",
-            value=str(st.session_state.get("bt_run_oracle_oos_path", "") or ""),
-            key="bt_run_oracle_oos_path",
-            help="artifacts/models/oracle/oracle-wf-<run>/oos_predictions.parquet — sortie walk-forward du modèle Oracle.",
+        oracle_batches = get_oracle_prediction_batches()
+        _oracle_batch_labels: dict[str, str | None] = {"— (défaut : campagne ML)": None}
+        if not oracle_batches.empty:
+            for _, r in oracle_batches.iterrows():
+                _label = f"{r['batch_id']} | {int(r['n_predictions']):,} préd | {r['min_date']}→{r['max_date']}"
+                if r.get("comment"):
+                    _label += f" | {str(r['comment'])[:50]}"
+                _oracle_batch_labels[_label] = str(r["batch_id"])
+        _all_oracle_labels = list(_oracle_batch_labels.keys())
+        _default_oracle_idx = 0
+        _prev_oracle_label = str(st.session_state.get("bt_run_oracle_batch_id", "") or "")
+        if _prev_oracle_label in _all_oracle_labels:
+            _default_oracle_idx = _all_oracle_labels.index(_prev_oracle_label)
+        _sel_oracle_label = cast(str, st.selectbox(
+            "Batch Oracle Extreme (table --oracle-batch-id)",
+            options=_all_oracle_labels,
+            index=_default_oracle_idx,
+            key="bt_run_oracle_batch_id",
+            help="Source des proba_extreme depuis oracle_extreme_predictions (filtre batch strict). "
+                 "« Défaut : campagne ML » = le batch sélectionné comme Campagne ML est aussi la source "
+                 "oracle (un seul batch B25+Oracle). Source table uniquement (parquet supprimé).",
+        ))
+        oracle_batch_id = _oracle_batch_labels[_sel_oracle_label]
+
+    # ── Priorité N4X2 jours saturés (recherche E, extreme_gate uniquement) ──
+    extreme_gate_dip_saturated = bool(st.session_state.get("bt_run_extreme_gate_dip_saturated", False))
+    extreme_gate_dip_band = float(st.session_state.get("bt_run_extreme_gate_dip_band", 0.02) or 0.02)
+    if _cascade_rank_mode == "extreme_gate":
+        st.markdown("**🥇 Priorité N4X2 jours saturés (recherche)**")
+        _eg_sat_c1, _eg_sat_c2 = st.columns(2)
+        with _eg_sat_c1:
+            extreme_gate_dip_saturated = st.checkbox(
+                "Activer la priorité N4X2 jours saturés",
+                value=extreme_gate_dip_saturated,
+                key="bt_run_extreme_gate_dip_saturated",
+                help="--extreme-gate-dip-saturated : pool Oracle TOP20 intact, N4X2 réordonne "
+                     "lexicographiquement (bande de rang Oracle → N4X2 → score) UNIQUEMENT quand "
+                     "candidats > slots disponibles. Jour non saturé = ordre inchangé.",
+            )
+        with _eg_sat_c2:
+            extreme_gate_dip_band = st.number_input(
+                "Bande de rang Oracle (fraction)",
+                min_value=0.005,
+                max_value=0.20,
+                value=extreme_gate_dip_band,
+                step=0.005,
+                format="%.3f",
+                key="bt_run_extreme_gate_dip_band",
+                help="--extreme-gate-dip-band : largeur de bande du percentile Oracle pour le "
+                     "groupement lexicographique (défaut 0.02).",
+            )
+        st.caption(
+            "Ne prend effet que si le **filtre DIP est activé** (case DIP ci-dessus). "
+            "Le DIP ne filtre plus : il ne fait que prioriser N4X2 dans sa bande de rang "
+            "sur les jours où il y a plus de candidats que de positions."
         )
     with st.expander("ℹ️ Détail des modes de combinaison", expanded=False):
         st.markdown(
@@ -2302,7 +2631,9 @@ def _build_run_options() -> BacktestRunOptions:
 - **extreme_gate** (E6-E13) — Oracle **seul**, **LONG-only**, top 20% du jour par `proba_extreme` (percentile intra-date). Indépendant du rang global.
 - **random** — rangs aléatoires (placebo, isole l'edge du ranking).
 
-⚠️ Le **rang global** vient de `global_rank_history` du batch sélectionné (étape « Prédire l'univers »), et `proba_extreme` du parquet OOS Oracle. Pour combiner proprement, utilisez un batch ayant entraîné **les deux** modèles (ablation O1) — le rang global utilisé est celui du batch sélectionné, **pas un B25 figé**.
+🤖 **Auto-détection Extreme Gate** : si le batch sélectionné est **oracle-only** (aucun rang global dans `global_rank_history`, mais des prédictions dans `oracle_extreme_predictions`), le mode cascade passe **automatiquement** en `extreme_gate`, ce batch étant la source oracle. Dans ce cas, pas besoin de sélectionner Extreme Gate ni de renseigner le batch Oracle ci-dessus.
+
+⚠️ Le **rang global** vient de `global_rank_history` du batch sélectionné (étape « Prédire l'univers »), et `proba_extreme` de la table `oracle_extreme_predictions` (batch sélectionné ci-dessus). Pour combiner proprement, utilisez un batch ayant entraîné **les deux** modèles (ablation O1) — le rang global utilisé est celui du batch sélectionné, **pas un B25 figé**.
 """
         )
 
@@ -2438,8 +2769,20 @@ def _build_run_options() -> BacktestRunOptions:
         cascade_batch_id=selected_ml_batch_id,
         batch_diagnostics_batch_id=selected_ml_batch_id,
         cascade_top_pct=float(st.session_state.get("bt_run_cascade_top_pct", 0.10) or 0.10),
+        # Persistent Rank DIP filter — valeurs UI = défauts config.yaml. Seuls
+        # les champs explicitement modifiés génèrent un flag --dip-* ; sinon la
+        # CLI lit config.yaml (comportement gelé inchangé).
+        dip_enabled=bool(st.session_state.get("bt_run_dip_enabled", _dip_defaults.get("enabled", BT_RUN_DIP_ENABLED_DEFAULT))),
+        dip_rank_horizon=int(st.session_state.get("bt_run_dip_rank_horizon", _dip_defaults.get("rank_horizon", BT_RUN_DIP_RANK_HORIZON_DEFAULT))),
+        dip_rank_threshold=float(st.session_state.get("bt_run_dip_rank_threshold", _dip_defaults.get("rank_threshold", BT_RUN_DIP_RANK_THRESHOLD_DEFAULT))),
+        dip_persist_days=int(st.session_state.get("bt_run_dip_persist_days", _dip_defaults.get("persist_days", BT_RUN_DIP_PERSIST_DAYS_DEFAULT))),
+        dip_pct=float(st.session_state.get("bt_run_dip_pct", _dip_defaults.get("dip_pct", BT_RUN_DIP_PCT_DEFAULT))),
+        dip_reclaim_ratio=st.session_state.get("bt_run_dip_reclaim_ratio"),
+        dip_reclaim_max_wait=int(st.session_state.get("bt_run_dip_reclaim_max_wait", _dip_defaults.get("reclaim_max_wait", BT_RUN_DIP_RECLAIM_MAX_WAIT_DEFAULT))),
         cascade_rank_mode=cast(Any, st.session_state.get("bt_run_cascade_rank_mode", "ml") or "ml"),
-        oracle_oos_path=(oracle_oos_path.strip() if oracle_oos_path else None),
+        oracle_batch_id=(oracle_batch_id or None),
+        extreme_gate_dip_saturated=bool(extreme_gate_dip_saturated),
+        extreme_gate_dip_band=float(extreme_gate_dip_band or 0.02),
         score_column=cast(Any, score_column),
         walk_forward_artifacts_dir=walk_forward_artifacts_dir.strip() or None,
         disable_walk_forward=bool(st.session_state.get("bt_run_disable_walk_forward", False)),
@@ -5117,14 +5460,137 @@ def _render_runtime_center_body(*, auto_refresh_enabled: bool) -> None:
     )
     with st.expander("🗃️ Historique des exécutions backtesting", expanded=False):
         st.caption("Sélectionnez une ligne pour faire apparaître les boutons de téléchargement des logs du run historique.")
+
+        # ── Purge des runs non-terminés (bouton) ────────────────────────────
+        _status_counts = count_backtesting_runs_by_status()
+        _non_kept_counts = {k: v for k, v in _status_counts.items() if k != "completed"}
+        _purge_key = "backtesting_purge_non_completed"
+        # Flag de confirmation — clé DÉDIÉE, distincte des clés des widgets
+        # (évite StreamlitValueAssignmentNotAllowedError : on ne peut pas écrire
+        # dans st.session_state sur une clé de widget).
+        _purge_pending_key = "backtesting_purge_non_completed_pending"
+        if _non_kept_counts:
+            _non_kept_total = sum(_non_kept_counts.values())
+            _summary = ", ".join(f"{k}: {v}" for k, v in sorted(_non_kept_counts.items()))
+            st.markdown(
+                f"<div style='padding:6px 10px;border:1px solid #888;border-radius:8px;"
+                f"background:#1a1a1a;color:#ddd'>"
+                f"🗑️ <b>{_non_kept_total}</b> run(s) non terminé(s) : {_summary}. "
+                f"Uniquement les runs <b>completed</b> seront conservés "
+                f"(({_status_counts.get('completed', 0)}).</div>",
+                unsafe_allow_html=True,
+            )
+            if not st.session_state.get(_purge_pending_key):
+                if st.button(
+                    "🗑️ Supprimer tous les backtests non terminés (répertoires + index)",
+                    key=_purge_key,
+                    use_container_width=True,
+                    help="Supprime les runs dont le statut n'est pas `completed` : "
+                    "leur entrée dans l'historique ET leur répertoire d'artefacts/logs. "
+                    "Les runs en cours sont arrêtés au préalable.",
+                ):
+                    st.session_state[_purge_pending_key] = True
+                    st.rerun()
+            else:
+                st.warning(
+                    f"⚠️ Confirmer la suppression de **{_non_kept_total}** run(s) non terminé(s) ? "
+                    "Cette action est irréversible (répertoires + historique supprimés)."
+                )
+                _confirm_cols = st.columns(2)
+                if _confirm_cols[0].button(
+                    "✅ Confirmer la suppression",
+                    key=f"{_purge_key}_confirm",
+                    use_container_width=True,
+                ):
+                    result = delete_backtesting_runs_except(
+                        keep_statuses={"completed"},
+                        stop_active=True,
+                    )
+                    st.session_state.pop(_purge_pending_key, None)
+                    _clear_history_selection()
+                    if result.get("errors"):
+                        st.error(
+                            f"Suppression partielle : {len(result['deleted'])} supprimé(s), "
+                            f"{len(result['kept'])} conservé(s), erreurs : {', '.join(result['errors'][:5])}"
+                        )
+                    else:
+                        st.success(
+                            f"Suppression terminée : {len(result['deleted'])} run(s) supprimé(s), "
+                            f"{len(result['kept'])} conservé(s)."
+                        )
+                    st.rerun()
+                if _confirm_cols[1].button(
+                    "❌ Annuler",
+                    key=f"{_purge_key}_cancel",
+                    use_container_width=True,
+                ):
+                    st.session_state.pop(_purge_pending_key, None)
+                    st.rerun()
+        else:
+            st.success("✅ Tous les runs backtesting sont terminés (completed) — rien à supprimer.")
+
         st.dataframe(
             history_df,
             use_container_width=True,
             hide_index=True,
             on_select="rerun",
-            selection_mode="single-row",
+            selection_mode="multi-row",
             key=BACKTESTING_HISTORY_TABLE_KEY,
         )
+
+        # ── Suppression des runs sélectionnés ──────────────────────────────
+        _selected_run_ids = _resolve_history_selected_run_ids(history_df)
+        _selected_delete_key = "backtesting_delete_selected"
+        # Flag de confirmation — clé DÉDIÉE, distincte des clés des widgets.
+        _selected_delete_pending_key = "backtesting_delete_selected_pending"
+        if _selected_run_ids:
+            st.caption(
+                f"✅ {len(_selected_run_ids)} run(s) sélectionné(s) : "
+                + ", ".join(f"`{rid}`" for rid in _selected_run_ids[:5])
+                + ("…" if len(_selected_run_ids) > 5 else "")
+            )
+            if not st.session_state.get(_selected_delete_pending_key):
+                if st.button(
+                    f"🗑️ Supprimer {len(_selected_run_ids)} backtest(s) sélectionné(s) (répertoires + index)",
+                    key=_selected_delete_key,
+                    use_container_width=True,
+                    help="Supprime les runs sélectionnés : leur entrée dans l'historique ET leur "
+                    "répertoire d'artefacts/logs. Les runs en cours sont arrêtés au préalable.",
+                ):
+                    st.session_state[_selected_delete_pending_key] = True
+                    st.rerun()
+            else:
+                st.warning(
+                    f"⚠️ Confirmer la suppression de **{len(_selected_run_ids)}** run(s) sélectionné(s) ? "
+                    "Cette action est irréversible (répertoires + historique supprimés)."
+                )
+                _sel_confirm_cols = st.columns(2)
+                if _sel_confirm_cols[0].button(
+                    "✅ Confirmer la suppression",
+                    key=f"{_selected_delete_key}_confirm",
+                    use_container_width=True,
+                ):
+                    result = delete_backtesting_runs(_selected_run_ids, stop_active=True)
+                    st.session_state.pop(_selected_delete_pending_key, None)
+                    _clear_history_selection()
+                    if result.get("errors"):
+                        st.error(
+                            f"Suppression partielle : {len(result['deleted'])} supprimé(s), "
+                            f"{len(result['kept'])} conservé(s), erreurs : {', '.join(result['errors'][:5])}"
+                        )
+                    else:
+                        st.success(
+                            f"Suppression terminée : {len(result['deleted'])} run(s) supprimé(s), "
+                            f"{len(result['kept'])} conservé(s)."
+                        )
+                    st.rerun()
+                if _sel_confirm_cols[1].button(
+                    "❌ Annuler",
+                    key=f"{_selected_delete_key}_cancel",
+                    use_container_width=True,
+                ):
+                    st.session_state.pop(_selected_delete_pending_key, None)
+                    st.rerun()
 
         selected_history_run_id = _resolve_history_selected_run_id(history_df)
         if selected_history_run_id is None:

@@ -199,6 +199,51 @@ def test_run_configuration_preset_pipeline_live_like_exposes_expected_phase_chai
     assert updates["bt_run_phase7_mode"] == "exit_lifecycle_replay"
 
 
+def test_run_configuration_preset_auto_applied_once_on_first_page_load() -> None:
+    """L'auto-application du preset de configuration à l'arrivée sur la page
+    pose les valeurs AVANT l'instanciation des widgets (une seule fois par
+    session), puis préserve les ajustements manuels de l'utilisateur."""
+    from streamlit.testing.v1 import AppTest
+
+    code = """\
+import streamlit as st
+from ihm.pages.backtesting import (
+    _ensure_run_configuration_preset_session_key,
+    _apply_run_configuration_preset,
+    BT_RUN_CONFIGURATION_PRESET_APPLIED_KEY,
+    BT_RUN_CONFIGURATION_PRESET_KEY,
+)
+_ensure_run_configuration_preset_session_key()
+if not st.session_state.get(BT_RUN_CONFIGURATION_PRESET_APPLIED_KEY):
+    _apply_run_configuration_preset(
+        str(st.session_state.get(BT_RUN_CONFIGURATION_PRESET_KEY, "pipeline_live_like"))
+    )
+    st.session_state[BT_RUN_CONFIGURATION_PRESET_APPLIED_KEY] = True
+engine_mode = st.selectbox("engine", options=["research", "pipeline"], key="bt_run_engine_mode")
+phase2 = st.selectbox("phase2", options=["off", "risk_execution"], key="bt_run_phase2_mode")
+dip = st.checkbox("DIP", value=True, key="bt_run_dip_enabled")
+st.write("ok")
+"""
+    at = AppTest.from_string(code, default_timeout=10)
+    at.run()
+
+    # RUN 1 : arrivée sur la page -> le preset par défaut est appliqué.
+    assert at.selectbox(key="bt_run_engine_mode").value == "pipeline"
+    assert at.selectbox(key="bt_run_phase2_mode").value == "risk_execution"
+    assert at.session_state["bt_run_configuration_preset_applied"] is True
+
+    # RUN 2 : l'utilisateur modifie un paramètre -> pas de ré-application.
+    at.selectbox(key="bt_run_phase2_mode").set_value("off")
+    at.run()
+    assert at.selectbox(key="bt_run_phase2_mode").value == "off"
+
+    # RUN 3 : rerun quelconque (ex. toggle DIP) -> la modif manuelle est préservée.
+    at.checkbox(key="bt_run_dip_enabled").uncheck()
+    at.run()
+    assert at.selectbox(key="bt_run_phase2_mode").value == "off"
+    assert at.selectbox(key="bt_run_engine_mode").value == "pipeline"
+
+
 def test_build_pipeline_pit_status_message_warns_when_history_is_missing() -> None:
     level, message = backtesting._build_pipeline_pit_status_message(
         {
@@ -882,3 +927,35 @@ def test_is_runtime_center_auto_update_enabled_reads_session_preference() -> Non
     assert backtesting._is_runtime_center_auto_update_enabled() is False
 
 
+
+
+def test_clear_history_selection_resets_selection_rows(monkeypatch) -> None:
+    """Après suppression, la sélection du dataframe doit être vidée."""
+    state = {"selection": {"rows": [0, 2]}}
+    backtesting.st.session_state[backtesting.BACKTESTING_HISTORY_TABLE_KEY] = state
+
+    backtesting._clear_history_selection()
+
+    assert backtesting.st.session_state[backtesting.BACKTESTING_HISTORY_TABLE_KEY]["selection"]["rows"] == []
+
+
+def test_clear_history_selection_handles_attribute_selection(monkeypatch) -> None:
+    """Supporte aussi le cas où selection est exposé comme attribut (objet)."""
+    class _Selection:
+        def __init__(self):
+            self.rows = [0, 1]
+
+    class _State:
+        def __init__(self):
+            self.selection = _Selection()
+
+    backtesting.st.session_state[backtesting.BACKTESTING_HISTORY_TABLE_KEY] = _State()
+
+    backtesting._clear_history_selection()
+
+    assert backtesting.st.session_state[backtesting.BACKTESTING_HISTORY_TABLE_KEY].selection.rows == []
+
+
+def test_clear_history_selection_noop_when_no_state() -> None:
+    backtesting.st.session_state.pop(backtesting.BACKTESTING_HISTORY_TABLE_KEY, None)
+    backtesting._clear_history_selection()  # ne doit pas lever

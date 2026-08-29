@@ -52,7 +52,9 @@ Oracle O0) en un **gate d'univers LONG**, indépendant du ranking B25 (`global_r
 modelFactory/oracle/
 ├── extreme_gate.py          # compute_extreme_gate() + build_oracle_rank_map()  (NOUVEAU)
 ├── train.py                 # entraînement Oracle Extreme + ablations O0/O1/O2 (S3)
-├── walk_forward.py          # WF causal strict (oracle_available_date < test_start) + persist_oos()
+├── walk_forward.py          # WF causal strict (oracle_available_date < test_start) + persist_oos() → table
+├── predictions_store.py     # table oracle_extreme_predictions : write/load (table-only)
+├── predict_history.py       # prédiction standard sans retrain (champions) → table
 ├── dataset.py               # build_dataset() — features PIT + targets Oracle
 ├── build_labels.py          # build_labels() — labels Oracle H20 (global_oracle_labels)
 ├── config.py                # OracleConfig — horizon H20, top_pct 0.10, raw_target=True
@@ -70,9 +72,17 @@ config.yaml                  # section `extreme_gate:` (enabled / pool_pct / lon
 
 | Donnée | Source |
 |---|---|
-| `proba_extreme` | Parquet OOS du walk-forward Oracle : `artifacts/models/oracle/oracle-wf-<run_id>/oos_predictions.parquet` |
+| `proba_extreme` | **Table `oracle_extreme_predictions`** (stockage table-uniquement) — écrite par `persist_oos` (walk-forward) ET la prédiction standard (`predict_oracle_extreme_history`) ; lue au backtest via `--oracle-batch-id` (filtre batch strict) |
 | Pool features + `proba_extreme` + `atr_pct_20` | Recherche : `scripts/e6_b2_ev_long_backtest.load_pool()` (merge_pools) |
 | OHLCV | `artifacts/backtest_cache/39587735630f_ohlcv_2017-10-26_2026-06-30.parquet` |
+
+> 📦 **Stockage (2026-08-28) — table-uniquement** : les prédictions `proba_extreme`
+> sont stockées dans `oracle_extreme_predictions` (PK `(prediction_date, symbol, batch_id)`,
+> **sans `run_id`** → toute ré-écriture d'un même couple écrase, pas de doublons entre runs).
+> Le walk-forward (`persist_oos`) et la prédiction standard alimentent la même table.
+> Le parquet `artifacts/models/oracle/oracle-wf-<run_id>/oos_predictions.parquet` n'est **plus
+> écrit ni lu** ; `--oracle-oos-path` (parquet legacy) reste un fallback, `--oracle-batch-id`
+> (table) est la voie recommandée.
 
 ---
 
@@ -215,7 +225,7 @@ Utilisation CLI :
 
 ```bash
 --cascade-rank-mode extreme_gate \
---oracle-oos-path artifacts/models/oracle/oracle-wf-20260820025255/oos_predictions.parquet \
+--oracle-batch-id <batch_oracle> \   # table oracle_extreme_predictions (remplace --oracle-oos-path)
 --extreme-gate-pct 0.20 \
 --extreme-gate-per-symbol filter   # | no_filter | bypass
 ```
@@ -284,7 +294,7 @@ Construit `{date: {symbol: proba_extreme}}` à passer à
 
 ```python
 from modelFactory.oracle.extreme_gate import build_oracle_rank_map
-rank_map = build_oracle_rank_map(oos_df)   # oos_df = parquet OOS Oracle
+rank_map = build_oracle_rank_map(oos_df)   # oos_df = load_oracle_predictions(engine, batch_id=…) (table)
 ```
 
 ---
@@ -296,8 +306,8 @@ rank_map = build_oracle_rank_map(oos_df)   # oos_df = parquet OOS Oracle
 - **Flag :** `modelFactory/config.py` → `enable_oracle_model: bool = False` (défaut) ;
   IHM → `ihm/services/pipeline_ml_defaults.py` → `DEFAULT_ML_ENABLE_ORACLE_MODEL = False`.
 - **Déclenchement :** `modelFactory/orchestrator.py` → `train_oracle_extreme()` (L467) —
-  pipeline : labels H20 → dataset → walk-forward causal O0 → `persist_oos()` sous
-  `artifacts/models/oracle/oracle-wf-<run_id>/`.
+  pipeline : labels H20 → dataset → walk-forward causal O0 → `persist_oos()` →
+  **table `oracle_extreme_predictions`** (stockage table-uniquement, plus de parquet).
 - **Anti-leakage :** `oracle_available_date < test_start` (T2), folds expansifs
   (`modelFactory/oracle/walk_forward.py`).
 
@@ -337,7 +347,7 @@ Depuis E16-D, le CLI `python -m backtesting run` câble complètement le gate Ex
 ```bash
 python -m backtesting run ... \
   --cascade-rank-mode extreme_gate \
-  --oracle-oos-path artifacts/models/oracle/oracle-wf-20260820025255/oos_predictions.parquet \
+  --oracle-batch-id <batch_oracle> \   # table oracle_extreme_predictions (filtre batch strict)
   --extreme-gate-pct 0.20 \
   [--extreme-gate-per-symbol filter|no_filter|bypass] \
   [--extreme-gate-shorts]                    # E18 : branche SHORT optionnelle (NO-GO)
@@ -358,7 +368,7 @@ Le gate Extreme (LONG et SHORT) est aujourd'hui un composant **backtest/recherch
 
 | # | Action | Fichier |
 |---|---|---|
-| 1 | Brancher `rank_mode="extreme_gate"` + `oracle_rank_map` au call-site live (à partir du parquet OOS Oracle fraîchement généré) | `ihm/services/pipeline_runner.py` |
+| 1 | Brancher `rank_mode="extreme_gate"` + `oracle_rank_map` au call-site live (à partir de la table `oracle_extreme_predictions`) | `ihm/services/pipeline_runner.py` |
 | 2 | Rendre `enabled`/`long_only` de la config réellement consommés (interrupteur) | `predictor.py` / call-site |
 
 ---
@@ -395,7 +405,8 @@ res = make_engine(m=24).run(open_df=pivots["open"], close=pivots["close"],
 
 Même mécanisme qu'en production mais avec `apply_cascade_to_predictions(...)` sur les
 prédictions du batch — sujet au même **câblage manquant** (§8) : il faut charger
-l'`oracle_rank_map` depuis le parquet OOS avant l'appel.
+l'`oracle_rank_map` depuis la table `oracle_extreme_predictions` (via `load_oracle_predictions`)
+avant l'appel.
 
 ---
 

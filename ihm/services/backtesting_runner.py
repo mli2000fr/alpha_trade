@@ -73,13 +73,33 @@ class BacktestRunOptions:
     # P5.2 — seuil top/bottom de la cascade ML (fraction). None = config.yaml
     # (cascade.top_pct). Défaut aligné benchmark B25 : 0.10.
     cascade_top_pct: float | None = 0.10
+    # Persistent Rank DIP filter — overrides config.yaml
+    # (persistent_dip_filter_long.backtest_*). None = lire config.yaml. L'IHM
+    # préremplit ces champs avec les valeurs par défaut du config.yaml (l'utilisateur
+    # ne change rien → pas de flag émis → comportement identique à config.yaml).
+    dip_enabled: bool | None = None
+    dip_rank_horizon: int | None = None
+    dip_rank_threshold: float | None = None
+    dip_persist_days: int | None = None
+    dip_pct: float | None = None
+    # Reclaim (confirmation de rebond avant entrée). None = config.yaml
+    # (backtest_reclaim_ratio null = R désactivé / D0 direct). 0 = R off.
+    dip_reclaim_ratio: float | None = None
+    dip_reclaim_max_wait: int | None = None
     # S6 (Oracle Layer) — mode de rang cascade. Les modes oracle_* / extreme_gate
     # combinent le rang global (batch sélectionné) et proba_extreme (Oracle Extreme,
-    # via oracle_oos_path).
+    # source table oracle_extreme_predictions).
     cascade_rank_mode: Literal[
         "ml", "random", "oracle", "oracle_filter", "oracle_rerank", "oracle_pool", "extreme_gate"
     ] = "ml"
-    oracle_oos_path: str | None = None
+    # Source Oracle Extreme : table oracle_extreme_predictions (filtre batch strict).
+    # None = défaut CLI (ml_batch_id si parquet absent).
+    oracle_batch_id: str | None = None
+    # E-recherche — priorité N4X2 jours saturés (pool Oracle TOP20 intact) :
+    # réordonnancement lexicographique (bande de rang Oracle → N4X2 → score)
+    # UNIQUEMENT quand candidats > slots disponibles. Défaut off (gate dur actuel).
+    extreme_gate_dip_saturated: bool = False
+    extreme_gate_dip_band: float = 0.02
     score_column: Literal["auto", "final_score_walk_forward", "final_score_sentiment", "final_score"] = "auto"
     walk_forward_artifacts_dir: str | None = None
     disable_walk_forward: bool = False
@@ -104,6 +124,12 @@ class BacktestRunOptions:
     regime_sma_window: int = 200
     regime_bear_threshold: float = -0.02
     max_sector_exposure_pct: float = 0.0
+    # Ablation cap sectoriel (2026-08-27) : override config.yaml
+    # (--max-tickers-per-sector / --no-sector-cap). None = config.yaml.
+    max_tickers_per_sector: int | None = None
+    no_sector_cap: bool = False
+    # Smart sector cap (research 2026-08-27) : C0=count, C1=exposure, C2=hybrid.
+    sector_cap_mode: Literal["count", "exposure", "hybrid"] | None = None
     max_portfolio_dd_pct: float = 0.0
     dd_recovery_pct: float = 0.92
     # E23 — politique du drawdown breaker. None = config.yaml risk_management.policy.
@@ -324,11 +350,31 @@ def build_backtesting_command(
         # P5.2 — seuil top/bottom cascade ML (aligné benchmark : 0.10)
         if options.cascade_top_pct is not None and float(options.cascade_top_pct) > 0:
             command.extend(["--cascade-top-pct", str(options.cascade_top_pct)])
+        # Persistent Rank DIP filter — overrides optionnels du config.yaml.
+        # Aucun flag émis si tous les champs sont None → la CLI lit config.yaml.
+        if options.dip_enabled is not None:
+            command.append("--dip-enabled" if options.dip_enabled else "--no-dip-enabled")
+        if options.dip_rank_horizon is not None:
+            command.extend(["--dip-rank-horizon", str(int(options.dip_rank_horizon))])
+        if options.dip_rank_threshold is not None:
+            command.extend(["--dip-rank-threshold", str(float(options.dip_rank_threshold))])
+        if options.dip_persist_days is not None:
+            command.extend(["--dip-persist-days", str(int(options.dip_persist_days))])
+        if options.dip_pct is not None:
+            command.extend(["--dip-pct", str(float(options.dip_pct))])
+        if options.dip_reclaim_ratio is not None:
+            command.extend(["--dip-reclaim-ratio", str(float(options.dip_reclaim_ratio))])
+        if options.dip_reclaim_max_wait is not None:
+            command.extend(["--dip-reclaim-max-wait", str(int(options.dip_reclaim_max_wait))])
         # S6 (Oracle Layer) — rang cascade remplacé par P(top10)
         if options.cascade_rank_mode and options.cascade_rank_mode != "ml":
             command.extend(["--cascade-rank-mode", options.cascade_rank_mode])
-        if options.oracle_oos_path:
-            command.extend(["--oracle-oos-path", options.oracle_oos_path])
+        if options.oracle_batch_id:
+            command.extend(["--oracle-batch-id", options.oracle_batch_id])
+        # E-recherche — priorité N4X2 jours saturés (pool Oracle TOP20 intact).
+        if options.extreme_gate_dip_saturated:
+            command.append("--extreme-gate-dip-saturated")
+            command.extend(["--extreme-gate-dip-band", str(float(options.extreme_gate_dip_band or 0.02))])
         if options.use_live_protection_logic:
             command.append("--use-live-protection-logic")
         else:
@@ -431,6 +477,12 @@ def build_backtesting_command(
             command.extend(["--regime-bear-threshold", str(options.regime_bear_threshold)])
         if options.max_sector_exposure_pct:
             command.extend(["--max-sector-exposure-pct", str(options.max_sector_exposure_pct)])
+        if options.max_tickers_per_sector is not None:
+            command.extend(["--max-tickers-per-sector", str(int(options.max_tickers_per_sector))])
+        if options.no_sector_cap:
+            command.append("--no-sector-cap")
+        if options.sector_cap_mode is not None:
+            command.extend(["--sector-cap-mode", options.sector_cap_mode])
         if options.max_portfolio_dd_pct:
             command.extend(["--max-portfolio-dd-pct", str(options.max_portfolio_dd_pct)])
             command.extend(["--dd-recovery-pct", str(options.dd_recovery_pct)])

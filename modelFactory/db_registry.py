@@ -38,6 +38,37 @@ _PREDICTION_TERNARY_COLUMNS = {
     "proba_short",      # probabilité short
 }
 
+# ── Colonne `source` (0067) : origine de la prédiction ─────────────────────
+# Permet un filtrage déterministe à la LECTURE (plus de "last-wins" ambigu) et
+# évite la jointure lourde `model_training_run` pour identifier chaque ligne.
+# Convention de valeurs (libre, non contrainte en DB) :
+#   per_symbol        → prédiction d'un modèle per-symbol
+#   per_sector        → prédiction d'un modèle per-sector (fallback sectoriel)
+#   global_rank_synth → synthèse rank-driven depuis global_rank_history
+#                       (run `{batch}_globalrank_synth`)
+#   oracle_synth      → synchro Oracle Extreme → model_predictions
+#                       (run `{batch}_oracle_synth`)
+PREDICTION_SOURCE_PER_SYMBOL = "per_symbol"
+PREDICTION_SOURCE_PER_SECTOR = "per_sector"
+PREDICTION_SOURCE_GLOBAL_RANK_SYNTH = "global_rank_synth"
+PREDICTION_SOURCE_ORACLE_SYNTH = "oracle_synth"
+
+# Ordre de priorité par défaut pour la déduplication déterministe (le plus
+# prioritaire = le plus fiable / le plus riche en infos). Utilisé côté cascade.
+_PREDICTION_SOURCE_PRIORITY: dict[str, int] = {
+    PREDICTION_SOURCE_PER_SYMBOL: 0,
+    PREDICTION_SOURCE_GLOBAL_RANK_SYNTH: 1,
+    PREDICTION_SOURCE_ORACLE_SYNTH: 2,
+    PREDICTION_SOURCE_PER_SECTOR: 3,
+}
+
+
+def _source_priority(source: str | None) -> int:
+    """Priorité d'une valeur `source` pour la dédup (None = dernier)."""
+    if not source:
+        return 10**9
+    return _PREDICTION_SOURCE_PRIORITY.get(str(source).strip().lower(), 10**9 - 1)
+
 
 def _required_text(value: Any, *, field_name: str) -> str:
     normalized = str(value or "").strip()
@@ -503,6 +534,9 @@ def delete_batch_rows(
         "model_batch_diagnostics",
         "global_rank_history",
         "global_oracle_labels",
+        # Oracle Extreme : table oracle_extreme_predictions (PK (date, symbol, batch)).
+        # 0 ligne si le batch n'a pas de modèle Oracle — DELETE par batch_id inoffensif.
+        "oracle_extreme_predictions",
         "model_training_run",
         "model_training_batch",
     ]
@@ -850,33 +884,46 @@ def insert_predictions(engine: Engine, predictions: pd.DataFrame) -> int:
     - decision_threshold
     - signal_label
     - calibration_method
+    - source (optionnel, colonne 0067) — origine de la prédiction
     """
     if predictions.empty:
         return 0
     _validate_predictions_frame(predictions)
     # ML Sprint 3 — détecter si les colonnes ternaires sont présentes
     has_ternary = "predicted_side" in predictions.columns
+    # 0067 — la colonne `source` est optionnelle (None si absente du DataFrame)
+    has_source = "source" in predictions.columns
     if has_ternary:
+        _src_cols = ", source" if has_source else ""
+        _src_vals = ", :src" if has_source else ""
+        _src_upd = ", source = VALUES(source)" if has_source else ""
         stmt_v2 = text(
             "INSERT INTO model_predictions ("
             "symbol, prediction_date, predicted_proba, predicted_class, "
             "predicted_side, proba_long, proba_flat, proba_short, "
             "run_id, selected_model, decision_threshold, signal_label, calibration_method"
+            f"{_src_cols}"
             ") VALUES ("
             ":sym, :pd, :pp, :pc, :ps, :pl, :pf, :psh, "
             ":rid, :selected_model, :decision_threshold, :signal_label, :calibration_method"
+            f"{_src_vals}"
             ") ON DUPLICATE KEY UPDATE "
-            "run_id = run_id"
+            f"run_id = run_id{_src_upd}"
         )
     else:
+        _src_cols = ", source" if has_source else ""
+        _src_vals = ", :src" if has_source else ""
+        _src_upd = ", source = VALUES(source)" if has_source else ""
         stmt_v2 = text(
             "INSERT INTO model_predictions ("
             "symbol, prediction_date, predicted_proba, predicted_class, run_id, "
             "selected_model, decision_threshold, signal_label, calibration_method"
+            f"{_src_cols}"
             ") VALUES ("
             ":sym, :pd, :pp, :pc, :rid, :selected_model, :decision_threshold, :signal_label, :calibration_method"
+            f"{_src_vals}"
             ") ON DUPLICATE KEY UPDATE "
-            "run_id = run_id"
+            f"run_id = run_id{_src_upd}"
         )
     inserted = 0
     with engine.begin() as conn:
@@ -892,6 +939,8 @@ def insert_predictions(engine: Engine, predictions: pd.DataFrame) -> int:
                 "signal_label": _required_text(row.get("signal_label"), field_name="signal_label"),
                 "calibration_method": _required_text(row.get("calibration_method"), field_name="calibration_method"),
             }
+            if has_source:
+                params["src"] = (str(row.get("source") or "").strip() or None)
             if has_ternary:
                 params["ps"] = str(row.get("predicted_side") or "") or None
                 params["pl"] = float(row.get("proba_long")) if pd.notna(row.get("proba_long")) else None

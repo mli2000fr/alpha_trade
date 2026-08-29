@@ -921,11 +921,10 @@ def test_build_pipeline_command_ml_steps() -> None:
     assert train_cmd[train_cmd.index("--wf-step-size") + 1] == "252"
     assert train_cmd[train_cmd.index("--wf-max-splits") + 1] == "8"
 
-    # Drapeaux booléens activés par défaut (prod global-only / champion)
+    # Drapeaux booléens activés par défaut (prod exclude per-symbol/per-sector + champion)
     for flag in (
-        "--global-model-only",
+        "--exclude-per-symbol-per-sector",
         "--global-champion",
-        "--select-champion",
         "--walkforward",  # walk-forward activé par défaut en swing
         "--include-short-score",
         "--include-factors",
@@ -939,6 +938,8 @@ def test_build_pipeline_command_ml_steps() -> None:
         "--enable-catboost",
         "--optimize-thresholds",
         "--candidate-decision-thresholds",
+        "--global-model-only",  # 2026-08-28 : décoché par défaut (conflit Oracle)
+        "--select-champion",    # DEFAULT_ML_SELECT_CHAMPION=False
     ):
         assert flag not in train_cmd, f"Flag inattendu présent : {flag}"
 
@@ -1103,6 +1104,37 @@ def test_build_pipeline_command_ml_train_global_model_only_no_duplicate() -> Non
     assert "--global-model-only" in train_cmd
     assert "--global-champion" in train_cmd
     assert "--global-model-name" not in train_cmd
+
+
+def test_build_pipeline_command_ml_train_exclude_per_symbol_per_sector() -> None:
+    """2026-08-28 : --exclude-per-symbol-per-sector est émis quand coché,
+    et absorbé par --global-model-only (qui gagne) quand les deux sont cochés."""
+    # Cas nominal : exclude coché (défaut IHM), global-model-only décoché
+    options = PipelineLaunchOptions(
+        ml_exclude_per_symbol_per_sector=True,
+        ml_global_model_only=False,
+    )
+    train_cmd = build_pipeline_command("ml_train", options)
+    assert "--exclude-per-symbol-per-sector" in train_cmd
+    assert "--global-model-only" not in train_cmd
+
+    # Conflit : global-model-only coché → il gagne (return tôt orchestrator),
+    # on n'émet PAS exclude (sinon commande ambiguë)
+    options_conflict = PipelineLaunchOptions(
+        ml_exclude_per_symbol_per_sector=True,
+        ml_global_model_only=True,
+    )
+    train_cmd_conflict = build_pipeline_command("ml_train", options_conflict)
+    assert "--global-model-only" in train_cmd_conflict
+    assert "--exclude-per-symbol-per-sector" not in train_cmd_conflict
+
+    # Décoché explicitement → pas de flag
+    options_off = PipelineLaunchOptions(
+        ml_exclude_per_symbol_per_sector=False,
+        ml_global_model_only=False,
+    )
+    train_cmd_off = build_pipeline_command("ml_train", options_off)
+    assert "--exclude-per-symbol-per-sector" not in train_cmd_off
 
 
 def test_build_pipeline_command_ml_train_propagates_training_end_date() -> None:

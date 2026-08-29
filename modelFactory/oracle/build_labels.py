@@ -279,6 +279,25 @@ def build_labels(
             "only_in_ranks": 0, "only_in_preds": 0,
             "samples_only_ranks": [], "samples_only_preds": [],
         }
+    elif not rank_keys:
+        # Batch oracle-only SANS --symbols : aucun global_rank_history → l'univers
+        # des labels est dérivé des symboles DÉJÀ labellisés pour ce batch
+        # (global_oracle_labels, get_universe_symbols) ayant une barre dans la
+        # fenêtre. Évite le "empty_universe" pour les batchs oracle-extreme-only.
+        from modelFactory.oracle.train import get_universe_symbols
+        symbols = get_universe_symbols(engine, batch_id, horizon)
+        LOGGER.info(
+            "build_labels oracle-only universe from labels batch_id=%s symbols=%d",
+            batch_id, len(symbols),
+        )
+        rank_keys = load_universe_from_bars(
+            engine, symbols, start_date=start_date, end_date=end_date,
+        )
+        universe_check = {
+            "equal": True, "n_ranks": len(rank_keys), "n_preds": len(rank_keys),
+            "only_in_ranks": 0, "only_in_preds": 0,
+            "samples_only_ranks": [], "samples_only_preds": [],
+        }
     else:
         pred_keys = load_universe_from_predictions(engine, batch_id)
         universe_check = check_universe_equality(rank_keys, pred_keys)
