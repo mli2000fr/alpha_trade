@@ -17,6 +17,8 @@ la page et le service qui l’exécutent.
 
 ## Carte actuelle de l’application
 
+La correspondance exhaustive page → source → chapitre est disponible dans [Couverture des pages IHM](COUVERTURE_PAGES_IHM.md).
+
 ```mermaid
 flowchart LR
   A[Accueil] --> B[Workflow & orchestration]
@@ -60,6 +62,12 @@ seule, une destination utilisateur officielle.
 10. [Corporate actions, conformité et fiscalité](10_conformite_corporate_actions.md)
 11. [Paramètres, infrastructure et administration](11_parametres_administration.md)
 12. [Dépannage et questions fréquentes](12_depannage_faq.md)
+13. [Régime marché et comptes broker](13_regime_et_comptes.md)
+14. [Infra, sauvegardes et administration DB](14_infra_backups_et_db.md)
+15. [Calibrations et Diagnostic ML](15_calibrations_et_diagnostic_ml.md)
+16. [Fondamentaux](16_fondamentaux.md)
+17. [Compliance, fiscalité et sandbox health](17_conformite_fiscalite_sandbox.md)
+18. [Glossaire et système d’aide](18_glossaire_et_aide.md)
 
 ## Trois distinctions à ne jamais perdre
 
@@ -95,4 +103,3 @@ passage en live.
 | règles métier | modules `screener`, `modelFactory`, `risk_management`, `execution_engine` |
 | stockage | modèles/migrations et accès dans `database` |
 | valeurs de déploiement | configuration chargée au runtime, pas une capture d’écran documentaire |
-

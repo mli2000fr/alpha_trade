@@ -7,11 +7,11 @@ Cet inventaire couvre les **178 fichiers Markdown** présents hors
 dans la refonte. Il ne certifie pas le contenu historique : le code courant a
 été utilisé comme source de vérité.
 
-Les fichiers historiques restent physiquement inchangés. « Expérience » signifie
-qu’une synthèse autonome est créée sous `experiences/`, pas que le journal
-d’expérience est recopié. « Archive » signifie que le fichier est un doublon,
-un audit ponctuel, une proposition ou un état de migration et n’a pas vocation à
-devenir une référence courante.
+Les anciens emplacements ont été supprimés après migration. « Expérience »
+signifie qu’une synthèse autonome est maintenue sous `experiences/`; les rapports
+bruts nécessaires à la traçabilité sont isolés dans ses sous-dossiers d’archives.
+« Archive » désigne un doublon, audit ponctuel, proposition ou état de migration
+conservé sous `sources_historiques/`, jamais une référence runtime.
 
 ## Références générales racine
 
@@ -100,7 +100,7 @@ Le contrat exécutable actuel est documenté dans
 [entraînement/serving](ml/entrainement_serving_et_gouvernance.md). Les noms de
 campagnes ne sont pas assimilés à des modèles actifs.
 
-## `doc/backup` (64 fichiers)
+## Ancien `doc/backup` (64 Markdown, plus deux fichiers texte découverts)
 
 Le répertoire est traité comme une archive historique, mais ses thèmes utiles
 ont une destination explicite :
@@ -129,13 +129,14 @@ ont une destination explicite :
 - `onboarding_assets/README.md` : inventaire d’assets historiques ; le parcours
   d’onboarding actuel est [Guide utilisateur](guide_utilisateur/README.md).
 
-## Critère de suppression future des anciens documents
+## Contrôles appliqués lors de la migration
 
-Avant suppression manuelle par le propriétaire, vérifier :
+La suppression des anciens emplacements a été effectuée après vérification des points suivants :
 
 1. tous les liens internes de `doc/refactor` sont valides ;
 2. chaque destination ci-dessus existe ;
 3. les exemples de configuration sont comparés au chargeur actuel ;
 4. aucune destination ne dépend d’un lien vers un ancien document ;
-5. les journaux expérimentaux à conserver pour preuve sont archivés hors du
-   corpus documentaire courant, même si leur synthèse suffit à l’onboarding.
+5. les journaux expérimentaux nécessaires à la preuve sont isolés des guides
+   maintenus, même si leur synthèse suffit à l’onboarding ;
+6. les actifs Prometheus/Grafana sont comparés au registre métrique du code.

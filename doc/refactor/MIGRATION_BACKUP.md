@@ -69,7 +69,29 @@ Cette matrice suit les 64 fichiers trouvés le 29 août 2026. La destination est
 | `tlaps_proofs.md` | [qualité avancée](operations/qualite_avancee_fuzz_mutation_formel.md) |
 | `watcher.md` | [protections/watcher](execution/protections_et_watcher.md) et [runbook](22_runbook_exploitation.md) |
 
+## Fichiers non Markdown découverts dans `doc/backup`
+
+| Archive | Traitement |
+|---|---|
+| `api_v1_public_symbols.txt` | snapshot historique conservé sous `sources_historiques/backup/general`; le contrat courant est [stabilité API](api/stabilite_v1_et_deprecation.md) et les inventaires `api/` |
+| `question.txt` | questions historiques conservées sous `sources_historiques/backup/ihm`; parcours courant dans le [guide utilisateur](guide_utilisateur/README.md) |
+
+## Migration de `doc/ml`
+
+Les trois références générales ont été conservées sous `sources_historiques/backup/ml` : `features_ml.md`, `module_model_factory.md` et `ordre_execution_ml.md`. Leurs contrats courants sont respectivement [features/dataset](ml/features_et_dataset.md), [architecture ML](ml/README.md) et [ordre d’exécution](ml/ordre_execution_et_dependances.md).
+
+Les campagnes `global_per_sector/test` B0–B44 et le test per-symbol ont été déplacés intégralement sous [campagnes Global Ranking](experiences/campagnes_global_ranking/README.md). Ils restent des preuves historiques ; leur synthèse maintenue est [Global Ranking et per-sector](experiences/global_ranking_et_per_sector.md).
+
+`analyse_oos.txt`, `ml_todo.md`, `synthese_long_short.md`, `synthese_per_symbol_v2_2026-08-19.md`, `synthese_s7_feature_whitelist_2026-08-18.md` et `synthese_tp_risk_execution_2026-08-18.md` sont sous [archives ML](experiences/archives_ml/README.md). Les verdicts encore utiles sont synthétisés dans `experiences/`; les TODO et chiffres datés ne deviennent pas configuration active.
+
+## Migration de `doc/monitoring`
+
+Les deux actifs ont été déplacés sous [operations/monitoring](operations/monitoring/README.md). Ils n’ont pas été copiés tels quels : leurs anciennes expressions visaient six métriques inexistantes. Les règles et le dashboard utilisent désormais le registre réellement exposé par `service/prometheus_metrics.py` : erreurs API, runs d’exécution, alertes, circuit breaker, heartbeat stale, univers vide, kill switch, drift et alignement cash.
+
+## Statut des textes intégraux
+
+Les anciens guides volumineux qui mélangent connaissances et valeurs obsolètes sont conservés sous [sources historiques](sources_historiques/README.md), hors parcours d’onboarding. Leur contenu utile a une destination normative dans la matrice ci-dessus. Ce classement évite à la fois la perte d’information et la présentation d’une ancienne commande comme contrat courant.
+
 ## Contrôle final
 
-Après suppression : aucun Markdown dans `doc/backup`, aucun lien cassé ou sortant vers l’ancienne documentation, et aucune modification du code source.
-
+Après migration : les répertoires `doc/backup`, `doc/ml` et `doc/monitoring` n’existent plus. Aucun code source n’a été modifié. Les liens du corpus maintenu sont validés séparément des liens internes aux snapshots historiques, qui peuvent volontairement viser leur ancien contexte.

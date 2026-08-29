@@ -57,11 +57,10 @@ Le registre est local au processus et repart à zéro au redémarrage. Plusieurs
 
 ## Exploitation
 
-Une alerte indique environnement, compte non secret, run id, date, statut, conséquence et action. Le payload reste minimal. Les règles Prometheus historiques sous `doc/monitoring/` sont des sources à vérifier contre les noms de métriques actuels avant déploiement.
+Une alerte indique environnement, compte non secret, run id, date, statut, conséquence et action. Le payload reste minimal. Les [règles Prometheus et le dashboard Grafana](monitoring/README.md) ont été réalignés sur `service/prometheus_metrics.py`; toute évolution du registre impose de les revalider.
 
 Une panne de notification est un incident d’observabilité, pas une preuve d’échec métier. Un run critique peut toutefois être déclaré non exploitable si la politique opérationnelle exige un canal sain : cette décision appartient au caller, pas aux notifiers best-effort.
 
 ## Tests
 
 Tester factory avec configurations partielles, fallback log, timeout/HTTP non-2xx, destinataires SMTP, cooldown, cache multi-signatures, marqueur succès/échec, statuts filtrés, taille de pièce jointe, TLS/SSL, écriture Prometheus atomique et endpoint autre que `/metrics`.
-

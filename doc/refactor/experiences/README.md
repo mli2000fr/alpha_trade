@@ -1,5 +1,7 @@
 # Synthèses des expériences historiques
 
+Archives intégrales : [campagnes Global Ranking](campagnes_global_ranking/README.md) et [archives ML complémentaires](archives_ml/README.md).
+
 Ce répertoire conserve les enseignements des campagnes de recherche sans mélanger résultats historiques et comportement actuel.
 
 Les fichiers originaux restent dans `doc/` et ne sont pas modifiés. Les synthèses de ce dossier sont autonomes : elles décrivent question, protocole, conclusion durable, limites et relation avec le code courant.
@@ -21,4 +23,3 @@ Une métrique historique dépend de la base, du batch, de l’univers, des coût
 Une expérience devient documentation fonctionnelle uniquement lorsque son comportement existe dans le code courant et peut être activé par la configuration/CLI. Le guide du module documente alors le contrat exécutable et pointe vers la synthèse historique pour le contexte.
 
 Retour : [index général](../README.md)
-

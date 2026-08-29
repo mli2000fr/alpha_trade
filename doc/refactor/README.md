@@ -2,6 +2,8 @@
 
 Suivi exhaustif des archives : [migration de `doc/backup`](MIGRATION_BACKUP.md).
 
+Les textes anciens conservés pour traçabilité sont isolés dans [sources historiques](sources_historiques/README.md). Ils ne font pas partie du parcours normatif.
+
 Cette arborescence documente l'application telle qu'elle existe dans le code source au 29 août 2026. Les documents historiques de `doc/` ont servi de contexte, mais ne constituent pas la source de vérité. En cas d'écart, l'ordre d'autorité est : code exécutable, migrations et schéma SQL, `config.yaml`, tests contractuels, puis cette documentation.
 
 ## Parcours conseillé pour un nouvel arrivant

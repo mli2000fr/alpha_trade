@@ -24,7 +24,7 @@ Cet audit porte sur le dépôt au 29 août 2026. Il ne garantit pas l’état d�
 - vérification qu’aucun lien de navigation ne dépend d’un ancien fichier.
 - inventaire explicite des **178 Markdown historiques** dans
   `COUVERTURE_DOCUMENTS_HISTORIQUES.md` ;
-- reconstruction du manuel à partir des **23 pages** enregistrées dans la
+- reconstruction du manuel à partir des **22 pages** enregistrées dans la
   navigation actuelle et de leurs services ;
 - création de références dédiées pour Oracle Extreme, couverture/fallbacks,
   recalibration, granularités de modèles, cascade, datasets, ordre ML, sécurité
@@ -32,17 +32,19 @@ Cet audit porte sur le dépôt au 29 août 2026. Il ne garantit pas l’état d�
 
 ## Résultat mesuré
 
-Au contrôle final du 29 août 2026 :
+Au contrôle de migration du 29 août 2026 :
 
 | Contrôle | Résultat |
 |---|---:|
-| fichiers Markdown sous `doc/refactor` | 145 |
-| lignes documentaires | 9 715 |
-| volume | 747 164 octets |
+| fichiers Markdown sous `doc/refactor` | 273 |
+| lignes documentaires, archives incluses | 52 399 |
+| volume Markdown, archives incluses | 2 920 077 octets |
 | liens Markdown internes cassés | 0 |
 | liens relatifs sortant de `doc/refactor` | 0 |
 | anciens Markdown inventoriés | 178 |
-| modifications détectées hors `doc/refactor` dans `doc/` | 0 |
+| fichiers conservés comme sources/expériences historiques | 88 |
+| anciens répertoires `doc/backup`, `doc/ml`, `doc/monitoring` | supprimés après migration |
+| modifications détectées hors documentation | 0 |
 
 Ces nombres sont un constat d'audit, pas un objectif de volume. La couverture
 est structurée par contrats et responsabilités, avec des documents spécialisés
