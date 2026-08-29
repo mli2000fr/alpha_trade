@@ -1631,6 +1631,21 @@ def _build_parser() -> argparse.ArgumentParser:
              "Réouverture SHORT optionnelle à valider OOS — NO-GO E14/E18 par défaut.",
     )
     run_p.add_argument(
+        "--extreme-gate-dip-saturated",
+        action="store_true",
+        default=False,
+        help="E-recherche : N4X2 en PRIORITÉ sur jours saturés (pool Oracle TOP20 intact). "
+             "Le DIP ne filtre plus ; il réordonne lexicographiquement (bande de rang Oracle "
+             "→ N4X2 → score) UNIQUEMENT quand candidats > slots disponibles. Défaut off.",
+    )
+    run_p.add_argument(
+        "--extreme-gate-dip-band",
+        type=float,
+        default=0.02,
+        help="E-recherche : largeur de bande de rang Oracle (fraction de percentile) pour "
+             "le réordonnancement lexicographique N4X2 jours saturés (défaut 0.02).",
+    )
+    run_p.add_argument(
         "--cascade-rank-seed",
         type=int,
         default=42,
@@ -3592,6 +3607,9 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 extreme_gate_pct=getattr(args, "extreme_gate_pct", None),
                 extreme_gate_per_symbol=getattr(args, "extreme_gate_per_symbol", "filter"),
                 extreme_gate_shorts=bool(getattr(args, "extreme_gate_shorts", False)),
+                extreme_gate_dip_saturated=bool(getattr(args, "extreme_gate_dip_saturated", False)),
+                extreme_gate_dip_band=float(getattr(args, "extreme_gate_dip_band", 0.02) or 0.02),
+                saturation_slots=int(getattr(args, "max_positions", 8) or 8),
                 dip_quality_map=_dip_quality_map,
                 dip_quality_policy=_dip_quality_policy,
             )

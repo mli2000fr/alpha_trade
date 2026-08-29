@@ -2999,6 +2999,25 @@ def _render_global_ranking_horizon_details(row: pd.Series) -> None:
                     st.metric("IC Max", f"{_arr.max():.4f}")
 
 
+def _split_group_from_comment(comment: str) -> tuple[str, str]:
+    """Extrait le groupe '[nom] ' en tête d'un commentaire de batch.
+
+    Ex. '[Oracle Test] ranking + orale 2026' → ('Oracle Test', 'ranking + orale 2026').
+    Retourne ('', comment) si le commentaire ne commence pas par '[…]'.
+    """
+    if not comment:
+        return "", comment
+    stripped = comment.lstrip()
+    if not stripped.startswith("["):
+        return "", comment
+    end = stripped.find("]")
+    if end < 0:
+        return "", comment
+    group = stripped[1:end].strip()
+    rest = stripped[end + 1 :].lstrip()
+    return group, rest
+
+
 # ---------------------------------------------------------------------------
 # Page principale
 # ---------------------------------------------------------------------------
@@ -3031,10 +3050,26 @@ def render() -> None:
             axis=1,
         )
     if "comment" in display_df.columns:
-        display_df["comment"] = display_df["comment"].fillna("—")
-        display_df["comment"] = display_df["comment"].apply(
-            lambda x: (str(x)[:60] + "…") if str(x) != "—" and len(str(x)) > 60 else str(x)
-        )
+        # Colonne 'group' : extraite du préfixe '[nom] ' du commentaire.
+        # Ex. '[Oracle Test] ranking + orale 2026' → group='Oracle Test' et
+        # comment='ranking + orale 2026' (le préfixe est retiré du commentaire,
+        # l'info étant déjà portée par la colonne group).
+        groups: list[str] = []
+        cleaned_comments: list[str] = []
+        for _raw in display_df["comment"].fillna(""):
+            _group_tag, _rest = _split_group_from_comment(str(_raw))
+            groups.append(_group_tag if _group_tag else "—")
+            cleaned_comments.append(_rest if _rest else "—")
+        display_df["group"] = groups
+        display_df["comment"] = [
+            (c[:60] + "…") if c != "—" and len(c) > 60 else c for c in cleaned_comments
+        ]
+        # Réordonne les colonnes : batch_id, group, status, puis le reste.
+        _ordered = ["batch_id", "group", "status"]
+        display_df = display_df[
+            [c for c in _ordered if c in display_df.columns]
+            + [c for c in display_df.columns if c not in _ordered]
+        ]
 
     # Sélection d'un batch via dataframe
     st.dataframe(

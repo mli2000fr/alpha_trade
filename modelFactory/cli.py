@@ -567,6 +567,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Entraîne aussi un modèle global multi-symboles en comparaison")
     p.add_argument("--global-model-only", action="store_true", default=False,
                    help="Entraîne UNIQUEMENT le modèle global, sans per-symbol ni per-sector. Active implicitement --enable-global-model.")
+    p.add_argument("--exclude-per-symbol-per-sector", action="store_true", default=False,
+                   help="Saute l'entraînement per-symbol ET per-sector, mais GARDE le Global Ranking et l'Oracle Extreme (si activés). "
+                        "À la différence de --global-model-only qui fait un return tôt et skip aussi l'Oracle, ce flag ne skip que les modèles par ticker/secteur.")
     # Oracle Extreme (O0) — 2026-08-20 : détection d'extrêmes H20 SANS global_rank_20
     p.add_argument("--enable-oracle-model", action="store_true", default=False,
                    help="Entraîne AUSSI le modèle Oracle Extreme (ablation O0, sans global_rank_20) en fin de séquence globale. Le rank B25 étant redondant avec les features PIT (audit 2026-08-20), on entraîne O0 sans global_rank_20.")
@@ -713,6 +716,7 @@ def main(args: list[str] | None = None) -> None:
             ),
             force_v1_lstm=opts.force_v1_lstm,
             global_model_only=opts.global_model_only,
+            exclude_per_symbol_per_sector=opts.exclude_per_symbol_per_sector,
             enable_oracle_model=opts.enable_oracle_model,
             oracle_model_only=opts.oracle_model_only,
             sector_use_symbol_feature=opts.sector_symbol_feature,
@@ -1047,17 +1051,25 @@ def main(args: list[str] | None = None) -> None:
                 "(flux rank-driven : global_rank → synthèse)",
                 _batch_id,
             )
-        # ── Oracle Extreme only : batch sans per-symbol/sector MAIS avec champions
-        # Oracle persistés (walk-forward) → prédiction standard via les champions
-        # (predict_oracle_extreme_history), même logique que le Global Rank.
-        # Exclut les batchs combinés (B25 + Oracle, ablation O1) : ceux qui ont du
-        # global_rank_history gardent le flux rank-driven normal. ──
-        _oracle_only = bool(_batch_id) and (not _has_ps_models) and (not _per_sector)
-        if _oracle_only:
+        # ── Oracle Extreme : détection des champions Oracle (POINT 2, 2026-08-29).
+        # On détecte les champions INDÉPENDAMMENT du mode : un batch COMBINÉ
+        # (Global Ranking + Oracle, ablation O1) garde le flux rank-driven MAIS doit
+        # aussi remplir oracle_extreme_predictions via predict_oracle_extreme_history
+        # (bloc d'enchaînement ajouté après le dispatch). Le mode _oracle_only
+        # (batch sans per-symbol/sector et sans global_rank_history) conserve le flux
+        # exclusivement Oracle existant. ──
+        _has_oracle_champions = False
+        if _batch_id:
             try:
                 from modelFactory.oracle.predict_history import has_oracle_champions
-                _oracle_only = has_oracle_champions(_batch_id)
-                if _oracle_only:
+                _has_oracle_champions = has_oracle_champions(_batch_id)
+            except Exception:  # noqa: BLE001
+                _has_oracle_champions = False
+        _oracle_only = bool(_batch_id) and (not _has_ps_models) and (not _per_sector)
+        if _oracle_only:
+            _oracle_only = _has_oracle_champions
+            if _oracle_only:
+                try:
                     from sqlalchemy import text as _sql_text
                     with engine.connect() as _conn:
                         _gr_count = _conn.execute(
@@ -1073,8 +1085,8 @@ def main(args: list[str] | None = None) -> None:
                             "predict: batch=%s a global_rank_history → flux rank-driven (pas oracle-only)",
                             _batch_id,
                         )
-            except Exception:  # noqa: BLE001
-                _oracle_only = False
+                except Exception:  # noqa: BLE001
+                    _oracle_only = False
             if _oracle_only:
                 LOGGER.info(
                     "predict: batch=%s Oracle-only détecté (champions, sans global_rank) → "
@@ -1391,6 +1403,37 @@ def main(args: list[str] | None = None) -> None:
                     preds = _load_synth_frame_for_range(engine, _batch_id, [_live_day])
                 else:
                     preds = predict_batch(symbols, Path(opts.artifacts_dir), engine, persist=False, batch_id=_batch_id, accelerator=opts.accelerator)
+
+        # ── POINT 2 (2026-08-29) : batch COMBINÉ (Global Ranking + Oracle) →
+        #    enchaîner la prédiction Oracle standard pour remplir
+        #    oracle_extreme_predictions même si le flux principal est rank-driven.
+        #    Détection indépendante : _has_oracle_champions (le bloc _oracle_only
+        #    ci-dessus exclut déjà les batchs oracle-only via global_rank_history).
+        #    Idempotent (PK batch strict) ; non-bloquant. ──
+        if (not _oracle_only) and _has_oracle_champions and _batch_id:
+            _oc_start = (
+                str(cfg.data.training_start_date or "2020-01-01")
+                if historical_predict_enabled else str(universe_date)
+            )
+            _oc_end = (
+                str(cfg.data.training_end_date)
+                if historical_predict_enabled else _oc_start
+            )
+            try:
+                from modelFactory.oracle.predict_history import predict_oracle_extreme_history
+                _oc_out = predict_oracle_extreme_history(
+                    engine, _batch_id, _oc_start, _oc_end,
+                    horizon=int(getattr(opts, "horizon", 20) or 20),
+                )
+                LOGGER.info(
+                    "predict combined batch=%s oracle predict result=%s",
+                    _batch_id, _oc_out,
+                )
+            except Exception as _oc_exc:  # noqa: BLE001
+                LOGGER.warning(
+                    "predict combined batch=%s oracle predict FAILED (non-bloquant): %s",
+                    _batch_id, _oc_exc,
+                )
 
         # Sprint S4 (A-021) — drift gate / kill switch ML
         drift_decision = None

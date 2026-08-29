@@ -22,6 +22,9 @@ from ihm.pages import run_page_if_standalone
 from ihm.services.backtesting_registry import (
     backtesting_log_available,
     build_backtesting_log_download_name,
+    count_backtesting_runs_by_status,
+    delete_backtesting_runs,
+    delete_backtesting_runs_except,
     get_backtesting_run_record,
     list_active_backtesting_runs,
     list_active_backtesting_runs_by_kind,
@@ -652,6 +655,63 @@ def _resolve_history_selected_run_id(
         return None
     run_id = str(history_df.iloc[row_index].get("run_id") or "").strip()
     return run_id or None
+
+
+def _resolve_history_selected_run_ids(
+    history_df: pd.DataFrame,
+    *,
+    table_key: str = BACKTESTING_HISTORY_TABLE_KEY,
+) -> list[str]:
+    """Retourne les run_id de TOUTES les lignes sélectionnées (multi-row)."""
+    if history_df.empty or "run_id" not in history_df.columns:
+        return []
+    state = st.session_state.get(table_key)
+    if state is None:
+        return []
+    selection = getattr(state, "selection", None) or (state.get("selection") if isinstance(state, dict) else None)
+    if not selection:
+        return []
+    rows = getattr(selection, "rows", None) or (selection.get("rows") if isinstance(selection, dict) else None)
+    if not rows:
+        return []
+    selected_run_ids: list[str] = []
+    for row_index in rows:
+        try:
+            row_index = int(row_index)
+        except (TypeError, ValueError):
+            continue
+        if row_index < 0 or row_index >= len(history_df):
+            continue
+        run_id = str(history_df.iloc[row_index].get("run_id") or "").strip()
+        if run_id and run_id not in selected_run_ids:
+            selected_run_ids.append(run_id)
+    return selected_run_ids
+
+
+def _clear_history_selection(*, table_key: str = BACKTESTING_HISTORY_TABLE_KEY) -> None:
+    """Réinitialise la sélection du dataframe d'historique.
+
+    Après une suppression, les indices de lignes sélectionnés restent dans
+    ``st.session_state`` et se réappliquent aux NOUVELLES lignes aux mêmes
+    positions → il faut vider ``selection.rows`` avant le rerun.
+    """
+    state = st.session_state.get(table_key)
+    if state is None:
+        return
+    selection = getattr(state, "selection", None) or (state.get("selection") if isinstance(state, dict) else None)
+    if selection is None:
+        return
+    if hasattr(selection, "rows"):
+        try:
+            selection.rows = []
+            return
+        except Exception:
+            pass
+    if isinstance(selection, dict):
+        try:
+            selection["rows"] = []
+        except Exception:
+            pass
 
 
 def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
@@ -1822,7 +1882,7 @@ def _build_run_options() -> BacktestRunOptions:
     with dir_col1:
         no_shorts = st.checkbox(
             "Long only (--no-shorts)",
-            value=bool(st.session_state.get("bt_run_no_shorts", False)),
+            value=bool(st.session_state.get("bt_run_no_shorts", True)),
             key="bt_run_no_shorts",
             help="Ne trade que des positions LONG : ignore les signaux short. Équivalent CLI --no-shorts.",
         )
@@ -2527,6 +2587,39 @@ def _build_run_options() -> BacktestRunOptions:
                  "oracle (un seul batch B25+Oracle). Source table uniquement (parquet supprimé).",
         ))
         oracle_batch_id = _oracle_batch_labels[_sel_oracle_label]
+
+    # ── Priorité N4X2 jours saturés (recherche E, extreme_gate uniquement) ──
+    extreme_gate_dip_saturated = bool(st.session_state.get("bt_run_extreme_gate_dip_saturated", False))
+    extreme_gate_dip_band = float(st.session_state.get("bt_run_extreme_gate_dip_band", 0.02) or 0.02)
+    if _cascade_rank_mode == "extreme_gate":
+        st.markdown("**🥇 Priorité N4X2 jours saturés (recherche)**")
+        _eg_sat_c1, _eg_sat_c2 = st.columns(2)
+        with _eg_sat_c1:
+            extreme_gate_dip_saturated = st.checkbox(
+                "Activer la priorité N4X2 jours saturés",
+                value=extreme_gate_dip_saturated,
+                key="bt_run_extreme_gate_dip_saturated",
+                help="--extreme-gate-dip-saturated : pool Oracle TOP20 intact, N4X2 réordonne "
+                     "lexicographiquement (bande de rang Oracle → N4X2 → score) UNIQUEMENT quand "
+                     "candidats > slots disponibles. Jour non saturé = ordre inchangé.",
+            )
+        with _eg_sat_c2:
+            extreme_gate_dip_band = st.number_input(
+                "Bande de rang Oracle (fraction)",
+                min_value=0.005,
+                max_value=0.20,
+                value=extreme_gate_dip_band,
+                step=0.005,
+                format="%.3f",
+                key="bt_run_extreme_gate_dip_band",
+                help="--extreme-gate-dip-band : largeur de bande du percentile Oracle pour le "
+                     "groupement lexicographique (défaut 0.02).",
+            )
+        st.caption(
+            "Ne prend effet que si le **filtre DIP est activé** (case DIP ci-dessus). "
+            "Le DIP ne filtre plus : il ne fait que prioriser N4X2 dans sa bande de rang "
+            "sur les jours où il y a plus de candidats que de positions."
+        )
     with st.expander("ℹ️ Détail des modes de combinaison", expanded=False):
         st.markdown(
             """
@@ -2688,6 +2781,8 @@ def _build_run_options() -> BacktestRunOptions:
         dip_reclaim_max_wait=int(st.session_state.get("bt_run_dip_reclaim_max_wait", _dip_defaults.get("reclaim_max_wait", BT_RUN_DIP_RECLAIM_MAX_WAIT_DEFAULT))),
         cascade_rank_mode=cast(Any, st.session_state.get("bt_run_cascade_rank_mode", "ml") or "ml"),
         oracle_batch_id=(oracle_batch_id or None),
+        extreme_gate_dip_saturated=bool(extreme_gate_dip_saturated),
+        extreme_gate_dip_band=float(extreme_gate_dip_band or 0.02),
         score_column=cast(Any, score_column),
         walk_forward_artifacts_dir=walk_forward_artifacts_dir.strip() or None,
         disable_walk_forward=bool(st.session_state.get("bt_run_disable_walk_forward", False)),
@@ -5365,14 +5460,137 @@ def _render_runtime_center_body(*, auto_refresh_enabled: bool) -> None:
     )
     with st.expander("🗃️ Historique des exécutions backtesting", expanded=False):
         st.caption("Sélectionnez une ligne pour faire apparaître les boutons de téléchargement des logs du run historique.")
+
+        # ── Purge des runs non-terminés (bouton) ────────────────────────────
+        _status_counts = count_backtesting_runs_by_status()
+        _non_kept_counts = {k: v for k, v in _status_counts.items() if k != "completed"}
+        _purge_key = "backtesting_purge_non_completed"
+        # Flag de confirmation — clé DÉDIÉE, distincte des clés des widgets
+        # (évite StreamlitValueAssignmentNotAllowedError : on ne peut pas écrire
+        # dans st.session_state sur une clé de widget).
+        _purge_pending_key = "backtesting_purge_non_completed_pending"
+        if _non_kept_counts:
+            _non_kept_total = sum(_non_kept_counts.values())
+            _summary = ", ".join(f"{k}: {v}" for k, v in sorted(_non_kept_counts.items()))
+            st.markdown(
+                f"<div style='padding:6px 10px;border:1px solid #888;border-radius:8px;"
+                f"background:#1a1a1a;color:#ddd'>"
+                f"🗑️ <b>{_non_kept_total}</b> run(s) non terminé(s) : {_summary}. "
+                f"Uniquement les runs <b>completed</b> seront conservés "
+                f"(({_status_counts.get('completed', 0)}).</div>",
+                unsafe_allow_html=True,
+            )
+            if not st.session_state.get(_purge_pending_key):
+                if st.button(
+                    "🗑️ Supprimer tous les backtests non terminés (répertoires + index)",
+                    key=_purge_key,
+                    use_container_width=True,
+                    help="Supprime les runs dont le statut n'est pas `completed` : "
+                    "leur entrée dans l'historique ET leur répertoire d'artefacts/logs. "
+                    "Les runs en cours sont arrêtés au préalable.",
+                ):
+                    st.session_state[_purge_pending_key] = True
+                    st.rerun()
+            else:
+                st.warning(
+                    f"⚠️ Confirmer la suppression de **{_non_kept_total}** run(s) non terminé(s) ? "
+                    "Cette action est irréversible (répertoires + historique supprimés)."
+                )
+                _confirm_cols = st.columns(2)
+                if _confirm_cols[0].button(
+                    "✅ Confirmer la suppression",
+                    key=f"{_purge_key}_confirm",
+                    use_container_width=True,
+                ):
+                    result = delete_backtesting_runs_except(
+                        keep_statuses={"completed"},
+                        stop_active=True,
+                    )
+                    st.session_state.pop(_purge_pending_key, None)
+                    _clear_history_selection()
+                    if result.get("errors"):
+                        st.error(
+                            f"Suppression partielle : {len(result['deleted'])} supprimé(s), "
+                            f"{len(result['kept'])} conservé(s), erreurs : {', '.join(result['errors'][:5])}"
+                        )
+                    else:
+                        st.success(
+                            f"Suppression terminée : {len(result['deleted'])} run(s) supprimé(s), "
+                            f"{len(result['kept'])} conservé(s)."
+                        )
+                    st.rerun()
+                if _confirm_cols[1].button(
+                    "❌ Annuler",
+                    key=f"{_purge_key}_cancel",
+                    use_container_width=True,
+                ):
+                    st.session_state.pop(_purge_pending_key, None)
+                    st.rerun()
+        else:
+            st.success("✅ Tous les runs backtesting sont terminés (completed) — rien à supprimer.")
+
         st.dataframe(
             history_df,
             use_container_width=True,
             hide_index=True,
             on_select="rerun",
-            selection_mode="single-row",
+            selection_mode="multi-row",
             key=BACKTESTING_HISTORY_TABLE_KEY,
         )
+
+        # ── Suppression des runs sélectionnés ──────────────────────────────
+        _selected_run_ids = _resolve_history_selected_run_ids(history_df)
+        _selected_delete_key = "backtesting_delete_selected"
+        # Flag de confirmation — clé DÉDIÉE, distincte des clés des widgets.
+        _selected_delete_pending_key = "backtesting_delete_selected_pending"
+        if _selected_run_ids:
+            st.caption(
+                f"✅ {len(_selected_run_ids)} run(s) sélectionné(s) : "
+                + ", ".join(f"`{rid}`" for rid in _selected_run_ids[:5])
+                + ("…" if len(_selected_run_ids) > 5 else "")
+            )
+            if not st.session_state.get(_selected_delete_pending_key):
+                if st.button(
+                    f"🗑️ Supprimer {len(_selected_run_ids)} backtest(s) sélectionné(s) (répertoires + index)",
+                    key=_selected_delete_key,
+                    use_container_width=True,
+                    help="Supprime les runs sélectionnés : leur entrée dans l'historique ET leur "
+                    "répertoire d'artefacts/logs. Les runs en cours sont arrêtés au préalable.",
+                ):
+                    st.session_state[_selected_delete_pending_key] = True
+                    st.rerun()
+            else:
+                st.warning(
+                    f"⚠️ Confirmer la suppression de **{len(_selected_run_ids)}** run(s) sélectionné(s) ? "
+                    "Cette action est irréversible (répertoires + historique supprimés)."
+                )
+                _sel_confirm_cols = st.columns(2)
+                if _sel_confirm_cols[0].button(
+                    "✅ Confirmer la suppression",
+                    key=f"{_selected_delete_key}_confirm",
+                    use_container_width=True,
+                ):
+                    result = delete_backtesting_runs(_selected_run_ids, stop_active=True)
+                    st.session_state.pop(_selected_delete_pending_key, None)
+                    _clear_history_selection()
+                    if result.get("errors"):
+                        st.error(
+                            f"Suppression partielle : {len(result['deleted'])} supprimé(s), "
+                            f"{len(result['kept'])} conservé(s), erreurs : {', '.join(result['errors'][:5])}"
+                        )
+                    else:
+                        st.success(
+                            f"Suppression terminée : {len(result['deleted'])} run(s) supprimé(s), "
+                            f"{len(result['kept'])} conservé(s)."
+                        )
+                    st.rerun()
+                if _sel_confirm_cols[1].button(
+                    "❌ Annuler",
+                    key=f"{_selected_delete_key}_cancel",
+                    use_container_width=True,
+                ):
+                    st.session_state.pop(_selected_delete_pending_key, None)
+                    st.rerun()
 
         selected_history_run_id = _resolve_history_selected_run_id(history_df)
         if selected_history_run_id is None:

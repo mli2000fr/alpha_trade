@@ -35,7 +35,15 @@ from modelFactory.data_loader import (
     load_universe_bars,
 )
 from modelFactory.dataset import FeatureScaler
-from modelFactory.db_registry import insert_predictions, load_tradable_universe_symbols, load_training_run
+from modelFactory.db_registry import (
+    PREDICTION_SOURCE_GLOBAL_RANK_SYNTH,
+    PREDICTION_SOURCE_ORACLE_SYNTH,
+    PREDICTION_SOURCE_PER_SECTOR,
+    PREDICTION_SOURCE_PER_SYMBOL,
+    insert_predictions,
+    load_tradable_universe_symbols,
+    load_training_run,
+)
 from modelFactory.features import compute_features, get_feature_columns, validate_feature_contract
 from modelFactory.feature_logging import log_feature_values
 from modelFactory.model import LSTMAttentionModule
@@ -396,6 +404,8 @@ def _build_prediction_result(
     # Sprint Maître 2 — PIT
     data_availability: DataAvailabilityInfo | None = None,
     data_quality: QualityState = QualityState.PRESENT,
+    # 0067 — origine de la prédiction (per_symbol | per_sector)
+    source: str | None = None,
 ) -> pd.DataFrame:
     row: dict[str, object] = {
         "symbol": symbol,
@@ -410,6 +420,8 @@ def _build_prediction_result(
         "selected_model": selected_model,
         "decision_policy_version": decision_policy_version,
     }
+    if source is not None:
+        row["source"] = source
     if decision_reason is not None:
         row["decision_reason"] = decision_reason
     # ── Sprint Maître 2 : qualité PIT ──────────────────────────────────
@@ -617,6 +629,41 @@ def _resolve_artifact_paths(
             symbol, batch_id, sym_dir,
         )
     return sym_dir / "best.ckpt", sym_dir / "scaler.pkl", sym_dir / "config.json", run_id
+
+
+_run_source_cache: dict[str, str] = {}
+
+
+def _classify_prediction_source(
+    engine: "Engine",  # type: ignore[name-defined]
+    symbol: str,
+    selected_run_id: str | None,
+) -> str:
+    """Classe l'origine d'une prédiction : ``per_symbol`` | ``per_sector``.
+
+    La décision est basée sur le run d'entraînement résolu : si son symbole
+    est le ticker lui-même → per-symbol ; sinon (run sectoriel, symbole =
+    secteur GICS) → per-sector. Cache par run_id (stable par run).
+    """
+    if not selected_run_id:
+        return PREDICTION_SOURCE_PER_SYMBOL
+    rid = str(selected_run_id)
+    if rid in _run_source_cache:
+        return _run_source_cache[rid]
+    source = PREDICTION_SOURCE_PER_SYMBOL
+    try:
+        from sqlalchemy import text as _sa_text
+        with engine.connect() as conn:
+            run_sym = conn.execute(
+                _sa_text("SELECT symbol FROM model_training_run WHERE run_id = :r LIMIT 1"),
+                {"r": rid},
+            ).scalar()
+        if run_sym and str(run_sym).strip().upper() != str(symbol).strip().upper():
+            source = PREDICTION_SOURCE_PER_SECTOR
+    except Exception:  # noqa: BLE001 — la classification ne doit jamais bloquer
+        source = PREDICTION_SOURCE_PER_SYMBOL
+    _run_source_cache[rid] = source
+    return source
 
 
 def _resolve_sector_run(
@@ -1258,6 +1305,7 @@ def _predict_with_global_model(
     as_of_date: date | None,
     persist: bool,
     ps_features: dict[str, Any] | None = None,
+    source: str | None = None,
 ) -> Optional[pd.DataFrame]:
     return _predict_with_tabular_model(
         symbol,
@@ -1273,6 +1321,7 @@ def _predict_with_global_model(
         decision_threshold=cfg_data.get("selected_decision_threshold"),
         config_path=config_path,
         ps_features=ps_features,
+        source=source,
     )
 
 
@@ -1293,6 +1342,7 @@ def _predict_with_tabular_model(
     route_feature_fingerprint: object = None,
     route_feature_contract: object = None,
     ps_features: dict[str, Any] | None = None,
+    source: str | None = None,
 ) -> Optional[pd.DataFrame]:
     if not model_path.exists():
         reason = f"tabular_model_missing:{selected_model}"
@@ -1603,6 +1653,7 @@ def _predict_with_tabular_model(
         decision_reason=decision_reason,
         data_availability=pit_avail,
         data_quality=QualityState.PRESENT if pit_avail is not None else QualityState.MISSING_NO_SOURCE,
+        source=source,
     )
     update_runtime_status(
         last_prediction_symbol=symbol,
@@ -1653,6 +1704,8 @@ def predict_symbol(
         run_id,
         batch_id=batch_id,
     )
+    # 0067 — origine de la prédiction (per_symbol vs per_sector) selon le run résolu
+    _pred_source = _classify_prediction_source(engine, symbol, selected_run_id)
 
     if not config_path.exists():
         # Batch sans modèle per-symbol/per-sector : absence de config normale → pas de
@@ -1720,6 +1773,7 @@ def predict_symbol(
                     as_of_date=as_of_date,
                     persist=persist,
                     ps_features=_ps_features,
+                    source=_pred_source,
                 )
             except ArtifactIntegrityError as exc:
                 route = _build_lstm_fallback_route(
@@ -1772,6 +1826,7 @@ def predict_symbol(
                     route_feature_fingerprint=route.get("feature_fingerprint"),
                     route_feature_contract=route.get("feature_contract"),
                     ps_features=_ps_features,
+                    source=_pred_source,
                 )
             except ArtifactIntegrityError as exc:
                 route = _build_lstm_fallback_route(
@@ -2082,6 +2137,7 @@ def predict_symbol(
         proba_long=proba_long_val,
         proba_flat=proba_flat_val,
         proba_short=proba_short_val,
+        source=_pred_source,
     )
     update_runtime_status(
         last_prediction_symbol=symbol,
@@ -2755,6 +2811,10 @@ def cascade_select(
     extreme_gate_pct: float | None = None,
     extreme_gate_per_symbol: str = "filter",
     extreme_gate_shorts: bool = False,
+    extreme_gate_dip_saturated: bool = False,
+    extreme_gate_dip_band: float = 0.02,
+    saturation_slots: int | None = None,
+    dip_stats: dict[str, Any] | None = None,
     dip_filter_config: dict[str, Any] | None = None,
 ) -> list[tuple[str, str, float]]:
     """Filtre cascade : Global Rank → Per-Symbol → trades ordonnancés.
@@ -2823,6 +2883,8 @@ def cascade_select(
         _oracle_pct = pd.Series(_oracle_values).rank(pct=True)  # percentile intra-date (PIT)
         _oracle_pct_map = dict(zip(_oracle_symbols, _oracle_pct.to_numpy()))
         ranks_df = pd.DataFrame({"symbol": _oracle_symbols, "proba_extreme": _oracle_pct.to_numpy()})
+        _oracle_rank_by_sym = dict(zip(_oracle_symbols, _oracle_pct.to_numpy()))
+        _n4x2_pass: set[str] = set()
         _rank_col = "proba_extreme"
         if _extreme_gate_cfg.get("min_prob") is not None:
             _min_prob = float(_extreme_gate_cfg["min_prob"])
@@ -2830,35 +2892,53 @@ def cascade_select(
             "cascade_select: EXTREME_GATE top %d%% par proba_extreme (%d symbols, percentile du jour)",
             int(round((1.0 - _extreme_gate_pct) * 100)), len(ranks_df),
         )
-        # ── DIP filter sur la source Oracle (persistance proba_extreme + prix) ──
-        # Même squelette que le DIP Global Rank N4X2, mais le « rang » est le
-        # percentile intra-date de proba_extreme (oracle_extreme_predictions),
-        # pas global_rank_history → compatible batch oracle-only. Activé quand
-        # dip_filter_config.enabled (flags --dip-* / config.yaml persistent_*).
+        # ── DIP Oracle (persistance proba_extreme + prix) : gate dur OU priorité ──
+        # Deux usages selon le flag de recherche extreme_gate_dip_saturated :
+        #   - défaut (False) : GATE DUR historique — ne garde que les symboles
+        #     passant N4X2 (pool réduit) ;
+        #   - True : PRIORITÉ JOURS SATURÉS — on calcule l'ensemble passant N4X2
+        #     MAIS on garde le pool Oracle TOP20 intact ; le réordonnancement
+        #     lexicographique (bande de rang Oracle → N4X2 → score) n'est appliqué
+        #     qu'en fin de cascade quand candidats > slots disponibles.
+        _n4x2_pass = set()
         if dip_filter_config and bool(dip_filter_config.get("enabled", False)):
             try:
                 from selector.dip_filter import filter_day_candidates as _oracle_dip_filter
-                _dip_before = int(ranks_df.shape[0]) if ranks_df is not None else 0
-                ranks_df = _oracle_dip_filter(
-                    ranks_df, engine, batch_id, trade_date, dip_filter_config,
-                    best_h=None, rank_source="oracle",
-                )
-                _dip_after = int(ranks_df.shape[0]) if ranks_df is not None else 0
-                LOGGER.info(
-                    "DIP_FILTER backtest date=%s batch=%s source=oracle N=%s X=%.4f "
-                    "threshold=%.4f before=%d after=%d rejected=%d",
-                    trade_date, batch_id,
-                    dip_filter_config.get("persist_days"),
-                    float(dip_filter_config.get("dip_pct", 0.02)),
-                    float(dip_filter_config.get("rank_threshold", 0.90)),
-                    _dip_before, _dip_after, _dip_before - _dip_after,
-                )
-                if ranks_df.empty:
-                    LOGGER.info(
-                        "cascade_select: ORACLE DIP filter vide pour %s (%s) — aucun candidat",
-                        trade_date, batch_id,
+                if extreme_gate_dip_saturated:
+                    _pass_df = _oracle_dip_filter(
+                        ranks_df.copy(), engine, batch_id, trade_date, dip_filter_config,
+                        best_h=None, rank_source="oracle",
                     )
-                    return []
+                    _n4x2_pass = {
+                        str(s).upper() for s in _pass_df["symbol"].unique()
+                        if pd.notna(s)
+                    }
+                    LOGGER.info(
+                        "EXTREME_GATE_SAT date=%s batch=%s N4X2 pass=%d/%d (pool TOP20 intact)",
+                        trade_date, batch_id, len(_n4x2_pass), int(ranks_df.shape[0]),
+                    )
+                else:
+                    _dip_before = int(ranks_df.shape[0]) if ranks_df is not None else 0
+                    ranks_df = _oracle_dip_filter(
+                        ranks_df, engine, batch_id, trade_date, dip_filter_config,
+                        best_h=None, rank_source="oracle",
+                    )
+                    _dip_after = int(ranks_df.shape[0]) if ranks_df is not None else 0
+                    LOGGER.info(
+                        "DIP_FILTER backtest date=%s batch=%s source=oracle N=%s X=%.4f "
+                        "threshold=%.4f before=%d after=%d rejected=%d",
+                        trade_date, batch_id,
+                        dip_filter_config.get("persist_days"),
+                        float(dip_filter_config.get("dip_pct", 0.02)),
+                        float(dip_filter_config.get("rank_threshold", 0.90)),
+                        _dip_before, _dip_after, _dip_before - _dip_after,
+                    )
+                    if ranks_df.empty:
+                        LOGGER.info(
+                            "cascade_select: ORACLE DIP filter vide pour %s (%s) — aucun candidat",
+                            trade_date, batch_id,
+                        )
+                        return []
             except Exception:  # noqa: BLE001
                 LOGGER.exception(
                     "cascade_select: ORACLE DIP filter échoué pour %s — on continue sans filtre",
@@ -3080,6 +3160,8 @@ def cascade_select(
             if _mode_oracle_filter and (_oracle_pct is None or _oracle_pct < _oracle_filter_pct):
                 continue
             if _mode_oracle_rerank or _mode_oracle_pool:
+                if _oracle_pct is None:
+                    continue  # pas de P_extreme → pas réordonnable (cohérent audit inner-join)
                 rank_dir = _oracle_pct
             else:
                 rank_dir = rank  # déjà proche de 1.0
@@ -3110,6 +3192,8 @@ def cascade_select(
             if _mode_oracle_filter and (_oracle_pct is None or _oracle_pct > (1.0 - _oracle_filter_pct)):
                 continue
             if _mode_oracle_rerank or _mode_oracle_pool:
+                if _oracle_pct is None:
+                    continue  # pas de P_extreme → pas réordonnable (cohérent audit inner-join)
                 rank_dir = 1.0 - _oracle_pct
             else:
                 rank_dir = 1.0 - rank  # inverse : 0.05 → 0.95
@@ -3118,6 +3202,75 @@ def cascade_select(
 
     # Tri par score décroissant
     candidates.sort(key=lambda x: x[2], reverse=True)
+
+    # ── Priorité N4X2 jours saturés (recherche E) ──
+    # Réordonnancement lexicographique UNIQUEMENT quand le nombre de candidats
+    # admissibles dépasse les slots disponibles : clé (bande de rang Oracle →
+    # flag N4X2 → score). Le pool TOP20 reste intact (le DIP n'a pas filtré).
+    # Bande déterministe : travail en points de base (int) pour éviter toute
+    # instabilité de frontière flottante (ex. 0.96/0.02 ≈ 47.999…).
+    if (
+        _mode_extreme_gate
+        and extreme_gate_dip_saturated
+        and saturation_slots
+        and len(candidates) > int(saturation_slots)
+        and _oracle_rank_by_sym
+    ):
+        _band = float(extreme_gate_dip_band or 0.02)
+        if _band <= 0.0:
+            _band = 0.02
+        _band_bp = int(round(_band * 10000.0))
+        if _band_bp <= 0:
+            _band_bp = 200  # 0.02 par défaut
+        _slots = int(saturation_slots)
+
+        def _n4x2_sat_key(_item: tuple[str, str, float]):
+            _side, _sym, _score = _item
+            _o = float(_oracle_rank_by_sym.get(str(_sym).upper(), 0.0))
+            _bp = int(round(_o * 10000.0))
+            _b = int(_bp // _band_bp)
+            _n4 = 1 if str(_sym).upper() in _n4x2_pass else 0
+            return (_b, _n4, float(_score))
+
+        # T0 = top slots dans l'ordre score (avant réordonnancement) — référence.
+        _t0_top = {c[1] for c in candidates[:_slots]}
+        candidates.sort(key=_n4x2_sat_key, reverse=True)
+        _t1_top = {c[1] for c in candidates[:_slots]}
+        _added = _t1_top - _t0_top
+        _removed = _t0_top - _t1_top
+        _rk_add = sorted((float(_oracle_rank_by_sym.get(s, 0.0)) for s in _added), reverse=True)
+        _rk_rem = sorted((float(_oracle_rank_by_sym.get(s, 0.0)) for s in _removed), reverse=True)
+        _mean_add = (sum(_rk_add) / len(_rk_add)) if _rk_add else float("nan")
+        _mean_rem = (sum(_rk_rem) / len(_rk_rem)) if _rk_rem else float("nan")
+        if dip_stats is not None:
+            dip_stats["n_saturated_days"] = dip_stats.get("n_saturated_days", 0) + 1
+            dip_stats["n_reordered_days"] = dip_stats.get("n_reordered_days", 0) + 1
+            dip_stats["n_candidates_reordered"] = dip_stats.get("n_candidates_reordered", 0) + len(candidates)
+            dip_stats["n_substitutions"] = dip_stats.get("n_substitutions", 0) + len(_added)
+            dip_stats["n_added"] = dip_stats.get("n_added", 0) + len(_rk_add)
+            dip_stats["n_removed"] = dip_stats.get("n_removed", 0) + len(_rk_rem)
+            dip_stats["sum_rank_added"] = dip_stats.get("sum_rank_added", 0.0) + sum(_rk_add)
+            dip_stats["sum_rank_removed"] = dip_stats.get("sum_rank_removed", 0.0) + sum(_rk_rem)
+            _hist = dip_stats.setdefault("rank_gap_hist", {})
+            for _a, _r in zip(_rk_add, _rk_rem):
+                _gap = _r - _a
+                if _gap <= 0.005:
+                    _bname = "0-0.005"
+                elif _gap <= 0.010:
+                    _bname = "0.005-0.010"
+                elif _gap <= 0.020:
+                    _bname = "0.010-0.020"
+                else:
+                    _bname = ">0.020"
+                _hist[_bname] = _hist.get(_bname, 0) + 1
+        LOGGER.info(
+            "cascade_select: %s jours saturés — reorder N4X2 (%d candidats > %d slots, "
+            "band=%.3f) substitutions=%d rank_removed=%.4f rank_added=%.4f sacrifice=%.4f",
+            trade_date, len(candidates), _slots, _band,
+            len(_added),
+            _mean_rem, _mean_add,
+            (_mean_rem - _mean_add) if (_rk_add and _rk_rem) else float("nan"),
+        )
 
     LOGGER.info(
         "cascade_select: %s / %s — %d candidates (top_pct=%.2f, min_prob=%.2f)",
@@ -3240,6 +3393,9 @@ def apply_cascade_to_predictions(
     extreme_gate_pct: float | None = None,
     extreme_gate_per_symbol: str = "filter",
     extreme_gate_shorts: bool = False,
+    extreme_gate_dip_saturated: bool = False,
+    extreme_gate_dip_band: float = 0.02,
+    saturation_slots: int | None = None,
     dip_filter_config: dict[str, Any] | None = None,
     # Research dip_quality_score (chantier dip_quality_static_model, défaut off).
     #   dip_quality_map   : {(date_str, symbol_upper): score} — scores OOF par (J, symbol).
@@ -3296,6 +3452,53 @@ def apply_cascade_to_predictions(
     # Initialiser la colonne cascade_score
     result["cascade_score"] = 0.0
 
+    # ── 0067 : dédup DÉTERMINISTE par source (colonne `source`) ────────────
+    # Fix bug contamination 2026 : quand plusieurs runs du même batch couvrent
+    # la même (date, symbol) — ex. synthèse global_rank (probas ternaires) ET
+    # runs per-sector (regression, proba_long NULL) — le "last-wins" selon
+    # l'ordre de retour SQL était non déterministe et faisait gagner le
+    # per-sector dans ~90% des cas. On retient désormais TOUJOURS la source la
+    # plus fiable pour le mode cascade (per_symbol > global_rank_synth >
+    # oracle_synth > per_sector ; en mode oracle/extreme_gate, oracle_synth
+    # passe devant global_rank_synth car c'est la couche per-symbol attendue).
+    _src_col = "source" if "source" in result.columns else None
+    if _src_col is not None:
+        _dedup_before = len(result)
+        _rank_mode_low = str(rank_mode or "ml").strip().lower()
+        _oracle_first = _rank_mode_low in ("oracle", "extreme_gate")
+
+        def _prio(row_source: object) -> tuple[int, int]:
+            _s = str(row_source or "").strip().lower()
+            if _oracle_first and _s == PREDICTION_SOURCE_ORACLE_SYNTH:
+                return (0, 1)
+            if _oracle_first and _s == PREDICTION_SOURCE_GLOBAL_RANK_SYNTH:
+                return (1, 2)
+            _order = {
+                PREDICTION_SOURCE_PER_SYMBOL: (0, 0),
+                PREDICTION_SOURCE_GLOBAL_RANK_SYNTH: (1, 2),
+                PREDICTION_SOURCE_ORACLE_SYNTH: (2, 1),
+                PREDICTION_SOURCE_PER_SECTOR: (3, 3),
+            }
+            return _order.get(_s, (4, 4))
+
+        _sort_cols = [_date_col, "symbol"]
+        _key_sorted = result.copy()
+        _key_sorted["_prio"] = result[_src_col].map(_prio) if _src_col in result.columns else 0
+        _key_sorted[["_prio_a", "_prio_b"]] = pd.DataFrame(
+            _key_sorted["_prio"].tolist(), index=_key_sorted.index, columns=["_prio_a", "_prio_b"],
+        )
+        _key_sorted = _key_sorted.sort_values([*_sort_cols, "_prio_a", "_prio_b"], kind="mergesort")
+        _key_sorted = _key_sorted.drop_duplicates(subset=[_date_col, "symbol"], keep="first")
+        _key_sorted = _key_sorted.drop(columns=["_prio", "_prio_a", "_prio_b"])
+        result = _key_sorted.reset_index(drop=True)
+        _dedup_after = len(result)
+        if _dedup_after != _dedup_before:
+            LOGGER.info(
+                "apply_cascade_to_predictions: dedup par source (colonne source) "
+                "%d → %d lignes (mode=%s)",
+                _dedup_before, _dedup_after, _rank_mode_low,
+            )
+
     # ── P0-5 (2026-08-06) : détecter le mode (regression vs classification) ──
     _has_ternary = (
         "proba_long" in result.columns
@@ -3324,6 +3527,8 @@ def apply_cascade_to_predictions(
     _dates = sorted(result[_date_col].dropna().unique())
     _total_passed = 0
     _total_processed = 0
+    # Stats agrégées du réordonnancement N4X2 jours saturés (recherche E).
+    _dip_stats: dict[str, Any] = {} if extreme_gate_dip_saturated else None
 
     for _d in _dates:
         _date_str = str(_d)[:10]
@@ -3372,6 +3577,10 @@ def apply_cascade_to_predictions(
             extreme_gate_pct=extreme_gate_pct,
             extreme_gate_per_symbol=_eg_ps_mode,
             extreme_gate_shorts=_eg_shorts,
+            extreme_gate_dip_saturated=extreme_gate_dip_saturated,
+            extreme_gate_dip_band=extreme_gate_dip_band,
+            saturation_slots=saturation_slots,
+            dip_stats=_dip_stats,
             dip_filter_config=dip_filter_config,
         )
 
@@ -3473,6 +3682,26 @@ def apply_cascade_to_predictions(
         "(batch=%s, dates=%d)",
         _total_passed, _total_processed, batch_id, len(_dates),
     )
+    if _dip_stats:
+        _ns = int(_dip_stats.get("n_substitutions", 0) or 0)
+        _nadd = int(_dip_stats.get("n_added", 0) or 0)
+        _nrem = int(_dip_stats.get("n_removed", 0) or 0)
+        _mean_rem = (float(_dip_stats.get("sum_rank_removed", 0.0)) / _nrem) if _nrem else float("nan")
+        _mean_add = (float(_dip_stats.get("sum_rank_added", 0.0)) / _nadd) if _nadd else float("nan")
+        _hist = _dip_stats.get("rank_gap_hist") or {}
+        _hist_str = ", ".join(f"{k}={v}" for k, v in sorted(_hist.items()))
+        LOGGER.info(
+            "DIP_N4X2_SAT résumé: jours_saturés=%d jours_reordonnes=%d candidats_reordonnes=%d "
+            "substitutions=%d | mean_oracle_rank_removed=%.4f mean_oracle_rank_added=%.4f "
+            "sacrifice_moyen=%.4f | rank_gap_hist {%s}",
+            int(_dip_stats.get("n_saturated_days", 0) or 0),
+            int(_dip_stats.get("n_reordered_days", 0) or 0),
+            int(_dip_stats.get("n_candidates_reordered", 0) or 0),
+            _ns,
+            _mean_rem, _mean_add,
+            (_mean_rem - _mean_add) if (_nadd and _nrem) else float("nan"),
+            _hist_str,
+        )
     return result
 
 

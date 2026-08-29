@@ -370,3 +370,117 @@ def test_start_backtesting_run_releases_lock_if_popen_fails(tmp_path: Path, monk
         pipeline_lock.set_locks_dir_for_tests(None)
 
 
+
+
+def test_delete_backtesting_runs_except_removes_non_completed_index_and_dir(tmp_path: Path, monkeypatch) -> None:
+    from ihm.services import backtesting_registry
+
+    runs_dir = tmp_path / "ihm_runs"
+    monkeypatch.setattr(backtesting_registry, "RUNS_DIR", runs_dir)
+    monkeypatch.setattr(backtesting_registry, "HISTORY_INDEX_PATH", runs_dir / "history_index.json")
+    monkeypatch.setattr(backtesting_registry, "_ACTIVE_RUNS", {})
+
+    def _mk_run(run_id: str, kind: str, status: str) -> None:
+        d = runs_dir / kind / run_id
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "stdout.log").write_text("out\n", encoding="utf-8")
+        (d / "artifacts").mkdir(exist_ok=True)
+        (d / "artifacts" / "report.json").write_text("{}", encoding="utf-8")
+
+    _mk_run("r_completed", "run", "completed")
+    _mk_run("r_failed", "run", "failed")
+    _mk_run("r_stopped", "run", "stopped")
+    _mk_run("r_backfill", "backfill-scores-history", "failed")
+
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    (runs_dir / "history_index.json").write_text(
+        json.dumps(
+            {
+                "r_completed": {"run_id": "r_completed", "run_kind": "run", "status": "completed"},
+                "r_failed": {"run_id": "r_failed", "run_kind": "run", "status": "failed"},
+                "r_stopped": {"run_id": "r_stopped", "run_kind": "run", "status": "stopped"},
+                "r_backfill": {"run_id": "r_backfill", "run_kind": "backfill-scores-history", "status": "failed"},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(backtesting_registry, "list_active_backtesting_runs", lambda: [])
+
+    result = backtesting_registry.delete_backtesting_runs_except(keep_statuses={"completed"}, stop_active=False)
+
+    assert sorted(result["deleted"]) == ["r_backfill", "r_failed", "r_stopped"]
+    assert result["kept"] == ["r_completed"]
+    assert result["errors"] == []
+
+    remaining = backtesting_registry._read_history_index()
+    assert set(remaining) == {"r_completed"}
+    assert not (runs_dir / "run" / "r_failed").exists()
+    assert not (runs_dir / "run" / "r_stopped").exists()
+    assert not (runs_dir / "backfill-scores-history" / "r_backfill").exists()
+    assert (runs_dir / "run" / "r_completed").exists()
+
+
+def test_delete_backtesting_runs_except_counts_statuses(tmp_path: Path, monkeypatch) -> None:
+    from ihm.services import backtesting_registry
+
+    runs_dir = tmp_path / "ihm_runs"
+    monkeypatch.setattr(backtesting_registry, "RUNS_DIR", runs_dir)
+    monkeypatch.setattr(backtesting_registry, "HISTORY_INDEX_PATH", runs_dir / "history_index.json")
+    monkeypatch.setattr(backtesting_registry, "_ACTIVE_RUNS", {})
+
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    (runs_dir / "history_index.json").write_text(
+        json.dumps(
+            {
+                "r1": {"run_id": "r1", "run_kind": "run", "status": "completed"},
+                "r2": {"run_id": "r2", "run_kind": "run", "status": "completed"},
+                "r3": {"run_id": "r3", "run_kind": "run", "status": "failed"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    for rid in ("r1", "r2", "r3"):
+        (runs_dir / "run" / rid).mkdir(parents=True, exist_ok=True)
+
+    counts = backtesting_registry.count_backtesting_runs_by_status()
+    assert counts == {"completed": 2, "failed": 1}
+
+
+def test_delete_backtesting_runs_deletes_only_selected_ids(tmp_path: Path, monkeypatch) -> None:
+    from ihm.services import backtesting_registry
+
+    runs_dir = tmp_path / "ihm_runs"
+    monkeypatch.setattr(backtesting_registry, "RUNS_DIR", runs_dir)
+    monkeypatch.setattr(backtesting_registry, "HISTORY_INDEX_PATH", runs_dir / "history_index.json")
+    monkeypatch.setattr(backtesting_registry, "_ACTIVE_RUNS", {})
+
+    for rid, status in (("a", "completed"), ("b", "failed"), ("c", "completed")):
+        (runs_dir / "run" / rid).mkdir(parents=True, exist_ok=True)
+        (runs_dir / "run" / rid / "stdout.log").write_text("out\n", encoding="utf-8")
+
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    (runs_dir / "history_index.json").write_text(
+        json.dumps(
+            {
+                "a": {"run_id": "a", "run_kind": "run", "status": "completed"},
+                "b": {"run_id": "b", "run_kind": "run", "status": "failed"},
+                "c": {"run_id": "c", "run_kind": "run", "status": "completed"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(backtesting_registry, "list_active_backtesting_runs", lambda: [])
+
+    result = backtesting_registry.delete_backtesting_runs(["a", "b"], stop_active=False)
+
+    assert sorted(result["deleted"]) == ["a", "b"]
+    assert result["kept"] == []
+    assert result["errors"] == []
+    remaining = backtesting_registry._read_history_index()
+    assert set(remaining) == {"c"}
+    assert not (runs_dir / "run" / "a").exists()
+    assert not (runs_dir / "run" / "b").exists()
+    assert (runs_dir / "run" / "c").exists()

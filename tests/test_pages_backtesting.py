@@ -927,3 +927,35 @@ def test_is_runtime_center_auto_update_enabled_reads_session_preference() -> Non
     assert backtesting._is_runtime_center_auto_update_enabled() is False
 
 
+
+
+def test_clear_history_selection_resets_selection_rows(monkeypatch) -> None:
+    """Après suppression, la sélection du dataframe doit être vidée."""
+    state = {"selection": {"rows": [0, 2]}}
+    backtesting.st.session_state[backtesting.BACKTESTING_HISTORY_TABLE_KEY] = state
+
+    backtesting._clear_history_selection()
+
+    assert backtesting.st.session_state[backtesting.BACKTESTING_HISTORY_TABLE_KEY]["selection"]["rows"] == []
+
+
+def test_clear_history_selection_handles_attribute_selection(monkeypatch) -> None:
+    """Supporte aussi le cas où selection est exposé comme attribut (objet)."""
+    class _Selection:
+        def __init__(self):
+            self.rows = [0, 1]
+
+    class _State:
+        def __init__(self):
+            self.selection = _Selection()
+
+    backtesting.st.session_state[backtesting.BACKTESTING_HISTORY_TABLE_KEY] = _State()
+
+    backtesting._clear_history_selection()
+
+    assert backtesting.st.session_state[backtesting.BACKTESTING_HISTORY_TABLE_KEY].selection.rows == []
+
+
+def test_clear_history_selection_noop_when_no_state() -> None:
+    backtesting.st.session_state.pop(backtesting.BACKTESTING_HISTORY_TABLE_KEY, None)
+    backtesting._clear_history_selection()  # ne doit pas lever

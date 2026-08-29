@@ -130,6 +130,7 @@ from ihm.services.pipeline_runner import (
     DEFAULT_ML_INCLUDE_MACRO_REGIME,
     DEFAULT_ML_INCLUDE_SCORE_COMPONENTS,
     DEFAULT_ML_GLOBAL_MODEL_ONLY,
+    DEFAULT_ML_EXCLUDE_PER_SYMBOL_PER_SECTOR,
     DEFAULT_ML_ENABLE_ORACLE_MODEL,
     DEFAULT_ML_ORACLE_MODEL_ONLY,
     DEFAULT_ML_TARGET_SKIP_VOL_SCALING,
@@ -3620,6 +3621,23 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_ml_enable_global_model",
                 help="Ajoute `--enable-global-model`. Entraîne un modèle tabulaire (CatBoost/LightGBM) sur tous les symboles en walk-forward pour produire `global_pred_long` PIT-safe.",
             )
+            # Auto-décochage : si le modèle global est décoché, le champion Global
+            # Ranking, le Global Model ONLY et le Stacking sont forcés à False
+            # AVANT leur instanciation (sinon ils resteraient cochés dans
+            # session_state alors que le modèle global est désactivé — même
+            # pattern que l'Oracle ONLY).
+            if not ml_enable_global_model:
+                st.session_state["pipeline_ml_global_champion"] = False
+                st.session_state["pipeline_ml_global_model_only"] = False
+                st.session_state["pipeline_ml_enable_global_stacking"] = False
+            # 2026-08-28 : Exclude per-symbol & per-sector est COCHÉ PAR DÉFAUT.
+            # Il force Global Model ONLY à False AVANT son instanciation : sinon
+            # --global-model-only ferait un return tôt côté orchestrator et
+            # tuerait l'Oracle Extreme qu'on veut justement conserver avec le
+            # nouveau flag (les deux sont mutuellement exclus — c'est le nouveau
+            # checkbox qui gagne car il préserve l'Oracle).
+            if _session_state_bool("pipeline_ml_exclude_per_symbol_per_sector", DEFAULT_ML_EXCLUDE_PER_SYMBOL_PER_SECTOR):
+                st.session_state["pipeline_ml_global_model_only"] = False
             ml_global_champion = st.checkbox(
                 "🏆 Champion automatique CatBoost vs LightGBM vs XGBoost pour le Global Ranking",
                 value=_session_state_bool("pipeline_ml_global_champion", DEFAULT_ML_GLOBAL_CHAMPION),
@@ -3628,11 +3646,25 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 help="Ajoute `--global-champion`. Entraîne les TROIS backends (CatBoost + LightGBM + XGBoost) et sélectionne le champion par horizon selon le meilleur IC Rank walk-forward. Si décoché, le backend choisi ci-dessous est utilisé seul.",
             )
             ml_global_model_only = st.checkbox(
-                "🎯 Global Model ONLY — sauter per-symbol et per-sector",
+                "🎯 Global Model Ranking ONLY — sauter per-symbol et per-sector",
                 value=_session_state_bool("pipeline_ml_global_model_only", DEFAULT_ML_GLOBAL_MODEL_ONLY),
                 key="pipeline_ml_global_model_only",
                 disabled=not ml_enable_global_model,
-                help="Ajoute `--global-model-only`. N'entraîne QUE le modèle global, sans entraîner de modèles per-symbol ni per-sector. Le batch s'arrête après le Global Model.",
+                help="Ajoute `--global-model-only`. N'entraîne QUE le modèle global ranking, exclure per-symbol, per-sector, Oracle et Global Direction.",
+            )
+            # ── Exclude per-symbol & per-sector — 2026-08-28 ──
+            # Saute l'entraînement per-symbol ET per-sector, mais GARDE le Global
+            # Ranking et l'Oracle Extreme si activés (contrairement à
+            # global_model_only qui fait un return tôt et skip AUSSI l'Oracle).
+            # COCHÉ PAR DÉFAUT : un lancement standard n'entraîne donc que le
+            # Global Ranking + Oracle. L'auto-décochage de global_model_only
+            # (mutuellement exclusif) est fait AVANT l'instanciation de ce
+            # widget — voir le bloc auto-décochage ci-dessus.
+            ml_exclude_per_symbol_per_sector = st.checkbox(
+                "🚫 Exclude per-symbol et per-sector (garde Global Ranking + Oracle)",
+                value=_session_state_bool("pipeline_ml_exclude_per_symbol_per_sector", DEFAULT_ML_EXCLUDE_PER_SYMBOL_PER_SECTOR),
+                key="pipeline_ml_exclude_per_symbol_per_sector",
+                help="Ajoute `--exclude-per-symbol-per-sector`. Saute l'entraînement des modèles par ticker (per-symbol) et par secteur (per-sector), mais continue d'entraîner le Global Ranking et l'Oracle Extreme s'ils sont activés ci-dessous/au-dessus. Coché par défaut.",
             )
             st.caption("L'option ci-dessous nécessite que le modèle global soit activé.")
 
@@ -4766,6 +4798,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_enable_catboost=bool(ml_enable_catboost),
             ml_enable_global_model=bool(ml_enable_global_model),
             ml_global_model_only=bool(ml_global_model_only),
+            ml_exclude_per_symbol_per_sector=bool(ml_exclude_per_symbol_per_sector),
             ml_enable_oracle_model=bool(ml_enable_oracle_model),
             ml_oracle_model_only=bool(ml_oracle_model_only),
             ml_enable_global_stacking=bool(ml_enable_global_stacking),

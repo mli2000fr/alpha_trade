@@ -83,22 +83,86 @@ def build_folds(dataset: pd.DataFrame, test_windows: list[tuple[str, str]]) -> l
     return folds
 
 
+def build_folds_adaptive(
+    dataset: pd.DataFrame,
+    *,
+    min_train_dates: int,
+    val_dates: int,
+    test_dates: int,
+    step_dates: int,
+    max_splits: int,
+    forecast_horizon: int = 20,
+) -> list[dict[str, Any]]:
+    """Découpe le dataset en folds causaux ADAPTATIFS (T2 bloquant).
+
+    Reprend la machinerie du Global Ranking : ``generate_walk_forward_splits_by_dates``
+    (modelFactory.dataset) glisse des fenêtres de taille fixe en NOMBRE DE DATES
+    sur les dates réellement présentes dans le dataset — au lieu des bornes
+    calendaires fixes ``DEFAULT_TEST_WINDOWS`` (2022→2026). Conséquences :
+
+      - un batch entraîné sur 2012→2019 (ex. ``--oracle-model-only``) produit des
+        folds de test sur les dernières dates disponibles, comme le Global Ranking ;
+      - une fenêtre trop courte renvoie une liste vide → l'appelant décide de
+        skipper proprement (status ``skipped``), pas de ``error``.
+
+    Les fenêtres de test dérivées sont ensuite passées à ``build_folds``, qui
+    conserve EXACTEMENT le découpage T2 bloquant actuel (train =
+    ``oracle_available_date < t_start`` + assertion anti-leakage).
+    """
+    from modelFactory.dataset import generate_walk_forward_splits_by_dates
+
+    # generate_walk_forward_splits_by_dates exige un tri par date croissant.
+    sorted_ds = dataset.sort_values("date").reset_index(drop=True)
+    splits = generate_walk_forward_splits_by_dates(
+        sorted_ds,
+        min_train_dates=min_train_dates,
+        val_dates=val_dates,
+        test_dates=test_dates,
+        step_dates=step_dates,
+        max_splits=max_splits,
+        forecast_horizon=forecast_horizon,
+        date_column="date",
+    )
+    windows: list[tuple[str, str]] = []
+    for split in splits:
+        if split.test is None or split.test.empty:
+            continue
+        windows.append((
+            str(pd.Timestamp(split.test["date"].min()).date()),
+            str(pd.Timestamp(split.test["date"].max()).date()),
+        ))
+    LOGGER.info(
+        "build_folds_adaptive windows=%d min_train=%d val=%d test=%d step=%d max_splits=%d "
+        "first=%s last=%s",
+        len(windows), min_train_dates, val_dates, test_dates, step_dates, max_splits,
+        windows[0] if windows else "-", windows[-1] if windows else "-",
+    )
+    return build_folds(dataset, windows)
+
+
 def run_walk_forward(
     dataset: pd.DataFrame,
     feature_columns: list[str],
     *,
-    test_windows: list[tuple[str, str]],
+    test_windows: list[tuple[str, str]] | None = None,
+    folds: list[dict[str, Any]] | None = None,
     ablation: str = "O1",
 ) -> dict[str, Any]:
     """Retrain par fold + prédictions OOS + métriques par fold et globales.
 
     Cible unique : ``oracle_extreme10`` (détection de gros mouvement H20,
     TOP 10 % ∪ BOTTOM 10 %). Colonne proba : ``proba_extreme``.
+
+    ``folds`` (facultatif) permet d'injecter des folds pré-construits, par ex.
+    via ``build_folds_adaptive`` (fenêtres adaptatives, comme le Global Ranking).
+    Si ``folds`` est None, on retombe sur ``build_folds(dataset, test_windows)``
+    avec ``DEFAULT_TEST_WINDOWS`` par défaut.
     """
     _target_col = TARGET_COL
     _proba_col = "proba_extreme"
 
-    folds = build_folds(dataset, test_windows)
+    if folds is None:
+        folds = build_folds(dataset, test_windows or DEFAULT_TEST_WINDOWS)
     if not folds:
         return {"status": "error", "reason": "no_folds"}
 
@@ -296,6 +360,16 @@ def main() -> None:
         help="Batch oracle-only : ne pas fusionner global_rank_20 dans le dataset "
              "(build_dataset require_global_rank=False).",
     )
+    # ── Fenêtres adaptatives (comme le Global Ranking) ──
+    parser.add_argument("--wf-min-train-size", type=int, default=504)
+    parser.add_argument("--wf-val-size", type=int, default=126)
+    parser.add_argument("--wf-test-size", type=int, default=126)
+    parser.add_argument("--wf-step-size", type=int, default=252)
+    parser.add_argument("--wf-max-splits", type=int, default=8)
+    parser.add_argument(
+        "--fixed-windows", action="store_true",
+        help="Utiliser DEFAULT_TEST_WINDOWS (2022→2026) au lieu des fenêtres adaptatives.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
@@ -331,9 +405,21 @@ def main() -> None:
     if dataset.empty:
         raise SystemExit("Dataset vide.")
 
+    if args.fixed_windows:
+        folds = build_folds(dataset, DEFAULT_TEST_WINDOWS)
+    else:
+        folds = build_folds_adaptive(
+            dataset,
+            min_train_dates=args.wf_min_train_size,
+            val_dates=args.wf_val_size,
+            test_dates=args.wf_test_size,
+            step_dates=args.wf_step_size,
+            max_splits=args.wf_max_splits,
+            forecast_horizon=args.horizon,
+        )
     result = run_walk_forward(
         dataset, feature_columns,
-        test_windows=DEFAULT_TEST_WINDOWS,
+        folds=folds,
         ablation=args.ablation,
     )
     if result.get("status") == "completed":
