@@ -16,7 +16,8 @@ def _engine() -> "create_engine":  # type: ignore[no-untyped-def]
             CREATE TABLE model_training_batch (
                 batch_id VARCHAR(64) PRIMARY KEY,
                 command_argv_json TEXT,
-                command_line TEXT
+                command_line TEXT,
+                metadata_json TEXT
             )
         """))
         conn.execute(text("""

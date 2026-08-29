@@ -22,7 +22,7 @@ def test_build_capital_preset_executability_summary_for_small_cash_account() -> 
     assert summary["min_position_notional"] == pytest.approx(155.0)
     assert summary["ticket_share_of_equity"] == pytest.approx(155.0 / 3_500.0, rel=1e-6)
     assert summary["recommended_commission_bps_stress"] == pytest.approx(1.0)
-    assert summary["recommended_slippage_bps_stress"] == pytest.approx(2.0)
+    assert summary["recommended_slippage_bps_stress"] == pytest.approx(20.0)
     assert summary["ml_gate_policy"] == "quant_only_on_ml_gate_disable"
     assert any("ticket minimal effectif 155 $" in warning for warning in summary["warnings"])
 
@@ -44,12 +44,12 @@ def test_apply_backtest_defaults_from_preset_prefills_costs_and_settlement() -> 
         explicit_flags=set(),
     )
 
-    assert updated["max_positions"] == 4
+    assert updated["max_positions"] == 8
     assert updated["account_type"] == "margin"
     assert updated["swing_only"] is False
     assert updated["cash_settlement_days"] == 1
     assert updated["commission_bps"] == pytest.approx(1.0)
-    assert updated["slippage_bps"] == pytest.approx(2.0)
+    assert updated["slippage_bps"] == pytest.approx(20.0)
 
 
 def test_small_account_preset_uses_more_prudent_ml_defaults() -> None:
@@ -60,7 +60,7 @@ def test_small_account_preset_uses_more_prudent_ml_defaults() -> None:
 
     assert values["risk_score_weight"] == pytest.approx(0.4)
     assert values["risk_prediction_weight"] == pytest.approx(0.6)
-    assert values["risk_min_ml_coverage_ratio"] == pytest.approx(0.95)
-    assert values["backtesting_min_ml_coverage_ratio"] == pytest.approx(0.95)
+    assert values["risk_min_ml_coverage_ratio"] == pytest.approx(0.90)
+    assert values["backtesting_min_ml_coverage_ratio"] == pytest.approx(0.90)
 
 

@@ -6,6 +6,7 @@
 # racine du repo dans sys.path pour rendre la collecte déterministe.
 
 from pathlib import Path
+import logging
 import sys
 
 import pytest
@@ -14,6 +15,19 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+
+@pytest.fixture(autouse=True)
+def _restore_logging_state_between_tests():
+    """Empêche une configuration CLI de désactiver les logs des tests suivants."""
+    logging.disable(logging.NOTSET)
+    logging.getLogger().disabled = False
+    for logger in logging.Logger.manager.loggerDict.values():
+        if isinstance(logger, logging.Logger):
+            logger.disabled = False
+    yield
+    logging.disable(logging.NOTSET)
+    logging.getLogger().disabled = False
 
 
 @pytest.fixture(autouse=True)

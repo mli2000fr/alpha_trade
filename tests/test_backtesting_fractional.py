@@ -120,6 +120,7 @@ def test_backtest_engine_execution_replay_mode_supports_fractional_share_overrid
             "symbol": ["AAPL"],
             "selected": [True],
             "rank": [1.0],
+            "score": [1.0],
             "approved_shares": [0.5],
             "filled_qty": [0.5],
             "target_weight": [0.10],

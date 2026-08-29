@@ -29,14 +29,14 @@ def test_calibration_config_rejects_unknown_method() -> None:
         config.CalibrationConfig(method="isotonic")
 
 
-def test_walk_forward_config_defaults_to_eleven_non_overlapping_splits() -> None:
+def test_walk_forward_config_defaults_to_eight_non_overlapping_splits() -> None:
     cfg = config.WalkForwardConfig()
 
     assert cfg.min_train_size == 504
     assert cfg.val_size == 126
     assert cfg.test_size == 126
-    assert cfg.step_size == 126
-    assert cfg.max_splits == 11
+    assert cfg.step_size == 252
+    assert cfg.max_splits == 8
 
 
 def test_data_config_accepts_expert_feature_set() -> None:

@@ -59,6 +59,42 @@ _MAX_POSITIONS = 30
 _ALL_HORIZONS = (3, 5, 10, 15, 20)
 
 
+# ---------------------------------------------------------------------------
+# Cache page (Diagnostic ML) — sans cache, chaque clic/interaction re-exécute
+# TOUTES les requêtes (dont global_rank_history jusqu'à ~500k lignes).
+# ---------------------------------------------------------------------------
+
+_GR_COUNT_QUERY = """
+SELECT COUNT(*) AS n
+FROM alpha_trade.global_rank_history
+WHERE batch_id = :batch_id
+"""
+
+_ORACLE_COUNT_QUERY = """
+SELECT COUNT(*) AS n
+FROM alpha_trade.oracle_extreme_predictions
+WHERE batch_id = :batch_id
+"""
+
+
+@st.cache_data(ttl=300, show_spinner=False, max_entries=128)
+def _cached_query(query: str, params: dict[str, Any] | None = None) -> pd.DataFrame:
+    """safe_query mis en cache (5 min) pour les requêtes moyennes/lourdes."""
+    return safe_query(query, params)
+
+
+@st.cache_data(ttl=600, show_spinner=False, max_entries=32)
+def _cached_global_rank_all(batch_id: str, horizon: int) -> pd.DataFrame:
+    """Tous les rangs globaux d'un batch pour un horizon (grosse requête, 10 min)."""
+    return safe_query(_global_rank_all_query(horizon), {"batch_id": batch_id})
+
+
+@st.cache_data(ttl=600, show_spinner=False, max_entries=32)
+def _cached_oracle_oos(batch_id: str) -> tuple[str | None, pd.DataFrame]:
+    """Prédictions Oracle Extreme du batch (grosse requête, 10 min)."""
+    return _load_latest_oracle_oos(batch_id)
+
+
 def _run_strategy_backtest(
     rank_df: pd.DataFrame,
     best_horizon: int = 20,
@@ -814,7 +850,7 @@ def _render_regime_table(batch_id: str) -> None:
     st.subheader("📅 Diagnostic par régime de marché — Walk-Forward")
 
     # ── 1. Récupérer tous les metrics_json du batch ──
-    all_json_df = safe_query(ALL_WF_JSON_QUERY, {"batch_id": batch_id})
+    all_json_df = _cached_query(ALL_WF_JSON_QUERY, {"batch_id": batch_id})
     if all_json_df.empty:
         st.info("Aucune donnée walk-forward détaillée disponible pour ce batch.")
         return
@@ -869,8 +905,8 @@ def _render_regime_table(batch_id: str) -> None:
         return
 
     # ── 4. Récupérer SPY et VIX ──
-    spy_df = safe_query(SPY_QUERY)
-    vix_df = safe_query(VIX_QUERY)
+    spy_df = _cached_query(SPY_QUERY)
+    vix_df = _cached_query(VIX_QUERY)
 
     def _spy_return(start: str, end: str) -> float | None:
         if spy_df.empty or "date" not in spy_df.columns:
@@ -948,6 +984,19 @@ def _render_regime_table(batch_id: str) -> None:
     st.caption(f"Classification basée sur la médiane VIX = {median_vix:.1f} | SPY < 0 & VIX > médiane → bear_high_vol | SPY > 0 & VIX ≤ médiane → bull")
 
 
+def _is_safe_batch_id(batch_id: str) -> bool:
+    """Garde-fou : un batch_id malformé ne doit JAMAIS déclencher un rmtree
+    sur artifacts/ (ex. '', '.', '..', ou contenant '/' ou '\\')."""
+    b = str(batch_id or "").strip()
+    if not b:
+        return False
+    if b in (".", ".."):
+        return False
+    if "/" in b or "\\" in b:
+        return False
+    return True
+
+
 def _render_delete_batch_button(selected_batch: str, artifacts_dir: Path) -> None:
     """Affiche un bouton de suppression compact avec confirmation inline.
 
@@ -1018,7 +1067,13 @@ def _render_delete_batch_button(selected_batch: str, artifacts_dir: Path) -> Non
 
         if confirmed:
             errors: list[str] = []
-            # Avertissement si ce batch est promu comme source de serving.
+            # ── Garde-fou : batch_id malformé → annuler (protection anti-suppression à tort) ──
+            if not _is_safe_batch_id(selected_batch):
+                st.error("Batch_id invalide — suppression annulée (protection anti-suppression à tort).")
+                st.session_state.pop(confirm_key, None)
+                return
+            # Avertissement si ce batch est promu comme source de serving
+            # (la référence `model_serving_batch` sera supprimée à la fin).
             try:
                 with engine.connect() as conn:
                     served = conn.execute(
@@ -1028,9 +1083,8 @@ def _render_delete_batch_button(selected_batch: str, artifacts_dir: Path) -> Non
                 if served:
                     scopes = ", ".join(str(r[0]) for r in served)
                     st.warning(
-                        f"⚠️ Ce batch est référencé comme batch de serving ({scopes}). "
-                        f"`model_serving_batch` n'est pas supprimé automatiquement "
-                        f"(c'est une configuration de serving, pas une donnée du batch)."
+                        f"⚠️ Ce batch est référencé comme batch de serving ({scopes}) : "
+                        f"la référence `model_serving_batch` sera supprimée avec le batch."
                     )
             except Exception:
                 pass
@@ -1065,6 +1119,28 @@ def _render_delete_batch_button(selected_batch: str, artifacts_dir: Path) -> Non
                 except Exception as exc:
                     errors.append(f"Disque (champions): {exc}")
 
+            # ── Nettoyage dossiers oracle-wf-* (parquet OOS walk-forward liés au batch) ──
+            # Chaque dossier oracle-wf-<timestamp> porte un tag `batch_id.txt` ; on ne
+            # supprime que ceux dont le tag correspond au batch supprimé.
+            _oracle_root = artifacts_dir.parent / "oracle"
+            if _oracle_root.exists():
+                _removed_wf: list[str] = []
+                for _wf_dir in sorted(_oracle_root.glob("oracle-wf-*")):
+                    _tag = _wf_dir / "batch_id.txt"
+                    _match = False
+                    try:
+                        _match = _tag.exists() and _tag.read_text(encoding="utf-8").strip() == selected_batch
+                    except OSError:
+                        _match = False
+                    if _match:
+                        try:
+                            _shutil.rmtree(_wf_dir)
+                            _removed_wf.append(_wf_dir.name)
+                        except OSError as exc:
+                            errors.append(f"oracle-wf: {exc}")
+                if _removed_wf:
+                    st.success("✅ Dossiers oracle-wf supprimés : " + ", ".join(_removed_wf))
+
             # ── Nettoyage artifacts/rapport_ml/ (rapport .md + logs .log archivés) ──
             _safe_r = selected_batch.replace("/", "_").replace("\\", "_")[:100]
             _rapport_dir = artifacts_dir.parent.parent / "rapport_ml"
@@ -1084,6 +1160,7 @@ def _render_delete_batch_button(selected_batch: str, artifacts_dir: Path) -> Non
                 st.error("Erreurs : " + "; ".join(errors))
             else:
                 st.success(f"🗑️ Batch `{selected_batch}` entièrement supprimé.")
+                st.cache_data.clear()  # purge le cache (le batch supprimé ne doit pas réapparaître)
                 st.session_state.pop(confirm_key, None)
                 st.rerun()
 
@@ -1123,7 +1200,7 @@ def _oracle_periods(batch_id: str) -> list[dict[str, Any]]:
     """
     out: list[dict[str, Any]] = []
     try:
-        _tbl = safe_query(ORACLE_TABLE_PERIODS_QUERY, {"batch_id": batch_id})
+        _tbl = _cached_query(ORACLE_TABLE_PERIODS_QUERY, {"batch_id": batch_id})
         if not _tbl.empty:
             _r = _tbl.iloc[0]
             _mn = pd.Timestamp(_r["min_date"])
@@ -1161,7 +1238,7 @@ def _load_latest_oracle_oos(batch_id: str) -> tuple[str | None, pd.DataFrame]:
 def _batch_best_horizon(batch_id: str) -> int:
     """Meilleur horizon du Global Ranking pour ce batch (metadata, défaut H20)."""
     try:
-        detail = safe_query(BATCH_DETAIL_QUERY, {"batch_id": batch_id})
+        detail = _cached_query(BATCH_DETAIL_QUERY, {"batch_id": batch_id})
         if detail.empty:
             return 20
         raw = detail.iloc[0].get("metadata_json")
@@ -1249,7 +1326,7 @@ def _render_build_oracle_labels_button(
             la vérification synthétique (le run synth est au best_h du batch).
     """
     # ── Prérequis : des rangs globaux pour ce batch ──
-    gr_check = safe_query(GLOBAL_RANK_DATE_RANGE_QUERY, {"batch_id": batch_id})
+    gr_check = _cached_query(GLOBAL_RANK_DATE_RANGE_QUERY, {"batch_id": batch_id})
     if gr_check.empty or not gr_check.iloc[0].get("nb_dates"):
         st.caption("⚠️ Aucun rang global pour ce batch — impossible de calculer le vrai Oracle.")
         return
@@ -1421,17 +1498,19 @@ def _render_oracle_distribution(batch_id: str, row: pd.Series) -> None:
             st.rerun()
         return
 
-    # ── Modèle global entraîné ? ──
-    global_df = safe_query(_global_rank_all_query(best_h), {"batch_id": batch_id})
-    has_global = not global_df.empty
+    # ── Modèle global entraîné ? (COUNT léger — on charge les ~500k lignes de
+    #    rangs SEULEMENT si l'utilisateur sélectionne le modèle global, pas à
+    #    chaque rerun de la page) ──
+    _gr_df = safe_query(_GR_COUNT_QUERY, {"batch_id": batch_id})
+    has_global = bool(not _gr_df.empty and int(_gr_df.iloc[0]["n"] or 0) > 0)
 
-    # ── Modèle Oracle Extreme entraîné ? ──
+    # ── Modèle Oracle Extreme entraîné ? (COUNT léger) ──
     has_oracle = _batch_trains_oracle(row)
     oracle_run: str | None = None
     oracle_oos = pd.DataFrame()
     if has_oracle:
-        oracle_run, oracle_oos = _load_latest_oracle_oos(batch_id)
-        has_oracle = not oracle_oos.empty
+        _oc_df = safe_query(_ORACLE_COUNT_QUERY, {"batch_id": batch_id})
+        has_oracle = bool(not _oc_df.empty and int(_oc_df.iloc[0]["n"] or 0) > 0)
 
     if not has_global and not has_oracle:
         st.info("Ni le modèle global ni le modèle Oracle Extreme ne sont disponibles pour ce batch.")
@@ -1461,7 +1540,7 @@ def _render_oracle_distribution(batch_id: str, row: pd.Series) -> None:
     # ── Horizon du vrai Oracle selon le modèle choisi ──
     horizon = best_h if chosen == "global" else 20
 
-    labels_df = safe_query(
+    labels_df = _cached_query(
         ORACLE_LABELS_DECILE_QUERY, {"batch_id": batch_id, "horizon": horizon}
     )
     if labels_df.empty:
@@ -1481,6 +1560,7 @@ def _render_oracle_distribution(batch_id: str, row: pd.Series) -> None:
 
     # ── Construire le DataFrame du modèle : date × symbol × score ──
     if chosen == "global":
+        global_df = _cached_global_rank_all(batch_id, best_h)
         model_df = global_df[["date", "symbol", "global_rank_best"]].copy()
         model_df["date"] = pd.to_datetime(model_df["date"], errors="coerce")
         model_df["score"] = pd.to_numeric(model_df["global_rank_best"], errors="coerce")
@@ -1488,6 +1568,7 @@ def _render_oracle_distribution(batch_id: str, row: pd.Series) -> None:
         kind_label = f"🌐 Modèle global (`global_rank_{best_h}`)"
         top_caption = "TOP/BOTTOM 10% = les 10% plus hauts / plus bas rangs par date (cross-sectionnel)"
     else:
+        oracle_run, oracle_oos = _cached_oracle_oos(batch_id)
         date_col = next(
             (c for c in ("prediction_date", "date", "entry_date", "asof_date") if c in oracle_oos.columns),
             None,
@@ -1676,7 +1757,7 @@ def _render_oracle_quality(batch_id: str, row: pd.Series) -> None:
 
     st.subheader("🔥 Oracle Extreme — Qualité du modèle (OOS)")
 
-    oracle_run, oos = _load_latest_oracle_oos(batch_id)
+    oracle_run, oos = _cached_oracle_oos(batch_id)
     if oos.empty:
         st.info("Aucune prédiction OOS Oracle Extreme disponible pour ce batch.")
         return
@@ -1880,7 +1961,7 @@ def _render_prediction_periods(batch_id: str, batch: pd.Series) -> None:
     sector_rows: list[dict[str, Any]] = []
 
     # ── 1. Modèle global (Global Ranking) ──
-    gr = safe_query(GLOBAL_RANK_COVERAGE_QUERY, {"batch_id": batch_id})
+    gr = _cached_query(GLOBAL_RANK_COVERAGE_QUERY, {"batch_id": batch_id})
     if not gr.empty and gr.iloc[0].get("min_date") is not None:
         g = gr.iloc[0]
         summary.append({
@@ -1912,6 +1993,10 @@ def _render_prediction_periods(batch_id: str, batch: pd.Series) -> None:
             elif rsym in _GICS_SECTORS:
                 sector_rows.append({"Secteur": rsym, "Période": f"{_fmt(dmin)} → {_fmt(dmax)}",
                                     "Jours": jours, "Symboles": syms})
+            elif rsym == "__ORACLE_SYNTH__" or rid.endswith("_oracle_synth"):
+                # Run miroir Oracle → model_predictions (oracle_synth) : déjà couvert
+                # par la section « Oracle extreme » — NE PAS compter comme per-symbol.
+                pass
             else:
                 sym_n += 1
                 if dmin is not None and (sym_min is None or dmin < sym_min):
@@ -1996,7 +2081,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
     batch_id = str(batch["batch_id"])
     st.subheader("📋 Détail du batch")
 
-    detail_df = safe_query(BATCH_DETAIL_QUERY, {"batch_id": batch_id})
+    detail_df = _cached_query(BATCH_DETAIL_QUERY, {"batch_id": batch_id})
     if detail_df.empty:
         st.warning("Impossible de charger le détail du batch.")
         return
@@ -2014,13 +2099,29 @@ def _render_batch_detail(batch: pd.Series) -> None:
         with col_dl:
             col_report, col_logs = st.columns(2)
             with col_report:
-                st.download_button(
-                    label="📥 Télécharger le rapport (.md)",
-                    data=generate_batch_report(engine, batch_id),
-                    file_name=f"{_dl_name}.md",
-                    mime="text/markdown",
-                    key=f"dl_{safe_bid}",
-                )
+                # La génération du rapport est lourde (~30 s) : on ne la lance que
+                # quand l'utilisateur clique (« Générer »), puis on propose le
+                # téléchargement. Évite ~30 s de blocage à CHAQUE rerun (sélection
+                # de batch, clic sur un bouton, confirmation de suppression…).
+                _report_key = f"ml_diag_report_{safe_bid}"
+                _report_val = st.session_state.get(_report_key)
+                if _report_val is None:
+                    if st.button(
+                        "📥 Générer le rapport (.md)",
+                        key=f"gen_report_{safe_bid}",
+                        help="Génère le rapport du batch (peut prendre ~30 s), puis propose le téléchargement.",
+                    ):
+                        with st.spinner("⏳ Génération du rapport…"):
+                            _report_val = generate_batch_report(engine, batch_id)
+                        st.session_state[_report_key] = _report_val
+                if _report_val is not None:
+                    st.download_button(
+                        label="📥 Télécharger le rapport (.md)",
+                        data=_report_val,
+                        file_name=f"{_dl_name}.md",
+                        mime="text/markdown",
+                        key=f"dl_{safe_bid}",
+                    )
             with col_logs:
                 st.download_button(
                     label="📄 Logs d'entraînement (.txt)",
@@ -2289,7 +2390,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
     st.subheader("🔵 Per-Symbol / Per-Sector — Métriques")
 
     # ── Statut sélection du champion ──
-    champion_df = safe_query(
+    champion_df = _cached_query(
         """SELECT mg.selection_mode, COUNT(DISTINCT mg.symbol) AS nb_symbols
            FROM alpha_trade.model_governance AS mg
            JOIN alpha_trade.model_training_run AS mtr ON mtr.run_id = mg.run_id
@@ -2317,7 +2418,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
             )
 
         # ── Répartition champions par modèle ──
-        champion_by_model_df = safe_query(
+        champion_by_model_df = _cached_query(
             """SELECT mg.model_name, COUNT(DISTINCT mg.symbol) AS nb_symbols
                FROM alpha_trade.model_governance AS mg
                JOIN alpha_trade.model_training_run AS mtr ON mtr.run_id = mg.run_id
@@ -2352,7 +2453,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
     _has_classif = _target_mode in ("binary", "ternary", "swing_cash")
 
     # ── Horizon selector (avant les métriques) ──
-    horizon_list = safe_query(HORIZON_LIST_QUERY, {"batch_id": batch_id})
+    horizon_list = _cached_query(HORIZON_LIST_QUERY, {"batch_id": batch_id})
     selected_horizon: int | None = None
     _horizon_sql: str = ""
     if not horizon_list.empty:
@@ -2386,7 +2487,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
             params["horizon"] = selected_horizon
         if extra_params:
             params.update(extra_params)
-        return safe_query(_sql, params)
+        return _cached_query(_sql, params)
 
     # ── Indicateur d'horizon ──
     if not horizon_list.empty:
@@ -2606,7 +2707,7 @@ def _render_global_rank_history(batch_id: str) -> None:
     st.subheader("🌐 Ranks Globaux Historiques (global_rank_history)")
 
     # ── Vérifier si des données existent pour ce batch ──
-    date_range_df = safe_query(GLOBAL_RANK_DATE_RANGE_QUERY, {"batch_id": batch_id})
+    date_range_df = _cached_query(GLOBAL_RANK_DATE_RANGE_QUERY, {"batch_id": batch_id})
     if date_range_df.empty or date_range_df.iloc[0]["nb_dates"] == 0:
         st.info(f"Aucun rang global historique trouvé pour le batch `{batch_id}`. Les rangs sont générés via **10. ML Predict → Prédire l'univers sélectionné**.")
         return
@@ -2615,7 +2716,7 @@ def _render_global_rank_history(batch_id: str) -> None:
     st.caption(f"📅 {dr['nb_dates']} dates disponibles — du {str(dr['min_date'])[:10]} au {str(dr['max_date'])[:10]}")
 
     # ── Sélecteur de date ──
-    dates_df = safe_query(GLOBAL_RANK_DATES_FOR_BATCH_QUERY, {"batch_id": batch_id})
+    dates_df = _cached_query(GLOBAL_RANK_DATES_FOR_BATCH_QUERY, {"batch_id": batch_id})
     if dates_df.empty:
         st.info("Aucune date trouvée.")
         return
@@ -2644,7 +2745,7 @@ def _render_global_rank_history(batch_id: str) -> None:
     )
 
     # ── Requête principale ──
-    rank_df = safe_query(
+    rank_df = _cached_query(
         GLOBAL_RANK_TOP_BOTTOM_QUERY,
         {"batch_id": batch_id, "date": selected_date_str},
     )
@@ -3091,9 +3192,13 @@ def render() -> None:
     st.divider()
     with st.expander("🧹 Nettoyer les batchs", expanded=False):
         from modelFactory.cleanup_incomplete_batches import cleanup_batches, list_batches
-        _include_completed = st.checkbox("🗑️ Inclure les batchs **terminés** (TOUT supprimer)", value=False)
+        _include_completed = st.checkbox(
+            "🗑️ Inclure les batchs **terminés** (les batchs en cours restent exclus)",
+            value=False,
+            help="Les batchs `running` (en cours d'entraînement) ne sont jamais supprimés par le nettoyage collectif.",
+        )
         _candidates = list_batches(include_completed=_include_completed)
-        _label = "terminés et non terminés" if _include_completed else "non terminés"
+        _label = "terminés et non terminés" if _include_completed else "non terminés (hors en cours)"
         if _candidates:
             st.warning(f"{len(_candidates)} batch(s) {_label}")
             if st.button("🗑️ Supprimer tous les batchs listés", type="primary"):

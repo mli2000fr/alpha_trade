@@ -181,6 +181,7 @@ def test_sync_earnings_calendar_main_emits_structured_summary(monkeypatch, capsy
                     log_every=7,
                     batch_size=50,
                     resume=True,
+                    provider="finnhub",
                 )
             },
         )(),
@@ -275,6 +276,8 @@ def test_update_sector_main_emits_structured_summary(monkeypatch, capsys) -> Non
                     sleep_seconds=1.2,
                     log_every=9,
                     refresh_stale_days=0,
+                    symbols_file=None,
+                    symbol_source="active-tradable",
                 )
             },
         )(),

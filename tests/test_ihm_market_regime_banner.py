@@ -259,11 +259,10 @@ def test_format_macro_import_command_exposes_dates():
 
     command = mod._format_macro_import_command(date(2025, 4, 1), date(2025, 4, 30))
 
-    assert "from common.config_loader import load_config" in command
-    assert "from service.market import populate_macro_indicators_table" in command
-    assert "start_date=date.fromisoformat('2025-04-01')" in command
-    assert "end_date=date.fromisoformat('2025-04-30')" in command
-    assert "yaml_cfg=load_config() or {}" in command
+    assert "-m service.market populate-macro" in command
+    assert "--start 2025-04-01" in command
+    assert "--end 2025-04-30" in command
+    assert "--progress" in command
 
 
 def test_recompute_macro_table_forwards_range_and_equity_to_service(monkeypatch):
@@ -301,11 +300,11 @@ def test_format_regime_recompute_command_exposes_dates_and_equity():
 
     command = mod._format_regime_recompute_command(date(2025, 4, 1), date(2025, 4, 30), 2000.0)
 
-    assert "from service.market import recompute_macro_regime_table" in command
-    assert "start_date=date.fromisoformat('2025-04-01')" in command
-    assert "end_date=date.fromisoformat('2025-04-30')" in command
-    assert "yaml_cfg=load_config() or {}" in command
-    assert "equity=2000.0" in command
+    assert "-m service.market recompute-regime" in command
+    assert "--start 2025-04-01" in command
+    assert "--end 2025-04-30" in command
+    assert "--equity 2000.0" in command
+    assert "--progress" in command
 
 
 @pytest.mark.parametrize(

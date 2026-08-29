@@ -8,14 +8,18 @@ import pytest
 from modelFactory.calibration import (
     PlattCalibrator,
     TemperatureScaler,
+    VectorScaler,
     calibrator_from_state_dict,
 )
 from modelFactory.config import CalibrationConfig, DataConfig, TrainingConfig
 
 
 def _make_training_cfg(*, target_mode: str = "binary", calibration_method: str = "platt") -> TrainingConfig:
+    data_kwargs = {}
+    if target_mode == "ternary":
+        data_kwargs = {"target_up_threshold": 0.03, "target_down_threshold": -0.03}
     return TrainingConfig(
-        data=DataConfig(target_mode=target_mode),
+        data=DataConfig(target_mode=target_mode, **data_kwargs),
         calibration=CalibrationConfig(method=calibration_method, min_samples=2),
     )
 
@@ -102,7 +106,7 @@ def test_platt_calibrator_unchanged() -> None:
 
 # ── Tabular calibration routing (Sprint Maître 1) ───────────────────────────
 
-def test_fit_tabular_calibrator_ternary_uses_temperature() -> None:
+def test_fit_tabular_calibrator_ternary_uses_vector_scaling() -> None:
     from modelFactory.tabular_baseline import fit_tabular_calibrator
 
     cfg = _make_training_cfg(target_mode="ternary", calibration_method="platt")
@@ -116,7 +120,7 @@ def test_fit_tabular_calibrator_ternary_uses_temperature() -> None:
     ], dtype=np.float64)
     labels = np.array([0, 1, 2, 0, 1, 2], dtype=np.int64)
     cal = fit_tabular_calibrator(val_proba, labels, cfg, target_mode="ternary")
-    assert isinstance(cal, TemperatureScaler)
+    assert isinstance(cal, VectorScaler)
     assert cal.fitted is True
 
 

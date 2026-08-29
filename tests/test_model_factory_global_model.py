@@ -76,7 +76,7 @@ def test_train_global_model_returns_metrics_and_artifacts(monkeypatch, tmp_path:
 	monkeypatch.setattr("modelFactory.global_model.load_benchmark_bars", lambda engine, benchmark_symbol, **kwargs: benchmark.copy())
 	monkeypatch.setattr(
 		"modelFactory.global_model.load_universe_latest_bar_date",
-		lambda engine, symbols: pd.Timestamp("2020-09-15"),
+		lambda engine, symbols, **kwargs: pd.Timestamp("2020-09-15"),
 	)
 	monkeypatch.setattr(
 		"modelFactory.global_model._import_lightgbm",

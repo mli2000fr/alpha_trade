@@ -127,6 +127,8 @@ def test_apply_no_position(monkeypatch):
 
 def test_apply_split(monkeypatch):
     event = make_event(symbol="AAPL", ca_type=CaType.SPLIT)
+    event.split_from = 1.0
+    event.split_to = 2.0
     provider = DummyProvider()
     repo = MagicMock()
     repo.load_pending_events.return_value = [event]
@@ -153,7 +155,7 @@ def test_apply_unsupported_type(monkeypatch):
     repo.load_latest_positions.return_value = [{"symbol": "AAPL", "qty": 10, "avg_entry_price": 100, "market_value": 1000}]
     engine = CorporateActionEngine(provider, repo)
     stats = engine.apply()
-    assert stats["skipped"] == 1
+    assert stats["failed"] == 1
 
 def test_apply_exception(monkeypatch):
     event = make_event(symbol="AAPL")

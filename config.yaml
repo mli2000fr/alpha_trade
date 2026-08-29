@@ -468,12 +468,55 @@ eodhd:
 # et ajoute une ligne de statut (START / OK / ERROR) dans `log_file`.
 # powershell -ExecutionPolicy Bypass -File .\scripts\windows\install_earnings_calendar_task.ps1
 
+# Désinstaller
+# powershell -ExecutionPolicy Bypass -File .\scripts\windows\uninstall_earnings_calendar_task.ps1
 #  Get-ScheduledTask -TaskName AlphaTrade-EarningsCalendarSync | Select-Object State
 #  (Get-ScheduledTask -TaskName AlphaTrade-EarningsCalendarSync).Triggers | Select-Object StartBoundary
 # ---------------------------------------------------------------------------
 earnings_calendar_sync:
-  run_hours: "3,14"                             # Heures de la journée (0-23) séparées par des virgules : "3" = 3h du matin, "4,9" = 4h et 9h.
+  run_hours: "23,5"                             # Heures de la journée (0-23) séparées par des virgules : "3" = 3h du matin, "4,9" = 4h et 9h.
   log_file: log/batch/earnings_calendar.txt  # Ligne de statut ajoutée à chaque exécution.
+
+# ---------------------------------------------------------------------------
+# Collecte prospective Yahoo analyst (RESEARCH ONLY — todo3.txt)
+# Historique PIT append-only dans MySQL (estimates/targets/recommendations).
+# Aucune intégration PROD. Aucun stockage fichier (MySQL = source de vérité).
+# L'univers est la liste FIGÉE ~400 symboles du fichier `symbols_file`
+# (config/ticket_mid_cap_400.txt) : explicite, configurable, déterministe,
+# jamais recalculé (ni active-tradable 13 608, ni pool Oracle).
+# CLI : python scripts/collect_yahoo_analyst_snapshots.py --universe analyst_research --write-db
+# powershell -ExecutionPolicy Bypass -File .\scripts\windows\install_analyst_snapshot_task.ps1
+
+# lancer immédiate
+# powershell -ExecutionPolicy Bypass -File .\scripts\windows\analyst_snapshot_launcher.ps1
+# Désinstaller
+# powershell -ExecutionPolicy Bypass -File .\scripts\windows\uninstall_analyst_snapshot_task.ps1
+# État de la tâche (Ready / Running / Disabled…)
+# Get-ScheduledTask -TaskName AlphaTrade-AnalystSnapshot | Select-Object State
+# Déclencheurs (heures planifiées)
+# (Get-ScheduledTask -TaskName AlphaTrade-AnalystSnapshot).Triggers | Select-Object StartBoundary
+# Détail complet (action, arguments, principal, settings)
+# Get-ScheduledTask -TaskName AlphaTrade-AnalystSnapshot | Select-Object -ExpandProperty Actions
+# Get-ScheduledTask -TaskName AlphaTrade-AnalystSnapshot | Format-List *
+# Via schtasks (vue classique)
+# schtasks /query /tn AlphaTrade-AnalystSnapshot /v /fo LIST
+# Dernier résultat d'exécution de la tâche
+# (Get-ScheduledTaskInfo -TaskName AlphaTrade-AnalystSnapshot) | Select-Object LastRunTime, LastTaskResult
+# ---------------------------------------------------------------------------
+analyst_snapshot_collection:
+  enabled: false                         # RESEARCH ONLY — aucune exécution PROD.
+  provider: yahoo
+  universe_name: analyst_research        # Nom de l'univers (analyst_research = liste figée).
+  symbols_file: config/ticket_mid_cap_400.txt
+  sleep_seconds: 0.25                    # Throttling entre symboles.
+  timeout_seconds: 20                    # Timeout watchdog par symbole.
+  max_retries: 2                         # Retries sur TEMPORARY_ERROR / RATE_LIMIT.
+  run_hours: "0,4"                        # Heures de la journée (0-23) heure LOCALE machine. Clôture US 16:00 ET = 22:00 heure de Paris (été comme hiver) → "23" = 1h après clôture US. Ajuster à la timezone de la machine si elle n'est pas à Paris.
+  log_file: log/batch/analyst_snapshots.txt
+  # Planification (après clôture US) : tâche Windows dédiée `AlphaTrade-AnalystSnapshot`
+  #   powershell -ExecutionPolicy Bypass -File .\scripts\windows\install_analyst_snapshot_task.ps1
+  # qui déclenche `analyst_snapshot_launcher.ps1` aux heures `run_hours` ci-dessus
+  # (collecte `--write-db --resume`, append-only PIT, idempotente).
 
 # ---------------------------------------------------------------------------
 # Diagnostics batch ML — stockés dans model_batch_diagnostics à la fin de

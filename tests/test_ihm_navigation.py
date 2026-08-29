@@ -20,6 +20,8 @@ def test_navigation_sidebar_order_matches_pipeline_then_support_pages() -> None:
         "backtesting",
         "weights_calibration_runs",
         "parity",
+        "ml_diagnostics",
+        "fundamentals",
         "db_admin",
         "settings",
         # Sprint S19.4 / S19.5 — nouvelles pages institutionnelles

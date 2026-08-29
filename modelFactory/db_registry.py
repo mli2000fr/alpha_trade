@@ -516,7 +516,8 @@ def delete_batch_rows(
     - retries avec backoff en cas de lock wait.
 
     Ordre : tables enfants (via run_id) → ``model_training_run`` (parent) →
-    tables ``batch_id`` direct → ``model_training_batch`` en dernier.
+    tables ``batch_id`` direct → ``model_training_batch`` puis
+    ``model_serving_batch`` en dernier.
 
     Returns:
         dict {table: nombre de lignes supprimées}.
@@ -539,6 +540,9 @@ def delete_batch_rows(
         "oracle_extreme_predictions",
         "model_training_run",
         "model_training_batch",
+        # model_serving_batch : référence de serving (promotion) du batch.
+        # Supprimée à la fin avec les autres tables à batch_id direct.
+        "model_serving_batch",
     ]
 
     deleted: dict[str, int] = {}

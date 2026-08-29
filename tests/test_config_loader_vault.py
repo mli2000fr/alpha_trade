@@ -135,8 +135,8 @@ def test_repo_default_config_promotes_r13a_market_regime_profile(monkeypatch: py
     assert hysteresis_cfg["enabled"] is True
     assert hysteresis_cfg["enter_soft_signals_required"] == 1
     assert hysteresis_cfg["enter_confirm_days"] == 2
-    assert hysteresis_cfg["exit_confirm_days"] == 3
-    assert hysteresis_cfg["min_hold_days_defensive"] == 5
+    assert hysteresis_cfg["exit_confirm_days"] == 1
+    assert hysteresis_cfg["min_hold_days_defensive"] == 1
     assert hysteresis_cfg["gate_soft_constraints_on_confirmed_entry"] is True
     assert vix_cfg["high_threshold"] == pytest.approx(30.0)
     assert vix_cfg["inverted_curve_min_spread"] == pytest.approx(1.5)

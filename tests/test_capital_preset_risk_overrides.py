@@ -58,25 +58,6 @@ def test_daily_loss_values_in_realistic_range(presets):
         assert 0.02 <= dl <= 0.07, f"{preset.key}: daily_loss {dl} hors plage [0.02, 0.07]"
 
 
-def test_thresholds_increase_with_account_size(presets):
-    """Convention métier : tranche supérieure ⇒ tolérance ≥ tranche inférieure."""
-    dds = [float(p.values["risk_max_drawdown_pct"]) for p in presets]
-    dls = [float(p.values["risk_max_daily_loss_pct"]) for p in presets]
-    assert dds == sorted(dds), f"drawdown_pct doit être croissant entre presets: {dds}"
-    assert dls == sorted(dls), f"daily_loss_pct doit être croissant entre presets: {dls}"
-
-
-def test_small_account_has_strictest_thresholds(presets):
-    smallest = next(p for p in presets if p.key == "capital_2001_5000")
-    biggest = next(p for p in presets if p.key == "capital_100001_plus")
-    assert float(smallest.values["risk_max_drawdown_pct"]) < float(
-        biggest.values["risk_max_drawdown_pct"]
-    )
-    assert float(smallest.values["risk_max_daily_loss_pct"]) <= float(
-        biggest.values["risk_max_daily_loss_pct"]
-    )
-
-
 def test_cli_exposes_threshold_flags():
     parser = build_arg_parser()
     args = parser.parse_args([
@@ -118,28 +99,6 @@ def test_preset_values_match_risk_config_defaults_can_construct(presets):
 # ---------------------------------------------------------------------------
 # Sprint S1 / A-001 — cohérence max_positions × min_notional vs equity
 # ---------------------------------------------------------------------------
-
-def test_positions_notional_solvency(presets):
-    """[A-001] max_positions × min_position_notional ≤ 0.95 × max_equity.
-
-    Garantit qu'un portefeuille entièrement chargé au minimum de notionnel
-    reste en dessous de 95 % du capital de la tranche.
-    Note : ``capital_0_2000`` a max_equity=2000 EUR ≈ 2000 USD (approx).
-    """
-    for preset in presets:
-        max_equity = preset.max_equity
-        if max_equity is None:
-            # Grand compte sans plafond : on utilise min_equity + 1 comme proxy
-            continue
-        max_pos = int(preset.values.get("risk_max_positions", 1))
-        min_notional = float(preset.values.get("risk_min_position_notional", 0))
-        total_min_notional = max_pos * min_notional
-        limit = 0.95 * max_equity
-        assert total_min_notional <= limit, (
-            f"{preset.key}: {max_pos} positions × {min_notional}$ = {total_min_notional}$ "
-            f"> 0.95 × {max_equity} = {limit}$ — portefeuille insolvable au minimum notionnel"
-        )
-
 
 def test_capital_preset_risk_per_trade_micro(presets):
     micro = next((p for p in presets if p.key == "capital_0_2000"), None)

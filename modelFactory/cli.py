@@ -1429,6 +1429,27 @@ def main(args: list[str] | None = None) -> None:
                     "predict combined batch=%s oracle predict result=%s",
                     _batch_id, _oc_out,
                 )
+                # ── Synchro Oracle → model_predictions (même logique que le flux
+                #    rank-driven / oracle-only) : peuple model_predictions avec le
+                #    signal Oracle (source=oracle_synth) pour la couverture ML et
+                #    l'univers per-symbol. Idempotent ; échec non-bloquant. ──
+                if _oc_out and _oc_out.get("status") == "completed" and int(_oc_out.get("n_rows", 0) or 0) > 0:
+                    try:
+                        from modelFactory.synthesize_oracle_predictions import synthesize as _synth_oc
+                        _oc_synth = _synth_oc(
+                            _batch_id,
+                            start=_oc_start if historical_predict_enabled else None,
+                            end=_oc_end if historical_predict_enabled else None,
+                        )
+                        LOGGER.info(
+                            "predict combined batch=%s sync oracle_synth result=%s",
+                            _batch_id, _oc_synth,
+                        )
+                    except Exception as _synth_oc_exc:  # noqa: BLE001
+                        LOGGER.warning(
+                            "predict combined batch=%s sync oracle_synth FAILED (non-bloquant): %s",
+                            _batch_id, _synth_oc_exc,
+                        )
             except Exception as _oc_exc:  # noqa: BLE001
                 LOGGER.warning(
                     "predict combined batch=%s oracle predict FAILED (non-bloquant): %s",

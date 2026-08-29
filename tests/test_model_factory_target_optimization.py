@@ -100,7 +100,7 @@ class TestScoreTripleBarrierCandidate:
     def test_returns_valid_result_on_trending_data(self) -> None:
         """Un DF OHLC avec tendance doit produire un score > 0."""
         df = _make_ohlc_df(120, start_price=100.0, trend=0.8)
-        cfg = DataConfig(target_mode="ternary", label_method="triple_barrier")
+        cfg = DataConfig(target_mode="ternary", label_method="triple_barrier", target_up_threshold=0.03, target_down_threshold=-0.03)
 
         result = score_triple_barrier_candidate(
             df,
@@ -121,7 +121,7 @@ class TestScoreTripleBarrierCandidate:
     def test_insufficient_data_yields_negative_score(self) -> None:
         """Avec trop peu de barres, le trade_rate < min_trades_fraction → score = -1."""
         df = _make_ohlc_df(30, start_price=100.0, trend=0.1)
-        cfg = DataConfig(target_mode="ternary", label_method="triple_barrier")
+        cfg = DataConfig(target_mode="ternary", label_method="triple_barrier", target_up_threshold=0.03, target_down_threshold=-0.03)
 
         result = score_triple_barrier_candidate(
             df,
@@ -138,7 +138,7 @@ class TestScoreTripleBarrierCandidate:
     def test_different_params_produce_different_scores(self) -> None:
         """Des paramètres différents donnent des scores différents."""
         df = _make_ohlc_df(200, start_price=100.0, trend=0.5)
-        cfg = DataConfig(target_mode="ternary", label_method="triple_barrier")
+        cfg = DataConfig(target_mode="ternary", label_method="triple_barrier", target_up_threshold=0.03, target_down_threshold=-0.03)
 
         r1 = score_triple_barrier_candidate(
             df, stop_atr_mult=1.5, tp_atr_mult=2.0, max_sessions=10,
@@ -159,7 +159,7 @@ class TestOptimizeTripleBarrierParameters:
     def test_returns_best_triple_barrier_config(self) -> None:
         """Retourne les paramètres triple-barrier optimaux."""
         df = _make_ohlc_df(200, start_price=100.0, trend=0.6)
-        cfg = DataConfig(target_mode="ternary", label_method="triple_barrier")
+        cfg = DataConfig(target_mode="ternary", label_method="triple_barrier", target_up_threshold=0.03, target_down_threshold=-0.03)
         opt_cfg = TargetOptimizationConfig(
             enabled=True,
             candidate_stop_atr_mults=(1.5, 2.0),
@@ -181,7 +181,7 @@ class TestOptimizeTripleBarrierParameters:
     def test_score_positive_for_valid_config(self) -> None:
         """Le score du meilleur candidat est >= 0."""
         df = _make_ohlc_df(200, start_price=100.0, trend=0.6)
-        cfg = DataConfig(target_mode="ternary", label_method="triple_barrier")
+        cfg = DataConfig(target_mode="ternary", label_method="triple_barrier", target_up_threshold=0.03, target_down_threshold=-0.03)
         opt_cfg = TargetOptimizationConfig(
             enabled=True,
             candidate_stop_atr_mults=(2.0,),
@@ -201,7 +201,7 @@ class TestOptimizeTargetParametersTripleBarrier:
     def test_triple_barrier_mode_includes_tb_params(self) -> None:
         """En mode triple_barrier, le résultat contient les clés triple-barrier."""
         df = _make_ohlc_df(200, start_price=100.0, trend=0.6)
-        cfg = DataConfig(target_mode="ternary", label_method="triple_barrier")
+        cfg = DataConfig(target_mode="ternary", label_method="triple_barrier", target_up_threshold=0.03, target_down_threshold=-0.03)
         opt_cfg = TargetOptimizationConfig(
             enabled=True,
             candidate_stop_atr_mults=(2.0,),
@@ -221,7 +221,7 @@ class TestOptimizeTargetParametersTripleBarrier:
     def test_triple_barrier_with_horizon_candidates(self) -> None:
         """Avec candidate_horizons, on optimise aussi l'horizon."""
         df = _make_ohlc_df(200, start_price=100.0, trend=0.6)
-        cfg = DataConfig(target_mode="ternary", label_method="triple_barrier")
+        cfg = DataConfig(target_mode="ternary", label_method="triple_barrier", target_up_threshold=0.03, target_down_threshold=-0.03)
         opt_cfg = TargetOptimizationConfig(
             enabled=True,
             candidate_horizons=(10, 20),
@@ -263,7 +263,7 @@ class TestTrainFoldIsolation:
         """score_triple_barrier_candidate ne doit référencer que le df passé,
         pas de données externes."""
         df = _make_ohlc_df(150, start_price=100.0, trend=0.5)
-        cfg = DataConfig(target_mode="ternary", label_method="triple_barrier")
+        cfg = DataConfig(target_mode="ternary", label_method="triple_barrier", target_up_threshold=0.03, target_down_threshold=-0.03)
 
         result = score_triple_barrier_candidate(
             df,
@@ -283,7 +283,7 @@ class TestTrainFoldIsolation:
         """optimize_target_parameters ne doit pas accéder à des données
         hors du DataFrame passé en paramètre."""
         df_train = _make_ohlc_df(150, start_price=100.0, trend=0.5)
-        cfg = DataConfig(target_mode="ternary", label_method="triple_barrier")
+        cfg = DataConfig(target_mode="ternary", label_method="triple_barrier", target_up_threshold=0.03, target_down_threshold=-0.03)
         opt_cfg = TargetOptimizationConfig(
             enabled=True,
             candidate_stop_atr_mults=(2.0,),
@@ -298,3 +298,4 @@ class TestTrainFoldIsolation:
         # Le résultat doit provenir uniquement du df_train
         assert "selected_triple_barrier_stop_atr_mult" in result
         assert result["selected_triple_barrier_score"] >= 0.0
+

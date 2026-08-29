@@ -53,13 +53,14 @@ class TestFlagMatrixFeatureColumns:
         )
         assert "global_rank" in cols
 
-    def test_stacking_without_cross_sectional_no_global_rank(self) -> None:
+    def test_stacking_without_cross_sectional_still_adds_global_rank(self) -> None:
         cols = get_feature_columns(include_global_stacking=True)
-        assert "global_rank" not in cols
+        assert "global_rank" in cols
 
-    def test_010_b_without_a_no_cross_sectional_no_effect(self) -> None:
-        """B=True sans cross-sectional → pas de global_pred (gating dans get_feature_columns)."""
+    def test_010_b_without_a_keeps_rank_stacking_independent(self) -> None:
+        """Le stacking global est indépendant des features cross-sectionnelles."""
         cols = get_feature_columns(include_global_stacking=True)
+        assert "global_rank" in cols
         for _col in ("global_pred_short", "global_pred_flat", "global_pred_long"):
             assert _col not in cols
 
