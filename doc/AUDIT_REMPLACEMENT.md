@@ -36,14 +36,15 @@ Au contrôle de migration du 29 août 2026 :
 
 | Contrôle | Résultat |
 |---|---:|
-| fichiers Markdown sous `doc/refactor` | 273 |
-| lignes documentaires, archives incluses | 52 399 |
-| volume Markdown, archives incluses | 2 920 077 octets |
+| fichiers Markdown sous `doc/refactor` | 317 |
+| lignes documentaires, archives incluses | 66 845 |
+| volume Markdown, archives incluses | 3 700 856 octets |
 | liens Markdown internes cassés | 0 |
 | liens relatifs sortant de `doc/refactor` | 0 |
 | anciens Markdown inventoriés | 178 |
 | fichiers conservés comme sources/expériences historiques | 88 |
 | anciens répertoires `doc/backup`, `doc/ml`, `doc/monitoring` | supprimés après migration |
+| fichiers restant hors `doc/refactor` sous `doc` | 0 |
 | modifications détectées hors documentation | 0 |
 
 Ces nombres sont un constat d'audit, pas un objectif de volume. La couverture

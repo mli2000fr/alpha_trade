@@ -2,6 +2,8 @@
 
 Archives intégrales : [campagnes Global Ranking](campagnes_global_ranking/README.md) et [archives ML complémentaires](archives_ml/README.md).
 
+Autres audits et verdicts datés : [archives de recherche complémentaires](archives_recherche/README.md).
+
 Ce répertoire conserve les enseignements des campagnes de recherche sans mélanger résultats historiques et comportement actuel.
 
 Les fichiers originaux restent dans `doc/` et ne sont pas modifiés. Les synthèses de ce dossier sont autonomes : elles décrivent question, protocole, conclusion durable, limites et relation avec le code courant.
