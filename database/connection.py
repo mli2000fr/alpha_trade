@@ -25,8 +25,8 @@ DB_SSL_CA_PATH_ENV = "DB_SSL_CA_PATH"
 # avec l'ancien bug (rmtree malgré échec DB), les dossiers de batchs disparaissaient
 # alors que la DB restait intacte. Serveur MySQL : max_connections=151, pic 38 →
 # marge suffisante. Toujours surchargeable via env DB_POOL_SIZE / DB_MAX_OVERFLOW.
-DEFAULT_POOL_SIZE = 6
-DEFAULT_MAX_OVERFLOW = 10
+DEFAULT_POOL_SIZE = 10
+DEFAULT_MAX_OVERFLOW = 20
 DEFAULT_POOL_RECYCLE = 3600
 
 # Phase 1 sécurité : placeholders évidents refusés (audit_global.md §1.5).
