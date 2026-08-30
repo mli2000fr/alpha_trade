@@ -977,10 +977,22 @@ def main(args: list[str] | None = None) -> None:
         except Exception as _liq_exc:
             LOGGER.warning("cli: failed to inject liquidity diagnostics: %s", _liq_exc)
 
+        # P-fix (2026-08-30) : un batch dont TOUTES les unités ont échoué ne doit
+        # pas être marqué "completed" (ex: per_sector 11/11 FAILED). On le marque
+        # "failed" ; un batch partiellement réussi (completed>0) reste "completed".
+        _batch_final_status = (
+            "failed" if (completed == 0 and failed > 0) else "completed"
+        )
+        if _batch_final_status == "failed":
+            LOGGER.error(
+                "cli: batch %s marked FAILED — completed=%d skipped=%d failed=%d "
+                "(aucune unité terminée)",
+                run_id, completed, skipped, failed,
+            )
         update_training_batch(
             engine,
             run_id,
-            status="completed",
+            status=_batch_final_status,
             finished_at=finished_at,
             symbols_completed=completed,
             symbols_skipped=skipped,
