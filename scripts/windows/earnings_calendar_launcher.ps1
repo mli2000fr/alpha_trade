@@ -210,6 +210,11 @@ $errorMsg = ''
 try {
     Push-Location $resolvedWorkspace
     try {
+        # ── Encodage UTF-8 : force Python à écrire en UTF-8 et PS 5.1 à décoder en
+        #    UTF-8 (sinon CP850/OEM → mojibake, ex. ├®, dans les logs et l'email). ──
+        $env:PYTHONIOENCODING = 'utf-8'
+        [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+        $OutputEncoding = [System.Text.Encoding]::UTF8
         $captured = & $resolvedPython @commandArgs 2>&1
         $exitCode = $LASTEXITCODE
         $errorRecords = @($captured | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
@@ -237,6 +242,27 @@ if ($exitCode -eq 0) {
 } else {
     $err = if ($errorMsg) { " err=$errorMsg" } else { '' }
     Write-StatusLine ("[{0}] FIN TRAITEMENT ERROR  earnings_calendar_sync exit={1} durée={2}{3} — voir log/sync_earnings_calendar.log" -f $stamp, $exitCode, $durStr, $err)
+}
+
+# ── Email de fin de batch (statut + logs de CE run) via email_notifier ──
+# Best-effort : un échec d'envoi ne fait jamais échouer le batch.
+try {
+    $emailTmp = Join-Path ([IO.Path]::GetTempPath()) ("alpha_batch_log_{0}.txt" -f $PID)
+    if ($captured) {
+        (@($captured) | Select-Object -Last 300) -join "`n" | Set-Content -LiteralPath $emailTmp -Encoding UTF8
+    } else {
+        Set-Content -LiteralPath $emailTmp -Value '(aucune sortie)' -Encoding UTF8
+    }
+    $emailStatus = if ($exitCode -eq 0) { 'OK' } else { 'ERROR' }
+    & $resolvedPython (Join-Path $resolvedWorkspace 'scripts\send_batch_email.py') `
+        --event 'earnings_calendar_sync' `
+        --status $emailStatus `
+        --exit-code $exitCode `
+        --duration $durStr `
+        --log-file $emailTmp 2>&1 | Out-Null
+    Remove-Item -LiteralPath $emailTmp -Force -ErrorAction SilentlyContinue
+} catch {
+    Write-StatusLine ("[{0}] NOTE   email de fin non envoyé (best-effort) : {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), ($_.Exception.Message -replace '[\r\n]+', ' '))
 }
 
 exit $exitCode
