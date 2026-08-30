@@ -293,6 +293,20 @@ class TestCascadeSelect:
             )
         assert result == []
 
+    def test_extreme_gate_directional_rejects_exact_tie_even_with_zero_margin(self):
+        preds = {"TIE": CascadePrediction(symbol="TIE", long_prob=0.70, short_prob=0.70)}
+        oracle_map = {"2026-01-15": {"TIE": 0.99}}
+        with patch("modelFactory.predictor.load_cascade_config",
+                   return_value={"top_pct": 0.20, "min_prob": 0.55}):
+            result = cascade_select(
+                "2026-01-15", "batch-x", preds,
+                rank_mode="extreme_gate_directional",
+                oracle_rank_map=oracle_map,
+                extreme_gate_pct=1.0,
+                extreme_gate_direction_margin=0.0,
+            )
+        assert result == []
+
     def test_extreme_gate_legacy_does_not_change_when_short_is_stronger(self):
         """Non-régression : le mode historique conserve sa priorité LONG."""
         preds = {"S": CascadePrediction(symbol="S", long_prob=0.60, short_prob=0.90)}

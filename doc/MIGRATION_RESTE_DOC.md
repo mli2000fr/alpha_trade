@@ -11,7 +11,7 @@ Ce registre couvre tous les fichiers qui restaient hors `doc/refactor`. Les réf
 | `alpha_trade_recalibration_guide.md`, `ml_calivraiton_important.md` | ancienne référence de recalibration | [recalibration/promotion](ml/recalibration_et_promotion.md) |
 | `controle_couverture.md` | ancienne référence | [couverture/fallbacks](ml/qualite_couverture_et_fallbacks.md) |
 | `ml_oracle.md`, `ml_oracle_sprint.md`, `oracle_extreme.md`, `model_extreme_mode.md` | anciennes spécifications/états | [Oracle actuel](ml/oracle/README.md) |
-| `mode_cascade.md` | ancienne référence | [cascade actuelle](ml/cascade_et_fallbacks.md) |
+| `mode_cascade.md` | référence canonique actualisée | [mode cascade](mode_cascade.md) |
 | `per_sector.md` | ancienne synthèse | [per-sector actuel](ml/per_sector/README.md) |
 | `recherche_vs_pipeline.md` | analyse historique de lifecycles | [recherche/production](research/recherche_vs_production.md), [parité](backtesting/parite_live_backtest.md) |
 | `ml_old/filtre_ml.md`, `ml_old/ml_hybride.md`, `ml_old/ml_refactor_1.md` | conceptions anciennes | [ML actuel](ml/README.md), [expériences](experiences/README.md) |

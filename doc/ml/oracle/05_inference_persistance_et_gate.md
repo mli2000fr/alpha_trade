@@ -36,6 +36,13 @@ Les égalités suivent le rang pandas par défaut. La taille retenue peut diffé
 
 `build_oracle_rank_map()` retourne `{date:{symbol:proba_extreme}}`. Le consumer cascade recalcule son percentile selon son univers. Filtrer l’univers avant le rang change les membres ; conserver batch, pool, population, valeurs manquantes et couche directionnelle aval.
 
+Le backtest offre deux consumers distincts : `extreme_gate` pour le chemin legacy LONG et
+`extreme_gate_directional` pour la combinaison amplitude Oracle + direction Per-Symbol.
+Le second exige une prédiction Per-Symbol, compare `proba_long` et `proba_short`, applique le
+seuil de la cascade et une marge directionnelle, puis classe par
+`percentile_oracle × probabilité_directionnelle`. Voir
+[Mode cascade](../../mode_cascade.md).
+
 ## Contrôles
 
 1. Batch et champions explicites.

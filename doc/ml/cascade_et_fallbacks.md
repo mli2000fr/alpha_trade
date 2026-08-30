@@ -37,7 +37,7 @@ stabilité temporelle. Tester aussi le système privé d’un niveau afin de mes
 sa valeur marginale. La parité live/backtest exige la même résolution PIT et le
 même ordre de cascade.
 
-Voir [cascade de sélection recherche](../research/cascade_selection.md),
+Voir [mode cascade](../mode_cascade.md),
 [qualité/couverture](qualite_couverture_et_fallbacks.md) et
 [audit serving](../guide_utilisateur/05_ml_predictions.md).
 

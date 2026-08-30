@@ -53,6 +53,12 @@ Le code expose AUC, precision/recall aux top percentiles, monotonie des déciles
 
 Un batch Oracle-only peut remplir la table spécialisée puis synthétiser `model_predictions`. Un batch combiné peut faire tourner Oracle en complément du flux rank-driven. La présence d'artefacts Oracle ne signifie pas que le gate pilote automatiquement le portefeuille : le mode de cascade et la configuration effective doivent l'activer.
 
+Deux modes Extreme Gate sont exposés dans le backtest : `extreme_gate` conserve le chemin
+historique LONG, tandis que `extreme_gate_directional` utilise l’Oracle pour sélectionner
+l’amplitude puis compare `proba_long` et `proba_short` du modèle Per-Symbol. Le détail des
+seuils, scores, sources de batch et options IHM est documenté dans
+[Mode cascade](mode_cascade.md).
+
 ## Contrat lifecycle
 
 Les labels Oracle et les backtests E6–E13 ont pu utiliser un lifecycle de recherche différent. Toute promotion exige un replay avec stop, TP, trailing, time-stop, gap filter, entry timing et résolution intrabar exactement identiques à PROD.

@@ -3125,7 +3125,7 @@ def cascade_select(
                 if max(_long_prob, _short_prob) <= _min_prob:
                     continue
                 # Une égalité est ambiguë : aucun biais LONG implicite.
-                if _direction_margin < _eg_direction_margin:
+                if _direction_margin <= 0.0 or _direction_margin < _eg_direction_margin:
                     continue
                 if _long_prob > _short_prob:
                     candidates.append(("LONG", symbol, rank * _long_prob))
