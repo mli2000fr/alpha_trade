@@ -4,6 +4,7 @@ import sys
 
 import pytest
 
+from common.universe_files import default_universe_file_source_or
 import ihm.services.pipeline_runner as pipeline_runner
 from ihm.services.pipeline_runner import (
     PROJECT_ROOT,
@@ -938,7 +939,7 @@ def test_build_pipeline_command_ml_steps() -> None:
     # Le builder émet toujours --ml-mode (défaut rebuild-all)
     assert train_cmd[train_cmd.index("--ml-mode") + 1] == "rebuild-all"
     assert train_cmd[train_cmd.index("--training-start-date") + 1] == pipeline_runner.DEFAULT_ML_TRAINING_START_DATE
-    assert train_cmd[train_cmd.index("--symbol-source") + 1] == "tradable-universe"
+    assert train_cmd[train_cmd.index("--symbol-source") + 1] == default_universe_file_source_or("tradable-universe")
     assert train_cmd[train_cmd.index("--wf-min-train-size") + 1] == "504"
     assert train_cmd[train_cmd.index("--wf-val-size") + 1] == "126"
     assert train_cmd[train_cmd.index("--wf-test-size") + 1] == "126"
@@ -994,7 +995,7 @@ def test_build_pipeline_command_ml_steps() -> None:
     # Predict
     assert predict_cmd[:6] == [predict_cmd[0], "-u", "-m", "modelFactory", "--mode", "predict"]
     assert predict_cmd[predict_cmd.index("--accelerator") + 1] == "gpu"
-    assert predict_cmd[predict_cmd.index("--symbol-source") + 1] == "tradable-universe"
+    assert predict_cmd[predict_cmd.index("--symbol-source") + 1] == default_universe_file_source_or("tradable-universe")
     assert "--artifacts-dir" in predict_cmd
     assert "--batch-id" not in predict_cmd
 
@@ -1234,6 +1235,15 @@ def test_build_pipeline_command_ml_predict_respects_selected_symbol_source() -> 
         ),
     )
     assert command[command.index("--symbol-source") + 1] == "stock-bars-daily"
+
+    command = build_pipeline_command(
+        "ml_predict",
+        PipelineLaunchOptions(
+            ml_accelerator="cpu",
+            ml_predict_symbol_source="universe-file:univers_filtred_2016.txt",
+        ),
+    )
+    assert command[command.index("--symbol-source") + 1] == "universe-file:univers_filtred_2016.txt"
 
     # Source inconnue/héritée -> fallback canonique tradable-universe (inchangé).
     command = build_pipeline_command(

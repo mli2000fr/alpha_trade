@@ -12,6 +12,13 @@ catboost_info/
 ./*.txt
 *.pyc
 __pycache__/
+# Caches générés par les runs de tests (PYTHONPYCACHEPREFIX / pytest / outils)
+.test_pycache_*/
+.pytest_cache/
+.hypothesis/
+.benchmarks/
+.ruff_cache/
+.import_linter_cache/
 .env
 .env.*
 scripts/windows/protection_watcher.env

@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.model_training_batch (
     command_argv_json      TEXT         NOT NULL COMMENT 'Arguments CLI exacts recus par le processus',
     metadata_json          TEXT         NOT NULL COMMENT 'Options CLI et configuration effective serializees',
     comment                VARCHAR(200)  NOT NULL COMMENT 'Commentaire saisi par l utilisateur dans IHM',
-    symbol_source          VARCHAR(32)  NOT NULL,
+    symbol_source          VARCHAR(255) NOT NULL COMMENT 'Source native ou universe-file:<nom>.txt',
     universe_date          DATE         DEFAULT NULL,
     requested_symbol_count INT UNSIGNED DEFAULT NULL,
     training_start_date    DATE         DEFAULT NULL,

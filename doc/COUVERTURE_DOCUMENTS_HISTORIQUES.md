@@ -26,7 +26,7 @@ conservé sous `sources_historiques/`, jamais une référence runtime.
 | `alpha_trade_recalibration_guide.md` | [Recalibration](ml/recalibration_et_promotion.md), [calibrations IHM](guide_utilisateur/09_supervision_parite.md) | réécrit |
 | `alpha_trade_anti_overfitting_oos_protocol_2026-08-22.md` | [Validation et gouvernance](ml/validation_et_gouvernance.md) | protocole durable extrait |
 | `per_sector.md`, `per_sector_todo.md` | [Per-sector détaillé](ml/per_sector/README.md), [Global Ranking détaillé](ml/global_ranking/README.md), [synthèse historique](experiences/global_ranking_et_per_sector.md) | état courant + synthèse |
-| `mode_cascade.md` | [Cascade et fallback](ml/cascade_et_fallbacks.md) | réécrit |
+| `mode_cascade.md` | [Mode cascade](mode_cascade.md) | réécrit et actualisé |
 | `model_extreme_mode.md`, `oracle_extreme.md` | [Oracle Extreme](ml/oracle/README.md) | remplacé par dossier détaillé |
 | `ml_oracle.md`, `ml_oracle_sprint.md`, `calibration_oracle_exterme.md` | [Oracle architecture à diagnostics](ml/oracle/README.md), [expériences Oracle](experiences/oracle_extreme.md) | référence et historique séparés |
 | `persistent_tail_price.md`, `persistent_top10_dip.md` | [Filtres persistants](signals/filtres_persistants.md), [expériences filtres](experiences/filtres_et_direction.md) | contrat actuel + synthèse |

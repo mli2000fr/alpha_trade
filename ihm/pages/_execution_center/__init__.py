@@ -40,6 +40,7 @@ from typing import Any, SupportsFloat, SupportsIndex, SupportsInt, cast
 
 import streamlit as st
 
+from common.universe_files import default_universe_file_source_or
 from event_sentiment.db_io import EventSentimentRepository
 
 from ihm.pages._alpha_scanner_diagnostics import (
@@ -3299,7 +3300,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             )
 
         st.caption("Chaque lancement ML Train crée une campagne complète et isolée.")
-        ml_train_symbol_source = "ticket-recherche"
+        ml_train_symbol_source = default_universe_file_source_or("tradable-universe")
         ml_predict_symbol_source = "tradable-universe"
         ml_opt_col1, ml_opt_col2, ml_opt_col3 = st.columns(3)
         with ml_opt_col1:

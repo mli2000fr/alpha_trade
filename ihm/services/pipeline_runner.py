@@ -16,6 +16,11 @@ from typing import Literal
 
 from core.ml_selection_contract import MLFirstSelectionContract, SelectionCapacity
 from common.capital_presets import resolve_capital_preset_for_equity
+from common.universe_files import (
+    default_universe_file_source_or,
+    is_universe_file_source,
+    normalize_universe_file_source,
+)
 
 from database.selector_reference import normalize_symbol_source
 from event_sentiment.config import EventSentimentConfig
@@ -306,15 +311,7 @@ MLFeatureSet = Literal["v1", "expert"]
 MLCalibrationMethod = Literal["none", "platt"]
 MLDefaultChampion = Literal["lstm_attention", "lightgbm", "catboost"]
 MLMode = Literal["rebuild-all", "rebuild-missing", "refresh-stale"]
-MLTrainSymbolSource = Literal[
-    "tradable-universe",
-    "stock-bars-daily",
-    "ticket-recherche",
-    "stock_scores",
-    "stock_scores_history",
-    "stock_scores_all",
-    "stock_bars_daily",
-]
+MLTrainSymbolSource = str
 DataIntegritySymbolSource = Literal[
     "active_tradable",
     "stock_scores",
@@ -455,10 +452,10 @@ class PipelineLaunchOptions:
     ml_mode: MLMode = DEFAULT_ML_MODE
     ml_training_start_date: str = DEFAULT_ML_TRAINING_START_DATE
     ml_training_end_date: str = DEFAULT_ML_TRAINING_END_DATE
-    ml_train_symbol_source: MLTrainSymbolSource = "tradable-universe"
+    ml_train_symbol_source: MLTrainSymbolSource = default_universe_file_source_or("tradable-universe")
     ml_train_start_symbol: str | None = None
     ml_comment: str | None = None
-    ml_predict_symbol_source: MLTrainSymbolSource = "tradable-universe"
+    ml_predict_symbol_source: MLTrainSymbolSource = default_universe_file_source_or("tradable-universe")
     ml_predict_use_historical_range: bool = False
     ml_predict_batch_id: str | None = None
     ml_live_predict_batch_id: str | None = None
@@ -1711,19 +1708,41 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     ml_benchmark_symbol = _normalize_symbol(options.ml_benchmark_symbol, DEFAULT_ML_BENCHMARK_SYMBOL)
     ml_artifacts_dir = (options.ml_artifacts_dir or "").strip() or DEFAULT_ML_ARTIFACTS_DIR
     ml_training_end_date = _normalize_optional_date(options.ml_training_end_date)
+    requested_ml_train_source = str(options.ml_train_symbol_source or "").strip().lower()
+    raw_ml_train_source = (
+        "ticket-recherche"
+        if requested_ml_train_source == "ticket-recherche"
+        else normalize_universe_file_source(requested_ml_train_source)
+    )
     ml_train_symbol_source = {
         "stock-bars-daily": "stock-bars-daily",
         "stock_bars_daily": "stock-bars-daily",
         "tradable-universe": "tradable-universe",
         "ticket-recherche": "ticket-recherche",
-    }.get(str(options.ml_train_symbol_source or "").strip().lower(), "tradable-universe")
+    }.get(
+        raw_ml_train_source,
+        raw_ml_train_source
+        if is_universe_file_source(raw_ml_train_source)
+        else "tradable-universe",
+    )
     ml_train_start_symbol = _normalize_optional_symbol(options.ml_train_start_symbol)
+    requested_ml_predict_source = str(options.ml_predict_symbol_source or "").strip().lower()
+    raw_ml_predict_source = (
+        "ticket-recherche"
+        if requested_ml_predict_source == "ticket-recherche"
+        else normalize_universe_file_source(requested_ml_predict_source)
+    )
     ml_predict_symbol_source = {
         "stock-bars-daily": "stock-bars-daily",
         "stock_bars_daily": "stock-bars-daily",
         "tradable-universe": "tradable-universe",
         "ticket-recherche": "ticket-recherche",
-    }.get(str(options.ml_predict_symbol_source or "").strip().lower(), "tradable-universe")
+    }.get(
+        raw_ml_predict_source,
+        raw_ml_predict_source
+        if is_universe_file_source(raw_ml_predict_source)
+        else "tradable-universe",
+    )
     if step_key == "import_alpaca_assets":
         return [sys.executable, "-u", "-m", "dataIntegrityEngine.import_alpaca_assets"]
 

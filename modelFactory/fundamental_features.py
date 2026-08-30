@@ -24,6 +24,12 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from common.universe_files import (
+    is_universe_file_source,
+    list_universe_file_sources,
+    normalize_universe_file_source,
+)
+
 LOGGER = logging.getLogger(__name__)
 
 # ── Fundamental feature columns (derived from stock_fundamentals_daily) ──
@@ -982,20 +988,21 @@ def _resolve_cli_symbols(
     - ``missing-fundamentals`` (défaut)
     - ``stock-bars-daily``
     - ``tradable-universe`` (requiert --start-date/--end-date)
-    - ``ticket-recherche`` (lit config/ticket_recherche.txt)
+    - un fichier découvert dans ``config/univers``
     """
     from database.connection import get_sqlalchemy_engine as _get_engine
     from modelFactory.db_registry import load_symbols_for_source
 
     engine = _get_engine()
+    normalized_source = normalize_universe_file_source(symbol_source)
 
-    if symbol_source == "ticket-recherche":
-        return load_symbols_for_source(engine, "ticket-recherche")
+    if is_universe_file_source(normalized_source):
+        return load_symbols_for_source(engine, normalized_source)
 
-    if symbol_source == "stock-bars-daily":
+    if normalized_source == "stock-bars-daily":
         return load_symbols_for_source(engine, "stock-bars-daily")
 
-    if symbol_source == "tradable-universe":
+    if normalized_source == "tradable-universe":
         if not start_date or not end_date:
             raise ValueError("--start-date et --end-date sont requis pour --symbol-source tradable-universe")
         from datetime import datetime as _dt_cls
@@ -1031,7 +1038,13 @@ def main() -> None:
     parser.add_argument(
         "--symbol-source",
         type=str,
-        choices=("missing-fundamentals", "stock-bars-daily", "tradable-universe", "ticket-recherche"),
+        choices=(
+            "missing-fundamentals",
+            "stock-bars-daily",
+            "tradable-universe",
+            "ticket-recherche",
+            *list_universe_file_sources(),
+        ),
         default="missing-fundamentals",
         help="Source des symboles à traiter.",
     )
