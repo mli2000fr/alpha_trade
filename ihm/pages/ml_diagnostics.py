@@ -13,6 +13,7 @@ import shutil as _shutil
 from pathlib import Path
 from typing import Any
 
+from common.universe_files import is_universe_file_source
 from ihm.pages import run_page_if_standalone
 from ihm.components.db_controls import render_db_unavailable
 from ihm.services.db import db_available, safe_query, get_engine
@@ -29,6 +30,14 @@ try:
     _MIN_RISING_HORIZONS = int(_cfg.get("backtest", {}).get("min_rising_horizons", _MIN_RISING_HORIZONS_DEFAULT))
 except Exception:
     _MIN_RISING_HORIZONS = _MIN_RISING_HORIZONS_DEFAULT
+
+
+def _format_symbol_source(value: object) -> str:
+    """Affiche le nom du fichier tout en laissant les sources natives inchangées."""
+    source = str(value or "").strip()
+    if is_universe_file_source(source):
+        return source.split(":", 1)[1]
+    return source or "—"
 
 
 # ---------------------------------------------------------------------------
@@ -2192,7 +2201,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
     with col1:
         st.metric("Batch ID", str(row.get("batch_id", ""))[:32] + "…" if len(str(row.get("batch_id", ""))) > 32 else str(row.get("batch_id", "")))
         st.metric("Statut", _status_badge(str(row.get("status", ""))))
-        st.metric("Source symboles", str(row.get("symbol_source", "")))
+        st.metric("Source symboles", _format_symbol_source(row.get("symbol_source", "")))
         comment_val = row.get("comment")
         st.metric("Commentaire", str(comment_val) if comment_val and str(comment_val) != "None" and str(comment_val) != "nan" else "—")
         st.metric("Démarré le", str(row.get("started_at", "—")))
@@ -3178,6 +3187,8 @@ def render() -> None:
     display_df = batches_df.copy()
     if "status" in display_df.columns:
         display_df["status"] = display_df["status"].apply(_status_badge)
+    if "symbol_source" in display_df.columns:
+        display_df["symbol_source"] = display_df["symbol_source"].apply(_format_symbol_source)
     if "batch_id" in display_df.columns and "status" in batches_df.columns:
         # Prefix "❌ " for TO DELETE batches
         _raw_status = batches_df["status"].fillna("").str.strip().str.lower()

@@ -29,6 +29,7 @@ from common.capital_presets import (
     resolve_effective_capital_preset,
 )
 from common.market_calendar import nyse_session_dates
+from common.universe_files import default_universe_file_source_or
 from common.utils import configure_root_logging
 
 LOGGER = logging.getLogger(__name__)
@@ -1892,9 +1893,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     backfill_p.add_argument(
         "--symbol-source",
-        default="ticket-recherche",
-        help="Source de l'univers des symboles à scorer (tradable-universe, stock-bars-daily, ticket-recherche). "
-             "Défaut: ticket-recherche (config/ticket_recherche.txt).",
+        default=default_universe_file_source_or("tradable-universe"),
+        help="Source de l'univers des symboles à scorer (tradable-universe, stock-bars-daily ou fichier de config/univers/). "
+             "Défaut : premier fichier de config/univers/.",
     )
 
     # --- diagnose-screener ---
@@ -2020,7 +2021,7 @@ def _build_parser() -> argparse.ArgumentParser:
     calibrate_p.add_argument(
         "--symbol-source",
         default=None,
-        help="Source de l'univers (tradable-universe, stock-bars-daily, ticket-recherche). "
+        help="Source de l'univers (tradable-universe, stock-bars-daily ou fichier de config/univers/). "
              "Si non renseigné, utilise le comportement par défaut (--all-symbols ou candidats).",
     )
     calibrate_p.add_argument(
@@ -2138,7 +2139,7 @@ def _build_parser() -> argparse.ArgumentParser:
     walk_forward_p.add_argument(
         "--symbol-source",
         default=None,
-        help="Source de l'univers (tradable-universe, stock-bars-daily, ticket-recherche). "
+        help="Source de l'univers (tradable-universe, stock-bars-daily ou fichier de config/univers/). "
              "Si non renseigné, utilise le comportement par défaut (--all-symbols ou candidats).",
     )
     walk_forward_p.add_argument(

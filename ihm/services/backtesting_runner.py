@@ -6,6 +6,8 @@ import sys
 from dataclasses import dataclass
 from typing import Literal
 
+from common.universe_files import default_universe_file_source_or
+
 from core.ml_selection_contract import MLFirstSelectionContract, SelectionCapacity
 from ihm.services.pipeline_runner import PROJECT_ROOT, build_subprocess_env
 
@@ -166,7 +168,7 @@ class BackfillScoresHistoryOptions:
     selection_size: int = 100
     screener_workers: int | None = 4
     universe_only: bool = False
-    symbol_source: str | None = "ticket-recherche"
+    symbol_source: str | None = default_universe_file_source_or("tradable-universe")
 
 
 @dataclass(frozen=True, slots=True)

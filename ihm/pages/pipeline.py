@@ -15,6 +15,10 @@ from typing import Any, cast
 import streamlit as st
 from dataIntegrityEngine.sync_latest_quotes import estimate_sync_latest_quotes_cost
 from common.tradable_universe import load_tradable_universe_for_period
+from common.universe_files import (
+    list_universe_file_sources,
+    universe_file_source_labels,
+)
 from database.connection import get_sqlalchemy_engine
 from database.selector_reference import list_symbols_for_source, normalize_start_symbol
 from modelFactory.db_registry import load_symbols_for_source
@@ -106,18 +110,24 @@ from ihm.services.queries import get_alpha_scanner_dependency_diagnostic
 from ihm.services.queries import get_execution_live_guard
 
 
-ML_TRAIN_SYMBOL_SOURCE_OPTIONS = ("stock-bars-daily", "tradable-universe", "ticket-recherche")
+UNIVERSE_FILE_SOURCES = list_universe_file_sources()
+DEFAULT_UNIVERSE_FILE_SOURCE = UNIVERSE_FILE_SOURCES[0] if UNIVERSE_FILE_SOURCES else "tradable-universe"
+ML_TRAIN_SYMBOL_SOURCE_OPTIONS = (
+    "stock-bars-daily",
+    "tradable-universe",
+    *UNIVERSE_FILE_SOURCES,
+)
 
 ML_TRAIN_SYMBOL_SOURCE_LABELS = {
     "stock-bars-daily": "Symboles avec barres daily (stock_bars_daily)",
     "tradable-universe": "Univers tradable PIT canonique",
-    "ticket-recherche": "Tickets recherche (config/ticket_recherche.txt)",
+    **universe_file_source_labels(),
 }
 
 ML_TRAIN_SYMBOL_SOURCE_TO_CLI = {
     "stock-bars-daily": "stock-bars-daily",
     "tradable-universe": "tradable-universe",
-    "ticket-recherche": "ticket-recherche",
+    **{source: source for source in UNIVERSE_FILE_SOURCES},
 }
 
 DATA_INTEGRITY_SYMBOL_SOURCE_OPTIONS = (
@@ -284,10 +294,13 @@ def _render_period_sync_block(
         st.caption("Un run de cette étape est déjà actif : le lancement historique attend sa fin.")
 
     current_symbol_source = str(
-        st.session_state.get(symbol_source_key, getattr(options, source_attr, "active_tradable") or "active_tradable")
+        st.session_state.get(
+            symbol_source_key,
+            getattr(options, source_attr, DEFAULT_UNIVERSE_FILE_SOURCE) or DEFAULT_UNIVERSE_FILE_SOURCE,
+        )
     ).strip().lower()
     if current_symbol_source not in DATA_INTEGRITY_SYMBOL_SOURCE_OPTIONS:
-        current_symbol_source = "active_tradable"
+        current_symbol_source = DEFAULT_UNIVERSE_FILE_SOURCE
         st.session_state[symbol_source_key] = current_symbol_source
 
     selected_symbol_source = str(
@@ -1028,10 +1041,13 @@ def _render_ml_scope_block(
         st.caption(f"Un run `{label_prefix}` est déjà actif : le lancement ML ciblé attend la fin de ce run.")
 
     current_source = str(
-        st.session_state.get(selectbox_key, getattr(options, source_attr, "tradable-universe") or "tradable-universe")
+        st.session_state.get(
+            selectbox_key,
+            getattr(options, source_attr, DEFAULT_UNIVERSE_FILE_SOURCE) or DEFAULT_UNIVERSE_FILE_SOURCE,
+        )
     ).strip().lower()
     if current_source not in ML_TRAIN_SYMBOL_SOURCE_OPTIONS:
-        current_source = "tradable-universe"
+        current_source = DEFAULT_UNIVERSE_FILE_SOURCE
         st.session_state[selectbox_key] = current_source
 
     selected_symbol_source = str(

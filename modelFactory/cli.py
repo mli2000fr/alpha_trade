@@ -15,6 +15,7 @@ from uuid import uuid4
 import pandas as pd
 
 from common.utils import configure_root_logging
+from common.universe_files import list_universe_file_sources
 from core.run_summary import attach_schema_version
 from database.connection import get_sqlalchemy_engine
 from modelFactory.data_loader import (
@@ -107,6 +108,7 @@ SYMBOL_SOURCES = (
     "tradable-universe",
     "stock-bars-daily",
     "ticket-recherche",
+    *list_universe_file_sources(),
 )
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 60.0
 _REPORT_DIR = Path("artifacts/rapport_ml")

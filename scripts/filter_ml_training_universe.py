@@ -31,6 +31,7 @@ from sqlalchemy.engine import Engine
 from database.connection import get_sqlalchemy_engine
 from modelFactory.db_registry import load_symbols_for_source
 from modelFactory.liquidity_filter import filter_symbols_by_liquidity
+from common.universe_files import list_universe_file_sources
 
 
 LOGGER = logging.getLogger("filter_ml_training_universe")
@@ -166,7 +167,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--symbol-source",
         default="stock-bars-daily",
-        choices=("stock-bars-daily", "ticket-recherche"),
+        choices=("stock-bars-daily", "ticket-recherche", *list_universe_file_sources()),
     )
     parser.add_argument("--training-start-date", type=_iso_date, required=True)
     parser.add_argument("--training-end-date", type=_iso_date, required=True)

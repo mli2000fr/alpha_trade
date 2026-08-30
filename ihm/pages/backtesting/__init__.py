@@ -16,6 +16,7 @@ from common.capital_presets import (
     load_capital_presets,
     resolve_capital_preset_for_equity,
 )
+from common.universe_files import default_universe_file_source_or
 from ihm.components.db_controls import render_db_connection_form
 from ihm.components.metrics import format_duration_hhmmss
 from ihm.pages import run_page_if_standalone
@@ -835,7 +836,7 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
         {"Paramètre": "chunk_size", "Explication": "Taille des lots symboles pour screener/scanner.", "Défaut": "500"},
         {"Paramètre": "selection_size", "Explication": "Nombre final de candidats retenus par séance.", "Défaut": "100"},
         {"Paramètre": "screener_workers", "Explication": "Nombre de workers ProcessPool pour le screener PIT.", "Défaut": "auto"},
-        {"Paramètre": "symbol_source", "Explication": "Source de l'univers des symboles (tradable-universe, stock-bars-daily, ticket-recherche). Si absent, tous les symboles actifs avec barres daily.", "Défaut": "auto (tous)"},
+        {"Paramètre": "symbol_source", "Explication": "Source de l'univers des symboles (tradable-universe, stock-bars-daily ou fichier de config/univers/). Si absent, tous les symboles actifs avec barres daily.", "Défaut": "auto (tous)"},
     ]
 
 
@@ -2945,15 +2946,15 @@ def _build_backfill_options() -> BackfillScoresHistoryOptions:
         ML_TRAIN_SYMBOL_SOURCE_LABELS,
     )
     if BT_BACKFILL_SYMBOL_SOURCE_KEY not in st.session_state:
-        st.session_state[BT_BACKFILL_SYMBOL_SOURCE_KEY] = "ticket-recherche"
+        st.session_state[BT_BACKFILL_SYMBOL_SOURCE_KEY] = default_universe_file_source_or("tradable-universe")
     symbol_source = st.selectbox(
         "Univers des symboles",
         options=[""] + list(ML_TRAIN_SYMBOL_SOURCE_OPTIONS),
         format_func=lambda v: "🏛️ Tous les symboles actifs (stock_bars_daily + stock_metadata)" if v == "" else ML_TRAIN_SYMBOL_SOURCE_LABELS.get(v, v),
         key=BT_BACKFILL_SYMBOL_SOURCE_KEY,
         help=(
-            "Source de l'univers des symboles à scorer. Par défaut `ticket-recherche` "
-            "(config/ticket_recherche.txt). Choisissez une autre source ou vide "
+            "Source de l'univers des symboles à scorer. Par défaut, le premier fichier de `config/univers/`. "
+            "Choisissez une autre source ou vide "
             "pour utiliser tous les symboles actifs avec barres daily."
         ),
     )
@@ -3267,21 +3268,24 @@ def _build_calibrate_sentiment_options() -> "CalibrateSentimentWeightsOptions":
         )
     with col5:
         # Univers de symboles
+        from ihm.pages.pipeline import ML_TRAIN_SYMBOL_SOURCE_LABELS, ML_TRAIN_SYMBOL_SOURCE_OPTIONS
+
+        _sentiment_sources = ("all", *ML_TRAIN_SYMBOL_SOURCE_OPTIONS)
+        _sentiment_default = default_universe_file_source_or("all")
         sentiment_source = st.selectbox(
             "Univers de symboles",
-            options=("all", "tradable-universe", "stock-bars-daily", "ticket-recherche"),
-            index=("all", "tradable-universe", "stock-bars-daily", "ticket-recherche").index(
-                str(st.session_state.get("bt_calibrate_symbol_source", "all"))
-                if st.session_state.get("bt_calibrate_symbol_source", "all") in ("all", "tradable-universe", "stock-bars-daily", "ticket-recherche")
-                else "all"
+            options=_sentiment_sources,
+            index=_sentiment_sources.index(
+                str(st.session_state.get("bt_calibrate_symbol_source", _sentiment_default))
+                if st.session_state.get("bt_calibrate_symbol_source", _sentiment_default) in _sentiment_sources
+                else _sentiment_default
             ),
             key="bt_calibrate_symbol_source",
             format_func=lambda v: {
                 "all": "Tous les symboles (all-symbols)",
                 "tradable-universe": "Univers tradable PIT canonique",
                 "stock-bars-daily": "Symboles avec barres daily",
-                "ticket-recherche": "Tickets recherche (config/ticket_recherche.txt)",
-            }.get(str(v), str(v)),
+            }.get(str(v), ML_TRAIN_SYMBOL_SOURCE_LABELS.get(str(v), str(v))),
             help="Univers de symboles pour la calibration sentiment.",
         )
 
@@ -3679,21 +3683,24 @@ def _build_walk_forward_sentiment_options() -> "WalkForwardSentimentOptions":
 
     col13, col14, col15 = st.columns(3)
     with col13:
+        from ihm.pages.pipeline import ML_TRAIN_SYMBOL_SOURCE_LABELS, ML_TRAIN_SYMBOL_SOURCE_OPTIONS
+
+        _wfs_sources = ("all", *ML_TRAIN_SYMBOL_SOURCE_OPTIONS)
+        _wfs_default = default_universe_file_source_or("all")
         wfs_source = st.selectbox(
             "Univers de symboles",
-            options=("all", "tradable-universe", "stock-bars-daily", "ticket-recherche"),
-            index=("all", "tradable-universe", "stock-bars-daily", "ticket-recherche").index(
-                str(st.session_state.get("bt_wfs_symbol_source", "all"))
-                if st.session_state.get("bt_wfs_symbol_source", "all") in ("all", "tradable-universe", "stock-bars-daily", "ticket-recherche")
-                else "all"
+            options=_wfs_sources,
+            index=_wfs_sources.index(
+                str(st.session_state.get("bt_wfs_symbol_source", _wfs_default))
+                if st.session_state.get("bt_wfs_symbol_source", _wfs_default) in _wfs_sources
+                else _wfs_default
             ),
             key="bt_wfs_symbol_source",
             format_func=lambda v: {
                 "all": "Tous les symboles (all-symbols)",
                 "tradable-universe": "Univers tradable PIT canonique",
                 "stock-bars-daily": "Symboles avec barres daily",
-                "ticket-recherche": "Tickets recherche (config/ticket_recherche.txt)",
-            }.get(str(v), str(v)),
+            }.get(str(v), ML_TRAIN_SYMBOL_SOURCE_LABELS.get(str(v), str(v))),
             help="Univers de symboles pour le walk-forward sentiment.",
         )
 

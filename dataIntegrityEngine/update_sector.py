@@ -11,6 +11,11 @@ import requests
 
 
 from common.utils import configure_root_logging
+from common.universe_files import (
+	is_universe_file_source,
+	list_universe_file_sources,
+	normalize_universe_file_source,
+)
 from core.run_summary import attach_schema_version, merge_iex_bias_counters
 from database.assets import (
 	count_eligible_symbols_with_stale_market_cap,
@@ -141,7 +146,7 @@ def _resolve_symbol_source(
 
 	Args:
 		source: ``missing-fundamentals`` (défaut), ``stock-bars-daily``,
-		        ``tradable-universe``, ou ``ticket-recherche``.
+		        ``tradable-universe``, ou ``universe-file:<fichier.txt>``.
 		start_date: Requis pour ``tradable-universe`` (YYYY-MM-DD).
 		end_date: Requis pour ``tradable-universe`` (YYYY-MM-DD).
 
@@ -153,13 +158,14 @@ def _resolve_symbol_source(
 
 	engine = _get_engine()
 
-	if source == "ticket-recherche":
-		return load_symbols_for_source(engine, "ticket-recherche")
+	normalized_source = normalize_universe_file_source(source)
+	if is_universe_file_source(normalized_source):
+		return load_symbols_for_source(engine, normalized_source)
 
-	if source == "stock-bars-daily":
+	if normalized_source == "stock-bars-daily":
 		return load_symbols_for_source(engine, "stock-bars-daily")
 
-	if source == "tradable-universe":
+	if normalized_source == "tradable-universe":
 		if not start_date or not end_date:
 			raise ValueError("--start-date et --end-date sont requis pour --symbol-source tradable-universe")
 		try:
@@ -455,14 +461,20 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 	parser.add_argument(
 		"--symbol-source",
 		type=str,
-		choices=("missing-fundamentals", "stock-bars-daily", "tradable-universe", "ticket-recherche"),
+		choices=(
+			"missing-fundamentals",
+			"stock-bars-daily",
+			"tradable-universe",
+			"ticket-recherche",
+			*list_universe_file_sources(),
+		),
 		default="missing-fundamentals",
 		help=(
 			"Source des symboles à traiter. "
 			"missing-fundamentals (défaut) : symboles sans provider_sector ou market_cap obsolète. "
 			"stock-bars-daily : tous les symboles avec OHLCV. "
 			"tradable-universe : univers tradable PIT (requiert --start-date/--end-date). "
-			"ticket-recherche : watchlist config/ticket_recherche.txt."
+			"universe-file:<fichier.txt> : univers découvert dans config/univers/."
 		),
 	)
 	parser.add_argument(

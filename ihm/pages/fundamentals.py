@@ -22,9 +22,29 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from common.universe_files import (
+    default_universe_file_source_or,
+    is_universe_file_source,
+    list_universe_file_sources,
+    universe_file_source_labels,
+)
 from ihm.pages import run_page_if_standalone
 
 ARTIFACTS_DIR = Path(__file__).resolve().parents[2] / "artifacts"
+_FUND_FILE_SOURCES = list_universe_file_sources()
+_FUND_UNIVERSE_OPTIONS = (
+    "stock-bars-daily",
+    "tradable-universe",
+    *_FUND_FILE_SOURCES,
+    "missing-fundamentals",
+)
+_FUND_UNIVERSE_LABELS = {
+    "stock-bars-daily": "Symboles avec OHLCV chargé",
+    "tradable-universe": "Univers tradable PIT",
+    **universe_file_source_labels(),
+    "missing-fundamentals": "Symboles sans fondamentaux (provider_sector ou market_cap manquant)",
+}
+_FUND_DEFAULT_SOURCE = default_universe_file_source_or("tradable-universe")
 
 
 # ── Data loading ──
@@ -189,13 +209,9 @@ def fundamentals_page() -> None:
         st.markdown("##### Univers de symboles")
         universe_mode = st.selectbox(
             "Source des symboles",
-            options=[
-                "stock-bars-daily (symboles avec OHLCV chargé)",
-                "tradable-universe (univers tradable PIT)",
-                "ticket-recherche (watchlist manuelle)",
-                "Symboles sans fondamentaux (provider_sector ou market_cap manquant)",
-            ],
-            index=1,  # défaut : tradable-universe
+            options=_FUND_UNIVERSE_OPTIONS,
+            index=_FUND_UNIVERSE_OPTIONS.index(_FUND_DEFAULT_SOURCE),
+            format_func=lambda value: _FUND_UNIVERSE_LABELS.get(str(value), str(value)),
             key="fund_populate_mode",
             help="Détermine quels symboles seront fetchés. Tous les symboles de la source sont traités.",
         )
@@ -234,17 +250,7 @@ def fundamentals_page() -> None:
 
         # ── Commande CLI équivalente ──
         st.caption("Commande équivalente (copiable pour exécution hors IHM) :")
-        # Mapping IHM -> CLI --symbol-source
-        _MODE_TO_SYMBOL_SOURCE = {
-            "stock-bars-daily": "stock-bars-daily",
-            "tradable-universe": "tradable-universe",
-            "ticket-recherche": "ticket-recherche",
-            "Symboles sans fondamentaux": "missing-fundamentals",
-        }
-        symbol_source = next(
-            (v for k, v in _MODE_TO_SYMBOL_SOURCE.items() if k in universe_mode),
-            "missing-fundamentals",
-        )
+        symbol_source = str(universe_mode)
         cli_cmd = [
             sys.executable,
             "-m",
@@ -274,20 +280,20 @@ def fundamentals_page() -> None:
                     from common.tradable_universe import load_tradable_universe_for_period
                     from database.connection import get_sqlalchemy_engine
 
-                    if "sans fondamentaux" in universe_mode:
+                    if universe_mode == "missing-fundamentals":
                         symbols = get_symbols_missing_fundamentals()
-                    elif "stock-bars-daily" in universe_mode:
+                    elif universe_mode == "stock-bars-daily":
                         from modelFactory.db_registry import load_stock_bars_daily_symbols
                         symbols = load_stock_bars_daily_symbols(get_sqlalchemy_engine())
-                    elif "tradable-universe" in universe_mode:
+                    elif universe_mode == "tradable-universe":
                         symbols = load_tradable_universe_for_period(
                             get_sqlalchemy_engine(),
                             fund_start_date,
                             fund_end_date,
                         )
-                    elif "ticket-recherche" in universe_mode:
+                    elif is_universe_file_source(universe_mode):
                         from modelFactory.db_registry import load_symbols_for_source
-                        symbols = load_symbols_for_source(get_sqlalchemy_engine(), "ticket-recherche")
+                        symbols = load_symbols_for_source(get_sqlalchemy_engine(), universe_mode)
 
 
                     if not symbols:
@@ -510,24 +516,24 @@ def _start_fundamentals_fetch_subprocess(
     if populate_overwrite:
         from modelFactory.db_registry import load_stock_bars_daily_symbols
         symbols = load_stock_bars_daily_symbols(get_sqlalchemy_engine())
-    elif "sans fondamentaux" in universe_mode:
+    elif universe_mode == "missing-fundamentals":
         symbols = get_symbols_missing_fundamentals()
         if not symbols:
             symbols = get_symbols_with_stale_market_cap(max_age_days=30)
         if not symbols:
             symbols = list_eligible_stock_symbols()
-    elif "stock-bars-daily" in universe_mode:
+    elif universe_mode == "stock-bars-daily":
         from modelFactory.db_registry import load_stock_bars_daily_symbols
         symbols = load_stock_bars_daily_symbols(get_sqlalchemy_engine())
-    elif "tradable-universe" in universe_mode:
+    elif universe_mode == "tradable-universe":
         symbols = load_tradable_universe_for_period(
             get_sqlalchemy_engine(),
             fund_start_date,
             fund_end_date,
         )
-    elif "ticket-recherche" in universe_mode:
+    elif is_universe_file_source(universe_mode):
         from modelFactory.db_registry import load_symbols_for_source
-        symbols = load_symbols_for_source(get_sqlalchemy_engine(), "ticket-recherche")
+        symbols = load_symbols_for_source(get_sqlalchemy_engine(), universe_mode)
     else:
         symbols = []
 
@@ -538,16 +544,7 @@ def _start_fundamentals_fetch_subprocess(
     st.session_state["fund_populate_num_symbols"] = len(symbols)
 
     # ── Construction de la commande ──
-    _MODE_TO_SYMBOL_SOURCE = {
-        "stock-bars-daily": "stock-bars-daily",
-        "tradable-universe": "tradable-universe",
-        "ticket-recherche": "ticket-recherche",
-        "Symboles sans fondamentaux": "missing-fundamentals",
-    }
-    symbol_source = next(
-        (v for k, v in _MODE_TO_SYMBOL_SOURCE.items() if k in universe_mode),
-        "missing-fundamentals",
-    )
+    symbol_source = str(universe_mode)
     cmd = [
         sys.executable,
         "-m",

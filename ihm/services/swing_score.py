@@ -29,6 +29,7 @@ from datetime import date
 
 import pandas as pd
 
+from common.universe_files import list_universe_file_sources, universe_file_source_labels
 from ihm.services.db import safe_query
 
 LOGGER = logging.getLogger(__name__)
@@ -358,14 +359,14 @@ UNIVERSE_SYMBOL_SOURCE_OPTIONS = (
     "stock-bars-daily",
     "tradable-universe",
     "tradable-universe-history",
-    "ticket-recherche",
+    *list_universe_file_sources(),
 )
 
 UNIVERSE_SYMBOL_SOURCE_LABELS = {
     "stock-bars-daily": "Symboles avec barres daily (stock_bars_daily)",
     "tradable-universe": "Univers tradable PIT canonique (dernier snapshot)",
     "tradable-universe-history": "Univers tradable PIT — union historique",
-    "ticket-recherche": "Tickets recherche (config/ticket_recherche.txt)",
+    **universe_file_source_labels(),
 }
 
 # Au-delà de ce seuil, l'IHM affiche un avertissement (calcul plus long).

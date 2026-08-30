@@ -14,6 +14,11 @@ from sqlalchemy.engine import Engine
 
 from common.capital_presets import DEFAULT_CAPITAL_PRESET_KEY
 from common.tradable_universe import resolve_universe_asof
+from common.universe_files import (
+    is_universe_file_source,
+    load_universe_file_symbols,
+    normalize_universe_file_source,
+)
 from database.stock_scores import list_scored_symbols as list_stock_score_symbols
 from database.stock_scores import load_score_context as load_stock_score_context
 
@@ -1095,24 +1100,9 @@ def load_stock_scores_all_symbols(engine: Engine) -> list[str]:
     return symbols
 
 
-TICKET_RECHERCHE_PATH = Path("config/ticket_recherche.txt")
-
-
 def _load_ticket_recherche_symbols() -> list[str]:
-    """Charge les symboles depuis ``config/ticket_recherche.txt`` (un par ligne ou séparés par des virgules)."""
-    if not TICKET_RECHERCHE_PATH.exists():
-        raise FileNotFoundError(f"Fichier introuvable : {TICKET_RECHERCHE_PATH}")
-    raw = TICKET_RECHERCHE_PATH.read_text(encoding="utf-8").strip()
-    if not raw:
-        return []
-    # Supporte les deux formats : une ligne avec des virgules, ou un symbole par ligne
-    symbols: list[str] = []
-    for line in raw.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        symbols.extend(s.strip().upper() for s in line.split(",") if s.strip())
-    return sorted(set(symbols))
+    """Compatibilité : ``ticket-recherche`` désigne le premier fichier de ``config/univers``."""
+    return load_universe_file_symbols("ticket-recherche")
 
 
 # ---------------------------------------------------------------------------
@@ -1245,7 +1235,7 @@ def load_symbols_for_source(
     capital_preset_key: str = DEFAULT_CAPITAL_PRESET_KEY,
 ) -> list[str]:
     """Résout l’univers ML demandé via un identifiant de source stable."""
-    normalized_source = str(symbol_source or "tradable-universe").strip().lower()
+    normalized_source = normalize_universe_file_source(symbol_source or "tradable-universe")
     if normalized_source == "tradable-universe":
         if trade_date is None:
             raise ValueError("trade_date est obligatoire pour la source tradable-universe.")
@@ -1256,9 +1246,12 @@ def load_symbols_for_source(
         )
     if normalized_source in {"stock-bars-daily", "stock_bars_daily"}:
         return load_stock_bars_daily_symbols(engine)
-    if normalized_source == "ticket-recherche":
-        return _load_ticket_recherche_symbols()
-    raise ValueError(f"Source ML non admise: {normalized_source}. Utilisez tradable-universe, stock-bars-daily ou ticket-recherche.")
+    if is_universe_file_source(normalized_source):
+        return load_universe_file_symbols(normalized_source)
+    raise ValueError(
+        f"Source ML non admise: {normalized_source}. Utilisez tradable-universe, "
+        "stock-bars-daily ou un fichier de config/univers/."
+    )
 
 
 def load_tradable_universe_symbols(

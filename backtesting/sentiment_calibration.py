@@ -37,17 +37,15 @@ STEP_KEY = "backtesting_sentiment_calibration"
 
 def _resolve_symbol_source(engine: Engine, symbol_source: str) -> list[str]:
     """Résout une source de symboles en liste (cf. modelFactory/db_registry)."""
-    if symbol_source == "ticket-recherche":
-        from modelFactory.db_registry import _load_ticket_recherche_symbols
-        return _load_ticket_recherche_symbols()
-    if symbol_source in ("stock-bars-daily", "stock_bars_daily"):
-        from modelFactory.db_registry import load_stock_bars_daily_symbols
-        return load_stock_bars_daily_symbols(engine)
-    if symbol_source == "tradable-universe":
-        from modelFactory.db_registry import load_tradable_universe_symbols
-        from datetime import date as _date
-        return load_tradable_universe_symbols(engine, trade_date=_date.today())
-    return []
+    from datetime import date as _date
+    from modelFactory.db_registry import load_symbols_for_source
+
+    normalized = str(symbol_source or "").strip().lower()
+    return load_symbols_for_source(
+        engine,
+        normalized,
+        trade_date=_date.today() if normalized == "tradable-universe" else None,
+    )
 
 
 def _normalize_preset_keys(
