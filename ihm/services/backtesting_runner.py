@@ -92,7 +92,8 @@ class BacktestRunOptions:
     # combinent le rang global (batch sélectionné) et proba_extreme (Oracle Extreme,
     # source table oracle_extreme_predictions).
     cascade_rank_mode: Literal[
-        "ml", "random", "oracle", "oracle_filter", "oracle_rerank", "oracle_pool", "extreme_gate"
+        "ml", "random", "oracle", "oracle_filter", "oracle_rerank", "oracle_pool",
+        "extreme_gate", "extreme_gate_directional"
     ] = "ml"
     # Source Oracle Extreme : table oracle_extreme_predictions (filtre batch strict).
     # None = défaut CLI (ml_batch_id si parquet absent).
@@ -102,6 +103,7 @@ class BacktestRunOptions:
     # UNIQUEMENT quand candidats > slots disponibles. Défaut off (gate dur actuel).
     extreme_gate_dip_saturated: bool = False
     extreme_gate_dip_band: float = 0.02
+    extreme_gate_direction_margin: float = 0.02
     score_column: Literal["auto", "final_score_walk_forward", "final_score_sentiment", "final_score"] = "auto"
     walk_forward_artifacts_dir: str | None = None
     disable_walk_forward: bool = False
@@ -295,6 +297,8 @@ def build_backtesting_command(
     if kind == "run":
         if not isinstance(options, BacktestRunOptions):
             raise TypeError("options doit être une instance de BacktestRunOptions pour kind='run'.")
+        if options.no_shorts and options.no_longs:
+            raise ValueError("Long only et Short only ne peuvent pas être activés simultanément.")
         command.extend(["--start", options.start])
         if options.end:
             command.extend(["--end", options.end])
@@ -377,6 +381,11 @@ def build_backtesting_command(
         if options.extreme_gate_dip_saturated:
             command.append("--extreme-gate-dip-saturated")
             command.extend(["--extreme-gate-dip-band", str(float(options.extreme_gate_dip_band or 0.02))])
+        if options.cascade_rank_mode == "extreme_gate_directional":
+            command.extend([
+                "--extreme-gate-direction-margin",
+                str(float(options.extreme_gate_direction_margin)),
+            ])
         if options.use_live_protection_logic:
             command.append("--use-live-protection-logic")
         else:

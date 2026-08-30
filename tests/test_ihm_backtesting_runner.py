@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 
 def test_build_backtesting_run_command_includes_account_constraint_mode():
 	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
@@ -627,6 +629,34 @@ def test_build_backtesting_run_command_dip_flags_omitted_by_default():
     assert "--dip-pct" not in command
     assert "--dip-reclaim-ratio" not in command
     assert "--dip-reclaim-max-wait" not in command
+
+
+def test_build_backtesting_run_command_extreme_gate_directional():
+    from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+    command = build_backtesting_command(
+        "run",
+        BacktestRunOptions(
+            start="2025-01-01",
+            cascade_rank_mode="extreme_gate_directional",
+            extreme_gate_direction_margin=0.05,
+        ),
+    )
+
+    assert command[command.index("--cascade-rank-mode") + 1] == "extreme_gate_directional"
+    assert command[command.index("--extreme-gate-direction-margin") + 1] == "0.05"
+    assert "--no-shorts" not in command
+    assert "--no-longs" not in command
+
+
+def test_build_backtesting_run_command_rejects_both_direction_restrictions():
+    from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+    with pytest.raises(ValueError, match="simultanément"):
+        build_backtesting_command(
+            "run",
+            BacktestRunOptions(start="2025-01-01", no_shorts=True, no_longs=True),
+        )
 
 
 def test_build_backtesting_run_command_dip_enabled_on():

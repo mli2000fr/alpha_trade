@@ -1586,14 +1586,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--cascade-rank-mode",
         type=str,
         default="ml",
-        choices=["ml", "random", "oracle", "oracle_filter", "oracle_rerank", "oracle_pool", "extreme_gate"],
+        choices=["ml", "random", "oracle", "oracle_filter", "oracle_rerank", "oracle_pool", "extreme_gate", "extreme_gate_directional"],
         help="Ablation ML-vs-Random-vs-Oracle : 'ml' = rangs globaux réels (défaut), "
              "'random' = rangs aléatoires (placebo), 'oracle' = P(extreme10) du modèle Oracle Extreme "
              "remplace le rang global (via --oracle-oos-path). Politiques S6.1 : "
              "'oracle_filter' = B25 sélectionne + Oracle filtre la qualité ; "
              "'oracle_rerank' = pool B25 identique + Oracle réordonne (même exposition) ; "
              "'oracle_pool' = pool B25 élargi (--cascade-oracle-pool-pct) + Oracle sélectionne le top P pct. "
-             "'extreme_gate' = gate Extreme LONG-only (Oracle O0, top --extreme-gate-pct, via --oracle-oos-path).",
+             "'extreme_gate' = gate Extreme legacy LONG-only ; "
+             "'extreme_gate_directional' = amplitude Oracle + direction per-symbol LONG/SHORT.",
     )
     run_p.add_argument(
         "--cascade-oracle-filter-pct",
@@ -1630,6 +1631,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="E18 : active la branche SHORT dans extreme_gate (LONG-only par défaut). "
              "SHORT = restants du gate (non-LONG) ∩ short_prob > min_prob. "
              "Réouverture SHORT optionnelle à valider OOS — NO-GO E14/E18 par défaut.",
+    )
+    run_p.add_argument(
+        "--extreme-gate-direction-margin",
+        type=float,
+        default=0.02,
+        help="Marge minimale |proba_long - proba_short| pour extreme_gate_directional (défaut 0.02).",
     )
     run_p.add_argument(
         "--extreme-gate-dip-saturated",
@@ -3416,7 +3423,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
             # Source : table oracle_extreme_predictions (--oracle-batch-id, filtre batch
             # STRICT) OU parquet OOS (--oracle-oos-path, legacy). L'un des deux requis.
             _oracle_rank_map = None
-            _oracle_modes = ("oracle", "oracle_filter", "oracle_rerank", "oracle_pool", "extreme_gate")
+            _oracle_modes = ("oracle", "oracle_filter", "oracle_rerank", "oracle_pool", "extreme_gate", "extreme_gate_directional")
             _rank_mode_eff = str(getattr(args, "cascade_rank_mode", "ml") or "ml").strip().lower()
             # ── Auto-détection Extreme Gate (2026-08-28) ──
             # Un batch oracle-only n'a AUCUN rang global (global_rank_history vide) mais
@@ -3608,6 +3615,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 extreme_gate_pct=getattr(args, "extreme_gate_pct", None),
                 extreme_gate_per_symbol=getattr(args, "extreme_gate_per_symbol", "filter"),
                 extreme_gate_shorts=bool(getattr(args, "extreme_gate_shorts", False)),
+                extreme_gate_direction_margin=float(getattr(args, "extreme_gate_direction_margin", 0.02) or 0.0),
                 extreme_gate_dip_saturated=bool(getattr(args, "extreme_gate_dip_saturated", False)),
                 extreme_gate_dip_band=float(getattr(args, "extreme_gate_dip_band", 0.02) or 0.02),
                 saturation_slots=int(getattr(args, "max_positions", 8) or 8),

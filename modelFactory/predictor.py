@@ -2811,6 +2811,7 @@ def cascade_select(
     extreme_gate_pct: float | None = None,
     extreme_gate_per_symbol: str = "filter",
     extreme_gate_shorts: bool = False,
+    extreme_gate_direction_margin: float = 0.02,
     extreme_gate_dip_saturated: bool = False,
     extreme_gate_dip_band: float = 0.02,
     saturation_slots: int | None = None,
@@ -2859,7 +2860,9 @@ def cascade_select(
     _extreme_gate_cfg = load_extreme_gate_config()
     _extreme_gate_pct = extreme_gate_pct if extreme_gate_pct is not None else float(
         _extreme_gate_cfg["pool_pct"])
-    _mode_extreme_gate = rank_mode == "extreme_gate"
+    _mode_extreme_gate_legacy = rank_mode == "extreme_gate"
+    _mode_extreme_gate_directional = rank_mode == "extreme_gate_directional"
+    _mode_extreme_gate = _mode_extreme_gate_legacy or _mode_extreme_gate_directional
     # E17 : rôle du modèle per-symbol dans la branche extreme_gate.
     #   "filter"    = A actuel : veto long_prob > _min_prob + score = rank × long_prob
     #   "no_filter" = B demi-bypass : pas de veto, score = rank × long_prob
@@ -2868,6 +2871,7 @@ def cascade_select(
     if _eg_ps_mode not in ("filter", "no_filter", "bypass"):
         _eg_ps_mode = "filter"
     _eg_shorts = bool(extreme_gate_shorts)
+    _eg_direction_margin = max(0.0, float(extreme_gate_direction_margin or 0.0))
     # ── Pénalité directionnelle anti-D1 (extreme_gate.penalty_*) ──
     _eg_penalty_enabled = bool(_extreme_gate_cfg.get("penalty_enabled", False))
     _eg_penalty_min_dir = float(_extreme_gate_cfg.get("penalty_min_directional", 0.60))
@@ -3106,10 +3110,28 @@ def cascade_select(
         #   A "filter"    : veto long_prob > _min_prob + score = rank × long_prob (actuel)
         #   B "no_filter" : pas de veto, score = rank × long_prob
         #   C "bypass"    : Oracle pur — per-symbol ignoré, score = rank (percentile O0)
-        # E18 : --extreme-gate-shorts active la branche SHORT symétrique (LONG-only par défaut).
+        # Le mode directionnel choisit explicitement la probabilité la plus forte.
+        # Le mode legacy reste strictement inchangé pour la reproductibilité.
         if _mode_extreme_gate:
             _eg_score: float | None = None
             _eg_dir_signal: float | None = None
+            if _mode_extreme_gate_directional:
+                _eg_pred = per_symbol_preds.get(symbol)
+                if _eg_pred is None:
+                    continue
+                _long_prob = float(_eg_pred.long_prob)
+                _short_prob = float(_eg_pred.short_prob)
+                _direction_margin = abs(_long_prob - _short_prob)
+                if max(_long_prob, _short_prob) <= _min_prob:
+                    continue
+                # Une égalité est ambiguë : aucun biais LONG implicite.
+                if _direction_margin < _eg_direction_margin:
+                    continue
+                if _long_prob > _short_prob:
+                    candidates.append(("LONG", symbol, rank * _long_prob))
+                else:
+                    candidates.append(("SHORT", symbol, rank * _short_prob))
+                continue
             if _eg_ps_mode == "bypass":
                 _eg_score = rank
             else:
@@ -3393,6 +3415,7 @@ def apply_cascade_to_predictions(
     extreme_gate_pct: float | None = None,
     extreme_gate_per_symbol: str = "filter",
     extreme_gate_shorts: bool = False,
+    extreme_gate_direction_margin: float = 0.02,
     extreme_gate_dip_saturated: bool = False,
     extreme_gate_dip_band: float = 0.02,
     saturation_slots: int | None = None,
@@ -3520,7 +3543,9 @@ def apply_cascade_to_predictions(
     _eg_ps_mode = str(extreme_gate_per_symbol or "filter").strip().lower()
     if _eg_ps_mode not in ("filter", "no_filter", "bypass"):
         _eg_ps_mode = "filter"
-    _eg_ps_extreme = str(rank_mode or "ml").strip().lower() == "extreme_gate"
+    _eg_ps_extreme = str(rank_mode or "ml").strip().lower() in (
+        "extreme_gate", "extreme_gate_directional"
+    )
     _eg_ps_bypass = _eg_ps_extreme and _eg_ps_mode == "bypass"
     _eg_shorts = bool(extreme_gate_shorts)
 
@@ -3577,6 +3602,7 @@ def apply_cascade_to_predictions(
             extreme_gate_pct=extreme_gate_pct,
             extreme_gate_per_symbol=_eg_ps_mode,
             extreme_gate_shorts=_eg_shorts,
+            extreme_gate_direction_margin=extreme_gate_direction_margin,
             extreme_gate_dip_saturated=extreme_gate_dip_saturated,
             extreme_gate_dip_band=extreme_gate_dip_band,
             saturation_slots=saturation_slots,

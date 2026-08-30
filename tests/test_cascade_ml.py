@@ -256,6 +256,56 @@ class TestCascadeSelect:
                                     rank_mode="extreme_gate", oracle_rank_map=None)
         assert result == []
 
+    def test_extreme_gate_directional_chooses_strongest_side(self):
+        """Le nouveau mode choisit le côté le plus probable, sans priorité LONG."""
+        preds = {
+            "LONGER": CascadePrediction(symbol="LONGER", long_prob=0.72, short_prob=0.18),
+            "SHORTER": CascadePrediction(symbol="SHORTER", long_prob=0.61, short_prob=0.78),
+            "OUT": CascadePrediction(symbol="OUT", long_prob=0.90, short_prob=0.05),
+        }
+        oracle_map = {"2026-01-15": {"LONGER": 0.90, "SHORTER": 0.80, "OUT": 0.10}}
+        with patch("modelFactory.predictor.load_cascade_config",
+                   return_value={"top_pct": 0.20, "min_prob": 0.55}):
+            result = cascade_select(
+                "2026-01-15", "batch-x", preds,
+                rank_mode="extreme_gate_directional",
+                oracle_rank_map=oracle_map,
+                extreme_gate_pct=0.50,
+                extreme_gate_direction_margin=0.02,
+            )
+        assert [(side, symbol) for side, symbol, _ in result] == [
+            ("LONG", "LONGER"), ("SHORT", "SHORTER")
+        ]
+
+    def test_extreme_gate_directional_rejects_ambiguous_direction(self):
+        preds = {
+            "AMB": CascadePrediction(symbol="AMB", long_prob=0.61, short_prob=0.60),
+        }
+        oracle_map = {"2026-01-15": {"AMB": 0.99}}
+        with patch("modelFactory.predictor.load_cascade_config",
+                   return_value={"top_pct": 0.20, "min_prob": 0.55}):
+            result = cascade_select(
+                "2026-01-15", "batch-x", preds,
+                rank_mode="extreme_gate_directional",
+                oracle_rank_map=oracle_map,
+                extreme_gate_pct=1.0,
+                extreme_gate_direction_margin=0.02,
+            )
+        assert result == []
+
+    def test_extreme_gate_legacy_does_not_change_when_short_is_stronger(self):
+        """Non-régression : le mode historique conserve sa priorité LONG."""
+        preds = {"S": CascadePrediction(symbol="S", long_prob=0.60, short_prob=0.90)}
+        oracle_map = {"2026-01-15": {"S": 0.99}}
+        with patch("modelFactory.predictor.load_cascade_config",
+                   return_value={"top_pct": 0.20, "min_prob": 0.55}):
+            result = cascade_select(
+                "2026-01-15", "batch-x", preds,
+                rank_mode="extreme_gate", oracle_rank_map=oracle_map,
+                extreme_gate_pct=1.0, extreme_gate_shorts=True,
+            )
+        assert result[0][0] == "LONG"
+
     def test_compute_extreme_gate_pit(self):
         """compute_extreme_gate : percentile cross-sectionnel PAR DATE, aucun lookahead."""
         from modelFactory.oracle.extreme_gate import compute_extreme_gate

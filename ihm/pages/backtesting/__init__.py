@@ -1883,7 +1883,7 @@ def _build_run_options() -> BacktestRunOptions:
     with dir_col1:
         no_shorts = st.checkbox(
             "Long only (--no-shorts)",
-            value=bool(st.session_state.get("bt_run_no_shorts", True)),
+            value=bool(st.session_state.get("bt_run_no_shorts", False)),
             key="bt_run_no_shorts",
             help="Ne trade que des positions LONG : ignore les signaux short. Équivalent CLI --no-shorts.",
         )
@@ -2549,6 +2549,7 @@ def _build_run_options() -> BacktestRunOptions:
         "oracle_pool": "🧪 Pool Global Rank élargi → Oracle sélectionne le top % (S6.1-C)",
         "oracle_rerank": "🧪 Pool Global Rank → Oracle réordonne (S6.1-D)",
         "extreme_gate": "🚪 Extreme Gate : Oracle seul, LONG-only, top 20% (E6-E13)",
+        "extreme_gate_directional": "🧭 Extreme Gate directionnel : Oracle amplitude + Per-Symbol LONG/SHORT",
         "random": "🎲 Rangs aléatoires (placebo)",
     }
     _cascade_rank_mode = st.selectbox(
@@ -2564,7 +2565,7 @@ def _build_run_options() -> BacktestRunOptions:
         help="Comment le rang global (Global Ranking) et la proba_extreme (Oracle Extreme) sont combinés.",
     )
     oracle_batch_id: str | None = None
-    if _cascade_rank_mode in ("oracle", "oracle_filter", "oracle_rerank", "oracle_pool", "extreme_gate"):
+    if _cascade_rank_mode in ("oracle", "oracle_filter", "oracle_rerank", "oracle_pool", "extreme_gate", "extreme_gate_directional"):
         oracle_batches = get_oracle_prediction_batches()
         _oracle_batch_labels: dict[str, str | None] = {"— (défaut : campagne ML)": None}
         if not oracle_batches.empty:
@@ -2592,7 +2593,19 @@ def _build_run_options() -> BacktestRunOptions:
     # ── Priorité N4X2 jours saturés (recherche E, extreme_gate uniquement) ──
     extreme_gate_dip_saturated = bool(st.session_state.get("bt_run_extreme_gate_dip_saturated", False))
     extreme_gate_dip_band = float(st.session_state.get("bt_run_extreme_gate_dip_band", 0.02) or 0.02)
-    if _cascade_rank_mode == "extreme_gate":
+    extreme_gate_direction_margin = float(st.session_state.get("bt_run_extreme_gate_direction_margin", 0.02) or 0.0)
+    if _cascade_rank_mode == "extreme_gate_directional":
+        extreme_gate_direction_margin = float(st.number_input(
+            "Marge directionnelle minimale |P(long) − P(short)|",
+            min_value=0.0,
+            max_value=1.0,
+            value=extreme_gate_direction_margin,
+            step=0.01,
+            format="%.2f",
+            key="bt_run_extreme_gate_direction_margin",
+            help="Écarte les candidats dont les probabilités LONG et SHORT sont trop proches. Défaut : 0,02.",
+        ))
+    if _cascade_rank_mode in ("extreme_gate", "extreme_gate_directional"):
         st.markdown("**🥇 Priorité N4X2 jours saturés (recherche)**")
         _eg_sat_c1, _eg_sat_c2 = st.columns(2)
         with _eg_sat_c1:
@@ -2630,6 +2643,7 @@ def _build_run_options() -> BacktestRunOptions:
 - **oracle_pool** (S6.1-C) — pool du rang global **élargi** (top 20%), puis Oracle **sélectionne** le top 10% dedans.
 - **oracle_rerank** (S6.1-D) — pool du rang global identique, Oracle **réordonne** (score = `P_extreme × proba per-symbol`).
 - **extreme_gate** (E6-E13) — Oracle **seul**, **LONG-only**, top 20% du jour par `proba_extreme` (percentile intra-date). Indépendant du rang global.
+- **extreme_gate_directional** — Oracle sélectionne l'amplitude extrême, puis le modèle Per-Symbol choisit **LONG ou SHORT** selon la probabilité directionnelle la plus forte. Le score vaut `percentile Oracle × probabilité directionnelle`.
 - **random** — rangs aléatoires (placebo, isole l'edge du ranking).
 
 🤖 **Auto-détection Extreme Gate** : si le batch sélectionné est **oracle-only** (aucun rang global dans `global_rank_history`, mais des prédictions dans `oracle_extreme_predictions`), le mode cascade passe **automatiquement** en `extreme_gate`, ce batch étant la source oracle. Dans ce cas, pas besoin de sélectionner Extreme Gate ni de renseigner le batch Oracle ci-dessus.
@@ -2784,6 +2798,7 @@ def _build_run_options() -> BacktestRunOptions:
         oracle_batch_id=(oracle_batch_id or None),
         extreme_gate_dip_saturated=bool(extreme_gate_dip_saturated),
         extreme_gate_dip_band=float(extreme_gate_dip_band or 0.02),
+        extreme_gate_direction_margin=float(extreme_gate_direction_margin),
         score_column=cast(Any, score_column),
         walk_forward_artifacts_dir=walk_forward_artifacts_dir.strip() or None,
         disable_walk_forward=bool(st.session_state.get("bt_run_disable_walk_forward", False)),
