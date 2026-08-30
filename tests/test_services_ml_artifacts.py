@@ -3,7 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ihm.services.ml_artifacts import list_ml_artifact_batches, list_ml_artifact_symbols, load_ml_artifact_report
+from ihm.services.ml_artifacts import (
+    build_champion_walk_forward_stability,
+    list_ml_artifact_batches,
+    list_ml_artifact_symbols,
+    load_ml_artifact_report,
+)
 
 
 def test_list_ml_artifact_batches_detects_campaign_directories(tmp_path: Path) -> None:
@@ -177,4 +182,75 @@ def test_load_ml_artifact_report_handles_invalid_or_missing_files(tmp_path: Path
     assert len(report["degraded_reasons"]) == 2
     assert any("JSON invalide" in err for err in report["errors"])
     assert any("Fichier absent" in err for err in report["errors"])
+
+
+def test_champion_walk_forward_stability_uses_selected_model_and_horizon() -> None:
+    def split(index: int, f1_long: float, f1_short: float) -> dict[str, object]:
+        return {
+            "split_index": index,
+            "test_start_date": f"202{index}-01-01",
+            "test_end_date": f"202{index}-06-30",
+            "test_rows": 100,
+            "f1_macro": 0.40,
+            "f1_long": f1_long,
+            "f1_short": f1_short,
+            "f1_flat": 0.20,
+            "true_long_pct": 40.0,
+            "true_short_pct": 35.0,
+        }
+
+    metrics = {
+        # Ce bloc ne doit pas être utilisé car le champion est LightGBM.
+        "walk_forward": {"n_splits": 1, "splits": [split(9, 0.01, 0.01)]},
+        "baseline_lightgbm": {
+            "horizons": {
+                "h10": {"walk_forward": {"n_splits": 1, "splits": [split(8, 0.10, 0.10)]}},
+                "h20": {
+                    "walk_forward": {
+                        "status": "completed",
+                        "n_splits": 3,
+                        "splits": [
+                            split(0, 0.50, 0.50),
+                            split(1, 0.45, 0.10),
+                            split(2, 0.40, 0.45),
+                        ],
+                    }
+                },
+            }
+        },
+    }
+
+    result = build_champion_walk_forward_stability(
+        {"selected_forecast_horizon": 20}, metrics, "lightgbm"
+    )
+
+    assert result["available"] is True
+    assert result["selected_horizon"] == 20
+    assert result["source"] == "baseline_lightgbm.horizons.h20.walk_forward"
+    assert result["evaluated_folds"] == 3
+    assert result["long"]["status"] == "stable"
+    assert result["short"]["status"] == "fragile"
+    assert result["overall_status"] == "long_only_stable"
+    assert list(result["folds_df"]["fold"]) == [0, 1, 2]
+    assert list(result["folds_df"]["support_long"]) == [40, 40, 40]
+
+
+def test_champion_walk_forward_stability_reports_insufficient_folds() -> None:
+    metrics = {
+        "walk_forward": {
+            "n_splits": 2,
+            "splits": [
+                {"split_index": 0, "test_rows": 100, "f1_long": 0.70, "f1_short": 0.60,
+                 "true_long_pct": 40.0, "true_short_pct": 35.0},
+                {"split_index": 1, "test_rows": 100, "f1_long": 0.72, "f1_short": 0.62,
+                 "true_long_pct": 42.0, "true_short_pct": 33.0},
+            ],
+        }
+    }
+
+    result = build_champion_walk_forward_stability({}, metrics, "lstm_attention")
+
+    assert result["long"]["status"] == "insufficient_folds"
+    assert result["short"]["status"] == "insufficient_folds"
+    assert result["overall_status"] == "not_stable"
 
