@@ -1031,13 +1031,10 @@ def _render_delete_batch_button(selected_batch: str, artifacts_dir: Path) -> Non
 
     # P-fix (2026-08-30) : un batch en cours d'entraînement ne doit JAMAIS être
     # supprimé — cohérent avec le nettoyage collectif (list_batches exclut `running`).
+    # NB : PAS d'audit ici (silencieux) — cette branche s'exécute à CHAQUE rendu de
+    # page, pas sur un vrai clic. Journaliser créerait du bruit trompeur. Les vraies
+    # tentatives (delete_batch_rows / cleanup_batches) sont, elles, tracées.
     if batch_status in {"running", "starting"}:
-        # Trace : la page a tenté d'offrir la suppression d'un batch en cours → bloquée.
-        audit_batch_delete_attempt(
-            selected_batch,
-            reason=f"garde-fou: statut `{batch_status}` (running/starting interdit)",
-            source="ml_diagnostics:per_batch_delete_button",
-        )
         st.info(
             f"⏳ Batch `{selected_batch}` en cours d'entraînement (`{batch_status}`) — "
             "suppression bloquée. Arrête le run ou attends sa fin pour le supprimer."
