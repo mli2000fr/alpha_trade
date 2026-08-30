@@ -54,6 +54,18 @@ def test_get_pipeline_steps_contains_expected_keys() -> None:
     ]
 
 
+def test_pipeline_ml_defaults_use_recommended_per_symbol_capacity() -> None:
+    options = PipelineLaunchOptions()
+
+    assert options.ml_max_epochs == 50
+    assert options.ml_patience == 5
+    assert options.ml_sequence_length == 40
+    assert options.ml_batch_size == 32
+    assert options.ml_hidden_size == 128
+    assert options.ml_catboost_depth == 4
+    assert options.ml_catboost_iterations == 300
+
+
 def test_execution_step_depends_on_risk_management_contract_name() -> None:
     execution_step = next(step for step in get_pipeline_steps() if step.key == "execution")
     assert execution_step.deps == "risk_management"
