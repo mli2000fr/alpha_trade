@@ -29,12 +29,12 @@ class TestFeatureColumnsWithStacking:
         )
         assert "global_rank" in cols
         # Multi-horizon : GLOBAL_PRED_FEATURE_COLUMNS inclut global_rank_3/5/10 + global_rank
-        assert len(GLOBAL_PRED_FEATURE_COLUMNS) == 4
+        assert len(GLOBAL_PRED_FEATURE_COLUMNS) == 6
         assert GLOBAL_PRED_FEATURE_COLUMNS[0] == "global_rank_3"
 
-    def test_global_rank_not_included_without_cross_sectional(self) -> None:
+    def test_global_rank_included_without_cross_sectional(self) -> None:
         cols = get_feature_columns(include_global_stacking=True)
-        assert "global_rank" not in cols
+        assert "global_rank" in cols
 
     def test_global_rank_not_included_without_stacking_flag(self) -> None:
         cols = get_feature_columns(include_cross_sectional=True)

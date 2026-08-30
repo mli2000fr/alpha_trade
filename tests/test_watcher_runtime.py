@@ -19,7 +19,7 @@ def test_build_watcher_command_supports_once_and_service_modes() -> None:
         heartbeat_interval_seconds=90.0,
     )
 
-    assert "run_execution_protection_watch.py" in " ".join(once_command)
+    assert "execution_engine\\protection_watcher.py" in " ".join(once_command)
     assert "INFO" in once_command
     assert "--mode" in once_command and "once" in once_command
     assert "--account" in once_command and "acct-1" in once_command

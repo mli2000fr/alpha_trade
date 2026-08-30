@@ -75,6 +75,12 @@ def cleanup_batches(dry_run: bool = False, include_completed: bool = False) -> d
     _unsafe = [b for b in batch_ids if not _is_safe_batch_id(b)]
     if _unsafe:
         LOGGER.warning("cleanup_batches ignore %d batch_id malformé(s) : %s", len(_unsafe), _unsafe)
+        for _bad in _unsafe:
+            audit_batch_delete_attempt(
+                _bad,
+                reason="garde-fou: batch_id malformé (chemin non sûr) → aucun rmtree",
+                source="cleanup_batches:is_safe_batch_id",
+            )
     batch_ids = [b for b in batch_ids if _is_safe_batch_id(b)]
     if not batch_ids:
         return {"deleted_batches": 0, "deleted_db_rows": 0, "deleted_dirs": 0}
@@ -86,7 +92,7 @@ def cleanup_batches(dry_run: bool = False, include_completed: bool = False) -> d
         return {"deleted_batches": len(batch_ids), "deleted_db_rows": 0, "deleted_dirs": 0}
 
     from ihm.services.db import get_engine
-    from modelFactory.db_registry import delete_batch_rows
+    from modelFactory.db_registry import audit_batch_delete, audit_batch_delete_attempt, delete_batch_rows
     engine = get_engine()
 
     total_rows = 0
@@ -105,6 +111,24 @@ def cleanup_batches(dry_run: bool = False, include_completed: bool = False) -> d
     dirs_deleted = 0
     if artifacts_base.exists():
         for bid in batch_ids:
+            # P-fix (2026-08-30) : ne JAMAIS supprimer le dossier d'un batch dont la
+            # suppression DB a échoué. Sinon (pool MySQL saturée / lock → delete_batch_rows
+            # en timeout), on perd les fichiers (modèles entraînés) alors que les lignes DB
+            # restent intactes → état incohérent « dossiers disparus, DB présente » (les 4
+            # batchs [Rank + Oracle] du 29/08 22:52 : 622K global_rank_history + 2M labels
+            # toujours en DB, mais artifacts/models/<id> supprimés).
+            if bid in failed_batches:
+                LOGGER.warning(
+                    "cleanup_batches SKIP suppression répertoire %s (suppression DB en échec)",
+                    bid,
+                )
+                audit_batch_delete_attempt(
+                    bid,
+                    reason="garde-fou: delete_batch_rows en échec → rmtree disque sauté (DB intacte)",
+                    source="cleanup_batches:db_failed_skip",
+                )
+                continue
+            audit_batch_delete(bid, source="cleanup_batches:rmtree")
             batch_dir = artifacts_base / bid
             if batch_dir.exists():
                 shutil.rmtree(batch_dir)

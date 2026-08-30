@@ -402,6 +402,7 @@ class TestExecutor:
             "daytrade_count": 0,
         }
         broker.get_all_positions.return_value = []
+        repo.load_fractionable_asset_map.return_value = {"AAPL": True}
         repo.load_execution_positions.return_value = []
 
         metrics = executor.execute_run(risk_run_id="r1")
@@ -411,18 +412,25 @@ class TestExecutor:
         event_types = [c[0][0]["event_type"] for c in repo.insert_execution_event.call_args_list]
         assert EventType.INTENT_SKIPPED_ACCOUNT_CONSTRAINT in event_types
 
-    def test_margin_account_allows_buying_power_above_cash(self) -> None:
-        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, account_type="margin")
+    def test_margin_account_allows_buying_power_above_cash(self, monkeypatch) -> None:
+        monkeypatch.setattr("common.config_loader.load_config", lambda: {"risk_management": {"prod_exposure_multiplier": 1.0}})
+        cfg = ExecutionConfig(
+            dry_run=False,
+            allow_outside_rth=True,
+            account_type="margin",
+            allow_fractional_shares=True,
+        )
         small_target = replace(_target(), target_shares=0.5, target_notional=75.0)
         executor, repo, broker, _ = _make_executor(cfg, targets=[small_target])
         broker.get_account_snapshot.return_value = {
             "equity": 1_000.0,
             "cash": 100.0,
-            "buying_power": 20_000.0,
+            "buying_power": 1_000.0,
             "non_marginable_buying_power": 100.0,
             "daytrade_count": 0,
         }
         broker.get_all_positions.return_value = []
+        repo.load_fractionable_asset_map.return_value = {"AAPL": True}
         repo.load_execution_positions.return_value = []
 
         metrics = executor.execute_run(risk_run_id="r1")

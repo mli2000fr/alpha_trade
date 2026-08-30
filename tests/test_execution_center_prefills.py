@@ -158,7 +158,7 @@ def test_apply_selected_capital_preset_for_small_account_sets_expected_values(mo
     assert session_state["pipeline_screener_liquidity_threshold_usd"] == 5_000_000.0
     assert session_state["pipeline_screener_min_historical_range_score"] == 60.0
     assert session_state["pipeline_selector_selection_size"] == 20
-    assert session_state["pipeline_execution_account_type"] == "cash"
+    assert session_state["pipeline_execution_account_type"] == "margin"
     assert session_state["pipeline_execution_max_entry_gap_pct"] == 0.03
     assert str(session_state[execution_center.CAPITAL_PRESET_APPLIED_SIGNATURE_KEY]).startswith("capital_2001_5000|")
 

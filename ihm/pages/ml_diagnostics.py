@@ -19,7 +19,7 @@ from ihm.services.db import db_available, safe_query, get_engine
 from sqlalchemy import text
 from ihm.services.ml_artifacts import get_model_artifacts_dir
 from modelFactory.report import generate_batch_report
-from modelFactory.db_registry import delete_batch_rows
+from modelFactory.db_registry import audit_batch_delete, audit_batch_delete_attempt, delete_batch_rows
 
 # ── Chargement config (fallback silencieux si absent) ──
 _MIN_RISING_HORIZONS_DEFAULT = 4
@@ -1029,6 +1029,21 @@ def _render_delete_batch_button(selected_batch: str, artifacts_dir: Path) -> Non
             "vérifie qu'il n'est plus utilisé (serving, backtest, comparaison)."
         )
 
+    # P-fix (2026-08-30) : un batch en cours d'entraînement ne doit JAMAIS être
+    # supprimé — cohérent avec le nettoyage collectif (list_batches exclut `running`).
+    if batch_status in {"running", "starting"}:
+        # Trace : la page a tenté d'offrir la suppression d'un batch en cours → bloquée.
+        audit_batch_delete_attempt(
+            selected_batch,
+            reason=f"garde-fou: statut `{batch_status}` (running/starting interdit)",
+            source="ml_diagnostics:per_batch_delete_button",
+        )
+        st.info(
+            f"⏳ Batch `{selected_batch}` en cours d'entraînement (`{batch_status}`) — "
+            "suppression bloquée. Arrête le run ou attends sa fin pour le supprimer."
+        )
+        return
+
     confirm_key = f"ml_diag_confirm_delete_batch_{selected_batch}"
     if confirm_key not in st.session_state:
         st.session_state[confirm_key] = False
@@ -1069,6 +1084,12 @@ def _render_delete_batch_button(selected_batch: str, artifacts_dir: Path) -> Non
             errors: list[str] = []
             # ── Garde-fou : batch_id malformé → annuler (protection anti-suppression à tort) ──
             if not _is_safe_batch_id(selected_batch):
+                # Trace : tentative de suppression avec un batch_id malformé.
+                audit_batch_delete_attempt(
+                    selected_batch,
+                    reason="garde-fou: batch_id malformé (chemin non sûr) → suppression annulée",
+                    source="ml_diagnostics:per_batch_delete",
+                )
                 st.error("Batch_id invalide — suppression annulée (protection anti-suppression à tort).")
                 st.session_state.pop(confirm_key, None)
                 return
@@ -1091,9 +1112,11 @@ def _render_delete_batch_button(selected_batch: str, artifacts_dir: Path) -> Non
 
             # 1. Tables enfants liées par run_id → à supprimer AVANT model_training_run
             # 2. Tables avec batch_id direct (model_training_run = parent des tables via run_id)
+            _db_delete_ok = False
             try:
                 deleted = delete_batch_rows(engine, selected_batch)
                 _rows = sum(deleted.values())
+                _db_delete_ok = True
                 st.success(
                     f"✅ {len(deleted)} tables nettoyées en base ({_rows:,} lignes supprimées)"
                 )
@@ -1103,58 +1126,67 @@ def _render_delete_batch_button(selected_batch: str, artifacts_dir: Path) -> Non
                     f"dans ce batch puis réessayez."
                 )
 
-            if artifacts_dir.exists():
+            # P-fix (2026-08-30) : ne supprimer les fichiers QUE si la suppression DB a
+            # réussi. Sinon (pool MySQL saturée → timeout), on perdrait les modèles sur
+            # disque tout en gardant les lignes DB → état incohérent « dossiers disparus,
+            # DB présente ».
+            if artifacts_dir.exists() and _db_delete_ok:
                 try:
+                    audit_batch_delete(selected_batch, source="ml_diagnostics:per_batch_delete")
                     _shutil.rmtree(artifacts_dir)
                     st.success(f"✅ Répertoire supprimé")
                 except Exception as exc:
                     errors.append(f"Disque: {exc}")
 
-            # ── Nettoyage champions Oracle Extreme (dossier dédié, hors artifacts_dir) ──
-            _oracle_champ_dir = artifacts_dir.parent / "oracle" / "champions" / selected_batch
-            if _oracle_champ_dir.exists():
-                try:
-                    _shutil.rmtree(_oracle_champ_dir)
-                    st.success(f"✅ Champions Oracle supprimés")
-                except Exception as exc:
-                    errors.append(f"Disque (champions): {exc}")
-
-            # ── Nettoyage dossiers oracle-wf-* (parquet OOS walk-forward liés au batch) ──
-            # Chaque dossier oracle-wf-<timestamp> porte un tag `batch_id.txt` ; on ne
-            # supprime que ceux dont le tag correspond au batch supprimé.
-            _oracle_root = artifacts_dir.parent / "oracle"
-            if _oracle_root.exists():
-                _removed_wf: list[str] = []
-                for _wf_dir in sorted(_oracle_root.glob("oracle-wf-*")):
-                    _tag = _wf_dir / "batch_id.txt"
-                    _match = False
+            # P-fix (2026-08-30) : si la suppression DB a échoué, on ne supprime PAS non
+            # plus les artefacts annexes (champions Oracle, oracle-wf, rapport_ml) — ils
+            # référencent le batch et resteraient orphelins alors que le batch existe encore.
+            if _db_delete_ok:
+                # ── Nettoyage champions Oracle Extreme (dossier dédié, hors artifacts_dir) ──
+                _oracle_champ_dir = artifacts_dir.parent / "oracle" / "champions" / selected_batch
+                if _oracle_champ_dir.exists():
                     try:
-                        _match = _tag.exists() and _tag.read_text(encoding="utf-8").strip() == selected_batch
-                    except OSError:
-                        _match = False
-                    if _match:
-                        try:
-                            _shutil.rmtree(_wf_dir)
-                            _removed_wf.append(_wf_dir.name)
-                        except OSError as exc:
-                            errors.append(f"oracle-wf: {exc}")
-                if _removed_wf:
-                    st.success("✅ Dossiers oracle-wf supprimés : " + ", ".join(_removed_wf))
+                        _shutil.rmtree(_oracle_champ_dir)
+                        st.success(f"✅ Champions Oracle supprimés")
+                    except Exception as exc:
+                        errors.append(f"Disque (champions): {exc}")
 
-            # ── Nettoyage artifacts/rapport_ml/ (rapport .md + logs .log archivés) ──
-            _safe_r = selected_batch.replace("/", "_").replace("\\", "_")[:100]
-            _rapport_dir = artifacts_dir.parent.parent / "rapport_ml"
-            _removed_report: list[str] = []
-            for _suffix in (".md", ".log"):
-                _rp = _rapport_dir / f"{_safe_r}{_suffix}"
-                try:
-                    if _rp.exists():
-                        _rp.unlink()
-                        _removed_report.append(_rp.name)
-                except OSError as exc:
-                    errors.append(f"rapport_ml: {exc}")
-            if _removed_report:
-                st.success("✅ Rapport/logs archivés supprimés : " + ", ".join(_removed_report))
+                # ── Nettoyage dossiers oracle-wf-* (parquet OOS walk-forward liés au batch) ──
+                # Chaque dossier oracle-wf-<timestamp> porte un tag `batch_id.txt` ; on ne
+                # supprime que ceux dont le tag correspond au batch supprimé.
+                _oracle_root = artifacts_dir.parent / "oracle"
+                if _oracle_root.exists():
+                    _removed_wf: list[str] = []
+                    for _wf_dir in sorted(_oracle_root.glob("oracle-wf-*")):
+                        _tag = _wf_dir / "batch_id.txt"
+                        _match = False
+                        try:
+                            _match = _tag.exists() and _tag.read_text(encoding="utf-8").strip() == selected_batch
+                        except OSError:
+                            _match = False
+                        if _match:
+                            try:
+                                _shutil.rmtree(_wf_dir)
+                                _removed_wf.append(_wf_dir.name)
+                            except OSError as exc:
+                                errors.append(f"oracle-wf: {exc}")
+                    if _removed_wf:
+                        st.success("✅ Dossiers oracle-wf supprimés : " + ", ".join(_removed_wf))
+
+                # ── Nettoyage artifacts/rapport_ml/ (rapport .md + logs .log archivés) ──
+                _safe_r = selected_batch.replace("/", "_").replace("\\", "_")[:100]
+                _rapport_dir = artifacts_dir.parent.parent / "rapport_ml"
+                _removed_report: list[str] = []
+                for _suffix in (".md", ".log"):
+                    _rp = _rapport_dir / f"{_safe_r}{_suffix}"
+                    try:
+                        if _rp.exists():
+                            _rp.unlink()
+                            _removed_report.append(_rp.name)
+                    except OSError as exc:
+                        errors.append(f"rapport_ml: {exc}")
+                if _removed_report:
+                    st.success("✅ Rapport/logs archivés supprimés : " + ", ".join(_removed_report))
 
             if errors:
                 st.error("Erreurs : " + "; ".join(errors))

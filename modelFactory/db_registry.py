@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,45 @@ from database.stock_scores import list_scored_symbols as list_stock_score_symbol
 from database.stock_scores import load_score_context as load_stock_score_context
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _write_batch_delete_audit(event: str, batch_id: str, reason: str, source: str) -> None:
+    """Écrit une ligne d'audit de suppression de batch dans log/batch_delete_audit.log.
+
+    Inclut la pile d'appel + PID : si un batch disparaît (ou une tentative est
+    bloquée) sans action explicite, ce journal identifie le déclencheur exact
+    (page IHM, script, thread). Best-effort : n'échoue jamais.
+    """
+    try:
+        import traceback
+
+        log_path = Path("log") / "batch_delete_audit.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(UTC).replace(tzinfo=None).isoformat(timespec="seconds")
+        stack = "".join(traceback.format_stack()[:-1])
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(
+                f"[{ts}] pid={os.getpid()} {event} batch={batch_id} "
+                f"reason={reason} source={source}\n{stack}---\n"
+            )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def audit_batch_delete(batch_id: str, source: str) -> None:
+    """Trace une suppression EFFECTIVE de batch (DB ou disque)."""
+    _write_batch_delete_audit("DELETE", batch_id, "effective", source)
+
+
+def audit_batch_delete_attempt(batch_id: str, reason: str, source: str = "") -> None:
+    """Trace une TENTATIVE de suppression BLOQUÉE par un garde-fou.
+
+    Même si le garde-fou empêche la suppression, on saura QUI a tenté de
+    supprimer et POURQUOI (raison) : garde `running`/`starting`, batch_id
+    malformé, suppression DB en échec → rmtree disque sauté, etc.
+    """
+    _write_batch_delete_audit("DELETE-ATTEMPT-BLOCKED", batch_id, reason, source)
+
 
 _PREDICTION_REQUIRED_COLUMNS = {
     "symbol",
@@ -544,6 +584,33 @@ def delete_batch_rows(
         # Supprimée à la fin avec les autres tables à batch_id direct.
         "model_serving_batch",
     ]
+
+    # P-fix (2026-08-30) : ne jamais supprimer les lignes d'un batch en cours.
+    # Défense en profondeur (en plus du filtre `list_batches`) : le bouton par-batch
+    # de la page Diagnostic ML peut cibler n'importe quel batch sélectionné, `running`
+    # inclus — on refuse ici pour protéger TOUS les chemins de suppression.
+    try:
+        with engine.connect() as _conn:
+            _st = _conn.execute(
+                text("SELECT status FROM alpha_trade.model_training_batch WHERE batch_id = :bid"),
+                {"bid": batch_id},
+            ).scalar()
+    except Exception:
+        _st = None
+    if _st is not None and str(_st).strip().lower() in {"running", "starting"}:
+        # Trace de la TENTATIVE bloquée (qui a appelé delete_batch_rows sur un batch en cours).
+        audit_batch_delete_attempt(
+            batch_id,
+            reason=f"garde-fou: statut `{_st}` (running/starting interdit)",
+            source="delete_batch_rows",
+        )
+        raise RuntimeError(
+            f"delete_batch_rows refusé : batch {batch_id} est `{_st}` (en cours) — "
+            "on ne supprime pas un batch qui tourne."
+        )
+
+    # Audit : toute suppression DB de batch est tracée (pile d'appel + PID).
+    audit_batch_delete(batch_id, source="delete_batch_rows")
 
     deleted: dict[str, int] = {}
     last_exc: Exception | None = None

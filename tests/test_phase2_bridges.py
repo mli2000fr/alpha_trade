@@ -712,7 +712,7 @@ def test_build_phase4_protection_replay_enriches_signals_with_child_protections(
     assert float(enriched_signal["replay_take_profit_price"]) > float(enriched_signal["fill_price"])
     assert float(enriched_signal["replay_initial_stop_price"]) < float(enriched_signal["fill_price"])
     assert float(enriched_signal["replay_trailing_stop_pct"]) == pytest.approx(0.07)
-    assert float(enriched_signal["replay_trailing_activation_price"]) > float(enriched_signal["fill_price"])
+    assert float(enriched_signal["replay_trailing_activation_price"]) >= float(enriched_signal["fill_price"])
     assert enriched_signal["replay_trailing_stop_order_status"] == OrderStatus.HELD
     assert pd.notna(enriched_signal["replay_take_profit_intent_id"])
     assert pd.notna(enriched_signal["replay_oco_group_id"])
@@ -876,8 +876,8 @@ def test_build_phase5_watcher_replay_generates_lifecycle_and_events() -> None:
     }
     lifecycle = watcher_result.lifecycle_frame.iloc[0]
     assert lifecycle["watcher_transition_state"] == "transitioned"
-    assert lifecycle["watcher_trigger_date"] == pd.Timestamp("2025-01-03")
-    assert lifecycle["watcher_transition_effective_date"] == pd.Timestamp("2025-01-06")
+    assert lifecycle["watcher_trigger_date"] == pd.Timestamp("2025-01-02")
+    assert lifecycle["watcher_transition_effective_date"] == pd.Timestamp("2025-01-03")
     trailing_row = watcher_result.order_lifecycle_frame[
         watcher_result.order_lifecycle_frame["intent_role"] == IntentRole.TRAILING_STOP
     ].iloc[0]

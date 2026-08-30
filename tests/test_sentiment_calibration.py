@@ -83,7 +83,7 @@ def test_calibrate_uses_custom_dataset_and_exports(tmp_path, monkeypatch) -> Non
     monkeypatch.setattr(
         calibrator,
         "load_dataset",
-        lambda start_date, end_date, horizons=(5, 10, 20), selected_only=True, capital_preset_keys=None: dataset.copy(),
+        lambda start_date, end_date, horizons=(5, 10, 20), selected_only=True, capital_preset_keys=None, **kwargs: dataset.copy(),
     )
 
     result, ranking_df, artifacts = calibrator.calibrate(

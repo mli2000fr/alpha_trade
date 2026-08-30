@@ -206,7 +206,7 @@ def test_all_sql_defined_tables_are_assigned_to_a_functionality_group() -> None:
     }
     # Tables ML/Oracle nouvelles pas encore rattachées dans le registre IHM.
     assert unclassified == {
-        "global_oracle_labels", "global_rank_history", "oracle_extreme_predictions",
+        "analyst_snapshot_collection_run", "global_oracle_labels", "global_rank_history", "oracle_extreme_predictions",
     }
 
 

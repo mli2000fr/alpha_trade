@@ -1278,7 +1278,7 @@ def test_render_ml_predict_scope_block_uses_latest_widget_session_state_for_prev
     assert options.ml_predict_use_historical_range is True
 
 
-def test_render_ml_predict_scope_block_defaults_to_newest_completed_batch(monkeypatch) -> None:
+def test_render_ml_predict_scope_block_defaults_to_auto_detection(monkeypatch) -> None:
     session_state: dict[str, object] = {}
     launch_calls: list[pipeline.PipelineLaunchOptions] = []
 
@@ -1290,7 +1290,7 @@ def test_render_ml_predict_scope_block_defaults_to_newest_completed_batch(monkey
     monkeypatch.setattr(pipeline.st, "code", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         "ihm.services.queries.safe_query",
-        lambda: pd.DataFrame(
+        lambda *args, **kwargs: pd.DataFrame(
             [
                 {"batch_id": "batch-new", "finished_at": "2026-07-16 12:00:00", "comment": "expert"},
                 {"batch_id": "batch-old", "finished_at": "2026-07-15 12:00:00", "comment": "v1"},
@@ -1331,7 +1331,7 @@ def test_render_ml_predict_scope_block_defaults_to_newest_completed_batch(monkey
     )
 
     assert len(launch_calls) == 1
-    assert launch_calls[0].ml_predict_batch_id == "batch-new"
+    assert launch_calls[0].ml_predict_batch_id is None
 
 
 def test_render_ml_predict_scope_block_displays_manual_command_preview(monkeypatch) -> None:
@@ -1554,6 +1554,7 @@ def test_render_period_sync_block_blocks_invalid_earnings_window(monkeypatch) ->
         pipeline.EARNINGS_HISTORY_START_DATE_KEY: dt_date(2026, 5, 10),
         pipeline.EARNINGS_HISTORY_END_DATE_KEY: dt_date(2026, 5, 1),
         pipeline.EARNINGS_HISTORY_SYMBOL_SOURCE_KEY: "stock_scores_history",
+        pipeline.EARNINGS_HISTORY_PROVIDER_KEY: "finnhub",
     }
     errors: list[str] = []
     launch_calls: list[tuple[str, str, pipeline.PipelineLaunchOptions]] = []
@@ -1899,15 +1900,14 @@ def test_build_watcher_handoff_rows_exposes_post_execution_launch_guidance() -> 
     assert len(rows) >= 4
     assert rows[0]["Mode"] == "Run once (CLI local)"
     assert "juste après l'étape 12" in rows[0]["Quand l'utiliser"].lower()
-    assert "run_execution_protection_watch.py" in rows[0]["Comment lancer"]
+    assert "execution_engine\\protection_watcher.py" in rows[0]["Comment lancer"]
     assert any(row["Mode"] == "Task Scheduler" for row in rows)
 
 
 def test_render_ml_inspection_link_uses_pending_symbol_for_cross_page_navigation(monkeypatch) -> None:
     session_state: dict[str, object] = {}
     monkeypatch.setattr(pipeline.st, "session_state", session_state, raising=False)
-    monkeypatch.setattr(pipeline, "list_ml_artifact_batches", lambda _root: [])
-    monkeypatch.setattr(pipeline, "list_ml_artifact_symbols", lambda _root: ["AAPL", "MSFT"])
+    monkeypatch.setattr(pipeline, "list_ml_artifact_symbols", lambda: ["AAPL", "MSFT"])
     monkeypatch.setattr(pipeline.st, "selectbox", lambda *args, **kwargs: "MSFT")
     monkeypatch.setattr(pipeline.st, "button", lambda *args, **kwargs: True)
     monkeypatch.setattr(pipeline.st, "rerun", lambda: None)
@@ -1919,15 +1919,13 @@ def test_render_ml_inspection_link_uses_pending_symbol_for_cross_page_navigation
     assert "ihm_ml_selected_symbol" not in session_state
 
 
-def test_render_ml_inspection_link_uses_selected_prediction_batch(monkeypatch, tmp_path) -> None:
+def test_render_ml_inspection_link_uses_current_artifact_scope(monkeypatch, tmp_path) -> None:
     session_state: dict[str, object] = {"pipeline_ml_predict_batch_id": "batch-expert"}
     monkeypatch.setattr(pipeline.st, "session_state", session_state, raising=False)
-    monkeypatch.setattr(pipeline, "get_model_artifacts_dir", lambda: tmp_path)
-    monkeypatch.setattr(pipeline, "list_ml_artifact_batches", lambda _root: ["batch-expert", "batch-v1"])
     observed_dirs: list[object] = []
 
-    def list_symbols(artifacts_dir):
-        observed_dirs.append(artifacts_dir)
+    def list_symbols():
+        observed_dirs.append("current")
         return ["AAPL"]
 
     monkeypatch.setattr(pipeline, "list_ml_artifact_symbols", list_symbols)
@@ -1937,8 +1935,7 @@ def test_render_ml_inspection_link_uses_selected_prediction_batch(monkeypatch, t
 
     pipeline._render_ml_inspection_link("ml_predict")
 
-    assert observed_dirs == [tmp_path / "batch-expert"]
-    assert session_state["ihm_ml_selected_artifact_batch"] == "batch-expert"
+    assert observed_dirs == ["current"]
 
 
 def test_build_workflow_scope_help_lines_explains_1_to_12_3_to_12_and_13_14() -> None:

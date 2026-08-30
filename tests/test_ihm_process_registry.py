@@ -60,6 +60,7 @@ def _configure_tmp_storage(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(registry, "HISTORY_INDEX_PATH", history_index)
     registry._ACTIVE_RUNS.clear()
     registry._ACTIVE_WORKFLOWS.clear()
+    monkeypatch.setattr(registry, "_RECOVERY_DONE", False)
 
 
 def _wait_for_final_snapshot(run_id: str, *, attempts: int = 80, delay: float = 0.05) -> dict[str, object] | None:
