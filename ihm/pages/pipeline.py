@@ -17,6 +17,7 @@ from dataIntegrityEngine.sync_latest_quotes import estimate_sync_latest_quotes_c
 from common.tradable_universe import load_tradable_universe_for_period
 from common.universe_files import (
     list_universe_file_sources,
+    normalize_universe_file_source,
     universe_file_source_labels,
 )
 from database.connection import get_sqlalchemy_engine
@@ -112,6 +113,7 @@ from ihm.services.queries import get_execution_live_guard
 
 UNIVERSE_FILE_SOURCES = list_universe_file_sources()
 DEFAULT_UNIVERSE_FILE_SOURCE = UNIVERSE_FILE_SOURCES[0] if UNIVERSE_FILE_SOURCES else "tradable-universe"
+ML_PREDICT_BATCH_SOURCE_SYNC_KEY = "pipeline_ml_predict_source_synced_batch_id"
 ML_TRAIN_SYMBOL_SOURCE_OPTIONS = (
     "stock-bars-daily",
     "tradable-universe",
@@ -1230,11 +1232,12 @@ def _render_ml_predict_scope_block(
     # Tous les batchs complétés (pas de LIMIT : l'utilisateur veut pouvoir
     # rejouer un backtest avec un batch ancien, ex. B25 ou plus vieux).
     _batches_df = safe_query(
-        "SELECT batch_id, comment, started_at FROM alpha_trade.model_training_batch "
+        "SELECT batch_id, comment, symbol_source, started_at FROM alpha_trade.model_training_batch "
         "WHERE status = 'completed' ORDER BY started_at DESC"
     )
     _batch_options: list[tuple[str, str]] = [("", "⚠️ Auto-détection (config.yaml ou dossier artifacts)")]
     _batch_comments: dict[str, str] = {}
+    _batch_symbol_sources: dict[str, str] = {}
     if not _batches_df.empty:
         for _, _row in _batches_df.iterrows():
             _bid = str(_row["batch_id"])
@@ -1246,6 +1249,9 @@ def _render_ml_predict_scope_block(
             _batch_options.append((_bid, _label))
             if _comment:
                 _batch_comments[_bid] = _comment
+            _source = str(_row.get("symbol_source") or "").strip()
+            if _source:
+                _batch_symbol_sources[_bid] = _source
 
     # ── Défaut : backtest_batch_id du config.yaml ──
     _default_batch = ""
@@ -1270,12 +1276,36 @@ def _render_ml_predict_scope_block(
         key="pipeline_ml_predict_batch_id",
         help="Sélectionne le batch dont les modèles entraînés seront utilisés pour générer les prédictions. Laissez vide pour auto-détection (config.yaml ou dossier artifacts).",
     )
+    _batch_source = _batch_symbol_sources.get(str(_selected_batch), "")
+    _normalized_batch_source = (
+        normalize_universe_file_source(_batch_source) if _batch_source else ""
+    )
+    _last_synced_batch = str(st.session_state.get(ML_PREDICT_BATCH_SOURCE_SYNC_KEY, ""))
+    if _selected_batch and _last_synced_batch != str(_selected_batch):
+        if _normalized_batch_source in ML_TRAIN_SYMBOL_SOURCE_OPTIONS:
+            st.session_state["pipeline_ml_predict_symbol_source"] = _normalized_batch_source
+        else:
+            st.session_state["pipeline_ml_predict_symbol_source"] = DEFAULT_UNIVERSE_FILE_SOURCE
+        st.session_state[ML_PREDICT_BATCH_SOURCE_SYNC_KEY] = str(_selected_batch)
+
     if _selected_batch and _selected_batch in _batch_comments:
         st.caption(f"📝 Commentaire batch : {_batch_comments[_selected_batch]}")
     elif _selected_batch:
         st.caption(f"📦 Batch : `{_selected_batch}` (pas de commentaire)")
     else:
         st.caption("⚠️ Aucun batch sélectionné — le système tentera l'auto-détection via config.yaml ou le dossier artifacts.")
+    if _selected_batch and _normalized_batch_source:
+        if _normalized_batch_source in ML_TRAIN_SYMBOL_SOURCE_OPTIONS:
+            st.caption(
+                "🌐 Univers d’entraînement repris par défaut : "
+                f"`{ML_TRAIN_SYMBOL_SOURCE_LABELS.get(_normalized_batch_source, _normalized_batch_source)}`."
+            )
+        else:
+            st.warning(
+                "L’univers d’entraînement enregistré pour ce batch n’est plus disponible : "
+                f"`{_batch_source}`. Le premier fichier disponible est sélectionné par défaut : "
+                f"`{ML_TRAIN_SYMBOL_SOURCE_LABELS.get(DEFAULT_UNIVERSE_FILE_SOURCE, DEFAULT_UNIVERSE_FILE_SOURCE)}`."
+            )
 
     _predict_workers = st.number_input(
         "⚡ Workers parallèles (dates simultanées)",
