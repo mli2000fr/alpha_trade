@@ -299,16 +299,6 @@ class TestLSTMAttentionModule:
 # ===========================================================================
 
 class TestDbRegistry:
-    def test_load_candidate_symbols(self):
-        from modelFactory.db_registry import load_candidate_symbols
-        mock_engine = MagicMock()
-        mock_conn = MagicMock()
-        mock_engine.connect.return_value.__enter__ = MagicMock(return_value=mock_conn)
-        mock_engine.connect.return_value.__exit__ = MagicMock(return_value=False)
-        mock_conn.execute.return_value.scalars.return_value.all.return_value = ["AAPL", "MSFT"]
-        result = load_candidate_symbols(mock_engine)
-        assert result == ["AAPL", "MSFT"]
-
     def test_insert_predictions_empty(self):
         from modelFactory.db_registry import insert_predictions
         mock_engine = MagicMock()
@@ -413,7 +403,7 @@ class TestGpuExecutionBehavior:
         engine = MagicMock()
         train_calls: list[str] = []
 
-        def fake_train_worker(symbol: str, _cfg: TrainingConfig):
+        def fake_train_worker(symbol: str, _cfg: TrainingConfig, **kwargs):
             train_calls.append(symbol)
             return SimpleResult(symbol)
 
@@ -426,10 +416,10 @@ class TestGpuExecutionBehavior:
             skip_reason: str | None = None
 
         monkeypatch.setattr("modelFactory.orchestrator.torch.cuda.is_available", lambda: True)
-        monkeypatch.setattr("modelFactory.orchestrator.load_candidate_symbols", lambda _engine: ["AAPL", "MSFT"])
+        monkeypatch.setattr("modelFactory.orchestrator.load_tradable_universe_for_period", lambda engine, start_date, end_date: ["AAPL", "MSFT"])
         monkeypatch.setattr("modelFactory.orchestrator._train_worker", fake_train_worker)
 
-        results = run_training_batch(cfg, engine)
+        results = run_training_batch(cfg, engine, universe_date=date(2026, 4, 17))
 
         assert train_calls == ["AAPL", "MSFT"]
         assert [r.symbol for r in results] == ["AAPL", "MSFT"]

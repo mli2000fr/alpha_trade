@@ -45,12 +45,14 @@ class PickleableFakeGlobalEstimator:
 		return self
 
 	def predict_proba(self, X):
-		p = np.clip(np.asarray(X["daily_return"], dtype=float) + 0.55, 0.05, 0.95)
+		values = np.asarray(X.iloc[:, 0], dtype=float)
+		p = np.clip(0.5 + 0.1 * np.tanh(values), 0.05, 0.95)
 		return np.column_stack([1.0 - p, p])
 
 
 def _bars(symbol: str, base: float, n: int = 260) -> pd.DataFrame:
-	close = pd.Series(np.linspace(base, base + 40.0, n), dtype=float)
+	steps = np.arange(n, dtype=float)
+	close = pd.Series(base + 5.0 * np.sin(steps * 0.25) + 0.03 * steps, dtype=float)
 	return pd.DataFrame(
 		{
 			"symbol": [symbol] * n,
@@ -84,7 +86,7 @@ def test_train_global_model_returns_metrics_and_artifacts(monkeypatch, tmp_path:
 	)
 
 	cfg = TrainingConfig(
-		data=DataConfig(feature_set="expert", benchmark_symbol="SPY", min_history_days=80),
+		data=DataConfig(feature_set="v1", benchmark_symbol="SPY", min_history_days=80),
 		model=ModelConfig(max_epochs=1),
 		global_model=GlobalModelConfig(enabled=True, model_name="lightgbm", artifact_symbol="__GLOBAL__"),
 		artifacts_dir=tmp_path,
@@ -93,7 +95,7 @@ def test_train_global_model_returns_metrics_and_artifacts(monkeypatch, tmp_path:
 
 	result = train_global_model(["AAPL", "MSFT", "NVDA"], cfg, artifacts_dir=tmp_path, engine=_FakeEngine())
 
-	assert result["status"] == "completed"
+	assert result["status"] == "completed", result
 	assert result["backend_model_name"] == "lightgbm"
 	assert "AAPL" in result["by_symbol"]
 	assert (tmp_path / "__GLOBAL__" / "global_model.pkl").exists()

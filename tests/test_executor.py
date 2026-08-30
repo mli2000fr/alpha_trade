@@ -232,7 +232,7 @@ class TestExecutor:
         executor, repo, broker, _ = _make_executor()
         metrics = executor.execute_run(risk_run_id="r1")
         broker.submit_intent.assert_not_called()
-        assert metrics["submitted"] == 1
+        assert metrics["submitted"] == 1, metrics
         assert repo.upsert_execution_order_request_from_intent.called
         assert repo.snapshot_broker_account.called
 
@@ -401,6 +401,8 @@ class TestExecutor:
             "non_marginable_buying_power": 100.0,
             "daytrade_count": 0,
         }
+        broker.get_all_positions.return_value = []
+        repo.load_execution_positions.return_value = []
 
         metrics = executor.execute_run(risk_run_id="r1")
 
@@ -414,12 +416,14 @@ class TestExecutor:
         small_target = replace(_target(), target_shares=0.5, target_notional=75.0)
         executor, repo, broker, _ = _make_executor(cfg, targets=[small_target])
         broker.get_account_snapshot.return_value = {
-            "equity": 100.0,
+            "equity": 1_000.0,
             "cash": 100.0,
             "buying_power": 20_000.0,
             "non_marginable_buying_power": 100.0,
             "daytrade_count": 0,
         }
+        broker.get_all_positions.return_value = []
+        repo.load_execution_positions.return_value = []
 
         metrics = executor.execute_run(risk_run_id="r1")
 

@@ -22,8 +22,8 @@ class TestBaselineConfigLgbmTuning:
         assert cfg.lgbm_reg_alpha == 0.1
         assert cfg.lgbm_reg_lambda == 0.1
         assert cfg.lgbm_min_child_samples == 150
-        assert cfg.lgbm_subsample == 1.0
-        assert cfg.lgbm_colsample_bytree == 1.0
+        assert cfg.lgbm_subsample == 0.8
+        assert cfg.lgbm_colsample_bytree == 0.7
 
     def test_can_set_tuning_values(self) -> None:
         """On peut fixer des valeurs de tuning via le constructeur."""

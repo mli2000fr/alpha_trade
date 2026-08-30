@@ -290,6 +290,7 @@ def test_alpha_scanner_run_emits_live_progress(monkeypatch) -> None:
     scanner.progress_callback = progress_payloads.append
 
     monkeypatch.setattr(scanner, "preflight_data_quality", lambda: {"status": "ok", "blocking_checks": []})
+    monkeypatch.setattr(scanner, "_capture_preselection_audit", lambda: None)
     monkeypatch.setattr(scanner, "_reset_selector_outputs", lambda: None)
     monkeypatch.setattr(scanner, "_iter_eligible_symbol_chunks", lambda: iter([["AAA", "BBB"], ["CCC"]]))
     monkeypatch.setattr(
@@ -298,6 +299,9 @@ def test_alpha_scanner_run_emits_live_progress(monkeypatch) -> None:
         lambda symbols: pd.DataFrame([{"symbol": symbol, "sector": "Tech", "final_score": 1.0}] for symbol in symbols),
     )
     monkeypatch.setattr(scanner, "rank_and_select", lambda merged_df: merged_df.head(2).copy())
+    monkeypatch.setattr(scanner, "rank_and_select_short", lambda merged_df, selected_df: pd.DataFrame())
+    monkeypatch.setattr(scanner, "_enrich_short_score", lambda merged_df: None)
+    monkeypatch.setattr(scanner, "_apply_factor_neutralization", lambda merged_df: merged_df)
     monkeypatch.setattr(scanner, "update_database", lambda selected_df, scored_df=None: len(selected_df))
     monkeypatch.setattr(_selector_scanner, "ThreadPoolExecutor", _FakeExecutor)
     monkeypatch.setattr(_selector_scanner, "wait", lambda pending, return_when=None: (set(pending), set()))

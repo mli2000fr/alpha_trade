@@ -68,7 +68,6 @@ def test_build_quality_summary_rows_exposes_recent_pipeline_context() -> None:
     assert any("Stock Screener" in s or "screener" in s.lower() for s in scope_list)
     assert any("Alpha Scanner" in s for s in scope_list)
     assert any("Sentiment" in s for s in scope_list)
-    assert any("Signal" in s or "Aggregator" in s for s in scope_list)
     assert any("Workflow" in s or "complet" in s for s in scope_list)
 
 

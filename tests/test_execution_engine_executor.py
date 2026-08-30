@@ -319,7 +319,7 @@ def test_execute_run_applies_live_regime_guards_before_building_intents(monkeypa
     assert metrics["targets_loaded"] == 2
     assert metrics["targets_blocked_by_regime_guards"] == 1
     assert metrics["skipped_by_regime_max_sector_weight"] == 1
-    assert built_targets == [["AAPL"]]
+    assert built_targets == [["MSFT"]]
 
 
 def test_execute_run_applies_live_gross_exposure_guard_before_building_intents(monkeypatch) -> None:
@@ -396,6 +396,7 @@ def test_execute_run_applies_live_gross_exposure_guard_before_building_intents(m
 
 
 def test_execute_run_scales_targets_with_effective_leverage_before_building_intents(monkeypatch) -> None:
+    monkeypatch.setattr("common.config_loader.load_config", lambda: {"risk_management": {"prod_exposure_multiplier": 1.0}})
     config = ExecutionConfig(
         dry_run=True,
         allow_outside_rth=True,

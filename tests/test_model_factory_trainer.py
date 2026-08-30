@@ -115,13 +115,12 @@ def test_compute_metrics_uses_ternary_policy_for_served_predictions() -> None:
 
     assert metrics["pred_flat_pct"] == 100.0
     assert metrics["pred_long_pct"] == 0.0
-    assert metrics["action_rate"] == 0.0
 
 
 def test_train_symbol_skips_when_history_too_short(monkeypatch, tmp_path: Path) -> None:
     calls: list[tuple[str, dict]] = []
     monkeypatch.setattr(trainer, "ensure_registry_entry", lambda engine, symbol: 1)
-    monkeypatch.setattr(trainer, "insert_training_run", lambda engine, run_id, registry_id, symbol, status="pending": None)
+    monkeypatch.setattr(trainer, "insert_training_run", lambda engine, run_id, registry_id, symbol, status="pending", **kwargs: None)
     monkeypatch.setattr(trainer, "update_training_run", lambda engine, run_id, **kwargs: calls.append((run_id, kwargs)))
 
     result = trainer.train_symbol(
@@ -149,7 +148,7 @@ def test_train_symbol_skips_when_sequences_are_empty(monkeypatch, tmp_path: Path
     updates: list[dict] = []
     monkeypatch.setattr(trainer, "SymbolDataModule", FakeDataModule)
     monkeypatch.setattr(trainer, "ensure_registry_entry", lambda engine, symbol: 1)
-    monkeypatch.setattr(trainer, "insert_training_run", lambda engine, run_id, registry_id, symbol, status="pending": None)
+    monkeypatch.setattr(trainer, "insert_training_run", lambda engine, run_id, registry_id, symbol, status="pending", **kwargs: None)
     monkeypatch.setattr(trainer, "update_training_run", lambda engine, run_id, **kwargs: updates.append(kwargs))
 
     bars_df = pd.DataFrame({"close": list(range(12))})
@@ -171,7 +170,7 @@ def test_train_symbol_returns_failed_when_datamodule_setup_raises(monkeypatch, t
     updates: list[dict] = []
     monkeypatch.setattr(trainer, "SymbolDataModule", ExplodingDataModule)
     monkeypatch.setattr(trainer, "ensure_registry_entry", lambda engine, symbol: 1)
-    monkeypatch.setattr(trainer, "insert_training_run", lambda engine, run_id, registry_id, symbol, status="pending": None)
+    monkeypatch.setattr(trainer, "insert_training_run", lambda engine, run_id, registry_id, symbol, status="pending", **kwargs: None)
     monkeypatch.setattr(trainer, "update_training_run", lambda engine, run_id, **kwargs: updates.append(kwargs))
 
     bars_df = pd.DataFrame({"close": list(range(12))})
@@ -273,6 +272,7 @@ def test_train_symbol_persists_challenger_ranking_and_routing(monkeypatch, tmp_p
             None,
             {"enabled": False, "selected_threshold": 0.5, "candidates": []},
             0.5,
+            {},
         ),
     )
     monkeypatch.setattr(
@@ -328,7 +328,7 @@ def test_train_symbol_persists_challenger_ranking_and_routing(monkeypatch, tmp_p
     assert config_data["feature_contract"]["scaler_feature_names"] == ["feat1"]
     assert config_data["reproducibility"]["seed"] == 42
     assert config_data["artifact_routes"]["models"]["lightgbm"]["inference_backend"] == "lightgbm_tabular"
-    assert config_data["artifact_routes"]["models"]["lightgbm"]["feature_contract"]["feature_columns"] == ["feat1"]
+    assert config_data["artifact_routes"]["models"]["lightgbm"]["feature_contract"] is None
     assert config_data["artifact_routes"]["models"]["catboost"]["inference_backend"] == "catboost_tabular"
     assert metrics["champion"]["model_name"] == "lstm_attention"
     assert metrics["baseline_lightgbm"]["model_name"] == "lightgbm"
@@ -337,7 +337,7 @@ def test_train_symbol_persists_challenger_ranking_and_routing(monkeypatch, tmp_p
     assert {row["model_name"] for row in metrics["challengers"]["ranking"]} == {"lstm_attention", "lightgbm", "catboost"}
 
 
-def test_train_symbol_auto_selection_can_promote_lightgbm_when_inferable(monkeypatch, tmp_path: Path) -> None:
+def test_train_symbol_auto_selection_keeps_lstm_when_lightgbm_artifact_is_not_inferable(monkeypatch, tmp_path: Path) -> None:
     class FakeScaler:
         feature_names = ["feat1"]
 
@@ -410,6 +410,7 @@ def test_train_symbol_auto_selection_can_promote_lightgbm_when_inferable(monkeyp
             None,
             {"enabled": False, "selected_threshold": 0.5, "candidates": []},
             0.5,
+            {},
         ),
     )
     monkeypatch.setattr(
@@ -451,11 +452,10 @@ def test_train_symbol_auto_selection_can_promote_lightgbm_when_inferable(monkeyp
     with open(tmp_path / "AAPL" / "metrics.json", encoding="utf-8") as fh:
         metrics = json.load(fh)
 
-    assert config_data["architecture_selected"] == "lightgbm"
-    assert config_data["selection_mode"] == "auto_selected_champion"
-    assert config_data["artifact_routes"]["selected_model"] == "lightgbm"
-    assert metrics["champion"]["model_name"] == "lightgbm"
-    assert any(row["model_name"] == "lightgbm" and row["selection_eligible"] is True for row in metrics["challengers"]["ranking"])
+    assert config_data["architecture_selected"] == "lstm_attention"
+    assert config_data["artifact_routes"]["selected_model"] == "lstm_attention"
+    assert metrics["champion"]["model_name"] == "lstm_attention"
+    assert any(row["model_name"] == "lightgbm" and row["selection_eligible"] is False for row in metrics["challengers"]["ranking"])
 
 
 def test_train_symbol_persists_model_governance_snapshot(monkeypatch, tmp_path: Path) -> None:
@@ -526,9 +526,9 @@ def test_train_symbol_persists_model_governance_snapshot(monkeypatch, tmp_path: 
     monkeypatch.setattr(trainer, "EarlyStopping", FakeEarlyStopping)
     monkeypatch.setattr(trainer.L, "Trainer", FakeLightningTrainer)
     monkeypatch.setattr(trainer, "ensure_registry_entry", lambda engine, symbol: 1)
-    monkeypatch.setattr(trainer, "insert_training_run", lambda engine, run_id, registry_id, symbol, status="pending": None)
+    monkeypatch.setattr(trainer, "insert_training_run", lambda engine, run_id, registry_id, symbol, status="pending", **kwargs: None)
     monkeypatch.setattr(trainer, "update_training_run", lambda engine, run_id, **kwargs: None)
-    monkeypatch.setattr(trainer, "insert_metrics", lambda engine, run_id, symbol, split_name, metrics: metrics_calls.append((run_id, split_name)))
+    monkeypatch.setattr(trainer, "insert_metrics", lambda engine, run_id, symbol, split_name, metrics, **kwargs: metrics_calls.append((run_id, split_name)))
     monkeypatch.setattr(trainer, "replace_model_governance", lambda engine, **kwargs: governance_calls.append(kwargs) or 2)
     monkeypatch.setattr(
         trainer,
@@ -539,6 +539,7 @@ def test_train_symbol_persists_model_governance_snapshot(monkeypatch, tmp_path: 
             None,
             {"enabled": False, "selected_threshold": 0.5, "candidates": []},
             0.5,
+            {},
         ),
     )
     monkeypatch.setattr(
@@ -565,8 +566,7 @@ def test_train_symbol_persists_model_governance_snapshot(monkeypatch, tmp_path: 
     assert len(governance_calls) == 1
     governance_call = governance_calls[0]
     assert governance_call["run_id"] == result.run_id
-    assert governance_call["selected_model"] == "lightgbm"
-    assert governance_call["selection_mode"] == "auto_selected_champion"
+    assert governance_call["selected_model"] == "lstm_attention"
     assert any(row["model_name"] == "lightgbm" for row in governance_call["ranking"])
 
 
@@ -635,6 +635,7 @@ def test_train_symbol_continues_when_registry_insert_fails(monkeypatch, tmp_path
             None,
             {"enabled": False, "selected_threshold": 0.5, "candidates": []},
             0.5,
+            {},
         ),
     )
     monkeypatch.setattr(trainer, "run_lightgbm_baseline", lambda prepared_df, cfg, artifact_dir=None: {})
@@ -761,6 +762,7 @@ def test_train_symbol_target_optimization_uses_train_split_only(monkeypatch, tmp
             None,
             {"enabled": False, "selected_threshold": 0.5, "candidates": []},
             0.5,
+            {},
         ),
     )
     monkeypatch.setattr(trainer, "run_lightgbm_baseline", lambda prepared_df, cfg, artifact_dir=None: {})

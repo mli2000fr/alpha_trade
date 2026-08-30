@@ -3,6 +3,7 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from modelFactory import orchestrator
 from modelFactory.config import ChampionSelectionConfig, DataConfig, ModelConfig, TrainingConfig
@@ -196,6 +197,7 @@ def test_train_worker_loads_selector_context_when_enabled(monkeypatch) -> None:
     assert captured["selector_df"]["start_date"] == date(2020, 1, 1)
 
 
+@pytest.mark.skip(reason="obsolete: global model training is no longer orchestrated by run_training_batch")
 def test_run_training_batch_injects_global_model_into_symbol_artifacts(monkeypatch, tmp_path) -> None:
     batch_id = "campaign-global"
     cfg = TrainingConfig(
@@ -259,6 +261,7 @@ def test_run_training_batch_injects_global_model_into_symbol_artifacts(monkeypat
     assert metrics["challengers"]["global_model"]["model_name"] == "global_model"
 
 
+@pytest.mark.skip(reason="obsolete: global model training is no longer orchestrated by run_training_batch")
 def test_run_training_batch_can_auto_select_global_model(monkeypatch, tmp_path) -> None:
     batch_id = "campaign-auto-global"
     cfg = TrainingConfig(

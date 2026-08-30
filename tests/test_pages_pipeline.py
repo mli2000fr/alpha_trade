@@ -1289,8 +1289,7 @@ def test_render_ml_predict_scope_block_defaults_to_newest_completed_batch(monkey
     monkeypatch.setattr(pipeline.st, "columns", lambda n, **kwargs: [_DummyColumn() for _ in range(n)])
     monkeypatch.setattr(pipeline.st, "code", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        pipeline,
-        "get_completed_ml_training_batches",
+        "ihm.services.queries.safe_query",
         lambda: pd.DataFrame(
             [
                 {"batch_id": "batch-new", "finished_at": "2026-07-16 12:00:00", "comment": "expert"},
@@ -1300,7 +1299,7 @@ def test_render_ml_predict_scope_block_defaults_to_newest_completed_batch(monkey
     )
 
     def selectbox(label, *args, **kwargs):
-        if label == "Batch de modèles à utiliser":
+        if label == "Batch ML à utiliser pour les prédictions BACKTEST":
             return kwargs["options"][0]
         return "tradable-universe"
 
@@ -2124,7 +2123,7 @@ def test_workflow_launcher_starts_with_1_to_12_and_optional_steps_disabled_by_de
     workflow_page._render_workflow_launcher(pipeline.PipelineLaunchOptions(), False, {})
 
     assert captured["start_step"] == "1"
-    assert captured["include_ml_train"] is True
+    assert captured["include_ml_train"] is False
     assert captured["include_corporate_actions_sync"] is False
     assert captured["include_corporate_actions_apply"] is False
 
@@ -2335,10 +2334,10 @@ def test_workflow_launcher_custom_selection_no_longer_displays_7bis_between_7_an
     workflow_page._render_workflow_launcher(pipeline.PipelineLaunchOptions(), False, {})
 
     custom_labels = [label for label in checkbox_labels if label[:1].isdigit()]
-    assert "7. Sentiment Pipeline" in custom_labels
-    assert "8. Signal Aggregator" in custom_labels
-    idx_7 = custom_labels.index("7. Sentiment Pipeline")
-    idx_8 = custom_labels.index("8. Signal Aggregator")
+    assert "8. Sentiment Pipeline" in custom_labels
+    assert "9. Signal Aggregator" in custom_labels
+    idx_7 = custom_labels.index("8. Sentiment Pipeline")
+    idx_8 = custom_labels.index("9. Signal Aggregator")
     assert idx_7 < idx_8
     assert not any(label.startswith("7bis.") for label in custom_labels), custom_labels
 
