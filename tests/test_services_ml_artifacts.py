@@ -11,6 +11,7 @@ from ihm.services.ml_artifacts import (
     list_ml_artifact_batches,
     list_ml_artifact_symbols,
     load_ml_artifact_report,
+    resolve_batch_artifacts_root,
 )
 
 
@@ -83,6 +84,26 @@ def test_list_ml_artifact_symbols_returns_sorted_symbol_directories(tmp_path: Pa
     symbols = list_ml_artifact_symbols(tmp_path)
 
     assert symbols == ["AAPL", "MSFT", "__GLOBAL__"]
+
+
+def test_resolve_batch_artifacts_root_uses_configured_custom_directory(tmp_path: Path) -> None:
+    custom_root = tmp_path / "models_screening"
+    (custom_root / "batch-custom").mkdir(parents=True)
+    metadata = {"cli_options": {"artifacts_dir": str(custom_root)}}
+
+    resolved = resolve_batch_artifacts_root("batch-custom", metadata)
+
+    assert resolved == custom_root.resolve()
+
+
+def test_resolve_batch_artifacts_root_accepts_path_already_scoped_to_batch(tmp_path: Path) -> None:
+    batch_dir = tmp_path / "models_screening" / "batch-custom"
+    batch_dir.mkdir(parents=True)
+    metadata = {"training_config": {"artifacts_dir": str(batch_dir)}}
+
+    resolved = resolve_batch_artifacts_root("batch-custom", metadata)
+
+    assert resolved == batch_dir.parent.resolve()
 
 
 def test_batch_directional_candidate_selection_builds_three_exclusive_lists(tmp_path: Path) -> None:

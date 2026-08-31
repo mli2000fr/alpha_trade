@@ -74,6 +74,65 @@ def _resolve_artifact_batch_dir(batch_id: str, artifacts_dir: Path | None = None
     return root / normalized
 
 
+def resolve_batch_artifacts_root(
+    batch_id: str,
+    metadata: str | dict[str, Any] | None = None,
+) -> Path:
+    """Résout la racine réelle des modèles, y compris pour ``--artifacts-dir``.
+
+    Les batches récents exposent la valeur CLI dans ``metadata_json``. Pour les
+    anciens batches, une découverte bornée à ``PROJECT_ROOT/artifacts/*`` évite
+    de dépendre exclusivement du répertoire historique ``artifacts/models``.
+    """
+    normalized = str(batch_id or "").strip()
+    if not normalized or normalized in {".", ".."} or Path(normalized).name != normalized:
+        raise ValueError("batch_id d'artefacts invalide")
+
+    if isinstance(metadata, str):
+        try:
+            parsed = json.loads(metadata) if metadata.strip() else {}
+        except json.JSONDecodeError:
+            parsed = {}
+    else:
+        parsed = metadata if isinstance(metadata, dict) else {}
+
+    configured_values: list[Any] = []
+    cli_options = parsed.get("cli_options") if isinstance(parsed, dict) else None
+    training_config = parsed.get("training_config") if isinstance(parsed, dict) else None
+    if isinstance(cli_options, dict):
+        configured_values.append(cli_options.get("artifacts_dir"))
+    if isinstance(training_config, dict):
+        configured_values.append(training_config.get("artifacts_dir"))
+
+    candidates: list[Path] = []
+    for raw_value in configured_values:
+        if not isinstance(raw_value, (str, Path)) or not str(raw_value).strip():
+            continue
+        configured = Path(str(raw_value).strip())
+        if not configured.is_absolute():
+            configured = PROJECT_ROOT / configured
+        configured = configured.resolve()
+        candidates.append(configured.parent if configured.name == normalized else configured)
+
+    candidates.append(DEFAULT_MODEL_ARTIFACTS_DIR.resolve())
+    artifacts_parent = (PROJECT_ROOT / "artifacts").resolve()
+    if artifacts_parent.exists():
+        candidates.extend(
+            child.resolve()
+            for child in artifacts_parent.iterdir()
+            if child.is_dir() and (child / normalized).is_dir()
+        )
+
+    seen: set[Path] = set()
+    for root in candidates:
+        if root in seen:
+            continue
+        seen.add(root)
+        if (root / normalized).is_dir():
+            return root
+    return DEFAULT_MODEL_ARTIFACTS_DIR.resolve()
+
+
 def has_per_symbol_artifacts(batch_id: str, artifacts_dir: Path | None = None) -> bool:
     """Indique si le batch contient au moins un manifeste de symbole ordinaire."""
     batch_dir = _resolve_artifact_batch_dir(batch_id, artifacts_dir)

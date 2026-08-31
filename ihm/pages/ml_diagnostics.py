@@ -19,10 +19,12 @@ from ihm.components.db_controls import render_db_unavailable
 from ihm.services.db import db_available, safe_query, get_engine
 from sqlalchemy import text
 from ihm.services.ml_artifacts import (
+    WF_MIN_VALID_FOLDS,
     build_batch_directional_candidate_selection,
     format_directional_candidate_selection,
     get_model_artifacts_dir,
     has_per_symbol_artifacts,
+    resolve_batch_artifacts_root,
 )
 from modelFactory.report import generate_batch_report
 from modelFactory.db_registry import audit_batch_delete, audit_batch_delete_attempt, delete_batch_rows
@@ -45,10 +47,18 @@ def _format_symbol_source(value: object) -> str:
     return source or "—"
 
 
-def _render_directional_candidate_download(batch_id: str, batch_status: str) -> None:
+def _render_directional_candidate_download(
+    batch_id: str,
+    batch_status: str,
+    metadata_json: object = None,
+) -> None:
     """Prépare à la demande puis expose l'univers directionnel téléchargeable."""
     try:
-        available = has_per_symbol_artifacts(batch_id)
+        artifacts_root = resolve_batch_artifacts_root(
+            batch_id,
+            metadata_json if isinstance(metadata_json, (str, dict)) else None,
+        )
+        available = has_per_symbol_artifacts(batch_id, artifacts_root)
     except ValueError:
         available = False
     if not available:
@@ -64,7 +74,9 @@ def _render_directional_candidate_download(batch_id: str, batch_status: str) -> 
     if st.button(prepare_label, key=f"prepare_directional_candidates_{batch_id}"):
         try:
             with st.spinner("Analyse des folds Walk-Forward des champions…"):
-                st.session_state[state_key] = build_batch_directional_candidate_selection(batch_id)
+                st.session_state[state_key] = build_batch_directional_candidate_selection(
+                    batch_id, artifacts_root
+                )
         except Exception as exc:  # noqa: BLE001 — l'IHM doit rester consultable
             st.error(f"Impossible de préparer la sélection : {exc}")
 
@@ -80,6 +92,20 @@ def _render_directional_candidate_download(batch_id: str, batch_status: str) -> 
     c2.metric("LONG uniquement", len(long_only))
     c3.metric("SHORT uniquement", len(short_only))
     c4.metric("LONG + SHORT", len(long_short))
+
+    audit_df = selection.get("audit_df")
+    if int(selection.get("eligible_symbols") or 0) == 0 and isinstance(audit_df, pd.DataFrame) and not audit_df.empty:
+        long_insufficient = int(
+            (pd.to_numeric(audit_df["long_valid_folds"], errors="coerce").fillna(0) < WF_MIN_VALID_FOLDS).sum()
+        )
+        short_insufficient = int(
+            (pd.to_numeric(audit_df["short_valid_folds"], errors="coerce").fillna(0) < WF_MIN_VALID_FOLDS).sum()
+        )
+        st.warning(
+            "Aucun candidat ne satisfait tous les gates. "
+            f"Folds insuffisants (< {WF_MIN_VALID_FOLDS}) : LONG {long_insufficient}/{len(audit_df)}, "
+            f"SHORT {short_insufficient}/{len(audit_df)}. Consultez les règles ci-dessous avant de modifier les seuils."
+        )
 
     if str(batch_status).strip().lower() == "running":
         st.warning(
@@ -97,21 +123,74 @@ def _render_directional_candidate_download(batch_id: str, batch_status: str) -> 
         key=f"download_directional_candidates_{batch_id}",
     )
 
-    with st.expander("Voir les règles et le détail de la sélection", expanded=False):
+    if isinstance(audit_df, pd.DataFrame) and not audit_df.empty:
+        st.markdown("**Détail des candidats retenus**")
+        long_tab, short_tab, both_tab = st.tabs(
+            [
+                f"🟢 LONG uniquement ({len(long_only)})",
+                f"🔴 SHORT uniquement ({len(short_only)})",
+                f"🔵 LONG + SHORT ({len(long_short)})",
+            ]
+        )
+
+        with long_tab:
+            long_df = audit_df[audit_df["classification"] == "LONG_ONLY"].copy()
+            long_df = long_df.sort_values(
+                ["long_f1_median", "long_f1_min", "long_valid_folds"],
+                ascending=[False, False, False],
+            )
+            long_columns = [
+                "symbol", "selected_model", "selected_horizon",
+                "long_valid_folds", "long_f1_median", "long_f1_min",
+                "long_f1_std", "long_pass_rate", "long_support_total",
+            ]
+            if long_df.empty:
+                st.info("Aucun symbole stable uniquement en LONG.")
+            else:
+                st.dataframe(long_df[long_columns], use_container_width=True, hide_index=True)
+
+        with short_tab:
+            short_df = audit_df[audit_df["classification"] == "SHORT_ONLY"].copy()
+            short_df = short_df.sort_values(
+                ["short_f1_median", "short_f1_min", "short_valid_folds"],
+                ascending=[False, False, False],
+            )
+            short_columns = [
+                "symbol", "selected_model", "selected_horizon",
+                "short_valid_folds", "short_f1_median", "short_f1_min",
+                "short_f1_std", "short_pass_rate", "short_support_total",
+            ]
+            if short_df.empty:
+                st.info("Aucun symbole stable uniquement en SHORT.")
+            else:
+                st.dataframe(short_df[short_columns], use_container_width=True, hide_index=True)
+
+        with both_tab:
+            both_df = audit_df[audit_df["classification"] == "LONG_SHORT"].copy()
+            if not both_df.empty:
+                both_df["directional_f1_floor"] = both_df[
+                    ["long_f1_median", "short_f1_median"]
+                ].min(axis=1)
+                both_df = both_df.sort_values(
+                    ["directional_f1_floor", "long_f1_min", "short_f1_min"],
+                    ascending=[False, False, False],
+                )
+            both_columns = [
+                "symbol", "selected_model", "selected_horizon", "directional_f1_floor",
+                "long_valid_folds", "long_f1_median", "long_f1_min", "long_pass_rate", "long_support_total",
+                "short_valid_folds", "short_f1_median", "short_f1_min", "short_pass_rate", "short_support_total",
+            ]
+            if both_df.empty:
+                st.info("Aucun symbole stable simultanément en LONG et SHORT.")
+            else:
+                st.dataframe(both_df[both_columns], use_container_width=True, hide_index=True)
+
+    with st.expander("Voir les règles de sélection", expanded=False):
         st.markdown(
             "Chaque côté est validé indépendamment : au moins 3 folds valides, support réel ≥ 15 par fold, "
             "F1 médian ≥ 0,40, F1 minimum ≥ 0,20 et au moins 60 % des folds avec F1 ≥ 0,35. "
             "Les trois listes du fichier sont exclusives."
         )
-        audit_df = selection.get("audit_df")
-        if isinstance(audit_df, pd.DataFrame) and not audit_df.empty:
-            selected_df = audit_df[audit_df["classification"] != "REJECTED"].copy()
-            display_columns = [
-                "symbol", "selected_model", "selected_horizon", "classification",
-                "long_valid_folds", "long_f1_median", "long_f1_min", "long_pass_rate",
-                "short_valid_folds", "short_f1_median", "short_f1_min", "short_pass_rate",
-            ]
-            st.dataframe(selected_df[display_columns], use_container_width=True, hide_index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -2565,7 +2644,8 @@ def _render_batch_detail(batch: pd.Series) -> None:
     _has_classif = _target_mode in ("binary", "ternary", "swing_cash")
 
     if _target_mode == "ternary":
-        _render_directional_candidate_download(batch_id, _batch_status)
+        _metadata_json = detail_df.iloc[0].get("metadata_json") if not detail_df.empty else None
+        _render_directional_candidate_download(batch_id, _batch_status, _metadata_json)
         st.markdown("")
 
     # ── Horizon selector (avant les métriques) ──

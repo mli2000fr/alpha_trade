@@ -24,7 +24,8 @@ pour LONG uniquement, SHORT uniquement, ou pour les deux côtés.
 3. Dans **Per-Symbol / Per-Sector — Métriques**, ouvrir le bloc
    **Bons candidats per-symbol par direction**.
 4. Cliquer sur **Préparer la sélection**.
-5. Vérifier les compteurs et, si nécessaire, le détail des candidats.
+5. Vérifier les compteurs et les trois tableaux LONG uniquement, SHORT
+   uniquement et LONG+SHORT.
 6. Cliquer sur **Télécharger les bons candidats (.txt)**.
 
 Le calcul n'est pas lancé automatiquement au chargement de la page. Un batch
@@ -33,6 +34,10 @@ interaction Streamlit dégraderait fortement la page.
 
 Si le batch est encore `running`, le résultat est un snapshot des symboles déjà
 matérialisés. Le bouton **Actualiser la sélection** recalcule le snapshot.
+
+Le répertoire d'artefacts n'est pas supposé être toujours `artifacts/models`.
+La page résout d'abord le `--artifacts-dir` conservé dans `metadata_json`, puis
+utilise une découverte bornée sous `artifacts/*` pour les anciens batches.
 
 ## Périmètre exact évalué
 
@@ -158,12 +163,23 @@ LONG_ONLY ∪ SHORT_ONLY ∪ LONG_SHORT
 
 ## Audit disponible dans la page
 
-Le détail affiche notamment :
+Trois onglets présentent les listes exclusives directement dans l'écran. Les
+tableaux LONG et SHORT sont triés par F1 médian du côté concerné, puis par F1
+minimum et nombre de folds valides. Le tableau LONG+SHORT est trié par son
+`directional_f1_floor`, défini comme :
+
+```text
+directional_f1_floor = min(median_f1_long, median_f1_short)
+```
+
+Cette priorité empêche qu'un côté excellent masque un second côté simplement
+acceptable. Les tableaux affichent notamment :
 
 - symbole, champion et horizon sélectionnés ;
 - classification directionnelle ;
 - nombre de folds valides de chaque côté ;
-- médiane, minimum et taux de passage F1 de chaque côté.
+- médiane, minimum, dispersion et taux de passage F1 de chaque côté ;
+- support réel cumulé utilisé par côté.
 
 Le service conserve également dans son DataFrame d'audit la dispersion F1, le
 support total, la source du payload et les raisons compactes de rejet.
@@ -192,4 +208,3 @@ totalement hors sélection reste requise avant une utilisation en production.
 - `modelFactory/tabular_baseline.py` : métriques walk-forward tabulaires ;
 - `modelFactory/trainer.py` : walk-forward LSTM et orchestration multi-horizon ;
 - `modelFactory/db_registry.py` : persistance des métriques agrégées et complètes.
-
