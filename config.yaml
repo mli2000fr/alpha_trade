@@ -474,7 +474,7 @@ eodhd:
 #  (Get-ScheduledTask -TaskName AlphaTrade-EarningsCalendarSync).Triggers | Select-Object StartBoundary
 # ---------------------------------------------------------------------------
 earnings_calendar_sync:
-  run_hours: "23,5"                             # Heures de la journée (0-23) séparées par des virgules : "3" = 3h du matin, "4,9" = 4h et 9h.
+  run_hours: "23"                             # Heures de la journée (0-23) séparées par des virgules : "3" = 3h du matin, "4,9" = 4h et 9h.
   log_file: log/batch/earnings_calendar.txt  # Ligne de statut ajoutée à chaque exécution.
 
 # ---------------------------------------------------------------------------
@@ -507,11 +507,11 @@ analyst_snapshot_collection:
   enabled: false                         # RESEARCH ONLY — aucune exécution PROD.
   provider: yahoo
   universe_name: analyst_research        # Nom de l'univers (analyst_research = liste figée).
-  symbols_file: config/ticket_mid_cap_400.txt
+  symbols_file: config/univers_batch/univers_filtred_tradable.txt
   sleep_seconds: 0.25                    # Throttling entre symboles.
   timeout_seconds: 20                    # Timeout watchdog par symbole.
   max_retries: 2                         # Retries sur TEMPORARY_ERROR / RATE_LIMIT.
-  run_hours: "0,4"                        # Heures de la journée (0-23) heure LOCALE machine. Clôture US 16:00 ET = 22:00 heure de Paris (été comme hiver) → "23" = 1h après clôture US. Ajuster à la timezone de la machine si elle n'est pas à Paris.
+  run_hours: "23"                        # Heures de la journée (0-23) heure LOCALE machine. Clôture US 16:00 ET = 22:00 heure de Paris (été comme hiver) → "23" = 1h après clôture US. Ajuster à la timezone de la machine si elle n'est pas à Paris.
   log_file: log/batch/analyst_snapshots.txt
   # Planification (après clôture US) : tâche Windows dédiée `AlphaTrade-AnalystSnapshot`
   #   powershell -ExecutionPolicy Bypass -File .\scripts\windows\install_analyst_snapshot_task.ps1

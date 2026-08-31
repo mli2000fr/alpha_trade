@@ -76,7 +76,9 @@ DEFAULT_ML_MIN_PRECISION_LONG = 0.55         # plus exigeant que 0.52 backend
 # ---------------------------------------------------------------------------
 DEFAULT_ML_SEQUENCE_LENGTH = 40
 DEFAULT_ML_BATCH_SIZE = 32
-DEFAULT_ML_HIDDEN_SIZE = 256
+# Per-symbol : 128 limite le surapprentissage et le coût sur des historiques
+# généralement courts, tout en conservant une capacité suffisante.
+DEFAULT_ML_HIDDEN_SIZE = 128
 DEFAULT_ML_ARTIFACTS_DIR = "artifacts/models"
 DEFAULT_ML_BENCHMARK_SYMBOL = "SPY"
 DEFAULT_ML_DEFAULT_CHAMPION = "lstm_attention"
@@ -124,7 +126,8 @@ DEFAULT_ML_CALIBRATION_MAX_ITER = 100
 DEFAULT_ML_LGBM_MAX_DEPTH = 5  # 6→5 (Sprint 2026-08-01 v2)
 DEFAULT_ML_LGBM_N_ESTIMATORS = 200
 DEFAULT_ML_LGBM_LEARNING_RATE = 0.03  # 0.05→0.03 (Sprint 2026-08-01)
-DEFAULT_ML_CATBOOST_DEPTH = 6
+# Per-symbol : profondeur volontairement prudente pour les petits échantillons.
+DEFAULT_ML_CATBOOST_DEPTH = 4
 DEFAULT_ML_CATBOOST_ITERATIONS = 300
 DEFAULT_ML_CATBOOST_LEARNING_RATE = 0.03
 DEFAULT_ML_RANKING_TOP_K_FEATURES = 0       # 0 = toutes les features (feature selection désactivée)

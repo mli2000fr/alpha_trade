@@ -205,6 +205,11 @@ $commandArgs = @(
     '--resume'
 )
 
+# P-fix (2026-08-31) : `$captured` initialisé AVANT le try — sous Set-StrictMode, référencer
+# une variable jamais assignée lève « Impossible d'extraire la variable $captured » et bloquait
+# l'envoi de l'email de fin (best-effort). Garantit que le bloc email marche même si le process
+# python n'a jamais pu être lancé (throw → catch).
+$captured = $null
 $exitCode = 0
 $errorMsg = ''
 try {
@@ -215,11 +220,17 @@ try {
         $env:PYTHONIOENCODING = 'utf-8'
         [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
         $OutputEncoding = [System.Text.Encoding]::UTF8
-        $captured = & $resolvedPython @commandArgs 2>&1
+        $captured = @(& $resolvedPython @commandArgs 2>&1)
         $exitCode = $LASTEXITCODE
-        $errorRecords = @($captured | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
-        if ($errorRecords.Count -gt 0) {
-            $errorMsg = (($errorRecords[-1].ToString()) -replace '[\r\n]+', ' ').Trim()
+        # P-fix (2026-08-31) : capturer l'ERREUR RÉELLE. Les stderr python arrivent sous forme
+        # d'ErrorRecord multi-lignes dont .ToString() du premier ne donne que
+        # « Traceback (most recent call last): ». On concatène tout et on prend la DERNIÈRE
+        # ligne non vide = « ExceptionType: message » (ex. FileNotFoundError: ...).
+        $stderrRecords = @($captured | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } | ForEach-Object { $_.ToString() })
+        if ($stderrRecords.Count -gt 0) {
+            $stderrText = $stderrRecords -join "`n"
+            $stderrLines = @($stderrText -split "`r?`n" | Where-Object { $_.Trim() })
+            $errorMsg = (($stderrLines[-1]) -replace '[\r\n]+', ' ').Trim()
         }
     } finally {
         Pop-Location

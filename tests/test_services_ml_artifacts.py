@@ -3,7 +3,61 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ihm.services.ml_artifacts import list_ml_artifact_batches, list_ml_artifact_symbols, load_ml_artifact_report
+from ihm.services.ml_artifacts import (
+    build_batch_directional_candidate_selection,
+    build_champion_walk_forward_stability,
+    format_directional_candidate_selection,
+    has_per_symbol_artifacts,
+    list_ml_artifact_batches,
+    list_ml_artifact_symbols,
+    load_ml_artifact_report,
+    resolve_batch_artifacts_root,
+)
+
+
+def _write_directional_symbol_artifacts(
+    batch_dir: Path,
+    symbol: str,
+    *,
+    long_values: list[float],
+    short_values: list[float],
+) -> None:
+    symbol_dir = batch_dir / symbol
+    symbol_dir.mkdir(parents=True)
+    (symbol_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "selected_forecast_horizon": 20,
+                "selection_mode": "auto_selected_champion",
+                "artifact_routes": {"selected_model": "lightgbm", "models": {}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    splits = [
+        {
+            "split_index": index,
+            "test_rows": 100,
+            "f1_long": f1_long,
+            "f1_short": f1_short,
+            "f1_flat": 0.20,
+            "f1_macro": (f1_long + f1_short + 0.20) / 3,
+            "true_long_pct": 30.0,
+            "true_short_pct": 30.0,
+        }
+        for index, (f1_long, f1_short) in enumerate(zip(long_values, short_values, strict=True))
+    ]
+    (symbol_dir / "metrics.json").write_text(
+        json.dumps(
+            {
+                "champion": {"model_name": "lightgbm"},
+                "baseline_lightgbm": {
+                    "horizons": {"h20": {"walk_forward": {"n_splits": len(splits), "splits": splits}}}
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_list_ml_artifact_batches_detects_campaign_directories(tmp_path: Path) -> None:
@@ -30,6 +84,78 @@ def test_list_ml_artifact_symbols_returns_sorted_symbol_directories(tmp_path: Pa
     symbols = list_ml_artifact_symbols(tmp_path)
 
     assert symbols == ["AAPL", "MSFT", "__GLOBAL__"]
+
+
+def test_resolve_batch_artifacts_root_uses_configured_custom_directory(tmp_path: Path) -> None:
+    custom_root = tmp_path / "models_screening"
+    (custom_root / "batch-custom").mkdir(parents=True)
+    metadata = {"cli_options": {"artifacts_dir": str(custom_root)}}
+
+    resolved = resolve_batch_artifacts_root("batch-custom", metadata)
+
+    assert resolved == custom_root.resolve()
+
+
+def test_resolve_batch_artifacts_root_accepts_path_already_scoped_to_batch(tmp_path: Path) -> None:
+    batch_dir = tmp_path / "models_screening" / "batch-custom"
+    batch_dir.mkdir(parents=True)
+    metadata = {"training_config": {"artifacts_dir": str(batch_dir)}}
+
+    resolved = resolve_batch_artifacts_root("batch-custom", metadata)
+
+    assert resolved == batch_dir.parent.resolve()
+
+
+def test_batch_directional_candidate_selection_builds_three_exclusive_lists(tmp_path: Path) -> None:
+    batch_dir = tmp_path / "batch-1"
+    _write_directional_symbol_artifacts(
+        batch_dir, "BOTH", long_values=[0.50, 0.45, 0.40], short_values=[0.55, 0.45, 0.40]
+    )
+    _write_directional_symbol_artifacts(
+        batch_dir, "LONG", long_values=[0.50, 0.45, 0.40], short_values=[0.10, 0.15, 0.20]
+    )
+    _write_directional_symbol_artifacts(
+        batch_dir, "SHORT", long_values=[0.10, 0.15, 0.20], short_values=[0.50, 0.45, 0.40]
+    )
+    _write_directional_symbol_artifacts(
+        batch_dir, "REJECT", long_values=[0.10, 0.15, 0.20], short_values=[0.10, 0.15, 0.20]
+    )
+    internal = batch_dir / "__GLOBAL__"
+    internal.mkdir()
+    (internal / "config.json").write_text("{}", encoding="utf-8")
+
+    assert has_per_symbol_artifacts("batch-1", tmp_path) is True
+    result = build_batch_directional_candidate_selection("batch-1", tmp_path)
+
+    assert result["scanned_symbols"] == 4
+    assert result["eligible_symbols"] == 3
+    assert result["long_only"] == ["LONG"]
+    assert result["short_only"] == ["SHORT"]
+    assert result["long_short"] == ["BOTH"]
+    audit = result["audit_df"].set_index("symbol")
+    assert audit.loc["BOTH", "selected_model"] == "lightgbm"
+    assert audit.loc["BOTH", "selected_horizon"] == 20
+    assert audit.loc["BOTH", "classification"] == "LONG_SHORT"
+    assert audit.loc["LONG", "classification"] == "LONG_ONLY"
+    assert audit.loc["SHORT", "classification"] == "SHORT_ONLY"
+    assert audit.loc["REJECT", "classification"] == "REJECTED"
+
+
+def test_directional_candidate_file_contains_comma_separated_exclusive_lists() -> None:
+    payload = format_directional_candidate_selection(
+        {
+            "batch_id": "batch-1",
+            "generated_at": "2026-08-31T12:00:00+00:00",
+            "long_only": ["MSFT", "AAPL"],
+            "short_only": ["TSLA"],
+            "long_short": ["NVDA", "AMD"],
+        }
+    )
+
+    assert "[LONG_ONLY]\nAAPL,MSFT" in payload
+    assert "[SHORT_ONLY]\nTSLA" in payload
+    assert "[LONG_SHORT]\nAMD,NVDA" in payload
+    assert "AAPL, MSFT" not in payload
 
 
 def test_load_ml_artifact_report_extracts_champion_routes_and_ranking(tmp_path: Path) -> None:
@@ -177,4 +303,102 @@ def test_load_ml_artifact_report_handles_invalid_or_missing_files(tmp_path: Path
     assert len(report["degraded_reasons"]) == 2
     assert any("JSON invalide" in err for err in report["errors"])
     assert any("Fichier absent" in err for err in report["errors"])
+
+
+def test_champion_walk_forward_stability_uses_selected_model_and_horizon() -> None:
+    def split(index: int, f1_long: float, f1_short: float) -> dict[str, object]:
+        return {
+            "split_index": index,
+            "test_start_date": f"202{index}-01-01",
+            "test_end_date": f"202{index}-06-30",
+            "test_rows": 100,
+            "f1_macro": 0.40,
+            "f1_long": f1_long,
+            "f1_short": f1_short,
+            "f1_flat": 0.20,
+            "true_long_pct": 40.0,
+            "true_short_pct": 35.0,
+        }
+
+    metrics = {
+        # Ce bloc ne doit pas être utilisé car le champion est LightGBM.
+        "walk_forward": {"n_splits": 1, "splits": [split(9, 0.01, 0.01)]},
+        "baseline_lightgbm": {
+            "horizons": {
+                "h10": {"walk_forward": {"n_splits": 1, "splits": [split(8, 0.10, 0.10)]}},
+                "h20": {
+                    "walk_forward": {
+                        "status": "completed",
+                        "n_splits": 3,
+                        "splits": [
+                            split(0, 0.50, 0.50),
+                            split(1, 0.45, 0.10),
+                            split(2, 0.40, 0.45),
+                        ],
+                    }
+                },
+            }
+        },
+    }
+
+    result = build_champion_walk_forward_stability(
+        {"selected_forecast_horizon": 20}, metrics, "lightgbm"
+    )
+
+    assert result["available"] is True
+    assert result["selected_horizon"] == 20
+    assert result["source"] == "baseline_lightgbm.horizons.h20.walk_forward"
+    assert result["evaluated_folds"] == 3
+    assert result["long"]["status"] == "stable"
+    assert result["short"]["status"] == "fragile"
+    assert result["overall_status"] == "long_only_stable"
+    assert list(result["folds_df"]["fold"]) == [0, 1, 2]
+    assert list(result["folds_df"]["support_long"]) == [40, 40, 40]
+
+
+def test_champion_walk_forward_stability_reports_insufficient_folds() -> None:
+    metrics = {
+        "walk_forward": {
+            "n_splits": 2,
+            "splits": [
+                {"split_index": 0, "test_rows": 100, "f1_long": 0.70, "f1_short": 0.60,
+                 "true_long_pct": 40.0, "true_short_pct": 35.0},
+                {"split_index": 1, "test_rows": 100, "f1_long": 0.72, "f1_short": 0.62,
+                 "true_long_pct": 42.0, "true_short_pct": 33.0},
+            ],
+        }
+    }
+
+    result = build_champion_walk_forward_stability({}, metrics, "lstm_attention")
+
+    assert result["long"]["status"] == "insufficient_folds"
+    assert result["short"]["status"] == "insufficient_folds"
+    assert result["overall_status"] == "not_stable"
+
+
+def test_champion_walk_forward_stability_rejects_high_f1_with_low_side_support() -> None:
+    metrics = {
+        "walk_forward": {
+            "n_splits": 3,
+            "splits": [
+                {
+                    "split_index": index,
+                    "test_rows": 20,
+                    "f1_long": 0.90,
+                    "f1_short": 0.90,
+                    "true_long_pct": 20.0,
+                    "true_short_pct": 20.0,
+                }
+                for index in range(3)
+            ],
+        }
+    }
+
+    result = build_champion_walk_forward_stability({}, metrics, "lstm_attention")
+
+    assert list(result["folds_df"]["support_long"]) == [4, 4, 4]
+    assert result["long"]["valid_folds"] == 0
+    assert result["short"]["valid_folds"] == 0
+    assert result["long"]["status"] == "insufficient_folds"
+    assert result["short"]["status"] == "insufficient_folds"
 

@@ -41,3 +41,59 @@ afin de garantie oos et la cohérence des données, les backtest peut etes fait 
 - entre 01/01/2023 et 31/12/2024: utiliser le batch model-factory-20260830074143-272f17
 - entre 01/01/2025 et 31/12/2026: utiliser le batch model-factory-20260830074150-f8144a
 bien respecter ces paliers.
+
+-----------------------------------------
+Pour ta combinaison Oracle + Per-Symbol
+Je prendrais comme première règle de recherche :
+Minimum exploratoire :
+f1_side OOS >= 0,40
+support réel >= 30–50 événements de cette classe
+precision_side supérieure aux baselines
+résultat positif sur plusieurs folds
+
+Très bon candidat :
+f1_side OOS >= 0,45
+aucun fold catastrophique
+precision et rendement conditionnel stables
+Pour chaque signal directionnel :
+si direction prédite = LONG :
+    utiliser f1_long du modèle du symbole
+
+si direction prédite = SHORT :
+    utiliser f1_short du modèle du symbole
+
+Qualité mesurée	Autorisation
+bon f1_long, mauvais f1_short	LONG uniquement
+mauvais f1_long, bon f1_short	SHORT uniquement
+bons dans les deux directions	LONG + SHORT
+mauvais dans les deux	exclu
+métriques insuffisantes	non éligible ou surveillance
+
+
+Mais il faut ajouter deux conditions essentielles :
+support_long >= minimum
+support_short >= minimum
+et une stabilité temporelle :
+plusieurs folds OOS corrects
+pas uniquement une moyenne élevée portée par un seul fold
+
+
+Filtre provisoire raisonnable
+Pour construire l’univers candidat initial :
+LONG éligible :
+f1_long >= 0,40
+support_long suffisant
+au moins plusieurs folds valides
+
+SHORT éligible :
+f1_short >= 0,40
+support_short suffisant
+au moins plusieurs folds valides
+Catégorie renforcée :
+LONG solide  : f1_long  >= 0,50
+SHORT solide : f1_short >= 0,50
+Bidirectionnel solide :
+f1_long >= 0,50
+ET f1_short >= 0,50
+D’après la capture, HAYW H20, ASO H20 et DRVN H20 satisfont déjà cette dernière condition.
+Le tableau confirme donc ton intuition : filtrer uniquement sur f1_macro ferait perdre des modèles directionnellement très intéressants. Pour Extreme Gate directionnel, il faut construire une éligibilité séparée LONG et SHORT, puis utiliser le F1 du côté effectivement choisi.
