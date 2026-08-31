@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,11 @@ WF_PASS_F1 = 0.35
 WF_STABLE_MEDIAN_F1 = 0.40
 WF_STABLE_MIN_F1 = 0.20
 WF_STABLE_PASS_RATE = 0.60
+
+DIRECTIONAL_CLASS_LONG_ONLY = "LONG_ONLY"
+DIRECTIONAL_CLASS_SHORT_ONLY = "SHORT_ONLY"
+DIRECTIONAL_CLASS_LONG_SHORT = "LONG_SHORT"
+DIRECTIONAL_CLASS_REJECTED = "REJECTED"
 
 
 def get_model_artifacts_dir(artifacts_dir: Path | None = None) -> Path:
@@ -57,6 +63,28 @@ def list_ml_artifact_symbols(artifacts_dir: Path | None = None) -> list[str]:
         if (child / "config.json").exists() or (child / "metrics.json").exists():
             symbols.append(child.name)
     return sorted(symbols, key=_symbol_sort_key)
+
+
+def _resolve_artifact_batch_dir(batch_id: str, artifacts_dir: Path | None = None) -> Path:
+    """Résout un batch sous la racine des artefacts sans accepter de traversée."""
+    normalized = str(batch_id or "").strip()
+    if not normalized or normalized in {".", ".."} or Path(normalized).name != normalized:
+        raise ValueError("batch_id d'artefacts invalide")
+    root = get_model_artifacts_dir(artifacts_dir).resolve()
+    return root / normalized
+
+
+def has_per_symbol_artifacts(batch_id: str, artifacts_dir: Path | None = None) -> bool:
+    """Indique si le batch contient au moins un manifeste de symbole ordinaire."""
+    batch_dir = _resolve_artifact_batch_dir(batch_id, artifacts_dir)
+    if not batch_dir.exists() or not batch_dir.is_dir():
+        return False
+    return any(
+        child.is_dir()
+        and not child.name.startswith("_")
+        and ((child / "config.json").exists() or (child / "metrics.json").exists())
+        for child in batch_dir.iterdir()
+    )
 
 
 def _read_json_file(path: Path) -> tuple[dict[str, Any] | None, str | None]:
@@ -336,6 +364,135 @@ def build_champion_walk_forward_stability(
             "stable_pass_rate": WF_STABLE_PASS_RATE,
         },
     }
+
+
+def _directional_selection_reason(side_summary: dict[str, Any]) -> str:
+    """Produit une raison compacte et auditable lorsqu'un côté est rejeté."""
+    if side_summary.get("status") == "stable":
+        return "stable"
+    reasons: list[str] = []
+    valid_folds = int(side_summary.get("valid_folds") or 0)
+    median = _finite_float(side_summary.get("f1_median"))
+    minimum = _finite_float(side_summary.get("f1_min"))
+    pass_rate = _finite_float(side_summary.get("pass_rate"))
+    if valid_folds < WF_MIN_VALID_FOLDS:
+        reasons.append(f"valid_folds<{WF_MIN_VALID_FOLDS}")
+    if median is None or median < WF_STABLE_MEDIAN_F1:
+        reasons.append(f"median_f1<{WF_STABLE_MEDIAN_F1:.2f}")
+    if minimum is None or minimum < WF_STABLE_MIN_F1:
+        reasons.append(f"min_f1<{WF_STABLE_MIN_F1:.2f}")
+    if pass_rate is None or pass_rate < WF_STABLE_PASS_RATE:
+        reasons.append(f"pass_rate<{WF_STABLE_PASS_RATE:.2f}")
+    return ";".join(reasons) or str(side_summary.get("status") or "not_stable")
+
+
+def build_batch_directional_candidate_selection(
+    batch_id: str,
+    artifacts_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Sélectionne les symboles per-symbol stables, indépendamment par côté.
+
+    Seuls le champion et l'horizon sélectionnés dans le manifeste du symbole
+    sont évalués. Les trois listes retournées sont exclusives : LONG_ONLY,
+    SHORT_ONLY et LONG_SHORT.
+    """
+    batch_dir = _resolve_artifact_batch_dir(batch_id, artifacts_dir)
+    symbols = [symbol for symbol in list_ml_artifact_symbols(batch_dir) if not symbol.startswith("_")]
+    rows: list[dict[str, Any]] = []
+
+    for symbol in symbols:
+        report = load_ml_artifact_report(symbol, batch_dir)
+        stability = report.get("walk_forward_stability") or {}
+        long_summary = stability.get("long") or {}
+        short_summary = stability.get("short") or {}
+        eligible_long = long_summary.get("status") == "stable"
+        eligible_short = short_summary.get("status") == "stable"
+        if eligible_long and eligible_short:
+            classification = DIRECTIONAL_CLASS_LONG_SHORT
+        elif eligible_long:
+            classification = DIRECTIONAL_CLASS_LONG_ONLY
+        elif eligible_short:
+            classification = DIRECTIONAL_CLASS_SHORT_ONLY
+        else:
+            classification = DIRECTIONAL_CLASS_REJECTED
+
+        rows.append(
+            {
+                "symbol": symbol,
+                "selected_model": report.get("selected_model"),
+                "selected_horizon": stability.get("selected_horizon"),
+                "selection_mode": report.get("selection_mode"),
+                "classification": classification,
+                "eligible_long": eligible_long,
+                "eligible_short": eligible_short,
+                "long_valid_folds": long_summary.get("valid_folds"),
+                "long_f1_median": long_summary.get("f1_median"),
+                "long_f1_min": long_summary.get("f1_min"),
+                "long_f1_std": long_summary.get("f1_std"),
+                "long_pass_rate": long_summary.get("pass_rate"),
+                "long_support_total": long_summary.get("support_total"),
+                "long_reason": _directional_selection_reason(long_summary),
+                "short_valid_folds": short_summary.get("valid_folds"),
+                "short_f1_median": short_summary.get("f1_median"),
+                "short_f1_min": short_summary.get("f1_min"),
+                "short_f1_std": short_summary.get("f1_std"),
+                "short_pass_rate": short_summary.get("pass_rate"),
+                "short_support_total": short_summary.get("support_total"),
+                "short_reason": _directional_selection_reason(short_summary),
+                "artifact_health": report.get("manifest_health"),
+                "fold_source": stability.get("source"),
+            }
+        )
+
+    audit_df = pd.DataFrame(rows)
+    by_class = {
+        classification: sorted(
+            row["symbol"] for row in rows if row["classification"] == classification
+        )
+        for classification in (
+            DIRECTIONAL_CLASS_LONG_ONLY,
+            DIRECTIONAL_CLASS_SHORT_ONLY,
+            DIRECTIONAL_CLASS_LONG_SHORT,
+        )
+    }
+    return {
+        "batch_id": batch_id,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "scanned_symbols": len(symbols),
+        "eligible_symbols": sum(len(values) for values in by_class.values()),
+        "long_only": by_class[DIRECTIONAL_CLASS_LONG_ONLY],
+        "short_only": by_class[DIRECTIONAL_CLASS_SHORT_ONLY],
+        "long_short": by_class[DIRECTIONAL_CLASS_LONG_SHORT],
+        "audit_df": audit_df,
+    }
+
+
+def format_directional_candidate_selection(selection: dict[str, Any]) -> str:
+    """Formate le fichier texte téléchargeable à trois listes exclusives."""
+    def _symbols(key: str) -> str:
+        values = sorted({str(value).strip() for value in selection.get(key, []) if str(value).strip()})
+        return ",".join(values)
+
+    lines = [
+        "# Candidats directionnels per-symbol",
+        f"# batch_id={selection.get('batch_id', '')}",
+        f"# generated_at={selection.get('generated_at', '')}",
+        "# Listes exclusives; symboles separes par une virgule sans espace.",
+        f"# Gates: support>={WF_MIN_SIDE_SUPPORT}; valid_folds>={WF_MIN_VALID_FOLDS}; "
+        f"median_f1>={WF_STABLE_MEDIAN_F1:.2f}; min_f1>={WF_STABLE_MIN_F1:.2f}; "
+        f"pass_rate(f1>={WF_PASS_F1:.2f})>={WF_STABLE_PASS_RATE:.2f}",
+        "",
+        "[LONG_ONLY]",
+        _symbols("long_only"),
+        "",
+        "[SHORT_ONLY]",
+        _symbols("short_only"),
+        "",
+        "[LONG_SHORT]",
+        _symbols("long_short"),
+        "",
+    ]
+    return "\n".join(lines)
 
 
 def _load_optional_artifact_json(path: Path) -> dict[str, Any]:

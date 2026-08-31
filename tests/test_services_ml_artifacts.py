@@ -4,11 +4,59 @@ import json
 from pathlib import Path
 
 from ihm.services.ml_artifacts import (
+    build_batch_directional_candidate_selection,
     build_champion_walk_forward_stability,
+    format_directional_candidate_selection,
+    has_per_symbol_artifacts,
     list_ml_artifact_batches,
     list_ml_artifact_symbols,
     load_ml_artifact_report,
 )
+
+
+def _write_directional_symbol_artifacts(
+    batch_dir: Path,
+    symbol: str,
+    *,
+    long_values: list[float],
+    short_values: list[float],
+) -> None:
+    symbol_dir = batch_dir / symbol
+    symbol_dir.mkdir(parents=True)
+    (symbol_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "selected_forecast_horizon": 20,
+                "selection_mode": "auto_selected_champion",
+                "artifact_routes": {"selected_model": "lightgbm", "models": {}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    splits = [
+        {
+            "split_index": index,
+            "test_rows": 100,
+            "f1_long": f1_long,
+            "f1_short": f1_short,
+            "f1_flat": 0.20,
+            "f1_macro": (f1_long + f1_short + 0.20) / 3,
+            "true_long_pct": 30.0,
+            "true_short_pct": 30.0,
+        }
+        for index, (f1_long, f1_short) in enumerate(zip(long_values, short_values, strict=True))
+    ]
+    (symbol_dir / "metrics.json").write_text(
+        json.dumps(
+            {
+                "champion": {"model_name": "lightgbm"},
+                "baseline_lightgbm": {
+                    "horizons": {"h20": {"walk_forward": {"n_splits": len(splits), "splits": splits}}}
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_list_ml_artifact_batches_detects_campaign_directories(tmp_path: Path) -> None:
@@ -35,6 +83,58 @@ def test_list_ml_artifact_symbols_returns_sorted_symbol_directories(tmp_path: Pa
     symbols = list_ml_artifact_symbols(tmp_path)
 
     assert symbols == ["AAPL", "MSFT", "__GLOBAL__"]
+
+
+def test_batch_directional_candidate_selection_builds_three_exclusive_lists(tmp_path: Path) -> None:
+    batch_dir = tmp_path / "batch-1"
+    _write_directional_symbol_artifacts(
+        batch_dir, "BOTH", long_values=[0.50, 0.45, 0.40], short_values=[0.55, 0.45, 0.40]
+    )
+    _write_directional_symbol_artifacts(
+        batch_dir, "LONG", long_values=[0.50, 0.45, 0.40], short_values=[0.10, 0.15, 0.20]
+    )
+    _write_directional_symbol_artifacts(
+        batch_dir, "SHORT", long_values=[0.10, 0.15, 0.20], short_values=[0.50, 0.45, 0.40]
+    )
+    _write_directional_symbol_artifacts(
+        batch_dir, "REJECT", long_values=[0.10, 0.15, 0.20], short_values=[0.10, 0.15, 0.20]
+    )
+    internal = batch_dir / "__GLOBAL__"
+    internal.mkdir()
+    (internal / "config.json").write_text("{}", encoding="utf-8")
+
+    assert has_per_symbol_artifacts("batch-1", tmp_path) is True
+    result = build_batch_directional_candidate_selection("batch-1", tmp_path)
+
+    assert result["scanned_symbols"] == 4
+    assert result["eligible_symbols"] == 3
+    assert result["long_only"] == ["LONG"]
+    assert result["short_only"] == ["SHORT"]
+    assert result["long_short"] == ["BOTH"]
+    audit = result["audit_df"].set_index("symbol")
+    assert audit.loc["BOTH", "selected_model"] == "lightgbm"
+    assert audit.loc["BOTH", "selected_horizon"] == 20
+    assert audit.loc["BOTH", "classification"] == "LONG_SHORT"
+    assert audit.loc["LONG", "classification"] == "LONG_ONLY"
+    assert audit.loc["SHORT", "classification"] == "SHORT_ONLY"
+    assert audit.loc["REJECT", "classification"] == "REJECTED"
+
+
+def test_directional_candidate_file_contains_comma_separated_exclusive_lists() -> None:
+    payload = format_directional_candidate_selection(
+        {
+            "batch_id": "batch-1",
+            "generated_at": "2026-08-31T12:00:00+00:00",
+            "long_only": ["MSFT", "AAPL"],
+            "short_only": ["TSLA"],
+            "long_short": ["NVDA", "AMD"],
+        }
+    )
+
+    assert "[LONG_ONLY]\nAAPL,MSFT" in payload
+    assert "[SHORT_ONLY]\nTSLA" in payload
+    assert "[LONG_SHORT]\nAMD,NVDA" in payload
+    assert "AAPL, MSFT" not in payload
 
 
 def test_load_ml_artifact_report_extracts_champion_routes_and_ranking(tmp_path: Path) -> None:
@@ -253,4 +353,31 @@ def test_champion_walk_forward_stability_reports_insufficient_folds() -> None:
     assert result["long"]["status"] == "insufficient_folds"
     assert result["short"]["status"] == "insufficient_folds"
     assert result["overall_status"] == "not_stable"
+
+
+def test_champion_walk_forward_stability_rejects_high_f1_with_low_side_support() -> None:
+    metrics = {
+        "walk_forward": {
+            "n_splits": 3,
+            "splits": [
+                {
+                    "split_index": index,
+                    "test_rows": 20,
+                    "f1_long": 0.90,
+                    "f1_short": 0.90,
+                    "true_long_pct": 20.0,
+                    "true_short_pct": 20.0,
+                }
+                for index in range(3)
+            ],
+        }
+    }
+
+    result = build_champion_walk_forward_stability({}, metrics, "lstm_attention")
+
+    assert list(result["folds_df"]["support_long"]) == [4, 4, 4]
+    assert result["long"]["valid_folds"] == 0
+    assert result["short"]["valid_folds"] == 0
+    assert result["long"]["status"] == "insufficient_folds"
+    assert result["short"]["status"] == "insufficient_folds"
 

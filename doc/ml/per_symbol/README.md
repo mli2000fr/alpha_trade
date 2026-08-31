@@ -12,6 +12,7 @@ conduire au modèle sectoriel, selon la résolution d’artefacts.
 3. [Entraînement, walk-forward et champions](03_train_walk_forward_champions.md)
 4. [Artefacts, serving et fallbacks](04_artefacts_serving_fallbacks.md)
 5. [Configuration, diagnostics et runbook](05_configuration_diagnostics_runbook.md)
+6. [Sélection des candidats directionnels](06_selection_candidats_directionnels.md)
 
 ## Flux
 

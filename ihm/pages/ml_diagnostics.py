@@ -18,7 +18,12 @@ from ihm.pages import run_page_if_standalone
 from ihm.components.db_controls import render_db_unavailable
 from ihm.services.db import db_available, safe_query, get_engine
 from sqlalchemy import text
-from ihm.services.ml_artifacts import get_model_artifacts_dir
+from ihm.services.ml_artifacts import (
+    build_batch_directional_candidate_selection,
+    format_directional_candidate_selection,
+    get_model_artifacts_dir,
+    has_per_symbol_artifacts,
+)
 from modelFactory.report import generate_batch_report
 from modelFactory.db_registry import audit_batch_delete, audit_batch_delete_attempt, delete_batch_rows
 
@@ -38,6 +43,75 @@ def _format_symbol_source(value: object) -> str:
     if is_universe_file_source(source):
         return source.split(":", 1)[1]
     return source or "—"
+
+
+def _render_directional_candidate_download(batch_id: str, batch_status: str) -> None:
+    """Prépare à la demande puis expose l'univers directionnel téléchargeable."""
+    try:
+        available = has_per_symbol_artifacts(batch_id)
+    except ValueError:
+        available = False
+    if not available:
+        return
+
+    st.markdown("**🎯 Bons candidats per-symbol par direction**")
+    st.caption(
+        "La sélection analyse uniquement le champion et son horizon retenu. "
+        "Le calcul est déclenché manuellement pour ne pas relire les folds de tous les symboles à chaque rafraîchissement."
+    )
+    state_key = f"ml_diag_directional_candidates_{batch_id}"
+    prepare_label = "🔄 Actualiser la sélection" if state_key in st.session_state else "🔎 Préparer la sélection"
+    if st.button(prepare_label, key=f"prepare_directional_candidates_{batch_id}"):
+        try:
+            with st.spinner("Analyse des folds Walk-Forward des champions…"):
+                st.session_state[state_key] = build_batch_directional_candidate_selection(batch_id)
+        except Exception as exc:  # noqa: BLE001 — l'IHM doit rester consultable
+            st.error(f"Impossible de préparer la sélection : {exc}")
+
+    selection = st.session_state.get(state_key)
+    if not isinstance(selection, dict):
+        return
+
+    long_only = selection.get("long_only") or []
+    short_only = selection.get("short_only") or []
+    long_short = selection.get("long_short") or []
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Symboles analysés", int(selection.get("scanned_symbols") or 0))
+    c2.metric("LONG uniquement", len(long_only))
+    c3.metric("SHORT uniquement", len(short_only))
+    c4.metric("LONG + SHORT", len(long_short))
+
+    if str(batch_status).strip().lower() == "running":
+        st.warning(
+            "Le batch est encore en cours : ce téléchargement est un snapshot des symboles déjà matérialisés. "
+            "Utilisez « Actualiser la sélection » plus tard pour intégrer les nouveaux résultats."
+        )
+
+    payload = format_directional_candidate_selection(selection).encode("utf-8")
+    safe_batch_id = batch_id.replace("/", "_").replace("\\", "_")
+    st.download_button(
+        "📥 Télécharger les bons candidats (.txt)",
+        data=payload,
+        file_name=f"{safe_batch_id}_bons_candidats_directionnels.txt",
+        mime="text/plain",
+        key=f"download_directional_candidates_{batch_id}",
+    )
+
+    with st.expander("Voir les règles et le détail de la sélection", expanded=False):
+        st.markdown(
+            "Chaque côté est validé indépendamment : au moins 3 folds valides, support réel ≥ 15 par fold, "
+            "F1 médian ≥ 0,40, F1 minimum ≥ 0,20 et au moins 60 % des folds avec F1 ≥ 0,35. "
+            "Les trois listes du fichier sont exclusives."
+        )
+        audit_df = selection.get("audit_df")
+        if isinstance(audit_df, pd.DataFrame) and not audit_df.empty:
+            selected_df = audit_df[audit_df["classification"] != "REJECTED"].copy()
+            display_columns = [
+                "symbol", "selected_model", "selected_horizon", "classification",
+                "long_valid_folds", "long_f1_median", "long_f1_min", "long_pass_rate",
+                "short_valid_folds", "short_f1_median", "short_f1_min", "short_pass_rate",
+            ]
+            st.dataframe(selected_df[display_columns], use_container_width=True, hide_index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -2489,6 +2563,10 @@ def _render_batch_detail(batch: pd.Series) -> None:
         pass
     _is_reg_batch = _target_mode == "regression"
     _has_classif = _target_mode in ("binary", "ternary", "swing_cash")
+
+    if _target_mode == "ternary":
+        _render_directional_candidate_download(batch_id, _batch_status)
+        st.markdown("")
 
     # ── Horizon selector (avant les métriques) ──
     horizon_list = _cached_query(HORIZON_LIST_QUERY, {"batch_id": batch_id})
