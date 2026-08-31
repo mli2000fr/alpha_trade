@@ -101,7 +101,7 @@ def test_ihm_settings_micro_preset_banner() -> None:
 
     assert message is not None
     assert "concentration maximale" in message
-    assert "0 → 2 000 €" in message
+    assert "0 → 2 000 $" in message
 
 
 @pytest.mark.e2e

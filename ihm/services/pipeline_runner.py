@@ -16,6 +16,11 @@ from typing import Literal
 
 from core.ml_selection_contract import MLFirstSelectionContract, SelectionCapacity
 from common.capital_presets import resolve_capital_preset_for_equity
+from common.universe_files import (
+    default_universe_file_source_or,
+    is_universe_file_source,
+    normalize_universe_file_source,
+)
 
 from database.selector_reference import normalize_symbol_source
 from event_sentiment.config import EventSentimentConfig
@@ -306,15 +311,7 @@ MLFeatureSet = Literal["v1", "expert"]
 MLCalibrationMethod = Literal["none", "platt"]
 MLDefaultChampion = Literal["lstm_attention", "lightgbm", "catboost"]
 MLMode = Literal["rebuild-all", "rebuild-missing", "refresh-stale"]
-MLTrainSymbolSource = Literal[
-    "tradable-universe",
-    "stock-bars-daily",
-    "ticket-recherche",
-    "stock_scores",
-    "stock_scores_history",
-    "stock_scores_all",
-    "stock_bars_daily",
-]
+MLTrainSymbolSource = str
 DataIntegritySymbolSource = Literal[
     "active_tradable",
     "stock_scores",
@@ -455,10 +452,10 @@ class PipelineLaunchOptions:
     ml_mode: MLMode = DEFAULT_ML_MODE
     ml_training_start_date: str = DEFAULT_ML_TRAINING_START_DATE
     ml_training_end_date: str = DEFAULT_ML_TRAINING_END_DATE
-    ml_train_symbol_source: MLTrainSymbolSource = "tradable-universe"
+    ml_train_symbol_source: MLTrainSymbolSource = default_universe_file_source_or("tradable-universe")
     ml_train_start_symbol: str | None = None
     ml_comment: str | None = None
-    ml_predict_symbol_source: MLTrainSymbolSource = "tradable-universe"
+    ml_predict_symbol_source: MLTrainSymbolSource = default_universe_file_source_or("tradable-universe")
     ml_predict_use_historical_range: bool = False
     ml_predict_batch_id: str | None = None
     ml_live_predict_batch_id: str | None = None
@@ -643,6 +640,10 @@ class PipelineLaunchOptions:
     eodhd_backfill_symbols: str | None = None
     eodhd_backfill_resume: bool = True
     eodhd_backfill_write: bool = True
+    # Collecte prospective Yahoo analyst (RESEARCH ONLY, todo3.txt) — étape auxiliaire B4
+    analyst_snapshot_write_db: bool = True
+    analyst_snapshot_resume: bool = False
+    analyst_snapshot_symbols: str | None = None
 
     def __post_init__(self) -> None:
         """Validation post-initialisation : cohérence avec les presets et la réglementation.
@@ -915,6 +916,20 @@ PIPELINE_AUXILIARY_STEPS: tuple[PipelineStepDefinition, ...] = (
              "Utile au démarrage initial post-cutover `bars_provider=eodhd`.",
         tables="stock_bars, stock_bars_daily",
         deps="import_alpaca_assets (univers requis)",
+    ),
+    PipelineStepDefinition(
+        key="analyst_snapshot_collect",
+        num="B4",
+        name="Collecte Analyst Yahoo (directionnel)",
+        desc="Collecte prospective PIT d'analyst data Yahoo (EPS/revenue estimates, price targets, "
+             "recommendations) dans les tables append-only `stock_analyst_*_history`. "
+             "RESEARCH ONLY — aucune intégration PROD (ni Global Rank, ni Oracle, ni cascade, ni live). "
+             "Univers figé ~400 symboles (`config.yaml` → `analyst_snapshot_collection.symbols_file`), "
+             "explicite et jamais recalculé. Aucun stockage fichier : MySQL = source de vérité "
+             "(`raw_payload_json` + `raw_hash` conservés). Idempotent : relancer ne crée aucun doublon. "
+             "Contrat PIT : `available_at` = prochaine séance après observation.",
+        tables="stock_analyst_estimate_history, stock_analyst_target_history, stock_analyst_recommendation_history, analyst_snapshot_collection_run",
+        deps="— (univers figé ; réseau Yahoo requis)",
     ),
 )
 
@@ -1693,19 +1708,41 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     ml_benchmark_symbol = _normalize_symbol(options.ml_benchmark_symbol, DEFAULT_ML_BENCHMARK_SYMBOL)
     ml_artifacts_dir = (options.ml_artifacts_dir or "").strip() or DEFAULT_ML_ARTIFACTS_DIR
     ml_training_end_date = _normalize_optional_date(options.ml_training_end_date)
+    requested_ml_train_source = str(options.ml_train_symbol_source or "").strip().lower()
+    raw_ml_train_source = (
+        "ticket-recherche"
+        if requested_ml_train_source == "ticket-recherche"
+        else normalize_universe_file_source(requested_ml_train_source)
+    )
     ml_train_symbol_source = {
         "stock-bars-daily": "stock-bars-daily",
         "stock_bars_daily": "stock-bars-daily",
         "tradable-universe": "tradable-universe",
         "ticket-recherche": "ticket-recherche",
-    }.get(str(options.ml_train_symbol_source or "").strip().lower(), "tradable-universe")
+    }.get(
+        raw_ml_train_source,
+        raw_ml_train_source
+        if is_universe_file_source(raw_ml_train_source)
+        else "tradable-universe",
+    )
     ml_train_start_symbol = _normalize_optional_symbol(options.ml_train_start_symbol)
+    requested_ml_predict_source = str(options.ml_predict_symbol_source or "").strip().lower()
+    raw_ml_predict_source = (
+        "ticket-recherche"
+        if requested_ml_predict_source == "ticket-recherche"
+        else normalize_universe_file_source(requested_ml_predict_source)
+    )
     ml_predict_symbol_source = {
         "stock-bars-daily": "stock-bars-daily",
         "stock_bars_daily": "stock-bars-daily",
         "tradable-universe": "tradable-universe",
         "ticket-recherche": "ticket-recherche",
-    }.get(str(options.ml_predict_symbol_source or "").strip().lower(), "tradable-universe")
+    }.get(
+        raw_ml_predict_source,
+        raw_ml_predict_source
+        if is_universe_file_source(raw_ml_predict_source)
+        else "tradable-universe",
+    )
     if step_key == "import_alpaca_assets":
         return [sys.executable, "-u", "-m", "dataIntegrityEngine.import_alpaca_assets"]
 
@@ -1766,6 +1803,24 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             if symbols:
                 command.append("--symbols")
                 command.extend(symbols)
+        return command
+
+    if step_key == "analyst_snapshot_collect":
+        # Collecte prospective Yahoo analyst (RESEARCH ONLY, todo3.txt)
+        command = [
+            sys.executable, "-u",
+            str(PROJECT_ROOT / "scripts" / "collect_yahoo_analyst_snapshots.py"),
+            "--universe", "analyst_research",
+        ]
+        if options.analyst_snapshot_write_db:
+            command.append("--write-db")
+        if options.analyst_snapshot_resume:
+            command.append("--resume")
+        if options.analyst_snapshot_symbols:
+            symbols = [s.strip().upper() for s in options.analyst_snapshot_symbols.split(",") if s.strip()]
+            if symbols:
+                command.append("--symbols")
+                command.append(",".join(symbols))
         return command
 
     if step_key == "corporate_actions_sync":

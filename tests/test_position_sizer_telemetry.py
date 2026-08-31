@@ -125,6 +125,7 @@ def stub_repo_with_rejects(monkeypatch):
         def load_return_matrix_asof(self, *_): return pd.DataFrame()
 
     monkeypatch.setattr(risk_cli, "RiskRepository", lambda: _Repo())
+    monkeypatch.setattr(risk_cli, "_check_model_compatibility", lambda predictions: {"compatible": True, "issues": []})
     monkeypatch.setattr(risk_cli, "configure_root_logging", lambda **_: None)
     monkeypatch.setattr(risk_cli, "persist_run_business_summary", lambda **kw: None)
     monkeypatch.setattr(risk_cli, "emit_run_summary", lambda payload: _captured.append(payload))
@@ -211,7 +212,11 @@ def test_run_summary_aggregates_rejected_notional_below_enforced(monkeypatch) ->
                 )
             ]
 
+        def build_from_ml_candidates(self, ml_candidates, prices, **kwargs):
+            return self.build([], prices, {}, {}, pd.DataFrame())
+
     monkeypatch.setattr(risk_cli, "RiskRepository", lambda: _FakeRepo())
+    monkeypatch.setattr(risk_cli, "_check_model_compatibility", lambda predictions: {"compatible": True, "issues": []})
     monkeypatch.setattr(risk_cli, "PortfolioBuilder", _FakeBuilder)
     monkeypatch.setattr(risk_cli, "configure_root_logging", lambda **_: None)
     monkeypatch.setattr(risk_cli, "persist_run_business_summary", lambda **kw: captured.setdefault("summary", kw["summary"]))

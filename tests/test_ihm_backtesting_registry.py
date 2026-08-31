@@ -484,3 +484,82 @@ def test_delete_backtesting_runs_deletes_only_selected_ids(tmp_path: Path, monke
     assert not (runs_dir / "run" / "a").exists()
     assert not (runs_dir / "run" / "b").exists()
     assert (runs_dir / "run" / "c").exists()
+
+
+def test_append_to_log_self_heals_deleted_run_directory(tmp_path: Path) -> None:
+    """_append_to_log doit recréer le dossier/fichier manquant (auto-réparation).
+
+    Régression : le répertoire d'un run actif peut être supprimé pendant que le
+    process tourne encore (purge, reset ML, rétention, suppression manuelle).
+    Sans récréation, `_drain_events` plantait toute la page en FileNotFoundError.
+    """
+    from ihm.services import backtesting_registry
+
+    log_path = tmp_path / "run" / "20260830_082329_bfadd8e6" / "stdout.log"
+
+    # Le fichier (et son dossier parent) n'existe pas → l'append doit auto-réparer
+    assert not log_path.exists()
+    backtesting_registry._append_to_log(str(log_path), "ligne 1\n")
+
+    assert log_path.exists()
+    assert log_path.read_text(encoding="utf-8") == "ligne 1\n"
+
+    # Append successif → contenu conservé, pas d'écrasement
+    backtesting_registry._append_to_log(str(log_path), "ligne 2\n")
+    assert log_path.read_text(encoding="utf-8") == "ligne 1\nligne 2\n"
+
+    # Chemin vide / texte vide → no-op silencieux
+    backtesting_registry._append_to_log("", "x")
+    backtesting_registry._append_to_log(str(log_path), "")
+    assert log_path.read_text(encoding="utf-8") == "ligne 1\nligne 2\n"
+
+
+def test_drain_events_survives_deleted_log_files(tmp_path: Path, monkeypatch) -> None:
+    """_drain_events ne doit pas planter quand les fichiers de logs ont disparu.
+
+    Reproduit le crash `FileNotFoundError` remonté en prod : le run est actif,
+    il a du stdout en attente, mais son répertoire de logs a été supprimé.
+    """
+    from ihm.services import backtesting_registry
+    from ihm.services.backtesting_registry import BacktestingRunRecord, _ManagedRun
+
+    runs_dir = tmp_path / "ihm_runs"
+    run_dir = runs_dir / "run" / "20260830_082329_bfadd8e6"
+
+    record = BacktestingRunRecord(
+        run_id="20260830_082329_bfadd8e6",
+        run_kind="run",
+        run_label="Backtest complet",
+        command=["python", "-m", "backtesting", "run"],
+        command_display="python -m backtesting run",
+        status="running",
+        executed_at="2026-08-30T08:23:29",
+        stdout_path=str(run_dir / "stdout.log"),
+        stderr_path=str(run_dir / "stderr.log"),
+        combined_path=str(run_dir / "combined.log"),
+    )
+    events: "queue.Queue[tuple[str, str]]" = __import__("queue").Queue()
+    events.put(("stdout", "hello\n"))
+    events.put(("stderr", "err\n"))
+
+    managed = _ManagedRun(
+        record=record,
+        process=_FakeProcess(),
+        events=events,
+        stdout_thread=_FakeThread(),
+        stderr_thread=_FakeThread(),
+        started_perf=0.0,
+    )
+
+    # Le répertoire du run n'existe PAS (simule la suppression pendant le run)
+    assert not run_dir.exists()
+
+    drained = backtesting_registry._drain_events(managed)
+
+    assert drained is True
+    # Auto-réparation : les logs ont été recréés et remplis
+    assert (run_dir / "stdout.log").read_text(encoding="utf-8") == "hello\n"
+    assert (run_dir / "stderr.log").read_text(encoding="utf-8") == "err\n"
+    assert "[stdout] hello\n" in (run_dir / "combined.log").read_text(encoding="utf-8")
+    assert managed.record.stdout_lines == 1
+    assert managed.record.stderr_lines == 1

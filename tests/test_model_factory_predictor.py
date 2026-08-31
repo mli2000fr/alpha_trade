@@ -412,7 +412,7 @@ def test_cross_sectional_cache_builds_one_snapshot_per_date(monkeypatch) -> None
         calls["bars"] += 1
         return pd.DataFrame({"symbol": symbols, "date": [pd.Timestamp("2026-04-21")] * len(symbols)})
 
-    def _build(universe_df, *, benchmark_df=None, min_universe_size=20):
+    def _build(universe_df, *, benchmark_df=None, min_universe_size=20, sector_map=None, feature_subset=None):
         calls["build"] += 1
         return cross_sectional.copy(), {"enabled": True}
 
@@ -651,7 +651,7 @@ def test_predict_symbol_supports_cross_sectional_features(tmp_path: Path, monkey
     monkeypatch.setattr(
         predictor,
         "build_cross_sectional_features",
-        lambda universe_df, benchmark_df=None, min_universe_size=20: (cross_sectional.copy(), {"enabled": True}),
+        lambda universe_df, benchmark_df=None, min_universe_size=20, **kwargs: (cross_sectional.copy(), {"enabled": True}),
     )
     monkeypatch.setattr(predictor.torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(

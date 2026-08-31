@@ -4,6 +4,7 @@ import sys
 
 import pytest
 
+from common.universe_files import default_universe_file_source_or
 import ihm.services.pipeline_runner as pipeline_runner
 from ihm.services.pipeline_runner import (
     PROJECT_ROOT,
@@ -53,6 +54,18 @@ def test_get_pipeline_steps_contains_expected_keys() -> None:
     ]
 
 
+def test_pipeline_ml_defaults_use_recommended_per_symbol_capacity() -> None:
+    options = PipelineLaunchOptions()
+
+    assert options.ml_max_epochs == 50
+    assert options.ml_patience == 5
+    assert options.ml_sequence_length == 40
+    assert options.ml_batch_size == 32
+    assert options.ml_hidden_size == 128
+    assert options.ml_catboost_depth == 4
+    assert options.ml_catboost_iterations == 300
+
+
 def test_execution_step_depends_on_risk_management_contract_name() -> None:
     execution_step = next(step for step in get_pipeline_steps() if step.key == "execution")
     assert execution_step.deps == "risk_management"
@@ -94,7 +107,31 @@ def test_get_pipeline_workflow_steps_ignores_removed_7bis_when_explicitly_select
 
 def test_get_pipeline_auxiliary_steps_contains_expected_keys() -> None:
     keys = [step.key for step in get_pipeline_auxiliary_steps()]
-    assert keys == ["import_alpaca_assets", "update_sector", "eodhd_backfill_history"]
+    assert keys == [
+        "import_alpaca_assets", "update_sector", "eodhd_backfill_history",
+        "analyst_snapshot_collect",
+    ]
+
+
+def test_build_pipeline_command_analyst_snapshot_collect() -> None:
+    """B4 — la commande IHM correspond au CLI `collect_yahoo_analyst_snapshots.py`."""
+    # Défaut → write-db (collection réelle, univers figé analyst_research)
+    cmd = build_pipeline_command("analyst_snapshot_collect", PipelineLaunchOptions())
+    assert cmd[1] == "-u"
+    assert cmd[2].replace("\\", "/").endswith("scripts/collect_yahoo_analyst_snapshots.py")
+    assert cmd[3] == "--universe"
+    assert cmd[4] == "analyst_research"
+    assert "--write-db" in cmd
+    # dry-run + resume + symboles (surcharge univers)
+    opts = PipelineLaunchOptions(
+        analyst_snapshot_write_db=False,
+        analyst_snapshot_resume=True,
+        analyst_snapshot_symbols="AAPL, MSFT",
+    )
+    cmd2 = build_pipeline_command("analyst_snapshot_collect", opts)
+    assert "--write-db" not in cmd2
+    assert "--resume" in cmd2
+    assert cmd2[cmd2.index("--symbols") + 1] == "AAPL,MSFT"
 
 
 def test_get_pipeline_workflow_steps_defaults_to_live_ml_first_without_training() -> None:
@@ -914,7 +951,7 @@ def test_build_pipeline_command_ml_steps() -> None:
     # Le builder émet toujours --ml-mode (défaut rebuild-all)
     assert train_cmd[train_cmd.index("--ml-mode") + 1] == "rebuild-all"
     assert train_cmd[train_cmd.index("--training-start-date") + 1] == pipeline_runner.DEFAULT_ML_TRAINING_START_DATE
-    assert train_cmd[train_cmd.index("--symbol-source") + 1] == "tradable-universe"
+    assert train_cmd[train_cmd.index("--symbol-source") + 1] == default_universe_file_source_or("tradable-universe")
     assert train_cmd[train_cmd.index("--wf-min-train-size") + 1] == "504"
     assert train_cmd[train_cmd.index("--wf-val-size") + 1] == "126"
     assert train_cmd[train_cmd.index("--wf-test-size") + 1] == "126"
@@ -970,7 +1007,7 @@ def test_build_pipeline_command_ml_steps() -> None:
     # Predict
     assert predict_cmd[:6] == [predict_cmd[0], "-u", "-m", "modelFactory", "--mode", "predict"]
     assert predict_cmd[predict_cmd.index("--accelerator") + 1] == "gpu"
-    assert predict_cmd[predict_cmd.index("--symbol-source") + 1] == "tradable-universe"
+    assert predict_cmd[predict_cmd.index("--symbol-source") + 1] == default_universe_file_source_or("tradable-universe")
     assert "--artifacts-dir" in predict_cmd
     assert "--batch-id" not in predict_cmd
 
@@ -1210,6 +1247,15 @@ def test_build_pipeline_command_ml_predict_respects_selected_symbol_source() -> 
         ),
     )
     assert command[command.index("--symbol-source") + 1] == "stock-bars-daily"
+
+    command = build_pipeline_command(
+        "ml_predict",
+        PipelineLaunchOptions(
+            ml_accelerator="cpu",
+            ml_predict_symbol_source="universe-file:univers_filtred_2016.txt",
+        ),
+    )
+    assert command[command.index("--symbol-source") + 1] == "universe-file:univers_filtred_2016.txt"
 
     # Source inconnue/héritée -> fallback canonique tradable-universe (inchangé).
     command = build_pipeline_command(

@@ -68,7 +68,12 @@ class _Bracket:
 
     def on_fill(self, role: str, qty: float) -> None:
         leg = self.tp if role == "TP" else self.sl
-        if leg.is_terminal():
+        # Un fill reçu après l'annulation OCO n'est pas un événement valide du
+        # modèle. Hypothesis doit explorer les événements broker admissibles,
+        # pas permettre à une jambe CANCEL_PENDING/CANCELED de ressusciter.
+        if leg.is_terminal() or leg.status == _Status.CANCEL_PENDING:
+            return
+        if self.sibling(role).status == _Status.FILLED:
             return
         new_filled = min(leg.filled_qty + qty, leg.qty)
         leg.filled_qty = new_filled

@@ -17,13 +17,13 @@ class TestBaselineConfigLgbmTuning:
     """Validation des nouveaux champs LightGBM dans BaselineConfig."""
 
     def test_defaults_are_backward_compatible(self) -> None:
-        """Les défauts ne changent pas le comportement (reg_alpha=0, subsample=1.0...)."""
+        """Les défauts de régularisation restent explicitement verrouillés."""
         cfg = BaselineConfig()
-        assert cfg.lgbm_reg_alpha == 0.0
-        assert cfg.lgbm_reg_lambda == 0.0
-        assert cfg.lgbm_min_child_samples == 20
-        assert cfg.lgbm_subsample == 1.0
-        assert cfg.lgbm_colsample_bytree == 1.0
+        assert cfg.lgbm_reg_alpha == 0.1
+        assert cfg.lgbm_reg_lambda == 0.1
+        assert cfg.lgbm_min_child_samples == 150
+        assert cfg.lgbm_subsample == 0.8
+        assert cfg.lgbm_colsample_bytree == 0.7
 
     def test_can_set_tuning_values(self) -> None:
         """On peut fixer des valeurs de tuning via le constructeur."""

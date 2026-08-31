@@ -445,6 +445,105 @@ def _prime_selected_symbol_state(symbols: list[str]) -> str | None:
     return symbols[0]
 
 
+def _render_champion_walk_forward_stability(report: dict[str, object]) -> None:
+    stability = report.get("walk_forward_stability")
+    if not isinstance(stability, dict):
+        return
+
+    st.markdown("**📊 Stabilité Walk-Forward du champion**")
+    model = stability.get("selected_model") or report.get("selected_model") or "—"
+    horizon = stability.get("selected_horizon")
+    horizon_label = f"H{horizon}" if horizon is not None else "horizon non renseigné"
+    st.caption(
+        f"Champion `{model}` · `{horizon_label}` · source `{stability.get('source') or 'indisponible'}`"
+    )
+
+    if not stability.get("available"):
+        st.info(
+            "Le résumé Walk-Forward existe peut-être, mais le détail par fold n’est pas disponible "
+            "dans cet ancien artefact. Un nouvel entraînement est nécessaire pour calculer la stabilité."
+        )
+        return
+
+    long_summary = stability.get("long") if isinstance(stability.get("long"), dict) else {}
+    short_summary = stability.get("short") if isinstance(stability.get("short"), dict) else {}
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Folds évalués", int(stability.get("evaluated_folds") or 0))
+    c2.metric("Folds LONG valides", int(long_summary.get("valid_folds") or 0))
+    c3.metric("Folds SHORT valides", int(short_summary.get("valid_folds") or 0))
+    c4.metric("Diagnostic", str(stability.get("overall_label") or "—"))
+
+    summary_df = stability.get("summary_df")
+    if isinstance(summary_df, pd.DataFrame) and not summary_df.empty:
+        display_summary = summary_df.rename(columns={
+            "side": "Direction",
+            "status_label": "Statut",
+            "valid_folds": "Folds valides",
+            "passing_folds": "Folds F1≥0,35",
+            "pass_rate": "Taux folds solides",
+            "f1_mean": "F1 moyen",
+            "f1_median": "F1 médian",
+            "f1_min": "F1 minimum",
+            "f1_std": "Écart-type F1",
+            "support_total": "Support cumulé",
+        })[[
+            "Direction", "Statut", "Folds valides", "Folds F1≥0,35",
+            "Taux folds solides", "F1 moyen", "F1 médian", "F1 minimum",
+            "Écart-type F1", "Support cumulé",
+        ]].copy()
+        display_summary["Taux folds solides"] = display_summary["Taux folds solides"].map(
+            lambda value: f"{float(value):.0%}" if pd.notna(value) else "—"
+        )
+        for col in ("F1 moyen", "F1 médian", "F1 minimum", "Écart-type F1"):
+            display_summary[col] = display_summary[col].map(
+                lambda value: round(float(value), 3) if pd.notna(value) else None
+            )
+        show_dataframe(display_summary, height=150)
+
+    folds_df = stability.get("folds_df")
+    if isinstance(folds_df, pd.DataFrame) and not folds_df.empty:
+        display_folds = folds_df.rename(columns={
+            "fold": "Fold",
+            "test_start": "Début test",
+            "test_end": "Fin test",
+            "test_rows": "Lignes test",
+            "n_samples": "Échantillons évalués",
+            "f1_macro": "F1 macro",
+            "f1_long": "F1 LONG",
+            "f1_short": "F1 SHORT",
+            "f1_flat": "F1 FLAT",
+            "support_long": "Support LONG",
+            "support_short": "Support SHORT",
+            "long_valid": "Fold LONG valide",
+            "short_valid": "Fold SHORT valide",
+        })
+        wanted = [
+            "Fold", "Début test", "Fin test", "Lignes test", "Échantillons évalués",
+            "F1 LONG", "Support LONG", "Fold LONG valide",
+            "F1 SHORT", "Support SHORT", "Fold SHORT valide", "F1 FLAT", "F1 macro",
+        ]
+        display_folds = display_folds[[col for col in wanted if col in display_folds.columns]].copy()
+        for col in ("F1 LONG", "F1 SHORT", "F1 FLAT", "F1 macro"):
+            if col in display_folds.columns:
+                display_folds[col] = display_folds[col].map(
+                    lambda value: round(float(value), 3) if pd.notna(value) else None
+                )
+        show_dataframe(display_folds, height=min(420, 70 + 35 * len(display_folds)))
+
+    thresholds = stability.get("thresholds") if isinstance(stability.get("thresholds"), dict) else {}
+    with st.expander("ℹ️ Règles du diagnostic de stabilité", expanded=False):
+        st.markdown(
+            f"""
+- Fold valide pour un côté : F1 présent et support estimé ≥ **{thresholds.get('min_side_support', 15)}**.
+- Nombre minimal de folds valides : **{thresholds.get('min_valid_folds', 3)}**.
+- Fold directionnel solide : F1 ≥ **{thresholds.get('passing_f1', 0.35):.2f}**.
+- Direction stable : médiane ≥ **{thresholds.get('stable_median_f1', 0.40):.2f}**, minimum ≥ **{thresholds.get('stable_min_f1', 0.20):.2f}** et au moins **{thresholds.get('stable_pass_rate', 0.60):.0%}** des folds valides solides.
+
+Le support est lu directement lorsqu’il est persisté ; sinon il est estimé avec `n_samples` ou `test_rows` × `true_<side>_pct`.
+"""
+        )
+
+
 def render() -> None:
     st.header("🤖 Model Factory — Entraînement & prédictions")
     st.caption(
@@ -578,6 +677,8 @@ def render() -> None:
             )
         if governance_thresholds["selection_reason"]:
             st.caption(f"Raison de sélection : {governance_thresholds['selection_reason']}")
+
+        _render_champion_walk_forward_stability(report)
 
         attribution_results_df = report.get("attribution_results_df") if isinstance(report.get("attribution_results_df"), pd.DataFrame) else pd.DataFrame()
         attribution_regimes_df = report.get("attribution_regimes_df") if isinstance(report.get("attribution_regimes_df"), pd.DataFrame) else pd.DataFrame()

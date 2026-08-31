@@ -72,9 +72,17 @@ def test_load_training_run_filters_completed_artifacts_by_batch_id() -> None:
     assert params == {"sym": "AAPL", "bid": "campaign-expert"}
 
 
-def test_load_training_run_rejects_run_and_batch_selection_together() -> None:
-    with pytest.raises(ValueError, match="cannot be selected together"):
-        db_registry.load_training_run(MagicMock(), "AAPL", run_id="run-1", batch_id="campaign-expert")
+def test_load_training_run_prioritizes_explicit_run_id_over_batch_id() -> None:
+    mock_engine = MagicMock()
+    mock_conn = MagicMock()
+    mock_engine.connect.return_value.__enter__.return_value = mock_conn
+    mock_conn.execute.return_value.mappings.return_value.first.return_value = None
+
+    assert db_registry.load_training_run(mock_engine, "AAPL", run_id="run-1", batch_id="campaign-expert") is None
+    statement, params = mock_conn.execute.call_args.args
+    assert "run_id = :rid" in str(statement)
+    assert "batch_id" not in str(statement)
+    assert params == {"sym": "AAPL", "rid": "run-1"}
 
 
 def test_upsert_directional_oos_metrics_keeps_only_complete_empirical_sides() -> None:

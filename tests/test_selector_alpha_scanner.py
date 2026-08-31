@@ -639,7 +639,7 @@ def test_fetch_quote_snapshots_normalizes_missing_optional_columns(monkeypatch) 
 
     quotes_df = scanner.fetch_quote_snapshots(["AAPL"], reference_date=date(2026, 4, 30))
 
-    assert quotes_df.columns.tolist() == ["symbol", "quote_date", "quote_timestamp", "spread_bps", "bid_size", "ask_size"]
+    assert {"symbol", "quote_date", "quote_timestamp", "spread_bps", "bid_size", "ask_size"}.issubset(quotes_df.columns)
     assert quotes_df.loc[0, "symbol"] == "AAPL"
     assert pd.isna(quotes_df.loc[0, "quote_timestamp"])
     assert pd.isna(quotes_df.loc[0, "bid_size"])

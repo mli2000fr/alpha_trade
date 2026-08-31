@@ -93,7 +93,7 @@ class TestCatboostClassifierReceivesTuningParams:
                 return np.column_stack([p, p, p])
 
         def _fake_import_catboost():
-            return FakeCatBoostClassifier
+            return FakeCatBoostClassifier, FakeCatBoostClassifier
 
         monkeypatch.setattr(
             "modelFactory.catboost_baseline._import_catboost",

@@ -368,7 +368,9 @@ def test_enrich_and_filter_equities_logs_exclusion_breakdown(caplog) -> None:
         enriched = scanner._enrich_and_filter_equities(merged, metadata)
 
     assert list(enriched["symbol"]) == ["AAA"]
-    assert "detail={'metadata_missing': 1, 'inactive': 1, 'etf_name': 1}" in caplog.text
+    # Le filtrage est le contrat fonctionnel. Le détail de log n'est plus émis
+    # par la fonction pure enrich_and_filter_equities.
+    assert set(merged["symbol"]) - set(enriched["symbol"]) == {"ETF1", "MISS", "INAC"}
 
 
 def test_enrich_and_filter_equities_excludes_blocked_history_statuses() -> None:
@@ -900,7 +902,7 @@ def test_run_shadow_ablation_publishes_variant_summary_and_artifact(tmp_path, mo
     monkeypatch.setattr(scanner, "_reset_selector_outputs", lambda: None)
     monkeypatch.setattr(
         scanner,
-        "_scan_ablation_candidates",
+        "_scan_ablation_selections",
         lambda runtime_variants: (
             {
                 "primary": primary_candidates,
@@ -1227,7 +1229,13 @@ def test_run_end_to_end_returns_ranked_top_selection_and_updates_database() -> N
 
     scanner = AlphaScanner(
         engine=engine,
-        config=AlphaScannerConfig(selection_size=4, chunk_size=3, update_batch_size=2, max_workers=1),
+        config=AlphaScannerConfig(
+            selection_size=4,
+            short_selection_size=0,
+            chunk_size=3,
+            update_batch_size=2,
+            max_workers=1,
+        ),
     )
 
     result = scanner.run()
@@ -1257,7 +1265,7 @@ def test_run_end_to_end_returns_ranked_top_selection_and_updates_database() -> N
     assert len(selection_rows) == 4
     assert {row[0] for row in selection_rows} == set(result["symbol"])
     assert all(row[1] is not None and row[2] is not None and row[3] is not None for row in persisted_rows)
-    assert legacy_row == ("ZZZ", None, None, None, 0)
+    assert legacy_row == ("ZZZ", None, None, None, None)
 
 
 def test_iter_eligible_symbol_chunks_excludes_blocked_history_statuses_in_sql() -> None:

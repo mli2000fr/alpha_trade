@@ -17,6 +17,7 @@ from sqlalchemy.engine import Engine
 from backtesting.data_loader import get_required_bars_source_filter
 from common.capital_presets import DEFAULT_CAPITAL_PRESET_KEY
 from common.market_calendar import nyse_session_dates
+from common.universe_files import default_universe_file_source_or
 from common.tradable_universe import (
     UniverseMember,
     begin_universe_run,
@@ -145,7 +146,7 @@ class BackfillScoresHistoryService:
         screener_max_workers: int | None = None,
         capital_preset_key: str = DEFAULT_CAPITAL_PRESET_KEY,
         config_fingerprint: str | None = None,
-        symbol_source: str | None = "ticket-recherche",
+        symbol_source: str | None = default_universe_file_source_or("tradable-universe"),
     ) -> None:
         self.engine = engine or get_sqlalchemy_engine()
         self.screener_config = screener_config or ScreenerConfig.strict_swing_cash()
@@ -342,7 +343,7 @@ class BackfillScoresHistoryService:
         return self._symbol_chunks_cache
 
     def _resolve_symbols_from_source(self) -> tuple[tuple[str, ...], ...]:
-        """Résout les symboles depuis une source nommée (ticket-recherche, tradable-universe, stock-bars-daily)
+        """Résout les symboles depuis une source nommée (fichier config/univers, tradable-universe, stock-bars-daily)
         et les découpe en chunks compatibles avec le screener PIT."""
         from datetime import date as _date
 
@@ -368,11 +369,15 @@ class BackfillScoresHistoryService:
             return ()
 
         # Filtrer pour ne garder que les symboles ayant des barres daily
+        # NB : bindparam expanding=True obligatoire — sans lui, un tuple est
+        # bindé tel quel (`WHERE symbol IN ?`) → erreur SQL sur SQLite/MySQL.
         with self.engine.connect() as conn:
             existing = {
                 row[0]
                 for row in conn.execute(
-                    text("SELECT DISTINCT symbol FROM stock_bars_daily WHERE symbol IN :symbols"),
+                    text("SELECT DISTINCT symbol FROM stock_bars_daily WHERE symbol IN :symbols").bindparams(
+                        bindparam("symbols", expanding=True)
+                    ),
                     {"symbols": tuple(symbols)},
                 ).fetchall()
             }

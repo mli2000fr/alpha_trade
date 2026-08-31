@@ -92,8 +92,8 @@ class TestGlobalModelConfig:
 # ─────────────────────────────────────────────────────────────────────
 
 class TestGlobalPredFeatureColumns:
-    def test_single_column_global_rank(self) -> None:
-        assert len(GLOBAL_PRED_FEATURE_COLUMNS) == 1
+    def test_multi_horizon_global_rank_columns(self) -> None:
+        assert len(GLOBAL_PRED_FEATURE_COLUMNS) == 6
         assert "global_rank" in GLOBAL_PRED_FEATURE_COLUMNS
 
     def test_is_list_of_strings(self) -> None:
@@ -102,7 +102,10 @@ class TestGlobalPredFeatureColumns:
             assert len(col) > 0
 
     def test_order(self) -> None:
-        assert GLOBAL_PRED_FEATURE_COLUMNS[0] == "global_rank"
+        assert GLOBAL_PRED_FEATURE_COLUMNS == [
+            "global_rank_3", "global_rank_5", "global_rank_10",
+            "global_rank_15", "global_rank_20", "global_rank",
+        ]
 
 
 # ─────────────────────────────────────────────────────────────────────

@@ -15,6 +15,7 @@ import logging
 import pandas as pd
 import streamlit as st
 
+from common.universe_files import default_universe_file_source_or
 from ihm.services.swing_score import (
     LARGE_UNIVERSE_WARNING_THRESHOLD,
     UNIVERSE_SYMBOL_SOURCE_LABELS,
@@ -110,7 +111,9 @@ def render_swing_score_block() -> None:
                 st.selectbox(
                     "Univers de symboles",
                     options=UNIVERSE_SYMBOL_SOURCE_OPTIONS,
-                    index=0,
+                    index=UNIVERSE_SYMBOL_SOURCE_OPTIONS.index(
+                        default_universe_file_source_or(UNIVERSE_SYMBOL_SOURCE_OPTIONS[0])
+                    ),
                     key=_UNIVERSE_SELECT_KEY,
                     format_func=lambda value: UNIVERSE_SYMBOL_SOURCE_LABELS.get(str(value), str(value)),
                     help=(

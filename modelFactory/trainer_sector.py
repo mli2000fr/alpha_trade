@@ -144,7 +144,17 @@ def _prepare_sector_data(
     # Predict outperformance within the sector, not absolute direction.
     # The target becomes: "will this stock beat the sector median?"
     # Must neutralize ALL horizon targets before splits are created.
-    if "date" in prepared.columns:
+    #
+    # P-fix (2026-08-30) : la neutralisation (target - médiane journalière)
+    # n'est valide QUE pour une cible continue (regression). Pour les modes
+    # classification (binary / swing_cash / ternary), soustraire la médiane
+    # des labels de classe {-1,0,1} les corrompt → labels hors bornes, ex.
+    # "Target 3 is out of bounds" (CrossEntropyLoss) quand la médiane du
+    # secteur vaut -1 un jour donné et que des labels LONG(+1) existent
+    # (label = 1 - (-1) = 2 → +1 dans model._shared_step → 3). On saute donc
+    # la neutralisation pour tous les modes classification.
+    _is_classification_mode = cfg.data.target_mode in {"binary", "swing_cash", "ternary"}
+    if "date" in prepared.columns and not _is_classification_mode:
         if cfg.data.forecast_horizons:
             for h in cfg.data.forecast_horizons:
                 _col = f"target_h{h}"
@@ -164,11 +174,19 @@ def _prepare_sector_data(
                 "train_sector: target sector-neutralized "
                 "(target = target - daily_median within sector)"
             )
+    elif _is_classification_mode:
+        LOGGER.info(
+            "train_sector: sector-neutralization SKIPPED — target_mode=%s "
+            "(classification: neutralization would corrupt class labels)",
+            cfg.data.target_mode,
+        )
 
     # ── T2 experiment (2026-08-05) : rang percentile intra-secteur ──
     # Au lieu de prédire la magnitude de la surperformance, le modèle apprend
     # à classer les titres dans leur secteur. La target devient un rang [0,1].
-    if cfg.data.target_intra_sector_rank:
+    # (P-fix 2026-08-30 : aussi restreint à la régression — un rang [0,1]
+    # continu est incompatible avec les labels de classification.)
+    if cfg.data.target_intra_sector_rank and not _is_classification_mode:
         _ranked = 0
         if cfg.data.forecast_horizons:
             for h in cfg.data.forecast_horizons:

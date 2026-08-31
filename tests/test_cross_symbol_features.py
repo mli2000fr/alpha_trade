@@ -295,8 +295,10 @@ class TestGetGlobalFeatureColumns:
         cols = _get_global_feature_columns(cfg)
         for col in FEATURE_COLUMNS:
             assert col not in cols, f"OHLCV feature {col} should be excluded"
-        for col in EXPERT_FEATURE_COLUMNS:
+        global_regime_features = {"regime_bull_market", "regime_risk_off"}
+        for col in set(EXPERT_FEATURE_COLUMNS) - global_regime_features:
             assert col not in cols, f"Expert feature {col} should be excluded"
+        assert global_regime_features.issubset(cols)
 
     def test_includes_macro_when_enabled(self) -> None:
         from modelFactory.global_model import _get_global_feature_columns
@@ -322,11 +324,11 @@ class TestGetGlobalFeatureColumns:
             assert col not in cols, f"{col} should be excluded when use_cross_sectional=False"
 
     def test_total_col_count_matches_expected(self) -> None:
-        """22 = 8 rangs + 8 secteur + 6 exclusives (sans macro)."""
+        """26 features globales canoniques, dont les deux indicateurs de régime."""
         from modelFactory.global_model import _get_global_feature_columns
         cfg = _make_minimal_cfg(cross_sectional=True)
         cols = _get_global_feature_columns(cfg)
-        assert len(cols) == 22, f"Expected 22 global features, got {len(cols)}: {cols}"
+        assert len(cols) == 26, f"Expected 26 global features, got {len(cols)}: {cols}"
 
 
 # ─────────────────────────────────────────────────────────────────────

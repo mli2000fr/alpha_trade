@@ -13,13 +13,21 @@ import shutil as _shutil
 from pathlib import Path
 from typing import Any
 
+from common.universe_files import is_universe_file_source
 from ihm.pages import run_page_if_standalone
 from ihm.components.db_controls import render_db_unavailable
 from ihm.services.db import db_available, safe_query, get_engine
 from sqlalchemy import text
-from ihm.services.ml_artifacts import get_model_artifacts_dir
+from ihm.services.ml_artifacts import (
+    WF_MIN_VALID_FOLDS,
+    build_batch_directional_candidate_selection,
+    format_directional_candidate_selection,
+    get_model_artifacts_dir,
+    has_per_symbol_artifacts,
+    resolve_batch_artifacts_root,
+)
 from modelFactory.report import generate_batch_report
-from modelFactory.db_registry import delete_batch_rows
+from modelFactory.db_registry import audit_batch_delete, audit_batch_delete_attempt, delete_batch_rows
 
 # ── Chargement config (fallback silencieux si absent) ──
 _MIN_RISING_HORIZONS_DEFAULT = 4
@@ -29,6 +37,160 @@ try:
     _MIN_RISING_HORIZONS = int(_cfg.get("backtest", {}).get("min_rising_horizons", _MIN_RISING_HORIZONS_DEFAULT))
 except Exception:
     _MIN_RISING_HORIZONS = _MIN_RISING_HORIZONS_DEFAULT
+
+
+def _format_symbol_source(value: object) -> str:
+    """Affiche le nom du fichier tout en laissant les sources natives inchangées."""
+    source = str(value or "").strip()
+    if is_universe_file_source(source):
+        return source.split(":", 1)[1]
+    return source or "—"
+
+
+def _render_directional_candidate_download(
+    batch_id: str,
+    batch_status: str,
+    metadata_json: object = None,
+) -> None:
+    """Prépare à la demande puis expose l'univers directionnel téléchargeable."""
+    try:
+        artifacts_root = resolve_batch_artifacts_root(
+            batch_id,
+            metadata_json if isinstance(metadata_json, (str, dict)) else None,
+        )
+        available = has_per_symbol_artifacts(batch_id, artifacts_root)
+    except ValueError:
+        available = False
+    if not available:
+        return
+
+    st.markdown("**🎯 Bons candidats per-symbol par direction**")
+    st.caption(
+        "La sélection analyse uniquement le champion et son horizon retenu. "
+        "Le calcul est déclenché manuellement pour ne pas relire les folds de tous les symboles à chaque rafraîchissement."
+    )
+    state_key = f"ml_diag_directional_candidates_{batch_id}"
+    prepare_label = "🔄 Actualiser la sélection" if state_key in st.session_state else "🔎 Préparer la sélection"
+    if st.button(prepare_label, key=f"prepare_directional_candidates_{batch_id}"):
+        try:
+            with st.spinner("Analyse des folds Walk-Forward des champions…"):
+                st.session_state[state_key] = build_batch_directional_candidate_selection(
+                    batch_id, artifacts_root
+                )
+        except Exception as exc:  # noqa: BLE001 — l'IHM doit rester consultable
+            st.error(f"Impossible de préparer la sélection : {exc}")
+
+    selection = st.session_state.get(state_key)
+    if not isinstance(selection, dict):
+        return
+
+    long_only = selection.get("long_only") or []
+    short_only = selection.get("short_only") or []
+    long_short = selection.get("long_short") or []
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Symboles analysés", int(selection.get("scanned_symbols") or 0))
+    c2.metric("LONG uniquement", len(long_only))
+    c3.metric("SHORT uniquement", len(short_only))
+    c4.metric("LONG + SHORT", len(long_short))
+
+    audit_df = selection.get("audit_df")
+    if int(selection.get("eligible_symbols") or 0) == 0 and isinstance(audit_df, pd.DataFrame) and not audit_df.empty:
+        long_insufficient = int(
+            (pd.to_numeric(audit_df["long_valid_folds"], errors="coerce").fillna(0) < WF_MIN_VALID_FOLDS).sum()
+        )
+        short_insufficient = int(
+            (pd.to_numeric(audit_df["short_valid_folds"], errors="coerce").fillna(0) < WF_MIN_VALID_FOLDS).sum()
+        )
+        st.warning(
+            "Aucun candidat ne satisfait tous les gates. "
+            f"Folds insuffisants (< {WF_MIN_VALID_FOLDS}) : LONG {long_insufficient}/{len(audit_df)}, "
+            f"SHORT {short_insufficient}/{len(audit_df)}. Consultez les règles ci-dessous avant de modifier les seuils."
+        )
+
+    if str(batch_status).strip().lower() == "running":
+        st.warning(
+            "Le batch est encore en cours : ce téléchargement est un snapshot des symboles déjà matérialisés. "
+            "Utilisez « Actualiser la sélection » plus tard pour intégrer les nouveaux résultats."
+        )
+
+    payload = format_directional_candidate_selection(selection).encode("utf-8")
+    safe_batch_id = batch_id.replace("/", "_").replace("\\", "_")
+    st.download_button(
+        "📥 Télécharger les bons candidats (.txt)",
+        data=payload,
+        file_name=f"{safe_batch_id}_bons_candidats_directionnels.txt",
+        mime="text/plain",
+        key=f"download_directional_candidates_{batch_id}",
+    )
+
+    if isinstance(audit_df, pd.DataFrame) and not audit_df.empty:
+        st.markdown("**Détail des candidats retenus**")
+        long_tab, short_tab, both_tab = st.tabs(
+            [
+                f"🟢 LONG uniquement ({len(long_only)})",
+                f"🔴 SHORT uniquement ({len(short_only)})",
+                f"🔵 LONG + SHORT ({len(long_short)})",
+            ]
+        )
+
+        with long_tab:
+            long_df = audit_df[audit_df["classification"] == "LONG_ONLY"].copy()
+            long_df = long_df.sort_values(
+                ["long_f1_median", "long_f1_min", "long_valid_folds"],
+                ascending=[False, False, False],
+            )
+            long_columns = [
+                "symbol", "selected_model", "selected_horizon",
+                "long_valid_folds", "long_f1_median", "long_f1_min",
+                "long_f1_std", "long_pass_rate", "long_support_total",
+            ]
+            if long_df.empty:
+                st.info("Aucun symbole stable uniquement en LONG.")
+            else:
+                st.dataframe(long_df[long_columns], use_container_width=True, hide_index=True)
+
+        with short_tab:
+            short_df = audit_df[audit_df["classification"] == "SHORT_ONLY"].copy()
+            short_df = short_df.sort_values(
+                ["short_f1_median", "short_f1_min", "short_valid_folds"],
+                ascending=[False, False, False],
+            )
+            short_columns = [
+                "symbol", "selected_model", "selected_horizon",
+                "short_valid_folds", "short_f1_median", "short_f1_min",
+                "short_f1_std", "short_pass_rate", "short_support_total",
+            ]
+            if short_df.empty:
+                st.info("Aucun symbole stable uniquement en SHORT.")
+            else:
+                st.dataframe(short_df[short_columns], use_container_width=True, hide_index=True)
+
+        with both_tab:
+            both_df = audit_df[audit_df["classification"] == "LONG_SHORT"].copy()
+            if not both_df.empty:
+                both_df["directional_f1_floor"] = both_df[
+                    ["long_f1_median", "short_f1_median"]
+                ].min(axis=1)
+                both_df = both_df.sort_values(
+                    ["directional_f1_floor", "long_f1_min", "short_f1_min"],
+                    ascending=[False, False, False],
+                )
+            both_columns = [
+                "symbol", "selected_model", "selected_horizon", "directional_f1_floor",
+                "long_valid_folds", "long_f1_median", "long_f1_min", "long_pass_rate", "long_support_total",
+                "short_valid_folds", "short_f1_median", "short_f1_min", "short_pass_rate", "short_support_total",
+            ]
+            if both_df.empty:
+                st.info("Aucun symbole stable simultanément en LONG et SHORT.")
+            else:
+                st.dataframe(both_df[both_columns], use_container_width=True, hide_index=True)
+
+    with st.expander("Voir les règles de sélection", expanded=False):
+        st.markdown(
+            "Chaque côté est validé indépendamment : au moins 3 folds valides, support réel ≥ 15 par fold, "
+            "F1 médian ≥ 0,40, F1 minimum ≥ 0,20 et au moins 60 % des folds avec F1 ≥ 0,35. "
+            "Les trois listes du fichier sont exclusives."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +219,42 @@ _H5_DIP = 0.35
 _TRANSACTION_COST_BPS = 25.0
 _MAX_POSITIONS = 30
 _ALL_HORIZONS = (3, 5, 10, 15, 20)
+
+
+# ---------------------------------------------------------------------------
+# Cache page (Diagnostic ML) — sans cache, chaque clic/interaction re-exécute
+# TOUTES les requêtes (dont global_rank_history jusqu'à ~500k lignes).
+# ---------------------------------------------------------------------------
+
+_GR_COUNT_QUERY = """
+SELECT COUNT(*) AS n
+FROM alpha_trade.global_rank_history
+WHERE batch_id = :batch_id
+"""
+
+_ORACLE_COUNT_QUERY = """
+SELECT COUNT(*) AS n
+FROM alpha_trade.oracle_extreme_predictions
+WHERE batch_id = :batch_id
+"""
+
+
+@st.cache_data(ttl=300, show_spinner=False, max_entries=128)
+def _cached_query(query: str, params: dict[str, Any] | None = None) -> pd.DataFrame:
+    """safe_query mis en cache (5 min) pour les requêtes moyennes/lourdes."""
+    return safe_query(query, params)
+
+
+@st.cache_data(ttl=600, show_spinner=False, max_entries=32)
+def _cached_global_rank_all(batch_id: str, horizon: int) -> pd.DataFrame:
+    """Tous les rangs globaux d'un batch pour un horizon (grosse requête, 10 min)."""
+    return safe_query(_global_rank_all_query(horizon), {"batch_id": batch_id})
+
+
+@st.cache_data(ttl=600, show_spinner=False, max_entries=32)
+def _cached_oracle_oos(batch_id: str) -> tuple[str | None, pd.DataFrame]:
+    """Prédictions Oracle Extreme du batch (grosse requête, 10 min)."""
+    return _load_latest_oracle_oos(batch_id)
 
 
 def _run_strategy_backtest(
@@ -814,7 +1012,7 @@ def _render_regime_table(batch_id: str) -> None:
     st.subheader("📅 Diagnostic par régime de marché — Walk-Forward")
 
     # ── 1. Récupérer tous les metrics_json du batch ──
-    all_json_df = safe_query(ALL_WF_JSON_QUERY, {"batch_id": batch_id})
+    all_json_df = _cached_query(ALL_WF_JSON_QUERY, {"batch_id": batch_id})
     if all_json_df.empty:
         st.info("Aucune donnée walk-forward détaillée disponible pour ce batch.")
         return
@@ -869,8 +1067,8 @@ def _render_regime_table(batch_id: str) -> None:
         return
 
     # ── 4. Récupérer SPY et VIX ──
-    spy_df = safe_query(SPY_QUERY)
-    vix_df = safe_query(VIX_QUERY)
+    spy_df = _cached_query(SPY_QUERY)
+    vix_df = _cached_query(VIX_QUERY)
 
     def _spy_return(start: str, end: str) -> float | None:
         if spy_df.empty or "date" not in spy_df.columns:
@@ -948,6 +1146,19 @@ def _render_regime_table(batch_id: str) -> None:
     st.caption(f"Classification basée sur la médiane VIX = {median_vix:.1f} | SPY < 0 & VIX > médiane → bear_high_vol | SPY > 0 & VIX ≤ médiane → bull")
 
 
+def _is_safe_batch_id(batch_id: str) -> bool:
+    """Garde-fou : un batch_id malformé ne doit JAMAIS déclencher un rmtree
+    sur artifacts/ (ex. '', '.', '..', ou contenant '/' ou '\\')."""
+    b = str(batch_id or "").strip()
+    if not b:
+        return False
+    if b in (".", ".."):
+        return False
+    if "/" in b or "\\" in b:
+        return False
+    return True
+
+
 def _render_delete_batch_button(selected_batch: str, artifacts_dir: Path) -> None:
     """Affiche un bouton de suppression compact avec confirmation inline.
 
@@ -979,6 +1190,18 @@ def _render_delete_batch_button(selected_batch: str, artifacts_dir: Path) -> Non
             "⚠️ Batch marqué `completed`. La suppression reste possible — "
             "vérifie qu'il n'est plus utilisé (serving, backtest, comparaison)."
         )
+
+    # P-fix (2026-08-30) : un batch en cours d'entraînement ne doit JAMAIS être
+    # supprimé — cohérent avec le nettoyage collectif (list_batches exclut `running`).
+    # NB : PAS d'audit ici (silencieux) — cette branche s'exécute à CHAQUE rendu de
+    # page, pas sur un vrai clic. Journaliser créerait du bruit trompeur. Les vraies
+    # tentatives (delete_batch_rows / cleanup_batches) sont, elles, tracées.
+    if batch_status in {"running", "starting"}:
+        st.info(
+            f"⏳ Batch `{selected_batch}` en cours d'entraînement (`{batch_status}`) — "
+            "suppression bloquée. Arrête le run ou attends sa fin pour le supprimer."
+        )
+        return
 
     confirm_key = f"ml_diag_confirm_delete_batch_{selected_batch}"
     if confirm_key not in st.session_state:
@@ -1018,7 +1241,19 @@ def _render_delete_batch_button(selected_batch: str, artifacts_dir: Path) -> Non
 
         if confirmed:
             errors: list[str] = []
-            # Avertissement si ce batch est promu comme source de serving.
+            # ── Garde-fou : batch_id malformé → annuler (protection anti-suppression à tort) ──
+            if not _is_safe_batch_id(selected_batch):
+                # Trace : tentative de suppression avec un batch_id malformé.
+                audit_batch_delete_attempt(
+                    selected_batch,
+                    reason="garde-fou: batch_id malformé (chemin non sûr) → suppression annulée",
+                    source="ml_diagnostics:per_batch_delete",
+                )
+                st.error("Batch_id invalide — suppression annulée (protection anti-suppression à tort).")
+                st.session_state.pop(confirm_key, None)
+                return
+            # Avertissement si ce batch est promu comme source de serving
+            # (la référence `model_serving_batch` sera supprimée à la fin).
             try:
                 with engine.connect() as conn:
                     served = conn.execute(
@@ -1028,18 +1263,19 @@ def _render_delete_batch_button(selected_batch: str, artifacts_dir: Path) -> Non
                 if served:
                     scopes = ", ".join(str(r[0]) for r in served)
                     st.warning(
-                        f"⚠️ Ce batch est référencé comme batch de serving ({scopes}). "
-                        f"`model_serving_batch` n'est pas supprimé automatiquement "
-                        f"(c'est une configuration de serving, pas une donnée du batch)."
+                        f"⚠️ Ce batch est référencé comme batch de serving ({scopes}) : "
+                        f"la référence `model_serving_batch` sera supprimée avec le batch."
                     )
             except Exception:
                 pass
 
             # 1. Tables enfants liées par run_id → à supprimer AVANT model_training_run
             # 2. Tables avec batch_id direct (model_training_run = parent des tables via run_id)
+            _db_delete_ok = False
             try:
                 deleted = delete_batch_rows(engine, selected_batch)
                 _rows = sum(deleted.values())
+                _db_delete_ok = True
                 st.success(
                     f"✅ {len(deleted)} tables nettoyées en base ({_rows:,} lignes supprimées)"
                 )
@@ -1049,41 +1285,73 @@ def _render_delete_batch_button(selected_batch: str, artifacts_dir: Path) -> Non
                     f"dans ce batch puis réessayez."
                 )
 
-            if artifacts_dir.exists():
+            # P-fix (2026-08-30) : ne supprimer les fichiers QUE si la suppression DB a
+            # réussi. Sinon (pool MySQL saturée → timeout), on perdrait les modèles sur
+            # disque tout en gardant les lignes DB → état incohérent « dossiers disparus,
+            # DB présente ».
+            if artifacts_dir.exists() and _db_delete_ok:
                 try:
+                    audit_batch_delete(selected_batch, source="ml_diagnostics:per_batch_delete")
                     _shutil.rmtree(artifacts_dir)
                     st.success(f"✅ Répertoire supprimé")
                 except Exception as exc:
                     errors.append(f"Disque: {exc}")
 
-            # ── Nettoyage champions Oracle Extreme (dossier dédié, hors artifacts_dir) ──
-            _oracle_champ_dir = artifacts_dir.parent / "oracle" / "champions" / selected_batch
-            if _oracle_champ_dir.exists():
-                try:
-                    _shutil.rmtree(_oracle_champ_dir)
-                    st.success(f"✅ Champions Oracle supprimés")
-                except Exception as exc:
-                    errors.append(f"Disque (champions): {exc}")
+            # P-fix (2026-08-30) : si la suppression DB a échoué, on ne supprime PAS non
+            # plus les artefacts annexes (champions Oracle, oracle-wf, rapport_ml) — ils
+            # référencent le batch et resteraient orphelins alors que le batch existe encore.
+            if _db_delete_ok:
+                # ── Nettoyage champions Oracle Extreme (dossier dédié, hors artifacts_dir) ──
+                _oracle_champ_dir = artifacts_dir.parent / "oracle" / "champions" / selected_batch
+                if _oracle_champ_dir.exists():
+                    try:
+                        _shutil.rmtree(_oracle_champ_dir)
+                        st.success(f"✅ Champions Oracle supprimés")
+                    except Exception as exc:
+                        errors.append(f"Disque (champions): {exc}")
 
-            # ── Nettoyage artifacts/rapport_ml/ (rapport .md + logs .log archivés) ──
-            _safe_r = selected_batch.replace("/", "_").replace("\\", "_")[:100]
-            _rapport_dir = artifacts_dir.parent.parent / "rapport_ml"
-            _removed_report: list[str] = []
-            for _suffix in (".md", ".log"):
-                _rp = _rapport_dir / f"{_safe_r}{_suffix}"
-                try:
-                    if _rp.exists():
-                        _rp.unlink()
-                        _removed_report.append(_rp.name)
-                except OSError as exc:
-                    errors.append(f"rapport_ml: {exc}")
-            if _removed_report:
-                st.success("✅ Rapport/logs archivés supprimés : " + ", ".join(_removed_report))
+                # ── Nettoyage dossiers oracle-wf-* (parquet OOS walk-forward liés au batch) ──
+                # Chaque dossier oracle-wf-<timestamp> porte un tag `batch_id.txt` ; on ne
+                # supprime que ceux dont le tag correspond au batch supprimé.
+                _oracle_root = artifacts_dir.parent / "oracle"
+                if _oracle_root.exists():
+                    _removed_wf: list[str] = []
+                    for _wf_dir in sorted(_oracle_root.glob("oracle-wf-*")):
+                        _tag = _wf_dir / "batch_id.txt"
+                        _match = False
+                        try:
+                            _match = _tag.exists() and _tag.read_text(encoding="utf-8").strip() == selected_batch
+                        except OSError:
+                            _match = False
+                        if _match:
+                            try:
+                                _shutil.rmtree(_wf_dir)
+                                _removed_wf.append(_wf_dir.name)
+                            except OSError as exc:
+                                errors.append(f"oracle-wf: {exc}")
+                    if _removed_wf:
+                        st.success("✅ Dossiers oracle-wf supprimés : " + ", ".join(_removed_wf))
+
+                # ── Nettoyage artifacts/rapport_ml/ (rapport .md + logs .log archivés) ──
+                _safe_r = selected_batch.replace("/", "_").replace("\\", "_")[:100]
+                _rapport_dir = artifacts_dir.parent.parent / "rapport_ml"
+                _removed_report: list[str] = []
+                for _suffix in (".md", ".log"):
+                    _rp = _rapport_dir / f"{_safe_r}{_suffix}"
+                    try:
+                        if _rp.exists():
+                            _rp.unlink()
+                            _removed_report.append(_rp.name)
+                    except OSError as exc:
+                        errors.append(f"rapport_ml: {exc}")
+                if _removed_report:
+                    st.success("✅ Rapport/logs archivés supprimés : " + ", ".join(_removed_report))
 
             if errors:
                 st.error("Erreurs : " + "; ".join(errors))
             else:
                 st.success(f"🗑️ Batch `{selected_batch}` entièrement supprimé.")
+                st.cache_data.clear()  # purge le cache (le batch supprimé ne doit pas réapparaître)
                 st.session_state.pop(confirm_key, None)
                 st.rerun()
 
@@ -1123,7 +1391,7 @@ def _oracle_periods(batch_id: str) -> list[dict[str, Any]]:
     """
     out: list[dict[str, Any]] = []
     try:
-        _tbl = safe_query(ORACLE_TABLE_PERIODS_QUERY, {"batch_id": batch_id})
+        _tbl = _cached_query(ORACLE_TABLE_PERIODS_QUERY, {"batch_id": batch_id})
         if not _tbl.empty:
             _r = _tbl.iloc[0]
             _mn = pd.Timestamp(_r["min_date"])
@@ -1161,7 +1429,7 @@ def _load_latest_oracle_oos(batch_id: str) -> tuple[str | None, pd.DataFrame]:
 def _batch_best_horizon(batch_id: str) -> int:
     """Meilleur horizon du Global Ranking pour ce batch (metadata, défaut H20)."""
     try:
-        detail = safe_query(BATCH_DETAIL_QUERY, {"batch_id": batch_id})
+        detail = _cached_query(BATCH_DETAIL_QUERY, {"batch_id": batch_id})
         if detail.empty:
             return 20
         raw = detail.iloc[0].get("metadata_json")
@@ -1249,7 +1517,7 @@ def _render_build_oracle_labels_button(
             la vérification synthétique (le run synth est au best_h du batch).
     """
     # ── Prérequis : des rangs globaux pour ce batch ──
-    gr_check = safe_query(GLOBAL_RANK_DATE_RANGE_QUERY, {"batch_id": batch_id})
+    gr_check = _cached_query(GLOBAL_RANK_DATE_RANGE_QUERY, {"batch_id": batch_id})
     if gr_check.empty or not gr_check.iloc[0].get("nb_dates"):
         st.caption("⚠️ Aucun rang global pour ce batch — impossible de calculer le vrai Oracle.")
         return
@@ -1421,17 +1689,19 @@ def _render_oracle_distribution(batch_id: str, row: pd.Series) -> None:
             st.rerun()
         return
 
-    # ── Modèle global entraîné ? ──
-    global_df = safe_query(_global_rank_all_query(best_h), {"batch_id": batch_id})
-    has_global = not global_df.empty
+    # ── Modèle global entraîné ? (COUNT léger — on charge les ~500k lignes de
+    #    rangs SEULEMENT si l'utilisateur sélectionne le modèle global, pas à
+    #    chaque rerun de la page) ──
+    _gr_df = safe_query(_GR_COUNT_QUERY, {"batch_id": batch_id})
+    has_global = bool(not _gr_df.empty and int(_gr_df.iloc[0]["n"] or 0) > 0)
 
-    # ── Modèle Oracle Extreme entraîné ? ──
+    # ── Modèle Oracle Extreme entraîné ? (COUNT léger) ──
     has_oracle = _batch_trains_oracle(row)
     oracle_run: str | None = None
     oracle_oos = pd.DataFrame()
     if has_oracle:
-        oracle_run, oracle_oos = _load_latest_oracle_oos(batch_id)
-        has_oracle = not oracle_oos.empty
+        _oc_df = safe_query(_ORACLE_COUNT_QUERY, {"batch_id": batch_id})
+        has_oracle = bool(not _oc_df.empty and int(_oc_df.iloc[0]["n"] or 0) > 0)
 
     if not has_global and not has_oracle:
         st.info("Ni le modèle global ni le modèle Oracle Extreme ne sont disponibles pour ce batch.")
@@ -1461,7 +1731,7 @@ def _render_oracle_distribution(batch_id: str, row: pd.Series) -> None:
     # ── Horizon du vrai Oracle selon le modèle choisi ──
     horizon = best_h if chosen == "global" else 20
 
-    labels_df = safe_query(
+    labels_df = _cached_query(
         ORACLE_LABELS_DECILE_QUERY, {"batch_id": batch_id, "horizon": horizon}
     )
     if labels_df.empty:
@@ -1481,6 +1751,7 @@ def _render_oracle_distribution(batch_id: str, row: pd.Series) -> None:
 
     # ── Construire le DataFrame du modèle : date × symbol × score ──
     if chosen == "global":
+        global_df = _cached_global_rank_all(batch_id, best_h)
         model_df = global_df[["date", "symbol", "global_rank_best"]].copy()
         model_df["date"] = pd.to_datetime(model_df["date"], errors="coerce")
         model_df["score"] = pd.to_numeric(model_df["global_rank_best"], errors="coerce")
@@ -1488,6 +1759,7 @@ def _render_oracle_distribution(batch_id: str, row: pd.Series) -> None:
         kind_label = f"🌐 Modèle global (`global_rank_{best_h}`)"
         top_caption = "TOP/BOTTOM 10% = les 10% plus hauts / plus bas rangs par date (cross-sectionnel)"
     else:
+        oracle_run, oracle_oos = _cached_oracle_oos(batch_id)
         date_col = next(
             (c for c in ("prediction_date", "date", "entry_date", "asof_date") if c in oracle_oos.columns),
             None,
@@ -1676,7 +1948,7 @@ def _render_oracle_quality(batch_id: str, row: pd.Series) -> None:
 
     st.subheader("🔥 Oracle Extreme — Qualité du modèle (OOS)")
 
-    oracle_run, oos = _load_latest_oracle_oos(batch_id)
+    oracle_run, oos = _cached_oracle_oos(batch_id)
     if oos.empty:
         st.info("Aucune prédiction OOS Oracle Extreme disponible pour ce batch.")
         return
@@ -1749,8 +2021,14 @@ def _render_oracle_quality(batch_id: str, row: pd.Series) -> None:
                 actual_rate=(target_col, "mean"),
                 n=("proba_extreme", "size"),
             )
-            g.index = [f"D{i}" for i in g.index]
-            cal = g.reset_index().rename(columns={"_q": "Décile", "mean_proba": "P(extrême) prédite", "actual_rate": "Taux réalisé", "n": "N"})
+            # NB : reset_index() après `g.index = [...]` nommerait la colonne
+            # 'index' (le nom '_q' est perdu) → on construit cal directement.
+            cal = pd.DataFrame({
+                "Décile": [f"D{i}" for i in g.index],
+                "P(extrême) prédite": g["mean_proba"].to_numpy(dtype=float),
+                "Taux réalisé": g["actual_rate"].to_numpy(dtype=float),
+                "N": g["n"].to_numpy(dtype=int),
+            })
 
     # ── Rendement du top décile vs overall (future_return) ──
     top_ret: float | None = None
@@ -1874,7 +2152,7 @@ def _render_prediction_periods(batch_id: str, batch: pd.Series) -> None:
     sector_rows: list[dict[str, Any]] = []
 
     # ── 1. Modèle global (Global Ranking) ──
-    gr = safe_query(GLOBAL_RANK_COVERAGE_QUERY, {"batch_id": batch_id})
+    gr = _cached_query(GLOBAL_RANK_COVERAGE_QUERY, {"batch_id": batch_id})
     if not gr.empty and gr.iloc[0].get("min_date") is not None:
         g = gr.iloc[0]
         summary.append({
@@ -1906,6 +2184,10 @@ def _render_prediction_periods(batch_id: str, batch: pd.Series) -> None:
             elif rsym in _GICS_SECTORS:
                 sector_rows.append({"Secteur": rsym, "Période": f"{_fmt(dmin)} → {_fmt(dmax)}",
                                     "Jours": jours, "Symboles": syms})
+            elif rsym == "__ORACLE_SYNTH__" or rid.endswith("_oracle_synth"):
+                # Run miroir Oracle → model_predictions (oracle_synth) : déjà couvert
+                # par la section « Oracle extreme » — NE PAS compter comme per-symbol.
+                pass
             else:
                 sym_n += 1
                 if dmin is not None and (sym_min is None or dmin < sym_min):
@@ -1990,7 +2272,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
     batch_id = str(batch["batch_id"])
     st.subheader("📋 Détail du batch")
 
-    detail_df = safe_query(BATCH_DETAIL_QUERY, {"batch_id": batch_id})
+    detail_df = _cached_query(BATCH_DETAIL_QUERY, {"batch_id": batch_id})
     if detail_df.empty:
         st.warning("Impossible de charger le détail du batch.")
         return
@@ -2008,13 +2290,29 @@ def _render_batch_detail(batch: pd.Series) -> None:
         with col_dl:
             col_report, col_logs = st.columns(2)
             with col_report:
-                st.download_button(
-                    label="📥 Télécharger le rapport (.md)",
-                    data=generate_batch_report(engine, batch_id),
-                    file_name=f"{_dl_name}.md",
-                    mime="text/markdown",
-                    key=f"dl_{safe_bid}",
-                )
+                # La génération du rapport est lourde (~30 s) : on ne la lance que
+                # quand l'utilisateur clique (« Générer »), puis on propose le
+                # téléchargement. Évite ~30 s de blocage à CHAQUE rerun (sélection
+                # de batch, clic sur un bouton, confirmation de suppression…).
+                _report_key = f"ml_diag_report_{safe_bid}"
+                _report_val = st.session_state.get(_report_key)
+                if _report_val is None:
+                    if st.button(
+                        "📥 Générer le rapport (.md)",
+                        key=f"gen_report_{safe_bid}",
+                        help="Génère le rapport du batch (peut prendre ~30 s), puis propose le téléchargement.",
+                    ):
+                        with st.spinner("⏳ Génération du rapport…"):
+                            _report_val = generate_batch_report(engine, batch_id)
+                        st.session_state[_report_key] = _report_val
+                if _report_val is not None:
+                    st.download_button(
+                        label="📥 Télécharger le rapport (.md)",
+                        data=_report_val,
+                        file_name=f"{_dl_name}.md",
+                        mime="text/markdown",
+                        key=f"dl_{safe_bid}",
+                    )
             with col_logs:
                 st.download_button(
                     label="📄 Logs d'entraînement (.txt)",
@@ -2056,7 +2354,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
     with col1:
         st.metric("Batch ID", str(row.get("batch_id", ""))[:32] + "…" if len(str(row.get("batch_id", ""))) > 32 else str(row.get("batch_id", "")))
         st.metric("Statut", _status_badge(str(row.get("status", ""))))
-        st.metric("Source symboles", str(row.get("symbol_source", "")))
+        st.metric("Source symboles", _format_symbol_source(row.get("symbol_source", "")))
         comment_val = row.get("comment")
         st.metric("Commentaire", str(comment_val) if comment_val and str(comment_val) != "None" and str(comment_val) != "nan" else "—")
         st.metric("Démarré le", str(row.get("started_at", "—")))
@@ -2283,7 +2581,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
     st.subheader("🔵 Per-Symbol / Per-Sector — Métriques")
 
     # ── Statut sélection du champion ──
-    champion_df = safe_query(
+    champion_df = _cached_query(
         """SELECT mg.selection_mode, COUNT(DISTINCT mg.symbol) AS nb_symbols
            FROM alpha_trade.model_governance AS mg
            JOIN alpha_trade.model_training_run AS mtr ON mtr.run_id = mg.run_id
@@ -2311,7 +2609,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
             )
 
         # ── Répartition champions par modèle ──
-        champion_by_model_df = safe_query(
+        champion_by_model_df = _cached_query(
             """SELECT mg.model_name, COUNT(DISTINCT mg.symbol) AS nb_symbols
                FROM alpha_trade.model_governance AS mg
                JOIN alpha_trade.model_training_run AS mtr ON mtr.run_id = mg.run_id
@@ -2345,8 +2643,13 @@ def _render_batch_detail(batch: pd.Series) -> None:
     _is_reg_batch = _target_mode == "regression"
     _has_classif = _target_mode in ("binary", "ternary", "swing_cash")
 
+    if _target_mode == "ternary":
+        _metadata_json = detail_df.iloc[0].get("metadata_json") if not detail_df.empty else None
+        _render_directional_candidate_download(batch_id, _batch_status, _metadata_json)
+        st.markdown("")
+
     # ── Horizon selector (avant les métriques) ──
-    horizon_list = safe_query(HORIZON_LIST_QUERY, {"batch_id": batch_id})
+    horizon_list = _cached_query(HORIZON_LIST_QUERY, {"batch_id": batch_id})
     selected_horizon: int | None = None
     _horizon_sql: str = ""
     if not horizon_list.empty:
@@ -2380,7 +2683,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
             params["horizon"] = selected_horizon
         if extra_params:
             params.update(extra_params)
-        return safe_query(_sql, params)
+        return _cached_query(_sql, params)
 
     # ── Indicateur d'horizon ──
     if not horizon_list.empty:
@@ -2600,7 +2903,7 @@ def _render_global_rank_history(batch_id: str) -> None:
     st.subheader("🌐 Ranks Globaux Historiques (global_rank_history)")
 
     # ── Vérifier si des données existent pour ce batch ──
-    date_range_df = safe_query(GLOBAL_RANK_DATE_RANGE_QUERY, {"batch_id": batch_id})
+    date_range_df = _cached_query(GLOBAL_RANK_DATE_RANGE_QUERY, {"batch_id": batch_id})
     if date_range_df.empty or date_range_df.iloc[0]["nb_dates"] == 0:
         st.info(f"Aucun rang global historique trouvé pour le batch `{batch_id}`. Les rangs sont générés via **10. ML Predict → Prédire l'univers sélectionné**.")
         return
@@ -2609,7 +2912,7 @@ def _render_global_rank_history(batch_id: str) -> None:
     st.caption(f"📅 {dr['nb_dates']} dates disponibles — du {str(dr['min_date'])[:10]} au {str(dr['max_date'])[:10]}")
 
     # ── Sélecteur de date ──
-    dates_df = safe_query(GLOBAL_RANK_DATES_FOR_BATCH_QUERY, {"batch_id": batch_id})
+    dates_df = _cached_query(GLOBAL_RANK_DATES_FOR_BATCH_QUERY, {"batch_id": batch_id})
     if dates_df.empty:
         st.info("Aucune date trouvée.")
         return
@@ -2638,7 +2941,7 @@ def _render_global_rank_history(batch_id: str) -> None:
     )
 
     # ── Requête principale ──
-    rank_df = safe_query(
+    rank_df = _cached_query(
         GLOBAL_RANK_TOP_BOTTOM_QUERY,
         {"batch_id": batch_id, "date": selected_date_str},
     )
@@ -3042,6 +3345,8 @@ def render() -> None:
     display_df = batches_df.copy()
     if "status" in display_df.columns:
         display_df["status"] = display_df["status"].apply(_status_badge)
+    if "symbol_source" in display_df.columns:
+        display_df["symbol_source"] = display_df["symbol_source"].apply(_format_symbol_source)
     if "batch_id" in display_df.columns and "status" in batches_df.columns:
         # Prefix "❌ " for TO DELETE batches
         _raw_status = batches_df["status"].fillna("").str.strip().str.lower()
@@ -3085,9 +3390,13 @@ def render() -> None:
     st.divider()
     with st.expander("🧹 Nettoyer les batchs", expanded=False):
         from modelFactory.cleanup_incomplete_batches import cleanup_batches, list_batches
-        _include_completed = st.checkbox("🗑️ Inclure les batchs **terminés** (TOUT supprimer)", value=False)
+        _include_completed = st.checkbox(
+            "🗑️ Inclure les batchs **terminés** (les batchs en cours restent exclus)",
+            value=False,
+            help="Les batchs `running` (en cours d'entraînement) ne sont jamais supprimés par le nettoyage collectif.",
+        )
         _candidates = list_batches(include_completed=_include_completed)
-        _label = "terminés et non terminés" if _include_completed else "non terminés"
+        _label = "terminés et non terminés" if _include_completed else "non terminés (hors en cours)"
         if _candidates:
             st.warning(f"{len(_candidates)} batch(s) {_label}")
             if st.button("🗑️ Supprimer tous les batchs listés", type="primary"):

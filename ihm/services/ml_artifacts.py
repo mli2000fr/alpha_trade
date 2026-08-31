@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,18 @@ from ihm.services.pipeline_runner import PROJECT_ROOT
 
 
 DEFAULT_MODEL_ARTIFACTS_DIR = PROJECT_ROOT / "artifacts" / "models"
+
+WF_MIN_SIDE_SUPPORT = 15
+WF_MIN_VALID_FOLDS = 3
+WF_PASS_F1 = 0.35
+WF_STABLE_MEDIAN_F1 = 0.40
+WF_STABLE_MIN_F1 = 0.20
+WF_STABLE_PASS_RATE = 0.60
+
+DIRECTIONAL_CLASS_LONG_ONLY = "LONG_ONLY"
+DIRECTIONAL_CLASS_SHORT_ONLY = "SHORT_ONLY"
+DIRECTIONAL_CLASS_LONG_SHORT = "LONG_SHORT"
+DIRECTIONAL_CLASS_REJECTED = "REJECTED"
 
 
 def get_model_artifacts_dir(artifacts_dir: Path | None = None) -> Path:
@@ -50,6 +63,87 @@ def list_ml_artifact_symbols(artifacts_dir: Path | None = None) -> list[str]:
         if (child / "config.json").exists() or (child / "metrics.json").exists():
             symbols.append(child.name)
     return sorted(symbols, key=_symbol_sort_key)
+
+
+def _resolve_artifact_batch_dir(batch_id: str, artifacts_dir: Path | None = None) -> Path:
+    """Résout un batch sous la racine des artefacts sans accepter de traversée."""
+    normalized = str(batch_id or "").strip()
+    if not normalized or normalized in {".", ".."} or Path(normalized).name != normalized:
+        raise ValueError("batch_id d'artefacts invalide")
+    root = get_model_artifacts_dir(artifacts_dir).resolve()
+    return root / normalized
+
+
+def resolve_batch_artifacts_root(
+    batch_id: str,
+    metadata: str | dict[str, Any] | None = None,
+) -> Path:
+    """Résout la racine réelle des modèles, y compris pour ``--artifacts-dir``.
+
+    Les batches récents exposent la valeur CLI dans ``metadata_json``. Pour les
+    anciens batches, une découverte bornée à ``PROJECT_ROOT/artifacts/*`` évite
+    de dépendre exclusivement du répertoire historique ``artifacts/models``.
+    """
+    normalized = str(batch_id or "").strip()
+    if not normalized or normalized in {".", ".."} or Path(normalized).name != normalized:
+        raise ValueError("batch_id d'artefacts invalide")
+
+    if isinstance(metadata, str):
+        try:
+            parsed = json.loads(metadata) if metadata.strip() else {}
+        except json.JSONDecodeError:
+            parsed = {}
+    else:
+        parsed = metadata if isinstance(metadata, dict) else {}
+
+    configured_values: list[Any] = []
+    cli_options = parsed.get("cli_options") if isinstance(parsed, dict) else None
+    training_config = parsed.get("training_config") if isinstance(parsed, dict) else None
+    if isinstance(cli_options, dict):
+        configured_values.append(cli_options.get("artifacts_dir"))
+    if isinstance(training_config, dict):
+        configured_values.append(training_config.get("artifacts_dir"))
+
+    candidates: list[Path] = []
+    for raw_value in configured_values:
+        if not isinstance(raw_value, (str, Path)) or not str(raw_value).strip():
+            continue
+        configured = Path(str(raw_value).strip())
+        if not configured.is_absolute():
+            configured = PROJECT_ROOT / configured
+        configured = configured.resolve()
+        candidates.append(configured.parent if configured.name == normalized else configured)
+
+    candidates.append(DEFAULT_MODEL_ARTIFACTS_DIR.resolve())
+    artifacts_parent = (PROJECT_ROOT / "artifacts").resolve()
+    if artifacts_parent.exists():
+        candidates.extend(
+            child.resolve()
+            for child in artifacts_parent.iterdir()
+            if child.is_dir() and (child / normalized).is_dir()
+        )
+
+    seen: set[Path] = set()
+    for root in candidates:
+        if root in seen:
+            continue
+        seen.add(root)
+        if (root / normalized).is_dir():
+            return root
+    return DEFAULT_MODEL_ARTIFACTS_DIR.resolve()
+
+
+def has_per_symbol_artifacts(batch_id: str, artifacts_dir: Path | None = None) -> bool:
+    """Indique si le batch contient au moins un manifeste de symbole ordinaire."""
+    batch_dir = _resolve_artifact_batch_dir(batch_id, artifacts_dir)
+    if not batch_dir.exists() or not batch_dir.is_dir():
+        return False
+    return any(
+        child.is_dir()
+        and not child.name.startswith("_")
+        and ((child / "config.json").exists() or (child / "metrics.json").exists())
+        for child in batch_dir.iterdir()
+    )
 
 
 def _read_json_file(path: Path) -> tuple[dict[str, Any] | None, str | None]:
@@ -166,6 +260,300 @@ def _build_governance_thresholds_summary(config_data: dict[str, Any], metrics_da
     }
 
 
+def _finite_float(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if pd.notna(parsed) else None
+
+
+def _selected_walk_forward_payload(
+    config_data: dict[str, Any],
+    metrics_data: dict[str, Any],
+    selected_model: str | None,
+) -> tuple[dict[str, Any], int | None, str]:
+    """Résout le WF du champion servi, puis de son horizon sélectionné."""
+    raw_horizon = config_data.get("selected_forecast_horizon")
+    try:
+        horizon = int(raw_horizon) if raw_horizon is not None else None
+    except (TypeError, ValueError):
+        horizon = None
+
+    model = str(selected_model or "").strip().lower()
+    baseline_key = {"lightgbm": "baseline_lightgbm", "catboost": "baseline_catboost"}.get(model)
+    if baseline_key:
+        baseline = metrics_data.get(baseline_key)
+        if isinstance(baseline, dict):
+            horizons = baseline.get("horizons")
+            if isinstance(horizons, dict) and horizon is not None:
+                horizon_payload = horizons.get(f"h{horizon}") or horizons.get(str(horizon))
+                if isinstance(horizon_payload, dict) and isinstance(horizon_payload.get("walk_forward"), dict):
+                    return horizon_payload["walk_forward"], horizon, f"{baseline_key}.horizons.h{horizon}.walk_forward"
+            if isinstance(baseline.get("walk_forward"), dict):
+                return baseline["walk_forward"], horizon, f"{baseline_key}.walk_forward"
+
+    payload = metrics_data.get("walk_forward")
+    if isinstance(payload, dict):
+        return payload, horizon, "walk_forward"
+    return {}, horizon, ""
+
+
+def _estimated_side_support(split: dict[str, Any], side: str) -> int | None:
+    explicit = _finite_float(split.get(f"support_{side}"))
+    if explicit is not None:
+        return max(0, int(round(explicit)))
+    pct = _finite_float(split.get(f"true_{side}_pct"))
+    samples = _finite_float(split.get("n_samples"))
+    if samples is None:
+        samples = _finite_float(split.get("test_rows"))
+    if pct is None or samples is None:
+        return None
+    return max(0, int(round(samples * pct / 100.0)))
+
+
+def _side_stability(folds: list[dict[str, Any]], side: str) -> dict[str, Any]:
+    valid = [row for row in folds if row[f"{side}_valid"]]
+    values = [float(row[f"f1_{side}"]) for row in valid]
+    supports = [row[f"support_{side}"] for row in valid if row[f"support_{side}"] is not None]
+    passing = sum(value >= WF_PASS_F1 for value in values)
+    pass_rate = passing / len(values) if values else 0.0
+    median = float(pd.Series(values).median()) if values else None
+    minimum = min(values) if values else None
+    stable = (
+        len(values) >= WF_MIN_VALID_FOLDS
+        and median is not None and median >= WF_STABLE_MEDIAN_F1
+        and minimum is not None and minimum >= WF_STABLE_MIN_F1
+        and pass_rate >= WF_STABLE_PASS_RATE
+    )
+    if len(values) < WF_MIN_VALID_FOLDS:
+        status = "insufficient_folds"
+        status_label = "⚪ Folds insuffisants"
+    elif stable:
+        status = "stable"
+        status_label = "✅ Stable"
+    else:
+        status = "fragile"
+        status_label = "⚠️ Fragile"
+    return {
+        "side": side.upper(),
+        "status": status,
+        "status_label": status_label,
+        "valid_folds": len(values),
+        "passing_folds": passing,
+        "pass_rate": pass_rate,
+        "f1_mean": float(pd.Series(values).mean()) if values else None,
+        "f1_median": median,
+        "f1_min": minimum,
+        "f1_std": float(pd.Series(values).std(ddof=0)) if values else None,
+        "support_total": int(sum(supports)) if supports else None,
+    }
+
+
+def build_champion_walk_forward_stability(
+    config_data: dict[str, Any],
+    metrics_data: dict[str, Any],
+    selected_model: str | None,
+) -> dict[str, Any]:
+    """Construit le diagnostic de stabilité WF du champion/horizon effectivement servi."""
+    payload, horizon, source = _selected_walk_forward_payload(config_data, metrics_data, selected_model)
+    raw_splits = payload.get("splits") if isinstance(payload, dict) else None
+    splits = [split for split in raw_splits if isinstance(split, dict)] if isinstance(raw_splits, list) else []
+    fold_rows: list[dict[str, Any]] = []
+    for split in splits:
+        row: dict[str, Any] = {
+            "fold": split.get("split_index"),
+            "test_start": split.get("test_start_date"),
+            "test_end": split.get("test_end_date"),
+            "test_rows": int(split.get("test_rows")) if _finite_float(split.get("test_rows")) is not None else None,
+            "n_samples": int(split.get("n_samples")) if _finite_float(split.get("n_samples")) is not None else None,
+            "f1_macro": _finite_float(split.get("f1_macro")),
+            "f1_long": _finite_float(split.get("f1_long")),
+            "f1_short": _finite_float(split.get("f1_short")),
+            "f1_flat": _finite_float(split.get("f1_flat")),
+            "precision_long": _finite_float(split.get("precision_long")),
+            "recall_long": _finite_float(split.get("recall_long")),
+            "precision_short": _finite_float(split.get("precision_short")),
+            "recall_short": _finite_float(split.get("recall_short")),
+        }
+        for side in ("long", "short"):
+            support = _estimated_side_support(split, side)
+            row[f"support_{side}"] = support
+            row[f"{side}_valid"] = row[f"f1_{side}"] is not None and support is not None and support >= WF_MIN_SIDE_SUPPORT
+        fold_rows.append(row)
+
+    long_summary = _side_stability(fold_rows, "long")
+    short_summary = _side_stability(fold_rows, "short")
+    summary_rows = [long_summary, short_summary]
+    if long_summary["status"] == "stable" and short_summary["status"] == "stable":
+        overall_status = "long_short_stable"
+        overall_label = "✅ LONG + SHORT stables"
+    elif long_summary["status"] == "stable":
+        overall_status = "long_only_stable"
+        overall_label = "🟢 LONG stable uniquement"
+    elif short_summary["status"] == "stable":
+        overall_status = "short_only_stable"
+        overall_label = "🔴 SHORT stable uniquement"
+    elif not fold_rows:
+        overall_status = "unavailable"
+        overall_label = "⚪ Détail des folds indisponible"
+    else:
+        overall_status = "not_stable"
+        overall_label = "⛔ Stabilité directionnelle non démontrée"
+
+    return {
+        "available": bool(fold_rows),
+        "selected_model": selected_model,
+        "selected_horizon": horizon,
+        "source": source,
+        "reported_n_splits": payload.get("n_splits") if isinstance(payload, dict) else None,
+        "evaluated_folds": len(fold_rows),
+        "overall_status": overall_status,
+        "overall_label": overall_label,
+        "long": long_summary,
+        "short": short_summary,
+        "summary_df": pd.DataFrame(summary_rows),
+        "folds_df": pd.DataFrame(fold_rows),
+        "thresholds": {
+            "min_side_support": WF_MIN_SIDE_SUPPORT,
+            "min_valid_folds": WF_MIN_VALID_FOLDS,
+            "passing_f1": WF_PASS_F1,
+            "stable_median_f1": WF_STABLE_MEDIAN_F1,
+            "stable_min_f1": WF_STABLE_MIN_F1,
+            "stable_pass_rate": WF_STABLE_PASS_RATE,
+        },
+    }
+
+
+def _directional_selection_reason(side_summary: dict[str, Any]) -> str:
+    """Produit une raison compacte et auditable lorsqu'un côté est rejeté."""
+    if side_summary.get("status") == "stable":
+        return "stable"
+    reasons: list[str] = []
+    valid_folds = int(side_summary.get("valid_folds") or 0)
+    median = _finite_float(side_summary.get("f1_median"))
+    minimum = _finite_float(side_summary.get("f1_min"))
+    pass_rate = _finite_float(side_summary.get("pass_rate"))
+    if valid_folds < WF_MIN_VALID_FOLDS:
+        reasons.append(f"valid_folds<{WF_MIN_VALID_FOLDS}")
+    if median is None or median < WF_STABLE_MEDIAN_F1:
+        reasons.append(f"median_f1<{WF_STABLE_MEDIAN_F1:.2f}")
+    if minimum is None or minimum < WF_STABLE_MIN_F1:
+        reasons.append(f"min_f1<{WF_STABLE_MIN_F1:.2f}")
+    if pass_rate is None or pass_rate < WF_STABLE_PASS_RATE:
+        reasons.append(f"pass_rate<{WF_STABLE_PASS_RATE:.2f}")
+    return ";".join(reasons) or str(side_summary.get("status") or "not_stable")
+
+
+def build_batch_directional_candidate_selection(
+    batch_id: str,
+    artifacts_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Sélectionne les symboles per-symbol stables, indépendamment par côté.
+
+    Seuls le champion et l'horizon sélectionnés dans le manifeste du symbole
+    sont évalués. Les trois listes retournées sont exclusives : LONG_ONLY,
+    SHORT_ONLY et LONG_SHORT.
+    """
+    batch_dir = _resolve_artifact_batch_dir(batch_id, artifacts_dir)
+    symbols = [symbol for symbol in list_ml_artifact_symbols(batch_dir) if not symbol.startswith("_")]
+    rows: list[dict[str, Any]] = []
+
+    for symbol in symbols:
+        report = load_ml_artifact_report(symbol, batch_dir)
+        stability = report.get("walk_forward_stability") or {}
+        long_summary = stability.get("long") or {}
+        short_summary = stability.get("short") or {}
+        eligible_long = long_summary.get("status") == "stable"
+        eligible_short = short_summary.get("status") == "stable"
+        if eligible_long and eligible_short:
+            classification = DIRECTIONAL_CLASS_LONG_SHORT
+        elif eligible_long:
+            classification = DIRECTIONAL_CLASS_LONG_ONLY
+        elif eligible_short:
+            classification = DIRECTIONAL_CLASS_SHORT_ONLY
+        else:
+            classification = DIRECTIONAL_CLASS_REJECTED
+
+        rows.append(
+            {
+                "symbol": symbol,
+                "selected_model": report.get("selected_model"),
+                "selected_horizon": stability.get("selected_horizon"),
+                "selection_mode": report.get("selection_mode"),
+                "classification": classification,
+                "eligible_long": eligible_long,
+                "eligible_short": eligible_short,
+                "long_valid_folds": long_summary.get("valid_folds"),
+                "long_f1_median": long_summary.get("f1_median"),
+                "long_f1_min": long_summary.get("f1_min"),
+                "long_f1_std": long_summary.get("f1_std"),
+                "long_pass_rate": long_summary.get("pass_rate"),
+                "long_support_total": long_summary.get("support_total"),
+                "long_reason": _directional_selection_reason(long_summary),
+                "short_valid_folds": short_summary.get("valid_folds"),
+                "short_f1_median": short_summary.get("f1_median"),
+                "short_f1_min": short_summary.get("f1_min"),
+                "short_f1_std": short_summary.get("f1_std"),
+                "short_pass_rate": short_summary.get("pass_rate"),
+                "short_support_total": short_summary.get("support_total"),
+                "short_reason": _directional_selection_reason(short_summary),
+                "artifact_health": report.get("manifest_health"),
+                "fold_source": stability.get("source"),
+            }
+        )
+
+    audit_df = pd.DataFrame(rows)
+    by_class = {
+        classification: sorted(
+            row["symbol"] for row in rows if row["classification"] == classification
+        )
+        for classification in (
+            DIRECTIONAL_CLASS_LONG_ONLY,
+            DIRECTIONAL_CLASS_SHORT_ONLY,
+            DIRECTIONAL_CLASS_LONG_SHORT,
+        )
+    }
+    return {
+        "batch_id": batch_id,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "scanned_symbols": len(symbols),
+        "eligible_symbols": sum(len(values) for values in by_class.values()),
+        "long_only": by_class[DIRECTIONAL_CLASS_LONG_ONLY],
+        "short_only": by_class[DIRECTIONAL_CLASS_SHORT_ONLY],
+        "long_short": by_class[DIRECTIONAL_CLASS_LONG_SHORT],
+        "audit_df": audit_df,
+    }
+
+
+def format_directional_candidate_selection(selection: dict[str, Any]) -> str:
+    """Formate le fichier texte téléchargeable à trois listes exclusives."""
+    def _symbols(key: str) -> str:
+        values = sorted({str(value).strip() for value in selection.get(key, []) if str(value).strip()})
+        return ",".join(values)
+
+    lines = [
+        "# Candidats directionnels per-symbol",
+        f"# batch_id={selection.get('batch_id', '')}",
+        f"# generated_at={selection.get('generated_at', '')}",
+        "# Listes exclusives; symboles separes par une virgule sans espace.",
+        f"# Gates: support>={WF_MIN_SIDE_SUPPORT}; valid_folds>={WF_MIN_VALID_FOLDS}; "
+        f"median_f1>={WF_STABLE_MEDIAN_F1:.2f}; min_f1>={WF_STABLE_MIN_F1:.2f}; "
+        f"pass_rate(f1>={WF_PASS_F1:.2f})>={WF_STABLE_PASS_RATE:.2f}",
+        "",
+        "[LONG_ONLY]",
+        _symbols("long_only"),
+        "",
+        "[SHORT_ONLY]",
+        _symbols("short_only"),
+        "",
+        "[LONG_SHORT]",
+        _symbols("long_short"),
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def _load_optional_artifact_json(path: Path) -> dict[str, Any]:
     data, _error = _read_json_file(path)
     return data or {}
@@ -198,6 +586,7 @@ def load_ml_artifact_report(symbol: str, artifacts_dir: Path | None = None) -> d
             "selected_route_errors": [f"missing_symbol_dir:{symbol}"],
             "routes_df": pd.DataFrame(),
             "ranking_df": pd.DataFrame(),
+            "walk_forward_stability": build_champion_walk_forward_stability({}, {}, None),
         }
 
     config_data, config_error = _read_json_file(config_path)
@@ -258,6 +647,9 @@ def load_ml_artifact_report(symbol: str, artifacts_dir: Path | None = None) -> d
         if isinstance(row, dict)
     ]
     attribution_regimes_df = pd.DataFrame(regime_rows)
+    walk_forward_stability = build_champion_walk_forward_stability(
+        config_data, metrics_data, selected_model
+    )
 
     return {
         "symbol": symbol,
@@ -286,5 +678,6 @@ def load_ml_artifact_report(symbol: str, artifacts_dir: Path | None = None) -> d
         "attribution_regimes_df": attribution_regimes_df,
         "routes_df": routes_df,
         "ranking_df": _build_ranking_dataframe(metrics_data),
+        "walk_forward_stability": walk_forward_stability,
     }
 

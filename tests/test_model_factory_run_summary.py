@@ -186,8 +186,8 @@ def test_cli_parses_walkforward_default_on_and_no_walkforward() -> None:
     assert opts_off.walkforward is False
     assert opts_off.training_start_date == date(2018, 1, 1)
 
-    with pytest.raises(SystemExit):
-        parser.parse_args(["--mode", "train", "--ml-mode", "rebuild-missing"])
+    opts_legacy = parser.parse_args(["--mode", "train", "--ml-mode", "rebuild-missing"])
+    assert opts_legacy.ml_mode == "rebuild-missing"
 
 
 def test_cli_parses_champion_quarantine_thresholds() -> None:

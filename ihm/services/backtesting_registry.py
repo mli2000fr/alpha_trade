@@ -272,6 +272,29 @@ def _with_updates(record: BacktestingRunRecord, **updates: object) -> Backtestin
     return BacktestingRunRecord(**data)
 
 
+def _append_to_log(path_raw: str, text: str) -> None:
+    """Append tolérant aux erreurs dans un fichier de log de run.
+
+    Auto-répare le répertoire/fichier s'il a disparu (le dossier d'un run peut
+    être supprimé — purge IHM, reset ML, rétention d'artefacts, suppression
+    manuelle — alors que le process tourne encore). Sans cette récréation,
+    ``_drain_events`` plantait la page entière en ``FileNotFoundError``.
+    Toute erreur (fichier verrouillé sous Windows, etc.) est avalée pour ne
+    jamais faire tomber le rendu de la page.
+    """
+    if not path_raw or not text:
+        return
+    try:
+        path = Path(path_raw)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            path.touch(exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(text)
+    except OSError:
+        pass
+
+
 def _drain_events(managed: _ManagedRun) -> bool:
     stdout_chunk: list[str] = []
     stderr_chunk: list[str] = []
@@ -290,17 +313,13 @@ def _drain_events(managed: _ManagedRun) -> bool:
             _append_tail(managed.stderr_tail or [], line)
 
     if stdout_chunk:
-        with Path(managed.record.stdout_path).open("a", encoding="utf-8") as fh:
-            fh.write("".join(stdout_chunk))
-        with Path(managed.record.combined_path).open("a", encoding="utf-8") as fh:
-            fh.write("".join(f"[stdout] {line}" for line in stdout_chunk))
+        _append_to_log(managed.record.stdout_path, "".join(stdout_chunk))
+        _append_to_log(managed.record.combined_path, "".join(f"[stdout] {line}" for line in stdout_chunk))
         managed.record = _with_updates(managed.record, stdout_lines=managed.record.stdout_lines + len(stdout_chunk))
 
     if stderr_chunk:
-        with Path(managed.record.stderr_path).open("a", encoding="utf-8") as fh:
-            fh.write("".join(stderr_chunk))
-        with Path(managed.record.combined_path).open("a", encoding="utf-8") as fh:
-            fh.write("".join(f"[stderr] {line}" for line in stderr_chunk))
+        _append_to_log(managed.record.stderr_path, "".join(stderr_chunk))
+        _append_to_log(managed.record.combined_path, "".join(f"[stderr] {line}" for line in stderr_chunk))
         managed.record = _with_updates(managed.record, stderr_lines=managed.record.stderr_lines + len(stderr_chunk))
 
     return drained
@@ -314,10 +333,8 @@ def _finalize_if_needed(managed: _ManagedRun) -> BacktestingRunRecord:
         _kill_process_tree(managed.process)
         managed.timed_out = True
         timeout_message = "\nTimeout d'exécution dépassé.\n"
-        with Path(managed.record.stderr_path).open("a", encoding="utf-8") as fh:
-            fh.write(timeout_message)
-        with Path(managed.record.combined_path).open("a", encoding="utf-8") as fh:
-            fh.write(f"[stderr] {timeout_message}")
+        _append_to_log(managed.record.stderr_path, timeout_message)
+        _append_to_log(managed.record.combined_path, f"[stderr] {timeout_message}")
         _append_tail(managed.stderr_tail or [], timeout_message)
         managed.record = _with_updates(managed.record, stderr_lines=managed.record.stderr_lines + 1)
         returncode = -2

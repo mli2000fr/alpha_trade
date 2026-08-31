@@ -15,6 +15,7 @@ from uuid import uuid4
 import pandas as pd
 
 from common.utils import configure_root_logging
+from common.universe_files import list_universe_file_sources
 from core.run_summary import attach_schema_version
 from database.connection import get_sqlalchemy_engine
 from modelFactory.data_loader import (
@@ -107,6 +108,7 @@ SYMBOL_SOURCES = (
     "tradable-universe",
     "stock-bars-daily",
     "ticket-recherche",
+    *list_universe_file_sources(),
 )
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 60.0
 _REPORT_DIR = Path("artifacts/rapport_ml")
@@ -977,10 +979,22 @@ def main(args: list[str] | None = None) -> None:
         except Exception as _liq_exc:
             LOGGER.warning("cli: failed to inject liquidity diagnostics: %s", _liq_exc)
 
+        # P-fix (2026-08-30) : un batch dont TOUTES les unités ont échoué ne doit
+        # pas être marqué "completed" (ex: per_sector 11/11 FAILED). On le marque
+        # "failed" ; un batch partiellement réussi (completed>0) reste "completed".
+        _batch_final_status = (
+            "failed" if (completed == 0 and failed > 0) else "completed"
+        )
+        if _batch_final_status == "failed":
+            LOGGER.error(
+                "cli: batch %s marked FAILED — completed=%d skipped=%d failed=%d "
+                "(aucune unité terminée)",
+                run_id, completed, skipped, failed,
+            )
         update_training_batch(
             engine,
             run_id,
-            status="completed",
+            status=_batch_final_status,
             finished_at=finished_at,
             symbols_completed=completed,
             symbols_skipped=skipped,
@@ -1429,6 +1443,27 @@ def main(args: list[str] | None = None) -> None:
                     "predict combined batch=%s oracle predict result=%s",
                     _batch_id, _oc_out,
                 )
+                # ── Synchro Oracle → model_predictions (même logique que le flux
+                #    rank-driven / oracle-only) : peuple model_predictions avec le
+                #    signal Oracle (source=oracle_synth) pour la couverture ML et
+                #    l'univers per-symbol. Idempotent ; échec non-bloquant. ──
+                if _oc_out and _oc_out.get("status") == "completed" and int(_oc_out.get("n_rows", 0) or 0) > 0:
+                    try:
+                        from modelFactory.synthesize_oracle_predictions import synthesize as _synth_oc
+                        _oc_synth = _synth_oc(
+                            _batch_id,
+                            start=_oc_start if historical_predict_enabled else None,
+                            end=_oc_end if historical_predict_enabled else None,
+                        )
+                        LOGGER.info(
+                            "predict combined batch=%s sync oracle_synth result=%s",
+                            _batch_id, _oc_synth,
+                        )
+                    except Exception as _synth_oc_exc:  # noqa: BLE001
+                        LOGGER.warning(
+                            "predict combined batch=%s sync oracle_synth FAILED (non-bloquant): %s",
+                            _batch_id, _synth_oc_exc,
+                        )
             except Exception as _oc_exc:  # noqa: BLE001
                 LOGGER.warning(
                     "predict combined batch=%s oracle predict FAILED (non-bloquant): %s",

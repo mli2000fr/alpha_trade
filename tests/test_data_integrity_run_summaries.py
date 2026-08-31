@@ -94,6 +94,8 @@ def test_sync_latest_quotes_main_emits_failed_summary_when_sync_raises(monkeypat
                     from_date="2026-04-01",
                     to_date="2026-04-15",
                     symbol_source="active-tradable",
+                    start_date=None,
+                    end_date=None,
                     limit=5,
                     batch_size=10,
                     start_symbol=" msft ",
@@ -181,6 +183,7 @@ def test_sync_earnings_calendar_main_emits_structured_summary(monkeypatch, capsy
                     log_every=7,
                     batch_size=50,
                     resume=True,
+                    provider="finnhub",
                 )
             },
         )(),
@@ -275,6 +278,10 @@ def test_update_sector_main_emits_structured_summary(monkeypatch, capsys) -> Non
                     sleep_seconds=1.2,
                     log_every=9,
                     refresh_stale_days=0,
+                    symbols_file=None,
+                    symbol_source="active-tradable",
+                    start_date=None,
+                    end_date=None,
                 )
             },
         )(),

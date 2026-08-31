@@ -227,7 +227,7 @@ def test_execute_run_emits_live_progress_payloads(monkeypatch) -> None:
     }
     oco = MagicMock()
 
-    monkeypatch.setattr(executor_module, "build_entry_intents", lambda targets, cfg, exec_run_id: [])
+    monkeypatch.setattr(executor_module, "build_entry_intents", lambda targets, cfg, exec_run_id, **kwargs: [])
 
     executor = ProductionExecutor(
         config,
@@ -305,7 +305,7 @@ def test_execute_run_applies_live_regime_guards_before_building_intents(monkeypa
 
     built_targets: list[list[str]] = []
 
-    def _capture_build_entry_intents(targets, cfg, exec_run_id):
+    def _capture_build_entry_intents(targets, cfg, exec_run_id, **kwargs):
         built_targets.append([target.symbol for target in targets])
         return []
 
@@ -319,7 +319,7 @@ def test_execute_run_applies_live_regime_guards_before_building_intents(monkeypa
     assert metrics["targets_loaded"] == 2
     assert metrics["targets_blocked_by_regime_guards"] == 1
     assert metrics["skipped_by_regime_max_sector_weight"] == 1
-    assert built_targets == [["AAPL"]]
+    assert built_targets == [["MSFT"]]
 
 
 def test_execute_run_applies_live_gross_exposure_guard_before_building_intents(monkeypatch) -> None:
@@ -378,7 +378,7 @@ def test_execute_run_applies_live_gross_exposure_guard_before_building_intents(m
 
     built_targets: list[list[str]] = []
 
-    def _capture_build_entry_intents(targets, cfg, exec_run_id):
+    def _capture_build_entry_intents(targets, cfg, exec_run_id, **kwargs):
         built_targets.append([target.symbol for target in targets])
         return []
 
@@ -396,6 +396,7 @@ def test_execute_run_applies_live_gross_exposure_guard_before_building_intents(m
 
 
 def test_execute_run_scales_targets_with_effective_leverage_before_building_intents(monkeypatch) -> None:
+    monkeypatch.setattr("common.config_loader.load_config", lambda: {"risk_management": {"prod_exposure_multiplier": 1.0}})
     config = ExecutionConfig(
         dry_run=True,
         allow_outside_rth=True,
@@ -443,7 +444,7 @@ def test_execute_run_scales_targets_with_effective_leverage_before_building_inte
 
     captured_targets: list[tuple[float, float, float | None]] = []
 
-    def _capture_build_entry_intents(targets, cfg, exec_run_id):
+    def _capture_build_entry_intents(targets, cfg, exec_run_id, **kwargs):
         captured_targets.extend(
             (float(target.target_shares), float(target.target_weight), target.target_notional)
             for target in targets

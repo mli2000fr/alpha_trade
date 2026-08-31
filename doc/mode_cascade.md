@@ -1,390 +1,614 @@
-# Modes de cascade — combinaison Global Rank × Oracle Extreme
+# Cascade de sélection et modes de ranking
 
-> Statut : implémenté (CLI `--cascade-rank-mode` + sélecteur dans la page backtesting IHM).
-> Date : 2026-08-26.
+Retour : [documentation recherche](research/README.md) · Voir aussi : [Oracle Extreme](ml/oracle/README.md)
 
-> ⚠️ **IMPORTANT — PRODUCTION NON PRÊTE** : ces modes (sauf `ml`) ne sont **pas câblés au
-> pipeline live**. Ils servent uniquement à la **recherche / au backtest**
-> (`python -m backtesting run`). À **brancher dans le flux live**
-> (`pipeline_runner.py` / étape risk) si et seulement si un mode est validé OOS
-> puis promu en production.
+> Statut au 31 août 2026 : les modes sont disponibles dans la CLI Backtest et dans la page
+> Backtest de l’IHM. Cette documentation décrit le chemin de backtest. Elle ne signifie pas
+> que les modes Oracle expérimentaux sont automatiquement promus dans le pipeline live.
 
-Ce document décrit les **modes de cascade** : comment le **rang global** (Global Ranking,
-`global_rank_{H}`) et la **proba_extreme** (Oracle Extreme, O0) sont combinés (ou pas)
-pour sélectionner les candidats LONG/SHORT dans le backtest.
+## 1. Rôle de la cascade
 
----
+La cascade transforme les prédictions ML disponibles pour une date en candidats ordonnés
+`(side, symbol, score)`. L’implémentation de référence est
+`modelFactory.predictor.cascade_select()` ; `apply_cascade_to_predictions()` applique ensuite
+la sélection au DataFrame consommé par le backtest.
 
-## 1. Rappel des deux modèles
+La cascade ne réalise pas l’entraînement. Elle combine, selon le mode choisi :
 
-| Modèle | Sortie | Sémantique |
+- les rangs de `global_rank_history` ;
+- `proba_extreme` de `oracle_extreme_predictions` ;
+- les probabilités directionnelles Per-Symbol de `model_predictions` ;
+- les seuils de sélection, filtres DIP et contraintes de saturation.
+
+```mermaid
+flowchart LR
+  GR[Global Ranking] --> C[cascade_select]
+  O[Oracle Extreme<br/>proba_extreme] --> C
+  PS[Per-Symbol<br/>P long / P short] --> C
+  C --> G[Gate et classement]
+  G --> S[Signaux LONG / SHORT / FLAT]
+  S --> R[Contraintes portefeuille et backtest]
+```
+
+## 2. Modes disponibles
+
+| Mode CLI/IHM | Source du pool | Couche directionnelle | Usage principal |
+|---|---|---|---|
+| `ml` | Global Rank | Per-Symbol | cascade standard top/bottom |
+| `random` | rang aléatoire déterministe | Per-Symbol | placebo et ablation |
+| `oracle` | rang Oracle direct | Per-Symbol selon le flux courant | remplacement du rang global |
+| `oracle_filter` | Global Rank | Per-Symbol | Oracle retire les candidats de qualité insuffisante |
+| `oracle_pool` | pool Global Rank élargi | Per-Symbol | Oracle sélectionne dans le pool |
+| `oracle_rerank` | pool Global Rank | Per-Symbol | Oracle change l’ordre sans changer le pool initial |
+| `extreme_gate` | percentile Oracle quotidien | comportement historique LONG | legacy reproductible |
+| `extreme_gate_directional` | percentile Oracle quotidien | comparaison Per-Symbol LONG/SHORT | amplitude Oracle + direction Per-Symbol |
+
+Les noms ne sont pas interchangeables : changer le mode peut changer la population éligible,
+le côté, le score et la couverture requise.
+
+## 3. Mode standard `ml`
+
+Le rang global du batch et de l’horizon effectif définit deux zones :
+
+- zone haute : candidat LONG si `long_prob > min_prob` ;
+- zone basse : candidat SHORT si `short_prob > min_prob` ;
+- milieu : candidat rejeté.
+
+Le score directionnel combine le rang et la probabilité du côté. Le filtre momentum SHORT,
+les filtres DIP et les politiques de saturation peuvent encore modifier ou rejeter la liste.
+
+## 4. Modes Oracle combinés
+
+### `oracle`
+
+Les probabilités Oracle remplacent la source de rang. Ce mode ne doit pas être interprété
+comme une prédiction de direction : `proba_extreme` mesure l’amplitude extrême, pas la hausse.
+
+### `oracle_filter`
+
+Le Global Rank construit d’abord le pool top/bottom. Oracle agit ensuite comme filtre de
+qualité. Le mode exige donc une couverture Global Rank et Oracle compatibles.
+
+### `oracle_pool`
+
+Le Global Rank construit un pool plus large, puis Oracle sélectionne la meilleure fraction
+de ce pool. La population finale peut être différente de celle du mode `ml`.
+
+### `oracle_rerank`
+
+Le Global Rank conserve le pool initial et Oracle en modifie l’ordre. Cette variante sert à
+isoler l’effet du classement Oracle à exposition initiale comparable.
+
+## 5. `extreme_gate` legacy
+
+Ce mode est conservé pour reproduire les recherches E6–E13 et les anciens backtests.
+L’Oracle est la source exclusive du **pool** : le rang global n’est pas chargé. Pour chaque
+date, le code convertit `proba_extreme` en percentile cross-sectionnel et conserve :
+
+```text
+oracle_percentile >= 1 - extreme_gate_pct
+```
+
+Avec `extreme_gate_pct=0.20`, les percentiles supérieurs ou égaux à `0.80` sont retenus.
+Le chemin historique émet des LONG. Selon `--extreme-gate-per-symbol`, le Per-Symbol peut
+encore jouer un rôle de veto ou de score ; l’expression « Oracle seul » dans l’IHM signifie
+donc précisément « Oracle seul pour définir le pool, sans Global Ranking ».
+
+Le flag historique `--extreme-gate-shorts` est conservé mais ne constitue pas une sélection
+symétrique : le code teste le LONG avant le SHORT. Il ne faut pas l’utiliser comme équivalent
+du nouveau mode directionnel.
+
+## 6. `extreme_gate_directional`
+
+Ce mode sépare explicitement les deux responsabilités :
+
+1. Oracle détecte les titres susceptibles de produire un mouvement important ;
+2. le modèle Per-Symbol détermine le côté le plus probable ;
+3. la cascade filtre les directions faibles ou ambiguës ;
+4. les candidats acceptés sont classés avec Oracle et la probabilité directionnelle.
+
+Pour chaque symbole appartenant au pool Oracle :
+
+```text
+direction_probability = max(proba_long, proba_short)
+direction_margin      = abs(proba_long - proba_short)
+
+rejet si direction_probability <= cascade.min_prob
+rejet si direction_margin < extreme_gate_direction_margin
+rejet systématique si proba_long == proba_short
+
+LONG  si proba_long  > proba_short
+SHORT si proba_short > proba_long
+
+score = oracle_percentile * direction_probability
+```
+
+La marge par défaut est `0.02`. Elle est modifiable dans la page Backtest et transmise par
+`--extreme-gate-direction-margin`. Le seuil de probabilité reste celui de la cascade
+(`min_prob`) : le nouveau paramètre de marge ne le remplace pas.
+
+Un symbole sans prédiction Per-Symbol est rejeté. Contrairement au mode legacy Oracle-only,
+la couverture ML directionnelle est donc obligatoire et le contrôle de couverture n’est pas
+neutralisé.
+
+### Exemple
+
+| Symbole | Percentile Oracle | P(LONG) | P(SHORT) | Marge | Décision | Score |
+|---|---:|---:|---:|---:|---|---:|
+| A | 0,95 | 0,72 | 0,18 | 0,54 | LONG | 0,684 |
+| B | 0,90 | 0,61 | 0,78 | 0,17 | SHORT | 0,702 |
+| C | 0,88 | 0,61 | 0,60 | 0,01 | rejet si marge 0,02 | — |
+| D | 0,40 | 0,90 | 0,05 | 0,85 | hors pool Oracle | — |
+
+## 7. Utilisation dans l’IHM Backtest
+
+La liste **Mode de cascade** expose deux options distinctes :
+
+- `Extreme Gate : Oracle seul, LONG-only` → `extreme_gate` legacy ;
+- `Extreme Gate directionnel : Oracle amplitude + Per-Symbol LONG/SHORT` →
+  `extreme_gate_directional`.
+
+Pour le mode directionnel, sélectionner :
+
+- comme campagne ML, le batch contenant les prédictions Per-Symbol ;
+- comme Batch Oracle Extreme, le batch contenant `proba_extreme` ;
+- ou le même batch si celui-ci contient effectivement les deux familles de prédictions.
+
+Les restrictions de côté sont appliquées après la sélection directionnelle :
+
+| Long only | Short only | Résultat |
+|---:|---:|---|
+| décoché | décoché | LONG + SHORT, comportement par défaut |
+| coché | décoché | les SHORT sont supprimés (`--no-shorts`) |
+| décoché | coché | les LONG sont supprimés (`--no-longs`) |
+| coché | coché | configuration refusée avant lancement |
+
+L’auto-détection d’un batch Oracle-only continue volontairement de sélectionner
+`extreme_gate` legacy. Elle ne choisit jamais automatiquement le mode directionnel, car ce
+dernier exige une source Per-Symbol explicite.
+
+## 8. Contrats de données et erreurs fréquentes
+
+| Symptôme | Cause probable | Contrôle |
 |---|---|---|
-| **Global Ranking** (B25 / batch) | `global_rank_{3,5,10,15,20}` | rang percentile cross-sectionnel **directionnel** (top = LONG, bottom = SHORT) |
-| **Oracle Extreme** (O0) | `proba_extreme` | potentiel de **mouvement extrême** — ⚠️ **≠ P(LONG)**, pas directionnel |
+| aucun candidat | batch Oracle vide ou mauvaise période | vérifier `oracle_extreme_predictions` |
+| pool Oracle présent mais aucun trade directionnel | prédictions Per-Symbol absentes | vérifier `model_predictions` du batch ML |
+| uniquement des LONG | mode legacy ou case Long only active | vérifier le mode effectif et `--no-shorts` |
+| uniquement des SHORT | case Short only active | vérifier `--no-longs` |
+| très peu de candidats | seuil de probabilité ou marge trop élevés | publier le funnel des motifs de rejet |
+| résultats différents avec le même modèle | population du percentile différente | figer univers, date et couverture Oracle |
+| Oracle interprété comme direction | confusion amplitude/sens | utiliser le Per-Symbol pour le côté |
 
-⚠️ **Sémantique à ne jamais oublier** : `proba_extreme` n'est **pas** `P(LONG)`. C'est le
-potentiel de **mouvement extrême** (top/bottom 10 % du rendement futur). L'edge LONG est
-**empirique** (E8-E13) : le top 20 % de `proba_extreme` forme un univers porteur, sans
-qu'Oracle prédise la direction.
+Le percentile Oracle dépend de la population disponible le jour considéré. Modifier
+l’univers avant son calcul peut modifier le rang de tous les symboles.
 
----
+## 9. Protocole de comparaison
 
-## 1.1 Vue d'ensemble du pipeline de sélection
+Pour comparer correctement les modes, conserver strictement :
 
-Chaque jour, le backtest alimente `cascade_select()` avec **deux familles de signaux**
-(dont l'utilisation dépend du mode) :
+- mêmes dates, univers et données PIT ;
+- mêmes batches Oracle et Per-Symbol ;
+- mêmes coûts, lifecycle, positions maximales et règles de risque ;
+- mêmes paramètres DIP et saturation ;
+- mêmes restrictions LONG/SHORT.
+
+Publier séparément couverture, candidats Oracle, rejets pour absence Per-Symbol, rejets par
+seuil, rejets par marge, LONG retenus, SHORT retenus, trades exécutés et performance par côté.
+Sans ce funnel, une amélioration peut provenir uniquement d’une baisse d’exposition.
+
+## 10. Formules exactes des modes historiques
+
+Cette section détaille les branches réellement exécutées. Les comparaisons de seuil du code
+sont strictes (`>` ou `<`) sauf pour l’Extreme Gate, qui accepte la frontière supérieure
+avec `>=`.
+
+### 10.1 `ml`
+
+```text
+is_top    = global_rank_H > 1 - top_pct
+is_bottom = global_rank_H < top_pct
+
+LONG  si is_top    et proba_long  > min_prob
+SHORT si is_bottom et proba_short > min_prob
+
+score_LONG  = global_rank_H × proba_long
+score_SHORT = (1-global_rank_H) × proba_short
+```
+
+Avec `cascade.top_pct=0.10`, le pool directionnel correspond au top 10 % et au bottom 10 %.
+Pour le ternaire, `cascade.min_prob_classification=0.55`. Pour une prédiction régression,
+le code utilise `cascade.min_prob_regression`, actuellement `0.10`.
 
 ```mermaid
 flowchart LR
-    subgraph SIGNAUX["Signaux disponibles le jour D (PIT)"]
-        GR[("🗄️ global_rank_history<br/>rang global par (date, symbol)")]
-        OX[("📦 parquet OOS Oracle<br/>proba_extreme par (date, symbol)")]
-        PS[("🧮 per-symbol<br/>long_prob / short_prob")]
-    end
-
-    C["⚙️ cascade_select(rank_mode, ...)"]
-
-    GR -->|"selon le mode<br/>(ou pas)"| C
-    OX -->|"oracle / oracle_* / extreme_gate"| C
-    PS -->|"toujours (sauf bypass)"| C
-
-    C --> OUT["📋 liste ordonnée de trades<br/>(side, symbol, score)"]
+  GR[Global Rank H] --> B{Bande du rang}
+  B -->|Top N %| PL{P LONG > seuil ?}
+  B -->|Bottom N %| PS{P SHORT > seuil ?}
+  B -->|Milieu| X[Rejet]
+  PL -->|oui| L[LONG<br/>score = rank × P LONG]
+  PL -->|non| X
+  PS -->|oui| S[SHORT<br/>score = 1-rank × P SHORT]
+  PS -->|non| X
 ```
 
-Le **mode de cascade** détermine **qui définit le pool** (l'univers candidat) et **qui
-réordonne/filtre** dans ce pool. Voir §3 pour la synthèse tabulaire.
+### 10.2 `random`
 
----
+Le DataFrame de rang reste celui du batch, mais la colonne de rang est remplacée par un
+uniforme pseudo-aléatoire. La graine journalière est déterministe :
 
-## 2. Les 7 modes
-
-### `ml` — rang global seul (défaut)
-```python
-is_top   = global_rank_{H} > 1 - top_pct      # top 10%
-is_bottom = global_rank_{H} < top_pct          # bottom 10%
+```text
+daily_seed = cascade_rank_seed × 1 000 003 + YYYYMMDD
+random_rank ~ Uniform(0,1)
 ```
-Cascade standard : top/bottom N% du rang global du **batch sélectionné**
-(`--cascade-batch-id` → `global_rank_history`). Aucun Oracle.
 
-### `oracle` — Oracle seul (S6)
-```python
-proba_extreme → percentile intra-date → top/bottom par P_extreme
-```
-`proba_extreme` **remplace** le rang global. Le rang global n'est **pas** chargé.
+Les probabilités Per-Symbol, seuils, filtres et règles aval restent identiques au mode `ml`.
+Ce mode isole donc la contribution du ranking, pas celle de toute la chaîne ML.
 
 ```mermaid
 flowchart LR
-    OX["proba_extreme<br/>(parquet OOS)"] --> P1["percentile intra-date"]
-    P1 --> P2["top/bottom N% par P_extreme"]
-    P2 --> OUT["trades LONG + SHORT"]
+  U[Symboles du batch] --> RNG[Rang uniforme déterministe<br/>seed + date]
+  RNG --> B{Bande aléatoire}
+  B -->|Top N %| PL{P LONG > seuil ?}
+  B -->|Bottom N %| PS{P SHORT > seuil ?}
+  PL -->|oui| L[LONG]
+  PS -->|oui| S[SHORT]
+  PL -->|non| X[Rejet]
+  PS -->|non| X
 ```
 
-**Rôle** : Oracle joue **les deux côtés** (top = potentiel de mouvement haut, bottom =
-potentiel de mouvement bas) comme s'il était le rang global.
+### 10.3 `oracle`
 
----
+Pour la date D, le code transforme toutes les valeurs `proba_extreme` en percentiles
+cross-sectionnels. Ce percentile remplace entièrement `global_rank_H` :
 
-### `oracle_filter` — Global Rank sélectionne, Oracle filtre (S6.1-B)
-```python
-is_top = global_rank > 1 - top_pct                  # pool : top 10% du rang global
-if _oracle_pct < 0.80: continue                      # filtre : Oracle élimine la mauvaise qualité
-```
-**Sens** : le **rang global définit le pool** (top/bottom 10 %), puis **Oracle filtre la
-qualité** (ne garder que `P_extreme` élevé, seuil `--cascade-oracle-filter-pct` défaut 0.80).
-
-```mermaid
-flowchart TD
-    GR["rang global"] --> POOL["pool = top/bottom 10 %<br/>(rang global)"]
-    POOL --> FILT{"P_extreme ≥ 0.80 ?"}
-    FILT -- "oui" --> KEEP["gardé ✅"]
-    FILT -- "non" --> DROP["éliminé ❌"]
-    KEEP --> OUT["trades"]
+```text
+oracle_pct = rank_percentile_intra_date(proba_extreme)
+is_top     = oracle_pct > 1-top_pct
+is_bottom  = oracle_pct < top_pct
 ```
 
-**Rôle** : le rang global choisit le pool, Oracle ne fait que **retirer** les titres de
-mauvaise qualité extrême.
-
----
-
-### `oracle_pool` — Pool global élargi, Oracle sélectionne (S6.1-C)
-```python
-_in_pool  = global_rank > 1 - 0.20                  # pool élargi : top 20% du rang global
-is_top    = _in_pool and _oracle_pct > 1 - top_pct  # Oracle sélectionne le top 10% dedans
-```
-**Sens** : le **rang global élargit le pool** (top 20 %, `--cascade-oracle-pool-pct` défaut
-0.20), puis **Oracle sélectionne le top 10 %** dedans.
-
-```mermaid
-flowchart TD
-    GR["rang global"] --> POOL["pool élargi = top 20 %<br/>(rang global)"]
-    POOL --> SEL{"P_extreme dans<br/>le top 10 % du pool ?"}
-    SEL -- "oui" --> KEEP["gardé ✅"]
-    SEL -- "non" --> DROP["écarté ❌"]
-    KEEP --> OUT["trades"]
-```
-
-**Rôle** : le rang global élargit l'univers, Oracle **sélectionne** le sous-ensemble
-d'extrêmes porteurs dans ce pool.
-
----
-
-### `oracle_rerank` — Pool global identique, Oracle réordonne (S6.1-D)
-```python
-is_top = global_rank > 1 - top_pct                  # pool : top 10% du rang global (inchangé)
-score  = _oracle_pct * pred.long_prob               # Oracle réordonne le score
-```
-**Sens** : même **pool** que `ml` (même exposition), mais le **score final est réordonné** par
-Oracle (`P_extreme × proba per-symbol`).
-
-```mermaid
-flowchart TD
-    GR["rang global"] --> POOL["pool = top/bottom 10 %<br/>(rang global, identique à ml)"]
-    POOL --> SCORE["score = P_extreme × long_prob"]
-    SCORE --> SORT["tri par score<br/>→ Oracle change l'ORDRE<br/>des candidats"]
-    SORT --> OUT["trades (même exposition,<br/>ordre réordonné)"]
-```
-
-**Rôle** : l'exposition (le pool) reste **identique au mode `ml`** — seul l'**ordre
-d'allocation** (qui est prioritaire dans le budget) change grâce à Oracle. Idéal pour isoler
-l'effet « réordonnancement » pur.
-
----
-
-### `extreme_gate` — Oracle seul, LONG-only (E6-E13)
-```python
-is_top   = percentile_intra_date(proba_extreme) >= 1 - pool_pct   # top 20% du jour
-is_bottom = False   # LONG-only
-```
-**Sens** : **Oracle seul**, **indépendant du rang global** (le rang global n'est pas chargé).
-Univers LONG = top 20 % du jour par `proba_extreme` (percentile intra-date, PIT). Pool par
-`--extreme-gate-pct` (défaut 0.20). Rôle du per-symbol configurable via
-`--extreme-gate-per-symbol` (`filter` | `no_filter` | `bypass`).
-
-```mermaid
-flowchart TD
-    OX["proba_extreme<br/>(parquet OOS)"] --> P1["percentile intra-date"]
-    P1 --> GATE{"top 20 % du jour ?"}
-    GATE -- "oui" --> LG["LONG-only ✅<br/>(is_bottom = False)"]
-    GATE -- "non" --> OUT2["écarté ❌"]
-    LG --> PSS{"per-symbol ?"}
-    PSS -- "filter" --> VETO["veto long_prob > min_prob"]
-    PSS -- "no_filter" --> SKIP["pas de veto, score = rank × long_prob"]
-    PSS -- "bypass" --> BYPASS["Oracle pur : per-symbol ignoré"]
-```
-
-**Rôle** : le mode **extreme_gate** est **totalement indépendant du rang global** — il ne le
-charge jamais. C'est le composant E6-E13 : un **gate d'univers LONG** sur le potentiel de
-mouvement extrême.
-
-### `random` — rangs aléatoires (placebo)
-Rangs globaux remplacés par des valeurs aléatoires (seed reproductible par date).
-Ablation placebo : isole l'edge du **ranking ML** (tout le reste — per-symbol, min_prob,
-score — reste identique).
-
----
-
-## 3. Tableau récapitulatif
-
-| Mode | Pool (qui définit l'univers) | Rôle du second modèle | Rang global chargé ? | LONG/SHORT |
-|---|---|---|---|---|
-| `ml` | rang global | — | oui | les deux |
-| `oracle` | Oracle (remplace) | — | non | les deux |
-| `oracle_filter` | rang global (top/bottom 10%) | Oracle **filtre** la qualité | oui | les deux |
-| `oracle_pool` | rang global élargi (top 20%) | Oracle **sélectionne** le top 10% | oui | les deux |
-| `oracle_rerank` | rang global (top 10%) | Oracle **réordonne** | oui | les deux |
-| `extreme_gate` | Oracle seul (top 20%) | — (per-symbol veto optionnel) | non | **LONG-only** |
-| `random` | aléatoire | — | non | les deux |
-
-### 3.1 Comparatif visuel des 5 modes Oracle (fonction du rang global)
-
-```mermaid
-flowchart TD
-    subgraph LEGEND["Légende — largeur du pool = nombre de candidats"]
-        L1["🔵 = rang global | 🟠 = Oracle (proba_extreme)"]
-    end
-
-    subgraph M_ORACLE["oracle"]
-        O1["🟠 top/bottom par P_extreme<br/>rang global IGNORÉ"]
-    end
-
-    subgraph M_FILTER["oracle_filter"]
-        F1["🔵 pool top/bottom 10%<br/>puis 🟠 filtre P_extreme ≥ 0.80<br/>→ pool réduit"]
-    end
-
-    subgraph M_POOL["oracle_pool"]
-        P1["🔵 pool élargi top 20%<br/>puis 🟠 sélectionne top 10%<br/>→ pool = 10% du 20%"]
-    end
-
-    subgraph M_RERANK["oracle_rerank"]
-        R1["🔵 pool top/bottom 10% (inchangé)<br/>🟠 réordonne le score<br/>→ même exposition, ordre différent"]
-    end
-
-    subgraph M_GATE["extreme_gate"]
-        G1["🟠 top 20% par P_extreme<br/>rang global IGNORÉ<br/>LONG-only"]
-    end
-```
-
-| Mode | Qui définit le pool ? | Que fait Oracle dans le pool ? | Exposition vs `ml` |
-|---|---|---|---|
-| `oracle` | Oracle | remplace le rang | différente |
-| `oracle_filter` | rang global | retire la mauvaise qualité | réduite |
-| `oracle_pool` | rang global élargi | sélectionne le top | différente (20% → 10%) |
-| `oracle_rerank` | rang global | réordonne | **identique** |
-| `extreme_gate` | Oracle | — | différente |
-
----
-
-## 4. Pourquoi « B25 » ? (clarification importante)
-
-Le mot « B25 » apparaît dans `combine.py` et les docs (« combine `global_rank_20` (B25) et
-`P(extreme10)` »). **Ce n'est PAS un batch figé en dur** :
-
-- **La cascade utilise le batch sélectionné**, pas B25. Le rang global est chargé depuis
-  `global_rank_history` du batch passé à `--cascade-batch-id` :
-
-  ```python
-  ranks_df = load_global_ranks_from_db(trade_date, batch_id, engine=engine)  # ← votre batch
-  ```
-
-- « B25 » est un **nom de référence historique** : au moment de la recherche S5, B25 était
-  le seul ranking global validé en production, donc la recherche S5 a été évaluée contre
-  B25. Si vous entraînez un **nouveau batch avec le Global Ranking**, la combinaison
-  utilisera **le rang global de CE batch**, pas B25.
-
----
-
-## 5. Prérequis pour combiner
-
-Pour les modes `oracle_filter` / `oracle_pool` / `oracle_rerank`, il faut **deux sources
-de prédictions disponibles aux dates du backtest** :
-
-1. **Rang global** : `global_rank_history` du batch sélectionné (étape « 10. ML Predict →
-   Prédire l'univers sélectionné »).
-2. **`proba_extreme`** : parquet OOS Oracle (`--oracle-oos-path` →
-   `artifacts/models/oracle/oracle-wf-<run>/oos_predictions.parquet`).
-
-Pour la **cohérence**, utiliser un batch ayant entraîné **les deux modèles** (ablation O1 =
-`include_global_rank=True`). Un batch O0 (Oracle-only, `oracle_model_only=True`) n'a pas de
-`global_rank_history` → les modes de combinaison ne sélectionneront rien.
-
-### 5.1 Flux complet : de l'entraînement au backtest
-
-```mermaid
-flowchart TD
-    subgraph TRAIN["1. Entraînement (modelFactory)"]
-        T1["🎯 Global Ranking TRAIN<br/>(--enable-global-model)"] --> T2["🔮 Oracle TRAIN<br/>(--enable-oracle-model OU --oracle-model-only)"]
-    end
-
-    subgraph PRED["2. Prédiction (ML Predict)"]
-        P1["predict_global_rank_history<br/>→ remplit global_rank_history"]
-    end
-
-    subgraph OOS["3. Produit le parquet Oracle"]
-        O1["walk-forward Oracle →<br/>oos_predictions.parquet"]
-    end
-
-    subgraph BT["4. Backtest (backtesting run)"]
-        B1["cascade_select(rank_mode)<br/>charge global_rank_history + parquet OOS"]
-    end
-
-    T1 --> P1
-    T2 --> O1
-    P1 --> B1
-    O1 --> B1
-```
-
-**Pourquoi la prédiction est indispensable** : l'entraînement du Global Ranking ne **remplit
-jamais** `global_rank_history` — seule l'étape « ML Predict » le fait. Sans predict, les
-modes de combinaison (`oracle_filter`/`oracle_pool`/`oracle_rerank`) ne trouvent aucun rang.
-
-### 5.2 Choix du mode d'entraînement (lien avec `model_extreme_mode.md`)
-
-Le critère décisif est : **quelles sources de prédiction le batch produit-il** ?
-
-| Mode de cascade | Rang global requis ? | `proba_extreme` requis ? | Batch d'entraînement conseillé |
-|---|---|---|---|
-| `oracle` | non | oui | **standalone** (`--oracle-model-only`) **OU** combiné |
-| `oracle_filter` | oui | oui | **non-standalone** (Global + Oracle) |
-| `oracle_pool` | oui | oui | **non-standalone** (Global + Oracle) |
-| `oracle_rerank` | oui | oui | **non-standalone** (Global + Oracle) |
-| `extreme_gate` | non | oui | **standalone** (`--oracle-model-only`) **OU** combiné |
-
-> ⚠️ Un batch `--oracle-model-only` (O0) ne produit **pas** de `global_rank_history` → il ne
-> peut alimenter QUE `oracle` / `extreme_gate`. Pour `oracle_filter`/`oracle_pool`/
-> `oracle_rerank`, il faut un batch **non-standalone** + le **predict** du Global Ranking.
-> Détail complet : [`doc/model_extreme_mode.md`](model_extreme_mode.md) §9.
-
-#### 5.2.1 Tableau complet : quel batch pour quel mode ?
-
-Un batch **combiné** (Global Ranking + Oracle) est le **plus polyvalent** : il produit les
-**deux** sources → il peut alimenter **tous** les modes Oracle.
-
-| Batch disponible | `oracle` | `extreme_gate` | `oracle_filter` / `oracle_pool` / `oracle_rerank` |
-|---|---|---|---|
-| **Standalone** (`--oracle-model-only`, O0) | ✅ | ✅ | ❌ (pas de `global_rank_history`) |
-| **Combiné** (Global + Oracle) | ✅ | ✅ | ✅ |
-| **Global seul** (sans Oracle) | ❌ | ❌ | ❌ (pas de `proba_extreme`) |
-| **Aucun** | ❌ | ❌ | ❌ |
+Le côté est ensuite confirmé par `proba_long` ou `proba_short`. Attention : traiter le bas
+du classement `proba_extreme` comme branche SHORT est une politique historique du mode
+`oracle`, pas une conséquence sémantique du label Oracle. Une faible `proba_extreme` signifie
+« faible probabilité d’extrême », pas nécessairement « baisse ».
 
 ```mermaid
 flowchart LR
-    subgraph COMBINED["🎯 Batch combiné (ranking + oracle)"]
-        GR["global_rank_history ✅"]
-        OX["oracle_extreme_predictions ✅<br/>(proba_extreme)"]
-    end
-    subgraph MODES["Modes de cascade"]
-        M1["oracle (Oracle seul)"] --> NEED1["proba_extreme seul ✅"]
-        M2["extreme_gate (Oracle seul, LONG)"] --> NEED1
-        M3["oracle_filter / oracle_pool / oracle_rerank"] --> NEED2["global_rank + proba_extreme ✅"]
-    end
-    COMBINED --> MODES
+  O[P extreme] --> OP[Percentile Oracle du jour]
+  OP --> B{Bande Oracle}
+  B -->|Top N %| PL{P LONG > seuil ?}
+  B -->|Bottom N %| PS{P SHORT > seuil ?}
+  B -->|Milieu| X[Rejet]
+  PL -->|oui| L[LONG]
+  PS -->|oui| S[SHORT historique]
+  PL -->|non| X
+  PS -->|non| X
 ```
 
-**Pourquoi le batch combiné marche aussi pour `oracle` / `extreme_gate`** : ces modes ne
-consomment que `proba_extreme` — le rang global est **ignoré** (pour `oracle`, `ranks_df`
-est remplacé par `proba_extreme` ; pour `extreme_gate`, `load_global_ranks_from_db` n'est
-jamais appelé). La présence d'un Global Ranking en plus dans le batch **ne gêne pas**.
+### 10.4 `oracle_filter`
 
-#### 5.2.2 Nuance : la couverture des dates de `proba_extreme`
+Le Global Rank définit d’abord les bandes top et bottom. Oracle applique ensuite un filtre :
 
-Ce n'est pas « quel batch » mais « **quelles dates** couvre `proba_extreme` » qui décide si
-un backtest Oracle fonctionne :
+```text
+LONG :
+  global_rank > 1-top_pct
+  oracle_pct >= oracle_filter_pct
+  proba_long > min_prob
 
-- Les prédictions Oracle issues du **walk-forward** ne couvrent que les **folds de test**
-  (fin de période d'entraînement).
-- Pour backtester sur une période **différente** (ex. 2023→2024) avec un batch entraîné
-  2016→2022, il faut le **predict standard Oracle** (`--predict-range 2023-01-01:2024-12-31`)
-  avec les champions persistés — même exigence pour tous les modes Oracle.
-
----
-
-## 6. Utilisation
-
-### CLI
-```bash
-python -m backtesting run \
-  --cascade-rank-mode oracle_pool \
-  --oracle-oos-path artifacts/models/oracle/oracle-wf-<run>/oos_predictions.parquet \
-  --cascade-oracle-pool-pct 0.20 \
-  ...
+SHORT :
+  global_rank < top_pct
+  oracle_pct <= 1-oracle_filter_pct
+  proba_short > min_prob
 ```
-Autres flags liés : `--cascade-oracle-filter-pct` (défaut 0.80),
-`--extreme-gate-pct` (défaut 0.20), `--extreme-gate-per-symbol`
-(`filter`|`no_filter`|`bypass`), `--extreme-gate-shorts`.
 
-### IHM (page backtesting)
-Sélecteur **« Mode de cascade »** + champ **« Chemin parquet OOS Oracle »** (affiché pour
-les modes Oracle), avec un expandeur détaillant chaque mode.
+Le seuil CLI est `--cascade-oracle-filter-pct`, avec `0.80` par défaut. L’asymétrie apparente
+est fidèle au code historique : percentile Oracle élevé pour LONG, faible pour SHORT.
 
----
+```mermaid
+flowchart LR
+  GR[Global Rank] --> B{Top ou bottom ?}
+  O[P extreme] --> OP[Percentile Oracle]
+  B -->|Top| LF{Oracle élevé<br/>et P LONG valide ?}
+  B -->|Bottom| SF{Oracle faible<br/>et P SHORT valide ?}
+  OP --> LF
+  OP --> SF
+  LF -->|oui| L[LONG]
+  SF -->|oui| S[SHORT]
+  LF -->|non| X[Rejet]
+  SF -->|non| X
+```
 
-## Références
+### 10.5 `oracle_pool`
 
-- `modelFactory/predictor.py` — `cascade_select()` (implémentation des modes).
-- `modelFactory/oracle/extreme_gate.py` — `extreme_gate`, `build_oracle_rank_map`.
-- `modelFactory/oracle/combine.py` — combinaison/calibration S5 (fusion `weighted`/`mult`).
-- `doc/synthese_e6_e13_2026-08-20.md` — justification du gate Extreme.
-- `doc/oracle_extreme.md` — architecture et sémantique de l'Oracle Extreme.
-- `doc/calibration_oracle_exterme.md` — calibration de `proba_extreme`.
-- [`doc/model_extreme_mode.md`](model_extreme_mode.md) — les 2 modes d'entraînement de l'Oracle
-  (standalone vs after-sequence) et **quel batch entraîner pour quel mode de cascade**.
+Le Global Rank ouvre un pool plus large, puis Oracle sélectionne à l’intérieur :
+
+```text
+LONG :
+  global_rank > 1-oracle_pool_pct
+  oracle_pct > 1-top_pct
+
+SHORT :
+  global_rank < oracle_pool_pct
+  oracle_pct < top_pct
+```
+
+`--cascade-oracle-pool-pct` vaut `0.20` par défaut. Le score utilise ensuite `oracle_pct`
+pour LONG et `1-oracle_pct` pour SHORT, multiplié par la probabilité Per-Symbol du côté.
+
+```mermaid
+flowchart LR
+  GR[Global Rank] --> GP{Dans le pool élargi ?}
+  GP -->|Top global| OT{Top Oracle ?}
+  GP -->|Bottom global| OB{Bottom Oracle ?}
+  GP -->|non| X[Rejet]
+  O[P extreme] --> OP[Percentile Oracle]
+  OP --> OT
+  OP --> OB
+  OT -->|oui + P LONG valide| L[LONG]
+  OB -->|oui + P SHORT valide| S[SHORT]
+  OT -->|non| X
+  OB -->|non| X
+```
+
+### 10.6 `oracle_rerank`
+
+Le pool top/bottom du Global Rank reste celui du mode `ml`, mais l’ordre est remplacé :
+
+```text
+score_LONG  = oracle_pct × proba_long
+score_SHORT = (1-oracle_pct) × proba_short
+```
+
+Le mode garde donc le pool initial avant les autres filtres, mais il ne garantit pas un nombre
+de trades exécutés identique : l’ordre interagit avec les slots, exclusions et contraintes.
+
+```mermaid
+flowchart LR
+  GR[Global Rank] --> P[Pool top et bottom<br/>identique au mode ML]
+  O[P extreme] --> OP[Percentile Oracle]
+  P --> D{Côté du pool}
+  OP --> SC[Calcul du nouveau score]
+  D -->|Top| SC
+  D -->|Bottom| SC
+  SC --> R[Tri décroissant Oracle × P côté]
+  R --> A[Allocation selon les slots]
+```
+
+### 10.7 Extreme Gate legacy et directionnel
+
+Les deux modes commencent par le même pool :
+
+```text
+oracle_pct = rank_percentile_intra_date(proba_extreme)
+in_pool    = oracle_pct >= 1-extreme_gate_pct
+```
+
+Ils divergent ensuite :
+
+```mermaid
+flowchart TD
+  P[Pool Oracle Extreme] --> L{Mode legacy ?}
+  L -->|oui| LL[Chemin LONG historique<br/>filter / no_filter / bypass]
+  L -->|non| D[Comparer P LONG et P SHORT]
+  D --> M{seuil et marge valides ?}
+  M -->|non| X[Rejet]
+  M -->|oui, P LONG supérieure| LG[LONG]
+  M -->|oui, P SHORT supérieure| SH[SHORT]
+```
+
+### Schéma complet `extreme_gate` legacy
+
+```mermaid
+flowchart LR
+  O[P extreme] --> OP[Percentile Oracle du jour]
+  OP --> G{Dans le top pool ?}
+  G -->|non| X[Rejet]
+  G -->|oui| M{Rôle Per-Symbol}
+  M -->|bypass| L1[LONG<br/>score = percentile Oracle]
+  M -->|no_filter| L2[LONG<br/>score = percentile × P LONG]
+  M -->|filter| V{P LONG > seuil ?}
+  V -->|oui| L3[LONG<br/>score = percentile × P LONG]
+  V -->|non| X
+```
+
+### Schéma complet `extreme_gate_directional`
+
+```mermaid
+flowchart LR
+  O[P extreme] --> OP[Percentile Oracle du jour]
+  OP --> G{Dans le top pool ?}
+  G -->|non| X[Rejet]
+  G -->|oui| P[Charger P LONG et P SHORT]
+  P --> Q{max P > seuil ?}
+  Q -->|non| X
+  Q -->|oui| M{marge suffisante<br/>et pas égalité ?}
+  M -->|non| X
+  M -->|oui| D{Probabilité la plus forte}
+  D -->|P LONG| L[LONG<br/>score = percentile × P LONG]
+  D -->|P SHORT| S[SHORT<br/>score = percentile × P SHORT]
+```
+
+## 11. Rôle Per-Symbol dans `extreme_gate` legacy
+
+Le paramètre `--extreme-gate-per-symbol` possède trois valeurs :
+
+| Valeur | Veto | Score | Modèle Per-Symbol requis |
+|---|---|---|---|
+| `filter` | `long_prob > min_prob` | `oracle_pct × long_prob` | oui |
+| `no_filter` | aucun veto de probabilité | `oracle_pct × long_prob` | oui |
+| `bypass` | aucun | `oracle_pct` | non |
+
+La valeur par défaut CLI est `filter`. Le libellé IHM « Oracle seul » signifie que l’Oracle
+définit seul le pool ; il ne signifie pas nécessairement que toute information Per-Symbol est
+ignorée. Pour un Oracle réellement pur, il faut la variante `bypass`.
+
+Le flag `--extreme-gate-shorts` appartient au chemin expérimental historique E18. Il envoie
+en SHORT uniquement les candidats qui n’ont pas déjà franchi le test LONG et dont
+`short_prob > min_prob`. Il ne compare pas directement les deux probabilités. Le nouveau mode
+`extreme_gate_directional` est la branche correcte pour une décision symétrique.
+
+La section `extreme_gate` de `config.yaml` contient aussi une pénalité anti-D1 facultative :
+
+- `penalty_enabled` active le mécanisme ;
+- `penalty_min_directional` fixe le niveau sous lequel le score LONG est dégradé ;
+- `penalty_score_floor` borne le multiplicateur minimal ;
+- `penalty_reject_below` permet un rejet dur.
+
+Cette pénalité concerne le signal LONG legacy. Le mode directionnel choisit directement le
+côté et ne passe pas dans cette pénalité LONG.
+
+## 12. Sources de données et choix des batches
+
+### 12.1 Tables consommées
+
+| Information | Stockage principal actuel | Identifiant de source |
+|---|---|---|
+| rang global par horizon | `global_rank_history` | batch cascade/ML |
+| probabilités directionnelles | `model_predictions` | batch ML |
+| probabilité de mouvement extrême | `oracle_extreme_predictions` | batch Oracle |
+
+Le chemin parquet `--oracle-oos-path` existe encore comme compatibilité/recherche, mais la
+page Backtest utilise principalement `--oracle-batch-id` et la table spécialisée. Il ne faut
+donc plus décrire le parquet comme l’unique source Oracle.
+
+### 12.2 Matrice des prérequis
+
+| Mode | Global Rank | Oracle | Per-Symbol | Batch Oracle-only suffisant ? |
+|---|---:|---:|---:|---:|
+| `ml` | oui | non | oui | non |
+| `random` | structure de rang du batch | non | oui | non |
+| `oracle` | non | oui | oui dans le flux normal | généralement non |
+| `oracle_filter` | oui | oui | oui | non |
+| `oracle_pool` | oui | oui | oui | non |
+| `oracle_rerank` | oui | oui | oui | non |
+| `extreme_gate` `bypass` | non | oui | non | oui |
+| `extreme_gate` `filter/no_filter` | non | oui | oui | seulement si les prédictions directionnelles existent aussi |
+| `extreme_gate_directional` | non | oui | **oui, obligatoire** | non |
+
+Pour le nouveau mode directionnel, la campagne ML choisie dans l’IHM doit contenir de vraies
+prédictions Per-Symbol. Un batch Oracle-only peut fournir le pool Oracle, mais il ne peut pas
+fournir à lui seul `proba_long` et `proba_short`.
+
+### 12.3 Batch unique ou batches séparés
+
+Deux organisations sont valides :
+
+```text
+Batch combiné :
+  ml_batch_id = batch A
+  oracle_batch_id = batch A
+
+Batches séparés :
+  ml_batch_id = batch Per-Symbol
+  oracle_batch_id = batch Oracle
+```
+
+Dans les deux cas, il faut vérifier l’intersection réelle `(date, symbol)`. Une présence des
+deux batches dans les listes IHM ne garantit pas leur compatibilité temporelle ou d’univers.
+
+## 13. Couverture temporelle et discipline PIT
+
+L’entraînement ne garantit pas automatiquement des prédictions sur toute la période du
+backtest. Les points suivants doivent être contrôlés :
+
+1. `global_rank_history` couvre chaque date nécessaire au mode Global Rank ;
+2. `model_predictions` contient les symboles et dates Per-Symbol ;
+3. `oracle_extreme_predictions` couvre la même fenêtre et le même univers utile ;
+4. les champions sélectionnés pour D ont été entraînés avec des données disponibles avant D ;
+5. aucun fallback vers un batch plus récent ne doit être interprété comme PIT-safe.
+
+Les sorties Oracle walk-forward couvrent généralement les folds de test. Pour une autre
+période, il faut produire l’inférence historique correspondante avec les champions appropriés.
+
+Le percentile Oracle est recalculé quotidiennement sur la population effectivement chargée.
+Ainsi, ces deux opérations ne sont pas équivalentes :
+
+```text
+calculer le percentile sur 2 000 symboles puis filtrer
+filtrer à 400 symboles puis calculer le percentile
+```
+
+Le batch, l’univers, les dates, les NaN et l’ordre des filtres font partie du contrat de
+reproductibilité.
+
+## 14. Clarification « B25 » et horizon
+
+Les commentaires historiques emploient « B25 » car ce batch a servi de référence aux
+expériences S5/S6. Le code ne charge pas automatiquement un B25 immuable :
+
+```text
+load_global_ranks_from_db(trade_date, cascade_batch_id, ...)
+```
+
+Le rang provient donc du batch sélectionné ou du fallback configuré. L’horizon effectif est
+résolu depuis l’override backtest, le meilleur horizon du batch ou les colonnes disponibles.
+Pour comparer deux runs, publier `cascade_batch_id`, `ml_batch_id`, `oracle_batch_id` et
+l’horizon effectivement utilisé, pas seulement le nom informel « B25 ».
+
+## 15. Paramètres CLI et correspondance IHM
+
+| Réglage | CLI | Défaut actuel |
+|---|---|---:|
+| mode | `--cascade-rank-mode` | `ml` |
+| seuil top/bottom | `--cascade-top-pct` | IHM/config, généralement `0.10` |
+| filtre Oracle | `--cascade-oracle-filter-pct` | `0.80` |
+| pool Oracle élargi | `--cascade-oracle-pool-pct` | `0.20` |
+| pool Extreme Gate | `--extreme-gate-pct` | `config.extreme_gate.pool_pct`, `0.20` |
+| rôle Per-Symbol legacy | `--extreme-gate-per-symbol` | `filter` |
+| shorts historiques E18 | `--extreme-gate-shorts` | désactivé |
+| marge directionnelle | `--extreme-gate-direction-margin` | `0.02` |
+| source Oracle table | `--oracle-batch-id` | batch ML si non précisé selon le flux |
+| source Oracle parquet legacy | `--oracle-oos-path` | aucune |
+| placebo | `--cascade-rank-seed` | `42` |
+
+La page Backtest construit ces arguments via `BacktestRunOptions` et
+`build_backtesting_command()`. L’utilisateur sélectionne les batches et le mode ; il n’a pas
+à saisir manuellement les flags.
+
+### Restrictions directionnelles IHM
+
+Les cases ne changent pas la prédiction du modèle. Elles limitent les signaux autorisés en
+aval :
+
+```text
+Long only  → --no-shorts → capacité SHORT = 0
+Short only → --no-longs  → capacité LONG  = 0
+```
+
+Les deux cases simultanément sont rejetées avant construction de la commande.
+
+## 16. Saturation, DIP et ordre final
+
+Après création des candidats, la liste est triée par score décroissant. Lorsque
+`--extreme-gate-dip-saturated` est activé, le DIP ne réduit pas le pool Extreme Gate : il
+réordonne les candidats seulement lorsque leur nombre dépasse les slots disponibles.
+
+La clé est lexicographique : bande de rang Oracle, indicateur N4X2, puis score. La largeur de
+bande est pilotée par `--extreme-gate-dip-band`, défaut `0.02`. Ce mécanisme est un réglage de
+recherche distinct de la direction Per-Symbol.
+
+Un score supérieur ne garantit pas une exécution : les limites par côté, la capacité totale,
+les exclusions de symboles, la liquidité, le risque, le régime et le lifecycle peuvent encore
+rejeter le candidat.
+
+## 17. Périmètre backtest et promotion live
+
+La présence d’un mode dans `cascade_select()` et dans la page Backtest ne suffit pas à en
+faire une politique live. Avant promotion :
+
+1. valider OOS le mode et ses seuils ;
+2. vérifier la disponibilité quotidienne des deux batches ;
+3. reproduire la sélection dans le pipeline live avec les mêmes identifiants et fallbacks ;
+4. vérifier le contrat LONG/SHORT jusque dans risk management et exécution ;
+5. journaliser le mode effectif, la marge, les batches et le funnel de rejet ;
+6. conserver un rollback vers le mode validé précédent.
+
+## 18. Références code
+
+- `modelFactory/predictor.py` : `cascade_select()` et `apply_cascade_to_predictions()` ;
+- `modelFactory/oracle/extreme_gate.py` : percentile Oracle quotidien ;
+- `backtesting/cli/_impl.py` : options CLI et chargement des sources ;
+- `ihm/services/backtesting_runner.py` : traduction IHM vers CLI ;
+- `ihm/pages/backtesting/__init__.py` : choix des modes et restrictions de côté ;
+- `tests/test_cascade_ml.py` : contrats legacy et directionnels ;
+- `tests/test_ihm_backtesting_runner.py` : commande IHM et exclusions LONG/SHORT.

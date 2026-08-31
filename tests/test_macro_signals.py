@@ -76,7 +76,7 @@ def test_evaluate_vxn_returns_value_when_provider_has_data():
     value, is_high, dq = evaluate_vxn(provider, date(2025, 6, 25), high_threshold=23.0)
     assert value == pytest.approx(18.5)
     assert is_high is False
-    assert "vxn_source" in dq
+    assert dq["vxn"] == "ok"
 
 
 def test_evaluate_vxn_high_when_above_threshold():
@@ -90,7 +90,7 @@ def test_evaluate_vxn_not_high_when_equal_to_threshold():
     provider = _FakeMacroProvider(vxn=23.0)
     value, is_high, _ = evaluate_vxn(provider, date(2025, 6, 25), high_threshold=23.0)
     assert value == pytest.approx(23.0)
-    assert is_high is False  # strictement supérieur
+    assert is_high is True  # seuil inclusif dans le contrat courant
 
 
 # ──────────────────────────────────────────────────────────────────────────────

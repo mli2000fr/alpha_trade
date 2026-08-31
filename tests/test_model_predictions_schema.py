@@ -85,6 +85,7 @@ def test_insert_predictions_persists_governance_values() -> None:
     mock_conn = MagicMock()
     mock_engine.begin.return_value.__enter__.return_value = mock_conn
     mock_engine.begin.return_value.__exit__.return_value = False
+    mock_conn.execute.return_value.rowcount = 1
 
     predictions = pd.DataFrame(
         [

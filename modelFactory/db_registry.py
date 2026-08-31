@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -13,10 +14,54 @@ from sqlalchemy.engine import Engine
 
 from common.capital_presets import DEFAULT_CAPITAL_PRESET_KEY
 from common.tradable_universe import resolve_universe_asof
+from common.universe_files import (
+    is_universe_file_source,
+    load_universe_file_symbols,
+    normalize_universe_file_source,
+)
 from database.stock_scores import list_scored_symbols as list_stock_score_symbols
 from database.stock_scores import load_score_context as load_stock_score_context
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _write_batch_delete_audit(event: str, batch_id: str, reason: str, source: str) -> None:
+    """Écrit une ligne d'audit de suppression de batch dans log/batch_delete_audit.log.
+
+    Inclut la pile d'appel + PID : si un batch disparaît (ou une tentative est
+    bloquée) sans action explicite, ce journal identifie le déclencheur exact
+    (page IHM, script, thread). Best-effort : n'échoue jamais.
+    """
+    try:
+        import traceback
+
+        log_path = Path("log") / "batch_delete_audit.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(UTC).replace(tzinfo=None).isoformat(timespec="seconds")
+        stack = "".join(traceback.format_stack()[:-1])
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(
+                f"[{ts}] pid={os.getpid()} {event} batch={batch_id} "
+                f"reason={reason} source={source}\n{stack}---\n"
+            )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def audit_batch_delete(batch_id: str, source: str) -> None:
+    """Trace une suppression EFFECTIVE de batch (DB ou disque)."""
+    _write_batch_delete_audit("DELETE", batch_id, "effective", source)
+
+
+def audit_batch_delete_attempt(batch_id: str, reason: str, source: str = "") -> None:
+    """Trace une TENTATIVE de suppression BLOQUÉE par un garde-fou.
+
+    Même si le garde-fou empêche la suppression, on saura QUI a tenté de
+    supprimer et POURQUOI (raison) : garde `running`/`starting`, batch_id
+    malformé, suppression DB en échec → rmtree disque sauté, etc.
+    """
+    _write_batch_delete_audit("DELETE-ATTEMPT-BLOCKED", batch_id, reason, source)
+
 
 _PREDICTION_REQUIRED_COLUMNS = {
     "symbol",
@@ -516,7 +561,8 @@ def delete_batch_rows(
     - retries avec backoff en cas de lock wait.
 
     Ordre : tables enfants (via run_id) → ``model_training_run`` (parent) →
-    tables ``batch_id`` direct → ``model_training_batch`` en dernier.
+    tables ``batch_id`` direct → ``model_training_batch`` puis
+    ``model_serving_batch`` en dernier.
 
     Returns:
         dict {table: nombre de lignes supprimées}.
@@ -539,7 +585,37 @@ def delete_batch_rows(
         "oracle_extreme_predictions",
         "model_training_run",
         "model_training_batch",
+        # model_serving_batch : référence de serving (promotion) du batch.
+        # Supprimée à la fin avec les autres tables à batch_id direct.
+        "model_serving_batch",
     ]
+
+    # P-fix (2026-08-30) : ne jamais supprimer les lignes d'un batch en cours.
+    # Défense en profondeur (en plus du filtre `list_batches`) : le bouton par-batch
+    # de la page Diagnostic ML peut cibler n'importe quel batch sélectionné, `running`
+    # inclus — on refuse ici pour protéger TOUS les chemins de suppression.
+    try:
+        with engine.connect() as _conn:
+            _st = _conn.execute(
+                text("SELECT status FROM alpha_trade.model_training_batch WHERE batch_id = :bid"),
+                {"bid": batch_id},
+            ).scalar()
+    except Exception:
+        _st = None
+    if _st is not None and str(_st).strip().lower() in {"running", "starting"}:
+        # Trace de la TENTATIVE bloquée (qui a appelé delete_batch_rows sur un batch en cours).
+        audit_batch_delete_attempt(
+            batch_id,
+            reason=f"garde-fou: statut `{_st}` (running/starting interdit)",
+            source="delete_batch_rows",
+        )
+        raise RuntimeError(
+            f"delete_batch_rows refusé : batch {batch_id} est `{_st}` (en cours) — "
+            "on ne supprime pas un batch qui tourne."
+        )
+
+    # Audit : toute suppression DB de batch est tracée (pile d'appel + PID).
+    audit_batch_delete(batch_id, source="delete_batch_rows")
 
     deleted: dict[str, int] = {}
     last_exc: Exception | None = None
@@ -1024,24 +1100,9 @@ def load_stock_scores_all_symbols(engine: Engine) -> list[str]:
     return symbols
 
 
-TICKET_RECHERCHE_PATH = Path("config/ticket_recherche.txt")
-
-
 def _load_ticket_recherche_symbols() -> list[str]:
-    """Charge les symboles depuis ``config/ticket_recherche.txt`` (un par ligne ou séparés par des virgules)."""
-    if not TICKET_RECHERCHE_PATH.exists():
-        raise FileNotFoundError(f"Fichier introuvable : {TICKET_RECHERCHE_PATH}")
-    raw = TICKET_RECHERCHE_PATH.read_text(encoding="utf-8").strip()
-    if not raw:
-        return []
-    # Supporte les deux formats : une ligne avec des virgules, ou un symbole par ligne
-    symbols: list[str] = []
-    for line in raw.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        symbols.extend(s.strip().upper() for s in line.split(",") if s.strip())
-    return sorted(set(symbols))
+    """Compatibilité : ``ticket-recherche`` désigne le premier fichier de ``config/univers``."""
+    return load_universe_file_symbols("ticket-recherche")
 
 
 # ---------------------------------------------------------------------------
@@ -1174,7 +1235,7 @@ def load_symbols_for_source(
     capital_preset_key: str = DEFAULT_CAPITAL_PRESET_KEY,
 ) -> list[str]:
     """Résout l’univers ML demandé via un identifiant de source stable."""
-    normalized_source = str(symbol_source or "tradable-universe").strip().lower()
+    normalized_source = normalize_universe_file_source(symbol_source or "tradable-universe")
     if normalized_source == "tradable-universe":
         if trade_date is None:
             raise ValueError("trade_date est obligatoire pour la source tradable-universe.")
@@ -1185,9 +1246,12 @@ def load_symbols_for_source(
         )
     if normalized_source in {"stock-bars-daily", "stock_bars_daily"}:
         return load_stock_bars_daily_symbols(engine)
-    if normalized_source == "ticket-recherche":
-        return _load_ticket_recherche_symbols()
-    raise ValueError(f"Source ML non admise: {normalized_source}. Utilisez tradable-universe, stock-bars-daily ou ticket-recherche.")
+    if is_universe_file_source(normalized_source):
+        return load_universe_file_symbols(normalized_source)
+    raise ValueError(
+        f"Source ML non admise: {normalized_source}. Utilisez tradable-universe, "
+        "stock-bars-daily ou un fichier de config/univers/."
+    )
 
 
 def load_tradable_universe_symbols(

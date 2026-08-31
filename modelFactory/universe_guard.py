@@ -15,12 +15,13 @@ import logging
 from datetime import date
 from pathlib import Path
 
+from common.universe_files import load_universe_file_symbols
+
 LOGGER = logging.getLogger(__name__)
 
 DEFAULT_MIN_UNIVERSE_PCT = 75.0  # % du référentiel (400) → 300 symboles
 DEFAULT_REFERENCE_UNIVERSE_SIZE = 400
 _CONFIG_PATH = Path("config.yaml")
-_TICKET_PATH = Path("config/ticket_recherche.txt")
 
 
 def compute_min_breadth(reference_size: int, pct: float) -> int:
@@ -48,19 +49,16 @@ def load_min_universe_pct() -> float:
 
 
 def load_reference_universe_size() -> int:
-    """Taille du référentiel = nombre de symboles dans config/ticket_recherche.txt."""
+    """Taille du référentiel = premier univers configuré dans ``config/univers``."""
     try:
-        raw = _TICKET_PATH.read_text(encoding="utf-8").strip()
-        symbols: set[str] = set()
-        for line in raw.splitlines():
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            symbols.update(s.strip().upper() for s in line.split(",") if s.strip())
+        symbols = load_universe_file_symbols("ticket-recherche")
         if symbols:
             return len(symbols)
     except Exception:
-        LOGGER.warning("load_reference_universe_size: ticket_recherche.txt illisible → défaut %d", DEFAULT_REFERENCE_UNIVERSE_SIZE)
+        LOGGER.warning(
+            "load_reference_universe_size: premier fichier de config/univers illisible → défaut %d",
+            DEFAULT_REFERENCE_UNIVERSE_SIZE,
+        )
     return DEFAULT_REFERENCE_UNIVERSE_SIZE
 
 

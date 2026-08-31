@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -53,6 +54,7 @@ def test_scan_repo_secrets_runs(tmp_path):
         ],
         capture_output=True,
         text=True,
+        env={**os.environ, "PYTHONPATH": str(ROOT)},
     )
     assert proc.returncode == 0, proc.stderr
     data = json.loads(out.read_text(encoding="utf-8"))

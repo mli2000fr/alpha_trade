@@ -7,7 +7,7 @@ import logging
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Optional
 from uuid import uuid4
 
 import numpy as np
@@ -47,11 +47,7 @@ from modelFactory.trainer import TrainResult, train_symbol
 from database.selector_reference import filter_symbols_from_start, normalize_start_symbol
 
 LOGGER = logging.getLogger(__name__)
-SymbolSource = Literal[
-    "tradable-universe",
-    "stock-bars-daily",
-    "ticket-recherche",
-]
+SymbolSource = str
 
 # Cache pour le diagnostic de liquidité — lu par cli.py après run_training_batch()
 _last_liquidity_diag: dict[str, Any] = {}

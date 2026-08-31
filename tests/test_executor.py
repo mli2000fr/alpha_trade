@@ -1,6 +1,7 @@
 """Tests for execution_engine.executor."""
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from unittest.mock import MagicMock, patch
 
@@ -231,7 +232,7 @@ class TestExecutor:
         executor, repo, broker, _ = _make_executor()
         metrics = executor.execute_run(risk_run_id="r1")
         broker.submit_intent.assert_not_called()
-        assert metrics["submitted"] == 1
+        assert metrics["submitted"] == 1, metrics
         assert repo.upsert_execution_order_request_from_intent.called
         assert repo.snapshot_broker_account.called
 
@@ -400,6 +401,9 @@ class TestExecutor:
             "non_marginable_buying_power": 100.0,
             "daytrade_count": 0,
         }
+        broker.get_all_positions.return_value = []
+        repo.load_fractionable_asset_map.return_value = {"AAPL": True}
+        repo.load_execution_positions.return_value = []
 
         metrics = executor.execute_run(risk_run_id="r1")
 
@@ -408,16 +412,26 @@ class TestExecutor:
         event_types = [c[0][0]["event_type"] for c in repo.insert_execution_event.call_args_list]
         assert EventType.INTENT_SKIPPED_ACCOUNT_CONSTRAINT in event_types
 
-    def test_margin_account_allows_buying_power_above_cash(self) -> None:
-        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, account_type="margin")
-        executor, repo, broker, _ = _make_executor(cfg)
+    def test_margin_account_allows_buying_power_above_cash(self, monkeypatch) -> None:
+        monkeypatch.setattr("common.config_loader.load_config", lambda: {"risk_management": {"prod_exposure_multiplier": 1.0}})
+        cfg = ExecutionConfig(
+            dry_run=False,
+            allow_outside_rth=True,
+            account_type="margin",
+            allow_fractional_shares=True,
+        )
+        small_target = replace(_target(), target_shares=0.5, target_notional=75.0)
+        executor, repo, broker, _ = _make_executor(cfg, targets=[small_target])
         broker.get_account_snapshot.return_value = {
-            "equity": 2_000.0,
+            "equity": 1_000.0,
             "cash": 100.0,
-            "buying_power": 20_000.0,
+            "buying_power": 1_000.0,
             "non_marginable_buying_power": 100.0,
             "daytrade_count": 0,
         }
+        broker.get_all_positions.return_value = []
+        repo.load_fractionable_asset_map.return_value = {"AAPL": True}
+        repo.load_execution_positions.return_value = []
 
         metrics = executor.execute_run(risk_run_id="r1")
 
@@ -426,7 +440,7 @@ class TestExecutor:
 
     def test_margin_account_does_not_defer_children_when_daytrade_count_is_high(self) -> None:
         cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, account_type="margin", swing_only=False)
-        targets = [_target("AAPL")]
+        targets = [replace(_target("AAPL"), target_shares=5.0, target_notional=750.0)]
         executor, repo, broker, _ = _make_executor(cfg, targets=targets)
         broker.submit_intent.side_effect = lambda intent: _filled_order(intent_id=intent.intent_id, symbol=intent.symbol)
         broker.poll_order_status.side_effect = (
@@ -448,7 +462,8 @@ class TestExecutor:
 
     def test_margin_account_does_not_block_entry_when_daytrade_count_is_high(self) -> None:
         cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True, account_type="margin")
-        executor, repo, broker, _ = _make_executor(cfg)
+        small_target = replace(_target(), target_shares=5.0, target_notional=750.0)
+        executor, repo, broker, _ = _make_executor(cfg, targets=[small_target])
         broker.get_account_snapshot.return_value = {
             "equity": 2_000.0,
             "cash": 2_000.0,
@@ -834,7 +849,7 @@ class TestExecutor:
         executor._submit_rebalance_orders.assert_called_once()
         safe_auto_diffs = executor._submit_rebalance_orders.call_args.args[0]
         assert len(safe_auto_diffs) == 1
-        assert safe_auto_diffs[0].target_qty == 0.5
+        assert safe_auto_diffs[0].target_qty == 0.73
         assert safe_auto_diffs[0].broker_qty == 0.25
-        assert safe_auto_diffs[0].delta == -0.25
+        assert safe_auto_diffs[0].delta == -0.48
 

@@ -16,7 +16,7 @@ def test_publish_tradable_universe_cli_accepts_a_complete_date_range(monkeypatch
     monkeypatch.setattr(
         publish_tradable_universe,
         "publish_full_tradable_universe",
-        lambda _engine, *, snapshot_date, capital_preset_key: published_dates.append(snapshot_date) or f"run-{snapshot_date}",
+        lambda _engine, *, snapshot_date, capital_preset_key, **kwargs: published_dates.append(snapshot_date) or f"run-{snapshot_date}",
     )
 
     assert publish_tradable_universe.main(["--start-date", "2024-01-02", "--end-date", "2024-01-03"]) == 0
@@ -29,7 +29,7 @@ def test_publish_tradable_universe_cli_reports_missing_screener_snapshots(monkey
     monkeypatch.setattr(publish_tradable_universe, "nyse_session_dates", lambda start, end: [start, end])
     monkeypatch.setattr(publish_tradable_universe, "get_sqlalchemy_engine", lambda: object())
 
-    def _raise_for_first_day(_engine, *, snapshot_date, capital_preset_key):
+    def _raise_for_first_day(_engine, *, snapshot_date, capital_preset_key, **kwargs):
         if snapshot_date == date(2024, 1, 2):
             raise RuntimeError("Aucun snapshot screener complet exact pour preset=small date=2024-01-02.")
         return "run-2024-01-03"
@@ -217,7 +217,7 @@ def test_cli_main_predict_historical_loops_over_available_trading_dates(monkeypa
     monkeypatch.setattr(
         predictor,
         "predict_batch",
-        lambda symbols, artifacts_dir, engine, prediction_date=None, as_of_date=None, persist=False, accelerator="auto", max_workers=1: prediction_calls.append((prediction_date, as_of_date)) or pd.DataFrame([
+        lambda symbols, artifacts_dir, engine, prediction_date=None, as_of_date=None, persist=False, accelerator="auto", max_workers=1, **kwargs: prediction_calls.append((prediction_date, as_of_date)) or pd.DataFrame([
             {
                 "symbol": symbols[0],
                 "prediction_date": prediction_date,
@@ -274,7 +274,7 @@ def test_cli_main_predict_historical_resolves_pit_universe_per_date(monkeypatch)
     monkeypatch.setattr(
         predictor,
         "predict_batch",
-        lambda symbols, artifacts_dir, engine, prediction_date=None, as_of_date=None, persist=False, accelerator="auto", max_workers=1: prediction_calls.append((tuple(symbols), prediction_date, as_of_date)) or pd.DataFrame([
+        lambda symbols, artifacts_dir, engine, prediction_date=None, as_of_date=None, persist=False, accelerator="auto", max_workers=1, **kwargs: prediction_calls.append((tuple(symbols), prediction_date, as_of_date)) or pd.DataFrame([
             {
                 "symbol": symbol,
                 "prediction_date": prediction_date,

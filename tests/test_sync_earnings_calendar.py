@@ -12,12 +12,14 @@ def _context(
     to_date: date,
     limit: int | None = None,
     symbol_source: str = "active-tradable",
+    provider: str = "finnhub",
 ) -> dict[str, object]:
     return {
         "from_date": from_date.isoformat(),
         "to_date": to_date.isoformat(),
         "limit": limit,
         "symbol_source": symbol_source,
+        "provider": provider,
     }
 
 

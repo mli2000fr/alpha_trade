@@ -13,7 +13,12 @@ from database.connection import SessionLocal, get_sqlalchemy_engine
 
 
 def normalize_symbol_source(symbol_source: str | None) -> str:
-    normalized = str(symbol_source or "").strip().lower().replace("_", "-")
+    from common.universe_files import is_universe_file_source, normalize_universe_file_source
+
+    raw_source = str(symbol_source or "").strip()
+    if is_universe_file_source(raw_source) or raw_source.lower() == "ticket-recherche":
+        return normalize_universe_file_source(raw_source)
+    normalized = raw_source.lower().replace("_", "-")
     if normalized in {"", "active-tradable", "eligible", "stock-metadata"}:
         return "active-tradable"
     return {

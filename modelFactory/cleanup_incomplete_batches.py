@@ -13,20 +13,44 @@ from pathlib import Path
 LOGGER = logging.getLogger(__name__)
 
 
+def _is_safe_batch_id(batch_id: str) -> bool:
+    """Garde-fou : un batch_id malformé ne doit JAMAIS déclencher un rmtree
+    sur artifacts/ (ex. '', '.', '..', ou contenant '/' ou '\\')."""
+    b = str(batch_id or "").strip()
+    if not b:
+        return False
+    if b in (".", ".."):
+        return False
+    if "/" in b or "\\" in b:
+        return False
+    return True
+
+
 def list_batches(include_completed: bool = False) -> list[str]:
     """Retourne la liste des batch_id.
 
+    Les batchs en cours (``running``) sont TOUJOURS exclus : on ne supprime jamais
+    un batch pendant son entraînement.
+
     Args:
-        include_completed: Si True, retourne TOUS les batchs (y compris terminés).
-                           Si False (défaut), seulement les non terminés.
+        include_completed: Si True, retourne tous les batchs sauf les ``running``
+                           (terminés + échoués + à supprimer).
+                           Si False (défaut), seulement les non terminés et non
+                           en cours (``failed``, ``to delete``, statut NULL).
     """
     from ihm.services.db import get_engine
     from sqlalchemy import text
     engine = get_engine()
     if include_completed:
-        query = "SELECT batch_id FROM alpha_trade.model_training_batch"
+        query = (
+            "SELECT batch_id FROM alpha_trade.model_training_batch "
+            "WHERE status IS NULL OR status != 'running'"
+        )
     else:
-        query = "SELECT batch_id FROM alpha_trade.model_training_batch WHERE status != 'completed'"
+        query = (
+            "SELECT batch_id FROM alpha_trade.model_training_batch "
+            "WHERE status IS NULL OR status NOT IN ('completed', 'running')"
+        )
     with engine.connect() as conn:
         rows = conn.execute(text(query)).mappings().fetchall()
     return [str(r["batch_id"]) for r in rows]
@@ -47,6 +71,19 @@ def cleanup_batches(dry_run: bool = False, include_completed: bool = False) -> d
     if not batch_ids:
         LOGGER.info("Aucun batch trouvé.")
         return {"deleted_batches": 0, "deleted_db_rows": 0, "deleted_dirs": 0}
+    # Garde-fou : ne jamais traiter un batch_id malformé (protection anti-suppression à tort).
+    _unsafe = [b for b in batch_ids if not _is_safe_batch_id(b)]
+    if _unsafe:
+        LOGGER.warning("cleanup_batches ignore %d batch_id malformé(s) : %s", len(_unsafe), _unsafe)
+        for _bad in _unsafe:
+            audit_batch_delete_attempt(
+                _bad,
+                reason="garde-fou: batch_id malformé (chemin non sûr) → aucun rmtree",
+                source="cleanup_batches:is_safe_batch_id",
+            )
+    batch_ids = [b for b in batch_ids if _is_safe_batch_id(b)]
+    if not batch_ids:
+        return {"deleted_batches": 0, "deleted_db_rows": 0, "deleted_dirs": 0}
 
     label = "terminés et non terminés" if include_completed else "non terminés"
     LOGGER.info("Trouvé %d batch(s) %s : %s", len(batch_ids), label, batch_ids)
@@ -55,7 +92,7 @@ def cleanup_batches(dry_run: bool = False, include_completed: bool = False) -> d
         return {"deleted_batches": len(batch_ids), "deleted_db_rows": 0, "deleted_dirs": 0}
 
     from ihm.services.db import get_engine
-    from modelFactory.db_registry import delete_batch_rows
+    from modelFactory.db_registry import audit_batch_delete, audit_batch_delete_attempt, delete_batch_rows
     engine = get_engine()
 
     total_rows = 0
@@ -74,6 +111,24 @@ def cleanup_batches(dry_run: bool = False, include_completed: bool = False) -> d
     dirs_deleted = 0
     if artifacts_base.exists():
         for bid in batch_ids:
+            # P-fix (2026-08-30) : ne JAMAIS supprimer le dossier d'un batch dont la
+            # suppression DB a échoué. Sinon (pool MySQL saturée / lock → delete_batch_rows
+            # en timeout), on perd les fichiers (modèles entraînés) alors que les lignes DB
+            # restent intactes → état incohérent « dossiers disparus, DB présente » (les 4
+            # batchs [Rank + Oracle] du 29/08 22:52 : 622K global_rank_history + 2M labels
+            # toujours en DB, mais artifacts/models/<id> supprimés).
+            if bid in failed_batches:
+                LOGGER.warning(
+                    "cleanup_batches SKIP suppression répertoire %s (suppression DB en échec)",
+                    bid,
+                )
+                audit_batch_delete_attempt(
+                    bid,
+                    reason="garde-fou: delete_batch_rows en échec → rmtree disque sauté (DB intacte)",
+                    source="cleanup_batches:db_failed_skip",
+                )
+                continue
+            audit_batch_delete(bid, source="cleanup_batches:rmtree")
             batch_dir = artifacts_base / bid
             if batch_dir.exists():
                 shutil.rmtree(batch_dir)
@@ -99,7 +154,8 @@ def main() -> None:
     import argparse
     parser = argparse.ArgumentParser(description="Cleanup batches")
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--all", action="store_true", help="Inclure les batchs terminés")
+    parser.add_argument("--all", action="store_true",
+                        help="Inclure les batchs terminés (les batchs en cours 'running' sont toujours exclus)")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     result = cleanup_batches(dry_run=args.dry_run, include_completed=args.all)

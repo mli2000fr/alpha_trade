@@ -4,7 +4,7 @@ from common.capital_presets import apply_backtest_defaults_from_preset, get_capi
 from backtesting.trading_constraints import TradingConstraintConfig
 
 
-def test_small_cash_account_preset_enables_settled_cash_simulation() -> None:
+def test_micro_account_preset_uses_current_margin_profile() -> None:
     preset = get_capital_preset_by_key("capital_0_2000")
 
     assert preset is not None
@@ -24,10 +24,10 @@ def test_small_cash_account_preset_enables_settled_cash_simulation() -> None:
         cash_settlement_days=int(updated["cash_settlement_days"]),
     )
 
-    assert constraints.account_type == "cash"
-    assert constraints.use_settled_cash_only is True
+    assert constraints.account_type == "margin"
+    assert constraints.use_settled_cash_only is False
     assert constraints.cash_settlement_days == 1
-    assert constraints.requires_stateful_simulation(2_000.0) is True
+    assert constraints.requires_stateful_simulation(2_000.0) is False
 
 
 def test_margin_preset_keeps_cash_settlement_at_zero() -> None:

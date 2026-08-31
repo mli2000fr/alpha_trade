@@ -18,8 +18,15 @@ DB_MAX_OVERFLOW_ENV = "DB_MAX_OVERFLOW"
 DB_POOL_RECYCLE_ENV = "DB_POOL_RECYCLE_SECONDS"
 DB_SSL_CA_PATH_ENV = "DB_SSL_CA_PATH"
 
-DEFAULT_POOL_SIZE = 2
-DEFAULT_MAX_OVERFLOW = 3
+# P-fix (2026-08-30) : défauts relevés (2+3 → 5+10 = 15 connexions max/processus).
+# L'ancien budget (5/processus) provoquait des `QueuePool limit ... overflow ...
+# reached, connection timed out` sous charge (plusieurs batchs d'entraînement +
+# prédiction + backtests en parallèle) → delete_batch_rows partait en timeout et,
+# avec l'ancien bug (rmtree malgré échec DB), les dossiers de batchs disparaissaient
+# alors que la DB restait intacte. Serveur MySQL : max_connections=151, pic 38 →
+# marge suffisante. Toujours surchargeable via env DB_POOL_SIZE / DB_MAX_OVERFLOW.
+DEFAULT_POOL_SIZE = 10
+DEFAULT_MAX_OVERFLOW = 20
 DEFAULT_POOL_RECYCLE = 3600
 
 # Phase 1 sécurité : placeholders évidents refusés (audit_global.md §1.5).

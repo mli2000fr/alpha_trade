@@ -133,7 +133,7 @@ def test_select_champion_marks_zero_eligible_models_explicitly() -> None:
     assert result["selected_model_eligible"] is False
 
 
-def test_selection_score_ignores_ambiguous_top_level_value() -> None:
+def test_selection_score_ignores_noncanonical_selection_score_fields() -> None:
     result = {
         "status": "completed",
         "selection_score": 0.99,
@@ -141,7 +141,7 @@ def test_selection_score_ignores_ambiguous_top_level_value() -> None:
         "val": {"selection_score": 0.61},
     }
 
-    assert selection_score_from_result(result) == pytest.approx(0.61)
+    assert selection_score_from_result(result) == float("-inf")
 
 
 def test_selection_score_without_authorized_partition_is_ineligible() -> None:
