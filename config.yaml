@@ -474,7 +474,7 @@ eodhd:
 #  (Get-ScheduledTask -TaskName AlphaTrade-EarningsCalendarSync).Triggers | Select-Object StartBoundary
 # ---------------------------------------------------------------------------
 earnings_calendar_sync:
-  run_hours: "23"                             # Heures de la journée (0-23) séparées par des virgules : "3" = 3h du matin, "4,9" = 4h et 9h.
+  run_hours: "12,23"                             # Heures de la journée (0-23) séparées par des virgules : "3" = 3h du matin, "4,9" = 4h et 9h.
   log_file: log/batch/earnings_calendar.txt  # Ligne de statut ajoutée à chaque exécution.
 
 # ---------------------------------------------------------------------------
@@ -486,6 +486,9 @@ earnings_calendar_sync:
 # jamais recalculé (ni active-tradable 13 608, ni pool Oracle).
 # CLI : python scripts/collect_yahoo_analyst_snapshots.py --universe analyst_research --write-db
 # powershell -ExecutionPolicy Bypass -File .\scripts\windows\install_analyst_snapshot_task.ps1
+
+# lancer immédiate
+# powershell -ExecutionPolicy Bypass -File .\scripts\windows\earnings_calendar_launcher.ps1
 
 # lancer immédiate
 # powershell -ExecutionPolicy Bypass -File .\scripts\windows\analyst_snapshot_launcher.ps1
@@ -511,7 +514,7 @@ analyst_snapshot_collection:
   sleep_seconds: 0.25                    # Throttling entre symboles.
   timeout_seconds: 20                    # Timeout watchdog par symbole.
   max_retries: 2                         # Retries sur TEMPORARY_ERROR / RATE_LIMIT.
-  run_hours: "23"                        # Heures de la journée (0-23) heure LOCALE machine. Clôture US 16:00 ET = 22:00 heure de Paris (été comme hiver) → "23" = 1h après clôture US. Ajuster à la timezone de la machine si elle n'est pas à Paris.
+  run_hours: "9,23"                        # Heures de la journée (0-23) heure LOCALE machine. Clôture US 16:00 ET = 22:00 heure de Paris (été comme hiver) → "23" = 1h après clôture US. Ajuster à la timezone de la machine si elle n'est pas à Paris.
   log_file: log/batch/analyst_snapshots.txt
   # Planification (après clôture US) : tâche Windows dédiée `AlphaTrade-AnalystSnapshot`
   #   powershell -ExecutionPolicy Bypass -File .\scripts\windows\install_analyst_snapshot_task.ps1
