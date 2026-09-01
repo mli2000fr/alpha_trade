@@ -4125,7 +4125,12 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                             else DEFAULT_ML_FEATURE_SET
                         ),
                         key="pipeline_ml_feature_set",
-                        help="v1 = 13 features OHLCV | expert = 65 features (incl. 18 interactions régime). Ce flag contrôle UNIQUEMENT LightGBM/CatBoost. Le LSTM est automatiquement en v1 (29 features).",
+                        help=(
+                            "v1 = jeu compact historique | expert = jeu complet incluant les "
+                            "familles activées dans ce formulaire. En mode expert, l'IHM désactive "
+                            "automatiquement le forçage V1 : LSTM, LightGBM et CatBoost utilisent "
+                            "donc tous le contrat de features Expert."
+                        ),
                     ),
                 )
             with ml_hp_col2:

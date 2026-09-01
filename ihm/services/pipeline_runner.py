@@ -2342,6 +2342,13 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             "--log-level",
             str(options.ml_log_level or DEFAULT_ML_LOG_LEVEL).upper(),
         ])
+        # Contrat IHM : la valeur affichée dans « ML — feature set » doit être
+        # la valeur effectivement utilisée par l'entraînement per-symbol. Le CLI
+        # conserve force_v1_lstm=True par défaut pour la compatibilité historique ;
+        # il faut donc lever explicitement ce forçage lorsque l'utilisateur choisit
+        # le jeu Expert dans l'IHM.
+        if options.ml_feature_set == "expert":
+            command.append("--no-force-v1-lstm")
         if options.ml_watchdog_timeout_seconds and options.ml_watchdog_timeout_seconds > 0:
             command.extend(["--watchdog-timeout-seconds", str(int(options.ml_watchdog_timeout_seconds))])
         if ml_training_end_date:

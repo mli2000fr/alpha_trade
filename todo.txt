@@ -42,7 +42,8 @@ afin de garantie oos et la cohérence des données, les backtest peut etes fait 
 - entre 01/01/2025 et 31/12/2026: utiliser le batch model-factory-20260830074150-f8144a
 bien respecter ces paliers.
 
-
+best long: baseline
+best short baseline + --include-macro-move --no-include-score-components
 -----------------------------------------
 
 python -u -m modelFactory --mode train --accelerator auto --target-mode regression --num-classes 1 --forecast-horizons 3,5,10,15,20 --target-up-threshold 0.03 --target-down-threshold -0.03 --decision-threshold 0.55 --calibration-method platt --calibration-min-samples 64 --calibration-max-iter 100 --feature-set expert --benchmark-symbol SPY --sequence-length 40 --batch-size 32 --hidden-size 128 --ml-mode rebuild-all --training-start-date 2016-01-01 --symbol-source universe-file:univers_test_rapide.txt --artifacts-dir artifacts/models --max-workers 6 --max-epochs 50 --patience 5 --cross-sectional-min-universe 20 --lgbm-max-depth 5 --lgbm-n-estimators 200 --lgbm-learning-rate 0.03 --catboost-depth 4 --catboost-iterations 300 --catboost-learning-rate 0.03 --lgbm-reg-alpha 0.1 --lgbm-reg-lambda 0.1 --lgbm-min-child-samples 150 --lgbm-subsample 0.8 --lgbm-colsample-bytree 0.7 --catboost-l2-leaf-reg 3.0 --catboost-border-count 128 --catboost-random-strength 1.0 --catboost-bagging-temperature 1.0 --catboost-od-type IncToDec --catboost-od-wait 20 --catboost-loss-function YetiRank --default-champion lstm_attention --heartbeat-interval-seconds 60.0 --log-level INFO --training-end-date 2024-06-30 --no-include-score-components --compare-lightgbm --enable-catboost --select-champion --walkforward --wf-min-train-size 504 --wf-val-size 126 --wf-test-size 126 --wf-step-size 252 --wf-max-splits 8 --comment "[Test features per Sympol] Base line"
@@ -134,3 +135,6 @@ f1_long >= 0,50
 ET f1_short >= 0,50
 D’après la capture, HAYW H20, ASO H20 et DRVN H20 satisfont déjà cette dernière condition.
 Le tableau confirme donc ton intuition : filtrer uniquement sur f1_macro ferait perdre des modèles directionnellement très intéressants. Pour Extreme Gate directionnel, il faut construire une éligibilité séparée LONG et SHORT, puis utiliser le F1 du côté effectivement choisi.
+
+
+python  -u -m dataIntegrityEngine.sync_latest_quotes --batch-size 200 --symbol-source active-tradable --from-date 2020-07-22 --to-date 2026-08-19 --start-symbol METU
