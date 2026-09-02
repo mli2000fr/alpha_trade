@@ -1339,7 +1339,8 @@ def train_symbol(
     """
     torch.set_float32_matmul_precision("medium")
 
-    run_id = f"{symbol}_{datetime.now(timezone.utc):%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}"
+    _role_token = "" if cfg.model_role == "direction_legacy" else f"_{cfg.model_role}"
+    run_id = f"{symbol}{_role_token}_{datetime.now(timezone.utc):%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}"
     registry_id: int = 0
 
     if engine is not None:
@@ -2031,6 +2032,7 @@ def train_symbol(
             "symbol": symbol,
             "run_id": run_id,
             "batch_id": batch_id,
+            "model_role": effective_cfg.model_role,
             "artifacts_dir": str(cfg.artifacts_dir),
             "feature_columns": dm.scaler.feature_names,
             "feature_contract": feature_contract,

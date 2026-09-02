@@ -961,6 +961,8 @@ def insert_predictions(engine: Engine, predictions: pd.DataFrame) -> int:
     - signal_label
     - calibration_method
     - source (optionnel, colonne 0067) — origine de la prédiction
+    - model_role et direction_* (optionnels, colonne 0069) — double filiation
+      des bundles Per-Symbol LONG/SHORT
     """
     if predictions.empty:
         return 0
@@ -969,6 +971,16 @@ def insert_predictions(engine: Engine, predictions: pd.DataFrame) -> int:
     has_ternary = "predicted_side" in predictions.columns
     # 0067 — la colonne `source` est optionnelle (None si absente du DataFrame)
     has_source = "source" in predictions.columns
+    lineage_columns = (
+        "model_role", "direction_long_run_id", "direction_short_run_id",
+        "direction_long_model", "direction_short_model",
+    )
+    has_directional_lineage = any(column in predictions.columns for column in lineage_columns)
+    _lineage_cols = (
+        ", model_role, direction_long_run_id, direction_short_run_id, "
+        "direction_long_model, direction_short_model"
+    ) if has_directional_lineage else ""
+    _lineage_vals = ", :model_role, :long_run, :short_run, :long_model, :short_model" if has_directional_lineage else ""
     if has_ternary:
         _src_cols = ", source" if has_source else ""
         _src_vals = ", :src" if has_source else ""
@@ -978,11 +990,11 @@ def insert_predictions(engine: Engine, predictions: pd.DataFrame) -> int:
             "symbol, prediction_date, predicted_proba, predicted_class, "
             "predicted_side, proba_long, proba_flat, proba_short, "
             "run_id, selected_model, decision_threshold, signal_label, calibration_method"
-            f"{_src_cols}"
+            f"{_src_cols}{_lineage_cols}"
             ") VALUES ("
             ":sym, :pd, :pp, :pc, :ps, :pl, :pf, :psh, "
             ":rid, :selected_model, :decision_threshold, :signal_label, :calibration_method"
-            f"{_src_vals}"
+            f"{_src_vals}{_lineage_vals}"
             ") ON DUPLICATE KEY UPDATE "
             f"run_id = run_id{_src_upd}"
         )
@@ -994,10 +1006,10 @@ def insert_predictions(engine: Engine, predictions: pd.DataFrame) -> int:
             "INSERT INTO model_predictions ("
             "symbol, prediction_date, predicted_proba, predicted_class, run_id, "
             "selected_model, decision_threshold, signal_label, calibration_method"
-            f"{_src_cols}"
+            f"{_src_cols}{_lineage_cols}"
             ") VALUES ("
             ":sym, :pd, :pp, :pc, :rid, :selected_model, :decision_threshold, :signal_label, :calibration_method"
-            f"{_src_vals}"
+            f"{_src_vals}{_lineage_vals}"
             ") ON DUPLICATE KEY UPDATE "
             f"run_id = run_id{_src_upd}"
         )
@@ -1017,6 +1029,14 @@ def insert_predictions(engine: Engine, predictions: pd.DataFrame) -> int:
             }
             if has_source:
                 params["src"] = (str(row.get("source") or "").strip() or None)
+            if has_directional_lineage:
+                params.update({
+                    "model_role": (str(row.get("model_role") or "").strip() or None),
+                    "long_run": (str(row.get("direction_long_run_id") or "").strip() or None),
+                    "short_run": (str(row.get("direction_short_run_id") or "").strip() or None),
+                    "long_model": (str(row.get("direction_long_model") or "").strip() or None),
+                    "short_model": (str(row.get("direction_short_model") or "").strip() or None),
+                })
             if has_ternary:
                 params["ps"] = str(row.get("predicted_side") or "") or None
                 params["pl"] = float(row.get("proba_long")) if pd.notna(row.get("proba_long")) else None

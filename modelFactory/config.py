@@ -512,6 +512,11 @@ class TrainingConfig:
     accelerator: str = "auto"  # auto | cpu | gpu
     debug_train: bool = False
     training_mode: str = "per_symbol"  # per_symbol | per_sector
+    directional_profiles_enabled: bool = False
+    oracle_feature_profile: str = "oracle.json"
+    long_feature_profile: str = "long.json"
+    short_feature_profile: str = "short.json"
+    model_role: str = "direction_legacy"  # direction_legacy | direction_long | direction_short
 
     def __post_init__(self) -> None:
         if self.max_workers < 1:
@@ -520,4 +525,8 @@ class TrainingConfig:
             raise ValueError("batch_id doit être un nom de dossier non vide.")
         if self.training_mode not in {"per_symbol", "per_sector"}:
             raise ValueError("training_mode doit être 'per_symbol' ou 'per_sector'.")
+        if self.model_role not in {"direction_legacy", "direction_long", "direction_short"}:
+            raise ValueError("model_role invalide.")
+        if self.directional_profiles_enabled and self.training_mode != "per_symbol":
+            raise ValueError("Les profils directionnels LONG/SHORT requièrent training_mode='per_symbol'.")
 

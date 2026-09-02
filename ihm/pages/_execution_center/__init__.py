@@ -41,6 +41,7 @@ from typing import Any, SupportsFloat, SupportsIndex, SupportsInt, cast
 import streamlit as st
 
 from common.universe_files import default_universe_file_source_or
+from modelFactory.feature_profiles import discover_feature_profiles
 from event_sentiment.db_io import EventSentimentRepository
 
 from ihm.pages._alpha_scanner_diagnostics import (
@@ -3302,24 +3303,73 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         st.caption("Chaque lancement ML Train crée une campagne complète et isolée.")
         ml_train_symbol_source = default_universe_file_source_or("tradable-universe")
         ml_predict_symbol_source = "tradable-universe"
+        ml_directional_profiles_enabled = st.checkbox(
+            "🧭 Bundle Oracle + deux modèles Per-Symbol LONG/SHORT",
+            value=_session_state_bool("pipeline_ml_directional_profiles_enabled", False),
+            key="pipeline_ml_directional_profiles_enabled",
+            help="Entraîne dans un seul batch l'Oracle Extreme global puis deux champions par symbole, avec des contrats de features LONG et SHORT indépendants.",
+        )
+        oracle_profiles = discover_feature_profiles("oracle") or ["oracle.json"]
+        long_profiles = discover_feature_profiles("long") or ["long.json"]
+        short_profiles = discover_feature_profiles("short") or ["short.json"]
+        profile_col0, profile_col1, profile_col2 = st.columns(3)
+        with profile_col0:
+            ml_oracle_feature_profile = cast(str, st.selectbox(
+                "Profil de features Oracle", options=oracle_profiles,
+                index=oracle_profiles.index("oracle.json") if "oracle.json" in oracle_profiles else 0,
+                key="pipeline_ml_oracle_feature_profile", disabled=not ml_directional_profiles_enabled,
+            ))
+        with profile_col1:
+            ml_long_feature_profile = cast(str, st.selectbox(
+                "Profil de features LONG", options=long_profiles,
+                index=long_profiles.index("long.json") if "long.json" in long_profiles else 0,
+                key="pipeline_ml_long_feature_profile", disabled=not ml_directional_profiles_enabled,
+            ))
+        with profile_col2:
+            ml_short_feature_profile = cast(str, st.selectbox(
+                "Profil de features SHORT", options=short_profiles,
+                index=short_profiles.index("short.json") if "short.json" in short_profiles else 0,
+                key="pipeline_ml_short_feature_profile", disabled=not ml_directional_profiles_enabled,
+            ))
+        if ml_directional_profiles_enabled:
+            st.session_state["pipeline_ml_enable_oracle_model"] = True
+            st.session_state["pipeline_ml_oracle_model_only"] = False
+            st.session_state["pipeline_ml_exclude_per_symbol_per_sector"] = False
+            st.session_state["pipeline_ml_global_model_only"] = False
+            st.session_state["pipeline_ml_training_mode"] = "per_symbol"
+            for feature_key in (
+                "pipeline_ml_include_sentiment", "pipeline_ml_include_screener_scores",
+                "pipeline_ml_include_short_score", "pipeline_ml_include_macro_vix",
+                "pipeline_ml_include_macro_vxn", "pipeline_ml_include_macro_vix3m",
+                "pipeline_ml_include_macro_move", "pipeline_ml_include_fundamentals",
+                "pipeline_ml_include_factors", "pipeline_ml_include_volume_features",
+                "pipeline_ml_include_macro_regime", "pipeline_ml_include_score_components",
+                "pipeline_ml_enable_cross_sectional", "pipeline_ml_include_directional_features",
+                "pipeline_ml_enable_global_stacking",
+            ):
+                st.session_state[feature_key] = False
+            st.info("Les cases de features manuelles sont ignorées. Les trois contrats Oracle, LONG et SHORT sont pilotés exclusivement par les profils JSON sélectionnés.")
         ml_opt_col1, ml_opt_col2, ml_opt_col3 = st.columns(3)
         with ml_opt_col1:
             ml_include_sentiment = st.checkbox(
                 "Inclure les features sentiment (per-symbol uniquement)",
                 value=_session_state_bool("pipeline_ml_include_sentiment", DEFAULT_ML_INCLUDE_SENTIMENT),
                 key="pipeline_ml_include_sentiment",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--include-sentiment` au per-symbol uniquement. Le Global Ranking Model ignore ces features (trop sparse pour du ranking cross-sectionnel).",
             )
             ml_include_screener_scores = st.checkbox(
                 "Inclure les scores du screener (trend, VCP, final_score…)",
                 value=_session_state_bool("pipeline_ml_include_screener_scores", DEFAULT_ML_INCLUDE_SCREENER_SCORES),
                 key="pipeline_ml_include_screener_scores",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--include-screener-scores` pour enrichir le dataset ML avec les scores PIT-safe du screener (trend_score, vcp_score, final_score, market_cap, beta, etc.).",
             )
             ml_include_short_score = st.checkbox(
                 "Inclure le short_score dédié (score baissier)",
                 value=_session_state_bool("pipeline_ml_include_short_score", DEFAULT_ML_INCLUDE_SHORT_SCORE),
                 key="pipeline_ml_include_short_score",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--include-short-score` pour intégrer le score baissier composite (trend+RSI+SMA) comme feature ML indépendante.",
             )
             ml_enable_lightgbm = st.checkbox(
@@ -3339,54 +3389,63 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 "📊 VIX/VIX9D (volatilité S&P 500)",
                 value=_session_state_bool("pipeline_ml_include_macro_vix", DEFAULT_ML_INCLUDE_MACRO_VIX),
                 key="pipeline_ml_include_macro_vix",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--include-macro-vix`. Nécessite un backfill préalable de `stock_macro_indicators_daily`.",
             )
             ml_include_macro_vxn = st.checkbox(
                 "📊 VXN (volatilité NASDAQ-100)",
                 value=_session_state_bool("pipeline_ml_include_macro_vxn", DEFAULT_ML_INCLUDE_MACRO_VXN),
                 key="pipeline_ml_include_macro_vxn",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--include-macro-vxn`. Utile pour les valeurs Tech.",
             )
             ml_include_macro_vix3m = st.checkbox(
                 "📊 VIX3M + ratio (term structure)",
                 value=_session_state_bool("pipeline_ml_include_macro_vix3m", DEFAULT_ML_INCLUDE_MACRO_VIX3M),
                 key="pipeline_ml_include_macro_vix3m",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--include-macro-vix3m`. Ratio VIX/VIX3M : détecte la backwardation (panique court terme).",
             )
             ml_include_macro_move = st.checkbox(
                 "📊 MOVE (volatilité obligataire)",
                 value=_session_state_bool("pipeline_ml_include_macro_move", DEFAULT_ML_INCLUDE_MACRO_MOVE),
                 key="pipeline_ml_include_macro_move",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--include-macro-move`. Indice ICE BofA MOVE : volatilité des bons du Trésor US.",
             )
             ml_include_fundamentals = st.checkbox(
                 "📊 Fondamentaux (PE, ROE, marges, croissance)",
                 value=_session_state_bool("pipeline_ml_include_fundamentals", DEFAULT_ML_INCLUDE_FUNDAMENTALS),
                 key="pipeline_ml_include_fundamentals",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--include-fundamentals`. Features EODHD (valuation, profitabilité, croissance, santé financière) depuis stock_fundamentals_daily. Applicable per-symbol, per-sector et Global Ranking. Exclu du Global Model (cross-symbol) car ce sont des features par titre. Nécessite un backfill préalable de stock_fundamentals_daily.",
             )
             ml_include_factors = st.checkbox(
                 "📊 Facteurs CAPM (beta, alpha, R² via rolling 252j)",
                 value=_session_state_bool("pipeline_ml_include_factors", DEFAULT_ML_INCLUDE_FACTORS),
                 key="pipeline_ml_include_factors",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--include-factors`. Calcule beta, alpha annualisé, R² et momentum 252j vs marché par rolling regression sur SPY.",
             )
             ml_include_volume_features = st.checkbox(
                 "📊 Profil volume / liquidité (P3-5 — 10 features)",
                 value=_session_state_bool("pipeline_ml_include_volume_features", DEFAULT_ML_INCLUDE_VOLUME_FEATURES),
                 key="pipeline_ml_include_volume_features",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--include-volume-features`. Dollar volume, Amihud illiquidité, corrélation prix/volume, OBV, skew… 10 features de profil volume/liquidité (expérience P3-5, off par défaut).",
             )
             ml_include_macro_regime = st.checkbox(
                 "🌍 Régime macro (SPY_SMA_200_slope + VIX_zscore)",
                 value=_session_state_bool("pipeline_ml_include_macro_regime", DEFAULT_ML_INCLUDE_MACRO_REGIME),
                 key="pipeline_ml_include_macro_regime",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--include-macro-regime`. Injecte la tendance SPY long terme et le z-score VIX à tous les symboles.",
             )
             ml_include_score_components = st.checkbox(
                 "📊 Composants de score (stock_scores_history)",
                 value=_session_state_bool("pipeline_ml_include_score_components", DEFAULT_ML_INCLUDE_SCORE_COMPONENTS),
                 key="pipeline_ml_include_score_components",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--include-score-components`. Injecte sentiment_net_agg, company_idio_score, macro_regime_score, quant_component et autres composants de stock_scores_history comme features ML. Actif par défaut sur per-sector + global, ignoré sur per-symbol.",
             )
             ml_target_excess_vs_spy = st.checkbox(
@@ -3738,7 +3797,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 "📥 Utiliser le rang global comme feature (Stacking)",
                 value=_session_state_bool("pipeline_ml_enable_global_stacking", DEFAULT_ML_ENABLE_GLOBAL_STACKING),
                 key="pipeline_ml_enable_global_stacking",
-                disabled=not ml_enable_global_model,
+                disabled=ml_directional_profiles_enabled or not ml_enable_global_model,
                 help="Ajoute `--enable-global-stacking`. Injecte `global_rank` comme feature dans les modèles per-symbol (LSTM/LGBM/CatBoost). Le modèle apprend à pondérer le signal transverse.",
             )
             ml_global_model_name = cast(
@@ -3761,6 +3820,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 "🌐 Features cross-sectionnelles & sectorielles (rangs percentiles + momentum intra-secteur)",
                 value=_session_state_bool("pipeline_ml_enable_cross_sectional", DEFAULT_ML_ENABLE_CROSS_SECTIONAL),
                 key="pipeline_ml_enable_cross_sectional",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--enable-cross-sectional`. Calcule les rangs percentiles PIT-safe ET les features sectorielles dynamiques (momentum, volatilité, alpha intra-secteur GICS).",
             )
             # 2026-08-23 : liste restreinte 'direction' — injecte uniquement les
@@ -3770,6 +3830,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 "🎯 Ajouter les features directionnels (liste restreinte 'direction')",
                 value=_session_state_bool("pipeline_ml_include_directional_features", DEFAULT_ML_INCLUDE_DIRECTIONAL_FEATURES),
                 key="pipeline_ml_include_directional_features",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--include-directional-features`. Injecte dans l'entraînement uniquement les features de la liste 'direction' (stock_vs_sector_ret_5/20/60, momentum_20_sector_neutral, sector_ret_5/20/60, sector_relative_strength_20, *_xs_rank...). Pour les features déjà présentes dans la liste d'entraînement, on les ignore (aucun doublon). Transparent pour la prédiction (les features d'entraînement sont sauvegardées et réutilisées).",
             )
 
@@ -4820,6 +4881,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_include_volume_features=bool(ml_include_volume_features),
             ml_include_macro_regime=bool(ml_include_macro_regime),
             ml_include_score_components=bool(ml_include_score_components),
+            ml_directional_profiles_enabled=bool(ml_directional_profiles_enabled),
+            ml_oracle_feature_profile=str(ml_oracle_feature_profile),
+            ml_long_feature_profile=str(ml_long_feature_profile),
+            ml_short_feature_profile=str(ml_short_feature_profile),
             ml_target_skip_vol_scaling=bool(ml_target_skip_vol_scaling),
             ml_target_excess_vs_spy=bool(ml_target_excess_vs_spy),
             ml_target_intra_sector_rank=bool(ml_target_intra_sector_rank),

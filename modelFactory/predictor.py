@@ -2167,6 +2167,105 @@ def predict_symbol(
     return result
 
 
+def _directional_bundle_root(artifacts_dir: Path, batch_id: str | None) -> Path | None:
+    """Retourne la racine d'un bundle dual si son manifeste est présent."""
+    candidates = [artifacts_dir / batch_id] if batch_id else []
+    candidates.append(artifacts_dir)
+    for candidate in candidates:
+        manifest = candidate / "cascade_manifest.json"
+        if manifest.is_file():
+            try:
+                payload = json.loads(manifest.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if payload.get("cascade_type") == "oracle_extreme_plus_per_symbol_directional":
+                return candidate
+    return None
+
+
+def predict_directional_symbol(
+    symbol: str,
+    bundle_root: Path,
+    engine: "Engine",  # type: ignore[name-defined]
+    prediction_date: Optional[date] = None,
+    as_of_date: Optional[date] = None,
+    persist: bool = True,
+    accelerator: str = "auto",
+) -> Optional[pd.DataFrame]:
+    """Sert les deux champions directionnels et arbitre LONG/SHORT.
+
+    La branche LONG est seule autorisée à fournir ``proba_long`` et la branche
+    SHORT est seule autorisée à fournir ``proba_short``. Une branche manquante
+    invalide la prédiction : aucun fallback silencieux vers le modèle legacy.
+    """
+    def _branch_prediction(direction: str) -> Optional[pd.DataFrame]:
+        branch_root = bundle_root / "directions" / direction
+        config_path = branch_root / symbol / "config.json"
+        try:
+            branch_config = json.loads(config_path.read_text(encoding="utf-8"))
+            branch_run_id = str(branch_config["run_id"])
+        except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+            LOGGER.error("directional_bundle config unavailable symbol=%s direction=%s error=%s",
+                         symbol, direction, exc)
+            return None
+        expected_role = f"direction_{direction}"
+        if branch_config.get("model_role") != expected_role:
+            LOGGER.error("directional_bundle role mismatch symbol=%s direction=%s expected=%s actual=%s",
+                         symbol, direction, expected_role, branch_config.get("model_role"))
+            return None
+        return predict_symbol(
+            symbol, branch_root, engine, prediction_date, run_id=branch_run_id,
+            as_of_date=as_of_date, persist=False, accelerator=accelerator,
+        )
+
+    long_pred = _branch_prediction("long")
+    short_pred = _branch_prediction("short")
+    if long_pred is None or long_pred.empty or short_pred is None or short_pred.empty:
+        LOGGER.error("directional_bundle incomplete symbol=%s long=%s short=%s", symbol,
+                     long_pred is not None and not long_pred.empty,
+                     short_pred is not None and not short_pred.empty)
+        return None
+    long_row = long_pred.iloc[0]
+    short_row = short_pred.iloc[0]
+    p_long = float(long_row.get("proba_long", long_row.get("predicted_proba", 0.0)) or 0.0)
+    p_short = float(short_row.get("proba_short", short_row.get("predicted_proba", 0.0)) or 0.0)
+    p_flat = max(
+        float(long_row.get("proba_flat", 0.0) or 0.0),
+        float(short_row.get("proba_flat", 0.0) or 0.0),
+    )
+    if p_long > p_short and p_long > p_flat:
+        side, pred_class, score = "long", 1, p_long
+    elif p_short > p_long and p_short > p_flat:
+        side, pred_class, score = "short", -1, p_short
+    else:
+        side, pred_class, score = "flat", 0, p_flat
+    merged = _build_prediction_result(
+        symbol=symbol,
+        prediction_date=pd.Timestamp(long_row["prediction_date"]).date(),
+        proba=score,
+        pred_class=pred_class,
+        run_id=str(long_row["run_id"]),
+        raw_proba=score,
+        decision_threshold=max(float(long_row.get("decision_threshold", 0.5)), float(short_row.get("decision_threshold", 0.5))),
+        signal_label=side.upper(),
+        calibration_method=f"long:{long_row.get('calibration_method', 'none')}|short:{short_row.get('calibration_method', 'none')}",
+        selected_model="directional_bundle",
+        predicted_side=side,
+        proba_long=p_long,
+        proba_flat=p_flat,
+        proba_short=p_short,
+        source=str(long_row.get("source", PREDICTION_SOURCE_PER_SYMBOL)),
+    )
+    merged["direction_long_run_id"] = str(long_row["run_id"])
+    merged["direction_short_run_id"] = str(short_row["run_id"])
+    merged["direction_long_model"] = str(long_row.get("selected_model", "unknown"))
+    merged["direction_short_model"] = str(short_row.get("selected_model", "unknown"))
+    merged["model_role"] = "directional_bundle"
+    if persist:
+        _persist_predictions_best_effort(engine, merged, symbol=symbol)
+    return merged
+
+
 # ────────────────────────────────────────────────────────────────────
 # Cascade config loader (Étape 1 — cascade_ml.md)
 # ────────────────────────────────────────────────────────────────────
@@ -3844,6 +3943,7 @@ def predict_batch(
         (non thread-safe) et seul un résumé final est émis.
     """
     total = len(symbols)
+    directional_root = _directional_bundle_root(artifacts_dir, batch_id)
     update_runtime_status(
         current_phase="predict_batch_start",
         progress_label="🔮 Progression ML Predict",
@@ -3873,16 +3973,12 @@ def predict_batch(
                 current_symbol_index=index,
                 progress_item=sym,
             )
-            pred = predict_symbol(
-                sym,
-                artifacts_dir,
-                engine,
-                prediction_date,
-                batch_id=batch_id,
-                as_of_date=as_of_date,
-                persist=persist,
-                accelerator=accelerator,
-            )
+            if directional_root is not None:
+                pred = predict_directional_symbol(sym, directional_root, engine, prediction_date,
+                                                  as_of_date=as_of_date, persist=persist, accelerator=accelerator)
+            else:
+                pred = predict_symbol(sym, artifacts_dir, engine, prediction_date, batch_id=batch_id,
+                                      as_of_date=as_of_date, persist=persist, accelerator=accelerator)
             if pred is not None:
                 all_preds.append(pred)
                 completed += 1
@@ -3923,16 +4019,12 @@ def predict_batch(
 
     def _predict_one(sym: str) -> tuple[str, pd.DataFrame | None]:
         """Wrapper thread-safe : chaque thread utilise sa propre connexion DB."""
-        pred = predict_symbol(
-            sym,
-            artifacts_dir,
-            engine,
-            prediction_date,
-            batch_id=batch_id,
-            as_of_date=as_of_date,
-            persist=persist,
-            accelerator=accelerator,
-        )
+        if directional_root is not None:
+            pred = predict_directional_symbol(sym, directional_root, engine, prediction_date,
+                                              as_of_date=as_of_date, persist=persist, accelerator=accelerator)
+        else:
+            pred = predict_symbol(sym, artifacts_dir, engine, prediction_date, batch_id=batch_id,
+                                  as_of_date=as_of_date, persist=persist, accelerator=accelerator)
         return sym, pred
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:

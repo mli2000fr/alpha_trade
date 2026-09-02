@@ -463,6 +463,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="S7 : liste de features séparées par des virgules à utiliser comme X (ex. \"momentum_20,momentum_60,selector_short_score\"). Vide = legacy. Ignoré si --feature-whitelist-enabled absent.")
     p.add_argument("--no-force-v1-lstm", dest="force_v1_lstm", action="store_false", default=True,
                    help="S7 : NE PAS forcer feature_set=v1 pour le LSTM per-symbol (utilise le feature_set demandé, ex. expert). Opt-in ; par défaut le LSTM force v1 (comportement prod inchangé).")
+    p.add_argument("--directional-feature-profiles", action="store_true", default=False,
+                   help="Entraîne dans un même batch les branches Per-Symbol LONG et SHORT avec deux profils JSON, plus l'Oracle Extreme global.")
+    p.add_argument("--oracle-feature-profile", type=str, default="oracle.json",
+                   help="Nom du profil JSON présent dans config/features/oracle (défaut: oracle.json).")
+    p.add_argument("--long-feature-profile", type=str, default="long.json",
+                   help="Nom du profil JSON présent dans config/features/long (défaut: long.json).")
+    p.add_argument("--short-feature-profile", type=str, default="short.json",
+                   help="Nom du profil JSON présent dans config/features/short (défaut: short.json).")
     p.add_argument("--target-skip-vol-scaling", action="store_true", default=False,
                    help="T1 experiment: désactiver le vol-scaling dans la target regression (target = future_return brut)")
     p.add_argument("--target-excess-vs-spy", action="store_true", default=False,
@@ -686,6 +694,12 @@ def main(args: list[str] | None = None) -> None:
     # Oracle Extreme (O0) : --oracle-model-only active implicitement l'Oracle
     if getattr(opts, "oracle_model_only", False):
         opts.enable_oracle_model = True
+    if getattr(opts, "directional_feature_profiles", False):
+        opts.enable_oracle_model = True
+        opts.oracle_model_only = False
+        opts.global_model_only = False
+        opts.exclude_per_symbol_per_sector = False
+        opts.training_mode = "per_symbol"
 
     _horizons: tuple[int, ...] = ()
     _forecast_horizon = opts.forecast_horizon
@@ -849,6 +863,10 @@ def main(args: list[str] | None = None) -> None:
         accelerator=opts.accelerator,
         debug_train=opts.debug_train,
         training_mode=opts.training_mode,
+        directional_profiles_enabled=opts.directional_feature_profiles,
+        oracle_feature_profile=opts.oracle_feature_profile,
+        long_feature_profile=opts.long_feature_profile,
+        short_feature_profile=opts.short_feature_profile,
     )
 
     reproducibility_state = apply_reproducibility(cfg.reproducibility, context=f"cli:{opts.mode}")

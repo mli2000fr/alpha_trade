@@ -1,5 +1,7 @@
 # Cascade de sélection et modes de ranking
 
+> Architecture associée : [bundle unique Oracle Extreme + champions Per-Symbol LONG/SHORT](ml/per_symbol/07_bundle_oracle_long_short.md).
+
 Retour : [documentation recherche](research/README.md) · Voir aussi : [Oracle Extreme](ml/oracle/README.md)
 
 > Statut au 31 août 2026 : les modes sont disponibles dans la CLI Backtest et dans la page

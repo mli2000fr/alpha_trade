@@ -390,6 +390,10 @@ class PipelineLaunchOptions:
     ml_exclude_per_symbol_per_sector: bool = DEFAULT_ML_EXCLUDE_PER_SYMBOL_PER_SECTOR  # 2026-08-28
     ml_enable_oracle_model: bool = DEFAULT_ML_ENABLE_ORACLE_MODEL  # 2026-08-20 : Oracle Extreme (O0)
     ml_oracle_model_only: bool = DEFAULT_ML_ORACLE_MODEL_ONLY      # 2026-08-20 : Oracle ONLY
+    ml_directional_profiles_enabled: bool = False
+    ml_oracle_feature_profile: str = "oracle.json"
+    ml_long_feature_profile: str = "long.json"
+    ml_short_feature_profile: str = "short.json"
     ml_target_skip_vol_scaling: bool = DEFAULT_ML_TARGET_SKIP_VOL_SCALING
     ml_target_excess_vs_spy: bool = DEFAULT_ML_TARGET_EXCESS_VS_SPY  # P0-7
     ml_target_intra_sector_rank: bool = DEFAULT_ML_TARGET_INTRA_SECTOR_RANK
@@ -2355,7 +2359,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--training-end-date", ml_training_end_date])
         if ml_train_start_symbol:
             command.extend(["--start-symbol", ml_train_start_symbol])
-        if options.ml_global_model_only:
+        if options.ml_global_model_only and not options.ml_directional_profiles_enabled:
             # P0-6 : --global-model-only active déjà --enable-global-model implicitement
             # côté cli → on ne l'émet pas ici pour éviter le doublon dans la commande.
             # 2026-08-28 : si exclude_per_symbol_per_sector est coché, on ne l'émet
@@ -2363,37 +2367,46 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             # qu'on veut justement conserver avec le nouveau flag.
             command.append("--global-model-only")
         # 2026-08-28 : Exclude per-symbol & per-sector (garde Global Ranking + Oracle)
-        if options.ml_exclude_per_symbol_per_sector and not options.ml_global_model_only:
+        if (options.ml_exclude_per_symbol_per_sector and not options.ml_global_model_only
+                and not options.ml_directional_profiles_enabled):
             command.append("--exclude-per-symbol-per-sector")
         # Oracle Extreme (O0) — 2026-08-20
-        if options.ml_oracle_model_only:
+        if options.ml_directional_profiles_enabled:
+            command.extend([
+                "--directional-feature-profiles",
+                "--oracle-feature-profile", options.ml_oracle_feature_profile,
+                "--long-feature-profile", options.ml_long_feature_profile,
+                "--short-feature-profile", options.ml_short_feature_profile,
+                "--enable-oracle-model",
+            ])
+        elif options.ml_oracle_model_only:
             command.append("--oracle-model-only")
             command.append("--enable-oracle-model")  # implicite
         elif options.ml_enable_oracle_model:
             command.append("--enable-oracle-model")
-        if options.ml_include_sentiment:
+        if options.ml_include_sentiment and not options.ml_directional_profiles_enabled:
             command.append("--include-sentiment")
-        if options.ml_include_screener_scores:
+        if options.ml_include_screener_scores and not options.ml_directional_profiles_enabled:
             command.append("--include-screener-scores")
-        if options.ml_include_short_score:
+        if options.ml_include_short_score and not options.ml_directional_profiles_enabled:
             command.append("--include-short-score")
-        if options.ml_include_macro_vix:
+        if options.ml_include_macro_vix and not options.ml_directional_profiles_enabled:
             command.append("--include-macro-vix")
-        if options.ml_include_macro_vxn:
+        if options.ml_include_macro_vxn and not options.ml_directional_profiles_enabled:
             command.append("--include-macro-vxn")
-        if options.ml_include_macro_vix3m:
+        if options.ml_include_macro_vix3m and not options.ml_directional_profiles_enabled:
             command.append("--include-macro-vix3m")
-        if options.ml_include_macro_move:
+        if options.ml_include_macro_move and not options.ml_directional_profiles_enabled:
             command.append("--include-macro-move")
-        if options.ml_include_fundamentals:
+        if options.ml_include_fundamentals and not options.ml_directional_profiles_enabled:
             command.append("--include-fundamentals")
-        if options.ml_include_factors:
+        if options.ml_include_factors and not options.ml_directional_profiles_enabled:
             command.append("--include-factors")
-        if options.ml_include_volume_features:
+        if options.ml_include_volume_features and not options.ml_directional_profiles_enabled:
             command.append("--include-volume-features")
-        if options.ml_include_macro_regime:
+        if options.ml_include_macro_regime and not options.ml_directional_profiles_enabled:
             command.append("--include-macro-regime")
-        if not options.ml_include_score_components:
+        if not options.ml_include_score_components and not options.ml_directional_profiles_enabled:
             command.append("--no-include-score-components")  # default True, explicit disable
         if options.ml_target_skip_vol_scaling:
             command.append("--target-skip-vol-scaling")

@@ -142,6 +142,7 @@ def build_dataset(
     horizon: int = 20,
     require_global_rank: bool = True,
     need_targets: bool = True,
+    feature_whitelist: list[str] | tuple[str, ...] | None = None,
 ) -> tuple[pd.DataFrame, list[str]]:
     """Assemble features + global_rank_20 + target Oracle.
 
@@ -169,6 +170,18 @@ def build_dataset(
     base_cols = [c for c in expert_feature_columns() if c in feats.columns]
     xs_cols = [c for c in feats.columns if c.endswith("_xs_rank")]
     feature_columns = base_cols + xs_cols  # O0
+    if feature_whitelist is not None:
+        requested = [str(column).strip() for column in feature_whitelist if str(column).strip()]
+        available = set(feature_columns)
+        feature_columns = [column for column in requested if column in available]
+        missing = [column for column in requested if column not in available]
+        if missing:
+            raise ValueError(
+                "Profil Oracle incompatible avec le dataset: features absentes="
+                + ",".join(missing)
+            )
+        if not feature_columns:
+            raise ValueError("Profil Oracle vide après résolution du dataset.")
 
     targets = load_oracle_targets(engine, batch_id, horizon)
 
