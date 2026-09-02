@@ -24,6 +24,8 @@ from ihm.services.ml_artifacts import (
     format_directional_candidate_selection,
     get_model_artifacts_dir,
     has_per_symbol_artifacts,
+    list_directional_bundle_symbols,
+    load_batch_artifact_contract,
     resolve_batch_artifacts_root,
 )
 from modelFactory.report import generate_batch_report
@@ -47,6 +49,108 @@ def _format_symbol_source(value: object) -> str:
     return source or "—"
 
 
+def _profile_summary(profile: object) -> tuple[str, int]:
+    data = profile if isinstance(profile, dict) else {}
+    profile_id = str(data.get("profile_id") or "—")
+    columns = data.get("feature_columns")
+    feature_count = len(columns) if isinstance(columns, list) else int(
+        (data.get("provenance") or {}).get("feature_count") or 0
+    )
+    return profile_id, feature_count
+
+
+def _render_directional_bundle_overview(
+    batch_id: str,
+    contract: dict[str, Any],
+    batch_status: str,
+) -> None:
+    """Render the component coverage and immutable profiles of a bundle."""
+    manifest = contract.get("manifest") or {}
+    oracle = manifest.get("oracle") or {}
+    per_symbol = manifest.get("per_symbol") or {}
+    long_cfg = per_symbol.get("long") or {}
+    short_cfg = per_symbol.get("short") or {}
+    oracle_id, oracle_features = _profile_summary(oracle.get("profile"))
+    long_id, long_features = _profile_summary(long_cfg.get("profile"))
+    short_id, short_features = _profile_summary(short_cfg.get("profile"))
+
+    long_symbols = set(list_directional_bundle_symbols(batch_id, contract["batch_dir"].parent, "direction_long"))
+    short_symbols = set(list_directional_bundle_symbols(batch_id, contract["batch_dir"].parent, "direction_short"))
+    paired = long_symbols & short_symbols
+    oracle_status = str(oracle.get("status") or (oracle.get("result") or {}).get("status") or "pending")
+    ready = bool(paired) and long_symbols == short_symbols and (
+        oracle_status.lower() == "completed" and str(batch_status).lower() == "completed"
+    )
+
+    st.subheader("🧩 Contrat du batch combiné")
+    st.caption(
+        "Oracle détecte l'amplitude ; les branches per-symbol LONG et SHORT produisent séparément "
+        "les probabilités directionnelles. Les métriques ci-dessous ne sont jamais fusionnées entre branches."
+    )
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Oracle Extreme", oracle_status.upper(), help=f"Profil {oracle_id} · {oracle_features} features")
+    c2.metric("Branche LONG", f"{len(long_symbols)} symboles", help=f"Profil {long_id} · {long_features} features")
+    c3.metric("Branche SHORT", f"{len(short_symbols)} symboles", help=f"Profil {short_id} · {short_features} features")
+    c4.metric("Paires LONG + SHORT", len(paired), help="Symboles ayant les deux artefacts spécialisés")
+    if ready:
+        st.success("✅ Bundle prêt : Oracle terminé et au moins une paire LONG/SHORT matérialisée.")
+    else:
+        st.warning("⚠️ Bundle incomplet : vérifiez l'état Oracle et la couverture des deux branches.")
+
+    profile_df = pd.DataFrame([
+        {"Composant": "Oracle amplitude", "Profil": oracle_id, "Features": oracle_features, "Artefacts": oracle_status},
+        {"Composant": "Direction LONG", "Profil": long_id, "Features": long_features, "Artefacts": len(long_symbols)},
+        {"Composant": "Direction SHORT", "Profil": short_id, "Features": short_features, "Artefacts": len(short_symbols)},
+    ])
+    with st.expander("Profils et couverture du bundle", expanded=False):
+        st.dataframe(profile_df, use_container_width=True, hide_index=True)
+
+    lineage = safe_query(
+        """SELECT
+               COUNT(*) AS n_rows,
+               COUNT(DISTINCT mp.symbol) AS n_symbols,
+               SUM(mp.direction_long_run_id IS NOT NULL) AS n_long_lineage,
+               SUM(mp.direction_short_run_id IS NOT NULL) AS n_short_lineage,
+               SUM(mp.direction_long_run_id IS NOT NULL AND mp.direction_short_run_id IS NOT NULL) AS n_double_lineage,
+               ROUND(AVG(mp.proba_long), 4) AS avg_proba_long,
+               ROUND(AVG(mp.proba_short), 4) AS avg_proba_short,
+               SUM(mp.predicted_side = 'long') AS n_long,
+               SUM(mp.predicted_side = 'short') AS n_short,
+               SUM(mp.predicted_side = 'flat') AS n_flat
+           FROM alpha_trade.model_predictions AS mp
+           JOIN alpha_trade.model_training_run AS mtr ON mtr.run_id = mp.run_id
+           WHERE mtr.batch_id = :batch_id AND mp.model_role = 'directional_bundle'""",
+        {"batch_id": batch_id},
+    )
+    if not lineage.empty and int(lineage.iloc[0].get("n_rows") or 0) > 0:
+        values = lineage.iloc[0]
+        n_rows = int(values.get("n_rows") or 0)
+        with st.expander("Couplage et filiation des prédictions", expanded=False):
+            l1, l2, l3, l4 = st.columns(4)
+            l1.metric("Prédictions bundle", n_rows)
+            l2.metric("Symboles prédits", int(values.get("n_symbols") or 0))
+            l3.metric(
+                "Double filiation",
+                f"{int(values.get('n_double_lineage') or 0) / n_rows:.1%}",
+                help="Lignes traçables vers les deux runs spécialisés.",
+            )
+            l4.metric(
+                "Probas moyennes L / S",
+                f"{float(values.get('avg_proba_long') or 0):.3f} / {float(values.get('avg_proba_short') or 0):.3f}",
+            )
+            st.dataframe(
+                pd.DataFrame([{
+                    "Décisions LONG": int(values.get("n_long") or 0),
+                    "Décisions SHORT": int(values.get("n_short") or 0),
+                    "Décisions FLAT": int(values.get("n_flat") or 0),
+                    "Filiation LONG": int(values.get("n_long_lineage") or 0),
+                    "Filiation SHORT": int(values.get("n_short_lineage") or 0),
+                }]),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+
 def _render_directional_candidate_download(
     batch_id: str,
     batch_status: str,
@@ -66,7 +170,8 @@ def _render_directional_candidate_download(
 
     st.markdown("**🎯 Bons candidats per-symbol par direction**")
     st.caption(
-        "La sélection analyse uniquement le champion et son horizon retenu. "
+        "La sélection analyse le champion et l'horizon retenu de chaque branche. "
+        "Dans un bundle, LONG est validé par f1_long du modèle LONG et SHORT par f1_short du modèle SHORT. "
         "Le calcul est déclenché manuellement pour ne pas relire les folds de tous les symboles à chaque rafraîchissement."
     )
     state_key = f"ml_diag_directional_candidates_{batch_id}"
@@ -140,10 +245,11 @@ def _render_directional_candidate_download(
                 ascending=[False, False, False],
             )
             long_columns = [
-                "symbol", "selected_model", "selected_horizon",
+                "symbol", "long_selected_model", "long_selected_horizon",
                 "long_valid_folds", "long_f1_median", "long_f1_min",
                 "long_f1_std", "long_pass_rate", "long_support_total",
             ]
+            long_columns = [column for column in long_columns if column in long_df.columns]
             if long_df.empty:
                 st.info("Aucun symbole stable uniquement en LONG.")
             else:
@@ -156,10 +262,11 @@ def _render_directional_candidate_download(
                 ascending=[False, False, False],
             )
             short_columns = [
-                "symbol", "selected_model", "selected_horizon",
+                "symbol", "short_selected_model", "short_selected_horizon",
                 "short_valid_folds", "short_f1_median", "short_f1_min",
                 "short_f1_std", "short_pass_rate", "short_support_total",
             ]
+            short_columns = [column for column in short_columns if column in short_df.columns]
             if short_df.empty:
                 st.info("Aucun symbole stable uniquement en SHORT.")
             else:
@@ -176,10 +283,12 @@ def _render_directional_candidate_download(
                     ascending=[False, False, False],
                 )
             both_columns = [
-                "symbol", "selected_model", "selected_horizon", "directional_f1_floor",
+                "symbol", "long_selected_model", "long_selected_horizon",
+                "short_selected_model", "short_selected_horizon", "directional_f1_floor",
                 "long_valid_folds", "long_f1_median", "long_f1_min", "long_pass_rate", "long_support_total",
                 "short_valid_folds", "short_f1_median", "short_f1_min", "short_pass_rate", "short_support_total",
             ]
+            both_columns = [column for column in both_columns if column in both_df.columns]
             if both_df.empty:
                 st.info("Aucun symbole stable simultanément en LONG et SHORT.")
             else:
@@ -396,6 +505,7 @@ HORIZON_LIST_QUERY = """
     JOIN alpha_trade.model_training_run AS mtr
         ON mtr.run_id = mm.run_id
     WHERE mtr.batch_id = :batch_id
+      AND (:model_role IS NULL OR mtr.model_role = :model_role)
       AND mm.horizon IS NOT NULL
     ORDER BY mm.horizon
 """
@@ -433,6 +543,7 @@ F1_BY_SPLIT_QUERY = """
     JOIN alpha_trade.model_training_run AS mtr
         ON mtr.run_id = mm.run_id
     WHERE mtr.batch_id = :batch_id
+      AND (:model_role IS NULL OR mtr.model_role = :model_role)
       AND mtr.status = 'completed'
       AND mm.model_name != 'global_model'
     GROUP BY mm.model_name, mm.split_name
@@ -442,10 +553,10 @@ F1_BY_SPLIT_QUERY = """
 F1_BUCKET_QUERY = """
     SELECT
         CASE
-            WHEN mm.f1_macro < 0.10 THEN '0.00-0.09'
-            WHEN mm.f1_macro < 0.20 THEN '0.10-0.19'
-            WHEN mm.f1_macro < 0.30 THEN '0.20-0.29'
-            WHEN mm.f1_macro < 0.40 THEN '0.30-0.39'
+            WHEN (CASE WHEN :model_role = 'direction_long' THEN mm.f1_long WHEN :model_role = 'direction_short' THEN mm.f1_short ELSE mm.f1_macro END) < 0.10 THEN '0.00-0.09'
+            WHEN (CASE WHEN :model_role = 'direction_long' THEN mm.f1_long WHEN :model_role = 'direction_short' THEN mm.f1_short ELSE mm.f1_macro END) < 0.20 THEN '0.10-0.19'
+            WHEN (CASE WHEN :model_role = 'direction_long' THEN mm.f1_long WHEN :model_role = 'direction_short' THEN mm.f1_short ELSE mm.f1_macro END) < 0.30 THEN '0.20-0.29'
+            WHEN (CASE WHEN :model_role = 'direction_long' THEN mm.f1_long WHEN :model_role = 'direction_short' THEN mm.f1_short ELSE mm.f1_macro END) < 0.40 THEN '0.30-0.39'
             ELSE '0.40+'
         END AS wf_f1_macro_bucket,
         COUNT(DISTINCT mm.symbol) AS nb_symbols
@@ -453,6 +564,7 @@ F1_BUCKET_QUERY = """
     JOIN alpha_trade.model_training_run AS mtr
         ON mtr.run_id = mm.run_id
     WHERE mtr.batch_id = :batch_id
+      AND (:model_role IS NULL OR mtr.model_role = :model_role)
       AND mtr.status = 'completed'
       AND mm.split_name = 'wf'
     GROUP BY wf_f1_macro_bucket
@@ -470,10 +582,10 @@ F1_BUCKET_QUERY = """
 F1_BUCKET_CHAMPION_QUERY = """
     SELECT
         CASE
-            WHEN mm.f1_macro < 0.10 THEN '0.00-0.09'
-            WHEN mm.f1_macro < 0.20 THEN '0.10-0.19'
-            WHEN mm.f1_macro < 0.30 THEN '0.20-0.29'
-            WHEN mm.f1_macro < 0.40 THEN '0.30-0.39'
+            WHEN (CASE WHEN :model_role = 'direction_long' THEN mm.f1_long WHEN :model_role = 'direction_short' THEN mm.f1_short ELSE mm.f1_macro END) < 0.10 THEN '0.00-0.09'
+            WHEN (CASE WHEN :model_role = 'direction_long' THEN mm.f1_long WHEN :model_role = 'direction_short' THEN mm.f1_short ELSE mm.f1_macro END) < 0.20 THEN '0.10-0.19'
+            WHEN (CASE WHEN :model_role = 'direction_long' THEN mm.f1_long WHEN :model_role = 'direction_short' THEN mm.f1_short ELSE mm.f1_macro END) < 0.30 THEN '0.20-0.29'
+            WHEN (CASE WHEN :model_role = 'direction_long' THEN mm.f1_long WHEN :model_role = 'direction_short' THEN mm.f1_short ELSE mm.f1_macro END) < 0.40 THEN '0.30-0.39'
             ELSE '0.40+'
         END AS wf_f1_macro_bucket,
         COUNT(DISTINCT mm.symbol) AS nb_symbols
@@ -484,7 +596,9 @@ F1_BUCKET_CHAMPION_QUERY = """
         ON mg.symbol = mm.symbol AND mg.model_name = mm.model_name AND mg.is_selected_model = 1
     JOIN alpha_trade.model_training_run AS mtr_gov
         ON mtr_gov.run_id = mg.run_id AND mtr_gov.batch_id = :batch_id
+       AND (mtr_gov.model_role = mtr.model_role OR (mtr_gov.model_role IS NULL AND mtr.model_role IS NULL))
     WHERE mtr.batch_id = :batch_id
+      AND (:model_role IS NULL OR mtr.model_role = :model_role)
       AND mtr.status = 'completed'
       AND mm.split_name = 'wf'
     GROUP BY wf_f1_macro_bucket
@@ -504,9 +618,10 @@ TOP5_BEST_F1_QUERY = """
     JOIN alpha_trade.model_training_run AS mtr
         ON mtr.run_id = mm.run_id
     WHERE mtr.batch_id = :batch_id
+      AND (:model_role IS NULL OR mtr.model_role = :model_role)
       AND mtr.status = 'completed'
       AND mm.split_name = 'wf'
-    ORDER BY mm.f1_macro DESC
+    ORDER BY CASE WHEN :model_role = 'direction_long' THEN mm.f1_long WHEN :model_role = 'direction_short' THEN mm.f1_short ELSE mm.f1_macro END DESC
     LIMIT 10
 """
 
@@ -523,9 +638,10 @@ TOP5_WORST_F1_QUERY = """
     JOIN alpha_trade.model_training_run AS mtr
         ON mtr.run_id = mm.run_id
     WHERE mtr.batch_id = :batch_id
+      AND (:model_role IS NULL OR mtr.model_role = :model_role)
       AND mtr.status = 'completed'
       AND mm.split_name = 'wf'
-    ORDER BY mm.f1_macro ASC
+    ORDER BY CASE WHEN :model_role = 'direction_long' THEN mm.f1_long WHEN :model_role = 'direction_short' THEN mm.f1_short ELSE mm.f1_macro END ASC
     LIMIT 10
 """
 
@@ -541,9 +657,12 @@ ZERO_F1_SHORT_QUERY = """
     JOIN alpha_trade.model_training_run AS mtr
         ON mtr.run_id = mm.run_id
     WHERE mtr.batch_id = :batch_id
+      AND (:model_role IS NULL OR mtr.model_role = :model_role)
       AND mtr.status = 'completed'
       AND mm.split_name = 'wf'
-      AND mm.f1_short = 0
+      AND ((:model_role = 'direction_long' AND mm.f1_long = 0)
+        OR (:model_role = 'direction_short' AND mm.f1_short = 0)
+        OR (:model_role IS NULL AND mm.f1_short = 0))
     LIMIT 10
 """
 
@@ -565,10 +684,12 @@ TOP5_BEST_CHAMPION_QUERY = """
         ON mg.symbol = mm.symbol AND mg.model_name = mm.model_name AND mg.is_selected_model = 1
     JOIN alpha_trade.model_training_run AS mtr_gov
         ON mtr_gov.run_id = mg.run_id AND mtr_gov.batch_id = :batch_id
+       AND (mtr_gov.model_role = mtr.model_role OR (mtr_gov.model_role IS NULL AND mtr.model_role IS NULL))
     WHERE mtr.batch_id = :batch_id
+      AND (:model_role IS NULL OR mtr.model_role = :model_role)
       AND mtr.status = 'completed'
       AND mm.split_name = 'wf'
-    ORDER BY mm.f1_macro DESC
+    ORDER BY CASE WHEN :model_role = 'direction_long' THEN mm.f1_long WHEN :model_role = 'direction_short' THEN mm.f1_short ELSE mm.f1_macro END DESC
     LIMIT 10
 """
 
@@ -588,10 +709,12 @@ TOP5_WORST_CHAMPION_QUERY = """
         ON mg.symbol = mm.symbol AND mg.model_name = mm.model_name AND mg.is_selected_model = 1
     JOIN alpha_trade.model_training_run AS mtr_gov
         ON mtr_gov.run_id = mg.run_id AND mtr_gov.batch_id = :batch_id
+       AND (mtr_gov.model_role = mtr.model_role OR (mtr_gov.model_role IS NULL AND mtr.model_role IS NULL))
     WHERE mtr.batch_id = :batch_id
+      AND (:model_role IS NULL OR mtr.model_role = :model_role)
       AND mtr.status = 'completed'
       AND mm.split_name = 'wf'
-    ORDER BY mm.f1_macro ASC
+    ORDER BY CASE WHEN :model_role = 'direction_long' THEN mm.f1_long WHEN :model_role = 'direction_short' THEN mm.f1_short ELSE mm.f1_macro END ASC
     LIMIT 10
 """
 
@@ -609,10 +732,14 @@ ZERO_F1_SHORT_CHAMPION_QUERY = """
         ON mg.symbol = mm.symbol AND mg.model_name = mm.model_name AND mg.is_selected_model = 1
     JOIN alpha_trade.model_training_run AS mtr_gov
         ON mtr_gov.run_id = mg.run_id AND mtr_gov.batch_id = :batch_id
+       AND (mtr_gov.model_role = mtr.model_role OR (mtr_gov.model_role IS NULL AND mtr.model_role IS NULL))
     WHERE mtr.batch_id = :batch_id
+      AND (:model_role IS NULL OR mtr.model_role = :model_role)
       AND mtr.status = 'completed'
       AND mm.split_name = 'wf'
-      AND mm.f1_short = 0
+      AND ((:model_role = 'direction_long' AND mm.f1_long = 0)
+        OR (:model_role = 'direction_short' AND mm.f1_short = 0)
+        OR (:model_role IS NULL AND mm.f1_short = 0))
     LIMIT 10
 """
 
@@ -629,6 +756,7 @@ REG_BY_SPLIT_QUERY = """
     JOIN alpha_trade.model_training_run AS mtr
         ON mtr.run_id = mm.run_id
     WHERE mtr.batch_id = :batch_id
+      AND (:model_role IS NULL OR mtr.model_role = :model_role)
       AND mtr.status = 'completed'
       AND mm.model_name != 'global_model'
     GROUP BY mm.model_name, mm.split_name
@@ -642,6 +770,7 @@ REG_TOP_QUERY = """
     FROM alpha_trade.model_metrics AS mm
     JOIN alpha_trade.model_training_run AS mtr ON mtr.run_id = mm.run_id
     WHERE mtr.batch_id = :batch_id AND mtr.status = 'completed'
+      AND (:model_role IS NULL OR mtr.model_role = :model_role)
       AND mm.split_name = 'wf' AND mm.model_name != 'global_model'
     ORDER BY mm.directional_accuracy DESC LIMIT 10
 """
@@ -653,6 +782,7 @@ REG_WORST_QUERY = """
     FROM alpha_trade.model_metrics AS mm
     JOIN alpha_trade.model_training_run AS mtr ON mtr.run_id = mm.run_id
     WHERE mtr.batch_id = :batch_id AND mtr.status = 'completed'
+      AND (:model_role IS NULL OR mtr.model_role = :model_role)
       AND mm.split_name = 'wf' AND mm.model_name != 'global_model'
     ORDER BY mm.directional_accuracy ASC LIMIT 10
 """
@@ -674,6 +804,7 @@ SYMBOL_METRICS_QUERY = """
     JOIN alpha_trade.model_training_run AS mtr
         ON mtr.run_id = mm.run_id
     WHERE mtr.batch_id = :batch_id
+      AND (:model_role IS NULL OR mtr.model_role = :model_role)
       AND mtr.status = 'completed'
       AND mm.symbol = :symbol
     ORDER BY FIELD(mm.split_name, 'train', 'val', 'test', 'wf')
@@ -694,6 +825,7 @@ TRUE_PRED_AGG_QUERY = """
     JOIN alpha_trade.model_training_run AS mtr
         ON mtr.run_id = mm.run_id
     WHERE mtr.batch_id = :batch_id
+      AND (:model_role IS NULL OR mtr.model_role = :model_role)
       AND mtr.status = 'completed'
       AND mm.model_name != 'global_model'
     GROUP BY mm.model_name, mm.split_name
@@ -709,6 +841,7 @@ SYMBOL_WF_JSON_QUERY = """
     JOIN alpha_trade.model_training_run AS mtr
         ON mtr.run_id = mmf.run_id
     WHERE mtr.batch_id = :batch_id
+      AND (:model_role IS NULL OR mtr.model_role = :model_role)
       AND mtr.status = 'completed'
       AND mmf.symbol = :symbol
     LIMIT 1
@@ -722,6 +855,7 @@ ALL_WF_JSON_QUERY = """
     JOIN alpha_trade.model_training_run AS mtr
         ON mtr.run_id = mmf.run_id
     WHERE mtr.batch_id = :batch_id
+      AND (:model_role IS NULL OR mtr.model_role = :model_role)
       AND mtr.status = 'completed'
 """
 
@@ -812,18 +946,21 @@ GLOBAL_RANK_COVERAGE_QUERY = """
 PRED_RUNS_FOR_BATCH_QUERY = """
     SELECT
         mp.run_id AS run_id,
+        mp.model_role AS prediction_model_role,
         r.symbol AS run_symbol,
         COUNT(mp.prediction_date) AS n_rows,
         COUNT(DISTINCT mp.symbol) AS nb_symbols,
         MIN(mp.prediction_date) AS min_date,
         MAX(mp.prediction_date) AS max_date,
         COUNT(DISTINCT mp.prediction_date) AS nb_dates
+        ,SUM(CASE WHEN mp.direction_long_run_id IS NOT NULL THEN 1 ELSE 0 END) AS long_lineage_rows
+        ,SUM(CASE WHEN mp.direction_short_run_id IS NOT NULL THEN 1 ELSE 0 END) AS short_lineage_rows
     FROM alpha_trade.model_predictions AS mp
     JOIN alpha_trade.model_training_run AS r
         ON r.run_id = mp.run_id
     WHERE r.batch_id = :batch_id
       AND r.status = 'completed'
-    GROUP BY mp.run_id, r.symbol
+    GROUP BY mp.run_id, mp.model_role, r.symbol
     ORDER BY mp.run_id
 """
 
@@ -870,12 +1007,14 @@ def _status_badge(status: str) -> str:
     return mapping.get(str(status).strip().lower(), str(status))
 
 
-def _render_symbol_detail(batch_id: str, symbol: str) -> None:
+def _render_symbol_detail(batch_id: str, symbol: str, model_role: str | None = None) -> None:
     """Affiche le détail des métriques par split pour un symbole."""
-    st.subheader(f"🔍 Détail symbole : `{symbol}`")
+    role_label = " LONG" if model_role == "direction_long" else " SHORT" if model_role == "direction_short" else ""
+    st.subheader(f"🔍 Détail symbole{role_label} : `{symbol}`")
 
     # ── Métriques par split ──
-    sym_df = safe_query(SYMBOL_METRICS_QUERY, {"batch_id": batch_id, "symbol": symbol})
+    query_params = {"batch_id": batch_id, "symbol": symbol, "model_role": model_role}
+    sym_df = safe_query(SYMBOL_METRICS_QUERY, query_params)
     if sym_df.empty:
         st.info(f"Aucune métrique détaillée trouvée pour `{symbol}` dans ce batch.")
         return
@@ -887,7 +1026,7 @@ def _render_symbol_detail(batch_id: str, symbol: str) -> None:
     st.markdown("")
     st.markdown("**🎯 Probas moyennes par split (brutes → calibrées)**")
     probas_rows: list[dict] = []
-    sym_wf = safe_query(SYMBOL_WF_JSON_QUERY, {"batch_id": batch_id, "symbol": symbol})
+    sym_wf = safe_query(SYMBOL_WF_JSON_QUERY, query_params)
     if not sym_wf.empty:
         blob = sym_wf.iloc[0].get("metrics_json")
         if blob is not None:
@@ -920,7 +1059,7 @@ def _render_symbol_detail(batch_id: str, symbol: str) -> None:
     st.markdown("")
     # ── Walk-Forward : splits et dates par fold ──
     st.markdown("**📅 Splits Walk-Forward**")
-    wf_row = safe_query(SYMBOL_WF_JSON_QUERY, {"batch_id": batch_id, "symbol": symbol})
+    wf_row = safe_query(SYMBOL_WF_JSON_QUERY, query_params)
     if wf_row.empty:
         st.caption("Aucune donnée walk-forward.")
     else:
@@ -1007,12 +1146,15 @@ _REGIME_LABELS: dict[str, str] = {
 }
 
 
-def _render_regime_table(batch_id: str) -> None:
+def _render_regime_table(batch_id: str, model_role: str | None = None) -> None:
     """Affiche le tableau de diagnostic par régime (§3.4 du plan ML)."""
     st.subheader("📅 Diagnostic par régime de marché — Walk-Forward")
 
     # ── 1. Récupérer tous les metrics_json du batch ──
-    all_json_df = _cached_query(ALL_WF_JSON_QUERY, {"batch_id": batch_id})
+    all_json_df = _cached_query(
+        ALL_WF_JSON_QUERY,
+        {"batch_id": batch_id, "model_role": model_role},
+    )
     if all_json_df.empty:
         st.info("Aucune donnée walk-forward détaillée disponible pour ce batch.")
         return
@@ -2171,6 +2313,13 @@ def _render_prediction_periods(batch_id: str, batch: pd.Series) -> None:
     sym_days = 0
     sym_syms = 0
     sym_n = 0
+    bundle_min: Any = None
+    bundle_max: Any = None
+    bundle_days = 0
+    bundle_symbols: set[str] = set()
+    bundle_rows = 0
+    bundle_long_lineage = 0
+    bundle_short_lineage = 0
     if not runs.empty:
         for _, r in runs.iterrows():
             rsym = str(r["run_symbol"] or "").strip()
@@ -2179,7 +2328,18 @@ def _render_prediction_periods(batch_id: str, batch: pd.Series) -> None:
             dmax = pd.Timestamp(r["max_date"]) if r["max_date"] is not None else None
             jours = int(r["nb_dates"] or 0)
             syms = int(r["nb_symbols"] or 0)
-            if rsym == "__GLOBAL_RANK_SYNTH__" or rid.endswith("_globalrank_synth"):
+            prediction_role = str(r.get("prediction_model_role") or "").strip()
+            if prediction_role == "directional_bundle":
+                bundle_rows += int(r.get("n_rows") or 0)
+                bundle_long_lineage += int(r.get("long_lineage_rows") or 0)
+                bundle_short_lineage += int(r.get("short_lineage_rows") or 0)
+                bundle_symbols.add(rsym)
+                bundle_days = max(bundle_days, jours)
+                if dmin is not None and (bundle_min is None or dmin < bundle_min):
+                    bundle_min = dmin
+                if dmax is not None and (bundle_max is None or dmax > bundle_max):
+                    bundle_max = dmax
+            elif rsym == "__GLOBAL_RANK_SYNTH__" or rid.endswith("_globalrank_synth"):
                 synth = {"Période": f"{_fmt(dmin)} → {_fmt(dmax)}", "Jours": jours, "Symboles": syms}
             elif rsym in _GICS_SECTORS:
                 sector_rows.append({"Secteur": rsym, "Période": f"{_fmt(dmin)} → {_fmt(dmax)}",
@@ -2205,6 +2365,16 @@ def _render_prediction_periods(batch_id: str, batch: pd.Series) -> None:
             summary.append({"Type": "🌐 Modèle global (cascade)", "Période": synth["Période"],
                             "Jours": synth["Jours"], "Symboles": synth["Symboles"],
                             "Détail": f"run {batch_id}_globalrank_synth"})
+
+    if bundle_rows > 0:
+        complete_lineage = min(bundle_long_lineage, bundle_short_lineage)
+        summary.append({
+            "Type": "🧩 Bundle directionnel LONG/SHORT",
+            "Période": f"{_fmt(bundle_min)} → {_fmt(bundle_max)}",
+            "Jours": bundle_days,
+            "Symboles": len(bundle_symbols),
+            "Détail": f"double filiation {complete_lineage}/{bundle_rows} lignes",
+        })
 
     if sym_n > 0:
         summary.append({"Type": "📈 Per-symbol",
@@ -2276,6 +2446,14 @@ def _render_batch_detail(batch: pd.Series) -> None:
     if detail_df.empty:
         st.warning("Impossible de charger le détail du batch.")
         return
+    row = detail_df.iloc[0]
+    _metadata_for_contract = row.get("metadata_json")
+    try:
+        _bundle_artifacts_root = resolve_batch_artifacts_root(batch_id, _metadata_for_contract)
+        _batch_contract = load_batch_artifact_contract(batch_id, _bundle_artifacts_root)
+    except (OSError, ValueError):
+        _batch_contract = {"is_directional_bundle": False, "kind": "legacy"}
+    _is_directional_bundle = bool(_batch_contract.get("is_directional_bundle"))
 
     # ── Bouton téléchargement ──
     safe_bid = batch_id.replace("/", "_").replace("\\", "_")[:64]
@@ -2294,25 +2472,31 @@ def _render_batch_detail(batch: pd.Series) -> None:
                 # quand l'utilisateur clique (« Générer »), puis on propose le
                 # téléchargement. Évite ~30 s de blocage à CHAQUE rerun (sélection
                 # de batch, clic sur un bouton, confirmation de suppression…).
-                _report_key = f"ml_diag_report_{safe_bid}"
-                _report_val = st.session_state.get(_report_key)
-                if _report_val is None:
-                    if st.button(
-                        "📥 Générer le rapport (.md)",
-                        key=f"gen_report_{safe_bid}",
-                        help="Génère le rapport du batch (peut prendre ~30 s), puis propose le téléchargement.",
-                    ):
-                        with st.spinner("⏳ Génération du rapport…"):
-                            _report_val = generate_batch_report(engine, batch_id)
-                        st.session_state[_report_key] = _report_val
-                if _report_val is not None:
-                    st.download_button(
-                        label="📥 Télécharger le rapport (.md)",
-                        data=_report_val,
-                        file_name=f"{_dl_name}.md",
-                        mime="text/markdown",
-                        key=f"dl_{safe_bid}",
+                if _is_directional_bundle:
+                    st.info(
+                        "Le rapport historique fusionne les rôles et est donc désactivé pour ce bundle. "
+                        "Utilisez les vues LONG/SHORT de cette page et le fichier d'audit des candidats."
                     )
+                else:
+                    _report_key = f"ml_diag_report_{safe_bid}"
+                    _report_val = st.session_state.get(_report_key)
+                    if _report_val is None:
+                        if st.button(
+                            "📥 Générer le rapport (.md)",
+                            key=f"gen_report_{safe_bid}",
+                            help="Génère le rapport du batch (peut prendre ~30 s), puis propose le téléchargement.",
+                        ):
+                            with st.spinner("⏳ Génération du rapport…"):
+                                _report_val = generate_batch_report(engine, batch_id)
+                            st.session_state[_report_key] = _report_val
+                    if _report_val is not None:
+                        st.download_button(
+                            label="📥 Télécharger le rapport (.md)",
+                            data=_report_val,
+                            file_name=f"{_dl_name}.md",
+                            mime="text/markdown",
+                            key=f"dl_{safe_bid}",
+                        )
             with col_logs:
                 st.download_button(
                     label="📄 Logs d'entraînement (.txt)",
@@ -2347,8 +2531,6 @@ def _render_batch_detail(batch: pd.Series) -> None:
                         if st.button("❌ Non", key=f"{_del_key}_no"):
                             st.session_state["_confirm_to_delete"] = None
                             st.rerun()
-
-    row = detail_df.iloc[0]
 
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -2578,16 +2760,34 @@ def _render_batch_detail(batch: pd.Series) -> None:
     # �🔵 PER-SYMBOL / PER-SECTOR — Métriques d'entraînement
     # ═══════════════════════════════════════════════════════════════
     st.divider()
-    st.subheader("🔵 Per-Symbol / Per-Sector — Métriques")
+    if _is_directional_bundle:
+        _render_directional_bundle_overview(batch_id, _batch_contract, _batch_status)
+        selected_model_role = st.radio(
+            "Branche directionnelle à diagnostiquer",
+            options=("direction_long", "direction_short"),
+            format_func=lambda role: "🟢 LONG — f1_long" if role == "direction_long" else "🔴 SHORT — f1_short",
+            horizontal=True,
+            key=f"ml_diag_role_{batch_id}",
+            help="Toutes les métriques, folds, champions et détails symbole ci-dessous sont limités à cette branche.",
+        )
+        st.subheader(
+            "🟢 Direction LONG — Métriques" if selected_model_role == "direction_long"
+            else "🔴 Direction SHORT — Métriques"
+        )
+    else:
+        selected_model_role = None
+        st.subheader("🔵 Per-Symbol / Per-Sector — Métriques")
 
     # ── Statut sélection du champion ──
     champion_df = _cached_query(
         """SELECT mg.selection_mode, COUNT(DISTINCT mg.symbol) AS nb_symbols
            FROM alpha_trade.model_governance AS mg
            JOIN alpha_trade.model_training_run AS mtr ON mtr.run_id = mg.run_id
-           WHERE mtr.batch_id = :batch_id AND mg.is_selected_model = 1
+           WHERE mtr.batch_id = :batch_id
+             AND (:model_role IS NULL OR mtr.model_role = :model_role)
+             AND mg.is_selected_model = 1
            GROUP BY mg.selection_mode""",
-        {"batch_id": batch["batch_id"]},
+        {"batch_id": batch["batch_id"], "model_role": selected_model_role},
     )
     if not champion_df.empty:
         mode_map: dict[str, int] = {}
@@ -2613,10 +2813,12 @@ def _render_batch_detail(batch: pd.Series) -> None:
             """SELECT mg.model_name, COUNT(DISTINCT mg.symbol) AS nb_symbols
                FROM alpha_trade.model_governance AS mg
                JOIN alpha_trade.model_training_run AS mtr ON mtr.run_id = mg.run_id
-               WHERE mtr.batch_id = :batch_id AND mg.is_selected_model = 1
+               WHERE mtr.batch_id = :batch_id
+                 AND (:model_role IS NULL OR mtr.model_role = :model_role)
+                 AND mg.is_selected_model = 1
                GROUP BY mg.model_name
                ORDER BY nb_symbols DESC""",
-            {"batch_id": batch["batch_id"]},
+            {"batch_id": batch["batch_id"], "model_role": selected_model_role},
         )
         if not champion_by_model_df.empty:
             st.markdown("**Champions par modèle :**")
@@ -2649,7 +2851,10 @@ def _render_batch_detail(batch: pd.Series) -> None:
         st.markdown("")
 
     # ── Horizon selector (avant les métriques) ──
-    horizon_list = _cached_query(HORIZON_LIST_QUERY, {"batch_id": batch_id})
+    horizon_list = _cached_query(
+        HORIZON_LIST_QUERY,
+        {"batch_id": batch_id, "model_role": selected_model_role},
+    )
     selected_horizon: int | None = None
     _horizon_sql: str = ""
     if not horizon_list.empty:
@@ -2678,7 +2883,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
                 _sql = _sql.replace("ORDER BY", f"{_horizon_sql}\n    ORDER BY")
             elif "LIMIT" in _sql:
                 _sql = _sql.replace("LIMIT", f"{_horizon_sql}\n    LIMIT")
-        params: dict[str, object] = {"batch_id": batch_id}
+        params: dict[str, object] = {"batch_id": batch_id, "model_role": selected_model_role}
         if selected_horizon is not None:
             params["horizon"] = selected_horizon
         if extra_params:
@@ -2783,7 +2988,8 @@ def _render_batch_detail(batch: pd.Series) -> None:
 
     st.markdown("")
     # ── Bloc distribution F1 macro (walk-forward) ──
-    st.subheader("📈 Distribution F1 macro — Walk-Forward")
+    _primary_f1 = "f1_long" if selected_model_role == "direction_long" else "f1_short" if selected_model_role == "direction_short" else "f1_macro"
+    st.subheader(f"📈 Distribution {_primary_f1} — Walk-Forward")
 
     champion_only_wf = st.checkbox(
         "🏆 Afficher uniquement les champions (1 seul modèle par symbole)",
@@ -2807,13 +3013,13 @@ def _render_batch_detail(batch: pd.Series) -> None:
             chart_df = bucket_df.set_index("wf_f1_macro_bucket")
             # Convertir en int pour le graphique
             chart_df["nb_symbols"] = pd.to_numeric(chart_df["nb_symbols"], errors="coerce").fillna(0).astype(int)
-            st.bar_chart(chart_df["nb_symbols"], y_label="Nb symboles", x_label="Bucket F1 macro")
+            st.bar_chart(chart_df["nb_symbols"], y_label="Nb symboles", x_label=f"Bucket {_primary_f1}")
         with col_table:
             st.dataframe(bucket_df, use_container_width=True, hide_index=True)
 
     st.markdown("")
     # ── Diagnostic par régime (§3.4) ──
-    _render_regime_table(str(batch["batch_id"]))
+    _render_regime_table(str(batch["batch_id"]), selected_model_role)
 
     st.markdown("")
     # ── Top 10 / Flop 10 / F1 short = 0 ──
@@ -2837,7 +3043,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
     col_best, col_worst, col_zero = st.columns(3)
 
     with col_best:
-        st.markdown("**🥇 10 meilleurs `f1_macro`**")
+        st.markdown(f"**🥇 10 meilleurs `{_primary_f1}`**")
         best_df = _q(_best_q)
         if best_df.empty:
             st.caption("Aucune donnée.")
@@ -2849,7 +3055,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
             )
 
     with col_worst:
-        st.markdown("**🥉 10 plus mauvais `f1_macro`**")
+        st.markdown(f"**🥉 10 plus mauvais `{_primary_f1}`**")
         worst_df = _q(_worst_q)
         if worst_df.empty:
             st.caption("Aucune donnée.")
@@ -2861,10 +3067,10 @@ def _render_batch_detail(batch: pd.Series) -> None:
             )
 
     with col_zero:
-        st.markdown("**⚪ `f1_short = 0`**")
+        st.markdown(f"**⚪ `{_primary_f1} = 0`**")
         zero_df = _q(_zero_q)
         if zero_df.empty:
-            st.caption("Aucun symbole avec f1_short = 0.")
+            st.caption(f"Aucun symbole avec {_primary_f1} = 0.")
         else:
             st.dataframe(
                 zero_df, use_container_width=True, hide_index=True,
@@ -2890,7 +3096,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
 
     if selected_symbol:
         st.divider()
-        _render_symbol_detail(str(batch["batch_id"]), selected_symbol)
+        _render_symbol_detail(str(batch["batch_id"]), selected_symbol, selected_model_role)
 
     # ── Suppression batch (tout en bas du détail) ──
     st.divider()

@@ -1357,6 +1357,7 @@ def train_symbol(
             insert_training_run(
                 engine, run_id, registry_id, symbol, status="running",
                 train_start_date=_train_start, train_end_date=_train_end,
+                model_role=cfg.model_role,
                 **({"batch_id": batch_id} if batch_id is not None else {}),
             )
         except Exception as exc:  # noqa: BLE001

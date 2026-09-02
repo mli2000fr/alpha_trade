@@ -8,8 +8,10 @@ from ihm.services.ml_artifacts import (
     build_champion_walk_forward_stability,
     format_directional_candidate_selection,
     has_per_symbol_artifacts,
+    list_directional_bundle_symbols,
     list_ml_artifact_batches,
     list_ml_artifact_symbols,
+    load_batch_artifact_contract,
     load_ml_artifact_report,
     resolve_batch_artifacts_root,
 )
@@ -139,6 +141,53 @@ def test_batch_directional_candidate_selection_builds_three_exclusive_lists(tmp_
     assert audit.loc["LONG", "classification"] == "LONG_ONLY"
     assert audit.loc["SHORT", "classification"] == "SHORT_ONLY"
     assert audit.loc["REJECT", "classification"] == "REJECTED"
+
+
+def test_directional_bundle_uses_each_specialized_branch_for_its_owned_side(tmp_path: Path) -> None:
+    batch_dir = tmp_path / "bundle-1"
+    batch_dir.mkdir()
+    (batch_dir / "cascade_manifest.json").write_text(
+        json.dumps({
+            "schema_version": 1,
+            "cascade_type": "oracle_extreme_plus_per_symbol_directional",
+            "oracle": {"status": "completed", "profile": {"profile_id": "oracle", "feature_columns": ["o"]}},
+            "per_symbol": {
+                "long": {"profile": {"profile_id": "long", "feature_columns": ["l"]}},
+                "short": {"profile": {"profile_id": "short", "feature_columns": ["s"]}},
+            },
+        }),
+        encoding="utf-8",
+    )
+    # The LONG model is intentionally poor on f1_short; the SHORT model is
+    # intentionally poor on f1_long.  Cross-side scores must not reject them.
+    _write_directional_symbol_artifacts(
+        batch_dir / "directions" / "long", "BOTH",
+        long_values=[0.50, 0.45, 0.40], short_values=[0.05, 0.10, 0.15],
+    )
+    _write_directional_symbol_artifacts(
+        batch_dir / "directions" / "short", "BOTH",
+        long_values=[0.05, 0.10, 0.15], short_values=[0.55, 0.45, 0.40],
+    )
+    _write_directional_symbol_artifacts(
+        batch_dir / "directions" / "long", "LONG_ONLY",
+        long_values=[0.50, 0.45, 0.40], short_values=[0.05, 0.10, 0.15],
+    )
+
+    contract = load_batch_artifact_contract("bundle-1", tmp_path)
+    assert contract["is_directional_bundle"] is True
+    assert has_per_symbol_artifacts("bundle-1", tmp_path) is True
+    assert list_directional_bundle_symbols("bundle-1", tmp_path, "direction_long") == ["BOTH", "LONG_ONLY"]
+    assert list_directional_bundle_symbols("bundle-1", tmp_path, "direction_short") == ["BOTH"]
+
+    result = build_batch_directional_candidate_selection("bundle-1", tmp_path)
+
+    assert result["batch_kind"] == "directional_bundle"
+    assert result["long_short"] == ["BOTH"]
+    assert result["long_only"] == ["LONG_ONLY"]
+    audit = result["audit_df"].set_index("symbol")
+    assert audit.loc["BOTH", "long_selected_model"] == "lightgbm"
+    assert audit.loc["BOTH", "short_selected_model"] == "lightgbm"
+    assert audit.loc["BOTH", "classification"] == "LONG_SHORT"
 
 
 def test_directional_candidate_file_contains_comma_separated_exclusive_lists() -> None:

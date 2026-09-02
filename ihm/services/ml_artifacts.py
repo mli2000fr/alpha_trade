@@ -24,6 +24,8 @@ DIRECTIONAL_CLASS_LONG_ONLY = "LONG_ONLY"
 DIRECTIONAL_CLASS_SHORT_ONLY = "SHORT_ONLY"
 DIRECTIONAL_CLASS_LONG_SHORT = "LONG_SHORT"
 DIRECTIONAL_CLASS_REJECTED = "REJECTED"
+BATCH_KIND_LEGACY = "legacy"
+BATCH_KIND_DIRECTIONAL_BUNDLE = "directional_bundle"
 
 
 def get_model_artifacts_dir(artifacts_dir: Path | None = None) -> Path:
@@ -43,7 +45,7 @@ def list_ml_artifact_batches(artifacts_dir: Path | None = None) -> list[str]:
     for child in root.iterdir():
         if not child.is_dir():
             continue
-        if any(
+        if (child / "cascade_manifest.json").is_file() or any(
             grandchild.is_dir()
             and ((grandchild / "config.json").exists() or (grandchild / "metrics.json").exists())
             for grandchild in child.iterdir()
@@ -62,6 +64,63 @@ def list_ml_artifact_symbols(artifacts_dir: Path | None = None) -> list[str]:
             continue
         if (child / "config.json").exists() or (child / "metrics.json").exists():
             symbols.append(child.name)
+    return sorted(symbols, key=_symbol_sort_key)
+
+
+def load_batch_artifact_contract(
+    batch_id: str,
+    artifacts_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Return the artifact layout contract for one training batch.
+
+    ``cascade_manifest.json`` is authoritative for directional bundles.  A
+    missing or invalid manifest deliberately falls back to the historical
+    direct-per-symbol layout so old batches remain readable.
+    """
+    batch_dir = _resolve_artifact_batch_dir(batch_id, artifacts_dir)
+    manifest_path = batch_dir / "cascade_manifest.json"
+    manifest, manifest_error = _read_json_file(manifest_path)
+    is_bundle = bool(
+        manifest
+        and manifest.get("cascade_type") == "oracle_extreme_plus_per_symbol_directional"
+    )
+    return {
+        "batch_id": batch_id,
+        "kind": BATCH_KIND_DIRECTIONAL_BUNDLE if is_bundle else BATCH_KIND_LEGACY,
+        "is_directional_bundle": is_bundle,
+        "batch_dir": batch_dir,
+        "manifest_path": manifest_path,
+        "manifest": manifest or {},
+        "manifest_error": None if is_bundle else manifest_error,
+        "legacy_root": batch_dir,
+        "long_root": batch_dir / "directions" / "long",
+        "short_root": batch_dir / "directions" / "short",
+        "oracle_profile_path": batch_dir / "oracle" / "feature_profile.json",
+        "long_profile_path": batch_dir / "directions" / "long" / "feature_profile.json",
+        "short_profile_path": batch_dir / "directions" / "short" / "feature_profile.json",
+    }
+
+
+def list_directional_bundle_symbols(
+    batch_id: str,
+    artifacts_dir: Path | None = None,
+    role: str | None = None,
+) -> list[str]:
+    """List materialized symbols in either or both directional branches."""
+    contract = load_batch_artifact_contract(batch_id, artifacts_dir)
+    if not contract["is_directional_bundle"]:
+        return [symbol for symbol in list_ml_artifact_symbols(contract["legacy_root"]) if not symbol.startswith("_")]
+    roots = {
+        "direction_long": contract["long_root"],
+        "direction_short": contract["short_root"],
+    }
+    selected_roots = [roots[role]] if role in roots else list(roots.values())
+    symbols: set[str] = set()
+    for root in selected_roots:
+        symbols.update(
+            symbol for symbol in list_ml_artifact_symbols(root)
+            if not symbol.startswith("_")
+        )
     return sorted(symbols, key=_symbol_sort_key)
 
 
@@ -135,9 +194,12 @@ def resolve_batch_artifacts_root(
 
 def has_per_symbol_artifacts(batch_id: str, artifacts_dir: Path | None = None) -> bool:
     """Indique si le batch contient au moins un manifeste de symbole ordinaire."""
-    batch_dir = _resolve_artifact_batch_dir(batch_id, artifacts_dir)
+    contract = load_batch_artifact_contract(batch_id, artifacts_dir)
+    batch_dir = contract["batch_dir"]
     if not batch_dir.exists() or not batch_dir.is_dir():
         return False
+    if contract["is_directional_bundle"]:
+        return bool(list_directional_bundle_symbols(batch_id, artifacts_dir))
     return any(
         child.is_dir()
         and not child.name.startswith("_")
@@ -455,15 +517,27 @@ def build_batch_directional_candidate_selection(
     sont évalués. Les trois listes retournées sont exclusives : LONG_ONLY,
     SHORT_ONLY et LONG_SHORT.
     """
-    batch_dir = _resolve_artifact_batch_dir(batch_id, artifacts_dir)
-    symbols = [symbol for symbol in list_ml_artifact_symbols(batch_dir) if not symbol.startswith("_")]
+    contract = load_batch_artifact_contract(batch_id, artifacts_dir)
+    batch_dir = contract["batch_dir"]
+    is_bundle = bool(contract["is_directional_bundle"])
+    symbols = list_directional_bundle_symbols(batch_id, artifacts_dir)
     rows: list[dict[str, Any]] = []
 
     for symbol in symbols:
-        report = load_ml_artifact_report(symbol, batch_dir)
-        stability = report.get("walk_forward_stability") or {}
-        long_summary = stability.get("long") or {}
-        short_summary = stability.get("short") or {}
+        if is_bundle:
+            long_report = load_ml_artifact_report(symbol, contract["long_root"])
+            short_report = load_ml_artifact_report(symbol, contract["short_root"])
+            long_stability = long_report.get("walk_forward_stability") or {}
+            short_stability = short_report.get("walk_forward_stability") or {}
+            # A specialized branch is gated only on the side it owns.
+            long_summary = long_stability.get("long") or {}
+            short_summary = short_stability.get("short") or {}
+        else:
+            report = load_ml_artifact_report(symbol, batch_dir)
+            long_report = short_report = report
+            long_stability = short_stability = report.get("walk_forward_stability") or {}
+            long_summary = long_stability.get("long") or {}
+            short_summary = short_stability.get("short") or {}
         eligible_long = long_summary.get("status") == "stable"
         eligible_short = short_summary.get("status") == "stable"
         if eligible_long and eligible_short:
@@ -478,9 +552,17 @@ def build_batch_directional_candidate_selection(
         rows.append(
             {
                 "symbol": symbol,
-                "selected_model": report.get("selected_model"),
-                "selected_horizon": stability.get("selected_horizon"),
-                "selection_mode": report.get("selection_mode"),
+                "selected_model": long_report.get("selected_model") if not is_bundle else None,
+                "selected_horizon": long_stability.get("selected_horizon") if not is_bundle else None,
+                "selection_mode": long_report.get("selection_mode") if not is_bundle else None,
+                "long_selected_model": long_report.get("selected_model"),
+                "long_run_id": long_report.get("run_id"),
+                "long_selected_horizon": long_stability.get("selected_horizon"),
+                "long_selection_mode": long_report.get("selection_mode"),
+                "short_selected_model": short_report.get("selected_model"),
+                "short_run_id": short_report.get("run_id"),
+                "short_selected_horizon": short_stability.get("selected_horizon"),
+                "short_selection_mode": short_report.get("selection_mode"),
                 "classification": classification,
                 "eligible_long": eligible_long,
                 "eligible_short": eligible_short,
@@ -498,8 +580,16 @@ def build_batch_directional_candidate_selection(
                 "short_pass_rate": short_summary.get("pass_rate"),
                 "short_support_total": short_summary.get("support_total"),
                 "short_reason": _directional_selection_reason(short_summary),
-                "artifact_health": report.get("manifest_health"),
-                "fold_source": stability.get("source"),
+                "long_artifact_health": long_report.get("health_status"),
+                "short_artifact_health": short_report.get("health_status"),
+                "artifact_health": (
+                    "healthy"
+                    if long_report.get("health_status") == short_report.get("health_status") == "healthy"
+                    else "degraded"
+                ),
+                "long_fold_source": long_stability.get("source"),
+                "short_fold_source": short_stability.get("source"),
+                "fold_source": long_stability.get("source") if not is_bundle else None,
             }
         )
 
@@ -516,6 +606,7 @@ def build_batch_directional_candidate_selection(
     }
     return {
         "batch_id": batch_id,
+        "batch_kind": contract["kind"],
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "scanned_symbols": len(symbols),
         "eligible_symbols": sum(len(values) for values in by_class.values()),

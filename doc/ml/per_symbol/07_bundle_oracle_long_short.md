@@ -68,7 +68,7 @@ AAPL
 
 LSTM reste obligatoire ; LightGBM et CatBoost restent optionnels. Avec la sélection automatique, chaque branche choisit son propre backend éligible. Le champion LONG et le champion SHORT peuvent donc utiliser des architectures différentes.
 
-Les `run_id` distincts contiennent `direction_long` ou `direction_short`, tout en partageant le même `batch_id`. Les métriques et la gouvernance ne se remplacent donc pas. Chaque `config.json` persiste aussi `model_role`.
+Les `run_id` distincts contiennent `direction_long` ou `direction_short`, tout en partageant le même `batch_id`. Chaque `config.json` persiste `model_role` et la table `model_training_run` le stocke explicitement. L'index `(batch_id, model_role, symbol)` permet aux diagnostics de séparer les branches sans déduire le rôle depuis le nom du run. Les anciens runs restent compatibles avec un rôle nullable ; la migration `0070_training_run_role` reprend automatiquement les premiers runs bundle reconnaissables.
 
 L'Oracle est entraîné une seule fois sur l'univers global. L'ordre d'exécution actuel l'entraîne après les branches ; cela ne change pas son rôle au serving, où il est le gate d'amplitude en amont de la décision directionnelle.
 
@@ -129,3 +129,15 @@ python -m modelFactory --mode train --training-mode per_symbol --directional-fea
 Le backend active aussi automatiquement l'Oracle lorsque le bundle est demandé.
 
 Avant un backtest, vérifier : manifeste et `batch_id`, statut Oracle `completed`, copies et SHA-256 des profils, deux champions servables pour chaque symbole, plusieurs folds Walk-Forward valides par rôle, stabilité de `f1_long` côté LONG et `f1_short` côté SHORT, couverture et abstention, puis sélection du mode de gate directionnel symétrique.
+
+## Diagnostic ML du bundle
+
+La page **Diagnostic ML** détecte `cascade_manifest.json` et affiche une synthèse des trois composants. Un sélecteur LONG/SHORT borne ensuite toutes les requêtes de métriques, de gouvernance, d'horizons, de régimes et de détail symbole au `model_role` choisi.
+
+- LONG classe et sélectionne sur `f1_long` ; les autres F1 restent informatifs ;
+- SHORT classe et sélectionne sur `f1_short` ;
+- Oracle conserve ses métriques binaires d'amplitude et n'est jamais agrégé aux modèles ternaires ;
+- le volet de couplage contrôle la présence des deux run ids dans `model_predictions` ;
+- le téléchargement des candidats lit les artefacts sous `directions/long` et `directions/short`, puis applique les gates indépendamment.
+
+La compatibilité historique est conservée : en l'absence de manifeste bundle, la page utilise le parcours direct `<batch>/<SYMBOL>` et l'affichage per-symbol/per-sector précédent.
