@@ -25,6 +25,22 @@ Ce mode sépare explicitement amplitude et direction dans une seule campagne ML.
 
 Le mode est activé par `--directional-feature-profiles`. Sans ce drapeau, le contrat historique — un champion ternaire Per-Symbol par symbole — reste inchangé.
 
+## Contrat des cibles : binaire pour l'Oracle, ternaire pour la direction
+
+Le bundle n'utilise volontairement pas la même cible pour ses trois composants :
+
+| Composant | Type de cible | Classes / sortie | Rôle |
+|---|---|---|---|
+| Oracle O0 | classification binaire interne | `extreme` / `non-extreme`, avec `proba_extreme` | détecter l'amplitude extrême |
+| branche LONG | classification ternaire | SHORT / FLAT / LONG | fournir `proba_long` |
+| branche SHORT | classification ternaire | SHORT / FLAT / LONG | fournir `proba_short` |
+
+L'Oracle O0 **n'est donc pas un modèle de régression**. Il construit sa cible `oracle_extreme10` à partir des extrêmes cross-sectionnels et entraîne son classifieur binaire indépendamment du champ global `target_mode`.
+
+En mode bundle, le backend force systématiquement les deux branches directionnelles en `target_mode=ternary` et `num_classes=3`, même si une ancienne commande, une session IHM ou une API transmet `regression`. Les seuils ternaires configurés sont conservés ; s'ils sont invalides, les valeurs de repli sont `+3 %` et `-3 %`. Cette règle empêche qu'un choix destiné à l'Oracle transforme accidentellement les modèles LONG/SHORT en régresseurs.
+
+Le modèle Global Ranking n'appartient pas à ce bundle et n'est requis ni à l'entraînement O0 ni à la prédiction. Le préremplissage `global_rank_20` est donc désactivé pour ce parcours. Les autres campagnes Global Ranking demeurent inchangées.
+
 ## Contrat et découverte des profils
 
 Les profils sont découverts dynamiquement dans `config/features/oracle/*.json`, `config/features/long/*.json` et `config/features/short/*.json`. L'IHM choisit `oracle.json`, `long.json` et `short.json` par défaut lorsqu'ils existent.
@@ -47,14 +63,14 @@ La case « Bundle Oracle + deux modèles Per-Symbol LONG/SHORT » :
 
 1. affiche les profils Oracle, LONG et SHORT détectés sur disque ;
 2. désactive les cases manuelles de features afin d'éviter deux sources de vérité ;
-3. conserve les réglages indépendants des features : cibles, horizons, walk-forward, epochs, patience, challengers et sélection du champion ;
+3. verrouille visuellement la cible sur **Ternaire — SHORT / FLAT / LONG** pour les deux branches ; horizons, walk-forward, epochs, patience, challengers et sélection du champion restent réglables ;
 4. émet `--directional-feature-profiles`, `--long-feature-profile` et `--short-feature-profile` ;
 5. active l'Oracle et force le mode Per-Symbol côté backend ;
 6. neutralise `oracle_model_only` et `exclude_per_symbol_per_sector`.
 
 Le profil Oracle est appliqué à la liste finale des colonnes O0 après calcul des features EXPERT et des rangs cross-sectionnels. Une feature demandée mais absente provoque l'échec explicite du batch : aucune réduction silencieuse du contrat n'est autorisée.
 
-Les cases de features désactivées peuvent conserver leur valeur en session, mais elles ne sont pas ajoutées à la commande. Les profils sont les seules sources de vérité effectives des deux branches. L'Oracle conserve son propre contrat et n'hérite pas des whitelists directionnelles.
+Les cases de features désactivées peuvent conserver leur valeur en session, mais elles ne sont pas ajoutées à la commande. Les profils sont les seules sources de vérité effectives des deux branches. L'Oracle conserve son propre contrat et n'hérite pas des whitelists directionnelles. La commande générée contient explicitement `--target-mode ternary --num-classes 3` en mode bundle, quelle que soit l'ancienne valeur de session.
 
 ## Entraînement et champions
 
@@ -93,6 +109,21 @@ artifacts/models/<batch_id>/
 
 `cascade_manifest.json` est le point d'entrée du serving. Il déclare le type du bundle, les racines relatives, les profils complets et leurs empreintes, puis le statut et le résultat terminal de l'Oracle.
 
+Le manifeste suit maintenant un cycle de vie explicite :
+
+```text
+training / serving_ready=false
+              │
+              ├─ Oracle absent, branche manquante ou zéro paire ──> failed
+              │                                                  serving_ready=false
+              └─ Oracle terminé + au moins une paire LONG∩SHORT ─> completed
+                                                                 serving_ready=true
+```
+
+La section `coverage` expose le nombre de symboles demandés, terminés en LONG, terminés en SHORT, présents dans l'intersection LONG ∩ SHORT, ainsi que les symboles exclus. Le batch n'est marqué `completed` dans la base que si le manifeste est réellement servable. Une fin de processus sans Oracle ou sans paire directionnelle ne constitue plus un succès.
+
+Chaque `config.json` stocke un `feature_contract` complet et son `feature_fingerprint`. L'empreinte au niveau supérieur doit être strictement identique à celle du contrat. Les modèles LightGBM sont persistés au format natif texte et les modèles CatBoost au format natif CBM ; une extension `.cbm` ne peut plus contenir un objet Python sérialisé.
+
 ## Prédiction et arbitrage
 
 `predict_batch` détecte automatiquement le manifeste et charge les deux champions :
@@ -107,7 +138,21 @@ La classe consolidée est LONG si `P_long` est strictement supérieure aux deux 
 
 La table `model_predictions` persiste également `direction_long_model` et `direction_short_model`. Ainsi, `proba_long` est traçable jusqu'au run et au champion LONG, tandis que `proba_short` est traçable jusqu'au run et au champion SHORT. Le champ historique `run_id` reste renseigné avec le run LONG pour conserver sa contrainte et la compatibilité des jointures existantes ; la double filiation complète se lit dans les nouvelles colonnes.
 
-L'absence d'une branche invalide la prédiction du symbole. Aucun fallback silencieux vers le modèle legacy n'est fait, car mélanger un champion récent avec un modèle unique historique serait difficile à auditer.
+L'absence d'une branche invalide la prédiction du symbole. Aucun fallback silencieux vers le modèle legacy n'est fait, car mélanger un champion récent avec un modèle unique historique serait difficile à auditer. L'univers réellement prédit est donc l'intersection des symboles servables `LONG ∩ SHORT`, pas l'union des deux répertoires.
+
+### Préflight obligatoire avant toute prédiction
+
+Avant de calculer la première date, la CLI valide une seule fois l'ensemble du bundle :
+
+1. manifeste de type `oracle_per_symbol_directional_bundle`, statut `completed` et `serving_ready=true` ;
+2. Oracle déclaré `completed` et champions Oracle présents ;
+3. deux `config.json` par symbole, avec les rôles `direction_long` et `direction_short` ;
+4. cible `ternary` et `num_classes=3` dans les deux branches ;
+5. concordance stricte de chaque empreinte de features ;
+6. route du champion sélectionné et fichier modèle présents ;
+7. format natif cohérent pour LightGBM et CatBoost.
+
+Les symboles incomplets sont retirés avec une raison explicite. Si aucun symbole ne reste, ou si le manifeste/Oracle est invalide, la commande s'arrête immédiatement avec un code d'erreur au lieu de parcourir toutes les dates en produisant uniquement des `skipped`. Après le préflight, l'échec de la prédiction Oracle est également bloquant pour le bundle.
 
 ## Oracle, cascade et backtest
 
@@ -115,7 +160,7 @@ Dans « Oracle amplitude + Per-Symbol direction LONG/SHORT » :
 
 1. l'Oracle fournit l'éligibilité ou le percentile d'amplitude ;
 2. la ligne consolidée fournit `proba_long`, `proba_short` et `predicted_side` ;
-3. le gate applique la marge directionnelle configurée ;
+3. le gate rejette une direction qui ne domine pas strictement `proba_flat`, puis applique la marge directionnelle configurée ;
 4. Long only et Short only restent des restrictions de portefeuille en aval et ne modifient pas les modèles.
 
 Le mode « Oracle seul, LONG-only » demeure disponible pour la compatibilité historique.
@@ -129,6 +174,8 @@ python -m modelFactory --mode train --training-mode per_symbol --directional-fea
 Le backend active aussi automatiquement l'Oracle lorsque le bundle est demandé.
 
 Avant un backtest, vérifier : manifeste et `batch_id`, statut Oracle `completed`, copies et SHA-256 des profils, deux champions servables pour chaque symbole, plusieurs folds Walk-Forward valides par rôle, stabilité de `f1_long` côté LONG et `f1_short` côté SHORT, couverture et abstention, puis sélection du mode de gate directionnel symétrique.
+
+> Les batches bundle entraînés avant ce contrat de validation peuvent être refusés s'ils contiennent des branches en régression, un Oracle manquant, des empreintes incohérentes ou de faux artefacts natifs. Ils doivent être réentraînés ; les déclarer manuellement servables masquerait une incompatibilité réelle.
 
 ## Diagnostic ML du bundle
 

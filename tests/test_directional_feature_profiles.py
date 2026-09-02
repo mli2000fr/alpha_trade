@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from ihm.services.pipeline_runner import PipelineLaunchOptions, build_pipeline_command
-from modelFactory.config import TrainingConfig
+from modelFactory.config import DataConfig, TrainingConfig
 from modelFactory.cli import build_arg_parser
 from modelFactory.db_registry import insert_predictions
 from modelFactory.feature_profiles import (
@@ -15,7 +15,14 @@ from modelFactory.feature_profiles import (
     load_feature_profile,
     resolve_profile_path,
 )
-from modelFactory.predictor import _directional_bundle_root, predict_directional_symbol
+from modelFactory.predictor import (
+    DirectionalBundleContractError,
+    _LightGBMBoosterAdapter,
+    _directional_bundle_root,
+    predict_directional_symbol,
+    validate_directional_bundle_for_prediction,
+)
+from modelFactory.orchestrator import _oracle_requires_global_rank
 from modelFactory.oracle.dataset import expert_feature_columns
 from modelFactory.global_ranking import _XS_RANK_SOURCE_FEATURES, _xs_rank_column_name
 
@@ -65,6 +72,10 @@ def test_profile_application_isolates_direction_artifacts() -> None:
     assert effective.global_model.stacking_enabled is False
     assert len(effective.data.feature_whitelist) == 84
     assert effective.artifacts_dir.as_posix().endswith("directions/long")
+    assert effective.data.target_mode == "ternary"
+    assert effective.model.num_classes == 3
+    assert effective.data.target_up_threshold == pytest.approx(0.03)
+    assert effective.data.target_down_threshold == pytest.approx(-0.03)
 
 
 def test_ihm_command_emits_bundle_and_ignores_manual_feature_switches() -> None:
@@ -77,6 +88,7 @@ def test_ihm_command_emits_bundle_and_ignores_manual_feature_switches() -> None:
         ml_include_macro_vix=True,
         ml_global_model_only=True,
         ml_exclude_per_symbol_per_sector=True,
+        ml_target_mode="regression",
     )
     command = build_pipeline_command("ml_train", options)
     assert "--directional-feature-profiles" in command
@@ -89,6 +101,78 @@ def test_ihm_command_emits_bundle_and_ignores_manual_feature_switches() -> None:
     assert "--no-include-score-components" not in command
     assert "--global-model-only" not in command
     assert "--exclude-per-symbol-per-sector" not in command
+    assert command[command.index("--target-mode") + 1] == "ternary"
+    assert command[command.index("--num-classes") + 1] == "3"
+
+
+def test_oracle_o0_bundle_does_not_require_global_rank_history() -> None:
+    assert _oracle_requires_global_rank(TrainingConfig(directional_profiles_enabled=True)) is False
+    assert _oracle_requires_global_rank(TrainingConfig()) is True
+    assert _oracle_requires_global_rank(
+        TrainingConfig(data=DataConfig(oracle_model_only=True))
+    ) is False
+
+
+def test_lightgbm_adapter_supports_regression_predict() -> None:
+    import numpy as np
+
+    class Booster:
+        def predict(self, X):
+            return [0.1, -0.2]
+
+    adapter = _LightGBMBoosterAdapter(Booster())
+    assert np.asarray(adapter.predict([[1], [2]])).tolist() == pytest.approx([0.1, -0.2])
+
+
+def test_bundle_preflight_keeps_only_complete_ternary_symbols(tmp_path: Path) -> None:
+    bundle = tmp_path / "batch-1"
+    bundle.mkdir()
+    (bundle / "cascade_manifest.json").write_text(json.dumps({
+        "batch_id": "batch-1",
+        "cascade_type": "oracle_extreme_plus_per_symbol_directional",
+        "status": "completed",
+        "serving_ready": True,
+        "oracle": {"status": "completed"},
+    }), encoding="utf-8")
+
+    for symbol in ("BOTH", "LONG_ONLY"):
+        directions = ("long", "short") if symbol == "BOTH" else ("long",)
+        for direction in directions:
+            symbol_dir = bundle / "directions" / direction / symbol
+            symbol_dir.mkdir(parents=True)
+            model_path = symbol_dir / "lightgbm_model.txt"
+            model_path.write_text("tree\nversion=v4\n", encoding="utf-8")
+            (symbol_dir / "config.json").write_text(json.dumps({
+                "model_role": f"direction_{direction}",
+                "data": {"target_mode": "ternary"},
+                "model": {"num_classes": 3},
+                "feature_fingerprint": "fp-ok",
+                "feature_contract": {"feature_fingerprint": "fp-ok"},
+                "architecture_selected": "lightgbm",
+                "artifact_routes": {
+                    "selected_model": "lightgbm",
+                    "models": {"lightgbm": {"model_path": str(model_path)}},
+                },
+            }), encoding="utf-8")
+
+    valid, excluded = validate_directional_bundle_for_prediction(
+        bundle, ["BOTH", "LONG_ONLY"], require_oracle=False,
+    )
+    assert valid == ["BOTH"]
+    assert excluded == {"LONG_ONLY": ["short:config_missing"]}
+
+
+def test_bundle_preflight_rejects_non_servable_manifest(tmp_path: Path) -> None:
+    bundle = tmp_path / "batch-1"
+    bundle.mkdir()
+    (bundle / "cascade_manifest.json").write_text(json.dumps({
+        "batch_id": "batch-1",
+        "cascade_type": "oracle_extreme_plus_per_symbol_directional",
+        "status": "failed",
+        "serving_ready": False,
+    }), encoding="utf-8")
+    with pytest.raises(DirectionalBundleContractError, match="bundle_not_serving_ready"):
+        validate_directional_bundle_for_prediction(bundle, ["AAPL"], require_oracle=False)
 
 
 def test_directional_manifest_detection(tmp_path: Path) -> None:

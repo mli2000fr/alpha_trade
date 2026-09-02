@@ -3855,6 +3855,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         ml_target_col1, ml_target_col2, ml_target_col3 = st.columns(3)
         with ml_target_col1:
             _target_options = ["regression", "ternary", "binary", "swing_cash"]
+            if ml_directional_profiles_enabled:
+                st.session_state["pipeline_ml_target_mode"] = "ternary"
             _session_target = cast(str, st.session_state.get("pipeline_ml_target_mode", DEFAULT_ML_TARGET_MODE))
             _default_idx = _target_options.index(_session_target) if _session_target in _target_options else 0
             ml_target_mode = cast(
@@ -3864,9 +3866,18 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     options=_target_options,
                     index=_default_idx,
                     key="pipeline_ml_target_mode",
-                    help="`regression` = target continue vol-scalée (recommandé). `ternary` = long/flat/short. `binary`/`swing_cash` = classification.",
+                    disabled=ml_directional_profiles_enabled,
+                    help=(
+                        "Dans un bundle, LONG et SHORT sont obligatoirement ternaires ; "
+                        "l'Oracle conserve sa cible binaire Extreme interne."
+                        if ml_directional_profiles_enabled
+                        else "`regression` = target continue vol-scalée (recommandé). "
+                        "`ternary` = long/flat/short. `binary`/`swing_cash` = classification."
+                    ),
                 ),
             )
+            if ml_directional_profiles_enabled:
+                st.caption("Bundle : Oracle = binaire Extreme ; LONG/SHORT = ternaire forcé.")
             ml_forecast_horizon = int(
                 st.number_input(
                     "Horizon de prédiction (jours)",

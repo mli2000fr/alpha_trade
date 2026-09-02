@@ -21,7 +21,6 @@ from modelFactory.evaluation import (
     optimize_decision_threshold,
 )
 from modelFactory.features import build_feature_contract
-from modelFactory.features import fingerprint as compute_feature_fingerprint
 from modelFactory.features import get_feature_columns
 from modelFactory.reproducibility import apply_reproducibility, derive_seed
 
@@ -651,6 +650,13 @@ def run_tabular_baseline(
 		include_macro_vix3m=cfg.data.include_macro_vix3m_features,
 		include_macro_move=cfg.data.include_macro_move_features,
 		include_global_stacking=cfg.global_model.stacking_enabled,
+		include_fundamentals=cfg.data.include_fundamentals_features,
+		include_factors=cfg.data.include_factors_features,
+		include_macro_regime=cfg.data.include_macro_regime_features,
+		include_score_components=cfg.data.include_score_components,
+		include_volume_features=(cfg.data.include_volume_features and cfg.data.feature_whitelist_enabled),
+		feature_whitelist_enabled=cfg.data.feature_whitelist_enabled,
+		feature_whitelist=cfg.data.feature_whitelist,
 		feature_columns=feature_columns,
 		scaler_feature_names=feature_columns,
 	)
@@ -660,19 +666,7 @@ def run_tabular_baseline(
 		"seed": int(resolved_seed),
 		"feature_columns": feature_columns,
 		"feature_contract": feature_contract,
-		"feature_fingerprint": compute_feature_fingerprint(
-			include_sentiment=cfg.data.include_sentiment_features,
-			feature_set=cfg.data.feature_set,
-			include_cross_sectional=cfg.data.enable_cross_sectional_features,
-			include_screener_scores=cfg.data.include_screener_scores,
-			include_short_score=cfg.data.include_short_score_features,
-			include_macro_vix=cfg.data.include_macro_vix_features,
-			include_macro_vxn=cfg.data.include_macro_vxn_features,
-			include_macro_vix3m=cfg.data.include_macro_vix3m_features,
-			include_macro_move=cfg.data.include_macro_move_features,
-			include_global_stacking=cfg.global_model.stacking_enabled,
-			feature_columns=feature_columns,
-		),
+		"feature_fingerprint": feature_contract.get("feature_fingerprint"),
 		"val": val_metrics,
 		"test": test_metrics,
 		"calibration_method": calibrator.method if calibrator is not None and calibrator.fitted else "none",

@@ -62,6 +62,11 @@ def get_last_liquidity_diagnostics() -> dict[str, Any]:
     return _last_liquidity_diag
 
 
+def _oracle_requires_global_rank(cfg: TrainingConfig) -> bool:
+    """Indique si le dataset Oracle dépend réellement du Global Ranking."""
+    return not cfg.data.oracle_model_only and not cfg.directional_profiles_enabled
+
+
 def _with_batch_artifacts_dir(cfg: TrainingConfig, batch_id: str) -> TrainingConfig:
     """Scopes durable training artifacts under one immutable campaign directory."""
     return replace(
@@ -529,7 +534,10 @@ def train_oracle_extreme(
         #    batch courant sur TOUTE la période d'entraînement (in-sample OK ; l'OOS
         #    est géré par le walk-forward de l'Oracle lui-même). Idempotent (upsert) ;
         #    non-bloquant : en cas d'échec, l'Oracle sera skipped proprement. ──
-        _require_gr = not cfg.data.oracle_model_only
+        # O0 n'utilise pas global_rank_20. Un bundle directionnel n'entraîne
+        # volontairement aucun Global Ranking : exiger global_rank_history ici
+        # vidait intégralement le dataset Oracle.
+        _require_gr = _oracle_requires_global_rank(cfg)
         if _require_gr:
             try:
                 from modelFactory.predictor import predict_global_rank_history as _pgrh
@@ -655,6 +663,7 @@ def run_training_batch(
     """
     batch_id = batch_id or f"model-factory-{datetime.now(timezone.utc):%Y%m%d%H%M%S}-{uuid4().hex[:6]}"
     cfg = _with_batch_artifacts_dir(cfg, batch_id)
+    directional_bundle_serving_ready: bool | None = None
     directional_cfgs: tuple[TrainingConfig, ...] = (cfg,)
     directional_profiles: dict[str, dict[str, Any]] = {}
     if cfg.directional_profiles_enabled:
@@ -682,6 +691,8 @@ def run_training_batch(
                     "schema_version": 1,
                     "batch_id": batch_id,
                     "cascade_type": "oracle_extreme_plus_per_symbol_directional",
+                    "status": "training",
+                    "serving_ready": False,
                     "oracle": {
                         "role": "amplitude_gate", "enabled": True, "batch_id": batch_id,
                         "artifact_root": f"../oracle/champions/{batch_id}",
@@ -1338,6 +1349,7 @@ def run_training_batch(
 
     # ── Oracle Extreme en fin de séquence (2026-08-20) : entraîne l'Oracle
     #    AUSSI (en plus du global / per-symbol / per-sector déjà faits). ──
+    _oracle_result: dict[str, Any] | None = None
     if cfg.data.enable_oracle_model and not cfg.data.oracle_model_only:
         LOGGER.info("orchestrator enable_oracle_model — training Oracle Extreme (O0) after sequence")
         try:
@@ -1366,6 +1378,59 @@ def run_training_batch(
             LOGGER.exception("enable_oracle_model failed: %s", _exc)
             results.append(TrainResult("__ORACLE__", batch_id, "failed", skip_reason=str(_exc)))
 
+    if cfg.directional_profiles_enabled:
+        long_symbols = {
+            r.symbol for r in results
+            if r.status == "completed" and r.metrics.get("model_role") == "direction_long"
+        }
+        short_symbols = {
+            r.symbol for r in results
+            if r.status == "completed" and r.metrics.get("model_role") == "direction_short"
+        }
+        paired_symbols = sorted(long_symbols & short_symbols)
+        requested_symbols = {str(symbol).upper() for symbol in (symbols or [])}
+        excluded_symbols = sorted(requested_symbols - set(paired_symbols))
+        oracle_champions_path = (
+            Path(cfg.artifacts_dir) / ".." / "oracle" / "champions" / batch_id / "oracle_champions.json"
+        ).resolve()
+        oracle_ready = bool(
+            _oracle_result
+            and _oracle_result.get("status") == "completed"
+            and oracle_champions_path.is_file()
+        )
+        serving_ready = oracle_ready and bool(paired_symbols)
+        directional_bundle_serving_ready = serving_ready
+        _manifest_path = Path(cfg.artifacts_dir) / "cascade_manifest.json"
+        try:
+            _manifest = json.loads(_manifest_path.read_text(encoding="utf-8"))
+            _manifest.update({
+                "status": "completed" if serving_ready else "failed",
+                "serving_ready": serving_ready,
+                "coverage": {
+                    "requested_symbols": len(requested_symbols),
+                    "long_symbols": len(long_symbols),
+                    "short_symbols": len(short_symbols),
+                    "paired_symbols": len(paired_symbols),
+                    "excluded_symbols": excluded_symbols,
+                },
+            })
+            _manifest["oracle"] = {
+                **dict(_manifest.get("oracle") or {}),
+                "champions_ready": oracle_champions_path.is_file(),
+            }
+            _manifest_path.write_text(
+                json.dumps(_manifest, ensure_ascii=False, indent=2, default=str),
+                encoding="utf-8",
+            )
+        except Exception as _manifest_exc:  # noqa: BLE001
+            LOGGER.error("directional bundle final manifest update failed: %s", _manifest_exc)
+            serving_ready = False
+        if not serving_ready:
+            LOGGER.error(
+                "directional bundle NOT SERVABLE batch=%s oracle_ready=%s paired_symbols=%d",
+                batch_id, oracle_ready, len(paired_symbols),
+            )
+
     # Summary
     completed = sum(1 for r in results if r.status == "completed")
     skipped = sum(1 for r in results if r.status == "skipped")
@@ -1385,7 +1450,9 @@ def run_training_batch(
             )
 
     update_runtime_status(
-        current_phase="batch_completed",
+        current_phase=(
+            "batch_failed" if directional_bundle_serving_ready is False else "batch_completed"
+        ),
         progress_current=len(results),
         symbols_completed=completed,
         symbols_skipped=skipped,

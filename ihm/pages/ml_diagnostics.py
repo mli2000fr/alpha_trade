@@ -964,6 +964,30 @@ PRED_RUNS_FOR_BATCH_QUERY = """
     ORDER BY mp.run_id
 """
 
+BUNDLE_PREDICTION_COVERAGE_QUERY = """
+    SELECT
+        COUNT(*) AS n_rows,
+        COUNT(DISTINCT mp.prediction_date) AS nb_dates,
+        COUNT(DISTINCT mp.symbol) AS nb_symbols,
+        MIN(mp.prediction_date) AS min_date,
+        MAX(mp.prediction_date) AS max_date,
+        SUM(CASE WHEN mp.direction_long_run_id IS NOT NULL THEN 1 ELSE 0 END) AS long_lineage_rows,
+        SUM(CASE WHEN mp.direction_short_run_id IS NOT NULL THEN 1 ELSE 0 END) AS short_lineage_rows,
+        SUM(CASE
+                WHEN mp.direction_long_run_id IS NOT NULL
+                 AND mp.direction_short_run_id IS NOT NULL THEN 1
+                ELSE 0
+            END) AS double_lineage_rows,
+        COUNT(DISTINCT mp.direction_long_run_id) AS long_runs,
+        COUNT(DISTINCT mp.direction_short_run_id) AS short_runs
+    FROM alpha_trade.model_predictions AS mp
+    JOIN alpha_trade.model_training_run AS r
+        ON r.run_id = mp.run_id
+    WHERE r.batch_id = :batch_id
+      AND r.status = 'completed'
+      AND mp.model_role = 'directional_bundle'
+"""
+
 _GICS_SECTORS = {
     "Communication Services", "Consumer Discretionary", "Consumer Staples",
     "Energy", "Financials", "Health Care", "Industrials",
@@ -2271,14 +2295,15 @@ def _render_prediction_periods(batch_id: str, batch: pd.Series) -> None:
     """Bouton « Périodes de prédictions » au-dessus du Modèle global.
 
     Affiche, pour le batch sélectionné, les périodes où il existe des
-    prédictions selon le type de modèle entraîné : global / per-symbol /
-    per-sector / oracle extreme. Les 4 types sont optionnels, ≥1 présent.
+    prédictions selon le contrat réellement entraîné. Un bundle directionnel
+    possède une vue dédiée : Oracle Extreme + direction LONG/SHORT consolidée.
+    Les batches historiques conservent la vue global/per-symbol/per-sector.
     Info purement diagnostique — non incluse dans le rapport téléchargé.
     """
     _key = f"ml_diag_pred_periods_{batch_id}"
     if not st.button(
         "🔍 Périodes de prédictions du batch", key=_key,
-        help="Affiche les périodes où ce batch a des prédictions (global / per-symbol / per-sector / oracle extreme).",
+        help="Affiche les périodes et la couverture des prédictions selon le contrat réel du batch.",
     ):
         return
 
@@ -2289,6 +2314,113 @@ def _render_prediction_periods(batch_id: str, batch: pd.Series) -> None:
             return str(pd.Timestamp(d).date())
         except Exception:
             return str(d)
+
+    def _int_or_zero(value: Any) -> int:
+        try:
+            return 0 if value is None or pd.isna(value) else int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    # Un bundle n'est pas l'addition visuelle de deux anciens modèles
+    # per-symbol. Sa sortie servie est une ligne consolidée dont P(long) et
+    # P(short) proviennent de deux runs distincts, avec Oracle comme gate
+    # d'amplitude. On lui réserve donc une lecture contractuelle et on évite
+    # les lignes historiques « per-symbol/per-sector non entraîné ».
+    try:
+        _artifacts_root = resolve_batch_artifacts_root(batch_id, batch.get("metadata_json"))
+        _contract = load_batch_artifact_contract(batch_id, _artifacts_root)
+    except (OSError, ValueError):
+        _contract = {"is_directional_bundle": False}
+
+    if bool(_contract.get("is_directional_bundle")):
+        coverage = safe_query(BUNDLE_PREDICTION_COVERAGE_QUERY, {"batch_id": batch_id})
+        oracle_rows = _oracle_periods(batch_id)
+        bundle_summary: list[dict[str, Any]] = []
+        coverage_row = coverage.iloc[0] if not coverage.empty else None
+        n_rows = _int_or_zero(coverage_row.get("n_rows") if coverage_row is not None else 0)
+        long_rows = _int_or_zero(coverage_row.get("long_lineage_rows") if coverage_row is not None else 0)
+        short_rows = _int_or_zero(coverage_row.get("short_lineage_rows") if coverage_row is not None else 0)
+        double_rows = _int_or_zero(coverage_row.get("double_lineage_rows") if coverage_row is not None else 0)
+
+        if n_rows > 0:
+            long_runs = _int_or_zero(coverage_row.get("long_runs"))
+            short_runs = _int_or_zero(coverage_row.get("short_runs"))
+            bundle_summary.append({
+                "Couche": "🧭 Direction LONG/SHORT consolidée",
+                "Période": f"{_fmt(coverage_row.get('min_date'))} → {_fmt(coverage_row.get('max_date'))}",
+                "Jours": _int_or_zero(coverage_row.get("nb_dates")),
+                "Symboles": _int_or_zero(coverage_row.get("nb_symbols")),
+                "Lignes": n_rows,
+                "Filiation": f"{double_rows}/{n_rows} double",
+                "Détail": f"{long_runs} run(s) LONG · {short_runs} run(s) SHORT",
+            })
+        else:
+            bundle_summary.append({
+                "Couche": "🧭 Direction LONG/SHORT consolidée",
+                "Période": "—", "Jours": "", "Symboles": "", "Lignes": 0,
+                "Filiation": "—", "Détail": "aucune prédiction consolidée",
+            })
+
+        valid_oracle = [
+            row for row in oracle_rows
+            if "→" in str(row.get("Période", ""))
+            and not str(row.get("Période", "")).startswith(("—", "?"))
+        ]
+        if valid_oracle:
+            latest_oracle = valid_oracle[-1]
+            bundle_summary.append({
+                "Couche": "🔥 Oracle Extreme (amplitude)",
+                "Période": latest_oracle.get("Période", "—"),
+                "Jours": latest_oracle.get("Jours", ""),
+                "Symboles": latest_oracle.get("Symboles", ""),
+                "Lignes": "",
+                "Filiation": "gate séparé",
+                "Détail": f"{len(oracle_rows)} run(s) disponible(s)",
+            })
+        else:
+            bundle_summary.append({
+                "Couche": "🔥 Oracle Extreme (amplitude)",
+                "Période": "—", "Jours": "", "Symboles": "", "Lignes": "",
+                "Filiation": "gate séparé", "Détail": "aucune prédiction Oracle",
+            })
+
+        st.caption(
+            "Vue bundle : l'Oracle détecte l'amplitude extrême ; la sortie directionnelle "
+            "consolidée porte P(long) et P(short), chacune reliée à son run spécialisé."
+        )
+        st.dataframe(
+            pd.DataFrame(bundle_summary, columns=[
+                "Couche", "Période", "Jours", "Symboles", "Lignes", "Filiation", "Détail",
+            ]).fillna(""),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        if n_rows == 0:
+            st.warning("Ce bundle ne contient encore aucune prédiction directionnelle consolidée.")
+        elif double_rows != n_rows:
+            st.error(
+                "Filiation incomplète : "
+                f"{n_rows - long_rows} ligne(s) sans run LONG, "
+                f"{n_rows - short_rows} sans run SHORT et "
+                f"{n_rows - double_rows} sans double filiation."
+            )
+        else:
+            st.success(f"Double filiation complète sur les {n_rows:,} prédictions consolidées.")
+
+        if not valid_oracle:
+            st.warning(
+                "Aucune période Oracle exploitable n'est associée à ce batch : "
+                "la cascade amplitude + direction ne peut pas être contrôlée de bout en bout."
+            )
+        if oracle_rows:
+            with st.expander("🔥 Détail Oracle Extreme (runs)"):
+                st.dataframe(
+                    pd.DataFrame(oracle_rows, columns=["Type", "Période", "Jours", "Symboles", "Détail"]),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+        return
 
     summary: list[dict[str, Any]] = []
     sector_rows: list[dict[str, Any]] = []

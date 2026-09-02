@@ -2241,6 +2241,9 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     if step_key == "ml_train":
+        effective_target_mode = (
+            "ternary" if options.ml_directional_profiles_enabled else options.ml_target_mode
+        )
         command = [
             sys.executable,
             "-u",
@@ -2251,10 +2254,10 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             "--accelerator",
             options.ml_accelerator,
             "--target-mode",
-            options.ml_target_mode,
+            effective_target_mode,
         ]
         # ML Sprint 1 — ajouter num-classes pour mode ternaire / régression
-        if options.ml_target_mode == "ternary":
+        if effective_target_mode == "ternary":
             command.extend(["--num-classes", "3"])
             command.extend([
                 "--ternary-weight-short", str(options.ml_ternary_weight_short),
@@ -2264,7 +2267,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
                 "--ternary-threshold-long", str(options.ml_ternary_threshold_long),
                 "--ternary-top2-margin", str(options.ml_ternary_top2_margin),
             ])
-        elif options.ml_target_mode == "regression":
+        elif effective_target_mode == "regression":
             command.extend(["--num-classes", "1"])
         if options.ml_training_mode != "per_symbol":
             command.extend(["--training-mode", options.ml_training_mode])

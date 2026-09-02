@@ -17,6 +17,17 @@ def test_ml_diagnostics_partitions_bundle_metrics_by_training_role() -> None:
     assert "direction_short_run_id" in source
 
 
+def test_prediction_periods_has_a_dedicated_bundle_contract_view() -> None:
+    source = (ROOT / "ihm" / "pages" / "ml_diagnostics.py").read_text(encoding="utf-8")
+
+    assert "BUNDLE_PREDICTION_COVERAGE_QUERY" in source
+    assert "Direction LONG/SHORT consolidée" in source
+    assert "Oracle Extreme (amplitude)" in source
+    assert "double_lineage_rows" in source
+    assert "Double filiation complète" in source
+    assert "Aucune période Oracle exploitable" in source
+
+
 def test_training_role_schema_is_kept_in_alembic_and_reference_sql() -> None:
     migration = (ROOT / "alembic" / "versions" / "0070_add_model_training_run_role.py").read_text(encoding="utf-8")
     schema = (ROOT / "database" / "sql" / "ml" / "model_training_run.sql").read_text(encoding="utf-8")

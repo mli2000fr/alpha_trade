@@ -69,6 +69,15 @@ def apply_feature_profile(cfg: TrainingConfig, profile: dict[str, Any], directio
     columns = tuple(str(v) for v in profile["feature_columns"])
     data = replace(
         cfg.data,
+        # L'Oracle possède sa cible binaire interne. Les deux branches du
+        # bundle doivent, elles, toujours produire SHORT/FLAT/LONG.
+        target_mode="ternary",
+        target_up_threshold=(
+            cfg.data.target_up_threshold if cfg.data.target_up_threshold > 0 else 0.03
+        ),
+        target_down_threshold=(
+            cfg.data.target_down_threshold if cfg.data.target_down_threshold < 0 else -0.03
+        ),
         feature_set=str(profile.get("feature_set", "expert")),
         feature_whitelist_enabled=True,
         feature_whitelist=columns,
@@ -93,6 +102,7 @@ def apply_feature_profile(cfg: TrainingConfig, profile: dict[str, Any], directio
     return replace(
         cfg,
         data=data,
+        model=replace(cfg.model, num_classes=3),
         global_model=replace(
             cfg.global_model,
             stacking_enabled=bool(options.get("include_global_stacking", False)),

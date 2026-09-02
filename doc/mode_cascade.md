@@ -116,6 +116,7 @@ direction_probability = max(proba_long, proba_short)
 direction_margin      = abs(proba_long - proba_short)
 
 rejet si direction_probability <= cascade.min_prob
+rejet si direction_probability <= proba_flat
 rejet si direction_margin < extreme_gate_direction_margin
 rejet systématique si proba_long == proba_short
 
@@ -420,10 +421,12 @@ flowchart LR
   O[P extreme] --> OP[Percentile Oracle du jour]
   OP --> G{Dans le top pool ?}
   G -->|non| X[Rejet]
-  G -->|oui| P[Charger P LONG et P SHORT]
+  G -->|oui| P[Charger P LONG, P SHORT et P FLAT]
   P --> Q{max P > seuil ?}
   Q -->|non| X
-  Q -->|oui| M{marge suffisante<br/>et pas égalité ?}
+  Q -->|oui| F{Direction > P FLAT ?}
+  F -->|non| X
+  F -->|oui| M{marge suffisante<br/>et pas égalité ?}
   M -->|non| X
   M -->|oui| D{Probabilité la plus forte}
   D -->|P LONG| L[LONG<br/>score = percentile × P LONG]

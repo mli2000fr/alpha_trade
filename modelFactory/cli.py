@@ -676,6 +676,12 @@ def main(args: list[str] | None = None) -> None:
     parser = build_arg_parser()
     raw_args = list(args) if args is not None else sys.argv[1:]
     opts = parser.parse_args(raw_args)
+    # Le target-mode CLI pilote les modèles génériques, pas l'Oracle O0. Dans
+    # un bundle, les deux branches directionnelles ont un contrat ternaire
+    # immuable, quelle que soit une ancienne valeur regression transmise.
+    if getattr(opts, "directional_feature_profiles", False):
+        opts.target_mode = "ternary"
+        opts.num_classes = 3
     if opts.label_method == "triple_barrier" and (opts.target_mode != "ternary" or opts.num_classes != 3):
         parser.error("--label-method triple_barrier requiert --target-mode ternary et --num-classes 3")
 
@@ -1003,6 +1009,15 @@ def main(args: list[str] | None = None) -> None:
         _batch_final_status = (
             "failed" if (completed == 0 and failed > 0) else "completed"
         )
+        if cfg.directional_profiles_enabled:
+            try:
+                _bundle_manifest = json.loads(
+                    (Path(cfg.artifacts_dir) / run_id / "cascade_manifest.json").read_text(encoding="utf-8")
+                )
+                if not bool(_bundle_manifest.get("serving_ready")):
+                    _batch_final_status = "failed"
+            except (OSError, json.JSONDecodeError):
+                _batch_final_status = "failed"
         if _batch_final_status == "failed":
             LOGGER.error(
                 "cli: batch %s marked FAILED — completed=%d skipped=%d failed=%d "
@@ -1057,7 +1072,13 @@ def main(args: list[str] | None = None) -> None:
             insert_predictions,
             load_symbols_for_source,
         )
-        from modelFactory.predictor import _batch_has_per_symbol_or_sector, predict_batch
+        from modelFactory.predictor import (
+            DirectionalBundleContractError,
+            _batch_has_per_symbol_or_sector,
+            _directional_bundle_root,
+            predict_batch,
+            validate_directional_bundle_for_prediction,
+        )
         from modelFactory.drift_monitor import compute_drift
         from modelFactory.drift_policy import (
             apply_kill_switch,
@@ -1162,6 +1183,28 @@ def main(args: list[str] | None = None) -> None:
             opts.symbol_source,
             trade_date=universe_date,
         )
+        _directional_root = _directional_bundle_root(Path(opts.artifacts_dir), _batch_id)
+        _is_directional_bundle = _directional_root is not None
+        if _directional_root is not None:
+            try:
+                symbols, _bundle_excluded = validate_directional_bundle_for_prediction(
+                    _directional_root,
+                    list(symbols),
+                    require_oracle=True,
+                )
+            except DirectionalBundleContractError as exc:
+                LOGGER.error("predict bundle preflight FAILED batch=%s reason=%s", _batch_id, exc)
+                _safe_print(f"❌ Bundle non servable : {exc}")
+                raise SystemExit(2) from exc
+            if _bundle_excluded:
+                LOGGER.warning(
+                    "predict bundle universe filtered batch=%s kept=%d excluded=%d details=%s",
+                    _batch_id, len(symbols), len(_bundle_excluded), _bundle_excluded,
+                )
+            LOGGER.info(
+                "predict bundle preflight OK batch=%s paired_symbols=%d excluded=%d",
+                _batch_id, len(symbols), len(_bundle_excluded),
+            )
         if _oracle_only:
             # Prédiction standard Oracle (champions, sans retrain) → table
             # oracle_extreme_predictions. Période : historique (start/end) ou live (jour).
@@ -1238,7 +1281,7 @@ def main(args: list[str] | None = None) -> None:
                 """Traite une date : global_rank → predict_batch → persist. Thread-safe."""
                 _ds = pred_date.isoformat()
                 # Étape 1 : global rank
-                if _batch_id:
+                if _batch_id and not _is_directional_bundle:
                     predict_global_rank_history(
                         start_date=_ds,
                         end_date=_ds,
@@ -1251,8 +1294,10 @@ def main(args: list[str] | None = None) -> None:
                 # OU aux batches sans modèles per-symbol/per-sector (global-only).
                 if _per_sector or not _has_ps_models:
                     return (_ds, 0)
-                _syms = opts.symbols or load_symbols_for_source(
-                    engine, opts.symbol_source, trade_date=pred_date,
+                _syms = symbols if _is_directional_bundle else (
+                    opts.symbols or load_symbols_for_source(
+                        engine, opts.symbol_source, trade_date=pred_date,
+                    )
                 )
                 _part = predict_batch(
                     _syms,
@@ -1461,6 +1506,12 @@ def main(args: list[str] | None = None) -> None:
                     "predict combined batch=%s oracle predict result=%s",
                     _batch_id, _oc_out,
                 )
+                if _is_directional_bundle and (
+                    not _oc_out
+                    or _oc_out.get("status") != "completed"
+                    or int(_oc_out.get("n_rows", 0) or 0) <= 0
+                ):
+                    raise RuntimeError(f"oracle_prediction_required_but_failed:{_oc_out}")
                 # ── Synchro Oracle → model_predictions (même logique que le flux
                 #    rank-driven / oracle-only) : peuple model_predictions avec le
                 #    signal Oracle (source=oracle_synth) pour la couverture ML et
@@ -1483,6 +1534,9 @@ def main(args: list[str] | None = None) -> None:
                             _batch_id, _synth_oc_exc,
                         )
             except Exception as _oc_exc:  # noqa: BLE001
+                if _is_directional_bundle:
+                    LOGGER.error("predict bundle oracle FAILED batch=%s: %s", _batch_id, _oc_exc)
+                    raise
                 LOGGER.warning(
                     "predict combined batch=%s oracle predict FAILED (non-bloquant): %s",
                     _batch_id, _oc_exc,

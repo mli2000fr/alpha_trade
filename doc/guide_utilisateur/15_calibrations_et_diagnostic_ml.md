@@ -17,6 +17,15 @@ dans [Sélection des candidats directionnels](../ml/per_symbol/06_selection_cand
 
 Pour un batch combiné Oracle + Per-Symbol LONG/SHORT, la page présente d'abord le contrat du bundle et la couverture de chaque branche. Sélectionner **LONG** pour consulter les champions, folds, régimes et classements fondés sur `f1_long`, ou **SHORT** pour les mêmes diagnostics fondés sur `f1_short`. Le volet « Couplage et filiation des prédictions » vérifie que chaque ligne consolidée référence bien les deux runs spécialisés. Ne pas comparer un tableau LONG et un tableau SHORT comme s'ils provenaient du même modèle : ce sont deux entraînements indépendants partageant le batch id.
 
+Le bouton **Périodes de prédictions du batch** suit également ce contrat. Pour un
+bundle, il n'affiche pas les anciennes lignes génériques per-symbol/per-sector :
+il présente la période de la sortie directionnelle consolidée, le nombre de
+lignes, dates et symboles, la couverture des filiations LONG et SHORT, puis la
+période Oracle Extreme utilisée comme gate d'amplitude. Une double filiation
+incomplète ou l'absence de période Oracle déclenche une alerte explicite. Pour
+un batch historique non combiné, la présentation global/per-symbol/per-sector
+reste inchangée.
+
 Le diagnostic ne change pas le modèle servi tant qu’une promotion explicite n’a pas lieu. Toujours identifier batch id, horizon, source symboles, dates training/univers et champion. Les mini-backtests et commandes générées doivent être relus avec leur contrat d’exécution.
 
 Les suppressions sont irréversibles sans sauvegarde. Vérifier que le batch n’est ni servi, ni requis comme fallback/rollback, puis archiver rapports et manifests. Les métriques Oracle sont OOS seulement si les lignes et splits affichés le garantissent.

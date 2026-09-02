@@ -958,25 +958,25 @@ def test_build_pipeline_command_ml_steps() -> None:
     assert train_cmd[train_cmd.index("--wf-step-size") + 1] == "252"
     assert train_cmd[train_cmd.index("--wf-max-splits") + 1] == "8"
 
-    # Drapeaux booléens activés par défaut (prod exclude per-symbol/per-sector + champion)
+    # Drapeaux booléens activés par défaut.
     for flag in (
         "--exclude-per-symbol-per-sector",
-        "--global-champion",
         "--walkforward",  # walk-forward activé par défaut en swing
         "--include-short-score",
         "--include-factors",
+        "--compare-lightgbm",
+        "--enable-catboost",
+        "--select-champion",
     ):
         assert flag in train_cmd, f"Flag attendu manquant : {flag}"
 
     # Drapeaux désactivés par défaut
     for flag in (
+        "--global-champion",
         "--include-sentiment",
-        "--compare-lightgbm",
-        "--enable-catboost",
         "--optimize-thresholds",
         "--candidate-decision-thresholds",
         "--global-model-only",  # 2026-08-28 : décoché par défaut (conflit Oracle)
-        "--select-champion",    # DEFAULT_ML_SELECT_CHAMPION=False
     ):
         assert flag not in train_cmd, f"Flag inattendu présent : {flag}"
 

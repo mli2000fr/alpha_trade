@@ -68,7 +68,6 @@ from modelFactory.evaluation import (
     optimize_decision_threshold,
 )
 from modelFactory.features import build_feature_contract, get_feature_columns
-from modelFactory.features import fingerprint as compute_feature_fingerprint
 from modelFactory.catboost_baseline import run_catboost_baseline
 from modelFactory.lightgbm_baseline import run_lightgbm_baseline
 from modelFactory.model import LSTMAttentionModule
@@ -1876,6 +1875,7 @@ def train_symbol(
                     model_name="catboost",
                     model_builder=_cb_builder,
                     artifact_dir=_h_dir / "catboost" if _is_multi else _h_dir,
+                    save_callback=lambda model, path: model.save_model(str(path)),
                     model_extension=".cbm",
                     ternary_policy=_ternary_policy,
                     by_dates=False,
@@ -1943,6 +1943,15 @@ def train_symbol(
             include_cross_sectional=effective_cfg.data.enable_cross_sectional_features,
             include_screener_scores=effective_cfg.data.include_screener_scores,
             include_short_score=effective_cfg.data.include_short_score_features,
+            include_macro_vix=effective_cfg.data.include_macro_vix_features,
+            include_macro_vxn=effective_cfg.data.include_macro_vxn_features,
+            include_macro_vix3m=effective_cfg.data.include_macro_vix3m_features,
+            include_macro_move=effective_cfg.data.include_macro_move_features,
+            include_global_stacking=effective_cfg.global_model.stacking_enabled,
+            include_fundamentals=effective_cfg.data.include_fundamentals_features,
+            include_factors=effective_cfg.data.include_factors_features,
+            include_macro_regime=effective_cfg.data.include_macro_regime_features,
+            include_score_components=effective_cfg.data.include_score_components,
             include_volume_features=(effective_cfg.data.include_volume_features and effective_cfg.data.feature_whitelist_enabled),
             feature_whitelist_enabled=effective_cfg.data.feature_whitelist_enabled,
             feature_whitelist=effective_cfg.data.feature_whitelist,
@@ -2058,18 +2067,12 @@ def train_symbol(
                 "selected_model": selected_architecture,
                 "models": artifact_routes_models,
             },
-            "feature_fingerprint": compute_feature_fingerprint(
-                include_sentiment=effective_cfg.data.include_sentiment_features,
-                feature_set=effective_cfg.data.feature_set,
-                include_cross_sectional=effective_cfg.data.enable_cross_sectional_features,
-                include_screener_scores=effective_cfg.data.include_screener_scores,
-                include_short_score=effective_cfg.data.include_short_score_features,
-                feature_columns=list(dm.scaler.feature_names),
-            ),
+            "feature_fingerprint": feature_contract.get("feature_fingerprint"),
         }
         _atomic_write_json(config_path, config_data)
 
         all_metrics = {
+            "model_role": effective_cfg.model_role,
             "val": val_metrics,
             "test": test_metrics,
             "walk_forward": walk_forward_metrics,

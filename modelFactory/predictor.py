@@ -800,6 +800,11 @@ class _LightGBMBoosterAdapter:
         proba_pos = _np.asarray(proba_pos, dtype=float).ravel()
         return _np.column_stack([1.0 - proba_pos, proba_pos])
 
+    def predict(self, X: Any) -> np.ndarray:  # type: ignore[name-defined]
+        """Expose l'API de régression attendue par le routeur générique."""
+        import numpy as _np
+        return _np.asarray(self._booster.predict(X), dtype=float)
+
 
 def _load_tabular_model(model_path: Path, *, selected_model: str) -> Any:
     """Charge un modèle tabulaire en routant selon l'extension.
@@ -2183,6 +2188,112 @@ def _directional_bundle_root(artifacts_dir: Path, batch_id: str | None) -> Path 
     return None
 
 
+class DirectionalBundleContractError(RuntimeError):
+    """Le bundle ne satisfait pas le contrat minimal de serving."""
+
+
+def _resolve_bundle_artifact_path(bundle_root: Path, config_path: Path, value: Any) -> Path | None:
+    if not value:
+        return None
+    raw = Path(str(value))
+    candidates = [raw] if raw.is_absolute() else [raw, bundle_root / raw, config_path.parent / raw]
+    return next((candidate for candidate in candidates if candidate.is_file()), candidates[0])
+
+
+def validate_directional_bundle_for_prediction(
+    bundle_root: Path,
+    symbols: list[str],
+    *,
+    require_oracle: bool = True,
+) -> tuple[list[str], dict[str, list[str]]]:
+    """Valide un bundle une fois avant tout backfill et filtre son univers.
+
+    Un symbole partiellement entraîné est exclu avec une raison explicite. Les
+    défauts globaux (manifeste/Oracle) et un univers final vide sont bloquants.
+    """
+    manifest_path = bundle_root / "cascade_manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise DirectionalBundleContractError(f"manifest_unavailable:{exc}") from exc
+    if manifest.get("cascade_type") != "oracle_extreme_plus_per_symbol_directional":
+        raise DirectionalBundleContractError("invalid_cascade_type")
+    if manifest.get("status") != "completed" or manifest.get("serving_ready") is not True:
+        raise DirectionalBundleContractError(
+            f"bundle_not_serving_ready:status={manifest.get('status')}"
+        )
+    batch_id = str(manifest.get("batch_id") or bundle_root.name)
+    if require_oracle:
+        from modelFactory.oracle.predict_history import has_oracle_champions
+
+        if (manifest.get("oracle") or {}).get("status") != "completed":
+            raise DirectionalBundleContractError("oracle_not_completed")
+        if not has_oracle_champions(batch_id):
+            raise DirectionalBundleContractError("oracle_champions_missing")
+
+    valid: list[str] = []
+    excluded: dict[str, list[str]] = {}
+    for raw_symbol in symbols:
+        symbol = str(raw_symbol).strip().upper()
+        reasons: list[str] = []
+        for direction in ("long", "short"):
+            config_path = bundle_root / "directions" / direction / symbol / "config.json"
+            try:
+                config = json.loads(config_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                reasons.append(f"{direction}:config_missing")
+                continue
+            if config.get("model_role") != f"direction_{direction}":
+                reasons.append(f"{direction}:role_mismatch")
+            if (config.get("data") or {}).get("target_mode") != "ternary":
+                reasons.append(f"{direction}:target_not_ternary")
+            if int((config.get("model") or {}).get("num_classes") or 0) != 3:
+                reasons.append(f"{direction}:num_classes_not_3")
+            contract_fp = str((config.get("feature_contract") or {}).get("feature_fingerprint") or "")
+            persisted_fp = str(config.get("feature_fingerprint") or "")
+            if not contract_fp or persisted_fp != contract_fp:
+                reasons.append(f"{direction}:feature_fingerprint_mismatch")
+
+            routes = config.get("artifact_routes") or {}
+            selected = str(routes.get("selected_model") or config.get("architecture_selected") or "")
+            route = ((routes.get("models") or {}).get(selected) or {}) if selected else {}
+            artifact_value = route.get("model_path") or route.get("checkpoint_path")
+            artifact_path = _resolve_bundle_artifact_path(bundle_root, config_path, artifact_value)
+            if not selected or artifact_path is None or not artifact_path.is_file():
+                reasons.append(f"{direction}:champion_artifact_missing")
+            elif artifact_path.suffix.lower() == ".cbm":
+                try:
+                    with artifact_path.open("rb") as fh:
+                        header = fh.read(4)
+                    if header != b"CBM1":
+                        reasons.append(f"{direction}:catboost_not_native")
+                except OSError:
+                    reasons.append(f"{direction}:champion_artifact_unreadable")
+            elif artifact_path.suffix.lower() == ".txt":
+                try:
+                    with artifact_path.open("rb") as fh:
+                        header = fh.read(1)
+                    if header == b"\x80":
+                        reasons.append(f"{direction}:lightgbm_not_native")
+                except OSError:
+                    reasons.append(f"{direction}:champion_artifact_unreadable")
+        if reasons:
+            excluded[symbol] = reasons
+        elif symbol:
+            valid.append(symbol)
+
+    valid = list(dict.fromkeys(valid))
+    if not valid:
+        reason_counts: dict[str, int] = {}
+        for reasons in excluded.values():
+            for reason in reasons:
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        raise DirectionalBundleContractError(
+            f"no_symbol_with_complete_long_short_contract:{reason_counts}"
+        )
+    return valid, excluded
+
+
 def predict_directional_symbol(
     symbol: str,
     bundle_root: Path,
@@ -3220,8 +3331,14 @@ def cascade_select(
                     continue
                 _long_prob = float(_eg_pred.long_prob)
                 _short_prob = float(_eg_pred.short_prob)
+                _flat_prob = float(_eg_pred.flat_prob)
+                _direction_prob = max(_long_prob, _short_prob)
                 _direction_margin = abs(_long_prob - _short_prob)
-                if max(_long_prob, _short_prob) <= _min_prob:
+                if _direction_prob <= _min_prob:
+                    continue
+                # Contrat ternaire strict : la cascade ne doit pas transformer
+                # une prédiction FLAT dominante en position LONG ou SHORT.
+                if _direction_prob <= _flat_prob:
                     continue
                 # Une égalité est ambiguë : aucun biais LONG implicite.
                 if _direction_margin <= 0.0 or _direction_margin < _eg_direction_margin:
@@ -3958,8 +4075,10 @@ def predict_batch(
         symbols_failed=0,
     )
 
-    # ── Pré-calcul du global_rank pour stacking (si activé) ──
-    _try_compute_global_rank_for_prediction(artifacts_dir, engine, prediction_date)
+    # Un bundle Oracle O0 + direction n'embarque aucun Global Ranking. Ne pas
+    # déclencher le fallback legacy, coûteux et trompeur dans les logs.
+    if directional_root is None:
+        _try_compute_global_rank_for_prediction(artifacts_dir, engine, prediction_date)
 
     if max_workers <= 1:
         # ── Chemin séquentiel (comportement historique) ──────────
