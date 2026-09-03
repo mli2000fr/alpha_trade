@@ -23,7 +23,11 @@ from modelFactory.predictor import (
     validate_directional_bundle_for_prediction,
 )
 from modelFactory.orchestrator import _oracle_requires_global_rank
-from modelFactory.oracle.dataset import expert_feature_columns
+from modelFactory.oracle.dataset import (
+    ORACLE_REDUNDANT_FEATURES,
+    deduplicate_oracle_feature_columns,
+    expert_feature_columns,
+)
 from modelFactory.global_ranking import _XS_RANK_SOURCE_FEATURES, _xs_rank_column_name
 
 
@@ -34,11 +38,12 @@ def test_bundled_profiles_are_discoverable_and_valid() -> None:
     long_profile = load_feature_profile("long", "long.json")
     short_profile = load_feature_profile("short", "short.json")
     oracle_profile = load_feature_profile("oracle", "oracle.json")
-    expected_oracle = expert_feature_columns() + [
+    expected_oracle = deduplicate_oracle_feature_columns(expert_feature_columns() + [
         _xs_rank_column_name(column) for column in _XS_RANK_SOURCE_FEATURES
-    ]
+    ])
     assert oracle_profile["feature_columns"] == expected_oracle
-    assert len(oracle_profile["feature_columns"]) == 174
+    assert len(oracle_profile["feature_columns"]) == 168
+    assert ORACLE_REDUNDANT_FEATURES.isdisjoint(oracle_profile["feature_columns"])
     assert len(long_profile["feature_columns"]) == 84
     assert len(short_profile["feature_columns"]) == 130
     assert short_profile["generator_options"]["include_macro_move"] is True

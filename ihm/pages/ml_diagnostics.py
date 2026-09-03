@@ -1588,7 +1588,10 @@ def _oracle_periods(batch_id: str) -> list[dict[str, Any]]:
     """
     out: list[dict[str, Any]] = []
     try:
-        _tbl = _cached_query(ORACLE_TABLE_PERIODS_QUERY, {"batch_id": batch_id})
+        # Agrégation légère et indexée, exécutée seulement après clic. Ne pas la
+        # mettre dans le cache partagé de 5 minutes : la prédiction Oracle écrit
+        # désormais par lots et cette vue sert précisément à suivre sa progression.
+        _tbl = safe_query(ORACLE_TABLE_PERIODS_QUERY, {"batch_id": batch_id})
         if not _tbl.empty:
             _r = _tbl.iloc[0]
             _mn = pd.Timestamp(_r["min_date"])

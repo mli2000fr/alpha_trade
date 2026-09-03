@@ -57,9 +57,11 @@ Le chargeur refuse les chemins relatifs ou traversants, une mauvaise direction, 
 
 ### Profils livrés
 
-- `oracle/oracle.json` : contrat canonique O0, 129 features EXPERT et 45 rangs cross-sectionnels, sans `global_rank_20` ni les deux extras O1, soit 174 colonnes ordonnées ;
+- `oracle/oracle.json` : contrat canonique O0 dédupliqué, 124 features EXPERT et 44 rangs cross-sectionnels, sans `global_rank_20` ni les deux extras O1, soit 168 colonnes ordonnées. Les cinq alias bruts `distance_ema20`, `distance_ema50`, `return_5d`, `return_10d`, `return_20d` et le rang redondant `log_return_xs_rank` sont exclus ;
 - `long/long.json` : contrat LONG confirmé du batch `model-factory-20260902052533-998d3a`, 84 features EXPERT, après ablation et confirmation sur 300 symboles.
 - `short/short.json` : contrat SHORT confirmé du batch `model-factory-20260901180312-2d74f9`, 130 features EXPERT avec MOVE. `include_macro_move=true` est indispensable : mettre `move_close` dans une whitelist ne calcule pas sa source à lui seul.
+
+En prédiction historique, les sorties Oracle sont persistées par défaut tous les 20 jours de marché. Chaque lot possède sa propre transaction et devient immédiatement visible dans la page Diagnostic ML. Une interruption conserve donc les lots déjà écrits et une relance les met à jour sans doublon grâce à la clé `(prediction_date, symbol, batch_id)`. Le tableau des périodes Oracle exécute son agrégation à chaque clic afin d'afficher cette progression sans le délai du cache général.
 
 Les performances historiques constituent la provenance du profil, pas une garantie. Une modification d'univers, d'horizon, de seuil de label ou de période exige une nouvelle validation OOS.
 
