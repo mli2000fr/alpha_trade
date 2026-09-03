@@ -251,7 +251,9 @@ def apply_tabular_calibration(
 	if calibrator is None or not calibrator.fitted:
 		return np.asarray(raw_proba, dtype=np.float64)
 	if target_mode == "ternary" and isinstance(calibrator, (TemperatureScaler, VectorScaler)):
-		return calibrator.predict_proba(raw_proba)
+		from modelFactory.calibration import probabilities_to_pseudo_logits
+
+		return calibrator.predict_proba(probabilities_to_pseudo_logits(raw_proba))
 	if isinstance(calibrator, PlattCalibrator):
 		eps = 1e-6
 		raw = np.asarray(raw_proba, dtype=np.float64)

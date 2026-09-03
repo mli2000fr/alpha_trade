@@ -10,10 +10,13 @@ Promouvoir ou bloquer modifie l’état en base. Avant promotion : vérifier pé
 
 Cette page très large inspecte batches, symboles, splits walk-forward, régimes, distributions true/pred, Oracle Extreme, modèle global, per-symbol/per-sector et historique des rangs. Elle peut générer/lancer des backtests exploratoires, calculer des labels Oracle et supprimer des batches/artefacts.
 
-Pour un batch ternaire per-symbol, elle peut également préparer et télécharger
-trois listes exclusives de candidats stables : LONG uniquement, SHORT uniquement
-et LONG+SHORT. Le contrat détaillé des supports, folds et seuils F1 est documenté
-dans [Sélection des candidats directionnels](../ml/per_symbol/06_selection_candidats_directionnels.md).
+Pour un batch ternaire per-symbol, elle peut également préparer les listes
+exclusives LONG uniquement, SHORT uniquement et LONG+SHORT. Le sélecteur local
+permet de passer de **DISCOVERY / HIGH POTENTIAL** (screening, affiché par
+défaut) à **STRICT / STABLE** (confirmation robuste), sans modifier
+`config.yaml`. Le téléchargement contient simultanément les deux niveaux. Le
+contrat détaillé des supports, folds et seuils F1 est documenté dans
+[Sélection des candidats directionnels](../ml/per_symbol/06_selection_candidats_directionnels.md).
 
 Pour un batch combiné Oracle + Per-Symbol LONG/SHORT, la page présente d'abord le contrat du bundle et la couverture de chaque branche. Sélectionner **LONG** pour consulter les champions, folds, régimes et classements fondés sur `f1_long`, ou **SHORT** pour les mêmes diagnostics fondés sur `f1_short`. Le volet « Couplage et filiation des prédictions » vérifie que chaque ligne consolidée référence bien les deux runs spécialisés. Ne pas comparer un tableau LONG et un tableau SHORT comme s'ils provenaient du même modèle : ce sont deux entraînements indépendants partageant le batch id.
 

@@ -155,6 +155,28 @@ def test_apply_tabular_calibration_ternary() -> None:
     assert np.allclose(calibrated.sum(axis=1), 1.0, atol=1e-5)
 
 
+def test_apply_tabular_vector_calibration_reuses_training_pseudo_logits() -> None:
+    from modelFactory.calibration import probabilities_to_pseudo_logits
+    from modelFactory.tabular_baseline import apply_tabular_calibration
+
+    cal = VectorScaler(
+        temperature=1.4,
+        biases=np.array([-0.2, 0.05, 0.15]),
+        fitted=True,
+    )
+    raw_proba = np.array([[0.6, 0.3, 0.1], [0.1, 0.7, 0.2]])
+
+    calibrated = apply_tabular_calibration(
+        raw_proba,
+        cal,
+        target_mode="ternary",
+    )
+    expected = cal.predict(probabilities_to_pseudo_logits(raw_proba))
+
+    np.testing.assert_allclose(calibrated, expected)
+    np.testing.assert_allclose(calibrated.sum(axis=1), 1.0, atol=1e-6)
+
+
 def test_apply_tabular_calibration_binary() -> None:
     from modelFactory.tabular_baseline import apply_tabular_calibration
 

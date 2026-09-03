@@ -358,8 +358,17 @@ def build_backtesting_command(
             command.extend(["--cascade-top-pct", str(options.cascade_top_pct)])
         # Persistent Rank DIP filter — overrides optionnels du config.yaml.
         # Aucun flag émis si tous les champs sont None → la CLI lit config.yaml.
-        if options.dip_enabled is not None:
-            command.append("--dip-enabled" if options.dip_enabled else "--no-dip-enabled")
+        _effective_dip_enabled = options.dip_enabled
+        if (
+            options.cascade_rank_mode in ("extreme_gate", "extreme_gate_directional")
+            and not options.extreme_gate_dip_saturated
+        ):
+            # Persistent Rank DIP appartient à la branche Global Ranking. En
+            # Extreme Gate, seule la priorité N4X2 saturée peut l'activer sans
+            # transformer le DIP en gate Oracle dur.
+            _effective_dip_enabled = False
+        if _effective_dip_enabled is not None:
+            command.append("--dip-enabled" if _effective_dip_enabled else "--no-dip-enabled")
         if options.dip_rank_horizon is not None:
             command.extend(["--dip-rank-horizon", str(int(options.dip_rank_horizon))])
         if options.dip_rank_threshold is not None:

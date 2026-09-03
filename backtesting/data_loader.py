@@ -656,10 +656,14 @@ def load_predictions(
             where_symbols = f" AND prediction.symbol IN ({placeholders})"
             params.update({f"sym_{i}": sym for i, sym in enumerate(unique_symbols)})
 
+    training_run_columns = (
+        _get_table_columns(engine, "model_training_run")
+        if "run_id" in columns
+        else set()
+    )
     batch_join = ""
     batch_condition = ""
     if batch_id:
-        training_run_columns = _get_table_columns(engine, "model_training_run")
         if "batch_id" not in training_run_columns:
             raise RuntimeError("Le filtrage par batch ML exige model_training_run.batch_id.")
         batch_join = """
@@ -668,6 +672,30 @@ def load_predictions(
         """
         batch_condition = " AND training_run.batch_id = :batch_id"
         params["batch_id"] = batch_id
+    elif "run_id" in training_run_columns and "run_id" in columns:
+        batch_join = """
+            LEFT JOIN model_training_run training_run
+              ON training_run.run_id = prediction.run_id
+        """
+
+    # A directional bundle contains two independently trained models.  Keep
+    # both training cut-offs next to every prediction so the backtest can
+    # prove that each model existed before the simulated trading date.
+    directional_joins = ""
+    has_training_cutoff = "train_end_date" in training_run_columns
+    has_directional_lineage = (
+        has_training_cutoff
+        and "run_id" in training_run_columns
+        and "direction_long_run_id" in columns
+        and "direction_short_run_id" in columns
+    )
+    if has_directional_lineage:
+        directional_joins = """
+            LEFT JOIN model_training_run direction_long_training_run
+              ON direction_long_training_run.run_id = prediction.direction_long_run_id
+            LEFT JOIN model_training_run direction_short_training_run
+              ON direction_short_training_run.run_id = prediction.direction_short_run_id
+        """
 
     source_condition = ""
     if sources:
@@ -680,7 +708,26 @@ def load_predictions(
     def _optional_select(columns: set[str], column: str) -> str:  # noqa: redefinition-ok
         return f"prediction.{column}" if column in columns else f"NULL AS {column}"
 
-    selected_batch = "training_run.batch_id AS batch_id" if batch_id else "NULL AS batch_id"
+    selected_batch = (
+        "training_run.batch_id AS batch_id"
+        if "batch_id" in training_run_columns and batch_join
+        else "NULL AS batch_id"
+    )
+    model_train_end = (
+        "training_run.train_end_date AS model_train_end_date"
+        if has_training_cutoff and batch_join
+        else "NULL AS model_train_end_date"
+    )
+    long_train_end = (
+        "direction_long_training_run.train_end_date AS direction_long_train_end_date"
+        if has_directional_lineage
+        else "NULL AS direction_long_train_end_date"
+    )
+    short_train_end = (
+        "direction_short_training_run.train_end_date AS direction_short_train_end_date"
+        if has_directional_lineage
+        else "NULL AS direction_short_train_end_date"
+    )
 
     query = text(f"""
         SELECT prediction.symbol,
@@ -694,9 +741,16 @@ def load_predictions(
                {_optional_select(columns, 'run_id')},
                {_optional_select(columns, 'created_at')},
                {_optional_select(columns, 'source')},
+               {_optional_select(columns, 'model_role')},
+               {_optional_select(columns, 'direction_long_run_id')},
+               {_optional_select(columns, 'direction_short_run_id')},
+               {model_train_end},
+               {long_train_end},
+               {short_train_end},
                {selected_batch}
         FROM model_predictions prediction
         {batch_join}
+        {directional_joins}
         WHERE prediction.{date_col} BETWEEN :start AND :end{where_symbols}{batch_condition}{source_condition}
         ORDER BY prediction.{date_col}, prediction.symbol
     """)

@@ -37,3 +37,12 @@ def test_training_role_schema_is_kept_in_alembic_and_reference_sql() -> None:
     assert "idx_batch_role_symbol" in migration
     assert "model_role" in schema
     assert "idx_batch_role_symbol" in schema
+
+
+def test_directional_candidate_view_can_switch_strict_and_discovery() -> None:
+    source = (ROOT / "ihm" / "pages" / "ml_diagnostics.py").read_text(encoding="utf-8")
+
+    assert "Niveau de sélection" in source
+    assert "DISCOVERY / HIGH POTENTIAL" in source
+    assert "STRICT / STABLE" in source
+    assert "discovery_classification" in source

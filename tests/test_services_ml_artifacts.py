@@ -122,6 +122,11 @@ def test_batch_directional_candidate_selection_builds_three_exclusive_lists(tmp_
     _write_directional_symbol_artifacts(
         batch_dir, "REJECT", long_values=[0.10, 0.15, 0.20], short_values=[0.10, 0.15, 0.20]
     )
+    _write_directional_symbol_artifacts(
+        batch_dir, "POTENTIAL",
+        long_values=[0.73, 0.60, 0.50, 0.40, 0.00],
+        short_values=[0.10, 0.15, 0.20, 0.10, 0.15],
+    )
     internal = batch_dir / "__GLOBAL__"
     internal.mkdir()
     (internal / "config.json").write_text("{}", encoding="utf-8")
@@ -129,17 +134,23 @@ def test_batch_directional_candidate_selection_builds_three_exclusive_lists(tmp_
     assert has_per_symbol_artifacts("batch-1", tmp_path) is True
     result = build_batch_directional_candidate_selection("batch-1", tmp_path)
 
-    assert result["scanned_symbols"] == 4
+    assert result["scanned_symbols"] == 5
     assert result["eligible_symbols"] == 3
     assert result["long_only"] == ["LONG"]
     assert result["short_only"] == ["SHORT"]
     assert result["long_short"] == ["BOTH"]
+    assert result["strict"]["eligible_symbols"] == 3
+    assert result["discovery"]["eligible_symbols"] == 4
+    assert result["discovery"]["long_only"] == ["LONG", "POTENTIAL"]
     audit = result["audit_df"].set_index("symbol")
     assert audit.loc["BOTH", "selected_model"] == "lightgbm"
     assert audit.loc["BOTH", "selected_horizon"] == 20
     assert audit.loc["BOTH", "classification"] == "LONG_SHORT"
     assert audit.loc["LONG", "classification"] == "LONG_ONLY"
     assert audit.loc["SHORT", "classification"] == "SHORT_ONLY"
+    assert audit.loc["POTENTIAL", "classification"] == "REJECTED"
+    assert audit.loc["POTENTIAL", "discovery_classification"] == "LONG_ONLY"
+    assert audit.loc["POTENTIAL", "long_discovery_reason"] == "high_potential_fragile_fold"
     assert audit.loc["REJECT", "classification"] == "REJECTED"
 
 
@@ -198,12 +209,21 @@ def test_directional_candidate_file_contains_comma_separated_exclusive_lists() -
             "long_only": ["MSFT", "AAPL"],
             "short_only": ["TSLA"],
             "long_short": ["NVDA", "AMD"],
+            "discovery": {
+                "long_only": ["SM", "CPRI"],
+                "short_only": ["BEN"],
+                "long_short": ["AAL"],
+            },
         }
     )
 
     assert "[LONG_ONLY]\nAAPL,MSFT" in payload
     assert "[SHORT_ONLY]\nTSLA" in payload
     assert "[LONG_SHORT]\nAMD,NVDA" in payload
+    assert "[DISCOVERY_LONG_ONLY]\nCPRI,SM" in payload
+    assert "[DISCOVERY_SHORT_ONLY]\nBEN" in payload
+    assert "[DISCOVERY_LONG_SHORT]\nAAL" in payload
+    assert "f1_macro exclu" in payload
     assert "AAPL, MSFT" not in payload
 
 

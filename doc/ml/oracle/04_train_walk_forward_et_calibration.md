@@ -32,6 +32,10 @@ Les sorties OOS vont sous `artifacts/models/oracle/<run_id>/` et dans la table s
 
 `combine.py` recherche méthodes, poids et isotonic en séparant selection folds et final folds. Ajuster sur selection, geler une seule variante, évaluer une fois sur final et conserver une baseline non calibrée.
 
+`apply_oracle_calibration(..., method="isotonic")` exige désormais un `calibration_df` explicite, distinct du DataFrame évalué. Il est interdit d'utiliser implicitement les labels `oracle_extreme10` de la fenêtre de backtest pour ajuster puis évaluer la même fenêtre. Un jeu de calibration absent, incomplet ou inférieur à 50 lignes provoque une erreur au lieu d'un fallback silencieux.
+
+Le backtest strict ne dispose actuellement pas d'un artefact de calibration Oracle gelé et daté antérieurement à la période. Il utilise donc `proba_extreme` OOS brute (`oracle.calibration: none`). C'est le contrat adapté à `extreme_gate`, qui reclasse déjà quotidiennement les scores en percentiles. Une future réactivation d'isotonic exigera un artefact contenant au minimum la courbe, la période de fit, le batch source et une date de disponibilité antérieure au début du backtest.
+
 Isotonic crée potentiellement des plateaux ; documenter les égalités dans le percentile. Aucune calibration ne transforme l’amplitude extrême en direction.
 
 ## Validation trading

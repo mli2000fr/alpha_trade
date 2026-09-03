@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from modelFactory.oracle.walk_forward import build_folds
+from modelFactory.oracle.walk_forward import build_folds, run_walk_forward
 
 
 def _dataset(n_days: int = 100, n_symbols: int = 20) -> pd.DataFrame:
@@ -70,3 +70,14 @@ class TestBuildFolds:
         # donc T2 n'est pas déclenché ici (le fold est simplement ignoré).
         folds = build_folds(df, [("2021-06-15", "2021-12-31")])
         assert folds == []
+
+
+def test_walk_forward_rejects_null_oracle_targets_without_type_error():
+    dataset = pd.DataFrame({
+        "oracle_extreme10": [None, None],
+        "date": pd.to_datetime(["2024-01-02", "2024-01-03"]),
+    })
+
+    result = run_walk_forward(dataset, [], folds=[])
+
+    assert result == {"status": "error", "reason": "no_labeled_oracle_targets"}

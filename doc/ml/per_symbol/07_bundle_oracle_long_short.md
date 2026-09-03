@@ -41,6 +41,12 @@ En mode bundle, le backend force systématiquement les deux branches directionne
 
 Le modèle Global Ranking n'appartient pas à ce bundle et n'est requis ni à l'entraînement O0 ni à la prédiction. Le préremplissage `global_rank_20` est donc désactivé pour ce parcours. Les autres campagnes Global Ranking demeurent inchangées.
 
+### Taille minimale de l'univers Oracle
+
+Les labels O0 sont des rangs cross-sectionnels TOP/BOTTOM 10 %. Ils exigent au moins **20 symboles disposant d'un rendement futur exploitable pour une même date**. Un bundle dont l'univers total contient moins de 20 symboles est maintenant refusé avant tout entraînement avec `insufficient_oracle_universe`, afin de ne pas dépenser du temps sur les branches LONG/SHORT d'un batch qui ne pourra jamais être servi.
+
+Le seuil de 20 est un minimum technique, pas une recommandation de campagne. Pour un smoke test, prévoir au moins 25 à 30 titres avec suffisamment d'historique pour absorber les exclusions et les données manquantes. Après construction, les lignes sans cible binaire sont retirées du dataset Oracle. Si aucune cible ne reste, le batch échoue explicitement avec `no_labeled_oracle_targets` ; aucune conversion de valeur `NULL` en entier n'est tentée.
+
 ## Contrat et découverte des profils
 
 Les profils sont découverts dynamiquement dans `config/features/oracle/*.json`, `config/features/long/*.json` et `config/features/short/*.json`. L'IHM choisit `oracle.json`, `long.json` et `short.json` par défaut lorsqu'ils existent.
@@ -138,6 +144,18 @@ La classe consolidée est LONG si `P_long` est strictement supérieure aux deux 
 
 La table `model_predictions` persiste également `direction_long_model` et `direction_short_model`. Ainsi, `proba_long` est traçable jusqu'au run et au champion LONG, tandis que `proba_short` est traçable jusqu'au run et au champion SHORT. Le champ historique `run_id` reste renseigné avec le run LONG pour conserver sa contrainte et la compatibilité des jointures existantes ; la double filiation complète se lit dans les nouvelles colonnes.
 
+### Calibration multiclasse au serving
+
+Les calibrateurs directionnels sont distincts de `oracle.calibration`. Pour une branche ternaire, la calibration doit traiter simultanément `[P(SHORT), P(FLAT), P(LONG)]` : elle ne peut pas être appliquée à la seule marge binaire de `P(LONG)`.
+
+- LSTM utilise `TemperatureScaler` sur les logits natifs `[N,3]` ;
+- LightGBM et CatBoost utilisent `VectorScaler` ; leurs probabilités sont normalisées puis transformées en pseudo-logits `log(P)` exactement comme pendant le fit ;
+- la sortie calibrée doit conserver la forme `[N,3]`, contenir uniquement des valeurs finies et sommer à 1 par ligne ;
+- `calibration_method` vaut `temperature` ou `vector` seulement lorsque cette sortie est effectivement utilisée ;
+- en cas d'artefact incompatible, le fallback vers les probabilités brutes reste non bloquant mais il est comptabilisé dans `prediction_calibration_fallback_count` et journalisé explicitement.
+
+Le chemin scalaire `_apply_optional_calibration` est réservé à Platt/binaire. Les méthodes `temperature` et `vector` en sont exclues pour éviter l'erreur de conversion d'un vecteur de trois classes vers un seul `float`.
+
 L'absence d'une branche invalide la prédiction du symbole. Aucun fallback silencieux vers le modèle legacy n'est fait, car mélanger un champion récent avec un modèle unique historique serait difficile à auditer. L'univers réellement prédit est donc l'intersection des symboles servables `LONG ∩ SHORT`, pas l'union des deux répertoires.
 
 ### Préflight obligatoire avant toute prédiction
@@ -188,3 +206,19 @@ La page **Diagnostic ML** détecte `cascade_manifest.json` et affiche une synth�
 - le téléchargement des candidats lit les artefacts sous `directions/long` et `directions/short`, puis applique les gates indépendamment.
 
 La compatibilité historique est conservée : en l'absence de manifeste bundle, la page utilise le parcours direct `<batch>/<SYMBOL>` et l'affichage per-symbol/per-sector précédent.
+
+## Contrôle PIT des prédictions directionnelles en backtest
+
+La présence d'une ligne historique dans `model_predictions` ne prouve pas qu'elle était disponible à la date simulée. Une commande de prédiction lancée après l'entraînement final peut recalculer 2024 avec un modèle dont `train_end_date` est en juin 2024 : ces lignes sont techniquement historiques, mais elles utilisent du futur pour janvier-mai 2024.
+
+En mode backtest `pipeline`, le contrôle est bloquant pour un bundle directionnel. Pour chaque ligne, le chargeur relie `direction_long_run_id` et `direction_short_run_id` à leurs lignes `model_training_run`. Le contrat exigé est :
+
+```text
+train_end_date(LONG)  < trade_date
+ET
+train_end_date(SHORT) < trade_date
+```
+
+L'égalité est refusée : avec des barres daily, un modèle entraîné jusqu'au close du jour ne peut pas être considéré disponible avant la décision du même jour sans contrat intraday plus précis. Une filiation absente, un run inconnu ou une date de fin d'entraînement absente sont également refusés ; le moteur ne remplace pas une preuve PIT manquante par une hypothèse favorable.
+
+Pour tester une période incluse dans la fenêtre d'entraînement finale, il faut donc persister des prédictions issues de vrais folds walk-forward et leur propre filiation de modèle as-of. Sinon, le backtest doit commencer après la fin d'entraînement des deux branches. Les backtests directionnels antérieurs à ce contrôle sont non conclusifs lorsque leurs prédictions précèdent la fin d'entraînement de leur run.

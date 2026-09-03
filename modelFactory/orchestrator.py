@@ -67,6 +67,19 @@ def _oracle_requires_global_rank(cfg: TrainingConfig) -> bool:
     return not cfg.data.oracle_model_only and not cfg.directional_profiles_enabled
 
 
+def _insufficient_oracle_universe_reason(symbols: list[str]) -> str | None:
+    """Retourne une erreur déterministe si aucun rang Oracle n'est possible."""
+    from modelFactory.oracle.build_labels import _MIN_RANK_UNIVERSE
+
+    unique_symbols = {str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()}
+    if len(unique_symbols) >= _MIN_RANK_UNIVERSE:
+        return None
+    return (
+        "insufficient_oracle_universe:"
+        f"symbols={len(unique_symbols)} min_required={_MIN_RANK_UNIVERSE}"
+    )
+
+
 def _with_batch_artifacts_dir(cfg: TrainingConfig, batch_id: str) -> TrainingConfig:
     """Scopes durable training artifacts under one immutable campaign directory."""
     return replace(
@@ -518,6 +531,19 @@ def train_oracle_extreme(
             symbols=_universe,
         )
         LOGGER.info("oracle_extreme build_labels status=%s n_labeled=%s", labels_result.get("status"), labels_result.get("n_labeled"))
+        if int(labels_result.get("n_labeled") or 0) <= 0:
+            reason = (
+                "no_labeled_oracle_targets:"
+                f"rows={int(labels_result.get('n_rows') or 0)} "
+                f"unavailable={int(labels_result.get('n_unavailable') or 0)}"
+            )
+            LOGGER.error("oracle_extreme %s", reason)
+            return {
+                "status": "failed",
+                "reason": reason,
+                "batch_id": _batch_id,
+                "labels": labels_result,
+            }
     except Exception as exc:
         LOGGER.warning("oracle_extreme build_labels failed: %s", exc)
 
@@ -809,6 +835,51 @@ def run_training_batch(
     # ── Filtrage per-symbol max (test rapide, top N par volume moyen) ──
     # Ne PAS appliquer au Global Ranking — sauvegarder la liste complète avant.
     _global_symbols = list(symbols)
+    if cfg.directional_profiles_enabled:
+        _oracle_universe_reason = _insufficient_oracle_universe_reason(_global_symbols)
+        if _oracle_universe_reason:
+            LOGGER.error("directional bundle preflight FAILED: %s", _oracle_universe_reason)
+            _manifest_path = Path(cfg.artifacts_dir) / "cascade_manifest.json"
+            try:
+                _manifest = json.loads(_manifest_path.read_text(encoding="utf-8"))
+                _manifest.update({
+                    "status": "failed",
+                    "serving_ready": False,
+                    "failure_reason": _oracle_universe_reason,
+                    "coverage": {
+                        "requested_symbols": len({str(s).strip().upper() for s in _global_symbols}),
+                        "long_symbols": 0,
+                        "short_symbols": 0,
+                        "paired_symbols": 0,
+                        "excluded_symbols": sorted({str(s).strip().upper() for s in _global_symbols}),
+                    },
+                })
+                _manifest["oracle"] = {
+                    **dict(_manifest.get("oracle") or {}),
+                    "status": "failed",
+                    "result": {"status": "failed", "reason": _oracle_universe_reason},
+                    "champions_ready": False,
+                }
+                _manifest_path.write_text(
+                    json.dumps(_manifest, ensure_ascii=False, indent=2, default=str),
+                    encoding="utf-8",
+                )
+            except Exception as _manifest_exc:  # noqa: BLE001
+                LOGGER.error("directional bundle preflight manifest update failed: %s", _manifest_exc)
+            update_runtime_status(
+                current_phase="batch_failed",
+                progress_current=0,
+                symbols_completed=0,
+                symbols_skipped=0,
+                symbols_failed=1,
+                progress_item=None,
+                phase_detail=_oracle_universe_reason,
+            )
+            return [
+                TrainResult(
+                    "__ORACLE__", batch_id, "failed", skip_reason=_oracle_universe_reason,
+                )
+            ]
     _ps_max = getattr(cfg.data, "per_symbol_max_symbols", 0)
     _ps_stratified = getattr(cfg.data, "per_symbol_selection_stratified", False)
     if _ps_max > 0 and len(symbols) > _ps_max:

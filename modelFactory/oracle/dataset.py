@@ -39,6 +39,20 @@ GLOBAL_RANK_COL = "global_rank_20"
 # Features Oracle spécialisées (§7C) — calculées en plus du set B25.
 ORACLE_EXTRA_FEATURES: list[str] = ["drawdown_20", "high_low_position_20"]
 
+# Redondances exactes du contrat EXPERT à ne jamais présenter au modèle Oracle.
+# On conserve les noms historiques les plus directs (``ema*_distance`` et
+# ``momentum_*``). Les colonnes restent calculées par le moteur partagé pour ne
+# pas modifier les autres familles de modèles, mais elles sont retirées du
+# contrat Oracle avant l'entraînement et le serving.
+ORACLE_REDUNDANT_FEATURES: frozenset[str] = frozenset({
+    "distance_ema20",       # == ema20_distance
+    "distance_ema50",       # == ema50_distance
+    "return_5d",            # == momentum_5
+    "return_10d",           # == momentum_10
+    "return_20d",           # == momentum_20
+    "log_return_xs_rank",   # == daily_return_xs_rank (même ordre cross-sectionnel)
+})
+
 # Familles pour l'ablation O2 (le « set allégé »).
 _MOMENTUM_PREFIXES = ("momentum_", "relative_strength_", "accel_", "decay_")
 _VOLUME_PREFIXES = ("volume_", "dollar_volume_", "amihud_", "obv_", "up_volume_",
@@ -50,6 +64,11 @@ _REGIME_PREFIXES = ("regime_", "market_", "SPY_", "VIX_")
 def expert_feature_columns() -> list[str]:
     """Liste canonique des features expert (même moteur que B25)."""
     return list(get_feature_columns(feature_set="expert"))
+
+
+def deduplicate_oracle_feature_columns(features: list[str]) -> list[str]:
+    """Retire les alias sémantiques connus du contrat Oracle en préservant l'ordre."""
+    return [column for column in features if column not in ORACLE_REDUNDANT_FEATURES]
 
 
 def lean_feature_columns(features: list[str]) -> list[str]:
@@ -169,7 +188,7 @@ def build_dataset(
 
     base_cols = [c for c in expert_feature_columns() if c in feats.columns]
     xs_cols = [c for c in feats.columns if c.endswith("_xs_rank")]
-    feature_columns = base_cols + xs_cols  # O0
+    feature_columns = deduplicate_oracle_feature_columns(base_cols + xs_cols)  # O0
     if feature_whitelist is not None:
         requested = [str(column).strip() for column in feature_whitelist if str(column).strip()]
         available = set(feature_columns)
@@ -199,8 +218,14 @@ def build_dataset(
             how="inner",
         )
         df = df.drop(columns=["prediction_date"])
-        # Garde anti-leakage : ne garder que les labels strictement disponibles.
-        df = df[df[GUARD_COL] > df["date"]]
+        # Garde anti-leakage et contrat d'entraînement : une ligne dont le
+        # rang cross-sectionnel n'a pas pu être calculé ne doit jamais arriver
+        # au classifieur binaire ni être convertie implicitement en entier.
+        df = df[
+            df[TARGET_COL].notna()
+            & df[GUARD_COL].notna()
+            & (df[GUARD_COL] > df["date"])
+        ]
     else:
         # Prédiction standard : labels optionnels (NULL si pas encore réalisés).
         df = df.merge(

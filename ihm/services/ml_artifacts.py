@@ -19,6 +19,7 @@ WF_PASS_F1 = 0.35
 WF_STABLE_MEDIAN_F1 = 0.40
 WF_STABLE_MIN_F1 = 0.20
 WF_STABLE_PASS_RATE = 0.60
+WF_DISCOVERY_MEDIAN_F1 = 0.45
 
 DIRECTIONAL_CLASS_LONG_ONLY = "LONG_ONLY"
 DIRECTIONAL_CLASS_SHORT_ONLY = "SHORT_ONLY"
@@ -507,6 +508,44 @@ def _directional_selection_reason(side_summary: dict[str, Any]) -> str:
     return ";".join(reasons) or str(side_summary.get("status") or "not_stable")
 
 
+def _is_discovery_side_candidate(side_summary: dict[str, Any]) -> bool:
+    """Gate de screening : performance centrale forte, minimum non bloquant."""
+    valid_folds = int(side_summary.get("valid_folds") or 0)
+    median = _finite_float(side_summary.get("f1_median"))
+    pass_rate = _finite_float(side_summary.get("pass_rate"))
+    return bool(
+        valid_folds >= WF_MIN_VALID_FOLDS
+        and median is not None and median >= WF_DISCOVERY_MEDIAN_F1
+        and pass_rate is not None and pass_rate >= WF_STABLE_PASS_RATE
+    )
+
+
+def _directional_discovery_reason(side_summary: dict[str, Any]) -> str:
+    if _is_discovery_side_candidate(side_summary):
+        minimum = _finite_float(side_summary.get("f1_min"))
+        return "high_potential_fragile_fold" if minimum is None or minimum < WF_STABLE_MIN_F1 else "high_potential"
+    reasons: list[str] = []
+    if int(side_summary.get("valid_folds") or 0) < WF_MIN_VALID_FOLDS:
+        reasons.append(f"valid_folds<{WF_MIN_VALID_FOLDS}")
+    median = _finite_float(side_summary.get("f1_median"))
+    if median is None or median < WF_DISCOVERY_MEDIAN_F1:
+        reasons.append(f"median_f1_side<{WF_DISCOVERY_MEDIAN_F1:.2f}")
+    pass_rate = _finite_float(side_summary.get("pass_rate"))
+    if pass_rate is None or pass_rate < WF_STABLE_PASS_RATE:
+        reasons.append(f"pass_rate<{WF_STABLE_PASS_RATE:.2f}")
+    return ";".join(reasons) or "not_high_potential"
+
+
+def _exclusive_directional_class(eligible_long: bool, eligible_short: bool) -> str:
+    if eligible_long and eligible_short:
+        return DIRECTIONAL_CLASS_LONG_SHORT
+    if eligible_long:
+        return DIRECTIONAL_CLASS_LONG_ONLY
+    if eligible_short:
+        return DIRECTIONAL_CLASS_SHORT_ONLY
+    return DIRECTIONAL_CLASS_REJECTED
+
+
 def build_batch_directional_candidate_selection(
     batch_id: str,
     artifacts_dir: Path | None = None,
@@ -540,14 +579,12 @@ def build_batch_directional_candidate_selection(
             short_summary = short_stability.get("short") or {}
         eligible_long = long_summary.get("status") == "stable"
         eligible_short = short_summary.get("status") == "stable"
-        if eligible_long and eligible_short:
-            classification = DIRECTIONAL_CLASS_LONG_SHORT
-        elif eligible_long:
-            classification = DIRECTIONAL_CLASS_LONG_ONLY
-        elif eligible_short:
-            classification = DIRECTIONAL_CLASS_SHORT_ONLY
-        else:
-            classification = DIRECTIONAL_CLASS_REJECTED
+        classification = _exclusive_directional_class(eligible_long, eligible_short)
+        discovery_eligible_long = _is_discovery_side_candidate(long_summary)
+        discovery_eligible_short = _is_discovery_side_candidate(short_summary)
+        discovery_classification = _exclusive_directional_class(
+            discovery_eligible_long, discovery_eligible_short,
+        )
 
         rows.append(
             {
@@ -566,6 +603,9 @@ def build_batch_directional_candidate_selection(
                 "classification": classification,
                 "eligible_long": eligible_long,
                 "eligible_short": eligible_short,
+                "discovery_classification": discovery_classification,
+                "discovery_eligible_long": discovery_eligible_long,
+                "discovery_eligible_short": discovery_eligible_short,
                 "long_valid_folds": long_summary.get("valid_folds"),
                 "long_f1_median": long_summary.get("f1_median"),
                 "long_f1_min": long_summary.get("f1_min"),
@@ -573,6 +613,7 @@ def build_batch_directional_candidate_selection(
                 "long_pass_rate": long_summary.get("pass_rate"),
                 "long_support_total": long_summary.get("support_total"),
                 "long_reason": _directional_selection_reason(long_summary),
+                "long_discovery_reason": _directional_discovery_reason(long_summary),
                 "short_valid_folds": short_summary.get("valid_folds"),
                 "short_f1_median": short_summary.get("f1_median"),
                 "short_f1_min": short_summary.get("f1_min"),
@@ -580,6 +621,7 @@ def build_batch_directional_candidate_selection(
                 "short_pass_rate": short_summary.get("pass_rate"),
                 "short_support_total": short_summary.get("support_total"),
                 "short_reason": _directional_selection_reason(short_summary),
+                "short_discovery_reason": _directional_discovery_reason(short_summary),
                 "long_artifact_health": long_report.get("health_status"),
                 "short_artifact_health": short_report.get("health_status"),
                 "artifact_health": (
@@ -604,6 +646,17 @@ def build_batch_directional_candidate_selection(
             DIRECTIONAL_CLASS_LONG_SHORT,
         )
     }
+    discovery_by_class = {
+        classification: sorted(
+            row["symbol"] for row in rows
+            if row["discovery_classification"] == classification
+        )
+        for classification in (
+            DIRECTIONAL_CLASS_LONG_ONLY,
+            DIRECTIONAL_CLASS_SHORT_ONLY,
+            DIRECTIONAL_CLASS_LONG_SHORT,
+        )
+    }
     return {
         "batch_id": batch_id,
         "batch_kind": contract["kind"],
@@ -613,6 +666,18 @@ def build_batch_directional_candidate_selection(
         "long_only": by_class[DIRECTIONAL_CLASS_LONG_ONLY],
         "short_only": by_class[DIRECTIONAL_CLASS_SHORT_ONLY],
         "long_short": by_class[DIRECTIONAL_CLASS_LONG_SHORT],
+        "strict": {
+            "long_only": by_class[DIRECTIONAL_CLASS_LONG_ONLY],
+            "short_only": by_class[DIRECTIONAL_CLASS_SHORT_ONLY],
+            "long_short": by_class[DIRECTIONAL_CLASS_LONG_SHORT],
+            "eligible_symbols": sum(len(values) for values in by_class.values()),
+        },
+        "discovery": {
+            "long_only": discovery_by_class[DIRECTIONAL_CLASS_LONG_ONLY],
+            "short_only": discovery_by_class[DIRECTIONAL_CLASS_SHORT_ONLY],
+            "long_short": discovery_by_class[DIRECTIONAL_CLASS_LONG_SHORT],
+            "eligible_symbols": sum(len(values) for values in discovery_by_class.values()),
+        },
         "audit_df": audit_df,
     }
 
@@ -628,9 +693,13 @@ def format_directional_candidate_selection(selection: dict[str, Any]) -> str:
         f"# batch_id={selection.get('batch_id', '')}",
         f"# generated_at={selection.get('generated_at', '')}",
         "# Listes exclusives; symboles separes par une virgule sans espace.",
-        f"# Gates: support>={WF_MIN_SIDE_SUPPORT}; valid_folds>={WF_MIN_VALID_FOLDS}; "
-        f"median_f1>={WF_STABLE_MEDIAN_F1:.2f}; min_f1>={WF_STABLE_MIN_F1:.2f}; "
-        f"pass_rate(f1>={WF_PASS_F1:.2f})>={WF_STABLE_PASS_RATE:.2f}",
+        "# Les metriques f1 sont directionnelles: f1_long pour LONG, f1_short pour SHORT; f1_macro exclu.",
+        f"# STRICT gates: support_side>={WF_MIN_SIDE_SUPPORT}; valid_folds>={WF_MIN_VALID_FOLDS}; "
+        f"median_f1_side>={WF_STABLE_MEDIAN_F1:.2f}; min_f1_side>={WF_STABLE_MIN_F1:.2f}; "
+        f"pass_rate(f1_side>={WF_PASS_F1:.2f})>={WF_STABLE_PASS_RATE:.2f}",
+        f"# DISCOVERY gates: support_side>={WF_MIN_SIDE_SUPPORT}; valid_folds>={WF_MIN_VALID_FOLDS}; "
+        f"median_f1_side>={WF_DISCOVERY_MEDIAN_F1:.2f}; "
+        f"pass_rate(f1_side>={WF_PASS_F1:.2f})>={WF_STABLE_PASS_RATE:.2f}; min_f1_side=alerte_non_bloquante",
         "",
         "[LONG_ONLY]",
         _symbols("long_only"),
@@ -640,6 +709,15 @@ def format_directional_candidate_selection(selection: dict[str, Any]) -> str:
         "",
         "[LONG_SHORT]",
         _symbols("long_short"),
+        "",
+        "[DISCOVERY_LONG_ONLY]",
+        ",".join(sorted(set((selection.get("discovery") or {}).get("long_only") or []))),
+        "",
+        "[DISCOVERY_SHORT_ONLY]",
+        ",".join(sorted(set((selection.get("discovery") or {}).get("short_only") or []))),
+        "",
+        "[DISCOVERY_LONG_SHORT]",
+        ",".join(sorted(set((selection.get("discovery") or {}).get("long_short") or []))),
         "",
     ]
     return "\n".join(lines)

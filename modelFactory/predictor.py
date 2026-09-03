@@ -15,7 +15,11 @@ import numpy as np
 import pandas as pd
 import torch
 
-from modelFactory.calibration import calibrator_from_state_dict, margin_from_logits
+from modelFactory.calibration import (
+    calibrator_from_state_dict,
+    margin_from_logits,
+    probabilities_to_pseudo_logits,
+)
 from modelFactory.champion_selection import ArtifactSignatureError, verify_route_artifact_signatures
 from modelFactory.config import DataConfig
 from modelFactory.cross_sectional import build_cross_sectional_features, merge_cross_sectional_features
@@ -235,8 +239,9 @@ def _apply_optional_calibration(
 ) -> tuple[float, str]:
     if calibrator is None or not getattr(calibrator, "fitted", False):
         return raw_proba, "none"
-    # Temperature Scaling est géré séparément dans predict_symbol (ternaire)
-    if getattr(calibrator, "method", None) == "temperature":
+    # Les calibrateurs multiclasse sont appliqués ensemble aux trois classes
+    # dans le chemin ternaire, jamais à une marge binaire isolée.
+    if getattr(calibrator, "method", None) in {"temperature", "vector"}:
         return raw_proba, "none"
     try:
         calibrated = float(calibrator.predict_proba(margin)[0])
@@ -257,6 +262,60 @@ def _apply_optional_calibration(
         )
         return raw_proba, "none"
     return calibrated, str(getattr(calibrator, "method", "none") or "none")
+
+
+def _apply_optional_multiclass_calibration(
+    *,
+    symbol: str,
+    selected_model: str,
+    calibrator: Any,
+    raw_probabilities: np.ndarray,
+    calibrator_path: Path | None,
+    logits: np.ndarray | None = None,
+) -> tuple[np.ndarray, str]:
+    """Applique Temperature/Vector Scaling à toutes les classes ensemble."""
+    raw = np.asarray(raw_probabilities, dtype=np.float64)
+    method = str(getattr(calibrator, "method", "none") or "none")
+    if (
+        calibrator is None
+        or not getattr(calibrator, "fitted", False)
+        or method not in {"temperature", "vector"}
+    ):
+        return raw, "none"
+    try:
+        calibration_input = (
+            np.asarray(logits, dtype=np.float64)
+            if logits is not None
+            else probabilities_to_pseudo_logits(raw)
+        )
+        calibrated = np.asarray(calibrator.predict(calibration_input), dtype=np.float64)
+        if calibrated.shape != raw.shape:
+            raise ValueError(
+                f"invalid calibrated shape={calibrated.shape}, expected={raw.shape}"
+            )
+        if not np.isfinite(calibrated).all():
+            raise ValueError("non-finite multiclass calibrated probabilities")
+        return calibrated, method
+    except Exception as exc:  # noqa: BLE001
+        reason = f"multiclass_calibrator_incompatible:{selected_model}"
+        LOGGER.warning(
+            "predict_symbol multiclass_calibrator_runtime_fallback "
+            "symbol=%s selected_model=%s method=%s path=%s error=%s",
+            symbol,
+            selected_model,
+            method,
+            calibrator_path,
+            exc,
+        )
+        increment_runtime_counter("prediction_calibration_fallback_count", 1)
+        update_runtime_status(
+            last_prediction_symbol=symbol,
+            last_calibration_fallback_reason=reason,
+            last_calibration_fallback_path=(
+                str(calibrator_path) if calibrator_path is not None else None
+            ),
+        )
+        return raw, "none"
 
 
 def _extract_positive_class_probability(
@@ -1573,26 +1632,18 @@ def _predict_with_tabular_model(
 
     # ── Ternaire tabulaire : side + signal via policy partagée (Sprint Maître 0) ─
     if is_ternary_tab:
-        if (
-            calibrator is not None
-            and getattr(calibrator, "method", None) == "temperature"
-            and getattr(calibrator, "fitted", False)
-        ):
-            try:
-                logits = np.log(np.clip(proba_all[:, :3], eps, 1.0))
-                calibrated = calibrator.predict(logits)
-                proba_short_val = float(calibrated[0, 0])
-                proba_flat_val = float(calibrated[0, 1])
-                proba_long_val = float(calibrated[0, 2])
-                calibration_method = "temperature"
-            except Exception as exc:  # noqa: BLE001
-                LOGGER.warning(
-                    "predict_symbol ternary_temperature_fallback symbol=%s selected_model=%s error=%s",
-                    symbol,
-                    selected_model,
-                    exc,
-                )
-                calibration_method = "none"
+        calibrated, multiclass_method = _apply_optional_multiclass_calibration(
+            symbol=symbol,
+            selected_model=selected_model,
+            calibrator=calibrator,
+            raw_probabilities=proba_all[:, :3],
+            calibrator_path=calibrator_path,
+        )
+        if multiclass_method != "none":
+            proba_short_val = float(calibrated[0, 0])
+            proba_flat_val = float(calibrated[0, 1])
+            proba_long_val = float(calibrated[0, 2])
+            calibration_method = multiclass_method
 
         p_short = proba_short_val or 0.0
         p_flat = proba_flat_val or 0.0
@@ -2046,39 +2097,40 @@ def predict_symbol(
         )
         return None
 
-    # ── Temperature Scaling ternaire (2026-06-25) ────────────────
-    # Si un TemperatureScaler est disponible, recalibrer TOUTES les
-    # probas ternaires (pas seulement proba_long).
+    # Calibration ternaire : recalibrer les trois classes ensemble.
     calibrated_ternary_probs: dict[str, float | None] = {
         "proba_short": proba_short_val,
         "proba_flat": proba_flat_val,
         "proba_long": proba_long_val,
     }
-    if (
-        is_ternary
-        and num_classes >= 3
-        and calibrator is not None
-        and getattr(calibrator, "method", None) == "temperature"
-        and getattr(calibrator, "fitted", False)
-    ):
-        try:
-            cal_probs = calibrator.predict(logits_tensor.detach().cpu().numpy())
-            # cal_probs: [1, 3] → extraire les 3 probas
+    if is_ternary and num_classes >= 3:
+        raw_ternary = np.asarray(
+            [[proba_short_val, proba_flat_val, proba_long_val]],
+            dtype=np.float64,
+        )
+        cal_probs, multiclass_method = _apply_optional_multiclass_calibration(
+            symbol=symbol,
+            selected_model=selected_architecture,
+            calibrator=calibrator,
+            raw_probabilities=raw_ternary,
+            calibrator_path=calibrator_path,
+            logits=logits_tensor.detach().cpu().numpy(),
+        )
+        if multiclass_method != "none":
             calibrated_ternary_probs["proba_short"] = float(cal_probs[0, 0])
             calibrated_ternary_probs["proba_flat"] = float(cal_probs[0, 1])
             calibrated_ternary_probs["proba_long"] = float(cal_probs[0, 2])
-            proba = calibrated_ternary_probs["proba_long"]
-            calibration_method = "temperature"
+            proba = float(cal_probs[0, 2])
+            calibration_method = multiclass_method
             LOGGER.debug(
-                "Temperature scaling applied symbol=%s T=%.3f short=%.3f flat=%.3f long=%.3f",
+                "Multiclass calibration applied symbol=%s method=%s "
+                "short=%.3f flat=%.3f long=%.3f",
                 symbol,
-                getattr(calibrator, "temperature", 1.0),
+                multiclass_method,
                 calibrated_ternary_probs["proba_short"],
                 calibrated_ternary_probs["proba_flat"],
                 calibrated_ternary_probs["proba_long"],
             )
-        except Exception as _exc:
-            LOGGER.warning("Temperature scaling failed symbol=%s: %s", symbol, _exc)
 
     pred_date = prediction_date or date.today()
     if is_regression:
@@ -3104,55 +3156,33 @@ def cascade_select(
             _min_prob = float(_extreme_gate_cfg["min_prob"])
         LOGGER.info(
             "cascade_select: EXTREME_GATE top %d%% par proba_extreme (%d symbols, percentile du jour)",
-            int(round((1.0 - _extreme_gate_pct) * 100)), len(ranks_df),
+            int(round(_extreme_gate_pct * 100)), len(ranks_df),
         )
-        # ── DIP Oracle (persistance proba_extreme + prix) : gate dur OU priorité ──
-        # Deux usages selon le flag de recherche extreme_gate_dip_saturated :
-        #   - défaut (False) : GATE DUR historique — ne garde que les symboles
-        #     passant N4X2 (pool réduit) ;
-        #   - True : PRIORITÉ JOURS SATURÉS — on calcule l'ensemble passant N4X2
-        #     MAIS on garde le pool Oracle TOP20 intact ; le réordonnancement
-        #     lexicographique (bande de rang Oracle → N4X2 → score) n'est appliqué
-        #     qu'en fin de cascade quand candidats > slots disponibles.
+        # ── DIP Oracle : priorité de recherche uniquement ────────────────
+        # Le gate DIP dur appartient au Global Ranking. En Extreme Gate,
+        # N4X2 n'est calculé que si `extreme_gate_dip_saturated=True`; le pool
+        # Oracle TOP20 reste alors intact et N4X2 sert uniquement au
+        # réordonnancement des jours saturés.
         _n4x2_pass = set()
-        if dip_filter_config and bool(dip_filter_config.get("enabled", False)):
+        if (
+            dip_filter_config
+            and bool(dip_filter_config.get("enabled", False))
+            and extreme_gate_dip_saturated
+        ):
             try:
                 from selector.dip_filter import filter_day_candidates as _oracle_dip_filter
-                if extreme_gate_dip_saturated:
-                    _pass_df = _oracle_dip_filter(
-                        ranks_df.copy(), engine, batch_id, trade_date, dip_filter_config,
-                        best_h=None, rank_source="oracle",
-                    )
-                    _n4x2_pass = {
-                        str(s).upper() for s in _pass_df["symbol"].unique()
-                        if pd.notna(s)
-                    }
-                    LOGGER.info(
-                        "EXTREME_GATE_SAT date=%s batch=%s N4X2 pass=%d/%d (pool TOP20 intact)",
-                        trade_date, batch_id, len(_n4x2_pass), int(ranks_df.shape[0]),
-                    )
-                else:
-                    _dip_before = int(ranks_df.shape[0]) if ranks_df is not None else 0
-                    ranks_df = _oracle_dip_filter(
-                        ranks_df, engine, batch_id, trade_date, dip_filter_config,
-                        best_h=None, rank_source="oracle",
-                    )
-                    _dip_after = int(ranks_df.shape[0]) if ranks_df is not None else 0
-                    LOGGER.info(
-                        "DIP_FILTER backtest date=%s batch=%s source=oracle N=%s X=%.4f "
-                        "threshold=%.4f before=%d after=%d rejected=%d",
-                        trade_date, batch_id,
-                        dip_filter_config.get("persist_days"),
-                        float(dip_filter_config.get("dip_pct", 0.02)),
-                        float(dip_filter_config.get("rank_threshold", 0.90)),
-                        _dip_before, _dip_after, _dip_before - _dip_after,
-                    )
-                    if ranks_df.empty:
-                        LOGGER.info(
-                            "cascade_select: ORACLE DIP filter vide pour %s (%s) — aucun candidat",
-                            trade_date, batch_id,
-                        )
-                        return []
+                _pass_df = _oracle_dip_filter(
+                    ranks_df.copy(), engine, batch_id, trade_date, dip_filter_config,
+                    best_h=None, rank_source="oracle",
+                )
+                _n4x2_pass = {
+                    str(s).upper() for s in _pass_df["symbol"].unique()
+                    if pd.notna(s)
+                }
+                LOGGER.info(
+                    "EXTREME_GATE_SAT date=%s batch=%s N4X2 pass=%d/%d (pool TOP20 intact)",
+                    trade_date, batch_id, len(_n4x2_pass), int(ranks_df.shape[0]),
+                )
             except Exception:  # noqa: BLE001
                 LOGGER.exception(
                     "cascade_select: ORACLE DIP filter échoué pour %s — on continue sans filtre",
@@ -3688,6 +3718,28 @@ def apply_cascade_to_predictions(
         return preds_df
 
     result = preds_df.copy()
+    _rank_mode_low = str(rank_mode or "ml").strip().lower()
+    if _rank_mode_low == "extreme_gate_directional":
+        # Le contrat directionnel ne doit jamais retomber sur une synthèse
+        # Oracle (proba_short=0) lorsqu'une ligne Per-Symbol a été exclue en
+        # amont. Si la filiation moderne est disponible, elle est autoritaire.
+        _directional_mask = None
+        if "model_role" in result.columns:
+            _role_mask = result["model_role"].astype(str).str.lower() == "directional_bundle"
+            # Dès qu'une filiation bundle moderne existe, elle est
+            # autoritaire. Une simple source per_symbol ne suffit plus.
+            if _role_mask.any():
+                _directional_mask = _role_mask
+        if _directional_mask is None and "source" in result.columns:
+            _source_mask = result["source"].astype(str).str.lower() == PREDICTION_SOURCE_PER_SYMBOL
+            _directional_mask = _source_mask
+        if _directional_mask is not None:
+            _directional_before = len(result)
+            result = result.loc[_directional_mask].copy()
+            LOGGER.info(
+                "apply_cascade_to_predictions: contrat directional_bundle strict %d → %d lignes",
+                _directional_before, len(result),
+            )
     # Initialiser la colonne cascade_score
     result["cascade_score"] = 0.0
 
@@ -3703,7 +3755,6 @@ def apply_cascade_to_predictions(
     _src_col = "source" if "source" in result.columns else None
     if _src_col is not None:
         _dedup_before = len(result)
-        _rank_mode_low = str(rank_mode or "ml").strip().lower()
         _oracle_first = _rank_mode_low in ("oracle", "extreme_gate")
 
         def _prio(row_source: object) -> tuple[int, int]:

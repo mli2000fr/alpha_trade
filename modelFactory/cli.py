@@ -1009,6 +1009,7 @@ def main(args: list[str] | None = None) -> None:
         _batch_final_status = (
             "failed" if (completed == 0 and failed > 0) else "completed"
         )
+        _batch_failure_reason: str | None = None
         if cfg.directional_profiles_enabled:
             try:
                 _bundle_manifest = json.loads(
@@ -1016,13 +1017,21 @@ def main(args: list[str] | None = None) -> None:
                 )
                 if not bool(_bundle_manifest.get("serving_ready")):
                     _batch_final_status = "failed"
+                    _oracle_result = (_bundle_manifest.get("oracle") or {}).get("result") or {}
+                    _batch_failure_reason = str(
+                        _bundle_manifest.get("failure_reason")
+                        or _oracle_result.get("reason")
+                        or "directional_bundle_not_serving_ready"
+                    )
             except (OSError, json.JSONDecodeError):
                 _batch_final_status = "failed"
+                _batch_failure_reason = "directional_bundle_manifest_unavailable"
         if _batch_final_status == "failed":
+            _batch_failure_reason = _batch_failure_reason or "no_completed_training_unit"
             LOGGER.error(
-                "cli: batch %s marked FAILED — completed=%d skipped=%d failed=%d "
-                "(aucune unité terminée)",
+                "cli: batch %s marked FAILED — completed=%d skipped=%d failed=%d reason=%s",
                 run_id, completed, skipped, failed,
+                _batch_failure_reason,
             )
         update_training_batch(
             engine,
@@ -1032,6 +1041,7 @@ def main(args: list[str] | None = None) -> None:
             symbols_completed=completed,
             symbols_skipped=skipped,
             symbols_failed=failed,
+            failure_reason=_batch_failure_reason,
         )
 
         # ── Génération automatique du rapport Markdown ──

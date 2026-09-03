@@ -20,7 +20,9 @@ La cascade ne réalise pas l’entraînement. Elle combine, selon le mode choisi
 - les rangs de `global_rank_history` ;
 - `proba_extreme` de `oracle_extreme_predictions` ;
 - les probabilités directionnelles Per-Symbol de `model_predictions` ;
-- les seuils de sélection, filtres DIP et contraintes de saturation.
+- les seuils de sélection et contraintes de saturation ;
+- le Persistent Rank DIP pour la branche Global Ranking uniquement. En Extreme Gate,
+  N4X2 ne peut intervenir que comme priorité de saturation explicitement demandée.
 
 ```mermaid
 flowchart LR
@@ -130,7 +132,10 @@ La marge par défaut est `0.02`. Elle est modifiable dans la page Backtest et tr
 `--extreme-gate-direction-margin`. Le seuil de probabilité reste celui de la cascade
 (`min_prob`) : le nouveau paramètre de marge ne le remplace pas.
 
-Un symbole sans prédiction Per-Symbol est rejeté. Contrairement au mode legacy Oracle-only,
+Un symbole sans prédiction Per-Symbol est rejeté. Les lignes synthétiques `oracle_synth` ne
+sont jamais utilisées comme remplacement : elles ne portent pas une véritable probabilité
+SHORT. Seules les lignes `model_role=directional_bundle` — ou `source=per_symbol` pour un
+contrat antérieur sans rôle — alimentent ce mode. Contrairement au mode legacy Oracle-only,
 la couverture ML directionnelle est donc obligatoire et le contrôle de couverture n’est pas
 neutralisé.
 
@@ -151,7 +156,17 @@ La liste **Mode de cascade** expose deux options distinctes :
 - `Extreme Gate directionnel : Oracle amplitude + Per-Symbol LONG/SHORT` →
   `extreme_gate_directional`.
 
-Pour le mode directionnel, sélectionner :
+Lorsqu’une nouvelle campagne ML est sélectionnée et que son `cascade_manifest.json` déclare
+un bundle terminé, `serving_ready=true`, un Oracle terminé et au moins un symbole LONG/SHORT
+apparié, l’IHM présélectionne automatiquement :
+
+```text
+Mode de cascade      = extreme_gate_directional
+Batch Oracle Extreme = même batch que la campagne ML
+```
+
+Un choix manuel réalisé ensuite est conservé tant que la campagne ML ne change pas. Pour des
+batches séparés, sélectionner manuellement :
 
 - comme campagne ML, le batch contenant les prédictions Per-Symbol ;
 - comme Batch Oracle Extreme, le batch contenant `proba_extreme` ;
@@ -166,9 +181,38 @@ Les restrictions de côté sont appliquées après la sélection directionnelle 
 | décoché | coché | les LONG sont supprimés (`--no-longs`) |
 | coché | coché | configuration refusée avant lancement |
 
-L’auto-détection d’un batch Oracle-only continue volontairement de sélectionner
-`extreme_gate` legacy. Elle ne choisit jamais automatiquement le mode directionnel, car ce
-dernier exige une source Per-Symbol explicite.
+L’auto-détection du moteur applique le même contrat, même si la CLI reçoit encore le mode
+`ml` par défaut : bundle directionnel servable → `extreme_gate_directional`; ancien batch
+Oracle sans manifeste directionnel servable → `extreme_gate` legacy.
+
+Pour un ancien batch, le quality gate SQL `batch_diagnostics` reste utilisé. Pour un bundle
+directionnel, il est volontairement remplacé par le gate Walk-Forward du champion réellement
+servi : les anciens classements génériques, notamment ceux fondés sur `f1_macro`, ne doivent
+pas décider si une branche LONG ou SHORT est fiable.
+
+Le niveau est configuré par `batch_diagnostics.directional_bundle_gate` :
+
+| Niveau | Usage | Conditions par côté |
+|---|---|---|
+| `strict` | défaut backtest/production | support du côté ≥ 15, ≥ 3 folds valides, médiane F1 côté ≥ 0,40, minimum ≥ 0,20, au moins 60 % des folds avec F1 côté ≥ 0,35 |
+| `discovery` | expérimentation/screening | support ≥ 15, ≥ 3 folds, médiane ≥ 0,45, pass-rate ≥ 60 % ; minimum seulement signalé |
+| `off` | diagnostic contrôlé | aucune exclusion WF, mais les vraies sources Per-Symbol restent obligatoires |
+
+Le gate est **side-aware** et s'applique après le choix du côté par la cascade. Un symbole
+éligible SHORT mais rejeté LONG ne peut donc pas être servi LONG. Les lignes `oracle_synth`,
+Per-Sector ou sans `model_role=directional_bundle` sont retirées avant la cascade : elles ne
+peuvent plus réapparaître comme repli directionnel.
+
+En backtest `pipeline`, les deux filiations sont aussi vérifiées **as-of** avant la cascade.
+Une ligne n'est utilisable que si les runs LONG et SHORT ont tous deux une
+`train_end_date` strictement antérieure à sa `trade_date`. Une prédiction rétrospective
+calculée en septembre avec un modèle entraîné jusqu'en juin ne peut donc pas être utilisée
+sur janvier-février de la même année. Une filiation ou une date absente arrête le run : ce
+contrôle est fail-closed et n'est pas un simple filtre de couverture.
+
+Enfin, lorsque la cascade est active, le simulateur neutralise son ancien
+`min_score_threshold=0.70`. Ce seuil historique ne concernait que les LONG et doublonnait le
+`cascade.min_prob` (0,55 par défaut), ce qui créait une asymétrie silencieuse LONG/SHORT.
 
 ## 8. Contrats de données et erreurs fréquentes
 
@@ -178,9 +222,21 @@ dernier exige une source Per-Symbol explicite.
 | pool Oracle présent mais aucun trade directionnel | prédictions Per-Symbol absentes | vérifier `model_predictions` du batch ML |
 | uniquement des LONG | mode legacy ou case Long only active | vérifier le mode effectif et `--no-shorts` |
 | uniquement des SHORT | case Short only active | vérifier `--no-longs` |
+| Oracle et directions présents mais zéro candidat | intersection vide après `batch_diagnostics` ou seuil directionnel trop élevé | lire le résumé d’éligibilité affiché avant lancement |
+| arrêt « Fuite temporelle ML » | branche entraînée à la date simulée ou après, ou filiation absente | produire des prédictions walk-forward avec runs as-of, ou démarrer après les deux `train_end_date` |
 | très peu de candidats | seuil de probabilité ou marge trop élevés | publier le funnel des motifs de rejet |
 | résultats différents avec le même modèle | population du percentile différente | figer univers, date et couverture Oracle |
 | Oracle interprété comme direction | confusion amplitude/sens | utiliser le Per-Symbol pour le côté |
+
+En mode Oracle, le message d’échec ne demande pas de remplir `global_rank_history`, car cette
+table n’est pas un prérequis. Le compteur affiché correspond aux couples date/symbole après
+déduplication des sources et rappelle séparément le nombre de lignes avant déduplication.
+
+Les artefacts distinguent désormais deux vérités : `trades.csv` contient uniquement les
+trades réellement exécutés qui alimentent le PnL et le rapport ;
+`pipeline_trade_candidates.csv` contient les candidats du lifecycle/replay, y compris ceux
+qui n'ont jamais été ouverts dans le portefeuille. Il ne faut pas calculer la performance du
+portefeuille à partir du second fichier.
 
 Le percentile Oracle dépend de la population disponible le jour considéré. Modifier
 l’univers avant son calcul peut modifier le rang de tous les symboles.
@@ -488,7 +544,7 @@ donc plus décrire le parquet comme l’unique source Oracle.
 | `oracle_rerank` | oui | oui | oui | non |
 | `extreme_gate` `bypass` | non | oui | non | oui |
 | `extreme_gate` `filter/no_filter` | non | oui | oui | seulement si les prédictions directionnelles existent aussi |
-| `extreme_gate_directional` | non | oui | **oui, obligatoire** | non |
+| `extreme_gate_directional` | non | oui | **oui, obligatoire** | oui uniquement si c’est un bundle directionnel complet |
 
 Pour le nouveau mode directionnel, la campagne ML choisie dans l’IHM doit contenir de vraies
 prédictions Per-Symbol. Un batch Oracle-only peut fournir le pool Oracle, mais il ne peut pas
@@ -584,9 +640,14 @@ Les deux cases simultanément sont rejetées avant construction de la commande.
 
 ## 16. Saturation, DIP et ordre final
 
-Après création des candidats, la liste est triée par score décroissant. Lorsque
-`--extreme-gate-dip-saturated` est activé, le DIP ne réduit pas le pool Extreme Gate : il
-réordonne les candidats seulement lorsque leur nombre dépasse les slots disponibles.
+Le Persistent Rank DIP dur est réservé au Global Ranking. Même si `--dip-enabled` provient
+encore d’un défaut historique de configuration, il est ignoré en `extreme_gate` et
+`extreme_gate_directional`; l’IHM émet aussi `--no-dip-enabled` pour ces modes.
+
+Après création des candidats, la liste est triée par score décroissant. La seule exception
+Oracle explicite est `--extreme-gate-dip-saturated` : le DIP ne réduit alors pas le pool
+Extreme Gate et réordonne les candidats seulement lorsque leur nombre dépasse les slots
+disponibles.
 
 La clé est lexicographique : bande de rang Oracle, indicateur N4X2, puis score. La largeur de
 bande est pilotée par `--extreme-gate-dip-band`, défaut `0.02`. Ce mécanisme est un réglage de
@@ -611,6 +672,7 @@ faire une politique live. Avant promotion :
 ## 18. Références code
 
 - `modelFactory/predictor.py` : `cascade_select()` et `apply_cascade_to_predictions()` ;
+- `common/ml_cascade_contract.py` : résolution légère du manifeste et mode automatique ;
 - `modelFactory/oracle/extreme_gate.py` : percentile Oracle quotidien ;
 - `backtesting/cli/_impl.py` : options CLI et chargement des sources ;
 - `ihm/services/backtesting_runner.py` : traduction IHM vers CLI ;

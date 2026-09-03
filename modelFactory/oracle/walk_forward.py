@@ -161,6 +161,11 @@ def run_walk_forward(
     _target_col = TARGET_COL
     _proba_col = "proba_extreme"
 
+    if _target_col not in dataset.columns:
+        return {"status": "error", "reason": "missing_oracle_target_column"}
+    if int(dataset[_target_col].notna().sum()) == 0:
+        return {"status": "error", "reason": "no_labeled_oracle_targets"}
+
     if folds is None:
         folds = build_folds(dataset, test_windows or DEFAULT_TEST_WINDOWS)
     if not folds:
@@ -177,10 +182,18 @@ def run_walk_forward(
     _models: list[dict[str, Any]] = []
 
     for fold in folds:
-        X_tr = fold["train"][cols].astype(float)
-        y_tr = fold["train"][_target_col].astype(int)
-        X_te = fold["test"][cols].astype(float)
-        y_te = fold["test"][_target_col].astype(int)
+        train_fold = fold["train"].dropna(subset=[_target_col])
+        test_fold = fold["test"].dropna(subset=[_target_col])
+        if train_fold.empty or test_fold.empty:
+            LOGGER.warning(
+                "fold %s: aucune target Oracle disponible (train=%d test=%d) — skipped",
+                fold["t_start"], len(train_fold), len(test_fold),
+            )
+            continue
+        X_tr = train_fold[cols].astype(float)
+        y_tr = train_fold[_target_col].astype(int)
+        X_te = test_fold[cols].astype(float)
+        y_te = test_fold[_target_col].astype(int)
         if y_tr.nunique() < 2 or y_te.nunique() < 2:
             LOGGER.warning("fold %s: target constant — skipped", fold["t_start"])
             continue
@@ -192,7 +205,7 @@ def run_walk_forward(
         proba = model.predict(X_te)
 
         oos_cols = ["date", "symbol", _target_col, "future_return"]
-        oos = fold["test"][oos_cols].copy()
+        oos = test_fold[oos_cols].copy()
         oos[_proba_col] = proba
         oos["fold_start"] = fold["t_start"]
         oos_parts.append(oos)
@@ -201,8 +214,8 @@ def run_walk_forward(
         prevalence = float(oos[_target_col].astype(float).mean()) if not oos.empty else None
         per_fold.append({
             "fold_start": fold["t_start"],
-            "n_train": int(len(fold["train"])),
-            "n_test": int(len(fold["test"])),
+            "n_train": int(len(train_fold)),
+            "n_test": int(len(test_fold)),
             "prevalence": prevalence,
             "precision_at_10pct": pr["precision"],
             "recall_at_10pct": pr["recall"],

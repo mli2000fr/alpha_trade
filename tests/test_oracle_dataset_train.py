@@ -7,6 +7,7 @@ import pytest
 
 from modelFactory.oracle.dataset import (
     ablation_features,
+    build_dataset,
     expert_feature_columns,
     lean_feature_columns,
 )
@@ -53,6 +54,38 @@ class TestAblationFeatures:
     def test_lean_feature_columns(self):
         feats = ["momentum_20", "rolling_volatility_20", "volume_ratio_20", "rsi_14", "foo"]
         assert lean_feature_columns(feats) == ["momentum_20", "rolling_volatility_20", "volume_ratio_20"]
+
+
+def test_build_dataset_excludes_rows_without_binary_oracle_target(monkeypatch):
+    import modelFactory.oracle.dataset as dataset_mod
+
+    prediction_date = pd.Timestamp("2024-01-02")
+    features = pd.DataFrame({
+        "date": [prediction_date, prediction_date],
+        "symbol": ["NO_LABEL", "VALID"],
+        "daily_return": [0.01, 0.02],
+    })
+    targets = pd.DataFrame({
+        "prediction_date": [prediction_date, prediction_date],
+        "symbol": ["NO_LABEL", "VALID"],
+        "oracle_extreme10": [None, 1],
+        "oracle_pct_rank": [None, 0.95],
+        "oracle_decile": [None, 10],
+        "future_return": [0.02, 0.10],
+        "oracle_available_date": [pd.Timestamp("2024-02-01"), pd.Timestamp("2024-02-01")],
+    })
+    monkeypatch.setattr(dataset_mod, "build_feature_matrix", lambda *a, **k: features)
+    monkeypatch.setattr(dataset_mod, "load_oracle_targets", lambda *a, **k: targets)
+
+    dataset, columns = build_dataset(
+        object(), "batch", ["NO_LABEL", "VALID"],
+        start_date="2024-01-01", end_date="2024-03-01",
+        require_global_rank=False,
+    )
+
+    assert columns == ["daily_return"]
+    assert dataset["symbol"].tolist() == ["VALID"]
+    assert dataset["oracle_extreme10"].astype(int).tolist() == [1]
 
 
 # ═══════════════════════════════════════════════════════════════════

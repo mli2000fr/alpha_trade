@@ -174,7 +174,7 @@ def _render_directional_candidate_download(
         "Dans un bundle, LONG est validé par f1_long du modèle LONG et SHORT par f1_short du modèle SHORT. "
         "Le calcul est déclenché manuellement pour ne pas relire les folds de tous les symboles à chaque rafraîchissement."
     )
-    state_key = f"ml_diag_directional_candidates_{batch_id}"
+    state_key = f"ml_diag_directional_candidates_v2_{batch_id}"
     prepare_label = "🔄 Actualiser la sélection" if state_key in st.session_state else "🔎 Préparer la sélection"
     if st.button(prepare_label, key=f"prepare_directional_candidates_{batch_id}"):
         try:
@@ -189,9 +189,37 @@ def _render_directional_candidate_download(
     if not isinstance(selection, dict):
         return
 
-    long_only = selection.get("long_only") or []
-    short_only = selection.get("short_only") or []
-    long_short = selection.get("long_short") or []
+    strict_selection = selection.get("strict") or {
+        "long_only": selection.get("long_only") or [],
+        "short_only": selection.get("short_only") or [],
+        "long_short": selection.get("long_short") or [],
+        "eligible_symbols": selection.get("eligible_symbols") or 0,
+    }
+    discovery_selection = selection.get("discovery") or {
+        "long_only": [], "short_only": [], "long_short": [], "eligible_symbols": 0,
+    }
+    selection_level = st.selectbox(
+        "Niveau de sélection",
+        options=["DISCOVERY / HIGH POTENTIAL", "STRICT / STABLE"],
+        index=0,
+        key=f"directional_candidate_level_{batch_id}",
+        help=(
+            "DISCOVERY retient les meilleures performances directionnelles centrales et signale les folds fragiles. "
+            "STRICT exige en plus qu'aucun fold valide ne tombe sous le minimum F1."
+        ),
+    )
+    discovery_mode = selection_level.startswith("DISCOVERY")
+    active_selection = discovery_selection if discovery_mode else strict_selection
+    classification_column = "discovery_classification" if discovery_mode else "classification"
+    long_only = active_selection.get("long_only") or []
+    short_only = active_selection.get("short_only") or []
+    long_short = active_selection.get("long_short") or []
+    st.caption(
+        "Gate actif : médiane f1_side ≥ 0,45, ≥ 3 folds valides, support_side ≥ 15 et pass-rate ≥ 60 % ; "
+        "le minimum est une alerte non bloquante."
+        if discovery_mode else
+        "Gate actif : stabilité stricte, avec médiane f1_side ≥ 0,40 et minimum f1_side ≥ 0,20."
+    )
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Symboles analysés", int(selection.get("scanned_symbols") or 0))
     c2.metric("LONG uniquement", len(long_only))
@@ -199,7 +227,7 @@ def _render_directional_candidate_download(
     c4.metric("LONG + SHORT", len(long_short))
 
     audit_df = selection.get("audit_df")
-    if int(selection.get("eligible_symbols") or 0) == 0 and isinstance(audit_df, pd.DataFrame) and not audit_df.empty:
+    if int(active_selection.get("eligible_symbols") or 0) == 0 and isinstance(audit_df, pd.DataFrame) and not audit_df.empty:
         long_insufficient = int(
             (pd.to_numeric(audit_df["long_valid_folds"], errors="coerce").fillna(0) < WF_MIN_VALID_FOLDS).sum()
         )
@@ -207,7 +235,7 @@ def _render_directional_candidate_download(
             (pd.to_numeric(audit_df["short_valid_folds"], errors="coerce").fillna(0) < WF_MIN_VALID_FOLDS).sum()
         )
         st.warning(
-            "Aucun candidat ne satisfait tous les gates. "
+            f"Aucun candidat ne satisfait le niveau {selection_level}. "
             f"Folds insuffisants (< {WF_MIN_VALID_FOLDS}) : LONG {long_insufficient}/{len(audit_df)}, "
             f"SHORT {short_insufficient}/{len(audit_df)}. Consultez les règles ci-dessous avant de modifier les seuils."
         )
@@ -239,41 +267,43 @@ def _render_directional_candidate_download(
         )
 
         with long_tab:
-            long_df = audit_df[audit_df["classification"] == "LONG_ONLY"].copy()
+            long_df = audit_df[audit_df[classification_column] == "LONG_ONLY"].copy()
             long_df = long_df.sort_values(
-                ["long_f1_median", "long_f1_min", "long_valid_folds"],
-                ascending=[False, False, False],
+                ["long_f1_median", "long_pass_rate", "long_valid_folds", "long_f1_min"],
+                ascending=[False, False, False, False],
             )
             long_columns = [
                 "symbol", "long_selected_model", "long_selected_horizon",
                 "long_valid_folds", "long_f1_median", "long_f1_min",
                 "long_f1_std", "long_pass_rate", "long_support_total",
+                "long_discovery_reason" if discovery_mode else "long_reason",
             ]
             long_columns = [column for column in long_columns if column in long_df.columns]
             if long_df.empty:
-                st.info("Aucun symbole stable uniquement en LONG.")
+                st.info("Aucun symbole retenu uniquement en LONG pour ce niveau.")
             else:
                 st.dataframe(long_df[long_columns], use_container_width=True, hide_index=True)
 
         with short_tab:
-            short_df = audit_df[audit_df["classification"] == "SHORT_ONLY"].copy()
+            short_df = audit_df[audit_df[classification_column] == "SHORT_ONLY"].copy()
             short_df = short_df.sort_values(
-                ["short_f1_median", "short_f1_min", "short_valid_folds"],
-                ascending=[False, False, False],
+                ["short_f1_median", "short_pass_rate", "short_valid_folds", "short_f1_min"],
+                ascending=[False, False, False, False],
             )
             short_columns = [
                 "symbol", "short_selected_model", "short_selected_horizon",
                 "short_valid_folds", "short_f1_median", "short_f1_min",
                 "short_f1_std", "short_pass_rate", "short_support_total",
+                "short_discovery_reason" if discovery_mode else "short_reason",
             ]
             short_columns = [column for column in short_columns if column in short_df.columns]
             if short_df.empty:
-                st.info("Aucun symbole stable uniquement en SHORT.")
+                st.info("Aucun symbole retenu uniquement en SHORT pour ce niveau.")
             else:
                 st.dataframe(short_df[short_columns], use_container_width=True, hide_index=True)
 
         with both_tab:
-            both_df = audit_df[audit_df["classification"] == "LONG_SHORT"].copy()
+            both_df = audit_df[audit_df[classification_column] == "LONG_SHORT"].copy()
             if not both_df.empty:
                 both_df["directional_f1_floor"] = both_df[
                     ["long_f1_median", "short_f1_median"]
@@ -290,15 +320,16 @@ def _render_directional_candidate_download(
             ]
             both_columns = [column for column in both_columns if column in both_df.columns]
             if both_df.empty:
-                st.info("Aucun symbole stable simultanément en LONG et SHORT.")
+                st.info("Aucun symbole retenu simultanément en LONG et SHORT pour ce niveau.")
             else:
                 st.dataframe(both_df[both_columns], use_container_width=True, hide_index=True)
 
     with st.expander("Voir les règles de sélection", expanded=False):
         st.markdown(
-            "Chaque côté est validé indépendamment : au moins 3 folds valides, support réel ≥ 15 par fold, "
-            "F1 médian ≥ 0,40, F1 minimum ≥ 0,20 et au moins 60 % des folds avec F1 ≥ 0,35. "
-            "Les trois listes du fichier sont exclusives."
+            "Chaque côté utilise sa propre métrique : f1_long pour LONG et f1_short pour SHORT ; f1_macro ne participe pas. "
+            "STRICT : ≥ 3 folds valides, support ≥ 15, médiane ≥ 0,40, minimum ≥ 0,20 et pass-rate ≥ 60 %. "
+            "DISCOVERY : ≥ 3 folds valides, support ≥ 15, médiane ≥ 0,45 et pass-rate ≥ 60 % ; "
+            "un minimum < 0,20 est signalé mais ne bloque pas. Les listes de chaque niveau sont exclusives."
         )
 
 
