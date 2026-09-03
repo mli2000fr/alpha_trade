@@ -1,1015 +1,170 @@
-Projet — Collecte prospective Yahoo Analyst Data avec stockage 100% MySQL, PIT strict
+Architecture cible
+Oracle O0 actuel
+   │
+   ├─ conserve uniquement le TOP20 amplitude
+   │
+   ▼
+Modèle directionnel entraîné spécifiquement sur ce contexte
+   │
+   ├─ score LONG absolu
+   ├─ score SHORT absolu
+   └─ abstention si aucune direction n'est suffisamment fiable
+Étape 1 — Conserver l’Oracle sans le modifier
+L’Oracle actuel est performant :
+- AUC OOS : 0,660 ;
+- précision Extreme du TOP20 : 31,9 % contre 18,4 % naturellement ;
+- amplitude moyenne : 12,8 % contre 8,7 % dans l’univers.
+Il peut être gelé comme baseline. Il n’est pas nécessaire de le réentraîner pour la première campagne directionnelle.
+Étape 2 — Corriger immédiatement la cible directionnelle
+Dans l’IHM du prochain entraînement bundle :
+- mode cible : ternary ;
+- horizon : 20 uniquement pour la première expérience ;
+- seuil LONG : +3 % ;
+- seuil SHORT : −3 % ;
+- désactiver target_excess_vs_spy ;
+- conserver les profils long.json et short.json actuels ;
+- conserver LSTM, LightGBM et CatBoost avec sélection du champion ;
+- conserver Walk-Forward.
+La cible doit devenir :
+SHORT : rendement absolu H20 <= −3 %
+FLAT  : −3 % < rendement absolu H20 < +3 %
+LONG  : rendement absolu H20 >= +3 %
+Le premier batch sert uniquement à mesurer l’impact du changement de cible. Il ne faut pas modifier simultanément les features, les modèles et les seuils, sinon nous ne saurons pas ce qui a amélioré le résultat.
+Étape 3 — Ne plus entraîner la direction comme une tâche générique
+C’est la modification la plus importante.
+Actuellement :
+entraînement directionnel sur toutes les journées
+→ application ultérieure uniquement aux journées Oracle Extreme
+Ce sont deux distributions différentes. Le modèle peut être raisonnable sur une journée normale et mauvais précisément dans les situations sélectionnées par l’Oracle.
+Il faut produire, pendant l’entraînement, des scores Oracle strictement OOF :
+pour chaque fold :
+    entraîner Oracle sur le passé
+    prédire la période suivante
+    calculer le percentile Oracle quotidien
+    marquer Oracle TOP20
+Puis entraîner la direction en donnant la priorité à ces observations.
+Je recommande de comparer deux versions :
+Version A — Pondération Oracle
+Conserver toutes les journées, mais appliquer par exemple :
+poids = 1 pour une journée normale
+poids = 5 pour une observation Oracle TOP20 OOF
+Avantage : chaque modèle per-symbol garde suffisamment d’exemples.
+Version B — Entraînement conditionnel
+Entraîner uniquement sur le TOP20 ou TOP30 Oracle OOF.
+Je commencerais par TOP30, car TOP20 risque de laisser trop peu d’observations par symbole.
+La pondération est probablement le meilleur premier choix pour les modèles per-symbol.
+Étape 4 — Rendre les scores comparables entre symboles
+Aujourd’hui, le top 10 % mélange des probabilités produites par 49 modèles et calibrateurs différents. Cela explique pourquoi quelques symboles monopolisent la sélection.
+Il faut conserver deux valeurs :
+raw_proba_long
+normalized_score_long
 
-Objectif
-
-Construire à partir de maintenant un historique prospectif, causal, append-only et PIT de données analystes gratuites, principalement via Yahoo/yfinance, afin de tester plus tard des features directionnelles capables d’aider à distinguer :
-
-D1-D3 vs D8-D10
-
-dans le pool Oracle.
-
-Sources ciblées :
-
-Ticker.earnings_estimate
-Ticker.revenue_estimate
-Ticker.analyst_price_targets
-Ticker.recommendations
-
-upgrades_downgrades est déjà étudié et NO-GO directionnel :
-
-ne pas refaire ce chantier
-
-Cette implémentation est :
-
-RESEARCH ONLY
-
-Ne pas modifier :
-
-Global Rank
-Oracle
-cascade PROD
-live execution
-backtesting PROD
-1. Architecture obligatoire
-
-Il ne doit y avoir aucun stockage fichier.
-
-Architecture :
-
-Yahoo API
-   ↓
-validation / normalisation
-   ↓
-MySQL append-only
-   ↓
-feature builder research
-   ↓
-DirectionalDataResearch
-
-MySQL est :
-
-l'unique source de vérité
-
-Ne créer :
-
-aucun JSON
-aucun CSV
-aucun Parquet
-aucun cache fichier
-
-pour les données Yahoo collectées.
-
-Si une réponse brute doit être conservée pour audit/reparsing :
-
-la stocker dans MySQL
-
-dans une colonne :
-
-raw_payload_json
-
-avec :
-
-raw_hash
-2. Principe PIT fondamental
-
-Pour chaque donnée récupérée :
-
-observed_at
-
-= moment réel où notre collecteur a observé Yahoo.
-
-available_at
-
-= moment à partir duquel cette donnée est autorisée pour une décision de trading.
-
-Contrat obligatoire :
-
-source.available_at <= decision_cutoff
-
+raw_proba_short
+normalized_score_short
+Le score normalisé pourrait être le percentile historique OOF du symbole :
+normalized_score_long =
+    percentile de la proba_long actuelle
+    dans la distribution OOF passée du même symbole
 Exemple :
-
-décision close J : 16:00 ET
-collecte Yahoo : 18:30 ET
-
-alors :
-
-le snapshot collecté à 18:30
-est INTERDIT pour la décision de J
-
-Il ne devient utilisable qu’à la prochaine session de décision.
-
-Aucun raccourci basé uniquement sur :
-
-DATE(snapshot)
-3. Créer les migrations Alembic
-
-Créer les tables nécessaires dans MySQL.
-
-Adapter les noms aux conventions existantes du repo.
-
-Ne pas créer une architecture parallèle si un repository/database layer existe déjà.
-
-4. Table estimates
-
-Créer :
-
-stock_analyst_estimate_history
-
-Une ligne représente :
-
-un symbole
-un type d'estimate
-un horizon
-un snapshot observé
-
-Colonnes recommandées :
-
-id
-symbol
-
-provider
-snapshot_date
-observed_at
-available_at
-ingestion_at
-
-estimate_type
-
-Valeurs :
-
-EPS
-REVENUE
-
-Puis :
-
-horizon_raw
-horizon_normalized
-
-Exemples :
-
-0q   → CURRENT_QUARTER
-+1q  → NEXT_QUARTER
-0y   → CURRENT_YEAR
-+1y  → NEXT_YEAR
-
-Ajouter :
-
-fiscal_period_end nullable
-fiscal_year nullable
-fiscal_quarter nullable
-relative_horizon_only boolean
-
-Valeurs estimates :
-
-avg_value
-low_value
-high_value
-analyst_count
-growth_value nullable
-
-Audit :
-
-raw_payload_json JSON/LONGTEXT
-raw_hash
-provider_schema_version nullable
-created_at
-
-Index :
-
-symbol
-snapshot_date
-observed_at
-available_at
-estimate_type
-horizon_normalized
-5. Table price targets
-
-Créer :
-
-stock_analyst_target_history
-
-Colonnes :
-
-id
-symbol
-provider
-
-snapshot_date
-observed_at
-available_at
-ingestion_at
-
-current_price
-target_low
-target_mean
-target_median
-target_high
-
-analyst_count nullable
-
-raw_payload_json
-raw_hash
-provider_schema_version nullable
-created_at
-
-Append-only strict.
-
-6. Table recommendations
-
-Créer :
-
-stock_analyst_recommendation_history
-
-Colonnes :
-
-id
-symbol
-provider
-
-snapshot_date
-observed_at
-available_at
-ingestion_at
-
-period_raw
-
-strong_buy
-buy
-hold
-sell
-strong_sell
-
-raw_payload_json
-raw_hash
-provider_schema_version nullable
-created_at
-
-Yahoo recommendations étant un snapshot courant/agrégé :
-
-ne jamais prétendre qu'il s'agit d'un historique PIT antérieur
-
-On commence l’historique au premier jour réel de collecte.
-
-7. Table des runs de collecte
-
-Créer :
-
-analyst_snapshot_collection_run
-
-Colonnes :
-
-id / run_id
-provider
-
-started_at
-finished_at
-
-requested_symbols
-successful_symbols
-empty_symbols
-failed_symbols
-
-estimates_rows_inserted
-targets_rows_inserted
-recommendations_rows_inserted
-
-rate_limit_count
-temporary_error_count
-schema_error_count
-parse_error_count
-
-eps_coverage
-revenue_coverage
-target_coverage
-recommendation_coverage
-
-status
-created_at
-8. Append-only strict
-
-Ces tables doivent représenter :
-
-ce que le système connaissait réellement à chaque date
-
-Exemple :
-
-2026-08-29 EPS FY = 4.25
-2026-08-30 EPS FY = 4.18
-
-La DB doit contenir :
-
-29/08 → 4.25
-30/08 → 4.18
-
-Interdiction :
-
-UPDATE ancienne valeur à 4.18
-
-Une nouvelle observation crée une nouvelle ligne.
-
-9. Idempotence
-
-Le job doit pouvoir être relancé sans créer de doublons.
-
-Pour estimates :
-
-UNIQUE (
-  provider,
-  symbol,
-  snapshot_date,
-  estimate_type,
-  horizon_normalized
-)
-
-Pour targets :
-
-UNIQUE (
-  provider,
-  symbol,
-  snapshot_date
-)
-
-Pour recommendations :
-
-choisir une granularité cohérente selon la structure Yahoo.
-
-Les retries ne doivent jamais générer des duplications.
-
-10. Payload brut dans la DB
-
-Puisqu’aucun fichier ne doit être créé, conserver dans chaque table :
-
-raw_payload_json
-
-contenant la réponse brute ou la portion pertinente de la réponse Yahoo.
-
-Ajouter :
-
-raw_hash
-
-calculé de manière déterministe.
-
-Objectifs :
-
-audit
-reparsing
-détection changement de schéma
-comparaison entre snapshots
-
-Ne pas utiliser raw_payload_json directement dans le modèle.
-
-11. Fiscal rollover
-
-Point critique.
-
-Yahoo utilise des horizons relatifs :
-
-0q
-+1q
-0y
-+1y
-
-0q aujourd’hui peut représenter une période fiscale différente de 0q après publication des résultats.
-
-Une variation :
-
-CURRENT_QUARTER J
-vs
-CURRENT_QUARTER J-20
-
-n’est une vraie révision que si :
-
-même fiscal_period_end
-
-Si Yahoo ne fournit pas l’identité fiscale exacte :
-
-relative_horizon_only = true
-
-et les révisions traversant un rollover doivent être :
-
-NULL
-
-Pas de fausse révision.
-
-12. Collecteur Yahoo
-
-Créer :
-
-scripts/collect_yahoo_analyst_snapshots.py
-
-CLI cible :
-
-python scripts/collect_yahoo_analyst_snapshots.py \
-  --universe production \
-  --write-db
-
-Options :
-
---symbols AAPL,MSFT,NVDA
---max-symbols 20
---dry-run
---resume
-
-Pas d’option --write-file.
-
-Aucun fichier externe généré.
-
-Les résultats de collecte doivent être accessibles depuis :
-
-la DB
-les logs existants du repo
-stdout
-13. Réseau / rate limits
-
-Implémenter :
-
-timeout
-retry
-exponential backoff
-jitter
-throttling
-resume
-
-Classifier :
-
-OK
-EMPTY
-RATE_LIMIT
-TEMPORARY_ERROR
-INVALID_SYMBOL
-PROVIDER_SCHEMA_CHANGED
-PARSE_ERROR
-
-Une panne Yahoo ne doit jamais toucher aux données historiques déjà stockées.
-
-14. Schema validation
-
-Yahoo/yfinance n’offre pas un contrat institutionnel stable.
-
-À chaque ingestion :
-
-vérifier :
-
-colonnes attendues
-type index
-horizons attendus
-types numériques
-
-Si le schéma change :
-
-PROVIDER_SCHEMA_CHANGED
-
-Ne jamais faire :
-
-champ absent → 0
-
-Utiliser :
-
-NULL
-
-ou rejeter proprement la réponse si nécessaire.
-
-15. Repository DB
-
-Créer ou étendre :
-
-AnalystSnapshotRepository
-
-Méthodes :
-
-insert_estimate_snapshot(...)
-insert_target_snapshot(...)
-insert_recommendation_snapshot(...)
-
-get_latest_estimate_before(...)
-get_latest_target_before(...)
-
-get_estimate_history(...)
-get_target_history(...)
-get_recommendation_history(...)
-
-La requête PIT essentielle :
-
-WHERE available_at <= :decision_cutoff
-ORDER BY available_at DESC
-16. Gestion available_at
-
-Centraliser la logique dans une fonction dédiée.
-
-Exemple :
-
-resolve_available_at(
-    observed_at,
-    market_calendar,
-    decision_contract
-)
-
-Ne pas reproduire cette logique dans plusieurs scripts.
-
-Si le snapshot est observé après le cutoff du jour :
-
-available_at = prochaine session autorisée
-
-Les jours fériés et week-ends doivent utiliser le calendrier marché existant.
-
-17. Feature builder séparé
-
-Créer :
-
-analyst_revision_features.py
-
-Il lit exclusivement MySQL.
-
-Architecture stricte :
-
-API ingestion
-     ↓
-DB historique
-     ↓
-feature builder
-
-Ne pas calculer les features avant la persistance DB.
-
-18. EPS revisions
-
-Lorsque suffisamment d’historique existe :
-
-eps_revision_abs_1d
-eps_revision_abs_5d
-eps_revision_abs_10d
-eps_revision_abs_20d
-eps_revision_abs_60d
-
-et :
-
-eps_revision_pct_5d
-eps_revision_pct_20d
-eps_revision_pct_60d
-
-Pour :
-
-CURRENT_QUARTER
-NEXT_QUARTER
-CURRENT_YEAR
-NEXT_YEAR
-
-Toujours vérifier l’identité de la période fiscale.
-
-19. Revenue revisions
-
-Construire :
-
-revenue_revision_abs_5d
-revenue_revision_abs_20d
-revenue_revision_abs_60d
-
-revenue_revision_pct_5d
-revenue_revision_pct_20d
-revenue_revision_pct_60d
-
-Même contrat PIT/fiscal.
-
-20. Price-target revisions
-
-Construire :
-
-target_mean_revision_5d
-target_mean_revision_20d
-target_mean_revision_60d
-
-target_median_revision_20d
-target_high_revision_20d
-target_low_revision_20d
-
-Ajouter :
-
-target_mean_upside
-target_median_upside
-target_low_upside
-target_high_upside
-
-avec :
-
-prix PIT à la date de décision
-21. Analyst count
-
-Construire :
-
-analyst_count
-analyst_count_change_5d
-analyst_count_change_20d
-analyst_count_change_60d
-
-Ne pas considérer cela automatiquement comme directionnel.
-
-C’est potentiellement :
-
-confidence
-coverage
-attention
-22. Révision en %
-
-Pour EPS :
-
-ne pas faire naïvement :
-
-(new-old)/old
-
-car :
-
-old ≈ 0
-old < 0
-changement de signe
-
-Toujours garder :
-
-revision_abs = new - old
-
-Pour :
-
-revision_pct
-
-utiliser une règle documentée.
-
-Exemple :
-
-denominator = abs(old)
-
-avec epsilon minimum.
-
-Si :
-
-abs(old) < epsilon
-
-alors :
-
-revision_pct = NULL
-23. Accélération
-
-Construire simplement :
-
-eps_revision_acceleration =
-eps_revision_5d - eps_revision_20d
-
-idem :
-
-revenue
-target
-
-Ne pas multiplier maintenant les variantes.
-
-24. Days since revision
-
-Puisque les snapshots quotidiens identiques sont conservés :
-
-construire :
-
-days_since_last_eps_revision
-days_since_last_revenue_revision
-days_since_last_target_revision
-
-Une absence de changement est aussi une information potentielle.
-
-25. Cross-sectional features
-
-Lorsque suffisamment de couverture existe :
-
-calculer à chaque date :
-
-eps_revision_20d_xs_rank
-revenue_revision_20d_xs_rank
-target_revision_20d_xs_rank
-
-Et si GICS disponible :
-
-sector-neutral rank
-
-Exemple :
-
-eps_revision_20d_sector_rank
-
-Toutes les lignes utilisées dans le cross-section doivent être disponibles à J.
-
-26. Stockage des features
-
-Puisqu’on veut zéro fichier :
-
-ne pas générer de Parquet.
-
-Deux options possibles :
-
-Option A — calcul à la volée
-
-Préférée au début.
-
-DB historique
-↓
-feature builder
-↓
-dataframe mémoire
-↓
-harness
-Option B — table research
-
-Si les calculs deviennent trop coûteux :
-
-créer :
-
-stock_analyst_features_daily_research
-
-Mais uniquement après justification.
-
-Ne pas créer une table de features PROD.
-
-27. Aucun backfill artificiel
-
-Interdiction absolue :
-
-snapshot Yahoo actuel → dates historiques
-
-Interdiction :
-
-utiliser des deltas Yahoo actuels
-pour recréer artificiellement d'anciens snapshots
-
-La première date exploitable est :
-
-la première vraie date de collecte
-28. POC initial
-
-Tester d’abord :
-
-AAPL
-MSFT
-NVDA
-ENPH
-NVCR
-
-Pour chaque symbole :
-
-afficher dans les logs :
-
-réponse Yahoo
-↓
-valeurs normalisées
-↓
-ID des lignes DB insérées
-
-Puis vérifier directement depuis MySQL :
-
-symbole
-date
-timestamps
-EPS
-revenue
-target
-recommendations
-raw_payload_json
-
-Ensuite :
-
-20 symboles
-
-puis :
-
-univers complet
-29. Tests unitaires
-
-Ajouter au minimum :
-
-test_estimate_parser
-test_target_parser
-test_recommendation_parser
-
-test_append_only
-test_daily_idempotence
-test_duplicate_retry
-
-test_latest_before_cutoff
-test_snapshot_after_cutoff_hidden
-
-test_fiscal_rollover
-test_zero_eps
-test_missing_value
-test_schema_change
-
-Test PIT critique :
-
-snapshot = 18:00 ET
-cutoff = 16:00 ET
-
-résultat :
-
-snapshot actuel NON visible
-snapshot précédent utilisé
-30. Collecte quotidienne
-
-Une fois le POC validé :
-
-exécuter le collecteur chaque jour de marché.
-
-Timing :
-
-après clôture US
-
-Utiliser :
-
-America/New_York
-UTC
-
-Ne pas coder une heure Paris fixe.
-
-Réutiliser le scheduler existant du projet si disponible.
-
-Sinon documenter la commande à planifier.
-
-31. Monitoring uniquement DB
-
-Puisqu’il ne doit y avoir aucun artifact fichier :
-
-fournir des commandes/requêtes permettant de consulter :
-
-dernier run
-coverage du dernier run
-symboles en erreur
-dernières observations
-évolution historique d'un symbole
-
-Exemple CLI :
-
-python -m directional_data snapshot-status
-
-ou équivalent adapté au repo.
-
-32. Contrôle visuel / manuel
-
-Fournir une commande pour afficher :
-
-historique EPS consensus
-historique revenue consensus
-historique target price
-
-pour un symbole.
-
-Exemple :
-
-AAPL
-
-date       EPS FY
-2026-09-01  4.25
-2026-09-02  4.25
-2026-09-03  4.18
-
-On doit pouvoir identifier immédiatement :
-
-vraie révision
-
-sans lire les payloads bruts.
-
-33. Quand lancer le harnais directionnel
-
-Ne pas conclure après quelques jours.
-
-Jalons :
-
-~20 sessions :
-QA uniquement
-
-~60 sessions :
-smoke test
-
-~120 sessions :
-premier diagnostic
-
-~252 sessions :
-validation plus sérieuse
-34. Harnais futur
-
-Réutiliser DirectionalDataResearch.
-
-Pool principal :
-
-Oracle TOP20%
-
-Target principal :
-
-D1-D3 vs D8-D10
-
-Target secondaire :
-
-D1 vs D10
-
-Mesurer :
-
-AUC_direction
-AUC_amplitude
-dir_vs_amp
-IC
-sign stability
-D1
-D10
-BAD
-GOOD
-coverage
-
-Tester séparément :
-
-raw revisions
-xs ranks
-sector ranks
-
-avant toute combinaison.
-
-35. Pas de modèle complexe
-
-Tant qu’aucune feature n’a montré de signal simple :
-
-pas de LightGBM
-pas de CatBoost
-pas de LSTM
-pas de Transformer
-
-Commencer par :
-
-univarié
-puis LogisticRegression
-
-uniquement si les features brutes sont prometteuses.
-
-36. Provider extensible
-
-Le schéma DB doit permettre plus tard :
-
-provider = yahoo
-provider = finnhub
-provider = intrinio
-provider = zacks
-
-sans refaire les tables.
-
-Mais ne mélanger aucun provider pour l’instant.
-
-37. Résultat attendu de l’implémentation
-
-À la fin de ce chantier, fournir dans la réponse console :
-
-IMPLEMENTATION_STATUS
-
-migrations applied
-tables created
-POC symbols tested
-EPS coverage
-revenue coverage
-target coverage
-recommendation coverage
-
-puis :
-
-PIT_AUDIT
-PASS / FAIL
-
-puis :
-
-DB_APPEND_ONLY_AUDIT
-PASS / FAIL
-
-puis :
-
-IDEMPOTENCE_AUDIT
-PASS / FAIL
-
-puis :
-
-READY_FOR_DAILY_COLLECTION
-YES / NO
-38. Critère de succès
-
-Le succès n’est PAS :
-
-obtenir immédiatement une AUC directionnelle
-
-Le succès est :
-
-commencer aujourd'hui à construire
-dans MySQL
-un historique analyste
-réel
-PIT
-immutable
-auditable
-exploitable
-
-qui permettra plus tard de reconstruire exactement :
-
-"quelles estimations et quels targets
-étaient réellement connus à la date J ?"
-
-et donc de tester proprement :
-
-EPS revisions
-Revenue revisions
-Target revisions
-
-comme nouvelles informations directionnelles.
-
-Aucun fichier local comme source de données. MySQL uniquement. Aucun changement PROD. Aucun tuning.
+ARLO P(LONG)=0,70, percentile historique=55 %
+CPRI P(LONG)=0,55, percentile historique=94 %
+Même si 0,70 est numériquement supérieur, le signal CPRI est beaucoup plus exceptionnel pour son modèle.
+Pour rester PIT :
+- distribution construite uniquement avec les prédictions OOF ou antérieures ;
+- aucun calcul sur toute la période future ;
+- profil de calibration gelé et versionné dans les artefacts.
+Le classement transversal doit utiliser les scores normalisés, pas les probabilités brutes.
+Étape 5 — Revoir la comparaison LONG contre SHORT
+Les deux probabilités viennent de modèles séparés et ne somment pas nécessairement à 1. Il ne faut donc pas les comparer directement avant calibration commune.
+Après normalisation :
+score_long  = percentile/calibration commune de la branche LONG
+score_short = percentile/calibration commune de la branche SHORT
+
+direction_margin = |score_long - score_short|
+Politique proposée :
+si score_long suffisamment élevé
+et score_long - score_short >= marge
+    → LONG
+
+sinon si score_short suffisamment élevé
+et score_short - score_long >= marge
+    → SHORT
+
+sinon
+    → FLAT / abstention
+Les seuils et la marge devront être choisis sur des prédictions OOF, pas sur le backtest final.
+Étape 6 — Ne pas sélectionner les symboles sur les mêmes données que l’évaluation
+Je recommande cette séparation :
+Période	Utilisation
+2016–2022	entraînement et construction initiale
+2023–2024H1	sélection des symboles et réglages
+2024H2–2026H1	confirmation totalement indépendante
+
+
+Cependant, comme 2024H2–2026H1 vient déjà d’être analysée, elle n’est plus totalement vierge pour les prochaines décisions. Elle peut servir de validation de recherche, mais il faudra ensuite une validation rolling réellement future ou des folds nested.
+Pour une campagne sérieuse, utiliser environ 300 symboles. Les 49 symboles actuels provoquent trop de concentration.
+Étape 7 — Changer les critères de sélection des symboles
+Ne plus retenir un symbole uniquement parce que son f1_long ou f1_short historique est élevé.
+Pour chaque côté, exiger sur les événements Oracle OOF :
+- au moins 3 folds valides ;
+- support directionnel suffisant ;
+- lift positif contre le pool Oracle ;
+- rendement signé médian positif ;
+- IC/Spearman quotidien positif ;
+- plusieurs périodes positives ;
+- absence de concentration sur un seul fold ;
+- couverture suffisante.
+Exemple de gate de recherche :
+valid_folds >= 3
+support_side >= 30
+median_directional_lift >= +3 pp
+median_signed_return > 0
+median_daily_IC > 0
+positive_fold_rate >= 60 %
+Ces valeurs doivent d’abord être auditées ; elles ne sont pas encore des paramètres de production.
+Étape 8 — Campagne minimale recommandée
+Je lancerais les expériences dans cet ordre :
+Run	Cible	Traitement Oracle	Scores
+D0	Relative à SPY	Aucun	Probabilités brutes — batch actuel
+D1	Absolue H20	Aucun	Probabilités brutes
+D2	Absolue H20	TOP20 OOF pondéré ×5	Probabilités brutes
+D3	Absolue H20	TOP20 OOF pondéré ×5	Scores normalisés par symbole
+D4	Absolue H20	Entraînement conditionnel TOP30	Scores normalisés
+D5	Absolue H20	Meilleure variante	Confirmation sur 300 symboles
+
+
+À chaque fois, comparer :
+- Oracle seul ;
+- Oracle + direction aléatoire ;
+- Oracle + modèle directionnel ;
+- LONG et SHORT séparément ;
+- tout l’univers et STRICT/DISCOVERY ;
+- H20 en métrique principale.
+Gates avant promotion
+Je ne promouvrais une nouvelle version que si, sur plusieurs périodes :
+LONG après Oracle
+taux bon sens > baseline Oracle
+lift >= +5 pp
+rendement signé médian > 0
+excès contre SPY non négatif
+IC quotidien > 0
+SHORT après Oracle
+taux bon sens > baseline Oracle
+lift >= +5 pp
+rendement signé médian > 0
+pas d'effondrement en régime haussier
+IC quotidien > 0
+Bundle complet
+amélioration contre Oracle seul
+amélioration contre direction aléatoire
+résultat non concentré sur quelques symboles
+résultat positif sur plusieurs semestres
+abstention explicite lorsque les scores sont ambigus
+Ma recommandation finale
+La priorité est :
+1. retirer la cible relative à SPY ;
+2. entraîner ou pondérer la direction sur les événements Oracle OOF ;
+3. normaliser les probabilités par symbole avant de les comparer ;
+4. confirmer sur un univers d’environ 300 symboles ;
+5. seulement ensuite ajuster seuils et marge LONG/SHORT.
+Le batch actuel peut rester comme référence expérimentale, mais je déconseille de l’utiliser en backtest de promotion ou en production. L’Oracle peut être conservé ; ce sont les branches directionnelles et leur contrat de scoring qu’il faut reconstruire.

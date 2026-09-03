@@ -209,6 +209,48 @@ La page **Diagnostic ML** détecte `cascade_manifest.json` et affiche une synth�
 
 La compatibilité historique est conservée : en l'absence de manifeste bundle, la page utilise le parcours direct `<batch>/<SYMBOL>` et l'affichage per-symbol/per-sector précédent.
 
+### Performance réalisée des prédictions directionnelles
+
+Pour un bundle, le bouton **« Calculer / actualiser la performance réalisée »** confronte les probabilités effectivement persistées dans `model_predictions` aux clôtures ajustées futures de `stock_bars_daily`. Il mesure séparément la branche LONG et la branche SHORT : il ne remplace ni leurs probabilités ni leurs métriques par la classe consolidée `predicted_side`.
+
+Deux périmètres permettent de localiser un éventuel défaut :
+
+1. **Oracle TOP20 — mission réelle**, utilisé par défaut : pour chaque date, le percentile de `proba_extreme` est calculé sur l'univers Oracle complet, avant son intersection avec les symboles directionnels. Le filtre reprend exactement la règle du moteur, `rank(pct=True) >= 0,80`. On évalue ensuite séparément le top 10 % de `proba_long` et le top 10 % de `proba_short` dans les candidats Oracle encore servables ;
+2. **Tout l'univers directionnel** : le top 10 % est pris parmi toutes les prédictions bundle de la date. Cette vue mesure plus directement la branche directionnelle, sans la composition d'univers imposée par l'Oracle.
+
+Les pourcentages sont recalculés **date par date**, jamais globalement sur toute la période. Cette règle évite qu'une date ou un régime dont les probabilités sont globalement plus hautes monopolise l'échantillon. Pour les branches directionnelles, un groupe non vide conserve au moins un titre par l'arrondi supérieur. Le pool Oracle conserve volontairement la convention percentile inclusive du moteur ; sur un très petit univers, son effectif peut donc être légèrement supérieur à 20 %.
+
+Les résultats sont mesurés à H3, H5, H10 et H20 **séances de cotation** :
+
+```text
+r_H(symbol, t) = AdjClose(symbol, t + H séances) / AdjClose(symbol, t) - 1
+
+rendement_signé_LONG  =  r_H
+rendement_signé_SHORT = -r_H
+
+excès_H = r_H(symbol) - r_H(SPY)
+excès_signé_LONG  =  excès_H
+excès_signé_SHORT = -excès_H
+```
+
+Ainsi, un rendement signé positif désigne toujours une prédiction correcte : hausse pour LONG, baisse pour SHORT. Le **taux bon sens** est la fréquence `rendement_signé > 0`. Le **taux mouvement ≥ 3 %** exige `rendement_signé >= 3 %`. Le **lift** est exprimé en points de pourcentage et compare le taux bon sens du top 10 % à celui de toutes les prédictions arrivées à maturité dans le même périmètre.
+
+Le tableau multi-horizons affiche aussi le rendement signé moyen et médian, l'excès signé moyen contre SPY et la proportion de dates dont la moyenne des sélections est positive. Le détail d'un horizon fournit :
+
+- les KPI propres à chaque côté ;
+- la stabilité par symbole avec nombre d'observations, hit rates et probabilité moyenne ;
+- les 250 sélections réalisées les plus récentes avec date, champion, rendement du titre, rendement signé, rendement SPY et excès signé.
+
+Lorsque la prédiction Oracle est encore en cours ou incomplète, l'écran affiche explicitement le rapport `dates Oracle / dates directionnelles`. Le périmètre TOP20 ne calcule alors que les dates Oracle déjà persistées ; le bouton **Actualiser** recharge les tables sans intervenir sur le processus de prédiction.
+
+#### Maturité, PIT et interprétation
+
+Le classement top 10 % est figé avec les seules probabilités disponibles à la date de prédiction. Une sélection récente qui ne possède pas encore H séances futures reste comptée comme **sélectionnée**, mais elle est exclue des métriques jusqu'à sa maturité. Elle n'est surtout pas remplacée a posteriori par le titre suivant du classement : ce remplacement introduirait un biais de disponibilité du label.
+
+Les clôtures futures servent uniquement à l'évaluation ex post. Elles ne participent ni au gate Oracle, ni au classement directionnel. La double filiation LONG/SHORT est exigée dans la requête afin de ne pas mélanger les anciennes prédictions legacy ou `oracle_synth` avec les deux modèles spécialisés. Le diagnostic relit aussi `train_end_date` des deux runs et impose `train_end_date(LONG) < prediction_date` et `train_end_date(SHORT) < prediction_date`. Toute ligne in-sample, sans filiation ou sans date vérifiable est comptée dans l'alerte PIT puis exclue des statistiques.
+
+Ces rendements ne constituent pas un backtest : les observations H3/H5/H10/H20 se chevauchent, aucune capacité de portefeuille, abstention finale, exécution, spread, slippage, stop ou TP n'est simulé. Le diagnostic répond à la question « les plus fortes probabilités de cette branche anticipent-elles le bon sens et une amplitude utile ? ». Seul le moteur de backtest mesure ensuite la stratégie tradable complète.
+
 ## Contrôle PIT des prédictions directionnelles en backtest
 
 La présence d'une ligne historique dans `model_predictions` ne prouve pas qu'elle était disponible à la date simulée. Une commande de prédiction lancée après l'entraînement final peut recalculer 2024 avec un modèle dont `train_end_date` est en juin 2024 : ces lignes sont techniquement historiques, mais elles utilisent du futur pour janvier-mai 2024.

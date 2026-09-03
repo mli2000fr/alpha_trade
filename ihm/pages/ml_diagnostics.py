@@ -28,6 +28,12 @@ from ihm.services.ml_artifacts import (
     load_batch_artifact_contract,
     resolve_batch_artifacts_root,
 )
+from ihm.services.directional_prediction_diagnostics import (
+    SUPPORTED_HORIZONS,
+    attach_forward_returns,
+    evaluate_directional_top_decile,
+    oracle_top_fraction,
+)
 from modelFactory.report import generate_batch_report
 from modelFactory.db_registry import audit_batch_delete, audit_batch_delete_attempt, delete_batch_rows
 
@@ -1019,6 +1025,47 @@ BUNDLE_PREDICTION_COVERAGE_QUERY = """
       AND mp.model_role = 'directional_bundle'
 """
 
+BUNDLE_DIRECTIONAL_REALIZED_QUERY = """
+    SELECT
+        mp.symbol,
+        mp.prediction_date,
+        mp.proba_long,
+        mp.proba_short,
+        mp.proba_flat,
+        mp.direction_long_run_id,
+        mp.direction_short_run_id,
+        mp.direction_long_model,
+        mp.direction_short_model,
+        long_run.train_end_date AS long_train_end_date,
+        short_run.train_end_date AS short_train_end_date,
+        op.proba_extreme
+    FROM alpha_trade.model_predictions AS mp
+    JOIN alpha_trade.model_training_run AS r
+      ON r.run_id = mp.run_id
+    LEFT JOIN alpha_trade.model_training_run AS long_run
+      ON long_run.run_id = mp.direction_long_run_id
+    LEFT JOIN alpha_trade.model_training_run AS short_run
+      ON short_run.run_id = mp.direction_short_run_id
+    LEFT JOIN alpha_trade.oracle_extreme_predictions AS op
+      ON op.batch_id = r.batch_id
+     AND op.prediction_date = mp.prediction_date
+     AND op.symbol = mp.symbol
+    WHERE r.batch_id = :batch_id
+      AND r.status = 'completed'
+      AND mp.model_role = 'directional_bundle'
+      AND mp.direction_long_run_id IS NOT NULL
+      AND mp.direction_short_run_id IS NOT NULL
+    ORDER BY mp.prediction_date, mp.symbol
+"""
+
+BUNDLE_ORACLE_REALIZED_QUERY = """
+    SELECT prediction_date, symbol, proba_extreme
+    FROM alpha_trade.oracle_extreme_predictions
+    WHERE batch_id = :batch_id
+      AND prediction_date BETWEEN :first_date AND :last_prediction_date
+    ORDER BY prediction_date, symbol
+"""
+
 _GICS_SECTORS = {
     "Communication Services", "Consumer Discretionary", "Consumer Staples",
     "Energy", "Financials", "Health Care", "Industrials",
@@ -1034,6 +1081,376 @@ BATCH_TABLE_KEY = "ml_diagnostics_batch_table"
 BEST_TABLE_KEY = "ml_diagnostics_best_table"
 WORST_TABLE_KEY = "ml_diagnostics_worst_table"
 ZERO_TABLE_KEY = "ml_diagnostics_zero_table"
+
+
+def _load_directional_realized_dataset(batch_id: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Charge les prédictions bundle et les clôtures nécessaires aux labels futurs."""
+    predictions = safe_query(BUNDLE_DIRECTIONAL_REALIZED_QUERY, {"batch_id": batch_id})
+    if predictions.empty:
+        return predictions, pd.DataFrame()
+
+    predictions = predictions.copy()
+    predictions["symbol"] = predictions["symbol"].astype(str).str.upper()
+    predictions["prediction_date"] = pd.to_datetime(
+        predictions["prediction_date"], errors="coerce"
+    ).dt.normalize()
+    predictions = predictions.dropna(subset=["symbol", "prediction_date"])
+    predictions = predictions.drop_duplicates(["symbol", "prediction_date"], keep="last")
+    if predictions.empty:
+        return predictions, pd.DataFrame()
+
+    first_date = predictions["prediction_date"].min().date().isoformat()
+    last_prediction_date = predictions["prediction_date"].max().date().isoformat()
+    oracle_universe = safe_query(
+        BUNDLE_ORACLE_REALIZED_QUERY,
+        {
+            "batch_id": batch_id,
+            "first_date": first_date,
+            "last_prediction_date": last_prediction_date,
+        },
+    )
+    if not oracle_universe.empty:
+        oracle_universe = oracle_universe.copy()
+        oracle_universe["symbol"] = oracle_universe["symbol"].astype(str).str.upper()
+        oracle_universe["prediction_date"] = pd.to_datetime(
+            oracle_universe["prediction_date"], errors="coerce"
+        ).dt.normalize()
+        # Important : le percentile Oracle est calculé sur son univers complet,
+        # avant l'intersection avec les symboles servis par les deux branches.
+        oracle_pool = oracle_top_fraction(oracle_universe, 0.20)[
+            ["prediction_date", "symbol"]
+        ].drop_duplicates()
+        oracle_pool["oracle_top_pool"] = True
+        predictions = predictions.merge(
+            oracle_pool,
+            on=["prediction_date", "symbol"],
+            how="left",
+        )
+        # La colonne issue de la jointure ne contient que True ou NULL.
+        predictions["oracle_top_pool"] = predictions["oracle_top_pool"].notna()
+    else:
+        predictions["oracle_top_pool"] = False
+    # 60 jours calendaires couvrent H20 même autour des périodes de fêtes.
+    last_date = (predictions["prediction_date"].max() + pd.Timedelta(days=60)).date().isoformat()
+    symbols = sorted(set(predictions["symbol"].tolist()) | {"SPY"})
+    bar_parts: list[pd.DataFrame] = []
+    for chunk_index, offset in enumerate(range(0, len(symbols), 500)):
+        chunk = symbols[offset:offset + 500]
+        params: dict[str, object] = {"first_date": first_date, "last_date": last_date}
+        placeholders: list[str] = []
+        for symbol_index, symbol in enumerate(chunk):
+            parameter = f"symbol_{chunk_index}_{symbol_index}"
+            params[parameter] = symbol
+            placeholders.append(f":{parameter}")
+        bars = safe_query(
+            f"""SELECT symbol, `date`, adj_close
+                FROM alpha_trade.stock_bars_daily
+                WHERE symbol IN ({', '.join(placeholders)})
+                  AND `date` BETWEEN :first_date AND :last_date
+                ORDER BY symbol, `date`""",
+            params,
+        )
+        if not bars.empty:
+            bar_parts.append(bars)
+    return predictions, (pd.concat(bar_parts, ignore_index=True) if bar_parts else pd.DataFrame())
+
+
+def _directional_metrics_row(side: str, horizon: int, result: dict[str, Any]) -> dict[str, object]:
+    metrics = result.get("metrics") or {}
+    return {
+        "Branche": side.upper(),
+        "Horizon": f"H{horizon}",
+        "Top 10 % sélectionnés": int(metrics.get("n_selected") or 0),
+        "Arrivés à maturité": int(metrics.get("n_picks") or 0),
+        "Dates évaluées": int(metrics.get("n_dates") or 0),
+        "Taux bon sens": metrics.get("hit_rate"),
+        "Taux mouvement ≥ 3 %": metrics.get("extreme_hit_rate"),
+        "Lift vs univers (pp)": metrics.get("hit_lift_pp"),
+        "Rendement signé moyen": metrics.get("mean_signed_return"),
+        "Rendement signé médian": metrics.get("median_signed_return"),
+        "Excès signé vs SPY": metrics.get("mean_signed_excess_return"),
+        "Dates profitables": metrics.get("profitable_date_rate"),
+    }
+
+
+def _render_directional_side_detail(side: str, horizon: int, result: dict[str, Any]) -> None:
+    """Affiche les KPI et observations réalisées d'une branche directionnelle."""
+    metrics = result.get("metrics") or {}
+    side_upper = side.upper()
+    if int(metrics.get("n_picks") or 0) == 0:
+        st.warning(f"Aucune sélection {side_upper} à H{horizon} n'est encore arrivée à maturité.")
+        return
+
+    signed_help = (
+        "Pour LONG, positif signifie que le titre a monté. "
+        "Pour SHORT, le rendement du titre est multiplié par −1 : positif signifie qu'il a baissé."
+    )
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Sélections matures", int(metrics["n_picks"]), help=f"Top 10 % quotidien {side_upper}.")
+    c2.metric("Bon sens", f"{metrics['hit_rate']:.1%}", help=signed_help)
+    c3.metric("Mouvement ≥ 3 %", f"{metrics['extreme_hit_rate']:.1%}", help=signed_help)
+    c4.metric("Rendement signé moyen", f"{metrics['mean_signed_return']:+.2%}", help=signed_help)
+    c5.metric("Lift", f"{metrics['hit_lift_pp']:+.1f} pp", help="Écart de taux de bon sens entre le top 10 % et tout le périmètre.")
+    d1, d2, d3, d4 = st.columns(4)
+    d1.metric("Médiane signée", f"{metrics['median_signed_return']:+.2%}")
+    d2.metric("Excès signé vs SPY", f"{metrics['mean_signed_excess_return']:+.2%}")
+    d3.metric("Dates profitables", f"{metrics['profitable_date_rate']:.1%}")
+    d4.metric("Pire date", f"{metrics['worst_date_return']:+.2%}")
+
+    by_symbol = result.get("by_symbol")
+    if isinstance(by_symbol, pd.DataFrame) and not by_symbol.empty:
+        display_symbols = by_symbol.rename(columns={
+            "symbol": "Symbole",
+            "observations": "Observations",
+            "hit_rate": "Bon sens",
+            "extreme_hit_rate": "Mouvement ≥ 3 %",
+            "mean_signed_return": "Rendement signé moyen",
+            "median_signed_return": "Rendement signé médian",
+            "mean_probability": f"P({side_upper}) moyenne",
+        })
+        st.markdown(f"**Stabilité par symbole — {side_upper} H{horizon}**")
+        st.dataframe(
+            display_symbols,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Bon sens": st.column_config.NumberColumn(format="percent"),
+                "Mouvement ≥ 3 %": st.column_config.NumberColumn(format="percent"),
+                "Rendement signé moyen": st.column_config.NumberColumn(format="percent"),
+                "Rendement signé médian": st.column_config.NumberColumn(format="percent"),
+                f"P({side_upper}) moyenne": st.column_config.NumberColumn(format="%.3f"),
+            },
+        )
+
+    picks = result.get("picks")
+    if isinstance(picks, pd.DataFrame) and not picks.empty:
+        probability = f"proba_{side}"
+        detail_columns = [
+            "prediction_date", "symbol", probability, "future_return", "signed_return",
+            "benchmark_future_return", "signed_excess_return",
+            f"direction_{side}_model",
+        ]
+        detail_columns = [column for column in detail_columns if column in picks.columns]
+        recent = picks.sort_values(["prediction_date", probability], ascending=[False, False])[detail_columns].head(250)
+        recent = recent.rename(columns={
+            "prediction_date": "Date prédiction",
+            "symbol": "Symbole",
+            probability: f"P({side_upper})",
+            "future_return": "Rendement réel titre",
+            "signed_return": "Rendement signé",
+            "benchmark_future_return": "Rendement SPY",
+            "signed_excess_return": "Excès signé vs SPY",
+            f"direction_{side}_model": "Champion",
+        })
+        with st.expander(f"250 sélections réalisées les plus récentes — {side_upper}", expanded=False):
+            st.dataframe(
+                recent,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    f"P({side_upper})": st.column_config.NumberColumn(format="%.3f"),
+                    "Rendement réel titre": st.column_config.NumberColumn(format="percent"),
+                    "Rendement signé": st.column_config.NumberColumn(format="percent"),
+                    "Rendement SPY": st.column_config.NumberColumn(format="percent"),
+                    "Excès signé vs SPY": st.column_config.NumberColumn(format="percent"),
+                },
+            )
+
+
+def _render_directional_prediction_performance(batch_id: str) -> None:
+    """Diagnostic ex post des top déciles LONG et SHORT d'un bundle."""
+    st.subheader("📈 Performance réalisée des prédictions LONG / SHORT")
+    st.caption(
+        "Mesure les probabilités réellement servies par les deux champions per-symbol. "
+        "Le classement est reconstruit séparément chaque date, sans utiliser le futur."
+    )
+    state_key = f"directional_realized_dataset_{batch_id}"
+    if st.button(
+        "📊 Calculer / actualiser la performance réalisée",
+        key=f"load_directional_realized_{batch_id}",
+        help="Charge les clôtures ajustées et calcule les rendements futurs H3/H5/H10/H20.",
+    ):
+        with st.spinner("Chargement des prédictions et des clôtures futures…"):
+            predictions, bars = _load_directional_realized_dataset(batch_id)
+        st.session_state[state_key] = {"predictions": predictions, "bars": bars}
+
+    payload = st.session_state.get(state_key)
+    if not isinstance(payload, dict):
+        st.info("Cliquez sur le bouton pour lancer ce diagnostic à la demande.")
+        return
+    predictions = payload.get("predictions")
+    bars = payload.get("bars")
+    if not isinstance(predictions, pd.DataFrame) or predictions.empty:
+        st.warning("Aucune prédiction bundle avec double filiation LONG/SHORT n'est disponible pour ce batch.")
+        return
+    if not isinstance(bars, pd.DataFrame) or bars.empty:
+        st.warning("Aucune clôture ajustée n'a pu être chargée pour mesurer les résultats futurs.")
+        return
+
+    predictions = predictions.copy()
+    for column in ("long_train_end_date", "short_train_end_date"):
+        predictions[column] = pd.to_datetime(predictions[column], errors="coerce").dt.normalize()
+    pit_mask = (
+        predictions["long_train_end_date"].notna()
+        & predictions["short_train_end_date"].notna()
+        & (predictions["long_train_end_date"] < predictions["prediction_date"])
+        & (predictions["short_train_end_date"] < predictions["prediction_date"])
+    )
+    excluded_pit = int((~pit_mask).sum())
+    predictions = predictions.loc[pit_mask].copy()
+    if excluded_pit:
+        st.warning(
+            f"Contrôle PIT : {excluded_pit:,} ligne(s) in-sample ou sans date d'entraînement vérifiable "
+            "ont été exclues des résultats."
+        )
+    if predictions.empty:
+        st.error(
+            "Aucune prédiction n'est évaluable hors échantillon : la date de prédiction doit être "
+            "strictement postérieure aux fins d'entraînement LONG et SHORT."
+        )
+        return
+
+    scope_label = st.radio(
+        "Périmètre de mesure",
+        options=("Oracle TOP20 — mission réelle", "Tout l'univers directionnel"),
+        horizontal=True,
+        key=f"directional_realized_scope_{batch_id}",
+        help="Mission réelle : Oracle retient d'abord les 20 % plus fortes probabilités d'amplitude, puis chaque branche retient son top 10 % quotidien.",
+    )
+    oracle_scope = scope_label.startswith("Oracle TOP20")
+    all_prediction_dates = int(predictions["prediction_date"].nunique())
+    oracle_prediction_dates = int(
+        predictions.loc[predictions["proba_extreme"].notna(), "prediction_date"].nunique()
+    )
+    if oracle_scope and oracle_prediction_dates < all_prediction_dates:
+        st.warning(
+            f"Couverture Oracle encore partielle : {oracle_prediction_dates:,}/{all_prediction_dates:,} "
+            "dates directionnelles possèdent une prédiction Oracle. Les métriques TOP20 portent uniquement "
+            "sur les dates déjà disponibles. Cliquez de nouveau sur Actualiser pendant ou après la prédiction."
+        )
+    results: dict[tuple[str, int], dict[str, Any]] = {}
+    summary_rows: list[dict[str, object]] = []
+    scoped_rows = 0
+    scoped_dates = 0
+    for horizon in SUPPORTED_HORIZONS:
+        realized = attach_forward_returns(predictions, bars, horizon=horizon)
+        scoped = oracle_top_fraction(realized, 0.20) if oracle_scope else realized
+        scoped_rows = len(scoped)
+        scoped_dates = int(scoped["prediction_date"].nunique()) if not scoped.empty else 0
+        for side in ("long", "short"):
+            result = evaluate_directional_top_decile(scoped, side=side)
+            results[(side, horizon)] = result
+            summary_rows.append(_directional_metrics_row(side, horizon, result))
+
+    if scoped_rows == 0:
+        if oracle_scope:
+            st.warning("Aucune correspondance Oracle n'est disponible : choisissez temporairement tout l'univers ou terminez la prédiction Oracle.")
+        else:
+            st.warning("Le périmètre directionnel est vide.")
+        return
+
+    st.caption(
+        f"Périmètre : **{scoped_rows:,}** prédictions sur **{scoped_dates:,}** dates. "
+        "Hn signifie n séances de marché. Les lignes récentes sans n clôtures futures restent sélectionnées, "
+        "mais sont exclues des statistiques jusqu'à leur maturité."
+    )
+    summary = pd.DataFrame(summary_rows)
+    st.dataframe(
+        summary,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Branche": st.column_config.TextColumn(
+                help="LONG évalue P(LONG) ; SHORT évalue P(SHORT). Les deux classements sont indépendants."
+            ),
+            "Horizon": st.column_config.TextColumn(
+                help="Nombre de séances de Bourse entre la prédiction et la clôture utilisée pour vérifier le résultat."
+            ),
+            "Top 10 % sélectionnés": st.column_config.NumberColumn(
+                help="Nombre de titres appartenant au top 10 % quotidien de la probabilité de la branche, y compris les plus récents sans résultat futur disponible."
+            ),
+            "Arrivés à maturité": st.column_config.NumberColumn(
+                help="Sélections disposant réellement de H séances futures. Seules celles-ci entrent dans les statistiques de performance."
+            ),
+            "Dates évaluées": st.column_config.NumberColumn(
+                help="Nombre de dates distinctes ayant au moins une sélection arrivée à maturité."
+            ),
+            "Taux bon sens": st.column_config.NumberColumn(
+                format="percent",
+                help="Part des sélections dont le sens est correct : titre en hausse pour LONG, en baisse pour SHORT."
+            ),
+            "Taux mouvement ≥ 3 %": st.column_config.NumberColumn(
+                format="percent",
+                help="Part des sélections ayant évolué d'au moins +3 % pour LONG ou −3 % pour SHORT à l'horizon considéré."
+            ),
+            "Lift vs univers (pp)": st.column_config.NumberColumn(
+                format="%+.1f",
+                help="Taux bon sens du top 10 % moins celui de tout le périmètre, en points de pourcentage. Positif signifie que les fortes probabilités discriminent mieux."
+            ),
+            "Rendement signé moyen": st.column_config.NumberColumn(
+                format="percent",
+                help="Moyenne des rendements, avec le signe inversé pour SHORT. Positif est favorable aux deux branches."
+            ),
+            "Rendement signé médian": st.column_config.NumberColumn(
+                format="percent",
+                help="Valeur centrale des rendements signés, moins sensible que la moyenne aux quelques mouvements extrêmes."
+            ),
+            "Excès signé vs SPY": st.column_config.NumberColumn(
+                format="percent",
+                help="Performance moyenne contre SPY : titre moins SPY pour LONG, signe inversé pour SHORT. Positif signifie une valeur ajoutée relative."
+            ),
+            "Dates profitables": st.column_config.NumberColumn(
+                format="percent",
+                help="Part des dates où le rendement signé moyen de toutes les sélections du jour est positif. Mesure la stabilité dans le temps."
+            ),
+        },
+    )
+
+    with st.expander("ℹ️ Comment lire chaque colonne ?", expanded=True):
+        st.markdown(
+            """
+| Colonne | Signification | Lecture favorable |
+|---|---|---|
+| **Branche** | `LONG` classe par `proba_long`; `SHORT` classe indépendamment par `proba_short`. | À comparer séparément : une bonne branche LONG n'implique pas une bonne branche SHORT. |
+| **Horizon** | Nombre de **séances de Bourse** après la prédiction : H3, H5, H10 ou H20. | Une performance stable sur plusieurs horizons est plus crédible qu'un résultat isolé. |
+| **Top 10 % sélectionnés** | Nombre de candidats classés dans les 10 % de probabilités les plus élevées, date par date. Inclut les sélections récentes non mûres. | Donne la taille réelle du signal testé. |
+| **Arrivés à maturité** | Candidats pour lesquels les H séances futures existent déjà. Eux seuls servent aux calculs de performance. | Doit être suffisamment élevé et proche du nombre sélectionné, sauf en fin de période. |
+| **Dates évaluées** | Nombre de journées distinctes couvertes par les sélections mûres. | Beaucoup de dates réduisent le risque qu'un résultat provienne de quelques journées exceptionnelles. |
+| **Taux bon sens** | Fréquence de hausse pour LONG ou de baisse pour SHORT. | Au-dessus de 50 % est intuitivement favorable, mais doit aussi dépasser la référence de l'univers. |
+| **Taux mouvement ≥ 3 %** | Fréquence d'une hausse ≥ +3 % pour LONG ou d'une baisse ≤ −3 % pour SHORT. | Plus élevé signifie que le modèle trouve davantage de mouvements réellement exploitables. |
+| **Lift vs univers (pp)** | Écart entre le taux bon sens du top 10 % et celui de tout le périmètre. `+8 pp` signifie par exemple 58 % contre 50 %. | **Positif**, stable et présent sur plusieurs horizons. C'est la colonne la plus directe pour savoir si la probabilité classe utilement. |
+| **Rendement signé moyen** | Rendement moyen ; pour SHORT, le signe est inversé. Une baisse réelle de −4 % devient donc +4 %. | Positif. Attention : la moyenne peut être dominée par quelques gros mouvements. |
+| **Rendement signé médian** | Rendement signé de la sélection centrale. | Positif confirme que le résultat n'est pas dû uniquement à quelques valeurs extrêmes. |
+| **Excès signé vs SPY** | Rendement relatif au marché. LONG : titre − SPY. SHORT : l'inverse. | Positif signifie que le signal apporte quelque chose au-delà du simple mouvement du marché. |
+| **Dates profitables** | Pourcentage de dates dont le panier quotidien de sélections a un rendement signé moyen positif. | Élevé indique une meilleure stabilité temporelle. |
+"""
+        )
+        st.info(
+            "Exemple SHORT : si un titre passe de 100 à 94, son rendement réel est −6 %, mais son "
+            "rendement signé SHORT est +6 % : la branche avait correctement anticipé la baisse."
+        )
+        st.warning(
+            "Ce tableau mesure la qualité directionnelle brute, pas le PnL final : les horizons se chevauchent "
+            "et les frais, positions, stops, TP, spread et règles d'abstention du backtest ne sont pas appliqués."
+        )
+
+    horizon = st.selectbox(
+        "Horizon détaillé",
+        options=SUPPORTED_HORIZONS,
+        index=len(SUPPORTED_HORIZONS) - 1,
+        format_func=lambda value: f"H{value} séances",
+        key=f"directional_realized_horizon_{batch_id}",
+    )
+    long_tab, short_tab = st.tabs(("🟢 Branche LONG", "🔴 Branche SHORT"))
+    with long_tab:
+        _render_directional_side_detail("long", int(horizon), results[("long", int(horizon))])
+    with short_tab:
+        _render_directional_side_detail("short", int(horizon), results[("short", int(horizon))])
+
+    st.caption(
+        "Lecture : un rendement signé positif est favorable à la branche (hausse pour LONG, baisse pour SHORT). "
+        "Ces rendements futurs se chevauchent ; ils mesurent la qualité directionnelle et ne constituent pas un PnL de portefeuille."
+    )
 
 
 def _selected_row_index(table_key: str) -> int | None:
@@ -2928,6 +3345,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
     st.divider()
     if _is_directional_bundle:
         _render_directional_bundle_overview(batch_id, _batch_contract, _batch_status)
+        _render_directional_prediction_performance(batch_id)
         selected_model_role = st.radio(
             "Branche directionnelle à diagnostiquer",
             options=("direction_long", "direction_short"),

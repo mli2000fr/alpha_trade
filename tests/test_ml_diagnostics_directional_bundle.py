@@ -46,3 +46,24 @@ def test_directional_candidate_view_can_switch_strict_and_discovery() -> None:
     assert "DISCOVERY / HIGH POTENTIAL" in source
     assert "STRICT / STABLE" in source
     assert "discovery_classification" in source
+
+
+def test_bundle_diagnostics_exposes_realized_directional_performance() -> None:
+    source = (ROOT / "ihm" / "pages" / "ml_diagnostics.py").read_text(encoding="utf-8")
+
+    assert "BUNDLE_DIRECTIONAL_REALIZED_QUERY" in source
+    assert "BUNDLE_ORACLE_REALIZED_QUERY" in source
+    assert "oracle_top_pool" in source
+    assert "long_train_end_date" in source
+    assert "short_train_end_date" in source
+    assert "Contrôle PIT" in source
+    assert "Couverture Oracle encore partielle" in source
+    assert "Comment lire chaque colonne ?" in source
+    assert "Lift vs univers (pp)" in source
+    assert "Une baisse réelle de −4 % devient donc +4 %" in source
+    assert "Calculer / actualiser la performance réalisée" in source
+    assert "Oracle TOP20 — mission réelle" in source
+    assert "Tout l'univers directionnel" in source
+    assert "SUPPORTED_HORIZONS" in source
+    assert "evaluate_directional_top_decile" in source
+    assert "_render_directional_prediction_performance(batch_id)" in source
