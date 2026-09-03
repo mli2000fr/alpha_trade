@@ -462,6 +462,39 @@ def _train_worker(
                         cross_sectional_df.get("global_rank", pd.Series(0.5, index=cross_sectional_df.index)),
                     ).fillna(0.5).astype(np.float64)
 
+    oracle_gate_df = None
+    if cfg.directional_conditioning_enabled:
+        from modelFactory.directional_conditioning import ORACLE_ELIGIBLE_COLUMN
+
+        gate_path = Path(cfg.directional_oracle_gate_path or "")
+        if not gate_path.is_file():
+            raise RuntimeError(f"directional_oracle_oof_gate_missing:{gate_path}")
+        try:
+            oracle_gate_df = pd.read_parquet(
+                gate_path,
+                filters=[("symbol", "==", str(symbol).strip().upper())],
+            )
+        except Exception:  # filtres non supportés par certains moteurs parquet
+            oracle_gate_df = pd.read_parquet(gate_path)
+            oracle_gate_df = oracle_gate_df[
+                oracle_gate_df["symbol"].astype(str).str.upper() == str(symbol).strip().upper()
+            ].copy()
+        if oracle_gate_df.empty:
+            return TrainResult(
+                symbol, f"{symbol}_{cfg.model_role}_oracle_oof", "skipped",
+                skip_reason="directional_oracle_oof_symbol_missing",
+            )
+        if not bool(oracle_gate_df[ORACLE_ELIGIBLE_COLUMN].eq(True).any()):  # noqa: E712
+            return TrainResult(
+                symbol, f"{symbol}_{cfg.model_role}_oracle_oof", "skipped",
+                skip_reason="directional_oracle_oof_no_eligible_rows",
+            )
+        LOGGER.info(
+            "directional conditioning symbol=%s role=%s oof_rows=%d eligible_rows=%d path=%s",
+            symbol, cfg.model_role, len(oracle_gate_df),
+            int(oracle_gate_df[ORACLE_ELIGIBLE_COLUMN].sum()), gate_path,
+        )
+
     return train_symbol(
         symbol,
         bars,
@@ -474,6 +507,7 @@ def _train_worker(
         cross_sectional_df=cross_sectional_df,
         batch_id=batch_id,
         fundamental_df=fundamental_cache,
+        oracle_gate_df=oracle_gate_df,
     )
 
 
@@ -632,6 +666,30 @@ def train_oracle_extreme(
             LOGGER.warning("oracle_extreme walk_forward not completed: %s", result.get("status"))
             return {"status": result.get("status", "error"), "batch_id": _batch_id, **result}
 
+        # Le dataset directionnel doit reproduire le gate de serving sans
+        # jamais utiliser un score Oracle in-sample. On construit donc son
+        # cache exclusivement avec les prédictions de test des folds Oracle.
+        _gate_path: Path | None = None
+        _gate_diagnostics: dict[str, Any] = {}
+        if cfg.directional_profiles_enabled:
+            from modelFactory.directional_conditioning import build_directional_oof_gate
+
+            _gate_df, _gate_diagnostics = build_directional_oof_gate(
+                result["oos"], pool_pct=cfg.directional_oracle_pool_pct,
+            )
+            _gate_path = Path(cfg.artifacts_dir) / "_oracle_oof_gate.parquet"
+            _gate_path.parent.mkdir(parents=True, exist_ok=True)
+            _gate_df.to_parquet(_gate_path, index=False)
+            (_gate_path.with_suffix(".json")).write_text(
+                json.dumps(_gate_diagnostics, ensure_ascii=False, indent=2, default=str),
+                encoding="utf-8",
+            )
+            LOGGER.info(
+                "oracle directional OOF gate saved path=%s rows=%d eligible=%d dates=%d",
+                _gate_path, _gate_diagnostics["rows"],
+                _gate_diagnostics["eligible_rows"], _gate_diagnostics["dates"],
+            )
+
         from datetime import datetime as _dt
         run_id = f"oracle-wf-{_dt.now():%Y%m%d%H%M%S}"
         from modelFactory.oracle.walk_forward import persist_oos
@@ -652,6 +710,8 @@ def train_oracle_extreme(
             "n_folds": result.get("n_folds"),
             "fold_stability_pct": result.get("fold_stability_pct"),
             "overall": result.get("overall"),
+            "directional_oof_gate_path": str(_gate_path) if _gate_path else None,
+            "directional_oof_gate": _gate_diagnostics,
         }
     except Exception as exc:
         LOGGER.exception("oracle_extreme failed: %s", exc)
@@ -734,6 +794,16 @@ def run_training_batch(
                         },
                     },
                     "directional_target_contract": directional_target_contract(),
+                    "directional_conditioning": {
+                        "enabled": True,
+                        "source": "oracle_walk_forward_oof_test",
+                        "gate": "daily_cross_sectional_percentile",
+                        "pool_pct": cfg.directional_oracle_pool_pct,
+                        "threshold": 1.0 - cfg.directional_oracle_pool_pct,
+                        "oracle_score_is_feature": False,
+                        "cache_path": "_oracle_oof_gate.parquet",
+                        "status": "pending",
+                    },
                     "per_symbol": {
                         "long": {
                             "role": "direction_long",
@@ -1007,6 +1077,63 @@ def run_training_batch(
         accelerator=cfg.accelerator,
     )
     results: list[TrainResult] = []
+    _oracle_result: dict[str, Any] | None = None
+
+    # Dans un bundle conditionnel, l'Oracle doit impérativement être entraîné
+    # en premier : ses seules prédictions de test Walk-Forward définissent les
+    # endpoints autorisés pour les branches LONG et SHORT.
+    if cfg.directional_profiles_enabled:
+        LOGGER.info("directional bundle phase 1/2 — training Oracle OOF before direction branches")
+        try:
+            update_runtime_status(current_phase="oracle_extreme", progress_item="__ORACLE__")
+            _oracle_result = train_oracle_extreme(
+                cfg, engine, batch_id, symbols=_global_symbols,
+            )
+        except Exception as _exc:  # noqa: BLE001
+            LOGGER.exception("directional bundle Oracle-first failed: %s", _exc)
+            _oracle_result = {"status": "failed", "reason": str(_exc), "batch_id": batch_id}
+
+        _manifest_path = Path(cfg.artifacts_dir) / "cascade_manifest.json"
+        try:
+            _manifest = json.loads(_manifest_path.read_text(encoding="utf-8"))
+            _manifest["oracle"] = {
+                **dict(_manifest.get("oracle") or {}),
+                "status": _oracle_result.get("status"),
+                "result": _oracle_result,
+            }
+            _manifest["directional_conditioning"] = {
+                **dict(_manifest.get("directional_conditioning") or {}),
+                "status": (
+                    "ready" if _oracle_result.get("status") == "completed" else "failed"
+                ),
+                "diagnostics": _oracle_result.get("directional_oof_gate") or {},
+            }
+            if _oracle_result.get("status") != "completed":
+                _reason = f"directional_oracle_oof_required:{_oracle_result.get('reason') or _oracle_result.get('status')}"
+                _manifest.update({
+                    "status": "failed",
+                    "serving_ready": False,
+                    "failure_reason": _reason,
+                })
+            _manifest_path.write_text(
+                json.dumps(_manifest, ensure_ascii=False, indent=2, default=str),
+                encoding="utf-8",
+            )
+        except Exception as _manifest_exc:  # noqa: BLE001
+            LOGGER.error("directional bundle Oracle-first manifest update failed: %s", _manifest_exc)
+
+        if _oracle_result.get("status") == "completed":
+            results.append(TrainResult("__ORACLE__", batch_id, "completed", metrics=_oracle_result))
+            LOGGER.info("directional bundle phase 2/2 — training conditional direction branches")
+        else:
+            reason = f"directional_oracle_oof_required:{_oracle_result.get('reason') or _oracle_result.get('status')}"
+            results.append(TrainResult("__ORACLE__", batch_id, "failed", skip_reason=reason))
+            update_runtime_status(
+                current_phase="batch_failed", progress_current=1,
+                symbols_failed=1, phase_detail=reason,
+            )
+            LOGGER.error("directional bundle aborted before direction training: %s", reason)
+            return results
 
     # ── Oracle Extreme ONLY (2026-08-20) : entraîner UNIQUEMENT l'Oracle,
     #    skip Global Model, per-symbol et per-sector. ──
@@ -1318,6 +1445,12 @@ def run_training_batch(
                 "feature_whitelist": columns,
                 "include_macro_move": variant.data.include_macro_move_features,
                 "profile": directional_profiles[direction],
+                "training_population": {
+                    "conditioned_on": "oracle_walk_forward_oof_top20",
+                    "pool_pct": variant.directional_oracle_pool_pct,
+                    "gate_path": str(variant.directional_oracle_gate_path),
+                    "oracle_score_is_feature": False,
+                },
             }
             role_dir = Path(variant.artifacts_dir)
             role_dir.mkdir(parents=True, exist_ok=True)
@@ -1440,8 +1573,11 @@ def run_training_batch(
 
     # ── Oracle Extreme en fin de séquence (2026-08-20) : entraîne l'Oracle
     #    AUSSI (en plus du global / per-symbol / per-sector déjà faits). ──
-    _oracle_result: dict[str, Any] | None = None
-    if cfg.data.enable_oracle_model and not cfg.data.oracle_model_only:
+    if (
+        cfg.data.enable_oracle_model
+        and not cfg.data.oracle_model_only
+        and not cfg.directional_profiles_enabled
+    ):
         LOGGER.info("orchestrator enable_oracle_model — training Oracle Extreme (O0) after sequence")
         try:
             update_runtime_status(current_phase="oracle_extreme", progress_item="__ORACLE__")

@@ -141,6 +141,11 @@ def test_profile_application_isolates_direction_artifacts() -> None:
     assert effective.data.target_intra_sector_rank is False
     assert effective.data.target_ternary_intra_sector is False
     assert effective.target_optimization.enabled is False
+    assert effective.directional_conditioning_enabled is True
+    assert effective.directional_oracle_pool_pct == pytest.approx(0.20)
+    assert effective.directional_oracle_gate_path == (
+        cfg.artifacts_dir / "_oracle_oof_gate.parquet"
+    )
     assert directional_target_contract()["return_basis"] == "absolute"
 
 

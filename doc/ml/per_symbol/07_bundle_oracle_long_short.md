@@ -7,20 +7,26 @@ Ce mode sépare explicitement amplitude et direction dans une seule campagne ML.
 ```text
                           batch_id unique
                                 │
-             ┌──────────────────┼──────────────────┐
-             │                  │                  │
-     Oracle Extreme       branche LONG       branche SHORT
-     modèle global O0     modèle / symbole   modèle / symbole
-     amplitude extrême    profil LONG JSON   profil SHORT JSON
-             │                  │                  │
-             └──────────── gate + arbitrage LONG/SHORT ────────┘
+                     Oracle Extreme O0
+                  Walk-Forward → scores OOF
+                                │
+                     TOP20 de chaque date
+                                │
+                population directionnelle PIT
+                         ┌──────┴──────┐
+                         │             │
+                  branche LONG   branche SHORT
+                  profil LONG    profil SHORT
+                         └──────┬──────┘
+                                │
+                    arbitrage / abstention
                                 │
                        candidats de backtest
 ```
 
 - l'Oracle Extreme détecte les mouvements d'amplitude inhabituelle sans imposer leur sens ;
-- le champion LONG estime la probabilité haussière avec un contrat de features spécialisé ;
-- le champion SHORT estime la probabilité baissière avec un autre contrat ;
+- le champion LONG estime la probabilité haussière, uniquement sur la population d'événements que l'Oracle aurait effectivement proposée hors échantillon ;
+- le champion SHORT estime la probabilité baissière sur cette même population conditionnelle, avec un autre contrat de features ;
 - les trois composants portent le même `batch_id`.
 
 Le mode est activé par `--directional-feature-profiles`. Sans ce drapeau, le contrat historique — un champion ternaire Per-Symbol par symbole — reste inchangé.
@@ -52,6 +58,43 @@ Les branches sont donc toujours en `target_mode=ternary`, `num_classes=3`, `labe
 Le verrouillage existe à trois niveaux : formulaire IHM, génération de commande et configuration effective de chaque profil. Il ne repose donc pas uniquement sur l'état visible d'une case à cocher. Le manifeste et chaque configuration de branche permettent d'auditer le contrat réellement exécuté.
 
 Le modèle Global Ranking n'appartient pas à ce bundle et n'est requis ni à l'entraînement O0 ni à la prédiction. Le préremplissage `global_rank_20` est donc désactivé pour ce parcours. Les autres campagnes Global Ranking demeurent inchangées.
+
+## Population d'entraînement conditionnelle — étape 3
+
+Les branches directionnelles ne sont plus entraînées comme des classifieurs génériques sur toutes les journées. Leur mission est maintenant exactement celle du serving : répondre à la question « parmi les candidats retenus par l'Oracle Extreme, quel est le sens probable du mouvement ? ».
+
+L'ordre d'entraînement est bloquant :
+
+```text
+1. entraîner Oracle O0 sur ses folds causaux
+2. collecter uniquement les prédictions des fenêtres TEST de chaque fold
+3. calculer le percentile de proba_extreme séparément pour chaque date
+4. marquer éligibles les rangs >= 0,80, soit la convention TOP20 du moteur
+5. entraîner LONG et SHORT en n'autorisant que ces lignes comme endpoints
+```
+
+Un score recalculé avec le champion Oracle final sur sa propre période d'apprentissage n'est jamais accepté pour construire cette population. Chaque ligne du cache doit posséder un `fold_start`, qui trace son origine Walk-Forward. Les colonnes futures de l'Oracle (`future_return`, label réalisé) ne sont pas copiées dans le cache directionnel.
+
+À l'intérieur de chaque fold Oracle, les trois partitions ont des fonctions distinctes : `train` ajuste LightGBM, `validation` pilote son early stopping et `test` produit le score OOF. Les labels de validation doivent être disponibles avant le début du test ; le test n'est passé à aucune API d'entraînement. Cette séparation est indispensable puisque ses scores deviennent ensuite des données d'entrée pour l'apprentissage directionnel.
+
+Le cache `<batch_id>/_oracle_oof_gate.parquet` contient uniquement : date, symbole, probabilité Oracle OOF, percentile du jour, décision de gate et fold d'origine. Son fichier compagnon `_oracle_oof_gate.json` donne la couverture, la période, le nombre de symboles et la fraction retenue. Le manifeste expose la même synthèse sous `directional_conditioning`.
+
+### Continuité des séquences LSTM
+
+Filtrer physiquement les journées TOP20 avant de construire les séquences créerait un faux calendrier : deux observations consécutives pourraient être séparées de plusieurs semaines. Le pipeline conserve donc toutes les journées et toutes les features dans la fenêtre de 40 séances, mais limite les fins de séquence portant une cible :
+
+```text
+J-39 ─────────────────────────────────────────────── J
+        historique quotidien complet                 │
+                                                     └─ exemple appris
+                                                        seulement si Oracle OOF TOP20 à J
+```
+
+LightGBM et CatBoost ne consomment pas de séquences. Pour eux, les frontières train/validation/test sont d'abord calculées sur le calendrier complet, avec purge H20, puis seules les lignes éligibles sont gardées dans chaque partition. Les trois architectures évaluent ainsi la même mission conditionnelle sans déplacer rétroactivement les frontières temporelles.
+
+`proba_extreme` et son percentile sont conservés pour l'audit du gate, mais ne sont pas ajoutés aux features LONG/SHORT dans cette première version. Cela isole l'effet « population conditionnelle » et évite d'introduire une dépendance supplémentaire dans le serving. Leur ajout comme features devra faire l'objet d'une expérience séparée.
+
+Si l'Oracle échoue, ne produit aucun fold OOF, ne produit aucun candidat ou si le cache est absent, le bundle s'arrête avant le premier entraînement directionnel. Il n'existe aucun fallback vers un entraînement générique, car celui-ci changerait silencieusement la mission du modèle.
 
 ### Taille minimale de l'univers Oracle
 
@@ -106,13 +149,15 @@ LSTM reste obligatoire ; LightGBM et CatBoost restent optionnels. Avec la sélec
 
 Les `run_id` distincts contiennent `direction_long` ou `direction_short`, tout en partageant le même `batch_id`. Chaque `config.json` persiste `model_role` et la table `model_training_run` le stocke explicitement. L'index `(batch_id, model_role, symbol)` permet aux diagnostics de séparer les branches sans déduire le rôle depuis le nom du run. Les anciens runs restent compatibles avec un rôle nullable ; la migration `0070_training_run_role` reprend automatiquement les premiers runs bundle reconnaissables.
 
-L'Oracle est entraîné une seule fois sur l'univers global. L'ordre d'exécution actuel l'entraîne après les branches ; cela ne change pas son rôle au serving, où il est le gate d'amplitude en amont de la décision directionnelle.
+L'Oracle est entraîné une seule fois sur l'univers global et obligatoirement avant les branches. Les branches peuvent utiliser un sous-univers limité par `per_symbol_max_symbols`, mais le percentile Oracle est toujours calculé sur l'univers global disponible de la date, jamais uniquement sur les quelques symboles du smoke test directionnel après troncature.
 
 ## Artefacts et manifeste
 
 ```text
 artifacts/models/<batch_id>/
   ├─ cascade_manifest.json
+  ├─ _oracle_oof_gate.parquet
+  ├─ _oracle_oof_gate.json
   ├─ oracle/
   │   └─ feature_profile.json
   ├─ directions/

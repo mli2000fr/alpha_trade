@@ -1,10 +1,11 @@
 """Tests unitaires Oracle S4 — walk-forward causal (build_folds)."""
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
-import pytest
 
-from modelFactory.oracle.walk_forward import build_folds, run_walk_forward
+import modelFactory.oracle.walk_forward as oracle_walk_forward
+from modelFactory.oracle.walk_forward import build_folds, build_folds_adaptive, run_walk_forward
 
 
 def _dataset(n_days: int = 100, n_symbols: int = 20) -> pd.DataFrame:
@@ -36,8 +37,12 @@ class TestBuildFolds:
         assert len(folds) >= 1
         for fold in folds:
             t_start = pd.Timestamp(fold["t_start"])
-            # Toutes les labels d'entraînement sont strictement disponibles avant le début du test
-            assert (fold["train"]["oracle_available_date"] < t_start).all()
+            val_start = pd.Timestamp(fold["val_start"])
+            # Train, validation et test sont trois partitions causales distinctes.
+            assert (fold["train"]["oracle_available_date"] < val_start).all()
+            assert (fold["val"]["oracle_available_date"] < t_start).all()
+            assert set(fold["train"]["date"]).isdisjoint(set(fold["val"]["date"]))
+            assert set(fold["val"]["date"]).isdisjoint(set(fold["test"]["date"]))
             # Toutes les dates de test sont dans la fenêtre
             assert (fold["test"]["date"] >= t_start).all()
 
@@ -70,6 +75,60 @@ class TestBuildFolds:
         # donc T2 n'est pas déclenché ici (le fold est simplement ignoré).
         folds = build_folds(df, [("2021-06-15", "2021-12-31")])
         assert folds == []
+
+
+def test_adaptive_folds_retain_distinct_validation_and_test():
+    df = _dataset(n_days=400)
+
+    folds = build_folds_adaptive(
+        df,
+        min_train_dates=150,
+        val_dates=40,
+        test_dates=40,
+        step_dates=40,
+        max_splits=2,
+        forecast_horizon=20,
+    )
+
+    assert len(folds) == 2
+    for fold in folds:
+        assert not fold["train"].empty
+        assert not fold["val"].empty
+        assert not fold["test"].empty
+        assert set(fold["train"]["date"]).isdisjoint(set(fold["val"]["date"]))
+        assert set(fold["val"]["date"]).isdisjoint(set(fold["test"]["date"]))
+        assert fold["train"]["oracle_available_date"].max() < fold["val"]["date"].min()
+        assert fold["val"]["oracle_available_date"].max() < fold["test"]["date"].min()
+
+
+def test_walk_forward_uses_validation_not_test_for_early_stopping(monkeypatch):
+    dataset = _dataset(n_days=400)
+    folds = build_folds(dataset, [("2022-01-03", "2022-03-31")])
+    assert len(folds) == 1
+    fold = folds[0]
+    observed: dict[str, pd.Index] = {}
+
+    class _FakeModel:
+        def predict(self, X):
+            return np.full(len(X), 0.5, dtype=float)
+
+    def _fake_train(X_train, y_train, X_valid, y_valid):
+        observed["train"] = X_train.index
+        observed["valid"] = X_valid.index
+        return _FakeModel()
+
+    monkeypatch.setattr(oracle_walk_forward, "train_lightgbm", _fake_train)
+    result = run_walk_forward(
+        dataset,
+        ["global_rank_20"],
+        folds=folds,
+        ablation="O0",
+    )
+
+    assert result["status"] == "completed"
+    assert set(observed["valid"]) == set(fold["val"].index)
+    assert set(observed["valid"]).isdisjoint(set(fold["test"].index))
+    assert result["folds"][0]["n_val"] == len(fold["val"])
 
 
 def test_walk_forward_rejects_null_oracle_targets_without_type_error():

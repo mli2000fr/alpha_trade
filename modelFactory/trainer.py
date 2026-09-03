@@ -1330,6 +1330,7 @@ def train_symbol(
     cross_sectional_df: "pd.DataFrame | None" = None,
     batch_id: str | None = None,
     fundamental_df: "pd.DataFrame | None" = None,
+    oracle_gate_df: "pd.DataFrame | None" = None,
 ) -> TrainResult:
     """Entraîne un modèle LSTM+Attention pour un symbole unique.
 
@@ -1459,6 +1460,8 @@ def train_symbol(
             datamodule_kwargs["cross_sectional_df"] = cross_sectional_df
         if fundamental_df is not None:
             datamodule_kwargs["fundamental_df"] = fundamental_df
+        if oracle_gate_df is not None:
+            datamodule_kwargs["oracle_gate_df"] = oracle_gate_df
         datamodule_signature = inspect.signature(SymbolDataModule)
         if "reproducibility_seed" in datamodule_signature.parameters:
             datamodule_kwargs["reproducibility_seed"] = derive_seed(symbol_seed, "symbol_datamodule")
@@ -2020,6 +2023,11 @@ def train_symbol(
         )
         cross_sectional_feature_columns = list(getattr(dm, "cross_sectional_feature_columns", []))
         cross_sectional_diagnostics = dict(getattr(dm, "cross_sectional_diagnostics", {}))
+        directional_conditioning_diagnostics = dict(
+            (getattr(dm, "prepared_df", None).attrs.get("directional_conditioning", {}))
+            if getattr(dm, "prepared_df", None) is not None
+            else {}
+        )
         trained_through_date = None
         if not bars_df.empty and "date" in bars_df.columns:
             trained_through_raw = bars_df["date"].max()
@@ -2048,6 +2056,7 @@ def train_symbol(
             "feature_contract": feature_contract,
             "cross_sectional_feature_columns": cross_sectional_feature_columns,
             "cross_sectional_diagnostics": cross_sectional_diagnostics,
+            "directional_conditioning": directional_conditioning_diagnostics,
             "calibrator_path": calibrator_path,
             "selected_forecast_horizon": effective_cfg.data.forecast_horizon,
             "selected_target_up_threshold": effective_cfg.data.target_up_threshold,
@@ -2089,6 +2098,7 @@ def train_symbol(
                 "feature_contract": feature_contract,
                 "cross_sectional_feature_columns": cross_sectional_feature_columns,
                 "cross_sectional_diagnostics": cross_sectional_diagnostics,
+                "directional_conditioning": directional_conditioning_diagnostics,
             },
             "champion": {
                 "model_name": selected_architecture,

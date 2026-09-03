@@ -15,6 +15,9 @@ def test_ml_diagnostics_partitions_bundle_metrics_by_training_role() -> None:
     assert "Bundle directionnel LONG/SHORT" in source
     assert "direction_long_run_id" in source
     assert "direction_short_run_id" in source
+    assert "Direction conditionnelle" in source
+    assert "Oracle OOF TOP20" in source
+    assert "bundle historique entraînait la direction sur toutes les journées" in source
 
 
 def test_prediction_periods_has_a_dedicated_bundle_contract_view() -> None:

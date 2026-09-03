@@ -852,3 +852,64 @@ def test_directional_bundle_fails_fast_when_oracle_universe_is_too_small(
     assert manifest["per_symbol"]["short"]["target_contract"] == manifest["directional_target_contract"]
 
 
+def test_directional_bundle_trains_oracle_oof_before_direction_branches(
+    monkeypatch, tmp_path,
+) -> None:
+    cfg = TrainingConfig(
+        data=DataConfig(enable_oracle_model=True),
+        directional_profiles_enabled=True,
+        artifacts_dir=tmp_path,
+        max_workers=1,
+        accelerator="cpu",
+    )
+    symbols = [f"S{i:02d}" for i in range(20)]
+    call_order: list[str] = []
+
+    def fake_oracle(config, engine, batch_id, symbols=None):
+        call_order.append("oracle")
+        gate_path = Path(config.artifacts_dir) / "_oracle_oof_gate.parquet"
+        pd.DataFrame({
+            "date": [pd.Timestamp("2024-01-02")],
+            "symbol": ["S00"],
+            "directional_oracle_eligible": [True],
+        }).to_parquet(gate_path, index=False)
+        champions = tmp_path / "oracle" / "champions" / batch_id
+        champions.mkdir(parents=True, exist_ok=True)
+        (champions / "oracle_champions.json").write_text("[]", encoding="utf-8")
+        return {
+            "status": "completed",
+            "batch_id": batch_id,
+            "directional_oof_gate_path": str(gate_path),
+            "directional_oof_gate": {"oof_only": True, "eligible_rows": 1},
+        }
+
+    def fake_worker(symbol, config, **kwargs):
+        assert call_order and call_order[0] == "oracle"
+        call_order.append(config.model_role)
+        return orchestrator.TrainResult(
+            symbol,
+            f"run-{symbol}-{config.model_role}",
+            "completed",
+            metrics={"model_role": config.model_role},
+        )
+
+    monkeypatch.setattr(orchestrator, "train_oracle_extreme", fake_oracle)
+    monkeypatch.setattr(orchestrator, "_train_worker", fake_worker)
+
+    results = orchestrator.run_training_batch(
+        cfg, engine=object(), symbols=symbols, batch_id="batch-conditional",
+    )
+
+    assert call_order[0] == "oracle"
+    assert call_order.count("oracle") == 1
+    assert call_order.count("direction_long") == 20
+    assert call_order.count("direction_short") == 20
+    assert results[0].symbol == "__ORACLE__"
+    manifest = json.loads(
+        (tmp_path / "batch-conditional" / "cascade_manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["serving_ready"] is True
+    assert manifest["directional_conditioning"]["status"] == "ready"
+    assert manifest["directional_conditioning"]["diagnostics"]["oof_only"] is True
+
+

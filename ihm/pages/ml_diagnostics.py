@@ -76,6 +76,8 @@ def _render_directional_bundle_overview(
     per_symbol = manifest.get("per_symbol") or {}
     long_cfg = per_symbol.get("long") or {}
     short_cfg = per_symbol.get("short") or {}
+    conditioning = manifest.get("directional_conditioning") or {}
+    conditioning_diag = conditioning.get("diagnostics") or {}
     oracle_id, oracle_features = _profile_summary(oracle.get("profile"))
     long_id, long_features = _profile_summary(long_cfg.get("profile"))
     short_id, short_features = _profile_summary(short_cfg.get("profile"))
@@ -103,6 +105,21 @@ def _render_directional_bundle_overview(
     else:
         st.warning("⚠️ Bundle incomplet : vérifiez l'état Oracle et la couverture des deux branches.")
 
+    if bool(conditioning.get("enabled")):
+        status = str(conditioning.get("status") or "pending").upper()
+        eligible_rows = int(conditioning_diag.get("eligible_rows") or 0)
+        oof_rows = int(conditioning_diag.get("rows") or 0)
+        st.info(
+            "🎯 Direction conditionnelle : les modèles LONG/SHORT apprennent uniquement sur "
+            f"les endpoints Oracle OOF TOP20. Statut `{status}` · "
+            f"{eligible_rows:,} candidats sur {oof_rows:,} scores OOF."
+        )
+    else:
+        st.warning(
+            "Ce bundle historique entraînait la direction sur toutes les journées : "
+            "il ne possède pas le contrat conditionnel Oracle OOF de l'étape 3."
+        )
+
     profile_df = pd.DataFrame([
         {"Composant": "Oracle amplitude", "Profil": oracle_id, "Features": oracle_features, "Artefacts": oracle_status},
         {"Composant": "Direction LONG", "Profil": long_id, "Features": long_features, "Artefacts": len(long_symbols)},
@@ -110,6 +127,20 @@ def _render_directional_bundle_overview(
     ])
     with st.expander("Profils et couverture du bundle", expanded=False):
         st.dataframe(profile_df, use_container_width=True, hide_index=True)
+        if bool(conditioning.get("enabled")):
+            st.dataframe(
+                pd.DataFrame([{
+                    "Population directionnelle": "Oracle OOF TOP20",
+                    "Statut": str(conditioning.get("status") or "pending"),
+                    "Pool": f"{float(conditioning.get('pool_pct') or 0.20):.0%}",
+                    "Dates OOF": int(conditioning_diag.get("dates") or 0),
+                    "Scores OOF": int(conditioning_diag.get("rows") or 0),
+                    "Endpoints éligibles": int(conditioning_diag.get("eligible_rows") or 0),
+                    "Oracle comme feature": bool(conditioning.get("oracle_score_is_feature", False)),
+                }]),
+                use_container_width=True,
+                hide_index=True,
+            )
 
     lineage = safe_query(
         """SELECT

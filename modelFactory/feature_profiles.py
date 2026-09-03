@@ -138,4 +138,7 @@ def apply_feature_profile(cfg: TrainingConfig, profile: dict[str, Any], directio
         artifacts_dir=branch_root,
         catboost_artifacts_dir=Path(cfg.catboost_artifacts_dir) / "directions" / direction,
         model_role=role,
+        directional_conditioning_enabled=True,
+        directional_oracle_gate_path=Path(cfg.artifacts_dir) / "_oracle_oof_gate.parquet",
+        directional_oracle_pool_pct=0.20,
     )

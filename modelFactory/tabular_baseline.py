@@ -14,6 +14,11 @@ import pandas as pd
 from modelFactory.calibration import PlattCalibrator, TemperatureScaler, VectorScaler
 from modelFactory.config import ReproducibilityConfig, TrainingConfig
 from modelFactory.dataset import chrono_split
+from modelFactory.directional_conditioning import (
+	ORACLE_ELIGIBLE_COLUMN,
+	eligible_target_mask,
+	filter_eligible_target_rows,
+)
 from modelFactory.evaluation import (
     check_model_collapse,
     compute_multiclass_metrics,
@@ -40,6 +45,24 @@ def tabular_split(
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
 	if "target" not in df.columns:
 		raise ValueError("La baseline tabulaire attend une colonne 'target'.")
+	if ORACLE_ELIGIBLE_COLUMN in df.columns:
+		# Conserver les frontières temporelles du calendrier complet, puis borner
+		# seulement les observations du modèle au TOP20 Oracle OOF.
+		if by_dates and "date" in df.columns:
+			from modelFactory.dataset import chrono_split_by_dates
+			split = chrono_split_by_dates(
+				df.reset_index(drop=True),
+				train_ratio=train_ratio,
+				val_ratio=val_ratio,
+				forecast_horizon=forecast_horizon,
+				embargo_dates=embargo_dates,
+			)
+		else:
+			split = chrono_split(
+				df.reset_index(drop=True), train_ratio, val_ratio,
+				forecast_horizon=forecast_horizon, embargo_rows=embargo_rows,
+			)
+		return tuple(filter_eligible_target_rows(part) for part in (split.train, split.val, split.test))
 	clean = df.loc[df["target"].notna()].reset_index(drop=True)
 	if by_dates and "date" in clean.columns:
 		from modelFactory.dataset import chrono_split_by_dates
@@ -906,7 +929,7 @@ def run_tabular_walk_forward(
 			# ── Winsorize + Standardize target on this fold's train stats (anti-leakage) ──
 			_train_df_r = split.train.copy()
 			_test_df_r = split.test.copy()
-			_train_valid_r = _train_df_r["target"].notna()
+			_train_valid_r = eligible_target_mask(_train_df_r)
 			if _train_valid_r.sum() >= 2:
 				# Winsorize using this fold's train quantiles (P1-1 fix)
 				_lo = float(_train_df_r.loc[_train_valid_r, "target"].quantile(0.01))
@@ -924,7 +947,7 @@ def run_tabular_walk_forward(
 					_test_df_r["target"] = _test_df_r["target"] - _t_mean
 			# ── Regression : target continue ──
 			# Filter NaN rows AFTER standardization (NaN targets persist from shift(-h))
-			_train_valid_mask = _train_df_r["target"].notna()
+			_train_valid_mask = eligible_target_mask(_train_df_r)
 			_train_df_r = _train_df_r.loc[_train_valid_mask]
 			if _train_df_r.empty:
 				continue
@@ -941,7 +964,7 @@ def run_tabular_walk_forward(
 			# ── Bias correction from train set (WF fold) ──
 			_train_pred = model.predict(_train_df_r[feature_cols])
 			_wf_bias = float(np.median(_train_pred))
-			_test_valid_r = _test_df_r["target"].notna()
+			_test_valid_r = eligible_target_mask(_test_df_r)
 			_test_df_r = _test_df_r.loc[_test_valid_r]
 			if _test_df_r.empty:
 				continue
@@ -998,7 +1021,7 @@ def run_tabular_walk_forward(
 			fold_metrics.append(fold_m)
 		else:
 			# ── Filtrer les lignes avec target valide (évite NaN du shift) ──
-			_train_valid = split.train["target"].notna()
+			_train_valid = eligible_target_mask(split.train)
 			_train_df = split.train.loc[_train_valid]
 			train_targets = _train_df["target"].astype(int)
 			if is_ternary:
@@ -1018,7 +1041,7 @@ def run_tabular_walk_forward(
 			model.fit(_train_df[feature_cols], train_targets, sample_weight=_wf_sample_weights)
 
 			# ── Filtrer les lignes test avec target valide ──
-			_test_valid = split.test["target"].notna()
+			_test_valid = eligible_target_mask(split.test)
 			_test_df = split.test.loc[_test_valid]
 			if _test_df.empty:
 				continue

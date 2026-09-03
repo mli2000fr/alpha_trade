@@ -2,11 +2,13 @@
 
 Pipeline strictement temporel (spec §11) :
 
-- Chaque fold d'entraînement vérifie ``oracle_available_date < test_start``
-  (T2 bloquant) : aucun fold ne « voit » une ligne Oracle dont l'horizon n'était
-  pas encore réalisé au moment de la première prédiction de test.
+- Chaque fold sépare train, validation et test. Le train vérifie
+  ``oracle_available_date < validation_start`` et la validation vérifie
+  ``oracle_available_date < test_start`` (T2 bloquant).
+- La validation pilote l'early stopping ; le test ne sert qu'à produire les
+  prédictions OOS. Aucun label test ne participe donc au réglage du modèle.
 - Retrain par fold (fenêtre expansive) + prédictions OOS par fold.
-- Persistance des prédictions OOS en parquet sous ``artifacts/models/oracle/<run_id>/``.
+- Persistance des prédictions OOS dans ``oracle_extreme_predictions``.
 
 Usage :
     python -m modelFactory.oracle.walk_forward --batch-id model-factory-20260811223551-ef2cd0 --ablation O1
@@ -23,6 +25,7 @@ from typing import Any
 import pandas as pd
 
 from database.connection import get_sqlalchemy_engine
+from modelFactory.feature_logging import log_feature_duplicates, log_feature_values, log_feature_weights
 from modelFactory.oracle.config import resolve_oracle_batch_id
 from modelFactory.oracle.dataset import (
     GUARD_COL,
@@ -38,7 +41,6 @@ from modelFactory.oracle.train import (
     roc_auc,
     train_lightgbm,
 )
-from modelFactory.feature_logging import log_feature_duplicates, log_feature_values, log_feature_weights
 
 LOGGER = logging.getLogger(__name__)
 
@@ -61,25 +63,53 @@ _ABLATIONS: dict[str, dict[str, Any]] = {
 def build_folds(dataset: pd.DataFrame, test_windows: list[tuple[str, str]]) -> list[dict[str, Any]]:
     """Découpe le dataset en folds causaux (T2 bloquant).
 
-    Pour chaque fenêtre ``[t_start, t_end]`` :
-    - train = lignes dont ``oracle_available_date < t_start`` (labels déjà connues) ;
-    - test  = lignes dont ``date ∈ [t_start, t_end]`` (prédictions après cutoff).
+    Pour chaque fenêtre ``[t_start, t_end]``, une validation chronologique est
+    prélevée avant le test. Le modèle ne voit donc jamais les labels du test,
+    y compris pour son early stopping.
     """
     folds: list[dict[str, Any]] = []
     for t_start, t_end in test_windows:
-        train = dataset[dataset[GUARD_COL] < pd.Timestamp(t_start)]
-        test = dataset[
-            (dataset["date"] >= pd.Timestamp(t_start)) & (dataset["date"] <= pd.Timestamp(t_end))
-        ]
-        if train.empty or test.empty:
-            LOGGER.warning("fold %s→%s vide (train=%d test=%d) — skipped", t_start, t_end, len(train), len(test))
+        test_start = pd.Timestamp(t_start)
+        validation_dates = pd.Index(sorted(dataset.loc[
+            (dataset["date"] < test_start) & (dataset[GUARD_COL] < test_start),
+            "date",
+        ].unique()))
+        if len(validation_dates) < 2:
+            LOGGER.warning("fold %s→%s sans historique de validation — skipped", t_start, t_end)
             continue
-        # T2 — bloquant : le cutoff couvre bien toutes les labels d'entraînement.
+        val_size = min(126, max(1, int(len(validation_dates) * 0.15)))
+        val_dates = validation_dates[-val_size:]
+        val_start = pd.Timestamp(val_dates.min())
+        train = dataset[
+            (dataset["date"] < val_start) & (dataset[GUARD_COL] < val_start)
+        ]
+        val = dataset[
+            dataset["date"].isin(set(val_dates))
+            & (dataset[GUARD_COL] < test_start)
+        ]
+        test = dataset[
+            (dataset["date"] >= test_start) & (dataset["date"] <= pd.Timestamp(t_end))
+        ]
+        if train.empty or val.empty or test.empty:
+            LOGGER.warning(
+                "fold %s→%s vide (train=%d val=%d test=%d) — skipped",
+                t_start, t_end, len(train), len(val), len(test),
+            )
+            continue
+        # Les labels du train doivent être disponibles avant la première date
+        # de validation, et non seulement avant le test.
         assert_training_cutoff_valid(
-            training_cutoff=t_start,
+            training_cutoff=str(val_start.date()),
             max_oracle_available_date=train[GUARD_COL].max(),
         )
-        folds.append({"t_start": t_start, "t_end": t_end, "train": train, "test": test})
+        folds.append({
+            "t_start": t_start,
+            "t_end": t_end,
+            "val_start": str(val_start.date()),
+            "train": train,
+            "val": val,
+            "test": test,
+        })
     return folds
 
 
@@ -105,9 +135,8 @@ def build_folds_adaptive(
       - une fenêtre trop courte renvoie une liste vide → l'appelant décide de
         skipper proprement (status ``skipped``), pas de ``error``.
 
-    Les fenêtres de test dérivées sont ensuite passées à ``build_folds``, qui
-    conserve EXACTEMENT le découpage T2 bloquant actuel (train =
-    ``oracle_available_date < t_start`` + assertion anti-leakage).
+    Les trois partitions produites par le splitter partagé sont conservées :
+    validation pilote l'early stopping et test reste strictement OOS.
     """
     from modelFactory.dataset import generate_walk_forward_splits_by_dates
 
@@ -123,21 +152,40 @@ def build_folds_adaptive(
         forecast_horizon=forecast_horizon,
         date_column="date",
     )
-    windows: list[tuple[str, str]] = []
+    folds: list[dict[str, Any]] = []
     for split in splits:
-        if split.test is None or split.test.empty:
+        if split.train.empty or split.val.empty or split.test.empty:
             continue
-        windows.append((
-            str(pd.Timestamp(split.test["date"].min()).date()),
-            str(pd.Timestamp(split.test["date"].max()).date()),
-        ))
+        val_start = pd.Timestamp(split.val["date"].min())
+        test_start = pd.Timestamp(split.test["date"].min())
+        train = split.train[
+            (split.train["date"] < val_start)
+            & (split.train[GUARD_COL] < val_start)
+        ].copy()
+        val = split.val[split.val[GUARD_COL] < test_start].copy()
+        test = split.test.copy()
+        if train.empty or val.empty or test.empty:
+            continue
+        assert_training_cutoff_valid(
+            training_cutoff=str(val_start.date()),
+            max_oracle_available_date=train[GUARD_COL].max(),
+        )
+        folds.append({
+            "t_start": str(test_start.date()),
+            "t_end": str(pd.Timestamp(test["date"].max()).date()),
+            "val_start": str(val_start.date()),
+            "train": train,
+            "val": val,
+            "test": test,
+        })
     LOGGER.info(
         "build_folds_adaptive windows=%d min_train=%d val=%d test=%d step=%d max_splits=%d "
         "first=%s last=%s",
-        len(windows), min_train_dates, val_dates, test_dates, step_dates, max_splits,
-        windows[0] if windows else "-", windows[-1] if windows else "-",
+        len(folds), min_train_dates, val_dates, test_dates, step_dates, max_splits,
+        (folds[0]["t_start"], folds[0]["t_end"]) if folds else "-",
+        (folds[-1]["t_start"], folds[-1]["t_end"]) if folds else "-",
     )
-    return build_folds(dataset, windows)
+    return folds
 
 
 def run_walk_forward(
@@ -183,22 +231,27 @@ def run_walk_forward(
 
     for fold in folds:
         train_fold = fold["train"].dropna(subset=[_target_col])
+        val_fold = fold.get("val", pd.DataFrame()).dropna(subset=[_target_col])
         test_fold = fold["test"].dropna(subset=[_target_col])
-        if train_fold.empty or test_fold.empty:
+        if train_fold.empty or val_fold.empty or test_fold.empty:
             LOGGER.warning(
-                "fold %s: aucune target Oracle disponible (train=%d test=%d) — skipped",
-                fold["t_start"], len(train_fold), len(test_fold),
+                "fold %s: aucune target Oracle disponible (train=%d val=%d test=%d) — skipped",
+                fold["t_start"], len(train_fold), len(val_fold), len(test_fold),
             )
             continue
         X_tr = train_fold[cols].astype(float)
         y_tr = train_fold[_target_col].astype(int)
+        X_val = val_fold[cols].astype(float)
+        y_val = val_fold[_target_col].astype(int)
         X_te = test_fold[cols].astype(float)
         y_te = test_fold[_target_col].astype(int)
-        if y_tr.nunique() < 2 or y_te.nunique() < 2:
+        if y_tr.nunique() < 2 or y_val.nunique() < 2 or y_te.nunique() < 2:
             LOGGER.warning("fold %s: target constant — skipped", fold["t_start"])
             continue
 
-        model = train_lightgbm(X_tr, y_tr, X_te, y_te)
+        # La partition test ne pilote jamais l'entraînement ni l'early stopping :
+        # ses prédictions deviennent le gate Oracle OOF des modèles directionnels.
+        model = train_lightgbm(X_tr, y_tr, X_val, y_val)
         log_feature_weights(model, cols, label=f"oracle_extreme fold={fold['t_start']}")
         _models.append({"t_start": str(fold["t_start"]), "model": model})
         _test_feature_parts.append(X_te)
@@ -215,6 +268,7 @@ def run_walk_forward(
         per_fold.append({
             "fold_start": fold["t_start"],
             "n_train": int(len(train_fold)),
+            "n_val": int(len(val_fold)),
             "n_test": int(len(test_fold)),
             "prevalence": prevalence,
             "precision_at_10pct": pr["precision"],
@@ -331,7 +385,7 @@ def format_report(result: dict[str, Any]) -> str:
         prev = f.get("prevalence")
         prev_s = f"{prev*100:.1f}%" if prev is not None else "-"
         lines.append(
-            f"  {f['fold_start']}: train={f['n_train']} test={f['n_test']} "
+            f"  {f['fold_start']}: train={f['n_train']} val={f['n_val']} test={f['n_test']} "
             f"prev={prev_s} "
             f"precision@10%={f['precision_at_10pct']:.3f} "
             f"recall@10%={f['recall_at_10pct']:.3f} AUC={f['auc']:.3f} "
