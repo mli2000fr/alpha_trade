@@ -41,6 +41,12 @@ from typing import Any, SupportsFloat, SupportsIndex, SupportsInt, cast
 import streamlit as st
 
 from common.universe_files import default_universe_file_source_or
+from modelFactory.feature_profiles import (
+    DIRECTIONAL_TARGET_DOWN_THRESHOLD,
+    DIRECTIONAL_TARGET_HORIZON,
+    DIRECTIONAL_TARGET_UP_THRESHOLD,
+    discover_feature_profiles,
+)
 from event_sentiment.db_io import EventSentimentRepository
 
 from ihm.pages._alpha_scanner_diagnostics import (
@@ -3302,24 +3308,87 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         st.caption("Chaque lancement ML Train crée une campagne complète et isolée.")
         ml_train_symbol_source = default_universe_file_source_or("tradable-universe")
         ml_predict_symbol_source = "tradable-universe"
+        ml_directional_profiles_enabled = st.checkbox(
+            "🧭 Bundle Oracle + deux modèles Per-Symbol LONG/SHORT",
+            value=_session_state_bool("pipeline_ml_directional_profiles_enabled", False),
+            key="pipeline_ml_directional_profiles_enabled",
+            help="Entraîne dans un seul batch l'Oracle Extreme global puis deux champions par symbole, avec des contrats de features LONG et SHORT indépendants.",
+        )
+        oracle_profiles = discover_feature_profiles("oracle") or ["oracle.json"]
+        long_profiles = discover_feature_profiles("long") or ["long.json"]
+        short_profiles = discover_feature_profiles("short") or ["short.json"]
+        ml_oracle_feature_profile = "oracle.json" if "oracle.json" in oracle_profiles else oracle_profiles[0]
+        ml_long_feature_profile = "long.json" if "long.json" in long_profiles else long_profiles[0]
+        ml_short_feature_profile = "short.json" if "short.json" in short_profiles else short_profiles[0]
+        ml_standalone_oracle_feature_profile = "dynamic"
+        if ml_directional_profiles_enabled:
+            profile_col0, profile_col1, profile_col2 = st.columns(3)
+            with profile_col0:
+                ml_oracle_feature_profile = cast(str, st.selectbox(
+                    "Profil de features Oracle", options=oracle_profiles,
+                    index=oracle_profiles.index("oracle.json") if "oracle.json" in oracle_profiles else 0,
+                    key="pipeline_ml_oracle_feature_profile",
+                ))
+            with profile_col1:
+                ml_long_feature_profile = cast(str, st.selectbox(
+                    "Profil de features LONG", options=long_profiles,
+                    index=long_profiles.index("long.json") if "long.json" in long_profiles else 0,
+                    key="pipeline_ml_long_feature_profile",
+                ))
+            with profile_col2:
+                ml_short_feature_profile = cast(str, st.selectbox(
+                    "Profil de features SHORT", options=short_profiles,
+                    index=short_profiles.index("short.json") if "short.json" in short_profiles else 0,
+                    key="pipeline_ml_short_feature_profile",
+                ))
+        if ml_directional_profiles_enabled:
+            st.session_state["pipeline_ml_enable_oracle_model"] = True
+            st.session_state["pipeline_ml_oracle_model_only"] = False
+            st.session_state["pipeline_ml_exclude_per_symbol_per_sector"] = False
+            st.session_state["pipeline_ml_global_model_only"] = False
+            st.session_state["pipeline_ml_training_mode"] = "per_symbol"
+            st.session_state["pipeline_ml_target_mode"] = "ternary"
+            st.session_state["pipeline_ml_forecast_horizon"] = DIRECTIONAL_TARGET_HORIZON
+            st.session_state["pipeline_ml_target_up_threshold"] = DIRECTIONAL_TARGET_UP_THRESHOLD
+            st.session_state["pipeline_ml_target_down_threshold"] = DIRECTIONAL_TARGET_DOWN_THRESHOLD
+            st.session_state["pipeline_ml_target_excess_vs_spy"] = False
+            st.session_state["pipeline_ml_target_skip_vol_scaling"] = False
+            st.session_state["pipeline_ml_target_intra_sector_rank"] = False
+            st.session_state["pipeline_ml_target_ternary_intra_sector"] = False
+            st.session_state["pipeline_ml_optimize_target"] = False
+            for feature_key in (
+                "pipeline_ml_include_sentiment", "pipeline_ml_include_screener_scores",
+                "pipeline_ml_include_short_score", "pipeline_ml_include_macro_vix",
+                "pipeline_ml_include_macro_vxn", "pipeline_ml_include_macro_vix3m",
+                "pipeline_ml_include_macro_move", "pipeline_ml_include_fundamentals",
+                "pipeline_ml_include_factors", "pipeline_ml_include_volume_features",
+                "pipeline_ml_include_macro_regime", "pipeline_ml_include_score_components",
+                "pipeline_ml_enable_cross_sectional", "pipeline_ml_include_directional_features",
+                "pipeline_ml_enable_global_stacking",
+            ):
+                st.session_state[feature_key] = False
+            st.info("Les cases de features manuelles sont ignorées. Les trois contrats Oracle, LONG et SHORT sont pilotés exclusivement par les profils JSON sélectionnés.")
         ml_opt_col1, ml_opt_col2, ml_opt_col3 = st.columns(3)
         with ml_opt_col1:
             ml_include_sentiment = st.checkbox(
                 "Inclure les features sentiment (per-symbol uniquement)",
                 value=_session_state_bool("pipeline_ml_include_sentiment", DEFAULT_ML_INCLUDE_SENTIMENT),
                 key="pipeline_ml_include_sentiment",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--include-sentiment` au per-symbol uniquement. Le Global Ranking Model ignore ces features (trop sparse pour du ranking cross-sectionnel).",
             )
             ml_include_screener_scores = st.checkbox(
                 "Inclure les scores du screener (trend, VCP, final_score…)",
                 value=_session_state_bool("pipeline_ml_include_screener_scores", DEFAULT_ML_INCLUDE_SCREENER_SCORES),
                 key="pipeline_ml_include_screener_scores",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--include-screener-scores` pour enrichir le dataset ML avec les scores PIT-safe du screener (trend_score, vcp_score, final_score, market_cap, beta, etc.).",
             )
             ml_include_short_score = st.checkbox(
                 "Inclure le short_score dédié (score baissier)",
                 value=_session_state_bool("pipeline_ml_include_short_score", DEFAULT_ML_INCLUDE_SHORT_SCORE),
                 key="pipeline_ml_include_short_score",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--include-short-score` pour intégrer le score baissier composite (trend+RSI+SMA) comme feature ML indépendante.",
             )
             ml_enable_lightgbm = st.checkbox(
@@ -3339,78 +3408,94 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 "📊 VIX/VIX9D (volatilité S&P 500)",
                 value=_session_state_bool("pipeline_ml_include_macro_vix", DEFAULT_ML_INCLUDE_MACRO_VIX),
                 key="pipeline_ml_include_macro_vix",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--include-macro-vix`. Nécessite un backfill préalable de `stock_macro_indicators_daily`.",
             )
             ml_include_macro_vxn = st.checkbox(
                 "📊 VXN (volatilité NASDAQ-100)",
                 value=_session_state_bool("pipeline_ml_include_macro_vxn", DEFAULT_ML_INCLUDE_MACRO_VXN),
                 key="pipeline_ml_include_macro_vxn",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--include-macro-vxn`. Utile pour les valeurs Tech.",
             )
             ml_include_macro_vix3m = st.checkbox(
                 "📊 VIX3M + ratio (term structure)",
                 value=_session_state_bool("pipeline_ml_include_macro_vix3m", DEFAULT_ML_INCLUDE_MACRO_VIX3M),
                 key="pipeline_ml_include_macro_vix3m",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--include-macro-vix3m`. Ratio VIX/VIX3M : détecte la backwardation (panique court terme).",
             )
             ml_include_macro_move = st.checkbox(
                 "📊 MOVE (volatilité obligataire)",
                 value=_session_state_bool("pipeline_ml_include_macro_move", DEFAULT_ML_INCLUDE_MACRO_MOVE),
                 key="pipeline_ml_include_macro_move",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--include-macro-move`. Indice ICE BofA MOVE : volatilité des bons du Trésor US.",
             )
             ml_include_fundamentals = st.checkbox(
                 "📊 Fondamentaux (PE, ROE, marges, croissance)",
                 value=_session_state_bool("pipeline_ml_include_fundamentals", DEFAULT_ML_INCLUDE_FUNDAMENTALS),
                 key="pipeline_ml_include_fundamentals",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--include-fundamentals`. Features EODHD (valuation, profitabilité, croissance, santé financière) depuis stock_fundamentals_daily. Applicable per-symbol, per-sector et Global Ranking. Exclu du Global Model (cross-symbol) car ce sont des features par titre. Nécessite un backfill préalable de stock_fundamentals_daily.",
             )
             ml_include_factors = st.checkbox(
                 "📊 Facteurs CAPM (beta, alpha, R² via rolling 252j)",
                 value=_session_state_bool("pipeline_ml_include_factors", DEFAULT_ML_INCLUDE_FACTORS),
                 key="pipeline_ml_include_factors",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--include-factors`. Calcule beta, alpha annualisé, R² et momentum 252j vs marché par rolling regression sur SPY.",
             )
             ml_include_volume_features = st.checkbox(
                 "📊 Profil volume / liquidité (P3-5 — 10 features)",
                 value=_session_state_bool("pipeline_ml_include_volume_features", DEFAULT_ML_INCLUDE_VOLUME_FEATURES),
                 key="pipeline_ml_include_volume_features",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--include-volume-features`. Dollar volume, Amihud illiquidité, corrélation prix/volume, OBV, skew… 10 features de profil volume/liquidité (expérience P3-5, off par défaut).",
             )
             ml_include_macro_regime = st.checkbox(
                 "🌍 Régime macro (SPY_SMA_200_slope + VIX_zscore)",
                 value=_session_state_bool("pipeline_ml_include_macro_regime", DEFAULT_ML_INCLUDE_MACRO_REGIME),
                 key="pipeline_ml_include_macro_regime",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--include-macro-regime`. Injecte la tendance SPY long terme et le z-score VIX à tous les symboles.",
             )
             ml_include_score_components = st.checkbox(
                 "📊 Composants de score (stock_scores_history)",
                 value=_session_state_bool("pipeline_ml_include_score_components", DEFAULT_ML_INCLUDE_SCORE_COMPONENTS),
                 key="pipeline_ml_include_score_components",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--include-score-components`. Injecte sentiment_net_agg, company_idio_score, macro_regime_score, quant_component et autres composants de stock_scores_history comme features ML. Actif par défaut sur per-sector + global, ignoré sur per-symbol.",
             )
             ml_target_excess_vs_spy = st.checkbox(
                 "📊 P0-7 — Target excès vs SPY (target = (future_return - spy_return) / vol20)",
                 value=_session_state_bool("pipeline_ml_target_excess_vs_spy", DEFAULT_ML_TARGET_EXCESS_VS_SPY),
                 key="pipeline_ml_target_excess_vs_spy",
-                help="Ajoute `--target-excess-vs-spy`. Centre la distribution en soustrayant le rendement du SPY. Réduit le biais directionnel (long/short équilibré).",
+                disabled=ml_directional_profiles_enabled,
+                help=(
+                    "Désactivé pour un bundle : LONG/SHORT apprennent le rendement absolu H20. "
+                    "Hors bundle, ajoute `--target-excess-vs-spy`."
+                ),
             )
             ml_target_skip_vol_scaling = st.checkbox(
                 "🎯 T1 Experiment — Désactiver le vol-scaling de la target (target = future_return brut)",
                 value=_session_state_bool("pipeline_ml_target_skip_vol_scaling", DEFAULT_ML_TARGET_SKIP_VOL_SCALING),
                 key="pipeline_ml_target_skip_vol_scaling",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--target-skip-vol-scaling`. La target regression n'est PAS divisée par la volatilité 20j. Expérience T1 : tester si le vol-scaling amplifie le bruit.",
             )
             ml_target_intra_sector_rank = st.checkbox(
                 "🏆 T2 Experiment — Rang percentile intra-secteur (classification de rang)",
                 value=_session_state_bool("pipeline_ml_target_intra_sector_rank", DEFAULT_ML_TARGET_INTRA_SECTOR_RANK),
                 key="pipeline_ml_target_intra_sector_rank",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--target-intra-sector-rank`. La target devient le rang percentil [0,1] du titre dans son secteur sur chaque date. Le modèle apprend à classer, pas à prédire une magnitude.",
             )
             ml_target_ternary_intra_sector = st.checkbox(
                 "🔺 T3 Experiment — Classification ternaire intra-secteur (LONG/FLAT/SHORT)",
                 value=_session_state_bool("pipeline_ml_target_ternary_intra_sector", DEFAULT_ML_TARGET_THRESHOLD_TERNARY_INTRA_SECTOR),
                 key="pipeline_ml_target_ternary_intra_sector",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--target-ternary-intra-sector`. Convertit la target continue en labels LONG(+1)/FLAT(0)/SHORT(-1) avec des seuils en quantiles calculés sur le train uniquement. Le modèle devient un classifieur.",
             )
             if ml_target_ternary_intra_sector:
@@ -3721,6 +3806,19 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_ml_enable_oracle_model",
                 help="Ajoute `--enable-oracle-model`. Entraîne le modèle Oracle Extreme (détection d'extrêmes H20, ablation O0 sans global_rank_20) en fin de séquence, en plus du per-symbol/per-sector et du modèle global (si activé).",
             )
+            if ml_enable_oracle_model and not ml_directional_profiles_enabled:
+                _standalone_oracle_profiles = ["dynamic", *oracle_profiles]
+                ml_standalone_oracle_feature_profile = cast(str, st.selectbox(
+                    "Features du modèle Oracle Extreme",
+                    options=_standalone_oracle_profiles,
+                    index=0,
+                    format_func=lambda value: "Dynamique (selon les features cochées)" if value == "dynamic" else value,
+                    key="pipeline_ml_standalone_oracle_feature_profile",
+                    help=(
+                        "Dynamique conserve les familles choisies dans cet écran. "
+                        "Un fichier JSON remplace ce choix et impose exclusivement son contrat de features."
+                    ),
+                ))
             # Auto-décochage : si le 1er checkbox (Oracle Extreme) est décoché,
             # le 2e (Oracle ONLY) est forcé à False AVANT son instanciation
             # (sinon il resterait coché dans session_state alors que désactivé).
@@ -3738,7 +3836,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 "📥 Utiliser le rang global comme feature (Stacking)",
                 value=_session_state_bool("pipeline_ml_enable_global_stacking", DEFAULT_ML_ENABLE_GLOBAL_STACKING),
                 key="pipeline_ml_enable_global_stacking",
-                disabled=not ml_enable_global_model,
+                disabled=ml_directional_profiles_enabled or not ml_enable_global_model,
                 help="Ajoute `--enable-global-stacking`. Injecte `global_rank` comme feature dans les modèles per-symbol (LSTM/LGBM/CatBoost). Le modèle apprend à pondérer le signal transverse.",
             )
             ml_global_model_name = cast(
@@ -3761,6 +3859,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 "🌐 Features cross-sectionnelles & sectorielles (rangs percentiles + momentum intra-secteur)",
                 value=_session_state_bool("pipeline_ml_enable_cross_sectional", DEFAULT_ML_ENABLE_CROSS_SECTIONAL),
                 key="pipeline_ml_enable_cross_sectional",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--enable-cross-sectional`. Calcule les rangs percentiles PIT-safe ET les features sectorielles dynamiques (momentum, volatilité, alpha intra-secteur GICS).",
             )
             # 2026-08-23 : liste restreinte 'direction' — injecte uniquement les
@@ -3770,6 +3869,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 "🎯 Ajouter les features directionnels (liste restreinte 'direction')",
                 value=_session_state_bool("pipeline_ml_include_directional_features", DEFAULT_ML_INCLUDE_DIRECTIONAL_FEATURES),
                 key="pipeline_ml_include_directional_features",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--include-directional-features`. Injecte dans l'entraînement uniquement les features de la liste 'direction' (stock_vs_sector_ret_5/20/60, momentum_20_sector_neutral, sector_ret_5/20/60, sector_relative_strength_20, *_xs_rank...). Pour les features déjà présentes dans la liste d'entraînement, on les ignore (aucun doublon). Transparent pour la prédiction (les features d'entraînement sont sauvegardées et réutilisées).",
             )
 
@@ -3779,7 +3879,11 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 "Optimiser l'horizon / la target swing",
                 value=_session_state_bool("pipeline_ml_optimize_target", DEFAULT_ML_OPTIMIZE_TARGET),
                 key="pipeline_ml_optimize_target",
-                help="Ajoute `--optimize-target`.",
+                disabled=ml_directional_profiles_enabled,
+                help=(
+                    "Désactivé pour un bundle : son contrat directionnel est figé à H20 et ±3 %. "
+                    "Hors bundle, ajoute `--optimize-target`."
+                ),
             )
         with ml_adv_col2:
             st.info(
@@ -3794,6 +3898,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         ml_target_col1, ml_target_col2, ml_target_col3 = st.columns(3)
         with ml_target_col1:
             _target_options = ["regression", "ternary", "binary", "swing_cash"]
+            if ml_directional_profiles_enabled:
+                st.session_state["pipeline_ml_target_mode"] = "ternary"
             _session_target = cast(str, st.session_state.get("pipeline_ml_target_mode", DEFAULT_ML_TARGET_MODE))
             _default_idx = _target_options.index(_session_target) if _session_target in _target_options else 0
             ml_target_mode = cast(
@@ -3803,9 +3909,18 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     options=_target_options,
                     index=_default_idx,
                     key="pipeline_ml_target_mode",
-                    help="`regression` = target continue vol-scalée (recommandé). `ternary` = long/flat/short. `binary`/`swing_cash` = classification.",
+                    disabled=ml_directional_profiles_enabled,
+                    help=(
+                        "Dans un bundle, LONG et SHORT sont obligatoirement ternaires ; "
+                        "l'Oracle conserve sa cible binaire Extreme interne."
+                        if ml_directional_profiles_enabled
+                        else "`regression` = target continue vol-scalée (recommandé). "
+                        "`ternary` = long/flat/short. `binary`/`swing_cash` = classification."
+                    ),
                 ),
             )
+            if ml_directional_profiles_enabled:
+                st.caption("Bundle : Oracle = binaire Extreme ; LONG/SHORT = ternaire forcé.")
             ml_forecast_horizon = int(
                 st.number_input(
                     "Horizon de prédiction (jours)",
@@ -3817,8 +3932,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     ),
                     step=1,
                     key="pipeline_ml_forecast_horizon",
+                    disabled=ml_directional_profiles_enabled,
                     help="0 = tous les horizons (3, 5, 10, 15, 20 jours). "
-                         "Valeur > 0 = un seul horizon (ex: 15 = H15 uniquement).",
+                         "Valeur > 0 = un seul horizon (ex: 15 = H15 uniquement). "
+                         "Bundle : H20 unique imposé.",
                 )
             )
         with ml_target_col2:
@@ -3834,6 +3951,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     step=0.005,
                     format="%.4f",
                     key="pipeline_ml_target_up_threshold",
+                    disabled=ml_directional_profiles_enabled,
                     help="Ex. 0.02 = +2 % sur l'horizon pour étiqueter long.",
                 )
             )
@@ -3849,7 +3967,15 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     step=0.005,
                     format="%.4f",
                     key="pipeline_ml_target_down_threshold",
+                    disabled=ml_directional_profiles_enabled,
+                    help="Bundle : −3 % absolu à H20, valeur imposée.",
                 )
+            )
+        if ml_directional_profiles_enabled:
+            st.success(
+                "Contrat directionnel bundle : rendement absolu H20 · LONG > +3 % · "
+                "SHORT < −3 % · zone intermédiaire FLAT. L'Oracle conserve séparément "
+                "sa cible binaire d'amplitude Extreme H20."
             )
         with ml_target_col3:
             ml_decision_threshold = float(
@@ -4125,7 +4251,12 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                             else DEFAULT_ML_FEATURE_SET
                         ),
                         key="pipeline_ml_feature_set",
-                        help="v1 = 13 features OHLCV | expert = 65 features (incl. 18 interactions régime). Ce flag contrôle UNIQUEMENT LightGBM/CatBoost. Le LSTM est automatiquement en v1 (29 features).",
+                        help=(
+                            "v1 = jeu compact historique | expert = jeu complet incluant les "
+                            "familles activées dans ce formulaire. En mode expert, l'IHM désactive "
+                            "automatiquement le forçage V1 : LSTM, LightGBM et CatBoost utilisent "
+                            "donc tous le contrat de features Expert."
+                        ),
                     ),
                 )
             with ml_hp_col2:
@@ -4815,6 +4946,11 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_include_volume_features=bool(ml_include_volume_features),
             ml_include_macro_regime=bool(ml_include_macro_regime),
             ml_include_score_components=bool(ml_include_score_components),
+            ml_directional_profiles_enabled=bool(ml_directional_profiles_enabled),
+            ml_oracle_feature_profile=str(ml_oracle_feature_profile),
+            ml_standalone_oracle_feature_profile=str(ml_standalone_oracle_feature_profile),
+            ml_long_feature_profile=str(ml_long_feature_profile),
+            ml_short_feature_profile=str(ml_short_feature_profile),
             ml_target_skip_vol_scaling=bool(ml_target_skip_vol_scaling),
             ml_target_excess_vs_spy=bool(ml_target_excess_vs_spy),
             ml_target_intra_sector_rank=bool(ml_target_intra_sector_rank),

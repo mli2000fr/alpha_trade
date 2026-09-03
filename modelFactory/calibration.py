@@ -94,6 +94,25 @@ def margins_from_logits_or_margin(values: np.ndarray | torch.Tensor) -> np.ndarr
 	return arr.reshape(-1).astype(np.float64)
 
 
+def probabilities_to_pseudo_logits(probabilities: np.ndarray) -> np.ndarray:
+    """Convertit des probabilités multiclasse en pseudo-logits stables.
+
+    Les modèles tabulaires n'exposent que ``predict_proba``. Les calibrateurs
+    Temperature/Vector Scaling étant entraînés dans l'espace des logits, le
+    serving doit reproduire la même transformation logarithmique.
+    """
+    proba = np.asarray(probabilities, dtype=np.float64)
+    if proba.ndim != 2 or proba.shape[1] < 2:
+        raise ValueError(f"multiclass probabilities must be 2-D, got {proba.shape}")
+    if not np.isfinite(proba).all() or (proba < 0.0).any():
+        raise ValueError("multiclass probabilities must be finite and non-negative")
+    row_sums = proba.sum(axis=1, keepdims=True)
+    if (row_sums <= 0.0).any():
+        raise ValueError("multiclass probability rows must have a positive sum")
+    normalized = proba / row_sums
+    return np.log(np.clip(normalized, 1e-8, 1.0))
+
+
 def calibrator_from_state_dict(state: dict[str, Any] | None) -> PlattCalibrator | TemperatureScaler | VectorScaler | None:
     if not state:
         return None

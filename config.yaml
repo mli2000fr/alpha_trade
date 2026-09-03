@@ -474,7 +474,7 @@ eodhd:
 #  (Get-ScheduledTask -TaskName AlphaTrade-EarningsCalendarSync).Triggers | Select-Object StartBoundary
 # ---------------------------------------------------------------------------
 earnings_calendar_sync:
-  run_hours: "23"                             # Heures de la journée (0-23) séparées par des virgules : "3" = 3h du matin, "4,9" = 4h et 9h.
+  run_hours: "12,23"                             # Heures de la journée (0-23) séparées par des virgules : "3" = 3h du matin, "4,9" = 4h et 9h.
   log_file: log/batch/earnings_calendar.txt  # Ligne de statut ajoutée à chaque exécution.
 
 # ---------------------------------------------------------------------------
@@ -486,6 +486,9 @@ earnings_calendar_sync:
 # jamais recalculé (ni active-tradable 13 608, ni pool Oracle).
 # CLI : python scripts/collect_yahoo_analyst_snapshots.py --universe analyst_research --write-db
 # powershell -ExecutionPolicy Bypass -File .\scripts\windows\install_analyst_snapshot_task.ps1
+
+# lancer immédiate
+# powershell -ExecutionPolicy Bypass -File .\scripts\windows\earnings_calendar_launcher.ps1
 
 # lancer immédiate
 # powershell -ExecutionPolicy Bypass -File .\scripts\windows\analyst_snapshot_launcher.ps1
@@ -511,7 +514,7 @@ analyst_snapshot_collection:
   sleep_seconds: 0.25                    # Throttling entre symboles.
   timeout_seconds: 20                    # Timeout watchdog par symbole.
   max_retries: 2                         # Retries sur TEMPORARY_ERROR / RATE_LIMIT.
-  run_hours: "23"                        # Heures de la journée (0-23) heure LOCALE machine. Clôture US 16:00 ET = 22:00 heure de Paris (été comme hiver) → "23" = 1h après clôture US. Ajuster à la timezone de la machine si elle n'est pas à Paris.
+  run_hours: "9,23"                        # Heures de la journée (0-23) heure LOCALE machine. Clôture US 16:00 ET = 22:00 heure de Paris (été comme hiver) → "23" = 1h après clôture US. Ajuster à la timezone de la machine si elle n'est pas à Paris.
   log_file: log/batch/analyst_snapshots.txt
   # Planification (après clôture US) : tâche Windows dédiée `AlphaTrade-AnalystSnapshot`
   #   powershell -ExecutionPolicy Bypass -File .\scripts\windows\install_analyst_snapshot_task.ps1
@@ -524,6 +527,14 @@ analyst_snapshot_collection:
 # filtrer les symboles peu prédictibles ou incapables de shorter/longer.
 # ---------------------------------------------------------------------------
 batch_diagnostics:
+  # Contrat des bundles Oracle Extreme + Per-Symbol LONG/SHORT.
+  # strict (défaut production/backtest) : le côté servi doit satisfaire
+  # support>=15, >=3 folds, médiane F1 côté>=0.40, min>=0.20 et
+  # >=60% des folds avec F1 côté>=0.35.
+  # discovery : screening expérimental (médiane>=0.45, min non bloquant).
+  # off : désactive uniquement ce gate WF directionnel.
+  directional_bundle_gate: strict
+
   # Nombre de symboles retenus dans le classement top / bottom F1 macro WF.
   top_n: 10
   bottom_n: 10
@@ -640,8 +651,10 @@ cascade:
 # Persistent Rank DIP filter (Global Rank LONG) — composant research validé
 # 2026-08-27 (in-sample 2022-24 + OOS 2025 / 2026 H1, jamais négatif).
 # Consommé par selector/dip_filter.py, appelé par cascade_select().
-# Périmètre STRICT : branche Global Rank (global_rank_{H}) uniquement — PAS
-# Oracle Extreme (tests : persistance + prix n'apportait rien sur Extreme).
+# Périmètre STRICT : gate dur sur la branche Global Rank (global_rank_{H})
+# uniquement — PAS Oracle Extreme. En Extreme Gate, une activation historique
+# est ignorée, sauf `--extreme-gate-dip-saturated` qui utilise N4X2 comme simple
+# priorité de classement sans réduire le pool Oracle.
 # Règle : global_rank_{H} >= rank_threshold sur `persist_days` séances
 #         consécutives ET condition prix close[J]/close[J-N] - 1 selon le SIGNE
 #         de dip_pct : >0 = baisse >= X (DIP) ; <0 = hausse >= |X| (anti-DIP).
@@ -719,14 +732,14 @@ extreme_gate:
 # Consommé par backtesting/cli/_impl.py (--oracle-calibration).
 #   none     = proba brute (inchangée)
 #   rank     = percentile cross-sectionnel intra-date (0..1)
-#   isotonic = régression isotonique PAV (fit sur folds de sélection 2022-2024,
-#              jamais les folds OOS finaux — discipline S5)
+#   isotonic = exige un jeu/artefact de calibration gelé distinct. Le backtest
+#              strict PIT ne l'ajuste jamais sur sa propre période.
 # NB : la cascade utilise déjà un classement par percentile → la calibration ne
 # change PAS la sélection extreme_gate ; elle fiabilise la valeur ABSOLUE de
 # proba_extreme (combinaison de signaux, sizing pondéré, seuils absolus).
 # ---------------------------------------------------------------------------
 oracle:
-  calibration: isotonic
+  calibration: none
 
 
 # Sprint S8 - Calibration formelle des poids de conviction (cf. core/conviction.py)

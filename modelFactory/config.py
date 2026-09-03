@@ -512,6 +512,19 @@ class TrainingConfig:
     accelerator: str = "auto"  # auto | cpu | gpu
     debug_train: bool = False
     training_mode: str = "per_symbol"  # per_symbol | per_sector
+    directional_profiles_enabled: bool = False
+    oracle_feature_profile: str = "oracle.json"
+    # Profil Oracle hors bundle. ``None`` conserve le mode dynamique piloté
+    # par les familles de features de DataConfig.
+    standalone_oracle_feature_profile: str | None = None
+    long_feature_profile: str = "long.json"
+    short_feature_profile: str = "short.json"
+    model_role: str = "direction_legacy"  # direction_legacy | direction_long | direction_short
+    # Bundle étape 3 : les endpoints d'entraînement directionnels sont bornés
+    # par le TOP20 des prédictions Oracle strictement OOF du même batch.
+    directional_conditioning_enabled: bool = False
+    directional_oracle_gate_path: Path | None = None
+    directional_oracle_pool_pct: float = 0.20
 
     def __post_init__(self) -> None:
         if self.max_workers < 1:
@@ -520,4 +533,12 @@ class TrainingConfig:
             raise ValueError("batch_id doit être un nom de dossier non vide.")
         if self.training_mode not in {"per_symbol", "per_sector"}:
             raise ValueError("training_mode doit être 'per_symbol' ou 'per_sector'.")
+        if self.model_role not in {"direction_legacy", "direction_long", "direction_short"}:
+            raise ValueError("model_role invalide.")
+        if self.directional_profiles_enabled and self.training_mode != "per_symbol":
+            raise ValueError("Les profils directionnels LONG/SHORT requièrent training_mode='per_symbol'.")
+        if not 0.0 < self.directional_oracle_pool_pct < 1.0:
+            raise ValueError("directional_oracle_pool_pct doit être dans ]0,1[.")
+        if self.directional_conditioning_enabled and self.directional_oracle_gate_path is None:
+            raise ValueError("directional_oracle_gate_path est obligatoire lorsque le conditionnement est actif.")
 

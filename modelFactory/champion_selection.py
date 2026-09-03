@@ -4,6 +4,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
+import statistics
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -19,6 +21,15 @@ LOGGER = logging.getLogger(__name__)
 # le couple (symbol, model_name). Découplé du db_registry pour faciliter
 # les tests.
 QuarantineLookup = Callable[[str, str], tuple[int, Optional[datetime]]]
+
+
+# Contrat de sélection des champions directionnels dédiés. Ces seuils sont
+# volontairement alignés avec l'écran "Stabilité Walk-Forward du champion" :
+# un F1 de classe sans support suffisant n'est pas une preuve exploitable.
+DIRECTIONAL_SELECTION_MIN_SIDE_SUPPORT = 15
+DIRECTIONAL_SELECTION_MIN_VALID_FOLDS = 3
+DIRECTIONAL_SELECTION_PASS_F1 = 0.35
+_DIRECTIONAL_SELECTION_SIDES = {"f1_long": "long", "f1_short": "short"}
 
 
 _SIGNED_ARTIFACT_ROUTE_KEYS: tuple[str, ...] = (
@@ -193,6 +204,90 @@ def is_under_quarantine(
     return False, ""
 
 
+def _finite_float(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def _walk_forward_payload(result: dict[str, Any]) -> dict[str, Any]:
+    for key in ("walk_forward", "walk_forward_oos"):
+        payload = result.get(key)
+        if isinstance(payload, dict) and payload:
+            return payload
+    return {}
+
+
+def _estimated_directional_support(split: dict[str, Any], side: str) -> int | None:
+    explicit = _finite_float(split.get(f"support_{side}"))
+    if explicit is not None:
+        return max(0, int(round(explicit)))
+    side_pct = _finite_float(split.get(f"true_{side}_pct"))
+    samples = _finite_float(split.get("n_samples"))
+    if samples is None:
+        samples = _finite_float(split.get("test_rows"))
+    if side_pct is None or samples is None:
+        return None
+    return max(0, int(round(samples * side_pct / 100.0)))
+
+
+def directional_selection_evidence(result: dict[str, Any], metric: str) -> dict[str, Any]:
+    """Construit la preuve Walk-Forward utilisée pour un champion LONG/SHORT.
+
+    Le holdout final et la validation simple sont volontairement exclus. Un
+    fold n'est valide que si le F1 de la classe existe et si cette classe a au
+    moins 15 observations réelles dans le fold.
+    """
+    side = _DIRECTIONAL_SELECTION_SIDES.get(metric)
+    if side is None:
+        return {"eligible": False, "reason": f"unsupported_directional_metric:{metric}"}
+    wf = _walk_forward_payload(result)
+    splits = wf.get("splits") if isinstance(wf.get("splits"), list) else []
+    values: list[float] = []
+    supports: list[int] = []
+    for split in splits:
+        if not isinstance(split, dict):
+            continue
+        value = _finite_float(split.get(metric))
+        support = _estimated_directional_support(split, side)
+        if value is None or support is None or support < DIRECTIONAL_SELECTION_MIN_SIDE_SUPPORT:
+            continue
+        values.append(value)
+        supports.append(support)
+
+    valid_folds = len(values)
+    eligible = valid_folds >= DIRECTIONAL_SELECTION_MIN_VALID_FOLDS
+    median_f1 = float(statistics.median(values)) if values else None
+    mean_f1 = float(statistics.fmean(values)) if values else None
+    min_f1 = min(values) if values else None
+    passing_folds = sum(value >= DIRECTIONAL_SELECTION_PASS_F1 for value in values)
+    pass_rate = passing_folds / valid_folds if valid_folds else 0.0
+    reason = None if eligible else (
+        f"directional_valid_folds<{DIRECTIONAL_SELECTION_MIN_VALID_FOLDS}"
+        f" (current={valid_folds}, side={side}, min_support={DIRECTIONAL_SELECTION_MIN_SIDE_SUPPORT})"
+    )
+    return {
+        "metric": metric,
+        "side": side,
+        "eligible": eligible,
+        "reason": reason,
+        "score": median_f1 if eligible else None,
+        "valid_folds": valid_folds,
+        "available_folds": len(splits),
+        "support_total": sum(supports) if supports else None,
+        "f1_median": median_f1,
+        "f1_mean": mean_f1,
+        "f1_min": min_f1,
+        "passing_folds": passing_folds,
+        "pass_rate": pass_rate,
+        "passing_f1": DIRECTIONAL_SELECTION_PASS_F1,
+        "min_side_support": DIRECTIONAL_SELECTION_MIN_SIDE_SUPPORT,
+        "min_valid_folds": DIRECTIONAL_SELECTION_MIN_VALID_FOLDS,
+    }
+
+
 def selection_score_from_result(result: dict[str, Any], metric: str = "selection_score") -> float:
     """Calcule le score de sélection SANS lire le holdout final (Sprint Maître 1).
 
@@ -208,6 +303,11 @@ def selection_score_from_result(result: dict[str, Any], metric: str = "selection
     """
     if not result or result.get("status") != "completed":
         return float("-inf")
+
+    if metric in _DIRECTIONAL_SELECTION_SIDES:
+        evidence = directional_selection_evidence(result, metric)
+        score = evidence.get("score")
+        return float(score) if score is not None else float("-inf")
 
     # ── Partitions autorisées pour la sélection (Sprint Maître 1) ──
     val = result.get("val") if isinstance(result.get("val"), dict) else {}
@@ -389,8 +489,17 @@ def select_champion(
     *,
     quarantine_lookup: QuarantineLookup | None = None,
     symbol: str | None = None,
+    selection_metric_override: str | None = None,
 ) -> dict[str, Any]:
     annotated = annotate_challengers(challengers, artifact_routes_models)
+    selection_metric = selection_metric_override or champion_cfg.selection_metric
+    if selection_metric in _DIRECTIONAL_SELECTION_SIDES:
+        for result in annotated.values():
+            evidence = directional_selection_evidence(result, selection_metric)
+            result["directional_selection_evidence"] = evidence
+            if result.get("selection_eligible") and not evidence["eligible"]:
+                result["selection_eligible"] = False
+                result["eligibility_reason"] = evidence["reason"]
     if champion_cfg.require_benchmark_report:
         for result in annotated.values():
             benchmark = result.get("benchmark_report")
@@ -443,7 +552,7 @@ def select_champion(
             "selected_model": default_model if default_exists else "lstm_attention",
             "selection_mode": "default_champion",
             "annotated_challengers": annotated,
-            "selection_metric": champion_cfg.selection_metric,
+            "selection_metric": selection_metric,
             **_selected_metadata(default_model if default_exists else "lstm_attention"),
         }
 
@@ -471,22 +580,24 @@ def select_champion(
             "selected_model": selected_model,
             "selection_mode": "fallback_default_champion",
             "annotated_challengers": annotated,
-            "selection_metric": champion_cfg.selection_metric,
+            "selection_metric": selection_metric,
             **_selected_metadata(selected_model, reason="zero_eligible_models"),
         }
 
     selected_model, selected_result = max(
         eligible,
         key=lambda item: (
-            selection_score_from_result(item[1], champion_cfg.selection_metric),
+            selection_score_from_result(item[1], selection_metric),
+            float((item[1].get("directional_selection_evidence") or {}).get("f1_min") or -1.0),
+            float((item[1].get("directional_selection_evidence") or {}).get("pass_rate") or 0.0),
             1 if item[0] == default_model else 0,
         ),
     )
     return {
         "selected_model": selected_model,
         "selection_mode": "auto_selected_champion",
-        "selection_metric": champion_cfg.selection_metric,
-        "selection_score": selection_score_from_result(selected_result, champion_cfg.selection_metric),
+        "selection_metric": selection_metric,
+        "selection_score": selection_score_from_result(selected_result, selection_metric),
         "annotated_challengers": annotated,
         **_selected_metadata(selected_model),
     }
@@ -499,11 +610,24 @@ def build_challenger_ranking(
     *,
     selection_mode: str,
     champion_cfg: ChampionSelectionConfig,
+    selection_metric_override: str | None = None,
 ) -> list[dict[str, Any]]:
     annotated = annotate_challengers(challengers, artifact_routes_models)
+    selection_metric = selection_metric_override or champion_cfg.selection_metric
+    if selection_metric in _DIRECTIONAL_SELECTION_SIDES:
+        for result in annotated.values():
+            evidence = directional_selection_evidence(result, selection_metric)
+            result["directional_selection_evidence"] = evidence
+            if result.get("selection_eligible") and not evidence["eligible"]:
+                result["selection_eligible"] = False
+                result["eligibility_reason"] = evidence["reason"]
     sortable = sorted(
         annotated.items(),
-        key=lambda item: selection_score_from_result(item[1], champion_cfg.selection_metric),
+        key=lambda item: (
+            selection_score_from_result(item[1], selection_metric),
+            float((item[1].get("directional_selection_evidence") or {}).get("f1_min") or -1.0),
+            float((item[1].get("directional_selection_evidence") or {}).get("pass_rate") or 0.0),
+        ),
         reverse=True,
     )
     ranking: list[dict[str, Any]] = []
@@ -515,11 +639,13 @@ def build_challenger_ranking(
             {
                 "rank": idx,
                 "model_name": model_name,
-                "selection_score": None if selection_score_from_result(result, champion_cfg.selection_metric) == float("-inf") else selection_score_from_result(result, champion_cfg.selection_metric),
+                "selection_metric": selection_metric,
+                "selection_score": None if selection_score_from_result(result, selection_metric) == float("-inf") else selection_score_from_result(result, selection_metric),
                 "status": status,
                 "reason": result.get("reason"),
                 "selection_eligible": result.get("selection_eligible", False),
                 "eligibility_reason": result.get("eligibility_reason"),
+                "directional_selection_evidence": result.get("directional_selection_evidence"),
             }
         )
     return ranking

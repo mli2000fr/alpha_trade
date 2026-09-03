@@ -27,6 +27,11 @@ from event_sentiment.config import EventSentimentConfig
 from event_sentiment.signal_aggregator import SentimentBoostConfig
 from screener.models import ScreenerConfig
 from selector.strict_filter_profiles import STRICT_SWING_CASH_FILTERS  # alias → core.filter_profiles (Sprint S14)
+from modelFactory.feature_profiles import (
+    DIRECTIONAL_TARGET_DOWN_THRESHOLD,
+    DIRECTIONAL_TARGET_HORIZON,
+    DIRECTIONAL_TARGET_UP_THRESHOLD,
+)
 from ihm.services.pipeline_ml_defaults import (
     DEFAULT_ML_CATBOOST_LOSS_FUNCTION,  # Sprint S12 — constantes ML extraites
     DEFAULT_ML_ARTIFACTS_DIR,
@@ -390,6 +395,11 @@ class PipelineLaunchOptions:
     ml_exclude_per_symbol_per_sector: bool = DEFAULT_ML_EXCLUDE_PER_SYMBOL_PER_SECTOR  # 2026-08-28
     ml_enable_oracle_model: bool = DEFAULT_ML_ENABLE_ORACLE_MODEL  # 2026-08-20 : Oracle Extreme (O0)
     ml_oracle_model_only: bool = DEFAULT_ML_ORACLE_MODEL_ONLY      # 2026-08-20 : Oracle ONLY
+    ml_directional_profiles_enabled: bool = False
+    ml_oracle_feature_profile: str = "oracle.json"
+    ml_standalone_oracle_feature_profile: str = "dynamic"
+    ml_long_feature_profile: str = "long.json"
+    ml_short_feature_profile: str = "short.json"
     ml_target_skip_vol_scaling: bool = DEFAULT_ML_TARGET_SKIP_VOL_SCALING
     ml_target_excess_vs_spy: bool = DEFAULT_ML_TARGET_EXCESS_VS_SPY  # P0-7
     ml_target_intra_sector_rank: bool = DEFAULT_ML_TARGET_INTRA_SECTOR_RANK
@@ -2237,6 +2247,24 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     if step_key == "ml_train":
+        effective_target_mode = (
+            "ternary" if options.ml_directional_profiles_enabled else options.ml_target_mode
+        )
+        effective_forecast_horizon = (
+            DIRECTIONAL_TARGET_HORIZON
+            if options.ml_directional_profiles_enabled
+            else options.ml_forecast_horizon
+        )
+        effective_target_up_threshold = (
+            DIRECTIONAL_TARGET_UP_THRESHOLD
+            if options.ml_directional_profiles_enabled
+            else options.ml_target_up_threshold
+        )
+        effective_target_down_threshold = (
+            DIRECTIONAL_TARGET_DOWN_THRESHOLD
+            if options.ml_directional_profiles_enabled
+            else options.ml_target_down_threshold
+        )
         command = [
             sys.executable,
             "-u",
@@ -2247,10 +2275,10 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             "--accelerator",
             options.ml_accelerator,
             "--target-mode",
-            options.ml_target_mode,
+            effective_target_mode,
         ]
         # ML Sprint 1 — ajouter num-classes pour mode ternaire / régression
-        if options.ml_target_mode == "ternary":
+        if effective_target_mode == "ternary":
             command.extend(["--num-classes", "3"])
             command.extend([
                 "--ternary-weight-short", str(options.ml_ternary_weight_short),
@@ -2260,17 +2288,17 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
                 "--ternary-threshold-long", str(options.ml_ternary_threshold_long),
                 "--ternary-top2-margin", str(options.ml_ternary_top2_margin),
             ])
-        elif options.ml_target_mode == "regression":
+        elif effective_target_mode == "regression":
             command.extend(["--num-classes", "1"])
         if options.ml_training_mode != "per_symbol":
             command.extend(["--training-mode", options.ml_training_mode])
         command.extend([
-            "--forecast-horizon" if options.ml_forecast_horizon != 0 else "--forecast-horizons",
-            str(options.ml_forecast_horizon) if options.ml_forecast_horizon != 0 else "3,5,10,15,20",
+            "--forecast-horizon" if effective_forecast_horizon != 0 else "--forecast-horizons",
+            str(effective_forecast_horizon) if effective_forecast_horizon != 0 else "3,5,10,15,20",
             "--target-up-threshold",
-            str(options.ml_target_up_threshold),
+            str(effective_target_up_threshold),
             "--target-down-threshold",
-            str(options.ml_target_down_threshold),
+            str(effective_target_down_threshold),
             "--decision-threshold",
             str(options.ml_decision_threshold),
             "--calibration-method",
@@ -2342,13 +2370,20 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             "--log-level",
             str(options.ml_log_level or DEFAULT_ML_LOG_LEVEL).upper(),
         ])
+        # Contrat IHM : la valeur affichée dans « ML — feature set » doit être
+        # la valeur effectivement utilisée par l'entraînement per-symbol. Le CLI
+        # conserve force_v1_lstm=True par défaut pour la compatibilité historique ;
+        # il faut donc lever explicitement ce forçage lorsque l'utilisateur choisit
+        # le jeu Expert dans l'IHM.
+        if options.ml_feature_set == "expert":
+            command.append("--no-force-v1-lstm")
         if options.ml_watchdog_timeout_seconds and options.ml_watchdog_timeout_seconds > 0:
             command.extend(["--watchdog-timeout-seconds", str(int(options.ml_watchdog_timeout_seconds))])
         if ml_training_end_date:
             command.extend(["--training-end-date", ml_training_end_date])
         if ml_train_start_symbol:
             command.extend(["--start-symbol", ml_train_start_symbol])
-        if options.ml_global_model_only:
+        if options.ml_global_model_only and not options.ml_directional_profiles_enabled:
             # P0-6 : --global-model-only active déjà --enable-global-model implicitement
             # côté cli → on ne l'émet pas ici pour éviter le doublon dans la commande.
             # 2026-08-28 : si exclude_per_symbol_per_sector est coché, on ne l'émet
@@ -2356,45 +2391,58 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             # qu'on veut justement conserver avec le nouveau flag.
             command.append("--global-model-only")
         # 2026-08-28 : Exclude per-symbol & per-sector (garde Global Ranking + Oracle)
-        if options.ml_exclude_per_symbol_per_sector and not options.ml_global_model_only:
+        if (options.ml_exclude_per_symbol_per_sector and not options.ml_global_model_only
+                and not options.ml_directional_profiles_enabled):
             command.append("--exclude-per-symbol-per-sector")
         # Oracle Extreme (O0) — 2026-08-20
-        if options.ml_oracle_model_only:
+        if options.ml_directional_profiles_enabled:
+            command.extend([
+                "--directional-feature-profiles",
+                "--oracle-feature-profile", options.ml_oracle_feature_profile,
+                "--long-feature-profile", options.ml_long_feature_profile,
+                "--short-feature-profile", options.ml_short_feature_profile,
+                "--enable-oracle-model",
+            ])
+        elif options.ml_oracle_model_only:
             command.append("--oracle-model-only")
             command.append("--enable-oracle-model")  # implicite
+            if options.ml_standalone_oracle_feature_profile != "dynamic":
+                command.extend(["--standalone-oracle-feature-profile", options.ml_standalone_oracle_feature_profile])
         elif options.ml_enable_oracle_model:
             command.append("--enable-oracle-model")
-        if options.ml_include_sentiment:
+            if options.ml_standalone_oracle_feature_profile != "dynamic":
+                command.extend(["--standalone-oracle-feature-profile", options.ml_standalone_oracle_feature_profile])
+        if options.ml_include_sentiment and not options.ml_directional_profiles_enabled:
             command.append("--include-sentiment")
-        if options.ml_include_screener_scores:
+        if options.ml_include_screener_scores and not options.ml_directional_profiles_enabled:
             command.append("--include-screener-scores")
-        if options.ml_include_short_score:
+        if options.ml_include_short_score and not options.ml_directional_profiles_enabled:
             command.append("--include-short-score")
-        if options.ml_include_macro_vix:
+        if options.ml_include_macro_vix and not options.ml_directional_profiles_enabled:
             command.append("--include-macro-vix")
-        if options.ml_include_macro_vxn:
+        if options.ml_include_macro_vxn and not options.ml_directional_profiles_enabled:
             command.append("--include-macro-vxn")
-        if options.ml_include_macro_vix3m:
+        if options.ml_include_macro_vix3m and not options.ml_directional_profiles_enabled:
             command.append("--include-macro-vix3m")
-        if options.ml_include_macro_move:
+        if options.ml_include_macro_move and not options.ml_directional_profiles_enabled:
             command.append("--include-macro-move")
-        if options.ml_include_fundamentals:
+        if options.ml_include_fundamentals and not options.ml_directional_profiles_enabled:
             command.append("--include-fundamentals")
-        if options.ml_include_factors:
+        if options.ml_include_factors and not options.ml_directional_profiles_enabled:
             command.append("--include-factors")
-        if options.ml_include_volume_features:
+        if options.ml_include_volume_features and not options.ml_directional_profiles_enabled:
             command.append("--include-volume-features")
-        if options.ml_include_macro_regime:
+        if options.ml_include_macro_regime and not options.ml_directional_profiles_enabled:
             command.append("--include-macro-regime")
-        if not options.ml_include_score_components:
+        if not options.ml_include_score_components and not options.ml_directional_profiles_enabled:
             command.append("--no-include-score-components")  # default True, explicit disable
-        if options.ml_target_skip_vol_scaling:
+        if options.ml_target_skip_vol_scaling and not options.ml_directional_profiles_enabled:
             command.append("--target-skip-vol-scaling")
-        if options.ml_target_excess_vs_spy:
+        if options.ml_target_excess_vs_spy and not options.ml_directional_profiles_enabled:
             command.append("--target-excess-vs-spy")
-        if options.ml_target_intra_sector_rank:
+        if options.ml_target_intra_sector_rank and not options.ml_directional_profiles_enabled:
             command.append("--target-intra-sector-rank")
-        if options.ml_target_ternary_intra_sector:
+        if options.ml_target_ternary_intra_sector and not options.ml_directional_profiles_enabled:
             command.append("--target-ternary-intra-sector")
             command.extend(["--target-ternary-quantile", str(options.ml_target_ternary_quantile)])
         if options.ml_ranking_top_k_features > 0:
@@ -2465,7 +2513,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             if options.ml_candidate_decision_thresholds:
                 command.append("--candidate-decision-thresholds")
                 command.extend(str(v) for v in options.ml_candidate_decision_thresholds)
-        if options.ml_optimize_target:
+        if options.ml_optimize_target and not options.ml_directional_profiles_enabled:
             command.append("--optimize-target")
             command.extend(["--min-trades-fraction", str(options.ml_min_trades_fraction)])
             if options.ml_candidate_horizons:

@@ -666,6 +666,41 @@ class TestDataLoader:
         assert captured["params"]["batch_id"] == "model-factory-v1"
         assert df.iloc[0]["batch_id"] == "model-factory-v1"
 
+    def test_load_predictions_exposes_directional_training_cutoffs(self, monkeypatch):
+        from backtesting import data_loader
+
+        captured = {}
+
+        def fake_columns(_engine, table_name, *, required=False):
+            if table_name == "model_predictions":
+                return {
+                    "symbol", "prediction_date", "predicted_proba",
+                    "predicted_class", "run_id", "model_role",
+                    "direction_long_run_id", "direction_short_run_id",
+                }
+            if table_name == "model_training_run":
+                return {"run_id", "batch_id", "train_end_date"}
+            return set()
+
+        def fake_read_sql(query, conn, params=None, parse_dates=None):
+            captured["sql"] = str(query)
+            return pd.DataFrame()
+
+        monkeypatch.setattr(data_loader, "_get_table_columns", fake_columns)
+        monkeypatch.setattr(data_loader.pd, "read_sql", fake_read_sql)
+
+        data_loader.load_predictions(
+            cast(Engine, self._FakeEngine()),
+            date(2025, 1, 1),
+            date(2025, 1, 31),
+            batch_id="directional-bundle",
+        )
+
+        assert "direction_long_training_run.train_end_date" in captured["sql"]
+        assert "direction_short_training_run.train_end_date" in captured["sql"]
+        assert "prediction.direction_long_run_id" in captured["sql"]
+        assert "prediction.direction_short_run_id" in captured["sql"]
+
     def test_load_sentiment_supports_1d_columns(self, monkeypatch):
         from backtesting import data_loader
 

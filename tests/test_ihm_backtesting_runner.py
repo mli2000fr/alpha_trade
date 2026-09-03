@@ -649,6 +649,39 @@ def test_build_backtesting_run_command_extreme_gate_directional():
     assert "--no-longs" not in command
 
 
+def test_build_backtesting_run_command_extreme_gate_forces_hard_dip_off():
+    from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+    command = build_backtesting_command(
+        "run",
+        BacktestRunOptions(
+            start="2025-01-01",
+            cascade_rank_mode="extreme_gate_directional",
+            dip_enabled=True,
+        ),
+    )
+
+    assert "--no-dip-enabled" in command
+    assert "--dip-enabled" not in command
+
+
+def test_build_backtesting_run_command_saturated_priority_keeps_dip_enabled():
+    from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+    command = build_backtesting_command(
+        "run",
+        BacktestRunOptions(
+            start="2025-01-01",
+            cascade_rank_mode="extreme_gate_directional",
+            dip_enabled=True,
+            extreme_gate_dip_saturated=True,
+        ),
+    )
+
+    assert "--dip-enabled" in command
+    assert "--extreme-gate-dip-saturated" in command
+
+
 def test_build_backtesting_run_command_rejects_both_direction_restrictions():
     from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
 

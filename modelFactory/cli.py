@@ -39,6 +39,30 @@ from modelFactory.config import (
 )
 from modelFactory.reproducibility import apply_reproducibility
 from modelFactory.runtime_status import increment_runtime_counter, reset_runtime_status, snapshot_runtime_status, update_runtime_status
+from modelFactory.feature_profiles import (
+    DIRECTIONAL_TARGET_DOWN_THRESHOLD,
+    DIRECTIONAL_TARGET_HORIZON,
+    DIRECTIONAL_TARGET_UP_THRESHOLD,
+)
+
+
+def enforce_directional_bundle_target_options(opts: argparse.Namespace) -> argparse.Namespace:
+    """Impose le contrat de cible absolue H20 aux branches d'un bundle."""
+    if not getattr(opts, "directional_feature_profiles", False):
+        return opts
+    opts.target_mode = "ternary"
+    opts.num_classes = 3
+    opts.label_method = "fixed_horizon"
+    opts.forecast_horizon = DIRECTIONAL_TARGET_HORIZON
+    opts.forecast_horizons = None
+    opts.target_up_threshold = DIRECTIONAL_TARGET_UP_THRESHOLD
+    opts.target_down_threshold = DIRECTIONAL_TARGET_DOWN_THRESHOLD
+    opts.target_skip_vol_scaling = False
+    opts.target_excess_vs_spy = False
+    opts.target_intra_sector_rank = False
+    opts.target_ternary_intra_sector = False
+    opts.optimize_target = False
+    return opts
 
 
 def _resolve_synth_best_h(opts, batch_id: str | None) -> int:
@@ -463,6 +487,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="S7 : liste de features séparées par des virgules à utiliser comme X (ex. \"momentum_20,momentum_60,selector_short_score\"). Vide = legacy. Ignoré si --feature-whitelist-enabled absent.")
     p.add_argument("--no-force-v1-lstm", dest="force_v1_lstm", action="store_false", default=True,
                    help="S7 : NE PAS forcer feature_set=v1 pour le LSTM per-symbol (utilise le feature_set demandé, ex. expert). Opt-in ; par défaut le LSTM force v1 (comportement prod inchangé).")
+    p.add_argument("--directional-feature-profiles", action="store_true", default=False,
+                   help="Entraîne dans un même batch les branches Per-Symbol LONG et SHORT avec deux profils JSON, plus l'Oracle Extreme global.")
+    p.add_argument("--oracle-feature-profile", type=str, default="oracle.json",
+                   help="Nom du profil JSON présent dans config/features/oracle (défaut: oracle.json).")
+    p.add_argument("--standalone-oracle-feature-profile", type=str, default=None,
+                   help="Profil JSON Oracle hors bundle. Absent = features dynamiques pilotées par les options include-*.")
+    p.add_argument("--long-feature-profile", type=str, default="long.json",
+                   help="Nom du profil JSON présent dans config/features/long (défaut: long.json).")
+    p.add_argument("--short-feature-profile", type=str, default="short.json",
+                   help="Nom du profil JSON présent dans config/features/short (défaut: short.json).")
     p.add_argument("--target-skip-vol-scaling", action="store_true", default=False,
                    help="T1 experiment: désactiver le vol-scaling dans la target regression (target = future_return brut)")
     p.add_argument("--target-excess-vs-spy", action="store_true", default=False,
@@ -668,6 +702,9 @@ def main(args: list[str] | None = None) -> None:
     parser = build_arg_parser()
     raw_args = list(args) if args is not None else sys.argv[1:]
     opts = parser.parse_args(raw_args)
+    # Le target-mode CLI pilote les modèles génériques, pas l'Oracle O0. Dans
+    # un bundle, les deux branches ont un contrat absolu H20 immuable.
+    opts = enforce_directional_bundle_target_options(opts)
     if opts.label_method == "triple_barrier" and (opts.target_mode != "ternary" or opts.num_classes != 3):
         parser.error("--label-method triple_barrier requiert --target-mode ternary et --num-classes 3")
 
@@ -686,6 +723,12 @@ def main(args: list[str] | None = None) -> None:
     # Oracle Extreme (O0) : --oracle-model-only active implicitement l'Oracle
     if getattr(opts, "oracle_model_only", False):
         opts.enable_oracle_model = True
+    if getattr(opts, "directional_feature_profiles", False):
+        opts.enable_oracle_model = True
+        opts.oracle_model_only = False
+        opts.global_model_only = False
+        opts.exclude_per_symbol_per_sector = False
+        opts.training_mode = "per_symbol"
 
     _horizons: tuple[int, ...] = ()
     _forecast_horizon = opts.forecast_horizon
@@ -849,6 +892,11 @@ def main(args: list[str] | None = None) -> None:
         accelerator=opts.accelerator,
         debug_train=opts.debug_train,
         training_mode=opts.training_mode,
+        directional_profiles_enabled=opts.directional_feature_profiles,
+        oracle_feature_profile=opts.oracle_feature_profile,
+        standalone_oracle_feature_profile=opts.standalone_oracle_feature_profile,
+        long_feature_profile=opts.long_feature_profile,
+        short_feature_profile=opts.short_feature_profile,
     )
 
     reproducibility_state = apply_reproducibility(cfg.reproducibility, context=f"cli:{opts.mode}")
@@ -985,11 +1033,29 @@ def main(args: list[str] | None = None) -> None:
         _batch_final_status = (
             "failed" if (completed == 0 and failed > 0) else "completed"
         )
+        _batch_failure_reason: str | None = None
+        if cfg.directional_profiles_enabled:
+            try:
+                _bundle_manifest = json.loads(
+                    (Path(cfg.artifacts_dir) / run_id / "cascade_manifest.json").read_text(encoding="utf-8")
+                )
+                if not bool(_bundle_manifest.get("serving_ready")):
+                    _batch_final_status = "failed"
+                    _oracle_result = (_bundle_manifest.get("oracle") or {}).get("result") or {}
+                    _batch_failure_reason = str(
+                        _bundle_manifest.get("failure_reason")
+                        or _oracle_result.get("reason")
+                        or "directional_bundle_not_serving_ready"
+                    )
+            except (OSError, json.JSONDecodeError):
+                _batch_final_status = "failed"
+                _batch_failure_reason = "directional_bundle_manifest_unavailable"
         if _batch_final_status == "failed":
+            _batch_failure_reason = _batch_failure_reason or "no_completed_training_unit"
             LOGGER.error(
-                "cli: batch %s marked FAILED — completed=%d skipped=%d failed=%d "
-                "(aucune unité terminée)",
+                "cli: batch %s marked FAILED — completed=%d skipped=%d failed=%d reason=%s",
                 run_id, completed, skipped, failed,
+                _batch_failure_reason,
             )
         update_training_batch(
             engine,
@@ -999,6 +1065,7 @@ def main(args: list[str] | None = None) -> None:
             symbols_completed=completed,
             symbols_skipped=skipped,
             symbols_failed=failed,
+            failure_reason=_batch_failure_reason,
         )
 
         # ── Génération automatique du rapport Markdown ──
@@ -1039,7 +1106,13 @@ def main(args: list[str] | None = None) -> None:
             insert_predictions,
             load_symbols_for_source,
         )
-        from modelFactory.predictor import _batch_has_per_symbol_or_sector, predict_batch
+        from modelFactory.predictor import (
+            DirectionalBundleContractError,
+            _batch_has_per_symbol_or_sector,
+            _directional_bundle_root,
+            predict_batch,
+            validate_directional_bundle_for_prediction,
+        )
         from modelFactory.drift_monitor import compute_drift
         from modelFactory.drift_policy import (
             apply_kill_switch,
@@ -1144,6 +1217,28 @@ def main(args: list[str] | None = None) -> None:
             opts.symbol_source,
             trade_date=universe_date,
         )
+        _directional_root = _directional_bundle_root(Path(opts.artifacts_dir), _batch_id)
+        _is_directional_bundle = _directional_root is not None
+        if _directional_root is not None:
+            try:
+                symbols, _bundle_excluded = validate_directional_bundle_for_prediction(
+                    _directional_root,
+                    list(symbols),
+                    require_oracle=True,
+                )
+            except DirectionalBundleContractError as exc:
+                LOGGER.error("predict bundle preflight FAILED batch=%s reason=%s", _batch_id, exc)
+                _safe_print(f"❌ Bundle non servable : {exc}")
+                raise SystemExit(2) from exc
+            if _bundle_excluded:
+                LOGGER.warning(
+                    "predict bundle universe filtered batch=%s kept=%d excluded=%d details=%s",
+                    _batch_id, len(symbols), len(_bundle_excluded), _bundle_excluded,
+                )
+            LOGGER.info(
+                "predict bundle preflight OK batch=%s paired_symbols=%d excluded=%d",
+                _batch_id, len(symbols), len(_bundle_excluded),
+            )
         if _oracle_only:
             # Prédiction standard Oracle (champions, sans retrain) → table
             # oracle_extreme_predictions. Période : historique (start/end) ou live (jour).
@@ -1220,7 +1315,7 @@ def main(args: list[str] | None = None) -> None:
                 """Traite une date : global_rank → predict_batch → persist. Thread-safe."""
                 _ds = pred_date.isoformat()
                 # Étape 1 : global rank
-                if _batch_id:
+                if _batch_id and not _is_directional_bundle:
                     predict_global_rank_history(
                         start_date=_ds,
                         end_date=_ds,
@@ -1233,8 +1328,10 @@ def main(args: list[str] | None = None) -> None:
                 # OU aux batches sans modèles per-symbol/per-sector (global-only).
                 if _per_sector or not _has_ps_models:
                     return (_ds, 0)
-                _syms = opts.symbols or load_symbols_for_source(
-                    engine, opts.symbol_source, trade_date=pred_date,
+                _syms = symbols if _is_directional_bundle else (
+                    opts.symbols or load_symbols_for_source(
+                        engine, opts.symbol_source, trade_date=pred_date,
+                    )
                 )
                 _part = predict_batch(
                     _syms,
@@ -1443,6 +1540,12 @@ def main(args: list[str] | None = None) -> None:
                     "predict combined batch=%s oracle predict result=%s",
                     _batch_id, _oc_out,
                 )
+                if _is_directional_bundle and (
+                    not _oc_out
+                    or _oc_out.get("status") != "completed"
+                    or int(_oc_out.get("n_rows", 0) or 0) <= 0
+                ):
+                    raise RuntimeError(f"oracle_prediction_required_but_failed:{_oc_out}")
                 # ── Synchro Oracle → model_predictions (même logique que le flux
                 #    rank-driven / oracle-only) : peuple model_predictions avec le
                 #    signal Oracle (source=oracle_synth) pour la couverture ML et
@@ -1465,6 +1568,9 @@ def main(args: list[str] | None = None) -> None:
                             _batch_id, _synth_oc_exc,
                         )
             except Exception as _oc_exc:  # noqa: BLE001
+                if _is_directional_bundle:
+                    LOGGER.error("predict bundle oracle FAILED batch=%s: %s", _batch_id, _oc_exc)
+                    raise
                 LOGGER.warning(
                     "predict combined batch=%s oracle predict FAILED (non-bloquant): %s",
                     _batch_id, _oc_exc,

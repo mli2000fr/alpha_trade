@@ -15,7 +15,11 @@ import numpy as np
 import pandas as pd
 import torch
 
-from modelFactory.calibration import calibrator_from_state_dict, margin_from_logits
+from modelFactory.calibration import (
+    calibrator_from_state_dict,
+    margin_from_logits,
+    probabilities_to_pseudo_logits,
+)
 from modelFactory.champion_selection import ArtifactSignatureError, verify_route_artifact_signatures
 from modelFactory.config import DataConfig
 from modelFactory.cross_sectional import build_cross_sectional_features, merge_cross_sectional_features
@@ -235,8 +239,9 @@ def _apply_optional_calibration(
 ) -> tuple[float, str]:
     if calibrator is None or not getattr(calibrator, "fitted", False):
         return raw_proba, "none"
-    # Temperature Scaling est géré séparément dans predict_symbol (ternaire)
-    if getattr(calibrator, "method", None) == "temperature":
+    # Les calibrateurs multiclasse sont appliqués ensemble aux trois classes
+    # dans le chemin ternaire, jamais à une marge binaire isolée.
+    if getattr(calibrator, "method", None) in {"temperature", "vector"}:
         return raw_proba, "none"
     try:
         calibrated = float(calibrator.predict_proba(margin)[0])
@@ -257,6 +262,60 @@ def _apply_optional_calibration(
         )
         return raw_proba, "none"
     return calibrated, str(getattr(calibrator, "method", "none") or "none")
+
+
+def _apply_optional_multiclass_calibration(
+    *,
+    symbol: str,
+    selected_model: str,
+    calibrator: Any,
+    raw_probabilities: np.ndarray,
+    calibrator_path: Path | None,
+    logits: np.ndarray | None = None,
+) -> tuple[np.ndarray, str]:
+    """Applique Temperature/Vector Scaling à toutes les classes ensemble."""
+    raw = np.asarray(raw_probabilities, dtype=np.float64)
+    method = str(getattr(calibrator, "method", "none") or "none")
+    if (
+        calibrator is None
+        or not getattr(calibrator, "fitted", False)
+        or method not in {"temperature", "vector"}
+    ):
+        return raw, "none"
+    try:
+        calibration_input = (
+            np.asarray(logits, dtype=np.float64)
+            if logits is not None
+            else probabilities_to_pseudo_logits(raw)
+        )
+        calibrated = np.asarray(calibrator.predict(calibration_input), dtype=np.float64)
+        if calibrated.shape != raw.shape:
+            raise ValueError(
+                f"invalid calibrated shape={calibrated.shape}, expected={raw.shape}"
+            )
+        if not np.isfinite(calibrated).all():
+            raise ValueError("non-finite multiclass calibrated probabilities")
+        return calibrated, method
+    except Exception as exc:  # noqa: BLE001
+        reason = f"multiclass_calibrator_incompatible:{selected_model}"
+        LOGGER.warning(
+            "predict_symbol multiclass_calibrator_runtime_fallback "
+            "symbol=%s selected_model=%s method=%s path=%s error=%s",
+            symbol,
+            selected_model,
+            method,
+            calibrator_path,
+            exc,
+        )
+        increment_runtime_counter("prediction_calibration_fallback_count", 1)
+        update_runtime_status(
+            last_prediction_symbol=symbol,
+            last_calibration_fallback_reason=reason,
+            last_calibration_fallback_path=(
+                str(calibrator_path) if calibrator_path is not None else None
+            ),
+        )
+        return raw, "none"
 
 
 def _extract_positive_class_probability(
@@ -799,6 +858,11 @@ class _LightGBMBoosterAdapter:
         proba_pos = self._booster.predict(X)
         proba_pos = _np.asarray(proba_pos, dtype=float).ravel()
         return _np.column_stack([1.0 - proba_pos, proba_pos])
+
+    def predict(self, X: Any) -> np.ndarray:  # type: ignore[name-defined]
+        """Expose l'API de régression attendue par le routeur générique."""
+        import numpy as _np
+        return _np.asarray(self._booster.predict(X), dtype=float)
 
 
 def _load_tabular_model(model_path: Path, *, selected_model: str) -> Any:
@@ -1568,26 +1632,18 @@ def _predict_with_tabular_model(
 
     # ── Ternaire tabulaire : side + signal via policy partagée (Sprint Maître 0) ─
     if is_ternary_tab:
-        if (
-            calibrator is not None
-            and getattr(calibrator, "method", None) == "temperature"
-            and getattr(calibrator, "fitted", False)
-        ):
-            try:
-                logits = np.log(np.clip(proba_all[:, :3], eps, 1.0))
-                calibrated = calibrator.predict(logits)
-                proba_short_val = float(calibrated[0, 0])
-                proba_flat_val = float(calibrated[0, 1])
-                proba_long_val = float(calibrated[0, 2])
-                calibration_method = "temperature"
-            except Exception as exc:  # noqa: BLE001
-                LOGGER.warning(
-                    "predict_symbol ternary_temperature_fallback symbol=%s selected_model=%s error=%s",
-                    symbol,
-                    selected_model,
-                    exc,
-                )
-                calibration_method = "none"
+        calibrated, multiclass_method = _apply_optional_multiclass_calibration(
+            symbol=symbol,
+            selected_model=selected_model,
+            calibrator=calibrator,
+            raw_probabilities=proba_all[:, :3],
+            calibrator_path=calibrator_path,
+        )
+        if multiclass_method != "none":
+            proba_short_val = float(calibrated[0, 0])
+            proba_flat_val = float(calibrated[0, 1])
+            proba_long_val = float(calibrated[0, 2])
+            calibration_method = multiclass_method
 
         p_short = proba_short_val or 0.0
         p_flat = proba_flat_val or 0.0
@@ -2041,39 +2097,40 @@ def predict_symbol(
         )
         return None
 
-    # ── Temperature Scaling ternaire (2026-06-25) ────────────────
-    # Si un TemperatureScaler est disponible, recalibrer TOUTES les
-    # probas ternaires (pas seulement proba_long).
+    # Calibration ternaire : recalibrer les trois classes ensemble.
     calibrated_ternary_probs: dict[str, float | None] = {
         "proba_short": proba_short_val,
         "proba_flat": proba_flat_val,
         "proba_long": proba_long_val,
     }
-    if (
-        is_ternary
-        and num_classes >= 3
-        and calibrator is not None
-        and getattr(calibrator, "method", None) == "temperature"
-        and getattr(calibrator, "fitted", False)
-    ):
-        try:
-            cal_probs = calibrator.predict(logits_tensor.detach().cpu().numpy())
-            # cal_probs: [1, 3] → extraire les 3 probas
+    if is_ternary and num_classes >= 3:
+        raw_ternary = np.asarray(
+            [[proba_short_val, proba_flat_val, proba_long_val]],
+            dtype=np.float64,
+        )
+        cal_probs, multiclass_method = _apply_optional_multiclass_calibration(
+            symbol=symbol,
+            selected_model=selected_architecture,
+            calibrator=calibrator,
+            raw_probabilities=raw_ternary,
+            calibrator_path=calibrator_path,
+            logits=logits_tensor.detach().cpu().numpy(),
+        )
+        if multiclass_method != "none":
             calibrated_ternary_probs["proba_short"] = float(cal_probs[0, 0])
             calibrated_ternary_probs["proba_flat"] = float(cal_probs[0, 1])
             calibrated_ternary_probs["proba_long"] = float(cal_probs[0, 2])
-            proba = calibrated_ternary_probs["proba_long"]
-            calibration_method = "temperature"
+            proba = float(cal_probs[0, 2])
+            calibration_method = multiclass_method
             LOGGER.debug(
-                "Temperature scaling applied symbol=%s T=%.3f short=%.3f flat=%.3f long=%.3f",
+                "Multiclass calibration applied symbol=%s method=%s "
+                "short=%.3f flat=%.3f long=%.3f",
                 symbol,
-                getattr(calibrator, "temperature", 1.0),
+                multiclass_method,
                 calibrated_ternary_probs["proba_short"],
                 calibrated_ternary_probs["proba_flat"],
                 calibrated_ternary_probs["proba_long"],
             )
-        except Exception as _exc:
-            LOGGER.warning("Temperature scaling failed symbol=%s: %s", symbol, _exc)
 
     pred_date = prediction_date or date.today()
     if is_regression:
@@ -2165,6 +2222,227 @@ def predict_symbol(
         calibration_method,
     )
     return result
+
+
+def _directional_bundle_root(artifacts_dir: Path, batch_id: str | None) -> Path | None:
+    """Retourne la racine d'un bundle dual si son manifeste est présent."""
+    candidates = [artifacts_dir / batch_id] if batch_id else []
+    candidates.append(artifacts_dir)
+    for candidate in candidates:
+        manifest = candidate / "cascade_manifest.json"
+        if manifest.is_file():
+            try:
+                payload = json.loads(manifest.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if payload.get("cascade_type") == "oracle_extreme_plus_per_symbol_directional":
+                return candidate
+    return None
+
+
+class DirectionalBundleContractError(RuntimeError):
+    """Le bundle ne satisfait pas le contrat minimal de serving."""
+
+
+def _resolve_bundle_artifact_path(bundle_root: Path, config_path: Path, value: Any) -> Path | None:
+    if not value:
+        return None
+    raw = Path(str(value))
+    candidates = [raw] if raw.is_absolute() else [raw, bundle_root / raw, config_path.parent / raw]
+    return next((candidate for candidate in candidates if candidate.is_file()), candidates[0])
+
+
+def validate_directional_bundle_for_prediction(
+    bundle_root: Path,
+    symbols: list[str],
+    *,
+    require_oracle: bool = True,
+) -> tuple[list[str], dict[str, list[str]]]:
+    """Valide un bundle une fois avant tout backfill et filtre son univers.
+
+    Un symbole partiellement entraîné est exclu avec une raison explicite. Les
+    défauts globaux (manifeste/Oracle) et un univers final vide sont bloquants.
+    """
+    manifest_path = bundle_root / "cascade_manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise DirectionalBundleContractError(f"manifest_unavailable:{exc}") from exc
+    if manifest.get("cascade_type") != "oracle_extreme_plus_per_symbol_directional":
+        raise DirectionalBundleContractError("invalid_cascade_type")
+    if manifest.get("status") != "completed" or manifest.get("serving_ready") is not True:
+        raise DirectionalBundleContractError(
+            f"bundle_not_serving_ready:status={manifest.get('status')}"
+        )
+    batch_id = str(manifest.get("batch_id") or bundle_root.name)
+    if require_oracle:
+        from modelFactory.oracle.predict_history import has_oracle_champions
+
+        if (manifest.get("oracle") or {}).get("status") != "completed":
+            raise DirectionalBundleContractError("oracle_not_completed")
+        if not has_oracle_champions(batch_id):
+            raise DirectionalBundleContractError("oracle_champions_missing")
+
+    valid: list[str] = []
+    excluded: dict[str, list[str]] = {}
+    from modelFactory.directional_serving import selected_model_is_eligible
+
+    for raw_symbol in symbols:
+        symbol = str(raw_symbol).strip().upper()
+        reasons: list[str] = []
+        for direction in ("long", "short"):
+            config_path = bundle_root / "directions" / direction / symbol / "config.json"
+            try:
+                config = json.loads(config_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                reasons.append(f"{direction}:config_missing")
+                continue
+            if not selected_model_is_eligible(config):
+                reasons.append(f"{direction}:selected_model_ineligible")
+            if config.get("model_role") != f"direction_{direction}":
+                reasons.append(f"{direction}:role_mismatch")
+            if (config.get("data") or {}).get("target_mode") != "ternary":
+                reasons.append(f"{direction}:target_not_ternary")
+            if int((config.get("model") or {}).get("num_classes") or 0) != 3:
+                reasons.append(f"{direction}:num_classes_not_3")
+            contract_fp = str((config.get("feature_contract") or {}).get("feature_fingerprint") or "")
+            persisted_fp = str(config.get("feature_fingerprint") or "")
+            if not contract_fp or persisted_fp != contract_fp:
+                reasons.append(f"{direction}:feature_fingerprint_mismatch")
+
+            routes = config.get("artifact_routes") or {}
+            selected = str(routes.get("selected_model") or config.get("architecture_selected") or "")
+            route = ((routes.get("models") or {}).get(selected) or {}) if selected else {}
+            artifact_value = route.get("model_path") or route.get("checkpoint_path")
+            artifact_path = _resolve_bundle_artifact_path(bundle_root, config_path, artifact_value)
+            if not selected or artifact_path is None or not artifact_path.is_file():
+                reasons.append(f"{direction}:champion_artifact_missing")
+            elif artifact_path.suffix.lower() == ".cbm":
+                try:
+                    with artifact_path.open("rb") as fh:
+                        header = fh.read(4)
+                    if header != b"CBM1":
+                        reasons.append(f"{direction}:catboost_not_native")
+                except OSError:
+                    reasons.append(f"{direction}:champion_artifact_unreadable")
+            elif artifact_path.suffix.lower() == ".txt":
+                try:
+                    with artifact_path.open("rb") as fh:
+                        header = fh.read(1)
+                    if header == b"\x80":
+                        reasons.append(f"{direction}:lightgbm_not_native")
+                except OSError:
+                    reasons.append(f"{direction}:champion_artifact_unreadable")
+        if reasons:
+            excluded[symbol] = reasons
+        elif symbol:
+            valid.append(symbol)
+
+    valid = list(dict.fromkeys(valid))
+    if not valid:
+        reason_counts: dict[str, int] = {}
+        for reasons in excluded.values():
+            for reason in reasons:
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        raise DirectionalBundleContractError(
+            f"no_symbol_with_complete_long_short_contract:{reason_counts}"
+        )
+    return valid, excluded
+
+
+def predict_directional_symbol(
+    symbol: str,
+    bundle_root: Path,
+    engine: "Engine",  # type: ignore[name-defined]
+    prediction_date: Optional[date] = None,
+    as_of_date: Optional[date] = None,
+    persist: bool = True,
+    accelerator: str = "auto",
+) -> Optional[pd.DataFrame]:
+    """Sert les deux champions directionnels et arbitre LONG/SHORT.
+
+    La branche LONG est seule autorisée à fournir ``proba_long`` et la branche
+    SHORT est seule autorisée à fournir ``proba_short``. Une branche manquante
+    invalide la prédiction : aucun fallback silencieux vers le modèle legacy.
+    """
+    from modelFactory.directional_serving import selected_model_is_eligible
+
+    def _branch_prediction(direction: str) -> Optional[pd.DataFrame]:
+        branch_root = bundle_root / "directions" / direction
+        config_path = branch_root / symbol / "config.json"
+        try:
+            branch_config = json.loads(config_path.read_text(encoding="utf-8"))
+            branch_run_id = str(branch_config["run_id"])
+        except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+            LOGGER.error("directional_bundle config unavailable symbol=%s direction=%s error=%s",
+                         symbol, direction, exc)
+            return None
+        if not selected_model_is_eligible(branch_config):
+            LOGGER.error(
+                "directional_bundle selected model ineligible symbol=%s direction=%s",
+                symbol,
+                direction,
+            )
+            return None
+        expected_role = f"direction_{direction}"
+        if branch_config.get("model_role") != expected_role:
+            LOGGER.error("directional_bundle role mismatch symbol=%s direction=%s expected=%s actual=%s",
+                         symbol, direction, expected_role, branch_config.get("model_role"))
+            return None
+        return predict_symbol(
+            symbol, branch_root, engine, prediction_date, run_id=branch_run_id,
+            as_of_date=as_of_date, persist=False, accelerator=accelerator,
+        )
+
+    long_pred = _branch_prediction("long")
+    if long_pred is None or long_pred.empty:
+        LOGGER.error("directional_bundle incomplete symbol=%s long=False short=not_evaluated", symbol)
+        return None
+    short_pred = _branch_prediction("short")
+    if short_pred is None or short_pred.empty:
+        LOGGER.error("directional_bundle incomplete symbol=%s long=%s short=%s", symbol,
+                     True,
+                     short_pred is not None and not short_pred.empty)
+        return None
+    long_row = long_pred.iloc[0]
+    short_row = short_pred.iloc[0]
+    p_long = float(long_row.get("proba_long", long_row.get("predicted_proba", 0.0)) or 0.0)
+    p_short = float(short_row.get("proba_short", short_row.get("predicted_proba", 0.0)) or 0.0)
+    p_flat = max(
+        float(long_row.get("proba_flat", 0.0) or 0.0),
+        float(short_row.get("proba_flat", 0.0) or 0.0),
+    )
+    if p_long > p_short and p_long > p_flat:
+        side, pred_class, score = "long", 1, p_long
+    elif p_short > p_long and p_short > p_flat:
+        side, pred_class, score = "short", -1, p_short
+    else:
+        side, pred_class, score = "flat", 0, p_flat
+    merged = _build_prediction_result(
+        symbol=symbol,
+        prediction_date=pd.Timestamp(long_row["prediction_date"]).date(),
+        proba=score,
+        pred_class=pred_class,
+        run_id=str(long_row["run_id"]),
+        raw_proba=score,
+        decision_threshold=max(float(long_row.get("decision_threshold", 0.5)), float(short_row.get("decision_threshold", 0.5))),
+        signal_label=side.upper(),
+        calibration_method=f"long:{long_row.get('calibration_method', 'none')}|short:{short_row.get('calibration_method', 'none')}",
+        selected_model="directional_bundle",
+        predicted_side=side,
+        proba_long=p_long,
+        proba_flat=p_flat,
+        proba_short=p_short,
+        source=str(long_row.get("source", PREDICTION_SOURCE_PER_SYMBOL)),
+    )
+    merged["direction_long_run_id"] = str(long_row["run_id"])
+    merged["direction_short_run_id"] = str(short_row["run_id"])
+    merged["direction_long_model"] = str(long_row.get("selected_model", "unknown"))
+    merged["direction_short_model"] = str(short_row.get("selected_model", "unknown"))
+    merged["model_role"] = "directional_bundle"
+    if persist:
+        _persist_predictions_best_effort(engine, merged, symbol=symbol)
+    return merged
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -2894,55 +3172,33 @@ def cascade_select(
             _min_prob = float(_extreme_gate_cfg["min_prob"])
         LOGGER.info(
             "cascade_select: EXTREME_GATE top %d%% par proba_extreme (%d symbols, percentile du jour)",
-            int(round((1.0 - _extreme_gate_pct) * 100)), len(ranks_df),
+            int(round(_extreme_gate_pct * 100)), len(ranks_df),
         )
-        # ── DIP Oracle (persistance proba_extreme + prix) : gate dur OU priorité ──
-        # Deux usages selon le flag de recherche extreme_gate_dip_saturated :
-        #   - défaut (False) : GATE DUR historique — ne garde que les symboles
-        #     passant N4X2 (pool réduit) ;
-        #   - True : PRIORITÉ JOURS SATURÉS — on calcule l'ensemble passant N4X2
-        #     MAIS on garde le pool Oracle TOP20 intact ; le réordonnancement
-        #     lexicographique (bande de rang Oracle → N4X2 → score) n'est appliqué
-        #     qu'en fin de cascade quand candidats > slots disponibles.
+        # ── DIP Oracle : priorité de recherche uniquement ────────────────
+        # Le gate DIP dur appartient au Global Ranking. En Extreme Gate,
+        # N4X2 n'est calculé que si `extreme_gate_dip_saturated=True`; le pool
+        # Oracle TOP20 reste alors intact et N4X2 sert uniquement au
+        # réordonnancement des jours saturés.
         _n4x2_pass = set()
-        if dip_filter_config and bool(dip_filter_config.get("enabled", False)):
+        if (
+            dip_filter_config
+            and bool(dip_filter_config.get("enabled", False))
+            and extreme_gate_dip_saturated
+        ):
             try:
                 from selector.dip_filter import filter_day_candidates as _oracle_dip_filter
-                if extreme_gate_dip_saturated:
-                    _pass_df = _oracle_dip_filter(
-                        ranks_df.copy(), engine, batch_id, trade_date, dip_filter_config,
-                        best_h=None, rank_source="oracle",
-                    )
-                    _n4x2_pass = {
-                        str(s).upper() for s in _pass_df["symbol"].unique()
-                        if pd.notna(s)
-                    }
-                    LOGGER.info(
-                        "EXTREME_GATE_SAT date=%s batch=%s N4X2 pass=%d/%d (pool TOP20 intact)",
-                        trade_date, batch_id, len(_n4x2_pass), int(ranks_df.shape[0]),
-                    )
-                else:
-                    _dip_before = int(ranks_df.shape[0]) if ranks_df is not None else 0
-                    ranks_df = _oracle_dip_filter(
-                        ranks_df, engine, batch_id, trade_date, dip_filter_config,
-                        best_h=None, rank_source="oracle",
-                    )
-                    _dip_after = int(ranks_df.shape[0]) if ranks_df is not None else 0
-                    LOGGER.info(
-                        "DIP_FILTER backtest date=%s batch=%s source=oracle N=%s X=%.4f "
-                        "threshold=%.4f before=%d after=%d rejected=%d",
-                        trade_date, batch_id,
-                        dip_filter_config.get("persist_days"),
-                        float(dip_filter_config.get("dip_pct", 0.02)),
-                        float(dip_filter_config.get("rank_threshold", 0.90)),
-                        _dip_before, _dip_after, _dip_before - _dip_after,
-                    )
-                    if ranks_df.empty:
-                        LOGGER.info(
-                            "cascade_select: ORACLE DIP filter vide pour %s (%s) — aucun candidat",
-                            trade_date, batch_id,
-                        )
-                        return []
+                _pass_df = _oracle_dip_filter(
+                    ranks_df.copy(), engine, batch_id, trade_date, dip_filter_config,
+                    best_h=None, rank_source="oracle",
+                )
+                _n4x2_pass = {
+                    str(s).upper() for s in _pass_df["symbol"].unique()
+                    if pd.notna(s)
+                }
+                LOGGER.info(
+                    "EXTREME_GATE_SAT date=%s batch=%s N4X2 pass=%d/%d (pool TOP20 intact)",
+                    trade_date, batch_id, len(_n4x2_pass), int(ranks_df.shape[0]),
+                )
             except Exception:  # noqa: BLE001
                 LOGGER.exception(
                     "cascade_select: ORACLE DIP filter échoué pour %s — on continue sans filtre",
@@ -3121,8 +3377,14 @@ def cascade_select(
                     continue
                 _long_prob = float(_eg_pred.long_prob)
                 _short_prob = float(_eg_pred.short_prob)
+                _flat_prob = float(_eg_pred.flat_prob)
+                _direction_prob = max(_long_prob, _short_prob)
                 _direction_margin = abs(_long_prob - _short_prob)
-                if max(_long_prob, _short_prob) <= _min_prob:
+                if _direction_prob <= _min_prob:
+                    continue
+                # Contrat ternaire strict : la cascade ne doit pas transformer
+                # une prédiction FLAT dominante en position LONG ou SHORT.
+                if _direction_prob <= _flat_prob:
                     continue
                 # Une égalité est ambiguë : aucun biais LONG implicite.
                 if _direction_margin <= 0.0 or _direction_margin < _eg_direction_margin:
@@ -3472,6 +3734,28 @@ def apply_cascade_to_predictions(
         return preds_df
 
     result = preds_df.copy()
+    _rank_mode_low = str(rank_mode or "ml").strip().lower()
+    if _rank_mode_low == "extreme_gate_directional":
+        # Le contrat directionnel ne doit jamais retomber sur une synthèse
+        # Oracle (proba_short=0) lorsqu'une ligne Per-Symbol a été exclue en
+        # amont. Si la filiation moderne est disponible, elle est autoritaire.
+        _directional_mask = None
+        if "model_role" in result.columns:
+            _role_mask = result["model_role"].astype(str).str.lower() == "directional_bundle"
+            # Dès qu'une filiation bundle moderne existe, elle est
+            # autoritaire. Une simple source per_symbol ne suffit plus.
+            if _role_mask.any():
+                _directional_mask = _role_mask
+        if _directional_mask is None and "source" in result.columns:
+            _source_mask = result["source"].astype(str).str.lower() == PREDICTION_SOURCE_PER_SYMBOL
+            _directional_mask = _source_mask
+        if _directional_mask is not None:
+            _directional_before = len(result)
+            result = result.loc[_directional_mask].copy()
+            LOGGER.info(
+                "apply_cascade_to_predictions: contrat directional_bundle strict %d → %d lignes",
+                _directional_before, len(result),
+            )
     # Initialiser la colonne cascade_score
     result["cascade_score"] = 0.0
 
@@ -3487,7 +3771,6 @@ def apply_cascade_to_predictions(
     _src_col = "source" if "source" in result.columns else None
     if _src_col is not None:
         _dedup_before = len(result)
-        _rank_mode_low = str(rank_mode or "ml").strip().lower()
         _oracle_first = _rank_mode_low in ("oracle", "extreme_gate")
 
         def _prio(row_source: object) -> tuple[int, int]:
@@ -3844,6 +4127,7 @@ def predict_batch(
         (non thread-safe) et seul un résumé final est émis.
     """
     total = len(symbols)
+    directional_root = _directional_bundle_root(artifacts_dir, batch_id)
     update_runtime_status(
         current_phase="predict_batch_start",
         progress_label="🔮 Progression ML Predict",
@@ -3858,8 +4142,10 @@ def predict_batch(
         symbols_failed=0,
     )
 
-    # ── Pré-calcul du global_rank pour stacking (si activé) ──
-    _try_compute_global_rank_for_prediction(artifacts_dir, engine, prediction_date)
+    # Un bundle Oracle O0 + direction n'embarque aucun Global Ranking. Ne pas
+    # déclencher le fallback legacy, coûteux et trompeur dans les logs.
+    if directional_root is None:
+        _try_compute_global_rank_for_prediction(artifacts_dir, engine, prediction_date)
 
     if max_workers <= 1:
         # ── Chemin séquentiel (comportement historique) ──────────
@@ -3873,16 +4159,12 @@ def predict_batch(
                 current_symbol_index=index,
                 progress_item=sym,
             )
-            pred = predict_symbol(
-                sym,
-                artifacts_dir,
-                engine,
-                prediction_date,
-                batch_id=batch_id,
-                as_of_date=as_of_date,
-                persist=persist,
-                accelerator=accelerator,
-            )
+            if directional_root is not None:
+                pred = predict_directional_symbol(sym, directional_root, engine, prediction_date,
+                                                  as_of_date=as_of_date, persist=persist, accelerator=accelerator)
+            else:
+                pred = predict_symbol(sym, artifacts_dir, engine, prediction_date, batch_id=batch_id,
+                                      as_of_date=as_of_date, persist=persist, accelerator=accelerator)
             if pred is not None:
                 all_preds.append(pred)
                 completed += 1
@@ -3923,16 +4205,12 @@ def predict_batch(
 
     def _predict_one(sym: str) -> tuple[str, pd.DataFrame | None]:
         """Wrapper thread-safe : chaque thread utilise sa propre connexion DB."""
-        pred = predict_symbol(
-            sym,
-            artifacts_dir,
-            engine,
-            prediction_date,
-            batch_id=batch_id,
-            as_of_date=as_of_date,
-            persist=persist,
-            accelerator=accelerator,
-        )
+        if directional_root is not None:
+            pred = predict_directional_symbol(sym, directional_root, engine, prediction_date,
+                                              as_of_date=as_of_date, persist=persist, accelerator=accelerator)
+        else:
+            pred = predict_symbol(sym, artifacts_dir, engine, prediction_date, batch_id=batch_id,
+                                  as_of_date=as_of_date, persist=persist, accelerator=accelerator)
         return sym, pred
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:

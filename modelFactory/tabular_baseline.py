@@ -14,6 +14,11 @@ import pandas as pd
 from modelFactory.calibration import PlattCalibrator, TemperatureScaler, VectorScaler
 from modelFactory.config import ReproducibilityConfig, TrainingConfig
 from modelFactory.dataset import chrono_split
+from modelFactory.directional_conditioning import (
+	ORACLE_ELIGIBLE_COLUMN,
+	eligible_target_mask,
+	filter_eligible_target_rows,
+)
 from modelFactory.evaluation import (
     check_model_collapse,
     compute_multiclass_metrics,
@@ -21,7 +26,6 @@ from modelFactory.evaluation import (
     optimize_decision_threshold,
 )
 from modelFactory.features import build_feature_contract
-from modelFactory.features import fingerprint as compute_feature_fingerprint
 from modelFactory.features import get_feature_columns
 from modelFactory.reproducibility import apply_reproducibility, derive_seed
 
@@ -41,6 +45,24 @@ def tabular_split(
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
 	if "target" not in df.columns:
 		raise ValueError("La baseline tabulaire attend une colonne 'target'.")
+	if ORACLE_ELIGIBLE_COLUMN in df.columns:
+		# Conserver les frontières temporelles du calendrier complet, puis borner
+		# seulement les observations du modèle au TOP20 Oracle OOF.
+		if by_dates and "date" in df.columns:
+			from modelFactory.dataset import chrono_split_by_dates
+			split = chrono_split_by_dates(
+				df.reset_index(drop=True),
+				train_ratio=train_ratio,
+				val_ratio=val_ratio,
+				forecast_horizon=forecast_horizon,
+				embargo_dates=embargo_dates,
+			)
+		else:
+			split = chrono_split(
+				df.reset_index(drop=True), train_ratio, val_ratio,
+				forecast_horizon=forecast_horizon, embargo_rows=embargo_rows,
+			)
+		return tuple(filter_eligible_target_rows(part) for part in (split.train, split.val, split.test))
 	clean = df.loc[df["target"].notna()].reset_index(drop=True)
 	if by_dates and "date" in clean.columns:
 		from modelFactory.dataset import chrono_split_by_dates
@@ -252,7 +274,9 @@ def apply_tabular_calibration(
 	if calibrator is None or not calibrator.fitted:
 		return np.asarray(raw_proba, dtype=np.float64)
 	if target_mode == "ternary" and isinstance(calibrator, (TemperatureScaler, VectorScaler)):
-		return calibrator.predict_proba(raw_proba)
+		from modelFactory.calibration import probabilities_to_pseudo_logits
+
+		return calibrator.predict_proba(probabilities_to_pseudo_logits(raw_proba))
 	if isinstance(calibrator, PlattCalibrator):
 		eps = 1e-6
 		raw = np.asarray(raw_proba, dtype=np.float64)
@@ -651,6 +675,13 @@ def run_tabular_baseline(
 		include_macro_vix3m=cfg.data.include_macro_vix3m_features,
 		include_macro_move=cfg.data.include_macro_move_features,
 		include_global_stacking=cfg.global_model.stacking_enabled,
+		include_fundamentals=cfg.data.include_fundamentals_features,
+		include_factors=cfg.data.include_factors_features,
+		include_macro_regime=cfg.data.include_macro_regime_features,
+		include_score_components=cfg.data.include_score_components,
+		include_volume_features=(cfg.data.include_volume_features and cfg.data.feature_whitelist_enabled),
+		feature_whitelist_enabled=cfg.data.feature_whitelist_enabled,
+		feature_whitelist=cfg.data.feature_whitelist,
 		feature_columns=feature_columns,
 		scaler_feature_names=feature_columns,
 	)
@@ -660,19 +691,7 @@ def run_tabular_baseline(
 		"seed": int(resolved_seed),
 		"feature_columns": feature_columns,
 		"feature_contract": feature_contract,
-		"feature_fingerprint": compute_feature_fingerprint(
-			include_sentiment=cfg.data.include_sentiment_features,
-			feature_set=cfg.data.feature_set,
-			include_cross_sectional=cfg.data.enable_cross_sectional_features,
-			include_screener_scores=cfg.data.include_screener_scores,
-			include_short_score=cfg.data.include_short_score_features,
-			include_macro_vix=cfg.data.include_macro_vix_features,
-			include_macro_vxn=cfg.data.include_macro_vxn_features,
-			include_macro_vix3m=cfg.data.include_macro_vix3m_features,
-			include_macro_move=cfg.data.include_macro_move_features,
-			include_global_stacking=cfg.global_model.stacking_enabled,
-			feature_columns=feature_columns,
-		),
+		"feature_fingerprint": feature_contract.get("feature_fingerprint"),
 		"val": val_metrics,
 		"test": test_metrics,
 		"calibration_method": calibrator.method if calibrator is not None and calibrator.fitted else "none",
@@ -910,7 +929,7 @@ def run_tabular_walk_forward(
 			# ── Winsorize + Standardize target on this fold's train stats (anti-leakage) ──
 			_train_df_r = split.train.copy()
 			_test_df_r = split.test.copy()
-			_train_valid_r = _train_df_r["target"].notna()
+			_train_valid_r = eligible_target_mask(_train_df_r)
 			if _train_valid_r.sum() >= 2:
 				# Winsorize using this fold's train quantiles (P1-1 fix)
 				_lo = float(_train_df_r.loc[_train_valid_r, "target"].quantile(0.01))
@@ -928,7 +947,7 @@ def run_tabular_walk_forward(
 					_test_df_r["target"] = _test_df_r["target"] - _t_mean
 			# ── Regression : target continue ──
 			# Filter NaN rows AFTER standardization (NaN targets persist from shift(-h))
-			_train_valid_mask = _train_df_r["target"].notna()
+			_train_valid_mask = eligible_target_mask(_train_df_r)
 			_train_df_r = _train_df_r.loc[_train_valid_mask]
 			if _train_df_r.empty:
 				continue
@@ -945,7 +964,7 @@ def run_tabular_walk_forward(
 			# ── Bias correction from train set (WF fold) ──
 			_train_pred = model.predict(_train_df_r[feature_cols])
 			_wf_bias = float(np.median(_train_pred))
-			_test_valid_r = _test_df_r["target"].notna()
+			_test_valid_r = eligible_target_mask(_test_df_r)
 			_test_df_r = _test_df_r.loc[_test_valid_r]
 			if _test_df_r.empty:
 				continue
@@ -1002,7 +1021,7 @@ def run_tabular_walk_forward(
 			fold_metrics.append(fold_m)
 		else:
 			# ── Filtrer les lignes avec target valide (évite NaN du shift) ──
-			_train_valid = split.train["target"].notna()
+			_train_valid = eligible_target_mask(split.train)
 			_train_df = split.train.loc[_train_valid]
 			train_targets = _train_df["target"].astype(int)
 			if is_ternary:
@@ -1022,7 +1041,7 @@ def run_tabular_walk_forward(
 			model.fit(_train_df[feature_cols], train_targets, sample_weight=_wf_sample_weights)
 
 			# ── Filtrer les lignes test avec target valide ──
-			_test_valid = split.test["target"].notna()
+			_test_valid = eligible_target_mask(split.test)
 			_test_df = split.test.loc[_test_valid]
 			if _test_df.empty:
 				continue

@@ -30,6 +30,7 @@ import pandas as pd
 LOGGER = logging.getLogger(__name__)
 
 _CHAMPIONS_ROOT = Path("artifacts/models/oracle/champions")
+DEFAULT_PERSIST_CHUNK_DATES = 20
 
 
 def has_oracle_champions(batch_id: str | None) -> bool:
@@ -62,10 +63,14 @@ def predict_oracle_extreme_history(
     *,
     horizon: int = 20,
     symbols: list[str] | None = None,
+    persist_chunk_dates: int = DEFAULT_PERSIST_CHUNK_DATES,
 ) -> dict[str, Any]:
     """Prédit ``proba_extreme`` sur [start_date, end_date] avec les champions, sans retrain.
 
-    Écrit les prédictions dans ``oracle_extreme_predictions`` (filtre batch strict).
+    Écrit les prédictions dans ``oracle_extreme_predictions`` (filtre batch strict)
+    par lots de dates. Chaque lot est transactionnel et immédiatement visible :
+    un diagnostic concurrent peut donc suivre la progression et une interruption ne
+    perd pas les lots déjà validés. L'upsert rend la reprise idempotente.
     """
     if not (batch_id or "").strip():
         return {"status": "error", "reason": "no_batch_id"}
@@ -83,6 +88,20 @@ def predict_oracle_extreme_history(
         }
     _feature_columns = list(_meta[0].get("feature_columns") or [])
     _t_starts = [str(m["t_start"]) for m in _meta]
+    _generator_options: dict[str, Any] = {}
+    _profile_path = _champ_root / "feature_profile.json"
+    if _profile_path.is_file():
+        try:
+            _profile = json.loads(_profile_path.read_text(encoding="utf-8"))
+            _generator_options = {
+                **dict(_profile.get("generator_options") or {}),
+                "feature_set": str(_profile.get("feature_set", "expert")),
+            }
+        except Exception as _profile_exc:  # noqa: BLE001
+            return {
+                "status": "error", "reason": "invalid_oracle_feature_profile",
+                "batch_id": batch_id, "detail": str(_profile_exc),
+            }
 
     # 2. Dataset + univers
     from modelFactory.oracle.dataset import build_dataset
@@ -97,6 +116,11 @@ def predict_oracle_extreme_history(
         start_date=str(start_date), end_date=str(end_date), horizon=horizon,
         require_global_rank=_needs_gr,
         need_targets=False,  # prédiction : labels optionnels (NULL si non réalisés)
+        # Les anciens champions O0/O1 n'avaient pas de contrat de générateur
+        # persisté. On conserve leur résolution tolérante historique ; les
+        # nouveaux profils, eux, sont stricts et doivent être reproduits bit à bit.
+        feature_whitelist=(_feature_columns or None) if _profile_path.is_file() else None,
+        generator_options=_generator_options,
     )
     if dataset.empty:
         return {"status": "error", "reason": "empty_dataset", "batch_id": batch_id}
@@ -126,11 +150,36 @@ def predict_oracle_extreme_history(
     _start = pd.Timestamp(start_date)
     _end = pd.Timestamp(end_date)
     _date_col = pd.to_datetime(dataset["date"])
+    # ``build_dataset`` charge une longue fenêtre de warm-up pour calculer les
+    # indicateurs. Elle est utile au calcul mais ne doit pas rester dans la
+    # matrice servie pendant toute la prédiction historique.
+    _in_requested_range = (_date_col >= _start) & (_date_col <= _end)
+    dataset = dataset.loc[_in_requested_range].copy()
+    _date_col = pd.to_datetime(dataset["date"])
     _day_dates = sorted(_date_col.dropna().unique())
-    _day_dates = [d for d in _day_dates if _start <= d <= _end]
 
-    _rows: list[dict[str, Any]] = []
-    for _d in _day_dates:
+    # Import avant la boucle : chaque flush ouvre sa propre transaction courte.
+    from modelFactory.oracle.predictions_store import write_oracle_predictions
+
+    _chunk_dates = max(1, int(persist_chunk_dates or DEFAULT_PERSIST_CHUNK_DATES))
+    _pending_rows: list[dict[str, Any]] = []
+    _persisted_rows = 0
+    _predicted_symbols: set[str] = set()
+
+    def _flush_pending(*, processed_dates: int) -> None:
+        nonlocal _persisted_rows
+        if not _pending_rows:
+            return
+        _chunk = pd.DataFrame(_pending_rows)
+        _written = write_oracle_predictions(engine, _chunk, batch_id=batch_id)
+        _persisted_rows += int(_written)
+        _pending_rows.clear()
+        LOGGER.info(
+            "oracle predict progress batch=%s dates=%d/%d rows_persisted=%d",
+            batch_id, processed_dates, len(_day_dates), _persisted_rows,
+        )
+
+    for _date_index, _d in enumerate(_day_dates, start=1):
         _d_iso = str(_d.date())
         _sel = [ts for ts in _t_starts if ts <= _d_iso]
         _t_sel = _sel[-1] if _sel else _t_starts[0]
@@ -151,35 +200,35 @@ def predict_oracle_extreme_history(
             _day[["symbol", "future_return", "oracle_extreme10"]].itertuples(index=False, name=None),
             _proba,
         ):
-            _rows.append({
+            _symbol = str(_sym).upper()
+            _predicted_symbols.add(_symbol)
+            _pending_rows.append({
                 "date": _d_iso,
-                "symbol": str(_sym).upper(),
+                "symbol": _symbol,
                 "proba_extreme": float(_p),
                 "future_return": _fr if pd.notna(_fr) else None,
                 "oracle_extreme10": int(_lab) if pd.notna(_lab) else None,
                 "fold_start": _t_sel,
             })
 
-    if not _rows:
+        if _date_index % _chunk_dates == 0:
+            _flush_pending(processed_dates=_date_index)
+
+    _flush_pending(processed_dates=len(_day_dates))
+
+    if _persisted_rows <= 0:
         return {"status": "error", "reason": "no_predictions", "batch_id": batch_id}
-
-    _oos = pd.DataFrame(_rows)
-
-    # 5. Écrire dans la table (filtre batch strict ; PK (date, symbol, batch) →
-    #    toute re-prédiction d'une même plage écrase les lignes existantes).
-    from modelFactory.oracle.predictions_store import write_oracle_predictions
-
-    _n = write_oracle_predictions(engine, _oos, batch_id=batch_id)
     LOGGER.info(
         "predict_oracle_extreme_history batch=%s range=[%s,%s] rows=%d",
-        batch_id, start_date, end_date, _n,
+        batch_id, start_date, end_date, _persisted_rows,
     )
     return {
         "status": "completed",
         "batch_id": batch_id,
-        "n_rows": _n,
+        "n_rows": _persisted_rows,
         "range": [str(start_date), str(end_date)],
         "n_dates": len(_day_dates),
-        "n_symbols": int(_oos["symbol"].nunique()),
+        "n_symbols": len(_predicted_symbols),
         "n_folds_used": len(_t_starts),
+        "persist_chunk_dates": _chunk_dates,
     }

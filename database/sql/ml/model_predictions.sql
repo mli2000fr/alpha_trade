@@ -9,6 +9,11 @@ CREATE TABLE IF NOT EXISTS alpha_trade.model_predictions (
     proba_flat          DOUBLE          DEFAULT NULL COMMENT 'ML Sprint 3 — probabilité classe flat',
     proba_short         DOUBLE          DEFAULT NULL COMMENT 'ML Sprint 3 — probabilité classe short',
     run_id              VARCHAR(64)     NOT NULL,
+    model_role          VARCHAR(32)     DEFAULT NULL COMMENT 'Rôle métier: directional_bundle ou NULL pour le contrat historique',
+    direction_long_run_id  VARCHAR(128) DEFAULT NULL COMMENT 'Run Per-Symbol LONG ayant produit proba_long',
+    direction_short_run_id VARCHAR(128) DEFAULT NULL COMMENT 'Run Per-Symbol SHORT ayant produit proba_short',
+    direction_long_model   VARCHAR(64)  DEFAULT NULL COMMENT 'Champion servi pour la branche LONG',
+    direction_short_model  VARCHAR(64)  DEFAULT NULL COMMENT 'Champion servi pour la branche SHORT',
     selected_model      VARCHAR(32)     DEFAULT NULL COMMENT 'Backend réellement servi: lstm_attention|lightgbm|catboost|global_model',
     decision_threshold  DOUBLE          DEFAULT NULL COMMENT 'Seuil utilisé pour convertir la probabilité en classe',
     signal_label        VARCHAR(32)     DEFAULT NULL COMMENT 'Signal dérivé: long|no_trade',
@@ -22,7 +27,9 @@ CREATE TABLE IF NOT EXISTS alpha_trade.model_predictions (
     INDEX idx_symbol (symbol),
     INDEX idx_selected_model (selected_model),
     INDEX idx_predicted_side (predicted_side),
-    INDEX idx_source (source)
+    INDEX idx_source (source),
+    INDEX idx_model_predictions_long_run (direction_long_run_id),
+    INDEX idx_model_predictions_short_run (direction_short_run_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Predictions quotidiennes du module ML';
 
 

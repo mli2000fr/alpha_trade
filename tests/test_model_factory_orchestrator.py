@@ -694,7 +694,11 @@ def test_train_oracle_extreme_prefills_global_rank_history_before_dataset(monkey
         call_order.append("build_dataset")
         return pd.DataFrame(), []  # dataset vide → skipped proprement
 
-    monkeypatch.setattr(oracle_build_labels_mod, "build_labels", lambda *a, **k: {"status": "ok"})
+    monkeypatch.setattr(
+        oracle_build_labels_mod,
+        "build_labels",
+        lambda *a, **k: {"status": "completed", "n_labeled": 1},
+    )
     monkeypatch.setattr(predictor_mod, "predict_global_rank_history", _fake_pgrh)
     monkeypatch.setattr(oracle_dataset_mod, "build_dataset", _fake_build_dataset)
 
@@ -728,7 +732,11 @@ def test_train_oracle_extreme_skips_global_rank_prefill_when_oracle_only(monkeyp
     import modelFactory.predictor as predictor_mod
 
     call_order: list[str] = []
-    monkeypatch.setattr(oracle_build_labels_mod, "build_labels", lambda *a, **k: {"status": "ok"})
+    monkeypatch.setattr(
+        oracle_build_labels_mod,
+        "build_labels",
+        lambda *a, **k: {"status": "completed", "n_labeled": 1},
+    )
     monkeypatch.setattr(
         predictor_mod, "predict_global_rank_history",
         lambda *a, **k: call_order.append("predict_global_rank_history") or {},
@@ -753,5 +761,169 @@ def test_train_oracle_extreme_skips_global_rank_prefill_when_oracle_only(monkeyp
 
     assert result["status"] == "skipped"
     assert call_order == ["build_dataset"]  # pas de prefill
+
+
+def test_train_oracle_extreme_rejects_zero_labeled_targets_before_dataset(monkeypatch, tmp_path) -> None:
+    import modelFactory.oracle.build_labels as oracle_build_labels_mod
+    import modelFactory.oracle.dataset as oracle_dataset_mod
+
+    monkeypatch.setattr(
+        oracle_build_labels_mod,
+        "build_labels",
+        lambda *a, **k: {
+            "status": "completed",
+            "n_rows": 23511,
+            "n_labeled": 0,
+            "n_unavailable": 23511,
+        },
+    )
+    monkeypatch.setattr(
+        oracle_dataset_mod,
+        "build_dataset",
+        lambda *a, **k: pytest.fail("build_dataset ne doit pas être appelé sans labels"),
+    )
+    cfg = TrainingConfig(
+        data=DataConfig(
+            training_start_date=date(2016, 1, 1),
+            training_end_date=date(2024, 6, 30),
+            oracle_model_only=True,
+        ),
+        artifacts_dir=tmp_path,
+    )
+
+    result = orchestrator.train_oracle_extreme(
+        cfg, engine=object(), batch_id="batch-no-labels", symbols=["AAPL"],
+    )
+
+    assert result["status"] == "failed"
+    assert result["reason"] == "no_labeled_oracle_targets:rows=23511 unavailable=23511"
+
+
+def test_directional_bundle_fails_fast_when_oracle_universe_is_too_small(
+    monkeypatch, tmp_path,
+) -> None:
+    cfg = TrainingConfig(
+        data=DataConfig(enable_oracle_model=True),
+        directional_profiles_enabled=True,
+        artifacts_dir=tmp_path,
+        max_workers=1,
+        accelerator="cpu",
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "_train_worker",
+        lambda *a, **k: pytest.fail("aucune branche ne doit être entraînée"),
+    )
+    symbols = [f"S{i:02d}" for i in range(12)]
+
+    results = orchestrator.run_training_batch(
+        cfg, engine=object(), symbols=symbols, batch_id="batch-small-bundle",
+    )
+
+    assert len(results) == 1
+    assert results[0].status == "failed"
+    assert results[0].skip_reason == "insufficient_oracle_universe:symbols=12 min_required=20"
+    manifest = json.loads(
+        (tmp_path / "batch-small-bundle" / "cascade_manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["status"] == "failed"
+    assert manifest["serving_ready"] is False
+    assert manifest["failure_reason"] == results[0].skip_reason
+    assert manifest["coverage"]["paired_symbols"] == 0
+    assert manifest["oracle"]["target_contract"] == {
+        "mode": "binary_extreme",
+        "horizon": 20,
+        "return_basis": "cross_sectional_top10_bottom10",
+    }
+    assert manifest["directional_target_contract"] == {
+        "mode": "ternary",
+        "label_method": "fixed_horizon",
+        "horizon": 20,
+        "forecast_horizons": [],
+        "return_basis": "absolute",
+        "target_excess_vs_spy": False,
+        "target_up_threshold": 0.03,
+        "target_down_threshold": -0.03,
+        "target_intra_sector_rank": False,
+        "target_ternary_intra_sector": False,
+        "target_optimization": False,
+    }
+    assert manifest["per_symbol"]["long"]["target_contract"] == manifest["directional_target_contract"]
+    assert manifest["per_symbol"]["short"]["target_contract"] == manifest["directional_target_contract"]
+
+
+def test_directional_bundle_trains_oracle_oof_before_direction_branches(
+    monkeypatch, tmp_path,
+) -> None:
+    cfg = TrainingConfig(
+        data=DataConfig(enable_oracle_model=True),
+        directional_profiles_enabled=True,
+        artifacts_dir=tmp_path,
+        max_workers=1,
+        accelerator="cpu",
+    )
+    symbols = [f"S{i:02d}" for i in range(20)]
+    call_order: list[str] = []
+
+    def fake_oracle(config, engine, batch_id, symbols=None):
+        call_order.append("oracle")
+        gate_path = Path(config.artifacts_dir) / "_oracle_oof_gate.parquet"
+        pd.DataFrame({
+            "date": [pd.Timestamp("2024-01-02")],
+            "symbol": ["S00"],
+            "directional_oracle_eligible": [True],
+        }).to_parquet(gate_path, index=False)
+        champions = tmp_path / "oracle" / "champions" / batch_id
+        champions.mkdir(parents=True, exist_ok=True)
+        (champions / "oracle_champions.json").write_text("[]", encoding="utf-8")
+        return {
+            "status": "completed",
+            "batch_id": batch_id,
+            "directional_oof_gate_path": str(gate_path),
+            "directional_oof_gate": {"oof_only": True, "eligible_rows": 1},
+        }
+
+    def fake_worker(symbol, config, **kwargs):
+        assert call_order and call_order[0] == "oracle"
+        call_order.append(config.model_role)
+        return orchestrator.TrainResult(
+            symbol,
+            f"run-{symbol}-{config.model_role}",
+            "completed",
+            metrics={
+                "model_role": config.model_role,
+                "champion": {
+                    "selected_model_eligible": not (
+                        symbol == "S19" and config.model_role == "direction_long"
+                    ),
+                },
+            },
+        )
+
+    monkeypatch.setattr(orchestrator, "train_oracle_extreme", fake_oracle)
+    monkeypatch.setattr(orchestrator, "_train_worker", fake_worker)
+
+    results = orchestrator.run_training_batch(
+        cfg, engine=object(), symbols=symbols, batch_id="batch-conditional",
+    )
+
+    assert call_order[0] == "oracle"
+    assert call_order.count("oracle") == 1
+    assert call_order.count("direction_long") == 20
+    assert call_order.count("direction_short") == 20
+    assert results[0].symbol == "__ORACLE__"
+    manifest = json.loads(
+        (tmp_path / "batch-conditional" / "cascade_manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["serving_ready"] is True
+    assert manifest["coverage"]["long_symbols"] == 20
+    assert manifest["coverage"]["short_symbols"] == 20
+    assert manifest["coverage"]["paired_symbols"] == 20
+    assert manifest["coverage"]["servable_long_symbols"] == 19
+    assert manifest["coverage"]["servable_short_symbols"] == 20
+    assert manifest["coverage"]["servable_paired_symbols"] == 19
+    assert manifest["coverage"]["unservable_symbols"] == ["S19"]
+    assert manifest["directional_conditioning"]["status"] == "ready"
+    assert manifest["directional_conditioning"]["diagnostics"]["oof_only"] is True
 
 
