@@ -38,8 +38,10 @@ from modelFactory.global_ranking import _XS_RANK_SOURCE_FEATURES, _xs_rank_colum
 def test_bundled_profiles_are_discoverable_and_valid() -> None:
     assert "oracle.json" in discover_feature_profiles("oracle")
     assert "long.json" in discover_feature_profiles("long")
+    assert "long_spy_core.json" in discover_feature_profiles("long")
     assert "short.json" in discover_feature_profiles("short")
     long_profile = load_feature_profile("long", "long.json")
+    long_spy_profile = load_feature_profile("long", "long_spy_core.json")
     short_profile = load_feature_profile("short", "short.json")
     oracle_profile = load_feature_profile("oracle", "oracle.json")
     expected_oracle = deduplicate_oracle_feature_columns(expert_feature_columns() + [
@@ -49,6 +51,14 @@ def test_bundled_profiles_are_discoverable_and_valid() -> None:
     assert len(oracle_profile["feature_columns"]) == 168
     assert ORACLE_REDUNDANT_FEATURES.isdisjoint(oracle_profile["feature_columns"])
     assert len(long_profile["feature_columns"]) == 84
+    assert len(long_spy_profile["feature_columns"]) == 88
+    assert set(long_spy_profile["feature_columns"]) - set(long_profile["feature_columns"]) == {
+        "market_return_20",
+        "relative_strength_5",
+        "relative_strength_20",
+        "relative_strength_60",
+    }
+    assert set(long_profile["feature_columns"]).issubset(long_spy_profile["feature_columns"])
     assert len(short_profile["feature_columns"]) == 130
     assert short_profile["generator_options"]["include_macro_move"] is True
     assert len(long_profile["sha256"]) == 64
@@ -147,6 +157,35 @@ def test_profile_application_isolates_direction_artifacts() -> None:
         cfg.artifacts_dir / "_oracle_oof_gate.parquet"
     )
     assert directional_target_contract()["return_basis"] == "absolute"
+
+
+def test_long_spy_core_profile_keeps_absolute_target_and_generates_spy_features() -> None:
+    cfg = TrainingConfig(
+        data=DataConfig(
+            target_mode="regression",
+            target_excess_vs_spy=True,
+            benchmark_symbol="SPY",
+        ),
+        directional_profiles_enabled=True,
+    )
+
+    effective = apply_feature_profile(
+        cfg,
+        load_feature_profile("long", "long_spy_core.json"),
+        "long",
+    )
+
+    assert effective.data.target_mode == "ternary"
+    assert effective.data.target_excess_vs_spy is False
+    assert effective.data.benchmark_symbol == "SPY"
+    assert len(effective.data.feature_whitelist) == 88
+    for feature in (
+        "market_return_20",
+        "relative_strength_5",
+        "relative_strength_20",
+        "relative_strength_60",
+    ):
+        assert feature in effective.data.feature_whitelist
 
 
 def test_ihm_command_emits_bundle_and_ignores_manual_feature_switches() -> None:

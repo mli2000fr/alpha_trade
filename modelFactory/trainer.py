@@ -78,6 +78,15 @@ from modelFactory.target_optimization import optimize_target_parameters
 LOGGER = logging.getLogger(__name__)
 
 
+def effective_champion_selection_metric(model_role: str, configured_metric: str) -> str:
+    """Retourne la métrique réellement alignée sur la mission du modèle."""
+    if model_role == "direction_long":
+        return "f1_long"
+    if model_role == "direction_short":
+        return "f1_short"
+    return configured_metric
+
+
 def _atomic_write_json(path: Path, data: Any, *, indent: int = 2) -> None:
     """Écrit un fichier JSON de façon atomique (tempfile + rename).
 
@@ -898,7 +907,14 @@ def _evaluate_best_checkpoint(
     test_frame: "pd.DataFrame | None",
     cfg: TrainingConfig,
     ternary_policy: "TernaryDecisionPolicy | None" = None,
- ) -> tuple[dict[str, Any], dict[str, Any], PlattCalibrator | TemperatureScaler | None, dict[str, Any], float]:
+ ) -> tuple[
+    dict[str, Any],
+    dict[str, Any],
+    PlattCalibrator | TemperatureScaler | None,
+    dict[str, Any],
+    float,
+    dict[str, np.ndarray],
+]:
     model = LSTMAttentionModule.load_from_checkpoint(str(ckpt_path), map_location="cpu")
     device = torch.device("cpu")
     val_outputs = _collect_outputs(
@@ -948,6 +964,10 @@ def _evaluate_best_checkpoint(
     )
 
     test_metrics: dict[str, Any] = {}
+    # Une population conditionnelle rare peut légitimement ne fournir aucun
+    # endpoint dans le split test. Retourner alors une sortie vide stable au
+    # lieu de référencer une variable créée uniquement dans la branche ci-dessous.
+    test_outputs = _collect_outputs(model, None, device)
     if test_ds is not None and len(test_ds) > 0:
         test_outputs = _collect_outputs(
             model,
@@ -1497,6 +1517,14 @@ def train_symbol(
         if dm.train_ds is None or dm.val_ds is None or len(dm.train_ds) == 0 or len(dm.val_ds) == 0:
             reason = "insufficient_sequences_after_split"
             return _skip_train_symbol(symbol=symbol, run_id=run_id, reason=reason, engine=engine)
+        if (
+            effective_cfg.directional_conditioning_enabled
+            and (dm.test_ds is None or len(dm.test_ds) == 0)
+        ):
+            # Un champion conditionnel sans aucune observation holdout ne peut
+            # pas être qualifié pour le serving, même si train/val existent.
+            reason = "insufficient_conditional_test_sequences"
+            return _skip_train_symbol(symbol=symbol, run_id=run_id, reason=reason, engine=engine)
 
         walk_forward_metrics: dict[str, Any] = {}
         prepared_df = getattr(dm, "prepared_df", None)
@@ -2010,7 +2038,16 @@ def train_symbol(
             "lightgbm": baseline_metrics,
             "catboost": catboost_metrics,
         }
-        champion_decision = select_champion(challengers, artifact_routes_models, effective_cfg.champion_selection)
+        effective_selection_metric = effective_champion_selection_metric(
+            effective_cfg.model_role,
+            effective_cfg.champion_selection.selection_metric,
+        )
+        champion_decision = select_champion(
+            challengers,
+            artifact_routes_models,
+            effective_cfg.champion_selection,
+            selection_metric_override=effective_selection_metric,
+        )
         challengers = champion_decision["annotated_challengers"]
         selected_architecture = str(champion_decision["selected_model"])
         selection_mode = str(champion_decision["selection_mode"])
@@ -2020,6 +2057,7 @@ def train_symbol(
             selected_architecture,
             selection_mode=selection_mode,
             champion_cfg=effective_cfg.champion_selection,
+            selection_metric_override=effective_selection_metric,
         )
         cross_sectional_feature_columns = list(getattr(dm, "cross_sectional_feature_columns", []))
         cross_sectional_diagnostics = dict(getattr(dm, "cross_sectional_diagnostics", {}))
@@ -2038,7 +2076,10 @@ def train_symbol(
             "calibration": asdict(effective_cfg.calibration),
             "walk_forward": asdict(effective_cfg.walk_forward),
             "baseline": asdict(effective_cfg.baseline),
-            "champion_selection": asdict(effective_cfg.champion_selection),
+            "champion_selection": {
+                **asdict(effective_cfg.champion_selection),
+                "effective_selection_metric": effective_selection_metric,
+            },
             "target_optimization": asdict(effective_cfg.target_optimization),
             "threshold_optimization": asdict(effective_cfg.threshold_optimization),
             "reproducibility": {
@@ -2103,7 +2144,7 @@ def train_symbol(
             "champion": {
                 "model_name": selected_architecture,
                 "selection_mode": selection_mode,
-                "selection_metric": effective_cfg.champion_selection.selection_metric,
+                "selection_metric": effective_selection_metric,
                 "selection_score": champion_decision.get("selection_score", challengers.get(selected_architecture, {}).get("selection_score", lstm_selection_score)),
                 "selection_reason": champion_decision.get("selection_reason"),
                 "selected_model_eligible": bool(champion_decision.get("selected_model_eligible", False)),
@@ -2140,7 +2181,7 @@ def train_symbol(
                     artifact_routes_models=artifact_routes_models,
                     selected_architecture=selected_architecture,
                     selection_mode=selection_mode,
-                    selection_metric=effective_cfg.champion_selection.selection_metric,
+                    selection_metric=effective_selection_metric,
                     challenger_ranking=challenger_ranking,
                     lstm_horizons=_lstm_horizons if effective_cfg.data.forecast_horizons else None,
                 )

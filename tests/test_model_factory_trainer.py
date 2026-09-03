@@ -23,6 +23,52 @@ def _training_config(tmp_path: Path, *, min_history_days: int = 10) -> TrainingC
     )
 
 
+def test_evaluate_best_checkpoint_accepts_empty_conditional_test_split(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    class FakeModel:
+        pass
+
+    val_outputs = {
+        "logits": np.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=np.float32),
+        "labels": np.asarray([1, 0], dtype=np.int64),
+        "raw_proba": np.asarray([0.7, 0.3], dtype=np.float64),
+        "margins": np.asarray([1.0, -1.0], dtype=np.float64),
+        "num_classes": 2,
+    }
+    monkeypatch.setattr(
+        trainer.LSTMAttentionModule,
+        "load_from_checkpoint",
+        lambda *args, **kwargs: FakeModel(),
+    )
+    monkeypatch.setattr(trainer, "_build_loader", lambda *args, **kwargs: object())
+    monkeypatch.setattr(trainer, "_collect_outputs", lambda model, loader, device: (
+        val_outputs if loader is not None else {
+            "logits": np.empty((0, 2), dtype=np.float32),
+            "labels": np.empty(0, dtype=np.int64),
+            "raw_proba": np.empty(0, dtype=np.float64),
+            "margins": np.empty(0, dtype=np.float64),
+            "num_classes": 2,
+        }
+    ))
+    monkeypatch.setattr(trainer, "_fit_calibrator", lambda outputs, cfg: None)
+    monkeypatch.setattr(trainer, "_compute_metrics", lambda *args, **kwargs: {"n_samples": 2})
+
+    result = trainer._evaluate_best_checkpoint(
+        tmp_path / "best.ckpt",
+        batch_size=4,
+        val_ds=object(),
+        test_ds=None,
+        val_frame=None,
+        test_frame=None,
+        cfg=_training_config(tmp_path),
+    )
+
+    assert result[0] == {"n_samples": 2}
+    assert result[1] == {}
+    assert result[5]["labels"].size == 0
+
+
 def test_run_training_registry_writes_lstm_multi_horizon(monkeypatch, tmp_path: Path) -> None:
     """Option B (2026-08-15) : en multi-horizon, les métriques LSTM sont
     persistées avec horizon=h (comme les tabulaires) ; les horizons en échec
@@ -157,6 +203,40 @@ def test_train_symbol_skips_when_sequences_are_empty(monkeypatch, tmp_path: Path
     assert result.status == "skipped"
     assert result.skip_reason == "insufficient_sequences_after_split"
     assert updates and updates[-1]["status"] == "skipped"
+
+
+def test_conditional_train_symbol_skips_without_test_endpoints(monkeypatch, tmp_path: Path) -> None:
+    class FakeDataModule:
+        def __init__(self, bars_df, data_cfg, model_cfg, **kwargs) -> None:
+            self.train_ds = [1]
+            self.val_ds = [1]
+            self.test_ds = []
+
+        def setup(self) -> None:
+            return None
+
+    monkeypatch.setattr(trainer, "SymbolDataModule", FakeDataModule)
+    monkeypatch.setattr(trainer, "ensure_registry_entry", lambda engine, symbol: 1)
+    monkeypatch.setattr(trainer, "insert_training_run", lambda *args, **kwargs: None)
+    monkeypatch.setattr(trainer, "update_training_run", lambda *args, **kwargs: None)
+    cfg = TrainingConfig(
+        data=DataConfig(sequence_length=2, forecast_horizon=1, min_history_days=10),
+        model=ModelConfig(batch_size=4, max_epochs=1, patience=1),
+        artifacts_dir=tmp_path,
+        accelerator="cpu",
+        directional_conditioning_enabled=True,
+        directional_oracle_gate_path=tmp_path / "gate.parquet",
+    )
+
+    result = trainer.train_symbol(
+        "AAPL",
+        pd.DataFrame({"close": list(range(12))}),
+        cfg,
+        engine=cast(Engine, object()),
+    )
+
+    assert result.status == "skipped"
+    assert result.skip_reason == "insufficient_conditional_test_sequences"
 
 
 def test_train_symbol_returns_failed_when_datamodule_setup_raises(monkeypatch, tmp_path: Path) -> None:

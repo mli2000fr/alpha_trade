@@ -96,6 +96,8 @@ LightGBM et CatBoost ne consomment pas de séquences. Pour eux, les frontières 
 
 Si l'Oracle échoue, ne produit aucun fold OOF, ne produit aucun candidat ou si le cache est absent, le bundle s'arrête avant le premier entraînement directionnel. Il n'existe aucun fallback vers un entraînement générique, car celui-ci changerait silencieusement la mission du modèle.
 
+Au niveau d'un symbole, les partitions train et validation doivent contenir des endpoints éligibles, et la partition test doit en contenir au moins un. Un symbole sans endpoint conditionnel de test est marqué `skipped` avec `insufficient_conditional_test_sequences` : il n'est pas transformé en champion non évalué. L'absence d'un symbole dans la couverture finale peut donc être normale lorsque l'Oracle ne le retient presque jamais.
+
 ### Taille minimale de l'univers Oracle
 
 Les labels O0 sont des rangs cross-sectionnels TOP/BOTTOM 10 %. Ils exigent au moins **20 symboles disposant d'un rendement futur exploitable pour une même date**. Un bundle dont l'univers total contient moins de 20 symboles est maintenant refusé avant tout entraînement avec `insufficient_oracle_universe`, afin de ne pas dépenser du temps sur les branches LONG/SHORT d'un batch qui ne pourra jamais être servi.
@@ -114,7 +116,10 @@ Le chargeur refuse les chemins relatifs ou traversants, une mauvaise direction, 
 
 - `oracle/oracle.json` : contrat canonique O0 dédupliqué, 124 features EXPERT et 44 rangs cross-sectionnels, sans `global_rank_20` ni les deux extras O1, soit 168 colonnes ordonnées. Les cinq alias bruts `distance_ema20`, `distance_ema50`, `return_5d`, `return_10d`, `return_20d` et le rang redondant `log_return_xs_rank` sont exclus ;
 - `long/long.json` : contrat LONG confirmé du batch `model-factory-20260902052533-998d3a`, 84 features EXPERT, après ablation et confirmation sur 300 symboles.
+- `long/long_spy_core.json` : variante expérimentale du contrat LONG précédent, 88 features. Elle ajoute seulement `market_return_20`, `relative_strength_5`, `relative_strength_20` et `relative_strength_60` afin de mesurer l'apport direct de SPY dans la population conditionnée par l'Oracle. Elle ne réactive ni toute la famille momentum/returns, ni ses interactions, ni la cible relative à SPY ;
 - `short/short.json` : contrat SHORT confirmé du batch `model-factory-20260901180312-2d74f9`, 130 features EXPERT avec MOVE. `include_macro_move=true` est indispensable : mettre `move_close` dans une whitelist ne calcule pas sa source à lui seul.
+
+`long_spy_core.json` est un challenger et non un nouveau défaut. Pour une comparaison interprétable, conserver `oracle.json`, `short.json`, l'univers, la période, les paramètres Walk-Forward et les seeds identiques, et ne changer que le profil LONG. Le profil n'active jamais `target_excess_vs_spy` : les classes restent définies par le rendement absolu H20 à ±3 %.
 
 En prédiction historique, les sorties Oracle sont persistées par défaut tous les 20 jours de marché. Chaque lot possède sa propre transaction et devient immédiatement visible dans la page Diagnostic ML. Une interruption conserve donc les lots déjà écrits et une relance les met à jour sans doublon grâce à la clé `(prediction_date, symbol, batch_id)`. Le tableau des périodes Oracle exécute son agrégation à chaque clic afin d'afficher cette progression sans le délai du cache général.
 
@@ -146,6 +151,30 @@ AAPL
 ```
 
 LSTM reste obligatoire ; LightGBM et CatBoost restent optionnels. Avec la sélection automatique, chaque branche choisit son propre backend éligible. Le champion LONG et le champion SHORT peuvent donc utiliser des architectures différentes.
+
+### Contrat de sélection du champion directionnel
+
+La sélection automatique est alignée sur la mission de chaque branche :
+
+| Branche | Métrique effective | Population autorisée pour décider |
+|---|---:|---|
+| `direction_long` | médiane Walk-Forward de `f1_long` | folds possédant au moins 15 exemples LONG réels |
+| `direction_short` | médiane Walk-Forward de `f1_short` | folds possédant au moins 15 exemples SHORT réels |
+| `direction_legacy` | métrique configurée historique | comportement précédent inchangé |
+
+Un challenger directionnel doit disposer d'au moins **3 folds valides**. En dessous de ce seuil, il est marqué inéligible avec la raison `directional_valid_folds<3`. La validation simple et le holdout final ne servent jamais de remplacement : un LSTM doté d'un bon `f1_macro` de validation mais dépourvu de folds directionnels ne peut donc plus supplanter un challenger correctement évalué.
+
+À médiane identique, le minimum observé sur les folds puis le taux de folds ayant `f1_side >= 0,35` départagent les architectures. Cela pénalise les modèles qui s'effondrent ponctuellement sans transformer les seuils du téléchargement STRICT/DISCOVERY en règle d'entraînement. Ces deux mécanismes ont des responsabilités distinctes :
+
+```text
+sélection du champion d'un symbole
+    └─ choisit le meilleur backend suffisamment évalué pour ce symbole
+
+qualification STRICT / DISCOVERY
+    └─ décide ensuite si le symbole lui-même est assez robuste pour l'univers tradé
+```
+
+La preuve de sélection est persistée dans `metrics.json` sous `directional_selection_evidence` pour chaque challenger : côté, folds disponibles et valides, support total, moyenne/médiane/minimum du F1 de côté, taux de passage et seuils appliqués. `config.json` conserve à la fois la métrique demandée dans la configuration générale et `champion_selection.effective_selection_metric`, afin qu'un audit puisse constater l'override automatique `f1_long` ou `f1_short`.
 
 Les `run_id` distincts contiennent `direction_long` ou `direction_short`, tout en partageant le même `batch_id`. Chaque `config.json` persiste `model_role` et la table `model_training_run` le stocke explicitement. L'index `(batch_id, model_role, symbol)` permet aux diagnostics de séparer les branches sans déduire le rôle depuis le nom du run. Les anciens runs restent compatibles avec un rôle nullable ; la migration `0070_training_run_role` reprend automatiquement les premiers runs bundle reconnaissables.
 
