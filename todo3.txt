@@ -168,3 +168,11 @@ La priorité est :
 4. confirmer sur un univers d’environ 300 symboles ;
 5. seulement ensuite ajuster seuils et marge LONG/SHORT.
 Le batch actuel peut rester comme référence expérimentale, mais je déconseille de l’utiliser en backtest de promotion ou en production. L’Oracle peut être conservé ; ce sont les branches directionnelles et leur contrat de scoring qu’il faut reconstruire.
+
+
+
+implémenter l’étape 3 ;
+faire un smoke test sur 25–50 symboles ;
+corriger les éventuelles anomalies techniques ;
+lancer ensuite un nouveau bundle de confirmation sur 300–400 symboles ;
+ne lancer le gros entraînement final qu’après validation du diagnostic conditionnel.

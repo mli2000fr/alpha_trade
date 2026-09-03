@@ -41,7 +41,12 @@ from typing import Any, SupportsFloat, SupportsIndex, SupportsInt, cast
 import streamlit as st
 
 from common.universe_files import default_universe_file_source_or
-from modelFactory.feature_profiles import discover_feature_profiles
+from modelFactory.feature_profiles import (
+    DIRECTIONAL_TARGET_DOWN_THRESHOLD,
+    DIRECTIONAL_TARGET_HORIZON,
+    DIRECTIONAL_TARGET_UP_THRESHOLD,
+    discover_feature_profiles,
+)
 from event_sentiment.db_io import EventSentimentRepository
 
 from ihm.pages._alpha_scanner_diagnostics import (
@@ -3337,6 +3342,15 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             st.session_state["pipeline_ml_exclude_per_symbol_per_sector"] = False
             st.session_state["pipeline_ml_global_model_only"] = False
             st.session_state["pipeline_ml_training_mode"] = "per_symbol"
+            st.session_state["pipeline_ml_target_mode"] = "ternary"
+            st.session_state["pipeline_ml_forecast_horizon"] = DIRECTIONAL_TARGET_HORIZON
+            st.session_state["pipeline_ml_target_up_threshold"] = DIRECTIONAL_TARGET_UP_THRESHOLD
+            st.session_state["pipeline_ml_target_down_threshold"] = DIRECTIONAL_TARGET_DOWN_THRESHOLD
+            st.session_state["pipeline_ml_target_excess_vs_spy"] = False
+            st.session_state["pipeline_ml_target_skip_vol_scaling"] = False
+            st.session_state["pipeline_ml_target_intra_sector_rank"] = False
+            st.session_state["pipeline_ml_target_ternary_intra_sector"] = False
+            st.session_state["pipeline_ml_optimize_target"] = False
             for feature_key in (
                 "pipeline_ml_include_sentiment", "pipeline_ml_include_screener_scores",
                 "pipeline_ml_include_short_score", "pipeline_ml_include_macro_vix",
@@ -3452,24 +3466,31 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 "📊 P0-7 — Target excès vs SPY (target = (future_return - spy_return) / vol20)",
                 value=_session_state_bool("pipeline_ml_target_excess_vs_spy", DEFAULT_ML_TARGET_EXCESS_VS_SPY),
                 key="pipeline_ml_target_excess_vs_spy",
-                help="Ajoute `--target-excess-vs-spy`. Centre la distribution en soustrayant le rendement du SPY. Réduit le biais directionnel (long/short équilibré).",
+                disabled=ml_directional_profiles_enabled,
+                help=(
+                    "Désactivé pour un bundle : LONG/SHORT apprennent le rendement absolu H20. "
+                    "Hors bundle, ajoute `--target-excess-vs-spy`."
+                ),
             )
             ml_target_skip_vol_scaling = st.checkbox(
                 "🎯 T1 Experiment — Désactiver le vol-scaling de la target (target = future_return brut)",
                 value=_session_state_bool("pipeline_ml_target_skip_vol_scaling", DEFAULT_ML_TARGET_SKIP_VOL_SCALING),
                 key="pipeline_ml_target_skip_vol_scaling",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--target-skip-vol-scaling`. La target regression n'est PAS divisée par la volatilité 20j. Expérience T1 : tester si le vol-scaling amplifie le bruit.",
             )
             ml_target_intra_sector_rank = st.checkbox(
                 "🏆 T2 Experiment — Rang percentile intra-secteur (classification de rang)",
                 value=_session_state_bool("pipeline_ml_target_intra_sector_rank", DEFAULT_ML_TARGET_INTRA_SECTOR_RANK),
                 key="pipeline_ml_target_intra_sector_rank",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--target-intra-sector-rank`. La target devient le rang percentil [0,1] du titre dans son secteur sur chaque date. Le modèle apprend à classer, pas à prédire une magnitude.",
             )
             ml_target_ternary_intra_sector = st.checkbox(
                 "🔺 T3 Experiment — Classification ternaire intra-secteur (LONG/FLAT/SHORT)",
                 value=_session_state_bool("pipeline_ml_target_ternary_intra_sector", DEFAULT_ML_TARGET_THRESHOLD_TERNARY_INTRA_SECTOR),
                 key="pipeline_ml_target_ternary_intra_sector",
+                disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--target-ternary-intra-sector`. Convertit la target continue en labels LONG(+1)/FLAT(0)/SHORT(-1) avec des seuils en quantiles calculés sur le train uniquement. Le modèle devient un classifieur.",
             )
             if ml_target_ternary_intra_sector:
@@ -3840,7 +3861,11 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 "Optimiser l'horizon / la target swing",
                 value=_session_state_bool("pipeline_ml_optimize_target", DEFAULT_ML_OPTIMIZE_TARGET),
                 key="pipeline_ml_optimize_target",
-                help="Ajoute `--optimize-target`.",
+                disabled=ml_directional_profiles_enabled,
+                help=(
+                    "Désactivé pour un bundle : son contrat directionnel est figé à H20 et ±3 %. "
+                    "Hors bundle, ajoute `--optimize-target`."
+                ),
             )
         with ml_adv_col2:
             st.info(
@@ -3889,8 +3914,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     ),
                     step=1,
                     key="pipeline_ml_forecast_horizon",
+                    disabled=ml_directional_profiles_enabled,
                     help="0 = tous les horizons (3, 5, 10, 15, 20 jours). "
-                         "Valeur > 0 = un seul horizon (ex: 15 = H15 uniquement).",
+                         "Valeur > 0 = un seul horizon (ex: 15 = H15 uniquement). "
+                         "Bundle : H20 unique imposé.",
                 )
             )
         with ml_target_col2:
@@ -3906,6 +3933,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     step=0.005,
                     format="%.4f",
                     key="pipeline_ml_target_up_threshold",
+                    disabled=ml_directional_profiles_enabled,
                     help="Ex. 0.02 = +2 % sur l'horizon pour étiqueter long.",
                 )
             )
@@ -3921,7 +3949,15 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     step=0.005,
                     format="%.4f",
                     key="pipeline_ml_target_down_threshold",
+                    disabled=ml_directional_profiles_enabled,
+                    help="Bundle : −3 % absolu à H20, valeur imposée.",
                 )
+            )
+        if ml_directional_profiles_enabled:
+            st.success(
+                "Contrat directionnel bundle : rendement absolu H20 · LONG > +3 % · "
+                "SHORT < −3 % · zone intermédiaire FLAT. L'Oracle conserve séparément "
+                "sa cible binaire d'amplitude Extreme H20."
             )
         with ml_target_col3:
             ml_decision_threshold = float(

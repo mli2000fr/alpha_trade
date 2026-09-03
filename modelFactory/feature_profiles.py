@@ -17,6 +17,30 @@ from modelFactory.config import TrainingConfig
 Direction = Literal["oracle", "long", "short"]
 PROFILE_ROOT = Path("config/features")
 
+# Contrat métier des deux branches du bundle. L'Oracle conserve sa cible
+# binaire cross-sectionnelle interne H20 ; ces constantes concernent seulement
+# les modèles directionnels Per-Symbol.
+DIRECTIONAL_TARGET_HORIZON = 20
+DIRECTIONAL_TARGET_UP_THRESHOLD = 0.03
+DIRECTIONAL_TARGET_DOWN_THRESHOLD = -0.03
+
+
+def directional_target_contract() -> dict[str, Any]:
+    """Contrat sérialisable partagé par l'IHM, l'entraînement et le manifeste."""
+    return {
+        "mode": "ternary",
+        "label_method": "fixed_horizon",
+        "horizon": DIRECTIONAL_TARGET_HORIZON,
+        "forecast_horizons": [],
+        "return_basis": "absolute",
+        "target_excess_vs_spy": False,
+        "target_up_threshold": DIRECTIONAL_TARGET_UP_THRESHOLD,
+        "target_down_threshold": DIRECTIONAL_TARGET_DOWN_THRESHOLD,
+        "target_intra_sector_rank": False,
+        "target_ternary_intra_sector": False,
+        "target_optimization": False,
+    }
+
 
 def profile_directory(direction: Direction, root: Path = PROFILE_ROOT) -> Path:
     return root / direction
@@ -72,12 +96,15 @@ def apply_feature_profile(cfg: TrainingConfig, profile: dict[str, Any], directio
         # L'Oracle possède sa cible binaire interne. Les deux branches du
         # bundle doivent, elles, toujours produire SHORT/FLAT/LONG.
         target_mode="ternary",
-        target_up_threshold=(
-            cfg.data.target_up_threshold if cfg.data.target_up_threshold > 0 else 0.03
-        ),
-        target_down_threshold=(
-            cfg.data.target_down_threshold if cfg.data.target_down_threshold < 0 else -0.03
-        ),
+        label_method="fixed_horizon",
+        forecast_horizon=DIRECTIONAL_TARGET_HORIZON,
+        forecast_horizons=(),
+        target_up_threshold=DIRECTIONAL_TARGET_UP_THRESHOLD,
+        target_down_threshold=DIRECTIONAL_TARGET_DOWN_THRESHOLD,
+        target_skip_vol_scaling=False,
+        target_excess_vs_spy=False,
+        target_intra_sector_rank=False,
+        target_ternary_intra_sector=False,
         feature_set=str(profile.get("feature_set", "expert")),
         feature_whitelist_enabled=True,
         feature_whitelist=columns,
@@ -103,6 +130,7 @@ def apply_feature_profile(cfg: TrainingConfig, profile: dict[str, Any], directio
         cfg,
         data=data,
         model=replace(cfg.model, num_classes=3),
+        target_optimization=replace(cfg.target_optimization, enabled=False),
         global_model=replace(
             cfg.global_model,
             stacking_enabled=bool(options.get("include_global_stacking", False)),

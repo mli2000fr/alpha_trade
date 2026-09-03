@@ -39,6 +39,30 @@ from modelFactory.config import (
 )
 from modelFactory.reproducibility import apply_reproducibility
 from modelFactory.runtime_status import increment_runtime_counter, reset_runtime_status, snapshot_runtime_status, update_runtime_status
+from modelFactory.feature_profiles import (
+    DIRECTIONAL_TARGET_DOWN_THRESHOLD,
+    DIRECTIONAL_TARGET_HORIZON,
+    DIRECTIONAL_TARGET_UP_THRESHOLD,
+)
+
+
+def enforce_directional_bundle_target_options(opts: argparse.Namespace) -> argparse.Namespace:
+    """Impose le contrat de cible absolue H20 aux branches d'un bundle."""
+    if not getattr(opts, "directional_feature_profiles", False):
+        return opts
+    opts.target_mode = "ternary"
+    opts.num_classes = 3
+    opts.label_method = "fixed_horizon"
+    opts.forecast_horizon = DIRECTIONAL_TARGET_HORIZON
+    opts.forecast_horizons = None
+    opts.target_up_threshold = DIRECTIONAL_TARGET_UP_THRESHOLD
+    opts.target_down_threshold = DIRECTIONAL_TARGET_DOWN_THRESHOLD
+    opts.target_skip_vol_scaling = False
+    opts.target_excess_vs_spy = False
+    opts.target_intra_sector_rank = False
+    opts.target_ternary_intra_sector = False
+    opts.optimize_target = False
+    return opts
 
 
 def _resolve_synth_best_h(opts, batch_id: str | None) -> int:
@@ -677,11 +701,8 @@ def main(args: list[str] | None = None) -> None:
     raw_args = list(args) if args is not None else sys.argv[1:]
     opts = parser.parse_args(raw_args)
     # Le target-mode CLI pilote les modèles génériques, pas l'Oracle O0. Dans
-    # un bundle, les deux branches directionnelles ont un contrat ternaire
-    # immuable, quelle que soit une ancienne valeur regression transmise.
-    if getattr(opts, "directional_feature_profiles", False):
-        opts.target_mode = "ternary"
-        opts.num_classes = 3
+    # un bundle, les deux branches ont un contrat absolu H20 immuable.
+    opts = enforce_directional_bundle_target_options(opts)
     if opts.label_method == "triple_barrier" and (opts.target_mode != "ternary" or opts.num_classes != 3):
         parser.error("--label-method triple_barrier requiert --target-mode ternary et --num-classes 3")
 

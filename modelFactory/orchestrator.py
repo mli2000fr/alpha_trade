@@ -693,7 +693,11 @@ def run_training_batch(
     directional_cfgs: tuple[TrainingConfig, ...] = (cfg,)
     directional_profiles: dict[str, dict[str, Any]] = {}
     if cfg.directional_profiles_enabled:
-        from modelFactory.feature_profiles import apply_feature_profile, load_feature_profile
+        from modelFactory.feature_profiles import (
+            apply_feature_profile,
+            directional_target_contract,
+            load_feature_profile,
+        )
 
         oracle_profile = load_feature_profile("oracle", cfg.oracle_feature_profile)
         long_profile = load_feature_profile("long", cfg.long_feature_profile)
@@ -723,10 +727,26 @@ def run_training_batch(
                         "role": "amplitude_gate", "enabled": True, "batch_id": batch_id,
                         "artifact_root": f"../oracle/champions/{batch_id}",
                         "profile": oracle_profile,
+                        "target_contract": {
+                            "mode": "binary_extreme",
+                            "horizon": 20,
+                            "return_basis": "cross_sectional_top10_bottom10",
+                        },
                     },
+                    "directional_target_contract": directional_target_contract(),
                     "per_symbol": {
-                        "long": {"role": "direction_long", "artifact_root": "directions/long", "profile": long_profile},
-                        "short": {"role": "direction_short", "artifact_root": "directions/short", "profile": short_profile},
+                        "long": {
+                            "role": "direction_long",
+                            "artifact_root": "directions/long",
+                            "profile": long_profile,
+                            "target_contract": directional_target_contract(),
+                        },
+                        "short": {
+                            "role": "direction_short",
+                            "artifact_root": "directions/short",
+                            "profile": short_profile,
+                            "target_contract": directional_target_contract(),
+                        },
                     },
                     "legacy_fallback": False,
                 },

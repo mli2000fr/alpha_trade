@@ -37,7 +37,19 @@ Le bundle n'utilise volontairement pas la même cible pour ses trois composants 
 
 L'Oracle O0 **n'est donc pas un modèle de régression**. Il construit sa cible `oracle_extreme10` à partir des extrêmes cross-sectionnels et entraîne son classifieur binaire indépendamment du champ global `target_mode`.
 
-En mode bundle, le backend force systématiquement les deux branches directionnelles en `target_mode=ternary` et `num_classes=3`, même si une ancienne commande, une session IHM ou une API transmet `regression`. Les seuils ternaires configurés sont conservés ; s'ils sont invalides, les valeurs de repli sont `+3 %` et `-3 %`. Cette règle empêche qu'un choix destiné à l'Oracle transforme accidentellement les modèles LONG/SHORT en régresseurs.
+En mode bundle, le backend impose désormais un contrat directionnel unique aux deux branches, même si une ancienne commande, une session IHM ou une API transmet des valeurs contradictoires :
+
+```text
+rendement absolu H20 = AdjClose(t + 20 séances) / AdjClose(t) - 1
+
+SHORT : rendement < -3 %
+FLAT  : -3 % <= rendement <= +3 %
+LONG  : rendement > +3 %
+```
+
+Les branches sont donc toujours en `target_mode=ternary`, `num_classes=3`, `label_method=fixed_horizon`, horizon unique H20 et seuils absolus `-0.03/+0.03`. Le multi-horizon, l'excès relatif à SPY, les cibles intra-secteur, la normalisation optionnelle de cible et l'optimisation automatique de cible sont neutralisés. Ces options répondent à d'autres missions ML et rendraient la signification de `proba_long` et `proba_short` ambiguë dans ce bundle.
+
+Le verrouillage existe à trois niveaux : formulaire IHM, génération de commande et configuration effective de chaque profil. Il ne repose donc pas uniquement sur l'état visible d'une case à cocher. Le manifeste et chaque configuration de branche permettent d'auditer le contrat réellement exécuté.
 
 Le modèle Global Ranking n'appartient pas à ce bundle et n'est requis ni à l'entraînement O0 ni à la prédiction. Le préremplissage `global_rank_20` est donc désactivé pour ce parcours. Les autres campagnes Global Ranking demeurent inchangées.
 
@@ -71,7 +83,7 @@ La case « Bundle Oracle + deux modèles Per-Symbol LONG/SHORT » :
 
 1. affiche les profils Oracle, LONG et SHORT détectés sur disque ;
 2. désactive les cases manuelles de features afin d'éviter deux sources de vérité ;
-3. verrouille visuellement la cible sur **Ternaire — SHORT / FLAT / LONG** pour les deux branches ; horizons, walk-forward, epochs, patience, challengers et sélection du champion restent réglables ;
+3. verrouille visuellement la cible sur **Ternaire — SHORT / FLAT / LONG**, le rendement absolu H20 et les seuils `-3 %/+3 %` ; walk-forward, epochs, patience, challengers et sélection du champion restent réglables ;
 4. émet `--directional-feature-profiles`, `--long-feature-profile` et `--short-feature-profile` ;
 5. active l'Oracle et force le mode Per-Symbol côté backend ;
 6. neutralise `oracle_model_only` et `exclude_per_symbol_per_sector`.
@@ -115,7 +127,7 @@ artifacts/models/<batch_id>/
   └─ artefacts communs et référence vers artifacts/models/oracle/champions/<batch_id>
 ```
 
-`cascade_manifest.json` est le point d'entrée du serving. Il déclare le type du bundle, les racines relatives, les profils complets et leurs empreintes, puis le statut et le résultat terminal de l'Oracle.
+`cascade_manifest.json` est le point d'entrée du serving. Il déclare le type du bundle, les racines relatives, les profils complets et leurs empreintes, puis le statut et le résultat terminal de l'Oracle. Il distingue aussi explicitement les cibles : `oracle.target_contract` décrit la classification binaire d'extrêmes cross-sectionnels H20, tandis que `directional_target_contract` décrit la cible ternaire absolue H20 à ±3 %. Cette séparation évite de déduire à tort la cible Oracle depuis les options générales du batch.
 
 Le manifeste suit maintenant un cycle de vie explicite :
 
@@ -188,10 +200,16 @@ Le mode « Oracle seul, LONG-only » demeure disponible pour la compatibilité h
 ## CLI et contrôles de promotion
 
 ```text
-python -m modelFactory --mode train --training-mode per_symbol --directional-feature-profiles --oracle-feature-profile oracle.json --long-feature-profile long.json --short-feature-profile short.json --enable-oracle-model [paramètres de cible, WF et challengers]
+python -m modelFactory --mode train --training-mode per_symbol --directional-feature-profiles --oracle-feature-profile oracle.json --long-feature-profile long.json --short-feature-profile short.json --enable-oracle-model [paramètres WF et challengers]
 ```
 
-Le backend active aussi automatiquement l'Oracle lorsque le bundle est demandé.
+Le backend active aussi automatiquement l'Oracle lorsque le bundle est demandé. Il n'est pas nécessaire d'ajouter les paramètres de cible à cette commande : H20, ternaire et ±3 % sont le contrat du mode. S'ils sont tout de même fournis avec d'autres valeurs, ils sont remplacés avant la construction de `TrainingConfig`, puis de nouveau au moment d'appliquer les profils LONG et SHORT.
+
+### Portée réelle de cette correction
+
+Cette évolution rend la mission des modèles directionnels explicite et reproductible, mais elle ne garantit pas à elle seule une meilleure précision. L'audit du batch `model-factory-20260902192105-b5317c` a montré une nuance importante : `target_excess_vs_spy=true` figurait dans la configuration enregistrée, mais l'implémentation de la cible ne l'appliquait qu'à la régression. Les labels ternaires de ce batch étaient donc déjà fondés sur les rendements absolus. Son horizon H20 faisait toutefois partie d'un entraînement multi-horizons et non d'un contrat directionnel H20 isolé.
+
+Il ne faut donc pas attribuer les mauvaises performances de ce batch au seul excès relatif à SPY. Le nouveau contrat supprime l'ambiguïté et fournit une baseline propre pour les expériences suivantes. Sa promotion exige toujours un diagnostic OOS conditionnel au gate Oracle, avec précision LONG/SHORT, abstention, couverture et stabilité temporelle.
 
 Avant un backtest, vérifier : manifeste et `batch_id`, statut Oracle `completed`, copies et SHA-256 des profils, deux champions servables pour chaque symbole, plusieurs folds Walk-Forward valides par rôle, stabilité de `f1_long` côté LONG et `f1_short` côté SHORT, couverture et abstention, puis sélection du mode de gate directionnel symétrique.
 

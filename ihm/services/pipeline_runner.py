@@ -27,6 +27,11 @@ from event_sentiment.config import EventSentimentConfig
 from event_sentiment.signal_aggregator import SentimentBoostConfig
 from screener.models import ScreenerConfig
 from selector.strict_filter_profiles import STRICT_SWING_CASH_FILTERS  # alias → core.filter_profiles (Sprint S14)
+from modelFactory.feature_profiles import (
+    DIRECTIONAL_TARGET_DOWN_THRESHOLD,
+    DIRECTIONAL_TARGET_HORIZON,
+    DIRECTIONAL_TARGET_UP_THRESHOLD,
+)
 from ihm.services.pipeline_ml_defaults import (
     DEFAULT_ML_CATBOOST_LOSS_FUNCTION,  # Sprint S12 — constantes ML extraites
     DEFAULT_ML_ARTIFACTS_DIR,
@@ -2244,6 +2249,21 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         effective_target_mode = (
             "ternary" if options.ml_directional_profiles_enabled else options.ml_target_mode
         )
+        effective_forecast_horizon = (
+            DIRECTIONAL_TARGET_HORIZON
+            if options.ml_directional_profiles_enabled
+            else options.ml_forecast_horizon
+        )
+        effective_target_up_threshold = (
+            DIRECTIONAL_TARGET_UP_THRESHOLD
+            if options.ml_directional_profiles_enabled
+            else options.ml_target_up_threshold
+        )
+        effective_target_down_threshold = (
+            DIRECTIONAL_TARGET_DOWN_THRESHOLD
+            if options.ml_directional_profiles_enabled
+            else options.ml_target_down_threshold
+        )
         command = [
             sys.executable,
             "-u",
@@ -2272,12 +2292,12 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         if options.ml_training_mode != "per_symbol":
             command.extend(["--training-mode", options.ml_training_mode])
         command.extend([
-            "--forecast-horizon" if options.ml_forecast_horizon != 0 else "--forecast-horizons",
-            str(options.ml_forecast_horizon) if options.ml_forecast_horizon != 0 else "3,5,10,15,20",
+            "--forecast-horizon" if effective_forecast_horizon != 0 else "--forecast-horizons",
+            str(effective_forecast_horizon) if effective_forecast_horizon != 0 else "3,5,10,15,20",
             "--target-up-threshold",
-            str(options.ml_target_up_threshold),
+            str(effective_target_up_threshold),
             "--target-down-threshold",
-            str(options.ml_target_down_threshold),
+            str(effective_target_down_threshold),
             "--decision-threshold",
             str(options.ml_decision_threshold),
             "--calibration-method",
@@ -2411,13 +2431,13 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.append("--include-macro-regime")
         if not options.ml_include_score_components and not options.ml_directional_profiles_enabled:
             command.append("--no-include-score-components")  # default True, explicit disable
-        if options.ml_target_skip_vol_scaling:
+        if options.ml_target_skip_vol_scaling and not options.ml_directional_profiles_enabled:
             command.append("--target-skip-vol-scaling")
-        if options.ml_target_excess_vs_spy:
+        if options.ml_target_excess_vs_spy and not options.ml_directional_profiles_enabled:
             command.append("--target-excess-vs-spy")
-        if options.ml_target_intra_sector_rank:
+        if options.ml_target_intra_sector_rank and not options.ml_directional_profiles_enabled:
             command.append("--target-intra-sector-rank")
-        if options.ml_target_ternary_intra_sector:
+        if options.ml_target_ternary_intra_sector and not options.ml_directional_profiles_enabled:
             command.append("--target-ternary-intra-sector")
             command.extend(["--target-ternary-quantile", str(options.ml_target_ternary_quantile)])
         if options.ml_ranking_top_k_features > 0:
@@ -2488,7 +2508,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             if options.ml_candidate_decision_thresholds:
                 command.append("--candidate-decision-thresholds")
                 command.extend(str(v) for v in options.ml_candidate_decision_thresholds)
-        if options.ml_optimize_target:
+        if options.ml_optimize_target and not options.ml_directional_profiles_enabled:
             command.append("--optimize-target")
             command.extend(["--min-trades-fraction", str(options.ml_min_trades_fraction)])
             if options.ml_candidate_horizons:

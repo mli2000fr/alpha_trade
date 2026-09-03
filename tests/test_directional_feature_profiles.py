@@ -6,11 +6,15 @@ from pathlib import Path
 import pytest
 
 from ihm.services.pipeline_runner import PipelineLaunchOptions, build_pipeline_command
-from modelFactory.config import DataConfig, TrainingConfig
-from modelFactory.cli import build_arg_parser
+from modelFactory.config import DataConfig, TargetOptimizationConfig, TrainingConfig
+from modelFactory.cli import build_arg_parser, enforce_directional_bundle_target_options
 from modelFactory.db_registry import insert_predictions
 from modelFactory.feature_profiles import (
+    DIRECTIONAL_TARGET_DOWN_THRESHOLD,
+    DIRECTIONAL_TARGET_HORIZON,
+    DIRECTIONAL_TARGET_UP_THRESHOLD,
     apply_feature_profile,
+    directional_target_contract,
     discover_feature_profiles,
     load_feature_profile,
     resolve_profile_path,
@@ -67,8 +71,56 @@ def test_cli_accepts_directional_profile_contract() -> None:
     assert options.short_feature_profile == "short.json"
 
 
+def test_cli_directional_bundle_overrides_incompatible_target_options() -> None:
+    options = build_arg_parser().parse_args([
+        "--mode", "train",
+        "--directional-feature-profiles",
+        "--target-mode", "regression",
+        "--label-method", "triple_barrier",
+        "--forecast-horizon", "5",
+        "--forecast-horizons", "3,5,10,15,20",
+        "--target-up-threshold", "0.01",
+        "--target-down-threshold", "-0.01",
+        "--target-skip-vol-scaling",
+        "--target-excess-vs-spy",
+        "--target-intra-sector-rank",
+        "--target-ternary-intra-sector",
+        "--optimize-target",
+    ])
+
+    effective = enforce_directional_bundle_target_options(options)
+
+    assert effective.target_mode == "ternary"
+    assert effective.num_classes == 3
+    assert effective.label_method == "fixed_horizon"
+    assert effective.forecast_horizon == DIRECTIONAL_TARGET_HORIZON
+    assert effective.forecast_horizons is None
+    assert effective.target_up_threshold == pytest.approx(DIRECTIONAL_TARGET_UP_THRESHOLD)
+    assert effective.target_down_threshold == pytest.approx(DIRECTIONAL_TARGET_DOWN_THRESHOLD)
+    assert effective.target_skip_vol_scaling is False
+    assert effective.target_excess_vs_spy is False
+    assert effective.target_intra_sector_rank is False
+    assert effective.target_ternary_intra_sector is False
+    assert effective.optimize_target is False
+
+
 def test_profile_application_isolates_direction_artifacts() -> None:
-    cfg = TrainingConfig(directional_profiles_enabled=True)
+    cfg = TrainingConfig(
+        data=DataConfig(
+            forecast_horizon=5,
+            forecast_horizons=(3, 5, 10, 15, 20),
+            target_mode="ternary",
+            label_method="triple_barrier",
+            target_up_threshold=0.01,
+            target_down_threshold=-0.01,
+            target_skip_vol_scaling=True,
+            target_excess_vs_spy=True,
+            target_intra_sector_rank=True,
+            target_ternary_intra_sector=True,
+        ),
+        target_optimization=TargetOptimizationConfig(enabled=True),
+        directional_profiles_enabled=True,
+    )
     effective = apply_feature_profile(cfg, load_feature_profile("long", "long.json"), "long")
     assert effective.model_role == "direction_long"
     assert effective.data.feature_set == "expert"
@@ -79,8 +131,17 @@ def test_profile_application_isolates_direction_artifacts() -> None:
     assert effective.artifacts_dir.as_posix().endswith("directions/long")
     assert effective.data.target_mode == "ternary"
     assert effective.model.num_classes == 3
-    assert effective.data.target_up_threshold == pytest.approx(0.03)
-    assert effective.data.target_down_threshold == pytest.approx(-0.03)
+    assert effective.data.label_method == "fixed_horizon"
+    assert effective.data.forecast_horizon == DIRECTIONAL_TARGET_HORIZON
+    assert effective.data.forecast_horizons == ()
+    assert effective.data.target_up_threshold == pytest.approx(DIRECTIONAL_TARGET_UP_THRESHOLD)
+    assert effective.data.target_down_threshold == pytest.approx(DIRECTIONAL_TARGET_DOWN_THRESHOLD)
+    assert effective.data.target_skip_vol_scaling is False
+    assert effective.data.target_excess_vs_spy is False
+    assert effective.data.target_intra_sector_rank is False
+    assert effective.data.target_ternary_intra_sector is False
+    assert effective.target_optimization.enabled is False
+    assert directional_target_contract()["return_basis"] == "absolute"
 
 
 def test_ihm_command_emits_bundle_and_ignores_manual_feature_switches() -> None:
@@ -94,6 +155,14 @@ def test_ihm_command_emits_bundle_and_ignores_manual_feature_switches() -> None:
         ml_global_model_only=True,
         ml_exclude_per_symbol_per_sector=True,
         ml_target_mode="regression",
+        ml_forecast_horizon=5,
+        ml_target_up_threshold=0.01,
+        ml_target_down_threshold=-0.01,
+        ml_target_skip_vol_scaling=True,
+        ml_target_excess_vs_spy=True,
+        ml_target_intra_sector_rank=True,
+        ml_target_ternary_intra_sector=True,
+        ml_optimize_target=True,
     )
     command = build_pipeline_command("ml_train", options)
     assert "--directional-feature-profiles" in command
@@ -108,6 +177,18 @@ def test_ihm_command_emits_bundle_and_ignores_manual_feature_switches() -> None:
     assert "--exclude-per-symbol-per-sector" not in command
     assert command[command.index("--target-mode") + 1] == "ternary"
     assert command[command.index("--num-classes") + 1] == "3"
+    assert command[command.index("--forecast-horizon") + 1] == str(DIRECTIONAL_TARGET_HORIZON)
+    assert "--forecast-horizons" not in command
+    assert command[command.index("--target-up-threshold") + 1] == "0.03"
+    assert command[command.index("--target-down-threshold") + 1] == "-0.03"
+    for incompatible_flag in (
+        "--target-skip-vol-scaling",
+        "--target-excess-vs-spy",
+        "--target-intra-sector-rank",
+        "--target-ternary-intra-sector",
+        "--optimize-target",
+    ):
+        assert incompatible_flag not in command
 
 
 def test_oracle_o0_bundle_does_not_require_global_rank_history() -> None:

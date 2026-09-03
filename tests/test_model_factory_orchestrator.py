@@ -830,5 +830,25 @@ def test_directional_bundle_fails_fast_when_oracle_universe_is_too_small(
     assert manifest["serving_ready"] is False
     assert manifest["failure_reason"] == results[0].skip_reason
     assert manifest["coverage"]["paired_symbols"] == 0
+    assert manifest["oracle"]["target_contract"] == {
+        "mode": "binary_extreme",
+        "horizon": 20,
+        "return_basis": "cross_sectional_top10_bottom10",
+    }
+    assert manifest["directional_target_contract"] == {
+        "mode": "ternary",
+        "label_method": "fixed_horizon",
+        "horizon": 20,
+        "forecast_horizons": [],
+        "return_basis": "absolute",
+        "target_excess_vs_spy": False,
+        "target_up_threshold": 0.03,
+        "target_down_threshold": -0.03,
+        "target_intra_sector_rank": False,
+        "target_ternary_intra_sector": False,
+        "target_optimization": False,
+    }
+    assert manifest["per_symbol"]["long"]["target_contract"] == manifest["directional_target_contract"]
+    assert manifest["per_symbol"]["short"]["target_contract"] == manifest["directional_target_contract"]
 
 
