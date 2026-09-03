@@ -514,6 +514,9 @@ class TrainingConfig:
     training_mode: str = "per_symbol"  # per_symbol | per_sector
     directional_profiles_enabled: bool = False
     oracle_feature_profile: str = "oracle.json"
+    # Profil Oracle hors bundle. ``None`` conserve le mode dynamique piloté
+    # par les familles de features de DataConfig.
+    standalone_oracle_feature_profile: str | None = None
     long_feature_profile: str = "long.json"
     short_feature_profile: str = "short.json"
     model_role: str = "direction_legacy"  # direction_legacy | direction_long | direction_short

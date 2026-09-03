@@ -26,7 +26,7 @@ from modelFactory.predictor import (
     predict_directional_symbol,
     validate_directional_bundle_for_prediction,
 )
-from modelFactory.orchestrator import _oracle_requires_global_rank
+from modelFactory.orchestrator import _oracle_generator_options, _oracle_requires_global_rank
 from modelFactory.oracle.dataset import (
     ORACLE_REDUNDANT_FEATURES,
     deduplicate_oracle_feature_columns,
@@ -64,6 +64,30 @@ def test_bundled_profiles_are_discoverable_and_valid() -> None:
     assert len(long_profile["sha256"]) == 64
 
 
+def test_oracle_ablation_campaign_profiles_are_valid_baseline_subsets() -> None:
+    baseline = load_feature_profile("oracle", "oracle.json")
+    baseline_columns = set(baseline["feature_columns"])
+    campaign_files = [name for name in discover_feature_profiles("oracle") if name.startswith("ablation_")]
+    assert campaign_files == [f"ablation_{index:02d}_{suffix}" for index, suffix in (
+        (1, "no_xs_ranks.json"),
+        (2, "xs_ranks_only.json"),
+        (3, "raw_simple.json"),
+        (4, "no_momentum_returns.json"),
+        (5, "no_trend_position.json"),
+        (6, "no_volatility_range.json"),
+        (7, "no_volume_flow.json"),
+        (8, "no_rsi_mean_reversion.json"),
+        (9, "no_market_relative_regime.json"),
+        (10, "no_engineered_transforms.json"),
+        (11, "no_temporal_zscores.json"),
+    )]
+    for name in campaign_files:
+        profile = load_feature_profile("oracle", name)
+        assert set(profile["feature_columns"]) < baseline_columns
+        assert profile["provenance"]["baseline_feature_count"] == 168
+        assert profile["provenance"]["feature_count"] == len(profile["feature_columns"])
+
+
 def test_profile_path_rejects_traversal() -> None:
     with pytest.raises(ValueError):
         resolve_profile_path("long", "../short/short.json")
@@ -79,6 +103,30 @@ def test_cli_accepts_directional_profile_contract() -> None:
     assert options.oracle_feature_profile == "oracle.json"
     assert options.long_feature_profile == "long.json"
     assert options.short_feature_profile == "short.json"
+
+
+def test_cli_accepts_standalone_oracle_profile() -> None:
+    options = build_arg_parser().parse_args([
+        "--mode", "train", "--enable-oracle-model",
+        "--standalone-oracle-feature-profile", "oracle.json",
+    ])
+    assert options.directional_feature_profiles is False
+    assert options.standalone_oracle_feature_profile == "oracle.json"
+
+
+def test_dynamic_oracle_generator_options_follow_data_config() -> None:
+    cfg = TrainingConfig(data=DataConfig(
+        feature_set="expert",
+        include_macro_vix_features=True,
+        include_volume_features=True,
+        include_fundamentals_features=False,
+    ))
+    options = _oracle_generator_options(cfg, None)
+    assert options["feature_set"] == "expert"
+    assert options["include_macro_vix"] is True
+    assert options["include_volume_features"] is True
+    assert options["include_fundamentals"] is False
+    assert options["enable_cross_sectional_ranks"] is True
 
 
 def test_cli_directional_bundle_overrides_incompatible_target_options() -> None:
@@ -233,6 +281,32 @@ def test_ihm_command_emits_bundle_and_ignores_manual_feature_switches() -> None:
         "--optimize-target",
     ):
         assert incompatible_flag not in command
+
+
+def test_ihm_oracle_dynamic_keeps_manual_feature_options() -> None:
+    options = PipelineLaunchOptions(
+        ml_enable_oracle_model=True,
+        ml_directional_profiles_enabled=False,
+        ml_standalone_oracle_feature_profile="dynamic",
+        ml_include_macro_vix=True,
+        ml_include_volume_features=True,
+    )
+    command = build_pipeline_command("ml_train", options)
+    assert "--enable-oracle-model" in command
+    assert "--standalone-oracle-feature-profile" not in command
+    assert "--include-macro-vix" in command
+    assert "--include-volume-features" in command
+
+
+def test_ihm_oracle_json_profile_is_emitted_outside_bundle() -> None:
+    options = PipelineLaunchOptions(
+        ml_enable_oracle_model=True,
+        ml_directional_profiles_enabled=False,
+        ml_standalone_oracle_feature_profile="oracle.json",
+    )
+    command = build_pipeline_command("ml_train", options)
+    assert command[command.index("--standalone-oracle-feature-profile") + 1] == "oracle.json"
+    assert "--directional-feature-profiles" not in command
 
 
 def test_oracle_o0_bundle_does_not_require_global_rank_history() -> None:

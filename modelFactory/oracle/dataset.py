@@ -84,6 +84,7 @@ def build_feature_matrix(
     start_date: str,
     end_date: str,
     feature_set: str = "expert",
+    generator_options: dict[str, Any] | None = None,
 ) -> pd.DataFrame:
     """Calcule les features PIT par symbole + rangs cross-sectionnels + extras Oracle.
 
@@ -91,14 +92,59 @@ def build_feature_matrix(
     alimenter les fenêtres roulantes (momentum_250, z-scores 1 an min).
     """
     warmup_start = (pd.Timestamp(start_date) - pd.Timedelta(days=1100)).date().isoformat()
+    options = dict(generator_options or {})
+    feature_set = str(options.get("feature_set", feature_set))
     bars = load_universe_bars(engine, symbols, start_date=warmup_start, end_date=end_date)
     if bars.empty:
         return pd.DataFrame()
     benchmark = load_benchmark_bars(engine, "SPY", start_date=warmup_start, end_date=end_date)
 
+    sentiment = pd.DataFrame()
+    if bool(options.get("include_sentiment", False)):
+        from modelFactory.data_loader import load_symbols_sentiment
+        sentiment = load_symbols_sentiment(
+            engine, symbols, start_date=pd.Timestamp(warmup_start).date(), end_date=pd.Timestamp(end_date).date()
+        )
+    selector = pd.DataFrame()
+    if any(bool(options.get(key, False)) for key in (
+        "include_screener_scores", "include_short_score", "include_score_components",
+    )):
+        from modelFactory.data_loader import load_symbols_selector_context
+        selector = load_symbols_selector_context(
+            engine, symbols, start_date=pd.Timestamp(warmup_start).date(), end_date=pd.Timestamp(end_date).date()
+        )
+    fundamentals = pd.DataFrame()
+    if bool(options.get("include_fundamentals", False)):
+        from modelFactory.fundamental_features import load_fundamentals_from_db
+        fundamentals = load_fundamentals_from_db(
+            symbols, start_date=warmup_start, end_date=end_date, engine=engine,
+        )
+
     parts: list[pd.DataFrame] = []
-    for _, group in bars.groupby("symbol"):
-        feats = compute_features(group, benchmark_df=benchmark, feature_set=feature_set)
+    for symbol, group in bars.groupby("symbol"):
+        symbol_sentiment = sentiment[sentiment["symbol"] == symbol].copy() if not sentiment.empty else None
+        symbol_selector = selector[selector["symbol"] == symbol].copy() if not selector.empty else None
+        symbol_fundamentals = fundamentals[fundamentals["symbol"] == symbol].copy() if not fundamentals.empty else None
+        feats = compute_features(
+            group,
+            sentiment_df=symbol_sentiment,
+            include_sentiment=bool(options.get("include_sentiment", False)),
+            benchmark_df=benchmark,
+            feature_set=feature_set,
+            selector_df=symbol_selector,
+            include_screener_scores=bool(options.get("include_screener_scores", False)),
+            include_short_score=bool(options.get("include_short_score", False)),
+            include_macro_vix=bool(options.get("include_macro_vix", False)),
+            include_macro_vxn=bool(options.get("include_macro_vxn", False)),
+            include_macro_vix3m=bool(options.get("include_macro_vix3m", False)),
+            include_macro_move=bool(options.get("include_macro_move", False)),
+            include_fundamentals=bool(options.get("include_fundamentals", False)),
+            fundamental_df=symbol_fundamentals,
+            include_factors=bool(options.get("include_factors", False)),
+            include_macro_regime=bool(options.get("include_macro_regime", False)),
+            include_score_components=bool(options.get("include_score_components", False)),
+            include_volume_features=bool(options.get("include_volume_features", False)),
+        )
         if feats.empty:
             continue
         # Features Oracle spécialisées (§7C) — calculées sur adj_close.
@@ -119,7 +165,7 @@ def build_feature_matrix(
 
     # ── Rangs percentiles cross-sectionnels (même normalisation que B25) ──
     xs_available = [c for c in _XS_RANK_SOURCE_FEATURES if c in df.columns]
-    if xs_available:
+    if xs_available and bool(options.get("enable_cross_sectional_ranks", True)):
         ranked = df.groupby("date")[xs_available].rank(pct=True)
         ranked.columns = [_xs_rank_column_name(c) for c in xs_available]
         df = pd.concat([df, ranked], axis=1)
@@ -162,6 +208,7 @@ def build_dataset(
     require_global_rank: bool = True,
     need_targets: bool = True,
     feature_whitelist: list[str] | tuple[str, ...] | None = None,
+    generator_options: dict[str, Any] | None = None,
 ) -> tuple[pd.DataFrame, list[str]]:
     """Assemble features + global_rank_20 + target Oracle.
 
@@ -182,11 +229,31 @@ def build_dataset(
         ``ORACLE_EXTRA_FEATURES`` sont présentes dans le DataFrame mais pas dans
         cette liste (elles constituent les ablations O1).
     """
-    feats = build_feature_matrix(engine, symbols, start_date=start_date, end_date=end_date)
+    options = dict(generator_options or {})
+    feature_set = str(options.get("feature_set", "expert"))
+    feats = build_feature_matrix(
+        engine, symbols, start_date=start_date, end_date=end_date,
+        feature_set=feature_set, generator_options=options,
+    )
     if feats.empty:
         return pd.DataFrame(), []
 
-    base_cols = [c for c in expert_feature_columns() if c in feats.columns]
+    requested_base = get_feature_columns(
+        include_sentiment=bool(options.get("include_sentiment", False)),
+        feature_set=feature_set,
+        include_screener_scores=bool(options.get("include_screener_scores", False)),
+        include_short_score=bool(options.get("include_short_score", False)),
+        include_macro_vix=bool(options.get("include_macro_vix", False)),
+        include_macro_vxn=bool(options.get("include_macro_vxn", False)),
+        include_macro_vix3m=bool(options.get("include_macro_vix3m", False)),
+        include_macro_move=bool(options.get("include_macro_move", False)),
+        include_fundamentals=bool(options.get("include_fundamentals", False)),
+        include_factors=bool(options.get("include_factors", False)),
+        include_macro_regime=bool(options.get("include_macro_regime", False)),
+        include_score_components=bool(options.get("include_score_components", False)),
+        include_volume_features=bool(options.get("include_volume_features", False)),
+    )
+    base_cols = [c for c in requested_base if c in feats.columns]
     xs_cols = [c for c in feats.columns if c.endswith("_xs_rank")]
     feature_columns = deduplicate_oracle_feature_columns(base_cols + xs_cols)  # O0
     if feature_whitelist is not None:

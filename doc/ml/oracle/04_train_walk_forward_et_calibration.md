@@ -22,6 +22,17 @@ Comme la cible réunit deux queues de 10 %, son taux positif approche 20 %. La b
 
 `run_ablation()` construit dataset, train/validation, baseline rank puis O0/O1/O2. Il refuse implicitement une matrice vide ou une target constante. `evaluate_model()` correspond au Booster LightGBM utilisé dans ce chemin ; CatBoost nécessite ses méthodes propres.
 
+## Sélection des features depuis la page Pipeline
+
+Hors bundle directionnel, la case « Entraîner aussi le modèle Oracle Extreme » affiche un sélecteur conditionnel :
+
+- `Dynamique (selon les features cochées)` conserve le contrat O0 sans `global_rank_20`, utilise le `feature_set` demandé et ajoute les familles optionnelles activées dans l'écran (sentiment, screener, short score, macro, fondamentaux, facteurs, composants de score et volume) ;
+- un fichier `*.json` de `config/features/oracle/` impose sa liste ordonnée de colonnes et ses `generator_options`. Les cases manuelles ne déterminent alors plus le contrat Oracle ;
+- si la case Oracle est décochée, le sélecteur n'est pas affiché et aucun profil Oracle hors bundle n'est transmis ;
+- dans un bundle Oracle + LONG/SHORT, le sélecteur à trois profils reste le seul contrat applicable.
+
+La sélection JSON hors bundle est transmise par `--standalone-oracle-feature-profile <fichier.json>`. L'absence de ce paramètre signifie « dynamique ». Le contrat effectivement résolu est persisté dans `artifacts/models/<batch>/oracle/feature_profile.json` et auprès des champions Oracle, puis relu par la prédiction afin de reconstruire exactement les mêmes colonnes.
+
 ## Walk-forward
 
 Chaque fold causal sélectionne uniquement les labels disponibles avant le test, valide T2, réentraîne, prédit le test et conserve `fold_start`. Les modes fixes/adaptatifs doivent publier dates effectives, minimum train, tailles validation/test, pas et nombre de folds.

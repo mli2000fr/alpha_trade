@@ -397,6 +397,7 @@ class PipelineLaunchOptions:
     ml_oracle_model_only: bool = DEFAULT_ML_ORACLE_MODEL_ONLY      # 2026-08-20 : Oracle ONLY
     ml_directional_profiles_enabled: bool = False
     ml_oracle_feature_profile: str = "oracle.json"
+    ml_standalone_oracle_feature_profile: str = "dynamic"
     ml_long_feature_profile: str = "long.json"
     ml_short_feature_profile: str = "short.json"
     ml_target_skip_vol_scaling: bool = DEFAULT_ML_TARGET_SKIP_VOL_SCALING
@@ -2405,8 +2406,12 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         elif options.ml_oracle_model_only:
             command.append("--oracle-model-only")
             command.append("--enable-oracle-model")  # implicite
+            if options.ml_standalone_oracle_feature_profile != "dynamic":
+                command.extend(["--standalone-oracle-feature-profile", options.ml_standalone_oracle_feature_profile])
         elif options.ml_enable_oracle_model:
             command.append("--enable-oracle-model")
+            if options.ml_standalone_oracle_feature_profile != "dynamic":
+                command.extend(["--standalone-oracle-feature-profile", options.ml_standalone_oracle_feature_profile])
         if options.ml_include_sentiment and not options.ml_directional_profiles_enabled:
             command.append("--include-sentiment")
         if options.ml_include_screener_scores and not options.ml_directional_profiles_enabled:

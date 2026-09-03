@@ -3317,25 +3317,30 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         oracle_profiles = discover_feature_profiles("oracle") or ["oracle.json"]
         long_profiles = discover_feature_profiles("long") or ["long.json"]
         short_profiles = discover_feature_profiles("short") or ["short.json"]
-        profile_col0, profile_col1, profile_col2 = st.columns(3)
-        with profile_col0:
-            ml_oracle_feature_profile = cast(str, st.selectbox(
-                "Profil de features Oracle", options=oracle_profiles,
-                index=oracle_profiles.index("oracle.json") if "oracle.json" in oracle_profiles else 0,
-                key="pipeline_ml_oracle_feature_profile", disabled=not ml_directional_profiles_enabled,
-            ))
-        with profile_col1:
-            ml_long_feature_profile = cast(str, st.selectbox(
-                "Profil de features LONG", options=long_profiles,
-                index=long_profiles.index("long.json") if "long.json" in long_profiles else 0,
-                key="pipeline_ml_long_feature_profile", disabled=not ml_directional_profiles_enabled,
-            ))
-        with profile_col2:
-            ml_short_feature_profile = cast(str, st.selectbox(
-                "Profil de features SHORT", options=short_profiles,
-                index=short_profiles.index("short.json") if "short.json" in short_profiles else 0,
-                key="pipeline_ml_short_feature_profile", disabled=not ml_directional_profiles_enabled,
-            ))
+        ml_oracle_feature_profile = "oracle.json" if "oracle.json" in oracle_profiles else oracle_profiles[0]
+        ml_long_feature_profile = "long.json" if "long.json" in long_profiles else long_profiles[0]
+        ml_short_feature_profile = "short.json" if "short.json" in short_profiles else short_profiles[0]
+        ml_standalone_oracle_feature_profile = "dynamic"
+        if ml_directional_profiles_enabled:
+            profile_col0, profile_col1, profile_col2 = st.columns(3)
+            with profile_col0:
+                ml_oracle_feature_profile = cast(str, st.selectbox(
+                    "Profil de features Oracle", options=oracle_profiles,
+                    index=oracle_profiles.index("oracle.json") if "oracle.json" in oracle_profiles else 0,
+                    key="pipeline_ml_oracle_feature_profile",
+                ))
+            with profile_col1:
+                ml_long_feature_profile = cast(str, st.selectbox(
+                    "Profil de features LONG", options=long_profiles,
+                    index=long_profiles.index("long.json") if "long.json" in long_profiles else 0,
+                    key="pipeline_ml_long_feature_profile",
+                ))
+            with profile_col2:
+                ml_short_feature_profile = cast(str, st.selectbox(
+                    "Profil de features SHORT", options=short_profiles,
+                    index=short_profiles.index("short.json") if "short.json" in short_profiles else 0,
+                    key="pipeline_ml_short_feature_profile",
+                ))
         if ml_directional_profiles_enabled:
             st.session_state["pipeline_ml_enable_oracle_model"] = True
             st.session_state["pipeline_ml_oracle_model_only"] = False
@@ -3801,6 +3806,19 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key="pipeline_ml_enable_oracle_model",
                 help="Ajoute `--enable-oracle-model`. Entraîne le modèle Oracle Extreme (détection d'extrêmes H20, ablation O0 sans global_rank_20) en fin de séquence, en plus du per-symbol/per-sector et du modèle global (si activé).",
             )
+            if ml_enable_oracle_model and not ml_directional_profiles_enabled:
+                _standalone_oracle_profiles = ["dynamic", *oracle_profiles]
+                ml_standalone_oracle_feature_profile = cast(str, st.selectbox(
+                    "Features du modèle Oracle Extreme",
+                    options=_standalone_oracle_profiles,
+                    index=0,
+                    format_func=lambda value: "Dynamique (selon les features cochées)" if value == "dynamic" else value,
+                    key="pipeline_ml_standalone_oracle_feature_profile",
+                    help=(
+                        "Dynamique conserve les familles choisies dans cet écran. "
+                        "Un fichier JSON remplace ce choix et impose exclusivement son contrat de features."
+                    ),
+                ))
             # Auto-décochage : si le 1er checkbox (Oracle Extreme) est décoché,
             # le 2e (Oracle ONLY) est forcé à False AVANT son instanciation
             # (sinon il resterait coché dans session_state alors que désactivé).
@@ -4930,6 +4948,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_include_score_components=bool(ml_include_score_components),
             ml_directional_profiles_enabled=bool(ml_directional_profiles_enabled),
             ml_oracle_feature_profile=str(ml_oracle_feature_profile),
+            ml_standalone_oracle_feature_profile=str(ml_standalone_oracle_feature_profile),
             ml_long_feature_profile=str(ml_long_feature_profile),
             ml_short_feature_profile=str(ml_short_feature_profile),
             ml_target_skip_vol_scaling=bool(ml_target_skip_vol_scaling),

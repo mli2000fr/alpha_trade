@@ -170,9 +170,12 @@ La priorité est :
 Le batch actuel peut rester comme référence expérimentale, mais je déconseille de l’utiliser en backtest de promotion ou en production. L’Oracle peut être conservé ; ce sont les branches directionnelles et leur contrat de scoring qu’il faut reconstruire.
 
 
+----------------------------------------------------------------------------------------------------------------------------
+todo 1:
+e n’est pas encore optimisé en :
+Oracle d’abord
+→ puis exécuter LONG/SHORT uniquement sur les extrêmes du jour
+Cette deuxième organisation serait plus rapide, particulièrement avec 2 300 symboles. Elle demanderait toutefois de conserver l’univers complet pour calculer correctement le percentile Oracle, puis de transmettre uniquement les symboles retenus aux deux branches directionnelles. C’est une optimisation pertinente après la validation OOS actuelle.
 
-implémenter l’étape 3 ;
-faire un smoke test sur 25–50 symboles ;
-corriger les éventuelles anomalies techniques ;
-lancer ensuite un nouveau bundle de confirmation sur 300–400 symboles ;
-ne lancer le gros entraînement final qu’après validation du diagnostic conditionnel.
+todo 2:
+campagne d’ablation, les 168 features oracle

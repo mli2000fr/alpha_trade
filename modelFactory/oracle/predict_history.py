@@ -88,6 +88,20 @@ def predict_oracle_extreme_history(
         }
     _feature_columns = list(_meta[0].get("feature_columns") or [])
     _t_starts = [str(m["t_start"]) for m in _meta]
+    _generator_options: dict[str, Any] = {}
+    _profile_path = _champ_root / "feature_profile.json"
+    if _profile_path.is_file():
+        try:
+            _profile = json.loads(_profile_path.read_text(encoding="utf-8"))
+            _generator_options = {
+                **dict(_profile.get("generator_options") or {}),
+                "feature_set": str(_profile.get("feature_set", "expert")),
+            }
+        except Exception as _profile_exc:  # noqa: BLE001
+            return {
+                "status": "error", "reason": "invalid_oracle_feature_profile",
+                "batch_id": batch_id, "detail": str(_profile_exc),
+            }
 
     # 2. Dataset + univers
     from modelFactory.oracle.dataset import build_dataset
@@ -102,6 +116,11 @@ def predict_oracle_extreme_history(
         start_date=str(start_date), end_date=str(end_date), horizon=horizon,
         require_global_rank=_needs_gr,
         need_targets=False,  # prédiction : labels optionnels (NULL si non réalisés)
+        # Les anciens champions O0/O1 n'avaient pas de contrat de générateur
+        # persisté. On conserve leur résolution tolérante historique ; les
+        # nouveaux profils, eux, sont stricts et doivent être reproduits bit à bit.
+        feature_whitelist=(_feature_columns or None) if _profile_path.is_file() else None,
+        generator_options=_generator_options,
     )
     if dataset.empty:
         return {"status": "error", "reason": "empty_dataset", "batch_id": batch_id}

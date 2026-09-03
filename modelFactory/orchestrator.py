@@ -67,6 +67,34 @@ def _oracle_requires_global_rank(cfg: TrainingConfig) -> bool:
     return not cfg.data.oracle_model_only and not cfg.directional_profiles_enabled
 
 
+def _oracle_generator_options(cfg: TrainingConfig, profile: dict[str, Any] | None) -> dict[str, Any]:
+    """Résout le générateur Oracle depuis un profil ou les options dynamiques."""
+    if profile is not None:
+        return {
+            **dict(profile.get("generator_options") or {}),
+            "feature_set": str(profile.get("feature_set", "expert")),
+        }
+    data = cfg.data
+    return {
+        "feature_set": data.feature_set,
+        "include_sentiment": data.include_sentiment_features,
+        "include_screener_scores": data.include_screener_scores,
+        "include_short_score": data.include_short_score_features,
+        "include_macro_vix": data.include_macro_vix_features,
+        "include_macro_vxn": data.include_macro_vxn_features,
+        "include_macro_vix3m": data.include_macro_vix3m_features,
+        "include_macro_move": data.include_macro_move_features,
+        "include_fundamentals": data.include_fundamentals_features,
+        "include_factors": data.include_factors_features,
+        "include_macro_regime": data.include_macro_regime_features,
+        "include_score_components": data.include_score_components,
+        "include_volume_features": data.include_volume_features,
+        # Les rangs propres à O0 restent dans le socle dynamique. Cette option
+        # ne réintroduit jamais global_rank_20.
+        "enable_cross_sectional_ranks": True,
+    }
+
+
 def _insufficient_oracle_universe_reason(symbols: list[str]) -> str | None:
     """Retourne une erreur déterministe si aucun rang Oracle n'est possible."""
     from modelFactory.oracle.build_labels import _MIN_RANK_UNIVERSE
@@ -618,16 +646,23 @@ def train_oracle_extreme(
                 )
         _oracle_feature_whitelist = None
         _oracle_profile = None
-        if cfg.directional_profiles_enabled:
+        _profile_name = (
+            cfg.oracle_feature_profile
+            if cfg.directional_profiles_enabled
+            else cfg.standalone_oracle_feature_profile
+        )
+        if _profile_name:
             from modelFactory.feature_profiles import load_feature_profile
 
-            _oracle_profile = load_feature_profile("oracle", cfg.oracle_feature_profile)
+            _oracle_profile = load_feature_profile("oracle", _profile_name)
             _oracle_feature_whitelist = list(_oracle_profile["feature_columns"])
+        _generator_options = _oracle_generator_options(cfg, _oracle_profile)
         dataset, feature_columns = build_dataset(
             engine, _batch_id, _universe,
             start_date=_start, end_date=_end, horizon=horizon,
             require_global_rank=_require_gr,
             feature_whitelist=_oracle_feature_whitelist,
+            generator_options=_generator_options,
         )
         if dataset.empty:
             LOGGER.warning("oracle_extreme empty dataset — nothing to train")
@@ -698,6 +733,24 @@ def train_oracle_extreme(
             models=result.get("models"),
             feature_columns=result.get("feature_columns"),
         )
+        _resolved_profile = _oracle_profile or {
+            "schema_version": 1,
+            "profile_id": "dynamic",
+            "direction": "oracle",
+            "description": "Contrat Oracle dynamique résolu depuis les options du batch.",
+            "feature_set": _generator_options["feature_set"],
+            "generator_options": _generator_options,
+            "feature_columns": list(result.get("feature_columns") or []),
+        }
+        for _profile_path in (
+            Path(cfg.artifacts_dir) / "oracle" / "feature_profile.json",
+            Path("artifacts/models/oracle/champions") / _batch_id / "feature_profile.json",
+        ):
+            _profile_path.parent.mkdir(parents=True, exist_ok=True)
+            _profile_path.write_text(
+                json.dumps(_resolved_profile, ensure_ascii=False, indent=2, default=str),
+                encoding="utf-8",
+            )
         LOGGER.info("oracle_extreme DONE run_id=%s stored_batch=%s", run_id, _stored)
         return {
             "status": "completed",
@@ -705,7 +758,7 @@ def train_oracle_extreme(
             "run_id": run_id,
             "oos_path": f"oracle_extreme_predictions:{_stored}",
             "artifact_root": str(Path("artifacts/models/oracle/champions") / _batch_id),
-            "feature_profile": _oracle_profile,
+            "feature_profile": _resolved_profile,
             "ablation": "O0",
             "n_folds": result.get("n_folds"),
             "fold_stability_pct": result.get("fold_stability_pct"),

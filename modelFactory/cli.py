@@ -491,6 +491,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Entraîne dans un même batch les branches Per-Symbol LONG et SHORT avec deux profils JSON, plus l'Oracle Extreme global.")
     p.add_argument("--oracle-feature-profile", type=str, default="oracle.json",
                    help="Nom du profil JSON présent dans config/features/oracle (défaut: oracle.json).")
+    p.add_argument("--standalone-oracle-feature-profile", type=str, default=None,
+                   help="Profil JSON Oracle hors bundle. Absent = features dynamiques pilotées par les options include-*.")
     p.add_argument("--long-feature-profile", type=str, default="long.json",
                    help="Nom du profil JSON présent dans config/features/long (défaut: long.json).")
     p.add_argument("--short-feature-profile", type=str, default="short.json",
@@ -892,6 +894,7 @@ def main(args: list[str] | None = None) -> None:
         training_mode=opts.training_mode,
         directional_profiles_enabled=opts.directional_feature_profiles,
         oracle_feature_profile=opts.oracle_feature_profile,
+        standalone_oracle_feature_profile=opts.standalone_oracle_feature_profile,
         long_feature_profile=opts.long_feature_profile,
         short_feature_profile=opts.short_feature_profile,
     )
