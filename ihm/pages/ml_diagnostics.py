@@ -21,6 +21,7 @@ from sqlalchemy import text
 from ihm.services.ml_artifacts import (
     WF_MIN_VALID_FOLDS,
     build_batch_directional_candidate_selection,
+    build_directional_bundle_serving_coverage,
     format_directional_candidate_selection,
     get_model_artifacts_dir,
     has_per_symbol_artifacts,
@@ -82,11 +83,15 @@ def _render_directional_bundle_overview(
     long_id, long_features = _profile_summary(long_cfg.get("profile"))
     short_id, short_features = _profile_summary(short_cfg.get("profile"))
 
-    long_symbols = set(list_directional_bundle_symbols(batch_id, contract["batch_dir"].parent, "direction_long"))
-    short_symbols = set(list_directional_bundle_symbols(batch_id, contract["batch_dir"].parent, "direction_short"))
-    paired = long_symbols & short_symbols
+    coverage = build_directional_bundle_serving_coverage(batch_id, contract["batch_dir"].parent)
+    long_symbols = set(coverage["trained_long_symbols"])
+    short_symbols = set(coverage["trained_short_symbols"])
+    paired = set(coverage["trained_paired_symbols"])
+    servable_long = set(coverage["servable_long_symbols"])
+    servable_short = set(coverage["servable_short_symbols"])
+    servable_paired = set(coverage["servable_paired_symbols"])
     oracle_status = str(oracle.get("status") or (oracle.get("result") or {}).get("status") or "pending")
-    ready = bool(paired) and long_symbols == short_symbols and (
+    ready = bool(servable_paired) and bool(manifest.get("serving_ready", True)) and (
         oracle_status.lower() == "completed" and str(batch_status).lower() == "completed"
     )
 
@@ -97,11 +102,23 @@ def _render_directional_bundle_overview(
     )
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Oracle Extreme", oracle_status.upper(), help=f"Profil {oracle_id} · {oracle_features} features")
-    c2.metric("Branche LONG", f"{len(long_symbols)} symboles", help=f"Profil {long_id} · {long_features} features")
-    c3.metric("Branche SHORT", f"{len(short_symbols)} symboles", help=f"Profil {short_id} · {short_features} features")
-    c4.metric("Paires LONG + SHORT", len(paired), help="Symboles ayant les deux artefacts spécialisés")
+    c2.metric(
+        "Branche LONG",
+        f"{len(long_symbols)} entraînés / {len(servable_long)} éligibles",
+        help=f"Profil {long_id} · {long_features} features",
+    )
+    c3.metric(
+        "Branche SHORT",
+        f"{len(short_symbols)} entraînés / {len(servable_short)} éligibles",
+        help=f"Profil {short_id} · {short_features} features",
+    )
+    c4.metric(
+        "Paires LONG + SHORT",
+        f"{len(paired)} entraînées / {len(servable_paired)} servables",
+        help="Une paire n'est servable que si ses deux champions sont éligibles.",
+    )
     if ready:
-        st.success("✅ Bundle prêt : Oracle terminé et au moins une paire LONG/SHORT matérialisée.")
+        st.success("✅ Bundle prêt : Oracle terminé et au moins une paire LONG/SHORT servable.")
     else:
         st.warning("⚠️ Bundle incomplet : vérifiez l'état Oracle et la couverture des deux branches.")
 
@@ -122,8 +139,8 @@ def _render_directional_bundle_overview(
 
     profile_df = pd.DataFrame([
         {"Composant": "Oracle amplitude", "Profil": oracle_id, "Features": oracle_features, "Artefacts": oracle_status},
-        {"Composant": "Direction LONG", "Profil": long_id, "Features": long_features, "Artefacts": len(long_symbols)},
-        {"Composant": "Direction SHORT", "Profil": short_id, "Features": short_features, "Artefacts": len(short_symbols)},
+        {"Composant": "Direction LONG", "Profil": long_id, "Features": long_features, "Entraînés": len(long_symbols), "Servables": len(servable_long)},
+        {"Composant": "Direction SHORT", "Profil": short_id, "Features": short_features, "Entraînés": len(short_symbols), "Servables": len(servable_short)},
     ])
     with st.expander("Profils et couverture du bundle", expanded=False):
         st.dataframe(profile_df, use_container_width=True, hide_index=True)
@@ -257,11 +274,18 @@ def _render_directional_candidate_download(
         if discovery_mode else
         "Gate actif : stabilité stricte, avec médiane f1_side ≥ 0,40 et minimum f1_side ≥ 0,20."
     )
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Symboles analysés", int(selection.get("scanned_symbols") or 0))
-    c2.metric("LONG uniquement", len(long_only))
-    c3.metric("SHORT uniquement", len(short_only))
-    c4.metric("LONG + SHORT", len(long_short))
+    c2.metric("Paires servables", int(selection.get("servable_symbols") or 0))
+    c3.metric("LONG uniquement", len(long_only))
+    c4.metric("SHORT uniquement", len(short_only))
+    c5.metric("LONG + SHORT", len(long_short))
+    unservable_count = len(selection.get("unservable_symbols") or [])
+    if unservable_count:
+        st.caption(
+            f"{unservable_count} symbole(s) entraîné(s) sont exclus des listes : "
+            "au moins un champion LONG/SHORT est inéligible."
+        )
 
     audit_df = selection.get("audit_df")
     if int(active_selection.get("eligible_symbols") or 0) == 0 and isinstance(audit_df, pd.DataFrame) and not audit_df.empty:

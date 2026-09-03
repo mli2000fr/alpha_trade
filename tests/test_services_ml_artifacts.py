@@ -6,6 +6,7 @@ from pathlib import Path
 from ihm.services.ml_artifacts import (
     build_batch_directional_candidate_selection,
     build_champion_walk_forward_stability,
+    build_directional_bundle_serving_coverage,
     format_directional_candidate_selection,
     has_per_symbol_artifacts,
     list_directional_bundle_symbols,
@@ -23,17 +24,19 @@ def _write_directional_symbol_artifacts(
     *,
     long_values: list[float],
     short_values: list[float],
+    selected_model_eligible: bool | None = None,
 ) -> None:
     symbol_dir = batch_dir / symbol
     symbol_dir.mkdir(parents=True)
+    config = {
+        "selected_forecast_horizon": 20,
+        "selection_mode": "auto_selected_champion",
+        "artifact_routes": {"selected_model": "lightgbm", "models": {}},
+    }
+    if selected_model_eligible is not None:
+        config["selected_model_eligible"] = selected_model_eligible
     (symbol_dir / "config.json").write_text(
-        json.dumps(
-            {
-                "selected_forecast_horizon": 20,
-                "selection_mode": "auto_selected_champion",
-                "artifact_routes": {"selected_model": "lightgbm", "models": {}},
-            }
-        ),
+        json.dumps(config),
         encoding="utf-8",
     )
     splits = [
@@ -183,22 +186,37 @@ def test_directional_bundle_uses_each_specialized_branch_for_its_owned_side(tmp_
         batch_dir / "directions" / "long", "LONG_ONLY",
         long_values=[0.50, 0.45, 0.40], short_values=[0.05, 0.10, 0.15],
     )
+    for direction in ("long", "short"):
+        _write_directional_symbol_artifacts(
+            batch_dir / "directions" / direction, "INELIGIBLE",
+            long_values=[0.60, 0.55, 0.50], short_values=[0.60, 0.55, 0.50],
+            selected_model_eligible=direction != "long",
+        )
 
     contract = load_batch_artifact_contract("bundle-1", tmp_path)
     assert contract["is_directional_bundle"] is True
     assert has_per_symbol_artifacts("bundle-1", tmp_path) is True
-    assert list_directional_bundle_symbols("bundle-1", tmp_path, "direction_long") == ["BOTH", "LONG_ONLY"]
-    assert list_directional_bundle_symbols("bundle-1", tmp_path, "direction_short") == ["BOTH"]
+    assert list_directional_bundle_symbols("bundle-1", tmp_path, "direction_long") == ["BOTH", "INELIGIBLE", "LONG_ONLY"]
+    assert list_directional_bundle_symbols("bundle-1", tmp_path, "direction_short") == ["BOTH", "INELIGIBLE"]
 
     result = build_batch_directional_candidate_selection("bundle-1", tmp_path)
+    coverage = build_directional_bundle_serving_coverage("bundle-1", tmp_path)
 
     assert result["batch_kind"] == "directional_bundle"
     assert result["long_short"] == ["BOTH"]
-    assert result["long_only"] == ["LONG_ONLY"]
+    assert result["long_only"] == []
+    assert result["scanned_symbols"] == 3
+    assert result["servable_symbols"] == 1
+    assert result["unservable_symbols"] == ["INELIGIBLE", "LONG_ONLY"]
+    assert coverage["trained_paired_symbols"] == ["BOTH", "INELIGIBLE"]
+    assert coverage["servable_paired_symbols"] == ["BOTH"]
+    assert coverage["unservable_symbols"] == ["INELIGIBLE"]
     audit = result["audit_df"].set_index("symbol")
     assert audit.loc["BOTH", "long_selected_model"] == "lightgbm"
     assert audit.loc["BOTH", "short_selected_model"] == "lightgbm"
     assert audit.loc["BOTH", "classification"] == "LONG_SHORT"
+    assert audit.loc["INELIGIBLE", "classification"] == "REJECTED"
+    assert bool(audit.loc["INELIGIBLE", "pair_servable"]) is False
 
 
 def test_directional_candidate_file_contains_comma_separated_exclusive_lists() -> None:

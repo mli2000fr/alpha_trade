@@ -9,6 +9,7 @@ from typing import Any
 import pandas as pd
 
 from ihm.services.pipeline_runner import PROJECT_ROOT
+from modelFactory.directional_serving import selected_model_is_eligible
 
 
 DEFAULT_MODEL_ARTIFACTS_DIR = PROJECT_ROOT / "artifacts" / "models"
@@ -546,6 +547,54 @@ def _exclusive_directional_class(eligible_long: bool, eligible_short: bool) -> s
     return DIRECTIONAL_CLASS_REJECTED
 
 
+def _artifact_report_branch_is_servable(report: dict[str, Any]) -> bool:
+    """Une branche doit être matérialisée et ne pas être explicitement inéligible."""
+    return bool(
+        report.get("selected_model")
+        and selected_model_is_eligible(report.get("config"))
+    )
+
+
+def build_directional_bundle_serving_coverage(
+    batch_id: str,
+    artifacts_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Compte séparément les branches entraînées et les paires servables."""
+    contract = load_batch_artifact_contract(batch_id, artifacts_dir)
+    long_symbols = set(list_directional_bundle_symbols(batch_id, artifacts_dir, "direction_long"))
+    short_symbols = set(list_directional_bundle_symbols(batch_id, artifacts_dir, "direction_short"))
+    trained_pairs = long_symbols & short_symbols
+    servable_long: set[str] = set()
+    servable_short: set[str] = set()
+    for symbol in sorted(long_symbols | short_symbols):
+        if symbol in long_symbols:
+            config, error = _read_json_file(contract["long_root"] / symbol / "config.json")
+            selected = (
+                ((config or {}).get("artifact_routes") or {}).get("selected_model")
+                or (config or {}).get("architecture_selected")
+            )
+            if error is None and selected and selected_model_is_eligible(config):
+                servable_long.add(symbol)
+        if symbol in short_symbols:
+            config, error = _read_json_file(contract["short_root"] / symbol / "config.json")
+            selected = (
+                ((config or {}).get("artifact_routes") or {}).get("selected_model")
+                or (config or {}).get("architecture_selected")
+            )
+            if error is None and selected and selected_model_is_eligible(config):
+                servable_short.add(symbol)
+    servable_pairs = servable_long & servable_short
+    return {
+        "trained_long_symbols": sorted(long_symbols),
+        "trained_short_symbols": sorted(short_symbols),
+        "trained_paired_symbols": sorted(trained_pairs),
+        "servable_long_symbols": sorted(servable_long),
+        "servable_short_symbols": sorted(servable_short),
+        "servable_paired_symbols": sorted(servable_pairs),
+        "unservable_symbols": sorted(trained_pairs - servable_pairs),
+    }
+
+
 def build_batch_directional_candidate_selection(
     batch_id: str,
     artifacts_dir: Path | None = None,
@@ -571,17 +620,21 @@ def build_batch_directional_candidate_selection(
             # A specialized branch is gated only on the side it owns.
             long_summary = long_stability.get("long") or {}
             short_summary = short_stability.get("short") or {}
+            long_branch_servable = _artifact_report_branch_is_servable(long_report)
+            short_branch_servable = _artifact_report_branch_is_servable(short_report)
+            pair_servable = long_branch_servable and short_branch_servable
         else:
             report = load_ml_artifact_report(symbol, batch_dir)
             long_report = short_report = report
             long_stability = short_stability = report.get("walk_forward_stability") or {}
             long_summary = long_stability.get("long") or {}
             short_summary = short_stability.get("short") or {}
-        eligible_long = long_summary.get("status") == "stable"
-        eligible_short = short_summary.get("status") == "stable"
+            long_branch_servable = short_branch_servable = pair_servable = True
+        eligible_long = pair_servable and long_summary.get("status") == "stable"
+        eligible_short = pair_servable and short_summary.get("status") == "stable"
         classification = _exclusive_directional_class(eligible_long, eligible_short)
-        discovery_eligible_long = _is_discovery_side_candidate(long_summary)
-        discovery_eligible_short = _is_discovery_side_candidate(short_summary)
+        discovery_eligible_long = pair_servable and _is_discovery_side_candidate(long_summary)
+        discovery_eligible_short = pair_servable and _is_discovery_side_candidate(short_summary)
         discovery_classification = _exclusive_directional_class(
             discovery_eligible_long, discovery_eligible_short,
         )
@@ -600,6 +653,9 @@ def build_batch_directional_candidate_selection(
                 "short_run_id": short_report.get("run_id"),
                 "short_selected_horizon": short_stability.get("selected_horizon"),
                 "short_selection_mode": short_report.get("selection_mode"),
+                "long_branch_servable": long_branch_servable,
+                "short_branch_servable": short_branch_servable,
+                "pair_servable": pair_servable,
                 "classification": classification,
                 "eligible_long": eligible_long,
                 "eligible_short": eligible_short,
@@ -662,6 +718,8 @@ def build_batch_directional_candidate_selection(
         "batch_kind": contract["kind"],
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "scanned_symbols": len(symbols),
+        "servable_symbols": sum(bool(row["pair_servable"]) for row in rows),
+        "unservable_symbols": sorted(row["symbol"] for row in rows if not row["pair_servable"]),
         "eligible_symbols": sum(len(values) for values in by_class.values()),
         "long_only": by_class[DIRECTIONAL_CLASS_LONG_ONLY],
         "short_only": by_class[DIRECTIONAL_CLASS_SHORT_ONLY],
@@ -693,6 +751,8 @@ def format_directional_candidate_selection(selection: dict[str, Any]) -> str:
         f"# batch_id={selection.get('batch_id', '')}",
         f"# generated_at={selection.get('generated_at', '')}",
         "# Listes exclusives; symboles separes par une virgule sans espace.",
+        "# Serving gate: une branche LONG et une branche SHORT materialisees, avec champions eligibles.",
+        f"# Coverage: trained={selection.get('scanned_symbols', 0)}; servable_pairs={selection.get('servable_symbols', selection.get('scanned_symbols', 0))}.",
         "# Les metriques f1 sont directionnelles: f1_long pour LONG, f1_short pour SHORT; f1_macro exclu.",
         f"# STRICT gates: support_side>={WF_MIN_SIDE_SUPPORT}; valid_folds>={WF_MIN_VALID_FOLDS}; "
         f"median_f1_side>={WF_STABLE_MEDIAN_F1:.2f}; min_f1_side>={WF_STABLE_MIN_F1:.2f}; "

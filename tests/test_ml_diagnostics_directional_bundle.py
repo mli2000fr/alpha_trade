@@ -18,6 +18,9 @@ def test_ml_diagnostics_partitions_bundle_metrics_by_training_role() -> None:
     assert "Direction conditionnelle" in source
     assert "Oracle OOF TOP20" in source
     assert "bundle historique entraînait la direction sur toutes les journées" in source
+    assert "entraînés / {len(servable_long)} éligibles" in source
+    assert "entraînées / {len(servable_paired)} servables" in source
+    assert "Paires servables" in source
 
 
 def test_prediction_periods_has_a_dedicated_bundle_contract_view() -> None:

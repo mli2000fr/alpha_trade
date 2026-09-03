@@ -214,7 +214,14 @@ training / serving_ready=false
                                                                  serving_ready=true
 ```
 
-La section `coverage` expose le nombre de symboles demandés, terminés en LONG, terminés en SHORT, présents dans l'intersection LONG ∩ SHORT, ainsi que les symboles exclus. Le batch n'est marqué `completed` dans la base que si le manifeste est réellement servable. Une fin de processus sans Oracle ou sans paire directionnelle ne constitue plus un succès.
+La section `coverage` distingue désormais deux niveaux qui ne doivent pas être confondus :
+
+- `long_symbols`, `short_symbols` et `paired_symbols` comptent les artefacts entraînés et matérialisés ;
+- `servable_long_symbols`, `servable_short_symbols` et `servable_paired_symbols` exigent en plus un champion dont `selected_model_eligible=true` ;
+- `unservable_symbols` énumère les paires entraînées dont au moins un champion est explicitement inéligible ;
+- `excluded_symbols` contient tout symbole demandé qui n'appartient pas à l'intersection réellement servable.
+
+Le batch n'est marqué `completed` dans la base que si l'Oracle et au moins une paire éligible sont réellement servables. Une fin de processus sans Oracle ou sans paire directionnelle éligible ne constitue plus un succès. Les manifestes historiques qui précèdent le champ `selected_model_eligible` restent lisibles ; seule une valeur explicitement fausse bloque une branche.
 
 Chaque `config.json` stocke un `feature_contract` complet et son `feature_fingerprint`. L'empreinte au niveau supérieur doit être strictement identique à celle du contrat. Les modèles LightGBM sont persistés au format natif texte et les modèles CatBoost au format natif CBM ; une extension `.cbm` ne peut plus contenir un objet Python sérialisé.
 
@@ -244,7 +251,7 @@ Les calibrateurs directionnels sont distincts de `oracle.calibration`. Pour une 
 
 Le chemin scalaire `_apply_optional_calibration` est réservé à Platt/binaire. Les méthodes `temperature` et `vector` en sont exclues pour éviter l'erreur de conversion d'un vecteur de trois classes vers un seul `float`.
 
-L'absence d'une branche invalide la prédiction du symbole. Aucun fallback silencieux vers le modèle legacy n'est fait, car mélanger un champion récent avec un modèle unique historique serait difficile à auditer. L'univers réellement prédit est donc l'intersection des symboles servables `LONG ∩ SHORT`, pas l'union des deux répertoires.
+L'absence d'une branche ou un `selected_model_eligible=false` invalide la prédiction du symbole. Aucun fallback silencieux vers un modèle inéligible ou vers le modèle legacy n'est fait, car mélanger un champion qualifié avec un fallback non validé serait difficile à auditer. L'univers réellement prédit est donc l'intersection des symboles servables `LONG ∩ SHORT`, pas l'union des deux répertoires.
 
 ### Préflight obligatoire avant toute prédiction
 
@@ -255,10 +262,11 @@ Avant de calculer la première date, la CLI valide une seule fois l'ensemble du 
 3. deux `config.json` par symbole, avec les rôles `direction_long` et `direction_short` ;
 4. cible `ternary` et `num_classes=3` dans les deux branches ;
 5. concordance stricte de chaque empreinte de features ;
-6. route du champion sélectionné et fichier modèle présents ;
-7. format natif cohérent pour LightGBM et CatBoost.
+6. `selected_model_eligible` non explicitement faux dans les deux branches ;
+7. route du champion sélectionné et fichier modèle présents ;
+8. format natif cohérent pour LightGBM et CatBoost.
 
-Les symboles incomplets sont retirés avec une raison explicite. Si aucun symbole ne reste, ou si le manifeste/Oracle est invalide, la commande s'arrête immédiatement avec un code d'erreur au lieu de parcourir toutes les dates en produisant uniquement des `skipped`. Après le préflight, l'échec de la prédiction Oracle est également bloquant pour le bundle.
+Les symboles incomplets ou inéligibles sont retirés avec une raison explicite telle que `long:selected_model_ineligible`. Si aucun symbole ne reste, ou si le manifeste/Oracle est invalide, la commande s'arrête immédiatement avec un code d'erreur au lieu de parcourir toutes les dates en produisant uniquement des `skipped`. Après le préflight, l'échec de la prédiction Oracle est également bloquant pour le bundle. Le téléchargement STRICT/DISCOVERY applique la même intersection : une excellente branche SHORT n'expose pas un symbole si sa branche LONG nécessaire à l'arbitrage est inservable, et réciproquement.
 
 ## Oracle, cascade et backtest
 

@@ -2285,6 +2285,8 @@ def validate_directional_bundle_for_prediction(
 
     valid: list[str] = []
     excluded: dict[str, list[str]] = {}
+    from modelFactory.directional_serving import selected_model_is_eligible
+
     for raw_symbol in symbols:
         symbol = str(raw_symbol).strip().upper()
         reasons: list[str] = []
@@ -2295,6 +2297,8 @@ def validate_directional_bundle_for_prediction(
             except (OSError, json.JSONDecodeError):
                 reasons.append(f"{direction}:config_missing")
                 continue
+            if not selected_model_is_eligible(config):
+                reasons.append(f"{direction}:selected_model_ineligible")
             if config.get("model_role") != f"direction_{direction}":
                 reasons.append(f"{direction}:role_mismatch")
             if (config.get("data") or {}).get("target_mode") != "ternary":
@@ -2361,6 +2365,8 @@ def predict_directional_symbol(
     SHORT est seule autorisée à fournir ``proba_short``. Une branche manquante
     invalide la prédiction : aucun fallback silencieux vers le modèle legacy.
     """
+    from modelFactory.directional_serving import selected_model_is_eligible
+
     def _branch_prediction(direction: str) -> Optional[pd.DataFrame]:
         branch_root = bundle_root / "directions" / direction
         config_path = branch_root / symbol / "config.json"
@@ -2370,6 +2376,13 @@ def predict_directional_symbol(
         except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
             LOGGER.error("directional_bundle config unavailable symbol=%s direction=%s error=%s",
                          symbol, direction, exc)
+            return None
+        if not selected_model_is_eligible(branch_config):
+            LOGGER.error(
+                "directional_bundle selected model ineligible symbol=%s direction=%s",
+                symbol,
+                direction,
+            )
             return None
         expected_role = f"direction_{direction}"
         if branch_config.get("model_role") != expected_role:
@@ -2382,10 +2395,13 @@ def predict_directional_symbol(
         )
 
     long_pred = _branch_prediction("long")
+    if long_pred is None or long_pred.empty:
+        LOGGER.error("directional_bundle incomplete symbol=%s long=False short=not_evaluated", symbol)
+        return None
     short_pred = _branch_prediction("short")
-    if long_pred is None or long_pred.empty or short_pred is None or short_pred.empty:
+    if short_pred is None or short_pred.empty:
         LOGGER.error("directional_bundle incomplete symbol=%s long=%s short=%s", symbol,
-                     long_pred is not None and not long_pred.empty,
+                     True,
                      short_pred is not None and not short_pred.empty)
         return None
     long_row = long_pred.iloc[0]

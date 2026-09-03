@@ -890,7 +890,14 @@ def test_directional_bundle_trains_oracle_oof_before_direction_branches(
             symbol,
             f"run-{symbol}-{config.model_role}",
             "completed",
-            metrics={"model_role": config.model_role},
+            metrics={
+                "model_role": config.model_role,
+                "champion": {
+                    "selected_model_eligible": not (
+                        symbol == "S19" and config.model_role == "direction_long"
+                    ),
+                },
+            },
         )
 
     monkeypatch.setattr(orchestrator, "train_oracle_extreme", fake_oracle)
@@ -909,6 +916,13 @@ def test_directional_bundle_trains_oracle_oof_before_direction_branches(
         (tmp_path / "batch-conditional" / "cascade_manifest.json").read_text(encoding="utf-8")
     )
     assert manifest["serving_ready"] is True
+    assert manifest["coverage"]["long_symbols"] == 20
+    assert manifest["coverage"]["short_symbols"] == 20
+    assert manifest["coverage"]["paired_symbols"] == 20
+    assert manifest["coverage"]["servable_long_symbols"] == 19
+    assert manifest["coverage"]["servable_short_symbols"] == 20
+    assert manifest["coverage"]["servable_paired_symbols"] == 19
+    assert manifest["coverage"]["unservable_symbols"] == ["S19"]
     assert manifest["directional_conditioning"]["status"] == "ready"
     assert manifest["directional_conditioning"]["diagnostics"]["oof_only"] is True
 

@@ -274,6 +274,7 @@ def test_bundle_preflight_keeps_only_complete_ternary_symbols(tmp_path: Path) ->
             model_path.write_text("tree\nversion=v4\n", encoding="utf-8")
             (symbol_dir / "config.json").write_text(json.dumps({
                 "model_role": f"direction_{direction}",
+                "selected_model_eligible": symbol != "INELIGIBLE",
                 "data": {"target_mode": "ternary"},
                 "model": {"num_classes": 3},
                 "feature_fingerprint": "fp-ok",
@@ -285,11 +286,34 @@ def test_bundle_preflight_keeps_only_complete_ternary_symbols(tmp_path: Path) ->
                 },
             }), encoding="utf-8")
 
+    # Deux branches matérialisées, mais un champion explicitement inéligible.
+    for direction in ("long", "short"):
+        symbol_dir = bundle / "directions" / direction / "INELIGIBLE"
+        symbol_dir.mkdir(parents=True)
+        model_path = symbol_dir / "lightgbm_model.txt"
+        model_path.write_text("tree\nversion=v4\n", encoding="utf-8")
+        (symbol_dir / "config.json").write_text(json.dumps({
+            "model_role": f"direction_{direction}",
+            "selected_model_eligible": direction != "long",
+            "data": {"target_mode": "ternary"},
+            "model": {"num_classes": 3},
+            "feature_fingerprint": "fp-ok",
+            "feature_contract": {"feature_fingerprint": "fp-ok"},
+            "architecture_selected": "lightgbm",
+            "artifact_routes": {
+                "selected_model": "lightgbm",
+                "models": {"lightgbm": {"model_path": str(model_path)}},
+            },
+        }), encoding="utf-8")
+
     valid, excluded = validate_directional_bundle_for_prediction(
-        bundle, ["BOTH", "LONG_ONLY"], require_oracle=False,
+        bundle, ["BOTH", "LONG_ONLY", "INELIGIBLE"], require_oracle=False,
     )
     assert valid == ["BOTH"]
-    assert excluded == {"LONG_ONLY": ["short:config_missing"]}
+    assert excluded == {
+        "LONG_ONLY": ["short:config_missing"],
+        "INELIGIBLE": ["long:selected_model_ineligible"],
+    }
 
 
 def test_bundle_preflight_rejects_non_servable_manifest(tmp_path: Path) -> None:
@@ -353,6 +377,24 @@ def test_directional_prediction_merges_branch_probabilities(monkeypatch, tmp_pat
     assert row["selected_model"] == "directional_bundle"
     assert row["direction_long_model"] == "lightgbm"
     assert row["direction_short_model"] == "lightgbm"
+
+
+def test_directional_prediction_refuses_explicitly_ineligible_branch(monkeypatch, tmp_path: Path) -> None:
+    for direction in ("long", "short"):
+        symbol_dir = tmp_path / "directions" / direction / "AAPL"
+        symbol_dir.mkdir(parents=True)
+        (symbol_dir / "config.json").write_text(json.dumps({
+            "run_id": f"run-{direction}",
+            "model_role": f"direction_{direction}",
+            "selected_model_eligible": direction != "long",
+        }), encoding="utf-8")
+
+    monkeypatch.setattr(
+        "modelFactory.predictor.predict_symbol",
+        lambda *args, **kwargs: pytest.fail("un champion inéligible ne doit jamais être exécuté"),
+    )
+
+    assert predict_directional_symbol("AAPL", tmp_path, object(), persist=False) is None
 
 
 def test_directional_lineage_is_persisted() -> None:

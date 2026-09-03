@@ -941,6 +941,10 @@ def run_training_batch(
                         "long_symbols": 0,
                         "short_symbols": 0,
                         "paired_symbols": 0,
+                        "servable_long_symbols": 0,
+                        "servable_short_symbols": 0,
+                        "servable_paired_symbols": 0,
+                        "unservable_symbols": [],
                         "excluded_symbols": sorted({str(s).strip().upper() for s in _global_symbols}),
                     },
                 })
@@ -1606,17 +1610,33 @@ def run_training_batch(
             results.append(TrainResult("__ORACLE__", batch_id, "failed", skip_reason=str(_exc)))
 
     if cfg.directional_profiles_enabled:
-        long_symbols = {
+        from modelFactory.directional_serving import training_result_is_servable
+
+        trained_long_symbols = {
             r.symbol for r in results
             if r.status == "completed" and r.metrics.get("model_role") == "direction_long"
         }
-        short_symbols = {
+        trained_short_symbols = {
             r.symbol for r in results
             if r.status == "completed" and r.metrics.get("model_role") == "direction_short"
         }
-        paired_symbols = sorted(long_symbols & short_symbols)
+        servable_long_symbols = {
+            r.symbol for r in results
+            if r.status == "completed"
+            and r.metrics.get("model_role") == "direction_long"
+            and training_result_is_servable(r.metrics)
+        }
+        servable_short_symbols = {
+            r.symbol for r in results
+            if r.status == "completed"
+            and r.metrics.get("model_role") == "direction_short"
+            and training_result_is_servable(r.metrics)
+        }
+        trained_paired_symbols = sorted(trained_long_symbols & trained_short_symbols)
+        servable_paired_symbols = sorted(servable_long_symbols & servable_short_symbols)
+        unservable_symbols = sorted(set(trained_paired_symbols) - set(servable_paired_symbols))
         requested_symbols = {str(symbol).upper() for symbol in (symbols or [])}
-        excluded_symbols = sorted(requested_symbols - set(paired_symbols))
+        excluded_symbols = sorted(requested_symbols - set(servable_paired_symbols))
         oracle_champions_path = (
             Path(cfg.artifacts_dir) / ".." / "oracle" / "champions" / batch_id / "oracle_champions.json"
         ).resolve()
@@ -1625,7 +1645,7 @@ def run_training_batch(
             and _oracle_result.get("status") == "completed"
             and oracle_champions_path.is_file()
         )
-        serving_ready = oracle_ready and bool(paired_symbols)
+        serving_ready = oracle_ready and bool(servable_paired_symbols)
         directional_bundle_serving_ready = serving_ready
         _manifest_path = Path(cfg.artifacts_dir) / "cascade_manifest.json"
         try:
@@ -1635,9 +1655,15 @@ def run_training_batch(
                 "serving_ready": serving_ready,
                 "coverage": {
                     "requested_symbols": len(requested_symbols),
-                    "long_symbols": len(long_symbols),
-                    "short_symbols": len(short_symbols),
-                    "paired_symbols": len(paired_symbols),
+                    # Clés historiques : couverture entraînée/matérialisée.
+                    "long_symbols": len(trained_long_symbols),
+                    "short_symbols": len(trained_short_symbols),
+                    "paired_symbols": len(trained_paired_symbols),
+                    # Contrat de serving : champions explicitement éligibles.
+                    "servable_long_symbols": len(servable_long_symbols),
+                    "servable_short_symbols": len(servable_short_symbols),
+                    "servable_paired_symbols": len(servable_paired_symbols),
+                    "unservable_symbols": unservable_symbols,
                     "excluded_symbols": excluded_symbols,
                 },
             })
@@ -1654,8 +1680,8 @@ def run_training_batch(
             serving_ready = False
         if not serving_ready:
             LOGGER.error(
-                "directional bundle NOT SERVABLE batch=%s oracle_ready=%s paired_symbols=%d",
-                batch_id, oracle_ready, len(paired_symbols),
+                "directional bundle NOT SERVABLE batch=%s oracle_ready=%s servable_paired_symbols=%d",
+                batch_id, oracle_ready, len(servable_paired_symbols),
             )
 
     # Summary
