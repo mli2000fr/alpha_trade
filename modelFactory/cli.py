@@ -128,6 +128,115 @@ def _load_live_dip_config() -> dict | None:
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 ML_MODES = ("rebuild-all", "rebuild-missing", "refresh-stale")
+
+
+class PredictionPersistenceError(RuntimeError):
+    """Une prédiction obligatoire a été calculée mais non persistée."""
+
+
+def _persist_predictions_with_policy(
+    engine,
+    chunk: pd.DataFrame,
+    *,
+    insert_fn,
+    operation: str,
+    prediction_date: date | None = None,
+    required: bool = False,
+) -> None:
+    """Persiste un lot ; un bundle directionnel utilise ``required=True``."""
+    if chunk.empty:
+        return
+    try:
+        insert_fn(engine, chunk)
+        if prediction_date is not None:
+            LOGGER.info(
+                "predict persistence persisted date=%s rows=%d operation=%s",
+                prediction_date.isoformat(),
+                len(chunk),
+                operation,
+            )
+    except Exception as exc:  # noqa: BLE001
+        increment_runtime_counter("prediction_db_issue_count", 1)
+        update_runtime_status(
+            last_db_issue_operation=operation,
+            last_db_issue_reason=f"prediction_persist_failed:{type(exc).__name__}",
+        )
+        if required:
+            LOGGER.error(
+                "predict REQUIRED persistence failed rows=%d operation=%s error=%s",
+                len(chunk), operation, exc,
+            )
+            raise PredictionPersistenceError(
+                f"required_prediction_persistence_failed:{operation}:{type(exc).__name__}:{exc}"
+            ) from exc
+        LOGGER.warning(
+            "predict batch persistence degraded rows=%d operation=%s error=%s",
+            len(chunk), operation, exc,
+        )
+
+
+def _directional_bundle_prediction_coverage(
+    engine,
+    batch_id: str,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> tuple[int, int]:
+    """Compte les lignes/dates directionnelles persistées pour un batch."""
+    from sqlalchemy import text
+
+    filters = [
+        "mtr.batch_id = :batch_id",
+        "mp.model_role = 'directional_bundle'",
+        "mp.direction_long_run_id IS NOT NULL",
+        "mp.direction_short_run_id IS NOT NULL",
+    ]
+    params: dict[str, object] = {"batch_id": str(batch_id)}
+    if start_date is not None:
+        filters.append("mp.prediction_date >= :start_date")
+        params["start_date"] = start_date
+    if end_date is not None:
+        filters.append("mp.prediction_date <= :end_date")
+        params["end_date"] = end_date
+    query = text(
+        "SELECT COUNT(*) AS rows_n, COUNT(DISTINCT mp.prediction_date) AS dates_n "
+        "FROM model_predictions mp "
+        "JOIN model_training_run mtr ON mtr.run_id = mp.direction_long_run_id "
+        f"WHERE {' AND '.join(filters)}"
+    )
+    with engine.connect() as connection:
+        row = connection.execute(query, params).one()
+    return int(row[0] or 0), int(row[1] or 0)
+
+
+def _require_directional_bundle_predictions(
+    engine,
+    batch_id: str,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    expected_dates: int = 1,
+) -> tuple[int, int]:
+    """Échoue explicitement si un bundle ne possède pas sa sortie LONG/SHORT."""
+    rows_n, dates_n = _directional_bundle_prediction_coverage(
+        engine,
+        batch_id,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    if rows_n <= 0 or dates_n < max(1, int(expected_dates)):
+        raise PredictionPersistenceError(
+            "directional_bundle_predictions_missing:"
+            f"batch={batch_id}:rows={rows_n}:dates={dates_n}:"
+            f"expected_dates={max(1, int(expected_dates))}"
+        )
+    LOGGER.info(
+        "predict bundle persistence verified batch=%s rows=%d dates=%d",
+        batch_id,
+        rows_n,
+        dates_n,
+    )
+    return rows_n, dates_n
 SYMBOL_SOURCES = (
     "tradable-universe",
     "stock-bars-daily",
@@ -1192,25 +1301,16 @@ def main(args: list[str] | None = None) -> None:
             *,
             operation: str,
             prediction_date: date | None = None,
+            required: bool = False,
         ) -> None:
-            if chunk.empty:
-                return
-            try:
-                insert_predictions(engine, chunk)
-                if prediction_date is not None:
-                    LOGGER.info(
-                        "predict persistence persisted date=%s rows=%d operation=%s",
-                        prediction_date.isoformat(),
-                        len(chunk),
-                        operation,
-                    )
-            except Exception as exc:  # noqa: BLE001
-                LOGGER.warning("predict batch persistence degraded rows=%d operation=%s error=%s", len(chunk), operation, exc)
-                increment_runtime_counter("prediction_db_issue_count", 1)
-                update_runtime_status(
-                    last_db_issue_operation=operation,
-                    last_db_issue_reason=f"prediction_persist_failed:{type(exc).__name__}",
-                )
+            _persist_predictions_with_policy(
+                engine,
+                chunk,
+                insert_fn=insert_predictions,
+                operation=operation,
+                prediction_date=prediction_date,
+                required=required,
+            )
 
         symbols = opts.symbols or load_symbols_for_source(
             engine,
@@ -1352,8 +1452,14 @@ def main(args: list[str] | None = None) -> None:
                         _part,
                         operation="insert_predictions_historical_date",
                         prediction_date=pred_date,
+                        required=_is_directional_bundle,
                     )
                     _rows = len(_part)
+                elif _is_directional_bundle:
+                    raise PredictionPersistenceError(
+                        "directional_bundle_empty_prediction_date:"
+                        f"batch={_batch_id}:date={_ds}"
+                    )
                 return (_ds, _rows)
 
             _max_date_workers = max(1, min(getattr(opts, "predict_max_date_workers", 4) or 4, 8))
@@ -1363,6 +1469,7 @@ def main(args: list[str] | None = None) -> None:
             )
             with ThreadPoolExecutor(max_workers=_max_date_workers) as _exec:
                 _futures = {_exec.submit(_process_date, d): d for d in prediction_dates}
+                _failed_prediction_dates: list[tuple[date, Exception]] = []
                 for _future in as_completed(_futures):
                     try:
                         _ds, _rows = _future.result()
@@ -1379,9 +1486,17 @@ def main(args: list[str] | None = None) -> None:
                             )
                     except Exception as _exc:
                         _failed_date = _futures[_future]
+                        _failed_prediction_dates.append((_failed_date, _exc))
                         LOGGER.error(
                             "predict date=%s FAILED: %s", _failed_date.isoformat(), _exc,
                         )
+            if _is_directional_bundle and _failed_prediction_dates:
+                _first_failed_date, _first_failure = _failed_prediction_dates[0]
+                raise PredictionPersistenceError(
+                    "directional_bundle_backfill_failed:"
+                    f"batch={_batch_id}:failed_dates={len(_failed_prediction_dates)}:"
+                    f"first_date={_first_failed_date.isoformat()}:first_error={_first_failure}"
+                ) from _first_failure
             persisted_incrementally = True
             if _per_sector:
                 from modelFactory.synthesize_global_rank_predictions import synthesize
@@ -1445,6 +1560,14 @@ def main(args: list[str] | None = None) -> None:
                     LOGGER.info(
                         "predict historical done: %d/%d dates with predictions, %d total rows",
                         _dates_with_data, _dates_total, len(preds),
+                    )
+                if _is_directional_bundle:
+                    _require_directional_bundle_predictions(
+                        engine,
+                        _batch_id,
+                        start_date=prediction_dates[0] if prediction_dates else None,
+                        end_date=prediction_dates[-1] if prediction_dates else None,
+                        expected_dates=_dates_total,
                     )
         else:
             if _per_sector:
@@ -1602,12 +1725,29 @@ def main(args: list[str] | None = None) -> None:
             and (drift_decision is None or drift_decision.action != "kill_switch_ml")
             and not persisted_incrementally
         ):
-            _persist_predictions_chunk(preds, operation="insert_predictions_batch")
+            _persist_predictions_chunk(
+                preds,
+                operation="insert_predictions_batch",
+                required=_is_directional_bundle,
+            )
+            if _is_directional_bundle:
+                _pred_dates = pd.to_datetime(preds["prediction_date"], errors="coerce").dropna()
+                _require_directional_bundle_predictions(
+                    engine,
+                    _batch_id,
+                    start_date=_pred_dates.min().date() if not _pred_dates.empty else None,
+                    end_date=_pred_dates.max().date() if not _pred_dates.empty else None,
+                    expected_dates=int(_pred_dates.dt.date.nunique()) if not _pred_dates.empty else 1,
+                )
         elif drift_decision is not None and drift_decision.action == "kill_switch_ml":
             LOGGER.warning(
                 "predict batch persistence skipped reason=ml_kill_switch_active rows=%d decision=%s",
                 len(preds),
                 drift_decision.reason,
+            )
+        elif _is_directional_bundle and not historical_predict_enabled and preds.empty:
+            raise PredictionPersistenceError(
+                f"directional_bundle_predictions_missing:batch={_batch_id}:live_frame_empty"
             )
 
         print(f"\n{'=' * 60}")

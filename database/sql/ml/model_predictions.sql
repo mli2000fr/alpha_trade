@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.model_predictions (
     selected_model      VARCHAR(32)     DEFAULT NULL COMMENT 'Backend réellement servi: lstm_attention|lightgbm|catboost|global_model',
     decision_threshold  DOUBLE          DEFAULT NULL COMMENT 'Seuil utilisé pour convertir la probabilité en classe',
     signal_label        VARCHAR(32)     DEFAULT NULL COMMENT 'Signal dérivé: long|no_trade',
-    calibration_method  VARCHAR(32)     DEFAULT NULL COMMENT 'Méthode de calibration appliquée à la probabilité',
+    calibration_method  VARCHAR(128)    DEFAULT NULL COMMENT 'Méthode(s) de calibration appliquée(s) aux probabilités',
     source              VARCHAR(32)     DEFAULT NULL COMMENT 'Origine de la prédiction: per_symbol|per_sector|global_rank_synth|oracle_synth',
     created_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (prediction_id),

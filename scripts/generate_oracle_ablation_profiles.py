@@ -7,9 +7,8 @@ ne diffère de la baseline que par ses colonnes d'entrée.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
-
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE_DIR = ROOT / "config" / "features" / "oracle"
@@ -151,6 +150,32 @@ CAMPAIGNS: list[tuple[str, str, Callable[[str], bool], str]] = [
         "O0 sans z-scores temporels glissants.",
         lambda feature: not _is_zscore(feature),
         "Mesure l'apport de la normalisation temporelle longue.",
+    ),
+    (
+        "combined_12_no_market_regime_no_engineered.json",
+        "O0 sans marché/régime ni transformations complexes.",
+        lambda feature: not (
+            _is_market_relative_regime(feature) or _is_engineered_transform(feature)
+        ),
+        "Combine les deux retraits les plus favorables de la vague 1 (A09 + A10).",
+    ),
+    (
+        "combined_13_no_market_regime_no_momentum.json",
+        "O0 sans marché/régime ni rendements/momentum.",
+        lambda feature: not (
+            _is_market_relative_regime(feature) or _is_momentum_return(feature)
+        ),
+        "Teste le retrait A04 après nettoyage du contexte marché A09.",
+    ),
+    (
+        "combined_14_no_market_regime_no_engineered_no_momentum.json",
+        "O0 compact sans marché/régime, transformations complexes ni momentum.",
+        lambda feature: not (
+            _is_market_relative_regime(feature)
+            or _is_engineered_transform(feature)
+            or _is_momentum_return(feature)
+        ),
+        "Test de parcimonie agressif réunissant A09, A10 et A04.",
     ),
 ]
 

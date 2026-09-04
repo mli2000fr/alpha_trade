@@ -1,4 +1,4 @@
-"""scripts/send_batch_email.py — Envoie un mail de fin de batch (statut + logs du run).
+"""scripts/send_batch_email.py — Notification de fin de batch (email + Telegram OK/ERROR).
 
 Appelé par les launchers PowerShell en fin d'exécution :
     scripts/windows/analyst_snapshot_launcher.ps1
@@ -11,8 +11,10 @@ Arguments :
     --duration    durée d'exécution (ex. 0h05m12s)
     --log-file    chemin du fichier temporaire contenant la sortie de CE run
 
-Utilise ``ihm.services.email_notifier`` (env ``ALPHA_TRADE_EMAIL_*`` / ``ALPHA_TRADE_SMTP_*``).
-Best-effort : ne fait JAMAIS échouer le batch (email désactivé ou en erreur → 0).
+Canal email : ``ihm.services.email_notifier`` (env ``ALPHA_TRADE_EMAIL_*`` /
+``ALPHA_TRADE_SMTP_*``). Canal Telegram : ``service.telegram`` (env
+``TOKEN_TELEGRAM_BOT`` / ``TELEGRAM_CHAT_ID``) — message OK/ERROR de fin de batch.
+Best-effort : ne fait JAMAIS échouer le batch (email ou Telegram désactivé ou en erreur → 0).
 """
 from __future__ import annotations
 
@@ -43,6 +45,55 @@ def _read_run_log(log_file: str, *, max_lines: int, max_chars: int) -> str:
     if len(text) > max_chars:
         text = "… (tronqué)\n" + text[-max_chars:]
     return text
+
+
+def _send_telegram_status(args) -> bool:
+    """Envoie un message Telegram de fin de batch (OK/ERROR) — best-effort.
+
+    Token lu depuis ``TOKEN_TELEGRAM_BOT``, chat cible depuis ``TELEGRAM_CHAT_ID``
+    (via ``service.telegram``). Ne lève jamais ; retourne ``False`` si le canal
+    n'est pas configuré ou si l'envoi échoue (le batch n'est jamais impacté).
+    """
+    from service.telegram import (
+        TelegramConfigError,
+        is_telegram_configured,
+        send_telegram_message,
+    )
+
+    if not is_telegram_configured():
+        print(
+            "send_batch_email: Telegram non configuré (TOKEN_TELEGRAM_BOT absent) — message non envoyé.",
+            file=sys.stderr,
+        )
+        return False
+
+    ok_status = args.status == "OK"
+    label = "OK" if ok_status else "ERROR"
+    icon = "✅" if ok_status else "❌"
+    lines = [f"{icon} [{args.event}] Fin de batch — {label}"]
+    if args.duration:
+        lines.append(f"Durée : {args.duration}")
+    if args.exit_code:
+        lines.append(f"Code retour : {args.exit_code}")
+    # Court extrait des logs (dernières lignes) pour contexte du run.
+    excerpt = _read_run_log(args.log_file, max_lines=10, max_chars=1200)
+    if excerpt and excerpt != "(aucune sortie capturée pour ce run)":
+        lines.append(f"Logs (fin) :\n{excerpt}")
+    message = "\n".join(lines)
+
+    try:
+        ok = send_telegram_message(message)
+    except TelegramConfigError as exc:
+        print(f"send_batch_email: échec envoi Telegram (config) : {exc}", file=sys.stderr)
+        return False
+    if not ok:
+        print(
+            "send_batch_email: échec envoi Telegram (réseau/API) — voir logs service.telegram.",
+            file=sys.stderr,
+        )
+        return False
+    print(f"send_batch_email: message Telegram {label} envoyé.")
+    return True
 
 
 def main() -> int:
@@ -79,6 +130,13 @@ def main() -> int:
             "send_batch_email: notificateur désactivé (ALPHA_TRADE_EMAIL_ENABLED != 1) — email non envoyé.",
             file=sys.stderr,
         )
+
+    # ── Telegram de fin de batch (OK/ERROR) — best-effort ──
+    # Message envoyé indépendamment du canal email, si le token est configuré.
+    try:
+        _send_telegram_status(args)
+    except Exception as exc:  # noqa: BLE001 — ne fait jamais échouer le batch
+        print(f"send_batch_email: échec envoi Telegram : {exc}", file=sys.stderr)
     return 0
 
 

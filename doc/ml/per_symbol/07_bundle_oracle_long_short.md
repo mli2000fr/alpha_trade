@@ -246,7 +246,8 @@ Les calibrateurs directionnels sont distincts de `oracle.calibration`. Pour une 
 - LSTM utilise `TemperatureScaler` sur les logits natifs `[N,3]` ;
 - LightGBM et CatBoost utilisent `VectorScaler` ; leurs probabilités sont normalisées puis transformées en pseudo-logits `log(P)` exactement comme pendant le fit ;
 - la sortie calibrée doit conserver la forme `[N,3]`, contenir uniquement des valeurs finies et sommer à 1 par ligne ;
-- `calibration_method` vaut `temperature` ou `vector` seulement lorsque cette sortie est effectivement utilisée ;
+- chaque branche vaut `temperature`, `vector` ou `none` selon la sortie effectivement utilisée ; la ligne consolidée stocke les deux provenances sous la forme `long:<méthode>|short:<méthode>` ;
+- `model_predictions.calibration_method` est donc un `VARCHAR(128)` depuis la migration `0071_widen_prediction_calibration`, et non plus le `VARCHAR(32)` historique insuffisant pour `long:temperature|short:temperature` ;
 - en cas d'artefact incompatible, le fallback vers les probabilités brutes reste non bloquant mais il est comptabilisé dans `prediction_calibration_fallback_count` et journalisé explicitement.
 
 Le chemin scalaire `_apply_optional_calibration` est réservé à Platt/binaire. Les méthodes `temperature` et `vector` en sont exclues pour éviter l'erreur de conversion d'un vecteur de trois classes vers un seul `float`.
@@ -257,7 +258,7 @@ L'absence d'une branche ou un `selected_model_eligible=false` invalide la prédi
 
 Avant de calculer la première date, la CLI valide une seule fois l'ensemble du bundle :
 
-1. manifeste de type `oracle_per_symbol_directional_bundle`, statut `completed` et `serving_ready=true` ;
+1. manifeste de type `oracle_extreme_plus_per_symbol_directional`, statut `completed` et `serving_ready=true` ;
 2. Oracle déclaré `completed` et champions Oracle présents ;
 3. deux `config.json` par symbole, avec les rôles `direction_long` et `direction_short` ;
 4. cible `ternary` et `num_classes=3` dans les deux branches ;
@@ -267,6 +268,8 @@ Avant de calculer la première date, la CLI valide une seule fois l'ensemble du 
 8. format natif cohérent pour LightGBM et CatBoost.
 
 Les symboles incomplets ou inéligibles sont retirés avec une raison explicite telle que `long:selected_model_ineligible`. Si aucun symbole ne reste, ou si le manifeste/Oracle est invalide, la commande s'arrête immédiatement avec un code d'erreur au lieu de parcourir toutes les dates en produisant uniquement des `skipped`. Après le préflight, l'échec de la prédiction Oracle est également bloquant pour le bundle. Le téléchargement STRICT/DISCOVERY applique la même intersection : une excellente branche SHORT n'expose pas un symbole si sa branche LONG nécessaire à l'arbitrage est inservable, et réciproquement.
+
+La persistance est elle aussi stricte pour ce mode. Une erreur SQL sur un seul lot de date rend le backfill entier en échec ; elle ne peut plus être réduite à un avertissement « dégradé » suivi d'un faux succès Oracle. Une date qui ne produit aucune ligne directionnelle est également bloquante. À la fin du backfill, la CLI relit la base et exige des lignes `model_role=directional_bundle`, avec les deux identifiants de branche, sur toutes les dates traitées. L'Oracle n'est enchaîné qu'après la réussite de ce contrôle.
 
 ## Oracle, cascade et backtest
 

@@ -195,6 +195,8 @@ def _load_batch_training_universe_scope(
     engine: object,
     batch_id: str | None,
     trade_dates,
+    *,
+    artifacts_dir: Path | None = None,
 ) -> pd.DataFrame | None:
     """Univers du backtest pipeline = univers d'ENTRAÎNEMENT du batch.
 
@@ -233,6 +235,56 @@ def _load_batch_training_universe_scope(
             exc_info=True,
         )
         return None
+    # Un bundle directionnel ne peut servir que l'intersection des branches
+    # LONG et SHORT validées par son manifeste. Le gate de couverture doit donc
+    # mesurer les trous sur cet univers servable, pas sur tous les symboles
+    # demandés lors de l'entraînement (dont les branches absentes/inéligibles
+    # sont volontairement exclues du serving).
+    if artifacts_dir is not None:
+        try:
+            from common.ml_cascade_contract import load_serving_directional_bundle_manifest
+
+            manifest = load_serving_directional_bundle_manifest(artifacts_dir, batch_id)
+            if manifest is not None:
+                coverage = manifest.get("coverage") or {}
+                explicit_symbols = coverage.get("servable_paired_symbol_list")
+                if isinstance(explicit_symbols, list):
+                    serving_symbols = {
+                        str(symbol).strip().upper()
+                        for symbol in explicit_symbols
+                        if str(symbol).strip()
+                    }
+                else:
+                    excluded = {
+                        str(symbol).strip().upper()
+                        for symbol in (coverage.get("excluded_symbols") or [])
+                        if str(symbol).strip()
+                    }
+                    serving_symbols = set(_syms) - excluded
+                expected_count = int(coverage.get("servable_paired_symbols") or 0)
+                if expected_count > 0 and len(serving_symbols) == expected_count:
+                    _syms = [symbol for symbol in _syms if symbol in serving_symbols]
+                    LOGGER.info(
+                        "ml coverage scope: directional bundle %s -> %d paired servable symbols",
+                        batch_id,
+                        len(_syms),
+                    )
+                else:
+                    LOGGER.warning(
+                        "ml coverage scope: manifeste directionnel incohérent batch=%s "
+                        "expected=%d resolved=%d; conservation de l'univers d'entraînement",
+                        batch_id,
+                        expected_count,
+                        len(serving_symbols),
+                    )
+        except Exception:
+            LOGGER.warning(
+                "ml coverage scope: manifeste directionnel indisponible pour batch=%s; "
+                "conservation de l'univers d'entraînement",
+                batch_id,
+                exc_info=True,
+            )
+
     _dates = sorted(
         {
             pd.Timestamp(d).date()
@@ -649,6 +701,7 @@ def _build_backtest_common_params(
         "phase5_mode": phase5_mode,
         "phase7_mode": phase7_mode,
         "macro_pit_mode": getattr(args, "effective_macro_pit_mode", getattr(args, "macro_pit_mode", "yaml_default")),
+        "force_macro_missing": bool(getattr(args, "force_macro_missing", False)),
         "fidelity_baseline_id": getattr(args, "fidelity_baseline_id", None),
         "fidelity_baseline_catalog": getattr(args, "fidelity_baseline_catalog", None),
         "ml_pit_strategy": ml_pit_strategy,
@@ -1254,6 +1307,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Politique PIT explicite pour la macro en backtest. `yaml_default` lit `market_regimes.macro_pit_mode_backtest`, `asof_inclusive` autorise <= J, `j_minus_1_strict` force strictement J-1.",
     )
     run_p.add_argument(
+        "--force-macro-missing",
+        action="store_true",
+        help="Diagnostic uniquement : ignore le provider macro sur toute la période et force le fallback neutre avec data_quality=missing.",
+    )
+    run_p.add_argument(
         "--ml-pit-strategy",
         choices=["auto", "use-persisted", "rebuild-missing", "walk-forward-train-then-predict"],
         default="auto",
@@ -1512,6 +1570,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="P5.2 : override cascade.top_pct (ex 0.02/0.05/0.10/0.15) — courbe de capacité "
              "top_pct. Transmis à apply_cascade_to_predictions(top_pct=...). None = config.yaml.",
     )
+    run_p.add_argument(
+        "--cascade-min-prob",
+        type=float,
+        default=None,
+        help="Override de la probabilité directionnelle minimale de la cascade (0..1). "
+             "None = cascade.min_prob_classification/regression dans config.yaml.",
+    )
     # ── Persistent Rank DIP filter — overrides config.yaml (backtest_*) ──
     # Chaque flag est optionnel (None = valeur de config.yaml
     # `persistent_dip_filter_long.backtest_*`). Utile pour paramétrer le filtre
@@ -1637,6 +1702,13 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.02,
         help="Marge minimale |proba_long - proba_short| pour extreme_gate_directional (défaut 0.02).",
+    )
+    run_p.add_argument(
+        "--directional-bundle-gate",
+        choices=["strict", "discovery", "off"],
+        default=None,
+        help="Quality gate Walk-Forward du bundle directionnel. "
+             "None = batch_diagnostics.directional_bundle_gate dans config.yaml.",
     )
     run_p.add_argument(
         "--extreme-gate-dip-saturated",
@@ -2221,6 +2293,7 @@ def _explicit_flags(argv: list[str]) -> set[str]:
         "--short-momentum-filter": "short_momentum_filter",
         "--short-momentum-max-pct": "short_momentum_max_pct",
         "--cascade-top-pct": "cascade_top_pct",
+        "--oracle-calibration": "oracle_calibration",
         "--dip-enabled": "dip_enabled",
         "--no-dip-enabled": "dip_enabled",
         "--dip-rank-horizon": "dip_rank_horizon",
@@ -3140,7 +3213,10 @@ def _run_backtest(args: argparse.Namespace) -> None:
         # Pipeline : l'univers = celui de l'entraînement du batch (couverture ML
         # mesurée contre l'univers réel du modèle, pas l'univers tradable PIT).
         universe_scope_df = _load_batch_training_universe_scope(
-            engine, args.ml_batch_id, _universe_dates,
+            engine,
+            args.ml_batch_id,
+            _universe_dates,
+            artifacts_dir=Path(args.artifacts_dir),
         )
         if universe_scope_df is not None and not universe_scope_df.empty:
             _safe_print(
@@ -3277,7 +3353,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
             with open("config.yaml", encoding="utf-8") as _fh_directional_gate:
                 _directional_cfg = _yaml_directional_gate.safe_load(_fh_directional_gate) or {}
             _directional_level = str(
-                (_directional_cfg.get("batch_diagnostics") or {}).get(
+                getattr(args, "directional_bundle_gate", None)
+                or (_directional_cfg.get("batch_diagnostics") or {}).get(
                     "directional_bundle_gate", "strict"
                 )
             ).strip().lower()
@@ -3617,7 +3694,10 @@ def _run_backtest(args: argparse.Namespace) -> None:
                     raise SystemExit(2)
                 # ── Calibration optionnelle de proba_extreme (oracle.calibration) ──
                 _cal_flag = str(getattr(args, "oracle_calibration", "none") or "none").strip().lower()
-                if _cal_flag in ("", "none"):
+                if (
+                    _cal_flag in ("", "none")
+                    and "oracle_calibration" not in explicit_flags
+                ):
                     _cal_flag = str((_cfg_cas.get("oracle") or {}).get("calibration") or "none").strip().lower()
                 # Aucun backtest strict ne doit ajuster un calibrateur sur les
                 # labels futurs de sa propre fenêtre. Sans calibrateur Oracle
@@ -3730,6 +3810,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 preds_df, _cascade_batch_id, engine=engine,
                 best_h=_best_h_flag,
                 top_pct=getattr(args, "cascade_top_pct", None),
+                min_prob=getattr(args, "cascade_min_prob", None),
                 rank_mode=_rank_mode_eff,
                 rank_seed=getattr(args, "cascade_rank_seed", 42),
                 short_momentum_filter=(None if _sm_filter_flag == "none" else _sm_filter_flag),
@@ -4010,6 +4091,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 macro_pit_mode=macro_pit_mode,
             )
             macro_missing_policy = str(getattr(args, "macro_missing_policy", "") or "").strip().lower()
+            if bool(getattr(args, "force_macro_missing", False)):
+                macro_missing_policy = "allow"
             if macro_missing_policy in {"allow", "fail"}:
                 _mr_cfg_for_bt = replace(
                     _mr_cfg_for_bt,
@@ -4020,7 +4103,12 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 if getattr(_mr_cfg_for_bt, "allow_neutral_fallback_on_missing_macro_data", False)
                 else "fail"
             )
-            if getattr(_mr_cfg_for_bt, "enabled", False):
+            if bool(getattr(args, "force_macro_missing", False)):
+                _macro_provider_for_bt = None
+                _safe_print(
+                    "   ⚠️ Diagnostic macro : provider ignoré, fallback neutre forcé sur toute la période."
+                )
+            elif getattr(_mr_cfg_for_bt, "enabled", False):
                 try:
                     _macro_provider_for_bt = _build_macro_bt(
                         _yaml_bt,

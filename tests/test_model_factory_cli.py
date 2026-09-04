@@ -45,6 +45,53 @@ def test_cli_importable():
     assert hasattr(cli, "__doc__")
 
 
+def test_required_prediction_persistence_is_fail_fast(monkeypatch) -> None:
+    frame = pd.DataFrame([{"symbol": "AAPL"}])
+    monkeypatch.setattr(cli, "increment_runtime_counter", lambda *args, **kwargs: 1)
+    monkeypatch.setattr(cli, "update_runtime_status", lambda **kwargs: kwargs)
+
+    def _fail(_engine, _frame):
+        raise ValueError("column too short")
+
+    with pytest.raises(cli.PredictionPersistenceError, match="required_prediction_persistence_failed"):
+        cli._persist_predictions_with_policy(
+            object(),
+            frame,
+            insert_fn=_fail,
+            operation="directional_test",
+            required=True,
+        )
+
+
+def test_legacy_prediction_persistence_can_remain_degraded(monkeypatch) -> None:
+    frame = pd.DataFrame([{"symbol": "AAPL"}])
+    monkeypatch.setattr(cli, "increment_runtime_counter", lambda *args, **kwargs: 1)
+    monkeypatch.setattr(cli, "update_runtime_status", lambda **kwargs: kwargs)
+
+    cli._persist_predictions_with_policy(
+        object(),
+        frame,
+        insert_fn=lambda _engine, _frame: (_ for _ in ()).throw(ValueError("temporary")),
+        operation="legacy_test",
+        required=False,
+    )
+
+
+def test_directional_bundle_final_guard_rejects_empty_persistence(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_directional_bundle_prediction_coverage", lambda *args, **kwargs: (0, 0))
+
+    with pytest.raises(cli.PredictionPersistenceError, match="directional_bundle_predictions_missing"):
+        cli._require_directional_bundle_predictions(object(), "bundle-1", expected_dates=2)
+
+
+def test_directional_bundle_final_guard_accepts_complete_persistence(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_directional_bundle_prediction_coverage", lambda *args, **kwargs: (110, 2))
+
+    assert cli._require_directional_bundle_predictions(
+        object(), "bundle-1", expected_dates=2,
+    ) == (110, 2)
+
+
 def test_cli_parser_accepts_stock_bars_daily_symbol_source() -> None:
     parser = cli.build_arg_parser()
 
