@@ -179,3 +179,7 @@ Cette deuxième organisation serait plus rapide, particulièrement avec 2 300 sy
 
 todo 2:
 campagne d’ablation, les 168 features oracle
+
+
+
+python  -u -m dataIntegrityEngine.sync_latest_quotes --batch-size 200 --symbol-source active-tradable --from-date 2020-07-22 --to-date 2026-08-19 --start-symbol OGI
