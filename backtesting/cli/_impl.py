@@ -1564,6 +1564,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="P5.2 : override cascade.top_pct (ex 0.02/0.05/0.10/0.15) — courbe de capacité "
              "top_pct. Transmis à apply_cascade_to_predictions(top_pct=...). None = config.yaml.",
     )
+    run_p.add_argument(
+        "--cascade-min-prob",
+        type=float,
+        default=None,
+        help="Override de la probabilité directionnelle minimale de la cascade (0..1). "
+             "None = cascade.min_prob_classification/regression dans config.yaml.",
+    )
     # ── Persistent Rank DIP filter — overrides config.yaml (backtest_*) ──
     # Chaque flag est optionnel (None = valeur de config.yaml
     # `persistent_dip_filter_long.backtest_*`). Utile pour paramétrer le filtre
@@ -1689,6 +1696,13 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.02,
         help="Marge minimale |proba_long - proba_short| pour extreme_gate_directional (défaut 0.02).",
+    )
+    run_p.add_argument(
+        "--directional-bundle-gate",
+        choices=["strict", "discovery", "off"],
+        default=None,
+        help="Quality gate Walk-Forward du bundle directionnel. "
+             "None = batch_diagnostics.directional_bundle_gate dans config.yaml.",
     )
     run_p.add_argument(
         "--extreme-gate-dip-saturated",
@@ -3333,7 +3347,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
             with open("config.yaml", encoding="utf-8") as _fh_directional_gate:
                 _directional_cfg = _yaml_directional_gate.safe_load(_fh_directional_gate) or {}
             _directional_level = str(
-                (_directional_cfg.get("batch_diagnostics") or {}).get(
+                getattr(args, "directional_bundle_gate", None)
+                or (_directional_cfg.get("batch_diagnostics") or {}).get(
                     "directional_bundle_gate", "strict"
                 )
             ).strip().lower()
@@ -3789,6 +3804,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 preds_df, _cascade_batch_id, engine=engine,
                 best_h=_best_h_flag,
                 top_pct=getattr(args, "cascade_top_pct", None),
+                min_prob=getattr(args, "cascade_min_prob", None),
                 rank_mode=_rank_mode_eff,
                 rank_seed=getattr(args, "cascade_rank_seed", 42),
                 short_momentum_filter=(None if _sm_filter_flag == "none" else _sm_filter_flag),

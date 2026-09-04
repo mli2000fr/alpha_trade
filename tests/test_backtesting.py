@@ -2490,6 +2490,23 @@ class TestCLI:
         assert args.fidelity_baseline_id is None
         assert args.fidelity_baseline_catalog is None
         assert args.min_ml_coverage_ratio is None
+        assert args.cascade_min_prob is None
+        assert args.directional_bundle_gate is None
+
+    def test_parse_run_accepts_directional_bundle_research_overrides(self):
+        from backtesting.cli import _build_parser
+
+        args = _build_parser().parse_args([
+            "run",
+            "--start", "2024-07-01",
+            "--cascade-min-prob", "0.85",
+            "--directional-bundle-gate", "off",
+            "--extreme-gate-per-symbol", "bypass",
+        ])
+
+        assert args.cascade_min_prob == pytest.approx(0.85)
+        assert args.directional_bundle_gate == "off"
+        assert args.extreme_gate_per_symbol == "bypass"
 
     def test_parse_run_accepts_fixed_protection_logic_flag(self):
         from backtesting.cli import _build_parser

@@ -642,6 +642,9 @@ def test_build_backtesting_run_command_extreme_gate_directional():
             extreme_gate_direction_margin=0.05,
             extreme_gate_pct=0.20,
             oracle_calibration="none",
+            cascade_min_prob=0.55,
+            directional_bundle_gate="off",
+            extreme_gate_per_symbol="bypass",
         ),
     )
 
@@ -649,6 +652,9 @@ def test_build_backtesting_run_command_extreme_gate_directional():
     assert command[command.index("--extreme-gate-direction-margin") + 1] == "0.05"
     assert command[command.index("--extreme-gate-pct") + 1] == "0.2"
     assert command[command.index("--oracle-calibration") + 1] == "none"
+    assert command[command.index("--cascade-min-prob") + 1] == "0.55"
+    assert command[command.index("--directional-bundle-gate") + 1] == "off"
+    assert command[command.index("--extreme-gate-per-symbol") + 1] == "bypass"
     assert "--cascade-top-pct" not in command
     assert "--no-shorts" not in command
     assert "--no-longs" not in command

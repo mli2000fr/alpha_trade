@@ -75,6 +75,7 @@ class BacktestRunOptions:
     # P5.2 — seuil top/bottom de la cascade ML (fraction). None = config.yaml
     # (cascade.top_pct). Défaut aligné benchmark B25 : 0.10.
     cascade_top_pct: float | None = 0.10
+    cascade_min_prob: float | None = None
     # Pool Oracle Extreme (indépendant de cascade.top_pct / Global Rank).
     extreme_gate_pct: float | None = 0.20
     # Persistent Rank DIP filter — overrides config.yaml
@@ -101,6 +102,8 @@ class BacktestRunOptions:
     # None = défaut CLI (ml_batch_id si parquet absent).
     oracle_batch_id: str | None = None
     oracle_calibration: Literal["none", "rank", "isotonic"] = "none"
+    directional_bundle_gate: Literal["strict", "discovery", "off"] | None = None
+    extreme_gate_per_symbol: Literal["filter", "no_filter", "bypass"] = "filter"
     # E-recherche — priorité N4X2 jours saturés (pool Oracle TOP20 intact) :
     # réordonnancement lexicographique (bande de rang Oracle → N4X2 → score)
     # UNIQUEMENT quand candidats > slots disponibles. Défaut off (gate dur actuel).
@@ -363,6 +366,8 @@ def build_backtesting_command(
             and float(options.cascade_top_pct) > 0
         ):
             command.extend(["--cascade-top-pct", str(options.cascade_top_pct)])
+        if options.cascade_min_prob is not None:
+            command.extend(["--cascade-min-prob", str(float(options.cascade_min_prob))])
         # Persistent Rank DIP filter — overrides optionnels du config.yaml.
         # Aucun flag émis si tous les champs sont None → la CLI lit config.yaml.
         _effective_dip_enabled = options.dip_enabled
@@ -404,6 +409,12 @@ def build_backtesting_command(
             and float(options.extreme_gate_pct) > 0
         ):
             command.extend(["--extreme-gate-pct", str(float(options.extreme_gate_pct))])
+            command.extend(["--extreme-gate-per-symbol", options.extreme_gate_per_symbol])
+        if (
+            options.cascade_rank_mode in ("extreme_gate", "extreme_gate_directional")
+            and options.directional_bundle_gate is not None
+        ):
+            command.extend(["--directional-bundle-gate", options.directional_bundle_gate])
         # E-recherche — priorité N4X2 jours saturés (pool Oracle TOP20 intact).
         if options.extreme_gate_dip_saturated:
             command.append("--extreme-gate-dip-saturated")

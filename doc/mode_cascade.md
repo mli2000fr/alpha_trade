@@ -618,6 +618,8 @@ l’horizon effectivement utilisé, pas seulement le nom informel « B25 ».
 | rôle Per-Symbol legacy | `--extreme-gate-per-symbol` | `filter` |
 | shorts historiques E18 | `--extreme-gate-shorts` | désactivé |
 | marge directionnelle | `--extreme-gate-direction-margin` | `0.02` |
+| probabilité directionnelle minimale | `--cascade-min-prob` | `cascade.min_prob_classification`, généralement `0.55` |
+| quality gate du bundle | `--directional-bundle-gate` | `config.yaml`, généralement `strict` |
 | source Oracle table | `--oracle-batch-id` | batch ML si non précisé selon le flux |
 | source Oracle parquet legacy | `--oracle-oos-path` | aucune |
 | placebo | `--cascade-rank-seed` | `42` |
@@ -637,6 +639,26 @@ Short only → --no-longs  → capacité LONG  = 0
 ```
 
 Les deux cases simultanément sont rejetées avant construction de la commande.
+
+### Contrôles de recherche du bundle dans l’IHM
+
+Pour les modes Extreme Gate, la page Backtest expose trois réglages distincts :
+
+- **Rôle Per-Symbol dans Extreme Gate** : `filter` filtre et classe avec la
+  probabilité Per-Symbol, `no_filter` l’utilise seulement pour classer et
+  `bypass` l’ignore totalement afin d’obtenir un témoin Oracle pur. Ce réglage
+  concerne le mode legacy LONG-only ; il est désactivé visuellement dans le
+  mode directionnel symétrique, où les branches LONG et SHORT sont nécessaires.
+- **Quality gate directionnel** : `strict`, `discovery` ou `off`. `off`
+  conserve toutes les paires réellement servables et permet de mesurer le
+  modèle directionnel sans présélection supplémentaire sur ses folds.
+- **Probabilité directionnelle minimale** : seuil appliqué à
+  `max(P(LONG), P(SHORT))`. Il ne doit pas être confondu avec la marge
+  `abs(P(LONG)-P(SHORT))`, qui mesure l’ambiguïté entre les deux côtés.
+
+Ces valeurs sont émises explicitement dans la commande générée, afin que deux
+backtests restent comparables sans dépendre d’une modification ultérieure de
+`config.yaml`.
 
 ## 16. Saturation, DIP et ordre final
 
