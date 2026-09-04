@@ -25,6 +25,16 @@ Ne pas modifier simultanément la calibration, les seuils, la liquidité, l'univ
 | `ablation_10_no_engineered_transforms.json` | Les transformations complexes généralisent-elles ? |
 | `ablation_11_no_temporal_zscores.json` | Les z-scores temporels améliorent-ils la stabilité ? |
 
+## Vague 2 — combinaisons issues des résultats
+
+La synthèse chiffrée est conservée dans `RESULTATS_CAMPAGNE_20260904.md`. Les trois profils suivants combinent uniquement les retraits favorables de la première vague :
+
+| Profil | Question testée |
+|---|---|
+| `combined_12_no_market_regime_no_engineered.json` | Le gain A09 se cumule-t-il avec le retrait des transformations complexes A10 ? |
+| `combined_13_no_market_regime_no_momentum.json` | Le gain A09 se cumule-t-il avec le retrait momentum/rendements A04 ? |
+| `combined_14_no_market_regime_no_engineered_no_momentum.json` | Une version compacte réunissant A09+A10+A04 conserve-t-elle la précision du TOP20 ? |
+
 ## Résultats à conserver par batch
 
 Comparer prioritairement : `precision@10%`, lift contre la prévalence, recall@10%, AUC, monotonie des déciles, moyenne et minimum par fold, dispersion entre folds, nombre de folds valides et nombre de features effectif. Une ablation n'est favorable que si son gain est stable sur plusieurs folds ; une moyenne supérieure due à un seul fold ne suffit pas.
