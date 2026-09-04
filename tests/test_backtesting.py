@@ -2557,6 +2557,53 @@ class TestCLI:
 
         assert exc.value.code == 1
 
+    def test_directional_bundle_coverage_uses_only_servable_pairs(self, monkeypatch):
+        import backtesting.cli._impl as cli_impl
+        import common.ml_cascade_contract as cascade_contract
+
+        class _Result:
+            @staticmethod
+            def fetchone():
+                return ("AAA,BBB,CCC",)
+
+        class _Connection:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            @staticmethod
+            def execute(*_args, **_kwargs):
+                return _Result()
+
+        class _Engine:
+            @staticmethod
+            def connect():
+                return _Connection()
+
+        monkeypatch.setattr(
+            cascade_contract,
+            "load_serving_directional_bundle_manifest",
+            lambda *_args, **_kwargs: {
+                "coverage": {
+                    "servable_paired_symbols": 2,
+                    "excluded_symbols": ["CCC"],
+                }
+            },
+        )
+
+        scope = cli_impl._load_batch_training_universe_scope(
+            _Engine(),
+            "bundle-1",
+            pd.to_datetime(["2025-01-02", "2025-01-03"]),
+            artifacts_dir=Path("artifacts/models"),
+        )
+
+        assert scope is not None
+        assert set(scope["symbol"]) == {"AAA", "BBB"}
+        assert len(scope) == 4
+
     def test_parse_run_command_accepts_macro_missing_policy_flags(self):
         from backtesting.cli import _build_parser
 

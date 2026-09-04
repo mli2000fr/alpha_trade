@@ -640,11 +640,16 @@ def test_build_backtesting_run_command_extreme_gate_directional():
             start="2025-01-01",
             cascade_rank_mode="extreme_gate_directional",
             extreme_gate_direction_margin=0.05,
+            extreme_gate_pct=0.20,
+            oracle_calibration="none",
         ),
     )
 
     assert command[command.index("--cascade-rank-mode") + 1] == "extreme_gate_directional"
     assert command[command.index("--extreme-gate-direction-margin") + 1] == "0.05"
+    assert command[command.index("--extreme-gate-pct") + 1] == "0.2"
+    assert command[command.index("--oracle-calibration") + 1] == "none"
+    assert "--cascade-top-pct" not in command
     assert "--no-shorts" not in command
     assert "--no-longs" not in command
 
@@ -658,11 +663,38 @@ def test_build_backtesting_run_command_extreme_gate_forces_hard_dip_off():
             start="2025-01-01",
             cascade_rank_mode="extreme_gate_directional",
             dip_enabled=True,
+            dip_rank_horizon=20,
+            dip_rank_threshold=0.90,
+            dip_persist_days=4,
+            dip_pct=0.02,
+            dip_reclaim_max_wait=10,
         ),
     )
 
     assert "--no-dip-enabled" in command
     assert "--dip-enabled" not in command
+    assert "--dip-rank-horizon" not in command
+    assert "--dip-rank-threshold" not in command
+    assert "--dip-persist-days" not in command
+    assert "--dip-pct" not in command
+    assert "--dip-reclaim-max-wait" not in command
+
+
+def test_build_backtesting_run_command_canonical_costs_are_not_duplicated():
+    from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+    command = build_backtesting_command(
+        "run",
+        BacktestRunOptions(
+            start="2025-01-01",
+            use_canonical_costs=True,
+            commission_bps=1.0,
+            slippage_bps=2.0,
+        ),
+    )
+
+    assert command.count("--commission-bps") == 1
+    assert command.count("--slippage-bps") == 1
 
 
 def test_build_backtesting_run_command_saturated_priority_keeps_dip_enabled():

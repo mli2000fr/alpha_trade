@@ -75,6 +75,8 @@ class BacktestRunOptions:
     # P5.2 — seuil top/bottom de la cascade ML (fraction). None = config.yaml
     # (cascade.top_pct). Défaut aligné benchmark B25 : 0.10.
     cascade_top_pct: float | None = 0.10
+    # Pool Oracle Extreme (indépendant de cascade.top_pct / Global Rank).
+    extreme_gate_pct: float | None = 0.20
     # Persistent Rank DIP filter — overrides config.yaml
     # (persistent_dip_filter_long.backtest_*). None = lire config.yaml. L'IHM
     # préremplit ces champs avec les valeurs par défaut du config.yaml (l'utilisateur
@@ -98,6 +100,7 @@ class BacktestRunOptions:
     # Source Oracle Extreme : table oracle_extreme_predictions (filtre batch strict).
     # None = défaut CLI (ml_batch_id si parquet absent).
     oracle_batch_id: str | None = None
+    oracle_calibration: Literal["none", "rank", "isotonic"] = "none"
     # E-recherche — priorité N4X2 jours saturés (pool Oracle TOP20 intact) :
     # réordonnancement lexicographique (bande de rang Oracle → N4X2 → score)
     # UNIQUEMENT quand candidats > slots disponibles. Défaut off (gate dur actuel).
@@ -354,7 +357,11 @@ def build_backtesting_command(
             if _bt_h is not None:
                 command.extend(["--best-horizon", str(int(_bt_h))])
         # P5.2 — seuil top/bottom cascade ML (aligné benchmark : 0.10)
-        if options.cascade_top_pct is not None and float(options.cascade_top_pct) > 0:
+        if (
+            options.cascade_rank_mode not in ("extreme_gate", "extreme_gate_directional")
+            and options.cascade_top_pct is not None
+            and float(options.cascade_top_pct) > 0
+        ):
             command.extend(["--cascade-top-pct", str(options.cascade_top_pct)])
         # Persistent Rank DIP filter — overrides optionnels du config.yaml.
         # Aucun flag émis si tous les champs sont None → la CLI lit config.yaml.
@@ -369,23 +376,34 @@ def build_backtesting_command(
             _effective_dip_enabled = False
         if _effective_dip_enabled is not None:
             command.append("--dip-enabled" if _effective_dip_enabled else "--no-dip-enabled")
-        if options.dip_rank_horizon is not None:
+        if _effective_dip_enabled is not False and options.dip_rank_horizon is not None:
             command.extend(["--dip-rank-horizon", str(int(options.dip_rank_horizon))])
-        if options.dip_rank_threshold is not None:
+        if _effective_dip_enabled is not False and options.dip_rank_threshold is not None:
             command.extend(["--dip-rank-threshold", str(float(options.dip_rank_threshold))])
-        if options.dip_persist_days is not None:
+        if _effective_dip_enabled is not False and options.dip_persist_days is not None:
             command.extend(["--dip-persist-days", str(int(options.dip_persist_days))])
-        if options.dip_pct is not None:
+        if _effective_dip_enabled is not False and options.dip_pct is not None:
             command.extend(["--dip-pct", str(float(options.dip_pct))])
-        if options.dip_reclaim_ratio is not None:
+        if _effective_dip_enabled is not False and options.dip_reclaim_ratio is not None:
             command.extend(["--dip-reclaim-ratio", str(float(options.dip_reclaim_ratio))])
-        if options.dip_reclaim_max_wait is not None:
+        if _effective_dip_enabled is not False and options.dip_reclaim_max_wait is not None:
             command.extend(["--dip-reclaim-max-wait", str(int(options.dip_reclaim_max_wait))])
         # S6 (Oracle Layer) — rang cascade remplacé par P(top10)
         if options.cascade_rank_mode and options.cascade_rank_mode != "ml":
             command.extend(["--cascade-rank-mode", options.cascade_rank_mode])
         if options.oracle_batch_id:
             command.extend(["--oracle-batch-id", options.oracle_batch_id])
+        if options.cascade_rank_mode in (
+            "oracle", "oracle_filter", "oracle_rerank", "oracle_pool",
+            "extreme_gate", "extreme_gate_directional",
+        ):
+            command.extend(["--oracle-calibration", options.oracle_calibration])
+        if (
+            options.cascade_rank_mode in ("extreme_gate", "extreme_gate_directional")
+            and options.extreme_gate_pct is not None
+            and float(options.extreme_gate_pct) > 0
+        ):
+            command.extend(["--extreme-gate-pct", str(float(options.extreme_gate_pct))])
         # E-recherche — priorité N4X2 jours saturés (pool Oracle TOP20 intact).
         if options.extreme_gate_dip_saturated:
             command.append("--extreme-gate-dip-saturated")
@@ -432,9 +450,9 @@ def build_backtesting_command(
             command.extend(["--margin-interest-rate", str(options.margin_interest_rate)])
         if options.allow_fractional_shares:
             command.append("--allow-fractional-shares")
-        if options.commission_bps is not None:
+        if not options.use_canonical_costs and options.commission_bps is not None:
             command.extend(["--commission-bps", str(options.commission_bps)])
-        if options.slippage_bps is not None:
+        if not options.use_canonical_costs and options.slippage_bps is not None:
             command.extend(["--slippage-bps", str(options.slippage_bps)])
         if options.commission_bps is None and options.slippage_bps is None and options.fees is not None:
             command.extend(["--fees", str(options.fees)])

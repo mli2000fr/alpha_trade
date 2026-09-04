@@ -195,6 +195,8 @@ def _load_batch_training_universe_scope(
     engine: object,
     batch_id: str | None,
     trade_dates,
+    *,
+    artifacts_dir: Path | None = None,
 ) -> pd.DataFrame | None:
     """Univers du backtest pipeline = univers d'ENTRAÎNEMENT du batch.
 
@@ -233,6 +235,56 @@ def _load_batch_training_universe_scope(
             exc_info=True,
         )
         return None
+    # Un bundle directionnel ne peut servir que l'intersection des branches
+    # LONG et SHORT validées par son manifeste. Le gate de couverture doit donc
+    # mesurer les trous sur cet univers servable, pas sur tous les symboles
+    # demandés lors de l'entraînement (dont les branches absentes/inéligibles
+    # sont volontairement exclues du serving).
+    if artifacts_dir is not None:
+        try:
+            from common.ml_cascade_contract import load_serving_directional_bundle_manifest
+
+            manifest = load_serving_directional_bundle_manifest(artifacts_dir, batch_id)
+            if manifest is not None:
+                coverage = manifest.get("coverage") or {}
+                explicit_symbols = coverage.get("servable_paired_symbol_list")
+                if isinstance(explicit_symbols, list):
+                    serving_symbols = {
+                        str(symbol).strip().upper()
+                        for symbol in explicit_symbols
+                        if str(symbol).strip()
+                    }
+                else:
+                    excluded = {
+                        str(symbol).strip().upper()
+                        for symbol in (coverage.get("excluded_symbols") or [])
+                        if str(symbol).strip()
+                    }
+                    serving_symbols = set(_syms) - excluded
+                expected_count = int(coverage.get("servable_paired_symbols") or 0)
+                if expected_count > 0 and len(serving_symbols) == expected_count:
+                    _syms = [symbol for symbol in _syms if symbol in serving_symbols]
+                    LOGGER.info(
+                        "ml coverage scope: directional bundle %s -> %d paired servable symbols",
+                        batch_id,
+                        len(_syms),
+                    )
+                else:
+                    LOGGER.warning(
+                        "ml coverage scope: manifeste directionnel incohérent batch=%s "
+                        "expected=%d resolved=%d; conservation de l'univers d'entraînement",
+                        batch_id,
+                        expected_count,
+                        len(serving_symbols),
+                    )
+        except Exception:
+            LOGGER.warning(
+                "ml coverage scope: manifeste directionnel indisponible pour batch=%s; "
+                "conservation de l'univers d'entraînement",
+                batch_id,
+                exc_info=True,
+            )
+
     _dates = sorted(
         {
             pd.Timestamp(d).date()
@@ -2221,6 +2273,7 @@ def _explicit_flags(argv: list[str]) -> set[str]:
         "--short-momentum-filter": "short_momentum_filter",
         "--short-momentum-max-pct": "short_momentum_max_pct",
         "--cascade-top-pct": "cascade_top_pct",
+        "--oracle-calibration": "oracle_calibration",
         "--dip-enabled": "dip_enabled",
         "--no-dip-enabled": "dip_enabled",
         "--dip-rank-horizon": "dip_rank_horizon",
@@ -3140,7 +3193,10 @@ def _run_backtest(args: argparse.Namespace) -> None:
         # Pipeline : l'univers = celui de l'entraînement du batch (couverture ML
         # mesurée contre l'univers réel du modèle, pas l'univers tradable PIT).
         universe_scope_df = _load_batch_training_universe_scope(
-            engine, args.ml_batch_id, _universe_dates,
+            engine,
+            args.ml_batch_id,
+            _universe_dates,
+            artifacts_dir=Path(args.artifacts_dir),
         )
         if universe_scope_df is not None and not universe_scope_df.empty:
             _safe_print(
@@ -3617,7 +3673,10 @@ def _run_backtest(args: argparse.Namespace) -> None:
                     raise SystemExit(2)
                 # ── Calibration optionnelle de proba_extreme (oracle.calibration) ──
                 _cal_flag = str(getattr(args, "oracle_calibration", "none") or "none").strip().lower()
-                if _cal_flag in ("", "none"):
+                if (
+                    _cal_flag in ("", "none")
+                    and "oracle_calibration" not in explicit_flags
+                ):
                     _cal_flag = str((_cfg_cas.get("oracle") or {}).get("calibration") or "none").strip().lower()
                 # Aucun backtest strict ne doit ajuster un calibrateur sur les
                 # labels futurs de sa propre fenêtre. Sans calibrateur Oracle
