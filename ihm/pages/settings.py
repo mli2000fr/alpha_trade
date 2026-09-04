@@ -47,6 +47,14 @@ from ihm.services.notifications_preferences import (
 )
 from ihm.services.notifications import load_smtp_config, read_smtp_test_failure_log, send_test_email
 from ihm.services.capital_presets import get_capital_preset_by_key
+from service.telegram import (
+    CHAT_ID_ENV,
+    TOKEN_ENV,
+    TelegramConfigError,
+    get_default_chat_id,
+    is_telegram_configured,
+    send_telegram_message,
+)
 
 ALPHA_SCANNER_DEPENDENCY_THRESHOLDS_FLASH_KEY = "settings_alpha_scanner_dependency_thresholds_flash"
 ALPHA_SCANNER_SELECTED_STYLE_KEY = "settings_alpha_scanner_selected_style"
@@ -61,6 +69,8 @@ NOTIFICATIONS_RECIPIENTS_KEY = "settings_notifications_recipients_input"
 NOTIFICATIONS_ENABLED_KEY = "settings_notifications_enabled_input"
 NOTIFICATIONS_NOTIFY_ON_KEY = "settings_notifications_notify_on_input"
 NOTIFICATIONS_FLASH_KEY = "settings_notifications_flash"
+TELEGRAM_CHAT_ID_INPUT_KEY = "settings_telegram_chat_id_input"
+TELEGRAM_FLASH_KEY = "settings_telegram_flash"
 VAR_ENV_UPLOAD_SIGNATURE_KEY = "settings_var_env_upload_signature"
 VAR_ENV_UPLOAD_RESULT_KEY = "settings_var_env_upload_result"
 VAR_ENV_EXPORT_DATA_KEY = "settings_var_env_export_data"
@@ -758,6 +768,95 @@ def _render_notifications_settings():
             )
 
 
+def _build_telegram_not_configured_warning_message() -> str | None:
+    """Message d'avertissement si le token Telegram ``TOKEN_TELEGRAM_BOT`` est absent."""
+    if is_telegram_configured():
+        return None
+    return (
+        "Token Telegram non configuré → aucun message ne sera envoyé. "
+        f"Renseignez la variable d'environnement `{TOKEN_ENV}` (token du bot créé via @BotFather)."
+    )
+
+
+def _render_telegram_notifications_settings() -> None:
+    """Section Notifications Telegram — envoi d'un message de test.
+
+    Le token du bot est lu depuis l'env ``TOKEN_TELEGRAM_BOT`` (via
+    ``service.telegram``). Le Chat ID destinataire est saisi dans l'input ou
+    lu depuis l'env ``TELEGRAM_CHAT_ID`` si l'input est vide.
+    """
+    flash = st.session_state.pop(TELEGRAM_FLASH_KEY, None)
+    if isinstance(flash, tuple) and len(flash) == 2:
+        _flash_message(str(flash[0]), str(flash[1]))
+
+    st.subheader(" Notifications Telegram")
+    st.caption(
+        "Envoie un message Telegram via le bot configuré par la variable "
+        f"d'environnement `{TOKEN_ENV}`. Le chat/canal destinataire est saisi "
+        f"ci-dessous (sinon lu depuis `{CHAT_ID_ENV}`)."
+    )
+    telegram_warning = _build_telegram_not_configured_warning_message()
+    if telegram_warning:
+        st.warning(telegram_warning)
+
+    if TELEGRAM_CHAT_ID_INPUT_KEY not in st.session_state:
+        st.session_state[TELEGRAM_CHAT_ID_INPUT_KEY] = ""
+
+    with st.container(border=True):
+        st.text_input(
+            "Chat ID destinataire",
+            key=TELEGRAM_CHAT_ID_INPUT_KEY,
+            placeholder="-1001234567890",
+            help=(
+                "ID du chat/canal Telegram (utilisateur ou groupe). Laisser vide "
+                f"pour utiliser la variable d'environnement `{CHAT_ID_ENV}`."
+            ),
+        )
+        default_chat = get_default_chat_id()
+        token_state = "✅ configuré" if is_telegram_configured() else "❌ non configuré"
+        st.caption(
+            f"Token (`{TOKEN_ENV}`) : {token_state} — "
+            f"Chat ID par défaut (`{CHAT_ID_ENV}`) : `{default_chat or '—'}`."
+        )
+
+        if st.button(
+            "📨 Envoyer un message Telegram de test",
+            key="settings_telegram_test",
+            use_container_width=True,
+            disabled=not is_telegram_configured(),
+            help=None if is_telegram_configured() else f"Configurez d'abord la variable `{TOKEN_ENV}`.",
+        ):
+            chat_id_raw = str(st.session_state.get(TELEGRAM_CHAT_ID_INPUT_KEY, "")).strip()
+            chat_id = chat_id_raw or None
+            if not chat_id and not default_chat:
+                st.session_state[TELEGRAM_FLASH_KEY] = (
+                    "error",
+                    "Aucun Chat ID destinataire : saisissez-le ou définissez "
+                    f"la variable d'environnement `{CHAT_ID_ENV}`.",
+                )
+            else:
+                from datetime import datetime
+
+                message = (
+                    f"✅ Test de notification Telegram — {datetime.now().isoformat(timespec='seconds')}\n"
+                    "Si vous lisez ce message, la chaîne de notification fonctionne."
+                )
+                try:
+                    ok = send_telegram_message(message, chat_id=chat_id, parse_mode="Markdown")
+                    if ok:
+                        result = ("success", f"Message de test envoyé au chat `{chat_id or default_chat}`.")
+                    else:
+                        result = (
+                            "error",
+                            "Échec de l'envoi du message Telegram (erreur réseau/API). "
+                            "Consultez les logs (`service.telegram`) pour le détail.",
+                        )
+                except TelegramConfigError as exc:
+                    result = ("error", str(exc))
+                st.session_state[TELEGRAM_FLASH_KEY] = result
+            st.rerun()
+
+
 def _check_import(name: str) -> str:
     try:
         __import__(name)
@@ -796,6 +895,7 @@ def render():
     _render_bars_provider_settings()
     _render_alpha_scanner_dependency_threshold_settings()
     _render_notifications_settings()
+    _render_telegram_notifications_settings()
 
     # ---- Sprint S26 (gap P3) — Maintenance & sécurité ops ------------
     st.subheader(" Maintenance & sécurité ops")

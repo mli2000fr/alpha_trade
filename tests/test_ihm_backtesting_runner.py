@@ -204,6 +204,23 @@ def test_build_backtesting_run_command_can_allow_missing_macro_fallback():
 	assert "--fail-on-missing-macro-data" not in command
 
 
+def test_build_backtesting_run_command_can_force_macro_missing():
+	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
+
+	command = build_backtesting_command(
+		"run",
+		BacktestRunOptions(
+			start="2025-01-01",
+			force_macro_missing=True,
+			allow_neutral_fallback_on_missing_macro_data=False,
+		),
+	)
+
+	assert "--force-macro-missing" in command
+	assert "--allow-neutral-fallback-on-missing-macro-data" in command
+	assert "--fail-on-missing-macro-data" not in command
+
+
 def test_build_backtesting_run_command_includes_phase2_flags():
 	from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
 

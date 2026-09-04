@@ -59,6 +59,7 @@ class BacktestRunOptions:
     engine_mode: Literal["research", "pipeline"] = "research"
     scores_pit_mode: Literal["exact", "asof_latest"] = "exact"
     macro_pit_mode: Literal["yaml_default", "asof_inclusive", "j_minus_1_strict"] = "yaml_default"
+    force_macro_missing: bool = False
     ml_pit_strategy: Literal["auto", "use-persisted", "rebuild-missing", "walk-forward-train-then-predict"] = "auto"
     phase2_mode: Literal["off", "risk", "risk_execution"] = "off"
     phase3_mode: Literal["off", "execution_replay"] = "off"
@@ -467,7 +468,12 @@ def build_backtesting_command(
             command.extend(["--slippage-bps", str(options.slippage_bps)])
         if options.commission_bps is None and options.slippage_bps is None and options.fees is not None:
             command.extend(["--fees", str(options.fees)])
-        if options.allow_neutral_fallback_on_missing_macro_data:
+        if options.force_macro_missing:
+            command.extend([
+                "--force-macro-missing",
+                "--allow-neutral-fallback-on-missing-macro-data",
+            ])
+        elif options.allow_neutral_fallback_on_missing_macro_data:
             command.append("--allow-neutral-fallback-on-missing-macro-data")
         else:
             command.append("--fail-on-missing-macro-data")

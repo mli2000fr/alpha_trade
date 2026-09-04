@@ -2334,6 +2334,20 @@ def _build_run_options() -> BacktestRunOptions:
             st.caption(
                 "Mode strict actif (défaut) : le run échoue dès qu'une macro requise est indisponible."
             )
+    force_macro_missing = st.checkbox(
+        "Simuler la macro entièrement absente (diagnostic)",
+        value=bool(st.session_state.get("bt_run_force_macro_missing", False)),
+        key="bt_run_force_macro_missing",
+        help=(
+            "Ignore temporairement le provider macro pendant ce backtest, sans modifier les tables. "
+            "Chaque séance suit le même fallback neutre qu'une vraie absence de macro."
+        ),
+    )
+    if force_macro_missing:
+        st.warning(
+            "Ablation diagnostique active : les données macro existantes seront volontairement ignorées "
+            "et le fallback neutre sera forcé pour ce run uniquement."
+        )
 
     artifacts_dir = st.text_input(
         "Répertoire des artefacts modèles",
@@ -2696,10 +2710,10 @@ def _build_run_options() -> BacktestRunOptions:
                     "Quality gate directionnel",
                     options=["strict", "discovery", "off"],
                     index=["strict", "discovery", "off"].index(
-                        st.session_state.get("bt_run_directional_bundle_gate", "strict")
-                        if st.session_state.get("bt_run_directional_bundle_gate", "strict")
+                        st.session_state.get("bt_run_directional_bundle_gate", "off")
+                        if st.session_state.get("bt_run_directional_bundle_gate", "off")
                         in {"strict", "discovery", "off"}
-                        else "strict"
+                        else "off"
                     ),
                     key="bt_run_directional_bundle_gate",
                     help="`off` conserve toutes les paires servables ; `strict` et `discovery` appliquent les critères Walk-Forward du Diagnostic ML.",
@@ -2896,6 +2910,7 @@ def _build_run_options() -> BacktestRunOptions:
         engine_mode=cast(Any, engine_mode),
         scores_pit_mode=cast(Any, scores_pit_mode),
         macro_pit_mode=cast(Any, macro_pit_mode),
+        force_macro_missing=bool(force_macro_missing),
         ml_pit_strategy=cast(Any, ml_pit_strategy),
         phase2_mode=cast(Any, phase2_mode),
         phase3_mode=cast(Any, phase3_mode),

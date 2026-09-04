@@ -2639,6 +2639,14 @@ class TestCLI:
 
         assert args_allow.macro_missing_policy == "allow"
         assert args_fail.macro_missing_policy == "fail"
+        assert args_allow.force_macro_missing is False
+
+        args_forced = parser.parse_args([
+            "run",
+            "--start", "2025-01-01",
+            "--force-macro-missing",
+        ])
+        assert args_forced.force_macro_missing is True
 
     def test_parse_run_command_accepts_fidelity_baseline_options(self):
         from backtesting.cli import _build_parser
@@ -3079,6 +3087,7 @@ class TestCLI:
         import service.market as market
 
         captured: dict[str, object] = {}
+        macro_provider_sentinel = object()
         idx = pd.to_datetime(["2025-01-01", "2025-01-02"])
         ohlcv_df = pd.DataFrame({
             "symbol": ["AAPL", "AAPL"],
@@ -3114,6 +3123,7 @@ class TestCLI:
         def fake_build_phase2_risk_result(**kwargs):
             mr_cfg = kwargs["market_regimes_config"]
             captured["allow_neutral_fallback_on_missing_macro_data"] = mr_cfg.allow_neutral_fallback_on_missing_macro_data
+            captured["macro_provider"] = kwargs["macro_provider"]
             return SimpleNamespace(
                 entries=[],
                 signals_df=pd.DataFrame(columns=["trade_date", "symbol", "selected", "rank"]),
@@ -3158,7 +3168,7 @@ class TestCLI:
         monkeypatch.setattr(report, "save_report_json", lambda *args, **kwargs: tmp_path / "report.json")
         monkeypatch.setattr(report, "save_trades_csv", lambda *args, **kwargs: tmp_path / "trades.csv")
         monkeypatch.setattr(config_loader, "load_config", lambda *args, **kwargs: {"market_regimes": {"enabled": True, "vix": {"enabled": True}}})
-        monkeypatch.setattr(market, "build_default_macro_provider", lambda cfg: None)
+        monkeypatch.setattr(market, "build_default_macro_provider", lambda cfg: macro_provider_sentinel)
 
         args = argparse.Namespace(
             start="2025-01-01",
@@ -3187,6 +3197,14 @@ class TestCLI:
         cli._run_backtest(args)
 
         assert captured["allow_neutral_fallback_on_missing_macro_data"] is False
+        assert captured["macro_provider"] is macro_provider_sentinel
+
+        args.force_macro_missing = True
+        cli._run_backtest(args)
+
+        assert captured["allow_neutral_fallback_on_missing_macro_data"] is True
+        assert captured["macro_provider"] is None
+        assert args.macro_missing_policy == "allow"
 
     def test_run_backtest_phase3_requires_phase2_risk_execution(self, monkeypatch):
         import argparse

@@ -55,6 +55,21 @@ La page détecte une campagne manquante et peut désactiver le lancement. Même 
 le bouton est disponible, contrôler la couverture effective sur toute la
 période.
 
+#### Ablation « macro entièrement absente »
+
+La case **Simuler la macro entièrement absente (diagnostic)** ignore le provider
+macro pour le run courant sans modifier les tables ni les fichiers sources. Le
+bridge de risque reçoit alors la même absence de données que lors d'une panne
+réelle, active automatiquement le fallback neutre et marque chaque séance
+`data_quality=missing`. La commande correspondante contient
+`--force-macro-missing` et
+`--allow-neutral-fallback-on-missing-macro-data`.
+
+Cette option est réservée aux comparaisons contrôlées. Elle ne supprime pas les
+features macro déjà incorporées dans des prédictions ML persistées : elle isole
+la couche macro du régime appliquée pendant le backtest. Elle doit rester
+désactivée pour un run OOS normal disposant de sa macro PIT.
+
 ### Contrat de stratégie et d’exécution
 
 Les paramètres de sélection, stop, TP, trailing, drawdown, exposition secteur,

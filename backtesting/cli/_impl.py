@@ -701,6 +701,7 @@ def _build_backtest_common_params(
         "phase5_mode": phase5_mode,
         "phase7_mode": phase7_mode,
         "macro_pit_mode": getattr(args, "effective_macro_pit_mode", getattr(args, "macro_pit_mode", "yaml_default")),
+        "force_macro_missing": bool(getattr(args, "force_macro_missing", False)),
         "fidelity_baseline_id": getattr(args, "fidelity_baseline_id", None),
         "fidelity_baseline_catalog": getattr(args, "fidelity_baseline_catalog", None),
         "ml_pit_strategy": ml_pit_strategy,
@@ -1304,6 +1305,11 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["yaml_default", "asof_inclusive", "j_minus_1_strict"],
         default="yaml_default",
         help="Politique PIT explicite pour la macro en backtest. `yaml_default` lit `market_regimes.macro_pit_mode_backtest`, `asof_inclusive` autorise <= J, `j_minus_1_strict` force strictement J-1.",
+    )
+    run_p.add_argument(
+        "--force-macro-missing",
+        action="store_true",
+        help="Diagnostic uniquement : ignore le provider macro sur toute la période et force le fallback neutre avec data_quality=missing.",
     )
     run_p.add_argument(
         "--ml-pit-strategy",
@@ -4085,6 +4091,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 macro_pit_mode=macro_pit_mode,
             )
             macro_missing_policy = str(getattr(args, "macro_missing_policy", "") or "").strip().lower()
+            if bool(getattr(args, "force_macro_missing", False)):
+                macro_missing_policy = "allow"
             if macro_missing_policy in {"allow", "fail"}:
                 _mr_cfg_for_bt = replace(
                     _mr_cfg_for_bt,
@@ -4095,7 +4103,12 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 if getattr(_mr_cfg_for_bt, "allow_neutral_fallback_on_missing_macro_data", False)
                 else "fail"
             )
-            if getattr(_mr_cfg_for_bt, "enabled", False):
+            if bool(getattr(args, "force_macro_missing", False)):
+                _macro_provider_for_bt = None
+                _safe_print(
+                    "   ⚠️ Diagnostic macro : provider ignoré, fallback neutre forcé sur toute la période."
+                )
+            elif getattr(_mr_cfg_for_bt, "enabled", False):
                 try:
                     _macro_provider_for_bt = _build_macro_bt(
                         _yaml_bt,
