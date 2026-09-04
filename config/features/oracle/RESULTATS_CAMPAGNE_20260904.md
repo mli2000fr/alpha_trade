@@ -2,9 +2,9 @@
 
 ## Verdict
 
-Le meilleur profil moyen de cette vague est `ablation_09_no_market_relative_regime.json` (140 features). Il améliore à la fois le TOP10 et le TOP20 effectivement consommé par la cascade, mais son avantage n'est **pas statistiquement établi** une fois le chevauchement des cibles H20 correctement pris en compte.
+Après les deux vagues, le meilleur profil reste `ablation_09_no_market_relative_regime.json` (140 features). Il améliore à la fois le TOP10 et le TOP20 effectivement consommé par la cascade face à O0, mais son avantage n'est **pas statistiquement établi** une fois le chevauchement des cibles H20 correctement pris en compte.
 
-Elle ne doit toutefois pas remplacer immédiatement `oracle.json` en production. Onze variantes ont été comparées sur le même historique : le gagnant est donc exposé au biais de sélection multiple. Il faut d'abord tester les combinaisons proposées plus bas, puis effectuer une confirmation out-of-time verrouillée.
+Les trois combinaisons de la vague 2 n'améliorent pas A09 de façon exploitable. Elles dégradent toutes son TOP10 et son minimum de fold TOP20 ; aucune ne franchit donc le gate fixé avant leur entraînement. A09 ne doit toutefois pas remplacer immédiatement `oracle.json` en production : quatorze variantes ont désormais été comparées sur le même historique, ce qui expose le gagnant au biais de sélection multiple. La prochaine étape est une confirmation out-of-time verrouillée de **A09 contre O0 uniquement**.
 
 ## Contrôle de comparabilité
 
@@ -78,14 +78,36 @@ A02 et A06 obtiennent une AUC élevée, respectivement 0,711 et 0,715, tout en d
 
 La monotonie par décile du rendement **signé** existante dans le rapport historique est mal adaptée à une cible symétrique D1/D10. Pour cette campagne, la monotonie du taux d'extrêmes et celle de `abs(future_return)` ont été recalculées ; elles sont saturées à 1,0 pour toutes les variantes et ne départagent donc pas les profils.
 
-## Vague suivante recommandée
+## Vague 2 — combinaisons
 
-Créer seulement trois nouveaux profils à partir d'O0 :
+Les trois profils ont été entraînés avec le même protocole que la vague 1 :
 
 1. `combined_12_no_market_regime_no_engineered.json` : union des retraits A09 + A10, 120 features ;
 2. `combined_13_no_market_regime_no_momentum.json` : union des retraits A09 + A04, 107 features ;
 3. `combined_14_no_market_regime_no_engineered_no_momentum.json` : union A09 + A10 + A04, 93 features, comme test de parcimonie plus agressif.
 
-Conserver strictement le même univers et les mêmes fenêtres. Comparer chaque combinaison à O0 et à A09, avec P@20 comme métrique principale. Ne garder une combinaison que si elle ne dégrade ni le P@20 moyen ni le minimum par fold.
+| Profil | Features | P@10 | Δ P@10 vs O0 | Δ P@10 vs A09 | P@20 | Δ P@20 vs O0 | Δ P@20 vs A09 | AUC | Min. fold P@20 | Verdict |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| A09 | 140 | **47,116 %** | +0,247 | — | 40,711 % | +0,122 | — | 0,697 | **37,991 %** | Référence de la vague 2 |
+| C12 A09 + sans transformations complexes | 120 | 46,853 % | −0,015 | −0,262 | 40,682 % | +0,093 | −0,028 | **0,707** | 36,857 % | Rejet : queue et pire fold dégradés |
+| C13 A09 + sans momentum/rendements | 107 | 46,695 % | −0,174 | **−0,421** | **40,789 %** | **+0,200** | +0,078 | 0,682 | 37,575 % | Rejet : gain TOP20 fragile, perte TOP10 établie face à A09 |
+| C14 triple retrait | 93 | 46,946 % | +0,078 | −0,170 | 40,652 % | +0,063 | −0,059 | 0,681 | 37,396 % | Rejet : aucun avantage sur A09 |
 
-Après cette vague, figer un seul profil et le comparer à O0 sur une période out-of-time non utilisée pour la sélection des ablations. Aucun profil ne doit être promu dans `oracle.json` avant ce contrôle final.
+### Intervalles appariés contre A09
+
+- C12, Δ P@10 : −0,262 point, IC95 % blocs H20 `[-0,596 ; +0,087]` ; Δ P@20 : −0,028 point, `[-0,222 ; +0,179]` ;
+- C13, Δ P@10 : −0,421 point, IC95 % blocs H20 `[-0,794 ; -0,038]` ; Δ P@20 : +0,078 point, `[-0,123 ; +0,272]` ;
+- C14, Δ P@10 : −0,170 point, IC95 % blocs H20 `[-0,517 ; +0,233]` ; Δ P@20 : −0,059 point, `[-0,271 ; +0,158]`.
+
+C13 obtient le meilleur P@20 brut de toute la campagne, mais son gain sur A09 est de seulement 0,078 point et son intervalle inclut largement zéro. En parallèle, sa perte TOP10 face à A09 est statistiquement défavorable selon ce bootstrap, et son pire fold TOP20 baisse. Il ne satisfait donc pas le gate préétabli. L'AUC élevée de C12 ne compense pas sa dégradation sur la queue réellement tradée.
+
+## Étape suivante recommandée
+
+Figer deux profils seulement :
+
+1. témoin : `oracle.json` (O0, 168 features) ;
+2. challenger : `ablation_09_no_market_relative_regime.json` (A09, 140 features).
+
+Les comparer sur une période out-of-time qui n'a servi ni aux ablations ni au choix des combinaisons. Les métriques de décision restent, dans l'ordre : P@20, stabilité temporelle/blocs H20, minimum par période, P@10, puis AUC. Ne plus essayer de nouvelles combinaisons sur l'historique 2018-2024 avant ce holdout : cela augmenterait le biais de sélection sans fournir de preuve indépendante.
+
+Aucun profil ne doit être promu dans `oracle.json` avant ce contrôle final.
