@@ -16,5 +16,6 @@
     - [Dossier per-symbol complet](per_symbol/README.md)
     - [Dossier per-sector complet](per_sector/README.md)
 13. [Recalibration et promotion](recalibration_et_promotion.md)
+14. [Ranker conditionnel au TOP20 Oracle](conditional_oracle_ranker.md)
 
 Retour : [vue d'ensemble ML](../06_ml_vue_ensemble.md).

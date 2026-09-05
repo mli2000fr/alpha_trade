@@ -152,17 +152,19 @@ fourni. Pour chaque date :
 Le TOP20 doit être calculé avant tout filtre directionnel aval. Filtrer les
 symboles avant le percentile Oracle changerait le sens du gate.
 
-### 5.2 Horizon primaire
+### 5.2 Horizons pré-enregistrés
 
-Commencer par H3 uniquement. E2 a produit son seul signal directionnel répétable
-sur H3 LONG ; multiplier immédiatement les horizons augmenterait le risque de
-sélection opportuniste. H5/H10/H20 ne pourront être ouverts qu’après décision
-formelle sur H3 ou comme campagne distincte pré-enregistrée.
+La campagne entraîne deux modèles indépendants : H3 et H20. H3 reste comparable
+au seul signal directionnel répétable de E2-B ; H20 correspond à l’horizon
+naturel de l’Oracle Extreme et teste si le sens devient plus identifiable sur la
+fenêtre complète. Les métriques, gates et verdicts restent strictement séparés.
+H5, H10 et H15 sont exclus de cette campagne pour éviter une recherche
+opportuniste du meilleur horizon.
 
 ### 5.3 Cible primaire
 
-Le label de ranking primaire doit être l’ordre transversal du rendement futur
-ajusté H3 observé dans le pool Oracle de la date. Étudier dans le code la
+Le label de ranking doit être l’ordre transversal du rendement futur ajusté H3
+ou H20 observé dans le pool Oracle de la date. Étudier dans le code la
 définition canonique du prix de départ, du prix final et des corporate actions.
 
 Conserver pour évaluation, sans les fournir comme features :
@@ -381,4 +383,3 @@ La mission n’est pas terminée lorsqu’un modèle s’entraîne. Elle se term
 6. une confirmation intacte ;
 7. une intégration désactivée par défaut uniquement en cas de GO ;
 8. les tests et la documentation correspondants.
-
