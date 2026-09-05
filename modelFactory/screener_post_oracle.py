@@ -47,6 +47,16 @@ TRADABILITY_FEATURES = (
     "earnings_blackout", "signal_active", "anomaly_count",
     "missing_days_count",
 )
+DENSE_PREDICTIVE_FEATURES = (
+    "relative_strength_index", "historical_range_score", "total_score_dense",
+    "liquidity_score_dense", "relative_strength_score_dense",
+    "historical_range_percentile_dense",
+)
+DENSE_TRADABILITY_FEATURES = (
+    "liquidity_val", "history_bars_loaded", "filter_history_pass",
+    "filter_liquidity_pass", "filter_relative_strength_pass",
+    "filter_historical_range_pass", "filter_all_pass", "data_quality_valid",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,6 +176,34 @@ def merge_screener_asof(
         0, int(max_age_days), inclusive="both"
     ).fillna(False)
     return result
+
+
+def load_dense_screener_panel(
+    path: Path, *, start_date: str, end_date: str,
+) -> tuple[pd.DataFrame, list[str], list[str]]:
+    """Charge un panel dense déjà PIT et le normalise pour l'audit existant."""
+    dense = pd.read_parquet(path)
+    required = {"date", "symbol", "oracle_top_pool", *DENSE_PREDICTIVE_FEATURES}
+    missing = sorted(required.difference(dense.columns))
+    if missing:
+        raise ValueError(f"Panel screener dense incomplet: {missing}")
+    dense = dense.copy()
+    dense["date"] = pd.to_datetime(dense["date"], errors="coerce").dt.normalize()
+    dense["symbol"] = dense["symbol"].astype(str).str.strip().str.upper()
+    dense = dense[
+        dense["oracle_top_pool"].fillna(False).astype(bool)
+        & dense["date"].between(pd.Timestamp(start_date), pd.Timestamp(end_date))
+    ].copy()
+    if dense.empty:
+        raise ValueError("Panel screener dense TOP Oracle vide sur la période demandée.")
+    predictive = [name for name in DENSE_PREDICTIVE_FEATURES if name in dense.columns]
+    tradability = [name for name in DENSE_TRADABILITY_FEATURES if name in dense.columns]
+    dense["snapshot_date"] = dense["date"]
+    dense["created_at"] = dense["date"]
+    dense["snapshot_age_days"] = 0
+    dense["screener_snapshot_present"] = True
+    dense["screener_snapshot_fresh"] = True
+    return dense, predictive, tradability
 
 
 def attach_outcome(
@@ -308,7 +346,10 @@ def feature_coverage(
     denominator = max(len(dataset), 1)
     fresh_denominator = max(int(dataset["screener_snapshot_fresh"].sum()), 1)
     for feature in features:
-        numeric = pd.to_numeric(dataset[feature], errors="coerce")
+        # pandas conserve parfois le dtype bool après to_numeric ; NumPy ne
+        # définit pas l'interpolation des quantiles booléens. Les gates sont
+        # des variables numériques 0/1 dans ce rapport.
+        numeric = pd.to_numeric(dataset[feature], errors="coerce").astype(float)
         observed = numeric[dataset["screener_snapshot_fresh"] & numeric.notna()]
         quantiles = observed.quantile([0.01, 0.10, 0.25, 0.50, 0.75, 0.90, 0.99])
         rows.append({
@@ -568,27 +609,35 @@ def run_campaign(
     end_date: str,
     config: ScreenerAuditConfig,
     artifacts_root: Path = DEFAULT_ARTIFACTS_ROOT,
+    dense_panel_path: Path | None = None,
 ) -> tuple[Path, dict[str, Any]]:
-    predictive, tradability = available_screener_features(engine)
+    if dense_panel_path is not None:
+        merged, predictive, tradability = load_dense_screener_panel(
+            dense_panel_path, start_date=start_date, end_date=end_date)
+        gate = merged
+    else:
+        predictive, tradability = available_screener_features(engine)
+        all_features = predictive + tradability
+        gate_path = Path("artifacts/models") / oracle_batch_id / "_oracle_oof_gate.parquet"
+        gate = _load_gate(gate_path, config.pool_pct)
+        gate = gate[
+            gate["shared_oracle_eligible"]
+            & gate["date"].between(pd.Timestamp(start_date), pd.Timestamp(end_date))
+        ].copy()
+        if gate.empty:
+            raise ValueError("Pool Oracle OOF vide sur la période demandée.")
+        symbols = sorted(gate["symbol"].unique())
+        snapshots = load_screener_snapshots(
+            engine, symbols, start_date=start_date, end_date=end_date,
+            capital_preset_key=config.capital_preset_key,
+            feature_columns=all_features,
+        )
+        merged = merge_screener_asof(
+            gate, snapshots, feature_columns=all_features,
+            max_age_days=config.max_snapshot_age_days,
+        )
     all_features = predictive + tradability
-    gate_path = Path("artifacts/models") / oracle_batch_id / "_oracle_oof_gate.parquet"
-    gate = _load_gate(gate_path, config.pool_pct)
-    gate = gate[
-        gate["shared_oracle_eligible"]
-        & gate["date"].between(pd.Timestamp(start_date), pd.Timestamp(end_date))
-    ].copy()
-    if gate.empty:
-        raise ValueError("Pool Oracle OOF vide sur la période demandée.")
     symbols = sorted(gate["symbol"].unique())
-    snapshots = load_screener_snapshots(
-        engine, symbols, start_date=start_date, end_date=end_date,
-        capital_preset_key=config.capital_preset_key,
-        feature_columns=all_features,
-    )
-    merged = merge_screener_asof(
-        gate, snapshots, feature_columns=all_features,
-        max_age_days=config.max_snapshot_age_days,
-    )
     panel, target_diagnostics = load_forward_return_panel(
         engine, symbols, start_date=start_date, end_date=end_date,
         horizons=config.horizons, sector_min_members=config.sector_min_members,
@@ -634,7 +683,7 @@ def run_campaign(
         rules["development_verdict"].eq("CANDIDATE_DEVELOPMENT")
     ] if not rules.empty else rules
     campaign = {
-        "schema_version": 1, "run_id": run_id, "status": "completed",
+        "schema_version": 2, "run_id": run_id, "status": "completed",
         "experiment": "screener_pit_post_oracle", "research_only": True,
         "serving_ready": False, "source_oracle_batch_id": oracle_batch_id,
         "requested_period": {"start": start_date, "end": end_date},
@@ -674,6 +723,8 @@ def run_campaign(
             if not candidates.empty else "NO_GO_PREDICTIVE"
         ),
         "integration_performed": False,
+        "screener_source": "dense_research_panel" if dense_panel_path else "stock_scores_history",
+        "dense_panel_path": str(dense_panel_path.resolve()) if dense_panel_path else None,
     }
     (output / "campaign.json").write_text(
         json.dumps(campaign, ensure_ascii=False, indent=2, default=str),
@@ -704,6 +755,7 @@ def main() -> None:
     parser.add_argument("--target-down-threshold", type=float, default=-0.03)
     parser.add_argument("--max-abs-future-return", type=float, default=10.0)
     parser.add_argument("--artifacts-root", type=Path, default=DEFAULT_ARTIFACTS_ROOT)
+    parser.add_argument("--dense-panel", type=Path)
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
     logging.basicConfig(level=getattr(logging, str(args.log_level).upper(), logging.INFO))
@@ -728,6 +780,7 @@ def main() -> None:
         get_sqlalchemy_engine(), args.oracle_batch_id,
         start_date=args.start_date, end_date=args.end_date,
         config=config, artifacts_root=args.artifacts_root,
+        dense_panel_path=args.dense_panel,
     )
     print(f"Audit screener post-Oracle terminé: {output}")
     print(f"Verdict: {campaign['verdict']}")

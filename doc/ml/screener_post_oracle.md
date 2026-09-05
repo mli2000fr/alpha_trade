@@ -11,6 +11,23 @@ Code source : `modelFactory/screener_post_oracle.py`.
 
 Tests : `tests/test_screener_post_oracle.py`.
 
+## Source dense recommandée
+
+Avec `--dense-panel`, l'audit lit le panel PIT dense de recherche au lieu de
+`stock_scores_history`. C'est le mode correct pour étudier un filtre après
+Oracle : les symboles rejetés restent observables et la couverture n'est plus
+conditionnée à leur sélection historique.
+
+```powershell
+python -m modelFactory.screener_post_oracle --oracle-batch-id model-factory-20260904192500-0802c8 --start-date 2018-07-05 --end-date 2025-07-11 --dense-panel artifacts/research/screener_dense/<run>/dense_screener_panel.parquet
+```
+
+La campagne dense du 5 septembre 2026 (127 256 événements TOP20, neuf folds)
+confirme le verdict `NO_GO_PREDICTIVE`. Le meilleur effet descriptif concerne
+la liquidité à H10/H20, mais sa validation n'est positive que sur 4 à 5 folds
+sur 9 selon le côté, alors que le protocole en exige 7. Aucune règle n'est donc
+activée dans le serving, la cascade ou le backtest.
+
 ## Question étudiée
 
 Oracle Extreme détecte une probabilité de mouvement important, sans en connaître
@@ -281,4 +298,3 @@ interdisait cette étape lorsqu’aucun signal univarié ne survivait. Tester de
 combinaisons maintenant multiplierait les degrés de liberté et favoriserait le
 surapprentissage. Aucune confirmation supplémentaire n’est nécessaire en
 l’absence de candidat de développement.
-

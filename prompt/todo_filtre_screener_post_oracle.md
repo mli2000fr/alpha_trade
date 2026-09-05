@@ -410,3 +410,27 @@ le TOP20 Oracle n’est que de 10,44 % et présente une forte dérive temporelle
 
 Conformément au protocole, aucune combinaison de règles et aucune intégration
 applicative ne sont ouvertes après ce NO-GO.
+
+---
+
+## 17. Recontrôle sur panel dense
+
+Le défaut de couverture a été traité sans modifier les tables de serving. Le
+générateur `modelFactory/dense_screener_panel.py` recalcule les facteurs
+techniques avant filtre sur toute la population Oracle OOF, puis extrait le
+TOP20. Artefact source :
+`artifacts/research/screener_dense/dense-screener-20260905124034-0802c8`.
+
+Dimensions : 630 883 lignes, 1 764 dates, 399 symboles et 127 256 événements
+TOP20. La couverture technique est de 100 %; 162 012 lignes seulement passent
+tous les filtres, ce qui confirme que le panel dense conserve bien la
+population auparavant invisible.
+
+Campagne Walk-Forward dense :
+`artifacts/models/screener_post_oracle/screener-post-oracle-20260905124854-0802c8`.
+
+Verdict final : `NO_GO_PREDICTIVE`. Les six signaux denses testés ne satisfont
+pas les gates pré-enregistrés de stabilité validation/test. La liquidité montre
+un effet descriptif positif particulièrement à H10/H20, mais seulement 4 à 5
+folds de validation sur 9 sont positifs selon le côté et l'horizon, contre 7
+requis. Elle reste donc une piste descriptive, pas une règle intégrable.

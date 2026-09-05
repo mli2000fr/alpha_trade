@@ -41,6 +41,34 @@ def test_missing_values_are_not_imputed_to_zero() -> None:
     assert not bool(result.loc[0, "screener_snapshot_present"])
 
 
+def test_load_dense_panel_keeps_only_top_pool_and_marks_snapshot_fresh(tmp_path) -> None:
+    frame = pd.DataFrame({
+        "date": pd.to_datetime(["2024-01-05", "2024-01-05"]),
+        "symbol": ["AAA", "BBB"], "oracle_top_pool": [True, False],
+        **{name: [0.5, 0.2] for name in audit.DENSE_PREDICTIVE_FEATURES},
+        "liquidity_val": [1e7, 2e7], "filter_all_pass": [True, False],
+    })
+    path = tmp_path / "dense.parquet"
+    frame.to_parquet(path, index=False)
+    result, predictive, tradability = audit.load_dense_screener_panel(
+        path, start_date="2024-01-01", end_date="2024-01-31")
+    assert result["symbol"].tolist() == ["AAA"]
+    assert result["screener_snapshot_fresh"].all()
+    assert set(predictive) == set(audit.DENSE_PREDICTIVE_FEATURES)
+    assert "liquidity_val" in tradability
+
+
+def test_feature_coverage_accepts_boolean_filter_flags() -> None:
+    frame = pd.DataFrame({
+        "screener_snapshot_fresh": [True, True, True],
+        "filter_all_pass": [True, False, True],
+    })
+    result = audit.feature_coverage(
+        frame, ["filter_all_pass"], {"filter_all_pass": "tradability"})
+    assert result.loc[0, "p50"] == 1.0
+    assert result.loc[0, "distinct_values"] == 2
+
+
 def test_attach_outcome_builds_three_zone_events() -> None:
     date = pd.Timestamp("2024-01-05")
     base = pd.DataFrame({"date": [date] * 3, "symbol": ["A", "B", "C"]})
