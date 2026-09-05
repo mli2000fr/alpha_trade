@@ -441,8 +441,9 @@ def run_walk_forward_rules(
     dataset: pd.DataFrame,
     features: list[str],
     config: ScreenerAuditConfig,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     fold_rows: list[dict[str, Any]] = []
+    decision_parts: list[pd.DataFrame] = []
     for horizon, horizon_frame in dataset.groupby("horizon"):
         splits = generate_walk_forward_splits_by_dates(
             horizon_frame.sort_values("date").reset_index(drop=True),
@@ -452,6 +453,14 @@ def run_walk_forward_rules(
             date_column="date",
         )
         for fold_index, split in enumerate(splits):
+            decision = split.test.reindex(columns=[
+                "date", "symbol", "future_return", "true_long", "true_short",
+                "screener_snapshot_fresh", "snapshot_age_days",
+                "oracle_gate_score",
+            ]).copy()
+            decision["horizon"] = int(horizon)
+            decision["fold"] = fold_index
+            decision_columns: dict[str, pd.Series] = {}
             for feature in features:
                 for side in ("long", "short"):
                     rule = discover_rule(split.train, feature, side, config.min_rule_retention)
@@ -463,6 +472,16 @@ def run_walk_forward_rules(
                     test_metrics = evaluate_rule(
                         split.test, feature, side, rule["orientation"], rule["threshold"]
                     )
+                    values = pd.to_numeric(split.test[feature], errors="coerce")
+                    accepted = (
+                        values.ge(rule["threshold"])
+                        if rule["orientation"] == "high"
+                        else values.le(rule["threshold"])
+                    )
+                    decision_columns[f"{feature}__{side}"] = (
+                        split.test["screener_snapshot_fresh"]
+                        & values.notna() & accepted
+                    ).reset_index(drop=True)
                     validation_pass = bool(
                         validation["return_lift"] is not None
                         and validation["return_lift"] > 0
@@ -491,9 +510,18 @@ def run_walk_forward_rules(
                         "test_rows": test_metrics["selected"]["rows"],
                         "test_dates": test_metrics["selected"]["dates"],
                     })
+            if decision_columns:
+                decision = pd.concat(
+                    [decision.reset_index(drop=True), pd.DataFrame(decision_columns)], axis=1
+                )
+            decision_parts.append(decision)
     folds = pd.DataFrame(fold_rows)
+    decisions = (
+        pd.concat(decision_parts, ignore_index=True)
+        if decision_parts else pd.DataFrame()
+    )
     if folds.empty:
-        return folds, pd.DataFrame()
+        return folds, pd.DataFrame(), decisions
     summaries: list[dict[str, Any]] = []
     for (horizon, feature, side), group in folds.groupby(["horizon", "feature", "side"]):
         count = len(group)
@@ -529,7 +557,7 @@ def run_walk_forward_rules(
         ["horizon", "side", "development_verdict", "mean_test_return_lift"],
         ascending=[True, True, True, False],
     )
-    return folds, summary
+    return folds, summary, decisions
 
 
 def run_campaign(
@@ -586,7 +614,7 @@ def run_campaign(
     ]["feature"].tolist()
     reliability = reliability_tables(dataset, all_features, config.quantile_bins)
     presence = snapshot_presence_summary(dataset)
-    folds, rules = run_walk_forward_rules(dataset, eligible, config)
+    folds, rules, decisions = run_walk_forward_rules(dataset, eligible, config)
 
     run_id = (
         f"screener-post-oracle-{datetime.now(timezone.utc):%Y%m%d%H%M%S}-"
@@ -600,6 +628,7 @@ def run_campaign(
     presence.to_csv(output / "snapshot_presence_summary.csv", index=False)
     folds.to_csv(output / "walk_forward_folds.csv", index=False)
     rules.to_csv(output / "rule_summary.csv", index=False)
+    decisions.to_parquet(output / "oos_rule_decisions.parquet", index=False)
     dataset.to_parquet(output / "analytic_dataset.parquet", index=False)
     candidates = rules[
         rules["development_verdict"].eq("CANDIDATE_DEVELOPMENT")

@@ -17,5 +17,6 @@
     - [Dossier per-sector complet](per_sector/README.md)
 13. [Recalibration et promotion](recalibration_et_promotion.md)
 14. [Ranker conditionnel au TOP20 Oracle](conditional_oracle_ranker.md)
+15. [Filtre screener PIT après Oracle](screener_post_oracle.md)
 
 Retour : [vue d'ensemble ML](../06_ml_vue_ensemble.md).

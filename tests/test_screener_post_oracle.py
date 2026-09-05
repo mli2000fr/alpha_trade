@@ -108,10 +108,12 @@ def test_walk_forward_keeps_long_and_short_verdicts_independent() -> None:
         horizons=(3,), min_train_dates=30, val_dates=15, test_dates=15,
         step_dates=15, max_splits=3, min_feature_coverage=0.1,
     )
-    folds, summary = audit.run_walk_forward_rules(frame, ["score"], config)
+    folds, summary, decisions = audit.run_walk_forward_rules(frame, ["score"], config)
     assert not folds.empty
     assert set(summary["side"]) == {"long", "short"}
     assert set(summary["development_verdict"]) == {"CANDIDATE_DEVELOPMENT"}
+    assert {"score__long", "score__short"}.issubset(decisions.columns)
+    assert decisions[["score__long", "score__short"]].any().all()
 
 
 def test_feature_coverage_separates_absolute_and_conditional_coverage() -> None:

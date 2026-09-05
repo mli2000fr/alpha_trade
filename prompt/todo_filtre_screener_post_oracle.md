@@ -392,3 +392,21 @@ La mission est terminée seulement lorsque l’IA a livré :
 7. éventuellement une intégration inactive et testée après GO ;
 8. la documentation complète correspondante.
 
+---
+
+## 16. Exécution réalisée le 5 septembre 2026
+
+Le harnais est implémenté dans `modelFactory/screener_post_oracle.py`, testé dans
+`tests/test_screener_post_oracle.py` et documenté dans
+`doc/ml/screener_post_oracle.md`.
+
+Campagne canonique :
+`artifacts/models/screener_post_oracle/screener-post-oracle-20260905122039-0802c8`.
+
+Résultat : `NO_GO_PREDICTIVE` sur H3, H10 et H20, pour LONG comme pour SHORT.
+Aucune règle univariée ne franchit les gates de validation, stabilité, précision,
+rendement et couverture. La couverture fraîche de `stock_scores_history` dans
+le TOP20 Oracle n’est que de 10,44 % et présente une forte dérive temporelle.
+
+Conformément au protocole, aucune combinaison de règles et aucune intégration
+applicative ne sont ouvertes après ce NO-GO.
