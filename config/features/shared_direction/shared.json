@@ -2,7 +2,7 @@
   "schema_version": 1,
   "profile_id": "shared-direction-oracle-events-v1-20260905",
   "direction": "shared",
-  "description": "Profil directionnel mutualisé V1. Apprentissage D1 versus D10 uniquement dans le TOP20 Oracle OOF, sans utiliser proba_extreme comme feature.",
+  "description": "Profil directionnel mutualisé V1 pour les événements TOP20 Oracle OOF : classification D1/D10 ou rendement signé continu, sans score Oracle comme feature.",
   "feature_set": "expert",
   "generator_options": {
     "include_sentiment": false,
