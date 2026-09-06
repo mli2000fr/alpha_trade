@@ -36,6 +36,19 @@ def load_oracle_pool_proba(batch_id: str, oracle_run: str | None = None) -> pd.D
     if oracle_run:
         run_dir = _ORACLE_ROOT / oracle_run
     else:
+        # Les bundles récents conservent leur gate OOF exacte dans le dossier
+        # du batch. Elle a priorité sur tout fallback global afin de ne jamais
+        # mélanger les prédictions d'un autre entraînement Oracle.
+        bundle_gate = Path("artifacts/models") / batch_id / "_oracle_oof_gate.parquet"
+        if bundle_gate.exists():
+            frame = pd.read_parquet(bundle_gate)
+            frame["date"] = pd.to_datetime(frame["date"], errors="coerce").dt.normalize()
+            if "directional_oracle_proba_extreme" in frame.columns:
+                frame = frame.rename(columns={
+                    "directional_oracle_proba_extreme": "proba_extreme"})
+            required = ["date", "symbol", "proba_extreme"]
+            if all(column in frame.columns for column in required):
+                return frame[required].dropna(subset=["date", "symbol"])
         runs = sorted(_ORACLE_ROOT.glob("oracle-wf-*"))
         run_dir = None
         for r in reversed(runs):
@@ -133,7 +146,7 @@ def analyze_features(pool: pd.DataFrame, feature_columns: list[str]) -> pd.DataF
     """Batterie de séparabilité par feature (direction vs amplitude, stabilité)."""
     rows: list[dict[str, Any]] = []
     dec = pool[DECILE_COL].astype(int)
-    ic_folds: dict[str, list[float]] = {}
+    ic_folds: dict[str, dict[str, float]] = {}
 
     for col in feature_columns:
         if col not in pool.columns:
@@ -152,15 +165,16 @@ def analyze_features(pool: pd.DataFrame, feature_columns: list[str]) -> pd.DataF
         dir_y = np.where(dec >= 6, 1.0, 0.0)
         auc_direction = roc_auc(dir_y, s.astype(float).to_numpy())
         # IC par fold (stabilité du signe)
-        per_fold_ic: list[float] = []
-        for _, g in pool.groupby("fold_start"):
+        per_fold_ic: dict[str, float] = {}
+        for fold_name, g in pool.groupby("fold_start"):
             icf = _ic_spearman(g[col].astype(float), g[DECILE_COL].astype(int))
             if icf is not None:
-                per_fold_ic.append(icf)
+                per_fold_ic[str(fold_name)] = icf
         sign_stable = "—"
         if len(per_fold_ic) >= 2:
-            n_pos = sum(1 for v in per_fold_ic if v > 0)
-            n_neg = sum(1 for v in per_fold_ic if v < 0)
+            values = list(per_fold_ic.values())
+            n_pos = sum(1 for value in values if value > 0)
+            n_neg = sum(1 for value in values if value < 0)
             sign_stable = "OUI" if (n_pos == len(per_fold_ic) or n_neg == len(per_fold_ic)) else "NON"
         ic_folds[col] = per_fold_ic
         rows.append({
@@ -180,7 +194,7 @@ def analyze_features(pool: pd.DataFrame, feature_columns: list[str]) -> pd.DataF
     out = pd.DataFrame(rows)
     for fl in ["2022", "2023", "2024", "2025", "2026"]:
         out[f"IC_{fl}"] = [
-            (np.mean(ic_folds.get(f, [])) if ic_folds.get(f) else None) for f in out["feature"]
+            ic_folds.get(feature, {}).get(fl) for feature in out["feature"]
         ]
     return out
 

@@ -19,5 +19,6 @@
 14. [Ranker conditionnel au TOP20 Oracle](conditional_oracle_ranker.md)
 15. [Filtre screener PIT après Oracle](screener_post_oracle.md)
 16. [Panel screener PIT dense sur la population Oracle](panel_screener_dense.md)
+17. [POC Eroya — nouvelles informations directionnelles](eroya_directional_poc.md)
 
 Retour : [vue d'ensemble ML](../06_ml_vue_ensemble.md).

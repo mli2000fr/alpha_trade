@@ -69,16 +69,18 @@ def _send_telegram_status(args) -> bool:
 
     ok_status = args.status == "OK"
     label = "OK" if ok_status else "ERROR"
-    icon = "✅" if ok_status else "❌"
-    lines = [f"{icon} [{args.event}] Fin de batch — {label}"]
-    if args.duration:
-        lines.append(f"Durée : {args.duration}")
-    if args.exit_code:
-        lines.append(f"Code retour : {args.exit_code}")
-    # Court extrait des logs (dernières lignes) pour contexte du run.
-    excerpt = _read_run_log(args.log_file, max_lines=10, max_chars=1200)
-    if excerpt and excerpt != "(aucune sortie capturée pour ce run)":
-        lines.append(f"Logs (fin) :\n{excerpt}")
+    if ok_status:
+        # Message succès : volontairement concis.
+        lines = [f"✅ [{args.event}] Fin de batch — OK"]
+        if args.duration:
+            lines.append(f"Durée : {args.duration}")
+    else:
+        # Message erreur : très visible (bandeau + emojis d'alerte).
+        lines = [f"🚨🚨⛔ ÉCHEC DU BATCH — {args.event} ⛔🚨🚨", "❌ Fin de batch — ERROR"]
+        if args.duration:
+            lines.append(f"Durée : {args.duration}")
+        if args.exit_code:
+            lines.append(f"Code retour : {args.exit_code}")
     message = "\n".join(lines)
 
     try:
