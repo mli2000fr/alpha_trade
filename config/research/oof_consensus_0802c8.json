@@ -1,0 +1,148 @@
+{
+  "schema_version": 1,
+  "oracle_batch_id": "model-factory-20260904192500-0802c8",
+  "selection_fraction": 0.20,
+  "daily_overlay": {
+    "path": "artifacts/models/shared_directional/shared-daily-regime-20260906092533-0802c8/oof_predictions.parquet",
+    "columns": ["ridge_prediction", "catboost_prediction"]
+  },
+  "horizons": {
+    "3": {
+      "families": [
+        {
+          "name": "signed_return",
+          "components": [{
+            "path": "artifacts/models/shared_directional/shared-signed-return-20260904234239-0802c8/h3/oof_predictions.parquet",
+            "score": {"type": "column", "column": "direction_score"}
+          }]
+        },
+        {
+          "name": "dual_threshold",
+          "components": [{
+            "path": "artifacts/models/shared_directional/shared-dual-threshold-20260905063934-0802c8/h3/oof_predictions.parquet",
+            "score": {"type": "column", "column": "direction_margin"}
+          }]
+        },
+        {
+          "name": "long_confirmation",
+          "components": [{
+            "path": "artifacts/models/shared_directional/shared-long-h3-confirm-20260905074401-0802c8/oof_predictions.parquet",
+            "score": {"type": "column", "column": "calibrated_proba_long"}
+          }]
+        },
+        {
+          "name": "conditional_ranker",
+          "components": [{
+            "path": "artifacts/models/conditional_oracle_ranker/conditional-oracle-ranker-20260905082051-0802c8/h3/oof_predictions.parquet",
+            "score": {"type": "column", "column": "conditional_rank_score"}
+          }]
+        }
+      ]
+    },
+    "5": {
+      "families": [
+        {
+          "name": "signed_return",
+          "components": [{
+            "path": "artifacts/models/shared_directional/shared-signed-return-20260904234239-0802c8/h5/oof_predictions.parquet",
+            "score": {"type": "column", "column": "direction_score"}
+          }]
+        },
+        {
+          "name": "dual_threshold",
+          "components": [{
+            "path": "artifacts/models/shared_directional/shared-dual-threshold-20260905063934-0802c8/h5/oof_predictions.parquet",
+            "score": {"type": "column", "column": "direction_margin"}
+          }]
+        }
+      ]
+    },
+    "10": {
+      "families": [
+        {
+          "name": "signed_return",
+          "components": [{
+            "path": "artifacts/models/shared_directional/shared-signed-return-20260904234239-0802c8/h10/oof_predictions.parquet",
+            "score": {"type": "column", "column": "direction_score"}
+          }]
+        },
+        {
+          "name": "dual_threshold",
+          "components": [{
+            "path": "artifacts/models/shared_directional/shared-dual-threshold-20260905063934-0802c8/h10/oof_predictions.parquet",
+            "score": {"type": "column", "column": "direction_margin"}
+          }]
+        }
+      ]
+    },
+    "20": {
+      "families": [
+        {
+          "name": "d1_d10_classifier",
+          "components": [{
+            "path": "artifacts/models/shared_directional/shared-direction-20260904224554-0802c8/oof_predictions.parquet",
+            "score": {"type": "column", "column": "direction_score"}
+          }]
+        },
+        {
+          "name": "d1_d10_pairwise",
+          "components": [{
+            "path": "artifacts/models/shared_directional/shared-direction-20260904230009-0802c8/oof_predictions.parquet",
+            "score": {"type": "column", "column": "direction_score"}
+          }]
+        },
+        {
+          "name": "signed_return",
+          "components": [{
+            "path": "artifacts/models/shared_directional/shared-signed-return-20260904234239-0802c8/h20/oof_predictions.parquet",
+            "score": {"type": "column", "column": "direction_score"}
+          }]
+        },
+        {
+          "name": "dual_threshold",
+          "components": [{
+            "path": "artifacts/models/shared_directional/shared-dual-threshold-20260905063934-0802c8/h20/oof_predictions.parquet",
+            "score": {"type": "column", "column": "direction_margin"}
+          }]
+        },
+        {
+          "name": "conditional_ranker",
+          "components": [{
+            "path": "artifacts/models/conditional_oracle_ranker/conditional-oracle-ranker-20260905082051-0802c8/h20/oof_predictions.parquet",
+            "score": {"type": "column", "column": "conditional_rank_score"}
+          }]
+        },
+        {
+          "name": "path_economics",
+          "components": [
+            {
+              "path": "artifacts/models/shared_directional/shared-path-aware-20260906064548-0802c8/oof_predictions.parquet",
+              "score": {"type": "column", "column": "path_direction_score"}
+            },
+            {
+              "path": "artifacts/models/shared_directional/shared-path-utility-20260906071731-0802c8/oof_predictions.parquet",
+              "score": {
+                "type": "difference",
+                "positive": "long_economic_utility_daily_rank",
+                "negative": "short_economic_utility_daily_rank"
+              }
+            }
+          ]
+        },
+        {
+          "name": "first_touch",
+          "components": [
+            {
+              "path": "artifacts/models/shared_directional/shared-first-touch-20260906082223-0802c8/oof_predictions.parquet",
+              "score": {"type": "difference", "positive": "p_up_first", "negative": "p_down_first"}
+            },
+            {
+              "path": "artifacts/models/shared_directional/shared-first-touch-binary-20260906085319-0802c8/oof_predictions.parquet",
+              "score": {"type": "difference", "positive": "p_up_first", "negative": "p_down_first"}
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
