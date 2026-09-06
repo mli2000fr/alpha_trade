@@ -2167,7 +2167,51 @@ Une feature très bonne pour Oracle mais neutre D1/D10 est :
 AMPLITUDE_ONLY
 ```
 
-et ne doit pas être présentée comme nouvelle information directionnelle.
+Elle ne doit pas être présentée comme nouvelle information directionnelle, mais
+elle constitue un résultat potentiellement utile. Elle doit alors être évaluée
+comme candidate incrémentale pour Oracle Extreme.
+
+L'évaluation amplitude doit comparer, sur exactement les mêmes lignes OOF :
+
+```text
+ORACLE_BASE
+vs
+ORACLE_BASE + CANDIDATE_FEATURE_OR_FAMILY
+```
+
+Produire au minimum :
+
+```text
+tail_vs_middle_auc
+average_precision_extreme
+precision_at_top_10pct
+precision_at_top_20pct
+lift_at_top_10pct
+lift_at_top_20pct
+mean/median realized_absolute_return par bucket
+monotonicity des buckets
+delta vs Oracle seul
+stabilité par fold, semestre, symbole et régime
+```
+
+Une forte AUC amplitude autonome ne suffit pas : la famille doit apporter une
+information incrémentale au score Oracle existant. Si elle ne fait que reproduire
+`proba_extreme`, son verdict est `REDUNDANT_WITH_ORACLE`.
+
+Verdicts amplitude autorisés :
+
+```text
+AMPLITUDE_INCREMENTAL_GO_RESEARCH
+AMPLITUDE_ONLY_WEAK_SIGNAL
+REDUNDANT_WITH_ORACLE
+NO_AMPLITUDE_SIGNAL
+```
+
+Une candidate amplitude validée doit être dirigée vers une ablation du profil
+Oracle, pas vers les modèles Per-Symbol LONG/SHORT. Elle peut ensuite servir à
+mieux prioriser les événements, calibrer le gate ou prévoir l'amplitude attendue.
+Elle ne doit pas augmenter mécaniquement la taille des positions : une amplitude
+élevée représente aussi davantage de risque.
 
 ---
 
@@ -2912,6 +2956,14 @@ au Per-Symbol LONG ?
 Q12
 Le classifier mérite-t-il d’être ajouté
 au Per-Symbol SHORT ?
+
+Q13
+Une famille sans signal directionnel améliore-t-elle néanmoins l'amplitude
+de façon incrémentale par rapport à Oracle seul ?
+
+Q14
+Si oui, doit-elle être testée dans le profil Oracle comme feature, gate,
+priorité de classement ou estimation de risque ?
 ```
 
 ---
@@ -2974,6 +3026,7 @@ Et produire séparément :
 TEMPORAL_SIGNAL_VERDICT
 SELECTED_N
 EROYA_INCREMENTAL_VERDICT
+AMPLITUDE_INCREMENTAL_VERDICT
 LONG_INTEGRATION_VERDICT
 SHORT_INTEGRATION_VERDICT
 ```
