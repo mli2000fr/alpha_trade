@@ -365,3 +365,69 @@ première commande. Ne pas relancer ni ajuster E2-B après consultation de cette
 confirmation : elle constitue l'unique test intact. Un smoke technique limité
 à 50 symboles et deux folds a déjà validé le chemin complet, mais ses métriques
 ne sont pas une preuve statistique et ne doivent pas guider la décision.
+
+## E3 — Deux têtes de rentabilité conditionnelles au chemin
+
+E3 corrige l'alignement entre la cible ML et le trade réellement simulé. E1 et
+E2 utilisaient le rendement terminal : un titre pouvait toucher un objectif,
+se retourner puis recevoir un label opposé à l'opportunité tradable. E3 rejoue
+donc chaque événement Oracle TOP20 deux fois, une fois LONG et une fois SHORT,
+depuis l'open de la séance suivante.
+
+Le premier contrat est nommé `barrier_race_v1` :
+
+```text
+signal Oracle OOF au close J
+    -> rejet si |open J+1 / close J - 1| > 3 %
+    -> entrée open J+1
+    -> stop initial 2,5 ATR
+    -> TP min(3 ATR, 7 %)
+    -> stop prioritaire si stop et TP sont touchés dans la même barre
+    -> sortie au close après 20 séances si aucune barrière n'est touchée
+    -> spread 5 bps + commission 1 bp + slippage 2 bps par côté
+    -> coût d'emprunt SHORT 0,30 % annualisé
+```
+
+Le label LONG vaut un lorsque le rendement net du replay LONG est positif. Le
+label SHORT suit la même règle sur le replay SHORT. Les deux têtes sont
+indépendantes : une ligne peut avoir deux échecs, ou deux succès si son chemin
+oscille assez pour rendre les deux replays rentables. Le modèle n'est donc
+jamais forcé de choisir une direction.
+
+Les deux CatBoost sont mutualisés sur tous les événements du pool Oracle OOF.
+Le score Oracle reste un gate et n'entre pas dans les features. Les folds sont
+chronologiques et purgés de 20 séances. L'évaluation porte sur :
+
+- AUC et Brier séparés LONG/SHORT ;
+- top 10 % quotidien de chaque probabilité ;
+- rendement net et lift contre le pool Oracle des mêmes dates ;
+- résultats par semestre et par fold ;
+- concentration du PnL par symbole ;
+- politiques diagnostiques combinant probabilité et marge LONG-SHORT.
+
+Les gates sont séparés par côté : AUC moyenne >= 0,53, au moins sept folds avec
+AUC > 0,50, lift net >= 0,25 point, au moins sept folds avec lift et rendement
+positifs, et premier contributeur <= 35 % des contributions positives. Un GO
+LONG n'autorise jamais automatiquement la branche SHORT.
+
+`barrier_race_v1` est volontairement **research-only** et non conforme au
+lifecycle PROD complet : il inclut une sortie H20 et désactive le trailing
+risk-based afin d'isoler la prédictibilité du sens. Un passage des gates
+autoriserait une E3-B utilisant un replay complet du lifecycle ; il ne permet
+pas à lui seul une promotion serving.
+
+Le smoke du 6 septembre 2026 a exercé la chaîne réelle sur 30 symboles et un
+fold : 8 437 événements labellisés, AUC LONG 0,582 et AUC SHORT 0,449. Le top
+10 % LONG affiche +0,88 % net et +0,55 point de lift ; le SHORT affiche -0,65 %.
+Ce smoke vérifie uniquement le fonctionnement. Sa petite population et son
+fold unique interdisent toute conclusion ML.
+
+Commande de campagne complète :
+
+```powershell
+F:\projets\.venv\Scripts\python.exe -u -m modelFactory.path_aware_directional --oracle-batch-id model-factory-20260904192500-0802c8 --start-date 2016-01-01 --end-date 2025-12-31 --stop-atr-mult 2.5 --tp-atr-mult 3.0 --tp-max-pct 0.07 --max-sessions 20 --max-entry-gap-pct 0.03 --spread-bps 5 --commission-bps 1 --slippage-bps 2 --borrow-fee-annual 0.003 --wf-min-train-size 504 --wf-val-size 126 --wf-test-size 126 --wf-step-size 126 --wf-max-splits 12 --iterations 600 --depth 6 --learning-rate 0.03 --context-mode none --log-level INFO
+```
+
+Le répertoire `shared-path-aware-*` persiste les deux modèles, les prédictions
+OOF ligne à ligne, les métriques, le profil de features et le contrat complet.
+Il porte systématiquement `research_only=true` et `serving_ready=false`.

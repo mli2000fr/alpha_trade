@@ -160,22 +160,38 @@ aux **heures de la journée** définies dans `config.yaml` → `earnings_calenda
 ### Scripts
 
 - `earnings_calendar_launcher.ps1` : lanceur commun — exécute la commande
-  `python -u -m dataIntegrityEngine.sync_earnings_calendar --sleep-seconds 1.1 --log-every 25 --batch-size 50 --symbol-source active-tradable --resume`
-  et ajoute une ligne de statut (`START` / `OK` / `ERROR`) dans
-  `log/batch/earnings_calendar.txt` (chemin piloté par `config.yaml` → `earnings_calendar_sync.log_file`).
+  `python -u -m dataIntegrityEngine.sync_earnings_calendar --sleep-seconds 1.1 --log-every 25 --batch-size 50 --symbols-file <symbols_file> --resume`
+  (ou `--symbol-source active-tradable` si `symbols_file` est absent) et ajoute
+  une ligne de statut (`START` / `OK` / `ERROR` / `SKIP`) dans
+  `log/batch/earnings_calendar.txt` (chemin piloté par `config.yaml` →
+  `earnings_calendar_sync.log_file`). `SKIP` = jour hors `run_days`, rien n’est lancé.
 - `install_earnings_calendar_task.ps1` : installe la tâche planifiée Windows.
 - `uninstall_earnings_calendar_task.ps1` : supprime la tâche.
 
-### Configurer les heures (`config.yaml`)
+### Configurer les jours et heures (`config.yaml`)
 
 ```yaml
 earnings_calendar_sync:
-  run_hours: "3"        # "3" = 3h du matin ; "4,9" = 4h et 9h ; "8,12,18" = 8h, 12h, 18h
+  run_hours: "12,23"                            # "3" = 3h du matin ; "4,9" = 4h et 9h ; "8,12,18" = 8h, 12h, 18h
+  run_days: "0,3,6"                             # Jours de la semaine (0=dimanche … 6=samedi) ; vide/absent = tous les jours
+  symbols_file: config/univers_batch/univers_filtred_tradable.txt
   log_file: log/batch/earnings_calendar.txt
 ```
 
-`run_hours` = liste d’heures (0-23) séparées par des virgules. Chaque heure
-devient un déclencheur quotidien de la tâche planifiée.
+- `run_hours` = liste d’heures (0-23) séparées par des virgules. Chaque heure
+  devient un déclencheur quotidien de la tâche planifiée.
+- `run_days` = jours de la semaine autorisés (0=dimanche, 1=lundi, …, 6=samedi).
+  Vide/absent → déclencheurs **quotidiens**. Renseigné (ex. `0,3,5`) →
+  `install_earnings_calendar_task.ps1` crée des déclencheurs **hebdomadaires**
+  uniquement ces jours-là (l’installation affiche « Jours » et « Planif :
+  hebdomadaire »). Le launcher garde un filet de sécurité : un jour hors
+  `run_days` → ligne `SKIP`, rien n’est lancé.
+- `symbols_file` = univers fichier partagé avec `analyst_snapshot_collect`
+  (2255 symboles). S’il est renseigné, le batch earnings utilise ce fichier
+  (même univers que le batch analyst) au lieu de `--symbol-source
+  active-tradable` (~13 600 symboles). S’il est absent/vide OU le fichier
+  introuvable → repli sur `active-tradable` avec un **WARNING** remonté dans le
+  log de statut (`WARNING univers …`) + notification email **et** Telegram.
 
 ### Installer
 
@@ -240,19 +256,25 @@ définies dans `config.yaml` → `analyst_snapshot_collection.run_hours`.
 - `install_analyst_snapshot_task.ps1` : installe la tâche planifiée Windows.
 - `uninstall_analyst_snapshot_task.ps1` : supprime la tâche.
 
-### Configurer les heures (`config.yaml`)
+### Configurer l’univers et les heures (`config.yaml`)
 
 ```yaml
 analyst_snapshot_collection:
   run_hours: "18"        # "18" = 18h après clôture US ; "3,14" = 3h et 14h
+  symbols_file: config/univers_batch/univers_filtred_tradable.txt   # MÊME univers fichier que earnings_calendar_sync
   log_file: log/batch/analyst_snapshots.txt
 ```
 
-`run_hours` = liste d’heures (0-23) séparées par des virgules. Chaque heure
-devient un déclencheur quotidien de la tâche planifiée. ⚠️ L’heure est exprimée
-**en America/New_York** (la collecte doit se faire après la clôture US) ; le
-planificateur Windows suit la timezone de la machine — régler `run_hours` en
-conséquence (jamais d’heure de Paris fixe).
+- `symbols_file` = univers fichier partagé avec `earnings_calendar_sync`
+  (2255 symboles). S’il est absent/vide OU le fichier introuvable → le launcher
+  émet un **WARNING** (ligne `WARNING` dans le log de statut + notification
+  email **et** Telegram) et le batch **repli sur l’univers active-tradable**
+  (~13 600 symboles).
+- `run_hours` = liste d’heures (0-23) séparées par des virgules. Chaque heure
+  devient un déclencheur quotidien de la tâche planifiée. ⚠️ L’heure est
+  exprimée **en America/New_York** (la collecte doit se faire après la clôture
+  US) ; le planificateur Windows suit la timezone de la machine — régler
+  `run_hours` en conséquence (jamais d’heure de Paris fixe).
 
 ### Installer
 

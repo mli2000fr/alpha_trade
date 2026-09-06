@@ -460,12 +460,14 @@ eodhd:
 
 # ---------------------------------------------------------------------------
 # Synchronisation calendrier earnings — job planifié (scripts/windows)
-# La tâche planifiée Windows exécute automatiquement aux heures listées dans
-# `run_hours` :
+# Le launcher exécute la synchronisation aux heures listées dans `run_hours`,
+# limitées aux jours `run_days` (0=dimanche … 6=samedi ; hors run_days → SKIP) :
 #   python -u -m dataIntegrityEngine.sync_earnings_calendar
 #     --sleep-seconds 1.1 --log-every 25 --batch-size 50
-#     --symbol-source active-tradable --resume
-# et ajoute une ligne de statut (START / OK / ERROR) dans `log_file`.
+#     --symbols-file config/univers_batch/univers_filtred_tradable.txt --resume
+# `symbols_file` = MÊME univers fichier que `analyst_snapshot_collect`
+#   (2255 symboles) : prioritaire sur --symbol-source active-tradable (~13 600).
+# Le launcher ajoute une ligne de statut (START / OK / ERROR / SKIP) dans `log_file`.
 # powershell -ExecutionPolicy Bypass -File .\scripts\windows\install_earnings_calendar_task.ps1
 
 # Désinstaller
@@ -475,15 +477,18 @@ eodhd:
 # ---------------------------------------------------------------------------
 earnings_calendar_sync:
   run_hours: "12,23"                             # Heures de la journée (0-23) séparées par des virgules : "3" = 3h du matin, "4,9" = 4h et 9h.
+  run_days: "0,3,5"                              # Jours de la semaine (0=dimanche, 1=lundi, … 6=samedi) séparés par des virgules. Vide/absent = tous les jours. Ex. "0,2" = dimanche + mardi uniquement.
+  symbols_file: config/univers_batch/univers_filtred_tradable.txt   # Univers fichier partagé avec analyst_snapshot_collect (2255 symboles). Absent/vide → repli --symbol-source active-tradable.
   log_file: log/batch/earnings_calendar.txt  # Ligne de statut ajoutée à chaque exécution.
 
 # ---------------------------------------------------------------------------
 # Collecte prospective Yahoo analyst (RESEARCH ONLY — todo3.txt)
 # Historique PIT append-only dans MySQL (estimates/targets/recommendations).
 # Aucune intégration PROD. Aucun stockage fichier (MySQL = source de vérité).
-# L'univers est la liste FIGÉE ~400 symboles du fichier `symbols_file`
-# (config/ticket_mid_cap_400.txt) : explicite, configurable, déterministe,
-# jamais recalculé (ni active-tradable 13 608, ni pool Oracle).
+# L'univers est le fichier `symbols_file` (config/univers_batch/univers_filtred_tradable.txt,
+# 2255 symboles — MÊME univers fichier que earnings_calendar_sync).
+# Si `symbols_file` est absent/vide OU le fichier introuvable → AVERTISSEMENT
+# (log + email + Telegram) + repli sur l'univers dynamique active-tradable (~13 600).
 # CLI : python scripts/collect_yahoo_analyst_snapshots.py --universe analyst_research --write-db
 # powershell -ExecutionPolicy Bypass -File .\scripts\windows\install_analyst_snapshot_task.ps1
 
@@ -509,7 +514,7 @@ earnings_calendar_sync:
 analyst_snapshot_collection:
   enabled: false                         # RESEARCH ONLY — aucune exécution PROD.
   provider: yahoo
-  universe_name: analyst_research        # Nom de l'univers (analyst_research = liste figée).
+  universe_name: analyst_research        # Nom de l'univers (analyst_research = fichier symbols_file configuré).
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   sleep_seconds: 0.25                    # Throttling entre symboles.
   timeout_seconds: 20                    # Timeout watchdog par symbole.

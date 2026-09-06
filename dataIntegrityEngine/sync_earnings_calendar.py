@@ -275,12 +275,50 @@ def _fetch_sec_earnings(symbol: str, *, from_date: date, to_date: date) -> list[
         })
     return rows
 
+def _resolve_universe(
+    *,
+    symbol_source: str | None,
+    symbols_file: str | Path | None,
+    limit: int | None,
+) -> tuple[list[str], str]:
+    """Résout la liste de symboles du run.
+
+    ``symbols_file`` (fichier d'univers texte, même format que
+    ``analyst_snapshot_collection.symbols_file``) est PRIORITAIRE : il permet
+    au batch earnings d'utiliser exactement le même univers que le batch
+    ``analyst_snapshot_collect``. Si ce fichier est absent/inaccessible → repli
+    ``active-tradable`` (log warning). Sinon on retombe sur ``symbol_source``
+    (``active-tradable`` par défaut).
+    """
+    if symbols_file:
+        if limit is not None and limit < 1:
+            raise ValueError("limit doit être supérieur ou égal à 1.")
+        from analyst_research.universe import read_symbols_file
+
+        try:
+            symbols = read_symbols_file(symbols_file)
+        except OSError as exc:  # fichier absent/inaccessible → repli active-tradable.
+            LOGGER.warning(
+                "sync_earnings_calendar — symbols_file introuvable/inaccessible "
+                "(%s : %s) => repli univers active-tradable (~13 600)",
+                symbols_file,
+                exc,
+            )
+            symbols = None
+        if symbols is not None:
+            label = f"universe-file:{Path(symbols_file).name}"
+            return symbols[:limit] if limit is not None else symbols, label
+    resolved = normalize_symbol_source(symbol_source)
+    return list_symbols_for_source(resolved, limit=limit), resolved
+
+
 def sync_earnings_calendar(
     *,
     from_date: date | None = None,
     to_date: date | None = None,
     limit: int | None = None,
     symbol_source: str | None = None,
+    symbols_file: str | Path | None = None,
     sleep_seconds: float = MIN_REQUEST_INTERVAL_SECONDS,
     log_every: int = 25,
     batch_size: int = DEFAULT_BATCH_SIZE,
@@ -296,8 +334,11 @@ def sync_earnings_calendar(
 
     start = from_date or date.today() - timedelta(days=7)
     end = to_date or date.today() + timedelta(days=30)
-    resolved_symbol_source = normalize_symbol_source(symbol_source)
-    symbols = list_symbols_for_source(resolved_symbol_source, limit=limit)
+    symbols, resolved_symbol_source = _resolve_universe(
+        symbol_source=symbol_source,
+        symbols_file=symbols_file,
+        limit=limit,
+    )
     resolved_bookmark_path = _coerce_bookmark_path(bookmark_path)
     bookmark_context = _build_bookmark_context(start=start, end=end, limit=limit, symbol_source=resolved_symbol_source, provider=provider)
     bookmark_state, completed_symbols = _resolve_bookmark_state(
@@ -481,6 +522,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--from-date", type=str, default=None, help="Date de début ISO (YYYY-MM-DD)")
     parser.add_argument("--to-date", type=str, default=None, help="Date de fin ISO (YYYY-MM-DD)")
     parser.add_argument("--symbol-source", type=str, default=None, help="Univers de symboles (`active-tradable`, `stock-scores`, `stock-scores-history`, `stock-scores-all`, `stock-bars-daily`)")
+    parser.add_argument("--symbols-file", type=str, default=None, help="Chemin d'un fichier d'univers texte (même format que analyst_snapshot_collection.symbols_file). Prioritaire sur --symbol-source ; absent → repli sur la source.")
     parser.add_argument("--limit", type=int, default=None, help="Nombre maximum de symboles")
     parser.add_argument("--sleep-seconds", type=float, default=MIN_REQUEST_INTERVAL_SECONDS, help="Pause entre deux appels Finnhub")
     parser.add_argument("--log-every", type=int, default=25, help="Journalise la progression tous les N symboles (0 pour désactiver)")
@@ -524,6 +566,7 @@ def main() -> None:
             to_date=date.fromisoformat(args.to_date) if args.to_date else None,
             limit=args.limit,
             symbol_source=args.symbol_source,
+            symbols_file=args.symbols_file,
             sleep_seconds=args.sleep_seconds,
             log_every=args.log_every,
             batch_size=args.batch_size,
@@ -570,7 +613,11 @@ def main() -> None:
             "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
             "from_date": args.from_date,
             "to_date": args.to_date,
-            "symbol_source": normalize_symbol_source(args.symbol_source),
+            "symbol_source": (
+                f"universe-file:{Path(args.symbols_file).name}"
+                if args.symbols_file
+                else normalize_symbol_source(args.symbol_source)
+            ),
             "requested_limit": args.limit,
             "sleep_seconds": args.sleep_seconds,
             "log_every": args.log_every,

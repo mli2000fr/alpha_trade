@@ -8,16 +8,13 @@ import pytest
 
 from modelFactory.labeling import (
     TripleBarrierConfig,
-    TripleBarrierLabel,
+    _compute_atr,
+    _deduct_costs,
     build_triple_barrier_label,
     build_triple_barrier_labels,
     build_triple_barrier_targets,
     compare_label_methods,
-    _compute_atr,
-    _deduct_costs,
-    _resolve_exit,
 )
-
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -83,6 +80,7 @@ def test_config_defaults() -> None:
     cfg = TripleBarrierConfig()
     assert cfg.stop_atr_mult == 2.0
     assert cfg.tp_atr_mult == 3.0
+    assert cfg.tp_max_pct == 0.0
     assert cfg.max_sessions == 20
     assert cfg.total_cost_bps > 0
 
@@ -92,6 +90,8 @@ def test_config_rejects_invalid() -> None:
         TripleBarrierConfig(stop_atr_mult=0)
     with pytest.raises(ValueError):
         TripleBarrierConfig(tp_atr_mult=-1)
+    with pytest.raises(ValueError):
+        TripleBarrierConfig(tp_max_pct=-0.01)
     with pytest.raises(ValueError):
         TripleBarrierConfig(max_sessions=0)
     with pytest.raises(ValueError):
@@ -130,6 +130,23 @@ def test_long_take_profit(uptrend_prices) -> None:
     assert label.exit_reason in ("take_profit", "gap_tp")
     assert label.holding_sessions is not None and label.holding_sessions > 0
     assert label.net_return_pct is not None
+
+
+def test_take_profit_percentage_cap_is_applied() -> None:
+    n = 40
+    prices = {
+        "open": np.full(n, 100.0),
+        "high": np.full(n, 106.0),
+        "low": np.full(n, 99.5),
+        "close": np.full(n, 100.0),
+    }
+    cfg = TripleBarrierConfig(
+        stop_atr_mult=10.0, tp_atr_mult=10.0, tp_max_pct=0.05,
+        max_sessions=5, min_atr=0.02, entry_delay_sessions=1,
+    )
+    label = build_triple_barrier_label(entry_idx=15, side="long", prices=prices, cfg=cfg)
+    assert label.exit_reason == "take_profit"
+    assert label.exit_price == pytest.approx(105.0)
 
 
 def test_long_time_exit(flat_prices) -> None:

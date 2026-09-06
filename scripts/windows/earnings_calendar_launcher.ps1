@@ -8,7 +8,11 @@
 # Point d'entrée utilisé par la tâche planifiée Windows
 # « AlphaTrade-EarningsCalendarSync » (install_earnings_calendar_task.ps1),
 # qui déclenche ce launcher automatiquement aux heures de
-# config.yaml → earnings_calendar_sync.run_hours ("3" = 3h du matin, "4,9" = 4h et 9h).
+# config.yaml → earnings_calendar_sync.run_hours ("3" = 3h du matin, "4,9" = 4h et 9h)
+# et aux jours de earnings_calendar_sync.run_days (0=dimanche … 6=samedi ;
+# hors run_days → ligne SKIP, aucun lancement). L'univers est piloté par
+# earnings_calendar_sync.symbols_file (même fichier que analyst_snapshot_collect),
+# avec repli --symbol-source active-tradable.
 #
 # Usage manuel :
 #   powershell -ExecutionPolicy Bypass -File .\scripts\windows\earnings_calendar_launcher.ps1
@@ -174,22 +178,66 @@ if ($resolvedEnvFile) {
     Import-AlphaTradeEnvFile -Path $resolvedEnvFile
 }
 
-# ── Si aucun -LogFile fourni, on affine depuis config.yaml ──
-if (-not $LogFile) {
-    $cfg = Read-EarningsCalendarConfig -Workspace $resolvedWorkspace -PythonExe $resolvedPython
-    if ($cfg -and ($cfg.PSObject.Properties.Name -contains 'log_file') -and $cfg.log_file) {
-        $cfgLogFile = [string]$cfg.log_file
-        if (-not [IO.Path]::IsPathRooted($cfgLogFile)) {
-            $cfgLogFile = Join-Path $resolvedWorkspace $cfgLogFile
+# ── Configuration depuis config.yaml (log_file, run_days, symbols_file) ──
+$cfg = Read-EarningsCalendarConfig -Workspace $resolvedWorkspace -PythonExe $resolvedPython
+if (-not $LogFile -and $cfg -and ($cfg.PSObject.Properties.Name -contains 'log_file') -and $cfg.log_file) {
+    $cfgLogFile = [string]$cfg.log_file
+    if (-not [IO.Path]::IsPathRooted($cfgLogFile)) {
+        $cfgLogFile = Join-Path $resolvedWorkspace $cfgLogFile
+    }
+    if ($cfgLogFile -ne $effectiveLogFile) {
+        $effectiveLogFile = $cfgLogFile
+        $cfgLogDir = Split-Path -Parent $effectiveLogFile
+        if ($cfgLogDir -and -not (Test-Path -LiteralPath $cfgLogDir)) {
+            New-Item -ItemType Directory -Path $cfgLogDir -Force | Out-Null
         }
-        if ($cfgLogFile -ne $effectiveLogFile) {
-            $effectiveLogFile = $cfgLogFile
-            $cfgLogDir = Split-Path -Parent $effectiveLogFile
-            if ($cfgLogDir -and -not (Test-Path -LiteralPath $cfgLogDir)) {
-                New-Item -ItemType Directory -Path $cfgLogDir -Force | Out-Null
-            }
-            Write-StatusLine ("[{0}] NOTE   log_file = config.yaml → {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $effectiveLogFile)
-        }
+        Write-StatusLine ("[{0}] NOTE   log_file = config.yaml → {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $effectiveLogFile)
+    }
+}
+
+# ── run_days : ne lancer que certains jours de la semaine ────────────────
+#    0=dimanche, 1=lundi, … 6=samedi (convention [DayOfWeek]).
+#    run_days absent/vide dans config.yaml → tous les jours (comportement historique).
+$runDaysValue = ''
+if ($cfg -and ($cfg.PSObject.Properties.Name -contains 'run_days')) {
+    $runDaysValue = [string]$cfg.run_days
+}
+$runDays = @($runDaysValue -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+if ($runDays.Count -gt 0) {
+    $dow = [int](Get-Date).DayOfWeek
+    if ($runDays -notcontains [string]$dow) {
+        Write-StatusLine ("[{0}] SKIP   earnings_calendar_sync — jour={1} (0=dimanche) absent de run_days='{2}' — aucun lancement" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $dow, $runDaysValue)
+        exit 0
+    }
+    Write-StatusLine ("[{0}] NOTE   earnings_calendar_sync — jour={1} présent dans run_days='{2}'" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $dow, $runDaysValue)
+}
+
+# ── Univers : symbols_file (config.yaml) prioritaire sur active-tradable ──
+#    Même univers fichier que le batch analyst_snapshot_collect si renseigné.
+#    Si symbols_file est ABSENT/VIDE ou le fichier INTROUVABLE → repli univers
+#    active-tradable (~13 600) avec un AVERTISSEMENT (log + email + Telegram).
+$batchWarnings = @()
+$universeArgs = @('--symbol-source', 'active-tradable')
+$symbolsFileValue = ''
+if ($cfg -and ($cfg.PSObject.Properties.Name -contains 'symbols_file') -and $cfg.symbols_file) {
+    $symbolsFileValue = [string]$cfg.symbols_file
+}
+if (-not $symbolsFileValue) {
+    $warnMsg = "earnings_calendar_sync.symbols_file non renseigné (config.yaml) — repli univers active-tradable (~13 600)"
+    $batchWarnings += $warnMsg
+    Write-StatusLine ("[{0}] WARNING univers — {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $warnMsg)
+} else {
+    $symbolsFilePath = $symbolsFileValue
+    if (-not [IO.Path]::IsPathRooted($symbolsFilePath)) {
+        $symbolsFilePath = Join-Path $resolvedWorkspace $symbolsFilePath
+    }
+    if (Test-Path -LiteralPath $symbolsFilePath) {
+        Write-StatusLine ("[{0}] NOTE   univers = symbols_file → {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $symbolsFilePath)
+        $universeArgs = @('--symbols-file', $symbolsFilePath)
+    } else {
+        $warnMsg = "earnings_calendar_sync.symbols_file introuvable : $symbolsFilePath — repli univers active-tradable (~13 600)"
+        $batchWarnings += $warnMsg
+        Write-StatusLine ("[{0}] WARNING univers — {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $warnMsg)
     }
 }
 
@@ -200,10 +248,8 @@ $commandArgs = @(
     'dataIntegrityEngine.sync_earnings_calendar',
     '--sleep-seconds', '1.1',
     '--log-every', '25',
-    '--batch-size', '50',
-    '--symbol-source', 'active-tradable',
-    '--resume'
-)
+    '--batch-size', '50'
+) + $universeArgs + @('--resume')
 
 $exitCode = 0
 $errorMsg = ''
@@ -254,12 +300,17 @@ try {
         Set-Content -LiteralPath $emailTmp -Value '(aucune sortie)' -Encoding UTF8
     }
     $emailStatus = if ($exitCode -eq 0) { 'OK' } else { 'ERROR' }
-    & $resolvedPython (Join-Path $resolvedWorkspace 'scripts\send_batch_email.py') `
-        --event 'earnings_calendar_sync' `
-        --status $emailStatus `
-        --exit-code $exitCode `
-        --duration $durStr `
-        --log-file $emailTmp 2>&1 | Out-Null
+    $emailArgs = @(
+        '--event', 'earnings_calendar_sync',
+        '--status', $emailStatus,
+        '--exit-code', $exitCode,
+        '--duration', $durStr,
+        '--log-file', $emailTmp
+    )
+    foreach ($warningLine in $batchWarnings) {
+        $emailArgs += @('--warning', $warningLine)
+    }
+    & $resolvedPython (Join-Path $resolvedWorkspace 'scripts\send_batch_email.py') @emailArgs 2>&1 | Out-Null
     Remove-Item -LiteralPath $emailTmp -Force -ErrorAction SilentlyContinue
 } catch {
     Write-StatusLine ("[{0}] NOTE   email de fin non envoyé (best-effort) : {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), ($_.Exception.Message -replace '[\r\n]+', ' '))

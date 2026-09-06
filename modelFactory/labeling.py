@@ -23,7 +23,7 @@ Usage ::
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
@@ -54,6 +54,9 @@ class TripleBarrierConfig:
         Multiple d'ATR pour le stop-loss. Ex: 2.0 → stop à 2 ATR de l'entrée.
     tp_atr_mult : float
         Multiple d'ATR pour le take-profit. Ex: 3.0 → TP à 3 ATR de l'entrée.
+    tp_max_pct : float
+        Plafond optionnel de distance du TP en pourcentage du prix d'entrée.
+        ``0.0`` conserve le comportement historique sans plafond.
     max_sessions : int
         Nombre maximum de sessions avant sortie time-based.
     atr_window : int
@@ -74,6 +77,7 @@ class TripleBarrierConfig:
 
     stop_atr_mult: float = 2.0
     tp_atr_mult: float = 3.0
+    tp_max_pct: float = 0.0
     max_sessions: int = 20
     atr_window: int = 14
     min_atr: float = 0.001  # 0.1% minimum ATR
@@ -88,6 +92,8 @@ class TripleBarrierConfig:
             raise ValueError("stop_atr_mult doit être > 0.")
         if self.tp_atr_mult <= 0:
             raise ValueError("tp_atr_mult doit être > 0.")
+        if self.tp_max_pct < 0:
+            raise ValueError("tp_max_pct doit être >= 0.")
         if self.max_sessions < 1:
             raise ValueError("max_sessions doit être >= 1.")
         if self.atr_window < 2:
@@ -363,13 +369,17 @@ def build_triple_barrier_label(
     else:
         atr_val = max(atr_val, cfg.min_atr * entry_price)
 
-    # Niveaux stop et TP
+    # Niveaux stop et TP. Le plafond est opt-in pour préserver tous les
+    # contrats historiques qui utilisaient uniquement le multiple ATR.
+    tp_distance = cfg.tp_atr_mult * atr_val
+    if cfg.tp_max_pct > 0:
+        tp_distance = min(tp_distance, cfg.tp_max_pct * entry_price)
     if side == "long":
         stop_price = entry_price - cfg.stop_atr_mult * atr_val
-        tp_price = entry_price + cfg.tp_atr_mult * atr_val
+        tp_price = entry_price + tp_distance
     else:
         stop_price = entry_price + cfg.stop_atr_mult * atr_val
-        tp_price = entry_price - cfg.tp_atr_mult * atr_val
+        tp_price = entry_price - tp_distance
 
     direction = 1 if side == "long" else -1
 
@@ -548,7 +558,7 @@ def compare_label_methods(
     -------
     dict avec distribution des classes et statistiques pour chaque méthode.
     """
-    from modelFactory.features import build_target, compute_future_return
+    from modelFactory.features import build_target
 
     # Target fixe ternaire
     fixed_target = build_target(
