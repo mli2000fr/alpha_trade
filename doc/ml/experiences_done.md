@@ -62,6 +62,7 @@ une étape de confirmation ; il n'autorise jamais automatiquement le serving.
 | E5 | Direction quotidienne du régime Oracle | Choisir un côté commun pour tout le panier du jour | Ridge Spearman 0,000 ; CatBoost -0,008 ; aucune stabilité exploitable | `NO_GO` | [E5](oracle_daily_regime_direction.md) |
 | R1 | Ranker conditionnel au TOP20 Oracle | Ranking de rendement réel uniquement dans le pool Oracle | H3 IC +0,0136 ; H20 +0,0266, mais seulement 5/9 folds stables à H20 et Oracle seul reste meilleur LONG | `NO_GO` | [Ranker conditionnel](conditional_oracle_ranker.md) |
 | C1 | Consensus des modèles OOF existants | Moyenne équipondérée de rangs quotidiens, 2 à 7 familles selon H3/H5/H10/H20, sans réentraînement ni optimisation | IC -0,0014 à +0,0118, inférieur au meilleur composant ; SHORT signé négatif partout ; unanimité et régime E5 ne sauvent pas la direction | `NO_GO` | [Audit de consensus OOF](oof_consensus_audit.md) |
+| T-V2-A | Temporal D1/D10 V2 — Dataset A | État J contre trajectoires `[J-N,...,J]`, N=3/5/10, Logistic/CatBoost/PairLogit, labels H20 autoritatifs | Campagne principale locale lancée sur 399 symboles ; 21 variantes avec reprise par artefact | `IN_PROGRESS` | [Temporal D1/D10 V2](temporal_d1d10_v2.md) |
 | S1 | Règles screener PIT post-Oracle | Signaux screener LONG/SHORT H3/H10/H20 | Couverture fraîche 10,44 %, meilleurs effets instables ; aucun gate LONG/SHORT | `NO_GO_PREDICTIVE` | [Screener post-Oracle](screener_post_oracle.md) |
 | S1-D | Recontrôle screener sur panel dense | Six signaux quotidiens recalculés sur tout le pool | Couverture réparée mais verdict prédictif inchangé | `NO_GO_PREDICTIVE` | [Panel dense](panel_screener_dense.md), [résultat](screener_post_oracle.md#source-dense-recommandée) |
 
@@ -198,10 +199,9 @@ signal ML observé peut être monétisé sans biais d'exécution.
 
 | Priorité actuelle | Piste | Question | Statut | Protocole |
 |---:|---|---|---|---|
-| 1 | Temporal D1/D10 V2 | Les trajectoires J-N→J distinguent-elles D1/D10 ou améliorent-elles l'amplitude ? | `PROPOSED`, prompt ajusté | [Prompt V2](../../prompt/todo_tail_direction_classifier_V2.md) |
-| 2 | Microstructure proche de l'entrée | Le flux de clôture J, pré-market ou opening range donne-t-il la direction ? | `PROPOSED`, contrat d'exécution à choisir | À formaliser |
-| 3 | Modèle temporel multi-horizon | Un apprentissage commun H3/H5/H10/H20 régularise-t-il la direction ? | `PROPOSED`, conditionnel à V2 | À formaliser |
-| 4 | Portefeuille relatif | Un spread dollar-neutral peut-il monétiser un faible ranking sans direction absolue ? | `PROPOSED` secondaire | Dérivé du [ranker conditionnel](conditional_oracle_ranker.md) |
+| 1 | Microstructure proche de l'entrée | Le flux de clôture J, pré-market ou opening range donne-t-il la direction ? | `PROPOSED`, contrat d'exécution à choisir | À formaliser |
+| 2 | Modèle temporel multi-horizon | Un apprentissage commun H3/H5/H10/H20 régularise-t-il la direction ? | `PROPOSED`, conditionnel à V2 | À formaliser |
+| 3 | Portefeuille relatif | Un spread dollar-neutral peut-il monétiser un faible ranking sans direction absolue ? | `PROPOSED` secondaire | Dérivé du [ranker conditionnel](conditional_oracle_ranker.md) |
 
 ## Procédure de mise à jour du registre
 

@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "experiment": "TEMPORAL_D1D10_V2_DATASET_A",
+  "research_only": true,
+  "oracle_batch_id": "model-factory-20260904192500-0802c8",
+  "target_horizon": 20,
+  "start_date": "2018-07-05",
+  "end_date": "2025-07-11",
+  "windows": [3, 5, 10],
+  "window_convention": "[J-N,...,J], soit N+1 observations",
+  "base_features": [
+    "daily_return",
+    "overnight_gap",
+    "close_location_value",
+    "momentum_5",
+    "momentum_10",
+    "momentum_20",
+    "momentum_60",
+    "relative_strength_5",
+    "relative_strength_20",
+    "relative_strength_60",
+    "rolling_mean_return_5",
+    "rolling_mean_return_20",
+    "rsi_14",
+    "sma20_distance",
+    "sma50_distance",
+    "ema20_distance",
+    "range_position_20",
+    "distance_high_20",
+    "volume_ratio_20",
+    "volume_zscore_20",
+    "cmf_20",
+    "atr_14_norm",
+    "rolling_volatility_20",
+    "market_return_20",
+    "market_trend_strength_50",
+    "regime_bull_market",
+    "regime_risk_off"
+  ],
+  "positive_fraction_features": [
+    "daily_return",
+    "momentum_5",
+    "momentum_10",
+    "momentum_20",
+    "relative_strength_5",
+    "relative_strength_20",
+    "relative_strength_60",
+    "cmf_20"
+  ],
+  "acceleration_features": [
+    "momentum_5",
+    "momentum_20",
+    "relative_strength_20",
+    "cmf_20"
+  ],
+  "models": {
+    "logistic": {"C": 1.0, "max_iter": 1000},
+    "catboost": {"iterations": 300, "depth": 5, "learning_rate": 0.03},
+    "pairlogit": {"iterations": 300, "depth": 5, "learning_rate": 0.03}
+  },
+  "walk_forward": {
+    "min_train_sessions": 504,
+    "test_sessions": 126,
+    "step_sessions": 126,
+    "max_splits": 12,
+    "purge_rule": "oracle_available_date < test_start"
+  },
+  "seed": 42,
+  "gates": {
+    "min_delta_mean_same_date_auc_vs_t0": 0.01,
+    "min_positive_fold_rate": 0.6,
+    "min_positive_years": 3,
+    "min_bucket_monotonic_spearman": 0.7
+  },
+  "confirmation_status": "UNAVAILABLE_ALREADY_OBSERVED"
+}
