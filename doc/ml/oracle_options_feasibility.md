@@ -191,6 +191,70 @@ moyen et médian positifs, au moins cinq dates moyennes positives sur huit, puis
 robustesse ATM/liquidité et absence de concentration. Une amélioration restant
 négative signifie « moins mauvais », pas une validation.
 
+### Résultat E6-B2 — DTE adapté à l’horizon
+
+Les quatre runs sont terminés sur le même échantillon que B1 : `588` événements,
+`152` symboles et `8` dates réparties de 2022H1 à 2025H2. Les rendements sont
+calculés selon le contrat conservateur préfixé : achat du call et du put au ask,
+liquidation au bid et commission de `0,65 USD` par contrat et par côté.
+
+| Horizon | DTE cible | Observations | Couverture | Rendement net moyen | Médiane nette | Trades positifs | Dates moyennes positives |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| H3 | 14 | 257 | 43,71 % | -15,76 % | -17,49 % | 19,46 % | 1/8 |
+| H5 | 21 | 249 | 42,35 % | -14,39 % | -19,31 % | 22,09 % | 2/8 |
+| H10 | 28 | 136 | 23,13 % | -22,33 % | -25,21 % | 11,76 % | 0/8 |
+| H20 | 45 | 243 | 41,33 % | -29,68 % | -33,22 % | 11,93 % | 0/8 |
+
+La couverture franchit le seuil de 40 % à H3, H5 et H20, mais H10 échoue avec
+seulement 23,13 %. Aucun horizon ne franchit les deux gates de rentabilité : les
+moyennes et les médianes sont toutes négatives. Le gate de stabilité temporelle
+échoue lui aussi largement : le meilleur cas, H5, ne compte que deux dates
+moyennes positives sur huit, contre cinq exigées.
+
+#### Comparaison au témoin E6-B1 à 45 DTE
+
+| Horizon | Variation de la moyenne nette | Variation de la médiane nette | Variation de couverture | Lecture |
+|---:|---:|---:|---:|---|
+| H3 | +1,02 point | -3,52 points | -1,87 point | moyenne légèrement moins mauvaise, médiane dégradée |
+| H5 | +0,63 point | -4,16 points | -3,57 points | moyenne légèrement moins mauvaise, médiane dégradée |
+| H10 | +0,14 point | -3,26 points | -23,81 points | quasi aucun gain économique et forte perte de couverture |
+| H20 | 0,00 point | 0,00 point | 0,00 point | même configuration 45 DTE, donc témoin identique |
+
+Les contrats plus courts réduisent la prime médiane rapportée au sous-jacent :
+`11,05 %` à H3, `12,30 %` à H5 et `15,56 %` à H10, contre `18,65 %` à H20.
+Cette réduction ne suffit pas. Le spread combiné médian reste proche de 20 à
+23 %, et le rendement calculé depuis le midpoint jusqu’au bid demeure négatif
+à chaque horizon (`-4,50 %`, `-2,74 %`, `-12,88 %`, `-21,17 %`). La conclusion
+ne dépend donc pas uniquement de la convention d’achat au ask : la valeur du
+straddle après entrée ne compense pas suffisamment sa prime et son coût de
+liquidation.
+
+### Verdict E6-B2
+
+**E6-B2 est `NO_GO`.** Adapter mécaniquement le DTE à H3/H5/H10/H20 ne rend pas
+le long straddle ATM exploitable sur les événements Oracle TOP20. Les petits
+gains de moyenne à H3/H5/H10 sont des résultats « moins mauvais » et non une
+validation : les médianes se détériorent et les gates temporels échouent.
+
+La confirmation E6-B3, préconditionnée au succès de B2, n’est donc pas
+justifiée. Ce verdict ferme la formulation *long straddle ATM systématique* ; il
+ne rejette pas une étude distincte d’information optionnelle directionnelle
+(skew, risk reversal ou flux put/call), ni une stratégie dont le payoff et le
+risque seraient différents.
+
+Artefacts canoniques :
+
+- [H3 — 14 DTE](../../artifacts/models/shared_directional/oracle-options-dte-20260906-h3-0802c8/report.json) ;
+- [H5 — 21 DTE](../../artifacts/models/shared_directional/oracle-options-dte-20260906-h5-0802c8/report.json) ;
+- [H10 — 28 DTE](../../artifacts/models/shared_directional/oracle-options-dte-20260906-h10-0802c8/report.json) ;
+- [H20 — 45 DTE](../../artifacts/models/shared_directional/oracle-options-dte-20260906-h20-0802c8/report.json).
+
+Limite de traçabilité : le champ `experiment` interne des quatre rapports garde
+le nom générique `E6_B1_oracle_options_rest_pilot_v1`. L’identification E6-B2
+repose donc sur le répertoire et sur les paramètres DTE présents dans chaque
+rapport. Cela n’altère pas les calculs, mais ce libellé devra être distingué si
+le pilote est réutilisé.
+
 ## Implémentation
 
 - `modelFactory/oracle_options_feasibility.py` : audit reproductible des snapshots
