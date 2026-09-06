@@ -189,15 +189,19 @@ Il répond à une question conditionnelle :
 ressemble-t-elle davantage à un futur D1 ou D10 ?"
 ```
 
-La sortie doit donc être nommée :
+Pendant Dataset A/B, la sortie brute doit être nommée :
+
+```text
+tail_polarity_score
+```
+
+Elle représente un classement relatif appris sur la population D1/D10. Elle ne
+doit pas encore être présentée comme une probabilité calibrée sur le pool Oracle
+complet. La notation suivante n'est autorisée qu'après validation et calibration
+sur Dataset C, où D2-D9 sont réintroduits :
 
 ```text
 p_d10_given_tail
-```
-
-et :
-
-```text
 p_d1_given_tail = 1 - p_d10_given_tail
 ```
 
@@ -210,6 +214,10 @@ p_short
 ```
 
 car cela serait conceptuellement incorrect.
+
+Une valeur élevée signifie d'abord « ressemble davantage à un futur D10 qu'à
+un futur D1 ». Elle ne garantit ni un rendement absolu positif, ni que
+l'observation réalisera effectivement un tail.
 
 ---
 
@@ -240,6 +248,35 @@ D10 = top 10% realized H20 intra-date
 ```
 
 alors utiliser exactement cela.
+
+## 4.1 Audit obligatoire : rang relatif vs signe absolu
+
+Les déciles Oracle sont cross-sectionnels. D1 signifie « parmi les moins bons
+rendements du jour » et D10 « parmi les meilleurs » ; D1 ne signifie pas
+nécessairement rendement négatif et D10 ne signifie pas nécessairement rendement
+positif.
+
+Avant tout fit, produire globalement, par année, semestre et régime :
+
+```text
+P(future_return < 0 | D1)
+P(future_return > 0 | D10)
+P(future_return <= -3% | D1)
+P(future_return >= +3% | D10)
+mean/median future_return de D1 et D10
+part des dates où les deux tails ont le même signe absolu
+```
+
+Le rapport doit séparer deux verdicts :
+
+```text
+RELATIVE_TAIL_RANKING_VERDICT
+ABSOLUTE_LONG_SHORT_VERDICT
+```
+
+Un bon classement D1/D10 avec une mauvaise cohérence de signe peut rester utile
+pour un portefeuille long/short relatif, mais ne valide pas les décisions
+LONG/SHORT absolues de l'application.
 
 Produire en début de rapport :
 
@@ -1472,8 +1509,11 @@ D2-D9
 Scorer chaque candidat avec :
 
 ```text
-p_d10_given_tail
+tail_polarity_score
 ```
+
+Ne renommer ce score `p_d10_given_tail` qu'après calibration OOF sur cette
+population complète et vérification de la fiabilité par buckets.
 
 Puis mesurer par bucket de score :
 
@@ -1585,6 +1625,32 @@ walk-forward Oracle
 ```
 
 avant Dataset B/C.
+
+## 47.1 Sélection du modèle et confirmation séparée
+
+Les prédictions OOF utilisées pour choisir N, la représentation et le modèle
+servent au développement. Elles ne constituent pas une confirmation intacte.
+
+Le protocole doit distinguer :
+
+```text
+DEVELOPMENT_WF
+→ choix figé de N / représentation / modèle
+→ TEMPORAL_CONFIRMATION_BLOCK non utilisé pour ce choix
+```
+
+Si aucune période réellement intacte n'existe parce que ses résultats ont déjà
+guidé les expériences précédentes, le rapport doit déclarer :
+
+```text
+FINAL_CONFIRMATION_STATUS = UNAVAILABLE_ALREADY_OBSERVED
+serving_ready = false
+research_only = true
+```
+
+Dans ce cas, un nested walk-forward et un bootstrap par date mesurent la
+robustesse interne, mais ne doivent jamais être présentés comme une validation
+finale indépendante.
 
 ---
 
@@ -1962,6 +2028,27 @@ Question :
 
 # 64. Ablation feature families
 
+## 64.1 Budget de features pour la campagne principale
+
+Ne pas appliquer mécaniquement toutes les transformations aux quelque 129
+features EXPERT. La phase principale est limitée à environ 20-30 features de
+base denses et économiquement directionnelles, avec une définition canonique
+des transformations par famille.
+
+Produire avant fit :
+
+```text
+n_base_features
+n_generated_features_by_N
+duplicate_or_equivalent_features
+correlation_clusters
+coverage_by_feature
+```
+
+Les features déjà équivalentes à une trajectoire (`momentum_3/5/10`,
+`rsi_slope`, pentes EMA, `accel_3_5`, `decay_5_10`, etc.) doivent être signalées
+pour éviter de compter deux fois la même information.
+
 Comparer quelques familles principales :
 
 ```text
@@ -1979,6 +2066,11 @@ Ne pas faire toutes les combinaisons possibles.
 ---
 
 # 65. Eroya — ablation incrémentale par famille
+
+Cette section est différée. Ne pas engager un nouveau backfill Eroya ni tester
+T3 tant que la baseline locale T0/T1/T2 n'a pas franchi le gate de poursuite.
+Les expériences Eroya déjà réalisées constituent un prior défavorable ; seules
+des séries historiques PIT suffisamment denses justifient une nouvelle ablation.
 
 Après baseline actuelle :
 
@@ -2046,6 +2138,19 @@ et :
 ```text
 tail vs middle predictability
 ```
+
+Définition obligatoire :
+
+```text
+DIRECTION = D1 vs D10
+AMPLITUDE = (D1 ∪ D10) vs D2-D9
+```
+
+Ne pas réutiliser aveuglément l'ancien champ `dir_vs_amp` de
+`modelFactory/global_direction/temporal.py` : son implémentation historique
+`_auc_amplitude()` compare D1 à D10 au lieu de comparer tails à middle. Les AUC
+directionnelles historiques restent informatives, mais ce champ amplitude doit
+être recalculé correctement dans V2.
 
 Verdicts possibles :
 
@@ -2283,6 +2388,17 @@ peuvent être plus informatifs conjointement qu’individuellement.
 
 Pas de tuning spécifique par N.
 
+Ajouter un challenger de ranking pairwise groupé strictement par `signal_date` :
+
+```text
+CatBoost PairLogit ou ranker équivalent
+group_id = signal_date
+```
+
+La classification binaire et le ranker doivent partager exactement les mêmes
+lignes et folds. Le ranker optimise directement l'ordre D10 > D1 le même jour.
+Son score brut ne doit pas être appelé probabilité sans calibration OOF séparée.
+
 ---
 
 # 77. Modèles séquentiels
@@ -2452,6 +2568,21 @@ vérifier qu’une transformation accidentellement future ne donne pas un score 
 
 L’audit PIT reste la protection principale.
 
+## 83.1 Corporate actions, qualité des prix et biais d'univers
+
+Réutiliser les contrôles découverts pendant E6 : cours ajustés, détection des
+ruptures de ticker/corporate actions et exclusion des ratios de prix aberrants.
+Une trajectoire contaminée par un split ou un changement de ticker ne doit
+jamais devenir un pattern directionnel.
+
+Documenter également si l'univers historique est un univers fixe de survivants
+actuels ou un univers réellement PIT. Un univers fixe est acceptable pour un
+diagnostic initial, mais impose la mention :
+
+```text
+SURVIVORSHIP_BIAS_RISK = true
+```
+
 ---
 
 # 84. Critères de verdict
@@ -2484,6 +2615,19 @@ D10 enrichment en haut
 D1 enrichment en bas
 Dataset C confirme l’effet
 ```
+
+Gate quantitatif minimal pré-enregistré pour poursuivre au-delà de T2 :
+
+```text
+delta_mean_same_date_auc_vs_T0 >= +0.01
+majorité nette des folds avec same-date AUC > 0.50
+enrichissement monotone des buckets
+gain non concentré sur un symbole, une année ou un régime
+cohérence économique LONG et SHORT évaluée séparément
+```
+
+Une AUC élevée sans cohérence du rendement signé ne valide que le classement
+relatif, pas l'intégration au bundle de trading.
 
 ### STRONG_GO
 
@@ -2649,6 +2793,10 @@ WF protocol
 purge
 metrics
 GO/NO_GO rules
+feature budget
+development period
+confirmation period/status
+pairwise objective contract
 ```
 
 Ne pas modifier après observation des premiers résultats.
@@ -2660,8 +2808,11 @@ Ne pas modifier après observation des premiers résultats.
 Exécuter exactement dans cet ordre :
 
 ```text
+STEP 0
+Attendre la clôture et le verdict de la piste E6-B2 en cours
+
 STEP 1
-Auditer le contrat D1/D10 et le PIT
+Auditer le contrat D1/D10, le signe absolu, le PIT, les corporate actions et le biais d'univers
 
 STEP 2
 Construire Dataset A
@@ -2676,13 +2827,13 @@ STEP 5
 T2 : slopes / acceleration / persistence pour N=3,5,10
 
 STEP 6
-Comparer N=3 vs N=5 vs N=10 en OOF
+Comparer N=3 vs N=5 vs N=10 en OOF sur Logistic Regression, CatBoost classification et ranker pairwise
 
 STEP 7
 Sélectionner le plus petit N équivalent au meilleur
 
 STEP 8
-Tester LR, LightGBM, CatBoost avec protocole figé
+Figer le budget de features, le N, la représentation et le modèle retenus
 
 STEP 9
 Construire Dataset B Oracle OOF
@@ -2694,19 +2845,21 @@ STEP 11
 Construire Dataset C avec D2-D9 réintroduits
 
 STEP 12
-Auditer Eroya et la disponibilité historique PIT
+Émettre le verdict RELATIVE_TAIL_RANKING et ABSOLUTE_LONG_SHORT
 
 STEP 13
-Ajouter les familles Eroya une à une
+Exécuter la confirmation séparée si une période réellement intacte existe
 
 STEP 14
-Réévaluer si une famille Eroya préfère un autre N
-UNIQUEMENT comme analyse secondaire, sans changer le N principal
+Seulement si le gate T2 passe, auditer les séries Eroya temporelles réellement PIT et denses
 
 STEP 15
-Si justifié, tester T3 raw sequence avec TCN/1D-CNN puis LSTM
+Ajouter les familles Eroya une à une sur les mêmes lignes ; ne pas changer le N principal
 
 STEP 16
+Si justifié, tester T3 raw sequence avec TCN/1D-CNN puis LSTM
+
+STEP 17
 Verdict final
 ```
 
