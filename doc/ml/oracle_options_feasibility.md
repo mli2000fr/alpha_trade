@@ -110,6 +110,87 @@ une volatilité implicite très élevée. E6-B doit donc répondre à :
 
 Sans prix exécutable historique, la réponse reste inconnue.
 
+## Résultat E6-B1 — straddle 45 DTE
+
+Artefact : `oracle-options-pilot-20260906130521-0802c8`. Le calendrier comprend
+une date fixée au milieu de chaque semestre, soit huit dates, 588 événements
+TOP20 et 152 symboles entre mai 2022 et juillet 2025.
+
+### Couverture
+
+- paire call/put au même strike trouvée : 534/588 (`90,82 %`) ;
+- paire avec NBBO d’entrée synchronisé : 397/588 (`67,52 %`) ;
+- sortie exploitable : 268 à H3, 270 à H5, 276 à H10 et 243 à H20 ;
+- seulement 111 observations possèdent les quatre horizons complets ;
+- les pertes de couverture proviennent de l’absence de contrat, d’une jambe sans
+  NBBO ou de quotes non synchronisées, jamais d’une interpolation.
+
+### Résultats ask → bid, commissions incluses
+
+| Horizon | Observations | Moyenne | Médiane | Trades positifs | Dates moyennes positives |
+|---:|---:|---:|---:|---:|---:|
+| H3 | 268 | -16,77 % | -13,97 % | 13,06 % | 1/8 |
+| H5 | 270 | -15,02 % | -15,15 % | 15,93 % | 1/8 |
+| H10 | 276 | -22,47 % | -21,95 % | 10,14 % | 0/8 |
+| H20 | 243 | -29,68 % | -33,22 % | 11,93 % | 0/8 |
+
+Le résultat n’est pas causé par quelques mauvais contrats manifestes. Avec une
+distance au strike limitée à 3 % et une prime totale limitée à 30 % du
+sous-jacent, H20 reste à `-27,0 %` en moyenne et `-30,4 %` en médiane sur 191
+observations.
+
+Le score Oracle ne classe pas le rendement du straddle : Spearman proche de zéro
+à tous les horizons (`-0,05` à H3/H5, `-0,005` à H10, `+0,056` à H20). En
+revanche, l’amplitude **réalisée a posteriori** est bien corrélée au rendement de
+l’option. Même son quartile supérieur reste toutefois perdant en moyenne à H20
+(`-21,4 %`). Ce dernier classement est diagnostique et non tradable, puisqu’il
+utilise le futur.
+
+### Verdict
+
+Le long straddle ATM d’environ 45 DTE acheté au ask après chaque signal TOP20 est
+**rejeté dans cette formulation**. Le marché facture une prime d’entrée médiane
+de `19,04 %` du sous-jacent ; l’amplitude détectée par Oracle ne suffit pas à
+compenser la prime, le spread et la décroissance temporelle.
+
+Ce pilote ne valide ni une vente de straddle — dont le tail-risk serait majeur —
+ni un déploiement. Avec seulement huit dates, il constitue un rejet préliminaire
+fort de la formulation 45 DTE, pas une estimation définitive de stratégie.
+
+La seule variante encore justifiée sans optimisation opportuniste est un contrat
+DTE préfixé par horizon : environ 14 DTE pour H3, 21 pour H5, 28 pour H10 et 45
+pour H20. Elle répond à une différence structurelle de durée, et non à un seuil
+choisi sur les pertes observées. Le pilote conserve désormais bid et ask à
+l’entrée et à la sortie afin d’attribuer séparément spread et variation de valeur.
+
+## E6-B2 — DTE adapté à l’horizon
+
+La campagne conserve exactement le calendrier E6-B1 et sépare quatre contrats :
+
+| Sortie | DTE minimum | DTE cible | DTE maximum |
+|---:|---:|---:|---:|
+| H3 | 10 | 14 | 21 |
+| H5 | 14 | 21 | 28 |
+| H10 | 21 | 28 | 35 |
+| H20 | 35 | 45 | 55 |
+
+Chaque horizon possède son propre run afin que le strike, l’expiration et la
+prime soient reconstruits indépendamment à J+1. Les dates, symboles, horaires,
+commission et règle ask→bid restent identiques à B1. Les nouveaux artefacts
+conservent également le bid d’entrée, le midpoint, le spread combiné et les asks
+de sortie.
+
+Exemple H3 :
+
+```powershell
+python -u -m modelFactory.oracle_options_pilot --events-path artifacts/models/shared_directional/oracle-amplitude-audit-20260906094826-0802c8/event_metrics.parquet --output artifacts/models/shared_directional/oracle-options-dte-h3 --start-date 2022-03-07 --end-date 2025-07-11 --dates-per-semester 1 --horizons 3 --min-dte 10 --target-dte 14 --max-dte 21 --minimum-exit-buffer-days 5
+```
+
+Les gates sont préfixés avant résultats : couverture NBBO ≥ 40 %, rendement net
+moyen et médian positifs, au moins cinq dates moyennes positives sur huit, puis
+robustesse ATM/liquidité et absence de concentration. Une amélioration restant
+négative signifie « moins mauvais », pas une validation.
+
 ## Implémentation
 
 - `modelFactory/oracle_options_feasibility.py` : audit reproductible des snapshots
