@@ -40,8 +40,9 @@ une étape de confirmation ; il n'autorise jamais automatiquement le serving.
 5. **La surface Options directionnelle 45 DTE est rejetée** : aucune feature ne
    passe les gates préfixés. Les deux effets descriptifs H10/H20 sont instables
    et défavorables au SHORT ; le volume historique est non testable.
-6. La prochaine expérience directionnelle préparée est le classifieur temporel
-   D1/D10 V2, après clôture des pistes prioritaires et audit de consensus OOF.
+6. **Temporal D1/D10 V2 est en cours** sur Dataset A : 399 symboles, fenêtres
+   N=3/5/10, représentations T0/T1/T2 et modèles Logistic/CatBoost/PairLogit.
+   Dataset B/C reste conditionné au franchissement des gates Dataset A.
 
 ## Campagnes directionnelles récentes après Oracle
 
@@ -202,6 +203,135 @@ signal ML observé peut être monétisé sans biais d'exécution.
 | 1 | Microstructure proche de l'entrée | Le flux de clôture J, pré-market ou opening range donne-t-il la direction ? | `PROPOSED`, contrat d'exécution à choisir | À formaliser |
 | 2 | Modèle temporel multi-horizon | Un apprentissage commun H3/H5/H10/H20 régularise-t-il la direction ? | `PROPOSED`, conditionnel à V2 | À formaliser |
 | 3 | Portefeuille relatif | Un spread dollar-neutral peut-il monétiser un faible ranking sans direction absolue ? | `PROPOSED` secondaire | Dérivé du [ranker conditionnel](conditional_oracle_ranker.md) |
+
+## Audit des 49 méthodes de la roadmap professionnelle
+
+Cette section confronte
+[la roadmap des méthodes quant](alpha_trade_quant_professional_methods_roadmap.md)
+au code et aux expériences réellement présents au 6 septembre 2026. Les états
+ont le sens suivant :
+
+- `ACTIF` : méthode intégrée et utilisée dans l'application ou ses harnais ;
+- `FAIT_NO_GO` : expérience exécutée, hypothèse non promue ;
+- `EN_COURS` : campagne actuellement exécutée ;
+- `PARTIEL` : une partie seulement du contrat a été testée ou industrialisée ;
+- `À_FAIRE_CONDITIONNEL` : pertinent uniquement si son prérequis passe ;
+- `À_FAIRE_PRIORITAIRE` : information nouvelle potentiellement utile ;
+- `DIFFÉRÉ` : intérêt possible mais rapport signal/complexité faible maintenant ;
+- `À_ÉVITER` : non justifié dans l'état actuel des preuves.
+
+### 1–10 — formulation du signal et trajectoires
+
+| N° | Méthode | État réel | Décision et preuve |
+|---:|---|---|---|
+| 1 | Tail Classification D1/D10 | `FAIT_NO_GO` statique ; `EN_COURS` temporel | GlobalDirection binaire et le modèle mutualisé statique ont échoué. Temporal V2 reteste uniquement l'information nouvelle de trajectoire. Voir [GlobalDirection](../experiences/archives_recherche/global_direction_h20.md), [shared directional](shared_directional_oracle_events.md) et [Temporal V2](temporal_d1d10_v2.md). |
+| 2 | Temporal Feature Engineering | `FAIT_NO_GO` ancien ; `EN_COURS` V2 | L'ancien test sur scores clairsemés n'a donné aucun GO. V2 corrige le contrat avec 27 séries locales denses, N=3/5/10 et T0/T1/T2. Voir [historique temporel](../experiences/archives_recherche/global_direction_temporal.md). |
+| 3 | Meta-Labeling | `PARTIEL` | La cascade Oracle → spécialistes LONG/SHORT existe techniquement. L'entraînement directionnel conditionnel Oracle a échoué en généralisation ; le méta-label temporel n'est pas validé. Conserver l'architecture, pas la considérer comme alpha démontré. Voir [bundle](per_symbol/07_bundle_oracle_long_short.md). |
+| 4 | Cross-Sectional Ranking | `ACTIF` global ; `FAIT_NO_GO` post-Oracle | Global Ranking est une brique complète. Le ranker restreint au TOP20 Oracle n'a pas franchi les gates ; PairLogit est retesté dans V2 sur les trajectoires. Voir [Global Ranking](global_ranking/README.md) et [ranker conditionnel](conditional_oracle_ranker.md). |
+| 5 | Cross-Feature Divergence | `PARTIEL`, `À_FAIRE_CONDITIONNEL` | Plusieurs divergences existent déjà parmi les features EXPERT (`momentum_5_minus_momentum_20`, spread SMA, accélération), et CatBoost apprend des interactions. Une petite ablation dédiée de divergences économiquement motivées reste pertinente seulement si V2 trouve d'abord un signal temporel. |
+| 6 | Relative Trajectory | `PARTIEL`, priorité conditionnelle élevée | Les niveaux de force relative, features SPY/secteur et neutralisations existent ; V2 teste leurs deltas/pentes. La vraie trajectoire stock moins secteur à chaque point de la fenêtre n'est pas encore une ablation autonome. À faire après un GO Dataset A, sur les mêmes lignes. |
+| 7 | Multi-Horizon Agreement | `PARTIEL`, `À_FAIRE_CONDITIONNEL` | Les features momentum multi-horizons et l'audit de consensus existent, mais pas un test figé de cohérence directionnelle H3/H5/H10/H20 après sélection de N. À ouvrir seulement si V2 montre de l'information. Voir [consensus OOF](oof_consensus_audit.md). |
+| 8 | Persistence | `ACTIF` ailleurs ; `EN_COURS` D1/D10 | Persistance Global Rank/DIP déjà étudiée et intégrée dans son propre contrat. V2 inclut la fraction de variations positives sur N pour la polarité D1/D10. Ne pas confondre les deux populations. Voir [DIP historique](../experiences/archives_recherche/persistent_top10_dip.md). |
+| 9 | Velocity / Acceleration | `PARTIEL`, `EN_COURS` | Des pentes/accélérations existent dans EXPERT ; V2 construit une définition canonique trainée avec les autres trajectoires. Aucun verdict D1/D10 séparé avant la fin du run. |
+| 10 | Change-Point Detection | `DIFFÉRÉ` | Aucun test causal dédié CUSUM/PELT n'a été trouvé. À envisager seulement si V2 montre qu'une dynamique simple existe mais reste mal captée ; sinon ce serait du feature mining supplémentaire. |
+
+### 11–19 — conditionnement, spécialistes et modèles séquentiels
+
+| N° | Méthode | État réel | Décision et preuve |
+|---:|---|---|---|
+| 11 | Event-Conditioned Models | `PARTIEL` / majoritairement `FAIT_NO_GO` | Earnings, Form 4, news, analystes et 8-K ont été audités. Form 4 et earnings ne passent pas ; 8-K et Analyst Insights restent inconclusifs. Un nouveau modèle conditionné exige une série PIT plus dense ou une source nouvelle. Voir [POC Eroya](eroya_directional_poc.md). |
+| 12 | Regime-Conditioned Models | `FAIT_NO_GO` pour la direction | Les régimes sont disponibles comme features et dans le risque. Le modèle directionnel quotidien de régime Oracle n'a produit aucun avantage stable. Ne pas créer maintenant des experts séparés par régime. Voir [E5](oracle_daily_regime_direction.md). |
+| 13 | Mixture of Experts | `DIFFÉRÉ` | Aucun ensemble de patterns directionnels validés ne justifie encore un gating model. Requis : au moins deux experts complémentaires ayant chacun un avantage OOF. |
+| 14 | Trajectory Clustering | `À_FAIRE_CONDITIONNEL` diagnostique | Non exécuté pour D1/D10. Autorisé uniquement après un signal V2, pour comprendre plusieurs formes de D1/D10 ; pas pour réoptimiser la même période. |
+| 15 | Contrastive Learning | `À_ÉVITER` maintenant | Non implémenté et disproportionné sans séparabilité tabulaire préalable. |
+| 16 | 1D-CNN / TCN | `À_FAIRE_CONDITIONNEL` | Non exécuté pour la polarité Oracle. À tester seulement si T2 ou une séquence aplatie apporte déjà au moins +0,01 d'AUC same-date contre T0. |
+| 17 | LSTM séquentiel | `ACTIF` per-symbol générique ; `À_FAIRE_CONDITIONNEL` D1/D10 | LSTM existe dans ModelFactory, mais cela ne valide pas un LSTM mutualisé de polarité. Challenger seulement après TCN/flattened et GO tabulaire. |
+| 18 | Transformer temporel | `À_ÉVITER` | Séquences de 4 à 11 observations et absence actuelle de signal ne justifient ni paramètres ni complexité supplémentaires. |
+| 19 | Calibration | `ACTIF`, application conditionnelle | Platt/isotonic/temperature-vector et la gouvernance existent. E2-B a montré qu'une calibration correcte ne sauve pas un ranking faible. Calibrer Temporal uniquement après Dataset C et stabilité du classement. Voir [recalibration](recalibration_et_promotion.md). |
+
+### 20–29 — protocole scientifique et traitement des données
+
+| N° | Méthode | État réel | Décision et preuve |
+|---:|---|---|---|
+| 20 | Feature Ablation | `ACTIF` et largement `FAIT` | Campagnes Global Ranking B0–B44, Oracle 01–14, Per-Symbol S7/V2 et sources Eroya. Continuer seulement par familles préfixées sur mêmes lignes, pas par suppression opportuniste. |
+| 21 | Direction vs Amplitude Audit | `ACTIF` / `FAIT` | E6-A valide l'amplitude Oracle ; tous les harnais directionnels récents séparent rendement signé et amplitude. V2 recalcule correctement tail-vs-middle, contrairement à l'ancien `dir_vs_amp`. Voir [E6-A](oracle_amplitude_audit.md). |
+| 22 | Same-Date Evaluation | `ACTIF` | Métrique centrale des modèles mutualisés, rankers, consensus et V2. Elle évite qu'un régime de date soit pris pour une séparation cross-sectionnelle. |
+| 23 | Pairwise Ranking | `FAIT_NO_GO` statique ; `EN_COURS` temporel | R1 PairLogit sur le pool Oracle a échoué. V2 compare de nouveau PairLogit aux classifieurs sur les mêmes folds et trajectoires. |
+| 24 | Purged Walk-Forward | `ACTIF` | Oracle, Global Ranking, Per-Symbol et recherches partagées utilisent le WF. V2 impose `oracle_available_date < test_start`, donc les targets H20 du train sont connus avant le test. |
+| 25 | Embargo / Leakage Controls | `ACTIF` | Assertions de features interdites/futures, garde de disponibilité target, Oracle OOF, preprocessing train-only et contrôles PIT sont présents. La confirmation finale V2 reste déclarée indisponible car 2018–2025 a déjà été observé. |
+| 26 | Missingness as Information | `PARTIEL` | `is_filled`, âges de snapshots et âges d'événements existent dans plusieurs datasets. V2 local n'ajoute pas mécaniquement des centaines de flags. À compléter seulement pour les sources irrégulières réellement retenues. |
+| 27 | Event Recency | `PARTIEL` / sources testées non promues | Distance aux earnings, récence Form 4/news/événements ont été testées dans les POC correspondants sans signal suffisant. Garder comme contrat standard pour toute nouvelle source événementielle. |
+| 28 | Ensemble Models | `ACTIF` pour championnat ; `FAIT_NO_GO` pour consensus directionnel | La sélection de champion LSTM/LightGBM/CatBoost existe. Le consensus OOF des modèles directionnels n'améliore pas le meilleur composant ; ne pas rechercher des poids post-hoc. Voir [C1](oof_consensus_audit.md). |
+| 29 | Feature Neutralization | `ACTIF` / `FAIT` | Features SPY/secteur, CAPM et cibles résiduelles ont été testées. Les campagnes Global Ranking montrent leur utilité contextuelle ; les cibles directionnelles résidualisées n'ont pas résolu D1/D10. Voir [campagnes Global](../experiences/campagnes_global_ranking/README.md) et [E1](shared_directional_oracle_events.md). |
+
+### 30–39 — risque, portefeuille et formulations alternatives
+
+| N° | Méthode | État réel | Décision et preuve |
+|---:|---|---|---|
+| 30 | Risk Overlay | `ACTIF` | Moteur risque/exécution séparé, stops, TP, drawdown, volatilité cible et protections sont implémentés et documentés. Le risque ne doit pas être utilisé pour masquer un signal directionnel absent. Voir [risque/lifecycle](../experiences/risque_execution_lifecycle.md). |
+| 31 | Portfolio Constraints | `ACTIF` | Max positions, exposition sectorielle, exposition brute/nette, drawdown et liquidité sont consommés par le backtest/production. Smart sector cap a été testé sans remplacer le cap canonique. |
+| 32 | Transaction Cost Awareness | `ACTIF` | Commission, slippage, spread, intérêt de marge et replay d'exécution font partie des contrats canoniques. Les diagnostics ML purs restent avant coûts ; tout GO doit ensuite passer le backtest net. |
+| 33 | Probability Thresholding | `FAIT`, non promu | Les seuils 0,55/0,80/0,85/0,90 ont été comparés sur le bundle directionnel ; aucune politique robuste n'en est sortie. Ne pas reprendre un sweep fin sans nouveau modèle validé. |
+| 34 | Symbol-Specific Thresholds | `À_ÉVITER` | Les gates de sélection de candidats per-symbol sont des contrôles de qualité, pas des seuils de trading optimisés par ticker. L'échantillon de tails reste trop faible pour cette recherche. |
+| 35 | Per-Symbol Fine-Tuning | `FAIT_NO_GO` pour la mission Oracle | Les spécialistes LONG/SHORT et leur population conditionnelle Oracle sont implémentés. L'amélioration développement ne s'est pas généralisée. Capacité technique conservée, hypothèse ML non promue. |
+| 36 | Hierarchical Models | `PARTIEL`, `DIFFÉRÉ` | Global, Per-Sector et Per-Symbol existent comme modules distincts, mais pas comme modèle hiérarchique joint avec shrinkage. Inutile avant un signal partagé stable. Voir [Per-Sector](per_sector/README.md). |
+| 37 | Survival / Time-to-Event | `PARTIEL`, `FAIT_NO_GO` proche | First-touch, rentabilité path-aware et veto de risque ont étudié le chemin et l'ordre des barrières ; ils ont échoué. Un vrai modèle de durée n'est pas prioritaire tant que H20 reste le contrat. |
+| 38 | Régression directe des rendements | `FAIT_NO_GO` | E1 a prédit le rendement signé H3/H5/H10/H20 ; IC proche de zéro et branche SHORT négative. Ne pas relancer sans données nouvelles. |
+| 39 | Ordinal Classification | `FAIT_NO_GO` | GlobalDirection ordinal D1/milieu/D10 et objectif rank ont été testés sans battre les baselines. Dataset C V2 sera un audit de scoring du milieu, pas une réouverture opportuniste de cette cible. |
+
+### 40–49 — méthodes avancées, robustesse et données alternatives
+
+| N° | Méthode | État réel | Décision et preuve |
+|---:|---|---|---|
+| 40 | Multitask Learning | `À_ÉVITER` maintenant | Aucun avantage à remélanger amplitude, direction et rendement après avoir clarifié leurs rôles. Une future tête multi-horizon directionnelle serait une expérience distincte, pas un modèle end-to-end. |
+| 41 | Reinforcement Learning | `À_ÉVITER` | Ne résout ni la faiblesse informationnelle D1/D10 ni les problèmes de couverture. |
+| 42 | Genetic Programming / Symbolic Search | `À_ÉVITER` | Risque de data mining excessif sur une période déjà largement observée. |
+| 43 | SHAP Pattern Discovery | `À_FAIRE_CONDITIONNEL` diagnostique | Feature importance existe dans plusieurs entraînements, mais une analyse SHAP de trajectoires n'est utile qu'après un GO OOF V2. Elle n'est jamais une preuve autonome d'alpha. |
+| 44 | Counterfactual Analysis | `PARTIEL` | Des contrefactuels de lifecycle/stops et de risque existent. Aucun contrefactuel directionnel de trajectoire n'est justifié avant un modèle V2 informatif. |
+| 45 | Placebo Tests | `PARTIEL`, **reste obligatoire pour V2** | Des placebos ont validé Global Ranking et certains backtests. Le run V2 courant ne contient pas encore son shuffle-label dédié ; ajouter au minimum un contrôle Logistic sur la représentation candidate avant promotion Dataset B. |
+| 46 | Bootstrap par Date | `ACTIF` backtest ; **reste obligatoire pour V2** | Le moteur possède des bootstraps trades/blocs. V2 doit encore bootstrapper la différence d'AUC same-date entre N/T2 et T0 avant de sélectionner N ; calculable après les prédictions OOF sans réentraînement. |
+| 47 | Stability Selection | `PARTIEL` | Les gates fold/année et ablations par famille existent. La stabilité des rangs d'importance feature par fold n'est pas encore produite dans V2 ; à ajouter seulement pour une variante candidate. |
+| 48 | Data Source Incrementality | `FAIT` sur les sources disponibles | Form 4 a eu une ablation modèle, les autres familles ont été comparées sur des populations communes lorsque la couverture le permettait. Aucune source Eroya testée n'est promue. Réouvrir seulement avec une série PIT réellement nouvelle et dense. |
+| 49 | Alternative Data Families | `PARTIEL` | Déjà testés : short volume/intérêt, news, analystes, earnings, Form 4, 8-K et surface Options. Restent potentiellement sérieux : microstructure/order flow proche de l'entrée et borrow fee/utilization si historique PIT accessible. Capital flow mérite un audit de source. 13F/institutionnel reste faible priorité pour H3–H20. |
+
+## Pistes encore intéressantes après cet audit
+
+### Priorité P0 — terminer correctement Temporal V2
+
+1. Attendre Dataset A T0/T1/T2 en cours.
+2. Si une variante passe les gates, calculer le bootstrap par date de son delta
+   d'AUC contre T0.
+3. Exécuter un placebo shuffle-label limité à la représentation candidate.
+4. Seulement après ces contrôles, ouvrir Dataset B Oracle OOF puis Dataset C.
+5. Relative trajectory, divergences et multi-horizon agreement sont des
+   ablations de phase 2 : elles restent interdites si Dataset A est `NO_GO`.
+
+### Priorité P1 — information véritablement nouvelle si V2 échoue
+
+1. **Microstructure/order flow aligné sur l'entrée** : déséquilibre trades/quotes
+   en clôture J, pré-market ou opening range. Il faut d'abord choisir le cutoff
+   de décision et évaluer le volume/coût du backfill.
+2. **Borrow fee/utilization/shares available** : piste squeeze/pression short,
+   uniquement si une source offre un historique PIT suffisamment dense.
+3. **Capital flow signé** : auditer l'existence, la profondeur et la sémantique
+   de l'agresseur avant toute collecte.
+
+### Priorité P2 — uniquement après découverte d'un signal stable
+
+- cross-feature divergence contrôlée ;
+- trajectoire relative secteur/SPY ;
+- cohérence multi-horizon ;
+- SHAP et stability selection diagnostiques ;
+- séquence aplatie puis TCN/1D-CNN ;
+- intégration séparée dans LONG et SHORT, puis calibration et backtest net.
+
+### Faible priorité ou arrêt actuel
+
+- change-point avancé, clustering et mixture of experts sans patterns validés ;
+- 13F/institutionnel pour des décisions H3–H20 ;
+- LSTM D1/D10 avant TCN et avant preuve tabulaire ;
+- Transformer, contrastive learning, multitask end-to-end, RL, genetic
+  programming et seuils spécifiques par symbole.
 
 ## Procédure de mise à jour du registre
 
