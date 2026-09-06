@@ -1,185 +1,50 @@
-Architecture cible
-Oracle O0 actuel
-   │
-   ├─ conserve uniquement le TOP20 amplitude
-   │
-   ▼
-Modèle directionnel entraîné spécifiquement sur ce contexte
-   │
-   ├─ score LONG absolu
-   ├─ score SHORT absolu
-   └─ abstention si aucune direction n'est suffisamment fiable
-Étape 1 — Conserver l’Oracle sans le modifier
-L’Oracle actuel est performant :
-- AUC OOS : 0,660 ;
-- précision Extreme du TOP20 : 31,9 % contre 18,4 % naturellement ;
-- amplitude moyenne : 12,8 % contre 8,7 % dans l’univers.
-Il peut être gelé comme baseline. Il n’est pas nécessaire de le réentraîner pour la première campagne directionnelle.
-Étape 2 — Corriger immédiatement la cible directionnelle
-Dans l’IHM du prochain entraînement bundle :
-- mode cible : ternary ;
-- horizon : 20 uniquement pour la première expérience ;
-- seuil LONG : +3 % ;
-- seuil SHORT : −3 % ;
-- désactiver target_excess_vs_spy ;
-- conserver les profils long.json et short.json actuels ;
-- conserver LSTM, LightGBM et CatBoost avec sélection du champion ;
-- conserver Walk-Forward.
-La cible doit devenir :
-SHORT : rendement absolu H20 <= −3 %
-FLAT  : −3 % < rendement absolu H20 < +3 %
-LONG  : rendement absolu H20 >= +3 %
-Le premier batch sert uniquement à mesurer l’impact du changement de cible. Il ne faut pas modifier simultanément les features, les modèles et les seuils, sinon nous ne saurons pas ce qui a amélioré le résultat.
-Étape 3 — Ne plus entraîner la direction comme une tâche générique
-C’est la modification la plus importante.
-Actuellement :
-entraînement directionnel sur toutes les journées
-→ application ultérieure uniquement aux journées Oracle Extreme
-Ce sont deux distributions différentes. Le modèle peut être raisonnable sur une journée normale et mauvais précisément dans les situations sélectionnées par l’Oracle.
-Il faut produire, pendant l’entraînement, des scores Oracle strictement OOF :
-pour chaque fold :
-    entraîner Oracle sur le passé
-    prédire la période suivante
-    calculer le percentile Oracle quotidien
-    marquer Oracle TOP20
-Puis entraîner la direction en donnant la priorité à ces observations.
-Je recommande de comparer deux versions :
-Version A — Pondération Oracle
-Conserver toutes les journées, mais appliquer par exemple :
-poids = 1 pour une journée normale
-poids = 5 pour une observation Oracle TOP20 OOF
-Avantage : chaque modèle per-symbol garde suffisamment d’exemples.
-Version B — Entraînement conditionnel
-Entraîner uniquement sur le TOP20 ou TOP30 Oracle OOF.
-Je commencerais par TOP30, car TOP20 risque de laisser trop peu d’observations par symbole.
-La pondération est probablement le meilleur premier choix pour les modèles per-symbol.
-Étape 4 — Rendre les scores comparables entre symboles
-Aujourd’hui, le top 10 % mélange des probabilités produites par 49 modèles et calibrateurs différents. Cela explique pourquoi quelques symboles monopolisent la sélection.
-Il faut conserver deux valeurs :
-raw_proba_long
-normalized_score_long
+La meilleure prochaine étape est d’exploiter l’asymétrie des deux modèles de risque E3-A2.
+Piste 1 — Direction par côté le moins dangereux
+Les modèles de risque ont une AUC d’environ 0,73 des deux côtés. Pour chaque événement Oracle :
+risque LONG  = percentile quotidien de P(perte LONG <= -20 %)
+risque SHORT = percentile quotidien de P(perte SHORT <= -20 %)
 
-raw_proba_short
-normalized_score_short
-Le score normalisé pourrait être le percentile historique OOF du symbole :
-normalized_score_long =
-    percentile de la proba_long actuelle
-    dans la distribution OOF passée du même symbole
-Exemple :
-ARLO P(LONG)=0,70, percentile historique=55 %
-CPRI P(LONG)=0,55, percentile historique=94 %
-Même si 0,70 est numériquement supérieur, le signal CPRI est beaucoup plus exceptionnel pour son modèle.
-Pour rester PIT :
-- distribution construite uniquement avec les prédictions OOF ou antérieures ;
-- aucun calcul sur toute la période future ;
-- profil de calibration gelé et versionné dans les artefacts.
-Le classement transversal doit utiliser les scores normalisés, pas les probabilités brutes.
-Étape 5 — Revoir la comparaison LONG contre SHORT
-Les deux probabilités viennent de modèles séparés et ne somment pas nécessairement à 1. Il ne faut donc pas les comparer directement avant calibration commune.
-Après normalisation :
-score_long  = percentile/calibration commune de la branche LONG
-score_short = percentile/calibration commune de la branche SHORT
+si risque LONG nettement inférieur → candidat LONG
+si risque SHORT nettement inférieur → candidat SHORT
+sinon → abstention
+Ce n’est pas la même chose que prédire le rendement. On demande :
+« Dans quel sens la perte catastrophique est-elle la moins probable ? »
 
-direction_margin = |score_long - score_short|
-Politique proposée :
-si score_long suffisamment élevé
-et score_long - score_short >= marge
-    → LONG
-
-sinon si score_short suffisamment élevé
-et score_short - score_long >= marge
-    → SHORT
-
-sinon
-    → FLAT / abstention
-Les seuils et la marge devront être choisis sur des prédictions OOF, pas sur le backtest final.
-Étape 6 — Ne pas sélectionner les symboles sur les mêmes données que l’évaluation
-Je recommande cette séparation :
-Période	Utilisation
-2016–2022	entraînement et construction initiale
-2023–2024H1	sélection des symboles et réglages
-2024H2–2026H1	confirmation totalement indépendante
-
-
-Cependant, comme 2024H2–2026H1 vient déjà d’être analysée, elle n’est plus totalement vierge pour les prochaines décisions. Elle peut servir de validation de recherche, mais il faudra ensuite une validation rolling réellement future ou des folds nested.
-Pour une campagne sérieuse, utiliser environ 300 symboles. Les 49 symboles actuels provoquent trop de concentration.
-Étape 7 — Changer les critères de sélection des symboles
-Ne plus retenir un symbole uniquement parce que son f1_long ou f1_short historique est élevé.
-Pour chaque côté, exiger sur les événements Oracle OOF :
-- au moins 3 folds valides ;
-- support directionnel suffisant ;
-- lift positif contre le pool Oracle ;
-- rendement signé médian positif ;
-- IC/Spearman quotidien positif ;
-- plusieurs périodes positives ;
-- absence de concentration sur un seul fold ;
-- couverture suffisante.
-Exemple de gate de recherche :
-valid_folds >= 3
-support_side >= 30
-median_directional_lift >= +3 pp
-median_signed_return > 0
-median_daily_IC > 0
-positive_fold_rate >= 60 %
-Ces valeurs doivent d’abord être auditées ; elles ne sont pas encore des paramètres de production.
-Étape 8 — Campagne minimale recommandée
-Je lancerais les expériences dans cet ordre :
-Run	Cible	Traitement Oracle	Scores
-D0	Relative à SPY	Aucun	Probabilités brutes — batch actuel
-D1	Absolue H20	Aucun	Probabilités brutes
-D2	Absolue H20	TOP20 OOF pondéré ×5	Probabilités brutes
-D3	Absolue H20	TOP20 OOF pondéré ×5	Scores normalisés par symbole
-D4	Absolue H20	Entraînement conditionnel TOP30	Scores normalisés
-D5	Absolue H20	Meilleure variante	Confirmation sur 300 symboles
-
-
-À chaque fois, comparer :
-- Oracle seul ;
-- Oracle + direction aléatoire ;
-- Oracle + modèle directionnel ;
-- LONG et SHORT séparément ;
-- tout l’univers et STRICT/DISCOVERY ;
-- H20 en métrique principale.
-Gates avant promotion
-Je ne promouvrais une nouvelle version que si, sur plusieurs périodes :
-LONG après Oracle
-taux bon sens > baseline Oracle
-lift >= +5 pp
-rendement signé médian > 0
-excès contre SPY non négatif
-IC quotidien > 0
-SHORT après Oracle
-taux bon sens > baseline Oracle
-lift >= +5 pp
-rendement signé médian > 0
-pas d'effondrement en régime haussier
-IC quotidien > 0
-Bundle complet
-amélioration contre Oracle seul
-amélioration contre direction aléatoire
-résultat non concentré sur quelques symboles
-résultat positif sur plusieurs semestres
-abstention explicite lorsque les scores sont ambigus
-Ma recommandation finale
-La priorité est :
-1. retirer la cible relative à SPY ;
-2. entraîner ou pondérer la direction sur les événements Oracle OOF ;
-3. normaliser les probabilités par symbole avant de les comparer ;
-4. confirmer sur un univers d’environ 300 symboles ;
-5. seulement ensuite ajuster seuils et marge LONG/SHORT.
-Le batch actuel peut rester comme référence expérimentale, mais je déconseille de l’utiliser en backtest de promotion ou en production. L’Oracle peut être conservé ; ce sont les branches directionnelles et leur contrat de scoring qu’il faut reconstruire.
-
-
-----------------------------------------------------------------------------------------------------------------------------
-todo 1:
-e n’est pas encore optimisé en :
-Oracle d’abord
-→ puis exécuter LONG/SHORT uniquement sur les extrêmes du jour
-Cette deuxième organisation serait plus rapide, particulièrement avec 2 300 symboles. Elle demanderait toutefois de conserver l’univers complet pour calculer correctement le percentile Oracle, puis de transmettre uniquement les symboles retenus aux deux branches directionnelles. C’est une optimisation pertinente après la validation OOS actuelle.
-
-todo 2:
-campagne d’ablation, les 168 features oracle
-
-
-
-python  -u -m dataIntegrityEngine.sync_latest_quotes --batch-size 200 --symbol-source active-tradable --from-date 2020-07-22 --to-date 2026-08-19 --start-symbol OGI
+Diagnostic OOF peu coûteux, sans réentraînement :
+- politique sans abstention ;
+- marges de rang 0,10 / 0,20 / 0,30 ;
+- marge 0,20 comme politique primaire préfixée ;
+- rendement net du côté choisi ;
+- comparaison avec always-LONG, always-SHORT et choix aléatoire 50/50 ;
+- précision directionnelle, couverture, CVaR et résultats par fold/semestre.
+C’est la priorité numéro 1, car les modèles existent déjà et leur signal de risque est stable.
+Piste 2 — Modèle « première barrière touchée »
+Si la piste 1 échoue, la formulation directionnelle la plus propre restante est un modèle de risques concurrents :
+UP_FIRST       : barrière haussière touchée en premier
+DOWN_FIRST     : barrière baissière touchée en premier
+AMBIGUOUS      : les deux touchées dans la même barre
+NO_TOUCH       : aucune touchée avant H20
+Contrairement à E3-A, on ne rejoue plus deux trades indépendants. On observe un seul chemin et on apprend directement quel mouvement survient en premier.
+Deux variantes :
+- CatBoost multiclasses, simple et rapide ;
+- modèle de survie à risques concurrents, plus élaboré, prédisant chaque jour la probabilité du premier franchissement.
+C’est probablement la meilleure nouvelle formulation de cible pour répondre réellement à D1 contre D10.
+Piste 3 — Experts par régime, mais strictement encadrés
+N4X2 dépendait fortement du régime. Ce n’est pas forcément un défaut si le régime devient explicitement le mécanisme de routage :
+Oracle
+  → régime PIT calculé uniquement avec prix/breadth disponibles
+  → expert risk-on / risk-off / neutral
+  → direction ou abstention
+Il faudrait limiter à 2–3 régimes préfixés et exiger plusieurs folds valides par régime. Sans cela, le risque d’overfitting est très élevé.
+Piste 4 — Nouvelles données réellement signées
+Les données Eroya déjà testées n’ont pas apporté la direction. Les deux sources externes encore crédibles seraient :
+- surface d’options historique PIT : skew put/call, variation d’open interest, term structure, IV relative, flux directionnels ;
+- microstructure : order imbalance, pression bid/ask, clôture contre VWAP, flux de grosses transactions.
+Elles sont plus coûteuses à collecter et doivent être quotidiennes, denses et PIT. Les niveaux agrégés occasionnels ne suffiront pas.
+Mon ordre recommandé
+1. E3-D : direction par asymétrie du tail-risk, sans réentraînement.
+2. Si signal : calibration imbriquée puis confirmation.
+3. Si échec : E4 première barrière touchée.
+4. Si E4 échoue : considérer que les features prix journalières actuelles ne contiennent pas suffisamment de direction.
+5. Ensuite seulement : options/microstructure ou experts de régime.
+La piste E3-D est la dernière expérience immédiate à fort rapport information/coût. Elle peut être exécutée directement à partir de shared-path-utility-20260906071731-0802c8.
