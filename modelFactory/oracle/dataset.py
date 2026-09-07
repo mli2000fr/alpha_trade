@@ -28,6 +28,10 @@ from sqlalchemy import text
 from modelFactory.data_loader import load_benchmark_bars, load_universe_bars
 from modelFactory.features import compute_features, get_feature_columns
 from modelFactory.global_ranking import _XS_RANK_SOURCE_FEATURES, _xs_rank_column_name
+from modelFactory.oracle.security_continuity import (
+    load_security_discontinuities,
+    split_frame_on_discontinuities,
+)
 
 # ── Colonnes de target / garde ──
 # oracle_extreme10 = 1 si le titre est dans le TOP 10 % OU le BOTTOM 10 %
@@ -121,12 +125,14 @@ def build_feature_matrix(
         )
 
     parts: list[pd.DataFrame] = []
+    discontinuities = load_security_discontinuities()
     for symbol, group in bars.groupby("symbol"):
         symbol_sentiment = sentiment[sentiment["symbol"] == symbol].copy() if not sentiment.empty else None
         symbol_selector = selector[selector["symbol"] == symbol].copy() if not selector.empty else None
         symbol_fundamentals = fundamentals[fundamentals["symbol"] == symbol].copy() if not fundamentals.empty else None
-        feats = compute_features(
-            group,
+        for segment in split_frame_on_discontinuities(group, symbol, discontinuities):
+            feats = compute_features(
+            segment,
             sentiment_df=symbol_sentiment,
             include_sentiment=bool(options.get("include_sentiment", False)),
             benchmark_df=benchmark,
@@ -144,20 +150,20 @@ def build_feature_matrix(
             include_macro_regime=bool(options.get("include_macro_regime", False)),
             include_score_components=bool(options.get("include_score_components", False)),
             include_volume_features=bool(options.get("include_volume_features", False)),
-        )
-        if feats.empty:
-            continue
-        # Features Oracle spécialisées (§7C) — calculées sur adj_close.
-        if "adj_close" in feats.columns:
-            close = feats["adj_close"].astype(float)
-            feats["drawdown_20"] = close / close.rolling(20).max() - 1.0
-            roll_min = close.rolling(20).min()
-            roll_max = close.rolling(20).max()
-            feats["high_low_position_20"] = (close - roll_min) / (roll_max - roll_min).clip(lower=1e-8)
-        else:
-            feats["drawdown_20"] = 0.0
-            feats["high_low_position_20"] = 0.5
-        parts.append(feats)
+            )
+            if feats.empty:
+                continue
+            # Features Oracle spécialisées (§7C) — calculées dans le même segment.
+            if "adj_close" in feats.columns:
+                close = feats["adj_close"].astype(float)
+                feats["drawdown_20"] = close / close.rolling(20).max() - 1.0
+                roll_min = close.rolling(20).min()
+                roll_max = close.rolling(20).max()
+                feats["high_low_position_20"] = (close - roll_min) / (roll_max - roll_min).clip(lower=1e-8)
+            else:
+                feats["drawdown_20"] = 0.0
+                feats["high_low_position_20"] = 0.5
+            parts.append(feats)
 
     if not parts:
         return pd.DataFrame()
@@ -187,8 +193,9 @@ def load_oracle_targets(engine: Any, batch_id: str, horizon: int = 20) -> pd.Dat
     """Relit les targets Oracle depuis ``global_oracle_labels``."""
     query = text(
         "SELECT prediction_date, symbol, oracle_extreme10, oracle_pct_rank, oracle_decile, "
-        "future_return, oracle_available_date FROM global_oracle_labels "
-        "WHERE batch_id = :bid AND horizon = :h"
+        "future_return, future_return_raw, oracle_available_date, "
+        "target_quality_valid, target_quality_reason FROM global_oracle_labels "
+        "WHERE batch_id = :bid AND horizon = :h AND target_quality_valid = 1"
     )
     with engine.connect() as conn:
         df = pd.read_sql(query, conn, params={"bid": batch_id, "h": horizon})

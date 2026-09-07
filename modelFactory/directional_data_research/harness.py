@@ -74,6 +74,8 @@ def assemble_pool(
     horizon: int = 20,
     pool_pct: float = 0.20,
     oracle_run: str | None = None,
+    labels_parquet: str | Path | None = None,
+    oracle_pool_parquet: str | Path | None = None,
 ) -> pd.DataFrame:
     """Pool Oracle TOP20% + labels décile/rendement + fold/année/régime.
 
@@ -81,8 +83,38 @@ def assemble_pool(
     fold_start, year, regime) — SANS features (elles seront fusionnées par la
     famille de données testée).
     """
-    targets = load_oracle_targets(engine, batch_id, horizon)
-    oracle = load_oracle_pool_proba(batch_id, oracle_run)
+    if labels_parquet is not None:
+        targets = pd.read_parquet(labels_parquet)
+        if "target_quality_valid" not in targets.columns:
+            raise ValueError("Le Parquet de labels ne contient pas target_quality_valid.")
+        targets = targets[
+            (targets["batch_id"] == batch_id)
+            & (pd.to_numeric(targets["horizon"], errors="coerce") == horizon)
+            & (pd.to_numeric(targets["target_quality_valid"], errors="coerce") == 1)
+        ].copy()
+        targets["prediction_date"] = pd.to_datetime(
+            targets["prediction_date"], errors="coerce",
+        ).dt.normalize()
+    else:
+        targets = load_oracle_targets(engine, batch_id, horizon)
+    preselected_pool = oracle_pool_parquet is not None
+    if oracle_pool_parquet is not None:
+        oracle = pd.read_parquet(oracle_pool_parquet)
+        oracle["date"] = pd.to_datetime(oracle["date"], errors="coerce").dt.normalize()
+        oracle["symbol"] = oracle["symbol"].astype(str).str.upper()
+        if "oracle_top_pool" in oracle.columns:
+            oracle = oracle[pd.to_numeric(oracle["oracle_top_pool"], errors="coerce") == 1]
+        if "proba_extreme" not in oracle.columns:
+            if "oracle_percentile" not in oracle.columns:
+                raise ValueError(
+                    "Le panel Oracle doit contenir proba_extreme ou oracle_percentile."
+                )
+            oracle = oracle.rename(columns={"oracle_percentile": "proba_extreme"})
+        oracle = oracle[["date", "symbol", "proba_extreme"]].drop_duplicates(
+            ["date", "symbol"], keep="last",
+        )
+    else:
+        oracle = load_oracle_pool_proba(batch_id, oracle_run)
     df = targets[["prediction_date", "symbol", DECILE_COL, RETURN_COL]].merge(
         oracle, left_on=["prediction_date", "symbol"], right_on=["date", "symbol"],
         how="inner",
@@ -90,8 +122,9 @@ def assemble_pool(
     if df.empty:
         return pd.DataFrame()
     df = df[(df["date"] >= pd.Timestamp(start_date)) & (df["date"] <= pd.Timestamp(end_date))]
-    df["_eg_pct"] = df.groupby("date")["proba_extreme"].rank(pct=True)
-    df = df[df["_eg_pct"] >= (1.0 - pool_pct)]
+    if not preselected_pool:
+        df["_eg_pct"] = df.groupby("date")["proba_extreme"].rank(pct=True)
+        df = df[df["_eg_pct"] >= (1.0 - pool_pct)]
     if df.empty:
         return df
     df["fold_start"] = pd.cut(pd.to_datetime(df["date"]), bins=_FOLD_CUTS,

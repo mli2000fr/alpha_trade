@@ -1031,6 +1031,7 @@ ORACLE_LABELS_DECILE_QUERY = """
     FROM alpha_trade.global_oracle_labels
     WHERE batch_id = :batch_id
       AND horizon = :horizon
+      AND target_quality_valid = 1
       AND oracle_decile IS NOT NULL
     ORDER BY prediction_date, symbol
 """

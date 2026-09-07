@@ -7,6 +7,8 @@ artifacts and never changes serving, prediction or application tables.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import importlib
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -225,6 +227,18 @@ def _safe_auc(y: pd.Series | np.ndarray, score: pd.Series | np.ndarray) -> float
     if valid.sum() < 2 or len(np.unique(y_values[valid])) < 2:
         return None
     return float(roc_auc_score(y_values[valid].astype(int), score_values[valid]))
+
+
+def preload_metric_dependencies() -> None:
+    """Initialize optional dataframe backends before concurrent evaluation.
+
+    Scikit-learn discovers Polars lazily. Concurrent first access can expose a
+    partially initialized module to another worker on Python 3.14.
+    """
+    with contextlib.suppress(ModuleNotFoundError):
+        importlib.import_module("polars")
+    # Also initialize scikit-learn's array namespace cache on the main thread.
+    roc_auc_score(np.asarray([0, 1]), np.asarray([0.0, 1.0]))
 
 
 def _same_date_auc(frame: pd.DataFrame) -> pd.Series:
@@ -533,6 +547,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         }
         return oof, row
 
+    preload_metric_dependencies()
     with ThreadPoolExecutor(max_workers=args.parallel_variants) as executor:
         futures = {executor.submit(execute_variant, job): job for job in jobs}
         for completed, future in enumerate(as_completed(futures), start=1):

@@ -80,6 +80,11 @@ def test_same_date_auc_rewards_correct_within_date_order() -> None:
     assert auc.mean() == 1.0
 
 
+def test_metric_dependencies_can_be_preloaded_before_threads() -> None:
+    temporal.preload_metric_dependencies()
+    assert temporal._safe_auc(np.asarray([0, 1]), np.asarray([0.0, 1.0])) == 1.0
+
+
 def test_label_audit_separates_relative_tail_from_absolute_sign() -> None:
     labels = pd.DataFrame({
         "prediction_date": pd.to_datetime(["2024-01-02"] * 4),

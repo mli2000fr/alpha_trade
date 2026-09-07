@@ -40,9 +40,10 @@ une étape de confirmation ; il n'autorise jamais automatiquement le serving.
 5. **La surface Options directionnelle 45 DTE est rejetée** : aucune feature ne
    passe les gates préfixés. Les deux effets descriptifs H10/H20 sont instables
    et défavorables au SHORT ; le volume historique est non testable.
-6. **Temporal D1/D10 V2 est en cours** sur Dataset A : 399 symboles, fenêtres
-   N=3/5/10, représentations T0/T1/T2 et modèles Logistic/CatBoost/PairLogit.
-   Dataset B/C reste conditionné au franchissement des gates Dataset A.
+6. **Temporal D1/D10 V2 est fermé en `NO_GO_DATASET_A`** : sur 399 symboles,
+   T0 Logistic reste meilleur à 0,5143 d'AUC same-date. Le meilleur T2
+   logistique tombe à 0,5112 ; le plus grand delta T2 est +0,0066 mais avec une
+   AUC absolue de 0,4961 et des buckets inversés. Dataset B/C n'est pas ouvert.
 
 ## Campagnes directionnelles récentes après Oracle
 
@@ -63,7 +64,7 @@ une étape de confirmation ; il n'autorise jamais automatiquement le serving.
 | E5 | Direction quotidienne du régime Oracle | Choisir un côté commun pour tout le panier du jour | Ridge Spearman 0,000 ; CatBoost -0,008 ; aucune stabilité exploitable | `NO_GO` | [E5](oracle_daily_regime_direction.md) |
 | R1 | Ranker conditionnel au TOP20 Oracle | Ranking de rendement réel uniquement dans le pool Oracle | H3 IC +0,0136 ; H20 +0,0266, mais seulement 5/9 folds stables à H20 et Oracle seul reste meilleur LONG | `NO_GO` | [Ranker conditionnel](conditional_oracle_ranker.md) |
 | C1 | Consensus des modèles OOF existants | Moyenne équipondérée de rangs quotidiens, 2 à 7 familles selon H3/H5/H10/H20, sans réentraînement ni optimisation | IC -0,0014 à +0,0118, inférieur au meilleur composant ; SHORT signé négatif partout ; unanimité et régime E5 ne sauvent pas la direction | `NO_GO` | [Audit de consensus OOF](oof_consensus_audit.md) |
-| T-V2-A | Temporal D1/D10 V2 — Dataset A | État J contre trajectoires `[J-N,...,J]`, N=3/5/10, Logistic/CatBoost/PairLogit, labels H20 autoritatifs | Campagne principale locale lancée sur 399 symboles ; 21 variantes avec reprise par artefact | `IN_PROGRESS` | [Temporal D1/D10 V2](temporal_d1d10_v2.md) |
+| T-V2-A | Temporal D1/D10 V2 — Dataset A | État J contre trajectoires `[J-N,...,J]`, N=3/5/10, Logistic/CatBoost/PairLogit, labels H20 autoritatifs | 21 variantes, 399 symboles ; T0 Logistic 0,5143, meilleur T2 Logistic 0,5112 ; aucun gain T2 >= +0,01, aucun candidat servable | `NO_GO_DATASET_A` final | [Temporal D1/D10 V2](temporal_d1d10_v2.md) |
 | S1 | Règles screener PIT post-Oracle | Signaux screener LONG/SHORT H3/H10/H20 | Couverture fraîche 10,44 %, meilleurs effets instables ; aucun gate LONG/SHORT | `NO_GO_PREDICTIVE` | [Screener post-Oracle](screener_post_oracle.md) |
 | S1-D | Recontrôle screener sur panel dense | Six signaux quotidiens recalculés sur tout le pool | Couverture réparée mais verdict prédictif inchangé | `NO_GO_PREDICTIVE` | [Panel dense](panel_screener_dense.md), [résultat](screener_post_oracle.md#source-dense-recommandée) |
 
@@ -118,7 +119,9 @@ effets exploratoires ne sont pas des règles de production.
 | Earnings/surprise EPS | résultats trimestriels, surprise brute, distance earnings | Surprise brute rejetée comme signal autonome | `NO_GO` | [Earnings](eroya_directional_poc.md#résultats-trimestriels-et-surprises-eps) |
 | Dépôts 8-K | catégories structurées et compteurs événementiels | Information descriptive, mais répétitions et concentration interdisent une règle | `INCONCLUSIVE`, non promu | [8-K](eroya_directional_poc.md#dépôts-8-k-structurés) |
 | Options directionnelles | ratios de prix, skew approximé, profondeur et volume put/call sur surface 45 DTE | 625 événements/8 dates, 323 surfaces complètes. Aucun gate complet ; meilleur signal H10 IC +0,035/AUC 0,548 mais 2/4 années et lift SHORT négatif. Volume 4 jambes absent partout, donc non testable | `NO_GO` direction ; volume `NON_TESTABLE` | [Protocole et résultat E7](options_directional_poc.md#résultat-de-la-campagne-e7-a) |
-| Trades/quotes | microstructure et flux signés | Non testé : volume très lourd et contrat d'heure d'entrée à définir | `PROPOSED` | [Limites options et ticks](eroya_directional_poc.md#options-tradesquotes-et-13f) |
+| Quotes de clôture IEX | dernière quote quotidienne, spread, imbalance, microprice, profondeur et âge de quote | Couverture 88,8 %, mais aucun signal directionnel stable sur H3/H5/H10/H20 ; le niveau de profondeur H20 est un confondant de liquidité | `NO_GO` pour le snapshot quotidien | [Microstructure de clôture](closing_quote_microstructure.md) |
+| Intraday EODHD | barres OHLCV 5 minutes de clôture J, pré-market et éventuellement opening range J+1 | `STANDBY` : POC défini mais forfait intraday non disponible. Reprise avec **EOD+Intraday — All World Extended** ; cache Parquet, sans table, 400 symboles sur 2022–2025. Une table dédiée ne sera envisagée qu'après un GO OOF | `STANDBY_ABONNEMENT` | [Microstructure de clôture](closing_quote_microstructure.md#décision) |
+| Trades/quotes séquentiels riches | NBBO/SIP, trades signés ou carnet | Non testé : ces historiques ne sont pas présents localement et ne sont pas remplacés par les barres OHLCV EODHD | `PROPOSED` sous réserve de nouvelles données | [Limites options et ticks](eroya_directional_poc.md#options-tradesquotes-et-13f) |
 | 13F | positions institutionnelles trimestrielles retardées | Non testé, priorité faible pour H3/H10/H20 | `PROPOSED` faible priorité | [Limites options et ticks](eroya_directional_poc.md#options-tradesquotes-et-13f) |
 
 ## Expériences historiques Per-Symbol
@@ -200,7 +203,7 @@ signal ML observé peut être monétisé sans biais d'exécution.
 
 | Priorité actuelle | Piste | Question | Statut | Protocole |
 |---:|---|---|---|---|
-| 1 | Microstructure proche de l'entrée | Le flux de clôture J, pré-market ou opening range donne-t-il la direction ? | `PROPOSED`, contrat d'exécution à choisir | À formaliser |
+| 1 | Microstructure intraday EODHD proche de l'entrée | Les trajectoires OHLCV 5 minutes de clôture J, puis éventuellement l'opening range J+1, donnent-elles la direction ? | `STANDBY_ABONNEMENT` ; premier contrat fixé à clôture J → entrée open J+1 | [Microstructure de clôture](closing_quote_microstructure.md#décision) |
 | 2 | Modèle temporel multi-horizon | Un apprentissage commun H3/H5/H10/H20 régularise-t-il la direction ? | `PROPOSED`, conditionnel à V2 | À formaliser |
 | 3 | Portefeuille relatif | Un spread dollar-neutral peut-il monétiser un faible ranking sans direction absolue ? | `PROPOSED` secondaire | Dérivé du [ranker conditionnel](conditional_oracle_ranker.md) |
 
@@ -224,15 +227,15 @@ ont le sens suivant :
 
 | N° | Méthode | État réel | Décision et preuve |
 |---:|---|---|---|
-| 1 | Tail Classification D1/D10 | `FAIT_NO_GO` statique ; `EN_COURS` temporel | GlobalDirection binaire et le modèle mutualisé statique ont échoué. Temporal V2 reteste uniquement l'information nouvelle de trajectoire. Voir [GlobalDirection](../experiences/archives_recherche/global_direction_h20.md), [shared directional](shared_directional_oracle_events.md) et [Temporal V2](temporal_d1d10_v2.md). |
-| 2 | Temporal Feature Engineering | `FAIT_NO_GO` ancien ; `EN_COURS` V2 | L'ancien test sur scores clairsemés n'a donné aucun GO. V2 corrige le contrat avec 27 séries locales denses, N=3/5/10 et T0/T1/T2. Voir [historique temporel](../experiences/archives_recherche/global_direction_temporal.md). |
+| 1 | Tail Classification D1/D10 | `FAIT_NO_GO` statique et temporel | GlobalDirection, le modèle mutualisé statique et Temporal V2 ont échoué. V2 trouve au mieux 0,5143 avec l'état statique ; les trajectoires ne l'améliorent pas. Voir [GlobalDirection](../experiences/archives_recherche/global_direction_h20.md), [shared directional](shared_directional_oracle_events.md) et [Temporal V2](temporal_d1d10_v2.md). |
+| 2 | Temporal Feature Engineering | `FAIT_NO_GO` ancien et V2 | Après l'ancien test sur scores clairsemés, V2 a testé proprement 27 séries locales denses, N=3/5/10 et T0/T1/T2. Aucun T2 ne gagne +0,01 contre T0 ; N10 dégrade Logistic. Voir [historique temporel](../experiences/archives_recherche/global_direction_temporal.md) et [Temporal V2](temporal_d1d10_v2.md). |
 | 3 | Meta-Labeling | `PARTIEL` | La cascade Oracle → spécialistes LONG/SHORT existe techniquement. L'entraînement directionnel conditionnel Oracle a échoué en généralisation ; le méta-label temporel n'est pas validé. Conserver l'architecture, pas la considérer comme alpha démontré. Voir [bundle](per_symbol/07_bundle_oracle_long_short.md). |
 | 4 | Cross-Sectional Ranking | `ACTIF` global ; `FAIT_NO_GO` post-Oracle | Global Ranking est une brique complète. Le ranker restreint au TOP20 Oracle n'a pas franchi les gates ; PairLogit est retesté dans V2 sur les trajectoires. Voir [Global Ranking](global_ranking/README.md) et [ranker conditionnel](conditional_oracle_ranker.md). |
-| 5 | Cross-Feature Divergence | `PARTIEL`, `À_FAIRE_CONDITIONNEL` | Plusieurs divergences existent déjà parmi les features EXPERT (`momentum_5_minus_momentum_20`, spread SMA, accélération), et CatBoost apprend des interactions. Une petite ablation dédiée de divergences économiquement motivées reste pertinente seulement si V2 trouve d'abord un signal temporel. |
-| 6 | Relative Trajectory | `PARTIEL`, priorité conditionnelle élevée | Les niveaux de force relative, features SPY/secteur et neutralisations existent ; V2 teste leurs deltas/pentes. La vraie trajectoire stock moins secteur à chaque point de la fenêtre n'est pas encore une ablation autonome. À faire après un GO Dataset A, sur les mêmes lignes. |
-| 7 | Multi-Horizon Agreement | `PARTIEL`, `À_FAIRE_CONDITIONNEL` | Les features momentum multi-horizons et l'audit de consensus existent, mais pas un test figé de cohérence directionnelle H3/H5/H10/H20 après sélection de N. À ouvrir seulement si V2 montre de l'information. Voir [consensus OOF](oof_consensus_audit.md). |
-| 8 | Persistence | `ACTIF` ailleurs ; `EN_COURS` D1/D10 | Persistance Global Rank/DIP déjà étudiée et intégrée dans son propre contrat. V2 inclut la fraction de variations positives sur N pour la polarité D1/D10. Ne pas confondre les deux populations. Voir [DIP historique](../experiences/archives_recherche/persistent_top10_dip.md). |
-| 9 | Velocity / Acceleration | `PARTIEL`, `EN_COURS` | Des pentes/accélérations existent dans EXPERT ; V2 construit une définition canonique trainée avec les autres trajectoires. Aucun verdict D1/D10 séparé avant la fin du run. |
+| 5 | Cross-Feature Divergence | `PARTIEL`, `FERMÉ_CONDITIONNEL` | Plusieurs divergences existent déjà parmi les features EXPERT. L'ablation supplémentaire était conditionnée à un signal V2 ; Dataset A étant NO_GO, elle n'est pas ouverte. |
+| 6 | Relative Trajectory | `PARTIEL`, `FERMÉ_CONDITIONNEL` | Les niveaux de force relative et leurs deltas/pentes sont inclus dans V2. Une trajectoire stock moins secteur autonome n'est pas lancée, car le gate Dataset A préalable a échoué. |
+| 7 | Multi-Horizon Agreement | `PARTIEL`, `FERMÉ_CONDITIONNEL` | Les features multi-horizons et l'audit de consensus existent. Le test directionnel supplémentaire était conditionné à un V2 informatif ; il n'est pas ouvert. Voir [consensus OOF](oof_consensus_audit.md). |
+| 8 | Persistence | `ACTIF` ailleurs ; `FAIT_NO_GO` D1/D10 V2 | V2 a inclus la fraction de variations positives sur N sans améliorer T0. Ne pas confondre ce résultat avec la persistance Global Rank/DIP. Voir [DIP historique](../experiences/archives_recherche/persistent_top10_dip.md). |
+| 9 | Velocity / Acceleration | `FAIT_NO_GO` D1/D10 V2 | V2 a testé pentes, dispersion, persistance et accélération canonique dans T2. Aucun T2 ne franchit le gate de gain ; pas d'ablation séparée justifiée. |
 | 10 | Change-Point Detection | `DIFFÉRÉ` | Aucun test causal dédié CUSUM/PELT n'a été trouvé. À envisager seulement si V2 montre qu'une dynamique simple existe mais reste mal captée ; sinon ce serait du feature mining supplémentaire. |
 
 ### 11–19 — conditionnement, spécialistes et modèles séquentiels
@@ -244,8 +247,8 @@ ont le sens suivant :
 | 13 | Mixture of Experts | `DIFFÉRÉ` | Aucun ensemble de patterns directionnels validés ne justifie encore un gating model. Requis : au moins deux experts complémentaires ayant chacun un avantage OOF. |
 | 14 | Trajectory Clustering | `À_FAIRE_CONDITIONNEL` diagnostique | Non exécuté pour D1/D10. Autorisé uniquement après un signal V2, pour comprendre plusieurs formes de D1/D10 ; pas pour réoptimiser la même période. |
 | 15 | Contrastive Learning | `À_ÉVITER` maintenant | Non implémenté et disproportionné sans séparabilité tabulaire préalable. |
-| 16 | 1D-CNN / TCN | `À_FAIRE_CONDITIONNEL` | Non exécuté pour la polarité Oracle. À tester seulement si T2 ou une séquence aplatie apporte déjà au moins +0,01 d'AUC same-date contre T0. |
-| 17 | LSTM séquentiel | `ACTIF` per-symbol générique ; `À_FAIRE_CONDITIONNEL` D1/D10 | LSTM existe dans ModelFactory, mais cela ne valide pas un LSTM mutualisé de polarité. Challenger seulement après TCN/flattened et GO tabulaire. |
+| 16 | 1D-CNN / TCN | `NON_OUVERT` | Le prérequis T2 >= +0,01 d'AUC same-date contre T0 a échoué. Ajouter un réseau ne répondrait pas à l'absence de signal tabulaire. |
+| 17 | LSTM séquentiel | `ACTIF` per-symbol générique ; `NON_OUVERT` D1/D10 | LSTM existe dans ModelFactory, mais le challenger mutualisé de polarité n'est pas lancé après le NO_GO tabulaire V2. |
 | 18 | Transformer temporel | `À_ÉVITER` | Séquences de 4 à 11 observations et absence actuelle de signal ne justifient ni paramètres ni complexité supplémentaires. |
 | 19 | Calibration | `ACTIF`, application conditionnelle | Platt/isotonic/temperature-vector et la gouvernance existent. E2-B a montré qu'une calibration correcte ne sauve pas un ranking faible. Calibrer Temporal uniquement après Dataset C et stabilité du classement. Voir [recalibration](recalibration_et_promotion.md). |
 
@@ -256,7 +259,7 @@ ont le sens suivant :
 | 20 | Feature Ablation | `ACTIF` et largement `FAIT` | Campagnes Global Ranking B0–B44, Oracle 01–14, Per-Symbol S7/V2 et sources Eroya. Continuer seulement par familles préfixées sur mêmes lignes, pas par suppression opportuniste. |
 | 21 | Direction vs Amplitude Audit | `ACTIF` / `FAIT` | E6-A valide l'amplitude Oracle ; tous les harnais directionnels récents séparent rendement signé et amplitude. V2 recalcule correctement tail-vs-middle, contrairement à l'ancien `dir_vs_amp`. Voir [E6-A](oracle_amplitude_audit.md). |
 | 22 | Same-Date Evaluation | `ACTIF` | Métrique centrale des modèles mutualisés, rankers, consensus et V2. Elle évite qu'un régime de date soit pris pour une séparation cross-sectionnelle. |
-| 23 | Pairwise Ranking | `FAIT_NO_GO` statique ; `EN_COURS` temporel | R1 PairLogit sur le pool Oracle a échoué. V2 compare de nouveau PairLogit aux classifieurs sur les mêmes folds et trajectoires. |
+| 23 | Pairwise Ranking | `FAIT_NO_GO` statique et temporel | R1 PairLogit sur le pool Oracle a échoué. Dans V2, PairLogit reste sous 0,50 d'AUC same-date avec des buckets non monotones malgré les trajectoires. |
 | 24 | Purged Walk-Forward | `ACTIF` | Oracle, Global Ranking, Per-Symbol et recherches partagées utilisent le WF. V2 impose `oracle_available_date < test_start`, donc les targets H20 du train sont connus avant le test. |
 | 25 | Embargo / Leakage Controls | `ACTIF` | Assertions de features interdites/futures, garde de disponibilité target, Oracle OOF, preprocessing train-only et contrôles PIT sont présents. La confirmation finale V2 reste déclarée indisponible car 2018–2025 a déjà été observé. |
 | 26 | Missingness as Information | `PARTIEL` | `is_filled`, âges de snapshots et âges d'événements existent dans plusieurs datasets. V2 local n'ajoute pas mécaniquement des centaines de flags. À compléter seulement pour les sources irrégulières réellement retenues. |
@@ -288,29 +291,41 @@ ont le sens suivant :
 | 42 | Genetic Programming / Symbolic Search | `À_ÉVITER` | Risque de data mining excessif sur une période déjà largement observée. |
 | 43 | SHAP Pattern Discovery | `À_FAIRE_CONDITIONNEL` diagnostique | Feature importance existe dans plusieurs entraînements, mais une analyse SHAP de trajectoires n'est utile qu'après un GO OOF V2. Elle n'est jamais une preuve autonome d'alpha. |
 | 44 | Counterfactual Analysis | `PARTIEL` | Des contrefactuels de lifecycle/stops et de risque existent. Aucun contrefactuel directionnel de trajectoire n'est justifié avant un modèle V2 informatif. |
-| 45 | Placebo Tests | `PARTIEL`, **reste obligatoire pour V2** | Des placebos ont validé Global Ranking et certains backtests. Le run V2 courant ne contient pas encore son shuffle-label dédié ; ajouter au minimum un contrôle Logistic sur la représentation candidate avant promotion Dataset B. |
-| 46 | Bootstrap par Date | `ACTIF` backtest ; **reste obligatoire pour V2** | Le moteur possède des bootstraps trades/blocs. V2 doit encore bootstrapper la différence d'AUC same-date entre N/T2 et T0 avant de sélectionner N ; calculable après les prédictions OOF sans réentraînement. |
+| 45 | Placebo Tests | `NON_DÉCLENCHÉ` pour V2 | Le placebo était obligatoire avant promotion d'une variante. Aucun T2 n'ayant passé le gate primaire, l'exécuter ne changerait pas la décision NO_GO et Dataset B reste fermé. |
+| 46 | Bootstrap par Date | `NON_DÉCLENCHÉ` pour V2 | Le bootstrap du delta T2-T0 était prévu pour une variante candidate. Tous les deltas sont sous +0,01 ; aucun N n'est sélectionné et le contrôle n'est pas requis pour rejeter l'hypothèse. |
 | 47 | Stability Selection | `PARTIEL` | Les gates fold/année et ablations par famille existent. La stabilité des rangs d'importance feature par fold n'est pas encore produite dans V2 ; à ajouter seulement pour une variante candidate. |
 | 48 | Data Source Incrementality | `FAIT` sur les sources disponibles | Form 4 a eu une ablation modèle, les autres familles ont été comparées sur des populations communes lorsque la couverture le permettait. Aucune source Eroya testée n'est promue. Réouvrir seulement avec une série PIT réellement nouvelle et dense. |
-| 49 | Alternative Data Families | `PARTIEL` | Déjà testés : short volume/intérêt, news, analystes, earnings, Form 4, 8-K et surface Options. Restent potentiellement sérieux : microstructure/order flow proche de l'entrée et borrow fee/utilization si historique PIT accessible. Capital flow mérite un audit de source. 13F/institutionnel reste faible priorité pour H3–H20. |
+| 49 | Alternative Data Families | `PARTIEL / STANDBY` | Déjà testés : short volume/intérêt, news, analystes, earnings, Form 4, 8-K, surface Options et dernière quote IEX de clôture. Cette microstructure quotidienne est NO-GO sur H3/H5/H10/H20. Le POC EODHD 5 minutes sur 400 symboles, 2022–2025, est défini mais placé en attente du forfait **EOD+Intraday — All World Extended**. Restent aussi possibles : NBBO/SIP ou trades signés, et borrow fee/utilization si historique PIT accessible. Voir [microstructure closing quote](closing_quote_microstructure.md). |
+
+## Correctif transversal de qualité des labels Oracle
+
+L'audit D10 a découvert 36 faux rendements issus des restructurations WFRD/CHRD
+et 103 targets utilisant un prix D+H forward-fillé. Le correctif fail-closed est
+implémenté : barres réelles aux deux extrémités, registre de ruptures d'identité,
+quarantaine des sauts inexpliqués, traçabilité du rendement brut et segmentation
+des features rolling. Le dry-run complet isole exactement 139 lignes sur
+890 928. Voir [audit D10 et contrat corrigé](d10_corporate_action_anomaly_audit.md).
 
 ## Pistes encore intéressantes après cet audit
 
-### Priorité P0 — terminer correctement Temporal V2
+### Priorité P0 — Temporal V2 fermé
 
-1. Attendre Dataset A T0/T1/T2 en cours.
-2. Si une variante passe les gates, calculer le bootstrap par date de son delta
-   d'AUC contre T0.
-3. Exécuter un placebo shuffle-label limité à la représentation candidate.
-4. Seulement après ces contrôles, ouvrir Dataset B Oracle OOF puis Dataset C.
-5. Relative trajectory, divergences et multi-horizon agreement sont des
-   ablations de phase 2 : elles restent interdites si Dataset A est `NO_GO`.
+Dataset A est terminé en `NO_GO_DATASET_A`. Bootstrap et placebo n'ont pas été
+déclenchés, car aucune variante n'était éligible à une promotion. Dataset B/C,
+N20, divergences, trajectoire relative, multi-horizon et réseaux séquentiels
+restent fermés. Cette décision évite de chercher a posteriori un sous-groupe ou
+un hyperparamètre favorable dans une hypothèse déjà rejetée.
 
-### Priorité P1 — information véritablement nouvelle si V2 échoue
+### Priorité P1 — information véritablement nouvelle après l'échec V2
 
-1. **Microstructure/order flow aligné sur l'entrée** : déséquilibre trades/quotes
-   en clôture J, pré-market ou opening range. Il faut d'abord choisir le cutoff
-   de décision et évaluer le volume/coût du backfill.
+1. **Intraday EODHD aligné sur l'entrée — `STANDBY_ABONNEMENT`** : le snapshot
+   IEX quotidien a échoué sur H3/H5/H10/H20. Le prochain POC utilisera les
+   barres OHLCV 5 minutes sur 400 symboles entre 2022 et 2025, d'abord avec un
+   signal calculé à la clôture J et une entrée à l'open J+1. Les données seront
+   conservées en Parquet ; aucune table ne sera créée avant un GO OOF. Reprise
+   uniquement après souscription à **EOD+Intraday — All World Extended**. Les
+   séquences NBBO/SIP et trades signés constituent une piste distincte, non
+   couverte par ces barres. Voir [expérience closing quote](closing_quote_microstructure.md).
 2. **Borrow fee/utilization/shares available** : piste squeeze/pression short,
    uniquement si une source offre un historique PIT suffisamment dense.
 3. **Capital flow signé** : auditer l'existence, la profondeur et la sémantique
