@@ -23,6 +23,8 @@ une étape de confirmation ; il n'autorise jamais automatiquement le serving.
 | `INCONCLUSIVE` | données, couverture ou période insuffisantes |
 | `IN_PROGRESS` | campagne en cours, aucune conclusion définitive |
 | `PROPOSED` | protocole préparé mais non exécuté |
+| `STANDBY_ABONNEMENT` | protocole prêt, suspendu jusqu'à disponibilité du forfait requis |
+| `BLOCKED_NO_PIT_HISTORY` | hypothèse non rejetée, mais aucune source historique PIT suffisante |
 
 ## Résumé décisionnel actuel
 
@@ -62,7 +64,7 @@ une étape de confirmation ; il n'autorise jamais automatiquement le serving.
 | E4 | Première barrière symétrique touchée, quatre classes | `UP_FIRST`, `DOWN_FIRST`, `AMBIGUOUS`, `NO_TOUCH` | Surabstention et absence d'avantage directionnel stable | `NO_GO` | [E4](first_touch_directional.md) |
 | E4-B | Première barrière, contrôle binaire | `UP_FIRST` contre `DOWN_FIRST`, cas ambigus retirés | AUC fold 0,501 ; couverture 4,10 %, précision 41,09 %, rendement -2,36 % | `NO_GO` | [E4-B](first_touch_binary.md) |
 | E5 | Direction quotidienne du régime Oracle | Choisir un côté commun pour tout le panier du jour | Ridge Spearman 0,000 ; CatBoost -0,008 ; aucune stabilité exploitable | `NO_GO` | [E5](oracle_daily_regime_direction.md) |
-| R1 | Ranker conditionnel au TOP20 Oracle | Ranking de rendement réel uniquement dans le pool Oracle | H3 IC +0,0136 ; H20 +0,0266, mais seulement 5/9 folds stables à H20 et Oracle seul reste meilleur LONG | `NO_GO` | [Ranker conditionnel](conditional_oracle_ranker.md) |
+| R1 | Ranker conditionnel au TOP20 Oracle | Ranking de rendement réel uniquement dans le pool Oracle | Retest batch corrigé : H3 IC +0,0148/spread +0,12 % ; H20 IC +0,0260/spread +0,67 %, mais stabilité insuffisante et LONG/SHORT `NO_GO` | `NO_GO` confirmé | [Ranker conditionnel](conditional_oracle_ranker.md) |
 | C1 | Consensus des modèles OOF existants | Moyenne équipondérée de rangs quotidiens, 2 à 7 familles selon H3/H5/H10/H20, sans réentraînement ni optimisation | IC -0,0014 à +0,0118, inférieur au meilleur composant ; SHORT signé négatif partout ; unanimité et régime E5 ne sauvent pas la direction | `NO_GO` | [Audit de consensus OOF](oof_consensus_audit.md) |
 | T-V2-A | Temporal D1/D10 V2 — Dataset A | État J contre trajectoires `[J-N,...,J]`, N=3/5/10, Logistic/CatBoost/PairLogit, labels H20 autoritatifs | 21 variantes, 399 symboles ; T0 Logistic 0,5143, meilleur T2 Logistic 0,5112 ; aucun gain T2 >= +0,01, aucun candidat servable | `NO_GO_DATASET_A` final | [Temporal D1/D10 V2](temporal_d1d10_v2.md) |
 | S1 | Règles screener PIT post-Oracle | Signaux screener LONG/SHORT H3/H10/H20 | Couverture fraîche 10,44 %, meilleurs effets instables ; aucun gate LONG/SHORT | `NO_GO_PREDICTIVE` | [Screener post-Oracle](screener_post_oracle.md) |
@@ -121,7 +123,8 @@ effets exploratoires ne sont pas des règles de production.
 | Options directionnelles | ratios de prix, skew approximé, profondeur et volume put/call sur surface 45 DTE | 625 événements/8 dates, 323 surfaces complètes. Aucun gate complet ; meilleur signal H10 IC +0,035/AUC 0,548 mais 2/4 années et lift SHORT négatif. Volume 4 jambes absent partout, donc non testable | `NO_GO` direction ; volume `NON_TESTABLE` | [Protocole et résultat E7](options_directional_poc.md#résultat-de-la-campagne-e7-a) |
 | Quotes de clôture IEX | dernière quote quotidienne, spread, imbalance, microprice, profondeur et âge de quote | Couverture 88,8 %, mais aucun signal directionnel stable sur H3/H5/H10/H20 ; le niveau de profondeur H20 est un confondant de liquidité | `NO_GO` pour le snapshot quotidien | [Microstructure de clôture](closing_quote_microstructure.md) |
 | Intraday EODHD | barres OHLCV 5 minutes de clôture J, pré-market et éventuellement opening range J+1 | `STANDBY` : POC défini mais forfait intraday non disponible. Reprise avec **EOD+Intraday — All World Extended** ; cache Parquet, sans table, 400 symboles sur 2022–2025. Une table dédiée ne sera envisagée qu'après un GO OOF | `STANDBY_ABONNEMENT` | [Microstructure de clôture](closing_quote_microstructure.md#décision) |
-| Trades/quotes séquentiels riches | NBBO/SIP, trades signés ou carnet | Non testé : ces historiques ne sont pas présents localement et ne sont pas remplacés par les barres OHLCV EODHD | `PROPOSED` sous réserve de nouvelles données | [Limites options et ticks](eroya_directional_poc.md#options-tradesquotes-et-13f) |
+| Trades/quotes séquentiels riches | NBBO/SIP, trades signés ou carnet | Audit local confirmé : aucune série historique de transactions avec agresseur, NBBO séquentiel ou carnet ; les snapshots IEX quotidiens ne permettent pas de reconstruire le flux signé | `BLOCKED_NO_SIGNED_TICK_HISTORY` | [Limites options et ticks](eroya_directional_poc.md#options-tradesquotes-et-13f), [microstructure de clôture](closing_quote_microstructure.md) |
+| Borrow fee / utilization / shares available | statut Alpaca actuel et disponibilité des sources historiques | Aucun historique PIT pluriannuel local ou Eroya ; FINRA SLATE repoussé à septembre 2028. La compatibilité live Alpaca `borrow_status` a été sécurisée | `BLOCKED_NO_PIT_HISTORY` | [Audit de faisabilité borrow](borrow_lending_data_feasibility.md) |
 | 13F | positions institutionnelles trimestrielles retardées | Non testé, priorité faible pour H3/H10/H20 | `PROPOSED` faible priorité | [Limites options et ticks](eroya_directional_poc.md#options-tradesquotes-et-13f) |
 
 ## Expériences historiques Per-Symbol
@@ -205,7 +208,7 @@ signal ML observé peut être monétisé sans biais d'exécution.
 |---:|---|---|---|---|
 | 1 | Microstructure intraday EODHD proche de l'entrée | Les trajectoires OHLCV 5 minutes de clôture J, puis éventuellement l'opening range J+1, donnent-elles la direction ? | `STANDBY_ABONNEMENT` ; premier contrat fixé à clôture J → entrée open J+1 | [Microstructure de clôture](closing_quote_microstructure.md#décision) |
 | 2 | Modèle temporel multi-horizon | Un apprentissage commun H3/H5/H10/H20 régularise-t-il la direction ? | `PROPOSED`, conditionnel à V2 | À formaliser |
-| 3 | Portefeuille relatif | Un spread dollar-neutral peut-il monétiser un faible ranking sans direction absolue ? | `PROPOSED` secondaire | Dérivé du [ranker conditionnel](conditional_oracle_ranker.md) |
+| 3 | Portefeuille relatif | Un spread dollar-neutral peut-il monétiser un faible ranking sans direction absolue ? | `FAIT_NO_GO` : H3 net quasi nul ; H20 +0,304 % net par cohorte mais seulement 4/9 folds positifs, queue SHORT encore haussière | [Pré-gate portefeuille relatif](oracle_relative_portfolio.md) |
 
 ## Audit des 49 méthodes de la roadmap professionnelle
 
@@ -272,7 +275,7 @@ ont le sens suivant :
 | N° | Méthode | État réel | Décision et preuve |
 |---:|---|---|---|
 | 30 | Risk Overlay | `ACTIF` | Moteur risque/exécution séparé, stops, TP, drawdown, volatilité cible et protections sont implémentés et documentés. Le risque ne doit pas être utilisé pour masquer un signal directionnel absent. Voir [risque/lifecycle](../experiences/risque_execution_lifecycle.md). |
-| 31 | Portfolio Constraints | `ACTIF` | Max positions, exposition sectorielle, exposition brute/nette, drawdown et liquidité sont consommés par le backtest/production. Smart sector cap a été testé sans remplacer le cap canonique. |
+| 31 | Portfolio Constraints | `ACTIF` ; portefeuille relatif `FAIT_NO_GO` | Max positions, exposition sectorielle, exposition brute/nette, drawdown et liquidité sont consommés par le backtest/production. Le pré-gate dollar-neutral dans le TOP20 Oracle obtient +0,304 % net par cohorte H20, mais seulement 4/9 folds positifs ; aucun replay n'est autorisé. Voir [portefeuille relatif Oracle](oracle_relative_portfolio.md). |
 | 32 | Transaction Cost Awareness | `ACTIF` | Commission, slippage, spread, intérêt de marge et replay d'exécution font partie des contrats canoniques. Les diagnostics ML purs restent avant coûts ; tout GO doit ensuite passer le backtest net. |
 | 33 | Probability Thresholding | `FAIT`, non promu | Les seuils 0,55/0,80/0,85/0,90 ont été comparés sur le bundle directionnel ; aucune politique robuste n'en est sortie. Ne pas reprendre un sweep fin sans nouveau modèle validé. |
 | 34 | Symbol-Specific Thresholds | `À_ÉVITER` | Les gates de sélection de candidats per-symbol sont des contrôles de qualité, pas des seuils de trading optimisés par ticker. L'échantillon de tails reste trop faible pour cette recherche. |
@@ -326,10 +329,17 @@ un hyperparamètre favorable dans une hypothèse déjà rejetée.
    uniquement après souscription à **EOD+Intraday — All World Extended**. Les
    séquences NBBO/SIP et trades signés constituent une piste distincte, non
    couverte par ces barres. Voir [expérience closing quote](closing_quote_microstructure.md).
-2. **Borrow fee/utilization/shares available** : piste squeeze/pression short,
-   uniquement si une source offre un historique PIT suffisamment dense.
-3. **Capital flow signé** : auditer l'existence, la profondeur et la sémantique
-   de l'agresseur avant toute collecte.
+2. **Borrow fee/utilization/shares available — `BLOCKED_NO_PIT_HISTORY`** :
+   piste squeeze/pression short pertinente, mais aucun historique PIT dense
+   n'est disponible localement ou via Eroya. FINRA SLATE est repoussé à 2028.
+   Voir [audit de faisabilité borrow](borrow_lending_data_feasibility.md).
+3. **Capital flow signé — `BLOCKED_NO_SIGNED_TICK_HISTORY`** : l'audit du code,
+   des tables et des collecteurs confirme que le projet conserve une dernière
+   quote IEX par séance, mais aucun historique de transactions avec côté
+   agresseur, aucune séquence NBBO/SIP et aucun carnet. Le signal ne peut pas
+   être reconstruit honnêtement à partir des barres OHLCV ou du seul snapshot
+   bid/ask. Réouverture uniquement avec une source tick historique et un petit
+   POC borné avant toute collecte des 400 symboles.
 
 ### Priorité P2 — uniquement après découverte d'un signal stable
 

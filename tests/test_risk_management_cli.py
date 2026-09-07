@@ -35,6 +35,27 @@ def test_live_borrow_provider_blocks_short_when_asset_api_fails(monkeypatch) -> 
     assert snapshots["AAPL"].quantity_available == 0
 
 
+def test_live_borrow_provider_uses_new_alpaca_borrow_status(monkeypatch) -> None:
+    import service.alpaca.clientAlpaca as alpaca_module
+
+    monkeypatch.setattr(
+        alpaca_module,
+        "fetch_asset_by_symbol",
+        lambda *args, **kwargs: {
+            "shortable": True,
+            "borrow_status": "easy_to_borrow",
+            "easy_to_borrow": False,
+        },
+    )
+
+    snapshots = cli._load_live_borrow_snapshots(
+        ["AAPL"], account_id="paper", trade_date=date.today(),
+    )
+
+    assert snapshots["AAPL"].status.value == "easy_to_borrow"
+    assert snapshots["AAPL"].locate_required is False
+
+
 class _BaseFakeRepo:
     def load_equity_history(self, account_id, trade_date, lookback_days=25):
         return []

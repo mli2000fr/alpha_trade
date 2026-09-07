@@ -287,12 +287,29 @@ def build_forward_return_panel(
     spy[benchmark_price_col] = pd.to_numeric(spy[benchmark_price_col], errors="coerce")
     spy = spy.dropna(subset=["date", benchmark_price_col]).sort_values("date")
 
+    from modelFactory.oracle.security_continuity import (
+        load_security_discontinuities,
+        path_crosses_known_discontinuity,
+    )
+
+    continuity_registry = load_security_discontinuities()
     outputs: list[pd.DataFrame] = []
     diagnostics: dict[str, Any] = {"horizons": {}, "sector_min_members": int(sector_min_members)}
     for horizon in normalized_horizons:
         raw_col = f"future_return_h{horizon}"
         spy_col = f"spy_future_return_h{horizon}"
-        panel[raw_col] = panel.groupby("symbol", sort=False)[price_col].shift(-horizon) / panel[price_col] - 1.0
+        end_date_col = f"_future_date_h{horizon}"
+        grouped = panel.groupby("symbol", sort=False)
+        panel[end_date_col] = grouped["date"].shift(-horizon)
+        panel[raw_col] = grouped[price_col].shift(-horizon) / panel[price_col] - 1.0
+        discontinuity_mask = pd.Series(False, index=panel.index)
+        candidate_mask = panel["symbol"].isin(continuity_registry) & panel[end_date_col].notna()
+        for idx, row in panel.loc[candidate_mask, ["symbol", "date", end_date_col]].iterrows():
+            discontinuity_mask.at[idx] = path_crosses_known_discontinuity(
+                str(row["symbol"]), pd.Timestamp(row["date"]),
+                pd.Timestamp(row[end_date_col]), continuity_registry,
+            )
+        panel.loc[discontinuity_mask, raw_col] = np.nan
         spy[spy_col] = spy[benchmark_price_col].shift(-horizon) / spy[benchmark_price_col] - 1.0
         target = panel[["date", "symbol", SECTOR_COL, raw_col]].merge(
             spy[["date", spy_col]], on="date", how="left", validate="many_to_one",
@@ -316,6 +333,7 @@ def build_forward_return_panel(
         diagnostics["horizons"][str(horizon)] = {
             "rows": int(valid.sum()),
             "dates": int(target.loc[valid, "date"].nunique()),
+            "known_security_discontinuities_excluded": int(discontinuity_mask.sum()),
             "sector_residual_coverage": float(usable_sector[valid].mean()) if bool(valid.any()) else 0.0,
             "spy_coverage": float(target.loc[valid, SPY_RETURN_COL].notna().mean()) if bool(valid.any()) else 0.0,
         }

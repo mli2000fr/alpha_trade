@@ -240,3 +240,22 @@ Verdict final : ne pas ouvrir de confirmation et ne pas intégrer le ranker dans
 la cascade. Les artefacts restent des résultats de recherche. La prochaine
 hypothèse indépendante est l'audit univarié des règles screener PIT après
 Oracle, sans combiner ni retuner le ranker rejeté.
+
+## Retest sur le batch corrigé du 7 septembre 2026
+
+Après achèvement du batch `model-factory-20260907170018-0e94ac`, le protocole
+préfixé a été rejoué sans modifier ses paramètres. L'artefact produit est
+`conditional-oracle-ranker-20260907221309-0e94ac`.
+
+| Horizon | Folds | IC quotidien | Spread haut-bas | LONG signé | SHORT signé | Verdict |
+|---:|---:|---:|---:|---:|---:|---|
+| H3 | 9 | +0,0148 | +0,12 % | +0,34 % | -0,22 % | LONG `NO_GO`, SHORT `NO_GO` |
+| H20 | 9 | +0,0260 | +0,67 % | +2,22 % | -1,55 % | LONG `NO_GO`, SHORT `NO_GO` |
+
+H20 améliore le spread agrégé, mais pas sa stabilité : plusieurs folds récents
+s'inversent et le seuil de 75 % de folds positifs est impossible à atteindre.
+H3 reste sous les seuils d'IC et de spread. Ce retest confirme donc le rejet et
+n'autorise toujours aucun branchement dans la cascade.
+
+Le contrôle complémentaire dollar-neutral est documenté dans
+[Portefeuille relatif dans le pool Oracle TOP20](oracle_relative_portfolio.md).

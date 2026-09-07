@@ -198,13 +198,14 @@ def _load_live_borrow_snapshots(
     """Charge les statuts de borrow (ETB/HTB/NOT_SHORTABLE) pour le gate de liquidité.
 
     Point 9 — Interroge l'API Alpaca ``GET /v2/assets/{symbol}`` pour les champs
-    ``shortable`` et ``easy_to_borrow``, puis les mappe vers les statuts
+    ``shortable`` et ``borrow_status`` (avec fallback ``easy_to_borrow``), puis
+    les mappe vers les statuts
     ``BorrowStatus`` (ETB/HTB/NOT_SHORTABLE). En cas d'indisponibilité de l'API,
     le symbole est ``NOT_SHORTABLE`` : aucune disponibilité favorable n'est inventée.
     """
     from datetime import datetime as _dt, timezone as _tz
 
-    from risk_management.liquidity import BorrowSnapshot, BorrowStatus
+    from risk_management.liquidity import BorrowSnapshot, BorrowStatus, alpaca_borrow_status
 
     as_of = _dt.now(_tz.utc)
     snapshots: dict[str, BorrowSnapshot] = {}
@@ -235,19 +236,15 @@ def _load_live_borrow_snapshots(
                 )
                 continue
 
-            shortable = bool(asset.get("shortable", False))
-            easy_to_borrow = bool(asset.get("easy_to_borrow", False))
+            status = alpaca_borrow_status(asset)
 
-            if not shortable:
-                status = BorrowStatus.NOT_SHORTABLE
+            if status == BorrowStatus.NOT_SHORTABLE:
                 fee = float("inf")
                 locate_required = False
-            elif not easy_to_borrow:
-                status = BorrowStatus.HARD_TO_BORROW
+            elif status == BorrowStatus.HARD_TO_BORROW:
                 fee = 0.05   # 5%/an — frais HTB standards
                 locate_required = True
             else:
-                status = BorrowStatus.EASY_TO_BORROW
                 fee = 0.003  # 0.3%/an — frais ETB standards
                 locate_required = False
 

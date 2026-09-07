@@ -42,6 +42,50 @@ class TestBorrowStatus:
 
     def test_htb_requires_locate(self) -> None:
         assert BorrowStatus.HARD_TO_BORROW.requires_locate is True
+
+
+class TestAlpacaBorrowStatusCompatibility:
+    def test_new_borrow_status_is_authoritative(self) -> None:
+        from risk_management.liquidity import alpaca_borrow_status
+
+        assert alpaca_borrow_status({
+            "shortable": True,
+            "borrow_status": "easy_to_borrow",
+            "easy_to_borrow": False,
+        }) == BorrowStatus.EASY_TO_BORROW
+
+    def test_new_hard_to_borrow_requires_locate(self) -> None:
+        from risk_management.liquidity import alpaca_borrow_status
+
+        assert alpaca_borrow_status({
+            "shortable": True,
+            "borrow_status": "hard_to_borrow",
+        }) == BorrowStatus.HARD_TO_BORROW
+
+    def test_legacy_easy_to_borrow_remains_supported(self) -> None:
+        from risk_management.liquidity import alpaca_borrow_status
+
+        assert alpaca_borrow_status({
+            "shortable": True,
+            "easy_to_borrow": True,
+        }) == BorrowStatus.EASY_TO_BORROW
+
+    def test_unknown_or_missing_status_is_fail_closed(self) -> None:
+        from risk_management.liquidity import alpaca_borrow_status
+
+        assert alpaca_borrow_status({
+            "shortable": True,
+            "borrow_status": "future_unknown_value",
+        }) == BorrowStatus.HARD_TO_BORROW
+        assert alpaca_borrow_status({"shortable": True}) == BorrowStatus.HARD_TO_BORROW
+
+    def test_not_shortable_overrides_provider_status(self) -> None:
+        from risk_management.liquidity import alpaca_borrow_status
+
+        assert alpaca_borrow_status({
+            "shortable": False,
+            "borrow_status": "easy_to_borrow",
+        }) == BorrowStatus.NOT_SHORTABLE
         assert BorrowStatus.EASY_TO_BORROW.requires_locate is False
 
     def test_fee_multiplier(self) -> None:

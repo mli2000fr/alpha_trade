@@ -113,6 +113,24 @@ def test_build_forward_return_panel_residualizes_spy_and_sector() -> None:
     assert diagnostics["horizons"]["1"]["rows"] == 3
 
 
+def test_build_forward_return_panel_quarantines_known_security_discontinuity() -> None:
+    dates = pd.to_datetime(["2019-12-13", "2019-12-20"])
+    bars = pd.DataFrame({
+        "date": dates,
+        "symbol": ["WFRD", "WFRD"],
+        "adj_close": [0.10, 40.0],
+    })
+    benchmark = pd.DataFrame({"date": dates, "adj_close": [100.0, 101.0]})
+
+    panel, diagnostics = shared.build_forward_return_panel(
+        bars, benchmark, {"WFRD": "ENERGY"}, [1], sector_min_members=1,
+    )
+
+    first = panel[panel["date"].eq(dates[0])].iloc[0]
+    assert pd.isna(first["future_return"])
+    assert diagnostics["horizons"]["1"]["known_security_discontinuities_excluded"] == 1
+
+
 def test_attach_signed_return_target_selects_requested_basis() -> None:
     pool = pd.DataFrame({
         "date": pd.to_datetime(["2024-01-02"]), "symbol": ["A"],
