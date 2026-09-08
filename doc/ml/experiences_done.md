@@ -312,6 +312,46 @@ quarantaine des sauts inexpliqués, traçabilité du rendement brut et segmentat
 des features rolling. Le dry-run complet isole exactement 139 lignes sur
 890 928. Voir [audit D10 et contrat corrigé](d10_corporate_action_anomaly_audit.md).
 
+## P0 — audit de l’univers Oracle 400
+
+L’univers statique du batch `model-factory-20260907170018-0e94ac` est audité
+dans [P0 — univers Oracle 400](oracle_universe_p0_audit.md). Le biais de
+sélection est confirmé : 112/400 symboles commencent après le début de la
+période et 60 en 2020 ou après. Les 20 % de symboles les plus contributeurs
+créent 41 % des tails ; leur fréquence est corrélée à 0,895 avec la volatilité
+et 0,918 avec le range médian. Les snapshots PIT existants sont trop dégradés
+pour servir immédiatement de gold standard. Statut : `FAIT_BIAIS_CONFIRMÉ`,
+avec P0b bar-only/PIT qualifié comme prochaine étape avant tout réentraînement.
+
+P0b est maintenant terminé. L'admission bar-only quotidienne depuis les 2 696
+candidats produit 3,93 M de lignes et un univers médian de 1 550 titres.
+Seulement 67,7 % des anciennes lignes passent les nouveaux gates quotidiens et
+9,9 % des appartenances extrêmes changent. Les 20 % de symboles les plus
+contributeurs produisent désormais 52,2 % des tails : sélectionner les titres
+les plus volatils est explicitement rejeté. Voir
+[P0b — univers dynamique](oracle_universe_p0b_dynamic.md). Statut :
+`FAIT_DYNAMIC_BAR_ONLY`, avec capitalisation/type/pays historiques et titres
+radiés restant à qualifier.
+
+P0c compare ensuite, sur les mêmes 3,93 M lignes, le rendement brut, le
+vol-scaled, le rang intra-quintile de volatilité et le rang sectoriel. Aucune
+variante ne franchit tous les gates. `vol_strata` réduit la concentration de
+52,2 % à 42,3 %, mais conserve 89,86 % de l'amplitude contre un gate préfixé à
+90 %. Le seuil n'est pas relâché a posteriori ; le label brut reste canonique.
+Voir [P0c — cibles Oracle](oracle_universe_p0c_targets.md). Statut :
+`FAIT_NO_PROMOTION`, challenger `vol_strata` réservé à une confirmation future.
+
+P0d construit ensuite, sans utiliser labels ni performances futures, un nouvel
+échantillon de recherche de 400 titres depuis les 2 696 candidats. Après gates,
+995 titres sont éligibles. La sortie respecte exactement les quotas : 260 mid,
+100 large, 40 small ; volatilité 60/80/100/100/60 ; bêta 80 par quintile. Elle
+couvre 44 secteurs, avec un maximum de 16 titres par secteur, et ne partage que
+101 symboles avec l'ancien univers 400. Le fichier est reproductible par
+cutoff/seed/hash, mais reste `RECONSTRUCTED_GRADE_B` et ne rend pas 2026H1 OOS.
+Voir [P0d — univers équilibré 400](oracle_universe_p0d_balanced400.md). Statut :
+`FAIT_BALANCED_400`, prochaine étape préfixée P0e de comparaison OOF à contrat
+Oracle identique.
+
 ## Pistes encore intéressantes après cet audit
 
 ### Priorité P0 — Temporal V2 fermé
