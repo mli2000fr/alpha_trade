@@ -141,6 +141,15 @@ Le harnais reproductible est
   préalable échoue sur tous les horizons.
 - Conserver la profondeur cotée comme variable de liquidité/qualité d'exécution,
   pas comme signal directionnel.
-- La prochaine expérience microstructure exige une donnée réellement nouvelle :
-  séquences NBBO/SIP ou trades signés autour de la clôture, pré-market et
-  opening range J+1 avec décision explicitement retardée après la fenêtre.
+- Les séquences NBBO/SIP et trades signés de clôture ont depuis été collectées
+  via Eroya puis rejetées : le flux simple/accéléré échoue les gates et le score
+  d'épuisement 5 minutes ne se réplique pas sur 400 dates disjointes. Voir
+  [flux signé](signed_trade_flow_pilot.md) et
+  [prix/liquidité tick](tick_price_liquidity_audit.md).
+- La prochaine expérience distincte porte sur les barres Eroya 5 minutes de la
+  séance J complète, avec signal disponible après 16:00 ET et première entrée
+  J+1. Un préflight SPY a répondu HTTP 200 avec OHLCV, VWAP et compte de
+  transactions. EODHD reste une source de secours, plus un blocage.
+- Les messages d'auction imbalance MOC/LOC seraient une autre donnée nouvelle,
+  mais ils ne figurent pas dans le catalogue Eroya actuel et ne doivent pas
+  être approximés à partir du NBBO.
