@@ -483,8 +483,9 @@ strictement exploratoire.
   d'essai ;
 - les archives Options daily sont accessibles mais sont des fichiers de marché
   complet, potentiellement très volumineux ;
-- les trades/quotes tick sont encore plus lourds et ne constituent pas le
-  premier POC raisonnable pour un modèle quotidien ;
+- les endpoints historiques trades/quotes tick ont finalement été vérifiés :
+  ils permettent une collecte bornée par symbole, date et timestamp, sans
+  télécharger les flat files du marché complet ;
 - les 13F sont accessibles mais trimestriels et retardés : priorité faible pour
   une direction H3/H10/H20.
 
@@ -511,3 +512,33 @@ les archives quotidiennes disponibles via flat files :
    toute intégration ;
 8. à ce stade, la campagne Eroya n'a validé aucune nouvelle feature
    directionnelle de production pour distinguer D1 de D10 après Oracle TOP20.
+
+## Extension : flux signé trades/NBBO
+
+L'hypothèse tick a été rouverte le 7 septembre 2026 après confirmation HTTP 200
+sur les endpoints trades et quotes. Le premier POC de cinq minutes avant la
+clôture a collecté 18 261 trades et 21 267 quotes sur douze événements Oracle,
+avec 12/12 calculs complets et aucune troncature. Cette réussite est technique,
+pas prédictive.
+
+Le pré-gate directionnel préfixé sur 200 événements est terminé. Parmi les 182
+événements complets, 159 sont des tails H20. Le volume et les dollars signés
+atteignent une AUC orientée de 0,56 et un IC rendement de -0,14, mais ne sont
+favorables que sur quatre semestres sur sept. Le gate de stabilité à 70 %
+échoue : aucun modèle et aucune intégration ne sont autorisés.
+
+La dernière expérience de formulation est également terminée. Dix variables
+issues de trois sous-fenêtres fixes des trente dernières minutes ont été
+contrôlées avec Bonferroni. La meilleure, l'accélération du volume signé,
+atteint AUC 0,567, IC -0,102 et 5/7 semestres favorables, mais sa p-value brute
+est 0,149 et sa p-value corrigée vaut 1,0. La famille signed-flow est donc
+fermée sans modèle. Les mêmes ticks peuvent encore servir à une famille
+distincte prix/spread/liquidité. Cette famille n'a passé aucun gate. Le signal
+contrariant `-return_5m` a ensuite été figé et testé sur 400 dates disjointes :
+AUC 0,490, IC 0,005, p=0,627 et seulement 4/7 semestres favorables. Il est
+rejeté. La microstructure Eroya de fin de séance n'apporte donc, dans ces
+contrats, ni direction stable ni gain d'amplitude validé.
+
+Voir [audit prix/spread/liquidité et confirmation](tick_price_liquidity_audit.md).
+
+Voir [protocole détaillé du flux signé](signed_trade_flow_pilot.md).

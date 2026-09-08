@@ -122,8 +122,9 @@ effets exploratoires ne sont pas des règles de production.
 | Dépôts 8-K | catégories structurées et compteurs événementiels | Information descriptive, mais répétitions et concentration interdisent une règle | `INCONCLUSIVE`, non promu | [8-K](eroya_directional_poc.md#dépôts-8-k-structurés) |
 | Options directionnelles | ratios de prix, skew approximé, profondeur et volume put/call sur surface 45 DTE | 625 événements/8 dates, 323 surfaces complètes. Aucun gate complet ; meilleur signal H10 IC +0,035/AUC 0,548 mais 2/4 années et lift SHORT négatif. Volume 4 jambes absent partout, donc non testable | `NO_GO` direction ; volume `NON_TESTABLE` | [Protocole et résultat E7](options_directional_poc.md#résultat-de-la-campagne-e7-a) |
 | Quotes de clôture IEX | dernière quote quotidienne, spread, imbalance, microprice, profondeur et âge de quote | Couverture 88,8 %, mais aucun signal directionnel stable sur H3/H5/H10/H20 ; le niveau de profondeur H20 est un confondant de liquidité | `NO_GO` pour le snapshot quotidien | [Microstructure de clôture](closing_quote_microstructure.md) |
-| Intraday EODHD | barres OHLCV 5 minutes de clôture J, pré-market et éventuellement opening range J+1 | `STANDBY` : POC défini mais forfait intraday non disponible. Reprise avec **EOD+Intraday — All World Extended** ; cache Parquet, sans table, 400 symboles sur 2022–2025. Une table dédiée ne sera envisagée qu'après un GO OOF | `STANDBY_ABONNEMENT` | [Microstructure de clôture](closing_quote_microstructure.md#décision) |
-| Trades/quotes séquentiels riches | NBBO/SIP, trades signés ou carnet | Audit local confirmé : aucune série historique de transactions avec agresseur, NBBO séquentiel ou carnet ; les snapshots IEX quotidiens ne permettent pas de reconstruire le flux signé | `BLOCKED_NO_SIGNED_TICK_HISTORY` | [Limites options et ticks](eroya_directional_poc.md#options-tradesquotes-et-13f), [microstructure de clôture](closing_quote_microstructure.md) |
+| Intraday 5 minutes de séance complète | barres Eroya ajustées, segmentation matin/après-midi, VWAP, volume et volatilité | Accès REST vérifié HTTP 200 : 189 barres SPY sur la séance civile du 2 janvier 2025 avant filtre des heures régulières. Prochaine campagne : trajectoire de séance J calculée avant entrée J+1, cache Parquet sans table | `PREFLIGHT_OK_A_FORMALISER` | [Microstructure de clôture](closing_quote_microstructure.md#décision) |
+| Trades/quotes séquentiels riches | NBBO/SIP, flux signé, trajectoire prix et liquidité | Collecte Eroya validée puis hypothèses rejetées : signed-flow simple/accéléré `NO_GO`; épuisement prix 5 min non répliqué sur 400 dates disjointes (AUC 0,490) | `FAIT_NO_GO` | [Flux signé](signed_trade_flow_pilot.md), [prix/liquidité tick](tick_price_liquidity_audit.md) |
+| Déséquilibres d'enchère MOC/LOC | messages historiques d'auction imbalance disponibles avant la clôture | Aucun endpoint ou dataset correspondant dans le catalogue officiel Eroya au 8 septembre 2026 ; trades/NBBO ne remplacent pas ce flux | `BLOCKED_NO_DATA_SOURCE` | [Prix/liquidité tick](tick_price_liquidity_audit.md) |
 | Borrow fee / utilization / shares available | statut Alpaca actuel et disponibilité des sources historiques | Aucun historique PIT pluriannuel local ou Eroya ; FINRA SLATE repoussé à septembre 2028. La compatibilité live Alpaca `borrow_status` a été sécurisée | `BLOCKED_NO_PIT_HISTORY` | [Audit de faisabilité borrow](borrow_lending_data_feasibility.md) |
 | 13F | positions institutionnelles trimestrielles retardées | Non testé, priorité faible pour H3/H10/H20 | `PROPOSED` faible priorité | [Limites options et ticks](eroya_directional_poc.md#options-tradesquotes-et-13f) |
 
@@ -167,8 +168,8 @@ Ces expériences concernent principalement Global Ranking. Elles ne doivent pas
 | Oracle historique TOP/BOTTOM | Deux modèles directionnels au-dessus du ranking | Les deux côtés apprenaient surtout une magnitude commune ; architecture remplacée | [Synthèse Oracle](../experiences/oracle_extreme.md) |
 | Oracle O0 binaire | `D1 ∪ D10` contre le milieu, sans Global Rank comme entrée | Contrat actuel : magnitude uniquement, gate percentile quotidien | [Concept Oracle](oracle/01_concept_et_architecture.md) |
 | Diagnostics hard negatives/confounders | Faux positifs, sévérité, features, fondamentaux, cas catastrophiques | Diagnostics utiles, pas de gate live automatiquement validé | [Diagnostics Oracle](oracle/06_diagnostics_et_historique.md) |
-| Ablations Oracle 01–11 | Ranks XS, raw simple, momentum, tendance, volatilité, volume, RSI, régime, transformations et z-scores | Campagne terminée ; résultats à relire via les artefacts avant toute nouvelle sélection | `config/features/oracle/` et [entraînement Oracle](oracle/04_train_walk_forward_et_calibration.md) |
-| Combinaisons Oracle 12–14 | Retraits combinés marché/régime, engineered transforms et momentum | Campagne terminée ; aucune promotion ne doit être déduite sans comparaison OOF consolidée | `config/features/oracle/` et [diagnostics Oracle](oracle/06_diagnostics_et_historique.md) |
+| Ablations Oracle 01–11 | Ranks XS, raw simple, momentum, tendance, volatilité, volume, RSI, régime, transformations et z-scores | Comparaison corrigée terminée : l'AUC seule donne un classement trompeur ; le meilleur gain d'amplitude TOP20 est seulement +0,0215 point/jour apparié | `config/features/oracle/` et [comparaison corrigée](oracle_ablation_corrected_comparison.md) |
+| Combinaisons Oracle 12–14 | Retraits combinés marché/régime, engineered transforms et momentum | Aucun profil promu ; corrélations 0,974–0,980 avec la baseline et seulement ~3 % de décisions TOP20 modifiées, donc aucun ensemble justifié | [Comparaison corrigée](oracle_ablation_corrected_comparison.md) |
 
 ## Global Ranking et Per-Sector — historique B0 à B44
 
@@ -206,7 +207,7 @@ signal ML observé peut être monétisé sans biais d'exécution.
 
 | Priorité actuelle | Piste | Question | Statut | Protocole |
 |---:|---|---|---|---|
-| 1 | Microstructure intraday EODHD proche de l'entrée | Les trajectoires OHLCV 5 minutes de clôture J, puis éventuellement l'opening range J+1, donnent-elles la direction ? | `STANDBY_ABONNEMENT` ; premier contrat fixé à clôture J → entrée open J+1 | [Microstructure de clôture](closing_quote_microstructure.md#décision) |
+| 1 | Flux signé trades/NBBO Eroya proche de la clôture | L'agression bid/ask et le déséquilibre NBBO ajoutent-ils une direction dans Oracle TOP20 ? | `FAIT_NO_GO` : agrégat 5 min instable ; accélération 30 min AUC 0,567 et 5/7 semestres, mais p=0,149 et p Bonferroni=1. Aucun modèle autorisé | [Flux signé trades/NBBO](signed_trade_flow_pilot.md) |
 | 2 | Modèle temporel multi-horizon | Un apprentissage commun H3/H5/H10/H20 régularise-t-il la direction ? | `PROPOSED`, conditionnel à V2 | À formaliser |
 | 3 | Portefeuille relatif | Un spread dollar-neutral peut-il monétiser un faible ranking sans direction absolue ? | `FAIT_NO_GO` : H3 net quasi nul ; H20 +0,304 % net par cohorte mais seulement 4/9 folds positifs, queue SHORT encore haussière | [Pré-gate portefeuille relatif](oracle_relative_portfolio.md) |
 
@@ -298,7 +299,7 @@ ont le sens suivant :
 | 46 | Bootstrap par Date | `NON_DÉCLENCHÉ` pour V2 | Le bootstrap du delta T2-T0 était prévu pour une variante candidate. Tous les deltas sont sous +0,01 ; aucun N n'est sélectionné et le contrôle n'est pas requis pour rejeter l'hypothèse. |
 | 47 | Stability Selection | `PARTIEL` | Les gates fold/année et ablations par famille existent. La stabilité des rangs d'importance feature par fold n'est pas encore produite dans V2 ; à ajouter seulement pour une variante candidate. |
 | 48 | Data Source Incrementality | `FAIT` sur les sources disponibles | Form 4 a eu une ablation modèle, les autres familles ont été comparées sur des populations communes lorsque la couverture le permettait. Aucune source Eroya testée n'est promue. Réouvrir seulement avec une série PIT réellement nouvelle et dense. |
-| 49 | Alternative Data Families | `PARTIEL / STANDBY` | Déjà testés : short volume/intérêt, news, analystes, earnings, Form 4, 8-K, surface Options et dernière quote IEX de clôture. Cette microstructure quotidienne est NO-GO sur H3/H5/H10/H20. Le POC EODHD 5 minutes sur 400 symboles, 2022–2025, est défini mais placé en attente du forfait **EOD+Intraday — All World Extended**. Restent aussi possibles : NBBO/SIP ou trades signés, et borrow fee/utilization si historique PIT accessible. Voir [microstructure closing quote](closing_quote_microstructure.md). |
+| 49 | Alternative Data Families | `PARTIEL / NO_GO_TICKS` | Flux signé Eroya et prix/spread/liquidité sont rejetés. L'effet contrariant 5 min découvert (AUC inversée 0,57) disparaît sur 400 dates disjointes : AUC 0,490, IC 0,005, p=0,627, 4/7 semestres. Aucun feature tick de clôture n'est promu. Le POC EODHD reste en attente et borrow fee/utilization demeure bloqué. Voir [flux signé](signed_trade_flow_pilot.md), [prix/liquidité tick](tick_price_liquidity_audit.md) et [microstructure closing quote](closing_quote_microstructure.md). |
 
 ## Correctif transversal de qualité des labels Oracle
 
@@ -321,25 +322,36 @@ un hyperparamètre favorable dans une hypothèse déjà rejetée.
 
 ### Priorité P1 — information véritablement nouvelle après l'échec V2
 
-1. **Intraday EODHD aligné sur l'entrée — `STANDBY_ABONNEMENT`** : le snapshot
-   IEX quotidien a échoué sur H3/H5/H10/H20. Le prochain POC utilisera les
-   barres OHLCV 5 minutes sur 400 symboles entre 2022 et 2025, d'abord avec un
-   signal calculé à la clôture J et une entrée à l'open J+1. Les données seront
-   conservées en Parquet ; aucune table ne sera créée avant un GO OOF. Reprise
-   uniquement après souscription à **EOD+Intraday — All World Extended**. Les
-   séquences NBBO/SIP et trades signés constituent une piste distincte, non
-   couverte par ces barres. Voir [expérience closing quote](closing_quote_microstructure.md).
+1. **Intraday 5 minutes de séance complète Eroya — `PREFLIGHT_OK`** : les ticks
+   de clôture ont échoué, mais l'endpoint de barres ajustées répond HTTP 200 et
+   retourne OHLCV, VWAP et nombre de transactions. Le prochain POC doit tester
+   une trajectoire de séance J fixée avant outcome — matin, après-midi, retour
+   contre VWAP, profil de volume et volatilité — avec première entrée J+1. Les
+   données resteront en Parquet et aucune table ne sera créée avant un GO OOF.
+   EODHD devient une source de secours, plus un prérequis d'abonnement. Voir
+   [expérience closing quote](closing_quote_microstructure.md).
 2. **Borrow fee/utilization/shares available — `BLOCKED_NO_PIT_HISTORY`** :
    piste squeeze/pression short pertinente, mais aucun historique PIT dense
    n'est disponible localement ou via Eroya. FINRA SLATE est repoussé à 2028.
    Voir [audit de faisabilité borrow](borrow_lending_data_feasibility.md).
-3. **Capital flow signé — `BLOCKED_NO_SIGNED_TICK_HISTORY`** : l'audit du code,
-   des tables et des collecteurs confirme que le projet conserve une dernière
-   quote IEX par séance, mais aucun historique de transactions avec côté
-   agresseur, aucune séquence NBBO/SIP et aucun carnet. Le signal ne peut pas
-   être reconstruit honnêtement à partir des barres OHLCV ou du seul snapshot
-   bid/ask. Réouverture uniquement avec une source tick historique et un petit
-   POC borné avant toute collecte des 400 symboles.
+3. **Capital flow signé — `FAIT_NO_GO`** : sur 200 événements, le flux agrégé
+   échoue la stabilité. L'audit temporel préfixé ne le sauve pas : la meilleure
+   accélération atteint AUC 0,567 et 5/7 semestres, mais p brute 0,149 et p
+   Bonferroni 1,0. Aucun modèle ni découpage additionnel. Une famille séparée
+   prix/spread/liquidité peut être auditée comme découverte sur les ticks déjà
+   acquis, avec confirmation ultérieure obligatoire. Voir [flux signé
+   trades/NBBO](signed_trade_flow_pilot.md).
+4. **Épuisement du prix à la clôture — `FAIT_NO_GO`** : l'observation
+   contrariante du premier échantillon ne se reproduit pas sur 400 dates
+   disjointes. Le score fixe `-return_5m` obtient AUC 0,490, IC 0,005, p=0,627
+   et 4/7 semestres favorables. La piste est fermée sans modèle. Une tentative
+   initiale concentrée sur le ticker alphabétiquement premier a été interrompue
+   avant rapport ; le correctif hash intra-date est testé. Voir [audit tick prix
+   et liquidité](tick_price_liquidity_audit.md).
+5. **Auction imbalance MOC/LOC — `BLOCKED_NO_DATA_SOURCE`** : cette donnée
+   serait distincte des trades/NBBO et pertinente avant la clôture, mais le
+   catalogue Eroya ne publie ni endpoint ni archive de messages de déséquilibre.
+   Ne pas l'approximer à partir du dernier trade ou de la profondeur NBBO.
 
 ### Priorité P2 — uniquement après découverte d'un signal stable
 
