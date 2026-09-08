@@ -352,6 +352,17 @@ Voir [P0d — univers équilibré 400](oracle_universe_p0d_balanced400.md). Stat
 `FAIT_BALANCED_400`, prochaine étape préfixée P0e de comparaison OOF à contrat
 Oracle identique.
 
+P0e compare ensuite le témoin `model-factory-20260907170018-0e94ac` au batch
+Balanced 400 `model-factory-20260908183941-7826b4` sur 14 folds et 1 764 dates
+OOF communes. Le nouvel univers augmente marginalement l'AUC (0,6851→0,6882),
+mais diminue la précision TOP20 (40,00→38,94 %), le rappel
+(41,37→39,14 %) et le lift d'amplitude (1,591→1,515). Les IC 95 % par blocs de
+21 séances sont entièrement négatifs pour ces quatre mesures TOP20. Il ne gagne
+que 2/15 semestres en AUC et 3/15 en lift d'amplitude. Statut :
+`FAIT_NO_PROMOTION_PERFORMANCE`. L'ancien 400 reste un témoin biaisé et le
+Balanced 400 un échantillon de recherche ; la suite est P0f sur l'univers large
+dynamique. Voir [P0e — comparaison OOF](oracle_universe_p0e_comparison.md).
+
 ## Pistes encore intéressantes après cet audit
 
 ### Priorité P0 — Temporal V2 fermé
