@@ -189,19 +189,46 @@ Lecture détaillée :
   contradictoires selon l'horizon. Aucun score primaire ne franchit tous les
   garde-fous.
 
-### Volume : résultat non testable, et correction effectuée
+### Volume : mapping Eroya corrigé et réévaluation complète
 
-Eroya n'a retourné le volume journalier d'aucune des quatre jambes sur les 323
-surfaces complètes (`volume_legs_available = 0`). La première version du POC
-additionnait les valeurs absentes comme des zéros et produisait à tort un ratio
-put/call constant égal à zéro. Le traitement a été corrigé : le ratio est
-désormais manquant si les quatre jambes ne sont pas disponibles, y compris lors
-de la réévaluation d'un ancien checkpoint.
+L'ancienne conclusion `NON_TESTABLE` provenait d'un défaut du harnais :
+`fetch_daily_volume()` lisait la clé normalisée `volume`, alors que les
+agrégats Eroya/Polygon renvoient la clé compacte `v`. Une réponse réelle sur
+`O:AAL250822C00011500` confirme `v=23` avec cinq transactions.
 
-Après correction, `call_put_volume_log_ratio` a une couverture et un nombre
-d'observations égaux à zéro. Sa conclusion est `NON_TESTABLE`, et non un échec
-prédictif. Le verdict global reste `NO_GO`, car cette variable constante ne
-pouvait déjà faire passer aucun gate et aucune autre feature ne passe.
+Le lecteur utilise désormais `v` en priorité et conserve `volume` comme repli
+de compatibilité. Une valeur zéro réellement fournie reste valide ; une jambe
+absente reste manquante. Les tests couvrent les deux schémas et l'interdiction
+d'imputer une jambe absente à zéro.
+
+La reprise ciblée n'a modifié ni événements, ni échéances, ni strikes, ni
+quotes. Elle a interrogé uniquement les volumes journaliers des quatre jambes
+sur les 323 surfaces complètes.
+
+Artefact :
+`artifacts/research/eroya_directional/options-volume-repair-20260908051412/`.
+
+| Mesure | Valeur |
+|---|---:|
+| surfaces complètes réévaluées | 323 |
+| surfaces avec quatre volumes disponibles | 129 |
+| couverture quatre jambes | 39,94 % |
+| observations avec cible par horizon | 119, soit 36,84 % |
+
+| Horizon | IC quotidien | AUC D10/D1 | Lift LONG | Lift SHORT | Années IC+ | Verdict |
+|---:|---:|---:|---:|---:|---:|---|
+| H3 | +0,032 | 0,619 | +0,80 pt | +0,60 pt | 1/4 | `NO_GO` |
+| H10 | +0,048 | 0,390 | +1,92 pt | -0,99 pt | 2/4 | `NO_GO` |
+| H20 | -0,044 | 0,571 | +4,03 pt | -3,95 pt | 1/4 | `NO_GO` |
+
+H3 passe plusieurs métriques agrégées, mais échoue la couverture minimale et
+surtout la stabilité : IC +0,429 en 2022, puis -0,095 en 2023, -0,063 en 2024
+et -0,008 en 2025. De plus, le quintile call-fort reste perdant en LONG
+(-2,14 % à H3). H10 et H20 échouent l'AUC/IC ou la cohérence des deux côtés.
+
+La conclusion correcte devient donc `NO_GO`, et non `NON_TESTABLE`. Le défaut
+de mapping invalidait uniquement l'ancienne analyse du volume ; il ne change
+pas les résultats déjà établis sur prix, quotes, profondeur ou IV approximée.
 
 ## Verdict et décision
 
@@ -218,7 +245,26 @@ Conséquences :
   huit dates ;
 - conserver les artefacts pour éviter de répéter la même piste sous un autre
   nom ;
+- le volume journalier call/put corrigé est maintenant également `NO_GO` ;
 - considérer une nouvelle campagne Options uniquement avec une information
-  réellement nouvelle : historique IV/Greeks/open interest PIT, volume fiable,
-  davantage de dates indépendantes, ou microstructure alignée précisément sur
-  l'heure d'entrée.
+  réellement nouvelle : historique IV/Greeks/open interest PIT ou flux OPRA
+  agressif complet aligné précisément sur l'heure de décision.
+
+## Piste suivante : chaîne OPRA complète
+
+Le préflight du 8 septembre 2026 distingue trois niveaux :
+
+- REST trades par contrat : accessible, mais trop clairsemé sur quatre jambes
+  (CHWY 0–1 trade/jambe ; AAL 4–5 trades ATM sur une séance) et trop coûteux à
+  étendre contrat par contrat à toute la chaîne ;
+- archive `us-options-minute-aggs` : incluse dans le plan `Pro` actuel et
+  techniquement adaptée à une agrégation de toute la chaîne, mais sans côté
+  agresseur ;
+- archives `us-options-trades` et `us-options-quotes` : plan `Premium` requis,
+  non autorisées par la clé actuelle.
+
+Deux appels espacés à `flatfiles/list` pour l'archive minute ont répondu HTTP
+502 « temporarily unavailable ». Aucun téléchargement n'a été lancé. La piste
+est `STANDBY_ARCHIVE_SERVICE` : reprendre par un inventaire de taille d'une
+seule séance, puis un POC de quelques dates, uniquement lorsque le catalogue
+répond. Ne pas remplacer ce flux par les quatre contrats fixes déjà rejetés.

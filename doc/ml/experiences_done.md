@@ -120,11 +120,13 @@ effets exploratoires ne sont pas des règles de production.
 | News/sentiment multi-source | sentiment et événements Eroya comparés aux données internes | Contenu partiellement nouveau mais aucune preuve historique directionnelle | `NO_GO` historique ; collecte prospective possible | [News Eroya](eroya_directional_poc.md#news-multi-source-eroya-versus-sentiment-existant) |
 | Earnings/surprise EPS | résultats trimestriels, surprise brute, distance earnings | Surprise brute rejetée comme signal autonome | `NO_GO` | [Earnings](eroya_directional_poc.md#résultats-trimestriels-et-surprises-eps) |
 | Dépôts 8-K | catégories structurées et compteurs événementiels | Information descriptive, mais répétitions et concentration interdisent une règle | `INCONCLUSIVE`, non promu | [8-K](eroya_directional_poc.md#dépôts-8-k-structurés) |
-| Options directionnelles | ratios de prix, skew approximé, profondeur et volume put/call sur surface 45 DTE | 625 événements/8 dates, 323 surfaces complètes. Aucun gate complet ; meilleur signal H10 IC +0,035/AUC 0,548 mais 2/4 années et lift SHORT négatif. Volume 4 jambes absent partout, donc non testable | `NO_GO` direction ; volume `NON_TESTABLE` | [Protocole et résultat E7](options_directional_poc.md#résultat-de-la-campagne-e7-a) |
+| Options directionnelles | prix, skew, profondeur et volume put/call sur surface 45 DTE | 625 événements/8 dates, 323 surfaces complètes. Mapping volume `v` corrigé : 129 surfaces quatre jambes, 119 avec cible. H3 AUC 0,619/IC 0,032 mais stabilité 1/4 années et LONG brut perdant ; H10/H20 incohérents | `NO_GO`, volume désormais testé | [Protocole et résultat E7](options_directional_poc.md#volume--mapping-eroya-corrigé-et-réévaluation-complète) |
 | Quotes de clôture IEX | dernière quote quotidienne, spread, imbalance, microprice, profondeur et âge de quote | Couverture 88,8 %, mais aucun signal directionnel stable sur H3/H5/H10/H20 ; le niveau de profondeur H20 est un confondant de liquidité | `NO_GO` pour le snapshot quotidien | [Microstructure de clôture](closing_quote_microstructure.md) |
-| Intraday 5 minutes de séance complète | barres Eroya ajustées, segmentation matin/après-midi, VWAP, volume et volatilité | Accès REST vérifié HTTP 200 : 189 barres SPY sur la séance civile du 2 janvier 2025 avant filtre des heures régulières. Prochaine campagne : trajectoire de séance J calculée avant entrée J+1, cache Parquet sans table | `PREFLIGHT_OK_A_FORMALISER` | [Microstructure de clôture](closing_quote_microstructure.md#décision) |
+| Intraday 5 minutes de séance complète | barres Eroya ajustées, segmentation matin/après-midi, VWAP, volume et volatilité | 393 dates, 330 séances exploitables. Direction rejetée ; volatilité amplitude AUC 0,56/IC 0,18/6 sur 8 semestres, mais p Bonferroni 0,30. Aucun profil promu | `FAIT_NO_GO` | [Trajectoire de séance](intraday_session_path_pilot.md) |
 | Trades/quotes séquentiels riches | NBBO/SIP, flux signé, trajectoire prix et liquidité | Collecte Eroya validée puis hypothèses rejetées : signed-flow simple/accéléré `NO_GO`; épuisement prix 5 min non répliqué sur 400 dates disjointes (AUC 0,490) | `FAIT_NO_GO` | [Flux signé](signed_trade_flow_pilot.md), [prix/liquidité tick](tick_price_liquidity_audit.md) |
 | Déséquilibres d'enchère MOC/LOC | messages historiques d'auction imbalance disponibles avant la clôture | Aucun endpoint ou dataset correspondant dans le catalogue officiel Eroya au 8 septembre 2026 ; trades/NBBO ne remplacent pas ce flux | `BLOCKED_NO_DATA_SOURCE` | [Prix/liquidité tick](tick_price_liquidity_audit.md) |
+| Chaîne Options OPRA complète | minute aggregates de tous les contrats ; idéalement trades+quotes signés | Plan Pro autorise `us-options-minute-aggs`; ticks OPRA exigent Premium. REST quatre jambes trop clairsemé. `flatfiles/list` a répondu 502 deux fois, donc aucun téléchargement | `STANDBY_ARCHIVE_SERVICE` | [Options E7 — chaîne complète](options_directional_poc.md#piste-suivante--chaîne-opra-complète) |
+| Contexte intraday marché | trajectoires SPY/QQQ/IWM et VXX sur séance J | 364 événements alignés/305 tails. Meilleur directionnel IWM-SPY AUC 0,52 ; meilleurs amplitude SPY vol/VXX abs AUC 0,53. Toutes p Bonferroni=1, aucun gate complet | `FAIT_NO_GO` | [Contexte intraday marché](intraday_market_context_pilot.md) |
 | Borrow fee / utilization / shares available | statut Alpaca actuel et disponibilité des sources historiques | Aucun historique PIT pluriannuel local ou Eroya ; FINRA SLATE repoussé à septembre 2028. La compatibilité live Alpaca `borrow_status` a été sécurisée | `BLOCKED_NO_PIT_HISTORY` | [Audit de faisabilité borrow](borrow_lending_data_feasibility.md) |
 | 13F | positions institutionnelles trimestrielles retardées | Non testé, priorité faible pour H3/H10/H20 | `PROPOSED` faible priorité | [Limites options et ticks](eroya_directional_poc.md#options-tradesquotes-et-13f) |
 
@@ -299,7 +301,7 @@ ont le sens suivant :
 | 46 | Bootstrap par Date | `NON_DÉCLENCHÉ` pour V2 | Le bootstrap du delta T2-T0 était prévu pour une variante candidate. Tous les deltas sont sous +0,01 ; aucun N n'est sélectionné et le contrôle n'est pas requis pour rejeter l'hypothèse. |
 | 47 | Stability Selection | `PARTIEL` | Les gates fold/année et ablations par famille existent. La stabilité des rangs d'importance feature par fold n'est pas encore produite dans V2 ; à ajouter seulement pour une variante candidate. |
 | 48 | Data Source Incrementality | `FAIT` sur les sources disponibles | Form 4 a eu une ablation modèle, les autres familles ont été comparées sur des populations communes lorsque la couverture le permettait. Aucune source Eroya testée n'est promue. Réouvrir seulement avec une série PIT réellement nouvelle et dense. |
-| 49 | Alternative Data Families | `PARTIEL / NO_GO_TICKS` | Flux signé Eroya et prix/spread/liquidité sont rejetés. L'effet contrariant 5 min découvert (AUC inversée 0,57) disparaît sur 400 dates disjointes : AUC 0,490, IC 0,005, p=0,627, 4/7 semestres. Aucun feature tick de clôture n'est promu. Le POC EODHD reste en attente et borrow fee/utilization demeure bloqué. Voir [flux signé](signed_trade_flow_pilot.md), [prix/liquidité tick](tick_price_liquidity_audit.md) et [microstructure closing quote](closing_quote_microstructure.md). |
+| 49 | Alternative Data Families | `PARTIEL / NO_GO_TICKS_OPTIONS_VOLUME` | Flux signé, prix/liquidité et séance intraday sont rejetés. Le mapping Options `v` a été corrigé : le ratio volume call/put est enfin testable mais instable, H3 AUC 0,619 portée uniquement par 2022. Aucun feature n'est promu. Borrow fee/utilization et auction imbalance restent bloqués faute de source. Voir [Options E7](options_directional_poc.md), [flux signé](signed_trade_flow_pilot.md) et [prix/liquidité tick](tick_price_liquidity_audit.md). |
 
 ## Correctif transversal de qualité des labels Oracle
 
@@ -322,14 +324,12 @@ un hyperparamètre favorable dans une hypothèse déjà rejetée.
 
 ### Priorité P1 — information véritablement nouvelle après l'échec V2
 
-1. **Intraday 5 minutes de séance complète Eroya — `PREFLIGHT_OK`** : les ticks
-   de clôture ont échoué, mais l'endpoint de barres ajustées répond HTTP 200 et
-   retourne OHLCV, VWAP et nombre de transactions. Le prochain POC doit tester
-   une trajectoire de séance J fixée avant outcome — matin, après-midi, retour
-   contre VWAP, profil de volume et volatilité — avec première entrée J+1. Les
-   données resteront en Parquet et aucune table ne sera créée avant un GO OOF.
-   EODHD devient une source de secours, plus un prérequis d'abonnement. Voir
-   [expérience closing quote](closing_quote_microstructure.md).
+1. **Intraday 5 minutes de séance complète Eroya — `FAIT_NO_GO`** : 393 dates
+   OOF ont été collectées et 330 séances passent la qualité. Aucun signal
+   directionnel ne passe. La volatilité réalisée est descriptive pour
+   l'amplitude (AUC 0,56, IC 0,18, 6/8 semestres) mais échoue Bonferroni à 0,30.
+   Aucun modèle, profil ou stockage applicatif. Voir [trajectoire intraday de
+   séance](intraday_session_path_pilot.md).
 2. **Borrow fee/utilization/shares available — `BLOCKED_NO_PIT_HISTORY`** :
    piste squeeze/pression short pertinente, mais aucun historique PIT dense
    n'est disponible localement ou via Eroya. FINRA SLATE est repoussé à 2028.
@@ -352,6 +352,10 @@ un hyperparamètre favorable dans une hypothèse déjà rejetée.
    serait distincte des trades/NBBO et pertinente avant la clôture, mais le
    catalogue Eroya ne publie ni endpoint ni archive de messages de déséquilibre.
    Ne pas l'approximer à partir du dernier trade ou de la profondeur NBBO.
+6. **Contexte intraday SPY/QQQ/IWM/VXX — `FAIT_NO_GO`** : 364 événements
+   alignés et 305 tails. IWM-SPY atteint seulement AUC 0,52 ; volatilité SPY et
+   mouvement VXX plafonnent à AUC amplitude 0,53. Tous les tests corrigés sont
+   non significatifs. Voir [contexte intraday marché](intraday_market_context_pilot.md).
 
 ### Priorité P2 — uniquement après découverte d'un signal stable
 

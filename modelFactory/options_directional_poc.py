@@ -227,7 +227,11 @@ def fetch_daily_volume(client: EroyaClient, ticker: str, session_date: date) -> 
     values = _results(response)
     if not values:
         return None
-    value = pd.to_numeric(pd.Series([values[-1].get("volume")]), errors="coerce").iloc[0]
+    # Les endpoints Polygon/Massive/Eroya d'agrégats utilisent la clé compacte
+    # ``v``. Garder ``volume`` en repli rend le lecteur compatible avec les
+    # anciens fixtures/exports normalisés, sans transformer une absence en zéro.
+    raw_value = values[-1].get("v", values[-1].get("volume"))
+    value = pd.to_numeric(pd.Series([raw_value]), errors="coerce").iloc[0]
     return float(value) if np.isfinite(value) and value >= 0 else None
 
 

@@ -117,6 +117,24 @@ def test_compute_features_does_not_impute_missing_volume_as_zero() -> None:
     assert result["call_put_volume_log_ratio"] is None
 
 
+@pytest.mark.parametrize("payload,expected", [({"v": 123}, 123.0), ({"volume": 45}, 45.0)])
+def test_fetch_daily_volume_supports_eroya_compact_and_legacy_keys(
+    payload: dict[str, int], expected: float,
+) -> None:
+    class Response:
+        ok = True
+
+        @staticmethod
+        def json() -> dict[str, list[dict[str, int]]]:
+            return {"results": [payload]}
+
+    class Client:
+        def get(self, _path: str, *, params: dict[str, object]) -> Response:
+            return Response()
+
+    assert options.fetch_daily_volume(Client(), "O:TEST", date(2024, 1, 2)) == expected
+
+
 def test_evaluation_masks_incomplete_four_leg_volume() -> None:
     frame = pd.DataFrame({
         "date": [pd.Timestamp("2024-01-02")],

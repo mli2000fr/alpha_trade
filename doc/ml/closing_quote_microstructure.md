@@ -146,10 +146,15 @@ Le harnais reproductible est
   d'épuisement 5 minutes ne se réplique pas sur 400 dates disjointes. Voir
   [flux signé](signed_trade_flow_pilot.md) et
   [prix/liquidité tick](tick_price_liquidity_audit.md).
-- La prochaine expérience distincte porte sur les barres Eroya 5 minutes de la
-  séance J complète, avec signal disponible après 16:00 ET et première entrée
-  J+1. Un préflight SPY a répondu HTTP 200 avec OHLCV, VWAP et compte de
-  transactions. EODHD reste une source de secours, plus un blocage.
+- L'expérience distincte sur les barres Eroya 5 minutes de la séance complète
+  est terminée. Sur 330 séances exploitables, aucun signal directionnel ne
+  passe ; la volatilité réalisée atteint AUC amplitude 0,56 et IC 0,18 mais
+  échoue la correction Bonferroni à 0,30. Voir [trajectoire intraday de
+  séance](intraday_session_path_pilot.md). EODHD ne justifie plus de répéter le
+  même contrat avec une autre source.
 - Les messages d'auction imbalance MOC/LOC seraient une autre donnée nouvelle,
   mais ils ne figurent pas dans le catalogue Eroya actuel et ne doivent pas
   être approximés à partir du NBBO.
+- Le contexte intraday commun SPY/QQQ/IWM/VXX a également été testé : aucune
+  direction et aucune amplitude ne passent les gates corrigés. Voir
+  [contexte intraday marché](intraday_market_context_pilot.md).

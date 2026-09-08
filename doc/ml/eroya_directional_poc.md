@@ -510,7 +510,10 @@ les archives quotidiennes disponibles via flat files :
 7. si la piste 8-K est poursuivie, limiter l'étape suivante à une ablation modèle
    pré-enregistrée, puis exiger un nouvel OOS ou une collecte prospective avant
    toute intégration ;
-8. à ce stade, la campagne Eroya n'a validé aucune nouvelle feature
+8. le mapping du volume Options a été corrigé de `volume` vers la clé Eroya
+   `v`, puis les 323 surfaces complètes ont été réévaluées : 129 disposent des
+   quatre jambes, mais le signal reste instable et `NO_GO` ;
+9. à ce stade, la campagne Eroya n'a validé aucune nouvelle feature
    directionnelle de production pour distinguer D1 de D10 après Oracle TOP20.
 
 ## Extension : flux signé trades/NBBO
