@@ -89,6 +89,7 @@ def build_feature_matrix(
     end_date: str,
     feature_set: str = "expert",
     generator_options: dict[str, Any] | None = None,
+    membership: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Calcule les features PIT par symbole + rangs cross-sectionnels + extras Oracle.
 
@@ -169,6 +170,16 @@ def build_feature_matrix(
         return pd.DataFrame()
     df = pd.concat(parts, ignore_index=True)
 
+    # P0f : filtrer avant les rangs, sinon les percentiles ne correspondent
+    # pas à l'univers quotidien sur lequel les labels sont construits.
+    if membership is not None:
+        scope = membership[["date", "symbol"]].copy()
+        scope["date"] = pd.to_datetime(scope["date"]).dt.normalize()
+        scope["symbol"] = scope["symbol"].astype(str).str.upper()
+        df["date"] = pd.to_datetime(df["date"]).dt.normalize()
+        df["symbol"] = df["symbol"].astype(str).str.upper()
+        df = df.merge(scope.drop_duplicates(), on=["date", "symbol"], how="inner")
+
     # ── Rangs percentiles cross-sectionnels (même normalisation que B25) ──
     xs_available = [c for c in _XS_RANK_SOURCE_FEATURES if c in df.columns]
     if xs_available and bool(options.get("enable_cross_sectional_ranks", True)):
@@ -204,6 +215,23 @@ def load_oracle_targets(engine: Any, batch_id: str, horizon: int = 20) -> pd.Dat
     return df
 
 
+def load_oracle_membership(engine: Any, batch_id: str, horizon: int = 20) -> pd.DataFrame:
+    """Relit l'admission à J sans dépendre de la qualité future du label.
+
+    Les lignes invalidées à J+H appartenaient néanmoins à l'univers observable à
+    J et doivent participer aux rangs de features cross-sectionnels.
+    """
+    query = text(
+        "SELECT prediction_date, symbol FROM global_oracle_labels "
+        "WHERE batch_id = :bid AND horizon = :h"
+    )
+    with engine.connect() as conn:
+        membership = pd.read_sql(query, conn, params={"bid": batch_id, "h": horizon})
+    membership["prediction_date"] = pd.to_datetime(
+        membership["prediction_date"], errors="coerce").dt.normalize()
+    return membership.dropna(subset=["prediction_date", "symbol"])
+
+
 def build_dataset(
     engine: Any,
     batch_id: str,
@@ -216,6 +244,8 @@ def build_dataset(
     need_targets: bool = True,
     feature_whitelist: list[str] | tuple[str, ...] | None = None,
     generator_options: dict[str, Any] | None = None,
+    restrict_features_to_targets: bool = False,
+    feature_membership: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, list[str]]:
     """Assemble features + global_rank_20 + target Oracle.
 
@@ -238,9 +268,20 @@ def build_dataset(
     """
     options = dict(generator_options or {})
     feature_set = str(options.get("feature_set", "expert"))
+    targets = load_oracle_targets(engine, batch_id, horizon)
+    membership = feature_membership
+    if restrict_features_to_targets:
+        if feature_membership is not None:
+            raise ValueError(
+                "feature_membership et restrict_features_to_targets sont mutuellement exclusifs"
+            )
+        if not need_targets:
+            raise ValueError("restrict_features_to_targets requiert need_targets=True")
+        membership = load_oracle_membership(engine, batch_id, horizon).rename(
+            columns={"prediction_date": "date"})
     feats = build_feature_matrix(
         engine, symbols, start_date=start_date, end_date=end_date,
-        feature_set=feature_set, generator_options=options,
+        feature_set=feature_set, generator_options=options, membership=membership,
     )
     if feats.empty:
         return pd.DataFrame(), []
@@ -275,8 +316,6 @@ def build_dataset(
             )
         if not feature_columns:
             raise ValueError("Profil Oracle vide après résolution du dataset.")
-
-    targets = load_oracle_targets(engine, batch_id, horizon)
 
     if require_global_rank:
         ranks = load_global_rank_feature(engine, batch_id)

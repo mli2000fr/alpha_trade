@@ -2626,6 +2626,7 @@ def _build_run_options() -> BacktestRunOptions:
     oracle_calibration = "none"
     extreme_gate_pct = float(st.session_state.get("bt_run_extreme_gate_pct", 0.20) or 0.20)
     extreme_gate_per_symbol = "filter"
+    oracle_tradable_policy = "off"
     directional_bundle_gate = "strict"
     cascade_min_prob: float | None = None
     if _cascade_rank_mode in ("oracle", "oracle_filter", "oracle_rerank", "oracle_pool", "extreme_gate", "extreme_gate_directional"):
@@ -2729,6 +2730,30 @@ def _build_run_options() -> BacktestRunOptions:
                     key="bt_run_cascade_min_prob",
                     help="Exige max(P(LONG), P(SHORT)) au-dessus de ce seuil. Ce réglage est distinct de la marge |P(LONG)-P(SHORT)|.",
                 ))
+            oracle_tradable_policy = cast(str, st.selectbox(
+                "Filtre tradable autour du TOP20 Oracle",
+                options=["filter_then_top20", "top20_then_filter", "off"],
+                format_func=lambda value: {
+                    "filter_then_top20": "Tradables d'abord → TOP20 recalculé (recommandé)",
+                    "top20_then_filter": "TOP20 large → retirer les non-tradables (comparaison)",
+                    "off": "Désactivé — compatibilité anciens runs",
+                }[value],
+                index=["filter_then_top20", "top20_then_filter", "off"].index(
+                    st.session_state.get(
+                        "bt_run_oracle_tradable_policy", "filter_then_top20"
+                    )
+                    if st.session_state.get(
+                        "bt_run_oracle_tradable_policy", "filter_then_top20"
+                    ) in {"filter_then_top20", "top20_then_filter", "off"}
+                    else "filter_then_top20"
+                ),
+                key="bt_run_oracle_tradable_policy",
+                help=(
+                    "Utilise le snapshot tradable PIT exact du preset de capital. "
+                    "Une date absente ou non-full bloque le backtest ; aucun fallback "
+                    "vers les métadonnées actuelles n'est autorisé."
+                ),
+            ))
 
     # ── Priorité N4X2 jours saturés (recherche E, extreme_gate uniquement) ──
     extreme_gate_dip_saturated = bool(st.session_state.get("bt_run_extreme_gate_dip_saturated", False))
@@ -2950,6 +2975,7 @@ def _build_run_options() -> BacktestRunOptions:
         extreme_gate_dip_saturated=bool(extreme_gate_dip_saturated),
         extreme_gate_dip_band=float(extreme_gate_dip_band or 0.02),
         extreme_gate_direction_margin=float(extreme_gate_direction_margin),
+        oracle_tradable_policy=cast(Any, oracle_tradable_policy),
         score_column=cast(Any, score_column),
         walk_forward_artifacts_dir=walk_forward_artifacts_dir.strip() or None,
         disable_walk_forward=bool(st.session_state.get("bt_run_disable_walk_forward", False)),

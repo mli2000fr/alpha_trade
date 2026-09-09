@@ -14,6 +14,10 @@ Ce document donne la vue transversale. Les contrats algorithmiques, paramètres,
 - Alpaca : actifs, compte, ordres, positions, quotes et éventuellement barres IEX ;
 - EODHD : barres consolidées, news et corporate actions selon configuration ;
 - Finnhub/Yahoo/SEC : secteurs, capitalisations, earnings ou cross-checks ;
+
+La capitalisation PIT du nouvel univers tradable possède désormais un contrat
+dédié et un switch sec_edgar | eodhd. Voir
+[Capitalisation PIT — SEC EDGAR ou EODHD](ml/market_cap_sec_edgar.md).
 - Stooq/FRED/EODHD : macro et volatilité selon le provider choisi.
 
 `market_data.bars_provider` choisit la source OHLCV active. Quand EODHD est actif, l'import Alpaca bars devient un no-op contrôlé, et réciproquement.

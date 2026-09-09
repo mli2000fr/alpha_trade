@@ -547,7 +547,10 @@ def fetch_and_store_fundamentals(
                             if max_date and trade_date > max_date:
                                 continue
                         # Only upsert rows with at least one metric
-                        metric_keys = {"net_margin", "roe", "roa", "eps", "total_assets", "net_income"}
+                        metric_keys = {
+                            "net_margin", "roe", "roa", "eps", "total_assets",
+                            "net_income", "shares_outstanding",
+                        }
                         if any(row.get(k) is not None for k in metric_keys):
                             _upsert_fundamentals_row(
                                 resolved_engine,
@@ -1063,9 +1066,18 @@ def main() -> None:
     parser.add_argument(
         "--provider",
         type=str,
-        choices=("eodhd", "finnhub", "yahoo_finance", "fmp", "sec"),
-        default="eodhd",
-        help="Fournisseur de données fondamentales.",
+        choices=("config", "eodhd", "finnhub", "yahoo_finance", "fmp", "sec"),
+        default="config",
+        help=(
+            "Fournisseur de données fondamentales. config lit "
+            "config.yaml -> market_cap.provider (sec_edgar devient sec)."
+        ),
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Nombre maximal de symboles à traiter après résolution de l'univers.",
     )
     parser.add_argument(
         "--overwrite-existing",
@@ -1074,6 +1086,11 @@ def main() -> None:
         help="Écrase les données existantes (force re-fetch).",
     )
     args = parser.parse_args()
+    effective_provider = args.provider
+    if effective_provider == "config":
+        from common.market_cap import load_market_cap_config
+        configured_provider = load_market_cap_config().provider
+        effective_provider = "sec" if configured_provider == "sec_edgar" else configured_provider
 
     # Configure logging
     from common.utils import configure_root_logging
@@ -1089,17 +1106,21 @@ def main() -> None:
         start_date=args.start_date if args.symbol_source == "tradable-universe" else None,
         end_date=args.end_date if args.symbol_source == "tradable-universe" else None,
     )
+    if args.limit is not None:
+        if args.limit < 1:
+            parser.error("--limit doit être strictement positif.")
+        symbols = symbols[:args.limit]
 
     if not symbols:
         LOGGER.warning("Aucun symbole à traiter après résolution.")
         print("Aucun symbole à traiter.", flush=True)
         return
 
-    LOGGER.info("Début fetch fondamentaux : %s symboles, provider=%s", len(symbols), args.provider)
-    print(f"Début fetch fondamentaux : {len(symbols)} symboles, provider={args.provider}", flush=True)
+    LOGGER.info("Début fetch fondamentaux : %s symboles, provider=%s", len(symbols), effective_provider)
+    print(f"Début fetch fondamentaux : {len(symbols)} symboles, provider={effective_provider}", flush=True)
 
     # Vérification préalable du token FMP si le fournisseur est fmp
-    if args.provider == "fmp":
+    if effective_provider == "fmp":
         import os as _os
         if not _os.getenv("FMP_TOKEN", "").strip():
             msg = (
@@ -1127,7 +1148,7 @@ def main() -> None:
 
     result = fetch_and_store_fundamentals(
         symbols,
-        provider=args.provider,
+        provider=effective_provider,
         start_date=fetch_start,
         end_date=args.end_date,
     )
@@ -1142,7 +1163,8 @@ def main() -> None:
     summary = {
         "run_id": f"fund-fetch-{pd.Timestamp.now().strftime('%Y%m%d%H%M%S')}",
         "symbol_source": args.symbol_source,
-        "provider": args.provider,
+        "provider_requested": args.provider,
+        "provider": effective_provider,
         "start_date": args.start_date,
         "end_date": args.end_date,
         "total": len(symbols),

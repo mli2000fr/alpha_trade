@@ -46,6 +46,15 @@ from modelFactory.feature_profiles import (
 )
 
 
+def _safe_print(message: object) -> None:
+    """Affiche un message CLI, y compris sur une console Windows non UTF-8."""
+    try:
+        print(message)
+    except UnicodeEncodeError:
+        encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+        print(str(message).encode(encoding, errors="replace").decode(encoding))
+
+
 def enforce_directional_bundle_target_options(opts: argparse.Namespace) -> argparse.Namespace:
     """Impose le contrat de cible absolue H20 aux branches d'un bundle."""
     if not getattr(opts, "directional_feature_profiles", False):
@@ -504,6 +513,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-workers", type=int, default=4)
     p.add_argument("--predict-max-date-workers", type=int, default=4,
                    help="Nombre de dates traitées en parallèle lors du predict historique (défaut: 4)")
+    p.add_argument(
+        "--oracle-shadow",
+        action="store_true",
+        help=(
+            "P0h : autorise un Oracle à univers PIT dynamique uniquement en shadow. "
+            "Écrit des artefacts séparés, jamais oracle_extreme_predictions/model_predictions."
+        ),
+    )
     p.add_argument("--max-epochs", type=int, default=50)
     p.add_argument("--patience", type=int, default=DEFAULT_PATIENCE,
                    help="Patience pour l'early stopping du LSTM (epochs sans amélioration).")
@@ -602,6 +619,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Nom du profil JSON présent dans config/features/oracle (défaut: oracle.json).")
     p.add_argument("--standalone-oracle-feature-profile", type=str, default=None,
                    help="Profil JSON Oracle hors bundle. Absent = features dynamiques pilotées par les options include-*.")
+    p.add_argument("--oracle-universe-mode", choices=["static_bars", "pit_dynamic_bars"],
+                   default="static_bars",
+                   help="Univers des labels Oracle: statique legacy ou admission quotidienne PIT bar-only P0b (Oracle-only).")
     p.add_argument("--long-feature-profile", type=str, default="long.json",
                    help="Nom du profil JSON présent dans config/features/long (défaut: long.json).")
     p.add_argument("--short-feature-profile", type=str, default="short.json",
@@ -1004,6 +1024,7 @@ def main(args: list[str] | None = None) -> None:
         directional_profiles_enabled=opts.directional_feature_profiles,
         oracle_feature_profile=opts.oracle_feature_profile,
         standalone_oracle_feature_profile=opts.standalone_oracle_feature_profile,
+        oracle_universe_mode=opts.oracle_universe_mode,
         long_feature_profile=opts.long_feature_profile,
         short_feature_profile=opts.short_feature_profile,
     )
@@ -1285,9 +1306,13 @@ def main(args: list[str] | None = None) -> None:
                     _oracle_only = False
             if _oracle_only:
                 LOGGER.info(
-                    "predict: batch=%s Oracle-only détecté (champions, sans global_rank) → "
-                    "predict standard Oracle (remplit oracle_extreme_predictions)",
+                    "predict: batch=%s Oracle-only détecté (champions, sans global_rank) → %s",
                     _batch_id,
+                    (
+                        "shadow isolé (aucune écriture en base)"
+                        if bool(getattr(opts, "oracle_shadow", False))
+                        else "predict standard Oracle (remplit oracle_extreme_predictions)"
+                    ),
                 )
         LOGGER.info(
             "predict dispatch: batch=%s training_mode=%s → flux %s",
@@ -1295,6 +1320,9 @@ def main(args: list[str] | None = None) -> None:
             _batch_mode,
             "rank-driven (global ranks + synthèse)" if _per_sector else "per-symbol (predict_batch)",
         )
+        if bool(getattr(opts, "oracle_shadow", False)) and not _oracle_only:
+            _safe_print("❌ --oracle-shadow exige un batch Oracle-only avec champions.")
+            raise SystemExit(2)
 
         def _persist_predictions_chunk(
             chunk: pd.DataFrame,
@@ -1354,8 +1382,38 @@ def main(args: list[str] | None = None) -> None:
             _oracle_out = predict_oracle_extreme_history(
                 engine, _batch_id, _oracle_start, _oracle_end,
                 horizon=int(getattr(opts, "horizon", 20) or 20),
+                symbols=list(symbols) if bool(getattr(opts, "oracle_shadow", False)) else None,
+                shadow_mode=bool(getattr(opts, "oracle_shadow", False)),
             )
             LOGGER.info("predict oracle-only batch=%s result=%s", _batch_id, _oracle_out)
+            if bool(getattr(opts, "oracle_shadow", False)):
+                if (
+                    not _oracle_out
+                    or _oracle_out.get("status") != "completed"
+                    or int(_oracle_out.get("n_rows", 0) or 0) <= 0
+                ):
+                    _safe_print(f"❌ Oracle shadow échoué : {_oracle_out}")
+                    raise SystemExit(2)
+                _safe_print(
+                    "✅ Oracle shadow terminé — "
+                    f"{int(_oracle_out['n_rows'])} scores isolés dans "
+                    f"{_oracle_out.get('artifact_dir')}"
+                )
+                finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                _emit_run_summary(_build_run_summary(
+                    mode="predict",
+                    run_id=run_id,
+                    opts=opts,
+                    cfg=cfg,
+                    started_at=started_at,
+                    finished_at=finished_at,
+                    symbols_total=len(symbols),
+                    completed=int(_oracle_out["n_rows"]),
+                    skipped=0,
+                    failed=0,
+                    quarantined=0,
+                ))
+                return
             # ── Synchro Oracle → model_predictions (même logique que le Global Rank
             # synth) : peuple model_predictions pour que la couverture ML du backtest
             # pipeline soit satisfaite et que le signal Oracle soit consommable comme
@@ -1847,6 +1905,7 @@ def _build_run_summary(
         "training_end_date": cfg.data.training_end_date.isoformat() if cfg.data.training_end_date is not None else None,
         "symbol_source": str(getattr(opts, "symbol_source", "tradable-universe")),
         "historical_prediction_range_enabled": bool(mode == "predict" and cfg.data.training_end_date is not None),
+        "oracle_shadow": bool(getattr(opts, "oracle_shadow", False)),
         "universe_date": (getattr(opts, "universe_date", None) or cfg.data.training_end_date or date.today()).isoformat(),
         "debug_train_enabled": bool(getattr(opts, "debug_train", False)),
         "heartbeat_interval_seconds": float(getattr(opts, "heartbeat_interval_seconds", DEFAULT_HEARTBEAT_INTERVAL_SECONDS) or 0.0),

@@ -66,6 +66,24 @@ def test_pipeline_ml_defaults_use_recommended_per_symbol_capacity() -> None:
     assert options.ml_catboost_iterations == 300
 
 
+def test_ml_predict_command_enables_oracle_shadow_explicitly() -> None:
+    command = build_pipeline_command(
+        "ml_predict",
+        PipelineLaunchOptions(
+            ml_predict_batch_id="oracle-dynamic",
+            ml_oracle_shadow=True,
+        ),
+    )
+
+    assert "--oracle-shadow" in command
+
+
+def test_ml_predict_command_keeps_oracle_shadow_disabled_by_default() -> None:
+    command = build_pipeline_command("ml_predict", PipelineLaunchOptions())
+
+    assert "--oracle-shadow" not in command
+
+
 def test_execution_step_depends_on_risk_management_contract_name() -> None:
     execution_step = next(step for step in get_pipeline_steps() if step.key == "execution")
     assert execution_step.deps == "risk_management"
@@ -955,8 +973,8 @@ def test_build_pipeline_command_ml_steps() -> None:
     assert train_cmd[train_cmd.index("--wf-min-train-size") + 1] == "504"
     assert train_cmd[train_cmd.index("--wf-val-size") + 1] == "126"
     assert train_cmd[train_cmd.index("--wf-test-size") + 1] == "126"
-    assert train_cmd[train_cmd.index("--wf-step-size") + 1] == "252"
-    assert train_cmd[train_cmd.index("--wf-max-splits") + 1] == "8"
+    assert train_cmd[train_cmd.index("--wf-step-size") + 1] == "126"
+    assert train_cmd[train_cmd.index("--wf-max-splits") + 1] == "12"
 
     # Drapeaux booléens activés par défaut.
     for flag in (

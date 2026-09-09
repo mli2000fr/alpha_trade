@@ -54,6 +54,20 @@ def engine():
         connection.execute(
             text(
                 """
+                CREATE TABLE stock_fundamentals_daily (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol VARCHAR(32) NOT NULL,
+                    trade_date DATE NOT NULL,
+                    shares_outstanding BIGINT,
+                    market_cap FLOAT,
+                    source VARCHAR(32) NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
                 CREATE TABLE tradable_universe_history (
                     universe_run_id VARCHAR(64) NOT NULL,
                     symbol VARCHAR(32) NOT NULL,
@@ -182,6 +196,32 @@ def test_publish_full_universe_applies_objective_context_without_mutating_source
                 {"symbol": "WIDE", "market_cap": 5_000_000_000.0},
             ],
         )
+        connection.execute(
+            text(
+                """
+                INSERT INTO stock_fundamentals_daily
+                    (symbol, trade_date, shares_outstanding, market_cap, source)
+                VALUES
+                    (:symbol, :trade_date, :shares_outstanding, :market_cap, :source)
+                """
+            ),
+            [
+                {
+                    "symbol": "AAPL",
+                    "trade_date": date(2024, 12, 31),
+                    "shares_outstanding": 15_000_000_000,
+                    "market_cap": None,
+                    "source": "SEC_EDGAR",
+                },
+                {
+                    "symbol": "WIDE",
+                    "trade_date": date(2024, 12, 31),
+                    "shares_outstanding": 250_000_000,
+                    "market_cap": None,
+                    "source": "SEC_EDGAR",
+                },
+            ],
+        )
 
     full_run_id = publish_full_tradable_universe(
         engine,
@@ -200,6 +240,106 @@ def test_publish_full_universe_applies_objective_context_without_mutating_source
             text("SELECT data_quality_grade FROM tradable_universe_runs WHERE universe_run_id = 'source-degraded'")
         ).scalar_one()
     assert source_grade == "degraded"
+
+
+def test_publish_full_universe_sec_rejects_stale_shares(engine) -> None:
+    snapshot_date = date(2025, 1, 2)
+    begin_universe_run(
+        engine,
+        universe_run_id="source-stale-cap",
+        snapshot_date=snapshot_date,
+        capital_preset_key=DEFAULT_CAPITAL_PRESET_KEY,
+        config_fingerprint="source-stale-cap",
+        rows_expected=1,
+        data_quality_grade="degraded",
+    )
+    publish_universe_run(
+        engine,
+        "source-stale-cap",
+        [UniverseMember("AAPL", True, "tradable", history_days=600, close_price=200.0)],
+    )
+    with engine.begin() as connection:
+        connection.execute(
+            text("INSERT INTO stock_quote_snapshots VALUES ('AAPL', :d, 5.0)"),
+            {"d": snapshot_date},
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO stock_fundamentals_daily
+                    (symbol, trade_date, shares_outstanding, source)
+                VALUES ('AAPL', '2023-01-01', 15000000000, 'SEC_EDGAR')
+                """
+            )
+        )
+
+    publish_full_tradable_universe(
+        engine,
+        snapshot_date=snapshot_date,
+        capital_preset_key=DEFAULT_CAPITAL_PRESET_KEY,
+        market_cap_provider="sec_edgar",
+        market_cap_max_age_days=365,
+    )
+
+    resolution = resolve_universe_asof(
+        engine,
+        snapshot_date,
+        DEFAULT_CAPITAL_PRESET_KEY,
+        tradable_only=False,
+    )
+    row = resolution.frame.set_index("symbol").loc["AAPL"]
+    assert row["tradability_reason_code"] == "market_cap_stale"
+    assert row["market_cap"] == pytest.approx(3_000_000_000_000.0)
+
+
+def test_publish_full_universe_can_switch_back_to_eodhd(engine) -> None:
+    snapshot_date = date(2025, 1, 2)
+    begin_universe_run(
+        engine,
+        universe_run_id="source-eodhd-cap",
+        snapshot_date=snapshot_date,
+        capital_preset_key=DEFAULT_CAPITAL_PRESET_KEY,
+        config_fingerprint="source-eodhd-cap",
+        rows_expected=1,
+        data_quality_grade="degraded",
+    )
+    publish_universe_run(
+        engine,
+        "source-eodhd-cap",
+        [UniverseMember("AAPL", True, "tradable", history_days=600, close_price=1.0)],
+    )
+    with engine.begin() as connection:
+        connection.execute(
+            text("INSERT INTO stock_quote_snapshots VALUES ('AAPL', :d, 5.0)"),
+            {"d": snapshot_date},
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO stock_fundamentals_daily
+                    (symbol, trade_date, market_cap, source)
+                VALUES ('AAPL', '2024-12-31', 3000000000000, 'EODHD')
+                """
+            )
+        )
+
+    publish_full_tradable_universe(
+        engine,
+        snapshot_date=snapshot_date,
+        capital_preset_key=DEFAULT_CAPITAL_PRESET_KEY,
+        market_cap_provider="eodhd",
+        market_cap_max_age_days=365,
+    )
+
+    resolution = resolve_universe_asof(
+        engine,
+        snapshot_date,
+        DEFAULT_CAPITAL_PRESET_KEY,
+        tradable_only=False,
+    )
+    row = resolution.frame.set_index("symbol").loc["AAPL"]
+    assert bool(row["is_tradable"]) is True
+    assert row["market_cap"] == pytest.approx(3_000_000_000_000.0)
 
 
 def test_partial_or_failed_run_is_never_served(engine) -> None:

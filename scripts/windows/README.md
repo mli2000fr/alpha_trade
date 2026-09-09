@@ -309,3 +309,15 @@ credentials MySQL sans reprendre l’environnement du shell.
   logge dans `log/batch/analyst_snapshots.log` et trace chaque run dans la table
   `alpha_trade.analyst_snapshot_collection_run`.
 
+# Oracle dynamique P0j
+
+Le canary Oracle possède trois scripts dédiés :
+
+- `oracle_canary_launcher.ps1` : lancement journalisé ;
+- `install_oracle_canary_task.ps1` : installation de
+  `AlphaTrade-OracleCanary` ;
+- `uninstall_oracle_canary_task.ps1` : désinstallation.
+
+Les horaires, jours, batch et univers sont définis dans
+`config/oracle_canary.yaml`. Le canary est shadow-only et ne remplit aucune
+table de prédictions.

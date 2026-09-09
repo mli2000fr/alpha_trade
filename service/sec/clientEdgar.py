@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from datetime import date as _date, datetime as _dt
 from pathlib import Path
@@ -35,6 +36,8 @@ _SEC_BASE_URL = "https://data.sec.gov/api/xbrl/companyfacts"
 _SEC_CIK_MAPPING_URL = "https://www.sec.gov/files/company_tickers.json"
 _SEC_CIK_CACHE_DIR = Path("artifacts/sec_cache")
 _SEC_CIK_CACHE_FILE = _SEC_CIK_CACHE_DIR / "company_tickers.json"
+_SEC_FACTS_CACHE_DIR = _SEC_CIK_CACHE_DIR / "companyfacts"
+_SEC_FACTS_CACHE_TTL_S = 24 * 60 * 60
 _MIN_REQUEST_INTERVAL_S = 0.12  # ~8 req/s, well under 10/s limit
 
 _LAST_REQUEST_TS: float = 0.0
@@ -99,7 +102,7 @@ def _load_cik_mapping(force_refresh: bool = False) -> dict[str, str]:
     try:
         resp = requests.get(
             _SEC_CIK_MAPPING_URL,
-            headers={"User-Agent": _SEC_USER_AGENT},
+            headers={"User-Agent": os.getenv("SEC_EDGAR_USER_AGENT", _SEC_USER_AGENT)},
             timeout=30,
         )
         resp.raise_for_status()
@@ -145,12 +148,24 @@ def fetch_company_facts(cik: str) -> dict[str, Any]:
     Raises:
         EdgarError: on network/API errors.
     """
-    url = f"{_SEC_BASE_URL}/CIK{cik}.json"
+    normalized_cik = str(cik).zfill(10)
+    cache_file = _SEC_FACTS_CACHE_DIR / f"CIK{normalized_cik}.json"
+    if cache_file.exists():
+        cache_age = time.time() - cache_file.stat().st_mtime
+        if cache_age < _SEC_FACTS_CACHE_TTL_S:
+            try:
+                cached = json.loads(cache_file.read_text(encoding="utf-8"))
+                if isinstance(cached, dict) and cached.get("facts") is not None:
+                    return cached
+            except (OSError, json.JSONDecodeError):
+                LOGGER.warning("SEC companyfacts cache illisible pour CIK %s", normalized_cik)
+
+    url = f"{_SEC_BASE_URL}/CIK{normalized_cik}.json"
     _rate_limit()
     try:
         resp = requests.get(
             url,
-            headers={"User-Agent": _SEC_USER_AGENT},
+            headers={"User-Agent": os.getenv("SEC_EDGAR_USER_AGENT", _SEC_USER_AGENT)},
             timeout=60,
         )
         if resp.status_code == 404:
@@ -160,9 +175,15 @@ def fetch_company_facts(cik: str) -> dict[str, Any]:
         raise EdgarError(f"SEC API request failed for CIK {cik}: {exc}") from exc
 
     try:
-        return resp.json()
+        payload = resp.json()
     except ValueError as exc:
         raise EdgarError(f"Invalid JSON response for CIK {cik}") from exc
+    _SEC_FACTS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        cache_file.write_text(json.dumps(payload), encoding="utf-8")
+    except OSError:
+        LOGGER.warning("Impossible d'écrire le cache SEC pour CIK %s", normalized_cik)
+    return payload
 
 
 def fetch_symbol_fundamentals_record(
@@ -183,7 +204,14 @@ def fetch_symbol_fundamentals_record(
     data = fetch_company_facts(cik)
 
     facts = data.get("facts", {})
-    us_gaap = facts.get("us-gaap", {})
+    us_gaap = dict(facts.get("us-gaap", {}) or {})
+    dei = facts.get("dei", {}) or {}
+    # Le nombre d'actions de couverture est très souvent déclaré dans le
+    # namespace DEI et non US-GAAP. Le mapper travaille sur un dictionnaire
+    # unifié afin de conserver son interface historique.
+    entity_shares = dei.get("EntityCommonStockSharesOutstanding")
+    if entity_shares is not None:
+        us_gaap["EntityCommonStockSharesOutstanding"] = entity_shares
 
     return {
         "symbol": normalized,

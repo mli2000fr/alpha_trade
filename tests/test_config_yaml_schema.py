@@ -105,6 +105,15 @@ def test_market_data_fallback_on_failure_key_is_absent() -> None:
     )
 
 
+def test_market_cap_section_is_supported_and_fail_closed() -> None:
+    cfg = _load()
+    market_cap = cfg.get("market_cap", {}) or {}
+    assert set(market_cap) == {"provider", "max_age_days", "missing_policy"}
+    assert market_cap["provider"] in {"sec_edgar", "eodhd"}
+    assert int(market_cap["max_age_days"]) >= 0
+    assert market_cap["missing_policy"] == "reject"
+
+
 def test_execution_modes_section_is_absent() -> None:
     cfg = _load()
     execution_cfg = cfg.get("execution", {}) or {}

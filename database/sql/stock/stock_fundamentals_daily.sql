@@ -2,7 +2,7 @@ CREATE TABLE alpha_trade.stock_fundamentals_daily (
     id BIGINT AUTO_INCREMENT NOT NULL,
     symbol VARCHAR(20) NOT NULL,
     trade_date DATE NOT NULL,
-    fetched_at DATETIME NOT NULL COMMENT 'UTC timestamp of the EODHD API fetch',
+    fetched_at DATETIME NOT NULL COMMENT 'UTC timestamp of the provider fetch',
     -- Valuation
     pe_ratio FLOAT COMMENT 'Trailing P/E (Highlights.PERatio)',
     forward_pe FLOAT COMMENT 'Forward P/E (Valuation.ForwardPE)',
@@ -25,7 +25,7 @@ CREATE TABLE alpha_trade.stock_fundamentals_daily (
     -- Yield
     dividend_yield FLOAT COMMENT 'Dividend yield % (Highlights.DividendYield)',
     -- Market
-    market_cap FLOAT COMMENT 'Market capitalization',
+    market_cap FLOAT COMMENT 'Provider value or PIT close x shares_outstanding',
     beta FLOAT COMMENT 'Beta (Technicals.Beta)',
     eps FLOAT COMMENT 'Earnings per share (Highlights.EarningsShare)',
     book_value_per_share FLOAT COMMENT 'Book value per share (Highlights.BookValue)',
@@ -33,14 +33,12 @@ CREATE TABLE alpha_trade.stock_fundamentals_daily (
     -- Estimates
     eps_estimate_current FLOAT COMMENT 'EPS estimate current year',
     eps_estimate_next FLOAT COMMENT 'EPS estimate next year',
-    
-    current_ratio FLOAT,
     revenue FLOAT,
-    shares_outstanding BIGINT COMMENT 'Weighted average shares outstanding (from SEC 10-K/Q filings)',
+    shares_outstanding BIGINT COMMENT 'Shares outstanding available at trade_date (SEC 10-K/Q or provider)',
     -- Metadata
     source VARCHAR(32) NOT NULL DEFAULT 'EODHD' COMMENT 'Data provider',
     PRIMARY KEY (id),
-    UNIQUE KEY uq_symbol_date (symbol, trade_date),
+    UNIQUE KEY uq_sfd_symbol_date_source (symbol, trade_date, source),
     INDEX idx_sfd_symbol (symbol),
     INDEX idx_sfd_date (trade_date),
     INDEX idx_sfd_symbol_date (symbol, trade_date)

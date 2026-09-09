@@ -328,6 +328,7 @@ def build_labels(
     symbols: list[str] | None = None,
     output_parquet: str | None = None,
     progress_callback: Callable[[int, int, str], None] | None = None,
+    universe_mode: str = "static_bars",
 ) -> dict[str, Any]:
     """Construit et persiste les labels Oracle H20 pour ``batch_id``.
 
@@ -346,10 +347,27 @@ def build_labels(
     """
     engine = engine or get_sqlalchemy_engine()
 
-    # ── 1. Univers ──
-    rank_keys = load_universe_from_ranks(engine, batch_id, horizon)
+    if universe_mode not in {"static_bars", "pit_dynamic_bars"}:
+        raise ValueError(f"universe_mode Oracle invalide: {universe_mode}")
+    if universe_mode == "pit_dynamic_bars" and (not symbols or not start_date or not end_date):
+        raise ValueError("pit_dynamic_bars requiert symbols, start_date et end_date")
+    dynamic_diagnostics: dict[str, Any] | None = None
+    dynamic_membership: pd.DataFrame | None = None
+    rank_keys: set[tuple[str, str]] = set()
+    if universe_mode == "pit_dynamic_bars":
+        from modelFactory.oracle.dynamic_universe import load_dynamic_universe_from_bars
+        dynamic_membership, dynamic_diagnostics = load_dynamic_universe_from_bars(
+            engine, symbols or [], start_date=str(start_date), end_date=str(end_date))
+    else:
+        rank_keys = load_universe_from_ranks(engine, batch_id, horizon)
     universe_check: dict[str, Any] | None = None
-    if symbols and not rank_keys:
+    if universe_mode == "pit_dynamic_bars":
+        dynamic_rows = int(len(dynamic_membership)) if dynamic_membership is not None else 0
+        universe_check = {"equal": True, "n_ranks": dynamic_rows, "n_preds": dynamic_rows,
+                          "only_in_ranks": 0, "only_in_preds": 0,
+                          "samples_only_ranks": [], "samples_only_preds": [],
+                          "source": "pit_dynamic_bars", "dynamic": dynamic_diagnostics}
+    elif symbols and not rank_keys:
         # Standalone (--oracle-model-only) : aucun global_rank_history pour ce
         # batch → l'univers des labels est l'ensemble des symboles fournis ayant
         # une barre dans la fenêtre (stock_bars_daily).
@@ -401,13 +419,19 @@ def build_labels(
             )
 
     uni_by_day: dict[date, set[str]] = {}
-    for d_iso, sym in rank_keys:
-        d = date.fromisoformat(d_iso)
-        uni_by_day.setdefault(d, set()).add(sym)
+    if dynamic_membership is not None:
+        for timestamp, day_scope in dynamic_membership.groupby("date", sort=True):
+            uni_by_day[pd.Timestamp(timestamp).date()] = set(day_scope["symbol"].astype(str))
+        del dynamic_membership
+    else:
+        for d_iso, sym in rank_keys:
+            d = date.fromisoformat(d_iso)
+            uni_by_day.setdefault(d, set()).add(sym)
 
     all_dates = sorted(uni_by_day)
     if not all_dates:
-        return {"status": "error", "reason": "empty_universe", "universe_check": universe_check}
+        return {"status": "error", "reason": "empty_universe", "universe_check": universe_check,
+                "universe_mode": universe_mode, "dynamic_universe": dynamic_diagnostics}
 
     if start_date:
         all_dates = [d for d in all_dates if d >= date.fromisoformat(start_date)]
@@ -420,7 +444,10 @@ def build_labels(
     if progress_callback is not None:
         progress_callback(0, n_dates, "chargement de la matrice de prix…")
 
-    symbols = sorted({s for _, s in rank_keys})
+    # En mode dynamique ``rank_keys`` est volontairement vide pour éviter une
+    # seconde copie de plusieurs millions de tuples. La liste de prix doit donc
+    # être dérivée de l'univers quotidien déjà construit.
+    symbols = sorted({symbol for day_symbols in uni_by_day.values() for symbol in day_symbols})
     prices = load_price_matrices(engine, symbols, all_dates[0].isoformat())
     close = prices.close
     if close.empty:
@@ -579,6 +606,7 @@ def build_labels(
             "quality_reasons": dict(sorted(quality_reasons.items())),
             "output_parquet": output_parquet,
             "skipped_dates": skipped_dates, "n_symbols": len(symbols),
+            "universe_mode": universe_mode, "dynamic_universe": dynamic_diagnostics,
         }
 
     if not labels_df.empty:
@@ -601,6 +629,7 @@ def build_labels(
         "n_quality_invalid": n_quality_invalid,
         "quality_reasons": dict(sorted(quality_reasons.items())),
         "skipped_dates": skipped_dates, "n_symbols": len(symbols),
+        "universe_mode": universe_mode, "dynamic_universe": dynamic_diagnostics,
     }
 
 
@@ -613,6 +642,8 @@ def main() -> None:
     parser.add_argument("--end-date", default=None, help="YYYY-MM-DD inclus.")
     parser.add_argument("--dry-run", action="store_true",
                         help="Calcule sans écrire en base (diagnostic).")
+    parser.add_argument("--universe-mode", choices=["static_bars", "pit_dynamic_bars"],
+                        default="static_bars")
     parser.add_argument(
         "--output-parquet",
         default=None,
@@ -647,6 +678,7 @@ def main() -> None:
         dry_run=args.dry_run,
         output_parquet=args.output_parquet,
         symbols=symbols,
+        universe_mode=args.universe_mode,
     )
     print(result)
 

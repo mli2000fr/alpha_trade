@@ -3070,6 +3070,51 @@ def _load_momentum_for_symbols(
     return out
 
 
+def prepare_oracle_tradable_percentiles(
+    scores: dict[str, float],
+    *,
+    tradable_symbols: set[str] | None = None,
+    policy: str = "off",
+) -> tuple[dict[str, float], dict[str, int | str]]:
+    """Construit les percentiles Oracle selon un contrat tradable explicite."""
+    normalized_policy = str(policy or "off").strip().lower()
+    if normalized_policy not in ("off", "filter_then_top20", "top20_then_filter"):
+        raise ValueError(f"Politique Oracle/tradable inconnue: {normalized_policy}")
+    normalized_scores = {
+        str(symbol).strip().upper(): float(score)
+        for symbol, score in scores.items()
+        if str(symbol).strip() and score is not None and np.isfinite(float(score))
+    }
+    normalized_tradable = (
+        {str(symbol).strip().upper() for symbol in tradable_symbols if str(symbol).strip()}
+        if tradable_symbols is not None else None
+    )
+    if normalized_policy != "off" and normalized_tradable is None:
+        raise ValueError(
+            f"{normalized_policy} exige un snapshot tradable exact pour la date"
+        )
+    rank_population = normalized_scores
+    if normalized_policy == "filter_then_top20":
+        rank_population = {
+            symbol: score for symbol, score in normalized_scores.items()
+            if symbol in (normalized_tradable or set())
+        }
+    symbols = list(rank_population)
+    values = np.asarray([rank_population[symbol] for symbol in symbols], dtype=float)
+    percentiles = dict(zip(symbols, pd.Series(values).rank(pct=True).to_numpy()))
+    if normalized_policy == "top20_then_filter":
+        percentiles = {
+            symbol: percentile for symbol, percentile in percentiles.items()
+            if symbol in (normalized_tradable or set())
+        }
+    return percentiles, {
+        "policy": normalized_policy,
+        "oracle_symbols": len(normalized_scores),
+        "tradable_symbols": len(normalized_tradable or ()),
+        "ranked_symbols": len(percentiles),
+    }
+
+
 def cascade_select(
     trade_date: str,
     batch_id: str,
@@ -3092,6 +3137,8 @@ def cascade_select(
     extreme_gate_direction_margin: float = 0.02,
     extreme_gate_dip_saturated: bool = False,
     extreme_gate_dip_band: float = 0.02,
+    oracle_tradable_symbols: set[str] | None = None,
+    oracle_tradable_policy: str = "off",
     saturation_slots: int | None = None,
     dip_stats: dict[str, Any] | None = None,
     dip_filter_config: dict[str, Any] | None = None,
@@ -3141,6 +3188,7 @@ def cascade_select(
     _mode_extreme_gate_legacy = rank_mode == "extreme_gate"
     _mode_extreme_gate_directional = rank_mode == "extreme_gate_directional"
     _mode_extreme_gate = _mode_extreme_gate_legacy or _mode_extreme_gate_directional
+    _tradable_policy = str(oracle_tradable_policy or "off").strip().lower()
     # E17 : rôle du modèle per-symbol dans la branche extreme_gate.
     #   "filter"    = A actuel : veto long_prob > _min_prob + score = rank × long_prob
     #   "no_filter" = B demi-bypass : pas de veto, score = rank × long_prob
@@ -3159,13 +3207,18 @@ def cascade_select(
         if not oracle_rank_map or trade_date not in oracle_rank_map:
             LOGGER.warning("cascade_select: extreme_gate — no oracle ranks for %s", trade_date)
             return []
-        _oracle_ranks = oracle_rank_map[trade_date]
-        _oracle_symbols = list(_oracle_ranks.keys())
-        _oracle_values = np.asarray([float(_oracle_ranks[s]) for s in _oracle_symbols], dtype=float)
-        _oracle_pct = pd.Series(_oracle_values).rank(pct=True)  # percentile intra-date (PIT)
-        _oracle_pct_map = dict(zip(_oracle_symbols, _oracle_pct.to_numpy()))
-        ranks_df = pd.DataFrame({"symbol": _oracle_symbols, "proba_extreme": _oracle_pct.to_numpy()})
-        _oracle_rank_by_sym = dict(zip(_oracle_symbols, _oracle_pct.to_numpy()))
+        _oracle_pct_map, _tradable_diag = prepare_oracle_tradable_percentiles(
+            oracle_rank_map[trade_date],
+            tradable_symbols=oracle_tradable_symbols,
+            policy=_tradable_policy,
+        )
+        _oracle_symbols = list(_oracle_pct_map)
+        _oracle_pct_values = list(_oracle_pct_map.values())
+        ranks_df = pd.DataFrame({
+            "symbol": _oracle_symbols,
+            "proba_extreme": _oracle_pct_values,
+        })
+        _oracle_rank_by_sym = dict(_oracle_pct_map)
         _n4x2_pass: set[str] = set()
         _rank_col = "proba_extreme"
         if _extreme_gate_cfg.get("min_prob") is not None:
@@ -3174,6 +3227,14 @@ def cascade_select(
             "cascade_select: EXTREME_GATE top %d%% par proba_extreme (%d symbols, percentile du jour)",
             int(round(_extreme_gate_pct * 100)), len(ranks_df),
         )
+        if _tradable_policy != "off":
+            LOGGER.info(
+                "cascade_select: ORACLE_TRADABLE policy=%s date=%s oracle=%d tradable=%d ranked=%d",
+                _tradable_policy, trade_date,
+                _tradable_diag["oracle_symbols"],
+                _tradable_diag["tradable_symbols"],
+                _tradable_diag["ranked_symbols"],
+            )
         # ── DIP Oracle : priorité de recherche uniquement ────────────────
         # Le gate DIP dur appartient au Global Ranking. En Extreme Gate,
         # N4X2 n'est calculé que si `extreme_gate_dip_saturated=True`; le pool
@@ -3680,6 +3741,8 @@ def apply_cascade_to_predictions(
     extreme_gate_direction_margin: float = 0.02,
     extreme_gate_dip_saturated: bool = False,
     extreme_gate_dip_band: float = 0.02,
+    oracle_tradable_map: dict[str, set[str]] | None = None,
+    oracle_tradable_policy: str = "off",
     saturation_slots: int | None = None,
     dip_filter_config: dict[str, Any] | None = None,
     # Research dip_quality_score (chantier dip_quality_static_model, défaut off).
@@ -3888,6 +3951,11 @@ def apply_cascade_to_predictions(
             extreme_gate_direction_margin=extreme_gate_direction_margin,
             extreme_gate_dip_saturated=extreme_gate_dip_saturated,
             extreme_gate_dip_band=extreme_gate_dip_band,
+            oracle_tradable_symbols=(
+                oracle_tradable_map.get(_date_str)
+                if oracle_tradable_map is not None else None
+            ),
+            oracle_tradable_policy=oracle_tradable_policy,
             saturation_slots=saturation_slots,
             dip_stats=_dip_stats,
             dip_filter_config=dip_filter_config,

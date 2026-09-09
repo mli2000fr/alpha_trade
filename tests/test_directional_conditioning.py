@@ -14,6 +14,7 @@ from modelFactory.directional_conditioning import (
     attach_directional_oof_gate,
     build_directional_oof_gate,
     eligible_target_mask,
+    load_or_rebuild_directional_oof_gate,
 )
 from modelFactory.evaluation import align_sequence_rows
 from modelFactory.tabular_baseline import tabular_split
@@ -52,6 +53,66 @@ def test_build_directional_oof_gate_rejects_untraceable_scores() -> None:
 
     with pytest.raises(ValueError, match="fold_start"):
         build_directional_oof_gate(frame)
+
+
+def test_load_or_rebuild_directional_oof_gate_from_persisted_oof(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    source = _oracle_oof()
+    source.loc[0, "fold_start"] = pd.NaT
+    path = tmp_path / "batch" / "_oracle_oof_gate.parquet"
+    calls = {"count": 0}
+
+    def _load(_engine, *, batch_id, **_kwargs):
+        calls["count"] += 1
+        assert batch_id == "oracle-dynamic"
+        return source.copy()
+
+    monkeypatch.setattr(
+        "modelFactory.oracle.predictions_store.load_oracle_predictions", _load,
+    )
+    gate, diagnostics = load_or_rebuild_directional_oof_gate(
+        object(), oracle_batch_id="oracle-dynamic", gate_path=path, pool_pct=0.20,
+    )
+
+    assert path.is_file()
+    assert path.with_suffix(".json").is_file()
+    assert len(gate) == len(source) - 1
+    assert diagnostics["cache_rebuilt"] is True
+    assert diagnostics["non_oof_rows_excluded"] == 1
+    assert diagnostics["source_batch_id"] == "oracle-dynamic"
+
+    def _must_not_reload(*_args, **_kwargs):
+        raise AssertionError("La table ne doit pas être relue si le cache existe.")
+
+    monkeypatch.setattr(
+        "modelFactory.oracle.predictions_store.load_oracle_predictions",
+        _must_not_reload,
+    )
+    cached, cached_diagnostics = load_or_rebuild_directional_oof_gate(
+        object(), oracle_batch_id="oracle-dynamic", gate_path=path, pool_pct=0.20,
+    )
+    assert calls["count"] == 1
+    assert len(cached) == len(gate)
+    assert cached_diagnostics["cache_rebuilt"] is False
+
+
+def test_load_or_rebuild_directional_oof_gate_rejects_non_oof_source(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    source = _oracle_oof()
+    source["fold_start"] = pd.NaT
+    monkeypatch.setattr(
+        "modelFactory.oracle.predictions_store.load_oracle_predictions",
+        lambda *_args, **_kwargs: source.copy(),
+    )
+
+    with pytest.raises(ValueError, match="directional_oracle_oof_untraceable"):
+        load_or_rebuild_directional_oof_gate(
+            object(),
+            oracle_batch_id="oracle-live-only",
+            gate_path=tmp_path / "_oracle_oof_gate.parquet",
+        )
 
 
 def test_attach_gate_preserves_daily_history_and_only_marks_endpoints() -> None:

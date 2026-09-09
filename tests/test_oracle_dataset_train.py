@@ -88,6 +88,42 @@ def test_build_dataset_excludes_rows_without_binary_oracle_target(monkeypatch):
     assert dataset["oracle_extreme10"].astype(int).tolist() == [1]
 
 
+def test_build_dataset_forwards_explicit_feature_membership(monkeypatch):
+    import modelFactory.oracle.dataset as dataset_mod
+
+    day = pd.Timestamp("2026-01-02")
+    membership = pd.DataFrame({"date": [day], "symbol": ["PIT"]})
+    features = pd.DataFrame({
+        "date": [day], "symbol": ["PIT"], "daily_return": [0.01],
+    })
+    captured: dict[str, object] = {}
+
+    def _features(*args, **kwargs):
+        captured["membership"] = kwargs.get("membership")
+        return features.copy()
+
+    monkeypatch.setattr(dataset_mod, "build_feature_matrix", _features)
+    monkeypatch.setattr(
+        dataset_mod,
+        "load_oracle_targets",
+        lambda *args, **kwargs: pd.DataFrame(columns=[
+            "prediction_date", "symbol", "oracle_extreme10", "oracle_pct_rank",
+            "oracle_decile", "future_return", "oracle_available_date",
+        ]),
+    )
+
+    dataset, columns = build_dataset(
+        object(), "batch", ["PIT"],
+        start_date="2026-01-02", end_date="2026-01-02",
+        require_global_rank=False, need_targets=False,
+        feature_membership=membership,
+    )
+
+    assert captured["membership"] is membership
+    assert columns == ["daily_return"]
+    assert dataset["symbol"].tolist() == ["PIT"]
+
+
 # ═══════════════════════════════════════════════════════════════════
 # train — métriques pures
 # ═══════════════════════════════════════════════════════════════════

@@ -17,6 +17,7 @@ from common.capital_presets import (
     require_capital_preset,
 )
 from common.market_calendar import nyse_session_dates
+from common.market_cap import compute_sec_market_cap, load_market_cap_config
 from common.tradable_universe import UniverseMember, begin_universe_run, fail_universe_run, publish_universe_run
 from database.connection import get_sqlalchemy_engine
 
@@ -28,6 +29,7 @@ def _require_tables(engine: Engine) -> None:
         "stock_quote_snapshots",
         "stock_earnings_calendar",
         "stock_metadata",
+        "stock_fundamentals_daily",
     }
     available = set(inspect(engine).get_table_names())
     missing = sorted(required - available)
@@ -80,6 +82,7 @@ def _load_objective_context(
     snapshot_date: date,
     blackout_days: int,
     max_quote_age_days: int = 5,
+    market_cap_provider: str = "sec_edgar",
 ) -> tuple[pd.DataFrame, pd.DataFrame, set[str]]:
     if not symbols:
         return pd.DataFrame(), pd.DataFrame(), set()
@@ -108,16 +111,41 @@ def _load_objective_context(
                 **symbol_params,
             },
         )
+        if market_cap_provider == "sec_edgar":
+            market_value_column = "shares_outstanding"
+            source_value = "SEC_EDGAR"
+            value_predicate = "shares_outstanding IS NOT NULL AND shares_outstanding > 0"
+        elif market_cap_provider == "eodhd":
+            market_value_column = "market_cap"
+            source_value = "EODHD"
+            value_predicate = "market_cap IS NOT NULL AND market_cap > 0"
+        else:
+            raise ValueError(f"Fournisseur de capitalisation inconnu: {market_cap_provider}")
         metadata = pd.read_sql(
             text(
                 f"""
-                SELECT symbol, market_cap
-                FROM stock_metadata
-                WHERE symbol IN ({placeholders})
+                SELECT symbol, market_value, trade_date AS market_cap_reference_date
+                FROM (
+                    SELECT symbol, {market_value_column} AS market_value, trade_date, id,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY symbol
+                               ORDER BY trade_date DESC, id DESC
+                           ) AS rn
+                    FROM stock_fundamentals_daily
+                    WHERE symbol IN ({placeholders})
+                      AND trade_date <= :snapshot_date
+                      AND UPPER(source) = :market_cap_source
+                      AND {value_predicate}
+                ) ranked_market_cap
+                WHERE rn = 1
                 """
             ),
             connection,
-            params=symbol_params,
+            params={
+                "snapshot_date": snapshot_date,
+                "market_cap_source": source_value,
+                **symbol_params,
+            },
         )
         earnings_rows = connection.execute(
             text(
@@ -144,11 +172,17 @@ def publish_full_tradable_universe(
     capital_preset_key: str = DEFAULT_CAPITAL_PRESET_KEY,
     max_quote_age_days: int = 5,
     ignore_quotes: bool = False,
+    market_cap_provider: str | None = None,
+    market_cap_max_age_days: int | None = None,
 ) -> str:
     """Publish an immutable full-quality run from the exact screener run."""
     _require_tables(engine)
     preset = require_capital_preset(capital_preset_key)
     thresholds = build_selector_config_kwargs_from_preset(preset)
+    market_cap_config = load_market_cap_config(
+        provider_override=market_cap_provider,
+        max_age_days_override=market_cap_max_age_days,
+    )
     source_run, scope = _load_source_scope(engine, snapshot_date, preset.key)
     symbols = scope["symbol"].astype(str).str.strip().str.upper().tolist()
     quotes, metadata, earnings_blackout_symbols = _load_objective_context(
@@ -157,9 +191,11 @@ def publish_full_tradable_universe(
         snapshot_date,
         int(thresholds["earnings_blackout_days"]),
         max_quote_age_days=max_quote_age_days,
+        market_cap_provider=market_cap_config.provider,
     )
     quote_map = quotes.assign(symbol=quotes["symbol"].astype(str).str.upper()).set_index("symbol")["spread_bps"].to_dict() if not quotes.empty else {}
-    market_cap_map = metadata.assign(symbol=metadata["symbol"].astype(str).str.upper()).set_index("symbol")["market_cap"].to_dict() if not metadata.empty else {}
+    market_value_map = metadata.assign(symbol=metadata["symbol"].astype(str).str.upper()).set_index("symbol")["market_value"].to_dict() if not metadata.empty else {}
+    market_cap_date_map = metadata.assign(symbol=metadata["symbol"].astype(str).str.upper()).set_index("symbol")["market_cap_reference_date"].to_dict() if not metadata.empty else {}
 
     # Si ignore_quotes, on désactive complètement le filtre spread
     effective_max_spread_bps: float | None = float(thresholds["max_spread_bps"]) if not ignore_quotes else None
@@ -170,7 +206,16 @@ def publish_full_tradable_universe(
         reasons = list(json.loads(row.get("tradability_reasons_json") or "[]"))
         source_tradable = bool(row.get("is_tradable"))
         spread = pd.to_numeric(quote_map.get(symbol), errors="coerce")
-        market_cap = pd.to_numeric(market_cap_map.get(symbol), errors="coerce")
+        market_value = pd.to_numeric(market_value_map.get(symbol), errors="coerce")
+        reference_date = pd.to_datetime(market_cap_date_map.get(symbol), errors="coerce")
+        reference_age_days = (
+            (pd.Timestamp(snapshot_date) - reference_date.normalize()).days
+            if pd.notna(reference_date) else None
+        )
+        if market_cap_config.provider == "sec_edgar":
+            market_cap = compute_sec_market_cap(row.get("close_price"), market_value)
+        else:
+            market_cap = float(market_value) if pd.notna(market_value) else None
         earnings_blackout = symbol in earnings_blackout_symbols
         if not source_tradable:
             reason = str(row.get("tradability_reason_code") or "source_not_tradable")
@@ -180,8 +225,11 @@ def publish_full_tradable_universe(
         elif effective_max_spread_bps is not None and float(spread) > effective_max_spread_bps:
             reason = "spread_above_maximum"
             reasons.append(reason)
-        elif pd.isna(market_cap):
+        elif market_cap is None or pd.isna(market_cap):
             reason = "market_cap_unavailable"
+            reasons.append(reason)
+        elif reference_age_days is None or reference_age_days > market_cap_config.max_age_days:
+            reason = "market_cap_stale"
             reasons.append(reason)
         elif float(market_cap) < float(thresholds["min_market_cap"]):
             reason = "market_cap_below_minimum"
@@ -204,7 +252,7 @@ def publish_full_tradable_universe(
                 close_price=float(row["close_price"]) if pd.notna(row.get("close_price")) else None,
                 adv_usd=float(row["adv_usd"]) if pd.notna(row.get("adv_usd")) else None,
                 spread_bps=float(spread) if pd.notna(spread) else None,
-                market_cap=float(market_cap) if pd.notna(market_cap) else None,
+                market_cap=float(market_cap) if market_cap is not None and pd.notna(market_cap) else None,
                 atr_pct_20=float(row["atr_pct_20"]) if pd.notna(row.get("atr_pct_20")) else None,
                 earnings_blackout=earnings_blackout,
                 data_quality_grade="full",
@@ -219,6 +267,13 @@ def publish_full_tradable_universe(
             "max_spread_bps": thresholds["max_spread_bps"] if not ignore_quotes else None,
             "min_market_cap": thresholds["min_market_cap"],
             "earnings_blackout_days": thresholds["earnings_blackout_days"],
+            "market_cap_provider": market_cap_config.provider,
+            "market_cap_max_age_days": market_cap_config.max_age_days,
+            "market_cap_formula": (
+                "latest_sec_shares_asof_x_snapshot_close"
+                if market_cap_config.provider == "sec_edgar"
+                else "latest_eodhd_market_cap_asof"
+            ),
         },
     }
     fingerprint = hashlib.sha256(json.dumps(fingerprint_payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
@@ -255,6 +310,18 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Désactive complètement le contrôle de spread. Tous les symboles passent le filtre quote.",
     )
+    parser.add_argument(
+        "--market-cap-provider",
+        choices=("sec_edgar", "eodhd"),
+        default=None,
+        help="Override de config.yaml -> market_cap.provider.",
+    )
+    parser.add_argument(
+        "--market-cap-max-age-days",
+        type=int,
+        default=None,
+        help="Override de config.yaml -> market_cap.max_age_days.",
+    )
     args = parser.parse_args(argv)
     if (args.start_date is None) != (args.end_date is None):
         parser.error("--start-date et --end-date doivent être fournis ensemble.")
@@ -278,6 +345,8 @@ def main(argv: list[str] | None = None) -> int:
                     capital_preset_key=args.capital_preset_key,
                     max_quote_age_days=args.max_quote_age_days,
                     ignore_quotes=args.ignore_quotes,
+                    market_cap_provider=args.market_cap_provider,
+                    market_cap_max_age_days=args.market_cap_max_age_days,
                 )
             )
         except RuntimeError as exc:

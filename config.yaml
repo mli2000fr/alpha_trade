@@ -444,6 +444,20 @@ market_data:
   quotes_provider_live: yahoo
   quotes_provider_live_second: alpaca
 
+# ---------------------------------------------------------------------------
+# Capitalisation utilisée pour publier l'univers tradable PIT.
+# - sec_edgar : gratuit ; dernier shares_outstanding publié avant J × close[J].
+# - eodhd     : dernière market_cap EODHD persistée avant J.
+# Aucun fallback automatique : changer provider est une décision opérateur
+# explicite et le fournisseur retenu entre dans le fingerprint du snapshot.
+# max_age_days contrôle l'âge maximal du dépôt SEC ou du snapshot EODHD.
+# Une valeur absente/périmée est toujours rejetée (fail-closed).
+# ---------------------------------------------------------------------------
+market_cap:
+  provider: sec_edgar                   # sec_edgar | eodhd
+  max_age_days: 365
+  missing_policy: reject
+
 eodhd:
   # NB : l'activation runtime se pilote via market_data.bars_provider.
   # Aucun flag `enabled` ici (cf. audit S1 / A-002 : clé fantôme supprimée).
@@ -638,6 +652,13 @@ cascade:
   # Deux seuils distincts : classification (probas 0-1) vs regression (scores continus).
   min_prob_classification: 0.55
   min_prob_regression: 0.10
+
+  # Gate live Oracle + univers tradable. Désactivé jusqu'à validation shadow.
+  # Une activation exige un score Oracle exact à la date et charge uniquement
+  # les prédictions source=per_symbol du même batch : aucun oracle_synth.
+  live_oracle_tradable_policy: off  # off | filter_then_top20 | top20_then_filter
+  live_oracle_batch_id: null        # null = batch ML serving
+  live_oracle_pool_pct: 0.20
 
   # Filtre momentum côté SHORT uniquement (GO production 2026-08-15, dossier
   # logs/analyse_oos.txt sections 19-25 — arbitrage GPT).

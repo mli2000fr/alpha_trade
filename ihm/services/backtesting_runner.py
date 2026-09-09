@@ -111,6 +111,9 @@ class BacktestRunOptions:
     extreme_gate_dip_saturated: bool = False
     extreme_gate_dip_band: float = 0.02
     extreme_gate_direction_margin: float = 0.02
+    oracle_tradable_policy: Literal[
+        "off", "filter_then_top20", "top20_then_filter"
+    ] = "off"
     score_column: Literal["auto", "final_score_walk_forward", "final_score_sentiment", "final_score"] = "auto"
     walk_forward_artifacts_dir: str | None = None
     disable_walk_forward: bool = False
@@ -411,6 +414,10 @@ def build_backtesting_command(
         ):
             command.extend(["--extreme-gate-pct", str(float(options.extreme_gate_pct))])
             command.extend(["--extreme-gate-per-symbol", options.extreme_gate_per_symbol])
+            command.extend([
+                "--oracle-tradable-policy",
+                options.oracle_tradable_policy,
+            ])
         if (
             options.cascade_rank_mode in ("extreme_gate", "extreme_gate_directional")
             and options.directional_bundle_gate is not None

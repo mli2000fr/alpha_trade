@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import date, timedelta
+import json
+from pathlib import Path
 from typing import Any, cast
 
 import streamlit as st
@@ -1151,6 +1153,9 @@ def _render_ml_scope_block(
         command_preview_overrides[start_symbol_attr] = normalized_start_symbol
     if step_key == "ml_predict":
         command_preview_overrides["ml_predict_use_historical_range"] = historical_range
+        command_preview_overrides["ml_oracle_shadow"] = bool(
+            st.session_state.get("pipeline_ml_oracle_shadow", False)
+        )
         _predict_bid = st.session_state.get("pipeline_ml_predict_batch_id", "")
         if _predict_bid:
             command_preview_overrides["ml_predict_batch_id"] = _predict_bid
@@ -1176,6 +1181,9 @@ def _render_ml_scope_block(
             overrides[start_symbol_attr] = normalized_start_symbol
         if step_key == "ml_predict":
             overrides["ml_predict_use_historical_range"] = historical_range
+            overrides["ml_oracle_shadow"] = bool(
+                st.session_state.get("pipeline_ml_oracle_shadow", False)
+            )
             _predict_bid = st.session_state.get("pipeline_ml_predict_batch_id", "")
             if _predict_bid:
                 overrides["ml_predict_batch_id"] = _predict_bid
@@ -1280,12 +1288,27 @@ def _render_ml_predict_scope_block(
     _normalized_batch_source = (
         normalize_universe_file_source(_batch_source) if _batch_source else ""
     )
+    _dynamic_oracle_batch = False
+    if _selected_batch:
+        _oracle_profile = (
+            Path("artifacts/models/oracle/champions")
+            / str(_selected_batch)
+            / "feature_profile.json"
+        )
+        try:
+            _profile_payload = json.loads(_oracle_profile.read_text(encoding="utf-8"))
+            _dynamic_oracle_batch = (
+                _profile_payload.get("oracle_universe_mode") == "pit_dynamic_bars"
+            )
+        except Exception:
+            _dynamic_oracle_batch = False
     _last_synced_batch = str(st.session_state.get(ML_PREDICT_BATCH_SOURCE_SYNC_KEY, ""))
     if _selected_batch and _last_synced_batch != str(_selected_batch):
         if _normalized_batch_source in ML_TRAIN_SYMBOL_SOURCE_OPTIONS:
             st.session_state["pipeline_ml_predict_symbol_source"] = _normalized_batch_source
         else:
             st.session_state["pipeline_ml_predict_symbol_source"] = DEFAULT_UNIVERSE_FILE_SOURCE
+        st.session_state["pipeline_ml_oracle_shadow"] = _dynamic_oracle_batch
         st.session_state[ML_PREDICT_BATCH_SOURCE_SYNC_KEY] = str(_selected_batch)
 
     if _selected_batch and _selected_batch in _batch_comments:
@@ -1294,6 +1317,27 @@ def _render_ml_predict_scope_block(
         st.caption(f"📦 Batch : `{_selected_batch}` (pas de commentaire)")
     else:
         st.caption("⚠️ Aucun batch sélectionné — le système tentera l'auto-détection via config.yaml ou le dossier artifacts.")
+    _oracle_shadow = st.checkbox(
+        "🧪 Oracle dynamique — prédiction shadow uniquement",
+        value=bool(st.session_state.get("pipeline_ml_oracle_shadow", _dynamic_oracle_batch)),
+        key="pipeline_ml_oracle_shadow",
+        help=(
+            "Calcule l'univers PIT quotidien et les scores Oracle dans des artefacts isolés. "
+            "Aucune ligne n'est écrite dans oracle_extreme_predictions ou model_predictions ; "
+            "le backtest et le trading ne peuvent pas les consommer."
+        ),
+    )
+    if _dynamic_oracle_batch:
+        if _oracle_shadow:
+            st.info(
+                "Batch Oracle dynamique détecté : mode shadow actif, sans écriture "
+                "dans les tables de trading."
+            )
+        else:
+            st.warning(
+                "Ce batch dynamique est non servable : la commande sera refusée tant "
+                "que le mode shadow n'est pas activé."
+            )
     if _selected_batch and _normalized_batch_source:
         if _normalized_batch_source in ML_TRAIN_SYMBOL_SOURCE_OPTIONS:
             st.caption(

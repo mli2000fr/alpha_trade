@@ -1704,6 +1704,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Marge minimale |proba_long - proba_short| pour extreme_gate_directional (défaut 0.02).",
     )
     run_p.add_argument(
+        "--oracle-tradable-policy",
+        choices=["off", "filter_then_top20", "top20_then_filter"],
+        default="off",
+        help="Intersection Oracle avec l'univers tradable PIT exact. "
+             "filter_then_top20 = recommandé : filtre tradable puis recalcule le TOP20 ; "
+             "top20_then_filter = conserve le percentile Oracle large puis filtre ; "
+             "off = compatibilité historique.",
+    )
+    run_p.add_argument(
         "--directional-bundle-gate",
         choices=["strict", "discovery", "off"],
         default=None,
@@ -3589,6 +3598,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
             # Source : table oracle_extreme_predictions (--oracle-batch-id, filtre batch
             # STRICT) OU parquet OOS (--oracle-oos-path, legacy). L'un des deux requis.
             _oracle_rank_map = None
+            _oracle_tradable_map = None
             _oracle_modes = ("oracle", "oracle_filter", "oracle_rerank", "oracle_pool", "extreme_gate", "extreme_gate_directional")
             _rank_mode_eff = str(getattr(args, "cascade_rank_mode", "ml") or "ml").strip().lower()
             # ── Auto-détection Extreme Gate (2026-08-28) ──
@@ -3725,6 +3735,39 @@ def _run_backtest(args: argparse.Namespace) -> None:
                     d: dict(zip(g["symbol"], g["proba_extreme"]))
                     for d, g in _oos_df.groupby("_d")
                 }
+                _oracle_tradable_policy = str(
+                    getattr(args, "oracle_tradable_policy", "off") or "off"
+                ).strip().lower()
+                if (
+                    _rank_mode_eff in ("extreme_gate", "extreme_gate_directional")
+                    and _oracle_tradable_policy != "off"
+                ):
+                    from common.tradable_universe import load_tradable_universe_by_date
+                    _oracle_dates = sorted(_oracle_rank_map)
+                    _oracle_tradable_map = load_tradable_universe_by_date(
+                        engine,
+                        _oracle_dates,
+                        capital_preset_key=effective_preset.key,
+                    )
+                    _missing_tradable_dates = sorted(
+                        set(_oracle_dates).difference(_oracle_tradable_map)
+                    )
+                    if _missing_tradable_dates:
+                        _preview = ", ".join(_missing_tradable_dates[:5])
+                        raise SystemExit(
+                            "Univers tradable PIT exact absent ou non-full pour "
+                            f"{len(_missing_tradable_dates)} date(s) Oracle "
+                            f"(exemples: {_preview}). Publier l'étape 6 pour le preset "
+                            f"{effective_preset.key}; aucun fallback as-of/courant n'est autorisé."
+                        )
+                    _safe_print(
+                        "   Univers tradable Oracle : policy={} preset={} dates={} "
+                        "(snapshots exacts, full)\n".format(
+                            _oracle_tradable_policy,
+                            effective_preset.key,
+                            len(_oracle_tradable_map),
+                        )
+                    )
 
             # ── Persistent Rank DIP filter — config BACKTEST ──
             # Le CLI `backtesting run` est le chemin BACKTEST : il lit les clés
@@ -3825,6 +3868,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 extreme_gate_direction_margin=float(getattr(args, "extreme_gate_direction_margin", 0.02) or 0.0),
                 extreme_gate_dip_saturated=bool(getattr(args, "extreme_gate_dip_saturated", False)),
                 extreme_gate_dip_band=float(getattr(args, "extreme_gate_dip_band", 0.02) or 0.02),
+                oracle_tradable_map=_oracle_tradable_map,
+                oracle_tradable_policy=getattr(args, "oracle_tradable_policy", "off"),
                 saturation_slots=int(getattr(args, "max_positions", 8) or 8),
                 dip_quality_map=_dip_quality_map,
                 dip_quality_policy=_dip_quality_policy,
