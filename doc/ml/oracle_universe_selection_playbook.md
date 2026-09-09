@@ -28,9 +28,17 @@ et [construction P0d de l'univers équilibré](oracle_universe_p0d_balanced400.m
 | Capitalisation courante connue ≥ 500 M$ | 1 866 |
 | Capitalisation courante manquante | 830 |
 
-Le fichier est une population candidate, pas un univers PIT historique. Les 830
-capitalisations manquantes empêchent notamment de garantir l'exclusion de toutes
-les micro caps.
+Le fichier est une population candidate, pas un univers PIT historique. Depuis le
+9 septembre 2026, `scripts.build_equity_universe` produit sans écraser la source :
+
+```text
+config/univers/univers_filtred_equities.txt
+```
+
+Le fichier contient 1 798 actions ; 898 ETF, ETN, fonds et produits structurés ou
+à levier/inverses sont écartés. Les 830 capitalisations auparavant manquantes
+étaient très majoritairement des produits collectifs, mais l'exclusion repose sur
+la classification instrument et non sur l'absence de capitalisation.
 
 ## Ne pas retenir simplement les titres qui bougent le plus
 
@@ -48,9 +56,10 @@ doit pas être le classement de sélection.
 
 ### `oracle_pit_large_<YYYYMM>.txt`
 
-Jusqu'aux 2 696 candidats, admis dynamiquement à chaque date. Cet univers sert
-aux labels cross-sectionnels et au modèle Oracle mutualisé. Il peut être bien
-plus large que l'univers Per-Symbol car il ne crée pas un modèle par ticker.
+La source recommandée est désormais `univers_filtred_equities.txt` (1 798 titres
+au 9 septembre 2026), admise dynamiquement à chaque date. Cet univers sert aux
+labels cross-sectionnels et au modèle Oracle mutualisé. Il peut rester bien plus
+large que l'univers Per-Symbol car il ne crée pas un modèle par ticker.
 
 ### `oracle_balanced_400_<YYYYMM>.txt`
 
@@ -92,7 +101,13 @@ chaque cutoff ou utilise une admission quotidienne PIT.
 
 ### A. Figer et normaliser la source
 
-Partir de `config/univers/univers_filtred.txt` sans l'écraser :
+Partir de `config/univers/univers_filtred.txt` sans l'écraser, puis exécuter :
+
+```powershell
+python -m scripts.build_equity_universe --source config/univers/univers_filtred.txt --output config/univers/univers_filtred_equities.txt
+```
+
+Utiliser le fichier `univers_filtred_equities.txt` pour les nouveaux entraînements.
 
 1. accepter virgules et lignes, ignorer commentaires/vides ;
 2. supprimer les espaces, mettre en majuscules, dédupliquer ;

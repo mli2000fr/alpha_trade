@@ -363,6 +363,88 @@ que 2/15 semestres en AUC et 3/15 en lift d'amplitude. Statut :
 Balanced 400 un échantillon de recherche ; la suite est P0f sur l'univers large
 dynamique. Voir [P0e — comparaison OOF](oracle_universe_p0e_comparison.md).
 
+P0f est `FAIT_GO_RECHERCHE_AMPLITUDE`. Le batch de confirmation
+`model-factory-20260909051302-323684` produit 3,93 M de labels, 14 folds et
+2,91 M de prédictions OOS du 5 juillet 2018 au 11 juillet 2025. Sur les 1 512
+dates communes avec le premier batch 12-fold, les prédictions et métriques sont
+strictement identiques. Sur 1 764 dates face à l'ancien 400, les deltas TOP20
+sont +4,08 points de précision, +2,74 points de rappel, +0,095 de lift amplitude
+et +3,23 points de rétention ; tous les IC 95 % par blocs restent positifs. Face
+au Balanced 400, les quatre deltas sont aussi positifs. P0f devient donc le
+contrat de recherche recommandé pour l'Oracle d'amplitude. Il ne résout pas la
+direction : son TOP10 contient 25,5 % de D1 et 25,0 % de D10. Le batch reste
+`serving_ready=false` jusqu'à l'adaptation et la validation du serving. Voir
+[P0f — entraînement dynamique](oracle_universe_p0f_dynamic_training.md).
+
+P0g est `FAIT_NO_GO_DIRECTION`. Le témoin directionnel mutualisé figé,
+sans contexte symbole/secteur, a été réentraîné sur les 582 700 événements
+TOP20 OOS du batch P0f confirmé. Sur neuf folds et 179 605 observations D1/D10,
+il obtient AUC 0,4904 et IC quotidien −0,0147. Le TOP LONG contient 46,88 % de
+D10 contre 53,12 % de D1 ; le TOP SHORT produit −1,43 % de rendement signé.
+Le dernier fold 2025 est favorable, mais les autres folds sont instables et
+l'agrégat reste inférieur au hasard. Les variantes lourdes E1/E2 ne sont donc
+pas relancées sans information PIT nouvelle. Le correctif technique reconstruit
+désormais le cache directionnel manquant des batchs Oracle autonomes à partir
+des seules lignes persistées traçables par `fold_start`. Voir
+[P0g — impact directionnel](oracle_universe_p0g_directional_impact.md).
+
+P0h est `IMPLÉMENTÉ_SHADOW_ONLY`. Le batch P0f dynamique peut désormais
+calculer son admission PIT quotidienne, ses features, ses rangs et ses scores
+Oracle en dehors des tables de serving. Les fragments Parquet portent
+`prediction_mode=shadow`, `champion_t_start` et le gate TOP20 ; le rapport
+porte `trading_eligible=false`. Sans `--oracle-shadow`, le batch reste
+bloqué. L'IHM active automatiquement la case shadow lorsqu'elle détecte un
+profil `pit_dynamic_bars`. Une première collecte 2025-07-14→2026-06-30
+reste à exécuter, puis à évaluer lorsque les rendements H20 sont disponibles.
+Voir [P0h — serving shadow dynamique](oracle_universe_p0h_shadow_serving.md).
+
+P0i est `FAIT_GO_AMPLITUDE_SHADOW_NO_GO_TRADING`. Le run holdout dynamique
+compte 462 461 labels H20 valides sur 230 séances. L'AUC atteint 0,7742 et le
+lift d'amplitude TOP20 1,757 ; en 2026H1 ils restent respectivement à 0,7727 et
+1,709. Les déciles du score sont parfaitement monotones sur le rendement
+absolu. En revanche, parmi les vrais extrêmes retrouvés en 2026H1, 51,27 % sont
+positifs : la direction reste pratiquement équilibrée. P0i valide donc le
+détecteur d'amplitude, pas une stratégie LONG/SHORT. La suite autorisée est un
+canary shadow P0j, sans alimentation des tables de trading.
+
+Voir [P0i — évaluation holdout shadow](oracle_universe_p0i_shadow_evaluation.md).
+
+P0j est `IMPLÉMENTÉ_CANARY_SHADOW`. Le canary quotidien choisit la dernière
+séance EOD disponible, exécute l'admission P0b et l'Oracle dans des Parquet
+isolés, contrôle couverture/distribution contre la baseline P0i, puis évalue
+automatiquement les runs arrivés à H20 en reconstruisant les labels en dry-run.
+Le registre est local, idempotent par date et protégé contre deux exécutions
+simultanées. La tâche Windows est fournie mais n'est pas installée
+automatiquement. P0j reste `research_only` et n'alimente aucune table ML.
+
+Voir [P0j — canary quotidien](oracle_universe_p0j_daily_canary.md).
+
+Premier run P0j réel : `FAIT_WARN_AGE_ONLY` au 10 juillet 2026. Les 2 097
+scores et le TOP20 de 420 titres ont été écrits uniquement en Parquet. Le PSI
+de 0,0182, la moyenne des scores et la couverture restent dans les bandes P0i ;
+le seul avertissement est l'âge du champion, 548 jours. Les deux tables de
+prédictions contiennent zéro ligne pour ce batch et cette date. L'évaluation
+réalisée reste en attente des vingt séances futures.
+
+La branche d'évaluation retardée a été validée séparément au 9 juin 2026 :
+2 033 labels exploitables, AUC 0,8044, précision TOP20 47,17 % et lift
+d'amplitude 1,884. Le registre a correctement basculé à une date évaluée sur
+vingt requises, sans écrire en base.
+
+La source EODHD étant volontairement arrêtée, `stock_bars_daily` se termine au
+10 juillet 2026. P0j reste optionnel : sans nouvelle barre, la tâche quotidienne
+est idempotente et ne produit aucune observation supplémentaire. Elle peut être
+désinstallée sans supprimer les artefacts. Voir la section
+[caractère optionnel et retrait propre](oracle_universe_p0j_daily_canary.md#caractère-optionnel-et-retrait-propre).
+
+P0k est ouvert pour répondre à une limite de P0g : seul le classifieur D1/D10
+direct a été revalidé sur le nouvel univers dynamique. Une campagne courte et
+préfixée recontrôle les trois formulations réellement sensibles à la population
+quotidienne — probabilités indépendantes E2, ranker conditionnel R1 et régime
+quotidien E5. E4-B et les variantes lourdes ne sont autorisés que si ce premier
+écran produit un signal stable. Voir
+[P0k — revalidation directionnelle ciblée](oracle_universe_p0k_directional_revalidation.md).
+
 ## Pistes encore intéressantes après cet audit
 
 ### Priorité P0 — Temporal V2 fermé

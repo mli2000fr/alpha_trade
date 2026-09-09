@@ -571,6 +571,7 @@ def train_oracle_extreme(
     from modelFactory.oracle.train import get_universe_symbols
 
     horizon = 20
+    _universe_mode = cfg.oracle_universe_mode
     _universe = symbols or get_universe_symbols(engine, _batch_id, horizon)
     if not _universe:
         LOGGER.warning("oracle_extreme empty universe — nothing to train")
@@ -591,8 +592,13 @@ def train_oracle_extreme(
             engine=engine,
             dry_run=False,
             symbols=_universe,
+            universe_mode=_universe_mode,
         )
-        LOGGER.info("oracle_extreme build_labels status=%s n_labeled=%s", labels_result.get("status"), labels_result.get("n_labeled"))
+        LOGGER.info(
+            "oracle_extreme build_labels status=%s reason=%s n_labeled=%s dynamic=%s",
+            labels_result.get("status"), labels_result.get("reason"),
+            labels_result.get("n_labeled"), labels_result.get("dynamic_universe"),
+        )
         if int(labels_result.get("n_labeled") or 0) <= 0:
             reason = (
                 "no_labeled_oracle_targets:"
@@ -607,6 +613,10 @@ def train_oracle_extreme(
                 "labels": labels_result,
             }
     except Exception as exc:
+        if _universe_mode == "pit_dynamic_bars":
+            LOGGER.exception("oracle_extreme dynamic build_labels failed: %s", exc)
+            return {"status": "failed", "reason": str(exc), "batch_id": _batch_id,
+                    "oracle_universe_mode": _universe_mode}
         LOGGER.warning("oracle_extreme build_labels failed: %s", exc)
 
     # ── 2. Dataset + walk-forward O0 ──
@@ -663,10 +673,16 @@ def train_oracle_extreme(
             require_global_rank=_require_gr,
             feature_whitelist=_oracle_feature_whitelist,
             generator_options=_generator_options,
+            restrict_features_to_targets=(_universe_mode == "pit_dynamic_bars"),
         )
         if dataset.empty:
             LOGGER.warning("oracle_extreme empty dataset — nothing to train")
             return {"status": "skipped", "reason": "empty_dataset", "batch_id": _batch_id}
+        _memory_optimized = _universe_mode == "pit_dynamic_bars"
+        if _memory_optimized:
+            for _column in feature_columns:
+                if _column in dataset.columns and dataset[_column].dtype == "float64":
+                    dataset[_column] = dataset[_column].astype("float32")
 
         # ── Fenêtres ADAPTATIVES (comme le Global Ranking) : les folds de test
         #    sont dérivés des dates réellement présentes via
@@ -682,6 +698,7 @@ def train_oracle_extreme(
             step_dates=cfg.walk_forward.step_size,
             max_splits=cfg.walk_forward.max_splits,
             forecast_horizon=horizon,
+            materialize=not _memory_optimized,
         )
         if not folds:
             LOGGER.warning(
@@ -696,6 +713,7 @@ def train_oracle_extreme(
             dataset, feature_columns,
             folds=folds,
             ablation="O0",
+            memory_optimized=_memory_optimized,
         )
         if result.get("status") != "completed":
             LOGGER.warning("oracle_extreme walk_forward not completed: %s", result.get("status"))
@@ -742,6 +760,12 @@ def train_oracle_extreme(
             "generator_options": _generator_options,
             "feature_columns": list(result.get("feature_columns") or []),
         }
+        _resolved_profile = {
+            **_resolved_profile,
+            "oracle_universe_mode": _universe_mode,
+            "serving_ready": _universe_mode != "pit_dynamic_bars",
+            "dynamic_universe": labels_result.get("dynamic_universe"),
+        }
         for _profile_path in (
             Path(cfg.artifacts_dir) / "oracle" / "feature_profile.json",
             Path("artifacts/models/oracle/champions") / _batch_id / "feature_profile.json",
@@ -765,6 +789,9 @@ def train_oracle_extreme(
             "overall": result.get("overall"),
             "directional_oof_gate_path": str(_gate_path) if _gate_path else None,
             "directional_oof_gate": _gate_diagnostics,
+            "oracle_universe_mode": _universe_mode,
+            "labels": labels_result,
+            "serving_ready": _universe_mode != "pit_dynamic_bars",
         }
     except Exception as exc:
         LOGGER.exception("oracle_extreme failed: %s", exc)

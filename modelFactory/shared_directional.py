@@ -28,6 +28,7 @@ from modelFactory.oracle.leakage import assert_no_forbidden_features, assert_no_
 from modelFactory.oracle.train import roc_auc
 from modelFactory.oracle.walk_forward import build_folds_adaptive
 from modelFactory.calibration import PlattCalibrator
+from modelFactory.directional_conditioning import load_or_rebuild_directional_oof_gate
 
 LOGGER = logging.getLogger(__name__)
 
@@ -142,10 +143,7 @@ def load_profile(path: Path | str = DEFAULT_PROFILE) -> dict[str, Any]:
     }
 
 
-def _load_gate(path: Path, pool_pct: float) -> pd.DataFrame:
-    if not path.is_file():
-        raise FileNotFoundError(f"Cache Oracle OOF introuvable: {path}")
-    gate = pd.read_parquet(path)
+def _prepare_gate(gate: pd.DataFrame, pool_pct: float) -> pd.DataFrame:
     required = {
         "date", "symbol", "directional_oracle_eligible",
         "directional_oracle_oof_available", "directional_oracle_extreme_pct",
@@ -170,6 +168,12 @@ def _load_gate(path: Path, pool_pct: float) -> pd.DataFrame:
     return gate[["date", "symbol", "shared_oracle_eligible", ORACLE_GATE_SCORE_COL]]
 
 
+def _load_gate(path: Path, pool_pct: float) -> pd.DataFrame:
+    if not path.is_file():
+        raise FileNotFoundError(f"Cache Oracle OOF introuvable: {path}")
+    return _prepare_gate(pd.read_parquet(path), pool_pct)
+
+
 def build_shared_dataset(
     engine: Any,
     oracle_batch_id: str,
@@ -187,6 +191,19 @@ def build_shared_dataset(
     sont exclus du fit. ``proba_extreme`` sert uniquement de gate et n'entre
     jamais dans les features.
     """
+    raw_gate, gate_diagnostics = load_or_rebuild_directional_oof_gate(
+        engine,
+        oracle_batch_id=oracle_batch_id,
+        gate_path=gate_path,
+        pool_pct=config.pool_pct,
+    )
+    gate = _prepare_gate(raw_gate, config.pool_pct)
+    if gate_diagnostics.get("cache_rebuilt"):
+        LOGGER.info(
+            "Cache directionnel absent reconstruit avant les features: %s",
+            gate_diagnostics,
+        )
+
     requested = [str(c) for c in profile["feature_columns"]]
     frame, feature_columns = build_oracle_dataset(
         engine,
@@ -211,7 +228,6 @@ def build_shared_dataset(
     frame = frame.copy()
     frame["date"] = pd.to_datetime(frame["date"], errors="coerce").dt.normalize()
     frame["symbol"] = frame["symbol"].astype(str).str.upper()
-    gate = _load_gate(gate_path, config.pool_pct)
     frame = frame.merge(gate, on=["date", "symbol"], how="inner", validate="one_to_one")
     frame = frame[frame["shared_oracle_eligible"]].copy()
     if frame.empty:

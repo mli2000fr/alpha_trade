@@ -78,7 +78,7 @@ _TAG_MAP: dict[str, tuple[list[str], str]] = {
         "Diluted EPS",
     ),
     "shares_outstanding": (
-        ["CommonStockSharesOutstanding"],
+        ["EntityCommonStockSharesOutstanding", "CommonStockSharesOutstanding"],
         "Shares Outstanding",
     ),
     "ebitda": (

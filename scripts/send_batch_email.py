@@ -5,7 +5,7 @@ Appelé par les launchers PowerShell en fin d'exécution :
     scripts/windows/earnings_calendar_launcher.ps1
 
 Arguments :
-    --event       analyst_snapshot_collect | earnings_calendar_sync
+    --event       analyst_snapshot_collect | earnings_calendar_sync | market_cap_sync
     --status      OK | ERROR
     --exit-code   code de sortie du batch
     --duration    durée d'exécution (ex. 0h05m12s)

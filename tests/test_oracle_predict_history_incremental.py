@@ -1,9 +1,120 @@
 from __future__ import annotations
 
+import json
 import numpy as np
 import pandas as pd
 
 from modelFactory.oracle import predict_history
+
+
+def test_dynamic_p0f_batch_is_rejected_by_serving(monkeypatch, tmp_path) -> None:
+    root = tmp_path / "champions"
+    batch_root = root / "batch-p0f"
+    batch_root.mkdir(parents=True)
+    (batch_root / "feature_profile.json").write_text(json.dumps({
+        "oracle_universe_mode": "pit_dynamic_bars",
+        "serving_ready": False,
+    }), encoding="utf-8")
+    monkeypatch.setattr(predict_history, "_CHAMPIONS_ROOT", root)
+    monkeypatch.setattr(predict_history, "_load_champions_meta", lambda batch_id: [{
+        "t_start": "2020-01-01", "model_file": "fold.txt", "feature_columns": ["signal"],
+    }])
+    result = predict_history.predict_oracle_extreme_history(
+        object(), "batch-p0f", "2024-01-01", "2024-12-31")
+    assert result["status"] == "error"
+    assert result["reason"] == "dynamic_oracle_universe_not_serving_ready"
+
+
+def test_dynamic_oracle_shadow_uses_pit_membership_and_never_writes_tables(
+    monkeypatch, tmp_path,
+) -> None:
+    root = tmp_path / "champions"
+    batch_root = root / "batch-p0h"
+    batch_root.mkdir(parents=True)
+    (batch_root / "feature_profile.json").write_text(json.dumps({
+        "oracle_universe_mode": "pit_dynamic_bars",
+        "serving_ready": False,
+        "feature_set": "expert",
+        "generator_options": {},
+    }), encoding="utf-8")
+    monkeypatch.setattr(predict_history, "_CHAMPIONS_ROOT", root)
+    monkeypatch.setattr(predict_history, "_load_champions_meta", lambda batch_id: [{
+        "t_start": "2025-01-08", "model_file": "fold.txt", "feature_columns": ["signal"],
+    }])
+
+    dates = pd.to_datetime(["2026-01-02", "2026-01-02", "2026-01-05", "2026-01-05"])
+    membership = pd.DataFrame({"date": dates, "symbol": ["A", "B", "A", "B"]})
+    membership_diagnostics = {
+        "rows": 4, "dates": 2, "symbols": 2,
+        "daily_min": 2, "daily_median": 2, "daily_max": 2,
+    }
+    import modelFactory.oracle.dynamic_universe as dynamic_module
+    import modelFactory.oracle.dataset as dataset_module
+    import modelFactory.oracle.predictions_store as store_module
+    import lightgbm
+
+    monkeypatch.setattr(
+        dynamic_module,
+        "load_dynamic_universe_from_bars",
+        lambda *args, **kwargs: (membership.copy(), membership_diagnostics.copy()),
+    )
+    captured: dict[str, object] = {}
+
+    def _build_dataset(*args, **kwargs):
+        captured["membership"] = kwargs.get("feature_membership")
+        return pd.DataFrame({
+            "date": dates,
+            "symbol": ["A", "B", "A", "B"],
+            "signal": [0.1, 0.9, 0.2, 0.8],
+            "future_return": [np.nan] * 4,
+            "oracle_extreme10": [np.nan] * 4,
+        }), ["signal"]
+
+    monkeypatch.setattr(dataset_module, "build_dataset", _build_dataset)
+
+    class Booster:
+        def __init__(self, *, model_file: str) -> None:
+            self.model_file = model_file
+
+        def predict(self, frame: pd.DataFrame) -> np.ndarray:
+            return frame["signal"].to_numpy(dtype=float)
+
+    monkeypatch.setattr(lightgbm, "Booster", Booster)
+    monkeypatch.setattr(
+        store_module,
+        "write_oracle_predictions",
+        lambda *_args, **_kwargs: pytest.fail("shadow must not write Oracle table"),
+    )
+
+    result = predict_history.predict_oracle_extreme_history(
+        object(),
+        "batch-p0h",
+        "2026-01-02",
+        "2026-01-05",
+        symbols=["A", "B"],
+        persist_chunk_dates=1,
+        shadow_mode=True,
+        shadow_artifacts_root=tmp_path / "shadow",
+    )
+
+    assert result["status"] == "completed"
+    assert result["prediction_mode"] == "shadow"
+    assert result["trading_eligible"] is False
+    assert result["serving_ready"] is False
+    assert result["n_rows"] == 4
+    assert len(result["parts"]) == 2
+    assert isinstance(captured["membership"], pd.DataFrame)
+    artifact = tmp_path / "shadow" / "batch-p0h"
+    run_root = next(artifact.iterdir())
+    saved = pd.concat(
+        [pd.read_parquet(path) for path in sorted((run_root / "parts").glob("*.parquet"))],
+        ignore_index=True,
+    )
+    assert "champion_t_start" in saved.columns
+    assert "fold_start" not in saved.columns
+    assert saved["prediction_mode"].eq("shadow").all()
+    assert saved.groupby("date")["extreme_gate_top20"].sum().tolist() == [1, 1]
+    assert (run_root / "report.json").is_file()
 
 
 def test_oracle_history_persists_incrementally_by_date_chunks(monkeypatch) -> None:
@@ -79,4 +190,7 @@ def test_oracle_history_persists_incrementally_by_date_chunks(monkeypatch) -> No
         "n_symbols": 1,
         "n_folds_used": 1,
         "persist_chunk_dates": 2,
+        "prediction_mode": "serving",
+        "trading_eligible": True,
+        "dynamic_universe": None,
     }

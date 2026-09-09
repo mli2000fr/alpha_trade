@@ -398,6 +398,7 @@ class PipelineLaunchOptions:
     ml_directional_profiles_enabled: bool = False
     ml_oracle_feature_profile: str = "oracle.json"
     ml_standalone_oracle_feature_profile: str = "dynamic"
+    ml_oracle_universe_mode: str = "static_bars"
     ml_long_feature_profile: str = "long.json"
     ml_short_feature_profile: str = "short.json"
     ml_target_skip_vol_scaling: bool = DEFAULT_ML_TARGET_SKIP_VOL_SCALING
@@ -470,6 +471,7 @@ class PipelineLaunchOptions:
     ml_predict_batch_id: str | None = None
     ml_live_predict_batch_id: str | None = None
     ml_predict_max_date_workers: int = DEFAULT_ML_PREDICT_MAX_DATE_WORKERS
+    ml_oracle_shadow: bool = False
     ml_artifacts_dir: str = DEFAULT_ML_ARTIFACTS_DIR
     ml_benchmark_symbol: str = DEFAULT_ML_BENCHMARK_SYMBOL
     ml_default_champion: MLDefaultChampion = DEFAULT_ML_DEFAULT_CHAMPION  # type: ignore[assignment]
@@ -2406,6 +2408,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         elif options.ml_oracle_model_only:
             command.append("--oracle-model-only")
             command.append("--enable-oracle-model")  # implicite
+            if options.ml_oracle_universe_mode == "pit_dynamic_bars":
+                command.extend(["--oracle-universe-mode", "pit_dynamic_bars"])
             if options.ml_standalone_oracle_feature_profile != "dynamic":
                 command.extend(["--standalone-oracle-feature-profile", options.ml_standalone_oracle_feature_profile])
         elif options.ml_enable_oracle_model:
@@ -2577,6 +2581,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
                 command.extend(["--training-end-date", ml_training_end_date])
         if options.ml_predict_max_date_workers > 1:
             command.extend(["--predict-max-date-workers", str(options.ml_predict_max_date_workers)])
+        if options.ml_oracle_shadow:
+            command.append("--oracle-shadow")
         return command
 
     if step_key == "risk_management":

@@ -20,5 +20,8 @@
 15. [Filtre screener PIT après Oracle](screener_post_oracle.md)
 16. [Panel screener PIT dense sur la population Oracle](panel_screener_dense.md)
 17. [POC Eroya — nouvelles informations directionnelles](eroya_directional_poc.md)
+18. [Capitalisation PIT — SEC EDGAR ou EODHD](market_cap_sec_edgar.md)
+    - collecte gratuite des actions SEC ;
+    - calcul quotidien, TTL, switch fournisseur et contrat fail-closed.
 
 Retour : [vue d'ensemble ML](../06_ml_vue_ensemble.md).

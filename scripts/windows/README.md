@@ -239,6 +239,63 @@ puis renseigner `LOGIN_DB` / `PASSWORD_DB` dans `earnings_calendar.env`.
 
 ---
 
+## Job planifié — Capitalisations Yahoo + Finnhub
+
+La tâche **`AlphaTrade-MarketCapSync`** collecte deux snapshots distincts dans
+`stock_fundamentals_daily` : Yahoo d'abord, puis Finnhub. La sélection runtime
+`yahoo_then_finnhub` conserve Yahoo en priorité et utilise Finnhub seulement si
+Yahoo est absent ou périmé.
+
+Configuration :
+
+```yaml
+market_cap_sync:
+  run_hours: "11,23"
+  run_days: "1,4"  # lundi et jeudi ; 0=dimanche
+  symbols_file: config/univers/univers_filtred_equities.txt
+  providers: "yahoo_finance,finnhub"
+  log_file: log/batch/market_cap_sync.txt
+```
+
+Le launcher est volontairement fail-closed : si le fichier d'univers manque, il
+n'élargit pas la collecte aux 13 000 symboles. Un mutex et le réglage Windows
+`MultipleInstances IgnoreNew` empêchent les chevauchements. Une relance le même
+jour est idempotente car chaque source fait un upsert sur
+`(symbol, trade_date, source)`. À la fin, succès ou échec déclenche les
+notifications **email et Telegram** via `scripts/send_batch_email.py`; les
+avertissements de collecte partielle sont inclus.
+
+Installer la tâche :
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\install_market_cap_sync_task.ps1
+```
+
+Lancer immédiatement, indépendamment de la tâche planifiée :
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\market_cap_sync_launcher.ps1
+```
+
+Surveiller :
+
+```powershell
+Get-Content .\log\batch\market_cap_sync.txt -Encoding UTF8 -Tail 50 -Wait
+```
+
+Désinstaller :
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\uninstall_market_cap_sync_task.ps1
+```
+
+La tâche n'est pas installée par le dépôt lui-même : exécuter explicitement le
+script d'installation sur la machine cible. En mode `System`, les identifiants DB
+et `FINNHUB_API_KEY` doivent être accessibles via `.env` ou l'environnement du
+compte système.
+
+---
+
 ## Job planifié — Collecte Yahoo analyst (B4, RESEARCH ONLY)
 
 La tâche planifiée **`AlphaTrade-AnalystSnapshot`** exécute automatiquement la
@@ -309,3 +366,15 @@ credentials MySQL sans reprendre l’environnement du shell.
   logge dans `log/batch/analyst_snapshots.log` et trace chaque run dans la table
   `alpha_trade.analyst_snapshot_collection_run`.
 
+# Oracle dynamique P0j
+
+Le canary Oracle possède trois scripts dédiés :
+
+- `oracle_canary_launcher.ps1` : lancement journalisé ;
+- `install_oracle_canary_task.ps1` : installation de
+  `AlphaTrade-OracleCanary` ;
+- `uninstall_oracle_canary_task.ps1` : désinstallation.
+
+Les horaires, jours, batch et univers sont définis dans
+`config/oracle_canary.yaml`. Le canary est shadow-only et ne remplit aucune
+table de prédictions.

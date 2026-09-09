@@ -613,6 +613,42 @@ class RiskRepository:
             for r in rows
         }
 
+    def load_oracle_scores_asof(
+        self,
+        trade_date: date,
+        *,
+        batch_id: str,
+        symbols: list[str] | None = None,
+    ) -> dict[str, float]:
+        """Charge les scores Oracle de la date exacte, avec batch obligatoire."""
+        normalized_batch = str(batch_id or "").strip()
+        if not normalized_batch:
+            raise ValueError("batch_id Oracle obligatoire pour le gate live.")
+        params: dict[str, Any] = {
+            "batch_id": normalized_batch,
+            "trade_date": trade_date,
+        }
+        symbol_clause = ""
+        if symbols is not None:
+            normalized = sorted({str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()})
+            if not normalized:
+                return {}
+            placeholders = ", ".join(f":oracle_symbol_{i}" for i in range(len(normalized)))
+            symbol_clause = f" AND symbol IN ({placeholders})"
+            params.update({f"oracle_symbol_{i}": symbol for i, symbol in enumerate(normalized)})
+        query = text(
+            "SELECT symbol, proba_extreme "
+            "FROM alpha_trade.oracle_extreme_predictions "
+            "WHERE batch_id = :batch_id AND prediction_date = :trade_date"
+            + symbol_clause
+        )
+        with self.engine.connect() as connection:
+            rows = connection.execute(query, params).mappings().all()
+        return {
+            str(row["symbol"]).strip().upper(): float(row["proba_extreme"])
+            for row in rows if row.get("proba_extreme") is not None
+        }
+
     def load_win_rates(self, symbols: list[str], trade_date: date | None = None) -> dict[str, WinRateInfo]:
         """Compatibilité API : charge les métriques ML PIT."""
         return self.load_win_rates_asof(symbols, trade_date or date.today())

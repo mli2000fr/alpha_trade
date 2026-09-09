@@ -11,6 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
+import importlib
 
 from modelFactory.oracle.build_labels import (
     classify_target_quality,
@@ -22,6 +23,36 @@ from modelFactory.oracle.security_continuity import (
     path_crosses_known_discontinuity,
     split_frame_on_discontinuities,
 )
+
+
+def test_dynamic_builder_loads_prices_for_admitted_symbols(monkeypatch):
+    labels_module = importlib.import_module("modelFactory.oracle.build_labels")
+    dynamic_module = importlib.import_module("modelFactory.oracle.dynamic_universe")
+    membership = pd.DataFrame({
+        "date": pd.to_datetime(["2024-01-02", "2024-01-02"]),
+        "symbol": ["AAA", "BBB"],
+    })
+    monkeypatch.setattr(
+        dynamic_module, "load_dynamic_universe_from_bars",
+        lambda *args, **kwargs: (membership, {"rows": 2, "symbols": 2, "dates": 1}),
+    )
+    observed = {}
+
+    class EmptyPrices:
+        close = pd.DataFrame()
+
+    def fake_prices(engine, symbols, start_date):
+        observed["symbols"] = symbols
+        return EmptyPrices()
+
+    monkeypatch.setattr(labels_module, "load_price_matrices", fake_prices)
+    result = labels_module.build_labels(
+        "batch-p0f", engine=object(), symbols=["AAA", "BBB"],
+        start_date="2024-01-01", end_date="2024-12-31",
+        universe_mode="pit_dynamic_bars",
+    )
+    assert observed["symbols"] == ["AAA", "BBB"]
+    assert result["reason"] == "no_bars"
 
 
 # ═══════════════════════════════════════════════════════════════════

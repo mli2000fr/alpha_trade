@@ -114,6 +114,19 @@ def test_cli_accepts_standalone_oracle_profile() -> None:
     assert options.standalone_oracle_feature_profile == "oracle.json"
 
 
+def test_cli_accepts_pit_dynamic_oracle_universe() -> None:
+    options = build_arg_parser().parse_args([
+        "--mode", "train", "--oracle-model-only",
+        "--oracle-universe-mode", "pit_dynamic_bars",
+    ])
+    assert options.oracle_universe_mode == "pit_dynamic_bars"
+
+
+def test_dynamic_oracle_universe_requires_oracle_only() -> None:
+    with pytest.raises(ValueError, match="oracle_model_only"):
+        TrainingConfig(oracle_universe_mode="pit_dynamic_bars")
+
+
 def test_dynamic_oracle_generator_options_follow_data_config() -> None:
     cfg = TrainingConfig(data=DataConfig(
         feature_set="expert",
@@ -296,6 +309,17 @@ def test_ihm_oracle_dynamic_keeps_manual_feature_options() -> None:
     assert "--standalone-oracle-feature-profile" not in command
     assert "--include-macro-vix" in command
     assert "--include-volume-features" in command
+
+
+def test_ihm_emits_pit_dynamic_universe_for_oracle_only() -> None:
+    options = PipelineLaunchOptions(
+        ml_enable_oracle_model=True,
+        ml_oracle_model_only=True,
+        ml_oracle_universe_mode="pit_dynamic_bars",
+    )
+    command = build_pipeline_command("ml_train", options)
+    assert "--oracle-model-only" in command
+    assert command[command.index("--oracle-universe-mode") + 1] == "pit_dynamic_bars"
 
 
 def test_ihm_oracle_json_profile_is_emitted_outside_bundle() -> None:

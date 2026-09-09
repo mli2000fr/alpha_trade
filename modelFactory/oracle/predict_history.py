@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,7 @@ import pandas as pd
 LOGGER = logging.getLogger(__name__)
 
 _CHAMPIONS_ROOT = Path("artifacts/models/oracle/champions")
+_SHADOW_ROOT = Path("artifacts/models/oracle/shadow")
 DEFAULT_PERSIST_CHUNK_DATES = 20
 
 
@@ -64,6 +66,8 @@ def predict_oracle_extreme_history(
     horizon: int = 20,
     symbols: list[str] | None = None,
     persist_chunk_dates: int = DEFAULT_PERSIST_CHUNK_DATES,
+    shadow_mode: bool = False,
+    shadow_artifacts_root: Path | str | None = None,
 ) -> dict[str, Any]:
     """Prédit ``proba_extreme`` sur [start_date, end_date] avec les champions, sans retrain.
 
@@ -89,10 +93,28 @@ def predict_oracle_extreme_history(
     _feature_columns = list(_meta[0].get("feature_columns") or [])
     _t_starts = [str(m["t_start"]) for m in _meta]
     _generator_options: dict[str, Any] = {}
+    _dynamic_universe = False
+    _profile: dict[str, Any] = {}
     _profile_path = _champ_root / "feature_profile.json"
     if _profile_path.is_file():
         try:
             _profile = json.loads(_profile_path.read_text(encoding="utf-8"))
+            _dynamic_universe = _profile.get("oracle_universe_mode") == "pit_dynamic_bars"
+            if _dynamic_universe and not shadow_mode:
+                return {
+                    "status": "error",
+                    "reason": "dynamic_oracle_universe_not_serving_ready",
+                    "batch_id": batch_id,
+                    "hint": "P0f/P0h exige --oracle-shadow; aucune table de trading ne sera alimentée.",
+                }
+            if _profile.get("serving_ready") is False and not (
+                _dynamic_universe and shadow_mode
+            ):
+                return {
+                    "status": "error",
+                    "reason": "oracle_feature_profile_not_serving_ready",
+                    "batch_id": batch_id,
+                }
             _generator_options = {
                 **dict(_profile.get("generator_options") or {}),
                 "feature_set": str(_profile.get("feature_set", "expert")),
@@ -102,12 +124,36 @@ def predict_oracle_extreme_history(
                 "status": "error", "reason": "invalid_oracle_feature_profile",
                 "batch_id": batch_id, "detail": str(_profile_exc),
             }
+    if shadow_mode and not _dynamic_universe:
+        return {
+            "status": "error",
+            "reason": "oracle_shadow_requires_dynamic_universe",
+            "batch_id": batch_id,
+        }
 
     # 2. Dataset + univers
     from modelFactory.oracle.dataset import build_dataset
     from modelFactory.oracle.train import get_universe_symbols
 
     _syms = symbols or get_universe_symbols(engine, batch_id, horizon)
+    _membership = None
+    _membership_diagnostics: dict[str, Any] | None = None
+    if _dynamic_universe:
+        from modelFactory.oracle.dynamic_universe import load_dynamic_universe_from_bars
+
+        _membership, _membership_diagnostics = load_dynamic_universe_from_bars(
+            engine,
+            list(_syms),
+            start_date=str(start_date),
+            end_date=str(end_date),
+        )
+        if _membership.empty:
+            return {
+                "status": "error",
+                "reason": "empty_dynamic_shadow_universe",
+                "batch_id": batch_id,
+                "dynamic_universe": _membership_diagnostics,
+            }
     # Si le champion O0 (oracle-only) n'utilise PAS global_rank_20, on ne le
     # fusionne pas (sinon dataset vide pour un batch sans global_rank_history).
     _needs_gr = "global_rank_20" in _feature_columns
@@ -121,6 +167,7 @@ def predict_oracle_extreme_history(
         # nouveaux profils, eux, sont stricts et doivent être reproduits bit à bit.
         feature_whitelist=(_feature_columns or None) if _profile_path.is_file() else None,
         generator_options=_generator_options,
+        feature_membership=_membership,
     )
     if dataset.empty:
         return {"status": "error", "reason": "empty_dataset", "batch_id": batch_id}
@@ -165,18 +212,45 @@ def predict_oracle_extreme_history(
     _pending_rows: list[dict[str, Any]] = []
     _persisted_rows = 0
     _predicted_symbols: set[str] = set()
+    _shadow_parts: list[str] = []
+    _shadow_root: Path | None = None
+    if shadow_mode:
+        _shadow_parent = Path(shadow_artifacts_root) if shadow_artifacts_root else _SHADOW_ROOT
+        _shadow_run_id = (
+            f"oracle-shadow-{datetime.now(timezone.utc):%Y%m%d%H%M%S}-"
+            f"{str(batch_id)[-6:]}"
+        )
+        _shadow_root = _shadow_parent / str(batch_id) / _shadow_run_id
+        (_shadow_root / "parts").mkdir(parents=True, exist_ok=False)
 
     def _flush_pending(*, processed_dates: int) -> None:
         nonlocal _persisted_rows
         if not _pending_rows:
             return
         _chunk = pd.DataFrame(_pending_rows)
-        _written = write_oracle_predictions(engine, _chunk, batch_id=batch_id)
+        if shadow_mode:
+            assert _shadow_root is not None
+            _shadow_chunk = _chunk.rename(columns={"fold_start": "champion_t_start"})
+            _shadow_chunk["extreme_pct"] = _shadow_chunk.groupby("date")[
+                "proba_extreme"
+            ].rank(pct=True)
+            _shadow_chunk["extreme_gate_top20"] = _shadow_chunk["extreme_pct"].ge(0.80)
+            _shadow_chunk["prediction_mode"] = "shadow"
+            _part_name = f"part-{len(_shadow_parts):05d}.parquet"
+            _shadow_chunk.to_parquet(_shadow_root / "parts" / _part_name, index=False)
+            _shadow_parts.append(_part_name)
+            _written = len(_shadow_chunk)
+        else:
+            _written = write_oracle_predictions(engine, _chunk, batch_id=batch_id)
         _persisted_rows += int(_written)
         _pending_rows.clear()
         LOGGER.info(
-            "oracle predict progress batch=%s dates=%d/%d rows_persisted=%d",
-            batch_id, processed_dates, len(_day_dates), _persisted_rows,
+            "oracle predict progress batch=%s dates=%d/%d rows_%s=%d",
+            batch_id,
+            processed_dates,
+            len(_day_dates),
+            "shadow_written" if shadow_mode else "persisted",
+            _persisted_rows,
         )
 
     for _date_index, _d in enumerate(_day_dates, start=1):
@@ -222,7 +296,7 @@ def predict_oracle_extreme_history(
         "predict_oracle_extreme_history batch=%s range=[%s,%s] rows=%d",
         batch_id, start_date, end_date, _persisted_rows,
     )
-    return {
+    result = {
         "status": "completed",
         "batch_id": batch_id,
         "n_rows": _persisted_rows,
@@ -231,4 +305,20 @@ def predict_oracle_extreme_history(
         "n_symbols": len(_predicted_symbols),
         "n_folds_used": len(_t_starts),
         "persist_chunk_dates": _chunk_dates,
+        "prediction_mode": "shadow" if shadow_mode else "serving",
+        "trading_eligible": not shadow_mode,
+        "dynamic_universe": _membership_diagnostics,
     }
+    if shadow_mode:
+        assert _shadow_root is not None
+        result.update({
+            "artifact_dir": str(_shadow_root),
+            "parts": [f"parts/{name}" for name in _shadow_parts],
+            "serving_ready": False,
+            "research_only": True,
+        })
+        (_shadow_root / "report.json").write_text(
+            json.dumps(result, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
+    return result

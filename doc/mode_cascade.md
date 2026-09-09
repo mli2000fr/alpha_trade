@@ -1,6 +1,6 @@
 # Cascade de sélection et modes de ranking
 
-> Architecture associée : [bundle unique Oracle Extreme + champions Per-Symbol LONG/SHORT](ml/per_symbol/07_bundle_oracle_long_short.md).
+> Architectures associées : [bundle unique Oracle Extreme + champions Per-Symbol LONG/SHORT](ml/per_symbol/07_bundle_oracle_long_short.md) · [Oracle TOP20 recalculé sur l’univers tradable — backtest et live](ml/oracle_tradable_top20_backtest_live.md).
 
 Retour : [documentation recherche](research/README.md) · Voir aussi : [Oracle Extreme](ml/oracle/README.md)
 
