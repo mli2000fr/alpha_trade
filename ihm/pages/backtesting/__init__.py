@@ -18,6 +18,10 @@ from common.capital_presets import (
 )
 from common.universe_files import default_universe_file_source_or
 from common.ml_cascade_contract import load_serving_directional_bundle_manifest
+from modelFactory.oracle.artifact_contract import (
+    oracle_horizon_badge,
+    resolve_oracle_artifact_horizon,
+)
 from ihm.components.db_controls import render_db_connection_form
 from ihm.components.metrics import format_duration_hhmmss
 from ihm.pages import run_page_if_standalone
@@ -541,6 +545,25 @@ def _extract_run_batch_id(run: dict[str, object]) -> str | None:
             if tok and not tok.startswith("--"):
                 return tok
     return None
+
+
+def _extract_run_oracle_batch_id(run: dict[str, object]) -> str | None:
+    """Extrait le batch Oracle effectif, puis retombe sur le batch ML du run."""
+    raw = run.get("command")
+    if isinstance(raw, list):
+        tokens = [str(x) for x in raw]
+        if "--oracle-batch-id" in tokens:
+            idx = tokens.index("--oracle-batch-id")
+            if idx + 1 < len(tokens) and not tokens[idx + 1].startswith("--"):
+                return tokens[idx + 1]
+    text_ = str(run.get("command_display") or "").strip()
+    pos = text_.find("--oracle-batch-id")
+    if pos != -1:
+        rest = text_[pos + len("--oracle-batch-id"):].lstrip()
+        tok = rest.split(None, 1)[0] if rest.split(None, 1) else ""
+        if tok and not tok.startswith("--"):
+            return tok
+    return _extract_run_batch_id(run)
 
 
 def _extract_run_dates(run: dict[str, object]) -> tuple[str | None, str | None]:
@@ -2364,7 +2387,8 @@ def _build_run_options() -> BacktestRunOptions:
             finished_str = str(finished)[:19] if finished and str(finished) not in ("None", "nan", "") else "—"
             comment = row.get("comment")
             comment_str = str(comment)[:60] if comment and str(comment) not in ("None", "nan", "") else "—"
-            label = f"{bid} | {finished_str} | {comment_str}"
+            _h_badge = oracle_horizon_badge(bid, Path(artifacts_dir))
+            label = f"{bid} | {_h_badge + ' | ' if _h_badge else ''}{finished_str} | {comment_str}"
             batch_options[label] = bid
     selected_ml_batch_id: str | None = None
     if ml_mode != "off":
@@ -2626,6 +2650,7 @@ def _build_run_options() -> BacktestRunOptions:
     oracle_calibration = "none"
     extreme_gate_pct = float(st.session_state.get("bt_run_extreme_gate_pct", 0.20) or 0.20)
     extreme_gate_per_symbol = "filter"
+    oracle_tradable_policy = "off"
     directional_bundle_gate = "strict"
     cascade_min_prob: float | None = None
     if _cascade_rank_mode in ("oracle", "oracle_filter", "oracle_rerank", "oracle_pool", "extreme_gate", "extreme_gate_directional"):
@@ -2633,7 +2658,9 @@ def _build_run_options() -> BacktestRunOptions:
         _oracle_batch_labels: dict[str, str | None] = {"— (défaut : campagne ML)": None}
         if not oracle_batches.empty:
             for _, r in oracle_batches.iterrows():
-                _label = f"{r['batch_id']} | {int(r['n_predictions']):,} préd | {r['min_date']}→{r['max_date']}"
+                _oracle_bid = str(r["batch_id"])
+                _h_badge = oracle_horizon_badge(_oracle_bid)
+                _label = f"{_oracle_bid} | {_h_badge or 'H?'} | {int(r['n_predictions']):,} préd | {r['min_date']}→{r['max_date']}"
                 if r.get("comment"):
                     _label += f" | {str(r['comment'])[:50]}"
                 _oracle_batch_labels[_label] = str(r["batch_id"])
@@ -2729,6 +2756,30 @@ def _build_run_options() -> BacktestRunOptions:
                     key="bt_run_cascade_min_prob",
                     help="Exige max(P(LONG), P(SHORT)) au-dessus de ce seuil. Ce réglage est distinct de la marge |P(LONG)-P(SHORT)|.",
                 ))
+            oracle_tradable_policy = cast(str, st.selectbox(
+                "Filtre tradable autour du TOP20 Oracle",
+                options=["filter_then_top20", "top20_then_filter", "off"],
+                format_func=lambda value: {
+                    "filter_then_top20": "Tradables d'abord → TOP20 recalculé (recommandé)",
+                    "top20_then_filter": "TOP20 large → retirer les non-tradables (comparaison)",
+                    "off": "Désactivé — compatibilité anciens runs",
+                }[value],
+                index=["filter_then_top20", "top20_then_filter", "off"].index(
+                    st.session_state.get(
+                        "bt_run_oracle_tradable_policy", "filter_then_top20"
+                    )
+                    if st.session_state.get(
+                        "bt_run_oracle_tradable_policy", "filter_then_top20"
+                    ) in {"filter_then_top20", "top20_then_filter", "off"}
+                    else "filter_then_top20"
+                ),
+                key="bt_run_oracle_tradable_policy",
+                help=(
+                    "Utilise le snapshot tradable PIT exact du preset de capital. "
+                    "Une date absente ou non-full bloque le backtest ; aucun fallback "
+                    "vers les métadonnées actuelles n'est autorisé."
+                ),
+            ))
 
     # ── Priorité N4X2 jours saturés (recherche E, extreme_gate uniquement) ──
     extreme_gate_dip_saturated = bool(st.session_state.get("bt_run_extreme_gate_dip_saturated", False))
@@ -2950,6 +3001,7 @@ def _build_run_options() -> BacktestRunOptions:
         extreme_gate_dip_saturated=bool(extreme_gate_dip_saturated),
         extreme_gate_dip_band=float(extreme_gate_dip_band or 0.02),
         extreme_gate_direction_margin=float(extreme_gate_direction_margin),
+        oracle_tradable_policy=cast(Any, oracle_tradable_policy),
         score_column=cast(Any, score_column),
         walk_forward_artifacts_dir=walk_forward_artifacts_dir.strip() or None,
         disable_walk_forward=bool(st.session_state.get("bt_run_disable_walk_forward", False)),
@@ -4707,13 +4759,17 @@ _RUN_ORACLE_LABELS_QUERY = """
     FROM alpha_trade.global_oracle_labels
     WHERE batch_id = :batch_id
       AND horizon = :horizon
+      AND target_quality_valid = 1
       AND oracle_decile IS NOT NULL
     ORDER BY prediction_date, symbol
 """
 
 
 def _batch_oracle_horizon(batch_id: str) -> int:
-    """Meilleur horizon du batch (metadata ``global_ranking.best_horizon``), défaut H20."""
+    """Horizon de l'artefact Oracle, puis fallback Global Ranking/H20 legacy."""
+    artifact_horizon = resolve_oracle_artifact_horizon(batch_id)
+    if artifact_horizon is not None:
+        return artifact_horizon
     try:
         df = safe_query(
             "SELECT metadata_json FROM model_training_batch WHERE batch_id = :batch_id",
@@ -4759,7 +4815,7 @@ def _render_run_oracle_deciles(run_record: dict[str, object]) -> None:
             st.info("Aucun `trades.csv` disponible pour ce run.")
             return
 
-        batch_id = _extract_run_batch_id(run_record)
+        batch_id = _extract_run_oracle_batch_id(run_record)
         if not batch_id:
             st.warning(
                 "Impossible de déterminer le batch ML de ce run "

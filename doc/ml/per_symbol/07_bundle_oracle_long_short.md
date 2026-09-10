@@ -201,7 +201,7 @@ artifacts/models/<batch_id>/
   └─ artefacts communs et référence vers artifacts/models/oracle/champions/<batch_id>
 ```
 
-`cascade_manifest.json` est le point d'entrée du serving. Il déclare le type du bundle, les racines relatives, les profils complets et leurs empreintes, puis le statut et le résultat terminal de l'Oracle. Il distingue aussi explicitement les cibles : `oracle.target_contract` décrit la classification binaire d'extrêmes cross-sectionnels H20, tandis que `directional_target_contract` décrit la cible ternaire absolue H20 à ±3 %. Cette séparation évite de déduire à tort la cible Oracle depuis les options générales du batch.
+`cascade_manifest.json` est le point d'entrée du serving. Il déclare le type du bundle, les racines relatives, les profils complets et leurs empreintes, puis le statut et le résultat terminal de l'Oracle. Il distingue aussi explicitement les cibles : `oracle.target_contract` décrit la classification binaire d'extrêmes cross-sectionnels à l'horizon Oracle sélectionné (H5/H10/H15/H20), tandis que `directional_target_contract` décrit la cible ternaire absolue H20 à ±3 %. Cette séparation évite de déduire à tort la cible Oracle depuis les options générales du batch.
 
 Le manifeste suit maintenant un cycle de vie explicite :
 
@@ -288,7 +288,7 @@ Le mode « Oracle seul, LONG-only » demeure disponible pour la compatibilité h
 python -m modelFactory --mode train --training-mode per_symbol --directional-feature-profiles --oracle-feature-profile oracle.json --long-feature-profile long.json --short-feature-profile short.json --enable-oracle-model [paramètres WF et challengers]
 ```
 
-Le backend active aussi automatiquement l'Oracle lorsque le bundle est demandé. Il n'est pas nécessaire d'ajouter les paramètres de cible à cette commande : H20, ternaire et ±3 % sont le contrat du mode. S'ils sont tout de même fournis avec d'autres valeurs, ils sont remplacés avant la construction de `TrainingConfig`, puis de nouveau au moment d'appliquer les profils LONG et SHORT.
+Le backend active aussi automatiquement l'Oracle lorsque le bundle est demandé. H20, ternaire et ±3 % restent le contrat imposé aux branches LONG et SHORT. L'Oracle possède désormais son propre réglage `--oracle-horizon` : l'IHM propose H5/H10/H15/H20 et H20 reste la valeur par défaut. Les options directionnelles incompatibles sont remplacées avant la construction de `TrainingConfig`, sans écraser l'horizon Oracle demandé.
 
 ### Portée réelle de cette correction
 

@@ -114,6 +114,32 @@ def test_cli_accepts_standalone_oracle_profile() -> None:
     assert options.standalone_oracle_feature_profile == "oracle.json"
 
 
+def test_cli_accepts_pit_dynamic_oracle_universe() -> None:
+    options = build_arg_parser().parse_args([
+        "--mode", "train", "--oracle-model-only",
+        "--oracle-universe-mode", "pit_dynamic_bars",
+    ])
+    assert options.oracle_universe_mode == "pit_dynamic_bars"
+
+
+def test_cli_accepts_dedicated_oracle_horizon() -> None:
+    options = build_arg_parser().parse_args([
+        "--mode", "train", "--oracle-model-only", "--oracle-horizon", "10",
+    ])
+    assert options.oracle_horizon == 10
+
+
+def test_oracle_horizon_defaults_to_legacy_h20() -> None:
+    assert TrainingConfig().oracle_horizon == 20
+    with pytest.raises(ValueError, match="oracle_horizon"):
+        TrainingConfig(oracle_horizon=0)
+
+
+def test_dynamic_oracle_universe_requires_oracle_only() -> None:
+    with pytest.raises(ValueError, match="oracle_model_only"):
+        TrainingConfig(oracle_universe_mode="pit_dynamic_bars")
+
+
 def test_dynamic_oracle_generator_options_follow_data_config() -> None:
     cfg = TrainingConfig(data=DataConfig(
         feature_set="expert",
@@ -137,6 +163,7 @@ def test_cli_directional_bundle_overrides_incompatible_target_options() -> None:
         "--label-method", "triple_barrier",
         "--forecast-horizon", "5",
         "--forecast-horizons", "3,5,10,15,20",
+        "--oracle-horizon", "5",
         "--target-up-threshold", "0.01",
         "--target-down-threshold", "-0.01",
         "--target-skip-vol-scaling",
@@ -153,6 +180,7 @@ def test_cli_directional_bundle_overrides_incompatible_target_options() -> None:
     assert effective.label_method == "fixed_horizon"
     assert effective.forecast_horizon == DIRECTIONAL_TARGET_HORIZON
     assert effective.forecast_horizons is None
+    assert effective.oracle_horizon == 5
     assert effective.target_up_threshold == pytest.approx(DIRECTIONAL_TARGET_UP_THRESHOLD)
     assert effective.target_down_threshold == pytest.approx(DIRECTIONAL_TARGET_DOWN_THRESHOLD)
     assert effective.target_skip_vol_scaling is False
@@ -160,6 +188,15 @@ def test_cli_directional_bundle_overrides_incompatible_target_options() -> None:
     assert effective.target_intra_sector_rank is False
     assert effective.target_ternary_intra_sector is False
     assert effective.optimize_target is False
+
+
+def test_cli_directional_bundle_keeps_default_oracle_h20() -> None:
+    options = build_arg_parser().parse_args([
+        "--mode", "train", "--directional-feature-profiles",
+    ])
+    effective = enforce_directional_bundle_target_options(options)
+    assert effective.oracle_horizon is None
+    assert effective.forecast_horizon == DIRECTIONAL_TARGET_HORIZON
 
 
 def test_profile_application_isolates_direction_artifacts() -> None:
@@ -239,6 +276,7 @@ def test_long_spy_core_profile_keeps_absolute_target_and_generates_spy_features(
 def test_ihm_command_emits_bundle_and_ignores_manual_feature_switches() -> None:
     options = PipelineLaunchOptions(
         ml_directional_profiles_enabled=True,
+        ml_oracle_horizon=10,
         ml_oracle_feature_profile="oracle.json",
         ml_long_feature_profile="long.json",
         ml_short_feature_profile="short.json",
@@ -259,6 +297,7 @@ def test_ihm_command_emits_bundle_and_ignores_manual_feature_switches() -> None:
     command = build_pipeline_command("ml_train", options)
     assert "--directional-feature-profiles" in command
     assert command[command.index("--oracle-feature-profile") + 1] == "oracle.json"
+    assert command[command.index("--oracle-horizon") + 1] == "10"
     assert command[command.index("--long-feature-profile") + 1] == "long.json"
     assert command[command.index("--short-feature-profile") + 1] == "short.json"
     assert "--enable-oracle-model" in command
@@ -296,6 +335,17 @@ def test_ihm_oracle_dynamic_keeps_manual_feature_options() -> None:
     assert "--standalone-oracle-feature-profile" not in command
     assert "--include-macro-vix" in command
     assert "--include-volume-features" in command
+
+
+def test_ihm_emits_pit_dynamic_universe_for_oracle_only() -> None:
+    options = PipelineLaunchOptions(
+        ml_enable_oracle_model=True,
+        ml_oracle_model_only=True,
+        ml_oracle_universe_mode="pit_dynamic_bars",
+    )
+    command = build_pipeline_command("ml_train", options)
+    assert "--oracle-model-only" in command
+    assert command[command.index("--oracle-universe-mode") + 1] == "pit_dynamic_bars"
 
 
 def test_ihm_oracle_json_profile_is_emitted_outside_bundle() -> None:

@@ -5,11 +5,14 @@ Appelé par les launchers PowerShell en fin d'exécution :
     scripts/windows/earnings_calendar_launcher.ps1
 
 Arguments :
-    --event       analyst_snapshot_collect | earnings_calendar_sync
+    --event       analyst_snapshot_collect | earnings_calendar_sync | market_cap_sync
     --status      OK | ERROR
     --exit-code   code de sortie du batch
     --duration    durée d'exécution (ex. 0h05m12s)
     --log-file    chemin du fichier temporaire contenant la sortie de CE run
+    --warning     (répétable) avertissement du run (ex. symbols_file absent /
+                  introuvable → repli active-tradable). Ajouté au mail
+                  (payload ``warnings`` + en-tête des logs) et au message Telegram.
 
 Canal email : ``ihm.services.email_notifier`` (env ``ALPHA_TRADE_EMAIL_*`` /
 ``ALPHA_TRADE_SMTP_*``). Canal Telegram : ``service.telegram`` (env
@@ -69,16 +72,23 @@ def _send_telegram_status(args) -> bool:
 
     ok_status = args.status == "OK"
     label = "OK" if ok_status else "ERROR"
-    icon = "✅" if ok_status else "❌"
-    lines = [f"{icon} [{args.event}] Fin de batch — {label}"]
-    if args.duration:
-        lines.append(f"Durée : {args.duration}")
-    if args.exit_code:
-        lines.append(f"Code retour : {args.exit_code}")
-    # Court extrait des logs (dernières lignes) pour contexte du run.
-    excerpt = _read_run_log(args.log_file, max_lines=10, max_chars=1200)
-    if excerpt and excerpt != "(aucune sortie capturée pour ce run)":
-        lines.append(f"Logs (fin) :\n{excerpt}")
+    if ok_status:
+        # Message succès : volontairement concis.
+        lines = [f"✅ [{args.event}] Fin de batch — OK"]
+        if args.duration:
+            lines.append(f"Durée : {args.duration}")
+    else:
+        # Message erreur : très visible (bandeau + emojis d'alerte).
+        lines = [f"🚨🚨⛔ ÉCHEC DU BATCH — {args.event} ⛔🚨🚨", "❌ Fin de batch — ERROR"]
+        if args.duration:
+            lines.append(f"Durée : {args.duration}")
+        if args.exit_code:
+            lines.append(f"Code retour : {args.exit_code}")
+    warnings = list(getattr(args, "warning", None) or [])
+    if warnings:
+        lines.append("")
+        lines.append("⚠️ Avertissements :")
+        lines.extend(f"• {warning}" for warning in warnings)
     message = "\n".join(lines)
 
     try:
@@ -103,19 +113,28 @@ def main() -> int:
     parser.add_argument("--exit-code", type=int, default=0)
     parser.add_argument("--duration", default="")
     parser.add_argument("--log-file", default="")
+    parser.add_argument("--warning", action="append", default=[], help="Avertissement du run (répétable) : symbols_file absent/introuvable → repli active-tradable.")
     parser.add_argument("--max-lines", type=int, default=300)
     parser.add_argument("--max-chars", type=int, default=20000)
     args = parser.parse_args()
 
     log_text = _read_run_log(args.log_file, max_lines=args.max_lines, max_chars=args.max_chars)
+    warnings = list(args.warning or [])
+
+    # Logs du run : on place les avertissements EN TÊTE pour une visibilité immédiate.
+    log_lines = log_text.splitlines() if log_text else ["(aucune sortie)"]
+    if warnings:
+        log_lines = ["⚠️ AVERTISSEMENTS (univers) :"] + [f"- {warning}" for warning in warnings] + ["-----"] + log_lines
 
     payload = {
         "batch": args.event,
         "status": args.status,
         "exit_code": args.exit_code,
         "duration": args.duration,
+        # Avertissements (symbols_file absent/introuvable → repli univers).
+        "warnings": warnings,
         # Liste de lignes → rendu lisible dans le JSON du mail (une ligne par entrée).
-        "logs_du_run": log_text.splitlines() if log_text else ["(aucune sortie)"],
+        "logs_du_run": log_lines,
     }
 
     from ihm.services.email_notifier import send_notification

@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import numpy as np
 
 from database.connection import get_sqlalchemy_engine
 from modelFactory.feature_logging import log_feature_duplicates, log_feature_values, log_feature_weights
@@ -122,6 +123,7 @@ def build_folds_adaptive(
     step_dates: int,
     max_splits: int,
     forecast_horizon: int = 20,
+    materialize: bool = True,
 ) -> list[dict[str, Any]]:
     """Découpe le dataset en folds causaux ADAPTATIFS (T2 bloquant).
 
@@ -138,10 +140,34 @@ def build_folds_adaptive(
     Les trois partitions produites par le splitter partagé sont conservées :
     validation pilote l'early stopping et test reste strictement OOS.
     """
-    from modelFactory.dataset import generate_walk_forward_splits_by_dates
-
     # generate_walk_forward_splits_by_dates exige un tri par date croissant.
     sorted_ds = dataset.sort_values("date").reset_index(drop=True)
+    if not materialize:
+        unique_dates = pd.Index(sorted(pd.to_datetime(sorted_ds["date"]).unique()))
+        folds: list[dict[str, Any]] = []
+        train_end_idx = min_train_dates
+        while len(folds) < max_splits:
+            val_end_idx = train_end_idx + val_dates
+            test_end_idx = val_end_idx + test_dates
+            if test_end_idx > len(unique_dates):
+                break
+            train_scope = unique_dates[:max(0, train_end_idx - forecast_horizon)]
+            val_scope = unique_dates[train_end_idx:max(train_end_idx, val_end_idx - forecast_horizon)]
+            test_scope = unique_dates[val_end_idx:test_end_idx]
+            if len(train_scope) and len(val_scope) and len(test_scope):
+                folds.append({
+                    "t_start": str(pd.Timestamp(test_scope.min()).date()),
+                    "t_end": str(pd.Timestamp(test_scope.max()).date()),
+                    "val_start": str(pd.Timestamp(val_scope.min()).date()),
+                    "train_dates": train_scope,
+                    "val_dates": val_scope,
+                    "test_dates": test_scope,
+                })
+            train_end_idx += step_dates
+        LOGGER.info("build_folds_adaptive lightweight windows=%d", len(folds))
+        return folds
+
+    from modelFactory.dataset import generate_walk_forward_splits_by_dates
     splits = generate_walk_forward_splits_by_dates(
         sorted_ds,
         min_train_dates=min_train_dates,
@@ -195,6 +221,7 @@ def run_walk_forward(
     test_windows: list[tuple[str, str]] | None = None,
     folds: list[dict[str, Any]] | None = None,
     ablation: str = "O1",
+    memory_optimized: bool = False,
 ) -> dict[str, Any]:
     """Retrain par fold + prédictions OOS + métriques par fold et globales.
 
@@ -228,22 +255,33 @@ def run_walk_forward(
     per_fold: list[dict[str, Any]] = []
     _test_feature_parts: list[pd.DataFrame] = []
     _models: list[dict[str, Any]] = []
+    _logged_lightweight_test = False
 
     for fold in folds:
-        train_fold = fold["train"].dropna(subset=[_target_col])
-        val_fold = fold.get("val", pd.DataFrame()).dropna(subset=[_target_col])
-        test_fold = fold["test"].dropna(subset=[_target_col])
+        if "train" in fold:
+            train_fold = fold["train"].dropna(subset=[_target_col])
+            val_fold = fold.get("val", pd.DataFrame()).dropna(subset=[_target_col])
+            test_fold = fold["test"].dropna(subset=[_target_col])
+        else:
+            train_fold = dataset[dataset["date"].isin(fold["train_dates"])].dropna(subset=[_target_col])
+            val_fold = dataset[dataset["date"].isin(fold["val_dates"])].dropna(subset=[_target_col])
+            test_fold = dataset[dataset["date"].isin(fold["test_dates"])].dropna(subset=[_target_col])
+            val_start = pd.Timestamp(fold["val_start"])
+            test_start = pd.Timestamp(fold["t_start"])
+            train_fold = train_fold[train_fold[GUARD_COL] < val_start]
+            val_fold = val_fold[val_fold[GUARD_COL] < test_start]
         if train_fold.empty or val_fold.empty or test_fold.empty:
             LOGGER.warning(
                 "fold %s: aucune target Oracle disponible (train=%d val=%d test=%d) — skipped",
                 fold["t_start"], len(train_fold), len(val_fold), len(test_fold),
             )
             continue
-        X_tr = train_fold[cols].astype(float)
+        dtype = np.float32 if memory_optimized else float
+        X_tr = train_fold[cols].astype(dtype)
         y_tr = train_fold[_target_col].astype(int)
-        X_val = val_fold[cols].astype(float)
+        X_val = val_fold[cols].astype(dtype)
         y_val = val_fold[_target_col].astype(int)
-        X_te = test_fold[cols].astype(float)
+        X_te = test_fold[cols].astype(dtype)
         y_te = test_fold[_target_col].astype(int)
         if y_tr.nunique() < 2 or y_val.nunique() < 2 or y_te.nunique() < 2:
             LOGGER.warning("fold %s: target constant — skipped", fold["t_start"])
@@ -254,7 +292,12 @@ def run_walk_forward(
         model = train_lightgbm(X_tr, y_tr, X_val, y_val)
         log_feature_weights(model, cols, label=f"oracle_extreme fold={fold['t_start']}")
         _models.append({"t_start": str(fold["t_start"]), "model": model})
-        _test_feature_parts.append(X_te)
+        if memory_optimized:
+            if not _logged_lightweight_test:
+                log_feature_values(X_te, cols, label="oracle_extreme_predict_features_sample_fold")
+                _logged_lightweight_test = True
+        else:
+            _test_feature_parts.append(X_te)
         proba = model.predict(X_te)
 
         oos_cols = ["date", "symbol", _target_col, "future_return"]

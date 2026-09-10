@@ -8,6 +8,7 @@ logs/
 tmp/
 catboost_info/
 .coverage
+coverage.json
 ./*.ckpt
 ./*.log
 ./*.txt

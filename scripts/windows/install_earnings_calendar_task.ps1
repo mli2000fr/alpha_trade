@@ -3,8 +3,14 @@
 # Installe la tâche planifiée Windows « AlphaTrade-EarningsCalendarSync » qui
 # exécute earnings_calendar_launcher.ps1 AUTOMATIQUEMENT (sans lancement
 # manuel) aux heures définies dans config.yaml → earnings_calendar_sync.run_hours :
-#   - run_hours: "3"    → tous les jours à 03h00
-#   - run_hours: "4,9"  → tous les jours à 04h00 et 09h00
+#   - run_hours: "3"    → à 03h00
+#   - run_hours: "4,9"  → à 04h00 et 09h00
+# run_days (0=dimanche … 6=samedi) OPTIONNEL :
+#   - renseigné (ex. "0,3,5") → déclencheurs HEBDOMADAIRES ces jours-là
+#     uniquement (le launcher garde aussi le filet run_days → ligne SKIP).
+#   - vide/absent → déclencheurs QUOTIDIENS (comportement historique).
+# L'univers est piloté par earnings_calendar_sync.symbols_file (même fichier
+# que analyst_snapshot_collect) avec repli --symbol-source active-tradable.
 #
 # Usage :
 #   powershell -ExecutionPolicy Bypass -File .\scripts\windows\install_earnings_calendar_task.ps1
@@ -19,6 +25,7 @@ param(
     [string]$PythonExePath,
     [string]$LogFile,
     [string]$RunHours,
+    [string]$RunDays,
     [ValidateSet('Interactive', 'System')]
     [string]$RunAs = 'Interactive',
     [string]$UserId = $(if ($env:USERDOMAIN) { "$($env:USERDOMAIN)\$($env:USERNAME)" } else { $env:USERNAME })
@@ -127,6 +134,27 @@ if ($hours.Count -eq 0) {
     $hours = @(3)
 }
 
+# ── run_days (facultatif) : jours de la semaine 0=dimanche … 6=samedi ──
+#    Renseigné (ex. "0,3,5") → déclencheurs HEBDOMADAIRES ces jours-là.
+#    Vide/absent → déclencheurs QUOTIDIENS (comportement historique).
+$daysRaw = $RunDays
+if (-not $daysRaw) {
+    if ($cfg -and ($cfg.PSObject.Properties.Name -contains 'run_days') -and $cfg.run_days) {
+        $daysRaw = [string]$cfg.run_days
+    } else {
+        $daysRaw = ''
+    }
+}
+$days = @(
+    $daysRaw -split ',' |
+        ForEach-Object { $_.Trim() } |
+        Where-Object { $_ -match '^\d$' } |
+        ForEach-Object { [int]$_ } |
+        Where-Object { $_ -ge 0 -and $_ -le 6 } |
+        Sort-Object -Unique
+)
+$dayNames = @('dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi')
+
 $effectiveLogFile = $LogFile
 if (-not $effectiveLogFile) {
     if ($cfg -and ($cfg.PSObject.Properties.Name -contains 'log_file') -and $cfg.log_file) {
@@ -139,10 +167,19 @@ if (-not [IO.Path]::IsPathRooted($effectiveLogFile)) {
     $effectiveLogFile = Join-Path $resolvedWorkspace $effectiveLogFile
 }
 
-# ── Triggers quotidiens aux heures configurées ──
-$triggers = @($hours | ForEach-Object {
-    New-ScheduledTaskTrigger -Daily -At (Get-Date -Hour $_ -Minute 0 -Second 0)
-})
+# ── Triggers aux heures configurées ──
+#    run_days renseigné → HEBDOMADAIRES (ces jours uniquement).
+#    run_days vide → QUOTIDIENS (comportement historique).
+if ($days.Count -gt 0) {
+    $dayOfWeek = @($days | ForEach-Object { [DayOfWeek]$_ })
+    $triggers = @($hours | ForEach-Object {
+        New-ScheduledTaskTrigger -Weekly -DaysOfWeek $dayOfWeek -At (Get-Date -Hour $_ -Minute 0 -Second 0)
+    })
+} else {
+    $triggers = @($hours | ForEach-Object {
+        New-ScheduledTaskTrigger -Daily -At (Get-Date -Hour $_ -Minute 0 -Second 0)
+    })
+}
 
 # ── Action : powershell -File <launcher> ──
 $argumentList = @(
@@ -173,7 +210,14 @@ Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $triggers -S
 
 Write-Host "Task Scheduler installé: $TaskName" -ForegroundColor Green
 Write-Host "Workspace   : $resolvedWorkspace"
-Write-Host "Heures      : $($hours -join ', ') (tous les jours)"
+Write-Host "Heures      : $($hours -join ', ')"
+if ($days.Count -gt 0) {
+    $dayLabels = @($days | ForEach-Object { $dayNames[$_] })
+    Write-Host "Jours       : $($days -join ',') ($($dayLabels -join ', '))"
+    Write-Host "Planif      : hebdomadaire (uniquement ces jours — le launcher garde le filet run_days → SKIP)"
+} else {
+    Write-Host "Planif      : tous les jours (run_days vide/absent)"
+}
 Write-Host "RunAs       : $RunAs"
 Write-Host "Log statut  : $effectiveLogFile"
 Write-Host ""

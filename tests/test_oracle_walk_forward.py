@@ -101,6 +101,27 @@ def test_adaptive_folds_retain_distinct_validation_and_test():
         assert fold["val"]["oracle_available_date"].max() < fold["test"]["date"].min()
 
 
+def test_lightweight_adaptive_folds_match_materialized_date_contract():
+    df = _dataset(n_days=400)
+    kwargs = dict(min_train_dates=150, val_dates=40, test_dates=40,
+                  step_dates=40, max_splits=2, forecast_horizon=20)
+    materialized = build_folds_adaptive(df, **kwargs)
+    lightweight = build_folds_adaptive(df, materialize=False, **kwargs)
+    assert len(lightweight) == len(materialized)
+    for full, light in zip(materialized, lightweight, strict=True):
+        light_train = df[
+            df["date"].isin(light["train_dates"])
+            & (df["oracle_available_date"] < pd.Timestamp(light["val_start"]))
+        ]
+        light_val = df[
+            df["date"].isin(light["val_dates"])
+            & (df["oracle_available_date"] < pd.Timestamp(light["t_start"]))
+        ]
+        assert set(full["train"]["date"].unique()) == set(light_train["date"].unique())
+        assert set(full["val"]["date"].unique()) == set(light_val["date"].unique())
+        assert set(full["test"]["date"].unique()) == set(light["test_dates"])
+
+
 def test_walk_forward_uses_validation_not_test_for_early_stopping(monkeypatch):
     dataset = _dataset(n_days=400)
     folds = build_folds(dataset, [("2022-01-03", "2022-03-31")])

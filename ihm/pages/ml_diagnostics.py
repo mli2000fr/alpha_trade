@@ -37,6 +37,7 @@ from ihm.services.directional_prediction_diagnostics import (
 )
 from modelFactory.report import generate_batch_report
 from modelFactory.db_registry import audit_batch_delete, audit_batch_delete_attempt, delete_batch_rows
+from modelFactory.oracle.artifact_contract import resolve_oracle_artifact_horizon
 
 # ── Chargement config (fallback silencieux si absent) ──
 _MIN_RISING_HORIZONS_DEFAULT = 4
@@ -1022,6 +1023,7 @@ ORACLE_LABELS_DECILE_QUERY = """
     FROM alpha_trade.global_oracle_labels
     WHERE batch_id = :batch_id
       AND horizon = :horizon
+      AND target_quality_valid = 1
       AND oracle_decile IS NOT NULL
     ORDER BY prediction_date, symbol
 """
@@ -2099,7 +2101,10 @@ def _load_latest_oracle_oos(batch_id: str) -> tuple[str | None, pd.DataFrame]:
 
 
 def _batch_best_horizon(batch_id: str) -> int:
-    """Meilleur horizon du Global Ranking pour ce batch (metadata, défaut H20)."""
+    """Horizon Oracle de l'artefact, puis meilleur horizon Global Ranking."""
+    oracle_horizon = resolve_oracle_artifact_horizon(batch_id, get_model_artifacts_dir())
+    if oracle_horizon is not None:
+        return oracle_horizon
     try:
         detail = _cached_query(BATCH_DETAIL_QUERY, {"batch_id": batch_id})
         if detail.empty:
@@ -4188,6 +4193,14 @@ def render() -> None:
 
     # Formater les colonnes pour l'affichage
     display_df = batches_df.copy()
+    if "batch_id" in display_df.columns:
+        display_df["oracle_horizon"] = [
+            (f"H{h}" if h is not None else "—")
+            for h in (
+                resolve_oracle_artifact_horizon(str(bid), get_model_artifacts_dir())
+                for bid in display_df["batch_id"]
+            )
+        ]
     if "status" in display_df.columns:
         display_df["status"] = display_df["status"].apply(_status_badge)
     if "symbol_source" in display_df.columns:
@@ -4215,7 +4228,7 @@ def render() -> None:
             (c[:60] + "…") if c != "—" and len(c) > 60 else c for c in cleaned_comments
         ]
         # Réordonne les colonnes : batch_id, group, status, puis le reste.
-        _ordered = ["batch_id", "group", "status"]
+        _ordered = ["batch_id", "oracle_horizon", "group", "status"]
         display_df = display_df[
             [c for c in _ordered if c in display_df.columns]
             + [c for c in display_df.columns if c not in _ordered]

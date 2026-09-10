@@ -658,7 +658,7 @@ def _load_pre_submission_borrows(
 ) -> dict[str, object]:
     """Charge les statuts de borrow (ETB/HTB/NOT_SHORTABLE) depuis l'API Alpaca."""
     from datetime import datetime as _dt, timezone as _tz
-    from risk_management.liquidity import BorrowSnapshot, BorrowStatus
+    from risk_management.liquidity import BorrowSnapshot, BorrowStatus, alpaca_borrow_status
     from service.alpaca.clientAlpaca import fetch_asset_by_symbol
 
     if not symbols:
@@ -683,19 +683,15 @@ def _load_pre_submission_borrows(
             )
             continue
 
-        shortable = bool(asset.get("shortable", False))
-        easy_to_borrow = bool(asset.get("easy_to_borrow", False))
+        status = alpaca_borrow_status(asset)
 
-        if not shortable:
-            status = BorrowStatus.NOT_SHORTABLE
+        if status == BorrowStatus.NOT_SHORTABLE:
             fee = float("inf")
             locate_required = False
-        elif not easy_to_borrow:
-            status = BorrowStatus.HARD_TO_BORROW
+        elif status == BorrowStatus.HARD_TO_BORROW:
             fee = 0.05
             locate_required = True
         else:
-            status = BorrowStatus.EASY_TO_BORROW
             fee = 0.003
             locate_required = False
 

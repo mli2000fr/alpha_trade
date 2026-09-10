@@ -6,12 +6,17 @@ donc devenir des observations d'entraînement/validation/test.
 """
 from __future__ import annotations
 
+import json
+import logging
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
 from modelFactory.oracle.extreme_gate import DEFAULT_POOL_PCT, compute_extreme_gate
+
+LOGGER = logging.getLogger(__name__)
 
 ORACLE_PROBA_COLUMN = "directional_oracle_proba_extreme"
 ORACLE_PERCENTILE_COLUMN = "directional_oracle_extreme_pct"
@@ -84,6 +89,68 @@ def build_directional_oof_gate(
         "last_date": str(gated["date"].max().date()),
     }
     return gated, diagnostics
+
+
+def load_or_rebuild_directional_oof_gate(
+    engine: Any,
+    *,
+    oracle_batch_id: str,
+    gate_path: Path | str,
+    pool_pct: float = DEFAULT_POOL_PCT,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Charge le cache OOF ou le reconstruit depuis la table Oracle persistée.
+
+    Les entraînements Oracle autonomes ne produisent pas nécessairement le
+    cache directionnel. La table ``oracle_extreme_predictions`` reste alors la
+    source canonique : ``build_directional_oof_gate`` ne conserve que les
+    lignes traçables par un ``fold_start`` et recalcule le percentile par date.
+    """
+    path = Path(gate_path)
+    if path.is_file():
+        gate = pd.read_parquet(path)
+        return gate, {
+            "cache_rebuilt": False,
+            "cache_path": str(path),
+            "source_batch_id": str(oracle_batch_id),
+        }
+
+    from modelFactory.oracle.predictions_store import load_oracle_predictions
+
+    oracle_oof = load_oracle_predictions(engine, batch_id=str(oracle_batch_id))
+    if oracle_oof.empty:
+        raise FileNotFoundError(
+            f"Cache Oracle OOF introuvable et aucune prédiction persistée: {path}"
+        )
+    input_rows = int(len(oracle_oof))
+    traceable_rows = int(oracle_oof["fold_start"].notna().sum())
+    if traceable_rows == 0:
+        raise ValueError(
+            "directional_oracle_oof_untraceable:"
+            f"batch_id={oracle_batch_id},rows={input_rows}"
+        )
+
+    gate, diagnostics = build_directional_oof_gate(
+        oracle_oof, pool_pct=float(pool_pct),
+    )
+    diagnostics = {
+        **diagnostics,
+        "cache_rebuilt": True,
+        "cache_path": str(path),
+        "source_batch_id": str(oracle_batch_id),
+        "persisted_rows_read": input_rows,
+        "non_oof_rows_excluded": input_rows - traceable_rows,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    gate.to_parquet(path, index=False)
+    path.with_suffix(".json").write_text(
+        json.dumps(diagnostics, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
+    LOGGER.info(
+        "oracle directional OOF gate rebuilt batch=%s path=%s rows=%d eligible=%d",
+        oracle_batch_id, path, diagnostics["rows"], diagnostics["eligible_rows"],
+    )
+    return gate, diagnostics
 
 
 def attach_directional_oof_gate(

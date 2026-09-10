@@ -35,6 +35,7 @@ Cette arborescence documente l'application telle qu'elle existe dans le code sou
 | Modèle per-sector détaillé | [Dossier](ml/per_sector/README.md) | pooling sectoriel, targets, champions tabulaires et fallback |
 | Oracle Extreme | [08](08_ml_oracle_extreme.md) | `modelFactory/oracle/` |
 | Oracle Extreme détaillé | [Dossier Oracle](ml/oracle/README.md) | labels, tables, anti-fuite, walk-forward, inférence et gate |
+| Oracle TOP20 tradable | [Backtest et live](ml/oracle_tradable_top20_backtest_live.md) | filtre PIT, recalcul des percentiles, direction et abstention |
 | Risque | [09](09_risque_et_portefeuille.md) | `risk_management/` |
 | Régimes | [10](10_regime_marche.md) | `service/market/`, `risk_management/regime_*` |
 | Exécution | [11](11_execution_et_protections.md) | `run_execution.py`, `execution_engine/` |

@@ -517,6 +517,11 @@ class TrainingConfig:
     # Profil Oracle hors bundle. ``None`` conserve le mode dynamique piloté
     # par les familles de features de DataConfig.
     standalone_oracle_feature_profile: str | None = None
+    # P0f : univers historique quotidien bar-only. Opt-in et réservé aux runs
+    # Oracle-only de recherche ; le contrat statique legacy reste le défaut.
+    oracle_universe_mode: str = "static_bars"
+    # Horizon propre à l'Oracle Extreme. H20 reste le contrat par défaut.
+    oracle_horizon: int = 20
     long_feature_profile: str = "long.json"
     short_feature_profile: str = "short.json"
     model_role: str = "direction_legacy"  # direction_legacy | direction_long | direction_short
@@ -535,6 +540,14 @@ class TrainingConfig:
             raise ValueError("training_mode doit être 'per_symbol' ou 'per_sector'.")
         if self.model_role not in {"direction_legacy", "direction_long", "direction_short"}:
             raise ValueError("model_role invalide.")
+        if self.oracle_universe_mode not in {"static_bars", "pit_dynamic_bars"}:
+            raise ValueError("oracle_universe_mode invalide.")
+        if self.oracle_horizon < 1:
+            raise ValueError("oracle_horizon doit être >= 1.")
+        if self.oracle_universe_mode == "pit_dynamic_bars" and not self.data.oracle_model_only:
+            raise ValueError("L'univers Oracle PIT dynamique requiert oracle_model_only=True.")
+        if self.oracle_universe_mode == "pit_dynamic_bars" and self.directional_profiles_enabled:
+            raise ValueError("L'univers Oracle PIT dynamique n'est pas encore servable en bundle.")
         if self.directional_profiles_enabled and self.training_mode != "per_symbol":
             raise ValueError("Les profils directionnels LONG/SHORT requièrent training_mode='per_symbol'.")
         if not 0.0 < self.directional_oracle_pool_pct < 1.0:

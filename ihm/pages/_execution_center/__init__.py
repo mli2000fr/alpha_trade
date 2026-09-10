@@ -3321,8 +3321,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         ml_long_feature_profile = "long.json" if "long.json" in long_profiles else long_profiles[0]
         ml_short_feature_profile = "short.json" if "short.json" in short_profiles else short_profiles[0]
         ml_standalone_oracle_feature_profile = "dynamic"
+        ml_oracle_universe_mode = "static_bars"
+        ml_oracle_horizon = 20
         if ml_directional_profiles_enabled:
-            profile_col0, profile_col1, profile_col2 = st.columns(3)
+            profile_col0, profile_col1, profile_col2, profile_col3 = st.columns(4)
             with profile_col0:
                 ml_oracle_feature_profile = cast(str, st.selectbox(
                     "Profil de features Oracle", options=oracle_profiles,
@@ -3340,6 +3342,25 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     "Profil de features SHORT", options=short_profiles,
                     index=short_profiles.index("short.json") if "short.json" in short_profiles else 0,
                     key="pipeline_ml_short_feature_profile",
+                ))
+            with profile_col3:
+                _oracle_horizons = [5, 10, 15, 20]
+                _saved_oracle_horizon = _session_state_int(
+                    "pipeline_ml_oracle_horizon", 20,
+                )
+                ml_oracle_horizon = int(st.selectbox(
+                    "Horizon Oracle",
+                    options=_oracle_horizons,
+                    index=(
+                        _oracle_horizons.index(_saved_oracle_horizon)
+                        if _saved_oracle_horizon in _oracle_horizons else 3
+                    ),
+                    format_func=lambda h: f"H{h}",
+                    key="pipeline_ml_oracle_horizon",
+                    help=(
+                        "Horizon de détection d'amplitude de l'Oracle. "
+                        "Les branches LONG/SHORT restent indépendamment en H20."
+                    ),
                 ))
         if ml_directional_profiles_enabled:
             st.session_state["pipeline_ml_enable_oracle_model"] = True
@@ -3819,16 +3840,33 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         "Un fichier JSON remplace ce choix et impose exclusivement son contrat de features."
                     ),
                 ))
+                ml_oracle_universe_mode = cast(str, st.selectbox(
+                    "Univers historique des labels Oracle",
+                    options=["static_bars", "pit_dynamic_bars"],
+                    index=0,
+                    format_func=lambda value: (
+                        "Statique — fichier sélectionné (legacy)"
+                        if value == "static_bars"
+                        else "PIT dynamique quotidien — gates P0b (expérience P0f)"
+                    ),
+                    key="pipeline_ml_oracle_universe_mode",
+                    help=(
+                        "Le mode PIT recalcule chaque jour l'admission depuis les barres, avant les labels "
+                        "et les rangs de features. Il force Oracle Extreme ONLY et produit un batch de recherche non servable."
+                    ),
+                ))
             # Auto-décochage : si le 1er checkbox (Oracle Extreme) est décoché,
             # le 2e (Oracle ONLY) est forcé à False AVANT son instanciation
             # (sinon il resterait coché dans session_state alors que désactivé).
             if not ml_enable_oracle_model:
                 st.session_state["pipeline_ml_oracle_model_only"] = False
+            if ml_oracle_universe_mode == "pit_dynamic_bars":
+                st.session_state["pipeline_ml_oracle_model_only"] = True
             ml_oracle_model_only = st.checkbox(
                 "🔮 Oracle Extreme ONLY — sauter global, per-symbol et per-sector",
                 value=_session_state_bool("pipeline_ml_oracle_model_only", DEFAULT_ML_ORACLE_MODEL_ONLY),
                 key="pipeline_ml_oracle_model_only",
-                disabled=not ml_enable_oracle_model,
+                disabled=not ml_enable_oracle_model or ml_oracle_universe_mode == "pit_dynamic_bars",
                 help="Ajoute `--oracle-model-only`. N'entraîne QUE le modèle Oracle Extreme (O0), sans le Global Model ni les modèles per-symbol/per-sector. Nécessite que l'Oracle Extreme soit activé (case ci-dessus).",
             )
 
@@ -3975,7 +4013,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             st.success(
                 "Contrat directionnel bundle : rendement absolu H20 · LONG > +3 % · "
                 "SHORT < −3 % · zone intermédiaire FLAT. L'Oracle conserve séparément "
-                "sa cible binaire d'amplitude Extreme H20."
+                f"sa cible binaire d'amplitude Extreme H{ml_oracle_horizon}."
             )
         with ml_target_col3:
             ml_decision_threshold = float(
@@ -4947,6 +4985,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_include_macro_regime=bool(ml_include_macro_regime),
             ml_include_score_components=bool(ml_include_score_components),
             ml_directional_profiles_enabled=bool(ml_directional_profiles_enabled),
+            ml_oracle_horizon=int(ml_oracle_horizon),
             ml_oracle_feature_profile=str(ml_oracle_feature_profile),
             ml_standalone_oracle_feature_profile=str(ml_standalone_oracle_feature_profile),
             ml_long_feature_profile=str(ml_long_feature_profile),
@@ -4984,6 +5023,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_exclude_per_symbol_per_sector=bool(ml_exclude_per_symbol_per_sector),
             ml_enable_oracle_model=bool(ml_enable_oracle_model),
             ml_oracle_model_only=bool(ml_oracle_model_only),
+            ml_oracle_universe_mode=str(ml_oracle_universe_mode),
             ml_enable_global_stacking=bool(ml_enable_global_stacking),
             ml_global_champion=bool(ml_global_champion),
             ml_global_model_name=cast(Any, ml_global_model_name),

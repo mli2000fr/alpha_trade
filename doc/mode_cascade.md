@@ -1,6 +1,12 @@
 # Cascade de sélection et modes de ranking
 
-> Architecture associée : [bundle unique Oracle Extreme + champions Per-Symbol LONG/SHORT](ml/per_symbol/07_bundle_oracle_long_short.md).
+> Contrat multi-horizon Oracle : l'horizon est enregistré dans l'artefact du
+> batch et relu automatiquement à la prédiction. Un bundle peut utiliser un
+> Oracle H5/H10/H15/H20 tout en conservant ses modèles Per-Symbol LONG/SHORT
+> en H20. Le backtest et le live sélectionnent l'Oracle par `batch_id` ; ils ne
+> doivent jamais mélanger les prédictions de plusieurs batches/horizons.
+
+> Architectures associées : [bundle unique Oracle Extreme + champions Per-Symbol LONG/SHORT](ml/per_symbol/07_bundle_oracle_long_short.md) · [Oracle TOP20 recalculé sur l’univers tradable — backtest et live](ml/oracle_tradable_top20_backtest_live.md).
 
 Retour : [documentation recherche](research/README.md) · Voir aussi : [Oracle Extreme](ml/oracle/README.md)
 
