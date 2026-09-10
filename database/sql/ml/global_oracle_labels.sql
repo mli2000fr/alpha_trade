@@ -4,13 +4,19 @@ CREATE TABLE alpha_trade.global_oracle_labels (
     batch_id               VARCHAR(64)  NOT NULL COMMENT 'Batch du Global Model (B25)',
     horizon                INT          NOT NULL COMMENT 'H20=20 (horizon canonique de la 1ʳᵉ expérience)',
     future_return          DOUBLE       NULL COMMENT 'Rendement futur réalisé adj_close[D+H]/adj_close[D]-1 (target brut)',
+    future_return_raw      DOUBLE       NULL COMMENT 'Rendement brut conservé pour audit, même si la target est invalidée',
     oracle_pct_rank        DOUBLE       NULL COMMENT 'Percentile cross-sectionnel intra-date [0,1]',
     oracle_decile          SMALLINT     NULL COMMENT 'Décile 1..10 (10 = meilleur rendement futur)',
     oracle_extreme10           TINYINT(1)   NULL COMMENT '1 si TOP 10% OU BOTTOM 10% cross-sectionnel du jour (gros mouvement H20) — target du modèle Oracle Extreme (ex-oracle_top10)',
     oracle_exit_date       DATE         NULL COMMENT 'D + horizon',
     oracle_available_date  DATE         NULL COMMENT 'oracle_exit_date + 1 jour ouvrés — garde anti-leakage',
+    target_quality_valid   TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '1 uniquement si barres D/D+H réelles et continuité du titre valide',
+    target_quality_reason  VARCHAR(128) NULL COMMENT 'Premier motif déterministe de quarantaine de la target',
+    price_start_source     VARCHAR(64)  NULL COMMENT 'Source de la barre réellement observée à D',
+    price_end_source       VARCHAR(64)  NULL COMMENT 'Source de la barre réellement observée à D+H',
     created_at             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (prediction_date, symbol, batch_id, horizon),
     KEY idx_gol_batch_date (batch_id, prediction_date),
-    KEY idx_gol_available_date (oracle_available_date)
+    KEY idx_gol_available_date (oracle_available_date),
+    KEY idx_gol_quality_batch (batch_id, horizon, target_quality_valid, prediction_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

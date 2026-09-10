@@ -319,12 +319,15 @@ def build_trade_export_bundle(
         pipeline_signals_df,
         legacy_trades_df=legacy_trades_df,
     )
-    if not pipeline_export_df.empty:
-        export_df = pipeline_export_df
-        export_source = "phase3_to_phase7_pipeline"
-    else:
+    # ``trades.csv`` is the portfolio truth used by PnL/reporting.  Pipeline
+    # rows are candidate lifecycle diagnostics and can outnumber executed
+    # trades; exporting them as trades made the report internally inconsistent.
+    if not legacy_trades_df.empty:
         export_df = legacy_trades_df
         export_source = legacy_source
+    else:
+        export_df = pipeline_export_df
+        export_source = "phase3_to_phase7_pipeline_fallback"
 
     summary: dict[str, object] = {
         "source": export_source,
@@ -869,6 +872,35 @@ def save_trades_csv(
         )
     except Exception as exc:
         LOGGER.warning("Impossible d'exporter les trades : %s", exc)
+    return filepath
+
+
+def save_pipeline_trade_candidates_csv(
+    pf,
+    pipeline_signals_df: pd.DataFrame | None,
+    output_dir: Path | None = None,
+) -> Path | None:
+    """Export pipeline candidates separately from actually executed trades."""
+    if pipeline_signals_df is None or pipeline_signals_df.empty:
+        return None
+    out = output_dir or ARTIFACTS_DIR
+    out.mkdir(parents=True, exist_ok=True)
+    filepath = out / "pipeline_trade_candidates.csv"
+    try:
+        legacy_trades_df, _ = _build_legacy_trade_export_frame(pf)
+        candidates_df, _ = _build_pipeline_trade_export_frame(
+            pipeline_signals_df,
+            legacy_trades_df=legacy_trades_df,
+        )
+        candidates_df.to_csv(str(filepath), index=False)
+        LOGGER.info(
+            "Candidats pipeline exportés : %s (%d lignes; hors vérité portefeuille)",
+            filepath,
+            len(candidates_df),
+        )
+    except Exception as exc:
+        LOGGER.warning("Impossible d'exporter les candidats pipeline : %s", exc)
+        return None
     return filepath
 
 

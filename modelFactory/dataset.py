@@ -15,6 +15,10 @@ from torch.utils.data import DataLoader, Dataset
 
 from modelFactory.config import DataConfig, ModelConfig
 from modelFactory.cross_sectional import CROSS_SECTIONAL_FEATURE_COLUMNS, build_cross_sectional_features, merge_cross_sectional_features
+from modelFactory.directional_conditioning import (
+    attach_directional_oof_gate,
+    eligible_target_mask,
+)
 from modelFactory.features import FEATURE_COLUMNS, build_target, compute_features, compute_future_return, get_feature_columns
 from modelFactory.labeling import TripleBarrierConfig, build_triple_barrier_targets
 from modelFactory.reproducibility import build_torch_generator, derive_seed, seed_worker
@@ -527,7 +531,10 @@ def build_sequences(features: np.ndarray, targets: np.ndarray, seq_len: int) -> 
 def build_sequence_dataset(df: pd.DataFrame, scaler: FeatureScaler, seq_len: int, *, is_regression: bool = False) -> SequenceDataset | None:
     """Construit un `SequenceDataset` à partir d'un split préparé."""
     feats = scaler.transform(df)
-    targets = df["target"].values
+    # Les lignes non retenues par l'Oracle restent dans ``feats`` pour former
+    # un historique quotidien contigu, mais ne peuvent pas être endpoints.
+    targets = pd.to_numeric(df["target"], errors="coerce").to_numpy(dtype=float, copy=True)
+    targets[~eligible_target_mask(df).to_numpy()] = np.nan
     X, y = build_sequences(feats, targets, seq_len)
     return SequenceDataset(X, y, is_regression=is_regression) if len(X) > 0 else None
 
@@ -576,6 +583,7 @@ class SymbolDataModule(L.LightningDataModule):
         cross_sectional_df: pd.DataFrame | None = None,
         include_global_stacking: bool = False,
         fundamental_df: pd.DataFrame | None = None,
+        oracle_gate_df: pd.DataFrame | None = None,
     ) -> None:
         super().__init__()
         self.bars_df = bars_df
@@ -587,6 +595,7 @@ class SymbolDataModule(L.LightningDataModule):
         self.selector_df = selector_df
         self.cross_sectional_df = cross_sectional_df
         self.fundamental_df = fundamental_df
+        self.oracle_gate_df = oracle_gate_df
         self.reproducibility_seed = int(reproducibility_seed)
         self._include_global_stacking = bool(include_global_stacking)
         self._feature_cols = get_feature_columns(
@@ -648,6 +657,7 @@ class SymbolDataModule(L.LightningDataModule):
             cross_sectional_df=self.cross_sectional_df,
             include_global_stacking=self._include_global_stacking,
             fundamental_df=self.fundamental_df,
+            oracle_gate_df=self.oracle_gate_df,
         )
         self.prepared_df = df
         self.cross_sectional_diagnostics = dict(df.attrs.get("cross_sectional_diagnostics", {}))
@@ -738,6 +748,7 @@ def prepare_symbol_frame(
     cross_sectional_df: pd.DataFrame | None = None,
     include_global_stacking: bool = False,
     fundamental_df: pd.DataFrame | None = None,
+    oracle_gate_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Prepare le DataFrame final features + target pour un symbole.
 
@@ -855,6 +866,8 @@ def prepare_symbol_frame(
             len(active_features),
         )
     df = df.dropna(subset=active_features).reset_index(drop=True)
+    if oracle_gate_df is not None:
+        df = attach_directional_oof_gate(df, oracle_gate_df)
     df.attrs["cross_sectional_diagnostics"] = cross_sectional_diagnostics
     return df
 

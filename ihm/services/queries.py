@@ -2570,8 +2570,8 @@ def get_daily_pnl_data() -> dict[str, object]:
 # ────────────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=300, show_spinner="Chargement des diagnostics batch ML…")
-def get_batch_diagnostics_summary() -> dict[str, object]:
-    """Charge le résumé des diagnostics du dernier batch complété
+def get_batch_diagnostics_summary(batch_id: str | None = None) -> dict[str, object]:
+    """Charge le résumé des diagnostics d'un batch, ou du dernier batch,
     depuis ``alpha_trade.model_batch_diagnostics``.
 
     Returns:
@@ -2589,14 +2589,17 @@ def get_batch_diagnostics_summary() -> dict[str, object]:
         - ``prefer_symbols`` : list[str]  (top N, selon prefer_top_n config)
         - ``available`` : bool
     """
+    normalized_batch_id = str(batch_id or "").strip() or None
     latest = safe_query(
         """
         SELECT batch_id, batch_started_at
         FROM alpha_trade.model_batch_diagnostics
+        WHERE (:bid IS NULL OR batch_id = :bid)
         GROUP BY batch_id, batch_started_at
         ORDER BY batch_started_at DESC
         LIMIT 1
-        """
+        """,
+        {"bid": normalized_batch_id},
     )
     if latest.empty:
         return {"available": False, "reason": "Aucun diagnostic batch trouvé en base."}
@@ -2613,6 +2616,23 @@ def get_batch_diagnostics_summary() -> dict[str, object]:
     if not comment_df.empty:
         raw = str(comment_df["comment"].iloc[0] or "").strip()
         batch_comment = raw or None
+
+    # Les catégories de diagnostic ne couvrent pas nécessairement chaque
+    # symbole (un titre peut n'être ni top/bottom, ni faible). Le dénominateur
+    # affiché doit venir des runs directionnels réellement terminés.
+    trained_symbols_df = safe_query(
+        """
+        SELECT COUNT(DISTINCT symbol) AS total_symbols
+        FROM alpha_trade.model_training_run
+        WHERE batch_id = :bid
+          AND status = 'completed'
+          AND model_role IN ('direction_legacy', 'direction_long', 'direction_short')
+        """,
+        {"bid": batch_id},
+    )
+    trained_symbol_count = 0
+    if not trained_symbols_df.empty:
+        trained_symbol_count = int(trained_symbols_df["total_symbols"].iloc[0] or 0)
 
     df = safe_query(
         """
@@ -2645,7 +2665,7 @@ def get_batch_diagnostics_summary() -> dict[str, object]:
             "batch_id": batch_id,
             "batch_started_at": batch_started_at,
             "batch_comment": batch_comment,
-            "total_symbols": 0,
+            "total_symbols": trained_symbol_count,
             "top": [],
             "bottom": [],
             "zero_short": [],
@@ -2739,7 +2759,7 @@ def get_batch_diagnostics_summary() -> dict[str, object]:
         "batch_id": batch_id,
         "batch_started_at": batch_started_at,
         "batch_comment": batch_comment,
-        "total_symbols": int(df["symbol"].nunique()),
+        "total_symbols": max(trained_symbol_count, int(df["symbol"].nunique())),
         "top": top_rows,
         "bottom": bottom_rows,
         "zero_short": zero_short_rows,

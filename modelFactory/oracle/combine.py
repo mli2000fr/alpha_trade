@@ -128,6 +128,7 @@ def apply_oracle_calibration(
     method: str = "none",
     *,
     selection_folds: list[str] | None = None,
+    calibration_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Applique une calibration à ``proba_extreme`` sur un DataFrame OOS.
 
@@ -136,9 +137,9 @@ def apply_oracle_calibration(
 
     - ``none`` / ``identity`` : proba brute (inchangée) ;
     - ``rank`` : percentile cross-sectionnel intra-date (0..1) ;
-    - ``isotonic`` : régression isotonique (PAV), fit sur ``selection_folds``
-      (défaut 2022-2024, jamais les folds OOS finaux) si la cible
-      ``oracle_extreme10`` est disponible, sinon proba inchangée.
+    - ``isotonic`` : régression isotonique (PAV), ajustée exclusivement sur
+      ``calibration_df`` puis appliquée à ``oos_df``. Le jeu évalué ne sert
+      jamais implicitement de jeu d'ajustement.
     """
     df = oos_df.copy()
     method = str(method or "none").strip().lower()
@@ -150,25 +151,29 @@ def apply_oracle_calibration(
         )
         return df
     if method == "isotonic":
-        if "oracle_extreme10" not in df.columns:
-            LOGGER.warning(
-                "apply_oracle_calibration: isotonic demandé mais cible "
-                "oracle_extreme10 absente → proba inchangée"
+        if calibration_df is None:
+            raise ValueError(
+                "isotonic exige calibration_df séparé du jeu évalué; "
+                "ajuster sur oos_df créerait une fuite temporelle"
             )
-            return df
-        fit = df
+        fit = calibration_df.copy()
+        required = {"proba_extreme", "oracle_extreme10"}
+        missing = sorted(required.difference(fit.columns))
+        if missing:
+            raise ValueError(
+                "calibration_df incomplet pour isotonic: " + ", ".join(missing)
+            )
         folds = selection_folds or DEFAULT_CALIBRATION_SELECTION_FOLDS
-        if "fold_start" in df.columns:
-            fit_sub = df[df["fold_start"].isin(folds)]
+        if "fold_start" in fit.columns:
+            fit_sub = fit[fit["fold_start"].isin(folds)]
             if not fit_sub.empty:
                 fit = fit_sub
         fit = fit.dropna(subset=["proba_extreme", "oracle_extreme10"])
         if fit.empty or len(fit) < 50:
-            LOGGER.warning(
-                "apply_oracle_calibration: set de fit isotonique trop petit "
-                "(%d lignes) → proba inchangée", len(fit),
+            raise ValueError(
+                "set de calibration isotonique trop petit "
+                f"({len(fit)} lignes; minimum 50)"
             )
-            return df
         # Binning : isotonic_regression (PAV) est O(n²) — sur des volumes OOS
         # de ~200k lignes il est impraticable. On réduit le set de fit à
         # ~1000 bins quantiles (moyenne proba + taux réalisé par bin), PAV

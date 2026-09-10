@@ -381,6 +381,58 @@ def load_tradable_universe_for_period(
     return symbols
 
 
+def load_tradable_universe_by_date(
+    engine: Engine,
+    dates: Iterable[str | date],
+    capital_preset_key: str = DEFAULT_CAPITAL_PRESET_KEY,
+) -> dict[str, set[str]]:
+    """Charge le snapshot canonique *exact* de chaque date demandée.
+
+    Contrairement à :func:`resolve_universe_asof`, cette fonction n'autorise
+    aucun report d'un ancien snapshot. Elle est destinée aux gates Oracle PIT :
+    une date absente reste absente et le consommateur peut ainsi échouer fermé.
+    Seuls les runs complets, canoniques et de qualité ``full`` sont acceptés.
+    """
+    normalized = sorted({
+        value.isoformat() if isinstance(value, date) else str(value)[:10]
+        for value in dates if value is not None and str(value).strip()
+    })
+    if not normalized:
+        return {}
+    params: dict[str, Any] = {"preset_key": capital_preset_key}
+    placeholders: list[str] = []
+    for index, value in enumerate(normalized):
+        key = f"date_{index}"
+        params[key] = value
+        placeholders.append(f":{key}")
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                f"""
+                SELECT r.snapshot_date, UPPER(TRIM(h.symbol)) AS symbol
+                FROM tradable_universe_runs r
+                JOIN tradable_universe_history h
+                  ON h.universe_run_id = r.universe_run_id
+                WHERE r.capital_preset_key = :preset_key
+                  AND r.snapshot_date IN ({', '.join(placeholders)})
+                  AND r.status = 'completed'
+                  AND r.is_canonical = 1
+                  AND r.rows_written = r.rows_expected
+                  AND LOWER(r.data_quality_grade) = 'full'
+                  AND h.is_tradable = 1
+                ORDER BY r.snapshot_date, symbol
+                """
+            ),
+            params,
+        ).mappings().all()
+    result: dict[str, set[str]] = {}
+    for row in rows:
+        raw_date = row["snapshot_date"]
+        date_key = raw_date.isoformat() if isinstance(raw_date, date) else str(raw_date)[:10]
+        result.setdefault(date_key, set()).add(str(row["symbol"]).strip().upper())
+    return result
+
+
 # ── Universe fingerprint helper (Section 17 Point 2.2) ──────────────────────
 
 def compute_universe_fingerprint(

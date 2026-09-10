@@ -154,6 +154,16 @@ Pour juger un modèle : agréger les prédictions OOS uniquement, conserver mét
 
 Le per-symbol apprend la dynamique propre d'un ticker lorsque l'historique et les classes suffisent. Le per-sector mutualise les observations d'un secteur ; `sector_use_symbol_feature` contrôle si l'identité du symbole est injectée comme catégorie. Les branches peuvent utiliser LSTM attention, LightGBM, CatBoost ou baselines selon options et disponibilité des extras.
 
+### Direction mutualisée conditionnelle à l'Oracle
+
+La recherche directionnelle dispose aussi d'un modèle mutualisé expérimental qui
+regroupe les événements TOP20 de l'Oracle strictement OOF. Il apprend directement
+D1 contre D10 sur l'ensemble des symboles, conserve le symbole et le secteur comme
+contexte catégoriel et transforme l'incertitude en abstention. Ce modèle reste hors
+serving tant que ses gates OOS ne sont pas validés. Le contrat de population, les
+garde-fous anti-fuite, les métriques de promotion et la commande sont détaillés dans
+[Modèle directionnel mutualisé sur les événements Oracle](ml/shared_directional_oracle_events.md).
+
 Les petits groupes, classes absentes et historiques insuffisants sont skipped avec diagnostic plutôt que forcés. Un champion par symbole/secteur ne doit être utilisé que si sa metadata couvre l'horizon, le target et les features du predict.
 
 ### Registry et artefacts

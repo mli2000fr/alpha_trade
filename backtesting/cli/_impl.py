@@ -195,6 +195,8 @@ def _load_batch_training_universe_scope(
     engine: object,
     batch_id: str | None,
     trade_dates,
+    *,
+    artifacts_dir: Path | None = None,
 ) -> pd.DataFrame | None:
     """Univers du backtest pipeline = univers d'ENTRAÎNEMENT du batch.
 
@@ -233,6 +235,56 @@ def _load_batch_training_universe_scope(
             exc_info=True,
         )
         return None
+    # Un bundle directionnel ne peut servir que l'intersection des branches
+    # LONG et SHORT validées par son manifeste. Le gate de couverture doit donc
+    # mesurer les trous sur cet univers servable, pas sur tous les symboles
+    # demandés lors de l'entraînement (dont les branches absentes/inéligibles
+    # sont volontairement exclues du serving).
+    if artifacts_dir is not None:
+        try:
+            from common.ml_cascade_contract import load_serving_directional_bundle_manifest
+
+            manifest = load_serving_directional_bundle_manifest(artifacts_dir, batch_id)
+            if manifest is not None:
+                coverage = manifest.get("coverage") or {}
+                explicit_symbols = coverage.get("servable_paired_symbol_list")
+                if isinstance(explicit_symbols, list):
+                    serving_symbols = {
+                        str(symbol).strip().upper()
+                        for symbol in explicit_symbols
+                        if str(symbol).strip()
+                    }
+                else:
+                    excluded = {
+                        str(symbol).strip().upper()
+                        for symbol in (coverage.get("excluded_symbols") or [])
+                        if str(symbol).strip()
+                    }
+                    serving_symbols = set(_syms) - excluded
+                expected_count = int(coverage.get("servable_paired_symbols") or 0)
+                if expected_count > 0 and len(serving_symbols) == expected_count:
+                    _syms = [symbol for symbol in _syms if symbol in serving_symbols]
+                    LOGGER.info(
+                        "ml coverage scope: directional bundle %s -> %d paired servable symbols",
+                        batch_id,
+                        len(_syms),
+                    )
+                else:
+                    LOGGER.warning(
+                        "ml coverage scope: manifeste directionnel incohérent batch=%s "
+                        "expected=%d resolved=%d; conservation de l'univers d'entraînement",
+                        batch_id,
+                        expected_count,
+                        len(serving_symbols),
+                    )
+        except Exception:
+            LOGGER.warning(
+                "ml coverage scope: manifeste directionnel indisponible pour batch=%s; "
+                "conservation de l'univers d'entraînement",
+                batch_id,
+                exc_info=True,
+            )
+
     _dates = sorted(
         {
             pd.Timestamp(d).date()
@@ -408,7 +460,7 @@ def _emit_backtest_missing_coverage_logs(
     ml_missing_before = _extract_symbols_for_log(getattr(ml_diagnostics, "missing_symbols_before", ()))
     if ml_mode != "off" and ml_missing_before:
         message = (
-            f"⚠️ ML — symboles sans prédiction / modèle entraîné disponible avant fallback/rebuild ({len(ml_missing_before)}) : "
+            f"⚠️ ML — symboles ayant au moins une date sans prédiction avant fallback/rebuild ({len(ml_missing_before)}) : "
             f"{_format_symbol_preview(ml_missing_before)}"
         )
         LOGGER.warning(message)
@@ -417,7 +469,7 @@ def _emit_backtest_missing_coverage_logs(
     ml_missing_after = _extract_symbols_for_log(getattr(ml_diagnostics, "missing_symbols_after", ()))
     if ml_mode != "off" and ml_missing_after:
         message = (
-            f"⚠️ ML — symboles encore sans couverture prédictive après préparation ({len(ml_missing_after)}) : "
+            f"⚠️ ML — symboles ayant encore au moins une date sans couverture prédictive après préparation ({len(ml_missing_after)}) : "
             f"{_format_symbol_preview(ml_missing_after)}"
         )
         LOGGER.warning(message)
@@ -649,6 +701,7 @@ def _build_backtest_common_params(
         "phase5_mode": phase5_mode,
         "phase7_mode": phase7_mode,
         "macro_pit_mode": getattr(args, "effective_macro_pit_mode", getattr(args, "macro_pit_mode", "yaml_default")),
+        "force_macro_missing": bool(getattr(args, "force_macro_missing", False)),
         "fidelity_baseline_id": getattr(args, "fidelity_baseline_id", None),
         "fidelity_baseline_catalog": getattr(args, "fidelity_baseline_catalog", None),
         "ml_pit_strategy": ml_pit_strategy,
@@ -1254,6 +1307,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Politique PIT explicite pour la macro en backtest. `yaml_default` lit `market_regimes.macro_pit_mode_backtest`, `asof_inclusive` autorise <= J, `j_minus_1_strict` force strictement J-1.",
     )
     run_p.add_argument(
+        "--force-macro-missing",
+        action="store_true",
+        help="Diagnostic uniquement : ignore le provider macro sur toute la période et force le fallback neutre avec data_quality=missing.",
+    )
+    run_p.add_argument(
         "--ml-pit-strategy",
         choices=["auto", "use-persisted", "rebuild-missing", "walk-forward-train-then-predict"],
         default="auto",
@@ -1512,6 +1570,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="P5.2 : override cascade.top_pct (ex 0.02/0.05/0.10/0.15) — courbe de capacité "
              "top_pct. Transmis à apply_cascade_to_predictions(top_pct=...). None = config.yaml.",
     )
+    run_p.add_argument(
+        "--cascade-min-prob",
+        type=float,
+        default=None,
+        help="Override de la probabilité directionnelle minimale de la cascade (0..1). "
+             "None = cascade.min_prob_classification/regression dans config.yaml.",
+    )
     # ── Persistent Rank DIP filter — overrides config.yaml (backtest_*) ──
     # Chaque flag est optionnel (None = valeur de config.yaml
     # `persistent_dip_filter_long.backtest_*`). Utile pour paramétrer le filtre
@@ -1637,6 +1702,22 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.02,
         help="Marge minimale |proba_long - proba_short| pour extreme_gate_directional (défaut 0.02).",
+    )
+    run_p.add_argument(
+        "--oracle-tradable-policy",
+        choices=["off", "filter_then_top20", "top20_then_filter"],
+        default="off",
+        help="Intersection Oracle avec l'univers tradable PIT exact. "
+             "filter_then_top20 = recommandé : filtre tradable puis recalcule le TOP20 ; "
+             "top20_then_filter = conserve le percentile Oracle large puis filtre ; "
+             "off = compatibilité historique.",
+    )
+    run_p.add_argument(
+        "--directional-bundle-gate",
+        choices=["strict", "discovery", "off"],
+        default=None,
+        help="Quality gate Walk-Forward du bundle directionnel. "
+             "None = batch_diagnostics.directional_bundle_gate dans config.yaml.",
     )
     run_p.add_argument(
         "--extreme-gate-dip-saturated",
@@ -2221,6 +2302,7 @@ def _explicit_flags(argv: list[str]) -> set[str]:
         "--short-momentum-filter": "short_momentum_filter",
         "--short-momentum-max-pct": "short_momentum_max_pct",
         "--cascade-top-pct": "cascade_top_pct",
+        "--oracle-calibration": "oracle_calibration",
         "--dip-enabled": "dip_enabled",
         "--no-dip-enabled": "dip_enabled",
         "--dip-rank-horizon": "dip_rank_horizon",
@@ -2750,6 +2832,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
         save_equity_curve,
         save_equity_curve_csv,
         save_report_json,
+        save_pipeline_trade_candidates_csv,
         save_trades_csv,
     )
     from risk_management.config import RiskConfig
@@ -3139,7 +3222,10 @@ def _run_backtest(args: argparse.Namespace) -> None:
         # Pipeline : l'univers = celui de l'entraînement du batch (couverture ML
         # mesurée contre l'univers réel du modèle, pas l'univers tradable PIT).
         universe_scope_df = _load_batch_training_universe_scope(
-            engine, args.ml_batch_id, _universe_dates,
+            engine,
+            args.ml_batch_id,
+            _universe_dates,
+            artifacts_dir=Path(args.artifacts_dir),
         )
         if universe_scope_df is not None and not universe_scope_df.empty:
             _safe_print(
@@ -3247,8 +3333,9 @@ def _run_backtest(args: argparse.Namespace) -> None:
     # exclude_long / exclude_short du dernier batch complété.
     _bt_filtered_count = 0
     _bt_boosted_count = 0
+    _bt_directional_gate = None
     try:
-        from modelFactory.batch_diagnostics import get_batch_filters, filter_predictions
+        from modelFactory.batch_diagnostics import filter_predictions, get_batch_filters
         # Utilise le batch_id configuré pour le backtest (config.yaml → backtest_batch_id).
         # Si vide, get_batch_filters utilise automatiquement le dernier batch.
         _bt_batch_id: str | None = str(
@@ -3264,8 +3351,92 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 ).strip() or None
             except Exception:
                 pass
-        _bt_filters = get_batch_filters(engine, batch_id=_bt_batch_id)
-        if _bt_filters.batch_id and not preds_df.empty:
+        from common.ml_cascade_contract import load_serving_directional_bundle_manifest
+        _directional_batch_id = str(getattr(args, "ml_batch_id", "") or _bt_batch_id or "").strip()
+        _directional_manifest = load_serving_directional_bundle_manifest(
+            Path(args.artifacts_dir), _directional_batch_id,
+        )
+        _bt_filters = None
+        if _directional_manifest and not preds_df.empty:
+            import yaml as _yaml_directional_gate
+            with open("config.yaml", encoding="utf-8") as _fh_directional_gate:
+                _directional_cfg = _yaml_directional_gate.safe_load(_fh_directional_gate) or {}
+            _directional_level = str(
+                getattr(args, "directional_bundle_gate", None)
+                or (_directional_cfg.get("batch_diagnostics") or {}).get(
+                    "directional_bundle_gate", "strict"
+                )
+            ).strip().lower()
+            from modelFactory.directional_quality import load_directional_quality_gate
+            _bt_directional_gate = load_directional_quality_gate(
+                _directional_batch_id,
+                Path(args.artifacts_dir),
+                level=_directional_level,
+            )
+
+            # A directional bundle must never fall back to an Oracle-synthesized
+            # direction or another model family. Oracle owns amplitude only.
+            _source_mask = pd.Series(True, index=preds_df.index)
+            if "source" in preds_df.columns:
+                _source_mask &= preds_df["source"].astype(str).str.lower().eq("per_symbol")
+            if "model_role" in preds_df.columns:
+                _role = preds_df["model_role"].astype(str).str.lower()
+                _source_mask &= _role.eq("directional_bundle")
+            _source_before = len(preds_df)
+            preds_df = preds_df.loc[_source_mask].copy()
+            _source_removed = _source_before - len(preds_df)
+            if strict_pit:
+                from backtesting.prediction_pit import (
+                    assert_directional_bundle_predictions_pit,
+                )
+                _prediction_pit_audit = assert_directional_bundle_predictions_pit(
+                    preds_df
+                )
+                _safe_print(
+                    f"   PIT directionnel validé : "
+                    f"{_prediction_pit_audit.checked_rows}/"
+                    f"{_prediction_pit_audit.checked_rows} prédictions utilisent "
+                    "deux modèles entraînés avant la date simulée.\n"
+                )
+            _safe_print(
+                "   Directional bundle quality: gate={} · LONG {}/{} · SHORT {}/{} "
+                "(batch={}; {} fallback/non-directional rows removed)\n".format(
+                    _bt_directional_gate.level,
+                    len(_bt_directional_gate.allowed_long),
+                    _bt_directional_gate.scanned_symbols,
+                    len(_bt_directional_gate.allowed_short),
+                    _bt_directional_gate.scanned_symbols,
+                    _directional_batch_id,
+                    _source_removed,
+                )
+            )
+        else:
+            _bt_filters = get_batch_filters(engine, batch_id=_bt_batch_id)
+
+        # Legacy batches keep the historical DB diagnostics. Directional
+        # bundles use their side-specific champion/fold gate after the cascade.
+        if _bt_filters is not None and _bt_filters.batch_id and not preds_df.empty:
+            _bt_prediction_symbols = {
+                str(symbol).strip().upper()
+                for symbol in preds_df.get("symbol", [])
+                if str(symbol).strip()
+            }
+            _bt_long_eligible = _bt_prediction_symbols - set(_bt_filters.exclude_long)
+            _bt_short_eligible = _bt_prediction_symbols - set(_bt_filters.exclude_short)
+            _safe_print(
+                f"   batch_diagnostics eligibility: "
+                f"LONG {len(_bt_long_eligible)}/{len(_bt_prediction_symbols)} · "
+                f"SHORT {len(_bt_short_eligible)}/{len(_bt_prediction_symbols)} "
+                f"(batch={_bt_filters.batch_id})\n"
+            )
+            if _bt_prediction_symbols and (
+                len(_bt_long_eligible) / len(_bt_prediction_symbols) < 0.20
+                or len(_bt_short_eligible) / len(_bt_prediction_symbols) < 0.20
+            ):
+                _safe_print(
+                    "   ⚠️ batch_diagnostics très restrictif : moins de 20% de "
+                    "l'univers reste éligible sur au moins un côté.\n"
+                )
             # ── Étape 1 : exclure ──
             _bt_before = len(preds_df)
             preds_df = filter_predictions(preds_df, _bt_filters)
@@ -3349,6 +3520,10 @@ def _run_backtest(args: argparse.Namespace) -> None:
                     )
                 )
     except Exception as _bt_exc:
+        from backtesting.prediction_pit import PredictionPitViolationError
+        if isinstance(_bt_exc, PredictionPitViolationError):
+            _safe_print(f"❌ {_bt_exc}")
+            sys.exit(1)
         LOGGER.warning(
             "batch_diagnostics backtest filter skipped (non-blocking): %s",
             _bt_exc,
@@ -3423,6 +3598,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
             # Source : table oracle_extreme_predictions (--oracle-batch-id, filtre batch
             # STRICT) OU parquet OOS (--oracle-oos-path, legacy). L'un des deux requis.
             _oracle_rank_map = None
+            _oracle_tradable_map = None
             _oracle_modes = ("oracle", "oracle_filter", "oracle_rerank", "oracle_pool", "extreme_gate", "extreme_gate_directional")
             _rank_mode_eff = str(getattr(args, "cascade_rank_mode", "ml") or "ml").strip().lower()
             # ── Auto-détection Extreme Gate (2026-08-28) ──
@@ -3455,18 +3631,25 @@ def _run_backtest(args: argparse.Namespace) -> None:
                                 {"b": _cascade_batch_id},
                             ).scalar() or 0
                         )
-                    if _auto_oracle_rows > 0 and _auto_rank_rows == 0:
+                    from common.ml_cascade_contract import infer_oracle_only_cascade_mode
+                    _auto_mode = infer_oracle_only_cascade_mode(
+                        Path(args.artifacts_dir),
+                        _cascade_batch_id,
+                        oracle_rows=_auto_oracle_rows,
+                        global_rank_rows=_auto_rank_rows,
+                    )
+                    if _auto_mode is not None:
                         _auto_extreme_gate = True
-                        _rank_mode_eff = "extreme_gate"
+                        _rank_mode_eff = _auto_mode
                         _safe_print(
                             "   🔀 Auto-détection : batch {} oracle-only "
-                            "(0 rang global, {} prédictions oracle) → cascade extreme_gate\n".format(
-                                _cascade_batch_id, _auto_oracle_rows,
+                            "(0 rang global, {} prédictions oracle) → cascade {}\n".format(
+                                _cascade_batch_id, _auto_oracle_rows, _rank_mode_eff,
                             )
                         )
                         LOGGER.info(
-                            "cascade: auto-extreme_gate batch=%s oracle_rows=%d global_ranks=0",
-                            _cascade_batch_id, _auto_oracle_rows,
+                            "cascade: auto-%s batch=%s oracle_rows=%d global_ranks=0",
+                            _rank_mode_eff, _cascade_batch_id, _auto_oracle_rows,
                         )
                 except Exception as _auto_exc:
                     LOGGER.warning("cascade: auto-détection oracle-only échouée (%s)", _auto_exc)
@@ -3521,8 +3704,25 @@ def _run_backtest(args: argparse.Namespace) -> None:
                     raise SystemExit(2)
                 # ── Calibration optionnelle de proba_extreme (oracle.calibration) ──
                 _cal_flag = str(getattr(args, "oracle_calibration", "none") or "none").strip().lower()
-                if _cal_flag in ("", "none"):
+                if (
+                    _cal_flag in ("", "none")
+                    and "oracle_calibration" not in explicit_flags
+                ):
                     _cal_flag = str((_cfg_cas.get("oracle") or {}).get("calibration") or "none").strip().lower()
+                # Aucun backtest strict ne doit ajuster un calibrateur sur les
+                # labels futurs de sa propre fenêtre. Sans calibrateur Oracle
+                # gelé antérieur, Extreme Gate consomme le score OOS brut.
+                if strict_pit and _cal_flag == "isotonic":
+                    _safe_print(
+                        "   Oracle PIT : calibration isotonic ignorée (aucun "
+                        "calibrateur gelé antérieur); utilisation de "
+                        "proba_extreme OOS brute.\n"
+                    )
+                    LOGGER.warning(
+                        "oracle calibration isotonic disabled in strict PIT "
+                        "backtest: no frozen pre-period calibrator"
+                    )
+                    _cal_flag = "none"
                 if _cal_flag not in ("none", "identity"):
                     try:
                         from modelFactory.oracle.combine import apply_oracle_calibration
@@ -3535,6 +3735,39 @@ def _run_backtest(args: argparse.Namespace) -> None:
                     d: dict(zip(g["symbol"], g["proba_extreme"]))
                     for d, g in _oos_df.groupby("_d")
                 }
+                _oracle_tradable_policy = str(
+                    getattr(args, "oracle_tradable_policy", "off") or "off"
+                ).strip().lower()
+                if (
+                    _rank_mode_eff in ("extreme_gate", "extreme_gate_directional")
+                    and _oracle_tradable_policy != "off"
+                ):
+                    from common.tradable_universe import load_tradable_universe_by_date
+                    _oracle_dates = sorted(_oracle_rank_map)
+                    _oracle_tradable_map = load_tradable_universe_by_date(
+                        engine,
+                        _oracle_dates,
+                        capital_preset_key=effective_preset.key,
+                    )
+                    _missing_tradable_dates = sorted(
+                        set(_oracle_dates).difference(_oracle_tradable_map)
+                    )
+                    if _missing_tradable_dates:
+                        _preview = ", ".join(_missing_tradable_dates[:5])
+                        raise SystemExit(
+                            "Univers tradable PIT exact absent ou non-full pour "
+                            f"{len(_missing_tradable_dates)} date(s) Oracle "
+                            f"(exemples: {_preview}). Publier l'étape 6 pour le preset "
+                            f"{effective_preset.key}; aucun fallback as-of/courant n'est autorisé."
+                        )
+                    _safe_print(
+                        "   Univers tradable Oracle : policy={} preset={} dates={} "
+                        "(snapshots exacts, full)\n".format(
+                            _oracle_tradable_policy,
+                            effective_preset.key,
+                            len(_oracle_tradable_map),
+                        )
+                    )
 
             # ── Persistent Rank DIP filter — config BACKTEST ──
             # Le CLI `backtesting run` est le chemin BACKTEST : il lit les clés
@@ -3560,18 +3793,34 @@ def _run_backtest(args: argparse.Namespace) -> None:
                     if _dv is not None:
                         _dip_cfg_full[_dk] = _dv
                 if bool(_dip_cfg_full.get("enabled", False)):
-                    _dip_filter_cfg = _dip_cfg_full
-                    _dip_reclaim = _dip_cfg_full.get("reclaim_ratio")
-                    _safe_print(
-                        "   🔻 DIP filter (backtest): N={} X={:.0%} rank>={:.2f} H={} R={} — {} candidats pré-cascade".format(
-                            int(_dip_cfg_full.get("persist_days", 4)),
-                            float(_dip_cfg_full.get("dip_pct", 0.02)),
-                            float(_dip_cfg_full.get("rank_threshold", 0.90)),
-                            _dip_cfg_full.get("rank_horizon", "best"),
-                            f"{float(_dip_reclaim):.2f}" if _dip_reclaim else "off",
-                            int(preds_df.shape[0]) if preds_df is not None else 0,
+                    # Le Persistent Rank DIP est un contrat Global Ranking. Il
+                    # ne doit jamais devenir silencieusement un gate dur Oracle.
+                    # La seule exception est le mode de recherche explicite
+                    # `--extreme-gate-dip-saturated`, où il sert de priorité sans
+                    # réduire le pool Oracle.
+                    if (
+                        _rank_mode_eff in ("extreme_gate", "extreme_gate_directional")
+                        and not bool(getattr(args, "extreme_gate_dip_saturated", False))
+                    ):
+                        _dip_filter_cfg = None
+                        _safe_print(
+                            "   ℹ️ DIP ignoré : ce filtre est réservé au Global Ranking; "
+                            "le pool Oracle Extreme reste intact.\n"
                         )
-                    )
+                    else:
+                        _dip_filter_cfg = _dip_cfg_full
+                    _dip_reclaim = _dip_cfg_full.get("reclaim_ratio")
+                    if _dip_filter_cfg is not None:
+                        _safe_print(
+                            "   🔻 DIP filter (backtest): N={} X={:.0%} rank>={:.2f} H={} R={} — {} candidats pré-cascade".format(
+                                int(_dip_cfg_full.get("persist_days", 4)),
+                                float(_dip_cfg_full.get("dip_pct", 0.02)),
+                                float(_dip_cfg_full.get("rank_threshold", 0.90)),
+                                _dip_cfg_full.get("rank_horizon", "best"),
+                                f"{float(_dip_reclaim):.2f}" if _dip_reclaim else "off",
+                                int(preds_df.shape[0]) if preds_df is not None else 0,
+                            )
+                        )
             except Exception:
                 LOGGER.exception("DIP filter config — désactivé")
                 _dip_filter_cfg = None
@@ -3604,6 +3853,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 preds_df, _cascade_batch_id, engine=engine,
                 best_h=_best_h_flag,
                 top_pct=getattr(args, "cascade_top_pct", None),
+                min_prob=getattr(args, "cascade_min_prob", None),
                 rank_mode=_rank_mode_eff,
                 rank_seed=getattr(args, "cascade_rank_seed", 42),
                 short_momentum_filter=(None if _sm_filter_flag == "none" else _sm_filter_flag),
@@ -3618,24 +3868,57 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 extreme_gate_direction_margin=float(getattr(args, "extreme_gate_direction_margin", 0.02) or 0.0),
                 extreme_gate_dip_saturated=bool(getattr(args, "extreme_gate_dip_saturated", False)),
                 extreme_gate_dip_band=float(getattr(args, "extreme_gate_dip_band", 0.02) or 0.02),
+                oracle_tradable_map=_oracle_tradable_map,
+                oracle_tradable_policy=getattr(args, "oracle_tradable_policy", "off"),
                 saturation_slots=int(getattr(args, "max_positions", 8) or 8),
                 dip_quality_map=_dip_quality_map,
                 dip_quality_policy=_dip_quality_policy,
             )
+            if _bt_directional_gate is not None:
+                from modelFactory.directional_quality import apply_directional_quality_gate
+                preds_df, _directional_gate_counts = apply_directional_quality_gate(
+                    preds_df,
+                    _bt_directional_gate,
+                )
+                _safe_print(
+                    "   Directional quality gate {}: LONG {}/{} rejetés · "
+                    "SHORT {}/{} rejetés (validation du côté final après cascade)\n".format(
+                        _bt_directional_gate.level,
+                        _directional_gate_counts["long_rejected"],
+                        _directional_gate_counts["long_before"],
+                        _directional_gate_counts["short_rejected"],
+                        _directional_gate_counts["short_before"],
+                    )
+                )
             _cas_passed = int(preds_df.loc[preds_df["predicted_side"] != "flat"].shape[0]) if "predicted_side" in preds_df.columns else 0
             _cascade_filtered_count = _cas_before - _cas_passed
 
             if _cas_passed == 0 and _cas_before > 0:
-                _safe_print(
-                    "❌ Cascade ML : 0/{} prédictions ont passé le filtre (batch={}).\n"
-                    "   → Vérifier global_rank_history (10. ML Predict → Prédire l'univers)\n"
-                    "   → Vérifier cascade.top_pct (actuel: {}) et cascade.min_prob (actuel: {})\n"
-                    "   → backtest interrompu car aucune prédiction viable.".format(
-                        _cas_before, _cascade_batch_id,
-                        float(_cas_cfg.get("top_pct", 0.20)),
-                        float(_cas_cfg.get("min_prob", 0.55)),
+                _cas_evaluated = len(preds_df)
+                if _rank_mode_eff in ("extreme_gate", "extreme_gate_directional"):
+                    _safe_print(
+                        "❌ Cascade ML : 0/{} prédictions dédupliquées ont passé le filtre "
+                        "(batch={}, mode={}; {} lignes avant déduplication).\n"
+                        "   → Les prédictions Oracle sont présentes : vérifier les exclusions "
+                        "directionnelles Walk-Forward et le seuil min_prob (actuel: {}).\n"
+                        "   → global_rank_history n'est pas requis dans ce mode Oracle.\n"
+                        "   → backtest interrompu car aucune prédiction viable.".format(
+                            _cas_evaluated, _cascade_batch_id, _rank_mode_eff, _cas_before,
+                            float(_cas_cfg.get("min_prob_classification", 0.55)),
+                        )
                     )
-                )
+                else:
+                    _safe_print(
+                        "❌ Cascade ML : 0/{} prédictions dédupliquées ont passé le filtre "
+                        "(batch={}, mode={}; {} lignes avant déduplication).\n"
+                        "   → Vérifier global_rank_history (10. ML Predict → Prédire l'univers).\n"
+                        "   → Vérifier cascade.top_pct (actuel: {}) et min_prob (actuel: {}).\n"
+                        "   → backtest interrompu car aucune prédiction viable.".format(
+                            _cas_evaluated, _cascade_batch_id, _rank_mode_eff, _cas_before,
+                            float(_cas_cfg.get("top_pct", 0.20)),
+                            float(_cas_cfg.get("min_prob_classification", 0.55)),
+                        )
+                    )
                 sys.exit(1)
 
             _safe_print(
@@ -3647,13 +3930,22 @@ def _run_backtest(args: argparse.Namespace) -> None:
         raise
     except Exception as _cas_exc:
         if _cascade_enabled:
-            _safe_print(
-                "❌ Cascade ML activée (cascade.enabled=true) mais échec du filtre : {}\n"
-                "   Vérifier que global_rank_history est peuplée pour le batch {} "
-                "(lancer 10. ML Predict → Prédire l'univers sélectionné d'abord).".format(
-                    _cas_exc, _cascade_batch_id or "?",
+            if _rank_mode_eff in ("extreme_gate", "extreme_gate_directional"):
+                _safe_print(
+                    "❌ Cascade Oracle activée mais échec du filtre : {}\n"
+                    "   Vérifier oracle_extreme_predictions et les prédictions "
+                    "Per-Symbol du batch {}. global_rank_history n'est pas requis.".format(
+                        _cas_exc, _cascade_batch_id or "?",
+                    )
                 )
-            )
+            else:
+                _safe_print(
+                    "❌ Cascade ML activée (cascade.enabled=true) mais échec du filtre : {}\n"
+                    "   Vérifier que global_rank_history est peuplée pour le batch {} "
+                    "(lancer 10. ML Predict → Prédire l'univers sélectionné d'abord).".format(
+                        _cas_exc, _cascade_batch_id or "?",
+                    )
+                )
             sys.exit(1)
         LOGGER.warning(
             "cascade backtest filter skipped (cascade.enabled=false): %s", _cas_exc,
@@ -3844,6 +4136,8 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 macro_pit_mode=macro_pit_mode,
             )
             macro_missing_policy = str(getattr(args, "macro_missing_policy", "") or "").strip().lower()
+            if bool(getattr(args, "force_macro_missing", False)):
+                macro_missing_policy = "allow"
             if macro_missing_policy in {"allow", "fail"}:
                 _mr_cfg_for_bt = replace(
                     _mr_cfg_for_bt,
@@ -3854,7 +4148,12 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 if getattr(_mr_cfg_for_bt, "allow_neutral_fallback_on_missing_macro_data", False)
                 else "fail"
             )
-            if getattr(_mr_cfg_for_bt, "enabled", False):
+            if bool(getattr(args, "force_macro_missing", False)):
+                _macro_provider_for_bt = None
+                _safe_print(
+                    "   ⚠️ Diagnostic macro : provider ignoré, fallback neutre forcé sur toute la période."
+                )
+            elif getattr(_mr_cfg_for_bt, "enabled", False):
                 try:
                     _macro_provider_for_bt = _build_macro_bt(
                         _yaml_bt,
@@ -4242,6 +4541,10 @@ def _run_backtest(args: argparse.Namespace) -> None:
         atr_trailing_stop_multiplier=float(getattr(args, "atr_ts", 0.0) or 0.0),
         use_live_protection_logic=bool(getattr(args, "use_live_protection_logic", True)),
         max_positions=args.max_positions,
+        # La cascade a déjà appliqué son seuil de probabilité et choisi le côté.
+        # Le seuil legacy 0.70 était LONG-only dans le simulateur et supprimait
+        # silencieusement les LONG 0.55–0.69 tout en laissant passer les SHORT.
+        min_score_threshold=0.0 if _cascade_enabled else 0.7,
         fees_pct=fees_pct,
         commission_bps=float(args.commission_bps),
         slippage_bps=float(args.slippage_bps),
@@ -4621,8 +4924,17 @@ def _run_backtest(args: argparse.Namespace) -> None:
         )
         artifact_paths["equity_curve_png"] = str(equity_curve_path)
         artifact_paths["trades_csv"] = str(trades_csv_path)
+        pipeline_candidates_path = save_pipeline_trade_candidates_csv(
+            pf,
+            pipeline_trade_truth_df,
+            output_dir=output_dir,
+        )
+        if pipeline_candidates_path is not None:
+            artifact_paths["pipeline_trade_candidates_csv"] = str(pipeline_candidates_path)
         _safe_print(f"   → {equity_curve_path}")
         _safe_print(f"   → {trades_csv_path}")
+        if pipeline_candidates_path is not None:
+            _safe_print(f"   → {pipeline_candidates_path} (diagnostic pipeline, non exécuté)")
 
         if output_dir is not None:
             save_report_json(

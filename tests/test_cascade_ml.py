@@ -307,6 +307,60 @@ class TestCascadeSelect:
             )
         assert result == []
 
+    @pytest.mark.parametrize(
+        ("long_prob", "short_prob", "flat_prob"),
+        [
+            (0.60, 0.20, 0.70),
+            (0.20, 0.60, 0.70),
+            (0.60, 0.20, 0.60),
+        ],
+    )
+    def test_extreme_gate_directional_rejects_when_flat_is_dominant_or_tied(
+        self, long_prob, short_prob, flat_prob,
+    ):
+        preds = {
+            "FLAT": CascadePrediction(
+                symbol="FLAT",
+                long_prob=long_prob,
+                short_prob=short_prob,
+                flat_prob=flat_prob,
+            )
+        }
+        oracle_map = {"2026-01-15": {"FLAT": 0.99}}
+        with patch("modelFactory.predictor.load_cascade_config",
+                   return_value={"top_pct": 0.20, "min_prob": 0.55}):
+            result = cascade_select(
+                "2026-01-15", "batch-x", preds,
+                rank_mode="extreme_gate_directional",
+                oracle_rank_map=oracle_map,
+                extreme_gate_pct=1.0,
+                extreme_gate_direction_margin=0.02,
+            )
+        assert result == []
+
+    def test_extreme_gate_directional_accepts_direction_stronger_than_flat(self):
+        preds = {
+            "LONG": CascadePrediction(
+                symbol="LONG", long_prob=0.70, short_prob=0.15, flat_prob=0.65,
+            ),
+            "SHORT": CascadePrediction(
+                symbol="SHORT", long_prob=0.10, short_prob=0.75, flat_prob=0.60,
+            ),
+        }
+        oracle_map = {"2026-01-15": {"LONG": 0.90, "SHORT": 0.99}}
+        with patch("modelFactory.predictor.load_cascade_config",
+                   return_value={"top_pct": 0.20, "min_prob": 0.55}):
+            result = cascade_select(
+                "2026-01-15", "batch-x", preds,
+                rank_mode="extreme_gate_directional",
+                oracle_rank_map=oracle_map,
+                extreme_gate_pct=1.0,
+                extreme_gate_direction_margin=0.02,
+            )
+        assert [(side, symbol) for side, symbol, _ in result] == [
+            ("SHORT", "SHORT"), ("LONG", "LONG"),
+        ]
+
     def test_extreme_gate_legacy_does_not_change_when_short_is_stronger(self):
         """Non-régression : le mode historique conserve sa priorité LONG."""
         preds = {"S": CascadePrediction(symbol="S", long_prob=0.60, short_prob=0.90)}
@@ -457,6 +511,85 @@ def _preds_df_ternary(
 
 
 class TestApplyCascadeToPredictions:
+    def test_directional_mode_never_falls_back_to_oracle_synth(self):
+        preds = pd.DataFrame([
+            {
+                "symbol": "REAL", "trade_date": "2026-01-15",
+                "predicted_side": "short", "proba_long": 0.10,
+                "proba_short": 0.80, "proba_flat": 0.10,
+                "model_role": "directional_bundle", "source": "per_symbol",
+            },
+            {
+                "symbol": "SYNTH_ONLY", "trade_date": "2026-01-15",
+                "predicted_side": "long", "proba_long": 0.95,
+                "proba_short": 0.0, "proba_flat": 0.05,
+                "model_role": None, "source": "oracle_synth",
+            },
+        ])
+        oracle_map = {"2026-01-15": {"REAL": 0.90, "SYNTH_ONLY": 0.99}}
+
+        with patch("modelFactory.predictor.load_cascade_config", return_value={
+            "top_pct": 0.20, "min_prob_classification": 0.55,
+            "min_prob_regression": 0.10,
+        }):
+            result = apply_cascade_to_predictions(
+                preds, "batch-x", rank_mode="extreme_gate_directional",
+                oracle_rank_map=oracle_map, extreme_gate_pct=1.0,
+            )
+
+        assert result["symbol"].tolist() == ["REAL"]
+        assert result.iloc[0]["predicted_side"] == "short"
+        assert result.iloc[0]["source"] == "per_symbol"
+
+    def test_directional_bundle_role_is_authoritative_over_generic_per_symbol(self):
+        preds = pd.DataFrame([
+            {
+                "symbol": "BUNDLE", "trade_date": "2026-01-15",
+                "predicted_side": "long", "proba_long": 0.80,
+                "proba_short": 0.10, "proba_flat": 0.10,
+                "model_role": "directional_bundle", "source": "per_symbol",
+            },
+            {
+                "symbol": "GENERIC", "trade_date": "2026-01-15",
+                "predicted_side": "long", "proba_long": 0.90,
+                "proba_short": 0.05, "proba_flat": 0.05,
+                "model_role": "direction_long", "source": "per_symbol",
+            },
+        ])
+        oracle_map = {"2026-01-15": {"BUNDLE": 0.90, "GENERIC": 0.99}}
+
+        with patch("modelFactory.predictor.load_cascade_config", return_value={
+            "top_pct": 0.20, "min_prob_classification": 0.55,
+            "min_prob_regression": 0.10,
+        }):
+            result = apply_cascade_to_predictions(
+                preds, "batch-x", rank_mode="extreme_gate_directional",
+                oracle_rank_map=oracle_map, extreme_gate_pct=1.0,
+            )
+
+        assert result["symbol"].tolist() == ["BUNDLE"]
+
+    def test_extreme_gate_ignores_hard_dip_filter(self):
+        preds = _preds_df_ternary(
+            ["AAPL"], ["long"], proba_long=[0.70], proba_short=[0.05],
+        )
+        oracle_map = {"2026-01-15": {"AAPL": 0.99}}
+        dip_config = {"enabled": True, "persist_days": 4, "dip_pct": 0.02}
+
+        with patch("modelFactory.predictor.load_cascade_config", return_value={
+            "top_pct": 0.20, "min_prob_classification": 0.55,
+            "min_prob_regression": 0.10,
+        }):
+            with patch("selector.dip_filter.filter_day_candidates") as dip_filter:
+                result = apply_cascade_to_predictions(
+                    preds, "batch-x", rank_mode="extreme_gate_directional",
+                    oracle_rank_map=oracle_map, extreme_gate_pct=1.0,
+                    dip_filter_config=dip_config,
+                )
+
+        dip_filter.assert_not_called()
+        assert result.iloc[0]["predicted_side"] == "long"
+
     def test_passed_symbols_unchanged(self, monkeypatch):
         """Les symboles retenus gardent leurs probas."""
         preds = _preds_df_ternary(

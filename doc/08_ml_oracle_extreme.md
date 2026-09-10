@@ -45,6 +45,8 @@ flowchart LR
 
 Le seuil est relatif au jour, sans seuil global appris sur le futur. Pour un DataFrame vide ou sans colonne de probabilité, le gate retourne faux.
 
+Lorsque le filtre tradable Oracle est activé, la politique recommandée `filter_then_top20` recalcule le TOP20 après intersection avec l’univers tradable PIT. Voir [Oracle TOP20 sur univers tradable — backtest et live](ml/oracle_tradable_top20_backtest_live.md) pour le contrat complet.
+
 ## Évaluation
 
 Le code expose AUC, precision/recall aux top percentiles, monotonie des déciles et métriques par fold. Une validation robuste vérifie aussi : couverture, calibration, stabilité temporelle, distribution sectorielle, hard negatives, coût des faux positifs et performance d'un portefeuille construit sans information directionnelle implicite.

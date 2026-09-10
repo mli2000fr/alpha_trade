@@ -24,6 +24,10 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
+from common.instrument_policy import (
+    COLLECTIVE_INSTRUMENT_NAME_PATTERNS,
+    excluded_collective_instrument_reason,
+)
 from database.assets import (
     HISTORY_STATUS_EXCLUDED_BY_POLICY,
     HISTORY_STATUS_NO_HISTORY,
@@ -52,25 +56,7 @@ METADATA_COLUMNS = [
     "market_cap_refreshed_at",
 ]
 ELIGIBLE_HISTORY_STATUSES = {HISTORY_STATUS_PENDING, HISTORY_STATUS_READY}
-ETF_NAME_PATTERNS = (
-    "etf",
-    "etn",
-    "fund",
-    "index fund",
-    "ishares",
-    "spdr",
-    "vanguard",
-    "invesco",
-    "proshares",
-    "direxion",
-    "wisdomtree",
-    "global x",
-    "first trust",
-    "xtrackers",
-    "schwab",
-    "bond",
-    "treasury",
-)
+ETF_NAME_PATTERNS = COLLECTIVE_INSTRUMENT_NAME_PATTERNS
 
 
 def apply_filters_with_stats(
@@ -433,7 +419,7 @@ def enrich_and_filter_equities(
 
     company_name_normalized = metadata["company_name"].str.lower()
     etf_mask = company_name_normalized.apply(
-        lambda value: any(pattern in value for pattern in ETF_NAME_PATTERNS)
+        lambda value: excluded_collective_instrument_reason(value) is not None
     )
     reason_masks = {
         "metadata_missing": pd.Index(sorted(requested_symbol_set.difference(set(metadata["symbol"].astype(str))))),

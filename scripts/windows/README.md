@@ -160,22 +160,38 @@ aux **heures de la journée** définies dans `config.yaml` → `earnings_calenda
 ### Scripts
 
 - `earnings_calendar_launcher.ps1` : lanceur commun — exécute la commande
-  `python -u -m dataIntegrityEngine.sync_earnings_calendar --sleep-seconds 1.1 --log-every 25 --batch-size 50 --symbol-source active-tradable --resume`
-  et ajoute une ligne de statut (`START` / `OK` / `ERROR`) dans
-  `log/batch/earnings_calendar.txt` (chemin piloté par `config.yaml` → `earnings_calendar_sync.log_file`).
+  `python -u -m dataIntegrityEngine.sync_earnings_calendar --sleep-seconds 1.1 --log-every 25 --batch-size 50 --symbols-file <symbols_file> --resume`
+  (ou `--symbol-source active-tradable` si `symbols_file` est absent) et ajoute
+  une ligne de statut (`START` / `OK` / `ERROR` / `SKIP`) dans
+  `log/batch/earnings_calendar.txt` (chemin piloté par `config.yaml` →
+  `earnings_calendar_sync.log_file`). `SKIP` = jour hors `run_days`, rien n’est lancé.
 - `install_earnings_calendar_task.ps1` : installe la tâche planifiée Windows.
 - `uninstall_earnings_calendar_task.ps1` : supprime la tâche.
 
-### Configurer les heures (`config.yaml`)
+### Configurer les jours et heures (`config.yaml`)
 
 ```yaml
 earnings_calendar_sync:
-  run_hours: "3"        # "3" = 3h du matin ; "4,9" = 4h et 9h ; "8,12,18" = 8h, 12h, 18h
+  run_hours: "12,23"                            # "3" = 3h du matin ; "4,9" = 4h et 9h ; "8,12,18" = 8h, 12h, 18h
+  run_days: "0,3,6"                             # Jours de la semaine (0=dimanche … 6=samedi) ; vide/absent = tous les jours
+  symbols_file: config/univers_batch/univers_filtred_tradable.txt
   log_file: log/batch/earnings_calendar.txt
 ```
 
-`run_hours` = liste d’heures (0-23) séparées par des virgules. Chaque heure
-devient un déclencheur quotidien de la tâche planifiée.
+- `run_hours` = liste d’heures (0-23) séparées par des virgules. Chaque heure
+  devient un déclencheur quotidien de la tâche planifiée.
+- `run_days` = jours de la semaine autorisés (0=dimanche, 1=lundi, …, 6=samedi).
+  Vide/absent → déclencheurs **quotidiens**. Renseigné (ex. `0,3,5`) →
+  `install_earnings_calendar_task.ps1` crée des déclencheurs **hebdomadaires**
+  uniquement ces jours-là (l’installation affiche « Jours » et « Planif :
+  hebdomadaire »). Le launcher garde un filet de sécurité : un jour hors
+  `run_days` → ligne `SKIP`, rien n’est lancé.
+- `symbols_file` = univers fichier partagé avec `analyst_snapshot_collect`
+  (2255 symboles). S’il est renseigné, le batch earnings utilise ce fichier
+  (même univers que le batch analyst) au lieu de `--symbol-source
+  active-tradable` (~13 600 symboles). S’il est absent/vide OU le fichier
+  introuvable → repli sur `active-tradable` avec un **WARNING** remonté dans le
+  log de statut (`WARNING univers …`) + notification email **et** Telegram.
 
 ### Installer
 
@@ -223,6 +239,63 @@ puis renseigner `LOGIN_DB` / `PASSWORD_DB` dans `earnings_calendar.env`.
 
 ---
 
+## Job planifié — Capitalisations Yahoo + Finnhub
+
+La tâche **`AlphaTrade-MarketCapSync`** collecte deux snapshots distincts dans
+`stock_fundamentals_daily` : Yahoo d'abord, puis Finnhub. La sélection runtime
+`yahoo_then_finnhub` conserve Yahoo en priorité et utilise Finnhub seulement si
+Yahoo est absent ou périmé.
+
+Configuration :
+
+```yaml
+market_cap_sync:
+  run_hours: "11,23"
+  run_days: "1,4"  # lundi et jeudi ; 0=dimanche
+  symbols_file: config/univers/univers_filtred_equities.txt
+  providers: "yahoo_finance,finnhub"
+  log_file: log/batch/market_cap_sync.txt
+```
+
+Le launcher est volontairement fail-closed : si le fichier d'univers manque, il
+n'élargit pas la collecte aux 13 000 symboles. Un mutex et le réglage Windows
+`MultipleInstances IgnoreNew` empêchent les chevauchements. Une relance le même
+jour est idempotente car chaque source fait un upsert sur
+`(symbol, trade_date, source)`. À la fin, succès ou échec déclenche les
+notifications **email et Telegram** via `scripts/send_batch_email.py`; les
+avertissements de collecte partielle sont inclus.
+
+Installer la tâche :
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\install_market_cap_sync_task.ps1
+```
+
+Lancer immédiatement, indépendamment de la tâche planifiée :
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\market_cap_sync_launcher.ps1
+```
+
+Surveiller :
+
+```powershell
+Get-Content .\log\batch\market_cap_sync.txt -Encoding UTF8 -Tail 50 -Wait
+```
+
+Désinstaller :
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\uninstall_market_cap_sync_task.ps1
+```
+
+La tâche n'est pas installée par le dépôt lui-même : exécuter explicitement le
+script d'installation sur la machine cible. En mode `System`, les identifiants DB
+et `FINNHUB_API_KEY` doivent être accessibles via `.env` ou l'environnement du
+compte système.
+
+---
+
 ## Job planifié — Collecte Yahoo analyst (B4, RESEARCH ONLY)
 
 La tâche planifiée **`AlphaTrade-AnalystSnapshot`** exécute automatiquement la
@@ -240,19 +313,25 @@ définies dans `config.yaml` → `analyst_snapshot_collection.run_hours`.
 - `install_analyst_snapshot_task.ps1` : installe la tâche planifiée Windows.
 - `uninstall_analyst_snapshot_task.ps1` : supprime la tâche.
 
-### Configurer les heures (`config.yaml`)
+### Configurer l’univers et les heures (`config.yaml`)
 
 ```yaml
 analyst_snapshot_collection:
   run_hours: "18"        # "18" = 18h après clôture US ; "3,14" = 3h et 14h
+  symbols_file: config/univers_batch/univers_filtred_tradable.txt   # MÊME univers fichier que earnings_calendar_sync
   log_file: log/batch/analyst_snapshots.txt
 ```
 
-`run_hours` = liste d’heures (0-23) séparées par des virgules. Chaque heure
-devient un déclencheur quotidien de la tâche planifiée. ⚠️ L’heure est exprimée
-**en America/New_York** (la collecte doit se faire après la clôture US) ; le
-planificateur Windows suit la timezone de la machine — régler `run_hours` en
-conséquence (jamais d’heure de Paris fixe).
+- `symbols_file` = univers fichier partagé avec `earnings_calendar_sync`
+  (2255 symboles). S’il est absent/vide OU le fichier introuvable → le launcher
+  émet un **WARNING** (ligne `WARNING` dans le log de statut + notification
+  email **et** Telegram) et le batch **repli sur l’univers active-tradable**
+  (~13 600 symboles).
+- `run_hours` = liste d’heures (0-23) séparées par des virgules. Chaque heure
+  devient un déclencheur quotidien de la tâche planifiée. ⚠️ L’heure est
+  exprimée **en America/New_York** (la collecte doit se faire après la clôture
+  US) ; le planificateur Windows suit la timezone de la machine — régler
+  `run_hours` en conséquence (jamais d’heure de Paris fixe).
 
 ### Installer
 
@@ -287,3 +366,15 @@ credentials MySQL sans reprendre l’environnement du shell.
   logge dans `log/batch/analyst_snapshots.log` et trace chaque run dans la table
   `alpha_trade.analyst_snapshot_collection_run`.
 
+# Oracle dynamique P0j
+
+Le canary Oracle possède trois scripts dédiés :
+
+- `oracle_canary_launcher.ps1` : lancement journalisé ;
+- `install_oracle_canary_task.ps1` : installation de
+  `AlphaTrade-OracleCanary` ;
+- `uninstall_oracle_canary_task.ps1` : désinstallation.
+
+Les horaires, jours, batch et univers sont définis dans
+`config/oracle_canary.yaml`. Le canary est shadow-only et ne remplit aucune
+table de prédictions.

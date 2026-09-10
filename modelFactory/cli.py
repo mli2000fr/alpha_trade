@@ -39,6 +39,39 @@ from modelFactory.config import (
 )
 from modelFactory.reproducibility import apply_reproducibility
 from modelFactory.runtime_status import increment_runtime_counter, reset_runtime_status, snapshot_runtime_status, update_runtime_status
+from modelFactory.feature_profiles import (
+    DIRECTIONAL_TARGET_DOWN_THRESHOLD,
+    DIRECTIONAL_TARGET_HORIZON,
+    DIRECTIONAL_TARGET_UP_THRESHOLD,
+)
+
+
+def _safe_print(message: object) -> None:
+    """Affiche un message CLI, y compris sur une console Windows non UTF-8."""
+    try:
+        print(message)
+    except UnicodeEncodeError:
+        encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+        print(str(message).encode(encoding, errors="replace").decode(encoding))
+
+
+def enforce_directional_bundle_target_options(opts: argparse.Namespace) -> argparse.Namespace:
+    """Impose le contrat H20 aux directions, sans écraser l'horizon Oracle."""
+    if not getattr(opts, "directional_feature_profiles", False):
+        return opts
+    opts.target_mode = "ternary"
+    opts.num_classes = 3
+    opts.label_method = "fixed_horizon"
+    opts.forecast_horizon = DIRECTIONAL_TARGET_HORIZON
+    opts.forecast_horizons = None
+    opts.target_up_threshold = DIRECTIONAL_TARGET_UP_THRESHOLD
+    opts.target_down_threshold = DIRECTIONAL_TARGET_DOWN_THRESHOLD
+    opts.target_skip_vol_scaling = False
+    opts.target_excess_vs_spy = False
+    opts.target_intra_sector_rank = False
+    opts.target_ternary_intra_sector = False
+    opts.optimize_target = False
+    return opts
 
 
 def _resolve_synth_best_h(opts, batch_id: str | None) -> int:
@@ -104,6 +137,115 @@ def _load_live_dip_config() -> dict | None:
 LOGGER = logging.getLogger(__name__)
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 ML_MODES = ("rebuild-all", "rebuild-missing", "refresh-stale")
+
+
+class PredictionPersistenceError(RuntimeError):
+    """Une prédiction obligatoire a été calculée mais non persistée."""
+
+
+def _persist_predictions_with_policy(
+    engine,
+    chunk: pd.DataFrame,
+    *,
+    insert_fn,
+    operation: str,
+    prediction_date: date | None = None,
+    required: bool = False,
+) -> None:
+    """Persiste un lot ; un bundle directionnel utilise ``required=True``."""
+    if chunk.empty:
+        return
+    try:
+        insert_fn(engine, chunk)
+        if prediction_date is not None:
+            LOGGER.info(
+                "predict persistence persisted date=%s rows=%d operation=%s",
+                prediction_date.isoformat(),
+                len(chunk),
+                operation,
+            )
+    except Exception as exc:  # noqa: BLE001
+        increment_runtime_counter("prediction_db_issue_count", 1)
+        update_runtime_status(
+            last_db_issue_operation=operation,
+            last_db_issue_reason=f"prediction_persist_failed:{type(exc).__name__}",
+        )
+        if required:
+            LOGGER.error(
+                "predict REQUIRED persistence failed rows=%d operation=%s error=%s",
+                len(chunk), operation, exc,
+            )
+            raise PredictionPersistenceError(
+                f"required_prediction_persistence_failed:{operation}:{type(exc).__name__}:{exc}"
+            ) from exc
+        LOGGER.warning(
+            "predict batch persistence degraded rows=%d operation=%s error=%s",
+            len(chunk), operation, exc,
+        )
+
+
+def _directional_bundle_prediction_coverage(
+    engine,
+    batch_id: str,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> tuple[int, int]:
+    """Compte les lignes/dates directionnelles persistées pour un batch."""
+    from sqlalchemy import text
+
+    filters = [
+        "mtr.batch_id = :batch_id",
+        "mp.model_role = 'directional_bundle'",
+        "mp.direction_long_run_id IS NOT NULL",
+        "mp.direction_short_run_id IS NOT NULL",
+    ]
+    params: dict[str, object] = {"batch_id": str(batch_id)}
+    if start_date is not None:
+        filters.append("mp.prediction_date >= :start_date")
+        params["start_date"] = start_date
+    if end_date is not None:
+        filters.append("mp.prediction_date <= :end_date")
+        params["end_date"] = end_date
+    query = text(
+        "SELECT COUNT(*) AS rows_n, COUNT(DISTINCT mp.prediction_date) AS dates_n "
+        "FROM model_predictions mp "
+        "JOIN model_training_run mtr ON mtr.run_id = mp.direction_long_run_id "
+        f"WHERE {' AND '.join(filters)}"
+    )
+    with engine.connect() as connection:
+        row = connection.execute(query, params).one()
+    return int(row[0] or 0), int(row[1] or 0)
+
+
+def _require_directional_bundle_predictions(
+    engine,
+    batch_id: str,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    expected_dates: int = 1,
+) -> tuple[int, int]:
+    """Échoue explicitement si un bundle ne possède pas sa sortie LONG/SHORT."""
+    rows_n, dates_n = _directional_bundle_prediction_coverage(
+        engine,
+        batch_id,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    if rows_n <= 0 or dates_n < max(1, int(expected_dates)):
+        raise PredictionPersistenceError(
+            "directional_bundle_predictions_missing:"
+            f"batch={batch_id}:rows={rows_n}:dates={dates_n}:"
+            f"expected_dates={max(1, int(expected_dates))}"
+        )
+    LOGGER.info(
+        "predict bundle persistence verified batch=%s rows=%d dates=%d",
+        batch_id,
+        rows_n,
+        dates_n,
+    )
+    return rows_n, dates_n
 SYMBOL_SOURCES = (
     "tradable-universe",
     "stock-bars-daily",
@@ -371,6 +513,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-workers", type=int, default=4)
     p.add_argument("--predict-max-date-workers", type=int, default=4,
                    help="Nombre de dates traitées en parallèle lors du predict historique (défaut: 4)")
+    p.add_argument(
+        "--oracle-shadow",
+        action="store_true",
+        help=(
+            "P0h : autorise un Oracle à univers PIT dynamique uniquement en shadow. "
+            "Écrit des artefacts séparés, jamais oracle_extreme_predictions/model_predictions."
+        ),
+    )
     p.add_argument("--max-epochs", type=int, default=50)
     p.add_argument("--patience", type=int, default=DEFAULT_PATIENCE,
                    help="Patience pour l'early stopping du LSTM (epochs sans amélioration).")
@@ -463,6 +613,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="S7 : liste de features séparées par des virgules à utiliser comme X (ex. \"momentum_20,momentum_60,selector_short_score\"). Vide = legacy. Ignoré si --feature-whitelist-enabled absent.")
     p.add_argument("--no-force-v1-lstm", dest="force_v1_lstm", action="store_false", default=True,
                    help="S7 : NE PAS forcer feature_set=v1 pour le LSTM per-symbol (utilise le feature_set demandé, ex. expert). Opt-in ; par défaut le LSTM force v1 (comportement prod inchangé).")
+    p.add_argument("--directional-feature-profiles", action="store_true", default=False,
+                   help="Entraîne dans un même batch les branches Per-Symbol LONG et SHORT avec deux profils JSON, plus l'Oracle Extreme global.")
+    p.add_argument("--oracle-feature-profile", type=str, default="oracle.json",
+                   help="Nom du profil JSON présent dans config/features/oracle (défaut: oracle.json).")
+    p.add_argument("--standalone-oracle-feature-profile", type=str, default=None,
+                   help="Profil JSON Oracle hors bundle. Absent = features dynamiques pilotées par les options include-*.")
+    p.add_argument("--oracle-universe-mode", choices=["static_bars", "pit_dynamic_bars"],
+                   default="static_bars",
+                   help="Univers des labels Oracle: statique legacy ou admission quotidienne PIT bar-only P0b (Oracle-only).")
+    p.add_argument("--oracle-horizon", type=int, default=None,
+                   help="Horizon propre à l'Oracle Extreme en séances (défaut entraînement: 20; prédiction: lu depuis l'artefact). N'affecte pas les branches Per-Symbol.")
+    p.add_argument("--long-feature-profile", type=str, default="long.json",
+                   help="Nom du profil JSON présent dans config/features/long (défaut: long.json).")
+    p.add_argument("--short-feature-profile", type=str, default="short.json",
+                   help="Nom du profil JSON présent dans config/features/short (défaut: short.json).")
     p.add_argument("--target-skip-vol-scaling", action="store_true", default=False,
                    help="T1 experiment: désactiver le vol-scaling dans la target regression (target = future_return brut)")
     p.add_argument("--target-excess-vs-spy", action="store_true", default=False,
@@ -668,6 +833,9 @@ def main(args: list[str] | None = None) -> None:
     parser = build_arg_parser()
     raw_args = list(args) if args is not None else sys.argv[1:]
     opts = parser.parse_args(raw_args)
+    # Le target-mode CLI pilote les modèles génériques, pas l'Oracle O0. Dans
+    # un bundle, les deux branches ont un contrat absolu H20 immuable.
+    opts = enforce_directional_bundle_target_options(opts)
     if opts.label_method == "triple_barrier" and (opts.target_mode != "ternary" or opts.num_classes != 3):
         parser.error("--label-method triple_barrier requiert --target-mode ternary et --num-classes 3")
 
@@ -686,6 +854,12 @@ def main(args: list[str] | None = None) -> None:
     # Oracle Extreme (O0) : --oracle-model-only active implicitement l'Oracle
     if getattr(opts, "oracle_model_only", False):
         opts.enable_oracle_model = True
+    if getattr(opts, "directional_feature_profiles", False):
+        opts.enable_oracle_model = True
+        opts.oracle_model_only = False
+        opts.global_model_only = False
+        opts.exclude_per_symbol_per_sector = False
+        opts.training_mode = "per_symbol"
 
     _horizons: tuple[int, ...] = ()
     _forecast_horizon = opts.forecast_horizon
@@ -849,6 +1023,13 @@ def main(args: list[str] | None = None) -> None:
         accelerator=opts.accelerator,
         debug_train=opts.debug_train,
         training_mode=opts.training_mode,
+        directional_profiles_enabled=opts.directional_feature_profiles,
+        oracle_feature_profile=opts.oracle_feature_profile,
+        standalone_oracle_feature_profile=opts.standalone_oracle_feature_profile,
+        oracle_universe_mode=opts.oracle_universe_mode,
+        oracle_horizon=int(opts.oracle_horizon or 20),
+        long_feature_profile=opts.long_feature_profile,
+        short_feature_profile=opts.short_feature_profile,
     )
 
     reproducibility_state = apply_reproducibility(cfg.reproducibility, context=f"cli:{opts.mode}")
@@ -985,11 +1166,29 @@ def main(args: list[str] | None = None) -> None:
         _batch_final_status = (
             "failed" if (completed == 0 and failed > 0) else "completed"
         )
+        _batch_failure_reason: str | None = None
+        if cfg.directional_profiles_enabled:
+            try:
+                _bundle_manifest = json.loads(
+                    (Path(cfg.artifacts_dir) / run_id / "cascade_manifest.json").read_text(encoding="utf-8")
+                )
+                if not bool(_bundle_manifest.get("serving_ready")):
+                    _batch_final_status = "failed"
+                    _oracle_result = (_bundle_manifest.get("oracle") or {}).get("result") or {}
+                    _batch_failure_reason = str(
+                        _bundle_manifest.get("failure_reason")
+                        or _oracle_result.get("reason")
+                        or "directional_bundle_not_serving_ready"
+                    )
+            except (OSError, json.JSONDecodeError):
+                _batch_final_status = "failed"
+                _batch_failure_reason = "directional_bundle_manifest_unavailable"
         if _batch_final_status == "failed":
+            _batch_failure_reason = _batch_failure_reason or "no_completed_training_unit"
             LOGGER.error(
-                "cli: batch %s marked FAILED — completed=%d skipped=%d failed=%d "
-                "(aucune unité terminée)",
+                "cli: batch %s marked FAILED — completed=%d skipped=%d failed=%d reason=%s",
                 run_id, completed, skipped, failed,
+                _batch_failure_reason,
             )
         update_training_batch(
             engine,
@@ -999,6 +1198,7 @@ def main(args: list[str] | None = None) -> None:
             symbols_completed=completed,
             symbols_skipped=skipped,
             symbols_failed=failed,
+            failure_reason=_batch_failure_reason,
         )
 
         # ── Génération automatique du rapport Markdown ──
@@ -1039,7 +1239,13 @@ def main(args: list[str] | None = None) -> None:
             insert_predictions,
             load_symbols_for_source,
         )
-        from modelFactory.predictor import _batch_has_per_symbol_or_sector, predict_batch
+        from modelFactory.predictor import (
+            DirectionalBundleContractError,
+            _batch_has_per_symbol_or_sector,
+            _directional_bundle_root,
+            predict_batch,
+            validate_directional_bundle_for_prediction,
+        )
         from modelFactory.drift_monitor import compute_drift
         from modelFactory.drift_policy import (
             apply_kill_switch,
@@ -1103,9 +1309,13 @@ def main(args: list[str] | None = None) -> None:
                     _oracle_only = False
             if _oracle_only:
                 LOGGER.info(
-                    "predict: batch=%s Oracle-only détecté (champions, sans global_rank) → "
-                    "predict standard Oracle (remplit oracle_extreme_predictions)",
+                    "predict: batch=%s Oracle-only détecté (champions, sans global_rank) → %s",
                     _batch_id,
+                    (
+                        "shadow isolé (aucune écriture en base)"
+                        if bool(getattr(opts, "oracle_shadow", False))
+                        else "predict standard Oracle (remplit oracle_extreme_predictions)"
+                    ),
                 )
         LOGGER.info(
             "predict dispatch: batch=%s training_mode=%s → flux %s",
@@ -1113,37 +1323,53 @@ def main(args: list[str] | None = None) -> None:
             _batch_mode,
             "rank-driven (global ranks + synthèse)" if _per_sector else "per-symbol (predict_batch)",
         )
+        if bool(getattr(opts, "oracle_shadow", False)) and not _oracle_only:
+            _safe_print("❌ --oracle-shadow exige un batch Oracle-only avec champions.")
+            raise SystemExit(2)
 
         def _persist_predictions_chunk(
             chunk: pd.DataFrame,
             *,
             operation: str,
             prediction_date: date | None = None,
+            required: bool = False,
         ) -> None:
-            if chunk.empty:
-                return
-            try:
-                insert_predictions(engine, chunk)
-                if prediction_date is not None:
-                    LOGGER.info(
-                        "predict persistence persisted date=%s rows=%d operation=%s",
-                        prediction_date.isoformat(),
-                        len(chunk),
-                        operation,
-                    )
-            except Exception as exc:  # noqa: BLE001
-                LOGGER.warning("predict batch persistence degraded rows=%d operation=%s error=%s", len(chunk), operation, exc)
-                increment_runtime_counter("prediction_db_issue_count", 1)
-                update_runtime_status(
-                    last_db_issue_operation=operation,
-                    last_db_issue_reason=f"prediction_persist_failed:{type(exc).__name__}",
-                )
+            _persist_predictions_with_policy(
+                engine,
+                chunk,
+                insert_fn=insert_predictions,
+                operation=operation,
+                prediction_date=prediction_date,
+                required=required,
+            )
 
         symbols = opts.symbols or load_symbols_for_source(
             engine,
             opts.symbol_source,
             trade_date=universe_date,
         )
+        _directional_root = _directional_bundle_root(Path(opts.artifacts_dir), _batch_id)
+        _is_directional_bundle = _directional_root is not None
+        if _directional_root is not None:
+            try:
+                symbols, _bundle_excluded = validate_directional_bundle_for_prediction(
+                    _directional_root,
+                    list(symbols),
+                    require_oracle=True,
+                )
+            except DirectionalBundleContractError as exc:
+                LOGGER.error("predict bundle preflight FAILED batch=%s reason=%s", _batch_id, exc)
+                _safe_print(f"❌ Bundle non servable : {exc}")
+                raise SystemExit(2) from exc
+            if _bundle_excluded:
+                LOGGER.warning(
+                    "predict bundle universe filtered batch=%s kept=%d excluded=%d details=%s",
+                    _batch_id, len(symbols), len(_bundle_excluded), _bundle_excluded,
+                )
+            LOGGER.info(
+                "predict bundle preflight OK batch=%s paired_symbols=%d excluded=%d",
+                _batch_id, len(symbols), len(_bundle_excluded),
+            )
         if _oracle_only:
             # Prédiction standard Oracle (champions, sans retrain) → table
             # oracle_extreme_predictions. Période : historique (start/end) ou live (jour).
@@ -1158,9 +1384,39 @@ def main(args: list[str] | None = None) -> None:
             from modelFactory.oracle.predict_history import predict_oracle_extreme_history
             _oracle_out = predict_oracle_extreme_history(
                 engine, _batch_id, _oracle_start, _oracle_end,
-                horizon=int(getattr(opts, "horizon", 20) or 20),
+                horizon=getattr(opts, "oracle_horizon", None),
+                symbols=list(symbols) if bool(getattr(opts, "oracle_shadow", False)) else None,
+                shadow_mode=bool(getattr(opts, "oracle_shadow", False)),
             )
             LOGGER.info("predict oracle-only batch=%s result=%s", _batch_id, _oracle_out)
+            if bool(getattr(opts, "oracle_shadow", False)):
+                if (
+                    not _oracle_out
+                    or _oracle_out.get("status") != "completed"
+                    or int(_oracle_out.get("n_rows", 0) or 0) <= 0
+                ):
+                    _safe_print(f"❌ Oracle shadow échoué : {_oracle_out}")
+                    raise SystemExit(2)
+                _safe_print(
+                    "✅ Oracle shadow terminé — "
+                    f"{int(_oracle_out['n_rows'])} scores isolés dans "
+                    f"{_oracle_out.get('artifact_dir')}"
+                )
+                finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                _emit_run_summary(_build_run_summary(
+                    mode="predict",
+                    run_id=run_id,
+                    opts=opts,
+                    cfg=cfg,
+                    started_at=started_at,
+                    finished_at=finished_at,
+                    symbols_total=len(symbols),
+                    completed=int(_oracle_out["n_rows"]),
+                    skipped=0,
+                    failed=0,
+                    quarantined=0,
+                ))
+                return
             # ── Synchro Oracle → model_predictions (même logique que le Global Rank
             # synth) : peuple model_predictions pour que la couverture ML du backtest
             # pipeline soit satisfaite et que le signal Oracle soit consommable comme
@@ -1220,7 +1476,7 @@ def main(args: list[str] | None = None) -> None:
                 """Traite une date : global_rank → predict_batch → persist. Thread-safe."""
                 _ds = pred_date.isoformat()
                 # Étape 1 : global rank
-                if _batch_id:
+                if _batch_id and not _is_directional_bundle:
                     predict_global_rank_history(
                         start_date=_ds,
                         end_date=_ds,
@@ -1233,8 +1489,10 @@ def main(args: list[str] | None = None) -> None:
                 # OU aux batches sans modèles per-symbol/per-sector (global-only).
                 if _per_sector or not _has_ps_models:
                     return (_ds, 0)
-                _syms = opts.symbols or load_symbols_for_source(
-                    engine, opts.symbol_source, trade_date=pred_date,
+                _syms = symbols if _is_directional_bundle else (
+                    opts.symbols or load_symbols_for_source(
+                        engine, opts.symbol_source, trade_date=pred_date,
+                    )
                 )
                 _part = predict_batch(
                     _syms,
@@ -1255,8 +1513,14 @@ def main(args: list[str] | None = None) -> None:
                         _part,
                         operation="insert_predictions_historical_date",
                         prediction_date=pred_date,
+                        required=_is_directional_bundle,
                     )
                     _rows = len(_part)
+                elif _is_directional_bundle:
+                    raise PredictionPersistenceError(
+                        "directional_bundle_empty_prediction_date:"
+                        f"batch={_batch_id}:date={_ds}"
+                    )
                 return (_ds, _rows)
 
             _max_date_workers = max(1, min(getattr(opts, "predict_max_date_workers", 4) or 4, 8))
@@ -1266,6 +1530,7 @@ def main(args: list[str] | None = None) -> None:
             )
             with ThreadPoolExecutor(max_workers=_max_date_workers) as _exec:
                 _futures = {_exec.submit(_process_date, d): d for d in prediction_dates}
+                _failed_prediction_dates: list[tuple[date, Exception]] = []
                 for _future in as_completed(_futures):
                     try:
                         _ds, _rows = _future.result()
@@ -1282,9 +1547,17 @@ def main(args: list[str] | None = None) -> None:
                             )
                     except Exception as _exc:
                         _failed_date = _futures[_future]
+                        _failed_prediction_dates.append((_failed_date, _exc))
                         LOGGER.error(
                             "predict date=%s FAILED: %s", _failed_date.isoformat(), _exc,
                         )
+            if _is_directional_bundle and _failed_prediction_dates:
+                _first_failed_date, _first_failure = _failed_prediction_dates[0]
+                raise PredictionPersistenceError(
+                    "directional_bundle_backfill_failed:"
+                    f"batch={_batch_id}:failed_dates={len(_failed_prediction_dates)}:"
+                    f"first_date={_first_failed_date.isoformat()}:first_error={_first_failure}"
+                ) from _first_failure
             persisted_incrementally = True
             if _per_sector:
                 from modelFactory.synthesize_global_rank_predictions import synthesize
@@ -1348,6 +1621,14 @@ def main(args: list[str] | None = None) -> None:
                     LOGGER.info(
                         "predict historical done: %d/%d dates with predictions, %d total rows",
                         _dates_with_data, _dates_total, len(preds),
+                    )
+                if _is_directional_bundle:
+                    _require_directional_bundle_predictions(
+                        engine,
+                        _batch_id,
+                        start_date=prediction_dates[0] if prediction_dates else None,
+                        end_date=prediction_dates[-1] if prediction_dates else None,
+                        expected_dates=_dates_total,
                     )
         else:
             if _per_sector:
@@ -1437,12 +1718,18 @@ def main(args: list[str] | None = None) -> None:
                 from modelFactory.oracle.predict_history import predict_oracle_extreme_history
                 _oc_out = predict_oracle_extreme_history(
                     engine, _batch_id, _oc_start, _oc_end,
-                    horizon=int(getattr(opts, "horizon", 20) or 20),
+                    horizon=getattr(opts, "oracle_horizon", None),
                 )
                 LOGGER.info(
                     "predict combined batch=%s oracle predict result=%s",
                     _batch_id, _oc_out,
                 )
+                if _is_directional_bundle and (
+                    not _oc_out
+                    or _oc_out.get("status") != "completed"
+                    or int(_oc_out.get("n_rows", 0) or 0) <= 0
+                ):
+                    raise RuntimeError(f"oracle_prediction_required_but_failed:{_oc_out}")
                 # ── Synchro Oracle → model_predictions (même logique que le flux
                 #    rank-driven / oracle-only) : peuple model_predictions avec le
                 #    signal Oracle (source=oracle_synth) pour la couverture ML et
@@ -1465,6 +1752,9 @@ def main(args: list[str] | None = None) -> None:
                             _batch_id, _synth_oc_exc,
                         )
             except Exception as _oc_exc:  # noqa: BLE001
+                if _is_directional_bundle:
+                    LOGGER.error("predict bundle oracle FAILED batch=%s: %s", _batch_id, _oc_exc)
+                    raise
                 LOGGER.warning(
                     "predict combined batch=%s oracle predict FAILED (non-bloquant): %s",
                     _batch_id, _oc_exc,
@@ -1496,12 +1786,29 @@ def main(args: list[str] | None = None) -> None:
             and (drift_decision is None or drift_decision.action != "kill_switch_ml")
             and not persisted_incrementally
         ):
-            _persist_predictions_chunk(preds, operation="insert_predictions_batch")
+            _persist_predictions_chunk(
+                preds,
+                operation="insert_predictions_batch",
+                required=_is_directional_bundle,
+            )
+            if _is_directional_bundle:
+                _pred_dates = pd.to_datetime(preds["prediction_date"], errors="coerce").dropna()
+                _require_directional_bundle_predictions(
+                    engine,
+                    _batch_id,
+                    start_date=_pred_dates.min().date() if not _pred_dates.empty else None,
+                    end_date=_pred_dates.max().date() if not _pred_dates.empty else None,
+                    expected_dates=int(_pred_dates.dt.date.nunique()) if not _pred_dates.empty else 1,
+                )
         elif drift_decision is not None and drift_decision.action == "kill_switch_ml":
             LOGGER.warning(
                 "predict batch persistence skipped reason=ml_kill_switch_active rows=%d decision=%s",
                 len(preds),
                 drift_decision.reason,
+            )
+        elif _is_directional_bundle and not historical_predict_enabled and preds.empty:
+            raise PredictionPersistenceError(
+                f"directional_bundle_predictions_missing:batch={_batch_id}:live_frame_empty"
             )
 
         print(f"\n{'=' * 60}")
@@ -1601,6 +1908,7 @@ def _build_run_summary(
         "training_end_date": cfg.data.training_end_date.isoformat() if cfg.data.training_end_date is not None else None,
         "symbol_source": str(getattr(opts, "symbol_source", "tradable-universe")),
         "historical_prediction_range_enabled": bool(mode == "predict" and cfg.data.training_end_date is not None),
+        "oracle_shadow": bool(getattr(opts, "oracle_shadow", False)),
         "universe_date": (getattr(opts, "universe_date", None) or cfg.data.training_end_date or date.today()).isoformat(),
         "debug_train_enabled": bool(getattr(opts, "debug_train", False)),
         "heartbeat_interval_seconds": float(getattr(opts, "heartbeat_interval_seconds", DEFAULT_HEARTBEAT_INTERVAL_SECONDS) or 0.0),

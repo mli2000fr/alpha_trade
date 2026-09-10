@@ -17,6 +17,11 @@ from common.capital_presets import (
     resolve_capital_preset_for_equity,
 )
 from common.universe_files import default_universe_file_source_or
+from common.ml_cascade_contract import load_serving_directional_bundle_manifest
+from modelFactory.oracle.artifact_contract import (
+    oracle_horizon_badge,
+    resolve_oracle_artifact_horizon,
+)
 from ihm.components.db_controls import render_db_connection_form
 from ihm.components.metrics import format_duration_hhmmss
 from ihm.pages import run_page_if_standalone
@@ -86,6 +91,8 @@ BT_RUN_CONFIGURATION_PRESET_APPLIED_KEY = "bt_run_configuration_preset_applied"
 BT_RUN_ALLOW_FRACTIONAL_SHARES_KEY = "bt_run_allow_fractional_shares"
 LOAD_GLOBAL_SCREENER_HISTORY_KEY = "ihm_backtesting_load_global_screener_history"
 RUNTIME_CENTER_AUTO_UPDATE_KEY = "ihm_backtesting_runtime_center_auto_update"
+BT_RUN_CASCADE_CONTRACT_BATCH_KEY = "bt_run_cascade_contract_batch_id"
+BT_RUN_ORACLE_BATCH_PENDING_KEY = "bt_run_oracle_batch_pending_id"
 
 # ── P2-4 — Fidélité live des protections (valeurs alignées sur la production) ──
 # Miroir de RiskConfig : `atr_stop_multiple_for()` SANS argument utilise
@@ -107,7 +114,7 @@ BT_RUN_MARGIN_INTEREST_DEFAULT = 7.5
 # Défauts = miroir de config.yaml `persistent_dip_filter_long.backtest_*`.
 # La page lit d'abord config.yaml (source de vérité) ; ces constantes ne
 # servent que de fallback si config.yaml est illisible/absent.
-BT_RUN_DIP_ENABLED_DEFAULT = True
+BT_RUN_DIP_ENABLED_DEFAULT = False
 BT_RUN_DIP_RANK_HORIZON_DEFAULT = 20
 BT_RUN_DIP_RANK_THRESHOLD_DEFAULT = 0.90
 BT_RUN_DIP_PERSIST_DAYS_DEFAULT = 4
@@ -540,6 +547,25 @@ def _extract_run_batch_id(run: dict[str, object]) -> str | None:
     return None
 
 
+def _extract_run_oracle_batch_id(run: dict[str, object]) -> str | None:
+    """Extrait le batch Oracle effectif, puis retombe sur le batch ML du run."""
+    raw = run.get("command")
+    if isinstance(raw, list):
+        tokens = [str(x) for x in raw]
+        if "--oracle-batch-id" in tokens:
+            idx = tokens.index("--oracle-batch-id")
+            if idx + 1 < len(tokens) and not tokens[idx + 1].startswith("--"):
+                return tokens[idx + 1]
+    text_ = str(run.get("command_display") or "").strip()
+    pos = text_.find("--oracle-batch-id")
+    if pos != -1:
+        rest = text_[pos + len("--oracle-batch-id"):].lstrip()
+        tok = rest.split(None, 1)[0] if rest.split(None, 1) else ""
+        if tok and not tok.startswith("--"):
+            return tok
+    return _extract_run_batch_id(run)
+
+
 def _extract_run_dates(run: dict[str, object]) -> tuple[str | None, str | None]:
     """Extrait les dates --start/--end de la commande du run (list ou command_display)."""
     start = end = None
@@ -792,7 +818,7 @@ def _parameter_reference_rows(kind: str) -> list[dict[str, str]]:
             {"Paramètre": "max_portfolio_dd_pct", "Explication": "Drawdown max avant coupe-circuit nouvelles entrées (Phase C.5).", "Défaut": "0.0"},
             {"Paramètre": "target_annual_vol", "Explication": "Cible vol annualisée portefeuille (Phase C.2).", "Défaut": "None"},
             # Persistent Rank DIP filter (2026-08-27) — config.yaml backtest_*.
-            {"Paramètre": "dip_enabled", "Explication": "Active/coupe le filtre Persistent Rank DIP en backtest (--dip-enabled / --no-dip-enabled).", "Défaut": "config.yaml backtest_enabled (true)"},
+            {"Paramètre": "dip_enabled", "Explication": "Active/coupe le filtre Persistent Rank DIP en backtest (--dip-enabled / --no-dip-enabled).", "Défaut": "désactivé dans l’IHM"},
             {"Paramètre": "dip_rank_horizon", "Explication": "Horizon de rang H → colonne global_rank_{H} (--dip-rank-horizon).", "Défaut": "config.yaml backtest_rank_horizon (20)"},
             {"Paramètre": "dip_rank_threshold", "Explication": "Seuil de rang minimal (0.90 = TOP 10%) (--dip-rank-threshold).", "Défaut": "config.yaml backtest_rank_threshold (0.90)"},
             {"Paramètre": "dip_persist_days", "Explication": "Persistance N : séances consécutives au-dessus du seuil (--dip-persist-days).", "Défaut": "config.yaml backtest_persist_days (4)"},
@@ -1450,7 +1476,7 @@ def _build_overlay_options(
                 "Min ML coverage ratio (pipeline)",
                 value=min_ml_coverage_ratio_default_raw,
                 key="bt_run_min_ml_coverage_ratio_raw",
-                help="Ex 0.80 = bloque le run pipeline si la couverture ML passe sous 80%. Vide = désactivé.",
+                help="Ex 0.90 = bloque le run pipeline si la couverture ML passe sous 90%. Pour un bundle directionnel, la couverture est calculée sur les paires LONG/SHORT réellement servables, pas sur tous les symboles demandés à l'entraînement. Vide = désactivé.",
             )
         with risk_col12:
             if engine_mode == "pipeline":
@@ -1555,7 +1581,7 @@ def _build_run_options() -> BacktestRunOptions:
     with col1:
         start = st.date_input(
             "Date de début",
-            value=_to_date_value(st.session_state.get("bt_run_start", "2025-01-01"), "2025-01-01"),
+            value=_to_date_value(st.session_state.get("bt_run_start", "2024-07-01"), "2024-07-01"),
             key="bt_run_start",
             help="Borne basse du backtest (calendrier).",
         )
@@ -1563,7 +1589,7 @@ def _build_run_options() -> BacktestRunOptions:
     with col2:
         end = st.date_input(
             "Date de fin",
-            value=_to_date_value(st.session_state.get("bt_run_end", "2026-06-30"), "2026-06-30"),
+            value=_to_date_value(st.session_state.get("bt_run_end", "2025-12-31"), "2025-12-31"),
             key="bt_run_end",
             help="Borne haute du backtest (calendrier). Date future = jusqu'au dernier bar dispo.",
         )
@@ -2331,6 +2357,20 @@ def _build_run_options() -> BacktestRunOptions:
             st.caption(
                 "Mode strict actif (défaut) : le run échoue dès qu'une macro requise est indisponible."
             )
+    force_macro_missing = st.checkbox(
+        "Simuler la macro entièrement absente (diagnostic)",
+        value=bool(st.session_state.get("bt_run_force_macro_missing", False)),
+        key="bt_run_force_macro_missing",
+        help=(
+            "Ignore temporairement le provider macro pendant ce backtest, sans modifier les tables. "
+            "Chaque séance suit le même fallback neutre qu'une vraie absence de macro."
+        ),
+    )
+    if force_macro_missing:
+        st.warning(
+            "Ablation diagnostique active : les données macro existantes seront volontairement ignorées "
+            "et le fallback neutre sera forcé pour ce run uniquement."
+        )
 
     artifacts_dir = st.text_input(
         "Répertoire des artefacts modèles",
@@ -2347,7 +2387,8 @@ def _build_run_options() -> BacktestRunOptions:
             finished_str = str(finished)[:19] if finished and str(finished) not in ("None", "nan", "") else "—"
             comment = row.get("comment")
             comment_str = str(comment)[:60] if comment and str(comment) not in ("None", "nan", "") else "—"
-            label = f"{bid} | {finished_str} | {comment_str}"
+            _h_badge = oracle_horizon_badge(bid, Path(artifacts_dir))
+            label = f"{bid} | {_h_badge + ' | ' if _h_badge else ''}{finished_str} | {comment_str}"
             batch_options[label] = bid
     selected_ml_batch_id: str | None = None
     if ml_mode != "off":
@@ -2388,6 +2429,47 @@ def _build_run_options() -> BacktestRunOptions:
             )
             selected_ml_batch_id = batch_options[selected_label]
 
+            # Un nouveau bundle Oracle + directions possède un contrat explicite :
+            # lors du changement de campagne, présélectionner le mode symétrique
+            # et le même batch Oracle. Les choix manuels restent intacts lors des
+            # reruns suivants tant que la campagne ML ne change pas.
+            _previous_contract_batch = str(
+                st.session_state.get(BT_RUN_CASCADE_CONTRACT_BATCH_KEY, "") or ""
+            )
+            if selected_ml_batch_id != _previous_contract_batch:
+                st.session_state[BT_RUN_CASCADE_CONTRACT_BATCH_KEY] = selected_ml_batch_id
+                _artifact_root = Path(artifacts_dir)
+                if not _artifact_root.is_absolute():
+                    _artifact_root = PROJECT_ROOT / _artifact_root
+                _bundle_manifest = load_serving_directional_bundle_manifest(
+                    _artifact_root, selected_ml_batch_id,
+                )
+                if _bundle_manifest is not None:
+                    st.session_state["bt_run_cascade_rank_mode"] = "extreme_gate_directional"
+                    st.session_state[BT_RUN_ORACLE_BATCH_PENDING_KEY] = selected_ml_batch_id
+                elif st.session_state.get("bt_run_cascade_rank_mode") == "extreme_gate_directional":
+                    st.session_state["bt_run_cascade_rank_mode"] = "ml"
+                    st.session_state[BT_RUN_ORACLE_BATCH_PENDING_KEY] = ""
+
+            # Visibilité du quality gate avant lancement : ce filtre est appliqué
+            # automatiquement au même batch dans le moteur de backtest.
+            _selected_diag = get_batch_diagnostics_summary(selected_ml_batch_id)
+            if bool(_selected_diag.get("available", False)):
+                _diag_total = int(_selected_diag.get("total_symbols") or 0)
+                _diag_excl_long = len(_selected_diag.get("exclude_long_symbols") or [])
+                _diag_excl_short = len(_selected_diag.get("exclude_short_symbols") or [])
+                _diag_long_ok = max(0, _diag_total - _diag_excl_long)
+                _diag_short_ok = max(0, _diag_total - _diag_excl_short)
+                _diag_text = (
+                    f"Quality gate du batch : LONG {_diag_long_ok}/{_diag_total} éligibles "
+                    f"({_diag_excl_long} exclus) · SHORT {_diag_short_ok}/{_diag_total} "
+                    f"éligibles ({_diag_excl_short} exclus)."
+                )
+                if _diag_total and (_diag_long_ok / _diag_total < 0.20 or _diag_short_ok / _diag_total < 0.20):
+                    st.warning(_diag_text + " Ce filtre est très restrictif pour cette campagne.")
+                else:
+                    st.caption(_diag_text)
+
     # ── P5.2 — Seuil top/bottom de la cascade ML (fraction) ──
     # Aligné benchmark B25 : 0.10 (top 10% LONG / bottom 10% SHORT).
     # Transmis à --cascade-top-pct ; None = config.yaml cascade.top_pct.
@@ -2405,13 +2487,13 @@ def _build_run_options() -> BacktestRunOptions:
         )
     with cascade_top_col2:
         st.caption(
-            "Seuil de la cascade Global Rank → Per-Symbol. `0.10` = config benchmark B25."
+            "Seuil de la cascade Global Rank → Per-Symbol. Sans effet dans les modes Extreme Gate, qui possèdent leur propre pool Oracle."
         )
 
     # ── Persistent Rank DIP filter (2026-08-27) — paramétrage backtest ──
-    # Défauts = config.yaml persistent_dip_filter_long.backtest_* (source de
-    # vérité). Transmis via --dip-* ; si l'utilisateur ne touche à rien, aucun
-    # flag n'est émis → la CLI lit config.yaml directement (comportement gelé).
+    # Les paramètres numériques viennent de config.yaml. L'activation est
+    # volontairement opt-in dans l'IHM : la case est décochée au premier
+    # affichage, indépendamment de backtest_enabled dans config.yaml.
     _dip_defaults = _load_dip_backtest_defaults()
     with st.expander("🔻 Filtre Persistent Rank DIP (paramétrage backtest)", expanded=False):
         st.caption(
@@ -2428,7 +2510,7 @@ def _build_run_options() -> BacktestRunOptions:
                 value=bool(
                     st.session_state.get(
                         "bt_run_dip_enabled",
-                        _dip_defaults.get("enabled", BT_RUN_DIP_ENABLED_DEFAULT),
+                        BT_RUN_DIP_ENABLED_DEFAULT,
                     )
                 ),
                 key="bt_run_dip_enabled",
@@ -2565,17 +2647,33 @@ def _build_run_options() -> BacktestRunOptions:
         help="Comment le rang global (Global Ranking) et la proba_extreme (Oracle Extreme) sont combinés.",
     )
     oracle_batch_id: str | None = None
+    oracle_calibration = "none"
+    extreme_gate_pct = float(st.session_state.get("bt_run_extreme_gate_pct", 0.20) or 0.20)
+    extreme_gate_per_symbol = "filter"
+    oracle_tradable_policy = "off"
+    directional_bundle_gate = "strict"
+    cascade_min_prob: float | None = None
     if _cascade_rank_mode in ("oracle", "oracle_filter", "oracle_rerank", "oracle_pool", "extreme_gate", "extreme_gate_directional"):
         oracle_batches = get_oracle_prediction_batches()
         _oracle_batch_labels: dict[str, str | None] = {"— (défaut : campagne ML)": None}
         if not oracle_batches.empty:
             for _, r in oracle_batches.iterrows():
-                _label = f"{r['batch_id']} | {int(r['n_predictions']):,} préd | {r['min_date']}→{r['max_date']}"
+                _oracle_bid = str(r["batch_id"])
+                _h_badge = oracle_horizon_badge(_oracle_bid)
+                _label = f"{_oracle_bid} | {_h_badge or 'H?'} | {int(r['n_predictions']):,} préd | {r['min_date']}→{r['max_date']}"
                 if r.get("comment"):
                     _label += f" | {str(r['comment'])[:50]}"
                 _oracle_batch_labels[_label] = str(r["batch_id"])
         _all_oracle_labels = list(_oracle_batch_labels.keys())
         _default_oracle_idx = 0
+        _pending_oracle_batch = str(
+            st.session_state.pop(BT_RUN_ORACLE_BATCH_PENDING_KEY, "") or ""
+        )
+        if _pending_oracle_batch:
+            for _candidate_label, _candidate_batch in _oracle_batch_labels.items():
+                if _candidate_batch == _pending_oracle_batch:
+                    st.session_state["bt_run_oracle_batch_id"] = _candidate_label
+                    break
         _prev_oracle_label = str(st.session_state.get("bt_run_oracle_batch_id", "") or "")
         if _prev_oracle_label in _all_oracle_labels:
             _default_oracle_idx = _all_oracle_labels.index(_prev_oracle_label)
@@ -2589,6 +2687,99 @@ def _build_run_options() -> BacktestRunOptions:
                  "oracle (un seul batch B25+Oracle). Source table uniquement (parquet supprimé).",
         ))
         oracle_batch_id = _oracle_batch_labels[_sel_oracle_label]
+        _oracle_cfg_col1, _oracle_cfg_col2 = st.columns(2)
+        with _oracle_cfg_col1:
+            oracle_calibration = cast(str, st.selectbox(
+                "Calibration Oracle",
+                options=["none", "rank", "isotonic"],
+                index=["none", "rank", "isotonic"].index(
+                    st.session_state.get("bt_run_oracle_calibration", "none")
+                    if st.session_state.get("bt_run_oracle_calibration", "none") in {"none", "rank", "isotonic"}
+                    else "none"
+                ),
+                key="bt_run_oracle_calibration",
+                help="`none` consomme le score OOS brut. En backtest PIT strict, isotonic exige un calibrateur antérieur gelé.",
+            ))
+        if _cascade_rank_mode in ("extreme_gate", "extreme_gate_directional"):
+            with _oracle_cfg_col2:
+                extreme_gate_pct = float(st.number_input(
+                    "Pool Oracle Extreme (fraction)",
+                    min_value=0.01,
+                    max_value=0.50,
+                    value=extreme_gate_pct,
+                    step=0.01,
+                    format="%.2f",
+                    key="bt_run_extreme_gate_pct",
+                    help="0.20 = les 20 % de symboles ayant la plus forte probabilité de mouvement extrême chaque jour.",
+                ))
+            _eg_contract_col1, _eg_contract_col2, _eg_contract_col3 = st.columns(3)
+            with _eg_contract_col1:
+                extreme_gate_per_symbol = cast(str, st.selectbox(
+                    "Rôle Per-Symbol dans Extreme Gate",
+                    options=["filter", "no_filter", "bypass"],
+                    format_func=lambda value: {
+                        "filter": "Filtrer + classer",
+                        "no_filter": "Classer sans veto",
+                        "bypass": "Bypass — Oracle pur",
+                    }[value],
+                    index=["filter", "no_filter", "bypass"].index(
+                        st.session_state.get("bt_run_extreme_gate_per_symbol", "filter")
+                        if st.session_state.get("bt_run_extreme_gate_per_symbol", "filter")
+                        in {"filter", "no_filter", "bypass"}
+                        else "filter"
+                    ),
+                    key="bt_run_extreme_gate_per_symbol",
+                    disabled=_cascade_rank_mode == "extreme_gate_directional",
+                    help="`bypass` ignore totalement la probabilité Per-Symbol : l’Oracle choisit seul le pool et son ordre. En mode directionnel LONG/SHORT, les deux branches restent requises pour choisir le sens.",
+                ))
+            with _eg_contract_col2:
+                directional_bundle_gate = cast(str, st.selectbox(
+                    "Quality gate directionnel",
+                    options=["strict", "discovery", "off"],
+                    index=["strict", "discovery", "off"].index(
+                        st.session_state.get("bt_run_directional_bundle_gate", "off")
+                        if st.session_state.get("bt_run_directional_bundle_gate", "off")
+                        in {"strict", "discovery", "off"}
+                        else "off"
+                    ),
+                    key="bt_run_directional_bundle_gate",
+                    help="`off` conserve toutes les paires servables ; `strict` et `discovery` appliquent les critères Walk-Forward du Diagnostic ML.",
+                ))
+            with _eg_contract_col3:
+                cascade_min_prob = float(st.number_input(
+                    "Probabilité directionnelle minimale",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(st.session_state.get("bt_run_cascade_min_prob", 0.55) or 0.0),
+                    step=0.05,
+                    format="%.2f",
+                    key="bt_run_cascade_min_prob",
+                    help="Exige max(P(LONG), P(SHORT)) au-dessus de ce seuil. Ce réglage est distinct de la marge |P(LONG)-P(SHORT)|.",
+                ))
+            oracle_tradable_policy = cast(str, st.selectbox(
+                "Filtre tradable autour du TOP20 Oracle",
+                options=["filter_then_top20", "top20_then_filter", "off"],
+                format_func=lambda value: {
+                    "filter_then_top20": "Tradables d'abord → TOP20 recalculé (recommandé)",
+                    "top20_then_filter": "TOP20 large → retirer les non-tradables (comparaison)",
+                    "off": "Désactivé — compatibilité anciens runs",
+                }[value],
+                index=["filter_then_top20", "top20_then_filter", "off"].index(
+                    st.session_state.get(
+                        "bt_run_oracle_tradable_policy", "filter_then_top20"
+                    )
+                    if st.session_state.get(
+                        "bt_run_oracle_tradable_policy", "filter_then_top20"
+                    ) in {"filter_then_top20", "top20_then_filter", "off"}
+                    else "filter_then_top20"
+                ),
+                key="bt_run_oracle_tradable_policy",
+                help=(
+                    "Utilise le snapshot tradable PIT exact du preset de capital. "
+                    "Une date absente ou non-full bloque le backtest ; aucun fallback "
+                    "vers les métadonnées actuelles n'est autorisé."
+                ),
+            ))
 
     # ── Priorité N4X2 jours saturés (recherche E, extreme_gate uniquement) ──
     extreme_gate_dip_saturated = bool(st.session_state.get("bt_run_extreme_gate_dip_saturated", False))
@@ -2646,7 +2837,7 @@ def _build_run_options() -> BacktestRunOptions:
 - **extreme_gate_directional** — Oracle sélectionne l'amplitude extrême, puis le modèle Per-Symbol choisit **LONG ou SHORT** selon la probabilité directionnelle la plus forte. Le score vaut `percentile Oracle × probabilité directionnelle`.
 - **random** — rangs aléatoires (placebo, isole l'edge du ranking).
 
-🤖 **Auto-détection Extreme Gate** : si le batch sélectionné est **oracle-only** (aucun rang global dans `global_rank_history`, mais des prédictions dans `oracle_extreme_predictions`), le mode cascade passe **automatiquement** en `extreme_gate`, ce batch étant la source oracle. Dans ce cas, pas besoin de sélectionner Extreme Gate ni de renseigner le batch Oracle ci-dessus.
+🤖 **Auto-détection Extreme Gate** : un bundle servable `oracle_extreme_plus_per_symbol_directional` présélectionne `extreme_gate_directional` et utilise le même batch comme source Oracle. Un ancien batch Oracle sans bundle directionnel conserve `extreme_gate` LONG-only.
 
 ⚠️ Le **rang global** vient de `global_rank_history` du batch sélectionné (étape « Prédire l'univers »), et `proba_extreme` de la table `oracle_extreme_predictions` (batch sélectionné ci-dessus). Pour combiner proprement, utilisez un batch ayant entraîné **les deux** modèles (ablation O1) — le rang global utilisé est celui du batch sélectionné, **pas un B25 figé**.
 """
@@ -2770,6 +2961,7 @@ def _build_run_options() -> BacktestRunOptions:
         engine_mode=cast(Any, engine_mode),
         scores_pit_mode=cast(Any, scores_pit_mode),
         macro_pit_mode=cast(Any, macro_pit_mode),
+        force_macro_missing=bool(force_macro_missing),
         ml_pit_strategy=cast(Any, ml_pit_strategy),
         phase2_mode=cast(Any, phase2_mode),
         phase3_mode=cast(Any, phase3_mode),
@@ -2784,10 +2976,17 @@ def _build_run_options() -> BacktestRunOptions:
         cascade_batch_id=selected_ml_batch_id,
         batch_diagnostics_batch_id=selected_ml_batch_id,
         cascade_top_pct=float(st.session_state.get("bt_run_cascade_top_pct", 0.10) or 0.10),
+        extreme_gate_pct=float(extreme_gate_pct),
+        cascade_min_prob=cascade_min_prob,
         # Persistent Rank DIP filter — valeurs UI = défauts config.yaml. Seuls
         # les champs explicitement modifiés génèrent un flag --dip-* ; sinon la
         # CLI lit config.yaml (comportement gelé inchangé).
-        dip_enabled=bool(st.session_state.get("bt_run_dip_enabled", _dip_defaults.get("enabled", BT_RUN_DIP_ENABLED_DEFAULT))),
+        dip_enabled=(
+            False
+            if _cascade_rank_mode in ("extreme_gate", "extreme_gate_directional")
+            and not bool(extreme_gate_dip_saturated)
+            else bool(st.session_state.get("bt_run_dip_enabled", BT_RUN_DIP_ENABLED_DEFAULT))
+        ),
         dip_rank_horizon=int(st.session_state.get("bt_run_dip_rank_horizon", _dip_defaults.get("rank_horizon", BT_RUN_DIP_RANK_HORIZON_DEFAULT))),
         dip_rank_threshold=float(st.session_state.get("bt_run_dip_rank_threshold", _dip_defaults.get("rank_threshold", BT_RUN_DIP_RANK_THRESHOLD_DEFAULT))),
         dip_persist_days=int(st.session_state.get("bt_run_dip_persist_days", _dip_defaults.get("persist_days", BT_RUN_DIP_PERSIST_DAYS_DEFAULT))),
@@ -2796,9 +2995,13 @@ def _build_run_options() -> BacktestRunOptions:
         dip_reclaim_max_wait=int(st.session_state.get("bt_run_dip_reclaim_max_wait", _dip_defaults.get("reclaim_max_wait", BT_RUN_DIP_RECLAIM_MAX_WAIT_DEFAULT))),
         cascade_rank_mode=cast(Any, st.session_state.get("bt_run_cascade_rank_mode", "ml") or "ml"),
         oracle_batch_id=(oracle_batch_id or None),
+        oracle_calibration=cast(Any, oracle_calibration),
+        directional_bundle_gate=cast(Any, directional_bundle_gate),
+        extreme_gate_per_symbol=cast(Any, extreme_gate_per_symbol),
         extreme_gate_dip_saturated=bool(extreme_gate_dip_saturated),
         extreme_gate_dip_band=float(extreme_gate_dip_band or 0.02),
         extreme_gate_direction_margin=float(extreme_gate_direction_margin),
+        oracle_tradable_policy=cast(Any, oracle_tradable_policy),
         score_column=cast(Any, score_column),
         walk_forward_artifacts_dir=walk_forward_artifacts_dir.strip() or None,
         disable_walk_forward=bool(st.session_state.get("bt_run_disable_walk_forward", False)),
@@ -4556,13 +4759,17 @@ _RUN_ORACLE_LABELS_QUERY = """
     FROM alpha_trade.global_oracle_labels
     WHERE batch_id = :batch_id
       AND horizon = :horizon
+      AND target_quality_valid = 1
       AND oracle_decile IS NOT NULL
     ORDER BY prediction_date, symbol
 """
 
 
 def _batch_oracle_horizon(batch_id: str) -> int:
-    """Meilleur horizon du batch (metadata ``global_ranking.best_horizon``), défaut H20."""
+    """Horizon de l'artefact Oracle, puis fallback Global Ranking/H20 legacy."""
+    artifact_horizon = resolve_oracle_artifact_horizon(batch_id)
+    if artifact_horizon is not None:
+        return artifact_horizon
     try:
         df = safe_query(
             "SELECT metadata_json FROM model_training_batch WHERE batch_id = :batch_id",
@@ -4608,7 +4815,7 @@ def _render_run_oracle_deciles(run_record: dict[str, object]) -> None:
             st.info("Aucun `trades.csv` disponible pour ce run.")
             return
 
-        batch_id = _extract_run_batch_id(run_record)
+        batch_id = _extract_run_oracle_batch_id(run_record)
         if not batch_id:
             st.warning(
                 "Impossible de déterminer le batch ML de ce run "

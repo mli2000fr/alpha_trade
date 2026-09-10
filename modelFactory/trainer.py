@@ -68,7 +68,6 @@ from modelFactory.evaluation import (
     optimize_decision_threshold,
 )
 from modelFactory.features import build_feature_contract, get_feature_columns
-from modelFactory.features import fingerprint as compute_feature_fingerprint
 from modelFactory.catboost_baseline import run_catboost_baseline
 from modelFactory.lightgbm_baseline import run_lightgbm_baseline
 from modelFactory.model import LSTMAttentionModule
@@ -77,6 +76,15 @@ from modelFactory.runtime_status import update_runtime_status
 from modelFactory.target_optimization import optimize_target_parameters
 
 LOGGER = logging.getLogger(__name__)
+
+
+def effective_champion_selection_metric(model_role: str, configured_metric: str) -> str:
+    """Retourne la métrique réellement alignée sur la mission du modèle."""
+    if model_role == "direction_long":
+        return "f1_long"
+    if model_role == "direction_short":
+        return "f1_short"
+    return configured_metric
 
 
 def _atomic_write_json(path: Path, data: Any, *, indent: int = 2) -> None:
@@ -899,7 +907,14 @@ def _evaluate_best_checkpoint(
     test_frame: "pd.DataFrame | None",
     cfg: TrainingConfig,
     ternary_policy: "TernaryDecisionPolicy | None" = None,
- ) -> tuple[dict[str, Any], dict[str, Any], PlattCalibrator | TemperatureScaler | None, dict[str, Any], float]:
+ ) -> tuple[
+    dict[str, Any],
+    dict[str, Any],
+    PlattCalibrator | TemperatureScaler | None,
+    dict[str, Any],
+    float,
+    dict[str, np.ndarray],
+]:
     model = LSTMAttentionModule.load_from_checkpoint(str(ckpt_path), map_location="cpu")
     device = torch.device("cpu")
     val_outputs = _collect_outputs(
@@ -949,6 +964,10 @@ def _evaluate_best_checkpoint(
     )
 
     test_metrics: dict[str, Any] = {}
+    # Une population conditionnelle rare peut légitimement ne fournir aucun
+    # endpoint dans le split test. Retourner alors une sortie vide stable au
+    # lieu de référencer une variable créée uniquement dans la branche ci-dessous.
+    test_outputs = _collect_outputs(model, None, device)
     if test_ds is not None and len(test_ds) > 0:
         test_outputs = _collect_outputs(
             model,
@@ -1331,6 +1350,7 @@ def train_symbol(
     cross_sectional_df: "pd.DataFrame | None" = None,
     batch_id: str | None = None,
     fundamental_df: "pd.DataFrame | None" = None,
+    oracle_gate_df: "pd.DataFrame | None" = None,
 ) -> TrainResult:
     """Entraîne un modèle LSTM+Attention pour un symbole unique.
 
@@ -1339,7 +1359,8 @@ def train_symbol(
     """
     torch.set_float32_matmul_precision("medium")
 
-    run_id = f"{symbol}_{datetime.now(timezone.utc):%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}"
+    _role_token = "" if cfg.model_role == "direction_legacy" else f"_{cfg.model_role}"
+    run_id = f"{symbol}{_role_token}_{datetime.now(timezone.utc):%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}"
     registry_id: int = 0
 
     if engine is not None:
@@ -1356,6 +1377,7 @@ def train_symbol(
             insert_training_run(
                 engine, run_id, registry_id, symbol, status="running",
                 train_start_date=_train_start, train_end_date=_train_end,
+                model_role=cfg.model_role,
                 **({"batch_id": batch_id} if batch_id is not None else {}),
             )
         except Exception as exc:  # noqa: BLE001
@@ -1458,6 +1480,8 @@ def train_symbol(
             datamodule_kwargs["cross_sectional_df"] = cross_sectional_df
         if fundamental_df is not None:
             datamodule_kwargs["fundamental_df"] = fundamental_df
+        if oracle_gate_df is not None:
+            datamodule_kwargs["oracle_gate_df"] = oracle_gate_df
         datamodule_signature = inspect.signature(SymbolDataModule)
         if "reproducibility_seed" in datamodule_signature.parameters:
             datamodule_kwargs["reproducibility_seed"] = derive_seed(symbol_seed, "symbol_datamodule")
@@ -1492,6 +1516,14 @@ def train_symbol(
 
         if dm.train_ds is None or dm.val_ds is None or len(dm.train_ds) == 0 or len(dm.val_ds) == 0:
             reason = "insufficient_sequences_after_split"
+            return _skip_train_symbol(symbol=symbol, run_id=run_id, reason=reason, engine=engine)
+        if (
+            effective_cfg.directional_conditioning_enabled
+            and (dm.test_ds is None or len(dm.test_ds) == 0)
+        ):
+            # Un champion conditionnel sans aucune observation holdout ne peut
+            # pas être qualifié pour le serving, même si train/val existent.
+            reason = "insufficient_conditional_test_sequences"
             return _skip_train_symbol(symbol=symbol, run_id=run_id, reason=reason, engine=engine)
 
         walk_forward_metrics: dict[str, Any] = {}
@@ -1874,6 +1906,7 @@ def train_symbol(
                     model_name="catboost",
                     model_builder=_cb_builder,
                     artifact_dir=_h_dir / "catboost" if _is_multi else _h_dir,
+                    save_callback=lambda model, path: model.save_model(str(path)),
                     model_extension=".cbm",
                     ternary_policy=_ternary_policy,
                     by_dates=False,
@@ -1941,6 +1974,15 @@ def train_symbol(
             include_cross_sectional=effective_cfg.data.enable_cross_sectional_features,
             include_screener_scores=effective_cfg.data.include_screener_scores,
             include_short_score=effective_cfg.data.include_short_score_features,
+            include_macro_vix=effective_cfg.data.include_macro_vix_features,
+            include_macro_vxn=effective_cfg.data.include_macro_vxn_features,
+            include_macro_vix3m=effective_cfg.data.include_macro_vix3m_features,
+            include_macro_move=effective_cfg.data.include_macro_move_features,
+            include_global_stacking=effective_cfg.global_model.stacking_enabled,
+            include_fundamentals=effective_cfg.data.include_fundamentals_features,
+            include_factors=effective_cfg.data.include_factors_features,
+            include_macro_regime=effective_cfg.data.include_macro_regime_features,
+            include_score_components=effective_cfg.data.include_score_components,
             include_volume_features=(effective_cfg.data.include_volume_features and effective_cfg.data.feature_whitelist_enabled),
             feature_whitelist_enabled=effective_cfg.data.feature_whitelist_enabled,
             feature_whitelist=effective_cfg.data.feature_whitelist,
@@ -1996,7 +2038,16 @@ def train_symbol(
             "lightgbm": baseline_metrics,
             "catboost": catboost_metrics,
         }
-        champion_decision = select_champion(challengers, artifact_routes_models, effective_cfg.champion_selection)
+        effective_selection_metric = effective_champion_selection_metric(
+            effective_cfg.model_role,
+            effective_cfg.champion_selection.selection_metric,
+        )
+        champion_decision = select_champion(
+            challengers,
+            artifact_routes_models,
+            effective_cfg.champion_selection,
+            selection_metric_override=effective_selection_metric,
+        )
         challengers = champion_decision["annotated_challengers"]
         selected_architecture = str(champion_decision["selected_model"])
         selection_mode = str(champion_decision["selection_mode"])
@@ -2006,9 +2057,15 @@ def train_symbol(
             selected_architecture,
             selection_mode=selection_mode,
             champion_cfg=effective_cfg.champion_selection,
+            selection_metric_override=effective_selection_metric,
         )
         cross_sectional_feature_columns = list(getattr(dm, "cross_sectional_feature_columns", []))
         cross_sectional_diagnostics = dict(getattr(dm, "cross_sectional_diagnostics", {}))
+        directional_conditioning_diagnostics = dict(
+            (getattr(dm, "prepared_df", None).attrs.get("directional_conditioning", {}))
+            if getattr(dm, "prepared_df", None) is not None
+            else {}
+        )
         trained_through_date = None
         if not bars_df.empty and "date" in bars_df.columns:
             trained_through_raw = bars_df["date"].max()
@@ -2019,7 +2076,10 @@ def train_symbol(
             "calibration": asdict(effective_cfg.calibration),
             "walk_forward": asdict(effective_cfg.walk_forward),
             "baseline": asdict(effective_cfg.baseline),
-            "champion_selection": asdict(effective_cfg.champion_selection),
+            "champion_selection": {
+                **asdict(effective_cfg.champion_selection),
+                "effective_selection_metric": effective_selection_metric,
+            },
             "target_optimization": asdict(effective_cfg.target_optimization),
             "threshold_optimization": asdict(effective_cfg.threshold_optimization),
             "reproducibility": {
@@ -2031,11 +2091,13 @@ def train_symbol(
             "symbol": symbol,
             "run_id": run_id,
             "batch_id": batch_id,
+            "model_role": effective_cfg.model_role,
             "artifacts_dir": str(cfg.artifacts_dir),
             "feature_columns": dm.scaler.feature_names,
             "feature_contract": feature_contract,
             "cross_sectional_feature_columns": cross_sectional_feature_columns,
             "cross_sectional_diagnostics": cross_sectional_diagnostics,
+            "directional_conditioning": directional_conditioning_diagnostics,
             "calibrator_path": calibrator_path,
             "selected_forecast_horizon": effective_cfg.data.forecast_horizon,
             "selected_target_up_threshold": effective_cfg.data.target_up_threshold,
@@ -2055,18 +2117,12 @@ def train_symbol(
                 "selected_model": selected_architecture,
                 "models": artifact_routes_models,
             },
-            "feature_fingerprint": compute_feature_fingerprint(
-                include_sentiment=effective_cfg.data.include_sentiment_features,
-                feature_set=effective_cfg.data.feature_set,
-                include_cross_sectional=effective_cfg.data.enable_cross_sectional_features,
-                include_screener_scores=effective_cfg.data.include_screener_scores,
-                include_short_score=effective_cfg.data.include_short_score_features,
-                feature_columns=list(dm.scaler.feature_names),
-            ),
+            "feature_fingerprint": feature_contract.get("feature_fingerprint"),
         }
         _atomic_write_json(config_path, config_data)
 
         all_metrics = {
+            "model_role": effective_cfg.model_role,
             "val": val_metrics,
             "test": test_metrics,
             "walk_forward": walk_forward_metrics,
@@ -2083,11 +2139,12 @@ def train_symbol(
                 "feature_contract": feature_contract,
                 "cross_sectional_feature_columns": cross_sectional_feature_columns,
                 "cross_sectional_diagnostics": cross_sectional_diagnostics,
+                "directional_conditioning": directional_conditioning_diagnostics,
             },
             "champion": {
                 "model_name": selected_architecture,
                 "selection_mode": selection_mode,
-                "selection_metric": effective_cfg.champion_selection.selection_metric,
+                "selection_metric": effective_selection_metric,
                 "selection_score": champion_decision.get("selection_score", challengers.get(selected_architecture, {}).get("selection_score", lstm_selection_score)),
                 "selection_reason": champion_decision.get("selection_reason"),
                 "selected_model_eligible": bool(champion_decision.get("selected_model_eligible", False)),
@@ -2124,7 +2181,7 @@ def train_symbol(
                     artifact_routes_models=artifact_routes_models,
                     selected_architecture=selected_architecture,
                     selection_mode=selection_mode,
-                    selection_metric=effective_cfg.champion_selection.selection_metric,
+                    selection_metric=effective_selection_metric,
                     challenger_ranking=challenger_ranking,
                     lstm_horizons=_lstm_horizons if effective_cfg.data.forecast_horizons else None,
                 )

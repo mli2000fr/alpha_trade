@@ -64,7 +64,8 @@ def load_oracle_labels(
     query = (
         "SELECT prediction_date, symbol, oracle_pct_rank, oracle_decile, "
         "oracle_extreme10, future_return "
-        "FROM global_oracle_labels WHERE batch_id = :bid AND horizon = :h"
+        "FROM global_oracle_labels WHERE batch_id = :bid AND horizon = :h "
+        "AND target_quality_valid = 1"
     )
     params: dict[str, Any] = {"bid": batch_id, "h": horizon}
     if start is not None:

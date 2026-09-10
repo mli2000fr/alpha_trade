@@ -83,7 +83,18 @@ support_side = round(test_rows × true_side_pct / 100)
 Un excellent F1 obtenu sur quelques observations n'est donc pas considéré comme
 une preuve suffisante.
 
-## Conditions de stabilité d'un côté
+## Deux niveaux de sélection
+
+La page propose un sélecteur local **Niveau de sélection**. Il ne modifie ni
+`config.yaml`, ni le batch, ni les artefacts : il change uniquement la vue des
+candidats dans Diagnostic ML.
+
+Les deux niveaux sont indépendants : DISCOVERY n'est pas nécessairement un
+sur-ensemble de STRICT, car il supprime le minimum bloquant mais relève la
+médiane exigée de 0,40 à 0,45. Un symbole très régulier entre 0,40 et 0,45 peut
+donc être STRICT sans être HIGH POTENTIAL.
+
+### STRICT / STABLE
 
 LONG et SHORT utilisent exactement les mêmes gates :
 
@@ -103,6 +114,25 @@ sur un seul fold.
 Ces seuils sont des gates d'ingénierie et non une preuve de rentabilité. Le F1
 doit toujours être confronté au taux d'action, à la calibration et au backtest
 OOS de la cascade.
+
+### DISCOVERY / HIGH POTENTIAL
+
+Ce niveau sert à construire l'univers d'un prochain entraînement approfondi. Il
+privilégie une performance directionnelle centrale élevée sans éliminer un
+symbole à cause d'un seul régime défavorable :
+
+| Gate | Condition |
+|---|---:|
+| Folds valides | `>= 3` |
+| Support réel | `>= 15` par fold valide |
+| F1 directionnel médian | `>= 0.45` |
+| Fold passant | `f1_side >= 0.35` |
+| Taux de folds passants | `>= 60 %` |
+| F1 minimum | non bloquant ; alerte si `< 0.20` |
+
+`f1_side` signifie exclusivement `f1_long` pour une candidature LONG et
+`f1_short` pour une candidature SHORT. `f1_macro` ne participe à aucun des deux
+niveaux.
 
 ## Classification exclusive
 
@@ -152,8 +182,19 @@ AMD,NVDA
 ```
 
 Les commentaires d'en-tête enregistrent le batch, l'heure UTC de génération et
-les seuils employés. Une section sans candidat reste présente avec une ligne
-vide afin que le contrat du fichier demeure stable.
+les seuils employés. Les sections historiques `[LONG_ONLY]`, `[SHORT_ONLY]` et
+`[LONG_SHORT]` restent les listes STRICT pour préserver le contrat existant. Le
+fichier ajoute :
+
+```text
+[DISCOVERY_LONG_ONLY]
+[DISCOVERY_SHORT_ONLY]
+[DISCOVERY_LONG_SHORT]
+```
+
+Une section sans candidat reste présente avec une ligne vide. Le téléchargement
+contient toujours les deux niveaux, quel que soit le niveau actuellement affiché
+dans la page.
 
 L'union utilisable pour constituer l'univers de l'entraînement final est :
 

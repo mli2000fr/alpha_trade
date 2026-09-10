@@ -66,6 +66,24 @@ def test_pipeline_ml_defaults_use_recommended_per_symbol_capacity() -> None:
     assert options.ml_catboost_iterations == 300
 
 
+def test_ml_predict_command_enables_oracle_shadow_explicitly() -> None:
+    command = build_pipeline_command(
+        "ml_predict",
+        PipelineLaunchOptions(
+            ml_predict_batch_id="oracle-dynamic",
+            ml_oracle_shadow=True,
+        ),
+    )
+
+    assert "--oracle-shadow" in command
+
+
+def test_ml_predict_command_keeps_oracle_shadow_disabled_by_default() -> None:
+    command = build_pipeline_command("ml_predict", PipelineLaunchOptions())
+
+    assert "--oracle-shadow" not in command
+
+
 def test_execution_step_depends_on_risk_management_contract_name() -> None:
     execution_step = next(step for step in get_pipeline_steps() if step.key == "execution")
     assert execution_step.deps == "risk_management"
@@ -955,28 +973,28 @@ def test_build_pipeline_command_ml_steps() -> None:
     assert train_cmd[train_cmd.index("--wf-min-train-size") + 1] == "504"
     assert train_cmd[train_cmd.index("--wf-val-size") + 1] == "126"
     assert train_cmd[train_cmd.index("--wf-test-size") + 1] == "126"
-    assert train_cmd[train_cmd.index("--wf-step-size") + 1] == "252"
-    assert train_cmd[train_cmd.index("--wf-max-splits") + 1] == "8"
+    assert train_cmd[train_cmd.index("--wf-step-size") + 1] == "126"
+    assert train_cmd[train_cmd.index("--wf-max-splits") + 1] == "12"
 
-    # Drapeaux booléens activés par défaut (prod exclude per-symbol/per-sector + champion)
+    # Drapeaux booléens activés par défaut.
     for flag in (
         "--exclude-per-symbol-per-sector",
-        "--global-champion",
         "--walkforward",  # walk-forward activé par défaut en swing
         "--include-short-score",
         "--include-factors",
+        "--compare-lightgbm",
+        "--enable-catboost",
+        "--select-champion",
     ):
         assert flag in train_cmd, f"Flag attendu manquant : {flag}"
 
     # Drapeaux désactivés par défaut
     for flag in (
+        "--global-champion",
         "--include-sentiment",
-        "--compare-lightgbm",
-        "--enable-catboost",
         "--optimize-thresholds",
         "--candidate-decision-thresholds",
         "--global-model-only",  # 2026-08-28 : décoché par défaut (conflit Oracle)
-        "--select-champion",    # DEFAULT_ML_SELECT_CHAMPION=False
     ):
         assert flag not in train_cmd, f"Flag inattendu présent : {flag}"
 
@@ -986,6 +1004,10 @@ def test_build_pipeline_command_ml_steps() -> None:
     assert train_cmd[train_cmd.index("--target-up-threshold") + 1] == "0.03"
     assert train_cmd[train_cmd.index("--decision-threshold") + 1] == "0.55"
     assert train_cmd[train_cmd.index("--calibration-method") + 1] == "platt"
+    # Le défaut IHM est Expert : il doit être effectif pour le LSTM
+    # per-symbol, et pas seulement affiché dans le formulaire.
+    assert train_cmd[train_cmd.index("--feature-set") + 1] == "expert"
+    assert "--no-force-v1-lstm" in train_cmd
 
     # Hyperparams architecture & boosters désormais explicites (cf. audit)
     for flag in (
@@ -1010,6 +1032,26 @@ def test_build_pipeline_command_ml_steps() -> None:
     assert predict_cmd[predict_cmd.index("--symbol-source") + 1] == default_universe_file_source_or("tradable-universe")
     assert "--artifacts-dir" in predict_cmd
     assert "--batch-id" not in predict_cmd
+
+
+def test_build_pipeline_command_ml_train_keeps_v1_legacy_contract() -> None:
+    command = build_pipeline_command(
+        "ml_train",
+        PipelineLaunchOptions(ml_feature_set="v1"),
+    )
+
+    assert command[command.index("--feature-set") + 1] == "v1"
+    assert "--no-force-v1-lstm" not in command
+
+
+def test_build_pipeline_command_ml_train_makes_expert_effective_for_per_symbol() -> None:
+    command = build_pipeline_command(
+        "ml_train",
+        PipelineLaunchOptions(ml_feature_set="expert", ml_training_mode="per_symbol"),
+    )
+
+    assert command[command.index("--feature-set") + 1] == "expert"
+    assert command.count("--no-force-v1-lstm") == 1
 
 
 def test_build_pipeline_command_ml_predict_uses_selected_batch() -> None:

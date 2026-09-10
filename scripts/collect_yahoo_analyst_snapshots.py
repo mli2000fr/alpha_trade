@@ -87,10 +87,18 @@ def main(argv: list[str] | None = None) -> int:
     cfg = (load_config().get("analyst_snapshot_collection") or {})
     _setup_logging(args.log_file or cfg.get("log_file"))
 
-    universe = resolve_universe(args.universe, args.symbols)
+    resolution = resolve_universe(args.universe, args.symbols)
+    universe = list(resolution.symbols)
     if args.max_symbols:
         universe = universe[: args.max_symbols]
-    LOGGER.info("univers %s : %d symboles", args.universe or "cli", len(universe))
+    for warning in resolution.warnings:
+        LOGGER.warning("UNIVERS_REPLI: %s", warning)
+        print(f"[univers] WARNING: {warning}", flush=True)
+    LOGGER.info(
+        "univers source=%s : %d symboles",
+        resolution.source,
+        len(universe),
+    )
 
     if args.resume and args.write_db and not args.dry_run:
         done = AnalystSnapshotRepository().get_symbols_with_snapshot_on(

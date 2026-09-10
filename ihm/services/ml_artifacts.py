@@ -9,6 +9,7 @@ from typing import Any
 import pandas as pd
 
 from ihm.services.pipeline_runner import PROJECT_ROOT
+from modelFactory.directional_serving import selected_model_is_eligible
 
 
 DEFAULT_MODEL_ARTIFACTS_DIR = PROJECT_ROOT / "artifacts" / "models"
@@ -19,11 +20,14 @@ WF_PASS_F1 = 0.35
 WF_STABLE_MEDIAN_F1 = 0.40
 WF_STABLE_MIN_F1 = 0.20
 WF_STABLE_PASS_RATE = 0.60
+WF_DISCOVERY_MEDIAN_F1 = 0.45
 
 DIRECTIONAL_CLASS_LONG_ONLY = "LONG_ONLY"
 DIRECTIONAL_CLASS_SHORT_ONLY = "SHORT_ONLY"
 DIRECTIONAL_CLASS_LONG_SHORT = "LONG_SHORT"
 DIRECTIONAL_CLASS_REJECTED = "REJECTED"
+BATCH_KIND_LEGACY = "legacy"
+BATCH_KIND_DIRECTIONAL_BUNDLE = "directional_bundle"
 
 
 def get_model_artifacts_dir(artifacts_dir: Path | None = None) -> Path:
@@ -43,7 +47,7 @@ def list_ml_artifact_batches(artifacts_dir: Path | None = None) -> list[str]:
     for child in root.iterdir():
         if not child.is_dir():
             continue
-        if any(
+        if (child / "cascade_manifest.json").is_file() or any(
             grandchild.is_dir()
             and ((grandchild / "config.json").exists() or (grandchild / "metrics.json").exists())
             for grandchild in child.iterdir()
@@ -62,6 +66,63 @@ def list_ml_artifact_symbols(artifacts_dir: Path | None = None) -> list[str]:
             continue
         if (child / "config.json").exists() or (child / "metrics.json").exists():
             symbols.append(child.name)
+    return sorted(symbols, key=_symbol_sort_key)
+
+
+def load_batch_artifact_contract(
+    batch_id: str,
+    artifacts_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Return the artifact layout contract for one training batch.
+
+    ``cascade_manifest.json`` is authoritative for directional bundles.  A
+    missing or invalid manifest deliberately falls back to the historical
+    direct-per-symbol layout so old batches remain readable.
+    """
+    batch_dir = _resolve_artifact_batch_dir(batch_id, artifacts_dir)
+    manifest_path = batch_dir / "cascade_manifest.json"
+    manifest, manifest_error = _read_json_file(manifest_path)
+    is_bundle = bool(
+        manifest
+        and manifest.get("cascade_type") == "oracle_extreme_plus_per_symbol_directional"
+    )
+    return {
+        "batch_id": batch_id,
+        "kind": BATCH_KIND_DIRECTIONAL_BUNDLE if is_bundle else BATCH_KIND_LEGACY,
+        "is_directional_bundle": is_bundle,
+        "batch_dir": batch_dir,
+        "manifest_path": manifest_path,
+        "manifest": manifest or {},
+        "manifest_error": None if is_bundle else manifest_error,
+        "legacy_root": batch_dir,
+        "long_root": batch_dir / "directions" / "long",
+        "short_root": batch_dir / "directions" / "short",
+        "oracle_profile_path": batch_dir / "oracle" / "feature_profile.json",
+        "long_profile_path": batch_dir / "directions" / "long" / "feature_profile.json",
+        "short_profile_path": batch_dir / "directions" / "short" / "feature_profile.json",
+    }
+
+
+def list_directional_bundle_symbols(
+    batch_id: str,
+    artifacts_dir: Path | None = None,
+    role: str | None = None,
+) -> list[str]:
+    """List materialized symbols in either or both directional branches."""
+    contract = load_batch_artifact_contract(batch_id, artifacts_dir)
+    if not contract["is_directional_bundle"]:
+        return [symbol for symbol in list_ml_artifact_symbols(contract["legacy_root"]) if not symbol.startswith("_")]
+    roots = {
+        "direction_long": contract["long_root"],
+        "direction_short": contract["short_root"],
+    }
+    selected_roots = [roots[role]] if role in roots else list(roots.values())
+    symbols: set[str] = set()
+    for root in selected_roots:
+        symbols.update(
+            symbol for symbol in list_ml_artifact_symbols(root)
+            if not symbol.startswith("_")
+        )
     return sorted(symbols, key=_symbol_sort_key)
 
 
@@ -135,9 +196,12 @@ def resolve_batch_artifacts_root(
 
 def has_per_symbol_artifacts(batch_id: str, artifacts_dir: Path | None = None) -> bool:
     """Indique si le batch contient au moins un manifeste de symbole ordinaire."""
-    batch_dir = _resolve_artifact_batch_dir(batch_id, artifacts_dir)
+    contract = load_batch_artifact_contract(batch_id, artifacts_dir)
+    batch_dir = contract["batch_dir"]
     if not batch_dir.exists() or not batch_dir.is_dir():
         return False
+    if contract["is_directional_bundle"]:
+        return bool(list_directional_bundle_symbols(batch_id, artifacts_dir))
     return any(
         child.is_dir()
         and not child.name.startswith("_")
@@ -445,6 +509,92 @@ def _directional_selection_reason(side_summary: dict[str, Any]) -> str:
     return ";".join(reasons) or str(side_summary.get("status") or "not_stable")
 
 
+def _is_discovery_side_candidate(side_summary: dict[str, Any]) -> bool:
+    """Gate de screening : performance centrale forte, minimum non bloquant."""
+    valid_folds = int(side_summary.get("valid_folds") or 0)
+    median = _finite_float(side_summary.get("f1_median"))
+    pass_rate = _finite_float(side_summary.get("pass_rate"))
+    return bool(
+        valid_folds >= WF_MIN_VALID_FOLDS
+        and median is not None and median >= WF_DISCOVERY_MEDIAN_F1
+        and pass_rate is not None and pass_rate >= WF_STABLE_PASS_RATE
+    )
+
+
+def _directional_discovery_reason(side_summary: dict[str, Any]) -> str:
+    if _is_discovery_side_candidate(side_summary):
+        minimum = _finite_float(side_summary.get("f1_min"))
+        return "high_potential_fragile_fold" if minimum is None or minimum < WF_STABLE_MIN_F1 else "high_potential"
+    reasons: list[str] = []
+    if int(side_summary.get("valid_folds") or 0) < WF_MIN_VALID_FOLDS:
+        reasons.append(f"valid_folds<{WF_MIN_VALID_FOLDS}")
+    median = _finite_float(side_summary.get("f1_median"))
+    if median is None or median < WF_DISCOVERY_MEDIAN_F1:
+        reasons.append(f"median_f1_side<{WF_DISCOVERY_MEDIAN_F1:.2f}")
+    pass_rate = _finite_float(side_summary.get("pass_rate"))
+    if pass_rate is None or pass_rate < WF_STABLE_PASS_RATE:
+        reasons.append(f"pass_rate<{WF_STABLE_PASS_RATE:.2f}")
+    return ";".join(reasons) or "not_high_potential"
+
+
+def _exclusive_directional_class(eligible_long: bool, eligible_short: bool) -> str:
+    if eligible_long and eligible_short:
+        return DIRECTIONAL_CLASS_LONG_SHORT
+    if eligible_long:
+        return DIRECTIONAL_CLASS_LONG_ONLY
+    if eligible_short:
+        return DIRECTIONAL_CLASS_SHORT_ONLY
+    return DIRECTIONAL_CLASS_REJECTED
+
+
+def _artifact_report_branch_is_servable(report: dict[str, Any]) -> bool:
+    """Une branche doit être matérialisée et ne pas être explicitement inéligible."""
+    return bool(
+        report.get("selected_model")
+        and selected_model_is_eligible(report.get("config"))
+    )
+
+
+def build_directional_bundle_serving_coverage(
+    batch_id: str,
+    artifacts_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Compte séparément les branches entraînées et les paires servables."""
+    contract = load_batch_artifact_contract(batch_id, artifacts_dir)
+    long_symbols = set(list_directional_bundle_symbols(batch_id, artifacts_dir, "direction_long"))
+    short_symbols = set(list_directional_bundle_symbols(batch_id, artifacts_dir, "direction_short"))
+    trained_pairs = long_symbols & short_symbols
+    servable_long: set[str] = set()
+    servable_short: set[str] = set()
+    for symbol in sorted(long_symbols | short_symbols):
+        if symbol in long_symbols:
+            config, error = _read_json_file(contract["long_root"] / symbol / "config.json")
+            selected = (
+                ((config or {}).get("artifact_routes") or {}).get("selected_model")
+                or (config or {}).get("architecture_selected")
+            )
+            if error is None and selected and selected_model_is_eligible(config):
+                servable_long.add(symbol)
+        if symbol in short_symbols:
+            config, error = _read_json_file(contract["short_root"] / symbol / "config.json")
+            selected = (
+                ((config or {}).get("artifact_routes") or {}).get("selected_model")
+                or (config or {}).get("architecture_selected")
+            )
+            if error is None and selected and selected_model_is_eligible(config):
+                servable_short.add(symbol)
+    servable_pairs = servable_long & servable_short
+    return {
+        "trained_long_symbols": sorted(long_symbols),
+        "trained_short_symbols": sorted(short_symbols),
+        "trained_paired_symbols": sorted(trained_pairs),
+        "servable_long_symbols": sorted(servable_long),
+        "servable_short_symbols": sorted(servable_short),
+        "servable_paired_symbols": sorted(servable_pairs),
+        "unservable_symbols": sorted(trained_pairs - servable_pairs),
+    }
+
+
 def build_batch_directional_candidate_selection(
     batch_id: str,
     artifacts_dir: Path | None = None,
@@ -455,35 +605,63 @@ def build_batch_directional_candidate_selection(
     sont évalués. Les trois listes retournées sont exclusives : LONG_ONLY,
     SHORT_ONLY et LONG_SHORT.
     """
-    batch_dir = _resolve_artifact_batch_dir(batch_id, artifacts_dir)
-    symbols = [symbol for symbol in list_ml_artifact_symbols(batch_dir) if not symbol.startswith("_")]
+    contract = load_batch_artifact_contract(batch_id, artifacts_dir)
+    batch_dir = contract["batch_dir"]
+    is_bundle = bool(contract["is_directional_bundle"])
+    symbols = list_directional_bundle_symbols(batch_id, artifacts_dir)
     rows: list[dict[str, Any]] = []
 
     for symbol in symbols:
-        report = load_ml_artifact_report(symbol, batch_dir)
-        stability = report.get("walk_forward_stability") or {}
-        long_summary = stability.get("long") or {}
-        short_summary = stability.get("short") or {}
-        eligible_long = long_summary.get("status") == "stable"
-        eligible_short = short_summary.get("status") == "stable"
-        if eligible_long and eligible_short:
-            classification = DIRECTIONAL_CLASS_LONG_SHORT
-        elif eligible_long:
-            classification = DIRECTIONAL_CLASS_LONG_ONLY
-        elif eligible_short:
-            classification = DIRECTIONAL_CLASS_SHORT_ONLY
+        if is_bundle:
+            long_report = load_ml_artifact_report(symbol, contract["long_root"])
+            short_report = load_ml_artifact_report(symbol, contract["short_root"])
+            long_stability = long_report.get("walk_forward_stability") or {}
+            short_stability = short_report.get("walk_forward_stability") or {}
+            # A specialized branch is gated only on the side it owns.
+            long_summary = long_stability.get("long") or {}
+            short_summary = short_stability.get("short") or {}
+            long_branch_servable = _artifact_report_branch_is_servable(long_report)
+            short_branch_servable = _artifact_report_branch_is_servable(short_report)
+            pair_servable = long_branch_servable and short_branch_servable
         else:
-            classification = DIRECTIONAL_CLASS_REJECTED
+            report = load_ml_artifact_report(symbol, batch_dir)
+            long_report = short_report = report
+            long_stability = short_stability = report.get("walk_forward_stability") or {}
+            long_summary = long_stability.get("long") or {}
+            short_summary = short_stability.get("short") or {}
+            long_branch_servable = short_branch_servable = pair_servable = True
+        eligible_long = pair_servable and long_summary.get("status") == "stable"
+        eligible_short = pair_servable and short_summary.get("status") == "stable"
+        classification = _exclusive_directional_class(eligible_long, eligible_short)
+        discovery_eligible_long = pair_servable and _is_discovery_side_candidate(long_summary)
+        discovery_eligible_short = pair_servable and _is_discovery_side_candidate(short_summary)
+        discovery_classification = _exclusive_directional_class(
+            discovery_eligible_long, discovery_eligible_short,
+        )
 
         rows.append(
             {
                 "symbol": symbol,
-                "selected_model": report.get("selected_model"),
-                "selected_horizon": stability.get("selected_horizon"),
-                "selection_mode": report.get("selection_mode"),
+                "selected_model": long_report.get("selected_model") if not is_bundle else None,
+                "selected_horizon": long_stability.get("selected_horizon") if not is_bundle else None,
+                "selection_mode": long_report.get("selection_mode") if not is_bundle else None,
+                "long_selected_model": long_report.get("selected_model"),
+                "long_run_id": long_report.get("run_id"),
+                "long_selected_horizon": long_stability.get("selected_horizon"),
+                "long_selection_mode": long_report.get("selection_mode"),
+                "short_selected_model": short_report.get("selected_model"),
+                "short_run_id": short_report.get("run_id"),
+                "short_selected_horizon": short_stability.get("selected_horizon"),
+                "short_selection_mode": short_report.get("selection_mode"),
+                "long_branch_servable": long_branch_servable,
+                "short_branch_servable": short_branch_servable,
+                "pair_servable": pair_servable,
                 "classification": classification,
                 "eligible_long": eligible_long,
                 "eligible_short": eligible_short,
+                "discovery_classification": discovery_classification,
+                "discovery_eligible_long": discovery_eligible_long,
+                "discovery_eligible_short": discovery_eligible_short,
                 "long_valid_folds": long_summary.get("valid_folds"),
                 "long_f1_median": long_summary.get("f1_median"),
                 "long_f1_min": long_summary.get("f1_min"),
@@ -491,6 +669,7 @@ def build_batch_directional_candidate_selection(
                 "long_pass_rate": long_summary.get("pass_rate"),
                 "long_support_total": long_summary.get("support_total"),
                 "long_reason": _directional_selection_reason(long_summary),
+                "long_discovery_reason": _directional_discovery_reason(long_summary),
                 "short_valid_folds": short_summary.get("valid_folds"),
                 "short_f1_median": short_summary.get("f1_median"),
                 "short_f1_min": short_summary.get("f1_min"),
@@ -498,8 +677,17 @@ def build_batch_directional_candidate_selection(
                 "short_pass_rate": short_summary.get("pass_rate"),
                 "short_support_total": short_summary.get("support_total"),
                 "short_reason": _directional_selection_reason(short_summary),
-                "artifact_health": report.get("manifest_health"),
-                "fold_source": stability.get("source"),
+                "short_discovery_reason": _directional_discovery_reason(short_summary),
+                "long_artifact_health": long_report.get("health_status"),
+                "short_artifact_health": short_report.get("health_status"),
+                "artifact_health": (
+                    "healthy"
+                    if long_report.get("health_status") == short_report.get("health_status") == "healthy"
+                    else "degraded"
+                ),
+                "long_fold_source": long_stability.get("source"),
+                "short_fold_source": short_stability.get("source"),
+                "fold_source": long_stability.get("source") if not is_bundle else None,
             }
         )
 
@@ -514,14 +702,40 @@ def build_batch_directional_candidate_selection(
             DIRECTIONAL_CLASS_LONG_SHORT,
         )
     }
+    discovery_by_class = {
+        classification: sorted(
+            row["symbol"] for row in rows
+            if row["discovery_classification"] == classification
+        )
+        for classification in (
+            DIRECTIONAL_CLASS_LONG_ONLY,
+            DIRECTIONAL_CLASS_SHORT_ONLY,
+            DIRECTIONAL_CLASS_LONG_SHORT,
+        )
+    }
     return {
         "batch_id": batch_id,
+        "batch_kind": contract["kind"],
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "scanned_symbols": len(symbols),
+        "servable_symbols": sum(bool(row["pair_servable"]) for row in rows),
+        "unservable_symbols": sorted(row["symbol"] for row in rows if not row["pair_servable"]),
         "eligible_symbols": sum(len(values) for values in by_class.values()),
         "long_only": by_class[DIRECTIONAL_CLASS_LONG_ONLY],
         "short_only": by_class[DIRECTIONAL_CLASS_SHORT_ONLY],
         "long_short": by_class[DIRECTIONAL_CLASS_LONG_SHORT],
+        "strict": {
+            "long_only": by_class[DIRECTIONAL_CLASS_LONG_ONLY],
+            "short_only": by_class[DIRECTIONAL_CLASS_SHORT_ONLY],
+            "long_short": by_class[DIRECTIONAL_CLASS_LONG_SHORT],
+            "eligible_symbols": sum(len(values) for values in by_class.values()),
+        },
+        "discovery": {
+            "long_only": discovery_by_class[DIRECTIONAL_CLASS_LONG_ONLY],
+            "short_only": discovery_by_class[DIRECTIONAL_CLASS_SHORT_ONLY],
+            "long_short": discovery_by_class[DIRECTIONAL_CLASS_LONG_SHORT],
+            "eligible_symbols": sum(len(values) for values in discovery_by_class.values()),
+        },
         "audit_df": audit_df,
     }
 
@@ -537,9 +751,15 @@ def format_directional_candidate_selection(selection: dict[str, Any]) -> str:
         f"# batch_id={selection.get('batch_id', '')}",
         f"# generated_at={selection.get('generated_at', '')}",
         "# Listes exclusives; symboles separes par une virgule sans espace.",
-        f"# Gates: support>={WF_MIN_SIDE_SUPPORT}; valid_folds>={WF_MIN_VALID_FOLDS}; "
-        f"median_f1>={WF_STABLE_MEDIAN_F1:.2f}; min_f1>={WF_STABLE_MIN_F1:.2f}; "
-        f"pass_rate(f1>={WF_PASS_F1:.2f})>={WF_STABLE_PASS_RATE:.2f}",
+        "# Serving gate: une branche LONG et une branche SHORT materialisees, avec champions eligibles.",
+        f"# Coverage: trained={selection.get('scanned_symbols', 0)}; servable_pairs={selection.get('servable_symbols', selection.get('scanned_symbols', 0))}.",
+        "# Les metriques f1 sont directionnelles: f1_long pour LONG, f1_short pour SHORT; f1_macro exclu.",
+        f"# STRICT gates: support_side>={WF_MIN_SIDE_SUPPORT}; valid_folds>={WF_MIN_VALID_FOLDS}; "
+        f"median_f1_side>={WF_STABLE_MEDIAN_F1:.2f}; min_f1_side>={WF_STABLE_MIN_F1:.2f}; "
+        f"pass_rate(f1_side>={WF_PASS_F1:.2f})>={WF_STABLE_PASS_RATE:.2f}",
+        f"# DISCOVERY gates: support_side>={WF_MIN_SIDE_SUPPORT}; valid_folds>={WF_MIN_VALID_FOLDS}; "
+        f"median_f1_side>={WF_DISCOVERY_MEDIAN_F1:.2f}; "
+        f"pass_rate(f1_side>={WF_PASS_F1:.2f})>={WF_STABLE_PASS_RATE:.2f}; min_f1_side=alerte_non_bloquante",
         "",
         "[LONG_ONLY]",
         _symbols("long_only"),
@@ -549,6 +769,15 @@ def format_directional_candidate_selection(selection: dict[str, Any]) -> str:
         "",
         "[LONG_SHORT]",
         _symbols("long_short"),
+        "",
+        "[DISCOVERY_LONG_ONLY]",
+        ",".join(sorted(set((selection.get("discovery") or {}).get("long_only") or []))),
+        "",
+        "[DISCOVERY_SHORT_ONLY]",
+        ",".join(sorted(set((selection.get("discovery") or {}).get("short_only") or []))),
+        "",
+        "[DISCOVERY_LONG_SHORT]",
+        ",".join(sorted(set((selection.get("discovery") or {}).get("long_short") or []))),
         "",
     ]
     return "\n".join(lines)

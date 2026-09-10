@@ -6,10 +6,13 @@ from pathlib import Path
 from ihm.services.ml_artifacts import (
     build_batch_directional_candidate_selection,
     build_champion_walk_forward_stability,
+    build_directional_bundle_serving_coverage,
     format_directional_candidate_selection,
     has_per_symbol_artifacts,
+    list_directional_bundle_symbols,
     list_ml_artifact_batches,
     list_ml_artifact_symbols,
+    load_batch_artifact_contract,
     load_ml_artifact_report,
     resolve_batch_artifacts_root,
 )
@@ -21,17 +24,19 @@ def _write_directional_symbol_artifacts(
     *,
     long_values: list[float],
     short_values: list[float],
+    selected_model_eligible: bool | None = None,
 ) -> None:
     symbol_dir = batch_dir / symbol
     symbol_dir.mkdir(parents=True)
+    config = {
+        "selected_forecast_horizon": 20,
+        "selection_mode": "auto_selected_champion",
+        "artifact_routes": {"selected_model": "lightgbm", "models": {}},
+    }
+    if selected_model_eligible is not None:
+        config["selected_model_eligible"] = selected_model_eligible
     (symbol_dir / "config.json").write_text(
-        json.dumps(
-            {
-                "selected_forecast_horizon": 20,
-                "selection_mode": "auto_selected_champion",
-                "artifact_routes": {"selected_model": "lightgbm", "models": {}},
-            }
-        ),
+        json.dumps(config),
         encoding="utf-8",
     )
     splits = [
@@ -120,6 +125,11 @@ def test_batch_directional_candidate_selection_builds_three_exclusive_lists(tmp_
     _write_directional_symbol_artifacts(
         batch_dir, "REJECT", long_values=[0.10, 0.15, 0.20], short_values=[0.10, 0.15, 0.20]
     )
+    _write_directional_symbol_artifacts(
+        batch_dir, "POTENTIAL",
+        long_values=[0.73, 0.60, 0.50, 0.40, 0.00],
+        short_values=[0.10, 0.15, 0.20, 0.10, 0.15],
+    )
     internal = batch_dir / "__GLOBAL__"
     internal.mkdir()
     (internal / "config.json").write_text("{}", encoding="utf-8")
@@ -127,18 +137,86 @@ def test_batch_directional_candidate_selection_builds_three_exclusive_lists(tmp_
     assert has_per_symbol_artifacts("batch-1", tmp_path) is True
     result = build_batch_directional_candidate_selection("batch-1", tmp_path)
 
-    assert result["scanned_symbols"] == 4
+    assert result["scanned_symbols"] == 5
     assert result["eligible_symbols"] == 3
     assert result["long_only"] == ["LONG"]
     assert result["short_only"] == ["SHORT"]
     assert result["long_short"] == ["BOTH"]
+    assert result["strict"]["eligible_symbols"] == 3
+    assert result["discovery"]["eligible_symbols"] == 4
+    assert result["discovery"]["long_only"] == ["LONG", "POTENTIAL"]
     audit = result["audit_df"].set_index("symbol")
     assert audit.loc["BOTH", "selected_model"] == "lightgbm"
     assert audit.loc["BOTH", "selected_horizon"] == 20
     assert audit.loc["BOTH", "classification"] == "LONG_SHORT"
     assert audit.loc["LONG", "classification"] == "LONG_ONLY"
     assert audit.loc["SHORT", "classification"] == "SHORT_ONLY"
+    assert audit.loc["POTENTIAL", "classification"] == "REJECTED"
+    assert audit.loc["POTENTIAL", "discovery_classification"] == "LONG_ONLY"
+    assert audit.loc["POTENTIAL", "long_discovery_reason"] == "high_potential_fragile_fold"
     assert audit.loc["REJECT", "classification"] == "REJECTED"
+
+
+def test_directional_bundle_uses_each_specialized_branch_for_its_owned_side(tmp_path: Path) -> None:
+    batch_dir = tmp_path / "bundle-1"
+    batch_dir.mkdir()
+    (batch_dir / "cascade_manifest.json").write_text(
+        json.dumps({
+            "schema_version": 1,
+            "cascade_type": "oracle_extreme_plus_per_symbol_directional",
+            "oracle": {"status": "completed", "profile": {"profile_id": "oracle", "feature_columns": ["o"]}},
+            "per_symbol": {
+                "long": {"profile": {"profile_id": "long", "feature_columns": ["l"]}},
+                "short": {"profile": {"profile_id": "short", "feature_columns": ["s"]}},
+            },
+        }),
+        encoding="utf-8",
+    )
+    # The LONG model is intentionally poor on f1_short; the SHORT model is
+    # intentionally poor on f1_long.  Cross-side scores must not reject them.
+    _write_directional_symbol_artifacts(
+        batch_dir / "directions" / "long", "BOTH",
+        long_values=[0.50, 0.45, 0.40], short_values=[0.05, 0.10, 0.15],
+    )
+    _write_directional_symbol_artifacts(
+        batch_dir / "directions" / "short", "BOTH",
+        long_values=[0.05, 0.10, 0.15], short_values=[0.55, 0.45, 0.40],
+    )
+    _write_directional_symbol_artifacts(
+        batch_dir / "directions" / "long", "LONG_ONLY",
+        long_values=[0.50, 0.45, 0.40], short_values=[0.05, 0.10, 0.15],
+    )
+    for direction in ("long", "short"):
+        _write_directional_symbol_artifacts(
+            batch_dir / "directions" / direction, "INELIGIBLE",
+            long_values=[0.60, 0.55, 0.50], short_values=[0.60, 0.55, 0.50],
+            selected_model_eligible=direction != "long",
+        )
+
+    contract = load_batch_artifact_contract("bundle-1", tmp_path)
+    assert contract["is_directional_bundle"] is True
+    assert has_per_symbol_artifacts("bundle-1", tmp_path) is True
+    assert list_directional_bundle_symbols("bundle-1", tmp_path, "direction_long") == ["BOTH", "INELIGIBLE", "LONG_ONLY"]
+    assert list_directional_bundle_symbols("bundle-1", tmp_path, "direction_short") == ["BOTH", "INELIGIBLE"]
+
+    result = build_batch_directional_candidate_selection("bundle-1", tmp_path)
+    coverage = build_directional_bundle_serving_coverage("bundle-1", tmp_path)
+
+    assert result["batch_kind"] == "directional_bundle"
+    assert result["long_short"] == ["BOTH"]
+    assert result["long_only"] == []
+    assert result["scanned_symbols"] == 3
+    assert result["servable_symbols"] == 1
+    assert result["unservable_symbols"] == ["INELIGIBLE", "LONG_ONLY"]
+    assert coverage["trained_paired_symbols"] == ["BOTH", "INELIGIBLE"]
+    assert coverage["servable_paired_symbols"] == ["BOTH"]
+    assert coverage["unservable_symbols"] == ["INELIGIBLE"]
+    audit = result["audit_df"].set_index("symbol")
+    assert audit.loc["BOTH", "long_selected_model"] == "lightgbm"
+    assert audit.loc["BOTH", "short_selected_model"] == "lightgbm"
+    assert audit.loc["BOTH", "classification"] == "LONG_SHORT"
+    assert audit.loc["INELIGIBLE", "classification"] == "REJECTED"
+    assert bool(audit.loc["INELIGIBLE", "pair_servable"]) is False
 
 
 def test_directional_candidate_file_contains_comma_separated_exclusive_lists() -> None:
@@ -149,12 +227,21 @@ def test_directional_candidate_file_contains_comma_separated_exclusive_lists() -
             "long_only": ["MSFT", "AAPL"],
             "short_only": ["TSLA"],
             "long_short": ["NVDA", "AMD"],
+            "discovery": {
+                "long_only": ["SM", "CPRI"],
+                "short_only": ["BEN"],
+                "long_short": ["AAL"],
+            },
         }
     )
 
     assert "[LONG_ONLY]\nAAPL,MSFT" in payload
     assert "[SHORT_ONLY]\nTSLA" in payload
     assert "[LONG_SHORT]\nAMD,NVDA" in payload
+    assert "[DISCOVERY_LONG_ONLY]\nCPRI,SM" in payload
+    assert "[DISCOVERY_SHORT_ONLY]\nBEN" in payload
+    assert "[DISCOVERY_LONG_SHORT]\nAAL" in payload
+    assert "f1_macro exclu" in payload
     assert "AAPL, MSFT" not in payload
 
 

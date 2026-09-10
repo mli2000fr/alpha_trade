@@ -1414,6 +1414,7 @@ def test_render_tradable_universe_publish_block_displays_period_command(monkeypa
 
     assert any(
         "common.publish_tradable_universe --start-date 2024-01-02 --end-date 2024-01-03" in value
+        and "--market-cap-policy strict" in value
         for value in codes
     )
 
@@ -1479,9 +1480,14 @@ def test_render_period_sync_block_launches_quotes_history_with_selected_window(m
     step_key, step_label, options = launch_calls[0]
     assert step_key == "sync_latest_quotes"
     assert "2026-04-01 → 2026-04-30" in step_label
-    assert "Tous les symboles éligibles" in step_label
+    assert pipeline.DATA_INTEGRITY_SYMBOL_SOURCE_LABELS[
+        pipeline.DEFAULT_UNIVERSE_FILE_SOURCE
+    ] in step_label
     assert "depuis AAG" in step_label
-    assert options.data_integrity_quotes_symbol_source == "active_tradable"
+    assert (
+        options.data_integrity_quotes_symbol_source
+        == pipeline.DEFAULT_UNIVERSE_FILE_SOURCE
+    )
     assert options.data_integrity_quotes_from_date == "2026-04-01"
     assert options.data_integrity_quotes_to_date == "2026-04-30"
     assert options.data_integrity_quotes_start_symbol == "AAG"

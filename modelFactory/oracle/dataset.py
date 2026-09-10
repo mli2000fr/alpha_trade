@@ -28,6 +28,10 @@ from sqlalchemy import text
 from modelFactory.data_loader import load_benchmark_bars, load_universe_bars
 from modelFactory.features import compute_features, get_feature_columns
 from modelFactory.global_ranking import _XS_RANK_SOURCE_FEATURES, _xs_rank_column_name
+from modelFactory.oracle.security_continuity import (
+    load_security_discontinuities,
+    split_frame_on_discontinuities,
+)
 
 # ── Colonnes de target / garde ──
 # oracle_extreme10 = 1 si le titre est dans le TOP 10 % OU le BOTTOM 10 %
@@ -38,6 +42,20 @@ GLOBAL_RANK_COL = "global_rank_20"
 
 # Features Oracle spécialisées (§7C) — calculées en plus du set B25.
 ORACLE_EXTRA_FEATURES: list[str] = ["drawdown_20", "high_low_position_20"]
+
+# Redondances exactes du contrat EXPERT à ne jamais présenter au modèle Oracle.
+# On conserve les noms historiques les plus directs (``ema*_distance`` et
+# ``momentum_*``). Les colonnes restent calculées par le moteur partagé pour ne
+# pas modifier les autres familles de modèles, mais elles sont retirées du
+# contrat Oracle avant l'entraînement et le serving.
+ORACLE_REDUNDANT_FEATURES: frozenset[str] = frozenset({
+    "distance_ema20",       # == ema20_distance
+    "distance_ema50",       # == ema50_distance
+    "return_5d",            # == momentum_5
+    "return_10d",           # == momentum_10
+    "return_20d",           # == momentum_20
+    "log_return_xs_rank",   # == daily_return_xs_rank (même ordre cross-sectionnel)
+})
 
 # Familles pour l'ablation O2 (le « set allégé »).
 _MOMENTUM_PREFIXES = ("momentum_", "relative_strength_", "accel_", "decay_")
@@ -50,6 +68,11 @@ _REGIME_PREFIXES = ("regime_", "market_", "SPY_", "VIX_")
 def expert_feature_columns() -> list[str]:
     """Liste canonique des features expert (même moteur que B25)."""
     return list(get_feature_columns(feature_set="expert"))
+
+
+def deduplicate_oracle_feature_columns(features: list[str]) -> list[str]:
+    """Retire les alias sémantiques connus du contrat Oracle en préservant l'ordre."""
+    return [column for column in features if column not in ORACLE_REDUNDANT_FEATURES]
 
 
 def lean_feature_columns(features: list[str]) -> list[str]:
@@ -65,6 +88,8 @@ def build_feature_matrix(
     start_date: str,
     end_date: str,
     feature_set: str = "expert",
+    generator_options: dict[str, Any] | None = None,
+    membership: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Calcule les features PIT par symbole + rangs cross-sectionnels + extras Oracle.
 
@@ -72,35 +97,92 @@ def build_feature_matrix(
     alimenter les fenêtres roulantes (momentum_250, z-scores 1 an min).
     """
     warmup_start = (pd.Timestamp(start_date) - pd.Timedelta(days=1100)).date().isoformat()
+    options = dict(generator_options or {})
+    feature_set = str(options.get("feature_set", feature_set))
     bars = load_universe_bars(engine, symbols, start_date=warmup_start, end_date=end_date)
     if bars.empty:
         return pd.DataFrame()
     benchmark = load_benchmark_bars(engine, "SPY", start_date=warmup_start, end_date=end_date)
 
+    sentiment = pd.DataFrame()
+    if bool(options.get("include_sentiment", False)):
+        from modelFactory.data_loader import load_symbols_sentiment
+        sentiment = load_symbols_sentiment(
+            engine, symbols, start_date=pd.Timestamp(warmup_start).date(), end_date=pd.Timestamp(end_date).date()
+        )
+    selector = pd.DataFrame()
+    if any(bool(options.get(key, False)) for key in (
+        "include_screener_scores", "include_short_score", "include_score_components",
+    )):
+        from modelFactory.data_loader import load_symbols_selector_context
+        selector = load_symbols_selector_context(
+            engine, symbols, start_date=pd.Timestamp(warmup_start).date(), end_date=pd.Timestamp(end_date).date()
+        )
+    fundamentals = pd.DataFrame()
+    if bool(options.get("include_fundamentals", False)):
+        from modelFactory.fundamental_features import load_fundamentals_from_db
+        fundamentals = load_fundamentals_from_db(
+            symbols, start_date=warmup_start, end_date=end_date, engine=engine,
+        )
+
     parts: list[pd.DataFrame] = []
-    for _, group in bars.groupby("symbol"):
-        feats = compute_features(group, benchmark_df=benchmark, feature_set=feature_set)
-        if feats.empty:
-            continue
-        # Features Oracle spécialisées (§7C) — calculées sur adj_close.
-        if "adj_close" in feats.columns:
-            close = feats["adj_close"].astype(float)
-            feats["drawdown_20"] = close / close.rolling(20).max() - 1.0
-            roll_min = close.rolling(20).min()
-            roll_max = close.rolling(20).max()
-            feats["high_low_position_20"] = (close - roll_min) / (roll_max - roll_min).clip(lower=1e-8)
-        else:
-            feats["drawdown_20"] = 0.0
-            feats["high_low_position_20"] = 0.5
-        parts.append(feats)
+    discontinuities = load_security_discontinuities()
+    for symbol, group in bars.groupby("symbol"):
+        symbol_sentiment = sentiment[sentiment["symbol"] == symbol].copy() if not sentiment.empty else None
+        symbol_selector = selector[selector["symbol"] == symbol].copy() if not selector.empty else None
+        symbol_fundamentals = fundamentals[fundamentals["symbol"] == symbol].copy() if not fundamentals.empty else None
+        for segment in split_frame_on_discontinuities(group, symbol, discontinuities):
+            feats = compute_features(
+            segment,
+            sentiment_df=symbol_sentiment,
+            include_sentiment=bool(options.get("include_sentiment", False)),
+            benchmark_df=benchmark,
+            feature_set=feature_set,
+            selector_df=symbol_selector,
+            include_screener_scores=bool(options.get("include_screener_scores", False)),
+            include_short_score=bool(options.get("include_short_score", False)),
+            include_macro_vix=bool(options.get("include_macro_vix", False)),
+            include_macro_vxn=bool(options.get("include_macro_vxn", False)),
+            include_macro_vix3m=bool(options.get("include_macro_vix3m", False)),
+            include_macro_move=bool(options.get("include_macro_move", False)),
+            include_fundamentals=bool(options.get("include_fundamentals", False)),
+            fundamental_df=symbol_fundamentals,
+            include_factors=bool(options.get("include_factors", False)),
+            include_macro_regime=bool(options.get("include_macro_regime", False)),
+            include_score_components=bool(options.get("include_score_components", False)),
+            include_volume_features=bool(options.get("include_volume_features", False)),
+            )
+            if feats.empty:
+                continue
+            # Features Oracle spécialisées (§7C) — calculées dans le même segment.
+            if "adj_close" in feats.columns:
+                close = feats["adj_close"].astype(float)
+                feats["drawdown_20"] = close / close.rolling(20).max() - 1.0
+                roll_min = close.rolling(20).min()
+                roll_max = close.rolling(20).max()
+                feats["high_low_position_20"] = (close - roll_min) / (roll_max - roll_min).clip(lower=1e-8)
+            else:
+                feats["drawdown_20"] = 0.0
+                feats["high_low_position_20"] = 0.5
+            parts.append(feats)
 
     if not parts:
         return pd.DataFrame()
     df = pd.concat(parts, ignore_index=True)
 
+    # P0f : filtrer avant les rangs, sinon les percentiles ne correspondent
+    # pas à l'univers quotidien sur lequel les labels sont construits.
+    if membership is not None:
+        scope = membership[["date", "symbol"]].copy()
+        scope["date"] = pd.to_datetime(scope["date"]).dt.normalize()
+        scope["symbol"] = scope["symbol"].astype(str).str.upper()
+        df["date"] = pd.to_datetime(df["date"]).dt.normalize()
+        df["symbol"] = df["symbol"].astype(str).str.upper()
+        df = df.merge(scope.drop_duplicates(), on=["date", "symbol"], how="inner")
+
     # ── Rangs percentiles cross-sectionnels (même normalisation que B25) ──
     xs_available = [c for c in _XS_RANK_SOURCE_FEATURES if c in df.columns]
-    if xs_available:
+    if xs_available and bool(options.get("enable_cross_sectional_ranks", True)):
         ranked = df.groupby("date")[xs_available].rank(pct=True)
         ranked.columns = [_xs_rank_column_name(c) for c in xs_available]
         df = pd.concat([df, ranked], axis=1)
@@ -122,14 +204,32 @@ def load_oracle_targets(engine: Any, batch_id: str, horizon: int = 20) -> pd.Dat
     """Relit les targets Oracle depuis ``global_oracle_labels``."""
     query = text(
         "SELECT prediction_date, symbol, oracle_extreme10, oracle_pct_rank, oracle_decile, "
-        "future_return, oracle_available_date FROM global_oracle_labels "
-        "WHERE batch_id = :bid AND horizon = :h"
+        "future_return, future_return_raw, oracle_available_date, "
+        "target_quality_valid, target_quality_reason FROM global_oracle_labels "
+        "WHERE batch_id = :bid AND horizon = :h AND target_quality_valid = 1"
     )
     with engine.connect() as conn:
         df = pd.read_sql(query, conn, params={"bid": batch_id, "h": horizon})
     df["prediction_date"] = pd.to_datetime(df["prediction_date"]).dt.normalize()
     df["oracle_available_date"] = pd.to_datetime(df["oracle_available_date"]).dt.normalize()
     return df
+
+
+def load_oracle_membership(engine: Any, batch_id: str, horizon: int = 20) -> pd.DataFrame:
+    """Relit l'admission à J sans dépendre de la qualité future du label.
+
+    Les lignes invalidées à J+H appartenaient néanmoins à l'univers observable à
+    J et doivent participer aux rangs de features cross-sectionnels.
+    """
+    query = text(
+        "SELECT prediction_date, symbol FROM global_oracle_labels "
+        "WHERE batch_id = :bid AND horizon = :h"
+    )
+    with engine.connect() as conn:
+        membership = pd.read_sql(query, conn, params={"bid": batch_id, "h": horizon})
+    membership["prediction_date"] = pd.to_datetime(
+        membership["prediction_date"], errors="coerce").dt.normalize()
+    return membership.dropna(subset=["prediction_date", "symbol"])
 
 
 def build_dataset(
@@ -142,6 +242,10 @@ def build_dataset(
     horizon: int = 20,
     require_global_rank: bool = True,
     need_targets: bool = True,
+    feature_whitelist: list[str] | tuple[str, ...] | None = None,
+    generator_options: dict[str, Any] | None = None,
+    restrict_features_to_targets: bool = False,
+    feature_membership: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, list[str]]:
     """Assemble features + global_rank_20 + target Oracle.
 
@@ -162,15 +266,56 @@ def build_dataset(
         ``ORACLE_EXTRA_FEATURES`` sont présentes dans le DataFrame mais pas dans
         cette liste (elles constituent les ablations O1).
     """
-    feats = build_feature_matrix(engine, symbols, start_date=start_date, end_date=end_date)
+    options = dict(generator_options or {})
+    feature_set = str(options.get("feature_set", "expert"))
+    targets = load_oracle_targets(engine, batch_id, horizon)
+    membership = feature_membership
+    if restrict_features_to_targets:
+        if feature_membership is not None:
+            raise ValueError(
+                "feature_membership et restrict_features_to_targets sont mutuellement exclusifs"
+            )
+        if not need_targets:
+            raise ValueError("restrict_features_to_targets requiert need_targets=True")
+        membership = load_oracle_membership(engine, batch_id, horizon).rename(
+            columns={"prediction_date": "date"})
+    feats = build_feature_matrix(
+        engine, symbols, start_date=start_date, end_date=end_date,
+        feature_set=feature_set, generator_options=options, membership=membership,
+    )
     if feats.empty:
         return pd.DataFrame(), []
 
-    base_cols = [c for c in expert_feature_columns() if c in feats.columns]
+    requested_base = get_feature_columns(
+        include_sentiment=bool(options.get("include_sentiment", False)),
+        feature_set=feature_set,
+        include_screener_scores=bool(options.get("include_screener_scores", False)),
+        include_short_score=bool(options.get("include_short_score", False)),
+        include_macro_vix=bool(options.get("include_macro_vix", False)),
+        include_macro_vxn=bool(options.get("include_macro_vxn", False)),
+        include_macro_vix3m=bool(options.get("include_macro_vix3m", False)),
+        include_macro_move=bool(options.get("include_macro_move", False)),
+        include_fundamentals=bool(options.get("include_fundamentals", False)),
+        include_factors=bool(options.get("include_factors", False)),
+        include_macro_regime=bool(options.get("include_macro_regime", False)),
+        include_score_components=bool(options.get("include_score_components", False)),
+        include_volume_features=bool(options.get("include_volume_features", False)),
+    )
+    base_cols = [c for c in requested_base if c in feats.columns]
     xs_cols = [c for c in feats.columns if c.endswith("_xs_rank")]
-    feature_columns = base_cols + xs_cols  # O0
-
-    targets = load_oracle_targets(engine, batch_id, horizon)
+    feature_columns = deduplicate_oracle_feature_columns(base_cols + xs_cols)  # O0
+    if feature_whitelist is not None:
+        requested = [str(column).strip() for column in feature_whitelist if str(column).strip()]
+        available = set(feature_columns)
+        feature_columns = [column for column in requested if column in available]
+        missing = [column for column in requested if column not in available]
+        if missing:
+            raise ValueError(
+                "Profil Oracle incompatible avec le dataset: features absentes="
+                + ",".join(missing)
+            )
+        if not feature_columns:
+            raise ValueError("Profil Oracle vide après résolution du dataset.")
 
     if require_global_rank:
         ranks = load_global_rank_feature(engine, batch_id)
@@ -186,8 +331,14 @@ def build_dataset(
             how="inner",
         )
         df = df.drop(columns=["prediction_date"])
-        # Garde anti-leakage : ne garder que les labels strictement disponibles.
-        df = df[df[GUARD_COL] > df["date"]]
+        # Garde anti-leakage et contrat d'entraînement : une ligne dont le
+        # rang cross-sectionnel n'a pas pu être calculé ne doit jamais arriver
+        # au classifieur binaire ni être convertie implicitement en entier.
+        df = df[
+            df[TARGET_COL].notna()
+            & df[GUARD_COL].notna()
+            & (df[GUARD_COL] > df["date"])
+        ]
     else:
         # Prédiction standard : labels optionnels (NULL si pas encore réalisés).
         df = df.merge(

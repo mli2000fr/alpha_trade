@@ -18,6 +18,19 @@ def test_model_predictions_sql_contains_governance_columns() -> None:
     assert "selected_model" in ddl
     assert "decision_threshold" in ddl
     assert "calibration_method" in ddl
+    assert "calibration_method  VARCHAR(128)" in ddl
+
+
+def test_directional_calibration_width_migration_is_chained() -> None:
+    migration = (
+        Path(__file__).resolve().parents[1]
+        / "alembic"
+        / "versions"
+        / "0071_widen_prediction_calibration_method.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'down_revision: str | None = "0070_training_run_role"' in migration
+    assert "type_=sa.String(length=128)" in migration
 
 
 def test_insert_predictions_rejects_missing_governance_columns() -> None:

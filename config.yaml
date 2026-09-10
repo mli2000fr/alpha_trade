@@ -444,6 +444,37 @@ market_data:
   quotes_provider_live: yahoo
   quotes_provider_live_second: alpaca
 
+# ---------------------------------------------------------------------------
+# Capitalisation utilisée pour publier l'univers tradable PIT.
+# - sec_edgar : gratuit ; dernier shares_outstanding publié avant J × close[J].
+# - eodhd     : dernière market_cap EODHD persistée avant J.
+# - yahoo_then_finnhub : Yahoo prioritaire, Finnhub seulement si Yahoo est
+#   absent ou périmé. Cette chaîne est explicite et fingerprintée.
+# max_age_days contrôle l'âge maximal du dépôt SEC ou du snapshot EODHD.
+# En strict, une valeur absente/périmée est rejetée (fail-closed).
+# En liquidity_only, provider/max_age_days/missing_policy restent configurés
+# pour un retour à strict, mais ne participent pas à la publication.
+# ---------------------------------------------------------------------------
+market_cap:
+  # strict = capitalisation obligatoire ; liquidity_only = aucun filtre de capitalisation.
+  policy: strict                         # strict | liquidity_only
+  provider: yahoo_then_finnhub           # sec_edgar | eodhd | yahoo_then_finnhub
+  max_age_days: 365
+  missing_policy: reject
+
+# Collecte des snapshots de capitalisation Yahoo puis Finnhub.
+# Les deux fournisseurs sont persistés séparément ; la politique market_cap
+# ci-dessus choisit Yahoo en priorité et Finnhub en fallback.
+# run_days suit DayOfWeek : 0=dimanche, 1=lundi, ... 6=samedi.
+# powershell -ExecutionPolicy Bypass -File .\scripts\windows\install_market_cap_sync_task.ps1
+# powershell -ExecutionPolicy Bypass -File .\scripts\windows\market_cap_sync_launcher.ps1
+market_cap_sync:
+  run_hours: "11,23"
+  run_days: "1,4"
+  symbols_file: config/univers/univers_filtred_equities.txt
+  providers: "yahoo_finance,finnhub"
+  log_file: log/batch/market_cap_sync.txt
+
 eodhd:
   # NB : l'activation runtime se pilote via market_data.bars_provider.
   # Aucun flag `enabled` ici (cf. audit S1 / A-002 : clé fantôme supprimée).
@@ -460,12 +491,14 @@ eodhd:
 
 # ---------------------------------------------------------------------------
 # Synchronisation calendrier earnings — job planifié (scripts/windows)
-# La tâche planifiée Windows exécute automatiquement aux heures listées dans
-# `run_hours` :
+# Le launcher exécute la synchronisation aux heures listées dans `run_hours`,
+# limitées aux jours `run_days` (0=dimanche … 6=samedi ; hors run_days → SKIP) :
 #   python -u -m dataIntegrityEngine.sync_earnings_calendar
 #     --sleep-seconds 1.1 --log-every 25 --batch-size 50
-#     --symbol-source active-tradable --resume
-# et ajoute une ligne de statut (START / OK / ERROR) dans `log_file`.
+#     --symbols-file config/univers_batch/univers_filtred_tradable.txt --resume
+# `symbols_file` = MÊME univers fichier que `analyst_snapshot_collect`
+#   (2255 symboles) : prioritaire sur --symbol-source active-tradable (~13 600).
+# Le launcher ajoute une ligne de statut (START / OK / ERROR / SKIP) dans `log_file`.
 # powershell -ExecutionPolicy Bypass -File .\scripts\windows\install_earnings_calendar_task.ps1
 
 # Désinstaller
@@ -474,18 +507,24 @@ eodhd:
 #  (Get-ScheduledTask -TaskName AlphaTrade-EarningsCalendarSync).Triggers | Select-Object StartBoundary
 # ---------------------------------------------------------------------------
 earnings_calendar_sync:
-  run_hours: "23"                             # Heures de la journée (0-23) séparées par des virgules : "3" = 3h du matin, "4,9" = 4h et 9h.
+  run_hours: "12,23"                             # Heures de la journée (0-23) séparées par des virgules : "3" = 3h du matin, "4,9" = 4h et 9h.
+  run_days: "0,3,5"                              # Jours de la semaine (0=dimanche, 1=lundi, … 6=samedi) séparés par des virgules. Vide/absent = tous les jours. Ex. "0,2" = dimanche + mardi uniquement.
+  symbols_file: config/univers_batch/univers_filtred_equities.txt   # Univers fichier partagé avec analyst_snapshot_collect (2255 symboles). Absent/vide → repli --symbol-source active-tradable.
   log_file: log/batch/earnings_calendar.txt  # Ligne de statut ajoutée à chaque exécution.
 
 # ---------------------------------------------------------------------------
 # Collecte prospective Yahoo analyst (RESEARCH ONLY — todo3.txt)
 # Historique PIT append-only dans MySQL (estimates/targets/recommendations).
 # Aucune intégration PROD. Aucun stockage fichier (MySQL = source de vérité).
-# L'univers est la liste FIGÉE ~400 symboles du fichier `symbols_file`
-# (config/ticket_mid_cap_400.txt) : explicite, configurable, déterministe,
-# jamais recalculé (ni active-tradable 13 608, ni pool Oracle).
+# L'univers est le fichier `symbols_file` (config/univers_batch/univers_filtred_tradable.txt,
+# 2255 symboles — MÊME univers fichier que earnings_calendar_sync).
+# Si `symbols_file` est absent/vide OU le fichier introuvable → AVERTISSEMENT
+# (log + email + Telegram) + repli sur l'univers dynamique active-tradable (~13 600).
 # CLI : python scripts/collect_yahoo_analyst_snapshots.py --universe analyst_research --write-db
 # powershell -ExecutionPolicy Bypass -File .\scripts\windows\install_analyst_snapshot_task.ps1
+
+# lancer immédiate
+# powershell -ExecutionPolicy Bypass -File .\scripts\windows\earnings_calendar_launcher.ps1
 
 # lancer immédiate
 # powershell -ExecutionPolicy Bypass -File .\scripts\windows\analyst_snapshot_launcher.ps1
@@ -506,12 +545,12 @@ earnings_calendar_sync:
 analyst_snapshot_collection:
   enabled: false                         # RESEARCH ONLY — aucune exécution PROD.
   provider: yahoo
-  universe_name: analyst_research        # Nom de l'univers (analyst_research = liste figée).
-  symbols_file: config/univers_batch/univers_filtred_tradable.txt
+  universe_name: analyst_research        # Nom de l'univers (analyst_research = fichier symbols_file configuré).
+  symbols_file: config/univers_batch/univers_filtred_equities.txt
   sleep_seconds: 0.25                    # Throttling entre symboles.
   timeout_seconds: 20                    # Timeout watchdog par symbole.
   max_retries: 2                         # Retries sur TEMPORARY_ERROR / RATE_LIMIT.
-  run_hours: "23"                        # Heures de la journée (0-23) heure LOCALE machine. Clôture US 16:00 ET = 22:00 heure de Paris (été comme hiver) → "23" = 1h après clôture US. Ajuster à la timezone de la machine si elle n'est pas à Paris.
+  run_hours: "9,23"                        # Heures de la journée (0-23) heure LOCALE machine. Clôture US 16:00 ET = 22:00 heure de Paris (été comme hiver) → "23" = 1h après clôture US. Ajuster à la timezone de la machine si elle n'est pas à Paris.
   log_file: log/batch/analyst_snapshots.txt
   # Planification (après clôture US) : tâche Windows dédiée `AlphaTrade-AnalystSnapshot`
   #   powershell -ExecutionPolicy Bypass -File .\scripts\windows\install_analyst_snapshot_task.ps1
@@ -524,6 +563,14 @@ analyst_snapshot_collection:
 # filtrer les symboles peu prédictibles ou incapables de shorter/longer.
 # ---------------------------------------------------------------------------
 batch_diagnostics:
+  # Contrat des bundles Oracle Extreme + Per-Symbol LONG/SHORT.
+  # strict (défaut production/backtest) : le côté servi doit satisfaire
+  # support>=15, >=3 folds, médiane F1 côté>=0.40, min>=0.20 et
+  # >=60% des folds avec F1 côté>=0.35.
+  # discovery : screening expérimental (médiane>=0.45, min non bloquant).
+  # off : désactive uniquement ce gate WF directionnel.
+  directional_bundle_gate: strict
+
   # Nombre de symboles retenus dans le classement top / bottom F1 macro WF.
   top_n: 10
   bottom_n: 10
@@ -623,6 +670,13 @@ cascade:
   min_prob_classification: 0.55
   min_prob_regression: 0.10
 
+  # Gate live Oracle + univers tradable. Activé par filter_then_top20 ; utiliser off pour le rollback.
+  # Une activation exige un score Oracle exact à la date et charge uniquement
+  # les prédictions source=per_symbol du même batch : aucun oracle_synth.
+  live_oracle_tradable_policy: off  # off | filter_then_top20 | top20_then_filter
+  live_oracle_batch_id: null        # null = batch ML serving
+  live_oracle_pool_pct: 0.20
+
   # Filtre momentum côté SHORT uniquement (GO production 2026-08-15, dossier
   # logs/analyse_oos.txt sections 19-25 — arbitrage GPT).
   # Le bottom-rank (faiblesse RELATIVE) n'est converti en short que si la
@@ -640,8 +694,10 @@ cascade:
 # Persistent Rank DIP filter (Global Rank LONG) — composant research validé
 # 2026-08-27 (in-sample 2022-24 + OOS 2025 / 2026 H1, jamais négatif).
 # Consommé par selector/dip_filter.py, appelé par cascade_select().
-# Périmètre STRICT : branche Global Rank (global_rank_{H}) uniquement — PAS
-# Oracle Extreme (tests : persistance + prix n'apportait rien sur Extreme).
+# Périmètre STRICT : gate dur sur la branche Global Rank (global_rank_{H})
+# uniquement — PAS Oracle Extreme. En Extreme Gate, une activation historique
+# est ignorée, sauf `--extreme-gate-dip-saturated` qui utilise N4X2 comme simple
+# priorité de classement sans réduire le pool Oracle.
 # Règle : global_rank_{H} >= rank_threshold sur `persist_days` séances
 #         consécutives ET condition prix close[J]/close[J-N] - 1 selon le SIGNE
 #         de dip_pct : >0 = baisse >= X (DIP) ; <0 = hausse >= |X| (anti-DIP).
@@ -719,14 +775,14 @@ extreme_gate:
 # Consommé par backtesting/cli/_impl.py (--oracle-calibration).
 #   none     = proba brute (inchangée)
 #   rank     = percentile cross-sectionnel intra-date (0..1)
-#   isotonic = régression isotonique PAV (fit sur folds de sélection 2022-2024,
-#              jamais les folds OOS finaux — discipline S5)
+#   isotonic = exige un jeu/artefact de calibration gelé distinct. Le backtest
+#              strict PIT ne l'ajuste jamais sur sa propre période.
 # NB : la cascade utilise déjà un classement par percentile → la calibration ne
 # change PAS la sélection extreme_gate ; elle fiabilise la valeur ABSOLUE de
 # proba_extreme (combinaison de signaux, sizing pondéré, seuils absolus).
 # ---------------------------------------------------------------------------
 oracle:
-  calibration: isotonic
+  calibration: none
 
 
 # Sprint S8 - Calibration formelle des poids de conviction (cf. core/conviction.py)

@@ -27,6 +27,7 @@ Usage ::
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -64,6 +65,37 @@ class BorrowStatus(StrEnum):
             BorrowStatus.HARD_TO_BORROW: 5.0,
             BorrowStatus.NOT_SHORTABLE: float("inf"),
         }[self]
+
+
+def alpaca_borrow_status(asset: Mapping[str, object]) -> BorrowStatus:
+    """Normalise le statut borrow Alpaca, avec compatibilité avant/après 2026-09-22.
+
+    Alpaca remplace ``easy_to_borrow`` par ``borrow_status``. Le nouveau champ
+    est autoritatif lorsqu'il est présent. Une valeur absente ou inconnue reste
+    fail-closed : un actif déclaré shortable est traité HTB et nécessite donc
+    un locate, jamais ETB par supposition.
+    """
+    if not bool(asset.get("shortable", False)):
+        return BorrowStatus.NOT_SHORTABLE
+
+    raw_status = asset.get("borrow_status")
+    if raw_status is not None and str(raw_status).strip():
+        normalized = str(raw_status).strip().lower().replace("-", "_").replace(" ", "_")
+        if normalized in {"easy_to_borrow", "easy", "etb"}:
+            return BorrowStatus.EASY_TO_BORROW
+        if normalized in {"hard_to_borrow", "hard", "htb", "locate_required"}:
+            return BorrowStatus.HARD_TO_BORROW
+        if normalized in {"not_shortable", "unavailable", "not_available", "none"}:
+            return BorrowStatus.NOT_SHORTABLE
+        return BorrowStatus.HARD_TO_BORROW
+
+    if "easy_to_borrow" in asset:
+        return (
+            BorrowStatus.EASY_TO_BORROW
+            if bool(asset.get("easy_to_borrow"))
+            else BorrowStatus.HARD_TO_BORROW
+        )
+    return BorrowStatus.HARD_TO_BORROW
 
 
 # ── SpreadSnapshot ──────────────────────────────────────────────────────────

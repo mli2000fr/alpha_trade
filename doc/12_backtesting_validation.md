@@ -45,6 +45,10 @@ Le moteur peut utiliser spread observé, slippage dépendant du volume, commissi
 - embargo/purge lorsque nécessaire ;
 - sélection de paramètres séparée de l'évaluation finale.
 
+Pour les bundles Per-Symbol LONG/SHORT, le mode `pipeline` vérifie les deux runs producteurs, pas seulement l'existence de la ligne dans `model_predictions`. Les deux dates de fin d'entraînement doivent être strictement antérieures au jour simulé. Une prédiction historique recalculée après coup n'est pas une prédiction PIT.
+
+De même, une calibration supervisée ne peut pas être ajustée sur les labels futurs de la fenêtre qu'elle évalue. En l'absence d'un calibrateur Oracle gelé et antérieur, le backtest consomme le score Oracle OOS brut. Le défaut `oracle.calibration` est donc `none` ; `rank` reste label-free, tandis qu'isotonic exige un jeu de calibration séparé.
+
 ## Métriques minimales
 
 PnL net, CAGR, volatilité, Sharpe/Sortino, max drawdown et durée, turnover, exposition gross/net, win rate, profit factor, coûts, capacité, attribution long/short/secteur/régime/exit reason, stabilité par semestre et concentration des gains.

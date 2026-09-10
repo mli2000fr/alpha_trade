@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 from core.ternary_decision_policy import TernaryDecisionPolicy, decide_ternary_side_batch
+from modelFactory.directional_conditioning import eligible_target_mask
 
 
 # ── Sprint Maître 1 : métriques multiclasses ─────────────────────────────────
@@ -593,6 +594,5 @@ def align_sequence_rows(df: pd.DataFrame, seq_len: int) -> pd.DataFrame:
     # build_sequences() crée sa première fenêtre aux lignes [0:seq_len] et
     # utilise le target de fin, à l'index seq_len - 1.
     aligned = df.iloc[seq_len - 1 :].copy()
-    targets = pd.to_numeric(aligned["target"], errors="coerce")
-    return aligned.loc[np.isfinite(targets)].reset_index(drop=True)
+    return aligned.loc[eligible_target_mask(aligned)].reset_index(drop=True)
 

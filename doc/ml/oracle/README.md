@@ -13,11 +13,11 @@ Ce dossier décrit la couche Oracle telle qu’elle existe dans le code actuel. 
 
 ## Résumé du contrat actuel
 
-Oracle Extreme estime `P(mouvement cross-sectionnel extrême à H20 | information disponible à D)`. La cible positive réunit le TOP 10 % et le BOTTOM 10 % des rendements futurs du jour. Le modèle mesure donc une magnitude/opportunité extrême, pas une direction.
+Oracle Extreme estime `P(mouvement cross-sectionnel extrême à H | information disponible à D)`. La cible positive réunit le TOP 10 % et le BOTTOM 10 % des rendements futurs du jour. Le modèle mesure donc une magnitude/opportunité extrême, pas une direction. Le contrat historique reste H20, mais un entraînement Oracle seul peut maintenant fixer H avec `--oracle-horizon` afin de comparer proprement H5/H10/H15/H20.
 
 ```mermaid
 flowchart LR
-  U[Univers date D] --> L[Labels futurs H20]
+  U[Univers date D] --> L[Labels futurs à H]
   F[Features PIT à D] --> O[Oracle Extreme O0]
   L --> O
   O --> P[proba_extreme]
@@ -27,6 +27,19 @@ flowchart LR
 ```
 
 La direction long/short doit venir d’une autre couche. Interpréter `proba_extreme` comme `P(long)` est une erreur de contrat.
+
+## Horizon configurable
+
+- `--oracle-horizon 5`, `10`, `15` ou `20` pilote les labels, le dataset, la purge Walk-Forward et les artefacts Oracle ;
+- l'option est distincte de `--forecast-horizon`, qui pilote les modèles génériques et Per-Symbol ;
+- sans option, un entraînement Oracle conserve H20 ;
+- la prédiction relit automatiquement `oracle_horizon` dans `feature_profile.json` ;
+- demander explicitement un horizon différent de celui de l'artefact provoque l'erreur bloquante `oracle_horizon_mismatch` ;
+- les listes de batches Pipeline, Backtest et Diagnostic ML affichent `H5`, `H10`, `H15` ou `H20` à partir de ce même artefact ;
+- le live refuse désormais un batch dont le contrat d'horizon Oracle est introuvable et journalise `batch`, `horizon`, politique et taille du pool avant toute sélection ;
+- dans un bundle, `--oracle-horizon` pilote uniquement l'Oracle : les deux branches directionnelles conservent leur contrat ternaire absolu H20 et ±3 % ;
+- la table de prédictions ne porte pas l'horizon dans sa clé : un batch ne doit donc contenir qu'un seul horizon Oracle. Les campagnes H5/H10/H15/H20 utilisent des `batch_id` distincts.
+- les anciens artefacts sans ce champ restent interprétés comme H20.
 
 ## Sources de vérité
 

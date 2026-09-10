@@ -157,6 +157,8 @@ Le buying power est lu selon une priorité de champs configurée. La disponibili
 
 Un run de risque doit permettre de reconstruire : inputs, snapshot de régime, config, batch ML, univers, raisons par symbole, tailles avant/après contraintes et totals portefeuille. `decision_fingerprint.py` calcule une empreinte stable ; `immutable_journal.py` protège le journal. `shadow_engine.py` peut produire une décision alternative sans remplacer le chemin principal ; `shadow_compare.py` explique les différences.
 
+Le flux live Oracle large → univers tradable → TOP20 recalculé → Per-Symbol → décision/abstention est documenté dans [Oracle TOP20 sur univers tradable — backtest et live](ml/oracle_tradable_top20_backtest_live.md). Le TOP20 ne contourne aucune contrainte de portefeuille ou de risque.
+
 ## Diagnostic
 
 | Symptôme | Inspection |

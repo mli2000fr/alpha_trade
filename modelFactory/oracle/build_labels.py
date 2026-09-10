@@ -5,9 +5,10 @@ Construit la table ``alpha_trade.global_oracle_labels`` (cf. doc/ml_oracle.md §
 1. **Univers** = ``global_rank_history`` (batch_id, colonne de rang canonique non
    NULL), **contrôlé bit-for-bit** contre ``model_predictions`` (run synthétique
    ``{batch_id}_globalrank_synth``) — le pool réellement consommé par la cascade.
-2. **Prix** = ``stock_bars_daily`` (``adj_close`` sinon ``close``), pivot + ffill
-   (même logique que ``scripts/oracle_selection_audit.py``).
-3. ``future_return_20 = px[D+20] / px[D] − 1``.
+2. **Prix** = ``stock_bars_daily`` (``adj_close`` sinon ``close``). Le calendrier
+   commun peut être forward-fillé, mais la cible exige une vraie barre à D et D+H.
+3. ``future_return_20 = px[D+20] / px[D] − 1`` uniquement si le chemin passe les
+   contrôles de continuité de prix et d'identité du titre.
 4. Par date : ``oracle_pct_rank`` (fraction de l'univers ≤ rendement, définition
    identique à l'audit), ``oracle_decile``, ``oracle_extreme10``
    (TOP/BOTTOM 10 % **cross-sectionnel de l'univers du jour** — jamais de seuil de
@@ -26,7 +27,10 @@ from __future__ import annotations
 
 import argparse
 import logging
+from collections import Counter
+from dataclasses import dataclass
 from datetime import date, datetime
+from pathlib import Path
 from typing import Any, Callable, Iterable
 
 import numpy as np
@@ -36,6 +40,10 @@ from sqlalchemy import bindparam, text
 from database.connection import get_sqlalchemy_engine
 from modelFactory.oracle.config import resolve_oracle_batch_id
 from modelFactory.oracle.leakage import assert_availability_after_prediction
+from modelFactory.oracle.security_continuity import (
+    load_security_discontinuities,
+    path_crosses_known_discontinuity,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -46,25 +54,85 @@ _CHUNK = 2000
 # (timeout websocket, rechargement, …), les labels déjà calculés restent en
 # base au lieu de tout perdre (upsert idempotent via ON DUPLICATE KEY UPDATE).
 _PERSIST_FLUSH_ROWS = 5000
+_MAX_UNEXPLAINED_DAILY_PRICE_RATIO = 20.0
 
 _COLUMNS = [
     "prediction_date", "symbol", "batch_id", "horizon",
-    "future_return", "oracle_pct_rank", "oracle_decile",
+    "future_return", "future_return_raw", "oracle_pct_rank", "oracle_decile",
     "oracle_extreme10", "oracle_exit_date", "oracle_available_date",
+    "target_quality_valid", "target_quality_reason",
+    "price_start_source", "price_end_source",
 ]
 
 _UPSERT = text(
     "INSERT INTO alpha_trade.global_oracle_labels "
-    "(prediction_date, symbol, batch_id, horizon, future_return, oracle_pct_rank, "
-    " oracle_decile, oracle_extreme10, oracle_exit_date, oracle_available_date) "
-    "VALUES (:prediction_date, :symbol, :batch_id, :horizon, :future_return, :oracle_pct_rank, "
-    " :oracle_decile, :oracle_extreme10, :oracle_exit_date, :oracle_available_date) "
+    "(prediction_date, symbol, batch_id, horizon, future_return, future_return_raw, "
+    " oracle_pct_rank, oracle_decile, oracle_extreme10, oracle_exit_date, "
+    " oracle_available_date, target_quality_valid, target_quality_reason, "
+    " price_start_source, price_end_source) "
+    "VALUES (:prediction_date, :symbol, :batch_id, :horizon, :future_return, "
+    " :future_return_raw, :oracle_pct_rank, :oracle_decile, :oracle_extreme10, "
+    " :oracle_exit_date, :oracle_available_date, :target_quality_valid, "
+    " :target_quality_reason, :price_start_source, :price_end_source) "
     "ON DUPLICATE KEY UPDATE "
-    "future_return=VALUES(future_return), oracle_pct_rank=VALUES(oracle_pct_rank), "
+    "future_return=VALUES(future_return), future_return_raw=VALUES(future_return_raw), "
+    "oracle_pct_rank=VALUES(oracle_pct_rank), "
     "oracle_decile=VALUES(oracle_decile), oracle_extreme10=VALUES(oracle_extreme10), "
     "oracle_exit_date=VALUES(oracle_exit_date), "
-    "oracle_available_date=VALUES(oracle_available_date), created_at=CURRENT_TIMESTAMP"
+    "oracle_available_date=VALUES(oracle_available_date), "
+    "target_quality_valid=VALUES(target_quality_valid), "
+    "target_quality_reason=VALUES(target_quality_reason), "
+    "price_start_source=VALUES(price_start_source), "
+    "price_end_source=VALUES(price_end_source), created_at=CURRENT_TIMESTAMP"
 )
+
+
+@dataclass(frozen=True, slots=True)
+class PriceMatrices:
+    """Aligned price matrices with explicit observation/source lineage."""
+
+    close: pd.DataFrame
+    raw_close: pd.DataFrame
+    source: pd.DataFrame
+    extreme_break_count: pd.DataFrame
+
+
+def _set_reason_where_empty(
+    reasons: pd.Series,
+    mask: pd.Series,
+    reason: str,
+) -> None:
+    """Apply the first failing quality reason, preserving deterministic priority."""
+    selected = mask.fillna(False) & reasons.eq("")
+    reasons.loc[selected] = reason
+
+
+def classify_target_quality(
+    *,
+    symbol: str,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    start_price: float | None,
+    end_price: float | None,
+    start_source: str | None,
+    end_source: str | None,
+    extreme_breaks: int,
+    registry: dict[str, tuple[Any, ...]],
+) -> str | None:
+    """Return the first target-quality failure, or ``None`` when usable."""
+    if start_price is None or not np.isfinite(start_price):
+        return "missing_start_bar"
+    if end_price is None or not np.isfinite(end_price):
+        return "missing_exit_bar"
+    if start_price <= 0 or end_price <= 0:
+        return "nonpositive_price"
+    if start_source and end_source and str(start_source) != str(end_source):
+        return "price_source_mismatch"
+    if path_crosses_known_discontinuity(symbol, start, end, registry):
+        return "known_security_discontinuity"
+    if int(extreme_breaks) > 0:
+        return "extreme_unadjusted_price_jump"
+    return None
 
 
 def _iso(value: Any) -> str:
@@ -159,30 +227,47 @@ def check_universe_equality(
     }
 
 
-def load_close_matrix(engine: Any, symbols: list[str], start_date: str) -> pd.DataFrame:
-    """Charge ``stock_bars_daily`` en matrice large (index=date, colonnes=symbol).
+def load_price_matrices(engine: Any, symbols: list[str], start_date: str) -> PriceMatrices:
+    """Load prices while preserving real-bar presence and source lineage.
 
-    ``px = COALESCE(adj_close, close)``, puis pivot + ``ffill`` — identique à l'audit.
-    Évite ``pivot_table`` (trop lent sur ~1 M de lignes) : fetchall + dedup + ``unstack``.
+    ``close`` remains forward-filled only to preserve the common market calendar.
+    Targets must use ``raw_close`` at both endpoints. ``extreme_break_count`` is
+    cumulative, so a path crossing an unexplained >20x or <1/20x price break is
+    rejected in O(1).
     """
     query = text(
-        "SELECT symbol, `date` AS d, CAST(COALESCE(adj_close, close) AS DOUBLE) AS px "
+        "SELECT symbol, `date` AS d, CAST(COALESCE(adj_close, close) AS DOUBLE) AS px, "
+        "data_source "
         "FROM stock_bars_daily WHERE symbol IN :syms AND `date` >= :start "
         "ORDER BY d, symbol, data_source"
     ).bindparams(bindparam("syms", expanding=True))
     with engine.connect() as conn:
         rows = conn.execute(query, {"syms": symbols, "start": start_date}).fetchall()
     if not rows:
-        return pd.DataFrame()
-    bars = pd.DataFrame(rows, columns=["symbol", "d", "px"])
+        empty = pd.DataFrame()
+        return PriceMatrices(empty, empty, empty, empty)
+    bars = pd.DataFrame(rows, columns=["symbol", "d", "px", "data_source"])
     # MySQL DECIMAL → decimal.Decimal ; conversion explicite en float (sinon
     # `fwd / ref - 1.0` lève TypeError sur les Decimal).
     bars["px"] = pd.to_numeric(bars["px"], errors="coerce")
     bars = bars.drop_duplicates(subset=["d", "symbol"], keep="last")
-    close = bars.set_index(["d", "symbol"])["px"].unstack()
-    close = close.sort_index().ffill()
-    close.index = pd.to_datetime(close.index)
-    return close
+    indexed = bars.set_index(["d", "symbol"])
+    raw_close = indexed["px"].unstack().sort_index()
+    source = indexed["data_source"].unstack().reindex_like(raw_close)
+    raw_close.index = pd.to_datetime(raw_close.index)
+    source.index = raw_close.index
+    close = raw_close.ffill()
+    previous_observed = raw_close.ffill().shift(1)
+    ratio = raw_close / previous_observed.where(previous_observed.ne(0))
+    threshold = float(_MAX_UNEXPLAINED_DAILY_PRICE_RATIO)
+    extreme_break = ratio.ge(threshold) | ratio.le(1.0 / threshold)
+    extreme_break_count = extreme_break.fillna(False).astype(int).cumsum()
+    return PriceMatrices(close, raw_close, source, extreme_break_count)
+
+
+def load_close_matrix(engine: Any, symbols: list[str], start_date: str) -> pd.DataFrame:
+    """Backward-compatible view used by older callers/tests."""
+    return load_price_matrices(engine, symbols, start_date).close
 
 
 def compute_cross_sectional_ranks(
@@ -241,7 +326,9 @@ def build_labels(
     dry_run: bool = False,
     strict_universe: bool = True,
     symbols: list[str] | None = None,
+    output_parquet: str | None = None,
     progress_callback: Callable[[int, int, str], None] | None = None,
+    universe_mode: str = "static_bars",
 ) -> dict[str, Any]:
     """Construit et persiste les labels Oracle H20 pour ``batch_id``.
 
@@ -260,10 +347,27 @@ def build_labels(
     """
     engine = engine or get_sqlalchemy_engine()
 
-    # ── 1. Univers ──
-    rank_keys = load_universe_from_ranks(engine, batch_id, horizon)
+    if universe_mode not in {"static_bars", "pit_dynamic_bars"}:
+        raise ValueError(f"universe_mode Oracle invalide: {universe_mode}")
+    if universe_mode == "pit_dynamic_bars" and (not symbols or not start_date or not end_date):
+        raise ValueError("pit_dynamic_bars requiert symbols, start_date et end_date")
+    dynamic_diagnostics: dict[str, Any] | None = None
+    dynamic_membership: pd.DataFrame | None = None
+    rank_keys: set[tuple[str, str]] = set()
+    if universe_mode == "pit_dynamic_bars":
+        from modelFactory.oracle.dynamic_universe import load_dynamic_universe_from_bars
+        dynamic_membership, dynamic_diagnostics = load_dynamic_universe_from_bars(
+            engine, symbols or [], start_date=str(start_date), end_date=str(end_date))
+    else:
+        rank_keys = load_universe_from_ranks(engine, batch_id, horizon)
     universe_check: dict[str, Any] | None = None
-    if symbols and not rank_keys:
+    if universe_mode == "pit_dynamic_bars":
+        dynamic_rows = int(len(dynamic_membership)) if dynamic_membership is not None else 0
+        universe_check = {"equal": True, "n_ranks": dynamic_rows, "n_preds": dynamic_rows,
+                          "only_in_ranks": 0, "only_in_preds": 0,
+                          "samples_only_ranks": [], "samples_only_preds": [],
+                          "source": "pit_dynamic_bars", "dynamic": dynamic_diagnostics}
+    elif symbols and not rank_keys:
         # Standalone (--oracle-model-only) : aucun global_rank_history pour ce
         # batch → l'univers des labels est l'ensemble des symboles fournis ayant
         # une barre dans la fenêtre (stock_bars_daily).
@@ -315,13 +419,19 @@ def build_labels(
             )
 
     uni_by_day: dict[date, set[str]] = {}
-    for d_iso, sym in rank_keys:
-        d = date.fromisoformat(d_iso)
-        uni_by_day.setdefault(d, set()).add(sym)
+    if dynamic_membership is not None:
+        for timestamp, day_scope in dynamic_membership.groupby("date", sort=True):
+            uni_by_day[pd.Timestamp(timestamp).date()] = set(day_scope["symbol"].astype(str))
+        del dynamic_membership
+    else:
+        for d_iso, sym in rank_keys:
+            d = date.fromisoformat(d_iso)
+            uni_by_day.setdefault(d, set()).add(sym)
 
     all_dates = sorted(uni_by_day)
     if not all_dates:
-        return {"status": "error", "reason": "empty_universe", "universe_check": universe_check}
+        return {"status": "error", "reason": "empty_universe", "universe_check": universe_check,
+                "universe_mode": universe_mode, "dynamic_universe": dynamic_diagnostics}
 
     if start_date:
         all_dates = [d for d in all_dates if d >= date.fromisoformat(start_date)]
@@ -334,8 +444,12 @@ def build_labels(
     if progress_callback is not None:
         progress_callback(0, n_dates, "chargement de la matrice de prix…")
 
-    symbols = sorted({s for _, s in rank_keys})
-    close = load_close_matrix(engine, symbols, all_dates[0].isoformat())
+    # En mode dynamique ``rank_keys`` est volontairement vide pour éviter une
+    # seconde copie de plusieurs millions de tuples. La liste de prix doit donc
+    # être dérivée de l'univers quotidien déjà construit.
+    symbols = sorted({symbol for day_symbols in uni_by_day.values() for symbol in day_symbols})
+    prices = load_price_matrices(engine, symbols, all_dates[0].isoformat())
+    close = prices.close
     if close.empty:
         return {"status": "error", "reason": "no_bars", "universe_check": universe_check}
 
@@ -346,8 +460,11 @@ def build_labels(
     rows: list[tuple[Any, ...]] = []
     n_labeled = 0
     n_unavailable = 0
+    n_quality_invalid = 0
+    quality_reasons: Counter[str] = Counter()
     skipped_dates = 0
     inserted_total = 0
+    discontinuities = load_security_discontinuities()
 
     def _flush_batch(rows_ref: list[tuple[Any, ...]]) -> int:
         """Garde T1 (bloquant) + upsert incrémental d'un lot.
@@ -373,11 +490,42 @@ def build_labels(
         if exit_pos >= len(close):
             continue  # fenêtre future incomplète → rien à stocker (queue de la série)
 
-        ref = close.iloc[pos]
-        fwd = close.iloc[exit_pos]
-        full_ret = (fwd / ref - 1.0).replace([np.inf, -np.inf], np.nan)
         uni_syms = sorted(uni_by_day[d])
-        day_ret = full_ret.reindex(uni_syms)  # conserve l'ordre + NaN
+        ref = prices.raw_close.iloc[pos].reindex(uni_syms)
+        fwd = prices.raw_close.iloc[exit_pos].reindex(uni_syms)
+        raw_ret = (fwd / ref - 1.0).replace([np.inf, -np.inf], np.nan)
+        start_sources = prices.source.iloc[pos].reindex(uni_syms)
+        end_sources = prices.source.iloc[exit_pos].reindex(uni_syms)
+        break_counts = (
+            prices.extreme_break_count.iloc[exit_pos]
+            - prices.extreme_break_count.iloc[pos]
+        ).reindex(uni_syms).fillna(0).astype(int)
+
+        reasons = pd.Series("", index=uni_syms, dtype=object)
+        _set_reason_where_empty(reasons, ref.isna(), "missing_start_bar")
+        _set_reason_where_empty(reasons, fwd.isna(), "missing_exit_bar")
+        _set_reason_where_empty(reasons, ref.le(0) | fwd.le(0), "nonpositive_price")
+        _set_reason_where_empty(
+            reasons,
+            start_sources.notna() & end_sources.notna()
+            & start_sources.astype(str).ne(end_sources.astype(str)),
+            "price_source_mismatch",
+        )
+        known_break = pd.Series(
+            {
+                sym: path_crosses_known_discontinuity(
+                    sym, ts, close.index[exit_pos], discontinuities,
+                )
+                for sym in uni_syms
+            },
+            dtype=bool,
+        ).reindex(uni_syms, fill_value=False)
+        _set_reason_where_empty(reasons, known_break, "known_security_discontinuity")
+        _set_reason_where_empty(
+            reasons, break_counts.gt(0), "extreme_unadjusted_price_jump",
+        )
+        valid_quality = reasons.eq("")
+        day_ret = raw_ret.where(valid_quality)
         finite_ret = day_ret.dropna()
 
         if len(finite_ret) >= _MIN_RANK_UNIVERSE:
@@ -395,27 +543,44 @@ def build_labels(
         available_date = close.index[avail_pos].date() if avail_pos < len(close) else None
 
         rets = day_ret.to_numpy(dtype=float)
+        raw_rets = raw_ret.to_numpy(dtype=float)
         pcts = pct_s.to_numpy(dtype=float)
         decs = dec_s.to_numpy(dtype=float)
         exts = ext_s.to_numpy(dtype=float)
 
         for i, sym in enumerate(uni_syms):
             fr = rets[i]
+            raw_fr = raw_rets[i]
+            quality_reason = str(reasons.iloc[i]) or None
+            quality_valid = quality_reason is None
+            start_source = start_sources.iloc[i]
+            end_source = end_sources.iloc[i]
             if np.isfinite(fr) and np.isfinite(pcts[i]):
                 rows.append((
                     d, sym, batch_id, horizon, float(fr),
+                    float(raw_fr) if np.isfinite(raw_fr) else None,
                     float(pcts[i]), int(decs[i]), int(exts[i]),
                     exit_date, available_date,
+                    1, None,
+                    str(start_source) if pd.notna(start_source) else None,
+                    str(end_source) if pd.notna(end_source) else None,
                 ))
                 n_labeled += 1
             else:
                 rows.append((
                     d, sym, batch_id, horizon,
                     float(fr) if np.isfinite(fr) else None,
+                    float(raw_fr) if np.isfinite(raw_fr) else None,
                     None, None, None,
                     exit_date, available_date,
+                    int(quality_valid), quality_reason,
+                    str(start_source) if pd.notna(start_source) else None,
+                    str(end_source) if pd.notna(end_source) else None,
                 ))
                 n_unavailable += 1
+            if not quality_valid:
+                n_quality_invalid += 1
+                quality_reasons[quality_reason or "unknown"] += 1
 
         # ── Persistance incrémentale (non-dry) : survit à une interruption ──
         if not dry_run and len(rows) >= _PERSIST_FLUSH_ROWS:
@@ -429,11 +594,19 @@ def build_labels(
         if not labels_df.empty:
             # ── T1 sur données réelles (bloquant) ──
             assert_availability_after_prediction(labels_df)
+            if output_parquet:
+                output_path = Path(output_parquet)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                labels_df.to_parquet(output_path, index=False)
         return {
             "status": "dry_run", "batch_id": batch_id, "horizon": horizon,
             "universe_check": universe_check, "n_rows": len(labels_df),
             "n_labeled": n_labeled, "n_unavailable": n_unavailable,
+            "n_quality_invalid": n_quality_invalid,
+            "quality_reasons": dict(sorted(quality_reasons.items())),
+            "output_parquet": output_parquet,
             "skipped_dates": skipped_dates, "n_symbols": len(symbols),
+            "universe_mode": universe_mode, "dynamic_universe": dynamic_diagnostics,
         }
 
     if not labels_df.empty:
@@ -444,14 +617,19 @@ def build_labels(
 
     inserted = inserted_total
     LOGGER.info(
-        "build_labels done batch_id=%s rows=%d labeled=%d unavailable=%d skipped_dates=%d",
-        batch_id, inserted, n_labeled, n_unavailable, skipped_dates,
+        "build_labels done batch_id=%s rows=%d labeled=%d unavailable=%d quality_invalid=%d "
+        "quality_reasons=%s skipped_dates=%d",
+        batch_id, inserted, n_labeled, n_unavailable, n_quality_invalid,
+        dict(sorted(quality_reasons.items())), skipped_dates,
     )
     return {
         "status": "completed", "batch_id": batch_id, "horizon": horizon,
         "universe_check": universe_check, "n_rows": inserted,
         "n_labeled": n_labeled, "n_unavailable": n_unavailable,
+        "n_quality_invalid": n_quality_invalid,
+        "quality_reasons": dict(sorted(quality_reasons.items())),
         "skipped_dates": skipped_dates, "n_symbols": len(symbols),
+        "universe_mode": universe_mode, "dynamic_universe": dynamic_diagnostics,
     }
 
 
@@ -464,6 +642,18 @@ def main() -> None:
     parser.add_argument("--end-date", default=None, help="YYYY-MM-DD inclus.")
     parser.add_argument("--dry-run", action="store_true",
                         help="Calcule sans écrire en base (diagnostic).")
+    parser.add_argument("--universe-mode", choices=["static_bars", "pit_dynamic_bars"],
+                        default="static_bars")
+    parser.add_argument(
+        "--output-parquet",
+        default=None,
+        help="En dry-run, exporte les labels corrigés sans modifier la base.",
+    )
+    parser.add_argument(
+        "--symbols-file",
+        default=None,
+        help="Fichier texte de symboles (virgules/retours ligne), utile en standalone.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
@@ -471,12 +661,24 @@ def main() -> None:
     if not batch_id:
         raise SystemExit("Aucun batch_id résolu (config.yaml → batch_diagnostics.backtest_batch_id).")
 
+    symbols = None
+    if args.symbols_file:
+        raw_symbols = Path(args.symbols_file).read_text(encoding="utf-8")
+        symbols = sorted({
+            value.strip().upper()
+            for value in raw_symbols.replace("\r", ",").replace("\n", ",").split(",")
+            if value.strip()
+        })
+
     result = build_labels(
         batch_id,
         horizon=args.horizon,
         start_date=args.start_date,
         end_date=args.end_date,
         dry_run=args.dry_run,
+        output_parquet=args.output_parquet,
+        symbols=symbols,
+        universe_mode=args.universe_mode,
     )
     print(result)
 

@@ -109,7 +109,8 @@ def build_dip_events(engine: Any) -> pd.DataFrame:
     # ── Labels oracle (decile cross-sectionnel du pool, PIT) ──
     labels = pd.read_sql(
         "SELECT prediction_date, symbol, future_return, oracle_decile "
-        "FROM global_oracle_labels WHERE batch_id=%s AND horizon=%s",
+        "FROM global_oracle_labels WHERE batch_id=%s AND horizon=%s "
+        "AND target_quality_valid=1",
         engine, params=(BATCH_ID, HORIZON),
     )
     labels["prediction_date"] = pd.to_datetime(labels["prediction_date"]).dt.normalize()

@@ -14,6 +14,13 @@ Ce document donne la vue transversale. Les contrats algorithmiques, paramètres,
 - Alpaca : actifs, compte, ordres, positions, quotes et éventuellement barres IEX ;
 - EODHD : barres consolidées, news et corporate actions selon configuration ;
 - Finnhub/Yahoo/SEC : secteurs, capitalisations, earnings ou cross-checks ;
+
+La publication de l’univers tradable possède un contrat dédié : la politique
+`strict` contrôle une capitalisation PIT provenant de Yahoo puis Finnhub, de `sec_edgar` ou de `eodhd`,
+tandis que `liquidity_only` ignore ce signal devenu insuffisamment fiable et
+conserve les filtres PIT de prix, historique, ADV, volatilité, qualité, spread
+et earnings. Voir
+[Capitalisation PIT — SEC EDGAR ou EODHD](ml/market_cap_sec_edgar.md).
 - Stooq/FRED/EODHD : macro et volatilité selon le provider choisi.
 
 `market_data.bars_provider` choisit la source OHLCV active. Quand EODHD est actif, l'import Alpaca bars devient un no-op contrôlé, et réciproquement.
@@ -205,6 +212,8 @@ Un symbole n'est tradable que si le snapshot screener source le considère trada
 4. Sur exception, `fail_universe_run` conserve le run échoué et sa raison.
 
 Le fingerprint inclut run screener source, fingerprint source, preset et seuils effectifs. Avec `--ignore-quotes`, le seuil spread est explicitement retiré du fingerprint de contrôle.
+
+La consommation de ces snapshots par la cascade Oracle directionnelle, notamment le recalcul PIT du TOP20 et le refus d’un fallback courant, est détaillée dans [Oracle TOP20 sur univers tradable — backtest et live](ml/oracle_tradable_top20_backtest_live.md).
 
 ### Commandes
 

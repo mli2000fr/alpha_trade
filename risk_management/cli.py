@@ -22,6 +22,7 @@ from common.utils import configure_root_logging
 from core.run_summary import attach_live_progress, attach_schema_version
 from database.macro_indicators import persist_market_macro_snapshot_daily
 from database.run_business_summaries import emit_run_summary, persist_run_business_summary
+from modelFactory.oracle.artifact_contract import resolve_oracle_artifact_horizon
 from risk_management.audit import (
     build_run_id,
     persist_decision_audit_log,
@@ -198,13 +199,14 @@ def _load_live_borrow_snapshots(
     """Charge les statuts de borrow (ETB/HTB/NOT_SHORTABLE) pour le gate de liquidité.
 
     Point 9 — Interroge l'API Alpaca ``GET /v2/assets/{symbol}`` pour les champs
-    ``shortable`` et ``easy_to_borrow``, puis les mappe vers les statuts
+    ``shortable`` et ``borrow_status`` (avec fallback ``easy_to_borrow``), puis
+    les mappe vers les statuts
     ``BorrowStatus`` (ETB/HTB/NOT_SHORTABLE). En cas d'indisponibilité de l'API,
     le symbole est ``NOT_SHORTABLE`` : aucune disponibilité favorable n'est inventée.
     """
     from datetime import datetime as _dt, timezone as _tz
 
-    from risk_management.liquidity import BorrowSnapshot, BorrowStatus
+    from risk_management.liquidity import BorrowSnapshot, BorrowStatus, alpaca_borrow_status
 
     as_of = _dt.now(_tz.utc)
     snapshots: dict[str, BorrowSnapshot] = {}
@@ -235,19 +237,15 @@ def _load_live_borrow_snapshots(
                 )
                 continue
 
-            shortable = bool(asset.get("shortable", False))
-            easy_to_borrow = bool(asset.get("easy_to_borrow", False))
+            status = alpaca_borrow_status(asset)
 
-            if not shortable:
-                status = BorrowStatus.NOT_SHORTABLE
+            if status == BorrowStatus.NOT_SHORTABLE:
                 fee = float("inf")
                 locate_required = False
-            elif not easy_to_borrow:
-                status = BorrowStatus.HARD_TO_BORROW
+            elif status == BorrowStatus.HARD_TO_BORROW:
                 fee = 0.05   # 5%/an — frais HTB standards
                 locate_required = True
             else:
-                status = BorrowStatus.EASY_TO_BORROW
                 fee = 0.003  # 0.3%/an — frais ETB standards
                 locate_required = False
 
@@ -1254,6 +1252,24 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Seuil minimal de couverture ML requis avant de publier de nouvelles cibles risk (ex: 0.80).",
     )
     p.add_argument(
+        "--oracle-tradable-policy",
+        choices=["off", "filter_then_top20", "top20_then_filter"],
+        default=None,
+        help="Gate Oracle live. None lit cascade.live_oracle_tradable_policy ; off conserve le flux actuel.",
+    )
+    p.add_argument(
+        "--oracle-batch-id",
+        type=str,
+        default=None,
+        help="Batch Oracle live ; défaut = batch ML serving.",
+    )
+    p.add_argument(
+        "--oracle-pool-pct",
+        type=float,
+        default=None,
+        help="Part supérieure Oracle conservée après résolution tradable (défaut 0.20).",
+    )
+    p.add_argument(
         "--enable-shadow-compare",
         action="store_true",
         default=False,
@@ -1845,11 +1861,96 @@ def main(args: list[str] | None = None) -> None:
     ml_coverage_gate = MlCoverageGateDecision(enabled=False, allowed=True, reason="disabled")
     if entry_gate_allows_new_entries:
         LOGGER.info("Chargement des predictions ML…")
-        predictions = repo.load_predictions_asof(universe_symbols, trade_date) if ml_gate_state.enabled else {}
+        try:
+            from common.config_loader import load_config as _load_oracle_gate_config
+            _root_live_config = _load_oracle_gate_config() or {}
+        except Exception:
+            _root_live_config = {}
+        _cascade_live_config = _root_live_config.get("cascade") or {}
+        _oracle_live_policy = str(
+            args.oracle_tradable_policy
+            or _cascade_live_config.get("live_oracle_tradable_policy")
+            or "off"
+        ).strip().lower()
+        _oracle_live_batch = str(
+            args.oracle_batch_id
+            or _cascade_live_config.get("live_oracle_batch_id")
+            or ""
+        ).strip()
+        if _oracle_live_policy != "off" and not _oracle_live_batch:
+            from modelFactory.db_registry import get_serving_batch
+            _oracle_live_batch = str(get_serving_batch(getattr(repo, "engine", None)) or "").strip()
+        _oracle_live_pool = float(
+            args.oracle_pool_pct
+            if args.oracle_pool_pct is not None
+            else _cascade_live_config.get("live_oracle_pool_pct", 0.20)
+        )
+        _prediction_symbols = list(universe_symbols)
+        if _oracle_live_policy != "off":
+            if not 0.0 < _oracle_live_pool <= 1.0:
+                raise SystemExit("oracle_pool_pct live doit appartenir à ]0, 1].")
+            if not _oracle_live_batch:
+                raise SystemExit("Aucun batch Oracle/serving disponible pour le gate live.")
+            _oracle_live_horizon = resolve_oracle_artifact_horizon(_oracle_live_batch)
+            if _oracle_live_horizon is None:
+                raise SystemExit(
+                    "Contrat Oracle live introuvable : "
+                    f"batch={_oracle_live_batch}. Impossible de déterminer l'horizon."
+                )
+            LOGGER.info(
+                "Contrat Oracle live validé batch=%s horizon=H%d policy=%s pool_pct=%.4f",
+                _oracle_live_batch,
+                _oracle_live_horizon,
+                _oracle_live_policy,
+                _oracle_live_pool,
+            )
+            print(
+                f"  Oracle live : batch={_oracle_live_batch} | "
+                f"horizon=H{_oracle_live_horizon} | policy={_oracle_live_policy}"
+            )
+            from modelFactory.predictor import prepare_oracle_tradable_percentiles
+            _oracle_scores = repo.load_oracle_scores_asof(
+                trade_date,
+                batch_id=_oracle_live_batch,
+                symbols=(None if _oracle_live_policy == "top20_then_filter" else universe_symbols),
+            )
+            if not _oracle_scores:
+                raise SystemExit(
+                    "Aucun score Oracle exact pour le gate live : "
+                    f"batch={_oracle_live_batch} date={trade_date}. Aucun fallback n'est autorisé."
+                )
+            _oracle_percentiles, _oracle_gate_diag = prepare_oracle_tradable_percentiles(
+                _oracle_scores,
+                tradable_symbols=set(universe_symbols),
+                policy=_oracle_live_policy,
+            )
+            _oracle_cutoff = 1.0 - _oracle_live_pool
+            _prediction_symbols = sorted(
+                symbol for symbol, percentile in _oracle_percentiles.items()
+                if float(percentile) >= _oracle_cutoff
+            )
+            LOGGER.info(
+                "Oracle/tradable live policy=%s batch=%s oracle=%d tradable=%d ranked=%d top=%d",
+                _oracle_live_policy,
+                _oracle_live_batch,
+                _oracle_gate_diag["oracle_symbols"],
+                len(universe_symbols),
+                _oracle_gate_diag["ranked_symbols"],
+                len(_prediction_symbols),
+            )
+        predictions = (
+            repo.load_predictions_asof(
+                _prediction_symbols,
+                trade_date,
+                batch_id=(_oracle_live_batch or None),
+                sources=(["per_symbol"] if _oracle_live_policy != "off" else None),
+            )
+            if ml_gate_state.enabled else {}
+        )
         LOGGER.info("Predictions chargees pour %d symboles.", len(predictions))
 
         ml_coverage_gate = evaluate_ml_coverage_gate(
-            selection_count=universe_symbol_count,
+            selection_count=len(_prediction_symbols),
             prediction_count=len(predictions),
             min_coverage_ratio=args.min_ml_coverage_ratio,
             regime_allows_new_entries=entry_gate_allows_new_entries,
