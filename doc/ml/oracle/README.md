@@ -35,6 +35,10 @@ La direction long/short doit venir d’une autre couche. Interpréter `proba_ext
 - sans option, un entraînement Oracle conserve H20 ;
 - la prédiction relit automatiquement `oracle_horizon` dans `feature_profile.json` ;
 - demander explicitement un horizon différent de celui de l'artefact provoque l'erreur bloquante `oracle_horizon_mismatch` ;
+- les listes de batches Pipeline, Backtest et Diagnostic ML affichent `H5`, `H10`, `H15` ou `H20` à partir de ce même artefact ;
+- le live refuse désormais un batch dont le contrat d'horizon Oracle est introuvable et journalise `batch`, `horizon`, politique et taille du pool avant toute sélection ;
+- dans un bundle, `--oracle-horizon` pilote uniquement l'Oracle : les deux branches directionnelles conservent leur contrat ternaire absolu H20 et ±3 % ;
+- la table de prédictions ne porte pas l'horizon dans sa clé : un batch ne doit donc contenir qu'un seul horizon Oracle. Les campagnes H5/H10/H15/H20 utilisent des `batch_id` distincts.
 - les anciens artefacts sans ce champ restent interprétés comme H20.
 
 ## Sources de vérité
