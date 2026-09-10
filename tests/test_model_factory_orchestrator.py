@@ -763,6 +763,36 @@ def test_train_oracle_extreme_skips_global_rank_prefill_when_oracle_only(monkeyp
     assert call_order == ["build_dataset"]  # pas de prefill
 
 
+def test_train_oracle_extreme_propagates_configured_horizon(monkeypatch, tmp_path) -> None:
+    import modelFactory.oracle.build_labels as oracle_build_labels_mod
+    import modelFactory.oracle.dataset as oracle_dataset_mod
+
+    observed: dict[str, int] = {}
+
+    def fake_labels(*args, **kwargs):
+        observed["labels"] = kwargs["horizon"]
+        return {"status": "completed", "n_labeled": 1}
+
+    def fake_dataset(*args, **kwargs):
+        observed["dataset"] = kwargs["horizon"]
+        return pd.DataFrame(), []
+
+    monkeypatch.setattr(oracle_build_labels_mod, "build_labels", fake_labels)
+    monkeypatch.setattr(oracle_dataset_mod, "build_dataset", fake_dataset)
+    cfg = TrainingConfig(
+        data=DataConfig(oracle_model_only=True),
+        oracle_horizon=10,
+        artifacts_dir=tmp_path,
+    )
+
+    result = orchestrator.train_oracle_extreme(
+        cfg, engine=object(), batch_id="batch-h10", symbols=["AAPL"],
+    )
+
+    assert result["status"] == "skipped"
+    assert observed == {"labels": 10, "dataset": 10}
+
+
 def test_train_oracle_extreme_propagates_dynamic_universe_contract(monkeypatch, tmp_path) -> None:
     import modelFactory.oracle.dataset as oracle_dataset_mod
     import modelFactory.oracle.build_labels as oracle_build_labels_mod

@@ -396,6 +396,7 @@ class PipelineLaunchOptions:
     ml_enable_oracle_model: bool = DEFAULT_ML_ENABLE_ORACLE_MODEL  # 2026-08-20 : Oracle Extreme (O0)
     ml_oracle_model_only: bool = DEFAULT_ML_ORACLE_MODEL_ONLY      # 2026-08-20 : Oracle ONLY
     ml_directional_profiles_enabled: bool = False
+    ml_oracle_horizon: int = 20
     ml_oracle_feature_profile: str = "oracle.json"
     ml_standalone_oracle_feature_profile: str = "dynamic"
     ml_oracle_universe_mode: str = "static_bars"
@@ -2400,6 +2401,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         if options.ml_directional_profiles_enabled:
             command.extend([
                 "--directional-feature-profiles",
+                "--oracle-horizon", str(int(options.ml_oracle_horizon)),
                 "--oracle-feature-profile", options.ml_oracle_feature_profile,
                 "--long-feature-profile", options.ml_long_feature_profile,
                 "--short-feature-profile", options.ml_short_feature_profile,
@@ -2408,12 +2410,14 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         elif options.ml_oracle_model_only:
             command.append("--oracle-model-only")
             command.append("--enable-oracle-model")  # implicite
+            command.extend(["--oracle-horizon", str(int(options.ml_oracle_horizon))])
             if options.ml_oracle_universe_mode == "pit_dynamic_bars":
                 command.extend(["--oracle-universe-mode", "pit_dynamic_bars"])
             if options.ml_standalone_oracle_feature_profile != "dynamic":
                 command.extend(["--standalone-oracle-feature-profile", options.ml_standalone_oracle_feature_profile])
         elif options.ml_enable_oracle_model:
             command.append("--enable-oracle-model")
+            command.extend(["--oracle-horizon", str(int(options.ml_oracle_horizon))])
             if options.ml_standalone_oracle_feature_profile != "dynamic":
                 command.extend(["--standalone-oracle-feature-profile", options.ml_standalone_oracle_feature_profile])
         if options.ml_include_sentiment and not options.ml_directional_profiles_enabled:

@@ -7,6 +7,60 @@ import pandas as pd
 from modelFactory.oracle import predict_history
 
 
+def test_prediction_infers_oracle_horizon_from_feature_profile(monkeypatch, tmp_path) -> None:
+    import modelFactory.oracle.dataset as dataset_module
+    import modelFactory.oracle.train as train_module
+
+    root = tmp_path / "champions"
+    batch_root = root / "batch-h10"
+    batch_root.mkdir(parents=True)
+    (batch_root / "oracle_champions.json").write_text(
+        '[{"t_start":"2024-01-01","model_file":"fold.txt","feature_columns":["signal"]}]',
+        encoding="utf-8",
+    )
+    (batch_root / "feature_profile.json").write_text(
+        '{"oracle_horizon":10,"oracle_universe_mode":"static_bars","serving_ready":true}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(predict_history, "_CHAMPIONS_ROOT", root)
+    observed: dict[str, int] = {}
+    def fake_universe(engine, batch_id, horizon):
+        observed["horizon"] = horizon
+        return ["AAPL"]
+
+    monkeypatch.setattr(train_module, "get_universe_symbols", fake_universe)
+    monkeypatch.setattr(dataset_module, "build_dataset", lambda *a, **k: (pd.DataFrame(), []))
+
+    result = predict_history.predict_oracle_extreme_history(
+        object(), "batch-h10", "2025-01-01", "2025-01-31",
+    )
+
+    assert result["reason"] == "empty_dataset"
+    assert observed["horizon"] == 10
+
+
+def test_prediction_rejects_oracle_horizon_mismatch(monkeypatch, tmp_path) -> None:
+    root = tmp_path / "champions"
+    batch_root = root / "batch-h5"
+    batch_root.mkdir(parents=True)
+    (batch_root / "oracle_champions.json").write_text(
+        '[{"t_start":"2024-01-01","model_file":"fold.txt","feature_columns":["signal"]}]',
+        encoding="utf-8",
+    )
+    (batch_root / "feature_profile.json").write_text(
+        '{"oracle_horizon":5,"oracle_universe_mode":"static_bars","serving_ready":true}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(predict_history, "_CHAMPIONS_ROOT", root)
+
+    result = predict_history.predict_oracle_extreme_history(
+        object(), "batch-h5", "2025-01-01", "2025-01-31", horizon=20,
+    )
+
+    assert result["reason"] == "oracle_horizon_mismatch"
+    assert result["trained_horizon"] == 5
+
+
 def test_dynamic_p0f_batch_is_rejected_by_serving(monkeypatch, tmp_path) -> None:
     root = tmp_path / "champions"
     batch_root = root / "batch-p0f"

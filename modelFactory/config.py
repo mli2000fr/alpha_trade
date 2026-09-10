@@ -520,6 +520,8 @@ class TrainingConfig:
     # P0f : univers historique quotidien bar-only. Opt-in et réservé aux runs
     # Oracle-only de recherche ; le contrat statique legacy reste le défaut.
     oracle_universe_mode: str = "static_bars"
+    # Horizon propre à l'Oracle Extreme. H20 reste le contrat par défaut.
+    oracle_horizon: int = 20
     long_feature_profile: str = "long.json"
     short_feature_profile: str = "short.json"
     model_role: str = "direction_legacy"  # direction_legacy | direction_long | direction_short
@@ -540,6 +542,8 @@ class TrainingConfig:
             raise ValueError("model_role invalide.")
         if self.oracle_universe_mode not in {"static_bars", "pit_dynamic_bars"}:
             raise ValueError("oracle_universe_mode invalide.")
+        if self.oracle_horizon < 1:
+            raise ValueError("oracle_horizon doit être >= 1.")
         if self.oracle_universe_mode == "pit_dynamic_bars" and not self.data.oracle_model_only:
             raise ValueError("L'univers Oracle PIT dynamique requiert oracle_model_only=True.")
         if self.oracle_universe_mode == "pit_dynamic_bars" and self.directional_profiles_enabled:

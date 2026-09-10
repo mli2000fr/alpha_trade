@@ -63,7 +63,7 @@ def predict_oracle_extreme_history(
     start_date: str,
     end_date: str,
     *,
-    horizon: int = 20,
+    horizon: int | None = None,
     symbols: list[str] | None = None,
     persist_chunk_dates: int = DEFAULT_PERSIST_CHUNK_DATES,
     shadow_mode: bool = False,
@@ -99,6 +99,17 @@ def predict_oracle_extreme_history(
     if _profile_path.is_file():
         try:
             _profile = json.loads(_profile_path.read_text(encoding="utf-8"))
+            _trained_horizon = int(_profile.get("oracle_horizon", 20) or 20)
+            if horizon is None:
+                horizon = _trained_horizon
+            elif int(horizon) != _trained_horizon:
+                return {
+                    "status": "error",
+                    "reason": "oracle_horizon_mismatch",
+                    "batch_id": batch_id,
+                    "requested_horizon": int(horizon),
+                    "trained_horizon": _trained_horizon,
+                }
             _dynamic_universe = _profile.get("oracle_universe_mode") == "pit_dynamic_bars"
             if _dynamic_universe and not shadow_mode:
                 return {
@@ -124,6 +135,10 @@ def predict_oracle_extreme_history(
                 "status": "error", "reason": "invalid_oracle_feature_profile",
                 "batch_id": batch_id, "detail": str(_profile_exc),
             }
+    if horizon is None:
+        # Compatibilité avec les anciens artefacts, tous entraînés sous le
+        # contrat Oracle H20 avant la persistance explicite de l'horizon.
+        horizon = 20
     if shadow_mode and not _dynamic_universe:
         return {
             "status": "error",

@@ -551,7 +551,7 @@ def train_oracle_extreme(
     PIT (audit O0≈O1, stack leakage sans impact), on entraîne O0 sans `global_rank_20`.
 
     Pipeline (spec ml_oracle.md) :
-      1. Labels Oracle H20 (global_oracle_labels) via build_labels().
+      1. Labels Oracle à l'horizon configuré (global_oracle_labels) via build_labels().
       2. Dataset Oracle (features PIT + targets) via build_dataset().
       3. Walk-forward causal strict (anti-leakage T2 : oracle_available_date < test_start)
          via run_walk_forward(ablation="O0").
@@ -570,7 +570,7 @@ def train_oracle_extreme(
     from modelFactory.oracle.dataset import build_dataset
     from modelFactory.oracle.train import get_universe_symbols
 
-    horizon = 20
+    horizon = int(cfg.oracle_horizon)
     _universe_mode = cfg.oracle_universe_mode
     _universe = symbols or get_universe_symbols(engine, _batch_id, horizon)
     if not _universe:
@@ -762,6 +762,7 @@ def train_oracle_extreme(
         }
         _resolved_profile = {
             **_resolved_profile,
+            "oracle_horizon": horizon,
             "oracle_universe_mode": _universe_mode,
             "serving_ready": _universe_mode != "pit_dynamic_bars",
             "dynamic_universe": labels_result.get("dynamic_universe"),
@@ -784,6 +785,7 @@ def train_oracle_extreme(
             "artifact_root": str(Path("artifacts/models/oracle/champions") / _batch_id),
             "feature_profile": _resolved_profile,
             "ablation": "O0",
+            "horizon": horizon,
             "n_folds": result.get("n_folds"),
             "fold_stability_pct": result.get("fold_stability_pct"),
             "overall": result.get("overall"),

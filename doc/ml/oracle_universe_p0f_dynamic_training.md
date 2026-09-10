@@ -85,7 +85,7 @@ couverture complète des titres radiés.
 ## Équivalent CLI
 
 ```powershell
-F:\projets\.venv\Scripts\python.exe -u -m modelFactory --mode train --oracle-model-only --oracle-universe-mode pit_dynamic_bars --standalone-oracle-feature-profile oracle.json --symbol-source universe-file:univers_filtred.txt --training-start-date 2016-01-01 --training-end-date 2025-12-31 --forecast-horizon 20 --feature-set expert --walkforward --wf-min-train-size 504 --wf-val-size 126 --wf-test-size 126 --wf-step-size 126 --wf-max-splits 12 --artifacts-dir artifacts/models --max-workers 4 --log-level INFO --comment "P0f Oracle univers PIT dynamique large"
+F:\projets\.venv\Scripts\python.exe -u -m modelFactory --mode train --oracle-model-only --oracle-universe-mode pit_dynamic_bars --oracle-horizon 20 --standalone-oracle-feature-profile oracle.json --symbol-source universe-file:univers_filtred.txt --training-start-date 2016-01-01 --training-end-date 2025-12-31 --feature-set expert --walkforward --wf-min-train-size 504 --wf-val-size 126 --wf-test-size 126 --wf-step-size 126 --wf-max-splits 12 --artifacts-dir artifacts/models --max-workers 4 --log-level INFO --comment "P0f Oracle univers PIT dynamique large"
 ```
 
 Les options génériques de modèle affichées par l'IHM peuvent rester présentes ;

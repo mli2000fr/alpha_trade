@@ -25,6 +25,7 @@ from common.universe_files import (
 from database.connection import get_sqlalchemy_engine
 from database.selector_reference import list_symbols_for_source, normalize_start_symbol
 from modelFactory.db_registry import load_symbols_for_source
+from modelFactory.oracle.artifact_contract import oracle_horizon_badge
 
 from ihm.components.watcher_documentation import render_watcher_documentation_panel
 from ihm.pages import run_page_if_standalone
@@ -1293,7 +1294,8 @@ def _render_ml_predict_scope_block(
             _bid = str(_row["batch_id"])
             _comment = str(_row.get("comment") or "").strip()
             _started = str(_row.get("started_at") or "")[:16]
-            _label = f"{_bid} — {_started}"
+            _h_badge = oracle_horizon_badge(_bid)
+            _label = f"{_bid} — {_h_badge + ' — ' if _h_badge else ''}{_started}"
             if _comment:
                 _label += f" — {_comment[:60]}"
             _batch_options.append((_bid, _label))
@@ -1561,7 +1563,8 @@ def _render_launchable_step_panel(
                         _bid = str(_row["batch_id"])
                         _comment = str(_row.get("comment") or "").strip()
                         _started = str(_row.get("started_at") or "")[:16]
-                        _label = f"{_bid} — {_started}"
+                        _h_badge = oracle_horizon_badge(_bid)
+                        _label = f"{_bid} — {_h_badge + ' — ' if _h_badge else ''}{_started}"
                         if _comment:
                             _label += f" — {_comment[:60]}"
                         _live_options.append((_bid, _label))

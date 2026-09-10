@@ -56,7 +56,7 @@ def _safe_print(message: object) -> None:
 
 
 def enforce_directional_bundle_target_options(opts: argparse.Namespace) -> argparse.Namespace:
-    """Impose le contrat de cible absolue H20 aux branches d'un bundle."""
+    """Impose le contrat H20 aux directions, sans écraser l'horizon Oracle."""
     if not getattr(opts, "directional_feature_profiles", False):
         return opts
     opts.target_mode = "ternary"
@@ -622,6 +622,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--oracle-universe-mode", choices=["static_bars", "pit_dynamic_bars"],
                    default="static_bars",
                    help="Univers des labels Oracle: statique legacy ou admission quotidienne PIT bar-only P0b (Oracle-only).")
+    p.add_argument("--oracle-horizon", type=int, default=None,
+                   help="Horizon propre à l'Oracle Extreme en séances (défaut entraînement: 20; prédiction: lu depuis l'artefact). N'affecte pas les branches Per-Symbol.")
     p.add_argument("--long-feature-profile", type=str, default="long.json",
                    help="Nom du profil JSON présent dans config/features/long (défaut: long.json).")
     p.add_argument("--short-feature-profile", type=str, default="short.json",
@@ -1025,6 +1027,7 @@ def main(args: list[str] | None = None) -> None:
         oracle_feature_profile=opts.oracle_feature_profile,
         standalone_oracle_feature_profile=opts.standalone_oracle_feature_profile,
         oracle_universe_mode=opts.oracle_universe_mode,
+        oracle_horizon=int(opts.oracle_horizon or 20),
         long_feature_profile=opts.long_feature_profile,
         short_feature_profile=opts.short_feature_profile,
     )
@@ -1381,7 +1384,7 @@ def main(args: list[str] | None = None) -> None:
             from modelFactory.oracle.predict_history import predict_oracle_extreme_history
             _oracle_out = predict_oracle_extreme_history(
                 engine, _batch_id, _oracle_start, _oracle_end,
-                horizon=int(getattr(opts, "horizon", 20) or 20),
+                horizon=getattr(opts, "oracle_horizon", None),
                 symbols=list(symbols) if bool(getattr(opts, "oracle_shadow", False)) else None,
                 shadow_mode=bool(getattr(opts, "oracle_shadow", False)),
             )
@@ -1715,7 +1718,7 @@ def main(args: list[str] | None = None) -> None:
                 from modelFactory.oracle.predict_history import predict_oracle_extreme_history
                 _oc_out = predict_oracle_extreme_history(
                     engine, _batch_id, _oc_start, _oc_end,
-                    horizon=int(getattr(opts, "horizon", 20) or 20),
+                    horizon=getattr(opts, "oracle_horizon", None),
                 )
                 LOGGER.info(
                     "predict combined batch=%s oracle predict result=%s",

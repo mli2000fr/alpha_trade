@@ -3322,8 +3322,9 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         ml_short_feature_profile = "short.json" if "short.json" in short_profiles else short_profiles[0]
         ml_standalone_oracle_feature_profile = "dynamic"
         ml_oracle_universe_mode = "static_bars"
+        ml_oracle_horizon = 20
         if ml_directional_profiles_enabled:
-            profile_col0, profile_col1, profile_col2 = st.columns(3)
+            profile_col0, profile_col1, profile_col2, profile_col3 = st.columns(4)
             with profile_col0:
                 ml_oracle_feature_profile = cast(str, st.selectbox(
                     "Profil de features Oracle", options=oracle_profiles,
@@ -3341,6 +3342,25 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     "Profil de features SHORT", options=short_profiles,
                     index=short_profiles.index("short.json") if "short.json" in short_profiles else 0,
                     key="pipeline_ml_short_feature_profile",
+                ))
+            with profile_col3:
+                _oracle_horizons = [5, 10, 15, 20]
+                _saved_oracle_horizon = _session_state_int(
+                    "pipeline_ml_oracle_horizon", 20,
+                )
+                ml_oracle_horizon = int(st.selectbox(
+                    "Horizon Oracle",
+                    options=_oracle_horizons,
+                    index=(
+                        _oracle_horizons.index(_saved_oracle_horizon)
+                        if _saved_oracle_horizon in _oracle_horizons else 3
+                    ),
+                    format_func=lambda h: f"H{h}",
+                    key="pipeline_ml_oracle_horizon",
+                    help=(
+                        "Horizon de détection d'amplitude de l'Oracle. "
+                        "Les branches LONG/SHORT restent indépendamment en H20."
+                    ),
                 ))
         if ml_directional_profiles_enabled:
             st.session_state["pipeline_ml_enable_oracle_model"] = True
@@ -3993,7 +4013,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             st.success(
                 "Contrat directionnel bundle : rendement absolu H20 · LONG > +3 % · "
                 "SHORT < −3 % · zone intermédiaire FLAT. L'Oracle conserve séparément "
-                "sa cible binaire d'amplitude Extreme H20."
+                f"sa cible binaire d'amplitude Extreme H{ml_oracle_horizon}."
             )
         with ml_target_col3:
             ml_decision_threshold = float(
@@ -4965,6 +4985,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_include_macro_regime=bool(ml_include_macro_regime),
             ml_include_score_components=bool(ml_include_score_components),
             ml_directional_profiles_enabled=bool(ml_directional_profiles_enabled),
+            ml_oracle_horizon=int(ml_oracle_horizon),
             ml_oracle_feature_profile=str(ml_oracle_feature_profile),
             ml_standalone_oracle_feature_profile=str(ml_standalone_oracle_feature_profile),
             ml_long_feature_profile=str(ml_long_feature_profile),

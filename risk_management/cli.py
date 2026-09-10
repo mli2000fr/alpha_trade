@@ -22,6 +22,7 @@ from common.utils import configure_root_logging
 from core.run_summary import attach_live_progress, attach_schema_version
 from database.macro_indicators import persist_market_macro_snapshot_daily
 from database.run_business_summaries import emit_run_summary, persist_run_business_summary
+from modelFactory.oracle.artifact_contract import resolve_oracle_artifact_horizon
 from risk_management.audit import (
     build_run_id,
     persist_decision_audit_log,
@@ -1890,6 +1891,23 @@ def main(args: list[str] | None = None) -> None:
                 raise SystemExit("oracle_pool_pct live doit appartenir à ]0, 1].")
             if not _oracle_live_batch:
                 raise SystemExit("Aucun batch Oracle/serving disponible pour le gate live.")
+            _oracle_live_horizon = resolve_oracle_artifact_horizon(_oracle_live_batch)
+            if _oracle_live_horizon is None:
+                raise SystemExit(
+                    "Contrat Oracle live introuvable : "
+                    f"batch={_oracle_live_batch}. Impossible de déterminer l'horizon."
+                )
+            LOGGER.info(
+                "Contrat Oracle live validé batch=%s horizon=H%d policy=%s pool_pct=%.4f",
+                _oracle_live_batch,
+                _oracle_live_horizon,
+                _oracle_live_policy,
+                _oracle_live_pool,
+            )
+            print(
+                f"  Oracle live : batch={_oracle_live_batch} | "
+                f"horizon=H{_oracle_live_horizon} | policy={_oracle_live_policy}"
+            )
             from modelFactory.predictor import prepare_oracle_tradable_percentiles
             _oracle_scores = repo.load_oracle_scores_asof(
                 trade_date,
