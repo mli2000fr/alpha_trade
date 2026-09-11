@@ -1,5 +1,174 @@
 # PROMPT DE RECHERCHE — Multi-Horizon Oracle + Rolling Confirmation + Dynamic Exit
 
+> **Version amendée et gelée — 10 septembre 2026**
+> Les règles de cette section prévalent sur toute formulation ambiguë plus bas.
+> La campagne commence par un POC *signal-level* isolé. Aucune modification du
+> backtest, du live, du lifecycle ou des tables de production n'est autorisée
+> avant un verdict `GO_RESEARCH` reproductible.
+
+## A. Contrat exécutable de la phase 1
+
+### A.1 Question réellement testée
+
+L'Oracle reste un modèle d'**amplitude**, jamais un modèle de direction. Les
+stratégies `S0` à `S5` sont donc explicitement des diagnostics **LONG-only** :
+elles mesurent si le chemin de prix et la persistance de l'amplitude permettent
+de conserver ou couper une exposition longue déjà prise. Elles ne prétendent
+pas résoudre `D1` contre `D10` à la date initiale.
+
+Une variante directionnelle distincte est obligatoire :
+
+```text
+S6-LS — confirmation retardée symétrique
+J         : aucune position
+close J+5 : le signe du rendement observé choisit LONG ou SHORT
+            et l'Oracle restant doit encore être confirmé
+open J+6  : entrée dans le sens observé
+open suivant la 20e séance depuis l'origine : sortie forcée
+```
+
+Cette variante répond à la question « le prix peut-il révéler causalement le
+sens après cinq séances ? », au prix assumé d'une entrée plus tardive.
+
+### A.2 Horloge causale unique
+
+```text
+close J   : scores Oracle observables et signal construit
+open J+1  : exécution initiale éventuelle
+close de la 5e/10e/15e séance de détention : checkpoint observable
+open suivant : exécution d'une décision prise au checkpoint
+open suivant la 20e séance de détention : liquidation théorique
+```
+
+Les stops et TP intraday ne sont pas appliqués dans l'event study de phase 1.
+Ils seront appliqués uniquement dans le replay portefeuille de phase 2, aux
+positions encore ouvertes. Il faut alors publier deux populations : cohorte
+d'origine fixe et survivants « at risk ».
+
+### A.3 Contrat des quatre Oracle
+
+La campagne est invalide si les quatre batches ne partagent pas : univers et
+empreinte d'univers, période, profil de features, paramètres Walk-Forward,
+folds/purge PIT et architecture comparable. L'horizon déclaré dans chaque
+artefact doit être exactement H5, H10, H15 ou H20. L'analyse se fait sur
+l'intersection `(date, symbol)` commune aux quatre batches et publie la perte de
+couverture induite.
+
+Les protections déjà présentes dans `modelFactory/oracle/walk_forward.py`
+(purge selon l'horizon et disponibilité des features) doivent être auditées,
+pas réimplémentées différemment.
+
+### A.4 Univers de la campagne actuelle
+
+```text
+config/univers/univers_filtred_equities.txt
+```
+
+Le manifeste conserve le chemin, le nombre de symboles et le SHA-256 du fichier.
+Cet univers courant introduit un biais de survivance sur un historique ancien.
+Il autorise au mieux `GO_RESEARCH`; `STRONG_GO` exige un univers historique PIT.
+
+### A.5 Normalisation et règles d'entrée gelées
+
+Les probabilités brutes de différents horizons ne sont pas moyennées. Pour
+chaque date, les percentiles sont recalculés sur la même intersection commune.
+
+```text
+MH0 = percentile H20 >= 0.80
+MH1 = les quatre percentiles H5/H10/H15/H20 >= 0.80
+MH2 = au moins trois des quatre percentiles >= 0.80
+MH3 = percentile quotidien de mean(pct_H5,pct_H10,pct_H15,pct_H20) >= 0.80
+```
+
+`MH3` est donc parfaitement défini et ne possède aucun seuil implicite.
+
+### A.6 Confirmation Oracle restante
+
+La règle principale est un TOP20 quotidien du consensus restant :
+
+```text
+J+5  : rank(mean(pct_H5,pct_H10,pct_H15)) >= 0.80
+J+10 : rank(mean(pct_H5,pct_H10)) >= 0.80
+J+15 : pct_H5 >= 0.80
+```
+
+L'intersection stricte de tous les horizons restants est conservée uniquement
+comme diagnostic secondaire. Elle ne remplace pas la politique principale.
+
+### A.7 Rendements et confirmation prix
+
+Pour une branche LONG, le rendement signé est le rendement brut du titre. Pour
+une branche SHORT, il est son opposé. La confirmation primaire utilise le
+rendement *mark-to-liquidation* net estimé des coûts d'entrée et de sortie ; le
+rendement brut est toujours publié en parallèle.
+
+```text
+perdant        : net <= 0
+gagnant faible : 0 < net < 3 %
+gagnant fort   : net >= 3 %
+```
+
+Le terme `oracle_decay` est remplacé par `oracle_rank_change` : une variation
+de percentile mesure une variation de rang relatif, pas nécessairement une
+baisse absolue de conviction. Le delta de score brut reste diagnostique et ne
+peut piloter une règle que si les scores sont calibrés et comparables.
+
+### A.8 Contrôles statistiques obligatoires
+
+- résultats globaux, par fold, semestre, secteur et symbole ;
+- intervalles à 95 % par bootstrap en blocs de dates ;
+- regroupement des observations par date de signal et contrôle du chevauchement ;
+- placebo aléatoire du même jour et contrôles appariés volatilité/secteur/bêta
+  lorsqu'ils sont disponibles ;
+- rendement brut, net, absolu, excédentaire à SPY et au secteur ;
+- double tri conviction initiale × conviction restante ;
+- déduplication : aucun nouveau signal tant qu'une position théorique du symbole
+  est ouverte ; réentrée autorisée seulement après sa sortie.
+
+### A.9 Persistance et promotion
+
+La table existante `oracle_extreme_predictions`, séparée par `batch_id`, suffit
+au POC. Aucun schéma SQL n'est créé maintenant. Le run produit des Parquet/CSV,
+un rapport JSON/Markdown et un manifeste immuable associant chaque horizon à son
+batch, avec empreintes des entrées.
+
+Les tables de cohorte/checkpoint, l'intégration multi-horizon au backtest, les
+sorties dynamiques et le live sont une **phase 2 conditionnelle**. Elles ne sont
+implémentées que si le signal incrémental survit aux folds, semestres, coûts,
+placebos et contrôles de couverture.
+
+### A.10 Ordre de décision
+
+```text
+Phase 1A : alignement, couverture, corrélations et overlaps
+Phase 1B : event study fixe J+5/J+10/J+15/J+20
+Phase 1C : valeur incrémentale du rolling Oracle
+Phase 1D : S6-LS retardée et symétrique
+Gate      : NO_GO / WEAK_SIGNAL / GO_RESEARCH / EXPERIMENT_INVALID
+Phase 2   : replay portefeuille et lifecycle, uniquement après GO_RESEARCH
+Phase 3   : shadow/live, uniquement après validation OOS indépendante
+```
+
+Un résultat obtenu uniquement avec l'univers courant ne peut pas être classé
+`STRONG_GO`, même si ses métriques sont excellentes.
+
+### A.11 Challenger ciblé après `WEAK_SIGNAL` — variante 2
+
+La phase 1 n'ouvre pas la phase 2 générale. Elle autorise uniquement un replay
+trade-level ciblé des événements `MH0/H20` gagnants et encore confirmés à J+5 :
+
+```text
+entrée LONG open J+6 après prix J→J+5 positif et consensus H5/H10/H15 confirmé
+puis, toutes les 5 séances, conserver si PnL net positif ET H5 quotidien TOP20
+sinon sortir à l'open suivant ; TP/stop/trailing PROD prioritaires ; plafond 60
+```
+
+Trois politiques doivent partager les mêmes entrées : H20 fixe, extension
+passive 60 séances, extension rolling H5 60 séances. Le gate porte d'abord sur
+`rolling_h5_60 - extended_60_no_rolling`, avec bootstrap par blocs de dates.
+Une absence de score H5 futur exclut l'observation et ne vaut pas rejet. Aucun
+branchement dans le backtest ou le live n'est permis avant validation.
+
 ## 0. Contexte général
 
 Nous travaillons sur l’architecture de recherche quantitative **α-Trade**.

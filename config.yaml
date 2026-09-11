@@ -414,11 +414,11 @@ risk_management:
 # Si `custom_universe_file` pointe vers un fichier existant, le Stock Screener
 # (étape 3) utilisera les symboles de ce fichier plutôt que de requêter
 # stock_metadata. Le fichier doit contenir des symboles séparés par des virgules.
-# Exemple : "config/ticket_mid_cap_400.txt"
+# Exemple : "config/univers/univers_filtred_equities.txt"
 # Laissez vide ou commenté pour utiliser l'univers tradable standard.
 # ---------------------------------------------------------------------------
 screener:
-  custom_universe_file: "config/ticket_mid_cap_400.txt"
+  custom_universe_file: "config/univers/univers_filtred_equities.txt"
 
 
 # ---------------------------------------------------------------------------
@@ -457,7 +457,7 @@ market_data:
 # ---------------------------------------------------------------------------
 market_cap:
   # strict = capitalisation obligatoire ; liquidity_only = aucun filtre de capitalisation.
-  policy: strict                         # strict | liquidity_only
+  policy: liquidity_only                         # strict | liquidity_only
   provider: yahoo_then_finnhub           # sec_edgar | eodhd | yahoo_then_finnhub
   max_age_days: 365
   missing_policy: reject
