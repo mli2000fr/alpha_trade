@@ -2,14 +2,88 @@
 
 ## Statut
 
-`READY_NEEDS_CLEAN_GLOBAL_RANK_OOF`
+`FAIT_NO_GO`
 
-L''évaluateur est implémenté et testé, mais l''expérience ne doit pas être lancée
-avec `global_rank_history`. Il faut d''abord produire un nouvel artefact
-`global_rank_cache.parquet` strictement Walk-Forward OOF.
+Le Global Ranking OOF propre a été entraîné, puis croisé avec l''Oracle P0f.
+Verdicts finaux : `ranking=NO_GO`, `long=NO_GO`, `short=NO_GO`.
 
 E11 est une expérience de recherche. Elle ne modifie ni le serving, ni le
 backtest, ni le live.
+
+## Résultat final du 11 septembre 2026
+
+### Artefacts
+
+- Oracle P0f : `model-factory-20260909051302-323684` ;
+- Global Ranking H20 OOF : `model-factory-20260910235721-bdc5b2` ;
+- rapport E11 canonique :
+  `artifacts/research/oracle_global_rank_cross/oracle-global-rank-cross-20260911141556/report.json`.
+
+Le Global Ranking contient 4 230 379 rangs OOF, 2 696 symboles et 13 folds.
+CatBoost est le champion de repli : IC global `+0,0237`, IR `0,998`, 10/13
+folds positifs. Aucun candidat n''est toutefois éligible selon le gate interne
+du championnat, car chacun dépasse le maximum de deux folds négatifs.
+
+### Couverture du croisement
+
+| Mesure | Résultat |
+|---|---:|
+| événements Oracle TOP20 | 582 700 |
+| événements joints avec un rang H20 OOF | 543 153 |
+| couverture de jointure | 93,21 % |
+| dates | 1 625 |
+| symboles | 1 461 |
+| candidats LONG | 109 269 |
+| candidats SHORT | 107 988 |
+| couverture des prix après jointure | 100 % |
+
+La couverture n''explique donc pas l''échec.
+
+### Résultats directionnels H20
+
+| Politique | Rendement moyen quotidien de la coupe |
+|---|---:|
+| Oracle TOP20 entièrement LONG, net | +1,379 % |
+| haut du ranking dans le pool Oracle, LONG net | +1,497 % |
+| lift LONG contre Oracle | **+0,118 %** |
+| bas du ranking pris en SHORT, net | **−1,329 %** |
+| portefeuille LONG/SHORT dollar-neutral, net | +0,084 % |
+| IC du ranking dans le pool Oracle | **+0,0101** |
+
+Le ranking sépare légèrement le haut du bas, mais il ne produit pas le signe
+absolu. Les titres du bas montent encore d''environ `+1,269 %` avant coûts sur
+H20. Les vendre à découvert transforme donc un rendement relatif inférieur en
+perte SHORT absolue.
+
+### Incertitude et stabilité
+
+- IC dans le pool Oracle : `0,0101`, inférieur au gate `0,02` et à l''IC global
+  du modèle `0,0237` ; seulement 52,1 % des dates ont un IC positif.
+- Lift LONG : `+11,8 bp`, IC95 `[-24,3 ; +45,8] bp`, donc non significatif et
+  inférieur au gate de 25 bp.
+- Lift du bas contre le pool : `+17,0 bp`, IC95 `[-14,5 ; +46,2] bp`, mais ce
+  lift relatif ne rend pas le SHORT rentable.
+- LONG/SHORT net : `+8,4 bp`, IC95 `[-20,9 ; +36,6] bp`.
+- Stabilité du lift LONG : 64,3 % des folds ; lift SHORT : 64,3 % des folds ;
+  sous le gate de 75 %.
+- Régimes particulièrement défavorables : 2020H2, 2021H2, 2024H1 et 2025H1.
+  Le bon résultat 2024H2 ne se maintient pas en 2025H1.
+
+Les fragments incomplets de deux et cinq dates aux frontières sont conservés
+dans les exports mais ne changent pas le verdict ; les métriques globales et
+les intervalles de confiance échouent déjà indépendamment de ces fragments.
+
+### Conclusion
+
+> Le Global Ranking H20 possède une faible information relative, mais cette
+> information est divisée par plus de deux une fois conditionnée au TOP20
+> Oracle et ne distingue pas hausse absolue et baisse absolue.
+
+Ne pas ajouter ce croisement au backtest ou au live. Ne pas chercher un seuil
+TOP/BOTTOM optimisé sur les mêmes dates : ce serait une optimisation ex post.
+E11 est fermé. Le ranking peut rester utile pour prioriser des LONG entre eux,
+mais le lift observé ici est trop faible et non significatif pour autoriser
+même cette évolution sans nouvelle information indépendante.
 
 ## Hypothèse
 
@@ -164,4 +238,3 @@ indépendante, puis seulement un replay du lifecycle canonique.
 - Tests : `tests/test_oracle_global_rank_cross.py`
 - Contrôle ciblé : 9 tests unitaires passants, Ruff et compilation Python
   propres au 11 septembre 2026.
-

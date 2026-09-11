@@ -471,7 +471,7 @@ market_cap:
 market_cap_sync:
   run_hours: "11,23"
   run_days: "1,4"
-  symbols_file: config/univers/univers_filtred_equities.txt
+  symbols_file: config/univers_batch/univers_filtred_tradable.txt
   providers: "yahoo_finance,finnhub"
   log_file: log/batch/market_cap_sync.txt
 
@@ -509,7 +509,7 @@ eodhd:
 earnings_calendar_sync:
   run_hours: "12,23"                             # Heures de la journée (0-23) séparées par des virgules : "3" = 3h du matin, "4,9" = 4h et 9h.
   run_days: "0,3,5"                              # Jours de la semaine (0=dimanche, 1=lundi, … 6=samedi) séparés par des virgules. Vide/absent = tous les jours. Ex. "0,2" = dimanche + mardi uniquement.
-  symbols_file: config/univers_batch/univers_filtred_equities.txt   # Univers fichier partagé avec analyst_snapshot_collect (2255 symboles). Absent/vide → repli --symbol-source active-tradable.
+  symbols_file: config/univers_batch/univers_filtred_tradable.txt   # Univers fichier partagé avec analyst_snapshot_collect (2255 symboles). Absent/vide → repli --symbol-source active-tradable.
   log_file: log/batch/earnings_calendar.txt  # Ligne de statut ajoutée à chaque exécution.
 
 # ---------------------------------------------------------------------------
@@ -546,7 +546,7 @@ analyst_snapshot_collection:
   enabled: false                         # RESEARCH ONLY — aucune exécution PROD.
   provider: yahoo
   universe_name: analyst_research        # Nom de l'univers (analyst_research = fichier symbols_file configuré).
-  symbols_file: config/univers_batch/univers_filtred_equities.txt
+  symbols_file: config/univers_batch/univers_filtred_tradable.txt
   sleep_seconds: 0.25                    # Throttling entre symboles.
   timeout_seconds: 20                    # Timeout watchdog par symbole.
   max_retries: 2                         # Retries sur TEMPORARY_ERROR / RATE_LIMIT.

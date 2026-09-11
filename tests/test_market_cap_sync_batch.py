@@ -15,7 +15,7 @@ def test_market_cap_sync_config_contract() -> None:
     assert sync == {
         "run_hours": "11,23",
         "run_days": "1,4",
-        "symbols_file": "config/univers/univers_filtred_equities.txt",
+        "symbols_file": "config/univers_batch/univers_filtred_tradable.txt",
         "providers": "yahoo_finance,finnhub",
         "log_file": "log/batch/market_cap_sync.txt",
     }
@@ -40,7 +40,13 @@ def test_market_cap_launcher_runs_both_sources_and_is_fail_closed() -> None:
     assert "symbols_file est obligatoire" in content
     assert "univers introuvable" in content
     assert "active-tradable" not in content
+    # Le chemin configuré est transmis à Python (nom court pour config/univers, chemin sinon).
+    assert "universe-file:config/" in content
+    assert "symbols_file doit être situé sous config/" in content
     assert "AlphaTradeMarketCapSync" in content
+    # Forçage du jour pour un rattrapage manuel hors run_days.
+    assert "[switch]$IgnoreRunDays" in content
+    assert "FORCE market_cap_sync" in content
     assert "::alpha_trade_run_summary::" in content
     assert "Send-MarketCapNotification" in content
     assert "scripts\\send_batch_email.py" in content

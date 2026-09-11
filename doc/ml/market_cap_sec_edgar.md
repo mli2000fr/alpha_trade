@@ -68,6 +68,10 @@ Lancement immédiat :
 
     powershell -ExecutionPolicy Bypass -File .\scripts\windows\market_cap_sync_launcher.ps1
 
+Rattrapage un jour hors `run_days` (défaut : lundi et jeudi) :
+
+    powershell -ExecutionPolicy Bypass -File .\scripts\windows\market_cap_sync_launcher.ps1 -IgnoreRunDays
+
 Ces snapshots ne sont pas rétroactifs : une ligne collectée aujourd'hui ne peut pas
 filtrer une date de backtest antérieure. Les backtests historiques exigent des
 snapshots réellement disponibles à chaque date ou une autre source PIT historique.

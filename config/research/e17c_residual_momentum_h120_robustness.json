@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "registration_id": "E17C_RESIDUAL_MOMENTUM_H120_HISTORICAL_ROBUSTNESS_20260911",
+  "registered_at": "2026-09-11T22:04:16+02:00",
+  "research_only": true,
+  "validation_class": "post_discovery_historical_robustness_not_oos",
+  "oracle_used": false,
+  "source_artifact": "artifacts/research/directional_alpha_book/directional-alpha-book-20260911194051/alpha_panel.parquet",
+  "source_period": ["2018-07-01", "2025-12-31"],
+  "signal": "residual_momentum_120_10",
+  "score_column": "score_residual_momentum_120_10",
+  "horizon_sessions": 120,
+  "portfolio": {
+    "side": "long_only",
+    "tail_pct": 0.20,
+    "minimum_selected_symbols": 10,
+    "rebalance_sessions": 20,
+    "primary_calendar_offset": 0,
+    "primary_round_trip_cost_bps": 6.0,
+    "benchmark": ["equal_weight_eligible_universe", "SPY"]
+  },
+  "locked_robustness_checks": {
+    "time_blocks": {
+      "early": ["2018-07-01", "2020-12-31"],
+      "middle": ["2021-01-01", "2022-12-31"],
+      "recent": ["2023-01-01", "2025-12-31"]
+    },
+    "symbol_hash_folds": 5,
+    "symbol_hash_salt": "E17C-20260911",
+    "calendar_offsets_sessions": [0, 5, 10, 15],
+    "round_trip_cost_stress_bps": [6.0, 12.0, 25.0],
+    "minimum_sector_symbols_per_cohort": 25,
+    "minimum_sector_cohorts": 12
+  },
+  "bootstrap": {
+    "samples": 2000,
+    "block_cohorts": 6,
+    "seed": 20260919
+  },
+  "gates": {
+    "minimum_primary_cohorts": 80,
+    "primary_long_net_positive": true,
+    "primary_excess_vs_universe_ci95_above_zero": true,
+    "primary_excess_vs_spy_ci95_above_zero": true,
+    "positive_excess_semester_ratio_min": 0.70,
+    "all_time_blocks_excess_vs_universe_positive": true,
+    "positive_symbol_hash_fold_ratio_min": 0.80,
+    "all_calendar_offsets_excess_vs_universe_positive": true,
+    "excess_vs_universe_positive_at_25bps": true,
+    "positive_sector_ratio_min": 0.60,
+    "max_top20_symbol_positive_contribution_share": 0.35
+  },
+  "decision_policy": {
+    "all_gates_pass": "ROBUST_HISTORICAL",
+    "otherwise": "NOT_ROBUST",
+    "oos_claim_authorized": false,
+    "production_promotion_authorized": false,
+    "parameter_tuning_after_results_forbidden": true
+  }
+}

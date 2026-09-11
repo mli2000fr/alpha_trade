@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "registration_id": "E17B_RESIDUAL_MOMENTUM_H120_LONG_ONLY_20260911",
+  "registered_at": "2026-09-11T21:52:04+02:00",
+  "research_only": true,
+  "oracle_used": false,
+  "discovery_experiment": "E17_PRICE_ONLY_DIRECTIONAL_ALPHA_BOOK",
+  "discovery_artifact": "artifacts/research/directional_alpha_book/directional-alpha-book-20260911194051",
+  "discovery_end_date": "2025-12-31",
+  "confirmation_start_date": "2026-09-14",
+  "symbol_source": "universe-file:univers_filtred_equities.txt",
+  "signal": "residual_momentum_120_10",
+  "signal_definition": "sum over J-119..J-10 of stock_return - rolling_beta_126_lagged_inputs * SPY_return",
+  "signal_time": "close J",
+  "horizon_sessions": 120,
+  "entry": "split-adjusted open J+1",
+  "exit": "split-adjusted open J+121",
+  "portfolio": {
+    "side": "long_only",
+    "selection": "top 20 percent of eligible symbols by score_residual_momentum_120_10",
+    "weighting": "equal_weight",
+    "rebalance_sessions": 20,
+    "minimum_leg_symbols": 10,
+    "round_trip_cost_bps": 6.0,
+    "borrow_cost": "not_applicable"
+  },
+  "eligibility": {
+    "minimum_history_sessions": 252,
+    "minimum_close_usd": 10.0,
+    "minimum_average_volume_20d_shares": 50000.0,
+    "minimum_adv_20d_usd": 10000000.0,
+    "exact_non_filled_bar_required": true,
+    "equity_instrument_required": true
+  },
+  "comparators": [
+    "equal_weight_eligible_universe",
+    "SPY"
+  ],
+  "minimum_evidence": {
+    "matured_cohorts": 24,
+    "distinct_entry_semesters": 4,
+    "mean_selected_symbols": 50
+  },
+  "gates": {
+    "mean_long_net_positive": true,
+    "mean_excess_vs_universe_positive": true,
+    "ci95_excess_vs_universe_above_zero": true,
+    "mean_excess_vs_spy_positive": true,
+    "ci95_excess_vs_spy_above_zero": true,
+    "positive_excess_semester_ratio_min": 0.60,
+    "max_positive_pnl_semester_concentration": 0.35
+  },
+  "decision_policy": {
+    "before_minimum_evidence": "PENDING_DATA",
+    "all_gates_pass": "GO_RESEARCH_SHADOW_ONLY",
+    "otherwise": "NO_GO",
+    "production_promotion_authorized": false,
+    "tuning_on_confirmation_period_forbidden": true
+  },
+  "bootstrap": {
+    "samples": 2000,
+    "block_cohorts": 6,
+    "seed": 20260918
+  }
+}

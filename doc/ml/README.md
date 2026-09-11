@@ -23,5 +23,21 @@
 18. [Capitalisation PIT — SEC EDGAR ou EODHD](market_cap_sec_edgar.md)
     - collecte gratuite des actions SEC ;
     - calcul quotidien, TTL, switch fournisseur et contrat fail-closed.
+19. [E16 — reconstruction PIT de l’univers tradable](oracle_tradable_pit_reconstruction_e16.md)
+    - audit des grades `full`/`degraded` et du statut canonique ;
+    - reconstruction bar-PIT sans imputation ;
+    - réplication E12/E15 et verdict lifecycle.
+20. [E17 — bibliothèque d’alphas directionnels price-only](directional_alpha_book_e17.md)
+    - signaux autonomes, sans Oracle, à H60/H120 ;
+    - portefeuille top/bottom 20 % et gates pré-enregistrés ;
+    - distinction entre classement relatif et direction absolue.
+21. [E17-B — confirmation prospective du momentum résiduel H120](directional_alpha_book_confirmation_e17b.md)
+    - candidat long-only figé et indépendant de l’Oracle ;
+    - empreinte du protocole, preuve minimale et gates non modifiables ;
+    - bloqué tant que les barres ne dépassent pas le début prospectif.
+22. [E17-C — robustesse historique du momentum résiduel H120](directional_alpha_book_robustness_e17c.md)
+    - blocs temporels, hash folds, calendriers, secteurs et concentration ;
+    - avantage robuste contre l’univers mais pas contre SPY ;
+    - verdict `NOT_ROBUST`, sans revendication OOS.
 
 Retour : [vue d'ensemble ML](../06_ml_vue_ensemble.md).

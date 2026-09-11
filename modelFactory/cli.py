@@ -15,7 +15,7 @@ from uuid import uuid4
 import pandas as pd
 
 from common.utils import configure_root_logging
-from common.universe_files import list_universe_file_sources
+from common.universe_files import list_universe_file_sources, validate_symbol_source
 from core.run_summary import attach_schema_version
 from database.connection import get_sqlalchemy_engine
 from modelFactory.data_loader import (
@@ -252,6 +252,16 @@ SYMBOL_SOURCES = (
     "ticket-recherche",
     *list_universe_file_sources(),
 )
+_NATIVE_SYMBOL_SOURCES = ("tradable-universe", "stock-bars-daily", "ticket-recherche")
+
+
+def _parse_symbol_source_arg(value: str) -> str:
+    """Accepte les sources natives et les fichiers d'univers (nom ou chemin sous config/)."""
+    try:
+        return validate_symbol_source(value, _NATIVE_SYMBOL_SOURCES)
+    except (ValueError, FileNotFoundError, OSError) as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 60.0
 _REPORT_DIR = Path("artifacts/rapport_ml")
 
@@ -490,10 +500,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--symbols", nargs="*", default=None, help="Liste explicite de symboles")
     p.add_argument(
         "--symbol-source",
-        type=str,
+        type=_parse_symbol_source_arg,
         default="tradable-universe",
-        choices=list(SYMBOL_SOURCES),
-        help="Source nominale quand --symbols n'est pas fourni.",
+        help=(
+            "Source nominale quand --symbols n'est pas fourni (source native, ou "
+            "fichier d'univers par nom dans config/univers ou par chemin sous config/)."
+        ),
     )
     p.add_argument(
         "--universe-date",

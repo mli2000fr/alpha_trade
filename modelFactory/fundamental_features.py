@@ -26,8 +26,8 @@ import pandas as pd
 
 from common.universe_files import (
     is_universe_file_source,
-    list_universe_file_sources,
     normalize_universe_file_source,
+    validate_symbol_source,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -1038,18 +1038,24 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Fetch les fondamentaux historiques et les stocke dans stock_fundamentals_daily.",
     )
+    def _symbol_source_arg(raw: str) -> str:
+        """Accepte les sources natives et les fichiers d'univers (nom ou chemin sous config/)."""
+        try:
+            return validate_symbol_source(
+                raw,
+                ("missing-fundamentals", "stock-bars-daily", "tradable-universe", "ticket-recherche"),
+            )
+        except (ValueError, FileNotFoundError, OSError) as exc:
+            raise argparse.ArgumentTypeError(str(exc)) from exc
+
     parser.add_argument(
         "--symbol-source",
-        type=str,
-        choices=(
-            "missing-fundamentals",
-            "stock-bars-daily",
-            "tradable-universe",
-            "ticket-recherche",
-            *list_universe_file_sources(),
-        ),
+        type=_symbol_source_arg,
         default="missing-fundamentals",
-        help="Source des symboles à traiter.",
+        help=(
+            "Source des symboles à traiter (source native, ou fichier d'univers "
+            "par nom dans config/univers ou par chemin sous config/)."
+        ),
     )
     parser.add_argument(
         "--start-date",

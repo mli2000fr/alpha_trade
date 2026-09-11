@@ -1,12 +1,15 @@
-# Collecte les capitalisations Yahoo puis Finnhub pour l'univers actions.
+﻿# Collecte les capitalisations Yahoo puis Finnhub pour l'univers actions.
 # Usage manuel :
 #   powershell -ExecutionPolicy Bypass -File .\scripts\windows\market_cap_sync_launcher.ps1
+#   powershell -ExecutionPolicy Bypass -File .\scripts\windows\market_cap_sync_launcher.ps1 -IgnoreRunDays
+#     (-IgnoreRunDays force le traitement un jour hors run_days : rattrapage manuel)
 [CmdletBinding()]
 param(
     [string]$WorkspacePath,
     [string]$PythonExePath,
     [string]$LogFile,
-    [string]$EnvFilePath
+    [string]$EnvFilePath,
+    [switch]$IgnoreRunDays
 )
 
 $ErrorActionPreference = 'Stop'
@@ -110,12 +113,12 @@ function Send-MarketCapNotification {
 }
 
 $started = Get-Date
-Write-StatusLine ("[{0}] DÉBUT DE TRAITEMENT market_cap_sync pid={1} — le batch est lancé" -f $started.ToString('yyyy-MM-dd HH:mm:ss'), $PID)
+Write-StatusLine ("[{0}] DÉBUT DE TRAITEMENT market_cap_sync pid={1} - le batch est lancé" -f $started.ToString('yyyy-MM-dd HH:mm:ss'), $PID)
 
 try {
     $resolvedPython = Resolve-AlphaTradePythonExe -Workspace $resolvedWorkspace -RequestedPythonExePath $PythonExePath
 } catch {
-    Write-StatusLine ("[{0}] FIN TRAITEMENT ERROR market_cap_sync — {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $_.Exception.Message)
+    Write-StatusLine ("[{0}] FIN TRAITEMENT ERROR market_cap_sync - {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $_.Exception.Message)
     exit 1
 }
 
@@ -129,10 +132,12 @@ if (-not $LogFile -and $cfg -and $cfg.log_file) {
 
 $runDaysValue = if ($cfg -and $cfg.run_days) { [string]$cfg.run_days } else { '' }
 $runDays = @($runDaysValue -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
-if ($runDays.Count -gt 0) {
+if ($IgnoreRunDays) {
+    Write-StatusLine ("[{0}] FORCE market_cap_sync - garde run_days='{1}' ignorée (jour={2})" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $runDaysValue, [string][int](Get-Date).DayOfWeek)
+} elseif ($runDays.Count -gt 0) {
     $dow = [string][int](Get-Date).DayOfWeek
     if ($runDays -notcontains $dow) {
-        Write-StatusLine ("[{0}] SKIP market_cap_sync — jour={1} absent de run_days='{2}'" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $dow, $runDaysValue)
+        Write-StatusLine ("[{0}] SKIP market_cap_sync - jour={1} absent de run_days='{2}'" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $dow, $runDaysValue)
         exit 0
     }
 }
@@ -144,7 +149,7 @@ $mutexAcquired = $false
 try {
     try { $mutexAcquired = $mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $mutexAcquired = $true }
     if (-not $mutexAcquired) {
-        Write-StatusLine ("[{0}] SKIP market_cap_sync — une exécution est déjà en cours" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))
+        Write-StatusLine ("[{0}] SKIP market_cap_sync - une exécution est déjà en cours" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))
         exit 0
     }
 
@@ -162,12 +167,19 @@ try {
     $symbolsFilePath = $symbolsFileValue
     if (-not [IO.Path]::IsPathRooted($symbolsFilePath)) { $symbolsFilePath = Join-Path $resolvedWorkspace $symbolsFilePath }
     if (-not (Test-Path -LiteralPath $symbolsFilePath)) { throw "univers introuvable: $symbolsFilePath" }
-    $universeRoot = (Resolve-Path -LiteralPath (Join-Path $resolvedWorkspace 'config\univers')).Path
+    # Le chemin configuré est transmis à Python (relatif au workspace, séparateurs POSIX) :
+    # config/univers/<fichier>.txt reste résolu par nom, tout autre dossier sous config/ par chemin.
+    $configRoot = (Resolve-Path -LiteralPath (Join-Path $resolvedWorkspace 'config')).Path
+    $configPrefix = $configRoot.TrimEnd([char]'\') + '\'
     $resolvedSymbolsFile = (Resolve-Path -LiteralPath $symbolsFilePath).Path
-    if (-not $resolvedSymbolsFile.StartsWith($universeRoot, [StringComparison]::OrdinalIgnoreCase)) {
-        throw 'symbols_file doit être situé dans config/univers'
+    if (-not $resolvedSymbolsFile.StartsWith($configPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'symbols_file doit être situé sous config/'
     }
-    $symbolSource = 'universe-file:{0}' -f (Split-Path -Leaf $resolvedSymbolsFile)
+    if (-not $resolvedSymbolsFile.EndsWith('.txt', [StringComparison]::OrdinalIgnoreCase)) {
+        throw "symbols_file doit désigner un fichier .txt: $resolvedSymbolsFile"
+    }
+    $relativeSymbolsFile = $resolvedSymbolsFile.Substring($configPrefix.Length).Replace('\', '/')
+    $symbolSource = 'universe-file:config/{0}' -f $relativeSymbolsFile
 
     $providersValue = if ($cfg.providers) { [string]$cfg.providers } else { 'yahoo_finance,finnhub' }
     $providers = @($providersValue -split ',' | ForEach-Object { $_.Trim().ToLowerInvariant() } | Where-Object { $_ -ne '' })
@@ -216,7 +228,7 @@ try {
     $duration = $finished - $started
     $durationText = '{0}h{1:D2}m{2:D2}s' -f [int]$duration.TotalHours, $duration.Minutes, $duration.Seconds
     $statusText = if ($overallExitCode -eq 0) { 'OK' } else { 'ERROR' }
-    Write-StatusLine ("[{0}] FIN TRAITEMENT {1} market_cap_sync exit={2} durée={3} — détail: log/fundamental_features.log" -f $finished.ToString('yyyy-MM-dd HH:mm:ss'), $statusText, $overallExitCode, $durationText)
+    Write-StatusLine ("[{0}] FIN TRAITEMENT {1} market_cap_sync exit={2} durée={3} - détail: log/fundamental_features.log" -f $finished.ToString('yyyy-MM-dd HH:mm:ss'), $statusText, $overallExitCode, $durationText)
 
     Send-MarketCapNotification -PythonExe $resolvedPython -Status $statusText -ExitCode $overallExitCode -Duration $durationText -CapturedOutput $allCaptured -Warnings $batchWarnings
     exit $overallExitCode

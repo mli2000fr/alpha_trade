@@ -17,7 +17,11 @@ import numpy as np
 import pandas as pd
 from sqlalchemy import bindparam, text
 
-from common.universe_files import load_universe_file_symbols
+from common.universe_files import (
+    is_universe_file_source,
+    load_universe_file_symbols,
+    resolve_universe_file_path,
+)
 from database.connection import get_sqlalchemy_engine
 
 OUTPUT_ROOT = Path("artifacts/research/oracle_universe_audit")
@@ -28,8 +32,10 @@ def parse_symbols(raw: str | None) -> list[str]:
 
 
 def source_path(source: str) -> Path | None:
-    prefix = "universe-file:"
-    return Path("config/univers") / source[len(prefix):] if source.startswith(prefix) else None
+    """Chemin du fichier d'univers désigné, ou ``None`` pour une source native."""
+    if not is_universe_file_source(source):
+        return None
+    return resolve_universe_file_path(source)
 
 
 def _read_symbols(engine: Any, sql: str, symbols: list[str], **params: Any) -> pd.DataFrame:
