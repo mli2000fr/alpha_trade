@@ -2,22 +2,23 @@
 
 ## 1. Statut
 
-E19-A2 corrige le contrat applicatif identifié par E19-A. Le code, la migration
-Alembic `0074` et le SQL manuel sont prêts et testés.
-
-La base observée conserve toutefois `0068_analyst_snapshot_collection` dans
-`alembic_version`, alors que des changements 0069–0073 sont déjà présents
-physiquement. Pour éviter de rejouer aveuglément ces migrations, 0074 n’est pas
-appliquée automatiquement. Après exécution du SQL autonome, les lignes SEC
-historiques doivent être rafraîchies pour renseigner leur lineage.
+E19-A2 corrige le contrat applicatif identifié par E19-A. Le code, le schéma et
+le rafraîchissement SEC sont désormais validés. Le nouvel audit canonique est
+`artifacts/research/fundamental_pit_availability/e19a-fundamental-pit-audit-20260912085103`.
 
 ```text
 loader PIT corrigé                         OUI
 migration et SQL de référence              OUI
-schéma 0074 appliqué à la base observée     NON
-lineage des anciennes lignes SEC renseigné NON
-E19-B autorisé                              NON, jusqu'au gate DATA_READY
+schéma PIT présent dans la base             OUI
+rafraîchissement SEC 2016–2025              OUI
+verdict du nouvel audit                     DATA_READY
+E19-B autorisé                              OUI
 ```
+
+Le run de rafraîchissement a traité 1 798 symboles, persisté 59 358 lignes et
+compté 168 symboles en échec SEC. Le nouvel audit mesure 1 622 symboles SEC sur
+la période, soit 90,21 % de l’univers, et 99,28 % de lignes avec lineage
+complet. Les neuf gates du rapport passent.
 
 ## 2. Contrat des dates
 
@@ -96,8 +97,8 @@ La table reçoit :
 - `dividend_per_share`, séparé de `dividend_yield`.
 
 Le mapper XBRL transporte ces valeurs jusqu’à l’upsert. Le gate E19 exige que
-95 % au moins des lignes SEC utilisées aient une lineage complète. Ajouter les
-colonnes ne suffit donc pas : les lignes historiques doivent être recollectées.
+95 % au moins des lignes SEC utilisées aient une lineage complète. Le
+rafraîchissement historique a porté cette couverture à 99,28 %.
 
 ## 7. Corrections sémantiques
 
@@ -124,12 +125,14 @@ Deux représentations équivalentes sont livrées :
 Ne pas exécuter les deux. Sur la base observée, utiliser le SQL manuel est le
 chemin le moins risqué tant que `alembic_version` n’a pas été réconciliée.
 
-Après le SQL :
+La procédure de validation exécutée a été :
 
 1. relancer la collecte SEC sur l’univers E19 ;
 2. vérifier le taux de lineage ;
 3. rejouer `modelFactory.fundamental_pit_availability_audit` ;
 4. n’ouvrir E19-B que si le verdict devient `DATA_READY`.
+
+Ces quatre étapes sont terminées. E19-B peut être pré-enregistrée et exécutée.
 
 ## 9. Tests de non-régression
 

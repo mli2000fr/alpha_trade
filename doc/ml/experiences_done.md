@@ -832,7 +832,7 @@ debt/equity, EBITDA, dividend yield et estimate revision. Verdict :
 `artifacts/research/fundamental_pit_availability/e19a-fundamental-pit-audit-20260911203804`.
 Voir [E19-A — disponibilité PIT des fondamentaux](fundamental_pit_availability_e19a.md).
 
-## E19-A2 — Correction du contrat PIT fondamental — `CODE_COMPLETE_SCHEMA_PENDING`
+## E19-A2 — Correction du contrat PIT fondamental — `COMPLETE_DATA_READY`
 
 Le loader applique désormais une date effective conservatrice : dépôt SEC à
 J+1 et snapshots non-SEC au plus tôt le lendemain de leur collecte. Les
@@ -843,11 +843,53 @@ période fiscale, formulaire, accession et dividende par action. Le mapper SEC
 utilise désormais la dette financière, ne confond plus operating income et
 EBITDA et sépare dividend/share du yield.
 
-La base observée annonce encore Alembic 0068 malgré des évolutions physiques
-ultérieures ; 0074 n’a donc pas été appliquée automatiquement. Le SQL manuel et
-un rafraîchissement SEC restent requis. E19-B demeure interdit jusqu’à un nouvel
-audit `DATA_READY` avec au moins 95 % de lineage SEC complète. Voir
+Le rafraîchissement SEC 2016–2025 a ensuite traité 1 798 symboles et persisté
+59 358 lignes. Le nouvel audit canonique couvre 1 622 symboles SEC (90,21 % de
+l’univers), 89,57 % des lignes quotidiennes avec une comptabilité fraîche de
+moins de 180 jours et 99,28 % de lineage complet. Tous les gates passent ; le
+verdict est `DATA_READY` et E19-B est désormais autorisée. Artefact :
+`artifacts/research/fundamental_pit_availability/e19a-fundamental-pit-audit-20260912085103`.
+Voir
 [E19-A2 — contrat PIT fondamental](fundamental_pit_contract_e19a2.md).
+
+## E19-B — Bibliothèque d’alphas fondamentaux PIT — `FAIT_VALUE_CANDIDATE_ONLY`
+
+E19-B a été pré-enregistrée avant lecture des résultats puis exécutée sur
+1 798 actions, 2018–2025, avec disponibilité SEC J+1, fraîcheur maximale de
+180 jours, cinq folds OOF, 63 cohortes et neutralisation quotidienne secteur +
+taille. Le composite qualité/valeur/croissance/levier/amélioration possède un
+IC positif, mais aucun spread exploitable : à H60, IC `+0,46 %`, LONG
+`+3,25 %`, SHORT `-3,32 %` et LONG/SHORT `-0,03 %`; depuis 2023 le spread vaut
+`-0,28 %`. Son `GO_LONG` mécanique est expliqué par le rendement absolu : la
+jambe LONG fait `-0,09 %` contre SPY à H60. Verdict scientifique composite :
+`NO_GO`; aucun serving modifié.
+
+La famille valeur, testée dès le protocole initial, ressort seule : à H60,
+IC `+4,47 %` [borne 95 % `+3,31 %`] et spread net `+1,00 %` [borne
+`+0,06 %`], avec 80 % des folds et semestres positifs. À H120, IC `+6,58 %`
+et spread `+2,18 %` [borne `+0,33 %`], 100 % des folds positifs. Elle reste
+positive depuis 2023. C’est un candidat de recherche relatif, pas encore une
+stratégie short absolue. Prochaine action permise : confirmation E19-C valeur
+seule, verrouillée et sans retuning. Artefact :
+`artifacts/research/fundamental_alpha_book/fundamental-alpha-book-20260912112042`.
+Voir [E19-B — bibliothèque fondamentale PIT](fundamental_alpha_book_e19b.md).
+
+## E19-C — Confirmation verrouillée du facteur valeur — `FAIT_NO_GO`
+
+E19-C a figé sans retuning le score valeur E19-B et l’a évalué sur deux blocs
+qui n’avaient pas contribué aux métriques OOF précédentes : 2018-07-02 à
+2020-07-01 et 2025-07-10 à 2025-12-31. Sur 33 cohortes H60, l’IC vaut
+`-3,61 %` [IC95 `-5,15 ; -2,01 %`] et le spread net `-0,99 %`. À H120,
+l’IC vaut `-5,23 %` et le spread `-1,59 %`. Le LONG sous-performe SPY de
+`-2,16 %` à H60 et `-2,70 %` à H120.
+
+Le holdout ancien est fortement négatif (`-1,63 %` H60 ; `-2,71 %` H120),
+alors que 2025H2 est positif (`+1,35 %` ; `+3,25 %`). Les cinq sous-univers
+hash sont négatifs aux deux horizons. Verdict `NO_GO` : le facteur est dépendant
+de période et ne doit être ni promu, ni inversé, ni filtré a posteriori par un
+régime choisi sur ces résultats. Aucun serving n’a changé. Artefact :
+`artifacts/research/fundamental_value_confirmation/fundamental-value-confirmation-20260912114827`.
+Voir [E19-C — confirmation valeur](fundamental_value_confirmation_e19c.md).
 
 ## Procédure de mise à jour du registre
 
