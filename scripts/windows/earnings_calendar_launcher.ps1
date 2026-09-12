@@ -21,7 +21,8 @@ param(
     [string]$WorkspacePath,
     [string]$PythonExePath,
     [string]$LogFile,
-    [string]$EnvFilePath
+    [string]$EnvFilePath,
+    [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
@@ -203,7 +204,7 @@ if ($cfg -and ($cfg.PSObject.Properties.Name -contains 'run_days')) {
     $runDaysValue = [string]$cfg.run_days
 }
 $runDays = @($runDaysValue -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
-if ($runDays.Count -gt 0) {
+if ($runDays.Count -gt 0 -and -not $Force) {
     $dow = [int](Get-Date).DayOfWeek
     if ($runDays -notcontains [string]$dow) {
         Write-StatusLine ("[{0}] SKIP   earnings_calendar_sync — jour={1} (0=dimanche) absent de run_days='{2}' — aucun lancement" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $dow, $runDaysValue)

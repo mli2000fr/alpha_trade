@@ -9,6 +9,9 @@
 # de config.yaml choisit ensuite Yahoo en priorité et Finnhub en fallback.
 # run_days suit DayOfWeek : 0=dimanche, 1=lundi, ... 6=samedi.
 market_cap_sync:
+  priority: P0
+  description: "Maintenir une capitalisation et un secteur récents pour l'éligibilité tradable, les filtres de taille et la neutralisation market-cap."
+  tables: "stock_fundamentals_daily"
   run_hours: "11,23"
   run_days: "1,4"
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
@@ -18,6 +21,9 @@ market_cap_sync:
 # Synchronisation du calendrier earnings Finnhub.
 # symbols_file est partagé avec analyst_snapshot_collection.
 earnings_calendar_sync:
+  priority: P1
+  description: "Connaître les publications de résultats à venir et réalisées afin d'appliquer les blackouts earnings et d'étudier les surprises."
+  tables: "stock_earnings_calendar,cleaning_audit_earnings_runs"
   run_hours: "12,23"
   run_days: "0,3,5"
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
@@ -27,6 +33,9 @@ earnings_calendar_sync:
 # Historique PIT append-only dans MySQL : consensus EPS/revenue, objectifs de
 # cours et recommandations. Aucun stockage fichier des réponses métier.
 analyst_snapshot_collection:
+  priority: P1
+  description: "Construire prospectivement des snapshots PIT Yahoo de consensus EPS/revenue, objectifs de cours et recommandations."
+  tables: "analyst_snapshot_collection_run,stock_analyst_estimate_history,stock_analyst_target_history,stock_analyst_recommendation_history"
   enabled: true
   provider: yahoo
   universe_name: analyst_research
@@ -39,6 +48,9 @@ analyst_snapshot_collection:
 
 # Tous les horaires sont exprimés dans timezone et interprétés par le lanceur.
 daily_bars_sync:
+  priority: P0
+  description: "Collecter les clôtures OHLCV confirmées et leurs corrections pour rétablir une alimentation quotidienne auditable des prix."
+  tables: "pit_collection_runs,pit_raw_payloads,stock_bars_daily_versions"
   enabled: true
   provider: business_quant
   api_key_env: BUSINESS_QUANT_API_KEY
@@ -54,6 +66,9 @@ daily_bars_sync:
   log_file: log/batch/daily_bars_sync.txt
 
 security_master_snapshot:
+  priority: P0
+  description: "Suivre l'identité des titres, leur type, leur place de cotation et les changements d'univers sans assimiler une absence ponctuelle à un delisting."
+  tables: "pit_collection_runs,pit_raw_payloads,security_master_snapshots,security_master_changes"
   enabled: true
   providers: "nasdaq_symbol_directory,business_quant"
   api_key_env: BUSINESS_QUANT_API_KEY
@@ -65,6 +80,9 @@ security_master_snapshot:
   log_file: log/batch/security_master_snapshot.txt
 
 corporate_actions_sync:
+  priority: P0
+  description: "Conserver splits, dividendes, fusions, spin-offs, changements de ticker et delistings par source pour sécuriser prix et positions."
+  tables: "pit_collection_runs,pit_raw_payloads,corporate_action_source_events"
   enabled: true
   providers: "business_quant,alpaca"
   api_key_env: BUSINESS_QUANT_API_KEY
@@ -77,6 +95,9 @@ corporate_actions_sync:
   log_file: log/batch/corporate_actions_sync.txt
 
 sec_edgar_incremental:
+  priority: P0
+  description: "Collecter une seule fois les nouveaux dépôts SEC et fournir un RAW commun aux fondamentaux, événements et données d'actionnariat."
+  tables: "pit_collection_runs,pit_raw_payloads,sec_filing_raw"
   enabled: true
   timezone: Europe/Paris
   run_hours: "0,6,12,18"
@@ -89,6 +110,9 @@ sec_edgar_incremental:
   log_file: log/batch/sec_edgar_incremental.txt
 
 pit_data_quality_daily:
+  priority: P0
+  description: "Détecter quotidiennement les retards, trous de couverture et échecs de collecte avant qu'ils contaminent les features PIT."
+  tables: "pit_collection_runs,pit_data_quality_metrics,pit_data_quality_issues"
   enabled: true
   timezone: Europe/Paris
   run_hours: "2"
@@ -103,6 +127,9 @@ pit_data_quality_daily:
   log_file: log/batch/pit_data_quality_daily.txt
 
 borrow_status_snapshot:
+  priority: P1
+  description: "Historiser la disponibilité short Alpaca et distinguer easy-to-borrow, locate requis et titre non shortable au moment de décision."
+  tables: "pit_collection_runs,pit_raw_payloads,stock_borrow_status_snapshots"
   enabled: true
   provider: alpaca
   timezone: America/New_York
@@ -112,6 +139,9 @@ borrow_status_snapshot:
   log_file: log/batch/borrow_status_snapshot.txt
 
 business_quant_analyst_snapshot:
+  priority: P1
+  description: "Évaluer un consensus analyste Business Quant prospectif sur un petit univers Oracle sans consommer inutilement le quota."
+  tables: "pit_collection_runs,pit_raw_payloads,stock_analyst_consensus_snapshots"
   enabled: false
   status: PENDING_QUOTA_DECISION
   provider: business_quant
@@ -125,6 +155,9 @@ business_quant_analyst_snapshot:
   log_file: log/batch/business_quant_analyst_snapshot.txt
 
 oracle_options_indicative_snapshot:
+  priority: P2
+  description: "Observer IV, Greeks, quotes et trades options indicatifs autour des candidats Oracle pour tester une confirmation directionnelle."
+  tables: "pit_collection_runs,pit_raw_payloads,stock_option_snapshots"
   enabled: false
   status: ENABLE_AFTER_ORACLE_LIVE_SELECTION
   provider: alpaca
@@ -138,6 +171,9 @@ oracle_options_indicative_snapshot:
   log_file: log/batch/oracle_options_indicative_snapshot.txt
 
 oracle_opening_window_sync:
+  priority: P3
+  description: "Conserver la microstructure de prémarché et d'ouverture des candidats Oracle pour étudier une confirmation après le signal."
+  tables: "pit_collection_runs,pit_raw_payloads,stock_opening_window_bars"
   enabled: false
   status: ENABLE_AFTER_ORACLE_LIVE_SELECTION
   provider: business_quant
@@ -154,6 +190,9 @@ oracle_opening_window_sync:
   log_file: log/batch/oracle_opening_window_sync.txt
 
 sec_corporate_events_normalize:
+  priority: P3
+  description: "Transformer localement les 8-K/6-K bruts en événements PIT structurés sans télécharger une seconde fois EDGAR."
+  tables: "pit_collection_runs,sec_filing_raw,sec_corporate_events"
   enabled: true
   timezone: Europe/Paris
   run_hours: "1,7,13,19"
@@ -162,6 +201,9 @@ sec_corporate_events_normalize:
   log_file: log/batch/sec_corporate_events_normalize.txt
 
 sec_institutional_ownership_normalize:
+  priority: P4
+  description: "Normaliser les 13F/13D/13G pour suivre le positionnement institutionnel et ses évolutions avec disponibilité PIT."
+  tables: "pit_collection_runs,sec_filing_raw,sec_ownership_snapshots"
   enabled: true
   timezone: Europe/Paris
   run_hours: "3"
@@ -170,6 +212,9 @@ sec_institutional_ownership_normalize:
   log_file: log/batch/sec_institutional_ownership_normalize.txt
 
 fred_alfred_vintage_sync:
+  priority: P4
+  description: "Conserver les vintages macro réellement disponibles afin d'éviter toute fuite provenant des révisions économiques futures."
+  tables: "pit_collection_runs,pit_raw_payloads,macro_vintage_observations"
   enabled: true
   provider: fred_alfred
   api_key_env: KEY_FRED
@@ -182,6 +227,9 @@ fred_alfred_vintage_sync:
   log_file: log/batch/fred_alfred_vintage_sync.txt
 
 finra_short_volume_sync:
+  priority: P1
+  description: "Contrôle optionnel du short volume consolidé FINRA ; la famille reste désactivée après résultats de recherche non concluants."
+  tables: ""
   enabled: false
   status: OPTIONAL_CONTROL_NO_GO_FAMILY
   timezone: America/New_York
@@ -190,16 +238,25 @@ finra_short_volume_sync:
   log_file: log/batch/finra_short_volume_sync.txt
 
 auction_imbalance_sync:
+  priority: P3
+  description: "Contrat réservé aux déséquilibres d'enchère d'ouverture/fermeture ; aucun fournisseur PIT n'est actuellement validé."
+  tables: ""
   enabled: false
   status: PENDING_PROVIDER
   log_file: log/batch/auction_imbalance_sync.txt
 
 securities_lending_sync:
+  priority: P1
+  description: "Contrat réservé aux borrow fees, utilization, lendable supply et shares on loan ; fournisseur encore manquant."
+  tables: ""
   enabled: false
   status: PENDING_PROVIDER
   log_file: log/batch/securities_lending_sync.txt
 
 official_options_nbbo_sync:
+  priority: P2
+  description: "Contrat réservé aux options officielles NBBO/OPRA avec corrections ; le pilote Alpaca disponible reste seulement indicatif."
+  tables: ""
   enabled: false
   status: PENDING_PROVIDER
   log_file: log/batch/official_options_nbbo_sync.txt

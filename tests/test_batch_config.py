@@ -49,3 +49,11 @@ def test_all_batch_launchers_and_installers_read_batch_yaml() -> None:
         content = (WINDOWS / name).read_text(encoding="utf-8")
         assert "batch.yaml" in content, name
         assert "config.yaml" not in content, name
+
+
+def test_every_batch_has_ui_catalogue_metadata() -> None:
+    batch = yaml.safe_load((ROOT / "batch.yaml").read_text(encoding="utf-8"))
+    for name, config in batch.items():
+        assert config.get("priority") in {"P0", "P1", "P2", "P3", "P4"}, name
+        assert str(config.get("description") or "").strip(), name
+        assert "tables" in config, name

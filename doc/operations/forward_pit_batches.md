@@ -1,5 +1,22 @@
 # Batchs de collecte Forward PIT
 
+## Pilotage depuis l'IHM
+
+La page **Workflow & Orchestration → Batch** constitue le catalogue opérationnel de
+batch.yaml. Elle affiche pour chaque traitement sa finalité, sa priorité P0 à P4,
+les tables alimentées, le calendrier configuré et l'état réel de la tâche Windows.
+Elle rapproche également la dernière exécution du Planificateur avec le dernier run
+présent dans pit_collection_runs (volumes demandés, reçus, persistés, alertes et
+échecs). Les trois traitements historiques qui ne renseignent pas encore cette table
+restent observables via leur tâche Windows et leur journal dédié.
+
+Les boutons **Installer / réinstaller** et **Lancer maintenant** exécutent les mêmes
+scripts PowerShell que l'exploitation manuelle. Un lancement depuis l'IHM est
+asynchrone : quitter la page ne coupe pas le traitement. Les batchs désactivés ou en
+attente de fournisseur/quota restent documentés mais leur bouton de lancement est
+bloqué. Les notifications email et Telegram sont envoyées par le launcher du batch ;
+la notification générique de l'IHM est neutralisée afin d'éviter un doublon.
+
 ## Objectif et contrat
 
 Ce dispositif construit, à partir de maintenant, l’historique réellement observable par Alpha‑Trade. Il ne reconstitue pas artificiellement le passé : chaque payload reçu porte un `observed_at`, un `available_at`, un hash de contenu, un hash de schéma et l’identifiant du run. Les données normalisées conservent ce lignage.
