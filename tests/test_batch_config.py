@@ -19,6 +19,7 @@ BATCH_SECTIONS = {
     "sec_institutional_ownership_normalize", "fred_alfred_vintage_sync",
     "finra_short_volume_sync", "auction_imbalance_sync",
     "securities_lending_sync", "official_options_nbbo_sync",
+    "options_delayed_bars_sync", "option_contract_adjustment_sync",
 }
 
 
@@ -105,6 +106,7 @@ def test_every_symbol_scoped_batch_uses_stable_tradable_universe() -> None:
         "auction_imbalance_sync",
         "securities_lending_sync",
         "official_options_nbbo_sync",
+        "options_delayed_bars_sync",
     )
     for name in names:
         assert batch[name]["symbols_file"] == expected
@@ -124,6 +126,36 @@ def test_options_batch_is_active_research_only_and_never_top20_scoped() -> None:
     assert "oracle_batch_id" not in options
 
 
+
+def test_delayed_option_batches_are_explicitly_research_only() -> None:
+    batch = yaml.safe_load((ROOT / "batch.yaml").read_text(encoding="utf-8"))
+    bars = batch["options_delayed_bars_sync"]
+    occ = batch["option_contract_adjustment_sync"]
+    nbbo = batch["official_options_nbbo_sync"]
+    assert bars["enabled"] is True
+    assert bars["status"] == "ACTIVE_RESEARCH_ONLY"
+    assert bars["symbols_file"] == "config/univers_batch/univers_filtred_tradable.txt"
+    assert "UNVERIFIED_OPRA" in bars["research_notice"]
+    assert occ["enabled"] is True
+    assert occ["universe_scope"] == "market_wide_options_adjustments"
+    assert nbbo["enabled"] is False
+    assert nbbo["status"] == "BLOCKED_FREE_NO_NBBO_SOURCE"
+
+def test_opening_window_batch_uses_delayed_sip_on_full_stable_universe() -> None:
+    batch = yaml.safe_load((ROOT / "batch.yaml").read_text(encoding="utf-8"))
+    opening = batch["oracle_opening_window_sync"]
+    assert opening["enabled"] is True
+    assert opening["status"] == "ACTIVE_RESEARCH_ONLY"
+    assert opening["provider"] == "alpaca"
+    assert opening["feed"] == "sip"
+    assert opening["adjustment"] == "raw"
+    assert opening["symbols_file"] == "config/univers_batch/univers_filtred_tradable.txt"
+    assert opening["window_start"] == "04:00"
+    assert opening["window_end"] == "10:30"
+    assert opening["minimum_sip_delay_minutes"] >= 16
+    assert "max_symbols" not in opening
+
+
 def test_non_symbol_batches_declare_why_they_are_not_universe_filtered() -> None:
     batch = yaml.safe_load((ROOT / "batch.yaml").read_text(encoding="utf-8"))
     expected_scopes = {
@@ -133,6 +165,7 @@ def test_non_symbol_batches_declare_why_they_are_not_universe_filtered() -> None
         "sec_corporate_events_normalize": "raw_sec_filings",
         "sec_institutional_ownership_normalize": "raw_sec_filings",
         "fred_alfred_vintage_sync": "macro_series",
+        "option_contract_adjustment_sync": "market_wide_options_adjustments",
     }
     for name, scope in expected_scopes.items():
         assert batch[name]["universe_scope"] == scope
@@ -154,3 +187,26 @@ def test_generic_powershell_scripts_guard_optional_batch_properties() -> None:
     assert "function Get-ConfigValue" in launcher
     for field in ("log_file", "enabled", "status", "timezone", "run_days", "run_hours", "run_minutes"):
         assert f"Get-ConfigValue $cfg '{field}'" in launcher
+
+
+def test_generic_installer_builds_task_name_without_spaces() -> None:
+    installer = (WINDOWS / "install_forward_pit_task.ps1").read_text(encoding="utf-8")
+    assert "}) -join '')" in installer
+    assert "$TaskName = 'AlphaTrade-' + $suffix" in installer
+
+
+def test_securities_lending_batch_explains_provider_blocker_in_ui() -> None:
+    batch = yaml.safe_load((ROOT / "batch.yaml").read_text(encoding="utf-8"))
+    lending = batch["securities_lending_sync"]
+    notice = lending["research_notice"]
+
+    assert lending["enabled"] is False
+    assert lending["status"] == "PENDING_PROVIDER"
+    assert lending["provider"] == "Aucun fournisseur validé"
+    assert "aucune source gratuite validée" in notice.lower()
+    for provider in (
+        "IBKR TWS/API", "IBKR Public Shortstock FTP", "Eulerpool", "Alpaca",
+        "Tradier", "iBorrowDesk", "ChartExchange", "MyAllies", "ORTEX",
+        "Orbisa", "S3 Partners",
+    ):
+        assert provider in notice

@@ -891,6 +891,13 @@ régime choisi sur ces résultats. Aucun serving n’a changé. Artefact :
 `artifacts/research/fundamental_value_confirmation/fundamental-value-confirmation-20260912114827`.
 Voir [E19-C — confirmation valeur](fundamental_value_confirmation_e19c.md).
 
+## POC Alpaca options trades versus barres — `GO_RESEARCH_ONLY`
+
+Sur la séance du 11 septembre 2026, 10 contrats CALL/PUT ATM proches de DTE 10 sur AAPL, MSFT, NVDA, TSLA et AMD ont été comparés entre l'endpoint transactions et les barres une minute Alpaca. Les 10 volumes et compteurs de transactions concordent exactement ; ratios médians 1,0 et erreur relative médiane du VWAP recomposé 2,64 × 10⁻⁹.
+
+Le POC autorise des features ML prospectives fondées sur transactions/volume Alpaca, mais ne prouve pas l'exhaustivité OPRA puisqu'il compare deux endpoints du même fournisseur. Provenance `UNVERIFIED_OPRA`, serving interdit et confirmation multi-jours requise avant activation d'un batch transactions complet. Artefact : `artifacts/research/options_delayed_trade_poc/poc-20260912224359/report.json`. Voir [Options retardées Alpaca et ajustements OCC](options_delayed_alpaca_occ.md).
+
+
 ## Procédure de mise à jour du registre
 
 Après chaque expérience, ajouter ou mettre à jour une ligne avec :

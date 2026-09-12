@@ -57,11 +57,11 @@ Principes invariants :
 - tout batch par symbole utilise `config/univers_batch/univers_filtred_tradable.txt` ; l'absence du fichier est bloquante et ne déclenche aucun repli vers un univers dynamique ;
 - seuls les flux de découverte ou intrinsèquement globaux restent market-wide : security master, corporate actions, dépôts SEC et séries macro.
 
-### Contrat d'univers des 19 batchs
+### Contrat d'univers des 21 batchs
 
 | Périmètre | Batchs | Contrat |
 |---|---|---|
-| Univers tradable stable | `market_cap_sync`, `earnings_calendar_sync`, `analyst_snapshot_collection`, `daily_bars_sync`, `pit_data_quality_daily`, `borrow_status_snapshot`, `business_quant_analyst_snapshot`, `oracle_options_indicative_snapshot`, `oracle_opening_window_sync` | fichier `config/univers_batch/univers_filtred_tradable.txt`, complet, sans TOP20 ni limite implicite |
+| Univers tradable stable | `market_cap_sync`, `earnings_calendar_sync`, `analyst_snapshot_collection`, `daily_bars_sync`, `pit_data_quality_daily`, `borrow_status_snapshot`, `business_quant_analyst_snapshot`, `oracle_options_indicative_snapshot`, `options_delayed_bars_sync`, `oracle_opening_window_sync` | fichier `config/univers_batch/univers_filtred_tradable.txt`, complet, sans TOP20 ni limite implicite |
 | Futurs collecteurs par symbole | `auction_imbalance_sync`, `securities_lending_sync`, `official_options_nbbo_sync` | le même fichier est déjà déclaré ; les collecteurs restent désactivés tant que source, stockage et qualité ne sont pas validés |
 | Découverte market-wide | `security_master_snapshot` | toutes les cotations disponibles afin de détecter nouveaux titres, changements et disparitions |
 | Événements market-wide | `corporate_actions_sync` | flux global afin de ne pas manquer une action affectant un titre entrant, sortant ou détenu |
@@ -84,8 +84,10 @@ Le TOP20 est une **sortie de modèle**, recalculée après entraînement ou à c
 | P1 | `business_quant_analyst_snapshot` | Business Quant `/estimates` | `stock_analyst_consensus_snapshots` | remplacé par Yahoo, désactivé |
 | P1 | `finra_short_volume_sync` | FINRA Consolidated NMS public | `stock_short_volume_daily` | actif, recherche uniquement |
 | P2 | `oracle_options_indicative_snapshot` | Alpaca Basic indicative | `stock_option_snapshots` | actif, recherche uniquement |
-| P2 | `official_options_nbbo_sync` | fournisseur requis | — | désactivé |
-| P3 | `oracle_opening_window_sync` | Business Quant minute-bars | `stock_opening_window_bars` | désactivé, capacité univers complet à valider |
+| P2 | `options_delayed_bars_sync` | Alpaca historique retardé, provenance non attestée | `stock_option_contract_versions`, `stock_option_bars_delayed` | actif, recherche uniquement |
+| P2 | `option_contract_adjustment_sync` | RSS officiel OCC | `option_contract_adjustments` | actif, métadonnées prospectives |
+| P2 | `official_options_nbbo_sync` | fournisseur requis | — | bloqué : aucune source NBBO gratuite |
+| P3 | `oracle_opening_window_sync` | Alpaca SIP historique 1 minute | `stock_opening_window_bars`, `stock_opening_window_bar_versions` | actif, recherche et entrée retardée uniquement |
 | P3 | `sec_corporate_events_normalize` | RAW SEC 8‑K/6‑K | `sec_corporate_events` | actif |
 | P4 | `sec_institutional_ownership_normalize` | RAW SEC 13F/13D/13G | `sec_ownership_snapshots` | actif |
 | P4 | `fred_alfred_vintage_sync` | FRED/ALFRED | `macro_vintage_observations` | actif |
@@ -139,7 +141,9 @@ Alpaca Assets permet de suivre `shortable`, `easy_to_borrow`, `marginable` et `t
 
 Le batch analyste Yahoo existant respecte désormais `enabled: false`, distingue couverture EPS et REVENUE et ne tourne plus deux fois le même jour avec un `resume` rendant le second passage vide. Business Quant analyste est un challenger désactivé. Sa population cible est l’univers stable `config/univers_batch/univers_filtred_tradable.txt`, et non la sélection d’un modèle Oracle courant.
 
-Les trois collecteurs de recherche `business_quant_analyst_snapshot`, `oracle_options_indicative_snapshot` et `oracle_opening_window_sync` utilisent le même univers tradable stable. Ce contrat évite un biais de sélection : un TOP20 produit aujourd’hui par un batch donné ne doit pas décider quelles données seront disponibles demain pour réentraîner ou backtester un autre Oracle, un autre horizon, un modèle Per-Symbol ou un ranker. Les noms historiques contenant `oracle_` sont conservés pour compatibilité, mais ne signifient plus que la collecte est limitée au TOP20.
+Les trois collecteurs de recherche `business_quant_analyst_snapshot`, `oracle_options_indicative_snapshot` et `oracle_opening_window_sync` utilisent le même univers tradable stable. Ce contrat évite un biais de sélection : un TOP20 produit aujourd’hui par un batch donné ne doit pas décider quelles données seront disponibles demain pour réentraîner ou backtester un autre Oracle, un autre horizon, un modèle Per-Symbol ou un ranker. Les noms historiques contenant `oracle_` sont conservés pour compatibilité, mais ne signifient plus que la collecte est limitée au TOP20. Le contrat détaillé Alpaca de la fenêtre d'ouverture est documenté dans [`../ml/oracle_opening_window_alpaca.md`](../ml/oracle_opening_window_alpaca.md).
+
+Les barres d'options retardées et les ajustements OCC suivent un contrat distinct détaillé dans [`../ml/options_delayed_alpaca_occ.md`](../ml/options_delayed_alpaca_occ.md). Ils ne transforment pas Alpaca en source NBBO officielle.
 
 Par défaut, le service charge tout le fichier. `max_symbols` n’est jamais une
 limite implicite de production ; il reste accepté uniquement lorsqu’il est fourni

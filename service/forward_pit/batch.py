@@ -29,8 +29,13 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Connection, Engine
 
 from common.config_loader import load_batch_config
+from common.market_calendar import is_trading_day
 from database.connection import get_sqlalchemy_engine
 from service.alpaca.clientAlpaca import fetch_alpaca_assets, get_alpaca_credentials
+from service.forward_pit.options_delayed import (
+    option_contract_adjustment_sync,
+    options_delayed_bars_sync,
+)
 
 LOGGER = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[2]
@@ -958,27 +963,221 @@ def options_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool
     return outcome
 
 
+def _alpaca_opening_row(
+    symbol: str,
+    item: dict[str, Any],
+    *,
+    observed: datetime,
+    cumulative_volume: int,
+    run_id: str,
+    feed: str,
+    adjustment: str,
+) -> dict[str, Any]:
+    """Normalise une barre Alpaca sans confondre volume minute et cumul."""
+    local_ts, utc_ts = _market_dt(item.get("t"))
+    minute_volume = max(0, int(item.get("v") or 0))
+    return {
+        "provider": "alpaca", "feed": feed, "adjustment": adjustment,
+        "symbol": symbol, "ts": utc_ts, "observed": observed,
+        # Contrat PIT conservateur : disponible lorsque notre collecte l'a reçue.
+        "available": observed,
+        "open": item.get("o"), "high": item.get("h"),
+        "low": item.get("l"), "close": item.get("c"),
+        "minute": minute_volume, "cum": cumulative_volume,
+        "trade_count": item.get("n"), "vwap": item.get("vw"),
+        "session": "PRE" if local_ts.strftime("%H:%M") < "09:30" else "OPEN",
+        "hash": _hash({"bar": item, "cumulative_volume": cumulative_volume}),
+        "run": run_id,
+    }
+
+
 def opening_window_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool) -> Outcome:
-    symbols = _collection_symbols(cfg); key = _secret(cfg, "BUSINESS_QUANT_API_KEY"); today = date.today(); observed = _utcnow(); outcome = Outcome(requested=len(symbols))
+    """Collecte les barres Alpaca SIP 1 minute de 04:00 à 10:30 ET."""
+    provider = str(cfg.get("provider", "alpaca")).strip().lower()
+    feed = str(cfg.get("feed", "sip")).strip().lower()
+    adjustment = str(cfg.get("adjustment", "raw")).strip().lower()
+    if provider != "alpaca":
+        raise ValueError("oracle_opening_window_sync impose provider=alpaca")
+    if feed != "sip":
+        raise ValueError("oracle_opening_window_sync impose feed=sip")
+    if adjustment not in {"raw", "split", "dividend", "spin-off", "all"}:
+        raise ValueError(f"adjustment Alpaca invalide: {adjustment}")
+
+    symbols = _collection_symbols(cfg)
+    market_tz = ZoneInfo(str(cfg.get("timezone", "America/New_York")))
+    session_date = datetime.now(market_tz).date()
+    outcome = Outcome(requested=len(symbols))
+    if not is_trading_day(session_date):
+        outcome.warnings.append(f"Marché NYSE fermé le {session_date}; collecte ignorée")
+        outcome.details.update({"session_date": session_date.isoformat(), "market_closed": True})
+        return outcome
+
+    window_start = str(cfg.get("window_start", "04:00"))
+    window_end = str(cfg.get("window_end", "10:30"))
+    start_local = datetime.fromisoformat(
+        f"{session_date.isoformat()}T{window_start}:00"
+    ).replace(tzinfo=market_tz)
+    end_local = datetime.fromisoformat(
+        f"{session_date.isoformat()}T{window_end}:00"
+    ).replace(tzinfo=market_tz)
+    minimum_delay = int(cfg.get("minimum_sip_delay_minutes", 16))
+    if datetime.now(UTC) < end_local.astimezone(UTC) + timedelta(minutes=minimum_delay):
+        raise RuntimeError(
+            f"SIP gratuit encore récent : attendre {minimum_delay} minutes après "
+            f"{window_end} America/New_York"
+        )
+
+    chunk_size = int(cfg.get("symbol_batch_size", 100))
+    max_pages = int(cfg.get("max_pages_per_batch", 20))
+    if chunk_size <= 0 or max_pages <= 0:
+        raise ValueError("symbol_batch_size et max_pages_per_batch doivent être positifs")
+    key, secret = get_alpaca_credentials()
+    headers = {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret}
+    covered: set[str] = set()
+    covered_open: set[str] = set()
+    covered_pre: set[str] = set()
+    cumulative_by_symbol: dict[str, int] = {}
+    pages_count = 0
+    invalid_rows = 0
+
+    canonical_sql = text("""INSERT INTO stock_opening_window_bars
+        (provider,feed,adjustment_mode,symbol,bar_timestamp,observed_at,available_at,
+         open,high,low,close,cumulative_volume,minute_volume,trade_count,vwap,
+         session_name,payload_hash,run_id)
+        VALUES (:provider,:feed,:adjustment,:symbol,:ts,:observed,:available,
+         :open,:high,:low,:close,:cum,:minute,:trade_count,:vwap,:session,:hash,:run)
+        ON DUPLICATE KEY UPDATE
+         open=VALUES(open),high=VALUES(high),low=VALUES(low),close=VALUES(close),
+         cumulative_volume=VALUES(cumulative_volume),minute_volume=VALUES(minute_volume),
+         trade_count=VALUES(trade_count),vwap=VALUES(vwap),payload_hash=VALUES(payload_hash),
+         run_id=VALUES(run_id),observed_at=LEAST(observed_at,VALUES(observed_at)),
+         available_at=LEAST(available_at,VALUES(available_at))""")
+    version_sql = text("""INSERT IGNORE INTO stock_opening_window_bar_versions
+        (provider,feed,adjustment_mode,symbol,bar_timestamp,observed_at,available_at,
+         open,high,low,close,cumulative_volume,minute_volume,trade_count,vwap,
+         session_name,payload_hash,run_id)
+        VALUES (:provider,:feed,:adjustment,:symbol,:ts,:observed,:available,
+         :open,:high,:low,:close,:cum,:minute,:trade_count,:vwap,:session,:hash,:run)""")
+
     with requests.Session() as session, engine.begin() as conn:
-        for chunk in _chunks(symbols, 20):
-            payload, status = _request_json(session, f"{BQ_URL}/quotes", params={"ticker": ",".join(chunk), "mode": "minute-bars", "from_date": today.isoformat(), "till_date": today.isoformat(), "limit": 1000, "api_key": key})
+        _configure_alpaca_session(
+            session,
+            use_system_trust_store=bool(cfg.get("use_system_trust_store", True)),
+        )
+        for chunk_number, chunk in enumerate(_chunks(symbols, chunk_size), start=1):
+            pages = _paginated_json(
+                session, f"{ALPACA_DATA_URL}/v2/stocks/bars",
+                params={
+                    "symbols": ",".join(chunk), "timeframe": "1Min",
+                    "start": start_local.astimezone(UTC).isoformat(),
+                    "end": end_local.astimezone(UTC).isoformat(),
+                    "feed": feed, "adjustment": adjustment,
+                    "limit": 10000, "sort": "asc",
+                }, headers=headers, page_key="next_page_token", max_pages=max_pages,
+                pause_seconds=float(cfg.get("request_interval_seconds", 0.0)),
+            )
+            pages_count += len(pages)
+            for page_number, (payload, status) in enumerate(pages, start=1):
+                observed = _utcnow()
+                if not dry:
+                    _raw(
+                        conn, run_id, "oracle_opening_window_sync", "alpaca",
+                        "/v2/stocks/bars", f"chunk:{chunk_number}:page:{page_number}",
+                        payload, status, observed,
+                    )
+                normalized: list[dict[str, Any]] = []
+                bars = payload.get("bars") or {}
+                if not isinstance(bars, dict):
+                    raise RuntimeError("Réponse Alpaca sans objet bars")
+                for raw_symbol, items in bars.items():
+                    symbol = str(raw_symbol or "").strip().upper()
+                    for item in items if isinstance(items, list) else []:
+                        if not isinstance(item, dict):
+                            invalid_rows += 1
+                            continue
+                        local_ts, _ = _market_dt(item.get("t"))
+                        if not window_start <= local_ts.strftime("%H:%M") <= window_end:
+                            invalid_rows += 1
+                            continue
+                        try:
+                            opn, high, low, close = (
+                                float(item[name]) for name in ("o", "h", "l", "c")
+                            )
+                        except (KeyError, TypeError, ValueError):
+                            invalid_rows += 1
+                            continue
+                        if min(opn, high, low, close) <= 0 or high < max(opn, low, close) or low > min(opn, high, close):
+                            invalid_rows += 1
+                            continue
+                        cumulative_by_symbol[symbol] = cumulative_by_symbol.get(symbol, 0) + max(0, int(item.get("v") or 0))
+                        row = _alpaca_opening_row(
+                            symbol, item, observed=observed,
+                            cumulative_volume=cumulative_by_symbol[symbol], run_id=run_id,
+                            feed=feed, adjustment=adjustment,
+                        )
+                        normalized.append(row)
+                        covered.add(symbol)
+                        (covered_pre if row["session"] == "PRE" else covered_open).add(symbol)
+                outcome.received += len(normalized)
+                if normalized and not dry:
+                    conn.execute(version_sql, normalized)
+                    conn.execute(canonical_sql, normalized)
+                    outcome.persisted += len(normalized)
+            LOGGER.info(
+                "alpaca_opening chunks=%s covered=%s bars=%s pages=%s",
+                chunk_number, len(covered), outcome.received, pages_count,
+            )
+
+    coverage = len(covered) / len(symbols) if symbols else 0.0
+    open_coverage = len(covered_open) / len(symbols) if symbols else 0.0
+    pre_coverage = len(covered_pre) / len(symbols) if symbols else 0.0
+    outcome.empty = max(0, len(symbols) - len(covered))
+    outcome.details.update({
+        "session_date": session_date.isoformat(), "provider": provider, "feed": feed,
+        "adjustment": adjustment, "universe_symbols": len(symbols),
+        "covered_symbols": len(covered), "covered_pre_symbols": len(covered_pre),
+        "covered_open_symbols": len(covered_open), "symbol_coverage": coverage,
+        "premarket_symbol_coverage": pre_coverage, "open_symbol_coverage": open_coverage,
+        "pages": pages_count, "invalid_rows": invalid_rows,
+        "missing_symbols": sorted(set(symbols) - covered),
+        "window": [window_start, window_end],
+        "availability_contract": "local_collection_time_conservative",
+    })
+    failures: list[str] = []
+    min_coverage = float(cfg.get("min_symbol_coverage", 0.75))
+    min_open_coverage = float(cfg.get("min_open_symbol_coverage", 0.70))
+    if coverage < min_coverage:
+        failures.append(f"couverture globale {coverage:.1%} < {min_coverage:.1%}")
+    if open_coverage < min_open_coverage:
+        failures.append(f"couverture OPEN {open_coverage:.1%} < {min_open_coverage:.1%}")
+    if invalid_rows:
+        outcome.warnings.append(f"{invalid_rows} barre(s) invalides ou hors fenêtre ignorées")
+    if failures:
+        outcome.details["quality_gate_failures"] = failures
+        if bool(cfg.get("fail_on_quality_gate", True)):
+            outcome.failed = len(failures)
             if not dry:
-                _raw(conn, run_id, "oracle_opening_window_sync", "business_quant", "/quotes:minute-bars", ",".join(chunk), payload, status, observed)
-            for symbol, data, meta in _data_blocks(payload):
-                resolved = str(symbol or meta.get("ticker") or "").upper(); ascending = sorted(data, key=lambda x: str(x.get("date")))
-                previous = 0
-                for item in ascending:
-                    local_ts, utc_ts = _market_dt(item.get("date")); cumulative = int(item.get("volume") or 0); minute = max(0, cumulative - previous); previous = cumulative
-                    if not (str(cfg.get("window_start", "04:00")) <= local_ts.strftime("%H:%M") <= str(cfg.get("window_end", "10:30"))): continue
-                    outcome.received += 1
-                    if dry: continue
-                    result = conn.execute(text("""INSERT INTO stock_opening_window_bars
-                        (provider,symbol,bar_timestamp,observed_at,available_at,open,high,low,close,cumulative_volume,minute_volume,session_name,payload_hash,run_id)
-                        VALUES ('business_quant',:symbol,:ts,:observed,:observed,:open,:high,:low,:close,:cum,:minute,:session,:hash,:run)
-                        ON DUPLICATE KEY UPDATE observed_at=VALUES(observed_at),available_at=VALUES(available_at),open=VALUES(open),high=VALUES(high),low=VALUES(low),close=VALUES(close),cumulative_volume=VALUES(cumulative_volume),minute_volume=VALUES(minute_volume),payload_hash=VALUES(payload_hash),run_id=VALUES(run_id)"""), {"symbol": resolved, "ts": utc_ts, "observed": observed, "open": item.get("open"), "high": item.get("high"), "low": item.get("low"), "close": item.get("close"), "cum": cumulative, "minute": minute, "session": "PRE" if local_ts.strftime("%H:%M") < "09:30" else "OPEN", "hash": _hash(item), "run": run_id})
-                    outcome.persisted += max(0, result.rowcount)
-    if not outcome.received: raise RuntimeError("Opening window vide")
+                # ``execute`` marquera ensuite le run FAILED. On conserve ici
+                # le diagnostic détaillé, que son gestionnaire d'exception ne
+                # doit pas faire disparaître.
+                with engine.begin() as conn:
+                    conn.execute(text("""UPDATE pit_collection_runs
+                        SET received_count=:received,persisted_count=:persisted,
+                            empty_count=:empty,failed_count=:failed,
+                            warning_count=:warnings,details_json=:details
+                        WHERE run_id=:run"""), {
+                        "received": outcome.received,
+                        "persisted": outcome.persisted,
+                        "empty": outcome.empty,
+                        "failed": outcome.failed,
+                        "warnings": len(outcome.warnings),
+                        "details": _json(outcome.details | {"warnings": outcome.warnings}),
+                        "run": run_id,
+                    })
+            raise RuntimeError("Qualité opening window insuffisante: " + "; ".join(failures))
+        outcome.warnings.extend(failures)
+    if not outcome.received:
+        raise RuntimeError("Opening window Alpaca vide")
     return outcome
 
 
@@ -1105,6 +1304,8 @@ HANDLERS: dict[str, Callable[[Engine, dict[str, Any], str, bool], Outcome]] = {
     "finra_short_volume_sync": finra_short_volume_sync,
     "business_quant_analyst_snapshot": business_quant_analyst_snapshot,
     "oracle_options_indicative_snapshot": options_snapshot,
+    "options_delayed_bars_sync": options_delayed_bars_sync,
+    "option_contract_adjustment_sync": option_contract_adjustment_sync,
     "oracle_opening_window_sync": opening_window_sync,
     "sec_corporate_events_normalize": normalize_sec_events,
     "sec_institutional_ownership_normalize": normalize_sec_ownership,

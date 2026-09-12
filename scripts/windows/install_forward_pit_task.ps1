@@ -22,7 +22,12 @@ function Get-ConfigValue([object]$Config, [string]$Name, [object]$Default=$null)
     if ($null -ne $property) { return $property.Value }
     return $Default
 }
-if (-not $TaskName) { $TaskName='AlphaTrade-' + (($BatchName -split '_') | ForEach-Object { (Get-Culture).TextInfo.ToTitleCase($_) }) -join '' }
+if (-not $TaskName) {
+    $suffix = ((($BatchName -split '_') | ForEach-Object {
+        (Get-Culture).TextInfo.ToTitleCase($_)
+    }) -join '')
+    $TaskName = 'AlphaTrade-' + $suffix
+}
 $launcher=Join-Path $PSScriptRoot 'forward_pit_launcher.ps1'
 # Un trigger horaire par minute utile; le launcher applique heure/jour/timezone.
 $minutesRaw=[string](Get-ConfigValue $cfg 'run_minutes' '')

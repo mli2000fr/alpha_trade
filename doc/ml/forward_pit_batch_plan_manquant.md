@@ -173,6 +173,8 @@ Pour chaque minute :
 - close ;
 - volume cumulé ;
 - volume propre à la minute ;
+- nombre de transactions ;
+- VWAP minute ;
 - session `PRE` ou `OPEN` ;
 - timestamp d’observation ;
 - timestamp de disponibilité ;
@@ -199,17 +201,24 @@ Pour chaque minute :
 - VWAP approximatif si le fournisseur permet sa reconstruction ;
 - confirmation ou invalidation du signal Oracle de la veille.
 
-## Limites actuelles
+## État actuel
 
-- environ **90 appels Business Quant par passage** avec des lots de 20 ;
-- quota gratuit insuffisant ;
-- pagination et limite de lignes à valider pour éviter une fenêtre tronquée ;
-- il s’agit de barres OHLCV, pas de trades et quotes complets ;
-- `fallback_window_start` est configuré mais n’est pas encore réellement exploité par le handler.
+Le blocage Business Quant est levé. Le batch utilise Alpaca SIP historique
+gratuit, en lots multi-symboles avec pagination exhaustive. Il tourne à 10:50
+et 18:15 New York sur l'univers tradable stable complet. Le premier passage
+attend volontairement plus de 15 minutes après 10:30.
+
+Il s'agit de barres agrégées, et non de trades et quotes bruts. Le dataset est
+donc adapté aux features minute de prix, volume, trade count et VWAP, mais pas à
+une analyse complète du spread ou de la profondeur du carnet.
+
+Le contrat complet, les contrôles qualité et la sémantique PIT sont décrits
+dans [`oracle_opening_window_alpaca.md`](oracle_opening_window_alpaca.md).
 
 ## Table
 
-`stock_opening_window_bars`
+- `stock_opening_window_bars` : vue canonique de lecture ;
+- `stock_opening_window_bar_versions` : corrections append-only.
 
 ## Utilité ML potentielle
 

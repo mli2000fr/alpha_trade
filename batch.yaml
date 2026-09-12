@@ -202,29 +202,75 @@ oracle_options_indicative_snapshot:
   max_failure_ratio: 0.05
   log_file: log/batch/oracle_options_indicative_snapshot.txt
 
+options_delayed_bars_sync:
+  priority: P2
+  description: "Collecter gratuitement les barres historiques retardées des options sur une surface ATM déterministe et indépendante de l'Oracle courant."
+  tables: "pit_collection_runs,pit_raw_payloads,stock_option_contract_versions,stock_option_bars_delayed"
+  enabled: true
+  status: ACTIVE_RESEARCH_ONLY
+  provider: alpaca
+  research_notice: "La provenance n'est pas attestée dans le payload historique Alpaca : les lignes sont marquées UNVERIFIED_OPRA. Elles servent uniquement à la recherche, jamais à simuler un NBBO ou un prix d'exécution live. Historique disponible depuis février 2024."
+  timezone: America/New_York
+  run_hours: "17,23"
+  run_minutes: "0"
+  run_days: "1,2,3,4,5"
+  symbols_file: config/univers_batch/univers_filtred_tradable.txt
+  target_dtes: "5,10,20"
+  dte_tolerance_days: 5
+  timeframe: 30Min
+  minimum_delay_minutes: 16
+  stock_snapshot_batch_size: 100
+  contract_batch_size: 100
+  max_contract_pages: 5
+  max_bar_pages: 20
+  min_underlying_coverage: 0.20
+  fail_on_quality_gate: false
+  request_interval_seconds: 0.0
+  use_system_trust_store: true
+  log_file: log/batch/options_delayed_bars_sync.txt
+
+option_contract_adjustment_sync:
+  priority: P2
+  description: "Conserver prospectivement les avis officiels OCC de Contract Adjustment et leur date de disponibilité, sans prétendre disposer automatiquement du détail complet du deliverable."
+  tables: "pit_collection_runs,pit_raw_payloads,option_contract_adjustments,stock_option_contract_versions"
+  enabled: true
+  status: ACTIVE_RESEARCH_ONLY
+  provider: occ
+  research_notice: "Le RSS OCC fournit numéro, publication, catégorie, résumé et lien. Le détail des mémos est protégé par Cloudflare ; multiplier, cash component et deliverable détaillé restent inconnus tant qu'ils ne sont pas observés dans le catalogue de contrats Alpaca versionné."
+  timezone: Europe/Paris
+  run_hours: "7,19"
+  run_minutes: "15"
+  run_days: "1,2,3,4,5,6"
+  universe_scope: market_wide_options_adjustments
+  rss_url: "https://infomemo.theocc.com/infomemo-rss"
+  use_system_trust_store: true
+  log_file: log/batch/option_contract_adjustment_sync.txt
+
 oracle_opening_window_sync:
   priority: P3
-  description: "Conserver la microstructure de prémarché et d'ouverture sur l'univers tradable stable afin de permettre des recherches et backtests indépendants du modèle courant."
-  tables: "pit_collection_runs,pit_raw_payloads,stock_opening_window_bars"
-  enabled: false
-  status: PENDING_FULL_UNIVERSE_CAPACITY
-  activation_requirement: "Valider une capacité intraday couvrant l'univers tradable complet. Avec 1 798 symboles et des lots de 20, un passage représente environ 90 appels Business Quant, au-delà du quota courant."
-  unlock_steps:
-    - "Obtenir un quota Business Quant couvrant au moins 90 appels par passage, plus les autres collectes Business Quant."
-    - "Vérifier la pagination et la limite de lignes afin que les barres minute des lots de 20 ne soient jamais tronquées."
-    - "Tester séparément prémarché, ouverture, jours sans données et corrections fournisseur."
-    - "Mesurer la couverture des 1 798 symboles et la croissance quotidienne du stockage minute."
-    - "Passer enabled à true et le statut à ACTIVE_RESEARCH_ONLY uniquement après franchissement des contrôles."
-  provider: business_quant
-  api_key_env: BUSINESS_QUANT_API_KEY
+  description: "Collecter en SIP consolidé les barres minute du prémarché et de l'ouverture sur tout l'univers tradable stable, pour recherche directionnelle et politiques d'entrée retardée."
+  tables: "pit_collection_runs,pit_raw_payloads,stock_opening_window_bars,stock_opening_window_bar_versions"
+  enabled: true
+  status: ACTIVE_RESEARCH_ONLY
+  research_notice: "Alpaca SIP historique gratuit, disponible avec retard. Ce batch alimente la recherche et une éventuelle entrée retardée; il ne fournit pas une confirmation SIP temps réel à 09:30."
+  provider: alpaca
+  feed: sip
+  adjustment: raw
   timezone: America/New_York
-  run_hours: "10,23"
-  run_minutes: "31"
+  run_hours: "10,18"
+  run_minutes: "50,15"
   run_days: "1,2,3,4,5"
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   window_start: "04:00"
   window_end: "10:30"
-  fallback_window_start: "09:30"
+  minimum_sip_delay_minutes: 16
+  symbol_batch_size: 100
+  max_pages_per_batch: 20
+  request_interval_seconds: 0.0
+  min_symbol_coverage: 0.75
+  min_open_symbol_coverage: 0.70
+  fail_on_quality_gate: true
+  use_system_trust_store: true
   log_file: log/batch/oracle_opening_window_sync.txt
 
 sec_corporate_events_normalize:
@@ -284,13 +330,16 @@ finra_short_volume_sync:
 
 auction_imbalance_sync:
   priority: P3
-  description: "Contrat réservé aux déséquilibres d'enchère d'ouverture/fermeture ; aucun fournisseur PIT n'est actuellement validé."
+  description: "Contrat réservé aux messages officiels de déséquilibre avant enchère d'ouverture/fermeture. Nasdaq NOII et NYSE live sont payants ; l'interface Web NYSE gratuite est seulement post-auction et réservée à un POC non planifié."
   tables: ""
   enabled: false
-  status: PENDING_PROVIDER
-  activation_requirement: "Choisir une source PIT Nasdaq/NYSE couvrant les déséquilibres d'enchère, puis implémenter et valider le collecteur et sa table avant activation."
+  status: BLOCKED_NO_FREE_OFFICIAL_FEED
+  provider: "Aucun flux officiel gratuit validé"
+  research_notice: "Nasdaq NOII est accessible par abonnement uniquement. Les flux NYSE Order Imbalances live et historiques TAQ complets sont commerciaux. L'interface Web NYSE gratuite expose après l'enchère environ trois mois d'historique agrégé par minute ; elle ne fournit ni API publique documentée, ni couverture Nasdaq, ni signal disponible en production avant le fixing. Le POC séparé nyse_auction_history_poc écrit uniquement des artefacts de recherche locaux, sans table, sans planification et sans serving."
+  activation_requirement: "Obtenir un flux officiel Nasdaq/NYSE autorisant réception pré-auction, stockage historique et usage automatisé ; le site Web NYSE post-auction ne suffit pas à activer ce batch."
   unlock_steps:
-    - "Choisir une source NOII/imbalance Nasdaq et/ou NYSE avec droits de stockage historique."
+    - "Souscrire ou valider un flux officiel couvrant Nasdaq NOII et/ou NYSE Order Imbalances avec droits de stockage historique."
+    - "Vérifier la couverture des places : une source NYSE seule ne couvre pas les titres Nasdaq."
     - "Définir les champs, timestamps, séquences de mises à jour et règles available_at du contrat PIT."
     - "Créer la table SQL, la migration Alembic, le handler fournisseur et les contrôles de couverture."
     - "Valider un smoke puis l'univers complet avant de passer enabled à true et le statut à ACTIVE_RESEARCH_ONLY."
@@ -299,13 +348,16 @@ auction_imbalance_sync:
 
 securities_lending_sync:
   priority: P1
-  description: "Contrat réservé aux borrow fees, utilization, lendable supply et shares on loan ; fournisseur encore manquant."
+  description: "Contrat réservé aux borrow fees, utilization, lendable supply et shares on loan. Aucune source gratuite, automatisable et suffisamment complète n'est actuellement validée."
   tables: ""
   enabled: false
   status: PENDING_PROVIDER
-  activation_requirement: "Choisir une source PIT de prêt de titres couvrant borrow fee, utilization, lendable supply et shares on loan, puis implémenter le collecteur et sa table."
+  provider: "Aucun fournisseur validé"
+  research_notice: "Sources essayées : IBKR TWS/API (compte et KYC requis, piste abandonnée), IBKR Public Shortstock FTP (accès non reproductible) et Eulerpool (routes lending annoncées mais absentes de l'API actuelle). Sources évaluées mais insuffisantes ou non gratuites : Alpaca, Tradier, iBorrowDesk, ChartExchange, MyAllies, ORTEX, Orbisa et S3 Partners. Conclusion : aucune source gratuite validée à ce jour pour collecter automatiquement borrow fee, shares available, utilization, lendable supply et shares on loan."
+  activation_requirement: "Ne pas activer tant qu'une source PIT gratuite ou financée, documentée, automatisable et autorisant l'historisation n'a pas été validée sur un smoke réel."
   unlock_steps:
-    - "Choisir un fournisseur autorisant l'historisation de borrow fee, utilization, lendable supply et shares on loan."
+    - "Obtenir une route officielle et fonctionnelle couvrant au minimum borrow fee et shares available ; utilization, lendable supply et shares on loan restent souhaités."
+    - "Vérifier le coût, les droits d'historisation, l'absence de KYC imposé si cette contrainte demeure et la couverture de l'univers complet."
     - "Définir fréquence, timestamps fournisseur, corrections, symbologie et contrat available_at."
     - "Créer la table SQL, la migration Alembic, le connecteur et les contrôles de fraîcheur/couverture."
     - "Comparer un smoke au statut Alpaca existant, puis activer seulement après validation de l'univers complet."
@@ -317,7 +369,8 @@ official_options_nbbo_sync:
   description: "Contrat réservé aux options officielles NBBO/OPRA avec corrections ; le pilote Alpaca disponible reste seulement indicatif."
   tables: ""
   enabled: false
-  status: PENDING_PROVIDER
+  status: BLOCKED_FREE_NO_NBBO_SOURCE
+  research_notice: "Besoin partiellement couvert par deux batchs actifs séparés : options_delayed_bars_sync collecte les barres OHLC, volumes, nombres de transactions et VWAP retardés Alpaca avec provenance UNVERIFIED_OPRA ; option_contract_adjustment_sync collecte prospectivement les avis d'ajustement OCC. Ces deux collectes utilisent les notifications email et Telegram communes. Elles ne fournissent ni bid/ask NBBO historique, ni tailles bid/ask, ni spread NBBO, ni provenance OPRA officiellement attestée. Le POC des transactions brutes est concluant pour la recherche seulement, mais aucun batch options_delayed_trades_sync n'est encore activé. official_options_nbbo_sync reste donc volontairement désactivé jusqu'à validation d'une source officielle."
   activation_requirement: "Choisir une source officielle OPRA/NBBO avec corrections et droits d'usage, puis implémenter le collecteur, les ajustements OCC et la persistance PIT."
   unlock_steps:
     - "Choisir une source OPRA/NBBO et vérifier les droits de téléchargement, stockage et réutilisation en backtest."

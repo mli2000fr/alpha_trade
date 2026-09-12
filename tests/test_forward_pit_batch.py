@@ -8,6 +8,7 @@ import pytest
 from service.forward_pit.batch import (
     HANDLERS,
     PENDING_BATCHES,
+    _alpaca_opening_row,
     _assets_in_universe,
     _collection_symbols,
     _configure_alpaca_session,
@@ -37,6 +38,7 @@ def test_all_enabled_forward_batches_have_handlers() -> None:
         "oracle_opening_window_sync", "sec_corporate_events_normalize",
         "sec_institutional_ownership_normalize", "fred_alfred_vintage_sync",
         "finra_short_volume_sync",
+        "options_delayed_bars_sync", "option_contract_adjustment_sync",
     }
     assert expected == set(HANDLERS)
     assert PENDING_BATCHES == {
@@ -114,17 +116,24 @@ def test_forward_pit_sql_reference_and_migration_cover_all_tables() -> None:
         "security_master_snapshots", "security_master_changes",
         "corporate_action_source_events", "sec_filing_raw",
         "stock_borrow_status_snapshots", "stock_analyst_consensus_snapshots",
-        "stock_option_snapshots", "stock_opening_window_bars", "sec_corporate_events",
+        "stock_option_snapshots", "stock_opening_window_bars",
+        "stock_opening_window_bar_versions", "sec_corporate_events",
         "sec_ownership_snapshots", "macro_vintage_observations",
         "pit_data_quality_metrics", "pit_data_quality_issues",
         "stock_short_volume_daily",
+        "stock_option_contract_versions", "stock_option_bars_delayed",
+        "option_contract_adjustments",
     }
     assert {name for name in expected if f"alpha_trade.{name}" in ddl} == expected
     migration = (ROOT / "alembic/versions/0075_forward_pit_collection_foundation.py").read_text(encoding="utf-8")
     assert 'down_revision: str | None = "0074_fundamental_pit_contract"' in migration
     finra_migration = (ROOT / "alembic/versions/0076_finra_short_volume_daily.py").read_text(encoding="utf-8")
     assert 'down_revision: str | None = "0075_forward_pit_collection"' in finra_migration
+    opening_migration = (ROOT / "alembic/versions/0078_alpaca_opening_window_pit.py").read_text(encoding="utf-8")
+    assert 'down_revision: str | None = "0077_yahoo_analyst_trends"' in opening_migration
 
+    options_migration = (ROOT / "alembic/versions/0079_delayed_options_and_occ_adjustments.py").read_text(encoding="utf-8")
+    assert 'down_revision: str | None = "0078_alpaca_opening_window_pit"' in options_migration
 
 def test_launcher_invokes_service_layer() -> None:
     launcher = (ROOT / "scripts/windows/forward_pit_launcher.ps1").read_text(encoding="utf-8")
@@ -255,3 +264,32 @@ def test_alpaca_system_trust_adapter_is_only_mounted_when_requested(monkeypatch)
     assert session.mounts == []
     _configure_alpaca_session(session, use_system_trust_store=True)  # type: ignore[arg-type]
     assert session.mounts[0][0] == "https://"
+
+
+def test_alpaca_opening_bar_maps_minute_volume_trade_count_vwap_and_session() -> None:
+    observed = datetime(2026, 9, 11, 14, 50)
+    row = _alpaca_opening_row(
+        "AAPL",
+        {"t": "2026-09-11T13:31:00Z", "o": 100, "h": 102, "l": 99,
+         "c": 101, "v": 1234, "n": 87, "vw": 100.8},
+        observed=observed, cumulative_volume=4321, run_id="run",
+        feed="sip", adjustment="raw",
+    )
+    assert row["minute"] == 1234
+    assert row["cum"] == 4321
+    assert row["trade_count"] == 87
+    assert row["vwap"] == 100.8
+    assert row["session"] == "OPEN"
+    assert row["available"] == observed
+    assert row["provider"] == "alpaca"
+
+
+def test_alpaca_opening_bar_classifies_premarket_in_new_york() -> None:
+    row = _alpaca_opening_row(
+        "AAPL",
+        {"t": "2026-09-11T08:15:00Z", "o": 100, "h": 100, "l": 100,
+         "c": 100, "v": 1, "n": 1, "vw": 100},
+        observed=datetime(2026, 9, 11, 14, 50), cumulative_volume=1,
+        run_id="run", feed="sip", adjustment="raw",
+    )
+    assert row["session"] == "PRE"

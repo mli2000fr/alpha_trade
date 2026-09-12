@@ -53,11 +53,14 @@ Market cap passe par le point d'entrée générique `modelFactory.fundamental_fe
 ## P2 — Options
 
 1. oracle_options_indicative_snapshot : malgré son nom historique, Alpaca Basic indicative actif sur tout `config/univers_batch/univers_filtred_tradable.txt`, à 16:20 et 19:00 ET. Aucun TOP20 ne réduit l'univers actions. Le volume est maîtrisé au niveau des contrats : requête strikes 80–120 % du spot, échéances disponibles les plus proches de DTE 5/10/20, puis un contrat par côté/échéance au plus près de chaque cible 0,85/0,90/0,95/1,00/1,05/1,10/1,15, avec quote bilatérale et filtre de spread/open interest. Les pages RAW restent intégrales ; la table normalisée reçoit contrat, expiration, strike, call/put, quote, trade, tailles, IV, Greeks, open interest et timestamps. Le volume journalier n'est pas disponible dans le snapshot bulk gratuit. Marquer systématiquement `indicative`, jamais OPRA/NBBO.
-2. official_options_nbbo_sync : interface désactivée en attente d'un fournisseur ; prévoir NBBO, trades, OI, volume, IV, Greeks, corrections et ajustements OCC.
+2. options_delayed_bars_sync : actif sur l'univers tradable complet ; sélection reproductible CALL/PUT ATM aux DTE 5/10/20, barres Alpaca retardées, catalogue de contrats versionné et preuves RAW. La provenance historique n'étant pas attestée dans le payload, toutes les lignes restent `UNVERIFIED_OPRA` et recherche uniquement.
+3. option_contract_adjustment_sync : RSS OCC market-wide, prospectif. Conserve numéro, publication, catégorie, résumé et lien ; le détail inaccessible n'est jamais imputé.
+4. official_options_nbbo_sync : bloqué tant qu'aucune source officielle NBBO gratuite ou financée n'est validée. Les deux collectes précédentes ne le remplacent pas.
+5. Contrat complet, limites et POC trades-versus-bars : [`options_delayed_alpaca_occ.md`](options_delayed_alpaca_occ.md).
 
 ## P3 — Entrée et événements
 
-1. oracle_opening_window_sync : malgré son nom historique, pilote minute sur tout `config/univers_batch/univers_filtred_tradable.txt`, 04:00-10:30 ET si le prémarché existe. Cela définit une entrée retardée, différente du next-open. Avec 1 798 symboles et des lots de 20, un passage représente environ 90 appels ; le batch reste désactivé tant que ce volume n’est pas compatible avec le fournisseur.
+1. oracle_opening_window_sync : Alpaca SIP historique 1 minute actif sur tout `config/univers_batch/univers_filtred_tradable.txt`, 04:00-10:30 ET. Deux passages à 10:50 et 18:15 New York alimentent une table canonique et des versions PIT append-only. Cela définit une entrée retardée, différente du next-open ; voir [`oracle_opening_window_alpaca.md`](oracle_opening_window_alpaca.md).
 2. sec_corporate_events_normalize : sans nouveau téléchargement, extraire du RAW EDGAR les 8-K/6-K, item codes, exhibits, texte, montants et amendements.
 3. earnings_calendar existant : conserver. Ajouter une table append-only distincte si l'on veut étudier les révisions de calendrier.
 
