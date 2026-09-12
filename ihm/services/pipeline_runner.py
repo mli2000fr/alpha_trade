@@ -937,7 +937,7 @@ PIPELINE_AUXILIARY_STEPS: tuple[PipelineStepDefinition, ...] = (
         desc="Collecte prospective PIT d'analyst data Yahoo (EPS/revenue estimates, price targets, "
              "recommendations) dans les tables append-only `stock_analyst_*_history`. "
              "RESEARCH ONLY — aucune intégration PROD (ni Global Rank, ni Oracle, ni cascade, ni live). "
-             "Univers figé ~400 symboles (`config.yaml` → `analyst_snapshot_collection.symbols_file`), "
+             "Univers configuré (`batch.yaml` → `analyst_snapshot_collection.symbols_file`), "
              "explicite et jamais recalculé. Aucun stockage fichier : MySQL = source de vérité "
              "(`raw_payload_json` + `raw_hash` conservés). Idempotent : relancer ne crée aucun doublon. "
              "Contrat PIT : `available_at` = prochaine séance après observation.",

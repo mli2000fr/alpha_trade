@@ -1,15 +1,15 @@
-﻿# analyst_snapshot_launcher.ps1
+# analyst_snapshot_launcher.ps1
 #
 # Collecte prospective Yahoo analyst (RESEARCH ONLY) :
 #   python -u scripts/collect_yahoo_analyst_snapshots.py --universe analyst_research --write-db --resume
 # et journalise une ligne de statut (START / OK / ERROR) dans
 #   log/batch/analyst_snapshots.txt
-# (chemin piloté par config.yaml → analyst_snapshot_collection.log_file).
+# (chemin piloté par batch.yaml → analyst_snapshot_collection.log_file).
 #
 # Point d'entrée utilisé par la tâche planifiée Windows
 # « AlphaTrade-AnalystSnapshot » (install_analyst_snapshot_task.ps1),
 # qui déclenche ce launcher automatiquement aux heures de
-# config.yaml → analyst_snapshot_collection.run_hours ("18" = 18h America/New_York,
+# batch.yaml → analyst_snapshot_collection.run_hours ("18" = 18h America/New_York,
 # après clôture US ; "3,14" = 3h et 14h).
 #
 # Usage manuel :
@@ -73,7 +73,7 @@ function Read-AnalystSnapshotConfig {
         [Parameter(Mandatory = $true)]
         [string]$PythonExe
     )
-    $configPath = Join-Path $Workspace 'config.yaml'
+    $configPath = Join-Path $Workspace 'batch.yaml'
     if (-not (Test-Path -LiteralPath $configPath)) {
         return $null
     }
@@ -176,7 +176,7 @@ if ($resolvedEnvFile) {
     Import-AlphaTradeEnvFile -Path $resolvedEnvFile
 }
 
-# ── Configuration depuis config.yaml (log_file, symbols_file) ──
+# ── Configuration depuis batch.yaml (log_file, symbols_file) ──
 $cfg = Read-AnalystSnapshotConfig -Workspace $resolvedWorkspace -PythonExe $resolvedPython
 if (-not $LogFile -and $cfg -and ($cfg.PSObject.Properties.Name -contains 'log_file') -and $cfg.log_file) {
     $cfgLogFile = [string]$cfg.log_file
@@ -189,7 +189,7 @@ if (-not $LogFile -and $cfg -and ($cfg.PSObject.Properties.Name -contains 'log_f
         if ($cfgLogDir -and -not (Test-Path -LiteralPath $cfgLogDir)) {
             New-Item -ItemType Directory -Path $cfgLogDir -Force | Out-Null
         }
-        Write-StatusLine ("[{0}] NOTE   log_file = config.yaml → {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $effectiveLogFile)
+        Write-StatusLine ("[{0}] NOTE   log_file = batch.yaml → {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $effectiveLogFile)
     }
 }
 
@@ -212,7 +212,7 @@ if (-not $collectionEnabled) {
     exit 0
 }
 
-# ── Univers : symbols_file (config.yaml) — warning si absent OU introuvable ──
+# ── Univers : symbols_file (batch.yaml) — warning si absent OU introuvable ──
 #    Le collecteur lit lui-même analyst_snapshot_collection.symbols_file
 #    (fichier 2255, même fichier qu'earnings_calendar_sync) ; sinon repli
 #    univers active-tradable (~13 600). On avertit ici pour que le warning
@@ -223,7 +223,7 @@ if ($cfg -and ($cfg.PSObject.Properties.Name -contains 'symbols_file') -and $cfg
     $symbolsFileValue = [string]$cfg.symbols_file
 }
 if (-not $symbolsFileValue) {
-    $warnMsg = "analyst_snapshot_collection.symbols_file non renseigné (config.yaml) — repli univers active-tradable (~13 600)"
+    $warnMsg = "analyst_snapshot_collection.symbols_file non renseigné (batch.yaml) — repli univers active-tradable (~13 600)"
     $batchWarnings += $warnMsg
     Write-StatusLine ("[{0}] WARNING univers — {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $warnMsg)
 } else {
@@ -240,7 +240,7 @@ if (-not $symbolsFileValue) {
     }
 }
 
-# Commande de collecte (mêmes arguments que la doc config.yaml).
+# Commande de collecte (mêmes arguments que la doc batch.yaml).
 $collectScriptPath = Join-Path $resolvedWorkspace 'scripts\collect_yahoo_analyst_snapshots.py'
 $commandArgs = @(
     '-u',

@@ -1,0 +1,38 @@
+# Configuration des batchs planifiés Alpha-Trade.
+#
+# Ce fichier sépare les paramètres d'exploitation des traitements récurrents
+# de la configuration fonctionnelle générale conservée dans config.yaml.
+# Les chemins relatifs sont résolus depuis la racine du projet.
+
+# Collecte des snapshots de capitalisation Yahoo puis Finnhub.
+# Les deux fournisseurs sont persistés séparément ; la politique market_cap
+# de config.yaml choisit ensuite Yahoo en priorité et Finnhub en fallback.
+# run_days suit DayOfWeek : 0=dimanche, 1=lundi, ... 6=samedi.
+market_cap_sync:
+  run_hours: "11,23"
+  run_days: "1,4"
+  symbols_file: config/univers_batch/univers_filtred_tradable.txt
+  providers: "yahoo_finance,finnhub"
+  log_file: log/batch/market_cap_sync.txt
+
+# Synchronisation du calendrier earnings Finnhub.
+# symbols_file est partagé avec analyst_snapshot_collection.
+earnings_calendar_sync:
+  run_hours: "12,23"
+  run_days: "0,3,5"
+  symbols_file: config/univers_batch/univers_filtred_tradable.txt
+  log_file: log/batch/earnings_calendar.txt
+
+# Collecte prospective Yahoo analyst (RESEARCH ONLY).
+# Historique PIT append-only dans MySQL : consensus EPS/revenue, objectifs de
+# cours et recommandations. Aucun stockage fichier des réponses métier.
+analyst_snapshot_collection:
+  enabled: true
+  provider: yahoo
+  universe_name: analyst_research
+  symbols_file: config/univers_batch/univers_filtred_tradable.txt
+  sleep_seconds: 0.25
+  timeout_seconds: 20
+  max_retries: 2
+  run_hours: "9,23"
+  log_file: log/batch/analyst_snapshots.txt

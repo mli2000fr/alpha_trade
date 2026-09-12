@@ -50,7 +50,7 @@ lignes Finnhub déjà persistées.
 
 Le batch `AlphaTrade-MarketCapSync` exécute ces deux collectes les lundis et
 jeudis à 11 h et 23 h, heure locale de la machine. Son contrat se trouve sous
-`market_cap_sync` dans `config.yaml`. Le fichier de statut est
+`market_cap_sync` dans `batch.yaml`. Le fichier de statut est
 `log/batch/market_cap_sync.txt` et le détail Python reste dans
 `log/fundamental_features.log`.
 

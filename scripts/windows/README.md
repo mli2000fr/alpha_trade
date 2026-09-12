@@ -155,7 +155,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\windows\install_protection_wa
 
 La tâche planifiée **`AlphaTrade-EarningsCalendarSync`** exécute automatiquement
 (« tout seul », sans lancement manuel) la synchronisation du calendrier earnings
-aux **heures de la journée** définies dans `config.yaml` → `earnings_calendar_sync.run_hours`.
+aux **heures de la journée** définies dans `batch.yaml` → `earnings_calendar_sync.run_hours`.
 
 ### Scripts
 
@@ -163,12 +163,12 @@ aux **heures de la journée** définies dans `config.yaml` → `earnings_calenda
   `python -u -m dataIntegrityEngine.sync_earnings_calendar --sleep-seconds 1.1 --log-every 25 --batch-size 50 --symbols-file <symbols_file> --resume`
   (ou `--symbol-source active-tradable` si `symbols_file` est absent) et ajoute
   une ligne de statut (`START` / `OK` / `ERROR` / `SKIP`) dans
-  `log/batch/earnings_calendar.txt` (chemin piloté par `config.yaml` →
+  `log/batch/earnings_calendar.txt` (chemin piloté par `batch.yaml` →
   `earnings_calendar_sync.log_file`). `SKIP` = jour hors `run_days`, rien n’est lancé.
 - `install_earnings_calendar_task.ps1` : installe la tâche planifiée Windows.
 - `uninstall_earnings_calendar_task.ps1` : supprime la tâche.
 
-### Configurer les jours et heures (`config.yaml`)
+### Configurer les jours et heures (`batch.yaml`)
 
 ```yaml
 earnings_calendar_sync:
@@ -252,7 +252,7 @@ Configuration :
 market_cap_sync:
   run_hours: "11,23"
   run_days: "1,4"  # lundi et jeudi ; 0=dimanche
-  symbols_file: config/univers/univers_filtred_equities.txt
+  symbols_file: config/univers_batch/univers_filtred_tradable.txt
   providers: "yahoo_finance,finnhub"
   log_file: log/batch/market_cap_sync.txt
 ```
@@ -301,19 +301,19 @@ compte système.
 La tâche planifiée **`AlphaTrade-AnalystSnapshot`** exécute automatiquement la
 collecte prospective d’analyst data Yahoo (estimates EPS/revenue, price targets,
 recommendations) — **RESEARCH ONLY**, append-only PIT dans MySQL — aux heures
-définies dans `config.yaml` → `analyst_snapshot_collection.run_hours`.
+définies dans `batch.yaml` → `analyst_snapshot_collection.run_hours`.
 
 ### Scripts
 
 - `analyst_snapshot_launcher.ps1` : lanceur commun — exécute
   `python -u scripts/collect_yahoo_analyst_snapshots.py --universe analyst_research --write-db --resume`
   et ajoute une ligne de statut (`START` / `OK` / `ERROR`) dans
-  `log/batch/analyst_snapshots.txt` (chemin piloté par `config.yaml` → `analyst_snapshot_collection.log_file`).
+  `log/batch/analyst_snapshots.txt` (chemin piloté par `batch.yaml` → `analyst_snapshot_collection.log_file`).
   Le `--resume` rend le run idempotent (les symboles déjà collectés le jour même sont sautés).
 - `install_analyst_snapshot_task.ps1` : installe la tâche planifiée Windows.
 - `uninstall_analyst_snapshot_task.ps1` : supprime la tâche.
 
-### Configurer l’univers et les heures (`config.yaml`)
+### Configurer l’univers et les heures (`batch.yaml`)
 
 ```yaml
 analyst_snapshot_collection:

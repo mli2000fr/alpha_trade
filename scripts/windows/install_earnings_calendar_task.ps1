@@ -1,8 +1,8 @@
-﻿# install_earnings_calendar_task.ps1
+# install_earnings_calendar_task.ps1
 #
 # Installe la tâche planifiée Windows « AlphaTrade-EarningsCalendarSync » qui
 # exécute earnings_calendar_launcher.ps1 AUTOMATIQUEMENT (sans lancement
-# manuel) aux heures définies dans config.yaml → earnings_calendar_sync.run_hours :
+# manuel) aux heures définies dans batch.yaml → earnings_calendar_sync.run_hours :
 #   - run_hours: "3"    → à 03h00
 #   - run_hours: "4,9"  → à 04h00 et 09h00
 # run_days (0=dimanche … 6=samedi) OPTIONNEL :
@@ -82,7 +82,7 @@ function Read-EarningsCalendarConfig {
         [Parameter(Mandatory = $true)]
         [string]$PythonExe
     )
-    $configPath = Join-Path $Workspace 'config.yaml'
+    $configPath = Join-Path $Workspace 'batch.yaml'
     if (-not (Test-Path -LiteralPath $configPath)) {
         return $null
     }
@@ -110,7 +110,7 @@ if (-not (Test-Path -LiteralPath $launcherPath)) {
     throw "Launcher PowerShell introuvable: $launcherPath"
 }
 
-# ── Lecture config.yaml (run_hours + log_file) via l'interpréteur Python ──
+# ── Lecture batch.yaml (run_hours + log_file) via l'interpréteur Python ──
 $resolvedPython = Resolve-AlphaTradePythonExe -Workspace $resolvedWorkspace -RequestedPythonExePath $PythonExePath
 $cfg = Read-EarningsCalendarConfig -Workspace $resolvedWorkspace -PythonExe $resolvedPython
 

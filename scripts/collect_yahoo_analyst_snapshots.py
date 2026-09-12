@@ -40,7 +40,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 from analyst_research.available_at import snapshot_date_of
 from analyst_research.collector import run_collection
 from analyst_research.universe import resolve_universe
-from common.config_loader import load_config
+from common.config_loader import load_batch_config
 from database.repositories.analyst_snapshots import AnalystSnapshotRepository
 
 
@@ -84,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--log-file", default=None)
     args = parser.parse_args(argv)
 
-    cfg = (load_config().get("analyst_snapshot_collection") or {})
+    cfg = (load_batch_config().get("analyst_snapshot_collection") or {})
     _setup_logging(args.log_file or cfg.get("log_file"))
 
     resolution = resolve_universe(args.universe, args.symbols)

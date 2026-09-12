@@ -10,7 +10,7 @@ WINDOWS = ROOT / "scripts" / "windows"
 
 
 def test_market_cap_sync_config_contract() -> None:
-    config = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
+    config = yaml.safe_load((ROOT / "batch.yaml").read_text(encoding="utf-8"))
     sync = config["market_cap_sync"]
     assert sync == {
         "run_hours": "11,23",
@@ -35,6 +35,8 @@ def test_market_cap_sync_scripts_exist_and_are_hardened() -> None:
 
 def test_market_cap_launcher_runs_both_sources_and_is_fail_closed() -> None:
     content = (WINDOWS / "market_cap_sync_launcher.ps1").read_text(encoding="utf-8")
+    assert "batch.yaml" in content
+    assert "config.yaml" not in content
     assert "modelFactory.fundamental_features" in content
     assert "yahoo_finance,finnhub" in content
     assert "symbols_file est obligatoire" in content
@@ -57,6 +59,8 @@ def test_market_cap_launcher_runs_both_sources_and_is_fail_closed() -> None:
 
 def test_market_cap_installer_uses_weekly_config_and_ignores_overlap() -> None:
     content = (WINDOWS / "install_market_cap_sync_task.ps1").read_text(encoding="utf-8")
+    assert "batch.yaml" in content
+    assert "config.yaml" not in content
     assert "New-ScheduledTaskTrigger -Weekly" in content
     assert "MultipleInstances IgnoreNew" in content
     assert "AlphaTrade-MarketCapSync" in content

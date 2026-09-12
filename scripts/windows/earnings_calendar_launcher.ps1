@@ -1,14 +1,14 @@
-﻿# earnings_calendar_launcher.ps1
+# earnings_calendar_launcher.ps1
 #
 # Synchronise le calendrier earnings (dataIntegrityEngine.sync_earnings_calendar)
 # et journalise une ligne de statut (START / OK / ERROR) dans
 #   log/batch/earnings_calendar.txt
-# (chemin piloté par config.yaml → earnings_calendar_sync.log_file).
+# (chemin piloté par batch.yaml → earnings_calendar_sync.log_file).
 #
 # Point d'entrée utilisé par la tâche planifiée Windows
 # « AlphaTrade-EarningsCalendarSync » (install_earnings_calendar_task.ps1),
 # qui déclenche ce launcher automatiquement aux heures de
-# config.yaml → earnings_calendar_sync.run_hours ("3" = 3h du matin, "4,9" = 4h et 9h)
+# batch.yaml → earnings_calendar_sync.run_hours ("3" = 3h du matin, "4,9" = 4h et 9h)
 # et aux jours de earnings_calendar_sync.run_days (0=dimanche … 6=samedi ;
 # hors run_days → ligne SKIP, aucun lancement). L'univers est piloté par
 # earnings_calendar_sync.symbols_file (même fichier que analyst_snapshot_collect),
@@ -75,7 +75,7 @@ function Read-EarningsCalendarConfig {
         [Parameter(Mandatory = $true)]
         [string]$PythonExe
     )
-    $configPath = Join-Path $Workspace 'config.yaml'
+    $configPath = Join-Path $Workspace 'batch.yaml'
     if (-not (Test-Path -LiteralPath $configPath)) {
         return $null
     }
@@ -178,7 +178,7 @@ if ($resolvedEnvFile) {
     Import-AlphaTradeEnvFile -Path $resolvedEnvFile
 }
 
-# ── Configuration depuis config.yaml (log_file, run_days, symbols_file) ──
+# ── Configuration depuis batch.yaml (log_file, run_days, symbols_file) ──
 $cfg = Read-EarningsCalendarConfig -Workspace $resolvedWorkspace -PythonExe $resolvedPython
 if (-not $LogFile -and $cfg -and ($cfg.PSObject.Properties.Name -contains 'log_file') -and $cfg.log_file) {
     $cfgLogFile = [string]$cfg.log_file
@@ -191,13 +191,13 @@ if (-not $LogFile -and $cfg -and ($cfg.PSObject.Properties.Name -contains 'log_f
         if ($cfgLogDir -and -not (Test-Path -LiteralPath $cfgLogDir)) {
             New-Item -ItemType Directory -Path $cfgLogDir -Force | Out-Null
         }
-        Write-StatusLine ("[{0}] NOTE   log_file = config.yaml → {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $effectiveLogFile)
+        Write-StatusLine ("[{0}] NOTE   log_file = batch.yaml → {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $effectiveLogFile)
     }
 }
 
 # ── run_days : ne lancer que certains jours de la semaine ────────────────
 #    0=dimanche, 1=lundi, … 6=samedi (convention [DayOfWeek]).
-#    run_days absent/vide dans config.yaml → tous les jours (comportement historique).
+#    run_days absent/vide dans batch.yaml → tous les jours (comportement historique).
 $runDaysValue = ''
 if ($cfg -and ($cfg.PSObject.Properties.Name -contains 'run_days')) {
     $runDaysValue = [string]$cfg.run_days
@@ -212,7 +212,7 @@ if ($runDays.Count -gt 0) {
     Write-StatusLine ("[{0}] NOTE   earnings_calendar_sync — jour={1} présent dans run_days='{2}'" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $dow, $runDaysValue)
 }
 
-# ── Univers : symbols_file (config.yaml) prioritaire sur active-tradable ──
+# ── Univers : symbols_file (batch.yaml) prioritaire sur active-tradable ──
 #    Même univers fichier que le batch analyst_snapshot_collect si renseigné.
 #    Si symbols_file est ABSENT/VIDE ou le fichier INTROUVABLE → repli univers
 #    active-tradable (~13 600) avec un AVERTISSEMENT (log + email + Telegram).
@@ -223,7 +223,7 @@ if ($cfg -and ($cfg.PSObject.Properties.Name -contains 'symbols_file') -and $cfg
     $symbolsFileValue = [string]$cfg.symbols_file
 }
 if (-not $symbolsFileValue) {
-    $warnMsg = "earnings_calendar_sync.symbols_file non renseigné (config.yaml) — repli univers active-tradable (~13 600)"
+    $warnMsg = "earnings_calendar_sync.symbols_file non renseigné (batch.yaml) — repli univers active-tradable (~13 600)"
     $batchWarnings += $warnMsg
     Write-StatusLine ("[{0}] WARNING univers — {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $warnMsg)
 } else {
@@ -241,7 +241,7 @@ if (-not $symbolsFileValue) {
     }
 }
 
-# Commande de synchronisation (mêmes arguments que la doc config.yaml).
+# Commande de synchronisation (mêmes arguments que la doc batch.yaml).
 $commandArgs = @(
     '-u',
     '-m',

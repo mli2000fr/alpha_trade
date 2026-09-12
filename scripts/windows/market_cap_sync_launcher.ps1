@@ -1,4 +1,4 @@
-﻿# Collecte les capitalisations Yahoo puis Finnhub pour l'univers actions.
+# Collecte les capitalisations Yahoo puis Finnhub pour l'univers actions.
 # Usage manuel :
 #   powershell -ExecutionPolicy Bypass -File .\scripts\windows\market_cap_sync_launcher.ps1
 #   powershell -ExecutionPolicy Bypass -File .\scripts\windows\market_cap_sync_launcher.ps1 -IgnoreRunDays
@@ -61,7 +61,7 @@ function Import-AlphaTradeEnvFile {
 
 function Read-MarketCapSyncConfig {
     param([string]$Workspace, [string]$PythonExe)
-    $configPath = Join-Path $Workspace 'config.yaml'
+    $configPath = Join-Path $Workspace 'batch.yaml'
     if (-not (Test-Path -LiteralPath $configPath)) { return $null }
     $pyCode = 'import json,sys,yaml; cfg=yaml.safe_load(open(sys.argv[1],encoding=''utf-8'')) or {}; print(json.dumps(cfg.get(''market_cap_sync'') or {}))'
     try {
@@ -161,7 +161,7 @@ try {
     }
     if ($resolvedEnvFile) { Import-AlphaTradeEnvFile -Path $resolvedEnvFile }
 
-    if (-not $cfg) { throw 'section market_cap_sync absente ou illisible dans config.yaml' }
+    if (-not $cfg) { throw 'section market_cap_sync absente ou illisible dans batch.yaml' }
     $symbolsFileValue = [string]$cfg.symbols_file
     if (-not $symbolsFileValue) { throw 'market_cap_sync.symbols_file est obligatoire' }
     $symbolsFilePath = $symbolsFileValue

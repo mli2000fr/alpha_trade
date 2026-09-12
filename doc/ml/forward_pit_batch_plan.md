@@ -2,6 +2,11 @@
 
 Ce plan transforme les besoins de données en collectes prospectives. Le RAW reste append-only et conserve l'heure réelle de réception.
 
+Les paramètres opérationnels des trois batchs existants sont centralisés dans
+`batch.yaml` : horaires, jours d'exécution, univers, fournisseurs, throttling
+et fichiers de statut. `config.yaml` conserve les politiques fonctionnelles
+consommées par l'application, par exemple `market_cap.policy`.
+
 ## Audit des trois batchs existants
 
 | Batch | Contenu réel | Décision |

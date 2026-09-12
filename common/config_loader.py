@@ -24,7 +24,9 @@ LOGGER = logging.getLogger(__name__)
 
 _VAULT_PLACEHOLDER = re.compile(r"^\$\{vault:([A-Za-z0-9_./-]+)\}$")
 CONFIG_PATH_ENV = "ALPHA_TRADE_CONFIG_PATH"
+BATCH_CONFIG_PATH_ENV = "ALPHA_TRADE_BATCH_CONFIG_PATH"
 _DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
+_DEFAULT_BATCH_CONFIG_PATH = Path(__file__).resolve().parent.parent / "batch.yaml"
 
 
 def resolve_config_path(path: str | os.PathLike[str] | None = None) -> Path:
@@ -47,6 +49,23 @@ def resolve_config_path(path: str | os.PathLike[str] | None = None) -> Path:
             if str(requested_path) == str(_DEFAULT_CONFIG_PATH):
                 return env_config_path
     return requested_path if requested_path is not None else _DEFAULT_CONFIG_PATH
+
+
+def resolve_batch_config_path(path: str | os.PathLike[str] | None = None) -> Path:
+    """Résout le chemin de ``batch.yaml`` et son override de déploiement."""
+    requested_path = Path(path) if path is not None else None
+    env_path = os.getenv(BATCH_CONFIG_PATH_ENV)
+    if env_path:
+        env_config_path = Path(env_path)
+        if requested_path is None:
+            return env_config_path
+        try:
+            if requested_path.resolve() == _DEFAULT_BATCH_CONFIG_PATH.resolve():
+                return env_config_path
+        except OSError:
+            if str(requested_path) == str(_DEFAULT_BATCH_CONFIG_PATH):
+                return env_config_path
+    return requested_path if requested_path is not None else _DEFAULT_BATCH_CONFIG_PATH
 
 
 @contextmanager
@@ -129,5 +148,38 @@ def load_config(
     return cfg
 
 
-__all__ = ["CONFIG_PATH_ENV", "load_config", "override_config_path", "resolve_config_path"]
+def load_batch_config(
+    path: Optional[str] = None,
+    *,
+    vault: Any = None,
+) -> dict:
+    """Charge la configuration dédiée aux traitements planifiés."""
+    config_path = resolve_batch_config_path(path)
+    with open(config_path, "r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f) or {}
+
+    if vault is None and os.getenv("ALPHA_TRADE_VAULT_ADDR"):
+        try:
+            from common.config_vault import build_vault_from_env
+
+            vault = build_vault_from_env()
+        except Exception:  # noqa: BLE001
+            LOGGER.warning("build_vault_from_env() a échoué — overrides ignorés.",
+                           exc_info=True)
+            vault = None
+
+    if vault is not None and isinstance(cfg, dict):
+        cfg = _apply_vault_overrides(cfg, vault)
+    return cfg
+
+
+__all__ = [
+    "BATCH_CONFIG_PATH_ENV",
+    "CONFIG_PATH_ENV",
+    "load_batch_config",
+    "load_config",
+    "override_config_path",
+    "resolve_batch_config_path",
+    "resolve_config_path",
+]
 

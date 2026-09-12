@@ -1,4 +1,4 @@
-# Installe AlphaTrade-MarketCapSync aux heures/jours de config.yaml.
+# Installe AlphaTrade-MarketCapSync aux heures/jours de batch.yaml.
 [CmdletBinding()]
 param(
     [string]$TaskName = 'AlphaTrade-MarketCapSync',
@@ -22,7 +22,7 @@ if (-not (Test-Path -LiteralPath $launcher)) { throw "Launcher introuvable: $lau
 if (-not $PythonExePath) { $PythonExePath = Join-Path $workspace '.venv\Scripts\python.exe' }
 if (-not (Test-Path -LiteralPath $PythonExePath)) { throw "Python introuvable: $PythonExePath" }
 $python = (Resolve-Path -LiteralPath $PythonExePath).Path
-$configPath = Join-Path $workspace 'config.yaml'
+$configPath = Join-Path $workspace 'batch.yaml'
 $pyCode = 'import json,sys,yaml; cfg=yaml.safe_load(open(sys.argv[1],encoding=''utf-8'')) or {}; print(json.dumps(cfg.get(''market_cap_sync'') or {}))'
 $cfg = ((& $python -c $pyCode $configPath | Out-String).Trim() | ConvertFrom-Json)
 

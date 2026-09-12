@@ -1,7 +1,7 @@
 """Univers de collecte analyst — configurable, avec repli active-tradable (RESEARCH ONLY).
 
 L'univers ``analyst_research`` = liste du fichier dont le CHEMIN est configuré
-dans ``config.yaml`` (``analyst_snapshot_collection.symbols_file``,
+dans ``batch.yaml`` (``analyst_snapshot_collection.symbols_file``,
 ex. ``config/univers_batch/univers_filtred_tradable.txt`` → 2255 symboles),
 le même fichier que celui du batch ``earnings_calendar_sync``.
 
@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from common.config_loader import load_config
+from common.config_loader import load_batch_config
 
 LOGGER = logging.getLogger(__name__)
 
@@ -80,7 +80,7 @@ def resolve_universe(
     Priorité :
     1. ``symbols_override`` (--symbols) s'il est fourni.
     2. ``name == analyst_research`` (ou None) → fichier configuré dans
-       ``config.yaml`` (``analyst_snapshot_collection.symbols_file``).
+       ``batch.yaml`` (``analyst_snapshot_collection.symbols_file``).
        Si ce chemin est absent/vide OU le fichier est introuvable → repli
        ``active-tradable`` avec un avertissement.
     """
@@ -93,7 +93,7 @@ def resolve_universe(
     name = name or DEFAULT_UNIVERSE_NAME
     if name != DEFAULT_UNIVERSE_NAME:
         raise ValueError(f"Univers inconnu: {name!r} (attendu: {DEFAULT_UNIVERSE_NAME!r})")
-    cfg = load_config()
+    cfg = load_batch_config()
     section = cfg.get("analyst_snapshot_collection") or {}
     configured = (
         symbols_file if symbols_file is not None else section.get("symbols_file")
@@ -101,7 +101,7 @@ def resolve_universe(
     path = str(configured or "").strip()
     if not path:
         warning = (
-            "analyst_snapshot_collection.symbols_file non renseigné (config.yaml) "
+            "analyst_snapshot_collection.symbols_file non renseigné (batch.yaml) "
             "=> repli univers active-tradable (~13 600)"
         )
         LOGGER.warning(warning)

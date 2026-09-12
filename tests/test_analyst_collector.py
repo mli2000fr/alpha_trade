@@ -54,5 +54,5 @@ def test_analyst_launcher_honours_enabled_before_provider_call() -> None:
 
 def test_active_analyst_collection_config_is_explicit() -> None:
     root = Path(__file__).resolve().parents[1]
-    config = yaml.safe_load((root / "config.yaml").read_text(encoding="utf-8"))
+    config = yaml.safe_load((root / "batch.yaml").read_text(encoding="utf-8"))
     assert config["analyst_snapshot_collection"]["enabled"] is True

@@ -1,8 +1,8 @@
-﻿# install_analyst_snapshot_task.ps1
+# install_analyst_snapshot_task.ps1
 #
 # Installe la tâche planifiée Windows « AlphaTrade-AnalystSnapshot » qui
 # exécute analyst_snapshot_launcher.ps1 AUTOMATIQUEMENT (sans lancement
-# manuel) aux heures définies dans config.yaml → analyst_snapshot_collection.run_hours :
+# manuel) aux heures définies dans batch.yaml → analyst_snapshot_collection.run_hours :
 #   - run_hours: "18"   → tous les jours à 18h00 America/New_York (après clôture US)
 #   - run_hours: "3,14" → tous les jours à 03h00 et 14h00
 #
@@ -78,7 +78,7 @@ function Read-AnalystSnapshotConfig {
         [Parameter(Mandatory = $true)]
         [string]$PythonExe
     )
-    $configPath = Join-Path $Workspace 'config.yaml'
+    $configPath = Join-Path $Workspace 'batch.yaml'
     if (-not (Test-Path -LiteralPath $configPath)) {
         return $null
     }
@@ -106,7 +106,7 @@ if (-not (Test-Path -LiteralPath $launcherPath)) {
     throw "Launcher PowerShell introuvable: $launcherPath"
 }
 
-# ── Lecture config.yaml (run_hours + log_file) via l'interpréteur Python ──
+# ── Lecture batch.yaml (run_hours + log_file) via l'interpréteur Python ──
 $resolvedPython = Resolve-AlphaTradePythonExe -Workspace $resolvedWorkspace -RequestedPythonExePath $PythonExePath
 $cfg = Read-AnalystSnapshotConfig -Workspace $resolvedWorkspace -PythonExe $resolvedPython
 
@@ -181,7 +181,7 @@ Write-Host "RunAs       : $RunAs"
 Write-Host "Log statut  : $effectiveLogFile"
 Write-Host ""
 Write-Host "⚠️ L'heure des triggers suit la timezone de la machine. Pour un déclenchement"
-Write-Host "   'après clôture US' en America/New_York, régler `run_hours` dans config.yaml"
+Write-Host "   'après clôture US' en America/New_York, régler `run_hours` dans batch.yaml"
 Write-Host "   et configurer la timezone du planificateur (ou lancer manuellement via le launcher)."
 Write-Host ""
 Write-Host "Pour vérifier le statut : schtasks /query /tn $TaskName /v /fo LIST"
