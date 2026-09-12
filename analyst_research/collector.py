@@ -232,10 +232,10 @@ def run_collection(
             counts["targets"] += len(res.targets_rows)
             counts["recommendations"] += len(res.recommendations_rows)
 
-        if res.estimates_rows:
+        if any(r.get("estimate_type") == "EPS" for r in res.estimates_rows):
             counts["eps_symbols"] += 1
-            if any(r["estimate_type"] == "REVENUE" for r in res.estimates_rows):
-                counts["revenue_symbols"] += 1
+        if any(r.get("estimate_type") == "REVENUE" for r in res.estimates_rows):
+            counts["revenue_symbols"] += 1
         if res.targets_rows:
             counts["target_symbols"] += 1
         if res.recommendations_rows:

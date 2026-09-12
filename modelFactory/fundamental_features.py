@@ -1,24 +1,29 @@
 """modelFactory/fundamental_features.py — Fundamental features for ML models.
 
 Loads point-in-time fundamentals from ``stock_fundamentals_daily``,
-forward-fills between fetches, and derives feature columns for the
+applies the provider availability contract, forward-fills between publications, and derives feature columns for the
 Global Ranking Model and per-symbol stacking.
 
 Data sources
 ------------
 - EODHD ``/fundamentals/{symbol}`` (current snapshot, fetched weekly)
-- Stored in ``stock_fundamentals_daily`` with ``trade_date`` = fetch date
+- ``trade_date`` keeps the provider event date; ``available_date`` is the
+  first calendar date at which the observation may be consumed
 - Forward-filled between fetches (fundamentals change slowly — quarterly)
 
 PIT safety
 ----------
-- Each row has ``trade_date`` (when the snapshot was taken)
-- Forward-fill ensures we never leak future information
+- SEC filings become available strictly after the filing date (J+1 calendar,
+  therefore the next observed market session when merged with bars)
+- Non-SEC snapshots cannot predate the day after their actual fetch
+- A deterministic provider priority resolves same-day collisions
 - ``fetched_at`` tracks the actual API call timestamp for audit
 """
 from __future__ import annotations
 
 import logging
+from contextlib import suppress
+from datetime import UTC, timedelta
 from typing import Any
 
 import numpy as np
@@ -67,6 +72,25 @@ FUNDAMENTAL_FEATURE_COLUMNS: list[str] = [
     "fund_estimate_revision",
 ]
 
+# Missingness is signal, not a fundamental value.  The explicit masks let the
+# numerical models consume a finite matrix without confusing an unavailable
+# observation with an economically meaningful zero.
+FUNDAMENTAL_MISSING_COLUMNS: list[str] = [
+    f"{column}_missing" for column in FUNDAMENTAL_FEATURE_COLUMNS
+]
+FUNDAMENTAL_FEATURE_COLUMNS.extend(FUNDAMENTAL_MISSING_COLUMNS)
+
+FUNDAMENTAL_SOURCE_PRIORITY: dict[str, int] = {
+    "SEC_EDGAR": 0,
+    "EODHD": 1,
+    "YAHOO FINANCE": 2,
+    "YAHOO_FINANCE": 2,
+    "FINNHUB": 3,
+    "FMP": 4,
+}
+FUNDAMENTAL_AVAILABILITY_POLICY = "sec_filing_j_plus_1_non_sec_fetch_j_plus_1"
+FUNDAMENTAL_MODEL_FILL_VALUE = 0.0
+
 # ── DB column → feature column mapping ──
 
 _DB_TO_FEATURE: dict[str, str] = {
@@ -95,7 +119,8 @@ _DB_TO_FEATURE: dict[str, str] = {
 
 # DB source columns needed from the table
 _DB_SOURCE_COLUMNS: list[str] = [
-    "symbol", "trade_date",
+    "symbol", "trade_date", "available_date", "fetched_at", "source",
+    "fiscal_period_end", "form", "accession_number",
     "pe_ratio", "forward_pe", "peg_ratio", "pb_ratio", "ps_ratio",
     "ev_to_ebitda", "roe", "roa", "net_margin", "operating_margin",
     "gross_margin", "eps_growth_yoy", "revenue_growth_yoy",
@@ -105,31 +130,40 @@ _DB_SOURCE_COLUMNS: list[str] = [
     "eps_estimate_current", "eps_estimate_next",
 ]
 
-# Default fill values for each feature (neutral / no-signal)
-FUNDAMENTAL_DEFAULTS: dict[str, float] = {
-    "fund_pe_ratio": -1.0,           # -1 = no data (PE > 0 normally)
-    "fund_forward_pe": -1.0,
-    "fund_peg_ratio": -1.0,
-    "fund_pb_ratio": -1.0,
-    "fund_ps_ratio": -1.0,
-    "fund_ev_to_ebitda": -1.0,
-    "fund_roe": 0.0,                 # 0 = neutral
-    "fund_roa": 0.0,
-    "fund_net_margin": 0.0,
-    "fund_operating_margin": 0.0,
-    "fund_gross_margin": 0.0,
-    "fund_eps_growth_yoy": 0.0,
-    "fund_revenue_growth_yoy": 0.0,
-    "fund_debt_to_equity": 0.0,
-    "fund_current_ratio": 1.0,        # 1.0 = neutral
-    "fund_dividend_yield": 0.0,
-    "fund_market_cap_log": 0.0,
-    "fund_beta": 1.0,               # 1.0 = market neutral
-    "fund_eps_to_price": 0.0,
-    "fund_eps_estimate_current": 0.0,
-    "fund_eps_estimate_next": 0.0,
-    "fund_estimate_revision": 0.0,
-}
+# Kept as a public compatibility symbol.  Silent semantic defaults are
+# deliberately forbidden by the E19-A2 contract.
+FUNDAMENTAL_DEFAULTS: dict[str, float] = {}
+
+
+def _normalized_source(value: Any) -> str:
+    return str(value or "").strip().upper()
+
+
+def _apply_availability_contract(frame: pd.DataFrame) -> pd.DataFrame:
+    """Compute conservative availability and deterministic source selection."""
+    if frame.empty:
+        return frame
+    result = frame.copy()
+    result["trade_date"] = pd.to_datetime(result["trade_date"], errors="coerce").dt.normalize()
+    fetched_raw = result.get("fetched_at", pd.Series(pd.NaT, index=result.index))
+    result["fetched_at"] = pd.to_datetime(fetched_raw, errors="coerce")
+    source = result.get("source", pd.Series("", index=result.index)).map(_normalized_source)
+    declared_raw = result.get("available_date", pd.Series(pd.NaT, index=result.index))
+    declared = pd.to_datetime(declared_raw, errors="coerce").dt.normalize()
+    filing_available = result["trade_date"] + pd.Timedelta(days=1)
+    fetch_available = result["fetched_at"].dt.normalize() + pd.Timedelta(days=1)
+    computed = filing_available.where(source.eq("SEC_EDGAR"), fetch_available)
+    # A declared date may make a row later, never earlier, than the conservative rule.
+    result["available_date"] = pd.concat([declared, computed], axis=1).max(axis=1)
+    result["source"] = source
+    result["_source_priority"] = source.map(FUNDAMENTAL_SOURCE_PRIORITY).fillna(999).astype(int)
+    result = result[result["available_date"].notna()].sort_values(
+        ["symbol", "available_date", "_source_priority", "fetched_at"],
+        ascending=[True, True, True, False],
+    )
+    # One coherent provider row per symbol and availability date: no column-wise
+    # mixing of observations whose accounting definitions may differ.
+    return result.drop_duplicates(["symbol", "available_date"], keep="first")
 
 
 def load_fundamentals_from_db(
@@ -159,7 +193,9 @@ def load_fundamentals_from_db(
         Empty DataFrame if table doesn't exist or no data.
     """
     try:
-        from sqlalchemy import select as _sa_select, and_
+        from sqlalchemy import and_
+        from sqlalchemy import select as _sa_select
+
         from database.connection import get_sqlalchemy_engine
 
         resolved_engine = engine or get_sqlalchemy_engine()
@@ -171,7 +207,7 @@ def load_fundamentals_from_db(
             LOGGER.info("load_fundamentals_from_db: stock_fundamentals_daily table not found")
             return pd.DataFrame()
 
-        from sqlalchemy import Table, MetaData
+        from sqlalchemy import MetaData, Table
         table = Table(
             "stock_fundamentals_daily",
             MetaData(),
@@ -186,11 +222,13 @@ def load_fundamentals_from_db(
         if not cols_to_select:
             return pd.DataFrame()
 
+        # Load all history up to end_date.  This deliberately includes the last
+        # predecessor before start_date; filtering happens after availability
+        # dates have been reconstructed.
         query = (
             _sa_select(*cols_to_select)
             .where(and_(
                 table.c.symbol.in_(sorted(set(symbols))),
-                table.c.trade_date >= pd.Timestamp(start_date).date(),
                 table.c.trade_date <= pd.Timestamp(end_date).date(),
             ))
             .order_by(table.c.symbol.asc(), table.c.trade_date.asc())
@@ -202,9 +240,27 @@ def load_fundamentals_from_db(
         if df.empty:
             return df
 
-        # Normalize
-        df["trade_date"] = pd.to_datetime(df["trade_date"])
-        return df.reset_index(drop=True)
+        df = _apply_availability_contract(df)
+        if df.empty:
+            return df
+        start = pd.Timestamp(start_date).normalize()
+        end = pd.Timestamp(end_date).normalize()
+        df = df[df["available_date"].le(end)].copy()
+        in_range = df[df["available_date"].ge(start)]
+        predecessor = (
+            df[df["available_date"].lt(start)]
+            .sort_values(["symbol", "available_date", "_source_priority", "fetched_at"])
+            .groupby("symbol", sort=False, as_index=False)
+            .tail(1)
+        )
+        df = pd.concat([predecessor, in_range], ignore_index=True)
+        # Downstream forward filling keys off the effective date.  Preserve the
+        # provider event date separately for audit and freshness calculations.
+        df["source_trade_date"] = df["trade_date"]
+        df["trade_date"] = df["available_date"]
+        return df.drop(columns=["_source_priority"], errors="ignore").sort_values(
+            ["symbol", "trade_date"]
+        ).reset_index(drop=True)
 
     except Exception:
         LOGGER.warning("load_fundamentals_from_db failed, returning empty", exc_info=True)
@@ -240,7 +296,10 @@ def forward_fill_fundamentals(
     # Pivot: symbol × trade_date → feature columns
     value_cols = [
         c for c in fund_df.columns
-        if c not in ("symbol", "trade_date", "fetched_at")
+        if c not in {
+            "symbol", "trade_date", "available_date", "source_trade_date",
+            "fetched_at", "source", "fiscal_period_end", "form", "accession_number",
+        }
     ]
     if not value_cols:
         return pd.DataFrame()
@@ -302,27 +361,25 @@ def derive_features(df: pd.DataFrame) -> pd.DataFrame:
     # If "close" column is present, derive eps_to_price.
     if "close" in result.columns and "fund_eps_to_price" in result.columns:
         price = result["close"].astype(float).clip(lower=1e-8)
-        result["fund_eps_to_price"] = (
-            result["fund_eps_to_price"].astype(float) / price
-        ).fillna(0.0)
+        result["fund_eps_to_price"] = result["fund_eps_to_price"].astype(float) / price
 
     # ── Derived: estimate revision (next_year / current_year - 1) ──
     if "fund_eps_estimate_current" in result.columns and "fund_eps_estimate_next" in result.columns:
         current = result["fund_eps_estimate_current"].astype(float)
         next_est = result["fund_eps_estimate_next"].astype(float)
-        result["fund_estimate_revision"] = np.where(
-            current.abs() > 1e-8,
-            (next_est / current) - 1.0,
-            0.0,
-        )
+        valid = current.notna() & next_est.notna() & current.abs().gt(1e-8)
+        result["fund_estimate_revision"] = ((next_est / current) - 1.0).where(valid)
 
-    # ── Fill missing features with defaults ──
-    for col, default in FUNDAMENTAL_DEFAULTS.items():
-        if col not in result.columns:
-            result[col] = default
-        else:
-            result[col] = result[col].fillna(default).astype(float)
-            result[col] = result[col].replace([np.inf, -np.inf], default)
+    # Preserve missingness explicitly, then produce a finite matrix value.  No
+    # economically meaningful default (beta=1, PE=-1, etc.) is invented.
+    base_features = [c for c in FUNDAMENTAL_FEATURE_COLUMNS if not c.endswith("_missing")]
+    for col in base_features:
+        values = (
+            pd.to_numeric(result[col], errors="coerce")
+            if col in result.columns else pd.Series(np.nan, index=result.index, dtype=float)
+        ).replace([np.inf, -np.inf], np.nan)
+        result[f"{col}_missing"] = values.isna().astype(float)
+        result[col] = values.fillna(FUNDAMENTAL_MODEL_FILL_VALUE).astype(float)
 
     return result
 
@@ -378,12 +435,10 @@ def merge_fundamentals(
         _affected_sorted = sorted(_affected)
         _show = _affected_sorted[:10] if len(_affected_sorted) > 10 else _affected_sorted
         LOGGER.warning(
-            "merge_fundamentals: no fundamentals data, filling defaults for %d symbols (showing first %d: %s)",
+            "merge_fundamentals: no fundamentals data, encoding explicit missingness for %d symbols (showing first %d: %s)",
             len(_affected_sorted), len(_show), _show,
         )
-        for col, default in FUNDAMENTAL_DEFAULTS.items():
-            bars_df[col] = default
-        return bars_df
+        return derive_features(bars_df.copy())
 
     # ── Forward-fill across the bars date range ──
     date_range = pd.date_range(
@@ -394,9 +449,7 @@ def merge_fundamentals(
     fund_ffilled = forward_fill_fundamentals(fund_raw, date_range)
 
     if fund_ffilled.empty:
-        for col, default in FUNDAMENTAL_DEFAULTS.items():
-            bars_df[col] = default
-        return bars_df
+        return derive_features(bars_df.copy())
 
     # ── Merge on (symbol, date) ──
     fund_ffilled["date"] = pd.to_datetime(fund_ffilled["date"])
@@ -453,10 +506,10 @@ def fetch_and_store_fundamentals(
     dict with keys: stored (int), failed (int), errors (list[str])
     """
     import time as _time
-    from datetime import date as _date_cls, datetime as _dt_cls, timezone
+    from datetime import date as _date_cls
+    from datetime import datetime as _dt_cls
 
     try:
-        from sqlalchemy import text as _sa_text
         from database.connection import get_sqlalchemy_engine
         resolved_engine = engine or get_sqlalchemy_engine()
     except Exception as exc:
@@ -466,17 +519,13 @@ def fetch_and_store_fundamentals(
     min_date: _date_cls | None = None
     max_date: _date_cls | None = None
     if start_date:
-        try:
+        with suppress(ValueError):
             min_date = _date_cls.fromisoformat(start_date)
-        except ValueError:
-            pass
     if end_date:
-        try:
+        with suppress(ValueError):
             max_date = _date_cls.fromisoformat(end_date)
-        except ValueError:
-            pass
 
-    now_utc = _dt_cls.now(timezone.utc).replace(tzinfo=None)
+    now_utc = _dt_cls.now(UTC).replace(tzinfo=None)
     stored = 0
     failed = 0
     errors: list[str] = []
@@ -632,7 +681,6 @@ def _extract_quarterly_fundamentals(
 
     income = financials.get("Income_Statement", {}) if isinstance(financials.get("Income_Statement"), dict) else {}
     balance = financials.get("Balance_Sheet", {}) if isinstance(financials.get("Balance_Sheet"), dict) else {}
-    cashflow = financials.get("Cash_Flow", {}) if isinstance(financials.get("Cash_Flow"), dict) else {}
     highlights = raw_payload.get("Highlights") if isinstance(raw_payload.get("Highlights"), dict) else {}
     valuation = raw_payload.get("Valuation") if isinstance(raw_payload.get("Valuation"), dict) else {}
     technicals = raw_payload.get("Technicals") if isinstance(raw_payload.get("Technicals"), dict) else {}
@@ -647,7 +695,12 @@ def _extract_quarterly_fundamentals(
     quarters = sorted(quarterly_income.keys(), reverse=True)
 
     # ── Current snapshot values (same for all quarters) ──
-    _sf = lambda v: float(v) if v not in (None, "", "N/A") and str(v).strip() else None
+    def _sf(value: Any) -> float | None:
+        return (
+            float(value)
+            if value not in (None, "", "N/A") and str(value).strip()
+            else None
+        )
 
     snapshot = {
         "beta": _sf(technicals.get("Beta")),
@@ -664,7 +717,6 @@ def _extract_quarterly_fundamentals(
     for quarter_date in quarters:
         q_income = quarterly_income.get(quarter_date, {}) if isinstance(quarterly_income.get(quarter_date), dict) else {}
         q_balance = (balance.get("quarterly", {}) or {}).get(quarter_date, {}) if isinstance(balance.get("quarterly"), dict) else {}
-        q_cf = (cashflow.get("quarterly", {}) or {}).get(quarter_date, {}) if isinstance(cashflow.get("quarterly"), dict) else {}
 
         # ── Income statement ──
         revenue = _sf(q_income.get("totalRevenue")) or _sf(q_income.get("revenue"))
@@ -779,7 +831,7 @@ def _extract_quarterly_fundamentals(
 def _get_prev_year_quarter(quarter_date: str) -> str | None:
     """Given '2025-06-30', return '2024-06-30'."""
     try:
-        from datetime import date as _dt_date, timedelta
+        from datetime import date as _dt_date
         d = _dt_date.fromisoformat(quarter_date)
         # Try same day previous year
         prev = d.replace(year=d.year - 1)
@@ -799,7 +851,6 @@ def _fetch_fundamentals_record(
 
     if provider_lower == "eodhd":
         from service.eodhd.clientEodhd import (
-            fetch_fundamentals,
             fetch_symbol_fundamentals_record as eodhd_record,
         )
         # Get both the normalized record AND the raw profile
@@ -836,7 +887,12 @@ def _extract_eodhd_highlights(highlights: dict) -> dict[str, Any]:
     """Extract normalized fundamental values from EODHD Highlights section."""
     result: dict[str, Any] = {}
 
-    _safe_float = lambda v: float(v) if v not in (None, "", "N/A") and str(v).strip() else None
+    def _safe_float(value: Any) -> float | None:
+        return (
+            float(value)
+            if value not in (None, "", "N/A") and str(value).strip()
+            else None
+        )
 
     result["market_cap"] = _safe_float(highlights.get("MarketCapitalization"))
     result["pe_ratio"] = _safe_float(highlights.get("PERatio"))
@@ -871,7 +927,12 @@ def _extract_eodhd_highlights(highlights: dict) -> dict[str, Any]:
 def _extract_eodhd_valuation(valuation: dict) -> dict[str, Any]:
     """Extract normalized fundamental values from EODHD Valuation section."""
     result: dict[str, Any] = {}
-    _safe_float = lambda v: float(v) if v not in (None, "", "N/A") and str(v).strip() else None
+    def _safe_float(value: Any) -> float | None:
+        return (
+            float(value)
+            if value not in (None, "", "N/A") and str(value).strip()
+            else None
+        )
 
     result["forward_pe"] = _safe_float(valuation.get("ForwardPE"))
     result["pb_ratio"] = _safe_float(valuation.get("PriceBookMRQ"))
@@ -884,7 +945,12 @@ def _extract_eodhd_valuation(valuation: dict) -> dict[str, Any]:
 def _extract_eodhd_technicals(technicals: dict) -> dict[str, Any]:
     """Extract beta from EODHD Technicals section."""
     result: dict[str, Any] = {}
-    _safe_float = lambda v: float(v) if v not in (None, "", "N/A") and str(v).strip() else None
+    def _safe_float(value: Any) -> float | None:
+        return (
+            float(value)
+            if value not in (None, "", "N/A") and str(value).strip()
+            else None
+        )
 
     result["beta"] = _safe_float(technicals.get("Beta"))
     return result
@@ -910,7 +976,10 @@ def _upsert_fundamentals_row(
         "book_value_per_share", "ebitda",
         "shares_outstanding", "revenue",
         "eps_estimate_current", "eps_estimate_next",
+        "dividend_per_share",
     }
+
+    lineage_map = {"available_date", "fiscal_period_end", "form", "accession_number"}
 
     set_clauses: list[str] = ["fetched_at = :fetched_at", "source = :source"]
     params: dict[str, Any] = {
@@ -919,6 +988,19 @@ def _upsert_fundamentals_row(
         "fetched_at": fetched_at,
         "source": source,
     }
+
+    normalized_source = _normalized_source(source)
+    conservative_available = (
+        pd.Timestamp(trade_date).date() + timedelta(days=1)
+        if normalized_source == "SEC_EDGAR"
+        else pd.Timestamp(fetched_at).date() + timedelta(days=1)
+    )
+    params["available_date"] = record.get("available_date") or conservative_available
+    set_clauses.append("available_date = :available_date")
+    for col in sorted(lineage_map - {"available_date"}):
+        if record.get(col) is not None:
+            params[col] = record[col]
+            set_clauses.append(f"{col} = :{col}")
 
     for col in sorted(column_map):
         val = record.get(col)
@@ -950,8 +1032,8 @@ def _enrich_sec_with_market_ratios(
 ) -> None:
     """Enrichit les lignes SEC EDGAR avec les ratios de marché (PE, PB, beta...)."""
     try:
-        from service.sec.ratio_calculator import enrich_with_market_ratios
         from database.connection import get_sqlalchemy_engine
+        from service.sec.ratio_calculator import enrich_with_market_ratios
 
         engine = get_sqlalchemy_engine()
         result = enrich_with_market_ratios(

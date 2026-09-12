@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "registration_id": "E18A_RESIDUAL_MOMENTUM_H120_ATTRIBUTION_20260911",
+  "registered_at": "2026-09-11T22:18:00+02:00",
+  "research_only": true,
+  "validation_class": "post_discovery_attribution_not_oos",
+  "oracle_used": false,
+  "source_artifact": "artifacts/research/directional_alpha_book/directional-alpha-book-20260911194051/alpha_panel.parquet",
+  "symbol_source": "universe-file:univers_filtred_equities.txt",
+  "period": ["2018-07-01", "2025-12-31"],
+  "signal": "residual_momentum_120_10",
+  "score_column": "score_residual_momentum_120_10",
+  "horizon_sessions": 120,
+  "portfolio": {
+    "tail_pct": 0.20,
+    "minimum_selected_symbols": 10,
+    "rebalance_sessions": 20,
+    "calendar_offset": 0,
+    "long_round_trip_cost_bps": 6.0,
+    "spy_hedge_round_trip_cost_bps": 6.0
+  },
+  "beta": {
+    "lookback_sessions": 126,
+    "minimum_sessions": 126,
+    "individual_beta_clip": [-5.0, 5.0],
+    "portfolio_hedge": "weighted_mean_ex_ante_beta_times_SPY_H120_return"
+  },
+  "sector_neutral": {
+    "minimum_sector_members": 10,
+    "selection_within_sector": "top_20_percent_minimum_one",
+    "sector_weights": "eligible_universe_sector_weights_at_J",
+    "unknown_sector_allowed": false
+  },
+  "regimes": {
+    "trend": "SPY adjusted close J greater_or_equal SMA200 J",
+    "volatility": "SPY realized_volatility_20 J greater than realized_volatility_252 J",
+    "states": ["bull_calm", "bull_stressed", "bear_calm", "bear_stressed"],
+    "minimum_total_cohorts": 12,
+    "minimum_cohorts_per_time_block": 4,
+    "minimum_positive_time_blocks": 2
+  },
+  "time_blocks": {
+    "early": ["2018-07-01", "2020-12-31"],
+    "middle": ["2021-01-01", "2022-12-31"],
+    "recent": ["2023-01-01", "2025-12-31"]
+  },
+  "bootstrap": {
+    "samples": 2000,
+    "block_cohorts": 6,
+    "seed": 20260920
+  },
+  "classification_rules": {
+    "structural_selection": "sector_neutral_excess_vs_universe_ci95_low>0 and combined_beta_sector_return_ci95_low>0 and all_time_blocks_combined_positive",
+    "regime_dependent_candidate": "not_structural and at_least_one_fixed_regime_combined_mean_positive_with_ci95_low>0_and_positive_in_two_time_blocks",
+    "market_or_sector_exposure": "raw_excess_vs_universe_ci95_low>0 and combined_beta_sector_return_ci95_low<=0 and no_repeated_fixed_regime",
+    "no_stable_alpha": "otherwise"
+  },
+  "decision_policy": {
+    "allowed_verdicts": [
+      "STRUCTURAL_SELECTION_CANDIDATE",
+      "REGIME_DEPENDENT_CANDIDATE",
+      "MARKET_OR_SECTOR_EXPOSURE",
+      "NO_STABLE_ALPHA"
+    ],
+    "oos_claim_authorized": false,
+    "production_promotion_authorized": false,
+    "regime_filter_activation_authorized": false
+  }
+}

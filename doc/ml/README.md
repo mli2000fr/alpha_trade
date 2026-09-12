@@ -39,5 +39,20 @@
     - blocs temporels, hash folds, calendriers, secteurs et concentration ;
     - avantage robuste contre l’univers mais pas contre SPY ;
     - verdict `NOT_ROBUST`, sans revendication OOS.
+23. [E18-A — attribution bêta, secteurs et régimes](directional_alpha_attribution_e18a.md)
+    - bêta PIT, portefeuille sector-neutral et couverture SPY ;
+    - attribution de la rupture 2021–2022 et de la reprise récente ;
+    - verdict `MARKET_OR_SECTOR_EXPOSURE`, sans filtre de régime.
+24. [E19-A — audit PIT des fondamentaux](fundamental_pit_availability_e19a.md)
+    - couverture SEC quotidienne reconstruite avec disponibilité J+1 ;
+    - audit des features, sources, versions et valeurs manquantes ;
+    - verdict `PARTIAL_CONTRACT_BLOCKED` avant tout alpha fondamental.
+25. [E19-A2 — correction du contrat PIT fondamental](fundamental_pit_contract_e19a2.md)
+    - disponibilité J+1, priorité fournisseur et prédécesseur de fenêtre ;
+    - lineage SEC, masques de valeurs absentes et corrections sémantiques ;
+    - migration 0074 prête, rafraîchissement SEC requis avant E19-B.
+26. [Données manquantes et priorités fournisseurs](data_gaps_and_provider_priorities.md)
+27. [Sources gratuites pour le Forward PIT Collector](data_gaps_and_provider_priorities_source_free.md)
+28. [Plan des batchs Forward PIT — P0 à P4](forward_pit_batch_plan.md)
 
 Retour : [vue d'ensemble ML](../06_ml_vue_ensemble.md).

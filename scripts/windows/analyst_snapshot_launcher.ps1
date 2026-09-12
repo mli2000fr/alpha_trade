@@ -193,6 +193,25 @@ if (-not $LogFile -and $cfg -and ($cfg.PSObject.Properties.Name -contains 'log_f
     }
 }
 
+# Le launcher est le dernier garde-fou avant l'appel réseau : le champ
+# analyst_snapshot_collection.enabled doit donc être effectif, y compris quand
+# la tâche Windows reste installée. Une clé absente conserve le comportement
+# historique (activé) ; les formes YAML/JSON et textuelles usuelles sont gérées.
+$collectionEnabled = $true
+if ($cfg -and ($cfg.PSObject.Properties.Name -contains 'enabled')) {
+    $enabledValue = $cfg.enabled
+    if ($enabledValue -is [bool]) {
+        $collectionEnabled = [bool]$enabledValue
+    } else {
+        $normalizedEnabled = ([string]$enabledValue).Trim().ToLowerInvariant()
+        $collectionEnabled = @('1', 'true', 'yes', 'on') -contains $normalizedEnabled
+    }
+}
+if (-not $collectionEnabled) {
+    Write-StatusLine ("[{0}] SKIP   analyst_snapshot_collect — analyst_snapshot_collection.enabled=false — aucun appel fournisseur" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))
+    exit 0
+}
+
 # ── Univers : symbols_file (config.yaml) — warning si absent OU introuvable ──
 #    Le collecteur lit lui-même analyst_snapshot_collection.symbols_file
 #    (fichier 2255, même fichier qu'earnings_calendar_sync) ; sinon repli

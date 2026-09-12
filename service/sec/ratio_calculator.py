@@ -17,7 +17,6 @@ Usage:
 from __future__ import annotations
 
 import logging
-from datetime import date as _date, timedelta
 from typing import Any
 
 import numpy as np
@@ -79,7 +78,7 @@ def enrich_with_market_ratios(
             sfd.book_value_per_share,
             sfd.shares_outstanding,
             sfd.revenue,
-            sfd.dividend_yield AS sec_dividend,
+            sfd.dividend_per_share AS sec_dividend,
             sfd.ebitda,
             sfd.pe_ratio,
             sfd.pb_ratio,
@@ -232,7 +231,7 @@ def enrich_with_market_ratios(
                     updates["beta"] = beta
 
             # Dividend yield = dividend_per_share / close_price
-            dps = row.get("sec_dividend")  # stored as dividend_yield from SEC (raw $ amount)
+            dps = row.get("sec_dividend")
             if dps is not None and dps > 0 and close_price > 0:
                 updates["dividend_yield"] = dps / close_price
 

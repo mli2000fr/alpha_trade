@@ -795,6 +795,60 @@ modifié. Artefact :
 `artifacts/research/directional_alpha_book_robustness/e17c-robustness-20260911201018`.
 Voir [E17-C — robustesse historique verrouillée](directional_alpha_book_robustness_e17c.md).
 
+## E18-A — Attribution bêta, secteurs et régimes — `FAIT_MARKET_OR_SECTOR_EXPOSURE`
+
+E18-A conserve exactement le momentum résiduel H120 et les 95 cohortes E17,
+puis attribue la performance avec des informations PIT à J. Le portefeuille a
+un bêta moyen de `1,021`. Sur `+7,696 %` nets par cohorte H120, la contribution
+estimée du marché vaut environ `+6,990 %`. Le rendement beta-hedged tombe à
+`+0,645 %`, IC95 `[-1,955 ; +3,263] %`.
+
+La sélection n’est pas un simple pari sectoriel : l’excès sector-neutral contre
+l’univers reste `+1,402 %`, IC95 `[+0,429 ; +2,239] %`. Mais la combinaison
+sector-neutral + beta-hedged vaut `−0,238 %`, IC95 `[-2,360 ; +2,168] %`.
+2021–2022 reste négatif sous toutes les décompositions et 2023–2025 devient
+`−1,068 %` après neutralisation combinée. Aucun des quatre régimes SPY figés ne
+présente à la fois IC95 positif et réplication temporelle. Verdict :
+`MARKET_OR_SECTOR_EXPOSURE`, principalement marché. Aucun filtre de régime ni
+serving n’est autorisé. Artefact :
+`artifacts/research/directional_alpha_attribution/e18a-attribution-20260911201902`.
+Voir [E18-A — attribution de l’alpha H120](directional_alpha_attribution_e18a.md).
+
+## E19-A — Audit de disponibilité PIT des fondamentaux — `FAIT_PARTIAL_CONTRACT_BLOCKED`
+
+E19-A audite 1 798 actions sur 2018–2025 et reconstruit une disponibilité SEC
+conservatrice à la séance suivant le dépôt. Les 45 132 lignes SEC couvrent
+1 621 symboles (`90,16 %`). Sur 2 369 379 lignes tradables, 89,57 % possèdent
+au moins une comptabilité fraîche de moins de 180 jours ; l’âge médian est 50
+jours. ROA, ROE, marges, croissance et revenue ont une couverture suffisante.
+Les estimations forward, PEG et forward PE sont totalement absentes.
+
+Le training reste interdit car le loader expose cinq défauts : utilisation le
+jour même du filing, absence de période fiscale/form/accession, aucune priorité
+multi-fournisseur, pas de prédécesseur antérieur au début et remplacement des
+NaN par des constantes. Des incohérences sémantiques touchent aussi
+debt/equity, EBITDA, dividend yield et estimate revision. Verdict :
+`PARTIAL_CONTRACT_BLOCKED`, pas un manque de volume. Artefact :
+`artifacts/research/fundamental_pit_availability/e19a-fundamental-pit-audit-20260911203804`.
+Voir [E19-A — disponibilité PIT des fondamentaux](fundamental_pit_availability_e19a.md).
+
+## E19-A2 — Correction du contrat PIT fondamental — `CODE_COMPLETE_SCHEMA_PENDING`
+
+Le loader applique désormais une date effective conservatrice : dépôt SEC à
+J+1 et snapshots non-SEC au plus tôt le lendemain de leur collecte. Les
+collisions utilisent une priorité déterministe, le dernier dépôt antérieur au
+début de fenêtre est conservé et les absences sont encodées par des masques au
+lieu de constantes sémantiques. La migration 0074 ajoute date de disponibilité,
+période fiscale, formulaire, accession et dividende par action. Le mapper SEC
+utilise désormais la dette financière, ne confond plus operating income et
+EBITDA et sépare dividend/share du yield.
+
+La base observée annonce encore Alembic 0068 malgré des évolutions physiques
+ultérieures ; 0074 n’a donc pas été appliquée automatiquement. Le SQL manuel et
+un rafraîchissement SEC restent requis. E19-B demeure interdit jusqu’à un nouvel
+audit `DATA_READY` avec au moins 95 % de lineage SEC complète. Voir
+[E19-A2 — contrat PIT fondamental](fundamental_pit_contract_e19a2.md).
+
 ## Procédure de mise à jour du registre
 
 Après chaque expérience, ajouter ou mettre à jour une ligne avec :
