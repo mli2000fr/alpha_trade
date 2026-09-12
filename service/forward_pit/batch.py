@@ -6,11 +6,15 @@ provider responses are failures unless a handler explicitly allows them.
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
+import io
 import json
 import logging
 import os
 import re
+import ssl
+import sys
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -20,6 +24,7 @@ from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo
 
 import requests
+from requests.adapters import HTTPAdapter
 from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Connection, Engine
 
@@ -32,8 +37,10 @@ ROOT = Path(__file__).resolve().parents[2]
 BQ_URL = "https://data.businessquant.com"
 SEC_ARCHIVES = "https://www.sec.gov/Archives"
 SEC_USER_AGENT_DEFAULT = ""
+ALPACA_DATA_URL = "https://data.alpaca.markets"
+ALPACA_PAPER_URL = "https://paper-api.alpaca.markets"
 
-PENDING_BATCHES = {"finra_short_volume_sync", "auction_imbalance_sync", "securities_lending_sync", "official_options_nbbo_sync"}
+PENDING_BATCHES = {"auction_imbalance_sync", "securities_lending_sync", "official_options_nbbo_sync"}
 
 
 @dataclass
@@ -102,6 +109,29 @@ def _symbols(cfg: dict[str, Any]) -> list[str]:
     return sorted({x.strip().upper() for x in re.split(r"[,\s;]+", content) if x.strip()})
 
 
+def _collection_symbols(cfg: dict[str, Any]) -> list[str]:
+    """Charge l'univers stable complet, sauf limite de smoke explicitement fournie."""
+    symbols = _symbols(cfg)
+    raw_limit = cfg.get("max_symbols")
+    if raw_limit in (None, "", "all", "ALL"):
+        return symbols
+    limit = int(raw_limit)
+    if limit <= 0:
+        raise ValueError("max_symbols doit être strictement positif ou absent pour l'univers complet")
+    return symbols[:limit]
+
+
+def _assets_in_universe(
+    assets: Iterable[dict[str, Any]], symbols: Iterable[str]
+) -> list[dict[str, Any]]:
+    allowed = {str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()}
+    return [
+        item for item in assets
+        if str(item.get("class")) == "us_equity"
+        and str(item.get("symbol") or "").strip().upper() in allowed
+    ]
+
+
 def _secret(cfg: dict[str, Any], default_env: str) -> str:
     name = str(cfg.get("api_key_env") or default_env)
     value = (os.getenv(name) or "").strip()
@@ -124,6 +154,181 @@ def _request_json(session: requests.Session, url: str, *, params: dict[str, Any]
             if attempt + 1 < attempts:
                 time.sleep(min(20, 2 ** attempt))
     raise RuntimeError(f"Echec HTTP {url}: {last}")
+
+
+def _paginated_json(
+    session: requests.Session,
+    url: str,
+    *,
+    params: dict[str, Any],
+    headers: dict[str, str],
+    page_key: str,
+    max_pages: int,
+    pause_seconds: float = 0.0,
+) -> list[tuple[dict[str, Any], int]]:
+    """Charge toutes les pages Alpaca sans accepter une troncature silencieuse."""
+    pages: list[tuple[dict[str, Any], int]] = []
+    next_token: str | None = None
+    for _page_number in range(1, max_pages + 1):
+        page_params = dict(params)
+        if next_token:
+            page_params["page_token"] = next_token
+        if pause_seconds > 0:
+            time.sleep(pause_seconds)
+        payload, status = _request_json(
+            session, url, params=page_params, headers=headers,
+        )
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"Réponse Alpaca non objet pour {url}")
+        pages.append((payload, status))
+        next_token = str(payload.get(page_key) or "").strip() or None
+        if not next_token:
+            return pages
+    raise RuntimeError(
+        f"Pagination Alpaca tronquée après {max_pages} pages pour {url}"
+    )
+
+
+def _option_contract_parts(contract_symbol: str) -> tuple[date | None, float | None, str | None]:
+    match = re.match(r"^(.+?)(\d{6})([CP])(\d{8})$", str(contract_symbol).upper())
+    if not match:
+        return None, None, None
+    try:
+        expiry = datetime.strptime(match.group(2), "%y%m%d").date()
+        strike = int(match.group(4)) / 1000
+    except ValueError:
+        return None, None, None
+    return expiry, strike, {"C": "CALL", "P": "PUT"}.get(match.group(3))
+
+
+def _nearest_option_expirations(
+    contracts: Iterable[str], target_dtes: Iterable[int], as_of: date,
+) -> set[date]:
+    expirations = sorted({
+        expiry for contract in contracts
+        for expiry, _, _ in [_option_contract_parts(contract)]
+        if expiry is not None and expiry >= as_of
+    })
+    return {
+        min(expirations, key=lambda expiry: (abs((expiry - as_of).days - target), expiry))
+        for target in target_dtes if expirations
+    }
+
+
+def _select_option_surface_contracts(
+    snapshots: dict[str, dict[str, Any]],
+    *,
+    expirations: set[date],
+    spot: float,
+    moneyness_targets: Iterable[float],
+) -> set[str]:
+    """Échantillonne une surface comparable : un strike par cible/type/échéance."""
+    groups: dict[tuple[date, str], list[tuple[str, float]]] = {}
+    for contract in snapshots:
+        expiry, strike, option_type = _option_contract_parts(contract)
+        if expiry not in expirations or strike is None or option_type is None:
+            continue
+        groups.setdefault((expiry, option_type), []).append((contract, strike))
+    selected: set[str] = set()
+    for contracts in groups.values():
+        for target in moneyness_targets:
+            selected.add(min(
+                contracts,
+                key=lambda pair: (abs(pair[1] / spot - target), pair[1], pair[0]),
+            )[0])
+    return selected
+
+
+def _underlying_price(snapshot: dict[str, Any]) -> float | None:
+    candidates = (
+        (snapshot.get("latestTrade") or {}).get("p"),
+        (snapshot.get("minuteBar") or {}).get("c"),
+        (snapshot.get("dailyBar") or {}).get("c"),
+        (snapshot.get("prevDailyBar") or {}).get("c"),
+    )
+    for value in candidates:
+        try:
+            price = float(value)
+        except (TypeError, ValueError):
+            continue
+        if price > 0:
+            return price
+    return None
+
+
+def _option_is_liquid(
+    item: dict[str, Any], *, min_bid: float, max_relative_spread: float,
+    require_two_sided_quote: bool,
+) -> bool:
+    quote = item.get("latestQuote") or {}
+    try:
+        bid = float(quote.get("bp") or 0)
+        ask = float(quote.get("ap") or 0)
+    except (TypeError, ValueError):
+        return False
+    if require_two_sided_quote and (bid <= 0 or ask <= 0):
+        return False
+    if bid < min_bid or ask < bid:
+        return False
+    midpoint = (bid + ask) / 2
+    return midpoint > 0 and (ask - bid) / midpoint <= max_relative_spread
+
+
+class _SystemTrustAdapter(HTTPAdapter):
+    """Requests adapter utilisant le magasin CA natif sans désactiver TLS."""
+
+    def init_poolmanager(self, *args: Any, **kwargs: Any) -> None:
+        kwargs["ssl_context"] = ssl.create_default_context()
+        super().init_poolmanager(*args, **kwargs)
+
+
+def _configure_alpaca_session(
+    session: requests.Session, *, use_system_trust_store: bool,
+) -> None:
+    if use_system_trust_store and sys.platform == "win32":
+        session.mount("https://", _SystemTrustAdapter())
+
+
+def _request_text_optional(
+    session: requests.Session, url: str, *, timeout: float = 45, attempts: int = 4
+) -> tuple[str | None, int]:
+    last: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            response = session.get(url, timeout=timeout)
+            if response.status_code == 404:
+                return None, 404
+            if response.status_code == 429 or response.status_code >= 500:
+                time.sleep(min(20, 2 ** attempt))
+                continue
+            response.raise_for_status()
+            return response.text, response.status_code
+        except requests.RequestException as exc:
+            last = exc
+            if attempt + 1 < attempts:
+                time.sleep(min(20, 2 ** attempt))
+    raise RuntimeError(f"Echec HTTP {url}: {last}")
+
+
+def _parse_finra_short_volume(content: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for item in csv.DictReader(io.StringIO(content.lstrip("\ufeff")), delimiter="|"):
+        raw_date = str(item.get("Date") or "").strip()
+        symbol = str(item.get("Symbol") or "").strip().upper()
+        if len(raw_date) != 8 or not raw_date.isdigit() or not symbol:
+            continue
+        try:
+            rows.append({
+                "trade_date": datetime.strptime(raw_date, "%Y%m%d").date(),
+                "symbol": symbol,
+                "short_volume": int(item.get("ShortVolume") or 0),
+                "short_exempt_volume": int(item.get("ShortExemptVolume") or 0),
+                "total_volume": int(item.get("TotalVolume") or 0),
+                "market": str(item.get("Market") or "").strip().upper() or "CNMS",
+            })
+        except (TypeError, ValueError):
+            continue
+    return rows
 
 
 def _raw(conn: Connection, run_id: str, batch: str, provider: str, endpoint: str, entity: str, payload: Any, status: int = 200, observed: datetime | None = None) -> None:
@@ -393,14 +598,19 @@ def sec_edgar_incremental(engine: Engine, cfg: dict[str, Any], run_id: str, dry:
 
 
 def borrow_status_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool) -> Outcome:
-    assets = fetch_alpaca_assets(); observed = _utcnow(); outcome = Outcome(requested=1, received=len(assets))
+    requested_symbols = set(_collection_symbols(cfg))
+    assets = fetch_alpaca_assets()
+    observed = _utcnow()
     if not assets: raise RuntimeError("Alpaca assets vide")
+    selected_assets = _assets_in_universe(assets, requested_symbols)
+    outcome = Outcome(requested=len(requested_symbols), received=len(selected_assets))
+    outcome.details["provider_assets_received"] = len(assets)
+    outcome.details["universe_symbols"] = len(requested_symbols)
     with engine.begin() as conn:
         if not dry:
             _raw(conn, run_id, "borrow_status_snapshot", "alpaca", "/v2/assets", "ALL", assets, observed=observed)
         if not dry:
-            for item in assets:
-                if str(item.get("class")) != "us_equity": continue
+            for item in selected_assets:
                 shortable, etb = item.get("shortable"), item.get("easy_to_borrow")
                 status = "EASY" if shortable and etb else ("LOCATE_REQUIRED" if shortable else "NOT_SHORTABLE")
                 result = conn.execute(text("""INSERT IGNORE INTO stock_borrow_status_snapshots
@@ -410,8 +620,65 @@ def borrow_status_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry
     return outcome
 
 
+def finra_short_volume_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool) -> Outcome:
+    symbols = set(_collection_symbols(cfg))
+    observed = _utcnow()
+    lookback_days = max(1, int(cfg.get("lookback_days", 7)))
+    template = str(cfg.get("source_url_template") or
+                   "https://cdn.finra.org/equity/regsho/daily/CNMSshvol{date}.txt")
+    market_today = datetime.now(ZoneInfo("America/New_York")).date()
+    outcome = Outcome(requested=lookback_days)
+    files_found = 0
+    with requests.Session() as session, engine.begin() as conn:
+        for offset in range(lookback_days):
+            trade_day = market_today - timedelta(days=offset)
+            url = template.format(date=trade_day.strftime("%Y%m%d"))
+            content, status = _request_text_optional(session, url)
+            if content is None:
+                outcome.empty += 1
+                continue
+            files_found += 1
+            if not dry:
+                _raw(conn, run_id, "finra_short_volume_sync", "finra",
+                     "/equity/regsho/daily/CNMS", trade_day.isoformat(),
+                     content, status, observed)
+            rows = [row for row in _parse_finra_short_volume(content)
+                    if row["symbol"] in symbols]
+            outcome.received += len(rows)
+            if dry:
+                continue
+            existing = conn.execute(text("""SELECT symbol,market,payload_hash
+                FROM stock_short_volume_daily
+                WHERE provider='finra_cnms' AND trade_date=:trade_date"""),
+                {"trade_date": trade_day}).mappings().all()
+            known_hashes: dict[tuple[str, str], set[str]] = {}
+            for item in existing:
+                known_hashes.setdefault(
+                    (str(item["symbol"]), str(item["market"])), set()
+                ).add(str(item["payload_hash"]))
+            for row in rows:
+                row_hash = _hash(row)
+                previous_hashes = known_hashes.get((row["symbol"], row["market"]), set())
+                correction = bool(previous_hashes and row_hash not in previous_hashes)
+                result = conn.execute(text("""INSERT IGNORE INTO stock_short_volume_daily
+                    (provider,trade_date,symbol,market,short_volume,short_exempt_volume,
+                     total_volume,observed_at,available_at,payload_hash,run_id,is_correction)
+                    VALUES ('finra_cnms',:trade_date,:symbol,:market,:short_volume,
+                            :short_exempt_volume,:total_volume,:observed,:observed,:hash,:run,
+                            :correction)"""),
+                    {**row, "observed": observed, "hash": row_hash, "run": run_id,
+                     "correction": correction})
+                outcome.persisted += max(0, result.rowcount)
+    outcome.details.update({"files_found": files_found, "universe_symbols": len(symbols)})
+    if files_found == 0:
+        raise RuntimeError("Aucun fichier FINRA Consolidated NMS disponible sur la fenêtre")
+    if outcome.received == 0:
+        raise RuntimeError("Fichiers FINRA trouvés mais aucun symbole de l'univers n'est couvert")
+    return outcome
+
+
 def business_quant_analyst_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool) -> Outcome:
-    symbols = _symbols(cfg)[:int(cfg.get("max_symbols", 20))]; metrics = [x.strip() for x in str(cfg.get("metrics", "eps")).split(",")]; key = _secret(cfg, "BUSINESS_QUANT_API_KEY"); observed = _utcnow(); outcome = Outcome(requested=len(symbols) * len(metrics))
+    symbols = _collection_symbols(cfg); metrics = [x.strip() for x in str(cfg.get("metrics", "eps")).split(",")]; key = _secret(cfg, "BUSINESS_QUANT_API_KEY"); observed = _utcnow(); outcome = Outcome(requested=len(symbols) * len(metrics))
     with requests.Session() as session, engine.begin() as conn:
         for symbol in symbols:
             for metric in metrics:
@@ -436,33 +703,263 @@ def business_quant_analyst_snapshot(engine: Engine, cfg: dict[str, Any], run_id:
 
 
 def options_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool) -> Outcome:
-    symbols = _symbols(cfg)[:int(cfg.get("max_symbols", 20))]; feed = str(cfg.get("feed", "indicative")); observed = _utcnow(); key, secret = get_alpaca_credentials(); outcome = Outcome(requested=len(symbols))
+    symbols = _collection_symbols(cfg)
+    feed = str(cfg.get("feed", "indicative")).strip().lower()
+    if feed != "indicative":
+        raise ValueError("Le batch gratuit impose feed=indicative; OPRA exige un abonnement")
+    target_dtes = tuple(sorted({
+        int(value) for value in str(cfg.get("target_dtes", "5,10,20")).split(",")
+        if str(value).strip()
+    }))
+    if not target_dtes or min(target_dtes) <= 0:
+        raise ValueError("target_dtes doit contenir des horizons strictement positifs")
+    moneyness_targets = tuple(sorted({
+        float(value) for value in str(
+            cfg.get("moneyness_targets", "0.85,0.90,0.95,1.00,1.05,1.10,1.15")
+        ).split(",") if str(value).strip()
+    }))
+    if not moneyness_targets:
+        raise ValueError("moneyness_targets ne peut pas être vide")
+    tolerance = int(cfg.get("dte_tolerance_days", 4))
+    moneyness_min = float(cfg.get("moneyness_min", 0.80))
+    moneyness_max = float(cfg.get("moneyness_max", 1.20))
+    if not 0 < moneyness_min < 1 < moneyness_max:
+        raise ValueError("La fenêtre de moneyness doit encadrer 1.0")
+    min_bid = float(cfg.get("min_bid", 0.01))
+    max_relative_spread = float(cfg.get("max_relative_spread", 1.0))
+    require_two_sided = bool(cfg.get("require_two_sided_quote", True))
+    include_contract_metadata = bool(cfg.get("include_contract_metadata", True))
+    min_open_interest = int(cfg.get("min_open_interest", 10))
+    allow_missing_oi = bool(cfg.get("allow_missing_open_interest", True))
+    max_pages = int(cfg.get("max_pages_per_symbol", 10))
+    request_pause = float(cfg.get("request_interval_seconds", 0.35))
+    stock_chunk_size = int(cfg.get("stock_snapshot_batch_size", 100))
+    max_consecutive_failures = int(cfg.get("max_consecutive_failures", 5))
+    max_failure_ratio = float(cfg.get("max_failure_ratio", 0.05))
+    as_of = datetime.now(ZoneInfo("America/New_York")).date()
+    min_expiry = as_of + timedelta(days=max(1, min(target_dtes) - tolerance))
+    max_expiry = as_of + timedelta(days=max(target_dtes) + tolerance)
+    observed = _utcnow()
+    key, secret = get_alpaca_credentials()
     headers = {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret}
+    outcome = Outcome(requested=len(symbols))
+    details: dict[str, int] = {
+        "universe_symbols": len(symbols), "symbols_with_spot": 0,
+        "symbols_with_options": 0, "symbols_without_options": 0,
+        "symbols_without_spot": 0, "snapshot_pages": 0,
+        "contract_pages": 0, "contracts_before_filters": 0,
+        "contracts_after_filters": 0, "contract_metadata_failures": 0,
+    }
     with requests.Session() as session, engine.begin() as conn:
-        for symbol in symbols:
-            payload, status = _request_json(session, f"https://data.alpaca.markets/v1beta1/options/snapshots/{symbol}", params={"feed": feed, "limit": 1000}, headers=headers)
+        _configure_alpaca_session(
+            session,
+            use_system_trust_store=bool(cfg.get("use_system_trust_store", True)),
+        )
+        prices: dict[str, float] = {}
+        for chunk in _chunks(symbols, stock_chunk_size):
+            if request_pause > 0:
+                time.sleep(request_pause)
+            payload, status = _request_json(
+                session, f"{ALPACA_DATA_URL}/v2/stocks/snapshots",
+                params={"symbols": ",".join(chunk), "feed": "iex"},
+                headers=headers,
+            )
             if not dry:
-                _raw(conn, run_id, "oracle_options_indicative_snapshot", "alpaca", "/v1beta1/options/snapshots", symbol, payload, status, observed)
-            snapshots = payload.get("snapshots", {}) if isinstance(payload, dict) else {}
-            outcome.received += len(snapshots)
-            if dry: continue
+                _raw(
+                    conn, run_id, "oracle_options_indicative_snapshot", "alpaca",
+                    "/v2/stocks/snapshots", "UNDERLYING:" + ",".join(chunk),
+                    payload, status, observed,
+                )
+            if isinstance(payload, dict):
+                for symbol, item in payload.items():
+                    if isinstance(item, dict):
+                        price = _underlying_price(item)
+                        if price is not None:
+                            prices[str(symbol).upper()] = price
+        details["symbols_with_spot"] = len(prices)
+        details["symbols_without_spot"] = len(symbols) - len(prices)
+
+        consecutive_failures = 0
+        for symbol_index, symbol in enumerate(symbols, start=1):
+            spot = prices.get(symbol)
+            if spot is None:
+                outcome.empty += 1
+                continue
+            if symbol_index == 1 or symbol_index % 50 == 0:
+                LOGGER.info(
+                    "alpaca_options progress=%s/%s received=%s failed=%s empty=%s",
+                    symbol_index, len(symbols), outcome.received,
+                    outcome.failed, outcome.empty,
+                )
+            common_params = {
+                "limit": 1000,
+                "expiration_date_gte": min_expiry.isoformat(),
+                "expiration_date_lte": max_expiry.isoformat(),
+                "strike_price_gte": round(spot * moneyness_min, 4),
+                "strike_price_lte": round(spot * moneyness_max, 4),
+            }
+            try:
+                pages = _paginated_json(
+                    session,
+                    f"{ALPACA_DATA_URL}/v1beta1/options/snapshots/{symbol}",
+                    params={**common_params, "feed": feed},
+                    headers=headers, page_key="next_page_token",
+                    max_pages=max_pages, pause_seconds=request_pause,
+                )
+                consecutive_failures = 0
+            except Exception as exc:
+                error_text = str(exc)
+                if "401 Client Error" in error_text or "403 Client Error" in error_text:
+                    raise RuntimeError(
+                        "Accès Alpaca Options refusé; vérifier les clés et les droits du feed indicative"
+                    ) from exc
+                if "404 Client Error" in error_text:
+                    consecutive_failures = 0
+                    details["symbols_without_options"] += 1
+                    outcome.empty += 1
+                    continue
+                outcome.failed += 1
+                consecutive_failures += 1
+                outcome.warnings.append(f"{symbol}: snapshots indisponibles ({exc})")
+                if consecutive_failures >= max_consecutive_failures:
+                    raise RuntimeError(
+                        f"Alpaca options interrompu après {consecutive_failures} "
+                        f"échecs consécutifs; dernier symbole={symbol}"
+                    ) from exc
+                continue
+            details["snapshot_pages"] += len(pages)
+            snapshots: dict[str, dict[str, Any]] = {}
+            for page_number, (payload, status) in enumerate(pages, start=1):
+                if not dry:
+                    _raw(
+                        conn, run_id, "oracle_options_indicative_snapshot", "alpaca",
+                        "/v1beta1/options/snapshots", f"{symbol}:page:{page_number}",
+                        payload, status, observed,
+                    )
+                block = payload.get("snapshots") or {}
+                if isinstance(block, dict):
+                    snapshots.update({
+                        str(contract): item for contract, item in block.items()
+                        if isinstance(item, dict)
+                    })
+            details["contracts_before_filters"] += len(snapshots)
+            if not snapshots:
+                details["symbols_without_options"] += 1
+                outcome.empty += 1
+                continue
+
+            selected_expiries = _nearest_option_expirations(
+                snapshots.keys(), target_dtes, as_of,
+            )
+            selected_contracts = _select_option_surface_contracts(
+                snapshots, expirations=selected_expiries, spot=spot,
+                moneyness_targets=moneyness_targets,
+            )
+            metadata: dict[str, dict[str, Any]] = {}
+            if include_contract_metadata:
+                try:
+                    contract_pages = _paginated_json(
+                        session, f"{ALPACA_PAPER_URL}/v2/options/contracts",
+                        params={**common_params, "underlying_symbols": symbol},
+                        headers=headers, page_key="next_page_token",
+                        max_pages=max_pages, pause_seconds=request_pause,
+                    )
+                    details["contract_pages"] += len(contract_pages)
+                    for page_number, (payload, status) in enumerate(contract_pages, start=1):
+                        if not dry:
+                            _raw(
+                                conn, run_id, "oracle_options_indicative_snapshot", "alpaca",
+                                "/v2/options/contracts", f"{symbol}:contracts:page:{page_number}",
+                                payload, status, observed,
+                            )
+                        for item in payload.get("option_contracts") or []:
+                            if isinstance(item, dict) and item.get("symbol"):
+                                metadata[str(item["symbol"])] = item
+                except Exception as exc:
+                    error_text = str(exc)
+                    if "401 Client Error" in error_text or "403 Client Error" in error_text:
+                        raise RuntimeError(
+                            "Accès Alpaca Options Contracts refusé; open interest non accessible"
+                        ) from exc
+                    details["contract_metadata_failures"] += 1
+                    outcome.warnings.append(
+                        f"{symbol}: open interest indisponible ({exc})"
+                    )
+
+            kept_for_symbol = 0
             for contract, item in snapshots.items():
-                quote, trade, greeks = item.get("latestQuote") or {}, item.get("latestTrade") or {}, item.get("greeks") or {}
-                match = re.match(r"^([A-Z.]+)(\d{6})([CP])(\d{8})$", contract)
-                expiry = datetime.strptime(match.group(2), "%y%m%d").date() if match else None
-                strike = int(match.group(4)) / 1000 if match else None; option_type = {"C": "CALL", "P": "PUT"}.get(match.group(3)) if match else None
-                params = {"provider": "alpaca", "feed": feed, "underlying": symbol, "contract": contract, "expiry": expiry, "strike": strike, "otype": option_type, "observed": observed, "provider_ts": _dt(quote.get("t") or trade.get("t")), "bid": quote.get("bp"), "ask": quote.get("ap"), "bid_size": quote.get("bs"), "ask_size": quote.get("as"), "trade_price": trade.get("p"), "trade_size": trade.get("s"), "iv": item.get("impliedVolatility"), "delta": greeks.get("delta"), "gamma": greeks.get("gamma"), "theta": greeks.get("theta"), "vega": greeks.get("vega"), "hash": _hash(item), "run": run_id}
+                if contract not in selected_contracts:
+                    continue
+                expiry, strike, option_type = _option_contract_parts(contract)
+                if expiry not in selected_expiries or strike is None or option_type is None:
+                    continue
+                if not _option_is_liquid(
+                    item, min_bid=min_bid, max_relative_spread=max_relative_spread,
+                    require_two_sided_quote=require_two_sided,
+                ):
+                    continue
+                contract_meta = metadata.get(contract) or {}
+                raw_oi = contract_meta.get("open_interest")
+                try:
+                    open_interest = int(raw_oi) if raw_oi is not None else None
+                except (TypeError, ValueError):
+                    open_interest = None
+                if open_interest is None and not allow_missing_oi:
+                    continue
+                if open_interest is not None and open_interest < min_open_interest:
+                    continue
+                kept_for_symbol += 1
+                outcome.received += 1
+                if dry:
+                    continue
+                quote = item.get("latestQuote") or {}
+                trade = item.get("latestTrade") or {}
+                greeks = item.get("greeks") or {}
+                params = {
+                    "provider": "alpaca", "feed": feed, "underlying": symbol,
+                    "contract": contract, "expiry": expiry, "strike": strike,
+                    "otype": option_type, "observed": observed,
+                    "provider_ts": _dt(quote.get("t") or trade.get("t")),
+                    "bid": quote.get("bp"), "ask": quote.get("ap"),
+                    "bid_size": quote.get("bs"), "ask_size": quote.get("as"),
+                    "trade_price": trade.get("p"), "trade_size": trade.get("s"),
+                    "iv": item.get("impliedVolatility"),
+                    "delta": greeks.get("delta"), "gamma": greeks.get("gamma"),
+                    "theta": greeks.get("theta"), "vega": greeks.get("vega"),
+                    "open_interest": open_interest, "volume": None,
+                    "hash": _hash({"snapshot": item, "contract": contract_meta}),
+                    "run": run_id,
+                }
                 result = conn.execute(text("""INSERT IGNORE INTO stock_option_snapshots
-                    (provider,feed,underlying_symbol,contract_symbol,expiration_date,strike,option_type,observed_at,available_at,provider_timestamp,bid,ask,bid_size,ask_size,trade_price,trade_size,implied_volatility,delta,gamma,theta,vega,payload_hash,run_id)
-                    VALUES (:provider,:feed,:underlying,:contract,:expiry,:strike,:otype,:observed,:observed,:provider_ts,:bid,:ask,:bid_size,:ask_size,:trade_price,:trade_size,:iv,:delta,:gamma,:theta,:vega,:hash,:run)"""), params)
+                    (provider,feed,underlying_symbol,contract_symbol,expiration_date,strike,option_type,observed_at,available_at,provider_timestamp,bid,ask,bid_size,ask_size,trade_price,trade_size,implied_volatility,delta,gamma,theta,vega,open_interest,volume,payload_hash,run_id)
+                    VALUES (:provider,:feed,:underlying,:contract,:expiry,:strike,:otype,:observed,:observed,:provider_ts,:bid,:ask,:bid_size,:ask_size,:trade_price,:trade_size,:iv,:delta,:gamma,:theta,:vega,:open_interest,:volume,:hash,:run)"""), params)
                 outcome.persisted += max(0, result.rowcount)
+            details["contracts_after_filters"] += kept_for_symbol
+            if kept_for_symbol:
+                details["symbols_with_options"] += 1
+            else:
+                details["symbols_without_options"] += 1
+                outcome.empty += 1
+
+    outcome.details.update(details)
+    outcome.details.update({
+        "feed": feed, "target_dtes": list(target_dtes),
+        "moneyness_targets": list(moneyness_targets),
+        "expiration_window": [min_expiry.isoformat(), max_expiry.isoformat()],
+        "moneyness": [moneyness_min, moneyness_max],
+        "volume_status": "not_available_in_alpaca_chain_snapshot",
+    })
     if outcome.received == 0:
-        raise RuntimeError("Snapshots options Alpaca vides pour tout l'univers demandé")
+        raise RuntimeError("Snapshots options Alpaca vides après filtres pour tout l'univers")
+    if symbols and outcome.failed / len(symbols) > max_failure_ratio:
+        raise RuntimeError(
+            f"Taux d'échec Alpaca options excessif: {outcome.failed}/{len(symbols)}"
+        )
     return outcome
 
 
 def opening_window_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool) -> Outcome:
-    symbols = _symbols(cfg)[:int(cfg.get("max_symbols", 20))]; key = _secret(cfg, "BUSINESS_QUANT_API_KEY"); today = date.today(); observed = _utcnow(); outcome = Outcome(requested=len(symbols))
+    symbols = _collection_symbols(cfg); key = _secret(cfg, "BUSINESS_QUANT_API_KEY"); today = date.today(); observed = _utcnow(); outcome = Outcome(requested=len(symbols))
     with requests.Session() as session, engine.begin() as conn:
         for chunk in _chunks(symbols, 20):
             payload, status = _request_json(session, f"{BQ_URL}/quotes", params={"ticker": ",".join(chunk), "mode": "minute-bars", "from_date": today.isoformat(), "till_date": today.isoformat(), "limit": 1000, "api_key": key})
@@ -605,6 +1102,7 @@ HANDLERS: dict[str, Callable[[Engine, dict[str, Any], str, bool], Outcome]] = {
     "sec_edgar_incremental": sec_edgar_incremental,
     "pit_data_quality_daily": quality_daily,
     "borrow_status_snapshot": borrow_status_snapshot,
+    "finra_short_volume_sync": finra_short_volume_sync,
     "business_quant_analyst_snapshot": business_quant_analyst_snapshot,
     "oracle_options_indicative_snapshot": options_snapshot,
     "oracle_opening_window_sync": opening_window_sync,

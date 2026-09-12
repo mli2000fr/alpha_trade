@@ -161,7 +161,7 @@ aux **heures de la journée** définies dans `batch.yaml` → `earnings_calendar
 
 - `earnings_calendar_launcher.ps1` : lanceur commun — exécute la commande
   `python -u -m dataIntegrityEngine.sync_earnings_calendar --sleep-seconds 1.1 --log-every 25 --batch-size 50 --symbols-file <symbols_file> --resume`
-  (ou `--symbol-source active-tradable` si `symbols_file` est absent) et ajoute
+  et ajoute
   une ligne de statut (`START` / `OK` / `ERROR` / `SKIP`) dans
   `log/batch/earnings_calendar.txt` (chemin piloté par `batch.yaml` →
   `earnings_calendar_sync.log_file`). `SKIP` = jour hors `run_days`, rien n’est lancé.
@@ -186,12 +186,10 @@ earnings_calendar_sync:
   uniquement ces jours-là (l’installation affiche « Jours » et « Planif :
   hebdomadaire »). Le launcher garde un filet de sécurité : un jour hors
   `run_days` → ligne `SKIP`, rien n’est lancé.
-- `symbols_file` = univers fichier partagé avec `analyst_snapshot_collect`
-  (2255 symboles). S’il est renseigné, le batch earnings utilise ce fichier
-  (même univers que le batch analyst) au lieu de `--symbol-source
-  active-tradable` (~13 600 symboles). S’il est absent/vide OU le fichier
-  introuvable → repli sur `active-tradable` avec un **WARNING** remonté dans le
-  log de statut (`WARNING univers …`) + notification email **et** Telegram.
+- `symbols_file` = univers stable partagé avec `analyst_snapshot_collect`,
+  actuellement `config/univers_batch/univers_filtred_tradable.txt`. Il est
+  obligatoire : absent, vide ou introuvable, le batch échoue avant tout appel
+  fournisseur et notifie l'erreur. Aucun repli vers `active-tradable` n'est permis.
 
 ### Installer
 
@@ -322,11 +320,10 @@ analyst_snapshot_collection:
   log_file: log/batch/analyst_snapshots.txt
 ```
 
-- `symbols_file` = univers fichier partagé avec `earnings_calendar_sync`
-  (2255 symboles). S’il est absent/vide OU le fichier introuvable → le launcher
-  émet un **WARNING** (ligne `WARNING` dans le log de statut + notification
-  email **et** Telegram) et le batch **repli sur l’univers active-tradable**
-  (~13 600 symboles).
+- `symbols_file` = univers stable partagé avec `earnings_calendar_sync`,
+  actuellement `config/univers_batch/univers_filtred_tradable.txt`. Il est
+  obligatoire : absent, vide ou introuvable, le batch échoue avant tout appel
+  fournisseur et notifie l'erreur. Aucun repli dynamique n'est permis.
 - `run_hours` = liste d’heures (0-23) séparées par des virgules. Chaque heure
   devient un déclencheur quotidien de la tâche planifiée. ⚠️ L’heure est
   exprimée **en America/New_York** (la collecte doit se faire après la clôture

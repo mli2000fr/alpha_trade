@@ -12,13 +12,17 @@ WINDOWS = ROOT / "scripts" / "windows"
 def test_market_cap_sync_config_contract() -> None:
     config = yaml.safe_load((ROOT / "batch.yaml").read_text(encoding="utf-8"))
     sync = config["market_cap_sync"]
-    assert sync == {
+    expected = {
         "run_hours": "11,23",
         "run_days": "1,4",
         "symbols_file": "config/univers_batch/univers_filtred_tradable.txt",
         "providers": "yahoo_finance,finnhub",
         "log_file": "log/batch/market_cap_sync.txt",
     }
+    assert {key: sync[key] for key in expected} == expected
+    assert sync["priority"] == "P0"
+    assert sync["tables"] == "stock_fundamentals_daily"
+    assert str(sync["description"]).strip()
 
 
 def test_market_cap_sync_scripts_exist_and_are_hardened() -> None:

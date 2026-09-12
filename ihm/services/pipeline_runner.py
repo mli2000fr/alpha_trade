@@ -934,14 +934,16 @@ PIPELINE_AUXILIARY_STEPS: tuple[PipelineStepDefinition, ...] = (
         key="analyst_snapshot_collect",
         num="B4",
         name="Collecte Analyst Yahoo (directionnel)",
-        desc="Collecte prospective PIT d'analyst data Yahoo (EPS/revenue estimates, price targets, "
-             "recommendations) dans les tables append-only `stock_analyst_*_history`. "
-             "RESEARCH ONLY — aucune intégration PROD (ni Global Rank, ni Oracle, ni cascade, ni live). "
+        desc="Collecte prospective PIT Yahoo Finance via yfinance (EPS/revenue estimates, tendances "
+             "et révisions EPS, price targets, recommandations) dans les tables append-only "
+             "`stock_analyst_*_history`. RECHERCHE PERSONNELLE/ÉDUCATIVE UNIQUEMENT : source non "
+             "officielle, sans SLA, non licenciée pour redistribution et sans intégration PROD "
+             "(ni Global Rank, ni Oracle, ni cascade, ni live). "
              "Univers configuré (`batch.yaml` → `analyst_snapshot_collection.symbols_file`), "
              "explicite et jamais recalculé. Aucun stockage fichier : MySQL = source de vérité "
              "(`raw_payload_json` + `raw_hash` conservés). Idempotent : relancer ne crée aucun doublon. "
              "Contrat PIT : `available_at` = prochaine séance après observation.",
-        tables="stock_analyst_estimate_history, stock_analyst_target_history, stock_analyst_recommendation_history, analyst_snapshot_collection_run",
+        tables="stock_analyst_estimate_history, stock_analyst_eps_trend_history, stock_analyst_eps_revision_history, stock_analyst_target_history, stock_analyst_recommendation_history, analyst_snapshot_collection_run",
         deps="— (univers figé ; réseau Yahoo requis)",
     ),
 )

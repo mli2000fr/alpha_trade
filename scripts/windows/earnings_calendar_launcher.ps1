@@ -12,7 +12,7 @@
 # et aux jours de earnings_calendar_sync.run_days (0=dimanche … 6=samedi ;
 # hors run_days → ligne SKIP, aucun lancement). L'univers est piloté par
 # earnings_calendar_sync.symbols_file (même fichier que analyst_snapshot_collect),
-# avec repli --symbol-source active-tradable.
+# obligatoire, sans repli vers active-tradable.
 #
 # Usage manuel :
 #   powershell -ExecutionPolicy Bypass -File .\scripts\windows\earnings_calendar_launcher.ps1
@@ -151,13 +151,13 @@ function Write-StatusLine {
 
 # ── DÉBUT DE TRAITEMENT : écrit immédiatement (sait que le batch tourne) ──
 $started = Get-Date
-Write-StatusLine ("[{0}] DÉBUT DE TRAITEMENT earnings_calendar_sync pid={1} — le batch est lancé" -f $started.ToString('yyyy-MM-dd HH:mm:ss'), $PID)
+Write-StatusLine ("[{0}] DEBUT DE TRAITEMENT earnings_calendar_sync pid={1} - le batch est lance" -f $started.ToString('yyyy-MM-dd HH:mm:ss'), $PID)
 
 # ── Interpréteur Python (indispensable) ──
 try {
     $resolvedPython = Resolve-AlphaTradePythonExe -Workspace $resolvedWorkspace -RequestedPythonExePath $PythonExePath
 } catch {
-    Write-StatusLine ("[{0}] FIN TRAITEMENT ERROR  earnings_calendar_sync — Python indisponible : {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), ($_.Exception.Message -replace '[\r\n]+', ' '))
+    Write-StatusLine ("[{0}] FIN TRAITEMENT ERROR  earnings_calendar_sync - Python indisponible : {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), ($_.Exception.Message -replace '[\r\n]+', ' '))
     exit 1
 }
 
@@ -192,7 +192,7 @@ if (-not $LogFile -and $cfg -and ($cfg.PSObject.Properties.Name -contains 'log_f
         if ($cfgLogDir -and -not (Test-Path -LiteralPath $cfgLogDir)) {
             New-Item -ItemType Directory -Path $cfgLogDir -Force | Out-Null
         }
-        Write-StatusLine ("[{0}] NOTE   log_file = batch.yaml → {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $effectiveLogFile)
+        Write-StatusLine ("[{0}] NOTE   log_file = batch.yaml -> {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $effectiveLogFile)
     }
 }
 
@@ -207,38 +207,38 @@ $runDays = @($runDaysValue -split ',' | ForEach-Object { $_.Trim() } | Where-Obj
 if ($runDays.Count -gt 0 -and -not $Force) {
     $dow = [int](Get-Date).DayOfWeek
     if ($runDays -notcontains [string]$dow) {
-        Write-StatusLine ("[{0}] SKIP   earnings_calendar_sync — jour={1} (0=dimanche) absent de run_days='{2}' — aucun lancement" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $dow, $runDaysValue)
+        Write-StatusLine ("[{0}] SKIP   earnings_calendar_sync - jour={1} (0=dimanche) absent de run_days='{2}' - aucun lancement" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $dow, $runDaysValue)
         exit 0
     }
-    Write-StatusLine ("[{0}] NOTE   earnings_calendar_sync — jour={1} présent dans run_days='{2}'" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $dow, $runDaysValue)
+    Write-StatusLine ("[{0}] NOTE   earnings_calendar_sync - jour={1} present dans run_days='{2}'" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $dow, $runDaysValue)
 }
 
-# ── Univers : symbols_file (batch.yaml) prioritaire sur active-tradable ──
-#    Même univers fichier que le batch analyst_snapshot_collect si renseigné.
-#    Si symbols_file est ABSENT/VIDE ou le fichier INTROUVABLE → repli univers
-#    active-tradable (~13 600) avec un AVERTISSEMENT (log + email + Telegram).
+# ── Univers stable obligatoire : aucun repli sur un univers dynamique. ──
 $batchWarnings = @()
-$universeArgs = @('--symbol-source', 'active-tradable')
+$universeArgs = @()
+$universePreflightError = ''
 $symbolsFileValue = ''
 if ($cfg -and ($cfg.PSObject.Properties.Name -contains 'symbols_file') -and $cfg.symbols_file) {
     $symbolsFileValue = [string]$cfg.symbols_file
 }
 if (-not $symbolsFileValue) {
-    $warnMsg = "earnings_calendar_sync.symbols_file non renseigné (batch.yaml) — repli univers active-tradable (~13 600)"
+    $warnMsg = "earnings_calendar_sync.symbols_file obligatoire mais non renseigne dans batch.yaml"
     $batchWarnings += $warnMsg
-    Write-StatusLine ("[{0}] WARNING univers — {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $warnMsg)
+    $universePreflightError = $warnMsg
+    Write-StatusLine ("[{0}] ERROR  univers - {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $warnMsg)
 } else {
     $symbolsFilePath = $symbolsFileValue
     if (-not [IO.Path]::IsPathRooted($symbolsFilePath)) {
         $symbolsFilePath = Join-Path $resolvedWorkspace $symbolsFilePath
     }
     if (Test-Path -LiteralPath $symbolsFilePath) {
-        Write-StatusLine ("[{0}] NOTE   univers = symbols_file → {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $symbolsFilePath)
+        Write-StatusLine ("[{0}] NOTE   univers = symbols_file -> {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $symbolsFilePath)
         $universeArgs = @('--symbols-file', $symbolsFilePath)
     } else {
-        $warnMsg = "earnings_calendar_sync.symbols_file introuvable : $symbolsFilePath — repli univers active-tradable (~13 600)"
+        $warnMsg = "earnings_calendar_sync.symbols_file introuvable : $symbolsFilePath"
         $batchWarnings += $warnMsg
-        Write-StatusLine ("[{0}] WARNING univers — {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $warnMsg)
+        $universePreflightError = $warnMsg
+        Write-StatusLine ("[{0}] ERROR  univers - {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $warnMsg)
     }
 }
 
@@ -255,6 +255,7 @@ $commandArgs = @(
 $exitCode = 0
 $errorMsg = ''
 try {
+    if ($universePreflightError) { throw $universePreflightError }
     Push-Location $resolvedWorkspace
     try {
         # ── Encodage UTF-8 : force Python à écrire en UTF-8 et PS 5.1 à décoder en
@@ -285,10 +286,10 @@ $dur = $finished - $started
 $durStr = '{0}h{1:D2}m{2:D2}s' -f [int]$dur.TotalHours, $dur.Minutes, $dur.Seconds
 
 if ($exitCode -eq 0) {
-    Write-StatusLine ("[{0}] FIN TRAITEMENT OK     earnings_calendar_sync exit=0 durée={1} — log/sync_earnings_calendar.log" -f $stamp, $durStr)
+    Write-StatusLine ("[{0}] FIN TRAITEMENT OK     earnings_calendar_sync exit=0 duree={1} - log/sync_earnings_calendar.log" -f $stamp, $durStr)
 } else {
     $err = if ($errorMsg) { " err=$errorMsg" } else { '' }
-    Write-StatusLine ("[{0}] FIN TRAITEMENT ERROR  earnings_calendar_sync exit={1} durée={2}{3} — voir log/sync_earnings_calendar.log" -f $stamp, $exitCode, $durStr, $err)
+    Write-StatusLine ("[{0}] FIN TRAITEMENT ERROR  earnings_calendar_sync exit={1} duree={2}{3} - voir log/sync_earnings_calendar.log" -f $stamp, $exitCode, $durStr, $err)
 }
 
 # ── Email de fin de batch (statut + logs de CE run) via email_notifier ──

@@ -10,12 +10,33 @@ présent dans pit_collection_runs (volumes demandés, reçus, persistés, alerte
 échecs). Les trois traitements historiques qui ne renseignent pas encore cette table
 restent observables via leur tâche Windows et leur journal dédié.
 
-Les boutons **Installer / réinstaller** et **Lancer maintenant** exécutent les mêmes
+Les compteurs distinguent configuré, exécutable, installé et exécutable,
+et installé mais dormant. Une tâche installée mais associée à enabled=false
+reste présente dans Windows, mais son launcher s'arrête avant tout appel fournisseur
+et n'écrit aucune donnée métier.
+Chaque batch dormant affiche une alerte rouge issue de son champ
+activation_requirement dans batch.yaml. Elle décrit le fournisseur, le quota, le
+flux amont ou la décision de recherche nécessaire avant de passer enabled à true.
+Elle est suivie d'une section **Comment le débloquer**, alimentée par `unlock_steps`,
+qui détaille les contrôles, développements et validations à réaliser dans l'ordre.
+
+Les boutons **Installer / réinstaller**, **Lancer maintenant** et **Désinstaller**
+exécutent les mêmes
 scripts PowerShell que l'exploitation manuelle. Un lancement depuis l'IHM est
 asynchrone : quitter la page ne coupe pas le traitement. Les batchs désactivés ou en
 attente de fournisseur/quota restent documentés mais leur bouton de lancement est
 bloqué. Les notifications email et Telegram sont envoyées par le launcher du batch ;
 la notification générique de l'IHM est neutralisée afin d'éviter un doublon.
+La désinstallation supprime uniquement la tâche du Planificateur Windows : elle ne
+supprime ni batch.yaml, ni les journaux, ni les données collectées. Le bouton est
+désactivé quand la tâche est absente ou en cours, et le script refuse également une
+désinstallation tant que la tâche s'exécute.
+
+Deux actions globales permettent d'installer ou réinstaller les 19 tâches configurées,
+et de désinstaller toutes les tâches Batch présentes dans Windows. Une opération
+globale continue après un échec isolé et affiche le résultat par batch. Les tâches en
+cours sont toujours ignorées. Installer une configuration dormante ne l'active pas :
+enabled=false demeure le verrou fonctionnel.
 
 ## Objectif et contrat
 
@@ -33,6 +54,21 @@ Principes invariants :
 - aucune disparition du security master ne devient automatiquement un delisting ;
 - aucune source expérimentale n’est activée sans fournisseur et quota validés.
 - timestamps persistés en UTC ; la date de séance reste calculée en heure New York.
+- tout batch par symbole utilise `config/univers_batch/univers_filtred_tradable.txt` ; l'absence du fichier est bloquante et ne déclenche aucun repli vers un univers dynamique ;
+- seuls les flux de découverte ou intrinsèquement globaux restent market-wide : security master, corporate actions, dépôts SEC et séries macro.
+
+### Contrat d'univers des 19 batchs
+
+| Périmètre | Batchs | Contrat |
+|---|---|---|
+| Univers tradable stable | `market_cap_sync`, `earnings_calendar_sync`, `analyst_snapshot_collection`, `daily_bars_sync`, `pit_data_quality_daily`, `borrow_status_snapshot`, `business_quant_analyst_snapshot`, `oracle_options_indicative_snapshot`, `oracle_opening_window_sync` | fichier `config/univers_batch/univers_filtred_tradable.txt`, complet, sans TOP20 ni limite implicite |
+| Futurs collecteurs par symbole | `auction_imbalance_sync`, `securities_lending_sync`, `official_options_nbbo_sync` | le même fichier est déjà déclaré ; les collecteurs restent désactivés tant que source, stockage et qualité ne sont pas validés |
+| Découverte market-wide | `security_master_snapshot` | toutes les cotations disponibles afin de détecter nouveaux titres, changements et disparitions |
+| Événements market-wide | `corporate_actions_sync` | flux global afin de ne pas manquer une action affectant un titre entrant, sortant ou détenu |
+| Dépôts SEC globaux | `sec_edgar_incremental`, `sec_corporate_events_normalize`, `sec_institutional_ownership_normalize` | collecte RAW puis normalisation des formulaires configurés ; pas de présélection Oracle |
+| Macro | `fred_alfred_vintage_sync` | séries économiques, notion de symbole non applicable |
+
+Le TOP20 est une **sortie de modèle**, recalculée après entraînement ou à chaque date de backtest. Il n'est jamais une source de collecte. Ainsi, un nouvel Oracle, un nouvel horizon ou une nouvelle politique de ranking peut reconstruire son propre TOP20 à partir du même historique large.
 
 ## Inventaire opérationnel
 
@@ -44,12 +80,12 @@ Principes invariants :
 | P0 | `sec_edgar_incremental` | SEC daily master index + submissions | `sec_filing_raw` | actif |
 | P0 | `pit_data_quality_daily` | contrôles locaux | `pit_data_quality_metrics`, `pit_data_quality_issues` | actif |
 | P1 | `borrow_status_snapshot` | Alpaca Assets | `stock_borrow_status_snapshots` | actif |
-| P1 | `analyst_snapshot_collection` | Yahoo/yfinance | tables analystes existantes | actif, stabilisé à un passage après clôture |
-| P1 | `business_quant_analyst_snapshot` | Business Quant `/estimates` | `stock_analyst_consensus_snapshots` | désactivé, décision quota requise |
-| P1 | `finra_short_volume_sync` | fournisseur à arrêter | — | désactivé ; famille de contrôle déjà NO_GO |
-| P2 | `oracle_options_indicative_snapshot` | Alpaca indicative | `stock_option_snapshots` | désactivé jusqu’à alimentation d’`oracle_top20.txt` |
+| P1 | `analyst_snapshot_collection` | Yahoo Finance/yfinance | consensus, tendances/révisions EPS, targets et recommandations | actif, recherche personnelle/éducative uniquement |
+| P1 | `business_quant_analyst_snapshot` | Business Quant `/estimates` | `stock_analyst_consensus_snapshots` | remplacé par Yahoo, désactivé |
+| P1 | `finra_short_volume_sync` | FINRA Consolidated NMS public | `stock_short_volume_daily` | actif, recherche uniquement |
+| P2 | `oracle_options_indicative_snapshot` | Alpaca Basic indicative | `stock_option_snapshots` | actif, recherche uniquement |
 | P2 | `official_options_nbbo_sync` | fournisseur requis | — | désactivé |
-| P3 | `oracle_opening_window_sync` | Business Quant minute-bars | `stock_opening_window_bars` | désactivé jusqu’à alimentation d’`oracle_top20.txt` |
+| P3 | `oracle_opening_window_sync` | Business Quant minute-bars | `stock_opening_window_bars` | désactivé, capacité univers complet à valider |
 | P3 | `sec_corporate_events_normalize` | RAW SEC 8‑K/6‑K | `sec_corporate_events` | actif |
 | P4 | `sec_institutional_ownership_normalize` | RAW SEC 13F/13D/13G | `sec_ownership_snapshots` | actif |
 | P4 | `fred_alfred_vintage_sync` | FRED/ALFRED | `macro_vintage_observations` | actif |
@@ -99,11 +135,57 @@ Les batchs P3/P4 relisent ce RAW local : aucun second téléchargement SEC. P3 e
 
 ### Borrow, analystes, options et ouverture
 
-Alpaca Assets permet de suivre `shortable`, `easy_to_borrow`, `marginable` et `tradable` plusieurs fois par séance. Cela ne fournit ni borrow fee, ni utilization, ni lendable supply.
+Alpaca Assets permet de suivre `shortable`, `easy_to_borrow`, `marginable` et `tradable` plusieurs fois par séance. L'endpoint renvoie globalement les actifs Alpaca : le payload RAW global est conservé pour audit, mais seules les actions US appartenant à `config/univers_batch/univers_filtred_tradable.txt` sont normalisées dans `stock_borrow_status_snapshots`. Cela ne fournit ni borrow fee, ni utilization, ni lendable supply.
 
-Le batch analyste Yahoo existant respecte désormais `enabled: false`, distingue couverture EPS et REVENUE et ne tourne plus deux fois le même jour avec un `resume` rendant le second passage vide. Business Quant analyste est un challenger désactivé et limité à l’univers Oracle pour maîtriser le quota.
+Le batch analyste Yahoo existant respecte désormais `enabled: false`, distingue couverture EPS et REVENUE et ne tourne plus deux fois le même jour avec un `resume` rendant le second passage vide. Business Quant analyste est un challenger désactivé. Sa population cible est l’univers stable `config/univers_batch/univers_filtred_tradable.txt`, et non la sélection d’un modèle Oracle courant.
 
-Les options Alpaca sont explicitement étiquetées `indicative`, pas OPRA/NBBO. Le pilote opening-window conserve les barres minute et reconstruit le volume minute à partir du volume cumulé. Ces deux batchs ne doivent être activés qu’après génération quotidienne de `config/univers_batch/oracle_top20.txt`.
+Les trois collecteurs de recherche `business_quant_analyst_snapshot`, `oracle_options_indicative_snapshot` et `oracle_opening_window_sync` utilisent le même univers tradable stable. Ce contrat évite un biais de sélection : un TOP20 produit aujourd’hui par un batch donné ne doit pas décider quelles données seront disponibles demain pour réentraîner ou backtester un autre Oracle, un autre horizon, un modèle Per-Symbol ou un ranker. Les noms historiques contenant `oracle_` sont conservés pour compatibilité, mais ne signifient plus que la collecte est limitée au TOP20.
+
+Par défaut, le service charge tout le fichier. `max_symbols` n’est jamais une
+limite implicite de production ; il reste accepté uniquement lorsqu’il est fourni
+explicitement pour un smoke test. Au 12 septembre 2026, le fichier contient
+1 798 symboles uniques. Le batch options est actif sur ces 1 798 titres : il ne
+reçoit ni TOP20, ni identifiant de batch Oracle, ni limite de symboles. Le pilote
+opening-window reste désactivé tant que sa capacité Business Quant n'est pas
+validée.
+
+Le collecteur options réduit le volume au niveau **des contrats**, pas au niveau
+des actions :
+
+- cours du sous-jacent obtenu par snapshots actions Alpaca IEX, par lots de 100 ;
+- fenêtre de strikes comprise par défaut entre 80 % et 120 % du sous-jacent ;
+- expirations interrogées autour de DTE 5, 10 et 20, puis conservation de
+  l'expiration disponible la plus proche de chacun de ces trois horizons ;
+- pour chaque expiration et côté CALL/PUT, un contrat est retenu au plus près
+  de chaque moneyness cible 0,85/0,90/0,95/1,00/1,05/1,10/1,15 ;
+- quote bid/ask bilatérale, bid d'au moins 0,01 USD et spread relatif maximal de
+  100 % ;
+- open interest d'au moins 10 lorsqu'Alpaca le fournit ; une valeur manquante ne
+  bloque pas le contrat car l'absence peut venir de l'endpoint de référence ;
+- pagination intégrale des snapshots et des contrats, avec échec explicite si
+  la limite de sécurité est atteinte.
+
+Les réponses RAW paginées sont conservées avant le filtre. La table normalisée
+reçoit les quotes, trades, IV, Greeks et l'open interest issu de
+`/v2/options/contracts`. Le volume journalier reste `NULL` : le snapshot de
+chaîne gratuit ne le fournit pas de façon exploitable en bulk. Il ne doit pas être
+confondu avec `trade_size`, qui est seulement la taille du dernier trade.
+
+Le feed reste **Alpaca Basic `indicative`**, jamais OPRA/NBBO : ses quotes sont
+modifiées et ses trades peuvent être retardés. Il est autorisé uniquement pour
+constituer des features de recherche prospectives ; il ne doit jamais fournir un
+prix d'exécution live. Deux passages après clôture (16:20 et 19:00 New York)
+offrent un rattrapage opérationnel. Un dataset ML quotidien doit sélectionner une
+seule observation PIT par séance selon une règle pré-enregistrée, par exemple la
+dernière observation complète disponible.
+
+La collecte est prospective : changer ultérieurement de modèle ou de TOP20 ne supprime pas les observations déjà acquises. En revanche, l’activation aujourd’hui ne reconstitue pas automatiquement un historique PIT antérieur si le fournisseur ne l’expose pas avec ses dates d’observation d’origine.
+
+### Short volume FINRA
+
+`finra_short_volume_sync` télécharge le fichier public Consolidated NMS sur une fenêtre glissante de sept jours, puis conserve seulement les symboles de `config/univers_batch/univers_filtred_tradable.txt`. Deux passages, à 18 h et 23 h New York, permettent de récupérer la publication du jour puis une éventuelle correction. Une ligne strictement identique est ignorée par sa clé incluant le hash ; une correction crée une nouvelle version auditable. Le payload source complet est conservé dans `pit_raw_payloads`.
+
+Le verdict ML historique `NO_GO` est conservé : le short volume ne devient ni une feature active ni un gate de trading. La collecte continue néanmoins afin de constituer un historique prospectif réutilisable si une nouvelle formulation, un nouvel univers ou une interaction de features justifie un retest.
 
 ### FRED/ALFRED
 
@@ -128,7 +210,7 @@ Les notifications sont best-effort : une panne SMTP ou Telegram est journalisée
 
 1. Appliquer `alembic upgrade head` avant le premier lancement.
 2. Définir `BUSINESS_QUANT_API_KEY`, les identifiants Alpaca déjà utilisés par l’application, `KEY_FRED` et `SEC_EDGAR_USER_AGENT`.
-3. Vérifier les chemins `symbols_file` et laisser désactivés les pilotes marqués `PENDING_*` ou `ENABLE_AFTER_*`.
+3. Vérifier les chemins `symbols_file` et laisser désactivés les pilotes marqués `PENDING_*` ou `ENABLE_AFTER_*`. Pour le batch options actif, vérifier que les identifiants Alpaca configurés donnent accès aux endpoints Data et Options.
 4. Tester un batch manuellement avec :
 
    `powershell -ExecutionPolicy Bypass -File .\scripts\windows\forward_pit_launcher.ps1 -BatchName daily_bars_sync -Force -DryRun`

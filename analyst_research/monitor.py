@@ -33,8 +33,11 @@ def cmd_status() -> int:
     else:
         for k in ("run_id", "provider", "started_at", "finished_at", "status",
                   "requested_symbols", "successful_symbols", "empty_symbols", "failed_symbols",
-                  "estimates_rows_inserted", "targets_rows_inserted", "recommendations_rows_inserted",
-                  "eps_coverage", "revenue_coverage", "target_coverage", "recommendation_coverage",
+                  "estimates_rows_inserted", "eps_trend_rows_inserted",
+                  "eps_revision_rows_inserted", "targets_rows_inserted",
+                  "recommendations_rows_inserted", "eps_coverage", "revenue_coverage",
+                  "eps_trend_coverage", "eps_revision_coverage", "target_coverage",
+                  "recommendation_coverage",
                   "rate_limit_count", "temporary_error_count", "schema_error_count", "parse_error_count"):
             print(f"  {k}: {_fmt(run.get(k))}")
     print("\n=== Compteurs tables ===")

@@ -2610,8 +2610,10 @@ def _render_corporate_actions_block(trade_date: str) -> dict[str, Any]:
 
     st.markdown("#### Paramètres Collecte Analyst Yahoo (B4)")
     st.caption(
-        "Collecte prospective PIT (RESEARCH ONLY) : snapshots quotidiens EPS/revenue estimates, "
-        "price targets et recommendations Yahoo, append-only dans les tables `stock_analyst_*_history`. "
+        "Yahoo Finance via yfinance — RECHERCHE PERSONNELLE/ÉDUCATIVE UNIQUEMENT : source non "
+        "officielle, sans SLA et non destinée à la redistribution. Collecte prospective PIT de "
+        "snapshots quotidiens EPS/revenue estimates, tendances/révisions EPS, price targets et "
+        "recommendations, append-only dans les tables `stock_analyst_*_history`. "
         "Univers configuré (`batch.yaml` → `analyst_snapshot_collection.symbols_file`). "
         "Aucun stockage fichier : MySQL = source de vérité (`raw_payload_json` conservé). "
         "Le bouton de la page Pipeline (B4) lance la commande ci-dessous."

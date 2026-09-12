@@ -29,7 +29,12 @@ OLD_BATCHES = {
     "earnings_calendar_sync": ("AlphaTrade-EarningsCalendarSync", "install_earnings_calendar_task.ps1", "earnings_calendar_launcher.ps1"),
     "analyst_snapshot_collection": ("AlphaTrade-AnalystSnapshot", "install_analyst_snapshot_task.ps1", "analyst_snapshot_launcher.ps1"),
 }
-PENDING_STATUSES = {"PENDING_PROVIDER", "PENDING_QUOTA_DECISION", "ENABLE_AFTER_ORACLE_LIVE_SELECTION"}
+PENDING_STATUSES = {
+    "PENDING_PROVIDER",
+    "PENDING_QUOTA_DECISION",
+    "PENDING_FULL_UNIVERSE_CAPACITY",
+    "ENABLE_AFTER_ORACLE_LIVE_SELECTION",
+}
 DAY_LABELS = {
     "0": "dim", "1": "lun", "2": "mar", "3": "mer",
     "4": "jeu", "5": "ven", "6": "sam",
@@ -41,6 +46,8 @@ class BatchSpec:
     name: str
     priority: str
     description: str
+    activation_requirement: str
+    unlock_steps: tuple[str, ...]
     tables: tuple[str, ...]
     enabled: bool
     status: str
@@ -50,9 +57,11 @@ class BatchSpec:
     run_minutes: tuple[str, ...]
     run_days: tuple[str, ...]
     symbols_file: str
+    universe_scope: str
     log_file: str
     task_name: str
     raw_config: Mapping[str, Any]
+    research_notice: str = ""
 
     @property
     def runnable(self) -> bool:
@@ -69,6 +78,13 @@ class CommandResult:
 
 def _split(value: Any) -> tuple[str, ...]:
     return tuple(part.strip() for part in str(value or "").split(",") if part.strip())
+
+
+def _string_list(value: Any) -> tuple[str, ...]:
+    if isinstance(value, (list, tuple)):
+        return tuple(str(item).strip() for item in value if str(item).strip())
+    text_value = str(value or "").strip()
+    return (text_value,) if text_value else ()
 
 
 def _default_task_name(batch_name: str) -> str:
@@ -92,6 +108,8 @@ def load_batch_specs(path: str | None = None) -> tuple[BatchSpec, ...]:
             name=str(name),
             priority=str(raw.get("priority") or "—"),
             description=str(raw.get("description") or "Description non renseignée dans batch.yaml."),
+            activation_requirement=str(raw.get("activation_requirement") or ""),
+            unlock_steps=_string_list(raw.get("unlock_steps")),
             tables=_split(raw.get("tables")),
             enabled=bool(raw.get("enabled", True)),
             status=status,
@@ -101,9 +119,11 @@ def load_batch_specs(path: str | None = None) -> tuple[BatchSpec, ...]:
             run_minutes=_split(raw.get("run_minutes")),
             run_days=_split(raw.get("run_days")),
             symbols_file=str(raw.get("symbols_file") or ""),
+            universe_scope=str(raw.get("universe_scope") or ""),
             log_file=str(raw.get("log_file") or f"log/batch/{name}.txt"),
             task_name=task_name_for_batch(str(name)),
             raw_config=dict(raw),
+            research_notice=str(raw.get("research_notice") or ""),
         ))
     order = {f"P{i}": i for i in range(5)}
     return tuple(sorted(specs, key=lambda item: (order.get(item.priority, 99), item.name)))
@@ -147,6 +167,13 @@ def build_run_command(spec: BatchSpec) -> list[str]:
     ]
 
 
+def build_uninstall_command(spec: BatchSpec) -> list[str]:
+    return _powershell_prefix() + [
+        str(WINDOWS_SCRIPTS / "uninstall_scheduled_batch_task.ps1"),
+        "-TaskName", spec.task_name,
+    ]
+
+
 def format_command(command: list[str]) -> str:
     return subprocess.list2cmdline(command)
 
@@ -159,6 +186,46 @@ def install_batch(spec: BatchSpec, *, run_as: str = "Interactive", timeout_secon
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     return CommandResult(completed.returncode == 0, completed.returncode, completed.stdout, completed.stderr)
+
+
+def uninstall_batch(spec: BatchSpec, *, timeout_seconds: int = 60) -> CommandResult:
+    completed = subprocess.run(
+        build_uninstall_command(spec),
+        cwd=str(PROJECT_ROOT), capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=timeout_seconds, check=False,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    return CommandResult(completed.returncode == 0, completed.returncode, completed.stdout, completed.stderr)
+
+
+def _failed_command_result(exc: Exception) -> CommandResult:
+    return CommandResult(False, -1, "", str(exc))
+
+
+def install_all_batches(
+    specs: tuple[BatchSpec, ...] | list[BatchSpec],
+    *,
+    run_as: str = "Interactive",
+) -> dict[str, CommandResult]:
+    results: dict[str, CommandResult] = {}
+    for spec in specs:
+        try:
+            results[spec.name] = install_batch(spec, run_as=run_as)
+        except Exception as exc:
+            results[spec.name] = _failed_command_result(exc)
+    return results
+
+
+def uninstall_all_batches(
+    specs: tuple[BatchSpec, ...] | list[BatchSpec],
+) -> dict[str, CommandResult]:
+    results: dict[str, CommandResult] = {}
+    for spec in specs:
+        try:
+            results[spec.name] = uninstall_batch(spec)
+        except Exception as exc:
+            results[spec.name] = _failed_command_result(exc)
+    return results
 
 
 def start_batch(spec: BatchSpec, *, db_config: dict[str, str | None] | None = None) -> PipelineRunRecord:
@@ -235,8 +302,8 @@ def read_batch_log_tail(spec: BatchSpec, max_lines: int = 80) -> str:
 
 
 __all__ = [
-    "BatchSpec", "CommandResult", "build_install_command", "build_run_command",
-    "format_command", "format_schedule", "install_batch", "list_active_batch_runs",
+    "BatchSpec", "CommandResult", "build_install_command", "build_run_command", "build_uninstall_command",
+    "format_command", "format_schedule", "install_all_batches", "install_batch", "list_active_batch_runs",
     "load_batch_specs", "query_windows_task_states", "read_batch_log_tail",
-    "start_batch", "task_name_for_batch",
+    "start_batch", "task_name_for_batch", "uninstall_all_batches", "uninstall_batch",
 ]

@@ -11,6 +11,8 @@ from analyst_research.parsers import (
     HORIZON_MAP,
     ProviderSchemaChangedError,
     compute_raw_hash,
+    parse_eps_revisions,
+    parse_eps_trend,
     parse_estimate,
     parse_recommendations,
     parse_targets,
@@ -76,6 +78,33 @@ def test_estimate_parser_schema_change_raises():
     with pytest.raises(ProviderSchemaChangedError):
         parse_estimate(df, estimate_type="EPS", symbol="AAPL",
                        snapshot_date=SNAP, observed_at=OBS, available_at=AVAIL)
+
+
+def test_eps_trend_parser_preserves_all_reference_windows():
+    frame = pd.DataFrame({
+        "current": [1.5], "7daysAgo": [1.4], "30daysAgo": [1.3],
+        "60daysAgo": [1.2], "90daysAgo": [1.1],
+    }, index=pd.Index(["0q"], name="period"))
+    row = parse_eps_trend(frame, symbol="AAPL", snapshot_date=SNAP,
+                          observed_at=OBS, available_at=AVAIL)[0]
+    assert row["horizon_normalized"] == "CURRENT_QUARTER"
+    assert row["current_value"] == 1.5
+    assert row["days_7_ago_value"] == 1.4
+    assert row["days_90_ago_value"] == 1.1
+    assert row["relative_horizon_only"] is True
+
+
+def test_eps_revisions_parser_supports_yahoo_lowercase_day_alias():
+    frame = pd.DataFrame({
+        "upLast7days": [4], "upLast30days": [9],
+        "downLast7days": [1], "downLast30days": [3],
+    }, index=pd.Index(["+1q"], name="period"))
+    row = parse_eps_revisions(frame, symbol="AAPL", snapshot_date=SNAP,
+                              observed_at=OBS, available_at=AVAIL)[0]
+    assert row["horizon_normalized"] == "NEXT_QUARTER"
+    assert row["up_last_7_days"] == 4
+    assert row["down_last_7_days"] == 1
+    assert row["down_last_30_days"] == 3
 
 
 def test_target_parser():

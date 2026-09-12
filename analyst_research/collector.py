@@ -45,6 +45,8 @@ from analyst_research.parsers import (
     ParseError,
     ProviderSchemaChangedError,
     parse_estimate,
+    parse_eps_revisions,
+    parse_eps_trend,
     parse_recommendations,
     parse_targets,
 )
@@ -60,6 +62,8 @@ class SymbolCollection:
     error: str | None = None
     families: dict[str, str] = field(default_factory=dict)
     estimates_rows: list[dict] = field(default_factory=list)
+    eps_trend_rows: list[dict] = field(default_factory=list)
+    eps_revision_rows: list[dict] = field(default_factory=list)
     targets_rows: list[dict] = field(default_factory=list)
     recommendations_rows: list[dict] = field(default_factory=list)
 
@@ -98,7 +102,7 @@ def _collect_family(
 
 
 def collect_symbol(symbol: str, *, observed_at: datetime, timeout_seconds: float) -> SymbolCollection:
-    """Collecte les 4 familles Yahoo pour un symbole (avec watchdog timeout)."""
+    """Collecte les 6 familles Yahoo pour un symbole (avec watchdog timeout)."""
     snapshot_date = snapshot_date_of(observed_at)
     available_at = to_utc_naive(resolve_available_at(observed_at))
     ctx = {
@@ -120,6 +124,16 @@ def collect_symbol(symbol: str, *, observed_at: datetime, timeout_seconds: float
         st, rows = _collect_family(ticker, attr, parser, {**ctx, "estimate_type": etype})
         result.families[f"{attr}"] = st
         result.estimates_rows.extend(rows)
+
+    # Tendance du consensus EPS et breadth des révisions. Ces objets partagent
+    # le module earningsTrend de la même instance Ticker côté yfinance.
+    st, rows = _collect_family(ticker, "eps_trend", parse_eps_trend, ctx)
+    result.families["eps_trend"] = st
+    result.eps_trend_rows.extend(rows)
+
+    st, rows = _collect_family(ticker, "eps_revisions", parse_eps_revisions, ctx)
+    result.families["eps_revisions"] = st
+    result.eps_revision_rows.extend(rows)
 
     # Price targets
     st, rows = _collect_family(ticker, "analyst_price_targets", parse_targets, ctx)
@@ -143,7 +157,9 @@ def collect_symbol(symbol: str, *, observed_at: datetime, timeout_seconds: float
         result.status = STATUS_INVALID_SYMBOL
     elif STATUS_TEMPORARY_ERROR in statuses:
         result.status = STATUS_TEMPORARY_ERROR
-    elif any(result.estimates_rows) or any(result.targets_rows) or any(result.recommendations_rows):
+    elif (any(result.estimates_rows) or any(result.eps_trend_rows)
+          or any(result.eps_revision_rows) or any(result.targets_rows)
+          or any(result.recommendations_rows)):
         result.status = STATUS_OK
     else:
         result.status = STATUS_EMPTY
@@ -205,10 +221,12 @@ def run_collection(
         repo.start_collection_run(run_id, PROVIDER, len(universe))
 
     counts = {
-        "estimates": 0, "targets": 0, "recommendations": 0,
+        "estimates": 0, "eps_trends": 0, "eps_revisions": 0,
+        "targets": 0, "recommendations": 0,
         "symbols_ok": 0, "symbols_empty": 0, "symbols_failed": 0,
         "rate_limit": 0, "temporary_error": 0, "schema_error": 0, "parse_error": 0,
-        "eps_symbols": 0, "revenue_symbols": 0, "target_symbols": 0, "reco_symbols": 0,
+        "eps_symbols": 0, "revenue_symbols": 0, "eps_trend_symbols": 0,
+        "eps_revision_symbols": 0, "target_symbols": 0, "reco_symbols": 0,
     }
     status_by_symbol: dict[str, str] = {}
     family_counter: dict[str, dict[str, int]] = {}
@@ -225,10 +243,14 @@ def run_collection(
 
         if write_db:
             counts["estimates"] += repo.insert_estimate_snapshots(res.estimates_rows)
+            counts["eps_trends"] += repo.insert_eps_trend_snapshots(res.eps_trend_rows)
+            counts["eps_revisions"] += repo.insert_eps_revision_snapshots(res.eps_revision_rows)
             counts["targets"] += repo.insert_target_snapshots(res.targets_rows)
             counts["recommendations"] += repo.insert_recommendation_snapshots(res.recommendations_rows)
         else:
             counts["estimates"] += len(res.estimates_rows)
+            counts["eps_trends"] += len(res.eps_trend_rows)
+            counts["eps_revisions"] += len(res.eps_revision_rows)
             counts["targets"] += len(res.targets_rows)
             counts["recommendations"] += len(res.recommendations_rows)
 
@@ -236,6 +258,10 @@ def run_collection(
             counts["eps_symbols"] += 1
         if any(r.get("estimate_type") == "REVENUE" for r in res.estimates_rows):
             counts["revenue_symbols"] += 1
+        if res.eps_trend_rows:
+            counts["eps_trend_symbols"] += 1
+        if res.eps_revision_rows:
+            counts["eps_revision_symbols"] += 1
         if res.targets_rows:
             counts["target_symbols"] += 1
         if res.recommendations_rows:
@@ -267,6 +293,8 @@ def run_collection(
         "empty_symbols": counts["symbols_empty"],
         "failed_symbols": counts["symbols_failed"],
         "estimates_rows_inserted": counts["estimates"],
+        "eps_trend_rows_inserted": counts["eps_trends"],
+        "eps_revision_rows_inserted": counts["eps_revisions"],
         "targets_rows_inserted": counts["targets"],
         "recommendations_rows_inserted": counts["recommendations"],
         "rate_limit_count": counts["rate_limit"],
@@ -275,6 +303,8 @@ def run_collection(
         "parse_error_count": counts["parse_error"],
         "eps_coverage": round(counts["eps_symbols"] / requested, 4) if requested else 0.0,
         "revenue_coverage": round(counts["revenue_symbols"] / requested, 4) if requested else 0.0,
+        "eps_trend_coverage": round(counts["eps_trend_symbols"] / requested, 4) if requested else 0.0,
+        "eps_revision_coverage": round(counts["eps_revision_symbols"] / requested, 4) if requested else 0.0,
         "target_coverage": round(counts["target_symbols"] / requested, 4) if requested else 0.0,
         "recommendation_coverage": round(counts["reco_symbols"] / requested, 4) if requested else 0.0,
         "elapsed_seconds": round(time.monotonic() - _mono_start, 1),
@@ -282,9 +312,12 @@ def run_collection(
     }
     if write_db:
         repo.finish_collection_run(run_id, stats=summary, status="COMPLETED")
-    LOGGER.info("run %s terminé en %.1fs : est=%d tgt=%d rec=%d | coverage eps=%.1f%% rev=%.1f%% tgt=%.1f%% rec=%.1f%%",
-                run_id, summary["elapsed_seconds"], counts["estimates"], counts["targets"],
-                counts["recommendations"], 100 * summary["eps_coverage"],
-                100 * summary["revenue_coverage"], 100 * summary["target_coverage"],
+    LOGGER.info("run %s terminé en %.1fs : est=%d trend=%d revisions=%d tgt=%d rec=%d | coverage eps=%.1f%% rev=%.1f%% trend=%.1f%% revisions=%.1f%% tgt=%.1f%% rec=%.1f%%",
+                run_id, summary["elapsed_seconds"], counts["estimates"],
+                counts["eps_trends"], counts["eps_revisions"], counts["targets"],
+                counts["recommendations"],
+                100 * summary["eps_coverage"], 100 * summary["revenue_coverage"],
+                100 * summary["eps_trend_coverage"], 100 * summary["eps_revision_coverage"],
+                100 * summary["target_coverage"],
                 100 * summary["recommendation_coverage"])
     return summary

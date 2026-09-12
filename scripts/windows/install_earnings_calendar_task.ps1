@@ -10,7 +10,7 @@
 #     uniquement (le launcher garde aussi le filet run_days → ligne SKIP).
 #   - vide/absent → déclencheurs QUOTIDIENS (comportement historique).
 # L'univers est piloté par earnings_calendar_sync.symbols_file (même fichier
-# que analyst_snapshot_collect) avec repli --symbol-source active-tradable.
+# que analyst_snapshot_collect). Ce fichier est obligatoire, sans repli dynamique.
 #
 # Usage :
 #   powershell -ExecutionPolicy Bypass -File .\scripts\windows\install_earnings_calendar_task.ps1
@@ -214,7 +214,7 @@ Write-Host "Heures      : $($hours -join ', ')"
 if ($days.Count -gt 0) {
     $dayLabels = @($days | ForEach-Object { $dayNames[$_] })
     Write-Host "Jours       : $($days -join ',') ($($dayLabels -join ', '))"
-    Write-Host "Planif      : hebdomadaire (uniquement ces jours — le launcher garde le filet run_days → SKIP)"
+    Write-Host "Planif      : hebdomadaire (uniquement ces jours - le launcher garde le filet run_days -> SKIP)"
 } else {
     Write-Host "Planif      : tous les jours (run_days vide/absent)"
 }

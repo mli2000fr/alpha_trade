@@ -34,16 +34,18 @@ earnings_calendar_sync:
 # cours et recommandations. Aucun stockage fichier des réponses métier.
 analyst_snapshot_collection:
   priority: P1
-  description: "Construire prospectivement des snapshots PIT Yahoo de consensus EPS/revenue, objectifs de cours et recommandations."
-  tables: "analyst_snapshot_collection_run,stock_analyst_estimate_history,stock_analyst_target_history,stock_analyst_recommendation_history"
+  description: "Construire prospectivement des snapshots PIT Yahoo de consensus EPS/revenue, tendances et révisions EPS, objectifs de cours et recommandations."
+  tables: "analyst_snapshot_collection_run,stock_analyst_estimate_history,stock_analyst_eps_trend_history,stock_analyst_eps_revision_history,stock_analyst_target_history,stock_analyst_recommendation_history"
   enabled: true
-  provider: yahoo
+  status: ACTIVE_RESEARCH_ONLY
+  provider: yahoo_finance_via_yfinance
+  research_notice: "Yahoo Finance est une source non officielle sans SLA, utilisée exclusivement pour la recherche personnelle et éducative. Ces données ne sont pas une source de production licenciée et ne doivent pas être redistribuées."
   universe_name: analyst_research
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   sleep_seconds: 0.25
   timeout_seconds: 20
   max_retries: 2
-  run_hours: "23"
+  run_hours: "14,22"
   log_file: log/batch/analyst_snapshots.txt
 
 # Tous les horaires sont exprimés dans timezone et interprétés par le lanceur.
@@ -70,10 +72,11 @@ security_master_snapshot:
   description: "Suivre l'identité des titres, leur type, leur place de cotation et les changements d'univers sans assimiler une absence ponctuelle à un delisting."
   tables: "pit_collection_runs,pit_raw_payloads,security_master_snapshots,security_master_changes"
   enabled: true
+  universe_scope: market_wide_discovery
   providers: "nasdaq_symbol_directory,business_quant"
   api_key_env: BUSINESS_QUANT_API_KEY
   timezone: Europe/Paris
-  run_hours: "0"
+  run_hours: "1,11"
   run_days: "1,2,3,4,5"
   # Même convention que run_days : 1=lundi.
   business_quant_weekdays: "1"
@@ -84,6 +87,7 @@ corporate_actions_sync:
   description: "Conserver splits, dividendes, fusions, spin-offs, changements de ticker et delistings par source pour sécuriser prix et positions."
   tables: "pit_collection_runs,pit_raw_payloads,corporate_action_source_events"
   enabled: true
+  universe_scope: market_wide
   providers: "business_quant,alpaca"
   api_key_env: BUSINESS_QUANT_API_KEY
   timezone: Europe/Paris
@@ -99,6 +103,7 @@ sec_edgar_incremental:
   description: "Collecter une seule fois les nouveaux dépôts SEC et fournir un RAW commun aux fondamentaux, événements et données d'actionnariat."
   tables: "pit_collection_runs,pit_raw_payloads,sec_filing_raw"
   enabled: true
+  universe_scope: market_wide_filings
   timezone: Europe/Paris
   run_hours: "0,6,12,18"
   run_days: "1,2,3,4,5,6"
@@ -115,7 +120,7 @@ pit_data_quality_daily:
   tables: "pit_collection_runs,pit_data_quality_metrics,pit_data_quality_issues"
   enabled: true
   timezone: Europe/Paris
-  run_hours: "2"
+  run_hours: "2,15"
   run_days: "1,2,3,4,5,6"
   bars_max_age_days: 4
   security_master_max_age_days: 8
@@ -131,6 +136,7 @@ borrow_status_snapshot:
   description: "Historiser la disponibilité short Alpaca et distinguer easy-to-borrow, locate requis et titre non shortable au moment de décision."
   tables: "pit_collection_runs,pit_raw_payloads,stock_borrow_status_snapshots"
   enabled: true
+  symbols_file: config/univers_batch/univers_filtred_tradable.txt
   provider: alpaca
   timezone: America/New_York
   run_hours: "8,9,15"
@@ -140,50 +146,82 @@ borrow_status_snapshot:
 
 business_quant_analyst_snapshot:
   priority: P1
-  description: "Évaluer un consensus analyste Business Quant prospectif sur un petit univers Oracle sans consommer inutilement le quota."
+  description: "Construire un historique PIT de consensus analyste sur l'univers tradable stable, indépendant des sélections produites par un modèle donné."
   tables: "pit_collection_runs,pit_raw_payloads,stock_analyst_consensus_snapshots"
   enabled: false
-  status: PENDING_QUOTA_DECISION
+  status: REPLACED_BY_YAHOO
+  research_notice: "Conservé uniquement comme connecteur de secours ou challenger futur. Il est volontairement désactivé car analyst_snapshot_collection via Yahoo/yfinance couvre déjà le besoin avec une meilleure couverture fonctionnelle et sans quota Business Quant. Ne pas l'activer en parallèle : cela dupliquerait la collecte de consensus analyste."
+  activation_requirement: "Batch remplacé par analyst_snapshot_collection (Yahoo/yfinance). Ne l'activer que comme challenger licencié après validation explicite du quota Business Quant."
+  unlock_steps:
+    - "Choisir un forfait Business Quant ou un endpoint bulk couvrant au moins 1 798 symboles par métrique et par passage."
+    - "Réserver dans ce quota la consommation des autres batchs Business Quant déjà actifs."
+    - "Vérifier BUSINESS_QUANT_API_KEY puis exécuter un smoke explicite avec max_symbols."
+    - "Mesurer couverture, erreurs 429, durée et volume stocké sur un passage complet."
+    - "Retirer la limite de smoke, passer enabled à true et remplacer le statut par ACTIVE seulement après validation."
   provider: business_quant
   api_key_env: BUSINESS_QUANT_API_KEY
   timezone: America/New_York
-  run_hours: "16"
+  run_hours: "4,16"
   run_days: "1,2,3,4,5"
-  symbols_file: config/univers_batch/oracle_top20.txt
+  symbols_file: config/univers_batch/univers_filtred_tradable.txt
   metrics: "eps"
-  max_symbols: 20
   log_file: log/batch/business_quant_analyst_snapshot.txt
 
 oracle_options_indicative_snapshot:
   priority: P2
-  description: "Observer IV, Greeks, quotes et trades options indicatifs autour des candidats Oracle pour tester une confirmation directionnelle."
+  description: "Construire prospectivement un historique PIT de chaînes d'options Alpaca indicatives sur tout l'univers tradable stable, sans dépendre du TOP20 d'un Oracle."
   tables: "pit_collection_runs,pit_raw_payloads,stock_option_snapshots"
-  enabled: false
-  status: ENABLE_AFTER_ORACLE_LIVE_SELECTION
+  enabled: true
+  status: ACTIVE_RESEARCH_ONLY
+  research_notice: "Alpaca Basic indicative est gratuit mais ne constitue pas un flux OPRA/NBBO : quotes modifiées et trades potentiellement retardés. Usage recherche personnelle uniquement, jamais comme prix d'exécution live."
   provider: alpaca
   feed: indicative
   timezone: America/New_York
-  run_hours: "9,15,15"
-  run_minutes: "31,45,59"
+  # Deux passages après clôture : le second est un rattrapage opérationnel.
+  run_hours: "16,19"
+  run_minutes: "20,0"
   run_days: "1,2,3,4,5"
-  symbols_file: config/univers_batch/oracle_top20.txt
-  max_symbols: 20
+  symbols_file: config/univers_batch/univers_filtred_tradable.txt
+  target_dtes: "5,10,20"
+  dte_tolerance_days: 4
+  moneyness_min: 0.80
+  moneyness_max: 1.20
+  # Un contrat le plus proche de chaque cible, par CALL/PUT et expiration.
+  moneyness_targets: "0.85,0.90,0.95,1.00,1.05,1.10,1.15"
+  min_bid: 0.01
+  max_relative_spread: 1.0
+  require_two_sided_quote: true
+  include_contract_metadata: true
+  min_open_interest: 10
+  allow_missing_open_interest: true
+  stock_snapshot_batch_size: 100
+  max_pages_per_symbol: 10
+  request_interval_seconds: 0.35
+  use_system_trust_store: true
+  max_consecutive_failures: 5
+  max_failure_ratio: 0.05
   log_file: log/batch/oracle_options_indicative_snapshot.txt
 
 oracle_opening_window_sync:
   priority: P3
-  description: "Conserver la microstructure de prémarché et d'ouverture des candidats Oracle pour étudier une confirmation après le signal."
+  description: "Conserver la microstructure de prémarché et d'ouverture sur l'univers tradable stable afin de permettre des recherches et backtests indépendants du modèle courant."
   tables: "pit_collection_runs,pit_raw_payloads,stock_opening_window_bars"
   enabled: false
-  status: ENABLE_AFTER_ORACLE_LIVE_SELECTION
+  status: PENDING_FULL_UNIVERSE_CAPACITY
+  activation_requirement: "Valider une capacité intraday couvrant l'univers tradable complet. Avec 1 798 symboles et des lots de 20, un passage représente environ 90 appels Business Quant, au-delà du quota courant."
+  unlock_steps:
+    - "Obtenir un quota Business Quant couvrant au moins 90 appels par passage, plus les autres collectes Business Quant."
+    - "Vérifier la pagination et la limite de lignes afin que les barres minute des lots de 20 ne soient jamais tronquées."
+    - "Tester séparément prémarché, ouverture, jours sans données et corrections fournisseur."
+    - "Mesurer la couverture des 1 798 symboles et la croissance quotidienne du stockage minute."
+    - "Passer enabled à true et le statut à ACTIVE_RESEARCH_ONLY uniquement après franchissement des contrôles."
   provider: business_quant
   api_key_env: BUSINESS_QUANT_API_KEY
   timezone: America/New_York
-  run_hours: "10"
+  run_hours: "10,23"
   run_minutes: "31"
   run_days: "1,2,3,4,5"
-  symbols_file: config/univers_batch/oracle_top20.txt
-  max_symbols: 20
+  symbols_file: config/univers_batch/univers_filtred_tradable.txt
   window_start: "04:00"
   window_end: "10:30"
   fallback_window_start: "09:30"
@@ -194,6 +232,7 @@ sec_corporate_events_normalize:
   description: "Transformer localement les 8-K/6-K bruts en événements PIT structurés sans télécharger une seconde fois EDGAR."
   tables: "pit_collection_runs,sec_filing_raw,sec_corporate_events"
   enabled: true
+  universe_scope: raw_sec_filings
   timezone: Europe/Paris
   run_hours: "1,7,13,19"
   run_days: "1,2,3,4,5,6"
@@ -205,8 +244,9 @@ sec_institutional_ownership_normalize:
   description: "Normaliser les 13F/13D/13G pour suivre le positionnement institutionnel et ses évolutions avec disponibilité PIT."
   tables: "pit_collection_runs,sec_filing_raw,sec_ownership_snapshots"
   enabled: true
+  universe_scope: raw_sec_filings
   timezone: Europe/Paris
-  run_hours: "3"
+  run_hours: "3,17"
   run_days: "2,4,6"
   forms: "13F-HR,13F-HR/A,SC 13D,SC 13D/A,SC 13G,SC 13G/A"
   log_file: log/batch/sec_institutional_ownership_normalize.txt
@@ -216,10 +256,11 @@ fred_alfred_vintage_sync:
   description: "Conserver les vintages macro réellement disponibles afin d'éviter toute fuite provenant des révisions économiques futures."
   tables: "pit_collection_runs,pit_raw_payloads,macro_vintage_observations"
   enabled: true
+  universe_scope: macro_series
   provider: fred_alfred
   api_key_env: KEY_FRED
   timezone: Europe/Paris
-  run_hours: "14"
+  run_hours: "2,14"
   run_days: "1,2,3,4,5"
   series: "DGS2,DGS10,DGS30,T10Y2Y,T10Y3M,FEDFUNDS,CPIAUCSL,CPILFESL,PCEPI,PCEPILFE,UNRATE,PAYEMS,INDPRO,RETAILSMS,GDPC1,VIXCLS,BAMLH0A0HYM2"
   observation_lookback_days: 730
@@ -228,13 +269,17 @@ fred_alfred_vintage_sync:
 
 finra_short_volume_sync:
   priority: P1
-  description: "Contrôle optionnel du short volume consolidé FINRA ; la famille reste désactivée après résultats de recherche non concluants."
-  tables: ""
-  enabled: false
-  status: OPTIONAL_CONTROL_NO_GO_FAMILY
+  description: "Collecter prospectivement le short volume quotidien FINRA consolidé comme donnée de recherche, sans le promouvoir automatiquement comme signal ML."
+  tables: "pit_collection_runs,pit_raw_payloads,stock_short_volume_daily"
+  enabled: true
+  status: ACTIVE_RESEARCH_ONLY
+  provider: finra_consolidated_nms
+  symbols_file: config/univers_batch/univers_filtred_tradable.txt
   timezone: America/New_York
-  run_hours: "18"
+  run_hours: "18,23"
   run_days: "1,2,3,4,5"
+  lookback_days: 7
+  source_url_template: "https://cdn.finra.org/equity/regsho/daily/CNMSshvol{date}.txt"
   log_file: log/batch/finra_short_volume_sync.txt
 
 auction_imbalance_sync:
@@ -243,6 +288,13 @@ auction_imbalance_sync:
   tables: ""
   enabled: false
   status: PENDING_PROVIDER
+  activation_requirement: "Choisir une source PIT Nasdaq/NYSE couvrant les déséquilibres d'enchère, puis implémenter et valider le collecteur et sa table avant activation."
+  unlock_steps:
+    - "Choisir une source NOII/imbalance Nasdaq et/ou NYSE avec droits de stockage historique."
+    - "Définir les champs, timestamps, séquences de mises à jour et règles available_at du contrat PIT."
+    - "Créer la table SQL, la migration Alembic, le handler fournisseur et les contrôles de couverture."
+    - "Valider un smoke puis l'univers complet avant de passer enabled à true et le statut à ACTIVE_RESEARCH_ONLY."
+  symbols_file: config/univers_batch/univers_filtred_tradable.txt
   log_file: log/batch/auction_imbalance_sync.txt
 
 securities_lending_sync:
@@ -251,6 +303,13 @@ securities_lending_sync:
   tables: ""
   enabled: false
   status: PENDING_PROVIDER
+  activation_requirement: "Choisir une source PIT de prêt de titres couvrant borrow fee, utilization, lendable supply et shares on loan, puis implémenter le collecteur et sa table."
+  unlock_steps:
+    - "Choisir un fournisseur autorisant l'historisation de borrow fee, utilization, lendable supply et shares on loan."
+    - "Définir fréquence, timestamps fournisseur, corrections, symbologie et contrat available_at."
+    - "Créer la table SQL, la migration Alembic, le connecteur et les contrôles de fraîcheur/couverture."
+    - "Comparer un smoke au statut Alpaca existant, puis activer seulement après validation de l'univers complet."
+  symbols_file: config/univers_batch/univers_filtred_tradable.txt
   log_file: log/batch/securities_lending_sync.txt
 
 official_options_nbbo_sync:
@@ -259,4 +318,12 @@ official_options_nbbo_sync:
   tables: ""
   enabled: false
   status: PENDING_PROVIDER
+  activation_requirement: "Choisir une source officielle OPRA/NBBO avec corrections et droits d'usage, puis implémenter le collecteur, les ajustements OCC et la persistance PIT."
+  unlock_steps:
+    - "Choisir une source OPRA/NBBO et vérifier les droits de téléchargement, stockage et réutilisation en backtest."
+    - "Définir quotes, trades, open interest, volume, IV, Greeks et timestamps réellement disponibles."
+    - "Implémenter la symbologie et les ajustements OCC pour splits, fusions et changements de contrats."
+    - "Créer la table SQL, la migration Alembic, le collecteur, la pagination et les contrôles qualité."
+    - "Valider coût, débit et couverture sur l'univers complet avant activation."
+  symbols_file: config/univers_batch/univers_filtred_tradable.txt
   log_file: log/batch/official_options_nbbo_sync.txt

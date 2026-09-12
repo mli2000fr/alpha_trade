@@ -16,27 +16,38 @@ $workspace = (Resolve-Path -LiteralPath $WorkspacePath).Path
 if (-not $PythonExePath) { $PythonExePath = Join-Path $workspace '.venv\Scripts\python.exe' }
 $python = (Resolve-Path -LiteralPath $PythonExePath).Path
 $configPath = Join-Path $workspace 'batch.yaml'
-$pyCode = 'import json,sys,yaml; c=yaml.safe_load(open(sys.argv[1],encoding="utf-8")) or {}; print(json.dumps(c.get(sys.argv[2]) or {}))'
+$pyCode = 'import json,sys,yaml; c=yaml.safe_load(open(sys.argv[1],encoding=''utf-8'')) or {}; print(json.dumps(c.get(sys.argv[2]) or {}))'
 $cfgText = ((& $python -c $pyCode $configPath $BatchName 2>$null) | Out-String).Trim()
 if (-not $cfgText) { throw "Section absente dans batch.yaml: $BatchName" }
 $cfg = $cfgText | ConvertFrom-Json
-$effectiveLog = if ($LogFile) { $LogFile } elseif ($cfg.log_file) { [string]$cfg.log_file } else { "log/batch/$BatchName.txt" }
+function Get-ConfigValue([object]$Config, [string]$Name, [object]$Default=$null) {
+    $property = $Config.PSObject.Properties[$Name]
+    if ($null -ne $property) { return $property.Value }
+    return $Default
+}
+$configuredLog = [string](Get-ConfigValue $cfg 'log_file' '')
+$effectiveLog = if ($LogFile) { $LogFile } elseif ($configuredLog) { $configuredLog } else { "log/batch/$BatchName.txt" }
 if (-not [IO.Path]::IsPathRooted($effectiveLog)) { $effectiveLog = Join-Path $workspace $effectiveLog }
 $logDir = Split-Path -Parent $effectiveLog
 if (-not (Test-Path -LiteralPath $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 function Write-Status([string]$line) { Add-Content -LiteralPath $effectiveLog -Value $line -Encoding UTF8 }
 
 # Le kill switch est absolu : -Force contourne l'horaire, jamais enabled=false.
-if (-not $cfg.enabled) { Write-Status "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] SKIP $BatchName enabled=false status=$($cfg.status)"; exit 0 }
+$enabled = [bool](Get-ConfigValue $cfg 'enabled' $true)
+$status = [string](Get-ConfigValue $cfg 'status' 'ACTIVE')
+if (-not $enabled) { Write-Status "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] SKIP $BatchName enabled=false status=$status"; exit 0 }
 if (-not $Force) {
-    $tzName = if ($cfg.timezone) { [string]$cfg.timezone } else { 'Europe/Paris' }
+    $tzName = [string](Get-ConfigValue $cfg 'timezone' 'Europe/Paris')
     $tzMap = @{ 'Europe/Paris'='Romance Standard Time'; 'America/New_York'='Eastern Standard Time'; 'UTC'='UTC' }
     $tz = [TimeZoneInfo]::FindSystemTimeZoneById($(if ($tzMap.ContainsKey($tzName)) { $tzMap[$tzName] } else { $tzName }))
     $now = [TimeZoneInfo]::ConvertTime([DateTimeOffset]::UtcNow, $tz)
-    $days = @(([string]$cfg.run_days) -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $daysRaw = [string](Get-ConfigValue $cfg 'run_days' '')
+    $days = @($daysRaw -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
     if ($days.Count -gt 0 -and $days -notcontains ([string][int]$now.DayOfWeek)) { exit 0 }
-    $hours = @(([string]$cfg.run_hours) -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-    $minutes = @(([string]$cfg.run_minutes) -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $hoursRaw = [string](Get-ConfigValue $cfg 'run_hours' '')
+    $minutesRaw = [string](Get-ConfigValue $cfg 'run_minutes' '')
+    $hours = @($hoursRaw -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $minutes = @($minutesRaw -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
     if ($minutes.Count -eq 0) { $minutes = @(0) }
     $due = $false
     for ($i=0; $i -lt $hours.Count; $i++) {

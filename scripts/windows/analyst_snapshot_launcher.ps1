@@ -148,13 +148,13 @@ function Write-StatusLine {
 
 # ── DÉBUT DE TRAITEMENT : écrit immédiatement (sait que le batch tourne) ──
 $started = Get-Date
-Write-StatusLine ("[{0}] DÉBUT DE TRAITEMENT analyst_snapshot_collect pid={1} — le batch est lancé" -f $started.ToString('yyyy-MM-dd HH:mm:ss'), $PID)
+Write-StatusLine ("[{0}] DEBUT DE TRAITEMENT analyst_snapshot_collect pid={1} - le batch est lance" -f $started.ToString('yyyy-MM-dd HH:mm:ss'), $PID)
 
 # ── Interpréteur Python (indispensable) ──
 try {
     $resolvedPython = Resolve-AlphaTradePythonExe -Workspace $resolvedWorkspace -RequestedPythonExePath $PythonExePath
 } catch {
-    Write-StatusLine ("[{0}] FIN TRAITEMENT ERROR  analyst_snapshot_collect — Python indisponible : {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), ($_.Exception.Message -replace '[\r\n]+', ' '))
+    Write-StatusLine ("[{0}] FIN TRAITEMENT ERROR  analyst_snapshot_collect - Python indisponible : {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), ($_.Exception.Message -replace '[\r\n]+', ' '))
     exit 1
 }
 
@@ -189,7 +189,7 @@ if (-not $LogFile -and $cfg -and ($cfg.PSObject.Properties.Name -contains 'log_f
         if ($cfgLogDir -and -not (Test-Path -LiteralPath $cfgLogDir)) {
             New-Item -ItemType Directory -Path $cfgLogDir -Force | Out-Null
         }
-        Write-StatusLine ("[{0}] NOTE   log_file = batch.yaml → {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $effectiveLogFile)
+        Write-StatusLine ("[{0}] NOTE   log_file = batch.yaml -> {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $effectiveLogFile)
     }
 }
 
@@ -208,35 +208,34 @@ if ($cfg -and ($cfg.PSObject.Properties.Name -contains 'enabled')) {
     }
 }
 if (-not $collectionEnabled) {
-    Write-StatusLine ("[{0}] SKIP   analyst_snapshot_collect — analyst_snapshot_collection.enabled=false — aucun appel fournisseur" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))
+    Write-StatusLine ("[{0}] SKIP   analyst_snapshot_collect - analyst_snapshot_collection.enabled=false - aucun appel fournisseur" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))
     exit 0
 }
 
-# ── Univers : symbols_file (batch.yaml) — warning si absent OU introuvable ──
-#    Le collecteur lit lui-même analyst_snapshot_collection.symbols_file
-#    (fichier 2255, même fichier qu'earnings_calendar_sync) ; sinon repli
-#    univers active-tradable (~13 600). On avertit ici pour que le warning
-#    remonte dans le log de statut + email + Telegram.
+# ── Univers stable obligatoire : aucun repli sur un univers dynamique. ──
 $batchWarnings = @()
+$universePreflightError = ''
 $symbolsFileValue = ''
 if ($cfg -and ($cfg.PSObject.Properties.Name -contains 'symbols_file') -and $cfg.symbols_file) {
     $symbolsFileValue = [string]$cfg.symbols_file
 }
 if (-not $symbolsFileValue) {
-    $warnMsg = "analyst_snapshot_collection.symbols_file non renseigné (batch.yaml) — repli univers active-tradable (~13 600)"
+    $warnMsg = "analyst_snapshot_collection.symbols_file obligatoire mais non renseigne dans batch.yaml"
     $batchWarnings += $warnMsg
-    Write-StatusLine ("[{0}] WARNING univers — {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $warnMsg)
+    $universePreflightError = $warnMsg
+    Write-StatusLine ("[{0}] ERROR  univers - {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $warnMsg)
 } else {
     $symbolsFilePath = $symbolsFileValue
     if (-not [IO.Path]::IsPathRooted($symbolsFilePath)) {
         $symbolsFilePath = Join-Path $resolvedWorkspace $symbolsFilePath
     }
     if (Test-Path -LiteralPath $symbolsFilePath) {
-        Write-StatusLine ("[{0}] NOTE   univers = symbols_file → {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $symbolsFilePath)
+        Write-StatusLine ("[{0}] NOTE   univers = symbols_file -> {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $symbolsFilePath)
     } else {
-        $warnMsg = "analyst_snapshot_collection.symbols_file introuvable : $symbolsFilePath — repli univers active-tradable (~13 600)"
+        $warnMsg = "analyst_snapshot_collection.symbols_file introuvable : $symbolsFilePath"
         $batchWarnings += $warnMsg
-        Write-StatusLine ("[{0}] WARNING univers — {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $warnMsg)
+        $universePreflightError = $warnMsg
+        Write-StatusLine ("[{0}] ERROR  univers - {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $warnMsg)
     }
 }
 
@@ -258,6 +257,7 @@ $captured = $null
 $exitCode = 0
 $errorMsg = ''
 try {
+    if ($universePreflightError) { throw $universePreflightError }
     Push-Location $resolvedWorkspace
     try {
         # ── Encodage UTF-8 : le collecteur écrit en UTF-8 (sys.stdout.reconfigure) et
@@ -294,10 +294,10 @@ $dur = $finished - $started
 $durStr = '{0}h{1:D2}m{2:D2}s' -f [int]$dur.TotalHours, $dur.Minutes, $dur.Seconds
 
 if ($exitCode -eq 0) {
-    Write-StatusLine ("[{0}] FIN TRAITEMENT OK     analyst_snapshot_collect exit=0 durée={1} — log/batch/analyst_snapshots.log" -f $stamp, $durStr)
+    Write-StatusLine ("[{0}] FIN TRAITEMENT OK     analyst_snapshot_collect exit=0 duree={1} - log/batch/analyst_snapshots.log" -f $stamp, $durStr)
 } else {
     $err = if ($errorMsg) { " err=$errorMsg" } else { '' }
-    Write-StatusLine ("[{0}] FIN TRAITEMENT ERROR  analyst_snapshot_collect exit={1} durée={2}{3} — log/batch/analyst_snapshots.log" -f $stamp, $exitCode, $durStr, $err)
+    Write-StatusLine ("[{0}] FIN TRAITEMENT ERROR  analyst_snapshot_collect exit={1} duree={2}{3} - log/batch/analyst_snapshots.log" -f $stamp, $exitCode, $durStr, $err)
 }
 
 # ── Email de fin de batch (statut + logs de CE run) via email_notifier ──
