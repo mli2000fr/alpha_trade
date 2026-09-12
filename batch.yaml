@@ -34,5 +34,172 @@ analyst_snapshot_collection:
   sleep_seconds: 0.25
   timeout_seconds: 20
   max_retries: 2
-  run_hours: "9,23"
+  run_hours: "23"
   log_file: log/batch/analyst_snapshots.txt
+
+# Tous les horaires sont exprimés dans timezone et interprétés par le lanceur.
+daily_bars_sync:
+  enabled: true
+  provider: business_quant
+  api_key_env: BUSINESS_QUANT_API_KEY
+  timezone: Europe/Paris
+  run_hours: "0"
+  run_days: "1,2,3,4,5"
+  symbols_file: config/univers_batch/univers_filtred_tradable.txt
+  batch_size: 100
+  lookback_days: 10
+  # Business Quant documente des OHLCV bruts. Ne pas les étiqueter "split"
+  # dans la table canonique avant validation du moteur d'ajustement.
+  canonical_upsert: false
+  log_file: log/batch/daily_bars_sync.txt
+
+security_master_snapshot:
+  enabled: true
+  providers: "nasdaq_symbol_directory,business_quant"
+  api_key_env: BUSINESS_QUANT_API_KEY
+  timezone: Europe/Paris
+  run_hours: "0"
+  run_days: "1,2,3,4,5"
+  # Même convention que run_days : 1=lundi.
+  business_quant_weekdays: "1"
+  log_file: log/batch/security_master_snapshot.txt
+
+corporate_actions_sync:
+  enabled: true
+  providers: "business_quant,alpaca"
+  api_key_env: BUSINESS_QUANT_API_KEY
+  timezone: Europe/Paris
+  run_hours: "0,8"
+  run_days: "1,2,3,4,5"
+  lookback_days: 7
+  forward_days: 30
+  market_wide: true
+  log_file: log/batch/corporate_actions_sync.txt
+
+sec_edgar_incremental:
+  enabled: true
+  timezone: Europe/Paris
+  run_hours: "0,6,12,18"
+  run_days: "1,2,3,4,5,6"
+  user_agent_env: SEC_EDGAR_USER_AGENT
+  forms: "8-K,8-K/A,6-K,6-K/A,10-Q,10-Q/A,10-K,10-K/A,13F-HR,13F-HR/A,SC 13D,SC 13D/A,SC 13G,SC 13G/A"
+  lookback_days: 3
+  download_primary_documents: true
+  max_requests_per_second: 8
+  log_file: log/batch/sec_edgar_incremental.txt
+
+pit_data_quality_daily:
+  enabled: true
+  timezone: Europe/Paris
+  run_hours: "2"
+  run_days: "1,2,3,4,5,6"
+  bars_max_age_days: 4
+  security_master_max_age_days: 8
+  borrow_max_age_hours: 30
+  macro_max_age_days: 10
+  min_universe_coverage: 0.90
+  symbols_file: config/univers_batch/univers_filtred_tradable.txt
+  fail_on_critical: true
+  log_file: log/batch/pit_data_quality_daily.txt
+
+borrow_status_snapshot:
+  enabled: true
+  provider: alpaca
+  timezone: America/New_York
+  run_hours: "8,9,15"
+  run_minutes: "0,25,45"
+  run_days: "1,2,3,4,5"
+  log_file: log/batch/borrow_status_snapshot.txt
+
+business_quant_analyst_snapshot:
+  enabled: false
+  status: PENDING_QUOTA_DECISION
+  provider: business_quant
+  api_key_env: BUSINESS_QUANT_API_KEY
+  timezone: America/New_York
+  run_hours: "16"
+  run_days: "1,2,3,4,5"
+  symbols_file: config/univers_batch/oracle_top20.txt
+  metrics: "eps"
+  max_symbols: 20
+  log_file: log/batch/business_quant_analyst_snapshot.txt
+
+oracle_options_indicative_snapshot:
+  enabled: false
+  status: ENABLE_AFTER_ORACLE_LIVE_SELECTION
+  provider: alpaca
+  feed: indicative
+  timezone: America/New_York
+  run_hours: "9,15,15"
+  run_minutes: "31,45,59"
+  run_days: "1,2,3,4,5"
+  symbols_file: config/univers_batch/oracle_top20.txt
+  max_symbols: 20
+  log_file: log/batch/oracle_options_indicative_snapshot.txt
+
+oracle_opening_window_sync:
+  enabled: false
+  status: ENABLE_AFTER_ORACLE_LIVE_SELECTION
+  provider: business_quant
+  api_key_env: BUSINESS_QUANT_API_KEY
+  timezone: America/New_York
+  run_hours: "10"
+  run_minutes: "31"
+  run_days: "1,2,3,4,5"
+  symbols_file: config/univers_batch/oracle_top20.txt
+  max_symbols: 20
+  window_start: "04:00"
+  window_end: "10:30"
+  fallback_window_start: "09:30"
+  log_file: log/batch/oracle_opening_window_sync.txt
+
+sec_corporate_events_normalize:
+  enabled: true
+  timezone: Europe/Paris
+  run_hours: "1,7,13,19"
+  run_days: "1,2,3,4,5,6"
+  forms: "8-K,8-K/A,6-K,6-K/A"
+  log_file: log/batch/sec_corporate_events_normalize.txt
+
+sec_institutional_ownership_normalize:
+  enabled: true
+  timezone: Europe/Paris
+  run_hours: "3"
+  run_days: "2,4,6"
+  forms: "13F-HR,13F-HR/A,SC 13D,SC 13D/A,SC 13G,SC 13G/A"
+  log_file: log/batch/sec_institutional_ownership_normalize.txt
+
+fred_alfred_vintage_sync:
+  enabled: true
+  provider: fred_alfred
+  api_key_env: KEY_FRED
+  timezone: Europe/Paris
+  run_hours: "14"
+  run_days: "1,2,3,4,5"
+  series: "DGS2,DGS10,DGS30,T10Y2Y,T10Y3M,FEDFUNDS,CPIAUCSL,CPILFESL,PCEPI,PCEPILFE,UNRATE,PAYEMS,INDPRO,RETAILSMS,GDPC1,VIXCLS,BAMLH0A0HYM2"
+  observation_lookback_days: 730
+  preserve_vintages: true
+  log_file: log/batch/fred_alfred_vintage_sync.txt
+
+finra_short_volume_sync:
+  enabled: false
+  status: OPTIONAL_CONTROL_NO_GO_FAMILY
+  timezone: America/New_York
+  run_hours: "18"
+  run_days: "1,2,3,4,5"
+  log_file: log/batch/finra_short_volume_sync.txt
+
+auction_imbalance_sync:
+  enabled: false
+  status: PENDING_PROVIDER
+  log_file: log/batch/auction_imbalance_sync.txt
+
+securities_lending_sync:
+  enabled: false
+  status: PENDING_PROVIDER
+  log_file: log/batch/securities_lending_sync.txt
+
+official_options_nbbo_sync:
+  enabled: false
+  status: PENDING_PROVIDER
+  log_file: log/batch/official_options_nbbo_sync.txt

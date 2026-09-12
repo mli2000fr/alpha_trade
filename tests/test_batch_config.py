@@ -13,6 +13,13 @@ BATCH_SECTIONS = {
     "market_cap_sync",
     "earnings_calendar_sync",
     "analyst_snapshot_collection",
+    "daily_bars_sync", "security_master_snapshot", "corporate_actions_sync",
+    "sec_edgar_incremental", "pit_data_quality_daily", "borrow_status_snapshot",
+    "business_quant_analyst_snapshot", "oracle_options_indicative_snapshot",
+    "oracle_opening_window_sync", "sec_corporate_events_normalize",
+    "sec_institutional_ownership_normalize", "fred_alfred_vintage_sync",
+    "finra_short_volume_sync", "auction_imbalance_sync",
+    "securities_lending_sync", "official_options_nbbo_sync",
 }
 
 
@@ -34,6 +41,9 @@ def test_all_batch_launchers_and_installers_read_batch_yaml() -> None:
         "install_earnings_calendar_task.ps1",
         "analyst_snapshot_launcher.ps1",
         "install_analyst_snapshot_task.ps1",
+        "forward_pit_launcher.ps1",
+        "install_forward_pit_task.ps1",
+        "install_all_forward_pit_tasks.ps1",
     )
     for name in files:
         content = (WINDOWS / name).read_text(encoding="utf-8")

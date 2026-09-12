@@ -1,5 +1,10 @@
 # Plan des batchs Forward PIT — P0 à P4
 
+> État d’implémentation : le socle décrit ici est réalisé par la migration
+> `0075_forward_pit_collection`, le service `service/forward_pit/batch.py` et
+> les sections correspondantes de `batch.yaml`. Le guide d’exploitation complet
+> se trouve dans `doc/operations/forward_pit_batches.md`.
+
 Ce plan transforme les besoins de données en collectes prospectives. Le RAW reste append-only et conserve l'heure réelle de réception.
 
 Les paramètres opérationnels des trois batchs existants sont centralisés dans
