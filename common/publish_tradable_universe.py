@@ -130,6 +130,15 @@ def _load_objective_context(
             source_predicate = "UPPER(source) IN ('YAHOO FINANCE', 'FINNHUB')"
             partition_columns = "symbol, UPPER(source)"
             value_predicate = "market_cap IS NOT NULL AND market_cap > 0"
+        elif market_cap_provider == "sec_edgar_then_yahoo_then_finnhub":
+            market_value_column = (
+                "CASE WHEN UPPER(source) = 'SEC_EDGAR' "
+                "THEN shares_outstanding ELSE market_cap END"
+            )
+            source_value = "SEC_EDGAR"
+            source_predicate = "UPPER(source) IN ('SEC_EDGAR', 'YAHOO FINANCE', 'FINNHUB')"
+            partition_columns = "symbol, UPPER(source)"
+            value_predicate = "((UPPER(source) = 'SEC_EDGAR' AND shares_outstanding > 0) OR (UPPER(source) <> 'SEC_EDGAR' AND market_cap > 0))"
         elif market_cap_provider == "disabled":
             # liquidity_only ne consomme aucune observation de capitalisation.
             market_value_column = "market_cap"
@@ -209,16 +218,21 @@ def _select_market_cap_rows(
     provider: str,
 ) -> pd.DataFrame:
     """Résout une ligne par symbole sans fuite et avec fallback frais."""
-    if rows.empty or provider != "yahoo_then_finnhub":
+    if rows.empty or provider not in {
+        "yahoo_then_finnhub", "sec_edgar_then_yahoo_then_finnhub",
+    }:
         return rows
     selected = rows.copy()
     selected["symbol"] = selected["symbol"].astype(str).str.strip().str.upper()
     selected["market_cap_source"] = (
         selected["market_cap_source"].fillna("").astype(str).str.upper()
     )
-    selected["_source_priority"] = selected["market_cap_source"].map(
-        {"YAHOO FINANCE": 0, "FINNHUB": 1}
-    ).fillna(99)
+    priorities = (
+        {"SEC_EDGAR": 0, "YAHOO FINANCE": 1, "FINNHUB": 2}
+        if provider == "sec_edgar_then_yahoo_then_finnhub"
+        else {"YAHOO FINANCE": 0, "FINNHUB": 1}
+    )
+    selected["_source_priority"] = selected["market_cap_source"].map(priorities).fillna(99)
     dates = pd.to_datetime(selected["market_cap_reference_date"], errors="coerce")
     ages = (pd.Timestamp(snapshot_date) - dates.dt.normalize()).dt.days
     selected["_fresh_priority"] = (~ages.between(0, max_age_days)).astype(int)
@@ -276,6 +290,7 @@ def publish_full_tradable_universe(
     quote_map = quotes.assign(symbol=quotes["symbol"].astype(str).str.upper()).set_index("symbol")["spread_bps"].to_dict() if not quotes.empty else {}
     market_value_map = metadata.assign(symbol=metadata["symbol"].astype(str).str.upper()).set_index("symbol")["market_value"].to_dict() if not metadata.empty else {}
     market_cap_date_map = metadata.assign(symbol=metadata["symbol"].astype(str).str.upper()).set_index("symbol")["market_cap_reference_date"].to_dict() if not metadata.empty else {}
+    market_cap_source_map = metadata.assign(symbol=metadata["symbol"].astype(str).str.upper()).set_index("symbol")["market_cap_source"].to_dict() if not metadata.empty else {}
     instrument_name_map = (
         instruments.assign(symbol=instruments["symbol"].astype(str).str.upper())
         .set_index("symbol")["company_name"]
@@ -301,7 +316,10 @@ def publish_full_tradable_universe(
         )
         if market_cap_config.policy == "liquidity_only":
             market_cap = None
-        elif market_cap_config.provider == "sec_edgar":
+        elif market_cap_config.provider == "sec_edgar" or (
+            market_cap_config.provider == "sec_edgar_then_yahoo_then_finnhub"
+            and str(market_cap_source_map.get(symbol) or "").upper() == "SEC_EDGAR"
+        ):
             market_cap = compute_sec_market_cap(row.get("close_price"), market_value)
         else:
             market_cap = float(market_value) if pd.notna(market_value) else None
@@ -389,6 +407,8 @@ def publish_full_tradable_universe(
             "market_cap_formula": (
                 "not_applied_liquidity_only"
                 if market_cap_config.policy == "liquidity_only"
+                else "latest_sec_shares_asof_x_snapshot_close_then_fresh_yahoo_then_finnhub"
+                if market_cap_config.provider == "sec_edgar_then_yahoo_then_finnhub"
                 else "latest_sec_shares_asof_x_snapshot_close"
                 if market_cap_config.provider == "sec_edgar"
                 else "latest_fresh_yahoo_else_finnhub_asof"
@@ -433,7 +453,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--market-cap-provider",
-        choices=("sec_edgar", "eodhd", "yahoo_then_finnhub"),
+        choices=("sec_edgar", "eodhd", "yahoo_then_finnhub", "sec_edgar_then_yahoo_then_finnhub"),
         default=None,
         help="Override de config.yaml -> market_cap.provider.",
     )

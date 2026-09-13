@@ -3,8 +3,8 @@
 sec_edgar calcule la capitalisation a la date demandee avec le dernier nombre
 d'actions publie avant cette date et le cours du jour. Les autres providers
 lisent une capitalisation positive persistee avant la date demandee.
-yahoo_then_finnhub choisit Yahoo en priorite, puis Finnhub si Yahoo est absent
-ou perime selon le TTL configure.
+sec_edgar_then_yahoo_then_finnhub privilégie le calcul SEC, puis choisit Yahoo
+et enfin Finnhub si la source précédente est absente ou périmée.
 """
 from __future__ import annotations
 
@@ -15,7 +15,10 @@ from common.config_loader import load_config
 
 
 SUPPORTED_MARKET_CAP_PROVIDERS = frozenset(
-    {"sec_edgar", "eodhd", "yahoo_then_finnhub"}
+    {
+        "sec_edgar", "eodhd", "yahoo_then_finnhub",
+        "sec_edgar_then_yahoo_then_finnhub",
+    }
 )
 SUPPORTED_MARKET_CAP_POLICIES = frozenset({"strict", "liquidity_only"})
 
@@ -38,12 +41,14 @@ def _normalize_provider(value: Any) -> str:
         "yahoo_then_finnhub": "yahoo_then_finnhub",
         "yahoo-finnhub": "yahoo_then_finnhub",
         "yahoo_finnhub": "yahoo_then_finnhub",
+        "sec_edgar_then_yahoo_then_finnhub": "sec_edgar_then_yahoo_then_finnhub",
+        "sec_then_yahoo_then_finnhub": "sec_edgar_then_yahoo_then_finnhub",
     }
     normalized = aliases.get(provider, provider)
     if normalized not in SUPPORTED_MARKET_CAP_PROVIDERS:
         raise ValueError(
             "market_cap.provider doit etre 'sec_edgar', 'eodhd' "
-            "ou 'yahoo_then_finnhub' "
+            "'yahoo_then_finnhub' ou 'sec_edgar_then_yahoo_then_finnhub' "
             f"(recu: {provider!r})."
         )
     return normalized

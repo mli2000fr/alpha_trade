@@ -78,7 +78,7 @@ Le TOP20 est une **sortie de modèle**, recalculée après entraînement ou à c
 | P0 | `security_master_snapshot` | Nasdaq Symbol Directory quotidien, Business Quant Universe hebdomadaire | `security_master_snapshots`, `security_master_changes` | actif |
 | P0 | `corporate_actions_sync` | Business Quant market-wide + Alpaca | `corporate_action_source_events` | actif |
 | P0 | `sec_edgar_incremental` | SEC daily master index + submissions | `sec_filing_raw` | actif |
-| P0 | `pit_data_quality_daily` | contrôles locaux | `pit_data_quality_metrics`, `pit_data_quality_issues` | actif |
+| P0 | `pit_data_quality_daily` | contrôles locaux | `pit_data_quality_metrics`, `pit_data_quality_issues` | désactivé, contrôle manuel facultatif |
 | P1 | `borrow_status_snapshot` | Alpaca Assets | `stock_borrow_status_snapshots` | actif |
 | P1 | `analyst_snapshot_collection` | Yahoo Finance/yfinance | consensus, tendances/révisions EPS, targets et recommandations | actif, recherche personnelle/éducative uniquement |
 | P1 | `business_quant_analyst_snapshot` | Business Quant `/estimates` | `stock_analyst_consensus_snapshots` | remplacé par Yahoo, désactivé |
@@ -94,7 +94,7 @@ Le TOP20 est une **sortie de modèle**, recalculée après entraînement ou à c
 | attente | `auction_imbalance_sync` | Nasdaq NOII/NYSE live payants ; Web NYSE post-auction limité | — | `BLOCKED_NO_FREE_OFFICIAL_FEED` ; [POC séparé](../ml/nyse_auction_history_poc.md) |
 | attente | `securities_lending_sync` | fournisseur requis | — | désactivé |
 
-Les batchs déjà présents `earnings_calendar_sync` et `market_cap_sync` sont conservés : ils ne font pas doublon. Le premier stocke calendrier/estimates/actuals d’earnings ; le second ne collecte que capitalisation et secteur via Yahoo puis Finnhub. Les états financiers historiques demeurent issus de SEC EDGAR.
+Les batchs `earnings_calendar_sync` et `market_cap_sync` ne font pas doublon. Le premier stocke calendrier/estimates/actuals d’earnings. Le second rafraîchit les faits SEC nécessaires à la capitalisation PIT, puis interroge Yahoo uniquement pour les symboles sans couverture SEC fraîche et Finnhub uniquement pour les trous restants. `market_cap_sync` passe par le handler et le lanceur Forward PIT commun : son état et ses compteurs survivent donc à un redémarrage de l’IHM dans `pit_collection_runs`.
 
 ## Tables et flux
 
@@ -112,6 +112,14 @@ Fournisseur
 
 Chaque exécution ──> pit_collection_runs ──> statut + compteurs + erreur
 ```
+
+La provenance peut contenir plusieurs fournisseurs (par exemple
+`nasdaq_symbol_directory,business_quant`). Toutes les colonnes `provider` du
+socle Forward PIT acceptent donc 255 caractères. Les migrations `0080` et
+`0081` uniformisent respectivement le registre des runs puis toutes les tables
+thématiques ; cette provenance ne remplace pas le détail conservé dans les
+payloads bruts.
+
 
 La migration `0075_forward_pit_collection` crée les 16 tables du socle. Le DDL de référence indépendant est `database/sql/forward_pit/forward_pit_tables.sql`.
 
@@ -131,7 +139,9 @@ Les événements Business Quant et Alpaca restent séparés par fournisseur. `co
 
 ### SEC EDGAR et normalisations
 
-`sec_edgar_incremental` lit les daily indexes des derniers jours, ne télécharge que les accessions absentes et conserve le dépôt complet. `SEC_EDGAR_USER_AGENT` est obligatoire au format `NomApplication contact@domaine`. L’heure d’acceptation SEC est extraite du header SGML lorsqu’elle existe ; `available_at` reste l’heure réellement reçue par l’application, choix volontairement conservateur.
+`sec_edgar_incremental` lit les daily indexes des derniers jours et ne télécharge que les accessions absentes ou dont le contenu n’avait pas pu être conservé. `SEC_EDGAR_USER_AGENT` est obligatoire au format `NomApplication contact@domaine`. L’heure d’acceptation SEC est extraite du header SGML lorsqu’elle existe ; `available_at` reste l’heure réellement reçue par l’application, choix volontairement conservateur.
+
+La taille d’une soumission complète est plafonnée par `max_submission_bytes` (16 MiB par défaut), nettement sous le paquet MySQL de 64 MiB. Si l’archive complète dépasse cette limite, le collecteur lit seulement son en-tête SGML, identifie le fichier de type principal (`primary_document`) et télécharge directement ce document, lui aussi plafonné par `max_primary_document_bytes`. Chaque accession est validée dans une transaction courte indépendante : un dépôt exceptionnel ne peut plus annuler les dépôts déjà enregistrés. Si même le document principal est indisponible ou trop volumineux, ses métadonnées sont conservées, le contenu reste `NULL` et l’anomalie apparaît dans `details_json` pour permettre une relance ultérieure.
 
 Les batchs P3/P4 relisent ce RAW local : aucun second téléchargement SEC. P3 extrait les items 8‑K/6‑K. P4 normalise les holdings XML embarqués des 13F et conserve une ligne de dépôt lorsque la table d’information n’est pas analysable. Les champs non fiables restent `NULL` plutôt que d’être inventés.
 
@@ -197,7 +207,13 @@ Le batch conserve pour chaque observation la valeur, `realtime_start`, `realtime
 
 ## Qualité et alertes
 
-`pit_data_quality_daily` vérifie au minimum : âge des barres Business Quant, âge du security master, âge du borrow snapshot, âge du dernier vintage macro, runs métier échoués sur 24 heures et couverture sur sept jours de l’univers configuré. Le seuil de couverture par défaut est 90 %. Le compteur `failed_runs_24h` exclut explicitement les anciens échecs de `pit_data_quality_daily` : le moniteur ne peut donc plus entretenir sa propre alerte pendant 24 heures.
+`pit_data_quality_daily` vérifie au minimum : âge des barres Business Quant, âge du security master, âge du borrow snapshot, âge du dernier vintage macro, derniers états métier échoués sur 24 heures et couverture sur sept jours de l’univers configuré. Le seuil de couverture par défaut est 90 %. Le compteur `failed_runs_24h` retient uniquement le dernier run de chaque batch métier : un échec corrigé par une relance réussie ne reste plus critique pendant 24 heures. Les anciens échecs de `pit_data_quality_daily` sont également exclus afin que le moniteur n’entretienne pas sa propre alerte.
+
+Avant un contrôle manuel, lancer `sec_edgar_incremental`, `finra_short_volume_sync` et `fred_alfred_vintage_sync`. Ces trois collecteurs sont indépendants et peuvent s’exécuter en parallèle. Attendre leur terminaison avant `pit_data_quality_daily` : ce dernier ne collecte rien et évalue l’état déjà persisté ; un ancien dernier run `FAILED` ou une table macro encore vide est donc volontairement critique.
+
+`pit_data_quality_daily` est désactivé par défaut (`enabled: false`, statut `MANUAL_CONTROL_ONLY`). Cette désactivation n’interrompt aucune collecte et ne prive les modèles d’aucune donnée : elle supprime seulement l’audit et ses notifications planifiées. Pour un contrôle ponctuel, le réactiver temporairement après la fin des trois collecteurs supervisés.
+
+Pour `market_cap_sync`, la couverture minimale opérationnelle est fixée à 95 %. Une couverture supérieure ou égale à ce seuil produit un statut `COMPLETED`, zéro échec et zéro alerte ; les symboles non couverts restent néanmoins conservés dans `details_json` (`uncovered_count` et `uncovered_symbols`). En dessous de 95 %, le run échoue de manière bloquante.
 
 Une anomalie critique crée une ligne dans `pit_data_quality_issues`, fait échouer le batch qualité et déclenche la notification du lanceur. Cet échec transporte néanmoins l’`Outcome` complet : `requested_count`, `received_count`, `persisted_count`, `failed_count`, avertissements et liste `critical_checks` sont conservés dans `pit_collection_runs` et dans le résumé envoyé aux notifications.
 

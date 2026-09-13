@@ -4,18 +4,27 @@
 # de la configuration fonctionnelle générale conservée dans config.yaml.
 # Les chemins relatifs sont résolus depuis la racine du projet.
 
-# Collecte des snapshots de capitalisation Yahoo puis Finnhub.
-# Les deux fournisseurs sont persistés séparément ; la politique market_cap
-# de config.yaml choisit ensuite Yahoo en priorité et Finnhub en fallback.
+# Collecte composite de capitalisation. SEC EDGAR est la source primaire PIT :
+# dernier shares_outstanding disponible × cours à J. Yahoo puis Finnhub ne sont
+# interrogés que pour les symboles non couverts par la source précédente.
 # run_days suit DayOfWeek : 0=dimanche, 1=lundi, ... 6=samedi.
 market_cap_sync:
   priority: P0
-  description: "Maintenir une capitalisation et un secteur récents pour l'éligibilité tradable, les filtres de taille et la neutralisation market-cap."
+  enabled: true
+  status: ACTIVE
+  timezone: Europe/Paris
+  description: "Maintenir les actions en circulation SEC PIT, puis compléter uniquement les trous avec Yahoo et Finnhub pour l'éligibilité tradable et la neutralisation market-cap."
   tables: "stock_fundamentals_daily"
   run_hours: "11,23"
   run_days: "1,4"
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
-  providers: "yahoo_finance,finnhub"
+  provider: sec_edgar_then_yahoo_then_finnhub
+  primary_provider: sec
+  fallback_providers: "yahoo_finance,finnhub"
+  sec_lookback_days: 30
+  max_age_days: 365
+  min_coverage_ratio: 0.95
+  research_notice: "Chaîne composite : SEC officielle et PIT en priorité ; Yahoo non officiel puis Finnhub servent uniquement de fallback de couverture."
   log_file: log/batch/market_cap_sync.txt
 
 # Synchronisation du calendrier earnings Finnhub.
@@ -111,14 +120,25 @@ sec_edgar_incremental:
   forms: "8-K,8-K/A,6-K,6-K/A,10-Q,10-Q/A,10-K,10-K/A,13F-HR,13F-HR/A,SC 13D,SC 13D/A,SC 13G,SC 13G/A"
   lookback_days: 3
   download_primary_documents: true
+  max_submission_bytes: 16777216
+  max_primary_document_bytes: 16777216
+  submission_probe_bytes: 2097152
   max_requests_per_second: 8
   log_file: log/batch/sec_edgar_incremental.txt
 
 pit_data_quality_daily:
   priority: P0
-  description: "Détecter quotidiennement les retards, trous de couverture et échecs de collecte avant qu'ils contaminent les features PIT."
+  description: "Contrôle manuel facultatif des retards, trous de couverture et échecs de collecte. Il ne récupère aucune donnée externe et n'est pas requis pour alimenter les tables métier."
+  supervision_dependencies: "sec_edgar_incremental,finra_short_volume_sync,fred_alfred_vintage_sync"
+  execution_notice: "PRÉREQUIS DE SUPERVISION : exécuter sec_edgar_incremental, finra_short_volume_sync et fred_alfred_vintage_sync avant ce contrôle. Ces trois collecteurs sont indépendants et peuvent tourner en parallèle ; pit_data_quality_daily doit être lancé seulement après leur fin, sinon leur ancien statut FAILED ou l'absence de données macro déclenche volontairement une alerte critique."
   tables: "pit_collection_runs,pit_data_quality_metrics,pit_data_quality_issues"
-  enabled: true
+  enabled: false
+  status: MANUAL_CONTROL_ONLY
+  research_notice: "Désactivé par choix opérationnel : ce batch est uniquement un audit de supervision (du sec_edgar_incremental, finra_short_volume_sync, fred_alfred_vintage_sync). Il peut être réactivé ponctuellement après l'exécution des collecteurs supervisés."
+  activation_requirement: "Réactiver uniquement pour lancer un audit ponctuel après la fin des trois collecteurs supervisés ; aucune alimentation métier ne dépend de ce batch."
+  unlock_steps:
+    - "Attendre la fin de sec_edgar_incremental, finra_short_volume_sync et fred_alfred_vintage_sync."
+    - "Passer temporairement enabled à true, lancer le contrôle, puis le remettre à false si la supervision planifiée n'est pas souhaitée."
   timezone: Europe/Paris
   run_hours: "2,15"
   run_days: "1,2,3,4,5,6"
@@ -308,7 +328,7 @@ fred_alfred_vintage_sync:
   timezone: Europe/Paris
   run_hours: "2,14"
   run_days: "1,2,3,4,5"
-  series: "DGS2,DGS10,DGS30,T10Y2Y,T10Y3M,FEDFUNDS,CPIAUCSL,CPILFESL,PCEPI,PCEPILFE,UNRATE,PAYEMS,INDPRO,RETAILSMS,GDPC1,VIXCLS,BAMLH0A0HYM2"
+  series: "DGS2,DGS10,DGS30,T10Y2Y,T10Y3M,FEDFUNDS,CPIAUCSL,CPILFESL,PCEPI,PCEPILFE,UNRATE,PAYEMS,INDPRO,RETAILSMSA,GDPC1,VIXCLS,BAMLH0A0HYM2"
   observation_lookback_days: 730
   preserve_vintages: true
   log_file: log/batch/fred_alfred_vintage_sync.txt

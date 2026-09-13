@@ -25,7 +25,6 @@ from ihm.services.process_registry import (
 
 WINDOWS_SCRIPTS = PROJECT_ROOT / "scripts" / "windows"
 OLD_BATCHES = {
-    "market_cap_sync": ("AlphaTrade-MarketCapSync", "install_market_cap_sync_task.ps1", "market_cap_sync_launcher.ps1"),
     "earnings_calendar_sync": ("AlphaTrade-EarningsCalendarSync", "install_earnings_calendar_task.ps1", "earnings_calendar_launcher.ps1"),
     "analyst_snapshot_collection": ("AlphaTrade-AnalystSnapshot", "install_analyst_snapshot_task.ps1", "analyst_snapshot_launcher.ps1"),
 }
@@ -64,6 +63,8 @@ class BatchSpec:
     task_name: str
     raw_config: Mapping[str, Any]
     research_notice: str = ""
+    supervision_dependencies: tuple[str, ...] = ()
+    execution_notice: str = ""
 
     @property
     def runnable(self) -> bool:
@@ -92,6 +93,18 @@ def _string_list(value: Any) -> tuple[str, ...]:
 def _default_task_name(batch_name: str) -> str:
     suffix = "".join(part[:1].upper() + part[1:] for part in batch_name.split("_") if part)
     return f"AlphaTrade-{suffix}"
+
+
+def _normalize_windows_task_time(value: Any) -> str | None:
+    """Reject Task Scheduler's pre-2000 sentinel used for 'never run'."""
+    text_value = str(value or "").strip()
+    if not text_value:
+        return None
+    try:
+        year = int(text_value[:4])
+    except (TypeError, ValueError):
+        return None
+    return text_value if year >= 2000 else None
 
 
 def task_name_for_batch(batch_name: str) -> str:
@@ -126,6 +139,8 @@ def load_batch_specs(path: str | None = None) -> tuple[BatchSpec, ...]:
             task_name=task_name_for_batch(str(name)),
             raw_config=dict(raw),
             research_notice=str(raw.get("research_notice") or ""),
+            supervision_dependencies=_split(raw.get("supervision_dependencies")),
+            execution_notice=str(raw.get("execution_notice") or ""),
         ))
     order = {f"P{i}": i for i in range(5)}
     return tuple(sorted(specs, key=lambda item: (order.get(item.priority, 99), item.name)))
@@ -157,8 +172,6 @@ def build_install_command(spec: BatchSpec, *, run_as: str = "Interactive") -> li
 
 
 def build_run_command(spec: BatchSpec) -> list[str]:
-    if spec.name == "market_cap_sync":
-        return _powershell_prefix() + [str(WINDOWS_SCRIPTS / OLD_BATCHES[spec.name][2]), "-IgnoreRunDays"]
     if spec.name == "earnings_calendar_sync":
         return _powershell_prefix() + [str(WINDOWS_SCRIPTS / OLD_BATCHES[spec.name][2]), "-Force"]
     if spec.name == "analyst_snapshot_collection":
@@ -263,8 +276,8 @@ $rows = @(Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.Ta
     task_name = $task.TaskName
     state = [string]$task.State
     enabled = ([string]$task.State -ne 'Disabled')
-    last_run_time = if ($info -and $info.LastRunTime.Year -gt 1900) { $info.LastRunTime.ToString('o') } else { $null }
-    next_run_time = if ($info -and $info.NextRunTime.Year -gt 1900) { $info.NextRunTime.ToString('o') } else { $null }
+    last_run_time = if ($info -and $info.LastRunTime.Year -ge 2000) { $info.LastRunTime.ToString('o') } else { $null }
+    next_run_time = if ($info -and $info.NextRunTime.Year -ge 2000) { $info.NextRunTime.ToString('o') } else { $null }
     last_result = if ($info) { [int64]$info.LastTaskResult } else { $null }
   }
 })
@@ -289,7 +302,15 @@ $rows | ConvertTo-Json -Depth 3 -Compress
     except json.JSONDecodeError as exc:
         return {}, f"Réponse Task Scheduler illisible : {exc}"
     rows = payload if isinstance(payload, list) else [payload]
-    return {str(row["task_name"]): dict(row) for row in rows if isinstance(row, dict) and row.get("task_name")}, None
+    normalized: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict) or not row.get("task_name"):
+            continue
+        item = dict(row)
+        item["last_run_time"] = _normalize_windows_task_time(item.get("last_run_time"))
+        item["next_run_time"] = _normalize_windows_task_time(item.get("next_run_time"))
+        normalized[str(item["task_name"])] = item
+    return normalized, None
 
 
 def read_batch_log_tail(spec: BatchSpec, max_lines: int = 80) -> str:

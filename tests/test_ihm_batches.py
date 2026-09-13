@@ -52,6 +52,20 @@ def test_catalogue_exposes_research_notice(tmp_path: Path) -> None:
     assert spec.research_notice == "Yahoo pour la recherche."
 
 
+def test_catalogue_exposes_quality_supervision_dependencies(tmp_path: Path) -> None:
+    path = tmp_path / "batch.yaml"
+    path.write_text(yaml.safe_dump({
+        "quality": {
+            "enabled": True,
+            "supervision_dependencies": "sec,finra,fred",
+            "execution_notice": "Lancer après les collecteurs.",
+        }
+    }), encoding="utf-8")
+    spec = batches.load_batch_specs(str(path))[0]
+    assert spec.supervision_dependencies == ("sec", "finra", "fred")
+    assert spec.execution_notice == "Lancer après les collecteurs."
+
+
 def test_schedule_and_task_names_cover_legacy_and_generic() -> None:
     assert batches.task_name_for_batch("earnings_calendar_sync") == "AlphaTrade-EarningsCalendarSync"
     assert batches.task_name_for_batch("daily_bars_sync") == "AlphaTrade-DailyBarsSync"
@@ -66,7 +80,9 @@ def test_commands_use_force_for_immediate_runs() -> None:
     earnings = _spec("earnings_calendar_sync")
     assert batches.build_run_command(earnings)[-1] == "-Force"
     market = _spec("market_cap_sync")
-    assert batches.build_run_command(market)[-1] == "-IgnoreRunDays"
+    assert batches.build_run_command(market)[-1] == "-Force"
+    assert "forward_pit_launcher.ps1" in " ".join(batches.build_run_command(market))
+    assert "install_forward_pit_task.ps1" in " ".join(batches.build_install_command(market))
     uninstall = batches.build_uninstall_command(generic)
     assert "uninstall_scheduled_batch_task.ps1" in " ".join(uninstall)
     assert uninstall[-2:] == ["-TaskName", "AlphaTrade-DailyBarsSync"]
@@ -93,7 +109,13 @@ def test_start_batch_is_async_and_suppresses_duplicate_notification(monkeypatch)
 
 
 def test_task_scheduler_json_is_normalized(monkeypatch) -> None:
-    payload = [{"task_name": "AlphaTrade-DailyBarsSync", "state": "Ready", "enabled": True}]
+    payload = [{
+        "task_name": "AlphaTrade-DailyBarsSync",
+        "state": "Ready",
+        "enabled": True,
+        "last_run_time": "1999-11-30T00:00:00.0000000+01:00",
+        "next_run_time": "2026-09-14T11:00:00+02:00",
+    }]
     monkeypatch.setattr(batches.sys, "platform", "win32")
     monkeypatch.setattr(
         batches.subprocess,
@@ -103,6 +125,8 @@ def test_task_scheduler_json_is_normalized(monkeypatch) -> None:
     states, error = batches.query_windows_task_states()
     assert error is None
     assert states["AlphaTrade-DailyBarsSync"]["state"] == "Ready"
+    assert states["AlphaTrade-DailyBarsSync"]["last_run_time"] is None
+    assert states["AlphaTrade-DailyBarsSync"]["next_run_time"] == "2026-09-14T11:00:00+02:00"
 
 
 def test_uninstall_batch_executes_exact_non_shell_command(monkeypatch) -> None:

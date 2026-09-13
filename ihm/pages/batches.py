@@ -129,7 +129,12 @@ def _render_last_run(row: dict[str, Any] | None) -> None:
         st.caption("Aucune exécution suivie dans pit_collection_runs.")
         return
     status = str(row.get("status") or "INCONNU")
-    icon = "✅" if status in {"SUCCESS", "COMPLETED", "OK"} else ("🔄" if status == "RUNNING" else "❌")
+    if status in {"SUCCESS", "COMPLETED", "OK"}:
+        icon = "✅"
+    elif status == "COMPLETED_WITH_WARNINGS":
+        icon = "⚠️"
+    else:
+        icon = "🔄" if status == "RUNNING" else "❌"
     st.markdown(f"**Dernière collecte :** {icon} {status}")
     st.caption(
         f"Début {_value(row.get('started_at'))} · Fin {_value(row.get('finished_at'))} · "
@@ -160,6 +165,14 @@ def _render_batch(
 
     with st.expander(_batch_title(status_bits, spec.name, db_run, task), expanded=bool(active)):
         st.write(spec.description)
+        if spec.supervision_dependencies:
+            dependencies = ", ".join(
+                f"`{name}`" for name in spec.supervision_dependencies
+            )
+            notice = spec.execution_notice or (
+                "Exécuter les collecteurs supervisés avant ce contrôle qualité."
+            )
+            st.info(f"🔗 **Prérequis de supervision :** {dependencies}.\n\n{notice}")
         if spec.research_notice:
             st.warning(f"🔬 Usage recherche — {spec.research_notice}")
         if not spec.runnable:
@@ -180,9 +193,13 @@ def _render_batch(
             st.markdown(f"**Univers :** {universe}")
         with col2:
             st.markdown(f"**Tâche Windows :** {spec.task_name}")
-            st.markdown(f"**Dernière exécution Windows :** {_value(task.get('last_run_time') if task else None)}")
+            scheduled_last = task.get("last_run_time") if task else None
+            scheduled_text = _value(scheduled_last) if scheduled_last else "jamais via le planificateur"
+            actual_last = db_run.get("started_at") if db_run else scheduled_last
+            st.markdown(f"**Dernière exécution réelle connue :** {_value(actual_last)}")
+            st.markdown(f"**Dernière exécution via le planificateur Windows :** {scheduled_text}")
             st.markdown(f"**Prochaine exécution Windows :** {_value(task.get('next_run_time') if task else None)}")
-            if task and task.get("last_result") is not None:
+            if task and scheduled_last and task.get("last_result") is not None:
                 st.markdown(f"**Code retour Windows :** {task['last_result']}")
 
         tables = ", ".join(spec.tables)

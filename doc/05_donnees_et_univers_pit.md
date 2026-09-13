@@ -13,10 +13,10 @@ Ce document donne la vue transversale. Les contrats algorithmiques, paramètres,
 
 - Alpaca : actifs, compte, ordres, positions, quotes et éventuellement barres IEX ;
 - EODHD : barres consolidées, news et corporate actions selon configuration ;
-- Finnhub/Yahoo/SEC : secteurs, capitalisations, earnings ou cross-checks ;
+- SEC : faits comptables et actions en circulation PIT ; Yahoo puis Finnhub : fallbacks de capitalisation courante ;
 
 La publication de l’univers tradable possède un contrat dédié : la politique
-`strict` contrôle une capitalisation PIT provenant de Yahoo puis Finnhub, de `sec_edgar` ou de `eodhd`,
+`strict` contrôle une capitalisation PIT provenant prioritairement de SEC, avec Yahoo puis Finnhub en fallback, ou des modes explicites legacy `sec_edgar`, `yahoo_then_finnhub` et `eodhd`,
 tandis que `liquidity_only` ignore ce signal devenu insuffisamment fiable et
 conserve les filtres PIT de prix, historique, ADV, volatilité, qualité, spread
 et earnings. Voir

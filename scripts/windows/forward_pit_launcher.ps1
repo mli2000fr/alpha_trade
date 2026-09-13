@@ -78,17 +78,24 @@ try {
     $started = Get-Date; Write-Status "[$($started.ToString('yyyy-MM-dd HH:mm:ss'))] START $BatchName pid=$PID"
     $args = @('-u','-m','service.forward_pit.batch','--batch',$BatchName,'--batch-config',$configPath)
     if ($DryRun) { $args += '--dry-run' }
-    Push-Location $workspace
-    $previousErrorActionPreference = $ErrorActionPreference
+    $stdoutTmp = Join-Path ([IO.Path]::GetTempPath()) "alpha_forward_pit_stdout_$PID.txt"
+    $stderrTmp = Join-Path ([IO.Path]::GetTempPath()) "alpha_forward_pit_stderr_$PID.txt"
     try {
-        # Windows PowerShell matérialise chaque ligne stderr d'un programme natif
-        # en ErrorRecord. Les logs INFO/WARNING Python ne doivent pas interrompre le run.
-        $ErrorActionPreference = 'Continue'
-        $captured = @(& $python @args 2>&1)
-        $exitCode = $LASTEXITCODE
+        # Start-Process garde stderr comme texte brut, sans NativeCommandError PowerShell.
+        $batchProcess = Start-Process -FilePath $python -ArgumentList $args `
+            -WorkingDirectory $workspace -Wait -PassThru -WindowStyle Hidden `
+            -RedirectStandardOutput $stdoutTmp -RedirectStandardError $stderrTmp
+        $exitCode = $batchProcess.ExitCode
+        $captured = @()
+        if (Test-Path -LiteralPath $stdoutTmp) {
+            $captured += @(Get-Content -LiteralPath $stdoutTmp -Encoding UTF8)
+        }
+        if (Test-Path -LiteralPath $stderrTmp) {
+            $captured += @(Get-Content -LiteralPath $stderrTmp -Encoding UTF8)
+        }
     } finally {
-        $ErrorActionPreference = $previousErrorActionPreference
-        Pop-Location
+        Remove-Item -LiteralPath $stdoutTmp -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $stderrTmp -Force -ErrorAction SilentlyContinue
     }
     foreach ($line in $captured) { Write-Status $line.ToString() }
     $duration = (Get-Date) - $started; $state = if ($exitCode -eq 0) { 'OK' } else { 'ERROR' }

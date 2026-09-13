@@ -1,7 +1,7 @@
 -- Forward PIT collection foundation (migration 0075).
 CREATE TABLE IF NOT EXISTS alpha_trade.pit_collection_runs (
  id BIGINT AUTO_INCREMENT PRIMARY KEY, run_id VARCHAR(64) NOT NULL UNIQUE,
- batch_name VARCHAR(64) NOT NULL, provider VARCHAR(32), status VARCHAR(24) NOT NULL,
+ batch_name VARCHAR(64) NOT NULL, provider VARCHAR(255), status VARCHAR(24) NOT NULL,
  started_at DATETIME(6) NOT NULL, finished_at DATETIME(6), requested_count INT DEFAULT 0,
  received_count INT DEFAULT 0, persisted_count INT DEFAULT 0, empty_count INT DEFAULT 0,
  failed_count INT DEFAULT 0, warning_count INT DEFAULT 0, schema_hash VARCHAR(64),
@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.pit_collection_runs (
 
 CREATE TABLE IF NOT EXISTS alpha_trade.pit_raw_payloads (
  id BIGINT AUTO_INCREMENT PRIMARY KEY, run_id VARCHAR(64) NOT NULL, batch_name VARCHAR(64) NOT NULL,
- provider VARCHAR(32) NOT NULL, endpoint VARCHAR(128) NOT NULL, entity_key VARCHAR(128),
+ provider VARCHAR(255) NOT NULL, endpoint VARCHAR(128) NOT NULL, entity_key VARCHAR(128),
  observed_at DATETIME(6) NOT NULL, available_at DATETIME(6) NOT NULL,
  http_status SMALLINT, payload_hash VARCHAR(64) NOT NULL, schema_hash VARCHAR(64),
  payload_json LONGTEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.pit_raw_payloads (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS alpha_trade.stock_bars_daily_versions (
- id BIGINT AUTO_INCREMENT PRIMARY KEY, provider VARCHAR(32) NOT NULL, symbol VARCHAR(32) NOT NULL,
+ id BIGINT AUTO_INCREMENT PRIMARY KEY, provider VARCHAR(255) NOT NULL, symbol VARCHAR(32) NOT NULL,
  trade_date DATE NOT NULL, observed_at DATETIME(6) NOT NULL, available_at DATETIME(6) NOT NULL,
  open DOUBLE NOT NULL, high DOUBLE NOT NULL, low DOUBLE NOT NULL, close DOUBLE NOT NULL,
  volume BIGINT, provider_timestamp DATETIME(6), payload_hash VARCHAR(64) NOT NULL,
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.stock_bars_daily_versions (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS alpha_trade.security_master_snapshots (
- id BIGINT AUTO_INCREMENT PRIMARY KEY, provider VARCHAR(32) NOT NULL, snapshot_date DATE NOT NULL,
+ id BIGINT AUTO_INCREMENT PRIMARY KEY, provider VARCHAR(255) NOT NULL, snapshot_date DATE NOT NULL,
  observed_at DATETIME(6) NOT NULL, available_at DATETIME(6) NOT NULL, symbol VARCHAR(32) NOT NULL,
  cik VARCHAR(10), cusip VARCHAR(16), company_name VARCHAR(255), exchange VARCHAR(32),
  security_type VARCHAR(64), asset_class VARCHAR(32), etf_flag BOOLEAN, test_issue BOOLEAN,
@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.security_master_snapshots (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS alpha_trade.security_master_changes (
- id BIGINT AUTO_INCREMENT PRIMARY KEY, provider VARCHAR(32) NOT NULL, detected_date DATE NOT NULL,
+ id BIGINT AUTO_INCREMENT PRIMARY KEY, provider VARCHAR(255) NOT NULL, detected_date DATE NOT NULL,
  symbol VARCHAR(32) NOT NULL, change_type VARCHAR(48) NOT NULL, previous_value TEXT,
  current_value TEXT, confirmed BOOLEAN NOT NULL DEFAULT 0, run_id VARCHAR(64) NOT NULL,
  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.security_master_changes (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS alpha_trade.corporate_action_source_events (
- id BIGINT AUTO_INCREMENT PRIMARY KEY, provider VARCHAR(32) NOT NULL, provider_event_id VARCHAR(128),
+ id BIGINT AUTO_INCREMENT PRIMARY KEY, provider VARCHAR(255) NOT NULL, provider_event_id VARCHAR(128),
  symbol VARCHAR(32) NOT NULL, action_type VARCHAR(48) NOT NULL, effective_date DATE NOT NULL,
  value_num DOUBLE, related_symbol VARCHAR(32), related_name VARCHAR(255), notes TEXT,
  observed_at DATETIME(6) NOT NULL, available_at DATETIME(6) NOT NULL, payload_hash VARCHAR(64) NOT NULL,
@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.sec_filing_raw (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS alpha_trade.stock_borrow_status_snapshots (
- id BIGINT AUTO_INCREMENT PRIMARY KEY, provider VARCHAR(32) NOT NULL, symbol VARCHAR(32) NOT NULL,
+ id BIGINT AUTO_INCREMENT PRIMARY KEY, provider VARCHAR(255) NOT NULL, symbol VARCHAR(32) NOT NULL,
  observed_at DATETIME(6) NOT NULL, available_at DATETIME(6) NOT NULL, shortable BOOLEAN,
  easy_to_borrow BOOLEAN, marginable BOOLEAN, tradable BOOLEAN, status VARCHAR(32),
  borrow_status VARCHAR(32), payload_hash VARCHAR(64), run_id VARCHAR(64) NOT NULL,
@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.stock_borrow_status_snapshots (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS alpha_trade.stock_analyst_consensus_snapshots (
- id BIGINT AUTO_INCREMENT PRIMARY KEY, provider VARCHAR(32) NOT NULL, symbol VARCHAR(32) NOT NULL,
+ id BIGINT AUTO_INCREMENT PRIMARY KEY, provider VARCHAR(255) NOT NULL, symbol VARCHAR(32) NOT NULL,
  metric VARCHAR(16) NOT NULL, dimension_name VARCHAR(16), fiscal_period VARCHAR(32) NOT NULL,
  data_type VARCHAR(16), consensus_value DOUBLE, high_value DOUBLE, low_value DOUBLE,
  actual_value DOUBLE, observed_at DATETIME(6) NOT NULL, available_at DATETIME(6) NOT NULL,
@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.stock_analyst_consensus_snapshots (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS alpha_trade.stock_option_snapshots (
- id BIGINT AUTO_INCREMENT PRIMARY KEY, provider VARCHAR(32) NOT NULL, feed VARCHAR(24) NOT NULL,
+ id BIGINT AUTO_INCREMENT PRIMARY KEY, provider VARCHAR(255) NOT NULL, feed VARCHAR(24) NOT NULL,
  underlying_symbol VARCHAR(32) NOT NULL, contract_symbol VARCHAR(64) NOT NULL,
  expiration_date DATE, strike DOUBLE, option_type VARCHAR(8), observed_at DATETIME(6) NOT NULL,
  available_at DATETIME(6) NOT NULL, provider_timestamp DATETIME(6), bid DOUBLE, ask DOUBLE,
@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.stock_option_snapshots (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS alpha_trade.stock_opening_window_bars (
- provider VARCHAR(32) NOT NULL, feed VARCHAR(16) NOT NULL DEFAULT 'legacy',
+ provider VARCHAR(255) NOT NULL, feed VARCHAR(16) NOT NULL DEFAULT 'legacy',
  adjustment_mode VARCHAR(16) NOT NULL DEFAULT 'raw',
  symbol VARCHAR(32) NOT NULL, bar_timestamp DATETIME(6) NOT NULL,
  observed_at DATETIME(6) NOT NULL, available_at DATETIME(6) NOT NULL,
@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.stock_opening_window_bars (
 
 CREATE TABLE IF NOT EXISTS alpha_trade.stock_opening_window_bar_versions (
  id BIGINT AUTO_INCREMENT PRIMARY KEY,
- provider VARCHAR(32) NOT NULL, feed VARCHAR(16) NOT NULL,
+ provider VARCHAR(255) NOT NULL, feed VARCHAR(16) NOT NULL,
  adjustment_mode VARCHAR(16) NOT NULL DEFAULT 'raw',
  symbol VARCHAR(32) NOT NULL, bar_timestamp DATETIME(6) NOT NULL,
  observed_at DATETIME(6) NOT NULL, available_at DATETIME(6) NOT NULL,
@@ -145,7 +145,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.sec_ownership_snapshots (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS alpha_trade.macro_vintage_observations (
- id BIGINT AUTO_INCREMENT PRIMARY KEY, provider VARCHAR(16) NOT NULL, series_id VARCHAR(32) NOT NULL,
+ id BIGINT AUTO_INCREMENT PRIMARY KEY, provider VARCHAR(255) NOT NULL, series_id VARCHAR(32) NOT NULL,
  observation_date DATE NOT NULL, value_num DOUBLE, value_raw VARCHAR(64), realtime_start DATE NOT NULL,
  realtime_end DATE NOT NULL, vintage_date DATE NOT NULL, observed_at DATETIME(6) NOT NULL,
  available_at DATETIME(6) NOT NULL, run_id VARCHAR(64) NOT NULL,
@@ -155,7 +155,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.macro_vintage_observations (
 
 CREATE TABLE IF NOT EXISTS alpha_trade.pit_data_quality_metrics (
  id BIGINT AUTO_INCREMENT PRIMARY KEY, metric_date DATE NOT NULL, batch_name VARCHAR(64) NOT NULL,
- provider VARCHAR(32), metric_name VARCHAR(96) NOT NULL, metric_value DOUBLE,
+ provider VARCHAR(255), metric_name VARCHAR(96) NOT NULL, metric_value DOUBLE,
  threshold_value DOUBLE, status VARCHAR(16) NOT NULL, details_json LONGTEXT,
  run_id VARCHAR(64) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
  UNIQUE KEY uq_pdqm_date_batch_provider_metric(metric_date, batch_name, provider, metric_name)
@@ -163,13 +163,13 @@ CREATE TABLE IF NOT EXISTS alpha_trade.pit_data_quality_metrics (
 
 CREATE TABLE IF NOT EXISTS alpha_trade.pit_data_quality_issues (
  id BIGINT AUTO_INCREMENT PRIMARY KEY, detected_at DATETIME(6) NOT NULL, severity VARCHAR(16) NOT NULL,
- batch_name VARCHAR(64) NOT NULL, provider VARCHAR(32), entity_key VARCHAR(128), issue_type VARCHAR(64) NOT NULL,
+ batch_name VARCHAR(64) NOT NULL, provider VARCHAR(255), entity_key VARCHAR(128), issue_type VARCHAR(64) NOT NULL,
  message TEXT NOT NULL, details_json LONGTEXT, status VARCHAR(16) NOT NULL DEFAULT 'OPEN',
  run_id VARCHAR(64) NOT NULL, resolved_at DATETIME(6), INDEX idx_pdqi_status_severity(status, severity)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS alpha_trade.stock_short_volume_daily (
- id BIGINT AUTO_INCREMENT PRIMARY KEY, provider VARCHAR(32) NOT NULL,
+ id BIGINT AUTO_INCREMENT PRIMARY KEY, provider VARCHAR(255) NOT NULL,
  trade_date DATE NOT NULL, symbol VARCHAR(32) NOT NULL, market VARCHAR(16) NOT NULL,
  short_volume BIGINT NOT NULL, short_exempt_volume BIGINT NOT NULL,
  total_volume BIGINT NOT NULL, observed_at DATETIME(6) NOT NULL,
@@ -182,7 +182,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.stock_short_volume_daily (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS alpha_trade.stock_option_contract_versions (
- id BIGINT AUTO_INCREMENT PRIMARY KEY, provider VARCHAR(32) NOT NULL,
+ id BIGINT AUTO_INCREMENT PRIMARY KEY, provider VARCHAR(255) NOT NULL,
  contract_symbol VARCHAR(64) NOT NULL, underlying_symbol VARCHAR(32) NOT NULL,
  root_symbol VARCHAR(32), status VARCHAR(24), expiration_date DATE, strike DOUBLE,
  option_type VARCHAR(8), exercise_style VARCHAR(16), multiplier DOUBLE, contract_size DOUBLE,
@@ -194,7 +194,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.stock_option_contract_versions (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS alpha_trade.stock_option_bars_delayed (
- id BIGINT AUTO_INCREMENT PRIMARY KEY, provider VARCHAR(32) NOT NULL, feed VARCHAR(32) NOT NULL,
+ id BIGINT AUTO_INCREMENT PRIMARY KEY, provider VARCHAR(255) NOT NULL, feed VARCHAR(32) NOT NULL,
  provenance_status VARCHAR(32) NOT NULL, underlying_symbol VARCHAR(32) NOT NULL,
  contract_symbol VARCHAR(64) NOT NULL, expiration_date DATE, strike DOUBLE, option_type VARCHAR(8),
  timeframe VARCHAR(12) NOT NULL, bar_timestamp DATETIME(6) NOT NULL,
@@ -208,7 +208,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.stock_option_bars_delayed (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS alpha_trade.option_contract_adjustments (
- id BIGINT AUTO_INCREMENT PRIMARY KEY, provider VARCHAR(32) NOT NULL,
+ id BIGINT AUTO_INCREMENT PRIMARY KEY, provider VARCHAR(255) NOT NULL,
  occ_memo_number VARCHAR(16) NOT NULL, published_at DATETIME(6), effective_at DATETIME(6),
  category VARCHAR(128), title VARCHAR(1024) NOT NULL, source_url VARCHAR(1024),
  adjustment_type VARCHAR(32), old_option_root VARCHAR(64), new_option_root VARCHAR(64),

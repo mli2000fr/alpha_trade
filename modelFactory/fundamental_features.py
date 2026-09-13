@@ -1178,7 +1178,11 @@ def main() -> None:
     if effective_provider == "config":
         from common.market_cap import load_market_cap_config
         configured_provider = load_market_cap_config().provider
-        if configured_provider == "sec_edgar":
+        if configured_provider in {
+            "sec_edgar", "sec_edgar_then_yahoo_then_finnhub",
+        }:
+            # La CLI unitaire exécute uniquement la branche primaire. La chaîne
+            # de fallback ciblée est orchestrée par market_cap_sync.
             effective_provider = "sec"
         elif configured_provider == "yahoo_then_finnhub":
             # La collecte primaire reste explicite ; le fallback est résolu

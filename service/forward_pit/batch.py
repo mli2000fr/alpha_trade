@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import html as html_lib
 import hashlib
 import io
 import json
@@ -42,9 +43,18 @@ ROOT = Path(__file__).resolve().parents[2]
 BQ_URL = "https://data.businessquant.com"
 SEC_ARCHIVES = "https://www.sec.gov/Archives"
 SEC_USER_AGENT_DEFAULT = ""
-FAILED_RUNS_24H_SQL = """SELECT COUNT(*) FROM pit_collection_runs
-    WHERE status='FAILED' AND batch_name <> 'pit_data_quality_daily'
-    AND started_at>=UTC_TIMESTAMP()-INTERVAL 24 HOUR"""
+FAILED_RUNS_24H_SQL = """SELECT COUNT(*)
+    FROM pit_collection_runs current_run
+    JOIN (
+        SELECT batch_name, MAX(started_at) AS started_at
+        FROM pit_collection_runs
+        WHERE batch_name <> 'pit_data_quality_daily'
+        GROUP BY batch_name
+    ) latest
+      ON latest.batch_name=current_run.batch_name
+     AND latest.started_at=current_run.started_at
+    WHERE current_run.status='FAILED'
+      AND current_run.started_at>=UTC_TIMESTAMP()-INTERVAL 24 HOUR"""
 
 ALPACA_DATA_URL = "https://data.alpaca.markets"
 ALPACA_PAPER_URL = "https://paper-api.alpaca.markets"
@@ -92,6 +102,198 @@ def _schema_hash(value: Any) -> str:
 
 def _utcnow() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
+
+
+def _previous_weekdays(reference_date: date, lookback_days: int) -> list[date]:
+    """Return past weekdays whose end-of-day file may already be published.
+
+    The current New York date is deliberately excluded: EDGAR builds its daily
+    indexes after the filing day.  Weekends are excluded because requesting a
+    non-existent dated index can return 403 instead of 404 from sec.gov.
+    """
+    remaining = max(1, int(lookback_days))
+    candidate = reference_date - timedelta(days=1)
+    dates: list[date] = []
+    while len(dates) < remaining:
+        if candidate.weekday() < 5:
+            dates.append(candidate)
+        candidate -= timedelta(days=1)
+    return dates
+
+
+def _read_sec_response_limited(
+    response: requests.Response,
+    *,
+    max_content_bytes: int,
+    probe_bytes: int,
+) -> tuple[str | None, str, int]:
+    """Read a SEC response without ever retaining an oversized body in memory."""
+    declared = int(response.headers.get("Content-Length") or 0)
+    oversized = declared > max_content_bytes > 0
+    content = bytearray()
+    probe = bytearray()
+    total = 0
+    for chunk in response.iter_content(chunk_size=64 * 1024):
+        if not chunk:
+            continue
+        total += len(chunk)
+        if len(probe) < probe_bytes:
+            probe.extend(chunk[:max(0, probe_bytes - len(probe))])
+        if not oversized:
+            if len(content) + len(chunk) > max_content_bytes:
+                oversized = True
+                content.clear()
+            else:
+                content.extend(chunk)
+        if oversized and len(probe) >= probe_bytes:
+            break
+    size = declared or total
+    probe_text = bytes(probe).decode(response.encoding or "utf-8", errors="replace")
+    if oversized:
+        return None, probe_text, size
+    body = bytes(content).decode(response.encoding or "utf-8", errors="replace")
+    return body, body, size
+
+
+def _sec_submission_header(
+    submission_prefix: str, expected_form: str,
+) -> tuple[datetime | None, str | None]:
+    """Extract acceptance time and the primary document name from SEC SGML."""
+    acceptance = None
+    match = re.search(r"<ACCEPTANCE-DATETIME>\s*(\d{14})", submission_prefix, re.I)
+    if match:
+        acceptance = datetime.strptime(match.group(1), "%Y%m%d%H%M%S")
+    expected = expected_form.strip().upper()
+    candidates: list[tuple[str, str]] = []
+    for document in re.finditer(
+        r"<DOCUMENT>\s*(.*?)(?:<TEXT>|</DOCUMENT>|$)",
+        submission_prefix,
+        re.I | re.S,
+    ):
+        header = document.group(1)
+        type_match = re.search(r"(?im)^<TYPE>\s*([^\r\n]+)", header)
+        file_match = re.search(r"(?im)^<FILENAME>\s*([^\r\n]+)", header)
+        if not file_match:
+            continue
+        name = file_match.group(1).strip().replace("\\", "/").rsplit("/", 1)[-1]
+        if not name or not re.fullmatch(r"[A-Za-z0-9._-]+", name):
+            continue
+        candidates.append(((type_match.group(1).strip().upper() if type_match else ""), name))
+    primary = next((name for doc_type, name in candidates if doc_type == expected), None)
+    if primary is None and candidates:
+        primary = candidates[0][1]
+    return acceptance, primary
+
+
+def _sec_filing_index_documents(index_html: str, base_url: str) -> list[dict[str, Any]]:
+    """Parse SEC filing-detail rows into downloadable document descriptors."""
+    documents: list[dict[str, Any]] = []
+    for row_match in re.finditer(r"(?is)<tr[^>]*>(.*?)</tr>", index_html):
+        row_html = row_match.group(1)
+        cells = re.findall(r"(?is)<td[^>]*>(.*?)</td>", row_html)
+        if len(cells) < 4:
+            continue
+        link_match = re.search(r"(?is)<a[^>]+href=[\"']([^\"']+)[\"']", cells[2])
+        if not link_match:
+            continue
+        href = html_lib.unescape(link_match.group(1).strip())
+        filename = href.replace("\\", "/").rsplit("/", 1)[-1]
+        if not filename or not re.fullmatch(r"[A-Za-z0-9._-]+", filename):
+            continue
+        clean = lambda value: html_lib.unescape(re.sub(r"(?is)<[^>]+>", " ", value)).strip()
+        sequence_text = clean(cells[0])
+        size_text = clean(cells[4]) if len(cells) > 4 else ""
+        documents.append({
+            "sequence": int(sequence_text) if sequence_text.isdigit() else None,
+            "description": re.sub(r"\s+", " ", clean(cells[1]))[:512] or None,
+            "filename": filename,
+            "document_type": re.sub(r"\s+", " ", clean(cells[3])).upper()[:32],
+            "declared_size": int(size_text.replace(",", "")) if size_text.replace(",", "").isdigit() else None,
+            "url": (href if href.startswith("http") else base_url.rstrip("/") + "/" + filename),
+        })
+    return documents
+
+
+def _read_response_bytes_limited(
+    response: requests.Response, max_content_bytes: int,
+) -> tuple[bytes | None, int]:
+    """Read a binary attachment while enforcing a hard pre-insert bound."""
+    declared = int(response.headers.get("Content-Length") or 0)
+    if declared > max_content_bytes > 0:
+        return None, declared
+    content = bytearray()
+    for chunk in response.iter_content(chunk_size=64 * 1024):
+        if not chunk:
+            continue
+        if len(content) + len(chunk) > max_content_bytes:
+            return None, len(content) + len(chunk)
+        content.extend(chunk)
+    return bytes(content), declared or len(content)
+
+
+def _download_sec_document(
+    session: requests.Session,
+    submission_url: str,
+    form_type: str,
+    headers: dict[str, str],
+    *,
+    max_submission_bytes: int,
+    max_primary_document_bytes: int,
+    probe_bytes: int,
+) -> dict[str, Any]:
+    """Download a bounded SEC submission, falling back to its primary document."""
+    response = session.get(submission_url, headers=headers, timeout=90, stream=True)
+    try:
+        response.raise_for_status()
+        content, prefix, submission_size = _read_sec_response_limited(
+            response,
+            max_content_bytes=max_submission_bytes,
+            probe_bytes=probe_bytes,
+        )
+    finally:
+        response.close()
+    acceptance, primary_document = _sec_submission_header(prefix, form_type)
+    if content is not None:
+        return {
+            "content": content,
+            "acceptance": acceptance,
+            "primary_document": primary_document,
+            "content_url": submission_url,
+            "submission_size": submission_size,
+            "used_primary_fallback": False,
+            "oversized_primary": False,
+        }
+    if not primary_document:
+        return {
+            "content": None,
+            "acceptance": acceptance,
+            "primary_document": None,
+            "content_url": submission_url,
+            "submission_size": submission_size,
+            "used_primary_fallback": False,
+            "oversized_primary": True,
+        }
+    primary_url = submission_url.rsplit("/", 1)[0] + "/" + primary_document
+    primary_response = session.get(primary_url, headers=headers, timeout=90, stream=True)
+    try:
+        primary_response.raise_for_status()
+        primary_content, _, primary_size = _read_sec_response_limited(
+            primary_response,
+            max_content_bytes=max_primary_document_bytes,
+            probe_bytes=min(probe_bytes, max_primary_document_bytes),
+        )
+    finally:
+        primary_response.close()
+    return {
+        "content": primary_content,
+        "acceptance": acceptance,
+        "primary_document": primary_document,
+        "content_url": primary_url,
+        "submission_size": submission_size,
+        "primary_size": primary_size,
+        "used_primary_fallback": True,
+        "oversized_primary": primary_content is None,
+    }
 
 
 def _dt(value: Any) -> datetime | None:
@@ -158,6 +360,15 @@ def _secret(cfg: dict[str, Any], default_env: str) -> str:
     return value
 
 
+def _safe_error_message(error: Exception) -> str:
+    """Redact credentials carried in request URLs before logging/persisting."""
+    return re.sub(
+        r"(?i)(api[_-]?key|access[_-]?token|token|secret|password)=([^&\s]+)",
+        r"\1=***",
+        str(error),
+    )
+
+
 def _request_json(session: requests.Session, url: str, *, params: dict[str, Any], headers: dict[str, str] | None = None, timeout: float = 45, attempts: int = 4) -> tuple[Any, int]:
     last: Exception | None = None
     for attempt in range(attempts):
@@ -171,7 +382,7 @@ def _request_json(session: requests.Session, url: str, *, params: dict[str, Any]
             last = exc
             if attempt + 1 < attempts:
                 time.sleep(min(20, 2 ** attempt))
-    raise RuntimeError(f"Echec HTTP {url}: {last}")
+    raise RuntimeError(f"Echec HTTP {url}: {_safe_error_message(last or RuntimeError('erreur inconnue'))}")
 
 
 def _paginated_json(
@@ -314,8 +525,8 @@ def _request_text_optional(
     for attempt in range(attempts):
         try:
             response = session.get(url, timeout=timeout)
-            if response.status_code == 404:
-                return None, 404
+            if response.status_code in {403, 404}:
+                return None, response.status_code
             if response.status_code == 429 or response.status_code >= 500:
                 time.sleep(min(20, 2 ** attempt))
                 continue
@@ -325,7 +536,7 @@ def _request_text_optional(
             last = exc
             if attempt + 1 < attempts:
                 time.sleep(min(20, 2 ** attempt))
-    raise RuntimeError(f"Echec HTTP {url}: {last}")
+    raise RuntimeError(f"Echec HTTP {url}: {_safe_error_message(last or RuntimeError('erreur inconnue'))}")
 
 
 def _parse_finra_short_volume(content: str) -> list[dict[str, Any]]:
@@ -394,6 +605,176 @@ def _security_changes(
                 changes.append({"symbol": symbol, "type": f"FIELD_{field_name.upper()}",
                                 "previous": _json(old), "current": _json(new), "confirmed": False})
     return changes
+
+
+def market_cap_sync(
+    engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool
+) -> Outcome:
+    """Rafraîchit la capitalisation avec SEC primaire et fallbacks ciblés.
+
+    La SEC fournit le nombre d'actions PIT, que le publieur d'univers multiplie
+    par le cours de la date demandée. Yahoo puis Finnhub ne sont interrogés que
+    pour les symboles sans ``shares_outstanding`` SEC frais.
+    """
+    symbols = _symbols(cfg)
+    primary = str(cfg.get("primary_provider") or "sec").strip().lower()
+    fallbacks = [
+        item.strip().lower()
+        for item in str(cfg.get("fallback_providers") or "yahoo_finance,finnhub").split(",")
+        if item.strip()
+    ]
+    if primary != "sec":
+        raise ValueError("market_cap_sync.primary_provider doit être 'sec'")
+    if fallbacks != ["yahoo_finance", "finnhub"]:
+        raise ValueError(
+            "market_cap_sync.fallback_providers doit respecter l'ordre "
+            "'yahoo_finance,finnhub'"
+        )
+    if not symbols:
+        raise ValueError("market_cap_sync: univers vide")
+
+    sec_lookback_days = max(1, int(cfg.get("sec_lookback_days", 30)))
+    max_age_days = max(0, int(cfg.get("max_age_days", 365)))
+    min_coverage_ratio = float(cfg.get("min_coverage_ratio", 0.95))
+    if not 0.0 <= min_coverage_ratio <= 1.0:
+        raise ValueError("market_cap_sync.min_coverage_ratio doit être compris entre 0 et 1")
+
+    # Les compteurs globaux portent sur l'univers, pas sur la somme des appels
+    # aux trois fournisseurs. Le détail des tentatives reste par provider.
+    outcome = Outcome(requested=len(symbols))
+    if dry:
+        outcome.details.update({
+            "strategy": "sec_edgar_then_yahoo_then_finnhub",
+            "symbols": len(symbols),
+            "sec_lookback_days": sec_lookback_days,
+            "max_age_days": max_age_days,
+        })
+        return outcome
+
+    from modelFactory.fundamental_features import fetch_and_store_fundamentals
+
+    today = date.today()
+    target_date = today + timedelta(days=1)
+    sec_start = today - timedelta(days=sec_lookback_days)
+    provider_details: dict[str, dict[str, Any]] = {}
+
+    def _run_provider(provider: str, candidates: list[str], **kwargs: Any) -> None:
+        if not candidates:
+            result: dict[str, Any] = {"stored": 0, "failed": 0, "errors": []}
+        else:
+            result = fetch_and_store_fundamentals(
+                candidates, engine=engine, provider=provider, **kwargs
+            )
+        stored = max(0, int(result.get("stored") or 0))
+        failed = max(0, int(result.get("failed") or 0))
+        outcome.persisted += stored
+        provider_details[provider] = {
+            "requested_symbols": len(candidates),
+            "stored": stored,
+            "failed": failed,
+            "error_samples": [str(error) for error in (result.get("errors") or [])][:20],
+        }
+
+    _run_provider(
+        "sec", symbols,
+        start_date=sec_start.isoformat(), end_date=today.isoformat(),
+    )
+    sec_covered = _market_cap_covered_symbols(
+        engine, symbols, target_date, max_age_days, ("SEC_EDGAR",)
+    )
+
+    yahoo_candidates = sorted(set(symbols) - sec_covered)
+    _run_provider("yahoo_finance", yahoo_candidates)
+    yahoo_covered = _market_cap_covered_symbols(
+        engine, yahoo_candidates, target_date, max_age_days, ("YAHOO FINANCE",)
+    )
+
+    finnhub_candidates = sorted(set(yahoo_candidates) - yahoo_covered)
+    _run_provider("finnhub", finnhub_candidates)
+    finnhub_covered = _market_cap_covered_symbols(
+        engine, finnhub_candidates, target_date, max_age_days, ("FINNHUB",)
+    )
+
+    covered = sec_covered | yahoo_covered | finnhub_covered
+    uncovered = sorted(set(symbols) - covered)
+    outcome.received = len(covered)
+    outcome.empty = len(uncovered)
+    coverage_ratio = len(covered) / len(symbols)
+    provider_details["sec"]["eligible_symbols"] = len(sec_covered)
+    provider_details["yahoo_finance"]["eligible_symbols"] = len(yahoo_covered)
+    provider_details["finnhub"]["eligible_symbols"] = len(finnhub_covered)
+
+    outcome.details.update({
+        "strategy": "sec_edgar_then_yahoo_then_finnhub",
+        "providers": provider_details,
+        "symbols": len(symbols),
+        "covered_symbols": len(covered),
+        "coverage_ratio": coverage_ratio,
+        "coverage_threshold": min_coverage_ratio,
+        "coverage_accepted": coverage_ratio >= min_coverage_ratio,
+        "uncovered_count": len(uncovered),
+        "uncovered_symbols": uncovered[:100],
+        "target_available_date": target_date.isoformat(),
+        "sec_lookback_days": sec_lookback_days,
+        "max_age_days": max_age_days,
+    })
+    _apply_market_cap_coverage_policy(
+        outcome, uncovered, coverage_ratio, min_coverage_ratio,
+    )
+    return outcome
+
+
+def _apply_market_cap_coverage_policy(
+    outcome: Outcome,
+    uncovered: list[str],
+    coverage_ratio: float,
+    min_coverage_ratio: float,
+) -> None:
+    """Keep missing-symbol diagnostics without failing an accepted run."""
+    if coverage_ratio >= min_coverage_ratio:
+        outcome.failed = 0
+        return
+    outcome.failed = len(uncovered) or 1
+    raise BatchRunError(
+        "market_cap_sync: couverture composite insuffisante "
+        f"({coverage_ratio:.2%} < {min_coverage_ratio:.2%})",
+        outcome,
+    )
+
+
+def _market_cap_covered_symbols(
+    engine: Engine,
+    symbols: Iterable[str],
+    as_of: date,
+    max_age_days: int,
+    sources: tuple[str, ...],
+) -> set[str]:
+    """Retourne les symboles disposant d'une observation PIT fraîche et valide."""
+    normalized_symbols = sorted({str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()})
+    normalized_sources = tuple(str(source).strip().upper() for source in sources if str(source).strip())
+    if not normalized_symbols or not normalized_sources:
+        return set()
+    statement = text("""
+        SELECT DISTINCT symbol
+        FROM stock_fundamentals_daily
+        WHERE symbol IN :symbols
+          AND UPPER(source) IN :sources
+          AND trade_date BETWEEN :min_date AND :as_of
+          AND COALESCE(available_date, DATE_ADD(trade_date, INTERVAL 1 DAY)) <= :as_of
+          AND (
+              (UPPER(source) = 'SEC_EDGAR' AND shares_outstanding > 0)
+              OR
+              (UPPER(source) <> 'SEC_EDGAR' AND market_cap > 0)
+          )
+    """).bindparams(bindparam("symbols", expanding=True), bindparam("sources", expanding=True))
+    with engine.connect() as connection:
+        rows = connection.execute(statement, {
+            "symbols": normalized_symbols,
+            "sources": normalized_sources,
+            "min_date": as_of - timedelta(days=max_age_days),
+            "as_of": as_of,
+        }).scalars().all()
+    return {str(symbol).strip().upper() for symbol in rows if str(symbol).strip()}
 
 
 def daily_bars_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool) -> Outcome:
@@ -566,24 +947,40 @@ def sec_edgar_incremental(engine: Engine, cfg: dict[str, Any], run_id: str, dry:
     if not user_agent:
         raise RuntimeError("SEC_EDGAR_USER_AGENT absent (format attendu: application contact@email)")
     allowed = {x.strip().upper() for x in str(cfg.get("forms", "")).split(",") if x.strip()}
-    observed = _utcnow(); rows: list[dict[str, Any]] = []
-    with requests.Session() as session, engine.begin() as conn:
+    observed = _utcnow(); rows: list[dict[str, Any]] = []; outcome = Outcome()
+    sec_today = datetime.now(ZoneInfo("America/New_York")).date()
+    index_dates = _previous_weekdays(sec_today, int(cfg.get("lookback_days", 3)))
+    unavailable_indexes: list[dict[str, Any]] = []
+    accessible_indexes = 0
+    max_submission_bytes = max(1024, int(cfg.get("max_submission_bytes", 16 * 1024 * 1024)))
+    max_primary_bytes = max(1024, int(cfg.get("max_primary_document_bytes", 16 * 1024 * 1024)))
+    probe_bytes = max(1024, int(cfg.get("submission_probe_bytes", 2 * 1024 * 1024)))
+    document_errors: list[dict[str, str]] = []
+    primary_fallbacks = 0
+    oversized_primary_documents = 0
+    with engine.connect() as conn:
         cik_symbols = {
             str(row.cik).zfill(10): row.symbol
             for row in conn.execute(text("""SELECT s.cik,s.symbol FROM security_master_snapshots s
                 JOIN (SELECT cik,MAX(snapshot_date) d FROM security_master_snapshots WHERE cik IS NOT NULL GROUP BY cik) x
                 ON x.cik=s.cik AND x.d=s.snapshot_date""")).fetchall()
         }
+    with requests.Session() as session:
         headers = {"User-Agent": user_agent, "Accept-Encoding": "gzip, deflate"}
-        for offset in range(int(cfg.get("lookback_days", 3)) + 1):
-            day = date.today() - timedelta(days=offset)
+        indexed_rows: dict[str, dict[str, Any]] = {}
+        for day in index_dates:
             quarter = (day.month - 1) // 3 + 1
             url = f"{SEC_ARCHIVES}/edgar/daily-index/{day.year}/QTR{quarter}/master.{day.strftime('%Y%m%d')}.idx"
+            outcome.requested += 1
             response = session.get(url, headers=headers, timeout=60)
-            if response.status_code == 404: continue
+            if response.status_code in {403, 404}:
+                unavailable_indexes.append({"date": day.isoformat(), "status": response.status_code})
+                continue
             response.raise_for_status()
+            accessible_indexes += 1
             if not dry:
-                _raw(conn, run_id, "sec_edgar_incremental", "sec_edgar", "/daily-index/master.idx", day.isoformat(), {"text": response.text}, response.status_code, observed)
+                with engine.begin() as conn:
+                    _raw(conn, run_id, "sec_edgar_incremental", "sec_edgar", "/daily-index/master.idx", day.isoformat(), {"text": response.text}, response.status_code, observed)
             body = response.text.split("--------------------------------------------------------------------------------", 1)[-1]
             for line in body.splitlines():
                 parts = line.split("|")
@@ -592,25 +989,88 @@ def sec_edgar_incremental(engine: Engine, cfg: dict[str, Any], run_id: str, dry:
                 if allowed and form.upper() not in allowed: continue
                 accession = Path(filename).stem.replace("-", "")
                 accession_fmt = f"{accession[:10]}-{accession[10:12]}-{accession[12:]}" if len(accession) >= 18 else accession
-                rows.append({"cik": cik.zfill(10), "company": company, "form": form, "filing_date": filing_date, "filename": filename, "accession": accession_fmt})
-        outcome.requested = int(cfg.get("lookback_days", 3)) + 1; outcome.received = len(rows)
+                indexed_rows[accession_fmt] = {"cik": cik.zfill(10), "company": company, "form": form, "filing_date": filing_date, "filename": filename, "accession": accession_fmt}
+        rows = list(indexed_rows.values())
+        outcome.received = len(rows)
+        outcome.details["index_dates"] = [day.isoformat() for day in index_dates]
+        outcome.details["accessible_indexes"] = accessible_indexes
+        outcome.details["unavailable_indexes"] = unavailable_indexes
+        if accessible_indexes == 0:
+            outcome.failed = len(unavailable_indexes) or 1
+            raise BatchRunError(
+                "Aucun index quotidien SEC accessible; vérifier SEC_EDGAR_USER_AGENT, "
+                "la disponibilité des index et une éventuelle limitation SEC",
+                outcome,
+            )
+        if unavailable_indexes:
+            unavailable = ", ".join(
+                f"{item['date']} (HTTP {item['status']})" for item in unavailable_indexes
+            )
+            outcome.warnings.append(f"Index SEC non encore disponible: {unavailable}")
         for item in rows:
-            exists = conn.execute(text("SELECT 1 FROM sec_filing_raw WHERE accession_number=:a"), {"a": item["accession"]}).first()
-            if exists: continue
-            content = None; filing_url = f"{SEC_ARCHIVES}/{item['filename']}"
-            if cfg.get("download_primary_documents", True) and not dry:
-                response = session.get(filing_url, headers=headers, timeout=90); response.raise_for_status(); content = response.text
-                time.sleep(1 / max(1, int(cfg.get("max_requests_per_second", 8))))
+            with engine.connect() as conn:
+                existing = conn.execute(text("""SELECT id,content_text IS NOT NULL AS has_content
+                    FROM sec_filing_raw WHERE accession_number=:a"""), {"a": item["accession"]}).mappings().first()
+            if existing and (bool(existing["has_content"]) or not cfg.get("download_primary_documents", True)):
+                continue
+            content = None
+            primary_document = None
+            submission_url = f"{SEC_ARCHIVES}/{item['filename']}"
+            content_url = submission_url
             acceptance = None
-            if content:
-                match = re.search(r"<ACCEPTANCE-DATETIME>\s*(\d{14})", content, re.I)
-                if match:
-                    acceptance = datetime.strptime(match.group(1), "%Y%m%d%H%M%S")
+            if cfg.get("download_primary_documents", True) and not dry:
+                try:
+                    downloaded = _download_sec_document(
+                        session, submission_url, item["form"], headers,
+                        max_submission_bytes=max_submission_bytes,
+                        max_primary_document_bytes=max_primary_bytes,
+                        probe_bytes=probe_bytes,
+                    )
+                    content = downloaded["content"]
+                    acceptance = downloaded["acceptance"]
+                    primary_document = downloaded["primary_document"]
+                    content_url = downloaded["content_url"]
+                    if downloaded["used_primary_fallback"]:
+                        primary_fallbacks += 1
+                    if downloaded["oversized_primary"]:
+                        oversized_primary_documents += 1
+                        outcome.failed += 1
+                        document_errors.append({
+                            "accession": item["accession"],
+                            "error": "document principal absent ou supérieur à la limite",
+                        })
+                except Exception as exc:
+                    outcome.failed += 1
+                    document_errors.append({
+                        "accession": item["accession"],
+                        "error": _safe_error_message(exc),
+                    })
+                time.sleep(1 / max(1, int(cfg.get("max_requests_per_second", 8))))
             if not dry:
-                result = conn.execute(text("""INSERT IGNORE INTO sec_filing_raw
-                    (accession_number,cik,symbol,company_name,form_type,filing_date,acceptance_datetime,filing_url,content_sha256,content_text,observed_at,available_at,run_id,amendment)
-                    VALUES (:accession,:cik,:symbol,:company,:form,:filing_date,:acceptance,:url,:hash,:content,:observed,:observed,:run,:amendment)"""), {**item, "symbol": cik_symbols.get(item["cik"]), "acceptance": acceptance, "url": filing_url, "hash": hashlib.sha256((content or "").encode(errors="ignore")).hexdigest() if content else None, "content": content, "observed": observed, "run": run_id, "amendment": item["form"].endswith("/A")})
-                outcome.persisted += max(0, result.rowcount)
+                with engine.begin() as conn:
+                    result = conn.execute(text("""INSERT INTO sec_filing_raw
+                        (accession_number,cik,symbol,company_name,form_type,filing_date,acceptance_datetime,primary_document,filing_url,content_sha256,content_text,observed_at,available_at,run_id,amendment)
+                        VALUES (:accession,:cik,:symbol,:company,:form,:filing_date,:acceptance,:primary_document,:url,:hash,:content,:observed,:observed,:run,:amendment)
+                        ON DUPLICATE KEY UPDATE
+                          symbol=COALESCE(VALUES(symbol),symbol),
+                          acceptance_datetime=COALESCE(VALUES(acceptance_datetime),acceptance_datetime),
+                          primary_document=COALESCE(VALUES(primary_document),primary_document),
+                          filing_url=COALESCE(VALUES(filing_url),filing_url),
+                          content_sha256=COALESCE(VALUES(content_sha256),content_sha256),
+                          content_text=COALESCE(VALUES(content_text),content_text),
+                          observed_at=VALUES(observed_at),available_at=VALUES(available_at),run_id=VALUES(run_id)"""), {**item, "symbol": cik_symbols.get(item["cik"]), "acceptance": acceptance, "primary_document": primary_document, "url": content_url, "hash": hashlib.sha256((content or "").encode(errors="ignore")).hexdigest() if content else None, "content": content, "observed": observed, "run": run_id, "amendment": item["form"].endswith("/A")})
+                    outcome.persisted += max(0, result.rowcount)
+    outcome.details.update({
+        "max_submission_bytes": max_submission_bytes,
+        "max_primary_document_bytes": max_primary_bytes,
+        "primary_document_fallbacks": primary_fallbacks,
+        "oversized_primary_documents": oversized_primary_documents,
+        "document_errors": document_errors[:50],
+    })
+    if document_errors:
+        outcome.warnings.append(
+            f"Contenu indisponible pour {len(document_errors)} dépôt(s) SEC; métadonnées conservées"
+        )
     if not rows: outcome.warnings.append("Aucun filing correspondant dans les daily indexes disponibles")
     return outcome
 
@@ -645,11 +1105,11 @@ def finra_short_volume_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dr
     template = str(cfg.get("source_url_template") or
                    "https://cdn.finra.org/equity/regsho/daily/CNMSshvol{date}.txt")
     market_today = datetime.now(ZoneInfo("America/New_York")).date()
-    outcome = Outcome(requested=lookback_days)
+    trade_days = _previous_weekdays(market_today, lookback_days)
+    outcome = Outcome(requested=len(trade_days))
     files_found = 0
     with requests.Session() as session, engine.begin() as conn:
-        for offset in range(lookback_days):
-            trade_day = market_today - timedelta(days=offset)
+        for trade_day in trade_days:
             url = template.format(date=trade_day.strftime("%Y%m%d"))
             content, status = _request_text_optional(session, url)
             if content is None:
@@ -687,9 +1147,17 @@ def finra_short_volume_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dr
                     {**row, "observed": observed, "hash": row_hash, "run": run_id,
                      "correction": correction})
                 outcome.persisted += max(0, result.rowcount)
-    outcome.details.update({"files_found": files_found, "universe_symbols": len(symbols)})
+    outcome.details.update({
+        "candidate_dates": [day.isoformat() for day in trade_days],
+        "files_found": files_found,
+        "universe_symbols": len(symbols),
+    })
     if files_found == 0:
-        raise RuntimeError("Aucun fichier FINRA Consolidated NMS disponible sur la fenêtre")
+        outcome.failed = len(trade_days)
+        raise BatchRunError(
+            "Aucun fichier FINRA Consolidated NMS disponible sur les jours ouvrés précédents",
+            outcome,
+        )
     if outcome.received == 0:
         raise RuntimeError("Fichiers FINRA trouvés mais aucun symbole de l'univers n'est couvert")
     return outcome
@@ -1240,9 +1708,15 @@ def normalize_sec_ownership(engine: Engine, cfg: dict[str, Any], run_id: str, dr
 
 def fred_alfred_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool) -> Outcome:
     key = _secret(cfg, "KEY_FRED"); series = [x.strip().upper() for x in str(cfg.get("series", "")).split(",") if x.strip()]; today = date.today(); start = today - timedelta(days=int(cfg.get("observation_lookback_days", 730))); observed = _utcnow(); outcome = Outcome(requested=len(series))
+    series_errors: list[dict[str, str]] = []
     with requests.Session() as session, engine.begin() as conn:
         for series_id in series:
-            payload, status = _request_json(session, "https://api.stlouisfed.org/fred/series/observations", params={"series_id": series_id, "api_key": key, "file_type": "json", "observation_start": start.isoformat(), "observation_end": today.isoformat(), "realtime_start": today.isoformat(), "realtime_end": today.isoformat(), "output_type": 1})
+            try:
+                payload, status = _request_json(session, "https://api.stlouisfed.org/fred/series/observations", params={"series_id": series_id, "api_key": key, "file_type": "json", "observation_start": start.isoformat(), "observation_end": today.isoformat(), "realtime_start": today.isoformat(), "realtime_end": today.isoformat(), "output_type": 1})
+            except Exception as exc:
+                outcome.failed += 1
+                series_errors.append({"series_id": series_id, "error": _safe_error_message(exc)})
+                continue
             if not dry:
                 _raw(conn, run_id, "fred_alfred_vintage_sync", "fred_alfred", "/fred/series/observations", series_id, payload, status, observed)
             rows = payload.get("observations", []); outcome.received += len(rows)
@@ -1255,8 +1729,14 @@ def fred_alfred_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool
                     VALUES ('fred_alfred',:series,:obs_date,:value,:raw,:rt_start,:rt_end,:vintage,:observed,:observed,:run)
                     ON DUPLICATE KEY UPDATE value_num=VALUES(value_num),value_raw=VALUES(value_raw),realtime_start=VALUES(realtime_start),realtime_end=VALUES(realtime_end),observed_at=VALUES(observed_at),available_at=VALUES(available_at),run_id=VALUES(run_id)"""), {"series": series_id, "obs_date": item.get("date"), "value": numeric, "raw": raw_value, "rt_start": item.get("realtime_start") or today, "rt_end": item.get("realtime_end") or today, "vintage": today, "observed": observed, "run": run_id})
                 outcome.persisted += max(0, result.rowcount)
+    outcome.details["series_requested"] = len(series)
+    outcome.details["series_failed"] = series_errors
+    if series_errors:
+        outcome.warnings.append(
+            f"FRED/ALFRED partiel: {len(series_errors)}/{len(series)} série(s) en échec"
+        )
     if outcome.received == 0:
-        raise RuntimeError("FRED/ALFRED vide pour toutes les séries demandées")
+        raise BatchRunError("FRED/ALFRED vide pour toutes les séries demandées", outcome)
     return outcome
 
 
@@ -1315,6 +1795,7 @@ def quality_daily(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool) -
 
 
 HANDLERS: dict[str, Callable[[Engine, dict[str, Any], str, bool], Outcome]] = {
+    "market_cap_sync": market_cap_sync,
     "daily_bars_sync": daily_bars_sync,
     "security_master_snapshot": security_master_snapshot,
     "corporate_actions_sync": corporate_actions_sync,

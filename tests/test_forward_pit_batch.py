@@ -11,10 +11,12 @@ from service.forward_pit.batch import (
     HANDLERS,
     PENDING_BATCHES,
     _alpaca_opening_row,
+    _apply_market_cap_coverage_policy,
     _assets_in_universe,
     _collection_symbols,
     _configure_alpaca_session,
     _data_blocks,
+    _download_sec_document,
     _hash,
     _market_dt,
     _nearest_option_expirations,
@@ -23,6 +25,9 @@ from service.forward_pit.batch import (
     _paginated_json,
     _parse_finra_short_volume,
     _schema_hash,
+    _sec_submission_header,
+    _previous_weekdays,
+    _safe_error_message,
     _security_changes,
     _select_option_surface_contracts,
     _underlying_price,
@@ -34,7 +39,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_all_enabled_forward_batches_have_handlers() -> None:
     expected = {
-        "daily_bars_sync", "security_master_snapshot", "corporate_actions_sync",
+        "daily_bars_sync", "market_cap_sync", "security_master_snapshot", "corporate_actions_sync",
         "sec_edgar_incremental", "pit_data_quality_daily", "borrow_status_snapshot",
         "business_quant_analyst_snapshot", "oracle_options_indicative_snapshot",
         "oracle_opening_window_sync", "sec_corporate_events_normalize",
@@ -47,6 +52,72 @@ def test_all_enabled_forward_batches_have_handlers() -> None:
         "auction_imbalance_sync", "securities_lending_sync",
         "official_options_nbbo_sync",
     }
+
+
+def test_market_cap_sync_uses_targeted_sec_yahoo_finnhub_fallbacks(monkeypatch) -> None:
+    from modelFactory import fundamental_features
+
+    monkeypatch.setattr(batch_module, "_symbols", lambda _cfg: ["AAA", "BBB", "CCC"])
+
+    calls: list[tuple[str, list[str]]] = []
+
+    def fetch(_symbols, *, engine, provider, **_kwargs):
+        assert engine is not None
+        calls.append((provider, list(_symbols)))
+        return {"stored": len(_symbols), "failed": 0, "errors": []}
+
+    def covered(_engine, symbols, _as_of, _max_age, sources):
+        if sources == ("SEC_EDGAR",):
+            return {"AAA", "BBB"}
+        if sources == ("YAHOO FINANCE",):
+            return set()
+        if sources == ("FINNHUB",):
+            return set(symbols)
+        raise AssertionError(sources)
+
+    monkeypatch.setattr(fundamental_features, "fetch_and_store_fundamentals", fetch)
+    monkeypatch.setattr(batch_module, "_market_cap_covered_symbols", covered)
+    outcome = batch_module.market_cap_sync(
+        object(),
+        {
+            "primary_provider": "sec",
+            "fallback_providers": "yahoo_finance,finnhub",
+            "min_coverage_ratio": 0.99,
+        },
+        "market-cap-run",
+        False,
+    )
+
+    assert calls == [
+        ("sec", ["AAA", "BBB", "CCC"]),
+        ("yahoo_finance", ["CCC"]),
+        ("finnhub", ["CCC"]),
+    ]
+    assert outcome.requested == 3
+    assert outcome.received == 3
+    assert outcome.persisted == 5
+    assert outcome.failed == 0
+    assert outcome.warnings == []
+    assert outcome.details["strategy"] == "sec_edgar_then_yahoo_then_finnhub"
+    assert outcome.details["providers"]["sec"]["eligible_symbols"] == 2
+
+
+def test_market_cap_accepted_coverage_keeps_gaps_as_diagnostics_only() -> None:
+    outcome = batch_module.Outcome(requested=100, received=95, empty=5)
+    _apply_market_cap_coverage_policy(
+        outcome, [f"MISS{i}" for i in range(5)], 0.95, 0.95,
+    )
+    assert outcome.failed == 0
+    assert outcome.warnings == []
+
+
+def test_market_cap_below_coverage_threshold_is_blocking() -> None:
+    outcome = batch_module.Outcome(requested=100, received=94, empty=6)
+    with pytest.raises(batch_module.BatchRunError, match="94.00% < 95.00%"):
+        _apply_market_cap_coverage_policy(
+            outcome, [f"MISS{i}" for i in range(6)], 0.94, 0.95,
+        )
+    assert outcome.failed == 6
 
 
 def test_business_quant_single_and_multi_ticker_envelopes() -> None:
@@ -111,6 +182,174 @@ def test_security_master_change_detection_is_conservative() -> None:
     assert all(item["confirmed"] is False for item in changes)
 
 
+def test_previous_weekdays_exclude_current_date_and_weekends() -> None:
+    # Sunday 2026-09-13: inspect Friday, Thursday and Wednesday, never Sunday/Saturday.
+    assert _previous_weekdays(datetime(2026, 9, 13).date(), 3) == [
+        datetime(2026, 9, 11).date(),
+        datetime(2026, 9, 10).date(),
+        datetime(2026, 9, 9).date(),
+    ]
+
+
+def test_previous_weekdays_keep_requested_business_day_depth() -> None:
+    # Monday must cross the weekend to retain the configured number of candidates.
+    assert _previous_weekdays(datetime(2026, 9, 14).date(), 2) == [
+        datetime(2026, 9, 11).date(),
+        datetime(2026, 9, 10).date(),
+    ]
+
+
+def test_sec_incremental_skips_unpublished_index_and_processes_available_one(monkeypatch) -> None:
+    index_dates = [
+        datetime(2026, 9, 11).date(),
+        datetime(2026, 9, 10).date(),
+    ]
+    monkeypatch.setattr(batch_module, "_previous_weekdays", lambda *_args: index_dates)
+    monkeypatch.setenv("SEC_EDGAR_USER_AGENT", "alpha-trade test@example.com")
+
+    class Result:
+        @staticmethod
+        def fetchall():
+            return []
+
+        def mappings(self):
+            return self
+
+        @staticmethod
+        def first():
+            return None
+
+    class Connection:
+        @staticmethod
+        def execute(*_args, **_kwargs):
+            return Result()
+
+    class Begin:
+        @staticmethod
+        def __enter__():
+            return Connection()
+
+        @staticmethod
+        def __exit__(*_args):
+            return False
+
+    class Engine:
+        @staticmethod
+        def begin():
+            return Begin()
+
+        @staticmethod
+        def connect():
+            return Begin()
+
+    class Response:
+        def __init__(self, status_code: int, text: str = ""):
+            self.status_code = status_code
+            self.text = text
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise AssertionError(f"unexpected HTTP {self.status_code}")
+
+    available = (
+        "header\n--------------------------------------------------------------------------------\n"
+        "1234|Example Corp|8-K|2026-09-10|edgar/data/1234/000000123426000001/a.txt\n"
+    )
+
+    class Session:
+        @staticmethod
+        def __enter__():
+            return Session()
+
+        @staticmethod
+        def __exit__(*_args):
+            return False
+
+        @staticmethod
+        def get(url, **_kwargs):
+            return Response(403) if "20260911" in url else Response(200, available)
+
+    monkeypatch.setattr(batch_module.requests, "Session", Session)
+    outcome = batch_module.sec_edgar_incremental(
+        Engine(),
+        {"lookback_days": 2, "forms": "8-K", "download_primary_documents": True},
+        "sec-run",
+        True,
+    )
+
+    assert outcome.requested == 2
+    assert outcome.received == 1
+    assert outcome.failed == 0
+    assert outcome.details["accessible_indexes"] == 1
+    assert outcome.details["unavailable_indexes"] == [
+        {"date": "2026-09-11", "status": 403}
+    ]
+    assert outcome.warnings == [
+        "Index SEC non encore disponible: 2026-09-11 (HTTP 403)"
+    ]
+
+
+def test_sec_submission_header_finds_acceptance_and_expected_primary_document() -> None:
+    prefix = """<SEC-HEADER>\n<ACCEPTANCE-DATETIME>20260911081822\n</SEC-HEADER>
+<DOCUMENT>\n<TYPE>EX-99.1\n<SEQUENCE>2\n<FILENAME>exhibit.htm\n<TEXT>
+<DOCUMENT>\n<TYPE>8-K\n<SEQUENCE>1\n<FILENAME>aa-20260911.htm\n<TEXT>"""
+    acceptance, primary = _sec_submission_header(prefix, "8-K")
+    assert acceptance == datetime(2026, 9, 11, 8, 18, 22)
+    assert primary == "aa-20260911.htm"
+
+
+def test_oversized_sec_submission_falls_back_to_bounded_primary_document() -> None:
+    prefix = b"""<SEC-HEADER>\n<ACCEPTANCE-DATETIME>20260911081822\n</SEC-HEADER>
+<DOCUMENT>\n<TYPE>8-K\n<SEQUENCE>1\n<FILENAME>primary.htm\n<TEXT>"""
+
+    class Response:
+        encoding = "utf-8"
+
+        def __init__(self, body: bytes, declared: int):
+            self.body = body
+            self.headers = {"Content-Length": str(declared)}
+            self.closed = False
+
+        @staticmethod
+        def raise_for_status():
+            return None
+
+        def iter_content(self, chunk_size=65536):
+            del chunk_size
+            yield self.body
+
+        def close(self):
+            self.closed = True
+
+    submission = Response(prefix, 96_533_876)
+    primary = Response(b"<html>primary filing</html>", 27)
+
+    class Session:
+        def __init__(self):
+            self.urls = []
+
+        def get(self, url, **_kwargs):
+            self.urls.append(url)
+            return submission if len(self.urls) == 1 else primary
+
+    session = Session()
+    result = _download_sec_document(
+        session,
+        "https://www.sec.gov/Archives/edgar/data/1/submission.txt",
+        "8-K",
+        {"User-Agent": "test test@example.com"},
+        max_submission_bytes=1024,
+        max_primary_document_bytes=1024,
+        probe_bytes=1024,
+    )
+    assert result["content"] == "<html>primary filing</html>"
+    assert result["primary_document"] == "primary.htm"
+    assert result["content_url"].endswith("/primary.htm")
+    assert result["used_primary_fallback"] is True
+    assert result["oversized_primary"] is False
+    assert submission.closed and primary.closed
+
+
 def test_forward_pit_sql_reference_and_migration_cover_all_tables() -> None:
     ddl = (ROOT / "database/sql/forward_pit/forward_pit_tables.sql").read_text(encoding="utf-8")
     expected = {
@@ -137,6 +376,21 @@ def test_forward_pit_sql_reference_and_migration_cover_all_tables() -> None:
     options_migration = (ROOT / "alembic/versions/0079_delayed_options_and_occ_adjustments.py").read_text(encoding="utf-8")
     assert 'down_revision: str | None = "0078_alpaca_opening_window_pit"' in options_migration
 
+    provider_migration = (
+        ROOT / "alembic/versions/0080_widen_pit_collection_run_provider.py"
+    ).read_text(encoding="utf-8")
+    assert 'down_revision: str | None = "0079_delayed_options_occ"' in provider_migration
+    assert "type_=sa.String(255)" in provider_migration
+    assert ddl.count("provider VARCHAR(255)") == 18
+    assert "provider VARCHAR(32)" not in ddl
+    assert "provider VARCHAR(16)" not in ddl
+
+    all_provider_migration = (
+        ROOT / "alembic/versions/0081_widen_forward_pit_providers.py"
+    ).read_text(encoding="utf-8")
+    assert 'down_revision: str | None = "0080_widen_pit_run_provider"' in all_provider_migration
+
+
 def test_launcher_invokes_service_layer() -> None:
     launcher = (ROOT / "scripts/windows/forward_pit_launcher.ps1").read_text(encoding="utf-8")
     assert "service.forward_pit.batch" in launcher
@@ -153,6 +407,16 @@ def test_all_forward_batches_use_existing_email_and_telegram_notifier() -> None:
     assert "forward_pit_launcher.ps1" in installer
     assert "send_notification" in notifier
     assert "send_telegram_message" in notifier
+
+
+
+def test_forward_launcher_captures_native_stderr_without_error_records() -> None:
+    launcher = (ROOT / "scripts/windows/forward_pit_launcher.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "$batchProcess = Start-Process" in launcher
+    assert "-RedirectStandardOutput $stdoutTmp" in launcher
+    assert "-RedirectStandardError $stderrTmp" in launcher
 
 
 def test_raw_business_quant_bars_cannot_be_mislabeled_as_canonical() -> None:
@@ -374,6 +638,16 @@ def test_quality_failed_runs_check_excludes_its_own_failures(monkeypatch) -> Non
     assert outcome.failed == 0
     failed_runs_query = next(sql for sql in statements if "failed_runs_24h" not in sql and "INTERVAL 24 HOUR" in sql)
     assert "batch_name <> 'pit_data_quality_daily'" in failed_runs_query
+    assert "MAX(started_at)" in failed_runs_query
+    assert "current_run.status='FAILED'" in failed_runs_query
+
+
+def test_http_error_message_redacts_query_credentials() -> None:
+    message = _safe_error_message(
+        RuntimeError("400 url=https://example.test?a=1&api_key=very-secret&series=x")
+    )
+    assert "very-secret" not in message
+    assert "api_key=***" in message
 
 
 def test_main_preserves_quality_failure_counters(monkeypatch, capsys) -> None:
@@ -412,3 +686,60 @@ def test_main_preserves_quality_failure_counters(monkeypatch, capsys) -> None:
         summary["details"]["critical_checks"][0]["name"]
         == "borrow_age_hours"
     )
+
+
+def test_execute_persists_counters_from_blocking_quality_failure(monkeypatch) -> None:
+    calls: list[tuple[str, dict | None]] = []
+
+    class Connection:
+        def execute(self, statement, params=None):
+            calls.append((str(statement), params))
+            return object()
+
+    connection = Connection()
+
+    class Begin:
+        def __enter__(self):
+            return connection
+
+        def __exit__(self, *_args):
+            return False
+
+    class Engine:
+        @staticmethod
+        def begin():
+            return Begin()
+
+    outcome = batch_module.Outcome(
+        requested=6,
+        received=6,
+        persisted=6,
+        failed=3,
+        warnings=["warning"],
+        details={"critical": 3},
+    )
+
+    def handler(*_args, **_kwargs):
+        raise batch_module.BatchRunError("quality failure", outcome)
+
+    monkeypatch.setattr(
+        batch_module,
+        "load_batch_config",
+        lambda _path=None: {"test_quality": {"enabled": True, "provider": "local"}},
+    )
+    monkeypatch.setattr(batch_module, "get_sqlalchemy_engine", lambda: Engine())
+    monkeypatch.setitem(batch_module.HANDLERS, "test_quality", handler)
+
+    with pytest.raises(batch_module.BatchRunError):
+        batch_module.execute("test_quality")
+
+    _, params = next(
+        call for call in calls
+        if "SET status='FAILED'" in call[0]
+    )
+    assert params is not None
+    assert params["requested"] == 6
+    assert params["received"] == 6
+    assert params["persisted"] == 6
+    assert params["failed"] == 3
+    assert json.loads(params["details"])["critical"] == 3

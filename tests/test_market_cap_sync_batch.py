@@ -16,7 +16,12 @@ def test_market_cap_sync_config_contract() -> None:
         "run_hours": "11,23",
         "run_days": "1,4",
         "symbols_file": "config/univers_batch/univers_filtred_tradable.txt",
-        "providers": "yahoo_finance,finnhub",
+        "provider": "sec_edgar_then_yahoo_then_finnhub",
+        "primary_provider": "sec",
+        "fallback_providers": "yahoo_finance,finnhub",
+        "sec_lookback_days": 30,
+        "max_age_days": 365,
+        "min_coverage_ratio": 0.95,
         "log_file": "log/batch/market_cap_sync.txt",
     }
     assert {key: sync[key] for key in expected} == expected
@@ -37,28 +42,12 @@ def test_market_cap_sync_scripts_exist_and_are_hardened() -> None:
         assert "Invoke-Expression" not in content
 
 
-def test_market_cap_launcher_runs_both_sources_and_is_fail_closed() -> None:
+def test_market_cap_launcher_delegates_to_common_forward_pit_runner() -> None:
     content = (WINDOWS / "market_cap_sync_launcher.ps1").read_text(encoding="utf-8")
-    assert "batch.yaml" in content
-    assert "config.yaml" not in content
-    assert "modelFactory.fundamental_features" in content
-    assert "yahoo_finance,finnhub" in content
-    assert "symbols_file est obligatoire" in content
-    assert "univers introuvable" in content
-    assert "active-tradable" not in content
-    # Le chemin configuré est transmis à Python (nom court pour config/univers, chemin sinon).
-    assert "universe-file:config/" in content
-    assert "symbols_file doit être situé sous config/" in content
-    assert "AlphaTradeMarketCapSync" in content
-    # Forçage du jour pour un rattrapage manuel hors run_days.
+    assert "forward_pit_launcher.ps1" in content
+    assert "market_cap_sync" in content
     assert "[switch]$IgnoreRunDays" in content
-    assert "FORCE market_cap_sync" in content
-    assert "::alpha_trade_run_summary::" in content
-    assert "Send-MarketCapNotification" in content
-    assert "scripts\\send_batch_email.py" in content
-    assert "email/Telegram" in content
-    assert "--warning" in content
-    assert "-Status 'ERROR'" in content
+    assert "'-Force'" in content
 
 
 def test_market_cap_installer_uses_weekly_config_and_ignores_overlap() -> None:

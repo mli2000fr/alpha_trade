@@ -31,6 +31,24 @@ def test_batch_configuration_is_separated_from_application_config() -> None:
     assert BATCH_SECTIONS.isdisjoint(application)
     assert load_batch_config() == batch
     assert resolve_batch_config_path() == ROOT / "batch.yaml"
+    assert "RETAILSMSA" in batch["fred_alfred_vintage_sync"]["series"].split(",")
+    assert "RETAILSMS" not in batch["fred_alfred_vintage_sync"]["series"].split(",")
+    quality = batch["pit_data_quality_daily"]
+    assert quality["enabled"] is False
+    assert quality["status"] == "MANUAL_CONTROL_ONLY"
+    assert "aucune donnée externe" in quality["description"]
+    assert quality["supervision_dependencies"].split(",") == [
+        "sec_edgar_incremental",
+        "finra_short_volume_sync",
+        "fred_alfred_vintage_sync",
+    ]
+    assert "peuvent tourner en parallèle" in quality["execution_notice"]
+    assert "après leur fin" in quality["execution_notice"]
+    sec = batch["sec_edgar_incremental"]
+    assert sec["download_primary_documents"] is True
+    assert sec["max_submission_bytes"] < 64 * 1024 * 1024
+    assert sec["max_primary_document_bytes"] < 64 * 1024 * 1024
+    assert sec["submission_probe_bytes"] <= sec["max_submission_bytes"]
 
 
 def test_all_batch_launchers_and_installers_read_batch_yaml() -> None:
