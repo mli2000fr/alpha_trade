@@ -174,6 +174,8 @@ def _render_batch(
                 "Exécuter les collecteurs supervisés avant ce contrôle qualité."
             )
             st.info(f"🔗 **Prérequis de supervision :** {dependencies}.\n\n{notice}")
+        elif spec.execution_notice:
+            st.info(spec.execution_notice)
         if spec.research_notice:
             st.warning(f"🔬 Usage recherche — {spec.research_notice}")
         if not spec.runnable:

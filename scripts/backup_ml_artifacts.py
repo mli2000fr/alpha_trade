@@ -73,7 +73,9 @@ def _rotate(dest_dir: Path, keep: int, dry_run: bool) -> tuple[list[str], list[s
     """Supprime les archives excédentaires. Retourne (rotated, kept)."""
     archives = _list_archives(dest_dir)
     rotated: list[str] = []
-    to_delete = archives[: max(0, len(archives) - keep + 1)]
+    # La rotation intervient après la création de la nouvelle archive : il faut
+    # conserver exactement ``keep`` fichiers, nouvelle archive comprise.
+    to_delete = archives[: max(0, len(archives) - keep)]
     for old in to_delete:
         LOGGER.info("Rotation — suppression de %s", old)
         if not dry_run:
@@ -118,6 +120,9 @@ def backup(
 
     artifacts_dir = artifacts_dir.resolve()
     dest_dir = dest_dir.resolve()
+
+    if keep < 1:
+        errors.append("keep doit être supérieur ou égal à 1")
 
     if not artifacts_dir.exists():
         errors.append(f"Répertoire source introuvable: {artifacts_dir}")

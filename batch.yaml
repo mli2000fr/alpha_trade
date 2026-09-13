@@ -8,10 +8,30 @@
 # J-N/J. Les snapshots non reconstructibles disposent d'un second passage
 # conditionnel, annulé automatiquement quand le principal a réussi.
 
+# Sauvegarde locale hebdomadaire des artefacts ML réellement nécessaires au runtime.
+# run_days suit DayOfWeek : 0=dimanche, 1=lundi, ... 6=samedi.
+ml_artifacts_backup:
+  priority: P0
+  enabled: true
+  status: ACTIVE
+  timezone: Europe/Paris
+  description: "Sauvegarder chaque semaine les modèles, préprocesseurs, calibrateurs et manifests nécessaires au serving, à la prédiction et au backtest ML."
+  tables: "fichiers:backups/ml"
+  provider: local_filesystem
+  universe_scope: ml_serving_artifacts
+  run_hours: "1"
+  run_minutes: "0"
+  run_days: "6"
+  artifacts_dir: artifacts/models
+  dest_dir: backups/ml
+  keep: 5
+  coverage_description: "Snapshot complet de artifacts/models ; conservation des 3 dernières archives"
+  execution_notice: "Audit runtime : artifacts/models est indispensable. catboost_info contient uniquement les journaux temporaires CatBoost et n'est pas requis pour charger ou servir les modèles ; il est volontairement exclu. Les caches benchmarks/per_symbol_v2/per_sector_cache sont absents ou reconstructibles et ne sont pas inclus."
+  log_file: log/batch/ml_artifacts_backup.txt
+
 # Collecte composite de capitalisation. SEC EDGAR est la source primaire PIT :
 # dernier shares_outstanding disponible × cours à J. Yahoo puis Finnhub ne sont
 # interrogés que pour les symboles non couverts par la source précédente.
-# run_days suit DayOfWeek : 0=dimanche, 1=lundi, ... 6=samedi.
 market_cap_sync:
   priority: P0
   enabled: true

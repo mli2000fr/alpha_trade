@@ -172,6 +172,9 @@ def format_schedule(spec: BatchSpec) -> str:
 
 def format_data_coverage(spec: BatchSpec) -> str:
     """Décrit la reprise réellement garantie, sans extrapoler le fournisseur."""
+    explicit = str(spec.raw_config.get("coverage_description") or "").strip()
+    if explicit:
+        return explicit
     recovery_hours = _split(spec.raw_config.get("recovery_run_hours"))
     if recovery_hours:
         recovery_minutes = _split(spec.raw_config.get("recovery_run_minutes")) or ("0",)

@@ -2112,7 +2112,52 @@ def quality_daily(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool) -
     return outcome
 
 
+def ml_artifacts_backup(
+    engine: Engine,
+    cfg: dict[str, Any],
+    run_id: str,
+    dry: bool,
+) -> Outcome:
+    """Archive les seuls artefacts indispensables au serving ML."""
+    del engine, run_id
+    from scripts.backup_ml_artifacts import backup
+
+    source = Path(str(cfg.get("artifacts_dir") or "artifacts/models"))
+    destination = Path(str(cfg.get("dest_dir") or "backups/ml"))
+    if not source.is_absolute():
+        source = ROOT / source
+    if not destination.is_absolute():
+        destination = ROOT / destination
+    keep = int(cfg.get("keep", 3))
+    report = backup(
+        artifacts_dir=source,
+        dest_dir=destination,
+        keep=keep,
+        dry_run=dry,
+    )
+    outcome = Outcome(
+        requested=1,
+        received=0 if report.errors else 1,
+        persisted=0 if dry or report.errors else 1,
+        failed=1 if report.errors else 0,
+        details={
+            "artifacts_dir": report.artifacts_dir,
+            "dest_dir": report.dest_dir,
+            "archive_path": report.archive_path,
+            "archive_size_bytes": report.archive_size_bytes,
+            "rotated_files": report.rotated_files,
+            "kept_files": report.kept_files,
+            "keep": keep,
+            "excluded_non_runtime_paths": ["catboost_info"],
+        },
+    )
+    if report.errors:
+        raise BatchRunError("; ".join(report.errors), outcome)
+    return outcome
+
+
 HANDLERS: dict[str, Callable[[Engine, dict[str, Any], str, bool], Outcome]] = {
+    "ml_artifacts_backup": ml_artifacts_backup,
     "market_cap_sync": market_cap_sync,
     "latest_quotes_sync": latest_quotes_sync_batch,
     "daily_bars_sync": daily_bars_sync,

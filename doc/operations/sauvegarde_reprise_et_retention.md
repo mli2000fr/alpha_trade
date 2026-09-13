@@ -10,6 +10,27 @@ Une reprise complète peut exiger base MySQL, schéma Alembic, configuration, ar
 
 Le rapport contient début/fin, durée, cible, chemin, taille, fichiers tournés/conservés, dry-run et erreurs. Un fichier créé n’est pas une sauvegarde validée : vérifier taille non nulle, lisibilité gzip, rapport sans erreur et restauration périodique. `--dry-run` ne crée aucune sauvegarde.
 
+## Sauvegarde hebdomadaire des artefacts ML
+
+Le batch `ml_artifacts_backup`, visible dans **Workflow & Orchestration → Batch**,
+s'exécute chaque samedi à 01:00 (`Europe/Paris`). Il applique l'équivalent de :
+
+```powershell
+python -u scripts/backup_ml_artifacts.py --artifacts-dir artifacts/models --dest-dir backups/ml --keep 3
+```
+
+Il crée `backups/ml/ml_artifacts_<UTC>.tar.gz`, puis conserve exactement les
+trois archives les plus récentes. Son exécution est suivie dans
+`pit_collection_runs` et passe par les notifications email et Telegram communes.
+
+L'audit des chemins runtime confirme que `artifacts/models` contient les modèles,
+préprocesseurs, calibrateurs, manifests et routes nécessaires au serving, à la
+prédiction et aux backtests. `catboost_info` n'est pas sauvegardé : il contient les
+journaux temporaires produits par CatBoost et aucun chargeur runtime ne le consulte.
+Les répertoires `artifacts/benchmarks`, `artifacts/global_benchmark`,
+`artifacts/per_symbol_v2` et `artifacts/per_sector_cache` sont absents, vides ou
+reconstructibles et ne sont pas indispensables au fonctionnement de l'application.
+
 ## Restauration
 
 `restore_from_backup.py` accepte `.sql` ou `.sql.gz`, alimente le client `mysql`, exécute `alembic upgrade head`, compte les tables critiques et appelle `scripts/verify_audit_chain.py --strict`. Son rapport expose chargement, migration, comptages, chaîne d’audit, âge du dump (`rpo_seconds`), durée (`rto_seconds`) et erreurs.

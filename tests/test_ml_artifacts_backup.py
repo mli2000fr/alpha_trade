@@ -131,7 +131,19 @@ def test_backup_rotation_keeps_n_files(tmp_path: Path) -> None:
     assert report.errors == []
 
     surviving = list(dest_dir.glob("ml_artifacts_*.tar.gz"))
-    assert len(surviving) <= keep
+    assert len(surviving) == keep
+
+
+def test_backup_rejects_zero_retention(tmp_path: Path) -> None:
+    artifacts_dir = tmp_path / "models"
+    artifacts_dir.mkdir()
+    report = bma.backup(
+        artifacts_dir=artifacts_dir,
+        dest_dir=tmp_path / "backups",
+        keep=0,
+        dry_run=True,
+    )
+    assert report.errors == ["keep doit être supérieur ou égal à 1"]
 
 
 def test_backup_rotation_dry_run_does_not_delete(tmp_path: Path) -> None:

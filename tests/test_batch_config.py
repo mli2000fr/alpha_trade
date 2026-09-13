@@ -9,6 +9,7 @@ from common.config_loader import load_batch_config, resolve_batch_config_path
 ROOT = Path(__file__).resolve().parents[1]
 WINDOWS = ROOT / "scripts" / "windows"
 BATCH_SECTIONS = {
+    "ml_artifacts_backup",
     "market_cap_sync",
     "earnings_calendar_sync",
     "latest_quotes_sync",
@@ -104,6 +105,20 @@ def test_market_sensitive_batch_timezones_are_explicit() -> None:
         assert batch[name]["timezone"] == "America/New_York"
     assert batch["earnings_calendar_sync"]["timezone"] == "Europe/Paris"
     assert batch["analyst_snapshot_collection"]["timezone"] == "Europe/Paris"
+
+
+def test_ml_artifacts_backup_is_weekly_and_excludes_catboost_logs() -> None:
+    batch = yaml.safe_load((ROOT / "batch.yaml").read_text(encoding="utf-8"))
+    backup = batch["ml_artifacts_backup"]
+    assert backup["enabled"] is True
+    assert backup["timezone"] == "Europe/Paris"
+    assert backup["run_days"] == "6"
+    assert backup["run_hours"] == "1"
+    assert backup["artifacts_dir"] == "artifacts/models"
+    assert backup["dest_dir"] == "backups/ml"
+    assert backup["keep"] == 3
+    assert "catboost_info" in backup["execution_notice"]
+    assert "exclu" in backup["execution_notice"]
 
 
 def test_all_batch_launchers_and_installers_read_batch_yaml() -> None:

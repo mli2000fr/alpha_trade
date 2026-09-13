@@ -36,6 +36,7 @@ from service.forward_pit.batch import (
     _underlying_price,
     daily_bars_sync,
     latest_quotes_sync_batch,
+    ml_artifacts_backup,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,6 +44,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_all_enabled_forward_batches_have_handlers() -> None:
     expected = {
+        "ml_artifacts_backup",
         "daily_bars_sync", "market_cap_sync", "security_master_snapshot", "corporate_actions_sync",
         "sec_edgar_incremental", "pit_data_quality_daily", "borrow_status_snapshot",
         "business_quant_analyst_snapshot", "oracle_options_indicative_snapshot",
@@ -57,6 +59,36 @@ def test_all_enabled_forward_batches_have_handlers() -> None:
         "auction_imbalance_sync", "securities_lending_sync",
         "official_options_nbbo_sync",
     }
+
+
+def test_ml_artifacts_backup_uses_only_runtime_model_directory(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    class Report:
+        errors: list[str] = []
+        artifacts_dir = str(tmp_path / "artifacts" / "models")
+        dest_dir = str(tmp_path / "backups" / "ml")
+        archive_path = str(tmp_path / "backups" / "ml" / "ml_artifacts_test.tar.gz")
+        archive_size_bytes = 123
+        rotated_files: list[str] = []
+        kept_files = [archive_path]
+
+    monkeypatch.setattr(
+        "scripts.backup_ml_artifacts.backup",
+        lambda **kwargs: captured.update(kwargs) or Report(),
+    )
+    monkeypatch.setattr(batch_module, "ROOT", tmp_path)
+    outcome = ml_artifacts_backup(
+        object(),
+        {"artifacts_dir": "artifacts/models", "dest_dir": "backups/ml", "keep": 3},
+        "backup-run",
+        False,
+    )
+    assert captured["artifacts_dir"] == tmp_path / "artifacts" / "models"
+    assert captured["dest_dir"] == tmp_path / "backups" / "ml"
+    assert captured["keep"] == 3
+    assert outcome.persisted == 1
+    assert outcome.details["excluded_non_runtime_paths"] == ["catboost_info"]
 
 
 def test_latest_quotes_batch_delegates_to_idempotent_historical_sync(monkeypatch) -> None:

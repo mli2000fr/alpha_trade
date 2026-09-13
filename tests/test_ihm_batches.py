@@ -104,6 +104,11 @@ def test_data_coverage_handles_local_backlog_and_disabled_contracts() -> None:
     assert batches.format_data_coverage(disabled).startswith("Aucune collecte planifiée")
 
 
+def test_data_coverage_uses_explicit_backup_scope() -> None:
+    spec = _spec(raw_config={"coverage_description": "Snapshot complet des modèles"})
+    assert batches.format_data_coverage(spec) == "Snapshot complet des modèles"
+
+
 def test_commands_use_force_for_immediate_runs() -> None:
     generic = _spec()
     assert "install_forward_pit_task.ps1" in " ".join(batches.build_install_command(generic))
