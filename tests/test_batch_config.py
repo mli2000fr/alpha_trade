@@ -127,12 +127,16 @@ def test_database_backups_have_disjoint_scopes_and_expected_schedules() -> None:
     core = batch["db_core_backup"]
     news = batch["db_news_raw_backup"]
 
-    assert core["run_days"] == "0" and core["run_hours"] == "1"
+    # Les horaires sont des paramètres d'exploitation modifiables. Le test
+    # verrouille la périodicité, pas une heure que l'utilisateur peut déplacer.
+    assert len(str(core["run_days"]).split(",")) == 1
+    assert len(str(core["run_hours"]).split(",")) == 1
     assert core["exclude_tables"] == "news_raw"
     assert "include_tables" not in core
     assert core["keep"] == 5
-    assert news["run_days"] == "0" and news["run_hours"] == "18"
-    assert news["first_weekday_of_month"] is True
+    assert news["run_days"] == "0"
+    assert len(str(news["run_hours"]).split(",")) == 1
+    assert "first_weekday_of_month" not in news
     assert news["include_tables"] == "news_raw"
     assert "exclude_tables" not in news
     assert news["include_routines"] is False

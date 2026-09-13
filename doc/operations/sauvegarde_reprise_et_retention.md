@@ -17,13 +17,13 @@ Deux batchs P0 complémentaires sont visibles dans **Workflow & Orchestration �
 | Batch | Périmètre | Calendrier Paris | Rétention | Préfixe |
 |---|---|---|---:|---|
 | `db_core_backup` | toute `alpha_trade`, sauf `news_raw` ; routines et triggers inclus | chaque dimanche 01:00 | 5 | `alpha_trade_without_news_` |
-| `db_news_raw_backup` | table `news_raw` uniquement ; aucun doublon des routines globales | premier dimanche du mois 18:00 | 3 | `alpha_trade_news_raw_` |
+| `db_news_raw_backup` | table `news_raw` uniquement ; aucun doublon des routines globales | chaque dimanche, heure définie dans `batch.yaml` | 3 | `alpha_trade_news_raw_` |
 
 Les deux familles utilisent `backups/db`, mais leurs préfixes rendent leurs rotations
-strictement indépendantes. Le batch mensuel est enregistré comme une tâche du
-dimanche ; le launcher vérifie en plus que la date est comprise entre le 1er et le
-7 du mois. Le bouton **Lancer maintenant** contourne uniquement le calendrier et
-permet une sauvegarde manuelle à tout moment. Il ne contourne pas `enabled: false`.
+strictement indépendantes. Les deux batchs sont hebdomadaires et autorisés chaque
+dimanche selon leur heure respective dans `batch.yaml`. Le bouton **Lancer
+maintenant** contourne uniquement le calendrier et permet une sauvegarde manuelle
+à tout moment. Il ne contourne pas `enabled: false`.
 
 Les paramètres `host`, `db`, `dest_dir`, `keep`, `archive_prefix`,
 `include_tables`, `exclude_tables`, `include_routines` et `include_triggers` sont
@@ -37,7 +37,7 @@ actuelle utilise `C:/Program Files/MySQL/MySQL Server 8.0/bin/mysqldump.exe` ; s
 MySQL est déplacé ou mis à niveau, seul ce champ de `batch.yaml` doit être adapté.
 
 Pour une restauration complète à une date donnée, restaurer d'abord l'archive
-`alpha_trade_without_news_…sql.gz`, puis l'archive mensuelle
+`alpha_trade_without_news_…sql.gz`, puis l'archive hebdomadaire
 `alpha_trade_news_raw_…sql.gz` retenue. Restaurer uniquement le dump principal
 recrée volontairement l'application sans la table `news_raw`.
 

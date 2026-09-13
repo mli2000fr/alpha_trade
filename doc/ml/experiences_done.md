@@ -38,7 +38,7 @@ une étape de confirmation ; il n'autorise jamais automatiquement le serving.
    E6-B2 reste négatif à H3/H5/H10/H20. Les moyennes vont de `-14,39 %` à
    `-29,68 %`, les médianes sont toutes négatives et seulement 0 à 2 dates sur
    8 sont positives selon l'horizon.
-4. **Aucune famille Eroya testée n'est promue**. Quelques effets descriptifs
+4. **Aucune famille Eroya testée n'est promue**. Quelques effets descriptifs 
    existent, mais pas de gain directionnel Walk-Forward suffisamment stable.
 5. **La surface Options directionnelle 45 DTE est rejetée** : aucune feature ne
    passe les gates préfixés. Les deux effets descriptifs H10/H20 sont instables
@@ -890,6 +890,25 @@ de période et ne doit être ni promu, ni inversé, ni filtré a posteriori par 
 régime choisi sur ces résultats. Aucun serving n’a changé. Artefact :
 `artifacts/research/fundamental_value_confirmation/fundamental-value-confirmation-20260912114827`.
 Voir [E19-C — confirmation valeur](fundamental_value_confirmation_e19c.md).
+
+## E20-A — Audit PIT Opening Window après Oracle — `BLOCKED_NO_OPENING_WINDOW_DATA`
+
+E20-A audite la matière nécessaire à une confirmation directionnelle au
+prémarché et dans les 15/30/60 premières minutes de J+1. La population de
+référence P0f compte 582 306 événements TOP20 OOF, 1 763 dates et 1 472
+symboles entre juillet 2018 et juillet 2025. La table
+`stock_opening_window_bars` existe mais contient zéro ligne : aucun événement,
+aucune date et aucun symbole Oracle ne possèdent une ouverture appariable.
+
+Le seul run de collecte a été correctement ignoré un dimanche fermé. E20-A ne
+rejette donc pas le signal : elle bloque E20-B/C faute de données. Les règles
+simples exigent au moins 126 dates et 5 000 événements ; un modèle exige 378
+dates, 20 000 événements et quatre semestres. Une collecte future doit être
+jointe à de nouveaux scores Oracle shadow ; elle ne chevauchera pas
+automatiquement l’ancien OOF arrêté en juillet 2025. Aucun modèle, règle ou
+serving n’a changé. Artefact canonique :
+`artifacts/research/oracle_opening_window_availability/e20a-opening-availability-20260913211726`.
+Voir [E20-A — disponibilité Opening Window](oracle_opening_window_availability_e20a.md).
 
 ## POC Alpaca options trades versus barres — `GO_RESEARCH_ONLY`
 

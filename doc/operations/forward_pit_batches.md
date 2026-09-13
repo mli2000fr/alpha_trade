@@ -84,7 +84,7 @@ Le TOP20 est une **sortie de modèle**, recalculée après entraînement ou à c
 | P0 | `pit_data_quality_daily` | contrôles locaux | `pit_data_quality_metrics`, `pit_data_quality_issues` | désactivé, contrôle manuel facultatif |
 | P0 | `ml_artifacts_backup` | système de fichiers local | `backups/ml/ml_artifacts_*.tar.gz` | actif ; samedi 01:00 Paris ; rétention configurable (`keep`) |
 | P0 | `db_core_backup` | MySQL local / `mysqldump` | `backups/db/alpha_trade_without_news_*.sql.gz` | actif ; dimanche 01:00 Paris ; toute la base sauf `news_raw` ; 5 archives |
-| P0 | `db_news_raw_backup` | MySQL local / `mysqldump` | `backups/db/alpha_trade_news_raw_*.sql.gz` | actif ; premier dimanche du mois 18:00 Paris ; `news_raw` seule ; 3 archives |
+| P0 | `db_news_raw_backup` | MySQL local / `mysqldump` | `backups/db/alpha_trade_news_raw_*.sql.gz` | actif ; chaque dimanche, heure de Paris configurée dans `batch.yaml` ; `news_raw` seule ; 3 archives |
 | P1 | `borrow_status_snapshot` | Alpaca Assets | `stock_borrow_status_snapshots` | actif |
 | P1 | `analyst_snapshot_collection` | Yahoo Finance/yfinance | consensus, tendances/révisions EPS, targets et recommandations | actif, recherche personnelle/éducative uniquement |
 | P1 | `business_quant_analyst_snapshot` | Business Quant `/estimates` | `stock_analyst_consensus_snapshots` | remplacé par Yahoo, désactivé |
