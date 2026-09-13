@@ -8,10 +8,84 @@
 # J-N/J. Les snapshots non reconstructibles disposent d'un second passage
 # conditionnel, annulé automatiquement quand le principal a réussi.
 
+# Sauvegarde locale hebdomadaire des artefacts ML réellement nécessaires au runtime.
+# run_days suit DayOfWeek : 0=dimanche, 1=lundi, ... 6=samedi.
+ml_artifacts_backup:
+  priority: P0
+  enabled: true
+  status: ACTIVE
+  timezone: Europe/Paris
+  description: "Sauvegarder chaque semaine les modèles, préprocesseurs, calibrateurs et manifests nécessaires au serving, à la prédiction et au backtest ML."
+  tables: "fichiers:backups/ml"
+  provider: local_filesystem
+  universe_scope: ml_serving_artifacts
+  run_hours: "1"
+  run_minutes: "0"
+  run_days: "6"
+  artifacts_dir: artifacts/models
+  dest_dir: backups/ml
+  keep: 5
+  coverage_description: "Snapshot complet de artifacts/models ; conservation pilotée par keep (actuellement 5 archives)"
+  execution_notice: "Audit runtime : artifacts/models est indispensable. catboost_info contient uniquement les journaux temporaires CatBoost et n'est pas requis pour charger ou servir les modèles ; il est volontairement exclu. Les caches benchmarks/per_symbol_v2/per_sector_cache sont absents ou reconstructibles et ne sont pas inclus."
+  log_file: log/batch/ml_artifacts_backup.txt
+
+# Sauvegarde logique principale MySQL, sans la volumineuse table de nouvelles.
+db_core_backup:
+  priority: P0
+  enabled: true
+  status: ACTIVE
+  timezone: Europe/Paris
+  description: "Sauvegarder chaque semaine toute la base alpha_trade, schéma, routines et triggers compris, à l'exception de news_raw sauvegardée séparément."
+  tables: "fichiers:backups/db"
+  provider: local_mysql
+  universe_scope: database_without_news_raw
+  run_hours: "2"
+  run_minutes: "0"
+  run_days: "6"
+  host: localhost
+  db: alpha_trade
+  mysqldump_path: "C:/Program Files/MySQL/MySQL Server 8.0/bin/mysqldump.exe"
+  dest_dir: backups/db
+  archive_prefix: alpha_trade_without_news
+  exclude_tables: "news_raw"
+  include_routines: true
+  include_triggers: true
+  keep: 5
+  coverage_description: "Base alpha_trade complète sauf news_raw ; conservation des 5 dernières archives"
+  execution_notice: "Sauvegarde principale du dimanche. news_raw est volontairement exclue et possède son propre batch mensuel afin de limiter la durée, le volume et la rétention du dump principal."
+  log_file: log/batch/db_core_backup.txt
+
+# Sauvegarde mensuelle isolée de news_raw. La tâche se réveille chaque dimanche,
+# mais le launcher n'autorise l'exécution planifiée que le premier du mois.
+db_news_raw_backup:
+  priority: P0
+  enabled: true
+  status: ACTIVE
+  timezone: Europe/Paris
+  description: "Sauvegarder séparément la table volumineuse news_raw le premier dimanche de chaque mois."
+  tables: "fichiers:backups/db"
+  provider: local_mysql
+  universe_scope: database_table_news_raw
+  run_hours: "1"
+  run_minutes: "0"
+  run_days: "0"
+  first_weekday_of_month: true
+  host: localhost
+  db: alpha_trade
+  mysqldump_path: "C:/Program Files/MySQL/MySQL Server 8.0/bin/mysqldump.exe"
+  dest_dir: backups/db
+  archive_prefix: alpha_trade_news_raw
+  include_tables: "news_raw"
+  include_routines: false
+  include_triggers: true
+  keep: 3
+  coverage_description: "Table news_raw uniquement ; conservation des 3 dernières archives mensuelles"
+  execution_notice: "La tâche planifiée ne produit un dump que le premier dimanche du mois à 18:00. Un lancement manuel reste possible à tout moment depuis l'IHM."
+  log_file: log/batch/db_news_raw_backup.txt
+
 # Collecte composite de capitalisation. SEC EDGAR est la source primaire PIT :
 # dernier shares_outstanding disponible × cours à J. Yahoo puis Finnhub ne sont
 # interrogés que pour les symboles non couverts par la source précédente.
-# run_days suit DayOfWeek : 0=dimanche, 1=lundi, ... 6=samedi.
 market_cap_sync:
   priority: P0
   enabled: true

@@ -82,6 +82,17 @@ def test_schedule_displays_conditional_recovery_separately() -> None:
     )
 
 
+def test_schedule_displays_first_weekday_of_month() -> None:
+    spec = _spec(
+        name="db_news_raw_backup",
+        run_hours=("18",), run_minutes=("0",), run_days=("0",),
+        raw_config={"first_weekday_of_month": True},
+    )
+    assert batches.format_schedule(spec) == (
+        "premier dim du mois · 18:00 · Europe/Paris"
+    )
+
+
 def test_data_coverage_prefers_recovery_then_rolling_window() -> None:
     recovery = _spec(
         run_hours=("16",), run_minutes=("20",),
@@ -102,6 +113,11 @@ def test_data_coverage_handles_local_backlog_and_disabled_contracts() -> None:
     assert "backlog RAW complet" in batches.format_data_coverage(raw)
     disabled = _spec(enabled=False)
     assert batches.format_data_coverage(disabled).startswith("Aucune collecte planifiée")
+
+
+def test_data_coverage_uses_explicit_backup_scope() -> None:
+    spec = _spec(raw_config={"coverage_description": "Snapshot complet des modèles"})
+    assert batches.format_data_coverage(spec) == "Snapshot complet des modèles"
 
 
 def test_commands_use_force_for_immediate_runs() -> None:

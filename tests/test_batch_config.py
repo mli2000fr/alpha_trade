@@ -9,6 +9,8 @@ from common.config_loader import load_batch_config, resolve_batch_config_path
 ROOT = Path(__file__).resolve().parents[1]
 WINDOWS = ROOT / "scripts" / "windows"
 BATCH_SECTIONS = {
+    "ml_artifacts_backup",
+    "db_core_backup", "db_news_raw_backup",
     "market_cap_sync",
     "earnings_calendar_sync",
     "latest_quotes_sync",
@@ -104,6 +106,47 @@ def test_market_sensitive_batch_timezones_are_explicit() -> None:
         assert batch[name]["timezone"] == "America/New_York"
     assert batch["earnings_calendar_sync"]["timezone"] == "Europe/Paris"
     assert batch["analyst_snapshot_collection"]["timezone"] == "Europe/Paris"
+
+
+def test_ml_artifacts_backup_is_weekly_and_excludes_catboost_logs() -> None:
+    batch = yaml.safe_load((ROOT / "batch.yaml").read_text(encoding="utf-8"))
+    backup = batch["ml_artifacts_backup"]
+    assert backup["enabled"] is True
+    assert backup["timezone"] == "Europe/Paris"
+    assert backup["run_days"] == "6"
+    assert backup["run_hours"] == "1"
+    assert backup["artifacts_dir"] == "artifacts/models"
+    assert backup["dest_dir"] == "backups/ml"
+    assert backup["keep"] == 5
+    assert "catboost_info" in backup["execution_notice"]
+    assert "exclu" in backup["execution_notice"]
+
+
+def test_database_backups_have_disjoint_scopes_and_expected_schedules() -> None:
+    batch = yaml.safe_load((ROOT / "batch.yaml").read_text(encoding="utf-8"))
+    core = batch["db_core_backup"]
+    news = batch["db_news_raw_backup"]
+
+    assert core["run_days"] == "0" and core["run_hours"] == "1"
+    assert core["exclude_tables"] == "news_raw"
+    assert "include_tables" not in core
+    assert core["keep"] == 5
+    assert news["run_days"] == "0" and news["run_hours"] == "18"
+    assert news["first_weekday_of_month"] is True
+    assert news["include_tables"] == "news_raw"
+    assert "exclude_tables" not in news
+    assert news["include_routines"] is False
+    assert news["keep"] == 3
+    assert core["archive_prefix"] != news["archive_prefix"]
+    assert core["mysqldump_path"].endswith("/mysqldump.exe")
+    assert news["mysqldump_path"] == core["mysqldump_path"]
+
+
+def test_generic_launcher_enforces_first_weekday_of_month() -> None:
+    content = (WINDOWS / "forward_pit_launcher.ps1").read_text(encoding="utf-8")
+    assert "first_weekday_of_month" in content
+    assert "$now.Day -gt 7" in content
+    assert "-not $Force" in content
 
 
 def test_all_batch_launchers_and_installers_read_batch_yaml() -> None:

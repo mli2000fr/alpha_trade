@@ -4,11 +4,65 @@
 
 Une reprise complète peut exiger base MySQL, schéma Alembic, configuration, artefacts ML compatibles, manifests et secrets recréés. Les scripts courants sont `scripts/backup_db.py`, `scripts/backup_ml_artifacts.py`, `scripts/restore_from_backup.py` et `scripts/prune_artifacts.py`. Les secrets ne doivent jamais être placés dans les archives ni dans les rapports.
 
-## Sauvegarde MySQL
+## Sauvegardes MySQL planifiées
 
-`backup_db.py` appelle `mysqldump` avec transaction cohérente, routines, triggers et `utf8mb4`, puis compresse en `.sql.gz`. Par défaut la destination est `backups/db` et 30 dumps sont conservés. Les identifiants viennent de `LOGIN_DB` et `PASSWORD_DB`; hôte et base de `DB_HOST`/`DB_NAME` ou des arguments.
+`backup_db.py` appelle `mysqldump` avec transaction cohérente et `utf8mb4`, puis
+compresse en `.sql.gz`. Il accepte désormais un périmètre explicite de tables à
+inclure ou à exclure. Les identifiants viennent de `LOGIN_DB` et `PASSWORD_DB` ;
+le mot de passe est transmis au sous-processus par son environnement et n'apparaît
+pas dans sa ligne de commande.
+
+Deux batchs P0 complémentaires sont visibles dans **Workflow & Orchestration → Batch** :
+
+| Batch | Périmètre | Calendrier Paris | Rétention | Préfixe |
+|---|---|---|---:|---|
+| `db_core_backup` | toute `alpha_trade`, sauf `news_raw` ; routines et triggers inclus | chaque dimanche 01:00 | 5 | `alpha_trade_without_news_` |
+| `db_news_raw_backup` | table `news_raw` uniquement ; aucun doublon des routines globales | premier dimanche du mois 18:00 | 3 | `alpha_trade_news_raw_` |
+
+Les deux familles utilisent `backups/db`, mais leurs préfixes rendent leurs rotations
+strictement indépendantes. Le batch mensuel est enregistré comme une tâche du
+dimanche ; le launcher vérifie en plus que la date est comprise entre le 1er et le
+7 du mois. Le bouton **Lancer maintenant** contourne uniquement le calendrier et
+permet une sauvegarde manuelle à tout moment. Il ne contourne pas `enabled: false`.
+
+Les paramètres `host`, `db`, `dest_dir`, `keep`, `archive_prefix`,
+`include_tables`, `exclude_tables`, `include_routines` et `include_triggers` sont
+centralisés dans `batch.yaml`. Les deux exécutions passent par le suivi
+`pit_collection_runs` et les notifications communes email et Telegram, succès ou
+échec compris.
+
+Sous Windows, `mysqldump_path` désigne explicitement le client MySQL. Cette valeur
+évite de dépendre du `PATH` souvent incomplet du Planificateur. L'installation
+actuelle utilise `C:/Program Files/MySQL/MySQL Server 8.0/bin/mysqldump.exe` ; si
+MySQL est déplacé ou mis à niveau, seul ce champ de `batch.yaml` doit être adapté.
+
+Pour une restauration complète à une date donnée, restaurer d'abord l'archive
+`alpha_trade_without_news_…sql.gz`, puis l'archive mensuelle
+`alpha_trade_news_raw_…sql.gz` retenue. Restaurer uniquement le dump principal
+recrée volontairement l'application sans la table `news_raw`.
 
 Le rapport contient début/fin, durée, cible, chemin, taille, fichiers tournés/conservés, dry-run et erreurs. Un fichier créé n’est pas une sauvegarde validée : vérifier taille non nulle, lisibilité gzip, rapport sans erreur et restauration périodique. `--dry-run` ne crée aucune sauvegarde.
+
+## Sauvegarde hebdomadaire des artefacts ML
+
+Le batch `ml_artifacts_backup`, visible dans **Workflow & Orchestration → Batch**,
+s'exécute chaque samedi à 01:00 (`Europe/Paris`). Il applique l'équivalent de :
+
+```powershell
+python -u scripts/backup_ml_artifacts.py --artifacts-dir artifacts/models --dest-dir backups/ml --keep 5
+```
+
+Il crée `backups/ml/ml_artifacts_<UTC>.tar.gz`, puis conserve exactement les
+archives les plus récentes selon `ml_artifacts_backup.keep` (actuellement cinq). Son exécution est suivie dans
+`pit_collection_runs` et passe par les notifications email et Telegram communes.
+
+L'audit des chemins runtime confirme que `artifacts/models` contient les modèles,
+préprocesseurs, calibrateurs, manifests et routes nécessaires au serving, à la
+prédiction et aux backtests. `catboost_info` n'est pas sauvegardé : il contient les
+journaux temporaires produits par CatBoost et aucun chargeur runtime ne le consulte.
+Les répertoires `artifacts/benchmarks`, `artifacts/global_benchmark`,
+`artifacts/per_symbol_v2` et `artifacts/per_sector_cache` sont absents, vides ou
+reconstructibles et ne sont pas indispensables au fonctionnement de l'application.
 
 ## Restauration
 

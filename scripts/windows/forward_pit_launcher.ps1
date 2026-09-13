@@ -45,6 +45,11 @@ if (-not $Force) {
     $daysRaw = [string](Get-ConfigValue $cfg 'run_days' '')
     $days = @($daysRaw -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
     if ($days.Count -gt 0 -and $days -notcontains ([string][int]$now.DayOfWeek)) { exit 0 }
+    $firstWeekdayOnly = [bool](Get-ConfigValue $cfg 'first_weekday_of_month' $false)
+    if ($firstWeekdayOnly -and $now.Day -gt 7) {
+        Write-Status "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] SKIP $BatchName outside-first-weekday-of-month"
+        exit 0
+    }
     $hoursRaw = [string](Get-ConfigValue $cfg 'run_hours' '')
     $minutesRaw = [string](Get-ConfigValue $cfg 'run_minutes' '')
     $hours = @($hoursRaw -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })

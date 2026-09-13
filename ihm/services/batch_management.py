@@ -155,6 +155,8 @@ def format_schedule(spec: BatchSpec) -> str:
         minute = minutes[index] if len(minutes) == len(hours) else minutes[0]
         times.append(f"{int(hour):02d}:{int(minute):02d}" if hour.isdigit() and minute.isdigit() else f"{hour}:{minute}")
     schedule = f"{days} · {', '.join(times)} · {spec.timezone}"
+    if bool(spec.raw_config.get("first_weekday_of_month", False)):
+        schedule = f"premier {days} du mois · {', '.join(times)} · {spec.timezone}"
     recovery_hours = _split(spec.raw_config.get("recovery_run_hours"))
     if recovery_hours:
         recovery_minutes = _split(spec.raw_config.get("recovery_run_minutes")) or ("0",)
@@ -172,6 +174,9 @@ def format_schedule(spec: BatchSpec) -> str:
 
 def format_data_coverage(spec: BatchSpec) -> str:
     """Décrit la reprise réellement garantie, sans extrapoler le fournisseur."""
+    explicit = str(spec.raw_config.get("coverage_description") or "").strip()
+    if explicit:
+        return explicit
     recovery_hours = _split(spec.raw_config.get("recovery_run_hours"))
     if recovery_hours:
         recovery_minutes = _split(spec.raw_config.get("recovery_run_minutes")) or ("0",)

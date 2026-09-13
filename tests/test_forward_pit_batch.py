@@ -35,7 +35,9 @@ from service.forward_pit.batch import (
     _select_option_surface_contracts,
     _underlying_price,
     daily_bars_sync,
+    database_backup,
     latest_quotes_sync_batch,
+    ml_artifacts_backup,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,6 +45,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_all_enabled_forward_batches_have_handlers() -> None:
     expected = {
+        "ml_artifacts_backup",
+        "db_core_backup", "db_news_raw_backup",
         "daily_bars_sync", "market_cap_sync", "security_master_snapshot", "corporate_actions_sync",
         "sec_edgar_incremental", "pit_data_quality_daily", "borrow_status_snapshot",
         "business_quant_analyst_snapshot", "oracle_options_indicative_snapshot",
@@ -57,6 +61,78 @@ def test_all_enabled_forward_batches_have_handlers() -> None:
         "auction_imbalance_sync", "securities_lending_sync",
         "official_options_nbbo_sync",
     }
+
+
+def test_ml_artifacts_backup_uses_only_runtime_model_directory(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    class Report:
+        errors: list[str] = []
+        artifacts_dir = str(tmp_path / "artifacts" / "models")
+        dest_dir = str(tmp_path / "backups" / "ml")
+        archive_path = str(tmp_path / "backups" / "ml" / "ml_artifacts_test.tar.gz")
+        archive_size_bytes = 123
+        rotated_files: list[str] = []
+        kept_files = [archive_path]
+
+    monkeypatch.setattr(
+        "scripts.backup_ml_artifacts.backup",
+        lambda **kwargs: captured.update(kwargs) or Report(),
+    )
+    monkeypatch.setattr(batch_module, "ROOT", tmp_path)
+    outcome = ml_artifacts_backup(
+        object(),
+        {"artifacts_dir": "artifacts/models", "dest_dir": "backups/ml", "keep": 3},
+        "backup-run",
+        False,
+    )
+    assert captured["artifacts_dir"] == tmp_path / "artifacts" / "models"
+    assert captured["dest_dir"] == tmp_path / "backups" / "ml"
+    assert captured["keep"] == 3
+    assert outcome.persisted == 1
+    assert outcome.details["excluded_non_runtime_paths"] == ["catboost_info"]
+
+
+def test_database_backup_forwards_table_scope_and_retention(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    class Report:
+        errors: list[str] = []
+        host = "localhost"
+        db = "alpha_trade"
+        dest_dir = str(tmp_path / "backups" / "db")
+        dump_path = str(tmp_path / "backups" / "db" / "alpha_trade_news_raw_test.sql.gz")
+        dump_size_bytes = 123
+        archive_prefix = "alpha_trade_news_raw"
+        include_tables = ["news_raw"]
+        exclude_tables: list[str] = []
+        rotated_files: list[str] = []
+        kept_files = [dump_path]
+
+    monkeypatch.setattr(
+        "scripts.backup_db.backup_db",
+        lambda **kwargs: captured.update(kwargs) or Report(),
+    )
+    monkeypatch.setattr(batch_module, "ROOT", tmp_path)
+    outcome = database_backup(
+        object(),
+        {
+            "dest_dir": "backups/db", "keep": 3,
+            "archive_prefix": "alpha_trade_news_raw",
+            "include_tables": "news_raw", "include_routines": False,
+            "mysqldump_path": "C:/mysql/mysqldump.exe",
+        },
+        "db-backup-run",
+        False,
+    )
+
+    assert captured["dest_dir"] == tmp_path / "backups" / "db"
+    assert captured["include_tables"] == ["news_raw"]
+    assert captured["exclude_tables"] == []
+    assert captured["include_routines"] is False
+    assert captured["mysqldump_path"] == "C:/mysql/mysqldump.exe"
+    assert captured["keep"] == 3
+    assert outcome.persisted == 1
 
 
 def test_latest_quotes_batch_delegates_to_idempotent_historical_sync(monkeypatch) -> None:
