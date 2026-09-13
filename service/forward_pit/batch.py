@@ -231,6 +231,141 @@ def _read_response_bytes_limited(
     return bytes(content), declared or len(content)
 
 
+def _sec_exhibit_prefixes(value: Any) -> tuple[str, ...]:
+    """Normalize configured SEC exhibit type prefixes."""
+    raw_values = value if isinstance(value, (list, tuple, set)) else str(value or "EX-99").split(",")
+    return tuple(item.strip().upper() for item in raw_values if str(item).strip()) or ("EX-99",)
+
+
+def _selected_sec_exhibits(
+    documents: list[dict[str, Any]], prefixes: tuple[str, ...], limit: int,
+) -> list[dict[str, Any]]:
+    """Keep configured exhibits, ordered as declared by the SEC filing index."""
+    selected = [
+        document for document in documents
+        if any(str(document.get("document_type") or "").upper().startswith(prefix)
+               for prefix in prefixes)
+    ]
+    selected.sort(key=lambda item: (
+        item.get("sequence") is None,
+        item.get("sequence") if item.get("sequence") is not None else 10**9,
+        str(item.get("filename") or ""),
+    ))
+    return selected[:max(0, limit)]
+
+
+def _sec_filing_index_url(submission_url: str, accession_number: str) -> str:
+    """Build the SEC filing-detail page URL from a submission URL."""
+    return submission_url.rsplit("/", 1)[0] + f"/{accession_number}-index.html"
+
+
+def _download_sec_exhibits(
+    engine: Engine,
+    session: requests.Session,
+    *,
+    accession_number: str,
+    submission_url: str,
+    headers: dict[str, str],
+    observed: datetime,
+    run_id: str,
+    prefixes: tuple[str, ...],
+    max_exhibits: int,
+    max_exhibit_bytes: int,
+    max_requests_per_second: int,
+) -> dict[str, Any]:
+    """Discover and persist bounded exhibits as independent binary documents."""
+    counters: dict[str, Any] = {
+        "discovered": 0, "downloaded": 0, "persisted": 0,
+        "skipped_existing": 0, "oversized": 0, "errors": [],
+    }
+    index_url = _sec_filing_index_url(submission_url, accession_number)
+    response = session.get(index_url, headers=headers, timeout=60)
+    if response.status_code == 404:
+        response.close()
+        index_url = index_url[:-1]  # .html -> .htm
+        response = session.get(index_url, headers=headers, timeout=60)
+    try:
+        response.raise_for_status()
+        base_url = index_url.rsplit("/", 1)[0]
+        documents = _selected_sec_exhibits(
+            _sec_filing_index_documents(response.text, base_url), prefixes, max_exhibits,
+        )
+    finally:
+        response.close()
+    time.sleep(1 / max(1, max_requests_per_second))
+    counters["discovered"] = len(documents)
+
+    for document in documents:
+        with engine.connect() as conn:
+            existing = conn.execute(text("""SELECT content_blob IS NOT NULL AS has_content
+                FROM sec_filing_documents
+                WHERE accession_number=:accession AND document_name=:name"""), {
+                "accession": accession_number, "name": document["filename"],
+            }).mappings().first()
+        if existing and bool(existing["has_content"]):
+            counters["skipped_existing"] += 1
+            continue
+
+        body: bytes | None = None
+        actual_size = document.get("declared_size")
+        mime_type = None
+        error_message = None
+        if actual_size and actual_size > max_exhibit_bytes:
+            counters["oversized"] += 1
+            error_message = f"taille déclarée {actual_size} > limite {max_exhibit_bytes}"
+        else:
+            attachment_response = None
+            try:
+                attachment_response = session.get(
+                    document["url"], headers=headers, timeout=90, stream=True,
+                )
+                attachment_response.raise_for_status()
+                mime_type = str(attachment_response.headers.get("Content-Type") or "").split(";", 1)[0] or None
+                body, actual_size = _read_response_bytes_limited(
+                    attachment_response, max_exhibit_bytes,
+                )
+                if body is None:
+                    counters["oversized"] += 1
+                    error_message = f"contenu > limite {max_exhibit_bytes}"
+                else:
+                    counters["downloaded"] += 1
+            except Exception as exc:
+                error_message = _safe_error_message(exc)
+            finally:
+                if attachment_response is not None:
+                    attachment_response.close()
+
+        if error_message:
+            counters["errors"].append({
+                "document": document["filename"], "error": error_message,
+            })
+        with engine.begin() as conn:
+            result = conn.execute(text("""INSERT INTO sec_filing_documents
+                (accession_number,document_sequence,document_type,document_name,description,
+                 document_url,mime_type,content_bytes,content_sha256,content_blob,
+                 observed_at,available_at,run_id)
+                VALUES (:accession,:sequence,:document_type,:name,:description,:url,:mime_type,
+                        :content_bytes,:content_sha256,:content_blob,:observed,:observed,:run)
+                ON DUPLICATE KEY UPDATE
+                  document_sequence=VALUES(document_sequence),document_type=VALUES(document_type),
+                  description=VALUES(description),document_url=VALUES(document_url),
+                  mime_type=COALESCE(VALUES(mime_type),mime_type),
+                  content_bytes=COALESCE(VALUES(content_bytes),content_bytes),
+                  content_sha256=COALESCE(VALUES(content_sha256),content_sha256),
+                  content_blob=COALESCE(VALUES(content_blob),content_blob),
+                  observed_at=VALUES(observed_at),available_at=VALUES(available_at),run_id=VALUES(run_id)"""), {
+                "accession": accession_number, "sequence": document.get("sequence"),
+                "document_type": document["document_type"], "name": document["filename"],
+                "description": document.get("description"), "url": document["url"],
+                "mime_type": mime_type, "content_bytes": actual_size,
+                "content_sha256": hashlib.sha256(body).hexdigest() if body is not None else None,
+                "content_blob": body, "observed": observed, "run": run_id,
+            })
+            counters["persisted"] += max(0, result.rowcount)
+        time.sleep(1 / max(1, max_requests_per_second))
+    return counters
+
+
 def _download_sec_document(
     session: requests.Session,
     submission_url: str,
@@ -955,9 +1090,18 @@ def sec_edgar_incremental(engine: Engine, cfg: dict[str, Any], run_id: str, dry:
     max_submission_bytes = max(1024, int(cfg.get("max_submission_bytes", 16 * 1024 * 1024)))
     max_primary_bytes = max(1024, int(cfg.get("max_primary_document_bytes", 16 * 1024 * 1024)))
     probe_bytes = max(1024, int(cfg.get("submission_probe_bytes", 2 * 1024 * 1024)))
+    download_exhibits = bool(cfg.get("download_exhibits", False))
+    exhibit_prefixes = _sec_exhibit_prefixes(cfg.get("exhibit_type_prefixes", "EX-99"))
+    max_exhibits = max(1, int(cfg.get("max_exhibits_per_filing", 10)))
+    max_exhibit_bytes = max(1024, int(cfg.get("max_exhibit_bytes", 8 * 1024 * 1024)))
+    max_requests_per_second = max(1, int(cfg.get("max_requests_per_second", 8)))
     document_errors: list[dict[str, str]] = []
     primary_fallbacks = 0
     oversized_primary_documents = 0
+    exhibit_totals: dict[str, Any] = {
+        "discovered": 0, "downloaded": 0, "persisted": 0,
+        "skipped_existing": 0, "oversized": 0, "errors": [],
+    }
     with engine.connect() as conn:
         cik_symbols = {
             str(row.cik).zfill(10): row.symbol
@@ -1011,14 +1155,17 @@ def sec_edgar_incremental(engine: Engine, cfg: dict[str, Any], run_id: str, dry:
             with engine.connect() as conn:
                 existing = conn.execute(text("""SELECT id,content_text IS NOT NULL AS has_content
                     FROM sec_filing_raw WHERE accession_number=:a"""), {"a": item["accession"]}).mappings().first()
-            if existing and (bool(existing["has_content"]) or not cfg.get("download_primary_documents", True)):
+            needs_primary = not existing or (
+                cfg.get("download_primary_documents", True) and not bool(existing["has_content"])
+            )
+            if not needs_primary and not download_exhibits:
                 continue
             content = None
             primary_document = None
             submission_url = f"{SEC_ARCHIVES}/{item['filename']}"
             content_url = submission_url
             acceptance = None
-            if cfg.get("download_primary_documents", True) and not dry:
+            if needs_primary and cfg.get("download_primary_documents", True) and not dry:
                 try:
                     downloaded = _download_sec_document(
                         session, submission_url, item["form"], headers,
@@ -1045,8 +1192,8 @@ def sec_edgar_incremental(engine: Engine, cfg: dict[str, Any], run_id: str, dry:
                         "accession": item["accession"],
                         "error": _safe_error_message(exc),
                     })
-                time.sleep(1 / max(1, int(cfg.get("max_requests_per_second", 8))))
-            if not dry:
+                time.sleep(1 / max_requests_per_second)
+            if not dry and needs_primary:
                 with engine.begin() as conn:
                     result = conn.execute(text("""INSERT INTO sec_filing_raw
                         (accession_number,cik,symbol,company_name,form_type,filing_date,acceptance_datetime,primary_document,filing_url,content_sha256,content_text,observed_at,available_at,run_id,amendment)
@@ -1060,16 +1207,48 @@ def sec_edgar_incremental(engine: Engine, cfg: dict[str, Any], run_id: str, dry:
                           content_text=COALESCE(VALUES(content_text),content_text),
                           observed_at=VALUES(observed_at),available_at=VALUES(available_at),run_id=VALUES(run_id)"""), {**item, "symbol": cik_symbols.get(item["cik"]), "acceptance": acceptance, "primary_document": primary_document, "url": content_url, "hash": hashlib.sha256((content or "").encode(errors="ignore")).hexdigest() if content else None, "content": content, "observed": observed, "run": run_id, "amendment": item["form"].endswith("/A")})
                     outcome.persisted += max(0, result.rowcount)
+            if download_exhibits and not dry:
+                try:
+                    exhibit_result = _download_sec_exhibits(
+                        engine, session,
+                        accession_number=item["accession"],
+                        submission_url=submission_url,
+                        headers=headers,
+                        observed=observed,
+                        run_id=run_id,
+                        prefixes=exhibit_prefixes,
+                        max_exhibits=max_exhibits,
+                        max_exhibit_bytes=max_exhibit_bytes,
+                        max_requests_per_second=max_requests_per_second,
+                    )
+                    for key in ("discovered", "downloaded", "persisted", "skipped_existing", "oversized"):
+                        exhibit_totals[key] += exhibit_result[key]
+                    exhibit_totals["errors"].extend(exhibit_result["errors"])
+                    outcome.persisted += exhibit_result["persisted"]
+                except Exception as exc:
+                    exhibit_totals["errors"].append({
+                        "accession": item["accession"], "error": _safe_error_message(exc),
+                    })
     outcome.details.update({
         "max_submission_bytes": max_submission_bytes,
         "max_primary_document_bytes": max_primary_bytes,
         "primary_document_fallbacks": primary_fallbacks,
         "oversized_primary_documents": oversized_primary_documents,
         "document_errors": document_errors[:50],
+        "download_exhibits": download_exhibits,
+        "exhibit_type_prefixes": list(exhibit_prefixes),
+        "max_exhibits_per_filing": max_exhibits,
+        "max_exhibit_bytes": max_exhibit_bytes,
+        "exhibits": {**exhibit_totals, "errors": exhibit_totals["errors"][:50]},
     })
     if document_errors:
         outcome.warnings.append(
             f"Contenu indisponible pour {len(document_errors)} dépôt(s) SEC; métadonnées conservées"
+        )
+    if exhibit_totals["errors"]:
+        outcome.failed += len(exhibit_totals["errors"])
+        outcome.warnings.append(
+            f"{len(exhibit_totals['errors'])} annexe(s) SEC indisponible(s) ou trop volumineuse(s); métadonnées conservées"
         )
     if not rows: outcome.warnings.append("Aucun filing correspondant dans les daily indexes disponibles")
     return outcome

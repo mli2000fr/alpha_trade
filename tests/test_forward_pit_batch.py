@@ -26,6 +26,9 @@ from service.forward_pit.batch import (
     _parse_finra_short_volume,
     _schema_hash,
     _sec_submission_header,
+    _sec_filing_index_documents,
+    _selected_sec_exhibits,
+    _read_response_bytes_limited,
     _previous_weekdays,
     _safe_error_message,
     _security_changes,
@@ -298,6 +301,38 @@ def test_sec_submission_header_finds_acceptance_and_expected_primary_document() 
     assert primary == "aa-20260911.htm"
 
 
+def test_sec_filing_index_selects_only_configured_ex99_exhibits() -> None:
+    index_html = """
+    <table>
+      <tr><td>1</td><td>FORM 8-K</td><td><a href="main.htm">main.htm</a></td><td>8-K</td><td>1,024</td></tr>
+      <tr><td>3</td><td>Press release</td><td><a href="release.htm">release.htm</a></td><td>EX-99.1</td><td>2,048</td></tr>
+      <tr><td>2</td><td>Presentation</td><td><a href="slides.pdf">slides.pdf</a></td><td>EX-99.2</td><td>3,072</td></tr>
+      <tr><td>4</td><td>Contract</td><td><a href="contract.htm">contract.htm</a></td><td>EX-10.1</td><td>4,096</td></tr>
+    </table>
+    """
+    documents = _sec_filing_index_documents(
+        index_html, "https://www.sec.gov/Archives/edgar/data/1/2",
+    )
+    selected = _selected_sec_exhibits(documents, ("EX-99",), 10)
+    assert [item["document_type"] for item in selected] == ["EX-99.2", "EX-99.1"]
+    assert selected[0]["url"].endswith("/slides.pdf")
+    assert selected[1]["declared_size"] == 2048
+
+
+def test_sec_exhibit_binary_reader_rejects_oversized_payload() -> None:
+    class Response:
+        headers = {"Content-Length": "100"}
+
+        @staticmethod
+        def iter_content(chunk_size=65536):
+            del chunk_size
+            yield b"x" * 100
+
+    body, size = _read_response_bytes_limited(Response(), 50)
+    assert body is None
+    assert size == 100
+
+
 def test_oversized_sec_submission_falls_back_to_bounded_primary_document() -> None:
     prefix = b"""<SEC-HEADER>\n<ACCEPTANCE-DATETIME>20260911081822\n</SEC-HEADER>
 <DOCUMENT>\n<TYPE>8-K\n<SEQUENCE>1\n<FILENAME>primary.htm\n<TEXT>"""
@@ -355,7 +390,7 @@ def test_forward_pit_sql_reference_and_migration_cover_all_tables() -> None:
     expected = {
         "pit_collection_runs", "pit_raw_payloads", "stock_bars_daily_versions",
         "security_master_snapshots", "security_master_changes",
-        "corporate_action_source_events", "sec_filing_raw",
+        "corporate_action_source_events", "sec_filing_raw", "sec_filing_documents",
         "stock_borrow_status_snapshots", "stock_analyst_consensus_snapshots",
         "stock_option_snapshots", "stock_opening_window_bars",
         "stock_opening_window_bar_versions", "sec_corporate_events",
@@ -389,6 +424,12 @@ def test_forward_pit_sql_reference_and_migration_cover_all_tables() -> None:
         ROOT / "alembic/versions/0081_widen_forward_pit_providers.py"
     ).read_text(encoding="utf-8")
     assert 'down_revision: str | None = "0080_widen_pit_run_provider"' in all_provider_migration
+
+    exhibit_migration = (
+        ROOT / "alembic/versions/0082_sec_filing_documents.py"
+    ).read_text(encoding="utf-8")
+    assert 'down_revision: str | None = "0081_widen_forward_pit_providers"' in exhibit_migration
+    assert "mysql.LONGBLOB()" in exhibit_migration
 
 
 def test_launcher_invokes_service_layer() -> None:

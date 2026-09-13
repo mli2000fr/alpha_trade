@@ -145,6 +145,32 @@ La taille d’une soumission complète est plafonnée par `max_submission_bytes`
 
 Les batchs P3/P4 relisent ce RAW local : aucun second téléchargement SEC. P3 extrait les items 8‑K/6‑K. P4 normalise les holdings XML embarqués des 13F et conserve une ligne de dépôt lorsque la table d’information n’est pas analysable. Les champs non fiables restent `NULL` plutôt que d’être inventés.
 
+#### Annexes SEC EX-99
+
+Les annexes sont un flux distinct, activé prospectivement avec
+download_exhibits: true. Le collecteur consulte
+la page de détail de chaque dépôt, sélectionne les types commençant par les
+préfixes de exhibit_type_prefixes (EX-99 par défaut, donc EX-99.1, EX-99.2,
+etc.) et enregistre chaque document séparément dans sec_filing_documents. Le
+formulaire principal n’est jamais concaténé avec ses annexes. HTML, texte et
+PDF sont conservés en binaire avec URL, type MIME, taille et SHA-256.
+max_exhibit_bytes limite chaque document à 8 MiB et max_exhibits_per_filing à
+dix annexes par dépôt. Une annexe trop volumineuse conserve ses métadonnées
+avec un contenu NULL, produit une alerte et pourra être retentée. L’unicité
+(accession_number, document_name) rend les passages répétés idempotents.
+
+Configuration active :
+
+    sec_edgar_incremental:
+      download_exhibits: true
+      exhibit_type_prefixes: "EX-99"
+      max_exhibits_per_filing: 10
+      max_exhibit_bytes: 8388608
+
+Le lookback normal reste de trois jours ouvrés. Activer l’option ne constitue
+donc pas un backfill historique complet ; un rattrapage doit temporairement
+élargir lookback_days ou utiliser une campagne dédiée.
+
 ### Borrow, analystes, options et ouverture
 
 Alpaca Assets permet de suivre `shortable`, `easy_to_borrow`, `marginable` et `tradable` plusieurs fois par séance. L'endpoint renvoie globalement les actifs Alpaca : le payload RAW global est conservé pour audit, mais seules les actions US appartenant à `config/univers_batch/univers_filtred_tradable.txt` sont normalisées dans `stock_borrow_status_snapshots`. Cela ne fournit ni borrow fee, ni utilization, ni lendable supply.

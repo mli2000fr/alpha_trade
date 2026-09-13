@@ -46,6 +46,11 @@ def test_batch_configuration_is_separated_from_application_config() -> None:
     assert "après leur fin" in quality["execution_notice"]
     sec = batch["sec_edgar_incremental"]
     assert sec["download_primary_documents"] is True
+    assert sec["download_exhibits"] is True
+    assert sec["exhibit_type_prefixes"] == "EX-99"
+    assert sec["max_exhibits_per_filing"] > 0
+    assert sec["max_exhibit_bytes"] < 64 * 1024 * 1024
+    assert "pas encore transformées en features" in sec["research_notice"]
     assert sec["max_submission_bytes"] < 64 * 1024 * 1024
     assert sec["max_primary_document_bytes"] < 64 * 1024 * 1024
     assert sec["submission_probe_bytes"] <= sec["max_submission_bytes"]

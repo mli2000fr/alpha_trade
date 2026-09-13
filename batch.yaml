@@ -110,7 +110,7 @@ corporate_actions_sync:
 sec_edgar_incremental:
   priority: P0
   description: "Collecter une seule fois les nouveaux dépôts SEC et fournir un RAW commun aux fondamentaux, événements et données d'actionnariat."
-  tables: "pit_collection_runs,pit_raw_payloads,sec_filing_raw"
+  tables: "pit_collection_runs,pit_raw_payloads,sec_filing_raw,sec_filing_documents"
   enabled: true
   universe_scope: market_wide_filings
   timezone: Europe/Paris
@@ -120,6 +120,12 @@ sec_edgar_incremental:
   forms: "8-K,8-K/A,6-K,6-K/A,10-Q,10-Q/A,10-K,10-K/A,13F-HR,13F-HR/A,SC 13D,SC 13D/A,SC 13G,SC 13G/A"
   lookback_days: 3
   download_primary_documents: true
+  # Annexes séparées (EX-99.1, EX-99.2, etc.).
+  download_exhibits: true
+  exhibit_type_prefixes: "EX-99"
+  max_exhibits_per_filing: 10
+  max_exhibit_bytes: 8388608
+  research_notice: "Les annexes EX-99.* sont collectées prospectivement et stockées séparément pour une future normalisation ML (guidance, surprises, marges, KPI et sentiment). Elles ne sont pas encore transformées en features ni utilisées par les modèles, prédictions, backtests ou le live."
   max_submission_bytes: 16777216
   max_primary_document_bytes: 16777216
   submission_probe_bytes: 2097152
