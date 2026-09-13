@@ -32,6 +32,8 @@ $launcher=Join-Path $PSScriptRoot 'forward_pit_launcher.ps1'
 # Un trigger horaire par minute utile; le launcher applique heure/jour/timezone.
 $minutesRaw=[string](Get-ConfigValue $cfg 'run_minutes' '')
 $minutes=@($minutesRaw -split ',' | ForEach-Object {$_.Trim()} | Where-Object {$_})
+$recoveryMinutesRaw=[string](Get-ConfigValue $cfg 'recovery_run_minutes' '')
+$minutes += @($recoveryMinutesRaw -split ',' | ForEach-Object {$_.Trim()} | Where-Object {$_})
 if ($minutes.Count -eq 0) { $minutes=@(0) }
 $triggers=@()
 foreach ($minute in ($minutes | Sort-Object -Unique)) {

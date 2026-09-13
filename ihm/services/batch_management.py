@@ -154,7 +154,20 @@ def format_schedule(spec: BatchSpec) -> str:
     for index, hour in enumerate(hours):
         minute = minutes[index] if len(minutes) == len(hours) else minutes[0]
         times.append(f"{int(hour):02d}:{int(minute):02d}" if hour.isdigit() and minute.isdigit() else f"{hour}:{minute}")
-    return f"{days} · {', '.join(times)} · {spec.timezone}"
+    schedule = f"{days} · {', '.join(times)} · {spec.timezone}"
+    recovery_hours = _split(spec.raw_config.get("recovery_run_hours"))
+    if recovery_hours:
+        recovery_minutes = _split(spec.raw_config.get("recovery_run_minutes")) or ("0",)
+        recovery_times: list[str] = []
+        for index, hour in enumerate(recovery_hours):
+            minute = recovery_minutes[index] if len(recovery_minutes) == len(recovery_hours) else recovery_minutes[0]
+            recovery_times.append(
+                f"{int(hour):02d}:{int(minute):02d}"
+                if hour.isdigit() and minute.isdigit()
+                else f"{hour}:{minute}"
+            )
+        schedule += f" · secours conditionnel {', '.join(recovery_times)}"
+    return schedule
 
 
 def _powershell_prefix() -> list[str]:
@@ -175,7 +188,7 @@ def build_run_command(spec: BatchSpec) -> list[str]:
     if spec.name == "earnings_calendar_sync":
         return _powershell_prefix() + [str(WINDOWS_SCRIPTS / OLD_BATCHES[spec.name][2]), "-Force"]
     if spec.name == "analyst_snapshot_collection":
-        return _powershell_prefix() + [str(WINDOWS_SCRIPTS / OLD_BATCHES[spec.name][2])]
+        return _powershell_prefix() + [str(WINDOWS_SCRIPTS / OLD_BATCHES[spec.name][2]), "-Force"]
     return _powershell_prefix() + [
         str(WINDOWS_SCRIPTS / "forward_pit_launcher.ps1"),
         "-BatchName", spec.name, "-Force",

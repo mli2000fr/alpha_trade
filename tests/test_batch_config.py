@@ -66,6 +66,30 @@ def test_each_scheduled_batch_has_at_most_one_daily_execution_time() -> None:
         assert len(minutes) <= 1, f"{name}: plusieurs run_minutes configurées"
 
 
+def test_non_reconstructible_snapshots_have_one_conditional_recovery() -> None:
+    batch = yaml.safe_load((ROOT / "batch.yaml").read_text(encoding="utf-8"))
+    snapshots = {
+        "security_master_snapshot",
+        "market_cap_sync",
+        "analyst_snapshot_collection",
+        "borrow_status_snapshot",
+        "oracle_options_indicative_snapshot",
+        "options_delayed_bars_sync",
+        "option_contract_adjustment_sync",
+    }
+    for name in snapshots:
+        config = batch[name]
+        recovery_hours = str(config.get("recovery_run_hours") or "").split(",")
+        recovery_minutes = str(config.get("recovery_run_minutes") or "").split(",")
+        assert len([value for value in recovery_hours if value.strip()]) == 1, name
+        assert len([value for value in recovery_minutes if value.strip()]) == 1, name
+        assert float(config["recovery_success_lookback_hours"]) > 0, name
+
+    for name, config in batch.items():
+        if name not in snapshots:
+            assert "recovery_run_hours" not in config, name
+
+
 def test_market_sensitive_batch_timezones_are_explicit() -> None:
     batch = yaml.safe_load((ROOT / "batch.yaml").read_text(encoding="utf-8"))
     new_york_batches = {
@@ -251,9 +275,12 @@ def test_generic_powershell_scripts_guard_optional_batch_properties() -> None:
     launcher = (WINDOWS / "forward_pit_launcher.ps1").read_text(encoding="utf-8")
     assert "function Get-ConfigValue" in installer
     assert "Get-ConfigValue $cfg 'run_minutes' ''" in installer
+    assert "Get-ConfigValue $cfg 'recovery_run_minutes' ''" in installer
     assert "function Get-ConfigValue" in launcher
     for field in ("log_file", "enabled", "status", "timezone", "run_days", "run_hours", "run_minutes"):
         assert f"Get-ConfigValue $cfg '{field}'" in launcher
+    assert "service.forward_pit.recovery_gate" in launcher
+    assert "gate-unavailable-run-anyway" in launcher
 
 
 def test_generic_installer_builds_task_name_without_spaces() -> None:

@@ -18,7 +18,10 @@ market_cap_sync:
   timezone: Europe/Paris
   description: "Maintenir les actions en circulation SEC PIT, puis compléter uniquement les trous avec Yahoo et Finnhub pour l'éligibilité tradable et la neutralisation market-cap."
   tables: "stock_fundamentals_daily"
-  run_hours: "23"
+  run_hours: "15"
+  recovery_run_hours: "23"
+  recovery_run_minutes: "0"
+  recovery_success_lookback_hours: 12
   run_days: "1,4"
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   provider: sec_edgar_then_yahoo_then_finnhub
@@ -61,6 +64,9 @@ analyst_snapshot_collection:
   timeout_seconds: 20
   max_retries: 2
   run_hours: "22"
+  recovery_run_hours: "4"
+  recovery_run_minutes: "0"
+  recovery_success_lookback_hours: 10
   log_file: log/batch/analyst_snapshots.txt
 
 # Snapshot bid/ask quotidien Alpaca IEX avec rattrapage idempotent J-7 -> J.
@@ -112,6 +118,9 @@ security_master_snapshot:
   api_key_env: BUSINESS_QUANT_API_KEY
   timezone: Europe/Paris
   run_hours: "1"
+  recovery_run_hours: "9"
+  recovery_run_minutes: "0"
+  recovery_success_lookback_hours: 12
   run_days: "1,2,3,4,5"
   # Même convention que run_days : 1=lundi.
   business_quant_weekdays: "1"
@@ -192,9 +201,12 @@ borrow_status_snapshot:
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   provider: alpaca
   timezone: America/New_York
-  # Snapshot unique juste avant l'ouverture régulière US.
-  run_hours: "9"
-  run_minutes: "25"
+  # Principal puis secours conditionnel, tous deux avant l'ouverture régulière US.
+  run_hours: "8"
+  run_minutes: "45"
+  recovery_run_hours: "9"
+  recovery_run_minutes: "25"
+  recovery_success_lookback_hours: 2
   run_days: "1,2,3,4,5"
   log_file: log/batch/borrow_status_snapshot.txt
 
@@ -231,9 +243,12 @@ oracle_options_indicative_snapshot:
   provider: alpaca
   feed: indicative
   timezone: America/New_York
-  # Passage unique vingt minutes après la clôture régulière US.
+  # Passage principal vingt minutes après la clôture régulière US.
   run_hours: "16"
   run_minutes: "20"
+  recovery_run_hours: "22"
+  recovery_run_minutes: "20"
+  recovery_success_lookback_hours: 8
   run_days: "1,2,3,4,5"
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   target_dtes: "5,10,20"
@@ -265,9 +280,12 @@ options_delayed_bars_sync:
   provider: alpaca
   research_notice: "La provenance n'est pas attestée dans le payload historique Alpaca : les lignes sont marquées UNVERIFIED_OPRA. Elles servent uniquement à la recherche, jamais à simuler un NBBO ou un prix d'exécution live. Historique disponible depuis février 2024."
   timezone: America/New_York
-  # Passage unique après clôture et après le délai minimal Alpaca.
+  # Passage principal après clôture et après le délai minimal Alpaca.
   run_hours: "17"
   run_minutes: "0"
+  recovery_run_hours: "23"
+  recovery_run_minutes: "0"
+  recovery_success_lookback_hours: 8
   run_days: "1,2,3,4,5"
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   target_dtes: "5,10,20"
@@ -293,8 +311,11 @@ option_contract_adjustment_sync:
   provider: occ
   research_notice: "Le RSS OCC fournit numéro, publication, catégorie, résumé et lien. Le détail des mémos est protégé par Cloudflare ; multiplier, cash component et deliverable détaillé restent inconnus tant qu'ils ne sont pas observés dans le catalogue de contrats Alpaca versionné."
   timezone: Europe/Paris
-  run_hours: "19"
+  run_hours: "11"
   run_minutes: "15"
+  recovery_run_hours: "19"
+  recovery_run_minutes: "15"
+  recovery_success_lookback_hours: 10
   run_days: "1,2,3,4,5,6"
   universe_scope: market_wide_options_adjustments
   rss_url: "https://infomemo.theocc.com/infomemo-rss"

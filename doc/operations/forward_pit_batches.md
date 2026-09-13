@@ -125,8 +125,26 @@ historique manqué. Le RSS de `option_contract_adjustment_sync` n'offre pas non
 plus de paramètre J−7/J garanti. Enfin, `options_delayed_bars_sync` expose des
 barres historiques, mais une séance manquée ne peut être reconstruite sans le
 catalogue des contrats alors actifs ; utiliser la chaîne courante introduirait
-un biais de sélection. Ces batchs relèvent donc d'un futur passage de secours
-conditionnel, pas d'un faux backfill.
+un biais de sélection. Ces sept batchs utilisent donc un passage de secours
+conditionnel, pas un faux backfill : avant tout appel fournisseur, le launcher
+cherche un succès récent en base. Un succès produit `SKIP`; une absence ou un
+échec du passage principal déclenche le rattrapage. Si le contrôle SQL est lui-même
+indisponible, le rattrapage est exécuté afin de privilégier la continuité de la
+collecte. Les lancements manuels avec `-Force` ignorent toujours ce gate.
+
+| Batch snapshot | Passage principal | Secours conditionnel | Écart |
+|---|---:|---:|---:|
+| `security_master_snapshot` | 01:00 Paris | 09:00 Paris | 8 h |
+| `market_cap_sync` | 15:00 Paris | 23:00 Paris | 8 h |
+| `analyst_snapshot_collection` | 22:00 Paris | 04:00 Paris le lendemain | 6 h |
+| `borrow_status_snapshot` | 08:45 New York | 09:25 New York | 40 min |
+| `oracle_options_indicative_snapshot` | 16:20 New York | 22:20 New York | 6 h |
+| `options_delayed_bars_sync` | 17:00 New York | 23:00 New York | 6 h |
+| `option_contract_adjustment_sync` | 11:15 Paris | 19:15 Paris | 8 h |
+
+Le secours `borrow_status_snapshot` reste volontairement avant l'ouverture :
+un passage plusieurs heures plus tard mesurerait un autre état de disponibilité
+du prêt et ne remplacerait pas fidèlement le snapshot pré-marché.
 
 ## Tables et flux
 

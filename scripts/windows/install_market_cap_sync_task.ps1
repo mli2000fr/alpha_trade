@@ -26,7 +26,9 @@ $configPath = Join-Path $workspace 'batch.yaml'
 $pyCode = 'import json,sys,yaml; cfg=yaml.safe_load(open(sys.argv[1],encoding=''utf-8'')) or {}; print(json.dumps(cfg.get(''market_cap_sync'') or {}))'
 $cfg = ((& $python -c $pyCode $configPath | Out-String).Trim() | ConvertFrom-Json)
 
-$hoursRaw = if ($RunHours) { $RunHours } elseif ($cfg.run_hours) { [string]$cfg.run_hours } else { '11,23' }
+$hoursRaw = if ($RunHours) { $RunHours } elseif ($cfg.run_hours) { [string]$cfg.run_hours } else { '15' }
+$recoveryHoursRaw = if ($cfg.PSObject.Properties.Name -contains 'recovery_run_hours') { [string]$cfg.recovery_run_hours } else { '' }
+$hoursRaw = @($hoursRaw, $recoveryHoursRaw) -join ','
 $hours = @($hoursRaw -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^\d{1,2}$' } | ForEach-Object { [int]$_ } | Where-Object { $_ -ge 0 -and $_ -le 23 } | Sort-Object -Unique)
 if ($hours.Count -eq 0) { throw "run_hours invalide: $hoursRaw" }
 $daysRaw = if ($RunDays) { $RunDays } elseif ($cfg.run_days) { [string]$cfg.run_days } else { '' }

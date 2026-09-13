@@ -72,6 +72,16 @@ def test_schedule_and_task_names_cover_legacy_and_generic() -> None:
     assert batches.format_schedule(_spec()) == "lun, jeu · 01:05, 13:05 · Europe/Paris"
 
 
+def test_schedule_displays_conditional_recovery_separately() -> None:
+    spec = _spec(
+        run_hours=("16",), run_minutes=("20",),
+        raw_config={"recovery_run_hours": "22", "recovery_run_minutes": "20"},
+    )
+    assert batches.format_schedule(spec) == (
+        "lun, jeu · 16:20 · Europe/Paris · secours conditionnel 22:20"
+    )
+
+
 def test_commands_use_force_for_immediate_runs() -> None:
     generic = _spec()
     assert "install_forward_pit_task.ps1" in " ".join(batches.build_install_command(generic))
@@ -79,6 +89,8 @@ def test_commands_use_force_for_immediate_runs() -> None:
     assert batches.build_run_command(generic)[-1] == "-Force"
     earnings = _spec("earnings_calendar_sync")
     assert batches.build_run_command(earnings)[-1] == "-Force"
+    analyst = _spec("analyst_snapshot_collection")
+    assert batches.build_run_command(analyst)[-1] == "-Force"
     market = _spec("market_cap_sync")
     assert batches.build_run_command(market)[-1] == "-Force"
     assert "forward_pit_launcher.ps1" in " ".join(batches.build_run_command(market))

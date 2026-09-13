@@ -12,14 +12,15 @@
 # batch.yaml → analyst_snapshot_collection.run_hours ("18" = 18h America/New_York,
 # après clôture US ; "3,14" = 3h et 14h).
 #
-# Usage manuel :
-#   powershell -ExecutionPolicy Bypass -File .\scripts\windows\analyst_snapshot_launcher.ps1
+# Usage manuel (le -Force garantit que le gate planifié est ignoré) :
+#   powershell -ExecutionPolicy Bypass -File .\scripts\windows\analyst_snapshot_launcher.ps1 -Force
 [CmdletBinding()]
 param(
     [string]$WorkspacePath,
     [string]$PythonExePath,
     [string]$LogFile,
-    [string]$EnvFilePath
+    [string]$EnvFilePath,
+    [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
@@ -210,6 +211,40 @@ if ($cfg -and ($cfg.PSObject.Properties.Name -contains 'enabled')) {
 if (-not $collectionEnabled) {
     Write-StatusLine ("[{0}] SKIP   analyst_snapshot_collect - analyst_snapshot_collection.enabled=false - aucun appel fournisseur" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))
     exit 0
+}
+
+# Le second trigger est un filet de sécurité, pas une seconde collecte.
+# Un lancement manuel avec -Force contourne toujours ce contrôle.
+$isRecovery = $false
+if (-not $Force -and $cfg) {
+    $recoveryHoursRaw = if ($cfg.PSObject.Properties.Name -contains 'recovery_run_hours') { [string]$cfg.recovery_run_hours } else { '' }
+    $recoveryMinutesRaw = if ($cfg.PSObject.Properties.Name -contains 'recovery_run_minutes') { [string]$cfg.recovery_run_minutes } else { '0' }
+    $recoveryHours = @($recoveryHoursRaw -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $recoveryMinutes = @($recoveryMinutesRaw -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($recoveryMinutes.Count -eq 0) { $recoveryMinutes = @(0) }
+    $tzName = if ($cfg.PSObject.Properties.Name -contains 'timezone') { [string]$cfg.timezone } else { 'Europe/Paris' }
+    $tzMap = @{ 'Europe/Paris'='Romance Standard Time'; 'America/New_York'='Eastern Standard Time'; 'UTC'='UTC' }
+    $tz = [TimeZoneInfo]::FindSystemTimeZoneById($(if ($tzMap.ContainsKey($tzName)) { $tzMap[$tzName] } else { $tzName }))
+    $now = [TimeZoneInfo]::ConvertTime([DateTimeOffset]::UtcNow, $tz)
+    for ($i=0; $i -lt $recoveryHours.Count; $i++) {
+        $minute = if ($recoveryMinutes.Count -eq $recoveryHours.Count) { [int]$recoveryMinutes[$i] } else { [int]$recoveryMinutes[0] }
+        if ([int]$recoveryHours[$i] -eq $now.Hour -and $minute -eq $now.Minute) { $isRecovery = $true; break }
+    }
+}
+if ($isRecovery) {
+    $lookback = if ($cfg.PSObject.Properties.Name -contains 'recovery_success_lookback_hours') { [double]$cfg.recovery_success_lookback_hours } else { 12.0 }
+    $gateOutput = @(& $resolvedPython -u -m service.forward_pit.recovery_gate --batch analyst_snapshot_collection --lookback-hours $lookback 2>&1)
+    $gateExit = $LASTEXITCODE
+    if ($gateExit -eq 10) {
+        Write-StatusLine ("[{0}] SKIP   analyst_snapshot_collect - recovery-already-completed" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))
+        exit 0
+    }
+    if ($gateExit -ne 0) {
+        $gateDetail = (($gateOutput | ForEach-Object { $_.ToString() }) -join ' ') -replace '[\r\n]+', ' '
+        Write-StatusLine ("[{0}] RECOVERY analyst_snapshot_collect - gate-unavailable-run-anyway exit={1} detail={2}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $gateExit, $gateDetail)
+    } else {
+        Write-StatusLine ("[{0}] RECOVERY analyst_snapshot_collect - primary-missing" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))
+    }
 }
 
 # ── Univers stable obligatoire : aucun repli sur un univers dynamique. ──

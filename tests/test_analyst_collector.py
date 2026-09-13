@@ -84,6 +84,17 @@ def test_analyst_launcher_honours_enabled_before_provider_call() -> None:
     assert "exit 0" in content[guard_position:provider_call_position]
 
 
+def test_analyst_launcher_has_conditional_recovery_and_manual_force() -> None:
+    root = Path(__file__).resolve().parents[1]
+    content = (root / "scripts" / "windows" / "analyst_snapshot_launcher.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "[switch]$Force" in content
+    assert "service.forward_pit.recovery_gate" in content
+    assert "recovery-already-completed" in content
+    assert "gate-unavailable-run-anyway" in content
+
+
 def test_active_analyst_collection_config_is_explicit() -> None:
     root = Path(__file__).resolve().parents[1]
     config = yaml.safe_load((root / "batch.yaml").read_text(encoding="utf-8"))

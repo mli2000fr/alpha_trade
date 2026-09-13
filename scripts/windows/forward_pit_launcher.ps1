@@ -36,6 +36,7 @@ function Write-Status([string]$line) { Add-Content -LiteralPath $effectiveLog -V
 $enabled = [bool](Get-ConfigValue $cfg 'enabled' $true)
 $status = [string](Get-ConfigValue $cfg 'status' 'ACTIVE')
 if (-not $enabled) { Write-Status "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] SKIP $BatchName enabled=false status=$status"; exit 0 }
+$isRecovery = $false
 if (-not $Force) {
     $tzName = [string](Get-ConfigValue $cfg 'timezone' 'Europe/Paris')
     $tzMap = @{ 'Europe/Paris'='Romance Standard Time'; 'America/New_York'='Eastern Standard Time'; 'UTC'='UTC' }
@@ -54,6 +55,13 @@ if (-not $Force) {
         $minute = if ($minutes.Count -eq $hours.Count) { [int]$minutes[$i] } else { [int]$minutes[0] }
         if ([int]$hours[$i] -eq $now.Hour -and $minute -eq $now.Minute) { $due = $true; break }
     }
+    $recoveryHours = @(([string](Get-ConfigValue $cfg 'recovery_run_hours' '')) -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $recoveryMinutes = @(([string](Get-ConfigValue $cfg 'recovery_run_minutes' '')) -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($recoveryMinutes.Count -eq 0) { $recoveryMinutes = @(0) }
+    for ($i=0; $i -lt $recoveryHours.Count; $i++) {
+        $minute = if ($recoveryMinutes.Count -eq $recoveryHours.Count) { [int]$recoveryMinutes[$i] } else { [int]$recoveryMinutes[0] }
+        if ([int]$recoveryHours[$i] -eq $now.Hour -and $minute -eq $now.Minute) { $due = $true; $isRecovery = $true; break }
+    }
     if (-not $due) { exit 0 }
 }
 
@@ -68,6 +76,18 @@ if ($EnvFilePath) {
         $pos = $value.IndexOf('='); if ($pos -lt 1) { continue }
         $name = $value.Substring(0,$pos).Trim(); $data = $value.Substring($pos+1).Trim().Trim('"').Trim("'")
         if ($name) { Set-Item -Path "Env:$name" -Value $data }
+    }
+}
+if ($isRecovery) {
+    $lookback = [double](Get-ConfigValue $cfg 'recovery_success_lookback_hours' 12)
+    $gateOutput = @(& $python -u -m service.forward_pit.recovery_gate --batch $BatchName --lookback-hours $lookback 2>&1)
+    $gateExit = $LASTEXITCODE
+    if ($gateExit -eq 10) { Write-Status "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] SKIP $BatchName recovery-already-completed"; exit 0 }
+    if ($gateExit -ne 0) {
+        $gateDetail = (($gateOutput | ForEach-Object { $_.ToString() }) -join ' ') -replace '[\r\n]+', ' '
+        Write-Status "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] RECOVERY $BatchName gate-unavailable-run-anyway exit=$gateExit detail=$gateDetail"
+    } else {
+        Write-Status "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] RECOVERY $BatchName primary-missing"
     }
 }
 $mutexName = 'Local\AlphaTradeForwardPIT' + ($BatchName -replace '[^A-Za-z0-9]','')

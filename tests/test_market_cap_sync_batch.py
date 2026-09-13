@@ -13,7 +13,10 @@ def test_market_cap_sync_config_contract() -> None:
     config = yaml.safe_load((ROOT / "batch.yaml").read_text(encoding="utf-8"))
     sync = config["market_cap_sync"]
     expected = {
-        "run_hours": "11,23",
+        "run_hours": "15",
+        "recovery_run_hours": "23",
+        "recovery_run_minutes": "0",
+        "recovery_success_lookback_hours": 12,
         "run_days": "1,4",
         "symbols_file": "config/univers_batch/univers_filtred_tradable.txt",
         "provider": "sec_edgar_then_yahoo_then_finnhub",
