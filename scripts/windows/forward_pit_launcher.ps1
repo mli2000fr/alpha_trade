@@ -90,6 +90,7 @@ if ($isRecovery) {
         Write-Status "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] RECOVERY $BatchName primary-missing"
     }
 }
+$passage = if ($Force) { 'manuel' } elseif ($isRecovery) { 'secours' } else { 'principal' }
 $mutexName = 'Local\AlphaTradeForwardPIT' + ($BatchName -replace '[^A-Za-z0-9]','')
 $mutex = New-Object System.Threading.Mutex($false, $mutexName); $locked = $false
 try {
@@ -126,7 +127,7 @@ try {
         $notificationPreviousErrorActionPreference = $ErrorActionPreference
         try {
             $ErrorActionPreference = 'Continue'
-            $notificationOutput = @(& $python (Join-Path $workspace 'scripts\send_batch_email.py') --event $BatchName --status $state --exit-code $exitCode --duration $duration.ToString() --log-file $tmp 2>&1)
+            $notificationOutput = @(& $python (Join-Path $workspace 'scripts\send_batch_email.py') --event $BatchName --status $state --exit-code $exitCode --duration $duration.ToString() --log-file $tmp --passage $passage 2>&1)
             $notificationExitCode = $LASTEXITCODE
         } finally {
             $ErrorActionPreference = $notificationPreviousErrorActionPreference
@@ -165,7 +166,7 @@ try {
                 & $python (Join-Path $workspace 'scripts\send_batch_email.py') `
                     --event $BatchName --status ERROR --exit-code 1 `
                     --duration $failureDuration.ToString() --log-file $failureTmp `
-                    --failed 1 --error-message $fatalMessage 2>&1
+                    --failed 1 --error-message $fatalMessage --passage $passage 2>&1
             )
             $notificationExitCode = $LASTEXITCODE
         } finally {

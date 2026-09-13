@@ -82,6 +82,28 @@ def test_schedule_displays_conditional_recovery_separately() -> None:
     )
 
 
+def test_data_coverage_prefers_recovery_then_rolling_window() -> None:
+    recovery = _spec(
+        run_hours=("16",), run_minutes=("20",),
+        raw_config={"recovery_run_hours": "22", "recovery_run_minutes": "20"},
+    )
+    assert batches.format_data_coverage(recovery) == (
+        "Snapshot J non reconstructible · second passage conditionnel disponible à "
+        "22:20 (Europe/Paris)"
+    )
+    rolling = _spec(raw_config={"lookback_days": 7})
+    assert batches.format_data_coverage(rolling) == "Fenêtre rejouée : J−7 à J"
+    forward = _spec(raw_config={"lookback_days": 7, "forward_days": 30})
+    assert batches.format_data_coverage(forward) == "Fenêtre rejouée : J−7 à J+30"
+
+
+def test_data_coverage_handles_local_backlog_and_disabled_contracts() -> None:
+    raw = _spec(universe_scope="raw_sec_filings")
+    assert "backlog RAW complet" in batches.format_data_coverage(raw)
+    disabled = _spec(enabled=False)
+    assert batches.format_data_coverage(disabled).startswith("Aucune collecte planifiée")
+
+
 def test_commands_use_force_for_immediate_runs() -> None:
     generic = _spec()
     assert "install_forward_pit_task.ps1" in " ".join(batches.build_install_command(generic))

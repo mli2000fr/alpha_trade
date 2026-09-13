@@ -170,6 +170,41 @@ def format_schedule(spec: BatchSpec) -> str:
     return schedule
 
 
+def format_data_coverage(spec: BatchSpec) -> str:
+    """Décrit la reprise réellement garantie, sans extrapoler le fournisseur."""
+    recovery_hours = _split(spec.raw_config.get("recovery_run_hours"))
+    if recovery_hours:
+        recovery_minutes = _split(spec.raw_config.get("recovery_run_minutes")) or ("0",)
+        times: list[str] = []
+        for index, hour in enumerate(recovery_hours):
+            minute = recovery_minutes[index] if len(recovery_minutes) == len(recovery_hours) else recovery_minutes[0]
+            times.append(
+                f"{int(hour):02d}:{int(minute):02d}"
+                if hour.isdigit() and minute.isdigit()
+                else f"{hour}:{minute}"
+            )
+        return (
+            "Snapshot J non reconstructible · second passage conditionnel disponible à "
+            f"{', '.join(times)} ({spec.timezone})"
+        )
+
+    lookback = spec.raw_config.get("lookback_days")
+    if lookback is None:
+        lookback = spec.raw_config.get("observation_lookback_days")
+    if lookback is not None:
+        forward = spec.raw_config.get("forward_days")
+        end = f"J+{int(forward)}" if forward is not None and int(forward) > 0 else "J"
+        return f"Fenêtre rejouée : J−{int(lookback)} à {end}"
+
+    if not spec.enabled:
+        return "Aucune collecte planifiée tant que le batch reste désactivé"
+    if spec.name == "pit_data_quality_daily":
+        return "Contrôle ponctuel à J · aucune nouvelle donnée collectée"
+    if spec.universe_scope == "raw_sec_filings":
+        return "Reprise du backlog RAW complet non encore normalisé"
+    return "Snapshot J uniquement · aucun rattrapage historique automatique"
+
+
 def _powershell_prefix() -> list[str]:
     return [shutil.which("powershell.exe") or "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]
 

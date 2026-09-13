@@ -11,6 +11,7 @@ from ihm.services.batch_management import (
     build_install_command,
     build_run_command,
     build_uninstall_command,
+    format_data_coverage,
     format_command,
     format_schedule,
     install_all_batches,
@@ -188,6 +189,7 @@ def _render_batch(
         col1, col2 = st.columns(2)
         with col1:
             st.markdown(f"**Calendrier configuré :** {format_schedule(spec)}")
+            st.markdown(f"**Couverture temporelle :** {format_data_coverage(spec)}")
             st.markdown(f"**Fournisseur(s) :** {spec.provider}")
             universe = spec.symbols_file or spec.universe_scope or "non applicable"
             st.markdown(f"**Univers :** {universe}")

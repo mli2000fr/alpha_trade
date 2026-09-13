@@ -122,6 +122,7 @@ def test_telegram_contains_counts_and_failure_message(monkeypatch) -> None:
         duration="2m",
         exit_code=1,
         warning=[],
+        passage="secours",
         metrics={
             "requested": 100,
             "received": 80,
@@ -135,6 +136,29 @@ def test_telegram_contains_counts_and_failure_message(monkeypatch) -> None:
     assert len(sent) == 1
     assert "Demandés 100 · reçus 80 · persistés 75 · échecs 20 · alertes 3" in sent[0]
     assert "Erreur : HTTP 503" in sent[0]
+    assert "Passage : second passage (secours conditionnel)" in sent[0]
+
+
+def test_error_email_event_and_payload_identify_primary_passage(monkeypatch, tmp_path) -> None:
+    log = tmp_path / "run.log"
+    log.write_text("RuntimeError: test failure", encoding="utf-8")
+    sent: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        "ihm.services.email_notifier.send_notification",
+        lambda event, payload: sent.append((event, payload)) or True,
+    )
+    monkeypatch.setattr(notifier, "_send_telegram_status", lambda _args: True)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "send_batch_email.py", "--event", "snapshot", "--status", "ERROR",
+            "--exit-code", "1", "--log-file", str(log), "--passage", "principal",
+        ],
+    )
+    assert notifier.main() == 0
+    assert sent[0][0] == "snapshot_premier_passage_error"
+    assert sent[0][1]["passage"] == "principal"
+    assert sent[0][1]["passage_label"] == "premier passage (principal)"
 
 
 def test_windows_failure_marks_legacy_batch_title_red() -> None:

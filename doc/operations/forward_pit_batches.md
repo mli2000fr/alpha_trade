@@ -146,6 +146,18 @@ Le secours `borrow_status_snapshot` reste volontairement avant l'ouverture :
 un passage plusieurs heures plus tard mesurerait un autre état de disponibilité
 du prêt et ne remplacerait pas fidèlement le snapshot pré-marché.
 
+La page **Workflow & Orchestration → Batch** affiche, pour chaque entrée, soit
+la fenêtre de reprise (`J−N à J`, éventuellement prolongée à `J+N`), soit la
+présence et l'heure du second passage conditionnel. Les normalisations locales
+affichent leur reprise de backlog RAW et les batchs désactivés indiquent qu'aucune
+collecte n'est planifiée.
+
+En cas d'échec, les notifications email et Telegram portent également le rôle
+du déclenchement : `premier passage (principal)`, `second passage (secours
+conditionnel)` ou `lancement manuel`. Un secours annulé parce que le principal
+a réussi écrit seulement un `SKIP recovery-already-completed` dans le journal ;
+il n'émet pas une fausse notification de succès ou d'échec.
+
 ## Tables et flux
 
 ```text

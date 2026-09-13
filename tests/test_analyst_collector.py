@@ -93,6 +93,7 @@ def test_analyst_launcher_has_conditional_recovery_and_manual_force() -> None:
     assert "service.forward_pit.recovery_gate" in content
     assert "recovery-already-completed" in content
     assert "gate-unavailable-run-anyway" in content
+    assert "'--passage', $passage" in content
 
 
 def test_active_analyst_collection_config_is_explicit() -> None:

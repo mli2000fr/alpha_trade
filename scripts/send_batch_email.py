@@ -13,6 +13,8 @@ Arguments :
     --warning     (répétable) avertissement du run (ex. symbols_file absent /
                   introuvable → repli active-tradable). Ajouté au mail
                   (payload ``warnings`` + en-tête des logs) et au message Telegram.
+    --passage     principal | secours | manuel. Sur erreur, identifie sans
+                  ambiguïté le passage dans le sujet email et Telegram.
 
 Canal email : ``ihm.services.email_notifier`` (env ``ALPHA_TRADE_EMAIL_*`` /
 ``ALPHA_TRADE_SMTP_*``). Canal Telegram : ``service.telegram`` (env
@@ -52,6 +54,16 @@ def _read_run_log(log_file: str, *, max_lines: int, max_chars: int) -> str:
     return text
 
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
+PASSAGE_LABELS = {
+    "principal": "premier passage (principal)",
+    "secours": "second passage (secours conditionnel)",
+    "manuel": "lancement manuel",
+}
+PASSAGE_EVENT_CODES = {
+    "principal": "premier_passage",
+    "secours": "second_passage",
+    "manuel": "lancement_manuel",
+}
 
 
 def _extract_run_summaries(log_text: str) -> list[dict]:
@@ -190,6 +202,9 @@ def _send_telegram_status(args) -> bool:
             lines.append(f"Durée : {args.duration}")
         if args.exit_code:
             lines.append(f"Code retour : {args.exit_code}")
+        passage = str(getattr(args, "passage", "") or "").strip()
+        if passage:
+            lines.append(f"Passage : {PASSAGE_LABELS.get(passage, passage)}")
     metrics = args.metrics
     lines.append(
         "Demandés {requested} · reçus {received} · persistés {persisted} · "
@@ -235,6 +250,7 @@ def main() -> int:
     parser.add_argument("--failed", type=int)
     parser.add_argument("--alerts", type=int)
     parser.add_argument("--error-message", default="")
+    parser.add_argument("--passage", choices=["principal", "secours", "manuel"], default="")
     parser.add_argument("--max-chars", type=int, default=20000)
     args = parser.parse_args()
 
@@ -262,6 +278,8 @@ def main() -> int:
         "failed": metrics["failed"],
         "alerts": metrics["alerts"],
         "error_message": metrics["error_message"],
+        "passage": args.passage,
+        "passage_label": PASSAGE_LABELS.get(args.passage, args.passage),
         "logs_du_run": log_lines,
     }
 
@@ -270,7 +288,11 @@ def main() -> int:
     sent = False
     email_failed = False
     try:
-        sent = send_notification(event=f"{args.event}_{args.status.lower()}", payload=payload)
+        notification_event = f"{args.event}_{args.status.lower()}"
+        if args.status == "ERROR" and args.passage:
+            passage_code = PASSAGE_EVENT_CODES.get(args.passage, args.passage)
+            notification_event = f"{args.event}_{passage_code}_{args.status.lower()}"
+        sent = send_notification(event=notification_event, payload=payload)
     except Exception as exc:  # noqa: BLE001 — best-effort
         email_failed = True
         print(f"send_batch_email: échec envoi email : {exc}", file=sys.stderr)

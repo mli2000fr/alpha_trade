@@ -488,6 +488,7 @@ def test_all_forward_batches_use_existing_email_and_telegram_notifier() -> None:
     assert "forward_pit_launcher.ps1" in installer
     assert "send_notification" in notifier
     assert "send_telegram_message" in notifier
+    assert "--passage $passage" in launcher
 
 
 

@@ -246,6 +246,7 @@ if ($isRecovery) {
         Write-StatusLine ("[{0}] RECOVERY analyst_snapshot_collect - primary-missing" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))
     }
 }
+$passage = if ($Force) { 'manuel' } elseif ($isRecovery) { 'secours' } else { 'principal' }
 
 # ── Univers stable obligatoire : aucun repli sur un univers dynamique. ──
 $batchWarnings = @()
@@ -350,7 +351,8 @@ try {
         '--status', $emailStatus,
         '--exit-code', $exitCode,
         '--duration', $durStr,
-        '--log-file', $emailTmp
+        '--log-file', $emailTmp,
+        '--passage', $passage
     )
     if ($errorMsg) { $emailArgs += @('--error-message', $errorMsg) }
     foreach ($warningLine in $batchWarnings) {

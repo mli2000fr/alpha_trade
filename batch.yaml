@@ -4,8 +4,9 @@
 # de la configuration fonctionnelle générale conservée dans config.yaml.
 # Les chemins relatifs sont résolus depuis la racine du projet.
 #
-# Politique d'exploitation : un seul passage planifié par batch. Les rattrapages
-# restent manuels tant qu'un mécanisme conditionnel sur l'échec n'est pas ajouté.
+# Politique d'exploitation : les collecteurs rejouables couvrent une fenêtre
+# J-N/J. Les snapshots non reconstructibles disposent d'un second passage
+# conditionnel, annulé automatiquement quand le principal a réussi.
 
 # Collecte composite de capitalisation. SEC EDGAR est la source primaire PIT :
 # dernier shares_outstanding disponible × cours à J. Yahoo puis Finnhub ne sont
@@ -43,6 +44,8 @@ earnings_calendar_sync:
   timezone: Europe/Paris
   run_hours: "23"
   run_days: "0,3,5"
+  lookback_days: 7
+  forward_days: 30
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   log_file: log/batch/earnings_calendar.txt
 
