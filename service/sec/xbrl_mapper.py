@@ -15,8 +15,7 @@ PIT Safety:
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
-from datetime import date as _date, datetime as _dt
+from datetime import date as _date
 from typing import Any
 
 LOGGER = logging.getLogger(__name__)
@@ -48,6 +47,15 @@ _TAG_MAP: dict[str, tuple[list[str], str]] = {
     "total_liabilities": (
         ["Liabilities"],
         "Total Liabilities",
+    ),
+    "total_debt": (
+        [
+            "LongTermDebtAndFinanceLeaseObligations",
+            "LongTermDebt",
+            "LongTermDebtAndFinanceLeaseObligationsCurrent",
+            "LongTermDebtCurrent",
+        ],
+        "Financial debt",
     ),
     "total_equity": (
         ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
@@ -82,8 +90,8 @@ _TAG_MAP: dict[str, tuple[list[str], str]] = {
         "Shares Outstanding",
     ),
     "ebitda": (
-        ["OperatingIncomeLoss", "EBITDA"],
-        "EBITDA / Operating Income (fallback for EV/EBITDA)",
+        ["EBITDA"],
+        "EBITDA (no operating-income semantic fallback)",
     ),
     "dividend_per_share": (
         ["CommonStockDividendsPerShareDeclared"],
@@ -230,6 +238,7 @@ def _build_filing_index(
                 "form": entry.get("form"),
                 "unit": entry.get("unit"),
                 "tag_used": entry.get("tag_used"),
+                "accn": entry.get("accn"),
             }
     return indexed
 
@@ -324,7 +333,15 @@ def extract_fundamentals_from_sec(
             "fy": fy,
             "fp": fp,
             "form": form,
+            "fiscal_period_end": end_dt,
         }
+        accessions = sorted({
+            str(entry.get("accn"))
+            for metric_idx in indexed.values()
+            if (entry := metric_idx.get((fy, fp))) and entry.get("accn")
+        })
+        if accessions:
+            row["accession_number"] = accessions[0]
 
         # Income statement metrics (YTD → quarterly conversion)
         for metric in _YTD_METRICS:
@@ -350,6 +367,7 @@ def extract_fundamentals_from_sec(
         _BS_METRICS = {
             "total_assets": "total_assets",
             "total_liabilities": "total_liabilities",
+            "total_debt": "total_debt",
             "total_equity": "total_equity",
             "current_assets": "current_assets",
             "current_liabilities": "current_liabilities",
@@ -456,9 +474,9 @@ def _compute_ratios(records: list[dict[str, Any]]) -> None:
                 row["current_ratio"] = ca / cl
 
             # Debt to equity
-            liabilities = row.get("total_liabilities")
-            if liabilities is not None and equity and equity > 0:
-                row["debt_to_equity"] = liabilities / equity
+            total_debt = row.get("total_debt")
+            if total_debt is not None and equity and equity > 0:
+                row["debt_to_equity"] = total_debt / equity
 
             # Book value per share
             shares = row.get("shares_outstanding")
@@ -504,6 +522,9 @@ def _to_fundamentals_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]
     _COLUMN_MAP = {
         "symbol": "symbol",
         "trade_date": "trade_date",
+        "fiscal_period_end": "fiscal_period_end",
+        "form": "form",
+        "accession_number": "accession_number",
         "net_margin": "net_margin",
         "operating_margin": "operating_margin",
         "gross_margin": "gross_margin",
@@ -518,7 +539,7 @@ def _to_fundamentals_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]
         "revenue_growth_yoy": "revenue_growth_yoy",
         "ebitda": "ebitda",
         "revenue": "revenue",
-        "dividend_per_share": "dividend_yield",
+        "dividend_per_share": "dividend_per_share",
     }
 
     result: list[dict[str, Any]] = []

@@ -110,7 +110,10 @@ def test_market_cap_section_is_supported_and_fail_closed() -> None:
     market_cap = cfg.get("market_cap", {}) or {}
     assert set(market_cap) == {"policy", "provider", "max_age_days", "missing_policy"}
     assert market_cap["policy"] in {"strict", "liquidity_only"}
-    assert market_cap["provider"] in {"sec_edgar", "eodhd", "yahoo_then_finnhub"}
+    assert market_cap["provider"] in {
+        "sec_edgar", "eodhd", "yahoo_then_finnhub",
+        "sec_edgar_then_yahoo_then_finnhub",
+    }
     assert int(market_cap["max_age_days"]) >= 0
     assert market_cap["missing_policy"] == "reject"
 

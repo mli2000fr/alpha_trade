@@ -79,3 +79,40 @@ def test_fresh_finnhub_replaces_stale_yahoo() -> None:
 
     assert selected.iloc[0]["market_cap_source"] == "FINNHUB"
     assert selected.iloc[0]["market_value"] == 3_000_000_000.0
+
+
+def test_composite_prefers_fresh_sec_shares_over_snapshots() -> None:
+    rows = pd.DataFrame([
+        {"symbol": "ABC", "market_value": 50_000_000.0,
+         "market_cap_reference_date": "2024-12-31", "market_cap_source": "SEC_EDGAR"},
+        {"symbol": "ABC", "market_value": 3_000_000_000.0,
+         "market_cap_reference_date": "2025-01-01", "market_cap_source": "YAHOO FINANCE"},
+        {"symbol": "ABC", "market_value": 3_100_000_000.0,
+         "market_cap_reference_date": "2025-01-01", "market_cap_source": "FINNHUB"},
+    ])
+
+    selected = _select_market_cap_rows(
+        rows, snapshot_date=date(2025, 1, 2), max_age_days=365,
+        provider="sec_edgar_then_yahoo_then_finnhub",
+    )
+
+    assert selected.iloc[0]["market_cap_source"] == "SEC_EDGAR"
+    assert selected.iloc[0]["market_value"] == 50_000_000.0
+
+
+def test_composite_falls_back_to_yahoo_when_sec_is_stale() -> None:
+    rows = pd.DataFrame([
+        {"symbol": "ABC", "market_value": 50_000_000.0,
+         "market_cap_reference_date": "2022-01-01", "market_cap_source": "SEC_EDGAR"},
+        {"symbol": "ABC", "market_value": 3_000_000_000.0,
+         "market_cap_reference_date": "2025-01-01", "market_cap_source": "YAHOO FINANCE"},
+        {"symbol": "ABC", "market_value": 3_100_000_000.0,
+         "market_cap_reference_date": "2025-01-01", "market_cap_source": "FINNHUB"},
+    ])
+
+    selected = _select_market_cap_rows(
+        rows, snapshot_date=date(2025, 1, 2), max_age_days=365,
+        provider="sec_edgar_then_yahoo_then_finnhub",
+    )
+
+    assert selected.iloc[0]["market_cap_source"] == "YAHOO FINANCE"

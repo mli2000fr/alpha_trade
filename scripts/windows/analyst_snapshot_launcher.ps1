@@ -1,25 +1,26 @@
-﻿# analyst_snapshot_launcher.ps1
+# analyst_snapshot_launcher.ps1
 #
 # Collecte prospective Yahoo analyst (RESEARCH ONLY) :
 #   python -u scripts/collect_yahoo_analyst_snapshots.py --universe analyst_research --write-db --resume
 # et journalise une ligne de statut (START / OK / ERROR) dans
 #   log/batch/analyst_snapshots.txt
-# (chemin piloté par config.yaml → analyst_snapshot_collection.log_file).
+# (chemin piloté par batch.yaml → analyst_snapshot_collection.log_file).
 #
 # Point d'entrée utilisé par la tâche planifiée Windows
 # « AlphaTrade-AnalystSnapshot » (install_analyst_snapshot_task.ps1),
 # qui déclenche ce launcher automatiquement aux heures de
-# config.yaml → analyst_snapshot_collection.run_hours ("18" = 18h America/New_York,
+# batch.yaml → analyst_snapshot_collection.run_hours ("18" = 18h America/New_York,
 # après clôture US ; "3,14" = 3h et 14h).
 #
-# Usage manuel :
-#   powershell -ExecutionPolicy Bypass -File .\scripts\windows\analyst_snapshot_launcher.ps1
+# Usage manuel (le -Force garantit que le gate planifié est ignoré) :
+#   powershell -ExecutionPolicy Bypass -File .\scripts\windows\analyst_snapshot_launcher.ps1 -Force
 [CmdletBinding()]
 param(
     [string]$WorkspacePath,
     [string]$PythonExePath,
     [string]$LogFile,
-    [string]$EnvFilePath
+    [string]$EnvFilePath,
+    [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
@@ -73,7 +74,7 @@ function Read-AnalystSnapshotConfig {
         [Parameter(Mandatory = $true)]
         [string]$PythonExe
     )
-    $configPath = Join-Path $Workspace 'config.yaml'
+    $configPath = Join-Path $Workspace 'batch.yaml'
     if (-not (Test-Path -LiteralPath $configPath)) {
         return $null
     }
@@ -148,13 +149,13 @@ function Write-StatusLine {
 
 # ── DÉBUT DE TRAITEMENT : écrit immédiatement (sait que le batch tourne) ──
 $started = Get-Date
-Write-StatusLine ("[{0}] DÉBUT DE TRAITEMENT analyst_snapshot_collect pid={1} — le batch est lancé" -f $started.ToString('yyyy-MM-dd HH:mm:ss'), $PID)
+Write-StatusLine ("[{0}] DEBUT DE TRAITEMENT analyst_snapshot_collect pid={1} - le batch est lance" -f $started.ToString('yyyy-MM-dd HH:mm:ss'), $PID)
 
 # ── Interpréteur Python (indispensable) ──
 try {
     $resolvedPython = Resolve-AlphaTradePythonExe -Workspace $resolvedWorkspace -RequestedPythonExePath $PythonExePath
 } catch {
-    Write-StatusLine ("[{0}] FIN TRAITEMENT ERROR  analyst_snapshot_collect — Python indisponible : {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), ($_.Exception.Message -replace '[\r\n]+', ' '))
+    Write-StatusLine ("[{0}] FIN TRAITEMENT ERROR  analyst_snapshot_collect - Python indisponible : {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), ($_.Exception.Message -replace '[\r\n]+', ' '))
     exit 1
 }
 
@@ -176,7 +177,7 @@ if ($resolvedEnvFile) {
     Import-AlphaTradeEnvFile -Path $resolvedEnvFile
 }
 
-# ── Configuration depuis config.yaml (log_file, symbols_file) ──
+# ── Configuration depuis batch.yaml (log_file, symbols_file) ──
 $cfg = Read-AnalystSnapshotConfig -Workspace $resolvedWorkspace -PythonExe $resolvedPython
 if (-not $LogFile -and $cfg -and ($cfg.PSObject.Properties.Name -contains 'log_file') -and $cfg.log_file) {
     $cfgLogFile = [string]$cfg.log_file
@@ -189,39 +190,92 @@ if (-not $LogFile -and $cfg -and ($cfg.PSObject.Properties.Name -contains 'log_f
         if ($cfgLogDir -and -not (Test-Path -LiteralPath $cfgLogDir)) {
             New-Item -ItemType Directory -Path $cfgLogDir -Force | Out-Null
         }
-        Write-StatusLine ("[{0}] NOTE   log_file = config.yaml → {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $effectiveLogFile)
+        Write-StatusLine ("[{0}] NOTE   log_file = batch.yaml -> {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $effectiveLogFile)
     }
 }
 
-# ── Univers : symbols_file (config.yaml) — warning si absent OU introuvable ──
-#    Le collecteur lit lui-même analyst_snapshot_collection.symbols_file
-#    (fichier 2255, même fichier qu'earnings_calendar_sync) ; sinon repli
-#    univers active-tradable (~13 600). On avertit ici pour que le warning
-#    remonte dans le log de statut + email + Telegram.
+# Le launcher est le dernier garde-fou avant l'appel réseau : le champ
+# analyst_snapshot_collection.enabled doit donc être effectif, y compris quand
+# la tâche Windows reste installée. Une clé absente conserve le comportement
+# historique (activé) ; les formes YAML/JSON et textuelles usuelles sont gérées.
+$collectionEnabled = $true
+if ($cfg -and ($cfg.PSObject.Properties.Name -contains 'enabled')) {
+    $enabledValue = $cfg.enabled
+    if ($enabledValue -is [bool]) {
+        $collectionEnabled = [bool]$enabledValue
+    } else {
+        $normalizedEnabled = ([string]$enabledValue).Trim().ToLowerInvariant()
+        $collectionEnabled = @('1', 'true', 'yes', 'on') -contains $normalizedEnabled
+    }
+}
+if (-not $collectionEnabled) {
+    Write-StatusLine ("[{0}] SKIP   analyst_snapshot_collect - analyst_snapshot_collection.enabled=false - aucun appel fournisseur" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))
+    exit 0
+}
+
+# Le second trigger est un filet de sécurité, pas une seconde collecte.
+# Un lancement manuel avec -Force contourne toujours ce contrôle.
+$isRecovery = $false
+if (-not $Force -and $cfg) {
+    $recoveryHoursRaw = if ($cfg.PSObject.Properties.Name -contains 'recovery_run_hours') { [string]$cfg.recovery_run_hours } else { '' }
+    $recoveryMinutesRaw = if ($cfg.PSObject.Properties.Name -contains 'recovery_run_minutes') { [string]$cfg.recovery_run_minutes } else { '0' }
+    $recoveryHours = @($recoveryHoursRaw -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $recoveryMinutes = @($recoveryMinutesRaw -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($recoveryMinutes.Count -eq 0) { $recoveryMinutes = @(0) }
+    $tzName = if ($cfg.PSObject.Properties.Name -contains 'timezone') { [string]$cfg.timezone } else { 'Europe/Paris' }
+    $tzMap = @{ 'Europe/Paris'='Romance Standard Time'; 'America/New_York'='Eastern Standard Time'; 'UTC'='UTC' }
+    $tz = [TimeZoneInfo]::FindSystemTimeZoneById($(if ($tzMap.ContainsKey($tzName)) { $tzMap[$tzName] } else { $tzName }))
+    $now = [TimeZoneInfo]::ConvertTime([DateTimeOffset]::UtcNow, $tz)
+    for ($i=0; $i -lt $recoveryHours.Count; $i++) {
+        $minute = if ($recoveryMinutes.Count -eq $recoveryHours.Count) { [int]$recoveryMinutes[$i] } else { [int]$recoveryMinutes[0] }
+        if ([int]$recoveryHours[$i] -eq $now.Hour -and $minute -eq $now.Minute) { $isRecovery = $true; break }
+    }
+}
+if ($isRecovery) {
+    $lookback = if ($cfg.PSObject.Properties.Name -contains 'recovery_success_lookback_hours') { [double]$cfg.recovery_success_lookback_hours } else { 12.0 }
+    $gateOutput = @(& $resolvedPython -u -m service.forward_pit.recovery_gate --batch analyst_snapshot_collection --lookback-hours $lookback 2>&1)
+    $gateExit = $LASTEXITCODE
+    if ($gateExit -eq 10) {
+        Write-StatusLine ("[{0}] SKIP   analyst_snapshot_collect - recovery-already-completed" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))
+        exit 0
+    }
+    if ($gateExit -ne 0) {
+        $gateDetail = (($gateOutput | ForEach-Object { $_.ToString() }) -join ' ') -replace '[\r\n]+', ' '
+        Write-StatusLine ("[{0}] RECOVERY analyst_snapshot_collect - gate-unavailable-run-anyway exit={1} detail={2}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $gateExit, $gateDetail)
+    } else {
+        Write-StatusLine ("[{0}] RECOVERY analyst_snapshot_collect - primary-missing" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))
+    }
+}
+$passage = if ($Force) { 'manuel' } elseif ($isRecovery) { 'secours' } else { 'principal' }
+
+# ── Univers stable obligatoire : aucun repli sur un univers dynamique. ──
 $batchWarnings = @()
+$universePreflightError = ''
 $symbolsFileValue = ''
 if ($cfg -and ($cfg.PSObject.Properties.Name -contains 'symbols_file') -and $cfg.symbols_file) {
     $symbolsFileValue = [string]$cfg.symbols_file
 }
 if (-not $symbolsFileValue) {
-    $warnMsg = "analyst_snapshot_collection.symbols_file non renseigné (config.yaml) — repli univers active-tradable (~13 600)"
+    $warnMsg = "analyst_snapshot_collection.symbols_file obligatoire mais non renseigne dans batch.yaml"
     $batchWarnings += $warnMsg
-    Write-StatusLine ("[{0}] WARNING univers — {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $warnMsg)
+    $universePreflightError = $warnMsg
+    Write-StatusLine ("[{0}] ERROR  univers - {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $warnMsg)
 } else {
     $symbolsFilePath = $symbolsFileValue
     if (-not [IO.Path]::IsPathRooted($symbolsFilePath)) {
         $symbolsFilePath = Join-Path $resolvedWorkspace $symbolsFilePath
     }
     if (Test-Path -LiteralPath $symbolsFilePath) {
-        Write-StatusLine ("[{0}] NOTE   univers = symbols_file → {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $symbolsFilePath)
+        Write-StatusLine ("[{0}] NOTE   univers = symbols_file -> {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $symbolsFilePath)
     } else {
-        $warnMsg = "analyst_snapshot_collection.symbols_file introuvable : $symbolsFilePath — repli univers active-tradable (~13 600)"
+        $warnMsg = "analyst_snapshot_collection.symbols_file introuvable : $symbolsFilePath"
         $batchWarnings += $warnMsg
-        Write-StatusLine ("[{0}] WARNING univers — {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $warnMsg)
+        $universePreflightError = $warnMsg
+        Write-StatusLine ("[{0}] ERROR  univers - {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $warnMsg)
     }
 }
 
-# Commande de collecte (mêmes arguments que la doc config.yaml).
+# Commande de collecte (mêmes arguments que la doc batch.yaml).
 $collectScriptPath = Join-Path $resolvedWorkspace 'scripts\collect_yahoo_analyst_snapshots.py'
 $commandArgs = @(
     '-u',
@@ -239,6 +293,7 @@ $captured = $null
 $exitCode = 0
 $errorMsg = ''
 try {
+    if ($universePreflightError) { throw $universePreflightError }
     Push-Location $resolvedWorkspace
     try {
         # ── Encodage UTF-8 : le collecteur écrit en UTF-8 (sys.stdout.reconfigure) et
@@ -275,10 +330,10 @@ $dur = $finished - $started
 $durStr = '{0}h{1:D2}m{2:D2}s' -f [int]$dur.TotalHours, $dur.Minutes, $dur.Seconds
 
 if ($exitCode -eq 0) {
-    Write-StatusLine ("[{0}] FIN TRAITEMENT OK     analyst_snapshot_collect exit=0 durée={1} — log/batch/analyst_snapshots.log" -f $stamp, $durStr)
+    Write-StatusLine ("[{0}] FIN TRAITEMENT OK     analyst_snapshot_collect exit=0 duree={1} - log/batch/analyst_snapshots.log" -f $stamp, $durStr)
 } else {
     $err = if ($errorMsg) { " err=$errorMsg" } else { '' }
-    Write-StatusLine ("[{0}] FIN TRAITEMENT ERROR  analyst_snapshot_collect exit={1} durée={2}{3} — log/batch/analyst_snapshots.log" -f $stamp, $exitCode, $durStr, $err)
+    Write-StatusLine ("[{0}] FIN TRAITEMENT ERROR  analyst_snapshot_collect exit={1} duree={2}{3} - log/batch/analyst_snapshots.log" -f $stamp, $exitCode, $durStr, $err)
 }
 
 # ── Email de fin de batch (statut + logs de CE run) via email_notifier ──
@@ -296,12 +351,15 @@ try {
         '--status', $emailStatus,
         '--exit-code', $exitCode,
         '--duration', $durStr,
-        '--log-file', $emailTmp
+        '--log-file', $emailTmp,
+        '--passage', $passage
     )
+    if ($errorMsg) { $emailArgs += @('--error-message', $errorMsg) }
     foreach ($warningLine in $batchWarnings) {
         $emailArgs += @('--warning', $warningLine)
     }
-    & $resolvedPython (Join-Path $resolvedWorkspace 'scripts\send_batch_email.py') @emailArgs 2>&1 | Out-Null
+    $notificationOutput = @(& $resolvedPython (Join-Path $resolvedWorkspace 'scripts\send_batch_email.py') @emailArgs 2>&1)
+    foreach ($line in $notificationOutput) { Write-StatusLine ("[{0}] NOTIFY {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $line.ToString()) }
     Remove-Item -LiteralPath $emailTmp -Force -ErrorAction SilentlyContinue
 } catch {
     Write-StatusLine ("[{0}] NOTE   email de fin non envoyé (best-effort) : {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), ($_.Exception.Message -replace '[\r\n]+', ' '))
