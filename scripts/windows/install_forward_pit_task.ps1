@@ -40,7 +40,7 @@ foreach ($minute in ($minutes | Sort-Object -Unique)) {
     $at=(Get-Date).Date.AddMinutes([int]$minute)
     $triggers += New-ScheduledTaskTrigger -Once -At $at -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration (New-TimeSpan -Days 3650)
 }
-$arguments='-NoProfile -ExecutionPolicy Bypass -File "{0}" -BatchName "{1}" -WorkspacePath "{2}" -PythonExePath "{3}"' -f $launcher,$BatchName,$workspace,$python
+$arguments='-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -BatchName "{1}" -WorkspacePath "{2}" -PythonExePath "{3}"' -f $launcher,$BatchName,$workspace,$python
 $action=New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arguments -WorkingDirectory $workspace
 $settings=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 12)
 $principal=if($RunAs -eq 'System'){New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest}else{New-ScheduledTaskPrincipal -UserId $UserId -LogonType Interactive}

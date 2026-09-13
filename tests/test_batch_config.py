@@ -291,6 +291,9 @@ def test_opening_window_batch_uses_delayed_sip_on_full_stable_universe() -> None
     assert opening["window_start"] == "04:00"
     assert opening["window_end"] == "10:30"
     assert opening["minimum_sip_delay_minutes"] >= 16
+    assert opening["research_feature_mode"] == "price_only"
+    assert opening["price_checkpoints_minutes"] == "5,15,30,60"
+    assert opening["volume_required"] is False
     assert "max_symbols" not in opening
 
 

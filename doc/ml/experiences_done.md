@@ -910,6 +910,30 @@ serving n’a changé. Artefact canonique :
 `artifacts/research/oracle_opening_window_availability/e20a-opening-availability-20260913211726`.
 Voir [E20-A — disponibilité Opening Window](oracle_opening_window_availability_e20a.md).
 
+## E20-B — Confirmation Opening Window price-only — `IMPLEMENTED_WAITING_DATA`
+
+Le protocole est pré-enregistré et testé sans utiliser volume, trade count ou
+VWAP. Il mesure aux checkpoints 5/15/30/60 minutes les rendements, ranges,
+excursions et position de clôture dans le range. La politique primaire figée
+est le mouvement à 30 minutes avec abstention sous ±0,50 %. Ses gates exigent
+126 dates, 5 000 événements, 1 000 décisions dont 500 D1/D10, 60 % de
+couverture, une précision globale ≥ 52 %, une précision D1/D10 ≥ 55 %, un
+bootstrap positif et une stabilité par folds et semestres. Aucun modèle ni
+serving n'est modifié.
+
+Le harnais existe mais E20-A constate encore zéro ligne compatible ; aucun
+verdict statistique E20-B n'est donc revendiqué. Le prochain résultat autorisé
+est `BLOCKED_INSUFFICIENT_DATA`, `NO_GO_PRICE_ONLY` ou
+`GO_RESEARCH_VOLUME_ABLATION`. Voir
+[E20-B — confirmation price-only](oracle_opening_price_confirmation_e20b.md).
+
+Le chemin de backfill compact est validé sur une séance historique : 278
+symboles Oracle demandés, 274 couverts et 13 362 barres SIP reçues sans échec.
+Il agrège immédiatement les minutes en partitions price-only reprenables afin
+d'éviter de dupliquer environ 35 millions de barres dans les tables canonique
+et append-only. Le run complet a été lancé sur les 1 763 séances / 582 306
+événements du contrat OOF.
+
 ## POC Alpaca options trades versus barres — `GO_RESEARCH_ONLY`
 
 Sur la séance du 11 septembre 2026, 10 contrats CALL/PUT ATM proches de DTE 10 sur AAPL, MSFT, NVDA, TSLA et AMD ont été comparés entre l'endpoint transactions et les barres une minute Alpaca. Les 10 volumes et compteurs de transactions concordent exactement ; ratios médians 1,0 et erreur relative médiane du VWAP recomposé 2,64 × 10⁻⁹.
