@@ -21,6 +21,7 @@ import gzip
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import asdict, dataclass
@@ -33,6 +34,7 @@ DEFAULT_HOST = "localhost"
 DEFAULT_DB = "alpha_trade"
 DEFAULT_DEST_DIR = Path("backups") / "db"
 DEFAULT_KEEP = 30
+_SQL_IDENTIFIER = re.compile(r"^[A-Za-z0-9_$]+$")
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +49,9 @@ class DbBackupReport:
     duration_seconds: float
     host: str
     db: str
+    archive_prefix: str
+    include_tables: list[str]
+    exclude_tables: list[str]
     dest_dir: str
     dump_path: str | None
     dump_size_bytes: int
@@ -68,17 +73,34 @@ def _have_mysqldump() -> bool:
     return shutil.which("mysqldump") is not None
 
 
-def _list_dumps(dest_dir: Path) -> list[Path]:
+def _list_dumps(dest_dir: Path, archive_prefix: str) -> list[Path]:
     """Retourne les dumps triés par mtime ascendant (plus ancien en premier)."""
-    return sorted(dest_dir.glob("alpha_trade_*.sql.gz"), key=lambda p: p.stat().st_mtime)
+    return sorted(dest_dir.glob(f"{archive_prefix}_*.sql.gz"), key=lambda p: p.stat().st_mtime)
 
 
-def _build_dump_path(dest_dir: Path, db: str) -> Path:
+def _build_dump_path(dest_dir: Path, archive_prefix: str) -> Path:
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    return dest_dir / f"{db}_{ts}.sql.gz"
+    return dest_dir / f"{archive_prefix}_{ts}.sql.gz"
 
 
-def _run_mysqldump(host: str, db: str, user: str, password: str, dump_path: Path) -> None:
+def _validate_identifiers(values: list[str], *, label: str) -> None:
+    invalid = [value for value in values if not _SQL_IDENTIFIER.fullmatch(value)]
+    if invalid:
+        raise ValueError(f"{label} contient un identifiant SQL invalide: {invalid[0]!r}")
+
+
+def _run_mysqldump(
+    host: str,
+    db: str,
+    user: str,
+    password: str,
+    dump_path: Path,
+    *,
+    include_tables: list[str],
+    exclude_tables: list[str],
+    include_routines: bool,
+    include_triggers: bool,
+) -> None:
     """Lance mysqldump et compresse directement en gzip."""
     if not _have_mysqldump():
         raise RuntimeError("Binaire 'mysqldump' introuvable dans le PATH.")
@@ -87,16 +109,25 @@ def _run_mysqldump(host: str, db: str, user: str, password: str, dump_path: Path
         "mysqldump",
         "-h", host,
         "-u", user,
-        f"-p{password}",
         "--single-transaction",
-        "--routines",
-        "--triggers",
         "--default-character-set=utf8mb4",
-        db,
     ]
+    if include_routines:
+        cmd.append("--routines")
+    if include_triggers:
+        cmd.append("--triggers")
+    else:
+        cmd.append("--skip-triggers")
+    cmd.extend(f"--ignore-table={db}.{table}" for table in exclude_tables)
+    cmd.append(db)
+    cmd.extend(include_tables)
     LOGGER.info("Exécution mysqldump %s/%s → %s", host, db, dump_path)
+    process_env = os.environ.copy()
+    process_env["MYSQL_PWD"] = password
     with gzip.open(dump_path, "wb") as gz_out:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=process_env,
+        )
         assert proc.stdout is not None
         while chunk := proc.stdout.read(64 * 1024):
             gz_out.write(chunk)
@@ -107,10 +138,10 @@ def _run_mysqldump(host: str, db: str, user: str, password: str, dump_path: Path
     LOGGER.info("mysqldump terminé avec succès.")
 
 
-def _rotate(dest_dir: Path, keep: int, dry_run: bool) -> tuple[list[str], list[str]]:
+def _rotate(dest_dir: Path, archive_prefix: str, keep: int, dry_run: bool) -> tuple[list[str], list[str]]:
     """Supprime les dumps excédentaires. Retourne (rotated, kept)."""
-    dumps = _list_dumps(dest_dir)
-    to_delete = dumps[: max(0, len(dumps) - keep + 1)]
+    dumps = _list_dumps(dest_dir, archive_prefix)
+    to_delete = dumps[: max(0, len(dumps) - keep)]
     rotated: list[str] = []
     for old in to_delete:
         LOGGER.info("Rotation — suppression de %s", old)
@@ -137,6 +168,11 @@ def backup_db(
     password: str = "",
     dest_dir: Path = DEFAULT_DEST_DIR,
     keep: int = DEFAULT_KEEP,
+    archive_prefix: str | None = None,
+    include_tables: list[str] | None = None,
+    exclude_tables: list[str] | None = None,
+    include_routines: bool = True,
+    include_triggers: bool = True,
     dry_run: bool = False,
 ) -> DbBackupReport:
     """Exécute un backup de la DB et applique la rotation des dumps.
@@ -148,6 +184,11 @@ def backup_db(
         password: Mot de passe MySQL (lu depuis l'env ``PASSWORD_DB`` si vide).
         dest_dir: Répertoire de destination des dumps.
         keep: Nombre de dumps à conserver.
+        archive_prefix: Préfixe isolant le jeu d'archives et sa rotation.
+        include_tables: Tables seules à sauvegarder, vide pour toute la base.
+        exclude_tables: Tables à exclure d'un dump de base complet.
+        include_routines: Inclure les procédures et fonctions stockées.
+        include_triggers: Inclure les triggers des tables sauvegardées.
         dry_run: Si True, simule sans exécuter mysqldump.
 
     Returns:
@@ -161,9 +202,22 @@ def backup_db(
     kept: list[str] = []
 
     dest_dir = dest_dir.resolve()
+    archive_prefix = archive_prefix or db
+    include_tables = list(include_tables or [])
+    exclude_tables = list(exclude_tables or [])
     user = user or os.getenv("LOGIN_DB", "")
     password = password or os.getenv("PASSWORD_DB", "")
 
+    try:
+        _validate_identifiers([db, archive_prefix], label="db/archive_prefix")
+        _validate_identifiers(include_tables, label="include_tables")
+        _validate_identifiers(exclude_tables, label="exclude_tables")
+    except ValueError as exc:
+        errors.append(str(exc))
+    if include_tables and exclude_tables:
+        errors.append("include_tables et exclude_tables sont mutuellement exclusifs.")
+    if keep < 1:
+        errors.append("keep doit être supérieur ou égal à 1.")
     if not dry_run and not (user and password):
         errors.append("LOGIN_DB / PASSWORD_DB requis dans l'environnement.")
 
@@ -171,7 +225,7 @@ def backup_db(
         if not dry_run:
             dest_dir.mkdir(parents=True, exist_ok=True)
 
-        dump_path = _build_dump_path(dest_dir, db)
+        dump_path = _build_dump_path(dest_dir, archive_prefix)
 
         if not dry_run:
             if not _have_mysqldump():
@@ -179,15 +233,25 @@ def backup_db(
             else:
                 try:
                     assert dump_path is not None  # toujours set quand not dry_run
-                    _run_mysqldump(host, db, user, password, dump_path)
+                    _run_mysqldump(
+                        host, db, user, password, dump_path,
+                        include_tables=include_tables,
+                        exclude_tables=exclude_tables,
+                        include_routines=include_routines,
+                        include_triggers=include_triggers,
+                    )
                     dump_size = dump_path.stat().st_size
                     LOGGER.info("Dump créé — %.1f MB", dump_size / 1024 / 1024)
                 except Exception as exc:  # noqa: BLE001
                     errors.append(f"mysqldump: {exc}")
+                    if dump_path.exists():
+                        dump_path.unlink(missing_ok=True)
 
     if not errors and not dry_run:
         try:
-            rotated, kept = _rotate(dest_dir, keep=keep, dry_run=dry_run)
+            rotated, kept = _rotate(
+                dest_dir, archive_prefix=archive_prefix, keep=keep, dry_run=dry_run,
+            )
         except Exception as exc:  # noqa: BLE001
             errors.append(f"rotation: {exc}")
 
@@ -206,6 +270,9 @@ def backup_db(
         duration_seconds=round((finished - started).total_seconds(), 3),
         host=host,
         db=db,
+        archive_prefix=archive_prefix,
+        include_tables=include_tables,
+        exclude_tables=exclude_tables,
         dest_dir=str(dest_dir),
         dump_path=str(dump_path) if dump_path else None,
         dump_size_bytes=dump_size,
@@ -241,6 +308,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_KEEP,
         help=f"Nombre de dumps à conserver (défaut: {DEFAULT_KEEP}).",
     )
+    p.add_argument("--archive-prefix", default=None)
+    p.add_argument("--include-table", action="append", default=[])
+    p.add_argument("--exclude-table", action="append", default=[])
+    p.add_argument("--no-routines", action="store_true")
+    p.add_argument("--no-triggers", action="store_true")
     p.add_argument(
         "--dry-run",
         action="store_true",
@@ -267,6 +339,11 @@ def main(argv: list[str] | None = None) -> int:
         password=password,
         dest_dir=args.dest_dir,
         keep=args.keep,
+        archive_prefix=args.archive_prefix,
+        include_tables=args.include_table,
+        exclude_tables=args.exclude_table,
+        include_routines=not args.no_routines,
+        include_triggers=not args.no_triggers,
         dry_run=args.dry_run,
     )
     payload = json.dumps(report.to_dict(), indent=2, sort_keys=True)

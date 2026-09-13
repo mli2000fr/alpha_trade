@@ -2156,8 +2156,66 @@ def ml_artifacts_backup(
     return outcome
 
 
+def database_backup(
+    engine: Engine,
+    cfg: dict[str, Any],
+    run_id: str,
+    dry: bool,
+) -> Outcome:
+    """Crée un dump MySQL complet ou limité aux tables déclarées."""
+    del engine, run_id
+    from scripts.backup_db import backup_db
+
+    def table_list(name: str) -> list[str]:
+        value = cfg.get(name)
+        if isinstance(value, (list, tuple)):
+            return [str(item).strip() for item in value if str(item).strip()]
+        return [item.strip() for item in str(value or "").split(",") if item.strip()]
+
+    destination = Path(str(cfg.get("dest_dir") or "backups/db"))
+    if not destination.is_absolute():
+        destination = ROOT / destination
+    keep = int(cfg.get("keep", 5))
+    report = backup_db(
+        host=str(cfg.get("host") or "localhost"),
+        db=str(cfg.get("db") or "alpha_trade"),
+        dest_dir=destination,
+        keep=keep,
+        archive_prefix=str(cfg.get("archive_prefix") or cfg.get("db") or "alpha_trade"),
+        include_tables=table_list("include_tables"),
+        exclude_tables=table_list("exclude_tables"),
+        include_routines=bool(cfg.get("include_routines", True)),
+        include_triggers=bool(cfg.get("include_triggers", True)),
+        dry_run=dry,
+    )
+    outcome = Outcome(
+        requested=1,
+        received=0 if report.errors else 1,
+        persisted=0 if dry or report.errors else 1,
+        failed=1 if report.errors else 0,
+        details={
+            "host": report.host,
+            "db": report.db,
+            "dest_dir": report.dest_dir,
+            "dump_path": report.dump_path,
+            "dump_size_bytes": report.dump_size_bytes,
+            "archive_prefix": report.archive_prefix,
+            "include_tables": report.include_tables,
+            "exclude_tables": report.exclude_tables,
+            "rotated_files": report.rotated_files,
+            "kept_files": report.kept_files,
+            "keep": keep,
+        },
+    )
+    if report.errors:
+        raise BatchRunError("; ".join(report.errors), outcome)
+    return outcome
+
+
 HANDLERS: dict[str, Callable[[Engine, dict[str, Any], str, bool], Outcome]] = {
     "ml_artifacts_backup": ml_artifacts_backup,
+    "db_core_backup": database_backup,
+    "db_news_raw_backup": database_backup,
     "market_cap_sync": market_cap_sync,
     "latest_quotes_sync": latest_quotes_sync_batch,
     "daily_bars_sync": daily_bars_sync,

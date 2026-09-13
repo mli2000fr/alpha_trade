@@ -57,7 +57,7 @@ Principes invariants :
 - tout batch par symbole utilise `config/univers_batch/univers_filtred_tradable.txt` ; l'absence du fichier est bloquante et ne déclenche aucun repli vers un univers dynamique ;
 - seuls les flux de découverte ou intrinsèquement globaux restent market-wide : security master, corporate actions, dépôts SEC et séries macro.
 
-### Contrat d'univers des 23 batchs
+### Contrat d'univers des batchs
 
 | Périmètre | Batchs | Contrat |
 |---|---|---|
@@ -68,6 +68,7 @@ Principes invariants :
 | Dépôts SEC globaux | `sec_edgar_incremental`, `sec_corporate_events_normalize`, `sec_institutional_ownership_normalize` | collecte RAW puis normalisation des formulaires configurés ; pas de présélection Oracle |
 | Macro | `fred_alfred_vintage_sync` | séries économiques, notion de symbole non applicable |
 | Sauvegarde ML | `ml_artifacts_backup` | snapshot hebdomadaire du répertoire runtime `artifacts/models`, sans univers de symboles |
+| Sauvegardes DB | `db_core_backup`, `db_news_raw_backup` | dumps locaux sans univers de symboles ; périmètres complémentaires et rotations indépendantes |
 
 Le TOP20 est une **sortie de modèle**, recalculée après entraînement ou à chaque date de backtest. Il n'est jamais une source de collecte. Ainsi, un nouvel Oracle, un nouvel horizon ou une nouvelle politique de ranking peut reconstruire son propre TOP20 à partir du même historique large.
 
@@ -81,7 +82,9 @@ Le TOP20 est une **sortie de modèle**, recalculée après entraînement ou à c
 | P0 | `corporate_actions_sync` | Business Quant market-wide + Alpaca | `corporate_action_source_events` | actif |
 | P0 | `sec_edgar_incremental` | SEC daily master index + submissions | `sec_filing_raw` | actif |
 | P0 | `pit_data_quality_daily` | contrôles locaux | `pit_data_quality_metrics`, `pit_data_quality_issues` | désactivé, contrôle manuel facultatif |
-| P0 | `ml_artifacts_backup` | système de fichiers local | `backups/ml/ml_artifacts_*.tar.gz` | actif ; samedi 01:00 Paris ; 3 archives conservées |
+| P0 | `ml_artifacts_backup` | système de fichiers local | `backups/ml/ml_artifacts_*.tar.gz` | actif ; samedi 01:00 Paris ; rétention configurable (`keep`) |
+| P0 | `db_core_backup` | MySQL local / `mysqldump` | `backups/db/alpha_trade_without_news_*.sql.gz` | actif ; dimanche 01:00 Paris ; toute la base sauf `news_raw` ; 5 archives |
+| P0 | `db_news_raw_backup` | MySQL local / `mysqldump` | `backups/db/alpha_trade_news_raw_*.sql.gz` | actif ; premier dimanche du mois 18:00 Paris ; `news_raw` seule ; 3 archives |
 | P1 | `borrow_status_snapshot` | Alpaca Assets | `stock_borrow_status_snapshots` | actif |
 | P1 | `analyst_snapshot_collection` | Yahoo Finance/yfinance | consensus, tendances/révisions EPS, targets et recommandations | actif, recherche personnelle/éducative uniquement |
 | P1 | `business_quant_analyst_snapshot` | Business Quant `/estimates` | `stock_analyst_consensus_snapshots` | remplacé par Yahoo, désactivé |
