@@ -362,9 +362,12 @@ def render() -> None:
         st.rerun()
     if global_col2.button(
         "♻️ Installer / réinstaller tous", use_container_width=True,
-        help="Installe les 19 tâches configurées. Les batchs enabled=false resteront dormants.",
+        help="Installe uniquement les tâches dont enabled=true dans batch.yaml. Les batchs désactivés ne sont pas touchés.",
     ):
-        install_specs = [spec for spec in specs if spec.name not in busy_names]
+        install_specs = [
+            spec for spec in specs
+            if spec.enabled and spec.name not in busy_names
+        ]
         with st.spinner(f"Installation de {len(install_specs)} tâche(s) Windows…"):
             results = install_all_batches(install_specs, run_as=run_as)
         _task_states.clear()

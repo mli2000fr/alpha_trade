@@ -35,6 +35,7 @@ from service.forward_pit.batch import (
     _select_option_surface_contracts,
     _underlying_price,
     daily_bars_sync,
+    latest_quotes_sync_batch,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,6 +49,7 @@ def test_all_enabled_forward_batches_have_handlers() -> None:
         "oracle_opening_window_sync", "sec_corporate_events_normalize",
         "sec_institutional_ownership_normalize", "fred_alfred_vintage_sync",
         "finra_short_volume_sync",
+        "latest_quotes_sync",
         "options_delayed_bars_sync", "option_contract_adjustment_sync",
     }
     assert expected == set(HANDLERS)
@@ -55,6 +57,44 @@ def test_all_enabled_forward_batches_have_handlers() -> None:
         "auction_imbalance_sync", "securities_lending_sync",
         "official_options_nbbo_sync",
     }
+
+
+def test_latest_quotes_batch_delegates_to_idempotent_historical_sync(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    audits: list[dict[str, object]] = []
+
+    monkeypatch.setattr(batch_module, "_collection_symbols", lambda _cfg: ["AAPL", "MSFT"])
+    monkeypatch.setattr(
+        "dataIntegrityEngine.sync_latest_quotes.sync_latest_quotes",
+        lambda **kwargs: captured.update(kwargs) or {"symbols": 2, "rows_upserted": 4},
+    )
+    monkeypatch.setattr(
+        "database.cleaning_audits.record_quotes_audit_run",
+        lambda **kwargs: audits.append(kwargs),
+    )
+
+    outcome = latest_quotes_sync_batch(
+        object(),
+        {
+            "symbols_file": "config/univers_batch/univers_filtred_tradable.txt",
+            "lookback_days": 5,
+            "batch_size": 200,
+            "timezone": "America/New_York",
+        },
+        "latest-quotes-run",
+        False,
+    )
+
+    assert captured["batch_size"] == 200
+    assert captured["symbol_source"] == (
+        "universe-file:config/univers_batch/univers_filtred_tradable.txt"
+    )
+    assert (captured["to_date"] - captured["from_date"]).days == 5
+    assert outcome.requested == 2
+    assert outcome.received == 4
+    assert outcome.persisted == 4
+    assert outcome.failed == 0
+    assert audits[0]["status"] == "success"
 
 
 def test_market_cap_sync_uses_targeted_sec_yahoo_finnhub_fallbacks(monkeypatch) -> None:

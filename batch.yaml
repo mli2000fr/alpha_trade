@@ -3,6 +3,9 @@
 # Ce fichier sépare les paramètres d'exploitation des traitements récurrents
 # de la configuration fonctionnelle générale conservée dans config.yaml.
 # Les chemins relatifs sont résolus depuis la racine du projet.
+#
+# Politique d'exploitation : un seul passage planifié par batch. Les rattrapages
+# restent manuels tant qu'un mécanisme conditionnel sur l'échec n'est pas ajouté.
 
 # Collecte composite de capitalisation. SEC EDGAR est la source primaire PIT :
 # dernier shares_outstanding disponible × cours à J. Yahoo puis Finnhub ne sont
@@ -15,7 +18,7 @@ market_cap_sync:
   timezone: Europe/Paris
   description: "Maintenir les actions en circulation SEC PIT, puis compléter uniquement les trous avec Yahoo et Finnhub pour l'éligibilité tradable et la neutralisation market-cap."
   tables: "stock_fundamentals_daily"
-  run_hours: "11,23"
+  run_hours: "23"
   run_days: "1,4"
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   provider: sec_edgar_then_yahoo_then_finnhub
@@ -33,7 +36,9 @@ earnings_calendar_sync:
   priority: P1
   description: "Connaître les publications de résultats à venir et réalisées afin d'appliquer les blackouts earnings et d'étudier les surprises."
   tables: "stock_earnings_calendar,cleaning_audit_earnings_runs"
-  run_hours: "12,23"
+  enabled: true
+  timezone: Europe/Paris
+  run_hours: "23"
   run_days: "0,3,5"
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   log_file: log/batch/earnings_calendar.txt
@@ -48,14 +53,35 @@ analyst_snapshot_collection:
   enabled: true
   status: ACTIVE_RESEARCH_ONLY
   provider: yahoo_finance_via_yfinance
+  timezone: Europe/Paris
   research_notice: "Yahoo Finance est une source non officielle sans SLA, utilisée exclusivement pour la recherche personnelle et éducative. Ces données ne sont pas une source de production licenciée et ne doivent pas être redistribuées."
   universe_name: analyst_research
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   sleep_seconds: 0.25
   timeout_seconds: 20
   max_retries: 2
-  run_hours: "14,22"
+  run_hours: "22"
   log_file: log/batch/analyst_snapshots.txt
+
+# Snapshot bid/ask quotidien Alpaca IEX avec rattrapage idempotent J-5 -> J.
+# L'horaire est exprimé en heure de New York afin de suivre automatiquement
+# les changements d'heure US/France et de démarrer après la clôture régulière.
+latest_quotes_sync:
+  priority: P0
+  description: "Collecter le dernier bid/ask de chaque séance pour mesurer spread et liquidité, avec une fenêtre glissante J-5 à J qui rattrape automatiquement les journées manquantes."
+  tables: "pit_collection_runs,stock_quote_snapshots,cleaning_audit_quotes_runs"
+  enabled: true
+  status: ACTIVE
+  provider: alpaca_iex
+  timezone: America/New_York
+  run_hours: "17"
+  run_minutes: "15"
+  run_days: "1,2,3,4,5"
+  symbols_file: config/univers_batch/univers_filtred_tradable.txt
+  lookback_days: 5
+  batch_size: 200
+  research_notice: "Les quotes historiques du compte Alpaca Basic utilisent le feed IEX, pas le marché consolidé SIP/NBBO. Elles conviennent aux contrôles de liquidité et à la recherche si cette limite de couverture est conservée explicitement."
+  log_file: log/batch/latest_quotes_sync.txt
 
 # Tous les horaires sont exprimés dans timezone et interprétés par le lanceur.
 daily_bars_sync:
@@ -85,7 +111,7 @@ security_master_snapshot:
   providers: "nasdaq_symbol_directory,business_quant"
   api_key_env: BUSINESS_QUANT_API_KEY
   timezone: Europe/Paris
-  run_hours: "1,11"
+  run_hours: "1"
   run_days: "1,2,3,4,5"
   # Même convention que run_days : 1=lundi.
   business_quant_weekdays: "1"
@@ -100,7 +126,7 @@ corporate_actions_sync:
   providers: "business_quant,alpaca"
   api_key_env: BUSINESS_QUANT_API_KEY
   timezone: Europe/Paris
-  run_hours: "0,8"
+  run_hours: "0"
   run_days: "1,2,3,4,5"
   lookback_days: 7
   forward_days: 30
@@ -114,7 +140,7 @@ sec_edgar_incremental:
   enabled: true
   universe_scope: market_wide_filings
   timezone: Europe/Paris
-  run_hours: "0,6,12,18"
+  run_hours: "6"
   run_days: "1,2,3,4,5,6"
   user_agent_env: SEC_EDGAR_USER_AGENT
   forms: "8-K,8-K/A,6-K,6-K/A,10-Q,10-Q/A,10-K,10-K/A,13F-HR,13F-HR/A,SC 13D,SC 13D/A,SC 13G,SC 13G/A"
@@ -146,7 +172,7 @@ pit_data_quality_daily:
     - "Attendre la fin de sec_edgar_incremental, finra_short_volume_sync et fred_alfred_vintage_sync."
     - "Passer temporairement enabled à true, lancer le contrôle, puis le remettre à false si la supervision planifiée n'est pas souhaitée."
   timezone: Europe/Paris
-  run_hours: "2,15"
+  run_hours: "15"
   run_days: "1,2,3,4,5,6"
   bars_max_age_days: 4
   security_master_max_age_days: 8
@@ -165,8 +191,9 @@ borrow_status_snapshot:
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   provider: alpaca
   timezone: America/New_York
-  run_hours: "8,9,15"
-  run_minutes: "0,25,45"
+  # Snapshot unique juste avant l'ouverture régulière US.
+  run_hours: "9"
+  run_minutes: "25"
   run_days: "1,2,3,4,5"
   log_file: log/batch/borrow_status_snapshot.txt
 
@@ -187,7 +214,7 @@ business_quant_analyst_snapshot:
   provider: business_quant
   api_key_env: BUSINESS_QUANT_API_KEY
   timezone: America/New_York
-  run_hours: "4,16"
+  run_hours: "16"
   run_days: "1,2,3,4,5"
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   metrics: "eps"
@@ -203,9 +230,9 @@ oracle_options_indicative_snapshot:
   provider: alpaca
   feed: indicative
   timezone: America/New_York
-  # Deux passages après clôture : le second est un rattrapage opérationnel.
-  run_hours: "16,19"
-  run_minutes: "20,0"
+  # Passage unique vingt minutes après la clôture régulière US.
+  run_hours: "16"
+  run_minutes: "20"
   run_days: "1,2,3,4,5"
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   target_dtes: "5,10,20"
@@ -237,7 +264,8 @@ options_delayed_bars_sync:
   provider: alpaca
   research_notice: "La provenance n'est pas attestée dans le payload historique Alpaca : les lignes sont marquées UNVERIFIED_OPRA. Elles servent uniquement à la recherche, jamais à simuler un NBBO ou un prix d'exécution live. Historique disponible depuis février 2024."
   timezone: America/New_York
-  run_hours: "17,23"
+  # Passage unique après clôture et après le délai minimal Alpaca.
+  run_hours: "17"
   run_minutes: "0"
   run_days: "1,2,3,4,5"
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
@@ -264,7 +292,7 @@ option_contract_adjustment_sync:
   provider: occ
   research_notice: "Le RSS OCC fournit numéro, publication, catégorie, résumé et lien. Le détail des mémos est protégé par Cloudflare ; multiplier, cash component et deliverable détaillé restent inconnus tant qu'ils ne sont pas observés dans le catalogue de contrats Alpaca versionné."
   timezone: Europe/Paris
-  run_hours: "7,19"
+  run_hours: "19"
   run_minutes: "15"
   run_days: "1,2,3,4,5,6"
   universe_scope: market_wide_options_adjustments
@@ -283,8 +311,9 @@ oracle_opening_window_sync:
   feed: sip
   adjustment: raw
   timezone: America/New_York
-  run_hours: "10,18"
-  run_minutes: "50,15"
+  # Fenêtre terminée à 10:30 ET, puis délai SIP conservateur de vingt minutes.
+  run_hours: "10"
+  run_minutes: "50"
   run_days: "1,2,3,4,5"
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   window_start: "04:00"
@@ -306,7 +335,8 @@ sec_corporate_events_normalize:
   enabled: true
   universe_scope: raw_sec_filings
   timezone: Europe/Paris
-  run_hours: "1,7,13,19"
+  # Laisse au collecteur SEC de 06:00 le temps de terminer.
+  run_hours: "13"
   run_days: "1,2,3,4,5,6"
   forms: "8-K,8-K/A,6-K,6-K/A"
   log_file: log/batch/sec_corporate_events_normalize.txt
@@ -318,7 +348,7 @@ sec_institutional_ownership_normalize:
   enabled: true
   universe_scope: raw_sec_filings
   timezone: Europe/Paris
-  run_hours: "3,17"
+  run_hours: "17"
   run_days: "2,4,6"
   forms: "13F-HR,13F-HR/A,SC 13D,SC 13D/A,SC 13G,SC 13G/A"
   log_file: log/batch/sec_institutional_ownership_normalize.txt
@@ -332,7 +362,7 @@ fred_alfred_vintage_sync:
   provider: fred_alfred
   api_key_env: KEY_FRED
   timezone: Europe/Paris
-  run_hours: "2,14"
+  run_hours: "14"
   run_days: "1,2,3,4,5"
   series: "DGS2,DGS10,DGS30,T10Y2Y,T10Y3M,FEDFUNDS,CPIAUCSL,CPILFESL,PCEPI,PCEPILFE,UNRATE,PAYEMS,INDPRO,RETAILSMSA,GDPC1,VIXCLS,BAMLH0A0HYM2"
   observation_lookback_days: 730
@@ -348,7 +378,8 @@ finra_short_volume_sync:
   provider: finra_consolidated_nms
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   timezone: America/New_York
-  run_hours: "18,23"
+  # Publication FINRA attendue après la clôture; 23:00 ET maximise la disponibilité.
+  run_hours: "23"
   run_days: "1,2,3,4,5"
   lookback_days: 7
   source_url_template: "https://cdn.finra.org/equity/regsho/daily/CNMSshvol{date}.txt"

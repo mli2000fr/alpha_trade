@@ -57,11 +57,11 @@ Principes invariants :
 - tout batch par symbole utilise `config/univers_batch/univers_filtred_tradable.txt` ; l'absence du fichier est bloquante et ne déclenche aucun repli vers un univers dynamique ;
 - seuls les flux de découverte ou intrinsèquement globaux restent market-wide : security master, corporate actions, dépôts SEC et séries macro.
 
-### Contrat d'univers des 21 batchs
+### Contrat d'univers des 22 batchs
 
 | Périmètre | Batchs | Contrat |
 |---|---|---|
-| Univers tradable stable | `market_cap_sync`, `earnings_calendar_sync`, `analyst_snapshot_collection`, `daily_bars_sync`, `pit_data_quality_daily`, `borrow_status_snapshot`, `business_quant_analyst_snapshot`, `oracle_options_indicative_snapshot`, `options_delayed_bars_sync`, `oracle_opening_window_sync` | fichier `config/univers_batch/univers_filtred_tradable.txt`, complet, sans TOP20 ni limite implicite |
+| Univers tradable stable | `market_cap_sync`, `earnings_calendar_sync`, `analyst_snapshot_collection`, `latest_quotes_sync`, `daily_bars_sync`, `pit_data_quality_daily`, `borrow_status_snapshot`, `business_quant_analyst_snapshot`, `oracle_options_indicative_snapshot`, `options_delayed_bars_sync`, `oracle_opening_window_sync` | fichier `config/univers_batch/univers_filtred_tradable.txt`, complet, sans TOP20 ni limite implicite |
 | Futurs collecteurs par symbole | `auction_imbalance_sync`, `securities_lending_sync`, `official_options_nbbo_sync` | le même fichier est déjà déclaré ; les collecteurs restent désactivés tant que source, stockage et qualité ne sont pas validés |
 | Découverte market-wide | `security_master_snapshot` | toutes les cotations disponibles afin de détecter nouveaux titres, changements et disparitions |
 | Événements market-wide | `corporate_actions_sync` | flux global afin de ne pas manquer une action affectant un titre entrant, sortant ou détenu |
@@ -75,6 +75,7 @@ Le TOP20 est une **sortie de modèle**, recalculée après entraînement ou à c
 | Priorité | Batch | Source | Table(s) normalisée(s) | État initial |
 |---|---|---|---|---|
 | P0 | `daily_bars_sync` | Business Quant `/quotes`, mode `eod` | `stock_bars_daily_versions` RAW | actif |
+| P0 | `latest_quotes_sync` | Alpaca historique IEX | `stock_quote_snapshots` | actif ; J-5 à J, reprise idempotente |
 | P0 | `security_master_snapshot` | Nasdaq Symbol Directory quotidien, Business Quant Universe hebdomadaire | `security_master_snapshots`, `security_master_changes` | actif |
 | P0 | `corporate_actions_sync` | Business Quant market-wide + Alpaca | `corporate_action_source_events` | actif |
 | P0 | `sec_edgar_incremental` | SEC daily master index + submissions | `sec_filing_raw` | actif |
@@ -214,16 +215,16 @@ confondu avec `trade_size`, qui est seulement la taille du dernier trade.
 Le feed reste **Alpaca Basic `indicative`**, jamais OPRA/NBBO : ses quotes sont
 modifiées et ses trades peuvent être retardés. Il est autorisé uniquement pour
 constituer des features de recherche prospectives ; il ne doit jamais fournir un
-prix d'exécution live. Deux passages après clôture (16:20 et 19:00 New York)
-offrent un rattrapage opérationnel. Un dataset ML quotidien doit sélectionner une
-seule observation PIT par séance selon une règle pré-enregistrée, par exemple la
-dernière observation complète disponible.
+prix d'exécution live. Le passage unique est planifié à 16:20 New York, vingt
+minutes après la clôture régulière. Un dataset ML quotidien doit sélectionner
+une seule observation PIT par séance selon une règle pré-enregistrée, par
+exemple la dernière observation complète disponible.
 
 La collecte est prospective : changer ultérieurement de modèle ou de TOP20 ne supprime pas les observations déjà acquises. En revanche, l’activation aujourd’hui ne reconstitue pas automatiquement un historique PIT antérieur si le fournisseur ne l’expose pas avec ses dates d’observation d’origine.
 
 ### Short volume FINRA
 
-`finra_short_volume_sync` télécharge le fichier public Consolidated NMS sur une fenêtre glissante de sept jours, puis conserve seulement les symboles de `config/univers_batch/univers_filtred_tradable.txt`. Deux passages, à 18 h et 23 h New York, permettent de récupérer la publication du jour puis une éventuelle correction. Une ligne strictement identique est ignorée par sa clé incluant le hash ; une correction crée une nouvelle version auditable. Le payload source complet est conservé dans `pit_raw_payloads`.
+`finra_short_volume_sync` télécharge le fichier public Consolidated NMS sur une fenêtre glissante de sept jours, puis conserve seulement les symboles de `config/univers_batch/univers_filtred_tradable.txt`. Le passage unique à 23 h New York privilégie la disponibilité de la publication du jour. Une ligne strictement identique est ignorée par sa clé incluant le hash ; une correction crée une nouvelle version auditable. Le payload source complet est conservé dans `pit_raw_payloads`.
 
 Le verdict ML historique `NO_GO` est conservé : le short volume ne devient ni une feature active ni un gate de trading. La collecte continue néanmoins afin de constituer un historique prospectif réutilisable si une nouvelle formulation, un nouvel univers ou une interaction de features justifie un retest.
 

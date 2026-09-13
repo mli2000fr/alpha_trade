@@ -11,6 +11,7 @@ WINDOWS = ROOT / "scripts" / "windows"
 BATCH_SECTIONS = {
     "market_cap_sync",
     "earnings_calendar_sync",
+    "latest_quotes_sync",
     "analyst_snapshot_collection",
     "daily_bars_sync", "security_master_snapshot", "corporate_actions_sync",
     "sec_edgar_incremental", "pit_data_quality_daily", "borrow_status_snapshot",
@@ -54,6 +55,31 @@ def test_batch_configuration_is_separated_from_application_config() -> None:
     assert sec["max_submission_bytes"] < 64 * 1024 * 1024
     assert sec["max_primary_document_bytes"] < 64 * 1024 * 1024
     assert sec["submission_probe_bytes"] <= sec["max_submission_bytes"]
+
+
+def test_each_scheduled_batch_has_at_most_one_daily_execution_time() -> None:
+    batch = yaml.safe_load((ROOT / "batch.yaml").read_text(encoding="utf-8"))
+    for name, config in batch.items():
+        hours = [item.strip() for item in str(config.get("run_hours") or "").split(",") if item.strip()]
+        minutes = [item.strip() for item in str(config.get("run_minutes") or "").split(",") if item.strip()]
+        assert len(hours) <= 1, f"{name}: plusieurs run_hours configurés"
+        assert len(minutes) <= 1, f"{name}: plusieurs run_minutes configurées"
+
+
+def test_market_sensitive_batch_timezones_are_explicit() -> None:
+    batch = yaml.safe_load((ROOT / "batch.yaml").read_text(encoding="utf-8"))
+    new_york_batches = {
+        "borrow_status_snapshot",
+        "business_quant_analyst_snapshot",
+        "oracle_options_indicative_snapshot",
+        "options_delayed_bars_sync",
+        "oracle_opening_window_sync",
+        "finra_short_volume_sync",
+    }
+    for name in new_york_batches:
+        assert batch[name]["timezone"] == "America/New_York"
+    assert batch["earnings_calendar_sync"]["timezone"] == "Europe/Paris"
+    assert batch["analyst_snapshot_collection"]["timezone"] == "Europe/Paris"
 
 
 def test_all_batch_launchers_and_installers_read_batch_yaml() -> None:
@@ -104,6 +130,7 @@ def test_installer_executable_lines_are_safe_for_windows_powershell_51() -> None
 def test_every_batch_has_ui_catalogue_metadata() -> None:
     batch = yaml.safe_load((ROOT / "batch.yaml").read_text(encoding="utf-8"))
     for name, config in batch.items():
+        assert isinstance(config.get("enabled"), bool), name
         assert config.get("priority") in {"P0", "P1", "P2", "P3", "P4"}, name
         assert str(config.get("description") or "").strip(), name
         assert "tables" in config, name
@@ -119,6 +146,7 @@ def test_every_symbol_scoped_batch_uses_stable_tradable_universe() -> None:
         "market_cap_sync",
         "earnings_calendar_sync",
         "analyst_snapshot_collection",
+        "latest_quotes_sync",
         "daily_bars_sync",
         "pit_data_quality_daily",
         "borrow_status_snapshot",
@@ -134,6 +162,20 @@ def test_every_symbol_scoped_batch_uses_stable_tradable_universe() -> None:
     for name in names:
         assert batch[name]["symbols_file"] == expected
         assert "max_symbols" not in batch[name]
+
+
+def test_latest_quotes_batch_uses_safe_idempotent_catchup_window() -> None:
+    batch = yaml.safe_load((ROOT / "batch.yaml").read_text(encoding="utf-8"))
+    quotes = batch["latest_quotes_sync"]
+    assert quotes["enabled"] is True
+    assert quotes["priority"] == "P0"
+    assert quotes["provider"] == "alpaca_iex"
+    assert quotes["timezone"] == "America/New_York"
+    assert quotes["run_hours"] == "17"
+    assert quotes["run_minutes"] == "15"
+    assert quotes["lookback_days"] == 5
+    assert quotes["batch_size"] == 200
+    assert "stock_quote_snapshots" in quotes["tables"]
 
 
 def test_options_batch_is_active_research_only_and_never_top20_scoped() -> None:

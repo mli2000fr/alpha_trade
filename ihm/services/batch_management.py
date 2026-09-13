@@ -222,8 +222,16 @@ def install_all_batches(
     *,
     run_as: str = "Interactive",
 ) -> dict[str, CommandResult]:
+    """Installe uniquement les batchs explicitement actifs dans batch.yaml.
+
+    Le filtrage est volontairement répété ici, même si l'IHM filtre déjà sa
+    sélection, afin qu'un autre appelant ne puisse pas réinstaller par erreur
+    une tâche dont ``enabled`` vaut ``false``.
+    """
     results: dict[str, CommandResult] = {}
     for spec in specs:
+        if not spec.enabled:
+            continue
         try:
             results[spec.name] = install_batch(spec, run_as=run_as)
         except Exception as exc:

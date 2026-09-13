@@ -30,7 +30,7 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Connection, Engine
 
 from common.config_loader import load_batch_config
-from common.market_calendar import is_trading_day
+from common.market_calendar import is_trading_day, nyse_session_dates
 from database.connection import get_sqlalchemy_engine
 from service.alpaca.clientAlpaca import fetch_alpaca_assets, get_alpaca_credentials
 from service.forward_pit.options_delayed import (
@@ -1919,6 +1919,83 @@ def fred_alfred_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool
     return outcome
 
 
+def latest_quotes_sync_batch(
+    engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool,
+) -> Outcome:
+    """Rattrape les snapshots quotes manquants sur une courte fenêtre mobile.
+
+    Le collecteur historique existant est réutilisé afin de conserver son
+    contrat d'idempotence ``(symbol, quote_date)`` et sa logique de reprise par
+    journées manquantes. Le batch commun apporte en plus la supervision dans
+    ``pit_collection_runs`` et les notifications d'exploitation.
+    """
+    del engine  # La persistance canonique est gérée par sync_latest_quotes.
+    from dataIntegrityEngine.sync_latest_quotes import sync_latest_quotes
+    from database.cleaning_audits import record_quotes_audit_run
+
+    symbols = _collection_symbols(cfg)
+    lookback_days = max(0, int(cfg.get("lookback_days", 5)))
+    batch_size = max(1, int(cfg.get("batch_size", 200)))
+    timezone_name = str(cfg.get("timezone") or "America/New_York")
+    to_date = datetime.now(ZoneInfo(timezone_name)).date()
+    from_date = to_date - timedelta(days=lookback_days)
+    source_path = str(cfg.get("symbols_file") or "").strip()
+    symbol_source = f"universe-file:{source_path}"
+    started_at = _utcnow()
+    outcome = Outcome(
+        requested=len(symbols),
+        details={
+            "from_date": from_date.isoformat(),
+            "to_date": to_date.isoformat(),
+            "lookback_days": lookback_days,
+            "batch_size": batch_size,
+            "symbol_source": symbol_source,
+            "feed": "iex",
+            "expected_sessions": len(nyse_session_dates(from_date, to_date)),
+        },
+    )
+    if dry:
+        return outcome
+
+    try:
+        summary = sync_latest_quotes(
+            batch_size=batch_size,
+            from_date=from_date,
+            to_date=to_date,
+            symbol_source=symbol_source,
+        )
+    except Exception as exc:
+        outcome.failed = 1
+        record_quotes_audit_run(
+            run_id=run_id,
+            started_at=started_at,
+            finished_at=_utcnow(),
+            symbols_requested=len(symbols),
+            rows_upserted=0,
+            status="failed",
+            error_message=_safe_error_message(exc),
+        )
+        raise BatchRunError(
+            f"Collecte latest quotes en échec: {_safe_error_message(exc)}", outcome,
+        ) from exc
+
+    outcome.requested = int(summary.get("symbols", len(symbols)))
+    outcome.received = int(summary.get("rows_upserted", 0))
+    outcome.persisted = outcome.received
+    outcome.details["rows_upserted"] = outcome.persisted
+    outcome.details["idempotent_no_new_rows"] = outcome.persisted == 0
+    record_quotes_audit_run(
+        run_id=run_id,
+        started_at=started_at,
+        finished_at=_utcnow(),
+        symbols_requested=outcome.requested,
+        rows_upserted=outcome.persisted,
+        status="success",
+        error_message=None,
+    )
+    return outcome
+
+
 def quality_daily(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool) -> Outcome:
     checks = [
         ("daily_bars_sync", "business_quant", "bars_age_days", "SELECT DATEDIFF(CURRENT_DATE,MAX(trade_date)) FROM stock_bars_daily_versions WHERE provider='business_quant'", float(cfg.get("bars_max_age_days", 4)), "MAX"),
@@ -1975,6 +2052,7 @@ def quality_daily(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool) -
 
 HANDLERS: dict[str, Callable[[Engine, dict[str, Any], str, bool], Outcome]] = {
     "market_cap_sync": market_cap_sync,
+    "latest_quotes_sync": latest_quotes_sync_batch,
     "daily_bars_sync": daily_bars_sync,
     "security_master_snapshot": security_master_snapshot,
     "corporate_actions_sync": corporate_actions_sync,

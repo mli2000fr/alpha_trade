@@ -166,6 +166,23 @@ def test_bulk_install_and_uninstall_continue_after_one_failure(monkeypatch) -> N
     assert all(result.ok for result in removed.values())
 
 
+def test_bulk_install_ignores_disabled_batches(monkeypatch) -> None:
+    installed_names: list[str] = []
+
+    def fake_install(spec, *, run_as):
+        installed_names.append(spec.name)
+        return batches.CommandResult(True, 0, "ok", "")
+
+    monkeypatch.setattr(batches, "install_batch", fake_install)
+    results = batches.install_all_batches(
+        [_spec("active"), _spec("disabled", enabled=False)],
+        run_as="Interactive",
+    )
+
+    assert installed_names == ["active"]
+    assert list(results) == ["active"]
+
+
 @pytest.mark.e2e
 def test_batch_page_renders_without_external_dependencies(monkeypatch) -> None:
     AppTest = pytest.importorskip("streamlit.testing.v1").AppTest
