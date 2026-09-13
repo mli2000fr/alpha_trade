@@ -368,3 +368,13 @@ def test_auction_imbalance_batch_stays_blocked_while_poc_is_not_scheduled() -> N
     assert "LAISSER DÉSACTIVÉ" in auction["research_notice"]
     assert "aucune collecte quotidienne" in auction["research_notice"]
     assert "HTTP 429 après 51 réponses" in auction["research_notice"]
+
+def test_generic_installer_uses_consoleless_synchronous_wrapper() -> None:
+    installer = (WINDOWS / "install_forward_pit_task.ps1").read_text(encoding="utf-8")
+    wrapper = (WINDOWS / "run_forward_pit_hidden.vbs").read_text(encoding="utf-8")
+
+    assert "wscript.exe" in installer
+    assert "//B //Nologo" in installer
+    assert "run_forward_pit_hidden.vbs" in installer
+    assert "shell.Run(command, 0, True)" in wrapper
+    assert "WScript.Quit exitCode" in wrapper
