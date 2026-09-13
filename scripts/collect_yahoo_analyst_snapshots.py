@@ -23,6 +23,7 @@ MySQL (les réponses brutes sont conservées dans ``raw_payload_json``).
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import sys
@@ -127,6 +128,7 @@ def main(argv: list[str] | None = None) -> int:
     print("COLLECTION SUMMARY")
     for k, v in summary.items():
         print(f"  {k}: {v}")
+    print("::alpha_trade_run_summary::" + json.dumps(summary, ensure_ascii=False, default=str), flush=True)
     print("=" * 60)
     return 0
 

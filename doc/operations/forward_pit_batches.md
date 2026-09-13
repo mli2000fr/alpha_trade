@@ -91,7 +91,7 @@ Le TOP20 est une **sortie de modèle**, recalculée après entraînement ou à c
 | P3 | `sec_corporate_events_normalize` | RAW SEC 8‑K/6‑K | `sec_corporate_events` | actif |
 | P4 | `sec_institutional_ownership_normalize` | RAW SEC 13F/13D/13G | `sec_ownership_snapshots` | actif |
 | P4 | `fred_alfred_vintage_sync` | FRED/ALFRED | `macro_vintage_observations` | actif |
-| attente | `auction_imbalance_sync` | fournisseur requis | — | désactivé |
+| attente | `auction_imbalance_sync` | Nasdaq NOII/NYSE live payants ; Web NYSE post-auction limité | — | `BLOCKED_NO_FREE_OFFICIAL_FEED` ; [POC séparé](../ml/nyse_auction_history_poc.md) |
 | attente | `securities_lending_sync` | fournisseur requis | — | désactivé |
 
 Les batchs déjà présents `earnings_calendar_sync` et `market_cap_sync` sont conservés : ils ne font pas doublon. Le premier stocke calendrier/estimates/actuals d’earnings ; le second ne collecte que capitalisation et secteur via Yahoo puis Finnhub. Les états financiers historiques demeurent issus de SEC EDGAR.
@@ -197,18 +197,30 @@ Le batch conserve pour chaque observation la valeur, `realtime_start`, `realtime
 
 ## Qualité et alertes
 
-`pit_data_quality_daily` vérifie au minimum : âge des barres Business Quant, âge du security master, âge du borrow snapshot, âge du dernier vintage macro, runs échoués sur 24 heures et couverture sur sept jours de l’univers configuré. Le seuil de couverture par défaut est 90 %. Une anomalie critique crée une ligne dans `pit_data_quality_issues`, fait échouer le batch qualité et déclenche la notification du lanceur.
+`pit_data_quality_daily` vérifie au minimum : âge des barres Business Quant, âge du security master, âge du borrow snapshot, âge du dernier vintage macro, runs métier échoués sur 24 heures et couverture sur sept jours de l’univers configuré. Le seuil de couverture par défaut est 90 %. Le compteur `failed_runs_24h` exclut explicitement les anciens échecs de `pit_data_quality_daily` : le moniteur ne peut donc plus entretenir sa propre alerte pendant 24 heures.
+
+Une anomalie critique crée une ligne dans `pit_data_quality_issues`, fait échouer le batch qualité et déclenche la notification du lanceur. Cet échec transporte néanmoins l’`Outcome` complet : `requested_count`, `received_count`, `persisted_count`, `failed_count`, avertissements et liste `critical_checks` sont conservés dans `pit_collection_runs` et dans le résumé envoyé aux notifications.
 
 Les réponses brutes permettent ensuite d’ajouter sans perte d’historique : détection de changement de schéma, volumes anormalement faibles, conflits fournisseurs, trous par symbole et contrôle de cohérence OHLC.
 
 ### Notifications de fin de batch
 
-Tous les nouveaux batchs installés par `install_forward_pit_task.ps1` passent par le même lanceur. Après chaque exécution réelle, réussie ou échouée, celui-ci transmet le statut, le code retour, la durée et les 300 dernières lignes du run à `scripts/send_batch_email.py`. Ce notificateur appelle les deux canaux historiques :
+Tous les nouveaux batchs installés par `install_forward_pit_task.ps1` passent par le même lanceur. Après chaque exécution réelle, réussie ou échouée, celui-ci transmet le statut, le code retour, la durée, le message d'erreur et les 300 dernières lignes du run à `scripts/send_batch_email.py`. Le service métier émet un résumé machine lisible, y compris lorsqu'une exception remonte ; le lanceur PowerShell possède un second `try/catch` afin de notifier aussi une erreur d'orchestration.
 
 - email via `ihm.services.email_notifier` et les variables `ALPHA_TRADE_EMAIL_*` / `ALPHA_TRADE_SMTP_*` ;
 - Telegram via `service.telegram`, `TOKEN_TELEGRAM_BOT` et `TELEGRAM_CHAT_ID`.
 
-Les notifications sont best-effort : une panne SMTP ou Telegram est journalisée mais ne transforme pas un batch métier réussi en échec. Un batch désactivé ou ignoré parce qu’une instance est déjà active ne génère pas de fausse notification de succès.
+Les deux messages indiquent systématiquement :
+
+- `demandés` : unités de travail prévues ;
+- `reçus` : réponses ou éléments effectivement obtenus ;
+- `persistés` : lignes écrites ou mises à jour ;
+- `échecs` : unités en erreur, avec un minimum de 1 pour un run en statut `ERROR` ;
+- `alertes` : avertissements métier, quotas, erreurs temporaires, schéma ou parsing.
+
+En cas d'échec, le message d'erreur est joint aux deux canaux. Les résumés de plusieurs fournisseurs exécutés dans le même run sont additionnés. L'échec d'un canal ne court-circuite jamais l'autre : une panne SMTP laisse Telegram être tenté, et inversement. Ces notifications restent best-effort et une panne du notificateur ne transforme pas un batch métier réussi en échec ; son diagnostic est toutefois écrit dans le journal avec le préfixe `NOTIFY`.
+
+Un batch désactivé ou ignoré parce qu’une instance est déjà active ne génère pas de fausse notification de succès. Dans **Workflow & Orchestration → Batch**, le titre d'un batch dont le dernier run enregistré est en échec apparaît en rouge et en gras ; pour les batchs historiques sans ligne dans `pit_collection_runs`, le code retour de la dernière tâche Windows sert de fallback. Le panneau conserve les compteurs et le détail de l'erreur.
 
 ## Mise en service
 

@@ -210,3 +210,17 @@ def test_securities_lending_batch_explains_provider_blocker_in_ui() -> None:
         "Orbisa", "S3 Partners",
     ):
         assert provider in notice
+
+
+def test_auction_imbalance_batch_stays_blocked_while_poc_is_not_scheduled() -> None:
+    batch = yaml.safe_load((ROOT / "batch.yaml").read_text(encoding="utf-8"))
+    auction = batch["auction_imbalance_sync"]
+    assert auction["enabled"] is False
+    assert auction["status"] == "BLOCKED_NO_FREE_OFFICIAL_FEED"
+    assert auction["tables"] == ""
+    assert "Nasdaq NOII" in auction["research_notice"]
+    assert "NYSE" in auction["research_notice"]
+    assert "nyse_auction_history_poc" in auction["research_notice"]
+    assert "LAISSER DÉSACTIVÉ" in auction["research_notice"]
+    assert "aucune collecte quotidienne" in auction["research_notice"]
+    assert "HTTP 429 après 51 réponses" in auction["research_notice"]

@@ -93,6 +93,37 @@ def _value(value: Any) -> str:
     return str(value)
 
 
+def _last_run_failed(row: dict[str, Any] | None) -> bool:
+    if not row:
+        return False
+    return str(row.get("status") or "").strip().upper() in {
+        "ERROR", "FAILED", "FAILURE", "KO",
+    }
+
+
+def _windows_last_run_failed(task: dict[str, Any] | None) -> bool:
+    if not task or not task.get("last_run_time"):
+        return False
+    if str(task.get("state") or "").strip().lower() == "running":
+        return False
+    try:
+        return int(task.get("last_result")) != 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _batch_title(
+    status_bits: list[str],
+    name: str,
+    row: dict[str, Any] | None,
+    task: dict[str, Any] | None = None,
+) -> str:
+    title = f"{' · '.join(status_bits)} — {name}"
+    if _last_run_failed(row) or _windows_last_run_failed(task):
+        return f":red[**{title}**]"
+    return title
+
+
 def _render_last_run(row: dict[str, Any] | None) -> None:
     if not row:
         st.caption("Aucune exécution suivie dans pit_collection_runs.")
@@ -127,7 +158,7 @@ def _render_batch(
     if active:
         status_bits.append("🔄 Lancé depuis cette IHM")
 
-    with st.expander(f"{' · '.join(status_bits)} — {spec.name}", expanded=bool(active)):
+    with st.expander(_batch_title(status_bits, spec.name, db_run, task), expanded=bool(active)):
         st.write(spec.description)
         if spec.research_notice:
             st.warning(f"🔬 Usage recherche — {spec.research_notice}")

@@ -42,6 +42,10 @@ ROOT = Path(__file__).resolve().parents[2]
 BQ_URL = "https://data.businessquant.com"
 SEC_ARCHIVES = "https://www.sec.gov/Archives"
 SEC_USER_AGENT_DEFAULT = ""
+FAILED_RUNS_24H_SQL = """SELECT COUNT(*) FROM pit_collection_runs
+    WHERE status='FAILED' AND batch_name <> 'pit_data_quality_daily'
+    AND started_at>=UTC_TIMESTAMP()-INTERVAL 24 HOUR"""
+
 ALPACA_DATA_URL = "https://data.alpaca.markets"
 ALPACA_PAPER_URL = "https://paper-api.alpaca.markets"
 
@@ -52,11 +56,20 @@ PENDING_BATCHES = {"auction_imbalance_sync", "securities_lending_sync", "officia
 class Outcome:
     requested: int = 0
     received: int = 0
+
     persisted: int = 0
     empty: int = 0
     failed: int = 0
     warnings: list[str] = field(default_factory=list)
     details: dict[str, Any] = field(default_factory=dict)
+
+
+class BatchRunError(RuntimeError):
+    """Échec bloquant conservant les compteurs déjà produits par le handler."""
+
+    def __init__(self, message: str, outcome: Outcome):
+        super().__init__(message)
+        self.outcome = outcome
 
 
 def _json(value: Any) -> str:
@@ -1253,14 +1266,17 @@ def quality_daily(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool) -
         ("security_master_snapshot", None, "security_master_age_days", "SELECT DATEDIFF(CURRENT_DATE,MAX(snapshot_date)) FROM security_master_snapshots", float(cfg.get("security_master_max_age_days", 8)), "MAX"),
         ("borrow_status_snapshot", "alpaca", "borrow_age_hours", "SELECT TIMESTAMPDIFF(HOUR,MAX(observed_at),UTC_TIMESTAMP()) FROM stock_borrow_status_snapshots", float(cfg.get("borrow_max_age_hours", 30)), "MAX"),
         ("fred_alfred_vintage_sync", "fred_alfred", "macro_age_days", "SELECT DATEDIFF(CURRENT_DATE,MAX(vintage_date)) FROM macro_vintage_observations", float(cfg.get("macro_max_age_days", 10)), "MAX"),
-        ("all", None, "failed_runs_24h", "SELECT COUNT(*) FROM pit_collection_runs WHERE status='FAILED' AND started_at>=UTC_TIMESTAMP()-INTERVAL 24 HOUR", 0.0, "MAX"),
+        ("all", None, "failed_runs_24h", FAILED_RUNS_24H_SQL, 0.0, "MAX"),
     ]
     expected_symbols = _symbols(cfg)
     outcome = Outcome(requested=len(checks) + int(bool(expected_symbols))); critical = 0
+    critical_checks: list[dict[str, Any]] = []
     with engine.begin() as conn:
         for batch, provider, name, sql, threshold, direction in checks:
             value = conn.execute(text(sql)).scalar(); value_num = float(value) if value is not None else None
             ok = value_num is not None and value_num <= threshold; status = "OK" if ok else "CRITICAL"; critical += int(not ok)
+            if not ok:
+                critical_checks.append({"name": name, "value": value_num, "threshold": threshold})
             if not dry:
                 conn.execute(text("""INSERT INTO pit_data_quality_metrics
                     (metric_date,batch_name,provider,metric_name,metric_value,threshold_value,status,details_json,run_id)
@@ -1280,6 +1296,8 @@ def quality_daily(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool) -
             ratio = covered / len(expected_symbols)
             threshold = float(cfg.get("min_universe_coverage", 0.90))
             ok = ratio >= threshold; critical += int(not ok)
+            if not ok:
+                critical_checks.append({"name": "universe_coverage_7d", "value": ratio, "threshold": threshold})
             if not dry:
                 conn.execute(text("""INSERT INTO pit_data_quality_metrics
                     (metric_date,batch_name,provider,metric_name,metric_value,threshold_value,status,details_json,run_id)
@@ -1289,8 +1307,10 @@ def quality_daily(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool) -
                     {"value": ratio, "threshold": threshold, "status": "OK" if ok else "CRITICAL",
                      "details": _json({"covered": covered, "expected": len(expected_symbols)}), "run": run_id})
             outcome.received += 1; outcome.persisted += int(not dry)
-    outcome.failed = critical; outcome.details["critical"] = critical
-    if critical and cfg.get("fail_on_critical", True): raise RuntimeError(f"{critical} contrôles PIT critiques en échec")
+    outcome.failed = critical
+    outcome.details.update({"critical": critical, "critical_checks": critical_checks})
+    if critical and cfg.get("fail_on_critical", True):
+        raise BatchRunError(f"{critical} contrôles PIT critiques en échec", outcome)
     return outcome
 
 
@@ -1333,9 +1353,29 @@ def execute(batch_name: str, *, dry_run: bool = False, config_path: str | None =
         outcome = handler(engine, cfg, run_id, dry_run)
         status = "DRY_RUN" if dry_run else ("COMPLETED_WITH_WARNINGS" if outcome.warnings or outcome.failed else "COMPLETED")
     except Exception as exc:
+        failure_outcome = exc.outcome if isinstance(exc, BatchRunError) else Outcome(failed=1)
         if not dry_run:
             with engine.begin() as conn:
-                conn.execute(text("UPDATE pit_collection_runs SET status='FAILED',finished_at=:finished,error_message=:error WHERE run_id=:run"), {"finished": _utcnow(), "error": str(exc)[:65535], "run": run_id})
+                conn.execute(text("""UPDATE pit_collection_runs
+                    SET status='FAILED',finished_at=:finished,error_message=:error,
+                        requested_count=:requested,received_count=:received,
+                        persisted_count=:persisted,empty_count=:empty,
+                        failed_count=:failed,warning_count=:warnings,
+                        details_json=:details
+                    WHERE run_id=:run"""), {
+                    "finished": _utcnow(),
+                    "error": str(exc)[:65535],
+                    "requested": failure_outcome.requested,
+                    "received": failure_outcome.received,
+                    "persisted": failure_outcome.persisted,
+                    "empty": failure_outcome.empty,
+                    "failed": max(1, failure_outcome.failed),
+                    "warnings": len(failure_outcome.warnings),
+                    "details": _json(
+                        failure_outcome.details | {"warnings": failure_outcome.warnings}
+                    ),
+                    "run": run_id,
+                })
         raise
     if not dry_run:
         with engine.begin() as conn:
@@ -1352,9 +1392,24 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args(); logging.basicConfig(level=getattr(logging, args.log_level.upper()), format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    status, outcome = execute(args.batch, dry_run=args.dry_run, config_path=args.batch_config)
+    try:
+        status, outcome = execute(
+            args.batch, dry_run=args.dry_run, config_path=args.batch_config,
+        )
+    except Exception as exc:
+        failure_outcome = exc.outcome if isinstance(exc, BatchRunError) else Outcome(failed=1)
+        summary = {
+            "batch": args.batch,
+            "status": "FAILED",
+            **failure_outcome.__dict__,
+            "failed": max(1, failure_outcome.failed),
+            "warning_count": len(failure_outcome.warnings),
+            "error_message": str(exc),
+        }
+        print("::alpha_trade_run_summary::" + _json(summary), flush=True)
+        raise
     summary = {"batch": args.batch, "status": status, **outcome.__dict__}
-    print("::alpha_trade_run_summary::" + _json(summary))
+    print("::alpha_trade_run_summary::" + _json(summary), flush=True)
 
 
 if __name__ == "__main__":

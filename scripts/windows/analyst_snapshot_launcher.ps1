@@ -317,10 +317,12 @@ try {
         '--duration', $durStr,
         '--log-file', $emailTmp
     )
+    if ($errorMsg) { $emailArgs += @('--error-message', $errorMsg) }
     foreach ($warningLine in $batchWarnings) {
         $emailArgs += @('--warning', $warningLine)
     }
-    & $resolvedPython (Join-Path $resolvedWorkspace 'scripts\send_batch_email.py') @emailArgs 2>&1 | Out-Null
+    $notificationOutput = @(& $resolvedPython (Join-Path $resolvedWorkspace 'scripts\send_batch_email.py') @emailArgs 2>&1)
+    foreach ($line in $notificationOutput) { Write-StatusLine ("[{0}] NOTIFY {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $line.ToString()) }
     Remove-Item -LiteralPath $emailTmp -Force -ErrorAction SilentlyContinue
 } catch {
     Write-StatusLine ("[{0}] NOTE   email de fin non envoyé (best-effort) : {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), ($_.Exception.Message -replace '[\r\n]+', ' '))

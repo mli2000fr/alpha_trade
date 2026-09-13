@@ -57,7 +57,7 @@ daily_bars_sync:
   provider: business_quant
   api_key_env: BUSINESS_QUANT_API_KEY
   timezone: Europe/Paris
-  run_hours: "0"
+  run_hours: "3"
   run_days: "1,2,3,4,5"
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   batch_size: 100
@@ -330,12 +330,12 @@ finra_short_volume_sync:
 
 auction_imbalance_sync:
   priority: P3
-  description: "Contrat réservé aux messages officiels de déséquilibre avant enchère d'ouverture/fermeture. Nasdaq NOII et NYSE live sont payants ; l'interface Web NYSE gratuite est seulement post-auction et réservée à un POC non planifié."
+  description: "Contrat réservé aux messages officiels de déséquilibre avant enchère d'ouverture/fermeture. Il doit rester désactivé : aucun collecteur quotidien n'est relié à cette entrée. Le POC NYSE Web est manuel, post-auction et non planifié."
   tables: ""
   enabled: false
   status: BLOCKED_NO_FREE_OFFICIAL_FEED
   provider: "Aucun flux officiel gratuit validé"
-  research_notice: "Nasdaq NOII est accessible par abonnement uniquement. Les flux NYSE Order Imbalances live et historiques TAQ complets sont commerciaux. L'interface Web NYSE gratuite expose après l'enchère environ trois mois d'historique agrégé par minute ; elle ne fournit ni API publique documentée, ni couverture Nasdaq, ni signal disponible en production avant le fixing. Le POC séparé nyse_auction_history_poc écrit uniquement des artefacts de recherche locaux, sans table, sans planification et sans serving."
+  research_notice: "LAISSER DÉSACTIVÉ. Passer seulement enabled à true ne lancerait aucune collecte quotidienne : aucun launcher ni tâche Windows n'est associé à ce batch. Nasdaq NOII est accessible par abonnement uniquement. Les flux NYSE Order Imbalances live et historiques TAQ complets sont commerciaux. L'interface Web NYSE gratuite expose après l'enchère environ trois mois d'historique agrégé par minute ; elle ne fournit ni API publique documentée, ni couverture Nasdaq, ni signal disponible en production avant le fixing. Le POC séparé nyse_auction_history_poc se lance uniquement à la demande et écrit des artefacts de recherche locaux, sans table, sans planification et sans serving. Le test sur l'univers a rencontré HTTP 429 après 51 réponses : il ne constitue pas un batch quotidien fiable."
   activation_requirement: "Obtenir un flux officiel Nasdaq/NYSE autorisant réception pré-auction, stockage historique et usage automatisé ; le site Web NYSE post-auction ne suffit pas à activer ce batch."
   unlock_steps:
     - "Souscrire ou valider un flux officiel couvrant Nasdaq NOII et/ou NYSE Order Imbalances avec droits de stockage historique."

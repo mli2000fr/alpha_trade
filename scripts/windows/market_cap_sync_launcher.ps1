@@ -105,7 +105,8 @@ function Send-MarketCapNotification {
             '--log-file', $notificationTmp
         )
         foreach ($warning in $Warnings) { $notificationArgs += @('--warning', $warning) }
-        & $PythonExe (Join-Path $resolvedWorkspace 'scripts\send_batch_email.py') @notificationArgs 2>&1 | Out-Null
+        $notificationOutput = @(& $PythonExe (Join-Path $resolvedWorkspace 'scripts\send_batch_email.py') @notificationArgs 2>&1)
+        foreach ($line in $notificationOutput) { Write-StatusLine ("[{0}] NOTIFY {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $line.ToString()) }
         Remove-Item -LiteralPath $notificationTmp -Force -ErrorAction SilentlyContinue
     } catch {
         Write-StatusLine ("[{0}] NOTE notifications email/Telegram non envoyées: {1}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $_.Exception.Message)

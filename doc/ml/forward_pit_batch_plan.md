@@ -47,7 +47,7 @@ Market cap passe par le point d'entrée générique `modelFactory.fundamental_fe
 2. analyst_snapshot existant : source Yahoo de consensus forward, tendances et breadth de révisions ; actif en recherche uniquement sur l'univers tradable stable.
 3. business_quant_analyst_snapshot : remplacé par Yahoo. Il reste désactivé ; ne le réouvrir que comme challenger licencié si un quota couvrant l'univers complet est acquis.
 4. finra_short_volume_sync : actif en recherche seulement ; fichier public Consolidated NMS et corrections, filtré localement sur l'univers tradable stable. La famille reste `NO_GO` comme signal actuel, mais la collecte prospective continue pour de futurs retests.
-5. auction_imbalance_sync : interface/schéma désactivés PENDING_PROVIDER pour paired shares, côté, prix indicatifs et séquences NYSE/Nasdaq.
+5. auction_imbalance_sync : désactivé `BLOCKED_NO_FREE_OFFICIAL_FEED`. Nasdaq NOII et NYSE live/TAQ sont payants. L'interface Web NYSE post-auction est limitée à un [POC de recherche non planifié](nyse_auction_history_poc.md), sans table ni serving.
 6. securities_lending_sync : interface/schéma désactivés PENDING_PROVIDER pour fee, utilization, lendable supply, shares on loan et locates.
 
 ## P2 — Options

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 
 import pytest
 
+from service.forward_pit import batch as batch_module
 from service.forward_pit.batch import (
     HANDLERS,
     PENDING_BATCHES,
@@ -293,3 +295,120 @@ def test_alpaca_opening_bar_classifies_premarket_in_new_york() -> None:
         run_id="run", feed="sip", adjustment="raw",
     )
     assert row["session"] == "PRE"
+
+
+def _summary_from_stdout(stdout: str) -> dict:
+    marker = "::alpha_trade_run_summary::"
+    line = next(item for item in stdout.splitlines() if marker in item)
+    return json.loads(line.split(marker, 1)[1])
+
+
+def test_main_emits_normalized_success_summary(monkeypatch, capsys) -> None:
+    outcome = batch_module.Outcome(
+        requested=10,
+        received=9,
+        persisted=8,
+        failed=1,
+        warnings=["quota"],
+    )
+    monkeypatch.setattr(batch_module, "execute", lambda *args, **kwargs: ("COMPLETED", outcome))
+    monkeypatch.setattr(
+        batch_module.sys,
+        "argv",
+        ["service.forward_pit.batch", "--batch", "daily_bars_sync"],
+    )
+    batch_module.main()
+    summary = _summary_from_stdout(capsys.readouterr().out)
+    assert summary["status"] == "COMPLETED"
+    assert summary["requested"] == 10
+    assert len(summary["warnings"]) == 1
+
+
+def test_main_emits_normalized_failure_summary(monkeypatch, capsys) -> None:
+    def fail(*args, **kwargs):
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(batch_module, "execute", fail)
+    monkeypatch.setattr(
+        batch_module.sys,
+        "argv",
+        ["service.forward_pit.batch", "--batch", "daily_bars_sync"],
+    )
+    with pytest.raises(RuntimeError, match="provider unavailable"):
+        batch_module.main()
+    summary = _summary_from_stdout(capsys.readouterr().out)
+    assert summary["status"] == "FAILED"
+    assert summary["failed"] == 1
+    assert summary["error_message"] == "provider unavailable"
+
+
+def test_quality_failed_runs_check_excludes_its_own_failures(monkeypatch) -> None:
+    statements: list[str] = []
+
+    class Result:
+        @staticmethod
+        def scalar():
+            return 0
+
+    class Connection:
+        def execute(self, statement, _params=None):
+            statements.append(str(statement))
+            return Result()
+
+    class Begin:
+        def __enter__(self):
+            return Connection()
+
+        def __exit__(self, *_args):
+            return False
+
+    class Engine:
+        @staticmethod
+        def begin():
+            return Begin()
+
+    monkeypatch.setattr(batch_module, "_symbols", lambda _cfg: [])
+    outcome = batch_module.quality_daily(
+        Engine(), {"fail_on_critical": True}, "quality-run", True
+    )
+    assert outcome.failed == 0
+    failed_runs_query = next(sql for sql in statements if "failed_runs_24h" not in sql and "INTERVAL 24 HOUR" in sql)
+    assert "batch_name <> 'pit_data_quality_daily'" in failed_runs_query
+
+
+def test_main_preserves_quality_failure_counters(monkeypatch, capsys) -> None:
+    outcome = batch_module.Outcome(
+        requested=6,
+        received=6,
+        persisted=6,
+        failed=3,
+        warnings=["one warning"],
+        details={
+            "critical": 3,
+            "critical_checks": [
+                {"name": "borrow_age_hours", "value": None, "threshold": 30.0}
+            ],
+        },
+    )
+
+    def fail(*_args, **_kwargs):
+        raise batch_module.BatchRunError("3 contrôles PIT critiques en échec", outcome)
+
+    monkeypatch.setattr(batch_module, "execute", fail)
+    monkeypatch.setattr(
+        batch_module.sys,
+        "argv",
+        ["service.forward_pit.batch", "--batch", "pit_data_quality_daily"],
+    )
+    with pytest.raises(batch_module.BatchRunError):
+        batch_module.main()
+    summary = _summary_from_stdout(capsys.readouterr().out)
+    assert summary["requested"] == 6
+    assert summary["received"] == 6
+    assert summary["persisted"] == 6
+    assert summary["failed"] == 3
+    assert summary["warning_count"] == 1
+    assert (
+        summary["details"]["critical_checks"][0]["name"]
+        == "borrow_age_hours"
+    )

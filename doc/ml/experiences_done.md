@@ -898,6 +898,13 @@ Sur la séance du 11 septembre 2026, 10 contrats CALL/PUT ATM proches de DTE 10 
 Le POC autorise des features ML prospectives fondées sur transactions/volume Alpaca, mais ne prouve pas l'exhaustivité OPRA puisqu'il compare deux endpoints du même fournisseur. Provenance `UNVERIFIED_OPRA`, serving interdit et confirmation multi-jours requise avant activation d'un batch transactions complet. Artefact : `artifacts/research/options_delayed_trade_poc/poc-20260912224359/report.json`. Voir [Options retardées Alpaca et ajustements OCC](options_delayed_alpaca_occ.md).
 
 
+## NYSE Auction History POC — `SMOKE_OK_RESEARCH_ONLY`
+
+Le batch officiel `auction_imbalance_sync` demeure désactivé : Nasdaq NOII, NYSE live et NYSE TAQ historique complet sont commerciaux. Une route JSON non documentée utilisée par l'interface Web NYSE a été confirmée sur IBM le 11 septembre 2026 : six agrégats minute 09:25–09:30 avec imbalance, paired quantity et book clearing price.
+
+Le mode univers a audité 1 798 symboles : 1 015 étaient présents dans les 2 273 symboles de l'interface NYSE. La collecte d'une séance a été limitée par le serveur après 51 réponses. Le POC sauvegarde désormais les résultats partiels et sait les reprendre sans doublon, mais la collecte quotidienne complète gratuite est jugée non fiable. Les données restent post-auction ; aucun serving, table ou batch planifié. Voir [POC NYSE Auction History](nyse_auction_history_poc.md).
+
+
 ## Procédure de mise à jour du registre
 
 Après chaque expérience, ajouter ou mettre à jour une ligne avec :

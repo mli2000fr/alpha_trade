@@ -79,15 +79,80 @@ try {
     $args = @('-u','-m','service.forward_pit.batch','--batch',$BatchName,'--batch-config',$configPath)
     if ($DryRun) { $args += '--dry-run' }
     Push-Location $workspace
-    try { $captured = @(& $python @args 2>&1); $exitCode = $LASTEXITCODE } finally { Pop-Location }
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        # Windows PowerShell matérialise chaque ligne stderr d'un programme natif
+        # en ErrorRecord. Les logs INFO/WARNING Python ne doivent pas interrompre le run.
+        $ErrorActionPreference = 'Continue'
+        $captured = @(& $python @args 2>&1)
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+        Pop-Location
+    }
     foreach ($line in $captured) { Write-Status $line.ToString() }
     $duration = (Get-Date) - $started; $state = if ($exitCode -eq 0) { 'OK' } else { 'ERROR' }
     Write-Status "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] FIN $BatchName status=$state exit=$exitCode duration=$($duration.ToString())"
     $tmp = Join-Path ([IO.Path]::GetTempPath()) "alpha_forward_pit_$PID.txt"
     $captured | Select-Object -Last 300 | Set-Content -LiteralPath $tmp -Encoding UTF8
-    & $python (Join-Path $workspace 'scripts\send_batch_email.py') --event $BatchName --status $state --exit-code $exitCode --duration $duration.ToString() --log-file $tmp 2>&1 | Out-Null
-    Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    try {
+        $notificationPreviousErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            $notificationOutput = @(& $python (Join-Path $workspace 'scripts\send_batch_email.py') --event $BatchName --status $state --exit-code $exitCode --duration $duration.ToString() --log-file $tmp 2>&1)
+            $notificationExitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $notificationPreviousErrorActionPreference
+        }
+        foreach ($line in $notificationOutput) { Write-Status "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] NOTIFY $($line.ToString())" }
+        if ($notificationExitCode -ne 0) {
+            Write-Status "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] NOTIFY ERROR exit=$notificationExitCode"
+        }
+    } catch {
+        Write-Status "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] NOTIFY ERROR $($_.Exception.Message)"
+    } finally {
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    }
     exit $exitCode
+} catch {
+    $fatalMessage = $_.Exception.Message
+    $finished = Get-Date
+    $failureDuration = if (Test-Path variable:started) {
+        $finished - $started
+    } else {
+        [TimeSpan]::Zero
+    }
+    try {
+        Write-Status "[$($finished.ToString('yyyy-MM-dd HH:mm:ss'))] FIN $BatchName status=ERROR exit=1 duration=$($failureDuration.ToString()) error=$fatalMessage"
+    } catch {
+        Write-Error "[$BatchName] $fatalMessage"
+    }
+    $failureTmp = Join-Path ([IO.Path]::GetTempPath()) "alpha_forward_pit_failure_$PID.txt"
+    try {
+        @("ERROR: $fatalMessage", $_.ScriptStackTrace) |
+            Set-Content -LiteralPath $failureTmp -Encoding UTF8
+        $notificationPreviousErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            $notificationOutput = @(
+                & $python (Join-Path $workspace 'scripts\send_batch_email.py') `
+                    --event $BatchName --status ERROR --exit-code 1 `
+                    --duration $failureDuration.ToString() --log-file $failureTmp `
+                    --failed 1 --error-message $fatalMessage 2>&1
+            )
+            $notificationExitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $notificationPreviousErrorActionPreference
+        }
+        foreach ($line in $notificationOutput) {
+            Write-Status "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] NOTIFY $($line.ToString())"
+        }
+    } catch {
+        try { Write-Status "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] NOTIFY ERROR $($_.Exception.Message)" } catch {}
+    } finally {
+        Remove-Item -LiteralPath $failureTmp -Force -ErrorAction SilentlyContinue
+    }
+    exit 1
 } finally {
     if ($locked) { $mutex.ReleaseMutex() }; $mutex.Dispose()
 }
