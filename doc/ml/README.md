@@ -62,6 +62,7 @@
 28. [Données manquantes et priorités fournisseurs](data_gaps_and_provider_priorities.md)
 29. [Sources gratuites pour le Forward PIT Collector](data_gaps_and_provider_priorities_source_free.md)
 30. [E20-A — disponibilité PIT Opening Window après Oracle](oracle_opening_window_availability_e20a.md)
-30. [Plan des batchs Forward PIT — P0 à P4](forward_pit_batch_plan.md)
+31. [E20-B — confirmation Opening Window price-only](oracle_opening_price_confirmation_e20b.md)
+32. [Plan des batchs Forward PIT — P0 à P4](forward_pit_batch_plan.md)
 
 Retour : [vue d'ensemble ML](../06_ml_vue_ensemble.md).

@@ -399,11 +399,11 @@ option_contract_adjustment_sync:
 
 oracle_opening_window_sync:
   priority: P3
-  description: "Collecter en SIP consolidé les barres minute du prémarché et de l'ouverture sur tout l'univers tradable stable, pour recherche directionnelle et politiques d'entrée retardée."
+  description: "Collecter en SIP consolidé les prix minute du prémarché et de l'ouverture sur tout l'univers tradable stable, pour recherche directionnelle et politiques d'entrée retardée."
   tables: "pit_collection_runs,pit_raw_payloads,stock_opening_window_bars,stock_opening_window_bar_versions"
   enabled: true
   status: ACTIVE_RESEARCH_ONLY
-  research_notice: "Alpaca SIP historique gratuit, disponible avec retard. Ce batch alimente la recherche et une éventuelle entrée retardée; il ne fournit pas une confirmation SIP temps réel à 09:30."
+  research_notice: "Alpaca SIP historique gratuit, disponible avec au moins 15 minutes de retard. E20-B utilise uniquement OHLC : volume, trade_count et VWAP restent collectés pour audit mais sont exclus de la baseline price-only. Ce batch ne fournit pas une confirmation SIP temps réel à 09:30."
   provider: alpaca
   feed: sip
   adjustment: raw
@@ -415,6 +415,9 @@ oracle_opening_window_sync:
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   window_start: "04:00"
   window_end: "10:30"
+  research_feature_mode: price_only
+  price_checkpoints_minutes: "5,15,30,60"
+  volume_required: false
   minimum_sip_delay_minutes: 16
   # Rejoue les séances NYSE de J-7 à J et ignore celles ayant déjà atteint le gate OPEN.
   lookback_days: 7

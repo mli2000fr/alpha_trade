@@ -91,10 +91,13 @@ persistée sur une date compatible avec un signal Oracle.
 
 ## Prochaine action autorisée
 
-Ne pas ouvrir E20-B ni E20-C. Après un premier run réussi un jour de marché,
-relancer E20-A pour contrôler la collecte. Ensuite, choisir explicitement entre
-un backfill historique Alpaca et une validation prospective conjointe. Aucun
-seuil directionnel ne doit être choisi avant ce choix.
+Le harnais E20-B price-only peut être implémenté et pré-enregistré, mais son
+exécution décisionnelle reste bloquée. Après un premier run réussi un jour de
+marché, relancer E20-A pour contrôler la collecte. Ensuite, choisir explicitement
+entre un backfill historique Alpaca et une validation prospective conjointe.
+Les seuils E20-B sont désormais figés dans le code et ne doivent pas être
+changés après lecture des résultats.
 
 Voir aussi [collecte Opening Window](oracle_opening_window_alpaca.md) et
+[E20-B price-only](oracle_opening_price_confirmation_e20b.md), puis le
 [registre des expériences](experiences_done.md).
