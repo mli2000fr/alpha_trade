@@ -52,24 +52,22 @@ db_core_backup:
   include_triggers: true
   keep: 5
   coverage_description: "Base alpha_trade complète sauf news_raw ; conservation des 5 dernières archives"
-  execution_notice: "Sauvegarde principale du dimanche. news_raw est volontairement exclue et possède son propre batch mensuel afin de limiter la durée, le volume et la rétention du dump principal."
+  execution_notice: "Sauvegarde principale hebdomadaire. news_raw est volontairement exclue et possède son propre batch hebdomadaire afin de limiter la durée, le volume et la rétention du dump principal."
   log_file: log/batch/db_core_backup.txt
 
-# Sauvegarde mensuelle isolée de news_raw. La tâche se réveille chaque dimanche,
-# mais le launcher n'autorise l'exécution planifiée que le premier du mois.
+# Sauvegarde hebdomadaire isolée de news_raw, chaque dimanche.
 db_news_raw_backup:
   priority: P0
   enabled: true
   status: ACTIVE
   timezone: Europe/Paris
-  description: "Sauvegarder séparément la table volumineuse news_raw le premier dimanche de chaque mois."
+  description: "Sauvegarder séparément la table volumineuse news_raw chaque dimanche."
   tables: "fichiers:backups/db"
   provider: local_mysql
   universe_scope: database_table_news_raw
   run_hours: "1"
   run_minutes: "0"
   run_days: "0"
-  first_weekday_of_month: true
   host: localhost
   db: alpha_trade
   mysqldump_path: "C:/Program Files/MySQL/MySQL Server 8.0/bin/mysqldump.exe"
@@ -79,8 +77,8 @@ db_news_raw_backup:
   include_routines: false
   include_triggers: true
   keep: 3
-  coverage_description: "Table news_raw uniquement ; conservation des 3 dernières archives mensuelles"
-  execution_notice: "La tâche planifiée ne produit un dump que le premier dimanche du mois à 18:00. Un lancement manuel reste possible à tout moment depuis l'IHM."
+  coverage_description: "Table news_raw uniquement ; conservation des 3 dernières archives hebdomadaires"
+  execution_notice: "La tâche planifiée produit un dump chaque dimanche à l'heure configurée. Un lancement manuel reste possible à tout moment depuis l'IHM."
   log_file: log/batch/db_news_raw_backup.txt
 
 # Collecte composite de capitalisation. SEC EDGAR est la source primaire PIT :
