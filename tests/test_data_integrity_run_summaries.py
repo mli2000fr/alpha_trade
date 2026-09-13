@@ -177,6 +177,7 @@ def test_sync_earnings_calendar_main_emits_structured_summary(monkeypatch, capsy
                 "parse_args": lambda self: argparse.Namespace(
                     from_date="2026-04-01",
                     to_date="2026-04-15",
+                    symbols_file=None,
                     symbol_source="active-tradable",
                     limit=22,
                     sleep_seconds=1.4,

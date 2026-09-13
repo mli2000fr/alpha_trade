@@ -24,6 +24,7 @@ une étape de confirmation ; il n'autorise jamais automatiquement le serving.
 | `IN_PROGRESS` | campagne en cours, aucune conclusion définitive |
 | `PROPOSED` | protocole préparé mais non exécuté |
 | `STANDBY_ABONNEMENT` | protocole prêt, suspendu jusqu'à disponibilité du forfait requis |
+| `ABANDON_COÛT` | source ou expérience volontairement arrêtée car l'accès requis est payant |
 | `BLOCKED_NO_PIT_HISTORY` | hypothèse non rejetée, mais aucune source historique PIT suffisante |
 
 ## Résumé décisionnel actuel
@@ -37,7 +38,7 @@ une étape de confirmation ; il n'autorise jamais automatiquement le serving.
    E6-B2 reste négatif à H3/H5/H10/H20. Les moyennes vont de `-14,39 %` à
    `-29,68 %`, les médianes sont toutes négatives et seulement 0 à 2 dates sur
    8 sont positives selon l'horizon.
-4. **Aucune famille Eroya testée n'est promue**. Quelques effets descriptifs
+4. **Aucune famille Eroya testée n'est promue**. Quelques effets descriptifs 
    existent, mais pas de gain directionnel Walk-Forward suffisamment stable.
 5. **La surface Options directionnelle 45 DTE est rejetée** : aucune feature ne
    passe les gates préfixés. Les deux effets descriptifs H10/H20 sont instables
@@ -46,6 +47,14 @@ une étape de confirmation ; il n'autorise jamais automatiquement le serving.
    T0 Logistic reste meilleur à 0,5143 d'AUC same-date. Le meilleur T2
    logistique tombe à 0,5112 ; le plus grand delta T2 est +0,0066 mais avec une
    AUC absolue de 0,4961 et des buckets inversés. Dataset B/C n'est pas ouvert.
+7. **E9 ferme la confirmation directionnelle post-signal** : attendre le close
+   J+1/J+2/J+3/J+5 puis entrer à l'open suivant ne révèle pas le sens restant.
+   La politique primaire D2 atteint 49,40 % de précision et -0,309 % net par
+   date ; les groupes désignés SHORT continuent en réalité de monter.
+8. **E10 rejette l'interprétation pullback LONG** : l'avantage découvert dans
+   E9 ne se confirme pas du 10 juillet 2024 au 11 juillet 2025. Le delta
+   quotidien contre Oracle LONG au même open vaut -0,056 point, IC95
+   [-0,603 ; +0,436], avec 1/2 folds et 1/3 semestres favorables.
 
 ## Campagnes directionnelles récentes après Oracle
 
@@ -66,6 +75,8 @@ une étape de confirmation ; il n'autorise jamais automatiquement le serving.
 | E5 | Direction quotidienne du régime Oracle | Choisir un côté commun pour tout le panier du jour | Ridge Spearman 0,000 ; CatBoost -0,008 ; aucune stabilité exploitable | `NO_GO` | [E5](oracle_daily_regime_direction.md) |
 | R1 | Ranker conditionnel au TOP20 Oracle | Ranking de rendement réel uniquement dans le pool Oracle | Retest batch corrigé : H3 IC +0,0148/spread +0,12 % ; H20 IC +0,0260/spread +0,67 %, mais stabilité insuffisante et LONG/SHORT `NO_GO` | `NO_GO` confirmé | [Ranker conditionnel](conditional_oracle_ranker.md) |
 | C1 | Consensus des modèles OOF existants | Moyenne équipondérée de rangs quotidiens, 2 à 7 familles selon H3/H5/H10/H20, sans réentraînement ni optimisation | IC -0,0014 à +0,0118, inférieur au meilleur composant ; SHORT signé négatif partout ; unanimité et régime E5 ne sauvent pas la direction | `NO_GO` | [Audit de consensus OOF](oof_consensus_audit.md) |
+| E9-A | Confirmation directionnelle après Oracle | Observer le prix à J+1/J+2/J+3/J+5, puis entrer LONG/SHORT au prochain open ; seuils choisis sur folds antérieurs | Primaire D2 : 49,40 % de précision, -0,309 % net quotidien, 1/12 folds positifs ; les signaux SHORT montent encore de +1,8 % à +3,2 % | `NO_GO`; E9-B fermé | [E9](oracle_post_signal_confirmation.md) |
+| E10 | Pullback LONG après Oracle | Seuil choisi sur E9 puis gelé à -0,25 % ; confirmation Oracle H20 OOF du 2024-07-10 au 2025-07-11, entrée LONG open J+2 | +0,732 % net quotidien mais benchmark +0,788 % ; delta -0,056 point, IC95 [-0,603 ; +0,436], 1/2 folds positifs | `NO_GO`; E10-B fermé | [E10](oracle_pullback_long.md) |
 | T-V2-A | Temporal D1/D10 V2 — Dataset A | État J contre trajectoires `[J-N,...,J]`, N=3/5/10, Logistic/CatBoost/PairLogit, labels H20 autoritatifs | 21 variantes, 399 symboles ; T0 Logistic 0,5143, meilleur T2 Logistic 0,5112 ; aucun gain T2 >= +0,01, aucun candidat servable | `NO_GO_DATASET_A` final | [Temporal D1/D10 V2](temporal_d1d10_v2.md) |
 | S1 | Règles screener PIT post-Oracle | Signaux screener LONG/SHORT H3/H10/H20 | Couverture fraîche 10,44 %, meilleurs effets instables ; aucun gate LONG/SHORT | `NO_GO_PREDICTIVE` | [Screener post-Oracle](screener_post_oracle.md) |
 | S1-D | Recontrôle screener sur panel dense | Six signaux quotidiens recalculés sur tout le pool | Couverture réparée mais verdict prédictif inchangé | `NO_GO_PREDICTIVE` | [Panel dense](panel_screener_dense.md), [résultat](screener_post_oracle.md#source-dense-recommandée) |
@@ -506,6 +517,412 @@ un hyperparamètre favorable dans une hypothèse déjà rejetée.
 - LSTM D1/D10 avant TCN et avant preuve tabulaire ;
 - Transformer, contrastive learning, multitask end-to-end, RL, genetic
   programming et seuils spécifiques par symbole.
+
+## Multi-Horizon Oracle + Rolling Confirmation — `FAIT_WEAK_SIGNAL`
+
+Quatre Oracle OOF H5/H10/H15/H20 sont alignés sur une coupe quotidienne
+commune. Le POC pré-enregistré mesure MH0–MH3, la continuation après
+J+5/J+10/J+15, la valeur incrémentale du consensus restant et une entrée
+retardée symétrique S6-LS. Il est strictement `research_only` : aucune table,
+aucun backtest et aucun flux live ne sont modifiés avant `GO_RESEARCH`.
+L'univers courant `univers_filtred_equities.txt` implique un biais de survivance
+et interdit `STRONG_GO`. Le run couvre réellement 284 symboles de juillet 2018
+à juillet 2024. H5/H10/H15/H20 sont très corrélés (0,926–0,970), la sélection
+multi-horizon contre REST n'est pas significative et S6-LS est négative. Un
+signal exploratoire subsiste pour H20 seul + gagnant J+5 + Oracle restant
+confirmé (écart quotidien +1,41 %, IC95 [+0,24 % ; +2,74 %]), mais il est
+concentré dans les extrêmes et instable selon les années. Verdict `WEAK_SIGNAL` ;
+phase 2 générale fermée, petit challenger OOS ciblé seulement. Voir
+[protocole et mode d'emploi](multi_horizon_oracle_rolling_confirmation.md)
+et [prompt de campagne](../../prompt/multi_horizon_oracle_rolling_confirmation_prompt.md).
+
+Le challenger ciblé **Variante 2 — maintien rolling H5 jusqu'au TP** est
+`FAIT_NO_GO`. Sur 30 566 entrées appariées, H20 fixe donne `+0,109 %` net/trade,
+l'extension passive H60 `+0,120 %` et le rolling prix + H5 `-0,097 %`. Le rolling
+perd `-0,217 %` par trade contre l'extension passive ; son delta quotidien
+apparié vaut `-0,286 %`, IC95 `[-0,568 % ; -0,043 %]`. La cause principale est
+le veto prix non positif, qui coupe 11 219 trades avant des récupérations
+partielles. Le veto H5 seul est légèrement favorable sur sa sous-population,
+mais trop faible et instable pour être promu. L'extension H60 seule n'est pas
+significative et 95,5 % des trades sont inchangés face à H20. Aucun changement
+du backtest ou du live. Voir la section résultat du
+[protocole](multi_horizon_oracle_rolling_confirmation.md).
+
+## E7 — Surveillance quotidienne KEEP / EXIT — `FAIT_NO_GO`
+
+E7-A construit, pour chaque position H20 encore ouverte à une clôture, un état
+PIT exécutable au prochain open. Il sépare strictement identité, features
+observables et labels futurs (`KEEP`, avantage contre sortie immédiate, TP avant
+stop, rendements et excursions futurs). `trade_id` est la future clé de groupe
+anti-fuite et `label_end_date` la borne de purge. Le premier run a révélé puis
+permis de corriger deux défauts avant entraînement : états de liquidation H20
+obligatoire et historique technique tronqué à l'entrée. Son artefact est
+supersédé ; E7-A doit être relancé. Aucun entraînement n'est autorisé avant le
+nouvel audit de couverture, de distribution et de stabilité semestrielle. Voir
+[E7 KEEP/EXIT](daily_position_keep_exit.md).
+
+Le run E7-A corrigé contient 199 677 états sur 29 449 trades, une cible KEEP à
+51,14 %, aucune décision H20 forcée et une couverture quasi complète. La forte
+dérive semestrielle interdit une règle statique, mais l'état de position possède
+assez de structure pour ouvrir E7-B. Trois modèles research-only sont prêts :
+logistique calibrée, LightGBM calibré et LightGBM Huber sur l'avantage. Le gate
+est le delta économique OOS de la première sortie contre H20, pas le F1.
+
+E7-B est terminé sur six folds et 16 609 trades OOS. La meilleure politique,
+LightGBM Huber sur l'avantage, ajoute `+0,080 %` par trade mais seulement
+`+0,013 %` par date, IC95 `[-0,484 % ; +0,516 %]`, avec 2/6 folds positifs et
+une corrélation score/avantage de `-0,016`. Les classifiers obtiennent AUC
+environ 0,64 sans valeur économique stable. Le mécanisme évite fortement les
+pertes de 2022H1 en sortant presque tout, puis détruit les gains de 2022H2 avec
+la même réaction. Verdict `NO_GO` : aucun seuil ou modèle n'est promu.
+
+## E8-A — Historique options PIT — `BLOCKED_NO_DENSE_PIT_HISTORY`
+
+L'audit local reproductible ne trouve aucune table options en base. La meilleure
+collecte comporte 625 événements, 155 symboles et 323 surfaces complètes
+(51,68 %), mais seulement huit dates entre mai 2022 et juillet 2025, contre 504
+requises. Les snapshots courants possèdent IV/Greeks/open interest sur quelques
+contrats mais ne sont pas historiques. Il manque des quotes entrée/sortie
+quotidiennes, IV/Greeks/OI historiques observés, taux, dividendes et ajustements
+de contrats. E8-B n'est pas autorisé. Voir
+[audit historique options PIT](options_pit_history_audit.md).
+
+## E8-A2 — Source et coût d’acquisition — `ABANDON_COÛT`
+
+Le TOP20 Oracle représente 28 736 événements sur les 504 dernières séances
+éligibles, environ 57 par jour. Une collecte REST ciblée nécessite 363 511
+tentatives pour une paire 45 DTE valorisée à H3/H5/H10/H20, soit environ
+4,06 Gio bruts selon les hypothèses prudentes ; télécharger l’OPRA complet est
+écarté. Un pilote de 60 dates réparties dans le temps représente 3 421 événements
+et 43 276 tentatives. Le fournisseur techniquement préféré était ThetaData
+Options Value, avec Massive Options Advanced comme repli opérationnel. Le
+10 septembre 2026, la décision a été prise de ne souscrire à aucune source
+payante : la campagne d'acquisition est donc fermée en `ABANDON_COÛT`.
+Eroya n’est pas retenu tant que les droits de livraison des données américaines
+ne sont pas confirmés. E8-B reste bloqué avant les gates du pilote. Voir
+[source, coût et plan d’acquisition](options_acquisition_cost_audit.md).
+
+## E8-A3 — Connecteur ThetaData et smoke — `ABANDON_COÛT`
+
+Le connecteur REST v3 local et le smoke préfixé sont implémentés. Dix événements
+Oracle TOP20 sont préparés sur cinq dates réparties de 2022 à 2024, avec un titre
+faible et un titre fort en dollar-volume par date. Le premier run s’est arrêté
+proprement avant tout appel : aucun Theta Terminal n’écoute sur le port 25503 et
+`THETADATA_API_KEY` est absente. Ce résultat ne rejette pas la source. Après
+démarrage du terminal, le même smoke doit vérifier contrats expirés, paire ATM
+35–55 DTE et NBBO entrée/H3/H5/H10/H20. Artefact canonique du blocage :
+`artifacts/research/thetadata_options/thetadata-options-smoke-20260910185522/report.json`.
+Les 15 tests ciblés E8-A1/A2/A3 passent et le contrôle statique est propre.
+
+La bibliothèque Python officielle publiée en 2026 permettrait aussi d'appeler
+directement `option_list_contracts()` et `option_history_quote()` sans Theta
+Terminal ni Java. Elle ne supprime toutefois pas l'obligation d'un abonnement
+Options Value ou supérieur. La piste est donc abandonnée pour raison économique,
+sans rejet scientifique de la donnée. Le connecteur research-only reste inactif,
+aucun paquet ThetaData n'a été installé et E8-A4 n'est pas ouvert. Voir
+[connecteur et procédure E8-A3](thetadata_options_smoke.md).
+
+## E11 — Oracle H20 × Global Ranking H20 — `FAIT_NO_GO`
+
+Le nouveau Global Ranking H20 strictement OOF contient 4,23 M de rangs sur
+2 696 symboles et 13 folds. Son IC global CatBoost vaut `+0,0237`, mais aucun
+candidat du championnat n''est éligible à cause de l''instabilité temporelle.
+Le croisement propre avec l''Oracle P0f couvre 543 153 événements, 1 625 dates
+et 1 461 symboles, soit 93,21 % des événements TOP20.
+
+Dans le pool Oracle, l''IC tombe à `+0,0101`. Le haut du ranking pris en LONG
+ajoute seulement `+11,8 bp` contre l''Oracle entier, IC95
+`[-24,3 ; +45,8] bp`. Le bas reste haussier en valeur absolue et donne
+`−1,329 %` net lorsqu''il est pris en SHORT. Le portefeuille LONG/SHORT vaut
+`+8,4 bp`, IC95 `[-20,9 ; +36,6] bp`. Les trois verdicts sont `NO_GO` : le
+ranking trie faiblement les rendements relatifs, mais ne distingue pas D1 de
+D10. Aucun changement du serving, du backtest ou du live. Artefact canonique :
+`artifacts/research/oracle_global_rank_cross/oracle-global-rank-cross-20260911141556`.
+Voir [E11 — croisement Oracle H20 × Global Ranking H20](oracle_global_ranking_cross_e11.md).
+
+## E12 — Pont de monétisation Oracle H20 — `FAIT_NO_GO_OR_BLOCKED`
+
+E12 relie l'étude d'événements Oracle au contrat exécutable : open J+1,
+sortie H20, déduplication, huit positions, comparaison priorité Oracle /
+liquidité / 200 tirages aléatoires, filtre tradable PIT et lifecycle PROD. Sur
+582 700 événements OOF, le rendement net fixe moyen reste positif à `+1,103 %`.
+Après capacité, la priorité Oracle vaut `+2,540 %` et bat le 95e percentile de
+tous les tirages aléatoires, mais son IC95 recouvre zéro.
+
+Le replay PROD dynamique exécute 2 013 trades sur 1 160 dates et ne conserve que
+`+0,276 %` moyen, IC95 journalier `[-0,290 ; +0,900] %`. Le lifecycle enlève
+`2,119 points` aux mêmes événements H20, avec un IC95 du delta entièrement
+négatif. Les 686 trailing stops perdent `-10,93 %` en moyenne ; 707 candidats
+sont rejetés par le gap 3 %. Enfin, les snapshots tradables stricts ne couvrent
+que 60/1 764 dates. La sensibilité `degraded` devient négative (`-0,791 %`),
+mais ne constitue pas une preuve PIT canonique. Aucune promotion n'est
+autorisée. Artefact canonique :
+`artifacts/research/oracle_monetization_bridge/oracle-monetization-bridge-20260911154131`.
+Voir [E12 — pont de monétisation Oracle H20](oracle_monetization_bridge_e12.md).
+
+## E13 — Veto pré-entrée Oracle — `FAIT_NO_GO_OR_BLOCKED`
+
+E13 entraîne un CatBoost mutualisé à prédire le futur motif `trailing_stop`
+avec uniquement des variables disponibles au close J ou à l'open J+1. Les 13
+folds sont strictement expanding et purgés : toute sortie d'un exemple train
+précède le début du fold test. Sur 32 314 événements OOF, l'AUC vaut `0,6259` et
+le taux de trailing progresse de 21,84 % dans le décile faible risque à 58,14 %
+dans le décile fort risque.
+
+Cette discrimination ne se transforme pas en avantage portefeuille. Le veto
+primaire 20 %, dont le seuil est appris uniquement sur chaque train, donne
+`+0,357 %` moyen contre `+0,328 %` pour la baseline, mais son delta journalier
+est `-0,052 %`, IC95 `[-0,185 ; +0,087] %`. Le trailing sélectionné ne baisse
+que de 33,35 % à 32,82 %, le Q05 se dégrade et la stabilité semestrielle échoue.
+L'ATR% porte 26,48 % de l'importance : le modèle apprend surtout la mécanique
+du stop proportionnel à l'ATR, pas une perte évitable. Les snapshots tradables
+stricts ne couvrent que 53 dates. Aucun seuil n'est promu. Artefact canonique :
+`artifacts/research/oracle_pre_entry_veto/oracle-pre-entry-veto-20260911155716`.
+Voir [E13 — veto pré-entrée après Oracle](oracle_pre_entry_veto_e13.md).
+
+## E14 — Cible économique pré-entrée — `FAIT_NO_GO_OR_BLOCKED`
+
+E14 remplace le motif mécanique de sortie d'E13 par deux cibles OOF : rendement
+net PROD winsorisé sur train et probabilité de perte nette. Sur 32 314
+événements, l'IC utilité global vaut `+0,0364` et le score de non-perte
+`+0,0592`. Le décile d'utilité supérieur rapporte `+1,162 %` avec 30,60 % de
+pertes, contre `+0,433 %` et 49,20 % pour le décile inférieur, mais la relation
+n'est pas monotone et l'IC quotidien moyen n'est que `+0,0047`.
+
+Le veto primaire 20 % échoue : `+0,149 %` par date contre `+0,360 %` pour la
+baseline, delta `-0,188 %`, IC95 `[-0,545 ; +0,132] %`, Q05 dégradé et seulement
+6/14 semestres améliorés. L'hybride diagnostique Oracle/utilité 50/50 atteint
+`+0,460 %` par date et améliore le Q05, mais son delta de `+0,063 %` est non
+significatif et positif sur seulement 7/14 semestres. Aucun seuil ni poids n'est
+promu. Les snapshots tradables stricts restent limités à 53 dates. Artefact :
+`artifacts/research/oracle_pre_entry_utility/oracle-pre-entry-utility-20260911162146`.
+Voir [E14 — cible économique pré-entrée](oracle_pre_entry_utility_e14.md).
+
+## E15 — Audit structurel du lifecycle — `FAIT_NO_GO_OR_BLOCKED`
+
+E15 croise quatre règles figées de trailing (PROD, activation après +0,5R,
+après +1R, aucun trailing) avec TP PROD ou aucun TP. Le candidat primaire +0,5R
+avec TP donne `+0,0419 %` par date sur événements appariés, IC95 recouvrant zéro,
+puis `-0,0830 %` après capacité. Il dégrade Q05/Q01 et la confirmation depuis
+2023 vaut `-0,2327 %`. Retarder le trailing transforme principalement les 686
+trailing stops PROD en 457–498 stops initiaux plus profonds.
+
+Le diagnostic sans TP révèle une convexité importante sur l'univers large :
+`prod_no_tp` atteint `+1,810 %` moyen et un delta portefeuille de `+0,711 %`,
+IC95 `[+0,078 ; +1,277] %`. Mais le delta passe de `+1,380 %` avant 2023 à
+`-0,489 %` depuis 2023 ; sur les snapshots tradables dégradés, ce contrat tombe
+à `-0,360 %`. Les 20 meilleurs trades portent 69 % du gain et la couche PIT
+`full` ne couvre que 60 dates. Aucun contrat n'est promu et le lifecycle PROD
+reste inchangé. Artefact canonique :
+`artifacts/research/oracle_lifecycle_structural_audit/oracle-lifecycle-audit-20260911164445`.
+Voir [E15 — audit structurel du lifecycle](oracle_lifecycle_structural_audit_e15.md).
+
+## E16 — Reconstruction PIT de l’univers tradable — `FAIT_NO_GO_OR_BLOCKED`
+
+E16 explique la couverture trompeuse d’E12/E15 : 1 750 dates ont un ancien run
+`full`, mais 60 seulement restent canoniques après des publications `degraded`.
+Ces anciens `full` ne couvrent ni `history_days`, ni `bars_available`, ni
+`close_price`, ni `adv_usd`, et seulement 17,81 % des spreads : ils ne sont pas
+requalifiés. La reconstruction bar-PIT couvre 1 764/1 764 séances et
+582 698/582 700 événements. Le H20 fixe sous capacité vaut `+2,808 %`, mais le
+lifecycle PROD seulement `+0,544 %`, IC95 recouvrant zéro.
+
+`prod_no_tp` est globalement positif avec un IC95 de delta portefeuille > 0,
+mais échoue depuis 2023 (`−0,2277 %`) et dégrade Q05 (`−15,44 %` à `−16,91 %`)
+ainsi que Q01 (`−22,18 %` à `−22,65 %`). Le trailing après `+0,5R` reste
+négatif après capacité et depuis 2023. Aucun contrat n’est promu. Artefact :
+`artifacts/research/oracle_tradable_pit_reconstruction/oracle-tradable-pit-reconstruction-20260911192318`.
+Voir [E16 — reconstruction PIT et réplication E12/E15](oracle_tradable_pit_reconstruction_e16.md).
+
+## E17 — Bibliothèque d’alphas directionnels price-only H60/H120 — `FAIT_NO_GO`
+
+E17 sort entièrement du pipeline Oracle et évalue six signaux price-only plus
+un composite figé sur 1 798 actions, du 2018-07-01 au 2025-12-31. Le contrat est
+PIT au close J, entrée open J+1, sortie open J+H+1, filtre de liquidité à J,
+top/bottom 20 %, portefeuille 50/50 dollar-neutral, rebalance 20 séances et
+6 bps aller-retour par jambe. Le rapport confirme `oracle_used=false`.
+
+Le composite primaire H60 possède un IC positif (`+0,0138`, IC95 entièrement
+positif), mais le rendement long/short de `+0,414 %` n’est pas significatif
+(IC95 `[-0,430 ; +1,102] %`), seuls 46,67 % des semestres sont positifs et la
+jambe SHORT perd `−2,288 %`. Verdict : `NO_GO` pour une stratégie directionnelle
+symétrique.
+
+Le momentum résiduel 120–10 à H120 est un `DISCOVERY_CANDIDATE` : IC `+0,0474`,
+long/short `+1,664 %`, IC95 `[+0,552 ; +2,527] %`, 80 % de semestres positifs.
+Mais la jambe SHORT reste perdante (`−4,368 %`) et le candidat a été identifié
+après lecture des diagnostics. Il suggère un alpha de classement relatif ou
+long-only à confirmer sur données nouvelles, pas une solution D1/D10. Les
+métadonnées actuelles non historisées ajoutent un risque de survivorship bias.
+Aucune promotion n’est autorisée. Artefact :
+`artifacts/research/directional_alpha_book/directional-alpha-book-20260911194051`.
+Voir [E17 — bibliothèque d’alphas price-only](directional_alpha_book_e17.md).
+
+## E17-B — Confirmation prospective momentum résiduel H120 — `BLOCKED_DATA_UNAVAILABLE`
+
+E17-B fige avant nouvelles observations le seul candidat exploratoire d’E17 :
+momentum résiduel 120–10, H120, long-only TOP20, entrée open J+1, sortie open
+J+121, rebalance 20 séances et 6 bps de coûts. La première date admissible est
+le 14 septembre 2026 ; 2018–2025 est définitivement exclu de la confirmation.
+Le contrat JSON est protégé par une empreinte canonique SHA-256.
+
+Un verdict exige au moins 24 cohortes matures, quatre semestres d’entrée et 50
+titres sélectionnés en moyenne. Il faut ensuite battre en moyenne et avec un
+IC95 positif l’univers éligible et SPY, rester positif en absolu, être positif
+sur au moins 60 % des semestres et respecter le gate de concentration. Les
+seuls verdicts possibles sont `PENDING_DATA`, `NO_GO` et
+`GO_RESEARCH_SHADOW_ONLY`. Le rapport initial est logiquement `PENDING_DATA`.
+La base disponible s’arrêtant au 30 juin 2026, aucune observation postérieure
+au début prospectif du 14 septembre 2026 n’existe. L’expérience est bloquée
+jusqu’à reprise de l’alimentation des barres. Aucune promotion production n’est
+autorisée.
+
+Voir [E17-B — confirmation prospective](directional_alpha_book_confirmation_e17b.md).
+
+## E17-C — Robustesse historique momentum résiduel H120 — `FAIT_NOT_ROBUST`
+
+E17-C applique des contrôles verrouillés au candidat E17 sans revendiquer un
+nouvel OOS. Sur 95 cohortes, le LONG net vaut `+7,696 %` et l’excès contre
+l’univers `+2,294 %`, avec IC95 `[+0,959 ; +3,463] %`. Les cinq sous-univers
+hash, les quatre calendriers et 14/21 secteurs sont positifs ; les 20 principaux
+symboles ne portent que 13,36 % des contributions positives.
+
+Le verdict reste `NOT_ROBUST` : l’excès contre SPY de `+1,194 %` a un IC95
+`[-1,279 ; +4,093] %`, et le bloc 2021–2022 perd `−0,770 %` contre l’univers.
+Le signal est donc un classement relatif diversifié mais dépendant du temps,
+pas un alpha autonome universel ni une solution D1/D10. Aucun serving n’est
+modifié. Artefact :
+`artifacts/research/directional_alpha_book_robustness/e17c-robustness-20260911201018`.
+Voir [E17-C — robustesse historique verrouillée](directional_alpha_book_robustness_e17c.md).
+
+## E18-A — Attribution bêta, secteurs et régimes — `FAIT_MARKET_OR_SECTOR_EXPOSURE`
+
+E18-A conserve exactement le momentum résiduel H120 et les 95 cohortes E17,
+puis attribue la performance avec des informations PIT à J. Le portefeuille a
+un bêta moyen de `1,021`. Sur `+7,696 %` nets par cohorte H120, la contribution
+estimée du marché vaut environ `+6,990 %`. Le rendement beta-hedged tombe à
+`+0,645 %`, IC95 `[-1,955 ; +3,263] %`.
+
+La sélection n’est pas un simple pari sectoriel : l’excès sector-neutral contre
+l’univers reste `+1,402 %`, IC95 `[+0,429 ; +2,239] %`. Mais la combinaison
+sector-neutral + beta-hedged vaut `−0,238 %`, IC95 `[-2,360 ; +2,168] %`.
+2021–2022 reste négatif sous toutes les décompositions et 2023–2025 devient
+`−1,068 %` après neutralisation combinée. Aucun des quatre régimes SPY figés ne
+présente à la fois IC95 positif et réplication temporelle. Verdict :
+`MARKET_OR_SECTOR_EXPOSURE`, principalement marché. Aucun filtre de régime ni
+serving n’est autorisé. Artefact :
+`artifacts/research/directional_alpha_attribution/e18a-attribution-20260911201902`.
+Voir [E18-A — attribution de l’alpha H120](directional_alpha_attribution_e18a.md).
+
+## E19-A — Audit de disponibilité PIT des fondamentaux — `FAIT_PARTIAL_CONTRACT_BLOCKED`
+
+E19-A audite 1 798 actions sur 2018–2025 et reconstruit une disponibilité SEC
+conservatrice à la séance suivant le dépôt. Les 45 132 lignes SEC couvrent
+1 621 symboles (`90,16 %`). Sur 2 369 379 lignes tradables, 89,57 % possèdent
+au moins une comptabilité fraîche de moins de 180 jours ; l’âge médian est 50
+jours. ROA, ROE, marges, croissance et revenue ont une couverture suffisante.
+Les estimations forward, PEG et forward PE sont totalement absentes.
+
+Le training reste interdit car le loader expose cinq défauts : utilisation le
+jour même du filing, absence de période fiscale/form/accession, aucune priorité
+multi-fournisseur, pas de prédécesseur antérieur au début et remplacement des
+NaN par des constantes. Des incohérences sémantiques touchent aussi
+debt/equity, EBITDA, dividend yield et estimate revision. Verdict :
+`PARTIAL_CONTRACT_BLOCKED`, pas un manque de volume. Artefact :
+`artifacts/research/fundamental_pit_availability/e19a-fundamental-pit-audit-20260911203804`.
+Voir [E19-A — disponibilité PIT des fondamentaux](fundamental_pit_availability_e19a.md).
+
+## E19-A2 — Correction du contrat PIT fondamental — `COMPLETE_DATA_READY`
+
+Le loader applique désormais une date effective conservatrice : dépôt SEC à
+J+1 et snapshots non-SEC au plus tôt le lendemain de leur collecte. Les
+collisions utilisent une priorité déterministe, le dernier dépôt antérieur au
+début de fenêtre est conservé et les absences sont encodées par des masques au
+lieu de constantes sémantiques. La migration 0074 ajoute date de disponibilité,
+période fiscale, formulaire, accession et dividende par action. Le mapper SEC
+utilise désormais la dette financière, ne confond plus operating income et
+EBITDA et sépare dividend/share du yield.
+
+Le rafraîchissement SEC 2016–2025 a ensuite traité 1 798 symboles et persisté
+59 358 lignes. Le nouvel audit canonique couvre 1 622 symboles SEC (90,21 % de
+l’univers), 89,57 % des lignes quotidiennes avec une comptabilité fraîche de
+moins de 180 jours et 99,28 % de lineage complet. Tous les gates passent ; le
+verdict est `DATA_READY` et E19-B est désormais autorisée. Artefact :
+`artifacts/research/fundamental_pit_availability/e19a-fundamental-pit-audit-20260912085103`.
+Voir
+[E19-A2 — contrat PIT fondamental](fundamental_pit_contract_e19a2.md).
+
+## E19-B — Bibliothèque d’alphas fondamentaux PIT — `FAIT_VALUE_CANDIDATE_ONLY`
+
+E19-B a été pré-enregistrée avant lecture des résultats puis exécutée sur
+1 798 actions, 2018–2025, avec disponibilité SEC J+1, fraîcheur maximale de
+180 jours, cinq folds OOF, 63 cohortes et neutralisation quotidienne secteur +
+taille. Le composite qualité/valeur/croissance/levier/amélioration possède un
+IC positif, mais aucun spread exploitable : à H60, IC `+0,46 %`, LONG
+`+3,25 %`, SHORT `-3,32 %` et LONG/SHORT `-0,03 %`; depuis 2023 le spread vaut
+`-0,28 %`. Son `GO_LONG` mécanique est expliqué par le rendement absolu : la
+jambe LONG fait `-0,09 %` contre SPY à H60. Verdict scientifique composite :
+`NO_GO`; aucun serving modifié.
+
+La famille valeur, testée dès le protocole initial, ressort seule : à H60,
+IC `+4,47 %` [borne 95 % `+3,31 %`] et spread net `+1,00 %` [borne
+`+0,06 %`], avec 80 % des folds et semestres positifs. À H120, IC `+6,58 %`
+et spread `+2,18 %` [borne `+0,33 %`], 100 % des folds positifs. Elle reste
+positive depuis 2023. C’est un candidat de recherche relatif, pas encore une
+stratégie short absolue. Prochaine action permise : confirmation E19-C valeur
+seule, verrouillée et sans retuning. Artefact :
+`artifacts/research/fundamental_alpha_book/fundamental-alpha-book-20260912112042`.
+Voir [E19-B — bibliothèque fondamentale PIT](fundamental_alpha_book_e19b.md).
+
+## E19-C — Confirmation verrouillée du facteur valeur — `FAIT_NO_GO`
+
+E19-C a figé sans retuning le score valeur E19-B et l’a évalué sur deux blocs
+qui n’avaient pas contribué aux métriques OOF précédentes : 2018-07-02 à
+2020-07-01 et 2025-07-10 à 2025-12-31. Sur 33 cohortes H60, l’IC vaut
+`-3,61 %` [IC95 `-5,15 ; -2,01 %`] et le spread net `-0,99 %`. À H120,
+l’IC vaut `-5,23 %` et le spread `-1,59 %`. Le LONG sous-performe SPY de
+`-2,16 %` à H60 et `-2,70 %` à H120.
+
+Le holdout ancien est fortement négatif (`-1,63 %` H60 ; `-2,71 %` H120),
+alors que 2025H2 est positif (`+1,35 %` ; `+3,25 %`). Les cinq sous-univers
+hash sont négatifs aux deux horizons. Verdict `NO_GO` : le facteur est dépendant
+de période et ne doit être ni promu, ni inversé, ni filtré a posteriori par un
+régime choisi sur ces résultats. Aucun serving n’a changé. Artefact :
+`artifacts/research/fundamental_value_confirmation/fundamental-value-confirmation-20260912114827`.
+Voir [E19-C — confirmation valeur](fundamental_value_confirmation_e19c.md).
+
+## E20-A — Audit PIT Opening Window après Oracle — `BLOCKED_NO_OPENING_WINDOW_DATA`
+
+E20-A audite la matière nécessaire à une confirmation directionnelle au
+prémarché et dans les 15/30/60 premières minutes de J+1. La population de
+référence P0f compte 582 306 événements TOP20 OOF, 1 763 dates et 1 472
+symboles entre juillet 2018 et juillet 2025. La table
+`stock_opening_window_bars` existe mais contient zéro ligne : aucun événement,
+aucune date et aucun symbole Oracle ne possèdent une ouverture appariable.
+
+Le seul run de collecte a été correctement ignoré un dimanche fermé. E20-A ne
+rejette donc pas le signal : elle bloque E20-B/C faute de données. Les règles
+simples exigent au moins 126 dates et 5 000 événements ; un modèle exige 378
+dates, 20 000 événements et quatre semestres. Une collecte future doit être
+jointe à de nouveaux scores Oracle shadow ; elle ne chevauchera pas
+automatiquement l’ancien OOF arrêté en juillet 2025. Aucun modèle, règle ou
+serving n’a changé. Artefact canonique :
+`artifacts/research/oracle_opening_window_availability/e20a-opening-availability-20260913211726`.
+Voir [E20-A — disponibilité Opening Window](oracle_opening_window_availability_e20a.md).
+
+## POC Alpaca options trades versus barres — `GO_RESEARCH_ONLY`
+
+Sur la séance du 11 septembre 2026, 10 contrats CALL/PUT ATM proches de DTE 10 sur AAPL, MSFT, NVDA, TSLA et AMD ont été comparés entre l'endpoint transactions et les barres une minute Alpaca. Les 10 volumes et compteurs de transactions concordent exactement ; ratios médians 1,0 et erreur relative médiane du VWAP recomposé 2,64 × 10⁻⁹.
+
+Le POC autorise des features ML prospectives fondées sur transactions/volume Alpaca, mais ne prouve pas l'exhaustivité OPRA puisqu'il compare deux endpoints du même fournisseur. Provenance `UNVERIFIED_OPRA`, serving interdit et confirmation multi-jours requise avant activation d'un batch transactions complet. Artefact : `artifacts/research/options_delayed_trade_poc/poc-20260912224359/report.json`. Voir [Options retardées Alpaca et ajustements OCC](options_delayed_alpaca_occ.md).
+
+
+## NYSE Auction History POC — `SMOKE_OK_RESEARCH_ONLY`
+
+Le batch officiel `auction_imbalance_sync` demeure désactivé : Nasdaq NOII, NYSE live et NYSE TAQ historique complet sont commerciaux. Une route JSON non documentée utilisée par l'interface Web NYSE a été confirmée sur IBM le 11 septembre 2026 : six agrégats minute 09:25–09:30 avec imbalance, paired quantity et book clearing price.
+
+Le mode univers a audité 1 798 symboles : 1 015 étaient présents dans les 2 273 symboles de l'interface NYSE. La collecte d'une séance a été limitée par le serveur après 51 réponses. Le POC sauvegarde désormais les résultats partiels et sait les reprendre sans doublon, mais la collecte quotidienne complète gratuite est jugée non fiable. Les données restent post-auction ; aucun serving, table ou batch planifié. Voir [POC NYSE Auction History](nyse_auction_history_poc.md).
+
 
 ## Procédure de mise à jour du registre
 

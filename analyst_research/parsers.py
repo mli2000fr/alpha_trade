@@ -1,7 +1,8 @@
 """Parsers Yahoo — normalisation des snapshots analyst (RESEARCH ONLY).
 
 Convertit les objets bruts ``yfinance`` (``earnings_estimate``,
-``revenue_estimate``, ``analyst_price_targets``, ``recommendations``) en lignes
+``revenue_estimate``, ``eps_trend``, ``eps_revisions``,
+``analyst_price_targets``, ``recommendations``) en lignes
 normalisées destinées aux tables append-only MySQL.
 
 Règles (todo3.txt) :
@@ -82,6 +83,13 @@ def _jsonable(v: Any) -> Any:
         return None
     if isinstance(v, (pd.Timestamp, datetime, date)):
         return v.isoformat()
+    # Les cellules DataFrame sont souvent des scalaires NumPy (int64, float64)
+    # que l'encodeur JSON standard ne sait pas sérialiser directement.
+    if hasattr(v, "item") and not isinstance(v, (str, bytes)):
+        try:
+            return _jsonable(v.item())
+        except (TypeError, ValueError):
+            pass
     if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
         return None
     if isinstance(v, (pd.Series, pd.Index)):
@@ -185,6 +193,119 @@ def parse_estimate(
             symbol=symbol, snapshot_date=snapshot_date, observed_at=observed_at,
             available_at=available_at, payload=payload, schema_version=schema_version,
         ))
+    return rows
+
+
+def _parse_eps_analysis_rows(
+    df: Any,
+    *,
+    value_columns: Mapping[str, str],
+    symbol: str,
+    provider: str,
+    snapshot_date: date,
+    observed_at: datetime,
+    available_at: datetime,
+    schema_version: str,
+) -> list[dict[str, Any]]:
+    """Normalise une famille Yahoo indexée par horizon relatif."""
+    if isinstance(df, tuple):
+        df = df[0]
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        return []
+    if not any(column in df.columns for column in value_columns):
+        expected = ", ".join(value_columns)
+        raise ProviderSchemaChangedError(
+            f"aucune colonne attendue ({expected}) dans le schéma Yahoo"
+        )
+    periods = _period_series(df)
+    rows: list[dict[str, Any]] = []
+    for period, (_, row) in zip(periods, df.iterrows()):
+        payload = {"period": period, **{
+            str(column): row[column] for column in df.columns if column != "period"
+        }}
+        normalized = {
+            "provider": provider,
+            "symbol": symbol,
+            "snapshot_date": snapshot_date,
+            "observed_at": observed_at,
+            "available_at": available_at,
+            "horizon_raw": period,
+            "horizon_normalized": HORIZON_MAP.get(period, period),
+            "fiscal_period_end": None,
+            "fiscal_year": None,
+            "fiscal_quarter": None,
+            "relative_horizon_only": True,
+            "raw_payload_json": json.dumps(_jsonable(payload), ensure_ascii=True),
+            "raw_hash": compute_raw_hash(payload),
+            "provider_schema_version": schema_version,
+        }
+        normalized.update({target: _num(row.get(source)) for source, target in value_columns.items()})
+        rows.append(normalized)
+    return rows
+
+
+def parse_eps_trend(
+    df: Any,
+    *,
+    symbol: str,
+    provider: str = PROVIDER,
+    snapshot_date: date,
+    observed_at: datetime,
+    available_at: datetime,
+    schema_version: str = SCHEMA_VERSION,
+) -> list[dict[str, Any]]:
+    """Normalise ``eps_trend`` (valeur courante et références 7/30/60/90 j)."""
+    return _parse_eps_analysis_rows(
+        df,
+        value_columns={
+            "current": "current_value",
+            "7daysAgo": "days_7_ago_value",
+            "30daysAgo": "days_30_ago_value",
+            "60daysAgo": "days_60_ago_value",
+            "90daysAgo": "days_90_ago_value",
+        },
+        symbol=symbol, provider=provider, snapshot_date=snapshot_date,
+        observed_at=observed_at, available_at=available_at,
+        schema_version=schema_version,
+    )
+
+
+def parse_eps_revisions(
+    df: Any,
+    *,
+    symbol: str,
+    provider: str = PROVIDER,
+    snapshot_date: date,
+    observed_at: datetime,
+    available_at: datetime,
+    schema_version: str = SCHEMA_VERSION,
+) -> list[dict[str, Any]]:
+    """Normalise ``eps_revisions`` (comptages up/down à 7 et 30 jours)."""
+    rows = _parse_eps_analysis_rows(
+        df,
+        value_columns={
+            "upLast7days": "up_last_7_days",
+            "upLast30days": "up_last_30_days",
+            "downLast7Days": "down_last_7_days",
+            "downLast30Days": "down_last_30_days",
+        },
+        symbol=symbol, provider=provider, snapshot_date=snapshot_date,
+        observed_at=observed_at, available_at=available_at,
+        schema_version=schema_version,
+    )
+    # Certaines versions Yahoo emploient ``downLast7days`` (d minuscule).
+    aliases = {
+        "down_last_7_days": "downLast7days",
+        "down_last_30_days": "downLast30days",
+    }
+    for normalized in rows:
+        payload = json.loads(normalized["raw_payload_json"])
+        for target, source in aliases.items():
+            if normalized.get(target) is None:
+                normalized[target] = _num(payload.get(source))
+        for target in ("up_last_7_days", "up_last_30_days",
+                       "down_last_7_days", "down_last_30_days"):
+            normalized[target] = _int(normalized.get(target))
     return rows
 
 

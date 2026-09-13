@@ -135,6 +135,7 @@ class _ManagedRun:
     timed_out: bool = False
     stdout_tail: list[str] | None = None
     stderr_tail: list[str] | None = None
+    notify_on_finish: bool = True
 
     def __post_init__(self) -> None:
         if self.stdout_tail is None:
@@ -1153,7 +1154,8 @@ def _finalize_if_needed(managed: _ManagedRun) -> PipelineRunRecord:
     except Exception:
         pass
     _persist_record(managed.record)
-    _dispatch_finished_notification(managed.record)
+    if managed.notify_on_finish:
+        _dispatch_finished_notification(managed.record)
     return managed.record
 
 
@@ -1512,6 +1514,7 @@ def start_managed_run(
     timeout_seconds: int | None = None,
     parent_run_id: str | None = None,
     workflow_correlation_id: str | None = None,
+    notify_on_finish: bool = True,
 ) -> PipelineRunRecord:
     """Démarre un sous-processus arbitraire piloté par le registre IHM."""
     _ensure_storage()
@@ -1572,6 +1575,7 @@ def start_managed_run(
         stdout_thread=stdout_thread,
         stderr_thread=stderr_thread,
         started_perf=time.perf_counter(),
+        notify_on_finish=notify_on_finish,
     )
 
     with _REGISTRY_LOCK:

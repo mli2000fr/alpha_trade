@@ -60,6 +60,7 @@ PIPELINE_NAVIGATION_PAGES: tuple[NavigationPage, ...] = (
 
 
 SUPPORT_NAVIGATION_PAGES: tuple[NavigationPage, ...] = (
+    NavigationPage("🗓️ Batch", "batches", "ihm.pages.batches", "support"),
     NavigationPage("🛟 Supervision Ops", "supervision_ops", "ihm.pages.supervision_ops", "support"),
     NavigationPage("🔧 Infra & Backups", "ops_infra", "ihm.pages.ops_infra", "support"),
     NavigationPage("🧪 Backtesting", "backtesting", "ihm.pages.backtesting", "support"),
@@ -116,6 +117,7 @@ def get_navigation_sections() -> tuple[NavigationSection, ...]:
             icon="🔄",
             pages=(
                 _get_page("pipeline"),
+                _get_page("batches"),
                 _get_page("supervision_ops"),
                 _get_page("ops_infra"),
             ),

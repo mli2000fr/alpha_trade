@@ -2,7 +2,11 @@ CREATE TABLE alpha_trade.stock_fundamentals_daily (
     id BIGINT AUTO_INCREMENT NOT NULL,
     symbol VARCHAR(20) NOT NULL,
     trade_date DATE NOT NULL,
+    available_date DATE NOT NULL COMMENT 'First calendar date at which this row may be consumed (strict PIT)',
     fetched_at DATETIME NOT NULL COMMENT 'UTC timestamp of the provider fetch',
+    fiscal_period_end DATE COMMENT 'Fiscal period represented by the filing',
+    form VARCHAR(16) COMMENT 'SEC form, for example 10-Q or 10-K',
+    accession_number VARCHAR(32) COMMENT 'SEC filing accession number',
     -- Valuation
     pe_ratio FLOAT COMMENT 'Trailing P/E (Highlights.PERatio)',
     forward_pe FLOAT COMMENT 'Forward P/E (Valuation.ForwardPE)',
@@ -24,6 +28,7 @@ CREATE TABLE alpha_trade.stock_fundamentals_daily (
     current_ratio FLOAT COMMENT 'Current assets / Current liabilities',
     -- Yield
     dividend_yield FLOAT COMMENT 'Dividend yield % (Highlights.DividendYield)',
+    dividend_per_share FLOAT COMMENT 'Dividend per share; distinct from dividend yield',
     -- Market
     market_cap FLOAT COMMENT 'Provider value or PIT close x shares_outstanding',
     beta FLOAT COMMENT 'Beta (Technicals.Beta)',
@@ -41,5 +46,6 @@ CREATE TABLE alpha_trade.stock_fundamentals_daily (
     UNIQUE KEY uq_sfd_symbol_date_source (symbol, trade_date, source),
     INDEX idx_sfd_symbol (symbol),
     INDEX idx_sfd_date (trade_date),
-    INDEX idx_sfd_symbol_date (symbol, trade_date)
+    INDEX idx_sfd_symbol_date (symbol, trade_date),
+    INDEX idx_sfd_symbol_available_date (symbol, available_date)
 );

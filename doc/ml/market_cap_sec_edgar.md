@@ -1,4 +1,4 @@
-# Capitalisation PIT — Yahoo prioritaire, Finnhub, SEC EDGAR ou EODHD
+# Capitalisation PIT — SEC prioritaire, Yahoo/Finnhub en fallback
 
 ## Objectif
 
@@ -10,21 +10,23 @@ La source est un choix opérateur explicite dans config.yaml :
 
     market_cap:
       policy: strict
-      provider: yahoo_then_finnhub
+      provider: sec_edgar_then_yahoo_then_finnhub
       max_age_days: 365
       missing_policy: reject
 
-Le mode actif est `strict`. Avant tout contrôle de capitalisation, le publieur
+En exploitation, `strict` active le contrôle ; `liquidity_only` le neutralise
+sans effacer la configuration. Avant tout contrôle de capitalisation, le publieur
 écarte les ETF, ETN, fonds indiciels, fonds obligataires et produits à levier ou
 inverses détectés dans les métadonnées instrument. Le mot `Trust` seul n'est jamais
 un motif de rejet : les REIT et sociétés organisées en trust restent admissibles.
 
-Avec `yahoo_then_finnhub`, le choix est effectué indépendamment pour chaque symbole
+Avec `sec_edgar_then_yahoo_then_finnhub`, le choix est effectué pour chaque symbole
 et chaque date J :
 
-1. prendre le dernier snapshot Yahoo positif, disponible au plus tard à J et non périmé ;
-2. sinon prendre le dernier snapshot Finnhub positif et non périmé ;
-3. sinon rejeter avec `market_cap_unavailable` ou `market_cap_stale`.
+1. prendre le dernier `shares_outstanding` SEC disponible et non périmé, puis calculer `close[J] × shares` ;
+2. sinon prendre le dernier snapshot Yahoo positif, disponible au plus tard à J et non périmé ;
+3. sinon prendre le dernier snapshot Finnhub positif et non périmé ;
+4. sinon rejeter avec `market_cap_unavailable` ou `market_cap_stale`.
 
 Yahoo est prioritaire car les valeurs Finnhub de certains ADR utilisent la
 capitalisation de la cotation primaire ou une unité incompatible avec l'ADR. Le TTL,
@@ -35,38 +37,47 @@ fingerprint. Les lignes Yahoo et Finnhub coexistent grâce à l'unicité
 Le mode `liquidity_only` reste disponible comme rollback : il ignore la
 capitalisation mais conserve les filtres PIT du screener, le spread et les earnings.
 
-## Mode Yahoo puis Finnhub
+## Batch composite SEC puis Yahoo puis Finnhub
 
-Les snapshots actuels se collectent séparément afin de conserver leur provenance :
+Le batch ne lance plus trois collectes complètes. Il rafraîchit les faits SEC sur
+une fenêtre de sécurité de 30 jours, mesure la couverture fraîche, appelle Yahoo
+uniquement pour les trous SEC, puis Finnhub uniquement pour les trous Yahoo.
+Chaque source conserve sa provenance dans `stock_fundamentals_daily`.
+
+Les commandes unitaires restent disponibles pour le diagnostic :
 
     python -m modelFactory.fundamental_features --provider yahoo_finance --symbol-source universe-file:univers_filtred.txt
     python -m modelFactory.fundamental_features --provider finnhub --symbol-source universe-file:univers_filtred.txt
 
-`--provider config` choisit Yahoo, le fournisseur primaire de la chaîne. Il ne lance
-pas implicitement deux collectes réseau. Le fallback Finnhub du publieur utilise les
-lignes Finnhub déjà persistées.
+`--provider config` choisit uniquement SEC, fournisseur primaire de la chaîne. Seul
+`market_cap_sync` orchestre les fallbacks ciblés.
 
 ### Automatisation Windows
 
-Le batch `AlphaTrade-MarketCapSync` exécute ces deux collectes les lundis et
+Le batch `AlphaTrade-MarketCapSync` exécute cette chaîne les lundis et
 jeudis à 11 h et 23 h, heure locale de la machine. Son contrat se trouve sous
-`market_cap_sync` dans `config.yaml`. Le fichier de statut est
+`market_cap_sync` dans `batch.yaml`. Le fichier de statut est
 `log/batch/market_cap_sync.txt` et le détail Python reste dans
 `log/fundamental_features.log`.
 
-Le batch refuse un univers absent, empêche deux exécutions simultanées et considère
-comme erreur un fournisseur qui ne produit aucun snapshot. Des échecs symboles
-partiels sont signalés comme `WARNING` sans supprimer les snapshots valides. Toute
-fin `OK` ou `ERROR` produit une notification email et Telegram best-effort ; les
-échecs de notification ne changent jamais le résultat de la collecte.
+Le batch utilise désormais le lanceur Forward PIT commun. Chaque exécution est
+persistée dans `pit_collection_runs`, indépendamment de la durée de vie de l'IHM,
+avec les compteurs demandés, reçus, persistés, échecs et alertes. Des symboles sans
+donnée exploitable produisent `COMPLETED_WITH_WARNINGS` sans invalider les snapshots
+valides. Une couverture inférieure à `min_coverage_ratio` est bloquante. Toute fin produit
+une notification email et Telegram best-effort.
 
 Installation :
 
-    powershell -ExecutionPolicy Bypass -File .\scripts\windows\install_market_cap_sync_task.ps1
+    powershell -ExecutionPolicy Bypass -File .\scripts\windows\install_forward_pit_task.ps1 -BatchName market_cap_sync -TaskName AlphaTrade-MarketCapSync
 
 Lancement immédiat :
 
-    powershell -ExecutionPolicy Bypass -File .\scripts\windows\market_cap_sync_launcher.ps1
+    powershell -ExecutionPolicy Bypass -File .\scripts\windows\forward_pit_launcher.ps1 -BatchName market_cap_sync -Force
+
+Le bouton IHM « Lancer maintenant » ajoute lui aussi `-Force`. Les anciens scripts
+`market_cap_sync_*` restent présents uniquement pour compatibilité historique et ne
+sont plus proposés par la page Batch.
 
 Ces snapshots ne sont pas rétroactifs : une ligne collectée aujourd'hui ne peut pas
 filtrer une date de backtest antérieure. Les backtests historiques exigent des
@@ -113,7 +124,7 @@ Collecte complète :
 
     python -m modelFactory.fundamental_features --provider config --symbol-source universe-file:univers_filtred.txt --start-date 2016-01-01
 
-Avec market_cap.provider: sec_edgar, --provider config devient
+Avec `market_cap.provider: sec_edgar` ou le mode composite, `--provider config` devient
 automatiquement --provider sec. Les faits sont stockés dans
 stock_fundamentals_daily avec :
 

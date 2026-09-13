@@ -1,16 +1,13 @@
-"""Univers de collecte analyst — configurable, avec repli active-tradable (RESEARCH ONLY).
+"""Univers stable de collecte analyst (RESEARCH ONLY).
 
 L'univers ``analyst_research`` = liste du fichier dont le CHEMIN est configuré
-dans ``config.yaml`` (``analyst_snapshot_collection.symbols_file``,
-ex. ``config/univers_batch/univers_filtred_tradable.txt`` → 2255 symboles),
+dans ``batch.yaml`` (``analyst_snapshot_collection.symbols_file``,
+``config/univers_batch/univers_filtred_tradable.txt``),
 le même fichier que celui du batch ``earnings_calendar_sync``.
 
-Règle (commune aux 2 batchs) :
-- ``symbols_file`` renseigné ET fichier lisible → univers fichier (2255) ;
-- ``symbols_file`` NON renseigné OU fichier introuvable → AVERTISSEMENT
-  (remonté dans le log, l'email et Telegram par le launcher) + repli sur
-  l'univers dynamique ``active-tradable`` (~13 600, table ``stock_metadata``
-  filtres éligibles).
+Le fichier est obligatoire. Une configuration absente, un fichier introuvable ou
+un fichier vide bloque la collecte avant tout appel fournisseur. Il n'existe pas
+de repli silencieux vers un univers dynamique plus large.
 
 ``--symbols AAPL,MSFT`` surcharge temporairement l'univers configuré.
 """
@@ -22,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from common.config_loader import load_config
+from common.config_loader import load_batch_config
 
 LOGGER = logging.getLogger(__name__)
 
@@ -34,8 +31,8 @@ class UniverseResolution:
     """Résolution d'univers : symboles + source effective + avertissements."""
 
     symbols: list[str]
-    source: str          # "file:<chemin>" | "active-tradable" | "cli-override"
-    warnings: list[str]  # messages si repli (symbols_file absent/introuvable)
+    source: str          # "file:<chemin>" | "cli-override"
+    warnings: list[str]
 
 
 def _split_symbols(raw: str | Iterable[str]) -> list[str]:
@@ -57,18 +54,6 @@ def read_symbols_file(path: str | Path) -> list[str]:
     return _split_symbols(p.read_text(encoding="utf-8"))
 
 
-def _active_tradable_resolution(warning: str) -> UniverseResolution:
-    """Repli sur l'univers dynamique active-tradable (DB ``stock_metadata``)."""
-    from database.selector_reference import list_active_tradable_symbols
-
-    symbols = list_active_tradable_symbols()
-    return UniverseResolution(
-        symbols=symbols,
-        source="active-tradable",
-        warnings=[warning],
-    )
-
-
 def resolve_universe(
     name: str | None = None,
     symbols_override: str | None = None,
@@ -80,9 +65,8 @@ def resolve_universe(
     Priorité :
     1. ``symbols_override`` (--symbols) s'il est fourni.
     2. ``name == analyst_research`` (ou None) → fichier configuré dans
-       ``config.yaml`` (``analyst_snapshot_collection.symbols_file``).
-       Si ce chemin est absent/vide OU le fichier est introuvable → repli
-       ``active-tradable`` avec un avertissement.
+       ``batch.yaml`` (``analyst_snapshot_collection.symbols_file``).
+       Ce chemin doit être renseigné, lisible et non vide.
     """
     if symbols_override:
         return UniverseResolution(
@@ -93,28 +77,19 @@ def resolve_universe(
     name = name or DEFAULT_UNIVERSE_NAME
     if name != DEFAULT_UNIVERSE_NAME:
         raise ValueError(f"Univers inconnu: {name!r} (attendu: {DEFAULT_UNIVERSE_NAME!r})")
-    cfg = load_config()
+    cfg = load_batch_config()
     section = cfg.get("analyst_snapshot_collection") or {}
     configured = (
         symbols_file if symbols_file is not None else section.get("symbols_file")
     )
     path = str(configured or "").strip()
     if not path:
-        warning = (
-            "analyst_snapshot_collection.symbols_file non renseigné (config.yaml) "
-            "=> repli univers active-tradable (~13 600)"
+        raise ValueError(
+            "analyst_snapshot_collection.symbols_file est obligatoire dans batch.yaml"
         )
-        LOGGER.warning(warning)
-        return _active_tradable_resolution(warning)
-    try:
-        symbols = read_symbols_file(path)
-    except OSError as exc:  # FileNotFoundError est un OSError.
-        warning = (
-            f"analyst_snapshot_collection.symbols_file introuvable/inaccessible : "
-            f"{path} ({exc}) => repli univers active-tradable (~13 600)"
-        )
-        LOGGER.warning(warning)
-        return _active_tradable_resolution(warning)
+    symbols = read_symbols_file(path)
+    if not symbols:
+        raise ValueError(f"Fichier d'univers vide: {path}")
     return UniverseResolution(
         symbols=symbols,
         source=f"file:{path}",

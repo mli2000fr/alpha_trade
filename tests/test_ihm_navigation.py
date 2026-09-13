@@ -14,6 +14,7 @@ def test_navigation_sidebar_order_matches_pipeline_then_support_pages() -> None:
         "execution",
         "alpaca_accounts",
         "corporate_actions",
+        "batches",
         "supervision_ops",
         # Sprint S5 — page Infra & Backups
         "ops_infra",
@@ -87,5 +88,11 @@ def test_research_section_includes_weights_calibration_runs_page() -> None:
     sections = {s.key: s for s in navigation.get_navigation_sections()}
     research_keys = {p.key for p in sections["research"].pages}
     assert "weights_calibration_runs" in research_keys
+
+
+def test_workflow_section_includes_batch_page() -> None:
+    sections = {s.key: s for s in navigation.get_navigation_sections()}
+    workflow_keys = [page.key for page in sections["workflow"].pages]
+    assert workflow_keys == ["pipeline", "batches", "supervision_ops", "ops_infra"]
 
 

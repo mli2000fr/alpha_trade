@@ -43,14 +43,32 @@ def _ddl() -> str:
         " ingestion_at DATETIME, period_raw TEXT, strong_buy INT, buy INT,"
         " hold INT, sell INT, strong_sell INT, raw_payload_json TEXT,"
         " raw_hash TEXT, provider_schema_version TEXT, created_at DATETIME);"
+        "CREATE TABLE stock_analyst_eps_trend_history ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT, provider TEXT, symbol TEXT,"
+        " snapshot_date DATE, observed_at DATETIME, available_at DATETIME,"
+        " horizon_raw TEXT, horizon_normalized TEXT, fiscal_period_end DATE,"
+        " fiscal_year INT, fiscal_quarter INT, relative_horizon_only INT,"
+        " current_value REAL, days_7_ago_value REAL, days_30_ago_value REAL,"
+        " days_60_ago_value REAL, days_90_ago_value REAL, raw_payload_json TEXT,"
+        " raw_hash TEXT, provider_schema_version TEXT);"
+        "CREATE TABLE stock_analyst_eps_revision_history ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT, provider TEXT, symbol TEXT,"
+        " snapshot_date DATE, observed_at DATETIME, available_at DATETIME,"
+        " horizon_raw TEXT, horizon_normalized TEXT, fiscal_period_end DATE,"
+        " fiscal_year INT, fiscal_quarter INT, relative_horizon_only INT,"
+        " up_last_7_days INT, up_last_30_days INT, down_last_7_days INT,"
+        " down_last_30_days INT, raw_payload_json TEXT, raw_hash TEXT,"
+        " provider_schema_version TEXT);"
         "CREATE TABLE analyst_snapshot_collection_run ("
         " id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT UNIQUE, provider TEXT,"
         " started_at DATETIME, finished_at DATETIME, requested_symbols INT,"
         " successful_symbols INT, empty_symbols INT, failed_symbols INT,"
-        " estimates_rows_inserted INT, targets_rows_inserted INT,"
+        " estimates_rows_inserted INT, eps_trend_rows_inserted INT,"
+        " eps_revision_rows_inserted INT, targets_rows_inserted INT,"
         " recommendations_rows_inserted INT, rate_limit_count INT,"
         " temporary_error_count INT, schema_error_count INT, parse_error_count INT,"
-        " eps_coverage REAL, revenue_coverage REAL, target_coverage REAL,"
+        " eps_coverage REAL, revenue_coverage REAL, eps_trend_coverage REAL,"
+        " eps_revision_coverage REAL, target_coverage REAL,"
         " recommendation_coverage REAL, status TEXT, created_at DATETIME);"
     )
 
@@ -138,3 +156,24 @@ def test_target_and_reco_idempotence(repo):
            "raw_payload_json": "{}", "raw_hash": "h", "provider_schema_version": "1.0"}
     assert repo.insert_recommendation_snapshots([rec]) == 1
     assert repo.insert_recommendation_snapshots([rec]) == 0
+
+
+def test_eps_analysis_snapshots_are_idempotent_and_pit_queryable(repo):
+    base = {
+        "provider": "yahoo", "symbol": "AAPL", "snapshot_date": D,
+        "observed_at": T0, "available_at": T1, "horizon_raw": "0q",
+        "horizon_normalized": "CURRENT_QUARTER", "fiscal_period_end": None,
+        "fiscal_year": None, "fiscal_quarter": None, "relative_horizon_only": True,
+        "raw_payload_json": "{}", "raw_hash": "h", "provider_schema_version": "1.0",
+    }
+    trend = {**base, "current_value": 1.5, "days_7_ago_value": 1.4,
+             "days_30_ago_value": 1.3, "days_60_ago_value": 1.2,
+             "days_90_ago_value": 1.1}
+    revision = {**base, "up_last_7_days": 4, "up_last_30_days": 9,
+                "down_last_7_days": 1, "down_last_30_days": 3}
+    assert repo.insert_eps_trend_snapshots([trend]) == 1
+    assert repo.insert_eps_trend_snapshots([trend]) == 0
+    assert repo.insert_eps_revision_snapshots([revision]) == 1
+    assert repo.get_latest_eps_trend_before("AAPL", "CURRENT_QUARTER", T0) is None
+    assert repo.get_latest_eps_trend_before("AAPL", "CURRENT_QUARTER", T1)["current_value"] == 1.5
+    assert repo.get_latest_eps_revision_before("AAPL", "CURRENT_QUARTER", T1)["up_last_7_days"] == 4

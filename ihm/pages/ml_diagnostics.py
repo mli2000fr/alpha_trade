@@ -2625,7 +2625,23 @@ def _render_oracle_quality(batch_id: str, row: pd.Series) -> None:
 
     st.subheader("🔥 Oracle Extreme — Qualité du modèle (OOS)")
 
-    oracle_run, oos = _cached_oracle_oos(batch_id)
+    coverage = safe_query(ORACLE_TABLE_PERIODS_QUERY, {"batch_id": batch_id})
+    if not coverage.empty:
+        coverage_row = coverage.iloc[0]
+        raw_dates = coverage_row.get("nb_dates")
+        raw_symbols = coverage_row.get("nb_symbols")
+        if pd.notna(raw_dates) and int(raw_dates) > 0:
+            st.caption(
+                "Données OOS détectées : "
+                f"{int(raw_dates):,} jours · {int(raw_symbols or 0):,} symboles. "
+                "Chargement et calcul des métriques en cours…"
+            )
+
+    with st.spinner(
+        "Chargement des prédictions OOS Oracle et calcul des métriques "
+        "(le premier affichage peut prendre environ 30 secondes)…"
+    ):
+        oracle_run, oos = _cached_oracle_oos(batch_id)
     if oos.empty:
         st.info("Aucune prédiction OOS Oracle Extreme disponible pour ce batch.")
         return
@@ -2643,7 +2659,7 @@ def _render_oracle_quality(batch_id: str, row: pd.Series) -> None:
         st.info("Aucune ligne exploitable dans les prédictions OOS.")
         return
 
-    from modelFactory.oracle.train import (
+    from modelFactory.oracle.metrics import (
         decile_monotonicity,
         precision_recall_at_top_pct,
         roc_auc,

@@ -10,6 +10,8 @@ Implémente le contrat PIT du chantier (todo3.txt) :
 
 Tables (schéma ``alpha_trade``, créées par la migration 0068) :
 - ``stock_analyst_estimate_history``
+- ``stock_analyst_eps_trend_history``
+- ``stock_analyst_eps_revision_history``
 - ``stock_analyst_target_history``
 - ``stock_analyst_recommendation_history``
 - ``analyst_snapshot_collection_run``
@@ -40,6 +42,7 @@ SCHEMA = "alpha_trade"
 _ESTIMATE_UNIQUE = ["provider", "symbol", "snapshot_date", "estimate_type", "horizon_normalized"]
 _TARGET_UNIQUE = ["provider", "symbol", "snapshot_date"]
 _RECOMMENDATION_UNIQUE = ["provider", "symbol", "snapshot_date", "period_raw"]
+_EPS_ANALYSIS_UNIQUE = ["provider", "symbol", "snapshot_date", "horizon_normalized"]
 
 _ESTIMATE_COLS = [
     "provider", "symbol", "snapshot_date", "observed_at", "available_at",
@@ -58,12 +61,28 @@ _RECOMMENDATION_COLS = [
     "period_raw", "strong_buy", "buy", "hold", "sell", "strong_sell",
     "raw_payload_json", "raw_hash", "provider_schema_version",
 ]
+_EPS_TREND_COLS = [
+    "provider", "symbol", "snapshot_date", "observed_at", "available_at",
+    "horizon_raw", "horizon_normalized", "fiscal_period_end", "fiscal_year",
+    "fiscal_quarter", "relative_horizon_only", "current_value",
+    "days_7_ago_value", "days_30_ago_value", "days_60_ago_value",
+    "days_90_ago_value", "raw_payload_json", "raw_hash", "provider_schema_version",
+]
+_EPS_REVISION_COLS = [
+    "provider", "symbol", "snapshot_date", "observed_at", "available_at",
+    "horizon_raw", "horizon_normalized", "fiscal_period_end", "fiscal_year",
+    "fiscal_quarter", "relative_horizon_only", "up_last_7_days",
+    "up_last_30_days", "down_last_7_days", "down_last_30_days",
+    "raw_payload_json", "raw_hash", "provider_schema_version",
+]
 _RUN_COLS = [
     "run_id", "provider", "started_at", "finished_at", "requested_symbols",
     "successful_symbols", "empty_symbols", "failed_symbols",
-    "estimates_rows_inserted", "targets_rows_inserted", "recommendations_rows_inserted",
+    "estimates_rows_inserted", "eps_trend_rows_inserted", "eps_revision_rows_inserted",
+    "targets_rows_inserted", "recommendations_rows_inserted",
     "rate_limit_count", "temporary_error_count", "schema_error_count", "parse_error_count",
-    "eps_coverage", "revenue_coverage", "target_coverage", "recommendation_coverage",
+    "eps_coverage", "revenue_coverage", "eps_trend_coverage", "eps_revision_coverage",
+    "target_coverage", "recommendation_coverage",
     "status",
 ]
 
@@ -139,6 +158,26 @@ class AnalystSnapshotRepository(Repository):
                     n += 1
         return n
 
+    def insert_eps_trend_snapshots(self, rows: Iterable[Mapping[str, Any]]) -> int:
+        n = 0
+        with self.transaction() as conn:
+            for row in rows:
+                payload = {column: row.get(column) for column in _EPS_TREND_COLS}
+                if _insert_if_absent(conn, "stock_analyst_eps_trend_history",
+                                     _EPS_ANALYSIS_UNIQUE, payload):
+                    n += 1
+        return n
+
+    def insert_eps_revision_snapshots(self, rows: Iterable[Mapping[str, Any]]) -> int:
+        n = 0
+        with self.transaction() as conn:
+            for row in rows:
+                payload = {column: row.get(column) for column in _EPS_REVISION_COLS}
+                if _insert_if_absent(conn, "stock_analyst_eps_revision_history",
+                                     _EPS_ANALYSIS_UNIQUE, payload):
+                    n += 1
+        return n
+
     # ── Runs de collecte ──────────────────────────────────────────────────
 
     def start_collection_run(self, run_id: str, provider: str, requested_symbols: int,
@@ -209,6 +248,34 @@ class AnalystSnapshotRepository(Repository):
         with self.connect() as conn:
             row = conn.execute(text(sql), {
                 "symbol": symbol, "pr": period_raw, "cutoff": cutoff,
+            }).mappings().first()
+        return dict(row) if row else None
+
+    def get_latest_eps_trend_before(
+        self, symbol: str, horizon_normalized: str, cutoff: datetime
+    ) -> dict[str, Any] | None:
+        sql = (
+            f"SELECT * FROM {_q('stock_analyst_eps_trend_history')} "
+            "WHERE symbol = :symbol AND horizon_normalized = :hz "
+            "AND available_at <= :cutoff ORDER BY available_at DESC, id DESC LIMIT 1"
+        )
+        with self.connect() as conn:
+            row = conn.execute(text(sql), {
+                "symbol": symbol, "hz": horizon_normalized, "cutoff": cutoff,
+            }).mappings().first()
+        return dict(row) if row else None
+
+    def get_latest_eps_revision_before(
+        self, symbol: str, horizon_normalized: str, cutoff: datetime
+    ) -> dict[str, Any] | None:
+        sql = (
+            f"SELECT * FROM {_q('stock_analyst_eps_revision_history')} "
+            "WHERE symbol = :symbol AND horizon_normalized = :hz "
+            "AND available_at <= :cutoff ORDER BY available_at DESC, id DESC LIMIT 1"
+        )
+        with self.connect() as conn:
+            row = conn.execute(text(sql), {
+                "symbol": symbol, "hz": horizon_normalized, "cutoff": cutoff,
             }).mappings().first()
         return dict(row) if row else None
 
@@ -288,7 +355,8 @@ class AnalystSnapshotRepository(Repository):
 
     def count_rows(self) -> dict[str, int]:
         out: dict[str, int] = {}
-        for name in ("stock_analyst_estimate_history", "stock_analyst_target_history",
+        for name in ("stock_analyst_estimate_history", "stock_analyst_eps_trend_history",
+                     "stock_analyst_eps_revision_history", "stock_analyst_target_history",
                      "stock_analyst_recommendation_history"):
             with self.connect() as conn:
                 out[name] = int(conn.execute(
@@ -299,7 +367,8 @@ class AnalystSnapshotRepository(Repository):
     def get_symbols_with_snapshot_on(self, snapshot_date: date) -> set[str]:
         """Symboles ayant déjà un snapshot à ``snapshot_date`` (pour ``--resume``)."""
         out: set[str] = set()
-        tables = ("stock_analyst_estimate_history", "stock_analyst_target_history",
+        tables = ("stock_analyst_estimate_history", "stock_analyst_eps_trend_history",
+                  "stock_analyst_eps_revision_history", "stock_analyst_target_history",
                   "stock_analyst_recommendation_history")
         with self.connect() as conn:
             for t in tables:
