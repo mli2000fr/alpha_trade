@@ -63,12 +63,12 @@ analyst_snapshot_collection:
   run_hours: "22"
   log_file: log/batch/analyst_snapshots.txt
 
-# Snapshot bid/ask quotidien Alpaca IEX avec rattrapage idempotent J-5 -> J.
+# Snapshot bid/ask quotidien Alpaca IEX avec rattrapage idempotent J-7 -> J.
 # L'horaire est exprimé en heure de New York afin de suivre automatiquement
 # les changements d'heure US/France et de démarrer après la clôture régulière.
 latest_quotes_sync:
   priority: P0
-  description: "Collecter le dernier bid/ask de chaque séance pour mesurer spread et liquidité, avec une fenêtre glissante J-5 à J qui rattrape automatiquement les journées manquantes."
+  description: "Collecter le dernier bid/ask de chaque séance pour mesurer spread et liquidité, avec une fenêtre glissante J-7 à J qui rattrape automatiquement les journées manquantes."
   tables: "pit_collection_runs,stock_quote_snapshots,cleaning_audit_quotes_runs"
   enabled: true
   status: ACTIVE
@@ -78,7 +78,7 @@ latest_quotes_sync:
   run_minutes: "15"
   run_days: "1,2,3,4,5"
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
-  lookback_days: 5
+  lookback_days: 7
   batch_size: 200
   research_notice: "Les quotes historiques du compte Alpaca Basic utilisent le feed IEX, pas le marché consolidé SIP/NBBO. Elles conviennent aux contrôles de liquidité et à la recherche si cette limite de couverture est conservée explicitement."
   log_file: log/batch/latest_quotes_sync.txt
@@ -144,7 +144,8 @@ sec_edgar_incremental:
   run_days: "1,2,3,4,5,6"
   user_agent_env: SEC_EDGAR_USER_AGENT
   forms: "8-K,8-K/A,6-K,6-K/A,10-Q,10-Q/A,10-K,10-K/A,13F-HR,13F-HR/A,SC 13D,SC 13D/A,SC 13G,SC 13G/A"
-  lookback_days: 3
+  # Sept jours ouvrés SEC précédents ; les accessions déjà présentes sont mises à jour sans doublon.
+  lookback_days: 7
   download_primary_documents: true
   # Annexes séparées (EX-99.1, EX-99.2, etc.).
   download_exhibits: true
@@ -319,6 +320,8 @@ oracle_opening_window_sync:
   window_start: "04:00"
   window_end: "10:30"
   minimum_sip_delay_minutes: 16
+  # Rejoue les séances NYSE de J-7 à J et ignore celles ayant déjà atteint le gate OPEN.
+  lookback_days: 7
   symbol_batch_size: 100
   max_pages_per_batch: 20
   request_interval_seconds: 0.0

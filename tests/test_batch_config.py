@@ -173,9 +173,11 @@ def test_latest_quotes_batch_uses_safe_idempotent_catchup_window() -> None:
     assert quotes["timezone"] == "America/New_York"
     assert quotes["run_hours"] == "17"
     assert quotes["run_minutes"] == "15"
-    assert quotes["lookback_days"] == 5
+    assert quotes["lookback_days"] == 7
     assert quotes["batch_size"] == 200
     assert "stock_quote_snapshots" in quotes["tables"]
+    assert batch["sec_edgar_incremental"]["lookback_days"] == 7
+    assert batch["oracle_opening_window_sync"]["lookback_days"] == 7
 
 
 def test_options_batch_is_active_research_only_and_never_top20_scoped() -> None:

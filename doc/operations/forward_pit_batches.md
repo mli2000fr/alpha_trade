@@ -75,7 +75,7 @@ Le TOP20 est une **sortie de modèle**, recalculée après entraînement ou à c
 | Priorité | Batch | Source | Table(s) normalisée(s) | État initial |
 |---|---|---|---|---|
 | P0 | `daily_bars_sync` | Business Quant `/quotes`, mode `eod` | `stock_bars_daily_versions` RAW | actif |
-| P0 | `latest_quotes_sync` | Alpaca historique IEX | `stock_quote_snapshots` | actif ; J-5 à J, reprise idempotente |
+| P0 | `latest_quotes_sync` | Alpaca historique IEX | `stock_quote_snapshots` | actif ; J-7 à J, reprise idempotente |
 | P0 | `security_master_snapshot` | Nasdaq Symbol Directory quotidien, Business Quant Universe hebdomadaire | `security_master_snapshots`, `security_master_changes` | actif |
 | P0 | `corporate_actions_sync` | Business Quant market-wide + Alpaca | `corporate_action_source_events` | actif |
 | P0 | `sec_edgar_incremental` | SEC daily master index + submissions | `sec_filing_raw` | actif |
@@ -96,6 +96,37 @@ Le TOP20 est une **sortie de modèle**, recalculée après entraînement ou à c
 | attente | `securities_lending_sync` | fournisseur requis | — | désactivé |
 
 Les batchs `earnings_calendar_sync` et `market_cap_sync` ne font pas doublon. Le premier stocke calendrier/estimates/actuals d’earnings. Le second rafraîchit les faits SEC nécessaires à la capitalisation PIT, puis interroge Yahoo uniquement pour les symboles sans couverture SEC fraîche et Finnhub uniquement pour les trous restants. `market_cap_sync` passe par le handler et le lanceur Forward PIT commun : son état et ses compteurs survivent donc à un redémarrage de l’IHM dans `pit_collection_runs`.
+
+### Politique de rattrapage J−7/J
+
+Les collecteurs historiques rejouent une fenêtre glissante et s'appuient sur
+les clés métier des tables : une observation identique est ignorée ou mise à
+jour, tandis qu'une correction de fournisseur conserve une version distincte.
+
+| Batch | Fenêtre effective | Reprise |
+|---|---:|---|
+| `earnings_calendar_sync` | J−7 à J+30 | reprise par symbole et upsert `(symbol, earnings_date)` |
+| `latest_quotes_sync` | J−7 à J | uniquement les séances quotes manquantes |
+| `daily_bars_sync` | J−10 à J | même payload ignoré, correction conservée par hash |
+| `corporate_actions_sync` | J−7 à J+30 | événements dédupliqués par identité et hash |
+| `sec_edgar_incremental` | 7 jours ouvrés précédents | accession SEC unique |
+| `oracle_opening_window_sync` | J−7 à J | séance ignorée dès que son gate de couverture OPEN est atteint |
+| `finra_short_volume_sync` | 7 jours ouvrés précédents | fichier/date/symbole/hash idempotents |
+| `fred_alfred_vintage_sync` | J−730 à J | unicité série/observation/vintage |
+
+Les normalisations `sec_corporate_events_normalize` et
+`sec_institutional_ownership_normalize` ne dépendent pas d'une fenêtre : elles
+reprennent tout dépôt RAW encore absent de leur table cible.
+
+Les snapshots `security_master_snapshot`, `market_cap_sync` (fallbacks
+Yahoo/Finnhub), `analyst_snapshot_collection`, `borrow_status_snapshot` et
+`oracle_options_indicative_snapshot` ne peuvent pas recréer fidèlement un état
+historique manqué. Le RSS de `option_contract_adjustment_sync` n'offre pas non
+plus de paramètre J−7/J garanti. Enfin, `options_delayed_bars_sync` expose des
+barres historiques, mais une séance manquée ne peut être reconstruite sans le
+catalogue des contrats alors actifs ; utiliser la chaîne courante introduirait
+un biais de sélection. Ces batchs relèvent donc d'un futur passage de secours
+conditionnel, pas d'un faux backfill.
 
 ## Tables et flux
 

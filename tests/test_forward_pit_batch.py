@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
@@ -77,7 +77,7 @@ def test_latest_quotes_batch_delegates_to_idempotent_historical_sync(monkeypatch
         object(),
         {
             "symbols_file": "config/univers_batch/univers_filtred_tradable.txt",
-            "lookback_days": 5,
+            "lookback_days": 7,
             "batch_size": 200,
             "timezone": "America/New_York",
         },
@@ -89,7 +89,7 @@ def test_latest_quotes_batch_delegates_to_idempotent_historical_sync(monkeypatch
     assert captured["symbol_source"] == (
         "universe-file:config/univers_batch/univers_filtred_tradable.txt"
     )
-    assert (captured["to_date"] - captured["from_date"]).days == 5
+    assert (captured["to_date"] - captured["from_date"]).days == 7
     assert outcome.requested == 2
     assert outcome.received == 4
     assert outcome.persisted == 4
@@ -640,6 +640,32 @@ def test_alpaca_opening_bar_classifies_premarket_in_new_york() -> None:
         run_id="run", feed="sip", adjustment="raw",
     )
     assert row["session"] == "PRE"
+
+
+def test_opening_window_catchup_skips_complete_sessions(monkeypatch) -> None:
+    sessions = [date(2026, 9, 10), date(2026, 9, 11)]
+    fetched: list[str] = []
+    monkeypatch.setattr(batch_module, "_collection_symbols", lambda _cfg: ["AAPL", "MSFT"])
+    monkeypatch.setattr(batch_module, "nyse_session_dates", lambda _start, _end: sessions)
+    monkeypatch.setattr(
+        batch_module,
+        "_opening_window_session_complete",
+        lambda _engine, _cfg, session_date, _count: session_date == sessions[0],
+    )
+
+    def fake_single(_engine, cfg, _run_id, _dry):
+        fetched.append(cfg["_session_date"])
+        return batch_module.Outcome(requested=2, received=6, persisted=6)
+
+    monkeypatch.setattr(batch_module, "_opening_window_single_session", fake_single)
+    outcome = batch_module.opening_window_sync(
+        object(), {"timezone": "America/New_York", "lookback_days": 7}, "run", False,
+    )
+
+    assert fetched == ["2026-09-11"]
+    assert outcome.requested == 2
+    assert outcome.persisted == 6
+    assert outcome.details["sessions_skipped_existing"] == ["2026-09-10"]
 
 
 def _summary_from_stdout(stdout: str) -> dict:

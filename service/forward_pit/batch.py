@@ -1651,7 +1651,7 @@ def _alpaca_opening_row(
     }
 
 
-def opening_window_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool) -> Outcome:
+def _opening_window_single_session(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool) -> Outcome:
     """Collecte les barres Alpaca SIP 1 minute de 04:00 à 10:30 ET."""
     provider = str(cfg.get("provider", "alpaca")).strip().lower()
     feed = str(cfg.get("feed", "sip")).strip().lower()
@@ -1665,7 +1665,11 @@ def opening_window_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dry: b
 
     symbols = _collection_symbols(cfg)
     market_tz = ZoneInfo(str(cfg.get("timezone", "America/New_York")))
-    session_date = datetime.now(market_tz).date()
+    raw_session_date = cfg.get("_session_date")
+    session_date = (
+        date.fromisoformat(str(raw_session_date))
+        if raw_session_date else datetime.now(market_tz).date()
+    )
     outcome = Outcome(requested=len(symbols))
     if not is_trading_day(session_date):
         outcome.warnings.append(f"Marché NYSE fermé le {session_date}; collecte ignorée")
@@ -1742,7 +1746,7 @@ def opening_window_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dry: b
                 if not dry:
                     _raw(
                         conn, run_id, "oracle_opening_window_sync", "alpaca",
-                        "/v2/stocks/bars", f"chunk:{chunk_number}:page:{page_number}",
+                        "/v2/stocks/bars", f"{session_date}:chunk:{chunk_number}:page:{page_number}",
                         payload, status, observed,
                     )
                 normalized: list[dict[str, Any]] = []
@@ -1839,6 +1843,64 @@ def opening_window_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dry: b
     if not outcome.received:
         raise RuntimeError("Opening window Alpaca vide")
     return outcome
+
+
+def _opening_window_session_complete(
+    engine: Engine, cfg: dict[str, Any], session_date: date, symbol_count: int,
+) -> bool:
+    if symbol_count <= 0:
+        return True
+    market_tz = ZoneInfo(str(cfg.get("timezone", "America/New_York")))
+    window_start = str(cfg.get("window_start", "04:00"))
+    window_end = str(cfg.get("window_end", "10:30"))
+    start_utc = datetime.fromisoformat(
+        f"{session_date.isoformat()}T{window_start}:00"
+    ).replace(tzinfo=market_tz).astimezone(UTC).replace(tzinfo=None)
+    end_utc = datetime.fromisoformat(
+        f"{session_date.isoformat()}T{window_end}:00"
+    ).replace(tzinfo=market_tz).astimezone(UTC).replace(tzinfo=None)
+    with engine.connect() as conn:
+        covered = int(conn.execute(text("""SELECT COUNT(DISTINCT symbol)
+            FROM stock_opening_window_bars
+            WHERE provider=:provider AND feed=:feed AND session_name='OPEN'
+              AND bar_timestamp BETWEEN :start AND :end"""), {
+                "provider": str(cfg.get("provider", "alpaca")).lower(),
+                "feed": str(cfg.get("feed", "sip")).lower(),
+                "start": start_utc, "end": end_utc,
+            }).scalar() or 0)
+    return covered / symbol_count >= float(cfg.get("min_open_symbol_coverage", 0.70))
+
+
+def opening_window_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool) -> Outcome:
+    """Rattrape les séances NYSE J-N/J absentes puis agrège leurs compteurs."""
+    symbols = _collection_symbols(cfg)
+    market_tz = ZoneInfo(str(cfg.get("timezone", "America/New_York")))
+    today = datetime.now(market_tz).date()
+    lookback_days = max(0, int(cfg.get("lookback_days", 7)))
+    sessions = nyse_session_dates(today - timedelta(days=lookback_days), today)
+    total = Outcome(details={
+        "from_date": (today - timedelta(days=lookback_days)).isoformat(),
+        "to_date": today.isoformat(), "lookback_days": lookback_days,
+        "sessions_considered": [item.isoformat() for item in sessions],
+        "sessions_fetched": [], "sessions_skipped_existing": [],
+    })
+    for session_date in sessions:
+        if not dry and _opening_window_session_complete(engine, cfg, session_date, len(symbols)):
+            total.details["sessions_skipped_existing"].append(session_date.isoformat())
+            continue
+        session_cfg = dict(cfg)
+        session_cfg["_session_date"] = session_date.isoformat()
+        result = _opening_window_single_session(engine, session_cfg, run_id, dry)
+        total.requested += result.requested
+        total.received += result.received
+        total.persisted += result.persisted
+        total.empty += result.empty
+        total.failed += result.failed
+        total.warnings.extend(result.warnings)
+        total.details["sessions_fetched"].append(session_date.isoformat())
+        total.details.setdefault("session_details", {})[session_date.isoformat()] = result.details
+    total.details["session_count"] = len(sessions)
+    return total
 
 
 def normalize_sec_events(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool) -> Outcome:
