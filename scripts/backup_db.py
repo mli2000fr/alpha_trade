@@ -69,8 +69,16 @@ class DbBackupReport:
 # ---------------------------------------------------------------------------
 
 
-def _have_mysqldump() -> bool:
-    return shutil.which("mysqldump") is not None
+def _resolve_mysqldump(mysqldump_path: str | Path | None = None) -> str | None:
+    """Résout le client explicitement avant de consulter le PATH du processus."""
+    if mysqldump_path:
+        candidate = Path(mysqldump_path).expanduser()
+        return str(candidate.resolve()) if candidate.is_file() else None
+    return shutil.which("mysqldump")
+
+
+def _have_mysqldump(mysqldump_path: str | Path | None = None) -> bool:
+    return _resolve_mysqldump(mysqldump_path) is not None
 
 
 def _list_dumps(dest_dir: Path, archive_prefix: str) -> list[Path]:
@@ -100,13 +108,16 @@ def _run_mysqldump(
     exclude_tables: list[str],
     include_routines: bool,
     include_triggers: bool,
+    mysqldump_path: str | Path | None,
 ) -> None:
     """Lance mysqldump et compresse directement en gzip."""
-    if not _have_mysqldump():
-        raise RuntimeError("Binaire 'mysqldump' introuvable dans le PATH.")
+    executable = _resolve_mysqldump(mysqldump_path)
+    if not executable:
+        location = str(mysqldump_path or "PATH")
+        raise RuntimeError(f"Binaire 'mysqldump' introuvable: {location}.")
 
     cmd = [
-        "mysqldump",
+        executable,
         "-h", host,
         "-u", user,
         "--single-transaction",
@@ -173,6 +184,7 @@ def backup_db(
     exclude_tables: list[str] | None = None,
     include_routines: bool = True,
     include_triggers: bool = True,
+    mysqldump_path: str | Path | None = None,
     dry_run: bool = False,
 ) -> DbBackupReport:
     """Exécute un backup de la DB et applique la rotation des dumps.
@@ -189,6 +201,7 @@ def backup_db(
         exclude_tables: Tables à exclure d'un dump de base complet.
         include_routines: Inclure les procédures et fonctions stockées.
         include_triggers: Inclure les triggers des tables sauvegardées.
+        mysqldump_path: Chemin explicite du client, prioritaire sur le PATH.
         dry_run: Si True, simule sans exécuter mysqldump.
 
     Returns:
@@ -228,8 +241,11 @@ def backup_db(
         dump_path = _build_dump_path(dest_dir, archive_prefix)
 
         if not dry_run:
-            if not _have_mysqldump():
-                errors.append("Binaire 'mysqldump' introuvable dans le PATH.")
+            if not _have_mysqldump(mysqldump_path):
+                errors.append(
+                    "Binaire 'mysqldump' introuvable: "
+                    f"{mysqldump_path or 'PATH'}."
+                )
             else:
                 try:
                     assert dump_path is not None  # toujours set quand not dry_run
@@ -239,6 +255,7 @@ def backup_db(
                         exclude_tables=exclude_tables,
                         include_routines=include_routines,
                         include_triggers=include_triggers,
+                        mysqldump_path=mysqldump_path,
                     )
                     dump_size = dump_path.stat().st_size
                     LOGGER.info("Dump créé — %.1f MB", dump_size / 1024 / 1024)
@@ -313,6 +330,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--exclude-table", action="append", default=[])
     p.add_argument("--no-routines", action="store_true")
     p.add_argument("--no-triggers", action="store_true")
+    p.add_argument("--mysqldump-path", default=None)
     p.add_argument(
         "--dry-run",
         action="store_true",
@@ -344,6 +362,7 @@ def main(argv: list[str] | None = None) -> int:
         exclude_tables=args.exclude_table,
         include_routines=not args.no_routines,
         include_triggers=not args.no_triggers,
+        mysqldump_path=args.mysqldump_path,
         dry_run=args.dry_run,
     )
     payload = json.dumps(report.to_dict(), indent=2, sort_keys=True)

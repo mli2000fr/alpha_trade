@@ -31,6 +31,11 @@ centralisés dans `batch.yaml`. Les deux exécutions passent par le suivi
 `pit_collection_runs` et les notifications communes email et Telegram, succès ou
 échec compris.
 
+Sous Windows, `mysqldump_path` désigne explicitement le client MySQL. Cette valeur
+évite de dépendre du `PATH` souvent incomplet du Planificateur. L'installation
+actuelle utilise `C:/Program Files/MySQL/MySQL Server 8.0/bin/mysqldump.exe` ; si
+MySQL est déplacé ou mis à niveau, seul ce champ de `batch.yaml` doit être adapté.
+
 Pour une restauration complète à une date donnée, restaurer d'abord l'archive
 `alpha_trade_without_news_…sql.gz`, puis l'archive mensuelle
 `alpha_trade_news_raw_…sql.gz` retenue. Restaurer uniquement le dump principal

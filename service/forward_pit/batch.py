@@ -2186,6 +2186,7 @@ def database_backup(
         exclude_tables=table_list("exclude_tables"),
         include_routines=bool(cfg.get("include_routines", True)),
         include_triggers=bool(cfg.get("include_triggers", True)),
+        mysqldump_path=str(cfg.get("mysqldump_path") or "") or None,
         dry_run=dry,
     )
     outcome = Outcome(
@@ -2200,6 +2201,7 @@ def database_backup(
             "dump_path": report.dump_path,
             "dump_size_bytes": report.dump_size_bytes,
             "archive_prefix": report.archive_prefix,
+            "mysqldump_path": str(cfg.get("mysqldump_path") or "PATH"),
             "include_tables": report.include_tables,
             "exclude_tables": report.exclude_tables,
             "rotated_files": report.rotated_files,

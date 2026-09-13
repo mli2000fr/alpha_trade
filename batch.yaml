@@ -39,11 +39,12 @@ db_core_backup:
   tables: "fichiers:backups/db"
   provider: local_mysql
   universe_scope: database_without_news_raw
-  run_hours: "1"
+  run_hours: "2"
   run_minutes: "0"
-  run_days: "0"
+  run_days: "6"
   host: localhost
   db: alpha_trade
+  mysqldump_path: "C:/Program Files/MySQL/MySQL Server 8.0/bin/mysqldump.exe"
   dest_dir: backups/db
   archive_prefix: alpha_trade_without_news
   exclude_tables: "news_raw"
@@ -65,12 +66,13 @@ db_news_raw_backup:
   tables: "fichiers:backups/db"
   provider: local_mysql
   universe_scope: database_table_news_raw
-  run_hours: "18"
+  run_hours: "1"
   run_minutes: "0"
   run_days: "0"
   first_weekday_of_month: true
   host: localhost
   db: alpha_trade
+  mysqldump_path: "C:/Program Files/MySQL/MySQL Server 8.0/bin/mysqldump.exe"
   dest_dir: backups/db
   archive_prefix: alpha_trade_news_raw
   include_tables: "news_raw"

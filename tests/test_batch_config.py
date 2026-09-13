@@ -138,6 +138,8 @@ def test_database_backups_have_disjoint_scopes_and_expected_schedules() -> None:
     assert news["include_routines"] is False
     assert news["keep"] == 3
     assert core["archive_prefix"] != news["archive_prefix"]
+    assert core["mysqldump_path"].endswith("/mysqldump.exe")
+    assert news["mysqldump_path"] == core["mysqldump_path"]
 
 
 def test_generic_launcher_enforces_first_weekday_of_month() -> None:

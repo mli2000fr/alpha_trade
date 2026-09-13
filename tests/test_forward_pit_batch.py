@@ -120,6 +120,7 @@ def test_database_backup_forwards_table_scope_and_retention(monkeypatch, tmp_pat
             "dest_dir": "backups/db", "keep": 3,
             "archive_prefix": "alpha_trade_news_raw",
             "include_tables": "news_raw", "include_routines": False,
+            "mysqldump_path": "C:/mysql/mysqldump.exe",
         },
         "db-backup-run",
         False,
@@ -129,6 +130,7 @@ def test_database_backup_forwards_table_scope_and_retention(monkeypatch, tmp_pat
     assert captured["include_tables"] == ["news_raw"]
     assert captured["exclude_tables"] == []
     assert captured["include_routines"] is False
+    assert captured["mysqldump_path"] == "C:/mysql/mysqldump.exe"
     assert captured["keep"] == 3
     assert outcome.persisted == 1
 
