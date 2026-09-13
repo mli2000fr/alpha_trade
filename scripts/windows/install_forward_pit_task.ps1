@@ -29,6 +29,11 @@ if (-not $TaskName) {
     $TaskName = 'AlphaTrade-' + $suffix
 }
 $launcher=Join-Path $PSScriptRoot 'forward_pit_launcher.ps1'
+$hiddenLauncher=Join-Path $PSScriptRoot 'run_forward_pit_hidden.vbs'
+if (-not (Test-Path -LiteralPath $hiddenLauncher)) { throw "Lanceur invisible absent: $hiddenLauncher" }
+$powershellExe=(Get-Command 'powershell.exe' -ErrorAction Stop).Source
+$wscriptExe=Join-Path $env:WINDIR 'System32\wscript.exe'
+if (-not (Test-Path -LiteralPath $wscriptExe)) { throw "Windows Script Host absent: $wscriptExe" }
 # Un trigger horaire par minute utile; le launcher applique heure/jour/timezone.
 $minutesRaw=[string](Get-ConfigValue $cfg 'run_minutes' '')
 $minutes=@($minutesRaw -split ',' | ForEach-Object {$_.Trim()} | Where-Object {$_})
@@ -40,8 +45,8 @@ foreach ($minute in ($minutes | Sort-Object -Unique)) {
     $at=(Get-Date).Date.AddMinutes([int]$minute)
     $triggers += New-ScheduledTaskTrigger -Once -At $at -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration (New-TimeSpan -Days 3650)
 }
-$arguments='-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -BatchName "{1}" -WorkspacePath "{2}" -PythonExePath "{3}"' -f $launcher,$BatchName,$workspace,$python
-$action=New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arguments -WorkingDirectory $workspace
+$arguments='//B //Nologo "{0}" "{1}" "{2}" "{3}" "{4}" "{5}"' -f $hiddenLauncher,$powershellExe,$launcher,$BatchName,$workspace,$python
+$action=New-ScheduledTaskAction -Execute $wscriptExe -Argument $arguments -WorkingDirectory $workspace
 $settings=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 12)
 $principal=if($RunAs -eq 'System'){New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest}else{New-ScheduledTaskPrincipal -UserId $UserId -LogonType Interactive}
 $existing=Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
