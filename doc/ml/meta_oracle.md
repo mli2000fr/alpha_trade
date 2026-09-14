@@ -1,3 +1,19 @@
+# Meta-Oracle — filtre des faux positifs Oracle
+
+## Contrat autoritatif corrigé
+
+Cette campagne est research-only. Batch recommandé : `model-factory-20260909051302-323684`. Le shadow 2025-07-14 → 2026-06-30 reste un holdout fermé jusqu'au gel du contrat.
+
+Les règles suivantes remplacent toute formulation historique contradictoire dans le protocole détaillé ci-dessous.
+
+1. **Cible** : utiliser `global_oracle_labels.oracle_extreme10`, uniquement avec `target_quality_valid = 1`. `oracle_decile` sert à reporter D1 et D10 séparément, jamais à reconstruire la cible.
+2. **Population TOP20** : lire directement `directional_oracle_oof_available = 1` et `directional_oracle_eligible = 1` dans `_oracle_oof_gate.parquet`. Ne pas recalculer le ranking depuis le percentile.
+3. **Disponibilité et purge** : un exemple n'entre dans le train que si `oracle_available_date < test_start`. Reporter également une purge nominale d'au moins 20 séances et l'étendre à l'horizon maximal réellement consulté.
+4. **V5 et comparateurs** : Meta keep80 conserve exactement 80 % du TOP20 par date. Comparer à nombre quotidien identique avec Oracle TOP16 direct, Oracle-score keep80 et Random keep80. `oracle_pct * p_true_extreme` est un score de ranking, pas une probabilité.
+5. **V2/V3** : V3 est le complément mathématique de V2 et seulement une sensibilité de pondération préfixée. Pas de focal loss, hard mining ou sweep avant un signal V2 répétable.
+6. **Ordre d'exécution** : étape A = M0/M1 et baselines ; étape B = M2 Logistic/CatBoost fixes, M4/M5 keep80 et M7 bandes Oracle ; arrêt sans AUC/lift/monotonie incrémentale. Étape C seulement après signal : M3, M6 calibré nested-OOF, M8 séparé et une famille F3 à la fois.
+
+---
 # CAMPAGNE DE RECHERCHE — META-ORACLE / FALSE-POSITIVE FILTER
 
 ## 0. CONTEXTE

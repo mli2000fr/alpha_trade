@@ -910,30 +910,9 @@ serving n’a changé. Artefact canonique :
 `artifacts/research/oracle_opening_window_availability/e20a-opening-availability-20260913211726`.
 Voir [E20-A — disponibilité Opening Window](oracle_opening_window_availability_e20a.md).
 
-## E20-B — Confirmation Opening Window price-only — `IMPLEMENTED_WAITING_DATA`
+## E20-B — Confirmation Opening Window price-only — `GO_RESEARCH_VOLUME_ABLATION`
 
-Le protocole est pré-enregistré et testé sans utiliser volume, trade count ou
-VWAP. Il mesure aux checkpoints 5/15/30/60 minutes les rendements, ranges,
-excursions et position de clôture dans le range. La politique primaire figée
-est le mouvement à 30 minutes avec abstention sous ±0,50 %. Ses gates exigent
-126 dates, 5 000 événements, 1 000 décisions dont 500 D1/D10, 60 % de
-couverture, une précision globale ≥ 52 %, une précision D1/D10 ≥ 55 %, un
-bootstrap positif et une stabilité par folds et semestres. Aucun modèle ni
-serving n'est modifié.
-
-Le harnais existe mais E20-A constate encore zéro ligne compatible ; aucun
-verdict statistique E20-B n'est donc revendiqué. Le prochain résultat autorisé
-est `BLOCKED_INSUFFICIENT_DATA`, `NO_GO_PRICE_ONLY` ou
-`GO_RESEARCH_VOLUME_ABLATION`. Voir
-[E20-B — confirmation price-only](oracle_opening_price_confirmation_e20b.md).
-
-Le chemin de backfill compact est validé sur une séance historique : 278
-symboles Oracle demandés, 274 couverts et 13 362 barres SIP reçues sans échec.
-Il agrège immédiatement les minutes en partitions price-only reprenables afin
-d'éviter de dupliquer environ 35 millions de barres dans les tables canonique
-et append-only. Le run complet a été lancé sur les 1 763 séances / 582 306
-événements du contrat OOF.
-
+Politique primaire figée : variation à 30 minutes, abstention sous ±0,50 %, OHLC uniquement. Sur 1 763 séances : 559 513 événements observés, couverture 96,09 %, précision globale 53,96 %, précision D1/D10 56,91 %, rendement cible signé quotidien +1,414 % avec IC95 [+1,226 % ; +1,619 %], 65,63 % de folds et 100 % de semestres positifs. Tous les gates passent. Ce n'est pas encore un PnL d'entrée à 10:00. E20-C volume incrémental est autorisée. Artefact : `artifacts/research/oracle_opening_price_confirmation/e20b-opening-price-only-20260914051444`. Voir [E20-B](oracle_opening_price_confirmation_e20b.md).
 ## POC Alpaca options trades versus barres — `GO_RESEARCH_ONLY`
 
 Sur la séance du 11 septembre 2026, 10 contrats CALL/PUT ATM proches de DTE 10 sur AAPL, MSFT, NVDA, TSLA et AMD ont été comparés entre l'endpoint transactions et les barres une minute Alpaca. Les 10 volumes et compteurs de transactions concordent exactement ; ratios médians 1,0 et erreur relative médiane du VWAP recomposé 2,64 × 10⁻⁹.
@@ -970,3 +949,30 @@ Ne jamais remplacer un `NO_GO` par une nouvelle interprétation sans nouvelle
 information, nouveau contrat pré-enregistré et nouvelle validation. Conserver
 les résultats négatifs : ils empêchent de répéter les mêmes recherches sous un
 autre nom.
+
+### E20-C — Ablation incrémentale du volume d'ouverture — NO-GO
+
+Comparaison OOF appariée sur 354 967 événements, neuf folds temporels avec
+embargo H20 : LightGBM prix seul contre le même modèle augmenté du volume SIP,
+du nombre de transactions, de la taille moyenne et du VWAP aux checkpoints
+5/15/30 minutes. Le volume augmente légèrement l'accuracy (+0,41 point) et
+l'accuracy D1/D10 (+0,65 point), mais dégrade l'AUC (-0,0021), le rendement
+cible signé (-0,047 point) et le rendement des décisions de confiance >= 0,55
+(-0,123 point). L'AUC ne progresse que dans 4/9 folds et 3/10 semestres. Les
+gates de stabilité et d'utilité économique échouent : ne pas intégrer ces
+features et ne pas lancer de confirmation IEX. Artefact :
+`artifacts/research/oracle_opening_volume_ablation/e20c-opening-volume-ablation-20260914170421`.
+Voir [E20-C](oracle_opening_volume_ablation_e20c.md).
+
+### E20-D — Replay économique price-only à 10:00 — NO-GO symétrique
+
+Le replay de 2 259 trades après capacité rejette la politique LONG/SHORT :
+le lifecycle donne -0,120 % par trade, IC95 journalier recouvrant zéro, et
+7/15 semestres positifs. L'attribution montre +1,697 % en entrée contrefactuelle
+à l'open mais -0,689 % en maintien H20 depuis l'entrée réellement possible à
+10:00. Le retard coûte -2,386 points, avec IC95 entièrement négatif. Le SHORT
+est structurellement mauvais (-4,015 % H20 depuis 10:00). Le LONG conserve
++2,822 % H20 et 10/15 semestres positifs, mais son IC95 recouvre zéro ; cette
+découpe est post-hoc et exige une confirmation indépendante pré-enregistrée.
+Artefact : `artifacts/research/oracle_opening_price_economic_replay/e20d-opening-price-economic-20260914175418`.
+Voir [E20-D](oracle_opening_price_economic_replay_e20d.md).
