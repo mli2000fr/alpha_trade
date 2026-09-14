@@ -976,3 +976,91 @@ est structurellement mauvais (-4,015 % H20 depuis 10:00). Le LONG conserve
 découpe est post-hoc et exige une confirmation indépendante pré-enregistrée.
 Artefact : `artifacts/research/oracle_opening_price_economic_replay/e20d-opening-price-economic-20260914175418`.
 Voir [E20-D](oracle_opening_price_economic_replay_e20d.md).
+
+### Meta Oracle A/B — veto des faux extremes : NO_GO F1
+
+A : les scores Oracle seuls n'ajoutent rien au tri Oracle ; placebo et hasard
+restent inferieurs. B : les 168 features d'origine ne donnent aucun gain
+incremental a quota identique. Precision quotidienne Oracle keep80 47,01 %,
+F1 Logistic 46,95 %, F1 CatBoost 46,97 %. Delta CatBoost -0,0398 point,
+IC95 [-0,1675 ; +0,0955] ; seulement 4/9 folds et 1/6 annees positifs.
+Le controle inverse universe-wide est significativement inferieur a Oracle.
+Le holdout n'est pas charge et aucune promotion n'est autorisee. F2/F3 et
+les variantes avancees ne sont pas testees ; ce NO_GO porte sur F1.
+L'anomalie de reporting des bandes Oracle est corrigee : diagnostics A/B
+recalcules en quatre bandes fixes 80-85/85-90/90-95/95-100 %, sans entrainement
+ni changement des candidats, selections, rapports primaires ou verdicts.
+Onze tests cibles passent ; les AUC par bande restent descriptives.
+
+### Audit de complementarite directionnelle — HISTORICAL_DIAGNOSTIC_ONLY
+
+Sur le nouvel Oracle `323684`, seules deux familles presentes sont alignables
+sans selection future : dual-threshold et ranker conditionnel H3/H10/H20.
+402 017 evenements et 1 134 dates par horizon ; anciens sept experts absents,
+D1/D10 tail-only et observations d'ouverture exclus du panel principal.
+Les correlations de scores sont faibles (0,10 a 0,22) mais aucun des six IC
+residuels n'a un IC95 strictement positif avec blocs de 21 dates. H3 ranker
++0,0160, IC95 [-0,0008 ; +0,0295] ; H20 pratiquement nul. Ni ensemble supervise,
+ni PnL, ni promotion. Le run v1 est supplante par v2, qui tient compte du H20
+de selection Oracle et compare les scores sur les memes dates. Neuf tests passent.
+Artefact : `artifacts/research/directional_complementarity/audit-20260914-v2`.
+Voir [audit de complementarite, inventaire et limites](directional_complementarity_audit.md).
+
+### E21-A — Revisions chiffrees de guidance PIT — BLOCKED_DATA_NOT_READY
+
+Audit en lecture seule sur l'univers de 1 798 titres : 2 050 depots locaux du
+3 au 11 septembre 2026, 203 lies a l'univers, 1 311 annexes referencees mais
+zero contenu d'annexe telecharge. Le collecteur reconstruit mal les href et
+perd le repertoire d'accession SEC, expliquant les 404. Correctif a faire,
+non applique dans cet audit. Sur 100 documents bornes, 23 contiennent 69
+passages candidats ; revue qualitative : vraies perspectives, realises et
+boilerplate melanges. Aucune paire ancienne/nouvelle guidance confirmee.
+Les depots sont posterieurs aux cours disponibles : pas de test directionnel
+possible avec cet echantillon. Hypothese non rejetee ; pas d'entrainement,
+de backtest ou de modification des batchs. Quatre tests cibles passent.
+Artefact : `artifacts/research/guidance_pit_availability/e21a-20260914-v1`.
+Voir [E21-A : contrat, exemples, blocages et prochaines etapes](guidance_pit_availability_e21a.md).
+
+Suite E21 : URL SEC corrigées et smoke historique janvier–juin 2025 terminé.
+14 annexes distinctes / six émetteurs ; neuf comparaisons numériques revues
+sur cinq paires de publications. Les 18 fourchettes correspondent aux textes
+locaux. ABM exclu pour changement de définition non-GAAP. 60 tests ciblés
+passent. Statut : SMOKE_MANUEL_OK, toujours DATA_NOT_READY pour une expérience
+directionnelle (disponibilité PIT et extraction sémantique non validées).
+Voir [résultats détaillés et exclusions](guidance_historical_smoke_e21.md).
+
+### E21-B — Extraction structurée — IN_PROGRESS / DATA_NOT_READY
+
+Socle de recherche implémenté : suggestions sémantiques, champs validés
+séparés, contrôle des hashes, revue avec sources immuables, comparabilité
+fail-closed et prédécesseur observé. Smoke : 14 documents, 85 candidats,
+zéro erreur, zéro paire automatiquement approuvée. Disponibilité historique,
+corpus multi-années exhaustif et validation indépendante restent à acquérir.
+Pas d'entraînement ni de modification des batchs quotidiens.
+Voir [contrat E21-B et procédure de revue](guidance_structured_e21b.md).
+
+Suite : archives submissions SEC et progression ajoutées ; 80 tests ciblés
+passent. Collecte bornée ABM/TTC 2022-10 à 2024-12 lancée dans
+`artifacts/research/guidance_historical_backfill/e21b-historical-2023-2024-v1`.
+Résultat non encore analysé au lancement ; dates nouvelles mais émetteurs
+connus, pas une confirmation indépendante par émetteur.
+
+Résultat analysé : 19 dépôts/19 annexes, zéro erreur, zéro troncature ; pages
+anciennes non nécessaires dans cette fenêtre. Extraction : 65 candidats,
+18 avec suggestion de mesure unique. Revue nominale : 16 fourchettes annuelles
+d'EPS ajusté retrouvées 16/16, sans revendication de rappel global ou de signal
+boursier. Douze comparaisons nominales : trois hausses, quatre baisses de milieu,
+cinq inchangées. Statut toujours DATA_NOT_READY : sémantique et preuve PIT
+non approuvées. Référence dans `guidance_structured/e21b-2023-2024-v1/manual_reference.json`.
+
+E21-B2 : rôles NEW_FORECAST/PRIOR_FORECAST/REALIZED_RESULT/AMBIGUOUS
+implémentés avec abstention. Validation figée sur nouveaux émetteurs A/ADBE
+2023 : huit annexes, zéro erreur, 71 candidats. Revue assistant : 66 prévisions
+actuelles et cinq faux intervalles. 25/66 prévisions classées (37,9%),
+46/71 abstentions. Classes prior/réalisé absentes de la référence, donc non
+validées empiriquement. Couverture tableaux insuffisante ; DATA_NOT_READY.
+89 tests ciblés passent. Aucun entraînement ni backtest.
+Voir [protocole et résultats E21-B2](guidance_role_validation_e21b.md).
+Artefacts : `artifacts/research/meta_oracle/meta-oracle-a-20260914194645`
+et `artifacts/research/meta_oracle/meta-oracle-b-20260914201547`.
+Voir [protocole](meta_oracle.md) et [resultats et limites](meta_oracle_execution.md).
