@@ -161,3 +161,11 @@ appariés, synthèses par politique/fold/semestre et `report.json` canonique.
 Voir aussi [collecte Alpaca](oracle_opening_window_alpaca.md),
 [audit E20-A](oracle_opening_window_availability_e20a.md) et
 [registre des expériences](experiences_done.md).
+
+## Résultat canonique du 14 septembre 2026
+
+Artefact : `artifacts/research/oracle_opening_price_confirmation/e20b-opening-price-only-20260914051444`.
+
+La politique primaire `return_30m` avec seuil absolu de 0,50 % observe 559 513 événements sur 582 306 et en sélectionne 387 530. Couverture : 96,09 % ; sélection : 69,26 % ; part LONG : 49,78 % ; précision globale : 53,96 % ; précision sur 175 028 D1/D10 : 56,91 % ; rendement cible signé quotidien : +1,414 %, IC95 [+1,226 % ; +1,619 %] ; folds positifs : 65,63 % ; semestres positifs : 100 %.
+
+Tous les gates pré-enregistrés passent. Ce résultat n'est pas encore un PnL d'entrée à 10:00. La prochaine étape autorisée est E20-C : ablation incrémentale du volume sur la même population et le même contrat.
