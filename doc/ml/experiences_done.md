@@ -976,3 +976,230 @@ est structurellement mauvais (-4,015 % H20 depuis 10:00). Le LONG conserve
 découpe est post-hoc et exige une confirmation indépendante pré-enregistrée.
 Artefact : `artifacts/research/oracle_opening_price_economic_replay/e20d-opening-price-economic-20260914175418`.
 Voir [E20-D](oracle_opening_price_economic_replay_e20d.md).
+
+### Meta Oracle A/B — veto des faux extremes : NO_GO F1
+
+A : les scores Oracle seuls n'ajoutent rien au tri Oracle ; placebo et hasard
+restent inferieurs. B : les 168 features d'origine ne donnent aucun gain
+incremental a quota identique. Precision quotidienne Oracle keep80 47,01 %,
+F1 Logistic 46,95 %, F1 CatBoost 46,97 %. Delta CatBoost -0,0398 point,
+IC95 [-0,1675 ; +0,0955] ; seulement 4/9 folds et 1/6 annees positifs.
+Le controle inverse universe-wide est significativement inferieur a Oracle.
+Le holdout n'est pas charge et aucune promotion n'est autorisee. F2/F3 et
+les variantes avancees ne sont pas testees ; ce NO_GO porte sur F1.
+L'anomalie de reporting des bandes Oracle est corrigee : diagnostics A/B
+recalcules en quatre bandes fixes 80-85/85-90/90-95/95-100 %, sans entrainement
+ni changement des candidats, selections, rapports primaires ou verdicts.
+Onze tests cibles passent ; les AUC par bande restent descriptives.
+
+### Audit de complementarite directionnelle — HISTORICAL_DIAGNOSTIC_ONLY
+
+Sur le nouvel Oracle `323684`, seules deux familles presentes sont alignables
+sans selection future : dual-threshold et ranker conditionnel H3/H10/H20.
+402 017 evenements et 1 134 dates par horizon ; anciens sept experts absents,
+D1/D10 tail-only et observations d'ouverture exclus du panel principal.
+Les correlations de scores sont faibles (0,10 a 0,22) mais aucun des six IC
+residuels n'a un IC95 strictement positif avec blocs de 21 dates. H3 ranker
++0,0160, IC95 [-0,0008 ; +0,0295] ; H20 pratiquement nul. Ni ensemble supervise,
+ni PnL, ni promotion. Le run v1 est supplante par v2, qui tient compte du H20
+de selection Oracle et compare les scores sur les memes dates. Neuf tests passent.
+Artefact : `artifacts/research/directional_complementarity/audit-20260914-v2`.
+Voir [audit de complementarite, inventaire et limites](directional_complementarity_audit.md).
+
+### E21 — Révisions chiffrées de guidance PIT — CLOSED / SUSPENDED_DATA_NOT_READY
+
+**Décision finale du 15 septembre 2026 : piste fermée et suspendue.** Les
+expériences E21-A à E21-B8 ont établi que l'information existe dans les
+documents SEC, mais que la chaîne gratuite actuelle ne fournit pas une
+couverture documentaire et sémantique suffisamment stable pour produire des
+labels ML. Ce statut n'est pas un rejet de l'hypothèse économique : aucun test
+directionnel propre n'a pu être autorisé.
+
+Conséquences : aucun E21-B9 planifié, aucun entraînement, aucun branchement au
+Meta Oracle, aucun backtest et aucun usage live. Le code de recherche,
+les annotations et les artefacts sont conservés uniquement pour traçabilité.
+
+Réouverture autorisée seulement si au moins une condition change
+matériellement :
+
+- source structurée de guidance historique réellement PIT et suffisamment
+  couverte ;
+- collecteur SEC démontré exhaustif par dépôt et annexe ;
+- extracteur validé sur un nouveau corpus avec zéro faux intervalle, précision
+  classée >=95 %, couverture NEW >=80 % et rappel de détection mesuré ;
+- annotation humaine indépendante de la référence.
+
+Les sections ci-dessous constituent l'historique de la piste fermée.
+
+### E21-A — Revisions chiffrees de guidance PIT — BLOCKED_DATA_NOT_READY
+
+Audit en lecture seule sur l'univers de 1 798 titres : 2 050 depots locaux du
+3 au 11 septembre 2026, 203 lies a l'univers, 1 311 annexes referencees mais
+zero contenu d'annexe telecharge. Le collecteur reconstruit mal les href et
+perd le repertoire d'accession SEC, expliquant les 404. Correctif a faire,
+non applique dans cet audit. Sur 100 documents bornes, 23 contiennent 69
+passages candidats ; revue qualitative : vraies perspectives, realises et
+boilerplate melanges. Aucune paire ancienne/nouvelle guidance confirmee.
+Les depots sont posterieurs aux cours disponibles : pas de test directionnel
+possible avec cet echantillon. Hypothese non rejetee ; pas d'entrainement,
+de backtest ou de modification des batchs. Quatre tests cibles passent.
+Artefact : `artifacts/research/guidance_pit_availability/e21a-20260914-v1`.
+Voir [E21-A : contrat, exemples, blocages et prochaines etapes](guidance_pit_availability_e21a.md).
+
+Suite E21 : URL SEC corrigées et smoke historique janvier–juin 2025 terminé.
+14 annexes distinctes / six émetteurs ; neuf comparaisons numériques revues
+sur cinq paires de publications. Les 18 fourchettes correspondent aux textes
+locaux. ABM exclu pour changement de définition non-GAAP. 60 tests ciblés
+passent. Statut : SMOKE_MANUEL_OK, toujours DATA_NOT_READY pour une expérience
+directionnelle (disponibilité PIT et extraction sémantique non validées).
+Voir [résultats détaillés et exclusions](guidance_historical_smoke_e21.md).
+
+### E21-B — Extraction structurée — CLOSED / SUSPENDED_DATA_NOT_READY
+
+Socle de recherche implémenté : suggestions sémantiques, champs validés
+séparés, contrôle des hashes, revue avec sources immuables, comparabilité
+fail-closed et prédécesseur observé. Smoke : 14 documents, 85 candidats,
+zéro erreur, zéro paire automatiquement approuvée. Disponibilité historique,
+corpus multi-années exhaustif et validation indépendante restent à acquérir.
+Pas d'entraînement ni de modification des batchs quotidiens.
+Voir [contrat E21-B et procédure de revue](guidance_structured_e21b.md).
+
+Suite : archives submissions SEC et progression ajoutées ; 80 tests ciblés
+passent. Collecte bornée ABM/TTC 2022-10 à 2024-12 lancée dans
+`artifacts/research/guidance_historical_backfill/e21b-historical-2023-2024-v1`.
+Résultat non encore analysé au lancement ; dates nouvelles mais émetteurs
+connus, pas une confirmation indépendante par émetteur.
+
+Résultat analysé : 19 dépôts/19 annexes, zéro erreur, zéro troncature ; pages
+anciennes non nécessaires dans cette fenêtre. Extraction : 65 candidats,
+18 avec suggestion de mesure unique. Revue nominale : 16 fourchettes annuelles
+d'EPS ajusté retrouvées 16/16, sans revendication de rappel global ou de signal
+boursier. Douze comparaisons nominales : trois hausses, quatre baisses de milieu,
+cinq inchangées. Statut toujours DATA_NOT_READY : sémantique et preuve PIT
+non approuvées. Référence dans `guidance_structured/e21b-2023-2024-v1/manual_reference.json`.
+
+E21-B2 : rôles NEW_FORECAST/PRIOR_FORECAST/REALIZED_RESULT/AMBIGUOUS
+implémentés avec abstention. Validation figée sur nouveaux émetteurs A/ADBE
+2023 : huit annexes, zéro erreur, 71 candidats. Revue assistant : 66 prévisions
+actuelles et cinq faux intervalles. 25/66 prévisions classées (37,9%),
+46/71 abstentions. Classes prior/réalisé absentes de la référence, donc non
+validées empiriquement. Couverture tableaux insuffisante ; DATA_NOT_READY.
+89 tests ciblés passent. Aucun entraînement ni backtest.
+Voir [protocole et résultats E21-B2](guidance_role_validation_e21b.md).
+
+E21-B3 : lecteur de tableaux HTML implémenté avec provenance cellule/ligne,
+en-têtes de période et colonnes ancien/actuel. Sur le corpus de développement
+A/ADBE : couverture des prévisions détectées de 25/66 à 63/66 (95,5 %), trois
+prévisions et cinq faux intervalles en abstention. Ce corpus ayant servi au
+développement, ce n'est pas une validation indépendante. Aucun rendement,
+entraînement, backtest ou batch quotidien modifié. Voir
+[lecteur et limites E21-B3](guidance_table_extraction_e21b.md).
+
+E21-B4 — validation indépendante CRM/BBY/FDX 2024 : 14 annexes, 12
+publications productrices, 99 candidats, zéro erreur de collecte. Référence :
+76 NEW, neuf PRIOR, 14 faux intervalles, zéro vrai réalisé. Règles figées :
+précision classée 94,1 %, couverture NEW 14,5 %, PRIOR 55,6 % avec support
+insuffisant, un faux intervalle accepté à cause d'une note inline XBRL.
+Échec des trois gates pré-enregistrés ; aucun ajustement post-résultat.
+Conclusion DATA_NOT_READY, pas d'entraînement/backtest. Voir
+[protocole, matrice et diagnostic E21-B4](guidance_table_validation_protocol_e21b4.md).
+
+E21-B5 — notes inline rejetées et headings Guidance/Forecast/Targets
+généralisés. Confirmation gelée ABBV/ANF/CPB 2024 : 23 candidats, 15 NEW,
+sept PRIOR, un réalisé. NEW reconnu 15/15 mais PRIOR 0/7, précision classée
+68,2 %, gate échoué. Le réalisé unique reste en abstention. Cinq annexes ANF
+manquées car leurs noms `pressrelease` ne contiennent pas EX99 : couverture
+des dépôts complète mais couverture des annexes incomplète. Verdict FAIL,
+DATA_NOT_READY ; aucun entraînement/backtest. Voir
+[résultats E21-B5](guidance_table_validation_protocol_e21b4.md).
+
+E21-B6/V3 — OLD→NEW, td/colspan et pressrelease implémentés. Confirmation
+BWA/CCK/BJ 2024 : 52 candidats ; référence 34 NEW, huit PRIOR, dix faux
+intervalles. NEW 33/34, PRIOR 7/8, mais sept paires de résultats multi-périodes
+classées à tort REALIZED. Précision 85,1 %, gate zéro faux intervalle échoué.
+REALIZED véritable absent et non validé. Verdict FAIL/DATA_NOT_READY ; aucun
+entraînement/backtest. Voir [rapport E21-B6](guidance_table_validation_protocol_e21b4.md).
+
+E21-B7/V4 — grammaire stricte des intervalles réalisés et rejet des paires
+multi-périodes. Confirmation TDG/PH/KFY 2024 : 73 candidats, 58 NEW et 15
+PRIOR. Les 51 décisions sont exactes (100 %) et PRIOR atteint 15/15, mais NEW
+seulement 36/58 (62,1 %). Quatre vraies fourchettes KFY utilisant 'in the
+range of X and Y' sont aussi manquées : rappel détecteur audité 73/77 (94,8 %),
+rappel NEW bout en bout 36/62 (58,1 %). Verdict FAIL/DATA_NOT_READY, sans
+entraînement/backtest. Voir [rapport E21-B7](guidance_table_validation_protocol_e21b4.md).
+
+E21-B8/V5 — restauration de 'in the range of X and Y', flexions des verbes de
+prévision et portée bornée des listes. Le smoke TDG/PH/KFY atteint 50/62 NEW
+(80,6 %) et 15/15 PRIOR. La confirmation APOG/SYY/EL échoue : 44 candidats,
+41 NEW et trois faux candidats correctement laissés ambigus ; précision 100 %
+mais couverture NEW 17/41 (41,5 %). Le rappel de détection est non mesurable :
+APOG ne couvre qu'un dépôt sur six et au moins 22 paires EL en notation
+'$.xx' sont ignorées. Verdict FAIL/DATA_NOT_READY, sans entraînement/backtest.
+Voir [rapport E21-B8](guidance_table_validation_protocol_e21b4.md).
+Artefacts : `artifacts/research/meta_oracle/meta-oracle-a-20260914194645`
+et `artifacts/research/meta_oracle/meta-oracle-b-20260914201547`.
+Voir [protocole](meta_oracle.md) et [resultats et limites](meta_oracle_execution.md).
+
+### E22 — Trajectoire pré-signal Oracle J−5 à J — NO_GO_H20
+
+Trois variantes pré-enregistrées : O0 canonique, 35 lags ordonnés J−1 à J−5,
+et 14 descripteurs compacts de la trajectoire J−5 à J. Le smoke H20 sur 50
+symboles et 91 155 lignes termine sans écriture en base ni changement du
+serving. Les lags bruts échouent ; la forme compacte améliore AUC (+0,0227) et
+average precision (+0,0240), mais pas suffisamment la précision du TOP20
+(+0,0022) et manque les gates de stabilité. Ce résultat n'est pas interprétable
+scientifiquement sur 50 symboles.
+
+Le smoke a détecté une faiblesse de protocole : les 12 premiers folds
+s'arrêtaient à mi-2024. Avant le run complet, E22 a été corrigé pour conserver
+les 12 folds valides les plus récents et couvrir la fin 2025. Une erreur neutre
+de comptage du premier changement de signe a aussi été corrigée.
+
+Le second smoke technique confirme les 12 folds récents du 8 juillet 2019 au
+11 juillet 2025. E22 est prêt pour le run H20 complet sur 2 493 symboles ; aucun
+résultat de smoke n'est utilisé pour promouvoir une variante.
+
+Run complet terminé : 2 493 symboles, 2 557 086 prédictions OOS et 1 512 dates.
+Les lags J−1 à J−5 n'ajoutent que +0,000519 d'AUC, +0,000809 d'average
+precision et +0,000225 de précision TOP20 ; ils ne gagnent que 7/12 folds et
+échouent quatre gates sur cinq. La forme compacte ajoute +0,000063 d'AUC,
++0,000019 d'average precision et perd 0,000027 de précision TOP20 ; 6/12 folds
+gagnants. Verdict NO_GO_H20 : aucune modification de `oracle.json`, du serving,
+des prédictions ou du backtest. Le signal du smoke 50 était un effet
+d'échantillon.
+
+Artefact complet :
+`artifacts/research/oracle_trajectory/e22-h20-20260915190508`.
+
+Voir [protocole, variantes, gates et smoke](oracle_trajectory_e22.md).
+
+### E23 — D10 one-vs-rest avec trajectoires J−10 à J — NO_GO
+
+Nouvelle formulation LONG-only dans le TOP20 Oracle OOF : D10 réel à H20 vaut
+1 et tous les déciles D1 à D9 valent 0. Quatre variantes isolent l'état J, la
+trajectoire price/volume, les onze scores quotidiens de sentiment J−10 à J et
+leur combinaison. Les lags utilisent les séances globales exactes ; absence de
+news et sentiment neutre restent distincts. Logistic et LightGBM contrôlent le
+CatBoost primaire. Recherche uniquement, aucun serving ou SQL modifié.
+
+Voir [contrat E23 et commandes](oracle_d10_trajectory_e23.md).
+
+Smoke final : 50 symboles demandés, 33 dans le pool, 12 537 événements et deux
+folds récents. Couverture news : 24,04 % à J, 67,58 % sur J−10 à J. Les quatre
+variantes CatBoost terminent ; aucune métrique n'est interprétée sur ce petit
+échantillon. Le chargement dense des lags a été séparé de la disponibilité des
+labels futurs afin d'éviter une fuite par missingness. Dix-sept tests ciblés
+passent. Artefact :
+`artifacts/research/oracle_d10_trajectory/e23-smoke50-20260915-v2`.
+
+Run complet : 582 700 événements, 1 472 symboles, neuf folds OOS de janvier
+2021 à juillet 2025. Toutes les variantes et les trois modèles échouent aux
+gates absolus ; toutes les trajectoires échouent aussi aux gates incrémentaux
+contre l'état J. La meilleure AUC est LightGBM prix + sentiment à 0,5250, mais
+son TOP10 gagne +0,727 %, sous le pool Oracle à +0,787 %. La meilleure sélection
+économique est la baseline Logistic à J (+1,019 %, précision D10 25,22 %),
+elle-même inférieure au classement par amplitude Oracle (+1,198 %, précision
+D10 28,62 %) et instable. CatBoost sentiment est le meilleur signal
+incrémental partiel (AUC +0,0098, AP +0,0117), sans amélioration économique
+(+0,002 point) ni stabilité suffisante. Aucun serving ni SQL modifié. Artefact :
+`artifacts/research/oracle_d10_trajectory/e23-d10-20260915203334`.

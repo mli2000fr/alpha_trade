@@ -23,6 +23,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -197,7 +198,16 @@ def _sec_filing_index_documents(index_html: str, base_url: str) -> list[dict[str
         if not link_match:
             continue
         href = html_lib.unescape(link_match.group(1).strip())
-        filename = href.replace("\\", "/").rsplit("/", 1)[-1]
+        href_parts = urlsplit(href)
+        if href_parts.path.rstrip('/') in ['/ix', '/ixviewer/doc/action']:
+            href = parse_qs(href_parts.query).get('doc', [''])[0]
+        resolved_url = urljoin(base_url.rstrip('/') + '/', href)
+        resolved = urlsplit(resolved_url)
+        if (not href or resolved.scheme != 'https' or resolved.hostname not in ['www.sec.gov', 'sec.gov']
+                or resolved.username or resolved.password or resolved.port not in [None, 443]
+                or not resolved.path.startswith('/Archives/edgar/data/')):
+            continue
+        filename = resolved.path.rsplit('/', 1)[-1]
         if not filename or not re.fullmatch(r"[A-Za-z0-9._-]+", filename):
             continue
         clean = lambda value: html_lib.unescape(re.sub(r"(?is)<[^>]+>", " ", value)).strip()
@@ -209,7 +219,7 @@ def _sec_filing_index_documents(index_html: str, base_url: str) -> list[dict[str
             "filename": filename,
             "document_type": re.sub(r"\s+", " ", clean(cells[3])).upper()[:32],
             "declared_size": int(size_text.replace(",", "")) if size_text.replace(",", "").isdigit() else None,
-            "url": (href if href.startswith("http") else base_url.rstrip("/") + "/" + filename),
+            "url": resolved_url,
         })
     return documents
 
@@ -287,6 +297,9 @@ def _download_sec_exhibits(
     try:
         response.raise_for_status()
         base_url = index_url.rsplit("/", 1)[0]
+        accession_directory = accession_number.replace('-', '')
+        if not base_url.endswith('/' + accession_directory):
+            base_url += '/' + accession_directory
         documents = _selected_sec_exhibits(
             _sec_filing_index_documents(response.text, base_url), prefixes, max_exhibits,
         )
