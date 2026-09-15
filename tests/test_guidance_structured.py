@@ -75,8 +75,9 @@ def test_equal_publication_times_abstain():
 @pytest.mark.parametrize('sentence,roles', [
     ('Fiscal 2024 EPS guidance is $3.30 to $3.45, up from $3.20 to $3.40.', ['NEW_FORECAST', 'PRIOR_FORECAST']),
     ('The company expects EPS $2.52 to $2.72, compared to $2.43 to $2.63 previously.', ['NEW_FORECAST', 'PRIOR_FORECAST']),
-    ('The company reported earnings $3.00 to $4.00 compared to $2.00 to $3.00 last year.', ['REALIZED_RESULT', 'REALIZED_RESULT']),
-    ('Outlook was published. Reported earnings $3.00 to $4.00.', ['REALIZED_RESULT']),
+    ('The company reported earnings $3.00 to $4.00 compared to $2.00 to $3.00 last year.', ['AMBIGUOUS', 'AMBIGUOUS']),
+    ('The company reported earnings in a range of $3.00 to $4.00.', ['REALIZED_RESULT']),
+    ('Outlook was published. Reported earnings $3.00 to $4.00.', ['AMBIGUOUS']),
     ('Fiscal year 2024 $3.00 to $4.00.', ['AMBIGUOUS']),
     ('Previously expected EPS $3.00 to $4.00.', ['PRIOR_FORECAST']),
 ])
@@ -88,3 +89,31 @@ def test_actual_is_not_comparable_forecast():
     row = approved()
     row['validated_statement_role'] = 'REALIZED_RESULT'
     assert 'NOT_A_VALIDATED_FORECAST' in compare(row, approved())['reasons']
+
+
+def test_from_old_to_new_relation_requires_forecast_context():
+    result = extract('Raises EPS guidance from $10 to $11 to $12 to $13.', {'content_sha256':'x'})
+    assert [r['range_role']['role'] for r in result] == ['PRIOR_FORECAST', 'NEW_FORECAST']
+    actual = extract('EPS has grown from $2 to $11.', {'content_sha256':'y'})
+    assert actual[0]['range_role']['role'] != 'PRIOR_FORECAST'
+
+
+def test_range_syntax_is_exposed_for_audit():
+    rows = extract('Expected EPS between $4 and $5.', {'content_sha256':'z'})
+    assert rows[0]['range_syntax'] == {'connector': 'and', 'lexical_range_cue': True}
+
+
+def test_forecast_inflections_and_bounded_list_scope():
+    sentence = ('Fiscal 2025 guidance is as follows: revenue is anticipated to be '
+        'in the range of $10 to $12; EBITDA in the range of $4 to $5.')
+    assert [r['range_role']['role'] for r in extract(
+        sentence, {'content_sha256':'scope'})] == ['NEW_FORECAST', 'NEW_FORECAST']
+    forecasted = extract('Forecasted earnings per share $20 to $21.',
+        {'content_sha256':'forecasted'})
+    assert forecasted[0]['range_role']['role'] == 'NEW_FORECAST'
+
+
+def test_forecast_scope_does_not_cross_completed_sentence():
+    rows = extract('Our guidance was published. EBITDA in the range of $4 to $5.',
+        {'content_sha256':'bounded'})
+    assert rows[0]['range_role']['role'] == 'AMBIGUOUS'

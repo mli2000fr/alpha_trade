@@ -1,5 +1,9 @@
 # E21-A — Disponibilite PIT des revisions chiffrees de guidance
 
+> **Archive d'une piste fermée.** E21 a été clôturée le 15 septembre 2026 au
+> statut CLOSED / SUSPENDED_DATA_NOT_READY après les validations E21-B4 à B8.
+> Ce document décrit l'audit initial ; il ne constitue plus un plan actif.
+
 ## Decision
 
 Audit execute le 14 septembre 2026 : **BLOCKED_DATA_NOT_READY**. L'hypothese

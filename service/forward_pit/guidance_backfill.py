@@ -53,6 +53,25 @@ def merge_history(payload, history):
     return payload
 
 
+def directory_exhibit_candidates(items, base, primary_document=None, maximum=2):
+    """Research candidates: explicit EX99 first, then guarded press-release names."""
+    explicit, fallback = [], []
+    for item in items:
+        name = item.get('name', '')
+        if (not re.fullmatch(r'[A-Za-z0-9._-]+', name)
+                or not name.lower().endswith(('.htm', '.html', '.txt'))
+                or name == primary_document
+                or re.search(r'(?:-index|_htm[.]xml|filingsummary|^r[0-9]+[.]htm)', name, re.I)):
+            continue
+        descriptor = {'filename': name, 'url': base + '/' + name}
+        if re.search(r'ex(?:hibit|h)?[_x-]*99', name, re.I):
+            explicit.append({**descriptor, 'document_type': 'UNCONFIRMED_EX99_FILENAME_CANDIDATE'})
+        elif re.search(r'(?:press[_-]?release|pressr|earnings?[_-]?release|businessupdatepressr)', name, re.I):
+            fallback.append({**descriptor, 'document_type': 'UNCONFIRMED_PRESS_RELEASE_FILENAME_CANDIDATE'})
+    return (sorted(explicit, key=lambda d: d['filename'])
+        + sorted(fallback, key=lambda d: d['filename']))[:maximum]
+
+
 def run(output, symbols, start, end, maximum, directory_index=False, max_history_pages=0):
     agent=os.getenv('SEC_EDGAR_USER_AGENT','').strip()
     if not agent:
@@ -114,13 +133,15 @@ def run(output, symbols, start, end, maximum, directory_index=False, max_history
                 all_filings = list({f['accession']: f for f in all_filings}.values())
                 filings = all_filings[:maximum]
                 recent=payload.get('filings',{}).get('recent',{})
-                coverage.append({'symbol':symbol,'cik':cik,'selected_filings':len(filings),
+                coverage_row={'symbol':symbol,'cik':cik,'selected_filings':len(filings),
                     'recent_first_date':min(recent.get('filingDate',[]) or ['']),
                     'matching_history_pages': len(pages), 'loaded_history_pages': loaded,
                     'history_pages_not_loaded': len(pages) - loaded,
                     'eligible_filings_in_inventory': len(all_filings),
                     'filings_truncated': len(all_filings) > maximum,
-                    'inventory_complete_for_requested_items': loaded == len(pages) and len(all_filings) <= maximum})
+                    'inventory_complete_for_requested_items': loaded == len(pages) and len(all_filings) <= maximum,
+                    'filings_with_exhibit_candidates': 0}
+                coverage.append(coverage_row)
             except Exception as exc:
                 errors.append({'symbol':symbol,'stage':'submissions','error':str(exc)[:500]})
                 continue
@@ -133,15 +154,7 @@ def run(output, symbols, start, end, maximum, directory_index=False, max_history
                     if directory_index:
                         index=fetch(base+'/index.json',folder/'directory-index.json')
                         items=json.loads(index).get('directory',{}).get('item',[])
-                        candidates=[]
-                        for item in items:
-                            name=item.get('name','')
-                            if (re.fullmatch(r'[A-Za-z0-9._-]+',name)
-                                    and re.search(r'ex(?:hibit|h)?[_x-]*99',name,re.I)
-                                    and name.lower().endswith(('.htm','.html','.txt'))):
-                                candidates.append({'filename':name,'url':base+'/'+name,
-                                    'document_type':'UNCONFIRMED_EX99_FILENAME_CANDIDATE'})
-                        candidates=sorted(candidates,key=lambda d:d['filename'])[:2]
+                        candidates=directory_exhibit_candidates(items, base, filing.get('primary_document'), 2)
                     else:
                         index_url=_sec_filing_index_url(short_url,accession)
                         index=fetch(index_url,folder/'filing-index.html')
@@ -149,6 +162,8 @@ def run(output, symbols, start, end, maximum, directory_index=False, max_history
                 except Exception as exc:
                     errors.append({'symbol':symbol,'accession':accession,'stage':'index','error':str(exc)[:500]})
                     continue
+                if candidates:
+                    coverage_row['filings_with_exhibit_candidates'] += 1
                 for doc in candidates:
                     descriptor={'symbol':symbol,'cik':cik,**filing,**doc,'historical_available_at':None}
                     if not doc['filename'].lower().endswith(('.htm','.html','.txt')):
@@ -183,6 +198,9 @@ def run(output, symbols, start, end, maximum, directory_index=False, max_history
                 'Collected today; no historical serving availability inferred',
                 'Deterministic small sample; no performance or predictive validation']}
         report['status']='COLLECTED_REQUIRES_MANUAL_REVIEW' if report['downloaded_documents'] else 'BLOCKED_COLLECTION'
+        for item in coverage:
+            item['exhibit_candidate_coverage'] = (item['filings_with_exhibit_candidates'] / item['selected_filings']
+                if item['selected_filings'] else None)
         (output/'collection_report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
         (output/'manual_review_candidates.json').write_text(json.dumps(snippets,indent=2),encoding='utf-8')
         (output/'progress.json').write_text(json.dumps({'status': report['status'],

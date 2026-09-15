@@ -37,7 +37,7 @@ def test_prior_and_current_columns():
 
 def test_respectively_is_not_range():
     html = '<p>The following table summarizes 2024 targets:</p><table><tr><td>Allowance</td><td>$17 and $23, respectively</td></tr></table>'
-    assert rows(html)[0]['range_role']['role'] == 'AMBIGUOUS'
+    assert rows(html) == []
 
 
 def test_layout_offsets_equal_normalized_visible_text():
@@ -45,3 +45,22 @@ def test_layout_offsets_equal_normalized_visible_text():
     parser = TableLayout()
     parser.feed('<p>A &amp; B</p><table><tr><td>EPS</td><td> $1 to $2 </td></tr></table>')
     assert parser.visible == re.sub(r'\s+', ' ', ''.join(parser.parts))
+
+
+def test_generic_bounded_guidance_and_forecast_headings():
+    for heading in ['Guidance Our guidance includes financial measures.',
+                    'Fiscal 2025 Earnings Per Share Forecast', 'Updated FY25 Targets']:
+        html = f'<p>{heading}</p><table><tr><td>EPS</td><td>$3 to $4</td></tr></table>'
+        assert rows(html)[0]['range_role']['role'] == 'NEW_FORECAST'
+
+
+def test_prior_local_cue_overrides_current_table_heading():
+    html = '<p>Updated Guidance</p><table><tr><td>EPS</td><td>$3 to $4 compared to prior forecast of $2 to $3</td></tr></table>'
+    assert [r['range_role']['role'] for r in rows(html)] == ['NEW_FORECAST', 'PRIOR_FORECAST']
+
+
+def test_td_headers_with_colspans_map_prior_and_updated_columns():
+    html = ('<table><tr><td colspan="3"></td><td colspan="3">Previous FY2024 Guidance</td>'
+        '<td colspan="3">Updated FY2024 Guidance</td></tr><tr><td colspan="3">EPS</td>'
+        '<td colspan="3">$3 to $4</td><td colspan="3">$4 to $5</td></tr></table>')
+    assert [r['range_role']['role'] for r in rows(html)] == ['PRIOR_FORECAST','NEW_FORECAST']

@@ -1,4 +1,4 @@
-from service.forward_pit.guidance_backfill import submission_filings, history_pages, merge_history
+from service.forward_pit.guidance_backfill import submission_filings, history_pages, merge_history, directory_exhibit_candidates
 
 
 def test_filing_window_and_priority_without_future_targets():
@@ -27,3 +27,14 @@ def test_history_merge_keeps_missing_columns_aligned():
     result = merge_history(payload, {'accessionNumber': ['old'], 'filingDate': ['2016-01-01']})
     assert result['filings']['recent']['items'] == ['2.02', None]
     assert result['filings']['recent']['filingDate'] == [None, '2016-01-01']
+
+
+def test_directory_candidates_prefer_ex99_then_guarded_press_release():
+    items=[{'name':'filing.htm'},{'name':'q1pressrelease.htm'},
+        {'name':'z_ex991.htm'},{'name':'R1.htm'},{'name':'evil/pressrelease.htm'}]
+    found=directory_exhibit_candidates(items,'https://www.sec.gov/Archives/edgar/data/1/2','filing.htm',2)
+    assert [x['filename'] for x in found] == ['z_ex991.htm','q1pressrelease.htm']
+
+
+def test_unrelated_html_is_not_selected_as_press_release():
+    assert directory_exhibit_candidates([{'name':'presentation.htm'},{'name':'report.css'}], 'base') == []

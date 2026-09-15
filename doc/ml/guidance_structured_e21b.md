@@ -1,5 +1,11 @@
 # E21-B — Extraction structurée et comparabilité de la guidance
 
+> **Statut final — CLOSED / SUSPENDED_DATA_NOT_READY (15 septembre 2026).**
+> La piste est fermée après E21-B8/V5. Aucun E21-B9 n'est prévu, aucune donnée
+> issue de cet extracteur ne doit alimenter un entraînement, un backtest, le
+> Meta Oracle ou le live. Le présent document est conservé comme documentation
+> historique et technique du prototype de recherche.
+
 ## Livré : socle conservateur de recherche
 
 Service : `service/forward_pit/guidance_structured.py`. Aucun accès réseau,
@@ -55,8 +61,8 @@ Une même valeur apparaît parfois plusieurs fois dans titre/corps ; ces
 occurrences ne sont pas des événements supplémentaires. Les communiqués de
 décembre 2024 annonçant FY2025 ne sont jamais joints aux prévisions FY2024.
 
-Statut : collecte et smoke numérique réussis, **résolution sémantique
-automatique encore insuffisante / DATA_NOT_READY**. La revue est celle de
+Statut historique de cette étape : collecte et smoke numérique réussis,
+**résolution sémantique automatique insuffisante / DATA_NOT_READY**. La revue est celle de
 l'assistant, pas une annotation humaine indépendante. Les nouvelles dates
 restent désormais des données explorées ; ne pas les réutiliser comme
 confirmation intacte après adaptation du parseur. Aucun rendement consulté.
@@ -169,9 +175,15 @@ contrôler les téléchargements manquants avant extraction et annotation.
 5. Valider preuves temporelles et sécurité master historique ; aucun test ML
    avant ces contrôles. Puis protocole OOF LONG/SHORT H5/H10/H20 net de coûts.
 
-**E21-B est en cours : socle et smoke livrés, extraction sémantique automatique
-complète et validation indépendante non acquises.** Ne pas transformer ce
-statut de données insuffisantes en NO_GO directionnel.
+**E21-B est désormais fermée et suspendue :** le socle et les smokes sont
+conservés, mais les validations indépendantes B4 à B8 n'ont pas établi une
+couverture généralisable. Il s'agit d'un NO-GO opérationnel sur la chaîne de
+données actuelle, pas d'un NO-GO directionnel sur l'information de guidance.
+
+La piste ne peut être rouverte qu'avec une source structurée PIT, ou après
+démonstration conjointe de l'exhaustivité des annexes, du rappel de détection,
+d'une précision classée >=95 %, d'une couverture NEW >=80 %, de zéro faux
+intervalle et d'une annotation humaine indépendante sur de nouveaux émetteurs.
 
 Voir [smoke historique et annotations](guidance_historical_smoke_e21.md) et
 [audit initial de disponibilité](guidance_pit_availability_e21a.md).

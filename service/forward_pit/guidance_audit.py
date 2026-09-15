@@ -42,12 +42,32 @@ def money_range_candidates(content):
     parser.feed(content)
     visible = re.sub(r'\s+', ' ', ''.join(parser.parts))
     pattern = re.compile(r'\$\s*([\d,]+(?:\.\d+)?)\s*(billion|million)?\s*'
-        r'(?:to|and|[-–—])\s*\$?\s*([\d,]+(?:\.\d+)?)\s*(billion|million)?', re.I)
+        r'(to|and|[-–—])\s*\$?\s*([\d,]+(?:\.\d+)?)\s*(billion|million)?', re.I)
     rows = []
     for match in pattern.finditer(visible):
-        rows.append({'low': float(match.group(1).replace(',', '')),
-            'high': float(match.group(3).replace(',', '')),
-            'explicit_unit': (match.group(2) or match.group(4) or '').lower() or None,
+        low, high = float(match.group(1).replace(',', '')), float(match.group(4).replace(',', ''))
+        before = visible[max(0, match.start()-100):match.start()]
+        tail = visible[match.end():match.end()+40]
+        if low > high:
+            continue
+        connector = match.group(3).lower()
+        # A bare "X and Y" normally enumerates distinct periods/metrics. It is
+        # a range only when the grammar explicitly says "between X and Y".
+        if connector == 'and' and not re.search(
+                r'\b(?:between|(?:in\s+)?(?:the\s+)?range(?:d|s)?(?:\s+of)?)\s*$',
+                before, re.I):
+            continue
+        # "increase by $5 to $60" is a delta followed by a target, not bounds.
+        if connector == 'to' and re.search(
+                r'\b(?:increase|decrease|raise|reduce|lower|decline|grow|rise|fall)\w*\s+by\s*$',
+                before, re.I):
+            continue
+        lexical_range_cue = bool(
+            connector in ['-', '–', '—']
+            or re.search(r'\b(?:between|range(?:d|s)?(?:\s+of)?|low\s*(?:end)?|high\s*(?:end)?)\b[^.!?;]{0,45}$', before, re.I))
+        rows.append({'low': low, 'high': high, 'connector': match.group(3).lower(),
+            'lexical_range_cue': lexical_range_cue,
+            'explicit_unit': (match.group(2) or match.group(5) or '').lower() or None,
             'start': match.start(), 'end': match.end(),
             'context': visible[max(0,match.start()-150):match.end()+150],
             'status': 'UNCONFIRMED_RANGE_REQUIRES_METRIC_PERIOD_UNIT_REVIEW'})

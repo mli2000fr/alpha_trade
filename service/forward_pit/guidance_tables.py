@@ -82,20 +82,41 @@ def table_context(layout, start, end):
                         result['reason'] = 'SEPARATE_VALUES_NOT_INTERVAL'
                         return result
                     # Column headings may explicitly distinguish old/current guidance.
-                    previous_headers = [r for r in table['rows'][:row_index] if any(c['kind'] == 'th' for c in r)]
+                    previous_headers = table['rows'][:row_index]
                     column_header = None
-                    if previous_headers and all(c['colspan'] == '1' for c in previous_headers[-1] + row):
-                        header_row = previous_headers[-1]
-                        if cell_index < len(header_row):
-                            column_header = header_row[cell_index]['text']
+                    try:
+                        logical_start = sum(int(c['colspan']) for c in row[:cell_index])
+                    except ValueError:
+                        logical_start = None
+                    if logical_start is not None:
+                        for header_row in reversed(previous_headers):
+                            cursor = 0
+                            for header_cell in header_row:
+                                try:
+                                    width = int(header_cell['colspan'])
+                                except ValueError:
+                                    width = 1
+                                if cursor <= logical_start < cursor + width and re.search(
+                                        r'\b(?:guidance|forecast|outlook|targets?)\b', header_cell['text'], re.I):
+                                    column_header = header_cell['text']
+                                    break
+                                cursor += width
+                            if column_header:
+                                break
                     result['column_header'] = column_header
-                    if column_header and re.search(r'prior|previous', column_header, re.I) and re.search(r'guidance|forecast|outlook', column_header, re.I):
+                    if column_header and re.search(r'prior|previous', column_header, re.I) and re.search(r'guidance|forecast|outlook|target', column_header, re.I):
                         result.update(role='PRIOR_FORECAST', reason='EXPLICIT_PRIOR_COLUMN')
-                    elif column_header and re.search(r'current|new|updated', column_header, re.I) and re.search(r'guidance|forecast|outlook', column_header, re.I):
+                    elif column_header and re.search(r'current|new|updated', column_header, re.I) and re.search(r'guidance|forecast|outlook|target', column_header, re.I):
                         result.update(role='NEW_FORECAST', reason='EXPLICIT_CURRENT_COLUMN')
                     elif re.search(r'following table summarizes[^.!?]{0,180}\btargets\s*:', heading, re.I):
                         result.update(role='NEW_FORECAST', reason='EXPLICIT_TARGETS_HEADING')
-                    elif re.search(r'\b(?:consolidated statements of (?:income|operations)|actual results)\b', heading, re.I):
+                    else:
+                        prior_rows = ' '.join(c['text'] for r in table['rows'][max(0,row_index-3):row_index] for c in r)
+                        bounded = heading[-400:] + ' ' + prior_rows
+                        if (re.search(r'\b(?:guidance|forecast|targets?)\b', bounded, re.I)
+                                and not re.search(r'forward-looking statements?\s*$', bounded, re.I)):
+                            result.update(role='NEW_FORECAST', reason='BOUNDED_GUIDANCE_FORECAST_TARGET_HEADING')
+                    if result['role'] == 'AMBIGUOUS' and re.search(r'\b(?:consolidated statements of (?:income|operations)|actual results)\b', heading, re.I):
                         result.update(role='REALIZED_RESULT', reason='EXPLICIT_RESULTS_HEADING')
                     return result
         return {'table_id': table['id'], 'role': 'AMBIGUOUS',

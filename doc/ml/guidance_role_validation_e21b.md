@@ -74,3 +74,5 @@ Suite nécessaire : lecteur de tableaux avec en-têtes de période/mesure et
 réjection de valeurs `respectively`, puis nouveau corpus non lu contenant
 ancienne prévision, nouvelle prévision et vrai réalisé. Le corpus A/ADBE
 devient développement si ses observations servent à adapter les règles.
+
+Suite : [lecteur de tableaux et résultats de développement](guidance_table_extraction_e21b.md).

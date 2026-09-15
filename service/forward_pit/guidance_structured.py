@@ -21,13 +21,15 @@ METRICS = {
 REVIEW_FIELDS = ['metric', 'period', 'unit', 'basis', 'definition_id', 'scope']
 
 
-def statement_role(visible, start, end):
+def statement_role(visible, start, end, explicit_range=False):
     """Local evidence only: uncertain comparisons/tables abstain, never become labels."""
     before = visible[max(0, start - 350):start]
+    sentence_scope = re.split(r'(?<=[.!?])\s+', before)[-1]
     # Do not carry a forecast cue across an unrelated completed sentence.
     before = re.split(r'(?<=[.!?;])\s+', before)[-1]
     after = visible[end:end + 40]
-    forecast = r'\b(?:guidance|outlook|forecast|expects?|expected|anticipates?|projects?|reaffirm\w*)\b'
+    forecast = (r'\b(?:guidance|outlook|forecasts?|forecasted|expects?|expected|'
+        r'anticipat(?:e|es|ed|ing)|project(?:s|ed|ing)?|reaffirm\w*)\b')
     comparison = r'\b(?:previously|prior|previous|compared to|versus|up from|down from)\b'
     actual = r'\b(?:reported|recorded|delivered|generated|realized|actual)\b'
     evidence = []
@@ -36,11 +38,21 @@ def statement_role(visible, start, end):
             evidence.append((m.end(), role, m.group()))
     prior_after = re.match(r'\s*(?:per (?:diluted )?share\s*)?(previously|prior forecast)\b', after, re.I)
     has_forecast = bool(re.search(forecast, before, re.I))
+    if has_forecast and re.search(r'\bfrom\s*$', before, re.I) and re.match(r'\s*to\s*\$', after, re.I):
+        return {'role': 'PRIOR_FORECAST', 'evidence': 'explicit from OLD to NEW relation', 'status': 'SUGGESTION_ONLY'}
+    if has_forecast and re.search(r'\bfrom\s+\$[\d,.]+(?:\s*(?:billion|million))?\s*(?:to|[-–—])\s*$', before, re.I):
+        return {'role': 'NEW_FORECAST', 'evidence': 'explicit from OLD to NEW relation', 'status': 'SUGGESTION_ONLY'}
     if re.search(r'\b(?:previously|prior|previous)\s+(?:expected|anticipated|projected|forecast|guidance|outlook)\b', before, re.I):
         return {'role': 'PRIOR_FORECAST', 'evidence': 'explicit prior forecast', 'status': 'SUGGESTION_ONLY'}
     if prior_after and has_forecast:
         return {'role': 'PRIOR_FORECAST', 'evidence': prior_after.group(), 'status': 'SUGGESTION_ONLY'}
     if not evidence:
+        # A forecast heading can govern semicolon/bullet-separated metrics, but
+        # never cross a completed sentence and only for explicit range syntax.
+        if (explicit_range and re.search(forecast, sentence_scope, re.I)
+                and not re.search(actual, before, re.I)):
+            return {'role': 'NEW_FORECAST', 'evidence': 'bounded forecast list scope',
+                'status': 'SUGGESTION_ONLY'}
         return {'role': 'AMBIGUOUS', 'evidence': None, 'status': 'ABSTAIN'}
     _, role, cue = max(evidence)
     if role == 'PRIOR_FORECAST' and not has_forecast:
@@ -57,10 +69,17 @@ def extract(content, source):
     for i, candidate in enumerate(money_range_candidates(content)):
         context = candidate['context']
         table = table_context(parser, candidate['start'], candidate['end'])
-        role = statement_role(visible, candidate['start'], candidate['end'])
-        if table:
+        role = statement_role(visible, candidate['start'], candidate['end'],
+            candidate.get('lexical_range_cue', False))
+        if table and (role['role'] != 'PRIOR_FORECAST'
+                or table.get('reason') in ['EXPLICIT_PRIOR_COLUMN', 'EXPLICIT_CURRENT_COLUMN']):
             role = {'role': table['role'], 'evidence': table['reason'],
                 'status': 'ABSTAIN' if table['role'] == 'AMBIGUOUS' else 'SUGGESTION_ONLY'}
+        # Actual figures joined by "to" are not necessarily a low/high range.
+        # Fail closed unless the candidate carries explicit range grammar.
+        if role['role'] == 'REALIZED_RESULT' and not candidate.get('lexical_range_cue'):
+            role = {'role': 'AMBIGUOUS', 'evidence': 'NO_EXPLICIT_REALIZED_RANGE_GRAMMAR',
+                'status': 'ABSTAIN'}
         metrics = [m for m, pattern in METRICS.items() if re.search(pattern, context, re.I)]
         years = sorted(set(re.findall(r'\b(?:fiscal (?:year )?|FY\s*)(20\d{2})\b', context, re.I)))
         dates = sorted(set(re.findall(r'\b(?:January|February|March|April|May|June|July|August|September|October|November|December) \d{1,2},? 20\d{2}\b', context)))
@@ -94,6 +113,8 @@ def extract(content, source):
         rows.append({
             'candidate_id': source['content_sha256'] + ':' + str(i),
             'source': source, 'low': candidate['low'], 'high': candidate['high'],
+            'range_syntax': {'connector': candidate['connector'],
+                'lexical_range_cue': candidate.get('lexical_range_cue', False)},
             'context': context,
             'range_role': role, 'table_context': table,
             'table_suggestions': table_suggestions,

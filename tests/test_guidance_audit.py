@@ -27,3 +27,23 @@ def test_money_ranges_keep_explicit_units_but_do_not_invent_table_units():
     assert [(r['low'],r['high'],r['explicit_unit']) for r in rows]==[(1.49,1.53,'billion'),(4.6,5.,None)]
     assert money_range_candidates('<p>Total revenue $3,129 to $3,141.</p>')[0]['low']==3129
     assert money_range_candidates('<p>Total revenue $3,129 to $3,141.</p>')[0]['explicit_unit'] is None
+
+
+def test_money_ranges_reject_decreasing_and_respectively():
+    html = ('$18.25 to 2 $20.25 per share; $23 million and $20 million, respectively; '
+        '$6.00 to $5.00; valid $4.00 to $5.00')
+    assert [(r['low'], r['high']) for r in money_range_candidates(html)] == [(4., 5.)]
+
+
+def test_bare_and_values_and_delta_to_target_are_not_ranges():
+    html = ('Recorded $7 million and $40 million in the quarter and year. '
+        'The fee will increase by $5 to $60. '
+        'EPS is between $4.60 and $5.00.')
+    rows = money_range_candidates(html)
+    assert [(r['low'], r['high']) for r in rows] == [(4.6, 5.)]
+    assert rows[0]['lexical_range_cue'] is True
+
+
+def test_range_of_allows_and_as_bounds():
+    rows = money_range_candidates('Revenue is in the range of $675 million and $695 million.')
+    assert [(r['low'], r['high']) for r in rows] == [(675., 695.)]
