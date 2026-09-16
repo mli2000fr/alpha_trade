@@ -1203,3 +1203,111 @@ D10 28,62 %) et instable. CatBoost sentiment est le meilleur signal
 incrémental partiel (AUC +0,0098, AP +0,0117), sans amélioration économique
 (+0,002 point) ni stabilité suffisante. Aucun serving ni SQL modifié. Artefact :
 `artifacts/research/oracle_d10_trajectory/e23-d10-20260915203334`.
+
+## P-MATH-0 — séparabilité non paramétrique — `NO_STABLE_SEPARATION`
+
+Audit de l'espace d'information à J dans le pool Oracle OOF TOP20. Trois tâches
+sont isolées : D1 contre D10, D10 contre D1–D9 et D1 contre D2–D10. Le
+protocole combine MMD-RBF scalable, Energy Distance projetée,
+Henze–Penrose/Friedman–Rafsky et classifier two-sample Logistic sur folds
+chronologiques. Normalisation train-only, équilibrage et permutations
+intra-date, combinaison Fisher et correction Holm empêchent les principaux
+faux positifs. Aucun SQL ni serving modifié. Voir
+[P-MATH-0](pmath0_nonparametric_separability.md).
+
+Smoke technique validé sur 50 symboles demandés, 33 présents, 12 537
+événements, 84 features et deux folds récents. Les trois tâches et les quatre
+familles statistiques terminent ; cinq tests ciblés passent. Les métriques de
+ce sous-univers alphabétique ne sont pas interprétées. Artefact :
+`artifacts/research/pmath0_separability/pmath0-smoke50-20260916-v2`.
+
+Run complet : 582 700 événements, 1 472 symboles, 84 features et neuf folds
+OOS de janvier 2021 à juillet 2025. D1/D10 obtient une AUC Logistic médiane de
+0,5077 et D10/reste 0,5096. D1/reste atteint 0,5380, mais seulement 5/9 folds
+dépassent 0,53, contre le minimum gelé de 67 %. HP détecte une différence
+multivariée stable sur les trois tâches ; MMD et Energy ne donnent pas les deux
+confirmations stables exigées. Les trois verdicts restent donc
+`NO_STABLE_SEPARATION`. Le faible signal asymétrique D1 ne doit pas être
+promu ni servir à relâcher les gates ; P-MATH-1 devra ajouter une source
+cross-asset réellement nouvelle. Aucun SQL ni serving modifié. Artefact :
+`artifacts/research/pmath0_separability/pmath0-20260915232426`.
+
+## P-MATH-1 — lead-lag cross-asset résiduel — `NO_GO_INCREMENTAL_LEAD_LAG`
+
+P-MATH-1 teste une source d'information absente de P-MATH-0 : les mouvements
+retardés des autres actions. Dans chaque fold, les rendements sont résidualisés
+par SPY et le secteur avec des coefficients appris exclusivement sur le train.
+Les leaders sont choisis sans labels et les arêtes J−1/J−2/J−3/J−5 doivent
+conserver le même signe dans les deux moitiés chronologiques du train. Le test
+compare pression seule, variables d'état seules et état augmenté de la pression.
+
+Les gates ont été enregistrées avant le run : AUC pression médiane ≥ 0,53,
+delta AUC médian ≥ +0,01, delta positif dans au moins 67 % des folds et gain de
+rendement signé du top décile ≥ +0,25 %. Aucun lag 0, aucune écriture SQL et
+aucun changement de serving. Voir
+[P-MATH-1](pmath1_cross_asset_lead_lag.md).
+
+Smoke technique validé sur 50 symboles demandés, 33 présents dans le pool,
+12 537 événements et deux folds récents. Le graphe contient 448 arêtes
+cumulées. Les cinq tests ciblés passent. Les AUC de ce petit sous-univers ne
+sont pas interprétées. Artefact :
+`artifacts/research/pmath1_cross_asset_lead_lag/pmath1-smoke50-20260916`.
+
+Run complet : 582 700 événements, 1 472 symboles et neuf folds OOS. La
+couverture pression atteint environ 93–94 % et chaque fold contient plus de
+11 000 arêtes. Malgré cela, les AUC pression médianes valent 0,4956 pour
+D1/D10, 0,4998 pour D10/reste et 0,4977 pour D1/reste. Les deltas AUC médians
+sont compris entre +0,00001 et +0,00007, très loin du +0,01 requis ; les lifts
+économiques médians sont également sous le gate. Le signal est nul OOS et la
+piste est fermée sans tuning post-hoc. Artefact :
+`artifacts/research/pmath1_cross_asset_lead_lag/pmath1-full-20260916-v2`.
+
+## P-MATH-2 — signatures de trajectoire titre/marché/secteur — `NO_GO_INCREMENTAL_PATH_SIGNATURE`
+
+Audit indépendant du graphe P-MATH-1. Le chemin J−19…J contient le temps, le
+rendement du titre, SPY et le rendement médian du secteur. Les signatures
+tensorielles exactes de profondeur 1, 2 et 3 sont testées avec une Logistic L2.
+La profondeur 2 est primaire et la profondeur 3 confirmatoire. Même pool Oracle
+OOF, mêmes trois tâches et mêmes folds que P-MATH-0/P-MATH-1. Aucun SQL ni
+serving modifié. Voir [P-MATH-2](pmath2_low_depth_path_signatures.md).
+
+Smoke technique validé sur 50 symboles demandés, 33 présents, 12 537
+événements et deux folds. Couverture des chemins : 100 %. Les six tests ciblés
+passent. Le témoin d'état chute lui-même sous 0,48 sur ce petit sous-univers ;
+ses métriques ne sont donc pas utilisées pour statuer. Artefact :
+`artifacts/research/pmath2_path_signatures/pmath2-smoke50-20260916`.
+
+Run complet : 582 700 événements, 1 472 symboles, neuf folds et 100 % de
+couverture des chemins. La profondeur 2 primaire obtient des AUC signature de
+0,4996 (D1/D10), 0,4932 (D10/reste) et 0,5115 (D1/reste) ; ses deltas AUC sont
+respectivement −0,0046, +0,00003 et +0,0016. La profondeur 3 confirmatoire ne
+passe aucun gate non plus. Son meilleur signal, D1/reste, atteint AUC 0,5199 et
+delta +0,0064 dans 6/9 folds, mais dégrade le rendement signé. La famille est
+fermée sans recherche post-hoc de profondeur ou de fenêtre. Artefact :
+`artifacts/research/pmath2_path_signatures/pmath2-full-20260916`.
+
+## P‑MATH‑3 — quantiles conditionnels du rendement H20 — `NO_GO_DISTRIBUTION` / `NO_GO_DIRECTION`
+
+Sept quantiles LightGBM pré-enregistrés (q05/q10/q25/q50/q75/q90/q95) sur les
+événements Oracle OOF TOP20. Deux verdicts distincts : qualité de distribution
+contre quantiles constants du train et séparation D1/D10 contre la Logistic
+directe. Score primaire sans labels directionnels : `(q10 + q90)/2` ; q50 et
+asymétrie sont secondaires. Même calendrier OOS et purge PIT que P‑MATH‑0 à 2.
+Voir [protocole P‑MATH‑3](pmath3_conditional_quantiles.md). Aucun SQL ni
+serving modifié.
+
+Smoke technique : 50 symboles demandés, 33 présents, 12 537 événements et
+deux folds ; les sept quantiles et les diagnostics terminent. Les résultats du
+petit sous-univers ne sont pas interprétés. Artefact :
+`artifacts/research/pmath3_conditional_quantiles/pmath3-smoke50-20260916`.
+
+Run complet : 582 700 événements, 1 472 symboles, neuf folds OOS. Le pinball
+moyen se dégrade de 1,67 % en médiane contre les quantiles constants du train
+et n'est meilleur que dans 2/9 folds. La couverture q10/q90 est acceptable
+(erreur médiane 2,40 points) mais insuffisante pour un GO distributionnel.
+Le score primaire `(q10 + q90)/2` obtient AUC D1/D10 0,4793, contre 0,4890
+pour la Logistic directe ; delta −0,0100 et lift du top décile quotidien
+−0,527 point. Les gates directionnels échouent tous. q90/q95 ont des pinballs
+individuels légèrement meilleurs dans 6/9 folds, indication exploratoire non
+promue. Aucun serving ni backtest modifié. Artefact :
+`artifacts/research/pmath3_conditional_quantiles/pmath3-full-20260916`.

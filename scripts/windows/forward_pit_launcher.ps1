@@ -127,7 +127,15 @@ try {
     $duration = (Get-Date) - $started; $state = if ($exitCode -eq 0) { 'OK' } else { 'ERROR' }
     Write-Status "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] FIN $BatchName status=$state exit=$exitCode duration=$($duration.ToString())"
     $tmp = Join-Path ([IO.Path]::GetTempPath()) "alpha_forward_pit_$PID.txt"
-    $captured | Select-Object -Last 300 | Set-Content -LiteralPath $tmp -Encoding UTF8
+    # The summary is on stdout, followed by stderr logs in $captured. Keep the
+    # summary last so neither the launcher nor the notifier can truncate it.
+    $summaryMarker = '::alpha_trade_run_summary::'
+    $notificationLines = @($captured | Select-Object -Last 300 | Where-Object {
+        -not $_.ToString().Contains($summaryMarker)
+    })
+    $summaryLines = @($captured | Where-Object { $_.ToString().Contains($summaryMarker) })
+    $notificationLines += $summaryLines
+    $notificationLines | Set-Content -LiteralPath $tmp -Encoding UTF8
     try {
         $notificationPreviousErrorActionPreference = $ErrorActionPreference
         try {

@@ -1,17 +1,1 @@
-Le chemin rapide est implémenté, validé et lancé.
-Le smoke réel Alpaca a réussi :
-- 278 symboles demandés ;
-- 274 couverts ;
-- 13 362 barres SIP reçues ;
-- aucun échec.
-Le backfill complet tourne maintenant en arrière-plan avec le PID 22588. Il couvre 1 763 séances et 582 306 événements Oracle. Il reprend automatiquement après interruption.
-Pour surveiller les logs :
-Get-Content F:\projets\log\batch\e20_opening_price_backfill.stderr.log -Tail 30 -Wait
-Pour afficher la progression :
-$s=Get-Content F:\projets\artifacts\research\oracle_opening_price_backfill\model-factory-20260909051302-323684-h20\state.json -Raw | ConvertFrom-Json;$items=@($s.sessions.PSObject.Properties|ForEach-Object{$_.Value});[pscustomobject]@{Terminées=($items|Where-Object status -eq 'COMPLETED').Count;Échecs=($items|Where-Object status -eq 'FAILED').Count;Total=$s.planned_sessions}
-Pour vérifier s’il tourne encore :
-Get-Process -Id (Get-Content F:\projets\log\batch\e20_opening_price_backfill.pid) -ErrorAction SilentlyContinue
-Quand la commande ne retourne plus de processus, vérifiez :
-Get-Content F:\projets\artifacts\research\oracle_opening_price_backfill\model-factory-20260909051302-323684-h20\report.json
-Le code est dans [oracle_opening_price_backfill.py](F:/projets/modelFactory/oracle_opening_price_backfill.py) et la procédure complète dans [oracle_opening_price_confirmation_e20b.md](F:/projets/doc/ml/oracle_opening_price_confirmation_e20b.md).
-Tous les tests ciblés et contrôles statiques passent. Une fois le backfill terminé, prévenez-moi : je lancerai/analyserai E20-B avec l’artefact compact.
+sur le batch latest_quotes_sync  , selon info sur dernier run, j'ai  Début 2026-09-15 21:15:02.796374 · Fin 2026-09-15 21:50:40.809599 · demandés 1798 · reçus 1660 · persistés 1660 · échecs 0 · alertes 0 , par contre, dans notification, j'ai tous à 0

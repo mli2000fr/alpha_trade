@@ -1,0 +1,39 @@
+{
+  "experiment": "P_MATH_0_NONPARAMETRIC_SEPARABILITY",
+  "status": "COMPLETED_NO_STABLE_SEPARATION",
+  "horizon": 20,
+  "pool_pct": 0.20,
+  "state_profile": "config/features/shared_direction/shared.json",
+  "tasks": ["D1_VS_D10", "D10_VS_REST", "D1_VS_REST"],
+  "walk_forward": {
+    "min_train_dates": 504,
+    "val_dates": 126,
+    "test_dates": 126,
+    "step_dates": 126,
+    "max_splits": 12,
+    "fold_selection": "latest"
+  },
+  "sampling": {
+    "test_max_per_class": 1500,
+    "classifier_train_max_per_class": 30000,
+    "bandwidth_max_rows": 2000
+  },
+  "statistics": {
+    "permutations": 99,
+    "random_seed": 20260916,
+    "rff_components": 512,
+    "sliced_energy_projections": 16,
+    "winsor_lower": 0.01,
+    "winsor_upper": 0.99,
+    "max_missing_rate": 0.50
+  },
+  "gates": {
+    "alpha": 0.01,
+    "nonparametric_fold_reject_rate_min": 0.67,
+    "nonparametric_median_null_z_min": 3.0,
+    "nonparametric_methods_min": 2,
+    "classifier_auc_median_min": 0.53,
+    "classifier_auc_pass_fold_rate_min": 0.67,
+    "hp_bayes_error_upper_median_max": 0.47
+  }
+}

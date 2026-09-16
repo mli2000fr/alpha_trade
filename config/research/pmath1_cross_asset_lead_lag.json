@@ -1,0 +1,39 @@
+{
+  "experiment": "P_MATH_1_CROSS_ASSET_LEAD_LAG",
+  "status": "COMPLETED_NO_GO_INCREMENTAL_LEAD_LAG",
+  "horizon": 20,
+  "pool_pct": 0.20,
+  "state_profile": "config/features/shared_direction/shared.json",
+  "tasks": ["D1_VS_D10", "D10_VS_REST", "D1_VS_REST"],
+  "lags": [1, 2, 3, 5],
+  "walk_forward": {
+    "min_train_dates": 504,
+    "val_dates": 126,
+    "test_dates": 126,
+    "step_dates": 126,
+    "max_splits": 12,
+    "fold_selection": "latest"
+  },
+  "graph": {
+    "max_candidate_leaders": 96,
+    "max_edges_per_follower": 5,
+    "min_half_overlap": 126,
+    "min_abs_half_correlation": 0.05,
+    "min_symbol_train_observations": 252,
+    "beta_min_observations": 126
+  },
+  "model": {
+    "classifier_train_max_per_class": 30000,
+    "test_max_per_class": 5000,
+    "winsor_lower": 0.01,
+    "winsor_upper": 0.99,
+    "max_missing_rate": 0.50,
+    "random_seed": 20260916
+  },
+  "gates": {
+    "pressure_auc_median_min": 0.53,
+    "incremental_auc_median_delta_min": 0.01,
+    "incremental_auc_positive_fold_rate_min": 0.67,
+    "signed_top_decile_return_lift_min": 0.0025
+  }
+}

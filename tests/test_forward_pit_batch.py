@@ -577,6 +577,17 @@ def test_forward_launcher_captures_native_stderr_without_error_records() -> None
     assert "-RedirectStandardError $stderrTmp" in launcher
 
 
+def test_forward_launcher_keeps_summary_after_truncated_notification_logs() -> None:
+    launcher = (ROOT / "scripts/windows/forward_pit_launcher.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "$summaryMarker = '::alpha_trade_run_summary::'" in launcher
+    assert "$notificationLines += $summaryLines" in launcher
+    assert launcher.index("$notificationLines += $summaryLines") < launcher.index(
+        "$notificationLines | Set-Content -LiteralPath $tmp -Encoding UTF8"
+    )
+
+
 def test_raw_business_quant_bars_cannot_be_mislabeled_as_canonical() -> None:
     with pytest.raises(RuntimeError, match="OHLCV Business Quant sont RAW"):
         daily_bars_sync(None, {"canonical_upsert": True}, "run", True)  # type: ignore[arg-type]
