@@ -19,6 +19,7 @@ import sys
 import time
 import uuid
 from dataclasses import dataclass, field
+from decimal import Decimal
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -421,7 +422,13 @@ def _download_sec_document(
             "used_primary_fallback": False,
             "oversized_primary": True,
         }
-    primary_url = submission_url.rsplit("/", 1)[0] + "/" + primary_document
+    base_url = submission_url.rsplit("/", 1)[0]
+    accession = Path(urlsplit(submission_url).path).stem
+    if re.fullmatch(r"\d{10}-\d{2}-\d{6}", accession):
+        accession_directory = accession.replace("-", "")
+        if not base_url.endswith("/" + accession_directory):
+            base_url += "/" + accession_directory
+    primary_url = base_url + "/" + primary_document
     primary_response = session.get(primary_url, headers=headers, timeout=90, stream=True)
     try:
         primary_response.raise_for_status()
@@ -687,25 +694,50 @@ def _request_text_optional(
     raise RuntimeError(f"Echec HTTP {url}: {_safe_error_message(last or RuntimeError('erreur inconnue'))}")
 
 
-def _parse_finra_short_volume(content: str) -> list[dict[str, Any]]:
+def _parse_finra_short_volume_with_quality(content: str) -> tuple[list[dict[str, Any]], int, list[str]]:
     rows: list[dict[str, Any]] = []
+    invalid = 0
+    examples: list[str] = []
     for item in csv.DictReader(io.StringIO(content.lstrip("\ufeff")), delimiter="|"):
         raw_date = str(item.get("Date") or "").strip()
         symbol = str(item.get("Symbol") or "").strip().upper()
         if len(raw_date) != 8 or not raw_date.isdigit() or not symbol:
             continue
+        volumes = [str(item.get(key) or "").strip() for key in
+                   ("ShortVolume", "ShortExemptVolume", "TotalVolume")]
+        market = str(item.get("Market") or "").strip().upper()
+        # Current CNMS payloads contain fractional shares (up to six places)
+        # and comma-separated reporting facilities. Preserve both exactly.
+        if not all(re.fullmatch(r"\d+(?:\.\d{1,6})?", value) for value in volumes) or not re.fullmatch(r"[A-Z](?:,[A-Z])*", market):
+            invalid += 1
+            if len(examples) < 5:
+                examples.append(symbol)
+            continue
         try:
             rows.append({
                 "trade_date": datetime.strptime(raw_date, "%Y%m%d").date(),
                 "symbol": symbol,
-                "short_volume": int(item.get("ShortVolume") or 0),
-                "short_exempt_volume": int(item.get("ShortExemptVolume") or 0),
-                "total_volume": int(item.get("TotalVolume") or 0),
-                "market": str(item.get("Market") or "").strip().upper() or "CNMS",
+                "short_volume": Decimal(volumes[0]),
+                "short_exempt_volume": Decimal(volumes[1]),
+                "total_volume": Decimal(volumes[2]),
+                "market": market,
             })
         except (TypeError, ValueError):
-            continue
-    return rows
+            invalid += 1
+            if len(examples) < 5:
+                examples.append(symbol)
+    return rows, invalid, examples
+
+
+def _parse_finra_short_volume(content: str) -> list[dict[str, Any]]:
+    return _parse_finra_short_volume_with_quality(content)[0]
+
+
+def _finra_fractional_schema_ready(conn: Connection) -> bool:
+    return int(conn.execute(text("""SELECT COUNT(*) FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='stock_short_volume_daily'
+          AND COLUMN_NAME IN ('short_volume','short_exempt_volume','total_volume')
+          AND DATA_TYPE='decimal' AND NUMERIC_SCALE>=6""")).scalar() or 0) == 3
 
 
 def _raw(conn: Connection, run_id: str, batch: str, provider: str, endpoint: str, entity: str, payload: Any, status: int = 200, observed: datetime | None = None) -> None:
@@ -1300,6 +1332,9 @@ def finra_short_volume_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dr
     trade_days = _previous_weekdays(market_today, lookback_days)
     outcome = Outcome(requested=len(trade_days))
     files_found = 0
+    invalid_records = 0
+    invalid_dates: list[dict[str, Any]] = []
+    schema_unready = False
     with requests.Session() as session, engine.begin() as conn:
         for trade_day in trade_days:
             url = template.format(date=trade_day.strftime("%Y%m%d"))
@@ -1312,8 +1347,25 @@ def finra_short_volume_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dr
                 _raw(conn, run_id, "finra_short_volume_sync", "finra",
                      "/equity/regsho/daily/CNMS", trade_day.isoformat(),
                      content, status, observed)
-            rows = [row for row in _parse_finra_short_volume(content)
-                    if row["symbol"] in symbols]
+            parsed, invalid, examples = _parse_finra_short_volume_with_quality(content)
+            if invalid:
+                invalid_records += invalid
+                invalid_dates.append({
+                    "date": trade_day.isoformat(),
+                    "invalid_records": invalid,
+                    "example_symbols": examples,
+                })
+                # Keep the raw response, but never promote a partially parsed
+                # file as a complete normalized trading-day observation.
+                continue
+            if not dry and any(
+                value != value.to_integral_value()
+                for row in parsed
+                for value in (row["short_volume"], row["short_exempt_volume"], row["total_volume"])
+            ) and not _finra_fractional_schema_ready(conn):
+                schema_unready = True
+                continue
+            rows = [row for row in parsed if row["symbol"] in symbols]
             outcome.received += len(rows)
             if dry:
                 continue
@@ -1343,11 +1395,28 @@ def finra_short_volume_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dr
         "candidate_dates": [day.isoformat() for day in trade_days],
         "files_found": files_found,
         "universe_symbols": len(symbols),
+        "schema_invalid_records": invalid_records,
+        "schema_invalid_dates": invalid_dates,
+        "fractional_schema_unready": schema_unready,
     })
     if files_found == 0:
         outcome.failed = len(trade_days)
         raise BatchRunError(
             "Aucun fichier FINRA Consolidated NMS disponible sur les jours ouvrés précédents",
+            outcome,
+        )
+    if invalid_records:
+        outcome.failed += invalid_records
+        raise BatchRunError(
+            "Fichier FINRA hors contrat: volume invalide ou code de marché invalide; "
+            "brut conservé, normalisation refusée",
+            outcome,
+        )
+    if schema_unready:
+        outcome.failed += 1
+        raise BatchRunError(
+            "Volumes FINRA fractionnaires reçus mais colonnes encore en BIGINT; "
+            "appliquer la migration 0083 avant normalisation (brut conservé)",
             outcome,
         )
     if outcome.received == 0:

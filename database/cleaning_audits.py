@@ -34,14 +34,14 @@ def _record_run(
     *,
     run_id: str,
     started_at: datetime,
-    finished_at: datetime,
+    finished_at: datetime | None,
     symbols_requested: int,
     rows_upserted: int,
     status: AuditStatus,
     error_message: str | None,
 ) -> None:
-    duration = round((finished_at - started_at).total_seconds(), 3)
-    stmt = text(
+    duration = round((finished_at - started_at).total_seconds(), 3) if finished_at else None
+    insert_stmt = text(
         f"""
         INSERT INTO {table}
             (run_id, started_at, finished_at, duration_seconds,
@@ -51,22 +51,36 @@ def _record_run(
              :symbols_requested, :rows_upserted, :status, :error_message)
         """
     )
+    update_stmt = text(
+        f"""
+        UPDATE {table}
+        SET finished_at=:finished_at, duration_seconds=:duration,
+            symbols_requested=:symbols_requested, rows_upserted=:rows_upserted,
+            status=:status, error_message=:error_message
+        WHERE run_id=:run_id
+        """
+    )
     try:
         engine = get_sqlalchemy_engine()
         with engine.begin() as conn:
-            conn.execute(
-                stmt,
-                {
-                    "run_id": run_id,
-                    "started_at": started_at,
-                    "finished_at": finished_at,
-                    "duration": duration,
-                    "symbols_requested": int(symbols_requested),
-                    "rows_upserted": int(rows_upserted),
-                    "status": status,
-                    "error_message": (error_message or None),
-                },
-            )
+            values = {
+                "run_id": run_id,
+                "started_at": started_at,
+                "finished_at": finished_at,
+                "duration": duration,
+                "symbols_requested": int(symbols_requested),
+                "rows_upserted": int(rows_upserted),
+                "status": status,
+                "error_message": (error_message or None),
+            }
+            exists = conn.execute(
+                text(f"SELECT 1 FROM {table} WHERE run_id=:run_id"),
+                {"run_id": run_id},
+            ).first()
+            if exists:
+                conn.execute(update_stmt, values)
+            else:
+                conn.execute(insert_stmt, values)
     except (SQLAlchemyError, Exception):  # noqa: BLE001 - best-effort audit.
         # Audit best-effort : ne jamais casser le run métier.
         LOGGER.warning(
@@ -104,7 +118,7 @@ def record_earnings_audit_run(
     *,
     run_id: str,
     started_at: datetime,
-    finished_at: datetime,
+    finished_at: datetime | None,
     symbols_requested: int,
     rows_upserted: int,
     status: AuditStatus = "success",

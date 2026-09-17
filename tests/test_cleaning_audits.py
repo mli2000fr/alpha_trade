@@ -99,6 +99,31 @@ def test_record_earnings_audit_run_persists_failure(sqlite_engine_with_audit_tab
     assert row == ("earnings-test-002", "failed", 0, "Finnhub 429 rate limit")
 
 
+def test_earnings_audit_start_is_updated_not_duplicated(sqlite_engine_with_audit_tables) -> None:
+    from database.cleaning_audits import record_earnings_audit_run
+
+    started = datetime(2026, 9, 16, 21, 0, 0)
+    record_earnings_audit_run(
+        run_id="earnings-recovery-001", started_at=started, finished_at=None,
+        symbols_requested=0, rows_upserted=0, status="partial",
+        error_message="RUNNING_UNCONFIRMED",
+    )
+    record_earnings_audit_run(
+        run_id="earnings-recovery-001", started_at=started,
+        finished_at=started + timedelta(seconds=60), symbols_requested=1798,
+        rows_upserted=53, status="success",
+    )
+    with sqlite_engine_with_audit_tables.connect() as conn:
+        rows = conn.execute(
+            text("SELECT status,finished_at,symbols_requested,rows_upserted,error_message "
+                 "FROM cleaning_audit_earnings_runs WHERE run_id='earnings-recovery-001'")
+        ).all()
+    assert len(rows) == 1
+    assert rows[0][0] == "success"
+    assert rows[0][1] is not None
+    assert rows[0][2:] == (1798, 53, None)
+
+
 def test_record_quotes_audit_run_swallows_db_errors(monkeypatch) -> None:
     """Phase 3.1.c — un échec DB sur l'audit ne doit pas casser le run métier."""
     from database import cleaning_audits

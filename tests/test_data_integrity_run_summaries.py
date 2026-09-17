@@ -5,6 +5,8 @@ import json
 import logging
 from datetime import date
 
+import pytest
+
 from dataIntegrityEngine import import_alpaca_assets, sync_earnings_calendar, sync_latest_quotes, update_sector
 from service.finnhub import clientFinnhub
 
@@ -207,6 +209,37 @@ def test_sync_earnings_calendar_main_emits_structured_summary(monkeypatch, capsy
     assert payload["batch_size"] == 50
     assert payload["resume"] is True
     assert payload["rows_upserted"] == 18
+
+
+def test_sync_earnings_partial_is_audited_and_exits_nonzero(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(sync_earnings_calendar, "configure_root_logging", lambda **kwargs: None)
+    args = argparse.Namespace(
+        from_date=None, to_date=None, symbols_file=None, symbol_source="active-tradable",
+        limit=None, sleep_seconds=0, log_every=0, batch_size=50, resume=True,
+        provider="finnhub",
+    )
+    monkeypatch.setattr(
+        sync_earnings_calendar, "_build_arg_parser",
+        lambda: type("Parser", (), {"parse_args": lambda self: args})(),
+    )
+    monkeypatch.setattr(
+        sync_earnings_calendar, "sync_earnings_calendar",
+        lambda **kwargs: {"symbols": 2, "rows_upserted": 1, "failed_symbols": 1},
+    )
+    audit = []
+    monkeypatch.setattr(
+        sync_earnings_calendar, "record_earnings_audit_run",
+        lambda **kwargs: audit.append(kwargs),
+    )
+    with pytest.raises(SystemExit) as exc:
+        sync_earnings_calendar.main()
+    assert exc.value.code == 1
+    assert audit[0]["finished_at"] is None
+    assert audit[0]["error_message"] == "RUNNING_UNCONFIRMED"
+    assert audit[-1]["status"] == "partial"
+    assert _payload_from_stdout(
+        capsys.readouterr().out.strip(), sync_earnings_calendar.RUN_SUMMARY_PREFIX
+    )["audit_status"] == "partial"
 
 
 def test_sync_earnings_calendar_emits_operator_visible_logs(monkeypatch, caplog) -> None:

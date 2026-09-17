@@ -560,6 +560,17 @@ def main() -> None:
         "batch_size": args.batch_size,
         "resume_enabled": bool(args.resume),
     }
+    # A forced termination bypasses every Python exception/finally handler.
+    # Persist a distinguishable unfinished audit row before the first request.
+    record_earnings_audit_run(
+        run_id=run_id,
+        started_at=started_at,
+        finished_at=None,
+        symbols_requested=0,
+        rows_upserted=0,
+        status="partial",
+        error_message="RUNNING_UNCONFIRMED",
+    )
     try:
         summary = sync_earnings_calendar(
             from_date=date.fromisoformat(args.from_date) if args.from_date else None,
@@ -602,8 +613,8 @@ def main() -> None:
         finished_at=finished_at,
         symbols_requested=int(summary.get("symbols", 0)),
         rows_upserted=int(summary.get("rows_upserted", 0)),
-        status="success",
-        error_message=None,
+        status=status,
+        error_message=error_message,
     )
     _emit_run_summary(
         {
@@ -627,6 +638,8 @@ def main() -> None:
             **summary,
         }
     )
+    if status != "success":
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,7 @@ from service.forward_pit.batch import (
     _option_is_liquid,
     _paginated_json,
     _parse_finra_short_volume,
+    _parse_finra_short_volume_with_quality,
     _schema_hash,
     _sec_submission_header,
     _sec_filing_index_documents,
@@ -278,6 +280,77 @@ def test_finra_short_volume_parser_skips_header_trailer_and_bad_rows() -> None:
     }]
 
 
+def test_finra_preserves_fractional_volumes_and_multiple_market_codes() -> None:
+    content = "\n".join([
+        "Date|Symbol|ShortVolume|ShortExemptVolume|TotalVolume|Market",
+        "20260914|AAA|120.25|0|300|Q",
+        "20260914|BBB|120|0|300|B,Q,N",
+        "20260914|CCC|120|0|300|Q",
+        "3",
+    ])
+    rows, invalid, examples = _parse_finra_short_volume_with_quality(content)
+    assert invalid == 0
+    assert examples == []
+    assert [row["symbol"] for row in rows] == ["AAA", "BBB", "CCC"]
+    assert rows[0]["short_volume"] == Decimal("120.25")
+    assert rows[1]["market"] == "B,Q,N"
+
+
+def test_finra_run_preserves_raw_but_fails_on_schema_drift(monkeypatch) -> None:
+    monkeypatch.setattr(batch_module, "_collection_symbols", lambda _cfg: ["AAA"])
+    monkeypatch.setattr(batch_module, "_previous_weekdays", lambda *_args: [date(2026, 9, 14)])
+    monkeypatch.setattr(
+        batch_module, "_request_text_optional",
+        lambda *_args: (
+            "Date|Symbol|ShortVolume|ShortExemptVolume|TotalVolume|Market\n"
+            "20260914|AAA|120.1234567|0|300|Q\n1",
+            200,
+        ),
+    )
+    raw_calls = []
+    monkeypatch.setattr(batch_module, "_raw", lambda *args, **kwargs: raw_calls.append((args, kwargs)))
+
+    class Session:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+
+    class Engine:
+        def begin(self): return Session()
+
+    monkeypatch.setattr(batch_module.requests, "Session", Session)
+    with pytest.raises(batch_module.BatchRunError, match="hors contrat") as exc:
+        batch_module.finra_short_volume_sync(Engine(), {}, "finra-test", False)
+    assert len(raw_calls) == 1
+    assert exc.value.outcome.details["schema_invalid_records"] == 1
+    assert exc.value.outcome.persisted == 0
+
+
+def test_finra_fractional_volume_waits_for_decimal_migration(monkeypatch) -> None:
+    monkeypatch.setattr(batch_module, "_collection_symbols", lambda _cfg: ["AAA"])
+    monkeypatch.setattr(batch_module, "_previous_weekdays", lambda *_args: [date(2026, 9, 14)])
+    monkeypatch.setattr(batch_module, "_request_text_optional", lambda *_args: (
+        "Date|Symbol|ShortVolume|ShortExemptVolume|TotalVolume|Market\n"
+        "20260914|AAA|120.25|0|300.5|B,Q,N\n1", 200,
+    ))
+    monkeypatch.setattr(batch_module, "_finra_fractional_schema_ready", lambda _conn: False)
+    raw_calls = []
+    monkeypatch.setattr(batch_module, "_raw", lambda *args, **kwargs: raw_calls.append(args))
+
+    class Session:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+
+    class Engine:
+        def begin(self): return Session()
+
+    monkeypatch.setattr(batch_module.requests, "Session", Session)
+    with pytest.raises(batch_module.BatchRunError, match="migration 0083") as exc:
+        batch_module.finra_short_volume_sync(Engine(), {}, "finra-test", False)
+    assert len(raw_calls) == 1
+    assert exc.value.outcome.persisted == 0
+    assert exc.value.outcome.details["fractional_schema_unready"] is True
+
+
 def test_payload_and_schema_hashes_are_stable_but_distinct() -> None:
     assert _hash({"a": 1, "b": 2}) == _hash({"b": 2, "a": 1})
     assert _schema_hash({"a": 1}) == _schema_hash({"a": 2})
@@ -499,6 +572,41 @@ def test_oversized_sec_submission_falls_back_to_bounded_primary_document() -> No
     assert result["used_primary_fallback"] is True
     assert result["oversized_primary"] is False
     assert submission.closed and primary.closed
+
+
+def test_sec_primary_document_uses_accession_directory() -> None:
+    prefix = b"""<SEC-HEADER>\n<ACCEPTANCE-DATETIME>20260911081822\n</SEC-HEADER>
+<DOCUMENT>\n<TYPE>8-K\n<SEQUENCE>1\n<FILENAME>primary.htm\n<TEXT>"""
+
+    class Response:
+        encoding = "utf-8"
+        headers = {}
+        def __init__(self, body): self.body = body
+        def raise_for_status(self): pass
+        def iter_content(self, chunk_size=65536): yield self.body
+        def close(self): pass
+
+    class Session:
+        def __init__(self): self.urls = []
+        def get(self, url, **_kwargs):
+            self.urls.append(url)
+            return Response(prefix) if len(self.urls) == 1 else Response(b"<html>primary</html>")
+
+    session = Session()
+    result = _download_sec_document(
+        session,
+        "https://www.sec.gov/Archives/edgar/data/1418121/0001193125-26-388649.txt",
+        "8-K",
+        {"User-Agent": "test test@example.com"},
+        max_submission_bytes=100,
+        max_primary_document_bytes=1000,
+        probe_bytes=1000,
+    )
+    assert session.urls[1] == (
+        "https://www.sec.gov/Archives/edgar/data/1418121/"
+        "000119312526388649/primary.htm"
+    )
+    assert result["used_primary_fallback"] is True
 
 
 def test_forward_pit_sql_reference_and_migration_cover_all_tables() -> None:
