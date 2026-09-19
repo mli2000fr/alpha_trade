@@ -673,6 +673,43 @@ def _configure_alpaca_session(
         session.mount("https://", _SystemTrustAdapter())
 
 
+def market_datetime(value: Any, timezone_name: str = "America/New_York") -> tuple[datetime, datetime]:
+    """API publique : convertit un timestamp en heures locale et UTC naïves."""
+    return _market_dt(value, timezone_name)
+
+
+def paginated_json(
+    session: requests.Session,
+    url: str,
+    *,
+    params: dict[str, Any],
+    headers: dict[str, str],
+    page_key: str,
+    max_pages: int,
+    pause_seconds: float = 0.0,
+) -> list[tuple[dict[str, Any], int]]:
+    """API publique : charge une pagination Alpaca sans troncature silencieuse."""
+    return _paginated_json(
+        session,
+        url,
+        params=params,
+        headers=headers,
+        page_key=page_key,
+        max_pages=max_pages,
+        pause_seconds=pause_seconds,
+    )
+
+
+def configure_alpaca_session(
+    session: requests.Session, *, use_system_trust_store: bool,
+) -> None:
+    """API publique : configure la confiance TLS native pour Alpaca."""
+    _configure_alpaca_session(
+        session,
+        use_system_trust_store=use_system_trust_store,
+    )
+
+
 def _request_text_optional(
     session: requests.Session, url: str, *, timeout: float = 45, attempts: int = 4
 ) -> tuple[str | None, int]:

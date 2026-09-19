@@ -6,6 +6,10 @@
 > Ce document planifie les travaux. Il ne constitue pas une autorisation de modifier le code ni d’activer le trading réel.
 > Architecture retenue : `alpha_trade` pour US, `alpha_trade_cn` pour la Chine, code et schéma logique partagés. Les entrées CN sont `config_cn.yaml` et `batch_cn.yaml`, et les autres fichiers propres à la Chine portent le suffixe `_cn`.
 
+## Avancement Sprint 0
+
+Le Sprint 0 et sa remédiation ont été terminés le 19 septembre 2026. Le gate est **GO** : 5 737 tests réussis, zéro échec, couverture 70,96 %, contrats physiques Alembic 15/15 et base alignée sur la tête 0083. Voir [Sprint 0 — baseline US et ADR](./sprint_0_baseline_us_et_adr.md). Sprint 1 — MarketContext est débloqué.
+
 ## 1. Mode d’emploi
 
 Ce planning est volontairement séquentiel sur les contrats structurants et parallélisable uniquement à l’intérieur d’un sprint lorsque les dépendances sont stables.

@@ -83,6 +83,12 @@ def test_scanner_whitelist_cache_dir():
     assert f == []
 
 
+def test_scanner_ignores_explicit_artifact_path_keys():
+    yaml = "artifact_root: artifacts/models/oracle/canary_with_a_long_string_xyz1234567890\n"
+    f = scan_text_for_literal_secrets(yaml)
+    assert f == []
+
+
 def test_scanner_noqa_marker_disables_scan():
     yaml = '  api_key: "PKABCDEFGHIJKLMNOPQR"  # noqa: secret-scan\n'
     f = scan_text_for_literal_secrets(yaml)

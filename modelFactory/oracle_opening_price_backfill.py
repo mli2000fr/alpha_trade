@@ -32,9 +32,9 @@ from modelFactory.oracle_opening_window_availability_audit import (
 from service.alpaca.clientAlpaca import get_alpaca_credentials
 from service.forward_pit.batch import (
     ALPACA_DATA_URL,
-    _configure_alpaca_session,
-    _market_dt,
-    _paginated_json,
+    configure_alpaca_session,
+    market_datetime,
+    paginated_json,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -106,7 +106,7 @@ def normalize_alpaca_pages(
                 if not isinstance(item, dict):
                     continue
                 try:
-                    local_ts, utc_ts = _market_dt(item.get("t"))
+                    local_ts, utc_ts = market_datetime(item.get("t"))
                     minute = local_ts.hour * 60 + local_ts.minute
                     prices = {name: float(item[key]) for name, key in (
                         ("open", "o"), ("high", "h"),
@@ -192,7 +192,7 @@ def _fetch_session(
     all_pages: list[tuple[dict[str, Any], int]] = []
     page_count = 0
     for chunk in _chunks(symbols, config.symbol_batch_size):
-        pages = _paginated_json(
+        pages = paginated_json(
             session, f"{ALPACA_DATA_URL}/v2/stocks/bars",
             params={
                 "symbols": ",".join(chunk), "timeframe": config.timeframe,
@@ -259,7 +259,7 @@ def run(
     headers = {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret}
     consecutive_failures = 0
     with requests.Session() as session:
-        _configure_alpaca_session(
+        configure_alpaca_session(
             session, use_system_trust_store=config.use_system_trust_store,
         )
         total = len(pending)

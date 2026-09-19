@@ -974,7 +974,7 @@ def test_build_pipeline_command_ml_steps() -> None:
     assert train_cmd[train_cmd.index("--wf-val-size") + 1] == "126"
     assert train_cmd[train_cmd.index("--wf-test-size") + 1] == "126"
     assert train_cmd[train_cmd.index("--wf-step-size") + 1] == "126"
-    assert train_cmd[train_cmd.index("--wf-max-splits") + 1] == "12"
+    assert train_cmd[train_cmd.index("--wf-max-splits") + 1] == "15"
 
     # Drapeaux booléens activés par défaut.
     for flag in (

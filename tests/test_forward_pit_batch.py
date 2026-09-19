@@ -654,6 +654,8 @@ def test_forward_pit_sql_reference_and_migration_cover_all_tables() -> None:
     ).read_text(encoding="utf-8")
     assert 'down_revision: str | None = "0081_widen_forward_pit_providers"' in exhibit_migration
     assert "mysql.LONGBLOB()" in exhibit_migration
+    assert 'if not inspector.has_table("sec_filing_documents", schema=SCHEMA):' in exhibit_migration
+    assert 'if "idx_sfd_accession" not in indexes:' in exhibit_migration
 
 
 def test_launcher_invokes_service_layer() -> None:

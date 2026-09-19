@@ -105,7 +105,7 @@ def stub_repo_with_rejects(monkeypatch):
             )
         def load_score_context_asof(self, *_): return candidates
         def load_prices_asof(self, syms, td, atr_window=20): return prices
-        def load_predictions_asof(self, symbols, trade_date):
+        def load_predictions_asof(self, symbols, trade_date, *, batch_id=None, sources=None):
             return {
                 symbol: PredictionInfo(
                     symbol=symbol,
@@ -180,7 +180,7 @@ def test_run_summary_aggregates_rejected_notional_below_enforced(monkeypatch) ->
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
             return {}
 
-        def load_predictions_asof(self, symbols, trade_date):
+        def load_predictions_asof(self, symbols, trade_date, *, batch_id=None, sources=None):
             return {}
 
         def load_win_rates_asof(self, symbols, trade_date):

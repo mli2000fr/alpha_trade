@@ -28,6 +28,7 @@ FUNCTIONALITY_GROUP_ORDER: tuple[str, ...] = (
     "Marché / Référentiel titres",
     "News / Sentiment",
     "ML / Modèles",
+    "Fondamentaux / SEC",
     "Calibration / Validation",
     "Risk / Portefeuille",
     "Exécution broker",
@@ -52,6 +53,9 @@ FUNCTIONALITY_TABLES: dict[str, tuple[str, ...]] = {
         "cleaning_audit_runs",
         "cleaning_audit_quotes_runs",
         "cleaning_audit_earnings_runs",
+        "macro_vintage_observations",
+        "security_master_changes",
+        "security_master_snapshots",
     ),
     "News / Sentiment": (
         "news_raw",
@@ -62,6 +66,7 @@ FUNCTIONALITY_TABLES: dict[str, tuple[str, ...]] = {
         "macro_event_audit",
         "ticker_daily_sentiment_features",
         "sector_daily_sentiment_features",
+        "analyst_snapshot_collection_run",
     ),
     "ML / Modèles": (
         "model_registry",
@@ -74,6 +79,14 @@ FUNCTIONALITY_TABLES: dict[str, tuple[str, ...]] = {
         "model_directional_oos_metrics",
         "ml_drift_runs",
         "champion_history",
+        "global_oracle_labels",
+        "global_rank_history",
+        "oracle_extreme_predictions",
+    ),
+    "Fondamentaux / SEC": (
+        "sec_filing_documents",
+        "sec_filing_raw",
+        "sec_ownership_snapshots",
     ),
     "Calibration / Validation": (
         "weights_calibration_runs",
@@ -106,12 +119,19 @@ FUNCTIONALITY_TABLES: dict[str, tuple[str, ...]] = {
         "corporate_actions_events",
         "corporate_actions_applications",
         "corporate_actions_audit_runs",
+        "corporate_action_source_events",
+        "option_contract_adjustments",
+        "sec_corporate_events",
     ),
     "Observabilité / Runs": (
         "run_business_summaries",
         "run_summaries",
         "watcher_heartbeats",
         "audit_chain_events",
+        "pit_collection_runs",
+        "pit_data_quality_issues",
+        "pit_data_quality_metrics",
+        "pit_raw_payloads",
     ),
 }
 

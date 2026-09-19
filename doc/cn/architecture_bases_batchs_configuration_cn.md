@@ -18,6 +18,14 @@ Ce document fixe la convention retenue pour toute l’intégration chinoise :
 
 Cette convention remplace toute proposition antérieure consistant à ajouter les sections Chine directement dans `batch.yaml` ou à utiliser des fichiers ambigus comme `cn_a.yaml` sans suffixe `_cn`.
 
+## ADR associés
+
+- [ADR-0001 — MarketContext](../architecture/adr_0001_market_context.md)
+- [ADR-0002 — identité instrument](../architecture/adr_0002_instrument_identity.md)
+- [ADR-0003 — partitionnement physique](../architecture/adr_0003_market_data_partitioning.md)
+- [ADR-0004 — règles exécution CN](../architecture/adr_0004_cn_execution_rules.md)
+- [Rapport Sprint 0](./sprint_0_baseline_us_et_adr.md)
+
 ## 1. Décision sur la base de données
 
 ### 1.1 Recommandation

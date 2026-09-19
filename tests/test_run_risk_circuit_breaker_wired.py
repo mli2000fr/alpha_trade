@@ -55,7 +55,7 @@ def stub_repo(monkeypatch):
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
             return {}
 
-        def load_predictions_asof(self, symbols, trade_date):
+        def load_predictions_asof(self, symbols, trade_date, *, batch_id=None, sources=None):
             return {}
 
         def load_win_rates_asof(self, symbols, trade_date):

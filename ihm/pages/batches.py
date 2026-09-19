@@ -400,12 +400,18 @@ def render() -> None:
         st.info(f"Historique détaillé indisponible : {db_error}")
 
     controls = st.columns([2, 2, 1, 1])
-    search = controls[0].text_input("Rechercher", placeholder="Nom, table, fournisseur…")
+    search = controls[0].text_input(
+        "Rechercher",
+        placeholder="Nom, table, fournisseur…",
+        help="Filtre les batchs sur leur nom, leur description, leurs tables et leur fournisseur.",
+    )
     priorities = controls[1].multiselect(
         "Priorités", [f"P{i}" for i in range(5)], default=[f"P{i}" for i in range(5)]
     )
     state_filter = controls[2].selectbox(
-        "État", ["Tous", "Installés", "Non installés", "Exécutables", "En attente"]
+        "État",
+        ["Tous", "Installés", "Non installés", "Exécutables", "En attente"],
+        help="Affiche tous les batchs ou uniquement ceux correspondant à l'état choisi.",
     )
     run_as = controls[3].selectbox(
         "Compte tâche", ["Interactive", "System"],

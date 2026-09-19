@@ -282,13 +282,16 @@ def test_cli_main_predict_historical_loops_over_available_trading_dates(monkeypa
         "--training-end-date", "2022-01-04",
     ])
 
-    assert prediction_calls == [
+    # Le backfill de dates est parallèle : l'ordre de terminaison n'est pas un
+    # contrat. On vérifie la couverture exacte des séances, pas leur ordre.
+    assert sorted(prediction_calls) == [
         (date(2022, 1, 3), date(2022, 1, 3)),
         (date(2022, 1, 4), date(2022, 1, 4)),
     ]
     assert len(inserted_batches) == 2
-    assert list(inserted_batches[0]["prediction_date"]) == [date(2022, 1, 3)]
-    assert list(inserted_batches[1]["prediction_date"]) == [date(2022, 1, 4)]
+    assert sorted(
+        batch["prediction_date"].iloc[0] for batch in inserted_batches
+    ) == [date(2022, 1, 3), date(2022, 1, 4)]
     assert emitted_summaries[-1]["historical_prediction_range_enabled"] is True
     assert emitted_summaries[-1]["training_end_date"] == "2022-01-04"
 
