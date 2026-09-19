@@ -40,6 +40,8 @@ def engine():
             CREATE TABLE execution_runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 exec_run_id VARCHAR(32) UNIQUE, risk_run_id VARCHAR(32),
+                market_code VARCHAR(16), calendar_id VARCHAR(32), base_currency VARCHAR(3),
+                market_context_fingerprint VARCHAR(64),
                 trade_date DATE, broker_mode VARCHAR(10), dry_run BOOLEAN,
                 execution_profile VARCHAR(32), submission_window VARCHAR(16),
                 status VARCHAR(20), started_at TIMESTAMP, completed_at TIMESTAMP,

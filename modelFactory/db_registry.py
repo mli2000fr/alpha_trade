@@ -373,32 +373,59 @@ def build_governance_rows(
 # Registry helpers
 # ---------------------------------------------------------------------------
 
-def ensure_registry_entry(engine: Engine, symbol: str, architecture: str = "lstm_attention") -> int:
-    """Retourne registry_id existant ou en crée un nouveau. Incrémente version si réentraînement."""
+def _resolve_batch_market_code(engine: Engine, batch_id: str | None, market_code: str | None) -> str:
+    """Resolve a child scope from its parent and reject cross-market writes."""
+    from common.run_market_scope import resolve_run_market_scope
+
+    explicit = str(market_code or "").strip().upper() or None
+    if batch_id:
+        with engine.connect() as conn:
+            parent = conn.execute(
+                text("SELECT market_code FROM model_training_batch WHERE batch_id = :bid"),
+                {"bid": batch_id},
+            ).scalar()
+        if parent is None:
+            raise ValueError(f"Batch parent introuvable: {batch_id}")
+        parent_code = str(parent).strip().upper()
+        if explicit and explicit != parent_code:
+            raise ValueError(f"Marché enfant incompatible: batch={parent_code}, enfant={explicit}")
+        return parent_code
+    return resolve_run_market_scope(explicit).market_code
+
+
+def ensure_registry_entry(
+    engine: Engine,
+    symbol: str,
+    architecture: str = "lstm_attention",
+    *,
+    batch_id: str | None = None,
+    market_code: str | None = None,
+) -> int:
+    """Return the active registry row in the same market, or create it."""
+    resolved_market = _resolve_batch_market_code(engine, batch_id, market_code)
     with engine.begin() as conn:
         row = conn.execute(
             text(
                 "SELECT registry_id, version FROM model_registry "
-                "WHERE symbol = :sym AND architecture = :arch AND is_active = 1 "
+                "WHERE market_code = :market AND symbol = :sym "
+                "AND architecture = :arch AND is_active = 1 "
                 "ORDER BY version DESC LIMIT 1"
             ),
-            {"sym": symbol, "arch": architecture},
+            {"market": resolved_market, "sym": symbol, "arch": architecture},
         ).fetchone()
-
         if row is not None:
             return int(row[0])
-
         conn.execute(
             text(
-                "INSERT INTO model_registry (symbol, architecture, version, is_active) "
-                "VALUES (:sym, :arch, 1, 1)"
+                "INSERT INTO model_registry "
+                "(market_code, symbol, architecture, version, is_active) "
+                "VALUES (:market, :sym, :arch, 1, 1)"
             ),
-            {"sym": symbol, "arch": architecture},
+            {"market": resolved_market, "sym": symbol, "arch": architecture},
         )
         result = conn.execute(text("SELECT LAST_INSERT_ID()")).scalar()
-        LOGGER.info("model_registry created registry_id=%s symbol=%s", result, symbol)
-        return int(result)  # type: ignore[arg-type]
-
+        LOGGER.info("model_registry created registry_id=%s market=%s symbol=%s", result, resolved_market, symbol)
+        return int(result)
 
 # ---------------------------------------------------------------------------
 # Training batch and run
@@ -438,16 +465,27 @@ def insert_training_batch(
     comment: str | None = None,
     stacking_enabled: bool = False,
     symbols: str | None = None,
+    market_code: str | None = None,
+    universe_id: str | None = None,
+    universe_fingerprint: str | None = None,
 ) -> None:
-    """Persist one immutable metadata record for a training campaign."""
+    """Persist one immutable, fully market-scoped training campaign."""
+    from common.run_market_scope import resolve_run_market_scope
+
+    scope = resolve_run_market_scope(market_code)
     with engine.begin() as conn:
         conn.execute(
             text(
                 "INSERT INTO model_training_batch "
                 "(batch_id, status, command_line, command_argv_json, metadata_json, symbol_source, "
-                "universe_date, requested_symbol_count, training_start_date, training_end_date, started_at, comment, stacking_enabled, symbols) "
-                "VALUES (:bid, 'running', :command_line, :command_argv_json, :metadata_json, :symbol_source, "
-                ":universe_date, :requested_symbol_count, :training_start_date, :training_end_date, :started_at, :comment, :stacking_enabled, :symbols)"
+                "market_code, calendar_id, base_currency, benchmark_instrument_id, universe_id, "
+                "universe_fingerprint, sector_taxonomy, market_context_fingerprint, universe_date, "
+                "requested_symbol_count, training_start_date, training_end_date, started_at, comment, "
+                "stacking_enabled, symbols) VALUES "
+                "(:bid, 'running', :command_line, :command_argv_json, :metadata_json, :symbol_source, "
+                ":market_code, :calendar_id, :base_currency, NULL, :universe_id, :universe_fingerprint, "
+                ":sector_taxonomy, :market_context_fingerprint, :universe_date, :requested_symbol_count, "
+                ":training_start_date, :training_end_date, :started_at, :comment, :stacking_enabled, :symbols)"
             ),
             {
                 "bid": batch_id,
@@ -455,6 +493,13 @@ def insert_training_batch(
                 "command_argv_json": command_argv_json,
                 "metadata_json": metadata_json,
                 "symbol_source": symbol_source,
+                "market_code": scope.market_code,
+                "calendar_id": scope.calendar_id,
+                "base_currency": scope.base_currency,
+                "universe_id": universe_id,
+                "universe_fingerprint": universe_fingerprint,
+                "sector_taxonomy": scope.sector_taxonomy,
+                "market_context_fingerprint": scope.market_context_fingerprint,
                 "universe_date": universe_date,
                 "requested_symbol_count": requested_symbol_count,
                 "training_start_date": training_start_date,
@@ -465,7 +510,6 @@ def insert_training_batch(
                 "symbols": symbols,
             },
         )
-
 
 def update_training_batch(engine: Engine, batch_id: str, **kwargs: Any) -> None:
     """Update terminal campaign state without allowing metadata to be overwritten."""
@@ -489,22 +533,22 @@ def insert_training_run(
     train_end_date: date | None = None,
     batch_id: str | None = None,
     model_role: str | None = None,
+    market_code: str | None = None,
 ) -> None:
+    resolved_market = _resolve_batch_market_code(engine, batch_id, market_code)
     with engine.begin() as conn:
         conn.execute(
             text(
                 "INSERT INTO model_training_run "
-                "(run_id, batch_id, model_role, registry_id, symbol, status, started_at, train_start_date, train_end_date) "
-                "VALUES (:rid, :bid, :role, :reg, :sym, :st, :now, :tsd, :ted)"
+                "(run_id, batch_id, model_role, market_code, registry_id, symbol, status, started_at, train_start_date, train_end_date) "
+                "VALUES (:rid, :bid, :role, :market, :reg, :sym, :st, :now, :tsd, :ted)"
             ),
             {
-                "rid": run_id, "bid": batch_id, "role": model_role,
-                "reg": registry_id, "sym": symbol, "st": status,
-                "now": datetime.now(UTC),
+                "rid": run_id, "bid": batch_id, "role": model_role, "market": resolved_market,
+                "reg": registry_id, "sym": symbol, "st": status, "now": datetime.now(UTC),
                 "tsd": train_start_date, "ted": train_end_date,
             },
         )
-
 
 def update_training_run(engine: Engine, run_id: str, **kwargs: Any) -> None:
     if not kwargs:
@@ -1225,29 +1269,54 @@ def detect_batch_training_mode(engine: Engine, batch_id: str | None) -> str:
     return "per_symbol"
 
 
-def get_serving_batch(engine: Engine) -> str | None:
-    """Retourne le ``batch_id`` de la campagne ML actuellement promue pour le serving, ou None."""
+def get_serving_batch(engine: Engine, *, market_code: str | None = None) -> str | None:
+    """Return the promoted ML batch for one market (legacy callers resolve to US)."""
+    from common.run_market_scope import resolve_run_market_scope
+
+    resolved_market = resolve_run_market_scope(market_code).market_code
     sql = text(
-        "SELECT batch_id FROM model_serving_batch WHERE scope = :scope ORDER BY promoted_at DESC LIMIT 1"
+        "SELECT batch_id FROM model_serving_batch "
+        "WHERE market_code = :market AND scope = :scope ORDER BY promoted_at DESC LIMIT 1"
     )
     try:
         with engine.connect() as conn:
-            row = conn.execute(sql, {"scope": _SERVING_BATCH_SCOPE}).mappings().first()
+            row = conn.execute(
+                sql, {"market": resolved_market, "scope": _SERVING_BATCH_SCOPE}
+            ).mappings().first()
         return str(row["batch_id"]) if row else None
     except Exception:
-        return None
+        LOGGER.warning("model_serving_batch legacy sans market_code: lecture US contrôlée")
+        try:
+            with engine.connect() as conn:
+                row = conn.execute(
+                    text(
+                        "SELECT batch_id FROM model_serving_batch WHERE scope = :scope "
+                        "ORDER BY promoted_at DESC LIMIT 1"
+                    ),
+                    {"scope": _SERVING_BATCH_SCOPE},
+                ).mappings().first()
+            return str(row["batch_id"]) if row else None
+        except Exception:
+            return None
 
-
-def set_serving_batch(engine: Engine, *, batch_id: str) -> None:
-    """Promeut une campagne ML comme source de serving (UPSERT sur le scope)."""
+def set_serving_batch(
+    engine: Engine,
+    *,
+    batch_id: str,
+    market_code: str | None = None,
+) -> None:
+    """Promote a campaign inside its own market serving scope."""
+    resolved_market = _resolve_batch_market_code(engine, batch_id, market_code)
     sql = text(
-        "INSERT INTO model_serving_batch (scope, batch_id, promoted_at) "
-        "VALUES (:scope, :bid, CURRENT_TIMESTAMP) "
+        "INSERT INTO model_serving_batch (market_code, scope, batch_id, promoted_at) "
+        "VALUES (:market, :scope, :bid, CURRENT_TIMESTAMP) "
         "ON DUPLICATE KEY UPDATE batch_id = VALUES(batch_id), promoted_at = CURRENT_TIMESTAMP"
     )
     with engine.begin() as conn:
-        conn.execute(sql, {"scope": _SERVING_BATCH_SCOPE, "bid": batch_id})
-
+        conn.execute(
+            sql,
+            {"market": resolved_market, "scope": _SERVING_BATCH_SCOPE, "bid": batch_id},
+        )
 
 def load_symbols_for_source(
     engine: Engine,

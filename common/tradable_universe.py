@@ -58,6 +58,10 @@ class UniverseResolution:
     data_quality_grade: str
     rows_expected: int
     rows_written: int
+    market_code: str = "US_EQ"
+    calendar_id: str = "NYSE"
+    base_currency: str = "USD"
+    market_context_fingerprint: str = ""
 
     @property
     def symbols(self) -> list[str]:
@@ -90,6 +94,7 @@ def begin_universe_run(
     rows_expected: int,
     universe_run_id: str | None = None,
     data_quality_grade: str = "unknown",
+    market_code: str | None = None,
 ) -> str:
     if rows_expected < 0:
         raise ValueError("rows_expected doit être >= 0.")
@@ -100,17 +105,24 @@ def begin_universe_run(
     fingerprint = str(config_fingerprint or "").strip()
     if not preset_key or not fingerprint:
         raise ValueError("capital_preset_key et config_fingerprint sont obligatoires.")
+    from common.run_market_scope import resolve_run_market_scope
+
+    scope = resolve_run_market_scope(market_code)
     with engine.begin() as connection:
         connection.execute(
             text(
                 """
                 INSERT INTO tradable_universe_runs (
                     universe_run_id, snapshot_date, capital_preset_key,
+                    market_code, calendar_id, base_currency, sector_taxonomy,
+                    market_context_fingerprint, universe_fingerprint,
                     config_fingerprint, status, is_canonical,
                     rows_expected, rows_written, tradable_rows,
                     data_quality_grade, started_at
                 ) VALUES (
                     :run_id, :snapshot_date, :preset_key,
+                    :market_code, :calendar_id, :base_currency, :sector_taxonomy,
+                    :market_context_fingerprint, :universe_fingerprint,
                     :fingerprint, 'running', 0,
                     :rows_expected, 0, 0,
                     :data_quality_grade, :started_at
@@ -122,6 +134,12 @@ def begin_universe_run(
                 "snapshot_date": snapshot_date,
                 "preset_key": preset_key,
                 "fingerprint": fingerprint,
+                "market_code": scope.market_code,
+                "calendar_id": scope.calendar_id,
+                "base_currency": scope.base_currency,
+                "sector_taxonomy": scope.sector_taxonomy,
+                "market_context_fingerprint": scope.market_context_fingerprint,
+                "universe_fingerprint": fingerprint,
                 "rows_expected": rows_expected,
                 "data_quality_grade": data_quality_grade,
                 "started_at": _utc_now_naive(),
@@ -144,7 +162,7 @@ def publish_universe_run(
         run = connection.execute(
             text(
                 """
-                SELECT snapshot_date, capital_preset_key, status, rows_expected
+                SELECT snapshot_date, capital_preset_key, market_code, status, rows_expected
                 FROM tradable_universe_runs
                 WHERE universe_run_id = :run_id
                 """
@@ -211,12 +229,14 @@ def publish_universe_run(
                 SET is_canonical = 0
                 WHERE snapshot_date = :snapshot_date
                   AND capital_preset_key = :preset_key
+                  AND market_code = :market_code
                   AND is_canonical = 1
                 """
             ),
             {
                 "snapshot_date": run["snapshot_date"],
                 "preset_key": run["capital_preset_key"],
+                "market_code": run["market_code"],
             },
         )
         connection.execute(
@@ -266,7 +286,11 @@ def resolve_universe_asof(
     capital_preset_key: str,
     *,
     tradable_only: bool = True,
+    market_code: str | None = None,
 ) -> UniverseResolution:
+    from common.run_market_scope import resolve_run_market_scope
+
+    scope = resolve_run_market_scope(market_code)
     with engine.connect() as connection:
         run = connection.execute(
             text(
@@ -276,6 +300,7 @@ def resolve_universe_asof(
                        rows_expected, rows_written
                 FROM tradable_universe_runs
                 WHERE capital_preset_key = :preset_key
+                  AND market_code = :market_code
                   AND snapshot_date <= :trade_date
                   AND status = 'completed'
                   AND is_canonical = 1
@@ -284,7 +309,7 @@ def resolve_universe_asof(
                 LIMIT 1
                 """
             ),
-            {"preset_key": capital_preset_key, "trade_date": trade_date},
+            {"preset_key": capital_preset_key, "market_code": scope.market_code, "trade_date": trade_date},
         ).mappings().first()
         if run is None:
             raise UniverseSnapshotNotFoundError(
@@ -322,6 +347,10 @@ def resolve_universe_asof(
         data_quality_grade=str(run["data_quality_grade"]),
         rows_expected=int(run["rows_expected"]),
         rows_written=int(run["rows_written"]),
+        market_code=scope.market_code,
+        calendar_id=scope.calendar_id,
+        base_currency=scope.base_currency,
+        market_context_fingerprint=scope.market_context_fingerprint,
     )
 
 
@@ -332,6 +361,7 @@ def load_tradable_universe_for_period(
     capital_preset_key: str = DEFAULT_CAPITAL_PRESET_KEY,
     *,
     tradable_only: bool = True,
+    market_code: str | None = None,
 ) -> list[str]:
     """Retourne l'union des symboles tradables sur une période.
 
@@ -352,6 +382,9 @@ def load_tradable_universe_for_period(
     """
     if end_date < start_date:
         return []
+    from common.run_market_scope import resolve_run_market_scope
+
+    scope = resolve_run_market_scope(market_code)
 
     tradable_clause = "AND h.is_tradable = 1" if tradable_only else ""
     with engine.connect() as connection:
@@ -362,6 +395,7 @@ def load_tradable_universe_for_period(
                 FROM tradable_universe_history h
                 JOIN tradable_universe_runs r ON r.universe_run_id = h.universe_run_id
                 WHERE r.capital_preset_key = :preset_key
+                  AND r.market_code = :market_code
                   AND r.snapshot_date BETWEEN :start_date AND :end_date
                   AND r.status = 'completed'
                   AND r.is_canonical = 1
@@ -372,6 +406,7 @@ def load_tradable_universe_for_period(
             ),
             {
                 "preset_key": capital_preset_key,
+                "market_code": scope.market_code,
                 "start_date": start_date,
                 "end_date": end_date,
             },
@@ -385,6 +420,8 @@ def load_tradable_universe_by_date(
     engine: Engine,
     dates: Iterable[str | date],
     capital_preset_key: str = DEFAULT_CAPITAL_PRESET_KEY,
+    *,
+    market_code: str | None = None,
 ) -> dict[str, set[str]]:
     """Charge le snapshot canonique *exact* de chaque date demandée.
 
@@ -393,13 +430,16 @@ def load_tradable_universe_by_date(
     une date absente reste absente et le consommateur peut ainsi échouer fermé.
     Seuls les runs complets, canoniques et de qualité ``full`` sont acceptés.
     """
+    from common.run_market_scope import resolve_run_market_scope
+
+    scope = resolve_run_market_scope(market_code)
     normalized = sorted({
         value.isoformat() if isinstance(value, date) else str(value)[:10]
         for value in dates if value is not None and str(value).strip()
     })
     if not normalized:
         return {}
-    params: dict[str, Any] = {"preset_key": capital_preset_key}
+    params: dict[str, Any] = {"preset_key": capital_preset_key, "market_code": scope.market_code}
     placeholders: list[str] = []
     for index, value in enumerate(normalized):
         key = f"date_{index}"
@@ -414,6 +454,7 @@ def load_tradable_universe_by_date(
                 JOIN tradable_universe_history h
                   ON h.universe_run_id = r.universe_run_id
                 WHERE r.capital_preset_key = :preset_key
+                  AND r.market_code = :market_code
                   AND r.snapshot_date IN ({', '.join(placeholders)})
                   AND r.status = 'completed'
                   AND r.is_canonical = 1

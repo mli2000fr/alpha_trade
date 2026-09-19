@@ -6,6 +6,14 @@ CREATE TABLE IF NOT EXISTS alpha_trade.model_training_batch (
     metadata_json          TEXT         NOT NULL COMMENT 'Options CLI et configuration effective serializees',
     comment                VARCHAR(200)  NOT NULL COMMENT 'Commentaire saisi par l utilisateur dans IHM',
     symbol_source          VARCHAR(255) NOT NULL COMMENT 'Source native ou universe-file:<nom>.txt',
+    market_code            VARCHAR(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'US_EQ',
+    calendar_id            VARCHAR(32) NOT NULL DEFAULT 'NYSE',
+    base_currency          CHAR(3) NOT NULL DEFAULT 'USD',
+    benchmark_instrument_id BIGINT UNSIGNED DEFAULT NULL,
+    universe_id            VARCHAR(255) DEFAULT NULL,
+    universe_fingerprint   CHAR(64) DEFAULT NULL,
+    sector_taxonomy        VARCHAR(32) NOT NULL DEFAULT 'GICS',
+    market_context_fingerprint CHAR(64) NOT NULL,
     universe_date          DATE         DEFAULT NULL,
     requested_symbol_count INT UNSIGNED DEFAULT NULL,
     training_start_date    DATE         DEFAULT NULL,
@@ -25,5 +33,8 @@ CREATE TABLE IF NOT EXISTS alpha_trade.model_training_batch (
     symbols                VARCHAR(5000) DEFAULT NULL COMMENT 'Liste des symboles utilisés par le batch (séparés par virgule)',
     created_at             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (batch_id),
-    INDEX idx_model_training_batch_status_started (status, started_at)
+    INDEX idx_model_training_batch_status_started (status, started_at),
+    INDEX idx_mtb_market_status_started (market_code, status, started_at),
+    CONSTRAINT fk_mtb_market FOREIGN KEY (market_code) REFERENCES alpha_trade.markets (market_code),
+    CONSTRAINT fk_mtb_benchmark FOREIGN KEY (benchmark_instrument_id) REFERENCES alpha_trade.instruments (instrument_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Metadonnees par campagne d entrainement ML';

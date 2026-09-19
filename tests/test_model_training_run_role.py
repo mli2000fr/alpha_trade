@@ -13,6 +13,16 @@ class _Connection:
     def execute(self, statement, params):
         self.sql = str(statement)
         self.params = dict(params)
+        if "SELECT market_code FROM model_training_batch" in self.sql:
+            return _ScalarResult("US_EQ")
+
+
+class _ScalarResult:
+    def __init__(self, value):
+        self.value = value
+
+    def scalar(self):
+        return self.value
 
 
 class _Engine:
@@ -21,6 +31,10 @@ class _Engine:
 
     @contextmanager
     def begin(self):
+        yield self.connection
+
+    @contextmanager
+    def connect(self):
         yield self.connection
 
 
@@ -38,3 +52,4 @@ def test_insert_training_run_persists_directional_role() -> None:
 
     assert "model_role" in engine.connection.sql
     assert engine.connection.params["role"] == "direction_long"
+    assert engine.connection.params["market"] == "US_EQ"

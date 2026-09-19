@@ -8,7 +8,7 @@
 
 ## Avancement Sprints 0 à 2
 
-Les Sprints 0 à 2 ont été terminés le 19 septembre 2026. Le gate Sprint 2 est **GO** : référentiel canonique installé par la migration 0084, mapping US mesuré sans écriture, 5 771 tests réussis, zéro échec et couverture 71,04 %. Voir [Sprint 2 — référentiel instruments](./sprint_2_referentiel_instruments.md). Sprint 3 — marché sur les parents de runs et batches est débloqué.
+Les Sprints 0 à 3 sont terminés. Le gate Sprint 3 est **GO** : migration 0085 appliquée, 100 % des parents historiques classés US_EQ, aucun contexte obligatoire vide et aucune divergence enfant/parent. Voir [Sprint 3 — contexte marché sur les runs](./sprint_3_contexte_marche_runs.md). Sprint 4 — propagation instrument/market dans les faits de données est débloqué.
 
 ## 1. Mode d’emploi
 

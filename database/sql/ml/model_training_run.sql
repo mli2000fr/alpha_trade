@@ -2,6 +2,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.model_training_run (
     run_id          VARCHAR(64)     NOT NULL  COMMENT 'UUID ou hash unique du run',
     batch_id        VARCHAR(64)     DEFAULT NULL COMMENT 'Identifiant partagé de la campagne d entraînement',
     model_role      VARCHAR(32)     DEFAULT NULL COMMENT 'Rôle du modèle: direction_legacy|direction_long|direction_short',
+    market_code     VARCHAR(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'US_EQ',
     registry_id     BIGINT UNSIGNED NOT NULL,
     symbol          VARCHAR(50)     NOT NULL,
     status          VARCHAR(20)     NOT NULL  COMMENT 'pending|running|completed|failed|skipped',
@@ -20,7 +21,9 @@ CREATE TABLE IF NOT EXISTS alpha_trade.model_training_run (
     INDEX idx_batch_status (batch_id, status),
     INDEX idx_batch_role_symbol (batch_id, model_role, symbol),
     INDEX idx_symbol_status (symbol, status),
-    INDEX idx_registry (registry_id)
+    INDEX idx_registry (registry_id),
+    INDEX idx_mtr_market_batch_status (market_code, batch_id, status),
+    CONSTRAINT fk_mtr_market FOREIGN KEY (market_code) REFERENCES alpha_trade.markets (market_code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Historique des runs d entrainement ML';
 
 

@@ -1365,7 +1365,11 @@ def train_symbol(
 
     if engine is not None:
         try:
-            registry_id = ensure_registry_entry(engine, symbol)
+            registry_id = (
+                ensure_registry_entry(engine, symbol, batch_id=batch_id)
+                if batch_id is not None
+                else ensure_registry_entry(engine, symbol)
+            )
             # Extraire les bornes des données d'entraînement pour le calibrateur
             _train_start: date | None = None
             _train_end: date | None = None
