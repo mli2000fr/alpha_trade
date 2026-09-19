@@ -55,6 +55,13 @@ une étape de confirmation ; il n'autorise jamais automatiquement le serving.
    E9 ne se confirme pas du 10 juillet 2024 au 11 juillet 2025. Le delta
    quotidien contre Oracle LONG au même open vaut -0,056 point, IC95
    [-0,603 ; +0,436], avec 1/2 folds et 1/3 semestres favorables.
+9. **Le diagnostic J+N sépare la reconnaissance du décile final du gain restant** :
+   sur 582 306 signaux Oracle TOP20 OOF, le signe du prix atteint environ 80 %
+   de reconnaissance D10 parmi les futurs vrais D1/D10 à J+8, mais seulement
+   35,9 % de probabilité D10 parmi tous les candidats haussiers. Sur les D10
+   reconnus, l'attente a déjà consommé environ 11,6 points de rendement net ;
+   aucune règle LONG/SHORT J+1…J+19 ne bat le LONG Oracle immédiat dans ce
+   diagnostic descriptif. Voir [révélation et coût d'attente](oracle_revelation_jn_vs_cost_of_waiting.md).
 
 ## Campagnes directionnelles récentes après Oracle
 
@@ -76,6 +83,7 @@ une étape de confirmation ; il n'autorise jamais automatiquement le serving.
 | R1 | Ranker conditionnel au TOP20 Oracle | Ranking de rendement réel uniquement dans le pool Oracle | Retest batch corrigé : H3 IC +0,0148/spread +0,12 % ; H20 IC +0,0260/spread +0,67 %, mais stabilité insuffisante et LONG/SHORT `NO_GO` | `NO_GO` confirmé | [Ranker conditionnel](conditional_oracle_ranker.md) |
 | C1 | Consensus des modèles OOF existants | Moyenne équipondérée de rangs quotidiens, 2 à 7 familles selon H3/H5/H10/H20, sans réentraînement ni optimisation | IC -0,0014 à +0,0118, inférieur au meilleur composant ; SHORT signé négatif partout ; unanimité et régime E5 ne sauvent pas la direction | `NO_GO` | [Audit de consensus OOF](oof_consensus_audit.md) |
 | E9-A | Confirmation directionnelle après Oracle | Observer le prix à J+1/J+2/J+3/J+5, puis entrer LONG/SHORT au prochain open ; seuils choisis sur folds antérieurs | Primaire D2 : 49,40 % de précision, -0,309 % net quotidien, 1/12 folds positifs ; les signaux SHORT montent encore de +1,8 % à +3,2 % | `NO_GO`; E9-B fermé | [E9](oracle_post_signal_confirmation.md) |
+| JN-H20 | Révélation progressive vs coût d'attente | Oracle TOP20 OOF, observation du rendement J→J+N pour N=1…19, entrée open suivant et sortie H20 d'origine | Reconnaissance parmi vrais tails 70 % à J+4, 80 % à J+8, 90 % à J+13, mais gain D10 consommé et aucune supériorité économique de la règle simple | `DIAGNOSTIC_NO_GO`, sans promotion | [Courbe J+N](oracle_revelation_jn_vs_cost_of_waiting.md) |
 | E10 | Pullback LONG après Oracle | Seuil choisi sur E9 puis gelé à -0,25 % ; confirmation Oracle H20 OOF du 2024-07-10 au 2025-07-11, entrée LONG open J+2 | +0,732 % net quotidien mais benchmark +0,788 % ; delta -0,056 point, IC95 [-0,603 ; +0,436], 1/2 folds positifs | `NO_GO`; E10-B fermé | [E10](oracle_pullback_long.md) |
 | T-V2-A | Temporal D1/D10 V2 — Dataset A | État J contre trajectoires `[J-N,...,J]`, N=3/5/10, Logistic/CatBoost/PairLogit, labels H20 autoritatifs | 21 variantes, 399 symboles ; T0 Logistic 0,5143, meilleur T2 Logistic 0,5112 ; aucun gain T2 >= +0,01, aucun candidat servable | `NO_GO_DATASET_A` final | [Temporal D1/D10 V2](temporal_d1d10_v2.md) |
 | S1 | Règles screener PIT post-Oracle | Signaux screener LONG/SHORT H3/H10/H20 | Couverture fraîche 10,44 %, meilleurs effets instables ; aucun gate LONG/SHORT | `NO_GO_PREDICTIVE` | [Screener post-Oracle](screener_post_oracle.md) |
