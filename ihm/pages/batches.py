@@ -1,7 +1,9 @@
 """Catalogue, installation et exécution des batchs planifiés."""
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import streamlit as st
 
@@ -61,6 +63,21 @@ def _latest_collection_runs() -> tuple[dict[str, dict[str, Any]], str | None]:
                NULL AS error_message
         FROM analyst_snapshot_collection_run a
         WHERE a.started_at = (SELECT MAX(started_at) FROM analyst_snapshot_collection_run)
+        UNION ALL
+        SELECT 'earnings_calendar_sync' AS batch_name, 'finnhub' AS provider,
+               CASE a.status
+                 WHEN 'success' THEN 'SUCCESS'
+                 WHEN 'partial' THEN 'COMPLETED_WITH_WARNINGS'
+                 ELSE 'FAILED'
+               END AS status,
+               a.started_at, a.finished_at, a.symbols_requested AS requested_count,
+               NULL AS received_count, a.rows_upserted AS persisted_count,
+               NULL AS empty_count,
+               CASE WHEN a.status = 'failed' THEN 1 ELSE 0 END AS failed_count,
+               CASE WHEN a.status = 'partial' THEN 1 ELSE 0 END AS warning_count,
+               a.error_message
+        FROM cleaning_audit_earnings_runs a
+        WHERE a.id = (SELECT MAX(id) FROM cleaning_audit_earnings_runs)
         """
     )
     error = get_last_query_error()
@@ -102,15 +119,52 @@ def _last_run_failed(row: dict[str, Any] | None) -> bool:
     }
 
 
-def _windows_last_run_failed(task: dict[str, Any] | None) -> bool:
+def _utc_timestamp(value: Any, *, naive_is_utc: bool) -> datetime | None:
+    if value is None or str(value) in {"", "NaT", "nan", "None"}:
+        return None
+    try:
+        parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
+        if parsed.tzinfo is None:
+            if not naive_is_utc:
+                return None
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
+    except (TypeError, ValueError):
+        return None
+
+
+def _database_time_label(value: Any) -> str:
+    timestamp = _utc_timestamp(value, naive_is_utc=True)
+    if timestamp is None:
+        return _value(value)
+    return timestamp.astimezone(ZoneInfo("Europe/Paris")).strftime("%Y-%m-%d %H:%M:%S Europe/Paris")
+
+
+def _windows_last_run_failed(
+    task: dict[str, Any] | None,
+    row: dict[str, Any] | None = None,
+) -> bool:
     if not task or not task.get("last_run_time"):
         return False
     if str(task.get("state") or "").strip().lower() == "running":
         return False
     try:
-        return int(task.get("last_result")) != 0
+        failed = int(task.get("last_result")) != 0
     except (TypeError, ValueError):
         return False
+    if not failed:
+        return False
+    windows_started = _utc_timestamp(task.get("last_run_time"), naive_is_utc=False)
+    business_finished = _utc_timestamp(
+        (row or {}).get("finished_at") or (row or {}).get("started_at"),
+        naive_is_utc=True,
+    )
+    # A later successful manual/managed run supersedes an older Scheduler error.
+    latest_status = str((row or {}).get("status") or "").strip().upper()
+    if (latest_status in {"SUCCESS", "COMPLETED", "OK", "COMPLETED_WITH_WARNINGS"}
+            and windows_started and business_finished and business_finished >= windows_started):
+        return False
+    return True
 
 
 def _batch_title(
@@ -120,7 +174,7 @@ def _batch_title(
     task: dict[str, Any] | None = None,
 ) -> str:
     title = f"{' · '.join(status_bits)} — {name}"
-    if _last_run_failed(row) or _windows_last_run_failed(task):
+    if _last_run_failed(row) or _windows_last_run_failed(task, row):
         return f":red[**{title}**]"
     return title
 
@@ -138,7 +192,8 @@ def _render_last_run(row: dict[str, Any] | None) -> None:
         icon = "🔄" if status == "RUNNING" else "❌"
     st.markdown(f"**Dernière collecte :** {icon} {status}")
     st.caption(
-        f"Début {_value(row.get('started_at'))} · Fin {_value(row.get('finished_at'))} · "
+        f"Début {_database_time_label(row.get('started_at'))} · "
+        f"Fin {_database_time_label(row.get('finished_at'))} · "
         f"demandés {_value(row.get('requested_count'))} · reçus {_value(row.get('received_count'))} · "
         f"persistés {_value(row.get('persisted_count'))} · échecs {_value(row.get('failed_count'))} · "
         f"alertes {_value(row.get('warning_count'))}"
@@ -199,8 +254,11 @@ def _render_batch(
             st.markdown(f"**Tâche Windows :** {spec.task_name}")
             scheduled_last = task.get("last_run_time") if task else None
             scheduled_text = _value(scheduled_last) if scheduled_last else "jamais via le planificateur"
-            actual_last = db_run.get("started_at") if db_run else scheduled_last
-            st.markdown(f"**Dernière exécution réelle connue :** {_value(actual_last)}")
+            actual_last = (
+                _database_time_label(db_run.get("started_at"))
+                if db_run else _value(scheduled_last)
+            )
+            st.markdown(f"**Dernière exécution réelle connue :** {actual_last}")
             st.markdown(f"**Dernière exécution via le planificateur Windows :** {scheduled_text}")
             st.markdown(f"**Prochaine exécution Windows :** {_value(task.get('next_run_time') if task else None)}")
             if task and scheduled_last and task.get("last_result") is not None:

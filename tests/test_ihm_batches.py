@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+import pandas as pd
 import pytest
 import yaml
 
@@ -177,6 +179,47 @@ def test_task_scheduler_json_is_normalized(monkeypatch) -> None:
     assert states["AlphaTrade-DailyBarsSync"]["state"] == "Ready"
     assert states["AlphaTrade-DailyBarsSync"]["last_run_time"] is None
     assert states["AlphaTrade-DailyBarsSync"]["next_run_time"] == "2026-09-14T11:00:00+02:00"
+
+
+def test_earnings_latest_audit_is_included_in_batch_page(monkeypatch) -> None:
+    from ihm.pages import batches as page
+
+    def fake_query(sql: str) -> pd.DataFrame:
+        assert "cleaning_audit_earnings_runs" in sql
+        return pd.DataFrame([{
+            "batch_name": "earnings_calendar_sync", "provider": "finnhub",
+            "status": "SUCCESS", "started_at": datetime(2026, 9, 17, 19, 27),
+            "finished_at": datetime(2026, 9, 17, 20, 6),
+            "requested_count": 1798, "persisted_count": 136,
+        }])
+
+    monkeypatch.setattr(page, "safe_query", fake_query)
+    monkeypatch.setattr(page, "get_last_query_error", lambda: None)
+    page._latest_collection_runs.clear()
+    runs, error = page._latest_collection_runs()
+    assert error is None
+    assert runs["earnings_calendar_sync"]["status"] == "SUCCESS"
+
+
+def test_batch_title_prefers_newer_business_success_to_stale_windows_failure() -> None:
+    from ihm.pages import batches as page
+
+    task = {
+        "state": "Ready", "last_run_time": "2026-09-16T23:00:00+02:00",
+        "last_result": 1073807364,
+    }
+    latest_success = {
+        "status": "SUCCESS", "started_at": datetime(2026, 9, 17, 19, 27),
+        "finished_at": datetime(2026, 9, 17, 20, 6),
+    }
+    assert not page._batch_title(["P1"], "earnings_calendar_sync", latest_success, task).startswith(":red[")
+    old_success = {**latest_success, "finished_at": datetime(2026, 9, 16, 19, 0)}
+    assert page._batch_title(["P1"], "earnings_calendar_sync", old_success, task).startswith(":red[")
+    latest_failure = {**latest_success, "status": "FAILED"}
+    assert page._batch_title(["P1"], "earnings_calendar_sync", latest_failure, task).startswith(":red[")
+    assert page._database_time_label(datetime(2026, 9, 17, 20, 6)) == (
+        "2026-09-17 22:06:00 Europe/Paris"
+    )
 
 
 def test_uninstall_batch_executes_exact_non_shell_command(monkeypatch) -> None:
