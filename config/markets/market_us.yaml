@@ -1,0 +1,23 @@
+schema_version: 1
+market_code: US_EQ
+database_alias: us_primary
+country_code: US
+currency: USD
+timezone: America/New_York
+calendar_id: NYSE
+benchmark_instrument: SPY
+sector_taxonomy: GICS
+cost_profile: us_equity_canonical
+execution_rules_profile: us_reg_t
+feature_profile_root: config/features
+enabled: true
+live_enabled: true
+short_execution_enabled: true
+capabilities:
+  - research
+  - training
+  - prediction
+  - backtest
+  - paper_execution
+  - live_execution
+  - short_execution

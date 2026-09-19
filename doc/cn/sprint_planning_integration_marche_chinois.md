@@ -6,9 +6,9 @@
 > Ce document planifie les travaux. Il ne constitue pas une autorisation de modifier le code ni d’activer le trading réel.
 > Architecture retenue : `alpha_trade` pour US, `alpha_trade_cn` pour la Chine, code et schéma logique partagés. Les entrées CN sont `config_cn.yaml` et `batch_cn.yaml`, et les autres fichiers propres à la Chine portent le suffixe `_cn`.
 
-## Avancement Sprint 0
+## Avancement Sprints 0 et 1
 
-Le Sprint 0 et sa remédiation ont été terminés le 19 septembre 2026. Le gate est **GO** : 5 737 tests réussis, zéro échec, couverture 70,96 %, contrats physiques Alembic 15/15 et base alignée sur la tête 0083. Voir [Sprint 0 — baseline US et ADR](./sprint_0_baseline_us_et_adr.md). Sprint 1 — MarketContext est débloqué.
+Les Sprints 0 et 1 ont été terminés le 19 septembre 2026. Le gate Sprint 1 est **GO** : MarketContext immuable et versionné, registres US_EQ/CN_A/CN_BJ, CN désactivé, 5 757 tests réussis, zéro échec et couverture 71,00 %. Voir [Sprint 0 — baseline US et ADR](./sprint_0_baseline_us_et_adr.md) et [Sprint 1 — MarketContext](./sprint_1_market_context.md). Sprint 2 — référentiel instruments est débloqué.
 
 ## 1. Mode d’emploi
 
@@ -198,6 +198,8 @@ Conserver :
 Aucun changement runtime ; suppression possible des seuls artefacts d’audit.
 
 ## 5. Sprint 1 — `MarketContext` et registre de marchés
+
+> **Terminé — GO le 19 septembre 2026.** Implémentation et preuves : [Sprint 1 — MarketContext et registre](./sprint_1_market_context.md).
 
 ### Objectif
 

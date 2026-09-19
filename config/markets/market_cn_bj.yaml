@@ -1,0 +1,20 @@
+schema_version: 1
+market_code: CN_BJ
+database_alias: cn_primary
+country_code: CN
+currency: CNY
+timezone: Asia/Shanghai
+calendar_id: CN_BJ
+benchmark_instrument: 899050.BJ
+sector_taxonomy: SW_2021
+cost_profile: cn_bj_research
+execution_rules_profile: cn_bj_t1
+feature_profile_root: config/features_cn/cn_bj
+enabled: false
+live_enabled: false
+short_execution_enabled: false
+capabilities:
+  - research
+  - training
+  - prediction
+  - backtest
