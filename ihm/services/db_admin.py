@@ -22,6 +22,12 @@ PROTECTED_TABLES = frozenset({
     "news_raw",
     "news_ticker_map",
     "news_ingestion_checkpoint",
+    "markets",
+    "instruments",
+    "instrument_provider_symbols",
+    "instrument_status_history",
+    "market_sessions",
+    "market_execution_rules",
 })
 
 FUNCTIONALITY_GROUP_ORDER: tuple[str, ...] = (
@@ -39,6 +45,12 @@ FUNCTIONALITY_GROUP_ORDER: tuple[str, ...] = (
 
 FUNCTIONALITY_TABLES: dict[str, tuple[str, ...]] = {
     "Marché / Référentiel titres": (
+        "markets",
+        "instruments",
+        "instrument_provider_symbols",
+        "instrument_status_history",
+        "market_sessions",
+        "market_execution_rules",
         "stock_bars",
         "stock_bars_daily",
         "stock_metadata",

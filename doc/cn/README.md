@@ -7,9 +7,10 @@ Ordre de lecture recommandé :
 3. [Architecture des bases, batchs et configurations](./architecture_bases_batchs_configuration_cn.md)
 4. [Sprint 0 — baseline US et ADR](./sprint_0_baseline_us_et_adr.md)
 5. [Sprint 1 - MarketContext et registre](./sprint_1_market_context.md)
-6. [Comparaison des données fournisseurs](./comparaison_data_fournisseur.md)
-7. [Actualisation des fournisseurs](./actualisation_fournisseurs_chine.md)
-8. [Étude d’opportunité historique](./Étude%20d’opportunité%20—%20Extension%20d’α-Trade%20au%20marché%20actions%20chinois.md)
+6. [Sprint 2 — Référentiel instruments](./sprint_2_referentiel_instruments.md)
+7. [Comparaison des données fournisseurs](./comparaison_data_fournisseur.md)
+8. [Actualisation des fournisseurs](./actualisation_fournisseurs_chine.md)
+9. [Étude d’opportunité historique](./Étude%20d’opportunité%20—%20Extension%20d’α-Trade%20au%20marché%20actions%20chinois.md)
 
 Les trois premiers documents définissent la cible technique actuelle. L’étude d’opportunité historique fournit le contexte et a été harmonisée avec les décisions finales.
 

@@ -6,9 +6,9 @@
 > Ce document planifie les travaux. Il ne constitue pas une autorisation de modifier le code ni d’activer le trading réel.
 > Architecture retenue : `alpha_trade` pour US, `alpha_trade_cn` pour la Chine, code et schéma logique partagés. Les entrées CN sont `config_cn.yaml` et `batch_cn.yaml`, et les autres fichiers propres à la Chine portent le suffixe `_cn`.
 
-## Avancement Sprints 0 et 1
+## Avancement Sprints 0 à 2
 
-Les Sprints 0 et 1 ont été terminés le 19 septembre 2026. Le gate Sprint 1 est **GO** : MarketContext immuable et versionné, registres US_EQ/CN_A/CN_BJ, CN désactivé, 5 757 tests réussis, zéro échec et couverture 71,00 %. Voir [Sprint 0 — baseline US et ADR](./sprint_0_baseline_us_et_adr.md) et [Sprint 1 — MarketContext](./sprint_1_market_context.md). Sprint 2 — référentiel instruments est débloqué.
+Les Sprints 0 à 2 ont été terminés le 19 septembre 2026. Le gate Sprint 2 est **GO** : référentiel canonique installé par la migration 0084, mapping US mesuré sans écriture, 5 771 tests réussis, zéro échec et couverture 71,04 %. Voir [Sprint 2 — référentiel instruments](./sprint_2_referentiel_instruments.md). Sprint 3 — marché sur les parents de runs et batches est débloqué.
 
 ## 1. Mode d’emploi
 
@@ -257,6 +257,8 @@ tests/test_market_context.py             nouveau
 - CN est visible uniquement comme contexte désactivé.
 
 ## 6. Sprint 2 — Référentiel instruments et mappings fournisseurs
+
+> **Terminé — GO le 19 septembre 2026.** Implémentation, audit à blanc et preuves : [Sprint 2 — référentiel instruments](./sprint_2_referentiel_instruments.md).
 
 ### Objectif
 
