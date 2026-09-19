@@ -4,6 +4,7 @@
 > Date : 19 septembre 2026.  
 > Cible : une intégration durable US + Chine permettant ingestion, recherche, entraînement, prédiction et backtest ; paper/live vient ensuite.  
 > Ce document planifie les travaux. Il ne constitue pas une autorisation de modifier le code ni d’activer le trading réel.
+> Architecture retenue : `alpha_trade` pour US, `alpha_trade_cn` pour la Chine, code et schéma logique partagés. Les entrées CN sont `config_cn.yaml` et `batch_cn.yaml`, et les autres fichiers propres à la Chine portent le suffixe `_cn`.
 
 ## 1. Mode d’emploi
 
@@ -119,11 +120,14 @@ Décisions à verrouiller :
 - codes marchés `US_EQ`, `CN_A`, `CN_BJ` ;
 - `instrument_id` interne ;
 - MIC officiels ;
-- staging fournisseur séparé, canonique commun ;
+- staging fournisseur séparé, contrat canonique commun mais bases physiques `alpha_trade` et `alpha_trade_cn` isolées ;
 - batch ML mono-marché ;
 - risque consolidable mais labels/rangs mono-marché ;
 - symbole = attribut d’affichage, non identité ;
-- US reste le défaut pendant la migration.
+- US reste le défaut pendant la migration ;
+- `database_alias` est obligatoire et vérifié contre `market_code` ;
+- `config.yaml`/`batch.yaml` restent US, `config_cn.yaml`/`batch_cn.yaml` sont réservés à la Chine ;
+- les migrations sont paramétrables et appliquées séparément aux deux bases.
 
 #### 0.2 Inventorier les tables et contrats
 
@@ -213,9 +217,9 @@ Champs minimaux : marché, pays, devise, timezone, calendrier, benchmark, secteu
 ```text
 common/market_context.py                 nouveau
 common/config_loader.py                  chargement registre
-config/markets/us_eq.yaml                nouveau
-config/markets/cn_a.yaml                 nouveau mais disabled
-config/markets/cn_bj.yaml                nouveau mais disabled
+config/markets/market_us.yaml                nouveau
+config/markets/market_cn.yaml                 nouveau mais disabled
+config/markets/market_cn_bj.yaml                nouveau mais disabled
 tests/test_market_context.py             nouveau
 ```
 
@@ -523,7 +527,7 @@ Sans ce GO, ne pas démarrer le Sprint 7.
 
 ### Objectif
 
-Collecter les sources chinoises de façon idempotente sans les exposer aux modules métier.
+Créer et migrer la base physique `alpha_trade_cn`, puis collecter les sources chinoises de façon idempotente sans les exposer aux modules métier. La base US `alpha_trade` n’est jamais utilisée comme destination d’un batch CN.
 
 ### Fichiers probables
 
@@ -537,8 +541,8 @@ service/tushare/adapters.py
 service/tushare/symbols.py
 service/tushare/models.py
 dataIntegrityEngine/cn_ingestion.py
-config/markets/cn_a.yaml
-batch.yaml
+config/markets/market_cn.yaml
+batch_cn.yaml
 ```
 
 ### Endpoints P0
@@ -1035,7 +1039,8 @@ Rendre le chemin CN utilisable sans permettre les erreurs de configuration.
 
 ### Batchs
 
-- collectes CN séparées ;
+- collectes CN chargées depuis `batch_cn.yaml`, séparées de `batch.yaml` ;
+- base cible et `market_code` affichés ;
 - couverture ;
 - quota ;
 - dernière session attendue ;
@@ -1181,7 +1186,7 @@ Rendre le pipeline CN maintenable au quotidien.
 
 ### Exigences
 
-- `batch.yaml` ;
+- `batch_cn.yaml` ;
 - timezone explicite ;
 - rattrapage J-N/J ou second passage conditionnel ;
 - idempotence ;
@@ -1190,7 +1195,7 @@ Rendre le pipeline CN maintenable au quotidien.
 - quotas ;
 - procédures de relance ;
 - page Batch ;
-- sauvegarde des nouvelles tables et artefacts.
+- sauvegarde séparée de `alpha_trade_cn`, restauration testée sans toucher `alpha_trade`, et artefacts CN isolés.
 
 ### Monitoring
 
@@ -1449,6 +1454,7 @@ Cette discipline paraît plus lente au départ, mais elle évite le scénario le
 ## 30. Documents de référence
 
 - [Audit du code et roadmap d’intégration](./roadmap_integration_marche_chinois_audit_code.md)
+- [Architecture des bases, batchs et configurations CN](./architecture_bases_batchs_configuration_cn.md)
 - [Comparaison des données fournisseurs](./comparaison_data_fournisseur.md)
 - [Actualisation des fournisseurs Chine](./actualisation_fournisseurs_chine.md)
 - [Étude d’opportunité historique](./Étude%20d’opportunité%20—%20Extension%20d’α-Trade%20au%20marché%20actions%20chinois.md)

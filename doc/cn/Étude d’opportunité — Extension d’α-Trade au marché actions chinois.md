@@ -1,5 +1,7 @@
 # Étude d’opportunité — Extension d’α-Trade au marché actions chinois
 
+> **Mise à jour d’architecture — 19 septembre 2026.** Les conclusions fournisseurs et marché de cette étude restent utiles. La cible technique définitive est toutefois : base US `alpha_trade`, base Chine `alpha_trade_cn`, code et contrat canonique partagés, routage explicite par `market_code`/`database_alias`, et fichiers CN suffixés `_cn` (`config_cn.yaml`, `batch_cn.yaml`, profils et univers). Toute formulation plus ancienne suggérant une base physique unique est remplacée par cette décision et par [l’architecture normative](./architecture_bases_batchs_configuration_cn.md).
+
 **Objet :** Évaluer l’intérêt de développer une déclinaison d’α-Trade sur le marché chinois et déterminer les fournisseurs de données adaptés à un POC.  
 **Marché cible :** Actions A chinoises — Shanghai, Shenzhen et Beijing.  
 **Horizon :** Swing trading — principalement H5 / H10 / H15 / H20.  
@@ -1888,20 +1890,9 @@ symbol seul
 
 La bonne cible est donc une application **market-aware**, dans laquelle le marché est un attribut persistant de chaque donnée et de chaque run, et non une variable globale cachée.
 
-## 68.2 Correction de l’architecture proposée initialement
+## 68.2 Architecture retenue après audit
 
-La première version du document proposait des tables parallèles :
-
-```text
-china_stock_master
-china_daily_bars
-china_fundamentals
-...
-```
-
-Cette solution convient éventuellement à une zone brute de staging propre à Tushare, mais elle est déconseillée pour les tables métier canoniques. Dupliquer toutes les tables créerait deux implémentations du screener, du ML, du risque et du backtest, avec un risque important de divergence.
-
-Architecture recommandée :
+La première version du document proposait des tables parallèles et le premier audit proposait ensuite une seule base physique canonique. La décision finale conserve les avantages du contrat commun tout en ajoutant une barrière de sécurité physique :
 
 ```text
 Sources US                         Sources CN
@@ -1910,10 +1901,14 @@ EODHD / Alpaca / Finnhub          Tushare / RQData
           ▼                              ▼
 staging provider US                staging provider CN
           │                              │
+          ▼                              ▼
+base alpha_trade                   base alpha_trade_cn
+market_code=US_EQ                  market_code=CN_A/CN_BJ
+          │                              │
           └──────────────┬───────────────┘
                          ▼
-               modèle canonique commun
-           instrument_id + market_code + MIC
+          code + schéma logique + repositories communs
+           instrument_id + market_code + MIC + PIT
                          │
              ┌───────────┼───────────┐
              ▼           ▼           ▼
@@ -1925,7 +1920,11 @@ staging provider US                staging provider CN
                  US broker / CN broker
 ```
 
-Les tables brutes peuvent rester spécifiques au fournisseur. Les tables consommées par le reste de l’application doivent être communes et explicitement scopées par marché.
+Les tables métier ont les mêmes contrats logiques, mais leurs lignes US et CN ne résident pas dans la même base physique. Les migrations sont écrites une fois, paramétrées et appliquées séparément. Cette séparation protège notamment contre un `TRUNCATE`, un nettoyage, une restauration ou une migration lancés sur le mauvais marché.
+
+Elle ne signifie pas deux applications : le screener, le ML, le risque, le backtest, l’IHM et les repositories restent communs. Les tables brutes peuvent rester propres aux fournisseurs. `market_code` demeure obligatoire malgré la séparation des bases afin de sécuriser les manifests, exports, artefacts et futures vues consolidées.
+
+Les configurations suivent la même séparation : `config.yaml` et `batch.yaml` restent US/legacy ; `config_cn.yaml`, `batch_cn.yaml` et les fichiers suffixés `_cn` portent les paramètres chinois.
 
 # 69. Le switch US/CN dans l’IHM
 
@@ -1982,8 +1981,8 @@ Pour les opérations cross-sectionnelles — Oracle, ranking, sector neutralizat
 Les fichiers texte actuels ne contiennent que des symboles. Deux options sont possibles :
 
 ```text
-config/univers/us/*.txt
-config/univers/cn/*.txt
+config/univers/<univers_us_existant>.txt
+config/univers/*_cn.txt
 ```
 
 ou un manifeste accompagnant chaque fichier :
@@ -2356,7 +2355,7 @@ Gate : tous les tests actuels passent et les runs US de référence sont inchang
 
 - connecter Tushare dans une zone de staging ;
 - charger master, calendrier, OHLCV, ajustements, statuts et suspensions ;
-- normaliser vers les tables canoniques ;
+- normaliser dans les tables canoniques de `alpha_trade_cn`, selon le même contrat logique que US ;
 - publier un univers PIT CN de 500 à 1 000 instruments ;
 - interdire encore l’exécution réelle.
 
@@ -2449,4 +2448,4 @@ Gate : purification directionnelle stable et amélioration après correction des
 
 Conclusion d’architecture :
 
-> **Oui, α-Trade peut faire coexister US et CN. Le switch IHM est la façade ; la vraie évolution est l’introduction d’une identité instrument, d’un contexte marché propagé de bout en bout et de politiques de calendrier, devise, données, ML et exécution propres à chaque marché.**
+> **Oui, α-Trade peut faire coexister US et CN. Le switch IHM est la façade ; la vraie évolution combine une identité instrument et un contexte marché propagés de bout en bout avec deux bases physiques (`alpha_trade`, `alpha_trade_cn`), un code commun et des configurations CN explicitement suffixées `_cn`.**

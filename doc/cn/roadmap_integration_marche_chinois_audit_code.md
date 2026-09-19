@@ -8,9 +8,9 @@
 
 ## 1. Décision d’architecture
 
-L’intégration est faisable, mais elle ne doit pas être réalisée comme un POC isolé ni comme une copie de l’application US.
+L’intégration est faisable, mais elle ne doit pas être réalisée comme une branche permanente ni comme une seconde application.
 
-La cible recommandée est :
+La cible retenue combine **isolation physique des données** et **contrat logique commun** :
 
 ```text
                          α-Trade multi-marchés
@@ -19,12 +19,16 @@ La cible recommandée est :
  EODHD / Alpaca / SEC / Yahoo                           Tushare / RQData éventuel
           │                                                        │
           ▼                                                        ▼
- staging brut fournisseur US                           staging brut fournisseur CN
+ staging brut US                                           staging brut CN
+          │                                                        │
+          ▼                                                        ▼
+ base alpha_trade                                      base alpha_trade_cn
+ market_code=US_EQ                                     market_code=CN_A/CN_BJ
           │                                                        │
           └──────────────────────┬─────────────────────────────────┘
                                  ▼
-                    modèle canonique commun
-              instrument_id + market_code + MIC
+                   code et contrat canonique commun
+              instrument_id + market_code + MIC + PIT
                                  │
                 ┌────────────────┼────────────────┐
                 ▼                ▼                ▼
@@ -41,15 +45,19 @@ La cible recommandée est :
 
 Principes structurants :
 
-1. une seule base canonique et un seul code métier ;
-2. des tables de staging séparées par fournisseur lorsque les formats sont très différents ;
-3. une identité d’instrument immuable, indépendante du ticker du fournisseur ;
-4. un `MarketContext` explicite transmis à chaque run, batch et requête ;
-5. des modèles entraînés et évalués séparément par marché ;
-6. un backtest chinois réaliste avant toute recherche de broker ;
-7. le chemin paper/live est différé, mais ses contrats sont prévus dès la fondation.
+1. deux bases physiques : `alpha_trade` pour US et `alpha_trade_cn` pour la Chine ;
+2. un seul code métier et un schéma logique partagé, avec migrations paramétrables appliquées séparément ;
+3. des tables de staging séparées par fournisseur lorsque les formats sont très différents ;
+4. une identité d’instrument immuable, indépendante du ticker du fournisseur ;
+5. un `MarketContext` et un `database_alias` explicites dans chaque run, batch et requête ;
+6. des modèles entraînés et évalués séparément par marché ;
+7. un backtest chinois réaliste avant toute recherche de broker ;
+8. le chemin paper/live est différé, mais ses contrats sont prévus dès la fondation ;
+9. `config_cn.yaml`, `batch_cn.yaml` et les fichiers propres à la Chine suffixés `_cn` empêchent les héritages ambigus depuis US.
 
-Il ne faut pas créer une branche Git permanente « Chine » ni une seconde base clonée. Cela conduirait rapidement à deux calendriers, deux moteurs ML, deux backtests et deux séries de correctifs divergentes.
+Il ne faut pas créer une branche Git permanente « Chine », ni dupliquer le moteur ML/backtest, ni créer manuellement une variante `china_*` de chaque composant. En revanche, la séparation physique des bases est volontaire : elle protège les données contre un nettoyage, une restauration ou une migration exécutés sur le mauvais marché. `market_code` reste obligatoire dans les deux bases et dans les artefacts.
+
+Le détail normatif est défini dans [Architecture Chine — Bases, batchs et configurations `_cn`](./architecture_bases_batchs_configuration_cn.md).
 
 ## 2. Ce que l’audit du code montre réellement
 
@@ -119,7 +127,7 @@ Exemples vérifiés :
 - `stock_scores` est un état courant avec PK `symbol` et pourrait être remplacé par un autre marché ;
 - les contraintes de positions et ordres emploient souvent `(account_id, symbol)`.
 
-Conclusion : **aucune donnée CN ne doit être chargée dans les tables canoniques actuelles avant la fin de la fondation P0**.
+Conclusion : **aucune donnée CN ne doit être chargée dans la base US `alpha_trade` ni dans les tables canoniques CN avant la fin de la fondation P0 avant la fin de la fondation P0**.
 
 ## 3. Périmètre fonctionnel cible
 
@@ -193,9 +201,9 @@ Ne pas utiliser simplement `CN` pour toutes les places dès le début : les règ
 Créer à terme des fichiers versionnés :
 
 ```text
-config/markets/us_eq.yaml
-config/markets/cn_a.yaml
-config/markets/cn_bj.yaml
+config/markets/market_us.yaml
+config/markets/market_cn.yaml
+config/markets/market_cn_bj.yaml
 ```
 
 Ils doivent définir les références, mais pas remplacer les historiques versionnés en base :
@@ -531,8 +539,8 @@ Le statut `SHORT_SIGNAL_ONLY` doit être possible : l’instrument peut servir a
 Faire évoluer la convention vers :
 
 ```text
-config/univers/us/*.txt
-config/univers/cn/*.txt
+config/univers/<univers_us_existant>.txt
+config/univers/univers_*_cn.txt
 ```
 
 avec un manifeste :
@@ -541,7 +549,7 @@ avec un manifeste :
 {
   "market_code": "CN_A",
   "universe_id": "cn_a_liquid_research_v1",
-  "symbols_file": "cn_a_liquid_research_v1.txt",
+  "symbols_file": "univers_research_cn.txt",
   "as_of_date": "2026-09-19",
   "currency": "CNY",
   "policy_version": "cn_a_universe_v1"
@@ -1206,7 +1214,7 @@ L’application peut accueillir durablement le marché chinois et réutiliser un
 
 La priorité absolue est donc :
 
-> **rendre α-Trade réellement market-aware tout en conservant une parité US démontrée, puis charger les données CN dans un modèle canonique commun.**
+> **rendre α-Trade réellement market-aware tout en conservant une parité US démontrée, puis charger les données CN dans `alpha_trade_cn` au moyen du même contrat canonique que la base US.**
 
 Une fois cette fondation achevée, Tushare permettra de produire les études, d’entraîner Oracle et les modèles directionnels, et d’exécuter des backtests CN sans attendre le choix d’un broker. Le broker deviendra ensuite un adaptateur supplémentaire, pas une raison de reconstruire le système.
 
@@ -1215,4 +1223,6 @@ Une fois cette fondation achevée, Tushare permettra de produire les études, d�
 - [Étude d’opportunité — Extension d’α-Trade au marché actions chinois](./Étude%20d’opportunité%20—%20Extension%20d’α-Trade%20au%20marché%20actions%20chinois.md) : étude métier et hypothèses initiales ; à lire comme contexte, pas comme vérité du code.
 - [Comparaison des données fournisseurs](./comparaison_data_fournisseur.md) : couverture Tushare face aux données US actuelles.
 - [Actualisation des fournisseurs Chine](./actualisation_fournisseurs_chine.md) : positionnement Tushare, RQData et sources institutionnelles.
+- [Architecture des bases, batchs et configurations CN](./architecture_bases_batchs_configuration_cn.md) : décision normative sur l’isolation physique et les fichiers `_cn`.
+- [Sprint planning détaillé](./sprint_planning_integration_marche_chinois.md) : séquence d’implémentation alignée sur cette architecture.
 
