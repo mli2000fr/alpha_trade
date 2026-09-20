@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS market_sessions (
     session_status VARCHAR(24) NOT NULL DEFAULT 'open',
     open_at_utc DATETIME(6) NULL,
     close_at_utc DATETIME(6) NULL,
+    session_segments_json JSON NULL,
     settlement_date DATE NULL,
     source VARCHAR(64) NOT NULL,
     observed_at DATETIME(6) NOT NULL,

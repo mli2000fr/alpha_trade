@@ -8,7 +8,7 @@
 
 ## Avancement Sprints 0 à 2
 
-Les Sprints 0 à 3 sont terminés. Le gate Sprint 3 est **GO** : migration 0085 appliquée, 100 % des parents historiques classés US_EQ, aucun contexte obligatoire vide et aucune divergence enfant/parent. Voir [Sprint 3 — contexte marché sur les runs](./sprint_3_contexte_marche_runs.md). Sprint 4 — propagation instrument/market dans les faits de données est débloqué.
+Les Sprints 0 à 4 sont terminés. Le gate Sprint 4 est **GO** : migration 0086 appliquée, calendrier US canonique 2010–2035, hash US inchangé, sessions CN segmentées chargeables, cutoffs PIT par dataset et aucun fallback weekday-only autorisé pour CN. Voir [Sprint 4 — calendrier et PIT multi-marchés](./sprint_4_calendrier_pit_multi_marches.md). Le Sprint 5 — propagation de `instrument_id` dans les faits US — est débloqué.
 
 ## 1. Mode d’emploi
 
@@ -449,7 +449,9 @@ Faire évoluer `DataAvailabilityInfo` :
 - erreur si calendrier CN absent ;
 - wrappers NYSE identiques.
 
-### Gate
+### Gate — **GO (20 septembre 2026)**
+
+Preuves : [Sprint 4 — calendrier et PIT multi-marchés](./sprint_4_calendrier_pit_multi_marches.md).
 
 - hash des dates US inchangé sur plusieurs années ;
 - aucun code Oracle/backtest CN ne peut appeler directement le calendrier NYSE ;

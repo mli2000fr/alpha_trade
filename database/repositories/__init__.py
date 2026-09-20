@@ -24,6 +24,7 @@ from __future__ import annotations
 from database.repositories.assets import AssetsRepository
 from database.repositories.bars import BarsRepository
 from database.repositories.instruments import InstrumentRepository
+from database.repositories.market_sessions import upsert_market_sessions
 from database.repositories.quotes import QuotesRepository
 from database.repositories.run_summaries import RunSummariesRepository
 from database.repositories.scores import ScoresRepository
@@ -32,6 +33,7 @@ __all__ = [
     "AssetsRepository",
     "BarsRepository",
     "InstrumentRepository",
+    "upsert_market_sessions",
     "QuotesRepository",
     "RunSummariesRepository",
     "ScoresRepository",

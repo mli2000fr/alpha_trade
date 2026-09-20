@@ -27,3 +27,5 @@ Les trois premiers documents définissent la cible technique actuelle. L’étud
 
 En cas d’ambiguïté, [architecture_bases_batchs_configuration_cn.md](./architecture_bases_batchs_configuration_cn.md) prévaut pour la base, les batchs et les configurations ; la roadmap prévaut pour les impacts code ; le sprint planning prévaut pour l’ordre de réalisation.
 - [Sprint 3 — contexte marché sur les runs, batches et univers](./sprint_3_contexte_marche_runs.md) — contrat parent, serving par marché, backfill US et garde cross-market.
+
+- [Sprint 4 — calendrier et PIT multi-marchés](./sprint_4_calendrier_pit_multi_marches.md) — séances US/CN, segments, cutoffs dataset et compatibilité NYSE.

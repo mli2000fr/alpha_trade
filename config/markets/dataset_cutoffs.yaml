@@ -1,0 +1,17 @@
+schema_version: 1
+
+# Moment minimal auquel une observation datée de la séance J peut être
+# consommée. Les horaires découlent des bornes réelles de séance (DST inclus).
+datasets:
+  daily_bars:
+    US_EQ: {anchor: session_close, offset_minutes: 15}
+    CN_A: {anchor: session_close, offset_minutes: 15}
+    CN_BJ: {anchor: session_close, offset_minutes: 15}
+  opening_window:
+    US_EQ: {anchor: session_open, offset_minutes: 30}
+    CN_A: {anchor: session_open, offset_minutes: 30}
+    CN_BJ: {anchor: session_open, offset_minutes: 30}
+  official_close:
+    US_EQ: {anchor: session_close, offset_minutes: 0}
+    CN_A: {anchor: session_close, offset_minutes: 0}
+    CN_BJ: {anchor: session_close, offset_minutes: 0}
