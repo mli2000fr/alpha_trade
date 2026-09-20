@@ -20,7 +20,7 @@ def load_oof(engine: Any, batch_id: str, horizon: int = 20) -> pd.DataFrame:
         "SELECT p.prediction_date date,p.symbol,p.proba_extreme,p.fold_start,"
         "l.oracle_extreme10,l.oracle_pct_rank,l.oracle_decile,l.future_return "
         "FROM oracle_extreme_predictions p JOIN global_oracle_labels l "
-        "ON l.prediction_date=p.prediction_date AND l.symbol=p.symbol "
+        "ON l.prediction_date=p.prediction_date AND l.instrument_id=p.instrument_id "
         "AND l.batch_id=p.batch_id AND l.horizon=:h "
         "WHERE p.batch_id=:batch_id AND p.fold_start IS NOT NULL "
         "AND l.target_quality_valid=1"

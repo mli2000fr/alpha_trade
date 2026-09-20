@@ -47,6 +47,7 @@ DEFAULT_SPREAD_MAX_QUOTE_AGE_DAYS = 5     # âge max d'une quote pour être cons
 _LIQUIDITY_QUERY = """
 WITH symbol_bars AS (
     SELECT
+        instrument_id,
         symbol,
         AVG(CASE WHEN date >= :lookback_start THEN volume ELSE NULL END) AS avg_volume_20d,
         AVG(CASE WHEN date >= :lookback_start THEN close * volume ELSE NULL END) AS avg_dollar_volume_20d,
@@ -55,13 +56,13 @@ WITH symbol_bars AS (
     FROM stock_bars_daily
     WHERE symbol IN :symbols_placeholder
       AND date <= :end_date
-    GROUP BY symbol
+    GROUP BY instrument_id, symbol
 ),
 last_close AS (
-    SELECT symbol, close AS last_close
+    SELECT instrument_id, symbol, close AS last_close
     FROM (
-        SELECT symbol, close,
-               ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
+        SELECT instrument_id, symbol, close,
+               ROW_NUMBER() OVER (PARTITION BY instrument_id ORDER BY date DESC) AS rn
         FROM stock_bars_daily
         WHERE symbol IN :symbols_placeholder2
           AND date <= :end_date
@@ -87,8 +88,8 @@ SELECT
         ELSE 'ok'
     END AS reason
 FROM symbol_bars sb
-LEFT JOIN last_close lc ON lc.symbol = sb.symbol
-LEFT JOIN stock_metadata sm ON sm.symbol = sb.symbol
+LEFT JOIN last_close lc ON lc.instrument_id = sb.instrument_id
+LEFT JOIN stock_metadata sm ON sm.instrument_id = sb.instrument_id
 WHERE sb.avg_volume_20d < :min_volume
    OR (:min_daily_dvol > 0 AND sb.avg_dollar_volume_20d < :min_daily_dvol)
    OR (:min_market_cap > 0 AND sm.market_cap IS NOT NULL AND sm.market_cap < :min_market_cap)
@@ -311,12 +312,12 @@ _SPREAD_QUERY = """
 SELECT q.symbol, q.spread_bps, q.quote_date
 FROM stock_quote_snapshots q
 INNER JOIN (
-    SELECT symbol, MAX(quote_date) AS max_date
+    SELECT instrument_id, symbol, MAX(quote_date) AS max_date
     FROM stock_quote_snapshots
     WHERE symbol IN :symbols_placeholder
       AND quote_date BETWEEN :min_quote_date AND :end_date
-    GROUP BY symbol
-) latest ON q.symbol = latest.symbol AND q.quote_date = latest.max_date
+    GROUP BY instrument_id, symbol
+) latest ON q.instrument_id = latest.instrument_id AND q.quote_date = latest.max_date
 """
 
 

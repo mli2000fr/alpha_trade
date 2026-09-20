@@ -11,6 +11,7 @@ from sqlalchemy.pool import StaticPool
 
 from common.market_context import MarketCompatibilityError
 from database.repositories.instruments import (
+    InstrumentAmbiguityError,
     InstrumentIdentityError,
     InstrumentRepository,
     assert_market_mic,
@@ -105,6 +106,15 @@ def test_same_local_symbol_can_exist_on_two_mics(repo: InstrumentRepository) -> 
     assert first != second
     assert repo.resolve_instrument("US_EQ", "XNAS", "ABC")["instrument_id"] == first
     assert repo.resolve_instrument("US_EQ", "XNYS", "ABC")["instrument_id"] == second
+    with pytest.raises(InstrumentAmbiguityError, match="local symbol"):
+        repo.resolve_local_symbol("US_EQ", "ABC")
+
+
+def test_local_symbol_bridge_resolves_unique_instrument(repo: InstrumentRepository) -> None:
+    instrument_id = _create(repo, "UNIQUE")
+    resolved = repo.resolve_local_symbol("US_EQ", " unique ")
+    assert resolved is not None
+    assert resolved["instrument_id"] == instrument_id
 
 
 def test_provider_ticker_change_resolves_as_of(repo: InstrumentRepository) -> None:

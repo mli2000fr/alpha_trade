@@ -122,6 +122,36 @@ class InstrumentRepository(Repository):
             rows = conn.execute(statement, params).mappings().all()
         return self._one_or_none(rows, "instrument")
 
+    def resolve_local_symbol(
+        self,
+        market_code: MarketCode | str,
+        local_symbol: str,
+    ) -> RowMapping[str, Any] | None:
+        """Résout un symbole canonique dans un marché.
+
+        Cette méthode est le pont de compatibilité des appels historiques qui
+        ne connaissent encore que ``symbol``. Une ambiguïté entre deux places
+        du même marché est volontairement bloquante : le consommateur doit
+        alors fournir le MIC ou directement ``instrument_id``.
+        """
+        context = self._registry.resolve(market_code)
+        params = {
+            "market_code": context.market_code.value,
+            "local_symbol": _clean(local_symbol, "local_symbol").upper(),
+        }
+        statement = text(
+            """
+            SELECT i.*
+            FROM instruments i
+            WHERE i.market_code = :market_code
+              AND i.local_symbol = :local_symbol
+            ORDER BY i.is_active DESC, i.instrument_id
+            """
+        )
+        with self.connect() as conn:
+            rows = conn.execute(statement, params).mappings().all()
+        return self._one_or_none(rows, "local symbol")
+
     def resolve_provider_symbol(
         self,
         provider: str,

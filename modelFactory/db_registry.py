@@ -829,7 +829,7 @@ def count_completed_runs(
         SELECT COUNT(*) AS cnt, MIN(COALESCE(finished_at, started_at)) AS first_at
         FROM model_training_run mtr
         JOIN model_governance mg
-          ON mg.run_id = mtr.run_id AND mg.symbol = mtr.symbol
+          ON mg.run_id = mtr.run_id
         WHERE mtr.symbol = :sym
           AND mg.model_name = :mn
           AND mtr.status = 'completed'

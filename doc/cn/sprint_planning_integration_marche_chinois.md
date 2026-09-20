@@ -6,9 +6,9 @@
 > Ce document planifie les travaux. Il ne constitue pas une autorisation de modifier le code ni d’activer le trading réel.
 > Architecture retenue : `alpha_trade` pour US, `alpha_trade_cn` pour la Chine, code et schéma logique partagés. Les entrées CN sont `config_cn.yaml` et `batch_cn.yaml`, et les autres fichiers propres à la Chine portent le suffixe `_cn`.
 
-## Avancement Sprints 0 à 2
+## Avancement Sprints 0 à 5
 
-Les Sprints 0 à 4 sont terminés. Le gate Sprint 4 est **GO** : migration 0086 appliquée, calendrier US canonique 2010–2035, hash US inchangé, sessions CN segmentées chargeables, cutoffs PIT par dataset et aucun fallback weekday-only autorisé pour CN. Voir [Sprint 4 — calendrier et PIT multi-marchés](./sprint_4_calendrier_pit_multi_marches.md). Le Sprint 5 — propagation de `instrument_id` dans les faits US — est débloqué.
+Les Sprints 0 à 5 sont terminés. Le gate Sprint 4 est **GO** : migration 0086 appliquée, calendrier US canonique 2010–2035, hash US inchangé, sessions CN segmentées chargeables, cutoffs PIT par dataset et aucun fallback weekday-only autorisé pour CN. Voir [Sprint 4 — calendrier et PIT multi-marchés](./sprint_4_calendrier_pit_multi_marches.md). Le gate Sprint 5 est également **GO** : 33 tables US migrées vers `instrument_id`, couverture critique de 100 %, parité US validée et aucune écriture canonique CN. Voir [Sprint 5 — migration canonique US](./sprint_5_migration_canonique_us.md). Le Sprint 6 est débloqué.
 
 ## 1. Mode d’emploi
 
@@ -531,7 +531,19 @@ critical symbol-only joins = 0
 CN canonical writes = still disabled
 ```
 
-Sans ce GO, ne pas démarrer le Sprint 7.
+### Gate — **GO (21 septembre 2026)**
+
+- migrations `0087` et `0088` appliquées ;
+- `34 091` instruments US canoniques ;
+- `33/33` tables couvertes à 100 % ;
+- hashes legacy/canoniques identiques sur barres, prédictions, rangs et Oracle ;
+- `33` FK, `33` index et `66` triggers actifs ;
+- jointures critiques symbol-only : `0` ;
+- écritures canoniques CN : `0` ;
+- suite complète : `5 796` tests réussis, aucun échec.
+
+Le Sprint 7 n''est plus bloqué par le Sprint 5, mais reste dépendant des gates
+de staging et de qualité du Sprint 6.
 
 ## 10. Sprint 6 — Connecteur Tushare et staging brut
 

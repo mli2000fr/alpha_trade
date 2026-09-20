@@ -340,7 +340,7 @@ class SentimentWeightCalibrator:
                 COALESCE(b.adj_close, b.close) AS close_price
             FROM stock_scores_history h
             JOIN stock_bars_daily b
-              ON b.symbol = h.symbol
+              ON b.instrument_id = h.instrument_id
              AND b.date >= h.snapshot_date
              AND b.date <= :end_date_plus_buffer
              {source_filter_sql}

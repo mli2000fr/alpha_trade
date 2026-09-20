@@ -94,7 +94,7 @@ _ALL_WF_METRICS_QUERY = """
     JOIN alpha_trade.model_training_run AS mtr
         ON mtr.run_id = mm.run_id
     JOIN alpha_trade.model_governance AS mg
-        ON mg.symbol = mm.symbol
+        ON mg.instrument_id = mm.instrument_id
        AND mg.model_name = mm.model_name
        AND mg.is_selected_model = 1
     JOIN alpha_trade.model_training_run AS mtr_gov

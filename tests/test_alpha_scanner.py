@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import zlib
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import cast
@@ -30,6 +31,15 @@ def _create_shared_sqlite_engine():
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+
+
+def _with_instrument_ids(frame: pd.DataFrame) -> pd.DataFrame:
+    """Aligne les fixtures SQLite sur l'identité canonique de production."""
+    result = frame.copy()
+    result["instrument_id"] = result["symbol"].map(
+        lambda symbol: int(zlib.crc32(str(symbol).encode("utf-8")))
+    )
+    return result
 
 
 def _make_market_frame(
@@ -77,6 +87,7 @@ def _seed_selector_run_universe(engine) -> None:
             text(
                 """
                 CREATE TABLE stock_bars_daily (
+                    instrument_id INTEGER NOT NULL,
                     symbol TEXT NOT NULL,
                     date DATETIME NOT NULL,
                     close REAL NOT NULL,
@@ -119,6 +130,7 @@ def _seed_selector_run_universe(engine) -> None:
             text(
                 """
                 CREATE TABLE stock_metadata (
+                    instrument_id INTEGER NOT NULL,
                     symbol TEXT PRIMARY KEY,
                     company_name TEXT,
                     asset_class TEXT,
@@ -178,9 +190,9 @@ def _seed_selector_run_universe(engine) -> None:
             }
         )
 
-        pd.concat(markets, ignore_index=True).to_sql("stock_bars_daily", conn, if_exists="append", index=False)
+        _with_instrument_ids(pd.concat(markets, ignore_index=True)).to_sql("stock_bars_daily", conn, if_exists="append", index=False)
         pd.DataFrame(scores).to_sql("stock_scores", conn, if_exists="append", index=False)
-        pd.DataFrame(metadata_rows).to_sql("stock_metadata", conn, if_exists="append", index=False)
+        _with_instrument_ids(pd.DataFrame(metadata_rows)).to_sql("stock_metadata", conn, if_exists="append", index=False)
 
 
 def test_compute_factors_prefers_trending_and_tighter_symbols() -> None:
@@ -681,6 +693,7 @@ def test_run_blocks_when_quotes_and_earnings_are_stale() -> None:
             text(
                 """
                 CREATE TABLE stock_quote_snapshots (
+                    instrument_id INTEGER NOT NULL,
                     symbol TEXT NOT NULL,
                     quote_date DATE NOT NULL,
                     spread_bps REAL,
@@ -693,6 +706,7 @@ def test_run_blocks_when_quotes_and_earnings_are_stale() -> None:
             text(
                 """
                 CREATE TABLE stock_earnings_calendar (
+                    instrument_id INTEGER NOT NULL,
                     symbol TEXT NOT NULL,
                     earnings_date DATE NOT NULL,
                     PRIMARY KEY(symbol, earnings_date)
@@ -702,12 +716,12 @@ def test_run_blocks_when_quotes_and_earnings_are_stale() -> None:
         )
         conn.execute(
             text(
-                "INSERT INTO stock_quote_snapshots(symbol, quote_date, spread_bps) VALUES ('AAA', '2026-04-01', 12.0)"
+                "INSERT INTO stock_quote_snapshots(instrument_id, symbol, quote_date, spread_bps) VALUES (1721774503, 'AAA', '2026-04-01', 12.0)"
             )
         )
         conn.execute(
             text(
-                "INSERT INTO stock_earnings_calendar(symbol, earnings_date) VALUES ('AAA', '2026-04-15')"
+                "INSERT INTO stock_earnings_calendar(instrument_id, symbol, earnings_date) VALUES (1721774503, 'AAA', '2026-04-15')"
             )
         )
 
@@ -958,6 +972,7 @@ def test_build_preselection_rejection_audit_exposes_reason_counts_and_samples() 
             text(
                 """
                 CREATE TABLE stock_bars_daily (
+                    instrument_id INTEGER NOT NULL,
                     symbol TEXT NOT NULL,
                     date DATETIME NOT NULL,
                     close REAL NOT NULL,
@@ -973,6 +988,7 @@ def test_build_preselection_rejection_audit_exposes_reason_counts_and_samples() 
             text(
                 """
                 CREATE TABLE stock_metadata (
+                    instrument_id INTEGER NOT NULL,
                     symbol TEXT PRIMARY KEY,
                     company_name TEXT,
                     asset_class TEXT,
@@ -994,7 +1010,7 @@ def test_build_preselection_rejection_audit_exposes_reason_counts_and_samples() 
         etf_market, _ = _make_market_frame("ETF1", "Unknown", drift=0.20, rows=260, volume=900_000.0)
         blocked_market, _ = _make_market_frame("BLOCK", "Technology", drift=0.20, rows=260, volume=900_000.0)
         missing_market, _ = _make_market_frame("MISS", "Technology", drift=0.20, rows=260, volume=900_000.0)
-        pd.concat(
+        _with_instrument_ids(pd.concat(
             [
                 eligible_market,
                 cheap_market,
@@ -1005,8 +1021,8 @@ def test_build_preselection_rejection_audit_exposes_reason_counts_and_samples() 
                 missing_market,
             ],
             ignore_index=True,
-        ).to_sql("stock_bars_daily", conn, if_exists="append", index=False)
-        pd.DataFrame(
+        )).to_sql("stock_bars_daily", conn, if_exists="append", index=False)
+        _with_instrument_ids(pd.DataFrame(
             [
                 {
                     "symbol": "PASS",
@@ -1075,7 +1091,7 @@ def test_build_preselection_rejection_audit_exposes_reason_counts_and_samples() 
                     "market_cap": 5_000_000_000.0,
                 },
             ]
-        ).to_sql("stock_metadata", conn, if_exists="append", index=False)
+        )).to_sql("stock_metadata", conn, if_exists="append", index=False)
 
     payload = selector_db_io.build_preselection_rejection_audit(
         engine,
@@ -1104,6 +1120,7 @@ def test_run_end_to_end_returns_ranked_top_selection_and_updates_database() -> N
             text(
                 """
                 CREATE TABLE stock_bars_daily (
+                    instrument_id INTEGER NOT NULL,
                     symbol TEXT NOT NULL,
                     date DATETIME NOT NULL,
                     close REAL NOT NULL,
@@ -1146,6 +1163,7 @@ def test_run_end_to_end_returns_ranked_top_selection_and_updates_database() -> N
             text(
                 """
                 CREATE TABLE stock_metadata (
+                    instrument_id INTEGER NOT NULL,
                     symbol TEXT PRIMARY KEY,
                     company_name TEXT,
                     asset_class TEXT,
@@ -1223,9 +1241,9 @@ def test_run_end_to_end_returns_ranked_top_selection_and_updates_database() -> N
         )
 
         market_df = pd.concat(markets, ignore_index=True)
-        market_df.to_sql("stock_bars_daily", conn, if_exists="append", index=False)
+        _with_instrument_ids(market_df).to_sql("stock_bars_daily", conn, if_exists="append", index=False)
         pd.DataFrame(scores).to_sql("stock_scores", conn, if_exists="append", index=False)
-        pd.DataFrame(metadata_rows).to_sql("stock_metadata", conn, if_exists="append", index=False)
+        _with_instrument_ids(pd.DataFrame(metadata_rows)).to_sql("stock_metadata", conn, if_exists="append", index=False)
 
     scanner = AlphaScanner(
         engine=engine,
@@ -1275,6 +1293,7 @@ def test_iter_eligible_symbol_chunks_excludes_blocked_history_statuses_in_sql() 
             text(
                 """
                 CREATE TABLE stock_bars_daily (
+                    instrument_id INTEGER NOT NULL,
                     symbol TEXT NOT NULL,
                     date DATETIME NOT NULL,
                     close REAL NOT NULL,
@@ -1290,6 +1309,7 @@ def test_iter_eligible_symbol_chunks_excludes_blocked_history_statuses_in_sql() 
             text(
                 """
                 CREATE TABLE stock_metadata (
+                    instrument_id INTEGER NOT NULL,
                     symbol TEXT PRIMARY KEY,
                     company_name TEXT,
                     asset_class TEXT,
@@ -1306,8 +1326,8 @@ def test_iter_eligible_symbol_chunks_excludes_blocked_history_statuses_in_sql() 
 
         market_ready, _ = _make_market_frame("AAA", "Technology", drift=0.35, rows=260)
         market_error, _ = _make_market_frame("ERR", "Technology", drift=0.35, rows=260)
-        pd.concat([market_ready, market_error], ignore_index=True).to_sql("stock_bars_daily", conn, if_exists="append", index=False)
-        pd.DataFrame(
+        _with_instrument_ids(pd.concat([market_ready, market_error], ignore_index=True)).to_sql("stock_bars_daily", conn, if_exists="append", index=False)
+        _with_instrument_ids(pd.DataFrame(
             [
                 {
                     "symbol": "AAA",
@@ -1332,7 +1352,7 @@ def test_iter_eligible_symbol_chunks_excludes_blocked_history_statuses_in_sql() 
                     "market_cap": 5_000_000_000.0,
                 },
             ]
-        ).to_sql("stock_metadata", conn, if_exists="append", index=False)
+        )).to_sql("stock_metadata", conn, if_exists="append", index=False)
 
     scanner = AlphaScanner(
         engine=engine,
@@ -1351,6 +1371,7 @@ def test_run_supports_strict_swing_preset_filters() -> None:
             text(
                 """
                 CREATE TABLE stock_bars_daily (
+                    instrument_id INTEGER NOT NULL,
                     symbol TEXT NOT NULL,
                     date DATETIME NOT NULL,
                     close REAL NOT NULL,
@@ -1393,6 +1414,7 @@ def test_run_supports_strict_swing_preset_filters() -> None:
             text(
                 """
                 CREATE TABLE stock_metadata (
+                    instrument_id INTEGER NOT NULL,
                     symbol TEXT PRIMARY KEY,
                     company_name TEXT,
                     asset_class TEXT,
@@ -1409,6 +1431,7 @@ def test_run_supports_strict_swing_preset_filters() -> None:
             text(
                 """
                 CREATE TABLE stock_quote_snapshots (
+                    instrument_id INTEGER NOT NULL,
                     symbol TEXT NOT NULL,
                     quote_date DATE NOT NULL,
                     spread_bps REAL,
@@ -1421,6 +1444,7 @@ def test_run_supports_strict_swing_preset_filters() -> None:
             text(
                 """
                 CREATE TABLE stock_earnings_calendar (
+                    instrument_id INTEGER NOT NULL,
                     symbol TEXT NOT NULL,
                     earnings_date DATE NOT NULL,
                     PRIMARY KEY(symbol, earnings_date)
@@ -1458,21 +1482,21 @@ def test_run_supports_strict_swing_preset_filters() -> None:
         spy_market, _ = _make_market_frame("SPY", "Benchmark", drift=0.20, rows=260, volume=2_000_000.0, noise_scale=0.01)
         markets.append(spy_market)
 
-        pd.concat(markets, ignore_index=True).to_sql("stock_bars_daily", conn, if_exists="append", index=False)
+        _with_instrument_ids(pd.concat(markets, ignore_index=True)).to_sql("stock_bars_daily", conn, if_exists="append", index=False)
         pd.DataFrame(scores).to_sql("stock_scores", conn, if_exists="append", index=False)
-        pd.DataFrame(metadata_rows).to_sql("stock_metadata", conn, if_exists="append", index=False)
-        pd.DataFrame(
+        _with_instrument_ids(pd.DataFrame(metadata_rows)).to_sql("stock_metadata", conn, if_exists="append", index=False)
+        _with_instrument_ids(pd.DataFrame(
             [
                 {"symbol": "AAA", "quote_date": date(2026, 4, 22), "spread_bps": 12.0},
                 {"symbol": "BBB", "quote_date": date(2026, 4, 22), "spread_bps": 40.0},
             ]
-        ).to_sql("stock_quote_snapshots", conn, if_exists="append", index=False)
-        pd.DataFrame(
+        )).to_sql("stock_quote_snapshots", conn, if_exists="append", index=False)
+        _with_instrument_ids(pd.DataFrame(
             [
                 {"symbol": "AAA", "earnings_date": date(2026, 5, 5)},
                 {"symbol": "BBB", "earnings_date": date(2026, 4, 23)},
             ]
-        ).to_sql("stock_earnings_calendar", conn, if_exists="append", index=False)
+        )).to_sql("stock_earnings_calendar", conn, if_exists="append", index=False)
 
     scanner = AlphaScanner(
         engine=engine,

@@ -29,3 +29,5 @@ En cas d’ambiguïté, [architecture_bases_batchs_configuration_cn.md](./archit
 - [Sprint 3 — contexte marché sur les runs, batches et univers](./sprint_3_contexte_marche_runs.md) — contrat parent, serving par marché, backfill US et garde cross-market.
 
 - [Sprint 4 — calendrier et PIT multi-marchés](./sprint_4_calendrier_pit_multi_marches.md) — séances US/CN, segments, cutoffs dataset et compatibilité NYSE.
+
+- [Sprint 5 — migration canonique US vers `instrument_id`](./sprint_5_migration_canonique_us.md) — backfill reprenable, double écriture, parité US et gate avant données CN canoniques.

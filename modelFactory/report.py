@@ -100,7 +100,7 @@ F1_BUCKET_QUERY = """
     JOIN alpha_trade.model_training_run AS mtr
         ON mtr.run_id = mm.run_id
     JOIN alpha_trade.model_governance AS mg
-        ON mg.symbol = mm.symbol AND mg.model_name = mm.model_name AND mg.is_selected_model = 1
+        ON mg.instrument_id = mm.instrument_id AND mg.model_name = mm.model_name AND mg.is_selected_model = 1
     JOIN alpha_trade.model_training_run AS mtr_gov
         ON mtr_gov.run_id = mg.run_id AND mtr_gov.batch_id = :batch_id
     WHERE mtr.batch_id = :batch_id
@@ -123,7 +123,7 @@ TOP5_BEST_F1_QUERY = """
     JOIN alpha_trade.model_training_run AS mtr
         ON mtr.run_id = mm.run_id
     JOIN alpha_trade.model_governance AS mg
-        ON mg.symbol = mm.symbol AND mg.model_name = mm.model_name AND mg.is_selected_model = 1
+        ON mg.instrument_id = mm.instrument_id AND mg.model_name = mm.model_name AND mg.is_selected_model = 1
     JOIN alpha_trade.model_training_run AS mtr_gov
         ON mtr_gov.run_id = mg.run_id AND mtr_gov.batch_id = :batch_id
     WHERE mtr.batch_id = :batch_id
@@ -146,7 +146,7 @@ TOP5_WORST_F1_QUERY = """
     JOIN alpha_trade.model_training_run AS mtr
         ON mtr.run_id = mm.run_id
     JOIN alpha_trade.model_governance AS mg
-        ON mg.symbol = mm.symbol AND mg.model_name = mm.model_name AND mg.is_selected_model = 1
+        ON mg.instrument_id = mm.instrument_id AND mg.model_name = mm.model_name AND mg.is_selected_model = 1
     JOIN alpha_trade.model_training_run AS mtr_gov
         ON mtr_gov.run_id = mg.run_id AND mtr_gov.batch_id = :batch_id
     WHERE mtr.batch_id = :batch_id
@@ -167,7 +167,7 @@ ZERO_F1_SHORT_QUERY = """
     JOIN alpha_trade.model_training_run AS mtr
         ON mtr.run_id = mm.run_id
     JOIN alpha_trade.model_governance AS mg
-        ON mg.symbol = mm.symbol AND mg.model_name = mm.model_name AND mg.is_selected_model = 1
+        ON mg.instrument_id = mm.instrument_id AND mg.model_name = mm.model_name AND mg.is_selected_model = 1
     JOIN alpha_trade.model_training_run AS mtr_gov
         ON mtr_gov.run_id = mg.run_id AND mtr_gov.batch_id = :batch_id
     WHERE mtr.batch_id = :batch_id
