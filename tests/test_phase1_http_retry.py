@@ -189,3 +189,15 @@ def test_request_with_retry_redacts_api_token_in_logs(monkeypatch: pytest.Monkey
     assert "api_token" in joined
 
 
+def test_retry_redaction_handles_relative_url_from_requests() -> None:
+    from service._http_retry import _redact_sensitive_text
+
+    message = (
+        "HTTPSConnectionPool(host='eodhd.com', port=443): retry with url: "
+        "/api/eod/600000.SHG?api_token=SECRET_TOKEN&fmt=json (SSL error)"
+    )
+    redacted = _redact_sensitive_text(message)
+    assert "SECRET_TOKEN" not in redacted
+    assert "api_token=***" in redacted
+
+

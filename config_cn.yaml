@@ -1,0 +1,19 @@
+schema_version: 1
+market_codes: [CN_A, CN_BJ]
+database_alias: cn_primary
+database_name: alpha_trade_cn
+provider: tushare
+provider_token_env: TUSHARE_TOKEN
+canonical_writes_enabled: false
+timezone: Asia/Shanghai
+scheduler_timezone: Europe/Paris
+artifacts_root: artifacts/cn
+models_root: artifacts/models/cn_a
+backtests_root: artifacts/backtests/cn_a
+staging:
+  preserve_raw_payloads: true
+  preserve_provider_corrections: true
+  require_payload_hash: true
+  require_available_at: true
+  default_page_limit: 5000
+  resume_state_root: artifacts/cn/tushare/state

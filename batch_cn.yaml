@@ -1,0 +1,66 @@
+schema_version: 1
+defaults:
+  database_alias: cn_primary
+  provider: tushare
+  timezone: Asia/Shanghai
+  scheduler_timezone: Europe/Paris
+  token_env: TUSHARE_TOKEN
+  page_limit: 5000
+  max_calls_per_minute: 180
+  max_calls_per_run: 10000
+  canonical_writes_enabled: false
+
+cn_master_calendar_sync:
+  enabled: false
+  priority: P0
+  market_code: CN_A
+  description: "Security master, changements de nom/ST et calendrier de cotation dans le staging brut CN."
+  endpoints: [stock_basic, namechange, trade_cal]
+  run_hours: "11"
+  run_days: "0"
+  log_file: log/batch_cn/cn_master_calendar_sync.txt
+
+cn_daily_market_data_sync:
+  enabled: false
+  priority: P0
+  market_code: CN_A
+  description: "Barres quotidiennes brutes, facteurs d'ajustement et benchmarks, sans publication canonique."
+  endpoints: [daily, adj_factor, index_daily]
+  lookback_days: 7
+  run_hours: "10"
+  run_days: "1,2,3,4,5"
+  log_file: log/batch_cn/cn_daily_market_data_sync.txt
+
+cn_status_limits_sync:
+  enabled: false
+  priority: P0
+  market_code: CN_A
+  description: "Suspensions/reprises et limites quotidiennes de prix pour le futur backtest conservateur."
+  endpoints: [suspend_d, stk_limit]
+  lookback_days: 7
+  run_hours: "10"
+  run_days: "1,2,3,4,5"
+  log_file: log/batch_cn/cn_status_limits_sync.txt
+
+cn_historical_backfill:
+  enabled: false
+  priority: P0
+  market_code: CN_A
+  description: "Backfill reprenable des endpoints P0 vers le staging brut alpha_trade_cn."
+  endpoints: [stock_basic, namechange, trade_cal, daily, adj_factor, suspend_d, stk_limit, index_daily]
+  start_date: 2010-01-01
+  end_date: null
+  chunk_days: 31
+  log_file: log/batch_cn/cn_historical_backfill.txt
+
+cn_staging_quality_daily:
+  enabled: false
+  priority: P0
+  market_code: CN_A
+  description: "Contrôle de couverture, fraîcheur, doublons et lineage du staging ; aucune collecte."
+  endpoints: [stock_basic, trade_cal, daily, adj_factor, suspend_d, stk_limit, index_daily]
+  min_daily_rows: 1
+  max_age_days: 5
+  run_hours: "12"
+  run_days: "1,2,3,4,5"
+  log_file: log/batch_cn/cn_staging_quality_daily.txt

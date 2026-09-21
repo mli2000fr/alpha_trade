@@ -8,9 +8,10 @@ Ordre de lecture recommandé :
 4. [Sprint 0 — baseline US et ADR](./sprint_0_baseline_us_et_adr.md)
 5. [Sprint 1 - MarketContext et registre](./sprint_1_market_context.md)
 6. [Sprint 2 — Référentiel instruments](./sprint_2_referentiel_instruments.md)
-7. [Comparaison des données fournisseurs](./comparaison_data_fournisseur.md)
-8. [Actualisation des fournisseurs](./actualisation_fournisseurs_chine.md)
-9. [Étude d’opportunité historique](./Étude%20d’opportunité%20—%20Extension%20d’α-Trade%20au%20marché%20actions%20chinois.md)
+7. [Sprint 6 — Connecteur Tushare et staging brut](./sprint_6_connecteur_tushare_staging.md)
+8. [Comparaison des données fournisseurs](./comparaison_data_fournisseur.md)
+9. [Actualisation des fournisseurs](./actualisation_fournisseurs_chine.md)
+10. [Étude d’opportunité historique](./Étude%20d’opportunité%20—%20Extension%20d’α-Trade%20au%20marché%20actions%20chinois.md)
 
 Les trois premiers documents définissent la cible technique actuelle. L’étude d’opportunité historique fournit le contexte et a été harmonisée avec les décisions finales.
 
@@ -31,3 +32,5 @@ En cas d’ambiguïté, [architecture_bases_batchs_configuration_cn.md](./archit
 - [Sprint 4 — calendrier et PIT multi-marchés](./sprint_4_calendrier_pit_multi_marches.md) — séances US/CN, segments, cutoffs dataset et compatibilité NYSE.
 
 - [Sprint 5 — migration canonique US vers `instrument_id`](./sprint_5_migration_canonique_us.md) — backfill reprenable, double écriture, parité US et gate avant données CN canoniques.
+
+- [Sprint 6 — connecteur Tushare et staging brut](./sprint_6_connecteur_tushare_staging.md) — base `alpha_trade_cn`, lineage brut, idempotence, batchs et état du gate fournisseur.
