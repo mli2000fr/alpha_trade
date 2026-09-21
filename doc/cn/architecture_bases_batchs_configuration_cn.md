@@ -202,7 +202,7 @@ Chaque section de `batch_cn.yaml` doit contenir :
 ```yaml
 market_code: CN_A
 database_alias: cn_primary
-provider: tushare
+provider: baostock
 timezone: Asia/Shanghai
 scheduler_timezone: Europe/Paris
 calendar_id: CN_A_CANONICAL
@@ -560,7 +560,7 @@ Les sprints de fondation doivent intégrer la séparation physique :
 - Sprint 2 : identité globale compatible multi-base ;
 - Sprint 3 : batches/runs stockent base et marché effectifs ;
 - Sprint 5 : parité US dans `alpha_trade`, sans donnée CN ;
-- Sprint 6 : création `alpha_trade_cn` et staging Tushare ;
+- Sprint 6 : création `alpha_trade_cn` et staging multi-fournisseurs, BaoStock primaire gratuit ;
 - Sprint 7 : canonicalisation uniquement dans `cn_primary` ;
 - Sprint 14 : IHM agrège les deux bases en lecture ;
 - Sprint 17 : backups, contrôles et nettoyages séparés ;

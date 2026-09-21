@@ -5,6 +5,8 @@ param(
     [string]$TaskName,
     [string]$WorkspacePath,
     [string]$PythonExePath,
+    [string]$BatchConfigPath,
+    [string]$LauncherPath,
     [ValidateSet('Interactive','System')][string]$RunAs='Interactive',
     [string]$UserId=$(if($env:USERDOMAIN){"$($env:USERDOMAIN)\$($env:USERNAME)"}else{$env:USERNAME})
 )
@@ -13,8 +15,9 @@ if (-not $WorkspacePath) { $WorkspacePath=Split-Path -Parent (Split-Path -Parent
 $workspace=(Resolve-Path -LiteralPath $WorkspacePath).Path
 if (-not $PythonExePath) { $PythonExePath=Join-Path $workspace '.venv\Scripts\python.exe' }
 $python=(Resolve-Path -LiteralPath $PythonExePath).Path
-$configPath=Join-Path $workspace 'batch.yaml'
-$pyCode='import json,sys,yaml; c=yaml.safe_load(open(sys.argv[1],encoding=''utf-8'')) or {}; print(json.dumps(c.get(sys.argv[2]) or {}))'
+$configPath=if($BatchConfigPath){$BatchConfigPath}else{Join-Path $workspace 'batch.yaml'}
+if(-not [IO.Path]::IsPathRooted($configPath)){$configPath=Join-Path $workspace $configPath}
+$pyCode='import json,sys,yaml; c=yaml.safe_load(open(sys.argv[1],encoding=''utf-8'')) or {}; d=c.get(''defaults'') or {}; s=c.get(sys.argv[2]) or {}; print(json.dumps({**d,**s}))'
 $cfg=((( & $python -c $pyCode $configPath $BatchName ) | Out-String).Trim() | ConvertFrom-Json)
 if (-not $cfg) { throw "Section absente: $BatchName" }
 function Get-ConfigValue([object]$Config, [string]$Name, [object]$Default=$null) {
@@ -28,7 +31,8 @@ if (-not $TaskName) {
     }) -join '')
     $TaskName = 'AlphaTrade-' + $suffix
 }
-$launcher=Join-Path $PSScriptRoot 'forward_pit_launcher.ps1'
+$launcher=if($LauncherPath){$LauncherPath}else{Join-Path $PSScriptRoot 'forward_pit_launcher.ps1'}
+if(-not [IO.Path]::IsPathRooted($launcher)){$launcher=Join-Path $workspace $launcher}
 $hiddenLauncher=Join-Path $PSScriptRoot 'run_forward_pit_hidden.vbs'
 if (-not (Test-Path -LiteralPath $hiddenLauncher)) { throw "Lanceur invisible absent: $hiddenLauncher" }
 $powershellExe=(Get-Command 'powershell.exe' -ErrorAction Stop).Source

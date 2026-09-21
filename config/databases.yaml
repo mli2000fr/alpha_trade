@@ -1,0 +1,20 @@
+schema_version: 1
+databases:
+  us_primary:
+    database: alpha_trade
+    database_env: DB_NAME
+    host: localhost
+    host_env: DB_HOST
+    user_env: LOGIN_DB
+    password_env: PASSWORD_DB
+    allowed_markets: [US_EQ]
+  cn_primary:
+    database: alpha_trade_cn
+    database_env: DB_NAME_CN
+    host: localhost
+    host_env: DB_HOST_CN
+    user_env: LOGIN_DB_CN
+    password_env: PASSWORD_DB_CN
+    fallback_user_env: LOGIN_DB
+    fallback_password_env: PASSWORD_DB
+    allowed_markets: [CN_A, CN_BJ]

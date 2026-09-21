@@ -37,7 +37,7 @@ Règles :
 | 3 | Migration des parents | Batches/runs/univers portent le marché | 4, 8, 10 |
 | 4 | Calendrier et PIT génériques | Sessions US/CN paramétrables | 7, 10, 12 |
 | 5 | Migration canonique US | `instrument_id` propagé, parité US validée | toute ingestion CN canonique |
-| 6 | Client et staging Tushare | Collecte brute idempotente | 7 |
+| 6 | Sources gratuites BaoStock et staging multi-fournisseurs | Collecte brute idempotente sans clé | 7 |
 | 7 | Canonicalisation CN P0 | Master, barres, ajustements, statuts, sessions | 8, 9, 10 |
 | 8 | Univers CN PIT | Univers quotidien sans survivorship bias | 9, 10 |
 | 9 | Features CN baseline | Panel prix/volume/benchmark/secteur | 10 |
@@ -545,7 +545,11 @@ CN canonical writes = still disabled
 Le Sprint 7 n''est plus bloqué par le Sprint 5, mais reste dépendant des gates
 de staging et de qualité du Sprint 6.
 
-## 10. Sprint 6 — Connecteur Tushare et staging brut
+## 10. Sprint 6 — Sources gratuites BaoStock et staging brut multi-fournisseurs
+
+### Décision fournisseur gratuite
+
+BaoStock est la source primaire du socle marché. AKShare est facultatif et non bloquant. RQData/Tushare ne sont pas requis. Le détail exécutable, les commandes et les limites sont dans [sprint_6_sources_gratuites_baostock.md](./sprint_6_sources_gratuites_baostock.md).
 
 ### Objectif
 

@@ -1,0 +1,90 @@
+schema_version: 2
+defaults:
+  database_alias: cn_primary
+  provider: baostock
+  timezone: Asia/Shanghai
+  scheduler_timezone: Europe/Paris
+  canonical_writes_enabled: false
+
+cn_master_calendar_sync:
+  enabled: false
+  priority: P0
+  market_code: CN_A
+  description: "Référentiel actions Shanghai/Shenzhen et calendrier de cotation via BaoStock gratuit."
+  endpoints: [stock_basic, trade_cal]
+  start_date: 2010-01-01
+  run_hours: "11"
+  run_days: "0"
+  state_key: cn_master_calendar_sync
+  log_file: log/batch_cn/cn_master_calendar_sync.txt
+
+cn_daily_market_data_sync:
+  enabled: false
+  priority: P0
+  market_code: CN_A
+  description: "OHLCV quotidien non ajusté, statuts de négociation/ST, facteurs d'ajustement et indices via BaoStock."
+  endpoints: [daily, adj_factor, index_daily]
+  lookback_days: 10
+  include_inactive: false
+  run_hours: "10"
+  run_days: "1,2,3,4,5"
+  state_key: cn_daily_market_data_sync
+  log_file: log/batch_cn/cn_daily_market_data_sync.txt
+
+cn_historical_backfill:
+  enabled: false
+  priority: P0
+  market_code: CN_A
+  description: "Backfill BaoStock reprenable depuis 2010 ; lancement manuel uniquement."
+  endpoints: [stock_basic, trade_cal, daily, adj_factor, index_daily]
+  start_date: 2010-01-01
+  end_date: null
+  include_inactive: true
+  state_key: cn_historical_backfill
+  log_file: log/batch_cn/cn_historical_backfill.txt
+
+cn_baostock_smoke:
+  enabled: false
+  priority: P0
+  market_code: CN_A
+  description: "Smoke réel borné BaoStock, sans clé, avant activation des batchs récurrents."
+  endpoints: [stock_basic, trade_cal, daily, adj_factor, index_daily]
+  start_date: 2025-01-02
+  end_date: 2025-01-10
+  max_symbols: 5
+  log_file: log/batch_cn/cn_baostock_smoke.txt
+
+cn_staging_quality_daily:
+  enabled: false
+  priority: P0
+  market_code: CN_A
+  provider: quality
+  description: "Contrôle de couverture, fraîcheur, doublons et lineage du staging CN ; aucune collecte."
+  endpoints: [stock_basic, trade_cal, daily, adj_factor, index_daily]
+  min_daily_rows: 1
+  max_age_days: 5
+  run_hours: "12"
+  run_days: "1,2,3,4,5"
+  log_file: log/batch_cn/cn_staging_quality_daily.txt
+
+cn_akshare_enrichment:
+  enabled: false
+  priority: P2
+  market_code: CN_A
+  provider: akshare
+  description: "Réservé aux enrichissements gratuits non bloquants après validation de chaque endpoint et de sa stabilité."
+  endpoints: []
+  activation_blocker: "Aucun endpoint AKShare ne devient canonique sans smoke réseau, contrat PIT et test de schéma."
+  log_file: log/batch_cn/cn_akshare_enrichment.txt
+
+cn_tushare_optional:
+  enabled: false
+  priority: P3
+  market_code: CN_A
+  provider: tushare
+  token_env: TUSHARE_TOKEN
+  description: "Connecteur conservé pour un futur essai ; jamais requis par le chemin gratuit."
+  endpoints: [stock_basic, namechange, trade_cal, daily, adj_factor, suspend_d, stk_limit, index_daily]
+  lookback_days: 7
+  state_key: cn_tushare_optional
+  log_file: log/batch_cn/cn_tushare_optional.txt

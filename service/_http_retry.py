@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import random
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -237,7 +238,11 @@ def _extract_host(url: str) -> str:
 
 
 def _redact_sensitive_text(text: str) -> str:
-    cleaned = str(text)
+    cleaned = re.sub(
+        r"(?i)([?&](?:api_token|token|api_key|apikey|key|secret)=)[^&\s)]+",
+        r"\1***",
+        str(text),
+    )
     try:
         start = cleaned.find("http://")
         if start < 0:

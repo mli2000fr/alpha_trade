@@ -4,6 +4,9 @@ param(
     [Parameter(Mandatory=$true)][string]$BatchName,
     [string]$WorkspacePath,
     [string]$PythonExePath,
+    [string]$BatchConfigPath,
+    [string]$RunnerModule='service.forward_pit.batch',
+    [string]$RunnerBatchArgument='--batch',
     [string]$LogFile,
     [string]$EnvFilePath,
     [switch]$Force,
@@ -15,10 +18,11 @@ if (-not $WorkspacePath) { $WorkspacePath = Split-Path -Parent (Split-Path -Pare
 $workspace = (Resolve-Path -LiteralPath $WorkspacePath).Path
 if (-not $PythonExePath) { $PythonExePath = Join-Path $workspace '.venv\Scripts\python.exe' }
 $python = (Resolve-Path -LiteralPath $PythonExePath).Path
-$configPath = Join-Path $workspace 'batch.yaml'
-$pyCode = 'import json,sys,yaml; c=yaml.safe_load(open(sys.argv[1],encoding=''utf-8'')) or {}; print(json.dumps(c.get(sys.argv[2]) or {}))'
+$configPath = if ($BatchConfigPath) { $BatchConfigPath } else { Join-Path $workspace 'batch.yaml' }
+if (-not [IO.Path]::IsPathRooted($configPath)) { $configPath = Join-Path $workspace $configPath }
+$pyCode = 'import json,sys,yaml; c=yaml.safe_load(open(sys.argv[1],encoding=''utf-8'')) or {}; d=c.get(''defaults'') or {}; s=c.get(sys.argv[2]) or {}; print(json.dumps({**d,**s}))'
 $cfgText = ((& $python -c $pyCode $configPath $BatchName 2>$null) | Out-String).Trim()
-if (-not $cfgText) { throw "Section absente dans batch.yaml: $BatchName" }
+if (-not $cfgText) { throw "Section absente dans ${configPath}: $BatchName" }
 $cfg = $cfgText | ConvertFrom-Json
 function Get-ConfigValue([object]$Config, [string]$Name, [object]$Default=$null) {
     $property = $Config.PSObject.Properties[$Name]
@@ -102,7 +106,7 @@ try {
     try { $locked = $mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $locked = $true }
     if (-not $locked) { Write-Status "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] SKIP $BatchName already-running"; exit 0 }
     $started = Get-Date; Write-Status "[$($started.ToString('yyyy-MM-dd HH:mm:ss'))] START $BatchName pid=$PID"
-    $args = @('-u','-m','service.forward_pit.batch','--batch',$BatchName,'--batch-config',$configPath)
+    $args = @('-u','-m',$RunnerModule,$RunnerBatchArgument,$BatchName,'--batch-config',$configPath)
     if ($DryRun) { $args += '--dry-run' }
     $stdoutTmp = Join-Path ([IO.Path]::GetTempPath()) "alpha_forward_pit_stdout_$PID.txt"
     $stderrTmp = Join-Path ([IO.Path]::GetTempPath()) "alpha_forward_pit_stderr_$PID.txt"
