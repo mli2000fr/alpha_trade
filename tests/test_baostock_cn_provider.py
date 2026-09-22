@@ -117,3 +117,85 @@ def test_cn_batch_defaults_to_free_provider() -> None:
     assert "token_env" not in payload["defaults"]
     assert payload["cn_tushare_optional"]["enabled"] is False
     assert payload["cn_akshare_enrichment"]["enabled"] is False
+
+class RetryBackend(FakeBackend):
+    def __init__(self) -> None:
+        self.daily_calls = 0
+        self.login_calls = 0
+
+    def login(self) -> FakeResult:
+        self.login_calls += 1
+        return FakeResult([], [])
+
+    def query_history_k_data_plus(self, *_args: Any, **_kwargs: Any) -> FakeResult:
+        self.daily_calls += 1
+        if self.daily_calls == 1:
+            return FakeResult([], [], code="10002007")
+        return super().query_history_k_data_plus(*_args, **_kwargs)
+
+
+class TruncatedPaginationResult(FakeResult):
+    def __init__(self) -> None:
+        rows = [
+            ["2025-01-02", "sh.600000", "10", "11", "9", "10.5", "10", "100", "1000", "1", "0"],
+            ["2025-01-03", "sh.600000", "10.5", "11", "10", "10.8", "10.5", "100", "1000", "1", "0"],
+        ]
+        super().__init__(
+            ["date", "code", "open", "high", "low", "close", "preclose", "volume", "amount", "tradestatus", "isST"],
+            rows,
+        )
+        self.data = rows
+        self.per_page_count = len(rows)
+
+
+def test_baostock_client_reconnects_after_transient_provider_error() -> None:
+    backend = RetryBackend()
+    client = BaoStockClient(backend, max_attempts=2, retry_delay_seconds=0)
+    page = client.daily("sh.600000", "2025-01-01", "2025-01-03")
+    assert page.rows
+    assert backend.daily_calls == 2
+    assert backend.login_calls == 2
+
+
+def test_baostock_client_rejects_a_silently_truncated_last_page() -> None:
+    backend = FakeBackend()
+    backend.query_history_k_data_plus = lambda *_args, **_kwargs: TruncatedPaginationResult()  # type: ignore[method-assign]
+    client = BaoStockClient(backend, max_attempts=1, retry_delay_seconds=0)
+    with pytest.raises(BaoStockError, match="Pagination BaoStock incomplète"):
+        client.daily("sh.600000", "2025-01-01", "2025-01-03")
+
+
+def test_baostock_client_rejects_invalid_resilience_configuration() -> None:
+    with pytest.raises(ValueError, match="socket_timeout_seconds"):
+        BaoStockClient(FakeBackend(), socket_timeout_seconds=0)
+    with pytest.raises(ValueError, match="max_attempts"):
+        BaoStockClient(FakeBackend(), max_attempts=0)
+
+def test_explicit_symbols_bypass_the_full_stock_master_query() -> None:
+    from service.baostock.ingestion import BaoStockIngestionService
+
+    class NoMasterBackend(FakeBackend):
+        def query_stock_basic(self) -> FakeResult:
+            raise AssertionError("stock_basic ne doit pas être appelé pour un manifeste explicite")
+
+    service = BaoStockIngestionService(
+        client=BaoStockClient(NoMasterBackend()),
+        engine=None,  # type: ignore[arg-type]
+        run_id="run",
+        symbols=["sz.000002", "sh.600000", "sh.600000"],
+    )
+    assert service.equity_symbols(include_inactive=True) == ["sh.600000", "sz.000002"]
+
+def test_historical_windows_avoid_baostock_pagination() -> None:
+    from service.baostock.ingestion import historical_windows
+
+    windows = historical_windows(
+        datetime(2018, 5, 10).date(),
+        datetime(2025, 12, 31).date(),
+    )
+    assert windows == [
+        (datetime(2018, 5, 10).date(), datetime(2020, 12, 31).date()),
+        (datetime(2021, 1, 1).date(), datetime(2023, 12, 31).date()),
+        (datetime(2024, 1, 1).date(), datetime(2025, 12, 31).date()),
+    ]
+    assert all((end - start).days < 1100 for start, end in windows)

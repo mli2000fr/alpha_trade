@@ -195,3 +195,9 @@ Le Sprint 7-B passe à GO complet uniquement si :
 10. CN_A reste désactivé pour le live.
 
 Après ce gate, Sprint 8 pourra publier l'univers tradable quotidien PIT. Avant cela, le statut correct est **7-B implémenté, données incomplètes**.
+
+## Correctif de robustesse BaoStock du 22 septembre 2026
+
+BaoStock utilise une socket sans timeout natif fiable et ses historiques longs déclenchent une pagination fragile. Le client Alpha-Trade impose désormais un timeout de 30 secondes, trois tentatives et une reconnexion.
+
+Lorsqu'un manifeste explicite est fourni, le service ne recharge plus le référentiel stock_basic complet. Les barres 2018–2025 sont demandées par fenêtres maximales de trois ans, soit trois requêtes quotidiennes par symbole, afin de rester sous la page BaoStock de 1 000 lignes. Chaque fenêtre validée est inscrite immédiatement dans l'état de reprise.

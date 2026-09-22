@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +15,22 @@ from service.tushare.storage import persist_page, utcnow_naive
 
 DEFAULT_STATE_ROOT = Path("artifacts/cn/baostock/state")
 DEFAULT_INDICES = ("sh.000001", "sz.399001", "sh.000300", "sz.399006")
+
+
+def historical_windows(start: date, end: date, *, years: int = 3) -> list[tuple[date, date]]:
+    """Fenêtres assez courtes pour rester sous la pagination BaoStock de 1 000 lignes."""
+    if years < 1:
+        raise ValueError("years doit être positif")
+    if end < start:
+        raise ValueError("end doit être postérieur ou égal à start")
+    windows: list[tuple[date, date]] = []
+    current = start
+    while current <= end:
+        boundary = date(current.year + years, 1, 1)
+        window_end = min(end, boundary - timedelta(days=1))
+        windows.append((current, window_end))
+        current = window_end + timedelta(days=1)
+    return windows
 
 
 class BaoStockResumeState:
@@ -45,12 +61,14 @@ class BaoStockIngestionService:
         state_root: Path = DEFAULT_STATE_ROOT,
         state_key: str | None = None,
         max_symbols: int | None = None,
+        symbols: list[str] | tuple[str, ...] | None = None,
     ) -> None:
         self.client = client
         self.engine = engine
         self.run_id = run_id
         self.state = BaoStockResumeState(state_root / f"{state_key or run_id}.json")
         self.max_symbols = max_symbols
+        self.symbols = tuple(sorted({str(value).strip().lower() for value in (symbols or []) if str(value).strip()}))
         self._master: BaoStockPage | None = None
 
     def _stock_master(self) -> BaoStockPage:
@@ -59,6 +77,9 @@ class BaoStockIngestionService:
         return self._master
 
     def equity_symbols(self, *, include_inactive: bool) -> list[str]:
+        if self.symbols:
+            selected = list(self.symbols)
+            return selected[: self.max_symbols] if self.max_symbols else selected
         rows = self._stock_master().rows
         symbols = [
             str(row.get("code") or "").lower()
@@ -115,16 +136,23 @@ class BaoStockIngestionService:
             pages = [(f"{start}:{end}", self.client.trade_calendar(start, end))]
         elif endpoint == "index_daily":
             pages = [(symbol, self.client.daily(symbol, start, end, index=True)) for symbol in DEFAULT_INDICES]
-        elif endpoint in {"daily", "adj_factor"}:
+        elif endpoint == "daily":
+            symbols = self.equity_symbols(include_inactive=include_inactive)
+            windows = historical_windows(start_date or date(1990, 1, 1), end_date or date.today())
+            total.details.update({"symbols": len(symbols), "windows_per_symbol": len(windows)})
+            pages = (
+                (
+                    f"{symbol}|{window_start.isoformat()}:{window_end.isoformat()}",
+                    self.client.daily(symbol, window_start.isoformat(), window_end.isoformat()),
+                )
+                for symbol in symbols
+                for window_start, window_end in windows
+            )
+        elif endpoint == "adj_factor":
             symbols = self.equity_symbols(include_inactive=include_inactive)
             total.details["symbols"] = len(symbols)
             pages = (
-                (
-                    symbol,
-                    self.client.daily(symbol, start, end)
-                    if endpoint == "daily"
-                    else self.client.adjustment_factors(symbol, start, end),
-                )
+                (symbol, self.client.adjustment_factors(symbol, start, end))
                 for symbol in symbols
             )
         else:
@@ -148,4 +176,4 @@ class BaoStockIngestionService:
         return total
 
 
-__all__ = ["BaoStockIngestionService", "BaoStockResumeState"]
+__all__ = ["BaoStockIngestionService", "BaoStockResumeState", "historical_windows"]
