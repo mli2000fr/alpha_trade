@@ -85,3 +85,78 @@ Le rapport final est sous `artifacts/cn/ranking/sprint10c/`.
 ne choisit pas automatiquement un horizon/modèle pour le live : après
 l'observation des résultats 10-B et 10-C, une confirmation sur des données
 CN plus récentes ou une période indépendante reste nécessaire.
+
+## Résultats de la campagne complète
+
+Les **64 folds attendus sont terminés et vérifiés** : 4 horizons × 2 modèles ×
+8 semestres. L'agrégation stricte ne signale aucun fold manquant ; le statut
+est `COMPLETE_RESEARCH_ONLY`. Les huit combinaisons franchissent le gate
+pré-enregistré **face au momentum relatif** : amélioration de la précision
+symétrique supérieure à 2 points, 8 semestres positifs sur 8 et borne basse
+du bootstrap mensuel positive même après correction pour huit hypothèses.
+Cela ne signifie ni que les deux directions sont bonnes, ni que le classement
+est prêt pour une décision de trading.
+
+Voici les résultats LightGBM **dans le pool Oracle TOP20 OOS**. Les pourcentages
+D10 et D1 sont des précisions conditionnelles parmi les 20 % extrêmes
+sélectionnés *au sein de ce pool*, et non des taux de réussite de trades.
+
+| Horizon | Précision symétrique modèle / momentum | D10 dans le haut modèle / momentum | D1 dans le bas modèle / momentum | IC moyen global modèle / momentum |
+| --- | ---: | ---: | ---: | ---: |
+| H5 | 26,10 % / 19,71 % | 16,04 % / 18,37 % | 36,16 % / 21,04 % | +0,093 / −0,057 |
+| H10 | 25,93 % / 18,15 % | 15,46 % / 16,07 % | 36,41 % / 20,22 % | +0,110 / −0,071 |
+| H15 | 25,88 % / 17,38 % | 15,25 % / 14,92 % | 36,51 % / 19,85 % | +0,117 / −0,080 |
+| H20 | 25,49 % / 16,90 % | 15,04 % / 14,19 % | 35,94 % / 19,62 % | +0,118 / −0,083 |
+
+Le gain symétrique H20 est de **+8,59 points** ; sa borne basse de bootstrap
+avec correction familiale est **+6,66 points**. Le même déséquilibre entre
+branches apparaît avec CatBoost. Les mesures couvrent environ 0,91 à
+0,94 million de lignes labellisées dans le pool selon l'horizon, et près de
+950 séances OOS. Les comparaisons sont appariées sur les mêmes observations.
+
+**Interprétation par branche :** le signal substantiel est l'identification
+de D1 dans le bas du classement. À H20, la précision D1 atteint 35,94 %
+contre 19,62 % pour le momentum. La branche D10 dans le haut n'apporte
+aucun gain convaincant : elle est moins bonne que le momentum à H5 et H10,
+et ne le dépasse que de 0,33 et 0,86 point à H15/H20. Les huit semestres
+positifs concernent la *moyenne symétrique*, dominée par D1 ; ils ne
+constituent pas huit validations de la branche D10. Même le classement modèle
+place encore, à H20, **18,15 % de vrais D1 dans son haut** et **13,07 % de
+vrais D10 dans son bas**. Une politique LONG D10 ou SHORT D1 n'est donc pas
+validée par cette étude.
+
+Les rendements moyens de prix des groupes LightGBM haut/bas sont
+respectivement +1,17 %/−2,38 % à H20. Ils sont calculés sur des trajectoires
+réalisées, sans coûts ni simulation des contraintes de négociation ; le
+spread arithmétique +3,55 % **n'est pas un rendement de stratégie**.
+L'hypothèse D1 pourrait inspirer un veto de risque sur les achats, mais
+elle ne justifie pas à elle seule une vente à découvert réalisable sur CN_A.
+
+## Sensibilité exploratoire : réversion plutôt que momentum
+
+Après lecture des résultats, l'IC négatif du momentum relatif a motivé un
+diagnostic **post-hoc** avec son score inversé, une baseline élémentaire de
+réversion. Le calcul lit les prédictions OOS déjà sauvegardées, ne réentraîne
+aucun modèle et ne modifie **pas** le gate pré-enregistré. Le
+[rapport de sensibilité](../../artifacts/cn/ranking/sprint10c/posthoc_reversed_momentum_diagnostic.json)
+est explicitement marqué `POST_HOC_DIAGNOSTIC_NOT_A_GATE`.
+
+| Horizon | Précision symétrique modèle / réversion | D10 dans le haut modèle / réversion | D1 dans le bas modèle / réversion |
+| --- | ---: | ---: | ---: |
+| H5 | 26,10 % / 25,50 % | 16,04 % / 17,11 % | 36,16 % / 33,89 % |
+| H10 | 25,93 % / 25,41 % | 15,46 % / 16,38 % | 36,41 % / 34,44 % |
+| H15 | 25,88 % / 25,06 % | 15,25 % / 15,79 % | 36,51 % / 34,33 % |
+| H20 | 25,49 % / 24,45 % | 15,04 % / 15,08 % | 35,94 % / 33,83 % |
+
+Ainsi, l'avantage symétrique sur cette baseline plus pertinente se réduit
+à **0,5–1,0 point**, et la réversion fait légèrement mieux sur D10 à tous
+les horizons. Comme elle a été choisie en voyant les résultats, on ne peut
+ni la déclarer gagnante par un test confirmatoire sur ces mêmes données, ni
+ignorer la fragilité qu'elle révèle. La conclusion opérationnelle est donc
+**NO-GO promotion en serving et NO-GO signal LONG autonome**, malgré le
+`GO_RESEARCH_ONLY` face à la baseline pré-enregistrée.
+
+Avant une nouvelle décision, il faut pré-enregistrer la réversion parmi
+les baselines, obtenir des dates CN indépendantes de cette campagne et
+tester séparément D10, D1/veto et les contraintes d'exécution. Aucun
+backtest portefeuille ni aucun flux live n'a été modifié par le Sprint 10-C.
