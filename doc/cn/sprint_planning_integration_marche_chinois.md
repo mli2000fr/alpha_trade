@@ -922,6 +922,20 @@ Le sprint peut conclure NO-GO directionnel sans bloquer la suite infrastructure.
 
 Créer un moteur économique spécifique par politiques, sans dupliquer le simulateur.
 
+**État Sprint 12-A (25/09/2026)** : [contrat d'exécution daté CN](./sprint_12a_contrat_execution.md)
+installé et audité dans `alpha_trade_cn`, avec règles 2018–2025 et coûts
+`RESEARCH_PROXY` explicitement non live. La simulation d'ordres,
+l'inventaire/cash et la validation économique complète restent au
+Sprint 12-B ; une éligibilité proxy n'est pas un fill.
+
+**État Sprint 12-B (25/09/2026)** : [moteur de replay CN_A](./sprint_12b_replay_portefeuille_cn.md)
+implémenté et testé, avec lecture seule de `alpha_trade_cn`, scénarios de
+fills hypothétiques, inventaire T+1, cash, coûts et journal de non-fills.
+Le gate technique est passé ; **le gate économique n'est pas passé** :
+les corporate actions canoniques sont encore non classifiées et aucune
+politique OOS de sélection/allocation/sortie n'a été figée puis rejouée
+sur le portefeuille. Aucun rendement de 11-B n'est requalifié en PnL net.
+
 ### 12.1 Quantités et lots
 
 - achats arrondis au lot ;

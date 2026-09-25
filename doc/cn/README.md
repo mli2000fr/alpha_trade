@@ -49,3 +49,5 @@ En cas d’ambiguïté, [architecture_bases_batchs_configuration_cn.md](./archit
 - [Sprint 10-C — Global ranking signé CN](./sprint_10c_global_ranking.md) — classement D1–D10 sur l'univers PIT et dans le TOP20 Oracle OOS.
 - [Sprint 11-A — Diagnostic directionnel après Oracle](./sprint_11a_diagnostic_directionnel.md) — veto D1, sélection LONG, abstention et comparaison explicite à la réversion.
 - [Sprint 11-B — Stress économique du veto D1](./sprint_11b_veto_economic.md) — coûts, lots et blocages CN ; replay indicatif, pas backtest portefeuille.
+- [Sprint 12-A — Contrat d'exécution daté CN](./sprint_12a_contrat_execution.md) — règles 2018–2025 et coûts proxy installés dans alpha_trade_cn, fail-closed hors période et sans preuve de fill.
+- [Sprint 12-B — Replay de portefeuille CN_A](./sprint_12b_replay_portefeuille_cn.md) — cash/inventaire T+1, non-fills et coûts détaillés ; fills de recherche hypothétiques, gate économique OOS encore ouvert.
