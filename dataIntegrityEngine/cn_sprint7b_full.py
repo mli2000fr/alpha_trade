@@ -16,6 +16,7 @@ from service.market.cn_canonical_full import (
     audit_full,
     enrich_manifest,
     measure_coverage,
+    remediate_historical_quality,
     select_full_universe,
     write_chunks,
 )
@@ -100,7 +101,7 @@ def _write_report(payload: dict[str, Any]) -> Path:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Canonicalisation complète CN Sprint 7-B")
-    parser.add_argument("action", choices=("prepare", "run-chunk", "run-all", "promote", "enrich", "coverage", "audit"))
+    parser.add_argument("action", choices=("prepare", "run-chunk", "run-all", "promote", "enrich", "coverage", "audit", "remediate-quality"))
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--chunks-root", type=Path, default=DEFAULT_CHUNKS)
     parser.add_argument("--state", type=Path, default=DEFAULT_ARTIFACTS / "state.json")
@@ -111,6 +112,7 @@ def main() -> None:
     parser.add_argument("--start-chunk", type=int, default=0)
     parser.add_argument("--max-chunks", type=int)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--apply", action="store_true", help="Confirme la remédiation historique CN")
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
     logging.basicConfig(level=getattr(logging, args.log_level.upper()), format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -150,6 +152,12 @@ def main() -> None:
             payload["coverage"] = measure_coverage(engine, manifest_path=args.manifest, start=args.start_date, end=args.end_date)
         elif args.action == "audit":
             payload["audit"] = audit_full(engine, manifest_path=args.manifest)
+        elif args.action == "remediate-quality":
+            if not args.apply:
+                parser.error("remediate-quality exige --apply")
+            payload["quality_remediation"] = remediate_historical_quality(
+                engine, start=args.start_date, end=args.end_date
+            )
         payload["finished_at"] = datetime.now(UTC)
         report = _write_report(payload)
         print(json.dumps({**payload, "report_path": str(report)}, ensure_ascii=False, indent=2, default=str))

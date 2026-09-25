@@ -23,6 +23,7 @@ try {
     $lock.Write($payload, 0, $payload.Length)
     $lock.Flush()
 
+    $env:PYTHONIOENCODING = "utf-8"
     Set-Location $projectRoot
     Write-Output "Sprint 7-B backfill start: $([DateTimeOffset]::Now.ToString('o'))"
     & $python -u -m dataIntegrityEngine.cn_sprint7b_full run-all --start-chunk $StartChunk --log-level INFO

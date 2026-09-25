@@ -36,3 +36,14 @@ En cas d’ambiguïté, [architecture_bases_batchs_configuration_cn.md](./archit
 
 - [Sprint 6 — sources gratuites BaoStock](./sprint_6_sources_gratuites_baostock.md) — base `alpha_trade_cn`, staging multi-fournisseurs, smoke réel et chemin Oracle amplitude.
 - [Archive Sprint 6 Tushare](./sprint_6_connecteur_tushare_staging.md) — connecteur conservé mais non requis.
+- [Sprint 7-B — canonicalisation historique](./sprint_7b_canonicalisation_complete.md) — 5 405 actions, backfill 2018–2025 et contrat des limites dérivées.
+- [Audit et remédiation Sprint 7-B](./sprint_7b_audit_final_2026_09_24.md) — couverture, exceptions de radiation, suspensions contradictoires et correctif des limites ST.
+- [Contrat d'univers tradable PIT](./contrat_univers_tradable_pit.md) — convention de radiation inclusive, exclusions des statuts contradictoires et limites inconnues, sans fuite temporelle.
+- [Sprint 8 — Univers quotidien Point-in-Time](./sprint_8_univers_pit.md) — politique V1, snapshots avant séance, audit après clôture, migration CN et gate de validation.
+- [Validation finale du Sprint 8](./sprint_8_validation_finale_2026_09_25.md) — 1 942 séances, contrôle complet PIT et traitement des exceptions.
+- [Sprint 9 — Features CN price-only](./sprint_9_features_cn_price_v1.md) — panel PIT `cn_price_v1`, benchmark CSI 300, rangs transversaux et limites documentées.
+- [Validation Sprint 9, 2018–2025](./sprint_9_validation_2018_2025.md) — 8,28 M lignes, audit global et limites sectorielles/ajustements.
+- [Sprint 10-A — Labels Oracle CN](./sprint_10a_labels_oracle_cn.md) — H5/H10/H15/H20, disponibilité future, facteurs vérifiés et déciles D1–D10.
+- [Sprint 10-A — Validation 2018–2025](./sprint_10a_validation_2018_2025.md) — audit des 32 artefacts, couvertures et quarantaine avant entraînement.
+- [Sprint 10-B — Oracle amplitude Walk-Forward](./sprint_10b_oracle_walk_forward.md) — protocole pré-enregistré, folds OOS CN, baseline ATR et gate de recherche.
+- [Sprint 10-C — Global ranking signé CN](./sprint_10c_global_ranking.md) — classement D1–D10 sur l'univers PIT et dans le TOP20 Oracle OOS.

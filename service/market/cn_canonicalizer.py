@@ -186,6 +186,18 @@ def _valid_bar(row: dict[str, Any]) -> bool:
     )
 
 
+def canonical_trading_status(raw_status: str, volume: Any, amount: Any) -> str:
+    """Signale une suspension contradictoire sans inventer une séance tradable."""
+    status = str(raw_status or "TRADE")
+    if (
+        status.startswith("SUSPENDED")
+        and not status.endswith("|SOURCE_CONFLICT")
+        and any(value is not None and Decimal(str(value)) > 0 for value in (volume, amount))
+    ):
+        return f"{status}|SOURCE_CONFLICT"
+    return status
+
+
 def promote_pilot(engine: Engine, *, manifest_path: Path, staging_cutoff: datetime | None = None) -> CanonicalizationReport:
     symbols = read_pilot_manifest(manifest_path)
     manifest_hash = hashlib.sha256((",".join(symbols) + "\n").encode()).hexdigest()
@@ -283,7 +295,9 @@ def promote_pilot(engine: Engine, *, manifest_path: Path, staging_cutoff: dateti
                 close = Decimal(str(row["close_price"]))
                 pre = Decimal(str(row["pre_close"])) if row.get("pre_close") not in (None, 0) else None
                 daily_return = (close / pre - 1) if pre and pre != 0 else None
-                status = str(row.get("status_code") or "TRADE")
+                status = canonical_trading_status(
+                    str(row.get("status_code") or "TRADE"), row.get("volume"), row.get("amount")
+                )
                 conn.execute(text(
                     "INSERT INTO stock_bars_daily(instrument_id,symbol,market_code,date,open,high,low,close,pre_close,adj_close,volume,amount,daily_return,trading_status,is_special_treatment,data_adjustment,data_source,source_payload_hash,observed_at,available_at) "
                     "VALUES (:id,:symbol,'CN_A',:date,:open,:high,:low,:close,:pre,:close,:volume,:amount,:ret,:status,:st,'raw','baostock',:hash,:observed,:available) "

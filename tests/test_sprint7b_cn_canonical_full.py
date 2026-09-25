@@ -9,7 +9,8 @@ from pathlib import Path
 import pytest
 
 from dataIntegrityEngine.cn_sprint7b_full import Sprint7BState
-from service.market.cn_canonical_full import price_limit_policy, write_chunks
+from service.market.cn_canonical_full import derived_limit_for_bar, price_limit_policy, write_chunks
+from service.market.cn_canonicalizer import canonical_trading_status
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -43,9 +44,15 @@ def test_sprint7b_schema_preserves_derived_and_unclassified_semantics() -> None:
     [
         ("SH_MAIN", date(2025, 1, 2), False, 1, "IPO_FIRST_5_OBS_NO_LIMIT_CONSERVATIVE", None),
         ("SH_MAIN", date(2025, 1, 2), True, 6, "CN_ST_5PCT_V1", Decimal("0.05")),
+        ("SH_MAIN", date(2026, 7, 5), True, 6, "CN_ST_5PCT_V1", Decimal("0.05")),
+        ("SH_MAIN", date(2026, 7, 6), True, 6, "CN_MAIN_ST_10PCT_POST_20260706_V1", Decimal("0.10")),
+        ("SZ_MAIN", date(2026, 7, 6), True, 6, "CN_MAIN_ST_10PCT_POST_20260706_V1", Decimal("0.10")),
         ("STAR", date(2020, 1, 2), False, 6, "CN_STAR_20PCT_V1", Decimal("0.20")),
+        ("STAR", date(2024, 1, 2), True, 6, "CN_STAR_20PCT_V1", Decimal("0.20")),
         ("CHINEXT", date(2020, 8, 23), False, 6, "CN_MAIN_10PCT_V1", Decimal("0.10")),
+        ("CHINEXT", date(2020, 8, 23), True, 6, "CN_ST_5PCT_V1", Decimal("0.05")),
         ("CHINEXT", date(2020, 8, 24), False, 6, "CN_CHINEXT_20PCT_POST_20200824_V1", Decimal("0.20")),
+        ("CHINEXT", date(2020, 8, 24), True, 6, "CN_CHINEXT_20PCT_POST_20200824_V1", Decimal("0.20")),
         ("SZ_MAIN", date(2025, 1, 2), False, 6, "CN_MAIN_10PCT_V1", Decimal("0.10")),
     ],
 )
@@ -66,6 +73,35 @@ def test_price_limit_policy_is_explicit_and_conservative(
     assert policy == expected_policy
     assert pct == expected_pct
     assert exception is (observation <= 5)
+
+
+def test_derived_limit_quarantines_observed_break_without_inventing_official_limit() -> None:
+    valid = derived_limit_for_bar(
+        board="CHINEXT", session_date=date(2024, 1, 2), is_st=True,
+        observed_number=100, pre_close=Decimal("10"), high=Decimal("11.50"), low=Decimal("9"),
+    )
+    assert valid["policy"] == "CN_CHINEXT_20PCT_POST_20200824_V1"
+    assert valid["up"] == Decimal("12.00")
+    assert valid["exception"] is False
+
+    unverified = derived_limit_for_bar(
+        board="SH_MAIN", session_date=date(2024, 1, 2), is_st=False,
+        observed_number=100, pre_close=Decimal("10"), high=Decimal("12.50"), low=Decimal("9"),
+    )
+    assert unverified["policy"] == "OBSERVED_OUTSIDE_DERIVED_LIMIT_V1"
+    assert unverified["derivation"] == "observed_break_v1"
+    assert unverified["exception"] is True
+    assert unverified["up"] is None and unverified["down"] is None
+    assert unverified["locked_up"] is None and unverified["locked_down"] is None
+
+
+def test_conflicting_suspension_remains_non_tradable_and_is_idempotently_tagged() -> None:
+    assert canonical_trading_status("SUSPENDED", 123, 0) == "SUSPENDED|SOURCE_CONFLICT"
+    assert canonical_trading_status("SUSPENDED|ST", 0, 1) == "SUSPENDED|ST|SOURCE_CONFLICT"
+    assert canonical_trading_status("SUSPENDED", 0, 0) == "SUSPENDED"
+    assert canonical_trading_status("TRADE", 123, 100) == "TRADE"
+    assert canonical_trading_status("SUSPENDED|SOURCE_CONFLICT", 123, 0) == "SUSPENDED|SOURCE_CONFLICT"
+    assert not canonical_trading_status("SUSPENDED", 123, 0).startswith("TRADE")
 
 
 def test_chunk_manifests_are_deterministic_and_indexed(tmp_path: Path) -> None:

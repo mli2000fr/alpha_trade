@@ -67,17 +67,50 @@ def price_limit_policy(*, board: str, session_date: date, is_st: bool, observed_
     """Politique conservatrice ; les cinq premières observations restent sans bornes."""
     if observed_number <= 5:
         return "IPO_FIRST_5_OBS_NO_LIMIT_CONSERVATIVE", None, True
-    if is_st:
-        return "CN_ST_5PCT_V1", Decimal("0.05"), False
     if board == "STAR":
         return "CN_STAR_20PCT_V1", Decimal("0.20"), False
     if board == "CHINEXT" and session_date >= date(2020, 8, 24):
         return "CN_CHINEXT_20PCT_POST_20200824_V1", Decimal("0.20"), False
+    if is_st and board in {"SH_MAIN", "SZ_MAIN"} and session_date >= date(2026, 7, 6):
+        return "CN_MAIN_ST_10PCT_POST_20260706_V1", Decimal("0.10"), False
+    if is_st:
+        return "CN_ST_5PCT_V1", Decimal("0.05"), False
     return "CN_MAIN_10PCT_V1", Decimal("0.10"), False
 
 
 def _rounded(value: Decimal) -> Decimal:
     return value.quantize(CENT, rounding=ROUND_HALF_UP)
+
+
+def derived_limit_for_bar(*, board: str, session_date: date, is_st: bool, observed_number: int,
+                          pre_close: Decimal | None, high: Decimal, low: Decimal) -> dict[str, Any]:
+    """Ne publie pas une borne démentie par l'OHLC connu à la clôture.
+
+    Le contrôle de cohérence est disponible seulement après la séance. Une
+    borne ainsi invalidée ne peut pas servir de preuve PIT d'exécutabilité
+    pendant cette même séance.
+    """
+    policy, pct, exception = price_limit_policy(
+        board=board, session_date=session_date, is_st=is_st,
+        observed_number=observed_number,
+    )
+    up = _rounded(pre_close * (1 + pct)) if pre_close is not None and pct is not None else None
+    down = _rounded(pre_close * (1 - pct)) if pre_close is not None and pct is not None else None
+    tolerance = Decimal("0.005")
+    if up is not None and down is not None and (high > up + tolerance or low < down - tolerance):
+        return {
+            "policy": "OBSERVED_OUTSIDE_DERIVED_LIMIT_V1", "derivation": "observed_break_v1",
+            "pct": None, "up": None, "down": None, "exception": True,
+            "reached_up": None, "reached_down": None, "locked_up": None, "locked_down": None,
+        }
+    return {
+        "policy": policy, "derivation": "board_rule_v2", "pct": pct,
+        "up": up, "down": down, "exception": exception or pre_close is None,
+        "reached_up": None if up is None else high >= up - tolerance,
+        "reached_down": None if down is None else low <= down + tolerance,
+        "locked_up": None if up is None else low >= up - tolerance,
+        "locked_down": None if down is None else high <= down + tolerance,
+    }
 
 
 def enrich_manifest(engine: Engine, *, manifest_path: Path) -> dict[str, int]:
@@ -107,25 +140,18 @@ def enrich_manifest(engine: Engine, *, manifest_path: Path) -> dict[str, int]:
         instrument_id = int(row["instrument_id"])
         observed_numbers[instrument_id] += 1
         pre_close = Decimal(str(row["pre_close"])) if row.get("pre_close") not in (None, 0) else None
-        policy, pct, exception = price_limit_policy(
+        derived = derived_limit_for_bar(
             board=str(row.get("board_code") or "UNKNOWN"),
             session_date=row["date"],
             is_st=bool(row.get("is_special_treatment")),
             observed_number=observed_numbers[instrument_id],
+            pre_close=pre_close,
+            high=Decimal(str(row["high"])),
+            low=Decimal(str(row["low"])),
         )
-        up = _rounded(pre_close * (1 + pct)) if pre_close is not None and pct is not None else None
-        down = _rounded(pre_close * (1 - pct)) if pre_close is not None and pct is not None else None
-        high = Decimal(str(row["high"]))
-        low = Decimal(str(row["low"]))
-        tolerance = Decimal("0.005")
         limit_rows.append({
             "id": instrument_id, "date": row["date"], "reference": pre_close,
-            "up": up, "down": down, "pct": pct, "policy": policy,
-            "exception": exception or pre_close is None,
-            "reached_up": None if up is None else high >= up - tolerance,
-            "reached_down": None if down is None else low <= down + tolerance,
-            "locked_up": None if up is None else low >= up - tolerance,
-            "locked_down": None if down is None else high <= down + tolerance,
+            **derived,
             "observed": row["observed_at"], "available": row["available_at"],
         })
     action_rows: list[dict[str, Any]] = []
@@ -144,8 +170,8 @@ def enrich_manifest(engine: Engine, *, manifest_path: Path) -> dict[str, int]:
         })
     limit_sql = text(
         "INSERT INTO cn_daily_price_limits(instrument_id,session_date,reference_close,limit_up,limit_down,limit_pct,policy_code,derivation_method,is_rule_exception,reached_up,reached_down,locked_up,locked_down,source,observed_at,available_at) "
-        "VALUES (:id,:date,:reference,:up,:down,:pct,:policy,'board_rule_v1',:exception,:reached_up,:reached_down,:locked_up,:locked_down,'alpha_trade_derived',:observed,:available) "
-        "ON DUPLICATE KEY UPDATE reference_close=VALUES(reference_close),limit_up=VALUES(limit_up),limit_down=VALUES(limit_down),limit_pct=VALUES(limit_pct),policy_code=VALUES(policy_code),is_rule_exception=VALUES(is_rule_exception),reached_up=VALUES(reached_up),reached_down=VALUES(reached_down),locked_up=VALUES(locked_up),locked_down=VALUES(locked_down),observed_at=VALUES(observed_at),available_at=VALUES(available_at)"
+        "VALUES (:id,:date,:reference,:up,:down,:pct,:policy,:derivation,:exception,:reached_up,:reached_down,:locked_up,:locked_down,'alpha_trade_derived',:observed,:available) "
+        "ON DUPLICATE KEY UPDATE reference_close=VALUES(reference_close),limit_up=VALUES(limit_up),limit_down=VALUES(limit_down),limit_pct=VALUES(limit_pct),policy_code=VALUES(policy_code),derivation_method=VALUES(derivation_method),is_rule_exception=VALUES(is_rule_exception),reached_up=VALUES(reached_up),reached_down=VALUES(reached_down),locked_up=VALUES(locked_up),locked_down=VALUES(locked_down),observed_at=VALUES(observed_at),available_at=VALUES(available_at)"
     )
     action_sql = text(
         "INSERT INTO cn_corporate_actions(instrument_id,action_type,ex_date,factor_value,previous_factor_value,classification_status,source,source_payload_hash,observed_at,available_at) "
@@ -158,6 +184,68 @@ def enrich_manifest(engine: Engine, *, manifest_path: Path) -> dict[str, int]:
         if action_rows:
             conn.execute(action_sql, action_rows)
     return {"limits": len(limit_rows), "corporate_actions": len(action_rows)}
+
+
+def remediate_historical_quality(engine: Engine, *, start: date, end: date) -> dict[str, int]:
+    """Répare les limites dérivées et signale les statuts contradictoires.
+
+    Ne modifie ni le staging, ni les OHLC, ni les données US. Les journées dont
+    l'OHLC contredit encore la règle après correction restent sans borne fiable.
+    Les flags fondés sur l'OHLC ne deviennent connaissables qu'à la clôture.
+    """
+    params = {"start": start, "end": end}
+    growth_st = text(
+        "UPDATE cn_daily_price_limits l "
+        "JOIN stock_bars_daily b ON b.instrument_id=l.instrument_id AND b.date=l.session_date "
+        "JOIN instrument_status_history s ON s.instrument_id=b.instrument_id AND s.valid_from=b.date "
+        "AND s.source='baostock_daily' "
+        "SET l.reference_close=b.pre_close,l.limit_up=ROUND(b.pre_close*1.20,2),"
+        "l.limit_down=ROUND(b.pre_close*0.80,2),l.limit_pct=0.20,"
+        "l.policy_code=CASE WHEN s.board_code='STAR' THEN 'CN_STAR_20PCT_V1' "
+        "ELSE 'CN_CHINEXT_20PCT_POST_20200824_V1' END,"
+        "l.derivation_method='board_rule_v2',"
+        "l.reached_up=(b.high>=ROUND(b.pre_close*1.20,2)-0.005),"
+        "l.reached_down=(b.low<=ROUND(b.pre_close*0.80,2)+0.005),"
+        "l.locked_up=(b.low>=ROUND(b.pre_close*1.20,2)-0.005),"
+        "l.locked_down=(b.high<=ROUND(b.pre_close*0.80,2)+0.005) "
+        "WHERE b.market_code='CN_A' AND l.session_date BETWEEN :start AND :end "
+        "AND l.policy_code='CN_ST_5PCT_V1' AND l.is_rule_exception=0 "
+        "AND (s.board_code='STAR' OR (s.board_code='CHINEXT' AND l.session_date>='2020-08-24'))"
+    )
+    unverified = text(
+        "UPDATE cn_daily_price_limits l "
+        "JOIN stock_bars_daily b ON b.instrument_id=l.instrument_id AND b.date=l.session_date "
+        "SET l.limit_up=NULL,l.limit_down=NULL,l.limit_pct=NULL,"
+        "l.policy_code='OBSERVED_OUTSIDE_DERIVED_LIMIT_V1',"
+        "l.derivation_method='observed_break_v1',l.is_rule_exception=1,"
+        "l.reached_up=NULL,l.reached_down=NULL,l.locked_up=NULL,l.locked_down=NULL "
+        "WHERE b.market_code='CN_A' AND l.session_date BETWEEN :start AND :end "
+        "AND l.is_rule_exception=0 AND l.limit_up IS NOT NULL AND l.limit_down IS NOT NULL "
+        "AND (b.high>l.limit_up+0.005 OR b.low<l.limit_down-0.005)"
+    )
+    conflicted_statuses = text(
+        "UPDATE instrument_status_history s "
+        "JOIN stock_bars_daily b ON b.instrument_id=s.instrument_id AND b.date=s.valid_from "
+        "SET s.trading_status=CONCAT(s.trading_status,'|SOURCE_CONFLICT'),s.is_tradable=0 "
+        "WHERE b.market_code='CN_A' AND b.date BETWEEN :start AND :end "
+        "AND s.source='baostock_daily' AND b.trading_status LIKE 'SUSPENDED%' "
+        "AND (b.volume>0 OR b.amount>0) "
+        "AND s.trading_status NOT LIKE '%|SOURCE_CONFLICT'"
+    )
+    conflicted_bars = text(
+        "UPDATE stock_bars_daily SET trading_status=CONCAT(trading_status,'|SOURCE_CONFLICT') "
+        "WHERE market_code='CN_A' AND date BETWEEN :start AND :end "
+        "AND trading_status LIKE 'SUSPENDED%' AND (volume>0 OR amount>0) "
+        "AND trading_status NOT LIKE '%|SOURCE_CONFLICT'"
+    )
+    with engine.begin() as conn:
+        result = {
+            "growth_st_reclassified": conn.execute(growth_st, params).rowcount,
+            "unverified_limits": conn.execute(unverified, params).rowcount,
+            "conflicted_statuses": conn.execute(conflicted_statuses, params).rowcount,
+            "conflicted_bars": conn.execute(conflicted_bars, params).rowcount,
+        }
+    return result
 
 
 def measure_coverage(engine: Engine, *, manifest_path: Path, start: date, end: date) -> dict[str, Any]:
@@ -180,6 +268,16 @@ def measure_coverage(engine: Engine, *, manifest_path: Path, start: date, end: d
         "WHERE ips.provider='baostock' AND ips.provider_symbol IN :symbols AND f.effective_date BETWEEN :start AND :end "
         "GROUP BY f.instrument_id,YEAR(f.effective_date)"
     ).bindparams(expanding)
+    terminal_stmt = text(
+        "SELECT ips.provider_symbol,i.delisting_date "
+        "FROM instruments i JOIN instrument_provider_symbols ips ON ips.instrument_id=i.instrument_id "
+        "JOIN market_sessions s ON s.market_code='CN_A' AND s.session_date=i.delisting_date "
+        "AND s.session_status='open' "
+        "LEFT JOIN stock_bars_daily b ON b.instrument_id=i.instrument_id AND b.date=i.delisting_date "
+        "WHERE i.market_code='CN_A' AND i.instrument_type='equity' AND ips.provider='baostock' "
+        "AND ips.provider_symbol IN :symbols AND i.delisting_date BETWEEN :start AND :end "
+        "AND b.instrument_id IS NULL"
+    ).bindparams(expanding)
     with engine.connect() as conn:
         instruments = [dict(row) for row in conn.execute(instrument_stmt, {"symbols": symbols}).mappings()]
         sessions = [row[0] for row in conn.execute(text(
@@ -188,6 +286,13 @@ def measure_coverage(engine: Engine, *, manifest_path: Path, start: date, end: d
         ), {"start": start, "end": end})]
         observed = {(int(row.instrument_id), int(row.y)): (int(row.n), int(row.suspended or 0)) for row in conn.execute(bars_stmt, {"symbols": symbols, "start": start, "end": end})}
         factors = {(int(row.instrument_id), int(row.y)): int(row.n) for row in conn.execute(factor_stmt, {"symbols": symbols, "start": start, "end": end})}
+        terminal_absences = [dict(row) for row in conn.execute(
+            terminal_stmt, {"symbols": symbols, "start": start, "end": end}
+        ).mappings()]
+    accepted_terminal = Counter(
+        (parse_baostock_symbol(row["provider_symbol"]).board_code, row["delisting_date"].year)
+        for row in terminal_absences
+    )
     aggregates: dict[tuple[str, int], dict[str, Any]] = defaultdict(lambda: {"instruments": set(), "expected": 0, "observed": 0, "suspended": 0, "factors": 0})
     for item in instruments:
         board = parse_baostock_symbol(item["provider_symbol"]).board_code
@@ -207,13 +312,20 @@ def measure_coverage(engine: Engine, *, manifest_path: Path, start: date, end: d
     for (board, year), values in sorted(aggregates.items()):
         expected = int(values["expected"])
         observed_count = int(values["observed"])
+        terminal_count = accepted_terminal.get((board, year), 0)
+        unexplained = max(0, expected - observed_count - terminal_count)
         ratio = Decimal(observed_count) / Decimal(expected) if expected else None
-        status = "PASS" if ratio is not None and ratio >= Decimal("0.95") else "INCOMPLETE"
+        status = "PASS" if ratio is not None and ratio >= Decimal("0.95") and unexplained == 0 else "INCOMPLETE"
         rows.append({
             "run": run_id, "board": board, "year": year, "instruments": len(values["instruments"]),
             "expected": expected, "observed": observed_count, "suspended": int(values["suspended"]),
             "factors": int(values["factors"]), "ratio": ratio, "status": status,
-            "details": json.dumps({"threshold": 0.95, "scope_symbols": len(symbols)}),
+            "details": json.dumps({
+                "threshold": 0.95, "scope_symbols": len(symbols),
+                "delisting_day_no_bar": terminal_count,
+                "unexplained_missing": unexplained,
+                "delisting_date_inclusive": True,
+            }),
             "measured": datetime.now(UTC).replace(tzinfo=None),
         })
     insert = text(
@@ -223,7 +335,13 @@ def measure_coverage(engine: Engine, *, manifest_path: Path, start: date, end: d
     with engine.begin() as conn:
         if rows:
             conn.execute(insert, rows)
-    return {"coverage_run_id": run_id, "rows": len(rows), "pass": sum(row["status"] == "PASS" for row in rows), "incomplete": sum(row["status"] != "PASS" for row in rows)}
+    return {
+        "coverage_run_id": run_id, "rows": len(rows),
+        "pass": sum(row["status"] == "PASS" for row in rows),
+        "incomplete": sum(row["status"] != "PASS" for row in rows),
+        "delisting_day_no_bar": sum(accepted_terminal.values()),
+        "unexplained_missing": sum(json.loads(row["details"])["unexplained_missing"] for row in rows),
+    }
 
 
 def audit_full(engine: Engine, *, manifest_path: Path) -> dict[str, Any]:
@@ -248,4 +366,4 @@ def audit_full(engine: Engine, *, manifest_path: Path) -> dict[str, Any]:
     return {"status": status, "manifest_symbols": len(symbols), "mapped": mapped, "with_bars": with_bars, **counts}
 
 
-__all__ = ["audit_full", "enrich_manifest", "measure_coverage", "price_limit_policy", "select_full_universe", "write_chunks"]
+__all__ = ["audit_full", "derived_limit_for_bar", "enrich_manifest", "measure_coverage", "price_limit_policy", "remediate_historical_quality", "select_full_universe", "write_chunks"]

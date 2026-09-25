@@ -2,7 +2,7 @@
 
 ## Statut
 
-**Implémentation terminée le 22 septembre 2026. Backfill historique complet en cours.**
+**Implémentation terminée le 22 septembre 2026. Backfill 217/217 terminé le 24 septembre 2026 ; audit de qualité détaillé effectué, gate complet conditionnel.** Voir [l'audit après backfill](./sprint_7b_audit_final_2026_09_24.md).
 
 Le Sprint 7-B généralise le pipeline validé au Sprint 7-A à toutes les actions A ayant chevauché la période du 1er janvier 2018 au 31 décembre 2025. Il ne débloque pas à lui seul le ML, le backtest ou le live CN : le gate final exige la fin du backfill, l'audit de couverture et la validation des exceptions.
 
@@ -74,15 +74,18 @@ Un lot COMPLETED est ignoré, sauf avec --force. Un échec est marqué FAILED av
 
 ## Limites journalières de cours
 
-cn_daily_price_limits contient une valeur par instrument et séance. Les valeurs sont **dérivées**, pas téléchargées comme limites officielles. derivation_method=board_rule_v1 et source=alpha_trade_derived rendent cette distinction vérifiable.
+cn_daily_price_limits contient une valeur par instrument et séance. Les valeurs sont **dérivées**, pas téléchargées comme limites officielles. `source=alpha_trade_derived` et `derivation_method` distinguent les anciennes règles `board_rule_v1`, la correction `board_rule_v2` et les exceptions `observed_break_v1`. Une borne contredite par l'OHLC est désormais mise à `NULL` avec `policy_code=OBSERVED_OUTSIDE_DERIVED_LIMIT_V1` et `is_rule_exception=1`. Cette contradiction n'est observable qu'après la clôture et ne doit jamais être utilisée pour décider rétroactivement d'une exécution intrajournalière.
 
 | Cas | Limite |
 |---|---:|
 | cinq premières observations | aucune limite affirmée, exception conservatrice |
-| titre ST | ±5 % |
-| STAR | ±20 % |
-| ChiNext à partir du 24 août 2020 | ±20 % |
-| ChiNext avant cette date et marchés principaux | ±10 % |
+| STAR, y compris ST | ±20 % |
+| ChiNext à partir du 24 août 2020, y compris ST | ±20 % |
+| ST des marchés principaux avant le 6 juillet 2026 ou ChiNext avant le 24 août 2020 | ±5 % |
+| ST des marchés principaux à partir du 6 juillet 2026 | ±10 % |
+| Autres actions ChiNext avant la réforme et marchés principaux | ±10 % |
+
+À partir du **6 juillet 2026**, les ST des marchés principaux passent également à ±10 %. Cette règle future n'affecte pas le backfill 2018–2025. Références : [règle ChiNext et ST de Shenzhen](https://www.szse.cn/English/rules/siteRule/P020240911598586572526.pdf), [réforme 2026 de Shanghai](https://www.sse.com.cn/aboutus/mediacenter/hotandd/c/c_20260424_10816474.shtml), [entrée en vigueur Shenzhen](https://investor.szse.cn/lawrules/rule/trade/t20260424_620190.html).
 
 Les bornes partent de pre_close et sont arrondies au centime avec ROUND_HALF_UP. Sans pre_close, la séance reste une exception. reached_up, reached_down, locked_up et locked_down utilisent une tolérance d'un demi-centime.
 
@@ -96,7 +99,7 @@ Il ne déduit jamais un dividende ou un split du seul facteur. Les champs d'anno
 
 ## Suspensions et couverture
 
-Une absence de barre n'est jamais convertie en suspension. Seuls les statuts explicitement observés alimentent explicit_suspension_count. Une séance attendue sans barre ni statut reste une lacune.
+Une absence de barre n'est jamais convertie en suspension. Seuls les statuts explicitement observés alimentent explicit_suspension_count. Une séance attendue sans barre ni statut reste une lacune, **sauf** l'exception terminale explicitement comptée quand elle coïncide avec `delisting_date` sur une séance ouverte. La date de radiation est par ailleurs inclusive : 200 des 223 titres radiés ont une barre ce jour-là.
 
 cn_canonical_coverage_metrics agrège chaque exécution par board et année :
 
@@ -105,9 +108,10 @@ cn_canonical_coverage_metrics agrège chaque exécution par board et année :
 - barres observées ;
 - suspensions explicites ;
 - facteurs présents ;
-- ratio et statut.
+- ratio et statut ;
+- `details_json.delisting_day_no_bar` et `details_json.unexplained_missing`.
 
-Le statut PASS exige 95 %. Ce seuil est un gate technique, pas une preuve d'absence de biais.
+Le statut PASS exige 95 % **et zéro absence inexpliquée**. Ce seuil est un gate technique, pas une preuve d'exécutabilité. La dernière vérification complète donne 31/31 PASS, 23 exceptions terminales et aucune lacune inexpliquée. Voir le [contrat d'univers négociable PIT](contrat_univers_tradable_pit.md).
 
 ## Validation déjà obtenue
 
@@ -194,7 +198,7 @@ Le Sprint 7-B passe à GO complet uniquement si :
 9. aucune table US n'est lue ou modifiée ;
 10. CN_A reste désactivé pour le live.
 
-Après ce gate, Sprint 8 pourra publier l'univers tradable quotidien PIT. Avant cela, le statut correct est **7-B implémenté, données incomplètes**.
+Le backfill et la couverture du Sprint 7-B sont terminés. Sprint 8 pourra publier l'univers tradable quotidien PIT **après** le branchement du contrat de décision/replay et la validation des exceptions ; le `PASS` de couverture ne suffit pas pour le backtest exécutable ou le live.
 
 ## Correctif de robustesse BaoStock du 22 septembre 2026
 

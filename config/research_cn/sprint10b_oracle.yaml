@@ -1,0 +1,76 @@
+# Pré-enregistrement Sprint 10-B. Toute modification requiert une nouvelle campagne.
+experiment: cn_oracle_sprint10b_v1
+market_code: CN_A
+feature_profile: cn_price_v1
+label_profile: cn_oracle_labels_v1
+years: [2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]
+horizons: [5, 10, 15, 20]
+test_semesters: [2022H1, 2022H2, 2023H1, 2023H2, 2024H1, 2024H2, 2025H1, 2025H2]
+validation_sessions: 126
+min_train_sessions: 504
+min_rank_cross_section: 20
+min_matured_label_coverage: 0.95
+features:
+  - return_1
+  - return_3
+  - return_5
+  - return_10
+  - return_20
+  - return_60
+  - sma20_distance
+  - sma50_distance
+  - sma200_distance
+  - atr20_pct
+  - realized_vol20
+  - range20_position
+  - volume_ratio20
+  - amount_mean20_cny
+  - overnight_gap
+  - position_52w
+  - benchmark_return_20
+  - benchmark_vol20
+  - relative_return_20
+  - cn_return20_rank
+  - cn_vol20_rank
+  - cn_breadth_1
+  - cn_dispersion_1
+  - factor_event_recent20
+  - factor_event_recent252
+  - prior_suspended
+  - prior_st
+  - prior_limit_unknown
+  - prior_limit_locked
+  - board_sh_main
+  - board_sz_main
+  - board_star
+  - board_chinext
+baseline_score: atr20_pct
+models: [lightgbm, catboost]
+seed: 20260925
+max_train_rows: 600000
+lightgbm:
+  n_estimators: 300
+  learning_rate: 0.03
+  max_depth: 5
+  num_leaves: 31
+  min_child_samples: 150
+  subsample: 0.8
+  colsample_bytree: 0.8
+  reg_lambda: 1.0
+  early_stopping_rounds: 30
+catboost:
+  iterations: 300
+  depth: 5
+  learning_rate: 0.03
+  l2_leaf_reg: 3.0
+  early_stopping_rounds: 30
+evaluation:
+  top_pct: 0.20
+  min_positive_semesters: 6
+  min_precision_uplift: 0.02
+  block_bootstrap_unit: month
+  bootstrap_repetitions: 1000
+  familywise_alpha: 0.05
+  multiple_testing_hypotheses: 8
+  min_test_sessions: 60
+  min_subgroup_rows: 500
