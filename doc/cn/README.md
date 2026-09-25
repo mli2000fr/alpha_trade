@@ -47,3 +47,5 @@ En cas d’ambiguïté, [architecture_bases_batchs_configuration_cn.md](./archit
 - [Sprint 10-A — Validation 2018–2025](./sprint_10a_validation_2018_2025.md) — audit des 32 artefacts, couvertures et quarantaine avant entraînement.
 - [Sprint 10-B — Oracle amplitude Walk-Forward](./sprint_10b_oracle_walk_forward.md) — protocole pré-enregistré, folds OOS CN, baseline ATR et gate de recherche.
 - [Sprint 10-C — Global ranking signé CN](./sprint_10c_global_ranking.md) — classement D1–D10 sur l'univers PIT et dans le TOP20 Oracle OOS.
+- [Sprint 11-A — Diagnostic directionnel après Oracle](./sprint_11a_diagnostic_directionnel.md) — veto D1, sélection LONG, abstention et comparaison explicite à la réversion.
+- [Sprint 11-B — Stress économique du veto D1](./sprint_11b_veto_economic.md) — coûts, lots et blocages CN ; replay indicatif, pas backtest portefeuille.
