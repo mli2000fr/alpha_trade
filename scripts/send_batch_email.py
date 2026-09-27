@@ -192,12 +192,12 @@ def _send_telegram_status(args) -> bool:
     label = "OK" if ok_status else "ERROR"
     if ok_status:
         # Message succès : volontairement concis.
-        lines = [f"✅ [{args.event}] Fin de batch — OK"]
+        lines = [f"🎯🎯✅ [{args.event}] Fin de batch — OK"]
         if args.duration:
             lines.append(f"Durée : {args.duration}")
     else:
         # Message erreur : très visible (bandeau + emojis d'alerte).
-        lines = [f"🚨🚨⛔ ÉCHEC DU BATCH — {args.event} ⛔🚨🚨", "❌ Fin de batch — ERROR"]
+        lines = [f"🎯🎯🚨🚨⛔ ÉCHEC DU BATCH — {args.event} ⛔🚨🚨", "❌ Fin de batch — ERROR"]
         if args.duration:
             lines.append(f"Durée : {args.duration}")
         if args.exit_code:
