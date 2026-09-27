@@ -15,6 +15,7 @@ from typing import Any
 
 from common.universe_files import is_universe_file_source
 from ihm.pages import run_page_if_standalone
+from ihm.services.cn_research_market import render_cn_research_view, select_market
 from ihm.components.db_controls import render_db_unavailable
 from ihm.services.db import db_available, safe_query, get_engine
 from sqlalchemy import text
@@ -4194,6 +4195,9 @@ def _split_group_from_comment(comment: str) -> tuple[str, str]:
 def render() -> None:
     st.header("🩺 Diagnostic ML")
     st.caption("Analyse agrégée des batchs d'entraînement et de leurs métriques.")
+    if select_market("diagnostic") == "CN_A":
+        render_cn_research_view("diagnostic")
+        return
 
     if not db_available():
         render_db_unavailable("Diagnostic ML", form_key="ml_diagnostics_db_form")

@@ -25,6 +25,7 @@ from modelFactory.oracle.artifact_contract import (
 from ihm.components.db_controls import render_db_connection_form
 from ihm.components.metrics import format_duration_hhmmss
 from ihm.pages import run_page_if_standalone
+from ihm.services.cn_research_market import render_cn_research_view, select_market
 from ihm.services.backtesting_registry import (
     backtesting_log_available,
     build_backtesting_log_download_name,
@@ -6068,6 +6069,9 @@ def render() -> None:
         "Page opérateur dédiée au backtesting et aux diagnostics screener : configuration complète, lancement direct depuis l'IHM, "
         "suivi des runs et consultation des logs."
     )
+    if select_market("backtest") == "CN_A":
+        render_cn_research_view("backtest")
+        return
 
     db_config_preview = get_runtime_db_config()
     source = db_config_preview.get("source")

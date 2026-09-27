@@ -1112,6 +1112,10 @@ Pas de live. Le GO autorise seulement l’IHM recherche et la collecte direction
 
 ## 18. Sprint 14 — IHM multi-marchés
 
+**État Sprint 14-A (27/09/2026)** : [sélecteur de marché et vue de recherche CN_A isolée](./sprint_14a_ihm_recherche_isolee.md) en place sur Pipeline, Diagnostic ML et Backtesting. US reste le défaut. Les commandes CN d'entraînement, prédiction, backtest opérateur et live ne sont pas ouvertes ; les points ci-dessous sont le périmètre du Sprint 14 complet, pas des capacités déjà livrées.
+
+**État Sprint 14-B (27/09/2026)** : [registre et diagnostic CN_A](./sprint_14b_diagnostic_campagnes_cn.md) accessibles depuis Diagnostic ML. Quatre campagnes de recherche ont un rapport et un protocole vérifiés ; la stabilité OOS par semestre est visible. Aucun batch de production CN ni lanceur CN n'est activé.
+
 ### Objectif
 
 Rendre le chemin CN utilisable sans permettre les erreurs de configuration.
