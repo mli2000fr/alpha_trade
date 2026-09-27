@@ -1049,9 +1049,22 @@ sur un changement officiel de code sans droit nouveau. Les sorties
 non négociables et les fractions de titre restent censurées. Le
 référentiel historique du symbole `302132` doit être audité avant la
 production ; aucun PnL issu de preuves différentes n'est agrégé.
-Les 36 cellules ciblées B5 sont valides ; la projection de matérialité
-donne 462/480 cellules et 154/160 triplets appariés valides, avec 18
-cellules toujours censurées. Le replay homogène complet est en cours.
+Les 36 cellules ciblées B5 sont valides. Le replay homogène complet est
+terminé : **462/480 cellules valides**, **18 censurées** et **154/160
+triplets appariés valides**. Les comparaisons descriptives favorisent
+faiblement les veto en moyenne, mais leur classement varie selon le
+semestre ; le rapport garde `economic_go_allowed=false`. Ces périodes
+OOS déjà inspectées ne constituent pas un holdout indépendant.
+
+**État Sprint 13-C (27/09/2026)** : [audit de décision économique
+appariée](./sprint_13c_decision_economique.md) terminé en lecture seule.
+Le comparateur momentum a été rejoué avec la même preuve B5 : 138/160
+cellules valides. Les quatre politiques ont 34/40 cohortes communes
+au coût standard et 33/40 sous stress. Les rendements semestriels
+moyens de ces cohortes restent négatifs et aucun veto ne domine de
+manière stable. Verdict de recherche : NO_GO_ECONOMIC sur les cohortes
+valides déjà inspectées ; 26 cohortes non comparables restent
+inconnues, et le GO serving/live reste fermé.
 
 ### Objectif
 

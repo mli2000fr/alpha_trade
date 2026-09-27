@@ -69,13 +69,41 @@ sont exactement les 12 de la position radiée de 2023H2/seed 2 et les
 6 de la fraction d'action de 2024H1/seed 0 sous coût stress.
 
 Ce calcul n'agrège **aucun rendement** entre versions de preuve. La
-campagne homogène complète B5 a été lancée en arrière-plan le
-27/09/2026 à 01:24 Europe/Paris, avec la même grille de 480 cellules,
-sans réoptimisation. Ses journaux sont dans
-`log/batch/cn-sprint13b5-full-20260927-012419/` et ses résultats
-dans `artifacts/cn/economic/sprint13b5/full/`. Son rapport final,
-et non cette projection, fera foi pour les cellules recalculées ;
-les 18 censures prévues restent des résultats invalides.
+campagne homogène B5 s'est terminée le 27/09/2026 à 09:39 Europe/Paris,
+avec la même grille de 480 cellules et sans réoptimisation. Le
+[rapport final](../../artifacts/cn/economic/sprint13b5/full/sprint13b-fcc5a4b464c50832/report.json)
+confirme **462 cellules valides et 18 censurées**. Son statut est
+`COMPLETE_RESEARCH_BLOCKED_OR_PARTIAL` : `economic_go_allowed=false`,
+`serving_enabled=false` et `live_enabled=false`. Les journaux sont dans
+`log/batch/cn-sprint13b5-full-20260927-012419/`.
+
+### Lecture économique du replay homogène
+
+En scénario de fill `base` et au profil de coûts `cn_a_research`, les
+trois politiques sont simultanément valides dans 39 des 40 combinaisons
+semestre × seed. Le rendement semestriel marqué moyen de ces mêmes cas
+est de −3,06 % pour Oracle seul, −1,41 % pour le veto retournement et
+−1,77 % pour le veto LightGBM. En comparaison appariée avec Oracle,
+le veto retournement améliore en moyenne de +1,65 point (21 cas améliorés,
+18 dégradés) et le veto LightGBM de +1,30 point (23 améliorés,
+16 dégradés). Ce sont des statistiques descriptives sur les cas valides,
+non un rendement composé ni un GO économique.
+
+| Semestre | Oracle seul | Veto retournement | Veto LightGBM | Seeds valides |
+| --- | ---: | ---: | ---: | ---: |
+| 2022H1 | −16,67 % | −15,41 % | −18,35 % | 5 |
+| 2022H2 | −10,94 % | −9,01 % | −13,43 % | 5 |
+| 2023H1 | −2,17 % | +2,23 % | +2,14 % | 5 |
+| 2023H2 | −16,03 % | −17,97 % | −12,55 % | 4 |
+| 2024H1 | −22,44 % | −22,29 % | −15,46 % | 5 |
+| 2024H2 | +22,71 % | +33,98 % | +25,73 % | 5 |
+| 2025H1 | +11,49 % | +9,53 % | +9,59 % | 5 |
+| 2025H2 | +6,93 % | +4,32 % | +6,02 % | 5 |
+
+Le classement change selon le semestre : les veto ne dominent pas
+Oracle de manière stable. Le CSI 300 du rapport est seulement un contexte
+indiciel brut, sans les mêmes coûts ou règles de fill. Ces périodes OOS
+ont déjà été inspectées ; elles ne forment pas un holdout indépendant.
 
 ## Cas qui restent censurés
 
@@ -104,7 +132,7 @@ jointures symbole/PIT avant tout usage CN en production.
 - replays B5 ciblés : validité technique et absence de nouveau blocage ;
 - audit de matérialité : compte des récupérations, des résiduels et des
   comparaisons appariées, **sans rendement mélangé** ;
-- campagne homogène complète : en cours avec la preuve B5 fixée et un
-  statut explicite pour les deux cas qui restent censurés ;
+- campagne homogène complète : terminée, 462/480 valides et 18 censurées,
+  avec un statut explicite pour les deux cas encore non évaluables ;
 - aucun GO économique, aucune activation serving/live sur ce travail
   rétrospectif déjà inspecté.
