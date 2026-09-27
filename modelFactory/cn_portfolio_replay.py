@@ -32,6 +32,78 @@ from service.market.cn_portfolio_replay import (
 )
 
 
+def load_verified_action_evidence(path: Path) -> dict[int, dict[str, Any]]:
+    """Accepte uniquement le dossier complet A2, hashé et sans doublon."""
+    from modelFactory.cn_corporate_action_a2 import _sha_json
+
+    report_path = path.parent / "report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    rows = json.loads(path.read_text(encoding="utf-8"))
+    if (not report.get("complete") or report.get("groups_cached") != report.get("groups_total")
+            or report.get("event_count") != len(rows)
+            or report.get("evidence_sha256") != _sha_json(rows)
+            or not report.get("preflight", {}).get("all_policies_pass")):
+        raise RuntimeError("Preuve A2 incomplète, modifiée ou gate non passé")
+    mapped = {int(row["corporate_action_id"]): row for row in rows}
+    if len(mapped) != len(rows):
+        raise RuntimeError("Preuve A2 à identifiants dupliqués")
+    return mapped
+
+
+def convert_verified_actions(
+    action_rows: list[Any], evidence: dict[int, dict[str, Any]] | None,
+) -> tuple[list[CNAction], set[tuple[date, int]]]:
+    """Conserve les événements non prouvés comme UNRESOLVED, sans inférer."""
+    actions: list[CNAction] = []
+    unresolved_dates: set[tuple[date, int]] = set()
+    for row in action_rows:
+        identifier = int(row["corporate_action_id"])
+        instrument_id = int(row["instrument_id"])
+        day = row["ex_date"]
+        prefix = f"{identifier}:{row['source_payload_hash']}"
+        item = evidence.get(identifier) if evidence is not None else None
+        corrected_ex_date = (
+            identifier == 19141 and item is not None
+            and item.get("remediation_kind") == "SOURCE_EX_DATE_ONE_SESSION_EARLIER"
+            and item.get("canonical_ex_date") == day.isoformat()
+            and item.get("ex_date") == "2022-03-29"
+            and day.isoformat() == "2022-03-30"
+        )
+        if item is not None and (int(item["instrument_id"]) != instrument_id
+                                 or (item["ex_date"] != day.isoformat() and not corrected_ex_date)
+                                 or item["source_payload_hash"] != row["source_payload_hash"]):
+            raise RuntimeError(f"Preuve A2 incompatible avec la ligne canonique {identifier}")
+        # B5: a vendor factor reset after the officially documented
+        # 300114 -> 302132 code change did not give holders cash or shares.
+        # It must neither block the raw-price replay nor create a fake right.
+        if (identifier == 316 and item is not None
+                and item["status"] == "EVIDENCED_NON_DISTRIBUTION"
+                and item.get("remediation_kind") == "OFFICIAL_TICKER_CHANGE_SAME_HOLDINGS"
+                and item.get("official_previous_symbol") == "sz.300114"
+                and item.get("official_effective_date") == "2025-02-17"
+                and day.isoformat() == "2025-02-18"):
+            continue
+        if item is None or item["status"] != "EVIDENCED_DISTRIBUTION":
+            actions.append(CNAction(prefix, instrument_id, day, "UNRESOLVED"))
+            unresolved_dates.add((day, instrument_id))
+            continue
+        cash = Decimal(item["cash_per_share_before_tax"])
+        ratio = Decimal(item["share_ratio"])
+        if cash < 0 or ratio < 0 or (cash == 0 and ratio == 0) or not cash.is_finite() or not ratio.is_finite():
+            raise RuntimeError(f"Termes A2 invalides pour {identifier}")
+        effective_day = date.fromisoformat(item["ex_date"])
+        if ratio > 0:
+            actions.append(CNAction(prefix + ":shares", instrument_id, effective_day, "SPLIT",
+                                    share_multiplier=Decimal(1) + ratio))
+        if cash > 0:
+            payment = date.fromisoformat(item["payment_date"])
+            if payment < effective_day:
+                raise RuntimeError(f"Paiement A2 avant ex-date pour {identifier}")
+            actions.append(CNAction(prefix + ":cash", instrument_id, effective_day, "CASH_DIVIDEND",
+                                    cash_per_share_cny=cash, payment_date=payment))
+    return actions, unresolved_dates
+
+
 def _digest_rows(*groups: list[Any]) -> str:
     digest = hashlib.sha256()
     for group in groups:
@@ -75,7 +147,8 @@ def load_inputs(path: Path) -> tuple[dict[str, Any], list[CNIntent]]:
 
 
 def load_cn_market(conn: Connection, *, start: date, end: date,
-                   instrument_ids: list[int]) -> tuple[list[date], list[CNInstrument], list[CNBar], list[CNAction]]:
+                   instrument_ids: list[int],
+                   evidence: dict[int, dict[str, Any]] | None = None) -> tuple[list[date], list[CNInstrument], list[CNBar], list[CNAction]]:
     """Lit les données canoniques révisées ; pas une preuve PIT de fill."""
     if not instrument_ids or len(instrument_ids) != len(set(instrument_ids)):
         raise ValueError("IDs CN vides ou dupliqués")
@@ -105,6 +178,16 @@ def load_cn_market(conn: Connection, *, start: date, end: date,
     histories: dict[int, list[Any]] = defaultdict(list)
     for row in status_rows:
         histories[int(row["instrument_id"])].append(row)
+    bar_rows = _query_ids(conn, """
+        SELECT b.instrument_id,b.`date` session_date,b.`open`,b.`close`,b.volume,
+               b.trading_status,l.policy_code,l.locked_up,l.locked_down
+        FROM stock_bars_daily b
+        LEFT JOIN cn_daily_price_limits l
+          ON l.instrument_id=b.instrument_id AND l.session_date=b.`date`
+        WHERE b.market_code='CN_A' AND b.instrument_id IN :ids
+          AND b.`date` BETWEEN :start AND :end
+    """, instrument_ids, start=start, end=end)
+    bar_keys = {(int(item["instrument_id"]), item["session_date"]) for item in bar_rows}
     instruments = []
     for row in rows:
         identifier = int(row["instrument_id"])
@@ -119,32 +202,24 @@ def load_cn_market(conn: Connection, *, start: date, end: date,
                 continue
             matching = [item for item in histories[identifier] if item["valid_from"] <= day
                         and (item["valid_to"] is None or item["valid_to"] >= day)]
+            # Le dernier jour de radiation peut être une séance de marché sans
+            # barre ni statut pour ce titre. Sans barre, aucun fill n'est possible;
+            # une position détenue aura une valorisation stale/invalide.
+            if not matching and (identifier, day) not in bar_keys:
+                continue
             if not matching or {item["board_code"] for item in matching} != boards:
                 raise ValueError(f"Statut/board CN ambigu ou absent {identifier}/{day}")
         instruments.append(CNInstrument(
             identifier, row["exchange_mic"], boards.pop(),
             row["listing_date"], row["delisting_date"],
         ))
-    bar_rows = _query_ids(conn, """
-        SELECT b.instrument_id,b.`date` session_date,b.`open`,b.`close`,b.volume,
-               b.trading_status,l.policy_code,l.locked_up,l.locked_down
-        FROM stock_bars_daily b
-        LEFT JOIN cn_daily_price_limits l
-          ON l.instrument_id=b.instrument_id AND l.session_date=b.`date`
-        WHERE b.market_code='CN_A' AND b.instrument_id IN :ids
-          AND b.`date` BETWEEN :start AND :end
-    """, instrument_ids, start=start, end=end)
     action_rows = _query_ids(conn, """
         SELECT corporate_action_id,instrument_id,ex_date,action_type,
                classification_status,source_payload_hash
         FROM cn_corporate_actions WHERE instrument_id IN :ids
           AND ex_date BETWEEN :start AND :end
     """, instrument_ids, start=start, end=end)
-    actions = [CNAction(
-        action_id=f"{row['corporate_action_id']}:{row['source_payload_hash']}",
-        instrument_id=int(row["instrument_id"]), ex_date=row["ex_date"], kind="UNRESOLVED",
-    ) for row in action_rows]
-    action_keys = {(item.ex_date, item.instrument_id) for item in actions}
+    actions, action_keys = convert_verified_actions(action_rows, evidence)
     bars = [CNBar(
         session_date=row["session_date"], instrument_id=int(row["instrument_id"]),
         open_cny=Decimal(str(row["open"])) if row["open"] is not None else None,
@@ -161,9 +236,11 @@ def load_cn_market(conn: Connection, *, start: date, end: date,
 def run(*, intent_path: Path, output_dir: Path, scenario: str, cost_profile_key: str,
         initial_cash_cny: Decimal, allow_research_proxy: bool,
         pending_policy: str = "carry", max_wait_sessions: int = 3,
-        max_positions: int = 8) -> dict[str, Any]:
+        max_positions: int = 8, evidence_path: Path | None = None,
+        auto_exit_after_full_sessions: int | None = None) -> dict[str, Any]:
     input_sha256 = hashlib.sha256(intent_path.read_bytes()).hexdigest()
     raw, intents = load_inputs(intent_path)
+    evidence = load_verified_action_evidence(evidence_path) if evidence_path else None
     engine = get_market_engine("CN_A", database_alias="cn_primary")
     try:
         with engine.connect() as conn:
@@ -173,6 +250,7 @@ def run(*, intent_path: Path, output_dir: Path, scenario: str, cost_profile_key:
                 conn, start=date.fromisoformat(raw["start_date"]),
                 end=date.fromisoformat(raw["end_date"]),
                 instrument_ids=sorted({item.instrument_id for item in intents}),
+                evidence=evidence,
             )
             canonical_data_sha256 = _digest_rows(
                 days, sorted(instruments, key=lambda item: item.instrument_id),
@@ -185,6 +263,7 @@ def run(*, intent_path: Path, output_dir: Path, scenario: str, cost_profile_key:
                 max_wait_sessions=max_wait_sessions, max_positions=max_positions,
                 allow_research_rules=allow_research_proxy,
                 allow_research_proxy=allow_research_proxy,
+                auto_exit_after_full_sessions=auto_exit_after_full_sessions,
             )
             cost_snapshot = resolve_cost_profile(
                 conn, profile_key=cost_profile_key, session_date=days[0],
@@ -234,7 +313,11 @@ def run(*, intent_path: Path, output_dir: Path, scenario: str, cost_profile_key:
             hashlib.sha256(Path(cn_execution_contract.__file__).read_bytes()).hexdigest(),
         ]),
         "sessions": len(days), "instruments": len(instruments),
-        "intent_count": len(intents), "corporate_action_rows_unresolved": len(actions),
+        "intent_count": len(intents),
+        "corporate_action_rows_unresolved": sum(item.kind == "UNRESOLVED" for item in actions),
+        "corporate_action_evidence_sha256": (
+            hashlib.sha256(evidence_path.read_bytes()).hexdigest() if evidence_path else None
+        ),
         "event_counts": dict(sorted(counts.items())),
         "reason_counts": dict(sorted(reasons.items())),
         "economic_result_valid": result.economic_result_valid,
@@ -266,6 +349,8 @@ def main() -> None:
     parser.add_argument("--max-wait-sessions", type=int, default=3)
     parser.add_argument("--max-positions", type=int, default=8)
     parser.add_argument("--allow-research-proxy", action="store_true")
+    parser.add_argument("--corporate-action-evidence", type=Path)
+    parser.add_argument("--auto-exit-after-full-sessions", type=int)
     args = parser.parse_args()
     report = run(
         intent_path=args.intent_file, output_dir=args.output_dir,
@@ -274,6 +359,8 @@ def main() -> None:
         allow_research_proxy=args.allow_research_proxy,
         pending_policy=args.pending_policy, max_wait_sessions=args.max_wait_sessions,
         max_positions=args.max_positions,
+        evidence_path=args.corporate_action_evidence,
+        auto_exit_after_full_sessions=args.auto_exit_after_full_sessions,
     )
     print(json.dumps(report, ensure_ascii=False, indent=2))
 

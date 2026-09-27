@@ -51,3 +51,10 @@ En cas d’ambiguïté, [architecture_bases_batchs_configuration_cn.md](./archit
 - [Sprint 11-B — Stress économique du veto D1](./sprint_11b_veto_economic.md) — coûts, lots et blocages CN ; replay indicatif, pas backtest portefeuille.
 - [Sprint 12-A — Contrat d'exécution daté CN](./sprint_12a_contrat_execution.md) — règles 2018–2025 et coûts proxy installés dans alpha_trade_cn, fail-closed hors période et sans preuve de fill.
 - [Sprint 12-B — Replay de portefeuille CN_A](./sprint_12b_replay_portefeuille_cn.md) — cash/inventaire T+1, non-fills et coûts détaillés ; fills de recherche hypothétiques, gate économique OOS encore ouvert.
+- [Sprint 13-A — Préflight économique sans labels futurs](./sprint_13a_preflight_economique.md) — protocole H20 gelé ; 5,77–6,17 % des fenêtres candidates croisent une corporate action non classifiée, au-dessus du gate de 5 %.
+- [Sprint 13-A2 — Normalisation ciblée des actions d'entreprise](./sprint_13a2_normalisation_actions.md) — collecte BaoStock reprenable, rapprochement ex-date/termes/facteur, puis relecture du gate inchangé.
+- [Sprint 13-B — Replay économique OOS CN_A](./sprint_13b_validation_economique.md) — distributions A2 et sortie liée au fill ; 40 sous-runs diagnostiques, sans GO économique.
+- [Sprint 13-B2 — Remédiation des positions détenues](./sprint_13b2_remediation_positions.md) — trois opérations sur titres rapprochées avec preuves séparées ; position suspendue censurée, sans sortie fictive.
+- [Sprint 13-B3 — Audit des huit titres bloquants](./sprint_13b3_audit_huit_blocages.md) — campagne 480 replays, une preuve additive ciblée ; autres événements et sorties non vérifiées toujours censurés.
+- [Sprint 13-B4 — Dilution des actions rachetées](./sprint_13b4_dilution_actions_rachetees.md) — trois droits économiques d'émetteur rapprochés du facteur de marché sans modifier la tolérance générale ; 24/24 cellules ciblées valides, sans GO économique.
+- [Sprint 13-B5 — Matérialité et droits économiques](./sprint_13b5_materialite_et_preuve_economique.md) — trois ruptures supplémentaires documentées, 36/36 cellules ciblées valides, projection 462/480 avec 18 censures ; replay homogène complet en cours.

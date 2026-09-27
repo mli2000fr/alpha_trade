@@ -204,5 +204,16 @@ class BaoStockClient:
             ),
         )
 
+    def dividend_data(self, symbol: str, year: int) -> BaoStockPage:
+        """Distributions par année d'ex-date (pas par année d'annonce)."""
+        request = {"method": "query_dividend_data", "symbol": symbol,
+                   "year": int(year), "yearType": "operate"}
+        return self._request(
+            "dividend_operate", request,
+            lambda: self.backend.query_dividend_data(
+                code=symbol, year=str(year), yearType="operate",
+            ),
+        )
+
 
 __all__ = ["BaoStockClient", "BaoStockError"]

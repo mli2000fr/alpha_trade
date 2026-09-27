@@ -998,6 +998,61 @@ sur le portefeuille. Aucun rendement de 11-B n'est requalifié en PnL net.
 
 ## 17. Sprint 13 — Validation économique OOS
 
+**État Sprint 13-A (26/09/2026)** : [préflight et protocole
+gelé](./sprint_13a_preflight_economique.md). Les prédictions H20 des
+huit semestres ont été auditées sans lire les labels futurs. Couverture
+de fenêtre Oracle 97,75 % (gate 95 % passé), mais 6,01 % des fenêtres
+Oracle croisent une action d'entreprise non classifiée (gate 5 %
+dépassé). Verdict `BLOCKED_ACTION_NORMALIZATION` : normaliser les
+événements, puis relancer le même audit avant la comparaison économique.
+Ces prédictions OOS ont déjà été inspectées ; elles ne constituent pas
+une confirmation indépendante d'une politique choisie aujourd'hui.
+
+**État Sprint 13-A2 (26/09/2026)** : [normalisation ciblée des actions
+CN](./sprint_13a2_normalisation_actions.md) terminée : 13 984 réponses,
+14 630 événements réconciliés, 1 695 non résolus. Le gate inchangé de
+5 % passe pour les quatre politiques (0,51–0,65 % de fenêtres encore
+exposées), mais le replay doit encore appliquer les droits économiques
+et gérer les cas non résolus avant toute comparaison de PnL. Aucun GO
+économique ou live n'est émis.
+
+**État Sprint 13-B (26/09/2026)** : [lanceur de replay
+économique](./sprint_13b_validation_economique.md) et prérequis
+fill-linked/corporate actions implémentés. Le smoke 2022H1 détecte
+deux positions détenues touchées par des événements non résolus : leurs
+marks ne sont pas des PnL valides. Le diagnostic des huit semestres est
+terminé : 40 sous-runs, dont 8 invalides, sans GO économique. Le
+[Sprint 13-B2](./sprint_13b2_remediation_positions.md) réconcilie trois
+opérations détenues par une preuve séparée et rejoue les deux semestres
+concernés ; une sortie 2025H1 reste censurée par suspension. Aucun
+seuil ou modèle n'est ajusté.
+
+**État Sprint 13-B3 (26/09/2026)** : la [campagne multi-seeds et l'audit
+des huit titres bloquants](./sprint_13b3_audit_huit_blocages.md) montrent
+398/480 replays valides. Un transfert d'actions de 2022 est réconcilié
+dans une nouvelle preuve versionnée ; les autres cas restent censurés.
+Les moyennes sur cellules valides ne constituent pas un GO économique.
+
+**État Sprint 13-B4 (27/09/2026)** : les [preuves officielles de
+dilution due aux actions rachetées](./sprint_13b4_dilution_actions_rachetees.md)
+réconcilient trois autres opérations sans élargir la tolérance des
+facteurs ni modifier la base CN. Deux replays ciblés totalisent 24/24
+cellules valides, mais ne montrent aucun avantage économique stable :
+2024H1 reste négatif et Oracle seul surpasse les veto en 2025H1.
+Les autres positions censurées demeurent bloquées ; aucun GO
+économique ou live.
+
+**État Sprint 13-B5 (27/09/2026)** : [audit de matérialité et preuve
+économique ciblée](./sprint_13b5_materialite_et_preuve_economique.md)
+sur deux dividendes dont le facteur fournisseur est contradictoire et
+sur un changement officiel de code sans droit nouveau. Les sorties
+non négociables et les fractions de titre restent censurées. Le
+référentiel historique du symbole `302132` doit être audité avant la
+production ; aucun PnL issu de preuves différentes n'est agrégé.
+Les 36 cellules ciblées B5 sont valides ; la projection de matérialité
+donne 462/480 cellules et 154/160 triplets appariés valides, avec 18
+cellules toujours censurées. Le replay homogène complet est en cours.
+
 ### Objectif
 
 Décider si les signaux baseline méritent une poursuite économique, sans optimiser le holdout.

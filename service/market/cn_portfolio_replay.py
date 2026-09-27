@@ -86,11 +86,15 @@ class ReplayConfig:
     allow_pyramiding: bool = False
     allow_research_rules: bool = False
     allow_research_proxy: bool = False
+    auto_exit_after_full_sessions: int | None = None
+    suppress_signals_during_open_position: bool = False
 
     def __post_init__(self) -> None:
         if (self.initial_cash_cny <= 0 or self.max_wait_sessions < 1
                 or self.max_positions < 1 or self.scenario not in {"permissive", "base", "conservative"}
-                or self.pending_policy not in {"carry", "cancel_day"}):
+                or self.pending_policy not in {"carry", "cancel_day"}
+                or (self.auto_exit_after_full_sessions is not None
+                    and self.auto_exit_after_full_sessions < 2)):
             raise ValueError("Configuration de replay CN invalide")
 
 
@@ -98,6 +102,7 @@ class ReplayConfig:
 class _Lot:
     shares: int
     acquired_session: date
+    basis_cny: Decimal = Decimal(0)
 
 
 @dataclass
@@ -144,6 +149,9 @@ class CNPortfolioReplay:
         self.commission_total = Decimal(0)
         self.other_cost_total = Decimal(0)
         self._used = False
+        self._session_index = -1
+        self._auto_exit_due: dict[int, int] = {}
+        self._auto_exit_queued: set[int] = set()
 
     def _rule(self, instrument: CNInstrument, day: date):
         return resolve_rule(
@@ -249,7 +257,10 @@ class CNPortfolioReplay:
         rule = self._rule(instrument, day)
         profile = self._cost(day)
         if bar is not None and bar.factor_event_unresolved:
-            self.unresolved[instrument.instrument_id] = "FACTOR_EVENT_UNRESOLVED"
+            # Un événement inconnu sur un titre non détenu bloque l'ordre,
+            # mais ne contamine pas la valeur du portefeuille entier.
+            if self.lots[instrument.instrument_id]:
+                self.unresolved[instrument.instrument_id] = "FACTOR_EVENT_UNRESOLVED"
             self.journal.append(_event(day, "ORDER_CANCELLED", intent_id=intent.intent_id,
                                        reason="FACTOR_EVENT_UNRESOLVED"))
             return "DONE"
@@ -314,7 +325,11 @@ class CNPortfolioReplay:
             if notional + cost.total_cny > self.cash:
                 raise CNExecutionContractError("Budget achat calculé sans frais")
             self._spend_cash(notional + cost.total_cny)
-            self.lots[intent.instrument_id].append(_Lot(quantity, day))
+            self.lots[intent.instrument_id].append(_Lot(quantity, day, notional + cost.total_cny))
+            if self.config.auto_exit_after_full_sessions is not None:
+                self._auto_exit_due[intent.instrument_id] = (
+                    self._session_index + self.config.auto_exit_after_full_sessions - 1
+                )
         else:
             proceeds = notional - cost.total_cny
             if proceeds < 0:
@@ -322,13 +337,27 @@ class CNPortfolioReplay:
                                            reason="SELL_COST_EXCEEDS_NOTIONAL"))
                 return "DONE"
             remaining = quantity
+            realized_basis = Decimal(0)
             for lot in self.lots[intent.instrument_id]:
                 take = min(remaining, lot.shares) if lot.acquired_session < day else 0
+                if take:
+                    allocated = lot.basis_cny * Decimal(take) / Decimal(lot.shares)
+                    lot.basis_cny -= allocated
+                    realized_basis += allocated
                 lot.shares -= take
                 remaining -= take
             if remaining:
                 raise CNExecutionContractError("Vente dépassant l'inventaire T+1")
             self.lots[intent.instrument_id] = [lot for lot in self.lots[intent.instrument_id] if lot.shares]
+            self.journal.append(_event(day, "REALIZED_SALE",
+                                       intent_id=intent.intent_id,
+                                       instrument_id=intent.instrument_id,
+                                       proceeds_after_cost_cny=str(proceeds),
+                                       allocated_basis_cny=str(realized_basis),
+                                       realized_pnl_ex_dividend_cny=str(proceeds - realized_basis)))
+            if not self.lots[intent.instrument_id]:
+                self._auto_exit_due.pop(intent.instrument_id, None)
+                self._auto_exit_queued.discard(intent.instrument_id)
             self.cash += proceeds
             self.unsettled.append((day, proceeds))  # passage à withdrawable à la séance suivante
         self.commission_total += cost.commission_cny
@@ -392,6 +421,7 @@ class CNPortfolioReplay:
         ):
             raise ValueError("Corporate actions CN invalides ou dupliquées")
         for index, day in enumerate(days):
+            self._session_index = index
             self._settle(day)
             self._actions(day, events)
             # Un ordre décidé après clôture J ne peut jamais prendre l'open J.
@@ -404,18 +434,40 @@ class CNPortfolioReplay:
                 instrument = by_instrument[item.intent.instrument_id]
                 state = self._attempt(day, item, instrument, by_bar.get((day, instrument.instrument_id)))
                 if state == "KEEP":
-                    if (self.config.pending_policy == "cancel_day"
-                            or item.wait_sessions >= self.config.max_wait_sessions):
+                    keep_auto_exit = item.intent.reason == "AUTO_EXIT_FROM_ACTUAL_FILL"
+                    if (not keep_auto_exit and (self.config.pending_policy == "cancel_day"
+                            or item.wait_sessions >= self.config.max_wait_sessions)):
                         self.journal.append(_event(day, "ORDER_CANCELLED", intent_id=item.intent.intent_id,
                                                    reason="END_OF_DAY" if self.config.pending_policy == "cancel_day"
                                                    else "MAX_WAIT_SESSIONS"))
                     else:
                         self.pending.append(item)
             for intent in sorted(signals[day], key=lambda value: value.intent_id):
+                if (self.config.suppress_signals_during_open_position
+                        and intent.side == "BUY" and self.lots[intent.instrument_id]):
+                    self.journal.append(_event(day, "SIGNAL_SUPPRESSED_OPEN_POSITION",
+                                               intent_id=intent.intent_id,
+                                               instrument_id=intent.instrument_id))
+                    continue
                 self.pending.append(_Pending(intent))
                 self.journal.append(_event(day, "ORDER_QUEUED_NEXT_SESSION", intent_id=intent.intent_id,
                                            instrument_id=intent.instrument_id, side=intent.side,
                                            reason=intent.reason))
+            # 20 séances complètes comptées depuis le fill à l'open.
+            # Décision à la clôture de la 20e, tentative à l'open suivant.
+            for instrument_id, due_index in sorted(self._auto_exit_due.items()):
+                if index >= due_index and instrument_id not in self._auto_exit_queued and self.lots[instrument_id]:
+                    intent = CNIntent(
+                        intent_id=f"auto-exit-{instrument_id}-{day.isoformat()}",
+                        signal_date=day, instrument_id=instrument_id,
+                        side="SELL", reason="AUTO_EXIT_FROM_ACTUAL_FILL",
+                    )
+                    self.pending.append(_Pending(intent))
+                    self._auto_exit_queued.add(instrument_id)
+                    self.journal.append(_event(day, "AUTO_EXIT_QUEUED_NEXT_SESSION",
+                                               intent_id=intent.intent_id,
+                                               instrument_id=instrument_id,
+                                               actual_fill_session=self.lots[instrument_id][0].acquired_session.isoformat()))
             for instrument_id, instrument in by_instrument.items():
                 bar = by_bar.get((day, instrument_id))
                 if bar is not None and bar.factor_event_unresolved and self.lots[instrument_id]:

@@ -7,7 +7,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import create_engine, text
 
-from modelFactory.cn_portfolio_replay import load_inputs
+from modelFactory.cn_portfolio_replay import convert_verified_actions, load_cn_market, load_inputs
 from service.market.cn_execution_contract import CNExecutionContractError
 from service.market.cn_portfolio_replay import (
     CNAction,
@@ -23,6 +23,54 @@ D2 = date(2024, 3, 5)
 D3 = date(2024, 3, 6)
 D4 = date(2024, 3, 7)
 D5 = date(2024, 3, 8)
+
+
+def test_load_market_allows_missing_status_only_when_no_bar_on_delisting_session():
+    class Result:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def scalars(self):
+            return self.rows
+
+        def mappings(self):
+            return self
+
+        def all(self):
+            return self.rows
+
+    class Conn:
+        def __init__(self, final_bar=False):
+            self.final_bar = final_bar
+
+        def execute(self, statement, _params):
+            query = str(statement)
+            if "FROM market_sessions" in query:
+                return Result([D1, D2, D3])
+            if "FROM instruments" in query:
+                return Result([{"instrument_id": 1, "market_code": "CN_A", "exchange_mic": "XSHG",
+                                "instrument_type": "equity", "currency": "CNY",
+                                "listing_date": D1, "delisting_date": D3}])
+            if "FROM instrument_status_history" in query:
+                return Result([{"instrument_id": 1, "board_code": "SH_MAIN",
+                                "valid_from": D1, "valid_to": D2}])
+            if "FROM stock_bars_daily" in query:
+                days = [D1, D2, D3] if self.final_bar else [D1, D2]
+                return Result([{"instrument_id": 1, "session_date": day, "open": 10,
+                                "close": 10, "volume": 1000, "trading_status": "TRADE",
+                                "policy_code": None, "locked_up": False,
+                                "locked_down": False} for day in days])
+            if "FROM cn_corporate_actions" in query:
+                return Result([])
+            raise AssertionError(query)
+
+    days, instruments, bars, _ = load_cn_market(Conn(), start=D1, end=D3,
+                                                  instrument_ids=[1])
+    assert days == [D1, D2, D3]
+    assert instruments[0].delisting_date == D3
+    assert [bar.session_date for bar in bars] == [D1, D2]
+    with pytest.raises(ValueError, match="Statut/board CN ambigu ou absent"):
+        load_cn_market(Conn(final_bar=True), start=D1, end=D3, instrument_ids=[1])
 
 
 @pytest.fixture
@@ -311,3 +359,86 @@ def test_price_off_tick_is_not_hypothetically_filled(cn_conn):
                   config=_config(pending_policy="cancel_day"))
     assert not _events(result, "HYPOTHETICAL_FILL")
     assert _events(result, "ORDER_NOT_FILLED")[0]["reason"] == "OPEN_PRICE_OFF_TICK"
+
+
+def test_auto_exit_is_linked_to_actual_fill_not_initial_signal(cn_conn):
+    days = [D1, D2, D3, D4, D5]
+    bars = [_bar(D1), _bar(D2, locked_up=True), _bar(D3), _bar(D4), _bar(D5)]
+    result = _run(cn_conn, days=days, bars=bars,
+                  intents=[CNIntent("entry", D1, 1, "BUY", budget_cny=Decimal("1005"))],
+                  config=_config(auto_exit_after_full_sessions=2))
+    fills = _events(result, "HYPOTHETICAL_FILL")
+    assert [(row["session_date"], row["side"]) for row in fills] == [
+        (D3.isoformat(), "BUY"), (D5.isoformat(), "SELL"),
+    ]
+    queued = _events(result, "AUTO_EXIT_QUEUED_NEXT_SESSION")
+    assert queued[0]["session_date"] == D4.isoformat()
+    assert queued[0]["actual_fill_session"] == D3.isoformat()
+
+
+def test_auto_exit_carries_when_next_open_locked_even_with_cancel_day(cn_conn):
+    days = [D1, D2, D3, D4, D5]
+    bars = [_bar(D1), _bar(D2), _bar(D3), _bar(D4, locked_down=True), _bar(D5)]
+    result = _run(cn_conn, days=days, bars=bars,
+                  intents=[CNIntent("entry", D1, 1, "BUY", budget_cny=Decimal("1005"))],
+                  config=_config(auto_exit_after_full_sessions=2, pending_policy="cancel_day"))
+    assert [(row["session_date"], row["side"]) for row in _events(result, "HYPOTHETICAL_FILL")] == [
+        (D2.isoformat(), "BUY"), (D5.isoformat(), "SELL"),
+    ]
+    assert not [row for row in _events(result, "ORDER_CANCELLED")
+                if row.get("intent_id", "").startswith("auto-exit-")]
+
+
+def test_a2_evidence_converts_compound_distribution_but_not_unknown_factor():
+    rows = [
+        {"corporate_action_id": 7, "instrument_id": 1, "ex_date": D3,
+         "source_payload_hash": "a" * 64},
+        {"corporate_action_id": 8, "instrument_id": 1, "ex_date": D4,
+         "source_payload_hash": "b" * 64},
+    ]
+    proof = {7: {
+        "corporate_action_id": 7, "instrument_id": 1, "ex_date": D3.isoformat(),
+        "source_payload_hash": "a" * 64, "status": "EVIDENCED_DISTRIBUTION",
+        "cash_per_share_before_tax": "0.5", "share_ratio": "1",
+        "payment_date": D4.isoformat(),
+    }}
+    actions, unresolved = convert_verified_actions(rows, proof)
+    assert [item.kind for item in actions] == ["SPLIT", "CASH_DIVIDEND", "UNRESOLVED"]
+    assert unresolved == {(D4, 1)}
+    with pytest.raises(RuntimeError, match="incompatible"):
+        convert_verified_actions(rows, {7: dict(proof[7], source_payload_hash="wrong")})
+
+
+def test_b2_source_ex_date_shift_is_explicit_and_unique():
+    source = date(2022, 3, 29)
+    canonical = date(2022, 3, 30)
+    row = {"corporate_action_id": 19141, "instrument_id": 4856,
+           "ex_date": canonical, "source_payload_hash": "a" * 64}
+    proof = {"corporate_action_id": 19141, "instrument_id": 4856,
+             "ex_date": source.isoformat(), "canonical_ex_date": canonical.isoformat(),
+             "remediation_kind": "SOURCE_EX_DATE_ONE_SESSION_EARLIER",
+             "source_payload_hash": "a" * 64, "status": "EVIDENCED_DISTRIBUTION",
+             "cash_per_share_before_tax": "0.3", "share_ratio": "0.2",
+             "payment_date": source.isoformat()}
+    actions, unresolved = convert_verified_actions([row], {19141: proof})
+    assert not unresolved
+    assert [action.ex_date for action in actions] == [source, source]
+    with pytest.raises(RuntimeError, match="incompatible"):
+        convert_verified_actions([row], {19141: dict(proof, canonical_ex_date="2022-03-31")})
+    with pytest.raises(RuntimeError, match="incompatible"):
+        convert_verified_actions([dict(row, corporate_action_id=19142)],
+                                 {19142: dict(proof, corporate_action_id=19142)})
+
+
+def test_unknown_factor_blocks_new_order_without_poisoning_flat_portfolio(cn_conn):
+    days = [D1, D2, D3, D4]
+    result = _run(
+        cn_conn, days=days,
+        bars=[_bar(D1), _bar(D2, factor=True), _bar(D3), _bar(D4)],
+        intents=[CNIntent("entry", D1, 1, "BUY", budget_cny=Decimal("1005"))],
+        actions=[CNAction("unknown", 1, D2, "UNRESOLVED")],
+        config=_config(pending_policy="cancel_day"),
+    )
+    assert result.unresolved == {}
+    assert result.economic_result_valid
+    assert not _events(result, "HYPOTHETICAL_FILL")
