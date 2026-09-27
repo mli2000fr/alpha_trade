@@ -60,6 +60,7 @@ tests d'incompatibilité batch/univers/marché. Réactiver les anciens
 formulaires US sous l'étiquette CN serait incorrect.
 
 Le [Sprint 14-B](./sprint_14b_diagnostic_campagnes_cn.md) a ajouté le
-registre et les diagnostics des campagnes CN en lecture seule. Un éventuel
-lancement de replay CN viendra ensuite, sans ouvrir le live tant que le
-gate économique reste fermé.
+registre et les diagnostics des campagnes CN en lecture seule. Le
+[Sprint 14-C](./sprint_14c_replay_recherche_ihm.md) a ensuite ouvert un
+replay CN de recherche limité à une cellule du protocole 13-B, sans live
+tant que le gate économique reste fermé.

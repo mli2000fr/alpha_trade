@@ -340,6 +340,8 @@ def run(*, output_root: Path = DEFAULT_OUTPUT, evidence_path: Path = DEFAULT_EVI
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Sprint 13-B CN_A : replay économique de recherche")
+    parser.add_argument("--market-code", choices=["CN_A"], default="CN_A")
+    parser.add_argument("--database-alias", choices=["cn_primary"], default="cn_primary")
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--evidence", type=Path, default=DEFAULT_EVIDENCE)
     parser.add_argument("--semesters", nargs="+")
@@ -348,6 +350,8 @@ def main() -> None:
     parser.add_argument("--scenarios", nargs="+")
     parser.add_argument("--cost-profiles", nargs="+")
     args = parser.parse_args()
+    if args.market_code != "CN_A" or args.database_alias != "cn_primary":
+        parser.error("Replay 13-B réservé à CN_A / cn_primary")
     report = run(output_root=args.output_root, evidence_path=args.evidence,
                  semesters=args.semesters, policies=args.policies,
                  seeds=args.seeds, scenarios=args.scenarios,

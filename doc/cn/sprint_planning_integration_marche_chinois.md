@@ -1116,6 +1116,10 @@ Pas de live. Le GO autorise seulement l’IHM recherche et la collecte direction
 
 **État Sprint 14-B (27/09/2026)** : [registre et diagnostic CN_A](./sprint_14b_diagnostic_campagnes_cn.md) accessibles depuis Diagnostic ML. Quatre campagnes de recherche ont un rapport et un protocole vérifiés ; la stabilité OOS par semestre est visible. Aucun batch de production CN ni lanceur CN n'est activé.
 
+**État Sprint 14-C (27/09/2026)** : [replay CN_A de recherche depuis Backtesting](./sprint_14c_replay_recherche_ihm.md) disponible pour une cellule gelée du protocole 13-B, après préflight OOS/preuves/base CN. Historique et logs propres aux runs CN. Aucun GO économique, serving ou live ; les autres commandes CN et batchs ne sont pas ouverts dans l'IHM.
+
+**État Sprint 14-D (27/09/2026)** : [folds Oracle/Ranking de recherche depuis Pipeline](./sprint_14d_pipeline_recherche_cn.md). Un lancement entraîne un fold CN et écrit ses prédictions OOS avec préflight de provenance, sortie et historique isolés. Il n'existe toujours pas de prédiction future/servable CN ; les commandes US restent masquées en vue CN.
+
 ### Objectif
 
 Rendre le chemin CN utilisable sans permettre les erreurs de configuration.

@@ -61,3 +61,5 @@ En cas d’ambiguïté, [architecture_bases_batchs_configuration_cn.md](./archit
 - [Sprint 13-C — Décision économique](./sprint_13c_decision_economique.md) — comparaison homogène de quatre politiques terminée ; 34/40 cohortes communes au coût standard, résultats moyens négatifs et aucun GO production.
 - [Sprint 14-A — IHM de recherche CN_A isolée](./sprint_14a_ihm_recherche_isolee.md) — sélecteur US/CN sur Pipeline, Diagnostic ML et Backtesting ; CN en lecture seule, sans réutiliser les commandes US.
 - [Sprint 14-B — Diagnostic des campagnes CN_A](./sprint_14b_diagnostic_campagnes_cn.md) — registre fermé Oracle, Ranking et directionnel, métriques H5/H10/H15/H20 et stabilité OOS par semestre, sans serving.
+- [Sprint 14-C — Replay CN_A de recherche dans l'IHM](./sprint_14c_replay_recherche_ihm.md) — lancement d'une cellule du protocole 13-B avec préflight CN, historique et coûts/fills hypothétiques ; aucun live.
+- [Sprint 14-D — Pipeline CN_A de recherche](./sprint_14d_pipeline_recherche_cn.md) — entraînement par fold et prédictions OOS Oracle/Ranking, sans prédiction future ni serving.

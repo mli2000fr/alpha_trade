@@ -79,8 +79,8 @@ registre ML.
 
 ## Suite
 
-Un Sprint 14-C éventuel devra définir le contrat de lancement d'un replay
-CN **de recherche** distinct des commandes US, avec routage explicite vers
-la base CN, batch/univers/marché compatibles et refus avant lancement en
-cas de mismatch. Il n'ouvrira pas le live CN tant que le gate économique
-reste fermé.
+Le [Sprint 14-C](./sprint_14c_replay_recherche_ihm.md) définit maintenant
+un lancement de replay CN **de recherche** distinct des commandes US,
+avec routage explicite vers la base CN et refus avant lancement en cas de
+mismatch. Il n'ouvre pas le live CN tant que le gate économique reste
+fermé.
