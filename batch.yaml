@@ -19,7 +19,7 @@ ml_artifacts_backup:
   tables: "fichiers:backups/ml"
   provider: local_filesystem
   universe_scope: ml_serving_artifacts
-  run_hours: "1"
+  run_hours: "2"
   run_minutes: "0"
   run_days: "6"
   artifacts_dir: artifacts/models
@@ -39,7 +39,7 @@ db_core_backup:
   tables: "fichiers:backups/db"
   provider: local_mysql
   universe_scope: database_without_news_raw
-  run_hours: "2"
+  run_hours: "3"
   run_minutes: "0"
   run_days: "6"
   host: localhost
@@ -65,7 +65,7 @@ db_news_raw_backup:
   tables: "fichiers:backups/db"
   provider: local_mysql
   universe_scope: database_table_news_raw
-  run_hours: "1"
+  run_hours: "2"
   run_minutes: "0"
   run_days: "0"
   host: localhost
@@ -91,9 +91,9 @@ market_cap_sync:
   timezone: Europe/Paris
   description: "Maintenir les actions en circulation SEC PIT, puis compléter uniquement les trous avec Yahoo et Finnhub pour l'éligibilité tradable et la neutralisation market-cap."
   tables: "stock_fundamentals_daily"
-  run_hours: "15"
+  run_hours: "16"
   recovery_run_hours: "23"
-  recovery_run_minutes: "0"
+  recovery_run_minutes: "30"
   recovery_success_lookback_hours: 12
   run_days: "1,4"
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
@@ -114,7 +114,7 @@ earnings_calendar_sync:
   tables: "stock_earnings_calendar,cleaning_audit_earnings_runs"
   enabled: true
   timezone: Europe/Paris
-  run_hours: "23"
+  run_hours: "22"
   run_days: "0,3,5"
   lookback_days: 7
   forward_days: 30
@@ -138,9 +138,9 @@ analyst_snapshot_collection:
   sleep_seconds: 0.25
   timeout_seconds: 20
   max_retries: 2
-  run_hours: "22"
+  run_hours: "23"
   recovery_run_hours: "4"
-  recovery_run_minutes: "0"
+  recovery_run_minutes: "30"
   recovery_success_lookback_hours: 10
   log_file: log/batch/analyst_snapshots.txt
 
@@ -155,7 +155,7 @@ latest_quotes_sync:
   status: ACTIVE
   provider: alpaca_iex
   timezone: America/New_York
-  run_hours: "17"
+  run_hours: "18"
   run_minutes: "15"
   run_days: "1,2,3,4,5"
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
@@ -173,7 +173,7 @@ daily_bars_sync:
   provider: business_quant
   api_key_env: BUSINESS_QUANT_API_KEY
   timezone: Europe/Paris
-  run_hours: "3"
+  run_hours: "4"
   run_days: "1,2,3,4,5"
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   batch_size: 100
@@ -192,8 +192,8 @@ security_master_snapshot:
   providers: "nasdaq_symbol_directory,business_quant"
   api_key_env: BUSINESS_QUANT_API_KEY
   timezone: Europe/Paris
-  run_hours: "1"
-  recovery_run_hours: "9"
+  run_hours: "2"
+  recovery_run_hours: "10"
   recovery_run_minutes: "0"
   recovery_success_lookback_hours: 12
   run_days: "1,2,3,4,5"
@@ -210,7 +210,7 @@ corporate_actions_sync:
   providers: "business_quant,alpaca"
   api_key_env: BUSINESS_QUANT_API_KEY
   timezone: Europe/Paris
-  run_hours: "0"
+  run_hours: "1"
   run_days: "1,2,3,4,5"
   lookback_days: 7
   forward_days: 30
@@ -224,7 +224,7 @@ sec_edgar_incremental:
   enabled: true
   universe_scope: market_wide_filings
   timezone: Europe/Paris
-  run_hours: "6"
+  run_hours: "7"
   run_days: "1,2,3,4,5,6"
   user_agent_env: SEC_EDGAR_USER_AGENT
   forms: "8-K,8-K/A,6-K,6-K/A,10-Q,10-Q/A,10-K,10-K/A,13F-HR,13F-HR/A,SC 13D,SC 13D/A,SC 13G,SC 13G/A"
@@ -257,7 +257,7 @@ pit_data_quality_daily:
     - "Attendre la fin de sec_edgar_incremental, finra_short_volume_sync et fred_alfred_vintage_sync."
     - "Passer temporairement enabled à true, lancer le contrôle, puis le remettre à false si la supervision planifiée n'est pas souhaitée."
   timezone: Europe/Paris
-  run_hours: "15"
+  run_hours: "16"
   run_days: "1,2,3,4,5,6"
   bars_max_age_days: 4
   security_master_max_age_days: 8
@@ -278,8 +278,8 @@ borrow_status_snapshot:
   timezone: America/New_York
   # Principal puis secours conditionnel, tous deux avant l'ouverture régulière US.
   run_hours: "8"
-  run_minutes: "45"
-  recovery_run_hours: "9"
+  run_minutes: "55"
+  recovery_run_hours: "10"
   recovery_run_minutes: "25"
   recovery_success_lookback_hours: 2
   run_days: "1,2,3,4,5"
@@ -302,7 +302,7 @@ business_quant_analyst_snapshot:
   provider: business_quant
   api_key_env: BUSINESS_QUANT_API_KEY
   timezone: America/New_York
-  run_hours: "16"
+  run_hours: "17"
   run_days: "1,2,3,4,5"
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   metrics: "eps"
@@ -319,9 +319,9 @@ oracle_options_indicative_snapshot:
   feed: indicative
   timezone: America/New_York
   # Passage principal vingt minutes après la clôture régulière US.
-  run_hours: "16"
+  run_hours: "15"
   run_minutes: "20"
-  recovery_run_hours: "22"
+  recovery_run_hours: "23"
   recovery_run_minutes: "20"
   recovery_success_lookback_hours: 8
   run_days: "1,2,3,4,5"
@@ -356,10 +356,10 @@ options_delayed_bars_sync:
   research_notice: "La provenance n'est pas attestée dans le payload historique Alpaca : les lignes sont marquées UNVERIFIED_OPRA. Elles servent uniquement à la recherche, jamais à simuler un NBBO ou un prix d'exécution live. Historique disponible depuis février 2024."
   timezone: America/New_York
   # Passage principal après clôture et après le délai minimal Alpaca.
-  run_hours: "17"
+  run_hours: "18"
   run_minutes: "0"
   recovery_run_hours: "23"
-  recovery_run_minutes: "0"
+  recovery_run_minutes: "30"
   recovery_success_lookback_hours: 8
   run_days: "1,2,3,4,5"
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
@@ -386,9 +386,9 @@ option_contract_adjustment_sync:
   provider: occ
   research_notice: "Le RSS OCC fournit numéro, publication, catégorie, résumé et lien. Le détail des mémos est protégé par Cloudflare ; multiplier, cash component et deliverable détaillé restent inconnus tant qu'ils ne sont pas observés dans le catalogue de contrats Alpaca versionné."
   timezone: Europe/Paris
-  run_hours: "11"
+  run_hours: "12"
   run_minutes: "15"
-  recovery_run_hours: "19"
+  recovery_run_hours: "20"
   recovery_run_minutes: "15"
   recovery_success_lookback_hours: 10
   run_days: "1,2,3,4,5,6"
@@ -409,7 +409,7 @@ oracle_opening_window_sync:
   adjustment: raw
   timezone: America/New_York
   # Fenêtre terminée à 10:30 ET, puis délai SIP conservateur de vingt minutes.
-  run_hours: "10"
+  run_hours: "11"
   run_minutes: "50"
   run_days: "1,2,3,4,5"
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
@@ -438,7 +438,7 @@ sec_corporate_events_normalize:
   universe_scope: raw_sec_filings
   timezone: Europe/Paris
   # Laisse au collecteur SEC de 06:00 le temps de terminer.
-  run_hours: "13"
+  run_hours: "14"
   run_days: "1,2,3,4,5,6"
   forms: "8-K,8-K/A,6-K,6-K/A"
   log_file: log/batch/sec_corporate_events_normalize.txt
@@ -450,7 +450,7 @@ sec_institutional_ownership_normalize:
   enabled: true
   universe_scope: raw_sec_filings
   timezone: Europe/Paris
-  run_hours: "17"
+  run_hours: "18"
   run_days: "2,4,6"
   forms: "13F-HR,13F-HR/A,SC 13D,SC 13D/A,SC 13G,SC 13G/A"
   log_file: log/batch/sec_institutional_ownership_normalize.txt
@@ -464,7 +464,7 @@ fred_alfred_vintage_sync:
   provider: fred_alfred
   api_key_env: KEY_FRED
   timezone: Europe/Paris
-  run_hours: "14"
+  run_hours: "15"
   run_days: "1,2,3,4,5"
   series: "DGS2,DGS10,DGS30,T10Y2Y,T10Y3M,FEDFUNDS,CPIAUCSL,CPILFESL,PCEPI,PCEPILFE,UNRATE,PAYEMS,INDPRO,RETAILSMSA,GDPC1,VIXCLS,BAMLH0A0HYM2"
   observation_lookback_days: 730
@@ -481,7 +481,7 @@ finra_short_volume_sync:
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   timezone: America/New_York
   # Publication FINRA attendue après la clôture; 23:00 ET maximise la disponibilité.
-  run_hours: "23"
+  run_hours: "22"
   run_days: "1,2,3,4,5"
   lookback_days: 7
   source_url_template: "https://cdn.finra.org/equity/regsho/daily/CNMSshvol{date}.txt"
