@@ -12,9 +12,36 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 if (-not $WorkspacePath) { $WorkspacePath = Split-Path -Parent (Split-Path -Parent $PSScriptRoot) }
 $workspace = (Resolve-Path -LiteralPath $WorkspacePath).Path
-if (-not $PythonExePath) { $PythonExePath = Join-Path $workspace '.venv\Scripts\python.exe' }
+# Priorité au venv local, repli sur l'interpréteur du PATH (installation globale).
+function Resolve-AlphaTradePythonExe {
+    param(
+        [Parameter(Mandatory = $true)][string]$Workspace,
+        [string]$RequestedPythonExePath
+    )
+    if ($RequestedPythonExePath) {
+        if (-not (Test-Path -LiteralPath $RequestedPythonExePath)) {
+            throw "Python introuvable: $RequestedPythonExePath"
+        }
+        return (Resolve-Path -LiteralPath $RequestedPythonExePath).Path
+    }
+    $candidates = @(
+        (Join-Path $Workspace '.venv\Scripts\python.exe'),
+        (Join-Path $Workspace 'venv\Scripts\python.exe'),
+        (Join-Path $Workspace '.python\Scripts\python.exe')
+    )
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath $candidate) {
+            return (Resolve-Path -LiteralPath $candidate).Path
+        }
+    }
+    $pythonCommand = Get-Command python.exe -ErrorAction SilentlyContinue
+    if ($pythonCommand) { return $pythonCommand.Source }
+    $pyLauncher = Get-Command py.exe -ErrorAction SilentlyContinue
+    if ($pyLauncher) { return $pyLauncher.Source }
+    throw 'Aucun interpréteur Python exploitable trouvé. Fournir -PythonExePath ou créer .venv\Scripts\python.exe.'
+}
+$PythonExePath = Resolve-AlphaTradePythonExe -Workspace $workspace -RequestedPythonExePath $PythonExePath
 if (-not $ConfigPath) { $ConfigPath = Join-Path $workspace 'config\oracle_canary.yaml' }
-if (-not (Test-Path -LiteralPath $PythonExePath)) { throw "Python introuvable: $PythonExePath" }
 if (-not (Test-Path -LiteralPath $ConfigPath)) { throw "Configuration introuvable: $ConfigPath" }
 $pyCode = 'import json,sys,yaml; print(json.dumps(yaml.safe_load(open(sys.argv[1],encoding=''utf-8'')) or {}))'
 $cfg = ((& $PythonExePath -c $pyCode $ConfigPath | Out-String).Trim() | ConvertFrom-Json)
