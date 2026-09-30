@@ -1,5 +1,67 @@
 # Registre des expériences ML réalisées
 
+## Recouvrement Oracle et dates officielles du 30 septembre 2026 — guidance
+
+Statut : `INCONCLUSIVE / ZERO_PIT_ELIGIBLE`.
+Les cinq révisions du pilote ont une ligne OOF, mais aucune n'entre dans le
+TOP20 % brut d'Oracle ; leurs déciles réalisés sont D4/D7/D9/D8/D8. Sur 38
+publications, trois seulement entrent dans ce TOP20 %, toutes `GROWTH_ONLY`.
+Un second tirage figé avant lecture des sources et des labels compte 12 couples
+émetteur/date : sept dates du calendrier sont décalées par rapport aux sources
+officielles ; dix restent dans le TOP20 % à la date corrigée, sans remplacement.
+Jointure temporelle stricte prototypée et testée, zéro événement réel admissible
+faute d'horloges de décision/disponibilité et de revue indépendante.
+Suivi : BBWI est un premier candidat de révision de ventes parmi les titres
+Oracle présélectionnés (milieu −1,75 point), mais le score pertinent avant sa
+publication matinale serait celui du 27/08, non celui du 28/08. Les labels
+clôture→clôture existants passent de D3 à D8 en décalant la date d'un jour :
+cible à reconstruire depuis l'entrée effective, aucune preuve prédictive.
+GEO fournit un contrôle négatif : malgré une annonce de guidance « mise à jour »,
+le revenu annuel annoncé reste environ 2,4 Md USD dans les deux publications.
+Prototype de label ouvert→ouvert H20 exécuté sur BBWI, score du 27/08 puis
+entrée théorique le 28/08 : −9,12 %, D1 provisoire dans 1 847 titres. Un
+report d'une séance donne −1,42 %, D3 provisoire sur une autre cohorte.
+Seulement une barre quotidienne disponible, aucun prix intrajournalier ou
+instant historique de réception validé : résultat descriptif, pas backtest PIT.
+Voir [rapport et protocole](guidance_oracle_overlap_and_calendar_20260930.md).
+
+## Vérification SEC du 30 septembre 2026 — cinq candidats guidance
+
+Statut : `BLOCKED_FOR_ML_EVIDENCE_IMPROVED`.
+Index 8-K et EX-99.1 retrouvés pour les cinq candidats ; anciennes valeurs
+Autodesk corroborées. Sous convention horaire New York, trois acceptations
+SEC sont postérieures à 16 h et deux antérieures à 09 h 30. Aucun cutoff
+réel de batch Oracle certifié ; acceptation distincte de diffusion/réception.
+Accès direct SEC : HTTP 403, aucun brut SEC archivé. Comparabilité comptable
+Autodesk et change COLM documentés ; revue indépendante encore absente.
+Contrôles locaux et frontières temporelles vérifiés, zéro événement ML-éligible.
+Voir [preuves et limites](guidance_pit_followup_20260930.md).
+
+## Pilote de référence du 30 septembre 2026 — guidance, dix émetteurs
+
+Statut : `REVIEW_READY_PARTIAL_EVIDENCE_NOT_ML_READY`.
+Sur deux fenêtres avril–août 2023/2024 : 38 publications inventoriées,
+20 bruts archivés, 18 téléchargements échoués avec lecture web complémentaire.
+13 objectifs annuels absolus chez trois émetteurs ; cinq révisions nominales
+candidates (trois OLD/NEW explicites, deux comparaisons entre publications),
+trois comparaisons inchangées. 37 propositions de classement et un cas CAT
+en revue incomplète. Pas de vérité terrain humaine indépendante, de PIT validé,
+de mesure prédictive ou d'événement ML-éligible. Aucun réglage du parseur.
+Voir [rapport et inventaire sourcé](guidance_reference_pilot_20260930.md).
+
+## Audit documentaire du 30 septembre 2026 — guidance
+
+Statut : `DOCUMENTARY_FEASIBILITY_ONLY / DATA_NOT_READY_ML`.
+Relecture E21-B4 à B8 et audit statique du collecteur, du parseur et de
+l'appariement. Les artefacts historiques E21 ne sont pas présents dans ce
+checkout. Sur six publications officielles de DECK/ULTA/ETSY sélectionnées
+avant lecture : deux révisions explicites de ventes chez ULTA, un objectif
+ponctuel nominalement inchangé chez DECK avec périmètre à vérifier, aucune
+paire annuelle de revenus en dollars identifiée chez ETSY. Zéro événement
+ML-éligible : revue humaine indépendante et disponibilité historique non
+validées. Aucun rendement utilisé, aucun entraînement, aucune B9 ou modification
+de production. Voir [audit et sources](guidance_feasibility_audit_20260930.md).
+
 ## Objet et règle de lecture
 
 Ce document est l'index central des expériences ML et des recherches directement
