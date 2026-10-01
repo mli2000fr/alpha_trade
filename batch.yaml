@@ -8,6 +8,92 @@
 # J-N/J. Les snapshots non reconstructibles disposent d'un second passage
 # conditionnel, annulé automatiquement quand le principal a réussi.
 
+# Sprint 15-D6 : observations officielles CN strictement de recherche.
+# Deux tâches distinctes pour conserver un seul horaire principal par batch.
+# Le planificateur Windows utilise son identifiant de fuseau China Standard
+# Time ; le calcul et le calendrier métier restent en Asia/Shanghai.
+cn_dragon_tiger_after_close:
+  priority: P2
+  enabled: true
+  status: RESEARCH_ONLY
+  timezone: China Standard Time
+  run_hours: "17"
+  run_minutes: "30"
+  description: "Observer les listes Dragon/Tiger officielles SSE/SZSE après la clôture CN ; journal de recherche uniquement."
+  tables: "fichiers:artifacts/research/cn_dragon_tiger_15d6"
+  provider: sse_szse_official
+  universe_scope: cn_a_exchange_disclosures
+  output_root: artifacts/research/cn_dragon_tiger_15d6/observations
+  coverage_description: "Snapshot de la séance CN J à 17:30 Asia/Shanghai ; première observation réelle, sans historique PIT reconstruit."
+  research_notice: "Jamais une feature ML ou un signal live automatique. Heures de publication et droits d'exploitation restent à qualifier ; aucun montant ni nom de siège persisté."
+  execution_notice: "Calendrier boursier explicite limité à 2026. Si le PC ou la session Windows est fermé, le passage peut être manqué ; aucun rattrapage fictif ne certifie le PIT."
+  log_file: log/batch/cn_dragon_tiger_after_close.txt
+
+cn_dragon_tiger_before_open:
+  priority: P2
+  enabled: true
+  status: RESEARCH_ONLY
+  timezone: China Standard Time
+  run_hours: "8"
+  run_minutes: "30"
+  description: "Réobserver avant l'ouverture CN la liste Dragon/Tiger de la précédente séance ouverte ; détecter ajouts et corrections."
+  tables: "fichiers:artifacts/research/cn_dragon_tiger_15d6"
+  provider: sse_szse_official
+  universe_scope: cn_a_exchange_disclosures
+  output_root: artifacts/research/cn_dragon_tiger_15d6/observations
+  coverage_description: "Snapshot avant le seuil prudent de 09:15 Asia/Shanghai sur la précédente séance ouverte ; week-ends et jours fériés respectés."
+  research_notice: "L'heure d'observation avant décision est tracée, sans certification de l'heure de diffusion ni activation ML/live."
+  execution_notice: "Calendrier boursier explicite limité à 2026 ; un passage manqué ne peut pas être reconstitué après coup."
+  log_file: log/batch/cn_dragon_tiger_before_open.txt
+
+# Sprint 15-D9 : journal Oracle CN prospectif après clôture, recherche seulement.
+# Une décision manquée ne doit jamais être reconstruite après son cutoff.
+cn_oracle_prospective_daily:
+  priority: P1
+  enabled: true
+  status: RESEARCH_ONLY
+  timezone: China Standard Time
+  run_hours: "18"
+  run_minutes: "15"
+  description: "Collecter la séance CN close, vérifier les 209 lots environ, puis publier Oracle TOP20 pour la prochaine ouverture avant 09:15 Shanghai."
+  tables: "cn_staging_rows,market_sessions,stock_bars_daily,instrument_adjustment_factors; fichiers:artifacts/research/cn_oracle_prospective_15d8"
+  provider: baostock,oracle_cn_frozen_lightgbm
+  universe_scope: cn_a_all_equities_pit
+  calendar: config/research_cn/sprint15d6_cn_calendar_2026.yaml
+  seed_manifest: config/univers_cn/canonical_incremental_2026-09-30.txt
+  manifest_root: config/univers_cn
+  chunks_root: config/univers_cn/sprint7c_daily_chunks
+  collection_root: artifacts/cn/sprint7c_daily
+  oracle_output_root: artifacts/research/cn_oracle_prospective_15d8
+  output_root: artifacts/research/cn_oracle_daily_15d9
+  chunk_size: 25
+  coverage_description: "Séance J close vers décision K suivante ; lots reprenables. Aucun score rétrodaté si le passage manque son cutoff."
+  research_notice: "Oracle de recherche uniquement ; ni serving, ni ordre, ni conclusion D1/D10."
+  execution_notice: "Session Windows Interactive requise ; calendrier CN vérifié jusqu'à 2026 seulement. Un échec notifie et ne publie pas de score incomplet."
+  log_file: log/batch/cn_oracle_prospective_daily.txt
+
+# Sprint 15-D10 : appariement D7 prospectif, sans lecture des rendements futurs.
+cn_dragon_tiger_daily_match:
+  priority: P2
+  enabled: true
+  status: RESEARCH_ONLY
+  timezone: China Standard Time
+  run_hours: "9"
+  run_minutes: "30"
+  description: "Apparier après 09:15 les candidats Oracle de la séance avec le dernier snapshot Dragon/Tiger officiellement observé à temps."
+  tables: "fichiers:artifacts/research/cn_dragon_tiger_15d10; aucune écriture de table métier"
+  provider: oracle_cn_frozen_lightgbm,sse_szse_official
+  universe_scope: oracle_cn_prospective_top20
+  calendar: config/research_cn/sprint15d6_cn_calendar_2026.yaml
+  protocol: config/research_cn/sprint15d7_dragon_tiger_protocol.yaml
+  snapshot_root: artifacts/research/cn_dragon_tiger_15d6/observations
+  oracle_output_root: artifacts/research/cn_oracle_prospective_15d8
+  output_root: artifacts/research/cn_dragon_tiger_15d10
+  coverage_description: "Une décision K après son cutoff de 09:15 Shanghai ; appariement quotidien immuable et sans issue H20."
+  research_notice: "Journal de recherche outcome-blind uniquement ; insuffisant pour conclure avant les gates D7 multi-séances et multi-trimestres."
+  execution_notice: "Exige export Oracle et snapshot officiel complets observés avant cutoff. Session Windows Interactive et calendrier 2026 vérifié requis."
+  log_file: log/batch/cn_dragon_tiger_daily_match.txt
+
 # Sauvegarde locale hebdomadaire des artefacts ML réellement nécessaires au runtime.
 # run_days suit DayOfWeek : 0=dimanche, 1=lundi, ... 6=samedi.
 ml_artifacts_backup:

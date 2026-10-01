@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -13,15 +14,17 @@ from ihm.services.batch_management import (
     build_install_command,
     build_run_command,
     build_uninstall_command,
-    format_data_coverage,
     format_command,
+    format_data_coverage,
     format_schedule,
     install_all_batches,
     install_batch,
+    latest_cn_dragon_research_run,
     list_active_batch_runs,
     load_batch_specs,
     query_windows_task_states,
     read_batch_log_tail,
+    read_cn_daily_quality_history,
     start_batch,
     uninstall_all_batches,
     uninstall_batch,
@@ -161,10 +164,8 @@ def _windows_last_run_failed(
     )
     # A later successful manual/managed run supersedes an older Scheduler error.
     latest_status = str((row or {}).get("status") or "").strip().upper()
-    if (latest_status in {"SUCCESS", "COMPLETED", "OK", "COMPLETED_WITH_WARNINGS"}
-            and windows_started and business_finished and business_finished >= windows_started):
-        return False
-    return True
+    return not (latest_status in {"SUCCESS", "COMPLETED", "OK", "COMPLETED_WITH_WARNINGS"}
+                and windows_started and business_finished and business_finished >= windows_started)
 
 
 def _batch_title(
@@ -213,7 +214,7 @@ def _render_batch(
 ) -> None:
     status_bits = [_priority_badge(spec.priority), _task_badge(task)]
     if not spec.enabled:
-        status_bits.append("⏸️ Désactivé dans batch.yaml")
+        status_bits.append(f"⏸️ Désactivé dans {Path(spec.catalog_path).name}")
     elif not spec.runnable:
         status_bits.append(f"🧪 {spec.status}")
     if active:
@@ -235,7 +236,7 @@ def _render_batch(
             st.warning(f"🔬 Usage recherche — {spec.research_notice}")
         if not spec.runnable:
             requirement = spec.activation_requirement or (
-                f"Corriger le statut {spec.status} et passer enabled à true dans batch.yaml "
+                f"Corriger le statut {spec.status} et passer enabled à true dans {Path(spec.catalog_path).name} "
                 "uniquement après validation opérationnelle."
             )
             st.error(f"🔴 Activation bloquée — {requirement}")
@@ -267,6 +268,24 @@ def _render_batch(
         tables = ", ".join(spec.tables)
         st.markdown("**Tables impactées :** " + (tables or "aucune tant que la source n’est pas activée"))
         _render_last_run(db_run)
+
+        if spec.name == "cn_daily_quality_17c":
+            history = read_cn_daily_quality_history(spec)
+            with st.expander("Qualité quotidienne CN — dernières séances"):
+                st.caption(
+                    "Rapports de contrôle en lecture seule. Les jours fermés sont exclus ; "
+                    "la présence de rapports ne valide pas à elle seule le gate de sept séances consécutives."
+                )
+                if history:
+                    st.dataframe([
+                        {"Séance CN": row["session"], "Statut": row["status"],
+                         "Gates OK": row["passed"], "Critiques": row["critical"],
+                         "Alertes": row["warnings"], "Contrôles à examiner": row["alerts"]}
+                        for row in history
+                    ], hide_index=True, use_container_width=True)
+                    st.caption(f"Dernier rapport : {history[0]['report_path']}")
+                else:
+                    st.info("Aucune séance CN ouverte contrôlée pour le moment.")
 
         with st.expander("Commandes et détails techniques"):
             st.caption("Installation / réinstallation de la tâche Windows")
@@ -361,7 +380,7 @@ def _render_bulk_result(action: str, results: dict[str, Any], skipped: list[str]
 def render() -> None:
     st.title("🗓️ Batchs planifiés")
     st.caption(
-        "Catalogue central de batch.yaml : rôle de chaque collecte, priorité, état réel du "
+        "Catalogues batch.yaml (US) et batch_cn.yaml (CN) : rôle de chaque collecte, priorité, état réel du "
         "Planificateur Windows, dernières écritures et pilotage manuel."
     )
 
@@ -383,7 +402,7 @@ def render() -> None:
     installed_dormant = sum(spec.task_name in tasks and not spec.runnable for spec in specs)
     top1, top2, top3, top4, top5 = st.columns(5)
     top1.metric("Configurés", len(specs))
-    top2.metric("Exécutables (batch.yaml)", sum(spec.runnable for spec in specs))
+    top2.metric("Exécutables (catalogues)", sum(spec.runnable for spec in specs))
     top3.metric("Installés et exécutables", installed_runnable)
     top4.metric("Installés mais dormants", installed_dormant)
     top5.metric("En cours via l’IHM", len(active))
@@ -391,7 +410,7 @@ def render() -> None:
     if installed_dormant:
         st.info(
             f"{installed_dormant} tâche(s) Windows sont installées mais neutralisées par "
-            "enabled=false ou un statut d’attente dans batch.yaml. Elles ne collectent aucune donnée."
+            "enabled=false ou un statut d’attente dans leur catalogue. Elles ne collectent aucune donnée."
         )
 
     if task_error:
@@ -430,7 +449,7 @@ def render() -> None:
         st.rerun()
     if global_col2.button(
         "♻️ Installer / réinstaller tous", use_container_width=True,
-        help="Installe uniquement les tâches dont enabled=true dans batch.yaml. Les batchs désactivés ne sont pas touchés.",
+        help="Installe uniquement les tâches dont enabled=true dans leur catalogue. Les batchs désactivés ne sont pas touchés.",
     ):
         install_specs = [
             spec for spec in specs
@@ -446,7 +465,7 @@ def render() -> None:
         "🗑️ Désinstaller tous les batchs",
         disabled=not installed_specs,
         use_container_width=True,
-        help="Supprime toutes les tâches Batch installées, mais conserve batch.yaml, les données et les journaux.",
+        help="Supprime toutes les tâches Batch installées, mais conserve les catalogues, les données et les journaux.",
     ):
         with st.spinner(f"Désinstallation de {len(uninstall_specs)} tâche(s) Windows…"):
             results = uninstall_all_batches(uninstall_specs)
@@ -475,7 +494,10 @@ def render() -> None:
         batch_active = active_by_batch.get(spec.name, [])
         recent = batch_active[0] if batch_active else history_by_batch.get(spec.name)
         _render_batch(
-            spec, tasks.get(spec.task_name), db_runs.get(spec.name),
+            spec, tasks.get(spec.task_name),
+            (latest_cn_dragon_research_run(spec) if spec.name.startswith("cn_dragon_tiger_")
+             or spec.name in {"cn_oracle_prospective_daily", "cn_db_backup", "cn_daily_quality_17c"}
+             else db_runs.get(spec.name)),
             run_as=run_as, active=batch_active, recent=recent,
         )
 

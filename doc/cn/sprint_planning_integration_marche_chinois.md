@@ -1186,6 +1186,8 @@ Ajouter les données absentes du marché US susceptibles d’aider D1/D10.
 
 ### 15A Money Flow
 
+**Audit 15-A0 (27/09/2026) :** [rapport de faisabilité PIT](./sprint_15a0_audit_money_flow_pit.md). Le flux individuel Eastmoney/AKShare est accessible mais le smoke réel plafonne à 120 séances récentes ; la variante historique B1 de Sprint 16 reste `NO_GO_HISTORICAL_FREE`. Une collecte prospective de recherche demeure possible sous réserve de qualité et de disponibilité PIT.
+
 - normalisation montant/taille ;
 - petits/moyens/grands/très grands ordres si définition fournisseur ;
 - ratios au turnover ;
@@ -1195,6 +1197,12 @@ Ajouter les données absentes du marché US susceptibles d’aider D1/D10.
 
 ### 15B Margin/Lending
 
+**Audit 15-B0 (27/09/2026) :** [rapport source et PIT](./sprint_15b0_audit_margin_lending_pit.md). Relevés historiques par titre SSE/SZSE réellement accessibles depuis le poste (`GO_SOURCE_CANDIDATE`), mais la couverture quotidienne et les vintages/horaires historiques ne sont pas encore prouvés (`NO_GO_ML_PIT_YET`). Sprint 15-B1 = backfill pilote et contrôle, sans ouvrir l'ablation B2.
+
+**15-B1 terminé le 28/09/2026 :** [rapport du pilote](./sprint_15b1_backfill_pilote_margin_lending.md). 16 ancrages et 40 journées hebdomadaires 2018–2025 collectés, zéro échec de lecture ; éligibilité, écarts détail/résumé et disponibilité PIT restent à résoudre en 15-B2 avant le ML.
+
+**15-B2 audité le 28/09/2026 :** [contrat et résultats](./sprint_15b2_eligibilite_et_contrat_pit.md). Listes Shenzhen rapprochées sur les 16 ancrages : 100 % des actions éligibles du référentiel ont un détail. Shanghai : liste historique non qualifiée et 3 019 transitions non réconciliées conservées en quarantaine. Proxy à la clôture de la deuxième séance suivante, explicitement non certifié PIT. Aucun entraînement ni écriture métier. Les gates de sortie PIT ne sont pas satisfaits ; prochaine tranche proposée 15-B3 = qualification des blocages, pas ablation ML.
+
 - financing balance/change ;
 - financing buys/repayments ;
 - lending balance/change ;
@@ -1203,6 +1211,8 @@ Ajouter les données absentes du marché US susceptibles d’aider D1/D10.
 - retard de publication.
 
 ### 15C Analystes et forecasts
+
+**15-C0 audité le 29/09/2026 :** [audit des analystes et prévisions PIT](./sprint_15c0_audit_analystes_pit.md). Aucun historique analyste dans `alpha_trade_cn`. Eastmoney/AKShare retourne des rapports anciens, mais pas les versions ni horodatages d'ingestion d'époque ; seulement 5/16 titres d'un petit échantillon Oracle ont un rapport en 2024, et 5/16 en 2025. RQData documente des timestamps d'ingestion et une option excluant les compléments historiques, mais accès et couverture réelle non vérifiés. **Pas de 15-C1 ML historique sur l'archive gratuite actuelle ; serving inchangé.**
 
 - ancienne estimation ;
 - nouvelle estimation ;
@@ -1214,6 +1224,32 @@ Ajouter les données absentes du marché US susceptibles d’aider D1/D10.
 - consensus reconstruit uniquement avec observations connues.
 
 ### 15D Événements
+
+**15-D0 audité le 29/09/2026 :** [audit PIT des événements](./sprint_15d0_audit_evenements_pit.md). CNINFO expose des PDF officiels de prévisions de résultats avec identifiant et date ; sur 279 paires Oracle d'un petit échantillon 15-B5, seules 21 ont une annonce dans les 20 jours précédents (93 dans les 90 jours). Horodatages souvent normalisés à minuit, corrections et extraction encore à qualifier : 15-D1 limité à un pilote documentaire sous proxy PIT. Les listes Dragon/Tiger historiques sont consultables, mais l'agrégat Eastmoney contient des rendements futurs `D1…D30` interdits comme features ; 15-D2 est un audit séparé. **Aucun modèle ni serving modifié.**
+
+**15-D1 terminé le 29/09/2026 :** [pilote documentaire et couverture complète](./sprint_15d1_pilote_guidance_pit.md). Huit PDF CNINFO lus et une paire annonce/correction vérifiée visuellement ; l'inventaire de masse Eastmoney recouvre seulement 23 831/464 834 décisions Oracle TOP20 dans les 20 jours antérieurs (5,13 %). L'archive n'est pas un historique de versions PIT certifié et les valeurs numériques restent en quarantaine. **Pas de GO ML historique, aucun serving modifié.** 15-D2 Dragon/Tiger reste séparé.
+
+**15-D2 terminé le 29/09/2026 :** [audit officiel Dragon/Tiger](./sprint_15d2_audit_dragon_tiger_pit.md). Les tableaux SSE principal + STAR et SZSE ont été rapprochés de l'archive Eastmoney sur quatre séances : 228/228 couples marché–titre actions A concordants. Les montants/motifs par siège, l'heure historique de publication et l'apport directionnel restent non établis ; rendements futurs et taux de réussite de l'agrégateur exclus. **Pas de GO ML PIT ni de changement serving.**
+
+**15-D3 terminé le 30/09/2026 :** [robustesse historique des listes Dragon/Tiger](./sprint_15d3_robustesse_historique_dragon_tiger.md). Deux séances mécaniquement choisies par an sur 2018–2025 : **985/985 couples séance–marché–titre actions A concordants** après séparation de deux avis de financement 2018. Les deux listes de sièges SSE sont présentes sur 395/396 lignes ; les montants présents sont structurellement cohérents et 16 détails SZSE sont lisibles. Les montants entre fournisseurs et l'heure historique de diffusion ne sont pas certifiés. **Toujours aucun entraînement ni serving.**
+
+**15-D4 terminé le 30/09/2026 :** [contrat temporel et couverture Oracle](./sprint_15d4_contrat_temporel_couverture_dragon_tiger.md). Archive assainie 2023-11 à 2025-12 : 32 469 événements titre–séance mappés à leur identifiant daté. Sur 464 834 décisions Oracle TOP20 OOF, couverture fraîche ≤ 5 séances de 14,435 % sous J+1 et 12,138 % sous J+2. Même séance interdite, heures de publication historiques non certifiées. **Aucune ablation ML ni production autorisée à ce stade.**
+
+**15-D5 terminé le 30/09/2026 :** [préflight directionnel et observations prospectives](./sprint_15d5_preflight_dragon_tiger_et_observations.md). Le diagnostic brut J+2/5 montre 19 526 D1 pour 7 704 D10 parmi les extrêmes couverts, mais n'est pas apparié au mouvement antérieur et ne permet pas de règle. Les droits de réutilisation de l'archive et les heures historiques restent non qualifiés : **NO_GO ML**. Un journal manuel officiel, horodaté et append-only, a passé un smoke rétrospectif de 76 motifs ; aucun batch planifié ni serving.
+
+**15-D6 mis en service recherche le 30/09/2026 :** [deux passages prospectifs officiels](./sprint_15d6_collecte_prospective_dragon_tiger.md) installés sous deux tâches Windows distinctes, 17:30 après clôture et 08:30 avant ouverture Shanghai. Calendrier officiel 2026 explicite, 2027 fail-closed ; premier passage manuel avant ouverture : 64 motifs pour le 29/09, lus avant 09:15 le 30/09. Observations horodatées et corrections suivies, sans certification PIT, ML ou live. Telegram local reste bloqué par une erreur de chaîne TLS ; aucune désactivation de la vérification HTTPS.
+
+**15-D7 pré-enregistré le 30/09/2026 :** [appariement outcome-blind Dragon/Tiger](./sprint_15d7_protocole_appariement_dragon_tiger.md), exact même séance et board, calipers figés sur rang Oracle et mouvement préalable, refus des scores tardifs et des colonnes de futur. Prévalidation réelle de l'export D8 du 08/10 : 1 034 candidats et snapshot officiel contrôlés, statut `WAITING_FOR_DECISION_CUTOFF`. Appariement réel seulement après 09:15 Shanghai le 08/10 et contrôle du dernier passage D6 ; aucun résultat D1/D10, entraînement ou serving.
+
+**15-D7a rattrapage terminé le 30/09/2026 :** [chemin canonique incrémental](./sprint_15d7a_rattrapage_canonique_2026.md) borné à 2026 et insert-only : 210/210 lots, 5 242 actions, 180 séances ouvertes et 936 103 barres d'actions jusqu'au 29/09. Les empreintes des séances 2018–2025 ne changent pas. Ce backfill ne transforme pas les décisions de septembre en prédictions PIT.
+
+**15-D8 premier export prospectif réel le 30/09/2026 :** [Oracle CN H20 TOP20 avant 09:15 Shanghai](./sprint_15d8_export_oracle_prospectif.md) sur artefact figé, univers pré-ouverture et séance du 30/09 collectée en 209/209 lots. Préflight `READY_TO_SCORE`, 5 166 titres éligibles, 1 034 candidats pour la décision du 08/10 ; fichier et empreinte contrôlés. Collecte et score encore manuels, D7 en attente du cutoff futur, aucun serving ni ordre.
+
+**15-D9 journal quotidien installé le 30/09/2026 :** [chaîne prospectif CN après clôture](./sprint_15d9_journal_oracle_prospectif_quotidien.md), batch IHM et tâche Windows à 18:15 Shanghai. Collecte J reprenable et vérifiée, score D8 K immuable uniquement avant cutoff, notifications communes, aucune rétrodatation/serving/trading. Contrôle réel `SKIP_CLOSED` pendant les congés d'octobre ; premier nouveau cycle utile attendu le 08/10 après clôture. Calendrier 2027 et session Windows Interactive restent des dépendances opérationnelles.
+
+**15-D10 journal d'appariement quotidien préparé le 30/09/2026 :** [enchaînement D8 × D6 après cutoff](./sprint_15d10_appariement_d7_quotidien.md), lecture des seuls scores et snapshots disponibles avant 09:15, paires outcome-blind, sans labels, serving ni trading. Première séance possible : 08/10 à 09:30 Shanghai ; elle n'établira pas à elle seule les gates D7.
+
+**15-D11 cumul pré-enregistré le 30/09/2026 :** [progression D7 sans lecture d'issues](./sprint_15d11_cumul_d7_outcome_blind.md), contrôle des empreintes D8/D10 et des lacunes quotidiennes, agrégation des paires et bilan de chaque gate figé. Premier rapport réel : `WAITING_FOR_FIRST_PROSPECTIVE_MATCH`, zéro séance ; aucun résultat D1/D10 n'a été consulté.
 
 - Dragon/Tiger list ;
 - motif ;
@@ -1284,6 +1320,14 @@ Chaque famille est testée :
 - décision sur achat éventuel de RQData.
 
 ## 21. Sprint 17 — Industrialisation recherche et données
+
+**17-A audité le 30/09/2026 :** [audit opérationnel CN](./sprint_17a_audit_exploitation_cn.md) en lecture seule, quatre findings : sauvegarde CN non planifiée (critique), contrôle qualité staging désactivé, collecteur général désactivé à ne pas activer sans réconciliation avec D9, et quatre batchs de recherche CN encore dans `batch.yaml`. Aucune tâche installée ni base n'a été modifiée. Ordre de suite : 17-B sauvegarde/restauration séparée, 17-C propriétaire unique de la collecte et qualité quotidienne, 17-D migration contrôlée du catalogue après le premier cycle réel.
+
+**17-B terminé le 30/09/2026 :** [sauvegarde CN et restauration isolée](./sprint_17b_sauvegarde_restauration_cn.md). Une archive complète `alpha_trade_cn` existe dans `backups/cn/db` ; sa restauration dans une base temporaire a été vérifiée sur 21 tables et 57 188 133 lignes sans écart, puis la base temporaire a été supprimée. Le batch hebdomadaire de `batch_cn.yaml` est actif et la tâche Windows dédiée est installée. Aucun effet sur les sauvegardes US ni sur les tâches CN prospectives.
+
+**17-C implémenté le 01/10/2026, validation opérationnelle en attente :** [propriétaire unique et qualité CN](./sprint_17c_qualite_quotidienne_proprietaire_collecte.md). D9 conserve seul les écritures canoniques quotidiennes ; le collecteur générique reste désactivé. Un contrôle read-only D6/D9/D10, conscient des jours fériés, est installé à 23:30 Shanghai, après la fenêtre de collecte D9, et notifie les échecs. Le rattrapage manuel du 30/09 ne vaut pas preuve D9. Gate de clôture : sept séances ouvertes consécutives sans anomalie critique inexpliquée, au plus tôt du 08 au 16/10/2026. Aucun serving ou ordre CN activé.
+
+**17-D préparé, non basculé :** [plan de migration contrôlée des catalogues](./sprint_17d_preparation_bascule_catalogues.md). L'IHM, les lanceurs Windows et les trois runners D6/D9/D10 acceptent désormais le futur catalogue CN explicite et refusent doublon ou route US ; les tests de simulation passent. Les quatre tâches installées lisent encore `batch.yaml` et restent sans changement. Leur déplacement vers `batch_cn.yaml` attend au minimum un premier cycle réel complet après le 8 octobre, puis une bascule hors fenêtre et une vérification de parité. Le gate des sept séances de 17-C reste distinct.
 
 ### Objectif
 
@@ -1568,6 +1612,18 @@ Golden US après MarketContext + instrument_id
 Cette discipline paraît plus lente au départ, mais elle évite le scénario le plus coûteux : découvrir après plusieurs entraînements CN que les labels, les barres ou les rangs ont été mélangés avec des hypothèses US.
 
 ## 30. Documents de référence
+
+**15-B6 exécuté et audité le 29/09/2026 :** [calendrier et extension OOF](./sprint_15b6_calendrier_et_extension_oracle_oof.md). Nouvelle campagne distincte de B4 : développement 2024H1/H2, confirmation historique 2025H1/H2, fenêtres directionnelles 504/126 avec gaps 20/20 et contrôles de disponibilité. Les deux extensions Oracle H20 LightGBM 2021H1/H2 sont terminées et vérifiées `OOS_RESEARCH_ONLY` ; 2020 manque d'historique. 57 tests ciblés passaient au jalon B6. Aucun modèle directionnel ni serving modifié.
+
+**15-B7 préflight terminé le 29/09/2026 :** [jointures 2021 et gates directionnels réels](./sprint_15b7_jointures_2021_preflight_directionnel.md). TOP20 calculé sur tous les scores CN avant restriction XSHE, puis jointures aux retards 2/3/5 ; 4 978/5 166 paires complètes 2021H1/H2 au lag principal. Huit gates tâche × fold 2024–2025 passent sur les lignes et classes réelles ; 62 tests ciblés passent. Couverture étroite, PIT sous proxy, aucun entraînement directionnel ni conclusion de performance.
+
+**15-B8 ablation terminée le 29/09/2026 :** [ablation directionnelle de la marge](./sprint_15b8_ablation_directionnelle_marge.md). Baseline prix comparée sur lignes identiques aux variantes flux, encours et combinée, deux tâches × deux modèles × quatre folds. Les 12 hypothèses principales donnent `NO_GO_INCREMENTAL_MARGIN` ; gain maximal d'AUC +0,0011 contre +0,015 requis, bornes inférieures corrigées toutes négatives. Aucun modèle en serving et PIT historique toujours non certifié.
+
+**15-B5 clôturé le 29/09/2026 pour la préparation :** [features et jointures temporelles](./sprint_15b5_features_et_jointures_temporelles.md). Fenêtres 5/20 sans pont sur les trous, ratio atypique isolé, 24 jointures Oracle OOF H20 × retards 2/3/5 strictement antérieurs aux décisions ; audit indépendant réussi et 47 tests passent. Six semestres ne disposent pas des 630 séances OOF antérieures requises ; seuls 2025H1/H2 passent ce contrôle avant purge. Le masque complet prix/marge/labels conserve 8,50–19,66 % du TOP20 XSHE. Aucun entraînement ni changement de serving : prochaine tranche proposée, audit/pré-enregistrement d'un calendrier réalisable et du périmètre de baseline.
+
+**15-B4 clôturé le 29/09/2026 pour la collecte et l'audit :** [dataset et protocole](./sprint_15b4_dataset_szse_et_preregistration.md). 1 942 séances terminées, zéro échec, 2 229 667 observations sur 2 229 675 lignes éligibles (99,9996 %), empreintes vérifiées et aucun doublon ; 35 tests ciblés passent. Huit observations absentes et deux séances sans proxy restent exclues des features utilisables ; un ratio supérieur à 1 est identifié et devra être isolé dans B5. Prochaine tranche proposée : fenêtres 5/20 séances et jointures temporelles Oracle/labels, avant évaluation. Archives sous proxy seulement : aucun modèle entraîné ni PIT strict certifié.
+
+**15-B3 terminé le 28/09/2026 :** [qualification des blocages](./sprint_15b3_qualification_blocages.md). Les 40 listes quotidiennes Shenzhen correspondent aux 46 966 lignes du détail du pilote ; les huit relevés Shanghai sont stables à la relecture, mais les écarts comptables et l'éligibilité exhaustive restent non qualifiés. Les flux Shenzhen concordent avec le résumé sur la date contrôlée, les encours non. PIT strict toujours NO-GO. Prochaine tranche proposée 15-B4 : pré-enregistrement et dataset quotidien **Shenzhen uniquement, sous proxy explicite**, avant tout entraînement. Aucun batch métier ni modèle modifié.
 
 - [Audit du code et roadmap d’intégration](./roadmap_integration_marche_chinois_audit_code.md)
 - [Architecture des bases, batchs et configurations CN](./architecture_bases_batchs_configuration_cn.md)

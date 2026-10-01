@@ -9,6 +9,8 @@ from common.config_loader import load_batch_config, resolve_batch_config_path
 ROOT = Path(__file__).resolve().parents[1]
 WINDOWS = ROOT / "scripts" / "windows"
 BATCH_SECTIONS = {
+    "cn_dragon_tiger_after_close", "cn_dragon_tiger_before_open",
+    "cn_oracle_prospective_daily", "cn_dragon_tiger_daily_match",
     "ml_artifacts_backup",
     "db_core_backup", "db_news_raw_backup",
     "market_cap_sync",
@@ -378,3 +380,6 @@ def test_generic_installer_uses_consoleless_synchronous_wrapper() -> None:
     assert "run_forward_pit_hidden.vbs" in installer
     assert "shell.Run(command, 0, True)" in wrapper
     assert "WScript.Quit exitCode" in wrapper
+    assert "WScript.Arguments.Count <> 5 And WScript.Arguments.Count <> 6" in wrapper
+    assert 'command = command & " -BatchConfigPath "' in wrapper
+    assert 'if ($BatchConfigPath) { $arguments +=' in installer

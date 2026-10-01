@@ -1941,8 +1941,10 @@ def main(argv: list[str] | None = None) -> None:
 
     def broker_factory(broker_mode: str, account_id: str | None) -> BrokerAdapter:
         config = config_factory(broker_mode, account_id)
+        from execution_engine.broker_router import BrokerRouter
+        BrokerRouter.validate(config)
         client = AlpacaTradingClient(broker_mode=broker_mode, account_id=account_id)
-        return BrokerAdapter(client, config)
+        return BrokerRouter(us_factory=lambda cfg: BrokerAdapter(client, cfg)).resolve(config)
 
     repo = ExecutionRepository()
     watcher = ProtectionTransitionWatcher(

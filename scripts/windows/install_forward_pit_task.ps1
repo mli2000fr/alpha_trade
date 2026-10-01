@@ -50,6 +50,7 @@ foreach ($minute in ($minutes | Sort-Object -Unique)) {
     $triggers += New-ScheduledTaskTrigger -Once -At $at -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration (New-TimeSpan -Days 3650)
 }
 $arguments='//B //Nologo "{0}" "{1}" "{2}" "{3}" "{4}" "{5}"' -f $hiddenLauncher,$powershellExe,$launcher,$BatchName,$workspace,$python
+if ($BatchConfigPath) { $arguments += ' "{0}"' -f $configPath }
 $action=New-ScheduledTaskAction -Execute $wscriptExe -Argument $arguments -WorkingDirectory $workspace
 $settings=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 12)
 $principal=if($RunAs -eq 'System'){New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest}else{New-ScheduledTaskPrincipal -UserId $UserId -LogonType Interactive}
@@ -57,4 +58,4 @@ $existing=Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if($existing){Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false}
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $triggers -Settings $settings -Principal $principal | Out-Null
 Write-Host "Tâche installée: $TaskName" -ForegroundColor Green
-Write-Host "Batch: $BatchName ; timezone/configuration: batch.yaml"
+Write-Host "Batch: $BatchName ; configuration: $configPath"

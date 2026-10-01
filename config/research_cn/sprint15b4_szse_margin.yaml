@@ -1,0 +1,68 @@
+# Pré-enregistré avant toute performance 15-B4. Changement = nouvelle campagne.
+experiment: cn_sprint15b4_szse_margin_proxy_v1
+market_code: CN_A
+database_alias: cn_primary
+exchange_mic: XSHE
+start: '2018-01-01'
+end: '2025-12-31'
+historical_vintage_proven: false
+strict_ml_allowed: false
+proxy_lag_sessions: 2
+sensitivity_lag_sessions: [3, 5]
+primary_horizon: 20
+tasks: [D1_VS_D10, D10_VS_REST]
+oracle_pool: OOF_TOP20_CN_SPRINT10B_H20
+label_profile: cn_oracle_labels_v1
+development_semesters: [2022H1, 2022H2, 2023H1, 2023H2, 2024H1, 2024H2]
+historical_confirmation_semesters: [2025H1, 2025H2]
+# Déjà étudiés par d'autres pistes : ce n'est pas un holdout global vierge.
+globally_untouched_holdout: false
+minimum_train_sessions: 504
+validation_sessions: 126
+purge_sessions: 20
+embargo_sessions: 20
+seed: 20260928
+max_train_rows: 600000
+models: [logistic, lightgbm]
+lightgbm:
+  n_estimators: 300
+  max_depth: 5
+  learning_rate: 0.03
+  num_leaves: 31
+  min_child_samples: 150
+  reg_lambda: 1.0
+variants:
+  PRICE_BASELINE: []
+  PRICE_MARGIN_FLOW: [financing_buy_to_amount, financing_buy_to_amount_mean5]
+  PRICE_MARGIN_BALANCE: [financing_balance_change5, financing_balance_change20]
+  PRICE_MARGIN_COMBINED: [financing_buy_to_amount, financing_buy_to_amount_mean5, financing_balance_change5, financing_balance_change20]
+normalization: train_only
+missing_policy: no_zero_imputation
+ineligible_policy: exclude
+unreconciled_policy: quarantine_derived_features
+sector_policy: dated_only_otherwise_omit_in_both_arms
+size_control: historical_amount20_proxy_not_current_market_cap
+pre_post_break: '2024-07-11'
+data_gates:
+  min_eligible_equity_coverage: 0.95
+  min_valid_day_fraction: 0.95
+  no_duplicates: true
+  require_complete_calendar: true
+  exclude_missing_proxy: true
+evaluation:
+  min_test_dates_per_fold: 60
+  min_rows_per_fold: 500
+  min_symbols_per_fold: 20
+  min_delta_auc: 0.015
+  min_positive_folds: 6
+  confirmation_positive_folds: 2
+  top_directional_pct: 0.20
+  min_d10_precision_uplift: 0.02
+  max_veto_winner_removal: 0.30
+  bootstrap_unit: calendar_month
+  bootstrap_repetitions: 1000
+  familywise_alpha: 0.05
+  hypotheses: 12
+  require_adjusted_ci_above_zero: true
+  require_equal_evaluation_rows: true
+production_decision: NEVER_FROM_PROXY_ALONE

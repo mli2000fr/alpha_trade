@@ -78,8 +78,21 @@ class TestTelegramClientSend:
             mock_post.side_effect = Exception("Network error")
 
             client = TelegramClient(bot_token="tok", default_chat_id="-10042")
-            with pytest.raises(Exception, match="Network error"):
+            with pytest.raises(RuntimeError, match="details redacted"):
                 client.send("Hello", raise_on_error=True)
+
+    def test_network_failure_never_logs_or_raises_bot_token(self, caplog):
+        secret = "123456:FAKE_TOKEN_FOR_TEST"
+        with patch("requests.post") as mock_post:
+            mock_post.side_effect = Exception(
+                f"HTTPSConnectionPool(host=api.telegram.org, url=/bot{secret}/sendMessage)"
+            )
+            client = TelegramClient(bot_token=secret, default_chat_id="-10042")
+            assert client.send("Hello") is False
+            assert secret not in caplog.text
+            with pytest.raises(RuntimeError) as captured:
+                client.send("Hello", raise_on_error=True)
+            assert secret not in str(captured.value)
 
     def test_send_truncates_long_text(self):
         long_text = "a" * (MAX_TEXT_LENGTH + 100)

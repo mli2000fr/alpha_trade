@@ -28,7 +28,15 @@ OLD_BATCHES = {
     "earnings_calendar_sync": ("AlphaTrade-EarningsCalendarSync", "install_earnings_calendar_task.ps1", "earnings_calendar_launcher.ps1"),
     "analyst_snapshot_collection": ("AlphaTrade-AnalystSnapshot", "install_analyst_snapshot_task.ps1", "analyst_snapshot_launcher.ps1"),
 }
+CN_DRAGON_BATCHES = {"cn_dragon_tiger_after_close", "cn_dragon_tiger_before_open"}
+CN_DRAGON_MATCH_BATCHES = {"cn_dragon_tiger_daily_match"}
+CN_ORACLE_BATCHES = {"cn_oracle_prospective_daily"}
+CN_BACKUP_BATCHES = {"cn_db_backup"}
+CN_QUALITY_BATCHES = {"cn_daily_quality_17c"}
+CN_OPERATIONAL_BATCHES = CN_BACKUP_BATCHES | CN_QUALITY_BATCHES
+CN_RESEARCH_BATCHES = CN_DRAGON_BATCHES | CN_DRAGON_MATCH_BATCHES | CN_ORACLE_BATCHES | CN_OPERATIONAL_BATCHES
 PENDING_STATUSES = {
+    "PENDING_RESTORE_PROOF",
     "PENDING_PROVIDER",
     "PENDING_QUOTA_DECISION",
     "PENDING_FULL_UNIVERSE_CAPACITY",
@@ -65,6 +73,7 @@ class BatchSpec:
     research_notice: str = ""
     supervision_dependencies: tuple[str, ...] = ()
     execution_notice: str = ""
+    catalog_path: str = "batch.yaml"
 
     @property
     def runnable(self) -> bool:
@@ -114,6 +123,17 @@ def task_name_for_batch(batch_name: str) -> str:
 
 def load_batch_specs(path: str | None = None) -> tuple[BatchSpec, ...]:
     config = load_batch_config(path)
+    catalog_paths = {name: str(Path(path).resolve()) if path else str(PROJECT_ROOT / "batch.yaml")
+                     for name in config}
+    if path is None:
+        # Add only CN jobs supported by this page. Until the controlled cutover,
+        # the four research sections remain in batch.yaml; duplicates fail closed.
+        cn_config = load_batch_config(str(PROJECT_ROOT / "batch_cn.yaml"))
+        for name in CN_RESEARCH_BATCHES & set(cn_config):
+            if name in config:
+                raise ValueError(f"Duplicate {name} in batch.yaml and batch_cn.yaml")
+            config[name] = cn_config[name]
+            catalog_paths[name] = str(PROJECT_ROOT / "batch_cn.yaml")
     specs: list[BatchSpec] = []
     for name, raw in config.items():
         if not isinstance(raw, dict):
@@ -141,6 +161,7 @@ def load_batch_specs(path: str | None = None) -> tuple[BatchSpec, ...]:
             research_notice=str(raw.get("research_notice") or ""),
             supervision_dependencies=_split(raw.get("supervision_dependencies")),
             execution_notice=str(raw.get("execution_notice") or ""),
+            catalog_path=catalog_paths[name],
         ))
     order = {f"P{i}": i for i in range(5)}
     return tuple(sorted(specs, key=lambda item: (order.get(item.priority, 99), item.name)))
@@ -215,9 +236,45 @@ def _powershell_prefix() -> list[str]:
 
 
 def build_install_command(spec: BatchSpec, *, run_as: str = "Interactive") -> list[str]:
+    cn_catalog = Path(spec.catalog_path).name == "batch_cn.yaml"
     if spec.name in OLD_BATCHES:
         script = OLD_BATCHES[spec.name][1]
         return _powershell_prefix() + [str(WINDOWS_SCRIPTS / script), "-RunAs", run_as]
+    if spec.name in CN_DRAGON_BATCHES:
+        command = _powershell_prefix() + [
+            str(WINDOWS_SCRIPTS / "install_forward_pit_task.ps1"),
+            "-BatchName", spec.name, "-TaskName", spec.task_name, "-RunAs", run_as,
+            "-LauncherPath", str(WINDOWS_SCRIPTS / "cn_dragon_tiger_launcher_15d6.ps1"),
+        ]
+        return command + (["-BatchConfigPath", spec.catalog_path] if cn_catalog else [])
+    if spec.name in CN_ORACLE_BATCHES:
+        command = _powershell_prefix() + [
+            str(WINDOWS_SCRIPTS / "install_forward_pit_task.ps1"),
+            "-BatchName", spec.name, "-TaskName", spec.task_name, "-RunAs", run_as,
+            "-LauncherPath", str(WINDOWS_SCRIPTS / "cn_oracle_daily_launcher_15d9.ps1"),
+        ]
+        return command + (["-BatchConfigPath", spec.catalog_path] if cn_catalog else [])
+    if spec.name in CN_DRAGON_MATCH_BATCHES:
+        command = _powershell_prefix() + [
+            str(WINDOWS_SCRIPTS / "install_forward_pit_task.ps1"),
+            "-BatchName", spec.name, "-TaskName", spec.task_name, "-RunAs", run_as,
+            "-LauncherPath", str(WINDOWS_SCRIPTS / "cn_dragon_tiger_daily_launcher_15d10.ps1"),
+        ]
+        return command + (["-BatchConfigPath", spec.catalog_path] if cn_catalog else [])
+    if spec.name in CN_BACKUP_BATCHES:
+        return _powershell_prefix() + [
+            str(WINDOWS_SCRIPTS / "install_forward_pit_task.ps1"),
+            "-BatchName", spec.name, "-TaskName", spec.task_name, "-RunAs", run_as,
+            "-BatchConfigPath", str(PROJECT_ROOT / "batch_cn.yaml"),
+            "-LauncherPath", str(WINDOWS_SCRIPTS / "cn_db_backup_launcher_17b.ps1"),
+        ]
+    if spec.name in CN_QUALITY_BATCHES:
+        return _powershell_prefix() + [
+            str(WINDOWS_SCRIPTS / "install_forward_pit_task.ps1"),
+            "-BatchName", spec.name, "-TaskName", spec.task_name, "-RunAs", run_as,
+            "-BatchConfigPath", str(PROJECT_ROOT / "batch_cn.yaml"),
+            "-LauncherPath", str(WINDOWS_SCRIPTS / "cn_daily_quality_launcher_17c.ps1"),
+        ]
     return _powershell_prefix() + [
         str(WINDOWS_SCRIPTS / "install_forward_pit_task.ps1"),
         "-BatchName", spec.name, "-TaskName", spec.task_name, "-RunAs", run_as,
@@ -225,6 +282,33 @@ def build_install_command(spec: BatchSpec, *, run_as: str = "Interactive") -> li
 
 
 def build_run_command(spec: BatchSpec) -> list[str]:
+    cn_config_arg = (["-BatchConfigPath", spec.catalog_path]
+                     if Path(spec.catalog_path).name == "batch_cn.yaml" else [])
+    if spec.name in CN_DRAGON_BATCHES:
+        return _powershell_prefix() + [
+            str(WINDOWS_SCRIPTS / "cn_dragon_tiger_launcher_15d6.ps1"),
+            "-BatchName", spec.name, *cn_config_arg, "-Force",
+        ]
+    if spec.name in CN_ORACLE_BATCHES:
+        return _powershell_prefix() + [
+            str(WINDOWS_SCRIPTS / "cn_oracle_daily_launcher_15d9.ps1"),
+            "-BatchName", spec.name, *cn_config_arg, "-Force",
+        ]
+    if spec.name in CN_DRAGON_MATCH_BATCHES:
+        return _powershell_prefix() + [
+            str(WINDOWS_SCRIPTS / "cn_dragon_tiger_daily_launcher_15d10.ps1"),
+            "-BatchName", spec.name, *cn_config_arg, "-Force",
+        ]
+    if spec.name in CN_BACKUP_BATCHES:
+        return _powershell_prefix() + [
+            str(WINDOWS_SCRIPTS / "cn_db_backup_launcher_17b.ps1"),
+            "-BatchName", spec.name, "-Force",
+        ]
+    if spec.name in CN_QUALITY_BATCHES:
+        return _powershell_prefix() + [
+            str(WINDOWS_SCRIPTS / "cn_daily_quality_launcher_17c.ps1"),
+            "-BatchName", spec.name, "-Force",
+        ]
     if spec.name == "earnings_calendar_sync":
         return _powershell_prefix() + [str(WINDOWS_SCRIPTS / OLD_BATCHES[spec.name][2]), "-Force"]
     if spec.name == "analyst_snapshot_collection":
@@ -385,9 +469,78 @@ def read_batch_log_tail(spec: BatchSpec, max_lines: int = 80) -> str:
     return "\n".join(lines[-max_lines:])
 
 
+def latest_cn_dragon_research_run(spec: BatchSpec) -> dict[str, Any] | None:
+    """Read CN research status from its file ledger, never the US PIT table."""
+    if spec.name not in CN_RESEARCH_BATCHES:
+        return None
+    root = Path(str(spec.raw_config.get("output_root") or ""))
+    if not root.is_absolute():
+        root = PROJECT_ROOT / root
+    for path in sorted((root / "runs").glob("run-*.json"), reverse=True):
+        try:
+            report = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if report.get("batch") != spec.name:
+            continue
+        status = str(report.get("status") or "UNKNOWN")
+        return {
+            "batch_name": spec.name, "provider": spec.provider,
+            "status": ("COMPLETED" if status == "COMPLETED_RESEARCH_ONLY"
+                       else "FAILED" if status.startswith("FAILED") else status),
+            "started_at": report.get("started_at_utc"),
+            "finished_at": report.get("finished_at_utc"),
+            "requested_count": report.get("requested_count"),
+            "received_count": report.get("received_count"),
+            "persisted_count": report.get("persisted_count"),
+            "failed_count": report.get("failed_count"),
+            "warning_count": report.get("warning_count"),
+            "error_message": report.get("error_message"),
+        }
+    return None
+
+
+def read_cn_daily_quality_history(spec: BatchSpec, *, limit: int = 7) -> tuple[dict[str, Any], ...]:
+    """Read the newest distinct CN sessions; no database or scheduler mutation."""
+    if spec.name != "cn_daily_quality_17c" or limit < 1:
+        return ()
+    root = Path(str(spec.raw_config.get("output_root") or ""))
+    if not root.is_absolute():
+        root = PROJECT_ROOT / root
+    rows: list[dict[str, Any]] = []
+    seen_sessions: set[str] = set()
+    for path in sorted((root / "runs").glob("run-*.json"), reverse=True):
+        try:
+            report = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(report, dict) or report.get("batch") != spec.name:
+            continue
+        session = str(report.get("session") or "")
+        if not session or session in seen_sessions:
+            continue
+        seen_sessions.add(session)
+        checks = report.get("checks") or []
+        alerts = [str(item.get("name")) for item in checks
+                  if isinstance(item, dict) and item.get("status") in {"CRITICAL", "WARNING"}]
+        rows.append({
+            "session": session, "status": str(report.get("status") or "UNKNOWN"),
+            "passed": sum(item.get("status") == "PASS" for item in checks
+                          if isinstance(item, dict)),
+            "critical": report.get("failed_count"), "warnings": report.get("warning_count"),
+            "alerts": ", ".join(alerts), "finished_at": report.get("finished_at_utc"),
+            "report_path": str(path),
+        })
+        if len(rows) >= limit:
+            break
+    return tuple(rows)
+
+
 __all__ = [
     "BatchSpec", "CommandResult", "build_install_command", "build_run_command", "build_uninstall_command",
     "format_command", "format_schedule", "install_all_batches", "install_batch", "list_active_batch_runs",
+    "read_cn_daily_quality_history",
     "load_batch_specs", "query_windows_task_states", "read_batch_log_tail",
+    "latest_cn_dragon_research_run",
     "start_batch", "task_name_for_batch", "uninstall_all_batches", "uninstall_batch",
 ]

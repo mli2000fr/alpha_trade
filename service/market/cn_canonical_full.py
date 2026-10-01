@@ -9,12 +9,14 @@ from datetime import UTC, date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Engine
 
 from service.baostock.symbols import parse_baostock_symbol
 from service.market.cn_canonicalizer import _json, _latest, read_pilot_manifest, write_pilot_manifest
+from service.market.cn_completed_session_guard import require_completed_session_end
 
 CENT = Decimal("0.01")
 
@@ -113,7 +115,20 @@ def derived_limit_for_bar(*, board: str, session_date: date, is_st: bool, observ
     }
 
 
-def enrich_manifest(engine: Engine, *, manifest_path: Path) -> dict[str, int]:
+def enrich_manifest(engine: Engine, *, manifest_path: Path,
+                    business_start_date: date | None = None,
+                    business_end_date: date | None = None,
+                    allow_same_day_after_close: bool = False) -> dict[str, int]:
+    incremental = business_start_date is not None or business_end_date is not None
+    if incremental:
+        if business_start_date is None or business_end_date is None:
+            raise ValueError("Incremental enrichment requires both date bounds")
+        if business_start_date < date(2026, 1, 1) or business_end_date < business_start_date:
+            raise ValueError("Incremental enrichment is restricted to 2026 onwards")
+        require_completed_session_end(business_end_date,
+                                      allow_same_day_after_close=allow_same_day_after_close)
+        if engine.url.database != "alpha_trade_cn":
+            raise RuntimeError("Incremental enrichment refused outside alpha_trade_cn")
     symbols = read_pilot_manifest(manifest_path)
     if not symbols:
         return {"limits": 0, "corporate_actions": 0}
@@ -149,6 +164,8 @@ def enrich_manifest(engine: Engine, *, manifest_path: Path) -> dict[str, int]:
             high=Decimal(str(row["high"])),
             low=Decimal(str(row["low"])),
         )
+        if incremental and not business_start_date <= row["date"] <= business_end_date:
+            continue
         limit_rows.append({
             "id": instrument_id, "date": row["date"], "reference": pre_close,
             **derived,
@@ -162,6 +179,8 @@ def enrich_manifest(engine: Engine, *, manifest_path: Path) -> dict[str, int]:
         before = previous.get(instrument_id)
         previous[instrument_id] = value
         if before is None or value == before:
+            continue
+        if incremental and not business_start_date <= row["effective_date"] <= business_end_date:
             continue
         action_rows.append({
             "id": instrument_id, "date": row["effective_date"], "value": value,
@@ -178,6 +197,11 @@ def enrich_manifest(engine: Engine, *, manifest_path: Path) -> dict[str, int]:
         "VALUES (:id,'adjustment_factor_change',:date,:value,:before,'UNCLASSIFIED_FACTOR_EVENT','baostock',:hash,:observed,:available) "
         "ON DUPLICATE KEY UPDATE factor_value=VALUES(factor_value),previous_factor_value=VALUES(previous_factor_value),observed_at=VALUES(observed_at),available_at=VALUES(available_at)"
     )
+    if incremental:
+        limit_sql = text(str(limit_sql).split(" ON DUPLICATE KEY UPDATE", 1)[0].replace(
+            "INSERT INTO ", "INSERT IGNORE INTO ", 1))
+        action_sql = text(str(action_sql).split(" ON DUPLICATE KEY UPDATE", 1)[0].replace(
+            "INSERT INTO ", "INSERT IGNORE INTO ", 1))
     with engine.begin() as conn:
         if limit_rows:
             conn.execute(limit_sql, limit_rows)

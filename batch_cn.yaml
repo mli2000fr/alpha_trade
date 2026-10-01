@@ -6,6 +6,29 @@ defaults:
   scheduler_timezone: Europe/Paris
   canonical_writes_enabled: false
 
+# Sprint 17-B : sauvegarde CN physiquement isolée. Restauration complète
+# vérifiée le 30/09/2026 (21 tables, 57 188 133 lignes, base temporaire nettoyée).
+cn_db_backup:
+  enabled: true
+  status: ACTIVE
+  priority: P0
+  market_code: CN_A
+  database_alias: cn_primary
+  timezone: Europe/Paris
+  run_hours: "4"
+  run_minutes: "0"
+  run_days: "0"
+  description: "Sauvegarde hebdomadaire isolée de alpha_trade_cn, jamais de alpha_trade."
+  provider: local_mysql
+  host: localhost
+  db: alpha_trade_cn
+  mysqldump_path: "C:/Program Files/MySQL/MySQL Server 8.0/bin/mysqldump.exe"
+  dest_dir: backups/cn/db
+  archive_prefix: alpha_trade_cn
+  keep: 3
+  output_root: artifacts/research/cn_backup_17b
+  log_file: log/batch_cn/cn_db_backup.txt
+
 cn_master_calendar_sync:
   enabled: false
   priority: P0
@@ -20,6 +43,7 @@ cn_master_calendar_sync:
 
 cn_daily_market_data_sync:
   enabled: false
+  status: DISABLED_DUPLICATE_D9
   priority: P0
   market_code: CN_A
   description: "OHLCV quotidien non ajusté, statuts de négociation/ST, facteurs d'ajustement et indices via BaoStock."
@@ -29,6 +53,7 @@ cn_daily_market_data_sync:
   run_hours: "10"
   run_days: "1,2,3,4,5"
   state_key: cn_daily_market_data_sync
+  execution_notice: "Ne pas activer : D9 est propriétaire unique des écritures canoniques quotidiennes CN. Ce collecteur générique ne publie pas l'Oracle et son lookback ne permet pas de reconstituer une décision PIT manquée."
   log_file: log/batch_cn/cn_daily_market_data_sync.txt
 
 cn_historical_backfill:
@@ -56,6 +81,7 @@ cn_baostock_smoke:
 
 cn_staging_quality_daily:
   enabled: false
+  status: SUPERSEDED_BY_17C
   priority: P0
   market_code: CN_A
   provider: quality
@@ -65,7 +91,33 @@ cn_staging_quality_daily:
   max_age_days: 5
   run_hours: "12"
   run_days: "1,2,3,4,5"
+  execution_notice: "Contrôle staging historique désactivé : l'âge en jours calendaires peut alerter à tort pendant les congés CN et ne vérifie ni D9 ni Oracle/D6/D10. Utiliser cn_daily_quality_17c."
   log_file: log/batch_cn/cn_staging_quality_daily.txt
+
+# Sprint 17-C : lecture seule après D9, sans second collecteur ou reconstruction PIT.
+cn_daily_quality_17c:
+  enabled: true
+  status: ACTIVE
+  priority: P0
+  market_code: CN_A
+  database_alias: cn_primary
+  timezone: China Standard Time
+  run_hours: "23"
+  run_minutes: "30"
+  run_days: "1,2,3,4,5"
+  description: "Contrôler chaque séance ouverte CN après la fenêtre de collecte D9 : lots, barres, facteurs, limites, Oracle, snapshots D6 et appariement D10. Aucune collecte."
+  provider: local_quality
+  tables: "lecture seule:market_sessions,cn_staging_rows,stock_bars_daily,instrument_adjustment_factors,cn_daily_price_limits; fichiers:D6/D9/D10"
+  universe_scope: cn_a_all_equities_pit
+  calendar: config/research_cn/sprint15d6_cn_calendar_2026.yaml
+  d6_snapshot_root: artifacts/research/cn_dragon_tiger_15d6/observations
+  d10_output_root: artifacts/research/cn_dragon_tiger_15d10
+  output_root: artifacts/research/cn_daily_quality_17c
+  minimum_bar_coverage_ratio: 0.995
+  coverage_description: "Séance CN ouverte J à 19:30 Shanghai ; contrôle de complétude D9 et des artefacts de recherche, sans reconstitution d'une prévision manquée. Jours fermés SKIP."
+  execution_notice: "D9 est le seul propriétaire de la collecte canonique. Les échecs critiques sont bloquants pour le gate opérationnel ; 7 séances ouvertes consécutives sans anomalie critique inexpliquée sont requises. Pas de serving ni d'ordres."
+  supervision_dependencies: cn_oracle_prospective_daily,cn_dragon_tiger_after_close,cn_dragon_tiger_before_open,cn_dragon_tiger_daily_match
+  log_file: log/batch_cn/cn_daily_quality_17c.txt
 
 cn_akshare_enrichment:
   enabled: false

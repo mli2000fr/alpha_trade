@@ -29,7 +29,13 @@ class CancelResult:
 class BrokerAdapter:
     """Adapte AlpacaTradingClient vers les types internes execution_engine."""
 
+    market_code = "US_EQ"
+
     def __init__(self, client: AlpacaTradingClient, config: ExecutionConfig) -> None:
+        if config.market_code != self.market_code:
+            raise ValueError(
+                f"Alpaca ne peut exécuter que {self.market_code}; marché reçu={config.market_code!r}"
+            )
         self._client = client
         self._config = config
 

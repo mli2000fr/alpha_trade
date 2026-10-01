@@ -19,6 +19,7 @@ from common.utils import configure_root_logging
 from core.feature_flags import FeatureFlags
 from core.run_summary import attach_schema_version
 from execution_engine.broker_adapter import BrokerAdapter
+from execution_engine.broker_router import BrokerRouter
 from execution_engine.config import ExecutionConfig
 from execution_engine.db_io import ExecutionRepository
 from execution_engine.models import EventType
@@ -292,8 +293,9 @@ def _run_cancel_all(args: argparse.Namespace) -> None:
 
     repo = ExecutionRepository()
     config = ExecutionConfig(broker_mode=broker_mode, account_id=account_id)
+    BrokerRouter.validate(config)
     client = AlpacaTradingClient(broker_mode=broker_mode, account_id=account_id)
-    broker = BrokerAdapter(client, config)
+    broker = BrokerRouter(us_factory=lambda cfg: BrokerAdapter(client, cfg)).resolve(config)
 
     results = broker.cancel_all_open_orders(dry_run=dry_run)
     finished_at = datetime.now()

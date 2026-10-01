@@ -19,6 +19,7 @@ from sqlalchemy.engine import Engine
 
 from database.repositories.instruments import build_instrument_uid
 from service.baostock.symbols import parse_baostock_symbol
+from service.market.cn_completed_session_guard import require_completed_session_end
 
 INDEX_SYMBOLS = ("sh.000001", "sz.399001", "sh.000300", "sz.399006")
 INDEX_NAMES = {
@@ -198,11 +199,45 @@ def canonical_trading_status(raw_status: str, volume: Any, amount: Any) -> str:
     return status
 
 
-def promote_pilot(engine: Engine, *, manifest_path: Path, staging_cutoff: datetime | None = None) -> CanonicalizationReport:
+def _incremental_insert_sql(statement: str) -> str:
+    """For a backfill, preserve every existing canonical row and its PIT timestamps."""
+    if not statement.startswith("INSERT INTO "):
+        raise ValueError("Expected canonical INSERT")
+    return statement.split(" ON DUPLICATE KEY UPDATE", 1)[0].replace(
+        "INSERT INTO ", "INSERT IGNORE INTO ", 1
+    )
+
+
+def _incremental_timestamps(row: dict[str, Any], day: date) -> tuple[datetime, datetime]:
+    observed = row.get("observed_at")
+    available = row.get("available_at")
+    if not isinstance(observed, datetime) or not isinstance(available, datetime):
+        raise ValueError("Incremental row missing actual staging observation timestamps")
+    observed = observed.astimezone(UTC).replace(tzinfo=None) if observed.tzinfo else observed
+    available = available.astimezone(UTC).replace(tzinfo=None) if available.tzinfo else available
+    if available < observed:
+        raise ValueError("Staging available_at precedes observed_at")
+    return observed, max(_pit_close(day), available)
+
+
+def promote_pilot(engine: Engine, *, manifest_path: Path, staging_cutoff: datetime | None = None,
+                  business_start_date: date | None = None,
+                  business_end_date: date | None = None,
+                  allow_same_day_after_close: bool = False) -> CanonicalizationReport:
+    incremental = business_start_date is not None or business_end_date is not None
+    if incremental:
+        if business_start_date is None or business_end_date is None:
+            raise ValueError("Incremental promotion requires both business-date bounds")
+        if business_start_date < date(2026, 1, 1) or business_end_date < business_start_date:
+            raise ValueError("Incremental promotion is restricted to 2026 onwards")
+        require_completed_session_end(business_end_date,
+                                      allow_same_day_after_close=allow_same_day_after_close)
+        if engine.url.database != "alpha_trade_cn":
+            raise RuntimeError("Incremental CN promotion refused outside alpha_trade_cn")
     symbols = read_pilot_manifest(manifest_path)
     manifest_hash = hashlib.sha256((",".join(symbols) + "\n").encode()).hexdigest()
     cutoff = staging_cutoff or datetime.now(UTC).replace(tzinfo=None)
-    run_id = f"cn-s7a-{datetime.now(UTC):%Y%m%d%H%M%S}-{uuid.uuid4().hex[:8]}"
+    run_id = f"cn-{'s7c' if incremental else 's7a'}-{datetime.now(UTC):%Y%m%d%H%M%S}-{uuid.uuid4().hex[:8]}"
     report = CanonicalizationReport(run_id, len(symbols), len(INDEX_SYMBOLS), missing_equity_bars=[])
     with engine.begin() as conn:
         conn.execute(text(
@@ -217,18 +252,21 @@ def promote_pilot(engine: Engine, *, manifest_path: Path, staging_cutoff: dateti
             "SELECT * FROM cn_staging_rows WHERE provider='baostock' AND available_at<=:cutoff "
             "AND endpoint='stock_basic' AND provider_symbol IN :wanted ORDER BY available_at,staging_id"
         ).bindparams(symbol_filter)
+        date_filter = " AND business_date BETWEEN :business_start AND :business_end" if incremental else ""
         data_statement = text(
             "SELECT * FROM cn_staging_rows WHERE provider='baostock' AND available_at<=:cutoff "
             "AND endpoint IN ('daily','index_daily','adj_factor') AND provider_symbol IN :wanted "
+            + date_filter + " "
             "ORDER BY available_at,staging_id"
         ).bindparams(symbol_filter)
+        date_params = {"business_start": business_start_date, "business_end": business_end_date} if incremental else {}
         with engine.connect() as conn:
             rows = [dict(row) for row in conn.execute(master_statement, {"cutoff": cutoff, "wanted": wanted_values}).mappings()]
             rows.extend(dict(row) for row in conn.execute(text(
                 "SELECT * FROM cn_staging_rows WHERE provider='baostock' AND available_at<=:cutoff "
-                "AND endpoint='trade_cal' ORDER BY available_at,staging_id"
-            ), {"cutoff": cutoff}).mappings())
-            rows.extend(dict(row) for row in conn.execute(data_statement, {"cutoff": cutoff, "wanted": wanted_values}).mappings())
+                "AND endpoint='trade_cal' " + date_filter + " ORDER BY available_at,staging_id"
+            ), {"cutoff": cutoff, **date_params}).mappings())
+            rows.extend(dict(row) for row in conn.execute(data_statement, {"cutoff": cutoff, "wanted": wanted_values, **date_params}).mappings())
         master, dup_master = _latest((row for row in rows if row["endpoint"] == "stock_basic"), ("provider_symbol",))
         sessions, dup_sessions = _latest((row for row in rows if row["endpoint"] == "trade_cal"), ("business_date",))
         bars, dup_bars = _latest((row for row in rows if row["endpoint"] in {"daily", "index_daily"} and row.get("provider_symbol") in wanted), ("provider_symbol", "business_date"))
@@ -250,9 +288,12 @@ def promote_pilot(engine: Engine, *, manifest_path: Path, staging_cutoff: dateti
                 "active": True if is_index else str(source.get("status_code") or "1") == "1", "provider_symbol": symbol,
                 "board": "INDEX" if is_index else parsed.board_code,
             })
+        def canonical_insert(statement: str):
+            return text(_incremental_insert_sql(statement) if incremental else statement)
+
         with engine.begin() as conn:
             for item in instrument_rows:
-                conn.execute(text(
+                conn.execute(canonical_insert(
                     "INSERT INTO instruments(instrument_uid,market_code,exchange_mic,local_symbol,display_name,instrument_type,currency,listing_date,delisting_date,mapping_status,is_active) "
                     "VALUES (:uid,:market,:mic,:symbol,:name,:type,'CNY',:listing,:delisting,'mapped',:active) "
                     "ON DUPLICATE KEY UPDATE display_name=VALUES(display_name),listing_date=VALUES(listing_date),delisting_date=VALUES(delisting_date),is_active=VALUES(is_active)"
@@ -265,7 +306,7 @@ def promote_pilot(engine: Engine, *, manifest_path: Path, staging_cutoff: dateti
                 instrument_id = canonical[item["symbol"] + "|" + item["mic"]]
                 ids[item["provider_symbol"]] = instrument_id
                 valid_from = item["listing"] or date(1990, 1, 1)
-                conn.execute(text(
+                conn.execute(canonical_insert(
                     "INSERT INTO instrument_provider_symbols(instrument_id,provider,provider_symbol,provider_exchange,valid_from,valid_to,is_primary) "
                     "VALUES (:id,'baostock',:provider_symbol,:exchange,:valid_from,:valid_to,TRUE) "
                     "ON DUPLICATE KEY UPDATE provider_exchange=VALUES(provider_exchange),valid_to=VALUES(valid_to),is_primary=TRUE"
@@ -279,11 +320,13 @@ def promote_pilot(engine: Engine, *, manifest_path: Path, staging_cutoff: dateti
                     continue
                 is_open = bool(row.get("is_open"))
                 opn, close, segments = _utc_session(session_date) if is_open else (None, None, None)
-                conn.execute(text(
+                observed, available = (_incremental_timestamps(row, session_date) if incremental
+                                       else (_pit_close(session_date), _pit_close(session_date)))
+                conn.execute(canonical_insert(
                     "INSERT INTO market_sessions(market_code,session_date,session_status,open_at_utc,close_at_utc,session_segments_json,source,observed_at,available_at) "
                     "VALUES ('CN_A',:date,:status,:open,:close,:segments,'baostock_trade_cal+cn_a_schedule_v1',:observed,:available) "
                     "ON DUPLICATE KEY UPDATE session_status=VALUES(session_status),open_at_utc=VALUES(open_at_utc),close_at_utc=VALUES(close_at_utc),session_segments_json=VALUES(session_segments_json),observed_at=VALUES(observed_at),available_at=VALUES(available_at)"
-                ), {"date": session_date, "status": "open" if is_open else "closed", "open": opn, "close": close, "segments": segments, "observed": _pit_close(session_date), "available": _pit_close(session_date)})
+                ), {"date": session_date, "status": "open" if is_open else "closed", "open": opn, "close": close, "segments": segments, "observed": observed, "available": available})
                 report.sessions += 1
             seen_bar_symbols: set[str] = set()
             for row in bars:
@@ -298,16 +341,18 @@ def promote_pilot(engine: Engine, *, manifest_path: Path, staging_cutoff: dateti
                 status = canonical_trading_status(
                     str(row.get("status_code") or "TRADE"), row.get("volume"), row.get("amount")
                 )
-                conn.execute(text(
+                observed, available = (_incremental_timestamps(row, row["business_date"]) if incremental
+                                       else (_pit_close(row["business_date"]), _pit_close(row["business_date"])))
+                conn.execute(canonical_insert(
                     "INSERT INTO stock_bars_daily(instrument_id,symbol,market_code,date,open,high,low,close,pre_close,adj_close,volume,amount,daily_return,trading_status,is_special_treatment,data_adjustment,data_source,source_payload_hash,observed_at,available_at) "
                     "VALUES (:id,:symbol,'CN_A',:date,:open,:high,:low,:close,:pre,:close,:volume,:amount,:ret,:status,:st,'raw','baostock',:hash,:observed,:available) "
                     "ON DUPLICATE KEY UPDATE symbol=VALUES(symbol),open=VALUES(open),high=VALUES(high),low=VALUES(low),close=VALUES(close),pre_close=VALUES(pre_close),adj_close=VALUES(adj_close),volume=VALUES(volume),amount=VALUES(amount),daily_return=VALUES(daily_return),trading_status=VALUES(trading_status),is_special_treatment=VALUES(is_special_treatment),source_payload_hash=VALUES(source_payload_hash),observed_at=VALUES(observed_at),available_at=VALUES(available_at)"
-                ), {"id": ids[symbol], "symbol": symbol, "date": row["business_date"], "open": row["open_price"], "high": row["high_price"], "low": row["low_price"], "close": close, "pre": pre, "volume": row.get("volume"), "amount": row.get("amount"), "ret": daily_return, "status": status, "st": "ST" in status, "hash": row["payload_hash"], "observed": _pit_close(row["business_date"]), "available": _pit_close(row["business_date"])})
-                conn.execute(text(
+                ), {"id": ids[symbol], "symbol": symbol, "date": row["business_date"], "open": row["open_price"], "high": row["high_price"], "low": row["low_price"], "close": close, "pre": pre, "volume": row.get("volume"), "amount": row.get("amount"), "ret": daily_return, "status": status, "st": "ST" in status, "hash": row["payload_hash"], "observed": observed, "available": available})
+                conn.execute(canonical_insert(
                     "INSERT INTO instrument_status_history(instrument_id,valid_from,valid_to,listing_status,trading_status,is_tradable,is_special_treatment,board_code,source,observed_at,available_at) "
                     "VALUES (:id,:date,:date,'listed',:status,:tradable,:st,:board,'baostock_daily',:observed,:available) "
                     "ON DUPLICATE KEY UPDATE trading_status=VALUES(trading_status),is_tradable=VALUES(is_tradable),is_special_treatment=VALUES(is_special_treatment),board_code=VALUES(board_code),observed_at=VALUES(observed_at),available_at=VALUES(available_at)"
-                ), {"id": ids[symbol], "date": row["business_date"], "status": status, "tradable": status.startswith("TRADE"), "st": "ST" in status, "board": "INDEX" if symbol in INDEX_SYMBOLS else parse_baostock_symbol(symbol).board_code, "observed": _pit_close(row["business_date"]), "available": _pit_close(row["business_date"])})
+                ), {"id": ids[symbol], "date": row["business_date"], "status": status, "tradable": status.startswith("TRADE"), "st": "ST" in status, "board": "INDEX" if symbol in INDEX_SYMBOLS else parse_baostock_symbol(symbol).board_code, "observed": observed, "available": available})
                 report.bars += 1
                 report.statuses += 1
             report.missing_equity_bars = sorted(set(symbols) - seen_bar_symbols)
@@ -317,11 +362,13 @@ def promote_pilot(engine: Engine, *, manifest_path: Path, staging_cutoff: dateti
                 if symbol not in ids or factor is None or Decimal(str(factor)) <= 0 or row.get("business_date") is None:
                     report.rejected_rows += 1
                     continue
-                conn.execute(text(
+                observed, available = (_incremental_timestamps(row, row["business_date"]) if incremental
+                                       else (_pit_close(row["business_date"]), _pit_close(row["business_date"])))
+                conn.execute(canonical_insert(
                     "INSERT INTO instrument_adjustment_factors(instrument_id,effective_date,provider,adjustment_factor,source_payload_hash,observed_at,available_at) "
                     "VALUES (:id,:date,'baostock',:factor,:hash,:observed,:available) "
                     "ON DUPLICATE KEY UPDATE adjustment_factor=VALUES(adjustment_factor),source_payload_hash=VALUES(source_payload_hash),observed_at=VALUES(observed_at),available_at=VALUES(available_at)"
-                ), {"id": ids[symbol], "date": row["business_date"], "factor": factor, "hash": row["payload_hash"], "observed": _pit_close(row["business_date"]), "available": _pit_close(row["business_date"])})
+                ), {"id": ids[symbol], "date": row["business_date"], "factor": factor, "hash": row["payload_hash"], "observed": observed, "available": available})
                 report.factors += 1
         report.board_counts = dict(Counter(parse_baostock_symbol(symbol).board_code for symbol in symbols))
         report.status = "PASS" if not report.missing_equity_bars and report.rejected_rows == 0 else "PASS_WITH_WARNINGS"

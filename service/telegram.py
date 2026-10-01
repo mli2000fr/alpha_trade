@@ -139,6 +139,7 @@ class TelegramClient:
         if parse_mode:
             payload["parse_mode"] = parse_mode
 
+        resp = None
         try:
             import requests  # type: ignore[import-untyped]  # import réseau lazy
 
@@ -148,9 +149,17 @@ class TelegramClient:
                 raise RuntimeError(f"Telegram HTTP {resp.status_code}: {resp.text[:200]}")
             return True
         except Exception as exc:  # noqa: BLE001 — best-effort
-            LOGGER.warning("[telegram] Échec envoi Telegram : %s", exc)
+            # requests/urllib3 includes the full /bot<TOKEN>/ URL in network
+            # exceptions. Never log or propagate its text.
+            status = getattr(resp, "status_code", None)
+            LOGGER.warning(
+                "[telegram] Échec envoi Telegram : type=%s http_status=%s (détails masqués)",
+                type(exc).__name__, status,
+            )
             if raise_on_error:
-                raise
+                raise RuntimeError(
+                    f"Telegram delivery failed ({type(exc).__name__}); details redacted"
+                ) from None
             return False
 
 

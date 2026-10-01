@@ -140,6 +140,149 @@ def test_commands_use_force_for_immediate_runs() -> None:
     assert uninstall[-2:] == ["-TaskName", "AlphaTrade-DailyBarsSync"]
 
 
+def test_cn_dragon_research_uses_dedicated_launcher_and_file_ledger(tmp_path: Path) -> None:
+    spec = _spec(
+        "cn_dragon_tiger_before_open",
+        raw_config={"output_root": str(tmp_path)},
+        timezone="China Standard Time",
+    )
+    assert "cn_dragon_tiger_launcher_15d6.ps1" in " ".join(batches.build_install_command(spec))
+    assert "cn_dragon_tiger_launcher_15d6.ps1" in " ".join(batches.build_run_command(spec))
+    folder = tmp_path / "runs"
+    folder.mkdir()
+    (folder / "run-20260930T003000Z-unit.json").write_text(json.dumps({
+        "batch": spec.name, "status": "COMPLETED_RESEARCH_ONLY",
+        "started_at_utc": "2026-09-30T00:30:00+00:00",
+        "finished_at_utc": "2026-09-30T00:31:00+00:00",
+        "requested_count": 2, "received_count": 76,
+        "persisted_count": 76, "failed_count": 0, "warning_count": 0,
+    }), encoding="utf-8")
+    row = batches.latest_cn_dragon_research_run(spec)
+    assert row is not None and row["status"] == "COMPLETED"
+    assert row["persisted_count"] == 76
+
+
+def test_cn_research_commands_pass_cn_catalog_only_after_cutover(tmp_path: Path) -> None:
+    cn_path = str(tmp_path / "batch_cn.yaml")
+    for name in (
+        "cn_dragon_tiger_before_open", "cn_dragon_tiger_after_close",
+        "cn_oracle_prospective_daily", "cn_dragon_tiger_daily_match",
+    ):
+        legacy = _spec(name)
+        future = _spec(name, catalog_path=cn_path)
+        assert "-BatchConfigPath" not in batches.build_install_command(legacy)
+        assert "-BatchConfigPath" not in batches.build_run_command(legacy)
+        for command in (batches.build_install_command(future), batches.build_run_command(future)):
+            position = command.index("-BatchConfigPath")
+            assert command[position + 1] == cn_path
+
+
+def test_cn_catalog_merge_rejects_duplicate_research_name(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(batches, "PROJECT_ROOT", tmp_path)
+    def load(path):
+        if path is None:
+            return {"cn_oracle_prospective_daily": {"enabled": True, "status": "RESEARCH_ONLY"}}
+        return {"cn_oracle_prospective_daily": {"enabled": True, "status": "RESEARCH_ONLY"}}
+    monkeypatch.setattr(batches, "load_batch_config", load)
+    with pytest.raises(ValueError, match="Duplicate cn_oracle_prospective_daily"):
+        batches.load_batch_specs()
+
+
+def test_cn_catalog_merge_loads_migrated_research_section(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(batches, "PROJECT_ROOT", tmp_path)
+    def load(path):
+        if path is None:
+            return {"us_job": {"enabled": True}}
+        return {"cn_oracle_prospective_daily": {"enabled": True, "status": "RESEARCH_ONLY"}}
+    monkeypatch.setattr(batches, "load_batch_config", load)
+    specs = {item.name: item for item in batches.load_batch_specs()}
+    assert specs["us_job"].catalog_path.endswith("batch.yaml")
+    assert specs["cn_oracle_prospective_daily"].catalog_path.endswith("batch_cn.yaml")
+    assert "-BatchConfigPath" in batches.build_run_command(specs["cn_oracle_prospective_daily"])
+
+
+def test_cn_oracle_daily_uses_dedicated_launcher_and_file_ledger(tmp_path: Path) -> None:
+    spec = _spec("cn_oracle_prospective_daily", raw_config={"output_root": str(tmp_path)})
+    assert "cn_oracle_daily_launcher_15d9.ps1" in " ".join(batches.build_install_command(spec))
+    assert "cn_oracle_daily_launcher_15d9.ps1" in " ".join(batches.build_run_command(spec))
+    folder = tmp_path / "runs"
+    folder.mkdir()
+    (folder / "run-20260930T183000Z-unit.json").write_text(json.dumps({
+        "batch": spec.name, "status": "COMPLETED_RESEARCH_ONLY",
+        "started_at_utc": "2026-09-30T17:00:00+00:00",
+        "finished_at_utc": "2026-09-30T18:30:00+00:00",
+        "requested_count": 5224, "received_count": 5228,
+        "persisted_count": 1034, "failed_count": 0, "warning_count": 0,
+    }), encoding="utf-8")
+    row = batches.latest_cn_dragon_research_run(spec)
+    assert row is not None and row["status"] == "COMPLETED"
+    assert row["persisted_count"] == 1034
+
+
+def test_cn_dragon_daily_match_uses_research_launcher_and_file_ledger(tmp_path: Path) -> None:
+    spec = _spec("cn_dragon_tiger_daily_match", raw_config={"output_root": str(tmp_path)})
+    assert "cn_dragon_tiger_daily_launcher_15d10.ps1" in " ".join(batches.build_install_command(spec))
+    assert "cn_dragon_tiger_daily_launcher_15d10.ps1" in " ".join(batches.build_run_command(spec))
+    folder = tmp_path / "runs"
+    folder.mkdir()
+    (folder / "run-20261008T013000Z-unit.json").write_text(json.dumps({
+        "batch": spec.name, "status": "COMPLETED_RESEARCH_ONLY",
+        "started_at_utc": "2026-10-08T01:30:00+00:00",
+        "finished_at_utc": "2026-10-08T01:31:00+00:00",
+        "requested_count": 1034, "received_count": 1034,
+        "persisted_count": 3, "failed_count": 0, "warning_count": 0,
+    }), encoding="utf-8")
+    row = batches.latest_cn_dragon_research_run(spec)
+    assert row is not None and row["status"] == "COMPLETED"
+    assert row["persisted_count"] == 3
+
+
+def test_cn_backup_is_catalogued_from_separate_cn_yaml_and_uses_own_launcher() -> None:
+    specs = {item.name: item for item in batches.load_batch_specs()}
+    spec = specs["cn_db_backup"]
+    assert spec.enabled is True
+    assert spec.status == "ACTIVE"
+    assert spec.runnable is True
+    assert spec.raw_config["db"] == "alpha_trade_cn"
+    assert "batch_cn.yaml" in " ".join(batches.build_install_command(spec))
+    assert "cn_db_backup_launcher_17b.ps1" in " ".join(batches.build_run_command(spec))
+    assert not _spec("cn_db_backup", enabled=True, status="PENDING_RESTORE_PROOF").runnable
+
+
+def test_cn_daily_quality_is_catalogued_without_enabling_duplicate_collector() -> None:
+    specs = {item.name: item for item in batches.load_batch_specs()}
+    quality = specs["cn_daily_quality_17c"]
+    assert quality.enabled and quality.runnable and quality.status == "ACTIVE"
+    assert quality.timezone == "China Standard Time"
+    assert "batch_cn.yaml" in " ".join(batches.build_install_command(quality))
+    assert "cn_daily_quality_launcher_17c.ps1" in " ".join(batches.build_run_command(quality))
+    assert "cn_daily_market_data_sync" not in specs
+
+
+def test_cn_daily_quality_history_deduplicates_sessions_and_exposes_failed_gates(tmp_path: Path) -> None:
+    spec = _spec("cn_daily_quality_17c", raw_config={"output_root": str(tmp_path)})
+    folder = tmp_path / "runs"
+    folder.mkdir()
+    reports = [
+        ("run-20261008T153000Z-old.json", "2026-10-08", "FAILED", "old_gate"),
+        ("run-20261008T154000Z-new.json", "2026-10-08", "FAILED", "d9_owner_completed"),
+        ("run-20261009T154000Z.json", "2026-10-09", "COMPLETED", ""),
+    ]
+    for name, session, status, alert in reports:
+        (folder / name).write_text(json.dumps({
+            "batch": spec.name, "session": session, "status": status,
+            "failed_count": int(status == "FAILED"), "warning_count": 0,
+            "checks": ([{"name": alert, "status": "CRITICAL"}] if alert else
+                       [{"name": "chunks_complete", "status": "PASS"}]),
+        }), encoding="utf-8")
+    (folder / "run-20261010T154000Z-broken.json").write_text("{broken", encoding="utf-8")
+    rows = batches.read_cn_daily_quality_history(spec)
+    assert [row["session"] for row in rows] == ["2026-10-09", "2026-10-08"]
+    assert rows[0]["passed"] == 1
+    assert rows[1]["critical"] == 1 and rows[1]["alerts"] == "d9_owner_completed"
+    assert batches.read_cn_daily_quality_history(_spec("daily_bars_sync")) == ()
+
+
 def test_pending_batch_cannot_run() -> None:
     assert not _spec(enabled=False).runnable
     assert not _spec(status="PENDING_PROVIDER").runnable
@@ -306,7 +449,7 @@ def test_batch_page_renders_without_external_dependencies(monkeypatch) -> None:
     assert not at.exception
     assert any("Batchs planifiés" in title.value for title in at.title)
     metric_labels = {metric.label for metric in at.metric}
-    assert "Exécutables (batch.yaml)" in metric_labels
+    assert "Exécutables (catalogues)" in metric_labels
     assert "Installés mais dormants" in metric_labels
     assert any("Choisir un fournisseur PIT." in error.value for error in at.error)
     button_labels = {button.label for button in at.button}

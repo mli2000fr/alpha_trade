@@ -1,0 +1,21 @@
+# Research-only CN H20 candidate export; never a serving or trading switch.
+protocol_id: CN_ORACLE_PROSPECTIVE_15D8_V1
+market_code: CN_A
+database_alias: cn_primary
+calendar: config/research_cn/sprint15d6_cn_calendar_2026.yaml
+feature_profile: config/features_cn/cn_price_v1.yaml
+universe_policy: config/universe_cn.yaml
+oracle_protocol: config/research_cn/sprint10b_oracle.yaml
+dragon_tiger_protocol: config/research_cn/sprint15d7_dragon_tiger_protocol.yaml
+model_report: artifacts/cn/oracle/sprint10b/cn_oracle_sprint10b_v1-3553bd25ea6f1fa4/h20/2025H2/lightgbm/report.json
+model_report_sha256: ad44242651b03d7ac93c62818f6903aab84e4cc3f21b6a4149898d2f9e97b506
+model_file: artifacts/cn/oracle/sprint10b/cn_oracle_sprint10b_v1-3553bd25ea6f1fa4/h20/2025H2/lightgbm/model.txt
+model_file_sha256: a0add02c97debef05b3ae97c0be822dedc7d60e45157244303bec74142a4cdff
+trained_through: 2025-06-30
+horizon: 20
+top_pct: 0.20
+minimum_candidate_count: 20
+minimum_feature_coverage: 0.95
+decision_time_shanghai: "09:15:00"
+output_root: artifacts/research/cn_oracle_prospective_15d8
+status: RESEARCH_ONLY

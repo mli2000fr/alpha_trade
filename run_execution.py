@@ -1135,6 +1135,8 @@ def run(
         time_stop=load_time_stop_config_from_yaml(),
     )
     repo     = ExecutionRepository()
+    from execution_engine.broker_router import BrokerRouter
+    BrokerRouter.validate(config)
     client   = AlpacaTradingClient(broker_mode=config.broker_mode, account_id=account_id)
     broker   = BrokerAdapter(client, config)
     oco      = OcoManager(broker, repo)
@@ -1405,6 +1407,7 @@ def run(
                 regime_max_gross_exposure=float(cast(object, _guarded_max_gross_exposure)) if _guarded_max_gross_exposure is not None else None,
             )
             # Reconstruire executor avec la nouvelle config (frozen).
+            BrokerRouter.validate(config)
             broker = BrokerAdapter(client, config)
             oco = OcoManager(broker, repo)
             executor = ProductionExecutor(
