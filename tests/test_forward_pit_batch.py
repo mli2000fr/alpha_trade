@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -275,6 +276,21 @@ def test_finra_short_volume_parser_skips_header_trailer_and_bad_rows() -> None:
         "trade_date": datetime(2026, 9, 11).date(),
         "symbol": "AAPL", "short_volume": 120, "short_exempt_volume": 5,
         "total_volume": 300, "market": "Q",
+    }]
+
+
+def test_finra_short_volume_parser_preserves_fractional_shares() -> None:
+    content = "\n".join([
+        "Date|Symbol|ShortVolume|ShortExemptVolume|TotalVolume|Market",
+        "20260921|AAPL|464197.449551|1|977931.873522|B,Q,N",
+        "20260921|MSFT|NaN|0|100|Q",
+        "20260921|NVDA|1.1234567|0|10|Q",
+    ])
+    assert _parse_finra_short_volume(content) == [{
+        "trade_date": date(2026, 9, 21), "symbol": "AAPL",
+        "short_volume": Decimal("464197.449551"),
+        "short_exempt_volume": Decimal("1"),
+        "total_volume": Decimal("977931.873522"), "market": "B,Q,N",
     }]
 
 

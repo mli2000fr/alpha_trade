@@ -19,6 +19,7 @@ import sys
 import time
 import uuid
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -698,21 +699,27 @@ def _request_text_optional(
 
 def _parse_finra_short_volume(content: str) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    quantum = Decimal("0.000001")
     for item in csv.DictReader(io.StringIO(content.lstrip("\ufeff")), delimiter="|"):
         raw_date = str(item.get("Date") or "").strip()
         symbol = str(item.get("Symbol") or "").strip().upper()
         if len(raw_date) != 8 or not raw_date.isdigit() or not symbol:
             continue
         try:
+            volumes = [Decimal(str(item.get(column) or "0").strip()) for column in
+                       ("ShortVolume", "ShortExemptVolume", "TotalVolume")]
+            if any(not volume.is_finite() or volume < 0 or
+                   volume != volume.quantize(quantum) for volume in volumes):
+                continue
             rows.append({
                 "trade_date": datetime.strptime(raw_date, "%Y%m%d").date(),
                 "symbol": symbol,
-                "short_volume": int(item.get("ShortVolume") or 0),
-                "short_exempt_volume": int(item.get("ShortExemptVolume") or 0),
-                "total_volume": int(item.get("TotalVolume") or 0),
+                "short_volume": volumes[0],
+                "short_exempt_volume": volumes[1],
+                "total_volume": volumes[2],
                 "market": str(item.get("Market") or "").strip().upper() or "CNMS",
             })
-        except (TypeError, ValueError):
+        except (InvalidOperation, TypeError, ValueError):
             continue
     return rows
 
@@ -1314,6 +1321,7 @@ def finra_short_volume_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dr
     trade_days = _previous_weekdays(market_today, lookback_days)
     outcome = Outcome(requested=len(trade_days))
     files_found = 0
+    parsed_rows = 0
     with requests.Session() as session, engine.begin() as conn:
         for trade_day in trade_days:
             url = template.format(date=trade_day.strftime("%Y%m%d"))
@@ -1326,8 +1334,9 @@ def finra_short_volume_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dr
                 _raw(conn, run_id, "finra_short_volume_sync", "finra",
                      "/equity/regsho/daily/CNMS", trade_day.isoformat(),
                      content, status, observed)
-            rows = [row for row in _parse_finra_short_volume(content)
-                    if row["symbol"] in symbols]
+            parsed = _parse_finra_short_volume(content)
+            parsed_rows += len(parsed)
+            rows = [row for row in parsed if row["symbol"] in symbols]
             outcome.received += len(rows)
             if dry:
                 continue
@@ -1356,6 +1365,7 @@ def finra_short_volume_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dr
     outcome.details.update({
         "candidate_dates": [day.isoformat() for day in trade_days],
         "files_found": files_found,
+        "parsed_rows": parsed_rows,
         "universe_symbols": len(symbols),
     })
     if files_found == 0:
@@ -1365,7 +1375,10 @@ def finra_short_volume_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dr
             outcome,
         )
     if outcome.received == 0:
-        raise RuntimeError("Fichiers FINRA trouvés mais aucun symbole de l'univers n'est couvert")
+        outcome.failed = files_found
+        if parsed_rows == 0:
+            raise BatchRunError("Fichiers FINRA trouvés mais aucune ligne de volume valide n'a pu être lue", outcome)
+        raise BatchRunError("Fichiers FINRA trouvés mais aucun symbole de l'univers n'est couvert", outcome)
     return outcome
 
 
