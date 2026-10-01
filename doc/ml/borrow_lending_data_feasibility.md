@@ -76,3 +76,16 @@ moins 40 % chaque année. Sans ce gate, aucun modèle ne doit être entraîné.
 
 Une collecte prospective Alpaca/IBKR peut être utile au risque d'exécution et à
 une future étude, mais elle ne remplace pas une validation historique OOF.
+
+## Préparation du pilote du 1er octobre 2026
+
+Après le réentraînement de l'Oracle corrigé, le statut scientifique reste
+`BLOCKED_NO_PIT_HISTORY`. Un échantillon déterministe de 50 titres Oracle TOP20
+et un contrôle de couverture PIT sont maintenant prêts, sans données ni achat
+fournisseur. Le premier compare 29 267 événements de 2018 à 2025 ; le second
+exige taux, quantité disponible, identifiant permanent et première disponibilité
+avant l'entrée next-open. L'audit des snapshots Alpaca existants a révélé 156
+statuts prospectifs faussement `NOT_SHORTABLE` dus à des doublons d'actifs ; le
+collecteur futur privilégie maintenant l'actif actif/tradable et lit
+`borrow_status`. Les lignes historiques sont répertoriées pour correction ou
+exclusion, sans écriture SQL. Voir [le protocole et l'audit](borrow_pilot_feasibility_20261001.md).

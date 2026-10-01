@@ -1,5 +1,63 @@
 # Registre des expériences ML réalisées
 
+## Pilote borrow PIT après Oracle — `SAMPLE_READY / BLOCKED_NO_PROVIDER_HISTORY`
+
+Un échantillon déterministe de 50 titres, 29 267 événements Oracle TOP20,
+huit années et cinq quintiles de liquidité est prêt. Le contrôle PIT exige
+frais d'emprunt, quantité disponible, identifiant permanent et disponibilité
+avant 09:25 ET à la séance suivante. Aucun extrait fournisseur n'est présent :
+pas de couverture réelle, d'entraînement ou d'AUC. L'historisation Alpaca
+prospective fournit 22 734 lignes sur 13 jours seulement et aucun fee/quantité.
+Un audit des RAW retrouve 156 statuts faussement non shortables sur 12 tickers,
+causés par des doublons d'actifs ; le collecteur est corrigé pour les prochains
+runs, les lignes passées restant à corriger ou exclure. Voir [le protocole de
+faisabilité](borrow_pilot_feasibility_20261001.md).
+
+## Oracle O0 corrigé, 14 folds OOF, puis P0g — `REFIT_COMPLETE / NO_GO_DIRECTION`
+
+L'Oracle d'amplitude O0 a été réentraîné hors base sur ses 14 folds gelés après
+reconstruction des prix NVIDIA et des cibles Oracle. Ses 2 908 295 prédictions
+OOF donnent AUC 0,758141 et précision TOP10 50,435 %, proches du P0f publié.
+Le TOP20 conserve 582 700 événements mais échange 9 041 entrées et sorties.
+P0g a été rejoué sur ce nouveau gate, avec ses 84 features recalculées et ses
+neuf fenêtres gelées : AUC D1/D10 0,481115 sur 179 475 observations OOS et
+IC quotidien −0,029740. Sur 176 598 événements communs avec le rejeu à gate
+fixe corrigé, l'AUC recule de 0,488053 à 0,480660. Pas de promotion ni
+d'écriture SQL. Voir [le rapport complet](oracle_split_corrected_oracle14_p0g_replay_20261001.md).
+
+## Replay P0g après correction des splits NVIDIA — `FIXED_ORACLE_GATE / NO_GO_DIRECTION`
+
+Prix NVIDIA reconstruits sur base post-2024 pour 2 014 barres réelles, avec
+facteurs 1/40 avant le split 2021 puis 1/10 avant celui de 2024. Les 40 labels
+H20 traversant ces dates sont recalculés : rendement −4,27 % à +43,05 %, aucun
+ne reste D1, 17 deviennent D10. Sur 69 136 labels valides des 40 dates,
+304 déciles et 80 cibles Oracle extrêmes changent. Le jeu P0g à gate Oracle
+OOF historique contient les mêmes 582 700 événements TOP20, 84 features et
+neuf fenêtres de test que le P0g publié. Dans un replay apparié avec mêmes
+features corrigées et même environnement, l'AUC D10/D1 passe de 0,5004
+(anciens labels, 179 605 lignes OOS) à 0,4882 (labels corrigés, 179 612 lignes).
+IC directionnel quotidien −0,0107 → −0,0212. Les scores Oracle amplitude
+n'ont pas été réentraînés : résultat de sensibilité, pas un replay complet
+Oracle → P0g. Aucun changement en base ou en serving. Voir
+[le rapport de replay](oracle_split_corrected_p0g_replay_20260930.md).
+
+## Audit des splits Oracle du 30 septembre 2026 — `QUARANTINE_RESEARCH / P0G_AUC_UNRECOMPUTED`
+
+Sur 2 493 symboles et 4,93 M de barres réelles, 390 événements de split
+Alpaca dédupliqués sont comparés aux prix locaux : 356 cohérents avec un
+ajustement, 31 indéterminés, trois candidats non ajustés (NVDA 2021/2024,
+SBS 2026). Quarante labels H20 NVIDIA précédemment valides et D1 traversent
+les deux splits ; SBS n'a pas de label exposé. Un override de recherche met
+ces 40 lignes en quarantaine et recalcule les rangs sur 40 dates. Dans le
+TOP20 Oracle, 21 lignes sont écartées, 32 autres changent de décile, et le
+nombre net D1 passe de 4 435 à 4 429 sur le panel de 56 dates étudié ; D10
+reste à 3 635. UCO est testé séparément comme cas incertain. Un écran des
+ruptures extrêmes trouve aussi 47 sauts sans split Alpaca proche, dont neuf
+touchent des labels valides ; ils ne sont pas supprimés automatiquement.
+L'AUC P0g 0,4904 ne peut pas être recalculée sans ses prédictions/artefacts
+absents ; `NO_GO_DIRECTION` reste le verdict publié. Voir
+[l'audit détaillé](oracle_split_label_audit_20260930.md).
+
 ## Recouvrement Oracle et dates officielles du 30 septembre 2026 — guidance
 
 Statut : `INCONCLUSIVE / ZERO_PIT_ELIGIBLE`.
@@ -21,8 +79,60 @@ le revenu annuel annoncé reste environ 2,4 Md USD dans les deux publications.
 Prototype de label ouvert→ouvert H20 exécuté sur BBWI, score du 27/08 puis
 entrée théorique le 28/08 : −9,12 %, D1 provisoire dans 1 847 titres. Un
 report d'une séance donne −1,42 %, D3 provisoire sur une autre cohorte.
-Seulement une barre quotidienne disponible, aucun prix intrajournalier ou
-instant historique de réception validé : résultat descriptif, pas backtest PIT.
+Dans la base locale, seulement une barre quotidienne et aucun instant historique
+de réception validé : résultat descriptif, pas backtest PIT.
+Suivi intrajournalier : 60 minutes historiques Alpaca SIP BBWI récupérées
+rétrospectivement pour le 28/08/2024. Rendement brut H20 selon ouverture
+09 h 30 / 09 h 45 / 10 h 00 : −9,12 % / −5,94 % / −6,81 %, sans décile
+transversal aux deux heures retardées. Les tables PIT locales commencent en
+septembre 2026, donc aucune réception 2024 prouvée. E20-D reste NO_GO agrégé.
+Tri supplémentaire des dix sources encore TOP20 % à la date officielle :
+BBWI seule baisse chiffrée des ventes annuelles, BFH et GEO contrôles de
+revenu inchangé, GL hausse de bénéfice opérationnel par action, MAC retrait
+de guidance EPS/FFO, AR révision de prime gazière, AAL maintien de l'EPS,
+HP capex à comparer, PEGA ACV et EBC outlook bancaire à résoudre. Familles
+de métriques à garder séparées ; aucune nouvelle ligne PIT-éligible ni
+entraînement D1/D10.
+Autre tirage figé de 12 titres sur scores TOP20 % du calendrier et de sa
+veille supposée, sans labels : 9/12 dates de calendrier sont décalées, donc
+leurs scores sélectionnés ne précèdent pas la vraie date de publication.
+Après correction, 11/12 restent TOP20 % ; LUV en sort. Le symbole PRKS en
+2023 désigne un émetteur coté alors SEAS ; le contrôle local voit le même
+instrument_id 23592 avant/après, soit un alias historique à dater.
+Deux autres baisses de ventes annuelles figées avant les cibles : HAYW
+−1,5 point et FMC −0,20 Md USD. Leurs proxies ouvert→ouvert H20 donnent
++2,95 % / D9 et +3,87 % / D8, contre −9,12 % / D1 pour BBWI. Le signe
+de la révision ne suffit pas ; zéro nouvelle ligne PIT-éligible.
+Audit des attentes historiques : 218 068 snapshots Yahoo REVENUE mais première
+observation le 29/08/2026 ; zéro pour HAYW/FMC/BBWI avant leurs annonces,
+zéro ligne REVENUE dans l'autre table de consensus. Le gap de l'ouverture
+après annonce est positif pour HAYW/FMC et négatif pour BBWI, diagnostic
+postpublication non utilisable pour une entrée à cette même ouverture.
+Jointure as-of étendue aux guidances de croissance des ventes via une base
+annuelle positive et comparable, avec abstention si elle manque ; 12 tests.
+Audit du panel prospectif : Oracle OOF s'arrête au 30/06/2026, les dépôts SEC
+locaux commencent le 13/09 et les barres journalières SPY s'arrêtent au 10/07.
+Le canary ne possède pas d'artefact dans ce checkout. Les 54 517 lignes Yahoo
+de revenu `CURRENT_YEAR` sont toutes à horizon relatif, sans exercice fiscal
+identifié ; une surprise de guidance FY ne peut pas y être jointe telle quelle.
+Statut inchangé : zéro décision Oracle + guidance + consensus PIT-éligible.
+Journal prospectif P0j ajouté : timestamp UTC post-calcul, batch, champion,
+score et rang TOP20 en JSONL sans label futur ; un replay ancien est exclu.
+Les tests du journal passent. Aucun run courant ici : barres SPY arrêtées
+au 10/07 et artefacts de champions/baseline absents de ce checkout.
+Précontrôle P0j ajouté : un run quotidien implicite sur date ancienne est
+bloqué avant écriture. L'audit du prix alternatif trouve 1 660 titres Business
+Quant `raw` au 28/09, mais zéro SPY ; aucune insertion canonique ajustée.
+Champions et baseline non retrouvés ; cinq tests du journal/précontrôle passent.
+Pilote Alpaca SIP quotidien (lecture seule) : 60/60 couples titre-séance
+SPY/AAPL/BBWI/HAYW/FMC communs avec EODHD ont la même clôture, et sept
+séances de septembre sont accessibles pour les cinq titres. Contrôle de
+splits : NVIDIA juin 2024 n'est pas ajusté dans `stock_bars_daily` malgré le
+marquage `split`. Dix-neuf labels H20 du batch Oracle sont D1 avec rendement
+−85,70 % à −89,72 % et qualité marquée valide ; l'ajustement 10:1 du prix
+de départ donne +2,77 % à +43,05 % avant recalcul des déciles. Trois autres
+fenêtres de split contrôlées concordent. Pas de switch fournisseur ni de
+réécriture des labels ; audit global des ruptures nécessaire.
 Voir [rapport et protocole](guidance_oracle_overlap_and_calendar_20260930.md).
 
 ## Vérification SEC du 30 septembre 2026 — cinq candidats guidance

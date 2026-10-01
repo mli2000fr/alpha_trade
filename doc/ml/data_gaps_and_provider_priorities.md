@@ -137,6 +137,15 @@ Les barres locales s'arrêtent autour de fin juin/début juillet 2026 depuis l'a
 
 Alpaca expose des barres historiques multi-symboles et des corporate actions ; EODHD ou un autre fournisseur peut également rester la source principale. Le choix doit être fait sur la couverture, les ajustements et le droit de conservation, pas seulement sur le prix.
 
+Pilote du 30/09/2026 : Alpaca SIP `1Day` ajusté couvre SPY et quatre titres sur
+12 séances communes avec EODHD, ainsi que sept séances récentes absentes de la
+table canonique. Un contrôle de split NVIDIA 2024 révèle toutefois 19 labels
+Oracle H20 D1 artificiels dans le batch étudié : la série locale est brute
+avant le split 10:1 malgré son marquage `split`. Avant tout changement de
+source, auditer les splits de l'univers, la convention d'ajustement, les
+corrections et les droits de conservation. Voir
+[l'audit guidance/Oracle](guidance_oracle_overlap_and_calendar_20260930.md).
+
 ### 4.3 Fondamentaux SEC PIT avec lignage
 
 #### Problème constaté

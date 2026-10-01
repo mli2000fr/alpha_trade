@@ -60,9 +60,13 @@ sur la dernière donnée locale existante ; il ne tente pas de télécharger ou 
 fabriquer des barres manquantes.
 
 Tant que cette alimentation reste suspendue, une exécution planifiée retrouve
-le 10 juillet 2026 et répond `already_completed`. Elle n'apporte aucune nouvelle
-date au suivi H20. Cette limitation n'empêche ni l'analyse des historiques déjà
-présents, ni les expériences ML OOF menées sur ces données.
+le 10 juillet 2026. Le précontrôle ajouté le 30/09/2026 répond maintenant
+`BLOCKED_PREFLIGHT` avec `STALE_LATEST_BENCHMARK_DATE`, avant de créer un
+artefact ; elle n'apporte aucune nouvelle date au suivi H20. Cette limitation
+n'empêche ni l'analyse des historiques déjà présents, ni les expériences ML
+OOF menées sur ces données. Une date historique passée explicitement reste
+possible pour un diagnostic si les artefacts du modèle sont présents, mais
+elle n'obtient jamais de journal prospectif.
 
 La date de coupure doit être relue comme un **cutoff de données volontaire** et
 non comme une panne du canary ou une dérive du modèle.
@@ -200,6 +204,41 @@ artifacts/models/oracle/canary/<batch>/
 `index.json` constitue le registre opérationnel : dates traitées, rapports de
 dérive, évaluations retardées et état glissant. Il demeure explicitement
 `research_only` et `trading_eligible=false`.
+
+### Journal prospectif pour la recherche guidance
+
+Après une prédiction canary réussie, P0j écrit dans le répertoire propre au run
+`prospective_score_journal.jsonl` **seulement si la date scorée est la date
+calendaire courante à New York**. Chaque ligne conserve symbole, probabilité,
+rang transversal, appartenance TOP20, taille d'univers, batch, champion et
+`score_artifact_available_at_utc`. L'heure est prise après le calcul des scores
+et du contrôle immédiat ; elle est conservatrice pour une décision ultérieure.
+Un SHA-256 du fichier est placé dans `canary_report.json` et `index.json`.
+Les colonnes de rendement et de label futurs sont exclues du journal. Une
+réexécution historique garde son rapport canary mais indique
+`SKIPPED_STALE_DATE` et ne produit pas de journal prospectif. Un journal déjà
+écrit ne peut pas être réécrit dans le même répertoire de run.
+
+Ce fichier reste un **candidat de preuve horaire**, avec
+`CANDIDATE_INPUT_PIT_UNVERIFIED` et `trading_eligible=false` : l'heure de fin
+du calcul ne démontre pas l'heure de première disponibilité de chaque feature
+en amont, la réception d'une annonce ni un prix d'entrée négociable. Il ne
+constitue donc pas à lui seul une observation admissible pour D1/D10.
+
+Dans le checkout vérifié le 30/09/2026, les répertoires de champions, de
+baseline P0i et de canary configurés ne sont pas présents, et SPY s'arrête
+au 10/07/2026. Le journal est testé localement, mais aucun run courant n'a pu
+être produit ici ; la collecte EODHD a été arrêtée volontairement, comme
+indiqué plus haut.
+
+Un audit de la source alternative locale a trouvé des versions Business Quant
+`raw` pour 1 660 titres jusqu'au 28/09/2026, mais aucune version SPY. Le batch
+`daily_bars_sync` du 30/09 s'est terminé sans échec et a persisté 1 660 lignes.
+Sa configuration interdit `canonical_upsert` : ces données brutes ne doivent
+pas être copiées telles quelles dans `stock_bars_daily`, dont Oracle lit les
+prix ajustés et la couverture SPY. Le précontrôle vérifie aussi la présence du
+manifeste de champions et des fragments de référence P0i avant d'écrire un
+nouveau run. Il n'atteste pas la validité interne des fichiers ni des inputs PIT.
 
 ## Critère de sortie de P0j
 

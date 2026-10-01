@@ -33,6 +33,7 @@ from sqlalchemy.engine import Connection, Engine
 from common.config_loader import load_batch_config
 from common.market_calendar import is_trading_day, nyse_session_dates
 from database.connection import get_sqlalchemy_engine
+from risk_management.liquidity import BorrowStatus, alpaca_borrow_status
 from service.alpaca.clientAlpaca import fetch_alpaca_assets, get_alpaca_credentials
 from service.forward_pit.options_delayed import (
     option_contract_adjustment_sync,
@@ -493,11 +494,19 @@ def _assets_in_universe(
     assets: Iterable[dict[str, Any]], symbols: Iterable[str]
 ) -> list[dict[str, Any]]:
     allowed = {str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()}
-    return [
-        item for item in assets
-        if str(item.get("class")) == "us_equity"
-        and str(item.get("symbol") or "").strip().upper() in allowed
-    ]
+    selected: dict[str, dict[str, Any]] = {}
+    for item in assets:
+        symbol = str(item.get("symbol") or "").strip().upper()
+        if str(item.get("class")) != "us_equity" or symbol not in allowed:
+            continue
+        # Alpaca can return an inactive asset before an active one for one ticker.
+        previous = selected.get(symbol)
+        priority = (str(item.get("status") or "").lower() == "active", bool(item.get("tradable")))
+        if previous is None or priority > (
+            str(previous.get("status") or "").lower() == "active", bool(previous.get("tradable"))
+        ):
+            selected[symbol] = item
+    return list(selected.values())
 
 
 def _secret(cfg: dict[str, Any], default_env: str) -> str:
@@ -1282,10 +1291,15 @@ def borrow_status_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry
         if not dry:
             for item in selected_assets:
                 shortable, etb = item.get("shortable"), item.get("easy_to_borrow")
-                status = "EASY" if shortable and etb else ("LOCATE_REQUIRED" if shortable else "NOT_SHORTABLE")
+                borrow = alpaca_borrow_status(item)
+                borrow_status = {
+                    BorrowStatus.EASY_TO_BORROW: "EASY",
+                    BorrowStatus.HARD_TO_BORROW: "LOCATE_REQUIRED",
+                    BorrowStatus.NOT_SHORTABLE: "NOT_SHORTABLE",
+                }[borrow]
                 result = conn.execute(text("""INSERT IGNORE INTO stock_borrow_status_snapshots
                     (provider,symbol,observed_at,available_at,shortable,easy_to_borrow,marginable,tradable,status,borrow_status,payload_hash,run_id)
-                    VALUES ('alpaca',:symbol,:observed,:observed,:shortable,:etb,:marginable,:tradable,:status,:borrow,:hash,:run)"""), {"symbol": item.get("symbol"), "observed": observed, "shortable": shortable, "etb": etb, "marginable": item.get("marginable"), "tradable": item.get("tradable"), "status": item.get("status"), "borrow": status, "hash": _hash(item), "run": run_id})
+                    VALUES ('alpaca',:symbol,:observed,:observed,:shortable,:etb,:marginable,:tradable,:status,:borrow,:hash,:run)"""), {"symbol": item.get("symbol"), "observed": observed, "shortable": shortable, "etb": etb, "marginable": item.get("marginable"), "tradable": item.get("tradable"), "status": item.get("status"), "borrow": borrow_status, "hash": _hash(item), "run": run_id})
                 outcome.persisted += max(0, result.rowcount)
     return outcome
 
