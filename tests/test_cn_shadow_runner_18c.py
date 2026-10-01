@@ -173,3 +173,67 @@ def test_contract_gate_then_attempt_and_later_mark(pilot) -> None:
     assert marked["states"] == {"MARKED_PRICE_ONLY": 1}
     mark_file = output / "marks" / DAY.isoformat() / "2024-03-06" / f"cn18c-{DAY}-123.json"
     assert json.loads(mark_file.read_text(encoding="utf-8"))["mark"]["mark_close_cny"] == "11"
+
+
+def test_observation_preflight_waits_for_close_and_never_writes_attempt(pilot) -> None:
+    engine, root, output, plan_path = pilot
+    runner.prepare_plan(decision=DAY, oracle_root=root, output_path=plan_path,
+                        now=datetime(2024, 3, 4, 10, 0, tzinfo=UTC), sample_size=1)
+    _contracts_and_bars(engine)
+    early = runner.observation_readiness(
+        plan_path=plan_path, now=datetime(2024, 3, 5, 6, 0, tzinfo=UTC))
+    assert early["status"] == "WAITING_FOR_CLOSE"
+    assert early["authorizes_attempt"] is False
+    assert not (output / "attempts").exists()
+    after = runner.observation_readiness(
+        plan_path=plan_path, now=datetime(2024, 3, 5, 8, 0, tzinfo=UTC))
+    assert after["status"] == "OBSERVATIONS_INSPECTED"
+    assert after["planned"] == after["observed_bars"] == 1
+    assert after["issue_count"] == 0
+    assert after["observations"][0]["trading_status"] == "TRADE"
+    assert after["observations"][0]["volume_shares"] == "100000"
+    assert after["observations"][0]["limit_policy"] == "CN_MAIN_10PCT_V1"
+    assert after["database_modified"] is False and after["broker_called"] is False
+    assert after["authorizes_attempt"] is False
+    assert not (output / "attempts").exists()
+
+
+def test_observation_preflight_reports_missing_bar_without_imputing_fill(pilot) -> None:
+    engine, root, output, plan_path = pilot
+    runner.prepare_plan(decision=DAY, oracle_root=root, output_path=plan_path,
+                        now=datetime(2024, 3, 4, 10, 0, tzinfo=UTC), sample_size=1)
+    _contracts_and_bars(engine)
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM stock_bars_daily WHERE `date`='2024-03-05'"))
+    report = runner.observation_readiness(
+        plan_path=plan_path, now=datetime(2024, 3, 5, 8, 0, tzinfo=UTC))
+    assert report["status"] == "OBSERVATIONS_INSPECTED"
+    assert report["observed_bars"] == 0
+    assert report["issues"] == [{"intent_id": f"cn18c-{DAY}-123",
+                                  "reason": "bar_not_available"}]
+    assert report["observations"][0]["status"] == "BAR_NOT_AVAILABLE"
+    assert report["authorizes_attempt"] is False
+    assert not (output / "attempts").exists()
+
+
+def test_observation_preflight_distinguishes_future_session_from_missing_current(pilot) -> None:
+    engine, root, output, plan_path = pilot
+    runner.prepare_plan(decision=DAY, oracle_root=root, output_path=plan_path,
+                        now=datetime(2024, 3, 4, 10, 0, tzinfo=UTC), sample_size=1)
+    _contracts_and_bars(engine)
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM market_sessions WHERE session_date='2024-03-05'"))
+    future = runner.observation_readiness(
+        plan_path=plan_path, now=datetime(2024, 3, 4, 11, 0, tzinfo=UTC))
+    assert future["status"] == "WAITING_FOR_SESSION"
+    current = runner.observation_readiness(
+        plan_path=plan_path, now=datetime(2024, 3, 5, 8, 0, tzinfo=UTC))
+    assert current["status"] == "BLOCKED_SESSION"
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO market_sessions VALUES "
+                          "('CN_A','2024-03-05','open',NULL),"
+                          "('CN_A','2024-03-05','open',NULL)"))
+    ambiguous_future = runner.observation_readiness(
+        plan_path=plan_path, now=datetime(2024, 3, 4, 11, 0, tzinfo=UTC))
+    assert ambiguous_future["status"] == "BLOCKED_SESSION"
+    assert not (output / "attempts").exists()

@@ -34,6 +34,10 @@ Les tests `tests/test_execution_broker_doubles_18d.py` valident conformité au p
 
 Ce sprint ne sélectionne pas de broker chinois et n'active ni paper/live CN ni ordonnanceur. Le [pilote 18-C](./sprint_18c_pilote_shadow_prospectif.md) reste suspendu jusqu'aux observations post-clôture du 8 octobre, selon son [TODO](./TODO_sprint_18c_post_cloture_2026_10_08.md). Le Sprint 19 reste conditionné à un GO économique, un broker/canal et une validation humaine distincte.
 
+**Contrôle complémentaire pré-08/10 :** 163 tests ciblés ont passé sur le routeur 18-A, les doubles 18-D, le shadow 18-B, l'exécuteur et ses protections US, la synchronisation broker, les gardes live, l'annulation et le replay. Ce résultat vérifie la non-régression de ces chemins sous mocks ; il ne remplace ni une séance CN observée, ni un essai shadow réel, ni des tests avec un broker chinois.
+
+Un second lot de **35 tests** a couvert le runner 18-C, le contrat d'exécution CN 2026, les règles 12-A et le replay de portefeuille 12-B : **198 tests ciblés passants au total** pour cette préparation. Le préflight réel du 08/10 reste `READY_FOR_RESEARCH_ATTEMPT`, `blocking_reasons=[]`, `database_modified=false` et `broker_called=false`. Aucune phase `attempt` ou `mark` n'a été lancée.
+
 ## Limites et étape ultérieure
 
 Le port représente l'interface actuellement consommée, pas une abstraction universelle de tous les brokers. `BrokerAdapter` garde des conversions Alpaca internes ; un futur adaptateur CN exigerait une traduction des statuts, symbologies, comptes, ordres conditionnels/OCO et frais du canal choisi. La disponibilité d'une méthode dans le port ne vaut aucune preuve qu'un autre broker la prend en charge. La symétrie paper/live n'est pas autorisée par ce travail.

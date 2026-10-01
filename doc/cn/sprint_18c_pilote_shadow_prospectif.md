@@ -37,6 +37,8 @@ Le plan pour la séance du **8 octobre 2026** a été figé à partir de l'expor
 
 Le blocage contractuel est levé **pour la recherche uniquement**. La phase tentative attendra les observations canoniques post-clôture du 8 octobre et une reprise manuelle selon le [TODO 18-C](./TODO_sprint_18c_post_cloture_2026_10_08.md). Il n'y a **pas de batch planifié**.
 
+La phase supplémentaire `observation-preflight` inspecte en lecture seule les 12 barres et leurs statuts **seulement après la clôture canonique** ; elle affiche manques et anomalies par intention, sans écrire de tentative et avec `authorizes_attempt=false`. Au 01/10, elle retourne normalement `WAITING_FOR_SESSION` pour le 08/10. Les contrats seuls restent `READY_FOR_RESEARCH_ATTEMPT` ; ce statut n'atteste pas encore les observations de marché.
+
 ## Commandes de recherche, sans activation automatique
 
 Depuis `F:\projets` :

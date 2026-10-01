@@ -27,6 +27,9 @@ from __future__ import annotations
 
 import logging
 import os
+import json
+import ssl
+import urllib.request
 from dataclasses import dataclass
 from typing import Optional
 
@@ -40,6 +43,23 @@ CHAT_ID_ENV = "TELEGRAM_CHAT_ID"
 API_BASE_URL = "https://api.telegram.org"
 # Limite officielle d'un message Telegram (caractères).
 MAX_TEXT_LENGTH = 4096
+
+
+def _windows_trust_available() -> bool:
+    return os.name == "nt"
+
+
+def _post_with_windows_trust(url: str, payload: dict, timeout: float) -> int:
+    """Retry a certifi-only TLS failure using the verified Windows root store."""
+    request = urllib.request.Request(
+        url, data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"}, method="POST",
+    )
+    # On Windows, create_default_context loads the OS certificate store.
+    # Never use an unverified context or disable certificate validation.
+    with urllib.request.urlopen(request, timeout=timeout,
+                                context=ssl.create_default_context()) as response:
+        return response.status
 
 
 class TelegramConfigError(RuntimeError):
@@ -144,7 +164,15 @@ class TelegramClient:
             import requests  # type: ignore[import-untyped]  # import réseau lazy
 
             url = f"{API_BASE_URL}/bot{token}/sendMessage"
-            resp = requests.post(url, json=payload, timeout=self.timeout_seconds)
+            try:
+                resp = requests.post(url, json=payload, timeout=self.timeout_seconds)
+            except requests.exceptions.SSLError:
+                if not _windows_trust_available():
+                    raise
+                status = _post_with_windows_trust(url, payload, self.timeout_seconds)
+                if status >= 300:
+                    raise RuntimeError(f"Telegram HTTP {status}")
+                return True
             if resp.status_code >= 300:
                 raise RuntimeError(f"Telegram HTTP {resp.status_code}: {resp.text[:200]}")
             return True

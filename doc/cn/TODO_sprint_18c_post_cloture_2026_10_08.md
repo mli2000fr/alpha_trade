@@ -13,6 +13,13 @@
    ```
 
    Exiger `READY_FOR_RESEARCH_ATTEMPT` et zéro `blocking_reasons`. Vérifier également que le marché CN live reste désactivé.
+   Après la clôture canonique, exécuter aussi l'inventaire détaillé des 12 intentions :
+
+   ```powershell
+   python -m service.market.cn_shadow_runner_18c --phase observation-preflight --decision-date 2026-10-08
+   ```
+
+   Cette phase est **read-only** et renvoie `authorizes_attempt=false` dans tous les cas. Avant que la séance et sa clôture canonique existent, `WAITING_FOR_SESSION` est normal (constaté au 01/10). Avant la clôture, `WAITING_FOR_CLOSE` est normal. Après clôture, examiner `observations` et `issues` : barres brutes disponibles, statut, open/close, volume, limites, facteurs non classifiés, provenance et `observed_at_utc`. Une barre absente n'est jamais imputée en fill ; le rapport ne lance ni `attempt` ni `mark`.
 4. Seulement après les trois vérifications, exécuter **une fois** la tentative shadow, avec opt-in explicite des règles et coûts de recherche :
 
    ```powershell

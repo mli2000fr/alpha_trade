@@ -60,3 +60,31 @@ Get-ChildItem artifacts/research/cn_daily_quality_17c/runs -Filter 'run-*.json' 
 Le [préflight daté du 01/10](../../artifacts/research/cn_operations_17a/cutover-preflight-20261001.json) retourne `BLOCKED` uniquement parce qu'aucun cycle D6/D9/D10 + 17-C réel postérieur au 08/10 n'existe encore. Son `scheduler_actions_verified: false` est volontaire : le préflight ne prétend pas avoir validé les actions Windows ; elles doivent être contrôlées humainement avant la bascule. Les [tests](../../tests/test_cn_catalog_preflight_17d.py) vérifient qu'un rapport minimal, un échec ou un doublon de section ne peut pas autoriser la migration.
 
 **Décision actuelle : HOLD.** Le seul avertissement de l'[audit 17-A actualisé](../../artifacts/research/cn_operations_17a/audit-20261001-after-17c.json) est le catalogue mixte ; il est connu et moins risqué que de déplacer les tâches pendant la fermeture du marché. Reprendre ce document après le premier cycle réel, puis exécuter la migration contrôlée avant de déclarer 17-D terminé.
+
+## Préparation vérifiée le 01/10 — sans bascule
+
+Le [plan de catalogue en lecture seule](../../service/market/cn_catalog_plan_17d.py) et son [rapport figé](../../artifacts/research/cn_operations_17a/catalog-plan-20261001.json) contrôlent les quatre sections actuellement dans `batch.yaml`. Les 15, 19, 15 et 22 champs respectifs restent identiques dans la cible simulée ; seules les identités explicites `market_code: CN_A` et `database_alias: cn_primary` seraient ajoutées. Le plan enregistre les empreintes SHA-256 des deux catalogues avant intervention et refuse une section dupliquée. Il ne génère aucun YAML cible sur disque et ne modifie ni base ni tâche.
+
+Inspection réelle des quatre tâches Windows : elles sont toutes `Ready`, utilisent `wscript.exe` avec le lanceur D6, D9 ou D10 attendu, ont chacune un déclencheur et un principal `Interactive`. La dernière exécution signalait le code `0` au moment de l'inspection. **Aucune action ne contient encore `batch_cn.yaml` ni `-BatchConfigPath`** ; le code `0` du planificateur ne prouve pas à lui seul qu'un cycle métier D6/D9/D10 est complet. Le prochain déclenchement visible était le 01/10 à 11:30 heure du PC pour trois tâches et 12:15 pour D9. Les contrôles d'horaires métier restent dans les lanceurs.
+
+Pour rafraîchir le plan après le premier cycle réel, utiliser un *nouveau* nom de sortie :
+
+```powershell
+.\.venv\Scripts\python.exe -m service.market.cn_catalog_plan_17d --output artifacts/research/cn_operations_17a/catalog-plan-APRES-CYCLE.json
+.\.venv\Scripts\python.exe -m pytest -q --no-cov tests/test_cn_catalog_plan_17d.py tests/test_cn_catalog_preflight_17d.py tests/test_cn_catalog_contract_17d.py
+```
+
+Après ce rapport, il faudra encore vérifier les quatre actions Windows, exporter leurs définitions et sauvegarder les deux YAML **avant** toute modification. Ces preuves devront porter les empreintes des catalogues relevées par le plan. Une divergence d'empreinte impose de régénérer le plan, pas d'appliquer un déplacement préparé sur un autre état. La migration elle-même reste interdite tant que le gate du premier cycle réel et la vérification manuelle des tâches ne sont pas satisfaits. Les tests ciblés de préparation passent (12 tests au 01/10) ; ils ne remplacent pas la preuve prospective.
+
+### Point de retour préparé le 01/10
+
+Le [script d'export 17-D](../../scripts/windows/export_cn_catalog_cutover_snapshot_17d.ps1) a produit un [manifest de retour arrière validé](../../artifacts/research/cn_operations_17a/cutover_snapshots/20261001T110256Z/manifest.json) contenant les deux YAML et les quatre définitions XML des tâches installées. Le [validateur de snapshot](../../service/market/cn_catalog_snapshot_validate_17d.py) vérifie les six empreintes SHA-256, le vrai décodage des XML, les lanceurs et identités de tâche, l'unicité des sections et l'absence de dérive des catalogues courants ; résultat `VALID_LEGACY_SNAPSHOT`. Les quatre tâches étaient hors exécution lors de la capture. Un premier export du 01/10 utilisait un encodage XML incompatible avec sa déclaration : le validateur l'a rejeté et cet export invalide généré pendant la préparation a été supprimé. Seul le snapshot validé doit servir de référence.
+
+L'export est une **photo de préparation**, pas encore la sauvegarde finale de bascule : régénérer un nouveau snapshot juste avant toute migration, puis comparer ses empreintes au plan 17-D actualisé. Ne pas restaurer aveuglément la photo du 01/10 si les catalogues ou tâches ont changé entre-temps.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows/export_cn_catalog_cutover_snapshot_17d.ps1
+python -m service.market.cn_catalog_snapshot_validate_17d --snapshot artifacts/research/cn_operations_17a/cutover_snapshots/NOUVELLE_CAPTURE
+```
+
+Le script lit/exporte seulement ; il ne désinstalle ni ne réinstalle aucune tâche. Un rollback effectif reste une opération contrôlée à réaliser seulement si la bascule échoue, après vérification des noms, horaires et empreintes de la sauvegarde immédiatement préalable.

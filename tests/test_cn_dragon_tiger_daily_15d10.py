@@ -95,3 +95,25 @@ def test_changed_candidate_cannot_reuse_prior_match(tmp_path):
     (output / "report.json").write_text(json.dumps({"candidate_sha256": "wrong"}), encoding="utf-8")
     with pytest.raises(RuntimeError, match="mismatch"):
         daily.execute(batch_config=config, now=NOW)
+
+
+def test_missing_candidate_then_timely_publication_can_retry(monkeypatch, tmp_path):
+    config = _config(tmp_path)
+    failure = daily.execute(batch_config=config, now=NOW)
+    assert failure["status"] == "FAILED"
+    digest = _published(tmp_path)
+
+    def recovered_audit(*, output, **_kwargs):
+        output.mkdir(parents=True)
+        result = {"status": "INSUFFICIENT_PROSPECTIVE_MATCHED_SAMPLE",
+                  "matching": {"candidate_rows": 1, "matched_pairs": 0}}
+        (output / "report.json").write_text(json.dumps(result), encoding="utf-8")
+        (output / "outcome_blind_matches.parquet").write_bytes(b"mock-parquet")
+        return result
+
+    monkeypatch.setattr(daily, "audit", recovered_audit)
+    success = daily.execute(batch_config=config, now=NOW)
+    assert success["status"] == "COMPLETED_RESEARCH_ONLY"
+    assert success["candidate_sha256"] == digest
+    assert Path(failure["report_path"]).exists() and Path(success["report_path"]).exists()
+    assert failure["report_path"] != success["report_path"]

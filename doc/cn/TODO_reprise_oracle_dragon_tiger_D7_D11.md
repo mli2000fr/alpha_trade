@@ -2,6 +2,8 @@
 
 **État figé au 30 septembre 2026.** Ce document sert de point de reprise lorsque les observations prospectives seront disponibles. Il ne constitue pas une validation de la direction D1/D10 ni une autorisation de déploiement. Les contrats complets sont dans [D6](./sprint_15d6_collecte_prospective_dragon_tiger.md), [D7](./sprint_15d7_protocole_appariement_dragon_tiger.md), [D8](./sprint_15d8_export_oracle_prospectif.md), [D9](./sprint_15d9_journal_oracle_prospectif_quotidien.md), [D10](./sprint_15d10_appariement_d7_quotidien.md) et [D11](./sprint_15d11_cumul_d7_outcome_blind.md). Le fichier [batch.yaml](../../batch.yaml) reste la source des horaires.
 
+La vérification opérationnelle avant le premier passage est détaillée dans le [préflight du 8 octobre](./preflight_premier_cycle_2026_10_08.md), notamment l'heure **02:30 Paris** du snapshot D6 avant ouverture et la surveillance des notifications.
+
 > Mise à jour opérationnelle du 1er octobre 2026 : le code de compatibilité [Sprint 17-D](./sprint_17d_preparation_bascule_catalogues.md) est prêt, mais **les quatre tâches CN n'ont pas été migrées**. Elles lisent toujours `batch.yaml`. Le préflight 17-D reste `BLOCKED` tant qu'un premier cycle prospectif complet postérieur au 8 octobre n'a pas été observé. Les sept séances exigées pour clôturer [17-C](./sprint_17c_qualite_quotidienne_proprietaire_collecte.md) sont un gate distinct.
 
 ## Ce qui est déjà fait — ne pas recommencer

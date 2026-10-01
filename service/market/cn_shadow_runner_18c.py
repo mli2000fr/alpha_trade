@@ -364,6 +364,94 @@ def _decode_bar(raw: dict | None) -> ShadowBar | None:
     )
 
 
+def observation_readiness(*, plan_path: Path, now: datetime | None = None,
+                          engine=None) -> dict:
+    """Read-only post-close inventory; never authorizes or writes shadow attempts."""
+    now = _iso(now or datetime.now(UTC))
+    loaded = load_frozen_plan(plan_path, now=now)
+    day, plans = loaded["decision"], loaded["plans"]
+    result = {"decision_date": day.isoformat(), "planned": len(plans),
+              "database_modified": False, "broker_called": False,
+              "attempts_written": 0, "authorizes_attempt": False}
+    contract = contract_readiness(
+        decision=day,
+        boards=[(p.intent.exchange_mic, p.intent.board_code) for p in plans],
+        engine=engine,
+    )
+    if contract["status"] != "READY_FOR_RESEARCH_ATTEMPT":
+        return {**result, "status": "BLOCKED_CONTRACT",
+                "blocking_reasons": contract["blocking_reasons"]}
+    db, owned = _engine(engine)
+    try:
+        with db.connect() as conn:
+            try:
+                close = _session_close(conn, day)
+            except RuntimeError as exc:
+                rows = conn.execute(text("""
+                    SELECT COUNT(*) FROM market_sessions
+                    WHERE market_code='CN_A' AND session_date=:day
+                """), {"day": day}).scalar_one()
+                future_session = day > now.astimezone(SHANGHAI).date() and rows == 0
+                return {**result, "status": "WAITING_FOR_SESSION" if future_session else "BLOCKED_SESSION",
+                        "blocking_reasons": [str(exc)]}
+            result["session_close_utc"] = close.isoformat()
+            if now < close:
+                return {**result, "status": "WAITING_FOR_CLOSE",
+                        "blocking_reasons": ["session_not_closed"]}
+            observed = 0
+            issues = []
+            observations = []
+            for plan in plans:
+                intent = plan.intent
+                try:
+                    bar = _observed_bar(conn, instrument_id=intent.instrument_id,
+                                        day=day, now=now)
+                except Exception as exc:
+                    observations.append({"intent_id": intent.intent_id,
+                                         "instrument_id": intent.instrument_id,
+                                         "status": "INVALID_OBSERVATION"})
+                    issues.append({"intent_id": intent.intent_id,
+                                   "reason": f"{type(exc).__name__}: {exc}"})
+                    continue
+                if bar is None:
+                    observations.append({"intent_id": intent.intent_id,
+                                         "instrument_id": intent.instrument_id,
+                                         "status": "BAR_NOT_AVAILABLE"})
+                    issues.append({"intent_id": intent.intent_id,
+                                   "reason": "bar_not_available"})
+                    continue
+                observed += 1
+                observations.append({
+                    "intent_id": intent.intent_id,
+                    "instrument_id": intent.instrument_id,
+                    "status": "OBSERVED",
+                    "trading_status": bar.trading_status,
+                    "open_cny": str(bar.open_cny) if bar.open_cny is not None else None,
+                    "close_cny": str(bar.close_cny) if bar.close_cny is not None else None,
+                    "volume_shares": str(bar.volume_shares) if bar.volume_shares is not None else None,
+                    "limit_policy": bar.limit_policy,
+                    "factor_event_unresolved": bar.factor_event_unresolved,
+                    "observed_at_utc": bar.observed_at.astimezone(UTC).isoformat(),
+                    "source_ref": bar.source_ref,
+                })
+                if bar.volume_shares is None:
+                    issues.append({"intent_id": intent.intent_id,
+                                   "reason": "volume_missing"})
+                if bar.limit_policy is None:
+                    issues.append({"intent_id": intent.intent_id,
+                                   "reason": "limit_policy_missing"})
+                if bar.factor_event_unresolved:
+                    issues.append({"intent_id": intent.intent_id,
+                                   "reason": "factor_event_unresolved"})
+            return {**result, "status": "OBSERVATIONS_INSPECTED",
+                    "observed_bars": observed, "observations": observations,
+                    "issues": issues,
+                    "issue_count": len(issues)}
+    finally:
+        if owned:
+            db.dispose()
+
+
 def _decode_attempt(raw: dict) -> ShadowAttempt:
     item = raw["attempt"]
     breakdown = item["hypothetical_cost_breakdown"]
@@ -530,7 +618,8 @@ def mark_frozen_session(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--phase", required=True, choices=("plan", "preflight", "attempt", "mark"))
+    parser.add_argument("--phase", required=True,
+                        choices=("plan", "preflight", "observation-preflight", "attempt", "mark"))
     parser.add_argument("--decision-date", required=True, type=date.fromisoformat)
     parser.add_argument("--oracle-root", type=Path, default=DEFAULT_ORACLE_ROOT)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
@@ -557,6 +646,9 @@ def main() -> None:
         boards = [(p.intent.exchange_mic, p.intent.board_code) for p in loaded["plans"]]
         print(json.dumps(contract_readiness(decision=args.decision_date, boards=boards),
                          ensure_ascii=False))
+    elif args.phase == "observation-preflight":
+        path = args.output_root / "plans" / f"{args.decision_date.isoformat()}.json"
+        print(json.dumps(observation_readiness(plan_path=path), ensure_ascii=False))
     elif args.phase == "attempt":
         path = args.output_root / "plans" / f"{args.decision_date.isoformat()}.json"
         result = assess_frozen_session(

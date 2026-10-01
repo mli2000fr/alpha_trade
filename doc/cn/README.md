@@ -2,6 +2,7 @@
 
 Ordre de lecture recommandé :
 
+0. [Guide fonctionnel CN_A — prise en main de l'application](./doc_fonctionnel.md)
 1. [Audit du code et roadmap](./roadmap_integration_marche_chinois_audit_code.md)
 2. [Sprint planning détaillé](./sprint_planning_integration_marche_chinois.md)
 3. [Architecture des bases, batchs et configurations](./architecture_bases_batchs_configuration_cn.md)
@@ -13,7 +14,7 @@ Ordre de lecture recommandé :
 9. [Actualisation des fournisseurs](./actualisation_fournisseurs_chine.md)
 10. [Étude d’opportunité historique](./Étude%20d’opportunité%20—%20Extension%20d’α-Trade%20au%20marché%20actions%20chinois.md)
 
-Les trois premiers documents définissent la cible technique actuelle. L’étude d’opportunité historique fournit le contexte ; ses choix initiaux de fournisseurs sont remplacés par la décision gratuite actuelle.
+Le guide fonctionnel présente l'état implémenté ; la roadmap, le planning et l'architecture définissent la cible technique et les suites. L’étude d’opportunité historique fournit le contexte ; ses choix initiaux de fournisseurs sont remplacés par la décision gratuite actuelle.
 
 ## Décisions normatives
 

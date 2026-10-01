@@ -102,3 +102,38 @@ def test_due_run_writes_file_ledger_and_skips_duplicate(monkeypatch, tmp_path: P
     assert execute("cn_dragon_tiger_after_close", batch, CALENDAR,
                    now=now, probe=True)["status"] == "SKIP_ALREADY_CAPTURED"
     assert calls == [date(2026, 9, 30)]
+
+
+def test_failed_observation_can_retry_without_fabricating_a_snapshot(monkeypatch, tmp_path: Path) -> None:
+    from service.market import cn_dragon_tiger_schedule_15d6 as mod
+    import yaml
+
+    batch = tmp_path / "batch.yaml"
+    batch.write_text(yaml.safe_dump({"cn_dragon_tiger_after_close": {
+        **_cfg("17"), "output_root": "research",
+    }}), encoding="utf-8")
+    now = datetime(2026, 9, 30, 9, 30, tzinfo=timezone.utc)
+
+    def broken(*_args, **_kwargs):
+        raise TimeoutError("official feed unavailable")
+
+    monkeypatch.setattr(mod, "collect", broken)
+    failure = execute("cn_dragon_tiger_after_close", batch, CALENDAR, now=now)
+    assert failure["status"] == "FAILED" and failure["failed_count"] == 1
+    assert not (tmp_path / "research" / "2026-09-30").exists()
+
+    def recovered(day, root, *, collection_context):
+        folder = root / day.isoformat()
+        folder.mkdir(parents=True)
+        path = folder / "snapshot-retry.json"
+        path.write_text(json.dumps({
+            "observed_at_utc": "2026-09-30T09:31:00+00:00",
+            "counts": {"events": 1}, "collection_context": collection_context,
+        }), encoding="utf-8")
+        return path
+
+    monkeypatch.setattr(mod, "collect", recovered)
+    success = execute("cn_dragon_tiger_after_close", batch, CALENDAR, now=now)
+    assert success["status"] == "COMPLETED_RESEARCH_ONLY"
+    assert Path(failure["report_path"]).exists() and Path(success["report_path"]).exists()
+    assert failure["report_path"] != success["report_path"]

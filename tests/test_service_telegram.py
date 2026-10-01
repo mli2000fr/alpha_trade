@@ -24,6 +24,19 @@ from service.telegram import (
 
 
 class TestTelegramClientSend:
+    def test_windows_verified_trust_retries_certifi_ssl_failure(self, monkeypatch):
+        import requests
+        from service import telegram
+
+        monkeypatch.setattr(telegram, "_windows_trust_available", lambda: True)
+        observed = []
+        monkeypatch.setattr(telegram, "_post_with_windows_trust",
+                            lambda url, payload, timeout: observed.append((url, payload, timeout)) or 200)
+        with patch("requests.post", side_effect=requests.exceptions.SSLError("certifi CA missing")):
+            client = TelegramClient(bot_token="tok", default_chat_id="-10042")
+            assert client.send("Hello") is True
+        assert observed[0][1]["text"] == "Hello"
+
     def test_send_success_builds_url_and_payload(self):
         """URL `/bot<token>/sendMessage` + payload chat_id/text/parse_mode."""
         with patch("requests.post") as mock_post:

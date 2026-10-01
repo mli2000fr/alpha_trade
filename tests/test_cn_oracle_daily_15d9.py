@@ -160,3 +160,69 @@ def test_invalid_existing_export_fails_closed(monkeypatch, tmp_path):
     report = daily.execute(batch_config=config, now=_now())
     assert report["status"] == "FAILED"
     assert "invalid" in report["error_message"]
+
+
+def test_partial_collection_resumes_and_publishes_only_after_completion(monkeypatch, tmp_path):
+    config = _config(tmp_path)
+
+    class Engine:
+        url = SimpleNamespace(database="alpha_trade_cn")
+        def dispose(self):
+            pass
+
+    monkeypatch.setattr(daily, "get_market_engine", lambda *_args, **_kwargs: Engine())
+
+    def fake_prepare(_engine, *, manifest, chunks_root, **_kwargs):
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text("sh.600519", encoding="utf-8")
+        chunks_root.mkdir(parents=True, exist_ok=True)
+        (chunks_root / "chunk_0000.txt").write_text("sh.600519", encoding="utf-8")
+        (chunks_root / "index.json").write_text(json.dumps({
+            "symbol_count": 1, "chunk_count": 1, "chunks": ["chunk_0000.txt"],
+        }), encoding="utf-8")
+
+    monkeypatch.setattr(daily, "prepare", fake_prepare)
+    attempts = []
+
+    def fake_collect(*_args, **_kwargs):
+        attempts.append(1)
+        return {"status": "PARTIAL" if len(attempts) == 1 else "COMPLETED",
+                "completed_chunks": 0 if len(attempts) == 1 else 1,
+                "state": "state.json"}
+
+    monkeypatch.setattr(daily, "run_all", fake_collect)
+    monkeypatch.setattr(daily, "oracle_check", lambda **_kwargs: {
+        "status": "READY_TO_SCORE", "known_bar_rows": 2, "reasons": [],
+    })
+
+    def fake_score(*, decision_day):
+        folder = tmp_path / "oracle" / decision_day.isoformat()
+        folder.mkdir(parents=True)
+        content = b"published-on-retry"
+        (folder / "oracle_top20.parquet").write_bytes(content)
+        (folder / "report.json").write_text(json.dumps({
+            "status": "PROSPECTIVE_RESEARCH_ONLY",
+            "decision_date": decision_day.isoformat(),
+            "candidate_export_sha256": hashlib.sha256(content).hexdigest(),
+            "candidate_export": str(folder / "oracle_top20.parquet"),
+            "score_available_at_utc": "2026-09-30T11:00:00+00:00",
+            "export_published_at_utc": "2026-09-30T11:01:00+00:00",
+            "decision_cutoff_utc": "2026-10-08T01:15:00+00:00",
+            "quality": {"top20": 1},
+        }), encoding="utf-8")
+        return {"quality": {"top20": 1}}
+
+    score_calls = []
+    def guarded_score(*, decision_day):
+        score_calls.append(decision_day)
+        return fake_score(decision_day=decision_day)
+    monkeypatch.setattr(daily, "oracle_run", guarded_score)
+
+    failure = daily.execute(batch_config=config, now=_now())
+    assert failure["status"] == "FAILED" and failure["completed_chunks"] == 0
+    assert not score_calls and not (tmp_path / "oracle" / "2026-10-08").exists()
+    success = daily.execute(batch_config=config, now=_now())
+    assert success["status"] == "COMPLETED_RESEARCH_ONLY"
+    assert len(attempts) == 2 and len(score_calls) == 1
+    assert Path(failure["report_path"]).exists() and Path(success["report_path"]).exists()
+    assert failure["report_path"] != success["report_path"]

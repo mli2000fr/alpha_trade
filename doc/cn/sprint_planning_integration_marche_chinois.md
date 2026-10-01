@@ -1268,6 +1268,8 @@ Une famille insuffisamment PIT n’entre pas dans les modèles, même si elle pa
 
 ## 20. Sprint 16 — Campagne pré-enregistrée D1/D10
 
+**16-A réalisé le 01/10/2026 :** [audit d'éligibilité et protocole directionnel](./sprint_16a_gates_et_protocole_directionnel.md). Il ne s'agit pas d'une nouvelle campagne ML : B2 marge a déjà un NO-GO incrémental dans son périmètre, B1/B3/B4 ne passent pas le gate historique PIT, et B5 reste fermé. B0 est une référence explorée, pas un holdout neuf. 16-B attend une famille éligible et une confirmation indépendante avec labels matures.
+
 ### Objectif
 
 Tester les nouvelles familles sans data snooping.
