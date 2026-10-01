@@ -27,4 +27,4 @@ __pycache__/
 scripts/windows/protection_watcher.env
 scripts/windows/*.secrets.json
 !scripts/windows/protection_watcher.env.example
-
+work/

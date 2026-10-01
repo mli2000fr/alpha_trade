@@ -19,7 +19,7 @@ import sys
 import time
 import uuid
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -34,6 +34,7 @@ from sqlalchemy.engine import Connection, Engine
 from common.config_loader import load_batch_config
 from common.market_calendar import is_trading_day, nyse_session_dates
 from database.connection import get_sqlalchemy_engine
+from risk_management.liquidity import BorrowStatus, alpaca_borrow_status
 from service.alpaca.clientAlpaca import fetch_alpaca_assets, get_alpaca_credentials
 from service.forward_pit.options_delayed import (
     option_contract_adjustment_sync,
@@ -422,13 +423,7 @@ def _download_sec_document(
             "used_primary_fallback": False,
             "oversized_primary": True,
         }
-    base_url = submission_url.rsplit("/", 1)[0]
-    accession = Path(urlsplit(submission_url).path).stem
-    if re.fullmatch(r"\d{10}-\d{2}-\d{6}", accession):
-        accession_directory = accession.replace("-", "")
-        if not base_url.endswith("/" + accession_directory):
-            base_url += "/" + accession_directory
-    primary_url = base_url + "/" + primary_document
+    primary_url = submission_url.rsplit("/", 1)[0] + "/" + primary_document
     primary_response = session.get(primary_url, headers=headers, timeout=90, stream=True)
     try:
         primary_response.raise_for_status()
@@ -500,11 +495,19 @@ def _assets_in_universe(
     assets: Iterable[dict[str, Any]], symbols: Iterable[str]
 ) -> list[dict[str, Any]]:
     allowed = {str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()}
-    return [
-        item for item in assets
-        if str(item.get("class")) == "us_equity"
-        and str(item.get("symbol") or "").strip().upper() in allowed
-    ]
+    selected: dict[str, dict[str, Any]] = {}
+    for item in assets:
+        symbol = str(item.get("symbol") or "").strip().upper()
+        if str(item.get("class")) != "us_equity" or symbol not in allowed:
+            continue
+        # Alpaca can return an inactive asset before an active one for one ticker.
+        previous = selected.get(symbol)
+        priority = (str(item.get("status") or "").lower() == "active", bool(item.get("tradable")))
+        if previous is None or priority > (
+            str(previous.get("status") or "").lower() == "active", bool(previous.get("tradable"))
+        ):
+            selected[symbol] = item
+    return list(selected.values())
 
 
 def _secret(cfg: dict[str, Any], default_env: str) -> str:
@@ -731,50 +734,31 @@ def _request_text_optional(
     raise RuntimeError(f"Echec HTTP {url}: {_safe_error_message(last or RuntimeError('erreur inconnue'))}")
 
 
-def _parse_finra_short_volume_with_quality(content: str) -> tuple[list[dict[str, Any]], int, list[str]]:
+def _parse_finra_short_volume(content: str) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    invalid = 0
-    examples: list[str] = []
+    quantum = Decimal("0.000001")
     for item in csv.DictReader(io.StringIO(content.lstrip("\ufeff")), delimiter="|"):
         raw_date = str(item.get("Date") or "").strip()
         symbol = str(item.get("Symbol") or "").strip().upper()
         if len(raw_date) != 8 or not raw_date.isdigit() or not symbol:
             continue
-        volumes = [str(item.get(key) or "").strip() for key in
-                   ("ShortVolume", "ShortExemptVolume", "TotalVolume")]
-        market = str(item.get("Market") or "").strip().upper()
-        # Current CNMS payloads contain fractional shares (up to six places)
-        # and comma-separated reporting facilities. Preserve both exactly.
-        if not all(re.fullmatch(r"\d+(?:\.\d{1,6})?", value) for value in volumes) or not re.fullmatch(r"[A-Z](?:,[A-Z])*", market):
-            invalid += 1
-            if len(examples) < 5:
-                examples.append(symbol)
-            continue
         try:
+            volumes = [Decimal(str(item.get(column) or "0").strip()) for column in
+                       ("ShortVolume", "ShortExemptVolume", "TotalVolume")]
+            if any(not volume.is_finite() or volume < 0 or
+                   volume != volume.quantize(quantum) for volume in volumes):
+                continue
             rows.append({
                 "trade_date": datetime.strptime(raw_date, "%Y%m%d").date(),
                 "symbol": symbol,
-                "short_volume": Decimal(volumes[0]),
-                "short_exempt_volume": Decimal(volumes[1]),
-                "total_volume": Decimal(volumes[2]),
-                "market": market,
+                "short_volume": volumes[0],
+                "short_exempt_volume": volumes[1],
+                "total_volume": volumes[2],
+                "market": str(item.get("Market") or "").strip().upper() or "CNMS",
             })
-        except (TypeError, ValueError):
-            invalid += 1
-            if len(examples) < 5:
-                examples.append(symbol)
-    return rows, invalid, examples
-
-
-def _parse_finra_short_volume(content: str) -> list[dict[str, Any]]:
-    return _parse_finra_short_volume_with_quality(content)[0]
-
-
-def _finra_fractional_schema_ready(conn: Connection) -> bool:
-    return int(conn.execute(text("""SELECT COUNT(*) FROM information_schema.COLUMNS
-        WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='stock_short_volume_daily'
-          AND COLUMN_NAME IN ('short_volume','short_exempt_volume','total_volume')
-          AND DATA_TYPE='decimal' AND NUMERIC_SCALE>=6""")).scalar() or 0) == 3
+        except (InvalidOperation, TypeError, ValueError):
+            continue
+    return rows
 
 
 def _raw(conn: Connection, run_id: str, batch: str, provider: str, endpoint: str, entity: str, payload: Any, status: int = 200, observed: datetime | None = None) -> None:
@@ -1351,10 +1335,15 @@ def borrow_status_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry
         if not dry:
             for item in selected_assets:
                 shortable, etb = item.get("shortable"), item.get("easy_to_borrow")
-                status = "EASY" if shortable and etb else ("LOCATE_REQUIRED" if shortable else "NOT_SHORTABLE")
+                borrow = alpaca_borrow_status(item)
+                borrow_status = {
+                    BorrowStatus.EASY_TO_BORROW: "EASY",
+                    BorrowStatus.HARD_TO_BORROW: "LOCATE_REQUIRED",
+                    BorrowStatus.NOT_SHORTABLE: "NOT_SHORTABLE",
+                }[borrow]
                 result = conn.execute(text("""INSERT IGNORE INTO stock_borrow_status_snapshots
                     (provider,symbol,observed_at,available_at,shortable,easy_to_borrow,marginable,tradable,status,borrow_status,payload_hash,run_id)
-                    VALUES ('alpaca',:symbol,:observed,:observed,:shortable,:etb,:marginable,:tradable,:status,:borrow,:hash,:run)"""), {"symbol": item.get("symbol"), "observed": observed, "shortable": shortable, "etb": etb, "marginable": item.get("marginable"), "tradable": item.get("tradable"), "status": item.get("status"), "borrow": status, "hash": _hash(item), "run": run_id})
+                    VALUES ('alpaca',:symbol,:observed,:observed,:shortable,:etb,:marginable,:tradable,:status,:borrow,:hash,:run)"""), {"symbol": item.get("symbol"), "observed": observed, "shortable": shortable, "etb": etb, "marginable": item.get("marginable"), "tradable": item.get("tradable"), "status": item.get("status"), "borrow": borrow_status, "hash": _hash(item), "run": run_id})
                 outcome.persisted += max(0, result.rowcount)
     return outcome
 
@@ -1369,9 +1358,7 @@ def finra_short_volume_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dr
     trade_days = _previous_weekdays(market_today, lookback_days)
     outcome = Outcome(requested=len(trade_days))
     files_found = 0
-    invalid_records = 0
-    invalid_dates: list[dict[str, Any]] = []
-    schema_unready = False
+    parsed_rows = 0
     with requests.Session() as session, engine.begin() as conn:
         for trade_day in trade_days:
             url = template.format(date=trade_day.strftime("%Y%m%d"))
@@ -1384,24 +1371,8 @@ def finra_short_volume_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dr
                 _raw(conn, run_id, "finra_short_volume_sync", "finra",
                      "/equity/regsho/daily/CNMS", trade_day.isoformat(),
                      content, status, observed)
-            parsed, invalid, examples = _parse_finra_short_volume_with_quality(content)
-            if invalid:
-                invalid_records += invalid
-                invalid_dates.append({
-                    "date": trade_day.isoformat(),
-                    "invalid_records": invalid,
-                    "example_symbols": examples,
-                })
-                # Keep the raw response, but never promote a partially parsed
-                # file as a complete normalized trading-day observation.
-                continue
-            if not dry and any(
-                value != value.to_integral_value()
-                for row in parsed
-                for value in (row["short_volume"], row["short_exempt_volume"], row["total_volume"])
-            ) and not _finra_fractional_schema_ready(conn):
-                schema_unready = True
-                continue
+            parsed = _parse_finra_short_volume(content)
+            parsed_rows += len(parsed)
             rows = [row for row in parsed if row["symbol"] in symbols]
             outcome.received += len(rows)
             if dry:
@@ -1431,10 +1402,8 @@ def finra_short_volume_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dr
     outcome.details.update({
         "candidate_dates": [day.isoformat() for day in trade_days],
         "files_found": files_found,
+        "parsed_rows": parsed_rows,
         "universe_symbols": len(symbols),
-        "schema_invalid_records": invalid_records,
-        "schema_invalid_dates": invalid_dates,
-        "fractional_schema_unready": schema_unready,
     })
     if files_found == 0:
         outcome.failed = len(trade_days)
@@ -1442,22 +1411,11 @@ def finra_short_volume_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dr
             "Aucun fichier FINRA Consolidated NMS disponible sur les jours ouvrés précédents",
             outcome,
         )
-    if invalid_records:
-        outcome.failed += invalid_records
-        raise BatchRunError(
-            "Fichier FINRA hors contrat: volume invalide ou code de marché invalide; "
-            "brut conservé, normalisation refusée",
-            outcome,
-        )
-    if schema_unready:
-        outcome.failed += 1
-        raise BatchRunError(
-            "Volumes FINRA fractionnaires reçus mais colonnes encore en BIGINT; "
-            "appliquer la migration 0083 avant normalisation (brut conservé)",
-            outcome,
-        )
     if outcome.received == 0:
-        raise RuntimeError("Fichiers FINRA trouvés mais aucun symbole de l'univers n'est couvert")
+        outcome.failed = files_found
+        if parsed_rows == 0:
+            raise BatchRunError("Fichiers FINRA trouvés mais aucune ligne de volume valide n'a pu être lue", outcome)
+        raise BatchRunError("Fichiers FINRA trouvés mais aucun symbole de l'univers n'est couvert", outcome)
     return outcome
 
 
