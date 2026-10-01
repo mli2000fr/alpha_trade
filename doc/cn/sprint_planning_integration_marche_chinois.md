@@ -1389,6 +1389,8 @@ Rendre le pipeline CN maintenable au quotidien.
 
 ## 22. Sprint 18 — Abstraction broker et shadow mode CN
 
+**État 18-D (01/10/2026)** : [port OMS complet et doubles mock/replay](./sprint_18d_port_oms_et_doubles.md) ajoutés sans route paper/live CN. L'adaptateur Alpaca US et ses commandes restent en place ; les doubles sont explicitement exclus du routeur paper/live. Le pilote 18-C est préparé, mais sa tentative attend les observations post-clôture du 8 octobre.
+
 ### Objectif
 
 Préparer l’exécution sans envoyer d’ordre réel.

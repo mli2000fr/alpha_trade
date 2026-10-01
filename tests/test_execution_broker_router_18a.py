@@ -7,31 +7,26 @@ from dataclasses import replace
 import pytest
 
 from execution_engine.broker_adapter import BrokerAdapter
+from execution_engine.broker_doubles_18d import MockBrokerAdapter
 from execution_engine.broker_router import BrokerRouteError, BrokerRouter, build_alpaca_broker
 from execution_engine.config import ExecutionConfig
 
 
-class _FakeBroker:
-    market_code = "US_EQ"
-
-    def submit_intent(self, intent):
-        return intent
-
-    def poll_order_status(self, broker_order_id, intent_id=""):
-        return broker_order_id
-
-    def cancel_broker_order(self, broker_order_id):
-        return True
-
-
 def test_us_route_preserves_broker_instance() -> None:
     calls = []
-    broker = _FakeBroker()
-    router = BrokerRouter(us_factory=lambda cfg: (calls.append(cfg), broker)[1])
     config = ExecutionConfig(broker_mode="paper")
+    broker = BrokerAdapter(object(), config)
+    router = BrokerRouter(us_factory=lambda cfg: (calls.append(cfg), broker)[1])
 
     assert router.resolve(config) is broker
     assert calls == [config]
+
+
+def test_simulated_adapter_cannot_be_routed_to_paper_or_live() -> None:
+    for mode in ("paper", "live"):
+        router = BrokerRouter(us_factory=lambda _cfg: MockBrokerAdapter())
+        with pytest.raises(BrokerRouteError, match="incompatible"):
+            router.resolve(ExecutionConfig(broker_mode=mode))
 
 
 @pytest.mark.parametrize("market", ["CN_A", "CN_BJ", "", "FR_EQ"])

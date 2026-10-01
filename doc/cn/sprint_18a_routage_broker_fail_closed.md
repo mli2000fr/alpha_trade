@@ -34,4 +34,4 @@ Le routeur n'infère jamais un marché à partir d'un ticker : un code explicite
 
 Le [shadow CN autonome de 18-B](./sprint_18b_shadow_execution_cn.md) est maintenant livré comme moteur pur d'intentions datées, contrôles de lots/inventaire T+1/suspensions/limites, résultat hypothétique et rapprochement des prix suivants. Il faudra encore élargir le contrat OMS aux opérations réellement consommées par le watcher avant toute substitution par `MockBrokerAdapter`/`ReplayBrokerAdapter`. Un shadow n'est ni un paper broker ni une autorisation live.
 
-Le Sprint 19 reste conditionné aux gates économiques, données et droits, choix de broker, rapprochement et décision humaine prévus dans le planning ; 18-A seul n'ouvre aucun de ces gates.
+Le [Sprint 18-D](./sprint_18d_port_oms_et_doubles.md) a depuis étendu `ExecutionBrokerPort` aux opérations effectivement consommées par l'OMS et le watcher et ajouté des doubles mock/replay inertes. Le routeur refuse ces doubles en paper/live. Cela ne choisit toujours pas de broker CN et ne change pas les gates du Sprint 19 : économie, données et droits, broker, rapprochement et décision humaine explicite.

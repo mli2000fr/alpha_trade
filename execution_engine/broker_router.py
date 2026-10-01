@@ -6,10 +6,11 @@ paper/live : sa recherche et son futur shadow restent hors de ce chemin.
 
 from __future__ import annotations
 
-from typing import Callable, Protocol, runtime_checkable
+from collections.abc import Callable
+from typing import Any, Protocol, runtime_checkable
 
 from execution_engine.config import ExecutionConfig
-from execution_engine.models import BrokerOrder, OrderIntent
+from execution_engine.models import BrokerOrder, CancelResult, OrderIntent
 
 
 class BrokerRouteError(RuntimeError):
@@ -18,7 +19,7 @@ class BrokerRouteError(RuntimeError):
 
 @runtime_checkable
 class ExecutionBrokerPort(Protocol):
-    """Contrat minimal consommé par le moteur pour soumettre et suivre un ordre."""
+    """Contrat complet réellement consommé par l'OMS, le watcher et la CLI."""
 
     market_code: str
 
@@ -27,6 +28,36 @@ class ExecutionBrokerPort(Protocol):
     def poll_order_status(self, broker_order_id: str, intent_id: str = "") -> BrokerOrder: ...
 
     def cancel_broker_order(self, broker_order_id: str) -> bool: ...
+
+    def submit_market_order(self, *, symbol: str, qty: float, side: str,
+                            intent_id: str) -> BrokerOrder: ...
+
+    def submit_oco_protection(self, parent_intent: OrderIntent,
+                              tp_intent: OrderIntent, stop_intent: OrderIntent
+                              ) -> tuple[BrokerOrder, BrokerOrder]: ...
+
+    def replace_stop_order(self, existing_broker_order_id: str,
+                           new_stop_intent: OrderIntent) -> BrokerOrder: ...
+
+    def get_position(self, symbol: str) -> dict[str, Any] | None: ...
+
+    def get_all_positions(self) -> list[dict[str, Any]]: ...
+
+    def get_account_snapshot(self) -> dict[str, Any]: ...
+
+    def get_account_equity(self) -> float: ...
+
+    def get_latest_market_price(self, symbol: str) -> float | None: ...
+
+    def is_market_open(self) -> bool: ...
+
+    def cancel_all_open_orders(self, *, dry_run: bool = False) -> list[CancelResult]: ...
+
+    def list_recent_orders(self, *, status: str = "all", limit: int = 500,
+                           symbols: list[str] | None = None) -> list[dict[str, Any]]: ...
+
+    def broker_order_from_api(self, payload: dict[str, Any], *,
+                              intent_id: str = "") -> BrokerOrder: ...
 
 
 class BrokerRouter:
@@ -50,7 +81,9 @@ class BrokerRouter:
     def resolve(self, config: ExecutionConfig) -> ExecutionBrokerPort:
         self.validate(config)
         broker = self._us_factory(config)
-        if not isinstance(broker, ExecutionBrokerPort) or broker.market_code != "US_EQ":
+        if (not isinstance(broker, ExecutionBrokerPort)
+                or broker.market_code != "US_EQ"
+                or getattr(broker, "simulated", False)):
             raise BrokerRouteError("Factory US incompatible avec le contrat d'exécution US_EQ")
         return broker
 

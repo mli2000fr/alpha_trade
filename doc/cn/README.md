@@ -94,3 +94,6 @@ En cas d’ambiguïté, [architecture_bases_batchs_configuration_cn.md](./archit
 # Catalogue des tâches CN : [Sprint 17-D — préparation de la bascule contrôlée, en attente du premier cycle réel](./sprint_17d_preparation_bascule_catalogues.md).
 # Exécution : [Sprint 18-A — contrat broker et verrou de marché](./sprint_18a_routage_broker_fail_closed.md) ; US Alpaca inchangé, CN paper/live interdit, shadow CN renvoyé à 18-B.
 # Shadow CN : [Sprint 18-B — intentions, tentative hypothétique et rapprochement](./sprint_18b_shadow_execution_cn.md) ; moteur pur sans broker, sans batch ni autorisation live.
+# Pilote prospectif : [Sprint 18-C — export Oracle figé et shadow post-clôture](./sprint_18c_pilote_shadow_prospectif.md) ; 12 intentions diagnostiques pour le 8 octobre 2026, contrat de recherche 2026 qualifié et préflight prêt, aucun ordre ni batch planifié.
+# Reprise différée : [TODO Sprint 18-C après clôture du 8 octobre](./TODO_sprint_18c_post_cloture_2026_10_08.md) ; collecte canonique, tentative shadow manuelle et marque ultérieure.
+# Contrat OMS : [Sprint 18-D — port complet et doubles mock/replay](./sprint_18d_port_oms_et_doubles.md) ; Alpaca US préservé, CN paper/live et doubles simulés refusés par le routeur.

@@ -15,6 +15,7 @@ from common.market_calendar import nyse_session_dates
 from database.run_business_summaries import emit_run_summary, persist_run_business_summary
 from execution_engine.audit import build_run_id, make_event
 from execution_engine.broker_adapter import BrokerAdapter
+from execution_engine.broker_router import ExecutionBrokerPort
 from execution_engine.broker_state_sync import BrokerStateSynchronizer
 from execution_engine.config import ExecutionConfig, ProtectionWatcherServiceConfig, load_time_stop_config_from_yaml
 from execution_engine.db_io import ExecutionRepository
@@ -144,7 +145,7 @@ class ProtectionTransitionWatcher:
     def __init__(
         self,
         repo: ExecutionRepository,
-        broker_factory: Callable[[str, str | None], BrokerAdapter],
+        broker_factory: Callable[[str, str | None], ExecutionBrokerPort],
         config_factory: Callable[[str, str | None], ExecutionConfig],
         *,
         default_broker_mode: str = "paper",
@@ -153,7 +154,7 @@ class ProtectionTransitionWatcher:
         self._broker_factory = broker_factory
         self._config_factory = config_factory
         self._default_broker_mode = default_broker_mode
-        self._broker_cache: dict[tuple[str, str | None], BrokerAdapter] = {}
+        self._broker_cache: dict[tuple[str, str | None], ExecutionBrokerPort] = {}
         self._config_cache: dict[tuple[str, str | None], ExecutionConfig] = {}
 
     def run(
@@ -450,7 +451,7 @@ class ProtectionTransitionWatcher:
             self._config_cache[key] = self._config_factory(broker_mode, account_id)
         return self._config_cache[key]
 
-    def _broker_for(self, broker_mode: str, account_id: str | None) -> BrokerAdapter:
+    def _broker_for(self, broker_mode: str, account_id: str | None) -> ExecutionBrokerPort:
         key = (broker_mode, account_id)
         if key not in self._broker_cache:
             self._broker_cache[key] = self._broker_factory(broker_mode, account_id)
@@ -537,7 +538,7 @@ class ProtectionTransitionWatcher:
     def _reconcile_position_closed(
         self,
         parent_intent: OrderIntent,
-        broker: BrokerAdapter,
+        broker: ExecutionBrokerPort,
         *,
         broker_mode: str,
         account_id: str,
@@ -679,7 +680,7 @@ class ProtectionTransitionWatcher:
     def _cancel_existing_protection_children(
         self,
         parent_intent: OrderIntent,
-        broker: BrokerAdapter,
+        broker: ExecutionBrokerPort,
         *,
         account_id: str | None,
         leg: str,
@@ -742,7 +743,7 @@ class ProtectionTransitionWatcher:
     def _cancel_existing_take_profit_children(
         self,
         parent_intent: OrderIntent,
-        broker: BrokerAdapter,
+        broker: ExecutionBrokerPort,
         *,
         account_id: str | None,
     ) -> int:
@@ -793,7 +794,7 @@ class ProtectionTransitionWatcher:
 
     def _cancel_initial_stop(
         self,
-        broker: BrokerAdapter,
+        broker: ExecutionBrokerPort,
         config: ExecutionConfig,
         item: ProtectionWatchItem,
         stop_order: BrokerOrder,
@@ -1939,7 +1940,7 @@ def main(argv: list[str] | None = None) -> None:
             time_stop=load_time_stop_config_from_yaml(),
         )
 
-    def broker_factory(broker_mode: str, account_id: str | None) -> BrokerAdapter:
+    def broker_factory(broker_mode: str, account_id: str | None) -> ExecutionBrokerPort:
         config = config_factory(broker_mode, account_id)
         from execution_engine.broker_router import BrokerRouter
         BrokerRouter.validate(config)
