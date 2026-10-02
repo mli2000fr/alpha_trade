@@ -77,6 +77,23 @@ def test_cn_refuses_weekday_only_when_library_is_missing(monkeypatch) -> None:
         calendar.session_dates(date(2026, 9, 14), date(2026, 9, 18))
 
 
+def test_fr_calendar_holidays_half_days_and_dst() -> None:
+    calendar = get_market_calendar(resolve_market_context("FR_EQ"))
+    assert not calendar.session_dates(date(2026, 4, 3), date(2026, 4, 6))
+    assert calendar.next_session(date(2026, 4, 2)) == date(2026, 4, 7)
+    assert calendar.session(date(2026, 12, 24)).status == "half_day"
+    assert calendar.session(date(2026, 12, 31)).status == "half_day"
+    assert calendar.session_bounds(date(2026, 3, 27))[0].hour == 8
+    assert calendar.session_bounds(date(2026, 3, 31))[0].hour == 7
+    assert dataset_cutoff("FR_EQ", "daily_bars", date(2026, 3, 31)) == datetime(2026, 3, 31, 17, 30, tzinfo=UTC)
+
+
+def test_fr_refuses_weekday_only_when_library_is_missing(monkeypatch) -> None:
+    monkeypatch.setattr(market_calendar, "_get_library_calendar", lambda _calendar_id: None)
+    with pytest.raises(MarketCalendarUnavailableError, match="fallback weekday-only interdit"):
+        get_market_calendar(resolve_market_context("FR_EQ")).session_dates(date(2026, 9, 14), date(2026, 9, 18))
+
+
 def test_dataset_cutoff_uses_real_close_and_dst() -> None:
     us = resolve_market_context("US_EQ")
     winter = dataset_cutoff(us, "daily_bars", date(2026, 1, 5))
@@ -95,6 +112,17 @@ def test_market_availability_carries_explicit_market_dataset_and_timezone() -> N
     assert info.timezone == "Asia/Shanghai"
     assert info.event_time == datetime(2026, 9, 18, 7, 0, tzinfo=UTC)
     assert info.available_at == datetime(2026, 9, 18, 7, 15, tzinfo=UTC)
+
+
+def test_fr_daily_bar_availability_requires_proven_source_timestamp() -> None:
+    context = resolve_market_context("FR_EQ")
+    with pytest.raises(ValueError, match="source_available_at"):
+        make_market_availability_from_bar_date("2026-03-31", context=context, source="eodhd")
+    observed = datetime(2026, 4, 2, 10, tzinfo=UTC)
+    info = make_market_availability_from_bar_date(
+        "2026-03-31", context=context, source="eodhd", source_available_at=observed
+    )
+    assert info.available_at == observed
 
 
 def test_publication_after_decision_cutoff_is_rejected() -> None:

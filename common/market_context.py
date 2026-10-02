@@ -32,6 +32,7 @@ class MarketCode(StrEnum):
     US_EQ = "US_EQ"
     CN_A = "CN_A"
     CN_BJ = "CN_BJ"
+    FR_EQ = "FR_EQ"
 
 
 _DATABASE_ALLOWLIST: Mapping[MarketCode, frozenset[str]] = MappingProxyType(
@@ -39,6 +40,7 @@ _DATABASE_ALLOWLIST: Mapping[MarketCode, frozenset[str]] = MappingProxyType(
         MarketCode.US_EQ: frozenset({"us_primary"}),
         MarketCode.CN_A: frozenset({"cn_primary"}),
         MarketCode.CN_BJ: frozenset({"cn_primary"}),
+        MarketCode.FR_EQ: frozenset({"fr_primary"}),
     }
 )
 _EXPECTED_COUNTRY: Mapping[MarketCode, str] = MappingProxyType(
@@ -46,6 +48,7 @@ _EXPECTED_COUNTRY: Mapping[MarketCode, str] = MappingProxyType(
         MarketCode.US_EQ: "US",
         MarketCode.CN_A: "CN",
         MarketCode.CN_BJ: "CN",
+        MarketCode.FR_EQ: "FR",
     }
 )
 _EXPECTED_CURRENCY: Mapping[MarketCode, str] = MappingProxyType(
@@ -53,6 +56,7 @@ _EXPECTED_CURRENCY: Mapping[MarketCode, str] = MappingProxyType(
         MarketCode.US_EQ: "USD",
         MarketCode.CN_A: "CNY",
         MarketCode.CN_BJ: "CNY",
+        MarketCode.FR_EQ: "EUR",
     }
 )
 _EXPECTED_TIMEZONE: Mapping[MarketCode, str] = MappingProxyType(
@@ -60,6 +64,7 @@ _EXPECTED_TIMEZONE: Mapping[MarketCode, str] = MappingProxyType(
         MarketCode.US_EQ: "America/New_York",
         MarketCode.CN_A: "Asia/Shanghai",
         MarketCode.CN_BJ: "Asia/Shanghai",
+        MarketCode.FR_EQ: "Europe/Paris",
     }
 )
 _EXPECTED_CALENDAR: Mapping[MarketCode, str] = MappingProxyType(
@@ -67,6 +72,7 @@ _EXPECTED_CALENDAR: Mapping[MarketCode, str] = MappingProxyType(
         MarketCode.US_EQ: "NYSE",
         MarketCode.CN_A: "CN_A",
         MarketCode.CN_BJ: "CN_BJ",
+        MarketCode.FR_EQ: "XPAR",
     }
 )
 

@@ -7,11 +7,16 @@ datasets:
     US_EQ: {anchor: session_close, offset_minutes: 15}
     CN_A: {anchor: session_close, offset_minutes: 15}
     CN_BJ: {anchor: session_close, offset_minutes: 15}
+    # Borne minimale prudente, pas une heure de publication contractuelle.
+    # Le PIT FR exige aussi l'horodatage reel de reception/publication.
+    FR_EQ: {anchor: session_close, offset_minutes: 120}
   opening_window:
     US_EQ: {anchor: session_open, offset_minutes: 30}
     CN_A: {anchor: session_open, offset_minutes: 30}
     CN_BJ: {anchor: session_open, offset_minutes: 30}
+    FR_EQ: {anchor: session_open, offset_minutes: 30}
   official_close:
     US_EQ: {anchor: session_close, offset_minutes: 0}
     CN_A: {anchor: session_close, offset_minutes: 0}
     CN_BJ: {anchor: session_close, offset_minutes: 0}
+    FR_EQ: {anchor: session_close, offset_minutes: 0}

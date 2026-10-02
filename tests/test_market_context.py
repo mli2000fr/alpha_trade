@@ -26,7 +26,7 @@ def _us_payload() -> dict:
 
 def test_registry_loads_all_declared_markets() -> None:
     registry = load_market_registry()
-    assert registry.market_codes == (MarketCode.CN_A, MarketCode.CN_BJ, MarketCode.US_EQ)
+    assert registry.market_codes == (MarketCode.CN_A, MarketCode.CN_BJ, MarketCode.FR_EQ, MarketCode.US_EQ)
 
 
 def test_legacy_resolution_warns_and_falls_back_to_us() -> None:
@@ -68,7 +68,33 @@ def test_manifest_is_serializable_and_fingerprint_is_stable() -> None:
 
 def test_unknown_market_is_blocked() -> None:
     with pytest.raises(MarketCompatibilityError, match="inconnu"):
-        load_market_registry().resolve("FR_EQ")
+        load_market_registry().resolve("UNKNOWN_MARKET")
+
+
+def test_fr_context_is_isolated_and_disabled() -> None:
+    registry = load_market_registry()
+    context = registry.resolve("FR_EQ")
+    assert context.database_alias == "fr_primary"
+    assert (context.country_code, context.currency, context.timezone, context.calendar_id) == (
+        "FR", "EUR", "Europe/Paris", "XPAR"
+    )
+    assert context.enabled is False
+    assert context.live_enabled is False
+    assert context.short_execution_enabled is False
+    assert "live_execution" not in context.capabilities
+    with pytest.raises(MarketCompatibilityError, match="désactivé"):
+        registry.resolve("FR_EQ", require_enabled=True)
+    for alias in ("us_primary", "cn_primary"):
+        with pytest.raises(MarketCompatibilityError, match="pas à"):
+            registry.assert_compatible("FR_EQ", alias)
+
+
+def test_fr_mic_is_explicit_and_other_venues_are_rejected() -> None:
+    from database.repositories.instruments import assert_market_mic
+
+    assert_market_mic("FR_EQ", "XPAR")
+    with pytest.raises(MarketCompatibilityError, match="incompatible"):
+        assert_market_mic("FR_EQ", "XNYS")
 
 
 @pytest.mark.parametrize(
@@ -131,7 +157,7 @@ def test_database_alias_compatibility_is_explicit() -> None:
 
 def test_parallel_resolution_has_no_mutable_current_market() -> None:
     registry = load_market_registry()
-    codes = ["US_EQ", "CN_A", "CN_BJ"] * 20
+    codes = ["US_EQ", "CN_A", "CN_BJ", "FR_EQ"] * 20
     with ThreadPoolExecutor(max_workers=6) as pool:
         resolved = list(pool.map(lambda code: registry.resolve(code).market_code.value, codes))
     assert resolved == codes

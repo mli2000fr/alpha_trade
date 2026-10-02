@@ -1,0 +1,21 @@
+schema_version: 1
+market_code: FR_EQ
+database_alias: fr_primary
+country_code: FR
+currency: EUR
+timezone: Europe/Paris
+calendar_id: XPAR
+# Placeholder interdit en entraînement : choix du benchmark au Sprint 6.
+benchmark_instrument: FR_BENCHMARK_PENDING
+sector_taxonomy: FR_SECTOR_PENDING
+cost_profile: fr_research_pending
+execution_rules_profile: fr_research_only
+feature_profile_root: config/features_fr
+enabled: false
+live_enabled: false
+short_execution_enabled: false
+capabilities:
+  - research
+  - training
+  - prediction
+  - backtest

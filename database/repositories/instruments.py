@@ -24,6 +24,7 @@ MARKET_MICS: Mapping[MarketCode, frozenset[str]] = {
     MarketCode.US_EQ: frozenset({"XNAS", "XNYS", "XASE", "ARCX", "BATS"}),
     MarketCode.CN_A: frozenset({"XSHG", "XSHE"}),
     MarketCode.CN_BJ: frozenset({"BJSE"}),
+    MarketCode.FR_EQ: frozenset({"XPAR"}),
 }
 
 _LIST_FILTER_COLUMNS = {

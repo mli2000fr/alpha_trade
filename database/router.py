@@ -16,7 +16,7 @@ from urllib.parse import quote_plus
 
 import yaml
 from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Engine, make_url
 
 from common.config_loader import load_market_registry
 from common.market_context import MarketCompatibilityError
@@ -102,6 +102,10 @@ def resolve_database_route(
             f"marchés autorisés={sorted(route.allowed_markets)}"
         )
     load_market_registry().assert_compatible(normalized_market, database_alias)
+    # FR_EQ reste lié à sa base physique, y compris si un YAML de déploiement
+    # ou une variable d'environnement tente de rediriger l'alias.
+    if normalized_market == "FR_EQ" and (route.alias != "fr_primary" or route.database != "alpha_trade_fr"):
+        raise MarketCompatibilityError("FR_EQ requiert fr_primary / alpha_trade_fr")
     return route
 
 
@@ -115,6 +119,8 @@ def build_database_url(
     route = resolve_database_route(database_alias, market_code, config_path=config_path)
     username = _credential(route.user_env, route.fallback_user_env)
     password = _credential(route.password_env, route.fallback_password_env)
+    if market_code.strip().upper() == "FR_EQ" and database_override and database_override != route.database:
+        raise MarketCompatibilityError("FR_EQ ne permet pas de database_override")
     database = database_override or route.database
     return (
         f"mysql+pymysql://{quote_plus(username)}:{quote_plus(password)}@"
@@ -132,11 +138,18 @@ def get_market_engine(
     **engine_options: Any,
 ) -> Engine:
     route = resolve_database_route(database_alias, market_code, config_path=config_path)
+    if market_code.strip().upper() == "FR_EQ" and not verify_schema:
+        raise MarketCompatibilityError("FR_EQ requiert verify_schema=True")
     resolved_url = url or build_database_url(
         database_alias,
         market_code,
         config_path=config_path,
     )
+    if market_code.strip().upper() == "FR_EQ":
+        parsed = make_url(resolved_url)
+        if (parsed.drivername != "mysql+pymysql" or parsed.database != route.database
+                or parsed.host != route.host):
+            raise MarketCompatibilityError("URL FR_EQ incompatible avec la route fr_primary / alpha_trade_fr")
     engine = create_engine(resolved_url, pool_pre_ping=True, pool_recycle=3600, **engine_options)
     if verify_schema and not str(resolved_url).startswith("sqlite"):
         with engine.connect() as conn:

@@ -70,6 +70,20 @@ def test_cn_batch_scope_must_be_explicit_and_changes_manifest() -> None:
     )
 
 
+def test_fr_scope_is_explicit_and_separate_from_us_cn() -> None:
+    fr = resolve_run_market_scope("FR_EQ")
+    assert (fr.market_code, fr.calendar_id, fr.base_currency) == ("FR_EQ", "XPAR", "EUR")
+    assert fr.market_context_fingerprint not in {
+        resolve_run_market_scope("US_EQ").market_context_fingerprint,
+        resolve_run_market_scope("CN_A").market_context_fingerprint,
+    }
+    assert compute_scope_universe_fingerprint(
+        market_code="FR_EQ", symbol_source="universe-file:test.txt", symbols=["AIR.PA"]
+    ) != compute_scope_universe_fingerprint(
+        market_code="US_EQ", symbol_source="universe-file:test.txt", symbols=["AIR.PA"]
+    )
+
+
 def test_incompatible_training_child_is_rejected() -> None:
     engine = _Engine(parent_market="CN_A")
     with pytest.raises(ValueError, match="incompatible"):

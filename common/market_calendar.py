@@ -29,7 +29,7 @@ LOGGER = logging.getLogger(__name__)
 MARKET_TZ = ZoneInfo("America/New_York")
 _ROOT = Path(__file__).resolve().parents[1]
 _DEFAULT_CUTOFFS_PATH = _ROOT / "config" / "markets" / "dataset_cutoffs.yaml"
-_LIBRARY_CALENDARS: Mapping[str, str] = {"NYSE": "NYSE", "CN_A": "XSHG", "CN_BJ": "XSHG"}
+_LIBRARY_CALENDARS: Mapping[str, str] = {"NYSE": "NYSE", "CN_A": "XSHG", "CN_BJ": "XSHG", "XPAR": "XPAR"}
 
 
 class MarketCalendarError(RuntimeError):
@@ -233,11 +233,17 @@ class MarketCalendar:
                 for index, row in schedule.iterrows():
                     day = index.date() if hasattr(index, "date") else index
                     market_open, market_close = _aware_utc(row["market_open"]), _aware_utc(row["market_close"])
+                    status = (
+                        "half_day"
+                        if self.context.market_code is MarketCode.FR_EQ
+                        and market_close - market_open < timedelta(hours=6)
+                        else "open"
+                    )
                     result.append(
                         MarketSession(
                             self.context.market_code,
                             day,
-                            "open",
+                            status,
                             market_open,
                             market_close,
                             _segments_for_context(self.context, day, market_open, market_close),

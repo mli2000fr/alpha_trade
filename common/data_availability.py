@@ -534,6 +534,7 @@ def make_market_availability_from_bar_date(
     source: str,
     dataset: str = "daily_bars",
     engine: Any = None,
+    source_available_at: datetime | None = None,
 ) -> DataAvailabilityInfo:
     """Construit le contrat PIT d'une barre depuis son calendrier de marché.
 
@@ -542,15 +543,24 @@ def make_market_availability_from_bar_date(
     """
     import pandas as pd
     from common.market_calendar import dataset_cutoff, get_market_calendar
+    from common.market_context import MarketCode
 
     day = pd.Timestamp(bar_date).date()
     session = get_market_calendar(context, engine=engine).session(day)
+    lower_bound = dataset_cutoff(context, dataset, day, engine=engine)
+    if source_available_at is not None and source_available_at.tzinfo is None:
+        raise ValueError("source_available_at doit être timezone-aware")
+    if context.market_code is MarketCode.FR_EQ and dataset == "daily_bars":
+        if source_available_at is None:
+            raise ValueError("FR_EQ daily_bars exige source_available_at timezone-aware prouvé")
+    available_at = max(lower_bound, source_available_at) if source_available_at is not None else lower_bound
     return DataAvailabilityInfo(
         event_time=session.close_at_utc,
-        available_at=dataset_cutoff(context, dataset, day, engine=engine),
+        available_at=available_at,
         source=source,
         timezone=context.timezone,
         market_code=context.market_code.value,
         dataset=dataset,
-        publication_policy="configured_dataset_cutoff",
+        publication_policy=("source_timestamp_plus_cutoff" if source_available_at is not None
+                            else "configured_dataset_cutoff"),
     )

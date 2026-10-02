@@ -18,3 +18,10 @@ databases:
     fallback_user_env: LOGIN_DB
     fallback_password_env: PASSWORD_DB
     allowed_markets: [CN_A, CN_BJ]
+  fr_primary:
+    database: alpha_trade_fr
+    host: localhost
+    host_env: DB_HOST_FR
+    user_env: LOGIN_DB_FR
+    password_env: PASSWORD_DB_FR
+    allowed_markets: [FR_EQ]
