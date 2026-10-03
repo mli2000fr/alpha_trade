@@ -200,6 +200,31 @@ Les sprints 0–5 sont essentiellement séquentiels. Une fois le référentiel e
 
 ### Sprint 10 — D1/D10, ranking conditionnel et abstention
 
+**Priorité utilisateur, 3 octobre 2026 : terminer Sprint 10 avant Sprint 11.**
+**Mise à jour finale 10-C3 :** [bilan reconstruction et confirmation](sprint_10c3_reparation_fold7.md).
+98 preuves OHLC intégrées uniquement dans de nouveaux artefacts de recherche,
+fold7 test126/126, Oracle OOF4/5/6/7 puis direction réellement testée sur6/7.
+AUC moyenne0,5088, spread brut−1,032 % : **NO_GO_DIRECTIONAL_PILOT**.
+La réparation/confirmation multi-fold est terminée, la piste prix-onlyH5
+clôturée négativement. Aucun GO économique/live et aucune évaluation2026.
+Les constats précédents ci-dessous sont historiques : le blocage fold7 et
+« un seul fold directionnel » sont désormais levés, pas le blocage ESMAfold3.
+[10-C3 : réparation du fold7](sprint_10c3_reparation_fold7.md) : aucune lacune
+ESMA dans les fenêtres des 27 séances test manquantes ; 104 couples prix à
+vérifier, dont 90 titres le 26 mars 2025. Collecte officielle ciblée lancée,
+distincte de l'audit général de fiabilité EODHD. Collecte maintenant terminée :
+90/90 titres récupérés, 98/104 couples corroborés sur les quatre OHLC EODHD,
+six non résolus. Pas d'admission/fit/reconstruction
+tant que les preuves de prix ne sont pas qualifiées. Fold3 reste bloqué et conservé.
+
+**Sprint 10-C1 — tentative de réparation exécutée :** [traçabilité du fold3](sprint_10c1_reparation_fold3.md), 14 997 candidats / 177 journées revus. 138 dates touchées par six publications ESMA absentes des recherches officielles effectuées ; autres obstacles dont corroboration de prix divergente. Masque 14 features recalculé identique ; aucune correction de valeurs étayée. Verdict `BLOCKED_NO_VERIFIED_SOURCE_REPAIR`, fold3 reste705/882, aucune nouvelle admission/fit/écriture SQL. 105 tests FR passent. Besoin de preuves ESMA ou d'une résolution indépendante des prix, pas d'un abaissement du gate80 %.
+
+**Sprint 10-C — qualification historique réalisée :** [audit OOF et lacunes](sprint_10c_qualification_historique_oracle_oof.md). Huit folds H5 audités sous train cumulatif et glissant504 : seuls4/5/6 restent admissibles. Aucun modèle nouveau. Fold3 train cumulatif705/882 (strictement sous80 %, minimum706) ; fold7 test99/126 (minimum101). Les exports détaillés ciblent une réparation des preuves/features/labels à la source, sans changer les gates ni inspecter2026. La confirmation multi-fold reste bloquée ; 102 tests FR passent. Ne pas confondre les dates potentielles avec des scores Oracle OOF réellement générés.
+
+**Sprint 10-B réalisé le 3 octobre 2026 :** [modèle directionnel mutualisé H5](sprint_10b_modele_directionnel_mutualise_h5.md), branche Oracle arbres fixée sans choix champion pour exploiter les scores validation/test hors fit. 7 385 événements / 459 séances OOF ; folds directionnels 4/5 bloqués (0/105 séances train, minimum126), fold6 seul admis (219 séances train). Cible D1/intermédiaires/D10, 14 features prix, deux variantes. Logistique retenue VAL AUC0,5383 ; test AUC0,5023 contre momentum20 0,5245, LONG brut −0,495 %, spread +0,100 %. Arbres test0,5556 non retenus sur VAL : pas de substitution a posteriori. Verdict **LIMITED_PILOT_INSUFFICIENT_OOS_FOLDS**, aucune confirmation directionnelle/économique ni serving, aucun test2026. 95 tests ciblés FR passent. Étendre/qualifier l'OOF avant une nouvelle confirmation multi-fold ; ne pas lever les gates antérieurs ni employer de scores Oracle in-sample. Le Sprint10 global reste ouvert.
+
+**Sprint 10-A réalisé le 3 octobre 2026 :** [diagnostic directionnel H5](sprint_10a_diagnostic_directionnel_h5.md), uniquement les trois folds OOF prix-only 9-A. 5 362 candidats, 339 séances, 75 UID ; support D1/D10 suffisant. Références aléatoire/momentum 5/momentum 20 figées, aucun modèle directionnel entraîné. AUC moyenne D10/D1 respectivement 0,4838 / 0,4887 / 0,5194 ; toutes `NO_GO_FROZEN_REFERENCE` (gate AUC ≥0,53). Momentum 20 a un IC positif mais un LONG perdant au fold 5 et une petite tranche janvier 2025 négative. Deux déciles indéterminés dans le pool restent hors évaluation de classe, pas hors classement. 2026 non évaluée, aucun SQL/serving/économie. Le Sprint 10 global n'est pas clôturé ; un 10-B supervisé requiert un train directionnel Oracle **OOF**, pas les scores in-sample du train Oracle.
+
 **Objectif.** Mesurer la direction **conditionnellement aux signaux Oracle**, et non réutiliser sans preuve les modèles Per-Symbol US.
 
 **Travaux.** Comparer Oracle seul, heuristiques simples, modèle mutualisé, ranking au sein des candidats Oracle et, uniquement si support suffisant, modèle par titre/secteur. Les scores OOF Oracle qui entraînent la direction doivent eux-mêmes être OOF ; jamais des sorties du modèle ajusté sur la même cible/date. Mesurer `precision(D10 | Oracle TOP20)`, `precision(D1 | Oracle TOP20)`, AUC pairwise, IC, spread de rangs, rendements H, courbes de fiabilité, stabilité par semestre et sens. Politique `LONG / SHORT / abstention` distincte du classement ; les seuils sont choisis sur validation puis gelés. Comparer les performances sur tout l'univers éligible et sur le seul sous-ensemble de positions servables ; faire des contrôles de concentration par symbole/secteur.
@@ -208,6 +233,14 @@ Les sprints 0–5 sont essentiellement séquentiels. Une fois le référentiel e
 
 ### Sprint 11 — Données événementielles et PIT directionnel FR
 
+**Sous-projet économique anticipé autorisé le4 octobre2026 :**
+[11-A économique, références ATR/Oracle/contrôle uniforme](sprint_11a_references_economiques.md).
+Ce nom dans la conversation ne remplace pas le Sprint11 événementiel.
+Préflight exécuté :21 379 candidats tests6/7,52 scores complétés par les modèles
+gelés sans fit ni filtre sur cible future ; intentions exportées.
+`BLOCKED_ECONOMIC_REPLAY` : coûts/taxes et preuves économiques/PIT non qualifiés.
+Aucun fill/PnL ; dépend des contrats Sprints12/13, pas de GO live.
+
 **Objectif.** Tester seulement les familles de données susceptibles d'apporter un signal supplémentaire après un contrat PIT solide.
 
 **Sous-projets indépendants.** (1) AMF : import historique des positions courtes *publiques* par ISIN, dates de position/publication distinctes, censure du seuil, absence = `NOT_OBSERVED`; no short-volume proxy. (2) DILA : métadonnées + documents versionnés/hashés, correspondance ISIN et heure de disponibilité vérifiée, types d'annonce. (3) Guidance : extraction *ancienne valeur/nouvelle valeur*, métrique, unité, période, périmètre et citation/page, contrôles humains et état `NON_COMPARABLE`. Le POC 120 émetteurs a trouvé 4 paires comparables parmi 12 PDF présélectionnés : cela justifie un parseur supervisé, **pas** un signal prêt à trader. (4) INPI/RNE/fondamentaux si calendrier de publication exploitable. (5) Consensus/borrow/quotes/auction/options uniquement si historique légalement accessible et horodaté est acquis ; un snapshot collecté aujourd'hui n'est pas un backfill PIT de 2016.
@@ -215,6 +248,13 @@ Les sprints 0–5 sont essentiellement séquentiels. Une fois le référentiel e
 **Évaluation.** Baseline Oracle/price gelée, ajout *un groupe à la fois*, puis petit ensemble si gains OOF; couverture, biais de sélection et amélioration **incrémentale** par côté LONG/SHORT. Conserver avis négatifs. **Gate GO.** Les données ont lineage/licence/PIT et l'amélioration traverse les années et coûts ; sinon la collecte peut rester prospective sans feature de serving.
 
 ### Sprint 12 — Contrat d'exécution simulée et coûts français
+
+**12-A partiel exécuté le4 octobre2026 :** [coûts/taxes/CA](sprint_12a_couts_taxes_operations_sur_titres.md).
+Moteur générique configurable (1EUR/ordre, spread complet5bps, slippage5bps),
+sources BOFiP historiques archivées, assujettissement titre/date encore inconnu.
+21 379 chemins H5/118 titres contrôlés :388 chemins à champs dividende complets,
+50 à champs bloquants et9 à prix invalides ; aucun GO économique/canonique.
+Le ledger portefeuille, la revue officielle CA et le mapping fiscal restent à faire.
 
 **Objectif.** Traduire un score en trade possible, sans supposer le lifecycle US ou les règles CN.
 
@@ -322,6 +362,14 @@ Ce sont des **cibles proposées**, à valider par l'inventaire du Sprint 0, pas 
 | « Gratuit » sans droits de stockage/trading | Contrat/licence et quota réellement vérifiés sur le compte utilisé |
 
 ## 10. Première séquence d'exécution recommandée
+
+**Point de contrôle 10-C2, 3 octobre 2026 :**
+[audit des clôtures corrigées officielles](sprint_10c2_audit_prix_independants.md).
+Une source gratuite a corroboré 82/84 clôtures litigieuses du 19 octobre 2020
+(78 EODHD seul, quatre les deux fournisseurs). Ce n'est pas une admission
+de 82 barres : OHLCV, deux conventions de séries et les lacunes ESMA restent
+à vérifier. Aucune requalification du fold 3 ni nouvelle génération OOF autorisée
+sur la seule base de cette concordance.
 
 Commencer par **Sprints 0 → 1 → 2** : ils sécurisent la base `alpha_trade_fr` vide sans acheter de données ni lancer de modèle. Puis **3 → 4 → 5 → 6** construisent la vérité historique ; si l'historique radié/PIT échoue, on arrête le ML plutôt que d'optimiser un jeu biaisé. Ensuite **7 → 8 → 9** testent l'amplitude Oracle ; **10 et 11** recherchent une direction incrémentale, avec abstention possible. Le backtest et les coûts (**12–13**) décident si l'application peut dépasser la recherche. L'IHM et les batchs (**14–15**) industrialisent uniquement les branches dont les sources sont qualifiées ; le shadow (**16**) précède toute discussion paper/live (**17–18**).
 

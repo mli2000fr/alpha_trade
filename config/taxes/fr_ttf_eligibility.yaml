@@ -1,0 +1,14 @@
+schema_version: 1
+market_code: FR_EQ
+unknown_policy: block
+# Liste configurable, par ISIN prioritaire ; ticker facultatif pour contrôle.
+# Une absence n'est PAS une exonération. Compléter après rapprochement des
+# listes fiscales officielles annuelles avec l'identité de l'émetteur.
+# Exemple de structure (non actif) :
+# - isin: FRxxxxxxxxxx
+#   ticker: EXEMPLE.PA
+#   from: '2025-01-01'
+#   to: '2025-12-31'
+#   liable: true  # false seulement si non-assujettissement explicitement établi
+#   evidence: URL ou document vérifié, version et motif
+instruments: []

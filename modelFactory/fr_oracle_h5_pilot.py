@@ -60,6 +60,9 @@ def load_config(path: Path) -> dict:
             "min_positive_folds": 2,
         },
     }
+    # Explicit research extension; the original v1 contract remains frozen.
+    if cfg.get("profile") == "fr_oracle_h5_fold7_repaired_v1":
+        fixed.update(profile="fr_oracle_h5_fold7_repaired_v1", folds=[4, 5, 6, 7])
     if any(cfg.get(k) != v for k, v in fixed.items()):
         raise ValueError("Protocole du pilote figé : créer une autre expérience pour le modifier")
     return cfg

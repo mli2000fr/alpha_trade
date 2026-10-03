@@ -1,0 +1,47 @@
+schema_version: 1
+profile: fr_economic_references_11a_v1
+market_code: FR_EQ
+rebuild_root: artifacts/fr/research/fold7_repair/rebuild-20261003-v1
+folds: [6, 7]
+phase: test
+development_end: '2025-12-31'
+reserved_confirmation_start: '2026-01-01'
+oracle_branch: trees
+horizon: 5
+selection_fraction: 0.20
+min_cross_section: 20
+seed: 17
+selection_uses_future_labels: false
+entry: decision_session_open
+exit: decision_plus_5_sessions_close
+portfolio:
+  currency: EUR
+  initial_equity: 4000.0
+  max_positions: 8
+  max_gross_exposure: 1.0
+  leverage: false
+  short_enabled: false
+  fractional_shares: false
+  allocation: equal_notional_at_entry
+  duplicate_symbol_policy: no_stacking
+  reentry: next_session_after_exit
+  intraday_cash_reuse: false
+  exit_rule: fixed_horizon_no_stop_tp_trailing_optimization
+policies:
+  - atr_top20_long
+  - oracle_top20_long
+  - uniform_control_long
+# Un indice EW complet ne respecte pas la limite de 8 positions : référence
+# descriptive seulement, jamais présenté comme portefeuille à coûts identiques.
+descriptive_reference: full_eligible_universe_equal_weight
+costs:
+  profile: fr_research_pending
+  commission: null
+  spread: null
+  slippage: null
+  instrument_date_tax_schedule: null
+  evidence_state: UNQUALIFIED
+stress_multiplier: 2.0
+economic_go_allowed: false
+canonical_writes_enabled: false
+serving_enabled: false

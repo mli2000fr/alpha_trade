@@ -1,5 +1,72 @@
 # Registre des expériences ML réalisées
 
+## FR12-A — qualification coûts/taxes/CA partielle
+
+[Bilan et conditions de rejeu](../fr/sprint_12a_couts_taxes_operations_sur_titres.md).
+Coûts génériques utilisateur configurables, composantes séparées. TTF historique
+0,3 % puis0,4 % au1er avril2025 vérifiée BOFiP ; mappingISIN non qualifié.
+21 379 chemins/118 titres :20 932 sans événement déclaré,388 champs dividendes
+complets à revoir,50 bloqués dividendes,9 bloqués prix. Zéro modification source,
+fit, SQL/live ou performance2026. Scénario de coûts prêt ; rejeu économique toujours bloqué.
+
+## FR 11-A économique — préflight réalisé, rejeu bloqué
+
+[Protocole et preuves](../fr/sprint_11a_references_economiques.md).
+Tests6/7 :21 379 candidats disponibles,52 scores OOF absents selon labels futurs
+complétés avec les fits arbres gelés, sans réentraînement. Scores connus identiques
+à1e−12 ; intentions ATR/Oracle/contrôle uniforme exportées, aucun fill.
+`BLOCKED_ECONOMIC_REPLAY` : PIT/CA économique non qualifiés, coûts/taxes FR inconnus.
+Pas de résultat net, SQL/live/évaluation2026. Le Sprint11 événementiel reste distinct.
+
+## FR Sprint 10-C1 — réparation fold3 : `BLOCKED_NO_VERIFIED_SOURCE_REPAIR`
+
+14 997 candidats sur177 séances non utilisables tracés vers le manifeste ; six
+publications ESMA non retrouvées (index0, noms directs testés404), 138 dates
+touchées, écarts de prix indépendants également présents. Masque des14 features
+identique au recalcul. Aucune donnée forcée, aucune correction source vérifiée :
+fold3 toujours705/882. 105 tests FR passent ; zéro fit/SQL/évaluation2026.
+[Rapport et conditions de déblocage](../fr/sprint_10c1_reparation_fold3.md).
+
+## FR Sprint 10-C — qualification OOF : aucune extension admise à ce stade
+
+Huit folds H5 revus sous train cumulatif et glissant504 : seuls4/5/6 complets
+dans les deux plans, 459 séances potentielles, zéro nouveau fit/score. Fold3
+cumulatif705/882 (79,93197 %, manque1 séance qualifiée) ; fold7 test99/126
+(manque2), lacunes mars/avril2025. Exports détaillés par séance pour réparer à
+la source sans assouplir les gates. 102 tests FR passent, 2026 intacte.
+[Audit et plan de réparation](../fr/sprint_10c_qualification_historique_oracle_oof.md).
+
+## FR Sprint 10-B — mutualisé H5 : `LIMITED_PILOT_INSUFFICIENT_OOS_FOLDS`
+
+Oracle arbres fixé, scores VAL/test hors fit dédupliqués causalement : 7 385
+événements / 459 séances. Folds directionnels4/5 bloqués, seul6 entraînable
+(219 séances, 3 438 lignes). Logistique choisie sur VAL AUC0,5383 ; test0,5023
+contre momentum20 0,5245, LONG brut −0,495 %. Arbres test0,5556 non retenus
+sur VAL : ne pas les promouvoir a posteriori. Un seul OOS, zéro évaluation2026,
+aucun SQL/serving. 95 tests ciblés FR passent. Voir le
+[rapport et protocole 10-B](../fr/sprint_10b_modele_directionnel_mutualise_h5.md).
+
+## FR Sprint 10-A — direction H5 après Oracle : `NO_GO_FROZEN_REFERENCE`
+
+5 362 candidats OOF Oracle sur 339 séances / 3 folds, 75 UID FR. AUC D10/D1
+aléatoire 0,4838, momentum 5 jours 0,4887, momentum 20 jours 0,5194.
+Le dernier score donne IC +0,0712 mais reste sous le gate AUC 0,53 ;
+LONG perdant sur un fold, janvier 2025 partiel négatif. Support suffisant,
+deux déciles inconnus dans le pool conservés au classement. Aucune direction
+exploitable démontrée ; aucun modèle directionnel entraîné, aucun test 2026,
+aucun SQL/serving. Voir le [rapport Sprint 10-A FR](../fr/sprint_10a_diagnostic_directionnel_h5.md).
+
+## Pilote US H20 ATR contre Oracle — `HISTORICAL_AMPLITUDE_INCREMENT / QUALITY_RESERVE`
+
+Archive OOF E22 O0, 12 folds, 1 512 séances (juillet 2019–juillet 2025),
+2 557 086 lignes communes : précision TOP20 Oracle 44,19 %, ATR20/prix
+42,54 %, aléatoire 20,02 %. Oracle gagne 12/12 folds, écart +1,65 point,
+recouvrement 81,16 %. Hors 80 séances autour des splits NVIDIA : +1,61 point.
+Les archives du réentraînement corrigé sous `work/` sont absentes ; ce test
+historique ne valide pas le dernier Oracle corrigé ni la direction D1/D10.
+Aucun entraînement, serving ou changement SQL. Voir le
+[protocole et rapport détaillés](us_h20_atr_vs_oracle.md).
+
 ## Pilote borrow PIT après Oracle — `SAMPLE_READY / BLOCKED_NO_PROVIDER_HISTORY`
 
 Un échantillon déterministe de 50 titres, 29 267 événements Oracle TOP20,
@@ -1491,3 +1558,30 @@ pour la Logistic directe ; delta −0,0100 et lift du top décile quotidien
 individuels légèrement meilleurs dans 6/9 folds, indication exploratoire non
 promue. Aucun serving ni backtest modifié. Artefact :
 `artifacts/research/pmath3_conditional_quantiles/pmath3-full-20260916`.
+
+### FR — Sprint 10-C2 : source officielle pour les clôtures litigieuses
+
+Complément prioritaire : [Sprint 10-C3, réparation du fold7](../fr/sprint_10c3_reparation_fold7.md).
+**Bilan final exécuté :** reconstruction ciblée98OHLC, aucune correction de prix,
+fold7 admis126/126. Oracle OOF4/5/6/7 : NO_GO_INCREMENTAL_PILOT vsATR.
+Direction sur deux folds6/7 : AUC0,5088, IC0,0272, spread brut−1,032 %,
+**NO_GO_DIRECTIONAL_PILOT**. Réparation/confirmation terminée ; pas de serving,
+SQL, performance2026 ni validation économique. Les statuts antérieurs de manque
+de support ci-dessous sont historiques et dépassés pour le fold7 seulement.
+Les 27 séances test manquantes n'ont pas de lacune ESMA dans les fenêtres
+auditées. 104 couples titre/date nécessitent une corroboration de prix, dont
+90 le 26 mars 2025. Collecte Euronext ciblée terminée, TLS vérifié : 90 titres
+récupérés, 98 couples concordant sur les quatre OHLC EODHD et six non résolus.
+Aucune admission, aucun nouvel entraînement, aucun serving modifié. Le Sprint10
+reste ouvert ; reconstruire les preuves puis requalifier avant génération OOF.
+
+Audit au 3 octobre 2026, sans entraînement ni mutation de données :
+[rapport détaillé](../fr/sprint_10c2_audit_prix_independants.md).
+Le fichier officiel Euronext de correction du 19 octobre 2020 est accessible
+gratuitement. Sur 84 titres concernés par les lacunes du fold 3, 78 clôtures
+corroborent EODHD seul, quatre les deux fournisseurs et deux aucun.
+48 titres ont aussi des différences open/high/low, 83 de volume ; le XLSX ne
+résout pas ces champs. **Fold toujours bloqué**, sans modification des seuils
+ou sélection du modèle. Les preuves ESMA manquantes restent requises.
+Rapport de référence :
+`artifacts/fr/research/official_close_audit/euronext-20201019-audit-20261003-final/report.json`.

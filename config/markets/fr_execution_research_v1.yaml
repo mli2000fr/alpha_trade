@@ -1,0 +1,33 @@
+schema_version: 1
+profile: fr_generic_execution_research_v1
+market_code: FR_EQ
+currency: EUR
+cost_basis: assumed_generic_not_broker_quote
+commission:
+  fixed_eur_per_executed_order: 1.0
+  bps: 0.0
+  minimum_eur: 0.0
+spread:
+  full_bid_ask_bps: 5.0
+  charged_fraction_per_execution: 0.5
+  evidence_state: ASSUMED_NO_QUOTES
+slippage:
+  bps_per_execution: 5.0
+  evidence_state: ASSUMED_NO_FILLS
+ttf:
+  buy_only: true
+  default_rate: 0.004
+  # Historique : utiliser la date fiscale d'acquisition/règlement-livraison,
+  # pas la date du signal. Ne pas appliquer 0,4 % aux acquisitions de 2024.
+  historical_rates:
+    - from: '2024-01-01'
+      to: '2025-03-31'
+      rate: 0.003
+    - from: '2025-04-01'
+      to: '2025-12-31'
+      rate: 0.004
+  eligibility_file: config/taxes/fr_ttf_eligibility.yaml
+  unknown_eligibility: block
+  future_default_state: CONFIGURED_ASSUMPTION_NOT_LEGAL_REVALIDATION
+canonical_writes_enabled: false
+serving_enabled: false
