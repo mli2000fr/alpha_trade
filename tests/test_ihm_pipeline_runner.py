@@ -579,6 +579,7 @@ def test_build_pipeline_command_sentiment_pipeline_uses_backend_cli_contract() -
     assert "--scoring-mode contextual_only" in ps_script
     assert "--skip-ingestion" in ps_script
     assert "--symbol-source stock_scores_all" in ps_script
+    assert "--resume-checkpoints" in ps_script
     assert "--symbol-source tradable-universe" in ps_script
     assert "--ticker-symbol-source tradable-universe" in ps_script
     assert ps_script.index("Calcul relevance_score (scope univers tradable / override CSV)") < ps_script.index(
@@ -644,6 +645,16 @@ def test_build_pipeline_command_sentiment_pipeline_exposes_supported_backend_opt
     assert ps_script.index("Scoring FinBERT contextuel (scope univers tradable / override CSV)") < ps_script.index(
         "Agregation features : ticker=univers tradable, secteur=scope large importe"
     )
+
+
+def test_build_pipeline_command_sentiment_pipeline_can_disable_checkpoint_resume() -> None:
+    command = build_pipeline_command(
+        "sentiment_pipeline",
+        PipelineLaunchOptions(news_import_resume_from_checkpoint=False),
+    )
+
+    assert command[0] == "powershell.exe"
+    assert "--resume-checkpoints" not in command[-1]
 
 
 def test_build_pipeline_command_sentiment_pipeline_supports_contextual_phase_with_explicit_thresholds() -> None:
