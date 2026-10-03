@@ -874,6 +874,29 @@ def _render_event_sentiment_block() -> dict[str, Any]:
             )
         )
 
+    news_import_resume_from_checkpoint = bool(
+        st.checkbox(
+            "Reprendre l'import news depuis les checkpoints",
+            value=bool(
+                st.session_state.get(
+                    "pipeline_sentiment_resume_checkpoints",
+                    True,
+                )
+            ),
+            key="pipeline_sentiment_resume_checkpoints",
+            help=(
+                "Ajoute `--resume-checkpoints` à l'import brut de l'étape 8. "
+                "Les symboles déjà à jour dans `news_ingestion_checkpoint` sont ignorés ; "
+                "les autres reprennent depuis leur dernier watermark. Décochez uniquement "
+                "pour forcer un reparcours complet de la période demandée."
+            ),
+        )
+    )
+    if news_import_resume_from_checkpoint:
+        st.caption(
+            "✅ Reprise active : l'import news ne reparcourt pas les symboles déjà à jour."
+        )
+
     sentiment_min_relevance_score = float(
         st.number_input(
             "Event Sentiment — seuil min relevance (mode 'scored')",
@@ -1231,6 +1254,7 @@ def _render_event_sentiment_block() -> dict[str, Any]:
         "sentiment_start_utc": sentiment_start_utc,
         "sentiment_end_utc": sentiment_end_utc,
         "sentiment_symbols": sentiment_symbols,
+        "news_import_resume_from_checkpoint": news_import_resume_from_checkpoint,
         "sentiment_news_provider": sentiment_news_provider,
         "sentiment_ticker_relevance_mode": sentiment_ticker_relevance_mode,
         "sentiment_min_relevance_score": sentiment_min_relevance_score,
@@ -4874,6 +4898,9 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         sentiment_start_utc = _sentiment_vars["sentiment_start_utc"]
         sentiment_end_utc = _sentiment_vars["sentiment_end_utc"]
         sentiment_symbols = _sentiment_vars["sentiment_symbols"]
+        news_import_resume_from_checkpoint = _sentiment_vars[
+            "news_import_resume_from_checkpoint"
+        ]
         sentiment_news_provider = _sentiment_vars["sentiment_news_provider"]
         sentiment_ticker_relevance_mode = _sentiment_vars["sentiment_ticker_relevance_mode"]
         sentiment_min_relevance_score = _sentiment_vars["sentiment_min_relevance_score"]
@@ -5134,6 +5161,9 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             sentiment_start_utc=sentiment_start_utc or None,
             sentiment_end_utc=sentiment_end_utc or None,
             sentiment_symbols=sentiment_symbols or None,
+            news_import_resume_from_checkpoint=bool(
+                news_import_resume_from_checkpoint
+            ),
             sentiment_news_provider=cast(Any, sentiment_news_provider or "eodhd"),
             sentiment_ticker_relevance_mode=cast(Any, sentiment_ticker_relevance_mode or "provider_default"),
             sentiment_min_relevance_score=float(sentiment_min_relevance_score) if sentiment_min_relevance_score else None,

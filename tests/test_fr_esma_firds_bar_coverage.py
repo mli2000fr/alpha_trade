@@ -57,3 +57,11 @@ def test_audit_keeps_diagnostic_categories_separate(tmp_path):
     assert report["canonical_go"] is False
     with pytest.raises(ValueError, match="hors du rejeu"):
         audit(history, root, start="2018-01-01", end="2019-01-01")
+
+def test_classify_rejects_active_non_equity_cfi_from_equity_scope():
+    markets = [{"mic": "XPAR", "versions": [{
+        "asof_from": "2025-07-11", "asof_to": None,
+        "event": "ModfdRcrd", "cfi": "CBMIXX",
+    }], "observed_asof_intervals": [{"from": "2025-07-11", "to": None}]}]
+    assert classify("2025-12-27", markets, set(), "2018-01-06") == (
+        "NON_EQUITY_CFI_FOR_CURRENT_ISIN")

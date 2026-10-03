@@ -21,10 +21,26 @@ def classify(day: str, markets: list[dict], missing_days: set[str],
         return "BEFORE_INITIAL_FULL"
     if day in missing_days:
         return "MISSING_DELTA_PUBLICATION_DAY"
+    saw_non_equity = False
     for market in markets:
+        versions = market.get("versions")
+        if versions is not None:
+            applicable = [row for row in versions
+                          if row["asof_from"] <= day
+                          and (row.get("asof_to") is None or day <= row["asof_to"])]
+            if len(applicable) > 1:
+                return "AMBIGUOUS_REFERENCE_VERSION"
+            if applicable and applicable[0].get("event") not in {"TermntdRcrd", "CancRcrd"}:
+                cfi = applicable[0].get("cfi")
+                if isinstance(cfi, str) and cfi.upper().startswith("E"):
+                    return "CURRENT_ISIN_HAS_OBSERVED_TARGET_MIC"
+                saw_non_equity = True
+            continue
         for interval in market["observed_asof_intervals"]:
             if interval["from"] <= day and (interval["to"] is None or day <= interval["to"]):
                 return "CURRENT_ISIN_HAS_OBSERVED_TARGET_MIC"
+    if saw_non_equity:
+        return "NON_EQUITY_CFI_FOR_CURRENT_ISIN"
     return "NO_OBSERVED_TARGET_MIC_FOR_CURRENT_ISIN"
 
 

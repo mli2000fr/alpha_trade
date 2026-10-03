@@ -4,12 +4,11 @@ from __future__ import annotations
 import argparse
 import json
 from collections import Counter
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from service.fr.eodhd_backfill import _atomic_json
 from service.fr.esma_firds_history import DEFAULT_MICS, archive_records
-
 
 FIELDS = ("currency", "cfi", "first_trade_reported", "termination_reported")
 TIMESTAMP_FIELDS = {"first_trade_reported", "termination_reported"}
@@ -30,13 +29,25 @@ def _comparable_value(field: str, value):
     except ValueError:
         return value
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc).isoformat()
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC).isoformat()
 
 
-def _asof_state(history: dict, asof: date) -> tuple[dict[tuple[str, str], dict], list[dict]]:
+def _is_equity_cfi(value: object) -> bool:
+    """Indique si le CFI appartient au périmètre ESMA ``FULINS_E``.
+
+    Un Delta peut faire passer un instrument de la famille ``E...`` (action)
+    à une autre famille sans terminer le couple ISIN/MIC. Il reste alors dans
+    l'historique Delta générique, mais ne doit plus être comparé à un Full E.
+    """
+    return isinstance(value, str) and value.upper().startswith("E")
+
+
+def _asof_state(history: dict, asof: date) -> tuple[
+        dict[tuple[str, str], dict], list[dict], list[dict]]:
     current = {}
     overlaps = []
+    excluded_non_equity = []
     day = asof.isoformat()
     for symbol in history["symbols"]:
         for market in symbol["market_reference"]:
@@ -47,8 +58,16 @@ def _asof_state(history: dict, asof: date) -> tuple[dict[tuple[str, str], dict],
                                  "source_files": [row["source_file"] for row in applicable]})
                 continue
             if applicable and applicable[0]["event"] not in {"TermntdRcrd", "CancRcrd"}:
-                current[(symbol["isin"], market["mic"])] = applicable[0]
-    return current, overlaps
+                version = applicable[0]
+                if _is_equity_cfi(version.get("cfi")):
+                    current[(symbol["isin"], market["mic"])] = version
+                else:
+                    excluded_non_equity.append({
+                        "isin": symbol["isin"], "mic": market["mic"],
+                        "date": day, "cfi": version.get("cfi"),
+                        "source_file": version.get("source_file"),
+                    })
+    return current, overlaps, excluded_non_equity
 
 
 def reconcile(history: dict, archives: list[Path], asof: date) -> dict:
@@ -62,7 +81,7 @@ def reconcile(history: dict, archives: list[Path], asof: date) -> dict:
                 duplicates.append({"isin": key[0], "mic": key[1], "file": archive.name})
             else:
                 observed[key] = record
-    replayed, overlaps = _asof_state(history, asof)
+    replayed, overlaps, excluded_non_equity = _asof_state(history, asof)
     excluded = {(row["isin"], row["mic"]) for row in overlaps}
     keys = sorted((set(replayed) | set(observed)) - excluded)
     mismatches = []
@@ -83,6 +102,7 @@ def reconcile(history: dict, archives: list[Path], asof: date) -> dict:
     return {"asof": asof.isoformat(), "full_files": [path.name for path in archives],
             "full_records": len(observed), "replayed_active_records": len(replayed),
             "overlapping_replay_versions": overlaps,
+            "excluded_non_equity_replay_records": excluded_non_equity,
             "duplicate_full_keys": duplicates, "mismatches": mismatches,
             "mismatch_types": dict(Counter(row["type"] for row in mismatches)),
             "candidate_pairs_reconciled": not (overlaps or duplicates or mismatches),

@@ -65,3 +65,21 @@ def test_full_reconciliation_quarantines_overlapping_versions(monkeypatch):
     assert len(result["overlapping_replay_versions"]) == 1
     assert result["candidate_pairs_reconciled"] is False
     assert result["mismatches"] == []
+
+
+def test_full_reconciliation_excludes_cfi_that_left_equity_family(monkeypatch):
+    history = _history()
+    version = history["symbols"][0]["market_reference"][0]["versions"][0]
+    version.update({"cfi": "CBMIXX", "source_file": "delta.zip"})
+    monkeypatch.setattr(module, "archive_records", lambda *_: iter(()))
+
+    result = module.reconcile(
+        history, [Path("FULINS_E_20251227_01of01.zip")], date(2025, 12, 27))
+
+    assert result["replayed_active_records"] == 0
+    assert result["mismatches"] == []
+    assert result["candidate_pairs_reconciled"] is True
+    assert result["excluded_non_equity_replay_records"] == [{
+        "isin": "FR0000000001", "mic": "XPAR", "date": "2025-12-27",
+        "cfi": "CBMIXX", "source_file": "delta.zip",
+    }]

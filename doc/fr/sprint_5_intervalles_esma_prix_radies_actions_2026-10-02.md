@@ -118,3 +118,9 @@ Le [contrat EODHD sur les prix historiques](https://eodhd.com/financial-apis/api
 6. Seulement ensuite produire un manifeste par instrument/date avec `identity_verified`, `venue_interval_verified`, `price_verified`, `corporate_action_verified`, `pit_verified` et motifs de rejet. Aucun `GO` agrégé si un contrôle critique reste inconnu.
 
 Tests ciblés : `python -m pytest -q --no-cov tests/test_fr_yahoo_price_reference_pilot.py tests/test_fr_bnains_price_reference_pilot.py tests/test_fr_esma_firds_history.py tests/test_fr_esma_firds_reference_pilot.py tests/test_fr_corporate_actions_audit.py tests/test_fr_sprint5_subset_audit.py`.
+
+## Finalisation 2018–2026 — 3 octobre 2026
+
+La chaîne annuelle est terminée jusqu'au 1er octobre 2026. Le Full du 26 septembre recoupe exactement le rejeu : 345 couples actifs contre 345, sans divergence. La couverture complète et le manifeste par symbole/date sont documentés dans [Sprint 5 — finalisation du GO limité 2018–2026](sprint_5_finalisation_go_limite_2018_2026.md).
+
+Le contrôle indépendant Yahoo élargi reçoit 325 historiques sur 490, mais échoue sur 163 radiés. Bien que la branche `RESEARCH_J1` atteigne 296 titres et 555 268 barres, elle ne contient que 2 radiés. La largeur quotidienne ne compense pas ce biais de survivance. Le gate historique reste donc fermé et aucune table canonique n'est modifiée.

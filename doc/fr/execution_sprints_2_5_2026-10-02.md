@@ -2,7 +2,7 @@
 
 Ce document est un **état vérifié**, à lire avec le [planning](sprint_planning_integration_marche_francais.md). Il ne constitue pas un GO pour l'entraînement français. Aucun batch US/CN ni entraînement en cours n'a été modifié.
 
-**Mise à jour Sprint 5 :** collecte et staging terminés, qualité reclassée sous `fr_eod_v2`, mais gate canonique/ML conclu `NO_GO`. Voir la [clôture détaillée du Sprint 5](sprint_5_cloture_2026-10-02.md) pour les chiffres définitifs et le chemin de déblocage.
+**Mise à jour Sprint 5 :** la [finalisation limitée 2018–2026](sprint_5_finalisation_go_limite_2018_2026.md) passe désormais à `GO_RESEARCH_J1`. L'historique public Euronext corrobore 34 radiés récents ; avec les deux déjà présents, le manifeste contient 36 radiés sur 330 titres (10,91 %). Le GO reste exclusivement recherche J+1 : canonique, production, live et serving restent bloqués.
 
 ## Verdict rapide
 
