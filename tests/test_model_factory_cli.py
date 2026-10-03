@@ -40,6 +40,8 @@ def test_publish_tradable_universe_cli_reports_missing_screener_snapshots(monkey
     output = json.loads(capsys.readouterr().out)
     assert output["status"] == "incomplete_missing_screener_snapshots"
     assert output["missing_screener_snapshot_dates"] == ["2024-01-02"]
+    assert output["requested_capital_preset_key"] == "capital_2001_5000"
+    assert output["market_code"] == "US_EQ"
 
 def test_cli_importable():
     assert hasattr(cli, "__doc__")

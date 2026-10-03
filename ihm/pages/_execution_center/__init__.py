@@ -336,6 +336,7 @@ PIPELINE_ALLOW_FRACTIONAL_SHARES_KEY = "pipeline_allow_fractional_shares"
 CAPITAL_PRESET_KEY = "pipeline_capital_preset"
 CAPITAL_PRESET_APPLIED_SIGNATURE_KEY = "pipeline_capital_preset_applied_signature"
 CAPITAL_PRESET_CUSTOM = "custom"
+DEFAULT_PIPELINE_CAPITAL_PRESET_KEY = "capital_2001_5000"
 DETECTED_CAPITAL_PRESET_KEY = "pipeline_detected_capital_preset"
 DETECTED_CAPITAL_PRESET_ACCOUNT_KEY = "pipeline_detected_capital_preset_account_id"
 ML_TRAIN_PRESET_KEY = "pipeline_ml_train_preset"
@@ -569,7 +570,10 @@ def _apply_selected_capital_preset(
     *,
     selected_account_id: str | None,
 ) -> None:
-    selected_key = str(st.session_state.get(CAPITAL_PRESET_KEY, CAPITAL_PRESET_CUSTOM) or CAPITAL_PRESET_CUSTOM)
+    selected_key = str(
+        st.session_state.get(CAPITAL_PRESET_KEY, DEFAULT_PIPELINE_CAPITAL_PRESET_KEY)
+        or DEFAULT_PIPELINE_CAPITAL_PRESET_KEY
+    )
     effective_equity = float(defaults.equity) if defaults is not None and defaults.equity is not None else None
     signature = f"{selected_key}|{str(selected_account_id or '').strip()}|{effective_equity if effective_equity is not None else 'none'}"
     last_signature = str(st.session_state.get(CAPITAL_PRESET_APPLIED_SIGNATURE_KEY, "") or "")
@@ -634,13 +638,13 @@ def _apply_execution_prefills(selected_account_id: str | None) -> PipelineExecut
     if detected_capital_preset is not None:
         st.session_state[DETECTED_CAPITAL_PRESET_KEY] = detected_capital_preset.key
         st.session_state[DETECTED_CAPITAL_PRESET_ACCOUNT_KEY] = cleaned_account_id
-        if account_changed or CAPITAL_PRESET_KEY not in st.session_state:
-            st.session_state[CAPITAL_PRESET_KEY] = detected_capital_preset.key
+        if CAPITAL_PRESET_KEY not in st.session_state:
+            st.session_state[CAPITAL_PRESET_KEY] = DEFAULT_PIPELINE_CAPITAL_PRESET_KEY
     else:
         st.session_state.pop(DETECTED_CAPITAL_PRESET_KEY, None)
         st.session_state.pop(DETECTED_CAPITAL_PRESET_ACCOUNT_KEY, None)
-        if account_changed:
-            st.session_state[CAPITAL_PRESET_KEY] = CAPITAL_PRESET_CUSTOM
+        if CAPITAL_PRESET_KEY not in st.session_state:
+            st.session_state[CAPITAL_PRESET_KEY] = DEFAULT_PIPELINE_CAPITAL_PRESET_KEY
     if defaults.equity is not None and defaults.equity > 0 and (
         account_changed or "pipeline_risk_account_equity" not in st.session_state
     ):
@@ -2701,9 +2705,9 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 "Preset capital — Risk / Execution / Selector",
                 options=capital_preset_options,
                 index=capital_preset_options.index(
-                    cast(str, st.session_state.get(CAPITAL_PRESET_KEY, CAPITAL_PRESET_CUSTOM))
-                    if st.session_state.get(CAPITAL_PRESET_KEY, CAPITAL_PRESET_CUSTOM) in capital_preset_options
-                    else CAPITAL_PRESET_CUSTOM
+                    cast(str, st.session_state.get(CAPITAL_PRESET_KEY, DEFAULT_PIPELINE_CAPITAL_PRESET_KEY))
+                    if st.session_state.get(CAPITAL_PRESET_KEY, DEFAULT_PIPELINE_CAPITAL_PRESET_KEY) in capital_preset_options
+                    else DEFAULT_PIPELINE_CAPITAL_PRESET_KEY
                 ),
                 format_func=_format_capital_preset_label,
                 key=CAPITAL_PRESET_KEY,
@@ -4951,6 +4955,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         PipelineLaunchOptions(
             account_id=selected_account_id,
             trade_date=trade_date,
+            capital_preset_key=capital_preset_key,
             force_trade_date_to_latest_snapshot=bool(force_trade_date_to_latest_snapshot),
             risk_account_equity=float(cast(float, risk_account_equity)),
             execution_mode=cast(Any, execution_mode),

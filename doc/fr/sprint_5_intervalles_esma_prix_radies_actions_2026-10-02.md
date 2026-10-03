@@ -39,18 +39,54 @@ F:\projets\.venv\Scripts\python.exe -m service.fr.esma_firds_full_reconcile --hi
 
 Cette concordance renforce l'état de fin d'année, mais ne date **pas** le changement exact pendant une des 20 séances 2018 sans Delta. Les fenêtres de ces séances restent à isoler ou à recouper par une autre source avant un GO journalier.
 
-Lorsque `gap_audit.json` indique `download_verified_as_indexed: true`, le rejeu des années ultérieures peut reprendre le rapport annuel vérifié sans retraiter les archives antérieures. Le rapport antérieur doit être un préfixe exact de l'index et porter le même pool/MIC ; le programme refuse sinon la reprise. Le passage **2019 est terminé** ; le passage **2020 est en cours** sous `log/batch/fr-esma-2020-observed-v2/`. La continuité des Delta reste un contrôle **distinct** :
+Lorsque `gap_audit.json` indique `download_verified_as_indexed: true`, le rejeu des années ultérieures peut reprendre le rapport annuel vérifié sans retraiter les archives antérieures. Le rapport antérieur doit être un préfixe exact de l'index et porter le même pool/MIC ; le programme refuse sinon la reprise. Les passages **2019 à 2022 sont terminés**. La continuité des Delta reste un contrôle **distinct** :
 
 ```powershell
-Get-Content F:\projets\log\batch\fr-esma-2020-observed-v2\stderr.log -Tail 10
-Test-Path F:\projets\artifacts\fr\esma_firds\replay_2018\history_2020_observed_v2.json
+Get-Content F:\projets\log\batch\fr-esma-2021-observed-v2\stderr.log -Tail 10
+Test-Path F:\projets\artifacts\fr\esma_firds\replay_2018\history_2021_observed_v2.json
 ```
 
 Le rejeu 2019 est terminé : 1 300/1 300 archives indexées depuis le Full initial, 2 169 versions et 440/490 candidats avec au moins un MIC cible observé depuis 2018. La continuité quotidienne n'est toujours pas prouvée. Une seule anomalie nouvelle est enregistrée : `DLTINS_20190406_21of22.zip` publie pour `FR0004030708` (`ALDUB.PA`) une terminaison XPAR datée du 12 décembre 2017, sans version XPAR antérieure dans notre Full initial de 2018. Cet événement rétroactif ne démontre pas une radiation survenue en 2019 ; le couple XPAR reste à vérifier indépendamment. Les neuf avertissements de date `FrDt` future étaient déjà présents dans le rapport 2018.
 
-Le passage 2020 a été lancé en arrière-plan à partir du rapport 2019. Le parseur journalise un point de progression tous les 50 fichiers. Le même mécanisme peut ensuite rejouer les autres années avec `--resume-from` pointant vers le rapport annuel achevé précédent. Un rapport partiel n'est jamais accepté comme base de reprise. En cas d'échec de téléchargement, corriger/reprendre ce téléchargement d'abord ; `--allow-incomplete` n'est autorisé que pour un diagnostic explicitement étiqueté incomplet.
+Le rejeu 2020 est terminé : 1 966/1 966 archives indexées depuis le Full initial, 2 302 versions, 445/490 candidats avec au moins un MIC cible observé depuis 2018 ; aucune anomalie nouvelle par rapport à 2019. Quatre dates 2020 n'ont pas de Delta indexé (10 avril, 10 mai, 11 mai et 18 juillet), dont **une séance XPAR** selon l'audit du calendrier ; la continuité quotidienne reste donc non prouvée.
+
+Le rejeu 2021 est terminé : **2 723/2 723 archives**, 3 012 versions et **474/490** candidats avec au moins un MIC cible observé depuis 2018. Aucune anomalie nouvelle n'est apparue : les dix alertes sont héritées de 2018–2019. Sept dates 2021 n'ont pas de Delta indexé ; trois sont des séances XPAR potentielles (4 janvier, 27 janvier et 7 juin) et restent des intervalles de preuve incertains. Vingt-neuf candidats obtiennent leur première référence cible pendant ce passage. Pour `STLAP.PA`, FIRDS publie un `NewRcrd` le 6 janvier pour une première négociation déclarée le 18 janvier 2021, cohérente avec l'admission officielle. Pour `URW.PA`, le `NewRcrd` n'est observé que le 16 novembre 2021 mais déclare une première négociation au 5 juin 2018 : il confirme l'identité et la date déjà trouvées chez Euronext, tout en démontrant que l'absence FIRDS observée avant novembre 2021 ne peut pas être interprétée comme une absence de cotation.
+
+Le dernier Full officiel de 2021, daté du 25 décembre, a été téléchargé avec MD5 officiel puis comparé au rejeu à la même date. Après normalisation sémantique des horodatages FIRDS (`00:01:00` et `00:01:00Z` représentent le même instant UTC), le résultat est **420 couples actifs rejoués = 420 couples du Full, 0 doublon, 0 chevauchement, 0 divergence**. Le rapport est `full_reconciliation_2021_observed_v2.json`. Cette concordance valide l'état au 25 décembre, pas les trois séances 2021 sans Delta.
+
+Le rejeu 2022 est terminé : **3 299/3 299 archives**, 3 293 versions et **481/490** candidats avec au moins un MIC cible observé depuis 2018. Sept nouveaux titres sont observés sur un MIC cible pendant l'année. Les cinq journées sans Delta de 2022 (9 janvier, 6 février, 20 mars, 7 mai et 13 novembre) tombent toutes un samedi ou un dimanche : aucune séance XPAR 2022 n'est manquante dans l'index audité. Les dix anomalies restent exactement celles héritées de 2018–2019. Le Full officiel en deux parties du **31 décembre 2022** a été téléchargé avec ses MD5 puis recoupé : **407 couples actifs rejoués = 407 couples du Full, 0 doublon, 0 chevauchement et 0 divergence**. Rapport : `full_reconciliation_2022_observed_v2.json`.
+
+L'enchaînement 2023–2026 est automatisé par [esma_firds_annual_chain.py](../../service/fr/esma_firds_annual_chain.py). Il attend le rapport 2023 déjà lancé, exige pour chaque année `complete=true`, `files_processed=files_indexed` et zéro archive manquante, télécharge le dernier Full officiel disponible, exige une réconciliation sans divergence, puis seulement démarre l'année suivante. Tout échec arrête la chaîne. La borne 2026 est le **1er octobre 2026**, dernière date de l'index local, et non une fin d'année future. L'état durable se trouve dans `artifacts/fr/esma_firds/replay_2018/annual_chain_state.json` et les logs sous `log/batch/fr-esma-annual-chain/`.
+
+Le parseur journalise un point de progression tous les 50 fichiers. Le même mécanisme peut ensuite rejouer les autres années avec `--resume-from` pointant vers le rapport annuel achevé précédent. Un rapport partiel n'est jamais accepté comme base de reprise. En cas d'échec de téléchargement, corriger/reprendre ce téléchargement d'abord ; `--allow-incomplete` n'est autorisé que pour un diagnostic explicitement étiqueté incomplet.
 
 ## Prix plus anciens : vérification indépendante de 2016
+
+### Audit parallèle des barres 2018–2020 contre FIRDS
+
+Le [contrôle de couverture](../../service/fr/esma_firds_bar_coverage.py) joint hors base les barres EODHD des 490 candidats aux intervalles ISIN/MIC observés dans le rejeu ESMA **arrêté fin 2020**. Il sépare explicitement les dates avant le Full initial, les dates sans Delta, les barres invalides ou sans volume et l'absence de MIC cible. Le rapport reproductible est `artifacts/fr/esma_firds/replay_2018/bar_coverage_2018_2020.json` ; aucun prix n'est réécrit et `canonical_go` reste `false`.
+
+Sur **290 853 barres** de 2018–2020 : **274 644 (94,43 %) coïncident** avec un intervalle observé pour l'ISIN fourni *aujourd'hui* par EODHD ; **8 518 (2,93 %) tombent sur une date sans Delta ESMA** ; **1 702 (0,59 %) n'ont pas de MIC cible observé** ; **4 486** ont un OHLC invalide ou un volume nul ; **1 503** précèdent le premier Full du 6 janvier 2018. Les deux premières catégories ne sont pas des « prix vérifiés » : le MIC peut correspondre alors que le prix, l'identité historique ou la disponibilité PIT restent faux. Le contrôle est un triage, pas une preuve de négociabilité.
+
+Les absences de MIC se concentrent surtout sur `STLAP.PA` (740 barres), `URW.PA` (740), `MLGML.PA` (106) et `ALAVE.PA` (59), puis `TOU.PA` (34) et `SEQ.PA` (20). L'[audit dédié des exceptions d'identité et de cycle de vie](sprint_5_exceptions_identite_2026-10-02.md) montre que les séries EODHD de `STLAP`, `URW` et `ALAVE` contiennent respectivement 1 289, 619 et 609 barres antérieures à l'admission de leur ISIN courant ; elles devront être coupées dans le futur manifeste. Il détecte aussi des barres EODHD à volume positif pendant des suspensions officielles, puis après radiation, pour `SEQ` et `TOU`. À l'inverse, Euronext confirme `MLGML` sous le même ISIN et le MIC `XMLI` dès le 1er décembre 2016 : son absence FIRDS relève d'une lacune de couverture à compléter par la preuve Euronext, pas d'un ticker recollé démontré. Cette jointure ESMA ne remplace donc ni le contrôle des suspensions ni le gate de prix indépendant.
+
+```powershell
+F:\projets\.venv\Scripts\python.exe -m service.fr.esma_firds_bar_coverage --history artifacts/fr/esma_firds/replay_2018/history_2020_observed_v2.json --start-date 2018-01-01 --end-date 2020-12-31 --output artifacts/fr/esma_firds/replay_2018/bar_coverage_2018_2020.json
+```
+
+### Contre-vérification Yahoo 2018–2025
+
+Le pilote [yahoo_price_reference_pilot.py](../../service/fr/yahoo_price_reference_pilot.py) interroge l'endpoint graphique public Yahoo avec TLS vérifié, met en cache la réponse brute et compare le prix brut OHLC et le volume à l'archive EODHD. Sous Windows, il combine `certifi` avec le magasin de certificats du système ; il ne désactive jamais la validation TLS. Le rapport est `artifacts/fr/yahoo_daily_reference/pilot_10_active_2018_2025.json`.
+
+Sur les **10 titres actifs pré-enregistrés**, Yahoo fournit une série pour les 10 entre leur première cotation disponible et fin 2025. La comparaison compte **17 408 séances communes** et **69 632 champs OHLC**. Seuls **63 champs (0,09048 %)** divergent de plus de 0,0001 €, tandis que 162 volumes diffèrent. Yahoo possède 221 dates sans barre EODHD correspondante ; EODHD n'a aucune date absente de Yahoo sur les fenêtres de recouvrement. Les écarts de prix les plus élevés observés sont de 1,05 € sur `ERA.PA` le 15 janvier 2024 ; plusieurs écarts se concentrent sur quelques dates communes à plusieurs titres (`2020-10-19`, `2024-01-15`, `2025-03-26`), ce qui suggère des corrections ou conventions fournisseur à examiner plutôt que des erreurs aléatoires quotidiennes.
+
+Le smoke distinct `pilot_20_2018_2020.json` confirme que les **10 titres radiés** de l'échantillon pré-enregistré ne sont plus servis par l'endpoint Yahoo (`404`). Trois actifs introduits après 2020 n'avaient logiquement aucune série dans cette première fenêtre ; ils sont bien couverts lorsque la fin est étendue à 2025. Yahoo fournit donc une contre-vérification historique forte pour les survivants, mais **ne ferme pas le gate des radiés** et n'est ni une preuve officielle ni une source PIT. La concordance de prix n'annule pas les périodes de suspension identifiées par les avis Euronext.
+
+Commande reproductible :
+
+```powershell
+F:\projets\.venv\Scripts\python.exe -u -m service.fr.yahoo_price_reference_pilot --symbols ALAGO.PA,CCN.PA,ANTIN.PA,ALGRO.PA,PRC.PA,ENGI.PA,ERA.PA,MLAAH.PA,BB.PA,XFAB.PA --start-date 2018-01-01 --end-date 2025-12-31 --output artifacts/fr/yahoo_daily_reference/pilot_10_active_2018_2025.json
+```
 
 L'[archive France 2016 de Bnains](https://www.bnains.org/archives/archives.php) a été téléchargée en lecture seule. C'est une source **tierce, non officielle et non PIT**, mais indépendante d'EODHD et indexée par ISIN/date, avec OHLCV. Le contrôle [bnains_price_reference_pilot.py](../../service/fr/bnains_price_reference_pilot.py) parcourt les ZIP mensuels/journaliers sans extraction, compare les quatre prix EODHD, et rapporte séparément les actifs et radiés. Les données et le rapport se trouvent sous `artifacts/fr/price_reference_bnains/`.
 
@@ -78,7 +114,7 @@ Le [contrat EODHD sur les prix historiques](https://eodhd.com/financial-apis/api
 2. Associer les prix 2016 à l'identité d'alors, pas seulement à l'ISIN courant ; traiter explicitement les 84 non-jointures et les 311 dates sans contrepartie.
 3. Classer les 2 612 écarts de prix > 1 % par facteur stable, changement de facteur, arrondi, ticker réutilisé et action sur titre officielle. Ne pas corriger les barres automatiquement.
 4. Résoudre les 47+9+4 splits non concluants et les cas à droits/scission/regroupement, au moins pour tout titre qu'on voudrait promouvoir dans l'univers tradable. Vérifier publication PIT et devise des dividendes.
-5. Recontrôler les radiés hors inventaire fournisseur et les prix **à partir de 2018** par une preuve indépendante appropriée ; les contrôles 2016–2017, dont l'archive Bnains, demeurent des audits de recherche non bloquants pour ce périmètre réduit.
+5. Étendre ou arbitrer les 63 écarts Yahoo/EODHD des actifs, puis recontrôler les radiés et leurs prix **à partir de 2018** par une source indépendante qui les conserve. Yahoo a levé une partie importante du gate des survivants, pas celui des radiés ; les contrôles 2016–2017, dont l'archive Bnains, demeurent des audits de recherche non bloquants pour ce périmètre réduit.
 6. Seulement ensuite produire un manifeste par instrument/date avec `identity_verified`, `venue_interval_verified`, `price_verified`, `corporate_action_verified`, `pit_verified` et motifs de rejet. Aucun `GO` agrégé si un contrôle critique reste inconnu.
 
-Tests ciblés : `python -m pytest -q --no-cov tests/test_fr_bnains_price_reference_pilot.py tests/test_fr_esma_firds_history.py tests/test_fr_esma_firds_reference_pilot.py tests/test_fr_corporate_actions_audit.py tests/test_fr_sprint5_subset_audit.py`.
+Tests ciblés : `python -m pytest -q --no-cov tests/test_fr_yahoo_price_reference_pilot.py tests/test_fr_bnains_price_reference_pilot.py tests/test_fr_esma_firds_history.py tests/test_fr_esma_firds_reference_pilot.py tests/test_fr_corporate_actions_audit.py tests/test_fr_sprint5_subset_audit.py`.

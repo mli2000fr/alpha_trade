@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections import Counter
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from service.fr.eodhd_backfill import _atomic_json
@@ -12,6 +12,26 @@ from service.fr.esma_firds_history import DEFAULT_MICS, archive_records
 
 
 FIELDS = ("currency", "cfi", "first_trade_reported", "termination_reported")
+TIMESTAMP_FIELDS = {"first_trade_reported", "termination_reported"}
+
+
+def _comparable_value(field: str, value):
+    """Normalise les dates FIRDS sans confondre instant et représentation.
+
+    Les anciens fichiers omettent parfois le suffixe UTC tandis que les Full
+    plus récents ajoutent ``Z`` au même instant. Dans ce flux officiel, une
+    date sans fuseau est interprétée en UTC uniquement pour la comparaison.
+    """
+    if field not in TIMESTAMP_FIELDS or not isinstance(value, str):
+        return value
+    try:
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00"
+                                        if value.endswith("Z") else value)
+    except ValueError:
+        return value
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat()
 
 
 def _asof_state(history: dict, asof: date) -> tuple[dict[tuple[str, str], dict], list[dict]]:
@@ -52,8 +72,12 @@ def reconcile(history: dict, archives: list[Path], asof: date) -> dict:
         if left is None or right is None:
             mismatches.append({"isin": key[0], "mic": key[1], "type": "missing_in_replay" if left is None else "missing_in_full"})
             continue
-        differences = {field: {"replay": left.get(field), "full": right.get(field)}
-                       for field in FIELDS if left.get(field) != right.get(field)}
+        differences = {
+            field: {"replay": left.get(field), "full": right.get(field)}
+            for field in FIELDS
+            if _comparable_value(field, left.get(field))
+            != _comparable_value(field, right.get(field))
+        }
         if differences:
             mismatches.append({"isin": key[0], "mic": key[1], "type": "field_difference", "fields": differences})
     return {"asof": asof.isoformat(), "full_files": [path.name for path in archives],

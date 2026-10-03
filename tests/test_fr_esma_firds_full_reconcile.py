@@ -28,6 +28,31 @@ def test_full_reconciliation_detects_field_difference(monkeypatch):
     assert result["candidate_pairs_reconciled"] is False
 
 
+def test_full_reconciliation_normalizes_equivalent_utc_timestamps(monkeypatch):
+    history = _history()
+    version = history["symbols"][0]["market_reference"][0]["versions"][0]
+    version["first_trade_reported"] = "2015-07-28T00:01:00"
+    monkeypatch.setattr(module, "archive_records", lambda *_: iter([{
+        "isin": "FR0000000001", "mic": "XPAR", "currency": "EUR", "cfi": "ESXXXX",
+        "first_trade_reported": "2015-07-28T00:01:00Z", "termination_reported": None}]))
+    result = module.reconcile(history, [Path("FULINS_E_20211225_01of01.zip")],
+                              date(2021, 12, 25))
+    assert result["mismatches"] == []
+    assert result["candidate_pairs_reconciled"] is True
+
+
+def test_full_reconciliation_keeps_real_timestamp_difference(monkeypatch):
+    history = _history()
+    version = history["symbols"][0]["market_reference"][0]["versions"][0]
+    version["first_trade_reported"] = "2015-07-28T00:01:00"
+    monkeypatch.setattr(module, "archive_records", lambda *_: iter([{
+        "isin": "FR0000000001", "mic": "XPAR", "currency": "EUR", "cfi": "ESXXXX",
+        "first_trade_reported": "2015-07-28T00:02:00Z", "termination_reported": None}]))
+    result = module.reconcile(history, [Path("FULINS_E_20211225_01of01.zip")],
+                              date(2021, 12, 25))
+    assert result["mismatch_types"] == {"field_difference": 1}
+
+
 def test_full_reconciliation_quarantines_overlapping_versions(monkeypatch):
     history = _history()
     versions = history["symbols"][0]["market_reference"][0]["versions"]

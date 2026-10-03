@@ -30,6 +30,8 @@ Le classeur gratuit [Euronext Cash Markets Daily Reports](https://live.euronext.
 
 Sur chaque titre actif, **509 séances communes**, du 3 octobre 2024 au 1er octobre 2026, ont été comparées : **3 563 couples titre/séance**. `ANTIN`, `BB`, `ENGI`, `ERA`, `PRC` et `XFAB` n'ont aucun écart OHLC au-delà de 0,0001 € ; `CCN` a **4 écarts de champ OHLC sur deux séances**. Le 7 septembre 2026, la clôture EODHD de `CCN.PA` est **161,50 €** contre **159,50 €** dans l'export Euronext ; l'ouverture et le plus bas diffèrent aussi. Le 26 mars 2025, l'ouverture diffère de 0,09 €. `ENGI` a en outre **12 écarts de volume de 1 à 8 actions**, malgré l'absence de split déclaré dans son archive EODHD. Ces écarts doivent rester visibles : ni arrondi implicite ni remplacement silencieux de la valeur fournisseur. Les données Euronext individuelles ne prouvent ni les barres antérieures à octobre 2024 ni le *point-in-time* des corrections.
 
+Depuis cette première vérification, le [rapport approfondi du Sprint 5](sprint_5_intervalles_esma_prix_radies_actions_2026-10-02.md#contre-vérification-yahoo-20182025) ajoute une seconde source fournisseur sur 2018–2025 : Yahoo couvre les 10 actifs pré-enregistrés, avec 17 408 séances communes et 63 écarts de champ OHLC sur 69 632 valeurs comparées. Cette corroboration ne remplace pas Euronext, n'établit pas le PIT et ne couvre aucun des 10 radiés de l'échantillon, que Yahoo renvoie désormais absents.
+
 ## Échantillon de validation pré-enregistré
 
 L'audit tire de façon déterministe, par SHA-256 de `fr_s5_subset_v1:symbol`, **10 codes actuellement actifs et 10 radiés** parmi les 490. L'ordre et les symboles sont dans le JSON ; il ne faut pas remplacer les échecs par de nouveaux titres plus faciles à vérifier. Au premier calcul :

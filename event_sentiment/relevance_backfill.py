@@ -272,9 +272,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--symbol-source",
         type=str,
-        choices=("tradable-universe", "stock_scores", "stock_scores_history", "stock_scores_all", "stock_bars_daily"),
         default=None,
-        help="Source optionnelle des symboles quand --symbols est absent.",
+        help="Source optionnelle des symboles quand --symbols est absent, y compris universe-file:<fichier.txt>.",
     )
     parser.add_argument(
         "--max-symbols",

@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime
 from datetime import date as DateValue, timedelta
-from typing import Literal, cast
+from typing import cast
 
 import streamlit as st
 from event_sentiment.db_io import EventSentimentRepository
@@ -16,6 +16,7 @@ from event_sentiment.importe_news import (
     STOCK_BARS_DAILY_WARNING_THRESHOLD,
     resolve_symbols_from_inputs,
 )
+from common.universe_files import list_universe_file_sources, universe_file_source_labels
 
 from ihm.pages._shared import (
     COMPARE_RUNS_KEY,
@@ -36,13 +37,26 @@ from ihm.services.queries import get_backfill_completeness_diagnostic
 __all__ = ["_render_import_news_panel"]
 
 
-NEWS_IMPORT_SYMBOL_SOURCE_OPTIONS = (
+NEWS_IMPORT_NATIVE_SYMBOL_SOURCE_OPTIONS = (
     "tradable-universe",
     "stock_scores",
     "stock_scores_history",
     "stock_scores_all",
     "stock_bars_daily",
 )
+NEWS_IMPORT_UNIVERSE_FILE_SOURCES = list_universe_file_sources()
+NEWS_IMPORT_SYMBOL_SOURCE_OPTIONS = (
+    *NEWS_IMPORT_NATIVE_SYMBOL_SOURCE_OPTIONS,
+    *NEWS_IMPORT_UNIVERSE_FILE_SOURCES,
+)
+NEWS_IMPORT_SYMBOL_SOURCE_LABELS = {
+    "tradable-universe": "Univers tradable PIT canonique",
+    "stock_scores": "Snapshot screener courant (stock_scores)",
+    "stock_scores_history": "Historique du screener (stock_scores_history)",
+    "stock_scores_all": "Union screener courant + historique",
+    "stock_bars_daily": "Tous les symboles avec barres daily",
+    **universe_file_source_labels(),
+}
 
 IMPORT_NEWS_START_DATE_WIDGET_KEY = f"{IMPORT_NEWS_START_DATE_KEY}_widget"
 IMPORT_NEWS_END_DATE_WIDGET_KEY = f"{IMPORT_NEWS_END_DATE_KEY}_widget"
@@ -495,11 +509,17 @@ def _render_import_news_panel(
 
         source_col, cap_col = st.columns(2)
         current_max_symbols = int(options.news_import_max_symbols or 0)
-        current_symbol_source = str(
+        requested_symbol_source = str(
             st.session_state.get("pipeline_import_news_symbol_source", getattr(options, "news_import_symbol_source", "stock_scores_all"))
-        ).strip().lower()
-        if current_symbol_source not in NEWS_IMPORT_SYMBOL_SOURCE_OPTIONS:
-            current_symbol_source = "stock_scores_all"
+        ).strip()
+        current_symbol_source = next(
+            (
+                source
+                for source in NEWS_IMPORT_SYMBOL_SOURCE_OPTIONS
+                if source.casefold() == requested_symbol_source.casefold()
+            ),
+            "stock_scores_all",
+        )
         with source_col:
             news_import_symbol_source = str(
                 st.selectbox(
@@ -507,11 +527,13 @@ def _render_import_news_panel(
                     options=NEWS_IMPORT_SYMBOL_SOURCE_OPTIONS,
                     index=NEWS_IMPORT_SYMBOL_SOURCE_OPTIONS.index(current_symbol_source),
                     key="pipeline_import_news_symbol_source",
+                    format_func=lambda source: NEWS_IMPORT_SYMBOL_SOURCE_LABELS.get(str(source), str(source)),
                     help=(
                         "`tradable-universe` cible l'univers PIT canonique ; `stock_scores_all` cible l'union dédupliquée des symboles présents dans `stock_scores` ou `stock_scores_history` ; "
                         "`stock_scores` limite l'import aux symboles du snapshot courant `stock_scores` ; "
                         "`stock_scores_history` cible les symboles déjà présents dans `stock_scores_history` ; "
-                        "`stock_bars_daily` réactive l'ancien comportement large."
+                        "`stock_bars_daily` réactive l'ancien comportement large ; les choix « Fichier d’univers » "
+                        "chargent dynamiquement les fichiers `.txt` présents dans `config/univers/`."
                     ),
                 )
             )
@@ -519,7 +541,8 @@ def _render_import_news_panel(
                 "Aide rapide : `tradable-universe` = univers PIT canonique ; `stock_scores_all` = union `stock_scores` + `stock_scores_history` ; "
                 "`stock_scores` = snapshot screener courant ; "
                 "`stock_scores_history` = historique PIT ; "
-                "un symbole présent dans l'une ou l'autre table est retenu avec `stock_scores_all`."
+                "un symbole présent dans l'une ou l'autre table est retenu avec `stock_scores_all` ; "
+                "les fichiers d’univers utilisent les symboles séparés par des virgules."
             )
         with cap_col:
             news_import_max_symbols_raw = st.number_input(
@@ -633,16 +656,7 @@ def _render_import_news_panel(
             news_import_start_date=cast(DateValue, start_value).isoformat(),
             news_import_end_date=cast(DateValue, end_value).isoformat(),
             news_import_symbols=news_import_symbols or None,
-            news_import_symbol_source=cast(
-                Literal[
-                    "stock_scores",
-                    "stock_scores_history",
-                    "stock_scores_all",
-                    "stock_bars_daily",
-                    "tradable-universe",
-                ],
-                news_import_symbol_source,
-            ),
+            news_import_symbol_source=news_import_symbol_source,
             news_import_max_symbols=news_import_max_symbols or None,
             news_import_resume_from_checkpoint=news_import_resume_from_checkpoint,
         )

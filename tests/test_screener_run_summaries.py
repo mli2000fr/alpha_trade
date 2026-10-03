@@ -12,6 +12,25 @@ from screener.models import ScreenerConfig
 from screener.models import ScreenerRunReport
 
 
+def test_screener_run_report_accepts_custom_universe_source() -> None:
+    report = stock_screener._build_run_report(
+        {
+            "run_id": "stock-screener-custom-universe",
+            "benchmark_symbol": "SPY",
+            "chunk_size": 500,
+            "workers": 12,
+            "as_of_date": "2026-06-25",
+            "started_at": "2026-10-03T00:36:11",
+            "custom_universe_source": "config/univers/univers_filtred_equities.txt",
+        }
+    )
+
+    assert report.custom_universe_source == "config/univers/univers_filtred_equities.txt"
+    assert report.to_summary_dict()["custom_universe_source"] == (
+        "config/univers/univers_filtred_equities.txt"
+    )
+
+
 def _payload_from_stdout(stdout: str, prefix: str) -> dict[str, object]:
     assert stdout.startswith(prefix)
     return json.loads(stdout[len(prefix):])
@@ -22,7 +41,7 @@ def test_stock_screener_main_emits_structured_summary(monkeypatch, capsys) -> No
     monkeypatch.setattr(
         stock_screener,
         "run_screener_with_report",
-        lambda config, max_workers=None, as_of_date=None, snapshot_date=None, progress_callback=None: (
+        lambda config, max_workers=None, as_of_date=None, snapshot_date=None, progress_callback=None, capital_preset_key=None, market_code=None: (
             pd.DataFrame(),
             ScreenerRunReport(
                 run_id="stock-screener-20260425010101-abc123",
@@ -91,7 +110,7 @@ def test_stock_screener_main_emits_chunk_error_samples_when_available(monkeypatc
     monkeypatch.setattr(
         stock_screener,
         "run_screener_with_report",
-        lambda config, max_workers=None, as_of_date=None, snapshot_date=None, progress_callback=None: (
+        lambda config, max_workers=None, as_of_date=None, snapshot_date=None, progress_callback=None, capital_preset_key=None, market_code=None: (
             pd.DataFrame(),
             ScreenerRunReport(
                 run_id="stock-screener-20260425010101-abc123",
@@ -136,10 +155,12 @@ def test_stock_screener_main_uses_trade_date_as_as_of_date(monkeypatch) -> None:
     monkeypatch.setattr(
         stock_screener,
         "run_screener_with_report",
-        lambda config, max_workers=None, as_of_date=None, snapshot_date=None, progress_callback=None: captured.update(
+        lambda config, max_workers=None, as_of_date=None, snapshot_date=None, progress_callback=None, capital_preset_key=None, market_code=None: captured.update(
             {
                 "as_of_date": as_of_date,
                 "snapshot_date": snapshot_date,
+                "capital_preset_key": capital_preset_key,
+                "market_code": market_code,
             }
         )
         or (
@@ -162,6 +183,8 @@ def test_stock_screener_main_uses_trade_date_as_as_of_date(monkeypatch) -> None:
             "stock_screener.py",
             "--trade-date",
             "2026-04-19",
+            "--capital-preset-key",
+            "capital_0_2000",
         ],
     )
 
@@ -169,6 +192,8 @@ def test_stock_screener_main_uses_trade_date_as_as_of_date(monkeypatch) -> None:
 
     assert str(captured["as_of_date"]) == "2026-04-19"
     assert str(captured["snapshot_date"]) == "2026-04-19"
+    assert captured["capital_preset_key"] == "capital_0_2000"
+    assert captured["market_code"] == "US_EQ"
 
 
 def test_stock_screener_main_uses_strict_swing_cash_defaults(monkeypatch) -> None:
@@ -179,7 +204,7 @@ def test_stock_screener_main_uses_strict_swing_cash_defaults(monkeypatch) -> Non
     monkeypatch.setattr(
         stock_screener,
         "run_screener_with_report",
-        lambda config, max_workers=None, as_of_date=None, snapshot_date=None, progress_callback=None: captured.update(
+        lambda config, max_workers=None, as_of_date=None, snapshot_date=None, progress_callback=None, capital_preset_key=None, market_code=None: captured.update(
             {"config": config}
         )
         or (

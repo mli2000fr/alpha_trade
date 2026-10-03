@@ -118,12 +118,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--symbol-source",
         type=str,
-        choices=("tradable-universe", "stock_scores", "stock_scores_history", "stock_scores_all", "stock_bars_daily"),
         default=None,
         help=(
             "Source optionnelle des symboles quand --symbols est absent. "
             "Utile notamment pour scorer uniquement un scope manuel de l'IHM en "
-            "mode --skip-ingestion."
+            "mode --skip-ingestion. Accepte aussi universe-file:<fichier.txt>."
         ),
     )
     parser.add_argument(
