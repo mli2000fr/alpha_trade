@@ -6,6 +6,8 @@
 
 ## Décision
 
+Mise à jour au Sprint 6-C (3 octobre 2026) : le calendrier XPAR a été validé au Sprint 4. Le benchmark de recherche devient `FR_RESEARCH_EW_PRICE_V1` et la taxonomie déclarée `FR_SECTOR_UNKNOWN_V1`, selon le [contrat 6-C](sprint_6c_identite_benchmark_secteurs.md). Le benchmark est synthétique et limité au sous-ensemble de recherche ; les secteurs historiques restent inconnus. Les mentions `PENDING` et calendrier non implémenté ci-dessous décrivent l'état initial des Sprints 0–1. Coûts, promotion canonique et exécution restent bloqués.
+
 Conserver un seul dépôt et les contrats transversaux (`MarketContext`, `DatabaseRouter`, `RunMarketScope`), avec trois bases distinctes :
 
 ```text

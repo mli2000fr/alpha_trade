@@ -1,0 +1,16 @@
+schema_version: 1
+profile: fr_price_v1
+market_code: FR_EQ
+database_alias: fr_primary
+price_adjustment_mode: raw_sprint5_split_histories_excluded
+availability_basis: RESEARCH_J1_XPAR_OPEN
+return_horizons: [1, 3, 5, 10, 20, 60]
+min_cross_section: 20
+min_ready_rows: 1000
+source_liquidity_report: artifacts/fr/sprint6b_liquidity/report.json
+source_reference_report: artifacts/fr/sprint6c_reference/report.json
+benchmark_features_enabled: false
+sector_features_enabled: false
+fundamental_features_enabled: false
+sentiment_features_enabled: false
+canonical_writes_enabled: false

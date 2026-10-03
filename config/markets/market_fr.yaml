@@ -5,9 +5,11 @@ country_code: FR
 currency: EUR
 timezone: Europe/Paris
 calendar_id: XPAR
-# Placeholder interdit en entraînement : choix du benchmark au Sprint 6.
-benchmark_instrument: FR_BENCHMARK_PENDING
-sector_taxonomy: FR_SECTOR_PENDING
+# Benchmark synthétique du sous-ensemble recherche 6-C, prix brut, connu J+1.
+# Ce code se résout dans fr_research_benchmark_daily, pas stock_bars_daily.
+benchmark_instrument: FR_RESEARCH_EW_PRICE_V1
+# Aucune source sectorielle historique validée ; features secteur désactivées.
+sector_taxonomy: FR_SECTOR_UNKNOWN_V1
 cost_profile: fr_research_pending
 execution_rules_profile: fr_research_only
 feature_profile_root: config/features_fr

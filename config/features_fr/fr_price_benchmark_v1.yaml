@@ -1,0 +1,15 @@
+schema_version: 1
+profile: fr_price_benchmark_v1
+market_code: FR_EQ
+database_alias: fr_primary
+base_profile: config/features_fr/fr_price_short_v1.yaml
+base_panel: artifacts/fr/features/fr_price_short_v1/fr-price-short-v1-938c3b93b038/panel.parquet
+base_sha256: 156ed1c1d4b0352274734d75577705b7600934a689ade9814fa47c34ee0093be
+benchmark_report: artifacts/fr/sprint6c_reference/report.json
+benchmark_sha256: 64169e8a47de63fc7d660a261ff373707bf8735a433414309429dbfa7af1311e
+benchmark_code: FR_RESEARCH_EW_PRICE_V1
+return_horizons: [1, 5, 10, 20]
+statistics_window: 20
+variance_floor: 1.0e-12
+sector_features_enabled: false
+canonical_writes_enabled: false
