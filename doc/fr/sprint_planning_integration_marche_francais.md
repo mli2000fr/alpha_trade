@@ -190,6 +190,8 @@ Les sprints 0–5 sont essentiellement séquentiels. Une fois le référentiel e
 
 ### Sprint 9 — Oracle Extreme France : baseline amplitude
 
+**Sprint 9-A réalisé le 3 octobre 2026, recherche H5 prix-only limitée.** Le [pilote pré-fixé et ses résultats](sprint_9a_oracle_h5_pilote.md) compare ATR, volatilité, aléatoire, logistique et arbres peu profonds sur les folds 4/5/6. Champion arbres choisi sur VAL dans les trois folds. Precision TOP20 test 45,08 % / 40,31 % / 41,61 %, lift quotidien moyen 2,069. Gain moyen contre ATR de seulement +0,1884 point de precision (gate ≥2 points), AP +0,01192 ; verdict **NO_GO_INCREMENTAL_PILOT** malgré une amplitude nettement mieux détectée que le hasard. Aucun fit/évaluation de confirmation 2026, aucun serving/backtest économique ; 192 tests ciblés passants. Ne pas confondre amplitude et direction, ni ces tests limités avec la clôture du Sprint 9 global.
+
 **Objectif.** Savoir si l'amplitude extrême est prédictible hors échantillon sur Paris.
 
 **Travaux.** Baselines simples (volatilité/ATR, mouvement passé, ranking mécanique) puis modèles Oracle avec profils du Sprint 7. Walk-forward chronologique purgé/embargué, folds et éligibilité fixes, sélection champion sans regarder le test final. Évaluer par horizon H5/H10/H20 : precision/recall TOP20, lift contre base rate, AUC/PR-AUC lorsque pertinent, calibration/fiabilité, couverture de tous les jours, stabilité par année/régime/taille/secteur et sensibilité aux radiés. Comparer prix-only, benchmark/secteur et éventuellement données événementielles **uniquement après** baseline figée. Conserver manifeste du modèle, features, calibration, folds, provenance et métadonnées de serving. Aucune règle LONG n'est inférée de l'amplitude.

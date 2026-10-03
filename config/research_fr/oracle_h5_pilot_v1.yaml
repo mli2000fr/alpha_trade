@@ -1,0 +1,34 @@
+schema_version: 1
+profile: fr_oracle_h5_pilot_v1
+market_code: FR_EQ
+horizon: 5
+folds: [4, 5, 6]
+labels_report: artifacts/fr/labels/fr_labels_v1/fr-labels-v1-a8f5acc2804c/report.json
+labels_sha256: f8c845aba3fa37bdc06ad51020ef8aecdf4d9016de2a75a7729ed353cbe4ab68
+price_panel: artifacts/fr/features/fr_price_short_v1/fr-price-short-v1-938c3b93b038/panel.parquet
+price_sha256: 156ed1c1d4b0352274734d75577705b7600934a689ade9814fa47c34ee0093be
+support_report: artifacts/fr/labels/review/fr-label-review-dff472deaf9a/report.json
+development_end: '2025-12-31'
+selection_fraction: 0.20
+min_cross_section: 20
+seed: 17
+threads: 2
+logistic:
+  C: 1.0
+  max_iter: 500
+trees:
+  max_iter: 100
+  learning_rate: 0.05
+  max_leaf_nodes: 7
+  max_depth: 3
+  min_samples_leaf: 100
+  l2_regularization: 1.0
+champion_selection: validation_average_precision
+calibration: none
+pilot_gates:
+  min_mean_daily_precision_delta: 0.02
+  min_average_precision_delta: 0.01
+  min_daily_lift: 1.10
+  min_positive_folds: 2
+canonical_writes_enabled: false
+serving_enabled: false
