@@ -1,5 +1,34 @@
 # Registre des expériences ML réalisées
 
+## FR12-D — levée gratuite des blocages, partielle
+
+[Bilan et travail restant](../fr/sprint_12d_levee_blocages_gratuits.md).
+Revue des97inconnus initiaux :22positifs supplémentaires,134/209qualifiés,
+75inconnus sur49titres ; aucune exonération déduite. Refus causal sans ouverture
+implémenté et testé, pas encore de tape réelle promue. Pièce Ipsos archivée
+confirmant paiement1,85EUR le3juillet2025, ex-date toujours inconnue. STIF :
+paiement proposé, archive403, aucune admission.26tests ciblés etRuff passent.
+**0chemin promu, aucune performance, aucune demande payante.** Les recherches
+gratuites ne sont pas déclarées épuisées ; réserves de couverture CA maintenues.
+
+## FR12-C — preuves fiscales et économiques, qualification partielle
+
+[Bilan détaillé](../fr/sprint_12c_qualification_preuves_execution.md).
+112/209couples titre/année TTF positifs rapprochés deBOFiP/ESMA,97inconnus.
+Calendrier standardEURT+2 documenté, pas des règlements réellement observés.
+Termes Planisware et paiement/montant Virbac corroborés séparément.
+Euronext confirme Artois sans ouverture/transaction ;4autres dates2024 hors
+fenêtre publique. Aucun chemin promu ni PnL, aucune réparation source ou fit.
+
+## FR12-B — moteur de rejeu économique, données réelles bloquées
+
+[Contrat et fonctionnement](../fr/sprint_12b_moteur_rejeu_economique.md).
+Moteur LONG EUR indépendant US/CN, sizing frais inclus, coûts distincts,
+cash/trades réconciliés, créances dividendes après vente et splits simples.
+Audit des21 379 chemins :0qualifié, pas de fill ni PnL historique calculé.
+Fiscalité ISIN/date, règlement, prix/statuts et preuves CA encore requis.
+Tests synthétiques uniquement pour la mécanique ; pas de résultat ML ni GO live.
+
 ## FR12-A — qualification coûts/taxes/CA partielle
 
 [Bilan et conditions de rejeu](../fr/sprint_12a_couts_taxes_operations_sur_titres.md).
@@ -1560,6 +1589,14 @@ promue. Aucun serving ni backtest modifié. Artefact :
 `artifacts/research/pmath3_conditional_quantiles/pmath3-full-20260916`.
 
 ### FR — Sprint 10-C2 : source officielle pour les clôtures litigieuses
+
+Suivi économique au 4 octobre 2026 :
+[passe publique gratuite et demande de preuves](../fr/demande_preuves_historiques_manquantes.md).
+118 symboles, 21 379 fenêtres candidates, 212 intervalles CA ; quatre barres
+officielles restent à corroborer, 97 couples fiscaux restent à revoir et un
+refus causal sans ouverture est nécessaire pour Artois. Annonces émetteurs
+partiellement corroborées, dont une erreur de paiement fournisseur pour ABC
+Arbitrage. Aucun GO économique ni PnL ni serving ; aucun achat lancé.
 
 Complément prioritaire : [Sprint 10-C3, réparation du fold7](../fr/sprint_10c3_reparation_fold7.md).
 **Bilan final exécuté :** reconstruction ciblée98OHLC, aucune correction de prix,

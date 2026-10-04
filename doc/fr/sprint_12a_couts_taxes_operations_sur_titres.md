@@ -160,6 +160,9 @@ ancienne n'est mise à vrai.
 
 ## 4. Utilisation, tests et suite
 
+Suite implémentée : [moteur12-B](sprint_12b_moteur_rejeu_economique.md).
+Le ledger existe désormais, sans lever les blocages de qualification ci-dessous.
+
 ```powershell
 python -u -m modelFactory.fr_economic_qualification_12a --output artifacts/fr/research/economic_qualification_12a/nouveau-run
 ```

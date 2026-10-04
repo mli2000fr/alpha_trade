@@ -254,7 +254,14 @@ Moteur générique configurable (1EUR/ordre, spread complet5bps, slippage5bps),
 sources BOFiP historiques archivées, assujettissement titre/date encore inconnu.
 21 379 chemins H5/118 titres contrôlés :388 chemins à champs dividende complets,
 50 à champs bloquants et9 à prix invalides ; aucun GO économique/canonique.
-Le ledger portefeuille, la revue officielle CA et le mapping fiscal restent à faire.
+Le ledger portefeuille est désormais implémenté en recherche :
+[Sprint12-B](sprint_12b_moteur_rejeu_economique.md). Cash EUR, quantités entières,
+frais distincts, créances dividendes et splits simples, inconnus bloquants.
+Le rejeu réel reste bloqué par la revue officielle CA, les prix/statuts,
+le calendrier de règlement et le mapping fiscal. Aucun PnL réel ou GO live.
+Qualification complémentaire [12-C](sprint_12c_qualification_preuves_execution.md) :
+112/209 couples fiscaux positifs, règle standardT+2 documentée et événements
+ciblés corroborés.97inconnus et couvertureCA/prix restent bloquants.
 
 **Objectif.** Traduire un score en trade possible, sans supposer le lifecycle US ou les règles CN.
 
@@ -362,6 +369,16 @@ Ce sont des **cibles proposées**, à valider par l'inventaire du Sprint 0, pas 
 | « Gratuit » sans droits de stockage/trading | Contrat/licence et quota réellement vérifiés sur le compte utilisé |
 
 ## 10. Première séquence d'exécution recommandée
+
+**Point de contrôle économique, 4 octobre 2026 :**
+[vérifications publiques et demande ciblée des preuves restantes](demande_preuves_historiques_manquantes.md).
+La comparaison 12-B reste bloquée : quatre journées de prix officiels,
+couverture CA indépendante et revue de 75 couples fiscaux après la
+[levée gratuite 12-D](sprint_12d_levee_blocages_gratuits.md) (134/209 positifs).
+Le refus causal sans ouverture est désormais implémenté et testé. Les annonces
+publiques retrouvées sont des preuves de champs, pas un GO global. Aucun
+abonnement/extrait commandé ; le dossier distingue revue gratuite et demande
+historique potentiellement payante.
 
 **Point de contrôle 10-C2, 3 octobre 2026 :**
 [audit des clôtures corrigées officielles](sprint_10c2_audit_prix_independants.md).
