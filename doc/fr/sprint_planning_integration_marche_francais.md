@@ -315,6 +315,12 @@ Aucun fill/PnL ; dépend des contrats Sprints12/13, pas de GO live.
 
 ### Sprint 12 — Contrat d'exécution simulée et coûts français
 
+**Décision utilisateur du 4 octobre 2026 :** reste à faire consigné dans
+[TODO Sprint 12](TODO_sprint_12_reste_a_faire.md). Sprint 12 ouvert et reprise
+différée pour une autre expérience ; ne pas engager le Sprint 13, même sa
+préparation, sans nouveau Go. Les chiffres des premiers jalons ci-dessous
+restent historiques ; le TODO distingue les derniers états 12-E/12-F.
+
 **12-E exécuté le 4 octobre 2026 :** [périmètre exploitable et biais de couverture](sprint_12e_perimetre_exploitable.md).
 21 379 chemins conservés ; 16 032 passent les contrôles partiels, zéro qualification
 économique complète. Intentions Oracle couvertes partiellement à 30,24 %, contre
@@ -343,6 +349,10 @@ ciblés corroborés.97inconnus et couvertureCA/prix restent bloquants.
 **Tests.** Cas gagnant/perdant, ouverture en gap, demi-séance, split/dividende, suspension jusqu'au-delà de H, absence de prix fill, taxe applicable/non applicable, frais nuls vs plausibles, courtier indisponible. **Gate GO.** Pas de fill impossible ou de coût silencieusement nul ; parité entre replay de recherche et moteur de backtest FR.
 
 ### Sprint 13 — Validation économique gelée et revue de décision
+
+**NON DÉMARRÉ — décision utilisateur du 4 octobre 2026.** Une autre expérience
+doit précéder ce sprint. Les travaux décrits ci-dessous restent un plan,
+pas une autorisation de préparer ou lancer des runs.
 
 **Objectif.** Déterminer si la politique apporte une valeur *nette* et résistante, pas seulement un bon métrique ML.
 

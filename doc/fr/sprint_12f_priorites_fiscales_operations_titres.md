@@ -159,6 +159,12 @@ fichiers Python ajoutés. Ce n'est pas un test intégral de l'application.
 
 ## 7. Prochaine passe
 
+**Reprise différée sur décision utilisateur du 4 octobre 2026.** Le reste du
+Sprint 12 est centralisé dans le [TODO de reprise](TODO_sprint_12_reste_a_faire.md).
+L'utilisateur souhaite une autre expérience avant le Sprint 13 ; ne pas
+commencer ce dernier ni sa préparation. Les étapes ci-dessous ne sont pas
+des travaux actuellement lancés.
+
 1. Prioriser OSE/ADOC/VLA selon les huit premiers rangs ; rapprocher les
    identités et les règles annuelles de 2024 et 2025.
 2. Pour les titres français non listés, obtenir cours et capital émis au
