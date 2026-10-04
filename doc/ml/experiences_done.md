@@ -1,5 +1,39 @@
 # Registre des expériences ML réalisées
 
+## US — Ratio D10/D1 et contexte macro : validation chronologique
+
+**Décision du 5 octobre 2026 : EN VEILLE — corrélations confirmées,
+exploitation prédictive et économique non démontrée.** Pas de suite immédiate,
+pas de filtre LONG/SHORT ni de veto ajouté au régime de production. Cette
+décision ne rejette pas définitivement toute information macro directionnelle.
+
+Conditions de reprise :
+
+- Historique prospectif macro/sentiment avec disponibilités et versions
+  traçables, et lineage Oracle qualifié.
+- Nouvelle période suffisamment longue avec labels H20 maturés ; la
+  suffisance doit être définie dans le protocole, pas décidée après résultats.
+- Hypothèse, variables, références et critères de validation figés avant
+  consultation des nouveaux résultats, puis nouveau GO explicite.
+
+Ne pas chercher davantage de seuils sur le même historique pour corriger les
+périodes perdantes. Les corrélations restent descriptives ; leur intégration
+au trading nécessiterait un avantage OOS stable puis une validation économique
+avec coûts et risque. Aucun nouveau calcul ou entraînement n'est programmé.
+
+Suite : [audit PIT/lineage](us_d10_d1_ratio_audit_pit_lineage.md). Aucun champion
+futur observé dans 3 618 577 lignes ; agrégats macro/sentiment largement
+reconstruits tardivement, versions historiques non certifiées. Pas de correction
+attestée ni rejeu artificiel, aucune modification de production.
+
+4 octobre 2026 : [rapport et protocole](us_d10_d1_ratio_validation_chronologique.md).
+Corrélations du document GPT reproduites sur 1 676 ratios. Features macro
+décalées d'une séance et entraînement purgé par maturité des labels H20.
+La combinaison VIX/structure/variation/sentiment n'améliore pas stablement
+les références en 2023–2025 ; 82 dates 2026 favorables mais non vierges et
+couverture clairsemée. `NO_STABLE_INCREMENTAL_REGIME_SIGNAL`, aucun GO de
+production ni bénéfice économique démontré. SQL en lecture seule.
+
 ## US — Intégration optionnelle du filtre Oracle × ATR
 
 4 octobre 2026 : [contrat backtest et live](oracle_atr_amplitude_gate.md).

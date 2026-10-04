@@ -549,6 +549,16 @@ sources traitent surtout **qualité des données, identité, fiscalité et réal
 
 ## 12. Références de reprise
 
+### Passe 13-C du 4 octobre 2026
+
+Yahoo fournit les quatre OHLCV manquants du 30 juillet 2024 pour ERA/GLE/MEDCL/VCT,
+concordants sur les séances voisines : overlay **exploratoire**, pas prix officiel.
+Le compte rendu d’AG OPmobility confirme le solde payé le 2 mai 2025 ; Virbac
+documente l’approbation et le paiement du 26 juin 2025. SES/Lectra/Ipsos et
+l’historique secondaire STIF complètent les paiements sous réserves distinctes.
+Certaines pages restent en 403 : une revue web structurée n’est pas une archive
+HTTP brute ni une qualification PIT. Voir [13-C : sources, données admises et limites](sprint_13c_reparations_decision_economique.md).
+
 ### Passe 12-F du 4 octobre 2026 — sources émetteur X-FAB
 
 Les rapports officiels 2023/2024/2025 issus de la page investisseurs X-FAB

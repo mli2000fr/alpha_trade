@@ -350,9 +350,40 @@ ciblés corroborés.97inconnus et couvertureCA/prix restent bloquants.
 
 ### Sprint 13 — Validation économique gelée et revue de décision
 
-**NON DÉMARRÉ — décision utilisateur du 4 octobre 2026.** Une autre expérience
-doit précéder ce sprint. Les travaux décrits ci-dessous restent un plan,
-pas une autorisation de préparer ou lancer des runs.
+**Décision utilisateur après 13-D :** le [bilan et les conditions de reprise](sprint_13_bilan_et_conditions_reprise.md)
+sont archivés. La branche exploratoire est terminée, la validation stricte
+reste bloquée. Le propriétaire souhaite faire autre chose : **ne pas commencer
+Sprint 14 sans un nouveau GO explicite**.
+
+**13-D, 4 octobre 2026 :** [sensibilités économiques figées](sprint_13d_robustesse_economique.md)
+terminées : 96/96 cellules, 24 baselines reproduites exactement. Retard d'une
+séance, plafond d'entrée de 10 % et combinaison ne rendent aucune variante
+Oracle rentable sur les deux folds. Pas de promotion shadow/live ; confirmation
+2026 non consultée. La clôture stricte reste bloquée par les preuves et le
+benchmark manquants. Ces sensibilités sont postérieures à l'observation du
+développement et ne constituent pas une nouvelle confirmation indépendante.
+
+**13-C réparations et décision, 4 octobre 2026 :**
+[comparaison complète fournisseur et réserves strictes](sprint_13c_reparations_decision_economique.md).
+24/24 cellules exploratoires achevées, aucun candidat retiré. Oracle nominal :
+−23,89 % fold 6, +63,81 % fold 7, second gain dominé par un trade ABVX.
+NO-GO shadow pour cette politique LONG H5 ; aucune confirmation 2026 ni activation.
+La branche exploratoire est complète, **Sprint 13 strict reste bloqué** par
+preuves indépendantes, PIT/fiscalité et benchmark ; les états ci-dessous sont
+les jalons antérieurs de préparation.
+
+**13-B préparation exécutée :** [assemblage des tapes et reporting](sprint_13b_assemblage_tapes_reporting.md).
+Deux gabarits communs, six lots d’intentions, douze cellules nominal/stress
+prévues. Reporting validé sur jeux synthétiques, pas de PnL réel : gates 12/13-A
+inchangées et bloquantes. Aucune activation live ni lecture de confirmation 2026.
+
+**Nouveau GO utilisateur du 4 octobre 2026 — 13-A démarré :**
+[gel du protocole et gates](sprint_13a_protocole_validation_economique.md).
+21 379 chemins conservés, zéro chemin économique entièrement qualifié.
+La préparation est exécutée, mais les comparaisons/PnL réels restent bloqués
+par Sprint 12. Aucun relâchement implicite des exigences, aucune confirmation
+2026, aucun GO live. L’interdiction antérieure de préparer Sprint 13 est levée
+par ce nouveau GO ; le reste ci-dessous demeure un plan.
 
 **Objectif.** Déterminer si la politique apporte une valeur *nette* et résistante, pas seulement un bon métrique ML.
 
@@ -363,6 +394,10 @@ pas une autorisation de préparer ou lancer des runs.
 ## 7. Sprints application, opérations et exécution optionnelle
 
 ### Sprint 14 — IHM et CLI France en mode recherche
+
+**Non démarré, sans GO actuel.** L'avancement en recherche uniquement a été
+discuté comme option, puis différé explicitement par le propriétaire. Voir le
+[bilan du Sprint 13](sprint_13_bilan_et_conditions_reprise.md).
 
 **Objectif.** Rendre le parcours FR utilisable dans l'application sans qu'un sélecteur visuel ne lance accidentellement une commande US.
 
@@ -452,6 +487,13 @@ Ce sont des **cibles proposées**, à valider par l'inventaire du Sprint 0, pas 
 | « Gratuit » sans droits de stockage/trading | Contrat/licence et quota réellement vérifiés sur le compte utilisé |
 
 ## 10. Première séquence d'exécution recommandée
+
+**13-B exploratoire fournisseur autorisé et exécuté, 4 octobre 2026 :**
+[protocole, hypothèses et résultats](sprint_13b_exploratoire_fournisseur.md).
+24 cellules figées ; quatre ATR fold 6 abouties négatives, vingt bloquées par
+prix ou dividendes incomplets. Le moteur strict et ses gates restent inchangés.
+Aucun classement économique des trois politiques, aucune confirmation 2026,
+aucun entraînement, aucune écriture SQL ni activation de production.
 
 Référentiel de reprise : [sources gratuites effectivement utilisées et
 conditions d'intégration](catalogue_sources_gratuites_validation_historique.md).

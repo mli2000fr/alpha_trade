@@ -2,6 +2,25 @@
 
 Date de référence : 4 octobre 2026.
 
+**Après 13-D :** [robustesse exploratoire](sprint_13d_robustesse_economique.md)
+terminée avec 96 scénarios ; aucun GO de promotion. Les preuves strictes de ce
+TODO restent nécessaires. Aucun résultat 2026 n'a été consulté.
+
+**État actuel après 13-C :** [réparations et conclusion exploratoire](sprint_13c_reparations_decision_economique.md).
+Quatre barres absentes complétées uniquement dans l’overlay fournisseur depuis
+Yahoo et six dates de paiement documentées sous réserves explicites ; aucun
+flag de qualification stricte ni archive SQL promu. Les 24 cellules exploratoires
+aboutissent, mais les tâches strictes ci-dessous restent ouvertes. Les décisions
+de différer/ne pas démarrer décrivent le contexte antérieur, pas une interdiction
+actuelle de l’expérience autorisée.
+
+Mise à jour après nouveau GO utilisateur : le
+[Sprint 13-A](sprint_13a_protocole_validation_economique.md) a démarré pour geler
+le protocole et vérifier les gates. L’interdiction antérieure de sa préparation
+est levée. **Sprint 12 reste ouvert et le rejeu économique réel reste bloqué.**
+La décision de différer ci-dessous décrit l’état antérieur à ce nouveau GO ;
+les tâches restantes et exigences strictes demeurent valables.
+
 ## 1. Décision de reprise
 
 **Sprint 12 ouvert, travaux différés au profit d'une autre expérience choisie
