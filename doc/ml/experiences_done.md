@@ -1,5 +1,94 @@
 # Registre des expériences ML réalisées
 
+## US — Désaccord Oracle × ATR H20, audit figé
+
+4 octobre 2026 : [protocole](us_oracle_atr_desaccord_protocole.md),
+[résultats](us_oracle_atr_desaccord_resultats.md). 3 196 186 observations,
+1 821 séances, 2019–2025 + T1 2026. BOTH/Oracle seul/ATR seul/NEITHER :
+41,76/34,37/25,70/14,08 % vrais extrêmes. À strates date/ATR/vol60 communes,
+Oracle ajoute +11,34 points d'extrêmes, positif dans chaque année, mais
+augmente aussi D1. Oracle seul T1 2026 : D10 15,73 %, D1 19,35 %, H20
+moyen −0,59 %. Avantage amplitude historique, pas de solution directionnelle
+ni de GO production. Deux tests passent ; aucun fit ni SQL write.
+
+## US — Actualisation macro 2026 du régime LONG
+
+4 octobre 2026 : [recalcul détaillé](us_2026_regime_macro_actualise.md).
+Couverture VIX/VXN/VIX3M/MOVE complète janvier–juin (123 lignes), analyse
+des candidats figés du T1 uniquement. Modes archivés et build_snapshot
+séquentiel/hystérésis concordent : blocage LONG le 30 mars, 29 exclusions.
+H20 moyen +8,29 % après régime contre +8,68 % avant ; janvier/février
+inchangés. Aucun réentraînement ni SQL write ; couverture ancienne absente
+supersédée, réserves de vintage et de backtest économique maintenues.
+
+## US — Confirmation figée secteur/breadth et régime LONG
+
+4 octobre 2026 : [protocole](us_confirmation_secteur_breadth_protocole.md),
+[résultats](us_confirmation_secteur_breadth_resultats.md). Huit variantes
+sans fit ni SQL write. Le régime archivé n'exclut aucun des 502 candidats
+de février 2025 (−13,74 % H20 moyen). RS+breadth ne confirme pas un gain
+stable : 2023–2025 D10 24,69 % contre 24,78 %, D1 24,11 % contre 22,71 % ;
+T1 2026 rendement +0,65 % contre +8,68 %, seulement 17,79 % des D10
+conservés. Secteurs actuels non PIT, macro incomplète en 2026, pas de parité
+intégrale régime ni de PnL économique. Deux tests ciblés passent. Aucun
+GO production, aucune recommandation de retirer les protections existantes.
+
+## US2025-COMBINATION — blocs momentum/volatilité/sentiment : exploratoire
+
+4 octobre 2026 : [protocole et résultats](us_2025_combinaison_features_d10.md).
+Sept scores de blocs à poids égaux,TOP10/TOP20 du pool ATR20×Oracle.
+M+V TOP10 :6 814couples,32,05 %D10/20,08 %D1,+4,91 %rendementH20brut
+contre22,18 %D10/+2,51 %pourlepool. Mseul/Vseul≈29 %D10 ; l'ajout de
+sentiment dégrade M+V. Février :44,42 %D1 et−13,74 %brut ; M+V dépasse les
+deux blocs en rendement seulement3mois/12. Piste à confirmer multi-années,
+pas de validation indépendante sur2025, aucun PnL net/fit/SQL/GOlive.
+
+## US2025-FEATURES — comparaison D1/D10 de 281 features : exploratoire
+
+4 octobre 2026 : [audit détaillé et interprétation](us_2025_features_separation_d1_d10.md).
+Intersection ATR20×Oracle :12 177D1/14 877D10. Momentum120 relatif meilleur
+en H2 (AUC0,5730) qu'en H1 (0,5154), signe brut instable. Volatilité60 plus
+régulière :AUC relative0,5329/0,5395,11mois/12positifs ; effet faible.
+Sentiment agrégé≈hasard.14colonnes constantes,28constantes par date ;
+consensus forward absent, valeurs imputées non assimilables à une source.
+Rangs initiaux parmi futurs extrêmes corrigés sur tous les candidats à J ;
+utiliser le rapport `feature-separation-review-20261004-v1/report.json`.
+PIT/multiplicité/secteur/symboles non qualifiés :aucun GO trading, fit ou SQL.
+
+## US2025 — ATR × Oracle H20 et news à sentiment > 0,9
+
+Lancement du 4 octobre 2026 : [protocole et surveillance](us_2025_atr_oracle_news_sentiment.md).
+Univers `univers_filtred_tradable.txt`, batch `model-factory-20261003082853-e98332`.
+Expérience descriptive terminée : recouvrement TOP20 ATR14/ATR20 et Oracle
+74,07 % / 74,54 %, aucune séance >=90 %. P(TOP20 | news >0,9 avant J)
+19,12 % positif / 24,37 % négatif, base20,02 %. Parmi Oracle+news avant J,
+hausses H20 57,36 % positif / 56,62 % négatif : négatif ≠ signal SHORT.
+206 409 observations sentiment datées 2025 mais créées après 2025 : PIT non
+certifié, résultats rétrospectifs sans causalité/GO trading. Pas de fit ni SQL.
+Rapport : `artifacts/research/us_atr_oracle_sentiment/audit-20261004-v1/report.json`.
+Compléments terminés le même jour : intersection ATR20 × Oracle =14,92 %
+de l'univers ; vrais D1/D10 =18,15 %/22,18 %. Quatre variantes sentiment
+comparées dans cette intersection : maximum à J, maximum sur chacune des
+quatre séances J−3/J, tous les articles scorés sur quatre séances, puis
+tous les articles scorés à J uniquement. Cette dernière retient 1 610
+couples positifs (25,78 % D10 ; 18,88 % D1) et 1 948 négatifs (17,56 % D1 ;
+21,61 % D10). Quatre séances avec tous les articles :0positif/5négatifs,
+support non interprétable. **Enrichissement positif modeste, pas de signal
+SHORT démontré ; aucun GO économique/PIT.** « Tous » porte sur le corpus
+scoré, pas sur les éventuels articles sans inférence. Les variantes explorées
+sur la même année ne sont pas des confirmations OOS indépendantes.
+Règles exactes, tableaux D1–D10, artefacts, reproduction et limites dans la
+[synthèse dédiée](us_2025_atr_oracle_news_sentiment.md#synthèse-des-variantes-testées--mise-à-jour-du-4-octobre-2026).
+Seuil >0,95 à J (tous articles scorés) :447positifs/25,06 %D10 et
+1 334négatifs/17,62 %D1. Cap dix par séance, classement par minimum du
+jour :447positifs inchangés et1 270négatifs/17,80 %D1. Pas d'amélioration
+directionnelle convaincante ; détails/reproduction section16 du même doc.
+Ajout SMA5/10/20/50/100 au seuil >0,9 à J :576positifs au-dessus des cinq
+moyennes,26,74 %D10 et20,31 %D1 ;757négatifs au-dessous,15,19 %D1 et21,40 %D10.
+Petit enrichissement D10 sans amélioration démontrée, dégradation D1.
+Moyennes ajustées incluant J, corpus scoré/PIT toujours réservés ; section17.
+Ce lancement ne commence pas le Sprint 13 France.
+
 ## FR12-F — priorités fiscales Oracle et opérations sur titres, partiel
 
 4 octobre 2026 : [dossier détaillé](../fr/sprint_12f_priorites_fiscales_operations_titres.md).
@@ -1691,3 +1780,16 @@ du vintage/Web, ni de backtest économique. Guidance : trois révisions
 prospectives toutes UP, support insuffisant ; ce n'est pas un NO-GO statistique
 de la guidance. 33 tests ciblés passent à la vérification finale cumulée,
 aucun serving/SQL/2026.
+## Audit US des régimes MV — 4 octobre 2026
+
+[Résultats complets 2019–2026 T1](us_2019_2026_audit_regimes_combinaison.md) :
+intersection ATR20 TOP20 × Oracle H20 TOP20, puis combinaison figée
+momentum120 + volatilité60/ATR20, TOP10 du pool. Sept années et T1 2026
+terminés : 27 mois négatifs sur 87 ; MV dépasse M et V en rendement moyen
+sur seulement 2 années sur 7. D10 2025 32,05 % / D1 20,08 % ; T1 2026 D10
+36,13 % / D1 11,19 %, rendement H20 brut +8,68 %, mais février ≈0 %.
+Marché/macro/secteurs décrivent des variations, aucun veto prédictif stable
+validé. VIX/VXN/VIX3M/MOVE absents au T1 2026, secteurs actuels non PIT,
+bêta ancien souvent constant par défaut. Pas de nouveau fit, serving,
+backtest économique ni écriture SQL. Suivi automatique clôturé à livraison.
+
