@@ -1,0 +1,26 @@
+-- US research aggregate. Realized deciles use the original batch label universe.
+CREATE TABLE IF NOT EXISTS alpha_trade.oracle_atr_market_regime_daily (
+ trade_date DATE NOT NULL,
+ universe_hash CHAR(64) NOT NULL,
+ universe_source VARCHAR(255) NOT NULL,
+ oracle_batch_id VARCHAR(255) NOT NULL,
+ oracle_horizon INT NOT NULL,
+ regime_mode VARCHAR(32) NULL,
+ vix DOUBLE NULL, vix9d DOUBLE NULL, ten_y DOUBLE NULL,
+ vxn DOUBLE NULL, vix3m DOUBLE NULL, move DOUBLE NULL,
+ yield_10y_5d_pct DOUBLE NULL, sentiment_score DOUBLE NULL,
+ universe_count INT NOT NULL,
+ oracle_scored_count INT NOT NULL, oracle_top20_count INT NOT NULL,
+ atr_valid_count INT NOT NULL, atr_missing_count INT NOT NULL,
+ intersection_count INT NOT NULL, evaluated_count INT NOT NULL,
+ unknown_count INT NOT NULL, d1_count INT NOT NULL, d10_count INT NOT NULL,
+ d1_pct DOUBLE NULL, d10_pct DOUBLE NULL, evaluation_coverage_pct DOUBLE NULL,
+ d10_d1_ratio DOUBLE NULL COMMENT 'D10 / D1 ; NULL si D1=0 ou sans résultat évaluable',
+ d1_d10_total_pct DOUBLE NULL COMMENT 'Pourcentage total D1 + D10 parmi les candidats évalués',
+ status VARCHAR(16) NOT NULL, quality_details VARCHAR(255) NULL,
+ evaluated_as_of DATE NOT NULL, calculation_version VARCHAR(32) NOT NULL,
+ created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+ PRIMARY KEY (trade_date,universe_hash,oracle_batch_id,oracle_horizon),
+ KEY idx_oatr_batch_date (oracle_batch_id,trade_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

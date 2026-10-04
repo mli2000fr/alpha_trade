@@ -1,5 +1,14 @@
 # Registre des expériences ML réalisées
 
+## US — Intégration optionnelle du filtre Oracle × ATR
+
+4 octobre 2026 : [contrat backtest et live](oracle_atr_amplitude_gate.md).
+Filtre d’amplitude activé par défaut, désactivable par
+`cascade.oracle_atr_enabled: false`. Aucun changement d’entraînement ni des
+prédictions persistées. L’intégration ne constitue pas une validation de la
+direction D1/D10 ou de la rentabilité économique ; les conclusions de l’audit
+historique ci-dessous restent celles d’un enrichissement d’amplitude.
+
 ## US — Désaccord Oracle × ATR H20, audit figé
 
 4 octobre 2026 : [protocole](us_oracle_atr_desaccord_protocole.md),

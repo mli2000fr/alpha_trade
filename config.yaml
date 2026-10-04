@@ -586,6 +586,11 @@ cascade:
   # 0.20 = top 20% pour LONG, bottom 20% pour SHORT.
   top_pct: 0.10
 
+  # Oracle Extreme (backtest + live) : intersection Oracle TOP pool et ATR20/prix TOP20.
+  # Classement ATR sur la même population ; n'affecte ni entraînement ni prédiction.
+  # false = rollback Oracle sans ATR ; prix/ATR absents rejetés quand actif.
+  oracle_atr_enabled: true
+
   # Probabilité minimale du Per-Symbol pour valider un trade.
   # En dessous, le trade est rejeté même si le rang global est bon.
   # Deux seuils distincts : classification (probas 0-1) vs regression (scores continus).
