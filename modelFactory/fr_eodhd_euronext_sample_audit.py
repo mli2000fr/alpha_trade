@@ -7,12 +7,14 @@ import hashlib
 import json
 import math
 import random
+import shutil
 import time
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib import parse, request
 
+from service.fr.eodhd_backfill import _atomic_json
 from service.fr.euronext_delisted_reference import (
     BASE_URL,
     archive_path,
@@ -238,15 +240,110 @@ def recompute(output: Path, name: str = "header_checked") -> dict:
     return report
 
 
+def resume_failed(previous: Path, output: Path, sleep: float, attempts: int = 2) -> dict:
+    """Fixed sample, preserved evidence, bounded retries; no canonical writes."""
+    if attempts < 1 or attempts > 3 or sleep < 0:
+        raise ValueError("Tentatives 1..3 et délai non négatif requis")
+    sample_path, report_path = previous / "sample.json", previous / "report.json"
+    sample = json.loads(sample_path.read_text(encoding="utf-8"))
+    original = json.loads(report_path.read_text(encoding="utf-8"))
+    old = {r["symbol"]: r for r in original["results"]}
+    if len(old) != len(sample) or len({r["symbol"] for r in sample}) != len(sample):
+        raise ValueError("Échantillon ou bilan incomplet/dupliqué")
+    for row in sample:
+        if row["symbol"] not in old or any(old[row["symbol"]][k] != row[k] for k in ("isin", "status", "mics")):
+            raise ValueError("Identité de l'échantillon modifiée")
+    output.mkdir(parents=True, exist_ok=False)
+    shutil.copy2(sample_path, output / "sample.json")
+    provenance = {"previous": str(previous), "sample_sha256": hashlib.sha256(sample_path.read_bytes()).hexdigest(),
+                  "previous_report_sha256": hashlib.sha256(report_path.read_bytes()).hexdigest(),
+                  "attempts_per_failed_symbol": attempts, "sample_redrawn": False}
+    _atomic_json(output / "resume_protocol.json", provenance)
+    results = []
+    context = None
+    for candidate in sample:
+        symbol = candidate["symbol"]
+        old_row = old[symbol]
+        if old_row["collection_status"] == "COMPLETED":
+            provider_path = archive_path(ROOT, symbol)
+            if hashlib.sha256(provider_path.read_bytes()).hexdigest() != old_row["eodhd_sha256"]:
+                raise ValueError(f"Archive EODHD modifiée : {symbol}")
+            raw = previous / f"{symbol}.encrypted.json"
+            if hashlib.sha256(raw.read_bytes()).hexdigest() != old_row["euronext_raw_sha256"]:
+                raise ValueError(f"Archive Euronext modifiée : {symbol}")
+            # Re-decode the original response, not a potentially edited HTML cache.
+            html = decrypt_ajax(json.loads(raw.read_bytes()), old_row["instrument"]["key"])
+            metrics, differences = compare_rows(parse_reference(html), read_eodhd(provider_path))
+            for suffix in ("page.html", "encrypted.json"):
+                source = previous / f"{symbol}.{suffix}"
+                if source.exists():
+                    shutil.copy2(source, output / f"{symbol}.{suffix}")
+            (output / f"{symbol}.history.html").write_text(html, encoding="utf-8")
+            _atomic_json(output / f"{symbol}.differences.json", differences)
+            result = {**old_row, **metrics, "reused_previous_success": True,
+                      "previous_page_archive_present": (previous / f"{symbol}.page.html").exists()}
+        else:
+            context = context or verified_tls_context()
+            failures = []
+            result = None
+            for attempt in range(1, attempts + 1):
+                _atomic_json(output / "state.json", {"status": "RUNNING", "requested": len(sample),
+                             "processed": len(results), "current_symbol": symbol, "attempt": attempt,
+                             "updated_at": datetime.now(UTC).isoformat()})
+                try:
+                    result = {**collect_one(candidate, output, context), "attempts_used": attempt,
+                              "previous_error": old_row.get("error"), "retry_errors": failures}
+                    break
+                except Exception as exc:
+                    failures.append(f"{type(exc).__name__}: {exc}")
+                    if attempt < attempts:
+                        time.sleep(max(sleep, 3))
+            if result is None:
+                result = {**candidate, "collection_status": "FAILED", "error": failures[-1],
+                          "retry_errors": failures, "previous_error": old_row.get("error"), "attempts_used": attempts}
+            time.sleep(sleep)
+        results.append(result)
+        _atomic_json(output / "progress.json", results)
+        print(f"{len(results)}/{len(sample)} {symbol} {result['collection_status']}", flush=True)
+    totals, groups, years = Counter(), {}, {}
+    for row in results:
+        if row["collection_status"] != "COMPLETED":
+            continue
+        totals.update(row["counts"])
+        groups.setdefault(row["status"], Counter()).update(row["counts"])
+        for year, counts in row["by_year"].items():
+            years.setdefault(year, Counter()).update(counts)
+    report = {**original, "generated_at": datetime.now(UTC).isoformat(), "results": results, "requested": len(sample),
+              "completed": sum(r["collection_status"] == "COMPLETED" for r in results),
+              "counts": dict(totals), "by_group": {k: dict(v) for k, v in groups.items()},
+              "by_year": {k: dict(v) for k, v in years.items()}, "resume": provenance,
+              "header_checked": True, "canonical_writes": False,
+              "code_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
+    report["failed"] = len(results) - report["completed"]
+    report["status"] = "COMPLETE_SAMPLE_AUDIT" if not report["failed"] else "PARTIAL_COLLECTION_FAILURES"
+    _atomic_json(output / "report.json", report)
+    _atomic_json(output / "state.json", {"status": report["status"], "processed": len(results),
+                 "requested": len(sample), "completed": report["completed"], "failed": report["failed"]})
+    print(json.dumps({k: report[k] for k in ("status", "requested", "completed", "failed")}), flush=True)
+    return report
+
+
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--sleep", type=float, default=1.)
+    p.add_argument("--resume-from", type=Path, help="Reprendre les échecs du même échantillon dans un nouveau dossier")
+    p.add_argument("--retry-attempts", type=int, default=2)
     p.add_argument("--recompute", action="store_true")
     p.add_argument("--recompute-name", default="header_checked")
     p.add_argument("--wait-for-report", action="store_true",
                    help="Attendre au plus une heure la fin de collecte avant relecture hors réseau")
     a = p.parse_args()
+    if a.resume_from:
+        if a.recompute or a.wait_for_report:
+            p.error("--resume-from est incompatible avec --recompute/--wait-for-report")
+        resume_failed(a.resume_from, a.output, a.sleep, a.retry_attempts)
+        raise SystemExit(0)
     if a.wait_for_report:
         if not a.recompute:
             p.error("--wait-for-report nécessite --recompute")

@@ -5,7 +5,79 @@ Cette étape ne commande aucun extrait et ne modifie ni les tables, ni les
 prix canoniques, ni les modèles, ni les batchs en cours. Les politiques H5,
 les folds 6/7 et les coûts restent figés ; aucun résultat 2026 n'est exploité.
 
+Pour réutiliser les sources : [catalogue détaillé des sources gratuites,
+usages et contrat d'intégration](catalogue_sources_gratuites_validation_historique.md).
+
+## Suite exécutée : 12-E
+
+[Inventaire du périmètre exploitable](sprint_12e_perimetre_exploitable.md) :
+21 379 chemins conservés, 16 032 passant les contrôles partiels, aucun entièrement
+qualifié. Couverture partielle des intentions Oracle 30,24 %, ATR 37,11 % et
+contrôle uniforme 74,99 % : ne pas comparer des sous-échantillons différents
+ni filtrer à l'entrée sur le futur chemin. Aucun PnL calculé.
+
 ## 1. Bilan mesurable
+
+### Reprise du 4 octobre — nouvelles pièces et raccord Artois
+
+Référence courante : `artifacts/fr/research/free_blocker_review/review-20261004-v6`.
+**137/209 positifs, 72 inconnus sur47titres**, aucune exonération implicite.
+Les chiffres134/75du tableau ci-dessous sont conservés comme bilan antérieur.
+ADP2024/2025 est désormais corroboré par le communiqué annuel2024 archivé sur
+Euronext ; Artois2024 par une publication AMF225C0150. Les2casBolloré restent
+inconnus : PDFémetteur403, pageEuronext non reçue correctement. Aucun
+contournement, ni assimilation de lectureWeb à une archive locale.
+
+Sources alternatives reçues :
+- [ADP — résultats annuels2024](https://live.euronext.com/sites/default/files/company_press_releases/attachments/2025/02/19/cpr03_lesechos_16165_1316157_Aroports_de_Paris_SA__Rsultats_annuels_2024.pdf).
+- [Artois — publication AMF](https://bdif.amf-france.org/back/api/v1/documents/2025/225C0150/5D20A8FF0BC0A996C0D22A290FFF0804005B6035371E63982D5C147E49DDBED4.pdf).
+
+La relance conserve les sources identiques déjà archivées, avec contrôle duSHA,
+URLidentique et date d'observation originale. Elle ne dégrade pas une preuve
+valide parce qu'une nouvelle requête réseau échoue. Les snapshots de manifeste
+et anciennes sorties sont conservés.
+
+`remaining_tax_requests.json` ajoute, pour chaque cas, les pièces requises et
+`scope_review_complete`. Les70autres cas sont triés :58sans correspondance
+annuelle qualifiée,10de scope d'émetteur étranger,2de scope composéURW.
+**Ce tri n'est pas la revue juridique individuelle achevée de70cas.** Il faut
+encore leurs pièces historiques, sièges/classes et, selon le motif, capitalisation
+au1erdécembre précédent ou autre justification d'exclusion du scope.
+
+Raccordement Artois : `service/fr/opening_evidence_overlay.py`, commande
+`modelFactory.fr_opening_evidence_overlay`, sortie
+`artifacts/fr/research/opening_evidence_overlay/artois-20261004`.
+Le module vérifieSHAde la réponse bruteEuronext et des identités, déchiffre
+la pièce, lit les en-têtes corrects Close/Numberofshares et produit un overlay
+`opening_execution.status=NO_OPENING_TRANSACTION` relié auUID/ISIN/MIC/date.
+**Une intention d'entrée** est concernée ; aucun autre chemin détenu concerné
+dans la population examinée. Le cours porté9550EUR n'est pas un prix exécutable.
+L'overlay est compatible avec le refus du moteur, mais n'est pas automatiquement
+appliqué à une tape réelle : assemblage/rejeu complet toujours non lancé.
+
+Dossier actualisé : `artifacts/fr/research/execution_public_requests/public-pass-20261004-v5`
+avec72inconnus,4barres à corroborer,105pistes d'événements et12revues publiques.
+Dividendes : pas de nouvel événement entièrement qualifié par cette reprise.
+28tests ciblés passent etRuff passe. **0chemin promu, aucun PnL, aucun achat,
+aucune modification des tables, aucun entraînement/backtest.**
+
+### Décision du 4 octobre : pas de source payante
+
+L'utilisateur ne souhaite pas prendre d'abonnement. Les recherches déjà faites
+ne sont pas présentées comme un épuisement exhaustif du gratuit. Les deux cas
+Bolloré, les revues individuelles de scope et les preuves de dividendes restent
+ouverts, sans statut favorable inventé.
+
+Prochaine étape : inventorier les blocages par chemin et mesurer, par fold et
+politique figée, le périmètre commun réellement exploitable avec les preuves
+disponibles. Documenter les exclusions et leur biais potentiel avant toute
+comparaison. Ne pas choisir les exclusions selon le rendement réalisé. Si la
+couverture complète des opérations sur titres demeure absente pour tous les
+chemins, conserver le blocage économique plutôt que lancer un backtest réputé
+qualifié. Aucun nouveau modèle n'est nécessaire pour cet inventaire.
+
+Les sections suivantes conservent le bilan historique de la première passe ;
+les chiffres courants sont ceux de la reprise ci-dessus (137/209 et 72 inconnus).
 
 | Contrôle | Avant | Après cette passe |
 | --- | --- | --- |

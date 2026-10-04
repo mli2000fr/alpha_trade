@@ -1,8 +1,34 @@
 # POC France — faisabilité des révisions de guidance (120 émetteurs)
 
+**Dernier état, 11-F v4 :** [151 PDF, 23 paires proposées et seconde revue](sprint_11f_sources_gratuites_et_seconde_revue.md).
+13 UP/10 DOWN non encore validés indépendamment ; 26 observations recoupées
+dans le pool Oracle, train trop peu exposé. Pas de fit ni de gain démontré.
+Les chiffres v2 et ceux du POC initial ci-dessous sont historiques.
+
+**Suite 4 octobre,11-E :** [collecte gratuite élargie, support et dossier de seconde revue](sprint_11e_completion_gratuite_guidance.md).
+15 annonces proposées11-D/11-E (9 UP/6 DOWN), deux cas réservés,143 PDF extraits
+dans ces nouvelles vagues ; la première collection de24 PDF reste distincte.
+Pas de nouveau fit ni de preuve directionnelle ; seconde lecture et support
+encore insuffisant empêchent un GO guidance. Les chiffres historiques ci-dessous
+ne sont pas le total de la nouvelle collecte.
+
 Date : 17 septembre 2026. Statut : **test de faisabilité documentaire terminé ; aucun signal D1/D10 démontré**. Aucun entraînement, backtest, ordre ni table applicative n'a été modifié. Cette étude est le premier palier avant un éventuel test historique sur un univers français tradable.
 
+**Actualisation du 4 octobre :** la [revue visuelle 11-C](sprint_11c_evenements_guidance_ablation.md)
+sépare les quatre paires numériques ci-dessous en **trois révisions prospectives**
+et un cas Vallourec de résultats provisoires pour un exercice déjà terminé.
+Chez Orange, l'ancienne cible est **3,5 Md EUR suivis de la note8**, non3,58.
+Ces trois révisions sont toutes haussières et ne suffisent pas à entraîner ou
+confirmer un modèle directionnel. Le bilan original de faisabilité est conservé,
+sans assimilation de comparabilité numérique à une cible guidance homogène.
+
 ## Question et périmètre
+
+**Suite 11-D, 4 octobre 2026 :** [élargissement à de nouveaux émetteurs](sprint_11d_corpus_guidance_elargi.md).
+17 nouveaux PDF / 16 émetteurs revus, quatre nouvelles annonces comparables
+(trois UP, une DOWN). Les deux vagues donnent sept annonces documentaires,
+sans GO entraînement/PIT ni nouvelle expérience AMF/DILA. Le bilan ci-dessous
+reste celui du POC initial, pas la couverture du corpus élargi.
 
 Peut-on reconstruire, à partir des publications réglementées françaises gratuites, une variable point-in-time telle que « nouvel objectif moins ancien objectif » ? Il faut d'abord vérifier l'accès, la stabilité des publications et la possibilité d'extraire des paires chiffrées. Ce POC **ne teste pas** si la variable prédit D1/D10.
 

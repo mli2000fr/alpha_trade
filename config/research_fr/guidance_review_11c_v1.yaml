@@ -1,0 +1,91 @@
+schema_version: 1
+review_method: manual_visual_pdf_and_text
+independent_second_reviewer: false
+review_date: '2026-10-04'
+purpose: semantic_validation_not_training_dataset
+records:
+  - id: dd5c0eaf6107c716
+    isin: FR0000130213
+    issuer: Lagardere
+    page: 1
+    type: FORWARD_GUIDANCE_REVISION
+    metric: Publishing operating margin
+    period: '2021'
+    unit: percent
+    old_value: 12
+    new_value: 13.5
+    old_comparator: approaching
+    new_comparator: around
+    scope: Publishing excluding Workman integration for both figures, footnote 3
+    direction: UP
+    date_in_document: '2021-12-20'
+    certainty: approximate_not_exact_interval
+  - id: 3e71b0c353329fd1
+    isin: FR0000063737
+    issuer: Aubay
+    page: 2
+    type: FORWARD_GUIDANCE_REVISION
+    metric: annual revenue
+    period: '2021'
+    unit: EUR_million
+    old_interval: [440, 450]
+    new_interval: [456, 465]
+    scope: consolidated annual revenue
+    direction: UP
+    date_in_document: '2021-07-22'
+    certainty: comparable_intervals
+  - id: d5c06e2442839fc6
+    isin: FR0000133308
+    issuer: Orange
+    page: 4
+    type: FORWARD_GUIDANCE_REVISION
+    metric: organic cash flow telecom activities
+    period: '2025'
+    unit: EUR_billion
+    old_value: 3.5
+    new_value: 3.6
+    old_comparator: target
+    new_comparator: at_least
+    scope: telecom activities; prior Capital Market Day target recalled in current document
+    direction: UP
+    date_in_document: '2025-02-13'
+    certainty: comparable_target_lower_bound
+    extraction_warning: '3,5 followed by superscript footnote 8 is NOT 3,58'
+  - id: bfb215e263152b36
+    isin: FR0013506730
+    issuer: Vallourec
+    page: 1
+    type: PROVISIONAL_RESULTS_VS_PREVIOUS_GUIDANCE
+    metric: gross operating income
+    period: '2023'
+    unit: EUR_million
+    old_interval: [1075, 1175]
+    new_lower_bound: 1190
+    direction: UP
+    date_in_document: '2024-02-01'
+    excluded_from_forward_guidance: true
+    reason: financial year ended before announcement; estimated unaudited results, not future guidance
+  - id: 44a44f55983585ba
+    isin: FR0000065484
+    issuer: Lectra
+    page: 1
+    type: CONFIRMATION_NOT_NEW_REVISION
+    date_in_document: '2023-07-27'
+    excluded_from_forward_guidance: true
+    reason: confirms objectives revised on 27 April; decline in realized results is not a new forecast cut
+  - id: 5814f9d28e482ec5
+    isin: FR0004056851
+    issuer: Valneva
+    page: 1
+    type: SCOPE_TIMING_CHANGE_NOT_COMPARABLE_REVENUE_PAIR
+    date_in_document: '2023-12-29'
+    excluded_from_forward_guidance: true
+    reason: total revenue plus other income including PRV versus unchanged product sales; cannot subtract those unlike scopes
+  - id: 4904e09d5b41f0e1
+    isin: FR0014004362
+    issuer: Entech
+    page: 1
+    type: NEW_TARGET_WITHOUT_COMPARABLE_OLD_VALUE
+    date_in_document: '2024-11-20'
+    excluded_from_forward_guidance: true
+    reason: future 2025/2026/2029 ambitions alone do not define old-to-new comparable revision

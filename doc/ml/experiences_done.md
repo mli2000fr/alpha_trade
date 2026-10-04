@@ -1,6 +1,20 @@
 # Registre des expériences ML réalisées
 
+## FR12-F — priorités fiscales Oracle et opérations sur titres, partiel
+
+4 octobre 2026 : [dossier détaillé](../fr/sprint_12f_priorites_fiscales_operations_titres.md).
+Classement de 40 titres affectant les intentions Oracle, sans lecture des
+rendements. Rapports officiels X-FAB archivés : siège/action ordinaire et
+absence de dividendes 2024–2025 documentés. Continuité fiscale annuelle et
+autres familles CA non qualifiées ; Nexity 403. Aucun changement modèle,
+serving ou table ; aucun alpha démontré. 11 tests ciblés 12-E/12-F passent.
+
 ## FR12-D — levée gratuite des blocages, partielle
+
+Actualisation :137/209positifs,72inconnus sur47titres ; ADP2cas etArtois1cas
+ajoutés par archivesEuronext/AMF. Overlay de refusArtois qualifié pour1intention,
+sans tape économique réelle.28tests ciblés passent. Dividendes/couvertureCA
+et revue juridique des autres cas toujours ouverts ; aucun achat/backtest.
 
 [Bilan et travail restant](../fr/sprint_12d_levee_blocages_gratuits.md).
 Revue des97inconnus initiaux :22positifs supplémentaires,134/209qualifiés,
@@ -1622,3 +1636,58 @@ résout pas ces champs. **Fold toujours bloqué**, sans modification des seuils
 ou sélection du modèle. Les preuves ESMA manquantes restent requises.
 Rapport de référence :
 `artifacts/fr/research/official_close_audit/euronext-20201019-audit-20261003-final/report.json`.
+# Actualisation FR — Sprint 11-C, 4 octobre 2026
+
+**Sprint 12-E :** [périmètre économique exploitable](../fr/sprint_12e_perimetre_exploitable.md).
+Audit local exécuté sur 21 379 chemins, 16 032 contrôles partiels favorables,
+zéro chemin entièrement qualifié. Fort biais de couverture entre intentions
+Oracle (30,24 %) et contrôle uniforme (74,99 %). Aucun rendement consulté pour
+sélectionner les preuves, aucun PnL ni nouveau fit. 31 tests ciblés passent.
+
+**11-H :** [arbitrage préparatoire et disponibilité PIT](../fr/sprint_11h_arbitrage_et_disponibilite_pit.md).
+38 preuves PDF intègres ; 33 décisions indépendantes PENDING et aucune
+disponibilité historique Web qualifiée dans le dossier. Corroborations officielles
+Nexans/SMCP repérées, sans promotion de label ni antidatation. Aucun fit.
+
+**11-G :** [seconde passe documentaire, non indépendante](../fr/sprint_11g_seconde_passe_documentaire.md).
+33/33 fiches relues ; contradiction Nexans et cas mixte Aramis maintenus en réserve.
+Économies Maisons du Monde et TCAM Exosens distingués de la cible annuelle.
+32 pages inspectées visuellement pour 27 fiches ; six fiches textuelles seulement.
+Réserves de périmètre Klépierre et de sémantique SMCP/Arcure documentées.
+Seconde passe technique achevée, 33 décisions indépendantes encore PENDING.
+Pas de nouveau fit ni de backtest.
+
+**Dernier état 11-F v4 :** [sources gratuites, comparabilité et seconde revue](../fr/sprint_11f_sources_gratuites_et_seconde_revue.md).
+151 PDF extraits sans échec ; 23 paires proposées (13 UP/10 DOWN), 6 cas complexes
+et 4 autres classifications. Seconde revue PENDING, pas d'autorisation ML.
+Quatre annonces recoupent 26 observations Oracle à 1j/30j ; 4 observations train
+exposées par fold externe, aucun D10 train exposé. Aucun fit guidance ; aucun
+NO-GO statistique guidance. 61 tests ciblés passent. Gratuit non déclaré épuisé,
+payant indispensable non démontré ; Sprint 11 reste ouvert.
+
+**Suite11-E :** [complément gratuit guidance et seconde revue](../fr/sprint_11e_completion_gratuite_guidance.md).
+126 PDF supplémentaires sans échec,143 avec11-D ;15 annonces proposées
+(9 UP/6 DOWN) et deux cas réservés. Trois anciennes cibles retrouvées. Sur
+9661 observations Oracle, seules deux annonces recoupent la fenêtre30j,
+21 observations et zéro train exposé dans folds directionnels6/7. Aucun fit,
+aucun NO-GO statistique guidance. Seconde revue autorisée encore PENDING,
+support/vintage bloquants.57 tests ciblés passent. Pas de payant indispensable
+démontré ; sources gratuites non déclarées épuisées, Sprint11 reste ouvert.
+
+Suite documentaire **11-D** : [corpus guidance élargi et revue](../fr/sprint_11d_corpus_guidance_elargi.md).
+105 nouveaux candidats, 17 PDF de 16 nouveaux émetteurs collectés et revus ;
+quatre nouvelles annonces avec paire prospective chiffrée comparable (3 UP/1 DOWN).
+Cumul avec la première revue : sept annonces (6 UP/1 DOWN), pas un dataset ML
+admis. Anciennes prévisions manquantes, changements de périmètre, confirmations,
+résultats passés, cible climatique et republication séparés. **Aucun modèle
+AMF/DILA refait** ; pas de gain D1/D10 testé ni revendiqué. Guidance reste ouverte,
+petit support, deuxième revue et disponibilité Web historique encore bloquants.
+
+[Disponibilité, guidance et ablation AMF/DILA](../fr/sprint_11c_evenements_guidance_ablation.md) :
+deux folds Oracle OOF H5, logistique fixe, délais de publication1/2 jours.
+AMF AUC0,4788 ; DILA compteurs0,5143, delta+0,0036 mais spread brut négatif ;
+combinaison0,4806 : NO-GO incrémental exploratoire. Pas de preuve PIT stricte
+du vintage/Web, ni de backtest économique. Guidance : trois révisions
+prospectives toutes UP, support insuffisant ; ce n'est pas un NO-GO statistique
+de la guidance. 33 tests ciblés passent à la vérification finale cumulée,
+aucun serving/SQL/2026.

@@ -2,9 +2,9 @@
 # ISIN + annual ESMA continuity + BOFiP annual name + archived issuer source required.
 schema_version: 1
 aliases:
-  - {symbol: ADP.PA, isin: FR0010340141, esma_names: [ADP], fiscal_names: ['Aéroports De Paris (ADP)'], url: 'https://echanges.dila.gouv.fr/OPENDATA/AMF/ECO/2025/02/FCECO077550_20250219.pdf'}
+  - {symbol: ADP.PA, isin: FR0010340141, esma_names: [ADP], fiscal_names: ['Aéroports De Paris (ADP)'], url: 'https://live.euronext.com/sites/default/files/company_press_releases/attachments/2025/02/19/cpr03_lesechos_16165_1316157_Aroports_de_Paris_SA__Rsultats_annuels_2024.pdf'}
   - {symbol: BNP.PA, isin: FR0000131104, esma_names: ['BNP PARIBAS ACT.A'], fiscal_names: ['BNP Paribas'], url: 'https://invest.bnpparibas/faq'}
-  - {symbol: BOL.PA, isin: FR0000039299, esma_names: ['BOLLORE SE'], fiscal_names: [Bolloré], url: 'https://echanges.dila.gouv.fr/OPENDATA/AMF/MKW/2024/09/FCMKW132125_20240916.pdf'}
+  - {symbol: BOL.PA, isin: FR0000039299, esma_names: ['BOLLORE SE'], fiscal_names: [Bolloré], url: 'https://live.euronext.com/fr/products/equities/company-news/2025-04-30-bollore-mise-disposition-du-document-denregistrement'}
   - {symbol: DEC.PA, isin: FR0000077919, esma_names: ['JCDECAUX SE'], fiscal_names: ['JC Decaux', 'JC Decaux SE'], url: 'https://www.jcdecaux.com/fr/investisseurs/action-jcdecaux'}
   - {symbol: GET.PA, isin: FR0010533075, esma_names: ['GETLINK SE'], fiscal_names: [Getlink], url: 'https://www.getlinkgroup.com/content/uploads/2022/01/e-guide-actionnaires-FR-2021.pdf'}
   - {symbol: GTT.PA, isin: FR0011726835, esma_names: ['GAZTRANSPORT & TECHNIGAZ'], fiscal_names: ['GTT (Gaztransport Technigaz)', GTT], url: 'https://www.gtt.fr/sites/default/files/GTT-2020-UNIVERSAL-REGISTRATION-DOCUMENT_0.pdf'}
@@ -16,5 +16,5 @@ aliases:
   - {symbol: SU.PA, isin: FR0000121972, esma_names: ['SCHNEIDER ELECTRIC SE'], fiscal_names: ['Schneider Electric'], url: 'https://www.se.com/ww/en/about-us/investor-relations/share-information/share-price/'}
   - {symbol: UBI.PA, isin: FR0000054470, esma_names: ['UBISOFT ENTERTAIN'], fiscal_names: ['Ubisoft Entertain', 'Ubisoft Entertainment'], url: 'https://www.ubisoft.com/fr-fr/company/about-us/investors'}
   - {symbol: OPM.PA, isin: FR0000124570, esma_names: ['PLASTIC OMNIUM', OPMOBILITY], fiscal_names: ['Plastic Omnium', Opmobility], url: 'https://www.opmobility.com/wp-content/uploads/2024/05/2024_05_22__Change_of_the_denomination_and_ticker_symbol_of_OPmobility_shares.pdf'}
-  - {symbol: ARTO.PA, isin: FR0000076952, esma_names: ['ARTOIS NOM.'], fiscal_names: ['Société Industrielle et Financière de l’Artois SA', "Société Industrielle et Financière de l'Artois SA"], url: 'https://echanges.dila.gouv.fr/OPENDATA/AMF/MKW/2025/01/FCMKW133032_20250114.pdf'}
+  - {symbol: ARTO.PA, isin: FR0000076952, esma_names: ['ARTOIS NOM.'], fiscal_names: ['Société Industrielle et Financière de l’Artois SA', "Société Industrielle et Financière de l'Artois SA"], url: 'https://bdif.amf-france.org/back/api/v1/documents/2025/225C0150/5D20A8FF0BC0A996C0D22A290FFF0804005B6035371E63982D5C147E49DDBED4.pdf'}
   - {symbol: ODET.PA, isin: FR0000062234, esma_names: ['ODET(COMPAGNIE DE L-)'], fiscal_names: ["Compagnie de l'Odet", 'Compagnie de l’Odet'], url: 'https://www.globenewswire.com/fr/news-release/2025/09/08/3146308/0/fr/Compagnie-de-l-Odet-D%C3%A9claration-des-transactions-sur-actions-propres-r%C3%A9alis%C3%A9es-du-1-septembre-au-5-septembre-2025.html'}

@@ -107,3 +107,82 @@ séparée des opérations de réparation du [Sprint 10-C3](sprint_10c3_reparatio
 Collecte en cours à la création initiale de ce protocole. Les résultats chiffrés seront
 ajoutés après présence du rapport final ; ne pas assimiler un compteur de
 progression à une conclusion sur la fiabilité globale du fournisseur.
+
+## Reprise des échecs — 4 octobre 2026
+
+Les 37 échecs de la collecte initiale sont des délais réseau ou réponses
+Euronext HTTP500/504. Ils ne démontrent pas des prix EODHD incorrects. Aucun
+processus initial ne tournait encore lors de la vérification.
+
+Une reprise du **même échantillon fixé de50titres** est lancée dans
+`artifacts/fr/research/eodhd_euronext_sample/audit-50-20261004-retry2`.
+Les13succès antérieurs sont relus avec les en-têtes corrigés, à partir des
+réponses brutes déchiffrées ; leurs hashes Euronext/EODHD sont vérifiés. Aucun
+nouveau tirage, aucune modification de la période ou des tolérances.
+Les autres titres disposent de deux tentatives maximum, temporisées de3secondes.
+Les archives et rapports initiaux ne sont pas écrasés. Aucun SQL/correction
+canonique, modèle ou batch existant touché.
+
+```powershell
+python -u -m modelFactory.fr_eodhd_euronext_sample_audit --resume-from artifacts/fr/research/eodhd_euronext_sample/audit-50-20261003 --output artifacts/fr/research/eodhd_euronext_sample/nouvelle-reprise --sleep 3 --retry-attempts 2
+```
+
+`state.json` contient l'état, le titre courant et sa tentative pendant la
+collecte ; `progress.json` les titres terminés après chaque passage.
+`report.json` n'est créé qu'au bilan final : `COMPLETE_SAMPLE_AUDIT` si tous
+les titres ont été collectés, sinon `PARTIAL_COLLECTION_FAILURES`. La fin
+technique du traitement n'est pas une garantie de couverture50/50.
+Le rapport de reprise est directement relu par en-têtes (`header_checked=true`) ;
+il n'exige pas un sous-dossier `header_checked` supplémentaire.
+
+La tentative retry1 s'est arrêtée avant reprise réseau : une page HTML
+optionnelle manquait pour un succès ancien. La réponse brute signée par hash
+est présente ; sa relecture est désormais possible sans cette page optionnelle,
+dont l'absence est explicitement enregistrée. Retry1 est conservé pour diagnostic.
+
+Journaux de cette reprise : `log/batch/fr-euronext-audit-50-20261004-retry2`.
+
+```powershell
+Get-Content F:\projets\log\batch\fr-euronext-audit-50-20261004-retry2\stdout.log -Tail 15
+Get-Content F:\projets\artifacts\fr\research\eodhd_euronext_sample\audit-50-20261004-retry2\state.json
+Test-Path F:\projets\artifacts\fr\research\eodhd_euronext_sample\audit-50-20261004-retry2\report.json
+```
+
+Six tests ciblés passent, notamment parsing Last/Close/volume, milliers,
+dénominateurs, tolérances, reprise bornée et refus d'une identité modifiée.
+Ruff passe. Les résultats chiffrés de la reprise restent à lire après sa fin.
+
+## Bilan final de la reprise — 4 octobre 2026
+
+Rapport : `audit-50-20261004-retry2/report.json`, état
+`COMPLETE_SAMPLE_AUDIT` : **50/50 collectés, 0 échec**, dont40actifs et10radiés.
+Ce statut signifie fin de collecte/comparaison, pas admission canonique générale.
+
+| Mesure | Numérateur / dénominateur | Taux |
+| --- | --- | --- |
+| Quatre OHLC concordants à0,0001EUR |20559/20718 journées appariées valides |99,23 % |
+| Quatre OHLC concordants à10bps |20566/20718 |99,27 % |
+| Clôture concordante à0,0001EUR |20570/20718 |99,29 % |
+| Volume identique |20568/20718 comparaisons disponibles |99,28 % |
+| OHLC stricts sur les10radiés |2050/2052 journées appariées valides |99,90 % |
+
+22329 journées communes au total, dont1611sans quatre prix positifs/finis
+appariables : elles ne sont pas mises dans le dénominateur des taux ci-dessus.
+719 dates existent dans la référence Euronext sans correspondance EODHD ; il
+faut examiner calendrier, bornes et statuts, pas les compter comme des prix
+EODHD faux. Aucun jour EODHD seul à l'intérieur de l'étendue Euronext observée.
+Les observations2026 sont un contrôle de qualité seulement, pas une sélection ML.
+
+**Principal foyer : Hermès/RMS**,146 des159journées dont au moins unOHLC diverge
+au seuil strict. Exemple4octobre2024 : ouvertureEODHD2127EUR contre
+Euronext2118,281EUR. Les quatre prix ont alors un écart relatif quasi constant
+d'environ41,16bps. Cette structure est **compatible avec une différence de
+convention d'ajustement**, mais la cause n'est pas prouvée. Euronext est demandé
+avec`adjusted=Y` ; ne pas déclarer EODHD erroné ni appliquer un ratio de correction
+à toute la série sans pièces d'opérations sur titres et convention définie.
+
+Conclusion : concordance élevée sur **cet échantillon et les journées valides
+comparables**, pas certification de toutes les donnéesEODHD, de2018–2026 ou
+de la négociabilité. Les lacunes/écarts restent explicitement conservés. Aucune
+barre stockée n'a été corrigée. Étape utile restante : qualifier RMS et les13
+autres journées divergentes, puis les journées non appariables et dates isolées.

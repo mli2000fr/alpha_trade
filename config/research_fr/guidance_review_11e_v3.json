@@ -1,0 +1,23 @@
+{
+  "schema_version":1,
+  "base_manifest":"config/research_fr/guidance_review_11e_v2.json",
+  "base_manifest_sha256":"655b0dd8494802d847ecccd61b0afb3646c8ea280631f49d08c246e85fd34443",
+  "independent_second_reviewer":false,
+  "training_eligible":false,
+  "records":[
+    {"id":"134899_20250320","pages":[1,2],"period_end":"2025-08-31","direction":"DOWN","metric":"organic annual revenue growth","unit":"percent","old":[5.5,6.5],"new":[3,4],"qualifiers":"Annual fiscal 2025 guidance, not preliminary H1 actual 3.5%; margin growth +30/+40 -> +10/+20 bps is same announcement and not counted again. Organic scope; second reader must verify fiscal end and definitions.","status":"FIRST_REVIEW_PAIR"},
+    {"id":"060335_20210924","pages":[1],"period_end":"2021-12-31","direction":"DOWN","metric":"operating margin","unit":"percent","old":[6,6],"new":[4,5],"qualifiers":"Old AT LEAST 6% is a floor, not exact point 6%; new range entirely below floor. World automobile production forecast 77 ->71/73 is context, NOT own-company revenue guidance.","status":"FIRST_REVIEW_PAIR"},
+    {"id":"138536_20191017","pages":[1],"period_end":"2019-12-31","direction":"DOWN","metric":"group operating margin","unit":"percent","old":[6,6],"new":[5,5],"qualifiers":"Old and new around estimates. Revenue old constant rates/scope vs new published revenue is NOT comparable and excluded. English duplicate 118536_20191017 must not count as second event.","status":"FIRST_REVIEW_PAIR"},
+    {"id":"133370_20231009","pages":[1],"period_end":"2023-12-31","direction":"DOWN","metric":"annual EBIT","unit":"EUR_million","old":[65,75],"new":[40,50],"qualifiers":"Table explicitly distinguishes revised versus initial guidance. FCF 40/50 ->20/30 same announcement, not independent observation. October 26 confirms October 9, not new event.","status":"FIRST_REVIEW_PAIR"},
+    {"id":"134747_20211028","pages":[3],"period_end":"2021-12-31","direction":"UP","metric":"annual revenue growth constant exchange rates","unit":"percent","old":[12,13],"new":[14.5,15],"qualifiers":"Contribution of scope changes around 5 points explicitly unchanged. Organic FCF and margin revisions same announcement. Not quarter actual growth.","status":"FIRST_REVIEW_PAIR"},
+    {"id":"138912_20241023","pages":[1],"period_end":"2024-12-31","direction":"UP","metric":"operating margin from activities","unit":"percent","old":[30,30],"new":[31,31],"qualifiers":"Both strictly greater-than floors; comparison is increase of forecast floor, not two closed probability intervals. Annual operating activities margin, not IFRS margin or nine-month revenue actual. Keep second reader scope gate.","status":"FIRST_REVIEW_PAIR"},
+    {"id":"133205_20210629","pages":[1],"period_end":"2021-12-31","direction":"UP","metric":"annual sales growth constant trading days","unit":"percent","old":[5,7],"new":[12,15],"qualifiers":"Same 2021 annual target; 2019 normalized 5/8% and H1 19% are other comparisons, not old guidance. Second reader must preserve constant trading days definition.","status":"FIRST_REVIEW_PAIR"},
+    {"id":"132825_20211209","pages":[1,6],"period_end":"2022-09-30","direction":"UP","metric":"annual revenue","unit":"EUR_billion","old":[1.5,1.5],"new":[1.6,1.6],"qualifiers":"Both strictly greater-than forecast floors; target for 2022, not past 2021 actual. Page6: perimeter at September30 2021. Must confirm prior floor uses same scope; no automatic serving approval.","status":"FIRST_REVIEW_PAIR"},
+    {"id":"132902_20221026","pages":[1,5],"status":"CONTRADICTORY_BOUNDS_REVIEW_REQUIRED","reason":"Page1 new EBITDA590-600 vs page5 580-600, old560-590. Do not choose favorable page. Requires issuer correction or reconciled source; overlapping ranges also need a separate contract."},
+    {"id":"137738_20220419","pages":[1,2],"status":"MIXED_METRICS_REVIEW_REQUIRED","reason":"Revenue floor raised1.6->1.7bn but EBITDA materially lowered vs initial1.5% margin. Do not label whole event UP using revenue alone."},
+    {"id":"134018_20220711","pages":[1],"status":"PAST_PERIOD_ESTIMATE","reason":"Bonduelle2021-2022 fiscal year ended June30 before July11 release. Warning on completed-year estimate, not same forward-guidance task."},
+    {"id":"135979_20231026","pages":[1],"status":"CONFIRMATION_NOT_NEW_REVISION","reason":"Title and introduction confirm October9 guidance adjustment; duplicate economic event, not independent downward announcement."},
+    {"id":"134882_20250506","pages":[1],"status":"NON_FINANCIAL_TARGET","reason":"Capgemini ESG commitments, not financial guidance revision."},
+    {"id":"131994_20250108","pages":[1],"status":"PAST_ESTIMATE_AND_NEW_PERIOD","reason":"Exosens estimates2024 already ended; new2025 forecast has no old same-period comparator in release."}
+  ]
+}

@@ -5,9 +5,10 @@ H5 LONG cash, capital 4 000 EUR, politiques ATR TOP20 / Oracle TOP20 / contrôle
 uniforme. Aucun modèle réentraîné, aucune performance 2026 consultée.
 
 **Mise à jour après levée gratuite :** [bilan 12-D](sprint_12d_levee_blocages_gratuits.md).
-134/209 couples fiscaux sont désormais positifs ; 75 restent inconnus sur
-49 titres. Le refus causal d'ouverture est implémenté et testé. Le dossier
-actualisé est `artifacts/fr/research/execution_public_requests/public-pass-20261004-v4`.
+137/209 couples fiscaux sont désormais positifs ; 72 restent inconnus sur
+47 titres. Le refus causal d'ouverture est implémenté et testé ; son overlay
+Artois est qualifié, sans application automatique de tape. Le dossier
+actualisé est `artifacts/fr/research/execution_public_requests/public-pass-20261004-v5`.
 Les chiffres 112/97 ci-dessous décrivent la passe antérieure 12-C.
 
 ## 1. Décision et limite de cette passe

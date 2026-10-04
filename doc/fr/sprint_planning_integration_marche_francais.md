@@ -8,6 +8,14 @@ Le [GO limité à un sous-ensemble](sprint_5_sous_ensemble_verifie.md) est en pr
 
 ## 1. Décision d'architecture et résultat attendu
 
+**Passe 12-F — 4 octobre 2026 :**
+[priorités fiscales Oracle et opérations sur titres](sprint_12f_priorites_fiscales_operations_titres.md).
+40 titres fiscaux affectent les intentions Oracle figées. Les preuves X-FAB
+complètent l'identité, le siège déclaré et l'absence de dividendes 2024–2025,
+sans prouver une exonération annuelle continue ni une couverture complète CA.
+Deux pièces Nexity ont répondu 403. Aucun nouveau couple fiscal promu,
+aucun chemin économique entièrement qualifié ; Sprint 12 reste ouvert.
+
 La décision du propriétaire du projet prévaut sur l'ancienne étude : **une seule application et un seul dépôt**, mais trois bases physiques indépendantes. `alpha_trade` reste US, `alpha_trade_cn` reste CN et **`alpha_trade_fr` est réservée à la France**. Cette dernière existe déjà et ne contient aucune table : ne pas la recréer, ne pas y copier indistinctement les tables US/CN et ne pas faire de migration US sur elle. La phrase de l'ancienne étude disant qu'une base France séparée n'était pas nécessaire est désormais obsolète sur ce point précis.
 
 Périmètre initial : **actions ordinaires cotées à Paris, cotées en EUR, recherche → ML → prédiction → backtest → exploitation des données**. Définir dès le Sprint 0 si le segment Euronext Growth Paris entre dans le premier univers ; par défaut, le traiter comme un segment distinct jusqu'à validation des métadonnées, coûts et règles. ETF, ETN, fonds, warrants, droits et obligations sont exclus du premier univers d'actions. Une action étrangère cotée à Paris n'est pas rejetée mécaniquement sur son préfixe ISIN : son éligibilité dépend du MIC, du type de titre, de la devise et de la politique d'univers. L'éligibilité PEA est un attribut éventuel **distinct** de l'appartenance au marché parisien.
@@ -233,6 +241,64 @@ tant que les preuves de prix ne sont pas qualifiées. Fold3 reste bloqué et con
 
 ### Sprint 11 — Données événementielles et PIT directionnel FR
 
+**11-H :** [arbitrages préparatoires et qualification PIT](sprint_11h_arbitrage_et_disponibilite_pit.md).
+38 empreintes PDF contrôlées sans divergence ; 0 disponibilité historique Web
+qualifiée dans le dossier. Revue indépendante toujours PENDING, pas de fit.
+
+**11-G :** [seconde passe documentaire](sprint_11g_seconde_passe_documentaire.md),
+33/33 fiches relues en texte ; 32 pages inspectées visuellement pour 27 fiches.
+Réserves maintenues, dont hypothèses de cessions Klépierre et sémantique des
+bornes SMCP/Arcure ; économies/TCAM séparées des révisions annuelles. Contrôle par la même IA,
+aucune revue indépendante fabriquée, aucune autorisation ML.
+
+**État actuel 11-F, dossier v4 du 4 octobre :** [sources gratuites et seconde revue](sprint_11f_sources_gratuites_et_seconde_revue.md).
+151 PDF extraits, 23 paires proposées (13 UP/10 DOWN), 6 cas complexes et
+4 autres classifications. Revue indépendante PENDING. Quatre annonces recoupent
+26 observations Oracle à 1j/30j ; folds externes 6 et 7 : train exposé 4/4,
+validation 0/21, test 21/1. Support insuffisant, aucun fit guidance.
+61 tests ciblés passent. **Sprint 11 ouvert** ; aucune source payante nécessaire
+démontrée et sources gratuites non déclarées épuisées. Les passes ci-dessous
+restent des jalons historiques.
+
+**11-E, actualisation du 4 octobre 2026 :** [complément gratuit et seconde revue](sprint_11e_completion_gratuite_guidance.md).
+126 PDF supplémentaires extraits sans échec ;143 avec11-D. Anciennes cibles
+Klépierre/Assystem/Ipsos retrouvées. Dossier v2 :15 paires proposées (9 UP/6 DOWN),
+deux cas réservés, seconde lecture indépendante autorisée. Deux annonces seules
+recoupent le pool Oracle sur30j :21 observations, zéro train exposé sur folds6/7.
+Pas de fit guidance.57 tests ciblés passent. **Sprint11 reste ouvert** : aucune
+source payante indispensable démontrée, revue sémantique non exhaustive.
+
+**11-D, 4 octobre 2026 :** [corpus guidance élargi](sprint_11d_corpus_guidance_elargi.md).
+105 nouveaux candidats DILA, 17 PDF de 16 nouveaux émetteurs collectés et revus.
+Quatre annonces avec paire prospective chiffrée comparable : trois UP, une DOWN.
+Périmètres, résultats passés, confirmations et republication séparés ; pas de
+réentraînement AMF/DILA. Avec la vague précédente : sept annonces documentaires,
+six UP/une DOWN, pas encore sept événements Oracle/PIT utilisables. Support,
+seconde revue et disponibilité Web historique restent bloquants. Sprint11 ouvert.
+
+**11-C exécuté le 4 octobre 2026 :**
+[disponibilité, guidance et ablation AMF/DILA](sprint_11c_evenements_guidance_ablation.md).
+Délais1/2 jours de publication, deux folds OOF6/7, logistique et gates figés.
+AMF : AUC moyenne0,4788 ; DILA compteurs0,5143 (delta+0,0036), spread brut
+négatif ; combinaison0,4806. Toutes les variantes sont NO-GO incrémental dans
+ce pilote exploratoire. Historique reconstruit/transmission ne constitue pas
+une preuve PIT stricte. Guidance : trois révisions prospectives haussières,
+aucune baissière ; étude bloquée par support et validation indépendante.
+Correction de note PDF Orange3,5 suivi de l'appel8, pas3,58 ; Vallourec séparé
+comme résultats provisoires. Sprint11 complet reste ouvert ; INPI/RNE non testé.
+33 tests ciblés passent à la vérification finale cumulée, aucune écriture
+SQL/serving ni donnée2026 utilisée.
+
+**11-B commencé le 4 octobre 2026 :**
+[qualification AMF/DILA et couverture du pool OOF](sprint_11b_qualification_sources_evenementielles.md).
+CSV officiel AMF archivé : 9 577 déclarations 2018–2025 rattachées à 95/330 ISIN,
+15 lignes mises en quarantaine et 38 groupes de mises à jour quotidiennes ambigus.
+120 exports DILA relus : 12 250 métadonnées rattachées à 48 ISIN.
+Couverture rapprochée de 9 661 événements Oracle OOF, sans cible ni rendement.
+**Sprint 11 toujours ouvert** : contrat PIT/vintage, événements validés et
+ablation prédictive multi-fold restent à faire. Aucune source payante commandée,
+aucun entraînement/backtest dans cette passe. 17 tests ciblés passent.
+
 **Sous-projet économique anticipé autorisé le4 octobre2026 :**
 [11-A économique, références ATR/Oracle/contrôle uniforme](sprint_11a_references_economiques.md).
 Ce nom dans la conversation ne remplace pas le Sprint11 événementiel.
@@ -248,6 +314,13 @@ Aucun fill/PnL ; dépend des contrats Sprints12/13, pas de GO live.
 **Évaluation.** Baseline Oracle/price gelée, ajout *un groupe à la fois*, puis petit ensemble si gains OOF; couverture, biais de sélection et amélioration **incrémentale** par côté LONG/SHORT. Conserver avis négatifs. **Gate GO.** Les données ont lineage/licence/PIT et l'amélioration traverse les années et coûts ; sinon la collecte peut rester prospective sans feature de serving.
 
 ### Sprint 12 — Contrat d'exécution simulée et coûts français
+
+**12-E exécuté le 4 octobre 2026 :** [périmètre exploitable et biais de couverture](sprint_12e_perimetre_exploitable.md).
+21 379 chemins conservés ; 16 032 passent les contrôles partiels, zéro qualification
+économique complète. Intentions Oracle couvertes partiellement à 30,24 %, contre
+74,99 % pour le contrôle uniforme. Rangs reproduits depuis les scores figés.
+Aucun filtre rétrospectif, aucun backtest/PnL ; couverture CA/PIT strict toujours
+bloquante, Sprint 12 ouvert.
 
 **12-A partiel exécuté le4 octobre2026 :** [coûts/taxes/CA](sprint_12a_couts_taxes_operations_sur_titres.md).
 Moteur générique configurable (1EUR/ordre, spread complet5bps, slippage5bps),
@@ -370,11 +443,14 @@ Ce sont des **cibles proposées**, à valider par l'inventaire du Sprint 0, pas 
 
 ## 10. Première séquence d'exécution recommandée
 
+Référentiel de reprise : [sources gratuites effectivement utilisées et
+conditions d'intégration](catalogue_sources_gratuites_validation_historique.md).
+
 **Point de contrôle économique, 4 octobre 2026 :**
 [vérifications publiques et demande ciblée des preuves restantes](demande_preuves_historiques_manquantes.md).
 La comparaison 12-B reste bloquée : quatre journées de prix officiels,
-couverture CA indépendante et revue de 75 couples fiscaux après la
-[levée gratuite 12-D](sprint_12d_levee_blocages_gratuits.md) (134/209 positifs).
+couverture CA indépendante et revue de 72 couples fiscaux après la
+[levée gratuite 12-D](sprint_12d_levee_blocages_gratuits.md) (137/209 positifs).
 Le refus causal sans ouverture est désormais implémenté et testé. Les annonces
 publiques retrouvées sont des preuves de champs, pas un GO global. Aucun
 abonnement/extrait commandé ; le dossier distingue revue gratuite et demande

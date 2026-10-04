@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from pathlib import Path
@@ -31,6 +32,24 @@ def alias_versions(identity: dict, alias: dict, official_name: str, year: int) -
     return issuer_match(reviewed, official_name, year)
 
 
+def reuse_verified_source(alias: dict, output: Path, directories: list[Path]) -> dict | None:
+    """Reuse an identical archived URL/hash, retaining its true observation date."""
+    for directory in directories:
+        report_path = directory / "report.json"
+        if not report_path.exists():
+            continue
+        row = json.loads(report_path.read_text(encoding="utf-8"))["sources"].get(alias["symbol"], {})
+        if row.get("url") != alias["url"] or not row.get("status", "").startswith("ARCHIVED"):
+            continue
+        path = ROOT / row["path"]
+        if not path.exists() or sha(path) != row["sha256"]:
+            raise ValueError("Archive primaire réutilisée modifiée")
+        target = output / path.name
+        shutil.copy2(path, target)
+        return {**row, "path": str(target), "reused_from": str(report_path)}
+    return None
+
+
 def run(output: Path) -> dict:
     output.mkdir(parents=True, exist_ok=False)
     previous = ROOT / "artifacts/fr/research/execution_evidence_12c/qualification-20261004-v4"
@@ -45,6 +64,9 @@ def run(output: Path) -> dict:
     def fetch(alias):
         key, url = alias["symbol"], alias["url"]
         try:
+            reused = reuse_verified_source(alias, output, [ROOT / f"artifacts/fr/research/free_blocker_review/review-20261004-v{v}" for v in (4, 3, 2)])
+            if reused:
+                return key, reused
             row = collect_source(url, output / (key + (".pdf" if url.endswith(".pdf") else ".html")))
             if not url.endswith(".pdf") and alias["isin"] not in Path(row["path"]).read_text(encoding="utf-8", errors="replace"):
                 raise ValueError("ISIN absent de la source d'identité archivée")
@@ -95,9 +117,16 @@ def run(output: Path) -> dict:
                   else "COMPOSITE_INSTRUMENT_SCOPE" if row.symbol == "URW.PA"
                   else "FOREIGN_ISSUER_SCOPE_PROOF_REQUIRED" if not row.isin.startswith("FR")
                   else "NO_REVIEWED_ANNUAL_LIST_MATCH_NOT_EXEMPT")
+        required = {
+            "IDENTITY_SOURCE_NOT_ARCHIVED": ["Archive primaire accessible liant ISIN et dénomination légale"],
+            "COMPOSITE_INSTRUMENT_SCOPE": ["Composition action/certificat et répartition fiscale datées", "Traitement TTF de chaque composante"],
+            "FOREIGN_ISSUER_SCOPE_PROOF_REQUIRED": ["Siège fiscal historique attesté pour l'année", "Classe exacte et éventuel certificat dépositaire", "Motif juridique de non-assujettissement si proposé"],
+            "NO_REVIEWED_ANNUAL_LIST_MATCH_NOT_EXEMPT": ["Dénomination légale et classe historiques", "Rapprochement exhaustif avec la liste annuelle", "Si absent : siège fiscal et capitalisation au 1er décembre précédent ou autre motif de scope prouvé"],
+        }.get(reason, [])
         reviews.append({"symbol": row.symbol, "isin": row.isin, "year": int(row.year),
                         "resolved": good, "reason": reason, "matched_official_names": [m[0] for m in matched],
-                        "source": sources.get(row.symbol), "negative_liability_inferred": False})
+                        "source": sources.get(row.symbol), "negative_liability_inferred": False,
+                        "next_evidence_requirements": required, "scope_review_complete": good})
     eligibility["instruments"].extend(additions)
     keys = [(r["isin"], r["from"], r["to"]) for r in eligibility["instruments"]]
     if len(set(keys)) != len(keys):
