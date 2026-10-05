@@ -60,7 +60,7 @@ def test_market_widget_defaults_us_and_is_scoped_per_page(monkeypatch):
     assert cn_research_market.select_market("pipeline") == "US_EQ"
     assert cn_research_market.select_market("diagnostic") == "US_EQ"
     assert seen[0]["key"] != seen[1]["key"]
-    assert seen[0]["options"] == ("US_EQ", "CN_A")
+    assert seen[0]["options"] == ("US_EQ", "CN_A", "FR_EQ")
 
 
 def test_cn_summary_reads_only_scoped_artifacts(tmp_path):

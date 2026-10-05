@@ -352,8 +352,9 @@ ciblés corroborés.97inconnus et couvertureCA/prix restent bloquants.
 
 **Décision utilisateur après 13-D :** le [bilan et les conditions de reprise](sprint_13_bilan_et_conditions_reprise.md)
 sont archivés. La branche exploratoire est terminée, la validation stricte
-reste bloquée. Le propriétaire souhaite faire autre chose : **ne pas commencer
-Sprint 14 sans un nouveau GO explicite**.
+reste bloquée. La pause du Sprint 14 a été levée par le GO explicite du
+5 octobre 2026 pour le parcours recherche uniquement ; aucun GO économique
+ou de production n'en découle.
 
 **13-D, 4 octobre 2026 :** [sensibilités économiques figées](sprint_13d_robustesse_economique.md)
 terminées : 96/96 cellules, 24 baselines reproduites exactement. Retard d'une
@@ -395,9 +396,15 @@ par ce nouveau GO ; le reste ci-dessous demeure un plan.
 
 ### Sprint 14 — IHM et CLI France en mode recherche
 
-**Non démarré, sans GO actuel.** L'avancement en recherche uniquement a été
-discuté comme option, puis différé explicitement par le propriétaire. Voir le
-[bilan du Sprint 13](sprint_13_bilan_et_conditions_reprise.md).
+**GO reçu le 5 octobre 2026 ; Sprint 14 démarré.** La tranche
+[14-A : consultation isolée IHM/CLI](sprint_14a_ihm_recherche_isolee.md) est
+implémentée, ainsi que le [14-B : replay figé avec historique/logs/progression](sprint_14b_lancement_replay_et_suivi.md).
+La [revue finale opérateur](sprint_14_bilan_validation_operateur.md) est
+terminée après les deux lancements du propriétaire : reproduction exacte,
+logs et empreintes conformes. **Sprint 14 terminé pour le périmètre livré :
+consultation et replay figé de recherche**, pas une duplication complète du
+pipeline US ni un lancement de serving. Les réserves du
+[Sprint 13](sprint_13_bilan_et_conditions_reprise.md) ne sont pas levées.
 
 **Objectif.** Rendre le parcours FR utilisable dans l'application sans qu'un sélecteur visuel ne lance accidentellement une commande US.
 

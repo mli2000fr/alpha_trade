@@ -22,6 +22,7 @@ PageKind = Literal["pipeline", "diagnostic", "backtest"]
 MARKET_LABELS = {
     MarketCode.US_EQ.value: "🇺🇸 États-Unis — application actuelle",
     MarketCode.CN_A.value: "🇨🇳 Chine A — recherche uniquement",
+    MarketCode.FR_EQ.value: "🇫🇷 France — recherche uniquement",
 }
 
 
@@ -270,10 +271,10 @@ def select_market(page: PageKind) -> str:
     return str(
         st.selectbox(
             "Marché",
-            options=(MarketCode.US_EQ.value, MarketCode.CN_A.value),
+            options=(MarketCode.US_EQ.value, MarketCode.CN_A.value, MarketCode.FR_EQ.value),
             key=f"sprint14a_{page}_market_code",
             format_func=lambda value: MARKET_LABELS[str(value)],
-            help="Le marché US conserve ses commandes. Le marché CN_A est limité aux résultats de recherche.",
+            help="US conserve ses commandes ; CN et FR utilisent des parcours de recherche isolés, sans paper/live.",
         )
     )
 

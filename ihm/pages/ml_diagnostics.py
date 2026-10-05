@@ -4195,7 +4195,12 @@ def _split_group_from_comment(comment: str) -> tuple[str, str]:
 def render() -> None:
     st.header("🩺 Diagnostic ML")
     st.caption("Analyse agrégée des batchs d'entraînement et de leurs métriques.")
-    if select_market("diagnostic") == "CN_A":
+    market = select_market("diagnostic")
+    if market == "FR_EQ":
+        from ihm.services.fr_research_market import render_fr_research_view
+        render_fr_research_view("diagnostic")
+        return
+    if market == "CN_A":
         render_cn_research_view("diagnostic")
         return
 

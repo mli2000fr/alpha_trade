@@ -165,6 +165,25 @@ devrait examiner sa qualité en validation séparée, pas seulement `fitted=True
 
 ## 5. Conditions pour trancher la cause des trois symboles
 
+### Constat final documenté — 5 octobre 2026
+
+PENN, ROKU et GH présentent des probabilités LONG presque constantes dans les
+prédictions persistées du batch `model-factory-20260903174624-014164`.
+Ce constat est réel, mais sa cause précise reste **non déterminée** : les
+anciens modèles, features et calibrateurs n'ont été retrouvés ni sur disque
+ni dans les quatre sauvegardes examinées. Les probabilités brutes ne sont pas
+conservées en base ; elles ne peuvent pas être reconstituées à partir des
+probabilités calibrées seules.
+
+Le défaut reproductible de température non positive est corrigé dans le code.
+Cette correction ne modifie pas les lignes historiques, ne répare pas un
+ancien calibrateur sur disque et ne démontre pas que ce défaut explique ces
+trois titres. Une grande température positive peut encore produire un score
+presque constant, parfois légitimement faute de signal en validation.
+Ne pas annoncer que les trois modèles sont réparés, ni sélectionner une
+nouvelle calibration sur les pertes de 2026. Pour une nouvelle campagne,
+contrôler séparément dynamique des sorties brutes, calibration et stabilité OOS.
+
 Récupérer les anciens `config.json`, modèles CatBoost, calibrateurs, profils de
 features et si possible logs de prédiction, puis :
 

@@ -379,6 +379,14 @@ def _render_bulk_result(action: str, results: dict[str, Any], skipped: list[str]
 
 def render() -> None:
     st.title("🗓️ Batchs planifiés")
+    from ihm.services.cn_research_market import MARKET_LABELS
+    market = st.selectbox("Périmètre des batchs", ("US_CN", "FR_EQ"),
+                          key="fr14_batch_market", format_func=lambda v:
+                          MARKET_LABELS[v] if v == "FR_EQ" else "Catalogues US / CN existants")
+    if market == "FR_EQ":
+        st.warning("FR_EQ — aucun batch prospectif France installé par cette page. Catalogue et orchestration prévus au Sprint 15.")
+        st.info("Base alpha_trade_fr · EUR · XPAR. Aucun bouton global US/CN n'est disponible dans cette vue France.")
+        return
     st.caption(
         "Catalogues batch.yaml (US) et batch_cn.yaml (CN) : rôle de chaque collecte, priorité, état réel du "
         "Planificateur Windows, dernières écritures et pilotage manuel."

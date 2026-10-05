@@ -6,13 +6,14 @@ travail sans confondre résultats exploratoires et validation stricte.
 ## 1. Décision du propriétaire du projet
 
 La branche exploratoire du Sprint 13 est terminée. Sa validation stricte reste
-bloquée ; elle n'est ni réussie ni déclarée complète. **Le Sprint 14 n'est pas
-autorisé à démarrer à ce stade** : le propriétaire souhaite travailler sur
-autre chose avant de reprendre l'intégration France.
+bloquée ; elle n'est ni réussie ni déclarée complète. La pause initiale du
+Sprint 14 a été levée par le GO du propriétaire le 5 octobre 2026. La
+[tranche 14-A](sprint_14a_ihm_recherche_isolee.md) démarre le parcours IHM/CLI
+en recherche uniquement, sans changer la décision économique du Sprint 13.
 
 Ne pas lancer automatiquement un autre sprint, une confirmation 2026, un
-entraînement ou une activation de serving à la lecture de ce document. Une
-nouvelle autorisation explicite est nécessaire pour reprendre les travaux.
+entraînement ou une activation de serving à la lecture de ce document. Le GO
+du 5 octobre porte sur le Sprint 14 recherche ; il ne couvre pas ces autres actions.
 
 Le NO-GO économique concerne la politique LONG H5 étudiée, pas l'ensemble du
 marché français ni un rejet définitif de l'Oracle d'amplitude.
@@ -141,10 +142,10 @@ pas masquer les chemins inconnus en les supprimant après observation.
 prévoit IHM/CLI FR, sélecteurs, historiques, logs et progression. Il pourrait
 être entrepris sans validation économique positive, à condition d'afficher les
 limites et de bloquer paper/live et promotion de stratégie. Cette option est
-une recommandation discutée, **pas une autorisation actuelle**.
+désormais autorisée par le GO du 5 octobre 2026 pour la recherche uniquement.
 
-**Décision actuelle : ne commencer aucune de ces options.** Le propriétaire
-souhaite faire une autre activité avant de revenir sur les sprints FR.
+**Décision actuelle : option B autorisée.** Les travaux stricts de l'option A
+restent ouverts ; aucun GO de production ne découle de cette évolution IHM.
 
 ## 8. Artefacts à conserver
 

@@ -633,8 +633,10 @@ def _format_run_inspect_label(run: dict[str, object], batch_comments: dict[str, 
 
 
 def _merge_runs() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-    active_runs = list_active_backtesting_runs()
-    merged: dict[str, dict[str, object]] = {str(run["run_id"]): run for run in load_backtesting_history()}
+    research_kinds = {"fr-research-replay", "cn-research-replay"}
+    active_runs = [r for r in list_active_backtesting_runs() if r.get("run_kind") not in research_kinds]
+    merged: dict[str, dict[str, object]] = {str(run["run_id"]): run for run in load_backtesting_history()
+                                          if run.get("run_kind") not in research_kinds}
     for run in active_runs:
         merged[str(run["run_id"])] = run
     all_runs = sorted(
@@ -6069,7 +6071,12 @@ def render() -> None:
         "Page opérateur dédiée au backtesting et aux diagnostics screener : configuration complète, lancement direct depuis l'IHM, "
         "suivi des runs et consultation des logs."
     )
-    if select_market("backtest") == "CN_A":
+    market = select_market("backtest")
+    if market == "FR_EQ":
+        from ihm.services.fr_research_market import render_fr_research_view
+        render_fr_research_view("backtest")
+        return
+    if market == "CN_A":
         render_cn_research_view("backtest")
         return
 

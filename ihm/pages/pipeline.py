@@ -1802,7 +1802,12 @@ def _render_step_panels(
 def render() -> None:
     st.header("🔄 Pipeline Quotidien")
     st.caption("Ordre d'exécution strict — chaque étape dépend de la précédente.")
-    if select_market("pipeline") == "CN_A":
+    market = select_market("pipeline")
+    if market == "FR_EQ":
+        from ihm.services.fr_research_market import render_fr_research_view
+        render_fr_research_view("pipeline")
+        return
+    if market == "CN_A":
         render_cn_research_view("pipeline")
         return
 
