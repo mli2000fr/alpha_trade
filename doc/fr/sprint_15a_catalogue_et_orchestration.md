@@ -50,7 +50,10 @@ est actif dans la configuration, pas encore dans le Planificateur Windows.
 | fr_amf_short_sync | P1 | Désactivé, adaptateur quotidien à construire | Positions courtes publiées au-delà des seuils, pas short interest complet |
 | fr_dila_disclosures_sync | P1 | Désactivé, adaptateur quotidien à construire | Annonces/pièces DILA, quotas/PIT ; guidance non validée indépendamment |
 | fr_fundamentals_sync | P2 | Actif recherche depuis 15-F | INPI public, 254 correspondances retenues sur 330 S6C ; lots/reprise/quarantaine uniquement ; aucun fondamental utilisable/SQL/ML |
-| fr_consensus_borrow_options | P3 | Dormant | Aucun fournisseur/licence/schema quotidien qualifié |
+| fr_consensus_borrow_options (historique) | P3 | Retiré du catalogue le 06/10/2026 | Remplacé par les collectes séparées ; aucune entrée à installer |
+| fr_consensus_snapshot | P3 | Collecte active en quarantaine | Univers FR S6C actif (294 titres), reprise quotidienne ; pas encore utilisé par ML/backtest |
+| fr_borrow_snapshot | P3 | Fournisseur manquant | Disponibilité et coût d'emprunt, pas positions courtes AMF |
+| fr_options_snapshot | P3 | Fournisseur manquant | Contrats FR/Euronext, licence et couverture à qualifier |
 | fr_db_backup | P0 ops | Handler implémenté, désactivé | Dump alpha_trade_fr ; restauration réelle non démontrée |
 | fr_artifacts_backup | P0 ops | Handler implémenté, désactivé | Volume/disque et extraction/hash à vérifier avant activation |
 

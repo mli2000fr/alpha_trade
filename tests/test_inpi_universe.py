@@ -57,6 +57,12 @@ def cfg():
             'request_interval_seconds':.2,'max_archive_bytes_per_run':100000}
 
 
+def write_manifest(path, issuers):
+    proof=path.parent/'mapping_report.json'
+    proof.write_text(json.dumps({'rows':issuers}))
+    path.write_text(json.dumps({'issuers':issuers,'mapping_report':str(proof)}))
+
+
 class FakeInpi:
     calls=0
     def _request(self): self.request_guard(); self.calls+=1
@@ -74,7 +80,7 @@ def test_collection_resume_quarantine_and_recent_skip(tmp_path,monkeypatch):
     monkeypatch.setattr(collector,'validate',lambda _:None)
     monkeypatch.setattr(collector.time,'sleep',lambda _:None)
     manifest=tmp_path/'manifest.json'
-    manifest.write_text(json.dumps({'issuers':[{'symbol':'AC.PA','isin':'FR0000120404','siren':'602036444','name_aliases':['ACCOR']}]}))
+    write_manifest(manifest,[{'symbol':'AC.PA','isin':'FR0000120404','siren':'602036444','name_aliases':['ACCOR']}])
     root=tmp_path/'out'; result={'failed_count':0}
     collector.collect(cfg(),result,root=root,manifest_path=manifest,client=FakeInpi())
     assert result['persisted_count']==1 and result['coverage_complete']
@@ -85,6 +91,13 @@ def test_collection_resume_quarantine_and_recent_skip(tmp_path,monkeypatch):
     collector.collect(cfg(),again,root=root,manifest_path=manifest,client=client)
     assert client.calls==0 and again['requested_count']==0
     assert len(list((root/'quarantine/objects').glob('*.json')))==1
+    evidence=next((root/'observations').glob('*/reference_pages/*/*.json'))
+    page=json.loads(evidence.read_text())
+    assert page['references'][0]['id']=='a'
+    assert page['request_started_at']<=page['available_at']
+    assert list((root/'observations').glob('*/identity_manifest.json'))
+    assert list((root/'observations').glob('*/mapping_report.json'))
+    assert list((root/'observations').glob('*/issuer_reviews/*.json'))
 
 
 def test_request_guard_is_invoked_before_http_call():
@@ -99,7 +112,7 @@ def test_quota_pause_resumes_unfinished_document_queue(tmp_path,monkeypatch):
     monkeypatch.setattr(collector,'validate',lambda _:None)
     monkeypatch.setattr(collector.time,'sleep',lambda _:None)
     path=tmp_path/'manifest.json'
-    path.write_text(json.dumps({'issuers':[{'symbol':'AC.PA','isin':'FR0000120404','siren':'602036444','name_aliases':['ACCOR']}]}))
+    write_manifest(path,[{'symbol':'AC.PA','isin':'FR0000120404','siren':'602036444','name_aliases':['ACCOR']}])
     class Many(FakeInpi):
         def accounts(self,*args,**kwargs):
             self._request()
@@ -136,7 +149,7 @@ def test_ambiguous_document_is_excluded_then_next_document_collected(tmp_path,mo
     monkeypatch.setattr(collector,'validate',lambda _:None)
     monkeypatch.setattr(collector.time,'sleep',lambda _:None)
     path=tmp_path/'manifest.json'
-    path.write_text(json.dumps({'issuers':[{'symbol':'AC.PA','isin':'FR0000120404','siren':'602036444','name_aliases':['ACCOR']}]}))
+    write_manifest(path,[{'symbol':'AC.PA','isin':'FR0000120404','siren':'602036444','name_aliases':['ACCOR']}])
     class Mixed(FakeInpi):
         def accounts(self,*args,**kwargs):
             self._request(); return [{'id':'bad','confidentiality':'Public'}, {'id':'good','confidentiality':'Public'}],None
@@ -157,7 +170,7 @@ def test_never_collected_issuer_precedes_expired_refresh(tmp_path,monkeypatch):
     monkeypatch.setattr(collector.time,'sleep',lambda _:None)
     old={'symbol':'OLD','isin':'OLD_ISIN','siren':'602036444','name_aliases':['ACCOR']}
     new={**old,'symbol':'NEW','isin':'NEW_ISIN'}
-    path=tmp_path/'manifest.json'; path.write_text(json.dumps({'issuers':[old,new]}))
+    path=tmp_path/'manifest.json'; write_manifest(path,[old,new])
     root=tmp_path/'out'; root.mkdir()
     (root/'collection_state.json').write_text(json.dumps({'issuers':{
         'OLD_ISIN-602036444':{'completed_at':'2000-01-01T00:00:00+00:00'}}}))

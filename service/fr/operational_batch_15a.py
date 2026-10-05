@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 OPS = ROOT / "artifacts/fr/operations"
 IMPLEMENTED = {"fr_calendar_snapshot", "fr_db_backup", "fr_artifacts_backup", "fr_daily_bars_sync",
                "fr_corporate_actions_sync", "fr_amf_short_sync", "fr_dila_disclosures_sync", "fr_pit_quality_daily",
-               "fr_security_master_sync", "fr_fundamentals_sync"}
+               "fr_security_master_sync", "fr_fundamentals_sync", "fr_consensus_snapshot", "fr_options_mifir_trade_sync"}
 
 
 def load_section(name: str, config_path: Path) -> dict:
@@ -63,6 +63,44 @@ def run(name: str, *, config_path: Path = ROOT / "batch_fr.yaml", dry_run=False,
 
 
 def _handle(name, cfg, result, *, dry_run, today, resume=False, max_symbols=None):
+    if name == 'fr_options_mifir_trade_sync':
+        from service.fr.mifir_options_daily import collect
+        identities = (ROOT / str(cfg['identities_file'])).resolve()
+        if not identities.is_relative_to((ROOT/'artifacts/fr').resolve()):
+            raise ValueError('Identités options hors périmètre FR')
+        root = OPS/name
+        if dry_run:
+            collect(cfg, result, root=root, identities=identities, dry_run=True, max_symbols=max_symbols)
+            return
+        root.mkdir(parents=True, exist_ok=True)
+        lock = root/'.lock'
+        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        with os.fdopen(fd, 'w') as stream:
+            stream.write(str(os.getpid()))
+        try:
+            collect(cfg, result, root=root, identities=identities, max_symbols=max_symbols)
+        finally:
+            lock.unlink(missing_ok=True)
+        return
+    if name == 'fr_consensus_snapshot':
+        from service.fr.consensus_snapshot import collect
+        identities = (ROOT / str(cfg['identities_file'])).resolve()
+        if not identities.is_relative_to((ROOT/'artifacts/fr').resolve()):
+            raise ValueError('Identités consensus hors périmètre FR')
+        root = OPS/name
+        if dry_run:
+            collect(cfg, result, root=root, identities=identities, dry_run=True, max_symbols=max_symbols)
+            return
+        root.mkdir(parents=True, exist_ok=True)
+        lock = root/'.lock'
+        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        with os.fdopen(fd, 'w') as stream:
+            stream.write(str(os.getpid()))
+        try:
+            collect(cfg, result, root=root, identities=identities, max_symbols=max_symbols)
+        finally:
+            lock.unlink(missing_ok=True)
+        return
     if name == 'fr_fundamentals_sync':
         from service.inpi.universe_collection import collect
         manifest=(ROOT/str(cfg['issuer_manifest'])).resolve()

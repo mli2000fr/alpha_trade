@@ -63,3 +63,17 @@ def test_atomic_progress_retries_transient_windows_lock(tmp_path,monkeypatch):
     _write(tmp_path/'progress.json',{'phase':'VERIFIED'})
     assert len(calls)==3 and (tmp_path/'progress.json').is_file()
     assert not list(tmp_path.glob('*.tmp'))
+
+
+def test_quarantine_evidence_included_in_artifact_backup(tmp_path):
+    source=tmp_path/'fr'
+    paths=['operations/fr_consensus_snapshot/daily_observations/2026-10-06/objects/test.json',
+           'operations/fr_fundamentals_sync/quarantine/objects/test.json',
+           'operations/fr_fundamentals_sync/observations/test/identity_manifest.json']
+    for relative in paths:
+        target=source/relative
+        target.parent.mkdir(parents=True,exist_ok=True)
+        target.write_text('{}')
+    result=verified_archive(source,tmp_path/'backups',keep=1,extract=True)
+    restored=Path(result['restore_path'])/'fr'
+    assert all((restored/p).read_text()=='{}' for p in paths)

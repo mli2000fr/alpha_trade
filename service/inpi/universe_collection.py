@@ -92,6 +92,9 @@ def collect(cfg,result,*,root,manifest_path,dry_run=False,max_symbols=None,clien
     client.request_guard=guard
     archive=ArchiveClient(client,manifest,root,max_requests=budget+1,max_bytes=byte_budget)
     folder=root/'observations'/now.strftime('%Y%m%dT%H%M%S%fZ'); folder.mkdir(parents=True,exist_ok=False)
+    # Immutable run evidence survives replacement of mutable mapping/checkpoints.
+    atomic(folder/'identity_manifest.json',manifest)
+    atomic(folder/'mapping_report.json',json.loads((ROOT/manifest['mapping_report']).read_text(encoding='utf-8')))
     def save():
         state.update(updated_at=datetime.now(UTC).isoformat(),canonical_go=False,ml_usable=False)
         atomic(folder/'quarantine_manifest.json',{'documents':archive.observations,
@@ -109,8 +112,18 @@ def collect(cfg,result,*,root,manifest_path,dry_run=False,max_symbols=None,clien
             checkpoint['last_error']=None
             try:
                 while not checkpoint.get('list_complete'):
+                    list_started=datetime.now(UTC).isoformat()
                     rows,cursor=archive.accounts(issuer['siren'],kind='bilans-saisis',page_size=10,
                                                 search_after=checkpoint.get('cursor'))
+                    observed=datetime.now(UTC).isoformat()
+                    # Preserve metadata only for withheld/withdrawn accounts, never their contents.
+                    references=[{k:r.get(k) for k in ('id','siren','denomination','dateCloture','dateDepot','typeBilan','confidentiality','deleted','updatedAt')} for r in rows]
+                    pages=folder/'reference_pages'/key
+                    pages.mkdir(parents=True,exist_ok=True)
+                    atomic(pages/f'{len(list(pages.glob("*.json"))):06d}.json',
+                           {'archive_version':'inpi-reference-v2','siren':issuer['siren'],
+                            'request_started_at':list_started,'observed_at':observed,'available_at':observed,
+                            'search_after':checkpoint.get('cursor'),'next_cursor':cursor,'references':references})
                     if not rows and cursor: raise InpiError('Page vide avec curseur')
                     for row in rows:
                         if not row.get('id'): raise InpiError('Référence sans ID')
@@ -131,6 +144,10 @@ def collect(cfg,result,*,root,manifest_path,dry_run=False,max_symbols=None,clien
                             result['warning_count']=result.get('warning_count',0)+1
                     checkpoint['done_ids'].append(identifier); save()
                 checkpoint['completed_at']=datetime.now(UTC).isoformat(); save()
+                atomic(folder/'issuer_reviews'/f'{key}.json',
+                       {'completed_at':checkpoint['completed_at'],'issuer':issuer,
+                        'done_ids':checkpoint['done_ids'],'skipped_documents':checkpoint['skipped_documents'],
+                        'ml_usable':False,'historical_pit_qualified':False})
                 print(json.dumps({'symbol':issuer['symbol'],'status':'COLLECTED_QUARANTINE',
                                   'references':len(checkpoint['rows'])}),flush=True)
             except QuotaPause: raise

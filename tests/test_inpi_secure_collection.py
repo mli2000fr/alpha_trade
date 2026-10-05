@@ -35,6 +35,8 @@ def test_archive_idempotent_objects_distinct_observations_and_no_promotion(tmp_p
     assert archive.observations[1]['available_at']>=archive.observations[0]['available_at']
     assert all(not x['ml_usable'] and not x['historical_pit_qualified'] for x in archive.observations)
     assert archive.observations[0]['qualification_state']=='QUARANTINED_UNQUALIFIED'
+    assert archive.observations[0]['archive_version']=='inpi-structured-v2'
+    assert archive.observations[0]['request_started_at']<=archive.observations[0]['available_at']
     saved=json.loads(next((tmp_path/'quarantine/objects').glob('*.json')).read_text(encoding='utf-8'))
     assert saved==payload()
     archive.close(); assert fake.closed

@@ -28,6 +28,7 @@ from ihm.services.batch_management import (
     read_batch_log_tail,
     read_cn_daily_quality_history,
     read_fr_inpi_mapping,
+    read_fr_consensus_state,
     start_batch,
     uninstall_all_batches,
     uninstall_batch,
@@ -237,6 +238,28 @@ def _render_batch(
             st.info(spec.execution_notice)
         if spec.research_notice:
             st.warning(f"🔬 Usage recherche — {spec.research_notice}")
+        if spec.name == 'fr_consensus_snapshot':
+            st.info('Collecte prospective : historique à partir des vraies dates de réception. '
+                    'Avant ML/backtest : qualifier identités, exercices et unités, puis joindre uniquement available_at <= heure de décision. '
+                    'Les estimations reçues aujourd\'hui ne doivent jamais être injectées dans un backtest passé. '
+                    'Collecter ne démontre pas un signal D1/D10 ; absent ne signifie pas zéro.')
+            try:
+                consensus = read_fr_consensus_state(spec)
+                if consensus:
+                    entries = consensus.get('symbols', {})
+                    states = [v.get('status') for v in entries.values()]
+                    st.caption(f"Observation {consensus.get('day')} : {states.count('COMPLETED')} snapshots archivés · "
+                               f"{states.count('EXCLUDED_IDENTITY')} identités exclues · {states.count('NO_COVERAGE')} sans consensus · "
+                               f"{states.count('FAILED')} échecs techniques. Disponibilité de recherche, pas validation ML.")
+                    excluded = [{'Symbole': s, 'État': v.get('status'), 'Motif': v.get('reason')}
+                                for s, v in entries.items() if v.get('status') in ('EXCLUDED_IDENTITY', 'NO_COVERAGE', 'FAILED')]
+                    excluded += [{'Symbole': v.get('symbol'), 'État': 'EXCLUDED_REFERENCE', 'Motif': v.get('reason')}
+                                 for v in consensus.get('reference_exclusions', [])]
+                    if excluded:
+                        with st.expander('Consensus FR : exclusions, absences et erreurs'):
+                            st.dataframe(excluded, use_container_width=True, hide_index=True)
+            except (ValueError, OSError) as exc:
+                st.error(f'Checkpoint consensus indisponible : {type(exc).__name__}')
         if spec.name=='fr_fundamentals_sync':
             try:
                 mapping=read_fr_inpi_mapping(spec)

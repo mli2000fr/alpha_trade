@@ -33,6 +33,7 @@ class ArchiveClient:
         self._budget(); return self.client.accounts(*args,**kwargs)
 
     def account(self,identifier):
+        started=datetime.now(UTC).isoformat()
         self._budget(); payload=self.client.account(identifier)
         observed=datetime.now(UTC).isoformat()
         siren=str(payload.get('siren'))
@@ -61,6 +62,10 @@ class ArchiveClient:
             self.new_documents+=1
         self.observations.append({'id':checked.get('id') or identifier,'siren':siren,
             'sha256':digest,'path':str(target),'observed_at':observed,'available_at':observed,
+            'archive_version':'inpi-structured-v2',
+            'endpoint':'bilans-saisis/detail', 'request_started_at':started,
+            'fiscal_period_state':'UNQUALIFIED_PROVIDER_VALUES',
+            'unit_state':'UNQUALIFIED_PROVIDER_VALUES',
             'qualification_state':'QUARANTINED_UNQUALIFIED','ml_usable':False,
             'historical_pit_qualified':False,'canonical_go':False})
         return payload

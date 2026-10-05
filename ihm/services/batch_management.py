@@ -236,6 +236,22 @@ def read_fr_inpi_mapping(spec: BatchSpec) -> dict | None:
     return report
 
 
+def read_fr_consensus_state(spec: BatchSpec) -> dict | None:
+    if spec.name != 'fr_consensus_snapshot':
+        return None
+    root = PROJECT_ROOT/'artifacts/fr/operations/fr_consensus_snapshot/days'
+    paths = sorted(root.glob('????-??-??.json'), reverse=True)
+    if not paths:
+        return None
+    path = paths[0]
+    if path.is_symlink() or path.stat().st_size > 8*1024*1024:
+        raise ValueError('Checkpoint consensus non autorisé ou trop volumineux')
+    state = json.loads(path.read_text(encoding='utf-8'))
+    if state.get('market_code') != 'FR_EQ' or state.get('day') != path.stem:
+        raise ValueError('Checkpoint consensus hors périmètre FR/date')
+    return state
+
+
 def format_schedule(spec: BatchSpec) -> str:
     days = ", ".join(DAY_LABELS.get(day, day) for day in spec.run_days) or "tous les jours"
     hours = spec.run_hours or ("—",)

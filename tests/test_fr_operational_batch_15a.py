@@ -19,11 +19,12 @@ def config(tmp_path, name='fr_calendar_snapshot', **changes):
 
 def test_fr_catalog_has_only_fr_and_defaults(tmp_path):
     specs = batch_management.load_batch_specs(str(config(tmp_path)))
-    assert len(specs) == 11
+    assert len(specs) == 14
+    assert 'fr_consensus_borrow_options' not in {s.name for s in specs}
     assert all(s.name.startswith('fr_') and s.timezone == 'Europe/Paris' for s in specs)
     assert all(s.raw_config['database_alias'] == 'fr_primary' for s in specs)
     assert {s.name for s in specs if s.runnable} == {'fr_calendar_snapshot', 'fr_daily_bars_sync',
-        'fr_corporate_actions_sync','fr_pit_quality_daily','fr_amf_short_sync','fr_dila_disclosures_sync', 'fr_db_backup','fr_security_master_sync','fr_artifacts_backup','fr_fundamentals_sync'}
+        'fr_corporate_actions_sync','fr_pit_quality_daily','fr_amf_short_sync','fr_dila_disclosures_sync', 'fr_db_backup','fr_security_master_sync','fr_artifacts_backup','fr_fundamentals_sync','fr_consensus_snapshot','fr_options_mifir_trade_sync'}
     assert all('univers_batch' not in s.symbols_file for s in specs)
 
 
@@ -54,11 +55,11 @@ def test_disabled_cannot_collect_and_unimplemented_cannot_be_activated(tmp_path,
     monkeypatch.setattr(runner, 'OPS', tmp_path/'ops')
     path = config(tmp_path, 'fr_security_master_sync',enabled=False)
     assert runner.run('fr_security_master_sync', config_path=path)['status'] == 'SKIPPED_DISABLED_OR_UNQUALIFIED'
-    path = config(tmp_path, 'fr_consensus_borrow_options', enabled=True, status='ACTIVE')
-    result = runner.run('fr_consensus_borrow_options', config_path=path)
+    path = config(tmp_path, 'fr_borrow_snapshot', enabled=True, status='ACTIVE')
+    result = runner.run('fr_borrow_snapshot', config_path=path)
     assert result['status'] == 'FAILED'
     assert 'non implémenté' in result['error_message']
-    assert runner.latest_run('fr_consensus_borrow_options')['failed_count'] == 1
+    assert runner.latest_run('fr_borrow_snapshot')['failed_count'] == 1
 
 
 def test_dry_run_no_disk_writes(tmp_path, monkeypatch):
@@ -94,7 +95,7 @@ def test_commands_use_fr_wrapper_and_config_and_no_disabled_install(tmp_path):
         for command in (batch_management.build_install_command(spec), batch_management.build_run_command(spec)):
             assert 'fr_operational_launcher_15a.ps1' in ' '.join(command)
             assert command[command.index('-BatchConfigPath')+1] == spec.catalog_path
-    blocked = next(s for s in specs if s.name == 'fr_consensus_borrow_options')
+    blocked = next(s for s in specs if s.name == 'fr_borrow_snapshot')
     assert batch_management.install_batch(blocked).ok is False
 
 

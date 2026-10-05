@@ -218,6 +218,34 @@ les comptes exclus et le nombre de correspondances examinées.
 
 ## Qualification ultérieure
 
+### Conservation renforcée à partir du 6 octobre 2026
+
+Les comptes publics acceptés restent archivés en JSON complet (réponse décodée,
+pas octets/headers HTTP), par SHA256. Les nouvelles observations détaillent
+`archive_version=inpi-structured-v2`, endpoint, début de requête et réception UTC.
+Les unités et exercices restent explicitement non qualifiés. Ni identifiants,
+ni mots de passe, ni tokens ou réponse de login ne sont archivés.
+
+Chaque nouveau passage étendu conserve dans son dossier `observations/<run>/`
+une copie du manifeste d'identité et du rapport de mapping utilisé. Les pages
+de références sont conservées dans `reference_pages/<ISIN-SIREN>/` avec les
+horodatages, curseurs et métadonnées id/SIREN/nom/clôture/dépôt/type/publicité/
+retrait/mise à jour. Les corps confidentiels ou retirés ne sont pas ajoutés.
+`issuer_reviews/` conserve les références examinées et exclusions à la fin
+d'un émetteur, même quand le checkpoint courant sera remplacé au rafraîchissement.
+Une reprise sans nouvelle page conserve les pages du passage précédent.
+
+Les refus de nom ne sont pas automatiquement acceptés : les motifs et références
+permettent la revue, mais le corps refusé n'est pas promu dans les comptes acceptés.
+Le mécanisme de retrait de copies précédemment publiques reste à qualifier avant
+redistribution/promotion. Aucun PDF, annexe ou nouvelle famille INPI n'est collecté
+par ce renforcement. Aucun historique ancien n'est certifié PIT rétroactivement.
+
+Les nouvelles preuves et les comptes sont sous `artifacts/fr`, déjà inclus dans
+`fr_artifacts_backup`. Test de restauration des chemins de quarantaine ajouté ;
+pas de sauvegarde lourde ni de nouvelle collecte lancée ici. Les anciens fichiers
+ne reçoivent pas de faux horodatages ou de preuves reconstruits à partir du présent.
+
 Collecter davantage ne corrige pas les incohérences comptables du pilote.
 Unité, période, consolidation, rubrique, révisions et disponibilité PIT doivent
 être rapprochées des publications avant tout usage. Les nouveaux snapshots
