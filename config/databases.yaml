@@ -24,4 +24,7 @@ databases:
     host_env: DB_HOST_FR
     user_env: LOGIN_DB_FR
     password_env: PASSWORD_DB_FR
+    # Identifiants partagés explicitement autorisés ; base physique FR isolée.
+    fallback_user_env: LOGIN_DB
+    fallback_password_env: PASSWORD_DB
     allowed_markets: [FR_EQ]

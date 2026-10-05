@@ -16,10 +16,12 @@ le lancement d'un replay figé ; aucun entraînement ou serving n'est activé.
 Les boutons paper/live et les étapes quotidiennes US sont absents.
 
 Dans Workflow & Orchestration → Batch, sélectionner le périmètre France.
-Cette vue indique qu'aucun catalogue prospectif FR n'est encore intégré ;
-elle ne charge ni n'installe les tâches US/CN. La création de batch_fr.yaml
-et de ces collectes reste au Sprint 15. Le catalogue US/CN existant demeure
-inchangé et sélectionné par défaut.
+La vue initiale 14-A était un emplacement réservé, sans catalogue prospectif.
+Depuis le [Sprint 15-A](sprint_15a_catalogue_et_orchestration.md), elle charge
+`batch_fr.yaml` et présente les tâches FR, leurs prérequis et leurs commandes.
+Elle ne charge ni n'installe les tâches US/CN. Les collecteurs fournisseur FR
+restent désactivés tant qu'ils ne sont pas qualifiés. Le catalogue US/CN
+existant demeure inchangé et sélectionné par défaut.
 
 ## Campagnes et interprétation
 

@@ -426,8 +426,8 @@ def test_batch_page_renders_without_external_dependencies(monkeypatch) -> None:
 
     monkeypatch.setattr(
         page,
-        "load_batch_specs",
-        lambda: (
+        "load_market_batch_specs",
+        lambda market: (
             _spec(),
             _spec(
                 "pending_provider", enabled=False, status="PENDING_PROVIDER",

@@ -1,0 +1,162 @@
+schema_version: 1
+defaults:
+  market_code: FR_EQ
+  database_alias: fr_primary
+  timezone: Europe/Paris
+  scheduler_timezone: Europe/Paris
+  calendar: XPAR
+  canonical_writes_enabled: false
+  serving_enabled: false
+  enabled: false
+  status: PENDING_QUALIFICATION
+  run_minutes: "0"
+  run_days: "1,2,3,4,5"
+  lookback_days: 7
+  license: source_specific_review_required
+
+fr_calendar_snapshot:
+  enabled: true
+  status: ACTIVE_RESEARCH
+  priority: P0
+  provider: local_XPAR_calendar
+  run_hours: "7"
+  run_days: "0"
+  days_ahead: 370
+  description: "Archiver le calendrier XPAR utilisé par la recherche, avec source et horaires UTC. Pas une preuve officielle ni une écriture de market_sessions."
+  tables: "aucune; fichiers:artifacts/fr/operations/calendar"
+  coverage_description: "J-7 à J+370, calendrier de bibliothèque XPAR ; relance idempotente par date d'observation."
+  research_notice: "Calendrier de bibliothèque, pas validation des exceptions officielles Euronext."
+  log_file: log/batch_fr/fr_calendar_snapshot.txt
+
+fr_security_master_sync:
+  priority: P0
+  provider: ESMA_Euronext
+  run_hours: "20"
+  description: "Référentiel et changements de cotation France, identités ISIN/MIC, radiations et statuts."
+  tables: "prévu:instruments,instrument_listing_intervals"
+  activation_requirement: "Adapter le rejeu ESMA en incrémental, vérifier les intervalles et la licence avant publication."
+  unlock_steps: ["Créer le collecteur quotidien distinct du rejeu historique", "Smoke de schéma, corrections et reprise", "Qualifier quotas et dates PIT"]
+  log_file: log/batch_fr/fr_security_master_sync.txt
+
+fr_daily_bars_sync:
+  enabled: true
+  status: ACTIVE_RESEARCH
+  priority: P0
+  provider: EODHD
+  run_hours: "22"
+  universe_scope: "config/universe_fr_s6c.yaml (contrat FR, pas fichier univers US)"
+  description: "Collecter J-7/J des OHLCV FR et leurs corrections dans un staging versionné, puis publier uniquement les données qualifiées."
+  identities_file: artifacts/fr/sprint6c_reference/identities.jsonl.gz
+  request_interval_seconds: 0.5
+  max_symbol_requests: 400 # 294 titres actifs du référentiel S6C actuel ; stop si budget dépassé.
+  after_close_hour_paris: 22
+  tables: "aucune SQL; fichiers:artifacts/fr/operations/eodhd_daily (raw,latest,windows)"
+  coverage_description: "J-7/J après 22h Paris ; avant 22h : J-7/J-1. Reprise explicite, relance normale rafraîchissant les corrections."
+  research_notice: "Collecte fournisseur fichiers uniquement ; univers S6C figé (statut actif actuel), pas référentiel quotidien ni preuve tradable/PIT historique. Aucun SQL canonique."
+  activation_requirement: "Smoke réel de deux passages validé sur 3 titres ; surveillance pleine couverture et publication staging SQL restent à qualifier."
+  unlock_steps: ["Valider deux collectes réelles sur petit sous-ensemble", "Contrôler quota et corrections", "Qualifier publication staging SQL séparément ; aucune promotion canonique automatique"]
+  log_file: log/batch_fr/fr_daily_bars_sync.txt
+
+fr_corporate_actions_sync:
+  enabled: true
+  status: ACTIVE_RESEARCH
+  identities_file: artifacts/fr/sprint6c_reference/identities.jsonl.gz
+  request_interval_seconds: 0.5
+  max_symbol_requests: 400
+  priority: P0
+  provider: EODHD_public_evidence
+  run_hours: "23"
+  description: "Dividendes/splits et corrections fournisseur, preuves publiques et dates de disponibilité ; inconnus explicites."
+  tables: "aucune SQL; fichiers versionnés:artifacts/fr/operations/fr_corporate_actions_sync"
+  coverage_description: "J-7/J fournisseur, dividendes et splits ; deux requêtes par titre, aucune action connue est une réponse vide valide."
+  activation_requirement: "Collecte fichiers validée sur 3 titres/deux passages ; validation cash/actions/paiement et publication SQL restent ouvertes."
+  research_notice: "Dates et valeurs fournisseur non promues comme preuves officielles ; normalisation canonique et contrôle complet des 294 titres à qualifier."
+  log_file: log/batch_fr/fr_corporate_actions_sync.txt
+
+fr_pit_quality_daily:
+  enabled: true
+  status: ACTIVE_RESEARCH
+  collection_dependencies: [fr_daily_bars_sync, fr_corporate_actions_sync, fr_amf_short_sync, fr_dila_disclosures_sync]
+  max_run_age_hours: 96 # Inclut un week-end ; fraîcheur des runs, pas certification PIT des tables.
+  priority: P0
+  provider: local_quality
+  run_hours: "6"
+  description: "Superviser le dernier run des quatre collectes FR : succès, ancienneté et exclusion des smokes limités. Aucune nouvelle donnée marché, pas certification PIT des tables."
+  tables: "aucune SQL; lecture des rapports locaux FR et fichiers:artifacts/fr/operations/quality"
+  activation_requirement: "Contrôle opérationnel implémenté ; échoue tant que les quatre collectes complètes ne disposent pas de runs récents réussis."
+  supervision_dependencies: fr_daily_bars_sync,fr_corporate_actions_sync,fr_amf_short_sync,fr_dila_disclosures_sync
+  research_notice: "Ce contrôle n'évalue pas encore le référentiel, la fraîcheur des barres individuelles, les doublons SQL ou la validité économique/PIT. Il n'inclut pas ses propres échecs."
+  log_file: log/batch_fr/fr_pit_quality_daily.txt
+
+fr_amf_short_sync:
+  enabled: true
+  status: ACTIVE_RESEARCH
+  identities_file: artifacts/fr/sprint6c_reference/identities.jsonl.gz
+  priority: P1
+  provider: AMF_public
+  run_hours: "21"
+  description: "Positions courtes publiques AMF : versions, seuils de publication et available_at prudent. Pas le short interest complet."
+  tables: "aucune SQL; fichiers versionnés:artifacts/fr/operations/fr_amf_short_sync"
+  coverage_description: "Snapshot de l'export AMF complet courant ; historique reconstruit, pas vintage historique."
+  activation_requirement: "Deux passages réels validés ; intégration SQL et features directionnelles non autorisées."
+  research_notice: "Licence Ouverte 2.0, positions publiques censurées par seuil ; absence n'est pas zéro. Lignes historiques incohérentes conservées en quarantaine."
+  log_file: log/batch_fr/fr_amf_short_sync.txt
+
+fr_dila_disclosures_sync:
+  enabled: true
+  status: ACTIVE_RESEARCH
+  identities_file: artifacts/fr/sprint6c_reference/identities.jsonl.gz
+  priority: P1
+  provider: DILA_INFO_FINANCIERE
+  run_hours: "21"
+  run_minutes: "30"
+  description: "Annonces et pièces publiques, hashes, publication/observation PIT, quota et erreurs de téléchargement visibles."
+  tables: "aucune SQL; fichiers versionnés:artifacts/fr/operations/fr_dila_disclosures_sync"
+  coverage_description: "J-7/J sur la date de transmission AMF ; métadonnées pour les ISIN vérifiés, versions conservées."
+  activation_requirement: "Deux passages réels validés ; extraction des documents et revue indépendante des paires guidance restent ouvertes."
+  research_notice: "Métadonnées uniquement, pas téléchargement des PDF ni signal directionnel. Horodatages invalides en quarantaine ; available_at est l'observation effective."
+  log_file: log/batch_fr/fr_dila_disclosures_sync.txt
+
+fr_fundamentals_sync:
+  priority: P2
+  provider: INPI_candidate
+  run_hours: "20"
+  description: "Fondamentaux et secteurs FR datés/versionnés ; candidat fournisseur, pas intégration déjà qualifiée."
+  activation_requirement: "Qualifier fournisseur, droits, couverture et dates de disponibilité."
+  log_file: log/batch_fr/fr_fundamentals_sync.txt
+
+fr_consensus_borrow_options:
+  priority: P3
+  provider: unqualified
+  run_hours: "20"
+  description: "Réserve pour consensus, emprunt, enchères et options France ; aucune source quotidienne qualifiée."
+  activation_requirement: "Fournisseur, licence, coût, PIT et contrat de schéma manquants."
+  log_file: log/batch_fr/fr_consensus_borrow_options.txt
+
+fr_db_backup:
+  status: PENDING_RESTORE_PROOF
+  priority: P0
+  provider: local_mysql
+  run_hours: "3"
+  run_days: "0"
+  db: alpha_trade_fr
+  dest_dir: backups/fr/db
+  archive_prefix: alpha_trade_fr
+  keep: 3
+  mysqldump_path: "C:/Program Files/MySQL/MySQL Server 8.0/bin/mysqldump.exe"
+  description: "Sauvegarde isolée de alpha_trade_fr, schéma/routines/triggers ; activation après preuve de restauration."
+  activation_requirement: "Valider un dump réel et sa restauration dans une base temporaire FR, sans toucher US/CN."
+  log_file: log/batch_fr/fr_db_backup.txt
+
+fr_artifacts_backup:
+  status: PENDING_RESTORE_PROOF
+  priority: P0
+  provider: local_archive
+  run_hours: "2"
+  run_days: "6"
+  sources: [artifacts/fr, artifacts/models/fr_eq]
+  dest_dir: backups/fr/artifacts
+  keep: 3
+  description: "Sauvegarde des données/preuves/recherche FR et modèles FR, archives séparées par racine. Pas catboost_info ni artefacts US/CN."
+  activation_requirement: "Mesurer volume/disque disponible et vérifier extraction sûre/hash des archives avant activation."
+  log_file: log/batch_fr/fr_artifacts_backup.txt

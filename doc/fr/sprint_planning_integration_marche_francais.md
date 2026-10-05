@@ -414,6 +414,19 @@ pipeline US ni un lancement de serving. Les réserves du
 
 ### Sprint 15 — Batchs prospectifs, surveillance, sauvegarde et restauration
 
+**GO reçu le 5 octobre 2026 ; en cours.** Le
+[15-A : catalogue et orchestration isolés](sprint_15a_catalogue_et_orchestration.md)
+est implémenté : calendrier local et handlers de sauvegarde, familles
+fournisseur dormantes avec prérequis explicites. Le
+[15-B : EODHD J−7/J](sprint_15b_eodhd_quotidien.md) est implémenté pour les
+fichiers versionnés, actif en recherche après deux smokes de trois titres.
+Pas de publication SQL/canonique ; 294 titres actuellement actifs dans
+le référentiel S6C figé (pas référentiel prospectif rafraîchi). Les autres collecteurs,
+à l'exception des actions EODHD/AMF/DILA et de la supervision des runs
+raccordés par le [15-C](sprint_15c_deblocage_collectes.md), ainsi que les
+preuves de restauration/notification et la semaine d'observation restent
+à réaliser. Aucune tâche Windows installée automatiquement.
+
 **Objectif.** Maintenir les données FR à jour et auditables une fois l'historique qualifié.
 
 **Configuration.** Créer `batch_fr.yaml`, séparé de `batch.yaml` et `batch_cn.yaml`, avec `market_code=FR_EQ`, `database_alias=fr_primary`, fournisseur, licence, priorité, calendrier XPAR, timezone `Europe/Paris`, fenêtre de rattrapage, cadence, politique d'upsert/version, quotas et alertes. Étendre la page Batch pour trois catalogues avec détection des doublons. Les launchers affichent demandé/reçu/persisté/échoué/alertes, clôturent leurs runs sur exception, notifications mail/Telegram et statut de fraîcheur. Installer/désinstaller uniquement les batches FR explicitement actifs. Aucun batch France ne lit `config/univers_batch` US par défaut.

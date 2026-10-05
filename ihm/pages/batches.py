@@ -22,6 +22,8 @@ from ihm.services.batch_management import (
     latest_cn_dragon_research_run,
     list_active_batch_runs,
     load_batch_specs,
+    load_market_batch_specs,
+    supports_batch_execution,
     query_windows_task_states,
     read_batch_log_tail,
     read_cn_daily_quality_history,
@@ -182,7 +184,7 @@ def _batch_title(
 
 def _render_last_run(row: dict[str, Any] | None) -> None:
     if not row:
-        st.caption("Aucune exécution suivie dans pit_collection_runs.")
+        st.caption("Aucune exécution suivie pour ce batch dans son périmètre.")
         return
     status = str(row.get("status") or "INCONNU")
     if status in {"SUCCESS", "COMPLETED", "OK"}:
@@ -288,17 +290,22 @@ def _render_batch(
                     st.info("Aucune séance CN ouverte contrôlée pour le moment.")
 
         with st.expander("Commandes et détails techniques"):
-            st.caption("Installation / réinstallation de la tâche Windows")
-            st.code(format_command(build_install_command(spec, run_as=run_as)), language="powershell")
-            st.caption("Exécution immédiate, sans attendre le calendrier")
-            st.code(format_command(build_run_command(spec)), language="powershell")
+            if supports_batch_execution(spec):
+                st.caption("Installation / réinstallation de la tâche Windows")
+                st.code(format_command(build_install_command(spec, run_as=run_as)), language="powershell")
+                st.caption("Exécution immédiate, sans attendre le calendrier")
+                st.code(format_command(build_run_command(spec)), language="powershell")
+            else:
+                st.info("Launcher dédié non raccordé : aucune commande US de substitution.")
             st.caption("Désinstallation de la tâche Windows uniquement")
             st.code(format_command(build_uninstall_command(spec)), language="powershell")
             st.caption(f"Journal principal : {spec.log_file} · Statut de configuration : {spec.status}")
 
         install_col, run_col, uninstall_col = st.columns(3)
         with install_col:
-            if st.button("♻️ Installer / réinstaller", key=f"batch_install_{spec.name}", use_container_width=True):
+            if st.button("♻️ Installer / réinstaller", key=f"batch_install_{spec.name}",
+                         disabled=not supports_batch_execution(spec) or (Path(spec.catalog_path).name == "batch_fr.yaml" and not spec.runnable),
+                         use_container_width=True):
                 with st.spinner(f"Installation de {spec.name}…"):
                     result = install_batch(spec, run_as=run_as)
                 if result.ok:
@@ -312,7 +319,7 @@ def _render_batch(
             disabled = not spec.runnable or bool(active) or scheduled_running
             if st.button("▶️ Lancer maintenant", key=f"batch_run_{spec.name}", disabled=disabled, use_container_width=True):
                 try:
-                    record = start_batch(spec, db_config=get_runtime_db_config())
+                    record = start_batch(spec, db_config=None if spec.name.startswith(('fr_','cn_')) else get_runtime_db_config())
                 except Exception as exc:
                     st.error(f"Impossible de lancer le batch : {exc}")
                 else:
@@ -379,23 +386,34 @@ def _render_bulk_result(action: str, results: dict[str, Any], skipped: list[str]
 
 def render() -> None:
     st.title("🗓️ Batchs planifiés")
-    from ihm.services.cn_research_market import MARKET_LABELS
-    market = st.selectbox("Périmètre des batchs", ("US_CN", "FR_EQ"),
-                          key="fr14_batch_market", format_func=lambda v:
-                          MARKET_LABELS[v] if v == "FR_EQ" else "Catalogues US / CN existants")
+    labels={'US_EQ':'États-Unis (US)','CN_A':'Chine (CN)','FR_EQ':'France (FR)'}
+    if st.session_state.get('fr14_batch_market') == 'US_CN':
+        st.session_state['fr14_batch_market']='US_EQ'
+    market = st.selectbox("Périmètre des batchs", tuple(labels),
+                          key="fr14_batch_market", format_func=labels.get)
     if market == "FR_EQ":
-        st.warning("FR_EQ — aucun batch prospectif France installé par cette page. Catalogue et orchestration prévus au Sprint 15.")
-        st.info("Base alpha_trade_fr · EUR · XPAR. Aucun bouton global US/CN n'est disponible dans cette vue France.")
+        from ihm.services.fr_batch_view import render_fr_batches
+        render_fr_batches()
         return
-    st.caption(
-        "Catalogues batch.yaml (US) et batch_cn.yaml (CN) : rôle de chaque collecte, priorité, état réel du "
-        "Planificateur Windows, dernières écritures et pilotage manuel."
-    )
+    render_market_batches(market)
 
-    specs = load_batch_specs()
+
+def render_market_batches(market: str) -> None:
+    """Same controls/cards for US, CN and FR, with separate status sources."""
+    captions={'US_EQ':'US · batch.yaml · alpha_trade',
+              'CN_A':'CN · batch_cn.yaml et sections CN historiques · alpha_trade_cn',
+              'FR_EQ':'FR · batch_fr.yaml · alpha_trade_fr · recherche fichiers uniquement'}
+    st.caption(
+        captions[market] + ' : rôle, priorité, état Windows, derniers runs et pilotage manuel. '
+        'Les actions globales concernent uniquement ce marché.'
+    )
+    specs = load_market_batch_specs(market)
     tasks, task_error = _task_states()
-    db_runs, db_error = _latest_collection_runs()
-    active = list_active_batch_runs()
+    db_runs, db_error = _latest_collection_runs() if market=='US_EQ' else ({},None)
+    if market=='FR_EQ':
+        st.warning('Collecte recherche fichiers uniquement ; pas de publication SQL/canonique. Sources non qualifiées et sauvegardes restent bloquées. Aucune installation automatique.')
+    names={s.name for s in specs}
+    active = [r for r in list_active_batch_runs() if str(r.get('step_key','')).removeprefix('batch:') in names]
     active_by_batch: dict[str, list[dict[str, object]]] = {}
     for row in active:
         name = str(row.get("step_key") or "").removeprefix("batch:")
@@ -501,11 +519,15 @@ def render() -> None:
     for spec in visible:
         batch_active = active_by_batch.get(spec.name, [])
         recent = batch_active[0] if batch_active else history_by_batch.get(spec.name)
+        if market=='FR_EQ':
+            from service.fr.operational_batch_15a import latest_run
+            last=latest_run(spec.name)
+        elif market=='CN_A':
+            last=latest_cn_dragon_research_run(spec)
+        else:
+            last=db_runs.get(spec.name)
         _render_batch(
-            spec, tasks.get(spec.task_name),
-            (latest_cn_dragon_research_run(spec) if spec.name.startswith("cn_dragon_tiger_")
-             or spec.name in {"cn_oracle_prospective_daily", "cn_db_backup", "cn_daily_quality_17c"}
-             else db_runs.get(spec.name)),
+            spec, tasks.get(spec.task_name), last,
             run_as=run_as, active=batch_active, recent=recent,
         )
 

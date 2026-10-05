@@ -71,8 +71,10 @@ Les réserves strictes prix/statuts/PIT/actions sur titres/fiscalité des Sprint
 confirmation 2026 reste réservée. Les messages de l'IHM ne doivent pas être
 interprétés comme une qualification indépendante des données fournisseur.
 
-Prochaine étape du planning : **Sprint 15, batchs prospectifs France,
-surveillance et sauvegardes**, à démarrer après GO explicite. La collecte
-qualifiée, les quotas, notifications, calendrier et isolation des fichiers FR
-doivent être traités à ce moment ; aucune tâche FR planifiée n'est activée ici.
+Le GO du **Sprint 15, batchs prospectifs France, surveillance et sauvegardes**
+a été reçu le 5 octobre 2026. La première tranche est décrite dans le
+[Sprint 15-A](sprint_15a_catalogue_et_orchestration.md). Le catalogue et le
+snapshot local du calendrier sont implémentés ; la collecte fournisseur
+quotidienne, la restauration et les notifications réelles restent à qualifier.
+Aucune tâche FR Windows n'a été installée automatiquement.
 La prédiction future/shadow appartient au Sprint 16 ; aucun live n'est autorisé.

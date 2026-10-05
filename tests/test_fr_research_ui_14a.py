@@ -80,6 +80,9 @@ def test_fr_returns_before_us_access(monkeypatch, module, kind, forbidden):
 
 def test_fr_batches_dont_query_or_install_us(monkeypatch):
     from ihm.pages import batches
+    from ihm.services import fr_batch_view
+    rendered = []
+    monkeypatch.setattr(fr_batch_view, 'render_fr_batches', lambda: rendered.append('FR_EQ'))
     monkeypatch.setattr(batches.st, 'title', lambda *a, **k: None)
     monkeypatch.setattr(batches.st, 'selectbox', lambda *a, **k: 'FR_EQ')
     monkeypatch.setattr(batches.st, 'warning', lambda *a, **k: None)
@@ -88,3 +91,4 @@ def test_fr_batches_dont_query_or_install_us(monkeypatch):
         raise AssertionError('US/CN batch catalogue touched')
     monkeypatch.setattr(batches, 'load_batch_specs', reject)
     batches.render()
+    assert rendered == ['FR_EQ']

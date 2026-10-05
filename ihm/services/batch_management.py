@@ -36,6 +36,7 @@ CN_QUALITY_BATCHES = {"cn_daily_quality_17c"}
 CN_OPERATIONAL_BATCHES = CN_BACKUP_BATCHES | CN_QUALITY_BATCHES
 CN_RESEARCH_BATCHES = CN_DRAGON_BATCHES | CN_DRAGON_MATCH_BATCHES | CN_ORACLE_BATCHES | CN_OPERATIONAL_BATCHES
 PENDING_STATUSES = {
+    "PENDING_QUALIFICATION",
     "PENDING_RESTORE_PROOF",
     "PENDING_PROVIDER",
     "PENDING_QUOTA_DECISION",
@@ -123,6 +124,26 @@ def task_name_for_batch(batch_name: str) -> str:
 
 def load_batch_specs(path: str | None = None) -> tuple[BatchSpec, ...]:
     config = load_batch_config(path)
+    if path and Path(path).name == 'batch_cn.yaml':
+        defaults = config.get('defaults') or {}
+        config = {name: {**defaults, **section} for name, section in config.items()
+                  if name not in ('defaults','schema_version') and isinstance(section,dict)}
+        if any(not n.startswith('cn_') or r.get('market_code')!='CN_A' or r.get('database_alias')!='cn_primary'
+               for n,r in config.items()):
+            raise ValueError('Catalogue CN incompatible')
+    if path and Path(path).name == "batch_fr.yaml":
+        defaults = config.get("defaults") or {}
+        config = {name: {**defaults, **section} for name, section in config.items()
+                  if name not in ("defaults", "schema_version") and isinstance(section, dict)}
+        for name, section in config.items():
+            if not name.startswith("fr_") or section.get("market_code") != "FR_EQ" or section.get("database_alias") != "fr_primary":
+                raise ValueError(f"Catalogue FR incompatible : {name}")
+        for sibling in ("batch.yaml", "batch_cn.yaml"):
+            other_path = Path(path).resolve().parent / sibling
+            if other_path.exists():
+                duplicates = set(config) & set(load_batch_config(str(other_path)))
+                if duplicates:
+                    raise ValueError(f"Doublons de catalogue FR / {sibling} : {sorted(duplicates)}")
     catalog_paths = {name: str(Path(path).resolve()) if path else str(PROJECT_ROOT / "batch.yaml")
                      for name in config}
     if path is None:
@@ -165,6 +186,34 @@ def load_batch_specs(path: str | None = None) -> tuple[BatchSpec, ...]:
         ))
     order = {f"P{i}": i for i in range(5)}
     return tuple(sorted(specs, key=lambda item: (order.get(item.priority, 99), item.name)))
+
+
+def load_market_batch_specs(market: str) -> tuple[BatchSpec, ...]:
+    """UI market boundary; retain legacy CN sections in their original catalogue."""
+    from dataclasses import replace
+    if market == 'FR_EQ':
+        return load_batch_specs(str(PROJECT_ROOT/'batch_fr.yaml'))
+    if market not in ('US_EQ','CN_A'):
+        raise ValueError('Périmètre batch inconnu')
+    legacy = load_batch_specs(str(PROJECT_ROOT/'batch.yaml'))
+    if market == 'US_EQ':
+        return tuple(s for s in legacy if not s.name.startswith(('cn_','fr_'))
+                     and s.raw_config.get('market_code', 'US_EQ') == 'US_EQ')
+    specs = {s.name:s for s in legacy if s.name.startswith('cn_')}
+    for spec in load_batch_specs(str(PROJECT_ROOT/'batch_cn.yaml')):
+        if spec.name in specs:
+            raise ValueError(f'Duplicate {spec.name} in batch.yaml and batch_cn.yaml')
+        specs[spec.name]=spec
+    for name,spec in list(specs.items()):
+        if name not in CN_RESEARCH_BATCHES:
+            specs[name] = replace(spec,enabled=False,status='PENDING_QUALIFICATION',
+                activation_requirement=spec.activation_requirement or
+                'Famille CN déclarée, sans launcher quotidien raccordé à cette page ; aucun fallback US autorisé.')
+    return tuple(sorted(specs.values(),key=lambda s:(s.priority,s.name)))
+
+
+def supports_batch_execution(spec: BatchSpec) -> bool:
+    return not spec.name.startswith('cn_') or spec.name in CN_RESEARCH_BATCHES
 
 
 def format_schedule(spec: BatchSpec) -> str:
@@ -236,6 +285,13 @@ def _powershell_prefix() -> list[str]:
 
 
 def build_install_command(spec: BatchSpec, *, run_as: str = "Interactive") -> list[str]:
+    if not supports_batch_execution(spec):
+        raise ValueError('Launcher CN non raccordé ; installation US interdite')
+    if Path(spec.catalog_path).name == "batch_fr.yaml":
+        return _powershell_prefix() + [str(WINDOWS_SCRIPTS / "install_forward_pit_task.ps1"),
+            "-BatchName", spec.name, "-TaskName", spec.task_name, "-RunAs", run_as,
+            "-BatchConfigPath", spec.catalog_path,
+            "-LauncherPath", str(WINDOWS_SCRIPTS / "fr_operational_launcher_15a.ps1")]
     cn_catalog = Path(spec.catalog_path).name == "batch_cn.yaml"
     if spec.name in OLD_BATCHES:
         script = OLD_BATCHES[spec.name][1]
@@ -282,6 +338,11 @@ def build_install_command(spec: BatchSpec, *, run_as: str = "Interactive") -> li
 
 
 def build_run_command(spec: BatchSpec) -> list[str]:
+    if not supports_batch_execution(spec):
+        raise ValueError('Launcher CN non raccordé ; exécution US interdite')
+    if Path(spec.catalog_path).name == "batch_fr.yaml":
+        return _powershell_prefix() + [str(WINDOWS_SCRIPTS / "fr_operational_launcher_15a.ps1"),
+            "-BatchName", spec.name, "-BatchConfigPath", spec.catalog_path, "-Force"]
     cn_config_arg = (["-BatchConfigPath", spec.catalog_path]
                      if Path(spec.catalog_path).name == "batch_cn.yaml" else [])
     if spec.name in CN_DRAGON_BATCHES:
@@ -331,6 +392,8 @@ def format_command(command: list[str]) -> str:
 
 
 def install_batch(spec: BatchSpec, *, run_as: str = "Interactive", timeout_seconds: int = 120) -> CommandResult:
+    if Path(spec.catalog_path).name == "batch_fr.yaml" and not spec.runnable:
+        return CommandResult(False, -1, "", "Batch FR désactivé ou non qualifié : aucune tâche modifiée.")
     completed = subprocess.run(
         build_install_command(spec, run_as=run_as),
         cwd=str(PROJECT_ROOT), capture_output=True, text=True, encoding="utf-8",
