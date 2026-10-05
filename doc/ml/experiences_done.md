@@ -1,5 +1,30 @@
 # Registre des expériences ML réalisées
 
+## US — Ancien bundle : diagnostic mensuel de la dégradation 2026
+
+5 octobre 2026 : diagnostic des prédictions récupérées et labels H20 reconstruits
+en lecture seule. Janvier est mauvais ; février et mars ne montrent pas une
+dégradation uniforme. **Audit descriptif du contexte terminé, aucun veto robuste :
+régime normal en janvier et forte concentration TTD. Attribution
+portefeuille bloquée par les rapports anciens absents.** Aucun entraînement,
+veto macro ou changement de production.
+Voir [méthode, chiffres et limites](us_degradation_commune_2026q1_audit.md).
+
+Suite du 5 octobre : [répétition et fiabilité LONG](us_bundle_repetition_fiabilite_long_audit.md)
+terminées. Un signal par titre toutes les 20 séances ne résout pas janvier.
+AUC opérationnelles globales 0,439–0,516 selon fenêtre, sans classement stable.
+Scores presque constants sur certains titres : réserve technique à vérifier,
+pas de bug démontré ni nouveau filtre promu. Dix tests ciblés passent.
+
+Suite technique : [scores constants PENN/ROKU/GH](us_bundle_probabilites_constantes_diagnostic.md).
+LONG CatBoost/vector, 501 dates par titre ; calibration fortement aplatie plausible,
+mais artefacts absents des quatre sauvegardes : cause historique non certifiée.
+Défaut séparé reproduit sur états à température négative : incohérence fit/predict.
+Audit initial : 17 tests ciblés passants. Après GO, correctif de positivité et de
+validation des états appliqué à Temperature/Vector Scaling : 89 tests ciblés
+passent. États positifs compatibles ; anciens modèles et SQL inchangés. Ce correctif
+ne certifie pas la cause et ne promet pas de résoudre les scores constants.
+
 ## US — Ratio D10/D1 et contexte macro : validation chronologique
 
 **Décision du 5 octobre 2026 : EN VEILLE — corrélations confirmées,
@@ -1835,4 +1860,3 @@ Marché/macro/secteurs décrivent des variations, aucun veto prédictif stable
 validé. VIX/VXN/VIX3M/MOVE absents au T1 2026, secteurs actuels non PIT,
 bêta ancien souvent constant par défaut. Pas de nouveau fit, serving,
 backtest économique ni écriture SQL. Suivi automatique clôturé à livraison.
-
