@@ -31,9 +31,12 @@ cn_db_backup:
 
 cn_master_calendar_sync:
   enabled: false
+  status: DISABLED_DUPLICATE_D9
   priority: P0
   market_code: CN_A
   description: "Référentiel actions Shanghai/Shenzhen et calendrier de cotation via BaoStock gratuit."
+  execution_notice: "D9 collecte déjà stock_basic/trade_cal dans cn_sprint7c.prepare pour chaque nouvelle séance préparée ; le calendrier planifié reste un contrat annuel distinct. Ne pas créer un second propriétaire canonique."
+  activation_requirement: "Pas de deuxième collecteur à activer : vérifier les runs cn_sprint7c_prepare de D9 et maintenir le calendrier annuel de planification séparément."
   endpoints: [stock_basic, trade_cal]
   start_date: 2010-01-01
   run_hours: "11"

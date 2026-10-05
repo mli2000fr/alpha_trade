@@ -126,7 +126,7 @@ Aucun run complet 294 titres EODHD/actions n'a été lancé dans cette tranche.
 | Famille | Motif réel | Travail nécessaire |
 |---|---|---|
 | fr_security_master_sync | Rejeu historique ESMA ≠ mise à jour quotidienne ; aucun handler quotidien installé | Collecte deltas, continuité/parties complètes, réconciliation Full, normalisation d'identités/intervalles avec corrections ; ne pas lever sur simple disponibilité du ZIP |
-| fr_fundamentals_sync | INPI candidat non qualifié | Contrat API/droits, couverture des sociétés cotées, schéma, disponibilité PIT |
+| fr_fundamentals_sync | Collecte active en quarantaine depuis 15-F ; utilisation bloquée | Extension 330 S6C : 254 retenues, 76 exclues ; lots/reprise. Qualifier unités/exercices/versions/PIT avant promotion. Voir inpi_univers_collecte_securisee.md |
 | fr_consensus_borrow_options | Aucune source qualifiée | Identifier fournisseur, coût/droits, couverture et contrat ; pas substitution indicative silencieuse |
 | fr_db_backup | Handler présent et mysqldump trouvé, restauration non prouvée | Dump réel puis restauration dans base de contrôle distincte ; vérifier tables/index/routines/triggers avant activation |
 | fr_artifacts_backup | Handler présent, restauration/extraction non prouvée | Archiver les ~61,15 Go mesurés (14 419 fichiers avant nouveaux runs), contrôler espace/volume et extraction avec hashes ; pas prétendre que des tests unitaires remplacent ce contrôle lourd |

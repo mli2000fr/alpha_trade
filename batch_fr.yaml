@@ -29,13 +29,21 @@ fr_calendar_snapshot:
   log_file: log/batch_fr/fr_calendar_snapshot.txt
 
 fr_security_master_sync:
+  enabled: true
+  status: ACTIVE_RESEARCH
   priority: P0
   provider: ESMA_Euronext
+  identities_file: artifacts/fr/sprint6c_reference/identities.jsonl.gz
+  baseline_history: artifacts/fr/esma_firds/replay_2018/history_2026_observed_v2.json
+  max_catchup_days: 31
+  max_archive_requests: 128
   run_hours: "20"
-  description: "Référentiel et changements de cotation France, identités ISIN/MIC, radiations et statuts."
-  tables: "prévu:instruments,instrument_listing_intervals"
-  activation_requirement: "Adapter le rejeu ESMA en incrémental, vérifier les intervalles et la licence avant publication."
-  unlock_steps: ["Créer le collecteur quotidien distinct du rejeu historique", "Smoke de schéma, corrections et reprise", "Qualifier quotas et dates PIT"]
+  description: "Observer les changements ESMA ISIN/MIC des 330 identités S6C ; fichiers versionnés, sans mise à jour canonique ni nouveaux tickers automatiques."
+  tables: "aucune SQL; fichiers:artifacts/fr/operations/fr_security_master_sync"
+  activation_requirement: "Deux passages réels validés le 05/10/2026 : 9/9 archives, zéro doublon de version, checkpoint au 04/10. Pas de promotion SQL ni de réparation des lacunes historiques."
+  coverage_description: "Publications ESMA jusqu'à J-1 ; recouvrement 7 jours, rattrapage borné à 31 jours. Fragments absents : checkpoint non avancé."
+  research_notice: "330 ISIN S6C figés ; pas découverte de tous les nouveaux émetteurs, pas remplacement automatique des alias EODHD. available_at des nouvelles versions = observation réelle, pas date rétroactive. Historique antérieur conserve ses lacunes."
+  unlock_steps: ["Installer la tâche FR depuis la page Batch", "Surveiller les fragments ESMA et la continuité récente", "Qualifier séparément découverte nouveaux titres et promotion SQL"]
   log_file: log/batch_fr/fr_security_master_sync.txt
 
 fr_daily_bars_sync:
@@ -118,11 +126,29 @@ fr_dila_disclosures_sync:
   log_file: log/batch_fr/fr_dila_disclosures_sync.txt
 
 fr_fundamentals_sync:
+  enabled: true
+  status: ACTIVE_RESEARCH
   priority: P2
-  provider: INPI_candidate
+  provider: INPI
+  collection_mode: quarantine_only
+  issuer_manifest: artifacts/fr/operations/fr_fundamentals_sync/mapping/verified_manifest.json
+  mapping_report_file: artifacts/fr/operations/fr_fundamentals_sync/mapping/mapping_report.json
+  max_requests_per_run: 500
+  max_requests_per_day: 5000 # Plafond local UTC ; quota INPI documenté 10000 API/IHM par utilisateur/jour, autres usages à déduire.
+  max_issuers_per_run: 25
+  refresh_days: 7
+  request_interval_seconds: 0.25
+  max_archive_bytes_per_run: 134217728 # 128 Mio ; arrêt explicite, pas promotion partielle.
+  username_env: INPI_USERNAME
+  password_env: INPI_PASSWORD
   run_hours: "20"
-  description: "Fondamentaux et secteurs FR datés/versionnés ; candidat fournisseur, pas intégration déjà qualifiée."
-  activation_requirement: "Qualifier fournisseur, droits, couverture et dates de disponibilité."
+  description: "Collecte sécurisée INPI étendue à toutes les identités FR S6C correctement reliées à un SIREN ; ambiguïtés exclues, archives en quarantaine, reprise et quotas."
+  tables: "aucune SQL; fichiers:artifacts/fr/operations/fr_fundamentals_sync/quarantine et observations"
+  universe_scope: "330 identités FR S6C recherchées ; seules correspondances ISIN/LEI/SIREN vérifiées sont collectées. Étrangers, ambiguïtés et validations insuffisantes exclus avec motifs."
+  coverage_description: "Lots de 25 émetteurs au plus, pagination et documents repris au checkpoint ; jusqu'à 500 appels/run et 5000/jour UTC, revue des documents tous les 7 jours. Pas de reconstruction PIT historique."
+  activation_requirement: "Mapping étendu aux 330 identités S6C, exclusions motivées ; seuls les SIREN vérifiés sont collectés par lots. Promotion des fondamentaux bloquée tant que unités, exercices, versions/retraits et dates PIT ne sont pas qualifiés. Voir doc/fr/inpi_univers_collecte_securisee.md."
+  unlock_steps: ["Accès et pilote dix émetteurs réalisés : conserver les secrets hors YAML", "Arbitrer les incohérences Danone/L'Oréal, l'échelle Schneider et les versions BIC", "Qualifier unités, cellules consolidées, retraits et dates PIT ; ne pas corriger automatiquement", "Implémenter/valider stockage, reprise, idempotence et notifications avant activation"]
+  research_notice: "**COLLECTE UNIQUEMENT — COMPTES EN QUARANTAINE. NON UTILISABLES PAR LE ML, LES BACKTESTS OU LE LIVE.** Mapping recherché sur tout l'univers FR S6C, pas sur tous les titres Euronext. Seuls les SIREN vérifiés sont collectés ; les exclus et leurs motifs sont affichés ci-dessous. Collecte répartie avec reprise : un passage réussi ne signifie pas que tout l'univers a été terminé. Aucune écriture SQL, aucune alimentation des features."
   log_file: log/batch_fr/fr_fundamentals_sync.txt
 
 fr_consensus_borrow_options:
@@ -134,7 +160,8 @@ fr_consensus_borrow_options:
   log_file: log/batch_fr/fr_consensus_borrow_options.txt
 
 fr_db_backup:
-  status: PENDING_RESTORE_PROOF
+  enabled: true
+  status: ACTIVE
   priority: P0
   provider: local_mysql
   run_hours: "3"
@@ -145,11 +172,14 @@ fr_db_backup:
   keep: 3
   mysqldump_path: "C:/Program Files/MySQL/MySQL Server 8.0/bin/mysqldump.exe"
   description: "Sauvegarde isolée de alpha_trade_fr, schéma/routines/triggers ; activation après preuve de restauration."
-  activation_requirement: "Valider un dump réel et sa restauration dans une base temporaire FR, sans toucher US/CN."
+  activation_requirement: "Dump et restauration réelle vérifiés le 05/10/2026 : 28 tables, schéma/index/routines/triggers et nombres de lignes identiques. Installation Windows reste à effectuer depuis l'IHM."
+  qualification_report: backups/fr/qualification/20261005T191341-42dd10c5/report.json
+  coverage_description: "Sauvegarde complète alpha_trade_fr ; dimanche 03:00 Paris, keep configurable."
   log_file: log/batch_fr/fr_db_backup.txt
 
 fr_artifacts_backup:
-  status: PENDING_RESTORE_PROOF
+  enabled: true
+  status: ACTIVE
   priority: P0
   provider: local_archive
   run_hours: "2"
@@ -158,5 +188,6 @@ fr_artifacts_backup:
   dest_dir: backups/fr/artifacts
   keep: 3
   description: "Sauvegarde des données/preuves/recherche FR et modèles FR, archives séparées par racine. Pas catboost_info ni artefacts US/CN."
-  activation_requirement: "Mesurer volume/disque disponible et vérifier extraction sûre/hash des archives avant activation."
+  activation_requirement: "Extraction réelle et SHA256 vérifiés le 05/10/2026 : 14 448 fichiers, 61 268 388 163 octets source. Installation Windows depuis l'IHM reste à effectuer."
+  qualification_report: backups/fr/qualification/20261005T193256-a4610757/report.json
   log_file: log/batch_fr/fr_artifacts_backup.txt

@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import time
 import uuid
 
 from sqlalchemy import create_engine, text
@@ -39,7 +40,18 @@ def digest_file(path):
 def _write(path, payload):
     temporary = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
     temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding='utf-8')
-    temporary.replace(path)
+    # Windows readers/antivirus may transiently hold the destination without
+    # FILE_SHARE_DELETE. A progress read must not abort a 61 GB validation.
+    try:
+        for attempt in range(12):
+            try:
+                temporary.replace(path)
+                break
+            except PermissionError:
+                if attempt == 11: raise
+                time.sleep(min(0.05 * 2**attempt, 1.0))
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def safe_member(name, root_name):
@@ -75,6 +87,9 @@ def verified_archive(source, destination, *, keep=3, extract=False, progress=Non
     # Un hash préalable puis contrôle stat après lecture empêchent une validation
     # silencieuse d'une source qui change pendant la sauvegarde.
     with tarfile.open(temporary, 'w:gz', compresslevel=1) as output:
+        output.add(source, arcname=source.name, recursive=False)
+        for directory in (p for p in entries if p.is_dir()):
+            output.add(directory, arcname=str(PurePosixPath(source.name, directory.relative_to(source).as_posix())), recursive=False)
         for number, path in enumerate(files, 1):
             before = path.stat()
             name = str(PurePosixPath(source.name, path.relative_to(source).as_posix()))
@@ -96,6 +111,9 @@ def verified_archive(source, destination, *, keep=3, extract=False, progress=Non
     with tarfile.open(temporary, 'r|gz') as handle:
         for member in handle:
             relative = safe_member(member.name, source.name)
+            if member.isdir():
+                if restore: restore.joinpath(*relative.parts).mkdir(parents=True, exist_ok=True)
+                continue
             if not member.isfile() or member.name in seen or member.name not in manifest:
                 raise ValueError('Membre archive inattendu ou dupliqué')
             seen.add(member.name)
@@ -118,7 +136,11 @@ def verified_archive(source, destination, *, keep=3, extract=False, progress=Non
     temporary.replace(archive)
     _write(archive.with_suffix('.manifest.json'), manifest)
     # Seulement les archives de ce service, et seulement après validation.
-    old = sorted(destination.glob('fr_artifacts_*.tar.gz'))[:-keep]
+    # L'UUID ne classe pas les archives créées dans la même seconde.
+    # L'archive venant d'être vérifiée est toujours la plus récente logique.
+    previous = sorted((p for p in destination.glob('fr_artifacts_*.tar.gz') if p != archive),
+                      key=lambda p: p.stat().st_mtime_ns)
+    old = previous[:max(0, len(previous) - keep + 1)]
     for path in old:
         path.unlink()
         path.with_suffix('.manifest.json').unlink(missing_ok=True)

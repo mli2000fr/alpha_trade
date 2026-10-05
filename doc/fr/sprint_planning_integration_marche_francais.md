@@ -285,7 +285,10 @@ ce pilote exploratoire. Historique reconstruit/transmission ne constitue pas
 une preuve PIT stricte. Guidance : trois révisions prospectives haussières,
 aucune baissière ; étude bloquée par support et validation indépendante.
 Correction de note PDF Orange3,5 suivi de l'appel8, pas3,58 ; Vallourec séparé
-comme résultats provisoires. Sprint11 complet reste ouvert ; INPI/RNE non testé.
+comme résultats provisoires. Sprint11 complet reste ouvert. Mise à jour INPI
+05/10/2026 : accès testé, pilote dix émetteurs, puis mapping 330 S6C (254 retenus,
+76 exclusions) et collecte publique en quarantaine par lots. Aucune qualification
+comptable/PIT générale ni utilisation ML : voir `inpi_univers_collecte_securisee.md`.
 33 tests ciblés passent à la vérification finale cumulée, aucune écriture
 SQL/serving ni donnée2026 utilisée.
 
@@ -424,8 +427,18 @@ Pas de publication SQL/canonique ; 294 titres actuellement actifs dans
 le référentiel S6C figé (pas référentiel prospectif rafraîchi). Les autres collecteurs,
 à l'exception des actions EODHD/AMF/DILA et de la supervision des runs
 raccordés par le [15-C](sprint_15c_deblocage_collectes.md), ainsi que les
-preuves de restauration/notification et la semaine d'observation restent
-à réaliser. Aucune tâche Windows installée automatiquement.
+preuve d'extraction des artefacts, les notifications réelles et la semaine
+d'observation restent à réaliser. La [qualification 15-D](sprint_15d_sauvegardes_et_blocages.md)
+a validé la restauration réelle de la DB FR (28 tables / 2 850 495 lignes) :
+`fr_db_backup` est actif dans le catalogue, sans installation automatique.
+Aucune tâche Windows installée automatiquement.
+
+Le [15-E](sprint_15e_referentiel_quotidien.md) raccorde désormais les deltas ESMA
+quotidiens des 330 ISIN S6C, actifs en recherche après deux passages réels
+sur les publications du 02 au 04/10. Cela ne découvre pas tous les nouveaux
+émetteurs et ne corrige pas les lacunes historiques. La première extraction
+complète du backup artefacts a échoué sur un verrou Windows de `progress.json` ;
+writer corrigé, nouvelle qualification requise avant activation de ce backup.
 
 **Objectif.** Maintenir les données FR à jour et auditables une fois l'historique qualifié.
 

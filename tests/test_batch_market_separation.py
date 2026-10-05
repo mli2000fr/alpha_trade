@@ -15,6 +15,8 @@ def test_real_catalogues_are_disjoint_and_preserve_legacy_cn_location():
     assert any(s.name=='cn_oracle_prospective_daily' and s.catalog_path.endswith('batch.yaml') for s in cn)
     pending=next(s for s in cn if s.name=='cn_master_calendar_sync')
     assert not pending.runnable
+    assert pending.status=='DISABLED_DUPLICATE_D9'
+    assert 'D9' in pending.activation_requirement
     with pytest.raises(ValueError,match='CN'): manager.build_run_command(pending)
 
 

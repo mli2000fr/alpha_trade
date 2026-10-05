@@ -582,3 +582,14 @@ collecteurs. Les URL et statuts de ce catalogue sont des observations des
 passes citées, pas la garantie que le fournisseur répondra pareil demain.
 Actualiser source par source la date de vérification, l'accès, les droits,
 la pièce, les champs admis et les limites avant tout GO d'intégration.
+# Ajout opérationnel du 05/10/2026 — GLEIF / comptes INPI
+
+La [GLEIF](https://www.gleif.org/fr/lei-data/gleif-api/) est utilisée pour rechercher
+ISIN → LEI → SIREN, avec vérification inverse de l'ISIN et références légales
+SIRENE RA000189 / RCS RA000192. Elle qualifie une correspondance actuelle, pas
+un historique PIT. Résultat sur les 330 identités S6C : 254 retenues et 76
+exclusions explicites. Les correspondances permettent uniquement la collecte
+publique INPI en quarantaine, sans SQL/ML/backtest/live.
+
+Contrat, sources précises, limites et reprise :
+[INPI — univers et collecte sécurisée](inpi_univers_collecte_securisee.md).

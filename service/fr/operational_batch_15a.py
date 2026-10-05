@@ -15,7 +15,8 @@ from common.config_loader import load_batch_config
 ROOT = Path(__file__).resolve().parents[2]
 OPS = ROOT / "artifacts/fr/operations"
 IMPLEMENTED = {"fr_calendar_snapshot", "fr_db_backup", "fr_artifacts_backup", "fr_daily_bars_sync",
-               "fr_corporate_actions_sync", "fr_amf_short_sync", "fr_dila_disclosures_sync", "fr_pit_quality_daily"}
+               "fr_corporate_actions_sync", "fr_amf_short_sync", "fr_dila_disclosures_sync", "fr_pit_quality_daily",
+               "fr_security_master_sync", "fr_fundamentals_sync"}
 
 
 def load_section(name: str, config_path: Path) -> dict:
@@ -62,6 +63,43 @@ def run(name: str, *, config_path: Path = ROOT / "batch_fr.yaml", dry_run=False,
 
 
 def _handle(name, cfg, result, *, dry_run, today, resume=False, max_symbols=None):
+    if name == 'fr_fundamentals_sync':
+        from service.inpi.universe_collection import collect
+        manifest=(ROOT/str(cfg['issuer_manifest'])).resolve()
+        if manifest != (OPS/name/'mapping/verified_manifest.json').resolve():
+            raise ValueError('Collecte INPI limitée au mapping vérifié FR')
+        root=OPS/name
+        if dry_run:
+            collect(cfg,result,root=root,manifest_path=manifest,dry_run=True,max_symbols=max_symbols)
+            return
+        root.mkdir(parents=True,exist_ok=True)
+        lock=root/'.lock'
+        try: fd=os.open(lock,os.O_CREAT|os.O_EXCL|os.O_WRONLY)
+        except FileExistsError: raise RuntimeError('Collecte INPI déjà verrouillée : vérifier le processus') from None
+        with os.fdopen(fd,'w') as stream: stream.write(str(os.getpid()))
+        try:
+            collect(cfg,result,root=root,manifest_path=manifest,max_symbols=max_symbols)
+        finally: lock.unlink(missing_ok=True)
+        return
+    if name == 'fr_security_master_sync':
+        from service.fr.security_master_daily_15e import collect
+        identities=(ROOT/str(cfg['identities_file'])).resolve()
+        baseline=(ROOT/str(cfg['baseline_history'])).resolve()
+        if not all(p.is_relative_to((ROOT/'artifacts/fr').resolve()) for p in (identities,baseline)):
+            raise ValueError('Référentiel ESMA hors périmètre FR')
+        root=OPS/name
+        if dry_run:
+            collect(cfg,result,root=root,identities=identities,base_path=baseline,dry_run=True,today=today)
+            return
+        root.mkdir(parents=True,exist_ok=True)
+        lock=root/'.lock'
+        try: fd=os.open(lock,os.O_CREAT|os.O_EXCL|os.O_WRONLY)
+        except FileExistsError: raise RuntimeError('Référentiel FR déjà verrouillé : vérifier le processus') from None
+        with os.fdopen(fd,'w') as stream: stream.write(str(os.getpid()))
+        try:
+            collect(cfg,result,root=root,identities=identities,base_path=baseline,today=today)
+        finally: lock.unlink(missing_ok=True)
+        return
     if name in ('fr_corporate_actions_sync','fr_amf_short_sync','fr_dila_disclosures_sync','fr_pit_quality_daily'):
         from service.fr import operational_collectors_15c as collectors
         if name == 'fr_pit_quality_daily':
@@ -140,7 +178,7 @@ def _handle(name, cfg, result, *, dry_run, today, resume=False, max_symbols=None
             raise RuntimeError("; ".join(report.errors))
         result.update(received_count=1, persisted_count=0 if dry_run else 1, archive=report.dump_path)
         return
-    from scripts.backup_ml_artifacts import backup
+    from service.fr.backup_qualification_15d import verified_archive
     dest = (ROOT / str(cfg["dest_dir"])).resolve()
     expected = {"artifacts/fr": "data", "artifacts/models/fr_eq": "models"}
     if dest != (ROOT / "backups/fr/artifacts").resolve() or cfg.get("sources") != list(expected):
@@ -154,9 +192,9 @@ def _handle(name, cfg, result, *, dry_run, today, resume=False, max_symbols=None
             raise ValueError("Racine artefacts FR absente")
         if source.is_symlink() or source.is_junction() or any(p.is_symlink() or p.is_junction() for p in source.rglob("*")):
             raise ValueError("Liens symboliques interdits dans le backup FR")
-        report = backup(artifacts_dir=source, dest_dir=dest/child, keep=keep, dry_run=dry_run)
-        if report.errors:
-            raise RuntimeError("; ".join(report.errors))
+        if not dry_run:
+            report = verified_archive(source, dest/child, keep=keep)
+            result.setdefault('archives', []).append(report)
         result["received_count"] += 1
         result["persisted_count"] += 0 if dry_run else 1
 

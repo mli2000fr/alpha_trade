@@ -27,6 +27,7 @@ from ihm.services.batch_management import (
     query_windows_task_states,
     read_batch_log_tail,
     read_cn_daily_quality_history,
+    read_fr_inpi_mapping,
     start_batch,
     uninstall_all_batches,
     uninstall_batch,
@@ -236,6 +237,29 @@ def _render_batch(
             st.info(spec.execution_notice)
         if spec.research_notice:
             st.warning(f"🔬 Usage recherche — {spec.research_notice}")
+        if spec.name=='fr_fundamentals_sync':
+            try:
+                mapping=read_fr_inpi_mapping(spec)
+                if mapping is None:
+                    st.info('Correspondances INPI : recherche à lancer avant la collecte.')
+                else:
+                    counts=mapping.get('counts',{})
+                    st.info(f"Correspondances : {counts.get('VERIFIED',0)} vérifiées · "
+                            f"{counts.get('EXCLUDED',0)} exclues · {mapping.get('pending',0)} en attente "
+                            f"/ {mapping.get('total_universe',0)} titres. Vérification actuelle, pas PIT historique.")
+                    excluded=[{'Symbole':r.get('symbol'),'ISIN':r.get('isin'),'Motif':r.get('reason')}
+                              for r in mapping.get('rows',[]) if r.get('status')=='EXCLUDED']
+                    if excluded:
+                        st.caption('Exclusions du mapping : aucun compte ne sera collecté pour ces correspondances.')
+                        st.dataframe(excluded,use_container_width=True,hide_index=True)
+                    if 'collection_completed_issuers' in mapping:
+                        st.caption(f"Collecte : {mapping['collection_completed_issuers']} correspondances examinées. "
+                                   'Comptes archivés en quarantaine uniquement ; reprise au prochain passage.')
+                    if mapping.get('document_exclusions'):
+                        with st.expander('Comptes exclus pendant la collecte — motifs'):
+                            st.dataframe(mapping['document_exclusions'],use_container_width=True,hide_index=True)
+            except (ValueError,OSError) as exc:
+                st.error(f'Rapport de correspondances INPI indisponible : {type(exc).__name__}')
         if not spec.runnable:
             requirement = spec.activation_requirement or (
                 f"Corriger le statut {spec.status} et passer enabled à true dans {Path(spec.catalog_path).name} "

@@ -206,7 +206,8 @@ def load_market_batch_specs(market: str) -> tuple[BatchSpec, ...]:
         specs[spec.name]=spec
     for name,spec in list(specs.items()):
         if name not in CN_RESEARCH_BATCHES:
-            specs[name] = replace(spec,enabled=False,status='PENDING_QUALIFICATION',
+            dormant_status = spec.status if spec.status.startswith(('DISABLED_', 'SUPERSEDED_')) else 'PENDING_QUALIFICATION'
+            specs[name] = replace(spec,enabled=False,status=dormant_status,
                 activation_requirement=spec.activation_requirement or
                 'Famille CN déclarée, sans launcher quotidien raccordé à cette page ; aucun fallback US autorisé.')
     return tuple(sorted(specs.values(),key=lambda s:(s.priority,s.name)))
@@ -214,6 +215,25 @@ def load_market_batch_specs(market: str) -> tuple[BatchSpec, ...]:
 
 def supports_batch_execution(spec: BatchSpec) -> bool:
     return not spec.name.startswith('cn_') or spec.name in CN_RESEARCH_BATCHES
+
+
+def read_fr_inpi_mapping(spec: BatchSpec) -> dict | None:
+    if spec.name!='fr_fundamentals_sync': return None
+    path=(PROJECT_ROOT/str(spec.raw_config.get('mapping_report_file',''))).resolve()
+    expected=(PROJECT_ROOT/'artifacts/fr/operations/fr_fundamentals_sync/mapping/mapping_report.json').resolve()
+    if path!=expected: raise ValueError('Rapport mapping INPI hors périmètre FR')
+    if not path.exists(): return None
+    if path.stat().st_size>4*1024*1024: raise ValueError('Rapport mapping INPI trop volumineux')
+    report=json.loads(path.read_text(encoding='utf-8'))
+    state_path=path.parent.parent/'collection_state.json'
+    if state_path.exists() and state_path.stat().st_size<=8*1024*1024:
+        state=json.loads(state_path.read_text(encoding='utf-8'))
+        entries=state.get('issuers',{})
+        eligible={r['isin']+'-'+r['siren'] for r in report['rows'] if r['status']=='VERIFIED'}
+        report['collection_completed_issuers']=sum(bool(e.get('completed_at')) for k,e in entries.items() if k in eligible)
+        report['document_exclusions']=[{'ISIN/SIREN':key,'Compte':d.get('id'),'Motif':d.get('reason')}
+            for key,entry in entries.items() for d in entry.get('skipped_documents',[])]
+    return report
 
 
 def format_schedule(spec: BatchSpec) -> str:

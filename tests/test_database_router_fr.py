@@ -41,13 +41,28 @@ def test_cross_market_routes_are_rejected(alias: str, market: str) -> None:
         resolve_database_route(alias, market)
 
 
-def test_fr_credentials_do_not_fall_back_to_us(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fr_explicit_shared_credentials_keep_database_isolated(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("LOGIN_DB_FR", raising=False)
     monkeypatch.delenv("PASSWORD_DB_FR", raising=False)
     monkeypatch.setenv("LOGIN_DB", "us-user")
     monkeypatch.setenv("PASSWORD_DB", "us-pass")
-    with pytest.raises(RuntimeError, match="LOGIN_DB_FR"):
-        build_database_url("fr_primary", "FR_EQ")
+    url = build_database_url("fr_primary", "FR_EQ")
+    assert 'us-user:us-pass@' in url
+    assert '/alpha_trade_fr?' in url
+
+
+def test_fr_credentials_fail_closed_without_configured_fallback(tmp_path, monkeypatch):
+    import yaml
+    from database.router import DEFAULT_ROUTING_CONFIG
+    payload = yaml.safe_load(DEFAULT_ROUTING_CONFIG.read_text(encoding='utf-8'))
+    payload['databases']['fr_primary'].pop('fallback_user_env')
+    payload['databases']['fr_primary'].pop('fallback_password_env')
+    path = tmp_path/'routes.yaml'
+    path.write_text(yaml.safe_dump(payload),encoding='utf-8')
+    monkeypatch.delenv('LOGIN_DB_FR',raising=False)
+    monkeypatch.setenv('LOGIN_DB','shared-user')
+    with pytest.raises(RuntimeError,match='LOGIN_DB_FR'):
+        build_database_url('fr_primary','FR_EQ',config_path=path)
 
 
 def test_fr_database_override_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:

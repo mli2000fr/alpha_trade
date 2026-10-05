@@ -49,7 +49,7 @@ est actif dans la configuration, pas encore dans le Planificateur Windows.
 | fr_pit_quality_daily | P0 | Désactivé, contrôles à construire | Couverture/fraîcheur par séance XPAR, lineage, doublons et dépendances |
 | fr_amf_short_sync | P1 | Désactivé, adaptateur quotidien à construire | Positions courtes publiées au-delà des seuils, pas short interest complet |
 | fr_dila_disclosures_sync | P1 | Désactivé, adaptateur quotidien à construire | Annonces/pièces DILA, quotas/PIT ; guidance non validée indépendamment |
-| fr_fundamentals_sync | P2 | Dormant | INPI candidat, droits/couverture/PIT non qualifiés |
+| fr_fundamentals_sync | P2 | Actif recherche depuis 15-F | INPI public, 254 correspondances retenues sur 330 S6C ; lots/reprise/quarantaine uniquement ; aucun fondamental utilisable/SQL/ML |
 | fr_consensus_borrow_options | P3 | Dormant | Aucun fournisseur/licence/schema quotidien qualifié |
 | fr_db_backup | P0 ops | Handler implémenté, désactivé | Dump alpha_trade_fr ; restauration réelle non démontrée |
 | fr_artifacts_backup | P0 ops | Handler implémenté, désactivé | Volume/disque et extraction/hash à vérifier avant activation |
@@ -120,6 +120,13 @@ Les backups restent enabled=false / PENDING_RESTORE_PROOF jusqu'à preuve
 d'extraction ou restauration sûre dans une destination de test dédiée.
 
 ## Commandes et validation
+
+Mise à jour du 05/10/2026 : la [qualification 15-D](sprint_15d_sauvegardes_et_blocages.md)
+a validé une restauration réelle de la base FR (28 tables / 2 850 495 lignes).
+`fr_db_backup` est activé dans le catalogue, sans installation Windows automatique.
+Le contrôle complet des artefacts est lancé ; cette seconde sauvegarde reste
+désactivée jusqu'au rapport d'extraction vérifiée. Les paragraphes de dry-run
+ci-dessus décrivent la validation initiale 15-A, désormais dépassée pour la DB.
 
 ```powershell
 python -m service.fr.operational_batch_15a --batch fr_calendar_snapshot --dry-run
