@@ -419,6 +419,9 @@ def _render_oracle_atr_study() -> None:
     st.caption('Une ligne par séance NYSE, univers et batch. Intersection Oracle TOP20 et ATR20/prix TOP20 ; '
                'D1/D10 réalisés dans l’univers de référence des labels du batch. Lecture des données existantes, '
                'sans entraînement ni téléchargement. Les lignes existantes sont mises à jour sans doublons.')
+    st.caption('Quatre listes de rendements réalisés signés (%) : TOP20 réel, intersection Oracle × ATR, '
+               'premiers scores Oracle et premiers ATR20/prix. Chaque liste contient evaluated_count valeurs, '
+               'triées par amplitude absolue décroissante. Migration 0092 nécessaire.')
     sources = list_universe_file_sources()
     if not sources:
         st.warning('Aucun univers texte disponible dans config/univers/.')
@@ -475,7 +478,7 @@ def _render_oracle_atr_study() -> None:
                 st.session_state['oatr_study_summary'] = summary
             except Exception as exc:
                 st.session_state['oatr_study_summary'] = {'error': str(exc)}
-                st.error(f'Étude interrompue : {exc}. Vérifier aussi la migration 0089.')
+                st.error(f'Étude interrompue : {exc}. Vérifier les migrations 0089 à 0092.')
     summary = st.session_state.get('oatr_study_summary')
     if isinstance(summary, dict) and not summary.get('error'):
         st.success(f'{summary["persisted_rows"]} séances persistées : '

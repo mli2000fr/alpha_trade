@@ -41,7 +41,8 @@ Après une correction des prix, macros, prédictions ou labels, cocher
 **Recalculer aussi les séances déjà complètes**, ou ajouter `--no-resume` dans la
 CLI. Sans cette option, une ligne complète est conservée même si sa source a
 été corrigée depuis. La reprise n’est pas une détection automatique de changements
-dans les sources. Aucun changement de schéma SQL n’est nécessaire.
+dans les sources. Cette option de recalcul ne change pas le schéma SQL ;
+l’ajout des quatre listes décrit plus bas exige néanmoins la migration 0092.
 
 Exemple de commande, à remplacer par un batch et un fichier réellement présents :
 
@@ -51,7 +52,7 @@ python -u -m service.market.oracle_atr_study --batch-id <batch_oracle> --symbol-
 
 ## Préconditions et données absentes
 
-- Migration **0089** ou exécution du SQL de création
+- Migrations **0089 à 0092**, ou exécution du SQL de création à jour
   `database/sql/ml/oracle_atr_market_regime_daily.sql`.
 - Scores du batch dans `oracle_extreme_predictions`, sur la période souhaitée.
 - Barres ajustées dans `stock_bars_daily`, avec au moins 21 barres valides avant
@@ -168,12 +169,13 @@ calculs. Le SQL manuel est `database/sql/ml/oracle_atr_market_regime_daily_ratio
 | `d1_d10_total_pct` | Somme D1 + D10, de 0 à 100 ; `NULL` sans candidats évaluables |
 | `status`, `quality_details` | Complétude et motifs explicites |
 | `evaluated_as_of` | Date limite de disponibilité des labels utilisée pour le calcul |
-| `calculation_version` | Version du contrat, actuellement `oracle_atr_v1` |
+| `calculation_version` | Version du contrat, actuellement `oracle_atr_v2_movements` |
 
 Les motifs sont `MISSING_REGIME`, `MISSING_MACRO`, `MISSING_ORACLE`,
 `MISSING_ATR`, `EMPTY_INTERSECTION`, `INCOMPLETE_LABELS`. Une séance complète
 signifie que ses candidats sélectionnés sont tous évaluables et que les macros
-demandées sont présentes. Cela ne garantit pas la couverture de tous les titres
+demandées sont présentes, et les quatre listes comparatives peuvent être constituées.
+Cela ne garantit pas la couverture de tous les titres
 du fichier : comparer également `oracle_scored_count` à `universe_count`.
 
 ## Limites PIT et interprétation
@@ -200,3 +202,113 @@ ou invalides, les données absentes, les doublons, l’identité stable à rép�
 l’upsert limité à cette table, les transactions par tranche, la reprise après
 échec, le recalcul forcé, la protection contre une base CN et la commande
 IHM. Les tests complémentaires du filtre ATR vérifient calcul et causalité.
+
+## Quatre listes comparatives de mouvements réalisés — migration 0092
+
+### Objectif et populations
+
+Pour chaque séance, comparer les rendements réalisés de quatre sélections,
+avec **N = `evaluated_count`**, c’est-à-dire le nombre de candidats évaluables
+de l’intersection Oracle × ATR. Les quatre colonnes sont des tableaux JSON de
+nombres, pas des probabilités ni des listes de symboles.
+
+| Colonne JSON | Sélection des titres avant le tri final |
+|---|---|
+| `real_oracle_top_returns_pct` | TOP20 réel par valeur absolue du rendement futur ; conserver ses N premiers |
+| `intersection_returns_pct` | Les N candidats évaluables de l’intersection Oracle TOP20 ∩ ATR TOP20 |
+| `predicted_oracle_top_returns_pct` | Les N premiers titres par score `proba_extreme` décroissant |
+| `atr_top_returns_pct` | Les N premiers titres par ATR20/prix décroissant |
+
+Le périmètre de comparaison est celui du fichier choisi **restreint aux titres
+ayant un score Oracle fini à J** (`oracle_scored_count`). Le classement ATR est
+restreint davantage aux ATR positifs et finis de cette population. Ce contrat
+évite de comparer le benchmark réel de tout le marché à un modèle ne couvrant
+qu’une partie du fichier. Si cette couverture est faible, ces listes ne
+représentent pas tout l’univers configuré : vérifier les compteurs.
+
+Le TOP20 réel utilise ici le percentile de `abs(future_return)` ≥ 0,80 sur ce
+périmètre de comparaison. Il **ne signifie pas D10 seulement** : une forte
+baisse figure également parmi les plus fortes amplitudes. Les pourcentages
+D1/D10 existants restent fondés sur les déciles originaux du batch, sans
+reclassement. Ne pas confondre ces deux référentiels.
+
+### Unités, horizon et ordre des valeurs
+
+Les quatre listes reprennent `global_oracle_labels.future_return`, pour le batch,
+la séance et l’horizon Oracle identifiés dans l’artefact. La convention du label
+est le rendement de prix à H séances, pas le MFE/MAE intrapériode ni le résultat
+d’une position avec TP/stop. Le service ne calcule pas une nouvelle cible et ne
+soustrait pas commissions, spread, slippage ou taxes.
+
+```text
+valeur stockée = 100 × future_return
+0,082 → 8,2 % ; −0,075 → −7,5 %
+JSON : [8.2,-7.5,6.9]
+```
+
+Après la sélection propre à chaque colonne, les valeurs sont triées par
+**amplitude absolue décroissante**, en conservant leur signe. Le tableau
+Oracle prédit n’est donc pas présenté dans l’ordre des scores Oracle ; la
+sélection l’est, puis le tri final sert à comparer les amplitudes réalisées.
+Les égalités de score, d’ATR ou d’amplitude sont départagées par symbole en
+ordre lexical pour obtenir un résultat déterministe.
+
+Exemple : N=2 et les deux meilleurs scores Oracle désignent A et B. Leurs
+rendements sont +3 % et −8 %. La troisième colonne contient `[-8,3]`, même
+si C réalise +20 %. C ne remplace jamais A ou B après observation du futur.
+Chaque liste renseignée a exactement N valeurs, même si le TOP20 d’origine
+contient davantage de titres. Les seuils inclusifs et ex æquo peuvent faire
+varier la taille des pools TOP20 ; si le pool réel ne permet pas N valeurs,
+son tableau reste `NULL` plutôt que d’être complété hors de ce pool.
+
+### Labels absents, invalides ou encore futurs
+
+Un label évaluable exige qualité valide, rendement **fini**, décile valide et
+date de disponibilité au plus égale à `evaluated_as_of`. Zéro résultat
+évaluable donne quatre `NULL`, pas quatre tableaux vides ou remplis de zéros.
+
+- Intersection : tableau des seuls candidats évaluables. Une intersection
+  partielle reste marquée `INCOMPLETE_LABELS`, même si ce tableau est renseigné.
+- Oracle prédit / ATR : sélectionner les N premiers **avant** de vérifier leurs
+  labels. Si l’un manque, toute la liste concernée reste `NULL` : aucun remplacement
+  par un titre moins bien classé. Motifs `INCOMPLETE_PREDICTED_TOP_RETURNS` et
+  `INCOMPLETE_ATR_TOP_RETURNS`.
+- TOP20 réel : tous les titres du périmètre Oracle scoré doivent avoir un label
+  évaluable pour connaître honnêtement le classement réel. Sinon `NULL` avec
+  `INCOMPLETE_REAL_TOP_RETURNS`. Classer uniquement les labels connus risquerait
+  de déclarer « premiers réels » des titres qui ne le sont pas.
+
+Ces motifs supplémentaires rendent la ligne `INCOMPLETE`, sans effacer les
+mesures ou les autres listes effectivement calculables. Ils ne constituent
+pas une erreur technique arrêtant les tranches suivantes.
+
+### Installation et alimentation des lignes existantes
+
+La création de table de référence contient les quatre colonnes. Pour une table
+déjà existante, choisir **soit** Alembic 0092 **soit** le SQL manuel
+[`oracle_atr_market_regime_daily_movements_migration.sql`](../../database/sql/ml/oracle_atr_market_regime_daily_movements_migration.sql).
+Le SQL manuel s’exécute une seule fois ; la migration Alembic vérifie les
+colonnes existantes et peut suivre une application manuelle sans les ajouter
+en double. La migration refuse toute base autre que `alpha_trade` en mode
+connecté. Elle n’alimente pas les listes avec des valeurs inventées.
+
+Après modification du schéma, relancer **Alimenter l’étude Oracle × ATR** sur
+la période, l’univers et le batch souhaités. Le changement de version de calcul
+vers `oracle_atr_v2_movements` force automatiquement le recalcul des anciennes
+lignes v1, même complètes, sans nécessité de cocher le recalcul forcé. Les clés
+restent identiques : upsert, pas doublons. Les tranches déjà complètes en v2
+sont ensuite ignorées lors des reprises ordinaires.
+
+Le contrôle des quatre colonnes est effectué avant la lecture coûteuse des
+prix. Aucun nouvel entraînement ou téléchargement n’est nécessaire si les
+scores, prix et labels sont déjà présents. Le tableau de résultat dans l’IHM
+présente aussi les nouvelles colonnes ; aucune nouvelle commande n’est requise.
+
+**Réserve importante :** ces listes sont des résultats futurs, donc strictement
+rétrospectifs. Elles ne doivent jamais servir de features connues à J pour un
+modèle, une sélection live ou une décision de backtest.
+
+Les tests couvrent également les quatre populations, les unités et signes,
+le tri absolu, les ex æquo déterministes, les valeurs non finies, l’absence de
+remplacement d’un résultat manquant, les indices de DataFrame répétés, le
+changement de version, la persistance JSON et les gardes de migration US.

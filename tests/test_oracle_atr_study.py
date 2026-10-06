@@ -1,10 +1,13 @@
 from datetime import date
+import json
+import importlib.util
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
 
-from service.market.oracle_atr_study import MACRO_FIELDS, run, summarize_day
+from service.market.oracle_atr_study import CALCULATION_VERSION, MACRO_FIELDS, MOVEMENT_FIELDS, run, summarize_day
 
 
 def frames():
@@ -12,6 +15,9 @@ def frames():
     labels = pd.DataFrame({'symbol': ['7','8','9'], 'oracle_decile': [1,10,5],
         'target_quality_valid': [1,1,1], 'future_return': [-.1,.2,.01],
         'oracle_available_date': ['2025-03-01']*3})
+    labels = pd.concat([labels, pd.DataFrame({'symbol': [str(i) for i in range(7)],
+        'oracle_decile': 5, 'target_quality_valid': 1, 'future_return': .005,
+        'oracle_available_date': '2025-03-01'})], ignore_index=True)
     atr = {str(i): i+1 for i in range(10)}
     macro = {k: 1. for k in MACRO_FIELDS}
     macro['mode'] = 'normal'
@@ -200,3 +206,122 @@ def test_total_is_sum_of_percentages_including_valid_zero():
     out=summarize_day(scores,atr,labels,macro,as_of=date(2026,1,1))
     assert out['evaluated_count']==3
     assert out['d1_d10_total_pct']==0
+
+
+def test_four_lists_use_selection_then_signed_absolute_order_and_percent_units():
+    scores, atr, labels, macro = frames()
+    # Biggest realized loser has a low predicted score and low ATR.
+    labels.loc[labels.symbol.eq('0'), 'future_return'] = -.3
+    atr['6'] = 100
+    out = summarize_day(scores, atr, labels, macro, as_of=date(2026,1,1))
+    assert out['evaluated_count'] == 2
+    expected = {
+        'real_oracle_top_returns_pct': [-30, 20],
+        'intersection_returns_pct': [20, 1],
+        'predicted_oracle_top_returns_pct': [20, 1],
+        'atr_top_returns_pct': [1, .5],
+    }
+    for field, values in expected.items():
+        assert json.loads(out[field]) == pytest.approx(values)
+    assert out['status'] == 'COMPLETE'
+
+
+def test_missing_top_result_not_replaced_and_real_benchmark_requires_full_coverage():
+    scores, atr, labels, macro = frames()
+    labels.loc[labels.symbol.eq('9'), 'target_quality_valid'] = 0
+    out = summarize_day(scores, atr, labels, macro, as_of=date(2026,1,1))
+    assert out['evaluated_count'] == 2
+    assert json.loads(out['intersection_returns_pct']) == [20, -10]
+    assert out['predicted_oracle_top_returns_pct'] is None
+    assert out['atr_top_returns_pct'] is None
+    assert out['real_oracle_top_returns_pct'] is None
+    assert 'INCOMPLETE_PREDICTED_TOP_RETURNS' in out['quality_details']
+    assert 'INCOMPLETE_ATR_TOP_RETURNS' in out['quality_details']
+    assert 'INCOMPLETE_REAL_TOP_RETURNS' in out['quality_details']
+
+
+@pytest.mark.parametrize('invalid', [float('inf'), float('-inf'), float('nan'), 'bad'])
+def test_nonfinite_realized_return_never_serialized(invalid):
+    scores, atr, labels, macro = frames()
+    labels['future_return'] = labels.future_return.astype(object)
+    labels.loc[labels.symbol.eq('8'), 'future_return'] = invalid
+    out = summarize_day(scores, atr, labels, macro, as_of=date(2026,1,1))
+    assert out['evaluated_count'] == 2
+    assert out['real_oracle_top_returns_pct'] is None
+    assert json.loads(out['intersection_returns_pct']) == [-10, 1]
+
+
+def test_no_evaluable_candidates_means_null_not_empty_lists():
+    out = summarize_day(*frames(), as_of=date(2025,2,1))
+    assert all(out[field] is None for field in MOVEMENT_FIELDS)
+
+
+def test_duplicate_dataframe_indices_and_input_order_do_not_change_lists():
+    scores, atr, labels, macro = frames()
+    expected = summarize_day(scores, atr, labels, macro, as_of=date(2026,1,1))
+    labels = labels.sample(frac=1, random_state=1)
+    labels.index = [0]*len(labels)
+    out = summarize_day(scores.sample(frac=1, random_state=2), atr, labels, macro, as_of=date(2026,1,1))
+    assert out == expected
+
+
+def test_tied_selection_uses_symbol_not_future_return():
+    scores, atr, labels, macro = frames()
+    scores.loc[scores.symbol.isin(['6','7','8','9']), 'proba_extreme'] = 100
+    # Average percentile .85 makes all four tied scores TOP20.
+    # ATR intersects three; selection of Oracle first three is 6,7,8, not 7,8,9.
+    labels.loc[labels.symbol.eq('9'), 'future_return'] = .9
+    out = summarize_day(scores, atr, labels, macro, as_of=date(2026,1,1))
+    assert out['evaluated_count'] == 3
+    assert json.loads(out['predicted_oracle_top_returns_pct']) == [20, -10, .5]
+    assert json.loads(out['intersection_returns_pct']) == [90, 20, -10]
+
+
+def test_new_version_preflight_and_resume_query(tranche_environment):
+    engine, conn = tranche_environment
+    with patch('service.market.oracle_atr_study._calculate_tranche',
+               return_value=[tranche_row('2025-01-02')]):
+        result = run(batch_id='batch', symbol_source='universe-file:a.txt',
+                     start_date='2025-01-02', end_date='2025-01-03', engine=engine)
+    assert result['rows'][0]['calculation_version'] == CALCULATION_VERSION
+    calls = conn.execute.call_args_list
+    assert all(field in str(calls[1].args[0]) for field in MOVEMENT_FIELDS)
+    assert calls[2].args[1]['version'] == CALCULATION_VERSION
+    write = engine.begin.return_value.__enter__.return_value.execute.call_args
+    assert all(field in str(write.args[0]) for field in MOVEMENT_FIELDS)
+    assert isinstance(write.args[1][0]['intersection_returns_pct'], str)
+
+
+def _movement_migration():
+    path = Path(__file__).parents[1]/'alembic/versions/0092_oracle_atr_movements.py'
+    spec = importlib.util.spec_from_file_location('movement_migration', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_migration_adds_missing_columns_and_is_idempotent():
+    migration = _movement_migration()
+    with patch.object(migration, 'context') as context, patch.object(migration, 'op') as op, \
+         patch.object(migration, 'inspect') as inspect:
+        context.is_offline_mode.return_value = False
+        op.get_bind.return_value.execute.return_value.scalar.return_value = 'alpha_trade'
+        inspect.return_value.get_columns.return_value = [{'name': MOVEMENT_FIELDS[0]}]
+        migration.upgrade()
+        assert op.execute.call_count == 3
+        assert all('JSON NULL' in call.args[0] for call in op.execute.call_args_list)
+        op.execute.reset_mock()
+        inspect.return_value.get_columns.return_value = [{'name': field} for field in MOVEMENT_FIELDS]
+        migration.upgrade()
+        op.execute.assert_not_called()
+
+
+@pytest.mark.parametrize('operation', ['upgrade', 'downgrade'])
+def test_movement_migration_blocks_other_markets(operation):
+    migration = _movement_migration()
+    with patch.object(migration, 'context') as context, patch.object(migration, 'op') as op:
+        context.is_offline_mode.return_value = False
+        op.get_bind.return_value.execute.return_value.scalar.return_value = 'alpha_trade_fr'
+        with pytest.raises(RuntimeError, match='alpha_trade'):
+            getattr(migration, operation)()
+        op.execute.assert_not_called()

@@ -18,6 +18,9 @@ from common.universe_files import load_universe_file_symbols
 from modelFactory.oracle.artifact_contract import resolve_oracle_artifact_horizon
 
 TABLE = 'oracle_atr_market_regime_daily'
+CALCULATION_VERSION = 'oracle_atr_v2_movements'
+MOVEMENT_FIELDS = ('real_oracle_top_returns_pct', 'intersection_returns_pct',
+                   'predicted_oracle_top_returns_pct', 'atr_top_returns_pct')
 MACRO_FIELDS = ['vix', 'vix9d', 'ten_y', 'vxn', 'vix3m', 'move',
                 'yield_10y_5d_pct', 'sentiment_score']
 
@@ -37,11 +40,14 @@ def summarize_day(scores, atr, labels, macro, *, as_of: date) -> dict:
     else:
         selected = set()
         diag = {'atr_valid': 0, 'atr_missing': len(ranks)}
-    chosen = labels[labels.symbol.isin(selected)].copy()
-    available = pd.to_datetime(chosen.oracle_available_date, errors='coerce')
-    evaluable = (chosen.target_quality_valid.eq(1) & chosen.future_return.notna()
-                 & chosen.oracle_decile.between(1, 10)
+    labels = labels.reset_index(drop=True).copy()
+    labels['future_return'] = pd.to_numeric(labels.future_return, errors='coerce')
+    available = pd.to_datetime(labels.oracle_available_date, errors='coerce')
+    valid = (labels.target_quality_valid.eq(1) & np.isfinite(labels.future_return)
+                 & labels.oracle_decile.between(1, 10)
                  & available.notna() & available.dt.date.le(as_of))
+    chosen = labels[labels.symbol.isin(selected)]
+    evaluable = valid.loc[chosen.index]
     n = int(evaluable.sum())
     d1 = int((evaluable & chosen.oracle_decile.eq(1)).sum())
     d10 = int((evaluable & chosen.oracle_decile.eq(10)).sum())
@@ -58,7 +64,38 @@ def summarize_day(scores, atr, labels, macro, *, as_of: date) -> dict:
         issues.append('EMPTY_INTERSECTION')
     elif n < len(selected):
         issues.append('INCOMPLETE_LABELS')
+    movements = dict.fromkeys(MOVEMENT_FIELDS)
+    if n:
+        returns = labels.loc[valid].set_index('symbol').future_return.to_dict()
+
+        def serialize(symbols):
+            # Selection precedes evaluation: never replace an unavailable result.
+            if len(symbols) != n or any(s not in returns for s in symbols):
+                return None
+            ordered = sorted(symbols, key=lambda s: (-abs(returns[s]), str(s)))
+            return json.dumps([float(returns[s])*100 for s in ordered], allow_nan=False)
+
+        movements['intersection_returns_pct'] = serialize(list(chosen.loc[evaluable, 'symbol']))
+        score_map = dict(zip(scores.loc[finite, 'symbol'], score_values[finite]))
+        oracle_top = sorted(score_map, key=lambda s: (-score_map[s], str(s)))[:n]
+        atr_top = sorted(valid_atr, key=lambda s: (-valid_atr[s], str(s)))[:n]
+        for field, population, issue in (
+            ('predicted_oracle_top_returns_pct', oracle_top, 'INCOMPLETE_PREDICTED_TOP_RETURNS'),
+            ('atr_top_returns_pct', atr_top, 'INCOMPLETE_ATR_TOP_RETURNS'),
+        ):
+            movements[field] = serialize(population)
+            if movements[field] is None:
+                issues.append(issue)
+        # A true realized benchmark requires coverage of the whole scored population.
+        if all(s in returns for s in ranks):
+            amplitudes = pd.Series({s: abs(returns[s]) for s in ranks})
+            real_pool = amplitudes[amplitudes.rank(pct=True) >= .8].index.tolist()
+            real_top = sorted(real_pool, key=lambda s: (-abs(returns[s]), str(s)))[:n]
+            movements['real_oracle_top_returns_pct'] = serialize(real_top)
+        if movements['real_oracle_top_returns_pct'] is None:
+            issues.append('INCOMPLETE_REAL_TOP_RETURNS')
     result = {'regime_mode': macro.get('mode') if macro is not None else None,
+              **movements,
               **{k: macro.get(k) if macro is not None else None for k in MACRO_FIELDS},
               'oracle_scored_count': len(ranks), 'oracle_top20_count': before,
               'atr_valid_count': diag['atr_valid'], 'atr_missing_count': diag['atr_missing'],
@@ -98,14 +135,15 @@ def run(*, batch_id: str, symbol_source: str, start_date: str, end_date: str,
         if conn.execute(text('SELECT DATABASE()')).scalar() != 'alpha_trade':
             raise ValueError('Cette étude US exige la base alpha_trade')
         # Check migration before doing costly price reads.
-        conn.execute(text(f'SELECT trade_date FROM {TABLE} LIMIT 0'))
+        conn.execute(text(f'SELECT trade_date,{",".join(MOVEMENT_FIELDS)} FROM {TABLE} LIMIT 0'))
         completed = set()
         if resume:
             completed = {str(d)[:10] for d in conn.execute(text(
                 f'SELECT trade_date FROM {TABLE} WHERE universe_hash=:hash AND oracle_batch_id=:batch '
-                "AND oracle_horizon=:horizon AND status='COMPLETE' AND calculation_version='oracle_atr_v1' "
+                "AND oracle_horizon=:horizon AND status='COMPLETE' AND calculation_version=:version "
                 'AND trade_date BETWEEN :start AND :end'),
-                {'hash': universe_hash, 'batch': batch_id, 'horizon': horizon, 'start': start, 'end': end}).scalars().all()}
+                {'hash': universe_hash, 'batch': batch_id, 'horizon': horizon, 'start': start, 'end': end,
+                 'version': CALCULATION_VERSION}).scalars().all()}
     calendar = _get_nyse_calendar()
     if calendar is None:
         raise RuntimeError('Calendrier NYSE fiable indisponible : aucun fallback lundi-vendredi pour cette étude')
@@ -123,7 +161,7 @@ def run(*, batch_id: str, symbol_source: str, start_date: str, end_date: str,
         for row in batch_records:
             row.update(universe_source=symbol_source, universe_hash=universe_hash,
                        oracle_batch_id=batch_id, oracle_horizon=horizon, universe_count=len(symbols),
-                       evaluated_as_of=as_of, calculation_version='oracle_atr_v1')
+                       evaluated_as_of=as_of, calculation_version=CALCULATION_VERSION)
         _persist_tranche(engine, batch_records)
         records.extend(batch_records)
         if progress_callback:
