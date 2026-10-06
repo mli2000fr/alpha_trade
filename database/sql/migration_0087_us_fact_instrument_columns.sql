@@ -1,0 +1,35 @@
+-- Sprint 5 / phase 1 : colonnes nullable avant backfill reprenable.
+-- Appliquer via Alembic ; cette référence explicite les tables concernées.
+ALTER TABLE `stock_metadata` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `stock_bars_daily` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `stock_bars` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `stock_quote_snapshots` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `stock_scores` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `stock_scores_history` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `tradable_universe_history` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `model_predictions` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `global_rank_history` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `global_oracle_labels` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `oracle_extreme_predictions` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `model_registry` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `model_metrics` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `model_metrics_full` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `model_batch_diagnostics` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `model_directional_oos_metrics` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `champion_history` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `model_governance` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `stock_fundamentals_daily` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `stock_earnings_calendar` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `stock_analyst_consensus_snapshots` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `stock_analyst_eps_revision_history` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `stock_analyst_eps_trend_history` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `stock_analyst_estimate_history` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `stock_analyst_recommendation_history` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `stock_analyst_target_history` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `ticker_daily_sentiment_features` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `news_ticker_sentiment` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `corporate_action_source_events` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `corporate_actions_events` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `corporate_actions_applications` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `sec_filing_raw` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;
+ALTER TABLE `sec_corporate_events` ADD COLUMN instrument_id BIGINT UNSIGNED NULL;

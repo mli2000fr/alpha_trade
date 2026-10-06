@@ -1,0 +1,36 @@
+protocol_id: CN_DRAGON_TIGER_15D7_V1
+status: PREREGISTERED_RESEARCH_ONLY
+market: CN_A
+decision_timezone: Asia/Shanghai
+decision_time: "09:15:00"
+source: SSE_SSE_STAR_SZSE_OFFICIAL
+snapshot_phases: [after_close, before_open]
+candidate_contract:
+  oracle_horizon: 20
+  oracle_top_pct: 0.20
+  require_out_of_sample: true
+  require_score_before_decision: true
+  require_prior_return_before_decision: true
+  require_model_trained_before_decision: true
+  forbidden_columns: [oracle_decile, realized_decile, future_return, target, label, d1, d10]
+matching:
+  same_decision_session: true
+  same_board: true
+  score_rank_caliper: 0.10
+  prior_return_5d_caliper: 0.03
+  max_controls_per_exposed: 3
+  control_reuse: false
+  order: [decision_date, board_code, exchange, code]
+readiness_gates:
+  minimum_open_sessions: 60
+  minimum_exposed_candidates: 200
+  minimum_matched_fraction: 0.80
+  maximum_absolute_standardized_difference: 0.10
+  minimum_calendar_quarters: 2
+future_outcomes:
+  horizon_sessions: 20
+  questions: [D1_veto, D10_long]
+  analysis: [matched_risk_difference, matched_precision, block_bootstrap_by_session, quarter_stability]
+  bootstrap_repetitions: 1000
+  threshold_tuning_on_confirmation: false
+  no_training_or_serving: true

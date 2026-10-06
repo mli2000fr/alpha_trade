@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "base_manifest": "config/research_fr/guidance_review_11e_v1.json",
+  "base_manifest_sha256": "28ca58891df6911104086e61e3e57ecca3b547ac88e4fadb38349a3a7525098e",
+  "independent_second_reviewer": false,
+  "training_eligible": false,
+  "records": [
+    {"id":"139441_20230914","pages":[1],"period_end":"2023-12-31","direction":"DOWN","metric":"organic revenue growth","unit":"percent","old":[5,5],"new":[3,4],"qualifiers":"Old around 5% explicitly recalled; new 3-4% for 2023. Second-half growth >5% is a different subperiod, not the annual new target.","status":"FIRST_REVIEW_PAIR"},
+    {"id":"137517_20230629","pages":[1],"period_end":"2023-12-31","direction":"UP","metric":"automotive operating free cash flow","unit":"EUR_billion","old":[2,2],"new":[2.5,2.5],"qualifiers":"Old at least 2bn -> new at least 2.5bn: comparison of forecast FLOORS, not exact realized values or closed uncertainty intervals. H1 estimate 1.5bn and Mobilize dividend 0.6bn are not the annual old target.","status":"FIRST_REVIEW_PAIR"},
+    {"id":"071593_20230630","pages":[1],"period_end":"2023-12-31","direction":"UP","metric":"recurring net income group share","unit":"EUR_billion","old":[3.4,4.0],"new":[4.7,5.3],"qualifiers":"Old upper HALF of 3.4-4.0bn, not entire interval equiprobable. Keeping outer bounds conservatively still proves an upward revision. Nuclear-excluded EBIT is a separate metric, not a second announcement.","status":"FIRST_REVIEW_PAIR"}
+  ]
+}

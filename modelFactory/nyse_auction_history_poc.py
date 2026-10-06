@@ -22,7 +22,7 @@ from sqlalchemy import bindparam, text
 
 from common.universe_files import load_universe_file_symbols
 from database.connection import get_sqlalchemy_engine
-from service.forward_pit.batch import _configure_alpaca_session
+from service.forward_pit.batch import configure_alpaca_session
 
 LOGGER = logging.getLogger(__name__)
 BASE_URL = "https://www.nyse.com"
@@ -308,7 +308,7 @@ def run(args: argparse.Namespace) -> Path:
     effective_interval = max(args.request_interval_seconds, 1.0 if args.symbol_source else 0.0)
 
     with requests.Session() as session:
-        _configure_alpaca_session(session, use_system_trust_store=True)
+        configure_alpaca_session(session, use_system_trust_store=True)
         eligible_file = output / "eligible_symbols.txt"
         excluded_file = output / "excluded_symbols.txt"
         rotation_offset: int | None = None

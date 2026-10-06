@@ -170,6 +170,7 @@ class ScreenerRunReport:
     workers: int
     as_of_date: str | None
     started_at: str
+    custom_universe_source: str | None = None
     finished_at: str | None = None
     duration_seconds: float = 0.0
     targeted_symbols: int = 0

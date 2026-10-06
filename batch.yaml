@@ -8,6 +8,108 @@
 # J-N/J. Les snapshots non reconstructibles disposent d'un second passage
 # conditionnel, annulé automatiquement quand le principal a réussi.
 
+# Sprint 15-D6 : observations officielles CN strictement de recherche.
+# Deux tâches distinctes pour conserver un seul horaire principal par batch.
+# Le planificateur Windows utilise son identifiant de fuseau China Standard
+# Time ; le calcul et le calendrier métier restent en Asia/Shanghai.
+cn_dragon_tiger_after_close:
+  priority: P2
+  # Suspension de précaution (audit du 06/10/2026), pas constat d'illégalité.
+  enabled: false
+  status: BLOCKED_SSE_SZSE_AUTOMATION
+  activation_requirement: "Suspendu par précaution : confirmer auprès de SSE/SZSE la collecte automatisée et les usages Alpha-Trade envisagés. Le téléchargement non commercial est prévu, mais ne certifie pas tout usage ML/live."
+  unlock_steps:
+    - "Obtenir une confirmation écrite couvrant endpoints, fréquence, stockage privé et usages de recherche/ML/backtest ; qualifier séparément le live et la redistribution."
+    - "Archiver la preuve dans doc/cn puis rétablir explicitement status: RESEARCH_ONLY et enabled: true après validation. Ne pas seulement basculer enabled."
+  timezone: China Standard Time
+  run_hours: "17"
+  run_minutes: "30"
+  description: "Observer les listes Dragon/Tiger officielles SSE/SZSE après la clôture CN ; journal de recherche uniquement."
+  tables: "fichiers:artifacts/research/cn_dragon_tiger_15d6"
+  provider: sse_szse_official
+  universe_scope: cn_a_exchange_disclosures
+  output_root: artifacts/research/cn_dragon_tiger_15d6/observations
+  coverage_description: "Snapshot de la séance CN J à 17:30 Asia/Shanghai ; première observation réelle, sans historique PIT reconstruit."
+  research_notice: "Jamais une feature ML ou un signal live automatique. Heures de publication et droits d'exploitation restent à qualifier ; aucun montant ni nom de siège persisté."
+  execution_notice: "Calendrier boursier explicite limité à 2026. Si le PC ou la session Windows est fermé, le passage peut être manqué ; aucun rattrapage fictif ne certifie le PIT."
+  log_file: log/batch/cn_dragon_tiger_after_close.txt
+
+cn_dragon_tiger_before_open:
+  priority: P2
+  # Même réserve que le passage après clôture ; aucune réactivation implicite.
+  enabled: false
+  status: BLOCKED_SSE_SZSE_AUTOMATION
+  activation_requirement: "Suspendu par précaution : la réobservation SSE/SZSE automatisée exige la même clarification des droits que le passage après clôture. Pas de constat d'illégalité ; pas d'autorisation live déduite du caractère public."
+  unlock_steps:
+    - "Confirmer par écrit les droits pour les deux passages quotidiens, la conservation des snapshots et les usages envisagés, sans redistribution non autorisée."
+    - "Archiver la preuve dans doc/cn puis rétablir explicitement status: RESEARCH_ONLY et enabled: true après validation."
+  timezone: China Standard Time
+  run_hours: "8"
+  run_minutes: "30"
+  description: "Réobserver avant l'ouverture CN la liste Dragon/Tiger de la précédente séance ouverte ; détecter ajouts et corrections."
+  tables: "fichiers:artifacts/research/cn_dragon_tiger_15d6"
+  provider: sse_szse_official
+  universe_scope: cn_a_exchange_disclosures
+  output_root: artifacts/research/cn_dragon_tiger_15d6/observations
+  coverage_description: "Snapshot avant le seuil prudent de 09:15 Asia/Shanghai sur la précédente séance ouverte ; week-ends et jours fériés respectés."
+  research_notice: "L'heure d'observation avant décision est tracée, sans certification de l'heure de diffusion ni activation ML/live."
+  execution_notice: "Calendrier boursier explicite limité à 2026 ; un passage manqué ne peut pas être reconstitué après coup."
+  log_file: log/batch/cn_dragon_tiger_before_open.txt
+
+# Sprint 15-D9 : journal Oracle CN prospectif après clôture, recherche seulement.
+# Une décision manquée ne doit jamais être reconstruite après son cutoff.
+cn_oracle_prospective_daily:
+  priority: P1
+  # BaoStock documente API/stockage local ; portée ML/live à confirmer par écrit.
+  enabled: false
+  status: BLOCKED_BAOSTOCK_RIGHTS
+  activation_requirement: "Suspendu par précaution : clarifier les droits BaoStock couvrant notre collecte quotidienne, stockage SQL/sauvegardes, ML/backtests et futur live. L'API documentée n'est pas déclarée interdite ; sa gratuité n'autorise pas tous les usages."
+  unlock_steps:
+    - "Demander à baostock@163.com une confirmation couvrant collecte SDK depuis la France, univers complet, fréquence, stockage privé, conservation, calculs et modèles dérivés."
+    - "Qualifier séparément trading pour compte propre, usage professionnel/live et redistribution ; archiver la réponse dans doc/cn."
+    - "Rétablir status: RESEARCH_ONLY et enabled: true uniquement après validation explicite ; ne pas activer un fallback non qualifié."
+  timezone: China Standard Time
+  run_hours: "18"
+  run_minutes: "15"
+  description: "Collecter la séance CN close, vérifier les 209 lots environ, puis publier Oracle TOP20 pour la prochaine ouverture avant 09:15 Shanghai."
+  tables: "cn_staging_rows,market_sessions,stock_bars_daily,instrument_adjustment_factors; fichiers:artifacts/research/cn_oracle_prospective_15d8"
+  provider: baostock,oracle_cn_frozen_lightgbm
+  universe_scope: cn_a_all_equities_pit
+  calendar: config/research_cn/sprint15d6_cn_calendar_2026.yaml
+  seed_manifest: config/univers_cn/canonical_incremental_2026-09-30.txt
+  manifest_root: config/univers_cn
+  chunks_root: config/univers_cn/sprint7c_daily_chunks
+  collection_root: artifacts/cn/sprint7c_daily
+  oracle_output_root: artifacts/research/cn_oracle_prospective_15d8
+  output_root: artifacts/research/cn_oracle_daily_15d9
+  chunk_size: 25
+  coverage_description: "Séance J close vers décision K suivante ; lots reprenables. Aucun score rétrodaté si le passage manque son cutoff."
+  research_notice: "Oracle de recherche uniquement ; ni serving, ni ordre, ni conclusion D1/D10."
+  execution_notice: "Session Windows Interactive requise ; calendrier CN vérifié jusqu'à 2026 seulement. Un échec notifie et ne publie pas de score incomplet."
+  log_file: log/batch/cn_oracle_prospective_daily.txt
+
+# Sprint 15-D10 : appariement D7 prospectif, sans lecture des rendements futurs.
+cn_dragon_tiger_daily_match:
+  priority: P2
+  enabled: true
+  status: RESEARCH_ONLY
+  timezone: China Standard Time
+  run_hours: "9"
+  run_minutes: "30"
+  description: "Apparier après 09:15 les candidats Oracle de la séance avec le dernier snapshot Dragon/Tiger officiellement observé à temps."
+  tables: "fichiers:artifacts/research/cn_dragon_tiger_15d10; aucune écriture de table métier"
+  provider: oracle_cn_frozen_lightgbm,sse_szse_official
+  universe_scope: oracle_cn_prospective_top20
+  calendar: config/research_cn/sprint15d6_cn_calendar_2026.yaml
+  protocol: config/research_cn/sprint15d7_dragon_tiger_protocol.yaml
+  snapshot_root: artifacts/research/cn_dragon_tiger_15d6/observations
+  oracle_output_root: artifacts/research/cn_oracle_prospective_15d8
+  output_root: artifacts/research/cn_dragon_tiger_15d10
+  coverage_description: "Une décision K après son cutoff de 09:15 Shanghai ; appariement quotidien immuable et sans issue H20."
+  research_notice: "Journal de recherche outcome-blind uniquement ; insuffisant pour conclure avant les gates D7 multi-séances et multi-trimestres."
+  execution_notice: "Exige export Oracle et snapshot officiel complets observés avant cutoff. Session Windows Interactive et calendrier 2026 vérifié requis."
+  log_file: log/batch/cn_dragon_tiger_daily_match.txt
+
 # Sauvegarde locale hebdomadaire des artefacts ML réellement nécessaires au runtime.
 # run_days suit DayOfWeek : 0=dimanche, 1=lundi, ... 6=samedi.
 ml_artifacts_backup:
@@ -39,9 +141,9 @@ db_core_backup:
   tables: "fichiers:backups/db"
   provider: local_mysql
   universe_scope: database_without_news_raw
-  run_hours: "2"
+  run_hours: "1"
   run_minutes: "0"
-  run_days: "6"
+  run_days: "0"
   host: localhost
   db: alpha_trade
   mysqldump_path: "C:/Program Files/MySQL/MySQL Server 8.0/bin/mysqldump.exe"
@@ -65,7 +167,7 @@ db_news_raw_backup:
   tables: "fichiers:backups/db"
   provider: local_mysql
   universe_scope: database_table_news_raw
-  run_hours: "1"
+  run_hours: "18"
   run_minutes: "0"
   run_days: "0"
   host: localhost
@@ -128,11 +230,16 @@ analyst_snapshot_collection:
   priority: P1
   description: "Construire prospectivement des snapshots PIT Yahoo de consensus EPS/revenue, tendances et révisions EPS, objectifs de cours et recommandations."
   tables: "analyst_snapshot_collection_run,stock_analyst_estimate_history,stock_analyst_eps_trend_history,stock_analyst_eps_revision_history,stock_analyst_target_history,stock_analyst_recommendation_history"
-  enabled: true
-  status: ACTIVE_RESEARCH_ONLY
+  # Blocage contractuel Yahoo : RESEARCH_ONLY et yfinance ne sont pas une permission.
+  enabled: false
+  status: BLOCKED_YAHOO_AUTOMATED_ACCESS
   provider: yahoo_finance_via_yfinance
   timezone: Europe/Paris
-  research_notice: "Yahoo Finance est une source non officielle sans SLA, utilisée exclusivement pour la recherche personnelle et éducative. Ces données ne sont pas une source de production licenciée et ne doivent pas être redistribuées."
+  research_notice: "BLOQUÉ — Yahoo exige une permission préalable pour la collecte automatisée. La recherche personnelle, yfinance et la quarantaine ne remplacent pas cette permission. Aucun nouveau téléchargement ne doit être lancé, même manuellement. Données existantes conservées sans décision de purge. Voir doc/ml/audit_autorisations_collectes_us_20261006.md."
+  activation_requirement: "Obtenir une autorisation écrite Yahoo couvrant automatisation, archivage des snapshots et usages analytiques/ML, ou qualifier un autre fournisseur."
+  unlock_steps:
+    - "Archiver la permission et son périmètre ; vérifier conservation, usages dérivés et redistribution."
+    - "Après validation explicite, rétablir un statut actif et enabled: true ; activer seulement enabled ne lève pas le blocage."
   universe_name: analyst_research
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   sleep_seconds: 0.25
@@ -242,31 +349,6 @@ sec_edgar_incremental:
   submission_probe_bytes: 2097152
   max_requests_per_second: 8
   log_file: log/batch/sec_edgar_incremental.txt
-
-pit_data_quality_daily:
-  priority: P0
-  description: "Contrôle manuel facultatif des retards, trous de couverture et échecs de collecte. Il ne récupère aucune donnée externe et n'est pas requis pour alimenter les tables métier."
-  supervision_dependencies: "sec_edgar_incremental,finra_short_volume_sync,fred_alfred_vintage_sync"
-  execution_notice: "PRÉREQUIS DE SUPERVISION : exécuter sec_edgar_incremental, finra_short_volume_sync et fred_alfred_vintage_sync avant ce contrôle. Ces trois collecteurs sont indépendants et peuvent tourner en parallèle ; pit_data_quality_daily doit être lancé seulement après leur fin, sinon leur ancien statut FAILED ou l'absence de données macro déclenche volontairement une alerte critique."
-  tables: "pit_collection_runs,pit_data_quality_metrics,pit_data_quality_issues"
-  enabled: false
-  status: MANUAL_CONTROL_ONLY
-  research_notice: "Désactivé par choix opérationnel : ce batch est uniquement un audit de supervision (du sec_edgar_incremental, finra_short_volume_sync, fred_alfred_vintage_sync). Il peut être réactivé ponctuellement après l'exécution des collecteurs supervisés."
-  activation_requirement: "Réactiver uniquement pour lancer un audit ponctuel après la fin des trois collecteurs supervisés ; aucune alimentation métier ne dépend de ce batch."
-  unlock_steps:
-    - "Attendre la fin de sec_edgar_incremental, finra_short_volume_sync et fred_alfred_vintage_sync."
-    - "Passer temporairement enabled à true, lancer le contrôle, puis le remettre à false si la supervision planifiée n'est pas souhaitée."
-  timezone: Europe/Paris
-  run_hours: "15"
-  run_days: "1,2,3,4,5,6"
-  bars_max_age_days: 4
-  security_master_max_age_days: 8
-  borrow_max_age_hours: 30
-  macro_max_age_days: 10
-  min_universe_coverage: 0.90
-  symbols_file: config/univers_batch/univers_filtred_tradable.txt
-  fail_on_critical: true
-  log_file: log/batch/pit_data_quality_daily.txt
 
 borrow_status_snapshot:
   priority: P1
@@ -459,7 +541,14 @@ fred_alfred_vintage_sync:
   priority: P4
   description: "Conserver les vintages macro réellement disponibles afin d'éviter toute fuite provenant des révisions économiques futures."
   tables: "pit_collection_runs,pit_raw_payloads,macro_vintage_observations"
-  enabled: true
+  # API FRED : restrictions explicites d'archivage en base et de ML.
+  enabled: false
+  status: BLOCKED_FRED_ARCHIVE_ML_RIGHTS
+  research_notice: "BLOQUÉ — Les conditions actuelles de l'API FRED restreignent stockage/cache/archivage et usage ML. Une clé API valide ne constitue pas une dérogation. L'archivage dans macro_vintage_observations est concerné dès la collecte ; les droits des séries tierces doivent aussi être qualifiés. Voir doc/ml/audit_autorisations_collectes_us_20261006.md."
+  activation_requirement: "Obtenir une permission écrite couvrant archivage PIT et ML, ainsi que les séries tierces, ou utiliser des sources primaires avec droits adaptés."
+  unlock_steps:
+    - "Qualifier séparément collecte, stockage, ML et droits des séries ; archiver les preuves."
+    - "Après validation explicite, rétablir un statut actif et enabled: true ; ne pas supprimer les anciennes données sans analyse des obligations."
   universe_scope: macro_series
   provider: fred_alfred
   api_key_env: KEY_FRED
@@ -475,8 +564,14 @@ finra_short_volume_sync:
   priority: P1
   description: "Collecter prospectivement le short volume quotidien FINRA consolidé comme donnée de recherche, sans le promouvoir automatiquement comme signal ML."
   tables: "pit_collection_runs,pit_raw_payloads,stock_short_volume_daily"
-  enabled: true
-  status: ACTIVE_RESEARCH_ONLY
+  # Gratuité des fichiers FINRA != permission de constituer une base prédictive.
+  enabled: false
+  status: BLOCKED_FINRA_PREDICTIVE_USE
+  research_notice: "BLOQUÉ — Les conditions FINRA restreignent constitution de bases, extraction et usages ML/prédictifs, notamment prédiction de trades. Les fichiers publics gratuits et le statut recherche ne prouvent pas une dérogation. Une autre API doit elle aussi être licenciée. Données existantes non supprimées. Voir doc/ml/audit_autorisations_collectes_us_20261006.md."
+  activation_requirement: "Obtenir une permission ou licence couvrant téléchargement automatisé des CNMS, archivage historique et analyses ML/prédictives internes."
+  unlock_steps:
+    - "Faire confirmer par FINRA le périmètre exact : endpoints, archivage, ML, dérivés et usages personnels/professionnels."
+    - "Archiver l'accord, puis rétablir un statut actif et enabled: true après validation explicite."
   provider: finra_consolidated_nms
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   timezone: America/New_York

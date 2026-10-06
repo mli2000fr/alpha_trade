@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "review_date": "2026-10-04",
+  "review_method": "first_reader_text_and_visual_pdf",
+  "independent_second_reviewer": false,
+  "training_eligible": false,
+  "records": [
+    {"id":"132474_20251202","pages":[1],"period_end":"2025-12-31","direction":"DOWN","metric":"revenue growth","unit":"percent","old":[-1,-1],"new":[-5,-4],"qualifiers":"Old around -1%; new interval -5 to -4%; constant exchange rates and perimeter. EBITDA/FCF not counted as separate announcements.","status":"FIRST_REVIEW_PAIR"},
+    {"id":"138110_20250915","pages":[1],"period_end":"2025-12-31","direction":"DOWN","metric":"revenue growth","unit":"percent","old":[3,5],"new":[-1,-1],"qualifiers":"New around -1%; constant exchange rates and comparable perimeter. Old interval explicitly recalled in release.","status":"FIRST_REVIEW_PAIR"},
+    {"id":"073426_20250319","pages":[4],"period_end":"2025-06-30","direction":"UP","metric":"current operating margin","unit":"percent","old":[8.7,8.7],"new":[9.1,9.1],"qualifiers":"New at least 9.1%, old 8.7% previously; revenue >560m on current perimeter is maintained, not a revision. Validate identical margin perimeter in second review.","status":"FIRST_REVIEW_PAIR"},
+    {"id":"059916_20220505","pages":[1],"period_end":"2022-12-31","direction":"UP","metric":"annual revenue","unit":"EUR_million","old":[40,40],"new":[42,42],"qualifiers":"Old announced February 2022 explicitly recalled. Introductory Q1 2021 typo; title and annual target identify 2022. Growth described as entirely organic.","status":"FIRST_REVIEW_PAIR"},
+    {"id":"139869_20240703","pages":[5],"period_end":"2024-08-31","direction":"UP","metric":"organic revenue growth","unit":"percent","old":[15,17],"new":[18,18],"qualifiers":"New around 18%; constant rates and perimeter. Do not conflate organic growth with acquisition uplift or count maintained EBITDA margin as new revision.","status":"FIRST_REVIEW_PAIR"},
+    {"id":"132696_20230801","pages":[5],"prior_id":"132899_20230215","prior_pages":[6],"period_end":"2023-12-31","direction":"UP","metric":"net current cash flow per share","unit":"EUR_per_share","old":[2.35,2.35],"new":[2.40,2.40],"qualifiers":"New at least 2.40; old 2023 target 2.35 from February, not 2022 actual 2.24. Compare disposal/rate assumptions in second review.","status":"FIRST_REVIEW_PAIR"},
+    {"id":"139406_20241024","pages":[2],"prior_id":"131286_20240911","prior_pages":[3],"period_end":"2024-12-31","direction":"DOWN","metric":"annual consolidated revenue","unit":"EUR_million","old":[620,620],"new":[610,610],"qualifiers":"Both around estimates; previous target already includes Pacific disposal and L&T/Keops acquisitions. Revenue only; operating margin definitions require separate reconciliation.","status":"FIRST_REVIEW_PAIR"},
+    {"id":"137591_20241015","pages":[1],"prior_id":"133126_20240724","prior_pages":[7],"period_end":"2024-12-31","direction":"DOWN","metric":"organic revenue growth","unit":"percent","old":[3,3],"new":[1,1],"qualifiers":"Old near 3% is explicit July 2024 forward guidance anchored to prior-year growth, not mere actual. New around 1%; 9-month actual 2.4% is not old guidance.","status":"FIRST_REVIEW_PAIR"},
+    {"id":"130052_20230918","pages":[1],"status":"BOUND_SEMANTICS_REVIEW_REQUIRED","reason":"Old target improves over 2022 actual margin 9.2%; not an exact old target of 9.2%. New 7-9%. Preserve strict lower-bound semantics before numerical encoding."},
+    {"id":"072137_20241204","pages":[1],"status":"UNCERTAINTY_INTERVAL_REVIEW_REQUIRED","reason":"Old target 20m; new central estimate 19m with interval 18.2-20. Lower actual 2023 18.2m is not new guidance. Direction of central estimate cannot erase overlapping uncertainty interval."}
+  ]
+}

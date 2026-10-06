@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Literal
 
 from core.ml_selection_contract import MLFirstSelectionContract, SelectionCapacity
-from common.capital_presets import resolve_capital_preset_for_equity
+from common.capital_presets import get_capital_preset_by_key, resolve_capital_preset_for_equity
 from common.universe_files import (
     default_universe_file_source_or,
     is_universe_file_source,
@@ -324,13 +324,7 @@ DataIntegritySymbolSource = Literal[
     "stock_scores_all",
     "stock_bars_daily",
 ]
-NewsImportSymbolSource = Literal[
-    "tradable-universe",
-    "stock_scores",
-    "stock_scores_history",
-    "stock_scores_all",
-    "stock_bars_daily",
-]
+NewsImportSymbolSource = str
 ExecutionSubmissionWindow = Literal["post_close", "pre_open", "both"]
 ExecutionTrailingTrigger = Literal["multiple_r", "profit_pct"]
 PipelineExecutionStatus = Literal["starting", "running", "completed", "failed", "timeout"]
@@ -345,6 +339,7 @@ class PipelineLaunchOptions:
 
     account_id: str | None = None
     trade_date: str | None = None
+    capital_preset_key: str | None = None
     # Si True, écrase ``trade_date`` au lancement par le snapshot_date le plus
     # récent <= trade_date présent dans ``stock_scores_history`` (avec
     # sélection classée). Permet de continuer un workflow démarré la veille même
@@ -1685,9 +1680,12 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     news_import_start_date = _normalize_optional_date(options.news_import_start_date)
     news_import_end_date = _normalize_optional_date(options.news_import_end_date)
     news_import_symbols = _normalize_symbol_list(options.news_import_symbols)
+    requested_news_import_source = str(options.news_import_symbol_source or "").strip()
     news_import_symbol_source = (
-        options.news_import_symbol_source
-        if options.news_import_symbol_source in {
+        normalize_universe_file_source(requested_news_import_source)
+        if is_universe_file_source(requested_news_import_source)
+        else requested_news_import_source
+        if requested_news_import_source in {
             "tradable-universe",
             "stock_scores",
             "stock_scores_history",
@@ -1859,6 +1857,11 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return [sys.executable, "-u", "-m", "dataIntegrityEngine.data_sanitizer_daily"]
 
     if step_key == "stock_screener":
+        preset = get_capital_preset_by_key(str(options.capital_preset_key or "").strip())
+        if preset is None:
+            preset = resolve_capital_preset_for_equity(float(options.risk_account_equity))
+        if preset is None:
+            raise ValueError("Aucun preset capital ne correspond à l'equity du pipeline.")
         command = [
             sys.executable,
             "-u",
@@ -1878,6 +1881,10 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             str(options.screener_min_historical_range_score),
             "--first-pass-window-days",
             str(options.screener_first_pass_window_days),
+            "--capital-preset-key",
+            preset.key,
+            "--market-code",
+            "US_EQ",
         ]
         if screener_max_workers is not None:
             command.extend(["--max-workers", str(screener_max_workers)])
@@ -1940,7 +1947,9 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     if step_key == "publish_tradable_universe":
-        preset = resolve_capital_preset_for_equity(float(options.risk_account_equity))
+        preset = get_capital_preset_by_key(str(options.capital_preset_key or "").strip())
+        if preset is None:
+            preset = resolve_capital_preset_for_equity(float(options.risk_account_equity))
         if preset is None:
             raise ValueError("Aucun preset capital ne correspond à l'equity du pipeline.")
         command = [
@@ -1950,6 +1959,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             "common.publish_tradable_universe",
             "--capital-preset-key",
             preset.key,
+            "--market-code",
+            "US_EQ",
         ]
         if trade_date:
             command.extend(["--trade-date", trade_date])

@@ -86,6 +86,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     cfg = (load_batch_config().get("analyst_snapshot_collection") or {})
+    # Manual/dry-run collection still accesses Yahoo: neither bypasses rights.
+    status = str(cfg.get("status") or "")
+    if not cfg.get("enabled", True) or status.startswith("BLOCKED_"):
+        print(json.dumps({"status": "SKIPPED_" + (status or "DISABLED"),
+                          "reason": "Collecte désactivée ou droits non qualifiés"}, ensure_ascii=False))
+        return 0
     _setup_logging(args.log_file or cfg.get("log_file"))
 
     resolution = resolve_universe(args.universe, args.symbols)

@@ -208,8 +208,10 @@ if ($cfg -and ($cfg.PSObject.Properties.Name -contains 'enabled')) {
         $collectionEnabled = @('1', 'true', 'yes', 'on') -contains $normalizedEnabled
     }
 }
-if (-not $collectionEnabled) {
-    Write-StatusLine ("[{0}] SKIP   analyst_snapshot_collect - analyst_snapshot_collection.enabled=false - aucun appel fournisseur" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))
+$collectionStatus = if ($cfg -and ($cfg.PSObject.Properties.Name -contains 'status')) { [string]$cfg.status } else { 'ACTIVE' }
+# -Force ne contourne ni enabled=false ni un blocage de droits.
+if (-not $collectionEnabled -or $collectionStatus.StartsWith('BLOCKED_')) {
+    Write-StatusLine ("[{0}] SKIP   analyst_snapshot_collect - enabled={1} status={2} - aucun appel fournisseur" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $collectionEnabled, $collectionStatus)
     exit 0
 }
 

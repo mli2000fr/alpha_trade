@@ -130,6 +130,39 @@ def calibrator_from_state_dict(state: dict[str, Any] | None) -> PlattCalibrator 
 # Temperature Scaling — calibration multi-classe (ternaire)
 # ---------------------------------------------------------------------------
 
+def _positive_temperature(value: float) -> float:
+    temperature = float(value)
+    if not np.isfinite(temperature) or temperature <= 0:
+        raise ValueError("calibration temperature must be finite and strictly positive")
+    return temperature
+
+
+def _multiclass_logits(values: np.ndarray | torch.Tensor) -> torch.Tensor:
+    x = (values.detach().cpu().to(dtype=torch.float64) if isinstance(values, torch.Tensor)
+         else torch.as_tensor(np.asarray(values, dtype=np.float64)))
+    if x.ndim != 2 or x.shape[1] < 2 or not torch.isfinite(x).all():
+        raise ValueError("calibration logits must be finite with shape [N, C>=2]")
+    return x
+
+
+def _multiclass_labels(labels: np.ndarray, x: torch.Tensor) -> torch.Tensor:
+    values = np.asarray(labels)
+    if (values.ndim != 1 or len(values) != len(x) or not np.isfinite(values).all()
+            or not np.equal(values, np.floor(values)).all()
+            or (values < 0).any() or (values >= x.shape[1]).any()):
+        raise ValueError("calibration labels must be class indices matching logits")
+    return torch.as_tensor(values, dtype=torch.int64)
+
+
+def _vector_biases(values: np.ndarray | None, classes: int | None = None) -> np.ndarray | None:
+    if values is None:
+        return None
+    biases = np.asarray(values, dtype=np.float64)
+    if (biases.ndim != 1 or len(biases) < 2 or not np.isfinite(biases).all()
+            or (classes is not None and len(biases) != classes)):
+        raise ValueError("calibration biases must be finite and match class count")
+    return biases
+
 @dataclass(slots=True)
 class TemperatureScaler:
 	"""Temperature Scaling pour calibration multi-classe (ternaire / N classes).
@@ -157,6 +190,9 @@ class TemperatureScaler:
 	fitted: bool = False
 	max_iter: int = 100
 
+	def __post_init__(self) -> None:
+		self.temperature = _positive_temperature(self.temperature)
+
 	@property
 	def method(self) -> str:
 		return "temperature"
@@ -171,27 +207,32 @@ class TemperatureScaler:
 		labels : np.ndarray [N]
 			Indices de classe (0, 1, 2, ...).
 		"""
-		x = torch.as_tensor(np.asarray(logits, dtype=np.float32))
-		y = torch.as_tensor(np.asarray(labels, dtype=np.int64))
-		if x.numel() < 2 or x.ndim < 2:
+		x = _multiclass_logits(logits)
+		y = _multiclass_labels(labels, x)
+		if len(x) < 2:
 			return self
 		unique = torch.unique(y)
 		if unique.numel() < 2:
 			return self
 
-		temperature = torch.tensor(self.temperature, dtype=torch.float32, requires_grad=True)
+		# Optimize log(T): the fit and serving formulas share the same positive T.
+		log_temperature = torch.tensor(np.log(_positive_temperature(self.temperature)), dtype=torch.float64, requires_grad=True)
 		optimizer = torch.optim.LBFGS(
-			[temperature], max_iter=self.max_iter, line_search_fn="strong_wolfe",
+			[log_temperature], max_iter=self.max_iter, line_search_fn="strong_wolfe",
 		)
 
 		def closure() -> torch.Tensor:
 			optimizer.zero_grad()
+			temperature = log_temperature.exp()
+			_positive_temperature(temperature.detach().item())
 			loss = F.cross_entropy(x / temperature, y)
+			if not torch.isfinite(loss):
+				raise ValueError("non-finite temperature calibration loss")
 			loss.backward()
 			return loss
 
 		optimizer.step(closure)
-		self.temperature = float(temperature.detach().cpu().item())
+		self.temperature = _positive_temperature(log_temperature.detach().exp().item())
 		self.fitted = True
 		return self
 
@@ -203,12 +244,12 @@ class TemperatureScaler:
 		logits : np.ndarray or torch.Tensor [N, C]
 			Logits bruts du modèle.
 		"""
-		if isinstance(logits, torch.Tensor):
-			x = logits.detach().cpu()
-		else:
-			x = torch.as_tensor(np.asarray(logits, dtype=np.float32))
-		t = max(self.temperature, 1e-6)  # protection division par zéro
-		return F.softmax(x / t, dim=1).numpy()
+		x = _multiclass_logits(logits)
+		t = _positive_temperature(self.temperature)
+		result = F.softmax(x / t, dim=1)
+		if not torch.isfinite(result).all():
+			raise ValueError("non-finite temperature calibration output")
+		return result.numpy()
 
 	def predict_proba(self, logits: np.ndarray | torch.Tensor) -> np.ndarray:
 		"""Alias pour compatibilité avec :class:`PlattCalibrator`."""
@@ -266,6 +307,10 @@ class VectorScaler:
     fitted: bool = False
     max_iter: int = 100
 
+    def __post_init__(self) -> None:
+        self.temperature = _positive_temperature(self.temperature)
+        self.biases = _vector_biases(self.biases)
+
     @property
     def method(self) -> str:
         return "vector"
@@ -280,9 +325,9 @@ class VectorScaler:
         labels : np.ndarray [N]
             Indices de classe (0, 1, 2, ...).
         """
-        x = torch.as_tensor(np.asarray(logits, dtype=np.float32))
-        y = torch.as_tensor(np.asarray(labels, dtype=np.int64))
-        if x.numel() < 2 or x.ndim < 2:
+        x = _multiclass_logits(logits)
+        y = _multiclass_labels(labels, x)
+        if len(x) < 2:
             return self
         unique = torch.unique(y)
         if unique.numel() < 2:
@@ -290,9 +335,9 @@ class VectorScaler:
 
         num_classes = x.shape[1]
         # Initialisation : T=1.0, b_i=0 avec contrainte sum(b)=0
-        temperature = torch.tensor(self.temperature, dtype=torch.float32, requires_grad=True)
-        biases = torch.zeros(num_classes, dtype=torch.float32, requires_grad=True)
-        params = [temperature, biases]
+        log_temperature = torch.tensor(np.log(_positive_temperature(self.temperature)), dtype=torch.float64, requires_grad=True)
+        biases = torch.zeros(num_classes, dtype=torch.float64, requires_grad=True)
+        params = [log_temperature, biases]
         optimizer = torch.optim.LBFGS(
             params, max_iter=self.max_iter, line_search_fn="strong_wolfe",
         )
@@ -301,15 +346,21 @@ class VectorScaler:
             optimizer.zero_grad()
             # Centrer les biais pour l'identifiabilité (sum b_i = 0)
             centered_biases = biases - biases.mean()
+            temperature = log_temperature.exp()
+            _positive_temperature(temperature.detach().item())
             scaled = x / temperature + centered_biases.unsqueeze(0)
             loss = F.cross_entropy(scaled, y)
+            if not torch.isfinite(loss):
+                raise ValueError("non-finite vector calibration loss")
             loss.backward()
             return loss
 
         optimizer.step(closure)
         with torch.no_grad():
-            self.temperature = float(temperature.detach().cpu().item())
-            self.biases = biases.detach().cpu().numpy().copy()
+            fitted_temperature = _positive_temperature(log_temperature.detach().exp().item())
+            fitted_biases = _vector_biases(biases.detach().cpu().numpy().copy(), num_classes)
+            self.temperature = fitted_temperature
+            self.biases = fitted_biases
         self.fitted = True
         return self
 
@@ -321,18 +372,18 @@ class VectorScaler:
         logits : np.ndarray or torch.Tensor [N, C]
             Logits bruts du modèle.
         """
-        if isinstance(logits, torch.Tensor):
-            x = logits.detach().cpu()
-        else:
-            x = torch.as_tensor(np.asarray(logits, dtype=np.float32))
-        t = max(self.temperature, 1e-6)
+        x = _multiclass_logits(logits)
+        t = _positive_temperature(self.temperature)
+        biases = _vector_biases(self.biases, x.shape[1])
         b = torch.as_tensor(
-            np.asarray(self.biases, dtype=np.float32) if self.biases is not None
-            else np.zeros(x.shape[1], dtype=np.float32)
+            biases if biases is not None else np.zeros(x.shape[1], dtype=np.float64)
         )
         # Centrer les biais pour la prédiction
         b_centered = b - b.mean()
-        return F.softmax(x / t + b_centered.unsqueeze(0), dim=1).numpy()
+        result = F.softmax(x / t + b_centered.unsqueeze(0), dim=1)
+        if not torch.isfinite(result).all():
+            raise ValueError("non-finite vector calibration output")
+        return result.numpy()
 
     def predict_proba(self, logits: np.ndarray | torch.Tensor) -> np.ndarray:
         """Alias pour compatibilité avec PlattCalibrator / TemperatureScaler."""

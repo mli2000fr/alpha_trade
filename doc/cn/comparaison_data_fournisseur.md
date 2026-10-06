@@ -1,4 +1,14 @@
-# Comparaison des données Tushare Chine et des données US d’Alpha-Trade
+# Comparaison des fournisseurs de données Chine pour Alpha-Trade
+
+## Décision opérationnelle du 22 septembre 2026
+
+Le premier socle est désormais **gratuit** : BaoStock fournit le référentiel, le calendrier, les barres, les statuts ST/suspension, les facteurs et les indices. AKShare est réservé aux enrichissements validés endpoint par endpoint. RQData et Tushare ne sont plus des dépendances du POC ; ils pourront être évalués plus tard pour les données directionnelles.
+
+Cette décision permet d’entraîner l’Oracle Extreme d’amplitude à H5/H10/H15/H20. Elle ne prétend pas résoudre D1/D10. Les sections Tushare ci-dessous restent un inventaire des données payantes potentiellement utiles, pas le plan d’implémentation actif.
+
+Voir : [Sprint 6 — sources gratuites BaoStock](./sprint_6_sources_gratuites_baostock.md).
+
+---
 
 ## Objet du document
 

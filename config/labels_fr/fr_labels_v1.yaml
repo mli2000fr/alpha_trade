@@ -1,0 +1,26 @@
+schema_version: 1
+profile: fr_labels_v1
+market_code: FR_EQ
+base_panel: artifacts/fr/features/fr_price_short_v1/fr-price-short-v1-938c3b93b038/panel.parquet
+base_sha256: 156ed1c1d4b0352274734d75577705b7600934a689ade9814fa47c34ee0093be
+liquidity_report: artifacts/fr/sprint6b_liquidity/report.json
+reference_report: artifacts/fr/sprint6c_reference/report.json
+horizons: [5, 10, 20]
+entry: decision_session_open
+exit: decision_plus_h_sessions_close
+availability: next_xpar_open_after_exit
+return_basis: raw_price_no_costs_no_dividends
+oracle_amplitude: absolute_terminal_return
+oracle_top_fraction: 0.20
+min_cross_section: 20
+min_label_coverage: 0.80
+tie_policy: whole_rank_interval_inside_bucket
+walk_forward:
+  min_train_sessions: 504
+  validation_sessions: 126
+  test_sessions: 126
+  step_sessions: 126
+  purge_embargo_sessions: 21
+  development_end: '2025-12-31'
+  reserved_confirmation_start: '2026-01-01'
+canonical_writes_enabled: false

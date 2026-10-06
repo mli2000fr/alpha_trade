@@ -1,5 +1,10 @@
 # Cascade de sélection et modes de ranking
 
+> Mise à jour du 4 octobre 2026 : les modes Extreme Gate disposent du
+> [filtre d’amplitude Oracle × ATR20](ml/oracle_atr_amplitude_gate.md), activé
+> par défaut via `cascade.oracle_atr_enabled`. Il intervient aussi dans la
+> sélection Oracle live lorsqu’elle est activée. `false` restitue Oracle seul.
+
 > Contrat multi-horizon Oracle : l'horizon est enregistré dans l'artefact du
 > batch et relu automatiquement à la prédiction. Un bundle peut utiliser un
 > Oracle H5/H10/H15/H20 tout en conservant ses modèles Per-Symbol LONG/SHORT

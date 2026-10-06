@@ -1,0 +1,15 @@
+profile: cn_oracle_labels_v1
+market_code: CN_A
+database_alias: cn_primary
+feature_profile: cn_price_v1
+horizons: [5, 10, 15, 20]
+entry_price: open_on_prediction_session
+exit_price: close_at_plus_h_sessions
+available_date: next_cn_session_after_exit
+min_rank_cross_section: 20
+quarantine_missing_session_bar: true
+quarantine_suspension_or_status_conflict: true
+quarantine_unverified_factor_event: true
+quarantine_late_source_revision: true
+price_limits_affect_label: false
+price_limits_affect_execution_flag: true

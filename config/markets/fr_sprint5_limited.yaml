@@ -1,0 +1,28 @@
+schema_version: 1
+policy_version: fr_s5_limited_v1
+market_code: FR_EQ
+start_date: 2018-01-01
+end_date: 2026-10-01
+allowed_mics: [XPAR, ALXP, XMLI]
+research_j1:
+  available_lag_sessions: 1
+  require_valid_ohlcv: true
+  require_equity_cfi: true
+  require_observed_mic_interval: true
+  reject_missing_delta_publication_day: true
+  require_independent_price_corroboration: true
+  reject_provider_split_history: true
+  minimum_symbols_per_session: 20
+  minimum_delisted_symbols: 20
+  minimum_delisted_ratio: 0.10
+  permitted_use: research_only
+canonical_strict:
+  require_official_price_verification: true
+  require_historical_pit_proof: true
+  require_economic_corporate_action_verification: true
+  writes_enabled: false
+prohibitions:
+  - no_live
+  - no_paper
+  - no_serving
+  - no_canonical_write_without_explicit_future_promotion

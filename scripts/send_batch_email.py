@@ -293,6 +293,8 @@ def main() -> int:
             passage_code = PASSAGE_EVENT_CODES.get(args.passage, args.passage)
             notification_event = f"{args.event}_{passage_code}_{args.status.lower()}"
         sent = send_notification(event=notification_event, payload=payload)
+        if sent:
+            print("send_batch_email: message email accepté par le serveur SMTP.")
     except Exception as exc:  # noqa: BLE001 — best-effort
         email_failed = True
         print(f"send_batch_email: échec envoi email : {exc}", file=sys.stderr)

@@ -29,6 +29,7 @@ from modelFactory.oracle.artifact_contract import oracle_horizon_badge
 
 from ihm.components.watcher_documentation import render_watcher_documentation_panel
 from ihm.pages import run_page_if_standalone
+from ihm.services.cn_research_market import render_cn_research_view, select_market
 from ihm.pages._alpha_scanner_diagnostics import (
     _alpha_scanner_dependency_block_reason,
     _collect_alpha_scanner_dependency_threshold_inputs,
@@ -1801,6 +1802,14 @@ def _render_step_panels(
 def render() -> None:
     st.header("🔄 Pipeline Quotidien")
     st.caption("Ordre d'exécution strict — chaque étape dépend de la précédente.")
+    market = select_market("pipeline")
+    if market == "FR_EQ":
+        from ihm.services.fr_research_market import render_fr_research_view
+        render_fr_research_view("pipeline")
+        return
+    if market == "CN_A":
+        render_cn_research_view("pipeline")
+        return
 
     options, live_confirmed = _build_launch_options()
     _render_execution_mode_banner(options)

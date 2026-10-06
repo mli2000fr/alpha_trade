@@ -45,6 +45,9 @@ _SCANNER_KEY_WHITELIST: frozenset[str] = frozenset({
     "cache_dir", "description", "label", "name", "path", "url",
     "exchange", "host", "comment", "note", "id", "account_id",
     "api_token_env", "broker_mode", "mode", "fingerprint",
+    # Chemins applicatifs longs pouvant ressembler à du base64.
+    # Les clés de credentials, elles, restent volontairement scannées.
+    "artifact_root", "baseline_shadow_dir", "symbols_file", "log_file",
 })
 
 _NOQA_MARKER = "noqa: secret-scan"

@@ -1,4 +1,20 @@
-# Actualisation des fournisseurs de données Chine
+# Actualisation des fournisseurs Chine
+
+## Décision gratuite actuelle
+
+Le fournisseur opérationnel initial est **BaoStock**. Il ne nécessite ni token ni abonnement. **AKShare** est un complément expérimental non bloquant. **RQData** est un produit d’essai/payant et ne doit pas être décrit comme une dépendance gratuite permanente. **Tushare** reste techniquement disponible mais désactivé, car il n’est pas accessible dans le contexte utilisateur actuel.
+
+| Rôle | Fournisseur | Statut |
+|---|---|---|
+| Socle OHLCV/calendrier/référentiel | BaoStock | GO, smoke réel passé |
+| Enrichissements publics | AKShare | À valider endpoint par endpoint |
+| Contrôle croisé temporaire | RQData | Optionnel, essai seulement |
+| Données directionnelles payantes | RQData/iFinD/Choice/Go-Goal | Reporté |
+| Ancien choix POC | Tushare | Désactivé, non requis |
+
+La suite active est documentée dans [sprint_6_sources_gratuites_baostock.md](./sprint_6_sources_gratuites_baostock.md). Les analyses historiques ci-dessous sont conservées pour le futur achat de données directionnelles.
+
+---
 
 ## Décision
 
@@ -8,13 +24,14 @@ L’étude d’opportunité historique avait correctement identifié Tushare, RQ
 
 | Fournisseur | Apport différenciant | Tarif ou accès connu | Rôle recommandé |
 |---|---|---|---|
-| **Tushare Pro** | Prévisions sell-side individuelles, objectifs, ratings, Dragon and Tiger et événements de limites | 10 000 points : 1 000 CNY/an pour un particulier ; certaines familles séparées | **Source principale du POC** |
+| **Tushare Pro** | Prévisions sell-side individuelles, objectifs, ratings, Dragon and Tiger et événements de limites | Offre payante historiquement étudiée | Connecteur futur optionnel, actuellement désactivé |
 | **RQData / Ricequant** | Consensus agrégé, objectifs, ratings, analyst momentum, surprises et horodatages d’ingestion | Aucun prix public vérifiable ; abonnement et modules sur devis | **Essai puis validation complémentaire** |
 | **CSMAR** | Prévisions analystes, recommandations, rapports, visites institutionnelles et bases académiques spécialisées | Devis ; accès souvent universitaire ou institutionnel | À utiliser via essai ou accès académique |
 | **CNRDS** | Textes de rapports, médias financiers chinois et données alternatives | Accès principalement académique ou institutionnel | Source historique complémentaire |
 | **Wind** | Couverture institutionnelle complète et support contractuel | Devis institutionnel, probablement hors budget POC | Exclu du POC personnel |
 | **RESSET / SUNTIME** | Prévisions et recommandations complémentaires | Offre institutionnelle, tarif public non vérifié | Non prioritaire |
-| **AKShare / BaoStock** | Prix, fondamentaux et données publiques | Gratuit | Ne pas utiliser comme source canonique PIT |
+| **BaoStock** | Référentiel, calendrier, OHLCV, facteurs, ST/suspension et indices | Gratuit, smoke réel passé | **Socle primaire du POC amplitude** |
+| **AKShare** | Données publiques complémentaires | Gratuit mais interfaces variables | Enrichissement non bloquant après validation |
 
 ## RQData : apport réel
 

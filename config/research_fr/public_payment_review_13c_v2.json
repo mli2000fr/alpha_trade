@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "state": "EXPLORATORY_ONLY_NOT_QUALIFIED",
+  "capture_kind": "MANUAL_STRUCTURED_REVIEW_NOT_RAW_HTTP_ARCHIVE",
+  "observed_at": "2026-10-04",
+  "notes": "Dates are realized-accounting supplements only, never model features or historical availability claims. Provider ex-date and cash remain unchanged. SES class/withholding and comprehensive action coverage remain assumptions.",
+  "reviews": [
+    {
+      "symbol": "SESG.PA",
+      "date": "2025-04-15",
+      "cash": "0.25",
+      "payment_date": "2025-04-17",
+      "state": "PRIMARY_REPORTED_PAID_A_SHARE_CLASS_ASSUMED",
+      "url": "https://www.ses.com/press-release/ses-q1-2025-results",
+      "location": "30 April 2025 results, final FY2024 dividend bullet; same release names ticker SESG",
+      "capture": "web retrieval of the issuer release; HTTP archiver returned 403"
+    },
+    {
+      "symbol": "OPM.PA",
+      "date": "2025-04-29",
+      "cash": "0.36",
+      "payment_date": "2025-05-02",
+      "state": "PRIMARY_REPORTED_PAID",
+      "url": "https://www.opmobility.com/wp-content/uploads/2025/05/opmobility-ag2025-compte-rendu-fr.pdf",
+      "location": "page 1; dividend approved, balance paid; ISIN FR0000124570",
+      "archive": "artifacts/fr/research/provider_exploratory_13b/public-repair-20261004-v1/opmobility_votes.pdf"
+    },
+    {
+      "symbol": "LSS.PA",
+      "date": "2025-04-30",
+      "cash": "0.40",
+      "payment_date": "2025-05-05",
+      "state": "PRIMARY_APPROVED_ANNOUNCED_PAYMENT_NOT_CONFIRMED_PAID",
+      "url": "https://www.lectra.com/fr/investisseurs/information-actionnaires/dividende",
+      "location": "dividend for fiscal 2024, AGM 25 April 2025",
+      "archive": "artifacts/fr/research/execution_public_requests/public-pass-20261004-v5/lectra_dividend.html"
+    },
+    {
+      "symbol": "IPS.PA",
+      "date": "2025-07-01",
+      "cash": "1.85",
+      "payment_date": "2025-07-03",
+      "state": "PRIMARY_REPORTED_PAID",
+      "url": "https://ml-eu.globenewswire.com/Resource/Download/95074133-74a4-4290-b4da-9b2f33b86559",
+      "location": "page 22, section 6.4.6, dividend placed in payment 3 July 2025",
+      "archive": "artifacts/fr/research/execution_public_requests/public-pass-20261004-v5/ipsos_paid.pdf"
+    },
+    {
+      "symbol": "ALSTI.PA",
+      "date": "2025-05-29",
+      "cash": "0.59",
+      "payment_date": "2025-06-02",
+      "state": "SECONDARY_PROVIDER_HISTORY_NOT_FINAL_AGM_PROOF",
+      "url": "https://fr.investing.com/equities/stif-france-dividends",
+      "location": "historical dividend row 29 May 2025, 0.59 EUR, paid 2 June 2025",
+      "capture": "web search retrieval; corroborates issuer proposed terms, NOT official final vote qualification"
+    },
+    {
+      "symbol": "VIRP.PA",
+      "date": "2025-06-24",
+      "cash": "1.45",
+      "payment_date": "2025-06-26",
+      "state": "PRIMARY_SHAREHOLDER_HISTORY_APPROVED_PAYMENT",
+      "url": "https://fr.virbac.com/fr/sites/virbac-corporate/home/investors/shareholders-area.html",
+      "location": "Dividend approved by AGM 19 June 2025; fiscal 2024 historical row states payment 26 June 2025",
+      "capture": "web retrieval, manual structured review, not raw archived HTTP"
+    }
+  ]
+}

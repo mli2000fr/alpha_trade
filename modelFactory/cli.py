@@ -393,8 +393,12 @@ def _build_training_batch_metadata(opts: argparse.Namespace, cfg: TrainingConfig
         feature_whitelist_enabled=cfg.data.feature_whitelist_enabled,
         feature_whitelist=cfg.data.feature_whitelist,
     )
+    from common.run_market_scope import resolve_run_market_scope
+
+    market_scope = resolve_run_market_scope(opts.market_code)
     return json.dumps(
         {
+            "market_context": market_scope.as_manifest(),
             "cli_options": vars(opts),
             "training_config": asdict(cfg),
             "feature_columns": feature_columns,
@@ -497,6 +501,12 @@ class _LiveRunSummaryEmitter:
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Model Factory — LSTM per-symbol training & prediction")
     p.add_argument("--mode", choices=["train", "predict"], required=True, help="train ou predict")
+    p.add_argument(
+        "--market-code",
+        choices=["US_EQ", "CN_A", "CN_BJ"],
+        default="US_EQ",
+        help="Marché canonique du batch et de ses artefacts (défaut: US_EQ).",
+    )
     p.add_argument("--symbols", nargs="*", default=None, help="Liste explicite de symboles")
     p.add_argument(
         "--symbol-source",
@@ -845,6 +855,13 @@ def main(args: list[str] | None = None) -> None:
     parser = build_arg_parser()
     raw_args = list(args) if args is not None else sys.argv[1:]
     opts = parser.parse_args(raw_args)
+    from common.config_loader import resolve_market_context
+    from common.market_context import MarketCompatibilityError
+
+    try:
+        resolve_market_context(opts.market_code, require_enabled=True)
+    except MarketCompatibilityError as exc:
+        parser.error(str(exc))
     # Le target-mode CLI pilote les modèles génériques, pas l'Oracle O0. Dans
     # un bundle, les deux branches ont un contrat absolu H20 immuable.
     opts = enforce_directional_bundle_target_options(opts)
@@ -1083,7 +1100,15 @@ def main(args: list[str] | None = None) -> None:
         from modelFactory.db_registry import insert_training_batch, update_training_batch
         from modelFactory.orchestrator import run_training_batch
 
+        from common.run_market_scope import compute_scope_universe_fingerprint
+
         command_line, command_argv_json = _build_training_batch_command(raw_args)
+        universe_fingerprint = compute_scope_universe_fingerprint(
+            market_code=opts.market_code,
+            symbol_source=opts.symbol_source,
+            universe_date=universe_date,
+            symbols=opts.symbols,
+        )
         insert_training_batch(
             engine,
             batch_id=run_id,
@@ -1099,6 +1124,9 @@ def main(args: list[str] | None = None) -> None:
             comment=opts.comment,
             stacking_enabled=opts.enable_global_stacking,
             symbols=",".join(opts.symbols)[:5000] if opts.symbols else None,
+            market_code=opts.market_code,
+            universe_id=opts.symbol_source,
+            universe_fingerprint=universe_fingerprint,
         )
         update_runtime_status(current_phase="batch_dispatch")
         try:

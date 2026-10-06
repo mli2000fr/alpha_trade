@@ -1,5 +1,9 @@
 # Audit du code et roadmap d’intégration du marché chinois
 
+## Mise à jour fournisseur — 22 septembre 2026
+
+La première implémentation opérationnelle utilise BaoStock gratuitement. AKShare reste un enrichissement optionnel ; RQData et Tushare sont reportés. Le connecteur et le staging actifs sont décrits dans [sprint_6_sources_gratuites_baostock.md](./sprint_6_sources_gratuites_baostock.md). Cette mise à jour prévaut sur les passages historiques qui présentent Tushare comme première source.
+
 > Statut : étude d’architecture et plan de réalisation.  
 > Date de l’audit : 19 septembre 2026.  
 > Révision du dépôt auditée : `8052fc18`, avec les modifications locales présentes à cette date.  

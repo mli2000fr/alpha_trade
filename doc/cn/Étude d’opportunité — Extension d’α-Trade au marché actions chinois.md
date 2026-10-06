@@ -1,3 +1,5 @@
+> **Statut fournisseur actualisé.** Cette étude conserve l’analyse historique, mais sa recommandation Tushare est remplacée depuis le 22 septembre 2026 par le socle gratuit BaoStock + AKShare optionnel. Voir [sprint_6_sources_gratuites_baostock.md](./sprint_6_sources_gratuites_baostock.md). RQData, Tushare et les fournisseurs institutionnels sont reportés.
+
 # Étude d’opportunité — Extension d’α-Trade au marché actions chinois
 
 > **Mise à jour d’architecture — 19 septembre 2026.** Les conclusions fournisseurs et marché de cette étude restent utiles. La cible technique définitive est toutefois : base US `alpha_trade`, base Chine `alpha_trade_cn`, code et contrat canonique partagés, routage explicite par `market_code`/`database_alias`, et fichiers CN suffixés `_cn` (`config_cn.yaml`, `batch_cn.yaml`, profils et univers). Toute formulation plus ancienne suggérant une base physique unique est remplacée par cette décision et par [l’architecture normative](./architecture_bases_batchs_configuration_cn.md).

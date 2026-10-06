@@ -336,6 +336,7 @@ PIPELINE_ALLOW_FRACTIONAL_SHARES_KEY = "pipeline_allow_fractional_shares"
 CAPITAL_PRESET_KEY = "pipeline_capital_preset"
 CAPITAL_PRESET_APPLIED_SIGNATURE_KEY = "pipeline_capital_preset_applied_signature"
 CAPITAL_PRESET_CUSTOM = "custom"
+DEFAULT_PIPELINE_CAPITAL_PRESET_KEY = "capital_2001_5000"
 DETECTED_CAPITAL_PRESET_KEY = "pipeline_detected_capital_preset"
 DETECTED_CAPITAL_PRESET_ACCOUNT_KEY = "pipeline_detected_capital_preset_account_id"
 ML_TRAIN_PRESET_KEY = "pipeline_ml_train_preset"
@@ -569,7 +570,10 @@ def _apply_selected_capital_preset(
     *,
     selected_account_id: str | None,
 ) -> None:
-    selected_key = str(st.session_state.get(CAPITAL_PRESET_KEY, CAPITAL_PRESET_CUSTOM) or CAPITAL_PRESET_CUSTOM)
+    selected_key = str(
+        st.session_state.get(CAPITAL_PRESET_KEY, DEFAULT_PIPELINE_CAPITAL_PRESET_KEY)
+        or DEFAULT_PIPELINE_CAPITAL_PRESET_KEY
+    )
     effective_equity = float(defaults.equity) if defaults is not None and defaults.equity is not None else None
     signature = f"{selected_key}|{str(selected_account_id or '').strip()}|{effective_equity if effective_equity is not None else 'none'}"
     last_signature = str(st.session_state.get(CAPITAL_PRESET_APPLIED_SIGNATURE_KEY, "") or "")
@@ -634,13 +638,13 @@ def _apply_execution_prefills(selected_account_id: str | None) -> PipelineExecut
     if detected_capital_preset is not None:
         st.session_state[DETECTED_CAPITAL_PRESET_KEY] = detected_capital_preset.key
         st.session_state[DETECTED_CAPITAL_PRESET_ACCOUNT_KEY] = cleaned_account_id
-        if account_changed or CAPITAL_PRESET_KEY not in st.session_state:
-            st.session_state[CAPITAL_PRESET_KEY] = detected_capital_preset.key
+        if CAPITAL_PRESET_KEY not in st.session_state:
+            st.session_state[CAPITAL_PRESET_KEY] = DEFAULT_PIPELINE_CAPITAL_PRESET_KEY
     else:
         st.session_state.pop(DETECTED_CAPITAL_PRESET_KEY, None)
         st.session_state.pop(DETECTED_CAPITAL_PRESET_ACCOUNT_KEY, None)
-        if account_changed:
-            st.session_state[CAPITAL_PRESET_KEY] = CAPITAL_PRESET_CUSTOM
+        if CAPITAL_PRESET_KEY not in st.session_state:
+            st.session_state[CAPITAL_PRESET_KEY] = DEFAULT_PIPELINE_CAPITAL_PRESET_KEY
     if defaults.equity is not None and defaults.equity > 0 and (
         account_changed or "pipeline_risk_account_equity" not in st.session_state
     ):
@@ -868,6 +872,29 @@ def _render_event_sentiment_block() -> dict[str, Any]:
                     "agrégats journaliers downstream."
                 ),
             )
+        )
+
+    news_import_resume_from_checkpoint = bool(
+        st.checkbox(
+            "Reprendre l'import news depuis les checkpoints",
+            value=bool(
+                st.session_state.get(
+                    "pipeline_sentiment_resume_checkpoints",
+                    True,
+                )
+            ),
+            key="pipeline_sentiment_resume_checkpoints",
+            help=(
+                "Ajoute `--resume-checkpoints` à l'import brut de l'étape 8. "
+                "Les symboles déjà à jour dans `news_ingestion_checkpoint` sont ignorés ; "
+                "les autres reprennent depuis leur dernier watermark. Décochez uniquement "
+                "pour forcer un reparcours complet de la période demandée."
+            ),
+        )
+    )
+    if news_import_resume_from_checkpoint:
+        st.caption(
+            "✅ Reprise active : l'import news ne reparcourt pas les symboles déjà à jour."
         )
 
     sentiment_min_relevance_score = float(
@@ -1227,6 +1254,7 @@ def _render_event_sentiment_block() -> dict[str, Any]:
         "sentiment_start_utc": sentiment_start_utc,
         "sentiment_end_utc": sentiment_end_utc,
         "sentiment_symbols": sentiment_symbols,
+        "news_import_resume_from_checkpoint": news_import_resume_from_checkpoint,
         "sentiment_news_provider": sentiment_news_provider,
         "sentiment_ticker_relevance_mode": sentiment_ticker_relevance_mode,
         "sentiment_min_relevance_score": sentiment_min_relevance_score,
@@ -2701,9 +2729,9 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 "Preset capital — Risk / Execution / Selector",
                 options=capital_preset_options,
                 index=capital_preset_options.index(
-                    cast(str, st.session_state.get(CAPITAL_PRESET_KEY, CAPITAL_PRESET_CUSTOM))
-                    if st.session_state.get(CAPITAL_PRESET_KEY, CAPITAL_PRESET_CUSTOM) in capital_preset_options
-                    else CAPITAL_PRESET_CUSTOM
+                    cast(str, st.session_state.get(CAPITAL_PRESET_KEY, DEFAULT_PIPELINE_CAPITAL_PRESET_KEY))
+                    if st.session_state.get(CAPITAL_PRESET_KEY, DEFAULT_PIPELINE_CAPITAL_PRESET_KEY) in capital_preset_options
+                    else DEFAULT_PIPELINE_CAPITAL_PRESET_KEY
                 ),
                 format_func=_format_capital_preset_label,
                 key=CAPITAL_PRESET_KEY,
@@ -4870,6 +4898,9 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         sentiment_start_utc = _sentiment_vars["sentiment_start_utc"]
         sentiment_end_utc = _sentiment_vars["sentiment_end_utc"]
         sentiment_symbols = _sentiment_vars["sentiment_symbols"]
+        news_import_resume_from_checkpoint = _sentiment_vars[
+            "news_import_resume_from_checkpoint"
+        ]
         sentiment_news_provider = _sentiment_vars["sentiment_news_provider"]
         sentiment_ticker_relevance_mode = _sentiment_vars["sentiment_ticker_relevance_mode"]
         sentiment_min_relevance_score = _sentiment_vars["sentiment_min_relevance_score"]
@@ -4951,6 +4982,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         PipelineLaunchOptions(
             account_id=selected_account_id,
             trade_date=trade_date,
+            capital_preset_key=capital_preset_key,
             force_trade_date_to_latest_snapshot=bool(force_trade_date_to_latest_snapshot),
             risk_account_equity=float(cast(float, risk_account_equity)),
             execution_mode=cast(Any, execution_mode),
@@ -5129,6 +5161,9 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             sentiment_start_utc=sentiment_start_utc or None,
             sentiment_end_utc=sentiment_end_utc or None,
             sentiment_symbols=sentiment_symbols or None,
+            news_import_resume_from_checkpoint=bool(
+                news_import_resume_from_checkpoint
+            ),
             sentiment_news_provider=cast(Any, sentiment_news_provider or "eodhd"),
             sentiment_ticker_relevance_mode=cast(Any, sentiment_ticker_relevance_mode or "provider_default"),
             sentiment_min_relevance_score=float(sentiment_min_relevance_score) if sentiment_min_relevance_score else None,

@@ -260,7 +260,11 @@ def _persist_sector_metrics(
         update_training_run,
     )
 
-    registry_id = ensure_registry_entry(engine, sector_name)
+    registry_id = (
+        ensure_registry_entry(engine, sector_name, batch_id=batch_id)
+        if batch_id is not None
+        else ensure_registry_entry(engine, sector_name)
+    )
     insert_training_run(
         engine, run_id, registry_id, sector_name, status="running",
         **( {"batch_id": batch_id} if batch_id is not None else {}),

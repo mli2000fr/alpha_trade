@@ -2,6 +2,10 @@ CREATE TABLE IF NOT EXISTS execution_runs (
     id              BIGINT AUTO_INCREMENT PRIMARY KEY,
     exec_run_id     VARCHAR(32) NOT NULL UNIQUE,
     risk_run_id     VARCHAR(32) NOT NULL,
+    market_code     VARCHAR(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'US_EQ',
+    calendar_id     VARCHAR(32) NOT NULL DEFAULT 'NYSE',
+    base_currency   CHAR(3) NOT NULL DEFAULT 'USD',
+    market_context_fingerprint CHAR(64) NOT NULL,
     account_id      VARCHAR(32) NOT NULL DEFAULT 'default',
     trade_date      DATE NOT NULL,
     broker_mode     VARCHAR(10) NOT NULL,
@@ -20,6 +24,8 @@ CREATE TABLE IF NOT EXISTS execution_runs (
     INDEX idx_er_risk (risk_run_id),
     INDEX idx_er_date (trade_date),
     INDEX idx_er_account (account_id),
-    INDEX idx_er_account_date (account_id, trade_date)
+    INDEX idx_er_account_date (account_id, trade_date),
+    INDEX idx_execution_market_status_started (market_code, status, started_at),
+    CONSTRAINT fk_execution_market FOREIGN KEY (market_code) REFERENCES markets (market_code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

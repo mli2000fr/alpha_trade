@@ -7,7 +7,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
 
-from execution_engine.broker_adapter import BrokerAdapter
+from execution_engine.broker_router import ExecutionBrokerPort
 from execution_engine.db_io import ExecutionRepository
 from execution_engine.models import ExecutionFill, ExecutionOrderRequest, OrderIntent
 from execution_engine.orphan_adoption import adopt_orphan_buy, adopt_orphan_sell
@@ -22,7 +22,7 @@ class BrokerStateSynchronizer:
     def __init__(
         self,
         repo: ExecutionRepository,
-        broker: BrokerAdapter,
+        broker: ExecutionBrokerPort,
         *,
         broker_mode: str,
     ) -> None:

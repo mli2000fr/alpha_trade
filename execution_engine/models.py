@@ -23,6 +23,16 @@ class OrderStatus:
     TERMINAL = frozenset({FILLED, CANCELED, REJECTED, FAILED, EXPIRED})
 
 
+@dataclass(frozen=True, slots=True)
+class CancelResult:
+    """Résultat d'annulation unitaire, partagé entre broker et doubles OMS."""
+
+    broker_order_id: str
+    symbol: str
+    canceled: bool
+    error: str | None = None
+
+
 class EventType:
     RUN_STARTED = "RUN_STARTED"
     RUN_LOCKED = "RUN_LOCKED"

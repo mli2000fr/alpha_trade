@@ -2045,8 +2045,8 @@ def get_completed_ml_training_batches(limit: int = 100) -> pd.DataFrame:
     Global Ranking) restent exclus.
     """
     return safe_query(f"""
-        SELECT batch_id, comment, symbol_source, training_start_date, training_end_date,
-               finished_at, symbols_completed
+        SELECT batch_id, market_code, calendar_id, base_currency, comment, symbol_source,
+               training_start_date, training_end_date, finished_at, symbols_completed
         FROM model_training_batch
         WHERE status = 'completed'
           AND (
@@ -2075,11 +2075,14 @@ def get_oracle_prediction_batches(limit: int = 50) -> pd.DataFrame:
                COUNT(*)            AS n_predictions,
                MIN(op.prediction_date) AS min_date,
                MAX(op.prediction_date) AS max_date,
+               mb.market_code,
+               mb.calendar_id,
+               mb.base_currency,
                mb.comment,
                mb.finished_at
         FROM oracle_extreme_predictions op
         LEFT JOIN model_training_batch mb ON mb.batch_id = op.batch_id
-        GROUP BY op.batch_id, mb.comment, mb.finished_at
+        GROUP BY op.batch_id, mb.market_code, mb.calendar_id, mb.base_currency, mb.comment, mb.finished_at
         ORDER BY MAX(op.prediction_date) DESC, MIN(op.prediction_date) DESC
         LIMIT {int(limit)}
     """)

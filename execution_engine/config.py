@@ -176,6 +176,9 @@ class ExecutionConfig:
     """Paramètres d'exécution — immutable après construction."""
 
     # --- Mode ---
+    # Le moteur de production actuel ne sait exécuter que les actions US.
+    # Toute autre valeur est rejetée avant de construire un client Alpaca.
+    market_code: str = "US_EQ"
     broker_mode: str = "paper"
     dry_run: bool = False
     account_id: str | None = None  # None = compte par défaut

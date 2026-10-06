@@ -7,12 +7,16 @@ from dataclasses import dataclass
 from typing import Literal
 
 from common.universe_files import default_universe_file_source_or
+from ihm.services.cn_replay_launch import CNResearchReplayOptions, build_cn_replay_command
+from ihm.services.fr_replay_launch import FRResearchReplayOptions, build_fr_replay_command
 
 from core.ml_selection_contract import MLFirstSelectionContract, SelectionCapacity
 from ihm.services.pipeline_runner import PROJECT_ROOT, build_subprocess_env
 
 BacktestingCommandKind = Literal[
     "run",
+    "cn-research-replay",
+    "fr-research-replay",
     "backfill-scores-history",
     "diagnose-screener",
     "recommend-screener",
@@ -293,6 +297,8 @@ class WalkForwardSentimentOptions:
 def build_backtesting_command(
     kind: BacktestingCommandKind,
     options: BacktestRunOptions
+    | CNResearchReplayOptions
+    | FRResearchReplayOptions
     | BackfillScoresHistoryOptions
     | DiagnoseScreenerOptions
     | RecommendScreenerOptions
@@ -302,6 +308,14 @@ def build_backtesting_command(
     | WalkForwardSentimentOptions,
 ) -> list[str]:
     """Construit la commande subprocess correspondant au backtesting."""
+    if kind == "fr-research-replay":
+        if not isinstance(options, FRResearchReplayOptions):
+            raise TypeError("Options FRResearchReplayOptions requises")
+        return build_fr_replay_command(options)
+    if kind == "cn-research-replay":
+        if not isinstance(options, CNResearchReplayOptions):
+            raise TypeError("options doit être CNResearchReplayOptions pour le replay CN")
+        return build_cn_replay_command(options)
     command = [sys.executable, "-u", "-m", "backtesting", kind]
 
     if kind == "run":
@@ -748,6 +762,7 @@ __all__ = [
     "build_subprocess_env",
     "BacktestingCommandKind",
     "BacktestRunOptions",
+    "CNResearchReplayOptions",
     "BackfillScoresHistoryOptions",
     "DiagnoseScreenerOptions",
     "RecommendScreenerOptions",

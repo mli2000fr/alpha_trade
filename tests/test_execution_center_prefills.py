@@ -105,7 +105,7 @@ def test_apply_execution_prefills_sets_risk_equity_from_broker_equity_on_account
     assert session_state["pipeline_risk_account_equity"] == 2_000.0
     assert session_state[execution_center.DETECTED_ACCOUNT_TYPE_KEY] == "cash"
     assert "pipeline_detected_legacy_execution_rule" not in session_state
-    assert session_state[execution_center.CAPITAL_PRESET_KEY] == "capital_0_2000"
+    assert session_state[execution_center.CAPITAL_PRESET_KEY] == "capital_2001_5000"
     assert session_state[execution_center.DETECTED_CAPITAL_PRESET_KEY] == "capital_0_2000"
 
 

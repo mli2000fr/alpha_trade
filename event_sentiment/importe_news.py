@@ -3,6 +3,11 @@ import logging
 from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import text
+from common.universe_files import (
+    is_universe_file_source,
+    load_universe_file_symbols,
+    normalize_universe_file_source,
+)
 from common.utils import configure_root_logging
 from database.connection import get_sqlalchemy_engine
 from event_sentiment.ingestion import NewsIngestionService
@@ -121,6 +126,10 @@ def resolve_symbols_from_inputs(
 ) -> tuple[list[str], str]:
     if symbols_csv:
         return _normalize_symbols(symbols_csv.split(",")), "explicit"
+
+    if is_universe_file_source(symbol_source):
+        normalized_source = normalize_universe_file_source(symbol_source)
+        return _normalize_symbols(load_universe_file_symbols(normalized_source)), normalized_source
 
     if symbol_source == "stock_bars_daily":
         return _normalize_symbols(get_all_symbols_from_stock_bars_daily()), "stock_bars_daily"
@@ -284,14 +293,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--symbol-source",
         type=str,
-        choices=("tradable-universe", "stock_scores", "stock_scores_history", "stock_scores_all", "stock_bars_daily"),
         default="tradable-universe",
         help=(
             "Source des symboles à importer. 'tradable-universe' (défaut) cible le dernier univers PIT canonique complet ; "
             "'stock_scores_all' cible l'union dédupliquée des symboles présents dans stock_scores ou stock_scores_history ; "
             "'stock_scores' limite l'univers aux symboles suivis par le screener ; "
             "'stock_scores_history' cible les symboles déjà présents dans l'historique PIT ; "
-            "'stock_bars_daily' conserve l'ancien comportement large."
+            "'stock_bars_daily' conserve l'ancien comportement large ; "
+            "'universe-file:<fichier.txt>' charge un fichier de config/univers/."
         ),
     )
     parser.add_argument(

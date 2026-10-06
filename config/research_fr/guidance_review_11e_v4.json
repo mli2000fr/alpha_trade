@@ -1,0 +1,10 @@
+{
+  "schema_version":1,
+  "base_manifest":"config/research_fr/guidance_review_11e_v3.json",
+  "base_manifest_sha256":"2bc8be661b370aeab941866285e6d7c3e3662d4d79daa855b591baea52a84740",
+  "training_eligible":false,
+  "records":[
+    {"id":"133936_20240925","pages":[1],"prior_id":"132242_20240718","prior_pages":[4],"status":"QUALITATIVE_OLD_TARGET_REVIEW_REQUIRED","reason":"Previous annual net bookings solid growth and slight non-IFRS operating income growth; new annual1.95bn/equilibrium. Old annual precise numeric target not stated on prior page. Q2 about500m ->350/370m is a different target period and requires typo reconciliation (French July page says2023-24 under2024-25 heading). Do not fabricate annual comparator from prior actual2.32bn."},
+    {"id":"137769_20191206","pages":[1],"prior_id":"110331_20191029","prior_pages":[3],"status":"SCOPE_AND_ACTUAL_ANCHOR_REVIEW_REQUIRED","reason":"Previous annual EBITDA margin stable vs2018, explicitly excludes De Fursac and IFRS16. New15.5/16 excludes IFRS16 but acquisition treatment not reconciled. Prior actual benchmark is not automatically exact old guidance; need scope plus referenced2018 annual margin proof."}
+  ]
+}

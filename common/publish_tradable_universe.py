@@ -257,6 +257,7 @@ def publish_full_tradable_universe(
     market_cap_provider: str | None = None,
     market_cap_max_age_days: int | None = None,
     market_cap_policy: str | None = None,
+    market_code: str = "US_EQ",
 ) -> str:
     """Publish an immutable full-quality run from the exact screener run."""
     _require_tables(engine)
@@ -425,6 +426,7 @@ def publish_full_tradable_universe(
         config_fingerprint=fingerprint,
         rows_expected=len(members),
         data_quality_grade="full",
+        market_code=market_code,
     )
     try:
         publish_universe_run(engine, run_id, members)
@@ -439,6 +441,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--trade-date", type=date.fromisoformat, default=None)
     parser.add_argument("--start-date", type=date.fromisoformat, default=None)
     parser.add_argument("--end-date", type=date.fromisoformat, default=None)
+    parser.add_argument(
+        "--market-code",
+        type=str,
+        default="US_EQ",
+        help="Marché explicite du snapshot. Défaut : US_EQ.",
+    )
     parser.add_argument("--capital-preset-key", default=DEFAULT_CAPITAL_PRESET_KEY)
     parser.add_argument(
         "--max-quote-age-days",
@@ -495,6 +503,7 @@ def main(argv: list[str] | None = None) -> int:
                     market_cap_provider=args.market_cap_provider,
                     market_cap_max_age_days=args.market_cap_max_age_days,
                     market_cap_policy=args.market_cap_policy,
+                    market_code=str(args.market_code).strip().upper(),
                 )
             )
         except RuntimeError as exc:
@@ -510,6 +519,8 @@ def main(argv: list[str] | None = None) -> int:
                 "snapshots_published": len(run_ids),
                 "universe_run_ids": run_ids,
                 "missing_screener_snapshot_dates": missing_source_dates,
+                "requested_capital_preset_key": args.capital_preset_key,
+                "market_code": str(args.market_code).strip().upper(),
                 "data_quality_grade": "full",
             }
         )
@@ -517,7 +528,8 @@ def main(argv: list[str] | None = None) -> int:
     if missing_source_dates:
         print(
             "Publication incomplète : exécutez d'abord le Stock Screener PIT pour les dates manquantes, "
-            "par exemple `python -m screener.stock_screener --trade-date YYYY-MM-DD`.",
+            "avec le même preset capital, par exemple "
+            f"`python -m screener.stock_screener --trade-date YYYY-MM-DD --capital-preset-key {args.capital_preset_key}`.",
             file=sys.stderr,
         )
         return 2

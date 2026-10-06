@@ -1,0 +1,16 @@
+schema_version: 1
+profile: fr_oracle_oof_qualification_v1
+market_code: FR_EQ
+horizon: 5
+development_end: '2025-12-31'
+rolling_train_sessions: 504
+min_cross_section: 20
+min_session_coverage: 0.8
+min_usable_sessions: 40
+labels_report: artifacts/fr/labels/fr_labels_v1/fr-labels-v1-a8f5acc2804c/report.json
+labels_sha256: f8c845aba3fa37bdc06ad51020ef8aecdf4d9016de2a75a7729ed353cbe4ab68
+price_panel: artifacts/fr/features/fr_price_short_v1/fr-price-short-v1-938c3b93b038/panel.parquet
+price_sha256: 156ed1c1d4b0352274734d75577705b7600934a689ade9814fa47c34ee0093be
+canonical_writes_enabled: false
+serving_enabled: false
+training_enabled: false

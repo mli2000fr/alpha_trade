@@ -1,0 +1,41 @@
+# Sprint 13-A : gel avant audit de couverture, pas de sélection sur rendements.
+experiment: cn_economic_preflight_sprint13a_v1
+market_code: CN_A
+database_alias: cn_primary
+evidence_level: previously_inspected_oos_predictions_not_independent_confirmation
+source_experiment: cn_global_ranking_sprint10c_v1
+source_horizon: 20
+source_model: lightgbm
+test_semesters: [2022H1, 2022H2, 2023H1, 2023H2, 2024H1, 2024H2, 2025H1, 2025H2]
+signal_time: after_close_j
+entry_policy: next_open_only_cancel_if_not_filled
+exit_policy: twenty_full_sessions_after_actual_fill_then_next_open_sell_carry_until_feasible
+portfolio:
+  initial_cash_cny: 100000
+  ticket_cny: 10000
+  max_positions: 8
+  allow_pyramiding: false
+  short_enabled: false
+  oracle_tie_break: deterministic_hash_seed_average
+  tie_break_seeds: [0, 1, 2, 3, 4]
+  no_signal_during_open_position: true
+  min_oracle_pool_per_session: 20
+candidate_policies:
+  - oracle_all
+  - reversal_veto_bottom20
+  - lightgbm_veto_bottom20
+  - lightgbm_long_top20
+benchmarks: [csi300_buy_hold, momentum_top20_same_universe]
+cost_profiles: [cn_a_research, cn_a_research_stress]
+fill_scenarios: [base, conservative]
+corporate_action_handling: quarantine_unclassified_never_synthesize_split_or_dividend
+delisting_handling: unresolved_without_verified_cash_recovery
+preflight_gate:
+  max_unclassified_action_exposure_fraction: 0.05
+  minimum_full_scheduled_path_fraction: 0.95
+  denominator: selected_candidates_with_full_scheduled_path
+  decision_if_exceeded: normalize_corporate_actions_before_economic_replay
+  decision_if_passed: allow_quarantined_research_replay_with_coverage_report
+serving_enabled: false
+live_enabled: false
+economic_go_allowed_at_13a: false

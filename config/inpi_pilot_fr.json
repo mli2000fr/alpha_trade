@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "identity_reference": "artifacts/fr/sprint6c_reference/identities.jsonl.gz",
+  "canonical_go": false,
+  "issuers": [
+    {"symbol":"AB.PA","isin":"FR0010557264","siren":"438479941","issuer":"AB SCIENCE","name_aliases":["AB SCIENCE"],"legal_source":"https://www.ab-science.com/wp-content/uploads/2024/11/RFS_AB_Science_S12024_18_11_2024_EN.pdf"},
+    {"symbol":"ABCA.PA","isin":"FR0004040608","siren":"400343182","issuer":"ABC ARBITRAGE","name_aliases":["ABC ARBITRAGE"],"legal_source":"https://www.abc-arbitrage.com/fr/mentions-legales/"},
+    {"symbol":"AC.PA","isin":"FR0000120404","siren":"602036444","issuer":"ACCOR","name_aliases":["ACCOR","ACCOR SA"],"legal_source":"https://group.accor.com/en/legal-terms"},
+    {"symbol":"ADOC.PA","isin":"FR0011184241","siren":"487647737","issuer":"ADOCIA","name_aliases":["ADOCIA"],"legal_source":"https://www.adocia.com/composants/uploads/2023/06/Adocia-_-Rapport-semestriel-ENG-2021-VF.pdf"},
+    {"symbol":"AKE.PA","isin":"FR0010313833","siren":"445074685","issuer":"ARKEMA","name_aliases":["ARKEMA"],"legal_source":"https://www.arkema.com/global/fr/legals/","mapping_caution":"Ne pas utiliser Arkema France, SIREN 319632790."},
+    {"symbol":"BB.PA","isin":"FR0000120966","siren":"552008443","issuer":"SOCIETE BIC","name_aliases":["SOCIETE BIC","BIC"],"legal_source":"https://corporate.bic.com/fr-fr/mentions-legales"},
+    {"symbol":"BN.PA","isin":"FR0000120644","siren":"552032534","issuer":"DANONE","name_aliases":["DANONE","GROUPE DANONE"],"legal_source":"https://careers.danone.com/fr-global/Legal-Notic.html"},
+    {"symbol":"OR.PA","isin":"FR0000120321","siren":"632012100","issuer":"L OREAL","name_aliases":["L OREAL","LOREAL"],"legal_source":"https://www.loreal-finance.com/fr/lettre-aux-actionnaires-84/fr/doc/article/8"},
+    {"symbol":"SU.PA","isin":"FR0000121972","siren":"542048574","issuer":"SCHNEIDER ELECTRIC SE","name_aliases":["SCHNEIDER ELECTRIC SE","SCHNEIDER ELECTRIC"],"legal_source":"https://www.se.com/ca/en/about-us/legal/legal-information/"},
+    {"symbol":"UBI.PA","isin":"FR0000054470","siren":"335186094","issuer":"UBISOFT ENTERTAINMENT","name_aliases":["UBISOFT ENTERTAINMENT","UBISOFT ENTERTAINMENT SA"],"legal_source":"https://staticctf.ubisoft.com/8aefmxkxpxwl/2n6xEpn0Pr4BgRot2TrwPQ/5e9a87084ec84a4581a0cf25f643a2cc/Ent_AGM_2025.07.10_Rapport_CAC_M%C3%83_c%C3%83_nat_2025.05.28.pdf"}
+  ]
+}

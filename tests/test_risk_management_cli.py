@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import subprocess
@@ -374,7 +374,7 @@ def test_cli_main_falls_back_to_account_equity_without_account_snapshot(monkeypa
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
             return {}
 
-        def load_predictions_asof(self, symbols, trade_date):
+        def load_predictions_asof(self, symbols, trade_date, *, batch_id=None, sources=None):
             return {}
 
         def load_win_rates_asof(self, symbols, trade_date):
@@ -456,7 +456,7 @@ def test_cli_main_passes_ternary_short_predictions_without_pre_tagging(monkeypat
                 for symbol in symbols
             }
 
-        def load_predictions_asof(self, symbols, trade_date):
+        def load_predictions_asof(self, symbols, trade_date, *, batch_id=None, sources=None):
             from risk_management.models import PredictionInfo
 
             return {
@@ -591,7 +591,7 @@ def test_cli_main_treats_default_account_as_implicit_and_falls_back(monkeypatch)
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
             return {}
 
-        def load_predictions_asof(self, symbols, trade_date):
+        def load_predictions_asof(self, symbols, trade_date, *, batch_id=None, sources=None):
             return {}
 
         def load_win_rates_asof(self, symbols, trade_date):
@@ -655,7 +655,7 @@ def test_cli_main_explicit_account_falls_back_when_no_snapshot(monkeypatch) -> N
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
             return {}
 
-        def load_predictions_asof(self, symbols, trade_date):
+        def load_predictions_asof(self, symbols, trade_date, *, batch_id=None, sources=None):
             return {}
 
         def load_win_rates_asof(self, symbols, trade_date):
@@ -723,7 +723,7 @@ def test_cli_main_accepts_min_position_notional_argument(monkeypatch) -> None:
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
             return {}
 
-        def load_predictions_asof(self, symbols, trade_date):
+        def load_predictions_asof(self, symbols, trade_date, *, batch_id=None, sources=None):
             return {}
 
         def load_win_rates_asof(self, symbols, trade_date):
@@ -791,7 +791,7 @@ def test_cli_main_caps_stale_snapshot_with_lower_requested_equity(monkeypatch) -
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
             return {}
 
-        def load_predictions_asof(self, symbols, trade_date):
+        def load_predictions_asof(self, symbols, trade_date, *, batch_id=None, sources=None):
             return {}
 
         def load_win_rates_asof(self, symbols, trade_date):
@@ -859,7 +859,7 @@ def test_cli_main_emits_live_progress_payloads(monkeypatch) -> None:
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
             return {}
 
-        def load_predictions_asof(self, symbols, trade_date):
+        def load_predictions_asof(self, symbols, trade_date, *, batch_id=None, sources=None):
             return {}
 
         def load_win_rates_asof(self, symbols, trade_date):
@@ -924,7 +924,7 @@ def test_cli_main_applies_market_regime_overrides_to_builder(monkeypatch) -> Non
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
             return {}
 
-        def load_predictions_asof(self, symbols, trade_date):
+        def load_predictions_asof(self, symbols, trade_date, *, batch_id=None, sources=None):
             return {}
 
         def load_win_rates_asof(self, symbols, trade_date):
@@ -989,7 +989,7 @@ def test_cli_main_persists_market_macro_snapshot(monkeypatch) -> None:
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
             return {}
 
-        def load_predictions_asof(self, symbols, trade_date):
+        def load_predictions_asof(self, symbols, trade_date, *, batch_id=None, sources=None):
             return {}
 
         def load_win_rates_asof(self, symbols, trade_date):
@@ -1055,7 +1055,7 @@ def test_cli_main_blocks_new_entries_when_regime_disallows_them(monkeypatch) -> 
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
             raise AssertionError("Les prix ne doivent pas Ãªtre chargÃ©s si le rÃ©gime bloque les entrÃ©es")
 
-        def load_predictions_asof(self, symbols, trade_date):
+        def load_predictions_asof(self, symbols, trade_date, *, batch_id=None, sources=None):
             raise AssertionError("Les prÃ©dictions ne doivent pas Ãªtre chargÃ©es si le rÃ©gime bloque les entrÃ©es")
 
         def load_win_rates_asof(self, symbols, trade_date):
@@ -1117,7 +1117,7 @@ def test_cli_main_blocks_run_when_ml_coverage_is_below_threshold(monkeypatch) ->
 
             return [SelectionScore("AAPL", "Tech", 0.9), SelectionScore("MSFT", "Tech", 0.8)]
 
-        def load_predictions_asof(self, symbols, trade_date):
+        def load_predictions_asof(self, symbols, trade_date, *, batch_id=None, sources=None):
             return {"AAPL": object()}
 
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
@@ -1178,7 +1178,7 @@ def test_cli_main_applies_vol_targeting_and_exposes_summary(monkeypatch) -> None
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
             return {}
 
-        def load_predictions_asof(self, symbols, trade_date):
+        def load_predictions_asof(self, symbols, trade_date, *, batch_id=None, sources=None):
             return {}
 
         def load_win_rates_asof(self, symbols, trade_date):
@@ -1253,7 +1253,7 @@ def test_cli_main_exposes_shadow_compare_and_postmortem_artifacts(monkeypatch) -
 
             return {"AAPL": PriceInfo(symbol="AAPL", last_close=100.0, atr_20=5.0, price_asof_date=trade_date, atr_asof_date=trade_date)}
 
-        def load_predictions_asof(self, symbols, trade_date):
+        def load_predictions_asof(self, symbols, trade_date, *, batch_id=None, sources=None):
             return {}
 
         def load_win_rates_asof(self, symbols, trade_date):
@@ -1391,7 +1391,7 @@ def test_cli_main_applies_empirical_risk_calibration_from_repository(monkeypatch
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
             return {}
 
-        def load_predictions_asof(self, symbols, trade_date):
+        def load_predictions_asof(self, symbols, trade_date, *, batch_id=None, sources=None):
             return {}
 
         def load_win_rates_asof(self, symbols, trade_date):
@@ -1488,7 +1488,7 @@ def test_cli_main_does_not_apply_empirical_risk_calibration_when_blocked_by_gove
         def load_prices_asof(self, symbols, trade_date, atr_window=20):
             return {}
 
-        def load_predictions_asof(self, symbols, trade_date):
+        def load_predictions_asof(self, symbols, trade_date, *, batch_id=None, sources=None):
             return {}
 
         def load_win_rates_asof(self, symbols, trade_date):

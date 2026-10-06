@@ -6,7 +6,7 @@ import logging
 from execution_engine.audit import make_event
 from execution_engine.db_io import ExecutionRepository
 from execution_engine.models import EventType, ExecutionEvent, OrderIntent, OrderStatus
-from execution_engine.broker_adapter import BrokerAdapter
+from execution_engine.broker_router import ExecutionBrokerPort
 
 LOGGER = logging.getLogger(__name__)
 
@@ -14,7 +14,7 @@ LOGGER = logging.getLogger(__name__)
 class OcoManager:
     """Gère la logique OCO synthétique pour les synthetic brackets."""
 
-    def __init__(self, broker: BrokerAdapter, repo: ExecutionRepository) -> None:
+    def __init__(self, broker: ExecutionBrokerPort, repo: ExecutionRepository) -> None:
         self._broker = broker
         self._repo = repo
 

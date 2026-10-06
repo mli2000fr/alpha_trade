@@ -33,7 +33,7 @@ from execution_engine.audit import (
     event_to_db_dict,
     make_event,
 )
-from execution_engine.broker_adapter import BrokerAdapter
+from execution_engine.broker_router import ExecutionBrokerPort
 from execution_engine.broker_state_sync import BrokerStateSynchronizer
 from execution_engine.children_submission import (
     submit_children as _submit_children_impl,
@@ -83,7 +83,7 @@ class ProductionExecutor:
         self,
         config: ExecutionConfig,
         repo: ExecutionRepository,
-        broker: BrokerAdapter,
+        broker: ExecutionBrokerPort,
         oco: OcoManager,
         circuit_breaker: Optional[Any] = None,
         progress_callback: Callable[[dict[str, object]], None] | None = None,

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -10,18 +11,25 @@ import streamlit as st
 from ihm.pages import run_page_if_standalone
 from ihm.services.batch_management import (
     BatchSpec,
+    RIGHTS_BLOCK_STATUSES,
     build_install_command,
     build_run_command,
     build_uninstall_command,
-    format_data_coverage,
     format_command,
+    format_data_coverage,
     format_schedule,
     install_all_batches,
     install_batch,
+    latest_cn_dragon_research_run,
     list_active_batch_runs,
     load_batch_specs,
+    load_market_batch_specs,
+    supports_batch_execution,
     query_windows_task_states,
     read_batch_log_tail,
+    read_cn_daily_quality_history,
+    read_fr_inpi_mapping,
+    read_fr_consensus_state,
     start_batch,
     uninstall_all_batches,
     uninstall_batch,
@@ -161,10 +169,8 @@ def _windows_last_run_failed(
     )
     # A later successful manual/managed run supersedes an older Scheduler error.
     latest_status = str((row or {}).get("status") or "").strip().upper()
-    if (latest_status in {"SUCCESS", "COMPLETED", "OK", "COMPLETED_WITH_WARNINGS"}
-            and windows_started and business_finished and business_finished >= windows_started):
-        return False
-    return True
+    return not (latest_status in {"SUCCESS", "COMPLETED", "OK", "COMPLETED_WITH_WARNINGS"}
+                and windows_started and business_finished and business_finished >= windows_started)
 
 
 def _batch_title(
@@ -172,8 +178,14 @@ def _batch_title(
     name: str,
     row: dict[str, Any] | None,
     task: dict[str, Any] | None = None,
+    *,
+    catalog_status: str = "",
 ) -> str:
     title = f"{' · '.join(status_bits)} — {name}"
+    # Rights/prudence is independent of an old successful or failed run.
+    # Do not label missing-provider or technical blocks as legal restrictions.
+    if catalog_status in RIGHTS_BLOCK_STATUSES:
+        return f"**⛔ ⚖️ DROITS / PRUDENCE — {title}**"
     if _last_run_failed(row) or _windows_last_run_failed(task, row):
         return f":red[**{title}**]"
     return title
@@ -181,7 +193,7 @@ def _batch_title(
 
 def _render_last_run(row: dict[str, Any] | None) -> None:
     if not row:
-        st.caption("Aucune exécution suivie dans pit_collection_runs.")
+        st.caption("Aucune exécution suivie pour ce batch dans son périmètre.")
         return
     status = str(row.get("status") or "INCONNU")
     if status in {"SUCCESS", "COMPLETED", "OK"}:
@@ -213,14 +225,20 @@ def _render_batch(
 ) -> None:
     status_bits = [_priority_badge(spec.priority), _task_badge(task)]
     if not spec.enabled:
-        status_bits.append("⏸️ Désactivé dans batch.yaml")
+        status_bits.append(f"⏸️ Désactivé dans {Path(spec.catalog_path).name}")
     elif not spec.runnable:
         status_bits.append(f"🧪 {spec.status}")
     if active:
         status_bits.append("🔄 Lancé depuis cette IHM")
 
-    with st.expander(_batch_title(status_bits, spec.name, db_run, task), expanded=bool(active)):
+    with st.expander(_batch_title(status_bits, spec.name, db_run, task,
+                                  catalog_status=spec.status), expanded=bool(active)):
         st.write(spec.description)
+        if spec.status in RIGHTS_BLOCK_STATUSES:
+            st.error("⛔ ⚖️ Blocage pour droits d'utilisation ou par prudence. "
+                     "Ne pas relancer ni réactiver sans validation des autorisations. "
+                     "Ce statut n'est pas une panne technique ni un constat d'illégalité ; "
+                     "consulter les motifs et les conditions de déblocage ci-dessous.")
         if spec.supervision_dependencies:
             dependencies = ", ".join(
                 f"`{name}`" for name in spec.supervision_dependencies
@@ -233,9 +251,54 @@ def _render_batch(
             st.info(spec.execution_notice)
         if spec.research_notice:
             st.warning(f"🔬 Usage recherche — {spec.research_notice}")
+        if spec.name == 'fr_consensus_snapshot':
+            st.info('Collecte prospective : historique à partir des vraies dates de réception. '
+                    'Avant ML/backtest : qualifier identités, exercices et unités, puis joindre uniquement available_at <= heure de décision. '
+                    'Les estimations reçues aujourd\'hui ne doivent jamais être injectées dans un backtest passé. '
+                    'Collecter ne démontre pas un signal D1/D10 ; absent ne signifie pas zéro.')
+            try:
+                consensus = read_fr_consensus_state(spec)
+                if consensus:
+                    entries = consensus.get('symbols', {})
+                    states = [v.get('status') for v in entries.values()]
+                    st.caption(f"Observation {consensus.get('day')} : {states.count('COMPLETED')} snapshots archivés · "
+                               f"{states.count('EXCLUDED_IDENTITY')} identités exclues · {states.count('NO_COVERAGE')} sans consensus · "
+                               f"{states.count('FAILED')} échecs techniques. Disponibilité de recherche, pas validation ML.")
+                    excluded = [{'Symbole': s, 'État': v.get('status'), 'Motif': v.get('reason')}
+                                for s, v in entries.items() if v.get('status') in ('EXCLUDED_IDENTITY', 'NO_COVERAGE', 'FAILED')]
+                    excluded += [{'Symbole': v.get('symbol'), 'État': 'EXCLUDED_REFERENCE', 'Motif': v.get('reason')}
+                                 for v in consensus.get('reference_exclusions', [])]
+                    if excluded:
+                        with st.expander('Consensus FR : exclusions, absences et erreurs'):
+                            st.dataframe(excluded, use_container_width=True, hide_index=True)
+            except (ValueError, OSError) as exc:
+                st.error(f'Checkpoint consensus indisponible : {type(exc).__name__}')
+        if spec.name=='fr_fundamentals_sync':
+            try:
+                mapping=read_fr_inpi_mapping(spec)
+                if mapping is None:
+                    st.info('Correspondances INPI : recherche à lancer avant la collecte.')
+                else:
+                    counts=mapping.get('counts',{})
+                    st.info(f"Correspondances : {counts.get('VERIFIED',0)} vérifiées · "
+                            f"{counts.get('EXCLUDED',0)} exclues · {mapping.get('pending',0)} en attente "
+                            f"/ {mapping.get('total_universe',0)} titres. Vérification actuelle, pas PIT historique.")
+                    excluded=[{'Symbole':r.get('symbol'),'ISIN':r.get('isin'),'Motif':r.get('reason')}
+                              for r in mapping.get('rows',[]) if r.get('status')=='EXCLUDED']
+                    if excluded:
+                        st.caption('Exclusions du mapping : aucun compte ne sera collecté pour ces correspondances.')
+                        st.dataframe(excluded,use_container_width=True,hide_index=True)
+                    if 'collection_completed_issuers' in mapping:
+                        st.caption(f"Collecte : {mapping['collection_completed_issuers']} correspondances examinées. "
+                                   'Comptes archivés en quarantaine uniquement ; reprise au prochain passage.')
+                    if mapping.get('document_exclusions'):
+                        with st.expander('Comptes exclus pendant la collecte — motifs'):
+                            st.dataframe(mapping['document_exclusions'],use_container_width=True,hide_index=True)
+            except (ValueError,OSError) as exc:
+                st.error(f'Rapport de correspondances INPI indisponible : {type(exc).__name__}')
         if not spec.runnable:
             requirement = spec.activation_requirement or (
-                f"Corriger le statut {spec.status} et passer enabled à true dans batch.yaml "
+                f"Corriger le statut {spec.status} et passer enabled à true dans {Path(spec.catalog_path).name} "
                 "uniquement après validation opérationnelle."
             )
             st.error(f"🔴 Activation bloquée — {requirement}")
@@ -268,18 +331,41 @@ def _render_batch(
         st.markdown("**Tables impactées :** " + (tables or "aucune tant que la source n’est pas activée"))
         _render_last_run(db_run)
 
+        if spec.name == "cn_daily_quality_17c":
+            history = read_cn_daily_quality_history(spec)
+            with st.expander("Qualité quotidienne CN — dernières séances"):
+                st.caption(
+                    "Rapports de contrôle en lecture seule. Les jours fermés sont exclus ; "
+                    "la présence de rapports ne valide pas à elle seule le gate de sept séances consécutives."
+                )
+                if history:
+                    st.dataframe([
+                        {"Séance CN": row["session"], "Statut": row["status"],
+                         "Gates OK": row["passed"], "Critiques": row["critical"],
+                         "Alertes": row["warnings"], "Contrôles à examiner": row["alerts"]}
+                        for row in history
+                    ], hide_index=True, use_container_width=True)
+                    st.caption(f"Dernier rapport : {history[0]['report_path']}")
+                else:
+                    st.info("Aucune séance CN ouverte contrôlée pour le moment.")
+
         with st.expander("Commandes et détails techniques"):
-            st.caption("Installation / réinstallation de la tâche Windows")
-            st.code(format_command(build_install_command(spec, run_as=run_as)), language="powershell")
-            st.caption("Exécution immédiate, sans attendre le calendrier")
-            st.code(format_command(build_run_command(spec)), language="powershell")
+            if supports_batch_execution(spec):
+                st.caption("Installation / réinstallation de la tâche Windows")
+                st.code(format_command(build_install_command(spec, run_as=run_as)), language="powershell")
+                st.caption("Exécution immédiate, sans attendre le calendrier")
+                st.code(format_command(build_run_command(spec)), language="powershell")
+            else:
+                st.info("Launcher dédié non raccordé : aucune commande US de substitution.")
             st.caption("Désinstallation de la tâche Windows uniquement")
             st.code(format_command(build_uninstall_command(spec)), language="powershell")
             st.caption(f"Journal principal : {spec.log_file} · Statut de configuration : {spec.status}")
 
         install_col, run_col, uninstall_col = st.columns(3)
         with install_col:
-            if st.button("♻️ Installer / réinstaller", key=f"batch_install_{spec.name}", use_container_width=True):
+            if st.button("♻️ Installer / réinstaller", key=f"batch_install_{spec.name}",
+                         disabled=not supports_batch_execution(spec) or (Path(spec.catalog_path).name == "batch_fr.yaml" and not spec.runnable),
+                         use_container_width=True):
                 with st.spinner(f"Installation de {spec.name}…"):
                     result = install_batch(spec, run_as=run_as)
                 if result.ok:
@@ -293,7 +379,7 @@ def _render_batch(
             disabled = not spec.runnable or bool(active) or scheduled_running
             if st.button("▶️ Lancer maintenant", key=f"batch_run_{spec.name}", disabled=disabled, use_container_width=True):
                 try:
-                    record = start_batch(spec, db_config=get_runtime_db_config())
+                    record = start_batch(spec, db_config=None if spec.name.startswith(('fr_','cn_')) else get_runtime_db_config())
                 except Exception as exc:
                     st.error(f"Impossible de lancer le batch : {exc}")
                 else:
@@ -360,15 +446,34 @@ def _render_bulk_result(action: str, results: dict[str, Any], skipped: list[str]
 
 def render() -> None:
     st.title("🗓️ Batchs planifiés")
-    st.caption(
-        "Catalogue central de batch.yaml : rôle de chaque collecte, priorité, état réel du "
-        "Planificateur Windows, dernières écritures et pilotage manuel."
-    )
+    labels={'US_EQ':'États-Unis (US)','CN_A':'Chine (CN)','FR_EQ':'France (FR)'}
+    if st.session_state.get('fr14_batch_market') == 'US_CN':
+        st.session_state['fr14_batch_market']='US_EQ'
+    market = st.selectbox("Périmètre des batchs", tuple(labels),
+                          key="fr14_batch_market", format_func=labels.get)
+    if market == "FR_EQ":
+        from ihm.services.fr_batch_view import render_fr_batches
+        render_fr_batches()
+        return
+    render_market_batches(market)
 
-    specs = load_batch_specs()
+
+def render_market_batches(market: str) -> None:
+    """Same controls/cards for US, CN and FR, with separate status sources."""
+    captions={'US_EQ':'US · batch.yaml · alpha_trade',
+              'CN_A':'CN · batch_cn.yaml et sections CN historiques · alpha_trade_cn',
+              'FR_EQ':'FR · batch_fr.yaml · alpha_trade_fr · recherche fichiers uniquement'}
+    st.caption(
+        captions[market] + ' : rôle, priorité, état Windows, derniers runs et pilotage manuel. '
+        'Les actions globales concernent uniquement ce marché.'
+    )
+    specs = load_market_batch_specs(market)
     tasks, task_error = _task_states()
-    db_runs, db_error = _latest_collection_runs()
-    active = list_active_batch_runs()
+    db_runs, db_error = _latest_collection_runs() if market=='US_EQ' else ({},None)
+    if market=='FR_EQ':
+        st.warning('Collecte recherche fichiers uniquement ; pas de publication SQL/canonique. Sources non qualifiées et sauvegardes restent bloquées. Aucune installation automatique.')
+    names={s.name for s in specs}
+    active = [r for r in list_active_batch_runs() if str(r.get('step_key','')).removeprefix('batch:') in names]
     active_by_batch: dict[str, list[dict[str, object]]] = {}
     for row in active:
         name = str(row.get("step_key") or "").removeprefix("batch:")
@@ -383,7 +488,7 @@ def render() -> None:
     installed_dormant = sum(spec.task_name in tasks and not spec.runnable for spec in specs)
     top1, top2, top3, top4, top5 = st.columns(5)
     top1.metric("Configurés", len(specs))
-    top2.metric("Exécutables (batch.yaml)", sum(spec.runnable for spec in specs))
+    top2.metric("Exécutables (catalogues)", sum(spec.runnable for spec in specs))
     top3.metric("Installés et exécutables", installed_runnable)
     top4.metric("Installés mais dormants", installed_dormant)
     top5.metric("En cours via l’IHM", len(active))
@@ -391,7 +496,7 @@ def render() -> None:
     if installed_dormant:
         st.info(
             f"{installed_dormant} tâche(s) Windows sont installées mais neutralisées par "
-            "enabled=false ou un statut d’attente dans batch.yaml. Elles ne collectent aucune donnée."
+            "enabled=false ou un statut d’attente dans leur catalogue. Elles ne collectent aucune donnée."
         )
 
     if task_error:
@@ -400,12 +505,18 @@ def render() -> None:
         st.info(f"Historique détaillé indisponible : {db_error}")
 
     controls = st.columns([2, 2, 1, 1])
-    search = controls[0].text_input("Rechercher", placeholder="Nom, table, fournisseur…")
+    search = controls[0].text_input(
+        "Rechercher",
+        placeholder="Nom, table, fournisseur…",
+        help="Filtre les batchs sur leur nom, leur description, leurs tables et leur fournisseur.",
+    )
     priorities = controls[1].multiselect(
         "Priorités", [f"P{i}" for i in range(5)], default=[f"P{i}" for i in range(5)]
     )
     state_filter = controls[2].selectbox(
-        "État", ["Tous", "Installés", "Non installés", "Exécutables", "En attente"]
+        "État",
+        ["Tous", "Installés", "Non installés", "Exécutables", "En attente"],
+        help="Affiche tous les batchs ou uniquement ceux correspondant à l'état choisi.",
     )
     run_as = controls[3].selectbox(
         "Compte tâche", ["Interactive", "System"],
@@ -424,7 +535,7 @@ def render() -> None:
         st.rerun()
     if global_col2.button(
         "♻️ Installer / réinstaller tous", use_container_width=True,
-        help="Installe uniquement les tâches dont enabled=true dans batch.yaml. Les batchs désactivés ne sont pas touchés.",
+        help="Installe uniquement les tâches dont enabled=true dans leur catalogue. Les batchs désactivés ne sont pas touchés.",
     ):
         install_specs = [
             spec for spec in specs
@@ -440,7 +551,7 @@ def render() -> None:
         "🗑️ Désinstaller tous les batchs",
         disabled=not installed_specs,
         use_container_width=True,
-        help="Supprime toutes les tâches Batch installées, mais conserve batch.yaml, les données et les journaux.",
+        help="Supprime toutes les tâches Batch installées, mais conserve les catalogues, les données et les journaux.",
     ):
         with st.spinner(f"Désinstallation de {len(uninstall_specs)} tâche(s) Windows…"):
             results = uninstall_all_batches(uninstall_specs)
@@ -468,8 +579,15 @@ def render() -> None:
     for spec in visible:
         batch_active = active_by_batch.get(spec.name, [])
         recent = batch_active[0] if batch_active else history_by_batch.get(spec.name)
+        if market=='FR_EQ':
+            from service.fr.operational_batch_15a import latest_run
+            last=latest_run(spec.name)
+        elif market=='CN_A':
+            last=latest_cn_dragon_research_run(spec)
+        else:
+            last=db_runs.get(spec.name)
         _render_batch(
-            spec, tasks.get(spec.task_name), db_runs.get(spec.name),
+            spec, tasks.get(spec.task_name), last,
             run_as=run_as, active=batch_active, recent=recent,
         )
 

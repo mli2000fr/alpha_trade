@@ -159,7 +159,7 @@ def iter_symbol_chunks(engine: Engine, chunk_size: int) -> Iterator[list[str]]:
 		"""
 		SELECT DISTINCT sbd.symbol
 		FROM stock_bars_daily sbd
-		INNER JOIN stock_metadata sm ON sm.symbol = sbd.symbol
+		INNER JOIN stock_metadata sm ON sm.instrument_id = sbd.instrument_id
 		WHERE sm.status = 'active'
 		  AND sm.tradable = 1
 		  AND sm.bars_available = 1

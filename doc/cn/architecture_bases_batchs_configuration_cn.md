@@ -18,6 +18,14 @@ Ce document fixe la convention retenue pour toute l’intégration chinoise :
 
 Cette convention remplace toute proposition antérieure consistant à ajouter les sections Chine directement dans `batch.yaml` ou à utiliser des fichiers ambigus comme `cn_a.yaml` sans suffixe `_cn`.
 
+## ADR associés
+
+- [ADR-0001 — MarketContext](../architecture/adr_0001_market_context.md)
+- [ADR-0002 — identité instrument](../architecture/adr_0002_instrument_identity.md)
+- [ADR-0003 — partitionnement physique](../architecture/adr_0003_market_data_partitioning.md)
+- [ADR-0004 — règles exécution CN](../architecture/adr_0004_cn_execution_rules.md)
+- [Rapport Sprint 0](./sprint_0_baseline_us_et_adr.md)
+
 ## 1. Décision sur la base de données
 
 ### 1.1 Recommandation
@@ -194,7 +202,7 @@ Chaque section de `batch_cn.yaml` doit contenir :
 ```yaml
 market_code: CN_A
 database_alias: cn_primary
-provider: tushare
+provider: baostock
 timezone: Asia/Shanghai
 scheduler_timezone: Europe/Paris
 calendar_id: CN_A_CANONICAL
@@ -552,7 +560,7 @@ Les sprints de fondation doivent intégrer la séparation physique :
 - Sprint 2 : identité globale compatible multi-base ;
 - Sprint 3 : batches/runs stockent base et marché effectifs ;
 - Sprint 5 : parité US dans `alpha_trade`, sans donnée CN ;
-- Sprint 6 : création `alpha_trade_cn` et staging Tushare ;
+- Sprint 6 : création `alpha_trade_cn` et staging multi-fournisseurs, BaoStock primaire gratuit ;
 - Sprint 7 : canonicalisation uniquement dans `cn_primary` ;
 - Sprint 14 : IHM agrège les deux bases en lecture ;
 - Sprint 17 : backups, contrôles et nettoyages séparés ;
