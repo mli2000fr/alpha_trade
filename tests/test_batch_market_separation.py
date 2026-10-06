@@ -13,10 +13,11 @@ def test_real_catalogues_are_disjoint_and_preserve_legacy_cn_location():
     assert not ({s.name for s in us}&{s.name for s in cn})
     assert not ({s.name for s in cn}&{s.name for s in fr})
     assert any(s.name=='cn_oracle_prospective_daily' and s.catalog_path.endswith('batch.yaml') for s in cn)
-    pending=next(s for s in cn if s.name=='cn_master_calendar_sync')
+    assert 'cn_master_calendar_sync' not in {s.name for s in cn}
+    pending=next(s for s in cn if s.name=='cn_daily_market_data_sync')
     assert not pending.runnable
     assert pending.status=='DISABLED_DUPLICATE_D9'
-    assert 'D9' in pending.activation_requirement
+    assert 'D9' in pending.execution_notice
     with pytest.raises(ValueError,match='CN'): manager.build_run_command(pending)
 
 

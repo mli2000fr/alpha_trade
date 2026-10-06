@@ -54,6 +54,26 @@ def test_catalogue_exposes_research_notice(tmp_path: Path) -> None:
     assert spec.research_notice == "Yahoo pour la recherche."
 
 
+def test_retired_us_quality_batch_is_absent_from_ui_catalog():
+    assert "pit_data_quality_daily" not in {
+        spec.name for spec in batches.load_market_batch_specs("US_EQ")
+    }
+
+
+def test_retired_cn_staging_quality_is_absent_and_current_quality_is_preserved():
+    names = {spec.name for spec in batches.load_market_batch_specs("CN_A")}
+    assert "cn_staging_quality_daily" not in names
+    assert "cn_baostock_smoke" not in names
+    assert "cn_master_calendar_sync" not in names
+    assert "cn_daily_quality_17c" in names
+
+
+def test_retired_fr_quality_batch_is_absent_from_ui_catalog():
+    assert "fr_pit_quality_daily" not in {
+        spec.name for spec in batches.load_market_batch_specs("FR_EQ")
+    }
+
+
 def test_catalogue_exposes_quality_supervision_dependencies(tmp_path: Path) -> None:
     path = tmp_path / "batch.yaml"
     path.write_text(yaml.safe_dump({
@@ -365,6 +385,37 @@ def test_batch_title_prefers_newer_business_success_to_stale_windows_failure() -
     )
 
 
+@pytest.mark.parametrize("status", sorted(batches.RIGHTS_BLOCK_STATUSES))
+@pytest.mark.parametrize("last_status", [None, "SUCCESS", "FAILED"])
+def test_rights_block_title_remains_visible_regardless_of_last_run(status, last_status):
+    from ihm.pages import batches as page
+    row = {"status": last_status} if last_status else None
+    title = page._batch_title(["P1", "Désactivé"], "sample", row, catalog_status=status)
+    assert title.startswith("**⛔ ⚖️ DROITS / PRUDENCE")
+    assert ":red[" not in title
+    assert "sample" in title and "Désactivé" in title
+
+
+@pytest.mark.parametrize("status", ["ACTIVE", "PENDING_PROVIDER", "BLOCKED_FREE_NO_NBBO_SOURCE",
+                                  "BLOCKED_NO_FREE_OFFICIAL_FEED", "PENDING_QUALIFICATION"])
+def test_technical_or_provider_block_does_not_show_rights_badge(status):
+    from ihm.pages import batches as page
+    title = page._batch_title(["P1"], "sample", {"status": "SUCCESS"}, catalog_status=status)
+    assert "⚖️" not in title and "DROITS / PRUDENCE" not in title
+    assert not title.startswith(":red[")
+
+
+@pytest.mark.parametrize("market,expected", [
+    ("US_EQ", {"analyst_snapshot_collection", "fred_alfred_vintage_sync", "finra_short_volume_sync"}),
+    ("CN_A", {"cn_oracle_prospective_daily", "cn_dragon_tiger_after_close", "cn_dragon_tiger_before_open"}),
+    ("FR_EQ", {"fr_fundamentals_sync", "fr_consensus_snapshot"}),
+])
+def test_rights_badge_covers_all_eight_blocked_collectors_across_markets(market, expected):
+    actual = {s.name for s in batches.load_market_batch_specs(market)
+              if s.status in batches.RIGHTS_BLOCK_STATUSES}
+    assert actual == expected
+
+
 def test_uninstall_batch_executes_exact_non_shell_command(monkeypatch) -> None:
     captured = {}
 
@@ -433,6 +484,10 @@ def test_batch_page_renders_without_external_dependencies(monkeypatch) -> None:
                 "pending_provider", enabled=False, status="PENDING_PROVIDER",
                 activation_requirement="Choisir un fournisseur PIT.",
             ),
+            _spec(
+                "rights_block", enabled=False, status="BLOCKED_YAHOO_AUTOMATED_ACCESS",
+                research_notice="Autorisation automatisation à confirmer.",
+            ),
         ),
     )
     monkeypatch.setattr(page, "_task_states", lambda: ({}, None))
@@ -452,6 +507,9 @@ def test_batch_page_renders_without_external_dependencies(monkeypatch) -> None:
     assert "Exécutables (catalogues)" in metric_labels
     assert "Installés mais dormants" in metric_labels
     assert any("Choisir un fournisseur PIT." in error.value for error in at.error)
+    assert any("⛔ ⚖️ DROITS / PRUDENCE" in expander.label and "rights_block" in expander.label
+               for expander in at.expander)
+    assert any("Ne pas relancer ni réactiver" in error.value for error in at.error)
     button_labels = {button.label for button in at.button}
     assert "♻️ Installer / réinstaller tous" in button_labels
     assert "🗑️ Désinstaller tous les batchs" in button_labels

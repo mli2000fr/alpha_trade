@@ -39,7 +39,7 @@ function Write-Status([string]$line) { Add-Content -LiteralPath $effectiveLog -V
 # Le kill switch est absolu : -Force contourne l'horaire, jamais enabled=false.
 $enabled = [bool](Get-ConfigValue $cfg 'enabled' $true)
 $status = [string](Get-ConfigValue $cfg 'status' 'ACTIVE')
-if (-not $enabled) { Write-Status "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] SKIP $BatchName enabled=false status=$status"; exit 0 }
+if (-not $enabled -or $status.StartsWith('BLOCKED_')) { Write-Status "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] SKIP $BatchName enabled=$enabled status=$status"; exit 0 }
 $isRecovery = $false
 if (-not $Force) {
     $tzName = [string](Get-ConfigValue $cfg 'timezone' 'Europe/Paris')

@@ -18,7 +18,7 @@ BATCH_SECTIONS = {
     "latest_quotes_sync",
     "analyst_snapshot_collection",
     "daily_bars_sync", "security_master_snapshot", "corporate_actions_sync",
-    "sec_edgar_incremental", "pit_data_quality_daily", "borrow_status_snapshot",
+    "sec_edgar_incremental", "borrow_status_snapshot",
     "business_quant_analyst_snapshot", "oracle_options_indicative_snapshot",
     "oracle_opening_window_sync", "sec_corporate_events_normalize",
     "sec_institutional_ownership_normalize", "fred_alfred_vintage_sync",
@@ -38,17 +38,7 @@ def test_batch_configuration_is_separated_from_application_config() -> None:
     assert resolve_batch_config_path() == ROOT / "batch.yaml"
     assert "RETAILSMSA" in batch["fred_alfred_vintage_sync"]["series"].split(",")
     assert "RETAILSMS" not in batch["fred_alfred_vintage_sync"]["series"].split(",")
-    quality = batch["pit_data_quality_daily"]
-    assert quality["enabled"] is False
-    assert quality["status"] == "MANUAL_CONTROL_ONLY"
-    assert "aucune donnée externe" in quality["description"]
-    assert quality["supervision_dependencies"].split(",") == [
-        "sec_edgar_incremental",
-        "finra_short_volume_sync",
-        "fred_alfred_vintage_sync",
-    ]
-    assert "peuvent tourner en parallèle" in quality["execution_notice"]
-    assert "après leur fin" in quality["execution_notice"]
+    assert "pit_data_quality_daily" not in batch
     sec = batch["sec_edgar_incremental"]
     assert sec["download_primary_documents"] is True
     assert sec["download_exhibits"] is True
@@ -221,7 +211,6 @@ def test_every_symbol_scoped_batch_uses_stable_tradable_universe() -> None:
         "analyst_snapshot_collection",
         "latest_quotes_sync",
         "daily_bars_sync",
-        "pit_data_quality_daily",
         "borrow_status_snapshot",
         "business_quant_analyst_snapshot",
         "oracle_options_indicative_snapshot",

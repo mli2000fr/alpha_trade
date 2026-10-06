@@ -94,4 +94,5 @@ def test_inpi_wrapper_dry_run_and_catalog_notice():
     result=runner.run('fr_fundamentals_sync',dry_run=True,max_symbols=1)
     assert result['status']=='DRY_RUN' and not result['canonical_writes'] and not result['serving_enabled']
     spec=next(s for s in load_market_batch_specs('FR_EQ') if s.name=='fr_fundamentals_sync')
-    assert spec.runnable and 'QUARANTAINE' in spec.research_notice and '330' in spec.universe_scope
+    assert not spec.runnable and spec.status == 'BLOCKED_INPI_RETENTION'
+    assert 'QUARANTAINE' in spec.research_notice and '330' in spec.universe_scope

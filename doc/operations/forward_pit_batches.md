@@ -353,3 +353,7 @@ Le mode `-DryRun` appelle le fournisseur et valide le parsing mais n’écrit ni
 ## Activation progressive recommandée
 
 Commencer par P0 et observer une semaine les taux de couverture et corrections. Activer ensuite borrow P1. Les options et opening window exigent d’abord un producteur fiable de l’univers Oracle quotidien. Business Quant analyste doit rester désactivé jusqu’à comparaison du coût et du contenu avec Yahoo. Auction imbalance, prêt de titres complet et options NBBO restent des contrats de données à pourvoir, pas des collecteurs simulés.
+# Retrait du contrôle US — 6 octobre 2026
+
+`pit_data_quality_daily` est retiré de `batch.yaml` et de la page Batch US à la demande de l'utilisateur. Il n'est plus installable ou lançable depuis ce catalogue. La tâche `AlphaTrade-PitDataQualityDaily` était déjà absente lors du contrôle Windows. Les journaux et les tables historiques de qualité sont conservés ; les contrôles CN et FR ne sont pas concernés. Les anciennes mentions de ce batch dans ce document décrivent l'ancien fonctionnement, pas une entrée actuelle du catalogue.
+

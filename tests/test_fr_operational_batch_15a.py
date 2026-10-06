@@ -19,13 +19,28 @@ def config(tmp_path, name='fr_calendar_snapshot', **changes):
 
 def test_fr_catalog_has_only_fr_and_defaults(tmp_path):
     specs = batch_management.load_batch_specs(str(config(tmp_path)))
-    assert len(specs) == 14
+    assert len(specs) == 13
+    assert 'fr_pit_quality_daily' not in {s.name for s in specs}
     assert 'fr_consensus_borrow_options' not in {s.name for s in specs}
     assert all(s.name.startswith('fr_') and s.timezone == 'Europe/Paris' for s in specs)
     assert all(s.raw_config['database_alias'] == 'fr_primary' for s in specs)
     assert {s.name for s in specs if s.runnable} == {'fr_calendar_snapshot', 'fr_daily_bars_sync',
-        'fr_corporate_actions_sync','fr_pit_quality_daily','fr_amf_short_sync','fr_dila_disclosures_sync', 'fr_db_backup','fr_security_master_sync','fr_artifacts_backup','fr_fundamentals_sync','fr_consensus_snapshot','fr_options_mifir_trade_sync'}
+        'fr_corporate_actions_sync','fr_amf_short_sync','fr_dila_disclosures_sync', 'fr_db_backup','fr_security_master_sync','fr_artifacts_backup','fr_options_mifir_trade_sync'}
     assert all('univers_batch' not in s.symbols_file for s in specs)
+
+
+@pytest.mark.parametrize('name,status', [('fr_consensus_snapshot', 'BLOCKED_YAHOO_AUTOMATED_ACCESS'),
+                                       ('fr_fundamentals_sync', 'BLOCKED_INPI_RETENTION')])
+def test_legal_blocks_remain_non_runnable_even_if_enabled_is_toggled(tmp_path, monkeypatch, name, status):
+    monkeypatch.setattr(runner, 'OPS', tmp_path/'ops')
+    spec = next(s for s in batch_management.load_batch_specs(str(config(tmp_path))) if s.name == name)
+    assert not spec.enabled and not spec.runnable
+    assert spec.status == status and spec.unlock_steps and spec.research_notice
+    path = config(tmp_path, name, enabled=True)
+    spec = next(s for s in batch_management.load_batch_specs(str(path)) if s.name == name)
+    assert not spec.runnable
+    monkeypatch.setattr(runner, '_handle', lambda *a, **kw: pytest.fail('Blocked collector must not execute'))
+    assert runner.run(name, config_path=path)['status'] == 'SKIPPED_DISABLED_OR_UNQUALIFIED'
 
 
 @pytest.mark.parametrize('field,value', [('market_code','US_EQ'), ('database_alias','cn_primary'),

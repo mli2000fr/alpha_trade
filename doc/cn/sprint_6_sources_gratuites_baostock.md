@@ -175,8 +175,8 @@ prudente de disponibilité à la séance suivante pour éviter toute fuite intra
 
 | Batch | Rôle | Activation |
 |---|---|---|
-| `cn_baostock_smoke` | cinq titres et période courte | manuel avec `--force` |
-| `cn_master_calendar_sync` | référentiel et calendrier | désactivé jusqu’à décision d’exploitation |
+| `cn_baostock_smoke` (retiré le 06/10/2026) | Ancien test réussi sur cinq titres ; rapport conservé | Plus de configuration ni de script dédié |
+| `cn_master_calendar_sync` (retiré le 06/10/2026) | Référentiel/calendrier fournisseur déjà collectés par la préparation D9 | Fonctions conservées ; calendrier annuel de planification maintenu séparément |
 | `cn_daily_market_data_sync` | J−10/J, facteurs et indices | désactivé jusqu’à décision d’exploitation |
 | `cn_historical_backfill` | historique depuis 2010 | manuel et reprenable |
 | `cn_staging_quality_daily` | qualité du staging | après première collecte significative |
@@ -201,7 +201,7 @@ tables neutres et attend la révision `0003_provider_neutral_staging`.
 ### Smoke réel borné
 
 ```powershell
-F:\projets\.venv\Scripts\python.exe -u scripts\smoke_baostock_cn.py
+# Commande historique retirée le 06/10/2026 : scripts/smoke_baostock_cn.py
 ```
 
 Rapport :

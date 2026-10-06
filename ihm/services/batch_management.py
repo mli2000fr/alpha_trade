@@ -35,7 +35,15 @@ CN_BACKUP_BATCHES = {"cn_db_backup"}
 CN_QUALITY_BATCHES = {"cn_daily_quality_17c"}
 CN_OPERATIONAL_BATCHES = CN_BACKUP_BATCHES | CN_QUALITY_BATCHES
 CN_RESEARCH_BATCHES = CN_DRAGON_BATCHES | CN_DRAGON_MATCH_BATCHES | CN_ORACLE_BATCHES | CN_OPERATIONAL_BATCHES
-PENDING_STATUSES = {
+RIGHTS_BLOCK_STATUSES = frozenset({
+    "BLOCKED_FRED_ARCHIVE_ML_RIGHTS",
+    "BLOCKED_FINRA_PREDICTIVE_USE",
+    "BLOCKED_SSE_SZSE_AUTOMATION",
+    "BLOCKED_BAOSTOCK_RIGHTS",
+    "BLOCKED_YAHOO_AUTOMATED_ACCESS",
+    "BLOCKED_INPI_RETENTION",
+})
+PENDING_STATUSES = RIGHTS_BLOCK_STATUSES | {
     "PENDING_QUALIFICATION",
     "PENDING_RESTORE_PROOF",
     "PENDING_PROVIDER",
@@ -309,8 +317,6 @@ def format_data_coverage(spec: BatchSpec) -> str:
 
     if not spec.enabled:
         return "Aucune collecte planifiée tant que le batch reste désactivé"
-    if spec.name == "pit_data_quality_daily":
-        return "Contrôle ponctuel à J · aucune nouvelle donnée collectée"
     if spec.universe_scope == "raw_sec_filings":
         return "Reprise du backlog RAW complet non encore normalisé"
     return "Snapshot J uniquement · aucun rattrapage historique automatique"

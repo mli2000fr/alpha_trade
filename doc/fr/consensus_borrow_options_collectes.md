@@ -2,6 +2,11 @@
 
 ## État courant : collecte quotidienne activée en quarantaine
 
+**État courant au 6 octobre : consensus Yahoo et fondamentaux INPI suspendus**
+après l'audit des droits. Leur état actif mentionné ci-dessous est historique.
+Les réserves et conditions de déblocage sont dans `batch_fr.yaml` et
+[l'audit des autorisations](audit_autorisations_collectes_20261006.md).
+
 Le 05/10/2026, l'utilisateur a autorisé la collecte sur l'ensemble du
 référentiel FR actif. `fr_consensus_snapshot` est désormais `enabled: true`,
 `ACTIVE_RESEARCH`, avec reprise quotidienne. **Le protocole courant, les

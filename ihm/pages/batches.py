@@ -11,6 +11,7 @@ import streamlit as st
 from ihm.pages import run_page_if_standalone
 from ihm.services.batch_management import (
     BatchSpec,
+    RIGHTS_BLOCK_STATUSES,
     build_install_command,
     build_run_command,
     build_uninstall_command,
@@ -177,8 +178,14 @@ def _batch_title(
     name: str,
     row: dict[str, Any] | None,
     task: dict[str, Any] | None = None,
+    *,
+    catalog_status: str = "",
 ) -> str:
     title = f"{' · '.join(status_bits)} — {name}"
+    # Rights/prudence is independent of an old successful or failed run.
+    # Do not label missing-provider or technical blocks as legal restrictions.
+    if catalog_status in RIGHTS_BLOCK_STATUSES:
+        return f"**⛔ ⚖️ DROITS / PRUDENCE — {title}**"
     if _last_run_failed(row) or _windows_last_run_failed(task, row):
         return f":red[**{title}**]"
     return title
@@ -224,8 +231,14 @@ def _render_batch(
     if active:
         status_bits.append("🔄 Lancé depuis cette IHM")
 
-    with st.expander(_batch_title(status_bits, spec.name, db_run, task), expanded=bool(active)):
+    with st.expander(_batch_title(status_bits, spec.name, db_run, task,
+                                  catalog_status=spec.status), expanded=bool(active)):
         st.write(spec.description)
+        if spec.status in RIGHTS_BLOCK_STATUSES:
+            st.error("⛔ ⚖️ Blocage pour droits d'utilisation ou par prudence. "
+                     "Ne pas relancer ni réactiver sans validation des autorisations. "
+                     "Ce statut n'est pas une panne technique ni un constat d'illégalité ; "
+                     "consulter les motifs et les conditions de déblocage ci-dessous.")
         if spec.supervision_dependencies:
             dependencies = ", ".join(
                 f"`{name}`" for name in spec.supervision_dependencies

@@ -29,21 +29,6 @@ cn_db_backup:
   output_root: artifacts/research/cn_backup_17b
   log_file: log/batch_cn/cn_db_backup.txt
 
-cn_master_calendar_sync:
-  enabled: false
-  status: DISABLED_DUPLICATE_D9
-  priority: P0
-  market_code: CN_A
-  description: "Référentiel actions Shanghai/Shenzhen et calendrier de cotation via BaoStock gratuit."
-  execution_notice: "D9 collecte déjà stock_basic/trade_cal dans cn_sprint7c.prepare pour chaque nouvelle séance préparée ; le calendrier planifié reste un contrat annuel distinct. Ne pas créer un second propriétaire canonique."
-  activation_requirement: "Pas de deuxième collecteur à activer : vérifier les runs cn_sprint7c_prepare de D9 et maintenir le calendrier annuel de planification séparément."
-  endpoints: [stock_basic, trade_cal]
-  start_date: 2010-01-01
-  run_hours: "11"
-  run_days: "0"
-  state_key: cn_master_calendar_sync
-  log_file: log/batch_cn/cn_master_calendar_sync.txt
-
 cn_daily_market_data_sync:
   enabled: false
   status: DISABLED_DUPLICATE_D9
@@ -70,32 +55,6 @@ cn_historical_backfill:
   include_inactive: true
   state_key: cn_historical_backfill
   log_file: log/batch_cn/cn_historical_backfill.txt
-
-cn_baostock_smoke:
-  enabled: false
-  priority: P0
-  market_code: CN_A
-  description: "Smoke réel borné BaoStock, sans clé, avant activation des batchs récurrents."
-  endpoints: [stock_basic, trade_cal, daily, adj_factor, index_daily]
-  start_date: 2025-01-02
-  end_date: 2025-01-10
-  max_symbols: 5
-  log_file: log/batch_cn/cn_baostock_smoke.txt
-
-cn_staging_quality_daily:
-  enabled: false
-  status: SUPERSEDED_BY_17C
-  priority: P0
-  market_code: CN_A
-  provider: quality
-  description: "Contrôle de couverture, fraîcheur, doublons et lineage du staging CN ; aucune collecte."
-  endpoints: [stock_basic, trade_cal, daily, adj_factor, index_daily]
-  min_daily_rows: 1
-  max_age_days: 5
-  run_hours: "12"
-  run_days: "1,2,3,4,5"
-  execution_notice: "Contrôle staging historique désactivé : l'âge en jours calendaires peut alerter à tort pendant les congés CN et ne vérifie ni D9 ni Oracle/D6/D10. Utiliser cn_daily_quality_17c."
-  log_file: log/batch_cn/cn_staging_quality_daily.txt
 
 # Sprint 17-C : lecture seule après D9, sans second collecteur ou reconstruction PIT.
 cn_daily_quality_17c:

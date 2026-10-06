@@ -2,6 +2,12 @@
 
 ## Autorisation et périmètre courant
 
+**Mise à jour du 6 octobre 2026 : batch suspendu**, `enabled: false`,
+`BLOCKED_YAHOO_AUTOMATED_ACCESS`. L'autorisation utilisateur du pilote ne prouve
+pas une permission de Yahoo pour la collecte automatisée. Obtenir cette permission
+ou une source licenciée avant réactivation. Voir [audit des droits](audit_autorisations_collectes_20261006.md).
+Les mentions d'activation ci-dessous décrivent l'état historique du 5 octobre.
+
 Autorisation du 5 octobre 2026 : collecte de recherche sur tout le référentiel
 actif, pas activation du ML, des backtests ou du live. Section
 `fr_consensus_snapshot` dans `batch_fr.yaml` : `enabled: true`, `ACTIVE_RESEARCH`.

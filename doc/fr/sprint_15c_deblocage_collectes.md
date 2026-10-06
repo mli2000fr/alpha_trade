@@ -1,5 +1,15 @@
 # Sprint 15-C — Déblocage des collectes possibles
 
+## Mise à jour du 6 octobre 2026 — retrait du contrôle planifié
+
+`fr_pit_quality_daily` est retiré de `batch_fr.yaml`, de la page Batch et
+du planificateur Windows à la demande de l'utilisateur. Il lisait uniquement
+les rapports des collecteurs et archivait un bilan local : aucune nouvelle
+donnée marché ni écriture SQL. Les rapports historiques et la fonction de
+contrôle interne sont conservés. Les mentions et commandes ci-dessous décrivent
+le périmètre historique du Sprint 15-C, pas un batch encore installable.
+Les quatre collectes supervisées continuent indépendamment de ce contrôle.
+
 5 octobre 2026. Raccordement quotidien fichiers uniquement, pas nouvelles
 tables ni migrations, pas serving, pas modification d'un batch existant.
 Aucune tâche Windows installée automatiquement. Les boutons de la page Batch

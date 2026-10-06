@@ -2,6 +2,12 @@
 
 ## État au 5 octobre 2026
 
+**Mise à jour du 6 octobre : suspension de prudence**, `enabled: false`,
+`BLOCKED_INPI_RETENTION`. L'accès API aux comptes publics est autorisé ; le
+blocage concerne la gestion des retraits ultérieurs, des archives et des backups.
+Qualifier et tester ce traitement avant réactivation. Voir
+[audit des droits](audit_autorisations_collectes_20261006.md).
+
 L'univers étudié est celui des **330 identités locales S6C**, pas tous les titres
 Euronext et pas les 1 152 références brutes EODHD. Titres actifs et anciennes
 identités présentes dans ce référentiel sont examinés ; cela ne les rend pas

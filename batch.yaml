@@ -14,8 +14,13 @@
 # Time ; le calcul et le calendrier métier restent en Asia/Shanghai.
 cn_dragon_tiger_after_close:
   priority: P2
-  enabled: true
-  status: RESEARCH_ONLY
+  # Suspension de précaution (audit du 06/10/2026), pas constat d'illégalité.
+  enabled: false
+  status: BLOCKED_SSE_SZSE_AUTOMATION
+  activation_requirement: "Suspendu par précaution : confirmer auprès de SSE/SZSE la collecte automatisée et les usages Alpha-Trade envisagés. Le téléchargement non commercial est prévu, mais ne certifie pas tout usage ML/live."
+  unlock_steps:
+    - "Obtenir une confirmation écrite couvrant endpoints, fréquence, stockage privé et usages de recherche/ML/backtest ; qualifier séparément le live et la redistribution."
+    - "Archiver la preuve dans doc/cn puis rétablir explicitement status: RESEARCH_ONLY et enabled: true après validation. Ne pas seulement basculer enabled."
   timezone: China Standard Time
   run_hours: "17"
   run_minutes: "30"
@@ -31,8 +36,13 @@ cn_dragon_tiger_after_close:
 
 cn_dragon_tiger_before_open:
   priority: P2
-  enabled: true
-  status: RESEARCH_ONLY
+  # Même réserve que le passage après clôture ; aucune réactivation implicite.
+  enabled: false
+  status: BLOCKED_SSE_SZSE_AUTOMATION
+  activation_requirement: "Suspendu par précaution : la réobservation SSE/SZSE automatisée exige la même clarification des droits que le passage après clôture. Pas de constat d'illégalité ; pas d'autorisation live déduite du caractère public."
+  unlock_steps:
+    - "Confirmer par écrit les droits pour les deux passages quotidiens, la conservation des snapshots et les usages envisagés, sans redistribution non autorisée."
+    - "Archiver la preuve dans doc/cn puis rétablir explicitement status: RESEARCH_ONLY et enabled: true après validation."
   timezone: China Standard Time
   run_hours: "8"
   run_minutes: "30"
@@ -50,8 +60,14 @@ cn_dragon_tiger_before_open:
 # Une décision manquée ne doit jamais être reconstruite après son cutoff.
 cn_oracle_prospective_daily:
   priority: P1
-  enabled: true
-  status: RESEARCH_ONLY
+  # BaoStock documente API/stockage local ; portée ML/live à confirmer par écrit.
+  enabled: false
+  status: BLOCKED_BAOSTOCK_RIGHTS
+  activation_requirement: "Suspendu par précaution : clarifier les droits BaoStock couvrant notre collecte quotidienne, stockage SQL/sauvegardes, ML/backtests et futur live. L'API documentée n'est pas déclarée interdite ; sa gratuité n'autorise pas tous les usages."
+  unlock_steps:
+    - "Demander à baostock@163.com une confirmation couvrant collecte SDK depuis la France, univers complet, fréquence, stockage privé, conservation, calculs et modèles dérivés."
+    - "Qualifier séparément trading pour compte propre, usage professionnel/live et redistribution ; archiver la réponse dans doc/cn."
+    - "Rétablir status: RESEARCH_ONLY et enabled: true uniquement après validation explicite ; ne pas activer un fallback non qualifié."
   timezone: China Standard Time
   run_hours: "18"
   run_minutes: "15"
@@ -214,11 +230,16 @@ analyst_snapshot_collection:
   priority: P1
   description: "Construire prospectivement des snapshots PIT Yahoo de consensus EPS/revenue, tendances et révisions EPS, objectifs de cours et recommandations."
   tables: "analyst_snapshot_collection_run,stock_analyst_estimate_history,stock_analyst_eps_trend_history,stock_analyst_eps_revision_history,stock_analyst_target_history,stock_analyst_recommendation_history"
-  enabled: true
-  status: ACTIVE_RESEARCH_ONLY
+  # Blocage contractuel Yahoo : RESEARCH_ONLY et yfinance ne sont pas une permission.
+  enabled: false
+  status: BLOCKED_YAHOO_AUTOMATED_ACCESS
   provider: yahoo_finance_via_yfinance
   timezone: Europe/Paris
-  research_notice: "Yahoo Finance est une source non officielle sans SLA, utilisée exclusivement pour la recherche personnelle et éducative. Ces données ne sont pas une source de production licenciée et ne doivent pas être redistribuées."
+  research_notice: "BLOQUÉ — Yahoo exige une permission préalable pour la collecte automatisée. La recherche personnelle, yfinance et la quarantaine ne remplacent pas cette permission. Aucun nouveau téléchargement ne doit être lancé, même manuellement. Données existantes conservées sans décision de purge. Voir doc/ml/audit_autorisations_collectes_us_20261006.md."
+  activation_requirement: "Obtenir une autorisation écrite Yahoo couvrant automatisation, archivage des snapshots et usages analytiques/ML, ou qualifier un autre fournisseur."
+  unlock_steps:
+    - "Archiver la permission et son périmètre ; vérifier conservation, usages dérivés et redistribution."
+    - "Après validation explicite, rétablir un statut actif et enabled: true ; activer seulement enabled ne lève pas le blocage."
   universe_name: analyst_research
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   sleep_seconds: 0.25
@@ -328,31 +349,6 @@ sec_edgar_incremental:
   submission_probe_bytes: 2097152
   max_requests_per_second: 8
   log_file: log/batch/sec_edgar_incremental.txt
-
-pit_data_quality_daily:
-  priority: P0
-  description: "Contrôle manuel facultatif des retards, trous de couverture et échecs de collecte. Il ne récupère aucune donnée externe et n'est pas requis pour alimenter les tables métier."
-  supervision_dependencies: "sec_edgar_incremental,finra_short_volume_sync,fred_alfred_vintage_sync"
-  execution_notice: "PRÉREQUIS DE SUPERVISION : exécuter sec_edgar_incremental, finra_short_volume_sync et fred_alfred_vintage_sync avant ce contrôle. Ces trois collecteurs sont indépendants et peuvent tourner en parallèle ; pit_data_quality_daily doit être lancé seulement après leur fin, sinon leur ancien statut FAILED ou l'absence de données macro déclenche volontairement une alerte critique."
-  tables: "pit_collection_runs,pit_data_quality_metrics,pit_data_quality_issues"
-  enabled: false
-  status: MANUAL_CONTROL_ONLY
-  research_notice: "Désactivé par choix opérationnel : ce batch est uniquement un audit de supervision (du sec_edgar_incremental, finra_short_volume_sync, fred_alfred_vintage_sync). Il peut être réactivé ponctuellement après l'exécution des collecteurs supervisés."
-  activation_requirement: "Réactiver uniquement pour lancer un audit ponctuel après la fin des trois collecteurs supervisés ; aucune alimentation métier ne dépend de ce batch."
-  unlock_steps:
-    - "Attendre la fin de sec_edgar_incremental, finra_short_volume_sync et fred_alfred_vintage_sync."
-    - "Passer temporairement enabled à true, lancer le contrôle, puis le remettre à false si la supervision planifiée n'est pas souhaitée."
-  timezone: Europe/Paris
-  run_hours: "15"
-  run_days: "1,2,3,4,5,6"
-  bars_max_age_days: 4
-  security_master_max_age_days: 8
-  borrow_max_age_hours: 30
-  macro_max_age_days: 10
-  min_universe_coverage: 0.90
-  symbols_file: config/univers_batch/univers_filtred_tradable.txt
-  fail_on_critical: true
-  log_file: log/batch/pit_data_quality_daily.txt
 
 borrow_status_snapshot:
   priority: P1
@@ -545,7 +541,14 @@ fred_alfred_vintage_sync:
   priority: P4
   description: "Conserver les vintages macro réellement disponibles afin d'éviter toute fuite provenant des révisions économiques futures."
   tables: "pit_collection_runs,pit_raw_payloads,macro_vintage_observations"
-  enabled: true
+  # API FRED : restrictions explicites d'archivage en base et de ML.
+  enabled: false
+  status: BLOCKED_FRED_ARCHIVE_ML_RIGHTS
+  research_notice: "BLOQUÉ — Les conditions actuelles de l'API FRED restreignent stockage/cache/archivage et usage ML. Une clé API valide ne constitue pas une dérogation. L'archivage dans macro_vintage_observations est concerné dès la collecte ; les droits des séries tierces doivent aussi être qualifiés. Voir doc/ml/audit_autorisations_collectes_us_20261006.md."
+  activation_requirement: "Obtenir une permission écrite couvrant archivage PIT et ML, ainsi que les séries tierces, ou utiliser des sources primaires avec droits adaptés."
+  unlock_steps:
+    - "Qualifier séparément collecte, stockage, ML et droits des séries ; archiver les preuves."
+    - "Après validation explicite, rétablir un statut actif et enabled: true ; ne pas supprimer les anciennes données sans analyse des obligations."
   universe_scope: macro_series
   provider: fred_alfred
   api_key_env: KEY_FRED
@@ -561,8 +564,14 @@ finra_short_volume_sync:
   priority: P1
   description: "Collecter prospectivement le short volume quotidien FINRA consolidé comme donnée de recherche, sans le promouvoir automatiquement comme signal ML."
   tables: "pit_collection_runs,pit_raw_payloads,stock_short_volume_daily"
-  enabled: true
-  status: ACTIVE_RESEARCH_ONLY
+  # Gratuité des fichiers FINRA != permission de constituer une base prédictive.
+  enabled: false
+  status: BLOCKED_FINRA_PREDICTIVE_USE
+  research_notice: "BLOQUÉ — Les conditions FINRA restreignent constitution de bases, extraction et usages ML/prédictifs, notamment prédiction de trades. Les fichiers publics gratuits et le statut recherche ne prouvent pas une dérogation. Une autre API doit elle aussi être licenciée. Données existantes non supprimées. Voir doc/ml/audit_autorisations_collectes_us_20261006.md."
+  activation_requirement: "Obtenir une permission ou licence couvrant téléchargement automatisé des CNMS, archivage historique et analyses ML/prédictives internes."
+  unlock_steps:
+    - "Faire confirmer par FINRA le périmètre exact : endpoints, archivage, ML, dérivés et usages personnels/professionnels."
+    - "Archiver l'accord, puis rétablir un statut actif et enabled: true après validation explicite."
   provider: finra_consolidated_nms
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   timezone: America/New_York

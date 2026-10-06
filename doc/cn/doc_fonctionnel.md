@@ -144,9 +144,30 @@ Le calendrier configuré ferme le marché du **1er au 7 octobre 2026**. Le premi
 | `cn_db_backup` | `batch_cn.yaml` | Actif, dimanche 04:00 Europe/Paris ; dump isolé CN, `keep: 3`. |
 | `cn_daily_quality_17c` | `batch_cn.yaml` | Actif, 23:30 Shanghai, lecture seule et gate opérationnel. |
 | `cn_daily_market_data_sync` | `batch_cn.yaml` | `DISABLED_DUPLICATE_D9` ; ne pas activer en parallèle. |
-| `cn_staging_quality_daily` | `batch_cn.yaml` | `SUPERSEDED_BY_17C` ; ancien contrôle désactivé. |
-| `cn_master_calendar_sync`, `cn_historical_backfill`, `cn_baostock_smoke` | `batch_cn.yaml` | Déclarés mais désactivés ; backfill historique non quotidien. |
+| `cn_historical_backfill` | `batch_cn.yaml` | Déclaré mais désactivé ; backfill historique non quotidien. |
+
+`cn_master_calendar_sync` a été retiré du catalogue le 6 octobre 2026 car
+redondant avec D9. Les fonctions de collecte de `stock_basic` et `trade_cal`
+dans `cn_sprint7c_incremental.prepare` restent conservées. Ce retrait ne
+réactive pas D9, suspendu pour clarification des droits BaoStock.
+Le calendrier annuel de planification reste un contrat distinct :
+`config/research_cn/sprint15d6_cn_calendar_2026.yaml`. Il doit être vérifié et
+renouvelé pour l'année suivante ; la collecte fournisseur ne le remplace pas
+automatiquement. Les données, états de reprise et journaux historiques restent
+conservés.
+
+`cn_baostock_smoke` a été retiré le 6 octobre 2026 : le test initial était déjà
+validé. Sa configuration et son script dédié ne sont plus disponibles ; son
+rapport historique `artifacts/audits/market_integration/sprint_06/real_provider_smoke.json`
+est conservé. Ce retrait ne réactive aucun collecteur BaoStock suspendu.
 | `cn_akshare_enrichment`, `cn_tushare_optional` | `batch_cn.yaml` | Désactivés ; validation de source/accès/PIT nécessaire. |
+
+Pour la suite ciblée d'AKShare, voir le [protocole de qualification des prévisions
+de résultats CNINFO](./qualification_previsions_resultats_cninfo_20261006.md).
+La famille retenue est celle des annonces d'émetteurs, en continuité avec 15-D1 ;
+aucun nouveau batch ni POC réseau n'est activé avant qualification des droits.
+
+Le 6 octobre 2026, `cn_staging_quality_daily` a été retiré du catalogue et de la page Batch CN à la demande de l'utilisateur. Sa tâche Windows était déjà absente. Les données historiques sont conservées et `cn_daily_quality_17c` reste inchangé. Les anciennes mentions de ce contrôle dans les documents de sprint sont historiques.
 
 **Transition 17-D :** les quatre sections de recherche encore dans `batch.yaml` doivent un jour rejoindre `batch_cn.yaml` sous les **mêmes** noms de tâches, après un premier cycle D6/D9/D10 + 17-C réel et contrôlé. Le plan et un snapshot de retour arrière existent, mais la bascule **n'est pas faite**. La page Batch rejette des noms dupliqués entre catalogues. [Procédure](./sprint_17d_preparation_bascule_catalogues.md).
 

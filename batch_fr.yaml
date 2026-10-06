@@ -81,21 +81,6 @@ fr_corporate_actions_sync:
   research_notice: "Dates et valeurs fournisseur non promues comme preuves officielles ; normalisation canonique et contrôle complet des 294 titres à qualifier."
   log_file: log/batch_fr/fr_corporate_actions_sync.txt
 
-fr_pit_quality_daily:
-  enabled: true
-  status: ACTIVE_RESEARCH
-  collection_dependencies: [fr_daily_bars_sync, fr_corporate_actions_sync, fr_amf_short_sync, fr_dila_disclosures_sync]
-  max_run_age_hours: 96 # Inclut un week-end ; fraîcheur des runs, pas certification PIT des tables.
-  priority: P0
-  provider: local_quality
-  run_hours: "6"
-  description: "Superviser le dernier run des quatre collectes FR : succès, ancienneté et exclusion des smokes limités. Aucune nouvelle donnée marché, pas certification PIT des tables."
-  tables: "aucune SQL; lecture des rapports locaux FR et fichiers:artifacts/fr/operations/quality"
-  activation_requirement: "Contrôle opérationnel implémenté ; échoue tant que les quatre collectes complètes ne disposent pas de runs récents réussis."
-  supervision_dependencies: fr_daily_bars_sync,fr_corporate_actions_sync,fr_amf_short_sync,fr_dila_disclosures_sync
-  research_notice: "Ce contrôle n'évalue pas encore le référentiel, la fraîcheur des barres individuelles, les doublons SQL ou la validité économique/PIT. Il n'inclut pas ses propres échecs."
-  log_file: log/batch_fr/fr_pit_quality_daily.txt
-
 fr_amf_short_sync:
   enabled: true
   status: ACTIVE_RESEARCH
@@ -126,8 +111,8 @@ fr_dila_disclosures_sync:
   log_file: log/batch_fr/fr_dila_disclosures_sync.txt
 
 fr_fundamentals_sync:
-  enabled: true
-  status: ACTIVE_RESEARCH
+  enabled: false # Suspension de prudence : accès API autorisé, gestion des retraits/archives à compléter.
+  status: BLOCKED_INPI_RETENTION
   priority: P2
   provider: INPI
   collection_mode: quarantine_only
@@ -146,9 +131,12 @@ fr_fundamentals_sync:
   tables: "aucune SQL; fichiers:artifacts/fr/operations/fr_fundamentals_sync/quarantine et observations"
   universe_scope: "330 identités FR S6C recherchées ; seules correspondances ISIN/LEI/SIREN vérifiées sont collectées. Étrangers, ambiguïtés et validations insuffisantes exclus avec motifs."
   coverage_description: "Lots de 25 émetteurs au plus, pagination et documents repris au checkpoint ; jusqu'à 500 appels/run et 5000/jour UTC, revue des documents tous les 7 jours. Pas de reconstruction PIT historique."
-  activation_requirement: "Mapping étendu aux 330 identités S6C, exclusions motivées ; seuls les SIREN vérifiés sont collectés par lots. Promotion des fondamentaux bloquée tant que unités, exercices, versions/retraits et dates PIT ne sont pas qualifiés. Voir doc/fr/inpi_univers_collecte_securisee.md."
-  unlock_steps: ["Accès et pilote dix émetteurs réalisés : conserver les secrets hors YAML", "Arbitrer les incohérences Danone/L'Oréal, l'échelle Schneider et les versions BIC", "Qualifier unités, cellules consolidées, retraits et dates PIT ; ne pas corriger automatiquement", "Implémenter/valider stockage, reprise, idempotence et notifications avant activation"]
+  activation_requirement: "SUSPENDU PAR PRUDENCE : l'accès INPI aux comptes publics est autorisé, mais le traitement des documents ultérieurement retirés et de leurs copies archivées/sauvegardées n'est pas complet. Qualifier les obligations du compte et implémenter/valider cette gestion avant réactivation. Voir doc/fr/audit_autorisations_collectes_20261006.md."
+  unlock_steps: ["Confirmer la licence applicable au compte et les obligations de conservation/retrait", "Détecter les documents supprimés ou devenus non publics, traiter les copies précédemment archivées et les index", "Définir et tester le traitement des sauvegardes et des restaurations pour éviter la réapparition des contenus retirés", "Documenter la validation puis lever le statut bloqué et enabled=false ; la promotion ML reste séparée"]
   research_notice: >-
+    **BATCH SUSPENDU PAR PRUDENCE — GESTION DES RETRAITS INPI À COMPLÉTER.**
+    L'accès officiel n'est pas déclaré interdit ; la réserve porte sur la conservation des documents retirés,
+    y compris leurs copies dans les sauvegardes. Ne pas réactiver avant validation de cette gestion.
     **COLLECTE UNIQUEMENT — COMPTES EN QUARANTAINE. NON UTILISABLES PAR LE ML, LES BACKTESTS OU LE LIVE.**
     Mapping recherché sur tout l'univers FR S6C, pas sur tous les titres Euronext.
     Seuls les SIREN vérifiés sont collectés ; les exclus et leurs motifs sont affichés ci-dessous.
@@ -167,8 +155,8 @@ fr_fundamentals_sync:
   log_file: log/batch_fr/fr_fundamentals_sync.txt
 
 fr_consensus_snapshot:
-  enabled: true
-  status: ACTIVE_RESEARCH
+  enabled: false # Aucune permission explicite de collecte automatisée Yahoo démontrée.
+  status: BLOCKED_YAHOO_AUTOMATED_ACCESS
   priority: P3
   provider: yahoo_finance_research
   run_hours: "20"
@@ -201,7 +189,11 @@ fr_consensus_snapshot:
   universe_scope: "330 identités du référentiel S6C, 294 marquées actives ; marchés Paris XPAR/ALXP/XMLI, exclusions ISIN/alias et noms Yahoo explicites. Pas tous les titres Euronext."
   coverage_description: "Snapshot réellement observé à J, reprise des titres incomplets du jour ; les succès ne sont pas rechargés le même jour. Pas de reconstruction J-7/J."
   research_notice: >-
-    **COLLECTE ACTIVE EN QUARANTAINE — PAS ENCORE UTILISABLE PAR ML/BACKTEST/LIVE.**
+    **BATCH BLOQUÉ — AUTORISATION YAHOO DE COLLECTE AUTOMATISÉE NON DÉMONTRÉE.**
+    Les conditions Yahoo restreignent la collecte automatisée sans permission préalable expresse.
+    yfinance, la gratuité et la mention recherche uniquement ne constituent pas cette permission.
+    Obtenir une autorisation explicite applicable ou remplacer la source par un fournisseur licencié.
+    Ne pas réactiver ni diffuser les archives avant revue. Voir doc/fr/audit_autorisations_collectes_20261006.md.
     Yahoo non officiel, recherche uniquement. Parcours du référentiel actif, pas garantie de consensus sur tous les titres.
     Ambiguïtés, noms contradictoires et absences sont explicités ; un nom concordant ne certifie pas un ISIN Yahoo.
     Historique construit uniquement à partir des vraies observations UTC ; pas de reconstruction du passé avec les valeurs reçues aujourd'hui.
@@ -217,7 +209,8 @@ fr_consensus_snapshot:
     Archivage renforcé : réponse info complète, tableaux de révisions EPS et recommandations disponibles,
     reçus par endpoint même si le passage est ensuite interrompu, version et heures UTC.
     Exercices/unités restent non qualifiés. La sauvegarde fr_artifacts_backup couvre la quarantaine.
-  activation_requirement: "Collecte fichiers autorisée sur tout le référentiel actif. Promotion ML/backtest toujours bloquée : identité indépendante, unités/exercices, contrat PIT, droits d'usage et validation OOF nécessaires."
+  activation_requirement: "BLOQUÉ : obtenir et conserver une permission explicite de Yahoo pour cette collecte automatisée, ou remplacer la source par un fournisseur licencié. Le GO utilisateur historique ne remplace pas l'autorisation du fournisseur. Promotion ML/backtest séparée."
+  unlock_steps: ["Obtenir une permission écrite applicable de Yahoo ou un contrat fournisseur autorisant la collecte automatisée", "Vérifier stockage, usages personnels/professionnels, quotas et droits de redistribution", "Adapter et tester le collecteur si la source change ; documenter la revue avant de lever le blocage", "Qualifier séparément les archives et la promotion ML/backtest"]
   log_file: log/batch_fr/fr_consensus_snapshot.txt
 
 fr_borrow_snapshot:

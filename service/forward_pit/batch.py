@@ -2318,7 +2318,8 @@ HANDLERS: dict[str, Callable[[Engine, dict[str, Any], str, bool], Outcome]] = {
 def execute(batch_name: str, *, dry_run: bool = False, config_path: str | None = None) -> tuple[str, Outcome]:
     config = load_batch_config(config_path); cfg = config.get(batch_name)
     if not isinstance(cfg, dict): raise KeyError(f"Section {batch_name} absente de batch.yaml")
-    if not cfg.get("enabled", False):
+    # A rights block survives an enabled-only toggle, including direct CLI calls.
+    if not cfg.get("enabled", False) or str(cfg.get("status") or "").startswith("BLOCKED_"):
         status = str(cfg.get("status") or "DISABLED")
         return f"SKIPPED_{status}", Outcome(details={"reason": status})
     handler = HANDLERS.get(batch_name)
