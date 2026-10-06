@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "market_code": "FR_EQ",
+  "serving_enabled": false,
+  "purpose": "Small issuer document review; claimed dates are not PIT availability or proof of payment",
+  "sources": [
+    {"id":"BNP_TERMS","symbol":"BNP.PA","url":"https://invest.bnpparibas/document/2q26-pr","claims":{"amount":3.23,"currency":"EUR","ex_date":"2026-09-24","payment_announced":"2026-09-28"}},
+    {"id":"GLE_TERMS","symbol":"GLE.PA","url":"https://www.globenewswire.com/news-release/2026/07/30/3335727/0/fr/Soci%C3%A9t%C3%A9-G%C3%A9n%C3%A9rale-R%C3%A9sultats-du-2%C3%A8me-trimestre-et-du-1er-semestre-2026.html","claims":{"amount":0.75,"currency":"EUR","ex_date":"2026-10-05","payment_announced":"2026-10-07"}},
+    {"id":"ODET_TERMS","symbol":"ODET.PA","url":"https://www.compagniedelodet.net/wp-content/uploads/2026/09/2026-09-16-Odet-CP-resultats-S1-2026-.pdf","claims":{"amount":380,"currency":"EUR","payment_announced":"2026-09-29"}},
+    {"id":"ODET_CALENDAR","symbol":"ODET.PA","url":"https://www.compagniedelodet.net/","claims":{"amount":380,"currency":"EUR","ex_date":"2026-09-25","record_date":"2026-09-28","payment_announced":"2026-09-29"}},
+    {"id":"SBT_TERMS","symbol":"SBT.PA","url":"https://www.actusnews.com/fr/telechargement/oeneo/2026/07/22/99455-cp-oeneo-cr-ag-2026-vf.pdf","claims":{"amount":0.35,"currency":"EUR","ex_date":"2026-09-30","payment_announced":"2026-10-02"}},
+    {"id":"SPIE_TERMS","symbol":"SPIE.PA","url":"https://www.spie.com/sites/www.spie.com/files/2026-07/H1%202026%20%20-%20Communiqu%C3%A9%20de%20presse_vDef.pdf","claims":{"amount":0.32,"currency":"EUR","ex_date":"2026-09-15","payment_announced":"2026-09-17","cash_announced":true}},
+    {"id":"TRI_TERMS","symbol":"TRI.PA","url":"https://trigano-finance.com/download/26918/08af5f02bd94ebd46c44f8b35705f922/","claims":{"amount":2.4,"currency":"EUR","ex_date":"2026-09-29","payment_announced":"2026-10-01"}},
+    {"id":"ALAMA_CURRENCY","symbol":"ALAMA.PA","url":"https://www.amaxperteye.com/share-information/","claims":{"isin":"GB00BNKGZC51","mic":"ALXP","trading_currency":"EUR","nominal_currency":"GBP","historical_effective_interval_verified":false}}
+  ]
+}

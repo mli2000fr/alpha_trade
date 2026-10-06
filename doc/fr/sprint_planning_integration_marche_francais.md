@@ -417,6 +417,14 @@ pipeline US ni un lancement de serving. Les réserves du
 
 ### Sprint 15 — Batchs prospectifs, surveillance, sauvegarde et restauration
 
+**Mise à jour du 6 octobre 2026 : bilan de livraison établi, gate opérationnel
+complet non acquis.** Voir [15-G : bilan et réserves de clôture](sprint_15g_bilan_cloture_operationnelle.md),
+qui prévaut sur les statuts historiques ci-dessous. La sauvegarde artefacts a
+finalement été extraite/vérifiée et activée ; INPI/Yahoo sont suspendus pour
+droits/conservation ; le contrôle `fr_pit_quality_daily` est retiré. Restent
+notamment deux réponses EODHD vides, la semaine d'exploitation, la reprise réelle
+et la publication quotidienne SQL qualifiée. Le Sprint 16 reste un gate distinct.
+
 **GO reçu le 5 octobre 2026 ; en cours.** Le
 [15-A : catalogue et orchestration isolés](sprint_15a_catalogue_et_orchestration.md)
 est implémenté : calendrier local et handlers de sauvegarde, familles
@@ -463,6 +471,58 @@ Les horaires doivent être déterminés *après* vérification de l'heure de pub
 **Gate GO.** Une semaine de collecte vérifiable, deux passages sans doublon métier, arrêt brutal puis reprise, notifications d'échec avec vrais compteurs, backup restauré dans une base de test. Ne pas déclencher FR en masse avant d'avoir qualifié les quotas.
 
 ### Sprint 16 — Prédiction FR et shadow prospectif
+
+**État au 6 octobre 2026 : 16-A livré, préparation seulement.** Voir
+[contrat de prédiction et preflight](sprint_16a_contrat_prediction_et_preflight.md).
+Manifeste candidat Oracle H5, empreintes, univers de recherche et contrôles
+fail-closed implémentés. Aucun serving, shadow, ordre ou SQL activé. Le dossier
+réel reste bloqué faute de dataset quotidien qualifié ; 16-B et les réserves
+opérationnelles du Sprint 15 restent à traiter.
+
+**16-B : adaptateur quotidien livré, données non libérées.** Voir
+[assemblage quotidien PIT](sprint_16b_assemblage_quotidien_pit.md).
+Reconstruction des versions observées avant ouverture XPAR, vérification des
+payloads, contrôles de fenêtre/identité/actions et réutilisation des formules
+d'entraînement. Diagnostic réel du 6 octobre : 0 ligne prête (warmup 21 séances,
+master à la date et continuité non qualifiés). Aucun SQL, serving ou ordre activé.
+
+**16-C engagé : rattrapage isolé et réserves ESMA.** Voir
+[rattrapage et réserves](sprint_16c_rattrapage_et_reserves.md).
+Collecte de démarrage 31 jours des 294 titres actifs, observations à leur heure
+réelle, sans changer les tâches quotidiennes. Le Delta ESMA du 9 septembre 2026
+reste absent de l'index officiel revérifié ; aucune continuité n'est promue.
+Bilan après collecte et qualification du référentiel encore requis avant shadow.
+
+**Bilan 16-C après rattrapage (6 octobre au soir) :** 6 414 barres et 588
+payloads actions, zéro échec réseau, 4 alertes de séances absentes. L'audit
+de warmup calcule 242 jeux de features ; 223 passent les contrôles locaux,
+mais 0 est libéré (continuité ESMA/qualification indépendante/release en
+réserve). Ce n'est pas un rejeu d'ouverture ; le Sprint 16 reste non clos.
+
+**16-D, qualification complémentaire (6 octobre au soir) :** voir
+[identités, événements et référence connue avant décision](sprint_16d_identites_evenements_reference_observee.md).
+Dix faux blocages de MIC terminal corrigés : le nouveau bilan est 242 jeux
+numériques, **233 passages locaux**, 0 servable. Devise nominale distinguée
+de devise de cotation ; modalités de dividendes revues sans promotion PIT.
+Politique diagnostique du dernier master réellement observé, retard limité
+à une séance XPAR et âge à 96 heures ; aucune autorisation de serving.
+L'assemblage quotidien strict et les réserves de continuité restent inchangés.
+
+**16-E, preuves locales et contrôle de décision :** voir
+[bilan et procédure de nouvelle ouverture](sprint_16e_preuves_et_decision_reelle.md).
+Sept sources archivées et relues (cinq dividendes + calendrier Odet + identité
+AMA), GLE en échec réseau après deux essais. Contrôle intégré hors ligne livré,
+refus des ouvertures futures et des preuves reçues après décision. Bilan du soir
+242/233/0 confirmé ; ouverture du 6 octobre 0 candidat. Confirmation à une
+nouvelle ouverture encore à réaliser ; aucun GO shadow et aucune écriture SQL.
+
+**16-F préparé, confirmation non réalisée :** voir
+[confirmation sur ouverture réelle](sprint_16f_confirmation_ouverture.md).
+Protocole gelé pour le 7 octobre à 9 h Paris et outil prepare/confirm livré.
+Inventaire du 6 octobre au soir : pas encore de barres/actions du 6 octobre
+dans les collectes quotidiennes avant leurs horaires 22 h/23 h ; master au
+5 octobre. Le retard structurel J−1 du master reste explicitement bloquant
+pour l'assemblage strict. Pas de nouvelle tâche, pas d'activation shadow.
 
 **Objectif.** Prouver que le modèle retenu peut servir sans accès au futur et sans ordre réel.
 

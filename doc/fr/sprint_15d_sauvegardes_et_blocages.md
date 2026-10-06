@@ -1,5 +1,11 @@
 # Sprint 15-D — Sauvegardes vérifiées et référentiels encore bloqués
 
+**Actualisation du 6 octobre 2026 :** la seconde qualification artefacts
+`backups/fr/qualification/20261005T193256-a4610757/report.json` porte
+`EXTRACTION_VERIFIED` (14 448 fichiers). `fr_artifacts_backup` est désormais
+actif ; les paragraphes relatant une attente/erreur d'extraction décrivent le
+premier essai historique. Pour le bilan courant, voir [15-G](sprint_15g_bilan_cloture_operationnelle.md).
+
 État au 5 octobre 2026. Ce document complète le catalogue 15-A et la collecte
 15-C ; il ne clôture pas tout le Sprint 15 et n'autorise aucun trading FR.
 

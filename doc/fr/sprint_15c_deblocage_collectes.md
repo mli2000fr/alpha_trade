@@ -1,5 +1,9 @@
 # Sprint 15-C — Déblocage des collectes possibles
 
+État courant et preuves de sauvegarde/exploitation : [bilan 15-G du 6 octobre
+2026](sprint_15g_bilan_cloture_operationnelle.md). Les tableaux de blocage
+ci-dessous décrivent la tranche initiale, pas l'état actualisé de tous les batchs.
+
 ## Mise à jour du 6 octobre 2026 — retrait du contrôle planifié
 
 `fr_pit_quality_daily` est retiré de `batch_fr.yaml`, de la page Batch et

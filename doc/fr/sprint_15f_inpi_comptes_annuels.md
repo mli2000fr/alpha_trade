@@ -1,5 +1,12 @@
 # Sprint 15-F — Pilote INPI comptes annuels
 
+**État au 6 octobre 2026 : suspendu**, `enabled: false`,
+`BLOCKED_INPI_RETENTION`. Les paragraphes d'activation ci-dessous décrivent
+le pilote historique, pas le catalogue courant. Les fichiers de quarantaine
+ont été supprimés sur demande utilisateur ; les correspondances sont conservées.
+Voir [audit des droits](audit_autorisations_collectes_20261006.md) et
+[bilan opérationnel 15-G](sprint_15g_bilan_cloture_operationnelle.md).
+
 **État actuel après extension :** le batch recherche les correspondances sur les
 330 identités S6C et collecte par lots les 254 correspondances retenues, en
 quarantaine uniquement. Les sections « dix émetteurs » ci-dessous conservent

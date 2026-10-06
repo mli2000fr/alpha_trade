@@ -1,0 +1,16 @@
+{
+  "schema_version":1,
+  "market_code":"FR_EQ",
+  "review_kind":"ASSISTANT_DOCUMENT_TERMS_REVIEW_NOT_INDEPENDENT_SECOND_REVIEW",
+  "reviewed_at":"2026-10-06T19:10:52+00:00",
+  "serving_enabled":false,
+  "records":[
+    {"id":"BNP_TERMS","sha256":"1e1711513bc664081dddd41cc4c0937a93f9bc339e7a256a697ffb5858d67f79","locator":"PDF page 6","confirmed_fields":["amount","currency","ex_date","payment_announced"],"payment_execution_proved":false},
+    {"id":"ODET_TERMS","sha256":"c517642bffa7b3ecc5f865ec554c29d71b36e07845be4e5924a25e222a16f26e","locator":"PDF pages 1 and 4","confirmed_fields":["amount","currency","payment_announced"],"payment_execution_proved":false},
+    {"id":"ODET_CALENDAR","sha256":"464bb1f14f7257cd21b8b9d8afd31685aeafdefcd88ece85f3941c096ededd64","locator":"Issuer HTML dividend calendar","confirmed_fields":["amount","currency","ex_date","record_date","payment_announced"],"payment_execution_proved":false},
+    {"id":"SBT_TERMS","sha256":"735b28d90bf6240e42b7679ea74e4b87d6f3e86310b8d46a0739a5197e78f8b4","locator":"PDF page 1","confirmed_fields":["amount","currency","ex_date","payment_announced"],"cash_announced":true,"payment_execution_proved":false},
+    {"id":"SPIE_TERMS","sha256":"37c70916b85515bc861536b650f4249e196bca055cca433b740d827cdd2eb005","locator":"PDF page 4","confirmed_fields":["amount","currency","ex_date","payment_announced","cash_announced"],"payment_execution_proved":false},
+    {"id":"TRI_TERMS","sha256":"a257f7c486d85f3d4d2962e9d7a1216de9158c7d9265505aeabafafc86b6bd43","locator":"PDF page 3","confirmed_fields":["amount","currency","ex_date","payment_announced"],"payment_execution_proved":false},
+    {"id":"ALAMA_CURRENCY","sha256":"da7e7de2c237d3731fd2c584e75f958bd76983726f8d0f96943147edeb5dcfb3","locator":"Issuer HTML Share information; Currency Euro and nominal value GBP","confirmed_fields":["isin","trading_currency","nominal_currency"],"historical_effective_interval_verified":false}
+  ]
+}

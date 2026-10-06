@@ -1,0 +1,19 @@
+{
+  "schema_version":1,
+  "market_code":"FR_EQ",
+  "calendar":"XPAR",
+  "decision_date":"2026-10-07",
+  "bootstrap_dir":"artifacts/fr/research/data_readiness_16c/bootstrap-20261006-v1",
+  "evidence_dir":"artifacts/fr/research/evidence_16e/issuer-20261006-v1",
+  "serving_allowed":false,
+  "orders_allowed":false,
+  "sql_writes":false,
+  "rules":[
+    "Actual opening must have occurred before confirmation",
+    "Select only versions observed and available before XPAR opening",
+    "Never carry forward a missing bar or action coverage",
+    "Strict master coverage gate is not relaxed by diagnostic last-known policy",
+    "No promotion of document terms to qualified action adjustments",
+    "No model refit or inference, no canonical writes or orders"
+  ]
+}
