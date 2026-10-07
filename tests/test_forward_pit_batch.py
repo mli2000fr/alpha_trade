@@ -46,6 +46,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_all_enabled_forward_batches_have_handlers() -> None:
     expected = {
+        "us_pipeline_1_9",
         "ml_artifacts_backup",
         "db_core_backup", "db_news_raw_backup",
         "daily_bars_sync", "market_cap_sync", "security_master_snapshot", "corporate_actions_sync",

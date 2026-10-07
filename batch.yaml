@@ -18,9 +18,20 @@ us_pipeline_1_9:
   run_hours: "22"
   run_minutes: "45"
   run_days: "1,2,3,4,5"
+  # Ces deux collectes remplacent désormais leurs planifications autonomes.
+  quotes_collection: &us_pipeline_quotes
+    symbols_file: config/univers_batch/univers_filtred_tradable.txt
+    lookback_days: 7
+    batch_size: 200
+  earnings_collection: &us_pipeline_earnings
+    symbols_file: config/univers_batch/univers_filtred_tradable.txt
+    lookback_days: 7
+    forward_days: 30
+    batch_size: 50
+    provider: finnhub
   description: "Enchaîner les étapes 1 à 9 de la page Pipeline avec ses valeurs par défaut : barres, nettoyage, screener, quotes, earnings, univers tradable, Alpha Scanner, sentiment et agrégation."
   tables: "stock_bars,stock_bars_daily,cleaning_audit_latest,cleaning_audit_runs,stock_scores,stock_scores_history,stock_quote_snapshots,stock_earnings_calendar,tradable_universe_runs,tradable_universe_history,news_raw,news_ticker_map,news_sentiment,news_ticker_sentiment,macro_event_audit,ticker_daily_sentiment_features,sector_daily_sentiment_features,news_ingestion_checkpoint,pit_collection_runs"
-  universe_scope: "Défauts Pipeline : univers Screener de config.yaml ; scopes natifs quotes/earnings/news, sans imposer un nouvel univers commun."
+  universe_scope: "Screener : défauts config.yaml ; quotes/earnings : config/univers_batch/univers_filtred_tradable.txt ; news : scope natif Pipeline."
   coverage_description: "Séance US J figée au lancement ; jours fériés US exclus par calendrier strict. Pas de second passage. Les fenêtres/reprises propres à chaque étape restent celles de l'IHM."
   execution_notice: "22:45 Europe/Paris, lundi–vendredi après clôture US, changements d'heure inclus. Étapes 1–9 uniquement : aucun ML Train/T1, ML Predict/10, Risk/11 ou Execution/12. Arrêt au premier échec ; verrou pipeline partagé avec l'IHM. Compteurs en étapes, pas en lignes SQL."
   research_notice: "Même générateur de commandes et mêmes défauts que la page Pipeline neuve, preset capital_2001_5000 et sentiment standard + contextuel. Les modifications temporaires de la session IHM ne sont pas reprises. Seule adaptation d'exploitation : ne pas rabattre J sur un ancien snapshot."
@@ -229,10 +240,13 @@ market_cap_sync:
 # Synchronisation du calendrier earnings Finnhub.
 # symbols_file est partagé avec analyst_snapshot_collection.
 earnings_calendar_sync:
+  <<: *us_pipeline_earnings
   priority: P1
   description: "Connaître les publications de résultats à venir et réalisées afin d'appliquer les blackouts earnings et d'étudier les surprises."
   tables: "stock_earnings_calendar,cleaning_audit_earnings_runs"
-  enabled: true
+  enabled: false
+  status: INTEGRATED_IN_US_PIPELINE
+  research_notice: "Planification autonome désactivée : collecte exécutée à l'étape 5 de us_pipeline_1_9, même univers, Finnhub, J-7/J+30 et reprise. Les paramètres sont partagés dans batch.yaml. Ne pas réactiver en parallèle ; le collecteur CLI reste disponible manuellement."
   timezone: Europe/Paris
   run_hours: "23"
   run_days: "0,3,5"
@@ -273,11 +287,12 @@ analyst_snapshot_collection:
 # L'horaire est exprimé en heure de New York afin de suivre automatiquement
 # les changements d'heure US/France et de démarrer après la clôture régulière.
 latest_quotes_sync:
+  <<: *us_pipeline_quotes
   priority: P0
   description: "Collecter le dernier bid/ask de chaque séance pour mesurer spread et liquidité, avec une fenêtre glissante J-7 à J qui rattrape automatiquement les journées manquantes."
   tables: "pit_collection_runs,stock_quote_snapshots,cleaning_audit_quotes_runs"
-  enabled: true
-  status: ACTIVE
+  enabled: false
+  status: INTEGRATED_IN_US_PIPELINE
   provider: alpaca_iex
   timezone: America/New_York
   run_hours: "17"
@@ -286,7 +301,7 @@ latest_quotes_sync:
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   lookback_days: 7
   batch_size: 200
-  research_notice: "Les quotes historiques du compte Alpaca Basic utilisent le feed IEX, pas le marché consolidé SIP/NBBO. Elles conviennent aux contrôles de liquidité et à la recherche si cette limite de couverture est conservée explicitement."
+  research_notice: "Planification autonome désactivée : collecte exécutée à l'étape 4 de us_pipeline_1_9, même univers et J-7/J. Ne pas réactiver en parallèle ; le collecteur CLI reste disponible manuellement. Quotes Alpaca Basic IEX, pas SIP/NBBO consolidé."
   log_file: log/batch/latest_quotes_sync.txt
 
 # Tous les horaires sont exprimés dans timezone et interprétés par le lanceur.
