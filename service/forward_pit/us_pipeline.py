@@ -29,12 +29,17 @@ def collection_options(options, cfg, day):
     """Pin collection windows to the session, not the wall clock after midnight."""
     from common.universe_files import universe_file_source_from_path
     values = {}
+    shared_file = cfg.get('symbols_file')
+    if shared_file:
+        source = universe_file_source_from_path(shared_file, root=ROOT)
+        values.update(screener_custom_universe_file=str(shared_file),
+                      sentiment_pipeline_symbol_source=source)
     for name in ('quotes', 'earnings'):
         policy = cfg.get(f'{name}_collection')
         if policy is None:
             continue
         prefix = f'data_integrity_{name}_'
-        source = universe_file_source_from_path(policy['symbols_file'], root=ROOT)
+        source = universe_file_source_from_path(shared_file or policy['symbols_file'], root=ROOT)
         lookback = int(policy['lookback_days'])
         forward = int(policy.get('forward_days', 0))
         if lookback < 0 or forward < 0:

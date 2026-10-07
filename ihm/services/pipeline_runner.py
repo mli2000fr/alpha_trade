@@ -572,6 +572,8 @@ class PipelineLaunchOptions:
     sentiment_start_utc: str | None = None
     sentiment_end_utc: str | None = None
     sentiment_symbols: str | None = None
+    # Optional batch-wide override. None preserves the interactive mixed scope.
+    sentiment_pipeline_symbol_source: str | None = None
     sentiment_news_provider: Literal["alpaca", "finnhub", "eodhd"] = "eodhd"
     sentiment_ticker_relevance_mode: Literal["provider_default", "strict", "scored"] = "provider_default"
     sentiment_min_relevance_score: float | None = None
@@ -2055,8 +2057,10 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     if step_key == "sentiment_pipeline":
+        pipeline_source = (normalize_symbol_source(options.sentiment_pipeline_symbol_source)
+                           if options.sentiment_pipeline_symbol_source else None)
         sentiment_scope_symbols = sentiment_symbols
-        sentiment_scope_symbol_source = None if sentiment_scope_symbols else "tradable-universe"
+        sentiment_scope_symbol_source = None if sentiment_scope_symbols else (pipeline_source or "tradable-universe")
         import_start_date = str(sentiment_start_utc)[:10] if sentiment_start_utc else None
         import_end_date = str(sentiment_end_utc)[:10] if sentiment_end_utc else None
         cmd0 = _build_import_news_command(
@@ -2064,7 +2068,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             import_start_date=import_start_date,
             import_end_date=import_end_date,
             import_symbols=None,
-            import_symbol_source="stock_scores_all",
+            import_symbol_source=pipeline_source or "stock_scores_all",
             import_max_symbols=None,
             resume_from_checkpoint=bool(options.news_import_resume_from_checkpoint),
             force_symbol_source=True,
@@ -2101,7 +2105,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
 
         return _build_chained_ps_commands(
             [
-                ("Import news brut (scope large stock_scores_all)", cmd0),
+                ("Import news brut (scope " + (pipeline_source or "stock_scores_all") + ")", cmd0),
                 ("Calcul relevance_score (scope univers tradable / override CSV)", cmd2),
                 ("Scoring FinBERT standard (scope univers tradable / override CSV)", cmd1),
                 ("Scoring FinBERT contextuel (scope univers tradable / override CSV)", cmd4),

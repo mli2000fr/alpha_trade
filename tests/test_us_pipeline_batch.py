@@ -1,4 +1,5 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, date
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -7,6 +8,50 @@ from service.forward_pit import us_pipeline
 from service.forward_pit.batch import BatchRunError, HANDLERS
 from ihm.services import process_registry
 from ihm.services.pipeline_runner import PAGE_SENTIMENT_DEFAULTS, pipeline_page_default_options
+
+
+def configured_policy():
+    import yaml
+    return yaml.safe_load((Path(__file__).resolve().parents[1] / 'batch.yaml').read_text(encoding='utf-8'))
+
+
+def test_common_universe_and_collection_windows():
+    from ihm.services.pipeline_runner import build_pipeline_command
+    cfg = configured_policy()
+    policy = cfg['us_pipeline_1_9']
+    options = us_pipeline.collection_options(pipeline_page_default_options(trade_date='2026-10-07'),
+                                             policy, date(2026, 10, 7))
+    path = 'config/univers_batch/univers_filtred_tradable.txt'
+    source = 'universe-file:' + path
+    assert options.screener_custom_universe_file == path
+    assert options.sentiment_pipeline_symbol_source == source
+    assert options.data_integrity_quotes_symbol_source == source
+    assert options.data_integrity_earnings_symbol_source == source
+    assert options.data_integrity_quotes_from_date == '2026-09-30'
+    assert options.data_integrity_quotes_to_date == '2026-10-07'
+    assert options.data_integrity_earnings_from_date == '2026-09-30'
+    assert options.data_integrity_earnings_to_date == '2026-11-06'
+    assert options.data_integrity_quotes_batch_size == 200
+    assert options.data_integrity_earnings_batch_size == 50
+    assert options.data_integrity_earnings_provider == 'finnhub'
+    assert options.data_integrity_earnings_resume is True
+    for step in ('stock_screener', 'sync_latest_quotes', 'sync_earnings_calendar'):
+        assert path in ' '.join(build_pipeline_command(step, options))
+    news = ' '.join(build_pipeline_command('sentiment_pipeline', options))
+    # Ingestion, relevance, standard, contextual and ticker features share scope.
+    assert news.count(source) >= 5
+    assert '--symbol-source stock_scores_all' not in news
+    assert '--symbol-source tradable-universe' not in news
+    assert not cfg['latest_quotes_sync']['enabled']
+    assert not cfg['earnings_calendar_sync']['enabled']
+
+
+def test_interactive_sentiment_mixed_scope_unchanged():
+    from ihm.services.pipeline_runner import build_pipeline_command
+    command = ' '.join(build_pipeline_command('sentiment_pipeline',
+        pipeline_page_default_options(trade_date='2026-10-07')))
+    assert '--symbol-source stock_scores_all' in command
+    assert '--symbol-source tradable-universe' in command
 
 
 def calendar(close_hour=20, opened=True):

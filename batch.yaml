@@ -18,23 +18,24 @@ us_pipeline_1_9:
   run_hours: "22"
   run_minutes: "45"
   run_days: "1,2,3,4,5"
+  symbols_file: &us_pipeline_universe config/univers_batch/univers_filtred_tradable.txt
   # Ces deux collectes remplacent désormais leurs planifications autonomes.
   quotes_collection: &us_pipeline_quotes
-    symbols_file: config/univers_batch/univers_filtred_tradable.txt
+    symbols_file: *us_pipeline_universe
     lookback_days: 7
     batch_size: 200
   earnings_collection: &us_pipeline_earnings
-    symbols_file: config/univers_batch/univers_filtred_tradable.txt
+    symbols_file: *us_pipeline_universe
     lookback_days: 7
     forward_days: 30
     batch_size: 50
     provider: finnhub
   description: "Enchaîner les étapes 1 à 9 de la page Pipeline avec ses valeurs par défaut : barres, nettoyage, screener, quotes, earnings, univers tradable, Alpha Scanner, sentiment et agrégation."
   tables: "stock_bars,stock_bars_daily,cleaning_audit_latest,cleaning_audit_runs,stock_scores,stock_scores_history,stock_quote_snapshots,stock_earnings_calendar,tradable_universe_runs,tradable_universe_history,news_raw,news_ticker_map,news_sentiment,news_ticker_sentiment,macro_event_audit,ticker_daily_sentiment_features,sector_daily_sentiment_features,news_ingestion_checkpoint,pit_collection_runs"
-  universe_scope: "Screener : défauts config.yaml ; quotes/earnings : config/univers_batch/univers_filtred_tradable.txt ; news : scope natif Pipeline."
+  universe_scope: "Univers commun config/univers_batch/univers_filtred_tradable.txt : screener, quotes, earnings, import news et scoring ticker. Les autres étapes conservent leurs périmètres natifs ou les résultats précédents."
   coverage_description: "Séance US J figée au lancement ; jours fériés US exclus par calendrier strict. Pas de second passage. Les fenêtres/reprises propres à chaque étape restent celles de l'IHM."
   execution_notice: "22:45 Europe/Paris, lundi–vendredi après clôture US, changements d'heure inclus. Étapes 1–9 uniquement : aucun ML Train/T1, ML Predict/10, Risk/11 ou Execution/12. Arrêt au premier échec ; verrou pipeline partagé avec l'IHM. Compteurs en étapes, pas en lignes SQL."
-  research_notice: "Même générateur de commandes et mêmes défauts que la page Pipeline neuve, preset capital_2001_5000 et sentiment standard + contextuel. Les modifications temporaires de la session IHM ne sont pas reprises. Seule adaptation d'exploitation : ne pas rabattre J sur un ancien snapshot."
+  research_notice: "Défauts Pipeline partagés, preset capital_2001_5000, sentiment standard + contextuel. Exceptions explicites : univers commun pour étapes 3/4/5 et import/scoring ticker de 8 ; quotes J-7/J, earnings J-7/J+30 ; séance J figée sans rabattement sur un ancien snapshot. Les sessions IHM ne sont pas modifiées."
   log_file: log/batch/us_pipeline_1_9.txt
 
 # Sprint 15-D6 : observations officielles CN strictement de recherche.
