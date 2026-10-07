@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 from pathlib import Path
+import traceback
 
 import pytest
 import requests
@@ -10,6 +11,7 @@ import requests
 from service.eodhd import accounts as eodhd_accounts
 from service.eodhd import clientEodhd
 from service.eodhd import quota as eodhd_quota
+from service._http_retry import RetryPolicy
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +181,25 @@ def test_fetch_eod_redacts_api_token_in_error_message(monkeypatch, tmp_path: Pat
     message = str(exc_info.value)
     assert "SECRET_TOKEN" not in message
     assert "api_token=%2A%2A%2A" in message or "api_token=***" in message
+
+
+def test_ssl_failure_never_exposes_token_in_formatted_traceback(monkeypatch, tmp_path: Path):
+    secret = "SYNTHETIC_SECRET_FOR_TEST"
+
+    class FailingSession:
+        def request(self, *_args: Any, **_kwargs: Any) -> None:
+            raise requests.exceptions.SSLError(
+                f"HTTPSConnectionPool: /api/eod/AIR.PA?api_token={secret}&fmt=json"
+            )
+
+    monkeypatch.setattr(clientEodhd, "_get_token", lambda: secret)
+    monkeypatch.setattr(clientEodhd, "_retry_policy", lambda: RetryPolicy(max_attempts=1))
+    tracker = eodhd_quota.EodhdQuotaTracker(cache_dir=tmp_path, failure_threshold=99)
+    with pytest.raises(clientEodhd.EodhdBarsFetchError) as exc_info:
+        clientEodhd.fetch_eod("AIR.PA", session=cast(Any, FailingSession()), tracker=tracker)
+    rendered = "".join(traceback.format_exception(exc_info.value))
+    assert secret not in rendered
+    assert "api_token=***" in rendered or "api_token=%2A%2A%2A" in rendered
 
 
 def test_fetch_dividends_uses_div_endpoint():

@@ -1,0 +1,45 @@
+# Pré-enregistrement Sprint 10-C : ranking signé, sans serving ni backtest.
+experiment: cn_global_ranking_sprint10c_v1
+market_code: CN_A
+source_feature_profile: cn_price_v1
+source_label_profile: cn_oracle_labels_v1
+oracle_oos_profile: cn_oracle_sprint10b_v1
+oracle_pool_rule: mean_lightgbm_catboost_scores_top20_before_label_filter
+years: [2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]
+horizons: [5, 10, 15, 20]
+test_semesters: [2022H1, 2022H2, 2023H1, 2023H2, 2024H1, 2024H2, 2025H1, 2025H2]
+validation_sessions: 126
+min_train_sessions: 504
+max_train_rows: 600000
+min_rank_cross_section: 20
+target: oracle_decile_minus_one
+features_source: sprint10b_oracle.yaml
+baseline_score: relative_return_20
+models: [lightgbm, catboost]
+seed: 20260925
+lightgbm:
+  n_estimators: 300
+  learning_rate: 0.03
+  max_depth: 5
+  num_leaves: 31
+  min_child_samples: 150
+  colsample_bytree: 0.8
+  reg_lambda: 1.0
+  early_stopping_rounds: 30
+catboost:
+  iterations: 300
+  depth: 5
+  learning_rate: 0.03
+  l2_leaf_reg: 3.0
+  early_stopping_rounds: 30
+evaluation:
+  global_tail_pct: 0.10
+  oracle_pool_pct: 0.20
+  conditional_tail_pct: 0.20
+  min_test_sessions: 60
+  min_positive_semesters: 6
+  min_conditional_tail_uplift: 0.02
+  min_matured_label_coverage: 0.95
+  bootstrap_months: 1000
+  familywise_alpha: 0.05
+  hypotheses: 8

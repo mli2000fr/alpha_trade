@@ -1,0 +1,12 @@
+schema_version: 1
+policy: fr_last_known_reference_diagnostic_v1
+market_code: FR_EQ
+calendar: XPAR
+database_alias: fr_primary
+# Diagnostic de l'état connu, PAS preuve de négociabilité pendant le délai.
+max_coverage_lag_sessions: 1
+max_observation_age_hours: 96
+historical_continuity_required_for_release: true
+serving_enabled: false
+orders_allowed: false
+canonical_writes_enabled: false

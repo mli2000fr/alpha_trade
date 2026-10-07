@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 from execution_engine.config import ExecutionConfig
-from execution_engine.models import BrokerOrder, OrderIntent
+from execution_engine.models import BrokerOrder, CancelResult, OrderIntent
 from execution_engine.order_intents import build_oco_protection_payload, intent_to_alpaca_payload
 from execution_engine.state_machine import map_alpaca_status
 from service.alpaca.clientAlpaca import fetch_latest_quotes
@@ -16,20 +15,16 @@ from service.alpaca.trading_client import AlpacaTradingClient, BrokerApiError
 LOGGER = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True, slots=True)
-class CancelResult:
-    """Phase 5.2.c — Résultat d'une annulation unitaire (kill switch)."""
-
-    broker_order_id: str
-    symbol: str
-    canceled: bool
-    error: str | None = None
-
-
 class BrokerAdapter:
     """Adapte AlpacaTradingClient vers les types internes execution_engine."""
 
+    market_code = "US_EQ"
+
     def __init__(self, client: AlpacaTradingClient, config: ExecutionConfig) -> None:
+        if config.market_code != self.market_code:
+            raise ValueError(
+                f"Alpaca ne peut exécuter que {self.market_code}; marché reçu={config.market_code!r}"
+            )
         self._client = client
         self._config = config
 

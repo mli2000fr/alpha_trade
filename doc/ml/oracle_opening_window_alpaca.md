@@ -17,8 +17,10 @@ Le dataset vise deux usages distincts :
    déjà observable.
 
 Il ne fournit pas une confirmation SIP temps réel à 09:30. Le plan Alpaca
-gratuit expose le SIP historique avec retard ; le premier passage attend donc
-plus de 15 minutes après la fin de fenêtre.
+gratuit expose le SIP historique avec retard ; le passage attend donc plus de
+15 minutes après la fin de fenêtre. La première expérience E20-B est
+strictement `price_only` : elle ignore volume, transactions et VWAP même si le
+collecteur les conserve pour les audits ou expériences ultérieures.
 
 ## Contrat fournisseur
 
@@ -40,11 +42,9 @@ l'application. Aucune clé n'est stockée dans `batch.yaml`.
 
 ## Calendrier
 
-Le batch est configuré les jours de semaine à :
-
-- 10:50 New York : première photographie, après expiration de la limite SIP
-  gratuite sur la barre de 10:30 ;
-- 18:15 New York : second passage après clôture pour détecter les corrections.
+Le batch est configuré les jours de semaine à 10:50 New York, après expiration
+de la limite SIP gratuite sur la barre de 10:30. Il rejoue les séances NYSE de
+J−7 à J et ignore les séances dont la couverture OPEN a déjà atteint le gate.
 
 Le calendrier NYSE empêche une absence totale de données un jour férié d'être
 interprétée comme une panne fournisseur. Le fuseau New York suit directement
@@ -134,7 +134,15 @@ tronqué.
 Les barres sont rejetées si un prix manque, est non positif, ou si `high/low`
 est incohérent avec `open/close`. Les volumes négatifs sont ramenés à zéro.
 
-## Features de recherche possibles
+## Baseline E20-B price-only
+
+La baseline verrouillée utilise uniquement `open/high/low/close` aux checkpoints
+5, 15, 30 et 60 minutes. `minute_volume`, `cumulative_volume`, `trade_count` et
+`vwap` sont interdits dans cette première analyse. Le détail du protocole, des
+seuils et des gates est dans
+[E20-B — confirmation price-only](oracle_opening_price_confirmation_e20b.md).
+
+## Features de recherche ultérieures possibles
 
 Le stockage permet notamment de calculer :
 

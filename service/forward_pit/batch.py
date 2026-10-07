@@ -19,10 +19,12 @@ import sys
 import time
 import uuid
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -32,6 +34,7 @@ from sqlalchemy.engine import Connection, Engine
 from common.config_loader import load_batch_config
 from common.market_calendar import is_trading_day, nyse_session_dates
 from database.connection import get_sqlalchemy_engine
+from risk_management.liquidity import BorrowStatus, alpaca_borrow_status
 from service.alpaca.clientAlpaca import fetch_alpaca_assets, get_alpaca_credentials
 from service.forward_pit.options_delayed import (
     option_contract_adjustment_sync,
@@ -197,7 +200,16 @@ def _sec_filing_index_documents(index_html: str, base_url: str) -> list[dict[str
         if not link_match:
             continue
         href = html_lib.unescape(link_match.group(1).strip())
-        filename = href.replace("\\", "/").rsplit("/", 1)[-1]
+        href_parts = urlsplit(href)
+        if href_parts.path.rstrip('/') in ['/ix', '/ixviewer/doc/action']:
+            href = parse_qs(href_parts.query).get('doc', [''])[0]
+        resolved_url = urljoin(base_url.rstrip('/') + '/', href)
+        resolved = urlsplit(resolved_url)
+        if (not href or resolved.scheme != 'https' or resolved.hostname not in ['www.sec.gov', 'sec.gov']
+                or resolved.username or resolved.password or resolved.port not in [None, 443]
+                or not resolved.path.startswith('/Archives/edgar/data/')):
+            continue
+        filename = resolved.path.rsplit('/', 1)[-1]
         if not filename or not re.fullmatch(r"[A-Za-z0-9._-]+", filename):
             continue
         clean = lambda value: html_lib.unescape(re.sub(r"(?is)<[^>]+>", " ", value)).strip()
@@ -209,7 +221,7 @@ def _sec_filing_index_documents(index_html: str, base_url: str) -> list[dict[str
             "filename": filename,
             "document_type": re.sub(r"\s+", " ", clean(cells[3])).upper()[:32],
             "declared_size": int(size_text.replace(",", "")) if size_text.replace(",", "").isdigit() else None,
-            "url": (href if href.startswith("http") else base_url.rstrip("/") + "/" + filename),
+            "url": resolved_url,
         })
     return documents
 
@@ -287,6 +299,9 @@ def _download_sec_exhibits(
     try:
         response.raise_for_status()
         base_url = index_url.rsplit("/", 1)[0]
+        accession_directory = accession_number.replace('-', '')
+        if not base_url.endswith('/' + accession_directory):
+            base_url += '/' + accession_directory
         documents = _selected_sec_exhibits(
             _sec_filing_index_documents(response.text, base_url), prefixes, max_exhibits,
         )
@@ -480,11 +495,19 @@ def _assets_in_universe(
     assets: Iterable[dict[str, Any]], symbols: Iterable[str]
 ) -> list[dict[str, Any]]:
     allowed = {str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()}
-    return [
-        item for item in assets
-        if str(item.get("class")) == "us_equity"
-        and str(item.get("symbol") or "").strip().upper() in allowed
-    ]
+    selected: dict[str, dict[str, Any]] = {}
+    for item in assets:
+        symbol = str(item.get("symbol") or "").strip().upper()
+        if str(item.get("class")) != "us_equity" or symbol not in allowed:
+            continue
+        # Alpaca can return an inactive asset before an active one for one ticker.
+        previous = selected.get(symbol)
+        priority = (str(item.get("status") or "").lower() == "active", bool(item.get("tradable")))
+        if previous is None or priority > (
+            str(previous.get("status") or "").lower() == "active", bool(previous.get("tradable"))
+        ):
+            selected[symbol] = item
+    return list(selected.values())
 
 
 def _secret(cfg: dict[str, Any], default_env: str) -> str:
@@ -653,6 +676,43 @@ def _configure_alpaca_session(
         session.mount("https://", _SystemTrustAdapter())
 
 
+def market_datetime(value: Any, timezone_name: str = "America/New_York") -> tuple[datetime, datetime]:
+    """API publique : convertit un timestamp en heures locale et UTC naïves."""
+    return _market_dt(value, timezone_name)
+
+
+def paginated_json(
+    session: requests.Session,
+    url: str,
+    *,
+    params: dict[str, Any],
+    headers: dict[str, str],
+    page_key: str,
+    max_pages: int,
+    pause_seconds: float = 0.0,
+) -> list[tuple[dict[str, Any], int]]:
+    """API publique : charge une pagination Alpaca sans troncature silencieuse."""
+    return _paginated_json(
+        session,
+        url,
+        params=params,
+        headers=headers,
+        page_key=page_key,
+        max_pages=max_pages,
+        pause_seconds=pause_seconds,
+    )
+
+
+def configure_alpaca_session(
+    session: requests.Session, *, use_system_trust_store: bool,
+) -> None:
+    """API publique : configure la confiance TLS native pour Alpaca."""
+    _configure_alpaca_session(
+        session,
+        use_system_trust_store=use_system_trust_store,
+    )
+
+
 def _request_text_optional(
     session: requests.Session, url: str, *, timeout: float = 45, attempts: int = 4
 ) -> tuple[str | None, int]:
@@ -676,21 +736,27 @@ def _request_text_optional(
 
 def _parse_finra_short_volume(content: str) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    quantum = Decimal("0.000001")
     for item in csv.DictReader(io.StringIO(content.lstrip("\ufeff")), delimiter="|"):
         raw_date = str(item.get("Date") or "").strip()
         symbol = str(item.get("Symbol") or "").strip().upper()
         if len(raw_date) != 8 or not raw_date.isdigit() or not symbol:
             continue
         try:
+            volumes = [Decimal(str(item.get(column) or "0").strip()) for column in
+                       ("ShortVolume", "ShortExemptVolume", "TotalVolume")]
+            if any(not volume.is_finite() or volume < 0 or
+                   volume != volume.quantize(quantum) for volume in volumes):
+                continue
             rows.append({
                 "trade_date": datetime.strptime(raw_date, "%Y%m%d").date(),
                 "symbol": symbol,
-                "short_volume": int(item.get("ShortVolume") or 0),
-                "short_exempt_volume": int(item.get("ShortExemptVolume") or 0),
-                "total_volume": int(item.get("TotalVolume") or 0),
+                "short_volume": volumes[0],
+                "short_exempt_volume": volumes[1],
+                "total_volume": volumes[2],
                 "market": str(item.get("Market") or "").strip().upper() or "CNMS",
             })
-        except (TypeError, ValueError):
+        except (InvalidOperation, TypeError, ValueError):
             continue
     return rows
 
@@ -1269,10 +1335,15 @@ def borrow_status_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry
         if not dry:
             for item in selected_assets:
                 shortable, etb = item.get("shortable"), item.get("easy_to_borrow")
-                status = "EASY" if shortable and etb else ("LOCATE_REQUIRED" if shortable else "NOT_SHORTABLE")
+                borrow = alpaca_borrow_status(item)
+                borrow_status = {
+                    BorrowStatus.EASY_TO_BORROW: "EASY",
+                    BorrowStatus.HARD_TO_BORROW: "LOCATE_REQUIRED",
+                    BorrowStatus.NOT_SHORTABLE: "NOT_SHORTABLE",
+                }[borrow]
                 result = conn.execute(text("""INSERT IGNORE INTO stock_borrow_status_snapshots
                     (provider,symbol,observed_at,available_at,shortable,easy_to_borrow,marginable,tradable,status,borrow_status,payload_hash,run_id)
-                    VALUES ('alpaca',:symbol,:observed,:observed,:shortable,:etb,:marginable,:tradable,:status,:borrow,:hash,:run)"""), {"symbol": item.get("symbol"), "observed": observed, "shortable": shortable, "etb": etb, "marginable": item.get("marginable"), "tradable": item.get("tradable"), "status": item.get("status"), "borrow": status, "hash": _hash(item), "run": run_id})
+                    VALUES ('alpaca',:symbol,:observed,:observed,:shortable,:etb,:marginable,:tradable,:status,:borrow,:hash,:run)"""), {"symbol": item.get("symbol"), "observed": observed, "shortable": shortable, "etb": etb, "marginable": item.get("marginable"), "tradable": item.get("tradable"), "status": item.get("status"), "borrow": borrow_status, "hash": _hash(item), "run": run_id})
                 outcome.persisted += max(0, result.rowcount)
     return outcome
 
@@ -1287,6 +1358,7 @@ def finra_short_volume_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dr
     trade_days = _previous_weekdays(market_today, lookback_days)
     outcome = Outcome(requested=len(trade_days))
     files_found = 0
+    parsed_rows = 0
     with requests.Session() as session, engine.begin() as conn:
         for trade_day in trade_days:
             url = template.format(date=trade_day.strftime("%Y%m%d"))
@@ -1299,8 +1371,9 @@ def finra_short_volume_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dr
                 _raw(conn, run_id, "finra_short_volume_sync", "finra",
                      "/equity/regsho/daily/CNMS", trade_day.isoformat(),
                      content, status, observed)
-            rows = [row for row in _parse_finra_short_volume(content)
-                    if row["symbol"] in symbols]
+            parsed = _parse_finra_short_volume(content)
+            parsed_rows += len(parsed)
+            rows = [row for row in parsed if row["symbol"] in symbols]
             outcome.received += len(rows)
             if dry:
                 continue
@@ -1329,6 +1402,7 @@ def finra_short_volume_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dr
     outcome.details.update({
         "candidate_dates": [day.isoformat() for day in trade_days],
         "files_found": files_found,
+        "parsed_rows": parsed_rows,
         "universe_symbols": len(symbols),
     })
     if files_found == 0:
@@ -1338,7 +1412,10 @@ def finra_short_volume_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dr
             outcome,
         )
     if outcome.received == 0:
-        raise RuntimeError("Fichiers FINRA trouvés mais aucun symbole de l'univers n'est couvert")
+        outcome.failed = files_found
+        if parsed_rows == 0:
+            raise BatchRunError("Fichiers FINRA trouvés mais aucune ligne de volume valide n'a pu être lue", outcome)
+        raise BatchRunError("Fichiers FINRA trouvés mais aucun symbole de l'univers n'est couvert", outcome)
     return outcome
 
 
@@ -2214,7 +2291,13 @@ def database_backup(
     return outcome
 
 
+def us_pipeline_1_9(engine, cfg, run_id, dry_run):
+    from service.forward_pit.us_pipeline import execute_pipeline
+    return execute_pipeline(engine, cfg, run_id, dry_run)
+
+
 HANDLERS: dict[str, Callable[[Engine, dict[str, Any], str, bool], Outcome]] = {
+    "us_pipeline_1_9": us_pipeline_1_9,
     "ml_artifacts_backup": ml_artifacts_backup,
     "db_core_backup": database_backup,
     "db_news_raw_backup": database_backup,
@@ -2241,7 +2324,8 @@ HANDLERS: dict[str, Callable[[Engine, dict[str, Any], str, bool], Outcome]] = {
 def execute(batch_name: str, *, dry_run: bool = False, config_path: str | None = None) -> tuple[str, Outcome]:
     config = load_batch_config(config_path); cfg = config.get(batch_name)
     if not isinstance(cfg, dict): raise KeyError(f"Section {batch_name} absente de batch.yaml")
-    if not cfg.get("enabled", False):
+    # A rights block survives an enabled-only toggle, including direct CLI calls.
+    if not cfg.get("enabled", False) or str(cfg.get("status") or "").startswith("BLOCKED_"):
         status = str(cfg.get("status") or "DISABLED")
         return f"SKIPPED_{status}", Outcome(details={"reason": status})
     handler = HANDLERS.get(batch_name)
@@ -2250,6 +2334,8 @@ def execute(batch_name: str, *, dry_run: bool = False, config_path: str | None =
         raise KeyError(f"Aucun handler pour {batch_name}")
     run_id = f"{batch_name}-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}"
     engine = get_sqlalchemy_engine(); started = _utcnow()
+    if batch_name == 'us_pipeline_1_9' and engine.url.database != 'alpha_trade':
+        raise ValueError('US pipeline requires alpha_trade; refusing cross-market run')
     if not dry_run:
         with engine.begin() as conn:
             conn.execute(text("""INSERT INTO pit_collection_runs(run_id,batch_name,provider,status,started_at)
@@ -2257,6 +2343,8 @@ def execute(batch_name: str, *, dry_run: bool = False, config_path: str | None =
     try:
         outcome = handler(engine, cfg, run_id, dry_run)
         status = "DRY_RUN" if dry_run else ("COMPLETED_WITH_WARNINGS" if outcome.warnings or outcome.failed else "COMPLETED")
+        if batch_name == 'us_pipeline_1_9' and outcome.details.get('skip_reason'):
+            status = 'SKIPPED_' + outcome.details['skip_reason']
     except Exception as exc:
         failure_outcome = exc.outcome if isinstance(exc, BatchRunError) else Outcome(failed=1)
         if not dry_run:

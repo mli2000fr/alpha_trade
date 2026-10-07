@@ -181,6 +181,16 @@ if ($resolvedEnvFile) {
 
 # ── Configuration depuis batch.yaml (log_file, run_days, symbols_file) ──
 $cfg = Read-EarningsCalendarConfig -Workspace $resolvedWorkspace -PythonExe $resolvedPython
+# Une section intégrée au pipeline ne doit plus se déclencher automatiquement.
+# -Force reste une demande manuelle explicite, jamais un contournement de droits.
+if ($cfg -and ($cfg.PSObject.Properties.Name -contains 'status') -and ([string]$cfg.status).StartsWith('BLOCKED_')) {
+    Write-StatusLine "SKIP earnings_calendar_sync blocked by configuration"
+    exit 0
+}
+if (-not $Force -and $cfg -and ($cfg.PSObject.Properties.Name -contains 'enabled') -and -not [bool]$cfg.enabled) {
+    Write-StatusLine "SKIP earnings_calendar_sync disabled; see us_pipeline_1_9"
+    exit 0
+}
 if (-not $LogFile -and $cfg -and ($cfg.PSObject.Properties.Name -contains 'log_file') -and $cfg.log_file) {
     $cfgLogFile = [string]$cfg.log_file
     if (-not [IO.Path]::IsPathRooted($cfgLogFile)) {

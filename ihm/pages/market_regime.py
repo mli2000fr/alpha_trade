@@ -395,6 +395,99 @@ def _render_summary(snap: dict[str, Any]) -> None:
         st.caption("Raisons : " + " · ".join(snap["reasons"]))
 
 
+def _oracle_study_command(start, end, source, batch_id, artifacts_dir, date_batch_size=20, resume=True) -> str:
+    import subprocess
+    args = [
+        'python', '-u', '-m', 'service.market.oracle_atr_study',
+        '--start-date', str(start), '--end-date', str(end),
+        '--symbol-source', source, '--batch-id', batch_id,
+        '--artifacts-dir', str(artifacts_dir),
+        '--date-batch-size', str(date_batch_size),
+    ]
+    if not resume:
+        args.append('--no-resume')
+    return subprocess.list2cmdline(args)
+
+
+def _render_oracle_atr_study() -> None:
+    from common.universe_files import list_universe_file_sources, universe_file_label
+    from ihm.services.ml_artifacts import get_model_artifacts_dir
+    from modelFactory.oracle.artifact_contract import resolve_oracle_artifact_horizon
+
+    st.markdown('---')
+    st.subheader('🔬 Alimenter l’étude Oracle × ATR et régime de marché')
+    st.caption('Une ligne par séance NYSE, univers et batch. Intersection Oracle TOP20 et ATR20/prix TOP20 ; '
+               'D1/D10 réalisés dans l’univers de référence des labels du batch. Lecture des données existantes, '
+               'sans entraînement ni téléchargement. Les lignes existantes sont mises à jour sans doublons.')
+    st.caption('Quatre listes de rendements réalisés signés (%) : TOP20 réel, intersection Oracle × ATR, '
+               'premiers scores Oracle et premiers ATR20/prix. Chaque liste contient evaluated_count valeurs, '
+               'triées par amplitude absolue décroissante. Migration 0092 nécessaire.')
+    sources = list_universe_file_sources()
+    if not sources:
+        st.warning('Aucun univers texte disponible dans config/univers/.')
+        return
+    artifacts = get_model_artifacts_dir()
+    try:
+        from database.connection import get_sqlalchemy_engine
+        from sqlalchemy import text
+        engine = get_sqlalchemy_engine()
+        with engine.connect() as conn:
+            if conn.execute(text('SELECT DATABASE()')).scalar() != 'alpha_trade':
+                st.info('Étude disponible uniquement pour le marché US, base alpha_trade.')
+                return
+            ids = conn.execute(text('SELECT DISTINCT batch_id FROM oracle_extreme_predictions ORDER BY batch_id DESC')).scalars().all()
+        batches = {b: resolve_oracle_artifact_horizon(b, artifacts) for b in ids}
+        batches = {b: h for b, h in batches.items() if h is not None}
+    except Exception as exc:
+        st.warning(f'Impossible de consulter les batches Oracle : {exc}')
+        return
+    if not batches:
+        st.info('Aucun batch avec scores Oracle persistés et horizon identifiable. Effectuer la prédiction Oracle au préalable.')
+        return
+    c1, c2 = st.columns(2)
+    start = c1.date_input('Début de l’étude', value=_date(2020, 1, 1), key='oatr_study_start')
+    end = c2.date_input('Fin de l’étude', value=_date(2026, 9, 30), key='oatr_study_end')
+    source = st.selectbox('Univers de symboles — étude', sources, format_func=universe_file_label, key='oatr_study_source')
+    batch = st.selectbox('Batch Oracle — étude', list(batches),
+                         format_func=lambda b: f'{b} — Oracle H{batches[b]}', key='oatr_study_batch')
+    tranche_size = int(st.number_input('Séances par tranche', min_value=1, max_value=252, value=20,
+                                      key='oatr_study_batch_size'))
+    force = st.checkbox('Recalculer aussi les séances déjà complètes', value=False, key='oatr_study_force',
+                        help='À cocher après correction des prix, macros, scores ou labels. Sinon, reprise automatique.')
+    st.caption('Chaque tranche est enregistrée immédiatement. Une relance saute les séances complètes et '
+               'recalcule les séances absentes ou incomplètes.')
+    st.code(_oracle_study_command(start, end, source, batch, artifacts, tranche_size, not force), language='powershell')
+    st.info('Les labels réels qualifiés doivent exister dans global_oracle_labels pour ce batch et cet horizon. '
+            'Les résultats manquants ou non encore disponibles restent incomplets, jamais assimilés à 0 %. '
+            'Les statistiques sont rétrospectives, pas des features disponibles au jour de trade.')
+    if st.button('📥 Alimenter l’étude Oracle × ATR', key='oatr_study_run', use_container_width=True):
+        if end < start:
+            st.error('La fin doit être postérieure ou égale au début.')
+        else:
+            from service.market.oracle_atr_study import run
+            progress = st.progress(0.0)
+            detail = st.empty()
+            def update(i, n, message):
+                progress.progress(i/n if n else 0.0)
+                detail.caption(message)
+            try:
+                with st.spinner('Calcul de l’étude et persistance…'):
+                    summary = run(batch_id=batch, symbol_source=source, start_date=str(start),
+                                  end_date=str(end), artifacts_dir=artifacts, engine=engine,
+                                  progress_callback=update, date_batch_size=tranche_size, resume=not force)
+                st.session_state['oatr_study_summary'] = summary
+            except Exception as exc:
+                st.session_state['oatr_study_summary'] = {'error': str(exc)}
+                st.error(f'Étude interrompue : {exc}. Vérifier les migrations 0089 à 0092.')
+    summary = st.session_state.get('oatr_study_summary')
+    if isinstance(summary, dict) and not summary.get('error'):
+        st.success(f'{summary["persisted_rows"]} séances persistées : '
+                   f'{summary["complete_rows"]} complètes / {summary["incomplete_rows"]} incomplètes ; '
+                   f'{summary.get("skipped_rows", 0)} séances déjà complètes ignorées.')
+        with st.expander('Détail du dernier calcul'):
+            st.dataframe(pd.DataFrame(summary['rows']), use_container_width=True, hide_index=True)
+
+
 def render() -> None:
     st.title("📊 Régime Marché — Couche Market-Aware")
     st.caption(
@@ -414,6 +507,8 @@ def render() -> None:
 
     with st.expander("🔧 Configuration active (config.yaml > market_regimes)", expanded=False):
         st.json(mr_cfg)
+
+    _render_oracle_atr_study()
 
     st.markdown("---")
     st.subheader("🗃️ Alimenter `stock_macro_indicators_daily`")

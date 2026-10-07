@@ -9,6 +9,8 @@ from common.config_loader import load_batch_config, resolve_batch_config_path
 ROOT = Path(__file__).resolve().parents[1]
 WINDOWS = ROOT / "scripts" / "windows"
 BATCH_SECTIONS = {
+    "cn_dragon_tiger_after_close", "cn_dragon_tiger_before_open",
+    "cn_oracle_prospective_daily", "cn_dragon_tiger_daily_match",
     "ml_artifacts_backup",
     "db_core_backup", "db_news_raw_backup",
     "market_cap_sync",
@@ -16,7 +18,7 @@ BATCH_SECTIONS = {
     "latest_quotes_sync",
     "analyst_snapshot_collection",
     "daily_bars_sync", "security_master_snapshot", "corporate_actions_sync",
-    "sec_edgar_incremental", "pit_data_quality_daily", "borrow_status_snapshot",
+    "sec_edgar_incremental", "borrow_status_snapshot",
     "business_quant_analyst_snapshot", "oracle_options_indicative_snapshot",
     "oracle_opening_window_sync", "sec_corporate_events_normalize",
     "sec_institutional_ownership_normalize", "fred_alfred_vintage_sync",
@@ -36,17 +38,7 @@ def test_batch_configuration_is_separated_from_application_config() -> None:
     assert resolve_batch_config_path() == ROOT / "batch.yaml"
     assert "RETAILSMSA" in batch["fred_alfred_vintage_sync"]["series"].split(",")
     assert "RETAILSMS" not in batch["fred_alfred_vintage_sync"]["series"].split(",")
-    quality = batch["pit_data_quality_daily"]
-    assert quality["enabled"] is False
-    assert quality["status"] == "MANUAL_CONTROL_ONLY"
-    assert "aucune donnée externe" in quality["description"]
-    assert quality["supervision_dependencies"].split(",") == [
-        "sec_edgar_incremental",
-        "finra_short_volume_sync",
-        "fred_alfred_vintage_sync",
-    ]
-    assert "peuvent tourner en parallèle" in quality["execution_notice"]
-    assert "après leur fin" in quality["execution_notice"]
+    assert "pit_data_quality_daily" not in batch
     sec = batch["sec_edgar_incremental"]
     assert sec["download_primary_documents"] is True
     assert sec["download_exhibits"] is True
@@ -219,7 +211,6 @@ def test_every_symbol_scoped_batch_uses_stable_tradable_universe() -> None:
         "analyst_snapshot_collection",
         "latest_quotes_sync",
         "daily_bars_sync",
-        "pit_data_quality_daily",
         "borrow_status_snapshot",
         "business_quant_analyst_snapshot",
         "oracle_options_indicative_snapshot",
@@ -291,6 +282,9 @@ def test_opening_window_batch_uses_delayed_sip_on_full_stable_universe() -> None
     assert opening["window_start"] == "04:00"
     assert opening["window_end"] == "10:30"
     assert opening["minimum_sip_delay_minutes"] >= 16
+    assert opening["research_feature_mode"] == "price_only"
+    assert opening["price_checkpoints_minutes"] == "5,15,30,60"
+    assert opening["volume_required"] is False
     assert "max_symbols" not in opening
 
 
@@ -365,3 +359,16 @@ def test_auction_imbalance_batch_stays_blocked_while_poc_is_not_scheduled() -> N
     assert "LAISSER DÉSACTIVÉ" in auction["research_notice"]
     assert "aucune collecte quotidienne" in auction["research_notice"]
     assert "HTTP 429 après 51 réponses" in auction["research_notice"]
+
+def test_generic_installer_uses_consoleless_synchronous_wrapper() -> None:
+    installer = (WINDOWS / "install_forward_pit_task.ps1").read_text(encoding="utf-8")
+    wrapper = (WINDOWS / "run_forward_pit_hidden.vbs").read_text(encoding="utf-8")
+
+    assert "wscript.exe" in installer
+    assert "//B //Nologo" in installer
+    assert "run_forward_pit_hidden.vbs" in installer
+    assert "shell.Run(command, 0, True)" in wrapper
+    assert "WScript.Quit exitCode" in wrapper
+    assert "WScript.Arguments.Count <> 5 And WScript.Arguments.Count <> 6" in wrapper
+    assert 'command = command & " -BatchConfigPath "' in wrapper
+    assert 'if ($BatchConfigPath) { $arguments +=' in installer

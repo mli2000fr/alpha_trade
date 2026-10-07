@@ -1,0 +1,10 @@
+# Sprint 8 CN_A : politique initiale explicite, à évaluer avant emploi économique.
+market_code: CN_A
+database_alias: cn_primary
+history_lookback_sessions: 60
+min_history_bars: 40
+liquidity_lookback_sessions: 20
+min_liquidity_bars: 15
+min_close_cny: 1.0
+min_avg_amount_cny: 5000000
+require_previous_session_bar: true

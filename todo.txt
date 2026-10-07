@@ -1,1 +1,291 @@
-python -u -m modelFactory.multi_horizon_oracle_rolling --h5-batch-id model-factory-20260910052522-c1cb2b --h10-batch-id model-factory-20260910052532-e60c4e --h15-batch-id model-factory-20260910052544-54416f --h20-batch-id model-factory-20260910052558-d5b30f --universe-file config/univers/univers_filtred_equities.txt --start-date 2016-01-01 --end-date 2025-12-31 --commission-bps 1 --slippage-bps 2 --bootstrap-samples 2000 --log-level INFO
+les 2 famille qui manque, il n'y a des sources gratuit ? i lfalloir collectionner au moins combien de temps pour avoir un premier test ?
+
+Oui, mais les deux familles ne sont pas dans la même situation.
+
+Pour la guidance, il existe une source gratuite sérieuse : SEC EDGAR. Pour l’auction imbalance, il existe quelques données publiques gratuites, surtout chez NYSE, mais pas un flux gratuit propre et scalable comparable à Alpaca pour tout ton univers.
+
+Famille	Gratuit ?	Historique ?	Facile à automatiser ?	État pour α-Trade
+Guidance via SEC/EX-99	✅	✅ profond	⚠️ extraction difficile	utilisable si extraction fiabilisée
+Guidance structurée fournisseur	généralement ❌	✅	✅	souvent chère
+NYSE Auction Tool	✅ public	✅ court historique	⚠️ limité / post-auction	bon POC
+NYSE TAQ Order Imbalances	❌	✅ depuis 2008	✅	payant
+Nasdaq NOII	❌ pour usage historique complet	✅ selon produit	✅	commercial
+1. Guidance : oui, on peut rester gratuit
+
+Ton batch récupère déjà prospectivement les 8-K/6-K et les annexes EX-99. C’est exactement là qu’on trouve souvent les nouvelles prévisions de sociétés. Ton Forward PIT conserve séparément les annexes EX-99 avec timestamp, URL, hash et contenu.
+
+Donc potentiellement zéro nouvel abonnement :
+
+SEC EDGAR
+   ↓
+8-K / 6-K
+   ↓
+EX-99.1 / EX-99.2
+   ↓
+texte / tableaux
+   ↓
+ancienne guidance
+nouvelle guidance
+   ↓
+RAISE / CUT / REAFFIRM
+
+Le problème n’est pas d’obtenir le document. Tu l’as déjà.
+
+Le problème est de transformer proprement :
+
+"We now expect FY revenue of $4.8-$5.0bn,
+compared with our previous outlook of $4.5-$4.7bn"
+
+en :
+
+metric = revenue
+period = FY2027
+
+old_low  = 4.5
+old_high = 4.7
+
+new_low  = 4.8
+new_high = 5.0
+
+revision_mid = +6.67%
+direction = RAISE
+available_at = SEC acceptance timestamp
+
+Ton expérience E21 avait justement conclu que l’hypothèse économique n’était pas rejetée, mais que l’extraction gratuite n’était pas encore suffisamment fiable pour lancer un vrai test ML.
+
+Donc je ne chercherais pas immédiatement un fournisseur payant. Puisque tu collectes maintenant toutes les EX-99, la matière première prospective est déjà en train de s’accumuler.
+
+2. Auction imbalance : il existe du gratuit, mais beaucoup moins propre
+
+NYSE possède un outil public d’historique d’auction. Il montre notamment :
+
+imbalance quantity
+paired quantity
+book clearing price
+
+et NYSE indique que l’interface permet de consulter l’historique d’opening imbalance par symbole et date.
+
+Donc pour un POC gratuit, oui.
+
+C’est d’ailleurs quasiment exactement la donnée qu’on veut :
+
+imbalance_side = BUY / SELL
+imbalance_qty
+paired_qty
+book_clearing_price
+
+NYSE publie officiellement les imbalance messages durant les auctions ; son flux temps réel professionnel envoie notamment les déséquilibres achat/vente.
+
+Mais ton propre POC avait déjà trouvé le problème pratique : l’interface NYSE gratuite est limitée et ton batch a commencé à être throttlé après plusieurs dizaines de requêtes. Elle est donc intéressante pour recherche/validation, mais pas comme source fiable quotidienne sur ~1 800 titres.
+
+Pour le vrai historique industriel, NYSE vend TAQ Order Imbalances, avec historique NYSE depuis le 14 mai 2008.
+
+Donc :
+
+NYSE web auction
+→ GRATUIT
+→ POC / échantillon
+
+NYSE TAQ Imbalances
+→ PAYANT
+→ backtest historique massif
+
+live proprietary imbalance feed
+→ PAYANT
+Combien de temps faut-il collecter ?
+
+Ici il faut distinguer auction, qui produit énormément d’observations chaque jour, et guidance, qui est événementielle et beaucoup plus rare.
+
+Auction imbalance : assez rapide
+
+Pour H20, une observation faite aujourd’hui ne possède son label définitif qu’environ 20 séances plus tard.
+
+Donc approximativement :
+
+N séances collectées
+→ N - 20 séances évaluables
+
+Exemple :
+
+40 séances collectées
+→ ~20 dates H20 évaluables
+
+60 séances
+→ ~40
+
+80 séances
+→ ~60
+
+140 séances
+→ ~120
+
+272 séances
+→ ~252
+
+Avec plusieurs centaines de titres chaque jour, même 40 dates peuvent produire énormément de lignes :
+
+500 titres
+× 40 dates évaluables
+= 20 000 observations
+
+Mais statistiquement ce ne sont pas 20 000 observations totalement indépendantes : la vraie unité de robustesse est largement la date.
+
+Je considérerais donc :
+
+Temps collecté	Utilisation
+~1 mois	QA seulement, quasiment pas de H20 mature
+~3-4 mois	premier vrai test H20
+~6-7 mois	test déjà sérieux, ~120 dates évaluables
+~12-13 mois	première validation robuste ~252 dates
+
+Pour auction, 3-4 mois peuvent déjà suffire à savoir si ça vaut la peine de continuer.
+
+Guidance : plus long
+
+Guidance ne produit pas :
+
+1 observation × 1 800 titres × chaque jour
+
+mais plutôt :
+
+quelques sociétés
+publient ou changent leurs prévisions
+à certains moments
+
+Donc le problème n’est pas uniquement H20.
+
+Il faut accumuler assez de :
+
+RAISE
+CUT
+REAFFIRM
+
+sur suffisamment de :
+
+symboles
+secteurs
+dates
+régimes
+
+Un premier diagnostic peut commencer dès qu’on a, par exemple :
+
+>= 100-200 événements guidance propres
+
+mais je ne construirais pas un modèle ML sérieux là-dessus.
+
+Je viserais plutôt :
+
+500+ événements propres
+
+pour un premier vrai test simple, et davantage pour entraîner plusieurs folds.
+
+En pratique, avec ton univers ~1 800 US, je prévoirais :
+
+3 mois
+→ smoke / statistiques descriptives
+
+6 mois
+→ premier test directionnel raisonnable si couverture suffisante
+
+12 mois+
+→ beaucoup plus crédible
+
+Le calendrier des earnings joue énormément : tu peux obtenir beaucoup plus d’événements pendant les saisons de résultats.
+
+Il y a une astuce importante pour la guidance
+
+Contrairement au consensus Yahoo, SEC possède de l’historique.
+
+Donc tu n’es pas obligé d’attendre un an.
+
+Tu pourrais construire un projet séparé :
+
+SEC GUIDANCE HISTORICAL BACKFILL
+2018 → 2025
+
+en téléchargeant historiquement :
+
+8-K
+EX-99
+
+puis en faisant une extraction stricte OLD→NEW.
+
+Autrement dit :
+
+Consensus Yahoo
+→ il faut attendre
+→ pas de vrai historique PIT gratuit
+
+Guidance SEC
+→ on peut potentiellement BACKFILL 2018-2025
+→ documents historiques datés existent
+
+C’est une différence énorme.
+
+Le problème E21 n’était pas l’absence des documents historiques ; c’était surtout la qualité/exhaustivité de l’extraction.
+
+Ce que je ferais maintenant
+
+Je ne paierais encore rien.
+
+Je ferais :
+
+CONSENSUS
+Yahoo
+→ continuer tous les jours
+→ ✅ déjà actif
+
+OPTIONS
+Alpaca
+→ continuer tous les jours
+→ ✅ déjà actif
+
+GUIDANCE
+SEC EX-99
+→ continuer prospectif
+→ + rouvrir éventuellement un backfill historique
+  uniquement pour améliorer l'extracteur
+
+AUCTION
+NYSE public interface
+→ petit échantillon quotidien
+→ 50-100 symboles représentatifs
+→ construire 3-4 mois gratuitement
+
+Pour auction, je ne commencerais surtout pas avec 1 798 symboles. Ton POC a déjà montré que la source gratuite ne supporte pas correctement cette échelle.
+
+Je ferais par exemple :
+
+100 symboles fixes
+diversifiés secteur / cap / beta
+        ↓
+auction every day
+        ↓
+imbalance
+paired quantity
+clearing price
+        ↓
+3-4 mois
+        ↓
+MMD / Energy / HP
+        ↓
+D1 vs D10
+
+Si après ~60 dates H20 évaluables on obtient :
+
+AUC ≈ 0.50
+aucune monotonie
+aucune séparation MMD/HP
+
+→ on arrête, zéro abonnement.
+
+Si on voit quelque chose comme :
+
+AUC 0.55+
+stable par date
+BUY imbalance enrichit D10
+SELL imbalance enrichit D1
+
+alors seulement on peut envisager d’acheter l’historique TAQ complet.
+
+Donc oui : on peut tester les deux familles presque gratuitement avant de payer. La guidance grâce à SEC, et l’auction via un petit POC NYSE. Pour un premier verdict auction H20, je viserais environ 3-4 mois de collecte ; pour un verdict nettement plus solide, 6-12 mois.

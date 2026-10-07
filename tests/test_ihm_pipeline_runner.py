@@ -97,6 +97,28 @@ def test_publish_tradable_universe_command_uses_trade_date_and_equity_preset() -
     assert command[:4] == [command[0], "-u", "-m", "common.publish_tradable_universe"]
     assert command[command.index("--trade-date") + 1] == "2026-07-10"
     assert command[command.index("--capital-preset-key") + 1] == preset.key
+    assert command[command.index("--market-code") + 1] == "US_EQ"
+
+
+def test_stock_screener_command_uses_same_equity_preset_as_publish() -> None:
+    options = PipelineLaunchOptions(risk_account_equity=1_500.0, trade_date="2026-06-25")
+    screener_command = build_pipeline_command("stock_screener", options)
+    publish_command = build_pipeline_command("publish_tradable_universe", options)
+
+    assert screener_command[screener_command.index("--capital-preset-key") + 1] == "capital_0_2000"
+    assert publish_command[publish_command.index("--capital-preset-key") + 1] == "capital_0_2000"
+
+
+def test_explicit_capital_preset_overrides_equity_for_screener_and_publish() -> None:
+    options = PipelineLaunchOptions(
+        capital_preset_key="capital_2001_5000",
+        risk_account_equity=1_500.0,
+        trade_date="2026-06-25",
+    )
+
+    for step_key in ("stock_screener", "publish_tradable_universe"):
+        command = build_pipeline_command(step_key, options)
+        assert command[command.index("--capital-preset-key") + 1] == "capital_2001_5000"
 
 
 def test_pipeline_step_number_helpers_handle_main_suffixes_and_auxiliary_prefixes() -> None:
@@ -403,6 +425,10 @@ def test_build_pipeline_command_stock_screener_exposes_all_supported_backend_opt
         "80.0",
         "--first-pass-window-days",
         "504",
+        "--capital-preset-key",
+        "capital_50001_100000",
+        "--market-code",
+        "US_EQ",
         "--max-workers",
         "6",
         "--disable-two-pass-loading",
@@ -553,6 +579,7 @@ def test_build_pipeline_command_sentiment_pipeline_uses_backend_cli_contract() -
     assert "--scoring-mode contextual_only" in ps_script
     assert "--skip-ingestion" in ps_script
     assert "--symbol-source stock_scores_all" in ps_script
+    assert "--resume-checkpoints" in ps_script
     assert "--symbol-source tradable-universe" in ps_script
     assert "--ticker-symbol-source tradable-universe" in ps_script
     assert ps_script.index("Calcul relevance_score (scope univers tradable / override CSV)") < ps_script.index(
@@ -618,6 +645,16 @@ def test_build_pipeline_command_sentiment_pipeline_exposes_supported_backend_opt
     assert ps_script.index("Scoring FinBERT contextuel (scope univers tradable / override CSV)") < ps_script.index(
         "Agregation features : ticker=univers tradable, secteur=scope large importe"
     )
+
+
+def test_build_pipeline_command_sentiment_pipeline_can_disable_checkpoint_resume() -> None:
+    command = build_pipeline_command(
+        "sentiment_pipeline",
+        PipelineLaunchOptions(news_import_resume_from_checkpoint=False),
+    )
+
+    assert command[0] == "powershell.exe"
+    assert "--resume-checkpoints" not in command[-1]
 
 
 def test_build_pipeline_command_sentiment_pipeline_supports_contextual_phase_with_explicit_thresholds() -> None:
@@ -974,7 +1011,7 @@ def test_build_pipeline_command_ml_steps() -> None:
     assert train_cmd[train_cmd.index("--wf-val-size") + 1] == "126"
     assert train_cmd[train_cmd.index("--wf-test-size") + 1] == "126"
     assert train_cmd[train_cmd.index("--wf-step-size") + 1] == "126"
-    assert train_cmd[train_cmd.index("--wf-max-splits") + 1] == "12"
+    assert train_cmd[train_cmd.index("--wf-max-splits") + 1] == "15"
 
     # Drapeaux booléens activés par défaut.
     for flag in (
@@ -1422,6 +1459,22 @@ def test_build_pipeline_command_import_news_accepts_stock_scores_all_symbol_sour
 
     assert "--symbol-source" not in command
     assert command[command.index("--max-symbols") + 1] == "300"
+
+
+def test_build_pipeline_command_import_news_accepts_universe_file_symbol_source() -> None:
+    options = PipelineLaunchOptions(
+        news_import_start_date="2026-04-01",
+        news_import_end_date="2026-04-15",
+        news_import_symbol_source="universe-file:univers_filtred_equities.txt",
+        news_import_max_symbols=2000,
+    )
+
+    command = build_pipeline_command("import_news", options)
+
+    assert command[command.index("--symbol-source") + 1] == (
+        "universe-file:univers_filtred_equities.txt"
+    )
+    assert command[command.index("--max-symbols") + 1] == "2000"
 
 
 def test_build_pipeline_command_import_news_emits_stock_scores_when_explicitly_requested() -> None:

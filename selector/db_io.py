@@ -615,12 +615,12 @@ def fetch_quote_snapshots(
         SELECT {select_clause}
         FROM stock_quote_snapshots q
         INNER JOIN (
-            SELECT symbol, MAX(quote_date) AS max_quote_date
+            SELECT instrument_id, symbol, MAX(quote_date) AS max_quote_date
             FROM stock_quote_snapshots
             WHERE symbol IN :symbols
               AND quote_date <= :reference_date
-            GROUP BY symbol
-        ) latest ON latest.symbol = q.symbol AND latest.max_quote_date = q.quote_date
+            GROUP BY instrument_id, symbol
+        ) latest ON latest.instrument_id = q.instrument_id AND latest.max_quote_date = q.quote_date
         WHERE q.symbol IN :symbols
         """
     ).bindparams(bindparam("symbols", expanding=True))
@@ -684,12 +684,12 @@ def fetch_next_earnings(
                e.earnings_date
         FROM stock_earnings_calendar e
         INNER JOIN (
-            SELECT symbol, MIN(earnings_date) AS next_earnings_date
+            SELECT instrument_id, symbol, MIN(earnings_date) AS next_earnings_date
             FROM stock_earnings_calendar
             WHERE symbol IN :symbols
               AND earnings_date >= :reference_date
-            GROUP BY symbol
-        ) next_e ON next_e.symbol = e.symbol AND next_e.next_earnings_date = e.earnings_date
+            GROUP BY instrument_id, symbol
+        ) next_e ON next_e.instrument_id = e.instrument_id AND next_e.next_earnings_date = e.earnings_date
         WHERE e.symbol IN :symbols
         """
     ).bindparams(bindparam("symbols", expanding=True))
@@ -775,19 +775,21 @@ def build_preselection_rejection_audit(
     stmt = text(
         f"""
         WITH ranked AS (
-            SELECT symbol,
+            SELECT instrument_id,
+                   symbol,
                    date,
                    close,
                    volume,
-                   ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
+                   ROW_NUMBER() OVER (PARTITION BY instrument_id ORDER BY date DESC) AS rn
             FROM {config.price_table}
         ), aggregated AS (
-            SELECT symbol,
+            SELECT instrument_id,
+                   symbol,
                    COUNT(*) AS history_days,
                    MAX(CASE WHEN rn = 1 THEN close END) AS latest_close,
                    AVG(CASE WHEN rn <= :liquidity_lookback_days THEN close * volume END) AS avg_dollar_volume_20d
             FROM ranked
-            GROUP BY symbol
+            GROUP BY instrument_id, symbol
         )
         SELECT agg.symbol,
                agg.history_days,
@@ -800,7 +802,7 @@ def build_preselection_rejection_audit(
                sm.bars_available,
                {history_status_select}
         FROM aggregated agg
-        LEFT JOIN stock_metadata sm ON sm.symbol = agg.symbol
+        LEFT JOIN stock_metadata sm ON sm.instrument_id = agg.instrument_id
         ORDER BY agg.symbol
         """
     )
@@ -895,22 +897,23 @@ def iter_eligible_symbol_chunks(
     stmt = text(
         f"""
         WITH ranked AS (
-            SELECT symbol,
+            SELECT instrument_id,
+                   symbol,
                    date,
                    close,
                    volume,
-                   ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
+                   ROW_NUMBER() OVER (PARTITION BY instrument_id ORDER BY date DESC) AS rn
             FROM {config.price_table}
         ), eligible AS (
             SELECT r.symbol
             FROM ranked r
-            INNER JOIN stock_metadata sm ON sm.symbol = r.symbol
+            INNER JOIN stock_metadata sm ON sm.instrument_id = r.instrument_id
             WHERE sm.asset_class = 'us_equity'
               AND sm.tradable    = 1
               AND sm.status      = 'active'
               AND sm.bars_available = 1
               {history_status_filter}
-            GROUP BY r.symbol
+            GROUP BY r.instrument_id, r.symbol
             HAVING COUNT(*) >= :min_history_days
                AND MAX(CASE WHEN rn = 1 THEN close END) > :min_close
                AND AVG(CASE WHEN rn <= :liquidity_lookback_days THEN close * volume END) > :liquidity_threshold

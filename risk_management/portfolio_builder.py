@@ -346,6 +346,8 @@ class PortfolioBuilder:
         factor_covariance: object | None = None,
         # Mapping symbole → secteur (fix max_tickers_per_sector sur "Unknown")
         sector_map: dict[str, str] | None = None,
+        concentration_trade_tracker: SymbolTradeTracker | None = None,
+        concentration_loss_tracker: ConsecutiveLossTracker | None = None,
     ) -> None:
         self._cfg = config
         self._sector_map: dict[str, str] = sector_map or {}
@@ -360,11 +362,11 @@ class PortfolioBuilder:
         self._factor_exposures: dict[str, object] = factor_exposures or {}
         self._factor_covariance: object | None = factor_covariance
         # Concentration filters (Priorité 4)
-        self._concentration_trade_tracker = SymbolTradeTracker(
+        self._concentration_trade_tracker = concentration_trade_tracker if concentration_trade_tracker is not None else SymbolTradeTracker(
             max_trades=config.concentration_max_trades_per_symbol,
             window_days=config.concentration_window_calendar_days,
         )
-        self._concentration_loss_tracker = ConsecutiveLossTracker(
+        self._concentration_loss_tracker = concentration_loss_tracker if concentration_loss_tracker is not None else ConsecutiveLossTracker(
             max_consecutive_losses=config.concentration_max_consecutive_losses,
             blacklist_duration_days=config.concentration_blacklist_duration_days,
         )
@@ -484,9 +486,21 @@ class PortfolioBuilder:
         candidates: list[SelectionScore],
         predictions: dict[str, PredictionInfo],
         win_rates: dict[str, WinRateInfo],
+        *, oracle_long_only: bool = False,
     ) -> list[EnrichedSelection]:
         enriched: list[EnrichedSelection] = []
         for candidate in candidates:
+            if oracle_long_only:
+                enriched.append(EnrichedSelection(
+                    symbol=candidate.symbol, sector=candidate.sector,
+                    score_used=candidate.score_used, score_source=candidate.score_source,
+                    predicted_proba=None, historical_win_rate=None,
+                    conviction_score=candidate.score_used, snapshot_date=candidate.snapshot_date,
+                    selection_rank=candidate.selection_rank,
+                    selector_signal_mode='oracle_pure_long',
+                    selection_explanation='Explicit LONG strategy; Oracle predicts amplitude, not direction',
+                    selector_earnings_blackout=candidate.selector_earnings_blackout, side='buy'))
+                continue
             prediction = predictions.get(candidate.symbol)
             win_rate = win_rates.get(candidate.symbol)
             if prediction is None:
@@ -685,6 +699,7 @@ class PortfolioBuilder:
         return_matrix: DataFrame | None = None,
         trade_date: date | None = None,
         directional_win_rates: Mapping[str | tuple[str, str], DirectionalWinRateInfo] | None = None,
+        *, selection_policy: str = 'directional',
     ) -> list[PortfolioEntry]:
         """Construit la liste des PortfolioEntry.
 
@@ -692,7 +707,48 @@ class PortfolioBuilder:
         régime est défensif, les scores des candidats sont ajustés via
         :func:`selector.regime_scoring.apply_regime_weights` avant la
         construction du portefeuille.
+
+        ``selection_policy='oracle_pure_long'`` is an explicit strategy, never
+        a synthetic directional prediction. It requires an operational account
+        snapshot and reserves held/pending positions and actual buying power.
+        The default directional contract is unchanged.
         """
+        if selection_policy not in {'directional', 'oracle_pure_long'}:
+            raise ValueError('Unknown portfolio selection policy')
+        oracle_long_only = selection_policy == 'oracle_pure_long'
+        operational = self.operational_snapshot if oracle_long_only else None
+        if oracle_long_only:
+            from risk_management.operational_data import OperationalDataSnapshot
+            if not isinstance(operational, OperationalDataSnapshot):
+                raise ValueError('Oracle LONG requires an explicit operational snapshot')
+            if trade_date is None or operational.account.as_of.date() != trade_date:
+                raise ValueError('Oracle operational snapshot must match decision date')
+            if not np.isfinite(operational.account.equity) or operational.account.equity <= 0:
+                raise ValueError('Invalid operational equity')
+            if abs(operational.account.equity-self._cfg.account_equity) > .005:
+                raise ValueError('Risk equity differs from operational equity')
+            if self._kelly_sizer is not None:
+                raise ValueError('Oracle amplitude cannot supply directional Kelly probabilities')
+            if self._portfolio_optimizer is not None:
+                raise ValueError('Oracle optimizer requires separately qualified directional edges')
+            if any(c.side not in ('buy', 'long') for c in candidates):
+                raise ValueError('Oracle pure policy is LONG-only')
+            if len({c.symbol for c in candidates}) != len(candidates):
+                raise ValueError('Duplicate Oracle candidate')
+            for c in candidates:
+                if not np.isfinite(c.score_used) or not 0 <= c.score_used <= 1:
+                    raise ValueError(f'Invalid Oracle amplitude score: {c.symbol}')
+                if not c.sector or c.sector.lower() in {'unknown', 'unqualified_pit_sector'}:
+                    raise ValueError(f'Missing qualified candidate sector: {c.symbol}')
+                if c.snapshot_date != trade_date:
+                    raise ValueError(f'Oracle candidate date differs from decision: {c.symbol}')
+            blocked_symbols = {p.symbol for p in operational.positions} | {o.symbol for o in operational.open_orders}
+            candidates = [c for c in candidates if c.symbol not in blocked_symbols]
+            if self._regime_snapshot is not None:
+                candidates = [c for c in candidates if not self._regime_snapshot.blocks_entry_for(c.symbol, c.sector, side='buy')[0]]
+            if self._regime_transition is not None and (
+                not self._regime_transition.allow_new_entries or not self._regime_transition.allow_long):
+                candidates = []
         predictions = predictions or {}
         win_rates = win_rates or {}
         directional_win_rates = directional_win_rates or self._directional_win_rates
@@ -706,7 +762,7 @@ class PortfolioBuilder:
         # ── 0a. Contrat de sélection ML ternaire ────────────────────
         # Une prédiction complète est obligatoire. Elle détermine le côté;
         # ni le score ni le tagging short amont ne peuvent le faire.
-        if candidates:
+        if candidates and not oracle_long_only:
             before = len(candidates)
             filtered: list[SelectionScore] = []
             excluded_symbols: list[str] = []
@@ -765,9 +821,12 @@ class PortfolioBuilder:
             filtered: list[SelectionScore] = []
             for c in candidates:
                 side = getattr(c, "side", "buy") or "buy"
-                prediction = predictions[str(c.symbol).strip().upper()]
                 if c.selector_earnings_blackout:
                     continue
+                if oracle_long_only:
+                    filtered.append(c)
+                    continue
+                prediction = predictions[str(c.symbol).strip().upper()]
                 if side == "sell":
                     if prediction.proba_short is None or prediction.proba_short < self._cfg.min_proba_short:
                         continue
@@ -795,7 +854,8 @@ class PortfolioBuilder:
         total_candidates = len(candidates)
 
         # 1. Enrichir puis trier par conviction DESC
-        enriched = self._build_enriched_candidates(candidates, predictions, win_rates)
+        enriched = self._build_enriched_candidates(candidates, predictions, win_rates,
+            oracle_long_only=oracle_long_only)
         enriched_by_symbol = {entry.symbol: entry for entry in enriched}
 
         # 2. Filtre corrélation (Pearson ou factoriel selon config)
@@ -844,6 +904,7 @@ class PortfolioBuilder:
         elif return_matrix is not None and not return_matrix.empty:
             retained, rejections = filter_correlated_signed(
                 enriched, return_matrix, self._cfg.correlation_threshold, self._cfg.correlation_min_overlap,
+                **({'precompute': True} if oracle_long_only else {}),
             )
             for rej in rejections:
                 ec = enriched_by_symbol[rej.rejected_symbol]
@@ -927,6 +988,28 @@ class PortfolioBuilder:
         # 3. Sizing + contraintes
         sector_map = {c.symbol: c.sector for c in candidates}
         state = PortfolioState()
+        remaining_buying_power = float('inf')
+        if oracle_long_only:
+            remaining_buying_power = float(operational.account.buying_power)
+            if not np.isfinite(remaining_buying_power) or remaining_buying_power < 0:
+                raise ValueError('Invalid operational buying power')
+            for holding in operational.positions:
+                sector = self._sector_map.get(holding.symbol)
+                mark = holding.current_price
+                if not sector or sector.strip().lower() in {'unknown', 'unqualified_pit_sector'}:
+                    raise ValueError(f'Missing qualified held-position sector: {holding.symbol}')
+                if mark is None or not np.isfinite(mark) or mark <= 0:
+                    raise ValueError(f'Missing held-position mark: {holding.symbol}')
+                state.add_position(notional=abs(holding.quantity)*mark, sector=sector,
+                    side=holding.side, symbol=holding.symbol)
+            held_symbols = {p.symbol for p in operational.positions}
+            pending = {o.symbol: o for o in operational.open_orders if o.symbol not in held_symbols}
+            for order in pending.values():
+                state.position_count += 1
+                if order.side == 'buy':
+                    state.long_count += 1
+                else:
+                    state.short_count += 1
         checker = RiskCheckerImpl(
             self._cfg,
             state=state,
@@ -1158,7 +1241,7 @@ class PortfolioBuilder:
             approved = normalize_share_quantity(
                 checker.check_position_size(
                     ec.symbol,
-                    sizing.proposed_shares,
+                    min(sizing.proposed_shares, remaining_buying_power/pi.last_close),
                     pi.last_close,
                     side=ec.side,
                     adv_usd=pi.adv_usd,
@@ -1218,6 +1301,7 @@ class PortfolioBuilder:
             reason = "OK" if decision == Decision.ACCEPTED else checker.get_last_decision_reason()
             reason_code = DecisionReasonCode.OK if decision == Decision.ACCEPTED else checker.get_last_decision_reason_code()
             checker.accept(ec.symbol, ec.sector, approved, pi.last_close, side=ec.side)
+            remaining_buying_power = max(0., remaining_buying_power-notional)
             accepted_rank += 1
 
             weight = notional / equity if equity > 0 else 0.0

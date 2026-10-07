@@ -34,6 +34,8 @@ from datetime import datetime, timezone as _tz
 from enum import Enum
 from typing import Any
 
+from common.market_context import MarketContext
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -51,7 +53,9 @@ class QualityState(str, Enum):
     MISSING_ERROR = "missing_error"   # erreur lors de l'ingestion
     NOT_YET_AVAILABLE = "not_yet_available"  # pas encore publiée (PIT)
     DELISTED = "delisted"             # symbole radié
-    HALTED = "halted"                 # trading suspendu
+    HALTED = "halted"                 # instrument suspendu
+    SUSPENDED = "suspended"           # publication/source suspendue
+    CLOSED = "closed"                 # marché ou dataset fermé
     UNKNOWN = "unknown"               # qualité indéterminée (fallback)
 
 
@@ -90,6 +94,9 @@ class DataAvailabilityInfo:
     ingested_at: datetime | None = None
     timezone: str = "America/New_York"
     quality: QualityState = QualityState.PRESENT
+    market_code: str | None = None
+    dataset: str | None = None
+    publication_policy: str | None = None
 
     def __post_init__(self) -> None:
         if not self.source.strip():
@@ -517,4 +524,43 @@ def make_availability_from_bar_date(
         available_at=available_dt.replace(tzinfo=_tz.utc),
         source=source,
         timezone="America/New_York",
+    )
+
+
+def make_market_availability_from_bar_date(
+    bar_date: str | Any,
+    *,
+    context: MarketContext,
+    source: str,
+    dataset: str = "daily_bars",
+    engine: Any = None,
+    source_available_at: datetime | None = None,
+) -> DataAvailabilityInfo:
+    """Construit le contrat PIT d'une barre depuis son calendrier de marché.
+
+    Contrairement au helper historique, aucune heure UTC ou timezone NYSE
+    implicite n'est utilisée. Le dataset choisit sa politique de publication.
+    """
+    import pandas as pd
+    from common.market_calendar import dataset_cutoff, get_market_calendar
+    from common.market_context import MarketCode
+
+    day = pd.Timestamp(bar_date).date()
+    session = get_market_calendar(context, engine=engine).session(day)
+    lower_bound = dataset_cutoff(context, dataset, day, engine=engine)
+    if source_available_at is not None and source_available_at.tzinfo is None:
+        raise ValueError("source_available_at doit être timezone-aware")
+    if context.market_code is MarketCode.FR_EQ and dataset == "daily_bars":
+        if source_available_at is None:
+            raise ValueError("FR_EQ daily_bars exige source_available_at timezone-aware prouvé")
+    available_at = max(lower_bound, source_available_at) if source_available_at is not None else lower_bound
+    return DataAvailabilityInfo(
+        event_time=session.close_at_utc,
+        available_at=available_at,
+        source=source,
+        timezone=context.timezone,
+        market_code=context.market_code.value,
+        dataset=dataset,
+        publication_policy=("source_timestamp_plus_cutoff" if source_available_at is not None
+                            else "configured_dataset_cutoff"),
     )

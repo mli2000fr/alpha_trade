@@ -355,6 +355,23 @@ def test_resolve_symbols_from_inputs_uses_explicit_csv_first() -> None:
     assert symbols == ["MSFT", "AAPL", "NVDA"]
 
 
+def test_resolve_symbols_from_inputs_uses_universe_file(monkeypatch) -> None:
+    monkeypatch.setattr(
+        importe_news,
+        "load_universe_file_symbols",
+        lambda source: ["msft", "AAPL", "MSFT"],
+    )
+
+    symbols, source = importe_news.resolve_symbols_from_inputs(
+        symbols_csv=None,
+        symbol_source="universe-file:univers_news.txt",
+        repository=object(),
+    )
+
+    assert symbols == ["MSFT", "AAPL"]
+    assert source == "universe-file:univers_news.txt"
+
+
 def test_resolve_symbols_from_inputs_uses_tradable_universe_source(monkeypatch) -> None:
     monkeypatch.setattr(importe_news, "get_all_symbols_from_tradable_universe", lambda: ["MSFT", "AAPL", "MSFT"])
 

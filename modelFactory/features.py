@@ -11,6 +11,20 @@ import pandas as pd
 
 LOGGER = logging.getLogger(__name__)
 
+# Numerical boundary only, not a fitted trading threshold or an output cap.
+RATIO_DENOMINATOR_EPSILON = 1e-8
+NUMERICAL_FEATURE_CONTRACT_VERSION = "2026-10-07-capm-safe-ratios-v2"
+
+
+def _positive_denominator_ratio(numerator: pd.Series, denominator: pd.Series) -> pd.Series:
+    """Neutral zero for an undefined positive-denominator ratio, not division by epsilon.
+
+    Keep ordinary finite ratios unchanged. No new model columns are introduced.
+    """
+    valid = np.isfinite(numerator) & np.isfinite(denominator) & denominator.gt(RATIO_DENOMINATOR_EPSILON)
+    value = numerator / denominator.where(valid)
+    return value.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
 # -------------------------------------------------------------------------
 # Liste ordonnée des features V1 (dérivées de OHLCV uniquement)
 # -------------------------------------------------------------------------
@@ -553,8 +567,8 @@ def fingerprint(
 
     Persisté dans ``config.json`` du modèle ; recalculé à l'inférence
     pour détecter toute dérive silencieuse du contrat de features
-    (la valeur **doit** rester stable tant que la liste de colonnes ne
-    change pas — un test gold bloque les modifications accidentelles).
+    La version numérique EXPERT/facteurs fait aussi partie du contrat : une
+    correction de formule doit invalider l'empreinte même à colonnes identiques.
     """
     columns = list(feature_columns or get_feature_columns(
         include_sentiment=include_sentiment,
@@ -595,6 +609,8 @@ def fingerprint(
         "feature_whitelist_enabled": bool(feature_whitelist_enabled),
         "feature_whitelist": list(feature_whitelist) if feature_whitelist_enabled else [],
     }
+    if feature_set == "expert" or include_factors:
+        payload["numerical_contract_version"] = NUMERICAL_FEATURE_CONTRACT_VERSION
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:16]
 
@@ -1390,34 +1406,34 @@ def compute_features(
 
     # ── Interaction features (Sprint 2026-07-25) ──
     if feature_set == "expert":
-        _vol_20 = df["rolling_volatility_20"].clip(lower=1e-8)
-        _vol_60 = df["rolling_volatility_60"].clip(lower=1e-8)
-        _atr = df["atr_14_norm"].clip(lower=1e-8)
-        _range = df["intraday_range"].clip(lower=1e-8)
+        _vol_20 = df["rolling_volatility_20"]
+        _vol_60 = df["rolling_volatility_60"]
+        _atr = df["atr_14_norm"]
+        _range = df["intraday_range"]
         _vol_ratio_5 = volume.rolling(5).mean().clip(lower=1.0)
         _vol_ratio_5 = volume / _vol_ratio_5
         _vol_ratio_20_s = df["volume_ratio_20"].clip(lower=1e-3)
         _mkt_trend = df.get("market_trend_strength_50", pd.Series(0.0, index=df.index))
-        _mkt_vol20 = df.get("market_volatility_20", pd.Series(1.0, index=df.index)).clip(lower=1e-8)
+        _mkt_vol20 = df.get("market_volatility_20", pd.Series(1.0, index=df.index))
 
         # Insertion groupée (évite la fragmentation du DataFrame)
         _interaction_cols = {
-            "momentum_20_div_vol_20": df["momentum_20"] / _vol_20,
-            "momentum_60_div_vol_60": df["momentum_60"] / _vol_60,
+            "momentum_20_div_vol_20": _positive_denominator_ratio(df["momentum_20"], _vol_20),
+            "momentum_60_div_vol_60": _positive_denominator_ratio(df["momentum_60"], _vol_60),
             "momentum_5_minus_momentum_20": df["momentum_5"] - df["momentum_20"],
             "momentum_20_minus_momentum_60": df["momentum_20"] - df["momentum_60"],
             "volume_ratio_5_div_volume_ratio_20": _vol_ratio_5 / _vol_ratio_20_s,
             "rsi_14_times_volume_ratio_20": df["rsi_14"] * _vol_ratio_20_s,
-            "rsi_14_div_volatility_20": df["rsi_14"] / _vol_20,
+            "rsi_14_div_volatility_20": _positive_denominator_ratio(df["rsi_14"], _vol_20),
             "sma20_minus_sma50": df["sma20_distance"] - df["sma50_distance"],
             "sma50_minus_sma200": df["sma50_distance"] - df["sma200_distance"],
             "ema20_minus_sma20": df["ema20_distance"] - df["sma20_distance"],
-            "intraday_range_div_atr_14": _range / _atr,
+            "intraday_range_div_atr_14": _positive_denominator_ratio(_range, _atr),
             "range_position_20_times_vol_ratio_20_60": df["range_position_20"] * df["vol_ratio_20_60"],
             "daily_return_times_volume_ratio_20": df["daily_return"] * _vol_ratio_20_s,
-            "log_return_div_intraday_range": df["log_return"] / _range,
+            "log_return_div_intraday_range": _positive_denominator_ratio(df["log_return"], _range),
             "relative_strength_20_times_market_trend": df["relative_strength_20"] * _mkt_trend,
-            "relative_strength_60_div_market_volatility": df["relative_strength_60"] / _mkt_vol20,
+            "relative_strength_60_div_market_volatility": _positive_denominator_ratio(df["relative_strength_60"], _mkt_vol20),
         }
         df = pd.concat([df, pd.DataFrame(_interaction_cols, index=df.index)], axis=1)
 

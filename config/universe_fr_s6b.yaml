@@ -1,0 +1,30 @@
+schema_version: 1
+policy_version: fr_s6b_history_liquidity_v1
+market_code: FR_EQ
+database_alias: fr_primary
+calendar_id: XPAR
+source_contract:
+  verdict: GO_RESEARCH_J1
+  policy_version: fr_s5_limited_v1
+  report_path: artifacts/fr/sprint5_limited_2018_2026/report.json
+  manifest_path: artifacts/fr/sprint5_limited_2018_2026/bar_manifest.jsonl.gz
+  archive_root: artifacts/fr/eodhd/backfill_2016
+scope:
+  start_date: 2018-01-01
+  end_date: 2026-10-01
+  allowed_mics: [XPAR, ALXP, XMLI]
+availability:
+  lag_sessions: 1
+  basis: RESEARCH_J1_SESSION
+training:
+  min_history_sessions: 252
+  liquidity_lookback_sessions: 20
+  min_liquidity_observations: 15
+  min_avg_traded_value_eur: 500000
+  min_close_eur: 1.0
+tradable:
+  enabled: false
+  blocker: ECONOMIC_RETURN_AND_EXECUTION_NOT_VALIDATED
+servable:
+  enabled: false
+  blocker: FR_MARKET_DISABLED

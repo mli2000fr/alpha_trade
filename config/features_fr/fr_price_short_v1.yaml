@@ -1,0 +1,33 @@
+schema_version: 1
+profile: fr_price_short_v1
+market_code: FR_EQ
+database_alias: fr_primary
+# Qualification des données uniquement, sans lecture de labels/rendements futurs.
+source_panel: artifacts/fr/features/fr_price_v1/fr-feature-20180101-20261002-18ba6e1d8d31/panel.parquet
+source_sha256: e6e0cb9e08f1449e5f47fa4a5ec86b494906b8778caa0094cc9b5a50f2d00be3
+start_date: '2018-01-01'
+end_date: '2026-10-02'
+features:
+  - return_1
+  - return_3
+  - return_5
+  - return_10
+  - return_20
+  - sma20_distance
+  - atr20_pct
+  - realized_vol20
+  - range20_position
+  - volume_ratio20
+  - traded_value_mean20_eur
+  - overnight_gap
+  - intraday_return
+  - intraday_range
+min_cross_section: 20
+period_gates:
+  min_ready_row_fraction: 0.80
+  min_ready_session_fraction: 0.80
+  min_ready_sessions: 40
+  require_complete_semester: true
+benchmark_features_enabled: false
+sector_features_enabled: false
+canonical_writes_enabled: false

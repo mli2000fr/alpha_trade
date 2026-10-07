@@ -1,0 +1,28 @@
+schema_version: 1
+profile: EXPLORATORY_PROVIDER_ASSUMED
+frozen: artifacts/fr/research/validation_protocol_13a/frozen-20261004-v1
+preflight: artifacts/fr/research/economic_references_11a/preflight-20261004-v2
+archive: artifacts/fr/eodhd/backfill_2016
+tax_review: artifacts/fr/research/free_blocker_review/review-20261004-v6/tax_review.parquet
+cost_profile: config/markets/fr_execution_research_v1.yaml
+repair_overlay: artifacts/fr/research/provider_exploratory_13b/payment-repair-20261004-v2/overlay.json
+tax_scenarios: [unknown_untaxed, unknown_taxed]
+cost_scenarios:
+  nominal: 1
+  stress_execution_x2: 2
+assumptions:
+  prices: EODHD_raw_with_four_missing_20240730_bars_from_Yahoo_not_official
+  availability: inherited_J1_research_hypothesis_not_verified_publication
+  tradability: positive_provider_prices_and_volume_not_verified_execution
+  corporate_actions: provider_events_with_explicit_public_or_secondary_payment_supplements_not_strictly_qualified
+  unsupported_events: block_whole_cell_not_drop_candidate
+  settlement: exchange_calendar_T_plus_2_assumed
+  tax_unknown: two_scenarios_not_qualified_exemption
+confirmation_2026_evaluated: false
+economic_go_allowed: false
+canonical_writes: false
+serving_enabled: false
+
+
+
+

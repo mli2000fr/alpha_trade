@@ -2457,10 +2457,12 @@ def load_cascade_config() -> dict[str, Any]:
         ``min_prob_classification`` (float, défaut 0.55) et
         ``min_prob_regression`` (float, défaut 0.10).
     """
+    from common.oracle_atr import resolve_oracle_atr_enabled
     _defaults: dict[str, Any] = {
         "top_pct": 0.20,
         "min_prob_classification": 0.55,
         "min_prob_regression": 0.10,
+        "oracle_atr_enabled": True,
     }
     try:
         import yaml as _yaml
@@ -2477,7 +2479,14 @@ def load_cascade_config() -> dict[str, Any]:
             "min_prob_regression": float(
                 _section.get("min_prob_regression", _legacy or _defaults["min_prob_regression"])
             ),
+            "oracle_atr_enabled": resolve_oracle_atr_enabled(
+                _section.get("oracle_atr_enabled", True)
+            ),
         }
+    except ValueError as exc:
+        if "cascade.oracle_atr_enabled" in str(exc):
+            raise
+        return _defaults
     except Exception:
         return _defaults
 
@@ -3139,6 +3148,8 @@ def cascade_select(
     extreme_gate_dip_band: float = 0.02,
     oracle_tradable_symbols: set[str] | None = None,
     oracle_tradable_policy: str = "off",
+    oracle_atr_enabled: bool | None = None,
+    oracle_atr_values: dict[str, float] | None = None,
     saturation_slots: int | None = None,
     dip_stats: dict[str, Any] | None = None,
     dip_filter_config: dict[str, Any] | None = None,
@@ -3212,6 +3223,17 @@ def cascade_select(
             tradable_symbols=oracle_tradable_symbols,
             policy=_tradable_policy,
         )
+        from common.oracle_atr import resolve_oracle_atr_enabled, load_oracle_atr_by_date, filter_oracle_atr_percentiles
+        _atr_enabled = resolve_oracle_atr_enabled(
+            _cfg.get("oracle_atr_enabled", False) if oracle_atr_enabled is None else oracle_atr_enabled
+        )
+        if _atr_enabled:
+            _atr_values = oracle_atr_values
+            if _atr_values is None:
+                _atr_values = load_oracle_atr_by_date(engine, list(_oracle_pct_map), [trade_date]).get(trade_date, {})
+            _oracle_pct_map, _atr_diag = filter_oracle_atr_percentiles(
+                _oracle_pct_map, _atr_values, oracle_pool_pct=_extreme_gate_pct, trade_date=trade_date,
+            )
         _oracle_symbols = list(_oracle_pct_map)
         _oracle_pct_values = list(_oracle_pct_map.values())
         ranks_df = pd.DataFrame({
@@ -3743,6 +3765,8 @@ def apply_cascade_to_predictions(
     extreme_gate_dip_band: float = 0.02,
     oracle_tradable_map: dict[str, set[str]] | None = None,
     oracle_tradable_policy: str = "off",
+    oracle_atr_enabled: bool | None = None,
+    oracle_atr_map: dict[str, dict[str, float]] | None = None,
     saturation_slots: int | None = None,
     dip_filter_config: dict[str, Any] | None = None,
     # Research dip_quality_score (chantier dip_quality_static_model, défaut off).
@@ -3901,6 +3925,15 @@ def apply_cascade_to_predictions(
     # Stats agrégées du réordonnancement N4X2 jours saturés (recherche E).
     _dip_stats: dict[str, Any] = {} if extreme_gate_dip_saturated else None
 
+    from common.oracle_atr import resolve_oracle_atr_enabled, load_oracle_atr_by_date
+    _atr_enabled = resolve_oracle_atr_enabled(
+        _cfg.get("oracle_atr_enabled", False) if oracle_atr_enabled is None else oracle_atr_enabled
+    )
+    if _rank_mode_low in ("extreme_gate", "extreme_gate_directional") and _atr_enabled and oracle_atr_map is None:
+        _atr_dates = [str(day)[:10] for day in _dates]
+        _atr_symbols = sorted({s for day in _atr_dates for s in (oracle_rank_map or {}).get(day, {})})
+        oracle_atr_map = load_oracle_atr_by_date(engine, _atr_symbols, _atr_dates)
+
     for _d in _dates:
         _date_str = str(_d)[:10]
         _mask = result[_date_col].astype(str).str[:10] == _date_str
@@ -3956,6 +3989,8 @@ def apply_cascade_to_predictions(
                 if oracle_tradable_map is not None else None
             ),
             oracle_tradable_policy=oracle_tradable_policy,
+            oracle_atr_enabled=_atr_enabled,
+            oracle_atr_values=(oracle_atr_map.get(_date_str, {}) if oracle_atr_map is not None else None),
             saturation_slots=saturation_slots,
             dip_stats=_dip_stats,
             dip_filter_config=dip_filter_config,

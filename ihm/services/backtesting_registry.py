@@ -17,6 +17,8 @@ from typing import Literal, cast
 from ihm.services.backtesting_runner import (
     BackfillScoresHistoryOptions,
     BacktestRunOptions,
+    CNResearchReplayOptions,
+    FRResearchReplayOptions,
     BacktestingCommandKind,
     CalibrateSentimentWeightsOptions,
     DiagnoseScreenerOptions,
@@ -448,6 +450,8 @@ def start_backtesting_run(
     run_kind: BacktestingCommandKind,
     run_label: str,
     options: BacktestRunOptions
+    | CNResearchReplayOptions
+    | FRResearchReplayOptions
     | BackfillScoresHistoryOptions
     | DiagnoseScreenerOptions
     | RecommendScreenerOptions
@@ -459,6 +463,17 @@ def start_backtesting_run(
     timeout_seconds: int | None = None,
 ) -> BacktestingRunRecord:
     """Démarre un run backtesting en arrière-plan et retourne son enregistrement initial."""
+    if run_kind == "fr-research-replay":
+        if not isinstance(options, FRResearchReplayOptions):
+            raise TypeError("Options de replay FR incompatibles")
+        from ihm.services.fr_replay_launch import preflight
+        preflight(options)
+    if run_kind == "cn-research-replay":
+        if not isinstance(options, CNResearchReplayOptions):
+            raise TypeError("Options de replay CN incompatibles")
+        from ihm.services.cn_replay_launch import preflight_cn_replay
+
+        preflight_cn_replay(options)
     _ensure_storage()
     active_same_kind = list_active_backtesting_runs_by_kind(run_kind)
     if active_same_kind:
@@ -497,6 +512,10 @@ def start_backtesting_run(
 
     if run_kind == "run" and isinstance(options, BacktestRunOptions):
         options = replace(options, output_dir=str(artifacts_dir))
+    elif run_kind == "cn-research-replay" and isinstance(options, CNResearchReplayOptions):
+        options = replace(options, output_root=str(artifacts_dir))
+    elif run_kind == "fr-research-replay" and isinstance(options, FRResearchReplayOptions):
+        options = replace(options, output_root=str(artifacts_dir))
 
     command = build_backtesting_command(run_kind, options)
     command_display = format_command_for_display(command)

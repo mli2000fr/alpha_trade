@@ -8,7 +8,7 @@ Features produced
 - ``beta_252``        : rolling CAPM beta (252 days)
 - ``alpha_252``       : rolling CAPM alpha, annualised (252 days)
 - ``r_squared_252``   : regression R², quality of fit
-- ``momentum_252_vs_market`` : stock 252d return minus market 252d return
+- ``momentum_252_vs_market`` : difference of rolling sums of paired daily returns
 """
 from __future__ import annotations
 
@@ -45,7 +45,9 @@ def compute_factor_features(
     df : pd.DataFrame
         Must have columns: date, daily_return.  Already sorted by date.
     benchmark_df : pd.DataFrame or None
-        Benchmark bars (SPY).  Must have date, daily_return.
+        Benchmark bars (SPY). Returns are derived from adjusted prices when
+        ``close`` is present, independently of the persisted daily_return field.
+        Returns-only frames remain supported. Missing dates are NOT forward-filled.
         If None, beta defaults to 1.0, alpha to 0.0.
 
     Returns
@@ -66,59 +68,52 @@ def compute_factor_features(
     # ── Align benchmark returns on stock dates ──
     bench = benchmark_df.copy().sort_values("date").reset_index(drop=True)
     bench["date"] = pd.to_datetime(bench["date"])
-    bench_returns = (
-        bench.set_index("date")
-        .reindex(pd.to_datetime(df["date"]), method="ffill")
-        .reset_index()
-    )
-    bench_daily = bench_returns.get("daily_return", pd.Series(0.0, index=df.index))
-    if isinstance(bench_daily, pd.DataFrame):
-        bench_daily = bench_daily.iloc[:, 0] if bench_daily.shape[1] > 0 else pd.Series(0.0, index=df.index)
-    # Conversion numérique explicite AVANT fillna : évite le downcasting
-    # implicite object → float déprécié (FutureWarning future.no_silent_downcasting).
-    bench_daily = pd.to_numeric(pd.Series(bench_daily), errors="coerce").fillna(0.0).astype(float).values
-
-    stock_daily = pd.to_numeric(df["daily_return"], errors="coerce").fillna(0.0).astype(float).values
-    n = len(stock_daily)
-
-    beta_arr = np.full(n, 1.0)
-    alpha_arr = np.full(n, 0.0)
-    rsq_arr = np.full(n, 0.0)
-
-    for i in range(n):
-        start = max(0, i - window + 1)
-        length = i - start + 1
-        if length < min_periods:
-            continue
-        x = bench_daily[start : i + 1]
-        y = stock_daily[start : i + 1]
-
-        # Simple OLS: beta = cov(x,y)/var(x), alpha = mean(y) - beta*mean(x)
-        x_mean = np.mean(x)
-        y_mean = np.mean(y)
-        x_demean = x - x_mean
-        y_demean = y - y_mean
-        cov_xy = np.dot(x_demean, y_demean) / length
-        var_x = np.dot(x_demean, x_demean) / length
-        var_y = np.dot(y_demean, y_demean) / length
-
-        if var_x > 1e-12:
-            beta = cov_xy / var_x
-            alpha_daily = y_mean - beta * x_mean
-            beta_arr[i] = beta
-            alpha_arr[i] = alpha_daily * 252  # annualised
-            if var_y > 1e-12:
-                rsq_arr[i] = (cov_xy ** 2) / (var_x * var_y)
-
-    df["beta_252"] = beta_arr
-    df["alpha_252"] = alpha_arr
-    df["r_squared_252"] = rsq_arr
+    dates = pd.to_datetime(df["date"])
+    if bench["date"].isna().any() or bench["date"].duplicated().any():
+        raise ValueError("Factor benchmark dates must be non-null and unique")
+    if dates.isna().any() or dates.duplicated().any() or not dates.is_monotonic_increasing:
+        raise ValueError("Factor stock dates must be sorted, non-null and unique")
+    if "close" in bench:
+        # Local import avoids the features -> factor_features import cycle.
+        from modelFactory.features import _build_adjusted_price_frame
+        prices = _build_adjusted_price_frame(bench)["close"]
+        prices = prices.where(np.isfinite(prices) & prices.gt(0))
+        # Insert stock-observed dates missing from the benchmark BEFORE differencing:
+        # otherwise the next benchmark return would silently span several sessions.
+        price_dates = pd.DatetimeIndex(bench["date"]).union(pd.DatetimeIndex(dates)).sort_values()
+        dated_prices = pd.Series(prices.to_numpy(), index=bench["date"]).reindex(price_dates)
+        benchmark_returns = dated_prices.pct_change(fill_method=None).reindex(bench["date"])
+    else:
+        benchmark_returns = pd.to_numeric(
+            bench.get("daily_return", pd.Series(np.nan, index=bench.index)), errors="coerce"
+        )
+    benchmark_returns = pd.Series(benchmark_returns.to_numpy(dtype=float), index=bench["date"])
+    bench_daily = pd.Series(benchmark_returns.reindex(dates).to_numpy(), index=df.index, dtype=float)
+    stock_daily = pd.to_numeric(df["daily_return"], errors="coerce").astype(float)
+    paired = np.isfinite(bench_daily) & np.isfinite(stock_daily)
+    missing_pairs = int((~paired).sum())
+    if missing_pairs:
+        LOGGER.debug("compute_factor_features: excluded %d missing/non-finite return pairs", missing_pairs)
+    x = bench_daily.where(paired)
+    y = stock_daily.where(paired)
+    # Both rolling series use precisely the same observed pairs. Preserve the
+    # historical 252-row window and 126-pair minimum; never fabricate zero returns.
+    xr = x.rolling(window, min_periods=min_periods)
+    yr = y.rolling(window, min_periods=min_periods)
+    var_x = xr.var(ddof=0)
+    var_y = yr.var(ddof=0)
+    cov_xy = xr.cov(y, ddof=0)
+    estimable = var_x.gt(1e-12)
+    beta = (cov_xy / var_x.where(estimable)).where(estimable)
+    alpha = ((yr.mean() - beta * xr.mean()) * 252).where(estimable)
+    rsq = (cov_xy.pow(2) / (var_x * var_y).where(estimable & var_y.gt(1e-12))).clip(0, 1)
+    df["beta_252"] = beta.replace([np.inf, -np.inf], np.nan).fillna(FACTOR_DEFAULTS["beta_252"])
+    df["alpha_252"] = alpha.replace([np.inf, -np.inf], np.nan).fillna(FACTOR_DEFAULTS["alpha_252"])
+    df["r_squared_252"] = rsq.replace([np.inf, -np.inf], np.nan).fillna(FACTOR_DEFAULTS["r_squared_252"])
 
     # ── Momentum 252d vs market ──
-    stock_mom_252 = df["daily_return"].rolling(window=window, min_periods=min_periods).sum()
-    market_mom_252 = pd.Series(bench_daily, index=df.index).rolling(
-        window=window, min_periods=min_periods
-    ).sum()
+    stock_mom_252 = yr.sum()
+    market_mom_252 = xr.sum()
     df["momentum_252_vs_market"] = stock_mom_252 - market_mom_252
     df["momentum_252_vs_market"] = pd.to_numeric(df["momentum_252_vs_market"], errors="coerce").fillna(0.0).astype(float)
 

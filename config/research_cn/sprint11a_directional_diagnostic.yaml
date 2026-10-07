@@ -1,0 +1,19 @@
+experiment: cn_directional_diagnostic_sprint11a_v1
+market_code: CN_A
+source_experiment: cn_global_ranking_sprint10c_v1
+source_period: 2022H1_to_2025H2_already_inspected
+evidence_level: exploratory_not_independent_confirmation
+source_horizons: [5, 10, 15, 20]
+source_models: [lightgbm, catboost]
+test_semesters: [2022H1, 2022H2, 2023H1, 2023H2, 2024H1, 2024H2, 2025H1, 2025H2]
+oracle_pool_rule: use_sprint10c_oos_top20_before_label_filter
+rank_universe: full_oracle_pool_before_label_filter
+score_families: [momentum, reversal, lightgbm, catboost, consensus]
+long_top_fractions: [0.10, 0.20, 0.30]
+veto_bottom_fraction: 0.20
+primary_label: oracle_decile_D1_D10
+eligibility_sensitivity: execution_data_eligible
+minimum_pool_per_session: 20
+decision_gate: none_exploratory
+serving_enabled: false
+backtest_enabled: false

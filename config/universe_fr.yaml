@@ -1,0 +1,29 @@
+schema_version: 1
+policy_version: fr_s6a_research_j1_v1
+market_code: FR_EQ
+database_alias: fr_primary
+source_contract:
+  verdict: GO_RESEARCH_J1
+  policy_version: fr_s5_limited_v1
+  report_path: artifacts/fr/sprint5_limited_2018_2026/report.json
+  manifest_path: artifacts/fr/sprint5_limited_2018_2026/bar_manifest.jsonl.gz
+scope:
+  start_date: 2018-01-01
+  end_date: 2026-10-01
+  allowed_mics: [XPAR, ALXP, XMLI]
+observable:
+  require_research_j1_eligible: true
+training:
+  min_history_sessions: 252
+  liquidity_gate: pending_sprint_6b
+tradable:
+  enabled: false
+  blocker: ECONOMIC_RETURN_AND_EXECUTION_NOT_VALIDATED
+servable:
+  enabled: false
+  blocker: FR_MARKET_DISABLED
+prohibitions:
+  - no_live
+  - no_paper
+  - no_serving
+  - no_canonical_write

@@ -1,0 +1,24 @@
+experiment: cn_veto_economic_sprint11b_v1
+market_code: CN_A
+evidence_level: exploratory_cost_stress_not_executable_backtest
+source_protocol: cn_directional_diagnostic_sprint11a_v1
+source_horizons: [5, 10, 15, 20]
+test_semesters: [2022H1, 2022H2, 2023H1, 2023H2, 2024H1, 2024H2, 2025H1, 2025H2]
+policies: [oracle_all, reversal_veto_bottom20, lightgbm_veto_bottom20, consensus_veto_bottom20]
+base_comparator: reversal_veto_bottom20
+ticket_cny: 10000
+cost_scenarios:
+  zero: {bps_per_side: 0, minimum_cny_per_side: 0}
+  base_proxy: {bps_per_side: 10, minimum_cny_per_side: 5}
+  stress_proxy: {bps_per_side: 25, minimum_cny_per_side: 5}
+board_lot_assumptions:
+  SH_MAIN: {minimum_shares: 100, increment_shares: 100}
+  SZ_MAIN: {minimum_shares: 100, increment_shares: 100}
+  CHINEXT: {minimum_shares: 100, increment_shares: 100}
+  STAR: {minimum_shares: 200, increment_shares: 1}
+quarantine_factor_event: true
+quarantine_unknown_or_locked_entry_exit: true
+unresolved_exit_is_not_zero_return: true
+serving_enabled: false
+backtest_enabled: false
+decision_gate: none_until_independent_CN_period_and_execution_rules

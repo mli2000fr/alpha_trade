@@ -436,6 +436,8 @@ def build_phase2_risk_result(
     sentiment_score_provider: Callable[[int], float | None] | None = None,
     earnings_lookup: Callable[[date, int, int], dict[str, date]] | None = None,
     sector_map: dict[str, str] | None = None,
+    selection_policy: str = 'directional',
+    operational_snapshot_provider: Callable[[date], object] | None = None,
 ) -> RiskBridgeResult:
     """Construit les résultats phase 2 ``risk_execution``.
 
@@ -447,6 +449,11 @@ def build_phase2_risk_result(
     Cela garantit la parité avec le live (``run_execution.py``) tout en
     découplant l'ablation macro des garde-fous structurels.
     """
+    if selection_policy not in {'directional', 'oracle_pure_long'}:
+        raise ValueError('Unknown risk bridge selection policy')
+    oracle_long_only = selection_policy == 'oracle_pure_long'
+    if oracle_long_only and operational_snapshot_provider is None:
+        raise ValueError('Oracle stateful replay requires an operational snapshot provider')
     normalized_scores = _prepare_score_columns(scores_df, preferred_score_column=score_column)
     execution_dates = sorted({pd.Timestamp(value).date() for value in normalized_scores["trade_date"].dropna().tolist()})
     all_entries: list[PortfolioEntry] = []
@@ -487,15 +494,23 @@ def build_phase2_risk_result(
     snapshot_dates = _resolve_regime_snapshot_dates(close_df, execution_dates) if use_regime else execution_dates
     previous_regime_state = None
     for snapshot_date in snapshot_dates:
+        operational_snapshot = operational_snapshot_provider(snapshot_date) if operational_snapshot_provider else None
         # ── 0. Régime snapshot (doit être résolu avant les sélections pour le
         #     scoring directionnel) ──────────────────────────────────────────
         cfg_for_day = structural_cfg
+        if oracle_long_only:
+            from risk_management.operational_data import OperationalDataSnapshot
+            if not isinstance(operational_snapshot, OperationalDataSnapshot):
+                raise ValueError('Operational snapshot provider returned an invalid snapshot')
+            if operational_snapshot.account.as_of.date() != snapshot_date:
+                raise ValueError('Operational snapshot provider returned a wrong decision date')
+            cfg_for_day = structural_cfg.with_overrides(account_equity=operational_snapshot.account.equity)
         snap = None
         if use_regime and build_snapshot_fn is not None:
             equity = (
                 equity_provider(snapshot_date)
                 if equity_provider is not None
-                else structural_cfg.account_equity
+                else cfg_for_day.account_equity
             )
             snap = build_snapshot_fn(
                 snapshot_date,
@@ -514,7 +529,7 @@ def build_phase2_risk_result(
             if macro_quality == "missing":
                 macro_missing_dates.append(snapshot_date.isoformat())
             regime_snapshots_dump[snapshot_date] = snap.to_summary_dict()
-            cfg_for_day = apply_snapshot(structural_cfg, snap)
+            cfg_for_day = apply_snapshot(cfg_for_day, snap)
             # ── Recovery gate : si SPY repasse au-dessus de sa SMA50, le marché
             #     rebondit → sortir du mode défensif → réautoriser les entrées.
             if (
@@ -571,7 +586,8 @@ def build_phase2_risk_result(
                 pass
 
         predictions = _build_predictions(predictions_df, snapshot_date)
-        selection_inputs = _build_ml_selection_inputs_from_day(day_scores, predictions, snapshot_date)
+        selection_inputs = (_build_selection_inputs_from_day(day_scores, snapshot_date)
+            if oracle_long_only else _build_ml_selection_inputs_from_day(day_scores, predictions, snapshot_date))
         n_sells = sum(1 for selection in selection_inputs if selection.side == "short")
         if n_sells > 0:
             LOGGER.info(
@@ -651,34 +667,35 @@ def build_phase2_risk_result(
             sector_map=sector_map,
         )
         # ── Section 17 Point 8.5 : snapshot opérationnel backtest ──────
-        try:
-            from datetime import datetime as _dt, timezone as _tz
-
-            from risk_management.operational_data import BacktestOperationalDataAdapter
-
-            backtest_snapshot = BacktestOperationalDataAdapter.build(
-                account_id=f"backtest-{snapshot_date.isoformat()}",
-                account={
-                    "equity": float(cfg_for_day.account_equity),
-                    "cash": float(cfg_for_day.account_equity),
-                    "settled_cash": float(cfg_for_day.account_equity),
-                    "buying_power": float(cfg_for_day.account_equity) * 2.0,
-                },
-                positions=[],   # backtest simule fresh chaque jour
-                orders=[],
-                as_of=_dt.combine(snapshot_date, _dt.min.time(), tzinfo=_tz.utc),
-                source="backtest_risk_bridge",
-            )
-            if hasattr(builder, "set_operational_snapshot"):
+        if operational_snapshot is not None:
+            builder.set_operational_snapshot(operational_snapshot)
+        else:
+            try:
+                from datetime import datetime as _dt, timezone as _tz
+                from risk_management.operational_data import BacktestOperationalDataAdapter
+                backtest_snapshot = BacktestOperationalDataAdapter.build(
+                    account_id=f"backtest-{snapshot_date.isoformat()}",
+                    account={
+                        "equity": float(cfg_for_day.account_equity),
+                        "cash": float(cfg_for_day.account_equity),
+                        "settled_cash": float(cfg_for_day.account_equity),
+                        "buying_power": float(cfg_for_day.account_equity) * 2.0,
+                    },
+                    positions=[],   # legacy assumption, NOT stateful parity
+                    orders=[],
+                    as_of=_dt.combine(snapshot_date, _dt.min.time(), tzinfo=_tz.utc),
+                    source="backtest_risk_bridge",
+                )
                 builder.set_operational_snapshot(backtest_snapshot)
-        except Exception:
-            LOGGER.debug("Backtest operational snapshot build skipped.", exc_info=True)
+            except Exception:
+                LOGGER.debug("Backtest operational snapshot build skipped.", exc_info=True)
 
-        entries = builder.build_from_ml_candidates(
+        entries = (builder.build(selection_inputs, prices, trade_date=snapshot_date,
+            return_matrix=return_matrix, selection_policy='oracle_pure_long') if oracle_long_only else builder.build_from_ml_candidates(
             selection_inputs, prices,
             return_matrix=return_matrix,
             trade_date=snapshot_date,
-        )
+        ))
         model_run_ids = sorted({prediction.run_id for prediction in predictions.values() if prediction.run_id})
         model_run_id = "|".join(model_run_ids)
         regime_mode = str(getattr(snap, "mode", "normal") or "normal")

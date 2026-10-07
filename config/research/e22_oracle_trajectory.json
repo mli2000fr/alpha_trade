@@ -1,0 +1,35 @@
+{
+  "experiment": "E22_ORACLE_PRE_SIGNAL_TRAJECTORY",
+  "status": "PREREGISTERED_NOT_RUN",
+  "lag_sessions": 5,
+  "lag_source_columns": [
+    "daily_return",
+    "intraday_range",
+    "overnight_gap",
+    "close_location_value",
+    "volume_ratio_20",
+    "rolling_volatility_5",
+    "relative_strength_5"
+  ],
+  "trajectory_window_sessions": 6,
+  "variants": {
+    "O0_BASELINE": "Oracle O0 canonique",
+    "O0_LAGS_5": "O0 + valeurs ordonnées J-1 à J-5",
+    "O0_PATH_SHAPE_6": "O0 + résumés de forme J-5 à J"
+  },
+  "walk_forward": {
+    "min_train_dates": 504,
+    "val_dates": 126,
+    "test_dates": 126,
+    "step_dates": 126,
+    "max_splits": 12,
+    "fold_selection": "latest"
+  },
+  "gates_vs_o0": {
+    "average_precision_delta_min": 0.005,
+    "auc_delta_min": 0.005,
+    "precision_at_20pct_delta_min": 0.01,
+    "fold_auc_win_rate_min": 0.60,
+    "worst_semester_precision_at_20pct_delta_min": -0.02
+  }
+}

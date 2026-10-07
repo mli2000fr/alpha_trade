@@ -1,0 +1,24 @@
+schema_version: 1
+profile: fr_direction_h5_audit_v1
+market_code: FR_EQ
+horizon: 5
+folds: [4, 5, 6]
+oracle_source: artifacts/fr/research/oracle_h5_pilot/fr-oracle-h5-d0f5fe0e2b07
+oracle_prediction_sha256: 36afd83718aafced51aec5ec3b0b4f7361c87d23af04660957f3e62fa59f8f91
+oracle_profile: config/research_fr/oracle_h5_pilot_v1.yaml
+development_end: '2025-12-31'
+oracle_fraction: 0.20
+side_fraction: 0.20
+seed: 17
+scores: [random, return_5, return_20]
+support:
+  min_dates: 30
+  min_tail_per_class: 30
+gates:
+  min_mean_tail_auc: 0.53
+  min_mean_daily_ic: 0.03
+  min_mean_daily_spread: 0.002
+  min_positive_folds: 2
+canonical_writes_enabled: false
+serving_enabled: false
+confirmation_evaluated: false

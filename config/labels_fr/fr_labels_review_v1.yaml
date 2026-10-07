@@ -1,0 +1,17 @@
+schema_version: 1
+profile: fr_labels_review_v1
+labels_report: artifacts/fr/labels/fr_labels_v1/fr-labels-v1-a8f5acc2804c/report.json
+labels_sha256: f8c845aba3fa37bdc06ad51020ef8aecdf4d9016de2a75a7729ed353cbe4ab68
+price_panel: artifacts/fr/features/fr_price_short_v1/fr-price-short-v1-938c3b93b038/panel.parquet
+price_sha256: 156ed1c1d4b0352274734d75577705b7600934a689ade9814fa47c34ee0093be
+benchmark_panel: artifacts/fr/features/fr_price_benchmark_v1/fr-benchmark-v1-bc8f18f98f29/panel.parquet
+benchmark_sha256: 69c3ccfcc34bc2d29bc1d33f920c1dfbf2453abcd00f95bf486255633315eb3d
+liquidity_report: artifacts/fr/sprint6b_liquidity/report.json
+# Règles de couverture héritées ; aucune sélection sur la performance.
+min_cross_section: 20
+min_session_coverage: 0.80
+min_usable_sessions: 40
+development_end: '2025-12-31'
+extreme_cases_per_side_horizon_semester: 2
+large_daily_move_alert: 0.30
+canonical_writes_enabled: false

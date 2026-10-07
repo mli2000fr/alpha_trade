@@ -17,6 +17,7 @@ requests
 certifi
 python-dotenv
 yfinance>=0.2
+baostock>=0.8.9
 
 # --- Data science ---
 pandas

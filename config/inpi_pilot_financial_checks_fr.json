@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "purpose": "Independent primary-publication spot checks, not full account certification or historical PIT qualification",
+  "reviewed_on": "2026-10-05",
+  "checks": [
+    {"symbol":"AB.PA","id":"643d6ce11f78493bed04a930","field":"revenue","expected_eur":"1607000","tolerance_eur":"0","source":"https://www.ab-science.com/wp-content/uploads/2022/04/2022-04-29_Annual_Report-31_12_2021_EN.pdf","locator":"2021 consolidated turnover, thousands EUR, printed p9"},
+    {"symbol":"AB.PA","id":"643d6ce11f78493bed04a930","field":"assets_net","expected_eur":"21271000","tolerance_eur":"0","source":"https://www.ab-science.com/wp-content/uploads/2022/04/2022-04-29_Annual_Report-31_12_2021_EN.pdf","locator":"2021 consolidated balance sheet, thousands EUR, printed p87"},
+    {"symbol":"ABCA.PA","id":"68945e0e2198b0e21904f13b","field":"income","expected_eur":"26800000","tolerance_eur":"50000","source":"https://www.abc-arbitrage.com/wp-content/uploads/2025/03/2024-ABCA-CP-Resultats-FY-2024-VF.pdf","locator":"2024 consolidated net income, 26.8 million EUR rounded"},
+    {"symbol":"AC.PA","id":"68a2deb5b4b2f6d48b09c2bf","field":"revenue","expected_eur":"5606000000","tolerance_eur":"0","source":"https://group.accor.com/en/news-stories/2024-full-year-results","locator":"2024 consolidated revenue, 5606 million EUR"},
+    {"symbol":"ADOC.PA","id":"688cc8fb4177a962e10173bd","field":"revenue","expected_eur":"9320000","tolerance_eur":"0","source":"https://www.adocia.com/composants/uploads/2025/04/ADOCIA-CP-RESULTATS-FINANCIERS-ANNUELS-2024.pdf","locator":"2024 consolidated revenue, 9320 thousand EUR"},
+    {"symbol":"AKE.PA","id":"685c02688347408d46074e8d","field":"revenue","expected_eur":"9544000000","tolerance_eur":"0","source":"https://www.arkema.com/files/live/sites/shared_arkema/files/downloads/investorrelations/en/finance/arkema-factsheet-results-q4-2024.pdf","locator":"2024 consolidated sales, 9544 million EUR"},
+    {"symbol":"BB.PA","id":"6a573fdcbcec04072c0683d7","field":"revenue","expected_eur":"2196600000","tolerance_eur":"50000","source":"https://live.euronext.com/en/products/equities/company-news/2025-02-18-bic-q4-full-year-2024-results","locator":"2024 consolidated net sales, 2196.6 million EUR rounded"},
+    {"symbol":"BN.PA","id":"6835758859346a1ae50e13af","field":"revenue","expected_eur":"27376000000","tolerance_eur":"0","source":"https://www.danone.com/content/dam/corp/global/danonecom/investors/en-all-publications/2025/pressreleases/prdanone260225.pdf","locator":"2024 consolidated sales, 27376 million EUR"},
+    {"symbol":"BN.PA","id":"6a33a929f9e4b401ad07b51b","field":"revenue","expected_eur":"27283000000","tolerance_eur":"0","source":"https://www.danone.com/content/dam/corp/global/danonecom/investors/en-all-publications/2026/pressreleases/danonepr200226.pdf","locator":"2025 consolidated sales 27283 million EUR; 2024 comparative 27376"},
+    {"symbol":"OR.PA","id":"68498cb663f86d9e160e5923","field":"revenue","expected_eur":"43486800000","tolerance_eur":"0","source":"https://www.loreal-finance.com/eng/press-release/2024-annual-results","locator":"2024 consolidated sales, 43486.8 million EUR"},
+    {"symbol":"SU.PA","id":"686bd442ed54ef00340f6ff1","field":"revenue","expected_eur":"38153000000","tolerance_eur":"0","source":"https://www.se.com/ww/en/Images/release-fy-results-2024_tcm564-505646.pdf","locator":"2024 consolidated revenue, 38153 million EUR"},
+    {"symbol":"UBI.PA","id":"6890690344dcd523300912d7","field":"revenue","expected_eur":"1899200000","tolerance_eur":"0","source":"https://staticctf.ubisoft.com/8aefmxkxpxwl/75aGUbWM9kwnQj44Tr7d6H/ce4ca047ddadf45cf1e98cea8d1d7a78/Ubisoft_FY25_PR_English_vfinal.pdf","locator":"FY2024-25 IFRS15 sales 1899.2 million EUR; not net bookings"}
+  ]
+}

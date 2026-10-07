@@ -1,0 +1,44 @@
+{
+  "experiment": "P_MATH_3_CONDITIONAL_RETURN_QUANTILES",
+  "status": "COMPLETED_NO_GO_DISTRIBUTION_NO_GO_DIRECTION",
+  "horizon": 20,
+  "pool_pct": 0.20,
+  "state_profile": "config/features/shared_direction/shared.json",
+  "quantiles": [0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95],
+  "primary_direction_score": "tail_midpoint_q10_q90",
+  "walk_forward": {
+    "min_train_dates": 504,
+    "val_dates": 126,
+    "test_dates": 126,
+    "step_dates": 126,
+    "max_splits": 12,
+    "fold_selection": "latest"
+  },
+  "model": {
+    "n_estimators": 250,
+    "learning_rate": 0.03,
+    "max_depth": 4,
+    "num_leaves": 15,
+    "min_child_samples": 150,
+    "colsample_bytree": 0.8,
+    "subsample": 0.8,
+    "reg_lambda": 1.0,
+    "n_jobs": 4,
+    "max_train_rows": 100000,
+    "classifier_train_max_per_class": 30000,
+    "test_max_per_class": 5000,
+    "winsor_lower": 0.01,
+    "winsor_upper": 0.99,
+    "max_missing_rate": 0.50,
+    "random_seed": 20260916
+  },
+  "gates": {
+    "pinball_relative_improvement_min": 0.02,
+    "pinball_positive_fold_rate_min": 0.67,
+    "outer_quantile_abs_coverage_error_max": 0.03,
+    "d1_d10_auc_median_min": 0.53,
+    "d1_d10_auc_delta_vs_logistic_min": 0.01,
+    "d1_d10_auc_positive_fold_rate_min": 0.67,
+    "d1_d10_signed_top_decile_return_lift_min": 0.0025
+  }
+}

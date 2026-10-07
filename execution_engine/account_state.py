@@ -16,7 +16,7 @@ from execution_engine.audit import make_event
 from execution_engine.models import EventType, ExecutionEvent, OrderIntent
 
 if TYPE_CHECKING:  # pragma: no cover
-    from execution_engine.broker_adapter import BrokerAdapter
+    from execution_engine.broker_router import ExecutionBrokerPort
     from execution_engine.config import ExecutionConfig
 
 LOGGER = logging.getLogger(__name__)
@@ -237,7 +237,7 @@ def _resolve_margin_buying_power(
 
 
 def build_account_constraint_state(
-    cfg: "ExecutionConfig", broker: "BrokerAdapter"
+    cfg: "ExecutionConfig", broker: "ExecutionBrokerPort"
 ) -> _AccountConstraintState:
     if cfg.dry_run:
         equity = float(cfg.simulated_account_equity)

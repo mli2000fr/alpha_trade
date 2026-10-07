@@ -1399,6 +1399,13 @@ def test_render_tradable_universe_publish_block_displays_period_command(monkeypa
     monkeypatch.setattr(pipeline.st, "markdown", lambda *args, **kwargs: None)
     monkeypatch.setattr(pipeline.st, "caption", lambda *args, **kwargs: None)
     monkeypatch.setattr(pipeline.st, "date_input", lambda _label, *, value, **kwargs: value)
+    monkeypatch.setattr(
+        pipeline.st,
+        "selectbox",
+        lambda label, *args, **kwargs: "strict" if "capitalisation" in label else "capital_2001_5000",
+    )
+    monkeypatch.setattr(pipeline.st, "number_input", lambda *args, **kwargs: 5)
+    monkeypatch.setattr(pipeline.st, "checkbox", lambda *args, **kwargs: False)
     monkeypatch.setattr(pipeline.st, "columns", lambda n, **kwargs: [_DummyColumn() for _ in range(n)])
     monkeypatch.setattr(pipeline.st, "code", lambda value, *args, **kwargs: codes.append(str(value)))
     monkeypatch.setattr(pipeline.st, "button", lambda *args, **kwargs: False)

@@ -1,0 +1,17 @@
+# Préparation FR_EQ (Sprint 1). Aucun job ni écriture canonique activés.
+schema_version: 1
+market_code: FR_EQ
+database_alias: fr_primary
+database_name: alpha_trade_fr
+provider: null
+canonical_writes_enabled: false
+timezone: Europe/Paris
+scheduler_timezone: Europe/Paris
+artifacts_root: artifacts/fr
+models_root: artifacts/models/fr_eq
+backtests_root: artifacts/backtests/fr_eq
+staging:
+  preserve_raw_payloads: true
+  preserve_provider_corrections: true
+  require_payload_hash: true
+  require_available_at: true

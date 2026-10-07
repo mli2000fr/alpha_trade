@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Literal
 
 from core.ml_selection_contract import MLFirstSelectionContract, SelectionCapacity
-from common.capital_presets import resolve_capital_preset_for_equity
+from common.capital_presets import get_capital_preset_by_key, resolve_capital_preset_for_equity
 from common.universe_files import (
     default_universe_file_source_or,
     is_universe_file_source,
@@ -302,6 +302,20 @@ DEFAULT_EXEC_PROTECTION_TRANSITION_POLL_INTERVAL_SECONDS = 5.0
 DEFAULT_EXEC_DEBUG = False
 # Selector — alpha scanner stage 2
 DEFAULT_SELECTOR_REQUIRE_ABOVE_MA200 = True
+
+# Product defaults shared with the fresh Pipeline page (not its transient session).
+DEFAULT_PIPELINE_CAPITAL_PRESET_KEY = "capital_2001_5000"
+PAGE_SENTIMENT_DEFAULTS = {
+    "sentiment_scoring_mode": "standard_and_contextual",
+    "sentiment_enable_contextual_scoring": True,
+    "sentiment_min_relevance_score": 0.0,
+    "sentiment_pending_limit": RECOMMENDED_EVENT_SENTIMENT_PENDING_LIMIT,
+    "sentiment_pending_max_batches_per_run": 0,
+    "sentiment_finbert_batch_size": RECOMMENDED_EVENT_SENTIMENT_FINBERT_BATCH_SIZE,
+    "sentiment_feature_flush_every_n_batches": DEFAULT_EVENT_SENTIMENT_FEATURE_FLUSH_EVERY_N_BATCHES,
+    "sentiment_contextual_min_relevance": 0.3,
+    "sentiment_contextual_max_pairs": 50000,
+}
 # Corporate actions sync — fenêtre custom + batching (cf. audit_ihm_pipeline_options)
 DEFAULT_CA_SKIP_EXISTING = False
 DEFAULT_CA_USE_CUSTOM_WINDOW = False
@@ -324,13 +338,7 @@ DataIntegritySymbolSource = Literal[
     "stock_scores_all",
     "stock_bars_daily",
 ]
-NewsImportSymbolSource = Literal[
-    "tradable-universe",
-    "stock_scores",
-    "stock_scores_history",
-    "stock_scores_all",
-    "stock_bars_daily",
-]
+NewsImportSymbolSource = str
 ExecutionSubmissionWindow = Literal["post_close", "pre_open", "both"]
 ExecutionTrailingTrigger = Literal["multiple_r", "profit_pct"]
 PipelineExecutionStatus = Literal["starting", "running", "completed", "failed", "timeout"]
@@ -345,6 +353,7 @@ class PipelineLaunchOptions:
 
     account_id: str | None = None
     trade_date: str | None = None
+    capital_preset_key: str | None = None
     # Si True, écrase ``trade_date`` au lancement par le snapshot_date le plus
     # récent <= trade_date présent dans ``stock_scores_history`` (avec
     # sélection classée). Permet de continuer un workflow démarré la veille même
@@ -563,6 +572,8 @@ class PipelineLaunchOptions:
     sentiment_start_utc: str | None = None
     sentiment_end_utc: str | None = None
     sentiment_symbols: str | None = None
+    # Optional batch-wide override. None preserves the interactive mixed scope.
+    sentiment_pipeline_symbol_source: str | None = None
     sentiment_news_provider: Literal["alpaca", "finnhub", "eodhd"] = "eodhd"
     sentiment_ticker_relevance_mode: Literal["provider_default", "strict", "scored"] = "provider_default"
     sentiment_min_relevance_score: float | None = None
@@ -951,6 +962,29 @@ PIPELINE_AUXILIARY_STEPS: tuple[PipelineStepDefinition, ...] = (
 
 def get_pipeline_steps() -> tuple[PipelineStepDefinition, ...]:
     return PIPELINE_STEPS
+
+
+def pipeline_page_default_options(*, trade_date: str) -> PipelineLaunchOptions:
+    """Fresh US page defaults, without Streamlit or broker/session-dependent state.
+
+    Only the scheduler's date is pinned: resuming an old selection snapshot is
+    inappropriate when rebuilding the current daily pipeline from step one.
+    """
+    from dataclasses import fields
+    known = {item.name for item in fields(PipelineLaunchOptions)}
+    preset = get_capital_preset_by_key(DEFAULT_PIPELINE_CAPITAL_PRESET_KEY)
+    if preset is None:
+        raise ValueError('Missing default Pipeline capital preset')
+    values = {}
+    for key, value in preset.to_session_state_values().items():
+        name = key.removeprefix('pipeline_')
+        if name in known and name.startswith(('screener_', 'selector_')):
+            if name == 'selector_require_above_ma200':
+                value = value in (True, 'auto', 'true')
+            values[name] = value
+    return replace(PipelineLaunchOptions(), **PAGE_SENTIMENT_DEFAULTS, **values,
+        trade_date=trade_date, capital_preset_key=DEFAULT_PIPELINE_CAPITAL_PRESET_KEY,
+        force_trade_date_to_latest_snapshot=False)
 
 
 def resolve_step_display_name(step: PipelineStepDefinition) -> str:
@@ -1685,9 +1719,12 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     news_import_start_date = _normalize_optional_date(options.news_import_start_date)
     news_import_end_date = _normalize_optional_date(options.news_import_end_date)
     news_import_symbols = _normalize_symbol_list(options.news_import_symbols)
+    requested_news_import_source = str(options.news_import_symbol_source or "").strip()
     news_import_symbol_source = (
-        options.news_import_symbol_source
-        if options.news_import_symbol_source in {
+        normalize_universe_file_source(requested_news_import_source)
+        if is_universe_file_source(requested_news_import_source)
+        else requested_news_import_source
+        if requested_news_import_source in {
             "tradable-universe",
             "stock_scores",
             "stock_scores_history",
@@ -1859,6 +1896,11 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return [sys.executable, "-u", "-m", "dataIntegrityEngine.data_sanitizer_daily"]
 
     if step_key == "stock_screener":
+        preset = get_capital_preset_by_key(str(options.capital_preset_key or "").strip())
+        if preset is None:
+            preset = resolve_capital_preset_for_equity(float(options.risk_account_equity))
+        if preset is None:
+            raise ValueError("Aucun preset capital ne correspond à l'equity du pipeline.")
         command = [
             sys.executable,
             "-u",
@@ -1878,6 +1920,10 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             str(options.screener_min_historical_range_score),
             "--first-pass-window-days",
             str(options.screener_first_pass_window_days),
+            "--capital-preset-key",
+            preset.key,
+            "--market-code",
+            "US_EQ",
         ]
         if screener_max_workers is not None:
             command.extend(["--max-workers", str(screener_max_workers)])
@@ -1940,7 +1986,9 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     if step_key == "publish_tradable_universe":
-        preset = resolve_capital_preset_for_equity(float(options.risk_account_equity))
+        preset = get_capital_preset_by_key(str(options.capital_preset_key or "").strip())
+        if preset is None:
+            preset = resolve_capital_preset_for_equity(float(options.risk_account_equity))
         if preset is None:
             raise ValueError("Aucun preset capital ne correspond à l'equity du pipeline.")
         command = [
@@ -1950,6 +1998,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             "common.publish_tradable_universe",
             "--capital-preset-key",
             preset.key,
+            "--market-code",
+            "US_EQ",
         ]
         if trade_date:
             command.extend(["--trade-date", trade_date])
@@ -2007,8 +2057,10 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     if step_key == "sentiment_pipeline":
+        pipeline_source = (normalize_symbol_source(options.sentiment_pipeline_symbol_source)
+                           if options.sentiment_pipeline_symbol_source else None)
         sentiment_scope_symbols = sentiment_symbols
-        sentiment_scope_symbol_source = None if sentiment_scope_symbols else "tradable-universe"
+        sentiment_scope_symbol_source = None if sentiment_scope_symbols else (pipeline_source or "tradable-universe")
         import_start_date = str(sentiment_start_utc)[:10] if sentiment_start_utc else None
         import_end_date = str(sentiment_end_utc)[:10] if sentiment_end_utc else None
         cmd0 = _build_import_news_command(
@@ -2016,7 +2068,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             import_start_date=import_start_date,
             import_end_date=import_end_date,
             import_symbols=None,
-            import_symbol_source="stock_scores_all",
+            import_symbol_source=pipeline_source or "stock_scores_all",
             import_max_symbols=None,
             resume_from_checkpoint=bool(options.news_import_resume_from_checkpoint),
             force_symbol_source=True,
@@ -2053,7 +2105,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
 
         return _build_chained_ps_commands(
             [
-                ("Import news brut (scope large stock_scores_all)", cmd0),
+                ("Import news brut (scope " + (pipeline_source or "stock_scores_all") + ")", cmd0),
                 ("Calcul relevance_score (scope univers tradable / override CSV)", cmd2),
                 ("Scoring FinBERT standard (scope univers tradable / override CSV)", cmd1),
                 ("Scoring FinBERT contextuel (scope univers tradable / override CSV)", cmd4),

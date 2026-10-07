@@ -1,0 +1,24 @@
+schema_version: 1
+description: "Contrat de sélection du smoke Tushare Sprint 6 ; aucune promotion canonique."
+fixed_symbols:
+  shanghai_main: 600000.SH
+  shenzhen_main: 000001.SZ
+  star: 688981.SH
+  chinext: 300750.SZ
+  beijing: 430047.BJ
+dynamic_cases:
+  historical_st:
+    source_endpoint: namechange
+    predicate: "name contains ST or *ST"
+  suspended:
+    source_endpoint: suspend_d
+    predicate: "most recent suspension row in requested interval"
+  delisted:
+    source_endpoint: stock_basic
+    predicate: "list_status=D"
+  recent_ipo:
+    source_endpoint: stock_basic
+    predicate: "latest non-null list_date with list_status=L"
+  corporate_action:
+    source_endpoint: adj_factor
+    predicate: "instrument with at least two distinct adjustment factors"

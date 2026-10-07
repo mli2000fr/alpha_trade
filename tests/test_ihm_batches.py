@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+import pandas as pd
 import pytest
 import yaml
 
@@ -50,6 +52,26 @@ def test_catalogue_exposes_research_notice(tmp_path: Path) -> None:
     }), encoding="utf-8")
     spec = batches.load_batch_specs(str(path))[0]
     assert spec.research_notice == "Yahoo pour la recherche."
+
+
+def test_retired_us_quality_batch_is_absent_from_ui_catalog():
+    assert "pit_data_quality_daily" not in {
+        spec.name for spec in batches.load_market_batch_specs("US_EQ")
+    }
+
+
+def test_retired_cn_staging_quality_is_absent_and_current_quality_is_preserved():
+    names = {spec.name for spec in batches.load_market_batch_specs("CN_A")}
+    assert "cn_staging_quality_daily" not in names
+    assert "cn_baostock_smoke" not in names
+    assert "cn_master_calendar_sync" not in names
+    assert "cn_daily_quality_17c" in names
+
+
+def test_retired_fr_quality_batch_is_absent_from_ui_catalog():
+    assert "fr_pit_quality_daily" not in {
+        spec.name for spec in batches.load_market_batch_specs("FR_EQ")
+    }
 
 
 def test_catalogue_exposes_quality_supervision_dependencies(tmp_path: Path) -> None:
@@ -138,6 +160,149 @@ def test_commands_use_force_for_immediate_runs() -> None:
     assert uninstall[-2:] == ["-TaskName", "AlphaTrade-DailyBarsSync"]
 
 
+def test_cn_dragon_research_uses_dedicated_launcher_and_file_ledger(tmp_path: Path) -> None:
+    spec = _spec(
+        "cn_dragon_tiger_before_open",
+        raw_config={"output_root": str(tmp_path)},
+        timezone="China Standard Time",
+    )
+    assert "cn_dragon_tiger_launcher_15d6.ps1" in " ".join(batches.build_install_command(spec))
+    assert "cn_dragon_tiger_launcher_15d6.ps1" in " ".join(batches.build_run_command(spec))
+    folder = tmp_path / "runs"
+    folder.mkdir()
+    (folder / "run-20260930T003000Z-unit.json").write_text(json.dumps({
+        "batch": spec.name, "status": "COMPLETED_RESEARCH_ONLY",
+        "started_at_utc": "2026-09-30T00:30:00+00:00",
+        "finished_at_utc": "2026-09-30T00:31:00+00:00",
+        "requested_count": 2, "received_count": 76,
+        "persisted_count": 76, "failed_count": 0, "warning_count": 0,
+    }), encoding="utf-8")
+    row = batches.latest_cn_dragon_research_run(spec)
+    assert row is not None and row["status"] == "COMPLETED"
+    assert row["persisted_count"] == 76
+
+
+def test_cn_research_commands_pass_cn_catalog_only_after_cutover(tmp_path: Path) -> None:
+    cn_path = str(tmp_path / "batch_cn.yaml")
+    for name in (
+        "cn_dragon_tiger_before_open", "cn_dragon_tiger_after_close",
+        "cn_oracle_prospective_daily", "cn_dragon_tiger_daily_match",
+    ):
+        legacy = _spec(name)
+        future = _spec(name, catalog_path=cn_path)
+        assert "-BatchConfigPath" not in batches.build_install_command(legacy)
+        assert "-BatchConfigPath" not in batches.build_run_command(legacy)
+        for command in (batches.build_install_command(future), batches.build_run_command(future)):
+            position = command.index("-BatchConfigPath")
+            assert command[position + 1] == cn_path
+
+
+def test_cn_catalog_merge_rejects_duplicate_research_name(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(batches, "PROJECT_ROOT", tmp_path)
+    def load(path):
+        if path is None:
+            return {"cn_oracle_prospective_daily": {"enabled": True, "status": "RESEARCH_ONLY"}}
+        return {"cn_oracle_prospective_daily": {"enabled": True, "status": "RESEARCH_ONLY"}}
+    monkeypatch.setattr(batches, "load_batch_config", load)
+    with pytest.raises(ValueError, match="Duplicate cn_oracle_prospective_daily"):
+        batches.load_batch_specs()
+
+
+def test_cn_catalog_merge_loads_migrated_research_section(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(batches, "PROJECT_ROOT", tmp_path)
+    def load(path):
+        if path is None:
+            return {"us_job": {"enabled": True}}
+        return {"cn_oracle_prospective_daily": {"enabled": True, "status": "RESEARCH_ONLY"}}
+    monkeypatch.setattr(batches, "load_batch_config", load)
+    specs = {item.name: item for item in batches.load_batch_specs()}
+    assert specs["us_job"].catalog_path.endswith("batch.yaml")
+    assert specs["cn_oracle_prospective_daily"].catalog_path.endswith("batch_cn.yaml")
+    assert "-BatchConfigPath" in batches.build_run_command(specs["cn_oracle_prospective_daily"])
+
+
+def test_cn_oracle_daily_uses_dedicated_launcher_and_file_ledger(tmp_path: Path) -> None:
+    spec = _spec("cn_oracle_prospective_daily", raw_config={"output_root": str(tmp_path)})
+    assert "cn_oracle_daily_launcher_15d9.ps1" in " ".join(batches.build_install_command(spec))
+    assert "cn_oracle_daily_launcher_15d9.ps1" in " ".join(batches.build_run_command(spec))
+    folder = tmp_path / "runs"
+    folder.mkdir()
+    (folder / "run-20260930T183000Z-unit.json").write_text(json.dumps({
+        "batch": spec.name, "status": "COMPLETED_RESEARCH_ONLY",
+        "started_at_utc": "2026-09-30T17:00:00+00:00",
+        "finished_at_utc": "2026-09-30T18:30:00+00:00",
+        "requested_count": 5224, "received_count": 5228,
+        "persisted_count": 1034, "failed_count": 0, "warning_count": 0,
+    }), encoding="utf-8")
+    row = batches.latest_cn_dragon_research_run(spec)
+    assert row is not None and row["status"] == "COMPLETED"
+    assert row["persisted_count"] == 1034
+
+
+def test_cn_dragon_daily_match_uses_research_launcher_and_file_ledger(tmp_path: Path) -> None:
+    spec = _spec("cn_dragon_tiger_daily_match", raw_config={"output_root": str(tmp_path)})
+    assert "cn_dragon_tiger_daily_launcher_15d10.ps1" in " ".join(batches.build_install_command(spec))
+    assert "cn_dragon_tiger_daily_launcher_15d10.ps1" in " ".join(batches.build_run_command(spec))
+    folder = tmp_path / "runs"
+    folder.mkdir()
+    (folder / "run-20261008T013000Z-unit.json").write_text(json.dumps({
+        "batch": spec.name, "status": "COMPLETED_RESEARCH_ONLY",
+        "started_at_utc": "2026-10-08T01:30:00+00:00",
+        "finished_at_utc": "2026-10-08T01:31:00+00:00",
+        "requested_count": 1034, "received_count": 1034,
+        "persisted_count": 3, "failed_count": 0, "warning_count": 0,
+    }), encoding="utf-8")
+    row = batches.latest_cn_dragon_research_run(spec)
+    assert row is not None and row["status"] == "COMPLETED"
+    assert row["persisted_count"] == 3
+
+
+def test_cn_backup_is_catalogued_from_separate_cn_yaml_and_uses_own_launcher() -> None:
+    specs = {item.name: item for item in batches.load_batch_specs()}
+    spec = specs["cn_db_backup"]
+    assert spec.enabled is True
+    assert spec.status == "ACTIVE"
+    assert spec.runnable is True
+    assert spec.raw_config["db"] == "alpha_trade_cn"
+    assert "batch_cn.yaml" in " ".join(batches.build_install_command(spec))
+    assert "cn_db_backup_launcher_17b.ps1" in " ".join(batches.build_run_command(spec))
+    assert not _spec("cn_db_backup", enabled=True, status="PENDING_RESTORE_PROOF").runnable
+
+
+def test_cn_daily_quality_is_catalogued_without_enabling_duplicate_collector() -> None:
+    specs = {item.name: item for item in batches.load_batch_specs()}
+    quality = specs["cn_daily_quality_17c"]
+    assert quality.enabled and quality.runnable and quality.status == "ACTIVE"
+    assert quality.timezone == "China Standard Time"
+    assert "batch_cn.yaml" in " ".join(batches.build_install_command(quality))
+    assert "cn_daily_quality_launcher_17c.ps1" in " ".join(batches.build_run_command(quality))
+    assert "cn_daily_market_data_sync" not in specs
+
+
+def test_cn_daily_quality_history_deduplicates_sessions_and_exposes_failed_gates(tmp_path: Path) -> None:
+    spec = _spec("cn_daily_quality_17c", raw_config={"output_root": str(tmp_path)})
+    folder = tmp_path / "runs"
+    folder.mkdir()
+    reports = [
+        ("run-20261008T153000Z-old.json", "2026-10-08", "FAILED", "old_gate"),
+        ("run-20261008T154000Z-new.json", "2026-10-08", "FAILED", "d9_owner_completed"),
+        ("run-20261009T154000Z.json", "2026-10-09", "COMPLETED", ""),
+    ]
+    for name, session, status, alert in reports:
+        (folder / name).write_text(json.dumps({
+            "batch": spec.name, "session": session, "status": status,
+            "failed_count": int(status == "FAILED"), "warning_count": 0,
+            "checks": ([{"name": alert, "status": "CRITICAL"}] if alert else
+                       [{"name": "chunks_complete", "status": "PASS"}]),
+        }), encoding="utf-8")
+    (folder / "run-20261010T154000Z-broken.json").write_text("{broken", encoding="utf-8")
+    rows = batches.read_cn_daily_quality_history(spec)
+    assert [row["session"] for row in rows] == ["2026-10-09", "2026-10-08"]
+    assert rows[0]["passed"] == 1
+    assert rows[1]["critical"] == 1 and rows[1]["alerts"] == "d9_owner_completed"
+    assert batches.read_cn_daily_quality_history(_spec("daily_bars_sync")) == ()
+
+
 def test_pending_batch_cannot_run() -> None:
     assert not _spec(enabled=False).runnable
     assert not _spec(status="PENDING_PROVIDER").runnable
@@ -177,6 +342,78 @@ def test_task_scheduler_json_is_normalized(monkeypatch) -> None:
     assert states["AlphaTrade-DailyBarsSync"]["state"] == "Ready"
     assert states["AlphaTrade-DailyBarsSync"]["last_run_time"] is None
     assert states["AlphaTrade-DailyBarsSync"]["next_run_time"] == "2026-09-14T11:00:00+02:00"
+
+
+def test_earnings_latest_audit_is_included_in_batch_page(monkeypatch) -> None:
+    from ihm.pages import batches as page
+
+    def fake_query(sql: str) -> pd.DataFrame:
+        assert "cleaning_audit_earnings_runs" in sql
+        return pd.DataFrame([{
+            "batch_name": "earnings_calendar_sync", "provider": "finnhub",
+            "status": "SUCCESS", "started_at": datetime(2026, 9, 17, 19, 27),
+            "finished_at": datetime(2026, 9, 17, 20, 6),
+            "requested_count": 1798, "persisted_count": 136,
+        }])
+
+    monkeypatch.setattr(page, "safe_query", fake_query)
+    monkeypatch.setattr(page, "get_last_query_error", lambda: None)
+    page._latest_collection_runs.clear()
+    runs, error = page._latest_collection_runs()
+    assert error is None
+    assert runs["earnings_calendar_sync"]["status"] == "SUCCESS"
+
+
+def test_batch_title_prefers_newer_business_success_to_stale_windows_failure() -> None:
+    from ihm.pages import batches as page
+
+    task = {
+        "state": "Ready", "last_run_time": "2026-09-16T23:00:00+02:00",
+        "last_result": 1073807364,
+    }
+    latest_success = {
+        "status": "SUCCESS", "started_at": datetime(2026, 9, 17, 19, 27),
+        "finished_at": datetime(2026, 9, 17, 20, 6),
+    }
+    assert not page._batch_title(["P1"], "earnings_calendar_sync", latest_success, task).startswith(":red[")
+    old_success = {**latest_success, "finished_at": datetime(2026, 9, 16, 19, 0)}
+    assert page._batch_title(["P1"], "earnings_calendar_sync", old_success, task).startswith(":red[")
+    latest_failure = {**latest_success, "status": "FAILED"}
+    assert page._batch_title(["P1"], "earnings_calendar_sync", latest_failure, task).startswith(":red[")
+    assert page._database_time_label(datetime(2026, 9, 17, 20, 6)) == (
+        "2026-09-17 22:06:00 Europe/Paris"
+    )
+
+
+@pytest.mark.parametrize("status", sorted(batches.RIGHTS_BLOCK_STATUSES))
+@pytest.mark.parametrize("last_status", [None, "SUCCESS", "FAILED"])
+def test_rights_block_title_remains_visible_regardless_of_last_run(status, last_status):
+    from ihm.pages import batches as page
+    row = {"status": last_status} if last_status else None
+    title = page._batch_title(["P1", "Désactivé"], "sample", row, catalog_status=status)
+    assert title.startswith("**⛔ ⚖️ DROITS / PRUDENCE")
+    assert ":red[" not in title
+    assert "sample" in title and "Désactivé" in title
+
+
+@pytest.mark.parametrize("status", ["ACTIVE", "PENDING_PROVIDER", "BLOCKED_FREE_NO_NBBO_SOURCE",
+                                  "BLOCKED_NO_FREE_OFFICIAL_FEED", "PENDING_QUALIFICATION"])
+def test_technical_or_provider_block_does_not_show_rights_badge(status):
+    from ihm.pages import batches as page
+    title = page._batch_title(["P1"], "sample", {"status": "SUCCESS"}, catalog_status=status)
+    assert "⚖️" not in title and "DROITS / PRUDENCE" not in title
+    assert not title.startswith(":red[")
+
+
+@pytest.mark.parametrize("market,expected", [
+    ("US_EQ", {"analyst_snapshot_collection", "fred_alfred_vintage_sync", "finra_short_volume_sync"}),
+    ("CN_A", {"cn_oracle_prospective_daily", "cn_dragon_tiger_after_close", "cn_dragon_tiger_before_open"}),
+    ("FR_EQ", {"fr_fundamentals_sync", "fr_consensus_snapshot"}),
+])
+def test_rights_badge_covers_all_eight_blocked_collectors_across_markets(market, expected):
+    actual = {s.name for s in batches.load_market_batch_specs(market)
+              if s.status in batches.RIGHTS_BLOCK_STATUSES}
+    assert actual == expected
 
 
 def test_uninstall_batch_executes_exact_non_shell_command(monkeypatch) -> None:
@@ -240,12 +477,16 @@ def test_batch_page_renders_without_external_dependencies(monkeypatch) -> None:
 
     monkeypatch.setattr(
         page,
-        "load_batch_specs",
-        lambda: (
+        "load_market_batch_specs",
+        lambda market: (
             _spec(),
             _spec(
                 "pending_provider", enabled=False, status="PENDING_PROVIDER",
                 activation_requirement="Choisir un fournisseur PIT.",
+            ),
+            _spec(
+                "rights_block", enabled=False, status="BLOCKED_YAHOO_AUTOMATED_ACCESS",
+                research_notice="Autorisation automatisation à confirmer.",
             ),
         ),
     )
@@ -263,9 +504,12 @@ def test_batch_page_renders_without_external_dependencies(monkeypatch) -> None:
     assert not at.exception
     assert any("Batchs planifiés" in title.value for title in at.title)
     metric_labels = {metric.label for metric in at.metric}
-    assert "Exécutables (batch.yaml)" in metric_labels
+    assert "Exécutables (catalogues)" in metric_labels
     assert "Installés mais dormants" in metric_labels
     assert any("Choisir un fournisseur PIT." in error.value for error in at.error)
+    assert any("⛔ ⚖️ DROITS / PRUDENCE" in expander.label and "rights_block" in expander.label
+               for expander in at.expander)
+    assert any("Ne pas relancer ni réactiver" in error.value for error in at.error)
     button_labels = {button.label for button in at.button}
     assert "♻️ Installer / réinstaller tous" in button_labels
     assert "🗑️ Désinstaller tous les batchs" in button_labels

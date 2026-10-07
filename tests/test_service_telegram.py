@@ -24,6 +24,19 @@ from service.telegram import (
 
 
 class TestTelegramClientSend:
+    def test_windows_verified_trust_retries_certifi_ssl_failure(self, monkeypatch):
+        import requests
+        from service import telegram
+
+        monkeypatch.setattr(telegram, "_windows_trust_available", lambda: True)
+        observed = []
+        monkeypatch.setattr(telegram, "_post_with_windows_trust",
+                            lambda url, payload, timeout: observed.append((url, payload, timeout)) or 200)
+        with patch("requests.post", side_effect=requests.exceptions.SSLError("certifi CA missing")):
+            client = TelegramClient(bot_token="tok", default_chat_id="-10042")
+            assert client.send("Hello") is True
+        assert observed[0][1]["text"] == "Hello"
+
     def test_send_success_builds_url_and_payload(self):
         """URL `/bot<token>/sendMessage` + payload chat_id/text/parse_mode."""
         with patch("requests.post") as mock_post:
@@ -78,8 +91,21 @@ class TestTelegramClientSend:
             mock_post.side_effect = Exception("Network error")
 
             client = TelegramClient(bot_token="tok", default_chat_id="-10042")
-            with pytest.raises(Exception, match="Network error"):
+            with pytest.raises(RuntimeError, match="details redacted"):
                 client.send("Hello", raise_on_error=True)
+
+    def test_network_failure_never_logs_or_raises_bot_token(self, caplog):
+        secret = "123456:FAKE_TOKEN_FOR_TEST"
+        with patch("requests.post") as mock_post:
+            mock_post.side_effect = Exception(
+                f"HTTPSConnectionPool(host=api.telegram.org, url=/bot{secret}/sendMessage)"
+            )
+            client = TelegramClient(bot_token=secret, default_chat_id="-10042")
+            assert client.send("Hello") is False
+            assert secret not in caplog.text
+            with pytest.raises(RuntimeError) as captured:
+                client.send("Hello", raise_on_error=True)
+            assert secret not in str(captured.value)
 
     def test_send_truncates_long_text(self):
         long_text = "a" * (MAX_TEXT_LENGTH + 100)

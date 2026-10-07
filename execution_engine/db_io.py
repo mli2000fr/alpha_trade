@@ -1697,15 +1697,19 @@ class ExecutionRepository:
         account_id: str | None = None,
         execution_profile: str | None = None,
         submission_window: str | None = None,
+        market_code: str | None = None,
     ) -> None:
+        from common.run_market_scope import resolve_run_market_scope
+
+        scope = resolve_run_market_scope(market_code, require_enabled=True)
         stmt = text("""
             INSERT INTO execution_runs
-                (exec_run_id, risk_run_id, trade_date, broker_mode, dry_run,
-                 status, started_at, total_targets, total_submitted, total_filled, account_id,
+                (exec_run_id, risk_run_id, market_code, calendar_id, base_currency, market_context_fingerprint,
+                 trade_date, broker_mode, dry_run, status, started_at, total_targets, total_submitted, total_filled, account_id,
                  execution_profile, submission_window)
             VALUES
-                (:exec_run_id, :risk_run_id, :trade_date, :broker_mode, :dry_run,
-                 'RUNNING', :started_at, :total_targets, 0, 0, :account_id,
+                (:exec_run_id, :risk_run_id, :market_code, :calendar_id, :base_currency, :market_context_fingerprint,
+                 :trade_date, :broker_mode, :dry_run, 'RUNNING', :started_at, :total_targets, 0, 0, :account_id,
                  :execution_profile, :submission_window)
         """)
         resolved_account_id = account_id or "default"
@@ -1713,6 +1717,10 @@ class ExecutionRepository:
             conn.execute(stmt, {
                 "exec_run_id": exec_run_id,
                 "risk_run_id": risk_run_id,
+                "market_code": scope.market_code,
+                "calendar_id": scope.calendar_id,
+                "base_currency": scope.base_currency,
+                "market_context_fingerprint": scope.market_context_fingerprint,
                 "trade_date": trade_date,
                 "broker_mode": broker_mode,
                 "dry_run": dry_run,

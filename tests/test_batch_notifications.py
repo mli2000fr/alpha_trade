@@ -41,6 +41,21 @@ def test_notification_metrics_are_read_from_normalized_summary() -> None:
     }
 
 
+def test_notification_keeps_summary_after_verbose_log_truncation(tmp_path) -> None:
+    log = tmp_path / "verbose_run.log"
+    summary = (
+        '::alpha_trade_run_summary::{"requested":1798,"received":1660,'
+        '"persisted":1660,"failed":0,"warnings":[]}'
+    )
+    log.write_text("\n".join(["stderr " + "x" * 100] * 500 + [summary]), encoding="utf-8")
+    visible = notifier._read_run_log(str(log), max_lines=300, max_chars=20000)
+    metrics = notifier._build_metrics(_args(status="OK"), visible)
+    assert metrics["requested"] == 1798
+    assert metrics["received"] == 1660
+    assert metrics["persisted"] == 1660
+    assert metrics["failed"] == 0
+
+
 def test_failed_notification_never_reports_zero_failures() -> None:
     metrics = notifier._build_metrics(
         _args(), "RuntimeError: source indisponible",

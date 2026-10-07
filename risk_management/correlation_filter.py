@@ -111,6 +111,8 @@ def filter_correlated_signed(
     return_matrix: pd.DataFrame,
     threshold: float,
     min_overlap: int,
+    *,
+    precompute: bool = False,
 ) -> tuple[list[EnrichedSelection], list[CorrelationRejection]]:
     """Filtre greedy avec corrélation de PnL signée (Sprint Maître 6).
 
@@ -143,6 +145,11 @@ def filter_correlated_signed(
     rejections: list[CorrelationRejection] = []
 
     matrix_cols = set(return_matrix.columns) if not return_matrix.empty else set()
+    # Opt-in for large research universes: same greedy ordering/overlap rules.
+    # Infinite returns retain the legacy path instead of silently becoming NaN.
+    cached = None
+    if precompute and not return_matrix.empty and not np.isinf(return_matrix.to_numpy(float)).any():
+        cached = return_matrix.corr(min_periods=max(min_overlap, 2))
 
     for candidate in candidates:
         sym = candidate.symbol
@@ -164,18 +171,15 @@ def filter_correlated_signed(
             k_is_short = k_side in ("short", "sell")
             k_sign = -1 if k_is_short else 1
 
-            pair = return_matrix[[sym, kept_sym]].dropna()
-            if len(pair) < min_overlap:
-                continue
-
-            # Rendements bruts
-            ret_c = pair[sym].to_numpy(float)
-            ret_k = pair[kept_sym].to_numpy(float)
-
-            # ── PnL signée ──────────────────────────────────────────
-            pnl_c = ret_c * c_sign
-            pnl_k = ret_k * k_sign
-            signed_corr = float(np.corrcoef(pnl_c, pnl_k)[0, 1]) if len(pnl_c) > 1 else 0.0
+            signed_corr = float(cached.at[sym, kept_sym])*c_sign*k_sign if cached is not None else None
+            # Near a threshold, keep the exact legacy numerical decision.
+            if signed_corr is None or abs(abs(signed_corr)-threshold) < 1e-10:
+                pair = return_matrix[[sym, kept_sym]].dropna()
+                if len(pair) < min_overlap:
+                    continue
+                pnl_c = pair[sym].to_numpy(float) * c_sign
+                pnl_k = pair[kept_sym].to_numpy(float) * k_sign
+                signed_corr = float(np.corrcoef(pnl_c, pnl_k)[0, 1]) if len(pnl_c) > 1 else 0.0
 
             if math.isnan(signed_corr):
                 continue

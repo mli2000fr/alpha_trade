@@ -1,0 +1,84 @@
+# Nouvelle campagne pré-enregistrée avant tout résultat directionnel de marge.
+experiment: cn_margin_directional_15b6_v1
+market_code: CN_A
+exchange_mic: XSHE
+historical_vintage_proven: false
+strict_ml_allowed: false
+globally_untouched_holdout: false
+upstream_hashes:
+  config/research_cn/sprint10b_oracle.yaml: 087851551f0a287d8b30d8eac40cb9148748f04c3f7e6e5cc6c30da027f963d9
+  config/research_cn/sprint15b4_szse_margin.yaml: d1913bc01ba3bc6ec48f51070b07b13d0c3409f851985254411b96a8d7a03637
+  modelFactory/cn_oracle_walk_forward.py: 8505ce143423620128e135f1cd013daae30303ea219b365d09ab7185d8010a31
+  artifacts/research/cn_margin_lending/sprint15b5_features_v3/report.json: 935593c056f485dccb420a5ea8003b008389e771287bb7fcac91aebe75a83b16
+  artifacts/research/cn_margin_lending/sprint15b5_features_v3/join_audit.json: 110f3d60e177eb214cb89c71a7ed5d669afaae5318c93e910070a57d2c00e1a2
+oracle_extension:
+  experiment: cn_oracle_margin_extension_15b6_v1
+  test_semesters: [2021H1, 2021H2]
+  horizon: 20
+  model: lightgbm
+  inherit_parameters_from: config/research_cn/sprint10b_oracle.yaml
+  # Même méthode que 10-B, pas d'optimisation selon les résultats directionnels.
+  minimum_train_sessions: 504
+  validation_window_sessions: 126
+  purge: label_available_before_next_partition_decision
+  maximum_train_rows: 600000
+  prediction_scope: all_CN_candidates_not_only_XSHE_or_margin_eligible
+directional:
+  history_start: '2021-01-01'
+  development_semesters: [2024H1, 2024H2]
+  historical_confirmation_semesters: [2025H1, 2025H2]
+  minimum_train_sessions_after_purge: 504
+  validation_window_sessions: 126
+  minimum_validation_sessions_after_label_purge: 100
+  purge_sessions: 20
+  embargo_sessions: 20
+  label_availability_comparison: strictly_before_next_partition_decision
+  oracle_pool: whole_CN_OOF_TOP20_then_XSHE_then_margin_asof
+  use_2022_2025_oracle: frozen_sprint10b_lightgbm_H20
+  tasks: [D1_VS_D10, D10_VS_REST]
+  primary_lag_sessions: 2
+  diagnostic_only_lag_sessions: [3, 5]
+  baseline: frozen_33_price_features_plus_log_amount_mean20_cny
+  missing_policy: complete_case_no_imputation
+  sector_policy: omit_undated_sector_in_all_arms
+  variants_from: config/research_cn/sprint15b4_szse_margin.yaml
+  normalization: train_only_standard_scaler_logistic_only
+  models: [logistic, lightgbm]
+  logistic:
+    C: 1.0
+    penalty: l2
+    solver: lbfgs
+    max_iter: 2000
+    class_weight: null
+  lightgbm_from: config/research_cn/sprint15b4_szse_margin.yaml
+  early_stopping: false
+  calibration: none
+  seed: 20260928
+  maximum_train_rows: 600000
+  sampling: deterministic_key_hash_train_only
+  threshold_optimization: forbidden
+evaluation:
+  min_dates_per_fold: 60
+  min_rows_per_task_per_fold: 500
+  min_symbols_per_task_per_fold: 20
+  require_both_classes_train_validation_test: true
+  min_delta_auc: 0.015
+  min_positive_folds: 3
+  total_required_folds: 4
+  both_confirmation_folds_positive: true
+  directional_top_pct: 0.20
+  min_precision_uplift: 0.02
+  # Veto relatif aux positifs du TOP20 de la baseline prix, pas à tous les D10.
+  max_removed_baseline_top20_true_positives_fraction: 0.30
+  equal_rows_all_variants_within_task_and_fold: true
+  bootstrap_unit: calendar_month
+  bootstrap_repetitions: 1000
+  familywise_alpha: 0.05
+  primary_hypotheses: 12
+  multiple_testing: bonferroni_two_sided_primary_lag_only
+  require_adjusted_delta_auc_ci_above_zero: true
+  pooled_summary: equal_date_weight
+  lag_sensitivity_policy: no_model_or_lag_selection_no_additional_GO_claim
+  pre_post_2024_07_11: descriptive_only
+  any_fold_gate_failure: BLOCKED_NOT_GO
+production_decision: NEVER_FROM_PROXY_ALONE

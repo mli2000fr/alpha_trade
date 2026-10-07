@@ -27,6 +27,8 @@ CONFIG_PATH_ENV = "ALPHA_TRADE_CONFIG_PATH"
 BATCH_CONFIG_PATH_ENV = "ALPHA_TRADE_BATCH_CONFIG_PATH"
 _DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
 _DEFAULT_BATCH_CONFIG_PATH = Path(__file__).resolve().parent.parent / "batch.yaml"
+MARKETS_CONFIG_DIR_ENV = "ALPHA_TRADE_MARKETS_CONFIG_DIR"
+_DEFAULT_MARKETS_CONFIG_DIR = Path(__file__).resolve().parent.parent / "config" / "markets"
 
 
 def resolve_config_path(path: str | os.PathLike[str] | None = None) -> Path:
@@ -84,6 +86,37 @@ def override_config_path(path: str | os.PathLike[str] | None) -> Iterator[None]:
         else:
             os.environ[CONFIG_PATH_ENV] = previous
 
+
+def resolve_markets_config_dir(
+    path: str | os.PathLike[str] | None = None,
+) -> Path:
+    """Résout le répertoire contenant les contextes de marché."""
+    if path is not None:
+        return Path(path)
+    env_path = os.getenv(MARKETS_CONFIG_DIR_ENV)
+    return Path(env_path) if env_path else _DEFAULT_MARKETS_CONFIG_DIR
+
+
+def load_market_registry(
+    path: str | os.PathLike[str] | None = None,
+):
+    """Charge un registre immuable depuis config/markets par défaut."""
+    from common.market_context import MarketRegistry
+
+    return MarketRegistry.from_directory(resolve_markets_config_dir(path))
+
+
+def resolve_market_context(
+    market_code: str | None = None,
+    *,
+    path: str | os.PathLike[str] | None = None,
+    require_enabled: bool = False,
+):
+    """Résout un contexte ; l'absence de code conserve le fallback US legacy."""
+    return load_market_registry(path).resolve(
+        market_code,
+        require_enabled=require_enabled,
+    )
 
 def _walk_substitute(node: Any, vault: Any) -> Any:
     if isinstance(node, dict):
@@ -176,10 +209,14 @@ def load_batch_config(
 __all__ = [
     "BATCH_CONFIG_PATH_ENV",
     "CONFIG_PATH_ENV",
+    "MARKETS_CONFIG_DIR_ENV",
     "load_batch_config",
+    "load_market_registry",
     "load_config",
     "override_config_path",
     "resolve_batch_config_path",
     "resolve_config_path",
+    "resolve_market_context",
+    "resolve_markets_config_dir",
 ]
 

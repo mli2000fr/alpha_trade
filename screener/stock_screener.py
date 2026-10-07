@@ -292,6 +292,7 @@ def run_screener_with_report(
     snapshot_date: Optional[date] = None,
     progress_callback: Callable[[dict[str, object]], None] | None = None,
     capital_preset_key: str = DEFAULT_CAPITAL_PRESET_KEY,
+    market_code: str = "US_EQ",
 ) -> tuple[pd.DataFrame, ScreenerRunReport]:
     """Exécute le screener et retourne les scores ainsi qu'un rapport détaillé.
 
@@ -417,6 +418,7 @@ def run_screener_with_report(
             config_fingerprint=hashlib.sha256(fingerprint_payload.encode("utf-8")).hexdigest()[:16],
             rows_expected=int(summary["targeted_symbols"]),
             data_quality_grade="degraded",
+            market_code=market_code,
         )
         summary["universe_run_id"] = universe_run_id
         summary["universe_persistence_status"] = "running"
@@ -596,6 +598,21 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Date logique du run (YYYY-MM-DD). Utilisée à la fois comme borne PIT des lectures (as_of_date) et comme snapshot_date pour l'archivage stock_scores_history. Défaut : aujourd'hui (mode live).",
     )
+    parser.add_argument(
+        "--capital-preset-key",
+        type=str,
+        default=DEFAULT_CAPITAL_PRESET_KEY,
+        help=(
+            "Preset capital associé au snapshot screener et au run d'univers source. "
+            f"Défaut : {DEFAULT_CAPITAL_PRESET_KEY}. Doit être identique à celui de Publish Tradable Universe."
+        ),
+    )
+    parser.add_argument(
+        "--market-code",
+        type=str,
+        default="US_EQ",
+        help="Marché explicite du run screener. Défaut : US_EQ.",
+    )
     return parser
 
 
@@ -629,6 +646,8 @@ def main() -> None:
         as_of_date=snapshot_date_override,
         snapshot_date=snapshot_date_override,
         progress_callback=lambda payload: _emit_run_summary(payload),
+        capital_preset_key=str(args.capital_preset_key).strip() or DEFAULT_CAPITAL_PRESET_KEY,
+        market_code=str(args.market_code).strip().upper() or "US_EQ",
     )
     payload = attach_schema_version(report.to_summary_dict())
     # Sprint S2 (A-017, A-023) — télémétrie ``data_source`` mixée et check

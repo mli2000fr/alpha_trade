@@ -1924,6 +1924,15 @@ def main(args: list[str] | None = None) -> None:
                 tradable_symbols=set(universe_symbols),
                 policy=_oracle_live_policy,
             )
+            from common.oracle_atr import resolve_oracle_atr_enabled, load_oracle_atr_by_date, filter_oracle_atr_percentiles
+            if resolve_oracle_atr_enabled(_cascade_live_config.get("oracle_atr_enabled", True)):
+                _live_atr_values = load_oracle_atr_by_date(
+                    getattr(repo, "engine", None), list(_oracle_percentiles), [str(trade_date)],
+                ).get(str(trade_date), {})
+                _oracle_percentiles, _live_atr_diag = filter_oracle_atr_percentiles(
+                    _oracle_percentiles, _live_atr_values,
+                    oracle_pool_pct=_oracle_live_pool, trade_date=str(trade_date),
+                )
             _oracle_cutoff = 1.0 - _oracle_live_pool
             _prediction_symbols = sorted(
                 symbol for symbol, percentile in _oracle_percentiles.items()

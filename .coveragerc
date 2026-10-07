@@ -1,0 +1,19 @@
+[run]
+# Le gate de qualité porte sur l'application maintenue. Les campagnes de
+# recherche ponctuelles produisent leurs propres rapports et ne font pas
+# partie du runtime livré.
+omit =
+    */modelFactory/dip_research/*
+    */modelFactory/directional_data_research/*
+    */modelFactory/*_pmath*.py
+    */modelFactory/*_poc.py
+    */modelFactory/*_audit.py
+    */modelFactory/*_ablation.py
+    */modelFactory/*_backfill.py
+    */modelFactory/*_e17.py
+    */modelFactory/*_e18.py
+    */modelFactory/*_e19.py
+    */modelFactory/*_e20.py
+    */modelFactory/*_e21.py
+    */modelFactory/*_e22.py
+    */modelFactory/*_e23.py

@@ -1,0 +1,36 @@
+{
+  "experiment": "E23_ORACLE_D10_ONE_VS_REST_TRAJECTORY",
+  "status": "PREREGISTERED_NOT_RUN",
+  "horizon": 20,
+  "pool_pct": 0.20,
+  "state_profile": "config/features/shared_direction/shared.json",
+  "price_lag_sessions": 10,
+  "price_source_columns": ["daily_return", "overnight_gap", "close_location_value", "volume_ratio_20", "rolling_mean_return_5", "relative_strength_5", "range_position_20"],
+  "sentiment_lag_sessions": 10,
+  "sentiment_daily_columns": ["sentiment_net_sum", "sentiment_net_mean", "sentiment_article_count", "sentiment_pos_ratio", "sentiment_neg_ratio", "sentiment_has_news"],
+  "variants": {
+    "E23_A_STATE_J": "état canonique disponible à J",
+    "E23_B_PRICE_PATH": "état J + trajectoire price/volume J-10 à J",
+    "E23_C_SENTIMENT_PATH": "état J + scores sentiment quotidiens J-10 à J",
+    "E23_D_PRICE_SENTIMENT": "état J + deux trajectoires"
+  },
+  "models": ["logistic", "lightgbm", "catboost"],
+  "primary_model": "catboost",
+  "walk_forward": {"min_train_dates": 504, "val_dates": 126, "test_dates": 126, "step_dates": 126, "max_splits": 12, "fold_selection": "latest"},
+  "selection_fractions": [0.05, 0.10, 0.20],
+  "absolute_gates": {
+    "auc_min": 0.53,
+    "average_precision_lift_vs_prevalence_min": 0.03,
+    "top10_precision_lift_vs_pool_min": 0.03,
+    "top10_return_lift_vs_pool_min": 0.0025,
+    "positive_top10_return_lift_fold_rate_min": 0.75,
+    "worst_semester_top10_return_lift_min": -0.0025
+  },
+  "incremental_gates_vs_state_j": {
+    "auc_delta_min": 0.01,
+    "average_precision_delta_min": 0.01,
+    "top10_precision_delta_min": 0.03,
+    "top10_return_delta_min": 0.0025,
+    "positive_top10_return_delta_fold_rate_min": 0.75
+  }
+}

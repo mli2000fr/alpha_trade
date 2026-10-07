@@ -25,6 +25,7 @@ from modelFactory.oracle.artifact_contract import (
 from ihm.components.db_controls import render_db_connection_form
 from ihm.components.metrics import format_duration_hhmmss
 from ihm.pages import run_page_if_standalone
+from ihm.services.cn_research_market import render_cn_research_view, select_market
 from ihm.services.backtesting_registry import (
     backtesting_log_available,
     build_backtesting_log_download_name,
@@ -632,8 +633,10 @@ def _format_run_inspect_label(run: dict[str, object], batch_comments: dict[str, 
 
 
 def _merge_runs() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-    active_runs = list_active_backtesting_runs()
-    merged: dict[str, dict[str, object]] = {str(run["run_id"]): run for run in load_backtesting_history()}
+    research_kinds = {"fr-research-replay", "cn-research-replay"}
+    active_runs = [r for r in list_active_backtesting_runs() if r.get("run_kind") not in research_kinds]
+    merged: dict[str, dict[str, object]] = {str(run["run_id"]): run for run in load_backtesting_history()
+                                          if run.get("run_kind") not in research_kinds}
     for run in active_runs:
         merged[str(run["run_id"])] = run
     all_runs = sorted(
@@ -6068,6 +6071,14 @@ def render() -> None:
         "Page opérateur dédiée au backtesting et aux diagnostics screener : configuration complète, lancement direct depuis l'IHM, "
         "suivi des runs et consultation des logs."
     )
+    market = select_market("backtest")
+    if market == "FR_EQ":
+        from ihm.services.fr_research_market import render_fr_research_view
+        render_fr_research_view("backtest")
+        return
+    if market == "CN_A":
+        render_cn_research_view("backtest")
+        return
 
     db_config_preview = get_runtime_db_config()
     source = db_config_preview.get("source")

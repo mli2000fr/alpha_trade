@@ -60,7 +60,7 @@ Market cap passe par le point d'entrée générique `modelFactory.fundamental_fe
 
 ## P3 — Entrée et événements
 
-1. oracle_opening_window_sync : Alpaca SIP historique 1 minute actif sur tout `config/univers_batch/univers_filtred_tradable.txt`, 04:00-10:30 ET. Deux passages à 10:50 et 18:15 New York alimentent une table canonique et des versions PIT append-only. Cela définit une entrée retardée, différente du next-open ; voir [`oracle_opening_window_alpaca.md`](oracle_opening_window_alpaca.md).
+1. oracle_opening_window_sync : Alpaca SIP historique 1 minute actif sur tout `config/univers_batch/univers_filtred_tradable.txt`, 04:00-10:30 ET. Le passage de 10:50 New York rejoue J−7/J et alimente une table canonique ainsi que des versions PIT append-only. E20-B utilise uniquement OHLC ; volume/trades/VWAP sont réservés à une ablation ultérieure. Cela définit une entrée retardée, différente du next-open ; voir [`oracle_opening_window_alpaca.md`](oracle_opening_window_alpaca.md).
 2. sec_corporate_events_normalize : sans nouveau téléchargement, extraire du RAW EDGAR les 8-K/6-K, item codes, exhibits, texte, montants et amendements.
 3. earnings_calendar existant : conserver. Ajouter une table append-only distincte si l'on veut étudier les révisions de calendrier.
 

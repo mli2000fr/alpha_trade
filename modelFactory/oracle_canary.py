@@ -25,6 +25,9 @@ from modelFactory.oracle.predict_history import predict_oracle_extreme_history
 from modelFactory.oracle.train import precision_recall_at_top_pct, roc_auc
 from modelFactory.oracle_universe_p0e_compare import daily_top_metrics
 from modelFactory.oracle_universe_p0i_evaluate import load_shadow, prepare_evaluation
+from modelFactory.oracle_prospective_journal import (
+    canary_input_preflight, write_prospective_score_journal,
+)
 
 DEFAULT_CONFIG = Path("config/oracle_canary.yaml")
 
@@ -251,6 +254,12 @@ def run_canary(config_path: Path, *, prediction_date: str | None = None,
     day = prediction_date or latest_benchmark_date(
         engine, str(config.get("benchmark_symbol", "SPY"))
     )
+    preflight = canary_input_preflight(
+        config, day, datetime.now(UTC), explicit_date=prediction_date is not None,
+    )
+    if preflight["status"] != "READY":
+        engine.dispose()
+        return preflight
     canary_root = Path(config["artifact_root"]) / batch_id
     state_path = canary_root / "index.json"
     lock_path = canary_root / ".lock"
@@ -270,6 +279,7 @@ def run_canary(config_path: Path, *, prediction_date: str | None = None,
             return {"status": "already_completed", "prediction_date": day,
                     "artifact_dir": existing.get("artifact_dir"),
                     "matured_evaluated": evaluated}
+        run_started_at = datetime.now(UTC)
         outcome = predict_oracle_extreme_history(
             engine, batch_id, day, day, horizon=int(config.get("horizon", 20)),
             symbols=symbols, shadow_mode=True,
@@ -285,11 +295,17 @@ def run_canary(config_path: Path, *, prediction_date: str | None = None,
         monitor = monitor_distribution(
             current, baseline, model_id=batch_id, champion_age_days=champion_age
         )
+        journal = write_prospective_score_journal(
+            current, artifact_dir=artifact_dir, batch_id=batch_id,
+            prediction_date=day, run_started_at=run_started_at,
+            observed_at=datetime.now(UTC),
+        )
         record = {
             "status": "completed", "prediction_date": day,
             "completed_at": datetime.now(UTC).isoformat(),
             "artifact_dir": str(artifact_dir), "prediction": outcome,
-            "immediate_monitor": monitor, "trading_eligible": False,
+            "immediate_monitor": monitor, "prospective_score_journal": journal,
+            "trading_eligible": False,
             "research_only": True,
         }
         state["runs"][day] = record

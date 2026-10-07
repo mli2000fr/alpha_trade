@@ -2,6 +2,12 @@ CREATE TABLE IF NOT EXISTS alpha_trade.tradable_universe_runs (
     universe_run_id VARCHAR(64) PRIMARY KEY,
     snapshot_date DATE NOT NULL,
     capital_preset_key VARCHAR(64) NOT NULL,
+    market_code VARCHAR(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'US_EQ',
+    calendar_id VARCHAR(32) NOT NULL DEFAULT 'NYSE',
+    base_currency CHAR(3) NOT NULL DEFAULT 'USD',
+    sector_taxonomy VARCHAR(32) NOT NULL DEFAULT 'GICS',
+    market_context_fingerprint CHAR(64) NOT NULL,
+    universe_fingerprint CHAR(64) NOT NULL,
     config_fingerprint VARCHAR(64) NOT NULL,
     status VARCHAR(16) NOT NULL,
     is_canonical BOOLEAN NOT NULL DEFAULT FALSE,
@@ -17,7 +23,9 @@ CREATE TABLE IF NOT EXISTS alpha_trade.tradable_universe_runs (
         snapshot_date,
         status,
         is_canonical
-    )
+        ),
+    INDEX idx_tur_market_status_started (market_code, status, started_at),
+    CONSTRAINT fk_tur_market FOREIGN KEY (market_code) REFERENCES alpha_trade.markets (market_code)
 );
 
 CREATE TABLE IF NOT EXISTS alpha_trade.tradable_universe_history (
