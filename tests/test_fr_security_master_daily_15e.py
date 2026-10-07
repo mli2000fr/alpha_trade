@@ -64,3 +64,37 @@ def test_missing_publication_never_advances_checkpoint(tmp_path,monkeypatch):
         master.collect({},result,root=tmp_path/'out',identities=identities,base_path=base,today=date(2026,10,3))
     assert result['missing_publication_days']==['2026-10-02']
     assert not (tmp_path/'out/checkpoint.json').exists()
+
+
+def test_reference_availability_is_after_download_and_replay(tmp_path, monkeypatch):
+    import gzip
+    from datetime import UTC, datetime
+    base = tmp_path / 'base.json'
+    base.write_text(json.dumps({**prior(), 'complete': True, 'publication_continuity_confirmed': False}))
+    identities = tmp_path / 'ids.gz'
+    with gzip.open(identities, 'wt') as stream:
+        stream.write(json.dumps(dict(isin='FR0000000001', identity_state='VERIFIED_RESEARCH'))+'\n')
+    class Clock:
+        current = datetime(2026, 10, 3, 6, tzinfo=UTC)
+        @classmethod
+        def now(cls, tz=None):
+            return cls.current
+    monkeypatch.setattr(master, 'datetime', Clock)
+    monkeypatch.setattr(master, '_tls_context', lambda: None)
+    monkeypatch.setattr(master, 'delta_index', lambda *args: [item()])
+    def downloaded(*args):
+        Clock.current = datetime(2026, 10, 3, 6, 10, tzinfo=UTC)
+        return {'sha256': 'download'}
+    monkeypatch.setattr(master, '_download', downloaded)
+    monkeypatch.setattr(master, '_check', lambda *args: {'sha256': 'download'})
+    def records(*args):
+        Clock.current = datetime(2026, 10, 3, 6, 12, tzinfo=UTC)
+        return iter([])
+    monkeypatch.setattr(master, 'archive_records', records)
+    result = dict(received_count=0, persisted_count=0, failed_count=0, warning_count=0)
+    root = tmp_path / 'out'
+    master.collect({}, result, root=root, identities=identities, base_path=base, today=date(2026,10,3))
+    state = json.loads((root/'checkpoint.json').read_text())
+    assert state['last_observed_at'] == '2026-10-03T06:12:00+00:00'
+    assert result['reference_available_at'] == state['last_observed_at']
+    assert not state['historical_continuity_confirmed']

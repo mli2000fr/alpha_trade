@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "market_code": "FR_EQ",
+  "calendar": "XPAR",
+  "decision_date": "2026-10-08",
+  "bootstrap_dir": "artifacts/fr/research/data_readiness_16c/bootstrap-remediation-20261007-v1",
+  "evidence_dir": "artifacts/fr/research/evidence_16e/issuer-20261006-v1",
+  "serving_allowed": false,
+  "orders_allowed": false,
+  "sql_writes": false,
+  "rules": [
+    "Distinct October 8 opening; never rewrite October 7 evidence or cutoff",
+    "Only actual observations available before 09:00 Europe/Paris",
+    "Current daily reference must cover the expected previous session",
+    "Historical ESMA continuity reserves remain blocking",
+    "21 XPAR sessions required; no missing bar imputation",
+    "Vendor action responses are not qualified corporate action adjustments",
+    "No model inference, refit, SQL writes, serving or orders"
+  ]
+}

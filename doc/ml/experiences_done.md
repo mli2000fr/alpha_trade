@@ -1,13 +1,58 @@
 # Registre des expériences ML réalisées
 
-## US — Oracle H20 : mesure appariée des correctifs numériques EN COURS
+## US — TOP10 Oracle H20 corrigé : backtests annuels 2020–2026 en cours
+
+7 octobre 2026 : lancement de sept années × quatre variantes de sortie,
+LONG-only, SL initial fixe 7 %, portefeuille partagé, coûts/risques/régimes.
+Capital remis à 4 000 USD chaque année ; 2026 limitée au 3 septembre.
+Classement par score prédit exclusivement, sans filtre positif/futur ni ATR.
+1 677 séances couvertes, dix candidats chaque jour ; second semestre 2024
+complété avec les features archivées et le dernier modèle déjà figé, sans
+réentraînement. Contrôle court réussi sur les sept années ; ces contrôles de
+trois séances ne sont pas des rendements annuels. 53 tests ciblés passent
+(`--no-cov`, pas une validation de toute la suite). Résultats économiques
+complets à lire uniquement après statut terminé de chaque variante ; toute
+anomalie de prix/volume reste bloquante et explicite. Secteurs actuels NON-PIT
+acceptés, univers reconstruit et macro non certifiée par vintage restent des
+limites. Pas d'écriture SQL ni de changement de serving/batch existant.
+Voir [protocole, suivi et limites](oracle_top10_annual_2020_2026.md).
+
+## US — TOP10 Oracle H20 corrigé : audit terminé, pas de gain stable
+
+7 octobre 2026 : vérification offline des **dix premiers titres**, classés par
+score, pas des 10 % ni des dix meilleures amplitudes futures. Archives appariées
+OOF 2018-07-05–2024-07-09 (1 512 séances), externe figée 2025–2026-09-03
+(419 sélections quotidiennes, 418 évaluables). Capture Oracle TOP10 avant →
+corrigée : 61,17 → 59,85 % en OOF, 55,74 → 55,26 % en externe. Amplitude
+moyenne absolue corrigée 20,91 % / 17,51 %, pas un gain de portefeuille.
+Les dix premiers corrigés sont déjà tous dans Oracle TOP20 ∩ ATR TOP20 :
+les deux politiques choisissent exactement les mêmes titres sur chaque date.
+En externe, 53,44 % de hausses, 46,41 % de baisses ; aucune direction démontrée.
+La capture recule historiquement (intervalle descriptif de différence excluant
+zéro) ; avantage externe des correctifs non démontré. Concentration, ex æquo,
+prix extrêmes et dix labels absents du 3 septembre explicités. 27 tests ciblés
+passent, sans certification de la suite complète. Aucun entraînement, SQL,
+changement de serving ni PnL. Conserver les calculs justes.
+Voir [audit détaillé, rangs, résultats annuels et limites](oracle_h20_corrected_top10_audit.md).
+
+## US — Oracle H20 : effet des correctifs mesuré, pas de gain net démontré
 
 7 octobre 2026, GO : deux bras réentraînés sur les mêmes 1 790 titres et caches
 2016–2024, anciennes features archivées contre features corrigées. 173 colonnes,
 12 folds de référence, 24 entraînements, mêmes paramètres Oracle et purge H20.
-Comparaison OOF Oracle TOP20, ATR20 TOP20 et intersection ; aucune écriture SQL,
-aucun remplacement du serving ni calcul de PnL. 36 tests ciblés passent.
-Confirmation 2025–2026 séparée encore à préparer après le rapport historique.
+24 entraînements terminés, 1 512 dates OOF du 2018-07-05 au 2024-07-09 :
+capture Oracle TOP20 40,379 % → 40,435 % (+0,056 point) ; intersection ATR
+42,186 % → 42,115 % (−0,071 point). Intervalles descriptifs par blocs incluant
+zéro ; aucun gain net de capture démontré. ATR témoin inchangé à 38,601 %.
+AUC moyenne des folds 0,708763 → 0,711081, 9/12 améliorés, sans avantage net
+du TOP20. Aucune écriture SQL, aucun remplacement du serving ni PnL.
+239 tests ciblés passent (dont 40 sur les protocoles/audit/corrections).
+Confirmation figée 2025-01-01–2026-09-03 terminée (419 séances), chaque modèle
+recevant son propre calcul numérique ; commit legacy et empreintes archivés.
+Capture externe Oracle 39,825 % → 39,748 % (−0,077 point), intersection
+41,132 % → 41,240 % (+0,108 point). Intervalles descriptifs incluant zéro,
+amplitude moyenne non améliorée. Conserver les calculs justes, sans promotion
+automatique ni promesse d'alpha. 2026 déjà examinée, pas de holdout vierge.
 Voir [protocole, limites et suivi](oracle_h20_numeric_effect.md).
 
 ## US — Correction facteurs CAPM et ratios EXPERT : code et audit comparatif VALIDÉS

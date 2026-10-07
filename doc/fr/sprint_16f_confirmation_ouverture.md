@@ -1,7 +1,10 @@
 # Sprint 16-F — Confirmation verrouillée sur une ouverture réelle
 
-État au 6 octobre 2026 au soir : **préparation exécutée ; confirmation en
-attente de l'ouverture réelle du 7 octobre**. Le shadow reste interdit.
+État au 7 octobre 2026 : **confirmation exécutée à 14 h 57, coupure maintenue
+à 9 h Paris ; 242 features sur 330, zéro candidat, shadow bloqué**.
+La [remédiation prospective](sprint_16f_remediation.md) est implémentée ;
+rattrapage et confirmation du 8 octobre restent à qualifier. L'inventaire du
+6 octobre ci-dessous est conservé comme historique.
 Ce travail poursuit [16-E](sprint_16e_preuves_et_decision_reelle.md).
 
 ## 1. Hypothèse et contrat figés
@@ -84,7 +87,7 @@ Les collectes existantes doivent réellement tourner pour alimenter le contrôle
 
 ## 4. Réserve structurelle du référentiel
 
-Le batch `fr_security_master_sync` est configuré à **20 h Paris** et recherche
+À la décision initiale, le batch `fr_security_master_sync` était configuré à **20 h Paris** et recherchait
 les publications jusqu'à **J−1**. Son passage du 6 octobre couvre donc au mieux
 le 5 octobre. À l'ouverture du 7 octobre, les features attendent le 6 octobre :
 une séance de retard peut subsister **même si le batch a réussi**.
@@ -124,7 +127,7 @@ d'activer le serving ; préparation qui n'est pas une décision réalisée.
 Campagne ciblée complète : **81 tests passants** après adaptation du test de
 chemin pour Windows. Aucun défaut applicatif n'a été masqué.
 
-16-F n'est pas déclaré confirmé avant l'ouverture du 7 octobre et la lecture
-du rapport réel. Il n'est pas nécessaire d'attendre pour livrer le protocole,
-les outils et leurs tests ; il est nécessaire d'attendre pour affirmer que
-les données ont effectivement été disponibles à cette prochaine décision.
+La confirmation du 7 octobre a été lue : `DECISION_AUDITED_SHADOW_BLOCKED`.
+La remédiation ne change pas ce résultat passé. Le prochain protocole cible
+le 8 octobre à 9 h Paris ; aucune confirmation de cette ouverture future
+ni clôture du Sprint 16 complet n'est déclarée.

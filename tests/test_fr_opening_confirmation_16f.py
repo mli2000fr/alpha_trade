@@ -54,3 +54,25 @@ def test_preparation_is_not_a_decision_audit(tmp_path, monkeypatch):
     assert result["status"] == "WAIT_ACTUAL_OPENING"
     assert result["last_session_bars_observed_now"] == 0
     assert "decision_at" not in result and not result["serving_allowed"]
+
+
+def test_confirmation_at_15h_keeps_opening_decision_contract(monkeypatch):
+    def fake(day, bootstrap, archive, **kwargs):
+        assert str(day) == '2026-10-07'
+        assert kwargs['now'] == datetime(2026, 10, 7, 13, tzinfo=UTC)
+        return {'decision_at': '2026-10-07T07:00:00+00:00', 'serving_allowed': False}
+    monkeypatch.setattr(module, 'audit', fake)
+    result = module.execute(protocol(), 'confirm', now=datetime(2026,10,7,13,tzinfo=UTC), calendar=calendar())
+    assert result['decision_at'] == '2026-10-07T07:00:00+00:00'
+
+
+def test_distinct_remediation_protocol_does_not_change_original():
+    import json
+    original = json.loads(module.PROTOCOL.read_text())
+    new = json.loads((module.PROTOCOL.parent/'opening_confirmation_16f_remediation.json').read_text())
+    module.validate(original)
+    module.validate(new)
+    assert original['decision_date'] == '2026-10-07'
+    assert new['decision_date'] == '2026-10-08'
+    assert new['bootstrap_dir'] != original['bootstrap_dir']
+    assert not new['serving_allowed'] and not new['sql_writes']

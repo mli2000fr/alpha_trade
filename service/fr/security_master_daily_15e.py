@@ -163,9 +163,16 @@ def collect(cfg,result,*,root,identities,base_path,dry_run=False,today=None):
         proof={**proof,**_check(path,item['md5'])}
         paths.append((item,path,proof))
         result['received_count']+=1
-    state, new_versions=advance(prior,paths,end=end,observed_at=stamp)
+    # An index receipt is not the availability of the complete downloaded,
+    # checked and parsed reference. Never date it at the start of a long fetch.
+    payloads_received_at=datetime.now(UTC).isoformat()
+    state, new_versions=advance(prior,paths,end=end,observed_at=payloads_received_at)
+    if str(end)!=prior['end'] or len(state['files'])!=len(prior['files']):
+        state['last_observed_at']=datetime.now(UTC).isoformat()
+        state['observation_rule']='FULL_REFERENCE_AFTER_DOWNLOAD_CHECK_AND_REPLAY'
     result.update(persisted_count=new_versions,checkpoint_end=str(end),
-                  new_anomalies=len(state['anomalies'])-len(prior['anomalies']))
+                  new_anomalies=len(state['anomalies'])-len(prior['anomalies']),
+                  reference_available_at=state.get('last_observed_at'))
     if result['new_anomalies']:
         result['warning_count']+=result['new_anomalies']
     # Version report first; checkpoint replacement last. Crash -> harmless re-read.

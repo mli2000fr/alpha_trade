@@ -302,6 +302,20 @@ DEFAULT_EXEC_PROTECTION_TRANSITION_POLL_INTERVAL_SECONDS = 5.0
 DEFAULT_EXEC_DEBUG = False
 # Selector — alpha scanner stage 2
 DEFAULT_SELECTOR_REQUIRE_ABOVE_MA200 = True
+
+# Product defaults shared with the fresh Pipeline page (not its transient session).
+DEFAULT_PIPELINE_CAPITAL_PRESET_KEY = "capital_2001_5000"
+PAGE_SENTIMENT_DEFAULTS = {
+    "sentiment_scoring_mode": "standard_and_contextual",
+    "sentiment_enable_contextual_scoring": True,
+    "sentiment_min_relevance_score": 0.0,
+    "sentiment_pending_limit": RECOMMENDED_EVENT_SENTIMENT_PENDING_LIMIT,
+    "sentiment_pending_max_batches_per_run": 0,
+    "sentiment_finbert_batch_size": RECOMMENDED_EVENT_SENTIMENT_FINBERT_BATCH_SIZE,
+    "sentiment_feature_flush_every_n_batches": DEFAULT_EVENT_SENTIMENT_FEATURE_FLUSH_EVERY_N_BATCHES,
+    "sentiment_contextual_min_relevance": 0.3,
+    "sentiment_contextual_max_pairs": 50000,
+}
 # Corporate actions sync — fenêtre custom + batching (cf. audit_ihm_pipeline_options)
 DEFAULT_CA_SKIP_EXISTING = False
 DEFAULT_CA_USE_CUSTOM_WINDOW = False
@@ -946,6 +960,29 @@ PIPELINE_AUXILIARY_STEPS: tuple[PipelineStepDefinition, ...] = (
 
 def get_pipeline_steps() -> tuple[PipelineStepDefinition, ...]:
     return PIPELINE_STEPS
+
+
+def pipeline_page_default_options(*, trade_date: str) -> PipelineLaunchOptions:
+    """Fresh US page defaults, without Streamlit or broker/session-dependent state.
+
+    Only the scheduler's date is pinned: resuming an old selection snapshot is
+    inappropriate when rebuilding the current daily pipeline from step one.
+    """
+    from dataclasses import fields
+    known = {item.name for item in fields(PipelineLaunchOptions)}
+    preset = get_capital_preset_by_key(DEFAULT_PIPELINE_CAPITAL_PRESET_KEY)
+    if preset is None:
+        raise ValueError('Missing default Pipeline capital preset')
+    values = {}
+    for key, value in preset.to_session_state_values().items():
+        name = key.removeprefix('pipeline_')
+        if name in known and name.startswith(('screener_', 'selector_')):
+            if name == 'selector_require_above_ma200':
+                value = value in (True, 'auto', 'true')
+            values[name] = value
+    return replace(PipelineLaunchOptions(), **PAGE_SENTIMENT_DEFAULTS, **values,
+        trade_date=trade_date, capital_preset_key=DEFAULT_PIPELINE_CAPITAL_PRESET_KEY,
+        force_trade_date_to_latest_snapshot=False)
 
 
 def resolve_step_display_name(step: PipelineStepDefinition) -> str:

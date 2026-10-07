@@ -41,6 +41,10 @@ from typing import Any, SupportsFloat, SupportsIndex, SupportsInt, cast
 import streamlit as st
 
 from common.universe_files import default_universe_file_source_or
+from ihm.services.pipeline_runner import (
+    PAGE_SENTIMENT_DEFAULTS,
+    DEFAULT_PIPELINE_CAPITAL_PRESET_KEY,
+)
 from modelFactory.feature_profiles import (
     DIRECTIONAL_TARGET_DOWN_THRESHOLD,
     DIRECTIONAL_TARGET_HORIZON,
@@ -336,7 +340,6 @@ PIPELINE_ALLOW_FRACTIONAL_SHARES_KEY = "pipeline_allow_fractional_shares"
 CAPITAL_PRESET_KEY = "pipeline_capital_preset"
 CAPITAL_PRESET_APPLIED_SIGNATURE_KEY = "pipeline_capital_preset_applied_signature"
 CAPITAL_PRESET_CUSTOM = "custom"
-DEFAULT_PIPELINE_CAPITAL_PRESET_KEY = "capital_2001_5000"
 DETECTED_CAPITAL_PRESET_KEY = "pipeline_detected_capital_preset"
 DETECTED_CAPITAL_PRESET_ACCOUNT_KEY = "pipeline_detected_capital_preset_account_id"
 ML_TRAIN_PRESET_KEY = "pipeline_ml_train_preset"
@@ -785,6 +788,8 @@ def _render_event_sentiment_block() -> dict[str, Any]:
     Retourne les valeurs nettoyées (``start_utc``, ``end_utc``, ``symbols``)
     qui seront passées à :class:`PipelineLaunchOptions`.
     """
+    for name, value in PAGE_SENTIMENT_DEFAULTS.items():
+        st.session_state.setdefault(f"pipeline_{name}", value)
     st.markdown("#### Paramètres Étape 7 — Event Sentiment")
     st.caption(
         "Ces réglages alimentent désormais l'étape 7 canonique à scope mixte : import news large sur "
@@ -913,8 +918,8 @@ def _render_event_sentiment_block() -> dict[str, Any]:
         )
     )
 
-    sentiment_scoring_mode = "standard_and_contextual"
-    sentiment_enable_contextual_scoring = True
+    sentiment_scoring_mode = PAGE_SENTIMENT_DEFAULTS['sentiment_scoring_mode']
+    sentiment_enable_contextual_scoring = PAGE_SENTIMENT_DEFAULTS['sentiment_enable_contextual_scoring']
     st.session_state["pipeline_sentiment_scoring_mode"] = sentiment_scoring_mode
     st.session_state["pipeline_sentiment_enable_contextual_scoring"] = sentiment_enable_contextual_scoring
     st.info(

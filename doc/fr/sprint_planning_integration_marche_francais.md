@@ -516,13 +516,19 @@ refus des ouvertures futures et des preuves reçues après décision. Bilan du s
 242/233/0 confirmé ; ouverture du 6 octobre 0 candidat. Confirmation à une
 nouvelle ouverture encore à réaliser ; aucun GO shadow et aucune écriture SQL.
 
-**16-F préparé, confirmation non réalisée :** voir
+**16-F confirmé, shadow bloqué ; remédiation en cours :** voir
 [confirmation sur ouverture réelle](sprint_16f_confirmation_ouverture.md).
 Protocole gelé pour le 7 octobre à 9 h Paris et outil prepare/confirm livré.
 Inventaire du 6 octobre au soir : pas encore de barres/actions du 6 octobre
 dans les collectes quotidiennes avant leurs horaires 22 h/23 h ; master au
 5 octobre. Le retard structurel J−1 du master reste explicitement bloquant
-pour l'assemblage strict. Pas de nouvelle tâche, pas d'activation shadow.
+pour l'assemblage strict. Confirmation du 7 octobre exécutée à 14 h 57 avec
+coupure 9 h : 242 features sur 330, zéro candidat. La
+[remédiation 16-F](sprint_16f_remediation.md) sécurise les écritures Windows,
+date ESMA après réception/rejeu, déplace sa collecte à 7 h Paris et élargit les
+actions à 31 jours. Rattrapage isolé en cours ; protocole distinct pour le
+8 octobre. Lacunes historiques et qualifications indépendantes non levées.
+Pas de nouvelle tâche ni d'activation shadow ; Sprint 16 complet non clos.
 
 **Objectif.** Prouver que le modèle retenu peut servir sans accès au futur et sans ordre réel.
 

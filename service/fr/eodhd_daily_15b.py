@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import os
+import time
 from pathlib import Path
 import uuid
 from datetime import UTC, date, datetime, timedelta
@@ -22,9 +23,23 @@ def atomic(path: Path, payload: dict):
     temp = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
     try:
         temp.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str), encoding='utf-8')
-        temp.replace(path)
+        # Windows readers/antivirus may briefly deny atomic replacement. Never
+        # delete the destination or fall back to an in-place partial JSON write.
+        for attempt in range(10):
+            try:
+                temp.replace(path)
+                break
+            except OSError as exc:
+                transient = isinstance(exc, PermissionError) or getattr(exc, 'winerror', None) in (5, 32, 33)
+                if not transient or attempt == 9:
+                    raise
+                time.sleep(min(.05 * 2 ** attempt, .5))
     finally:
-        temp.unlink(missing_ok=True)
+        try:
+            temp.unlink(missing_ok=True)
+        except PermissionError:
+            # Preserve the original replacement error rather than masking it.
+            pass
 
 
 def symbols_from_identities(path: Path) -> list[str]:

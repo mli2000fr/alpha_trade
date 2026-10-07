@@ -9,6 +9,12 @@ Service : `service/fr/security_master_daily_15e.py`, raccordé au runner FR
 `operational_batch_15a` et au launcher commun (logs, email/Telegram).
 Configuration exclusivement `batch_fr.yaml/fr_security_master_sync`.
 
+Mise à jour du 7 octobre : [remédiation 16-F](sprint_16f_remediation.md).
+Passage désormais à **7 h Paris**, toujours jusqu'à J−1, pour tenter de couvrir
+la dernière séance avant ouverture. Disponibilité du référentiel complet datée
+après téléchargement, contrôles et rejeu ; aucune réparation rétroactive de
+la continuité historique ni activation shadow.
+
 La base initiale est `history_2026_observed_v2.json`, terminée le 01/10/2026.
 Seuls les **330 ISIN qualifiés S6C**, avec XPAR/ALXP/XMLI, sont suivis. Ils
 incluent des titres historiquement radiés ; ce n'est pas une découverte de

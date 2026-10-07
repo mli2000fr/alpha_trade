@@ -84,12 +84,18 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--phase", choices=("prepare", "confirm"), required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--protocol", type=Path, default=PROTOCOL,
+                        help="Versioned FR protocol; default remains the original October 7 decision")
     args = parser.parse_args()
     output = args.output_dir.resolve()
     allowed = (ROOT / "artifacts/fr/research/opening_confirmation_16f").resolve()
     if output == allowed or not output.is_relative_to(allowed) or output.exists():
         parser.error("New FR 16-F output directory required")
-    protocol = json.loads(PROTOCOL.read_text(encoding="utf-8"))
+    protocol_path = args.protocol.resolve()
+    protocol_root = (ROOT / "config/research_fr").resolve()
+    if not protocol_path.is_relative_to(protocol_root) or protocol_path.suffix != ".json":
+        parser.error("Protocol must be a JSON file inside config/research_fr")
+    protocol = json.loads(protocol_path.read_text(encoding="utf-8"))
     result = execute(protocol, args.phase)
     output.mkdir(parents=True, exist_ok=False)
     (output / "report.json").write_text(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")

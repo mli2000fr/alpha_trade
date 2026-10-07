@@ -81,3 +81,52 @@ def test_lock_and_bad_universe(tmp_path,monkeypatch):
         s.write(json.dumps(dict(provider_symbol='AAPL.US',identity_state='VERIFIED_RESEARCH',provider_status_current='active')))
     with pytest.raises(ValueError,match='Paris'):
         execute(cfg,root,ids,dry_run=True)
+
+
+def test_atomic_retries_transient_windows_lock_without_partial_write(tmp_path, monkeypatch):
+    from pathlib import Path
+    path = tmp_path / 'checkpoint.json'
+    path.write_text('{"old": true}')
+    original = Path.replace
+    attempts = []
+    def replace(temp, destination):
+        attempts.append(1)
+        assert json.loads(path.read_text()) == {'old': True}
+        if len(attempts) < 3:
+            raise PermissionError('temporary sharing violation')
+        return original(temp, destination)
+    monkeypatch.setattr(Path, 'replace', replace)
+    monkeypatch.setattr(daily.time, 'sleep', lambda _: None)
+    daily.atomic(path, {'new': True})
+    assert len(attempts) == 3
+    assert json.loads(path.read_text()) == {'new': True}
+    assert not list(tmp_path.glob('*.tmp'))
+
+
+def test_atomic_permanent_denial_is_bounded_and_keeps_old_checkpoint(tmp_path, monkeypatch):
+    from pathlib import Path
+    path = tmp_path / 'checkpoint.json'
+    path.write_text('{"old": true}')
+    attempts = []
+    def denied(*args):
+        attempts.append(1)
+        raise PermissionError('permanent denial')
+    monkeypatch.setattr(Path, 'replace', denied)
+    monkeypatch.setattr(daily.time, 'sleep', lambda _: None)
+    with pytest.raises(PermissionError, match='permanent'):
+        daily.atomic(path, {'new': True})
+    assert len(attempts) == 10
+    assert json.loads(path.read_text()) == {'old': True}
+
+
+def test_atomic_other_io_failure_is_not_retried(tmp_path, monkeypatch):
+    from pathlib import Path
+    attempts = []
+    def failed(*args):
+        attempts.append(1)
+        raise OSError('disk full')
+    monkeypatch.setattr(Path, 'replace', failed)
+    monkeypatch.setattr(daily.time, 'sleep', lambda _: pytest.fail('unexpected retry'))
+    with pytest.raises(OSError, match='disk full'):
+        daily.atomic(tmp_path / 'checkpoint.json', {'new': True})
+    assert len(attempts) == 1

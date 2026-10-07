@@ -37,12 +37,12 @@ fr_security_master_sync:
   baseline_history: artifacts/fr/esma_firds/replay_2018/history_2026_observed_v2.json
   max_catchup_days: 31
   max_archive_requests: 128
-  run_hours: "20"
+  run_hours: "7"
   description: "Observer les changements ESMA ISIN/MIC des 330 identités S6C ; fichiers versionnés, sans mise à jour canonique ni nouveaux tickers automatiques."
   tables: "aucune SQL; fichiers:artifacts/fr/operations/fr_security_master_sync"
   activation_requirement: "Deux passages réels validés le 05/10/2026 : 9/9 archives, zéro doublon de version, checkpoint au 04/10. Pas de promotion SQL ni de réparation des lacunes historiques."
-  coverage_description: "Publications ESMA jusqu'à J-1 ; recouvrement 7 jours, rattrapage borné à 31 jours. Fragments absents : checkpoint non avancé."
-  research_notice: "330 ISIN S6C figés ; pas découverte de tous les nouveaux émetteurs, pas remplacement automatique des alias EODHD. available_at des nouvelles versions = observation réelle, pas date rétroactive. Historique antérieur conserve ses lacunes."
+  coverage_description: "Passage 7h Paris avant ouverture 9h ; publications jusqu'à J-1, recouvrement 7 jours, rattrapage borné à 31 jours. Fragments absents : checkpoint non avancé."
+  research_notice: "Remédiation 16-F : passage matinal pour tenter de couvrir la dernière séance avant décision, sans garantie de publication ESMA à 7h. 330 ISIN S6C figés ; available_at réel après téléchargement/contrôles/rejeu. Lacunes historiques toujours bloquantes ; aucune promotion du shadow. Le launcher horaire installé relit cette configuration."
   unlock_steps: ["Installer la tâche FR depuis la page Batch", "Surveiller les fragments ESMA et la continuité récente", "Qualifier séparément découverte nouveaux titres et promotion SQL"]
   log_file: log/batch_fr/fr_security_master_sync.txt
 
@@ -71,14 +71,15 @@ fr_corporate_actions_sync:
   identities_file: artifacts/fr/sprint6c_reference/identities.jsonl.gz
   request_interval_seconds: 0.5
   max_symbol_requests: 400
+  lookback_days: 31 # Warmup prospectif 16-F ; conserve la limite bornée du collecteur.
   priority: P0
   provider: EODHD_public_evidence
   run_hours: "23"
   description: "Dividendes/splits et corrections fournisseur, preuves publiques et dates de disponibilité ; inconnus explicites."
   tables: "aucune SQL; fichiers versionnés:artifacts/fr/operations/fr_corporate_actions_sync"
-  coverage_description: "J-7/J fournisseur, dividendes et splits ; deux requêtes par titre, aucune action connue est une réponse vide valide."
+  coverage_description: "J-31/J fournisseur pour le warmup, dividendes et splits ; deux requêtes par titre. Réponse vide = observation fournisseur, pas preuve officielle d'absence d'événement."
   activation_requirement: "Collecte fichiers validée sur 3 titres/deux passages ; validation cash/actions/paiement et publication SQL restent ouvertes."
-  research_notice: "Dates et valeurs fournisseur non promues comme preuves officielles ; normalisation canonique et contrôle complet des 294 titres à qualifier."
+  research_notice: "Remédiation 16-F : couverture 31 jours, reprise explicite et remplacement JSON atomique avec tentatives bornées Windows. Vérifier les 21 séances XPAR réellement couvertes (31 jours ne les garantissent pas autour de tous les jours fériés). Dates/valeurs fournisseur non promues comme preuves officielles ; aucun shadow autorisé."
   log_file: log/batch_fr/fr_corporate_actions_sync.txt
 
 fr_amf_short_sync:

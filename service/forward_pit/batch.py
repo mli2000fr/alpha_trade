@@ -2291,7 +2291,13 @@ def database_backup(
     return outcome
 
 
+def us_pipeline_1_9(engine, cfg, run_id, dry_run):
+    from service.forward_pit.us_pipeline import execute_pipeline
+    return execute_pipeline(engine, cfg, run_id, dry_run)
+
+
 HANDLERS: dict[str, Callable[[Engine, dict[str, Any], str, bool], Outcome]] = {
+    "us_pipeline_1_9": us_pipeline_1_9,
     "ml_artifacts_backup": ml_artifacts_backup,
     "db_core_backup": database_backup,
     "db_news_raw_backup": database_backup,
@@ -2328,6 +2334,8 @@ def execute(batch_name: str, *, dry_run: bool = False, config_path: str | None =
         raise KeyError(f"Aucun handler pour {batch_name}")
     run_id = f"{batch_name}-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}"
     engine = get_sqlalchemy_engine(); started = _utcnow()
+    if batch_name == 'us_pipeline_1_9' and engine.url.database != 'alpha_trade':
+        raise ValueError('US pipeline requires alpha_trade; refusing cross-market run')
     if not dry_run:
         with engine.begin() as conn:
             conn.execute(text("""INSERT INTO pit_collection_runs(run_id,batch_name,provider,status,started_at)
@@ -2335,6 +2343,8 @@ def execute(batch_name: str, *, dry_run: bool = False, config_path: str | None =
     try:
         outcome = handler(engine, cfg, run_id, dry_run)
         status = "DRY_RUN" if dry_run else ("COMPLETED_WITH_WARNINGS" if outcome.warnings or outcome.failed else "COMPLETED")
+        if batch_name == 'us_pipeline_1_9' and outcome.details.get('skip_reason'):
+            status = 'SKIPPED_' + outcome.details['skip_reason']
     except Exception as exc:
         failure_outcome = exc.outcome if isinstance(exc, BatchRunError) else Outcome(failed=1)
         if not dry_run:

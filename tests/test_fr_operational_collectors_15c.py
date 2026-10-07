@@ -31,6 +31,29 @@ def test_actions_empty_is_valid_dedup_and_correction(tmp_path,monkeypatch):
     assert len(list((root/'raw').glob('*.json')))==3
 
 
+def test_actions_partial_failure_resumes_completed_payloads(tmp_path, monkeypatch):
+    ids, cfg = fixture(tmp_path, monkeypatch)
+    cfg['lookback_days'] = 31
+    calls = []
+    def initial(endpoint, *args, **kwargs):
+        calls.append(endpoint)
+        assert args[1] == {'from': '2026-09-04', 'to': '2026-10-05'}
+        if endpoint.startswith('splits/'):
+            raise RuntimeError('temporary network failure')
+        return []
+    monkeypatch.setattr(c, '_fetch', initial)
+    root = tmp_path/'actions'
+    with pytest.raises(RuntimeError, match='reprise'):
+        c.corporate(cfg, result(), root=root, identities=ids, today=date(2026,10,5))
+    monkeypatch.setattr(c, '_fetch', lambda endpoint,*a,**k: (calls.append(endpoint),[])[1])
+    resumed = result()
+    c.corporate(cfg, resumed, root=root, identities=ids, today=date(2026,10,5), resume=True)
+    assert calls == ['div/AB.PA', 'splits/AB.PA', 'splits/AB.PA']
+    assert resumed['resumed_count'] == 1
+    assert resumed['received_count'] == 1
+    assert resumed['failed_count'] == 0
+
+
 @pytest.mark.parametrize('kind,row',[('div',{'date':'2026-10-02','value':-1}),('splits',{'date':'2026-10-02','split':'0/1'}),('div',{'date':'2020-01-01','value':1})])
 def test_invalid_action_rejected(kind,row):
     with pytest.raises((ValueError,ArithmeticError)):
