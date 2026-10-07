@@ -1,5 +1,107 @@
 # Registre des expériences ML réalisées
 
+## US — Oracle H20 : mesure appariée des correctifs numériques EN COURS
+
+7 octobre 2026, GO : deux bras réentraînés sur les mêmes 1 790 titres et caches
+2016–2024, anciennes features archivées contre features corrigées. 173 colonnes,
+12 folds de référence, 24 entraînements, mêmes paramètres Oracle et purge H20.
+Comparaison OOF Oracle TOP20, ATR20 TOP20 et intersection ; aucune écriture SQL,
+aucun remplacement du serving ni calcul de PnL. 36 tests ciblés passent.
+Confirmation 2025–2026 séparée encore à préparer après le rapport historique.
+Voir [protocole, limites et suivi](oracle_h20_numeric_effect.md).
+
+## US — Correction facteurs CAPM et ratios EXPERT : code et audit comparatif VALIDÉS
+
+7 octobre 2026, GO utilisateur : rendements benchmark dérivés des prix ajustés,
+alignement exact sans rendement imputé ni variation multi-séance présentée comme
+quotidienne, OLS sur paires finies et momentum relatif corrigé. Six ratios
+EXPERT neutralisés si dénominateur ≤ 1e−8/non fini, sans plafond de sortie choisi
+sur les performances. Version numérique du fingerprint EXPERT/facteurs mise à
+jour ; colonnes inchangées, anciens modèles à réentraîner avant usage corrigé.
+224 tests ciblés passent, incluant FR/CN. Aucun titre supplémentaire retiré ni
+SQL écrit. Audit corrigé v2 lancé ; v1 partiel arrêté volontairement et conservé.
+Comparaison des 72 lots de features terminée : mêmes 3 787 770 clés date/titre,
+aucune ligne supplémentaire perdue ; RSI/volatilité >1 million de 870 à 0 et
+log-return/range >1 million de 50 058 à 0, sans plafond imposé aux ratios valides.
+La consolidation annuelle est terminée (9/9) : aucune nouvelle violation des
+contrôles de labels ni feature émise non finie. SPY contre lui-même retrouve
+R²=1 et momentum relatif=0. Une amélioration prédictive reste à mesurer.
+Voir [détails, limites et suivi](oracle_numeric_feature_corrections.md).
+
+## US — Audit complet du contrat Oracle H20 : TERMINÉ, corrections recommandées
+
+7 octobre 2026 : audit de recherche terminé sur 1 790 titres, features 2016–2024,
+profil du batch `model-factory-20261003082853-e98332`. 173 features, dont 44 rangs
+cross-sectionnels reconstruits sur l'univers complet après assemblage des lots.
+Labels H20 existants contrôlés séparément sur leur univers original, sans les
+réécrire. 3 787 770 lignes de features émises ; 72 579 barres sans ligne (1,88 %),
+aucun titre totalement absent. Zéro incohérence détectée dans les contrôles
+réalisés sur 3 873 149 labels valides du batch original. Défaut confirmé : les
+3 023 rendements SPY persistés sont NULL, transformés en zéro par le module
+factoriel ; beta/alpha/R² restent aux défauts et le momentum relatif est affecté.
+Ratios EXPERT dégénérés : 870 RSI/volatilité et 50 058 log-return/range dépassent
+un million en amplitude, tous avec dénominateur ≤ 1e−8. Short score zéro sur
+99,249 % des lignes (valeur par défaut possible). 28 tests ciblés passent. Aucun
+entraînement, correction applicative, modification de modèle ni écriture SQL.
+Voir [protocole, contrôles, limites et surveillance](us_oracle_h20_dataset_quality_audit.md).
+
+## US — Recontrôle après huit exclusions : 1 790 titres
+
+7 octobre 2026 : scan terminé sur 4 950 873 barres ; 14 grandes variations
+sur 11 titres subsistent, contre 18 sur 14 avant le dernier retrait. Maxima :
+rendement MFA +216,67 %, gap REPX +178,21 %, volatilité20 MFA 0,564659.
+Les contextes événementiels documentés ne prouvent pas les cours exacts, mais
+interdisent de classer tous les grands mouvements comme erreurs. Trois dates
+supplémentaires EVVTY/REPX/KALV relues : sauts reproduits par le fournisseur.
+21 tests passent. Aucun nouveau retrait, entraînement ni écriture SQL.
+Audit limité à trois calculs de prix, pas certification de toutes les features.
+Voir [résultats et limites](us_oracle_remaining_discontinuities_audit.md#contrôle-après-huit-exclusions--1-790-titres).
+
+## US — Exclusion complémentaire BASFY / PECO / FBRT
+
+7 octobre 2026, décision utilisateur : retrait des trois titres des fichiers
+d'univers US, sans correction des historiques. Huit fichiers modifiés ; univers
+tradable/equities de 1 793 à 1 790, univers large de 2 691 à 2 688. Contrôle des
+24 fichiers : aucun des huit titres exclus depuis KNTK/AMTB ne subsiste ; autres
+symboles et ordre conservés. Aucun modèle, batch ou ligne SQL modifié. L'audit
+précédent reste celui des 1 793 titres, pas une certification des 1 790 restants.
+Voir [décision et effectifs](us_oracle_remaining_discontinuities_audit.md#décision-ultérieure--exclusion-basfy--peco--fbrt).
+
+## US — Contrôle des 1 793 titres après cinq exclusions
+
+7 octobre 2026 : scan de 4 957 887 barres terminé ; 18 grandes variations sur
+14 titres, avec une relecture fournisseur bornée pour chaque titre. BASFY
+(ratio ADR), PECO (classes pré-IPO/IPO) et FBRT (échange CMO/FBRT avec espèces)
+restent prioritaires. EVVTY et ASTH conservent des réserves de liquidité/identité.
+Les événements documentés d'autres titres ne permettent pas de classer toutes
+les grandes variations comme erreurs. 21 tests ciblés passent. Aucun retrait
+supplémentaire, entraînement, écriture SQL ou changement de batch.
+Voir [périmètre, chiffres, sources et réserves](us_oracle_remaining_discontinuities_audit.md).
+
+## US — Exclusion complémentaire DEC / TALO / INDV
+
+7 octobre 2026, décision utilisateur : retrait des trois titres des fichiers
+d'univers US plutôt que réparation de leurs historiques. Neuf fichiers
+modifiés ; univers tradable/equities de 1 796 à 1 793 et univers large de
+2 694 à 2 691. Les 24 fichiers des trois répertoires US ne contiennent plus
+KNTK, AMTB, DEC, TALO ou INDV ; autres symboles et ordre conservés. Aucun
+modèle ni donnée SQL modifié. Le scan précédent reste celui de 1 796 titres,
+pas une nouvelle certification des 1 793 restants. Maintenir les exclusions
+aux prochains renouvellements d'univers.
+Voir [détail de la décision](us_oracle_post_exclusion_price_audit.md).
+
+## US — Contrôle des features après exclusion KNTK / AMTB
+
+7 octobre 2026 : scan terminé sur 1 796 titres et 4 964 562 barres, sans SQL
+en écriture ni entraînement. Les anciens maxima disparaissent, mais DEC
+présente un saut local de +1 907 % au regroupement 20:1 du 5 décembre 2023 ;
+la relecture split-only le ramène à +0,35 %. TALO (+811 % en 2016) et INDV
+(+572 % en 2022) conservent leurs sauts chez le fournisseur : identité,
+prédécesseurs, ADR et ajustements restent à qualifier. 23 grandes variations
+sur 17 titres ne sont pas une liste de 23 erreurs certifiées. Quinze tests
+ciblés passent. Aucun retrait supplémentaire de symbole.
+Voir [résultats, sources et prochaines vérifications](us_oracle_post_exclusion_price_audit.md).
+
 ## US — Retrait KNTK et AMTB des fichiers d'univers
 
 7 octobre 2026 : décision utilisateur de retirer ces titres plutôt que de

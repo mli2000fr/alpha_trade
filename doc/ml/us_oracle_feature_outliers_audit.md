@@ -419,3 +419,11 @@ ou une liste explicite peuvent encore contenir ces titres. Un renouvellement
 des fichiers doit maintenir cette exclusion tant que les historiques restent
 réservés. Les audits antérieurs restent liés à leurs univers et empreintes
 originales ; ne pas les présenter comme recalculés sur les 1 796 titres.
+
+### Contrôle réalisé après exclusion
+
+Le [nouveau balayage des 1 796 titres](us_oracle_post_exclusion_price_audit.md)
+est terminé : maxima initiaux supprimés, mais raccordement de split DEC
+incohérent et grandes ruptures TALO/INDV persistantes chez le fournisseur.
+Ne pas considérer l'univers entier comme qualifié sur la seule exclusion
+des deux premiers titres. Aucun autre symbole n'a été retiré.
