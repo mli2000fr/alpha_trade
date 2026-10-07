@@ -48,6 +48,8 @@ def build_phase7_exit_lifecycle_replay(
     low_df: pd.DataFrame,
     intrabar_priority: str = "conservative",
     swing_only: bool = False,
+    take_profit_enabled: bool = True,
+    trailing_enabled: bool = True,
 ) -> ExitLifecycleReplayResult:
     exit_rows: list[dict[str, object]] = []
     event_rows: list[dict[str, object]] = []
@@ -94,6 +96,10 @@ def build_phase7_exit_lifecycle_replay(
         if take_profit_price is None or pd.isna(take_profit_price):
             continue
         take_profit_price = float(take_profit_price)
+        if not take_profit_enabled:
+            take_profit_price = float('-inf') if short else float('inf')
+        if not trailing_enabled:
+            trailing_stop_pct = None
         initial_stop_price = None if initial_stop_price is None or pd.isna(initial_stop_price) else float(initial_stop_price)
         trailing_stop_pct = None if trailing_stop_pct is None or pd.isna(trailing_stop_pct) else float(trailing_stop_pct)
         # Garde-fou directionnel : long → stop initial sous l'entrée ; short → au-dessus.

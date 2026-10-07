@@ -44,6 +44,33 @@ def test_future_labels_never_counted_as_available():
     assert 'INCOMPLETE_LABELS' in out['quality_details']
 
 
+@pytest.mark.parametrize('missing', [None, pd.NaT, 'invalid-date'])
+def test_all_missing_availability_dates_remain_incomplete_without_crashing(missing):
+    scores, atr, labels, macro = frames()
+    labels['oracle_available_date'] = missing
+    out = summarize_day(scores, atr, labels, macro, as_of=date(2026,10,6))
+    assert out['evaluated_count'] == 0
+    assert out['unknown_count'] == out['intersection_count'] == 3
+    assert out['status'] == 'INCOMPLETE'
+    assert 'INCOMPLETE_LABELS' in out['quality_details']
+    assert all(out[field] is None for field in MOVEMENT_FIELDS)
+
+
+def test_empty_labels_with_existing_scores_do_not_crash():
+    scores, atr, labels, macro = frames()
+    out = summarize_day(scores, atr, labels.iloc[:0], macro, as_of=date(2026,10,6))
+    assert out['evaluated_count'] == 0 and out['unknown_count'] == 3
+    assert 'INCOMPLETE_LABELS' in out['quality_details']
+
+
+def test_availability_cutoff_is_inclusive_calendar_day():
+    scores, atr, labels, macro = frames()
+    labels['oracle_available_date'] = '2026-10-06 23:59:59'
+    labels.loc[labels.symbol.eq('9'), 'oracle_available_date'] = '2026-10-07 00:00:00'
+    out = summarize_day(scores, atr, labels, macro, as_of=date(2026,10,6))
+    assert out['evaluated_count'] == 2 and out['unknown_count'] == 1
+
+
 def test_invalid_labels_and_partial_denominator():
     scores, atr, labels, macro = frames()
     labels.loc[1,'target_quality_valid']=0

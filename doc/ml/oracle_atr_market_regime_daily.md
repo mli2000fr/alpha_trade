@@ -282,6 +282,12 @@ Ces motifs supplémentaires rendent la ligne `INCOMPLETE`, sans effacer les
 mesures ou les autres listes effectivement calculables. Ils ne constituent
 pas une erreur technique arrêtant les tranches suivantes.
 
+La comparaison des dates de disponibilité conserve le type datetime pandas,
+y compris lorsque tous les labels ont une date absente/invalide ou lorsque
+la journée n’a aucun label. Ces cas donnent une ligne incomplète sans arrêter
+le calcul. La date limite est inclusive sur toute la journée ; les dates
+absentes et les journées ultérieures ne sont jamais évaluables.
+
 ### Installation et alimentation des lignes existantes
 
 La création de table de référence contient les quatre colonnes. Pour une table

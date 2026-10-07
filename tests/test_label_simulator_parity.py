@@ -509,7 +509,7 @@ class TestSimulatorCostModelIntegration:
         assert model.spread_bps == 0.0  # spread géré séparément par _get_spread_bps
 
     def test_canonical_costs_drive_effective_pnl_fees(self):
-        """P2-4 fix : canonical → frais effectifs (1+2)/1e4, fallback spread 5bps.
+        """Canonical → frais (1+2)/1e4 ; quote fallback FULL = 2 x HALF.
 
         Les champs legacy (défauts CLI 12/20 bps) doivent être IGNORÉS par le P&L.
         """
@@ -525,7 +525,7 @@ class TestSimulatorCostModelIntegration:
             slippage_bps=20.0,
         ))
         assert engine._effective_fees_pct == pytest.approx(0.0003)
-        assert engine._spread_fallback_bps == pytest.approx(5.0)
+        assert engine._spread_fallback_bps == pytest.approx(10.0)
 
     def test_legacy_fees_pct_still_effective(self):
         """Sans canonical ni cost_model, les champs legacy pilotent le P&L."""
@@ -573,7 +573,7 @@ class TestSimulatorCostModelIntegration:
             fees_pct=0.0032,
         ))
         assert engine._effective_fees_pct == pytest.approx(0.0007)  # (3+4)/1e4
-        assert engine._spread_fallback_bps == pytest.approx(8.0)
+        assert engine._spread_fallback_bps == pytest.approx(16.0)
 
     def test_borrow_cost_computation(self):
         """La borrow fee est calculée proportionnellement à la durée."""

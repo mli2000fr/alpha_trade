@@ -1,5 +1,71 @@
 # Registre des expériences ML réalisées
 
+## US — Futurs positifs du TOP10 réel H20, SL initial 7 % : LANCÉ
+
+7 octobre 2026 : TOP10 figé d'abord par amplitude absolue réalisée, puis seuls
+les positifs qualifiés conservés, sans remplacement. 3 133 occurrences retenues
+sur 4 189 qualifiées (419 dates, univers 1 798 titres). Même archive de barres,
+stop initial 7 %, quatre variantes et refus de budget explicite. 17 tests ciblés
+passent, smoke trois séances terminé. Chaque variante est tentée indépendamment,
+sans contourner un éventuel défaut de prix/volume. Connaissance du futur volontaire,
+pas une validation prédictive ou une stratégie déployable ; aucun SQL ou entraînement.
+Voir [protocole et suivi](us_realized_top10_positive_fixed_sl7.md).
+
+## US — TOP10 des mouvements réels H20, SL initial 7 % : RELANCE APRÈS CORRECTIF
+
+7 octobre 2026 : classement clairvoyant par amplitude absolue sur l'univers
+1 798 titres, deux signes achetés LONG. 419 dates matures, 4 190 candidats,
+dont un endpoint KLAC non qualifié exclu sans remplacement. Onze tests ciblés
+passants. Smoke arrêté au premier achat J+1 sur PGNY : budget insuffisant pour
+la quantité approuvée ; aucun PnL complet ni quatre runs lancés. Politique de
+refus/redimensionnement à qualifier avant reprise ; aucun contournement.
+Voir [protocole et blocage](us_realized_top10_fixed_sl7.md).
+
+Après GO : refus explicite de l'ordre devenu incompatible avec le budget à
+l'ouverture, sans resize ni débit, diagnostic détaillé. Mode strict inchangé
+par défaut. Smoke v2 quatre variantes réussi ; 72 tests ciblés passants.
+V2 : référence TOP10 prédit terminée, résultats inchangés, zéro refus.
+Réel TOP10 : deux variantes avec TP terminées à +89,97 % (4 000 → 7 598,63 USD),
+drawdown −36,65 %, 520 trades, 19 refus explicites. Trajectoires identiques
+avec/sans échéance 20 séances. Sans TP/stop fixe bloqué après 365/437 séances :
+ATEX volume nul le 18 juin 2026. Sans TP/trailing non lancé. Aucun résultat
+complet pour ces deux dernières variantes ; qualification de volume requise.
+
+## US — TOP10 complet, stop initial fixe à 7 %
+
+7 octobre 2026 : quatre variantes terminées sur janvier 2025–septembre 2026.
+TOP10 Oracle sans filtre futur ; stop initial à 93 % du fill réel, sizing,
+TP et trailing inchangés. Les gaps peuvent dépasser 7 % de perte.
+Comparateur : TOP10 complet ATR précédent, pas référence à labels observables.
+Sans TP/sans trailing/échéance vingt séances après entrée : **+27,88 %**
+(ancien ATR −2,52 %), 4 000 → 5 115,19 USD, drawdown −13,30 %, 300 trades,
+28 % gagnants. Sans TP/avec trailing : +21,57 % (ancien +4,23 %).
+Avec TP : encore perdant. Forte concentration des profits sur les meilleurs
+trades ; variante exploratoire, pas de validation directionnelle ni promotion.
+63 tests ciblés passants ; aucun entraînement ni SQL ni changement de production.
+Voir [protocole et suivi](us_oracle_top10_fixed_sl7.md).
+
+Suite Oracle × ATR TOP10 : quatre variantes terminées à SL initial 7 %.
+L'intersection TOP20 % puis dix meilleurs Oracle donne exactement les mêmes
+4 370 occurrences que le TOP10 Oracle seul sur ces 437 séances. Replay de
+contrôle terminé : trajectoires quotidiennes, trades et métriques strictement
+identiques au TOP10 Oracle seul. Aucun bénéfice additionnel de ce filtre sur ce jeu.
+Deux nouveaux tests de sélection passent avec les huit tests de stop.
+
+## US — Oracle TOP10 avec direction positive parfaite (contrefactuel)
+
+7 octobre 2026 : huit replays terminés, référence TOP10 à labels observables contre
+les seuls futurs positifs H20 du TOP10 initial, sans remplacement des exclus.
+4 190 occurrences évaluables sur 4 370, dont 2 290 positives. Quatre sorties
+figées, portefeuille réel simulé à 4 000 USD avec coûts et risque.
+**Connaissance du futur volontaire : aucune capacité D1/D10 démontrée ni stratégie
+déployable.** Sans TP, stop initial et échéance 20 séances après entrée :
+−3,29 % pour la référence contre +195,62 % avec filtre positif parfait
+(4 000 → 11 824,71 USD, drawdown −6,49 %, 148 trades). Les autres sorties
+parfaites donnent +121,80 % à +141,98 %. Potentiel économique, pas signal validé.
+Smoke terminé ; 17 tests ciblés passants. Aucun entraînement ni SQL.
+Voir [protocole et résultats](us_oracle_top10_perfect_direction.md).
+
 ## US — Ancien bundle : diagnostic mensuel de la dégradation 2026
 
 5 octobre 2026 : diagnostic des prédictions récupérées et labels H20 reconstruits
@@ -1860,3 +1926,222 @@ Marché/macro/secteurs décrivent des variations, aucun veto prédictif stable
 validé. VIX/VXN/VIX3M/MOVE absents au T1 2026, secteurs actuels non PIT,
 bêta ancien souvent constant par défaut. Pas de nouveau fit, serving,
 backtest économique ni écriture SQL. Suivi automatique clôturé à livraison.
+
+## US — Capture des mouvements H20 ≥50 % — 6 octobre 2026
+
+[Protocole et résultats](us_extreme50_capture.md). Audit descriptif figé,
+batch `model-factory-20261003082853-e98332`, univers tradable courant,
+2020–septembre 2026. Seuils absolus 50/100 %, Oracle/ATR/intersection et
+10/20/50 premiers titres. Comparaison de précision et capture, hausses/baisses
+séparées, fenêtres chevauchantes regroupées, contrôles des prix d'extrémité
+et chemins des plus grands cas. Aucun fit, modèle, exits, batch planifié
+ou SQL modifié. Run `artifacts/research/us_extreme50_capture/audit-20261006-v1`
+terminé. 14 316 fenêtres ≥50 %, 2 366 groupes titre/signe après regroupement
+des chevauchements ; 2020 représente 59,5 % des fenêtres. Oracle TOP20 :
+précision 1,629 % / capture 67,71 % ; intersection 1,875 % / 60,55 % ;
+10 premiers scores Oracle 6,557 % / 7,68 %. En 2025/2026, précision de
+ces dix premiers 3,88 % / 4,52 % ; captures 10,08 % / 5,54 %.
+2026 évaluable jusqu'au 2 septembre, pas septembre entier. INDV +603 % en 2022 comporte un saut
+et des volumes nuls : qualité native du label insuffisante pour certifier
+un gain réalisable. 58 tests ciblés passent. Pas de signal directionnel,
+profit net ou nouveau modèle démontré ; prix/identités à qualifier avant
+un éventuel test économique séparé. Ce n'est pas un NO-GO statistique d'une
+nouvelle cible ≥50 %, qui n'a pas été entraînée.
+
+### US — Qualification des prix suspects des sélections concentrées (6 octobre 2026)
+
+[Dossier de qualification et sources primaires](us_extreme50_price_qualification.md).
+100 chemins / 19 titres relus ; six réponses EODHD archivées pour INDV,
+KNTK et REPX. INDV octobre 2022 : +534,50 % local contre +26,90 % ajusté
+fournisseur, composante mécanique de split confirmée ; novembre reste
+réservé (rupture reproduite par le fournisseur, volumes nuls, identité ADR
+à résoudre). GRND traverse une combinaison d'entreprises. KNTK et REPX
+conservent leurs rendements après comparaison des échelles de prix. Un
+cours CLDX du 10 juin 2020 est corroboré exactement par la SEC (4,80 $).
+Sensibilité rétrospective sans remplacement : 886 labels rendus inconnus,
+25 occurrences ≥50 % retirées de l'évaluation ; dix premiers Oracle toujours
+1 099 occurrences, précision ≈6,57 %. Qualification partielle seulement,
+pas de certification de tous les chemins, pas de signal directionnel ni
+profit démontré. Run `artifacts/research/us_extreme50_capture/price-qualification-20261006-v2`.
+Aucun prix/label/modèle/SQL corrigé ; aucun rejeu économique lancé.
+
+### US — Préparation figée du replay des sélections concentrées (6 octobre 2026)
+
+[Protocole, couverture et réserves](us_concentrated_replay_protocol.md).
+Période principale 2025–30 septembre 2026, après fin d'entraînement
+au 31 décembre 2024 ; période déjà explorée, pas confirmation indépendante.
+156 835 candidats / 818 titres / 437 séances, 408 884 barres archivées.
+Oracle TOP10 et TOP10 dans Oracle ET ATR TOP20 sont strictement identiques
+(4 370 occurrences / 138 titres). Réserves TOP10 : 17 fenêtres sur un saut
+MP du 10 juillet 2025 (annonce officielle corroborée, prix non entièrement
+certifiés), huit sur une barre BAND de volume nul le 18 juin 2026 ;
+maturité de fin septembre et open après fin d'observation distingués des
+anomalies. Aucun candidat remplacé ou supprimé selon son rendement futur.
+Script SELECT-only, extraction annuelle reprenable, quatre tests nouveaux.
+Run `artifacts/research/us_concentrated_replay/prepare-20261006-v1` terminé.
+Pas de PnL calculé, pas de modèle/production/SQL modifié. Reste à qualifier
+les réserves et la parité complète du contrat économique avant le replay.
+
+### US — MP/BAND et contrat d'exécution des sélections concentrées (6 octobre 2026)
+
+[Audit détaillé et réserves](us_concentrated_contract_qualification.md).
+MP +50,616 % : événement officiel et clôture 45,23 $ corroborés ; ne pas
+exclure automatiquement. BAND 18 juin 2026 : EODHD relu fournit volume
+1 997 781, contre zéro local, OHLC inchangé ; correction non injectée.
+Contrat de recherche explicitement résolu/empreinté ; CLI equity explicite
+reprise dans l'adaptateur. Parité complète encore bloquée : defaults H20 /
+trailing / time-stop distincts du protocole historique ; convention demi-spread
+partagé contre spread complet du simulateur et pénalité d'entrée supplémentaire.
+Tapes bout-en-bout et borrow SHORT restent à qualifier. Aucun PnL, changement
+de modèle, moteur de production ou SQL. Rapport retenu :
+`artifacts/research/us_concentrated_replay/qualification-contract-20261006-v2/report.json`.
+
+**Suite après GO — contrat technique corrigé** : fallback full-spread égal
+à deux fois le demi-spread partagé ; frais monétaires aux deux jambes, sans
+pénalité canonique d'entrée de 5 bps ; coût RT forcé non doublé ; borrow en
+séances. Contrat historique explicite sans modifier les défauts live, gardes
+effectives contre sizing/protections de secours. 37 fixtures passent, dont
+chaîne réelle PortfolioBuilder → Phase3/4/5/7 → BacktestEngine en LONG/SHORT
+pour TP, stop initial et trailing. Overlay BAND d'une ligne archivé, pas SQL.
+329 tests ciblés élargis passent sur la version finale ; avertissements pandas
+et dépréciations de `--fees` non bloquants.
+Attestation retenue : `artifacts/research/us_concentrated_replay/contract-validation-20261006-v3`.
+Ce n'est pas un résultat de stratégie ni une certification de tous les chemins
+live : tapes historiques, autres réserves TOP20, liquidation terminale explicite
+et borrow SHORT restent à traiter. Aucun PnL historique ni modèle entraîné.
+
+### US — Assemblage des tapes historiques concentrées (6 octobre 2026)
+
+[Méthode, fichiers, suivi et réserves](us_concentrated_historical_tapes.md).
+Pilote terminé : 360 candidats/côté, 352 tapes unitaires/côté, huit refus de gap
+par côté. 45 tests ciblés passent. Les tapes emploient les phases 3/4/5/7 réelles,
+avec une unité technique explicitement non approuvée par PortfolioBuilder.
+Réserves nouvelles du pilote : 71 gaps au-delà du stop, 75 gaps favorables au TP
+(convention conservatrice à revoir, pas forcément une anomalie), neuf transitions
+watcher prévues après une sortie. Aucun de ces flags n'entraîne un remplacement
+par un candidat rétrospectivement gagnant.
+Traitement complet LONG/SHORT lancé sur 437 séances, avec shards quotidiens,
+empreintes et reprise, dans `artifacts/research/us_concentrated_replay/tapes-history-20261006-v1`.
+**Terminé, vérifié le 7 octobre 2026** : 437 séances, 874 shards, 3 496 fichiers
+vérifiés par SHA256 sans écart ; 142 414 tapes unitaires par côté, soit 284 828.
+20 144 chemins présentent un open au-delà du stop ; 11 130 une transition watcher
+effective prévue après sortie ; 6 036 restent ouverts à la borne finale.
+Ce sont des réserves à arbitrer, pas des pertes mesurées ; les drapeaux peuvent
+se recouvrir. Les dix premiers Oracle donnent 3 547 tapes/côté, avec 148/188
+gaps de stop LONG/SHORT et 481/392 transitions watcher après sortie.
+Aucun PnL/entraînement/SQL. Prochaine action : parité des gaps et chronologie
+watcher/OCO, puis portefeuille stateful et liquidation terminale. Qualification
+des chemins, tradabilité/lineage et borrow restent des gates économiques.
+
+### US — Variantes LONG sans TP, vingt séances après entrée (7 octobre 2026)
+
+[Protocole et suivi](us_concentrated_exit_variants.md). Convention utilisateur :
+sortie à la clôture entrée+20 séances, donc J+21 depuis le signal à J.
+Quatre variantes figées : témoin actuel sans échéance, référence avec échéance,
+sans TP/stop fixe, sans TP/trailing. Entrées unitaires identiques, aucun sweep.
+Résolveur de recherche chronologique : gaps de stop à l'open, TP gappé au prix
+limite conservateur, pas de watcher après sortie. Fonctions moteur partagées et
+anciens artefacts inchangés ; parité économique encore à valider.
+54 tests passent, pilote 352 entrées/variante terminé. Run complet lancé dans
+`artifacts/research/us_concentrated_replay/exit-variants-history-20261007-v1`,
+437 dates, reprise quotidienne. Aucun PnL, SQL ou modèle modifié. La future
+comparaison exige portefeuille stateful, coûts, liquidation et qualification
+des chemins/lineage ; une unité technique n'est pas un trade approuvé.
+
+Reprise du 7 octobre après verrou Windows sur `progress.json` : 282 lots
+vérifiés intègres (compteur bloqué à 281), aucune règle de variante changée.
+Écriture atomique renforcée par temporaire unique et retries bornés ; 56 tests
+passent. Lots achevés réutilisés ; journal de reprise `stderr.retry1.log`.
+
+**Clôture du run variantes le 7 octobre** : 437/437 séances, 437 parquets
+vérifiés SHA256, 569 656 lignes, quatre variantes pour chacune des 142 414
+entrées LONG techniques. Pas d'événement ni activation effective après sortie
+sur les trajectoires résolues contrôlées. La proportion atteignant l'échéance
+est 4,4 % (référence TP), 59,5 % (sans TP/stop fixe), 29,6 % (sans TP/trailing).
+Ce ne sont pas des win rates ni des rendements. Sur les dix premiers Oracle,
+3 547 entrées/variante, zéro chemin bloqué par les seuls contrôles locaux.
+Le témoin reconstruit change date/prix dans 8 617 cas versus l'ancienne tape :
+parité moteur à raccorder avant PnL. Préparation terminée ; aucune supériorité
+économique démontrée. Suite : portefeuille stateful, coûts et liquidation,
+sans sélectionner après coup uniquement les futurs gagnants ou chemins propres.
+
+**Raccordement portefeuille, 7 octobre 2026** — [Protocole et résultats détaillés](us_concentrated_portfolio_replay.md).
+Adaptateur de recherche avec PositionSizer natif, equity/cash continus, huit
+positions au plus, coûts aux deux jambes et sorties explicites validées sur gaps.
+66 tests ciblés passent. Aucun entraînement, aucune écriture SQL, aucun changement
+live. TOP10 = dix titres par jour : quatre variantes perdantes, respectivement
+−10,08 %, −9,42 %, −11,81 %, −6,17 % ; pas de promotion de la meilleure variante
+après observation. Réserves secteurs non PIT (bucket commun 50 %), contexte macro
+non rejoué et absence de parité complète PortfolioBuilder/live. TOP20 % terminé :
+−10,57 %, −10,85 %, −11,85 %, −8,21 %. Les premiers essais s'arrêtaient trop tôt
+sur LBRDK, avant le sizing ; le contrôle final intervient après approbation d'une
+quantité positive. LBRDK est non finançable le 7 juillet selon les règles PIT,
+indépendamment de son volume nul/prix répété à partir du 20 juillet. Aucun
+remplacement sur information future. Suite : qualifier les réserves historiques
+avant résultat certifié ; aucune variante profitable à promouvoir ici.
+
+**Raccordement au builder commun et ledger natif, 7 octobre 2026 — EN COURS.**
+[Audit, hypothèses acceptées et reste à faire](us_concentrated_live_parity_audit.md).
+Contrat confirmé : Oracle pur LONG-only, secteurs actuels explicitement acceptés
+comme hypothèse non-PIT. Précontrôle : 156 835 couples date/symbole couverts en
+secteurs, 437 séances couvertes en dates macro (pas une preuve de vintage).
+Session de risque persistante + ledger natif incrémental : sizing commun,
+fills J+1, frais aux deux jambes, règlements T+1, intérêts, watcher/lifecycle
+masqués aux dates observées et gaps de sortie prioritaires. **209 tests ciblés
+passent**, dont 13 fixtures du ledger ; aucune performance historique nouvelle.
+L'orchestrateur macro/breaker/transitions, les ordres protecteurs et la qualité
+des chemins détenus restent à qualifier avant certification et lancement
+historique. Aucun modèle, batch en cours ou contenu SQL modifié.
+# Mise à jour — raccordement portefeuille concentré, 7 octobre 2026
+
+**Relance v2** : TOP20 v1 bloqué sur GPRE/2026-06-18, volume local nul.
+Nouvelle réponse EODHD : volume 3 495 268, OHLC identiques. Overlay de recherche
+versionné, non-PIT, sans écriture SQL ; contrôle maintenu. TOP10/TOP20 relancés
+dans `live-portfolio-oracle_top10-20261007-v2` et
+`live-portfolio-oracle_top20-20261007-v2`, avec les quatre sorties chacun.
+Voir la section « Arrêt GPRE et relance versionnée » de l'audit lié ci-dessous.
+
+Orchestrateur chronologique raccordé au builder commun, phases 3/4/5/7 et
+comptabilité native : [audit détaillé](us_concentrated_live_parity_audit.md#raccordement-historique-et-lancement--7-octobre-2026).
+235 tests ciblés passent ; quatre variantes validées sur un smoke de trente
+séances. Backtests TOP10 (dix titres) et TOP20 % lancés sur 2025–septembre 2026,
+quatre sorties par sélection, dans `artifacts/research/us_concentrated_replay/live-portfolio-oracle_top10-20261007-v1`
+et `live-portfolio-oracle_top20-20261007-v1`. **EN COURS**, aucun verdict économique
+à ce stade. Secteurs actuels non-PIT acceptés, macro archivées non certifiées
+par vintage, fills OHLC simulés : ne pas présenter ce run comme des fills live.
+
+## Audit qualité Oracle e98332 — 7 octobre 2026
+
+[Chronologie et reproductibilité](us_oracle_reproducibility_audit.md), puis
+[localisation des features extrêmes](us_oracle_feature_outliers_audit.md).
+**ANOMALIE LOCALE IDENTIFIÉE, PAS DE RÉENTRAÎNEMENT.** Balayage lecture seule
+de 4 967 964 barres / 1 798 titres. KNTK, 13 novembre 2018 : 0,002 → 91 dollars
+en base reproduit daily_return=45 499, gap=47 749 et volatilité20≈10 173,89.
+Reconstruction split-only EODHD actuelle : 99 → 91 dollars, −8,08 %. AMTB,
+18 octobre 2018 : 0,108 → 30 local contre 26,25 → 30 reconstruit, +14,29 %.
+Historiques suspects présents dans les deux tables de barres, identifiants
+constants insuffisants, pollution des fenêtres longues. Preuves archivées,
+neuf tests ciblés passent. Aucune écriture SQL ou modification des modèles/live.
+Réparation ciblée, garde-fous features et comparaison après réentraînement
+versionné restent à autoriser ; aucune garantie d'amélioration D1/D10.
+# Suite de l'audit des prix Oracle — plan ciblé KNTK / AMTB
+
+Le 7 octobre 2026, préparation en lecture seule d'un plan pour 309 dates dans
+les deux tables de barres (265 KNTK, 35 AMTB anciennes, 9 AMTB en 2023 à revoir
+séparément). Sauvegardes, empreintes et diff OHLCV disponibles ; huit tests
+ciblés passent. Aucune réparation SQL ni aucun entraînement lancé.
+
+La sensibilité hors base supprime les maxima aberrants KNTK, mais la relecture
+EODHD conserve un rendement AMTB de +518 % le 4 septembre 2018. Ce mouvement
+n'est pas certifié ; pas de réimportation aveugle ni de filtre automatique des
+fortes variations. Suite : validation distincte des dossiers avant correction.
+Voir [l'audit détaillé](us_oracle_feature_outliers_audit.md), section « Suite :
+plan de réparation et sensibilité hors base » et les artefacts `repair-plan-v2`.
+
+Qualification supplémentaire : 108 clôtures KNTK de 2017 compatibles avec les
+fourchettes de bid du 10-K officiel ; deux splits confirmés par l'émetteur.
+Les neuf dates AMTB figées avec volume nul en 2023 commencent au transfert
+officiel Nasdaq→NYSE. La prise d'effet en séance du split AMTB est confirmée
+au 24 octobre 2018 par Nasdaq, mais le +518 % reste non certifié. Périmètre
+de correction proposé séparément : 265 dates KNTK + 9 AMTB 2023 ; AMTB 2018
+reste en revue. Treize tests ciblés passent ; toujours aucune écriture SQL.

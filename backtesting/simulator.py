@@ -123,8 +123,8 @@ class BacktestConfig:
     # slippage, borrow_fee_annual) sont utilisées pour le calcul des coûts
     # d'entrée/sortie et le borrow fee des shorts. Sinon, les champs legacy
     # ci-dessus sont utilisés (rétrocompatibilité).
-    # Le labeler (``TripleBarrierConfig``) partage le même modèle → parité
-    # label/simulateur garantie.
+    # Le labeler partage les paramètres ; la parité des cash-flows est testée
+    # séparément (les coûts portent sur les notionnels effectivement exécutés).
     trading_cost_model: TradingCostModel | None = None
     # ── Parité label/simulateur ──────────────────────────────────────
     # Si True, utilise DEFAULT_COST_MODEL (spread=5bps, comm=1bps,
@@ -155,7 +155,9 @@ class BacktestConfig:
     cost_round_trip_bps: float = 0.0
     # Stress test coûts (2026-08-17) : écrase le fallback de spread utilisé
     # quand la donnée réelle est absente OU corrompue (> MAX_REALISTIC).
-    # None = défaut (5.0 canonique). Teste « si les titres sans données ont
+    # Unité : spread COMPLET bid/ask, comme spread_df. None = 2 x le
+    # demi-spread du modèle canonique (10 bps avec DEFAULT_COST_MODEL).
+    # Teste « si les titres sans données ont
     # un vrai spread de 10/15/20 bps ». Outil de diagnostic uniquement.
     fallback_spread_bps: float | None = None
     trading_constraints: TradingConstraintConfig = field(default_factory=TradingConstraintConfig)
@@ -167,6 +169,12 @@ class BacktestConfig:
     # E21-B25 (P5) : sizing equal-weight x levier (comme recherche) au lieu du
     # sizing ATR-risk du pipeline (quantity_override ignoré). Off par défaut.
     research_sizing: bool = False
+    # Garde opt-in pour les replays de recherche certifiés : interdit de
+    # remplacer une quantité de la tape par le sizing interne du simulateur.
+    require_replay_quantities: bool = False
+    # Explicit research policy: reject the whole order rather than resize or abort.
+    reject_constrained_replay_entries: bool = False
+    require_replay_protections: bool = False
     # E46 (2026-08-22) — multiplicateur d'exposition pur (scaling du sizing).
     # 1.0 = comportement PROD inchangé. Ne touche ni CP-V2, ni B4, ni force-close.
     exposure_multiplier: float = 1.0
@@ -255,6 +263,10 @@ class BacktestConfig:
                 "execution_replay_mode doit être 'off' ou 'execution_replay'."
             )
         self.execution_replay_mode = normalized_replay_mode
+        if self.require_replay_quantities and (
+            self.execution_replay_mode != "execution_replay" or self.research_sizing
+        ):
+            raise ValueError("require_replay_quantities exige execution_replay et research_sizing=False")
         normalized_protection_mode = str(self.protection_replay_mode or "off").strip().lower()
         if normalized_protection_mode not in {"off", "protection_replay"}:
             raise ValueError(
@@ -273,6 +285,14 @@ class BacktestConfig:
                 "exit_lifecycle_replay_mode doit être 'off' ou 'exit_lifecycle_replay'."
             )
         self.exit_lifecycle_replay_mode = normalized_exit_lifecycle_mode
+        if self.require_replay_protections and (
+            not self.require_replay_quantities
+            or self.protection_replay_mode != "protection_replay"
+            or self.watcher_replay_mode != "watcher_replay"
+            or self.exit_lifecycle_replay_mode != "exit_lifecycle_replay"
+            or not (self.use_canonical_costs or self.trading_cost_model is not None)
+        ):
+            raise ValueError("require_replay_protections exige la chaîne replay complète et les coûts canoniques")
 
 
 @dataclass(slots=True)
@@ -515,11 +535,13 @@ class BacktestEngine:
         # (canonique ou explicite), sinon des champs legacy. Sans cela,
         # ``--use-canonical-costs`` ne changeait que le borrow fee et
         # les défauts CLI (12+20 bps) s'appliquaient au P&L.
-        if config.use_canonical_costs or config.trading_cost_model is not None:
+        self._canonical_costs = config.use_canonical_costs or config.trading_cost_model is not None
+        if self._canonical_costs:
             self._effective_fees_pct = (
                 self._cost_model.commission_bps + self._cost_model.slippage_bps
             ) / 10_000.0
-            self._spread_fallback_bps = float(self._cost_model.spread_bps)
+            # TradingCostModel stores HALF spread; quote pivots store FULL spread.
+            self._spread_fallback_bps = 2.0 * float(self._cost_model.spread_bps)
         else:
             self._effective_fees_pct = float(config.fees_pct)
             self._spread_fallback_bps = float(config.slippage_bps)
@@ -537,7 +559,7 @@ class BacktestEngine:
         # Stress test coûts : fallback de spread surchargé (données absentes
         # ou corrompues). None = défaut.
         _fb = getattr(config, "fallback_spread_bps", None)
-        if _fb is not None and float(_fb) > 0:
+        if _fb is not None and float(_fb) >= 0:
             self._spread_fallback_bps = float(_fb)
         # P2-4 (2026-08-14) : accumulateur d'intérêts de marge du run.
         self._margin_interest_total = 0.0
@@ -793,6 +815,10 @@ class BacktestEngine:
 
         # Aligner les symboles communs
         selected = signals.loc[signals["selected"].fillna(False).astype(bool)].copy()
+        if cfg.require_replay_quantities:
+            for _, signal in selected.iterrows():
+                if self._resolve_signal_quantity_override(signal) is None:
+                    raise ValueError(f"Missing valid replay quantity: {signal.get('symbol')}")
         if selected.empty:
             LOGGER.info("Aucun signal sélectionné — backtest plat sans trade.")
             return self._run_with_constraints(
@@ -805,6 +831,9 @@ class BacktestEngine:
                 sector_map=sector_map,
                 spread_df=spread_df,
             )
+
+        if cfg.require_replay_protections:
+            self._validate_replay_protections(selected, open_df)
 
         symbols = sorted(set(selected["symbol"]) & set(close.columns))
         if not symbols:
@@ -849,6 +878,52 @@ class BacktestEngine:
             signals_df=selected, volume=volume, sector_map=sector_map,
             spread_df=spread_df,
         )
+
+    @staticmethod
+    def _validate_replay_protections(signals: pd.DataFrame, opens: pd.DataFrame) -> None:
+        """Fail before accounting when a frozen protection tape is incomplete."""
+        required = ("fill_price", "execution_date", "replay_take_profit_price",
+                    "replay_initial_stop_price", "replay_trailing_stop_pct", "watcher_transition_state")
+        if any(column not in signals for column in required):
+            raise ValueError("Incomplete replay protection tape")
+        if signals.duplicated(["symbol", "execution_date"]).any():
+            raise ValueError("Ambiguous replay protection tape")
+        days = pd.DatetimeIndex(opens.index)
+        if not days.is_monotonic_increasing or days.has_duplicates:
+            raise ValueError("Invalid replay calendar")
+        for row in signals.to_dict("records"):
+            if row.get("side", "buy") not in {"buy", "sell"}:
+                raise ValueError("Invalid replay side")
+            if str(row["watcher_transition_state"]) not in {"pending", "triggered", "transitioned", "failed"}:
+                raise ValueError("Invalid replay watcher state")
+            try:
+                fill, tp, stop, trailing = [float(row[c]) for c in (
+                    "fill_price", "replay_take_profit_price", "replay_initial_stop_price", "replay_trailing_stop_pct")]
+                entry = pd.Timestamp(row["execution_date"])
+                idx = days.searchsorted(pd.Timestamp(row["trade_date"]), side="right")
+                observed_open = float(opens.at[entry, row["symbol"]])
+            except (TypeError, ValueError, KeyError) as exc:
+                raise ValueError("Invalid replay protection tape") from exc
+            if (not np.isfinite([fill, tp, stop, trailing, observed_open]).all()
+                    or min(fill, tp, stop, observed_open) <= 0 or not 0 < trailing < 1
+                    or idx >= len(days) or days[idx] != entry
+                    or not np.isclose(fill, observed_open, rtol=0, atol=.005)):
+                raise ValueError("Replay protection/fill/calendar mismatch")
+            if not ((tp < fill < stop) if is_short_side(row.get("side", "buy")) else (stop < fill < tp)):
+                raise ValueError("Replay protection side mismatch")
+            transition = row.get("watcher_transition_effective_date")
+            if transition is not None and pd.notna(transition) and pd.Timestamp(transition) <= entry:
+                raise ValueError("Replay watcher must activate after entry")
+            exit_date = row.get("replay_exit_date")
+            if exit_date is not None and pd.notna(exit_date):
+                price = row.get("replay_exit_price")
+                try:
+                    valid_price = np.isfinite(float(price)) and float(price) > 0
+                except (TypeError, ValueError):
+                    valid_price = False
+                if (pd.Timestamp(exit_date) < entry or pd.Timestamp(exit_date) not in days
+                        or not valid_price or not row.get("replay_exit_reason")):
+                    raise ValueError("Invalid replay terminal exit")
 
     @staticmethod
     def _schedule_signals_for_execution(
@@ -1568,6 +1643,10 @@ class BacktestEngine:
             # Quick Win 3 — pullback entry (direction-aware)
             # Le pullback utilise le signal_price (open) comme référence, pas le prix d'exécution
             entry_price = exec_entry_price
+            if cfg.require_replay_protections:
+                # Preserve the actual phase3 fill (including cent rounding),
+                # so protection anchors and accounting use the same price.
+                entry_price = float(row["fill_price"])
 
             # ── P1 (2026-06-25) : slippage model pour backtest réaliste ──
             trade_spread_bps = self._get_spread_bps(
@@ -1578,8 +1657,11 @@ class BacktestEngine:
             # d'exécution variable (5 bps + spread/2). Le spread réel est déjà
             # neutralisé (retourne 0 dans _get_spread_bps).
             _rt = float(getattr(self.config, "cost_round_trip_bps", 0.0) or 0.0)
-            if _rt > 0:
-                slippage_bps = _rt / 2.0
+            if _rt > 0 or self._canonical_costs:
+                # Canonical spread/slippage are monetary costs, not a second
+                # adjustment of the phase3 fill price/protection anchors.
+                # Forced RT likewise pays C/2 in fees, never twice at entry.
+                slippage_bps = 0.0
             else:
                 # Stress test coûts : la pénalité d'exécution de base (5 bps) est
                 # scalée par cost_multiplier (le spread/2 l'est déjà via
@@ -1771,9 +1853,14 @@ class BacktestEngine:
                 commission_config = resolve_commission_preset(float(current_equity))
                 # Pour le calcul préliminaire, on utilise le taux seul (le fixe sera ajouté après)
                 commission_rate_pct = commission_config.bps_rate / 10_000.0
-                base_cost_pct = commission_rate_pct + (cfg.slippage_bps / 10_000.0) + extra_slippage_pct
+                configured_slippage = self._cost_model.slippage_bps if self._canonical_costs else cfg.slippage_bps
+                base_cost_pct = commission_rate_pct + (configured_slippage / 10_000.0) + extra_slippage_pct
             else:
                 base_cost_pct = self._effective_fees_pct + extra_slippage_pct
+            if self._canonical_costs and not float(getattr(cfg, "cost_round_trip_bps", 0.0) or 0.0) > 0:
+                base_cost_pct += trade_spread_bps / 2.0 / 10_000.0
+            if float(getattr(cfg, "cost_round_trip_bps", 0.0) or 0.0) > 0:
+                base_cost_pct = self._effective_fees_pct
             effective_unit_cost = entry_price * (1.0 + base_cost_pct)
             if quantity_override is not None:
                 affordable_quantity = (
@@ -1822,6 +1909,22 @@ class BacktestEngine:
                     quantity = self._normalize_trade_quantity(quantity)
                     gross_exposure_cap_binds = quantity < quantity_before_gross_exposure_cap
 
+            if cfg.require_replay_quantities and quantity_override is not None and not np.isclose(
+                quantity, quantity_override, rtol=0.0, atol=QUANTITY_EPSILON
+            ):
+                if cfg.reject_constrained_replay_entries:
+                    self._record_trade_event(
+                        state, "entry_rejected", event_date=trade_day, symbol=symbol,
+                        rejection_reason="approved_quantity_exceeds_opening_constraints",
+                        quantity_override=quantity_override, affordable_constrained_quantity=quantity,
+                        effective_unit_cost=effective_unit_cost,
+                        available_entry_budget=available_entry_budget,
+                        current_equity=current_equity, current_gross_notional=current_gross_notional,
+                        gross_exposure_limit_pct=gross_exposure_limit,
+                        settled_cash_before=settled_cash_before_entry,
+                        policy="reject_whole_order_no_resize", **signal_context)
+                    continue
+                raise ValueError(f"Replay quantity clipped by portfolio constraints: {symbol}")
             if quantity <= QUANTITY_EPSILON:
                 if gross_exposure_cap_binds:
                     diagnostics.blocked_by_gross_exposure += 1
@@ -1889,7 +1992,10 @@ class BacktestEngine:
             # P3 — ajout de la commission fixe tiered après détermination de la quantité
             entry_notional = quantity_abs * entry_price
             if cfg.use_tiered_commission:
-                tiered_fixed = commission_config.fixed_per_trade_usd
+                tiered_fixed = (
+                    0.0 if float(getattr(cfg, "cost_round_trip_bps", 0.0) or 0.0) > 0
+                    else commission_config.fixed_per_trade_usd
+                )
                 effective_cost_pct = base_cost_pct
             else:
                 tiered_fixed = 0.0
@@ -2322,10 +2428,14 @@ class BacktestEngine:
             if cfg.use_tiered_commission:
                 exit_commission_config = resolve_commission_preset(float(current_equity))
                 exit_commission_rate_pct = exit_commission_config.bps_rate / 10_000.0
-                fees_rate = exit_commission_rate_pct + (cfg.slippage_bps / 10_000.0) + extra_slippage_pct + spread_cost_pct / 2.0
+                configured_slippage = self._cost_model.slippage_bps if self._canonical_costs else cfg.slippage_bps
+                fees_rate = exit_commission_rate_pct + (configured_slippage / 10_000.0) + extra_slippage_pct + spread_cost_pct / 2.0
                 exit_fixed_commission = exit_commission_config.fixed_per_trade_usd
             else:
                 fees_rate = self._effective_fees_pct + extra_slippage_pct + spread_cost_pct / 2.0
+                exit_fixed_commission = 0.0
+            if float(getattr(cfg, "cost_round_trip_bps", 0.0) or 0.0) > 0:
+                fees_rate = self._effective_fees_pct
                 exit_fixed_commission = 0.0
 
             if short:
@@ -2357,7 +2467,10 @@ class BacktestEngine:
             # ── Sprint 3 / Point 12 : borrow fee pour shorts ──────────
             borrow_cost = 0.0
             if short and self._cost_model.borrow_fee_annual > 0 and holding_days > 0:
-                holding_sessions = max(1, holding_days)  # ~1 session par jour calendaire
+                holding_sessions = (
+                    max(0, day_idx - int(trading_days.searchsorted(position.entry_date)))
+                    if self._canonical_costs else max(1, holding_days)
+                )
                 borrow_cost_pct = self._cost_model.borrow_cost_for_holding(
                     holding_sessions, sessions_per_year=252,
                 )
@@ -2529,12 +2642,21 @@ class BacktestEngine:
                 continue
             value = row.get(column_name)
             if value is None or pd.isna(value):
+                if self.config.require_replay_quantities and column_name == "filled_qty":
+                    return None  # A declared but absent fill is not an approved order.
                 continue
             try:
-                quantity = self._normalize_trade_quantity(float(value))
+                raw_quantity = float(value)
+                if not np.isfinite(raw_quantity) or raw_quantity <= QUANTITY_EPSILON:
+                    if self.config.require_replay_quantities:
+                        return None
+                    continue
+                quantity = self._normalize_trade_quantity(raw_quantity)
             except (TypeError, ValueError):
+                if self.config.require_replay_quantities:
+                    return None
                 continue
-            if quantity > QUANTITY_EPSILON:
+            if np.isfinite(quantity) and quantity > QUANTITY_EPSILON:
                 return quantity
         return None
 

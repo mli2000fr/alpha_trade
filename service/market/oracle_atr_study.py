@@ -45,7 +45,9 @@ def summarize_day(scores, atr, labels, macro, *, as_of: date) -> dict:
     available = pd.to_datetime(labels.oracle_available_date, errors='coerce')
     valid = (labels.target_quality_valid.eq(1) & np.isfinite(labels.future_return)
                  & labels.oracle_decile.between(1, 10)
-                 & available.notna() & available.dt.date.le(as_of))
+                 # Keep pandas datetime types even for empty/all-NaT series.
+                 # Availability is a calendar date, inclusive of the whole day.
+                 & available.notna() & available.dt.normalize().le(pd.Timestamp(as_of)))
     chosen = labels[labels.symbol.isin(selected)]
     evaluable = valid.loc[chosen.index]
     n = int(evaluable.sum())

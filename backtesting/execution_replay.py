@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, time, timezone
@@ -25,6 +26,7 @@ from execution_engine.order_intents import (
     build_initial_stop_intent,
     build_take_profit_intent,
     build_trailing_stop_intent,
+    split_entry_intents_by_gap_filter,
 )
 from execution_engine.tca import (
     build_tca_summary,
@@ -368,6 +370,7 @@ def simulate_phase3_execution_replay(
     risk_run_id_prefix: str,
     exec_run_id: str | None = None,
     regime_trailing_map: dict | None = None,
+    enforce_live_gap_filter: bool = False,
 ) -> ExecutionReplayResult:
     trading_days = pd.DatetimeIndex(open_df.index)
     effective_exec_run_id = exec_run_id or f"bt_exec_replay_{uuid.uuid4().hex[:12]}"
@@ -383,6 +386,7 @@ def simulate_phase3_execution_replay(
     skipped_missing_snapshot = 0
     skipped_no_next_session = 0
     skipped_missing_open = 0
+    gap_rejections = []
 
     eligible_entries = sorted(
         [entry for entry in entries if entry.approved_shares > 0],
@@ -417,7 +421,7 @@ def simulate_phase3_execution_replay(
         except (KeyError, TypeError, ValueError):
             skipped_missing_open += 1
             continue
-        if not pd.notna(fill_price) or fill_price <= 0:
+        if not pd.notna(fill_price) or fill_price <= 0 or (enforce_live_gap_filter and not math.isfinite(fill_price)):
             skipped_missing_open += 1
             continue
 
@@ -438,6 +442,15 @@ def simulate_phase3_execution_replay(
             trailing_risk_based=_tgt_risk,
         )
         intent = build_entry_intents([target], execution_config, effective_exec_run_id)[0]
+        if enforce_live_gap_filter:
+            kept, blocked = split_entry_intents_by_gap_filter(
+                targets=[target], intents=[intent], config=execution_config,
+                latest_market_prices={target.symbol: fill_price})
+            if blocked:
+                gap_rejections.extend([{**row, 'trade_date': str(pd.Timestamp(snapshot_date).date()),
+                    'execution_date': str(execution_day.date())} for row in blocked])
+            if not kept:
+                continue
         attempt_plan = _build_synthetic_fill_attempts(
             execution_day=execution_day,
             target_qty=float(target.target_shares),
@@ -845,6 +858,8 @@ def simulate_phase3_execution_replay(
         "skipped_missing_snapshot": skipped_missing_snapshot,
         "skipped_no_next_session": skipped_no_next_session,
         "skipped_missing_open": skipped_missing_open,
+        "live_gap_filter_enabled": enforce_live_gap_filter,
+        "gap_rejections": gap_rejections,
         "broker_like_orders": int(len(order_lifecycle_frame)),
         "broker_like_events": int(len(event_frame)),
         "filled_orders": int((order_lifecycle_frame["order_status"] == OrderStatus.FILLED).sum()) if not order_lifecycle_frame.empty else 0,
