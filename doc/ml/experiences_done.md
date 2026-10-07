@@ -1,5 +1,17 @@
 # Registre des expériences ML réalisées
 
+## US — Retrait KNTK et AMTB des fichiers d'univers
+
+7 octobre 2026 : décision utilisateur de retirer ces titres plutôt que de
+réparer leurs historiques à ce stade. Sept fichiers modifiés dans
+`config/univers`, `config/univers_batch` et `config/univers_bis`. Univers
+tradable/equities : 1 798 → 1 796 titres ; univers large : 2 696 → 2 694.
+Vérification des 24 fichiers de ces répertoires : aucune occurrence restante,
+autres symboles et ordre conservés. Aucun modèle, processus, prédiction ou
+ligne SQL modifié. Les anciens modèles ne sont pas réparés rétroactivement.
+Maintenir l'exclusion lors des renouvellements d'univers.
+Voir [l'audit et les limites](us_oracle_feature_outliers_audit.md).
+
 ## US — Futurs positifs du TOP10 réel H20, SL initial 7 % : LANCÉ
 
 7 octobre 2026 : TOP10 figé d'abord par amplitude absolue réalisée, puis seuls

@@ -390,3 +390,32 @@ Un futur applicateur devra exiger les empreintes validées, vérifier les valeur
 actuelles sous verrou transactionnel, refuser tout changement concurrent,
 mettre à jour les deux tables ensemble et journaliser les valeurs avant/après.
 Le plan présent ne l'exécute pas : aucune donnée SQL n'a été changée.
+
+## Décision utilisateur : retrait des fichiers d'univers
+
+À la demande de l'utilisateur, KNTK et AMTB ont été retirés des fichiers
+d'univers US plutôt que de réparer leurs prix en base à ce stade.
+
+| Fichier sous `config/` | Avant | Après | Retrait |
+|---|---:|---:|---|
+| `univers/univers_filtred.txt` | 2 696 | 2 694 | AMTB, KNTK |
+| `univers/univers_filtred_tradable.txt` | 1 798 | 1 796 | AMTB, KNTK |
+| `univers/univers_filtred_equities.txt` | 1 798 | 1 796 | AMTB, KNTK |
+| `univers_batch/univers_filtred_tradable.txt` | 1 798 | 1 796 | AMTB, KNTK |
+| `univers_bis/ticket_mid_cap.txt` | 939 | 938 | KNTK (AMTB déjà absent) |
+| `univers_bis/ticket_live.txt` | 939 | 938 | KNTK (AMTB déjà absent) |
+| `univers_bis/ticket_backtest.txt` | 939 | 938 | KNTK (AMTB déjà absent) |
+
+Vérification des 24 fichiers `.txt` de ces trois répertoires : aucun des deux
+symboles n'y reste ; tous les autres symboles et leur ordre sont inchangés.
+Les fichiers des marchés CN/FR ne sont pas concernés. Les données SQL, modèles,
+prédictions, journaux et univers archivés des anciennes expériences sont conservés.
+
+Ce retrait n'assainit pas rétroactivement les modèles déjà entraînés et n'est
+pas une exclusion globale dans le code. Il s'applique aux traitements qui
+relisent ces fichiers. Une tâche déjà lancée peut avoir chargé son ancien
+univers ; aucun processus n'a été arrêté. Une source SQL, un univers publié
+ou une liste explicite peuvent encore contenir ces titres. Un renouvellement
+des fichiers doit maintenir cette exclusion tant que les historiques restent
+réservés. Les audits antérieurs restent liés à leurs univers et empreintes
+originales ; ne pas les présenter comme recalculés sur les 1 796 titres.
