@@ -593,3 +593,20 @@ publique INPI en quarantaine, sans SQL/ML/backtest/live.
 
 Contrat, sources précises, limites et reprise :
 [INPI — univers et collecte sécurisée](inpi_univers_collecte_securisee.md).
+
+## Ajout du 08/10/2026 — transactions MiFIR actions et devise
+
+Source : [Euronext Delayed Trade Data](https://marketdata.euronext.com/data-reporting-service/trades-file),
+segment Equities, fichier Paris de la séance précédente. Les conditions
+spécifiques permettent l'usage interne gratuit sous restrictions de
+redistribution, sans autorisation générale des autres produits Euronext.
+
+Problème traité : distinguer devise nominale et devise effective de transactions
+ISIN/place/date. Le POC AIR/OR/SAN observe EUR sur XPAR le 7 octobre 2026.
+Réception réelle le 8 octobre à 22:22 Paris ; aucune disponibilité antidatée.
+Ne résout pas : devise sur toute la fenêtre, historique exhaustif, opérations
+sur titres, ajustements de prix ou NBBO. Ne réactive aucun collecteur bloqué.
+
+Service : `service/fr/mifir_equity_currency_16g.py`, avec archivage des reçus,
+empreintes et contrôles cash. Détails, résultats et relecture hors réseau :
+[preuve MiFIR ponctuelle du Sprint 16-G](sprint_16g_preuve_devise_mifir.md).

@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "contract": "fr_prospective_window_preparation_16g_v1",
+  "market_code": "FR_EQ",
+  "calendar": "XPAR",
+  "anchor_full_date": "2026-09-12",
+  "warmup_sessions": 21,
+  "future_oracle_min_cross_section": 20,
+  "pilot_symbols": ["AIR.PA", "OR.PA", "SAN.PA"],
+  "source_packet": "artifacts/fr/research/release_review_16g3/anchor-20261008-v2/report.json",
+  "preanchor_replay": "artifacts/fr/research/preanchor_replay_16g/september-window-20261008-v3/report.json",
+  "bootstrap_dir": "artifacts/fr/research/data_readiness_16c/bootstrap-remediation-20261007-v1",
+  "status": "PREPARATION_ONLY_NOT_RELEASED",
+  "serving_allowed": false,
+  "orders_allowed": false,
+  "sql_writes": false,
+  "model_inference_allowed": false,
+  "model_refit_allowed": false,
+  "rules": [
+    "Derive first complete window from XPAR sessions, never from calendar days",
+    "Inventory is as known at actual preparation time, not future opening qualification",
+    "Never rewrite October 7 or October 8 tests",
+    "Nominal EUR and empty provider action responses do not qualify trading currency or actions",
+    "Future qualification requires every reference fragment through the last feature session",
+    "Global inherited continuity assertions remain unchanged"
+  ]
+}

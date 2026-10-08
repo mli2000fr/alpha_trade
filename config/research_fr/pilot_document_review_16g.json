@@ -1,0 +1,62 @@
+{
+  "market_code": "FR_EQ",
+  "status": "CURATED_CONTENT_REVIEW_NOT_RELEASED",
+  "reviewer": "same_assistant_technical_review_not_independent_human",
+  "source_report": "artifacts/fr/research/issuer_pilot_16g/documents-20261008-v1/report.json",
+  "render_manifest": "artifacts/fr/research/issuer_pilot_16g/documents-20261008-v1/extraction-v2/manifest.json",
+  "visual_pages_reviewed": 16,
+  "historical_decision_at": "2026-10-08T07:00:00+00:00",
+  "received_after_historical_decision": true,
+  "currency_interval_qualified": false,
+  "actions_coverage_qualified": false,
+  "absence_of_actions_certified": false,
+  "serving_allowed": false,
+  "orders_allowed": false,
+  "sql_writes": false,
+  "groups": [
+    {
+      "symbol": "OR.PA",
+      "isin": "FR0000120321",
+      "kind": "CAPITAL_VOTING_RIGHTS_DISCLOSURE",
+      "reference_date": "2026-09-30",
+      "documents": [
+        {"id": "116486_20261006", "sha256": "1e577419f6971e796a0bc7069d5aee5d0da5672ae54587d194189dadbcc82b75", "language": "en", "pages_reviewed": [1]},
+        {"id": "136486_20261006", "sha256": "5927b2e6805e1b78c0e0014186be7afe6c458c258f938536d19d212b11700fab", "language": "fr", "pages_reviewed": [1]}
+      ],
+      "findings": "532649827 shares and real/theoretical voting rights; EUR is registered-capital currency, not a trading-currency field. ISIN appears in the footer. No price-adjustment instruction extracted.",
+      "price_adjustment_notice": false
+    },
+    {
+      "symbol": "SAN.PA",
+      "isin": "FR0000120578",
+      "kind": "COMMERCIAL_COLLABORATION_ANNOUNCEMENT",
+      "announced_date": "2026-10-01",
+      "documents": [
+        {"id": "115651_20261001", "sha256": "8682c12e0125c6d5355f9df937924296b76093f2671a7673f36850d4de1ac56f", "language": "en", "pages_reviewed": [1,2,3,4,5]},
+        {"id": "135651_20261001", "sha256": "959d1721ddc38512645a071755d0a4da5b0923c991878b5fe5b85fa051dd8443", "language": "fr", "pages_reviewed": [1,2,3,4,5]}
+      ],
+      "findings": "Sanofi/Regeneron collaboration; USD payments between companies are not dividends or trading-currency evidence. SAN and SNY listings mentioned. ISIN binding comes from verified DILA metadata, not an explicit body ISIN.",
+      "translation_equivalence_certified": false,
+      "price_adjustment_notice": false
+    },
+    {
+      "symbol": "SAN.PA",
+      "isin": "FR0000120578",
+      "kind": "PUBLICATION_AVAILABILITY_ANNOUNCEMENT",
+      "announced_date": "2026-10-06",
+      "documents": [
+        {"id": "116372_20261006", "sha256": "36f279b7a7dfac7126085151b7ab6be8ff0225dc7c37ab529e4879e41629430e", "language": "en", "pages_reviewed": [1,2]},
+        {"id": "136372_20261006", "sha256": "e49ea426b6fd5df484dc45c154df8f81552b365398bc450df6a94bde8c47a068", "language": "fr", "pages_reviewed": [1,2]}
+      ],
+      "findings": "Availability announcement, not the Q3 aide-memoire itself. Refers to FX impact and share count without providing the underlying tables. Does not qualify trading currency or adjustments. ISIN binding comes from DILA metadata.",
+      "linked_document_read": false,
+      "price_adjustment_notice": false
+    }
+  ],
+  "uncovered": [
+    "AIR.PA: no document in the frozen DILA sample",
+    "Trading currency per ISIN/MIC over the full window",
+    "Independent exhaustive coverage of corporate actions",
+    "No backdating of PDF receipt to earlier metadata availability"
+  ]
+}
