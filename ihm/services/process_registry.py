@@ -1360,6 +1360,11 @@ def _run_pipeline_workflow(
         _update_workflow_record(managed, status="running", workflow_total_steps=total_steps, workflow_completed_steps=0)
 
         completed_steps = 0
+        if options.llm_filter_enabled:
+            from dataclasses import replace as _llm_replace
+            options = _llm_replace(options,
+                llm_filter_run_id=options.llm_filter_run_id or f'llm-{uuid.uuid4().hex}',
+                force_trade_date_to_latest_snapshot=False)
         child_run_ids: list[str] = []
         child_runs_with_summary: dict[str, dict[str, object]] = {}
 
@@ -1610,7 +1615,7 @@ def start_pipeline_run(
     # avec une sélection classée dans stock_scores_history. Permet de continuer un
     # workflow démarré la veille même après réouverture de la session Streamlit
     # (qui a réinitialisé trade_date à date.today()).
-    if getattr(options, "force_trade_date_to_latest_snapshot", False) and (options.trade_date or "").strip():
+    if not options.llm_filter_enabled and getattr(options, "force_trade_date_to_latest_snapshot", False) and (options.trade_date or "").strip():
         try:
             from ihm.services.queries import resolve_latest_selection_snapshot_date
 

@@ -10,7 +10,8 @@ requires-python = ">=3.12"
 dependencies = [
     "pymysql",
     "cryptography",
-    "requests",
+    "requests>=2.32.2",
+    "jsonschema>=4",
     "certifi",
     "python-dotenv",
     "sqlalchemy",

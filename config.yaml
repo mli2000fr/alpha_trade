@@ -9,6 +9,24 @@ database:
   password: "${PASSWORD_DB}"
   name: alpha_trade
 
+llm_directional_filter:
+  # Opt-in, recherche prospective et exécution PAPER uniquement. Aucun historique Web simulé.
+  enabled: false
+  model: gpt-6.1-sol
+  api_key_env: OPENAI_API_KEY
+  oracle_top_n: 10  # Nombre de premiers scores Oracle à analyser (pas de tri par rendement futur).
+  max_selected: 5   # Plafond, jamais un quota obligatoire ; 0 candidat reste possible.
+  min_oracle_coverage_ratio: 0.90  # Bloque un classement issu d’une prédiction partielle.
+  min_confidence: 0.75  # Note LLM non calibrée, pas une probabilité de rendement.
+  min_sources: 2
+  max_source_age_days: 30
+  max_run_age_hours: 24
+  timeout_seconds: 120
+  max_output_tokens: 6000
+  max_tool_calls: 5
+  account_id: default
+  horizon: 20
+
 alpaca:
   # Sprint S5 / A-013 — plus aucune clé en clair acceptée à la racine.
   # Les credentials par compte vivent exclusivement sous `accounts:` ci-dessous,

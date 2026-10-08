@@ -318,3 +318,25 @@ Les tests couvrent également les quatre populations, les unités et signes,
 le tri absolu, les ex æquo déterministes, les valeurs non finies, l’absence de
 remplacement d’un résultat manquant, les indices de DataFrame répétés, le
 changement de version, la persistance JSON et les gardes de migration US.
+
+### Ordre Oracle prédit conservé — ajout du 8 octobre 2026
+
+`predicted_oracle_score_order_returns_pct` contient les mêmes N titres que
+`predicted_oracle_top_returns_pct`, mais **sans reclassement par rendement réalisé**.
+La position 1 correspond au plus grand `proba_extreme`, puis score décroissant ;
+les ex æquo sont départagés par symbole croissant. N reste `evaluated_count`.
+Les valeurs sont des rendements futurs réalisés signés en pourcentage, et non
+des prédictions de rendement ou de sens. Exemple : scores A > B, rendements
+A=+3 %, B=−8 % : nouvelle colonne `[3,-8]`, ancienne colonne `[-8,3]`.
+
+Les mêmes exigences de labels s'appliquent : si un résultat du TOP N manque,
+la nouvelle liste entière reste NULL, sans remplacement par un autre titre.
+La colonne actuelle et ses règles de tri sont inchangées.
+
+Schéma : migration Alembic **0094** ou SQL manuel
+[`oracle_atr_score_order_migration.sql`](../../database/sql/ml/oracle_atr_score_order_migration.sql).
+L'ajout du schéma seul ne remplit pas l'historique. Relancer le même bloc
+**Alimenter l'étude Oracle × ATR** avec le même batch, univers et dates :
+la version `oracle_atr_v3_score_order` recalcule les anciennes lignes v1/v2,
+par tranches et upsert sans doublons. Les séances complètes déjà en v3 sont
+ignorées à la reprise. Aucun nouvel entraînement n'est nécessaire.

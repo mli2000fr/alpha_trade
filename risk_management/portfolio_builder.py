@@ -497,8 +497,8 @@ class PortfolioBuilder:
                     predicted_proba=None, historical_win_rate=None,
                     conviction_score=candidate.score_used, snapshot_date=candidate.snapshot_date,
                     selection_rank=candidate.selection_rank,
-                    selector_signal_mode='oracle_pure_long',
-                    selection_explanation='Explicit LONG strategy; Oracle predicts amplitude, not direction',
+                    selector_signal_mode=candidate.selector_signal_mode or 'oracle_pure_long',
+                    selection_explanation=candidate.selection_explanation or 'Explicit LONG strategy; Oracle predicts amplitude, not direction',
                     selector_earnings_blackout=candidate.selector_earnings_blackout, side='buy'))
                 continue
             prediction = predictions.get(candidate.symbol)
@@ -713,9 +713,9 @@ class PortfolioBuilder:
         snapshot and reserves held/pending positions and actual buying power.
         The default directional contract is unchanged.
         """
-        if selection_policy not in {'directional', 'oracle_pure_long'}:
+        if selection_policy not in {'directional', 'oracle_pure_long', 'oracle_web_llm_long'}:
             raise ValueError('Unknown portfolio selection policy')
-        oracle_long_only = selection_policy == 'oracle_pure_long'
+        oracle_long_only = selection_policy in {'oracle_pure_long', 'oracle_web_llm_long'}
         operational = self.operational_snapshot if oracle_long_only else None
         if oracle_long_only:
             from risk_management.operational_data import OperationalDataSnapshot

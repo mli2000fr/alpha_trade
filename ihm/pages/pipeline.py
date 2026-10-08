@@ -1812,6 +1812,26 @@ def render() -> None:
         return
 
     options, live_confirmed = _build_launch_options()
+    with st.expander('🌐 Audit des sélections GPT + Web — PAPER'):
+        _llm_audit_id = st.text_input('Identifiant analyse à consulter',
+            value=options.llm_filter_run_id or '', key='llm_directional_audit_id')
+        if st.button('Consulter la sélection et les motifs', key='llm_directional_audit_load',
+                     disabled=not bool(_llm_audit_id.strip())):
+            try:
+                from database.connection import get_sqlalchemy_engine
+                from service.llm_directional.report import report as _llm_report
+                _llm_audit = _llm_report(get_sqlalchemy_engine(), _llm_audit_id.strip())
+                st.caption(f"{_llm_audit['status']} · {_llm_audit['trade_date']} · batch {_llm_audit['batch_id']}")
+                st.warning(_llm_audit['warning'])
+                st.dataframe(_llm_audit['candidates'], use_container_width=True)
+                st.json(_llm_audit['configuration'])
+                if _llm_audit['evaluations']:
+                    st.caption('Rendements bruts ajustés : sans portefeuille, frais ou preuve de profitabilité.')
+                    st.dataframe(_llm_audit['evaluations'], use_container_width=True)
+                if _llm_audit['error']:
+                    st.error(_llm_audit['error'])
+            except Exception:
+                st.error('Analyse indisponible : vérifier le run_id, la migration 0093 et la connexion US.')
     _render_execution_mode_banner(options)
     live_guard = get_execution_live_guard(account_id=str(options.account_id or "").strip() or None)
     _render_live_execution_freeze_banner(live_guard)

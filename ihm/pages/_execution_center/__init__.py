@@ -3343,6 +3343,27 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         st.caption("Chaque lancement ML Train crée une campagne complète et isolée.")
         ml_train_symbol_source = default_universe_file_source_or("tradable-universe")
         ml_predict_symbol_source = "tradable-universe"
+        from service.llm_directional.config import load_filter_config
+        _llm_config = load_filter_config()
+        llm_filter_enabled = st.checkbox(
+            '🌐 Filtrage GPT + recherche Web après Oracle — PAPER uniquement',
+            value=bool(st.session_state.get('pipeline_llm_filter_enabled', _llm_config.enabled)),
+            key='pipeline_llm_filter_enabled',
+            help='Analyse prospective des premiers scores Oracle, archivage en base, puis LONG/abstention. Aucun gain démontré.')
+        llm_filter_run_id = None
+        if llm_filter_enabled:
+            from common.universe_files import list_universe_file_sources
+            _llm_sources = ['tradable-universe', *list_universe_file_sources()]
+            ml_predict_symbol_source = st.selectbox('Univers Oracle → filtre GPT (même périmètre)',
+                options=_llm_sources, key='pipeline_llm_symbol_source',
+                help='Utilisé aussi par la prédiction du workflow. Le filtre ne reclasse pas un autre univers.')
+            st.warning(f'Compte principal default PAPER uniquement. Oracle TOP{_llm_config.oracle_top_n} → '
+                       f'0 à {_llm_config.max_selected} LONG. Paramètres dans config.yaml. '
+                       'Recherche Web facturée ; pas de backtest historique Web. Kelly, LIVE, '
+                       'hors séance et rééquilibrage automatique interdits.')
+            llm_filter_run_id = st.text_input('Identifiant analyse LLM (vide = nouveau run pour le workflow)',
+                key='pipeline_llm_filter_run_id',
+                help='Pour lancer 11/12 séparément, recopier le run_id affiché après étape 10. Ne pas utiliser auto.') or None
         ml_directional_profiles_enabled = st.checkbox(
             "🧭 Bundle Oracle + deux modèles Per-Symbol LONG/SHORT",
             value=_session_state_bool("pipeline_ml_directional_profiles_enabled", False),
@@ -4986,6 +5007,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
     return (
         PipelineLaunchOptions(
             account_id=selected_account_id,
+            llm_filter_enabled=bool(llm_filter_enabled),
+            llm_filter_run_id=llm_filter_run_id,
+            ml_predict_batch_id=(st.session_state.get('pipeline_ml_live_predict_batch_id_ml_predict')
+                or st.session_state.get('pipeline_ml_predict_batch_id') or None) if llm_filter_enabled else None,
             trade_date=trade_date,
             capital_preset_key=capital_preset_key,
             force_trade_date_to_latest_snapshot=bool(force_trade_date_to_latest_snapshot),
