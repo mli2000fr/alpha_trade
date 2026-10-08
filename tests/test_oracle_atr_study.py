@@ -247,7 +247,7 @@ def test_four_lists_use_selection_then_signed_absolute_order_and_percent_units()
         'intersection_returns_pct': [20, 1],
         'predicted_oracle_top_returns_pct': [20, 1],
         'predicted_oracle_score_order_returns_pct': [1, 20],
-        'atr_top_returns_pct': [1, .5],
+        'atr_top_returns_pct': [1, 1],
     }
     for field, values in expected.items():
         assert json.loads(out[field]) == pytest.approx(values)
@@ -280,6 +280,24 @@ def test_nonfinite_realized_return_never_serialized(invalid):
     assert json.loads(out['intersection_returns_pct']) == [-10, 1]
 
 
+@pytest.mark.parametrize('value,expected', [
+    (.082, 8), (-.075, -8), (.069, 7), (.005, 1), (-.005, -1),
+    (.0049, 0), (-.0049, 0), (1.235, 124), (-1.235, -124),
+])
+def test_all_five_lists_store_json_integers(value, expected):
+    scores, atr, labels, macro = frames()
+    # Keep a genuine TOP20 pool: only the three selected titles have this amplitude.
+    labels['future_return'] = 0.
+    labels.loc[labels.symbol.isin(['7', '8', '9']), 'future_return'] = value
+    out = summarize_day(scores, atr, labels, macro, as_of=date(2026,1,1))
+    for field in MOVEMENT_FIELDS:
+        values = json.loads(out[field])
+        assert values == [expected] * out['evaluated_count']
+        assert all(type(v) is int for v in values)
+    assert out['d1_pct'] == pytest.approx(100/3)
+    assert out['d10_d1_ratio'] == 1
+
+
 def test_no_evaluable_candidates_means_null_not_empty_lists():
     out = summarize_day(*frames(), as_of=date(2025,2,1))
     assert all(out[field] is None for field in MOVEMENT_FIELDS)
@@ -302,8 +320,8 @@ def test_tied_selection_uses_symbol_not_future_return():
     labels.loc[labels.symbol.eq('9'), 'future_return'] = .9
     out = summarize_day(scores, atr, labels, macro, as_of=date(2026,1,1))
     assert out['evaluated_count'] == 3
-    assert json.loads(out['predicted_oracle_top_returns_pct']) == [20, -10, .5]
-    assert json.loads(out['predicted_oracle_score_order_returns_pct']) == [.5, -10, 20]
+    assert json.loads(out['predicted_oracle_top_returns_pct']) == [20, -10, 1]
+    assert json.loads(out['predicted_oracle_score_order_returns_pct']) == [1, -10, 20]
     assert json.loads(out['intersection_returns_pct']) == [90, 20, -10]
 
 

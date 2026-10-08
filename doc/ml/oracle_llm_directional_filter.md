@@ -37,9 +37,11 @@ par le risque pour le sizing/protections selon la configuration existante.
 
 ```yaml
 llm_directional_filter:
-  enabled: false
+  enabled: true
   model: gpt-6.1-sol
   api_key_env: OPENAI_API_KEY
+  default_symbol_source: universe-file:univers_filtred_tradable.txt
+  default_oracle_batch_id: model-factory-20261003082853-e98332
   oracle_top_n: 10
   max_selected: 5
   min_oracle_coverage_ratio: 0.90
@@ -55,10 +57,23 @@ llm_directional_filter:
 ```
 
 `enabled` fournit le défaut IHM et autorise la CLI directe d’analyse. La checkbox
+est cochée par défaut dans la configuration actuelle, sans lancement automatique.
+Une valeur déjà mémorisée dans la session IHM reste prioritaire.
+La checkbox
 IHM est un opt-in explicite : elle peut activer une campagne ponctuelle même si
 ce défaut reste false. Elle n’active pas le batch planifié `us_pipeline_1_9`.
 Une campagne enregistre sa configuration entière : changer N/K demain ne change
 pas rétrospectivement les sélections enregistrées aujourd’hui.
+
+Les deux champs `default_symbol_source` et `default_oracle_batch_id` préremplissent
+les listes « Univers Oracle → filtre GPT » et « Batch Oracle → filtre GPT ».
+Les choix manuels restent prioritaires dans la session IHM. Après changement du
+YAML, une sélection déjà mémorisée n'est pas écrasée : sélectionner la nouvelle
+valeur ou ouvrir une nouvelle session. Le batch dédié remplace, pour ce flux
+uniquement, les anciens choix LIVE/BACKTEST ; prédiction et filtre utilisent
+toujours le même identifiant. Un univers configuré absent bloque avec un message,
+sans substitution silencieuse. Un batch sans artefact Oracle valide reste rejeté
+par les contrôles existants. Le filtre désactivé conserve le fonctionnement habituel.
 
 | Paramètre | Rôle / garde-fou |
 |---|---|

@@ -32,6 +32,8 @@ def response(symbol='ABC', confidence=.9, decision='LONG'):
     {'max_selected': 11}, {'max_selected': -1}, {'max_selected': 2.5},
     {'min_confidence': float('nan')}, {'min_confidence': 1.1}, {'min_sources': 0},
     {'account_id': 'test1'}, {'timeout_seconds': 0}, {'enabled': 'true'},
+    {'default_symbol_source': ''}, {'default_symbol_source': None},
+    {'default_oracle_batch_id': ''}, {'default_oracle_batch_id': '../batch'},
 ])
 def test_invalid_config(kwargs):
     with pytest.raises(ValueError):
@@ -51,7 +53,37 @@ def test_parameters_and_zero_selection():
 def test_actual_yaml_defaults():
     cfg = load_filter_config()
     assert (cfg.oracle_top_n, cfg.max_selected, cfg.model) == (10, 5, 'gpt-6.1-sol')
-    assert not cfg.enabled
+    assert cfg.enabled
+    assert cfg.default_symbol_source == 'universe-file:univers_filtred_tradable.txt'
+    assert cfg.default_oracle_batch_id == 'model-factory-20261003082853-e98332'
+
+
+def test_custom_selection_defaults_from_yaml(tmp_path):
+    path = tmp_path / 'config.yaml'
+    path.write_text('llm_directional_filter:\n  default_symbol_source: universe-file:other.txt\n'
+                    '  default_oracle_batch_id: other-batch\n', encoding='utf-8')
+    cfg = load_filter_config(path)
+    assert cfg.default_symbol_source == 'universe-file:other.txt'
+    assert cfg.default_oracle_batch_id == 'other-batch'
+
+
+def test_llm_explicit_batch_and_universe_override_legacy_defaults():
+    from ihm.services.pipeline_runner import PipelineLaunchOptions, build_pipeline_command
+    cfg = load_filter_config()
+    opts = PipelineLaunchOptions(llm_filter_enabled=True,
+        ml_predict_batch_id=cfg.default_oracle_batch_id,
+        ml_live_predict_batch_id='stale-legacy-batch',
+        ml_predict_symbol_source=cfg.default_symbol_source)
+    command = build_pipeline_command('ml_predict', opts)
+    assert command[command.index('--batch-id') + 1] == cfg.default_oracle_batch_id
+    assert command[command.index('--symbol-source') + 1] == cfg.default_symbol_source
+    inner = json.loads(command[command.index('--command-json') + 1])
+    assert inner[inner.index('--batch-id') + 1] == cfg.default_oracle_batch_id
+    assert inner[inner.index('--symbol-source') + 1] == cfg.default_symbol_source
+    manual = build_pipeline_command('ml_predict', replace(opts,
+        ml_predict_batch_id='manual-batch', ml_predict_symbol_source='universe-file:manual.txt'))
+    assert manual[manual.index('--batch-id') + 1] == 'manual-batch'
+    assert manual[manual.index('--symbol-source') + 1] == 'universe-file:manual.txt'
 
 
 def test_request_only_web_search_and_no_credentials(monkeypatch):

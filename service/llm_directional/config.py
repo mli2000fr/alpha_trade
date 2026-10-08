@@ -8,6 +8,8 @@ class FilterConfig:
     enabled: bool = False
     model: str = 'gpt-6.1-sol'
     api_key_env: str = 'OPENAI_API_KEY'
+    default_symbol_source: str = 'universe-file:univers_filtred_tradable.txt'
+    default_oracle_batch_id: str = 'model-factory-20261003082853-e98332'
     oracle_top_n: int = 10
     max_selected: int = 5
     min_oracle_coverage_ratio: float = .90
@@ -34,6 +36,12 @@ class FilterConfig:
                 raise ValueError(f'{name}: entier entre {minimum} et {maximum} requis')
         if type(self.enabled) is not bool:
             raise ValueError('enabled doit être booléen')
+        if not isinstance(self.default_symbol_source, str) or not self.default_symbol_source.strip():
+            raise ValueError('default_symbol_source doit être une source non vide')
+        if (not isinstance(self.default_oracle_batch_id, str)
+                or not self.default_oracle_batch_id.strip()
+                or any(not (c.isalnum() or c in '-_') for c in self.default_oracle_batch_id)):
+            raise ValueError('default_oracle_batch_id doit être un identifiant de batch explicite')
         if type(self.min_confidence) not in (int, float) or not math.isfinite(self.min_confidence) or not 0 <= self.min_confidence <= 1:
             raise ValueError('min_confidence doit être entre 0 et 1')
         if type(self.min_oracle_coverage_ratio) not in (int, float) or not math.isfinite(self.min_oracle_coverage_ratio) or not 0 < self.min_oracle_coverage_ratio <= 1:

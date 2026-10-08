@@ -1570,16 +1570,21 @@ def _render_launchable_step_panel(
                             _label += f" — {_comment[:60]}"
                         _live_options.append((_bid, _label))
 
-                if f"pipeline_ml_live_predict_batch_id_{step.key}" not in st.session_state:
+                if options.llm_filter_enabled:
+                    # One explicit selector for both prediction and GPT; never reuse a stale LIVE choice.
+                    _live_selected = options.ml_predict_batch_id or ""
+                    st.caption(f"📦 Batch Oracle du filtre GPT : `{_live_selected}`")
+                elif f"pipeline_ml_live_predict_batch_id_{step.key}" not in st.session_state:
                     st.session_state[f"pipeline_ml_live_predict_batch_id_{step.key}"] = _live_default_batch
 
-                _live_selected = st.selectbox(
-                    "📡 Batch LIVE",
-                    options=[b for b, _ in _live_options],
-                    format_func=lambda b: dict(_live_options).get(b, b),
-                    key=f"pipeline_ml_live_predict_batch_id_{step.key}",
-                    help="Batch ML pour les prédictions live (lancées en arrière-plan). Défaut = live_batch_id du config.yaml.",
-                )
+                if not options.llm_filter_enabled:
+                    _live_selected = st.selectbox(
+                        "📡 Batch LIVE",
+                        options=[b for b, _ in _live_options],
+                        format_func=lambda b: dict(_live_options).get(b, b),
+                        key=f"pipeline_ml_live_predict_batch_id_{step.key}",
+                        help="Batch ML pour les prédictions live (lancées en arrière-plan). Défaut = live_batch_id du config.yaml.",
+                    )
                 if _live_selected:
                     _live_comment = ""
                     try:
@@ -1685,7 +1690,8 @@ def _render_launchable_step_panel(
                 if run_clicked:
                     _launch_options = options
                     if step.key == "ml_predict":
-                        _live_bid = st.session_state.get(f"pipeline_ml_live_predict_batch_id_{step.key}", "") or None
+                        _live_bid = (options.ml_predict_batch_id if options.llm_filter_enabled else
+                            st.session_state.get(f"pipeline_ml_live_predict_batch_id_{step.key}", "")) or None
                         _live_w = st.session_state.get(f"pipeline_ml_live_predict_workers_{step.key}", 4)
                         _overrides: dict[str, object] = {}
                         if _live_bid:

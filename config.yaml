@@ -11,9 +11,11 @@ database:
 
 llm_directional_filter:
   # Opt-in, recherche prospective et exécution PAPER uniquement. Aucun historique Web simulé.
-  enabled: false
+  enabled: true  # Checkbox IHM cochée par défaut ; aucun lancement automatique.
   model: gpt-6.1-sol
   api_key_env: OPENAI_API_KEY
+  default_symbol_source: universe-file:univers_filtred_tradable.txt
+  default_oracle_batch_id: model-factory-20261003082853-e98332
   oracle_top_n: 10  # Nombre de premiers scores Oracle à analyser (pas de tri par rendement futur).
   max_selected: 5   # Plafond, jamais un quota obligatoire ; 0 candidat reste possible.
   min_oracle_coverage_ratio: 0.90  # Bloque un classement issu d’une prédiction partielle.

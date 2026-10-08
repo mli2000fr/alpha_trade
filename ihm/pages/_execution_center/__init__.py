@@ -36,6 +36,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Any, SupportsFloat, SupportsIndex, SupportsInt, cast
 
 import streamlit as st
@@ -3351,12 +3352,28 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             key='pipeline_llm_filter_enabled',
             help='Analyse prospective des premiers scores Oracle, archivage en base, puis LONG/abstention. Aucun gain démontré.')
         llm_filter_run_id = None
+        llm_oracle_batch_id = None
         if llm_filter_enabled:
             from common.universe_files import list_universe_file_sources
             _llm_sources = ['tradable-universe', *list_universe_file_sources()]
+            if _llm_config.default_symbol_source not in _llm_sources:
+                st.error(f'Univers GPT configuré indisponible : {_llm_config.default_symbol_source}')
+                st.stop()
             ml_predict_symbol_source = st.selectbox('Univers Oracle → filtre GPT (même périmètre)',
-                options=_llm_sources, key='pipeline_llm_symbol_source',
+                options=_llm_sources, index=_llm_sources.index(_llm_config.default_symbol_source),
+                key='pipeline_llm_symbol_source',
                 help='Utilisé aussi par la prédiction du workflow. Le filtre ne reclasse pas un autre univers.')
+            _llm_champions = Path('artifacts/models/oracle/champions')
+            _llm_batches = sorted({
+                _llm_config.default_oracle_batch_id,
+                *(p.name for p in _llm_champions.iterdir() if p.is_dir())
+            }) if _llm_champions.is_dir() else [_llm_config.default_oracle_batch_id]
+            llm_oracle_batch_id = st.selectbox(
+                'Batch Oracle → filtre GPT (même modèle)', options=_llm_batches,
+                index=_llm_batches.index(_llm_config.default_oracle_batch_id),
+                key='pipeline_llm_oracle_batch_id',
+                help='Défaut : llm_directional_filter.default_oracle_batch_id dans config.yaml. '
+                     'Utilisé par la prédiction et le filtre ; aucun fallback vers un autre batch.')
             st.warning(f'Compte principal default PAPER uniquement. Oracle TOP{_llm_config.oracle_top_n} → '
                        f'0 à {_llm_config.max_selected} LONG. Paramètres dans config.yaml. '
                        'Recherche Web facturée ; pas de backtest historique Web. Kelly, LIVE, '
@@ -5009,8 +5026,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             account_id=selected_account_id,
             llm_filter_enabled=bool(llm_filter_enabled),
             llm_filter_run_id=llm_filter_run_id,
-            ml_predict_batch_id=(st.session_state.get('pipeline_ml_live_predict_batch_id_ml_predict')
-                or st.session_state.get('pipeline_ml_predict_batch_id') or None) if llm_filter_enabled else None,
+            ml_predict_batch_id=llm_oracle_batch_id if llm_filter_enabled else None,
             trade_date=trade_date,
             capital_preset_key=capital_preset_key,
             force_trade_date_to_latest_snapshot=bool(force_trade_date_to_latest_snapshot),
