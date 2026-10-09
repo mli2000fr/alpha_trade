@@ -15,8 +15,9 @@ def configured_policy():
     return yaml.safe_load((Path(__file__).resolve().parents[1] / 'batch.yaml').read_text(encoding='utf-8'))
 
 
-def test_common_universe_and_collection_windows():
+def test_common_universe_and_collection_windows(monkeypatch):
     from ihm.services.pipeline_runner import build_pipeline_command
+    monkeypatch.setattr('ihm.services.pipeline_runner._resolve_bars_provider_for_ihm', lambda: 'eodhd')
     cfg = configured_policy()
     policy = cfg['us_pipeline']
     options = us_pipeline.collection_options(pipeline_page_default_options(trade_date='2026-10-07'),
@@ -35,6 +36,14 @@ def test_common_universe_and_collection_windows():
     assert options.data_integrity_earnings_batch_size == 50
     assert options.data_integrity_earnings_provider == 'finnhub'
     assert options.data_integrity_earnings_resume is True
+    assert options.eodhd_import_target_date == '2026-10-07'
+    assert options.eodhd_import_symbol_source == source
+    assert options.eodhd_import_wait_for_publication
+    assert options.eodhd_import_require_target_coverage
+    command = build_pipeline_command('import_alpaca_bar', options)
+    assert command[command.index('--target-date')+1] == '2026-10-07'
+    assert command[command.index('--symbol-source')+1] == source
+    assert '--require-target-coverage' in command and '--wait-for-publication' in command
     for step in ('stock_screener', 'sync_latest_quotes', 'sync_earnings_calendar'):
         assert path in ' '.join(build_pipeline_command(step, options))
     news = ' '.join(build_pipeline_command('sentiment_pipeline', options))
@@ -106,7 +115,7 @@ def test_default_options_match_page_preset_and_sentiment():
 
 def setup_run(monkeypatch, tmp_path):
     monkeypatch.setattr(us_pipeline, 'ROOT', tmp_path)
-    monkeypatch.setattr(us_pipeline, 'session_plan', lambda now: (now.date(), None))
+    monkeypatch.setattr(us_pipeline, 'session_plan', lambda now: (date(2026, 10, 7), None))
     monkeypatch.setattr(us_pipeline, 'load_pipeline_policy', lambda: {'steps':list(range(1,10))})
     return SimpleNamespace(url=SimpleNamespace(database='alpha_trade')), {'market_code':'US_EQ'}
 
@@ -275,6 +284,58 @@ def test_numbered_policy_reloaded_for_each_launch(monkeypatch, tmp_path):
     assert us_pipeline.execute_pipeline(engine, cfg, 'first', True).requested == 2
     current['steps'] = [10]
     assert us_pipeline.execute_pipeline(engine, cfg, 'second', True).requested == 1
+
+
+@pytest.mark.parametrize('day,key,numbers', [
+    ('2026-10-05','steps',[1,2]), ('2026-10-06','steps',[1,2]),
+    ('2026-10-07','steps',[1,2]), ('2026-10-08','steps',[1,2]),
+    ('2026-10-09','steps_friday',[3,9]),
+])
+def test_step_list_chosen_from_session_weekday(day, key, numbers):
+    chosen_key, steps = us_pipeline.session_steps({'steps':[2,1], 'steps_friday':[9,3]}, date.fromisoformat(day))
+    assert chosen_key == key
+    assert [int(s.num) for s in steps] == numbers
+
+
+@pytest.mark.parametrize('numbers', [None, [], [1,1], [13], [True], ['8']])
+def test_missing_or_invalid_friday_list_has_no_silent_fallback(numbers):
+    with pytest.raises(ValueError, match='steps_friday.*unique integers'):
+        us_pipeline.session_steps({'steps':[1,2], 'steps_friday':numbers}, date(2026, 10, 9))
+
+
+def test_friday_workflow_keeps_choice_after_midnight_and_policy_edit(monkeypatch, tmp_path):
+    engine, cfg = setup_run(monkeypatch, tmp_path)
+    calls = []
+    def session(now):
+        calls.append(now)
+        return date(2026,10,9), None
+    monkeypatch.setattr(us_pipeline, 'session_plan', session)
+    policy = {'steps':[1,2], 'steps_friday':[9,3]}
+    monkeypatch.setattr(us_pipeline, 'load_pipeline_policy', lambda: policy)
+    seen = {}
+    def start(options, **kwargs):
+        seen.update(kwargs)
+        assert options.trade_date == '2026-10-09'
+        # Emulate a long run reaching Saturday, plus a config edit mid-run.
+        policy['steps_friday'] = [8]
+        return SimpleNamespace(run_id='friday-workflow')
+    monkeypatch.setattr(process_registry, 'start_pipeline_workflow', start)
+    monkeypatch.setattr(process_registry, 'poll_pipeline_run', lambda run: dict(status='completed',workflow_completed_steps=2))
+    result = us_pipeline.execute_pipeline(engine, cfg, 'friday', False, now=datetime(2026,10,9,20,45,tzinfo=UTC))
+    assert len(calls) == 1
+    assert result.details['steps_configuration_source'] == 'config.yaml:us_pipeline.steps_friday'
+    assert result.details['selected_step_numbers'] == [3,9]
+    assert seen['selected_step_keys'] == ('stock_screener','signal_aggregator')
+    assert result.persisted == result.requested == 2
+    # A later run rereads the modified Friday list, the previous one stays pinned.
+    assert us_pipeline.execute_pipeline(engine, cfg, 'friday-next', True).details['selected_step_numbers'] == [8]
+
+
+def test_friday_holiday_still_skips_without_start(monkeypatch, tmp_path):
+    engine, cfg = setup_run(monkeypatch, tmp_path)
+    monkeypatch.setattr(us_pipeline, 'session_plan', lambda now: (date(2026,7,3),'NON_TRADING_DAY'))
+    monkeypatch.setattr(process_registry, 'start_pipeline_workflow', lambda *a, **k: pytest.fail('holiday start'))
+    assert us_pipeline.execute_pipeline(engine, cfg, 'holiday-friday', False).requested == 0
 
 
 def test_installer_handles_legacy_task_without_touching_running_job():

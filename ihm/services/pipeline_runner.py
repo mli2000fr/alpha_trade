@@ -656,6 +656,12 @@ class PipelineLaunchOptions:
     data_integrity_fundamentals_log_every: int = DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY
     eodhd_write_commit_every_symbols: int = DEFAULT_EODHD_WRITE_COMMIT_EVERY_SYMBOLS
     eodhd_enable_stooq_cross_check: bool = DEFAULT_EODHD_ENABLE_STOOQ_CROSS_CHECK
+    eodhd_import_target_date: str | None = None
+    eodhd_import_symbol_source: str | None = None
+    eodhd_import_require_target_coverage: bool = False
+    eodhd_import_min_target_coverage: float = 0.95
+    eodhd_import_benchmark_symbol: str = 'SPY'
+    eodhd_import_wait_for_publication: bool = False
     corporate_actions_skip_existing: bool = DEFAULT_CA_SKIP_EXISTING
     # Corporate actions sync — fenêtre custom + batching
     corporate_actions_use_custom_window: bool = DEFAULT_CA_USE_CUSTOM_WINDOW
@@ -1812,7 +1818,19 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
                 command.extend(["--commit-every-symbols", str(int(options.eodhd_write_commit_every_symbols))])
             if not options.eodhd_enable_stooq_cross_check:
                 command.append("--no-stooq-cross-check")
+            if options.eodhd_import_target_date:
+                command.extend(['--target-date', options.eodhd_import_target_date])
+            if options.eodhd_import_symbol_source:
+                command.extend(['--symbol-source', options.eodhd_import_symbol_source])
+            if options.eodhd_import_wait_for_publication:
+                command.append('--wait-for-publication')
+            if options.eodhd_import_require_target_coverage:
+                command.extend(['--require-target-coverage', '--min-target-coverage',
+                    str(options.eodhd_import_min_target_coverage), '--benchmark-symbol',
+                    options.eodhd_import_benchmark_symbol])
             return command
+        if options.eodhd_import_require_target_coverage:
+            raise ValueError('Le contrat de cours J du batch US est qualifié pour EODHD ; import Alpaca non raccordé à ce contrôle')
         return [sys.executable, "-u", "-m", "dataIntegrityEngine.import_alpaca_bar"]
 
     if step_key == "update_sector":

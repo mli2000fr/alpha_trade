@@ -26,16 +26,22 @@ def load_pipeline_policy():
     return policy
 
 
-def selected_steps(numbers):
+def selected_steps(numbers, *, config_key='steps'):
     if (not isinstance(numbers, list) or not numbers or
             any(type(n) is not int or not 1 <= n <= 12 for n in numbers) or
             len(set(numbers)) != len(numbers)):
-        raise ValueError('us_pipeline.steps must be a nonempty list of unique integers 1..12')
+        raise ValueError(f'us_pipeline.{config_key} must be a nonempty list of unique integers 1..12')
     wanted = sorted(numbers)
     steps = tuple(s for s in get_pipeline_steps() if s.num in {str(n) for n in wanted})
     if [s.num for s in steps] != [str(n) for n in wanted]:
         raise ValueError('US Pipeline definition differs from selected numbered steps')
     return steps
+
+
+def session_steps(policy, day):
+    """Choose once from the US session, never from the clock of a later step."""
+    key = 'steps_friday' if day.weekday() == 4 else 'steps'
+    return key, selected_steps(policy.get(key), config_key=key)
 
 
 def require_paper_account(account_id):
@@ -64,12 +70,19 @@ def collection_options(options, cfg, day):
     """Pin collection windows to the session, not the wall clock after midnight."""
     from common.universe_files import universe_file_source_from_path
     values = {}
+    bars = cfg.get('bars_collection') or {}
+    values.update(eodhd_import_target_date=day.isoformat(),
+                  eodhd_import_require_target_coverage=True,
+                  eodhd_import_wait_for_publication=True,
+                  eodhd_import_min_target_coverage=float(bars.get('min_coverage_ratio', .95)),
+                  eodhd_import_benchmark_symbol=str(bars.get('benchmark_symbol', 'SPY')))
     shared_file = cfg.get('symbols_file')
     if shared_file:
         source = universe_file_source_from_path(shared_file, root=ROOT)
         values.update(screener_custom_universe_file=str(shared_file),
                       sentiment_pipeline_symbol_source=source,
-                      ml_predict_symbol_source=source)
+                      ml_predict_symbol_source=source,
+                      eodhd_import_symbol_source=source)
     for name in ('quotes', 'earnings'):
         policy = cfg.get(f'{name}_collection')
         if policy is None:
@@ -120,9 +133,9 @@ def execute_pipeline(engine, cfg, run_id, dry_run, *, now=None):
         raise ValueError('US_EQ market scope required')
     day, skip = session_plan(now or datetime.now(UTC))
     policy = load_pipeline_policy()
-    steps = selected_steps(policy.get('steps'))
     if skip:
         return Outcome(details={'skip_reason': skip, 'trade_date': str(day), 'counter_unit': 'pipeline_steps'})
+    steps_key, steps = session_steps(policy, day)
     options = collection_options(pipeline_page_default_options(trade_date=str(day)), cfg, day)
     options = execution_options(options, policy, steps)
     plan = dict(market_code='US_EQ', trade_date=str(day), defaults='FRESH_PIPELINE_PAGE',
@@ -130,6 +143,7 @@ def execute_pipeline(engine, cfg, run_id, dry_run, *, now=None):
         steps=[dict(number=s.num, key=s.key, command=build_pipeline_command(s.key, options)) for s in steps],
         selected_step_numbers=[int(s.num) for s in steps],
         configuration_source='config.yaml:us_pipeline',
+        steps_configuration_source=f'config.yaml:us_pipeline.{steps_key}',
         counter_unit='pipeline_steps', training=False,
         account_id=options.account_id,
         execution_mode=options.execution_mode,
@@ -148,7 +162,8 @@ def execute_pipeline(engine, cfg, run_id, dry_run, *, now=None):
         outcome.failed = 1
         raise BatchRunError(f'US pipeline could not start: {exc}', outcome) from exc
     outcome.details.update(workflow_run_id=record.run_id, plan_path=str(directory/'plan.json'))
-    LOGGER.info('US pipeline workflow=%s trade_date=%s steps=%s', record.run_id, day, plan['selected_step_numbers'])
+    LOGGER.info('US pipeline workflow=%s trade_date=%s source=%s steps=%s',
+        record.run_id, day, plan['steps_configuration_source'], plan['selected_step_numbers'])
     previous = None
     while True:
         try:

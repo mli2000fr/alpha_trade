@@ -19,6 +19,11 @@ us_pipeline:
   run_minutes: "45"
   run_days: "1,2,3,4,5"
   symbols_file: &us_pipeline_universe config/univers_batch/univers_filtred_tradable.txt
+  bars_collection:
+    # Étape 1 : date J explicite, même univers, SPY ajouté pour les features.
+    # Attend clôture US + eodhd.bulk_publish_offset_hours (config.yaml).
+    min_coverage_ratio: 0.95
+    benchmark_symbol: SPY
   # Ces deux collectes remplacent désormais leurs planifications autonomes.
   quotes_collection: &us_pipeline_quotes
     symbols_file: *us_pipeline_universe
@@ -30,12 +35,12 @@ us_pipeline:
     forward_days: 30
     batch_size: 50
     provider: finnhub
-  description: "Enchaîner les étapes de la page Pipeline sélectionnées dans config.yaml → us_pipeline.steps (1 à 12). Par défaut 1 à 9, avec les défauts partagés de l'IHM."
+  description: "Enchaîner les étapes de la page Pipeline (1 à 12) : config.yaml → us_pipeline.steps pour les séances US lundi–jeudi ; us_pipeline.steps_friday pour le vendredi. Liste figée au lancement, même après minuit, avec les défauts partagés de l'IHM."
   tables: "stock_bars,stock_bars_daily,cleaning_audit_latest,cleaning_audit_runs,stock_scores,stock_scores_history,stock_quote_snapshots,stock_earnings_calendar,tradable_universe_runs,tradable_universe_history,news_raw,news_ticker_map,news_sentiment,news_ticker_sentiment,macro_event_audit,ticker_daily_sentiment_features,sector_daily_sentiment_features,news_ingestion_checkpoint,pit_collection_runs"
-  universe_scope: "Univers commun config/univers_batch/univers_filtred_tradable.txt : screener, quotes, earnings, import news, scoring ticker et prédiction si l'étape 10 est sélectionnée. Les autres étapes conservent leurs périmètres natifs ou les résultats précédents."
-  coverage_description: "Séance US J figée au lancement ; jours fériés US exclus par calendrier strict. Pas de second passage. Les fenêtres/reprises propres à chaque étape restent celles de l'IHM."
-  execution_notice: "22:45 Europe/Paris, lundi–vendredi après clôture US, changements d'heure inclus. config.yaml → us_pipeline : steps, execution_mode (paper) et account_id (default). Aucun ordre sans étape 12 ; compte PAPER exigé pour 11/12, LIVE interdit. T1/13/14 exclus. Arrêt au premier échec ; verrou partagé avec l'IHM. Compteurs en étapes, pas en lignes SQL."
-  research_notice: "Défauts Pipeline partagés, preset capital_2001_5000, sentiment standard + contextuel. Exceptions explicites : univers commun pour étapes 3/4/5 et import/scoring ticker de 8 ; quotes J-7/J, earnings J-7/J+30 ; séance J figée sans rabattement sur un ancien snapshot. Les sessions IHM ne sont pas modifiées."
+  universe_scope: "Univers commun config/univers_batch/univers_filtred_tradable.txt : barres (SPY ajouté), screener, quotes, earnings, import news, scoring ticker et prédiction si l'étape 10 est sélectionnée. Les autres étapes conservent leurs périmètres natifs ou les résultats précédents."
+  coverage_description: "Séance US J figée au lancement, même après minuit. Étape 1 EODHD : contrôle des cours J non remplis, couverture minimale bars_collection.min_coverage_ratio (95 %) et SPY obligatoire. Absence → arrêt, pas de repli vers J-1. Jours fériés exclus ; pas de second passage."
+  execution_notice: "22:45 Europe/Paris, lundi–vendredi après clôture US. Choix selon séance US figée : steps lundi–jeudi, steps_friday vendredi ; jours fériés exclus. L'étape 1 attend clôture + eodhd.bulk_publish_offset_hours (2 h), avec logs d'attente : généralement minuit Paris, 23 h lors du décalage d'heure automnal. PC allumé nécessaire. execution_mode: paper ; account_id: default. Aucun ordre sans étape 12 ; compte PAPER exigé pour 11/12, LIVE interdit. T1/13/14 exclus. Arrêt au premier échec ; verrou partagé avec l'IHM. Compteurs en étapes, pas en lignes SQL."
+  research_notice: "Défauts Pipeline partagés, preset capital_2001_5000. Étape 1 : date J et univers explicites, upsert sans doublons, délai fournisseur puis contrôle en base ; si bars_provider n'est plus EODHD, ce contrat d'import bloque au lieu de passer silencieusement. Univers commun pour étapes 3/4/5 et import/scoring ticker de 8 ; quotes J-7/J, earnings J-7/J+30. Les sessions IHM ne sont pas modifiées."
   log_file: log/batch/us_pipeline.txt
 
 # Sprint 15-D6 : observations officielles CN strictement de recherche.

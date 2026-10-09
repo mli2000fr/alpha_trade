@@ -3,22 +3,34 @@
 ## Périmètre
 
 `us_pipeline`, déclaré dans `batch.yaml`, enchaîne les étapes sélectionnées dans
-`config.yaml → us_pipeline.steps`, dans le même moteur de workflow que la page
-Pipeline. Le défaut reste **1 à 9** ; les étapes 10–12 ne sont pas activées par
-le renommage. T1 (entraînement), 13 et 14 sont toujours exclus.
+`config.yaml`, dans le même moteur de workflow que la page Pipeline :
+`us_pipeline.steps` pour les séances US du lundi au jeudi, et
+`us_pipeline.steps_friday` pour celles du vendredi. T1 (entraînement), 13 et 14
+sont toujours exclus. Configuration actuelle :
 
 ```yaml
 us_pipeline:
-  steps: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+  steps: [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12]
+  steps_friday: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
   execution_mode: paper
   account_id: default
 ```
 
-Pour sélectionner toutes les étapes, ajouter `10, 11, 12` à cette liste.
-La liste doit être non vide, contenir des entiers uniques entre 1 et 12 ;
+Les deux listes sont indépendantes : le vendredi ne complète pas la liste des
+autres jours, il utilise exclusivement `steps_friday`. La liste choisie doit
+être non vide et contenir des entiers uniques entre 1 et 12 ;
 l'exécution suit toujours l'ordre numérique, même si la liste est désordonnée.
 Une étape omise n'est pas ajoutée automatiquement : ses prérequis doivent
-être disponibles. Une configuration invalide bloque avant le workflow.
+être disponibles. Une liste choisie absente/invalide bloque avant le workflow,
+sans fallback silencieux vers une autre liste.
+
+Le choix se fait **une seule fois d'après la date de séance US**, pas le jour
+Paris d'une étape ultérieure. Un run du vendredi qui continue le samedi garde
+donc `steps_friday`. Les jours fériés US restent ignorés, même un vendredi.
+La configuration est relue au lancement suivant, mais une édition pendant un
+workflow ne change pas son plan. Le plan/résumé et le log indiquent la clé utilisée
+dans `steps_configuration_source` (`config.yaml:us_pipeline.steps` ou
+`config.yaml:us_pipeline.steps_friday`). L'horaire Windows reste inchangé.
 
 **Sécurité :** le mode LIVE est refusé pour ce batch. `execution_mode` accepte
 uniquement `simulate` ou `paper` ; la configuration actuelle choisit `paper`.
@@ -56,6 +68,11 @@ Un échec interrompt l'enchaînement : les étapes suivantes ne sont pas lancée
 - Le service vérifie le calendrier US strict, sans supposer qu'un lundi–vendredi est forcément négociable. Un jour férié US est ignoré.
 - La séance doit être clôturée. 22:45 Paris est postérieure à la clôture régulière US, y compris pendant les semaines de décalage entre les changements d'heure européens et américains.
 - La date de séance New York est figée au début du traitement, même si le workflow passe minuit à Paris.
+- Depuis le correctif du 9 octobre, l'étape 1 EODHD reçoit cette date avec
+  `--target-date` et attend la clôture US + `config.yaml → eodhd.bulk_publish_offset_hours`.
+  Avec 2 h : un démarrage à 22:45 Paris attend généralement minuit avant l'import,
+  ou 23 h pendant le décalage d'heure automnal Europe/US. L'attente est journalisée
+  chaque minute ; le PC doit rester allumé. L'heure Windows n'est pas modifiée.
 - Le rabattement automatique vers un ancien snapshot est désactivé pour ce batch quotidien. C'est la seule adaptation volontaire par rapport à cette option de la page interactive.
 - Aucun second passage n'est ajouté. Les modalités Windows existantes (session utilisateur, démarrage différé, limite de durée) restent celles de l'installeur commun.
 
@@ -73,13 +90,70 @@ Cela désigne une page fraîche, et non les modifications temporaires conservée
 
 | Étape | Application du fichier |
 |---|---|
+| 1 — Barres EODHD | `--symbol-source` sur le fichier commun ; SPY ajouté pour les features benchmark ; `--target-date J`, attente fournisseur et contrôle bloquant des cours J |
 | 3 — Screener | `--custom-universe-file`, prioritaire sur l'univers du screener dans config.yaml |
 | 4 — Quotes | `--symbol-source universe-file:config/univers_batch/univers_filtred_tradable.txt` ; fenêtre J−7/J, lot 200 |
 | 5 — Earnings | Même source ; Finnhub, J−7/J+30, lot 50, reprise activée |
 | 8 — News/sentiment | Import brut, pertinence, scoring standard/contextuel et features ticker sur ce fichier |
 | 10 — Prédiction | Même fichier commun via `--symbol-source` si cette étape est sélectionnée |
 
-L'import de barres (1) et le nettoyage (2) ne reçoivent pas de nouveau paramètre d'univers par ce raccordement. La publication (6), la sélection (7) et l'agrégation (9) conservent leurs périmètres dérivés/natifs. Les features secteur du traitement sentiment conservent leur agrégation historique par fournisseur : ce changement ne purge ni ne restreint rétroactivement l'historique déjà importé.
+Le nettoyage (2) conserve son périmètre natif. La publication (6), la sélection (7)
+et l'agrégation (9) conservent leurs périmètres dérivés/natifs. Les features secteur
+du traitement sentiment conservent leur agrégation historique par fournisseur :
+ce changement ne purge ni ne restreint rétroactivement l'historique déjà importé.
+
+### Correctif cours J — 9 octobre 2026
+
+Le run du 8 octobre à 22:45 avait J=2026-10-08 dans le plan, mais la commande
+d'import sans date utilisait J−1 et a importé 12 319 lignes pour le 7 octobre
+sur 13 245 symboles. Il n'avait pas été relancé au passage à minuit.
+
+La date et le fichier sont maintenant explicitement transmis à l'import. SPY est
+ajouté, sans basculement vers tout `stock_metadata`. Univers explicite vide →
+échec. L'import standalone sans date choisit la dernière séance clôturée dont le
+délai de publication est écoulé, et non un J−1 calendaire aveugle.
+
+Après les commits, un contrôle lit `stock_bars_daily` pour la date J exacte :
+barres non synthétiques (`is_filled=0`), OHLC positifs/cohérents et volume positif.
+Le minimum est paramétrable dans `batch.yaml → us_pipeline.bars_collection.min_coverage_ratio`
+(0.95), avec `benchmark_symbol: SPY` obligatoire. J−1, cours futurs, barres remplies
+et prix invalides ne comptent pas. Ce seuil n'affirme pas une couverture de 100 %.
+Le résumé conserve le nombre couvert, le ratio et les symboles absents.
+
+Un contrôle échoué retourne un code non nul : aucune étape suivante du workflow
+n'est lancée. Les lots déjà importés restent en base pour la reprise. Les cours de
+J reçus par bulk sont rafraîchis par upsert, sans doublons, même s'ils existaient
+(cela permet de remplacer une barre auparavant remplie). La contrainte de clé
+existante est conservée ; aucune migration n'est nécessaire.
+
+Le délai de 2 h est une précaution configurable, pas une garantie de disponibilité
+EODHD. La couverture reste contrôlée après cette attente. Le calendrier US est
+strict, sans fallback lundi-vendredi. Un changement de fournisseur vers Alpaca
+bloque ce contrat quotidien plutôt que d'ignorer les paramètres de date/univers.
+Les imports manuels non raccordés à ce contrat gardent leurs autres options.
+
+Pour un rattrapage manuel, remplacer J ci-dessous par la séance voulue :
+
+```powershell
+python -u -m dataIntegrityEngine.import_eodhd_bar --write --target-date YYYY-MM-DD --symbol-source universe-file:config/univers_batch/univers_filtred_tradable.txt --wait-for-publication --require-target-coverage --min-target-coverage 0.95 --benchmark-symbol SPY --commit-every-symbols 100 --no-stooq-cross-check
+```
+
+Le rattrapage historique existant récupère les dates manquantes depuis la dernière
+barre du symbole jusqu'à J. Une reprise ne lance pas GPT sur une ancienne séance
+dont la séance suivante a déjà ouvert. Aucun import réel ni changement de tâche
+Windows n'a été effectué pendant la validation de ce correctif.
+
+Validation du correctif : **220 tests ciblés passent** (commandes, import,
+calendrier strict, publication, coverage gate, upserts et résumés IHM).
+Avant le raccordement de `steps_friday`, une sélection plus large a donné
+248 succès et trois échecs hors du contrat
+cours J : le test de configuration attend seulement `steps/execution_mode/account_id`
+alors que le fichier contient maintenant aussi `steps_friday` ; deux tests IHM
+attendent une ancienne liste de champs sentiment et un compte `cash` au lieu
+du `margin` renvoyé. Ces autres réglages/tests n'ont pas été modifiés par ce
+correctif cours J. Le raccordement hebdomadaire du 9 octobre décrit en tête de
+ce document implémente désormais `steps_friday` et met à jour son test de
+configuration. Les tests sentiment/type de compte n'ont pas été modifiés.
 
 Les fenêtres quotes/earnings sont calculées depuis la séance J figée, pas depuis une horloge qui pourrait passer minuit au milieu du workflow. Les blocs `quotes_collection` et `earnings_collection` dans batch.yaml portent leurs réglages ; le fichier commun est prioritaire. Des ancres YAML partagent les valeurs avec les anciennes sections autonomes.
 
@@ -148,7 +222,7 @@ Journal du launcher : `log/batch/us_pipeline.txt`. Le détail du run conserve é
 
 Les notifications email et Telegram passent par le launcher commun, avec statut et message d'erreur. **L'unité des compteurs de ce batch est l'étape**, pas le nombre de lignes SQL :
 
-- demandés : nombre d'étapes sélectionnées (9 par défaut, 12 au maximum) ;
+- demandés : nombre d'étapes de la liste choisie pour la séance (12 au maximum) ;
 - reçus / persistés : nombre d'étapes terminées avec succès ;
 - échecs : 1 si le workflow ne peut pas commencer ou s'interrompt ;
 - alertes : avertissements du résumé du batch, pas une addition implicite des avertissements de chaque sous-traitement.

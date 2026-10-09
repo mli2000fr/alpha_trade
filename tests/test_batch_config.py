@@ -35,11 +35,12 @@ def test_batch_configuration_is_separated_from_application_config() -> None:
 
     assert set(batch) == BATCH_SECTIONS
     assert (BATCH_SECTIONS - {'us_pipeline'}).isdisjoint(application)
-    assert set(application['us_pipeline']) == {'steps','execution_mode','account_id'}
+    assert set(application['us_pipeline']) == {'steps','steps_friday','execution_mode','account_id'}
     assert application['us_pipeline']['execution_mode'] == 'paper'
     assert application['us_pipeline']['account_id'] == 'default'
     from service.forward_pit.us_pipeline import selected_steps
     assert selected_steps(application['us_pipeline']['steps'])
+    assert selected_steps(application['us_pipeline']['steps_friday'], config_key='steps_friday')
     assert 'run_hours' not in application['us_pipeline']
     assert load_batch_config() == batch
     assert resolve_batch_config_path() == ROOT / "batch.yaml"
