@@ -127,8 +127,21 @@ d’atteindre K : 0, 1 ou 2 candidats peuvent être le résultat normal.
 
 ## 4. Temps, PIT et limites de recherche
 
-Le filtre Web est **prospectif uniquement** : J doit être le jour courant à New
-York et la clôture NYSE doit être passée. Les cours J doivent être disponibles.
+Le filtre Web est **prospectif uniquement** : l’analyse doit commencer après la
+clôture de la séance J et être terminée strictement avant l’ouverture de la
+séance US suivante. Minuit (Paris ou New York) ne change pas la date de séance
+figée dans le workflow. Les cours J doivent être disponibles. Le calendrier
+NYSE fiable est requis, sans approximation lundi-vendredi : week-ends, jours
+fériés, clôtures anticipées et changements d’heure sont pris en compte.
+
+Exemple : un batch lancé le 8 octobre 2026 à 23 h Paris conserve J=2026-10-08
+à 8 h Paris le 9 octobre. La fenêtre se ferme à l’ouverture US suivante,
+le 9 octobre à 15 h 30 Paris. Une analyse qui dépasse cette ouverture est
+marquée échouée, sans sélection publiée. Les informations Web éventuellement
+publiées pendant la nuit restent des informations observées à l’heure réelle
+du calcul, pas des informations prétendument connues à la clôture J.
+La durée de validité configurée du run GPT et les contrôles exacts de date/compte
+à l’étape risque restent inchangés.
 Le filtre refuse une commande de prédiction historique ou Oracle shadow.
 Il ne reconstitue pas les informations qu’un LLM aurait connues en 2024 ou 2025.
 
@@ -289,6 +302,27 @@ L’accès effectif au modèle, la facturation et un premier cycle PAPER restent
 valider avec une clé valide et des prédictions de la séance courante.
 
 ## 11. Sources techniques et points d’entrée
+
+### Lancement manuel de ML Predict et tables GPT (9 octobre 2026)
+
+Le bouton « 10. ML Predict » peut être lancé sans succès préalable de l’étape 9
+ni de l’entraînement optionnel T1 : il peut utiliser des modèles et données déjà
+disponibles. Les verrous de concurrence, de workflow actif et de protection LIVE
+restent applicables. Les contrôles du filtre GPT (PAPER, fenêtre clôture J/ouverture suivante,
+données et batch Oracle disponibles) ne sont pas contournés. L’ordre du workflow
+et les prérequis des étapes risque/exécution ne changent pas.
+
+Le filtre GPT écrit uniquement dans la base US `alpha_trade` :
+
+- `llm_directional_runs` : configuration, entrées, état, sélection et liens avec
+  les étapes risque/exécution ;
+- `llm_directional_assessments` : requête/réponse brute, analyse, sources Web,
+  décision et sélection par symbole ;
+- `llm_directional_evaluations` : rendements réalisés, alimentés ultérieurement
+  par l’évaluation, pas pendant l’analyse GPT.
+
+GPT ne remplace pas les scores Oracle. La prédiction ML préalable conserve ses
+propres écritures habituelles ; ces trois tables concernent le filtre et son audit.
 
 - [OpenAI Responses Web Search](https://developers.openai.com/api/docs/guides/tools-web-search)
 - [OpenAI Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs)

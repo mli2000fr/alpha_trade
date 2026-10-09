@@ -874,7 +874,7 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
         name="ML Predict",
         desc="Inférence `modelFactory` sur le champion sélectionné par symbole (LSTM, LightGBM, CatBoost ou global_model selon les artefacts disponibles). Quotidien, alimente le score de conviction du risk.",
         tables="model_predictions",
-        deps="signal_aggregator, champion ML déjà publié",
+        deps="Modèle ML déjà entraîné et données disponibles ; étape 9 non obligatoire pour un lancement manuel",
     ),
     PipelineStepDefinition(
         key="risk_management",

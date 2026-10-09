@@ -4,8 +4,7 @@ import json
 import logging
 import math
 import uuid
-from datetime import date, datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import text, bindparam
 from .config import load_filter_config, FilterConfig
 from .repository import Repository, dumps, digest, utcnow
@@ -63,6 +62,24 @@ def load_inputs(engine, batch_id, trade_date, symbol_source, config, capital_pre
     return result
 
 
+def validate_analysis_window(trade_date, *, now=None, calendar=None):
+    """Prospective web analysis: session close <= now < next session open."""
+    from common.market_calendar import get_market_calendar
+    calendar = calendar or get_market_calendar('US_EQ', allow_us_weekday_fallback=False)
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        raise ValueError('Horodatage timezone-aware requis')
+    if trade_date not in calendar.session_dates(trade_date, trade_date):
+        raise ValueError('Date hors séance US')
+    _, close = calendar.session_bounds(trade_date)
+    next_day = calendar.next_session(trade_date)
+    next_open, _ = calendar.session_bounds(next_day)
+    if now < close:
+        raise ValueError('Attendre la clôture NYSE : les données J doivent être définitives')
+    if now >= next_open:
+        raise ValueError('Recherche Web prospective uniquement : la séance US suivante a déjà ouvert')
+
+
 def analyze(*, engine, batch_id, trade_date, symbol_source, capital_preset_key='capital_2001_5000',
             config=None, run_id=None, client=None, inputs=None, check_account=True):
     config = config or load_filter_config()
@@ -70,17 +87,7 @@ def analyze(*, engine, batch_id, trade_date, symbol_source, capital_preset_key='
         raise ValueError('llm_directional_filter.enabled=false')
     if isinstance(trade_date, str):
         trade_date = date.fromisoformat(trade_date)
-    today = datetime.now(ZoneInfo('America/New_York')).date()
-    if trade_date != today:
-        raise ValueError('Recherche Web prospective uniquement : trade_date doit être aujourd’hui NY')
-    from common.market_calendar import is_trading_day
-    if not is_trading_day(trade_date):
-        raise ValueError('Date hors séance US')
-    from common.market_calendar import get_nyse_session_bounds
-    _, market_close = get_nyse_session_bounds(trade_date)
-    from datetime import timezone
-    if datetime.now(timezone.utc) < market_close:
-        raise ValueError('Attendre la clôture NYSE : les données J doivent être définitives')
+    validate_analysis_window(trade_date)
     if check_account:
         assert_paper_account(config.account_id)
     repo = Repository(engine)
@@ -129,6 +136,8 @@ def analyze(*, engine, batch_id, trade_date, symbol_source, capital_preset_key='
                 errors.append(f'{context["symbol"]}: {error}')
             repo.finalize_assessment(run_id, context['symbol'], status=status, parsed=parsed, error=error)
             logging.info('LLM %d/%d %s %s', len(items)+len(errors), len(contexts), context['symbol'], status)
+        # A slow Web call must not publish a selection after the next open.
+        validate_analysis_window(trade_date)
         selected = [] if errors else select_symbols(items, config)
         repo.finish(run_id, 'FAILED' if errors else 'COMPLETED', selected, '\n'.join(errors) or None)
     except Exception as exc:

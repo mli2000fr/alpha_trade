@@ -447,11 +447,50 @@ def test_historical_web_analysis_rejected_before_calls(isolated):
 
 
 def test_preclose_analysis_rejected(isolated, monkeypatch):
-    import common.market_calendar as calendar
-    monkeypatch.setattr(calendar, 'get_nyse_session_bounds', lambda day: (
-        NOW.replace(tzinfo=timezone.utc), (NOW+timedelta(hours=1)).replace(tzinfo=timezone.utc)))
+    class PrecloseClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 10, 7, 19, tzinfo=timezone.utc)
+    monkeypatch.setattr(runner, 'datetime', PrecloseClock)
     with pytest.raises(ValueError, match='clôture'):
         analyze(isolated, lambda request: pytest.fail('No preclose calls'))
+
+
+@pytest.mark.parametrize('day,instant', [
+    ('2026-10-08', '2026-10-09T08:00:00+02:00'),
+    ('2026-10-09', '2026-10-12T08:00:00+02:00'),
+    ('2026-01-16', '2026-01-20T08:00:00+01:00'),
+    ('2026-10-30', '2026-11-02T08:00:00+01:00'),
+])
+def test_analysis_accepts_overnight_weekend_holiday_and_dst(day, instant):
+    runner.validate_analysis_window(date.fromisoformat(day), now=datetime.fromisoformat(instant))
+
+
+@pytest.mark.parametrize('instant', ['2026-10-09T15:30:00+02:00', '2026-10-09T16:00:00+02:00'])
+def test_analysis_rejects_at_or_after_next_open(instant):
+    with pytest.raises(ValueError, match='suivante'):
+        runner.validate_analysis_window(date(2026, 10, 8), now=datetime.fromisoformat(instant))
+
+
+def test_analysis_rejects_non_session_and_naive_time():
+    with pytest.raises(ValueError, match='hors séance'):
+        runner.validate_analysis_window(date(2026, 10, 10), now=datetime(2026, 10, 11, tzinfo=timezone.utc))
+    with pytest.raises(ValueError, match='timezone'):
+        runner.validate_analysis_window(date(2026, 10, 8), now=NOW)
+
+
+def test_analysis_crossing_next_open_never_publishes(isolated, monkeypatch):
+    checks = []
+    def window(day):
+        checks.append(day)
+        if len(checks) == 2:
+            raise ValueError('La séance suivante a déjà ouvert')
+    monkeypatch.setattr(runner, 'validate_analysis_window', window)
+    with pytest.raises(ValueError, match='suivante'):
+        analyze(isolated, lambda request: response(json.loads(request['input'])['symbol']))
+    run, _ = Repository(isolated).get('test-run')
+    assert run['status'] == 'FAILED'
+    assert json.loads(run['selected_json']) == []
 
 
 def test_inputs_rank_predicted_score_not_future_returns_and_respect_scope(isolated, monkeypatch):

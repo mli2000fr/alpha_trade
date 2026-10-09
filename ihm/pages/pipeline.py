@@ -1465,6 +1465,11 @@ def _pipeline_state_machine_lock_reason(
     step_key: str,
     latest_by_step: dict[str, dict[str, object]],
 ) -> str | None:
+    # Standalone inference can consume existing models/data independently of
+    # aggregation (or optional training T1). Concurrency/live guards stay in
+    # the launch panel; workflow ordering and runtime validation are unchanged.
+    if step_key == "ml_predict":
+        return None
     previous_step_key = _previous_pipeline_step_key(step_key)
     if previous_step_key is None:
         return None
