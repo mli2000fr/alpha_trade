@@ -52,7 +52,8 @@ def test_parameters_and_zero_selection():
 
 def test_actual_yaml_defaults():
     cfg = load_filter_config()
-    assert (cfg.oracle_top_n, cfg.model) == (10, 'gpt-6.1-sol')
+    assert cfg.model == 'gpt-6.1-sol'
+    assert 1 <= cfg.oracle_top_n <= 100  # User configuration, not a pinned factory default.
     # Deployment max_selected is user-configurable (currently 3); factory default
     # remains 5, tested separately. Never overwrite a user's YAML to satisfy a test.
     assert 0 <= cfg.max_selected <= cfg.oracle_top_n

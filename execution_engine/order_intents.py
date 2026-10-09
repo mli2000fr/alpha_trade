@@ -88,7 +88,7 @@ def resolve_trailing_activation_price(
 
     if config.llm_protection_profile is not None:
         from service.llm_directional.protections import ProtectionProfile, safe_trailing_trigger
-        return round(safe_trailing_trigger(fill_price, ProtectionProfile(**config.llm_protection_profile)), 4), 'gpt_sl_floor'
+        return round(safe_trailing_trigger(fill_price, ProtectionProfile(**config.llm_protection_profile), side=side), 4), 'gpt_sl_floor'
 
     if config.trailing_activation_trigger == "multiple_r":
         if target is not None and target.risk_per_share is not None and target.risk_per_share > 0:
@@ -852,9 +852,9 @@ def build_rebalance_buy_intent(
 def _resolve_alpaca_time_in_force(intent: OrderIntent, config: ExecutionConfig | None = None) -> str:
     if intent.time_in_force is not None:
         if (intent.time_in_force != 'opg' or intent.order_type != 'market'
-                or intent.intent_role != IntentRole.EXIT or intent.side != 'sell'
+                or intent.intent_role != IntentRole.EXIT or intent.side not in ('buy', 'sell')
                 or intent.broker_mode != 'paper' or not is_effectively_integer_quantity(intent.qty)):
-            raise ValueError('MOO GPT réservé aux sorties LONG PAPER en quantités entières')
+            raise ValueError('MOO GPT réservé aux sorties PAPER en quantités entières')
         return intent.time_in_force
     if intent.intent_role in (IntentRole.ENTRY, IntentRole.EXIT, IntentRole.REBALANCE_BUY):
         return "day"

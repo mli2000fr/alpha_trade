@@ -348,3 +348,95 @@ L'ajout du schéma seul ne remplit pas l'historique. Relancer le même bloc
 la version `oracle_atr_v4_integer_returns` recalcule les anciennes lignes v1/v2/v3,
 par tranches et upsert sans doublons. Les séances complètes déjà en v4 sont
 ignorées à la reprise. Aucun nouvel entraînement n'est nécessaire.
+
+### Réparation des listes NULL — 9 octobre 2026
+
+Le builder distingue désormais le calendrier **NYSE réel** de la présence des
+prix : H20 compte vingt séances, y compris une séance dont toutes les barres
+seraient absentes. La disponibilité est la séance suivant la sortie, même lorsque
+la prochaine barre n'a pas été téléchargée. Exemple : 3 septembre 2026 → sortie
+le 2 octobre → disponibilité le 5 octobre. Les barres `is_filled=1` ne peuvent
+plus qualifier les extrémités d'une cible : ce ne sont pas des prix observés.
+
+La réparation est dédiée à US/`alpha_trade`. Elle sauvegarde les labels des dates
+concernées et les agrégats avant toute modification, répare la disponibilité,
+reconstruit les journées dont la cible change et reprend l'étude par upsert de
+vingt séances. La reconstruction `stored_membership` utilise **tous les symboles
+originaux de chaque journée**, pas seulement l'intersection ni l'univers actuel.
+Pour prolonger les labels d'un batch `static_bars`, la réparation reconstruit le
+pool depuis **tous ses anciens labels**, puis exige de reproduire exactement
+l'univers de la dernière journée historique à partir des barres. Ce contrat et
+le pool sont archivés dans `static_extension_membership.json`. Seules les dates
+dont la sortie H20 est déjà couverte par les prix et la disponibilité passée sont
+prolongées. Un pool incompatible ou un univers dynamique reste bloqué plutôt
+que remplacé par l'univers actuel ou les seuls titres scorés.
+
+```powershell
+python -u -m service.market.oracle_atr_repair `
+  --batch-id model-factory-20261003082853-e98332 `
+  --start-date 2020-01-01 --end-date 2026-09-30 `
+  --symbol-source universe-file:univers_filtred_tradable.txt `
+  --output artifacts/research/oracle_atr_null_repair/repair-YYYYMMDD-v1 `
+  --apply --fetch-prices
+```
+
+Sans `--apply`, audit seul. `--fetch-prices` archive les relectures EODHD et leurs
+splits avec empreinte SHA-256, **sans écriture dans les tables de prix**. Chaque
+exécution exige un nouveau répertoire. `plan.json` décrit les dates affectées ;
+`labels_before/` et `study_before.parquet` conservent les sauvegardes ;
+`price_evidence_report.json` décrit les relectures ; `report.json` compare les
+comptages avant/après. Une relecture fournisseur ne certifie pas à elle seule
+l'identité d'un titre radié, ni un changement de ticker.
+
+Les règles strictes restent intactes : prix futur inconnu, rupture non expliquée
+ou H20 non disponible restent à `NULL`. Aucun remplacement de candidat, aucun
+rendement zéro pour une radiation, aucun relâchement des contrôles pour remplir
+les colonnes. Aucun modèle n'est modifié ou réentraîné ; aucune migration de
+schéma n'est nécessaire.
+
+### Résultat vérifié de la réparation `repair-20261009-v3`
+
+Exécution terminée le 9 octobre 2026 à 23:53 Paris, statut
+`COMPLETED_WITH_QUALIFICATION_RESERVES`. Rapport :
+`artifacts/research/oracle_atr_null_repair/repair-20261009-v3/report.json`.
+Les compteurs ont été revérifiés en base après l'exécution (1 695 journées).
+
+| Liste | Journées NULL avant | Après |
+| --- | ---: | ---: |
+| TOP réel | 134 | 134 |
+| Intersection Oracle × ATR | 19 | 15 |
+| Premiers Oracle, tri par amplitude réalisée | 105 | 103 |
+| Premiers ATR | 97 | 95 |
+| Premiers Oracle, ordre du score prédit | 105 | 103 |
+
+Travail effectivement appliqué : disponibilité du 3 septembre corrigée ;
+7 149 labels reconstruits sur les 1er et 4 mai, 15 juin et 15 juillet 2026,
+en conservant leurs univers quotidiens ; 5 274 labels ajoutés sur les
+4, 8 et 9 septembre (5 265 qualifiés, neuf prix de sortie manquants).
+134 agrégats recalculés et persistés, sans nouvel entraînement ni écriture
+dans les tables de prix. La sélection de l'intersection est maintenant évaluable
+sur ces quatre journées supplémentaires ; cela ne rend pas nécessairement les
+autres listes complètes.
+
+Les quinze journées du 10 au 30 septembre restent sans résultats évaluables.
+Au moment du run, les prix s'arrêtaient au 7 octobre : la sortie H20 du
+10 septembre nécessite la barre du 8 octobre ; les journées suivantes nécessitent
+des sorties et disponibilités encore ultérieures. Ces dates doivent être
+recalculées après acquisition des prix requis et maturité du label.
+
+**Réserve de téléchargement à ne pas confondre avec un échec du recalcul :**
+aucune des 88 relectures EODHD n'a abouti durant ce run. La première a échoué
+techniquement, les 87 suivantes ont rencontré le circuit HTTP ouvert. Un smoke
+ultérieur a identifié `SSL_CERTIFICATE_VERIFY_FAILED` (autorité locale manquante).
+Avec la session vérifiée existante `common.verified_http.verified_session`, le
+smoke ne rencontre plus l'erreur TLS, mais la fenêtre BK du 1er au 2 juin 2026
+retourne zéro barre. Cela ne constitue ni une réparation de prix, ni une preuve
+qu'un trou ou une radiation a été résolu. Ne jamais désactiver la vérification TLS.
+
+L'inventaire initial porte sur 999 labels non qualifiés : 168 trous de sortie
+intérieurs, 809 sorties au-delà de la dernière barre locale et 22 ruptures de
+prix non expliquées, sur 88 symboles. Les sorties terminales ne sont pas toutes
+des radiations certifiées. La prochaine action est la relecture ciblée avec TLS
+vérifié, puis la qualification prix/identité avant toute correction des barres
+et reconstruction des journées concernées. Le TOP réel reste NULL tant que
+le périmètre scoré complet ne dispose pas des rendements qualifiés requis.

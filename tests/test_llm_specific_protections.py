@@ -111,7 +111,7 @@ def test_step_commands_ignore_checkbox_without_gpt_and_restore_defaults():
         command = build_pipeline_command('execution',opts)
         assert ('--specific-protections' if enabled else '--no-specific-protections') in command
         inner=json.loads(command[command.index('--command-json')+1])
-        assert ('--allow-fractional-shares' in inner) is not enabled
+        assert '--allow-fractional-shares' not in inner  # SHORT also requires whole shares.
 
 
 def test_changing_checkbox_after_analysis_fails_before_orders():

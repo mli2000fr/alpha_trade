@@ -19,6 +19,10 @@ def report(engine, run_id):
     with engine.connect() as conn:
         realized = [dict(row) for row in conn.execute(select(evaluations).where(
             evaluations.c.run_id == run_id)).mappings()]
+    for row in realized:
+        decision = next((r['decision'] for r in rows if r['symbol'] == row['symbol']), None)
+        row['directional_gross_return_pct'] = (-row['return_pct'] if decision == 'SHORT'
+                                               else row['return_pct'] if decision == 'LONG' else None)
     return {'run_id': run_id, 'trade_date': str(run['trade_date']), 'batch_id': run['batch_id'],
             'status': run['status'], 'started_at_utc': str(run['started_at']),
             'completed_at_utc': str(run['completed_at']), 'risk_run_id': run['risk_run_id'],

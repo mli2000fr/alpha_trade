@@ -768,7 +768,7 @@ class ProtectionTransitionWatcher:
             risk_run_id=item.risk_run_id,
             exec_run_id=item.source_exec_run_id,
             symbol=item.symbol,
-            side="buy",
+            side=item.parent_side,
             qty=item.fill_qty,
             order_type="market",
             limit_price=None,
@@ -788,7 +788,7 @@ class ProtectionTransitionWatcher:
             risk_run_id=item.risk_run_id,
             exec_run_id=item.source_exec_run_id,
             symbol=item.symbol,
-            side="sell",
+            side="buy" if item.parent_side in ('sell', 'short') else "sell",
             qty=item.fill_qty,
             order_type="stop",
             limit_price=None,
@@ -1266,7 +1266,7 @@ class ProtectionTransitionWatcher:
     def _arm_gpt_stop(self, row, metrics, profile, config, broker):
         from service.llm_directional.protections import scoped_execution_config, submit_order
         config = scoped_execution_config(config, profile)
-        qty = float(row.get('parent_remaining_qty', row['fill_qty']))
+        qty = abs(float(row.get('parent_remaining_qty', row['fill_qty'])))
         parent_id = str(row['parent_intent_id'])
         price = self._repo.load_entry_fill_price(parent_id)
         if not isinstance(price, (float, int)) or not math.isfinite(price) or price <= 0:
@@ -1277,7 +1277,8 @@ class ProtectionTransitionWatcher:
         if any(c.order_type in ('stop', 'stop_limit', 'trailing_stop') for c in children):
             return
         position = broker.get_position(row['symbol'])
-        if not position or str(position.get('side') or 'long') != 'long':
+        short = str(row.get('side') or 'buy') in ('sell', 'short')
+        if not position or str(position.get('side') or 'long') != ('short' if short else 'long'):
             return
         qty = min(qty, abs(float(position.get('qty') or 0)))
         if qty <= 0:
@@ -1286,13 +1287,14 @@ class ProtectionTransitionWatcher:
         if not allowed or not float(qty).is_integer():
             raise ValueError('Protections GPT : quantité entière requise')
         parent = OrderIntent(intent_id=parent_id, risk_run_id=str(row['risk_run_id']),
-            exec_run_id=str(row['exec_run_id']), symbol=str(row['symbol']), side='buy', qty=qty,
+            exec_run_id=str(row['exec_run_id']), symbol=str(row['symbol']), side='sell' if short else 'buy', qty=qty,
             order_type='market', limit_price=None, trail_percent=None, broker_mode='paper',
             parent_intent_id=None, intent_role=IntentRole.ENTRY, idempotency_key=parent_id,
             decision_price=price)
         stop = build_initial_stop_intent(parent, qty, price, config)
         current_price = broker.get_latest_market_price(row['symbol'])
-        if isinstance(current_price, (int, float)) and 0 < current_price <= stop.stop_price:
+        if isinstance(current_price, (int, float)) and current_price > 0 and (
+                current_price >= stop.stop_price if short else current_price <= stop.stop_price):
             # During a repair, an already-breached floor calls for an exit, not
             # repeatedly rejected sell stops above the market.
             stop = replace(stop, order_type='market', stop_price=None,
@@ -1360,6 +1362,8 @@ class ProtectionTransitionWatcher:
                 continue  # No stagnation/percentage-profit veto for the deadline.
             if not ts_cfg.enabled:
                 continue
+            if row.get('parent_side') in ('sell', 'short'):
+                continue  # Generic legacy time-stop remains LONG-only; GPT SHORT handled above.
             metrics["time_stop_candidates"] = int(metrics.get("time_stop_candidates", 0) or 0) + 1
 
             opened_at = row.get("opened_at")
@@ -1527,14 +1531,16 @@ class ProtectionTransitionWatcher:
             ))
             return
 
-        trigger_price, trigger_mode = resolve_trailing_activation_price(item.fill_price, config, cast(ExecutionTarget, item))
+        short = item.parent_side in ('sell', 'short')
+        trigger_price, trigger_mode = resolve_trailing_activation_price(item.fill_price, config, cast(ExecutionTarget, item), side=item.parent_side)
         if trigger_price is None:
             metrics["pending_items"] += 1
             return
 
         market_price = broker.get_latest_market_price(item.symbol)
         metrics["trigger_check_count"] += 1
-        if market_price is None or market_price < trigger_price:
+        if market_price is None or not math.isfinite(market_price) or (
+                market_price > trigger_price if short else market_price < trigger_price):
             metrics["pending_items"] += 1
             return
 
@@ -1585,11 +1591,11 @@ class ProtectionTransitionWatcher:
             # A price fall while waiting for cancellation must not replace the
             # original SL with a now-looser 20% native trailing stop.
             position = broker.get_position(item.symbol)
-            if not position or str(position.get('side') or 'long') != 'long':
+            if not position or str(position.get('side') or 'long') != ('short' if short else 'long'):
                 metrics['terminal_items'] += 1
                 return
             qty = min(item.fill_qty, max(canceled_order.qty-canceled_order.filled_qty, 0),
-                      max(float(position.get('qty') or 0), 0))
+                      abs(float(position.get('qty') or 0)))
             if qty <= 0:
                 metrics['terminal_items'] += 1
                 return
@@ -1598,10 +1604,11 @@ class ProtectionTransitionWatcher:
             item = replace(item, fill_qty=qty)
             parent_intent = replace(parent_intent, qty=qty)
             fresh_price = broker.get_latest_market_price(item.symbol)
-            if fresh_price is None or not math.isfinite(fresh_price) or fresh_price < trigger_price:
+            if fresh_price is None or not math.isfinite(fresh_price) or (
+                    fresh_price > trigger_price if short else fresh_price < trigger_price):
                 self._arm_gpt_stop(dict(parent_intent_id=item.parent_intent_id,
                     risk_run_id=item.risk_run_id, exec_run_id=item.source_exec_run_id,
-                    symbol=item.symbol, fill_qty=item.fill_qty, fill_price=item.fill_price),
+                    symbol=item.symbol, side=item.parent_side, fill_qty=item.fill_qty, fill_price=item.fill_price),
                     metrics, profile, config, broker)
                 metrics['pending_items'] += 1
                 return
@@ -1616,14 +1623,15 @@ class ProtectionTransitionWatcher:
                     raise RuntimeError('Trailing GPT rejeté')
                 # Broker acknowledgement can differ from the last quote after
                 # cancellation. Verify the actual new floor, not just our quote.
-                floor = round(item.fill_price*(1-profile.stop_loss_pct), 2)
+                floor = round(item.fill_price*(1+profile.stop_loss_pct if short else 1-profile.stop_loss_pct), 2)
                 if trailing_order.stop_price is None:
                     trailing_order = broker.poll_order_status(trailing_order.broker_order_id, trailing_intent.intent_id)
                     persist_order(self._repo, trailing_intent, trailing_order, account_id=item.account_id)
                 if trailing_order.status == OrderStatus.FILLED:
                     metrics['terminal_items'] += 1
                     return
-                if trailing_order.stop_price is None or not math.isfinite(trailing_order.stop_price) or trailing_order.stop_price < floor:
+                if trailing_order.stop_price is None or not math.isfinite(trailing_order.stop_price) or (
+                        trailing_order.stop_price > floor if short else trailing_order.stop_price < floor):
                     trailing_item = replace(item, initial_stop_intent_id=trailing_intent.intent_id,
                         initial_stop_broker_order_id=trailing_order.broker_order_id)
                     removed, confirmed = self._cancel_initial_stop(broker, config, trailing_item, trailing_order)
@@ -1635,7 +1643,7 @@ class ProtectionTransitionWatcher:
                         raise RuntimeError('Plancher trailing GPT non qualifié ; annulation non confirmée')
                     self._arm_gpt_stop(dict(parent_intent_id=item.parent_intent_id,
                         risk_run_id=item.risk_run_id, exec_run_id=item.source_exec_run_id,
-                        symbol=item.symbol, fill_qty=item.fill_qty), metrics, profile, config, broker)
+                        symbol=item.symbol, side=item.parent_side, fill_qty=item.fill_qty), metrics, profile, config, broker)
                     metrics['pending_items'] += 1
                     return
             else:
@@ -1650,7 +1658,7 @@ class ProtectionTransitionWatcher:
                     try:
                         self._arm_gpt_stop(dict(parent_intent_id=item.parent_intent_id,
                             risk_run_id=item.risk_run_id, exec_run_id=item.source_exec_run_id,
-                            symbol=item.symbol, fill_qty=item.fill_qty), metrics, profile, config, broker)
+                            symbol=item.symbol, side=item.parent_side, fill_qty=item.fill_qty), metrics, profile, config, broker)
                     except Exception:
                         LOGGER.error('Réarmement SL GPT impossible pour %s', item.symbol, exc_info=True)
             metrics["submit_failed_items"] += 1

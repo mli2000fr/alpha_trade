@@ -377,5 +377,6 @@ class ProtectionWatchItem:
     risk_per_share: float | None = None
     initial_risk_dollars: float | None = None
     target_notional: float | None = None
+    parent_side: str = 'buy'
 
 

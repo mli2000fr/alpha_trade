@@ -3350,11 +3350,15 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             '🌐 Filtrage GPT + recherche Web après Oracle — PAPER uniquement',
             value=bool(st.session_state.get('pipeline_llm_filter_enabled', _llm_config.enabled)),
             key='pipeline_llm_filter_enabled',
-            help='Analyse prospective des premiers scores Oracle, archivage en base, puis LONG/abstention. Aucun gain démontré.')
+            help='Analyse prospective des premiers scores Oracle, archivage en base, puis LONG/SHORT/abstention '
+                 'selon config.yaml. Aucun gain démontré.')
         llm_filter_run_id = None
         llm_oracle_batch_id = None
         llm_specific_protections = False
         if llm_filter_enabled:
+            st.caption(f"Directions GPT autorisées : {'LONG / SHORT / ABSTENTION' if _llm_config.allow_short else 'LONG / ABSTENTION'}. "
+                       f"Maximum {_llm_config.max_selected} titres au total. Les SHORT restent soumis au régime, "
+                       "au risque et à une disponibilité easy-to-borrow Alpaca confirmée.")
             llm_specific_protections = st.checkbox(
                 '🛡️ Protections spécifiques GPT — SL / sortie temporelle / trailing',
                 value=bool(_llm_config.protections and _llm_config.protections.enabled),
@@ -3366,9 +3370,9 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 if _p is None:
                     st.error('Configuration llm_directional_filter.protections absente')
                     st.stop()
-                st.info(f'SL {_p.stop_loss_pct:.0%} depuis l’achat ; trailing {_p.trailing_stop_pct:.0%} '
-                        f'sans desserrer le SL ; vente à l’ouverture de la séance {_p.exit_session} '
-                        '(achat = séance 1). Aucun TP de prix. Quantités entières et watcher actif requis. '
+                st.info(f'SL {_p.stop_loss_pct:.0%} depuis l’entrée (sous LONG / au-dessus SHORT) ; trailing {_p.trailing_stop_pct:.0%} '
+                        f'sans desserrer le SL ; clôture à l’ouverture de la séance {_p.exit_session} '
+                        '(entrée = séance 1, vente LONG / rachat SHORT). Aucun TP de prix. Quantités entières et watcher actif requis. '
                         'Politique figée dès l’analyse ; pas de modification des positions existantes.')
                 st.caption('Avant l’étape 12 : Watcher protections → Démarrer service local '
                            'pour le compte principal. Un simple « Run watcher once » ne suffit pas. '

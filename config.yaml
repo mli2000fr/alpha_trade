@@ -26,7 +26,7 @@ llm_directional_filter:
   api_key_env: OPENAI_API_KEY
   default_symbol_source: universe-file:univers_filtred_tradable.txt
   default_oracle_batch_id: model-factory-20261003082853-e98332
-  oracle_top_n: 10  # Nombre de premiers scores Oracle à analyser (pas de tri par rendement futur).
+  oracle_top_n: 20  # Nombre de premiers scores Oracle à analyser (pas de tri par rendement futur).
   max_selected: 3   # Plafond, jamais un quota obligatoire ; 0 candidat reste possible.
   min_oracle_coverage_ratio: 0.90  # Bloque un classement issu d’une prédiction partielle.
   min_confidence: 0.75  # Note LLM non calibrée, pas une probabilité de rendement.
@@ -38,6 +38,7 @@ llm_directional_filter:
   max_tool_calls: 5
   account_id: default
   horizon: 20
+  allow_short: true  # GPT peut sélectionner LONG/SHORT ; ordres compte default PAPER, ETB uniquement.
   protections:
     enabled: true  # Case IHM par défaut ; effet uniquement avec filtre GPT PAPER.
     stop_loss_pct: 0.07  # SL depuis le prix réellement exécuté, pas depuis le close J.
@@ -60,7 +61,7 @@ alpaca:
       api_key: "${ALPACA_API_KEY}"
       secret_key: "${ALPACA_SECRET_KEY}"
       mode: paper
-      long_only: true
+      long_only: false  # Autorise les SHORT PAPER ; contrôles broker/risque toujours obligatoires.
     - id: test1
       label: "Compte test 1 (paper)"
       api_key: "${ALPACA_KEY_CPT_1}"

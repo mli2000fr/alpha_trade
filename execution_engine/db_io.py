@@ -1040,6 +1040,7 @@ class ExecutionRepository:
                 lot_agg.remaining_qty,
                 lot_agg.avg_entry_price,
                 parent_req.order_type AS parent_order_type,
+                parent_req.side AS parent_side,
                 parent_req.decision_price,
                 parent_req.business_key,
                 parent_req.submission_key,
@@ -1066,7 +1067,7 @@ class ExecutionRepository:
                 WHERE lot.lot_status = 'OPEN'
                   AND lot.remaining_qty > 0
                   AND req.intent_role IN ('entry', 'adopted_entry')
-                  AND req.side = 'buy'
+                  AND req.side IN ('buy', 'sell')
                   AND (:account_id IS NULL OR lot.account_id = :account_id)
                 GROUP BY lot.account_id, lot.symbol, lot.open_request_id, lot.open_exec_run_id
             ) lot_agg
@@ -1151,7 +1152,7 @@ class ExecutionRepository:
                 COALESCE(parent_open_lots.open_remaining_qty, parent_fill.total_filled_qty,
                          parent_obs.filled_qty, 0) AS parent_remaining_qty,
                 COALESCE(
-                    current_pos.qty,
+                    ABS(current_pos.qty),
                     parent_open_lots.open_remaining_qty,
                     parent_fill.total_filled_qty,
                     parent_obs.filled_qty,
@@ -1209,11 +1210,11 @@ class ExecutionRepository:
                   AND current_pos.symbol = parent_req.symbol
                   AND current_pos.created_at = latest_account_snapshot.latest_at
             WHERE parent_req.intent_role IN ('entry', 'adopted_entry')
-              AND parent_req.side = 'buy'
+              AND parent_req.side IN ('buy', 'sell')
               AND COALESCE(parent_obs.normalized_status, parent_req.status)
                   IN ('FILLED', 'PARTIALLY_FILLED')
               AND COALESCE(
-                    current_pos.qty,
+                    ABS(current_pos.qty),
                     parent_open_lots.open_remaining_qty,
                     parent_fill.total_filled_qty,
                     parent_obs.filled_qty,
@@ -1221,7 +1222,7 @@ class ExecutionRepository:
                   ) > 0
               AND (
                     latest_account_snapshot.latest_at IS NULL
-                 OR COALESCE(current_pos.qty, 0) > 0
+                 OR ABS(COALESCE(current_pos.qty, 0)) > 0
               )
               AND (
                     COALESCE(parent_open_lots.total_lot_count, 0) = 0
@@ -1353,6 +1354,7 @@ class ExecutionRepository:
                 er.broker_mode AS broker_mode,
                 stop_req.symbol AS symbol,
                 stop_req.parent_request_id AS parent_intent_id,
+                parent_req.side AS parent_side,
                 stop_req.request_id AS initial_stop_intent_id,
                 COALESCE(stop_obs.broker_order_id, '') AS initial_stop_broker_order_id,
                 COALESCE(parent_fill.total_filled_qty, stop_obs.filled_qty, stop_req.target_qty, 0) AS fill_qty,
@@ -1426,6 +1428,7 @@ class ExecutionRepository:
                 risk_per_share=float(r["risk_per_share"]) if r.get("risk_per_share") is not None else None,
                 initial_risk_dollars=float(r["initial_risk_dollars"]) if r.get("initial_risk_dollars") is not None else None,
                 target_notional=float(r["target_notional"]) if r.get("target_notional") is not None else None,
+                parent_side=str(r.get('parent_side') or 'buy'),
             )
             for r in rows
         ]

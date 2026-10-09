@@ -23,6 +23,7 @@ class FilterConfig:
     max_tool_calls: int = 5
     account_id: str = 'default'
     horizon: int = 20
+    allow_short: bool = False  # Explicit opt-in; absent in historical LONG-only snapshots.
     protections: ProtectionProfile | dict | None = None
 
     def __post_init__(self):
@@ -42,6 +43,8 @@ class FilterConfig:
                 raise ValueError(f'{name}: entier entre {minimum} et {maximum} requis')
         if type(self.enabled) is not bool:
             raise ValueError('enabled doit être booléen')
+        if type(self.allow_short) is not bool:
+            raise ValueError('allow_short doit être booléen')
         if not isinstance(self.default_symbol_source, str) or not self.default_symbol_source.strip():
             raise ValueError('default_symbol_source doit être une source non vide')
         if (not isinstance(self.default_oracle_batch_id, str)

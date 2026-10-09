@@ -307,6 +307,33 @@ def test_pipeline_workflow_runs_steps_in_order_and_aggregates_logs(monkeypatch, 
     assert "step_3" in logs
 
 
+@pytest.mark.parametrize('watcher_fails', [False, True])
+def test_before_execution_hook_runs_after_risk_and_can_block_orders(monkeypatch, tmp_path, watcher_fails):
+    _configure_tmp_storage(monkeypatch, tmp_path)
+    steps = (
+        PipelineStepDefinition('risk_management', '11', 'Risk', '', '', '—'),
+        PipelineStepDefinition('execution', '12', 'Execution', '', '', 'risk_management'),
+    )
+    monkeypatch.setattr(registry, 'get_pipeline_workflow_steps', lambda **kw: steps)
+    launched = []
+    def command(step, options):
+        launched.append(step)
+        return [sys.executable, '-c', 'print("done")']
+    monkeypatch.setattr(registry, 'build_pipeline_command', command)
+    def prepare(step, options, stop_event):
+        if step.key == 'execution':
+            assert launched == ['risk_management']
+            if watcher_fails:
+                raise RuntimeError('Watcher heartbeat absent')
+            return {'watcher':'READY'}
+    record = registry.start_pipeline_workflow(PipelineLaunchOptions(), before_step=prepare)
+    result = _wait_for_final_snapshot(record.run_id)
+    assert result['status'] == ('failed' if watcher_fails else 'completed')
+    assert result['workflow_completed_steps'] == (1 if watcher_fails else 2)
+    assert launched == (['risk_management'] if watcher_fails else ['risk_management', 'execution'])
+    assert 'Watcher heartbeat absent' in registry.read_pipeline_logs(record.run_id, 'all') if watcher_fails else True
+
+
 def test_pipeline_workflow_aggregates_child_run_summaries(monkeypatch, tmp_path: Path) -> None:
     _configure_tmp_storage(monkeypatch, tmp_path)
 

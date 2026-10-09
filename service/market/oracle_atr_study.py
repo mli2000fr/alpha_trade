@@ -120,7 +120,8 @@ def summarize_day(scores, atr, labels, macro, *, as_of: date) -> dict:
 
 def run(*, batch_id: str, symbol_source: str, start_date: str, end_date: str,
         artifacts_dir='artifacts/models', engine=None, progress_callback=None,
-        date_batch_size: int = 20, resume: bool = True) -> dict:
+        date_batch_size: int = 20, resume: bool = True,
+        trade_dates: list[str] | None = None) -> dict:
     if not isinstance(date_batch_size, int) or isinstance(date_batch_size, bool) or date_batch_size < 1:
         raise ValueError('date_batch_size doit être un entier strictement positif')
     start, end = date.fromisoformat(start_date), date.fromisoformat(end_date)
@@ -156,6 +157,11 @@ def run(*, batch_id: str, symbol_source: str, start_date: str, end_date: str,
     if calendar is None:
         raise RuntimeError('Calendrier NYSE fiable indisponible : aucun fallback lundi-vendredi pour cette étude')
     all_days = [d.date().isoformat() for d in calendar.schedule(start_date=start, end_date=end).index]
+    if trade_dates is not None:
+        requested = {date.fromisoformat(d).isoformat() for d in trade_dates}
+        if requested.difference(all_days):
+            raise ValueError('trade_dates contient une date hors fenêtre ou hors séance NYSE')
+        all_days = [d for d in all_days if d in requested]
     days = [d for d in all_days if d not in completed]
     skipped = len(all_days)-len(days)
     records = []

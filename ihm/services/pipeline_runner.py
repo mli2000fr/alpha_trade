@@ -2840,13 +2840,14 @@ def _wrap_llm_command(phase: str, command: list[str], options: PipelineLaunchOpt
     if batch:
         wrapped.extend(['--batch-id', batch])
     from service.llm_directional.config import load_filter_config
-    profile = load_filter_config().protections
+    filter_config = load_filter_config()
+    profile = filter_config.protections
     enabled = options.llm_specific_protections
     if enabled is None:
         enabled = bool(profile and profile.enabled)
     if type(enabled) is not bool:
         raise ValueError('Choix protections GPT : booléen requis')
-    if enabled and phase in ('risk', 'execute'):
+    if (enabled or filter_config.allow_short) and phase in ('risk', 'execute'):
         # MOO/GTC protections require whole shares. Preserve the legacy command
         # byte-for-byte when GPT or its dedicated protections are disabled.
         command = [part for part in command if part != '--allow-fractional-shares']

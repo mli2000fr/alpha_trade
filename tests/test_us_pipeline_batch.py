@@ -356,6 +356,7 @@ def test_paper_options_and_account_reach_workflow_and_commands(monkeypatch, tmp_
     seen = {}
     def start(options, **kwargs):
         seen['options'] = options
+        seen['before_step'] = kwargs['before_step']
         return SimpleNamespace(run_id='paper-test')
     monkeypatch.setattr(process_registry, 'start_pipeline_workflow', start)
     monkeypatch.setattr(process_registry, 'poll_pipeline_run',
@@ -367,6 +368,19 @@ def test_paper_options_and_account_reach_workflow_and_commands(monkeypatch, tmp_
     command = result.details['steps'][-1]['command']
     assert 'paper' in command
     assert command[command.index('--account')+1] == 'default'
+    assert result.details['watcher_before_execution'] is True
+    from service.forward_pit import watcher_startup
+    import threading
+    watcher = []
+    monkeypatch.setattr(watcher_startup, 'ensure_watcher',
+                        lambda engine, options, **kw: watcher.append(options.account_id) or {'status':'READY'})
+    event = threading.Event()
+    steps = us_pipeline.selected_steps([10,11,12])
+    assert seen['before_step'](steps[0], seen['options'], event) is None
+    assert seen['before_step'](steps[1], seen['options'], event) is None
+    assert not watcher
+    assert seen['before_step'](steps[2], seen['options'], event) == {'status':'READY'}
+    assert watcher == ['default']
 
 
 def test_paper_without_broker_steps_needs_no_credentials(monkeypatch, tmp_path):

@@ -48,7 +48,8 @@ def parse_response(response, symbol, config, observed_at):
             if now - timedelta(days=config.max_source_age_days) <= published <= now:
                 fresh.add(url)
     # An ABSTAIN remains a valid assessment even when recent sources are insufficient.
-    eligible = (result['decision'] == 'LONG' and result['confidence'] >= config.min_confidence
+    eligible = (result['decision'] in (('LONG', 'SHORT') if config.allow_short else ('LONG',))
+                and result['confidence'] >= config.min_confidence
                 and len(fresh) >= config.min_sources)
     result['eligible'] = eligible
     result['source_timestamps_verified'] = False

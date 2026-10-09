@@ -67,10 +67,15 @@ def scoped_execution_config(config, profile):
                    time_stop=replace(config.time_stop, enabled=False))
 
 
-def safe_trailing_trigger(fill_price, profile):
+def safe_trailing_trigger(fill_price, profile, side='buy'):
     # Never replace the 7% stop with a looser 20% stop. At the handover, the
     # trailing floor must be >= the original floor: .8*price >= .93*entry.
-    from decimal import Decimal, ROUND_CEILING
+    from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
+    from core.direction import is_short_side
+    if is_short_side(side):
+        ceiling = Decimal(str(round(fill_price*(1+profile.stop_loss_pct), 2)))
+        threshold = min(Decimal(str(fill_price)), ceiling/(1+Decimal(str(profile.trailing_stop_pct))))
+        return float(threshold.quantize(Decimal('.0001'), rounding=ROUND_FLOOR))
     # Same cent-rounded SL as the order builder; round activation upwards.
     floor = Decimal(str(round(fill_price*(1-profile.stop_loss_pct), 2)))
     threshold = max(Decimal(str(fill_price)), floor/(1-Decimal(str(profile.trailing_stop_pct))))
@@ -179,9 +184,10 @@ def apply_scheduled_exit(watcher, row, profile, metrics, *, now=None):
             IntentRole.TRAILING_STOP if child.order_type == 'trailing_stop' else IntentRole.INITIAL_STOP)
         persist_order(watcher._repo, child_intent, latest, account_id=account)
     position = broker.get_position(symbol)
-    if not position or str(position.get('side') or 'long') != 'long':
+    short = str(row.get('parent_side') or 'buy') in ('sell', 'short')
+    if not position or str(position.get('side') or 'long') != ('short' if short else 'long'):
         return
-    qty = min(float(row['remaining_qty']), max(float(position.get('qty') or 0), 0))
+    qty = min(float(row['remaining_qty']), abs(float(position.get('qty') or 0)))
     if qty <= 0:
         return
     if not is_effectively_integer_quantity(qty):
@@ -191,7 +197,7 @@ def apply_scheduled_exit(watcher, row, profile, metrics, *, now=None):
     attempt = action if action == 'MOO' else f'{action}:{now.astimezone(ZoneInfo("America/New_York")).date()}'
     key = hashlib.sha256(f'gpt-exit:{parent}:{due.isoformat()}:{attempt}'.encode()).hexdigest()[:32]
     intent = OrderIntent(intent_id=key[:16], risk_run_id=str(row['parent_risk_run_id']),
-        exec_run_id=str(row['parent_exec_run_id']), symbol=symbol, side='sell', qty=qty,
+        exec_run_id=str(row['parent_exec_run_id']), symbol=symbol, side='buy' if short else 'sell', qty=qty,
         order_type='market', limit_price=None, trail_percent=None, broker_mode='paper',
         parent_intent_id=parent, intent_role=IntentRole.EXIT, idempotency_key=key,
         decision_price=float(row['avg_entry_price']), submission_key=key,

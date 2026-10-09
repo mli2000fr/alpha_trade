@@ -1581,6 +1581,11 @@ def _render_launchable_step_panel(
                     # One explicit selector for both prediction and GPT; never reuse a stale LIVE choice.
                     _live_selected = options.ml_predict_batch_id or ""
                     st.caption(f"📦 Batch Oracle du filtre GPT : `{_live_selected}`")
+                    from service.llm_directional.config import load_filter_config
+                    _filter = load_filter_config()
+                    st.caption(f"GPT : {'LONG / SHORT / ABSTENTION' if _filter.allow_short else 'LONG / ABSTENTION'} — "
+                               f"maximum {_filter.max_selected} titres au total, PAPER uniquement. "
+                               "SHORT : actions entières, autorisation broker et emprunt ETB obligatoires.")
                 elif f"pipeline_ml_live_predict_batch_id_{step.key}" not in st.session_state:
                     st.session_state[f"pipeline_ml_live_predict_batch_id_{step.key}"] = _live_default_batch
 

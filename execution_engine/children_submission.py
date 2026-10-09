@@ -135,7 +135,7 @@ def submit_children(
     initial_stop_submitted_intent: OrderIntent | None = None
     initial_stop_submitted_order: BrokerOrder | None = None
     trigger_price, trigger_mode = (
-        resolve_trailing_activation_price(fill_price, cfg, target)
+        resolve_trailing_activation_price(fill_price, cfg, target, side=parent.side)
         if stop_intent is not None
         else (None, None)
     )

@@ -29,6 +29,7 @@ pandas-market-calendars
 
 # --- IHM Streamlit ---
 streamlit
+psutil>=5.9  # Vérification de l'identité du watcher local avant exécution PAPER.
 
 # --- Configuration ---
 pyyaml

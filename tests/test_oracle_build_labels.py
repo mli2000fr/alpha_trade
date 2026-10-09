@@ -17,6 +17,8 @@ from modelFactory.oracle.build_labels import (
     classify_target_quality,
     check_universe_equality,
     compute_cross_sectional_ranks,
+    label_calendar,
+    load_price_matrices,
 )
 from modelFactory.oracle.security_continuity import (
     SecurityDiscontinuity,
@@ -216,3 +218,82 @@ class TestOracleTargetQuality:
             pd.Timestamp("2020-01-20"),
             self._registry(),
         )
+
+
+def test_availability_is_next_nyse_session_even_without_next_price():
+    from datetime import date
+    dates = label_calendar('2026-09-03', '2026-09-03', 20)
+    assert dates[date(2026, 9, 3)] == (date(2026, 10, 2), date(2026, 10, 5))
+
+
+def test_calendar_skips_holiday_and_weekend():
+    from datetime import date
+    assert label_calendar('2026-07-01', '2026-07-01', 1)[date(2026, 7, 1)] == (
+        date(2026, 7, 2), date(2026, 7, 6))
+
+
+@pytest.mark.parametrize('horizon', [0, -1, True, 1.5])
+def test_invalid_label_horizon_rejected(horizon):
+    with pytest.raises(ValueError):
+        label_calendar('2026-01-02', '2026-01-02', horizon)
+
+
+def test_missing_global_price_day_does_not_shift_horizon():
+    from contextlib import contextmanager
+
+    class Conn:
+        def execute(self, query, params):
+            assert 'COALESCE(is_filled, 0)=0' in str(query)
+            return self
+
+        def fetchall(self):
+            return [('AAA', '2026-07-01', 100., 'eodhd_eod'),
+                    ('AAA', '2026-07-06', 110., 'eodhd_eod')]
+
+    class Engine:
+        @contextmanager
+        def connect(self):
+            yield Conn()
+
+    matrices = load_price_matrices(Engine(), ['AAA'], '2026-07-01')
+    assert list(matrices.raw_close.index.strftime('%Y-%m-%d')) == ['2026-07-01', '2026-07-02', '2026-07-06']
+    assert pd.isna(matrices.raw_close.loc['2026-07-02', 'AAA'])
+    assert matrices.close.loc['2026-07-02', 'AAA'] == 100.
+
+
+def test_stored_membership_never_reconstructs_universe_from_current_bars(monkeypatch):
+    labels = importlib.import_module('modelFactory.oracle.build_labels')
+    monkeypatch.setattr(labels, 'load_stored_membership', lambda *a: {('2026-01-02', 'ORIGINAL')})
+
+    def forbidden(*a, **kw):
+        pytest.fail('Original universe was replaced')
+
+    monkeypatch.setattr(labels, 'load_universe_from_ranks', forbidden)
+    monkeypatch.setattr(labels, 'load_universe_from_bars', forbidden)
+    monkeypatch.setattr(labels, 'load_price_matrices', lambda e, syms, start:
+        labels.PriceMatrices(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()))
+    result = labels.build_labels('batch', engine=object(), universe_mode='stored_membership')
+    assert result['universe_check']['source'] == 'stored_membership'
+    assert result['reason'] == 'no_bars'
+    with pytest.raises(ValueError):
+        labels.build_labels('batch', engine=object(), universe_mode='stored_membership', symbols=['OTHER'])
+
+
+def test_builder_last_exit_bar_has_calendar_availability(monkeypatch, tmp_path):
+    labels = importlib.import_module('modelFactory.oracle.build_labels')
+    syms = [f'S{i:02d}' for i in range(20)]
+    index = pd.to_datetime(['2026-07-01', '2026-07-02'])
+    raw = pd.DataFrame([np.ones(20) * 100, np.arange(101., 121.)], index=index, columns=syms)
+    prices = labels.PriceMatrices(raw, raw,
+        pd.DataFrame('eodhd_eod', index=index, columns=syms),
+        pd.DataFrame(0, index=index, columns=syms))
+    monkeypatch.setattr(labels, 'load_stored_membership', lambda *args: {('2026-07-01', s) for s in syms})
+    monkeypatch.setattr(labels, 'load_price_matrices', lambda *args: prices)
+    monkeypatch.setattr(labels, 'load_security_discontinuities', lambda: {})
+    output = tmp_path / 'labels.parquet'
+    result = labels.build_labels('batch', engine=object(), horizon=1, dry_run=True,
+                                 output_parquet=str(output), universe_mode='stored_membership')
+    frame = pd.read_parquet(output)
+    assert result['n_labeled'] == 20
+    assert pd.to_datetime(frame.oracle_available_date).eq(pd.Timestamp('2026-07-06')).all()
+    assert pd.to_datetime(frame.oracle_exit_date).eq(pd.Timestamp('2026-07-02')).all()

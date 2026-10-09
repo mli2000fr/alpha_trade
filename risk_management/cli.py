@@ -1185,7 +1185,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--min-position-notional", type=float, default=500.0)
     p.add_argument("--trade-date", type=str, default=None, help="YYYY-MM-DD (défaut: aujourd'hui)")
     p.add_argument("--summary-path", type=str, default=None, help="Chemin de sortie atomique du résumé JSON du run.")
-    p.add_argument('--llm-filter-run-id', help='Analyse Oracle/Web exacte, LONG-only et PAPER uniquement')
+    p.add_argument('--llm-filter-run-id', help='Analyse Oracle/Web directionnelle exacte, PAPER uniquement')
     p.add_argument("--dry-run", action="store_true", default=False)
     p.add_argument(
         "--run-mode",
@@ -1660,11 +1660,15 @@ def main(args: list[str] | None = None) -> None:
         from service.llm_directional.protections import archived_profile
         llm_run, _ = LLMRepository(repo.engine).get(args.llm_filter_run_id)
         protection = archived_profile(llm_run['config_json'])
-        if protection is not None:
+        from service.llm_directional.config import FilterConfig
+        llm_config = FilterConfig(**json.loads(llm_run['config_json']))
+        if llm_config.allow_short or protection is not None:
             # Sizing and the broker SL share the same risk distance. Whole shares
             # are required for GTC stops/trailing and market-on-open orders.
+            config = config.with_overrides(allow_fractional_shares=False)
+        if protection is not None:
             config = config.with_overrides(fixed_stop_pct=protection.stop_loss_pct,
-                disable_price_take_profit=True, allow_fractional_shares=False)
+                disable_price_take_profit=True)
     # Ré-assert long_only APRÈS les guards structurels : aucun chemin ne doit
     # réactiver les shorts pour un compte configuré long-only.
     if account_long_only:

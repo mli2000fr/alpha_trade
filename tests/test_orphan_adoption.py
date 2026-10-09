@@ -14,6 +14,7 @@ Couvre :
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import warnings
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -223,6 +224,27 @@ def _fetch_one(engine, sql: str, **params):
 def _fetch_all(engine, sql: str, **params):
     with engine.connect() as conn:
         return list(conn.execute(text(sql), params).mappings())
+
+
+@pytest.mark.parametrize('broker_mode', ['paper', 'live'])
+@pytest.mark.parametrize('side', ['buy', 'sell'])
+def test_adoption_explicit_us_market_without_legacy_warning(engine, repo, caplog, broker_mode, side):
+    adopt = adopt_orphan_buy if side == 'buy' else adopt_orphan_sell
+    payload = _buy_payload() if side == 'buy' else _sell_payload()
+    with warnings.catch_warnings():
+        warnings.filterwarnings('error', message='market_code absent.*', category=FutureWarning)
+        result = adopt(repo, broker_mode=broker_mode, account_id='default', raw_order=payload)
+        # The same history reread still uses the existing canonical identity.
+        repeated = adopt(repo, broker_mode=broker_mode, account_id='default', raw_order=payload)
+    assert repeated.intent.exec_run_id == result.intent.exec_run_id
+    row = _fetch_one(engine, 'SELECT * FROM execution_runs WHERE exec_run_id=:run',
+                     run=result.intent.exec_run_id)
+    assert row is not None  # Also catches warnings swallowed by best-effort adoption.
+    assert row['market_code'] == 'US_EQ'
+    assert row['base_currency'] == 'USD'
+    assert row['market_context_fingerprint']
+    assert row['broker_mode'] == broker_mode
+    assert not any('market_code absent' in r.getMessage() for r in caplog.records)
 
 
 class TestAdoptOrphanSell:

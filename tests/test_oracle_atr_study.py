@@ -203,6 +203,26 @@ def test_all_complete_no_price_read_or_write(tranche_environment):
     assert result['skipped_rows']==2 and result['persisted_rows']==0
 
 
+def test_targeted_repair_recalculates_only_requested_exchange_dates(tranche_environment):
+    engine, _ = tranche_environment
+    with patch('service.market.oracle_atr_study._calculate_tranche',
+               return_value=[tranche_row('2025-01-03')]) as calculate:
+        result = run(batch_id='batch', symbol_source='universe-file:a.txt',
+                     start_date='2025-01-02', end_date='2025-01-03', engine=engine,
+                     resume=False, trade_dates=['2025-01-03'])
+    assert calculate.call_args.args[2] == ['2025-01-03']
+    assert result['persisted_rows'] == 1
+
+
+def test_targeted_repair_refuses_dates_outside_calendar(tranche_environment):
+    engine, _ = tranche_environment
+    with pytest.raises(ValueError, match='hors fenêtre'):
+        run(batch_id='batch', symbol_source='universe-file:a.txt',
+            start_date='2025-01-02', end_date='2025-01-03', engine=engine,
+            resume=False, trade_dates=['2025-01-04'])
+    engine.begin.assert_not_called()
+
+
 @pytest.mark.parametrize('size',[0,-1,True,1.5])
 def test_invalid_tranche_size_rejected_before_io(size):
     with pytest.raises(ValueError,match='date_batch_size'):

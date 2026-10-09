@@ -147,6 +147,7 @@ def execute_pipeline(engine, cfg, run_id, dry_run, *, now=None):
         counter_unit='pipeline_steps', training=False,
         account_id=options.account_id,
         execution_mode=options.execution_mode,
+        watcher_before_execution=any(s.num=='12' for s in steps) and options.execution_mode=='paper',
         execution_orders=any(s.num=='12' for s in steps) and options.execution_mode=='paper')
     outcome = Outcome(requested=len(steps), details=plan)
     if dry_run:
@@ -155,9 +156,16 @@ def execute_pipeline(engine, cfg, run_id, dry_run, *, now=None):
     directory = ROOT/'artifacts/operations/us_pipeline'/run_id
     directory.mkdir(parents=True, exist_ok=False)
     (directory/'plan.json').write_text(json.dumps(plan, indent=2, default=str), encoding='utf-8')
+    def before_step(step, current_options, stop_event):
+        if step.key != 'execution' or current_options.execution_mode != 'paper':
+            return None
+        from service.forward_pit.watcher_startup import ensure_watcher
+        result = ensure_watcher(engine, current_options, directory=directory, stop_event=stop_event)
+        outcome.details['watcher_before_execution_result'] = result
+        return result
     try:
         record = start_pipeline_workflow(options, db_config={'name': 'alpha_trade'},
-            selected_step_keys=tuple(s.key for s in steps))
+            selected_step_keys=tuple(s.key for s in steps), before_step=before_step)
     except Exception as exc:
         outcome.failed = 1
         raise BatchRunError(f'US pipeline could not start: {exc}', outcome) from exc
