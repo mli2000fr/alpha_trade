@@ -100,6 +100,8 @@ def _render_replay_panel(page: str) -> None:
 
 
 def render_fr_research_view(page: str) -> None:
+    from ihm.services.fr_operations_view_18 import render_operations_preparation
+    render_operations_preparation(page)
     st.warning(
         "FR_EQ — recherche uniquement. Politique LONG H5 : NO-GO exploratoire ; "
         "validation économique stricte bloquée. Aucun paper, live ou serving activé."

@@ -167,11 +167,35 @@ def _handle(name, cfg, result, *, dry_run, today, resume=False, max_symbols=None
         return
     if name == "fr_daily_bars_sync":
         from service.fr.eodhd_daily_15b import collect
+        from service.fr.publish_daily_bars_staging import run as publish_staging
         identities = (ROOT / str(cfg['identities_file'])).resolve()
         if not identities.is_relative_to((ROOT/'artifacts/fr').resolve()):
             raise ValueError('Identités quotidiennes hors périmètre FR')
-        collect(cfg, result, root=OPS/'eodhd_daily', identities=identities,
-                dry_run=dry_run, today=today, resume=resume, max_symbols=max_symbols)
+        publication_enabled=cfg.get('publish_daily_staging',False)
+        if type(publication_enabled) is not bool:
+            raise ValueError('publish_daily_staging doit être booléen')
+        failure=None
+        try:
+            collect(cfg, result, root=OPS/'eodhd_daily', identities=identities,
+                    dry_run=dry_run, today=today, resume=resume, max_symbols=max_symbols)
+        except RuntimeError as exc:
+            failure=exc
+        # No SQL on dry-run or acquisition-lock failure. A completed partial
+        # collection may publish its validated archives but remains FAILED.
+        if publication_enabled and not dry_run and result.get('state_path'):
+            begin,end=map(date.fromisoformat,result['window'])
+            from service.fr.eodhd_daily_15b import symbols_from_identities
+            selected=symbols_from_identities(identities)[:max_symbols] if max_symbols is not None else None
+            report_path=OPS/'staging_runs'/f'{uuid.uuid4().hex}.json'
+            result['sql_writes']=True
+            result['staging_report_path']=str(report_path)
+            publication=publish_staging(start=begin,end=end,write=True,root=OPS/'eodhd_daily',
+                                       identities=identities,output=report_path,selected_symbols=selected)
+            result['daily_sql_publication']=publication
+            result['sql_persisted_count']=publication['new_staging_rows']
+            if publication['status']!='COMPLETED':
+                raise RuntimeError('Publication staging FR incomplète ; consulter le rapport')
+        if failure: raise failure
         return
     if name == "fr_calendar_snapshot":
         from common.market_calendar import get_market_calendar

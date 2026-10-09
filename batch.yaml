@@ -8,7 +8,7 @@
 # J-N/J. Les snapshots non reconstructibles disposent d'un second passage
 # conditionnel, annulé automatiquement quand le principal a réussi.
 
-us_pipeline_1_9:
+us_pipeline:
   priority: P0
   enabled: true
   status: ACTIVE
@@ -30,13 +30,13 @@ us_pipeline_1_9:
     forward_days: 30
     batch_size: 50
     provider: finnhub
-  description: "Enchaîner les étapes 1 à 9 de la page Pipeline avec ses valeurs par défaut : barres, nettoyage, screener, quotes, earnings, univers tradable, Alpha Scanner, sentiment et agrégation."
+  description: "Enchaîner les étapes de la page Pipeline sélectionnées dans config.yaml → us_pipeline.steps (1 à 12). Par défaut 1 à 9, avec les défauts partagés de l'IHM."
   tables: "stock_bars,stock_bars_daily,cleaning_audit_latest,cleaning_audit_runs,stock_scores,stock_scores_history,stock_quote_snapshots,stock_earnings_calendar,tradable_universe_runs,tradable_universe_history,news_raw,news_ticker_map,news_sentiment,news_ticker_sentiment,macro_event_audit,ticker_daily_sentiment_features,sector_daily_sentiment_features,news_ingestion_checkpoint,pit_collection_runs"
-  universe_scope: "Univers commun config/univers_batch/univers_filtred_tradable.txt : screener, quotes, earnings, import news et scoring ticker. Les autres étapes conservent leurs périmètres natifs ou les résultats précédents."
+  universe_scope: "Univers commun config/univers_batch/univers_filtred_tradable.txt : screener, quotes, earnings, import news, scoring ticker et prédiction si l'étape 10 est sélectionnée. Les autres étapes conservent leurs périmètres natifs ou les résultats précédents."
   coverage_description: "Séance US J figée au lancement ; jours fériés US exclus par calendrier strict. Pas de second passage. Les fenêtres/reprises propres à chaque étape restent celles de l'IHM."
-  execution_notice: "22:45 Europe/Paris, lundi–vendredi après clôture US, changements d'heure inclus. Étapes 1–9 uniquement : aucun ML Train/T1, ML Predict/10, Risk/11 ou Execution/12. Arrêt au premier échec ; verrou pipeline partagé avec l'IHM. Compteurs en étapes, pas en lignes SQL."
+  execution_notice: "22:45 Europe/Paris, lundi–vendredi après clôture US, changements d'heure inclus. config.yaml → us_pipeline : steps, execution_mode (paper) et account_id (default). Aucun ordre sans étape 12 ; compte PAPER exigé pour 11/12, LIVE interdit. T1/13/14 exclus. Arrêt au premier échec ; verrou partagé avec l'IHM. Compteurs en étapes, pas en lignes SQL."
   research_notice: "Défauts Pipeline partagés, preset capital_2001_5000, sentiment standard + contextuel. Exceptions explicites : univers commun pour étapes 3/4/5 et import/scoring ticker de 8 ; quotes J-7/J, earnings J-7/J+30 ; séance J figée sans rabattement sur un ancien snapshot. Les sessions IHM ne sont pas modifiées."
-  log_file: log/batch/us_pipeline_1_9.txt
+  log_file: log/batch/us_pipeline.txt
 
 # Sprint 15-D6 : observations officielles CN strictement de recherche.
 # Deux tâches distinctes pour conserver un seul horaire principal par batch.
@@ -247,7 +247,11 @@ earnings_calendar_sync:
   tables: "stock_earnings_calendar,cleaning_audit_earnings_runs"
   enabled: false
   status: INTEGRATED_IN_US_PIPELINE
-  research_notice: "Planification autonome désactivée : collecte exécutée à l'étape 5 de us_pipeline_1_9, même univers, Finnhub, J-7/J+30 et reprise. Les paramètres sont partagés dans batch.yaml. Ne pas réactiver en parallèle ; le collecteur CLI reste disponible manuellement."
+  activation_requirement: "Intégré à l'étape 5 de us_pipeline ; activer cette étape dans config.yaml, pas une seconde tâche autonome."
+  unlock_steps:
+    - "Inclure 5 dans config.yaml → us_pipeline.steps pour maintenir la collecte quotidienne."
+    - "Si une planification autonome est nécessaire, retirer d'abord l'étape 5 du pipeline avant réactivation pour éviter le doublon."
+  research_notice: "Planification autonome désactivée : collecte exécutée à l'étape 5 de us_pipeline, même univers, Finnhub, J-7/J+30 et reprise. Les paramètres sont partagés dans batch.yaml. Ne pas réactiver en parallèle ; le collecteur CLI reste disponible manuellement."
   timezone: Europe/Paris
   run_hours: "23"
   run_days: "0,3,5"
@@ -294,6 +298,10 @@ latest_quotes_sync:
   tables: "pit_collection_runs,stock_quote_snapshots,cleaning_audit_quotes_runs"
   enabled: false
   status: INTEGRATED_IN_US_PIPELINE
+  activation_requirement: "Intégré à l'étape 4 de us_pipeline ; activer cette étape dans config.yaml, pas une seconde tâche autonome."
+  unlock_steps:
+    - "Inclure 4 dans config.yaml → us_pipeline.steps pour maintenir la collecte quotidienne."
+    - "Si une planification autonome est nécessaire, retirer d'abord l'étape 4 du pipeline avant réactivation pour éviter le doublon."
   provider: alpaca_iex
   timezone: America/New_York
   run_hours: "17"
@@ -302,7 +310,7 @@ latest_quotes_sync:
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   lookback_days: 7
   batch_size: 200
-  research_notice: "Planification autonome désactivée : collecte exécutée à l'étape 4 de us_pipeline_1_9, même univers et J-7/J. Ne pas réactiver en parallèle ; le collecteur CLI reste disponible manuellement. Quotes Alpaca Basic IEX, pas SIP/NBBO consolidé."
+  research_notice: "Planification autonome désactivée : collecte exécutée à l'étape 4 de us_pipeline, même univers et J-7/J. Ne pas réactiver en parallèle ; le collecteur CLI reste disponible manuellement. Quotes Alpaca Basic IEX, pas SIP/NBBO consolidé."
   log_file: log/batch/latest_quotes_sync.txt
 
 # Tous les horaires sont exprimés dans timezone et interprétés par le lanceur.

@@ -9,6 +9,7 @@ from common.config_loader import load_batch_config, resolve_batch_config_path
 ROOT = Path(__file__).resolve().parents[1]
 WINDOWS = ROOT / "scripts" / "windows"
 BATCH_SECTIONS = {
+    "us_pipeline",
     "cn_dragon_tiger_after_close", "cn_dragon_tiger_before_open",
     "cn_oracle_prospective_daily", "cn_dragon_tiger_daily_match",
     "ml_artifacts_backup",
@@ -33,7 +34,13 @@ def test_batch_configuration_is_separated_from_application_config() -> None:
     application = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
 
     assert set(batch) == BATCH_SECTIONS
-    assert BATCH_SECTIONS.isdisjoint(application)
+    assert (BATCH_SECTIONS - {'us_pipeline'}).isdisjoint(application)
+    assert set(application['us_pipeline']) == {'steps','execution_mode','account_id'}
+    assert application['us_pipeline']['execution_mode'] == 'paper'
+    assert application['us_pipeline']['account_id'] == 'default'
+    from service.forward_pit.us_pipeline import selected_steps
+    assert selected_steps(application['us_pipeline']['steps'])
+    assert 'run_hours' not in application['us_pipeline']
     assert load_batch_config() == batch
     assert resolve_batch_config_path() == ROOT / "batch.yaml"
     assert "RETAILSMSA" in batch["fred_alfred_vintage_sync"]["series"].split(",")
@@ -229,7 +236,9 @@ def test_every_symbol_scoped_batch_uses_stable_tradable_universe() -> None:
 def test_latest_quotes_batch_uses_safe_idempotent_catchup_window() -> None:
     batch = yaml.safe_load((ROOT / "batch.yaml").read_text(encoding="utf-8"))
     quotes = batch["latest_quotes_sync"]
-    assert quotes["enabled"] is True
+    assert quotes["enabled"] is False
+    assert quotes['status'] == 'INTEGRATED_IN_US_PIPELINE'
+    assert batch['us_pipeline']['quotes_collection']['lookback_days'] == 7
     assert quotes["priority"] == "P0"
     assert quotes["provider"] == "alpaca_iex"
     assert quotes["timezone"] == "America/New_York"

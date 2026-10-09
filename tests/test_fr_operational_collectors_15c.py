@@ -74,6 +74,19 @@ def test_dila_dedup_and_preserve_observation_not_publication(tmp_path,monkeypatc
     assert list(saved['records'].values())[0]['available_at'] > row['uin_dat_amf']
 
 
+def test_dila_sentinel_preserved_raw_without_rejecting_valid_transmission(tmp_path,monkeypatch):
+    ids,cfg=fixture(tmp_path,monkeypatch)
+    row={'uin_idt_uin':'one','identificationsociete_iso_cd_isi':'FR0010557264',
+         'uin_dat_amf':'2026-10-02T17:00:00Z','uin_dat_mar':'8887-12-31T22:00:00Z'}
+    monkeypatch.setattr(c,'fetch',lambda url:json.dumps([row]).encode())
+    root=tmp_path/'dila'; r=result()
+    c.public_collection('fr_dila_disclosures_sync',cfg,r,root=root,identities=ids,today=date(2026,10,5))
+    assert r['rejected_count']==r['warning_count']==0
+    assert r['date_sentinel_count']==r['persisted_count']==1
+    saved=json.loads((root/'latest.json').read_text())
+    assert next(iter(saved['records'].values()))['row']['uin_dat_mar']==row['uin_dat_mar']
+
+
 def test_quality_excludes_itself_and_keeps_counts(tmp_path):
     cfg={'collection_dependencies':['fr_daily_bars_sync'],'max_run_age_hours':96}
     r=result()

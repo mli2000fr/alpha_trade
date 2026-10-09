@@ -157,14 +157,18 @@ def public_collection(name,cfg,result,*,root,identities,dry_run=False,today=None
         payload=json.loads(fetch(DILA+'?'+urlencode({'where':where})))
         if not isinstance(payload,list): raise ValueError('Export DILA non liste')
         digest=archive(root,{'query_window':[str(start),str(end)],'records':payload})
-        rows=[]; rejected=[]
+        rows=[]; rejected=[]; sentinel_count=0
         for r in payload:
             if r.get('identificationsociete_iso_cd_isi') not in isins: continue
+            sentinel_count += int(any(str(r.get(k, '')).startswith(('8887-', '8888-'))
+                for k in ('uin_dat_amf','uin_dat_mar','informationdeposee_inf_dat_emt')))
             if not r.get('uin_idt_uin') or not public_day(r) or public_day(r)>str(end):
                 rejected.append(r); continue
             rows.append(r)
         result['warning_count']+=int(bool(rejected))
         result['rejected_count']=len(rejected)
+        result['date_sentinel_count']=sentinel_count
+        result['date_notice']='Known DILA date sentinels excluded; valid transmission is not proven web availability'
         atomic(root/'quarantine'/f'{digest}.json',{'rejected':rejected})
         scope='METADATA_ONLY_NO_DOCUMENT_OR_GUIDANCE_EXTRACTION'
     result['received_count']=1

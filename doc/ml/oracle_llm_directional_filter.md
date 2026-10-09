@@ -61,7 +61,7 @@ est cochée par défaut dans la configuration actuelle, sans lancement automatiq
 Une valeur déjà mémorisée dans la session IHM reste prioritaire.
 La checkbox
 IHM est un opt-in explicite : elle peut activer une campagne ponctuelle même si
-ce défaut reste false. Elle n’active pas le batch planifié `us_pipeline_1_9`.
+ce défaut reste false. Elle n’active pas le batch planifié `us_pipeline`.
 Une campagne enregistre sa configuration entière : changer N/K demain ne change
 pas rétrospectivement les sélections enregistrées aujourd’hui.
 
@@ -218,8 +218,10 @@ plan d’exécution externe sont refusés. Aucun LLM ne choisit les quantités o
    consulter tous les titres, les motifs, sources, configuration et évaluations.
 
 Le workflow s’arrête en cas d’échec. Une abstention complète n’envoie aucun nouvel
-ordre. Le batch quotidien `us_pipeline_1_9` reste limité aux neuf premières étapes :
-aucune planification de trades PAPER n’a été activée par cette livraison.
+ordre. Le batch quotidien `us_pipeline` conserve par défaut les neuf premières
+étapes. Sa sélection est désormais configurable de 1 à 12 dans
+`config.yaml → us_pipeline.steps` ; le filtre GPT et les trades PAPER ne sont pas
+activés implicitement par cette sélection. Voir le guide `doc/operations/us_pipeline.md`.
 
 ## 8. Commandes et vérification
 

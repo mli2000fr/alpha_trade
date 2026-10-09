@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "market_code": "FR_EQ",
+  "database_alias": "fr_primary",
+  "currency": "EUR",
+  "account_context": "fr_simulated",
+  "mode": "preparation_only",
+  "orders_allowed": false,
+  "live_enabled": false,
+  "limits": {
+    "max_order_notional_eur": "100",
+    "max_gross_exposure_ratio": "0.10",
+    "max_daily_loss_ratio": "0.01",
+    "max_drawdown_ratio": "0.05",
+    "max_quote_age_seconds": 60,
+    "max_account_age_seconds": 60
+  },
+  "alert_delivery": "preview_only",
+  "evidence": {
+    "demo_readonly": "artifacts/fr/research/trading212_demo_17b/demo-20261008223330840725/report.json",
+    "mapping": "artifacts/fr/research/trading212_mapping_17c/mapping-20261008223358391465/manifest.json",
+    "collectors": "artifacts/fr/research/sprint15_closure/closure-20261009-s18.json"
+  }
+}

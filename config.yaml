@@ -9,6 +9,15 @@ database:
   password: "${PASSWORD_DB}"
   name: alpha_trade
 
+us_pipeline:
+  # Sélection fonctionnelle du batch us_pipeline ; horaires/univers dans batch.yaml.
+  # Entiers uniques 1..12, ordre d'exécution toujours numérique, arrêt au premier échec.
+  # 10 = prédiction, 11 = risque, 12 = exécution. LIVE interdit.
+  # Aucune insertion automatique des étapes omises ; leurs prérequis doivent exister.
+  execution_mode: paper  # Aucun ordre sans étape 12 sélectionnée.
+  account_id: default    # Les étapes 11/12 en PAPER exigent un compte configuré paper.
+  steps: [1, 2, 3, 4, 5, 6, 7, 9]
+
 llm_directional_filter:
   # Opt-in, recherche prospective et exécution PAPER uniquement. Aucun historique Web simulé.
   enabled: true  # Checkbox IHM cochée par défaut ; aucun lancement automatique.

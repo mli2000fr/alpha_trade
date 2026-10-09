@@ -100,7 +100,9 @@ def public_day(row: dict) -> str | None:
             stamp = datetime.fromisoformat(raw.replace("Z", "+00:00"))
         except (ValueError, AttributeError):
             continue
-        if stamp.tzinfo is not None:
+        # DILA uses 8887/8888 as an unavailable market-transmission sentinel.
+        # Preserve the source value elsewhere; it is not a publication in year 8888.
+        if stamp.tzinfo is not None and stamp.year not in (8887, 8888):
             values.append(stamp)
     return max(values).astimezone(ZoneInfo("Europe/Paris")).date().isoformat() if values else None
 

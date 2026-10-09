@@ -627,6 +627,65 @@ Pas de nouvelle tâche ni d'activation shadow ; Sprint 16 complet non clos.
 
 ### Sprint 17 — Courtier France et paper : conditionnel, hors POC historique
 
+**Décision utilisateur du 9 octobre : clôture administrative avec réserves.**
+[Bilan de clôture](sprint_17_cloture_avec_reserves.md) : préparation et lectures
+DEMO livrées, raccordement d'ordres suspendu. Pas de GO PAPER autonome/LIVE,
+réserves shadow inchangées. Les mentions « partiel/en cours » des lots ci-dessous
+décrivent leur état avant cette clôture ; les travaux non livrés restent réservés.
+
+**17-A livré le 8 octobre 2026, préparation hors ligne uniquement.**
+[Audit, contrat d'adaptateur et banc d'essai](sprint_17a_preparation_execution.md).
+39 tests ciblés passent, dont 22 nouveaux cas. Identité FR ISIN/MIC/EUR,
+quantités/notionnel, doublons concurrents et kill switch local contrôlés.
+Le banc n'est pas un adaptateur courtier, ne génère aucun fill et n'est pas
+enregistré dans le routeur. Sprint 17 complet reste `BLOCKED_BROKER` et
+`BLOCKED_SHADOW_DATA` ; les réserves Sprint 16 ne sont pas levées.
+
+**17-B — POC Trading212 Invest DEMO en lecture seule exécuté le 8 octobre.**
+[Résultats et limites](sprint_17b_trading212_demo_lecture_seule.md) : compte EUR,
+cinq GET réussis, historique des ordres HTTP 403 à qualifier ; 171 correspondances
+uniques sur les 233 titres du dossier de revue, 1 ambiguë, 61 absentes.
+Aucun ordre ni accès réel. Ce client de diagnostic n'est pas un adaptateur
+d'exécution ; le MIC réel et le cycle ordre/fill/protection ne sont pas qualifiés.
+Le choix de Trading212 pour ce POC ne lève pas les gates PAPER/LIVE.
+
+**17-C — correspondance de recherche figée.**
+[Périmètre et contrat restant](sprint_17c_mapping_et_contrat_trading212.md) :
+138 titres XPAR Paris/EUR ; 26 XPAR sans correspondance, 69 ALXP/XMLI hors
+pilote initial. Airbus Paris/Xetra distingué. 42 tests ciblés passent.
+L'historique reste HTTP 403 ; aucun adaptateur d'ordres ou OCO n'est raccordé.
+
+**Mise à jour 9 octobre / 17-D :** l'historique DEMO est désormais accessible
+(six GET HTTP 200). [Réconciliation synthétique](sprint_17d_reconciliation_simulee.md)
+livrée : timeout sans retry, fills partiels, annulation non garantie, courses,
+doublons et quarantaine testés. 83 tests ciblés passent. Les mentions 403 des
+lots précédents sont historiques, et non le blocage actuel. Toujours aucun
+adaptateur réseau d'ordres, OCO qualifié, idempotence durable ou GO PAPER/LIVE.
+
+**17-E — journal persistant synthétique livré le 9 octobre.**
+[Persistance et reprise](sprint_17e_journal_persistant_et_reprise.md) : fichiers
+append-only avec fsync/empreintes, verrou système mono-écrivain, reprise après
+mort de processus sans renvoi d'une intention inconnue. 97 tests ciblés passent.
+Qualification limitée au transport factice et au stockage local de recherche :
+pas d'idempotence courtier de production ni adaptateur réseau. Protections et
+parité restent à qualifier, sans GO PAPER/LIVE.
+
+**17-F — qualification documentaire et synthétique des protections livrée.**
+[Audit stop/TP et courses](sprint_17f_qualification_protections.md) :
+124 tests ciblés passent. Deux sorties indépendantes ne sont pas assimilées
+à un OCO ; annulation demandée distincte de confirmation, quantité résiduelle
+et trou de protection contrôlés. Stop au marché sans prix garanti.
+Parité courtier `BLOCKED_BROKER_PROTECTION_PARITY` : OCO natif et remplacement
+atomique non qualifiés, aucun ordre externe testé ni route activée.
+
+**17-G — recherche publique bornée et demande support préparée.**
+[Décision capacités Trading212](sprint_17g_decision_capacites_trading212.md) :
+réponse officielle de 2024 limitant OCO aux CFD, cohérente avec la réserve
+OpenAPI actuelle mais insuffisante pour certifier 2026. Questions support
+prêtes, non envoyées. Ne pas prolonger indéfiniment les tests synthétiques :
+suite conditionnée à réponse technique actuelle ou changement explicite du
+contrat de protection. Sprint 17 partiel, sans exécution ni GO PAPER/LIVE.
+
 **Prérequis.** Décision utilisateur sur un courtier/API disponible pour XPAR ; contrat commercial, droits de données, ouverture de compte, commissions et ordres vérifiés. Ne pas imposer IBKR, déjà écarté par préférence utilisateur pour un autre POC. Sans courtier, conserver `BLOCKED_BROKER` et s'arrêter au shadow.
 
 **Travaux si débloqué.** Implémenter un adaptateur qui satisfait le port du `BrokerRouter` (soumission, statut, annulation, positions, compte, marché ouvert, protections), avec identités ISIN/MIC et non ticker seul. Séparer clés et comptes FR/US, vérifier devise, tailles/minimums, ordre d'ouverture, partial fills, corporate actions, échecs réseau et réconciliation du lendemain. Simuler puis paper des ordres LONG seulement ; le short exige preuve supplémentaire d'emprunt et de disponibilité par titre. Kill switch et limites notional/exposition, clôture opérationnelle et alertes indépendantes du signal ML. Tests de concurrence et de duplicate order idempotency.
@@ -634,6 +693,15 @@ Pas de nouvelle tâche ni d'activation shadow ; Sprint 16 complet non clos.
 **Gate GO paper.** Parité signal→ordre→fill→position→compte et aucune route d'ordre vers US/CN par erreur ; incidents et rollback testés. Ceci n'est toujours pas un GO live.
 
 ### Sprint 18 — Canary live et exploitation durable : optionnel
+
+**Bilan du 9 octobre 2026 : préparation clôturée avec réserves, canary réel
+bloqué.** [Livraisons et résultats](sprint_18_preparation_exploitation.md) :
+politique isolée, contrôles hors ligne, diagnostic IHM, 17 scénarios conformes
+et 423 tests réussis. [Runbook](runbook_exploitation_fr.md) et
+[TODO de reprise](TODO_reprise_exploitation_sprints_16_18.md) livrés.
+Ces contrôles ne sont pas raccordés à l'exécution : aucune autorisation
+PAPER/LIVE, aucun ordre, batch ou SQL modifié. Les réserves des Sprints 16–17
+restent ouvertes. Aucun Sprint 19 n'est défini dans ce planning.
 
 **Prérequis.** Gates G0–G5 verts, approbation explicite du propriétaire, bilan paper, profil de risque/capital autorisé, conformité et flux data licenciés.
 

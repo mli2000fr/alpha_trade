@@ -29,6 +29,7 @@ def test_refresh_dedup_correction_and_explicit_resume(tmp_path, monkeypatch):
     ids, root, cfg = setup(tmp_path,monkeypatch)
     calls = []
     rows = [bar()]
+    monkeypatch.setattr(daily,'get_market_calendar',lambda _: type('Calendar',(),{'session_dates':lambda self,*a:[date(2026,10,2)]})())
     monkeypatch.setattr(daily,'_fetch',lambda *a,**k: (calls.append(a[0]),rows.copy())[1])
     assert execute(cfg,root,ids)['persisted_count'] == 2
     assert execute(cfg,root,ids)['unchanged_rows'] == 2
@@ -54,6 +55,7 @@ def test_invalid_does_not_overwrite_latest(tmp_path,monkeypatch,rows):
 def test_partial_failure_resume_and_dryrun(tmp_path,monkeypatch):
     ids,root,cfg = setup(tmp_path,monkeypatch)
     calls=[]
+    monkeypatch.setattr(daily,'get_market_calendar',lambda _: type('Calendar',(),{'session_dates':lambda self,*a:[date(2026,10,2)]})())
     def fetch(endpoint,*a,**k):
         calls.append(endpoint)
         if endpoint == 'eod/AC.PA':

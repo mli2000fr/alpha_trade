@@ -86,6 +86,44 @@ def test_dry_run_no_disk_writes(tmp_path, monkeypatch):
     assert not (tmp_path/'ops').exists()
 
 
+def test_partial_daily_collection_publishes_but_does_not_mask_failure(monkeypatch):
+    from service.fr import eodhd_daily_15b, publish_daily_bars_staging
+    cfg=runner.load_section('fr_daily_bars_sync',runner.ROOT/'batch_fr.yaml')
+    def partial(config,result,**kwargs):
+        result.update(window=['2026-10-01','2026-10-08'],state_path='checkpoint',failed_count=2)
+        raise RuntimeError('two source failures')
+    seen=[]
+    monkeypatch.setattr(eodhd_daily_15b,'collect',partial)
+    monkeypatch.setattr(publish_daily_bars_staging,'run',lambda **kw:(seen.append(kw),
+        {'status':'COMPLETED','new_staging_rows':10})[1])
+    result={}
+    with pytest.raises(RuntimeError,match='two source failures'):
+        runner._handle('fr_daily_bars_sync',cfg,result,dry_run=False,today=None)
+    assert len(seen)==1 and seen[0]['write'] is True
+    assert result['sql_persisted_count']==10 and result['failed_count']==2
+    assert result['sql_writes'] is True
+
+
+def test_daily_dryrun_never_publishes(monkeypatch):
+    from service.fr import eodhd_daily_15b, publish_daily_bars_staging
+    cfg=runner.load_section('fr_daily_bars_sync',runner.ROOT/'batch_fr.yaml')
+    monkeypatch.setattr(eodhd_daily_15b,'collect',lambda cfg,result,**kw:result.update(state_path='checkpoint',window=['2026-10-01','2026-10-08']))
+    monkeypatch.setattr(publish_daily_bars_staging,'run',lambda **kw:pytest.fail('Dry-run SQL'))
+    runner._handle('fr_daily_bars_sync',cfg,{},dry_run=True,today=None)
+
+
+def test_daily_smoke_sql_scope_matches_collection_scope(monkeypatch):
+    from service.fr import eodhd_daily_15b, publish_daily_bars_staging
+    cfg=runner.load_section('fr_daily_bars_sync',runner.ROOT/'batch_fr.yaml')
+    monkeypatch.setattr(eodhd_daily_15b,'collect',lambda cfg,result,**kw:result.update(state_path='checkpoint',window=['2026-10-01','2026-10-08']))
+    monkeypatch.setattr(eodhd_daily_15b,'symbols_from_identities',lambda path:['AB.PA','AC.PA','AD.PA'])
+    seen=[]
+    monkeypatch.setattr(publish_daily_bars_staging,'run',lambda **kw:(seen.append(kw),
+        {'status':'COMPLETED','new_staging_rows':0})[1])
+    runner._handle('fr_daily_bars_sync',cfg,{},dry_run=False,today=None,max_symbols=2)
+    assert seen[0]['selected_symbols']==['AB.PA','AC.PA']
+
+
 def test_db_backup_uses_fr_route_and_required_identity(tmp_path, monkeypatch):
     from database import router
     from scripts import backup_db

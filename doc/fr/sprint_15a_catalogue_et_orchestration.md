@@ -44,7 +44,7 @@ est actif dans la configuration, pas encore dans le Planificateur Windows.
 |---|---|---|---|
 | fr_calendar_snapshot | P0 | Implémenté, enabled=true | Snapshot du calendrier de bibliothèque XPAR ; pas preuve officielle |
 | fr_security_master_sync | P0 | Désactivé, non implémenté quotidiennement | Adapter ESMA/Euronext à l'incrémental, identités/intervalles et versions |
-| fr_daily_bars_sync | P0 | Implémenté 15-B, enabled=true, fichiers recherche | EODHD J−7/J ; publication SQL/canonique et pleine couverture restent à qualifier |
+| fr_daily_bars_sync | P0 | Implémenté 15-B, enabled=true, fichiers et staging SQL depuis le 9 octobre | EODHD J−7/J ; [publication staging qualifiée](publication_quotidienne_staging_sql.md), canonicalisation et couverture complète non libérées |
 | fr_corporate_actions_sync | P0 | Désactivé, non implémenté quotidiennement | Dividendes/splits/corrections, champs incomplets et preuves |
 | fr_pit_quality_daily | P0 | Désactivé, contrôles à construire | Couverture/fraîcheur par séance XPAR, lineage, doublons et dépendances |
 | fr_amf_short_sync | P1 | Désactivé, adaptateur quotidien à construire | Positions courtes publiées au-delà des seuils, pas short interest complet |

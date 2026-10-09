@@ -1208,6 +1208,13 @@ def _render_ml_scope_block(
     if ml_comment is not None:
         command_preview_overrides["ml_comment"] = ml_comment
     command_preview_options = replace(options, **command_preview_overrides)
+    if step_key == "ml_predict":
+        command_preview_options = _ml_prediction_scope_options(command_preview_options)
+        if options.llm_filter_enabled and not command_preview_options.llm_filter_enabled:
+            st.caption(
+                "Le filtre GPT + recherche Web ne s'applique pas à ce bouton historique/Oracle shadow. "
+                "Cette prédiction sera lancée sans LLM ; le filtre reste activé pour le parcours PAPER du jour."
+            )
     st.caption("Commande du bouton ci-dessous :")
     st.code(
         format_command_for_display(build_pipeline_command(step_key, command_preview_options)),
@@ -1220,28 +1227,23 @@ def _render_ml_scope_block(
         use_container_width=True,
         disabled=disabled,
     ):
-        overrides: dict[str, object] = {source_attr: cast(Any, selected_symbol_source)}
-        if start_symbol_attr is not None:
-            overrides[start_symbol_attr] = normalized_start_symbol
-        if step_key == "ml_predict":
-            overrides["ml_predict_use_historical_range"] = historical_range
-            overrides["ml_oracle_shadow"] = bool(
-                st.session_state.get("pipeline_ml_oracle_shadow", False)
-            )
-            _predict_bid = st.session_state.get("pipeline_ml_predict_batch_id", "")
-            if _predict_bid:
-                overrides["ml_predict_batch_id"] = _predict_bid
-            _predict_w = st.session_state.get("pipeline_ml_predict_backtest_workers", 4)
-            overrides["ml_predict_max_date_workers"] = int(_predict_w)
-        if ml_comment is not None:
-            overrides["ml_comment"] = ml_comment
         _launch_pipeline_step(
             step_key,
             f"{label_prefix} — {ML_TRAIN_SYMBOL_SOURCE_LABELS.get(selected_symbol_source, selected_symbol_source)}",
-            replace(options, **overrides),
+            command_preview_options,
             db_config,
             all_runs,
         )
+
+
+def _ml_prediction_scope_options(options: PipelineLaunchOptions) -> PipelineLaunchOptions:
+    """Historical/shadow research buttons are outside the prospective LLM path.
+
+    Only this local copy is changed; global checkbox and runner guards remain.
+    """
+    if options.ml_predict_use_historical_range or options.ml_oracle_shadow:
+        return replace(options, llm_filter_enabled=False)
+    return options
 
 
 def _render_ml_train_scope_block(
