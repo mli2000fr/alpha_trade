@@ -16,7 +16,7 @@ us_pipeline:
   # Aucune insertion automatique des étapes omises ; leurs prérequis doivent exister.
   execution_mode: paper  # Aucun ordre sans étape 12 sélectionnée.
   account_id: default    # Les étapes 11/12 en PAPER exigent un compte configuré paper.
-  steps: [1, 2, 3, 4, 5, 6, 7, 9]
+  steps: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
 
 llm_directional_filter:
   # Opt-in, recherche prospective et exécution PAPER uniquement. Aucun historique Web simulé.
