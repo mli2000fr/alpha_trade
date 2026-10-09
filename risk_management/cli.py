@@ -1655,6 +1655,16 @@ def main(args: list[str] | None = None) -> None:
         market_regimes_config=market_regimes_cfg,
         equity=effective_equity,
     )
+    if args.llm_filter_run_id:
+        from service.llm_directional.repository import Repository as LLMRepository
+        from service.llm_directional.protections import archived_profile
+        llm_run, _ = LLMRepository(repo.engine).get(args.llm_filter_run_id)
+        protection = archived_profile(llm_run['config_json'])
+        if protection is not None:
+            # Sizing and the broker SL share the same risk distance. Whole shares
+            # are required for GTC stops/trailing and market-on-open orders.
+            config = config.with_overrides(fixed_stop_pct=protection.stop_loss_pct,
+                disable_price_take_profit=True, allow_fractional_shares=False)
     # Ré-assert long_only APRÈS les guards structurels : aucun chemin ne doit
     # réactiver les shorts pour un compte configuré long-only.
     if account_long_only:

@@ -86,6 +86,10 @@ def resolve_trailing_activation_price(
     if fill_price <= 0:
         return None, None
 
+    if config.llm_protection_profile is not None:
+        from service.llm_directional.protections import ProtectionProfile, safe_trailing_trigger
+        return round(safe_trailing_trigger(fill_price, ProtectionProfile(**config.llm_protection_profile)), 4), 'gpt_sl_floor'
+
     if config.trailing_activation_trigger == "multiple_r":
         if target is not None and target.risk_per_share is not None and target.risk_per_share > 0:
             sign = -1 if short else 1
@@ -519,7 +523,9 @@ def build_take_profit_intent(
     avg_fill_price: float,
     config: ExecutionConfig,
     target: ExecutionTarget | None = None,
-) -> OrderIntent:
+) -> OrderIntent | None:
+    if config.llm_protection_profile is not None:
+        return None  # The profile has a scheduled exit, never a price TP/fallback.
     # Sprint 3 — direction-aware TP
     from core.direction import compute_take_profit_price, is_short_side
     parent_side = str(getattr(parent, "side", "buy") or "buy").strip().lower()
@@ -595,7 +601,10 @@ def build_initial_stop_intent(
 
     reference_price = avg_fill_price or parent.decision_price
     # E21-B25 (P3) : ancrage du SL initial sur le prix d'entrée (fill) — fidélité recherche.
-    if (
+    if config.llm_protection_profile is not None:
+        pct = float(config.llm_protection_profile['stop_loss_pct'])
+        stop_price = round(avg_fill_price * (1 + pct if short else 1 - pct), 2)
+    elif (
         bool(getattr(config, "sl_anchor_entry", False))
         and target is not None and avg_fill_price > 0
         and target.risk_per_share and target.risk_per_share > 0
@@ -729,7 +738,10 @@ def build_trailing_stop_intent(
     _tgt_risk = bool(getattr(target, "trailing_risk_based", False)) if target is not None else False
     # P13/P14 expérimental : override global, sinon override side-spécifique.
     trail_pct_override = getattr(config, "trailing_pct_override", None)
-    if _tgt_risk:
+    if config.llm_protection_profile is not None:
+        # Frozen GPT protections override experimental per-signal/ATR settings.
+        trail_pct_override = config.llm_protection_profile['trailing_stop_pct']
+    elif _tgt_risk:
         trail_pct_override = None  # force risk-based (2.5xATR)
     elif _tgt_pct is not None:
         trail_pct_override = _tgt_pct
@@ -838,6 +850,12 @@ def build_rebalance_buy_intent(
 
 
 def _resolve_alpaca_time_in_force(intent: OrderIntent, config: ExecutionConfig | None = None) -> str:
+    if intent.time_in_force is not None:
+        if (intent.time_in_force != 'opg' or intent.order_type != 'market'
+                or intent.intent_role != IntentRole.EXIT or intent.side != 'sell'
+                or intent.broker_mode != 'paper' or not is_effectively_integer_quantity(intent.qty)):
+            raise ValueError('MOO GPT réservé aux sorties LONG PAPER en quantités entières')
+        return intent.time_in_force
     if intent.intent_role in (IntentRole.ENTRY, IntentRole.EXIT, IntentRole.REBALANCE_BUY):
         return "day"
     if config is None:

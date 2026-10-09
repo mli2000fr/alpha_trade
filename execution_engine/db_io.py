@@ -101,6 +101,23 @@ class ExecutionRepository:
         except Exception:
             return False
 
+    def load_llm_protection_profile(self, risk_run_id, symbol, *, account_id, broker_mode):
+        from service.llm_directional.protections import profile_for_risk
+        return profile_for_risk(self.engine, risk_run_id, symbol,
+            account_id=account_id, broker_mode=broker_mode)
+
+    def load_entry_fill_price(self, parent_intent_id: str) -> float | None:
+        """Exact parent fill anchor, never the symbol's current blended price."""
+        with self.engine.connect() as conn:
+            value = conn.execute(text('''SELECT COALESCE(
+                (SELECT SUM(f.filled_qty*f.avg_fill_price)/NULLIF(SUM(f.filled_qty),0)
+                 FROM execution_broker_fills f WHERE f.request_id=req.request_id),
+                bo.avg_fill_price) AS fill_price
+                FROM execution_order_requests req LEFT JOIN execution_broker_orders bo
+                  ON bo.request_id=req.request_id WHERE req.request_id=:parent'''),
+                {'parent': parent_intent_id}).scalar_one_or_none()
+        return float(value) if value is not None else None
+
     def _get_table_columns(self, table_name: str) -> set[str]:
         try:
             return {
@@ -1131,6 +1148,8 @@ class ExecutionRepository:
                 parent_req.business_key        AS business_key,
                 parent_req.submission_key      AS submission_key,
                 parent_obs.broker_order_id     AS parent_broker_order_id,
+                COALESCE(parent_open_lots.open_remaining_qty, parent_fill.total_filled_qty,
+                         parent_obs.filled_qty, 0) AS parent_remaining_qty,
                 COALESCE(
                     current_pos.qty,
                     parent_open_lots.open_remaining_qty,

@@ -1305,7 +1305,7 @@ class PortfolioBuilder:
             accepted_rank += 1
 
             weight = notional / equity if equity > 0 else 0.0
-            risk_per_share = pi.atr_20 * self._cfg.atr_stop_multiple_for() if pi.atr_20 is not None and pi.atr_20 > 0 else None
+            risk_per_share = self._cfg.stop_distance(pi.last_close, pi.atr_20)
             risk_budget_dollars = equity * self._cfg.risk_per_trade_pct if equity > 0 else None
             initial_risk_dollars = approved * risk_per_share if risk_per_share is not None else None
             stop_price_initial = compute_initial_stop_price(
@@ -1326,7 +1326,10 @@ class PortfolioBuilder:
                 _tp_raw = _tp_pct
             else:
                 _tp_raw = None
-            if _tp_raw is not None:
+            if self._cfg.disable_price_take_profit:
+                take_profit_price = None
+                _tp_atr_mult, _tp_max_pct = None, None
+            elif _tp_raw is not None:
                 # TP ATR-based : distance absolue depuis l'entrée
                 from core.direction import direction_sign
                 _sign = direction_sign(ec.side)

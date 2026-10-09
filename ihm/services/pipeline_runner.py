@@ -355,6 +355,7 @@ class PipelineLaunchOptions:
     account_id: str | None = None
     llm_filter_enabled: bool = False
     llm_filter_run_id: str | None = None
+    llm_specific_protections: bool | None = None  # None = default from config.yaml.
     trade_date: str | None = None
     capital_preset_key: str | None = None
     # Si True, écrase ``trade_date`` au lancement par le snapshot_date le plus
@@ -2838,6 +2839,19 @@ def _wrap_llm_command(phase: str, command: list[str], options: PipelineLaunchOpt
                '--command-json', json.dumps(command)]
     if batch:
         wrapped.extend(['--batch-id', batch])
+    from service.llm_directional.config import load_filter_config
+    profile = load_filter_config().protections
+    enabled = options.llm_specific_protections
+    if enabled is None:
+        enabled = bool(profile and profile.enabled)
+    if type(enabled) is not bool:
+        raise ValueError('Choix protections GPT : booléen requis')
+    if enabled and phase in ('risk', 'execute'):
+        # MOO/GTC protections require whole shares. Preserve the legacy command
+        # byte-for-byte when GPT or its dedicated protections are disabled.
+        command = [part for part in command if part != '--allow-fractional-shares']
+        wrapped[wrapped.index('--command-json')+1] = json.dumps(command)
+    wrapped.append('--specific-protections' if enabled else '--no-specific-protections')
     return wrapped
 
 

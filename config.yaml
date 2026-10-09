@@ -16,8 +16,8 @@ us_pipeline:
   # Aucune insertion automatique des étapes omises ; leurs prérequis doivent exister.
   execution_mode: paper  # Aucun ordre sans étape 12 sélectionnée.
   account_id: default    # Les étapes 11/12 en PAPER exigent un compte configuré paper.
-  steps: [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12]  # Séances US lundi–jeudi.
-  steps_friday: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]  # Séance US vendredi, liste figée même après minuit.
+  steps: [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14]  # Séances US lundi–jeudi.
+  steps_friday: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]  # Séance US vendredi, liste figée même après minuit.
 
 llm_directional_filter:
   # Opt-in, recherche prospective et exécution PAPER uniquement. Aucun historique Web simulé.
@@ -27,7 +27,7 @@ llm_directional_filter:
   default_symbol_source: universe-file:univers_filtred_tradable.txt
   default_oracle_batch_id: model-factory-20261003082853-e98332
   oracle_top_n: 10  # Nombre de premiers scores Oracle à analyser (pas de tri par rendement futur).
-  max_selected: 5   # Plafond, jamais un quota obligatoire ; 0 candidat reste possible.
+  max_selected: 3   # Plafond, jamais un quota obligatoire ; 0 candidat reste possible.
   min_oracle_coverage_ratio: 0.90  # Bloque un classement issu d’une prédiction partielle.
   min_confidence: 0.75  # Note LLM non calibrée, pas une probabilité de rendement.
   min_sources: 2
@@ -38,6 +38,11 @@ llm_directional_filter:
   max_tool_calls: 5
   account_id: default
   horizon: 20
+  protections:
+    enabled: true  # Case IHM par défaut ; effet uniquement avec filtre GPT PAPER.
+    stop_loss_pct: 0.07  # SL depuis le prix réellement exécuté, pas depuis le close J.
+    exit_session: 21  # Séance d'achat = 1 ; sortie à l'ouverture de la 21e séance NYSE.
+    trailing_stop_pct: 0.15  # Ne desserre jamais le SL ; aucun TP de prix dans ce profil.
 
 alpaca:
   # Sprint S5 / A-013 — plus aucune clé en clair acceptée à la racine.

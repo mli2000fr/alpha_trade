@@ -22,6 +22,7 @@ def main():
     parser.add_argument('--symbol-source', default='tradable-universe')
     parser.add_argument('--capital-preset-key', default='capital_2001_5000')
     parser.add_argument('--command-json', required=True)
+    parser.add_argument('--specific-protections', action=argparse.BooleanOptionalAction, default=None)
     args = parser.parse_args()
     if args.run_id == 'auto':
         if args.phase != 'predict':
@@ -49,13 +50,18 @@ def main():
             raise ValueError('Filtre Web incompatible avec historique ou Oracle shadow')
         subprocess.run(command, check=True)
         config = replace(load_filter_config(), enabled=True)  # explicit IHM opt-in
+        if config.protections is not None and args.specific_protections is not None:
+            config = replace(config, protections=replace(config.protections, enabled=args.specific_protections))
+        elif args.specific_protections:
+            raise ValueError('Configuration des protections GPT absente')
         from database.run_business_summaries import emit_run_summary
         emit_run_summary(analyze(engine=engine, batch_id=args.batch_id, trade_date=args.trade_date,
             symbol_source=args.symbol_source, capital_preset_key=args.capital_preset_key,
             run_id=args.run_id, config=config))
     elif args.phase == 'risk':
         from datetime import date
-        qualified_selection(engine, args.run_id, date.fromisoformat(args.trade_date), 'default')
+        run, _ = qualified_selection(engine, args.run_id, date.fromisoformat(args.trade_date), 'default')
+        _check_protection_choice(run, args.specific_protections)
         summary_path = Path('artifacts/llm_directional') / args.run_id / 'risk_summary.json'
         # Reusing an old summary would bind the wrong portfolio after a failed process.
         if summary_path.exists():
@@ -74,7 +80,8 @@ def main():
     else:
         from datetime import timedelta, date
         run, _ = qualified_selection(engine, args.run_id, date.fromisoformat(args.trade_date),
-                                     'default', allow_consumed=True)
+                                      'default', allow_consumed=True)
+        _check_protection_choice(run, args.specific_protections)
         from .repository import utcnow
         config = load_filter_config()
         if not run['completed_at'] or not run['completed_at'] <= utcnow() <= run['completed_at'] + timedelta(hours=config.max_run_age_hours):
@@ -92,6 +99,7 @@ def main():
         if not targets:
             print('Risque : aucune cible publiée, aucune exécution.', flush=True)
             return
+        _check_watcher_ready(engine, run)
         from service.alpaca.trading_client import AlpacaTradingClient
         broker = AlpacaTradingClient(broker_mode='paper', account_id='default')
         holdings = {p['symbol']: p for p in broker.get_positions()}
@@ -112,6 +120,22 @@ def main():
         # A consumed claim is deliberately not reset on transport errors (order state unknown).
         repo.claim_execution(args.run_id)
         subprocess.run([*command, '--run-id', run['risk_run_id'], '--account', 'default'], check=True)
+
+
+def _check_protection_choice(run, choice):
+    from .protections import archived_profile
+    if choice is not None and choice != bool(archived_profile(run['config_json'])):
+        raise ValueError('Protections différentes de l’analyse GPT figée ; utiliser le même choix ou une nouvelle analyse')
+
+
+def _check_watcher_ready(engine, run):
+    from .protections import archived_profile
+    if archived_profile(run['config_json']) is None:
+        return
+    from execution_engine.db_io import ExecutionRepository
+    if not ExecutionRepository(engine).is_watcher_healthy(account_id='default'):
+        raise ValueError('Protections GPT : watcher continu du compte default absent ou périmé. '
+                         'Pipeline → Watcher protections → Démarrer service local, avant étape 12.')
 
 
 if __name__ == '__main__':

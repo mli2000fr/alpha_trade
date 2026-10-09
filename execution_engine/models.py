@@ -159,6 +159,7 @@ class OrderIntent:
     submission_key: str | None = None
     # ── Point 11 : traçabilité décision → ordre → fill → protection ──
     decision_fingerprint: str | None = None
+    time_in_force: str | None = None  # Explicit MOO for the scoped GPT time exit.
 
 
 @dataclass(frozen=True, slots=True)

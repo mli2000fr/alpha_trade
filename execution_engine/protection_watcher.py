@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import time
 from uuid import uuid4
 from collections import defaultdict
@@ -245,6 +246,8 @@ class ProtectionTransitionWatcher:
                 run_metrics["armed_missing_protections_failed"] = (
                     int(run_metrics.get("armed_missing_protections_failed", 0) or 0) + 1
                 )
+                if run_metrics.get('gpt_protection_active'):
+                    run_metrics['status'] = 'FAILED'
 
         # ------------------------------------------------------------------
         # Sprint 2026-05 — Adoption d'achats manuels orphelins (Q8 FAQ).
@@ -450,6 +453,13 @@ class ProtectionTransitionWatcher:
         if key not in self._config_cache:
             self._config_cache[key] = self._config_factory(broker_mode, account_id)
         return self._config_cache[key]
+
+    def _gpt_profile(self, risk_run_id, symbol, account_id, broker_mode):
+        from service.llm_directional.protections import ProtectionProfile
+        loader = getattr(self._repo, 'load_llm_protection_profile', None)
+        value = loader(risk_run_id, symbol, account_id=account_id,
+                       broker_mode=broker_mode) if callable(loader) else None
+        return value if isinstance(value, ProtectionProfile) else None
 
     def _broker_for(self, broker_mode: str, account_id: str | None) -> ExecutionBrokerPort:
         key = (broker_mode, account_id)
@@ -834,6 +844,12 @@ class ProtectionTransitionWatcher:
         config = self._config_for(broker_mode, account_id)
         broker = self._broker_for(broker_mode, account_id)
         trade_date = self._coerce_trade_date(row.get("trade_date"))
+        profile = None if use_manual_buy_stop else self._gpt_profile(
+            str(row.get('risk_run_id') or ''), symbol, account_id, broker_mode)
+        if profile is not None:
+            metrics['gpt_protection_active'] = True
+            self._arm_gpt_stop(row, metrics, profile, config, broker)
+            return  # Never reconstruct the historical percentage TP for this trade.
 
         if config.swing_only:
             if trade_date is not None and trade_date == datetime.now().date():
@@ -1247,6 +1263,52 @@ class ProtectionTransitionWatcher:
         sessions = nyse_session_dates(opened_date, as_of)
         return max(len(sessions) - 1, 0)
 
+    def _arm_gpt_stop(self, row, metrics, profile, config, broker):
+        from service.llm_directional.protections import scoped_execution_config, submit_order
+        config = scoped_execution_config(config, profile)
+        qty = float(row.get('parent_remaining_qty', row['fill_qty']))
+        parent_id = str(row['parent_intent_id'])
+        price = self._repo.load_entry_fill_price(parent_id)
+        if not isinstance(price, (float, int)) or not math.isfinite(price) or price <= 0:
+            raise ValueError('Prix exécuté du parent GPT absent ; SL non qualifié')
+        if self._repo.has_open_exit_order_for_symbol(account_id=config.resolved_account_id, symbol=row['symbol']):
+            return
+        children = self._repo.load_open_child_orders(parent_id)
+        if any(c.order_type in ('stop', 'stop_limit', 'trailing_stop') for c in children):
+            return
+        position = broker.get_position(row['symbol'])
+        if not position or str(position.get('side') or 'long') != 'long':
+            return
+        qty = min(qty, abs(float(position.get('qty') or 0)))
+        if qty <= 0:
+            return
+        allowed, _ = config.can_submit_fractional_protection_orders(qty, context='watcher')
+        if not allowed or not float(qty).is_integer():
+            raise ValueError('Protections GPT : quantité entière requise')
+        parent = OrderIntent(intent_id=parent_id, risk_run_id=str(row['risk_run_id']),
+            exec_run_id=str(row['exec_run_id']), symbol=str(row['symbol']), side='buy', qty=qty,
+            order_type='market', limit_price=None, trail_percent=None, broker_mode='paper',
+            parent_intent_id=None, intent_role=IntentRole.ENTRY, idempotency_key=parent_id,
+            decision_price=price)
+        stop = build_initial_stop_intent(parent, qty, price, config)
+        current_price = broker.get_latest_market_price(row['symbol'])
+        if isinstance(current_price, (int, float)) and 0 < current_price <= stop.stop_price:
+            # During a repair, an already-breached floor calls for an exit, not
+            # repeatedly rejected sell stops above the market.
+            stop = replace(stop, order_type='market', stop_price=None,
+                intent_role=IntentRole.EXIT,
+                submission_key=f'gpt-sl-breach-{parent_id}'[:48],
+                idempotency_key=f'gpt-sl-breach-{parent_id}')
+        order = submit_order(self._repo, broker, stop, account_id=config.resolved_account_id)
+        if order.status in {OrderStatus.REJECTED, OrderStatus.FAILED}:
+            raise RuntimeError('SL GPT rejeté ; vérifier la position immédiatement')
+        metrics['armed_missing_protections'] = int(metrics.get('armed_missing_protections', 0)) + 1
+        self._persist_event(make_event(parent.exec_run_id, EventType.CHILDREN_SUBMITTED,
+            f'SL GPT armé pour {parent.symbol}', symbol=parent.symbol, intent_id=stop.intent_id,
+            broker_order_id=order.broker_order_id,
+            payload={'initial_stop_price': stop.stop_price, 'take_profit_limit_price': None,
+                     'llm_protection_profile': config.llm_protection_profile}))
+
     def _resolve_time_stop_take_profit_price(
         self,
         *,
@@ -1272,8 +1334,6 @@ class ProtectionTransitionWatcher:
         broker_mode = str(metrics.get("broker_mode") or self._default_broker_mode)
         cfg = self._config_for(broker_mode, account_id)
         ts_cfg = cfg.time_stop
-        if not ts_cfg.enabled:
-            return
 
         broker = self._broker_for(broker_mode, account_id)
         candidates = self._repo.load_time_stop_positions(account_id=account_id, limit=300)
@@ -1283,6 +1343,22 @@ class ProtectionTransitionWatcher:
         for row in candidates:
             symbol = str(row.get("symbol") or "").strip().upper()
             if not symbol:
+                continue
+            profile = self._gpt_profile(str(row.get('parent_risk_run_id') or ''), symbol,
+                account_id, str(row.get('broker_mode') or broker_mode))
+            if profile is not None:
+                from service.llm_directional.protections import apply_scheduled_exit
+                try:
+                    apply_scheduled_exit(self, row, profile, metrics)
+                except Exception as exc:
+                    metrics['time_stop_failed'] = int(metrics.get('time_stop_failed', 0)) + 1
+                    metrics['status'] = 'FAILED'
+                    self._persist_event(make_event(str(row.get('parent_exec_run_id') or ''),
+                        EventType.PROTECTION_TRANSITION_FAILED,
+                        f'Sortie temporelle GPT bloquée pour {symbol}: {str(exc)[:200]}', symbol=symbol))
+                    LOGGER.error('Sortie temporelle GPT bloquée pour %s', symbol, exc_info=True)
+                continue  # No stagnation/percentage-profit veto for the deadline.
+            if not ts_cfg.enabled:
                 continue
             metrics["time_stop_candidates"] = int(metrics.get("time_stop_candidates", 0) or 0) + 1
 
@@ -1402,11 +1478,23 @@ class ProtectionTransitionWatcher:
             return
 
         config = self._config_for(item.broker_mode, item.account_id)
+        profile = self._gpt_profile(item.risk_run_id, item.symbol, item.account_id, item.broker_mode)
+        if profile is not None:
+            from service.llm_directional.protections import scoped_execution_config
+            config = scoped_execution_config(config, profile)
+            actual_price = self._repo.load_entry_fill_price(item.parent_intent_id)
+            if not isinstance(actual_price, (int, float)) or not math.isfinite(actual_price) or actual_price <= 0:
+                raise ValueError('Prix exécuté du parent GPT absent ; trailing bloqué')
+            item = replace(item, fill_price=actual_price)
         broker = self._broker_for(item.broker_mode, item.account_id)
         stop_order = broker.poll_order_status(item.initial_stop_broker_order_id, item.initial_stop_intent_id)
         parent_intent = self._build_parent_intent(item, stop_order)
         stop_intent = self._build_existing_stop_intent(item, stop_order)
-        self._persist_order_state(stop_intent, stop_order, account_id=item.account_id)
+        if profile is not None:
+            from service.llm_directional.protections import persist_order
+            persist_order(self._repo, stop_intent, stop_order, account_id=item.account_id)
+        else:
+            self._persist_order_state(stop_intent, stop_order, account_id=item.account_id)
 
         if stop_order.status in OrderStatus.TERMINAL:
             metrics["terminal_items"] += 1
@@ -1472,7 +1560,10 @@ class ProtectionTransitionWatcher:
             return
 
         canceled, canceled_order = self._cancel_initial_stop(broker, config, item, stop_order)
-        self._persist_order_state(stop_intent, canceled_order, account_id=item.account_id)
+        if profile is not None:
+            persist_order(self._repo, stop_intent, canceled_order, account_id=item.account_id)
+        else:
+            self._persist_order_state(stop_intent, canceled_order, account_id=item.account_id)
         if not canceled:
             metrics["cancel_failed_items"] += 1
             self._persist_event(make_event(
@@ -1490,11 +1581,78 @@ class ProtectionTransitionWatcher:
             ))
             return
 
+        if profile is not None:
+            # A price fall while waiting for cancellation must not replace the
+            # original SL with a now-looser 20% native trailing stop.
+            position = broker.get_position(item.symbol)
+            if not position or str(position.get('side') or 'long') != 'long':
+                metrics['terminal_items'] += 1
+                return
+            qty = min(item.fill_qty, max(canceled_order.qty-canceled_order.filled_qty, 0),
+                      max(float(position.get('qty') or 0), 0))
+            if qty <= 0:
+                metrics['terminal_items'] += 1
+                return
+            if not float(qty).is_integer():
+                raise ValueError('Protection GPT : quantité restante fractionnaire à réconcilier')
+            item = replace(item, fill_qty=qty)
+            parent_intent = replace(parent_intent, qty=qty)
+            fresh_price = broker.get_latest_market_price(item.symbol)
+            if fresh_price is None or not math.isfinite(fresh_price) or fresh_price < trigger_price:
+                self._arm_gpt_stop(dict(parent_intent_id=item.parent_intent_id,
+                    risk_run_id=item.risk_run_id, exec_run_id=item.source_exec_run_id,
+                    symbol=item.symbol, fill_qty=item.fill_qty, fill_price=item.fill_price),
+                    metrics, profile, config, broker)
+                metrics['pending_items'] += 1
+                return
+
         trailing_intent = build_trailing_stop_intent(parent_intent, item.fill_qty, item.fill_price, config, target=cast(ExecutionTarget, item))
+        trailing_order = None
         try:
-            trailing_order = broker.submit_intent(trailing_intent)
-            self._persist_order_state(trailing_intent, trailing_order, account_id=item.account_id)
+            if profile is not None:
+                from service.llm_directional.protections import submit_order
+                trailing_order = submit_order(self._repo, broker, trailing_intent, account_id=item.account_id)
+                if trailing_order.status in {OrderStatus.REJECTED, OrderStatus.FAILED}:
+                    raise RuntimeError('Trailing GPT rejeté')
+                # Broker acknowledgement can differ from the last quote after
+                # cancellation. Verify the actual new floor, not just our quote.
+                floor = round(item.fill_price*(1-profile.stop_loss_pct), 2)
+                if trailing_order.stop_price is None:
+                    trailing_order = broker.poll_order_status(trailing_order.broker_order_id, trailing_intent.intent_id)
+                    persist_order(self._repo, trailing_intent, trailing_order, account_id=item.account_id)
+                if trailing_order.status == OrderStatus.FILLED:
+                    metrics['terminal_items'] += 1
+                    return
+                if trailing_order.stop_price is None or not math.isfinite(trailing_order.stop_price) or trailing_order.stop_price < floor:
+                    trailing_item = replace(item, initial_stop_intent_id=trailing_intent.intent_id,
+                        initial_stop_broker_order_id=trailing_order.broker_order_id)
+                    removed, confirmed = self._cancel_initial_stop(broker, config, trailing_item, trailing_order)
+                    persist_order(self._repo, trailing_intent, confirmed, account_id=item.account_id)
+                    if confirmed.status == OrderStatus.FILLED:
+                        metrics['terminal_items'] += 1
+                        return
+                    if not removed:
+                        raise RuntimeError('Plancher trailing GPT non qualifié ; annulation non confirmée')
+                    self._arm_gpt_stop(dict(parent_intent_id=item.parent_intent_id,
+                        risk_run_id=item.risk_run_id, exec_run_id=item.source_exec_run_id,
+                        symbol=item.symbol, fill_qty=item.fill_qty), metrics, profile, config, broker)
+                    metrics['pending_items'] += 1
+                    return
+            else:
+                trailing_order = broker.submit_intent(trailing_intent)
+                self._persist_order_state(trailing_intent, trailing_order, account_id=item.account_id)
         except Exception as exc:
+            if profile is not None:
+                metrics['status'] = 'FAILED'
+                # Definite rejection only: never send a second order when an
+                # HTTP timeout leaves the first submission's state ambiguous.
+                if trailing_order is not None and trailing_order.status in {OrderStatus.REJECTED, OrderStatus.FAILED}:
+                    try:
+                        self._arm_gpt_stop(dict(parent_intent_id=item.parent_intent_id,
+                            risk_run_id=item.risk_run_id, exec_run_id=item.source_exec_run_id,
+                            symbol=item.symbol, fill_qty=item.fill_qty), metrics, profile, config, broker)
+                    except Exception:
+                        LOGGER.error('Réarmement SL GPT impossible pour %s', item.symbol, exc_info=True)
             metrics["submit_failed_items"] += 1
             self._persist_event(make_event(
                 item.source_exec_run_id,

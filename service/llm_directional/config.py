@@ -1,6 +1,7 @@
 """One validated source of settings for CLI, IHM and risk handoff."""
 from dataclasses import asdict, dataclass
 import math
+from .protections import ProtectionProfile
 
 
 @dataclass(frozen=True)
@@ -22,8 +23,13 @@ class FilterConfig:
     max_tool_calls: int = 5
     account_id: str = 'default'
     horizon: int = 20
+    protections: ProtectionProfile | dict | None = None
 
     def __post_init__(self):
+        if isinstance(self.protections, dict):
+            object.__setattr__(self, 'protections', ProtectionProfile(**self.protections))
+        elif self.protections is not None and not isinstance(self.protections, ProtectionProfile):
+            raise ValueError('protections doit être une configuration valide')
         for name, minimum, maximum in (
             ('oracle_top_n', 1, 100), ('max_selected', 0, self.oracle_top_n),
             ('min_sources', 1, 20), ('max_source_age_days', 1, 365),

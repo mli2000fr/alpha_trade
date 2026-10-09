@@ -45,6 +45,13 @@ Le filtre GPT n'est pas implicitement
 activé par la checkbox par défaut de l'IHM : les options fraîches du batch
 restent indépendantes de l'état d'une session interactive.
 
+La nouvelle case **Protections spécifiques GPT** (SL 7 %, sortie à l'ouverture
+de la 21e séance, trailing 20 %) ne modifie pas les exécutions ordinaires de ce
+batch lorsque le filtre GPT n'est pas activé. Son défaut vient de
+`config.yaml → llm_directional_filter.protections` ; elle est figée avec chaque
+analyse GPT et exige un watcher actif pour la sortie programmée. Voir
+[le contrat détaillé](../ml/oracle_llm_directional_filter.md#61-protections-spécifiques-gpt--9-octobre-2026).
+
 | Étape | Traitement |
 |---|---|
 | 1 | Import des barres et rattrapage, selon le fournisseur configuré dans l'application |

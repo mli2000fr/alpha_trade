@@ -26,6 +26,8 @@ class RiskConfig:
     # doivent être utilisées dans tout le code.
     atr_stop_multiple: float = 2.0  # fallback scalaire (rétrocompatibilité)
     best_horizon: int = 10  # horizon cible pour sizing/TP ; 10 = défaut conservateur
+    fixed_stop_pct: float | None = None  # Only injected from a frozen GPT PAPER run.
+    disable_price_take_profit: bool = False
 
     # Multiples ATR par horizon (stop loss)
     _atr_stop_multiple_map: dict[int, float] | None = None
@@ -147,6 +149,14 @@ class RiskConfig:
             return float(self._atr_stop_multiple_map[h])
         return float(self.atr_stop_multiple)
 
+    def stop_distance(self, price: float, atr: float | None) -> float | None:
+        if self.fixed_stop_pct is not None:
+            from decimal import Decimal
+            # Avoid 100 * .07 = 7.000000000000001 reducing an integer size
+            # of exactly ten shares to nine after floor().
+            return float(Decimal(str(price)) * Decimal(str(self.fixed_stop_pct)))
+        return atr * self.atr_stop_multiple_for() if atr is not None and atr > 0 else None
+
     def tp_params_for(self, horizon: int | None = None) -> tuple[float, float]:
         """Retourne (tp_atr_multiple, tp_max_pct) pour l'horizon donné.
 
@@ -263,6 +273,8 @@ class RiskConfig:
             raise ValueError("atr_window doit être >= 1.")
         if self.atr_stop_multiple <= 0:
             raise ValueError("atr_stop_multiple doit être > 0.")
+        if self.fixed_stop_pct is not None and not 0 < self.fixed_stop_pct < 1:
+            raise ValueError('fixed_stop_pct doit être dans ]0,1[')
         if self.target_annual_vol is not None and self.target_annual_vol <= 0:
             raise ValueError("target_annual_vol doit être > 0 quand renseigné.")
         if self.vol_target_lookback_days < 2:

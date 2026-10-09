@@ -20,18 +20,20 @@ flowchart TD
     F -->|Non| G[FAILED : arrêt du workflow]
     F -->|Oui| H[LONG éligibles, classés par note subjective]
     H --> I[0 à K retenus ; autres candidats conservés pour comparaison]
-    I --> J[11. Univers tradable, régime, capital broker réel, risque et sizing ATR]
+    I --> J[11. Univers tradable, régime, capital broker réel, risque et sizing configuré]
     J --> L[Run risque explicitement lié au run LLM]
     L --> M[12. Compte principal default PAPER exclusivement]
 ```
 
 **N = `oracle_top_n` et K = `max_selected`, configurables dans `config.yaml`.**
-Par défaut N=10, K=5. Ce sont des nombres de titres, pas des pourcentages.
+Défauts du composant : N=10, K=5 ; configuration locale actuelle : N=10, K=3.
+Ce sont des nombres de titres, pas des pourcentages.
 Le classement initial utilise uniquement `proba_extreme DESC, symbol ASC` ; il
 n’utilise jamais les rendements futurs ni un classement Oracle réalisé.
 Le filtre n’ajoute pas implicitement une intersection ATR : cette expérience
-porte sur les N premiers scores Oracle du périmètre choisi. ATR demeure utilisé
-par le risque pour le sizing/protections selon la configuration existante.
+porte sur les N premiers scores Oracle du périmètre choisi. ATR demeure qualifié
+par le risque ; le sizing/protections historiques l'utilisent lorsque le profil
+spécifique ci-dessous est désactivé.
 
 ## 2. Configuration
 
@@ -43,7 +45,7 @@ llm_directional_filter:
   default_symbol_source: universe-file:univers_filtred_tradable.txt
   default_oracle_batch_id: model-factory-20261003082853-e98332
   oracle_top_n: 10
-  max_selected: 5
+  max_selected: 3
   min_oracle_coverage_ratio: 0.90
   min_confidence: 0.75
   min_sources: 2
@@ -54,6 +56,11 @@ llm_directional_filter:
   max_tool_calls: 5
   account_id: default
   horizon: 20
+  protections:
+    enabled: true
+    stop_loss_pct: 0.07
+    exit_session: 21
+    trailing_stop_pct: 0.20
 ```
 
 `enabled` fournit le défaut IHM et autorise la CLI directe d’analyse. La checkbox
@@ -213,11 +220,93 @@ Les protections des positions existantes restent du ressort du lifecycle/watcher
 LIVE, les autres comptes, `allow_outside_rth`, le rééquilibrage automatique et un
 plan d’exécution externe sont refusés. Aucun LLM ne choisit les quantités ou les stops.
 
+### 6.1. Protections spécifiques GPT — 9 octobre 2026
+
+Dans les paramètres ML de Pipeline, sous la case GPT, apparaît la case
+**« 🛡️ Protections spécifiques GPT — SL / sortie temporelle / trailing »**.
+Elle est cochée par défaut (`protections.enabled: true`) et n'est prise en compte
+que si le filtre GPT est activé. Elle s'applique aux nouvelles entrées LONG du
+compte `default`, marché US, mode PAPER. Elle ne transforme pas les positions
+existantes, les achats manuels ou les ordres FR/CN/LIVE.
+
+| Réglage | Comportement du profil |
+|---|---|
+| `stop_loss_pct: 0.07` | Stop initial à 7 % sous le prix moyen **réellement exécuté** du parent, arrondi au centime. Sizing calculé avec cette distance plutôt que 2,5 ATR ; les contrôles capital/liquidité/régime restent actifs. |
+| `exit_session: 21` | Vente temporelle, gagnante ou perdante : séance d'achat = 1, sortie à l'ouverture de la 21e séance NYSE. Ce n'est ni un TP de prix ni 21 jours calendaires ; week-ends et jours fériés sont exclus. |
+| `trailing_stop_pct: 0.20` | Trailing natif à 20 % sous le plus haut suivi par le broker **après activation**. Le SL initial reste actif tant que le plancher du trailing serait plus bas que lui. |
+
+Exemple entrée 100 $ : SL 93 $. Le trailing 20 % peut prendre le relais lorsque
+le cours atteint au moins 116,25 $ (116,25 × 0,80 = 93), pas au trigger 1R
+historique. Le watcher recontrôle le prix après annulation du SL ; si le cours
+a reculé, il réarme le SL initial au lieu de le desserrer. La référence est le
+prix exécuté du parent, pas le prix moyen courant d'autres achats du même titre.
+Le plancher effectivement confirmé par le broker est également contrôlé :
+s'il est plus bas que le SL initial ou absent, le trailing est annulé avec
+confirmation, puis le SL est réarmé (une exécution pendant l'annulation interdit
+un nouvel ordre de vente). Les rejets certains et les états réseau inconnus sont
+traités séparément.
+Le plus haut antérieur à l'activation n'est pas reconstitué rétrospectivement.
+Les réglages expérimentaux par signal/ATR ne remplacent pas ce trailing spécifique.
+Les exemples ci-dessus utilisent le défaut 20 % ; la valeur locale peut être
+différente (`0.15` au dernier contrôle), sans être écrasée par le code.
+
+Aucun ordre limite de TP de prix n'est créé pour ce profil. Le garde-fou du watcher
+ne recrée pas non plus un ancien TP à 7 %/ATR et ne considère pas cette absence
+intentionnelle comme un motif de duplication du SL. Les quantités sont entières
+pour cette voie (protections GTC et ordre d'ouverture), même si les fractions
+restent autorisées dans la configuration historique.
+La préférence historique `swing_only` ne retarde pas l'armement de ce SL au
+lendemain ; seules les protections de ces nouvelles entrées GPT sont concernées,
+sans changer les contraintes du compte ou les règles d'entrée.
+
+**Sortie à l'ouverture :** le watcher programme un ordre marché d'ouverture
+Alpaca (`market`, `time_in_force=opg`) uniquement pour la séance immédiatement
+suivante, à partir de 19 h New York ou avant 9 h 28 le matin de la sortie.
+Les heures New York/Paris et leurs changements d'heure sont gérés par le
+calendrier strict. Les protections sont annulées et leur état est confirmé
+avant de réserver/envoyer la vente ; un stop exécuté pendant l'annulation bloque
+une seconde vente. Voir les [conditions officielles Alpaca](https://docs.alpaca.markets/us/docs/orders-at-alpaca).
+
+Le **service watcher doit rester actif et le PC allumé**, notamment avant
+l'ouverture cible : une simple exécution quotidienne des étapes 10–12 ne suffit
+pas à assurer cette échéance. Dans Pipeline → **Watcher protections**, utiliser
+**« Démarrer service local »**, compte principal, avant l'étape 12 ;
+`Run watcher once` et `--auto-watcher` en mode once ne suffisent pas.
+L'étape 12 bloque ce profil si le heartbeat du service est absent/périmé,
+avant toute réservation exécution ou soumission. Un service Windows existant
+avec heartbeat valide convient également. Le contrôle au lancement ne garantit
+pas que le PC restera disponible jusqu'à la séance cible.
+Si l'ouverture est manquée, le watcher soumet une
+sortie marché de rattrapage pendant une séance ouverte ; elle est marquée
+`LATE_MARKET`, jamais présentée comme une exécution au prix d'ouverture.
+Un ordre d'ouverture expiré/rejeté ne réutilise pas la même clé de soumission
+que ce rattrapage. Un état réseau ambigu est réservé en base et impose une
+réconciliation/revue avant nouvelle tentative ; pas de fallback silencieux
+vers un trailing moins protecteur. Un SL déjà franchi lors d'un réarmement
+déclenche une sortie marché plutôt qu'un stop incohérent au-dessus du cours.
+
+Les paramètres et le choix de la case sont figés à l'étape 10 dans
+`llm_directional_runs.config_json.protections`, puis retrouvés par le `risk_run_id`
+exact et le symbole sélectionné pour les étapes 11/12 et le watcher, y compris
+après redémarrage. Le journal d'exécution conserve les demandes/observations et
+la politique/délai dans les événements. **Aucune nouvelle table ni migration
+n'est nécessaire.** Changer le YAML ne réécrit pas les protections d'un run
+déjà publié. Changer la case entre 10 et 11/12 bloque : garder le même choix,
+ou effectuer une nouvelle analyse. Les anciennes analyses sans cette clé
+gardent leur politique historique.
+
+Case décochée, ou filtre GPT décoché : comportement historique inchangé
+(SL ATR, TP de prix, trailing et time-stop selon les autres réglages).
+Un SL de 7 % et un trailing ne garantissent pas une perte plafonnée : gaps,
+slippage, suspensions, annulations ou indisponibilité du service restent possibles.
+
 ## 7. Utilisation IHM
 
 1. Redémarrer l’IHM après installation du code. Choisir le marché US.
 2. Dans Pipeline → paramètres ML, cocher **« Filtrage GPT + recherche Web après
    Oracle — PAPER uniquement »**. Les valeurs N/K sont affichées depuis le YAML.
+   La case de protections spécifiques placée dessous est cochée par défaut ;
+   la décocher **avant l'étape 10** pour conserver les protections historiques.
 3. Sélectionner explicitement le batch Oracle et l’univers de prédiction, pour J,
    sans plage historique et sans Oracle shadow. Choisir le compte principal.
 4. Laisser Kelly, hors séance, LIVE et rééquilibrage automatique désactivés.
@@ -231,10 +320,10 @@ plan d’exécution externe sont refusés. Aucun LLM ne choisit les quantités o
    consulter tous les titres, les motifs, sources, configuration et évaluations.
 
 Le workflow s’arrête en cas d’échec. Une abstention complète n’envoie aucun nouvel
-ordre. Le batch quotidien `us_pipeline` conserve par défaut les neuf premières
-étapes. Sa sélection est désormais configurable de 1 à 12 dans
-`config.yaml → us_pipeline.steps` ; le filtre GPT et les trades PAPER ne sont pas
-activés implicitement par cette sélection. Voir le guide `doc/operations/us_pipeline.md`.
+ordre. Les listes `config.yaml → us_pipeline.steps` / `steps_friday` définissent
+les étapes du batch quotidien (de 1 à 12). Le filtre GPT n'est pas activé
+implicitement par ces listes ou les cases de la session IHM ; voir le guide
+`doc/operations/us_pipeline.md` pour le mode et le plan configurés.
 
 ## 8. Commandes et vérification
 
