@@ -229,6 +229,22 @@ def test_write_mode_upserts_both_tables(monkeypatch, patched_env, fake_bulk_payl
     assert session.committed >= 1
 
 
+def test_pipeline_refreshes_existing_target_with_upsert(monkeypatch, patched_env, fake_bulk_payload):
+    from datetime import date
+    monkeypatch.setattr(import_eodhd_bar, 'fetch_eod_bulk', lambda **kw: fake_bulk_payload)
+    monkeypatch.setattr(import_eodhd_bar, 'fetch_splits', lambda symbol, **kw: [])
+    monkeypatch.setattr(import_eodhd_bar, '_get_latest_bar_dates',
+        lambda session, symbols: {s:date(2026,4,28) for s in symbols})
+    monkeypatch.setattr(import_eodhd_bar, 'fetch_eod', lambda *a, **kw: pytest.fail('No needless catchup'))
+    session = _FakeSession()
+    result = import_eodhd_bar.run_eodhd_ingestion(dry_run=False, target_date='2026-04-28',
+        enable_stooq_cross_check=False, config={}, session=session,
+        tracker=patched_env['tracker'], refresh_target_date=True)
+    assert result['rows_upserted_stock_bars_daily'] == 3
+    assert result['errors'] == 0
+    assert all('ON DUPLICATE KEY UPDATE' in str(stmt) for stmt in session.executed[-2:])
+
+
 def test_write_mode_can_commit_in_batches(monkeypatch, patched_env, fake_bulk_payload):
     monkeypatch.setattr(import_eodhd_bar, "fetch_eod_bulk", lambda **kwargs: fake_bulk_payload)
     monkeypatch.setattr(import_eodhd_bar, "fetch_splits", lambda symbol, **kwargs: [])

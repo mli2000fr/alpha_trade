@@ -241,9 +241,9 @@ d’une position avec TP/stop. Le service ne calcule pas une nouvelle cible et n
 soustrait pas commissions, spread, slippage ou taxes.
 
 ```text
-valeur stockée = 100 × future_return
-0,082 → 8,2 % ; −0,075 → −7,5 %
-JSON : [8.2,-7.5,6.9]
+valeur stockée = arrondi entier de (100 × future_return)
+0,082 → 8 % ; −0,075 → −8 %
+JSON : [8,-8,7]
 ```
 
 Après la sélection propre à chaque colonne, les valeurs sont triées par
@@ -252,6 +252,14 @@ Oracle prédit n’est donc pas présenté dans l’ordre des scores Oracle ; la
 sélection l’est, puis le tri final sert à comparer les amplitudes réalisées.
 Les égalités de score, d’ATR ou d’amplitude sont départagées par symbole en
 ordre lexical pour obtenir un résultat déterministe.
+
+Depuis `oracle_atr_v4_integer_returns`, les cinq listes, y compris
+`predicted_oracle_score_order_returns_pct`, stockent des nombres JSON entiers.
+L'arrondi intervient après sélection et tri, à l'entier le plus proche ;
+les demis sont éloignés de zéro (0,5 → 1 ; −0,5 → −1).
+Ce n'est pas une troncature. Les rendements sources, statistiques D1/D10 et
+ratios ne sont pas arrondis par cette évolution. L'ordre Oracle par score
+reste inchangé pour la cinquième liste. Aucune migration de schéma requise.
 
 Exemple : N=2 et les deux meilleurs scores Oracle désignent A et B. Leurs
 rendements sont +3 % et −8 %. La troisième colonne contient `[-8,3]`, même
@@ -318,3 +326,25 @@ Les tests couvrent également les quatre populations, les unités et signes,
 le tri absolu, les ex æquo déterministes, les valeurs non finies, l’absence de
 remplacement d’un résultat manquant, les indices de DataFrame répétés, le
 changement de version, la persistance JSON et les gardes de migration US.
+
+### Ordre Oracle prédit conservé — ajout du 8 octobre 2026
+
+`predicted_oracle_score_order_returns_pct` contient les mêmes N titres que
+`predicted_oracle_top_returns_pct`, mais **sans reclassement par rendement réalisé**.
+La position 1 correspond au plus grand `proba_extreme`, puis score décroissant ;
+les ex æquo sont départagés par symbole croissant. N reste `evaluated_count`.
+Les valeurs sont des rendements futurs réalisés signés en pourcentage, et non
+des prédictions de rendement ou de sens. Exemple : scores A > B, rendements
+A=+3 %, B=−8 % : nouvelle colonne `[3,-8]`, ancienne colonne `[-8,3]`.
+
+Les mêmes exigences de labels s'appliquent : si un résultat du TOP N manque,
+la nouvelle liste entière reste NULL, sans remplacement par un autre titre.
+La colonne actuelle et ses règles de tri sont inchangées.
+
+Schéma : migration Alembic **0094** ou SQL manuel
+[`oracle_atr_score_order_migration.sql`](../../database/sql/ml/oracle_atr_score_order_migration.sql).
+L'ajout du schéma seul ne remplit pas l'historique. Relancer le même bloc
+**Alimenter l'étude Oracle × ATR** avec le même batch, univers et dates :
+la version `oracle_atr_v4_integer_returns` recalcule les anciennes lignes v1/v2/v3,
+par tranches et upsert sans doublons. Les séances complètes déjà en v4 sont
+ignorées à la reprise. Aucun nouvel entraînement n'est nécessaire.

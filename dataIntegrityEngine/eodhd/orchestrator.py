@@ -93,23 +93,13 @@ def _flush_pending_write_rows(
 
 
 def resolve_target_date(config: dict, today: Optional[date] = None) -> str:
-    """J-1 ouvré ; tient compte du décalage de publication EODHD."""
-    from common.utils import getLastDateMarche
-
-    eodhd_cfg = (config or {}).get("eodhd", {}) or {}
-    offset_hours = float(eodhd_cfg.get("bulk_publish_offset_hours", DEFAULT_BULK_PUBLISH_OFFSET_HOURS))
-    market_day = getLastDateMarche()
-    if hasattr(market_day, "isoformat"):
-        if isinstance(market_day, datetime):
-            d = market_day.date()
-        elif isinstance(market_day, date):
-            d = market_day
-        else:
-            d = today or date.today()
-    else:
-        d = today or date.today()
-    _ = offset_hours  # noqa: hint pour future utilisation
-    return d.isoformat()
+    """Dernière séance clôturée + délai de publication, jamais un J-1 aveugle."""
+    from dataIntegrityEngine.eodhd.readiness import latest_published_session
+    from datetime import UTC
+    from zoneinfo import ZoneInfo
+    # Compatibility for callers supplying a deterministic reference date.
+    now = datetime.combine(today, datetime.min.time(), tzinfo=ZoneInfo('America/New_York')) if today else datetime.now(UTC)
+    return latest_published_session(config or {}, now=now)
 
 
 def run_eodhd_ingestion(
@@ -124,6 +114,7 @@ def run_eodhd_ingestion(
     session=None,
     tracker: Optional[EodhdQuotaTracker] = None,
     cache: Optional[EodhdDiskCache] = None,
+    refresh_target_date: bool = False,
 ) -> dict[str, Any]:
     """Pipeline ingestion EODHD daily. Retourne le ``run_summary``."""
     shim = _shim()
@@ -273,7 +264,8 @@ def run_eodhd_ingestion(
                     summary["errors"] += 1
                     continue
                 raw_bar_date = _transforms.normalize_date(raw_bar.get("date"))
-                if last_known_date is None or (raw_bar_date is not None and raw_bar_date > last_known_date):
+                if (last_known_date is None or (raw_bar_date is not None and raw_bar_date > last_known_date)
+                        or (refresh_target_date and raw_bar_date == target_date_value)):
                     raw_bars.append(raw_bar)
                     target_date_covered_by_bulk = raw_bar_date == target_date_value
                 else:

@@ -2304,3 +2304,15 @@ officiel Nasdaq→NYSE. La prise d'effet en séance du split AMTB est confirmée
 au 24 octobre 2018 par Nasdaq, mais le +518 % reste non certifié. Périmètre
 de correction proposé séparément : 265 dates KNTK + 9 AMTB 2023 ; AMTB 2018
 reste en revue. Treize tests ciblés passent ; toujours aucune écriture SQL.
+
+## 2026-10-08 — Filtre prospectif Oracle → GPT + Web (non évalué)
+
+Implémentation optionnelle : TOP N Oracle par score prédit → recherche Web pour
+chaque titre → 0 à K LONG documentés → risque canonique → compte principal PAPER.
+N/K sont configurables, 10/5 par défaut. Toutes les réponses et les rejets sont
+archivés ; évaluations H5/H10/H20 séparées, aucune fausse probabilité ni Kelly.
+Statut : infrastructure et tests, **pas de résultat directionnel/économique**.
+Accès au modèle confirmé par HTTP 200 le 8 octobre après un premier contrôle
+`401 invalid_api_key` : blocage levé. Aucune analyse payante ni ordre lancé ;
+le premier cycle Responses/Web reste à valider. Le batch planifié 1–9 est inchangé.
+Voir [le fonctionnement complet](oracle_llm_directional_filter.md).

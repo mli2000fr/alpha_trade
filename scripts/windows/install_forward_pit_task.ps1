@@ -55,6 +55,20 @@ $action=New-ScheduledTaskAction -Execute $wscriptExe -Argument $arguments -Worki
 $settings=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 12)
 $principal=if($RunAs -eq 'System'){New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest}else{New-ScheduledTaskPrincipal -UserId $UserId -LogonType Interactive}
 $existing=Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+# Migration du nom : ne pas laisser deux planifications pour le même pipeline.
+# Aucun run actif ni tâche d'un autre workspace n'est interrompu.
+if ($BatchName -eq 'us_pipeline') {
+    $legacyTask=Get-ScheduledTask -TaskName 'AlphaTrade-UsPipeline19' -ErrorAction SilentlyContinue
+    if ($legacyTask) {
+        $matchingActions=@($legacyTask.Actions | Where-Object {
+            $_.Arguments -match 'us_pipeline_1_9' -and $_.WorkingDirectory -eq $workspace
+        })
+        if ($matchingActions.Count -eq 0) { throw 'Ancienne tache pipeline non reconnue : migration manuelle requise.' }
+        if ([string]$legacyTask.State -eq 'Running') { throw 'Ancien pipeline en cours : attendre sa fin avant reinstallation.' }
+        Unregister-ScheduledTask -TaskName 'AlphaTrade-UsPipeline19' -Confirm:$false
+        Write-Host 'Ancienne planification pipeline remplacee ; historiques conserves.'
+    }
+}
 if($existing){Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false}
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $triggers -Settings $settings -Principal $principal | Out-Null
 Write-Host "Tâche installée: $TaskName" -ForegroundColor Green

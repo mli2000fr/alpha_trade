@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 from datetime import date, datetime
+from decimal import Decimal, ROUND_HALF_UP
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -18,9 +19,10 @@ from common.universe_files import load_universe_file_symbols
 from modelFactory.oracle.artifact_contract import resolve_oracle_artifact_horizon
 
 TABLE = 'oracle_atr_market_regime_daily'
-CALCULATION_VERSION = 'oracle_atr_v2_movements'
+CALCULATION_VERSION = 'oracle_atr_v4_integer_returns'
 MOVEMENT_FIELDS = ('real_oracle_top_returns_pct', 'intersection_returns_pct',
-                   'predicted_oracle_top_returns_pct', 'atr_top_returns_pct')
+                   'predicted_oracle_top_returns_pct', 'atr_top_returns_pct',
+                   'predicted_oracle_score_order_returns_pct')
 MACRO_FIELDS = ['vix', 'vix9d', 'ten_y', 'vxn', 'vix3m', 'move',
                 'yield_10y_5d_pct', 'sentiment_score']
 
@@ -70,16 +72,20 @@ def summarize_day(scores, atr, labels, macro, *, as_of: date) -> dict:
     if n:
         returns = labels.loc[valid].set_index('symbol').future_return.to_dict()
 
-        def serialize(symbols):
+        def serialize(symbols, *, keep_order=False):
             # Selection precedes evaluation: never replace an unavailable result.
             if len(symbols) != n or any(s not in returns for s in symbols):
                 return None
-            ordered = sorted(symbols, key=lambda s: (-abs(returns[s]), str(s)))
-            return json.dumps([float(returns[s])*100 for s in ordered], allow_nan=False)
+            ordered = symbols if keep_order else sorted(symbols, key=lambda s: (-abs(returns[s]), str(s)))
+            # Round only after selection/order; .5 rounds away from zero for both signs.
+            values = [int((Decimal(str(returns[s])) * 100).quantize(
+                Decimal('1'), rounding=ROUND_HALF_UP)) for s in ordered]
+            return json.dumps(values, allow_nan=False)
 
         movements['intersection_returns_pct'] = serialize(list(chosen.loc[evaluable, 'symbol']))
         score_map = dict(zip(scores.loc[finite, 'symbol'], score_values[finite]))
         oracle_top = sorted(score_map, key=lambda s: (-score_map[s], str(s)))[:n]
+        movements['predicted_oracle_score_order_returns_pct'] = serialize(oracle_top, keep_order=True)
         atr_top = sorted(valid_atr, key=lambda s: (-valid_atr[s], str(s)))[:n]
         for field, population, issue in (
             ('predicted_oracle_top_returns_pct', oracle_top, 'INCOMPLETE_PREDICTED_TOP_RETURNS'),

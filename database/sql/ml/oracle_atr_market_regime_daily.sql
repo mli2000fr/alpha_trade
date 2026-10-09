@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.oracle_atr_market_regime_daily (
  real_oracle_top_returns_pct JSON NULL COMMENT 'TOP20 reel: N rendements signes en %, amplitude decroissante',
  intersection_returns_pct JSON NULL COMMENT 'Intersection Oracle ATR: N rendements signes en %',
  predicted_oracle_top_returns_pct JSON NULL COMMENT 'N premiers scores Oracle: rendements signes en %',
+ predicted_oracle_score_order_returns_pct JSON NULL COMMENT 'N rendements realises signes en %, ordre score Oracle decroissant sans reclassement',
  atr_top_returns_pct JSON NULL COMMENT 'N premiers ATR20/prix: rendements signes en %',
  status VARCHAR(16) NOT NULL, quality_details VARCHAR(255) NULL,
  evaluated_as_of DATE NOT NULL, calculation_version VARCHAR(32) NOT NULL,

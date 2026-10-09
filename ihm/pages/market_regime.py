@@ -409,6 +409,11 @@ def _oracle_study_command(start, end, source, batch_id, artifacts_dir, date_batc
     return subprocess.list2cmdline(args)
 
 
+def _oracle_study_default_source_index(sources) -> int:
+    preferred = 'universe-file:univers_filtred_tradable.txt'
+    return sources.index(preferred) if preferred in sources else 0
+
+
 def _render_oracle_atr_study() -> None:
     from common.universe_files import list_universe_file_sources, universe_file_label
     from ihm.services.ml_artifacts import get_model_artifacts_dir
@@ -447,7 +452,9 @@ def _render_oracle_atr_study() -> None:
     c1, c2 = st.columns(2)
     start = c1.date_input('Début de l’étude', value=_date(2020, 1, 1), key='oatr_study_start')
     end = c2.date_input('Fin de l’étude', value=_date(2026, 9, 30), key='oatr_study_end')
-    source = st.selectbox('Univers de symboles — étude', sources, format_func=universe_file_label, key='oatr_study_source')
+    source = st.selectbox('Univers de symboles — étude', sources,
+                         index=_oracle_study_default_source_index(sources),
+                         format_func=universe_file_label, key='oatr_study_source')
     batch = st.selectbox('Batch Oracle — étude', list(batches),
                          format_func=lambda b: f'{b} — Oracle H{batches[b]}', key='oatr_study_batch')
     tranche_size = int(st.number_input('Séances par tranche', min_value=1, max_value=252, value=20,

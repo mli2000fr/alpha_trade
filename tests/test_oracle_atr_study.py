@@ -246,7 +246,8 @@ def test_four_lists_use_selection_then_signed_absolute_order_and_percent_units()
         'real_oracle_top_returns_pct': [-30, 20],
         'intersection_returns_pct': [20, 1],
         'predicted_oracle_top_returns_pct': [20, 1],
-        'atr_top_returns_pct': [1, .5],
+        'predicted_oracle_score_order_returns_pct': [1, 20],
+        'atr_top_returns_pct': [1, 1],
     }
     for field, values in expected.items():
         assert json.loads(out[field]) == pytest.approx(values)
@@ -260,6 +261,7 @@ def test_missing_top_result_not_replaced_and_real_benchmark_requires_full_covera
     assert out['evaluated_count'] == 2
     assert json.loads(out['intersection_returns_pct']) == [20, -10]
     assert out['predicted_oracle_top_returns_pct'] is None
+    assert out['predicted_oracle_score_order_returns_pct'] is None
     assert out['atr_top_returns_pct'] is None
     assert out['real_oracle_top_returns_pct'] is None
     assert 'INCOMPLETE_PREDICTED_TOP_RETURNS' in out['quality_details']
@@ -276,6 +278,24 @@ def test_nonfinite_realized_return_never_serialized(invalid):
     assert out['evaluated_count'] == 2
     assert out['real_oracle_top_returns_pct'] is None
     assert json.loads(out['intersection_returns_pct']) == [-10, 1]
+
+
+@pytest.mark.parametrize('value,expected', [
+    (.082, 8), (-.075, -8), (.069, 7), (.005, 1), (-.005, -1),
+    (.0049, 0), (-.0049, 0), (1.235, 124), (-1.235, -124),
+])
+def test_all_five_lists_store_json_integers(value, expected):
+    scores, atr, labels, macro = frames()
+    # Keep a genuine TOP20 pool: only the three selected titles have this amplitude.
+    labels['future_return'] = 0.
+    labels.loc[labels.symbol.isin(['7', '8', '9']), 'future_return'] = value
+    out = summarize_day(scores, atr, labels, macro, as_of=date(2026,1,1))
+    for field in MOVEMENT_FIELDS:
+        values = json.loads(out[field])
+        assert values == [expected] * out['evaluated_count']
+        assert all(type(v) is int for v in values)
+    assert out['d1_pct'] == pytest.approx(100/3)
+    assert out['d10_d1_ratio'] == 1
 
 
 def test_no_evaluable_candidates_means_null_not_empty_lists():
@@ -300,7 +320,8 @@ def test_tied_selection_uses_symbol_not_future_return():
     labels.loc[labels.symbol.eq('9'), 'future_return'] = .9
     out = summarize_day(scores, atr, labels, macro, as_of=date(2026,1,1))
     assert out['evaluated_count'] == 3
-    assert json.loads(out['predicted_oracle_top_returns_pct']) == [20, -10, .5]
+    assert json.loads(out['predicted_oracle_top_returns_pct']) == [20, -10, 1]
+    assert json.loads(out['predicted_oracle_score_order_returns_pct']) == [1, -10, 20]
     assert json.loads(out['intersection_returns_pct']) == [90, 20, -10]
 
 
@@ -319,8 +340,8 @@ def test_new_version_preflight_and_resume_query(tranche_environment):
     assert isinstance(write.args[1][0]['intersection_returns_pct'], str)
 
 
-def _movement_migration():
-    path = Path(__file__).parents[1]/'alembic/versions/0092_oracle_atr_movements.py'
+def _movement_migration(filename='0092_oracle_atr_movements.py'):
+    path = Path(__file__).parents[1]/'alembic/versions'/filename
     spec = importlib.util.spec_from_file_location('movement_migration', path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -340,6 +361,26 @@ def test_migration_adds_missing_columns_and_is_idempotent():
         op.execute.reset_mock()
         inspect.return_value.get_columns.return_value = [{'name': field} for field in MOVEMENT_FIELDS]
         migration.upgrade()
+        op.execute.assert_not_called()
+
+
+def test_score_order_migration_idempotent_and_us_only():
+    migration = _movement_migration('0094_oracle_atr_score_order.py')
+    with patch.object(migration, 'context') as context, patch.object(migration, 'op') as op, \
+         patch.object(migration, 'inspect') as inspect:
+        context.is_offline_mode.return_value = False
+        op.get_bind.return_value.execute.return_value.scalar.return_value = 'alpha_trade'
+        inspect.return_value.get_columns.return_value = []
+        migration.upgrade()
+        assert op.execute.call_count == 1
+        assert migration.COLUMN in op.execute.call_args.args[0]
+        op.execute.reset_mock()
+        inspect.return_value.get_columns.return_value = [{'name': migration.COLUMN}]
+        migration.upgrade()
+        op.execute.assert_not_called()
+        op.get_bind.return_value.execute.return_value.scalar.return_value = 'alpha_trade_cn'
+        with pytest.raises(RuntimeError, match='alpha_trade'):
+            migration.upgrade()
         op.execute.assert_not_called()
 
 

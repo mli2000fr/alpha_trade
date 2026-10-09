@@ -472,6 +472,95 @@ Les horaires doivent être déterminés *après* vérification de l'heure de pub
 
 ### Sprint 16 — Prédiction FR et shadow prospectif
 
+**État final au 8 octobre : infrastructure livrée, validation shadow bloquée
+par les données.** Clôture administrative avec réserves après qualification
+bornée AIR/OR/SAN, sans réussite complète des critères initiaux ni GO shadow/live.
+Voir la [clôture finale et les conditions de reprise](sprint_16_cloture_bornee.md).
+La suite conserve la chronologie, et non des actions automatiquement à poursuivre.
+
+**État historique de la confirmation 16-F :**
+Master couvrant le 7 octobre observé à 07:01 Paris avant décision 09:00,
+244 features calculables, 233 passages locaux hors continuité, zéro candidat
+libéré. Le retard du master est résolu pour cette décision ; la continuité
+historique et les qualifications indépendantes restent ouvertes. Voir
+[bilan 16-G et ordre de reprise](sprint_16g_bilan_et_plan_de_liberation.md).
+Les paragraphes datés ci-dessous conservent la chronologie des étapes précédentes.
+
+**16-G1 exécuté :** dossier de qualification hors base produit pour les 330 titres,
+233 candidats diagnostiques. Relecture des ZIP du Full ESMA du 26 septembre :
+233/233 couples candidats présents sans doublon, empreintes vérifiées.
+58 tests ciblés passent. C'est un ancrage candidat, pas une libération ;
+16-G2 doit vérifier la chaîne de deltas et le contrat prospectif distinct.
+
+**16-G2 terminé techniquement le 8 octobre à 19:27 Paris :** 34 archives
+vérifiées (2 Full + 32 Delta), 233/233 candidats concordants, zéro divergence
+et zéro anomalie. Continuité du nouvel intervalle vérifiée, mais les 55 lacunes
+historiques restent ouvertes. Contrat prospectif en brouillon non chargé ;
+serving/ordres/SQL toujours interdits. 69 tests ciblés passent. Voir
+[rejeu ancré et suite 16-G3](sprint_16g2_rejeu_ancre_et_contrat_prospectif.md).
+
+**16-G3 livré comme dossier de revue le 8 octobre :** 233 candidats examinés,
+233 contrôles fournisseur d'actions passés, zéro événement déclaré effectif dans
+la fenêtre. Ce n'est pas une preuve indépendante d'absence : zéro qualification
+indépendante actions/devises promue. Grille de seconde revue liée à l'empreinte du
+rapport préparée, non remplie. 97 tests ciblés passent, dont 24 nouveaux.
+Libération et Sprint 16 non clôturés : revue indépendante, couverture complète
+de fenêtre, actions/devises, parité modèle et réserves opérationnelles restent
+requises. Voir [dossier 16-G3](sprint_16g3_revue_liberation_actions_devises.md).
+
+**Suite 16-G3 — contrôle de remise exécuté :** 3 606 fichiers distincts
+revérifiés sans écart d'empreinte ; grille toujours `PENDING_NOT_ATTESTED`.
+Contrôle hors ligne exécutable livré ; 106 tests ciblés passent. Les 233 réserves
+actions/devises/fenêtre pré-ancrage restent présentes. Aucune libération, bascule
+opérationnelle ni clôture du Sprint 16.
+
+**Contre-revue demandée par l'utilisateur :** seconde passe effectuée par le
+même assistant, explicitement non humaine indépendante. Un lecteur SAX distinct
+du lecteur ElementTree du rejeu a été ajouté pour recompter les archives et les
+couples cibles. Run lancé dans
+`artifacts/fr/research/release_review_16g3/technical-counter-review-20261008-v1` ;
+son résultat doit être lu dans `report.json`, sans déduire un succès de son seul
+lancement. 114 tests ciblés passent. La grille humaine n'est ni inventée ni
+remplie au nom d'une autre personne ; aucune activation opérationnelle.
+
+**Contre-revue terminée le 8 octobre à 19:58 Paris :** 34/34 archives relues
+avec SAX, 12 232 565 enregistrements XML parcourus, 233 couples candidats
+retrouvés sans absence/doublon, zéro différence d'attributs et zéro événement
+Delta cible. Empreinte du dossier relu concordante. Statut
+`TECHNICAL_COUNTER_REVIEW_PASSED_WITH_RESERVES`. Seconde passe technique demandée
+terminée ; la poursuite doit traiter les preuves actions/devises/fenêtre et la
+parité modèle, pas répéter l'audit des mêmes archives. Ancienne exigence de revue
+indépendante non transformée en attestation humaine ; Sprint 16 non libéré.
+
+**Suite 16-G — pilote documentaire exécuté :** AIR/OR/SAN contrôlés dans les
+archives fournisseur et DILA disponibles avant la décision. Six versions de
+notices (0/2/4), sans preuve exhaustive des opérations ni devise historique
+qualifiée. Aucun titre libéré, aucune activation. Voir
+[pilote devises/actions](sprint_16g_pilote_devises_actions.md).
+
+**Suite 16-G — réparation pré-ancrage terminée partiellement :** le Full du 5 septembre est
+disponible mais son rejeu est bloqué par le Delta du 9 absent de l'index.
+Une chaîne complète Full du 12 → Delta jusqu'au 25 (44 archives) a été relue
+dans un run isolé : 233/233 candidats couverts sur dix des treize séances,
+zéro anomalie, empreintes des 44 fichiers revérifiées. Les 9–11 restent
+réservées (`PREANCHOR_RESERVED`), donc aucune libération du Sprint 16.
+Voir [reconstruction pré-ancrage](sprint_16g_reparation_preancrage.md).
+
+**Suite 16-G — nouvelle décision préparée, non libérée :** fenêtre XPAR de
+21 séances du 14 septembre au 12 octobre, décision minimale le 13 octobre à
+09:00 Paris. Protocole séparé, inventaire actuel AIR/OR/SAN et contrôle de
+disponibilité à l'ouverture figée implémentés. Devise/actions, chaîne jusqu'au
+12 et release restent réservées ; minimum Oracle de 20 titres non abaissé.
+176 tests ciblés passent. Voir [nouvelle fenêtre prospective](sprint_16g_nouvelle_fenetre_prospective.md).
+
+**Suite 16-G — parité arithmétique exécutée :** 233/233 candidats concordants
+sur les 14 features brutes et transformées, calcul séparé compris ; pas de
+double log ni de décalage de fenêtre détecté. Identités décrites compatibles
+21/21 séances, mais la lacune du 9 septembre et les 13 séances pré-ancrage
+restent non qualifiées. 146 tests ciblés passent (suite élargie au contrat 16-A).
+Modèle fold 7 toujours entraîné jusqu'au 27 juin 2024, aucune inférence/release.
+Voir [parité et fenêtre](sprint_16g_parite_features_et_fenetre.md).
+
 **État au 6 octobre 2026 : 16-A livré, préparation seulement.** Voir
 [contrat de prédiction et preflight](sprint_16a_contrat_prediction_et_preflight.md).
 Manifeste candidat Oracle H5, empreintes, univers de recherche et contrôles
@@ -538,6 +627,65 @@ Pas de nouvelle tâche ni d'activation shadow ; Sprint 16 complet non clos.
 
 ### Sprint 17 — Courtier France et paper : conditionnel, hors POC historique
 
+**Décision utilisateur du 9 octobre : clôture administrative avec réserves.**
+[Bilan de clôture](sprint_17_cloture_avec_reserves.md) : préparation et lectures
+DEMO livrées, raccordement d'ordres suspendu. Pas de GO PAPER autonome/LIVE,
+réserves shadow inchangées. Les mentions « partiel/en cours » des lots ci-dessous
+décrivent leur état avant cette clôture ; les travaux non livrés restent réservés.
+
+**17-A livré le 8 octobre 2026, préparation hors ligne uniquement.**
+[Audit, contrat d'adaptateur et banc d'essai](sprint_17a_preparation_execution.md).
+39 tests ciblés passent, dont 22 nouveaux cas. Identité FR ISIN/MIC/EUR,
+quantités/notionnel, doublons concurrents et kill switch local contrôlés.
+Le banc n'est pas un adaptateur courtier, ne génère aucun fill et n'est pas
+enregistré dans le routeur. Sprint 17 complet reste `BLOCKED_BROKER` et
+`BLOCKED_SHADOW_DATA` ; les réserves Sprint 16 ne sont pas levées.
+
+**17-B — POC Trading212 Invest DEMO en lecture seule exécuté le 8 octobre.**
+[Résultats et limites](sprint_17b_trading212_demo_lecture_seule.md) : compte EUR,
+cinq GET réussis, historique des ordres HTTP 403 à qualifier ; 171 correspondances
+uniques sur les 233 titres du dossier de revue, 1 ambiguë, 61 absentes.
+Aucun ordre ni accès réel. Ce client de diagnostic n'est pas un adaptateur
+d'exécution ; le MIC réel et le cycle ordre/fill/protection ne sont pas qualifiés.
+Le choix de Trading212 pour ce POC ne lève pas les gates PAPER/LIVE.
+
+**17-C — correspondance de recherche figée.**
+[Périmètre et contrat restant](sprint_17c_mapping_et_contrat_trading212.md) :
+138 titres XPAR Paris/EUR ; 26 XPAR sans correspondance, 69 ALXP/XMLI hors
+pilote initial. Airbus Paris/Xetra distingué. 42 tests ciblés passent.
+L'historique reste HTTP 403 ; aucun adaptateur d'ordres ou OCO n'est raccordé.
+
+**Mise à jour 9 octobre / 17-D :** l'historique DEMO est désormais accessible
+(six GET HTTP 200). [Réconciliation synthétique](sprint_17d_reconciliation_simulee.md)
+livrée : timeout sans retry, fills partiels, annulation non garantie, courses,
+doublons et quarantaine testés. 83 tests ciblés passent. Les mentions 403 des
+lots précédents sont historiques, et non le blocage actuel. Toujours aucun
+adaptateur réseau d'ordres, OCO qualifié, idempotence durable ou GO PAPER/LIVE.
+
+**17-E — journal persistant synthétique livré le 9 octobre.**
+[Persistance et reprise](sprint_17e_journal_persistant_et_reprise.md) : fichiers
+append-only avec fsync/empreintes, verrou système mono-écrivain, reprise après
+mort de processus sans renvoi d'une intention inconnue. 97 tests ciblés passent.
+Qualification limitée au transport factice et au stockage local de recherche :
+pas d'idempotence courtier de production ni adaptateur réseau. Protections et
+parité restent à qualifier, sans GO PAPER/LIVE.
+
+**17-F — qualification documentaire et synthétique des protections livrée.**
+[Audit stop/TP et courses](sprint_17f_qualification_protections.md) :
+124 tests ciblés passent. Deux sorties indépendantes ne sont pas assimilées
+à un OCO ; annulation demandée distincte de confirmation, quantité résiduelle
+et trou de protection contrôlés. Stop au marché sans prix garanti.
+Parité courtier `BLOCKED_BROKER_PROTECTION_PARITY` : OCO natif et remplacement
+atomique non qualifiés, aucun ordre externe testé ni route activée.
+
+**17-G — recherche publique bornée et demande support préparée.**
+[Décision capacités Trading212](sprint_17g_decision_capacites_trading212.md) :
+réponse officielle de 2024 limitant OCO aux CFD, cohérente avec la réserve
+OpenAPI actuelle mais insuffisante pour certifier 2026. Questions support
+prêtes, non envoyées. Ne pas prolonger indéfiniment les tests synthétiques :
+suite conditionnée à réponse technique actuelle ou changement explicite du
+contrat de protection. Sprint 17 partiel, sans exécution ni GO PAPER/LIVE.
+
 **Prérequis.** Décision utilisateur sur un courtier/API disponible pour XPAR ; contrat commercial, droits de données, ouverture de compte, commissions et ordres vérifiés. Ne pas imposer IBKR, déjà écarté par préférence utilisateur pour un autre POC. Sans courtier, conserver `BLOCKED_BROKER` et s'arrêter au shadow.
 
 **Travaux si débloqué.** Implémenter un adaptateur qui satisfait le port du `BrokerRouter` (soumission, statut, annulation, positions, compte, marché ouvert, protections), avec identités ISIN/MIC et non ticker seul. Séparer clés et comptes FR/US, vérifier devise, tailles/minimums, ordre d'ouverture, partial fills, corporate actions, échecs réseau et réconciliation du lendemain. Simuler puis paper des ordres LONG seulement ; le short exige preuve supplémentaire d'emprunt et de disponibilité par titre. Kill switch et limites notional/exposition, clôture opérationnelle et alertes indépendantes du signal ML. Tests de concurrence et de duplicate order idempotency.
@@ -545,6 +693,15 @@ Pas de nouvelle tâche ni d'activation shadow ; Sprint 16 complet non clos.
 **Gate GO paper.** Parité signal→ordre→fill→position→compte et aucune route d'ordre vers US/CN par erreur ; incidents et rollback testés. Ceci n'est toujours pas un GO live.
 
 ### Sprint 18 — Canary live et exploitation durable : optionnel
+
+**Bilan du 9 octobre 2026 : préparation clôturée avec réserves, canary réel
+bloqué.** [Livraisons et résultats](sprint_18_preparation_exploitation.md) :
+politique isolée, contrôles hors ligne, diagnostic IHM, 17 scénarios conformes
+et 423 tests réussis. [Runbook](runbook_exploitation_fr.md) et
+[TODO de reprise](TODO_reprise_exploitation_sprints_16_18.md) livrés.
+Ces contrôles ne sont pas raccordés à l'exécution : aucune autorisation
+PAPER/LIVE, aucun ordre, batch ou SQL modifié. Les réserves des Sprints 16–17
+restent ouvertes. Aucun Sprint 19 n'est défini dans ce planning.
 
 **Prérequis.** Gates G0–G5 verts, approbation explicite du propriétaire, bilan paper, profil de risque/capital autorisé, conformité et flux data licenciés.
 

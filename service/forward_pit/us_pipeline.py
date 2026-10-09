@@ -1,4 +1,4 @@
-"""Scheduled US steps 1..9 using the same workflow engine as the Pipeline page."""
+"""Configurable scheduled US steps 1..12 using the Pipeline page workflow."""
 from __future__ import annotations
 
 from dataclasses import asdict, replace
@@ -10,6 +10,7 @@ import time
 from zoneinfo import ZoneInfo
 
 from common.market_calendar import get_market_calendar
+from common.config_loader import load_config
 from ihm.services.pipeline_runner import (
     build_pipeline_command, get_pipeline_steps, pipeline_page_default_options,
 )
@@ -18,22 +19,70 @@ LOGGER = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def first_nine():
-    steps = tuple(s for s in get_pipeline_steps() if s.num in {str(i) for i in range(1, 10)})
-    if [s.num for s in steps] != [str(i) for i in range(1, 10)]:
-        raise ValueError('US Pipeline definition must contain exactly steps 1..9 in order')
+def load_pipeline_policy():
+    policy = load_config(str(ROOT/'config.yaml')).get('us_pipeline')
+    if not isinstance(policy, dict):
+        raise ValueError('Section us_pipeline required in config.yaml')
+    return policy
+
+
+def selected_steps(numbers, *, config_key='steps'):
+    if (not isinstance(numbers, list) or not numbers or
+            any(type(n) is not int or not 1 <= n <= 12 for n in numbers) or
+            len(set(numbers)) != len(numbers)):
+        raise ValueError(f'us_pipeline.{config_key} must be a nonempty list of unique integers 1..12')
+    wanted = sorted(numbers)
+    steps = tuple(s for s in get_pipeline_steps() if s.num in {str(n) for n in wanted})
+    if [s.num for s in steps] != [str(n) for n in wanted]:
+        raise ValueError('US Pipeline definition differs from selected numbered steps')
     return steps
+
+
+def session_steps(policy, day):
+    """Choose once from the US session, never from the clock of a later step."""
+    key = 'steps_friday' if day.weekday() == 4 else 'steps'
+    return key, selected_steps(policy.get(key), config_key=key)
+
+
+def require_paper_account(account_id):
+    # Fresh local registry, no broker request or credentials in the plan.
+    from service.alpaca.accounts import AccountRegistry
+    if AccountRegistry().resolve(account_id).mode != 'paper':
+        raise ValueError('us_pipeline PAPER requires an Alpaca account configured in paper mode')
+
+
+def execution_options(options, policy, steps):
+    if options.execution_mode == 'live':
+        raise ValueError('Scheduled us_pipeline forbids LIVE execution')
+    mode = policy.get('execution_mode', 'simulate')
+    account_id = policy.get('account_id', 'default')
+    if mode not in ('simulate', 'paper'):
+        raise ValueError('us_pipeline.execution_mode must be simulate or paper; LIVE forbidden')
+    if not isinstance(account_id, str) or not account_id.strip():
+        raise ValueError('us_pipeline.account_id must be a nonempty account identifier')
+    account_id = account_id.strip()
+    if mode == 'paper' and any(s.num in ('11', '12') for s in steps):
+        require_paper_account(account_id)
+    return replace(options, execution_mode=mode, account_id=account_id)
 
 
 def collection_options(options, cfg, day):
     """Pin collection windows to the session, not the wall clock after midnight."""
     from common.universe_files import universe_file_source_from_path
     values = {}
+    bars = cfg.get('bars_collection') or {}
+    values.update(eodhd_import_target_date=day.isoformat(),
+                  eodhd_import_require_target_coverage=True,
+                  eodhd_import_wait_for_publication=True,
+                  eodhd_import_min_target_coverage=float(bars.get('min_coverage_ratio', .95)),
+                  eodhd_import_benchmark_symbol=str(bars.get('benchmark_symbol', 'SPY')))
     shared_file = cfg.get('symbols_file')
     if shared_file:
         source = universe_file_source_from_path(shared_file, root=ROOT)
         values.update(screener_custom_universe_file=str(shared_file),
-                      sentiment_pipeline_symbol_source=source)
+                      sentiment_pipeline_symbol_source=source,
+                      ml_predict_symbol_source=source,
+                      eodhd_import_symbol_source=source)
     for name in ('quotes', 'earnings'):
         policy = cfg.get(f'{name}_collection')
         if policy is None:
@@ -83,19 +132,27 @@ def execute_pipeline(engine, cfg, run_id, dry_run, *, now=None):
     if cfg.get('market_code') != 'US_EQ':
         raise ValueError('US_EQ market scope required')
     day, skip = session_plan(now or datetime.now(UTC))
-    steps = first_nine()
+    policy = load_pipeline_policy()
     if skip:
         return Outcome(details={'skip_reason': skip, 'trade_date': str(day), 'counter_unit': 'pipeline_steps'})
+    steps_key, steps = session_steps(policy, day)
     options = collection_options(pipeline_page_default_options(trade_date=str(day)), cfg, day)
+    options = execution_options(options, policy, steps)
     plan = dict(market_code='US_EQ', trade_date=str(day), defaults='FRESH_PIPELINE_PAGE',
         date_override='PIN_CURRENT_US_SESSION_NO_OLD_SNAPSHOT', options=asdict(options),
         steps=[dict(number=s.num, key=s.key, command=build_pipeline_command(s.key, options)) for s in steps],
-        counter_unit='pipeline_steps', training=False, execution_orders=False)
+        selected_step_numbers=[int(s.num) for s in steps],
+        configuration_source='config.yaml:us_pipeline',
+        steps_configuration_source=f'config.yaml:us_pipeline.{steps_key}',
+        counter_unit='pipeline_steps', training=False,
+        account_id=options.account_id,
+        execution_mode=options.execution_mode,
+        execution_orders=any(s.num=='12' for s in steps) and options.execution_mode=='paper')
     outcome = Outcome(requested=len(steps), details=plan)
     if dry_run:
         LOGGER.info('US pipeline plan: %s', json.dumps(plan, default=str))
         return outcome
-    directory = ROOT/'artifacts/operations/us_pipeline_1_9'/run_id
+    directory = ROOT/'artifacts/operations/us_pipeline'/run_id
     directory.mkdir(parents=True, exist_ok=False)
     (directory/'plan.json').write_text(json.dumps(plan, indent=2, default=str), encoding='utf-8')
     try:
@@ -105,7 +162,8 @@ def execute_pipeline(engine, cfg, run_id, dry_run, *, now=None):
         outcome.failed = 1
         raise BatchRunError(f'US pipeline could not start: {exc}', outcome) from exc
     outcome.details.update(workflow_run_id=record.run_id, plan_path=str(directory/'plan.json'))
-    LOGGER.info('US pipeline workflow=%s trade_date=%s steps=1..9', record.run_id, day)
+    LOGGER.info('US pipeline workflow=%s trade_date=%s source=%s steps=%s',
+        record.run_id, day, plan['steps_configuration_source'], plan['selected_step_numbers'])
     previous = None
     while True:
         try:
@@ -121,13 +179,13 @@ def execute_pipeline(engine, cfg, run_id, dry_run, *, now=None):
         outcome.persisted = completed
         progress = (completed, snapshot.get('workflow_current_step_label'))
         if progress != previous:
-            LOGGER.info('US pipeline %d/9 step=%s', *progress)
+            LOGGER.info('US pipeline %d/%d step=%s', completed, len(steps), progress[1])
             previous = progress
         if snapshot.get('status') not in ('starting', 'running', 'scheduled'):
             outcome.details['workflow_status'] = snapshot.get('status')
             outcome.details['workflow_summary'] = snapshot.get('run_summary') or {}
             outcome.details['workflow_log'] = snapshot.get('combined_path')
-            if snapshot.get('status') != 'completed' or completed != 9:
+            if snapshot.get('status') != 'completed' or completed != len(steps):
                 outcome.failed = 1
                 failed_step = progress[1] or 'voir journal workflow'
                 children = snapshot.get('workflow_child_run_ids') or []
@@ -136,7 +194,7 @@ def execute_pipeline(engine, cfg, run_id, dry_run, *, now=None):
                     failed_step = last_child.get('step_label') or failed_step
                     outcome.details['failed_child_run_id'] = children[-1]
                     outcome.details['failed_child_returncode'] = last_child.get('returncode')
-                raise BatchRunError(f'US pipeline interrupted after {completed}/9 steps ({failed_step}); '
+                raise BatchRunError(f'US pipeline interrupted after {completed}/{len(steps)} steps ({failed_step}); '
                     f'status={snapshot.get("status")} workflow={record.run_id}', outcome)
             return outcome
         time.sleep(.5)

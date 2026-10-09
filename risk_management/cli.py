@@ -1185,6 +1185,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--min-position-notional", type=float, default=500.0)
     p.add_argument("--trade-date", type=str, default=None, help="YYYY-MM-DD (défaut: aujourd'hui)")
     p.add_argument("--summary-path", type=str, default=None, help="Chemin de sortie atomique du résumé JSON du run.")
+    p.add_argument('--llm-filter-run-id', help='Analyse Oracle/Web exacte, LONG-only et PAPER uniquement')
     p.add_argument("--dry-run", action="store_true", default=False)
     p.add_argument(
         "--run-mode",
@@ -1352,6 +1353,12 @@ def main(args: list[str] | None = None) -> None:
 
     trade_date = datetime.strptime(args.trade_date, "%Y-%m-%d").date() if args.trade_date else date.today()
     raw_account_id = (args.account or "").strip() or None
+    args.llm_filter_run_id = getattr(args, 'llm_filter_run_id', None)
+    if args.llm_filter_run_id:
+        from service.llm_directional.runner import assert_paper_account
+        assert_paper_account(raw_account_id or 'default')
+        if args.run_mode != 'paper' or args.enable_kelly_sizing:
+            raise ValueError('Filtre LLM : --run-mode paper obligatoire, sizing Kelly interdit')
     requested_equity = float(args.account_equity)
     # ── Initialisation des variables de résumé ───────────────────────
     daily_quality_report_path: str | None = None
@@ -1540,6 +1547,20 @@ def main(args: list[str] | None = None) -> None:
         LOGGER.warning("Construction du snapshot opérationnel échouée — le pipeline continue sans.", exc_info=True)
         operational_snapshot = None
 
+    if args.llm_filter_run_id:
+        from service.llm_directional.risk_adapter import capture_paper_snapshot
+        operational_snapshot, _llm_broker_account = capture_paper_snapshot()
+        effective_account_id = 'default'
+        effective_equity = operational_snapshot.account.equity
+        _previous_peak = account_snapshot.high_watermark if account_snapshot is not None else effective_equity
+        _last_equity = float(_llm_broker_account.get('last_equity') or effective_equity)
+        pnl_snapshot = PnLSnapshot(portfolio_high_watermark=max(_previous_peak, effective_equity),
+            portfolio_current_value=effective_equity, daily_pnl=effective_equity - _last_equity)
+        if args.risk_budget_dollars is not None:
+            if not 0 < args.risk_budget_dollars < effective_equity:
+                raise ValueError('Budget risque incompatible avec equity PAPER réelle')
+            args.risk_per_trade_pct = args.risk_budget_dollars / effective_equity
+
     progress_total_steps = 8
     progress_context: dict[str, object] = {
         "trade_date": trade_date.isoformat(),
@@ -1639,6 +1660,13 @@ def main(args: list[str] | None = None) -> None:
     if account_long_only:
         config = config.with_overrides(max_short_positions=0, short_selling_enabled=False)
     regime_snapshot = _resolve_market_regime_snapshot(trade_date, effective_equity, repo)
+    if args.llm_filter_run_id:
+        # No synthetic midnight timestamp or fabricated calibrator for this non-probabilistic policy.
+        if regime_snapshot is None or regime_snapshot.trade_date != trade_date:
+            raise ValueError('LLM PAPER : régime du jour non qualifié')
+        _regime_age = (datetime.now(timezone.utc) - regime_snapshot.as_of).total_seconds()
+        if not 0 <= _regime_age <= 300:
+            raise ValueError('LLM PAPER : snapshot régime périmé ou futur')
     regime_snapshot_payload = _serialize_market_regime_snapshot(regime_snapshot)
     regime_transition = _evaluate_regime_transition(regime_snapshot)
     if regime_snapshot is not None:
@@ -1860,195 +1888,201 @@ def main(args: list[str] | None = None) -> None:
     liquidity_gate: object | None = None
     ml_coverage_gate = MlCoverageGateDecision(enabled=False, allowed=True, reason="disabled")
     if entry_gate_allows_new_entries:
-        LOGGER.info("Chargement des predictions ML…")
-        try:
-            from common.config_loader import load_config as _load_oracle_gate_config
-            _root_live_config = _load_oracle_gate_config() or {}
-        except Exception:
-            _root_live_config = {}
-        _cascade_live_config = _root_live_config.get("cascade") or {}
-        _oracle_live_policy = str(
-            args.oracle_tradable_policy
-            or _cascade_live_config.get("live_oracle_tradable_policy")
-            or "off"
-        ).strip().lower()
-        _oracle_live_batch = str(
-            args.oracle_batch_id
-            or _cascade_live_config.get("live_oracle_batch_id")
-            or ""
-        ).strip()
-        if _oracle_live_policy != "off" and not _oracle_live_batch:
-            from modelFactory.db_registry import get_serving_batch
-            _oracle_live_batch = str(get_serving_batch(getattr(repo, "engine", None)) or "").strip()
-        _oracle_live_pool = float(
-            args.oracle_pool_pct
-            if args.oracle_pool_pct is not None
-            else _cascade_live_config.get("live_oracle_pool_pct", 0.20)
-        )
-        _prediction_symbols = list(universe_symbols)
-        if _oracle_live_policy != "off":
-            if not 0.0 < _oracle_live_pool <= 1.0:
-                raise SystemExit("oracle_pool_pct live doit appartenir à ]0, 1].")
-            if not _oracle_live_batch:
-                raise SystemExit("Aucun batch Oracle/serving disponible pour le gate live.")
-            _oracle_live_horizon = resolve_oracle_artifact_horizon(_oracle_live_batch)
-            if _oracle_live_horizon is None:
-                raise SystemExit(
-                    "Contrat Oracle live introuvable : "
-                    f"batch={_oracle_live_batch}. Impossible de déterminer l'horizon."
-                )
-            LOGGER.info(
-                "Contrat Oracle live validé batch=%s horizon=H%d policy=%s pool_pct=%.4f",
-                _oracle_live_batch,
-                _oracle_live_horizon,
-                _oracle_live_policy,
-                _oracle_live_pool,
-            )
-            print(
-                f"  Oracle live : batch={_oracle_live_batch} | "
-                f"horizon=H{_oracle_live_horizon} | policy={_oracle_live_policy}"
-            )
-            from modelFactory.predictor import prepare_oracle_tradable_percentiles
-            _oracle_scores = repo.load_oracle_scores_asof(
-                trade_date,
-                batch_id=_oracle_live_batch,
-                symbols=(None if _oracle_live_policy == "top20_then_filter" else universe_symbols),
-            )
-            if not _oracle_scores:
-                raise SystemExit(
-                    "Aucun score Oracle exact pour le gate live : "
-                    f"batch={_oracle_live_batch} date={trade_date}. Aucun fallback n'est autorisé."
-                )
-            _oracle_percentiles, _oracle_gate_diag = prepare_oracle_tradable_percentiles(
-                _oracle_scores,
-                tradable_symbols=set(universe_symbols),
-                policy=_oracle_live_policy,
-            )
-            from common.oracle_atr import resolve_oracle_atr_enabled, load_oracle_atr_by_date, filter_oracle_atr_percentiles
-            if resolve_oracle_atr_enabled(_cascade_live_config.get("oracle_atr_enabled", True)):
-                _live_atr_values = load_oracle_atr_by_date(
-                    getattr(repo, "engine", None), list(_oracle_percentiles), [str(trade_date)],
-                ).get(str(trade_date), {})
-                _oracle_percentiles, _live_atr_diag = filter_oracle_atr_percentiles(
-                    _oracle_percentiles, _live_atr_values,
-                    oracle_pool_pct=_oracle_live_pool, trade_date=str(trade_date),
-                )
-            _oracle_cutoff = 1.0 - _oracle_live_pool
-            _prediction_symbols = sorted(
-                symbol for symbol, percentile in _oracle_percentiles.items()
-                if float(percentile) >= _oracle_cutoff
-            )
-            LOGGER.info(
-                "Oracle/tradable live policy=%s batch=%s oracle=%d tradable=%d ranked=%d top=%d",
-                _oracle_live_policy,
-                _oracle_live_batch,
-                _oracle_gate_diag["oracle_symbols"],
-                len(universe_symbols),
-                _oracle_gate_diag["ranked_symbols"],
-                len(_prediction_symbols),
-            )
-        predictions = (
-            repo.load_predictions_asof(
-                _prediction_symbols,
-                trade_date,
-                batch_id=(_oracle_live_batch or None),
-                sources=(["per_symbol"] if _oracle_live_policy != "off" else None),
-            )
-            if ml_gate_state.enabled else {}
-        )
-        LOGGER.info("Predictions chargees pour %d symboles.", len(predictions))
-
-        ml_coverage_gate = evaluate_ml_coverage_gate(
-            selection_count=len(_prediction_symbols),
-            prediction_count=len(predictions),
-            min_coverage_ratio=args.min_ml_coverage_ratio,
-            regime_allows_new_entries=entry_gate_allows_new_entries,
-            ml_gate_enabled=ml_gate_state.enabled,
-        )
-        if ml_coverage_gate.enabled and not ml_coverage_gate.allowed:
-            LOGGER.error(
-                "ML coverage gate bloquant | coverage=%.4f threshold=%.4f candidates=%d predictions=%d reason=%s",
-                float(ml_coverage_gate.coverage_ratio or 0.0),
-                float(ml_coverage_gate.required_ratio or 0.0),
-                int(ml_coverage_gate.selection_count),
-                int(ml_coverage_gate.prediction_count),
-                ml_coverage_gate.reason,
-            )
-            raise SystemExit(
-                "Couverture ML insuffisante pour publier de nouvelles cibles live : "
-                f"{float(ml_coverage_gate.coverage_ratio or 0.0):.2%} < {float(ml_coverage_gate.required_ratio or 0.0):.2%}."
-            )
-
-        # Construire les MLRankedCandidate depuis les prédictions (après coverage gate)
-        for symbol, pred in predictions.items():
+        predictions = {}
+        if args.llm_filter_run_id:
+            from service.llm_directional.risk_adapter import load_candidates
+            candidates = load_candidates(repo.engine, args.llm_filter_run_id, trade_date,
+                raw_account_id or 'default', universe_run_id, universe_symbols)
+        else:
+            LOGGER.info("Chargement des predictions ML…")
             try:
-                candidate = build_candidate_from_prediction(
-                    symbol=symbol,
-                    trade_date=trade_date,
-                    predicted_side=pred.predicted_side,
-                    proba_long=pred.proba_long,
-                    proba_flat=pred.proba_flat,
-                    proba_short=pred.proba_short,
-                    proba=pred.predicted_proba,
-                    model_run_id=pred.run_id,
-                    universe_run_id=universe_run_id,
-                    research_only=pred.research_only,
-                )
-            except (TypeError, ValueError) as exc:
-                LOGGER.warning("MLRankedCandidate construction failed for %s: %s", symbol, exc)
-                continue
-            if candidate.is_actionable():
-                candidates.append(candidate)
-        # Apply ML rankings (longs then shorts, each by p_side descending)
-        longs, shorts = _ml_rank(candidates)
-
-        # ── GO production 2026-08-15 : filtre momentum côté SHORT (dossier
-        #    logs/analyse_oos.txt sections 19-25, arbitrage GPT) — parité live ──
-        try:
-            from common.config_loader import load_config as _load_live_cfg
-            _live_cascade = (_load_live_cfg() or {}).get("cascade") or {}
-        except Exception:
-            _live_cascade = {}
-        _live_sm_filter = str(_live_cascade.get("short_momentum_filter") or "none").strip().lower()
-        if _live_sm_filter != "none" and shorts:
-            _live_sm_max = _live_cascade.get("short_momentum_max_pct")
-            try:
-                from modelFactory.predictor import _load_momentum_for_symbols
-                _live_engine = getattr(repo, "engine", None)
-                _mom_map = _load_momentum_for_symbols(
-                    str(trade_date), [c.symbol for c in shorts], engine=_live_engine,
-                ) or {}
-                _threshold = (
-                    float(_live_sm_max) / 100.0
-                    if _live_sm_max is not None
-                    else (0.02 if _live_sm_filter == "loose" else 0.0)
-                )
-                _kept_shorts: list[MLRankedCandidate] = []
-                for _c in shorts:
-                    _m = _mom_map.get(_c.symbol)
-                    if _m is None:
-                        continue  # pas de barres momentum → short rejeté (parité backtest)
-                    _m20, _m60 = _m
-                    if _live_sm_filter == "strict":
-                        _keep = _m20 is not None and _m20 < _threshold
-                    elif _live_sm_filter == "confirm":
-                        _keep = _m20 is not None and _m60 is not None and _m20 < 0 and _m60 < 0
-                    elif _live_sm_filter == "inverted":
-                        _keep = _m20 is not None and _m20 > _threshold
-                    else:  # loose
-                        _keep = _m20 is not None and _m20 < _threshold
-                    if _keep:
-                        _kept_shorts.append(_c)
-                LOGGER.info(
-                    "Filtre momentum short (mode=%s seuil=%.2f): %d/%d shorts retenus",
-                    _live_sm_filter, _threshold, len(_kept_shorts), len(shorts),
-                )
-                shorts = _kept_shorts
+                from common.config_loader import load_config as _load_oracle_gate_config
+                _root_live_config = _load_oracle_gate_config() or {}
             except Exception:
-                LOGGER.exception("Filtre momentum short live: erreur — filtrage désactivé pour cette séance")
+                _root_live_config = {}
+            _cascade_live_config = _root_live_config.get("cascade") or {}
+            _oracle_live_policy = str(
+                args.oracle_tradable_policy
+                or _cascade_live_config.get("live_oracle_tradable_policy")
+                or "off"
+            ).strip().lower()
+            _oracle_live_batch = str(
+                args.oracle_batch_id
+                or _cascade_live_config.get("live_oracle_batch_id")
+                or ""
+            ).strip()
+            if _oracle_live_policy != "off" and not _oracle_live_batch:
+                from modelFactory.db_registry import get_serving_batch
+                _oracle_live_batch = str(get_serving_batch(getattr(repo, "engine", None)) or "").strip()
+            _oracle_live_pool = float(
+                args.oracle_pool_pct
+                if args.oracle_pool_pct is not None
+                else _cascade_live_config.get("live_oracle_pool_pct", 0.20)
+            )
+            _prediction_symbols = list(universe_symbols)
+            if _oracle_live_policy != "off":
+                if not 0.0 < _oracle_live_pool <= 1.0:
+                    raise SystemExit("oracle_pool_pct live doit appartenir à ]0, 1].")
+                if not _oracle_live_batch:
+                    raise SystemExit("Aucun batch Oracle/serving disponible pour le gate live.")
+                _oracle_live_horizon = resolve_oracle_artifact_horizon(_oracle_live_batch)
+                if _oracle_live_horizon is None:
+                    raise SystemExit(
+                        "Contrat Oracle live introuvable : "
+                        f"batch={_oracle_live_batch}. Impossible de déterminer l'horizon."
+                    )
+                LOGGER.info(
+                    "Contrat Oracle live validé batch=%s horizon=H%d policy=%s pool_pct=%.4f",
+                    _oracle_live_batch,
+                    _oracle_live_horizon,
+                    _oracle_live_policy,
+                    _oracle_live_pool,
+                )
+                print(
+                    f"  Oracle live : batch={_oracle_live_batch} | "
+                    f"horizon=H{_oracle_live_horizon} | policy={_oracle_live_policy}"
+                )
+                from modelFactory.predictor import prepare_oracle_tradable_percentiles
+                _oracle_scores = repo.load_oracle_scores_asof(
+                    trade_date,
+                    batch_id=_oracle_live_batch,
+                    symbols=(None if _oracle_live_policy == "top20_then_filter" else universe_symbols),
+                )
+                if not _oracle_scores:
+                    raise SystemExit(
+                        "Aucun score Oracle exact pour le gate live : "
+                        f"batch={_oracle_live_batch} date={trade_date}. Aucun fallback n'est autorisé."
+                    )
+                _oracle_percentiles, _oracle_gate_diag = prepare_oracle_tradable_percentiles(
+                    _oracle_scores,
+                    tradable_symbols=set(universe_symbols),
+                    policy=_oracle_live_policy,
+                )
+                from common.oracle_atr import resolve_oracle_atr_enabled, load_oracle_atr_by_date, filter_oracle_atr_percentiles
+                if resolve_oracle_atr_enabled(_cascade_live_config.get("oracle_atr_enabled", True)):
+                    _live_atr_values = load_oracle_atr_by_date(
+                        getattr(repo, "engine", None), list(_oracle_percentiles), [str(trade_date)],
+                    ).get(str(trade_date), {})
+                    _oracle_percentiles, _live_atr_diag = filter_oracle_atr_percentiles(
+                        _oracle_percentiles, _live_atr_values,
+                        oracle_pool_pct=_oracle_live_pool, trade_date=str(trade_date),
+                    )
+                _oracle_cutoff = 1.0 - _oracle_live_pool
+                _prediction_symbols = sorted(
+                    symbol for symbol, percentile in _oracle_percentiles.items()
+                    if float(percentile) >= _oracle_cutoff
+                )
+                LOGGER.info(
+                    "Oracle/tradable live policy=%s batch=%s oracle=%d tradable=%d ranked=%d top=%d",
+                    _oracle_live_policy,
+                    _oracle_live_batch,
+                    _oracle_gate_diag["oracle_symbols"],
+                    len(universe_symbols),
+                    _oracle_gate_diag["ranked_symbols"],
+                    len(_prediction_symbols),
+                )
+            predictions = (
+                repo.load_predictions_asof(
+                    _prediction_symbols,
+                    trade_date,
+                    batch_id=(_oracle_live_batch or None),
+                    sources=(["per_symbol"] if _oracle_live_policy != "off" else None),
+                )
+                if ml_gate_state.enabled else {}
+            )
+            LOGGER.info("Predictions chargees pour %d symboles.", len(predictions))
 
-        candidates = [*longs, *shorts]
-        LOGGER.info("MLRankedCandidate construits: %d longs + %d shorts", len(longs), len(shorts))
+            ml_coverage_gate = evaluate_ml_coverage_gate(
+                selection_count=len(_prediction_symbols),
+                prediction_count=len(predictions),
+                min_coverage_ratio=args.min_ml_coverage_ratio,
+                regime_allows_new_entries=entry_gate_allows_new_entries,
+                ml_gate_enabled=ml_gate_state.enabled,
+            )
+            if ml_coverage_gate.enabled and not ml_coverage_gate.allowed:
+                LOGGER.error(
+                    "ML coverage gate bloquant | coverage=%.4f threshold=%.4f candidates=%d predictions=%d reason=%s",
+                    float(ml_coverage_gate.coverage_ratio or 0.0),
+                    float(ml_coverage_gate.required_ratio or 0.0),
+                    int(ml_coverage_gate.selection_count),
+                    int(ml_coverage_gate.prediction_count),
+                    ml_coverage_gate.reason,
+                )
+                raise SystemExit(
+                    "Couverture ML insuffisante pour publier de nouvelles cibles live : "
+                    f"{float(ml_coverage_gate.coverage_ratio or 0.0):.2%} < {float(ml_coverage_gate.required_ratio or 0.0):.2%}."
+                )
+
+            # Construire les MLRankedCandidate depuis les prédictions (après coverage gate)
+            for symbol, pred in predictions.items():
+                try:
+                    candidate = build_candidate_from_prediction(
+                        symbol=symbol,
+                        trade_date=trade_date,
+                        predicted_side=pred.predicted_side,
+                        proba_long=pred.proba_long,
+                        proba_flat=pred.proba_flat,
+                        proba_short=pred.proba_short,
+                        proba=pred.predicted_proba,
+                        model_run_id=pred.run_id,
+                        universe_run_id=universe_run_id,
+                        research_only=pred.research_only,
+                    )
+                except (TypeError, ValueError) as exc:
+                    LOGGER.warning("MLRankedCandidate construction failed for %s: %s", symbol, exc)
+                    continue
+                if candidate.is_actionable():
+                    candidates.append(candidate)
+            # Apply ML rankings (longs then shorts, each by p_side descending)
+            longs, shorts = _ml_rank(candidates)
+
+            # ── GO production 2026-08-15 : filtre momentum côté SHORT (dossier
+            #    logs/analyse_oos.txt sections 19-25, arbitrage GPT) — parité live ──
+            try:
+                from common.config_loader import load_config as _load_live_cfg
+                _live_cascade = (_load_live_cfg() or {}).get("cascade") or {}
+            except Exception:
+                _live_cascade = {}
+            _live_sm_filter = str(_live_cascade.get("short_momentum_filter") or "none").strip().lower()
+            if _live_sm_filter != "none" and shorts:
+                _live_sm_max = _live_cascade.get("short_momentum_max_pct")
+                try:
+                    from modelFactory.predictor import _load_momentum_for_symbols
+                    _live_engine = getattr(repo, "engine", None)
+                    _mom_map = _load_momentum_for_symbols(
+                        str(trade_date), [c.symbol for c in shorts], engine=_live_engine,
+                    ) or {}
+                    _threshold = (
+                        float(_live_sm_max) / 100.0
+                        if _live_sm_max is not None
+                        else (0.02 if _live_sm_filter == "loose" else 0.0)
+                    )
+                    _kept_shorts: list[MLRankedCandidate] = []
+                    for _c in shorts:
+                        _m = _mom_map.get(_c.symbol)
+                        if _m is None:
+                            continue  # pas de barres momentum → short rejeté (parité backtest)
+                        _m20, _m60 = _m
+                        if _live_sm_filter == "strict":
+                            _keep = _m20 is not None and _m20 < _threshold
+                        elif _live_sm_filter == "confirm":
+                            _keep = _m20 is not None and _m60 is not None and _m20 < 0 and _m60 < 0
+                        elif _live_sm_filter == "inverted":
+                            _keep = _m20 is not None and _m20 > _threshold
+                        else:  # loose
+                            _keep = _m20 is not None and _m20 < _threshold
+                        if _keep:
+                            _kept_shorts.append(_c)
+                    LOGGER.info(
+                        "Filtre momentum short (mode=%s seuil=%.2f): %d/%d shorts retenus",
+                        _live_sm_filter, _threshold, len(_kept_shorts), len(shorts),
+                    )
+                    shorts = _kept_shorts
+                except Exception:
+                    LOGGER.exception("Filtre momentum short live: erreur — filtrage désactivé pour cette séance")
+
+            candidates = [*longs, *shorts]
+            LOGGER.info("MLRankedCandidate construits: %d longs + %d shorts", len(longs), len(shorts))
 
         # Symbols list for loading prices/win_rates/returns
         symbols = [c.symbol for c in candidates]
@@ -2301,7 +2335,9 @@ def main(args: list[str] | None = None) -> None:
         builder.progress_callback = emit_run_summary
 
         # ── Point 12 : vérification compatibilité modèle ────────────
-        _compat = _check_model_compatibility(predictions)
+        # LLM uses its audited Oracle/Web contract, not a synthetic per-symbol probability.
+        _compat = ({'compatible': True, 'issues': [], 'champion_count': 0, 'model_versions': {}}
+                   if args.llm_filter_run_id else _check_model_compatibility(predictions))
         if not _compat["compatible"]:
             LOGGER.error(
                 "MODEL_INCOMPATIBLE issues=%s — blocage des entrées",
@@ -2327,7 +2363,7 @@ def main(args: list[str] | None = None) -> None:
         # ── Section 17 Point 6.4 : gate de fraîcheur avant entrées ───────
         freshness_blocked = False
         freshness_result = None
-        if not config.dry_run and _compat["compatible"]:
+        if not config.dry_run and _compat["compatible"] and not args.llm_filter_run_id:
             try:
                 from risk_management.freshness_gate import FreshnessConfig, FreshnessGate
 
@@ -2391,7 +2427,7 @@ def main(args: list[str] | None = None) -> None:
             # ── Boost batch diagnostics : score prefer AVANT sizing ──
             _bt_boosted = 0
             _bt_batch_id: str | None = None
-            if candidates:
+            if candidates and not args.llm_filter_run_id:
                 try:
                     _bt_boosted, _bt_batch_id = boost_candidate_scores(
                         candidates, getattr(repo, "engine", None),
@@ -2401,13 +2437,18 @@ def main(args: list[str] | None = None) -> None:
                         "risk batch_diagnostics score boost skipped: %s", _bt_exc,
                     )
 
-            entries = builder.build_from_ml_candidates(
-                candidates, prices,
-                win_rates=win_rates,
-                directional_win_rates=directional_win_rates,
-                return_matrix=return_matrix,
-                trade_date=trade_date,
-            )
+            if args.llm_filter_run_id:
+                from service.llm_directional.risk_adapter import build_entries
+                entries = build_entries(builder, candidates, prices, _sector_map_for_builder,
+                                        trade_date, return_matrix)
+            else:
+                entries = builder.build_from_ml_candidates(
+                    candidates, prices,
+                    win_rates=win_rates,
+                    directional_win_rates=directional_win_rates,
+                    return_matrix=return_matrix,
+                    trade_date=trade_date,
+                )
         _emit_live_progress(
             dict(progress_context, targeted_symbols=len(candidates), built_entries=len(entries)),
             current=7,

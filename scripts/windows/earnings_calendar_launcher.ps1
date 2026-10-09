@@ -188,7 +188,7 @@ if ($cfg -and ($cfg.PSObject.Properties.Name -contains 'status') -and ([string]$
     exit 0
 }
 if (-not $Force -and $cfg -and ($cfg.PSObject.Properties.Name -contains 'enabled') -and -not [bool]$cfg.enabled) {
-    Write-StatusLine "SKIP earnings_calendar_sync disabled; see us_pipeline_1_9"
+    Write-StatusLine "SKIP earnings_calendar_sync disabled; see us_pipeline"
     exit 0
 }
 if (-not $LogFile -and $cfg -and ($cfg.PSObject.Properties.Name -contains 'log_file') -and $cfg.log_file) {

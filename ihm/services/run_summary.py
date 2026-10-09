@@ -554,6 +554,16 @@ def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[st
             )
 
     if step_key == "import_alpaca_bar":
+        coverage = summary.get('target_coverage')
+        if isinstance(coverage, Mapping):
+            ratio = _to_float(coverage.get('coverage_ratio'))
+            lines.append(f"Cours de la séance {coverage.get('target_date')} : "
+                f"{coverage.get('covered')}/{coverage.get('requested')} "
+                f"({ratio:.1%}) — {coverage.get('status')} ; "
+                f"benchmark {coverage.get('benchmark')} disponible={coverage.get('benchmark_available')}."
+                if ratio is not None else f"Contrôle cours J : {coverage.get('status')}.")
+        if summary.get('error_message'):
+            lines.append(str(summary['error_message']))
         stooq_status = get_stooq_cross_check_status(record)
         if stooq_status is not None:
             lines.append(f"Cross-check Stooq : {stooq_status}.")

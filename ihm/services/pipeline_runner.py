@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import json
 import queue
 import re
 import subprocess
@@ -352,6 +353,8 @@ class PipelineLaunchOptions:
     """Options saisies dans l'IHM pour lancer une étape du pipeline."""
 
     account_id: str | None = None
+    llm_filter_enabled: bool = False
+    llm_filter_run_id: str | None = None
     trade_date: str | None = None
     capital_preset_key: str | None = None
     # Si True, écrase ``trade_date`` au lancement par le snapshot_date le plus
@@ -653,6 +656,12 @@ class PipelineLaunchOptions:
     data_integrity_fundamentals_log_every: int = DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY
     eodhd_write_commit_every_symbols: int = DEFAULT_EODHD_WRITE_COMMIT_EVERY_SYMBOLS
     eodhd_enable_stooq_cross_check: bool = DEFAULT_EODHD_ENABLE_STOOQ_CROSS_CHECK
+    eodhd_import_target_date: str | None = None
+    eodhd_import_symbol_source: str | None = None
+    eodhd_import_require_target_coverage: bool = False
+    eodhd_import_min_target_coverage: float = 0.95
+    eodhd_import_benchmark_symbol: str = 'SPY'
+    eodhd_import_wait_for_publication: bool = False
     corporate_actions_skip_existing: bool = DEFAULT_CA_SKIP_EXISTING
     # Corporate actions sync — fenêtre custom + batching
     corporate_actions_use_custom_window: bool = DEFAULT_CA_USE_CUSTOM_WINDOW
@@ -871,7 +880,7 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
         name="ML Predict",
         desc="Inférence `modelFactory` sur le champion sélectionné par symbole (LSTM, LightGBM, CatBoost ou global_model selon les artefacts disponibles). Quotidien, alimente le score de conviction du risk.",
         tables="model_predictions",
-        deps="signal_aggregator, champion ML déjà publié",
+        deps="Modèle ML déjà entraîné et données disponibles ; étape 9 non obligatoire pour un lancement manuel",
     ),
     PipelineStepDefinition(
         key="risk_management",
@@ -1809,7 +1818,19 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
                 command.extend(["--commit-every-symbols", str(int(options.eodhd_write_commit_every_symbols))])
             if not options.eodhd_enable_stooq_cross_check:
                 command.append("--no-stooq-cross-check")
+            if options.eodhd_import_target_date:
+                command.extend(['--target-date', options.eodhd_import_target_date])
+            if options.eodhd_import_symbol_source:
+                command.extend(['--symbol-source', options.eodhd_import_symbol_source])
+            if options.eodhd_import_wait_for_publication:
+                command.append('--wait-for-publication')
+            if options.eodhd_import_require_target_coverage:
+                command.extend(['--require-target-coverage', '--min-target-coverage',
+                    str(options.eodhd_import_min_target_coverage), '--benchmark-symbol',
+                    options.eodhd_import_benchmark_symbol])
             return command
+        if options.eodhd_import_require_target_coverage:
+            raise ValueError('Le contrat de cours J du batch US est qualifié pour EODHD ; import Alpaca non raccordé à ce contrôle')
         return [sys.executable, "-u", "-m", "dataIntegrityEngine.import_alpaca_bar"]
 
     if step_key == "update_sector":
@@ -2641,7 +2662,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--predict-max-date-workers", str(options.ml_predict_max_date_workers)])
         if options.ml_oracle_shadow:
             command.append("--oracle-shadow")
-        return command
+        return _wrap_llm_command('predict', command, options) if options.llm_filter_enabled else command
 
     if step_key == "risk_management":
         command = [
@@ -2732,7 +2753,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
                 pass  # best-effort : fallback H10 du dataclass
         if _best_h is not None:
             command.extend(["--best-horizon", str(_best_h)])
-        return command
+        return _wrap_llm_command('risk', command, options) if options.llm_filter_enabled else command
 
     if step_key == "execution":
         command = [sys.executable, "-u", str(PROJECT_ROOT / "run_execution.py"), options.execution_mode]
@@ -2778,7 +2799,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--approval-token", str(options.execution_live_approval_token)])
         if options.execution_run_plan_file:
             command.extend(["--run-plan-file", str(options.execution_run_plan_file)])
-        return command
+        return _wrap_llm_command('execute', command, options) if options.llm_filter_enabled else command
 
     if step_key == "corporate_actions_apply":
         command = [sys.executable, "-u", "-m", "corporate_actions", "apply"]
@@ -2789,6 +2810,40 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     raise KeyError(f"Étape de pipeline inconnue : {step_key}")
+
+
+def _wrap_llm_command(phase: str, command: list[str], options: PipelineLaunchOptions) -> list[str]:
+    """Opt-in paper-only handoff, no implicit latest run or historical web search."""
+    if (options.account_id or 'default') != 'default':
+        raise ValueError('Filtre LLM réservé au compte principal default PAPER')
+    if options.execution_mode == 'live' or options.allow_outside_rth or options.auto_rebalance:
+        raise ValueError('LLM : LIVE, hors séance et rééquilibrage automatique interdits')
+    if options.ml_predict_use_historical_range or options.ml_oracle_shadow:
+        raise ValueError('LLM : pas de recherche Web historique ni Oracle shadow')
+    if options.risk_enable_kelly:
+        raise ValueError('LLM : sizing Kelly interdit (note non calibrée)')
+    if phase == 'execute':
+        command = list(command)
+        command[3] = 'paper'  # run_execution.py mode positional argument
+        if '--run-plan-file' in command:
+            raise ValueError('LLM : plan d’exécution externe interdit; cibles du run risque lié uniquement')
+    batch = options.ml_predict_batch_id or options.ml_live_predict_batch_id
+    if phase == 'predict' and not batch:
+        raise ValueError('Sélectionner explicitement un batch Oracle pour le filtre LLM')
+    wrapped = [sys.executable, '-u', '-m', 'service.llm_directional.pipeline',
+               '--phase', phase, '--run-id', options.llm_filter_run_id or 'auto',
+               '--trade-date', options.trade_date or _llm_today_ny(),
+               '--symbol-source', options.ml_predict_symbol_source,
+               '--capital-preset-key', options.capital_preset_key or 'capital_2001_5000',
+               '--command-json', json.dumps(command)]
+    if batch:
+        wrapped.extend(['--batch-id', batch])
+    return wrapped
+
+
+def _llm_today_ny():
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo('America/New_York')).date().isoformat()
 
 
 def format_command_for_display(command: list[str]) -> str:

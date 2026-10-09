@@ -1,5 +1,12 @@
 # Sprint 16-F — Remédiation prospective
 
+**Mise à jour du 8 octobre :** confirmation exécutée à 18:53 avec coupure
+inchangée à 09:00 ; master frais couvrant le 7 octobre, 244 features calculables,
+233 passages locaux hors continuité, zéro candidat libéré. Voir le
+[bilan et plan de libération 16-G](sprint_16g_bilan_et_plan_de_liberation.md).
+Les mentions de confirmation encore à exécuter ci-dessous décrivent la préparation
+du 7 octobre, pas l'état courant.
+
 7 octobre 2026 : correctifs livrés, rattrapage à terminer et qualifier.
 **Shadow, serving, ordres et SQL restent interdits.**
 

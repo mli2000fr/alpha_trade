@@ -1208,6 +1208,13 @@ def _render_ml_scope_block(
     if ml_comment is not None:
         command_preview_overrides["ml_comment"] = ml_comment
     command_preview_options = replace(options, **command_preview_overrides)
+    if step_key == "ml_predict":
+        command_preview_options = _ml_prediction_scope_options(command_preview_options)
+        if options.llm_filter_enabled and not command_preview_options.llm_filter_enabled:
+            st.caption(
+                "Le filtre GPT + recherche Web ne s'applique pas à ce bouton historique/Oracle shadow. "
+                "Cette prédiction sera lancée sans LLM ; le filtre reste activé pour le parcours PAPER du jour."
+            )
     st.caption("Commande du bouton ci-dessous :")
     st.code(
         format_command_for_display(build_pipeline_command(step_key, command_preview_options)),
@@ -1220,28 +1227,23 @@ def _render_ml_scope_block(
         use_container_width=True,
         disabled=disabled,
     ):
-        overrides: dict[str, object] = {source_attr: cast(Any, selected_symbol_source)}
-        if start_symbol_attr is not None:
-            overrides[start_symbol_attr] = normalized_start_symbol
-        if step_key == "ml_predict":
-            overrides["ml_predict_use_historical_range"] = historical_range
-            overrides["ml_oracle_shadow"] = bool(
-                st.session_state.get("pipeline_ml_oracle_shadow", False)
-            )
-            _predict_bid = st.session_state.get("pipeline_ml_predict_batch_id", "")
-            if _predict_bid:
-                overrides["ml_predict_batch_id"] = _predict_bid
-            _predict_w = st.session_state.get("pipeline_ml_predict_backtest_workers", 4)
-            overrides["ml_predict_max_date_workers"] = int(_predict_w)
-        if ml_comment is not None:
-            overrides["ml_comment"] = ml_comment
         _launch_pipeline_step(
             step_key,
             f"{label_prefix} — {ML_TRAIN_SYMBOL_SOURCE_LABELS.get(selected_symbol_source, selected_symbol_source)}",
-            replace(options, **overrides),
+            command_preview_options,
             db_config,
             all_runs,
         )
+
+
+def _ml_prediction_scope_options(options: PipelineLaunchOptions) -> PipelineLaunchOptions:
+    """Historical/shadow research buttons are outside the prospective LLM path.
+
+    Only this local copy is changed; global checkbox and runner guards remain.
+    """
+    if options.ml_predict_use_historical_range or options.ml_oracle_shadow:
+        return replace(options, llm_filter_enabled=False)
+    return options
 
 
 def _render_ml_train_scope_block(
@@ -1463,6 +1465,11 @@ def _pipeline_state_machine_lock_reason(
     step_key: str,
     latest_by_step: dict[str, dict[str, object]],
 ) -> str | None:
+    # Standalone inference can consume existing models/data independently of
+    # aggregation (or optional training T1). Concurrency/live guards stay in
+    # the launch panel; workflow ordering and runtime validation are unchanged.
+    if step_key == "ml_predict":
+        return None
     previous_step_key = _previous_pipeline_step_key(step_key)
     if previous_step_key is None:
         return None
@@ -1570,16 +1577,21 @@ def _render_launchable_step_panel(
                             _label += f" — {_comment[:60]}"
                         _live_options.append((_bid, _label))
 
-                if f"pipeline_ml_live_predict_batch_id_{step.key}" not in st.session_state:
+                if options.llm_filter_enabled:
+                    # One explicit selector for both prediction and GPT; never reuse a stale LIVE choice.
+                    _live_selected = options.ml_predict_batch_id or ""
+                    st.caption(f"📦 Batch Oracle du filtre GPT : `{_live_selected}`")
+                elif f"pipeline_ml_live_predict_batch_id_{step.key}" not in st.session_state:
                     st.session_state[f"pipeline_ml_live_predict_batch_id_{step.key}"] = _live_default_batch
 
-                _live_selected = st.selectbox(
-                    "📡 Batch LIVE",
-                    options=[b for b, _ in _live_options],
-                    format_func=lambda b: dict(_live_options).get(b, b),
-                    key=f"pipeline_ml_live_predict_batch_id_{step.key}",
-                    help="Batch ML pour les prédictions live (lancées en arrière-plan). Défaut = live_batch_id du config.yaml.",
-                )
+                if not options.llm_filter_enabled:
+                    _live_selected = st.selectbox(
+                        "📡 Batch LIVE",
+                        options=[b for b, _ in _live_options],
+                        format_func=lambda b: dict(_live_options).get(b, b),
+                        key=f"pipeline_ml_live_predict_batch_id_{step.key}",
+                        help="Batch ML pour les prédictions live (lancées en arrière-plan). Défaut = live_batch_id du config.yaml.",
+                    )
                 if _live_selected:
                     _live_comment = ""
                     try:
@@ -1685,7 +1697,8 @@ def _render_launchable_step_panel(
                 if run_clicked:
                     _launch_options = options
                     if step.key == "ml_predict":
-                        _live_bid = st.session_state.get(f"pipeline_ml_live_predict_batch_id_{step.key}", "") or None
+                        _live_bid = (options.ml_predict_batch_id if options.llm_filter_enabled else
+                            st.session_state.get(f"pipeline_ml_live_predict_batch_id_{step.key}", "")) or None
                         _live_w = st.session_state.get(f"pipeline_ml_live_predict_workers_{step.key}", 4)
                         _overrides: dict[str, object] = {}
                         if _live_bid:
@@ -1812,6 +1825,26 @@ def render() -> None:
         return
 
     options, live_confirmed = _build_launch_options()
+    with st.expander('🌐 Audit des sélections GPT + Web — PAPER'):
+        _llm_audit_id = st.text_input('Identifiant analyse à consulter',
+            value=options.llm_filter_run_id or '', key='llm_directional_audit_id')
+        if st.button('Consulter la sélection et les motifs', key='llm_directional_audit_load',
+                     disabled=not bool(_llm_audit_id.strip())):
+            try:
+                from database.connection import get_sqlalchemy_engine
+                from service.llm_directional.report import report as _llm_report
+                _llm_audit = _llm_report(get_sqlalchemy_engine(), _llm_audit_id.strip())
+                st.caption(f"{_llm_audit['status']} · {_llm_audit['trade_date']} · batch {_llm_audit['batch_id']}")
+                st.warning(_llm_audit['warning'])
+                st.dataframe(_llm_audit['candidates'], use_container_width=True)
+                st.json(_llm_audit['configuration'])
+                if _llm_audit['evaluations']:
+                    st.caption('Rendements bruts ajustés : sans portefeuille, frais ou preuve de profitabilité.')
+                    st.dataframe(_llm_audit['evaluations'], use_container_width=True)
+                if _llm_audit['error']:
+                    st.error(_llm_audit['error'])
+            except Exception:
+                st.error('Analyse indisponible : vérifier le run_id, la migration 0093 et la connexion US.')
     _render_execution_mode_banner(options)
     live_guard = get_execution_live_guard(account_id=str(options.account_id or "").strip() or None)
     _render_live_execution_freeze_banner(live_guard)

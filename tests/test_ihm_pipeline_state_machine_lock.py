@@ -30,3 +30,15 @@ def test_pipeline_state_machine_lock_is_open_after_completed_previous_step() -> 
 
     assert reason is None
 
+
+def test_standalone_predict_does_not_require_aggregation_or_optional_training() -> None:
+    for latest in ({}, {'signal_aggregator':{'status':'failed'}},
+                   {'ml_train':{'status':'failed'}},
+                   {'signal_aggregator':{'status':'failed'},'ml_train':{'status':'running'}}):
+        assert pipeline._pipeline_state_machine_lock_reason('ml_predict',latest) is None
+
+
+def test_predict_unlock_does_not_unlock_risk_or_execution() -> None:
+    assert pipeline._pipeline_state_machine_lock_reason('risk_management',{}) is not None
+    assert pipeline._pipeline_state_machine_lock_reason('execution',{}) is not None
+

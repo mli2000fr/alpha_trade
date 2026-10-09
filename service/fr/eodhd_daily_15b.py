@@ -53,7 +53,8 @@ def symbols_from_identities(path: Path) -> list[str]:
 
 
 def collect(cfg: dict, result: dict, *, root: Path, identities: Path, dry_run=False,
-            today: date | None = None, resume=False, max_symbols: int | None = None):
+            today: date | None = None, resume=False, max_symbols: int | None = None,
+            selected_symbols: list[str] | None = None):
     now = datetime.now(ZoneInfo('Europe/Paris'))
     day = today or now.date()
     lookback = int(cfg.get('lookback_days', 7))
@@ -69,6 +70,13 @@ def collect(cfg: dict, result: dict, *, root: Path, identities: Path, dry_run=Fa
     end = day if today is not None or now.hour >= close_hour else day-timedelta(days=1)
     start = day-timedelta(days=lookback)
     symbols = symbols_from_identities(identities)
+    if selected_symbols is not None:
+        if (not selected_symbols or len(selected_symbols) != len(set(selected_symbols))
+                or not set(selected_symbols).issubset(symbols)):
+            raise ValueError('Sélection absente, dupliquée ou hors univers FR vérifié')
+        symbols = sorted(selected_symbols)
+        result['limited_smoke'] = True
+        result['selected_symbols'] = symbols
     if max_symbols is not None:
         symbols = symbols[:max_symbols]
     if len(symbols) > int(cfg.get('max_symbol_requests', 400)):
@@ -100,7 +108,8 @@ def collect(cfg: dict, result: dict, *, root: Path, identities: Path, dry_run=Fa
             key = hashlib.sha256(symbol.encode()).hexdigest()
             prior = state['symbols'].get(symbol, {})
             # Resume only explicit; regular reruns refetch to discover vendor corrections.
-            if resume and prior.get('status') == 'COMPLETED':
+            if (resume and prior.get('status') == 'COMPLETED'
+                    and prior.get('coverage_complete') is True):
                 raw = root/'raw'/f"{prior['sha256']}.json"
                 latest = root/'latest'/f'{key}.json'
                 if (raw.exists() and latest.exists()
@@ -149,11 +158,17 @@ def collect(cfg: dict, result: dict, *, root: Path, identities: Path, dry_run=Fa
                     changed += int(old is not None)
                     latest['bars'][session] = item
                     persisted += 1
+                latest['last_coverage'] = {'window': [str(start), str(end)],
+                    'missing_sessions': missing, 'observed_at': observed,
+                    'raw_sha256': digest,
+                    'retained_old_rows_not_reconfirmed': [s for s in missing if s in latest['bars']]}
                 atomic(latest_path, latest)
                 result['persisted_count'] += persisted
                 result['changed_rows'] += changed
                 result['unchanged_rows'] += unchanged
-                state['symbols'][symbol] = {'status':'COMPLETED','sha256':digest,'rows':len(rows),'observed_at':observed,
+                state['symbols'][symbol] = {'status':'COMPLETED_WITH_GAPS' if missing else 'COMPLETED',
+                    'coverage_complete': not missing, 'missing_sessions': missing,
+                    'sha256':digest,'rows':len(rows),'observed_at':observed,
                     'latest_sha256':hashlib.sha256(latest_path.read_bytes()).hexdigest()}
             except Exception as exc:
                 # _fetch strips signed URLs/tokens from its errors.

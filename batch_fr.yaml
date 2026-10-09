@@ -53,16 +53,17 @@ fr_daily_bars_sync:
   provider: EODHD
   run_hours: "22"
   universe_scope: "config/universe_fr_s6c.yaml (contrat FR, pas fichier univers US)"
-  description: "Collecter J-7/J des OHLCV FR et leurs corrections dans un staging versionné, puis publier uniquement les données qualifiées."
+  description: "Collecter J-7/J des OHLCV FR puis publier les versions validées en staging SQL de recherche ; aucune barre canonique ni activation LIVE."
+  publish_daily_staging: true # FR uniquement ; false conserve le mode fichiers seul. Pas une canonicalisation.
   identities_file: artifacts/fr/sprint6c_reference/identities.jsonl.gz
   request_interval_seconds: 0.5
   max_symbol_requests: 400 # 294 titres actifs du référentiel S6C actuel ; stop si budget dépassé.
   after_close_hour_paris: 22
-  tables: "aucune SQL; fichiers:artifacts/fr/operations/eodhd_daily (raw,latest,windows)"
+  tables: "fr_ingestion_runs, fr_raw_payloads, fr_provider_bars_staging, fr_staging_progress ; fichiers:artifacts/fr/operations/eodhd_daily"
   coverage_description: "J-7/J après 22h Paris ; avant 22h : J-7/J-1. Reprise explicite, relance normale rafraîchissant les corrections."
-  research_notice: "Collecte fournisseur fichiers uniquement ; univers S6C figé (statut actif actuel), pas référentiel quotidien ni preuve tradable/PIT historique. Aucun SQL canonique."
-  activation_requirement: "Smoke réel de deux passages validé sur 3 titres ; surveillance pleine couverture et publication staging SQL restent à qualifier."
-  unlock_steps: ["Valider deux collectes réelles sur petit sous-ensemble", "Contrôler quota et corrections", "Qualifier publication staging SQL séparément ; aucune promotion canonique automatique"]
+  research_notice: "Univers S6C figé, pas référentiel tradable historique. SQL en staging versionné uniquement ; prix bruts fournisseur, disponibilité de publication réelle, absences/réserves conservées. Persistés principal = fichiers ; sql_persisted_count = nouvelles lignes staging. Aucun instrument_id ni canonique créé."
+  activation_requirement: "Publication staging FR raccordée sous contrôle de publish_daily_staging ; reprise par payload et qualification hors canonique. La couverture et les prix indépendants restent à surveiller."
+  unlock_steps: ["Surveiller les réponses vides et changements de segment", "Contrôler couverture et corrections", "Qualifier séparément identités/PIT/canonicalisation ; aucune promotion automatique"]
   log_file: log/batch_fr/fr_daily_bars_sync.txt
 
 fr_corporate_actions_sync:
