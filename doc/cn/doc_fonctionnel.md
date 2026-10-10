@@ -120,13 +120,15 @@ La [politique V1](../../config/universe_cn.yaml) exige une fenêtre de 60 séanc
 
 ### Chronologie d'une séance CN
 
-Horaires ci-dessous en **Asia/Shanghai**. Paris est six heures en retard pendant l'heure d'été française, sept pendant l'hiver. Le Planificateur Windows peut lancer un contrôle chaque heure ; le lanceur n'exécute le travail qu'à l'heure métier : `NextRunTime` Windows n'est donc pas nécessairement la prochaine collecte effective.
+Horaires ci-dessous en **Asia/Shanghai**, sauf 17-C explicitement planifié à Paris.
+Mise à jour du 10/10 : [présence du PC et durées](../operations/horaires_fr_cn_presence_pc.md).
+Paris est six heures en retard pendant l'heure d'été française, sept pendant l'hiver. Le Planificateur Windows peut lancer un contrôle chaque heure ; le lanceur n'exécute le travail qu'à l'heure métier : `NextRunTime` Windows n'est donc pas nécessairement la prochaine collecte effective.
 
 | Moment | Tâche | Résultat attendu |
 | --- | --- | --- |
 | J 17:30, après clôture | `cn_dragon_tiger_after_close` (D6) | Premier snapshot de la liste officielle Dragon/Tiger J, horodaté. Aucun label. |
 | J 18:15 | `cn_oracle_prospective_daily` (D9) | Collecte et canonique J ; export Oracle TOP20 pour prochaine séance ouverte K **avant 09:15 K**. |
-| J 23:30 | `cn_daily_quality_17c` | Lecture seule : lots D9, barres, facteurs, limites, Oracle, D6/D10 ; aucune collecte. |
+| J 20:30 Paris = J+1 02:30/03:30 Shanghai | `cn_daily_quality_17c` | Lecture seule de la séance CN J : lots D9, barres, facteurs, limites, Oracle, D6/D10 ; aucune collecte. |
 | K 08:30 | `cn_dragon_tiger_before_open` (D6) | Nouvelle observation officielle, pouvant ajouter **ou retirer** un titre. |
 | K 09:15 | Cutoff de décision | Un score ou snapshot observé après cette limite ne peut pas décider à K. |
 | K 09:30 | `cn_dragon_tiger_daily_match` (D10) | Appariement Oracle + dernier snapshot complet connu avant cutoff ; **sans issues futures**. |
@@ -138,11 +140,11 @@ Le calendrier configuré ferme le marché du **1er au 7 octobre 2026**. Le premi
 
 | Batch | Catalogue | Statut et effet |
 | --- | --- | --- |
-| `cn_dragon_tiger_after_close`, `cn_dragon_tiger_before_open` | `batch.yaml` | Actifs `RESEARCH_ONLY`, captures D6. |
-| `cn_oracle_prospective_daily` | `batch.yaml` | Actif `RESEARCH_ONLY`, seul propriétaire planifié du canonique J et de l'export Oracle K. |
+| `cn_dragon_tiger_after_close`, `cn_dragon_tiger_before_open` | `batch.yaml` | Désactivés/bloqués pour droits/prudence depuis le 06/10 ; captures D6 non autorisées actuellement. |
+| `cn_oracle_prospective_daily` | `batch.yaml` | Désactivé/bloqué pour droits BaoStock ; propriétaire D9 requis, mais pas autorisé à collecter actuellement. |
 | `cn_dragon_tiger_daily_match` | `batch.yaml` | Actif `RESEARCH_ONLY`, D10 écrit des artefacts d'appariement. |
 | `cn_db_backup` | `batch_cn.yaml` | Actif, dimanche 04:00 Europe/Paris ; dump isolé CN, `keep: 3`. |
-| `cn_daily_quality_17c` | `batch_cn.yaml` | Actif, 23:30 Shanghai, lecture seule et gate opérationnel. |
+| `cn_daily_quality_17c` | `batch_cn.yaml` | Actif, 20:30 Paris ; lecture seule de la veille civile Shanghai. Reste bloquant si D9 désactivé. |
 | `cn_daily_market_data_sync` | `batch_cn.yaml` | `DISABLED_DUPLICATE_D9` ; ne pas activer en parallèle. |
 | `cn_historical_backfill` | `batch_cn.yaml` | Déclaré mais désactivé ; backfill historique non quotidien. |
 
@@ -221,7 +223,7 @@ Dans Pipeline, la barre de progression reflète des **jalons observés**, pas le
 
 1. **Avant ouverture K :** vérifier qu'un export Oracle K a été publié avant 09:15 Shanghai et que D6 a réellement observé un snapshot officiel complet avant cutoff. Si absent, ne pas « compléter » après coup en prétendant avoir une décision PIT. Un jour fermé répond normalement `SKIP_CLOSED`.
 2. **Après 09:30 K :** vérifier rapport D10. Périodiquement, produire un nouveau rapport [D11](./sprint_15d11_cumul_d7_outcome_blind.md). Il mesure suffisance de l'échantillon, **pas** la valeur directionnelle.
-3. **Après clôture J :** contrôler les lots D9, le rapport `COMPLETED_RESEARCH_ONLY`, l'export pour K+1 et la qualité 17-C à 23:30 Shanghai. Un lot manquant, une couverture insuffisante ou une empreinte divergente demande audit, pas un rendement imputé à zéro.
+3. **Après clôture J, une fois les droits débloqués :** contrôler les lots D9, le rapport `COMPLETED_RESEARCH_ONLY`, l'export pour K+1 et la qualité 17-C à 20:30 Paris (lendemain civil Shanghai). Un lot manquant, une couverture insuffisante ou une empreinte divergente demande audit, pas un rendement imputé à zéro.
 4. **Chaque semaine :** contrôler l'archive `cn_db_backup` dans `backups/cn/db`, la rétention et les notifications. Refaire périodiquement une **restauration isolée** : la présence d'un `.sql.gz` ne garantit pas sa restaurabilité. Les artefacts sous `artifacts/` ne font pas partie du dump MySQL. [17-B](./sprint_17b_sauvegarde_restauration_cn.md).
 5. **Gate 17-C :** sept séances **ouvertes consécutives** sans anomalie critique inexpliquée sont requises. Les premières candidates théoriques sont 8, 9, 12, 13, 14, 15 et 16 octobre 2026 ; leurs dates ne prouvent pas que les exécutions auront réussi.
 

@@ -5,10 +5,75 @@ non validée économiquement : aucun gain directionnel ou rendement n’est gara
 
 ## 1. Objectif et périmètre
 
+### Extension LONG/SHORT — 10 octobre 2026
+
+`llm_directional_filter.allow_short: true` et `alpaca.accounts[id=default].long_only: false`
+sont activés. Les comptes `test1/test2` restent LONG-only ; LIVE reste interdit.
+Le compte principal n'est donc plus LONG-only **également dans les autres parcours
+risque qui utilisent ce compte**. Aucune limite capital/exposition/positions ni
+autorisation de régime n'a été augmentée par cette évolution.
+
+Les 20 premiers scores Oracle sont analysés ; au maximum **3 candidats au total**
+peuvent être retenus, dans n'importe quelle combinaison LONG/SHORT. Il ne s'agit
+pas de 3 par côté. La note subjective reste non calibrée dans les deux sens.
+L'autorisation SHORT est un opt-in configurable, jamais déduite du score Oracle.
+
+Contrôles supplémentaires avant risque puis avant exécution : compte PAPER
+autorisé par Alpaca (`shorting_enabled`), action active, `tradable`, `marginable`,
+`shortable` et `easy_to_borrow` explicitement vrais. Absence, HTB ou erreur de
+lecture : **arrêt**, aucun statut favorable inventé ni locate payant automatique.
+Un candidat non empruntable fait échouer le passage, sans substitution implicite.
+Les quantités SHORT sont entières, même si la case protections spécifiques est
+décochée. Les cibles nouvelles doivent garder exactement le sens archivé par GPT.
+Une position opposée ne peut pas être retournée implicitement ; les cibles hors
+sélection peuvent seulement réduire une position existante du même sens.
+
+SL SHORT : ordre **buy stop** à entrée × 1,07. Trailing SHORT : ordre **buy trailing**
+au-dessus du plus bas suivi par le broker après activation. Avec le réglage local
+15 %, une entrée à 100 et un SL à 107 autorisent la transition seulement lorsque
+le cours est au plus 107/1,15 ≈ 93,0434. Le plafond confirmé par le broker doit
+rester ≤107 ; sinon annulation confirmée puis réarmement, sans double rachat en
+cas d'exécution pendant l'annulation. Une remontée pendant la transition réarme
+également le SL original. La sortie séance 21 est un **buy-to-cover** MOO/market,
+borné au reliquat réel du lot et à la quantité broker ; aucune vente supplémentaire.
+Les gaps peuvent dépasser la perte théorique du SL : ce n'est pas une garantie de 7 %.
+
+Le watcher relit désormais le côté du parent depuis les requêtes existantes,
+y compris les lots SHORT et les quantités broker signées. Les formats SQL sont
+inchangés : décisions/configuration en JSON, côtés des ordres déjà disponibles ;
+**aucune migration SQL nécessaire**. Le reporting ajoute un rendement directionnel
+brut signé pour SHORT, sans le présenter comme un backtest économique : frais,
+emprunt, dividendes compensatoires et fills réels doivent être analysés séparément.
+
+Le protocole passe à `oracle-web-directional-v2`. Les anciens runs v1 restent
+archivés et leurs protections figées restent accessibles, mais ne sont pas
+réutilisables pour une nouvelle étape risque/exécution : **relancer étape 10**.
+Redémarrer l'IHM et le **service watcher local** pour charger le nouveau code ;
+un watcher déjà démarré ne recharge pas ses modules automatiquement.
+Le passage exécution contrôle aussi que le watcher local n'a pas démarré avant
+la dernière modification des modules de protections : un ancien heartbeat sain
+ne suffit pas, les nouveaux ordres sont bloqués jusqu'au redémarrage. Le watcher
+continu est requis dès que SHORT est autorisé, même sans le profil spécifique.
+Enchaîner ensuite 10 → 11 → 12 avec le même run, compte default PAPER.
+Aucun ordre, appel GPT payant ou écriture SQL de production n'a été effectué
+pendant la validation locale de cette extension.
+
+Validation locale : **301 tests passent** (filtre, risque explicite mixte,
+protections, SQL en mémoire, pipeline et démarrage du watcher), plus compilation
+des modules/IHM modifiés. Les tests ne prouvent pas la rentabilité ni l'exécution
+effective d'un SHORT sur le compte : les autorisations broker sont revérifiées
+au moment du prochain passage réel PAPER.
+
+Références : [schéma JSON structuré OpenAI](https://developers.openai.com/api/docs/guides/structured-outputs),
+[règles d'emprunt Alpaca](https://docs.alpaca.markets/us/docs/margin-and-short-selling),
+[limites de simulation PAPER](https://docs.alpaca.markets/us/docs/paper-trading).
+Cette implémentation reste volontairement ETB-only même si d'autres possibilités
+de locates sont proposées par Alpaca.
+
 L’Oracle Extreme identifie une amplitude potentielle, pas le sens. Le filtre cherche
-une thèse LONG documentée parmi ses premiers candidats. Il ne remplace ni le moteur
+une thèse LONG ou SHORT documentée parmi ses premiers candidats. Il ne remplace ni le moteur
 de risque, ni le sizing, ni les protections. Il ne crée aucune prédiction Per-Symbol
-et n’écrit pas de fausses probabilités LONG dans `model_predictions`.
+et n’écrit pas de fausses probabilités directionnelles dans `model_predictions`.
 
 ```mermaid
 flowchart TD
@@ -18,20 +83,22 @@ flowchart TD
     D --> E[Archivage de toutes les réponses avant validation]
     E --> F{Toutes les réponses valides ?}
     F -->|Non| G[FAILED : arrêt du workflow]
-    F -->|Oui| H[LONG éligibles, classés par note subjective]
+    F -->|Oui| H[LONG/SHORT éligibles, classés par note subjective]
     H --> I[0 à K retenus ; autres candidats conservés pour comparaison]
-    I --> J[11. Univers tradable, régime, capital broker réel, risque et sizing ATR]
+    I --> J[11. Univers tradable, régime, capital broker réel, risque et sizing configuré]
     J --> L[Run risque explicitement lié au run LLM]
     L --> M[12. Compte principal default PAPER exclusivement]
 ```
 
 **N = `oracle_top_n` et K = `max_selected`, configurables dans `config.yaml`.**
-Par défaut N=10, K=5. Ce sont des nombres de titres, pas des pourcentages.
+Défauts du composant : N=10, K=5 ; configuration locale actuelle : N=20, K=3.
+Ce sont des nombres de titres, pas des pourcentages.
 Le classement initial utilise uniquement `proba_extreme DESC, symbol ASC` ; il
 n’utilise jamais les rendements futurs ni un classement Oracle réalisé.
 Le filtre n’ajoute pas implicitement une intersection ATR : cette expérience
-porte sur les N premiers scores Oracle du périmètre choisi. ATR demeure utilisé
-par le risque pour le sizing/protections selon la configuration existante.
+porte sur les N premiers scores Oracle du périmètre choisi. ATR demeure qualifié
+par le risque ; le sizing/protections historiques l'utilisent lorsque le profil
+spécifique ci-dessous est désactivé.
 
 ## 2. Configuration
 
@@ -42,8 +109,8 @@ llm_directional_filter:
   api_key_env: OPENAI_API_KEY
   default_symbol_source: universe-file:univers_filtred_tradable.txt
   default_oracle_batch_id: model-factory-20261003082853-e98332
-  oracle_top_n: 10
-  max_selected: 5
+  oracle_top_n: 20
+  max_selected: 3
   min_oracle_coverage_ratio: 0.90
   min_confidence: 0.75
   min_sources: 2
@@ -54,6 +121,12 @@ llm_directional_filter:
   max_tool_calls: 5
   account_id: default
   horizon: 20
+  allow_short: true
+  protections:
+    enabled: true
+    stop_loss_pct: 0.07
+    exit_session: 21
+    trailing_stop_pct: 0.15
 ```
 
 `enabled` fournit le défaut IHM et autorise la CLI directe d’analyse. La checkbox
@@ -80,7 +153,8 @@ par les contrôles existants. Le filtre désactivé conserve le fonctionnement h
 | `oracle_top_n` | Entier 1–100, borne du nombre d’appels d’analyse, un par titre |
 | `max_selected` | Entier 0–N, plafond de sélection ; zéro désactive toute sélection sans effacer l’audit |
 | `min_oracle_coverage_ratio` | Fraction minimale de l’univers avec un score Oracle exact pour J ; évite un TOP N issu d’un import partiel |
-| `min_confidence` | Seuil d’une **note subjective non calibrée** ; 0,75 ne signifie pas 75 % de chances de hausse |
+| `min_confidence` | Seuil d’une **note subjective non calibrée** ; 0,75 ne signifie pas 75 % de chances du mouvement prévu |
+| `allow_short` | Autorise SHORT, défaut du composant false, activé localement. Le plafond K est commun aux LONG et SHORT, pas doublé. |
 | `min_sources` | Nombre minimal d’URL distinctes, réellement rencontrées par la recherche et datées récemment |
 | `max_source_age_days` | Âge maximal des dates de publication déclarées dans la réponse |
 | `max_run_age_hours` | Expiration du résultat pour risque/exécution, au plus 48 h |
@@ -98,15 +172,18 @@ n’est choisi automatiquement si `gpt-6.1-sol` n’est pas accessible au projet
 
 Pour chaque titre : symbole, identité locale (`company_name`, exchange), date J,
 rang et score Oracle, horizon, et jusqu’à 21 clôtures connues à J. Le prompt impose
-la vérification de l’identité, une thèse haussière, les risques contradictoires,
+la vérification de l’identité, une thèse directionnelle, les risques contradictoires,
 les catalyseurs et les sources. Les publications d’émetteurs/SEC sont privilégiées.
 
 Le seul outil exposé au modèle est `web_search` de l’API Responses. Le modèle
 n’a aucun accès à Alpaca, SQL, au terminal, aux identifiants ni aux ordres. Les
 instructions contenues dans les pages Web sont traitées comme données non fiables.
-La sortie doit respecter un schéma JSON strict et choisir LONG ou ABSTAIN.
+La sortie doit respecter un schéma JSON strict et choisir LONG, SHORT ou ABSTAIN.
+Une absence d'argument haussier n'est pas une thèse baissière. Le prompt exige
+des preuves de baisse et l'examen du risque de squeeze ; l'empruntabilité ne
+peut jamais être déclarée par GPT à la place du broker.
 
-Une réponse LONG n’est éligible que si :
+Une réponse LONG/SHORT n’est éligible que si (SHORT exige aussi `allow_short: true`) :
 
 1. le statut API est `completed`, avec au moins une recherche Web terminée ;
 2. le JSON respecte le schéma et le symbole demandé ;
@@ -121,7 +198,7 @@ Une réponse ABSTAIN reste une réponse valide même si les sources récentes so
 insuffisantes. Une réponse techniquement invalide fait échouer **tout le run**,
 au lieu de trader silencieusement un sous-ensemble incomplet.
 
-Les LONG éligibles sont triés par note décroissante, puis rang Oracle croissant,
+Les LONG et SHORT éligibles sont triés ensemble par note décroissante, puis rang Oracle croissant,
 puis symbole. Les K premiers sont retenus au maximum. Il n’y a jamais obligation
 d’atteindre K : 0, 1 ou 2 candidats peuvent être le résultat normal.
 
@@ -188,7 +265,7 @@ de toutes les pages Web. Elles ne donnent pas de droit de redistribution des sou
 
 ## 6. Risque et exécution : pas de fausse probabilité
 
-Le chemin `oracle_web_llm_long` réutilise le PortfolioBuilder et ses contrôles
+Le chemin `oracle_web_llm_directional` réutilise le PortfolioBuilder et ses contrôles
 capital/slots/secteur/corrélation/régime/ATR. Il exige un snapshot broker réel
 PAPER (equity, cash, buying power, positions et ordres ouverts), et non une
 estimation issue des anciens ordres de risque.
@@ -199,7 +276,7 @@ restent autoritaires : un titre sélectionné par GPT peut être refusé ensuite
 Les secteurs actuellement disponibles restent ceux utilisés par l’application.
 
 La note LLM alimente le classement explicite avec
-`score_source=llm_confidence_uncalibrated`. Elle n’alimente pas `P(LONG)`, le Kelly
+`score_source=llm_confidence_uncalibrated`. Elle n’alimente pas `P(LONG)/P(SHORT)`, le Kelly
 ou une espérance de rendement artificielle. Kelly et un optimiseur exigeant un
 edge directionnel qualifié sont interdits dans cette voie.
 
@@ -213,11 +290,93 @@ Les protections des positions existantes restent du ressort du lifecycle/watcher
 LIVE, les autres comptes, `allow_outside_rth`, le rééquilibrage automatique et un
 plan d’exécution externe sont refusés. Aucun LLM ne choisit les quantités ou les stops.
 
+### 6.1. Protections spécifiques GPT — 9 octobre 2026
+
+Dans les paramètres ML de Pipeline, sous la case GPT, apparaît la case
+**« 🛡️ Protections spécifiques GPT — SL / sortie temporelle / trailing »**.
+Elle est cochée par défaut (`protections.enabled: true`) et n'est prise en compte
+que si le filtre GPT est activé. Elle s'applique aux nouvelles entrées LONG et SHORT du
+compte `default`, marché US, mode PAPER. Elle ne transforme pas les positions
+existantes, les achats manuels ou les ordres FR/CN/LIVE.
+
+| Réglage | Comportement du profil |
+|---|---|
+| `stop_loss_pct: 0.07` | Stop initial à 7 % sous l'entrée LONG, ou au-dessus de l'entrée SHORT, sur le prix moyen **réellement exécuté**, arrondi au centime. Sizing avec cette distance ; contrôles capital/liquidité/régime conservés. |
+| `exit_session: 21` | Vente LONG / rachat SHORT, gagnant ou perdant : séance d'entrée = 1, sortie à l'ouverture de la 21e séance NYSE, pas 21 jours calendaires. |
+| `trailing_stop_pct` | Sous le plus haut pour LONG, au-dessus du plus bas pour SHORT, suivi par le broker **après activation**. Défaut composant 20 %, configuration locale 15 %. Jamais de desserrement du SL initial. |
+
+Exemple entrée 100 $ : SL 93 $. Le trailing 20 % peut prendre le relais lorsque
+le cours atteint au moins 116,25 $ (116,25 × 0,80 = 93), pas au trigger 1R
+historique. Le watcher recontrôle le prix après annulation du SL ; si le cours
+a reculé, il réarme le SL initial au lieu de le desserrer. La référence est le
+prix exécuté du parent, pas le prix moyen courant d'autres achats du même titre.
+Le plancher effectivement confirmé par le broker est également contrôlé :
+s'il est plus bas que le SL initial ou absent, le trailing est annulé avec
+confirmation, puis le SL est réarmé (une exécution pendant l'annulation interdit
+un nouvel ordre de vente). Les rejets certains et les états réseau inconnus sont
+traités séparément.
+Le plus haut antérieur à l'activation n'est pas reconstitué rétrospectivement.
+Les réglages expérimentaux par signal/ATR ne remplacent pas ce trailing spécifique.
+Les exemples ci-dessus utilisent le défaut 20 % ; la valeur locale peut être
+différente (`0.15` au dernier contrôle), sans être écrasée par le code.
+
+Aucun ordre limite de TP de prix n'est créé pour ce profil. Le garde-fou du watcher
+ne recrée pas non plus un ancien TP à 7 %/ATR et ne considère pas cette absence
+intentionnelle comme un motif de duplication du SL. Les quantités sont entières
+pour cette voie (protections GTC et ordre d'ouverture), même si les fractions
+restent autorisées dans la configuration historique.
+La préférence historique `swing_only` ne retarde pas l'armement de ce SL au
+lendemain ; seules les protections de ces nouvelles entrées GPT sont concernées,
+sans changer les contraintes du compte ou les règles d'entrée.
+
+**Sortie à l'ouverture :** le watcher programme un ordre marché d'ouverture
+Alpaca (`market`, `time_in_force=opg`) uniquement pour la séance immédiatement
+suivante, à partir de 19 h New York ou avant 9 h 28 le matin de la sortie.
+Les heures New York/Paris et leurs changements d'heure sont gérés par le
+calendrier strict. Les protections sont annulées et leur état est confirmé
+avant de réserver/envoyer la vente ; un stop exécuté pendant l'annulation bloque
+une seconde vente. Voir les [conditions officielles Alpaca](https://docs.alpaca.markets/us/docs/orders-at-alpaca).
+
+Le **service watcher doit rester actif et le PC allumé**, notamment avant
+l'ouverture cible : une simple exécution quotidienne des étapes 10–12 ne suffit
+pas à assurer cette échéance. Dans Pipeline → **Watcher protections**, utiliser
+**« Démarrer service local »**, compte principal, avant l'étape 12 ;
+`Run watcher once` et `--auto-watcher` en mode once ne suffisent pas.
+L'étape 12 bloque ce profil si le heartbeat du service est absent/périmé,
+avant toute réservation exécution ou soumission. Un service Windows existant
+avec heartbeat valide convient également. Le contrôle au lancement ne garantit
+pas que le PC restera disponible jusqu'à la séance cible.
+Si l'ouverture est manquée, le watcher soumet une
+sortie marché de rattrapage pendant une séance ouverte ; elle est marquée
+`LATE_MARKET`, jamais présentée comme une exécution au prix d'ouverture.
+Un ordre d'ouverture expiré/rejeté ne réutilise pas la même clé de soumission
+que ce rattrapage. Un état réseau ambigu est réservé en base et impose une
+réconciliation/revue avant nouvelle tentative ; pas de fallback silencieux
+vers un trailing moins protecteur. Un SL déjà franchi lors d'un réarmement
+déclenche une sortie marché plutôt qu'un stop incohérent au-dessus du cours.
+
+Les paramètres et le choix de la case sont figés à l'étape 10 dans
+`llm_directional_runs.config_json.protections`, puis retrouvés par le `risk_run_id`
+exact et le symbole sélectionné pour les étapes 11/12 et le watcher, y compris
+après redémarrage. Le journal d'exécution conserve les demandes/observations et
+la politique/délai dans les événements. **Aucune nouvelle table ni migration
+n'est nécessaire.** Changer le YAML ne réécrit pas les protections d'un run
+déjà publié. Changer la case entre 10 et 11/12 bloque : garder le même choix,
+ou effectuer une nouvelle analyse. Les anciennes analyses sans cette clé
+gardent leur politique historique.
+
+Case décochée, ou filtre GPT décoché : comportement historique inchangé
+(SL ATR, TP de prix, trailing et time-stop selon les autres réglages).
+Un SL de 7 % et un trailing ne garantissent pas une perte plafonnée : gaps,
+slippage, suspensions, annulations ou indisponibilité du service restent possibles.
+
 ## 7. Utilisation IHM
 
 1. Redémarrer l’IHM après installation du code. Choisir le marché US.
 2. Dans Pipeline → paramètres ML, cocher **« Filtrage GPT + recherche Web après
    Oracle — PAPER uniquement »**. Les valeurs N/K sont affichées depuis le YAML.
+   La case de protections spécifiques placée dessous est cochée par défaut ;
+   la décocher **avant l'étape 10** pour conserver les protections historiques.
 3. Sélectionner explicitement le batch Oracle et l’univers de prédiction, pour J,
    sans plage historique et sans Oracle shadow. Choisir le compte principal.
 4. Laisser Kelly, hors séance, LIVE et rééquilibrage automatique désactivés.
@@ -231,10 +390,10 @@ plan d’exécution externe sont refusés. Aucun LLM ne choisit les quantités o
    consulter tous les titres, les motifs, sources, configuration et évaluations.
 
 Le workflow s’arrête en cas d’échec. Une abstention complète n’envoie aucun nouvel
-ordre. Le batch quotidien `us_pipeline` conserve par défaut les neuf premières
-étapes. Sa sélection est désormais configurable de 1 à 12 dans
-`config.yaml → us_pipeline.steps` ; le filtre GPT et les trades PAPER ne sont pas
-activés implicitement par cette sélection. Voir le guide `doc/operations/us_pipeline.md`.
+ordre. Les listes `config.yaml → us_pipeline.steps` / `steps_friday` définissent
+les étapes du batch quotidien (de 1 à 12). Le filtre GPT n'est pas activé
+implicitement par ces listes ou les cases de la session IHM ; voir le guide
+`doc/operations/us_pipeline.md` pour le mode et le plan configurés.
 
 ## 8. Commandes et vérification
 

@@ -68,7 +68,8 @@ complète des options. La liste `symbols_without_accepted_trade` les expose.
 
 ## Calendrier et limites de reprise
 
-Horaire : **07h Europe/Paris, lundi à samedi**. La récupération vise le fichier
+Horaire : **06h Europe/Paris, lundi à samedi** (avancé le 10/10 pour l'absence
+07:30–20:00 ; [horaires et réserves](../operations/horaires_fr_cn_presence_pc.md)). La récupération vise le fichier
 du précédent jour de négociation ; lundi peut reprendre le vendredi déjà reçu.
 Cela évite les ambiguïtés de conversion heure New York/Paris : cette source est
 Paris. Le fichier n'est pas demandé pendant la séance du jour courant.

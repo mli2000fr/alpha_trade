@@ -85,6 +85,9 @@ def _ensure_adoption_run(
             dry_run=False,
             total_targets=0,
             account_id=account_id,
+            # This adoption path belongs to the US Alpaca OMS. Do not rely
+            # on the deprecated implicit market fallback for historical fills.
+            market_code="US_EQ",
             execution_profile="custom",
             submission_window=None,
         )

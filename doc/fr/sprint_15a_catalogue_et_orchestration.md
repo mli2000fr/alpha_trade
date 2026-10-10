@@ -65,7 +65,8 @@ enabled=true sans lever le statut d'attente ne permet pas son installation.
 
 Service `service/fr/operational_batch_15a.py`, handler fr_calendar_snapshot :
 calendrier de J−7 à J+370, horaires UTC et provenance. Horaire proposé :
-dimanche 07:00 Europe/Paris. Les bascules heure d'été sont traitées par le
+dimanche 06:00 Europe/Paris (avancé le 10/10 pour l'absence 07:30–20:00 ;
+[planning actuel](../operations/horaires_fr_cn_presence_pc.md)). Les bascules heure d'été sont traitées par le
 launcher commun ; il ne s'agit pas d'un horaire New York copié.
 
 Le fichier d'observation est

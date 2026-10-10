@@ -53,12 +53,29 @@ def submit_children(
     target: Any | None = None,
 ) -> list[ExecutionEvent]:
     cfg = executor._cfg
+    from service.llm_directional.protections import ProtectionProfile, scoped_execution_config
+    loader = getattr(executor._repo, 'load_llm_protection_profile', None)
+    profile = loader(parent.risk_run_id, parent.symbol,
+        account_id=cfg.resolved_account_id, broker_mode=cfg.broker_mode) if callable(loader) else None
+    if isinstance(profile, ProtectionProfile):
+        if not filled_order.avg_fill_price or filled_order.avg_fill_price <= 0:
+            raise ValueError('Prix exécuté absent : SL GPT non qualifié')
+        cfg = scoped_execution_config(cfg, profile)
     broker = executor._broker
     events: list[ExecutionEvent] = []
     fill_qty = filled_order.filled_qty
     fill_price = filled_order.avg_fill_price or parent.decision_price
     if fill_qty <= 0:
         return events
+
+    if isinstance(profile, ProtectionProfile):
+        # No price TP is intentional: generic post-sync scans must not submit
+        # duplicate stops just because the take-profit leg is absent.
+        if executor._repo.has_open_exit_order_for_symbol(
+            account_id=cfg.resolved_account_id, symbol=parent.symbol
+        ) or any(c.order_type in {'stop', 'stop_limit', 'trailing_stop'}
+                 for c in executor._repo.load_open_child_orders(parent.intent_id)):
+            return events
 
     protections_allowed, blocked_reason = cfg.can_submit_fractional_protection_orders(
         fill_qty,
@@ -90,7 +107,7 @@ def submit_children(
         return events
 
     defer_children, reason = should_defer_children(account_state)
-    if defer_children:
+    if defer_children and not isinstance(profile, ProtectionProfile):
         metrics["children_deferred"] += 1
         events.append(
             make_event(
@@ -118,15 +135,21 @@ def submit_children(
     initial_stop_submitted_intent: OrderIntent | None = None
     initial_stop_submitted_order: BrokerOrder | None = None
     trigger_price, trigger_mode = (
-        resolve_trailing_activation_price(fill_price, cfg, target)
+        resolve_trailing_activation_price(fill_price, cfg, target, side=parent.side)
         if stop_intent is not None
         else (None, None)
     )
 
-    for child in [tp_intent, protection_intent]:
+    for child in [c for c in (tp_intent, protection_intent) if c is not None]:
         try:
-            child_order = broker.submit_intent(child)
-            executor._persist_child_order_state(child, child_order)
+            if isinstance(profile, ProtectionProfile):
+                from service.llm_directional.protections import submit_order
+                child_order = submit_order(executor._repo, broker, child, account_id=cfg.resolved_account_id)
+            else:
+                child_order = broker.submit_intent(child)
+                executor._persist_child_order_state(child, child_order)
+            if isinstance(profile, ProtectionProfile) and child_order.status in {OrderStatus.REJECTED, OrderStatus.FAILED}:
+                raise RuntimeError('SL GPT refusé par le broker')
             submitted_children.append((child, child_order))
             if child.intent_role == IntentRole.TAKE_PROFIT:
                 metrics["child_take_profit_orders_submitted"] = (
@@ -147,6 +170,10 @@ def submit_children(
             metrics["child_order_submit_failures"] = (
                 metrics.get("child_order_submit_failures", 0) + 1
             )
+            if isinstance(profile, ProtectionProfile):
+                # A 20% trailing fallback would loosen the mandatory 7% floor.
+                # Report failure; the watcher retries the fixed SL, never that fallback.
+                raise RuntimeError(f'SL GPT non armé pour {child.symbol}') from exc
             if child.intent_role == IntentRole.INITIAL_STOP:
                 fallback_trailing = build_trailing_stop_intent(
                     parent, fill_qty, fill_price, cfg, target=target
@@ -193,11 +220,11 @@ def submit_children(
         make_event(
             exec_run_id,
             EventType.CHILDREN_SUBMITTED,
-            f"Bracket children for {parent.symbol}: TP + {protection_label}",
+            f"Bracket children for {parent.symbol}: {'TP + ' if tp_intent else ''}{protection_label}",
             symbol=parent.symbol,
             intent_id=parent.intent_id,
             payload={
-                "take_profit_limit_price": tp_intent.limit_price,
+                "take_profit_limit_price": tp_intent.limit_price if tp_intent else None,
                 "initial_stop_price": stop_intent.stop_price if stop_intent is not None else None,
                 "trailing_stop_percent": protection_child.trail_percent
                 if protection_child and protection_child.intent_role == IntentRole.TRAILING_STOP
@@ -208,6 +235,7 @@ def submit_children(
                 "dynamic_trailing_trigger_mode": trigger_mode,
                 "risk_per_share": getattr(target, "risk_per_share", None),
                 "stop_price_initial": getattr(target, "stop_price_initial", None),
+                "llm_protection_profile": cfg.llm_protection_profile,
                 "initial_risk_dollars": getattr(target, "initial_risk_dollars", None),
             },
         )

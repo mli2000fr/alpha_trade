@@ -19,7 +19,7 @@ fr_calendar_snapshot:
   status: ACTIVE_RESEARCH
   priority: P0
   provider: local_XPAR_calendar
-  run_hours: "7"
+  run_hours: "6"
   run_days: "0"
   days_ahead: 370
   description: "Archiver le calendrier XPAR utilisé par la recherche, avec source et horaires UTC. Pas une preuve officielle ni une écriture de market_sessions."
@@ -37,12 +37,12 @@ fr_security_master_sync:
   baseline_history: artifacts/fr/esma_firds/replay_2018/history_2026_observed_v2.json
   max_catchup_days: 31
   max_archive_requests: 128
-  run_hours: "7"
+  run_hours: "5"
   description: "Observer les changements ESMA ISIN/MIC des 330 identités S6C ; fichiers versionnés, sans mise à jour canonique ni nouveaux tickers automatiques."
   tables: "aucune SQL; fichiers:artifacts/fr/operations/fr_security_master_sync"
   activation_requirement: "Deux passages réels validés le 05/10/2026 : 9/9 archives, zéro doublon de version, checkpoint au 04/10. Pas de promotion SQL ni de réparation des lacunes historiques."
-  coverage_description: "Passage 7h Paris avant ouverture 9h ; publications jusqu'à J-1, recouvrement 7 jours, rattrapage borné à 31 jours. Fragments absents : checkpoint non avancé."
-  research_notice: "Remédiation 16-F : passage matinal pour tenter de couvrir la dernière séance avant décision, sans garantie de publication ESMA à 7h. 330 ISIN S6C figés ; available_at réel après téléchargement/contrôles/rejeu. Lacunes historiques toujours bloquantes ; aucune promotion du shadow. Le launcher horaire installé relit cette configuration."
+  coverage_description: "Passage 5h Paris avant absence 7h30-20h ; publications jusqu'à J-1, recouvrement 7 jours, rattrapage borné à 31 jours. Fragments absents : checkpoint non avancé."
+  research_notice: "Passage avancé à 5h Paris : aucune garantie de publication ESMA à cette heure. Si des fragments arrivent ensuite, ils attendent le prochain passage ; ne pas considérer le référentiel complet avant décision. 330 ISIN S6C figés ; available_at réel après téléchargement/contrôles/rejeu. Lacunes historiques toujours bloquantes ; aucune promotion du shadow. Le launcher horaire installé relit cette configuration."
   unlock_steps: ["Installer la tâche FR depuis la page Batch", "Surveiller les fragments ESMA et la continuité récente", "Qualifier séparément découverte nouveaux titres et promotion SQL"]
   log_file: log/batch_fr/fr_security_master_sync.txt
 
@@ -231,7 +231,7 @@ fr_options_mifir_trade_sync:
   status: ACTIVE_RESEARCH
   priority: P3
   provider: euronext_mifir_esma_firds
-  run_hours: "7"
+  run_hours: "6"
   run_days: "1,2,3,4,5,6"
   identities_file: artifacts/fr/sprint6c_reference/identities.jsonl.gz
   universe_scope: verified_current_active_fr_equities
@@ -243,7 +243,7 @@ fr_options_mifir_trade_sync:
   description: "Transactions options différées Paris MiFIR + référentiel public FIRDS, pour tout l'univers FR vérifié et actif. Archivage fichiers de recherche uniquement."
   activation_requirement: "Collecteur implémenté ; activer puis installer. Usage interne et attribution ESMA ; aucune redistribution payante sans licence."
   research_notice: "COLLECTE PARTIELLE EN QUARANTAINE : prix, quantités déclarées, strike, échéance, call/put. Aucun OI, NBBO, Greeks ni historique d'ajustement. Unités de quantité et référence historique non qualifiées ; interdit ML/backtest avant qualification. Titres sans transaction affichés, sans conclure qu'ils n'ont pas d'options. Remplace la piste Excel retirée, PAS le batch options complet. Voir doc/fr/options_mifir_collecte_quotidienne.md."
-  execution_notice: "07h Europe/Paris : fichier du précédent jour de négociation, conservé brièvement par la source. Pas de reconstruction J-7/J garantie. Reprise FIRDS dans la même journée, archives dédupliquées ; notifications mail/Telegram via le launcher commun."
+  execution_notice: "06h Europe/Paris, avant absence 7h30-20h : fichier du précédent jour de négociation, conservé brièvement par la source. Si non publié à cette heure, risque de collecte manquée ; pas de reconstruction J-7/J garantie. Reprise FIRDS dans la même journée, archives dédupliquées ; notifications mail/Telegram via le launcher commun."
   log_file: log/batch_fr/fr_options_mifir_trade_sync.txt
 
 fr_options_snapshot:

@@ -4,6 +4,14 @@
 
 ## Décision d'architecture : D9 écrit, 17-C observe
 
+**Mise à jour du 10 octobre :** le contrôle est désormais à **20:30 Paris**,
+soit le lendemain civil à 02:30/03:30 Shanghai. Il audite la veille CN grâce à
+`audit_previous_day_before_open: true`, sans choisir une vieille séance durant
+les congés. Voir [planning et durées](../operations/horaires_fr_cn_presence_pc.md).
+Les mentions 23:30 ci-dessous décrivent l'installation initiale, pas l'horaire
+actuel. D9/D6 sont actuellement bloqués pour droits : ce déplacement ne les
+active pas et ne certifie aucun cycle réussi.
+
 Le propriétaire **unique des écritures canoniques quotidiennes prospectives** est `cn_oracle_prospective_daily` (D9, [code](../../service/market/cn_oracle_daily_15d9.py), [configuration](../../batch.yaml)). Après clôture d'une séance ouverte, D9 :
 
 1. fixe la séance J et la prochaine séance de décision K à partir du calendrier CN ; aucune prévision rétroactive après le cutoff de 09:15 Shanghai ;

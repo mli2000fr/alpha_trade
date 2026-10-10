@@ -24,7 +24,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Literal, cast
+from typing import Callable, Literal, cast
 
 from ihm.components.status_badges import classify_heartbeat_freshness
 
@@ -197,7 +197,8 @@ def _resolve_workflow_steps(
 
 
 def _format_workflow_core_step_ranges(steps: tuple[PipelineStepDefinition, ...]) -> str:
-    core_labels = [str(step.num).strip() for step in steps if is_workflow_core_step_number(step.num)]
+    core_labels = [str(step.num).strip() for step in steps
+                   if is_workflow_core_step_number(step.num, max_step=14)]
     if not core_labels:
         return "aucune"
 
@@ -216,7 +217,7 @@ def _format_workflow_core_step_ranges(steps: tuple[PipelineStepDefinition, ...])
         numeric_end = None
 
     for label in core_labels:
-        if is_canonical_pipeline_step_number(label):
+        if is_canonical_pipeline_step_number(label, max_step=14):
             value = int(label)
             if numeric_start is None:
                 numeric_start = numeric_end = value
@@ -1309,6 +1310,7 @@ def _run_pipeline_workflow(
     include_corporate_actions_sync: bool = False,
     include_corporate_actions_apply: bool = False,
     selected_step_keys: tuple[str, ...] | None = None,
+    before_step: Callable[[PipelineStepDefinition, PipelineLaunchOptions, threading.Event], object] | None = None,
 ) -> None:
     steps = cast(
         tuple[PipelineStepDefinition, ...],
@@ -1375,6 +1377,16 @@ def _run_pipeline_workflow(
                 return
 
             step_label = f"{step.num}. {step.name}"
+            _update_workflow_record(managed, workflow_current_step_key=step.key,
+                                    workflow_current_step_label=step_label)
+            if before_step is not None:
+                preparation = before_step(step, options, managed.stop_event)
+                if preparation is not None:
+                    _append_workflow_event(managed, f"Préparation {step_label} : {json.dumps(preparation, default=str)}")
+            if managed.stop_event.is_set():
+                _finalize_workflow_record(managed, status="stopped", returncode=-3,
+                                          workflow_completed_steps=completed_steps)
+                return
             _append_workflow_event(managed, f"=== [{index}/{total_steps}] Démarrage {step_label} ===")
             child_record = start_pipeline_run(
                 step.key,
@@ -1659,6 +1671,7 @@ def start_pipeline_workflow(
     include_corporate_actions_apply: bool = False,
     selected_step_keys: tuple[str, ...] | None = None,
     scheduled_for: datetime | None = None,
+    before_step: Callable[[PipelineStepDefinition, PipelineLaunchOptions, threading.Event], object] | None = None,
 ) -> PipelineRunRecord:
     """Démarre un workflow séquentiel complet en arrière-plan."""
     if list_active_pipeline_runs():
@@ -1793,6 +1806,7 @@ def start_pipeline_workflow(
                 include_corporate_actions_sync=include_sync,
                 include_corporate_actions_apply=include_corporate_actions_apply,
                 selected_step_keys=selected_step_keys,
+                before_step=before_step,
             )
         except Exception as exc:  # pragma: no cover — garde-fou ultime
             # Sans cette branche, une exception non gérée tuerait le thread

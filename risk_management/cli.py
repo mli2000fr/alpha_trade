@@ -1185,7 +1185,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--min-position-notional", type=float, default=500.0)
     p.add_argument("--trade-date", type=str, default=None, help="YYYY-MM-DD (défaut: aujourd'hui)")
     p.add_argument("--summary-path", type=str, default=None, help="Chemin de sortie atomique du résumé JSON du run.")
-    p.add_argument('--llm-filter-run-id', help='Analyse Oracle/Web exacte, LONG-only et PAPER uniquement')
+    p.add_argument('--llm-filter-run-id', help='Analyse Oracle/Web directionnelle exacte, PAPER uniquement')
     p.add_argument("--dry-run", action="store_true", default=False)
     p.add_argument(
         "--run-mode",
@@ -1655,6 +1655,20 @@ def main(args: list[str] | None = None) -> None:
         market_regimes_config=market_regimes_cfg,
         equity=effective_equity,
     )
+    if args.llm_filter_run_id:
+        from service.llm_directional.repository import Repository as LLMRepository
+        from service.llm_directional.protections import archived_profile
+        llm_run, _ = LLMRepository(repo.engine).get(args.llm_filter_run_id)
+        protection = archived_profile(llm_run['config_json'])
+        from service.llm_directional.config import FilterConfig
+        llm_config = FilterConfig(**json.loads(llm_run['config_json']))
+        if llm_config.allow_short or protection is not None:
+            # Sizing and the broker SL share the same risk distance. Whole shares
+            # are required for GTC stops/trailing and market-on-open orders.
+            config = config.with_overrides(allow_fractional_shares=False)
+        if protection is not None:
+            config = config.with_overrides(fixed_stop_pct=protection.stop_loss_pct,
+                disable_price_take_profit=True)
     # Ré-assert long_only APRÈS les guards structurels : aucun chemin ne doit
     # réactiver les shorts pour un compte configuré long-only.
     if account_long_only:
@@ -2085,10 +2099,27 @@ def main(args: list[str] | None = None) -> None:
             LOGGER.info("MLRankedCandidate construits: %d longs + %d shorts", len(longs), len(shorts))
 
         # Symbols list for loading prices/win_rates/returns
+        if run_mode in (RiskRunMode.PAPER, RiskRunMode.LIVE):
+            from service.market.new_entry_data_guard import check_new_entry_data
+            rejected_data = check_new_entry_data(getattr(repo, 'engine', None), [c.symbol for c in candidates], trade_date,
+                required_sessions=max(config.atr_window+1, config.correlation_lookback_days+1))
+            for symbol, reason in rejected_data.items():
+                LOGGER.error('NEW_ENTRY_DATA_REJECTED %s: %s', symbol, reason)
+            candidates = [c for c in candidates if c.symbol not in rejected_data]
+            progress_context['new_entry_data_rejections'] = rejected_data
         symbols = [c.symbol for c in candidates]
 
         LOGGER.info("Chargement des prix et ATR…")
         prices = repo.load_prices_asof(symbols, trade_date, atr_window=config.atr_window)
+        if run_mode in (RiskRunMode.PAPER, RiskRunMode.LIVE):
+            from service.market.new_entry_data_guard import validate_entry_prices
+            rejected_prices = validate_entry_prices(prices, symbols, trade_date)
+            for symbol, reason in rejected_prices.items():
+                LOGGER.error('NEW_ENTRY_DATA_REJECTED %s: %s', symbol, reason)
+            candidates = [c for c in candidates if c.symbol not in rejected_prices]
+            symbols = [c.symbol for c in candidates]
+            prices = {symbol: value for symbol, value in prices.items() if symbol in symbols}
+            progress_context['new_entry_data_rejections'].update(rejected_prices)
         LOGGER.info("Prix charges pour %d symboles.", len(prices))
         _emit_live_progress(
             dict(progress_context, targeted_symbols=len(candidates), price_symbols=len(prices)),
@@ -2776,6 +2807,7 @@ def main(args: list[str] | None = None) -> None:
         # ── Section 17 Point 2.4 : rapport qualité quotidien ────────────
         "daily_quality_report_path": daily_quality_report_path,
         "preflight_data_quality": preflight_data_quality,
+        "new_entry_data_rejections": progress_context.get('new_entry_data_rejections', {}),
         # Phase 5.1.a — décomposition equity (cash + positions + dividendes ledger)
         "account_equity_breakdown": equity_breakdown,
         # Phase 5.1.b — pondérations conviction unifiées via core.conviction

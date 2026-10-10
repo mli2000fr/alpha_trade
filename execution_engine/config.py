@@ -222,6 +222,7 @@ class ExecutionConfig:
     # lieu du close de décision — contrôle d'attribution causale (off par défaut).
     tp_anchor_entry: bool = False
     sl_anchor_entry: bool = False
+    llm_protection_profile: dict[str, Any] | None = None  # Frozen, scoped run policy.
     protection_transition_timeout_seconds: int = 0
     protection_transition_poll_interval_seconds: float = 2.0
 
@@ -281,6 +282,11 @@ class ExecutionConfig:
     def __post_init__(self) -> None:
         if self.broker_mode not in ("paper", "live"):
             raise ValueError("broker_mode doit être 'paper' ou 'live'.")
+        if self.llm_protection_profile is not None:
+            from service.llm_directional.protections import ProtectionProfile
+            ProtectionProfile(**self.llm_protection_profile)
+            if self.market_code != 'US_EQ' or self.broker_mode != 'paper' or self.resolved_account_id != 'default':
+                raise ValueError('Protections GPT exclusivement US default PAPER')
         if self.execution_profile not in ("overnight_cash_swing", "custom", "legacy_intraday"):
             raise ValueError("execution_profile doit être 'overnight_cash_swing', 'custom' ou 'legacy_intraday'.")
         if self.submission_window not in ("post_close", "pre_open", "both"):

@@ -273,7 +273,7 @@ def test_cn_daily_quality_is_catalogued_without_enabling_duplicate_collector() -
     specs = {item.name: item for item in batches.load_batch_specs()}
     quality = specs["cn_daily_quality_17c"]
     assert quality.enabled and quality.runnable and quality.status == "ACTIVE"
-    assert quality.timezone == "China Standard Time"
+    assert quality.timezone == "Europe/Paris"
     assert "batch_cn.yaml" in " ".join(batches.build_install_command(quality))
     assert "cn_daily_quality_launcher_17c.ps1" in " ".join(batches.build_run_command(quality))
     assert "cn_daily_market_data_sync" not in specs

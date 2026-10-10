@@ -11,13 +11,13 @@ database:
 
 us_pipeline:
   # Sélection fonctionnelle du batch us_pipeline ; horaires/univers dans batch.yaml.
-  # Entiers uniques 1..12, ordre d'exécution toujours numérique, arrêt au premier échec.
+  # Entiers uniques 1..14, ordre d'exécution toujours numérique, arrêt au premier échec.
   # 10 = prédiction, 11 = risque, 12 = exécution. LIVE interdit.
   # Aucune insertion automatique des étapes omises ; leurs prérequis doivent exister.
   execution_mode: paper  # Aucun ordre sans étape 12 sélectionnée.
-  account_id: default    # Les étapes 11/12 en PAPER exigent un compte configuré paper.
-  steps: [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12]  # Séances US lundi–jeudi.
-  steps_friday: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]  # Séance US vendredi, liste figée même après minuit.
+  account_id: default    # 11/12 en PAPER et 13/14 (même en simulation) exigent un compte paper.
+  steps: [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14]  # Séances US lundi–jeudi.
+  steps_friday: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]  # Séance US vendredi, liste figée même après minuit.
 
 llm_directional_filter:
   # Opt-in, recherche prospective et exécution PAPER uniquement. Aucun historique Web simulé.
@@ -26,8 +26,8 @@ llm_directional_filter:
   api_key_env: OPENAI_API_KEY
   default_symbol_source: universe-file:univers_filtred_tradable.txt
   default_oracle_batch_id: model-factory-20261003082853-e98332
-  oracle_top_n: 10  # Nombre de premiers scores Oracle à analyser (pas de tri par rendement futur).
-  max_selected: 5   # Plafond, jamais un quota obligatoire ; 0 candidat reste possible.
+  oracle_top_n: 20  # Nombre de premiers scores Oracle à analyser (pas de tri par rendement futur).
+  max_selected: 3   # Plafond, jamais un quota obligatoire ; 0 candidat reste possible.
   min_oracle_coverage_ratio: 0.90  # Bloque un classement issu d’une prédiction partielle.
   min_confidence: 0.75  # Note LLM non calibrée, pas une probabilité de rendement.
   min_sources: 2
@@ -38,6 +38,12 @@ llm_directional_filter:
   max_tool_calls: 5
   account_id: default
   horizon: 20
+  allow_short: true  # GPT peut sélectionner LONG/SHORT ; ordres compte default PAPER, ETB uniquement.
+  protections:
+    enabled: true  # Case IHM par défaut ; effet uniquement avec filtre GPT PAPER.
+    stop_loss_pct: 0.07  # SL depuis le prix réellement exécuté, pas depuis le close J.
+    exit_session: 21  # Séance d'achat = 1 ; sortie à l'ouverture de la 21e séance NYSE.
+    trailing_stop_pct: 0.15  # Ne desserre jamais le SL ; aucun TP de prix dans ce profil.
 
 alpaca:
   # Sprint S5 / A-013 — plus aucune clé en clair acceptée à la racine.
@@ -55,7 +61,7 @@ alpaca:
       api_key: "${ALPACA_API_KEY}"
       secret_key: "${ALPACA_SECRET_KEY}"
       mode: paper
-      long_only: true
+      long_only: false  # Autorise les SHORT PAPER ; contrôles broker/risque toujours obligatoires.
     - id: test1
       label: "Compte test 1 (paper)"
       api_key: "${ALPACA_KEY_CPT_1}"
@@ -486,6 +492,16 @@ market_data:
 # En liquidity_only, provider/max_age_days/missing_policy restent configurés
 # pour un retour à strict, mais ne participent pas à la publication.
 # ---------------------------------------------------------------------------
+oracle_atr_study:
+  # Recherche uniquement : aucune utilisation des rendements futurs pour entrer en live.
+  missing_returns_policy: partial  # partial | strict ; métadonnées de couverture par liste.
+
+# Nouvelles entrées US PAPER/LIVE uniquement ; jamais de fallback sur données manquantes.
+# Ce contrôle ne déclenche aucune vente ni modification des protections existantes.
+new_entry_data_guard:
+  min_sessions: 61  # ATR/ADV 20 + historique corrélation 60 ; minimum autorisé 21.
+  publication_delay_minutes: 15  # Après clôture NYSE réelle, y compris séances écourtées.
+
 market_cap:
   # strict = capitalisation obligatoire ; liquidity_only = aucun filtre de capitalisation.
   policy: liquidity_only                         # strict | liquidity_only

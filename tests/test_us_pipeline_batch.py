@@ -200,7 +200,7 @@ def test_catalogue_has_schedule_and_generic_commands():
     assert 'us_pipeline' in build_run_command(spec)
 
 
-@pytest.mark.parametrize('numbers', [[], None, '1,2', [0], [13], [True], [1.0], ['10'], [1,1]])
+@pytest.mark.parametrize('numbers', [[], None, '1,2', [0], [15], ['T1'], [True], [1.0], ['10'], [1,1]])
 def test_invalid_selection_rejected(numbers):
     with pytest.raises(ValueError, match='unique integers'):
         us_pipeline.selected_steps(numbers)
@@ -255,7 +255,7 @@ def test_live_refused_before_workflow(monkeypatch, tmp_path):
 
 def test_config_validation_before_workflow(monkeypatch, tmp_path):
     engine, cfg = setup_run(monkeypatch, tmp_path)
-    monkeypatch.setattr(us_pipeline, 'load_pipeline_policy', lambda: {'steps':[13]})
+    monkeypatch.setattr(us_pipeline, 'load_pipeline_policy', lambda: {'steps':[15]})
     monkeypatch.setattr(process_registry, 'start_pipeline_workflow', lambda *a, **k: pytest.fail('started'))
     with pytest.raises(ValueError, match='unique integers'):
         us_pipeline.execute_pipeline(engine, cfg, 'invalid', False)
@@ -297,7 +297,7 @@ def test_step_list_chosen_from_session_weekday(day, key, numbers):
     assert [int(s.num) for s in steps] == numbers
 
 
-@pytest.mark.parametrize('numbers', [None, [], [1,1], [13], [True], ['8']])
+@pytest.mark.parametrize('numbers', [None, [], [1,1], [15], [True], ['8']])
 def test_missing_or_invalid_friday_list_has_no_silent_fallback(numbers):
     with pytest.raises(ValueError, match='steps_friday.*unique integers'):
         us_pipeline.session_steps({'steps':[1,2], 'steps_friday':numbers}, date(2026, 10, 9))
@@ -356,6 +356,7 @@ def test_paper_options_and_account_reach_workflow_and_commands(monkeypatch, tmp_
     seen = {}
     def start(options, **kwargs):
         seen['options'] = options
+        seen['before_step'] = kwargs['before_step']
         return SimpleNamespace(run_id='paper-test')
     monkeypatch.setattr(process_registry, 'start_pipeline_workflow', start)
     monkeypatch.setattr(process_registry, 'poll_pipeline_run',
@@ -367,6 +368,19 @@ def test_paper_options_and_account_reach_workflow_and_commands(monkeypatch, tmp_
     command = result.details['steps'][-1]['command']
     assert 'paper' in command
     assert command[command.index('--account')+1] == 'default'
+    assert result.details['watcher_before_execution'] is True
+    from service.forward_pit import watcher_startup
+    import threading
+    watcher = []
+    monkeypatch.setattr(watcher_startup, 'ensure_watcher',
+                        lambda engine, options, **kw: watcher.append(options.account_id) or {'status':'READY'})
+    event = threading.Event()
+    steps = us_pipeline.selected_steps([10,11,12])
+    assert seen['before_step'](steps[0], seen['options'], event) is None
+    assert seen['before_step'](steps[1], seen['options'], event) is None
+    assert not watcher
+    assert seen['before_step'](steps[2], seen['options'], event) == {'status':'READY'}
+    assert watcher == ['default']
 
 
 def test_paper_without_broker_steps_needs_no_credentials(monkeypatch, tmp_path):
@@ -412,3 +426,71 @@ def test_paper_account_registry_resolution_without_network(monkeypatch):
     monkeypatch.setattr(AccountRegistry, '__init__', lambda self: None)
     monkeypatch.setattr(AccountRegistry, 'resolve', lambda self, account: SimpleNamespace(mode='paper'))
     us_pipeline.require_paper_account('default')
+
+
+@pytest.mark.parametrize('day,key', [('2026-10-07','steps'), ('2026-10-09','steps_friday')])
+def test_corporate_actions_selected_once_and_account_date_preserved(monkeypatch, tmp_path, day, key):
+    engine, cfg = setup_run(monkeypatch, tmp_path)
+    selected_day = date.fromisoformat(day)
+    monkeypatch.setattr(us_pipeline, 'session_plan', lambda now: (selected_day, None))
+    monkeypatch.setattr(us_pipeline, 'load_pipeline_policy', lambda: {
+        'steps':[14,12,13], 'steps_friday':[14,12,13],
+        'execution_mode':'paper', 'account_id':'default'})
+    accounts = []
+    monkeypatch.setattr(us_pipeline, 'require_paper_account', accounts.append)
+    seen = {}
+    def start(options, **kwargs):
+        seen.update(kwargs)
+        return SimpleNamespace(run_id='corporate-workflow')
+    monkeypatch.setattr(process_registry, 'start_pipeline_workflow', start)
+    monkeypatch.setattr(process_registry, 'poll_pipeline_run',
+        lambda run: dict(status='completed',workflow_completed_steps=3))
+    result = us_pipeline.execute_pipeline(engine, cfg, 'corporate', False)
+    assert accounts == ['default']
+    assert result.details['steps_configuration_source'] == f'config.yaml:us_pipeline.{key}'
+    assert result.requested == result.persisted == 3
+    assert seen['selected_step_keys'] == ('execution','corporate_actions_sync','corporate_actions_apply')
+    # Exercise the real workflow selector too: previously it silently dropped 13/14.
+    from ihm.services.pipeline_runner import get_pipeline_workflow_steps
+    steps = get_pipeline_workflow_steps(selected_step_keys=seen['selected_step_keys'])
+    assert [s.num for s in steps] == ['12','13','14']
+    for step in result.details['steps'][1:]:
+        command = step['command']
+        assert command[command.index('--account')+1] == 'default'
+    apply_command = result.details['steps'][-1]['command']
+    assert apply_command[apply_command.index('--as-of')+1] == day
+
+
+@pytest.mark.parametrize('mode', ['paper','simulate'])
+@pytest.mark.parametrize('number', [13,14])
+def test_corporate_actions_reject_live_account_even_in_simulation(monkeypatch, tmp_path, mode, number):
+    from service.alpaca.accounts import AccountRegistry
+    engine, cfg = setup_run(monkeypatch, tmp_path)
+    monkeypatch.setattr(us_pipeline, 'load_pipeline_policy', lambda: {
+        'steps':[number], 'execution_mode':mode, 'account_id':'default'})
+    monkeypatch.setattr(AccountRegistry, '__init__', lambda self: None)
+    monkeypatch.setattr(AccountRegistry, 'resolve', lambda self, account: SimpleNamespace(mode='live'))
+    monkeypatch.setattr(process_registry, 'start_pipeline_workflow', lambda *a, **k: pytest.fail('started'))
+    with pytest.raises(ValueError, match='configured in paper'):
+        us_pipeline.execute_pipeline(engine, cfg, 'corporate-live', False)
+
+
+@pytest.mark.parametrize('status,completed', [('completed',14),('failed',13),('failed',12)])
+def test_fourteen_step_counters_include_corporate_actions(monkeypatch, tmp_path, status, completed):
+    engine, cfg = setup_run(monkeypatch, tmp_path)
+    monkeypatch.setattr(us_pipeline, 'load_pipeline_policy', lambda: {'steps':list(range(1,15))})
+    monkeypatch.setattr(us_pipeline, 'require_paper_account', lambda account: None)
+    monkeypatch.setattr(process_registry, 'start_pipeline_workflow', lambda *a, **k: SimpleNamespace(run_id='fourteen'))
+    monkeypatch.setattr(process_registry, 'poll_pipeline_run', lambda run: dict(
+        status=status,workflow_completed_steps=completed,
+        workflow_current_step_label='13. Corporate Actions Sync' if completed==12 else '14. Corporate Actions Apply'))
+    if status == 'completed':
+        result = us_pipeline.execute_pipeline(engine, cfg, 'fourteen', False)
+        assert result.persisted == result.requested == 14
+        assert result.details['selected_step_numbers'] == list(range(1,15))
+        assert result.details['training'] is False
+    else:
+        with pytest.raises(BatchRunError, match=f'{completed}/14') as error:
+            us_pipeline.execute_pipeline(engine, cfg, 'fourteen', False)
+        assert error.value.outcome.persisted == completed
+        assert error.value.outcome.requested == 14

@@ -135,6 +135,10 @@ class AlpacaTradingClient:
     def get_account(self) -> dict:  # type: ignore[type-arg]
         return self._request("GET", "/v2/account")  # type: ignore[return-value]
 
+    def get_asset(self, symbol: str) -> dict:
+        from urllib.parse import quote
+        return self._request("GET", "/v2/assets/" + quote(symbol, safe=''))
+
     def get_portfolio_history(
         self,
         *,

@@ -3350,10 +3350,33 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             '🌐 Filtrage GPT + recherche Web après Oracle — PAPER uniquement',
             value=bool(st.session_state.get('pipeline_llm_filter_enabled', _llm_config.enabled)),
             key='pipeline_llm_filter_enabled',
-            help='Analyse prospective des premiers scores Oracle, archivage en base, puis LONG/abstention. Aucun gain démontré.')
+            help='Analyse prospective des premiers scores Oracle, archivage en base, puis LONG/SHORT/abstention '
+                 'selon config.yaml. Aucun gain démontré.')
         llm_filter_run_id = None
         llm_oracle_batch_id = None
+        llm_specific_protections = False
         if llm_filter_enabled:
+            st.caption(f"Directions GPT autorisées : {'LONG / SHORT / ABSTENTION' if _llm_config.allow_short else 'LONG / ABSTENTION'}. "
+                       f"Maximum {_llm_config.max_selected} titres au total. Les SHORT restent soumis au régime, "
+                       "au risque et à une disponibilité easy-to-borrow Alpaca confirmée.")
+            llm_specific_protections = st.checkbox(
+                '🛡️ Protections spécifiques GPT — SL / sortie temporelle / trailing',
+                value=bool(_llm_config.protections and _llm_config.protections.enabled),
+                key='pipeline_llm_specific_protections',
+                help='Uniquement pour les nouvelles positions GPT du compte principal PAPER. '
+                     'Décochée : protections historiques inchangées. Valeurs dans config.yaml.')
+            if llm_specific_protections:
+                _p = _llm_config.protections
+                if _p is None:
+                    st.error('Configuration llm_directional_filter.protections absente')
+                    st.stop()
+                st.info(f'SL {_p.stop_loss_pct:.0%} depuis l’entrée (sous LONG / au-dessus SHORT) ; trailing {_p.trailing_stop_pct:.0%} '
+                        f'sans desserrer le SL ; clôture à l’ouverture de la séance {_p.exit_session} '
+                        '(entrée = séance 1, vente LONG / rachat SHORT). Aucun TP de prix. Quantités entières et watcher actif requis. '
+                        'Politique figée dès l’analyse ; pas de modification des positions existantes.')
+                st.caption('Avant l’étape 12 : Watcher protections → Démarrer service local '
+                           'pour le compte principal. Un simple « Run watcher once » ne suffit pas. '
+                           'Sans heartbeat du service continu, l’exécution spécifique est bloquée.')
             from common.universe_files import list_universe_file_sources
             _llm_sources = ['tradable-universe', *list_universe_file_sources()]
             if _llm_config.default_symbol_source not in _llm_sources:
@@ -5026,6 +5049,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             account_id=selected_account_id,
             llm_filter_enabled=bool(llm_filter_enabled),
             llm_filter_run_id=llm_filter_run_id,
+            llm_specific_protections=llm_specific_protections,
             ml_predict_batch_id=llm_oracle_batch_id if llm_filter_enabled else None,
             trade_date=trade_date,
             capital_preset_key=capital_preset_key,

@@ -27,6 +27,7 @@ dependencies = [
     "torchmetrics",
     "lightgbm",
     "streamlit",
+    "psutil>=5.9",
     "pyyaml",
     "vectorbt>=0.26",
     "plotly",

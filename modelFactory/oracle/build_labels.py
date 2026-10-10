@@ -29,13 +29,15 @@ import argparse
 import logging
 from collections import Counter
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
 import numpy as np
 import pandas as pd
 from sqlalchemy import bindparam, text
+
+from common.market_calendar import _get_nyse_calendar
 
 from database.connection import get_sqlalchemy_engine
 from modelFactory.oracle.config import resolve_oracle_batch_id
@@ -239,6 +241,7 @@ def load_price_matrices(engine: Any, symbols: list[str], start_date: str) -> Pri
         "SELECT symbol, `date` AS d, CAST(COALESCE(adj_close, close) AS DOUBLE) AS px, "
         "data_source "
         "FROM stock_bars_daily WHERE symbol IN :syms AND `date` >= :start "
+        "AND COALESCE(is_filled, 0)=0 "
         "ORDER BY d, symbol, data_source"
     ).bindparams(bindparam("syms", expanding=True))
     with engine.connect() as conn:
@@ -256,6 +259,11 @@ def load_price_matrices(engine: Any, symbols: list[str], start_date: str) -> Pri
     source = indexed["data_source"].unstack().reindex_like(raw_close)
     raw_close.index = pd.to_datetime(raw_close.index)
     source.index = raw_close.index
+    # H means NYSE sessions, not the union of dates present in the price table.
+    # A globally missing session must not shift every subsequent exit date.
+    sessions = nyse_sessions(start_date, raw_close.index.max().date())
+    raw_close = raw_close.reindex(sessions)
+    source = source.reindex(sessions)
     close = raw_close.ffill()
     previous_observed = raw_close.ffill().shift(1)
     ratio = raw_close / previous_observed.where(previous_observed.ne(0))
@@ -263,6 +271,39 @@ def load_price_matrices(engine: Any, symbols: list[str], start_date: str) -> Pri
     extreme_break = ratio.ge(threshold) | ratio.le(1.0 / threshold)
     extreme_break_count = extreme_break.fillna(False).astype(int).cumsum()
     return PriceMatrices(close, raw_close, source, extreme_break_count)
+
+
+def nyse_sessions(start: str | date, end: str | date) -> pd.DatetimeIndex:
+    calendar = _get_nyse_calendar()
+    if calendar is None:
+        raise RuntimeError("Calendrier NYSE indisponible : labels non calculés")
+    return pd.DatetimeIndex(calendar.schedule(start_date=start, end_date=end).index).tz_localize(None)
+
+
+def label_calendar(start: str | date, end: str | date, horizon: int) -> dict[date, tuple[date, date]]:
+    """Exit and availability are exchange dates, independent of price presence."""
+    if isinstance(horizon, bool) or not isinstance(horizon, int) or horizon < 1:
+        raise ValueError("horizon doit être un entier strictement positif")
+    end = date.fromisoformat(end) if isinstance(end, str) else end
+    sessions = nyse_sessions(start, end + timedelta(days=3 * (horizon + 1) + 30))
+    days = [ts.date() for ts in sessions]
+    return {day: (days[i + horizon], days[i + horizon + 1])
+            for i, day in enumerate(days) if day <= end and i + horizon + 1 < len(days)}
+
+
+def load_stored_membership(engine: Any, batch_id: str, horizon: int,
+                           start_date: str | None, end_date: str | None) -> set[tuple[str, str]]:
+    """Repair the WHOLE original daily universe, never just today's study symbols."""
+    query = "SELECT prediction_date,symbol FROM global_oracle_labels WHERE batch_id=:bid AND horizon=:h"
+    params = {"bid": batch_id, "h": horizon}
+    if start_date:
+        query += " AND prediction_date>=:start"
+        params["start"] = start_date
+    if end_date:
+        query += " AND prediction_date<=:end"
+        params["end"] = end_date
+    with engine.connect() as conn:
+        return {(_iso(d), str(s)) for d, s in conn.execute(text(query), params)}
 
 
 def load_close_matrix(engine: Any, symbols: list[str], start_date: str) -> pd.DataFrame:
@@ -329,6 +370,7 @@ def build_labels(
     output_parquet: str | None = None,
     progress_callback: Callable[[int, int, str], None] | None = None,
     universe_mode: str = "static_bars",
+    prediction_dates: list[str] | None = None,
 ) -> dict[str, Any]:
     """Construit et persiste les labels Oracle H20 pour ``batch_id``.
 
@@ -347,7 +389,7 @@ def build_labels(
     """
     engine = engine or get_sqlalchemy_engine()
 
-    if universe_mode not in {"static_bars", "pit_dynamic_bars"}:
+    if universe_mode not in {"static_bars", "pit_dynamic_bars", "stored_membership"}:
         raise ValueError(f"universe_mode Oracle invalide: {universe_mode}")
     if universe_mode == "pit_dynamic_bars" and (not symbols or not start_date or not end_date):
         raise ValueError("pit_dynamic_bars requiert symbols, start_date et end_date")
@@ -358,6 +400,10 @@ def build_labels(
         from modelFactory.oracle.dynamic_universe import load_dynamic_universe_from_bars
         dynamic_membership, dynamic_diagnostics = load_dynamic_universe_from_bars(
             engine, symbols or [], start_date=str(start_date), end_date=str(end_date))
+    elif universe_mode == "stored_membership":
+        if symbols:
+            raise ValueError("stored_membership interdit de restreindre les symboles historiques")
+        rank_keys = load_stored_membership(engine, batch_id, horizon, start_date, end_date)
     else:
         rank_keys = load_universe_from_ranks(engine, batch_id, horizon)
     universe_check: dict[str, Any] | None = None
@@ -367,6 +413,9 @@ def build_labels(
                           "only_in_ranks": 0, "only_in_preds": 0,
                           "samples_only_ranks": [], "samples_only_preds": [],
                           "source": "pit_dynamic_bars", "dynamic": dynamic_diagnostics}
+    elif universe_mode == "stored_membership":
+        universe_check = {"equal": True, "source": "stored_membership", "n_ranks": len(rank_keys),
+                          "n_preds": len(rank_keys), "only_in_ranks": 0, "only_in_preds": 0}
     elif symbols and not rank_keys:
         # Standalone (--oracle-model-only) : aucun global_rank_history pour ce
         # batch → l'univers des labels est l'ensemble des symboles fournis ayant
@@ -437,6 +486,11 @@ def build_labels(
         all_dates = [d for d in all_dates if d >= date.fromisoformat(start_date)]
     if end_date:
         all_dates = [d for d in all_dates if d <= date.fromisoformat(end_date)]
+    if prediction_dates is not None:
+        if universe_mode != "stored_membership":
+            raise ValueError("prediction_dates est réservé à la réparation stored_membership")
+        selected_dates = {date.fromisoformat(d) for d in prediction_dates}
+        all_dates = [d for d in all_dates if d in selected_dates]
     if not all_dates:
         return {"status": "error", "reason": "empty_window", "universe_check": universe_check}
 
@@ -452,6 +506,7 @@ def build_labels(
     close = prices.close
     if close.empty:
         return {"status": "error", "reason": "no_bars", "universe_check": universe_check}
+    calendar_dates = label_calendar(all_dates[0], all_dates[-1], horizon)
 
     if progress_callback is not None:
         progress_callback(0, n_dates, "calcul des déciles cross-sectionnels…")
@@ -538,9 +593,9 @@ def build_labels(
             dec_s = pd.Series(np.nan, index=uni_syms, dtype=float)
             ext_s = pd.Series(np.nan, index=uni_syms, dtype=float)
 
-        exit_date = close.index[exit_pos].date()
-        avail_pos = exit_pos + 1
-        available_date = close.index[avail_pos].date() if avail_pos < len(close) else None
+        exit_date, available_date = calendar_dates[d]
+        if close.index[exit_pos].date() != exit_date:
+            raise RuntimeError("Matrice de prix non alignée sur les séances NYSE")
 
         rets = day_ret.to_numpy(dtype=float)
         raw_rets = raw_ret.to_numpy(dtype=float)
@@ -642,7 +697,7 @@ def main() -> None:
     parser.add_argument("--end-date", default=None, help="YYYY-MM-DD inclus.")
     parser.add_argument("--dry-run", action="store_true",
                         help="Calcule sans écrire en base (diagnostic).")
-    parser.add_argument("--universe-mode", choices=["static_bars", "pit_dynamic_bars"],
+    parser.add_argument("--universe-mode", choices=["static_bars", "pit_dynamic_bars", "stored_membership"],
                         default="static_bars")
     parser.add_argument(
         "--output-parquet",
