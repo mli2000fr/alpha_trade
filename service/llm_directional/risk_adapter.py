@@ -78,11 +78,10 @@ def build_entries(builder, candidates, prices, sector_map, trade_date, return_ma
         raise ValueError('Direction GPT inconnue')
     if any(c.side == 'short' for c in candidates) and not builder._cfg.short_selling_enabled:
         raise ValueError('SHORT désactivé par la configuration risque')
-    for candidate in candidates:
-        price = prices.get(candidate.symbol)
-        if (price is None or price.price_asof_date != trade_date or price.atr_asof_date != trade_date
-                or price.adv_usd is None or price.adv_usd <= 0):
-            raise ValueError(f'Prix/ATR/ADV J non qualifié: {candidate.symbol}')
+    from service.market.new_entry_data_guard import validate_entry_prices
+    rejected = validate_entry_prices(prices, [c.symbol for c in candidates], trade_date)
+    if rejected:
+        raise ValueError(f'Prix/ATR/ADV J non qualifié: {rejected}')
     selections = [SelectionScore(symbol=c.symbol, sector=sector_map.get(c.symbol, 'Unknown'),
         score_used=c.lineage['confidence_uncalibrated'], score_source='llm_confidence_uncalibrated',
         snapshot_date=trade_date, selection_rank=c.side_rank, side='sell' if c.side == 'short' else 'buy',

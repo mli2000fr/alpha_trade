@@ -492,6 +492,16 @@ market_data:
 # En liquidity_only, provider/max_age_days/missing_policy restent configurés
 # pour un retour à strict, mais ne participent pas à la publication.
 # ---------------------------------------------------------------------------
+oracle_atr_study:
+  # Recherche uniquement : aucune utilisation des rendements futurs pour entrer en live.
+  missing_returns_policy: partial  # partial | strict ; métadonnées de couverture par liste.
+
+# Nouvelles entrées US PAPER/LIVE uniquement ; jamais de fallback sur données manquantes.
+# Ce contrôle ne déclenche aucune vente ni modification des protections existantes.
+new_entry_data_guard:
+  min_sessions: 61  # ATR/ADV 20 + historique corrélation 60 ; minimum autorisé 21.
+  publication_delay_minutes: 15  # Après clôture NYSE réelle, y compris séances écourtées.
+
 market_cap:
   # strict = capitalisation obligatoire ; liquidity_only = aucun filtre de capitalisation.
   policy: liquidity_only                         # strict | liquidity_only

@@ -69,6 +69,25 @@ def calendar_changes(groups, calendar):
     return updates, rebuild
 
 
+def rebuild_dates(wrong_exits, synthetic_days, invalid, *, include_invalid=False):
+    """Return dates, never a reduced set of selected symbols."""
+    days = set(wrong_exits) | {str(d)[:10] for d in synthetic_days}
+    if include_invalid:
+        days.update(pd.to_datetime(invalid.prediction_date).dt.strftime('%Y-%m-%d'))
+    return sorted(days)
+
+
+def fetch_price_evidence(symbol, start, end, *, session):
+    """Use the same verified session for prices and adjustment evidence."""
+    from service.eodhd.clientEodhd import fetch_eod, fetch_splits
+    return {
+        'bars': fetch_eod(symbol, start=start, end=end,
+                          feature='oracle_atr_repair', session=session),
+        'splits': fetch_splits(symbol, start=start,
+                              feature='oracle_atr_repair', session=session),
+    }
+
+
 def coverage(engine, batch_id, horizon, start, end):
     fields = ','.join(f'SUM({name} IS NULL) AS {name}' for name in MOVEMENT_FIELDS)
     with engine.connect() as conn:
@@ -99,7 +118,7 @@ def qualify_static_extension(engine, batch_id, horizon, reference_day):
 
 
 def run(*, batch_id, horizon, start_date, end_date, symbol_source, output,
-        apply=False, fetch_prices=False, engine=None):
+        apply=False, fetch_prices=False, rebuild_invalid_labels=False, engine=None):
     from database.connection import get_sqlalchemy_engine
     engine = engine or get_sqlalchemy_engine(db_name='alpha_trade')
     if resolve_oracle_artifact_horizon(batch_id) != horizon:
@@ -144,7 +163,11 @@ def run(*, batch_id, horizon, start_date, end_date, symbol_source, output,
     updates, wrong_exits = calendar_changes(groups, calendar)
     # Only re-rank when the target actually changes. Existing missing-price
     # exclusions remain exclusions; rereading a provider does not certify identity.
-    rebuild_days = sorted(set(wrong_exits) | {str(d)[:10] for d in synthetic_days})
+    # Prices may have been supplied since these labels were calculated. Rebuild
+    # the whole original daily membership (not just the repaired symbols), so
+    # deciles and all comparative selections stay on the same population.
+    rebuild_days = rebuild_dates(wrong_exits, synthetic_days, invalid,
+                                 include_invalid=rebuild_invalid_labels)
     before = coverage(engine, batch_id, horizon, start_date, end_date)
     missing = invalid.merge(bounds, on='symbol', how='left')
     missing['gap_kind'] = [
@@ -172,13 +195,17 @@ def run(*, batch_id, horizon, start_date, end_date, symbol_source, output,
             'static_extension_dates': extend_days if seed else [],
             'static_extension_qualification': extension_reason,
             'price_policy': 'Archive provider evidence; do not invent delisting prices or overwrite suspect identities',
-            'apply': apply}
+            'apply': apply, 'rebuild_invalid_labels': rebuild_invalid_labels}
     save(output / 'plan.json', plan)
     LOG.info('Repair plan: availability=%d, rebuild=%d, unqualified symbols=%d',
              len(updates), len(rebuild_days), invalid.symbol.nunique())
 
     if fetch_prices:
-        from service.eodhd.clientEodhd import fetch_eod, fetch_splits
+        from common.verified_http import verified_session
+        # Keep TLS verification, including the Windows certificate store. A
+        # plain requests session can fail behind the local TLS proxy and open
+        # the provider circuit before any price evidence has been received.
+        provider_session = verified_session()
         evidence = output / 'provider_evidence'
         evidence.mkdir()
         results = []
@@ -188,9 +215,9 @@ def run(*, batch_id, horizon, start_date, end_date, symbol_source, output,
             last = min(pd.to_datetime(rows.oracle_exit_date).max().date(), today).isoformat()
             result = {'symbol': symbol, 'start': first, 'end': last}
             try:
-                bars = fetch_eod(symbol, start=first, end=last, feature='oracle_atr_repair')
-                splits = fetch_splits(symbol, start=first, feature='oracle_atr_repair')
-                payload = json.dumps({'bars': bars, 'splits': splits}, allow_nan=False).encode()
+                evidence_payload = fetch_price_evidence(symbol, first, last, session=provider_session)
+                bars = evidence_payload['bars']
+                payload = json.dumps(evidence_payload, allow_nan=False).encode()
                 digest = hashlib.sha256(payload).hexdigest()
                 (evidence / f'{symbol.replace("/", "_")}-{digest}.json').write_bytes(payload)
                 actual_dates = {str(row.get('date'))[:10] for row in bars}
@@ -204,6 +231,7 @@ def run(*, batch_id, horizon, start_date, end_date, symbol_source, output,
             results.append(result)
             save(output / 'price_evidence_progress.json', results)
         save(output / 'price_evidence_report.json', results)
+        provider_session.close()
 
     if apply:
         # Back up every row on each affected date BEFORE its first SQL mutation.
@@ -280,6 +308,8 @@ def main():
     parser.add_argument('--output', required=True)
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--fetch-prices', action='store_true')
+    parser.add_argument('--rebuild-invalid-labels', action='store_true',
+                        help='Recalculer les dates incomplètes avec leurs membres originaux et les prix actuels')
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
     print(json.dumps(run(**vars(args)), default=str))

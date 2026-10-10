@@ -8,6 +8,12 @@ Elle permet d’étudier les jours/régimes où les candidats deviennent plus so
 D1 ou D10. Ce n’est ni une table de signaux de production, ni un backtest de
 portefeuille. Un pourcentage D10 élevé ne mesure pas un profit net.
 
+Depuis le 10 octobre, le mode **partiel explicite** est le défaut dans
+`config.yaml`. Les règles « liste entière à NULL dès qu'un rendement manque »
+décrites dans les anciens audits restent celles du mode `strict`, pas du mode
+partiel. Voir la section « Mode partiel et contrôle des nouvelles entrées » en fin
+de document. Les anciens résultats restent des constats historiques datés.
+
 L’écran **Régime Marché** propose le bloc « Alimenter l’étude Oracle × ATR et
 régime de marché ». Le service de référence est
 `service/market/oracle_atr_study.py`. Aucun entraînement ni téléchargement n’est
@@ -23,7 +29,8 @@ macros, labels et prédictions existants ne sont pas modifiés.
    horizon identifiable dans leurs artefacts sont proposés ; le libellé affiche
    cet horizon. L’horizon est imposé par l’artefact, pas saisi arbitrairement.
 5. Copier la commande affichée, ou cliquer **Alimenter l’étude Oracle × ATR**.
-6. Examiner le nombre de séances complètes/incomplètes et le tableau de détail.
+6. Choisir le mode partiel ou strict, puis examiner les séances complètes,
+   partielles/incomplètes et la couverture détaillée dans `movement_quality`.
 
 Le traitement se fait par tranches de **20 séances par défaut**, taille réglable
 dans l’écran ou par `--date-batch-size`. Prix, scores et labels sont chargés pour
@@ -34,7 +41,7 @@ validée doit être refaite.
 Ne pas lancer plusieurs alimentations identiques en parallèle : cela n’apporte
 aucun bénéfice. Par défaut, une relance saute les séances déjà `COMPLETE` pour la
 même identité et version de calcul ; elle recalcule les séances absentes ou
-`INCOMPLETE`. Ces dernières peuvent donc être réexaminées à chaque relance tant
+`PARTIAL` ou `INCOMPLETE`. Ces dernières peuvent donc être réexaminées à chaque relance tant
 que leurs données manquent. Le compteur des séances ignorées est affiché.
 
 Après une correction des prix, macros, prédictions ou labels, cocher
@@ -52,7 +59,7 @@ python -u -m service.market.oracle_atr_study --batch-id <batch_oracle> --symbol-
 
 ## Préconditions et données absentes
 
-- Migrations **0089 à 0092**, ou exécution du SQL de création à jour
+- Migrations **0089 à 0095** nécessaires à cette table, ou exécution du SQL de création à jour
   `database/sql/ml/oracle_atr_market_regime_daily.sql`.
 - Scores du batch dans `oracle_extreme_predictions`, sur la période souhaitée.
 - Barres ajustées dans `stock_bars_daily`, avec au moins 21 barres valides avant
@@ -127,7 +134,8 @@ evaluation_coverage_pct = 100 × evaluated_count / intersection_count
 
 Les pourcentages sont exprimés de 0 à 100, pas de 0 à 1. Zéro candidat évaluable
 donne `NULL`, **pas 0 %**. Un résultat partiel peut être calculé sur les candidats
-connus mais reste `INCOMPLETE`. Il faut lire sa couverture avant de l’interpréter.
+connus mais reste `PARTIAL` en mode partiel (`INCOMPLETE` en mode strict).
+Il faut lire sa couverture avant de l’interpréter.
 
 Le ratio `d10_d1_ratio` n’est pas un pourcentage : D10=25 % et D1=20 %
 donnent **1,25**. Supérieur à 1 : davantage de D10 que de D1 ; inférieur à 1 :
@@ -203,7 +211,7 @@ l’upsert limité à cette table, les transactions par tranche, la reprise apr�
 échec, le recalcul forcé, la protection contre une base CN et la commande
 IHM. Les tests complémentaires du filtre ATR vérifient calcul et causalité.
 
-## Quatre listes comparatives de mouvements réalisés — migration 0092
+## Quatre listes comparatives — contrat initial strict, migration 0092
 
 ### Objectif et populations
 
@@ -440,3 +448,145 @@ des radiations certifiées. La prochaine action est la relecture ciblée avec TL
 vérifié, puis la qualification prix/identité avant toute correction des barres
 et reconstruction des journées concernées. Le TOP réel reste NULL tant que
 le périmètre scoré complet ne dispose pas des rendements qualifiés requis.
+
+## Réparation du 10 octobre 2026 — fenêtre 30 mars / 30 septembre
+
+La réparation est exécutée, mais **le remplissage intégral reste bloqué par les
+prix manquants/non qualifiés et la maturité H20**. Ne pas la présenter comme une
+suppression de tous les NULL.
+
+- La relecture EODHD utilise désormais la session TLS vérifiée existante, sans
+  désactivation des certificats. Les 51 symboles audités ont répondu avec au
+  moins une barre, mais une réponse non vide n'implique pas que les sorties H20
+  nécessaires soient présentes. Les réponses et les splits sont archivés avec
+  leur empreinte SHA256.
+- 201 274 labels de 113 dates sont reconstruits avec `stored_membership`, donc
+  avec tous les membres originaux de chaque date, sans remplacer les titres
+  dont le rendement est inconnu. 200 442 sont qualifiés, 832 restent invalides
+  (825 sorties absentes, cinq entrées absentes, deux ruptures suspectes).
+- Le 10 septembre est ajouté suivant le contrat statique vérifié : 1 758 labels,
+  dont 1 746 qualifiés. Les 128 lignes de l'étude sont recalculées par tranches
+  de vingt séances. Les anciens labels et agrégats sont sauvegardés avant SQL.
+- Aucune barre source, aucun modèle ni aucun batch planifié n'est modifié.
+
+Nombre de dates à NULL dans cette fenêtre (128 dates) :
+
+| Liste | Avant | Après | Dates renseignées après |
+| --- | ---: | ---: | ---: |
+| TOP réel | 128 | 128 | 0 |
+| Intersection Oracle/ATR | 15 | 14 | 114 |
+| TOP prédit, trié par amplitude réalisée | 103 | 102 | 26 |
+| TOP prédit, ordre du score conservé | 103 | 102 | 26 |
+| TOP ATR | 95 | 93 | 35 |
+
+Exemple du **30 mars 2026** : les listes prédites et ATR sont renseignées ; le
+TOP réel reste inconnu à cause de SEMR, dont la sortie attendue est le 28 avril.
+La relecture EODHD de ce symbole s'arrête au 27 avril. Une radiation, une fusion
+ou un rachat éventuels doivent être qualifiés séparément : ni report du dernier
+cours, ni rendement zéro, ni retrait rétroactif du titre.
+
+Les **14 dates du 11 au 30 septembre** n'ont pas encore atteint leur date de
+disponibilité selon le contrat actuel, au 10 octobre. Le 11 septembre sort le
+9 octobre et devient disponible le 12 octobre ; le 30 septembre sort le
+28 octobre et devient disponible le 29 octobre. Elles nécessiteront un nouveau
+calcul après maturité et acquisition des prix, sans promesse de complétude.
+
+Archives :
+
+- `artifacts/research/oracle_atr_null_repair/repair-20261010-prices-v1/`
+  (plan, réponses EODHD, dates de sortie reçues/manquantes) ;
+- `artifacts/research/oracle_atr_null_repair/repair-20261010-rebuild-v1/`
+  (backups, rapports de labels, `report.json`, `run.log`) ;
+- `artifacts/research/oracle_atr_null_repair/missing-report-20261010-v1/`
+  (`dates.json` : motifs et sélections manquantes par date ;
+  `missing_prices.csv` : titres et sorties manquants ; `report.json` : synthèse).
+
+Le nouvel outil `service.market.oracle_atr_missing_report` est en lecture seule.
+Le correctif `service.market.oracle_atr_repair --rebuild-invalid-labels --apply`
+recalcule explicitement les dates aux labels invalides, avec backup et univers
+original. La présence de réserves ne déclenche aucune substitution automatique.
+Tests ciblés : 77 tests réussis.
+
+## Mode partiel et contrôle des nouvelles entrées — 10 octobre 2026
+
+### Paramétrage et schéma
+
+```yaml
+oracle_atr_study:
+  missing_returns_policy: partial  # partial | strict
+new_entry_data_guard:
+  min_sessions: 61
+  publication_delay_minutes: 15
+```
+
+Migration Alembic : `0095_oracle_atr_partial_returns.py`. SQL équivalent :
+`database/sql/ml/oracle_atr_partial_returns_migration.sql`. Le SQL de création
+est à jour. Deux colonnes nouvelles : `missing_returns_policy` et
+`movement_quality` (JSON). Elles sont ajoutées à la base US locale ; aucune base
+CN/FR n'est modifiée. Le journal Alembic local étant encore en 0088, seules les
+deux modifications de schéma ciblées sont appliquées : aucun estampillage
+artificiel de la version ni lancement des autres migrations.
+
+Dans **Régime Marché → Alimenter l’étude Oracle × ATR**, la case
+**Ignorer les rendements manquants — listes partielles explicites** est cochée
+par défaut conformément à la configuration. La commande expose
+`--missing-returns-policy partial`. Décocher choisit `strict`.
+La nouvelle version est `oracle_atr_v5_partial_returns` (ou
+`oracle_atr_v5_strict_returns`) : une ancienne ligne COMPLETE ne suffit donc pas
+à sauter le nouveau calcul.
+
+### Règles de qualité des listes
+
+- Oracle et ATR : sélectionner les N=`evaluated_count` premiers **avant** de
+  vérifier les rendements. Conserver seulement ceux connus, sans recruter un
+  titre moins bien classé pour remplacer une inconnue.
+- La liste `predicted_oracle_score_order_returns_pct` conserve l'ordre relatif
+  des scores. Les positions originales sont archivées : si le premier est
+  inconnu, la première valeur affichée peut correspondre au deuxième score.
+- Les autres listes restent triées par amplitude réalisée, puis arrondies en
+  pourcentages entiers signés. L'arrondi ne change pas leur classement.
+- Le TOP réel partiel est **TOP20 réalisé parmi les titres évaluables**. Ce
+  n'est pas le vrai TOP20 de l'univers complet : les titres manquants pourraient
+  en faire partie. Sa couverture de référence est conservée séparément.
+- `movement_quality.lists.<colonne>` donne : statut, nombre demandé/connu,
+  couverture, symboles sélectionnés, symboles des valeurs dans leur ordre,
+  positions originales, titres inconnus et motifs. Le TOP réel indique aussi
+  la population de référence et ses manquants ; `selection_shortfall_count`
+  signale un pool évaluable trop petit pour fournir N valeurs.
+- Les D1/D10 restent ceux des labels du batch : aucune réaffectation des déciles
+  sur les seuls titres connus. Les proportions ont toujours pour dénominateur
+  `evaluated_count` ; leur couverture doit être lue avant toute comparaison.
+- Une séance évaluable avec réserves devient `PARTIAL`. Sans résultat évaluable,
+  elle reste `INCOMPLETE` et les listes à NULL, jamais des zéros inventés.
+- La disponibilité H20 est vérifiée aussi contre le calendrier NYSE officiel,
+  même si un label porte une date de disponibilité erronée. Une période non
+  mature ne devient pas évaluable grâce au mode partiel.
+
+### Recalcul réellement effectué
+
+Fenêtre **30 mars–30 septembre 2026**, batch
+`model-factory-20261003082853-e98332`, H20, fichier
+`config/univers/univers_filtred_tradable.txt` tel que présent au lancement :
+**1 790 titres**, empreinte
+`27fb35535b1de472708606150a9d0b92b9c81bdb8dd51ae0a1e32dfd50f8255b`.
+
+128 séances persistées par tranches de vingt : **114 PARTIAL / 14 INCOMPLETE**.
+Chacune des cinq listes est renseignée sur les 114 séances évaluables. Les 14
+séances du 11 au 30 septembre restent NULL pour maturité H20. Vérification SQL
+en lecture seule : 570 listes vérifiées (taille, symboles, ordre, absence de
+substitution, valeurs entières). Les anciennes études d'autres univers restent
+intactes ; aucun titre n'est retiré par cette évolution.
+
+Sauvegarde complète de la table et de son DDL avant migration :
+`artifacts/research/oracle_atr_null_repair/partial-refresh-20261010-v1/`.
+Premier lancement arrêté avant calcul par l'encodage de console Windows,
+corrigé sans écriture d'agrégat. Recalcul terminé et rapport :
+`artifacts/research/oracle_atr_null_repair/partial-refresh-20261010-v2/report.json`.
+Le script de reprise bornée est `scripts/research/oracle_atr_partial_refresh.py`.
+Aucun prix, label, modèle, batch planifié ni ordre broker n'a été modifié.
+
+### Séparation impérative avec le live
+
+Les listes sont des résultats **futurs et rétrospectifs**. Aucune n'est lue pour
+autoriser une nouvelle entrée. Le contrôle opérationnel est indépendant :
+voir [Contrôle strict des nouvelles entrées US](new_entry_data_guard.md).

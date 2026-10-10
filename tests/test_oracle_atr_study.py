@@ -413,3 +413,72 @@ def test_movement_migration_blocks_other_markets(operation):
         with pytest.raises(RuntimeError, match='alpha_trade'):
             getattr(migration, operation)()
         op.execute.assert_not_called()
+
+
+def test_partial_lists_keep_original_selection_without_replacements():
+    scores, atr, labels, macro = frames()
+    labels.loc[labels.symbol.eq('9'), 'target_quality_valid'] = 0
+    labels.loc[labels.symbol.eq('9'), 'target_quality_reason'] = 'EXIT_PRICE_MISSING'
+    out = summarize_day(scores, atr, labels, macro, as_of=date(2026,1,1), missing_returns_policy='partial')
+    assert out['status'] == 'PARTIAL' and out['evaluated_count'] == 2
+    assert json.loads(out['predicted_oracle_score_order_returns_pct']) == [20]
+    assert json.loads(out['predicted_oracle_top_returns_pct']) == [20]
+    info = json.loads(out['movement_quality'])['lists']['predicted_oracle_score_order_returns_pct']
+    assert info['selection_symbols'] == ['9', '8']  # Not replaced by 7.
+    assert info['value_symbols'] == ['8']
+    assert info['original_selection_positions'] == [2]
+    assert info['missing_symbols'] == ['9']
+    assert info['missing_reasons'] == {'9': 'EXIT_PRICE_MISSING'}
+    assert info['known_count'] == 1 and info['coverage_pct'] == 50
+
+
+def test_partial_real_top_explicitly_has_incomplete_reference_and_shortfall():
+    scores, atr, labels, macro = frames()
+    labels.loc[labels.symbol.eq('0'), 'target_quality_valid'] = 0
+    out = summarize_day(scores, atr, labels, macro, as_of=date(2026,1,1), missing_returns_policy='partial')
+    info = json.loads(out['movement_quality'])['lists']['real_oracle_top_returns_pct']
+    assert info['selection_basis'] == 'REALIZED_TOP20_AMONG_EVALUABLE_SYMBOLS'
+    assert info['reference_missing_symbols'] == ['0']
+    assert info['reference_coverage_pct'] == 90
+    assert info['status'] == 'PARTIAL'
+    assert info['requested_count'] == 3 and info['known_count'] == 2
+    assert info['selection_shortfall_count'] == 1
+    assert info['coverage_pct'] == pytest.approx(200/3)
+    assert json.loads(out['real_oracle_top_returns_pct']) == [20, -10]
+    strict = summarize_day(scores, atr, labels, macro, as_of=date(2026,1,1))
+    assert strict['real_oracle_top_returns_pct'] is None
+
+
+def test_partial_immature_day_never_uses_even_misdated_labels():
+    out = summarize_day(*frames(), as_of=date(2026,1,1), missing_returns_policy='partial',
+                        expected_available_date=date(2026,1,2))
+    assert all(out[field] is None for field in MOVEMENT_FIELDS)
+    assert out['evaluated_count'] == 0 and out['status'] == 'INCOMPLETE'
+    assert 'HORIZON_NOT_YET_AVAILABLE' in out['quality_details']
+
+
+def test_partial_quality_alignment_and_integer_values():
+    out = summarize_day(*frames(), as_of=date(2026,1,1), missing_returns_policy='partial')
+    for field, info in json.loads(out['movement_quality'])['lists'].items():
+        assert len(json.loads(out[field])) == info['known_count'] == len(info['value_symbols'])
+        assert all(type(value) is int for value in json.loads(out[field]))
+    with pytest.raises(ValueError, match='strict ou partial'):
+        summarize_day(*frames(), as_of=date(2026,1,1), missing_returns_policy='unknown')
+
+
+def test_partial_migration_is_idempotent_and_rejects_fr():
+    migration = _movement_migration('0095_oracle_atr_partial_returns.py')
+    with patch.object(migration, 'context') as context, patch.object(migration, 'op') as op, \
+         patch.object(migration, 'inspect') as inspector:
+        context.is_offline_mode.return_value = False
+        op.get_bind.return_value.execute.return_value.scalar.return_value = 'alpha_trade'
+        inspector.return_value.get_columns.return_value = []
+        migration.upgrade()
+        assert op.execute.call_count == 2
+        op.execute.reset_mock()
+        inspector.return_value.get_columns.return_value = [{'name': name} for name in migration.COLUMNS]
+        migration.upgrade()
+        op.execute.assert_not_called()
+        op.get_bind.return_value.execute.return_value.scalar.return_value = 'alpha_trade_fr'
+        with pytest.raises(RuntimeError, match='alpha_trade'):
+            migration.upgrade()

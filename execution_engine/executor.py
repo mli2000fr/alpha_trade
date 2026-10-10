@@ -752,6 +752,24 @@ class ProductionExecutor:
             submit_processed = 0
             for intent in new_intents:
                 submit_processed += 1
+                # Recheck at submission time. Only entry intents pass here:
+                # exits, rebalances and watcher protection orders remain unaffected.
+                if not self._cfg.dry_run:
+                    from service.market.new_entry_data_guard import check_new_entry_data
+                    rejected_data = check_new_entry_data(self._repo.engine, [intent.symbol], actual_trade_date)
+                    target = target_by_symbol.get(intent.symbol)
+                    if (target is None or getattr(target, 'price_asof_date', None) != actual_trade_date
+                            or getattr(target, 'trade_date', None) != actual_trade_date):
+                        rejected_data[intent.symbol] = 'TARGET_PRICE_DATE_UNQUALIFIED'
+                    if intent.symbol in rejected_data:
+                        reason = rejected_data[intent.symbol]
+                        LOGGER.error('NEW_ENTRY_DATA_REJECTED %s: %s', intent.symbol, reason)
+                        events.append(make_event(exec_run_id, EventType.PRECHECK_FAILED,
+                            f'NewEntryDataRejected: {reason}', symbol=intent.symbol,
+                            intent_id=intent.intent_id, payload={'reason': reason, 'scope': 'new_entry_only'}))
+                        metrics['new_entry_data_rejected'] = int(metrics.get('new_entry_data_rejected', 0))+1
+                        metrics['skipped'] += 1
+                        continue
                 if not self._reserve_account_capacity_for_intent(intent, account_state, exec_run_id, events, metrics):
                     self._emit_progress(
                         metrics,

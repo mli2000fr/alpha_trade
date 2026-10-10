@@ -2099,10 +2099,27 @@ def main(args: list[str] | None = None) -> None:
             LOGGER.info("MLRankedCandidate construits: %d longs + %d shorts", len(longs), len(shorts))
 
         # Symbols list for loading prices/win_rates/returns
+        if run_mode in (RiskRunMode.PAPER, RiskRunMode.LIVE):
+            from service.market.new_entry_data_guard import check_new_entry_data
+            rejected_data = check_new_entry_data(getattr(repo, 'engine', None), [c.symbol for c in candidates], trade_date,
+                required_sessions=max(config.atr_window+1, config.correlation_lookback_days+1))
+            for symbol, reason in rejected_data.items():
+                LOGGER.error('NEW_ENTRY_DATA_REJECTED %s: %s', symbol, reason)
+            candidates = [c for c in candidates if c.symbol not in rejected_data]
+            progress_context['new_entry_data_rejections'] = rejected_data
         symbols = [c.symbol for c in candidates]
 
         LOGGER.info("Chargement des prix et ATR…")
         prices = repo.load_prices_asof(symbols, trade_date, atr_window=config.atr_window)
+        if run_mode in (RiskRunMode.PAPER, RiskRunMode.LIVE):
+            from service.market.new_entry_data_guard import validate_entry_prices
+            rejected_prices = validate_entry_prices(prices, symbols, trade_date)
+            for symbol, reason in rejected_prices.items():
+                LOGGER.error('NEW_ENTRY_DATA_REJECTED %s: %s', symbol, reason)
+            candidates = [c for c in candidates if c.symbol not in rejected_prices]
+            symbols = [c.symbol for c in candidates]
+            prices = {symbol: value for symbol, value in prices.items() if symbol in symbols}
+            progress_context['new_entry_data_rejections'].update(rejected_prices)
         LOGGER.info("Prix charges pour %d symboles.", len(prices))
         _emit_live_progress(
             dict(progress_context, targeted_symbols=len(candidates), price_symbols=len(prices)),
@@ -2790,6 +2807,7 @@ def main(args: list[str] | None = None) -> None:
         # ── Section 17 Point 2.4 : rapport qualité quotidien ────────────
         "daily_quality_report_path": daily_quality_report_path,
         "preflight_data_quality": preflight_data_quality,
+        "new_entry_data_rejections": progress_context.get('new_entry_data_rejections', {}),
         # Phase 5.1.a — décomposition equity (cash + positions + dividendes ledger)
         "account_equity_breakdown": equity_breakdown,
         # Phase 5.1.b — pondérations conviction unifiées via core.conviction

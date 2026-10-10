@@ -19,7 +19,7 @@ from common.universe_files import load_universe_file_symbols
 from modelFactory.oracle.artifact_contract import resolve_oracle_artifact_horizon
 
 TABLE = 'oracle_atr_market_regime_daily'
-CALCULATION_VERSION = 'oracle_atr_v4_integer_returns'
+CALCULATION_VERSION = 'oracle_atr_v5_partial_returns'
 MOVEMENT_FIELDS = ('real_oracle_top_returns_pct', 'intersection_returns_pct',
                    'predicted_oracle_top_returns_pct', 'atr_top_returns_pct',
                    'predicted_oracle_score_order_returns_pct')
@@ -27,8 +27,19 @@ MACRO_FIELDS = ['vix', 'vix9d', 'ten_y', 'vxn', 'vix3m', 'move',
                 'yield_10y_5d_pct', 'sentiment_score']
 
 
-def summarize_day(scores, atr, labels, macro, *, as_of: date) -> dict:
+def resolve_returns_policy(value=None) -> str:
+    if value is None:
+        from common.config_loader import load_config
+        value = (load_config().get('oracle_atr_study') or {}).get('missing_returns_policy', 'partial')
+    if value not in {'strict', 'partial'}:
+        raise ValueError('missing_returns_policy doit être strict ou partial')
+    return value
+
+
+def summarize_day(scores, atr, labels, macro, *, as_of: date,
+                  missing_returns_policy='strict', expected_available_date=None) -> dict:
     """Labels retain their original batch-wide deciles; unknown != zero."""
+    policy = resolve_returns_policy(missing_returns_policy)
     if scores.symbol.duplicated().any() or labels.symbol.duplicated().any():
         raise ValueError('Doublons symbole dans les scores ou labels du jour')
     score_values = pd.to_numeric(scores.proba_extreme, errors='coerce')
@@ -50,12 +61,17 @@ def summarize_day(scores, atr, labels, macro, *, as_of: date) -> dict:
                  # Keep pandas datetime types even for empty/all-NaT series.
                  # Availability is a calendar date, inclusive of the whole day.
                  & available.notna() & available.dt.normalize().le(pd.Timestamp(as_of)))
+    immature = expected_available_date is not None and expected_available_date > as_of
+    if immature:
+        valid[:] = False
     chosen = labels[labels.symbol.isin(selected)]
     evaluable = valid.loc[chosen.index]
     n = int(evaluable.sum())
     d1 = int((evaluable & chosen.oracle_decile.eq(1)).sum())
     d10 = int((evaluable & chosen.oracle_decile.eq(10)).sum())
     issues = []
+    if immature:
+        issues.append('HORIZON_NOT_YET_AVAILABLE')
     if macro is None or pd.isna(macro.get('mode')):
         issues.append('MISSING_REGIME')
     if macro is None or any(pd.isna(macro.get(k)) for k in MACRO_FIELDS):
@@ -69,41 +85,106 @@ def summarize_day(scores, atr, labels, macro, *, as_of: date) -> dict:
     elif n < len(selected):
         issues.append('INCOMPLETE_LABELS')
     movements = dict.fromkeys(MOVEMENT_FIELDS)
+    returns = labels.loc[valid].set_index('symbol').future_return.to_dict()
+    label_map = labels.set_index('symbol').to_dict('index')
+    quality = {}
+
+    def missing_reason(symbol):
+        row = label_map.get(symbol)
+        if immature:
+            return 'NOT_YET_AVAILABLE'
+        if row is None:
+            return 'LABEL_MISSING'
+        reason = row.get('target_quality_reason')
+        if pd.notna(reason):
+            return str(reason)
+        availability_date = pd.to_datetime(row.get('oracle_available_date'), errors='coerce')
+        if pd.notna(availability_date) and availability_date.date() > as_of:
+            return 'NOT_YET_AVAILABLE'
+        return 'LABEL_UNQUALIFIED'
+
+    def serialize(field, symbols, *, keep_order=False, population=None, basis='INITIAL_SELECTION'):
+        # Choose first, evaluate second. Partial mode never recruits a replacement.
+        known = [s for s in symbols if s in returns]
+        missing = [s for s in symbols if s not in returns]
+        ordered = known if keep_order else sorted(known, key=lambda s: (-abs(returns[s]), str(s)))
+        quality[field] = {
+            'requested_count': len(symbols), 'known_count': len(known),
+            'missing_count': len(missing),
+            'coverage_pct': 100*len(known)/len(symbols) if symbols else None,
+            'selection_symbols': symbols, 'value_symbols': ordered,
+            'original_selection_positions': [symbols.index(s)+1 for s in ordered],
+            'missing_symbols': missing,
+            'missing_reasons': {s: missing_reason(s) for s in missing},
+            'selection_basis': basis,
+        }
+        if population is not None:
+            unknown_population = sorted(s for s in population if s not in returns)
+            quality[field].update(
+                reference_population_count=len(population),
+                reference_known_count=len(population)-len(unknown_population),
+                reference_coverage_pct=100*(len(population)-len(unknown_population))/len(population) if population else None,
+                reference_missing_symbols=unknown_population,
+                reference_missing_reasons={s: missing_reason(s) for s in unknown_population},
+            )
+        else:
+            unknown_population = []
+        complete = not missing and not unknown_population and bool(symbols)
+        quality[field]['status'] = ('COMPLETE' if complete else 'PARTIAL' if known else 'UNAVAILABLE')
+        if not known or (policy == 'strict' and (missing or unknown_population)):
+            return None
+        values = [int((Decimal(str(returns[s]))*100).quantize(
+            Decimal('1'), rounding=ROUND_HALF_UP)) for s in ordered]
+        return json.dumps(values, allow_nan=False)
+
     if n:
-        returns = labels.loc[valid].set_index('symbol').future_return.to_dict()
-
-        def serialize(symbols, *, keep_order=False):
-            # Selection precedes evaluation: never replace an unavailable result.
-            if len(symbols) != n or any(s not in returns for s in symbols):
-                return None
-            ordered = symbols if keep_order else sorted(symbols, key=lambda s: (-abs(returns[s]), str(s)))
-            # Round only after selection/order; .5 rounds away from zero for both signs.
-            values = [int((Decimal(str(returns[s])) * 100).quantize(
-                Decimal('1'), rounding=ROUND_HALF_UP)) for s in ordered]
-            return json.dumps(values, allow_nan=False)
-
-        movements['intersection_returns_pct'] = serialize(list(chosen.loc[evaluable, 'symbol']))
+        # Existing intersection was already partial; expose its full initial scope.
+        movements['intersection_returns_pct'] = serialize('intersection_returns_pct', sorted(selected))
+        if policy == 'strict':
+            # Preserve the legacy intersection's known-only serialization.
+            known_intersection = sorted(selected & set(returns), key=lambda s: (-abs(returns[s]), str(s)))
+            movements['intersection_returns_pct'] = json.dumps([int((Decimal(str(returns[s]))*100).quantize(
+                Decimal('1'), rounding=ROUND_HALF_UP)) for s in known_intersection])
         score_map = dict(zip(scores.loc[finite, 'symbol'], score_values[finite]))
         oracle_top = sorted(score_map, key=lambda s: (-score_map[s], str(s)))[:n]
-        movements['predicted_oracle_score_order_returns_pct'] = serialize(oracle_top, keep_order=True)
+        movements['predicted_oracle_score_order_returns_pct'] = serialize(
+            'predicted_oracle_score_order_returns_pct', oracle_top, keep_order=True)
         atr_top = sorted(valid_atr, key=lambda s: (-valid_atr[s], str(s)))[:n]
         for field, population, issue in (
             ('predicted_oracle_top_returns_pct', oracle_top, 'INCOMPLETE_PREDICTED_TOP_RETURNS'),
             ('atr_top_returns_pct', atr_top, 'INCOMPLETE_ATR_TOP_RETURNS'),
         ):
-            movements[field] = serialize(population)
-            if movements[field] is None:
+            movements[field] = serialize(field, population)
+            if quality[field]['status'] != 'COMPLETE':
                 issues.append(issue)
-        # A true realized benchmark requires coverage of the whole scored population.
-        if all(s in returns for s in ranks):
-            amplitudes = pd.Series({s: abs(returns[s]) for s in ranks})
-            real_pool = amplitudes[amplitudes.rank(pct=True) >= .8].index.tolist()
-            real_top = sorted(real_pool, key=lambda s: (-abs(returns[s]), str(s)))[:n]
-            movements['real_oracle_top_returns_pct'] = serialize(real_top)
-        if movements['real_oracle_top_returns_pct'] is None:
+        # With incomplete coverage this is explicitly a benchmark among known
+        # titles, NOT the true full-universe future TOP20.
+        amplitudes = pd.Series({s: abs(returns[s]) for s in ranks if s in returns}, dtype=float)
+        real_pool = amplitudes[amplitudes.rank(pct=True) >= .8].index.tolist()
+        real_top = sorted(real_pool, key=lambda s: (-abs(returns[s]), str(s)))[:n]
+        movements['real_oracle_top_returns_pct'] = serialize('real_oracle_top_returns_pct',
+            real_top, population=list(ranks), basis='REALIZED_TOP20_AMONG_EVALUABLE_SYMBOLS')
+        if len(real_top) < n:
+            info = quality['real_oracle_top_returns_pct']
+            info.update(requested_count=n, selection_shortfall_count=n-len(real_top),
+                        coverage_pct=100*len(real_top)/n,
+                        status='PARTIAL' if real_top else 'UNAVAILABLE')
+            if policy == 'strict':
+                movements['real_oracle_top_returns_pct'] = None
+        if quality['real_oracle_top_returns_pct']['status'] != 'COMPLETE':
             issues.append('INCOMPLETE_REAL_TOP_RETURNS')
+    else:
+        # Never turn an immature/empty date into an apparently successful [] list.
+        for field in MOVEMENT_FIELDS:
+            serialize(field, sorted(selected) if field == 'intersection_returns_pct' else [],
+                      population=list(ranks) if field == 'real_oracle_top_returns_pct' else None)
+    quality_payload = {'policy': policy,
+                       'expected_available_date': str(expected_available_date) if expected_available_date else None,
+                       'target_evaluated_count': n, 'lists': quality}
     result = {'regime_mode': macro.get('mode') if macro is not None else None,
               **movements,
+              'missing_returns_policy': policy,
+              'movement_quality': json.dumps(quality_payload, allow_nan=False),
               **{k: macro.get(k) if macro is not None else None for k in MACRO_FIELDS},
               'oracle_scored_count': len(ranks), 'oracle_top20_count': before,
               'atr_valid_count': diag['atr_valid'], 'atr_missing_count': diag['atr_missing'],
@@ -113,7 +194,7 @@ def summarize_day(scores, atr, labels, macro, *, as_of: date) -> dict:
               'd10_d1_ratio': d10/d1 if n and d1 else None,
               'd1_d10_total_pct': 100*(d1+d10)/n if n else None,
               'evaluation_coverage_pct': 100*n/len(selected) if selected else None,
-              'status': 'COMPLETE' if not issues else 'INCOMPLETE',
+              'status': ('COMPLETE' if not issues else 'PARTIAL' if policy == 'partial' and n else 'INCOMPLETE'),
               'quality_details': ','.join(issues) or None}
     return {k: None if pd.isna(v) else v for k, v in result.items()}
 
@@ -121,7 +202,9 @@ def summarize_day(scores, atr, labels, macro, *, as_of: date) -> dict:
 def run(*, batch_id: str, symbol_source: str, start_date: str, end_date: str,
         artifacts_dir='artifacts/models', engine=None, progress_callback=None,
         date_batch_size: int = 20, resume: bool = True,
-        trade_dates: list[str] | None = None) -> dict:
+        trade_dates: list[str] | None = None, missing_returns_policy=None) -> dict:
+    policy = resolve_returns_policy(missing_returns_policy)
+    version = CALCULATION_VERSION if policy == 'partial' else 'oracle_atr_v5_strict_returns'
     if not isinstance(date_batch_size, int) or isinstance(date_batch_size, bool) or date_batch_size < 1:
         raise ValueError('date_batch_size doit être un entier strictement positif')
     start, end = date.fromisoformat(start_date), date.fromisoformat(end_date)
@@ -144,7 +227,7 @@ def run(*, batch_id: str, symbol_source: str, start_date: str, end_date: str,
         if conn.execute(text('SELECT DATABASE()')).scalar() != 'alpha_trade':
             raise ValueError('Cette étude US exige la base alpha_trade')
         # Check migration before doing costly price reads.
-        conn.execute(text(f'SELECT trade_date,{",".join(MOVEMENT_FIELDS)} FROM {TABLE} LIMIT 0'))
+        conn.execute(text(f'SELECT trade_date,{",".join(MOVEMENT_FIELDS)},movement_quality,missing_returns_policy FROM {TABLE} LIMIT 0'))
         completed = set()
         if resume:
             completed = {str(d)[:10] for d in conn.execute(text(
@@ -152,7 +235,7 @@ def run(*, batch_id: str, symbol_source: str, start_date: str, end_date: str,
                 "AND oracle_horizon=:horizon AND status='COMPLETE' AND calculation_version=:version "
                 'AND trade_date BETWEEN :start AND :end'),
                 {'hash': universe_hash, 'batch': batch_id, 'horizon': horizon, 'start': start, 'end': end,
-                 'version': CALCULATION_VERSION}).scalars().all()}
+                 'version': version}).scalars().all()}
     calendar = _get_nyse_calendar()
     if calendar is None:
         raise RuntimeError('Calendrier NYSE fiable indisponible : aucun fallback lundi-vendredi pour cette étude')
@@ -171,11 +254,11 @@ def run(*, batch_id: str, symbol_source: str, start_date: str, end_date: str,
         tranche = days[offset:offset+date_batch_size]
         if progress_callback:
             progress_callback(skipped+offset, len(all_days), f'Calcul tranche {tranche[0]} → {tranche[-1]}…')
-        batch_records = _calculate_tranche(engine, symbols, tranche, batch_id, horizon, as_of)
+        batch_records = _calculate_tranche(engine, symbols, tranche, batch_id, horizon, as_of, policy)
         for row in batch_records:
             row.update(universe_source=symbol_source, universe_hash=universe_hash,
                        oracle_batch_id=batch_id, oracle_horizon=horizon, universe_count=len(symbols),
-                       evaluated_as_of=as_of, calculation_version=CALCULATION_VERSION)
+                       evaluated_as_of=as_of, calculation_version=version)
         _persist_tranche(engine, batch_records)
         records.extend(batch_records)
         if progress_callback:
@@ -183,11 +266,13 @@ def run(*, batch_id: str, symbol_source: str, start_date: str, end_date: str,
                               f'Tranche persistée jusqu’au {tranche[-1]} : {len(records)} séances enregistrées')
     return {'persisted_rows': len(records), 'skipped_rows': skipped,
             'complete_rows': sum(r['status']=='COMPLETE' for r in records),
-            'incomplete_rows': sum(r['status']!='COMPLETE' for r in records), 'horizon': horizon,
+            'partial_rows': sum(r['status']=='PARTIAL' for r in records),
+            'incomplete_rows': sum(r['status']=='INCOMPLETE' for r in records),
+            'missing_returns_policy': policy, 'horizon': horizon,
             'universe_hash': universe_hash, 'rows': records}
 
 
-def _calculate_tranche(engine, symbols, days, batch_id, horizon, as_of):
+def _calculate_tranche(engine, symbols, days, batch_id, horizon, as_of, policy='strict'):
     start, end = days[0], days[-1]
     with engine.connect() as conn:
         macro = pd.read_sql(text('SELECT * FROM stock_macro_indicators_daily WHERE trade_date BETWEEN :start AND :end'),
@@ -200,7 +285,7 @@ def _calculate_tranche(engine, symbols, days, batch_id, horizon, as_of):
                 'WHERE batch_id=:batch AND prediction_date BETWEEN :start AND :end AND symbol IN :symbols')
                 .bindparams(bindparam('symbols', expanding=True)), conn, params=params))
             label_parts.append(pd.read_sql(text('SELECT prediction_date,symbol,future_return,oracle_decile,'
-                'target_quality_valid,oracle_available_date FROM global_oracle_labels WHERE batch_id=:batch '
+                'target_quality_valid,target_quality_reason,oracle_available_date FROM global_oracle_labels WHERE batch_id=:batch '
                 'AND horizon=:horizon AND prediction_date BETWEEN :start AND :end AND symbol IN :symbols')
                 .bindparams(bindparam('symbols', expanding=True)), conn, params=params))
     scores, labels = pd.concat(score_parts), pd.concat(label_parts)
@@ -213,9 +298,12 @@ def _calculate_tranche(engine, symbols, days, batch_id, horizon, as_of):
     label_groups = {d: g for d, g in labels.groupby('prediction_date')}
     macro_groups = {row['trade_date']: row for row in macro.to_dict('records')}
     records = []
+    from modelFactory.oracle.build_labels import label_calendar
+    availability = label_calendar(start, end, horizon)
     for day in days:
         row = summarize_day(score_groups.get(day, scores.iloc[:0]), atr_map.get(day, {}),
-            label_groups.get(day, labels.iloc[:0]), macro_groups.get(day), as_of=as_of)
+            label_groups.get(day, labels.iloc[:0]), macro_groups.get(day), as_of=as_of,
+            missing_returns_policy=policy, expected_available_date=availability[date.fromisoformat(day)][1])
         row.update(trade_date=day)
         records.append(row)
     return records
@@ -240,6 +328,8 @@ def main():
     parser.add_argument('--artifacts-dir', default='artifacts/models')
     parser.add_argument('--date-batch-size', type=int, default=20, help='Séances par transaction (défaut 20)')
     parser.add_argument('--no-resume', dest='resume', action='store_false', help='Recalculer aussi les séances complètes')
+    parser.add_argument('--missing-returns-policy', choices=['strict', 'partial'], default=None,
+                        help='Politique des listes ; défaut config.yaml, sinon partial')
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     summary = run(**vars(args), progress_callback=lambda i,n,message: logging.info('%d/%d %s', i,n,message))

@@ -415,6 +415,9 @@ def test_cli_main_falls_back_to_account_equity_without_account_snapshot(monkeypa
 
 def test_cli_main_passes_ternary_short_predictions_without_pre_tagging(monkeypatch) -> None:
     captured: dict[str, object] = {}
+    # This test isolates directional routing; operational data readiness is
+    # exercised separately in test_new_entry_data_guard.py.
+    monkeypatch.setattr('service.market.new_entry_data_guard.check_new_entry_data', lambda *a, **kw: {})
 
     class _FakeRepo(_BaseFakeRepo):
         def load_account_risk_snapshot(self, account_id, trade_date):
@@ -452,6 +455,7 @@ def test_cli_main_passes_ternary_short_predictions_without_pre_tagging(monkeypat
                     atr_20=5.0,
                     price_asof_date=trade_date,
                     atr_asof_date=trade_date,
+                    adv_usd=10_000_000.,
                 )
                 for symbol in symbols
             }
