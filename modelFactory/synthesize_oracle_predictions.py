@@ -23,12 +23,12 @@ from __future__ import annotations
 
 import argparse
 import logging
-from datetime import datetime, timezone
 
 import pandas as pd
 from sqlalchemy import text
 
 from database.connection import get_sqlalchemy_engine
+from modelFactory.synthetic_prediction_run import ensure_synthetic_run
 
 LOGGER = logging.getLogger(__name__)
 
@@ -66,16 +66,6 @@ def synthesize(
     engine = get_sqlalchemy_engine()
     run_id = f"{batch_id}{_SYNTH_RUN_SUFFIX}"
 
-    # 1. Run synthétique dans model_training_run (pour le JOIN batch_id)
-    with engine.begin() as conn:
-        conn.execute(text(
-            "INSERT INTO alpha_trade.model_training_run "
-            "(run_id, batch_id, registry_id, symbol, status, started_at, finished_at) "
-            "VALUES (:run_id, :batch_id, 0, :symbol, 'completed', :now, :now) "
-            "ON DUPLICATE KEY UPDATE batch_id=VALUES(batch_id)"
-        ), {"run_id": run_id, "batch_id": batch_id, "symbol": "__ORACLE_SYNTH__",
-            "now": datetime.now(timezone.utc)})
-
     # 2. Lecture des prédictions Oracle Extreme (table, filtre batch strict)
     _where = "batch_id = :batch_id"
     _params: dict = {"batch_id": batch_id}
@@ -85,17 +75,17 @@ def synthesize(
     if end:
         _where += " AND prediction_date <= :end"
         _params["end"] = end
-    df = pd.read_sql(
-        text(
-            f"SELECT prediction_date, symbol, proba_extreme "
-            f"FROM alpha_trade.oracle_extreme_predictions "
-            f"WHERE {_where} ORDER BY prediction_date, symbol"
-        ),
-        engine.connect(),
-        params=_params,
-    )
+    with engine.connect() as conn:
+        df = pd.read_sql(
+            text(
+                f"SELECT prediction_date, symbol, proba_extreme "
+                f"FROM alpha_trade.oracle_extreme_predictions "
+                f"WHERE {_where} ORDER BY prediction_date, symbol"
+            ), conn, params=_params,
+        )
     if df.empty:
         return {"status": "error", "reason": "no rows in oracle_extreme_predictions", "run_id": run_id}
+    ensure_synthetic_run(engine, batch_id=batch_id, run_id=run_id, symbol="__ORACLE_SYNTH__")
 
     # 3. Mapping fidèle Extreme Gate : percentile intra-date (PIT) >= 1-pool_pct → LONG
     df["_date"] = df["prediction_date"].astype(str).str[:10]

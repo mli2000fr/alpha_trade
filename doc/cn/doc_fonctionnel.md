@@ -1,6 +1,17 @@
 # α-Trade — Guide fonctionnel du marché chinois (CN_A)
 
-**État du dépôt au 1er octobre 2026.** Ce guide s'adresse à une personne qui reprend l'application sans la connaître. Il décrit l'implémentation actuelle, puis distingue ce qui est opérationnel, expérimental ou en attente. Les résultats historiques cités ne sont pas des performances futures promises. L'[index CN](./README.md) renvoie aux preuves de chaque sprint.
+**Contrats implémentés au 1er octobre, actualisation opérationnelle du
+10 octobre 2026.** Ce guide s'adresse à une personne qui reprend l'application.
+Les résultats historiques ne promettent pas de performances futures.
+L'[index CN](./README.md) renvoie aux preuves datées.
+
+D9 BaoStock est désormais **bloqué droits/prudence**, de même que D6 automatisé
+SSE/SZSE. Leurs fonctions et tables existent mais les parcours décrits ci-dessous
+ne sont pas une permission de relancer ces collectes. D10/17-C activés restent
+dépendants de ces preuves manquantes. Calendrier/backup/recherche et exécution
+broker doivent être distingués ; le broker CN reste fermé.
+[Catalogue courant](../operations/catalogue_batchs_actuel.md),
+[horaires FR/CN hors absence PC](../operations/horaires_fr_cn_presence_pc.md).
 
 ## 1. Ce qu'est le parcours CN
 

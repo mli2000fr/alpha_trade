@@ -1,6 +1,12 @@
 # Vue fonctionnelle
 
-Alpha Trade est une plateforme de swing trading US long/short pilotée par ML. Elle transforme des données de marché et d'événements en un portefeuille cible, contrôle le risque, transmet les ordres à un broker et suit leur cycle de vie. Elle inclut une chaîne de recherche/backtest et une IHM Streamlit d'exploitation.
+Alpha Trade regroupe recherche, ML, backtests et exploitation de stratégies actions.
+Le parcours US dispose du risque, des ordres Alpaca et des protections. CN et FR
+ont des bases, collectes et replays séparés ; leurs contextes n'autorisent pas
+actuellement le trading broker autonome. L'IHM Streamlit expose ces parcours sans
+que choisir un marché suffise à ouvrir son exécution.
+
+État vérifié au 10/10/2026 : [contrats et limites actuels](ETAT_ACTUEL_IMPLEMENTATION.md).
 
 ## Objectifs métier
 
@@ -32,7 +38,13 @@ Le système ne doit pas ouvrir une nouvelle position si la prédiction ML attend
 
 ### Univers tradable
 
-Un snapshot immuable daté, de qualité `full`, publié dans `tradable_universe_runs` et `tradable_universe_history`. Il agrège notamment disponibilité des barres, liquidité, prix, spread/quote, capitalisation et blackout earnings. Il est la source nominale du train et du predict.
+Dans le parcours US, un snapshot immuable daté, de qualité `full`, publié dans
+`tradable_universe_runs` et `tradable_universe_history`. Il agrège disponibilité
+des barres et filtres activés : liquidité, prix, quotes, capitalisation ou blackout
+earnings. Train/predict peuvent aussi recevoir un fichier explicite ; ce fichier
+n'est pas une autorisation d'entrée. La politique de capitalisation locale est
+actuellement `liquidity_only`, pas `strict`. CN/FR ont leurs propres contrats
+de référentiel et d'éligibilité, pas ces tables US implicitement partagées.
 
 ### Prédiction, côté et rang
 
@@ -41,6 +53,12 @@ Le système manipule plusieurs sorties ML. La prédiction ternaire exprime `long
 ### Oracle Extreme
 
 L'Oracle O0 estime un potentiel de mouvement extrême, pas une direction. `proba_extreme` ne signifie donc jamais `P(LONG)`. Le gate officiel classe cette probabilité dans la coupe cross-sectionnelle du jour et peut retenir le top 20 % comme univers de recherche/filtrage.
+
+L'intersection Oracle TOP20 × ATR TOP20 peut être activée dans les parcours
+compatibles pour sélectionner l'amplitude. Elle ne démontre pas D1/D10.
+La branche GPT PAPER analyse les N premiers au score Oracle, sans ajouter
+implicitement ATR, et peut retenir LONG/SHORT ou s'abstenir. N=20 et plafond=3
+dans la configuration locale ; la confidence GPT n'est pas une probabilité calibrée.
 
 ### Portefeuille cible
 
@@ -53,9 +71,13 @@ Ensemble du chemin target → intention → ordre broker → fill observé → p
 ## Modes opératoires
 
 - `simulate` : déroule le contrat sans envoyer d'ordres réels ;
-- `paper` : utilise un compte paper Alpaca ;
+- `paper` : compte paper Alpaca pour le parcours US ;
 - `live` : argent réel, garde-fous renforcés et confirmation du label du compte ;
 - `check` : vérifications/préflight sans workflow normal d'envoi.
+
+Ces modes ne sont pas interchangeables entre marchés. Le shadow FR local est
+une simulation ; les lectures Trading212 DEMO EUR ne qualifient pas encore
+un moteur d'ordres et de protections autonome.
 
 ## Ce que le produit ne garantit pas
 

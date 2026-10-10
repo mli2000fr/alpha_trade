@@ -1,5 +1,10 @@
 # Guide utilisateur de l’application
 
+Mise à jour ciblée du **10 octobre 2026** :
+[état actuel](../ETAT_ACTUEL_IMPLEMENTATION.md),
+[batchs et marchés](19_batchs_et_marches.md). Les chapitres métier décrivent
+principalement le parcours US ; les capacités CN/FR sont précisées séparément.
+
 Ce guide décrit l’application telle qu’elle est implémentée aujourd’hui. Il ne
 reprend pas l’ancien manuel page par page : la navigation, les contrôles et les
 workflows ont évolué. Le registre de navigation faisant foi est
@@ -30,6 +35,7 @@ flowchart LR
   B --> B1[Pipeline]
   B --> B2[Supervision Ops]
   B --> B3[Infra & Backups]
+  B --> B4[Batch: US / CN / FR]
   C --> C1[Execution]
   C --> C2[Risk]
   C --> C3[Régime marché]
@@ -68,6 +74,7 @@ seule, une destination utilisateur officielle.
 16. [Fondamentaux](16_fondamentaux.md)
 17. [Compliance, fiscalité et sandbox health](17_conformite_fiscalite_sandbox.md)
 18. [Glossaire et système d’aide](18_glossaire_et_aide.md)
+19. [Batchs, catalogues séparés et exploitation multi-marchés](19_batchs_et_marches.md)
 
 ## Trois distinctions à ne jamais perdre
 

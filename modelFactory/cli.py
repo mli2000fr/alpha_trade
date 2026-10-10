@@ -291,35 +291,45 @@ def _generate_and_save_batch_report(engine: Engine, batch_id: str) -> None:
         LOGGER.warning("Échec génération rapport batch %s : %s", batch_id, exc)
 
 
-def _resolve_predict_batch_id(artifacts_dir: Path) -> str | None:
+def _resolve_predict_batch_id(artifacts_dir: Path, *, historical: bool = True) -> str | None:
     """Détermine le batch_id pour le mode predict.
 
     Ordre de priorité :
-    1. ``config.yaml`` → ``batch_diagnostics.backtest_batch_id`` (si renseigné)
-    2. Dernier composant du chemin ``artifacts_dir`` (ex: ``model-factory-xxx``)
+    1. Dossier explicitement nommé ``model-factory-xxx``
+    2. ``config.yaml`` → backtest_batch_id (historique) / live_batch_id (quotidien)
     3. None si indéterminable
     """
-    # Priorité 1 : config
+    if artifacts_dir.name.startswith("model-factory-"):
+        return artifacts_dir.name
+    # Auto-détection uniquement dans le contexte demandé.
     try:
         import yaml as _yaml
         with open("config.yaml", encoding="utf-8") as _fh:
             _raw = _yaml.safe_load(_fh) or {}
         _bd = _raw.get("batch_diagnostics") or {}
-        _bid = str(_bd.get("backtest_batch_id", "")).strip()
+        _key = "backtest_batch_id" if historical else "live_batch_id"
+        _bid = str(_bd.get(_key) or "").strip()
         if _bid:
             return _bid
     except Exception:
         pass
 
-    # Priorité 2 : dernier composant du chemin artifacts_dir
-    try:
-        _name = artifacts_dir.resolve().name
-        if _name and _name not in (".", "..", ""):
-            return _name
-    except Exception:
-        pass
-
     return None
+
+
+def _require_live_global_ranks(results: dict[str, int], *, day: str, batch_id: str) -> None:
+    """Never synthesize stale historical rows after a failed/empty current prediction."""
+    if results.get(day, 0) <= 0:
+        raise RuntimeError(
+            f"Aucun classement Global Ranking produit pour {day}, batch={batch_id}. "
+            "Vérifiez le dossier des artefacts, les modèles et l'univers PIT dans les logs. "
+            "Synthèse et étapes risque/exécution non autorisées pour ce run."
+        )
+
+
+def _require_live_synthesis(result: dict, *, day: str, batch_id: str) -> None:
+    if result.get("status") != "completed" or int(result.get("inserted") or 0) <= 0:
+        raise RuntimeError(f"Synthèse Global Ranking vide/échouée : batch={batch_id}, date={day}, résultat={result}")
 
 
 def _resolve_last_bar_date(engine) -> date | None:
@@ -1297,7 +1307,7 @@ def main(args: list[str] | None = None) -> None:
         persisted_incrementally = False
         _batch_id = (
             (getattr(opts, "batch_id", None) or "").strip()
-            or _resolve_predict_batch_id(Path(opts.artifacts_dir))
+            or _resolve_predict_batch_id(Path(opts.artifacts_dir), historical=historical_predict_enabled)
         )
         _batch_mode = detect_batch_training_mode(engine, _batch_id) if _batch_id else "per_symbol"
         _per_sector = _batch_mode == "per_sector"
@@ -1693,12 +1703,15 @@ def main(args: list[str] | None = None) -> None:
                     engine=engine,
                 )
                 LOGGER.info("predict per_sector live ranks %s: %s", _day_str, _ranks)
+                _require_live_global_ranks(_ranks, day=_day_str, batch_id=_batch_id)
                 _synth_out = synthesize(
                     _batch_id,
                     best_h=_resolve_synth_best_h(opts, _batch_id),
                     dip_config=_load_live_dip_config(),
+                    start=_day_str, end=_day_str,
                 )
                 LOGGER.info("predict per_sector live synthèse batch=%s: %s", _batch_id, _synth_out)
+                _require_live_synthesis(_synth_out, day=_day_str, batch_id=_batch_id)
                 persisted_incrementally = True
                 preds = _load_synth_frame_for_range(engine, _batch_id, [_live_day])
             else:
@@ -1728,12 +1741,15 @@ def main(args: list[str] | None = None) -> None:
                         engine=engine,
                     )
                     LOGGER.info("predict global-only live ranks %s: %s", _day_str, _ranks)
+                    _require_live_global_ranks(_ranks, day=_day_str, batch_id=_batch_id)
                     _synth_out = _synth_live(
                         _batch_id,
                         best_h=_resolve_synth_best_h(opts, _batch_id),
                         dip_config=_load_live_dip_config(),
+                        start=_day_str, end=_day_str,
                     )
                     LOGGER.info("predict global-only live synthèse batch=%s: %s", _batch_id, _synth_out)
+                    _require_live_synthesis(_synth_out, day=_day_str, batch_id=_batch_id)
                     persisted_incrementally = True
                     preds = _load_synth_frame_for_range(engine, _batch_id, [_live_day])
                 else:

@@ -1,5 +1,36 @@
 # Page Pipeline — guide opérateur détaillé
 
+## Repères actuels US/CN/FR et filtre GPT
+
+Au 10/10/2026, choisir le parcours marché avant de configurer les blocs. CN/FR
+restent recherche/replay, pas les étapes Alpaca US appliquées à leurs bases.
+Les fichiers de config/univers sont proposés dans les sélecteurs compatibles,
+notamment import news/sentiment. Le preset US frais est capital_2001_5000.
+Date, univers et preset des producteurs/consommateurs doivent correspondre.
+
+Pour le filtre US : case « 🌐 Filtrage GPT + recherche Web après Oracle — PAPER
+uniquement », univers et batch Oracle dédiés préremplis depuis config.yaml.
+Une session déjà ouverte garde ses choix mémorisés. Décocher désactive le
+wrapper GPT, pas l'entraînement Oracle. N=20 candidats/K=3 retenus localement,
+LONG/SHORT/abstention ; les nombres ne sont pas des pourcentages.
+Pas d'ATR implicite dans ce classement au score Oracle.
+
+10 prépare scores et analyse prospective après clôture J, avant ouverture
+suivante ; 11 consomme son run exact ; 12 transmet les targets PAPER/default.
+La case de protections spécifiques fige SL=7 %, sortie à l'ouverture séance 21,
+trailing=15 % configuré (20 % default Python), sans TP de prix. Décochée,
+le profil ordinaire subsiste. Watcher continu sain requis : bloc 12.bis →
+Démarrer service local pour un lancement manuel. Pas de Web historique/shadow.
+
+Le lancement isolé de 10 ne dépend plus du seul statut visuel de 9, mais ses
+features/données/batch/date doivent être valides. Les commandes historiques de
+prévisualisation n'ajoutent pas ce filtre incompatible avec un historique Web.
+
+Le batch us_pipeline reprend le builder, **pas l'état de session IHM** ; sa case
+GPT n'est pas activée implicitement. Il choisit les listes d'étapes de config.yaml
+et l'univers commun de batch.yaml. [Workflow détaillé](../04_pipeline_quotidien.md),
+[filtre GPT](../ml/oracle_llm_directional_filter.md).
+
 ## Rôle de la page
 
 La page Pipeline configure, lance et observe les traitements métier. Elle n’est
@@ -33,7 +64,7 @@ présentes, quota disponible et profondeur réellement utile au traitement aval.
 
 ## Étapes et dépendances
 
-Le pipeline de production est une séquence de quatorze étapes. L’interface
+Le pipeline US propose quatorze étapes, dont seules celles sélectionnées s'exécutent. L’interface
 regroupe le cœur quotidien et les traitements optionnels, contrôle les
 dépendances et expose des actions par étape. Pour la définition exacte et les
 entrées/sorties de chacune, consulter [Pipeline quotidien](../04_pipeline_quotidien.md).

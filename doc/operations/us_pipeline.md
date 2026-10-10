@@ -77,8 +77,9 @@ Le filtre GPT n'est pas implicitement
 activé par la checkbox par défaut de l'IHM : les options fraîches du batch
 restent indépendantes de l'état d'une session interactive.
 
-La nouvelle case **Protections spécifiques GPT** (SL 7 %, sortie à l'ouverture
-de la 21e séance, trailing 20 %) ne modifie pas les exécutions ordinaires de ce
+La case **Protections spécifiques GPT** (SL 7 %, sortie à l'ouverture
+de la 21e séance, trailing **15 % dans la configuration actuelle** ; défaut
+Python 20 %) ne modifie pas les exécutions ordinaires de ce
 batch lorsque le filtre GPT n'est pas activé. Son défaut vient de
 `config.yaml → llm_directional_filter.protections` ; elle est figée avec chaque
 analyse GPT et exige un watcher actif pour la sortie programmée. Voir
@@ -326,5 +327,48 @@ PowerShell de l'installeur vérifiée. Aucun pipeline ni ordre réel lancé pour
 tests ; la migration de la tâche existante sera appliquée à sa réinstallation.
 
 ## Vérification de livraison
+
+### Remédiation de ML Predict — 10 octobre 2026
+
+Le workflow `20261009_224502_a240d7a1` s'est arrêté à l'étape 10 :
+la commande n'avait pas de `--batch-id`, l'auto-détection a choisi
+`model-factory-20260811223551-ef2cd0`, puis l'inférence a cherché
+`artifacts/models/_global_ranking_features.json`, absent. L'univers PIT contenait
+484 titres au 9 octobre : ce n'était donc pas un univers vide. Le zéro classement
+a été suivi d'une insertion de run synthétique sans `market_code`, refusée par
+le contrat multi-marchés (migration 0085).
+
+Corrections :
+
+- auto-détection quotidienne via `batch_diagnostics.live_batch_id`, historique
+  via `backtest_batch_id` ; un dossier `model-factory-*` explicite est prioritaire ;
+- recherche Global Ranking dans le sous-dossier du batch (dossier direct accepté,
+  ancien format plat avec métadonnées conservé) ; chemin résolu dans les logs ;
+- priorité au sélecteur LIVE plutôt qu'à un ancien choix BACKTEST pour le bouton
+  quotidien ; pas de double suffixe batch dans le chemin ;
+- parents synthétiques Global Ranking **et** Oracle avec marché `US_EQ` explicite,
+  vérifié contre le batch parent ; rejet des parents CN/FR ou absents ;
+- aucune création de run synthétique `completed` sans données source ;
+- après zéro classement ou échec quotidien, arrêt avant synthèse : aucune
+  réutilisation de résultats historiques pour faire passer l'étape 10 ;
+- synthèse quotidienne limitée à la séance calculée et vérification des lignes
+  effectivement synthétisées avant de poursuivre le workflow.
+
+Le DDL de création `model_training_run.sql` est aligné sur la migration existante
+(marché obligatoire sans défaut). **Aucune nouvelle migration à appliquer pour
+cette réparation, aucune écriture SQL de maintenance exécutée.**
+
+La configuration de modèle et l'activation GPT ne sont pas modifiées implicitement.
+Au contrôle local du 10 octobre, les artefacts de `ef2cd0` sont absents ; le batch
+Oracle configuré pour GPT `model-factory-20261003082853-e98332` dispose de ses
+champions, mais remplacer un Global Ranking par cet Oracle ou activer GPT est
+un choix fonctionnel distinct. Restaurer le batch configuré ou sélectionner
+explicitement le batch voulu avant relance. Ne pas relancer automatiquement
+11/12/13/14 pour tester cette correction.
+
+Validation : **213 tests ciblés réussis** (synthèses, marché parent, résolution
+de batch/dossier, garde quotidienne, CLI, commandes IHM, scope GPT historique
+et batch US). Les connexions des tests sont factices ; aucun entraînement,
+collecte, appel GPT ou ordre broker n'a été lancé pour cette réparation.
 
 Le 7 octobre 2026, le mode `--dry-run` a construit les neuf commandes avec la date de séance US du jour et a terminé en `DRY_RUN`. Après harmonisation, une génération à blanc a confirmé le fichier commun sur 3/4/5/8. Aucun traitement réel ni écriture SQL n'a été déclenché pendant ces vérifications. Les tests couvrent l'ordre des étapes, l'exclusion ML/ordres, les défauts partagés, les jours fériés, le décalage Paris/New York, le refus d'une autre base, les compteurs d'échec, le verrou partagé, les fenêtres et l'univers commun, ainsi que la conservation des scopes interactifs par défaut.

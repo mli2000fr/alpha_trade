@@ -1,5 +1,11 @@
 # Workflow quotidien de bout en bout
 
+Ce chapitre décrit le parcours d'exploitation **US**. CN/FR ont des parcours
+de recherche/replay isolés et ne sont pas autorisés à suivre implicitement
+son chemin broker. Pour les options GPT, les sélections semaine/vendredi du
+batch et le watcher, lire [le pipeline actuel](03_pipeline.md) et
+[batchs/marchés](19_batchs_et_marches.md).
+
 ## Objectif
 
 Le workflow quotidien transforme des données de marché en décisions contrôlées,

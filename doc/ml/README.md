@@ -1,5 +1,18 @@
 # Références ML
 
+## Contrats opérationnels actuels — 10 octobre 2026
+
+- [État de l'implémentation US/CN/FR](../ETAT_ACTUEL_IMPLEMENTATION.md).
+- [Oracle TOP20 tradable, backtest et live](oracle_tradable_top20_backtest_live.md).
+- [Gate d'amplitude Oracle × ATR](oracle_atr_amplitude_gate.md).
+- [Étude quotidienne : rendements réalisés et mode partiel](oracle_atr_market_regime_daily.md).
+- [Oracle → GPT/Web → risque → PAPER LONG/SHORT](oracle_llm_directional_filter.md).
+- [Registre daté des expériences](experiences_done.md) : pas une liste de branches promues.
+
+Les références de recherche ci-dessous conservent leurs verdicts et réserves.
+Une source proposée dans un ancien plan ne devient pas une collecte autorisée
+actuellement ; vérifier [le catalogue](../operations/catalogue_batchs_actuel.md).
+
 1. [Orchestration train/predict](orchestration_train_predict.md)
 2. [Features et labels](features_et_labels.md)
 3. [Global Ranking](global_ranking_reference.md)

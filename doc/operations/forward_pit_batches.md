@@ -1,9 +1,18 @@
 # Batchs de collecte Forward PIT
 
+## Repère actuel et périmètre historique
+
+Rapprochement du 10/10/2026 : le
+[catalogue courant US/CN/FR](catalogue_batchs_actuel.md) fait référence pour
+les familles actives, retirées et bloquées. Les descriptions/itérations plus
+anciennes ci-dessous n'annulent pas les statuts droits/prudence actuels ni
+les frontières fichiers/staging/canonique. Cette page décrit surtout le
+contrat de collecte US ; FR/CN ont leurs runners et historiques séparés.
+
 ## Pilotage depuis l'IHM
 
 La page **Workflow & Orchestration → Batch** constitue le catalogue opérationnel de
-batch.yaml. Elle affiche pour chaque traitement sa finalité, sa priorité P0 à P4,
+des catalogues du marché sélectionné. Elle affiche finalité, priorité P0 à P4,
 les tables alimentées, le calendrier configuré et l'état réel de la tâche Windows.
 Elle rapproche également la dernière exécution du Planificateur avec le dernier run
 présent dans pit_collection_runs (volumes demandés, reçus, persistés, alertes et
@@ -14,9 +23,11 @@ Les compteurs distinguent configuré, exécutable, installé et exécutable,
 et installé mais dormant. Une tâche installée mais associée à enabled=false
 reste présente dans Windows, mais son launcher s'arrête avant tout appel fournisseur
 et n'écrit aucune donnée métier.
-Chaque batch dormant affiche une alerte rouge issue de son champ
+Chaque batch dormant affiche une explication issue de son champ
 activation_requirement dans batch.yaml. Elle décrit le fournisseur, le quota, le
 flux amont ou la décision de recherche nécessaire avant de passer enabled à true.
+Les blocages droits/prudence sont noirs avec ⛔ ⚖️, pas rouges comme un échec
+opérationnel. enabled=true seul ne lève jamais leur verrou.
 Elle est suivie d'une section **Comment le débloquer**, alimentée par `unlock_steps`,
 qui détaille les contrôles, développements et validations à réaliser dans l'ordre.
 
@@ -33,7 +44,7 @@ désactivé quand la tâche est absente ou en cours, et le script refuse égalem
 désinstallation tant que la tâche s'exécute.
 
 Deux actions globales permettent d'installer ou réinstaller les tâches actives configurées,
-et de désinstaller toutes les tâches Batch présentes dans Windows. Une opération
+et de désinstaller les tâches Batch installées du marché sélectionné. Une opération
 globale continue après un échec isolé et affiche le résultat par batch. Les tâches en
 cours sont toujours ignorées. Installer une configuration dormante ne l'active pas :
 enabled=false demeure le verrou fonctionnel.
@@ -42,7 +53,11 @@ enabled=false demeure le verrou fonctionnel.
 
 Ce dispositif construit, à partir de maintenant, l’historique réellement observable par Alpha‑Trade. Il ne reconstitue pas artificiellement le passé : chaque payload reçu porte un `observed_at`, un `available_at`, un hash de contenu, un hash de schéma et l’identifiant du run. Les données normalisées conservent ce lignage.
 
-Le code métier est dans `service/forward_pit/batch.py`. `scripts/windows/forward_pit_launcher.ps1` est uniquement un adaptateur d’exploitation Windows : lecture de `batch.yaml`, contrôle heure/jour/fuseau, mutex anti-chevauchement, journal et notification email/Telegram. Toutes les valeurs d’exploitation sont dans `batch.yaml`, jamais dans `config.yaml`.
+Le code métier US est dans `service/forward_pit/batch.py`.
+`scripts/windows/forward_pit_launcher.ps1` adapte lecture du catalogue,
+heure/jour/fuseau, mutex, journal et notifications. Le planning de collecte est
+dans batch.yaml ; exception : les listes d'étapes/mode/compte de us_pipeline
+sont dans config.yaml. Les profils FR/CN sont séparés.
 
 Principes invariants :
 

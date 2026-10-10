@@ -22,11 +22,12 @@ from __future__ import annotations
 
 import argparse
 import logging
-from datetime import date, datetime, timezone
+from datetime import date
 
 from sqlalchemy import text
 
 from database.connection import get_sqlalchemy_engine
+from modelFactory.synthetic_prediction_run import ensure_synthetic_run
 
 LOGGER = logging.getLogger(__name__)
 
@@ -51,7 +52,8 @@ _CHUNK = 2000
 
 
 def synthesize(batch_id: str, best_h: int, *, top_pct: float = 0.10,
-               dip_config: dict | None = None) -> dict:
+               dip_config: dict | None = None,
+               start: str | None = None, end: str | None = None) -> dict:
     engine = get_sqlalchemy_engine()
     run_id = f"{batch_id}{_SYNTH_RUN_SUFFIX}"
     rank_col = f"global_rank_{best_h}"
@@ -63,22 +65,21 @@ def synthesize(batch_id: str, best_h: int, *, top_pct: float = 0.10,
         if rank_col not in cols:
             return {"status": "error", "reason": f"missing column {rank_col}"}
 
-        # 1. Run synthétique dans model_training_run (pour le JOIN batch_id)
-        conn.execute(text(
-            "INSERT INTO alpha_trade.model_training_run "
-            "(run_id, batch_id, registry_id, symbol, status, started_at, finished_at) "
-            "VALUES (:run_id, :batch_id, 0, :symbol, 'completed', :now, :now) "
-            "ON DUPLICATE KEY UPDATE batch_id=VALUES(batch_id)"
-        ), {"run_id": run_id, "batch_id": batch_id, "symbol": "__GLOBAL_RANK_SYNTH__",
-            "now": datetime.now(timezone.utc)})
-        conn.commit()
-
+        where = f"batch_id = :batch_id AND {rank_col} IS NOT NULL"
+        params = {"batch_id": batch_id}
+        if start:
+            where += " AND `date` >= :start"
+            params["start"] = start
+        if end:
+            where += " AND `date` <= :end"
+            params["end"] = end
         rows = conn.execute(text(
             f"SELECT symbol, `date`, {rank_col} FROM alpha_trade.global_rank_history "
-            f"WHERE batch_id = :batch_id AND {rank_col} IS NOT NULL ORDER BY `date`, symbol"
-        ), {"batch_id": batch_id}).fetchall()
+            f"WHERE {where} ORDER BY `date`, symbol"
+        ), params).fetchall()
     if not rows:
         return {"status": "error", "reason": "no rows in global_rank_history"}
+    ensure_synthetic_run(engine, batch_id=batch_id, run_id=run_id, symbol="__GLOBAL_RANK_SYNTH__")
 
     # ── Persistent Rank DIP filter (LIVE — config prod_*) ──
     # Appliqué à la branche LONG uniquement : un top-rank n'est marqué `long`

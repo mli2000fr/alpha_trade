@@ -2655,6 +2655,19 @@ def upsert_global_ranks(
     return total
 
 
+def resolve_global_rank_artifacts_dir(artifacts_dir: Path, batch_id: str) -> Path:
+    """Accept a batch directory or a root, preferring that batch over flat legacy files."""
+    root = Path(artifacts_dir)
+    if root.name == batch_id:
+        return root
+    nested = root / batch_id
+    if (nested / "_global_ranking_features.json").is_file():
+        return nested
+    if (root / "_global_ranking_features.json").is_file():
+        return root  # Legacy caller explicitly points at a flat ranking directory.
+    return nested
+
+
 def predict_global_rank_history(
     start_date: str,
     end_date: str,
@@ -2692,6 +2705,8 @@ def predict_global_rank_history(
     if artifacts_dir is None:
         from ihm.services.ml_artifacts import get_model_artifacts_dir as _get_dir
         artifacts_dir = _get_dir() / batch_id
+    artifacts_dir = resolve_global_rank_artifacts_dir(artifacts_dir, batch_id)
+    LOGGER.info("predict_global_rank_history: batch=%s artifacts_dir=%s", batch_id, artifacts_dir)
 
     if engine is None:
         try:

@@ -2,6 +2,22 @@
 
 Retour : [références Execution](README.md)
 
+## Profil GPT PAPER distinct du profil ordinaire
+
+Actualisation du 10/10/2026 : les règles ordinaires TP/SL ci-dessous ne doivent
+pas être appliquées indistinctement au profil figé GPT. Il utilise SL 7 % depuis
+fill, sortie à l'ouverture séance 21 et trailing 15 % configuré, **sans TP de prix**.
+Le défaut Python du trailing est 20 %. Un lot existant conserve son profil.
+LONG et SHORT sont qualifiés séparément ; SHORT exige ETB/permissions et sorties
+buy-to-cover, sans double rachat lors d'une course cancel/fill.
+[Contrat détaillé et tests datés](../ml/oracle_llm_directional_filter.md).
+
+Watcher sain et code chargé requis ; heartbeat d'un ancien processus ne prouve
+pas qu'un correctif est actif. us_pipeline PAPER le prépare avant étape 12,
+avec réutilisation si compatible, sans doublon. La commande IHM manuelle reste
+12.bis → service local. Un PC éteint ne suit pas les sorties temporelles.
+Les bancs FR Trading212 ne qualifient pas une parité autonome de ce contrat.
+
 Le `ProtectionContract` décrit SLA, stop/TP et état attendu. `build_oco_group` relie les enfants ; `check_protection_state` vérifie couverture et cohérence. Les enfants sont soumis après fill et leur quantité ne dépasse jamais la position.
 
 `protection_watcher.py` synchronise positions/ordres, identifie protections manquantes/orphelines, applique transitions break-even/trailing et écrit heartbeat/événements. Il ne sélectionne pas de nouveaux trades.

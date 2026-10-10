@@ -12,6 +12,31 @@
 
 En paper/live, l'equity doit venir du broker : l'échec de lecture est bloquant. En live, l'opérateur doit ressaisir exactement le label du compte. Le couple compte/mode est résolu via `service.alpaca.accounts.AccountRegistry`.
 
+## Branche spécifique GPT US — 10 octobre 2026
+
+Ce parcours est exclusivement PAPER/default. Le wrapper transmet l'analyse
+et le run risque exacts ; les paramètres de protection sont figés avec le run,
+puis liés aux positions/lots. Une nouvelle valeur YAML ne reconfigure pas un
+ancien lot. La case spécifique n'a aucun effet si le filtre GPT est désactivé.
+
+Configuration actuelle : SL fixe 7 % depuis le prix réellement exécuté,
+**pas de TP de prix**, sortie à l'ouverture de la séance NYSE 21 (entrée=1),
+trailing 15 % sans desserrer le SL. Le défaut Python du trailing est 20 %.
+SHORT inverse le sens des ordres de sortie (rachats), exige ETB/permissions et
+quantités entières. Un gap peut dépasser 7 % de perte ; un stop n'est pas
+une garantie de prix. Sans la case spécifique, protections ordinaires conservées.
+
+Watcher continu sain obligatoire pour le profil et lorsque SHORT est autorisé.
+Dans l'IHM manuelle : bloc 12.bis → démarrer service local ; dans us_pipeline
+PAPER avec étape 12 : vérification/réutilisation ou démarrage automatique avant
+12. Un ancien processus ne recharge pas un correctif de code automatiquement.
+PC éteint = pas de suivi local ni de sortie temporelle assurée.
+[Contrat complet](ml/oracle_llm_directional_filter.md).
+
+CN/FR ne sont pas routés ici par un simple choix de marché. Les tests Trading212
+DEMO FR et bancs synthétiques ne qualifient pas une exécution autonome de ces
+protections. [État multi-marchés](ETAT_ACTUEL_IMPLEMENTATION.md).
+
 ## Lifecycle
 
 ```mermaid

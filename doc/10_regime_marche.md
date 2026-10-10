@@ -2,6 +2,29 @@
 
 Le moteur `service/market/` produit un `MarketRegimeSnapshot` injecté au risque et au backtest. Il est conçu avec providers injectables pour conserver les mêmes règles entre live et replay.
 
+## Bloc IHM d'étude Oracle × ATR — état actuel
+
+La page Régime Marché permet de choisir début/fin, univers et batch, afficher la
+commande puis alimenter `oracle_atr_market_regime_daily` via
+`service/market/oracle_atr_study.py`. Écritures par tranches, upsert et reprise ;
+ne pas purger pour reprendre un calcul interrompu. Ce bloc est une étude US,
+pas une source de décision CN/FR ni une table de targets.
+
+Il rapproche régime/macro, intersection Oracle TOP20 × ATR TOP20, proportions
+D1/D10, ratio D10/D1 et somme D1+D10. Ses cinq listes de rendements sont des
+pourcentages entiers signés réalisés à horizon mature. La liste
+`predicted_oracle_score_order_returns_pct` conserve l'ordre du score Oracle ;
+les listes de mouvements sont reclassées par amplitude réelle. Les nombres
+positifs/négatifs ne sont pas des directions prédites.
+
+`missing_returns_policy=partial` décrit le mode choisi, pas l'incomplétude :
+une séance peut être COMPLETE, zéro manquant et 100 % de couverture sous ce mode.
+Les candidats sans rendement qualifié restent comptabilisés et ne sont pas
+remplacés par les suivants connus. Un label immature, Oracle absent, ATR absent
+ou intersection vide doit rester visible, pas transformé en zéro.
+Lire `movement_quality`, les compteurs/couvertures et les statuts.
+[Contrat et listes](ml/oracle_atr_market_regime_daily.md).
+
 ## Modes
 
 Du moins au plus restrictif : `normal`, `capital_preservation`, `close_only`, `cash_only`. Quand plusieurs signaux se déclenchent, le moteur conserve le mode le plus restrictif.

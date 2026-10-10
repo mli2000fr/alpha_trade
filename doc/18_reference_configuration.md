@@ -1,6 +1,24 @@
 # Référence de configuration
 
-`config.yaml` est la configuration principale, complétée par les defaults des dataclasses, les flags CLI et les préférences IHM. Toujours journaliser la configuration effective d'un run.
+`config.yaml` porte le profil US et les options communes, complétés par les
+defaults des dataclasses, flags CLI et préférences IHM. Toujours journaliser
+la configuration effective ; ni un défaut Python ni un YAML isolé ne la décrivent seul.
+
+## Fichiers et propriétaires — 10 octobre 2026
+
+| Fichier | Fonction |
+| --- | --- |
+| config.yaml | Options métier US ; us_pipeline.steps/steps_friday et filtre GPT |
+| config_cn.yaml / config_fr.yaml | Profils de recherche propres aux marchés, serving fermé |
+| config/markets/market_us.yaml, market_cn.yaml, market_fr.yaml | Identité marché, capacités, calendrier, devise, alias DB |
+| config/databases.yaml | Bases distinctes, credentials et allowlists du router |
+| batch.yaml | Catalogue US et quatre entrées de recherche CN legacy |
+| batch_cn.yaml / batch_fr.yaml | Catalogues propres CN/FR |
+| config/research_cn / config/research_fr | Protocoles et preuves de recherche, pas paramètres LIVE |
+
+Les catalogues ne sont pas déplacés automatiquement par un changement d'IHM.
+Un nom dupliqué entre les catalogues CN est refusé. La page Batch résout le
+marché et les fichiers concernés. [Inventaire courant](operations/catalogue_batchs_actuel.md).
 
 ## Chargement du fichier
 
@@ -35,6 +53,9 @@ Les placeholders d’environnement `${VAR}` sont aussi utilisés par des composa
 | `persistent_dip_filter_long` | gate dip long et profils prod/backtest |
 | `extreme_gate` | gate Oracle par percentile |
 | `oracle` | batch et paramètres Oracle |
+| `us_pipeline` | listes d'étapes 1–14 lundi–jeudi/vendredi, mode et compte du batch |
+| `llm_directional_filter` | défauts IHM/CLI du filtre Oracle → Web → GPT PAPER, SHORT et protections |
+| `market_cap` | filtre de capitalisation, indépendamment de la collecte market_cap_sync |
 | `conviction` | transformation probabilités/score en conviction |
 | `backtest` | lifecycle, coûts, limites et reporting |
 
@@ -70,8 +91,11 @@ Variables structurantes :
 | Variable | Effet |
 |---|---|
 | `ALPHA_TRADE_CONFIG_PATH` | autre fichier YAML |
+| `ALPHA_TRADE_BATCH_CONFIG_PATH` | autre catalogue de batchs pour les consommateurs compatibles |
+| `ALPHA_TRADE_MARKETS_CONFIG_DIR` | répertoire des contextes de marchés |
 | `ALPHA_TRADE_VAULT_ADDR` | active la résolution Vault |
 | `LOGIN_DB`, `PASSWORD_DB` | credentials MySQL |
+| `LOGIN_DB_CN`, `PASSWORD_DB_CN`, `LOGIN_DB_FR`, `PASSWORD_DB_FR` | credentials par marché ; fallback partagé configuré dans le router, sans partage des données |
 | `DB_HOST`, `DB_NAME` | overrides DB ciblés |
 | `DB_POOL_SIZE`, `DB_MAX_OVERFLOW` | capacité du pool |
 | `DB_POOL_RECYCLE_SECONDS` | recyclage, minimum 60 s |
@@ -79,6 +103,29 @@ Variables structurantes :
 | `ALPACA_<ID>_*` | comptes broker multiples |
 | `ALPHA_TRADE_CACHE_URL` | Redis ou fallback mémoire |
 | `IHM_AUTH_TOKEN`, `IHM_REQUIRE_LOCALHOST` | accès IHM |
+
+## Valeurs locales à ne pas confondre avec les defaults Python
+
+Au 10/10/2026 : filtre GPT enabled=true pour le défaut IHM, modèle demandé
+gpt-6.1-sol, univers universe-file:univers_filtred_tradable.txt, batch
+model-factory-20261003082853-e98332 ; N=20, K=3, SHORT autorisé. SL=7 %, sortie
+à l'ouverture séance 21 (entrée=1), trailing=15 %. Sans option YAML,
+FilterConfig reste désactivé, N=10/K=5/SHORT=false ; ProtectionProfile a
+un trailing par défaut de 20 %. Le profil d'un run est figé, pas rechargé
+rétroactivement pour ses lots.
+
+Le batch US utilise des options fraîches dont llm_filter_enabled=false :
+enabled=true dans le défaut IHM ne suffit pas à lui ajouter GPT. Son mode
+configuré est PAPER/default, ses listes actuelles sont 1–7,9–14 lundi–jeudi
+et 1–14 vendredi. Les étapes omises ne sont pas rajoutées.
+
+Oracle × ATR : cascade.oracle_atr_enabled=true, mais politique Oracle live
+off et extreme_gate.enabled=false. Ne pas déduire « serving Oracle activé »
+du seul booléen ATR. Le filtre market_cap est liquidity_only actuellement,
+même si le batch de collecte SEC/Yahoo/Finnhub est actif.
+
+Voir [état actuel](ETAT_ACTUEL_IMPLEMENTATION.md) pour les contrats, restrictions
+et différences entre configuration et autorisation effective.
 
 ## Ajouter une option
 

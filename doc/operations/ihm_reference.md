@@ -2,6 +2,19 @@
 
 Retour : [IHM et opérations](../16_ihm_et_operations.md)
 
+## Actualisation multi-marchés du 10 octobre 2026
+
+La page Batch (`ihm/pages/batches.py`) complète Workflow & Orchestration.
+Catalogues US/CN/FR séparés, commandes/états/historiques propres, installation
+globale des activés compatibles du seul marché sélectionné. Blocages droits
+noirs avec ⛔ ⚖️, échecs opérationnels rouges/gras.
+[Mode d'emploi](../guide_utilisateur/19_batchs_et_marches.md).
+
+Pipeline/Diagnostic ML/Backtesting ont des parcours CN/FR, sans transformer
+Risk/Execution Alpaca en broker CN/FR. L'option GPT US PAPER ajoute un wrapper
+10/11/12 ; les options fraîches du scheduler ne copient pas la session IHM
+et ne l'activent pas par sa case cochée par défaut. [Contrat actuel](us_pipeline.md).
+
 ## Rôle et frontières
 
 L’IHM est une console locale d’exploitation. Elle consulte l’état du système, prépare des options, lance les commandes publiques du projet et suit leurs sorties. Elle ne remplace ni les règles métier, ni leurs validations, ni leurs journaux d’audit.
@@ -45,7 +58,7 @@ Une entrée YAML incomplète est ignorée. Seuls les modes `paper` et `live` son
 | 8 | `sentiment_pipeline` | ingestion et features sentiment | 6 |
 | 9 | `signal_aggregator` | agrégation quant/sentiment/secteur | 8 |
 | T1 | `ml_train` | entraînement et publication d’un champion | hors quotidien |
-| 10 | `ml_predict` | inférence avec champion publié | 9 + champion |
+| 10 | `ml_predict` | inférence avec champion publié | modèle et données disponibles ; 9 non obligatoire pour lancement manuel |
 | 11 | `risk_management` | sélection, sizing et contraintes | 9 + 10 |
 | 12 | `execution` | ordres, fills, positions, réconciliation et TCA | 11 |
 | 13 | `corporate_actions_sync` | collecte splits/dividendes | 12 |

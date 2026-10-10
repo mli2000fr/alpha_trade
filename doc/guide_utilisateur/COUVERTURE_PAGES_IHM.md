@@ -6,6 +6,7 @@ Cette matrice est dérivée de `ihm/services/navigation.py`. Une page officielle
 |---|---|---|---|
 | Accueil | Vue d’ensemble / `overview` | `ihm/pages/overview.py` | [workflow](02_workflow_quotidien.md) |
 | Workflow | Pipeline / `pipeline` | `ihm/pages/pipeline.py` | [pipeline](03_pipeline.md) |
+| Workflow | Batch / `batches` | `ihm/pages/batches.py` | [batchs/marchés](19_batchs_et_marches.md) |
 | Workflow | Supervision Ops / `supervision_ops` | `ihm/pages/supervision_ops.py` | [supervision](09_supervision_parite.md) |
 | Workflow | Infra & Backups / `ops_infra` | `ihm/pages/ops_infra.py` | [infra/DB](14_infra_backups_et_db.md) |
 | Trading | Execution / `execution` | `ihm/pages/execution.py` | [exécution](07_execution.md) |

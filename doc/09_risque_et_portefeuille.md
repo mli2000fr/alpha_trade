@@ -11,6 +11,30 @@ Le [régime de marché](10_regime_marche.md) dispose également de sa référenc
 
 `risk_management/` transforme des candidats ML en décisions auditables et en `portfolio_targets`. Le module est fail-closed pour les données critiques et applique le régime, les limites de compte, la liquidité et les contraintes de concentration.
 
+## Variante GPT PAPER et données d'entrée actuelles
+
+Au 10/10/2026, `service/llm_directional/risk_adapter.py` consomme les candidats
+retenus d'un run GPT exact, valide, de la même séance/du même compte. Pas de
+fallback latest vers un autre run. Confidence non calibrée : elle ne remplace
+pas une probabilité ML pour Kelly. Régime, capital, univers et limites restent
+prioritaires ; un plafond de 3 sélectionnés ne promet pas 3 positions.
+
+SHORT exige PAPER/default, autorisation compte et actif tradable/marginable/
+shortable/easy_to_borrow, quantités entières et contrôles répétés avant ordre.
+Pas de locate/HTB automatique ni inversion silencieuse d'une position.
+
+`service/market/new_entry_data_guard.py` qualifie les nouvelles entrées US :
+historique réel suffisamment dense, séance clôturée disponible, OHLCV valides,
+conventions et fraîcheur. Un refus par symbole ne bloque pas les autres valides ;
+une panne globale du contrôle peut bloquer toutes les nouvelles entrées.
+Ce contrôle ne liquide pas les positions existantes et n'utilise pas des
+rendements futurs de l'étude Oracle × ATR.
+
+Le profil GPT spécifique fige SL 7 %, sortie séance 21 et trailing 15 % dans
+la configuration actuelle, séparément du contrat ordinaire ATR/TP. Voir
+[contrat GPT](ml/oracle_llm_directional_filter.md) et
+[état courant](ETAT_ACTUEL_IMPLEMENTATION.md).
+
 ## Séquence logique
 
 ```mermaid

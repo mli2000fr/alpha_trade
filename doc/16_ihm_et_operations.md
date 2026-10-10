@@ -16,13 +16,38 @@ La couche thème sépare palette, badges, icônes et `typography.py`. Elle ne po
 
 ## Pages principales
 
-Overview, Pipeline, Screening, ML, ML diagnostics, Risk, Execution, Corporate Actions, Backtesting, Parity, Market Regime, Fundamentals, Alpaca Accounts, Supervision Ops, Infrastructure, Compliance/Audit, Tax, Settings, DB admin et Sandbox Health.
+Overview, Pipeline, Batch, Screening, ML, ML diagnostics, Risk, Execution,
+Corporate Actions, Backtesting, Parity, Market Regime, Fundamentals, Alpaca
+Accounts, Supervision Ops, Infrastructure, Compliance/Audit, Tax, Settings,
+DB admin, Sandbox Health et Glossaire.
+
+Les vues Pipeline, Diagnostic ML, Backtesting et Batch ont des parcours
+US/CN/FR. Cela n'est pas un switch global transformant Risk/Execution Alpaca
+en moteur broker CN/FR. Les capacités servent de garde-fous.
 
 L'IHM affiche et orchestre ; elle ne doit pas réimplémenter les règles métier. Les commandes sont construites par `pipeline_runner.py` et les services dédiés, puis exécutées avec journalisation, verrou de pipeline et registre de processus.
 
 ## Pipeline IHM
 
-`PipelineOptions` contient paramètres de date, compte, provider, ML, backtest et watcher. Les commandes produites doivent rester équivalentes aux CLI publiques. `pipeline_lock.py` empêche des workflows concurrents dangereux ; `process_registry.py` suit les processus et artefacts.
+`PipelineLaunchOptions` contient paramètres de date, compte, provider, ML,
+filtre GPT, backtest et watcher. Les commandes produites doivent rester
+équivalentes aux CLI publiques. `pipeline_lock.py` et `process_registry.py`
+gèrent verrous, processus et artefacts. Un défaut de checkbox IHM n'est pas
+automatiquement transmis aux options fraîches du batch us_pipeline.
+
+## Workflow & Orchestration → Batch
+
+`ihm/pages/batches.py` et `ihm/services/batch_management.py` résolvent les
+catalogues séparés et affichent priorité, description, tables, fenêtres/second
+passage, raison de blocage, commandes, installation, dernier run et compteurs.
+Installer/réinstaller tous agit uniquement sur les batchs activés compatibles
+du marché sélectionné ; désinstaller tous vise ses tâches installées hors runs actifs.
+
+Un dernier échec opérationnel est rouge/gras ; les blocages droits/prudence
+restent noirs avec icônes très visibles ⛔ ⚖️. Une date Windows sentinelle
+antérieure à 2000 n'est pas une véritable dernière collecte. Le résumé métier
+et l'état Windows sont distincts. `enabled=true` ne lève pas un blocage de droits.
+[Manuel de la page](guide_utilisateur/19_batchs_et_marches.md).
 
 ## Sécurité
 
@@ -34,7 +59,7 @@ L'IHM affiche et orchestre ; elle ne doit pas réimplémenter les règles métie
 - santé provider, DB, quotes et données ;
 - processus actifs et logs ;
 - watcher protections ;
-- notifications email ;
+- notifications email et Telegram, avec compteurs/erreur et principal/secours selon le launcher ;
 - métriques Prometheus et règles Grafana/alertes historiques ;
 - conformité, audit chain et réconciliation.
 

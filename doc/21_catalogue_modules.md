@@ -2,6 +2,22 @@
 
 Ce catalogue aide à localiser rapidement le propriétaire d'un comportement. Les fonctions privées ne sont pas une API stable ; partir du point d'entrée public, puis suivre les appels.
 
+## Parcours ajoutés : repères du 10 octobre 2026
+
+| Propriétaire | Fonction actuelle |
+| --- | --- |
+| common/market_context.py, common/config_loader.py | marché explicite, capacités, choix des fichiers de configuration |
+| database/router.py, config/databases.yaml | bases physiques US/CN/FR et allowlists |
+| ihm/services/batch_management.py, ihm/pages/batches.py | catalogues séparés, tâches Windows, état, commandes et blocages |
+| service/forward_pit/batch.py, us_pipeline.py, recovery_gate.py, watcher_startup.py | collectes US, workflow planifié 1–14, secours et prérequis watcher |
+| service/llm_directional/ | Oracle → GPT/Web prospectif → risque/PAPER, archivage et protections figées |
+| service/market/oracle_atr_study.py, new_entry_data_guard.py | étude rétrospective et contrôle live séparés |
+| service/baostock/, dataIntegrityEngine/cn_*, modelFactory/cn_* | données/recherche/replay CN ; propriétaires quotidiens bloqués selon catalogue |
+| service/fr/, service/inpi/ | collecte, staging, preuves et qualification FR ; droits/capacités contrôlés |
+
+Ce tableau complète les packages historiques ci-dessous ; il ne constitue pas
+une régénération exhaustive des inventaires API. [État actuel](ETAT_ACTUEL_IMPLEMENTATION.md).
+
 ## `core/`
 
 - `direction.py`, `types.py`, `broker_models.py` : types et directions partagés ;

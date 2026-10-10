@@ -8,7 +8,22 @@ La page peut alimenter `stock_macro_indicators_daily`, recalculer le régime sur
 
 Avant recalcul : vérifier période, fraîcheur/provider, calendrier et sauvegarde. Après : lire résumé et lignes détaillées, puis contrôler le snapshot réellement lié au run de risque.
 
-## Comptes Alpaca
+## Étude quotidienne Oracle × ATR
+
+Dans Régime Marché, le bloc d'alimentation choisit période, univers et batch
+Oracle, affiche une commande et persiste par tranches. Le défaut d'univers est
+univers_filtred_tradable.txt. Les cinq listes de rendements sont des futurs
+réalisés signés, pas les directions prédites du modèle. La liste
+predicted_oracle_score_order_returns_pct reste dans l'ordre du score Oracle.
+
+Lire le statut, les compteurs et movement_quality. `missing_returns_policy`
+indique la politique partielle/stricte choisie : partial avec zéro manquant peut
+être COMPLETE et à couverture 100 %. Un horizon immature reste inconnu. Recalculer
+les séances complètes après une correction source si nécessaire ; la reprise
+ne détecte pas automatiquement toutes les corrections.
+[Contrat et procédure](../ml/oracle_atr_market_regime_daily.md).
+
+## Comptes Alpaca — opérations broker
 
 La page sélectionne un compte déclaré, rafraîchit l’état live, affiche compte, positions, ordres, portfolio history et historique canonique Alpha Trade. L’absence de connexion DB masque l’historique canonique sans rendre le broker indisponible ; inversement un snapshot DB ne prouve pas l’état live.
 

@@ -1,5 +1,23 @@
 # Page Execution — du portefeuille cible au broker
 
+## Parcours et protections spécifiques — 10 octobre 2026
+
+Le contrat ci-dessous est le parcours US Alpaca. Le shadow FR et les lectures
+Trading212 DEMO ne sont pas un raccordement complet de ce moteur ; CN n'a pas
+d'exécution broker autorisée.
+
+Filtre GPT activé : même run/date, compte default PAPER, LONG/SHORT selon
+sélection archivée et autorisations ETB. La case spécifique fige SL 7 % depuis
+fill, sortie séance 21 (entrée=1), trailing 15 % configuré, aucun TP de prix.
+Sans cette case, contrat ordinaire conservé. Les contraintes de risque restent
+prioritaires et les gaps peuvent dépasser le stop théorique.
+
+Watcher continu sain obligatoire pour ce profil et si SHORT est autorisé.
+Manuellement : Pipeline → 12.bis → Démarrer service local. Le batch us_pipeline
+PAPER prépare automatiquement son watcher avant 12. Vérifier compte, heartbeat
+et code chargé ; ne pas lancer un doublon. PC éteint = suivi local arrêté.
+[Contrat détaillé](../ml/oracle_llm_directional_filter.md).
+
 ## Chaîne d’objets
 
 ```text

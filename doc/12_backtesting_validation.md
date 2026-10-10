@@ -9,6 +9,26 @@
 
 `backtesting/` rejoue signaux, risque et exécution avec données PIT et coûts réalistes. Sa fonction n'est pas seulement de calculer un PnL : il doit falsifier les hypothèses et mesurer la transférabilité au live.
 
+## Marché et contrat effectivement qualifié
+
+Au 10/10/2026, les vues US/CN/FR de Backtesting utilisent des parcours propres.
+La CLI US décrite ci-dessous ne devient pas un replay CN/FR par une base renommée.
+Isoler profils, instrument IDs, univers, calendrier, actions sur titres et coûts.
+CN inclut notamment T+1/limites/statuts ; FR distingue commissions, spread,
+slippage et TTF conditionnelle à l'éligibilité. Les preuves manquantes ne sont
+pas des exonérations fiscales ni des cours valides.
+
+Les frais FR génériques et le spread/slippage supposés restent configurables,
+pas un tarif broker certifié. Un replay fournisseur/exploratoire ou shadow local
+n'est pas une parité live démontrée. Lire les réserves des sprints avant promotion.
+[France](fr/README.md), [Chine](cn/README.md), [état actuel](ETAT_ACTUEL_IMPLEMENTATION.md).
+
+Pas de recherche Web GPT historique : le filtre actuel est prospectif PAPER.
+Les listes réalisées Oracle × ATR et simulations « meilleurs futurs réels »
+sont des diagnostics/oracles ex post, jamais des signaux disponibles à J.
+La sélection Oracle × ATR a un [contrat indépendant](ml/oracle_atr_amplitude_gate.md)
+dans les parcours compatibles ; vérifier les flags et comparer à univers égal.
+
 ## CLI
 
 `python -m backtesting` expose des sous-commandes `run`, `backfill`, `calibrate`, `diagnose`, `recommend` et `walk-forward`. `profiles.py` fournit des profils nommés ; les flags CLI explicitement fournis priment sur les valeurs du profil.

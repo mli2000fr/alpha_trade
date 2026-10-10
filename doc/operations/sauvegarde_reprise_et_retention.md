@@ -1,5 +1,9 @@
 # Sauvegarde, reprise après incident et rétention
 
+État des jobs au 10/10/2026 :
+[catalogue des trois marchés](catalogue_batchs_actuel.md). Une archive présente
+ne prouve pas une restauration qualifiée ; vérifier le rapport du drill concerné.
+
 ## Périmètre et vérité exécutable
 
 Une reprise complète peut exiger base MySQL, schéma Alembic, configuration, artefacts ML compatibles, manifests et secrets recréés. Les scripts courants sont `scripts/backup_db.py`, `scripts/backup_ml_artifacts.py`, `scripts/restore_from_backup.py` et `scripts/prune_artifacts.py`. Les secrets ne doivent jamais être placés dans les archives ni dans les rapports.
@@ -17,7 +21,7 @@ Deux batchs P0 complémentaires sont visibles dans **Workflow & Orchestration �
 | Batch | Périmètre | Calendrier Paris | Rétention | Préfixe |
 |---|---|---|---:|---|
 | `db_core_backup` | toute `alpha_trade`, sauf `news_raw` ; routines et triggers inclus | chaque dimanche 01:00 | 5 | `alpha_trade_without_news_` |
-| `db_news_raw_backup` | table `news_raw` uniquement ; aucun doublon des routines globales | chaque dimanche, heure définie dans `batch.yaml` | 3 | `alpha_trade_news_raw_` |
+| `db_news_raw_backup` | table `news_raw` uniquement ; aucun doublon des routines globales | chaque dimanche 20:00 | 3 | `alpha_trade_news_raw_` |
 
 Les deux familles utilisent `backups/db`, mais leurs préfixes rendent leurs rotations
 strictement indépendantes. Les deux batchs sont hebdomadaires et autorisés chaque
@@ -65,6 +69,20 @@ Les répertoires `artifacts/benchmarks`, `artifacts/global_benchmark`,
 reconstructibles et ne sont pas indispensables au fonctionnement de l'application.
 
 ## Restauration
+
+### Sauvegardes isolées CN/FR
+
+CN : cn_db_backup, dimanche 04:00 Paris, alpha_trade_cn → backups/cn/db,
+keep=3. FR : fr_db_backup dimanche 03:00, alpha_trade_fr → backups/fr/db,
+keep=3 ; fr_artifacts_backup samedi 02:00, artifacts/fr et
+artifacts/models/fr_eq → backups/fr/artifacts, keep=3.
+Les archives FR restent séparées par racine. La sauvegarde US de artifacts/models
+est plus large ; ne pas supposer qu'elle remplace les preuves/fichiers FR.
+
+La restauration legacy décrite ci-dessous possède des contrôles US et un
+appel Alembic. Ne pas l'appliquer aveuglément à CN/FR : sélectionner base,
+DDL et preuves de restauration du marché, sans importer les tables US dans
+une base étrangère. Les secrets doivent être rétablis hors archives.
 
 `restore_from_backup.py` accepte `.sql` ou `.sql.gz`, alimente le client `mysql`, exécute `alembic upgrade head`, compte les tables critiques et appelle `scripts/verify_audit_chain.py --strict`. Son rapport expose chargement, migration, comptages, chaîne d’audit, âge du dump (`rpo_seconds`), durée (`rto_seconds`) et erreurs.
 

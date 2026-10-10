@@ -9,6 +9,21 @@
 
 Ce document donne la vue transversale. Les contrats algorithmiques, paramètres, erreurs et procédures de reprise vivent dans les références ci-dessus.
 
+## Mise à jour multi-marchés et disponibilité live
+
+Au 10/10/2026, les contrats ci-dessous sont principalement US. CN/FR ont leurs
+référentiels, calendriers et bases isolées ; l'ingestion quotidienne FR reste
+en staging, les collectes CN D6/D9 sont bloquées droits/prudence.
+[État courant](ETAT_ACTUEL_IMPLEMENTATION.md),
+[destinations des collectes](operations/catalogue_batchs_actuel.md).
+
+La politique de capitalisation locale est liquidity_only. Un fichier de collecte
+ou de prédiction n'est pas un univers autorisé pour l'entrée. Le contrôle
+`service/market/new_entry_data_guard.py` vérifie séparément les barres réelles,
+historique et fraîcheur des nouvelles entrées US. Des listes d'étude partielles
+sur rendements futurs manquants n'assouplissent pas ce contrôle live. Un rejet
+par symbole laisse les autres valides admissibles ; une panne globale reste bloquante.
+
 ## Sources
 
 - Alpaca : actifs, compte, ordres, positions, quotes et éventuellement barres IEX ;

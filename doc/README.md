@@ -1,4 +1,11 @@
-# Documentation Alpha Trade — référentiel refactorisé
+# Documentation Alpha Trade — référentiel fonctionnel et opérationnel
+
+**Mise à jour ciblée du 10 octobre 2026** : commencer par
+[l'état actuel de l'implémentation](ETAT_ACTUEL_IMPLEMENTATION.md) et
+[le catalogue courant des batchs](operations/catalogue_batchs_actuel.md).
+Les guides centraux ont été rapprochés des sources ; les inventaires API et
+les comptes rendus historiques ne sont pas intégralement régénérés.
+[Périmètre et vérifications de cette mise à jour](AUDIT_MISE_A_JOUR_20261010.md).
 
 Suivi exhaustif des archives : [migration de `doc/backup`](MIGRATION_BACKUP.md).
 
@@ -6,18 +13,24 @@ Les textes anciens conservés pour traçabilité sont isolés dans [sources hist
 
 Migration de tous les autres fichiers de l’ancien `doc` : [registre complémentaire](MIGRATION_RESTE_DOC.md).
 
-Cette arborescence documente l'application telle qu'elle existe dans le code source au 29 août 2026. Les documents historiques de `doc/` ont servi de contexte, mais ne constituent pas la source de vérité. En cas d'écart, l'ordre d'autorité est : code exécutable, migrations et schéma SQL, `config.yaml`, tests contractuels, puis cette documentation.
+En cas d'écart, vérifier le code exécutable, le schéma effectivement déployé,
+la configuration effective et les tests du composant avant ce guide. Les fichiers
+US, CN et FR sont séparés : `config.yaml` n'est pas l'unique configuration.
+Une fonctionnalité implémentée ou un batch activé ne prouvent ni autorisation
+de trading ni disponibilité des données.
 
 ## Parcours conseillé pour un nouvel arrivant
 
 1. [Vue fonctionnelle](01_vue_fonctionnelle.md) : ce que fait le produit et les concepts métier.
 2. [Architecture globale](02_architecture_globale.md) : flux, frontières et dépendances.
 3. [Installation et prise en main](03_installation_et_demarrage.md).
-4. [Pipeline quotidien](04_pipeline_quotidien.md) : ordre canonique des 14 étapes.
+4. [Pipeline quotidien](04_pipeline_quotidien.md) : 14 étapes disponibles, sélection explicite et batch US.
 5. [Données et univers PIT](05_donnees_et_univers_pit.md).
 6. [ML : vue d'ensemble](06_ml_vue_ensemble.md), puis les documents spécialisés Global Ranking et Oracle Extreme.
 7. [Risque et portefeuille](09_risque_et_portefeuille.md), [régime de marché](10_regime_marche.md), puis [exécution](11_execution_et_protections.md).
 8. [Backtesting et validation](12_backtesting_validation.md).
+9. [Batchs et marchés dans l'IHM](guide_utilisateur/19_batchs_et_marches.md),
+   [marché CN](cn/README.md) et [marché FR](fr/README.md).
 
 ## Index par domaine
 
@@ -47,6 +60,8 @@ Cette arborescence documente l'application telle qu'elle existe dans le code sou
 | Alerting et métriques | [Notifications](operations/alerting_et_metriques.md) | `service/alerting.py`, Prometheus, notifications IHM |
 | Corporate actions | [17](17_corporate_actions.md) | `corporate_actions/` |
 | Configuration | [18](18_reference_configuration.md) | `config.yaml`, classes de configuration |
+| État multi-marchés actuel | [Synthèse](ETAT_ACTUEL_IMPLEMENTATION.md) | contextes, router DB, parcours US/CN/FR |
+| Collectes et sauvegardes | [Catalogue batchs](operations/catalogue_batchs_actuel.md) | YAML US/CN/FR, launchers, page Batch |
 | Tests et contribution | [19](19_tests_et_contribution.md) | `tests/`, `formal/` |
 | Glossaire | [20](20_glossaire.md) | contrats transverses |
 | Catalogue du code | [21](21_catalogue_modules.md) | tous les packages Python |
@@ -64,12 +79,14 @@ Cette arborescence documente l'application telle qu'elle existe dans le code sou
 
 - **Production et recherche sont séparées.** Un contrat de labels ou un lifecycle de recherche n'est pas automatiquement le contrat d'exécution réel.
 - **PIT signifie point-in-time.** Une donnée, un univers ou une prédiction doit être résolu à la date considérée sans information future.
-- **ML-first.** Le scope nominal vient de l'univers tradable complet ; le ML décide le côté et le rang. Les scores scanner/selector servent de features, diagnostics ou vetos, pas de fallback autonome.
+- **ML-first, selon le parcours.** Les modèles directionnels/rankings et la branche Oracle-only sont distincts. Oracle estime l'amplitude, pas LONG/SHORT. Le filtre GPT prospectif PAPER est une option séparée ; les scores scanner/selector ne sont pas un fallback autonome.
 - **Train n'est pas quotidien.** Le pipeline quotidien consomme un champion déjà publié.
 - **La configuration effective est composée.** Les valeurs par défaut Python, `config.yaml`, options CLI et préférences IHM peuvent se superposer ; les priorités sont détaillées dans [18](18_reference_configuration.md).
 
 ## Politique concernant les anciens documents d'expérience
 
-Les comptes rendus d'expériences historiques ne sont pas migrés intégralement dans ce référentiel. Ils restent disponibles dans l'ancien `doc/` comme archives de recherche. La refonte ne conserve que leurs enseignements durables sous forme de synthèses : question testée, protocole général, verdict, limites et statut actuel dans le code.
+Les comptes rendus d'expériences restent disponibles dans les dossiers de recherche,
+notamment `doc/ml`, `doc/cn` et `doc/fr`, et dans les archives. Leurs dates,
+protocoles et résultats ne sont pas réécrits lors d'une mise à jour opérationnelle.
 
 Ne sont volontairement pas reproduits : tableaux détaillés par batch, listes de seeds, journaux d'itérations, prompts d'analyse, variantes abandonnées et métriques intermédiaires. Une expérience n'est décrite comme fonctionnalité que si le code actuel l'intègre effectivement et que la configuration permet de l'activer.

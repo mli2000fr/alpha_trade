@@ -2636,9 +2636,15 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
 
     if step_key == "ml_predict":
         _predict_artifacts_dir = ml_artifacts_dir
-        _bid = options.ml_predict_batch_id or options.ml_live_predict_batch_id
+        # Historical and LIVE selectors are independent. A stale backtest choice
+        # must not override the explicitly selected LIVE batch.
+        if options.llm_filter_enabled or options.ml_predict_use_historical_range:
+            _bid = options.ml_predict_batch_id or options.ml_live_predict_batch_id
+        else:
+            _bid = options.ml_live_predict_batch_id or options.ml_predict_batch_id
         if _bid:
-            _predict_artifacts_dir = f"{ml_artifacts_dir}/{_bid}"
+            _root = Path(ml_artifacts_dir)
+            _predict_artifacts_dir = str(_root if _root.name == _bid else _root / _bid)
         command = [
             sys.executable,
             "-u",

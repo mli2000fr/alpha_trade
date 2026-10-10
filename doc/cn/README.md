@@ -1,5 +1,19 @@
 # Documentation — Intégration du marché chinois
 
+## État opérationnel du 10 octobre 2026
+
+Lire d'abord [l'état actuel multi-marchés](../ETAT_ACTUEL_IMPLEMENTATION.md)
+et [le catalogue des batchs](../operations/catalogue_batchs_actuel.md).
+Les comptes rendus de sprints ci-dessous décrivent des livraisons et preuves
+datées, pas une autorisation actuelle de collecte/serving.
+
+D9 BaoStock est bloqué par prudence sur les droits ; D6 SSE/SZSE automatisé
+également. D10 et l'audit 17-C activés peuvent manquer ces dépendances : ils
+ne prouvent pas une chaîne quotidienne saine. Pas de broker CN autorisé.
+Trois bases séparées US/CN/FR, alias cn_primary vers alpha_trade_cn. Le backup
+et les fenêtres du PC sont documentés dans
+[le planning actuel](../operations/horaires_fr_cn_presence_pc.md).
+
 Ordre de lecture recommandé :
 
 0. [Guide fonctionnel CN_A — prise en main de l'application](./doc_fonctionnel.md)
@@ -14,7 +28,9 @@ Ordre de lecture recommandé :
 9. [Actualisation des fournisseurs](./actualisation_fournisseurs_chine.md)
 10. [Étude d’opportunité historique](./Étude%20d’opportunité%20—%20Extension%20d’α-Trade%20au%20marché%20actions%20chinois.md)
 
-Le guide fonctionnel présente l'état implémenté ; la roadmap, le planning et l'architecture définissent la cible technique et les suites. L’étude d’opportunité historique fournit le contexte ; ses choix initiaux de fournisseurs sont remplacés par la décision gratuite actuelle.
+Le guide fonctionnel décrit les contrats implémentés ; roadmap/planning définissent
+la cible et les suites. L'étude historique et le choix gratuit du Sprint 6
+expliquent le contexte : ils ne lèvent pas les blocages actuels ci-dessus.
 
 ## Décisions normatives
 
@@ -22,11 +38,11 @@ Le guide fonctionnel présente l'état implémenté ; la roadmap, le planning et
 - données Chine dans `alpha_trade_cn` ;
 - code, contrats logiques, repositories, ML et backtest partagés ;
 - `market_code` et `database_alias` obligatoires malgré l’isolation physique ;
-- `config.yaml` et `batch.yaml` réservés au chemin US/legacy ;
+- `config.yaml` et `batch.yaml` portent le chemin US/legacy ; quatre entrées CN de recherche restent dans batch.yaml jusqu'à une migration contrôlée ;
 - `config_cn.yaml` et `batch_cn.yaml` réservés au chemin Chine ;
 - suffixe `_cn` pour tout autre fichier de configuration, profil de features, univers ou manifeste propre à la Chine ;
-- BaoStock est le fournisseur primaire gratuit du Sprint 6 ; AKShare est complémentaire et non bloquant ; RQData/Tushare restent optionnels ;
-- `config/databases.yaml` reste transversal, car il porte précisément le routage entre les deux bases.
+- BaoStock a servi de primaire au Sprint 6 ; son propriétaire quotidien D9 est actuellement bloqué. AKShare, RQData et Tushare ne sont pas des remplaçants activés/qualifiés ;
+- `config/databases.yaml` reste transversal et route les trois bases US/CN/FR.
 
 En cas d’ambiguïté, [architecture_bases_batchs_configuration_cn.md](./architecture_bases_batchs_configuration_cn.md) prévaut pour la base, les batchs et les configurations ; la roadmap prévaut pour les impacts code ; le sprint planning prévaut pour l’ordre de réalisation.
 - [Sprint 3 — contexte marché sur les runs, batches et univers](./sprint_3_contexte_marche_runs.md) — contrat parent, serving par marché, backfill US et garde cross-market.

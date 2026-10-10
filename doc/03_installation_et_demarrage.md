@@ -1,5 +1,11 @@
 # Installation et démarrage
 
+Le bootstrap ci-dessous concerne le parcours **US**. Pour CN/FR, créer/résoudre
+leur base isolée et appliquer les DDL/migrations propres au marché :
+[architecture DB](15_base_de_donnees.md), [CN](cn/README.md), [FR](fr/README.md).
+Un compte Alpaca n'est pas nécessaire pour un travail de recherche FR/CN
+hors parcours broker. Installer un connecteur n'autorise pas ses usages bloqués.
+
 ## Prérequis
 
 - Python 3.12 ou supérieur ;
@@ -31,7 +37,7 @@ Ne jamais remplacer les placeholders de `config.yaml` par des secrets en clair. 
 
 ## Base de données
 
-Appliquer les migrations :
+Pour une base US ciblée et sauvegardée, examiner puis appliquer les migrations :
 
 ```powershell
 alembic upgrade head
