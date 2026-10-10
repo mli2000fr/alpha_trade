@@ -10,7 +10,9 @@ Service : `service/fr/security_master_daily_15e.py`, raccordé au runner FR
 Configuration exclusivement `batch_fr.yaml/fr_security_master_sync`.
 
 Mise à jour du 7 octobre : [remédiation 16-F](sprint_16f_remediation.md).
-Passage désormais à **7 h Paris**, toujours jusqu'à J−1, pour tenter de couvrir
+Passage avancé le 10 octobre à **5 h Paris** pour respecter l'absence
+07:30–20:00 ([horaires et réserves](../operations/horaires_fr_cn_presence_pc.md)),
+toujours jusqu'à J−1, pour tenter de couvrir
 la dernière séance avant ouverture. Disponibilité du référentiel complet datée
 après téléchargement, contrôles et rejeu ; aucune réparation rétroactive de
 la continuité historique ni activation shadow.

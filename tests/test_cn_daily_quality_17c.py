@@ -5,6 +5,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 import yaml
@@ -72,6 +73,40 @@ def test_plan_skips_holiday_and_checks_next_verified_open_session():
     assert quality.plan(datetime(2026, 9, 30, 11, 35, tzinfo=UTC), calendar)["status"] == "SKIP_BEFORE_WINDOW"
     planned = quality.plan(NOW, calendar)
     assert (planned["previous_session"], planned["next_session"]) == ("2026-09-29", "2026-10-08")
+
+
+@pytest.mark.parametrize("paris_day", ["2026-02-06", "2026-07-10", "2026-10-09"])
+def test_paris_evening_audits_same_friday_cn_session(paris_day):
+    now = datetime.fromisoformat(paris_day + "T20:30:00").replace(tzinfo=ZoneInfo("Europe/Paris"))
+    planned = quality.plan(now, load_calendar(CALENDAR), audit_previous_day_before_open=True)
+    assert planned["status"] == "DUE"
+    assert planned["session"] == paris_day
+    assert planned["next_session"] > paris_day
+    assert quality.plan(now, load_calendar(CALENDAR))["status"] == "SKIP_CLOSED"
+
+
+def test_overnight_window_never_substitutes_stale_session_or_current_open_day():
+    calendar = load_calendar(CALENDAR)
+    # Oct 2 in Shanghai: previous civil day is the holiday, not Sep 30.
+    holiday = datetime(2026, 10, 1, 20, 30, tzinfo=ZoneInfo("Europe/Paris"))
+    planned = quality.plan(holiday, calendar, audit_previous_day_before_open=True)
+    assert planned == {"status": "SKIP_CLOSED", "session": "2026-10-01"}
+    # At/after decision cutoff the current CN session is not closed yet.
+    cutoff = datetime(2026, 10, 9, 9, 15, tzinfo=quality.SHANGHAI)
+    planned = quality.plan(cutoff, calendar, audit_previous_day_before_open=True)
+    assert planned == {"status": "SKIP_BEFORE_WINDOW", "session": "2026-10-09"}
+
+
+def test_execute_reads_overnight_option_without_connecting_to_database(tmp_path):
+    batch, research = _configs(tmp_path)
+    config = yaml.safe_load(batch.read_text(encoding="utf-8"))
+    config[quality.BATCH_NAME]["audit_previous_day_before_open"] = True
+    batch.write_text(yaml.safe_dump(config), encoding="utf-8")
+    now = datetime(2026, 10, 9, 20, 30, tzinfo=ZoneInfo("Europe/Paris"))
+    report = quality.execute(batch_config=batch, research_config=research, now=now, dry_run=True)
+    assert report["status"] == "DUE"
+    assert report["session"] == "2026-10-09"
+    assert report["database_modified"] is False
 
 
 def test_every_gate_passes_on_complete_pit_evidence():

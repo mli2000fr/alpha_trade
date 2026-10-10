@@ -459,6 +459,12 @@ def test_partial_immature_day_never_uses_even_misdated_labels():
 
 def test_partial_quality_alignment_and_integer_values():
     out = summarize_day(*frames(), as_of=date(2026,1,1), missing_returns_policy='partial')
+    # Policy is a configuration choice, not an observed incompleteness flag.
+    assert out['missing_returns_policy'] == 'partial'
+    assert out['status'] == 'COMPLETE' and out['unknown_count'] == 0
+    metadata = json.loads(out['movement_quality'])
+    assert all(item['status'] == 'COMPLETE' and item['missing_count'] == 0
+               for item in metadata['lists'].values())
     for field, info in json.loads(out['movement_quality'])['lists'].items():
         assert len(json.loads(out[field])) == info['known_count'] == len(info['value_symbols'])
         assert all(type(value) is int for value in json.loads(out[field]))

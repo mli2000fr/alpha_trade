@@ -7,6 +7,9 @@
 # Politique d'exploitation : les collecteurs rejouables couvrent une fenêtre
 # J-N/J. Les snapshots non reconstructibles disposent d'un second passage
 # conditionnel, annulé automatiquement quand le principal a réussi.
+# Disponibilité PC US : démarrages planifiés hors de [07:30,20:00[ Paris.
+# Les fuseaux NY sont conservés pour les collecteurs liés à la séance US.
+# Cela ne garantit pas qu'un traitement long se termine avant 07:30.
 
 us_pipeline:
   priority: P0
@@ -35,11 +38,11 @@ us_pipeline:
     forward_days: 30
     batch_size: 50
     provider: finnhub
-  description: "Enchaîner les étapes de la page Pipeline (1 à 12) : config.yaml → us_pipeline.steps pour les séances US lundi–jeudi ; us_pipeline.steps_friday pour le vendredi. Liste figée au lancement, même après minuit, avec les défauts partagés de l'IHM."
-  tables: "stock_bars,stock_bars_daily,cleaning_audit_latest,cleaning_audit_runs,stock_scores,stock_scores_history,stock_quote_snapshots,stock_earnings_calendar,tradable_universe_runs,tradable_universe_history,news_raw,news_ticker_map,news_sentiment,news_ticker_sentiment,macro_event_audit,ticker_daily_sentiment_features,sector_daily_sentiment_features,news_ingestion_checkpoint,pit_collection_runs"
+  description: "Enchaîner les étapes de la page Pipeline (1 à 14) : config.yaml → us_pipeline.steps pour les séances US lundi–jeudi ; us_pipeline.steps_friday pour le vendredi. Liste figée au lancement, même après minuit, avec les défauts partagés de l'IHM. 13 : sync des opérations sur titres ; 14 : application au portefeuille PAPER."
+  tables: "stock_bars,stock_bars_daily,cleaning_audit_latest,cleaning_audit_runs,stock_scores,stock_scores_history,stock_quote_snapshots,stock_earnings_calendar,tradable_universe_runs,tradable_universe_history,news_raw,news_ticker_map,news_sentiment,news_ticker_sentiment,macro_event_audit,ticker_daily_sentiment_features,sector_daily_sentiment_features,news_ingestion_checkpoint,pit_collection_runs,corporate_actions_events,corporate_actions_applications,portfolio_cash_ledger"
   universe_scope: "Univers commun config/univers_batch/univers_filtred_tradable.txt : barres (SPY ajouté), screener, quotes, earnings, import news, scoring ticker et prédiction si l'étape 10 est sélectionnée. Les autres étapes conservent leurs périmètres natifs ou les résultats précédents."
   coverage_description: "Séance US J figée au lancement, même après minuit. Étape 1 EODHD : contrôle des cours J non remplis, couverture minimale bars_collection.min_coverage_ratio (95 %) et SPY obligatoire. Absence → arrêt, pas de repli vers J-1. Jours fériés exclus ; pas de second passage."
-  execution_notice: "22:45 Europe/Paris, lundi–vendredi après clôture US. Choix selon séance US figée : steps lundi–jeudi, steps_friday vendredi ; jours fériés exclus. L'étape 1 attend clôture + eodhd.bulk_publish_offset_hours (2 h), avec logs d'attente : généralement minuit Paris, 23 h lors du décalage d'heure automnal. PC allumé nécessaire. execution_mode: paper ; account_id: default. Aucun ordre sans étape 12 ; compte PAPER exigé pour 11/12, LIVE interdit. T1/13/14 exclus. Arrêt au premier échec ; verrou partagé avec l'IHM. Compteurs en étapes, pas en lignes SQL."
+  execution_notice: "22:45 Europe/Paris, lundi–vendredi après clôture US. Choix selon séance US figée : steps lundi–jeudi, steps_friday vendredi ; jours fériés exclus. L'étape 1 attend clôture + eodhd.bulk_publish_offset_hours (2 h), avec logs d'attente : généralement minuit Paris, 23 h lors du décalage d'heure automnal. PC allumé nécessaire. execution_mode: paper ; account_id: default. Aucun ordre sans étape 12 ; compte PAPER exigé pour 11/12 et pour 13/14 même en simulation, LIVE interdit. T1 exclu ; 13/14 uniquement si sélectionnés. Arrêt au premier échec ; verrou partagé avec l'IHM. Compteurs en étapes, pas en lignes SQL."
   research_notice: "Défauts Pipeline partagés, preset capital_2001_5000. Étape 1 : date J et univers explicites, upsert sans doublons, délai fournisseur puis contrôle en base ; si bars_provider n'est plus EODHD, ce contrat d'import bloque au lieu de passer silencieusement. Univers commun pour étapes 3/4/5 et import/scoring ticker de 8 ; quotes J-7/J, earnings J-7/J+30. Les sessions IHM ne sont pas modifiées."
   log_file: log/batch/us_pipeline.txt
 
@@ -202,7 +205,7 @@ db_news_raw_backup:
   tables: "fichiers:backups/db"
   provider: local_mysql
   universe_scope: database_table_news_raw
-  run_hours: "18"
+  run_hours: "20"
   run_minutes: "0"
   run_days: "0"
   host: localhost
@@ -228,7 +231,7 @@ market_cap_sync:
   timezone: Europe/Paris
   description: "Maintenir les actions en circulation SEC PIT, puis compléter uniquement les trous avec Yahoo et Finnhub pour l'éligibilité tradable et la neutralisation market-cap."
   tables: "stock_fundamentals_daily"
-  run_hours: "15"
+  run_hours: "20"
   recovery_run_hours: "23"
   recovery_run_minutes: "0"
   recovery_success_lookback_hours: 12
@@ -240,6 +243,7 @@ market_cap_sync:
   sec_lookback_days: 30
   max_age_days: 365
   min_coverage_ratio: 0.95
+  execution_notice: "Principal 20:00 Paris lundi/jeudi ; secours 23:00 le même jour uniquement sans succès récent. Les fallbacks observent l'état courant, pas un état préouverture reconstitué."
   research_notice: "Chaîne composite : SEC officielle et PIT en priorité ; Yahoo non officiel puis Finnhub servent uniquement de fallback de couverture."
   log_file: log/batch/market_cap_sync.txt
 
@@ -347,12 +351,13 @@ security_master_snapshot:
   api_key_env: BUSINESS_QUANT_API_KEY
   timezone: Europe/Paris
   run_hours: "1"
-  recovery_run_hours: "9"
+  recovery_run_hours: "6"
   recovery_run_minutes: "0"
   recovery_success_lookback_hours: 12
   run_days: "1,2,3,4,5"
   # Même convention que run_days : 1=lundi.
   business_quant_weekdays: "1"
+  execution_notice: "Principal 01:00 Paris ; secours conditionnel 06:00 le même jour. Le snapshot décrit l'état réellement observé ; les états intermédiaires ne sont pas reconstruits."
   log_file: log/batch/security_master_snapshot.txt
 
 corporate_actions_sync:
@@ -378,7 +383,7 @@ sec_edgar_incremental:
   enabled: true
   universe_scope: market_wide_filings
   timezone: Europe/Paris
-  run_hours: "6"
+  run_hours: "20"
   run_days: "1,2,3,4,5,6"
   user_agent_env: SEC_EDGAR_USER_AGENT
   forms: "8-K,8-K/A,6-K,6-K/A,10-Q,10-Q/A,10-K,10-K/A,13F-HR,13F-HR/A,SC 13D,SC 13D/A,SC 13G,SC 13G/A"
@@ -395,6 +400,7 @@ sec_edgar_incremental:
   max_primary_document_bytes: 16777216
   submission_probe_bytes: 2097152
   max_requests_per_second: 8
+  execution_notice: "20:00 Paris, lundi–samedi. Fenêtre historique de sept jours ouvrés ; normalisations locales à 23:00. Un dépôt reçu trop tard pour la normalisation est repris au passage suivant, sans disponibilité rétrodatée."
   log_file: log/batch/sec_edgar_incremental.txt
 
 borrow_status_snapshot:
@@ -405,13 +411,16 @@ borrow_status_snapshot:
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   provider: alpaca
   timezone: America/New_York
-  # Principal puis secours conditionnel, tous deux avant l'ouverture régulière US.
-  run_hours: "8"
+  # Snapshot du soir, plus de prétention à observer la disponibilité préouverture.
+  # 15:45 NY = 21:45 Paris, ou 20:45 pendant le décalage des changements d'heure.
+  run_hours: "15"
   run_minutes: "45"
-  recovery_run_hours: "9"
+  recovery_run_hours: "22"
   recovery_run_minutes: "25"
-  recovery_success_lookback_hours: 2
+  recovery_success_lookback_hours: 10
   run_days: "1,2,3,4,5"
+  coverage_description: "Disponibilité short réellement observée à 15:45 New York ; second passage conditionnel à 22:25 NY le même jour US. Aucun historique J-7/J ni snapshot préouverture reconstruit."
+  execution_notice: "Principal 21:45 Paris (20:45 lors du décalage US/France) ; secours le lendemain à 04:25 (03:25 lors du décalage), y compris samedi matin après vendredi NY. Ne remplace pas la vérification de disponibilité avant un nouvel ordre SHORT."
   log_file: log/batch/borrow_status_snapshot.txt
 
 business_quant_analyst_snapshot:
@@ -515,13 +524,14 @@ option_contract_adjustment_sync:
   provider: occ
   research_notice: "Le RSS OCC fournit numéro, publication, catégorie, résumé et lien. Le détail des mémos est protégé par Cloudflare ; multiplier, cash component et deliverable détaillé restent inconnus tant qu'ils ne sont pas observés dans le catalogue de contrats Alpaca versionné."
   timezone: Europe/Paris
-  run_hours: "11"
+  run_hours: "1"
   run_minutes: "15"
-  recovery_run_hours: "19"
+  recovery_run_hours: "6"
   recovery_run_minutes: "15"
   recovery_success_lookback_hours: 10
   run_days: "1,2,3,4,5,6"
   universe_scope: market_wide_options_adjustments
+  execution_notice: "Principal 01:15 Paris ; secours conditionnel 06:15 le même jour. Le RSS conserve l'heure réelle d'observation et ne garantit pas la reconstruction d'un état manqué."
   rss_url: "https://infomemo.theocc.com/infomemo-rss"
   use_system_trust_store: true
   log_file: log/batch/option_contract_adjustment_sync.txt
@@ -537,8 +547,9 @@ oracle_opening_window_sync:
   feed: sip
   adjustment: raw
   timezone: America/New_York
-  # Fenêtre terminée à 10:30 ET, puis délai SIP conservateur de vingt minutes.
-  run_hours: "10"
+  # Collecte différée après le retour au domicile : fenêtre inchangée 04:00–10:30 NY.
+  # 15:50 NY = 21:50 Paris, ou 20:50 pendant le décalage des changements d'heure.
+  run_hours: "15"
   run_minutes: "50"
   run_days: "1,2,3,4,5"
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
@@ -557,6 +568,7 @@ oracle_opening_window_sync:
   min_open_symbol_coverage: 0.70
   fail_on_quality_gate: true
   use_system_trust_store: true
+  execution_notice: "15:50 New York, soit 21:50 Paris (20:50 lors du décalage US/France). Reprise J-7/J ; les barres d'ouverture sont disponibles pour l'application seulement à leur réception, pas à 09:30."
   log_file: log/batch/oracle_opening_window_sync.txt
 
 sec_corporate_events_normalize:
@@ -566,8 +578,8 @@ sec_corporate_events_normalize:
   enabled: true
   universe_scope: raw_sec_filings
   timezone: Europe/Paris
-  # Laisse au collecteur SEC de 06:00 le temps de terminer.
-  run_hours: "13"
+  # Reprend le backlog disponible après le lancement SEC de 20:00.
+  run_hours: "23"
   run_days: "1,2,3,4,5,6"
   forms: "8-K,8-K/A,6-K,6-K/A"
   log_file: log/batch/sec_corporate_events_normalize.txt
@@ -579,7 +591,7 @@ sec_institutional_ownership_normalize:
   enabled: true
   universe_scope: raw_sec_filings
   timezone: Europe/Paris
-  run_hours: "17"
+  run_hours: "23"
   run_days: "2,4,6"
   forms: "13F-HR,13F-HR/A,SC 13D,SC 13D/A,SC 13G,SC 13G/A"
   log_file: log/batch/sec_institutional_ownership_normalize.txt

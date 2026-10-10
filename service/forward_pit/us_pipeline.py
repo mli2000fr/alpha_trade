@@ -1,4 +1,4 @@
-"""Configurable scheduled US steps 1..12 using the Pipeline page workflow."""
+"""Configurable scheduled US steps 1..14 using the Pipeline page workflow."""
 from __future__ import annotations
 
 from dataclasses import asdict, replace
@@ -28,9 +28,9 @@ def load_pipeline_policy():
 
 def selected_steps(numbers, *, config_key='steps'):
     if (not isinstance(numbers, list) or not numbers or
-            any(type(n) is not int or not 1 <= n <= 12 for n in numbers) or
+            any(type(n) is not int or not 1 <= n <= 14 for n in numbers) or
             len(set(numbers)) != len(numbers)):
-        raise ValueError(f'us_pipeline.{config_key} must be a nonempty list of unique integers 1..12')
+        raise ValueError(f'us_pipeline.{config_key} must be a nonempty list of unique integers 1..14')
     wanted = sorted(numbers)
     steps = tuple(s for s in get_pipeline_steps() if s.num in {str(n) for n in wanted})
     if [s.num for s in steps] != [str(n) for n in wanted]:
@@ -61,7 +61,11 @@ def execution_options(options, policy, steps):
     if not isinstance(account_id, str) or not account_id.strip():
         raise ValueError('us_pipeline.account_id must be a nonempty account identifier')
     account_id = account_id.strip()
-    if mode == 'paper' and any(s.num in ('11', '12') for s in steps):
+    # Corporate actions have no simulation flag: they read the broker and/or
+    # update the account ledger. Never target a LIVE account via 13/14, even
+    # when the execution step itself is configured as simulate.
+    if (any(s.num in ('13', '14') for s in steps) or
+            mode == 'paper' and any(s.num in ('11', '12') for s in steps)):
         require_paper_account(account_id)
     return replace(options, execution_mode=mode, account_id=account_id)
 

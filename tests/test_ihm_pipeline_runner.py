@@ -234,6 +234,25 @@ def test_get_pipeline_workflow_steps_can_use_explicit_selected_step_keys_in_cano
     ]
 
 
+@pytest.mark.parametrize('include_apply', [False, True])
+def test_explicit_corporate_action_selection_is_preserved_without_duplicates(include_apply):
+    steps = get_pipeline_workflow_steps(
+        selected_step_keys=('corporate_actions_apply','execution','corporate_actions_sync','ml_train'),
+        include_corporate_actions_apply=include_apply)
+    assert [s.num for s in steps] == ['12','13','14']
+
+
+def test_explicit_apply_only_does_not_inject_sync_or_execution():
+    assert [s.num for s in get_pipeline_workflow_steps(
+        selected_step_keys=('corporate_actions_apply',))] == ['14']
+
+
+def test_legacy_apply_flag_adds_sync_before_explicit_apply_without_duplicate():
+    assert [s.num for s in get_pipeline_workflow_steps(
+        selected_step_keys=('corporate_actions_apply',),
+        include_corporate_actions_apply=True)] == ['13','14']
+
+
 
 def test_build_pipeline_command_injects_account_for_account_aware_steps() -> None:
     options = PipelineLaunchOptions(

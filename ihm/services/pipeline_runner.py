@@ -1027,7 +1027,10 @@ def get_pipeline_workflow_steps(
 
     selected_steps: list[PipelineStepDefinition] = []
     for step in PIPELINE_STEPS:
-        if not is_workflow_core_step_number(step.num):
+        explicitly_selectable_action = (
+            normalized_selected_step_keys is not None and step.num in ('13', '14')
+        )
+        if not is_workflow_core_step_number(step.num) and not explicitly_selectable_action:
             continue
         step_num = parse_pipeline_step_number(step.num)
         if normalized_selected_step_keys is not None:
@@ -1042,12 +1045,16 @@ def get_pipeline_workflow_steps(
                 continue
         selected_steps.append(step)
 
-    if include_sync:
+    # Legacy include flags still append their prerequisites, but an explicit
+    # selection must not be silently dropped or execute the same action twice.
+    if include_sync and not any(s.key == "corporate_actions_sync" for s in selected_steps):
         selected_steps.append(next(step for step in PIPELINE_STEPS if step.key == "corporate_actions_sync"))
-    if include_corporate_actions_apply:
+    if include_corporate_actions_apply and not any(s.key == "corporate_actions_apply" for s in selected_steps):
         selected_steps.append(next(step for step in PIPELINE_STEPS if step.key == "corporate_actions_apply"))
 
-    return tuple(selected_steps)
+    selected_keys = {step.key for step in selected_steps}
+    # In mixed explicit/legacy selection, an appended sync still precedes apply.
+    return tuple(step for step in PIPELINE_STEPS if step.key in selected_keys)
 
 
 def get_pipeline_auxiliary_steps() -> tuple[PipelineStepDefinition, ...]:

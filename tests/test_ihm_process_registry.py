@@ -682,6 +682,27 @@ def test_pipeline_workflow_can_run_explicit_selected_steps_in_order(monkeypatch,
     assert "step_8" not in logs
 
 
+@pytest.mark.parametrize('sync_fails', [False, True])
+def test_real_selector_executes_13_14_once_and_stops_on_failure(monkeypatch, tmp_path, sync_fails):
+    _configure_tmp_storage(monkeypatch, tmp_path)
+    # Only harmless local print commands are executed; no provider/SQL/broker calls.
+    def command(step_key, options):
+        code = f"print('{step_key}', flush=True)"
+        if sync_fails and step_key == 'corporate_actions_sync':
+            code += '; raise SystemExit(1)'
+        return [sys.executable, '-c', code]
+    monkeypatch.setattr(registry, 'build_pipeline_command', command)
+    record = registry.start_pipeline_workflow(PipelineLaunchOptions(),
+        selected_step_keys=('corporate_actions_apply','corporate_actions_sync'))
+    snapshot = _wait_for_final_snapshot(record.run_id, attempts=160)
+    assert snapshot['workflow_total_steps'] == 2
+    assert snapshot['command'] == ['corporate_actions_sync','corporate_actions_apply']
+    assert '13 → 14' in snapshot['step_label']
+    assert snapshot['status'] == ('failed' if sync_fails else 'completed')
+    assert snapshot['workflow_completed_steps'] == (0 if sync_fails else 2)
+    assert len(snapshot['workflow_child_run_ids']) == (1 if sync_fails else 2)
+
+
 def test_pipeline_workflow_can_be_scheduled_and_then_runs(monkeypatch, tmp_path: Path) -> None:
     _configure_tmp_storage(monkeypatch, tmp_path)
 

@@ -1,24 +1,25 @@
-# Batch US — Pipeline quotidien configurable 1 à 12
+# Batch US — Pipeline quotidien configurable 1 à 14
 
 ## Périmètre
 
 `us_pipeline`, déclaré dans `batch.yaml`, enchaîne les étapes sélectionnées dans
 `config.yaml`, dans le même moteur de workflow que la page Pipeline :
 `us_pipeline.steps` pour les séances US du lundi au jeudi, et
-`us_pipeline.steps_friday` pour celles du vendredi. T1 (entraînement), 13 et 14
-sont toujours exclus. Configuration actuelle :
+`us_pipeline.steps_friday` pour celles du vendredi. T1 (entraînement) reste
+exclu. Les étapes 13 et 14 sont autorisées uniquement si elles sont sélectionnées.
+Configuration actuelle :
 
 ```yaml
 us_pipeline:
-  steps: [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12]
-  steps_friday: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+  steps: [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14]
+  steps_friday: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
   execution_mode: paper
   account_id: default
 ```
 
 Les deux listes sont indépendantes : le vendredi ne complète pas la liste des
 autres jours, il utilise exclusivement `steps_friday`. La liste choisie doit
-être non vide et contenir des entiers uniques entre 1 et 12 ;
+être non vide et contenir des entiers uniques entre 1 et 14 ;
 l'exécution suit toujours l'ordre numérique, même si la liste est désordonnée.
 Une étape omise n'est pas ajoutée automatiquement : ses prérequis doivent
 être disponibles. Une liste choisie absente/invalide bloque avant le workflow,
@@ -36,11 +37,42 @@ dans `steps_configuration_source` (`config.yaml:us_pipeline.steps` ou
 uniquement `simulate` ou `paper` ; la configuration actuelle choisit `paper`.
 Si ce champ est absent, le fallback de compatibilité est `simulate`.
 `account_id` désigne le compte Alpaca transmis au risque et à l'exécution
-(fallback `default`). Pour les étapes 11 ou 12 en PAPER, le registre local est
+(fallback `default`). Pour les étapes 11 ou 12 en PAPER, ainsi que 13/14 quel
+que soit le mode (même `simulate`), le registre local est
 relu et le compte doit être configuré en `paper` ; compte inconnu, credentials
 manquantes ou compte réel bloquent avant le workflow. Aucun appel au courtier
 n'est nécessaire pour cette vérification. Aucun ordre n'est lancé si 12 est omis.
 La sélection des étapes ne constitue pas un changement de mode d'exécution.
+
+### Étapes 13/14 — opérations sur titres, 10 octobre 2026
+
+- **13 — Corporate Actions Sync** : collecte pour les titres détenus/pending du
+  compte configuré, via le connecteur existant ; alimente `corporate_actions_events`.
+- **14 — Corporate Actions Apply** : applique les événements qualifiés aux
+  positions/cash du compte, avec `--as-of` égal à la séance US figée ; alimente
+  `corporate_actions_applications` et `portfolio_cash_ledger`.
+
+Le workflow conserve les sélections explicites : `12,13,14` est exécuté dans
+cet ordre, chaque étape une seule fois. Si 12 échoue, ni 13 ni 14 ne démarre ;
+si 13 échoue, 14 ne démarre pas. Les compteurs et journaux incluent 13/14.
+Si 14 est sélectionnée seule, 13/12 ne sont pas ajoutées implicitement : les
+preuves et snapshots requis doivent déjà exister, et les précontrôles métier
+de l'application restent actifs. Les workflows IHM non personnalisés conservent
+leur défaut 1–12 et leurs options séparées pour les opérations sur titres.
+
+Les étapes 13/14 n'envoient pas de nouveaux ordres d'achat/vente, mais 14 peut
+**écrire dans le ledger**. Le mode `simulate` de l'étape 12 ne transforme pas
+14 en dry-run : le CLI corporate actions n'a pas ce drapeau. Un compte PAPER
+est donc obligatoire même sans étape 12. Pour examiner le plan sans collecte,
+sans écriture métier ni ordre, utiliser le `--dry-run` du **batch**.
+
+Validation du 10/10/2026 : **305 tests réussis**, couvrant notamment sélections
+lundi–jeudi/vendredi, ordre et unicité de 13/14, arrêt sur échec de la sync,
+compteurs 14 étapes, compte LIVE refusé (même en simulation), date/compte des
+commandes, affichage du workflow et maintien du planning. Les tests de workflow
+n'exécutent que des commandes locales factices ; aucun batch fournisseur ni
+ordre broker n'a été lancé pour qualifier ce changement.
+
 Le filtre GPT n'est pas implicitement
 activé par la checkbox par défaut de l'IHM : les options fraîches du batch
 restent indépendantes de l'état d'une session interactive.
@@ -112,6 +144,8 @@ correctif ; aucun redémarrage n'est déclenché automatiquement.
 | 10 | Prédiction ML, optionnelle |
 | 11 | Risk Management, optionnel |
 | 12 | Exécution, optionnelle ; mode `simulate` ou `paper` de config.yaml |
+| 13 | Synchronisation des opérations sur titres du compte PAPER, optionnelle |
+| 14 | Application des opérations qualifiées aux positions/cash PAPER à la date de séance, optionnelle |
 
 Un échec interrompt l'enchaînement : les étapes suivantes ne sont pas lancées. Les écritures des étapes déjà réussies ne sont pas annulées. La reprise reste celle des traitements concernés ; ce batch n'ajoute pas de reprise automatique à partir d'une étape arbitraire.
 

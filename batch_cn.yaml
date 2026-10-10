@@ -63,9 +63,10 @@ cn_daily_quality_17c:
   priority: P0
   market_code: CN_A
   database_alias: cn_primary
-  timezone: China Standard Time
-  run_hours: "23"
+  timezone: Europe/Paris
+  run_hours: "20"
   run_minutes: "30"
+  audit_previous_day_before_open: true
   run_days: "1,2,3,4,5"
   description: "Contrôler chaque séance ouverte CN après la fenêtre de collecte D9 : lots, barres, facteurs, limites, Oracle, snapshots D6 et appariement D10. Aucune collecte."
   provider: local_quality
@@ -76,7 +77,7 @@ cn_daily_quality_17c:
   d10_output_root: artifacts/research/cn_dragon_tiger_15d10
   output_root: artifacts/research/cn_daily_quality_17c
   minimum_bar_coverage_ratio: 0.995
-  coverage_description: "Séance CN ouverte J à 19:30 Shanghai ; contrôle de complétude D9 et des artefacts de recherche, sans reconstitution d'une prévision manquée. Jours fermés SKIP."
+  coverage_description: "20h30 Paris lundi-vendredi, soit J+1 à 02h30/03h30 Shanghai : contrôle de la séance CN J (veille civile Shanghai), sans reconstitution d'une prévision manquée. Si J fermé : SKIP."
   execution_notice: "D9 est le seul propriétaire de la collecte canonique. Les échecs critiques sont bloquants pour le gate opérationnel ; 7 séances ouvertes consécutives sans anomalie critique inexpliquée sont requises. Pas de serving ni d'ordres."
   supervision_dependencies: cn_oracle_prospective_daily,cn_dragon_tiger_after_close,cn_dragon_tiger_before_open,cn_dragon_tiger_daily_match
   log_file: log/batch_cn/cn_daily_quality_17c.txt

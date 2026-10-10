@@ -12,7 +12,7 @@ import json
 import sys
 import uuid
 from contextlib import suppress
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -34,17 +34,22 @@ def _path(base: Path, value: str) -> Path:
     return candidate if candidate.is_absolute() else base / candidate
 
 
-def plan(now: datetime, calendar: dict, *, earliest: time = time(23, 30)) -> dict:
+def plan(now: datetime, calendar: dict, *, earliest: time = time(23, 30),
+         audit_previous_day_before_open: bool = False) -> dict:
     if now.tzinfo is None:
         raise ValueError("CN quality time must be timezone-aware")
     local = now.astimezone(SHANGHAI)
-    if not is_open(local.date(), calendar):
-        return {"status": "SKIP_CLOSED", "session": local.date().isoformat()}
-    if local.time() < earliest:
-        return {"status": "SKIP_BEFORE_WINDOW", "session": local.date().isoformat()}
-    return {"status": "DUE", "session": local.date().isoformat(),
-            "previous_session": adjacent_open(local.date(), calendar, -1).isoformat(),
-            "next_session": adjacent_open(local.date(), calendar, 1).isoformat()}
+    # Paris evening is already the following civil day in Shanghai. Audit
+    # yesterday only, never an older session substituted across holidays.
+    overnight = audit_previous_day_before_open and local.time() < time(9, 15)
+    session = local.date() - timedelta(days=1) if overnight else local.date()
+    if not is_open(session, calendar):
+        return {"status": "SKIP_CLOSED", "session": session.isoformat()}
+    if not overnight and local.time() < earliest:
+        return {"status": "SKIP_BEFORE_WINDOW", "session": session.isoformat()}
+    return {"status": "DUE", "session": session.isoformat(),
+            "previous_session": adjacent_open(session, calendar, -1).isoformat(),
+            "next_session": adjacent_open(session, calendar, 1).isoformat()}
 
 
 def _read_json(path: Path) -> dict | None:
@@ -305,7 +310,8 @@ def execute(*, batch_config: Path = ROOT / "batch_cn.yaml",
         raise RuntimeError("D9 CN catalog route is not cn_primary/CN_A")
     base = batch_config.resolve().parent
     now = now or datetime.now(UTC)
-    planned = plan(now, load_calendar(_path(base, cfg["calendar"])))
+    planned = plan(now, load_calendar(_path(base, cfg["calendar"])),
+                   audit_previous_day_before_open=bool(cfg.get("audit_previous_day_before_open", False)))
     if planned["status"] != "DUE":
         return {"batch": BATCH_NAME, **planned}
     if dry_run:

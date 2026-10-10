@@ -139,17 +139,88 @@ collecte. Les lancements manuels avec `-Force` ignorent toujours ce gate.
 
 | Batch snapshot | Passage principal | Secours conditionnel | Écart |
 |---|---:|---:|---:|
-| `security_master_snapshot` | 01:00 Paris | 09:00 Paris | 8 h |
-| `market_cap_sync` | 15:00 Paris | 23:00 Paris | 8 h |
-| `analyst_snapshot_collection` | 22:00 Paris | 04:00 Paris le lendemain | 6 h |
-| `borrow_status_snapshot` | 08:45 New York | 09:25 New York | 40 min |
+| `security_master_snapshot` | 01:00 Paris | 06:00 Paris | 5 h |
+| `market_cap_sync` | 20:00 Paris | 23:00 Paris | 3 h |
+| `analyst_snapshot_collection` (désactivé / droits) | 22:00 Paris | 04:00 Paris le lendemain | 6 h |
+| `borrow_status_snapshot` | 15:45 New York | 22:25 New York | 6 h 40 |
 | `oracle_options_indicative_snapshot` | 16:20 New York | 22:20 New York | 6 h |
 | `options_delayed_bars_sync` | 17:00 New York | 23:00 New York | 6 h |
-| `option_contract_adjustment_sync` | 11:15 Paris | 19:15 Paris | 8 h |
+| `option_contract_adjustment_sync` | 01:15 Paris | 06:15 Paris | 5 h |
 
-Le secours `borrow_status_snapshot` reste volontairement avant l'ouverture :
-un passage plusieurs heures plus tard mesurerait un autre état de disponibilité
-du prêt et ne remplacerait pas fidèlement le snapshot pré-marché.
+Depuis le 10 octobre 2026, `borrow_status_snapshot` observe la disponibilité
+SHORT en soirée Paris, et non avant l'ouverture US. Le secours mesure aussi
+l'état courant à son heure réelle : il ne remplace pas fidèlement un snapshot
+pré-marché. La disponibilité doit être revérifiée avant un nouvel ordre SHORT.
+
+### Disponibilité du PC US : 20:00–07:30 Paris
+
+Les passages principaux **et** de secours des batchs US actifs sont placés hors
+de l'absence 07:30–20:00 Paris. `us_pipeline` conserve **22:45 Paris**, sa liste
+d'étapes et son calendrier. Ni FR/CN ni les sources désactivées n'ont été modifiés.
+Les horaires de New York sont conservés pour les collecteurs liés à la séance ;
+leurs secours restent le même jour **US**, donc fonctionnent aussi samedi matin
+Paris après le passage principal du vendredi. Aucune modification du calendrier
+ou du launcher n'est nécessaire.
+
+| Batch actif | Principal Paris | Secours Paris | Durée maximale réussie observée sur 30 jours |
+|---|---|---|---:|
+| `market_cap_sync` | 20:00, lundi/jeudi | 23:00 | 1 h 19 |
+| `sec_edgar_incremental` | 20:00, lundi–samedi | — | 28 min |
+| `db_news_raw_backup` | 20:00, dimanche | — | 17 min |
+| `borrow_status_snapshot` | 21:45 / 20:45* | 04:25 / 03:25* le lendemain | 7 min |
+| `oracle_opening_window_sync` | 21:50 / 20:50* | — (J−7/J) | 2 min |
+| `oracle_options_indicative_snapshot` | 22:20 / 21:20* | 04:20 / 03:20* le lendemain | 29 min |
+| `us_pipeline` | **22:45, inchangé** | — | run non clos au moment de l'audit ; durée non déduite |
+| `sec_corporate_events_normalize` | 23:00, lundi–samedi | — (backlog RAW) | 4 min |
+| `sec_institutional_ownership_normalize` | 23:00, mardi/jeudi/samedi | — (backlog RAW) | moins de 1 min |
+| `options_delayed_bars_sync` | 23:00 / 22:00* | 05:00 / 04:00* le lendemain | 16 min |
+| `corporate_actions_sync` | 00:00, lundi–vendredi | — (J−7/J+30) | 3 min |
+| `security_master_snapshot` | 01:00, lundi–vendredi | 06:00 | moins de 1 min |
+| `option_contract_adjustment_sync` | 01:15, lundi–samedi | 06:15 | moins de 1 min |
+| `daily_bars_sync` | 03:00, lundi–vendredi | — (J−10/J) | moins de 1 min |
+| `ml_artifacts_backup` | 01:00, samedi | — | 5 min |
+| `db_core_backup` | 01:00, dimanche | — | 19 min |
+
+\* Premier horaire : décalage habituel de six heures. Second : décalage de cinq
+heures entre les changements d'heure US et France, au printemps et en automne.
+Les jours sont ceux du fuseau configuré dans `batch.yaml` (NY pour les quatre
+collecteurs indiqués avec deux horaires ; Paris pour les autres).
+
+**Contrôle de durée du 10/10/2026** : lecture seule de `alpha_trade.pit_collection_runs`,
+30 derniers jours, uniquement runs terminés `COMPLETED` ou
+`COMPLETED_WITH_WARNINGS` (4 à 25 runs par batch). Les durées ci-dessus sont
+arrondies à la minute supérieure. Les échecs rapides et runs non clos ne sont
+pas des estimations de durée normale. Les tests réservent une enveloppe prudente
+(au moins 45 minutes, davantage pour capitalisation, options, SEC et backups)
+et une marge de 30 minutes avant 07:30. Ils couvrent 2025–2027, changements
+d'heure inclus. Aucun traitement de deux heures n'est placé à 07:00.
+
+Ces enveloppes servent à **valider le planning**, pas à interrompre les processus :
+un fournisseur lent, un gros rattrapage ou le pipeline peut dépasser la durée
+observée. En particulier, `us_pipeline` n'est pas déplacé ni artificiellement
+déclaré terminé avant le départ. Si un batch est encore en cours à 07:30, une
+extinction du PC peut interrompre sa collecte ; la reprise suit son contrat propre.
+
+La fenêtre historique de l'ouverture reste **04:00–10:30 New York** : seule
+l'heure de téléchargement est déplacée, sans disponibilité PIT rétrodatée.
+Les snapshots ne reconstruisent pas les états intermédiaires manqués. Les
+normalisations de 23:00 traitent le RAW alors disponible ; un collecteur SEC
+encore actif ne garantit pas que tout son nouveau RAW soit traité le même soir.
+
+Les tâches Windows installées utilisent des déclencheurs **horaires**, aux
+minutes utiles, puis relisent `batch.yaml`. Ces minutes n'ont pas changé
+(notamment 25/45 pour borrow et 15 pour OCC). Les nouveaux horaires sont donc
+appliqués au prochain passage **sans réinstallation** des tâches Forward PIT
+existantes. Aucun run n'a été lancé ou interrompu et aucune écriture SQL métier
+n'a été effectuée pour ce changement. L'IHM et les notifications continuent
+d'afficher le principal ou le secours conditionnel.
+
+Validation ciblée des horaires : **176 tests réussis** (marge de durée, DST,
+rattrapages, catalogue IHM et séparation des marchés). La réserve alors isolée
+sur les étapes 13/14 a ensuite été corrigée avec un GO distinct : le batch
+accepte 1–14, le moteur conserve les sélections explicites, sans doublon, et
+exige un compte PAPER pour les opérations sur titres. Les listes configurées
+et l'horaire du pipeline restent inchangés. Voir [le guide](us_pipeline.md).
 
 La page **Workflow & Orchestration → Batch** affiche, pour chaque entrée, soit
 la fenêtre de reprise (`J−N à J`, éventuellement prolongée à `J+N`), soit la
@@ -355,11 +426,14 @@ Le mode `-DryRun` appelle le fournisseur et valide le parsing mais n’écrit ni
 Commencer par P0 et observer une semaine les taux de couverture et corrections. Activer ensuite borrow P1. Les options et opening window exigent d’abord un producteur fiable de l’univers Oracle quotidien. Business Quant analyste doit rester désactivé jusqu’à comparaison du coût et du contenu avec Yahoo. Auction imbalance, prêt de titres complet et options NBBO restent des contrats de données à pourvoir, pas des collecteurs simulés.
 ## Pipeline US quotidien 1 à 9 — 7 octobre 2026
 
-Le batch `us_pipeline` enchaîne les étapes configurées dans `config.yaml → us_pipeline.steps` (1 à 12), à 22:45 Europe/Paris, lundi–vendredi après clôture US. T1 est exclu et LIVE interdit ; `execution_mode: paper` et `account_id: default` sont désormais raccordés. Les étapes 11/12 en PAPER exigent un compte configuré paper ; aucun ordre sans étape 12. Voir [le guide dédié](us_pipeline.md).
+Le batch `us_pipeline` enchaîne les étapes configurées dans `config.yaml → us_pipeline.steps` ou `steps_friday` (1 à 14), à 22:45 Europe/Paris, lundi–vendredi après clôture US. T1 est exclu et LIVE interdit ; `execution_mode: paper` et `account_id: default` sont raccordés. Les étapes 11/12 en PAPER et 13/14 même en simulation exigent un compte configuré paper ; aucun ordre sans étape 12. 13 synchronise les opérations sur titres, 14 les applique au ledger à la date de séance ; arrêt au premier échec. Voir [le guide dédié](us_pipeline.md).
 
 Les collectes quotes et earnings sont désormais intégrées aux étapes 4 et 5 : les sections/tâches autonomes `latest_quotes_sync` et `earnings_calendar_sync` sont désactivées pour éviter deux planifications. L'univers commun `config/univers_batch/univers_filtred_tradable.txt` est aussi appliqué au screener et à l'import/scoring ticker du sentiment ; fenêtres quotes J−7/J, earnings J−7/J+30. Les collecteurs restent disponibles en CLI pour les interventions manuelles.
 
 ## Retrait du contrôle US — 6 octobre 2026
+
+Les horaires FR/CN ont également été revus le 10 octobre pour l'absence
+07:30–20:00 Paris : [planning, durées et limites de couverture](horaires_fr_cn_presence_pc.md).
 
 `pit_data_quality_daily` est retiré de `batch.yaml` et de la page Batch US à la demande de l'utilisateur. Il n'est plus installable ou lançable depuis ce catalogue. La tâche `AlphaTrade-PitDataQualityDaily` était déjà absente lors du contrôle Windows. Les journaux et les tables historiques de qualité sont conservés ; les contrôles CN et FR ne sont pas concernés. Les anciennes mentions de ce batch dans ce document décrivent l'ancien fonctionnement, pas une entrée actuelle du catalogue.
 

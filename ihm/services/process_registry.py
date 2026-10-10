@@ -197,7 +197,8 @@ def _resolve_workflow_steps(
 
 
 def _format_workflow_core_step_ranges(steps: tuple[PipelineStepDefinition, ...]) -> str:
-    core_labels = [str(step.num).strip() for step in steps if is_workflow_core_step_number(step.num)]
+    core_labels = [str(step.num).strip() for step in steps
+                   if is_workflow_core_step_number(step.num, max_step=14)]
     if not core_labels:
         return "aucune"
 
@@ -216,7 +217,7 @@ def _format_workflow_core_step_ranges(steps: tuple[PipelineStepDefinition, ...])
         numeric_end = None
 
     for label in core_labels:
-        if is_canonical_pipeline_step_number(label):
+        if is_canonical_pipeline_step_number(label, max_step=14):
             value = int(label)
             if numeric_start is None:
                 numeric_start = numeric_end = value

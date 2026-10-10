@@ -42,8 +42,11 @@ l'application. Aucune clé n'est stockée dans `batch.yaml`.
 
 ## Calendrier
 
-Le batch est configuré les jours de semaine à 10:50 New York, après expiration
-de la limite SIP gratuite sur la barre de 10:30. Il rejoue les séances NYSE de
+Le batch est configuré les jours de semaine à **15:50 New York** : 21:50 Paris,
+ou 20:50 pendant le décalage des changements d'heure US/France. La fenêtre
+collectée reste 04:00–10:30 NY, bien après expiration du retard SIP minimal.
+Ce déplacement du 10/10/2026 respecte l'absence du PC 07:30–20:00 Paris,
+sans rétrodater la disponibilité des barres. Il rejoue les séances NYSE de
 J−7 à J et ignore les séances dont la couverture OPEN a déjà atteint le gate.
 
 Le calendrier NYSE empêche une absence totale de données un jour férié d'être

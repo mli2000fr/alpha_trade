@@ -11,11 +11,11 @@ database:
 
 us_pipeline:
   # Sélection fonctionnelle du batch us_pipeline ; horaires/univers dans batch.yaml.
-  # Entiers uniques 1..12, ordre d'exécution toujours numérique, arrêt au premier échec.
+  # Entiers uniques 1..14, ordre d'exécution toujours numérique, arrêt au premier échec.
   # 10 = prédiction, 11 = risque, 12 = exécution. LIVE interdit.
   # Aucune insertion automatique des étapes omises ; leurs prérequis doivent exister.
   execution_mode: paper  # Aucun ordre sans étape 12 sélectionnée.
-  account_id: default    # Les étapes 11/12 en PAPER exigent un compte configuré paper.
+  account_id: default    # 11/12 en PAPER et 13/14 (même en simulation) exigent un compte paper.
   steps: [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14]  # Séances US lundi–jeudi.
   steps_friday: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]  # Séance US vendredi, liste figée même après minuit.
 

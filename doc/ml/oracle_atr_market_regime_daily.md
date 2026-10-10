@@ -531,6 +531,13 @@ Dans **Régime Marché → Alimenter l’étude Oracle × ATR**, la case
 **Ignorer les rendements manquants — listes partielles explicites** est cochée
 par défaut conformément à la configuration. La commande expose
 `--missing-returns-policy partial`. Décocher choisit `strict`.
+`missing_returns_policy` enregistre **la règle choisie**, pas la complétude du
+résultat. Il reste donc `partial` quand aucun rendement ne manque. Pour connaître
+la qualité effective, lire `status`, `unknown_count` et les statuts/couvertures
+de `movement_quality.lists`. Vérification en lecture seule du 10/10/2026 :
+le 24/04/2023 est `COMPLETE`, avec 273 rendements connus par liste, zéro manquant
+et 100 % de couverture, malgré la politique `partial`. Aucun recalcul ni
+changement de politique n'est nécessaire pour cette ligne.
 La nouvelle version est `oracle_atr_v5_partial_returns` (ou
 `oracle_atr_v5_strict_returns`) : une ancienne ligne COMPLETE ne suffit donc pas
 à sauter le nouveau calcul.
