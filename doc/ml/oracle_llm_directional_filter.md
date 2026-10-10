@@ -249,11 +249,18 @@ Une réponse LONG/SHORT n’est éligible que si (SHORT exige aussi `allow_short
 4. la note atteint `min_confidence` ;
 5. au moins `min_sources` URL distinctes sont récentes et présentes parmi les
    sources/citations réellement renvoyées par l’outil ;
-6. les dates retenues comportent un fuseau, ne sont pas futures et respectent
-   `max_source_age_days`.
+6. les preuves retenues sont récentes et non futures : horodatage avec fuseau,
+   ou date seule dont l'intervalle complet de publication possible est dans
+   la fenêtre `max_source_age_days` (protocole v4, section 13) ;
+7. aucune URL citée dans l'analyse n'est non traçable ou invalide : ces URL sont
+   exclues et bloquent conservativement l'éligibilité de ce titre.
 
 Une réponse ABSTAIN reste une réponse valide même si les sources récentes sont
-insuffisantes. Une réponse techniquement invalide fait échouer **tout le run**,
+insuffisantes. Une date imprécise ne devient pas une erreur technique : elle reste
+archivée ; une date seule n'est comptée que si son intervalle complet est qualifié.
+Un LONG/SHORT
+sans preuves suffisantes est une abstention de sélection (`ABSTAIN_UNQUALIFIED`),
+sans modifier la décision brute du modèle. Une réponse techniquement invalide fait échouer **tout le run**,
 au lieu de trader silencieusement un sous-ensemble incomplet.
 
 Les LONG et SHORT éligibles sont triés ensemble par note décroissante, puis rang Oracle croissant,
@@ -449,7 +456,7 @@ slippage, suspensions, annulations ou indisponibilité du service restent possib
 
 Le workflow s’arrête en cas d’échec. Une abstention complète n’envoie aucun nouvel
 ordre. Les listes `config.yaml → us_pipeline.steps` / `steps_friday` définissent
-les étapes du batch quotidien (de 1 à 12). Le filtre GPT n'est pas activé
+les étapes du batch quotidien (de 1 à 14). Le filtre GPT n'est pas activé
 implicitement par ces listes ou les cases de la session IHM ; voir le guide
 `doc/operations/us_pipeline.md` pour le mode et le plan configurés.
 
@@ -552,3 +559,175 @@ propres écritures habituelles ; ces trois tables concernent le filtre et son au
 - `ihm/services/pipeline_runner.py`, `process_registry.py` : commandes et workflow.
 - `risk_management/cli.py`, `portfolio_builder.py` : réutilisation du moteur réel.
 - `tests/test_llm_directional_filter.py` : tests de la nouvelle fonctionnalité.
+
+## 12. Dates imprécises, abstentions et erreurs techniques — correctif du 10 octobre 2026
+
+Cette section décrit le premier correctif **v3**, remplacé pour les nouvelles
+analyses par le **v4** décrit en section 13. Les résultats historiques v3 ne sont
+pas réécrits.
+
+Le protocole `oracle-web-directional-v3` distingue désormais la qualité des
+preuves de la validité technique de la réponse. Aucun seuil, modèle, compte ou
+paramètre de risque n'est changé par ce correctif.
+
+- Date seule, sans heure (`2026-10-07`) : conservée exactement, classée `date_only`.
+- Heure sans fuseau : conservée exactement, classée `missing_timezone`.
+- Date absente ou illisible : conservée comme telle, non qualifiée.
+- Date future ou trop ancienne : non comptée dans `fresh_source_count`.
+- Horodatage précis et récent : compte une fois par URL distincte ; reste une
+  déclaration non certifiée PIT (`source_timestamps_verified=false`).
+- URL absente des sources/citations de la recherche terminée, ou URL invalide :
+  exclue de `sources`, conservée dans `excluded_sources` et la réponse brute.
+  Sa présence empêche toute sélection directionnelle du titre, même si d'autres
+  sources sont datées. Elle ne transforme pas une réponse ABSTAIN en erreur technique.
+
+Le prompt interdit d'inventer une heure ou un fuseau. `published_at` n'est jamais
+complété par une heure de minuit ni par le fuseau de collecte.
+`source_qualifications` conserve le statut de chaque preuve ; `selection_blockers`
+explique l'inéligibilité. Ces champs dérivés sont stockés dans `assessment_json`
+et visibles dans le rapport d'audit ; aucune migration SQL n'est nécessaire.
+
+`assessment_outcome` distingue `ELIGIBLE`, `ABSTAIN` (décision explicite du modèle)
+et `ABSTAIN_UNQUALIFIED` (LONG/SHORT déclaré mais non sélectionnable). Les trois
+issues sont techniquement `VALID`. Un run ne contenant que des abstentions est
+`COMPLETED`, avec zéro candidat sélectionné et zéro échec ; aucune nouvelle entrée
+n'est publiée. Les compteurs `abstained_count`, `eligible_count`,
+`excluded_source_count` et `unqualified_source_count` sont distincts des erreurs.
+Une erreur HTTP/transport, une réponse incomplète/refusée, l'absence de recherche
+terminée, un JSON/schéma invalide ou une identité non vérifiée restent bloquants
+pour l'ensemble du run.
+
+La relecture **sans appel API et sans écriture SQL** du run
+`llm-820db154cbfa4f23a6ac214cc8ce9434` donne 20 abstentions valides et zéro titre
+éligible. Parmi les 111 références : 51 dates seules, 47 dates absentes,
+4 URL non traçables exclues, 6 horodatages récents déclarés et 3 trop anciens.
+La correction ne crée donc pas de signal LONG/SHORT sur ces réponses.
+
+Le statut historique `FAILED`, les réponses brutes, leurs empreintes et les
+requêtes de ce run restent inchangés. Les anciens protocoles ne sont pas promus
+automatiquement aux étapes 11/12 : la validation avant risque exige le protocole
+courant et la requête exacte. Redémarrer l'IHM pour charger le correctif avant
+une future analyse prospective ; ne pas réinterpréter un ancien run pour trader.
+
+Validation locale : **211 tests ciblés passent** (filtre, abstentions, traçabilité,
+SHORT, protections, dates et commandes historiques), avec API/broker simulés et
+base SQLite isolée. Rapport :
+`artifacts/research/llm_directional_implementation/evidence-v3-tests.xml`.
+Aucun nouvel appel GPT, aucun ordre ni aucune écriture en base réelle pendant
+cette validation. Les réglages utilisateur de `config.yaml` sont préservés.
+
+## 13. Dates calendaires et pages ouvertes — protocole v4 et diagnostic des 11 titres
+
+Le protocole `oracle-web-directional-v4` corrige deux restrictions excessives :
+
+- Une URL exacte provenant d'une action `open_page` ou `find_in_page` **terminée**
+  est désormais traçable, au même titre que les sources/citations renvoyées.
+  Une action échouée ou en cours ne suffit pas. Une URL voisine ou inventée reste
+  exclue. Contrat officiel :
+  [OpenAI Web search — output et citations](https://developers.openai.com/api/docs/guides/tools-web-search).
+- Une date seule `YYYY-MM-DD` n'est pas transformée en horodatage. Elle est
+  conservée exactement. On construit uniquement les **bornes de son intervalle
+  possible**, en couvrant les fuseaux UTC−12 à UTC+14 : début du jour UTC moins
+  14 heures, fin du jour UTC plus 12 heures (borne finale exclusive).
+  Ces 50 heures doivent être **entièrement** comprises entre collecte moins
+  `max_source_age_days` et collecte pour compter comme `fresh_date_claim`.
+
+Les bornes sont archivées dans `source_qualifications` sous
+`possible_publication_start_utc` et `possible_publication_end_utc_exclusive` ;
+ce ne sont pas des heures de publication attestées. Un intervalle chevauchant
+une limite est `date_only_ambiguous` et ne compte pas. Un intervalle entièrement
+trop ancien/futur est `stale_date_claim`/`future_date_claim`. Une heure précise
+sans fuseau reste non qualifiée. Les dates absentes ou invalides ne comptent pas.
+
+`fresh_source_count` compte les URL distinctes qualifiées à la précision horaire
+ou journalière. Cela reste une qualification **des déclarations du modèle**,
+pas une vérification indépendante des publications ni une certification PIT.
+`source_timestamps_verified=false` reste inchangé. Le prompt distingue la date
+de publication d'un article des dates de prix, d'événements futurs ou de mise à
+jour d'une page. Le seuil de confiance, le modèle et les protections ne sont pas
+assouplis.
+
+### Run parent et sélection bornée
+
+Run parent : `llm-bc155d0d71484217b0bdc98cd9e06c7d`, modèle `gpt-6-luna`,
+séance signal 9 octobre 2026, 100 analyses VALID, protocole v3. Décisions brutes :
+89 ABSTAIN, 3 LONG (PENG, ICHR, CLS) et 8 SHORT
+(SSTK, FICO, QFIN, FMC, CWH, ABR, APP, HUBG). Les 11 décisions directionnelles
+ont une confiance de 0,61 à 0,72, sous le seuil de 0,75.
+
+La requalification locale des anciennes réponses ne change aucune ligne du
+parent et ne rend aucun de ces 11 titres éligible : le seuil de confiance suffit
+encore à les exclure. PENG, ICHR et APP disposent désormais d'au moins deux URL
+récentes déclarées, sans URL exclue ; leur seul blocage restant est la confiance.
+Une des quatre références de HUBG est effectivement ouverte et reconnue, les
+autres URL non traçables restent exclues.
+
+### Nouvelle analyse autorisée, recherche uniquement
+
+À la demande de l'utilisateur, une nouvelle analyse est limitée à ces **11 titres**,
+avec le même modèle et les paramètres archivés du parent. Les prix, le rang et
+les scores Oracle d'entrée sont conservés ; le nouveau modèle ne reçoit pas ses
+précédentes décisions, pour limiter l'ancrage. Les contrôles de la fenêtre
+prospective sont maintenus. Le service ne relance ni Oracle ni les étapes 11/12.
+
+Identifiant : `llm-research-11-20261010-v4`. Réponses et requêtes brutes sont
+archivées dans `llm_directional_runs` et `llm_directional_assessments`, sans
+écraser le parent. Le snapshot contient `research_only=true` et `parent_run_id` ;
+`qualified_selection` refuse tout passage de ce run au risque/exécution,
+même si certains titres deviennent éligibles à la recherche.
+
+Points d'entrée : `service/llm_directional/research_rerun.py`. Commande bornée :
+
+```powershell
+python -u -m service.llm_directional.research_rerun --parent-run-id llm-bc155d0d71484217b0bdc98cd9e06c7d --symbols SSTK,FICO,PENG,QFIN,FMC,ICHR,CWH,ABR,CLS,APP,HUBG --run-id llm-research-11-20261010-v4 --output-dir artifacts/research/llm_directional/requalification-11-20261010-v4
+```
+
+**Ne pas relancer automatiquement cette commande** : le même identifiant est
+refusé avant les appels ; choisir un nouvel identifiant nécessite une nouvelle
+autorisation pour éviter de consommer des appels payants en double. Le service
+ne fait pas de retry implicite après un timeout.
+
+Suivi : `run.log`, puis `report.json` et `baseline.json` dans le répertoire ci-dessus.
+La sélection a été faite après observation du premier run : ce diagnostic ne
+mesure ni la performance directionnelle ni un avantage économique OOS.
+Ne pas promouvoir les éventuels changements de confiance comme un gain prédictif.
+
+### Résultat de la réanalyse du 10 octobre 2026
+
+Run `llm-research-11-20261010-v4` **COMPLETED** : 11 réponses VALID archivées,
+zéro erreur technique, zéro candidat éligible, zéro passage au risque/exécution.
+Début 19:41:50, fin 19:46:44 (Paris). Modèle `gpt-6-luna`, confiance minimale 0,75,
+deux URL récentes distinctes requises : paramètres inchangés.
+
+| Symbole | Premier avis | Nouvel avis | Nouvelle confiance subjective | URL récentes qualifiées | Retenu |
+|---|---|---|---:|---:|---|
+| SSTK | SHORT | SHORT | 0,61 | 0 | Non |
+| FICO | SHORT | ABSTAIN | 0,72 | 2 | Non |
+| PENG | LONG | LONG | 0,66 | 2 | Non |
+| QFIN | SHORT | SHORT | 0,59 | 1 | Non |
+| FMC | SHORT | SHORT | 0,66 | 2 | Non |
+| ICHR | LONG | ABSTAIN | 0,76 | 2 | Non |
+| CWH | SHORT | SHORT | 0,66 | 2 | Non |
+| ABR | SHORT | SHORT | 0,66 | 1 | Non |
+| CLS | LONG | ABSTAIN | 0,76 | 2 | Non |
+| APP | SHORT | ABSTAIN | 0,74 | 4 | Non |
+| HUBG | SHORT | SHORT | 0,72 | 4 | Non |
+
+Décisions brutes : **1 LONG, 6 SHORT, 4 ABSTAIN**. Les sept avis directionnels
+restent tous sous 0,75. Huit analyses ont désormais au moins deux sources récentes
+qualifiées ; les dates ne sont donc plus un blocage systématique. Trois URL
+non traçables restent exclues (QFIN, ICHR et HUBG) ; elles ne sont pas blanchies
+pour produire une sélection. Les confiances 0,76 de ICHR et CLS accompagnent une
+décision ABSTAIN, pas un LONG/SHORT : elles ne doivent pas être interprétées comme
+une probabilité de hausse/baisse.
+
+Conclusion bornée : la correction technique fonctionne, mais ce second passage
+ne fournit aucun candidat respectant le protocole figé. Il ne démontre ni
+l'impossibilité de prédire la direction, ni un avantage économique du filtre.
+Ne pas diminuer le seuil après observation pour transformer ce résultat en succès.
+
+Validation isolée finale : **228 tests ciblés passent**, plus 22 tests documentaires.
+Rapport : `artifacts/research/llm_directional_implementation/evidence-v4-tests.xml`.
+Les nouveaux appels API réels sont limités aux 11 titres expressément autorisés ;
+les 89 autres ne sont pas réanalysés. Les anciennes réponses et le run parent
+restent conservés ; le nouveau snapshot est marqué recherche uniquement.

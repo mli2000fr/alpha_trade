@@ -1875,12 +1875,12 @@ Source SHA-256 : `b2e6c9c101a7cd262ef009386426ebc40a365c23c6ace0bc5efa8b7f8e68de
 
 ## `service/llm_directional/openai_client.py`
 
-Source SHA-256 : `9ff42a3bc70af43818d6ffbaefa568c84ca09de65f0521733a7086354ee288e0`
+Source SHA-256 : `4492f5a011fba93ff4274beb81f932241a8ae4ca040328bd03b9826dbeaa7b28`
 
-- [build_request](../../service/llm_directional/openai_client.py) — ligne 43 : `def build_request(context, config)`
-- [ResponsesClient](../../service/llm_directional/openai_client.py) — ligne 55 : `class ResponsesClient`
-- [ResponsesClient.__init__](../../service/llm_directional/openai_client.py) — ligne 56 : `def __init__(self, config, session=None)`
-- [ResponsesClient.__call__](../../service/llm_directional/openai_client.py) — ligne 64 : `def __call__(self, payload)`
+- [build_request](../../service/llm_directional/openai_client.py) — ligne 49 : `def build_request(context, config)`
+- [ResponsesClient](../../service/llm_directional/openai_client.py) — ligne 61 : `class ResponsesClient`
+- [ResponsesClient.__init__](../../service/llm_directional/openai_client.py) — ligne 62 : `def __init__(self, config, session=None)`
+- [ResponsesClient.__call__](../../service/llm_directional/openai_client.py) — ligne 70 : `def __call__(self, payload)`
 
 ## `service/llm_directional/pipeline.py`
 
@@ -1917,10 +1917,10 @@ Source SHA-256 : `dbe1720dbc011687c3e057abcf28d91b86273e2ad3fd889ae16f6fc880f52c
 
 ## `service/llm_directional/report.py`
 
-Source SHA-256 : `5ac1fa5da19f45c7fc111f2950c15ef1280d1f451fc1a9b769e59edbe1e200b1`
+Source SHA-256 : `80bd4d370fc743142ce66ee2fe45ea6d0bfa2d2f71154f6387b03d644317b48e`
 
 - [report](../../service/llm_directional/report.py) — ligne 8 : `def report(engine, run_id)`
-- [main](../../service/llm_directional/report.py) — ligne 35 : `def main()`
+- [main](../../service/llm_directional/report.py) — ligne 42 : `def main()`
 
 ## `service/llm_directional/repository.py`
 
@@ -1940,6 +1940,14 @@ Source SHA-256 : `b4299642d657f5c39256a5b64143c1ebd3d9e61d1afab547bc8400027c00b7
 - [Repository.claim_risk](../../service/llm_directional/repository.py) — ligne 122 : `def claim_risk(self, run_id)`
 - [Repository.claim_execution](../../service/llm_directional/repository.py) — ligne 130 : `def claim_execution(self, run_id)`
 
+## `service/llm_directional/research_rerun.py`
+
+Source SHA-256 : `0997df13b8422ee934066daeab14e6663b052e67410bc30e2a7e468f272e75d1`
+
+- [prepare_subset](../../service/llm_directional/research_rerun.py) — ligne 19 : `def prepare_subset(engine, parent_run_id, expected_symbols)`
+- [rerun](../../service/llm_directional/research_rerun.py) — ligne 61 : `def rerun(*, engine, parent_run_id, expected_symbols, run_id, output_dir, client=None)`
+- [main](../../service/llm_directional/research_rerun.py) — ligne 83 : `def main()`
+
 ## `service/llm_directional/risk_adapter.py`
 
 Source SHA-256 : `43b4b7d30140f188cc911675916440b4c6fc778f973cc15ec539ff02fe0f1932`
@@ -1951,21 +1959,23 @@ Source SHA-256 : `43b4b7d30140f188cc911675916440b4c6fc778f973cc15ec539ff02fe0f19
 
 ## `service/llm_directional/runner.py`
 
-Source SHA-256 : `676c3d1c1a24891f75ea8497119f0c4405e43ec2bd82947a148e719f5c72ec0e`
+Source SHA-256 : `19fb2e0f9496714c827b6389d6eff9523440cdfe1938bdd73e7c59d04d1a2f21`
 
 - [assert_paper_account](../../service/llm_directional/runner.py) — ligne 15 : `def assert_paper_account(account_id='default')`
 - [load_inputs](../../service/llm_directional/runner.py) — ligne 22 : `def load_inputs(engine, batch_id, trade_date, symbol_source, config, capital_preset_key)`
 - [validate_analysis_window](../../service/llm_directional/runner.py) — ligne 65 : `def validate_analysis_window(trade_date, *, now=None, calendar=None)`
-- [analyze](../../service/llm_directional/runner.py) — ligne 83 : `def analyze(*, engine, batch_id, trade_date, symbol_source, capital_preset_key='capital_2001_5000', config=None, run_id=None, client=None, inputs=None, check_account=True)`
-- [qualified_selection](../../service/llm_directional/runner.py) — ligne 157 : `def qualified_selection(engine, run_id, trade_date, account_id, *, now=None, allow_consumed=False)`
-- [main](../../service/llm_directional/runner.py) — ligne 197 : `def main()`
+- [analyze](../../service/llm_directional/runner.py) — ligne 83 : `def analyze(*, engine, batch_id, trade_date, symbol_source, capital_preset_key='capital_2001_5000', config=None, run_id=None, client=None, inputs=None, check_account=True, research_parent_run_id=None)`
+- [qualified_selection](../../service/llm_directional/runner.py) — ligne 170 : `def qualified_selection(engine, run_id, trade_date, account_id, *, now=None, allow_consumed=False)`
+- [main](../../service/llm_directional/runner.py) — ligne 213 : `def main()`
 
 ## `service/llm_directional/validation.py`
 
-Source SHA-256 : `d952c74ae6f73353523b321db143e7eaa0147ce52ce70ea6594ee5693300f514`
+Source SHA-256 : `bb81979f8221d10939bb213e7b489ce9f2005dff21c36e62b32c4aa42e59f16e`
 
-- [parse_response](../../service/llm_directional/validation.py) — ligne 10 : `def parse_response(response, symbol, config, observed_at)`
-- [select_symbols](../../service/llm_directional/validation.py) — ligne 59 : `def select_symbols(items, config)`
+- [_date_only_bounds](../../service/llm_directional/validation.py) — ligne 13 : `def _date_only_bounds(value)`
+- [_publication_status](../../service/llm_directional/validation.py) — ligne 28 : `def _publication_status(value, now, max_age_days)`
+- [parse_response](../../service/llm_directional/validation.py) — ligne 58 : `def parse_response(response, symbol, config, observed_at)`
+- [select_symbols](../../service/llm_directional/validation.py) — ligne 137 : `def select_symbols(items, config)`
 
 ## `service/market/__init__.py`
 

@@ -19,7 +19,7 @@ Les scripts CLI de recherche sont référencés dans leurs comptes rendus ; ne p
 | `execution_engine` | 29 | 378 | [API](../api/execution_engine.md) |
 | `backtesting` | 55 | 688 | [API](../api/backtesting.md) |
 | `corporate_actions` | 11 | 83 | [API](../api/corporate_actions.md) |
-| `service` | 247 | 1688 | [API](../api/service.md) |
+| `service` | 248 | 1693 | [API](../api/service.md) |
 | `ihm` | 107 | 1200 | [API](../api/ihm.md) |
 | `flows` | 2 | 18 | [API](../api/flows.md) |
 | `lineage` | 4 | 36 | [API](../api/lineage.md) |

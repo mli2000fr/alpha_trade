@@ -9,7 +9,7 @@ from sqlalchemy import text, bindparam
 from .config import load_filter_config, FilterConfig
 from .repository import Repository, dumps, digest, utcnow
 from .openai_client import ResponsesClient, build_request, PROTOCOL_VERSION
-from .validation import parse_response, select_symbols
+from .validation import parse_response, select_symbols, FRESH_QUALIFICATIONS
 
 
 def assert_paper_account(account_id='default'):
@@ -81,7 +81,8 @@ def validate_analysis_window(trade_date, *, now=None, calendar=None):
 
 
 def analyze(*, engine, batch_id, trade_date, symbol_source, capital_preset_key='capital_2001_5000',
-            config=None, run_id=None, client=None, inputs=None, check_account=True):
+            config=None, run_id=None, client=None, inputs=None, check_account=True,
+            research_parent_run_id=None):
     config = config or load_filter_config()
     if not config.enabled:
         raise ValueError('llm_directional_filter.enabled=false')
@@ -100,6 +101,8 @@ def analyze(*, engine, batch_id, trade_date, symbol_source, capital_preset_key='
         raise ValueError('Candidats dupliqués')
     snapshot = {'symbol_source': symbol_source, 'capital_preset_key': capital_preset_key,
                 'candidates': contexts}
+    if research_parent_run_id is not None:
+        snapshot.update(research_only=True, parent_run_id=research_parent_run_id)
     started = utcnow()
     repo.create(run_id=run_id, trade_date=trade_date, batch_id=batch_id,
         account_id=config.account_id, status='RUNNING', started_at=started,
@@ -135,7 +138,11 @@ def analyze(*, engine, batch_id, trade_date, symbol_source, capital_preset_key='
                 error = f'{type(exc).__name__}: {str(exc)[:600]}'
                 errors.append(f'{context["symbol"]}: {error}')
             repo.finalize_assessment(run_id, context['symbol'], status=status, parsed=parsed, error=error)
-            logging.info('LLM %d/%d %s %s', len(items)+len(errors), len(contexts), context['symbol'], status)
+            logging.info('LLM %d/%d %s %s outcome=%s fresh_sources=%s blockers=%s',
+                len(items)+len(errors), len(contexts), context['symbol'], status,
+                parsed['assessment_outcome'] if parsed else 'TECHNICAL_ERROR',
+                parsed['fresh_source_count'] if parsed else '-',
+                ','.join(parsed['selection_blockers']) if parsed else error)
         # A slow Web call must not publish a selection after the next open.
         validate_analysis_window(trade_date)
         selected = [] if errors else select_symbols(items, config)
@@ -151,7 +158,13 @@ def analyze(*, engine, batch_id, trade_date, symbol_source, capital_preset_key='
         raise RuntimeError(f'Analyse {run_id} échouée; {len(errors)} réponses invalides; aucun candidat publié')
     return {'run_id': run_id, 'status': 'completed', 'requested': len(contexts),
             'received': len(items), 'persisted': len(items), 'selected': selected,
-            'failed': 0, 'warning_count': 0}
+            'failed': 0, 'warning_count': 0,
+            'eligible_count': sum(item['eligible'] for item in items),
+            'abstained_count': sum(not item['eligible'] for item in items),
+            'excluded_source_count': sum(len(item['excluded_sources']) for item in items),
+            'unqualified_source_count': sum(
+                q['qualification'] not in FRESH_QUALIFICATIONS
+                for item in items for q in item['source_qualifications'])}
 
 
 def qualified_selection(engine, run_id, trade_date, account_id, *, now=None, allow_consumed=False):
@@ -167,9 +180,12 @@ def qualified_selection(engine, run_id, trade_date, account_id, *, now=None, all
         raise ValueError('Run LLM déjà consommé; pas de nouvelles cibles implicites')
     if run['protocol_version'] != PROTOCOL_VERSION:
         raise ValueError('Version du protocole LLM incompatible')
-    expected = json.loads(run['input_json'])['candidates']
-    if digest(json.loads(run['input_json'])) != run['input_sha256']:
+    snapshot = json.loads(run['input_json'])
+    if digest(snapshot) != run['input_sha256']:
         raise ValueError('Snapshot LLM altéré')
+    if snapshot.get('research_only'):
+        raise ValueError('Run LLM de recherche uniquement : risque/exécution interdits')
+    expected = snapshot['candidates']
     if len(items) != len(expected) or any(i['status'] != 'VALID' for i in items):
         raise ValueError('Archivage incomplet')
     expected_by_symbol = {context['symbol']: context for context in expected}

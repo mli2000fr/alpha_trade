@@ -36969,25 +36969,25 @@
     {
       "path": "service/llm_directional/openai_client.py",
       "package": "service",
-      "sha256": "9ff42a3bc70af43818d6ffbaefa568c84ca09de65f0521733a7086354ee288e0",
+      "sha256": "4492f5a011fba93ff4274beb81f932241a8ae4ca040328bd03b9826dbeaa7b28",
       "symbols": [
         {
-          "line": 43,
+          "line": 49,
           "name": "build_request",
           "signature": "def build_request(context, config)"
         },
         {
-          "line": 55,
+          "line": 61,
           "name": "ResponsesClient",
           "signature": "class ResponsesClient"
         },
         {
-          "line": 56,
+          "line": 62,
           "name": "ResponsesClient.__init__",
           "signature": "def __init__(self, config, session=None)"
         },
         {
-          "line": 64,
+          "line": 70,
           "name": "ResponsesClient.__call__",
           "signature": "def __call__(self, payload)"
         }
@@ -37107,7 +37107,7 @@
     {
       "path": "service/llm_directional/report.py",
       "package": "service",
-      "sha256": "5ac1fa5da19f45c7fc111f2950c15ef1280d1f451fc1a9b769e59edbe1e200b1",
+      "sha256": "80bd4d370fc743142ce66ee2fe45ea6d0bfa2d2f71154f6387b03d644317b48e",
       "symbols": [
         {
           "line": 8,
@@ -37115,7 +37115,7 @@
           "signature": "def report(engine, run_id)"
         },
         {
-          "line": 35,
+          "line": 42,
           "name": "main",
           "signature": "def main()"
         }
@@ -37194,6 +37194,28 @@
       ]
     },
     {
+      "path": "service/llm_directional/research_rerun.py",
+      "package": "service",
+      "sha256": "0997df13b8422ee934066daeab14e6663b052e67410bc30e2a7e468f272e75d1",
+      "symbols": [
+        {
+          "line": 19,
+          "name": "prepare_subset",
+          "signature": "def prepare_subset(engine, parent_run_id, expected_symbols)"
+        },
+        {
+          "line": 61,
+          "name": "rerun",
+          "signature": "def rerun(*, engine, parent_run_id, expected_symbols, run_id, output_dir, client=None)"
+        },
+        {
+          "line": 83,
+          "name": "main",
+          "signature": "def main()"
+        }
+      ]
+    },
+    {
       "path": "service/llm_directional/risk_adapter.py",
       "package": "service",
       "sha256": "43b4b7d30140f188cc911675916440b4c6fc778f973cc15ec539ff02fe0f1932",
@@ -37223,7 +37245,7 @@
     {
       "path": "service/llm_directional/runner.py",
       "package": "service",
-      "sha256": "676c3d1c1a24891f75ea8497119f0c4405e43ec2bd82947a148e719f5c72ec0e",
+      "sha256": "19fb2e0f9496714c827b6389d6eff9523440cdfe1938bdd73e7c59d04d1a2f21",
       "symbols": [
         {
           "line": 15,
@@ -37243,15 +37265,15 @@
         {
           "line": 83,
           "name": "analyze",
-          "signature": "def analyze(*, engine, batch_id, trade_date, symbol_source, capital_preset_key='capital_2001_5000', config=None, run_id=None, client=None, inputs=None, check_account=True)"
+          "signature": "def analyze(*, engine, batch_id, trade_date, symbol_source, capital_preset_key='capital_2001_5000', config=None, run_id=None, client=None, inputs=None, check_account=True, research_parent_run_id=None)"
         },
         {
-          "line": 157,
+          "line": 170,
           "name": "qualified_selection",
           "signature": "def qualified_selection(engine, run_id, trade_date, account_id, *, now=None, allow_consumed=False)"
         },
         {
-          "line": 197,
+          "line": 213,
           "name": "main",
           "signature": "def main()"
         }
@@ -37260,15 +37282,25 @@
     {
       "path": "service/llm_directional/validation.py",
       "package": "service",
-      "sha256": "d952c74ae6f73353523b321db143e7eaa0147ce52ce70ea6594ee5693300f514",
+      "sha256": "bb81979f8221d10939bb213e7b489ce9f2005dff21c36e62b32c4aa42e59f16e",
       "symbols": [
         {
-          "line": 10,
+          "line": 13,
+          "name": "_date_only_bounds",
+          "signature": "def _date_only_bounds(value)"
+        },
+        {
+          "line": 28,
+          "name": "_publication_status",
+          "signature": "def _publication_status(value, now, max_age_days)"
+        },
+        {
+          "line": 58,
           "name": "parse_response",
           "signature": "def parse_response(response, symbol, config, observed_at)"
         },
         {
-          "line": 59,
+          "line": 137,
           "name": "select_symbols",
           "signature": "def select_symbols(items, config)"
         }
