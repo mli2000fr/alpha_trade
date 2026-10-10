@@ -330,6 +330,12 @@ tests ; la migration de la tâche existante sera appliquée à sa réinstallatio
 
 ### Remédiation de ML Predict — 10 octobre 2026
 
+Le second incident manuel (samedi pris comme jour de signal) est corrigé
+également : le parcours Oracle/GPT transmet et fige la même séance US aux
+étapes 10/11/12, contrôle la fenêtre prospective avant calcul et bloque
+sur zéro score Oracle. Voir [le contrat de date détaillé](../ml/oracle_llm_directional_filter.md#date-unique-oracle--gpt--risque--exécution--correctif-du-10-octobre-2026).
+La configuration et l'activation GPT du batch planifié restent inchangées.
+
 Le workflow `20261009_224502_a240d7a1` s'est arrêté à l'étape 10 :
 la commande n'avait pas de `--batch-id`, l'auto-détection a choisi
 `model-factory-20260811223551-ef2cd0`, puis l'inférence a cherché

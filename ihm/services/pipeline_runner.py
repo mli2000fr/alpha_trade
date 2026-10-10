@@ -2844,9 +2844,12 @@ def _wrap_llm_command(phase: str, command: list[str], options: PipelineLaunchOpt
     batch = options.ml_predict_batch_id or options.ml_live_predict_batch_id
     if phase == 'predict' and not batch:
         raise ValueError('Sélectionner explicitement un batch Oracle pour le filtre LLM')
+    from common.us_signal_date import resolve_us_signal_date, pin_command_date
+    signal_date = resolve_us_signal_date(options.trade_date or _llm_today_ny()).isoformat()
+    command = pin_command_date(command, phase, signal_date)
     wrapped = [sys.executable, '-u', '-m', 'service.llm_directional.pipeline',
                '--phase', phase, '--run-id', options.llm_filter_run_id or 'auto',
-               '--trade-date', options.trade_date or _llm_today_ny(),
+               '--trade-date', signal_date,
                '--symbol-source', options.ml_predict_symbol_source,
                '--capital-preset-key', options.capital_preset_key or 'capital_2001_5000',
                '--command-json', json.dumps(command)]

@@ -5,6 +5,60 @@ non validée économiquement : aucun gain directionnel ou rendement n’est gara
 
 ## 1. Objectif et périmètre
 
+### Date unique Oracle / GPT / risque / exécution — correctif du 10 octobre 2026
+
+Le run manuel `20261010_124947_48e1fd11` utilisait le bon batch Oracle mais la
+date du samedi 10 octobre : Oracle calculait zéro score et le filtre GPT
+refusait une date hors séance. La commande Oracle ne recevait pas la date du
+wrapper, et son retour d'erreur était alors affiché avec un code de succès.
+
+Le parcours prospectif utilise désormais une **séance signal US unique** :
+
+- samedi/dimanche/jour férié : séance précédente selon le calendrier NYSE ;
+- aujourd'hui avant l'ouverture NYSE : séance précédente ;
+- après minuit Paris alors que New York est encore la veille : date NY de la
+  veille, puis résolution de sa séance ; aucun saut vers le nouveau jour Paris ;
+- séance explicitement sélectionnée dans le passé : conservée, jamais avancée
+  pour faire passer une analyse expirée ;
+- séance courante pendant le marché : données non définitives, analyse bloquée
+  avant la clôture ; une sélection future ne devient pas un signal du passé.
+
+Exemple : samedi **10/10/2026** → signal **09/10/2026**, valide pour une analyse
+Web prospective jusqu'avant l'ouverture de la séance suivante. Le calendrier
+gère jours fériés, demi-séances et changement d'heure NY/Paris, sans règle
+approximative « lundi–vendredi ».
+
+La commande affichée et celle exécutée contiennent : date du wrapper
+`--trade-date J`, Oracle `--universe-date J`, risque `--trade-date J`, exécution
+`--date J`. Le registre fige la date au lancement ; le workflow la conserve.
+La page Pipeline affiche la séance Oracle/GPT à côté de la commande LIVE.
+La **date signal n'est pas la date de fill** : l'entrée broker peut être ultérieure.
+
+Le wrapper revalide la fenêtre `clôture J ≤ maintenant < ouverture suivante`
+**avant** le sous-processus Oracle et avant l'accès DB/broker. Il n'autorise
+aucune recherche Web historique. Oracle-only renvoie un code non nul si le
+calcul échoue ou produit zéro score ; GPT n'est alors pas appelé. La synthèse
+Oracle quotidienne est limitée à J au lieu de réécrire tout l'historique.
+Une date valide ne garantit pas la présence des cours, des features ou des
+scores : les contrôles de couverture restent obligatoires.
+
+11/12 exigent toujours l'identifiant exact d'une analyse réussie, sa date,
+son compte PAPER, ses protections figées et le lien au run risque. Aucun
+fallback « dernier run », aucune autorisation d'ordre liée au seul changement
+de date. Aucune migration SQL ni réinstallation des tâches nécessaire ;
+rafraîchir/redémarrer l'IHM si elle conserve le code chargé précédemment.
+
+Vérification locale du correctif : **479 tests passent**, sans appel GPT ni
+ordre broker. Couverture : week-end, jours fériés/demi-séances, pré-ouverture,
+minuit Paris et changement d'heure, transmission des dates 10/11/12,
+précontrôle avant calcul et arrêt sur zéro score Oracle. Deux tests existants
+de `tests/test_ihm_pipeline_e2e.py` restent en écart, hors de ce correctif :
+les clés du bloc sentiment et le défaut `margin` attendu comme `cash` par
+le test. Ils ont été exclus du dernier passage vert ; leurs fonctions dans
+`ihm/pages/_execution_center` et leur configuration n'ont pas été modifiées.
+Ce contrôle local ne remplace pas la relance réelle de l'étape 10 ni ne
+garantit la disponibilité des scores au 09/10/2026.
+
 ### Extension LONG/SHORT — 10 octobre 2026
 
 `llm_directional_filter.allow_short: true` et `alpaca.accounts[id=default].long_only: false`

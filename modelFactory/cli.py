@@ -1377,6 +1377,11 @@ def main(args: list[str] | None = None) -> None:
             _safe_print("❌ --oracle-shadow exige un batch Oracle-only avec champions.")
             raise SystemExit(2)
 
+        if _oracle_only and not historical_predict_enabled:
+            from common.us_signal_date import resolve_us_signal_date
+            universe_date = resolve_us_signal_date(opts.universe_date)
+            LOGGER.info("predict Oracle date signal US figée: %s", universe_date)
+
         def _persist_predictions_chunk(
             chunk: pd.DataFrame,
             *,
@@ -1439,6 +1444,13 @@ def main(args: list[str] | None = None) -> None:
                 shadow_mode=bool(getattr(opts, "oracle_shadow", False)),
             )
             LOGGER.info("predict oracle-only batch=%s result=%s", _batch_id, _oracle_out)
+            if (
+                not _oracle_out
+                or _oracle_out.get("status") != "completed"
+                or int(_oracle_out.get("n_rows", 0) or 0) <= 0
+            ):
+                _safe_print(f"❌ Prédiction Oracle échouée : {_oracle_out}")
+                raise SystemExit(2)
             if bool(getattr(opts, "oracle_shadow", False)):
                 if (
                     not _oracle_out
@@ -1476,8 +1488,8 @@ def main(args: list[str] | None = None) -> None:
                     from modelFactory.synthesize_oracle_predictions import synthesize as _synth_oracle
                     _synth_res = _synth_oracle(
                         _batch_id,
-                        start=_oracle_start if historical_predict_enabled else None,
-                        end=_oracle_end if historical_predict_enabled else None,
+                        start=_oracle_start,
+                        end=_oracle_end,
                     )
                     LOGGER.info(
                         "predict oracle-only batch=%s sync model_predictions result=%s",

@@ -1627,8 +1627,12 @@ def _render_launchable_step_panel(
                 if _live_selected:
                     _live_overrides["ml_live_predict_batch_id"] = _live_selected
                 _live_opts = replace(options, **_live_overrides)
+                _live_command = build_pipeline_command(step.key, _live_opts)
+                if options.llm_filter_enabled:
+                    _signal_day = _live_command[_live_command.index('--trade-date') + 1]
+                    st.caption(f"📅 Séance signal Oracle / GPT : {_signal_day} — même date pour risque et exécution ; ce n'est pas la date du fill.")
                 st.code(
-                    format_command_for_display(build_pipeline_command(step.key, _live_opts)),
+                    format_command_for_display(_live_command),
                     language="powershell",
                 )
 

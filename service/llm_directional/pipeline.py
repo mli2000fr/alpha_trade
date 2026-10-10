@@ -10,7 +10,7 @@ from sqlalchemy import text
 from pathlib import Path
 from .config import load_filter_config
 from .repository import Repository
-from .runner import analyze, qualified_selection, assert_paper_account
+from .runner import analyze, qualified_selection, assert_paper_account, validate_analysis_window
 
 
 def main():
@@ -39,15 +39,25 @@ def main():
         raise ValueError('Commande risque invalide')
     if args.phase == 'predict' and (len(command) < 4 or command[2:4] != ['-m', 'modelFactory']):
         raise ValueError('Commande prédiction invalide')
+    from common.us_signal_date import resolve_us_signal_date, pin_command_date
+    if args.phase == 'predict':
+        if not args.batch_id:
+            raise ValueError('Batch Oracle explicite requis')
+        if any(part.split('=', 1)[0] in ('--training-start-date', '--training-end-date', '--oracle-shadow') for part in command):
+            raise ValueError('Filtre Web incompatible avec historique ou Oracle shadow')
+        requested_date = args.trade_date
+        args.trade_date = resolve_us_signal_date(requested_date).isoformat()
+        from datetime import date
+        validate_analysis_window(date.fromisoformat(args.trade_date))
+        print(f'Date signal US figée : {requested_date} → {args.trade_date} (Oracle et GPT)', flush=True)
+    # Risk/execution keep the exact archived date; qualified_selection checks it
+    # before downstream processes. Never fall back to another analysis run.
+    command = pin_command_date(command, args.phase, args.trade_date)
     assert_paper_account()
     from database.connection import get_sqlalchemy_engine
     engine = get_sqlalchemy_engine()
     repo = Repository(engine)
     if args.phase == 'predict':
-        if not args.batch_id:
-            raise ValueError('Batch Oracle explicite requis')
-        if '--training-start-date' in command or '--oracle-shadow' in command:
-            raise ValueError('Filtre Web incompatible avec historique ou Oracle shadow')
         subprocess.run(command, check=True)
         config = replace(load_filter_config(), enabled=True)  # explicit IHM opt-in
         if config.protections is not None and args.specific_protections is not None:
