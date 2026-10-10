@@ -2,8 +2,13 @@
 
 **État courant au 10 octobre :** l'utilisateur a de nouveau désactivé la
 collecte Yahoo (`enabled: false`, `BLOCKED_YAHOO_AUTOMATED_ACCESS`). La
-restauration et les résultats ci-dessous sont conservés, sans nouveau
-téléchargement ; EODHD reste une alternative envisagée et non activée.
+restauration ci-dessous décrit une opération historique. Sur demande ultérieure
+le même jour, les six tables ont été **vidées et contrôlées à zéro après commit**
+(1 115 261 lignes supprimées). Sauvegarde préalable ciblée :
+`backups/db/yahoo_consensus_before_clear/20261010T215706Z/`.
+Les résultats de recherche et anciens dumps restent sur fichiers, sans nouveau
+téléchargement ni restauration automatique ; EODHD reste une alternative
+envisagée et non activée.
 
 ## Restauration effectuée le 10 octobre 2026
 

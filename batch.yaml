@@ -281,7 +281,7 @@ analyst_snapshot_collection:
   status: BLOCKED_YAHOO_AUTOMATED_ACCESS
   provider: yahoo_finance_via_yfinance
   timezone: Europe/Paris
-  research_notice: "BLOQUÉ — Yahoo exige une permission préalable pour la collecte automatisée. La recherche personnelle, yfinance et la quarantaine ne remplacent pas cette permission. Aucun nouveau téléchargement ne doit être lancé, même manuellement. Données existantes conservées sans décision de purge. Voir doc/ml/audit_autorisations_collectes_us_20261006.md."
+  research_notice: "BLOQUÉ — Yahoo exige une permission préalable pour la collecte automatisée. La recherche personnelle, yfinance et la quarantaine ne remplacent pas cette permission. Aucun nouveau téléchargement ne doit être lancé, même manuellement. Les six tables de ce batch ont été vidées le 10 octobre 2026 à la demande utilisateur ; sauvegarde ciblée conservée hors base. Voir doc/ml/audit_autorisations_collectes_us_20261006.md."
   activation_requirement: "Obtenir une autorisation écrite Yahoo couvrant automatisation, archivage des snapshots et usages analytiques/ML, ou qualifier un autre fournisseur."
   unlock_steps:
     - "Archiver la permission et son périmètre ; vérifier conservation, usages dérivés et redistribution."

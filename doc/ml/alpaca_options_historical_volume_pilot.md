@@ -21,6 +21,29 @@ les snapshots indicatifs.
 
 Preuves : `artifacts/research/alpaca_options_history/20261010-smoke/`.
 
+### Première séance réellement observée : 18 janvier 2024
+
+Le sondage additionnel du 10 octobre 2026 interroge 12 contrats réels expirés :
+CALL/PUT sur AAPL (strike 180), MSFT (400) et SPY (480), échéances 16 février
+et 15 mars 2024. Les 12 identités sont confirmées par HTTP 200 avec le même
+symbole retourné. La requête de barres journalières du 1er janvier 2023 au
+29 février 2024 retourne 300 barres, sans pagination résiduelle.
+
+Pour **chacun des 12 contrats**, la première séance est **2024-01-18**. Une
+seconde requête bornée avant cette séance retourne HTTP 200 et zéro barre.
+Les barres minute de cette première séance sont aussi accessibles : premier
+timestamp observé **2024-01-18T14:30:00Z**, soit 09:30 New York / 15:30 Paris.
+
+Ce résultat est antérieur au mois de février 2024 annoncé par la documentation
+Alpaca consultée. Retenir le 18 janvier comme **début observé de cet échantillon
+avec ce compte**, pas comme garantie universelle ou preuve de couverture complète
+de tous les contrats. Ni les trades, ni les quotes, ni l'OI historique n'ont été
+testés pour cette frontière. Pas d'écriture SQL ni d'ordre.
+
+Script : `python -u -m scripts.research.alpaca_options_history_first_day`.
+Preuves brutes, barres et rapport :
+`artifacts/research/alpaca_options_history/20261010-first-day/report.json`.
+
 ## Protocole figé avant téléchargement
 
 - Univers : `config/univers_batch/univers_filtred_tradable.txt`, hash conservé.
@@ -78,5 +101,40 @@ ATM/orientation et l'absence d'imputation d'un PUT manquant.
 
 ## Résultat
 
-Téléchargement et test exploratoire en cours ; aucune conclusion directionnelle
-ou économique n'est déclarée avant le rapport final.
+Terminé le 10 octobre 2026 : **174 391 barres** téléchargées, aucune erreur API
+sur les 40 titres examinés, **719 paires titre/jour**, 37 titres exploitables et
+20 dates d'entrée. Les contrats hors règles et les paires manquantes sont exclus.
+
+| Horizon | Couples D1/D10 | D10 / D1 | AUC globale | Première moitié | Seconde moitié |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| H3 | 165 | 87 / 78 | 0,5102 | 0,5300 | 0,5045 |
+| H5 | 180 | 93 / 87 | 0,4928 | 0,5379 | 0,4557 |
+| H10 | 179 | 98 / 81 | 0,4755 | 0,4864 | 0,4518 |
+| H20 | 145 | 98 / 47 | 0,5929 | 0,5664 | 0,6251 |
+
+H3/H5/H10 ne montrent pas d'avantage directionnel probant. Le résultat H5 ne
+confirme pas le 0,547 du premier audit prospectif, mais **ce n'est pas une
+réplication exacte** : période, sous-ensemble et agrégation des strikes diffèrent.
+
+H20 mérite une confirmation distincte, pas une promotion. Une AUC 0,593 n'est
+ni un taux de trades gagnants, ni un rendement. Les 20 dates d'entrée se
+chevauchent presque entièrement à H20 ; les deux moitiés ne sont donc pas
+indépendantes. Aucun jour n'atteint le minimum de 20 observations D1/D10 requis
+par la fonction commune pour une AUC quotidienne : cette mesure est absente,
+pas nulle. L'effet peut refléter les titres/secteurs présents plutôt qu'une
+information nouvelle sur la direction.
+
+Conclusion : **accès historique gratuit confirmé sur cet échantillon ; avantage
+directionnel stable non démontré**. Avant toute utilisation, élargir avec la même
+règle à plusieurs mois disjoints et années, contrôler les prix bruts nécessaires
+au matching des strikes et les dates de disponibilité, puis distinguer effet
+de marché/secteur et apport du volume. Toujours aucun backtest économique,
+entraînement, changement de modèle, ordre ou écriture SQL.
+
+## Suite distincte autorisée : backfill SQL
+
+L'utilisateur a ensuite autorisé l'alimentation de `stock_option_bars_delayed`
+depuis le 20 janvier 2024 sur tout le fichier tradable. Cette opération distincte
+écrit uniquement cette table, en barres 1Day, avec réception réelle et reprise.
+Voir [le protocole et le suivi du backfill](alpaca_options_history_backfill.md).
+Les résultats du pilote ci-dessus restent inchangés.

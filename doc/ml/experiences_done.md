@@ -2408,3 +2408,54 @@ BEA/G17/Census et indices privés restent hors première tranche.
 Short volume laissé désactivé : droits non levés, aucun bénéfice directionnel
 stable démontré justifiant une dépense. **Pas une nouvelle expérience D1/D10**,
 pas d'entraînement ni de trading lancé.
+
+## 2026-10-10 — Pilote historique options Alpaca : volume call/put
+
+[Protocole, accès et limites](alpaca_options_historical_volume_pilot.md).
+Accès du compte principal confirmé : catalogue expiré AAPL et 12 barres de
+janvier 2025 reçus en HTTP 200. Le paramètre `feed=opra` est refusé par
+l'endpoint bars ; provenance laissée `UNVERIFIED_OPRA`, pas de NBBO imputé.
+Pilote figé sur janvier 2025 et 40 titres liquides sélectionnés avec les volumes
+de décembre 2024 dans l'univers tradable actuel ; paires ATM à 20 DTE,
+H3/H5/H10/H20, labels D1/D10 du plein univers qualifié. Aucun entraînement,
+écriture SQL, ordre, modification de batch ou promotion live. Ce premier test
+ne récupère pas de série historique OI/IV/Greeks. Résultats dans
+`artifacts/research/alpaca_options_history/20261010-volume-pilot/report.json`.
+
+Résultat terminé : **174 391 barres**, **719 paires titre/jour**, **37 titres**,
+20 dates d'entrée, aucune erreur API. AUC H3/H5/H10/H20 :
+**0,510 / 0,493 / 0,475 / 0,593**. H20 : 145 observations extrêmes, moitiés
+0,566 / 0,625, mais forte superposition des rendements et aucune date avec assez
+d'extrêmes pour l'AUC quotidienne (minimum 20). **Accès historique confirmé,
+avantage stable non démontré**. Le signal apparié ATM n'est pas une réplication
+du volume agrégé de l'audit prospectif ; pas de conclusion économique.
+
+Sondage du début d'historique : **18 janvier 2024** observé pour chacun de
+12 contrats CALL/PUT AAPL/MSFT/SPY, échéances février/mars 2024 ; 300 barres
+journalières, première barre minute à 14:30 UTC, zéro barre sur la requête
+antérieure depuis janvier 2023, réponses HTTP 200. Date plus ancienne que
+février 2024 annoncé par la documentation, mais uniquement une frontière
+observée sur cet échantillon et ce compte, pas une garantie exhaustive.
+Preuves : `artifacts/research/alpaca_options_history/20261010-first-day/report.json`.
+
+### Suite opérationnelle autorisée — backfill options US
+
+[Backfill SQL, périmètre, contrôles et reprise](alpaca_options_history_backfill.md).
+Demande distincte : remplir `stock_option_bars_delayed` du 20/01/2024 au
+09/10/2026 sur les 1 790 titres du fichier tradable ; première séance le 22/01.
+Barres **1Day**, paires ATM aux DTE 5/10/20 (tolérance 5), pas une chaîne complète.
+Premier contrôle réel : 54 lignes A/AA insérées et relues ; cinq tests passent.
+**Backfill complet lancé, pas déclaré terminé** : 60 860 tranches symbole/mois,
+progression/RAW archivés, reprise et insertions courtes sans écraser l'existant.
+`available_at` garde la réception réelle ; pas de snapshots/OI/IV/Greeks
+rétrospectifs, pas de nouvelle conclusion directionnelle ni d'ordre.
+
+## 2026-10-10 — Vidage demandé des six tables consensus Yahoo US
+
+Collecte désactivée, aucun collecteur actif et dépendances vérifiées. Suppression
+transactionnelle des seules six tables du batch `analyst_snapshot_collection`,
+schémas conservés : **1 115 261 lignes supprimées**, six contrôles post-commit
+à zéro. Sauvegarde ciblée préalable avec DDL, lignes JSONL compressées et hashes :
+`backups/db/yahoo_consensus_before_clear/20261010T215706Z/manifest.json`.
+Anciens dumps, résultats d'expériences et données options non supprimés. Aucun
+autre batch modifié ou blocage levé ; ne pas réinjecter les archives automatiquement.

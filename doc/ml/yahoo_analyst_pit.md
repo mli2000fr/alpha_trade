@@ -15,9 +15,14 @@ y compris manuel, tant que ce blocage est présent. La tâche installée peut
 rester en place : le launcher vérifie ces paramètres avant les appels.
 Le statut bloqué ne serait pas levé par le seul passage de `enabled` à `true`.
 
-Aucune purge demandée : les données actuelles et les six tables restaurées
-depuis la sauvegarde du 4 octobre sont conservées, ainsi que les résultats
-exploratoires. Leurs réserves de droits et de qualification restent applicables.
+Mise à jour ultérieure le 10 octobre 2026 : sur demande explicite, les six
+tables de ce batch ont été vidées et vérifiées après commit : **1 115 261 lignes
+supprimées**, zéro ligne restante dans chacune. Les schémas sont conservés et
+la collecte reste désactivée. Une sauvegarde ciblée préalable est conservée dans
+`backups/db/yahoo_consensus_before_clear/20261010T215706Z/`, avec manifeste et hashes.
+Les anciens dumps et résultats exploratoires sur fichiers n'ont pas été supprimés.
+Leurs réserves de droits et de qualification restent applicables ; pas de
+restauration ni d'exploitation automatique de ces archives.
 EODHD Calendar & News est envisagé pour une collecte prospective de remplacement,
 mais aucun nouvel abonnement ou batch de remplacement n'est confirmé ici.
 [Restauration et analyse](analyst_archive_restore_directional_20261010.md).
