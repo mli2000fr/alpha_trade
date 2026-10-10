@@ -6,6 +6,20 @@
 
 Date de vérification : 6 octobre 2026. Périmètre : catalogue `US_EQ` effectivement présenté par la page Batch, fournisseurs réellement appelés et conditions publiques officielles.
 
+**Dernière mise à jour opérationnelle, 10 octobre 2026 :** après une réactivation
+temporaire et le retrait de la borne du 10 novembre, l'utilisateur a de nouveau
+désactivé `analyst_snapshot_collection` US : `enabled: false`, statut
+`BLOCKED_YAHOO_AUTOMATED_ACCESS`. La permission Yahoo reste non confirmée.
+Aucun autre blocage FR/CN/US n'est levé. Les données restaurées et résultats
+de recherche sont conservés ; aucun nouveau téléchargement autorisé par cette
+mise à jour. EODHD est envisagé, pas encore activé pour cette collecte.
+[État actuel et historique](yahoo_analyst_pit.md).
+
+Complément du 10 octobre : [consensus EODHD et macro producteurs publics](consensus_eodhd_macro_publics_20261010.md).
+EODHD consensus : 403 actuel, pas d'achat ; confirmation spécifique des droits
+restante. BLS/H15 : premiers snapshots archivés prospectivement, distincts de
+FRED. Cette évolution ne lève aucun des trois blocages Yahoo/FINRA/FRED.
+
 ## 1. Conclusion et limites
 
 À l'ouverture de l'audit, le catalogue contenait **25 batchs US : 20 activés et 5 désactivés**. Les 25 ont été examinés, y compris les traitements locaux et sauvegardes. Le tableau ci-dessous conserve cette photographie initiale ; les blocages appliqués après GO sont décrits en section 14.

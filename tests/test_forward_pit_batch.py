@@ -46,6 +46,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_all_enabled_forward_batches_have_handlers() -> None:
     expected = {
+        "public_macro_snapshot_sync",
         "us_pipeline",
         "ml_artifacts_backup",
         "db_core_backup", "db_news_raw_backup",
@@ -532,6 +533,7 @@ def test_forward_pit_sql_reference_and_migration_cover_all_tables() -> None:
         "stock_short_volume_daily",
         "stock_option_contract_versions", "stock_option_bars_delayed",
         "option_contract_adjustments",
+        "macro_public_observation_versions",
     }
     assert {name for name in expected if f"alpha_trade.{name}" in ddl} == expected
     migration = (ROOT / "alembic/versions/0075_forward_pit_collection_foundation.py").read_text(encoding="utf-8")
@@ -549,7 +551,7 @@ def test_forward_pit_sql_reference_and_migration_cover_all_tables() -> None:
     ).read_text(encoding="utf-8")
     assert 'down_revision: str | None = "0079_delayed_options_occ"' in provider_migration
     assert "type_=sa.String(255)" in provider_migration
-    assert ddl.count("provider VARCHAR(255)") == 18
+    assert ddl.count("provider VARCHAR(255)") == 19
     assert "provider VARCHAR(32)" not in ddl
     assert "provider VARCHAR(16)" not in ddl
 

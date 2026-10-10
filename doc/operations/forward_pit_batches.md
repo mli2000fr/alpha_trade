@@ -116,6 +116,7 @@ Le TOP20 est une **sortie de modèle**, recalculée après entraînement ou à c
 | P3 | `sec_corporate_events_normalize` | RAW SEC 8‑K/6‑K | `sec_corporate_events` | actif |
 | P4 | `sec_institutional_ownership_normalize` | RAW SEC 13F/13D/13G | `sec_ownership_snapshots` | actif |
 | P4 | `fred_alfred_vintage_sync` | FRED/ALFRED | `macro_vintage_observations` | désactivé : `BLOCKED_FRED_ARCHIVE_ML_RIGHTS` |
+| P4 | `public_macro_snapshot_sync` | BLS + Federal Reserve Board H15 | `macro_public_observation_versions`, RAW et runs communs | actif recherche ; 23:15 Paris lun–ven ; migration 0096 |
 | attente | `auction_imbalance_sync` | Nasdaq NOII/NYSE live payants ; Web NYSE post-auction limité | — | `BLOCKED_NO_FREE_OFFICIAL_FEED` ; [POC séparé](../ml/nyse_auction_history_poc.md) |
 | attente | `securities_lending_sync` | fournisseur requis | — | désactivé |
 
@@ -388,6 +389,13 @@ fenêtre décrivent ses capacités techniques, pas une consigne de réactivation
 ni une validation des droits.
 
 ### FRED/ALFRED
+
+Depuis le 10 octobre : première tranche alternative **producteur-direct**,
+`public_macro_snapshot_sync`, BLS inflation/emploi et H15 taux nominaux/effectifs.
+Versions disponibles à leur première réception UTC, révisions conservées ;
+aucun ancien vintage reconstruit. Première collecte 107 versions, répétition 0
+doublon normalisé. Tâche installée à 23:15 Paris. VIX/VXN/VIX3M/MOVE et modèles
+inchangés. [Contrat, exploitation et qualification EODHD consensus](../ml/consensus_eodhd_macro_publics_20261010.md).
 
 Le batch conserve pour chaque observation la valeur, `realtime_start`, `realtime_end`, la date de vintage et l’heure de réception. Les futurs datasets doivent joindre sur `available_at <= decision_time` et sélectionner le dernier vintage alors disponible ; joindre seulement sur `observation_date` créerait une fuite de révision.
 

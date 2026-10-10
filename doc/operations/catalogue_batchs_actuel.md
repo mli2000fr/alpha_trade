@@ -9,7 +9,7 @@ des runners et des lanceurs. « Actif » décrit la configuration ; cela ne
 prouve ni installation Windows, ni réussite du dernier run, ni GO ML.
 Les commandes de la carte IHM font autorité pour le launcher et le catalogue.
 
-## US — batch.yaml, 25 entrées, 16 actives
+## US — batch.yaml, 26 entrées, 17 actives
 
 | Batch | État actuel | Fournisseur / stockage principal |
 | --- | --- | --- |
@@ -31,9 +31,10 @@ Les commandes de la carte IHM font autorité pour le launcher et le catalogue.
 | db_news_raw_backup | Actif | news_raw seule → backups/db ; keep=3, chaque dimanche 20:00 Paris |
 | latest_quotes_sync | Désactivé, intégré | Étape 4 du pipeline, quotes Alpaca, J−7/J |
 | earnings_calendar_sync | Désactivé, intégré | Étape 5 du pipeline, Finnhub configuré, J−7/J+30 |
-| analyst_snapshot_collection | ⛔ Droits/prudence | BLOCKED_YAHOO_AUTOMATED_ACCESS ; pas de reprise automatique |
-| business_quant_analyst_snapshot | Désactivé, remplacé | REPLACED_BY_YAHOO ; le remplaçant est lui-même bloqué actuellement |
+| analyst_snapshot_collection | ⛔ Droits/prudence, désactivé | BLOCKED_YAHOO_AUTOMATED_ACCESS ; nouvelle désactivation utilisateur le 10/10 ; données conservées, aucun nouvel appel ; voir doc/ml/yahoo_analyst_pit.md |
+| business_quant_analyst_snapshot | Désactivé, remplacé | REPLACED_BY_YAHOO ; collecteur Yahoo remplaçant lui-même désactivé, pas de droit Yahoo présumé |
 | fred_alfred_vintage_sync | ⛔ Droits/prudence | BLOCKED_FRED_ARCHIVE_ML_RIGHTS |
+| public_macro_snapshot_sync | Recherche active, 23:15 Paris lun–ven | BLS + Federal Reserve Board H15 → macro_public_observation_versions ; première tranche du remplacement public, pas de raccordement modèle automatique |
 | finra_short_volume_sync | ⛔ Droits/prudence | BLOCKED_FINRA_PREDICTIVE_USE |
 | securities_lending_sync | Fournisseur manquant | PENDING_PROVIDER ; pas de connecteur gratuit qualifié pour le besoin complet |
 | official_options_nbbo_sync | Source manquante | BLOCKED_FREE_NO_NBBO_SOURCE ; bars/mémos partiels ne fournissent pas le NBBO |
@@ -145,3 +146,8 @@ cn_staging_quality_daily, cn_baostock_smoke, cn_master_calendar_sync,
 fr_pit_quality_daily, fr_consensus_borrow_options. Fonctions/historiques peuvent
 subsister pour recherche et traçabilité ; leur présence ne réinstalle pas un job.
 Les exemples anciens utilisant ces noms sont des exemples historiques.
+
+Qualification du 10 octobre : le consensus EODHD renvoie 403 avec la clé actuelle,
+sans achat. Macro directe : première collecte 107 versions, seconde 0 nouvelle,
+tâche PublicMacroSnapshotSync installée. FRED et FINRA restent bloqués.
+Voir [les produits, droits, preuves et limites PIT](../ml/consensus_eodhd_macro_publics_20261010.md).

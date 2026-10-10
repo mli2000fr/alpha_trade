@@ -106,6 +106,7 @@ Les migrations US ne s'appliquent pas automatiquement aux bases CN/FR.
 | [alembic/versions/0093_llm_directional.py](../../alembic/versions/0093_llm_directional.py) | `0093_llm_directional` | `0092_oracle_atr_movements` |
 | [alembic/versions/0094_oracle_atr_score_order.py](../../alembic/versions/0094_oracle_atr_score_order.py) | `0094_oracle_atr_score_order` | `0093_llm_directional` |
 | [alembic/versions/0095_oracle_atr_partial_returns.py](../../alembic/versions/0095_oracle_atr_partial_returns.py) | `0095_oracle_atr_partial_returns` | `0094_oracle_atr_score_order` |
+| [alembic/versions/0096_public_macro_versions.py](../../alembic/versions/0096_public_macro_versions.py) | `0096_public_macro_versions` | `0095_oracle_atr_partial_returns` |
 | [alembic_cn/versions/0001_tushare_raw_staging.py](../../alembic_cn/versions/0001_tushare_raw_staging.py) | `0001_tushare_raw_staging` | `None` |
 | [alembic_cn/versions/0002_tushare_raw_run_lineage.py](../../alembic_cn/versions/0002_tushare_raw_run_lineage.py) | `0002_tushare_raw_run_lineage` | `0001_tushare_raw_staging` |
 | [alembic_cn/versions/0003_provider_neutral_staging.py](../../alembic_cn/versions/0003_provider_neutral_staging.py) | `0003_provider_neutral_staging` | `0002_tushare_raw_run_lineage` |
@@ -143,6 +144,7 @@ Les migrations US ne s'appliquent pas automatiquement aux bases CN/FR.
 | `alpha_trade.global_rank_history` | [database/sql/ml/global_rank_history.sql](../../database/sql/ml/global_rank_history.sql) |
 | `alpha_trade.macro_event_audit` | [database/sql/news/init_event_sentiment.sql](../../database/sql/news/init_event_sentiment.sql), [database/sql/news/macro_event_audit.sql](../../database/sql/news/macro_event_audit.sql) |
 | `alpha_trade.macro_vintage_observations` | [database/sql/forward_pit/forward_pit_tables.sql](../../database/sql/forward_pit/forward_pit_tables.sql) |
+| `alpha_trade.macro_public_observation_versions` | [database/sql/forward_pit/public_macro_observation_versions.sql](../../database/sql/forward_pit/public_macro_observation_versions.sql), [DDL Forward PIT](../../database/sql/forward_pit/forward_pit_tables.sql) |
 | `alpha_trade.ml_drift_runs` | [database/sql/ml/ml_drift_runs.sql](../../database/sql/ml/ml_drift_runs.sql) |
 | `alpha_trade.model_batch_diagnostics` | [database/sql/ml/model_batch_diagnostics.sql](../../database/sql/ml/model_batch_diagnostics.sql) |
 | `alpha_trade.model_governance` | [database/sql/ml/model_governance.sql](../../database/sql/ml/model_governance.sql) |

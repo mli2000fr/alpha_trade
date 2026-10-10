@@ -2296,7 +2296,13 @@ def us_pipeline(engine, cfg, run_id, dry_run):
     return execute_pipeline(engine, cfg, run_id, dry_run)
 
 
+def public_macro_snapshot_sync(engine, cfg, run_id, dry_run):
+    from service.forward_pit.public_macro import collect
+    return collect(engine, cfg, run_id, dry_run)
+
+
 HANDLERS: dict[str, Callable[[Engine, dict[str, Any], str, bool], Outcome]] = {
+    "public_macro_snapshot_sync": public_macro_snapshot_sync,
     "us_pipeline": us_pipeline,
     "ml_artifacts_backup": ml_artifacts_backup,
     "db_core_backup": database_backup,
@@ -2334,8 +2340,8 @@ def execute(batch_name: str, *, dry_run: bool = False, config_path: str | None =
         raise KeyError(f"Aucun handler pour {batch_name}")
     run_id = f"{batch_name}-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}"
     engine = get_sqlalchemy_engine(); started = _utcnow()
-    if batch_name == 'us_pipeline' and engine.url.database != 'alpha_trade':
-        raise ValueError('US pipeline requires alpha_trade; refusing cross-market run')
+    if batch_name in ('us_pipeline', 'public_macro_snapshot_sync') and engine.url.database != 'alpha_trade':
+        raise ValueError('US pipeline/public macro requires alpha_trade; refusing cross-market run')
     if not dry_run:
         with engine.begin() as conn:
             conn.execute(text("""INSERT INTO pit_collection_runs(run_id,batch_name,provider,status,started_at)

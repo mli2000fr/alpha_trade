@@ -11,6 +11,15 @@
 
 Ce plan transforme les besoins de données en collectes prospectives. Le RAW reste append-only et conserve l'heure réelle de réception.
 
+> Rectification opérationnelle au 10 octobre 2026 : les descriptions ci-dessous
+> qui disent Yahoo, FINRA ou FRED « actifs » sont historiques, **pas des autorisations
+> de réactivation**. FINRA/FRED restent bloqués ; Yahoo US a été de nouveau
+> désactivé par l'utilisateur le 10/10 : `enabled: false`,
+> `BLOCKED_YAHOO_AUTOMATED_ACCESS` (voir [état actuel](yahoo_analyst_pit.md)). EODHD consensus a été
+> testé (403), sans achat. La première alternative macro BLS/H15 est désormais
+> livrée et planifiée. Lire le [contrat actuel](consensus_eodhd_macro_publics_20261010.md)
+> et le [catalogue opérationnel](../operations/catalogue_batchs_actuel.md).
+
 Toutes les collectes par symbole utilisent l'univers stable
 `config/univers_batch/univers_filtred_tradable.txt`. Le TOP20 Oracle n'est jamais
 un univers de collecte : il est recalculé plus tard par le modèle ou le backtest.

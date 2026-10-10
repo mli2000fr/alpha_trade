@@ -35,6 +35,7 @@ Les noms d'état BLOCKED/PENDING priment ; aucune consigne de réactivation n'es
 | `sec_corporate_events_normalize` | True | ACTIVE | P3 | 23 / 0 ; 1,2,3,4,5,6 ; Europe/Paris | — | lookback_days=— ; lookahead_days=— |
 | `sec_institutional_ownership_normalize` | True | ACTIVE | P4 | 23 / 0 ; 2,4,6 ; Europe/Paris | — | lookback_days=— ; lookahead_days=— |
 | `fred_alfred_vintage_sync` | False | BLOCKED_FRED_ARCHIVE_ML_RIGHTS | P4 | 14 / 0 ; 1,2,3,4,5 ; Europe/Paris | — | lookback_days=— ; lookahead_days=— |
+| `public_macro_snapshot_sync` | True | ACTIVE_RESEARCH_ONLY | P4 | 23 / 15 ; 1,2,3,4,5 ; Europe/Paris | — | BLS deux années de niveaux actuels/révisés ; H15 cinq dates récentes ; disponibilité réelle, pas d'anciens vintages reconstruits |
 | `finra_short_volume_sync` | False | BLOCKED_FINRA_PREDICTIVE_USE | P1 | 23 / 0 ; 1,2,3,4,5 ; America/New_York | — | lookback_days=7 ; lookahead_days=— |
 | `auction_imbalance_sync` | False | BLOCKED_NO_FREE_OFFICIAL_FEED | P3 | — / 0 ; tous ; Windows local | — | lookback_days=— ; lookahead_days=— |
 | `securities_lending_sync` | False | PENDING_PROVIDER | P1 | — / 0 ; tous ; Windows local | — | lookback_days=— ; lookahead_days=— |

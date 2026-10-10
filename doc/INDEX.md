@@ -3,6 +3,8 @@
 > Généré automatiquement par `scripts/generate_doc_index.py` le 2026-10-10.
 > 685 documents indexés.
 
+Ajout opérationnel du 10 octobre : [consensus EODHD et collecte macro directe BLS/H15](ml/consensus_eodhd_macro_publics_20261010.md).
+
 ## Sommaire
 
 * [Architecture](#architecture) (4)

@@ -1,5 +1,56 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-10 — Nouvelle désactivation de la collecte analystes Yahoo US
+
+L'utilisateur a de nouveau désactivé `analyst_snapshot_collection`.
+État vérifié dans `batch.yaml` : `enabled: false`,
+`BLOCKED_YAHOO_AUTOMATED_ACCESS`. La réactivation temporaire et le retrait
+de l'expiration décrits plus bas sont historiques, plus l'état courant.
+Les données restaurées et les analyses sont conservées ; aucun effacement,
+appel fournisseur ou changement de tâche Windows effectué pour cette mise à jour.
+EODHD Calendar & News envisagé pour la collecte prospective, sans activation
+ou achat confirmé. [État actuel](yahoo_analyst_pit.md).
+
+## 2026-10-10 — Restauration consensus Yahoo et premier test directionnel
+
+Sauvegarde du 4 octobre : 1 080 167 lignes réinjectées dans les six tables
+analystes, sans écrasement ; contrôle ultérieur, zéro ligne archivée manquante.
+Analyse sur les 1 790 titres tradables actuels, disponibilité PIT validée,
+entrée prochaine ouverture, H3/H5/H10/H20 sans entraînement.
+Révisions EPS nettes 30 jours : H10 AUC 0,679 sur dix dates ; TOP20 des scores,
+D10 16,53 % contre 10,47 %, D1 6,59 % contre 10,23 %. Pas encore de révisions
+matures à H20. Objectifs H20 instables et augmentant aussi D1 ; recommandations
+sans gain de sélection TOP20. Échantillon court et chevauchant, aucune promotion
+ni preuve économique. Quatre tests ciblés passent.
+[Protocole, restauration et résultats](analyst_archive_restore_directional_20261010.md).
+
+Suite du même jour : contrôle de momentum20 et des secteurs actuels non PIT,
+sans entraînement. Sur la même couverture H10, AUC révisions30 brutes 0,695,
+neutralisées 0,595 ; le TOP20 neutralisé donne D10 7,16 % contre baseline
+11,26 %, malgré une AUC supérieure à 0,5. Les dix dates H10 ne fournissent
+qu'une date sans chevauchement. Aucun GO économique : continuer la collecte
+et confirmer sur de nouvelles périodes. Objectifs/recommandations testés sans
+avantage de sélection convaincant ; niveaux EPS/revenus, nombre d'analystes et
+références EPS J−7/30/60/90 non testés isolément. Un mois de snapshots ne crée
+pas quatre mois de décisions PIT. Un test de contrôle supplémentaire passe.
+
+## 2026-10-10 — Historique : réactivation temporaire Yahoo US, arrêt manuel
+
+Sur GO explicite de l'utilisateur, `analyst_snapshot_collection` avait été réactivé
+depuis le 10 octobre : statut
+`ACTIVE_RESEARCH_RIGHTS_UNCONFIRMED`, permission Yahoo toujours non confirmée.
+Tâche `AlphaTrade-AnalystSnapshot`, 22h Paris / secours conditionnel 4h, univers
+`config/univers_batch/univers_filtred_tradable.txt`, notifications existantes.
+Sur demande ultérieure de l'utilisateur, la borne du 10 novembre est retirée :
+arrêt manuel via `enabled: false`, sans réinstallation de la tâche.
+Pas de modèle ni de décision de trading raccordés.
+133 tests ciblés passent ; tâche Windows vérifiée Ready, actions masquées,
+timezone machine Romance Standard Time. Aucun téléchargement immédiat lancé
+dans cette réactivation, aucun nouveau résultat directionnel. Bilan à faire après
+un mois (couverture, vraies révisions, rollover, rendements à maturité), puis
+arrêt ou nouvelle décision explicite. Les autres blocages US/FR/CN restent inchangés.
+[Détails et suivi](yahoo_analyst_pit.md).
+
 <!-- doc-status:start -->
 > Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
 <!-- doc-status:end -->
@@ -10,6 +61,21 @@ de l'inscription, pas nécessairement un processus encore actif aujourd'hui.
 Pour les paramètres/branches actuellement raccordés, voir
 [l'état de l'implémentation](../ETAT_ACTUEL_IMPLEMENTATION.md). La présente
 mise à jour documentaire ne requalifie aucun résultat ni ne promeut un modèle.
+
+## US — Collectes prospectives : audit de couverture et direction courte
+
+10 octobre 2026 : audit terminé sur les **1 790 titres** du fichier tradable.
+Options indicatives : 231 519 lignes / 1 651 titres ; barres options retardées :
+188 444 / 1 569 ; disponibilité short : 36 554 / 1 751 ; news/sentiment du mois :
+11 581 / 1 268. Consensus analyste et short volume FINRA vides/suspendus.
+Contrôle figé sans entraînement : AUC D1/D10 H5 volume call/put 0,547,
+H3 OI call/put 0,547 ; associations faibles, chevauchement, recul trop court,
+aucune promotion ni PnL. Aucune option encore mature H20 au 9 octobre.
+Deux réserves SEC identifiées : extraction 8-K/6-K très insuffisante et
+`issuer_symbol` 13F alimenté avec le symbole du déclarant ; non corrigées ici.
+Aucune écriture SQL, configuration modifiée, collecte externe ou ordre.
+Cinq tests de recherche passent. Voir
+[audit détaillé et suites bornées](us_collectes_prospectives_direction_audit_20261010.md).
 
 ## US — TOP10 Oracle H20 corrigé : backtests annuels 2020–2026 en cours
 
@@ -2327,3 +2393,18 @@ Accès au modèle confirmé par HTTP 200 le 8 octobre après un premier contrôl
 `401 invalid_api_key` : blocage levé. Aucune analyse payante ni ordre lancé ;
 le premier cycle Responses/Web reste à valider. Le batch planifié 1–9 est inchangé.
 Voir [le fonctionnement complet](oracle_llm_directional_filter.md).
+
+## 2026-10-10 — Consensus EODHD / macro producteurs publics / short volume
+
+[Qualification, preuves, exploitation et limites PIT](consensus_eodhd_macro_publics_20261010.md).
+Consensus : compte EODHD HTTP 200, `/calendar/trends` AAPL.US HTTP 403 ; aucun
+achat, aucun payload de consensus archivé, produit/droits à confirmer.
+Macro : première tranche BLS/H15, 4+5 séries, **107 versions persistées** ;
+seconde exécution **0 nouvelle version / 107 inchangées**. Nouvelle table US,
+SQL/Alembic 0096, batch public actif installé à 23:15 Paris lun–ven, TLS vérifié,
+timestamps réels et révisions append-only. Pas de reconstitution historique PIT,
+pas de raccordement automatique aux modèles ; VIX/VXN/VIX3M/MOVE inchangés.
+BEA/G17/Census et indices privés restent hors première tranche.
+Short volume laissé désactivé : droits non levés, aucun bénéfice directionnel
+stable démontré justifiant une dépense. **Pas une nouvelle expérience D1/D10**,
+pas d'entraînement ni de trading lancé.

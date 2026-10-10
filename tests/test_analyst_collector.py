@@ -77,10 +77,10 @@ def test_analyst_launcher_honours_enabled_before_provider_call() -> None:
         encoding="utf-8"
     )
 
-    guard_position = content.index("if (-not $collectionEnabled)")
+    guard_position = content.index("if (-not $collectionEnabled -or")
     provider_call_position = content.index("$collectScriptPath =")
     assert guard_position < provider_call_position
-    assert "analyst_snapshot_collection.enabled=false" in content
+    assert "enabled={1} status={2}" in content
     assert "exit 0" in content[guard_position:provider_call_position]
 
 
@@ -100,7 +100,7 @@ def test_active_analyst_collection_config_is_explicit() -> None:
     root = Path(__file__).resolve().parents[1]
     config = yaml.safe_load((root / "batch.yaml").read_text(encoding="utf-8"))
     assert config["analyst_snapshot_collection"]["enabled"] is True
-    assert config["analyst_snapshot_collection"]["status"] == "ACTIVE_RESEARCH_ONLY"
+    assert config["analyst_snapshot_collection"]["status"] == "ACTIVE_RESEARCH_RIGHTS_UNCONFIRMED"
     assert "recherche" in config["analyst_snapshot_collection"]["research_notice"].lower()
     business_quant = config["business_quant_analyst_snapshot"]
     assert business_quant["enabled"] is False
