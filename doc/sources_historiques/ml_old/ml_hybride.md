@@ -1,5 +1,9 @@
 # ML Hybride — Features Cross-Sectionnelles & Sectorielles
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## 📌 Pourquoi ce changement ?
 
 L'application `modelFactory` est une architecture **per-symbol** : un modèle indépendant (LSTM / LightGBM / CatBoost) est entraîné par titre. Le secteur GICS (Technology, Financials, Healthcare…) est une information disponible dans `stock_metadata` mais n'était **jamais injectée** dans les features ML.

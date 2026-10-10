@@ -1,5 +1,9 @@
 # Sprint 11-B — qualification des sources événementielles gratuites FR
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 État exécuté le 4 octobre 2026. **Sprint 11 en cours, pas clôturé.**
 Cette passe mesure la disponibilité des sources et leur raccord aux événements
 Oracle ; elle ne mesure ni un gain directionnel, ni une performance économique.

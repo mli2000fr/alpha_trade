@@ -1,5 +1,9 @@
 # α-Trade — Guide fonctionnel du marché chinois (CN_A)
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 **Contrats implémentés au 1er octobre, actualisation opérationnelle du
 10 octobre 2026.** Ce guide s'adresse à une personne qui reprend l'application.
 Les résultats historiques ne promettent pas de performances futures.

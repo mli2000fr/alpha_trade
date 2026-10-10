@@ -1,5 +1,9 @@
 # FR — qualification des coûts, taxes et opérations sur titres (12-A)
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Résultat au 4 octobre 2026
 
 Le GO de qualification est exécuté sur les **21 379 chemins candidats H5 de

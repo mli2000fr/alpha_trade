@@ -1,5 +1,9 @@
 # 10. Page 🧪 Backtesting — préparer et tester une stratégie sur l'historique
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 > **But de ce chapitre** : produire un backtest reproductible, sans fuite
 > d'information, à partir des mêmes données et règles que la stratégie. Le
 > bouton final ne suffit pas : la qualité de l'historique, du Screener, du

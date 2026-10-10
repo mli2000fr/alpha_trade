@@ -1,5 +1,9 @@
 # E46 — Verdict exposition (Phase B) — 2026-08-22 — DÉCISION : 1.46 retenu
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Cadre (spec utilisateur, inchangé)
 
 - **B4 gelé à −15 %** (non modifié), politique catastrophe **WORST_50** (0.5), **CP-V2**, **6L/2S**, batch B25/H20, equity 4000, capital_2001_5000, seed 12345.

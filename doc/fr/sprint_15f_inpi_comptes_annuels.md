@@ -1,5 +1,9 @@
 # Sprint 15-F — Pilote INPI comptes annuels
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 **État au 6 octobre 2026 : suspendu**, `enabled: false`,
 `BLOCKED_INPI_RETENTION`. Les paragraphes d'activation ci-dessous décrivent
 le pilote historique, pas le catalogue courant. Les fichiers de quarantaine

@@ -1,5 +1,9 @@
 # CN — Audit des autorisations des collectes planifiées
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Date de vérification : 6 octobre 2026. Périmètre : configuration et chemins de code actuels, conditions publiques des fournisseurs. Audit documentaire et technique, pas consultation juridique ni garantie d'absence de litige.
 
 ### Décision appliquée après l'audit — 6 octobre 2026

@@ -1,5 +1,9 @@
 # TOP10 réel H20 : ne conserver que les futurs positifs, SL initial 7 %
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Objectif et protocole — 7 octobre 2026
 
 Suite du [TOP10 réel des deux signes](us_realized_top10_fixed_sl7.md).

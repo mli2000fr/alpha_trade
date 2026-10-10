@@ -92,6 +92,10 @@ Je mettrais cette expérience en **priorité 0**.
 
 # 2. La piste que je trouve la plus prometteuse : les relations lead-lag entre actions
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 C’est probablement la plus grosse famille mathématique que je ne vois pas réellement testée dans ton registre.
 
 Tu as énormément étudié :

@@ -1,5 +1,9 @@
 # Tiebreaker dip_quality — Document de synthèse
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 **Date :** 2026-08-28 · **Auteur :** session Copilot · **Statut :** recherche — verdict **INCONCLUSIVE_LOW_SAMPLE** (OOS 2026), non activé en production.
 
 ---

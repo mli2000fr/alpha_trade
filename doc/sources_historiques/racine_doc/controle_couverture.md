@@ -1,5 +1,9 @@
 # Contrôle de couverture ML — documentation complète
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 > Dernière mise à jour : 2026-08-27.
 > Sujet : mécanique du gate de couverture, sémantique « couverture ≠ qualité », flux global rank only, synchronisation `global_rank_history` / `model_predictions`, et les 2 points (déclencheur historique explicite + complément live quotidien global-only).
 

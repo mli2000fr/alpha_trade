@@ -1,5 +1,9 @@
 # Capital, sizing, levier et fractionnement
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Du risque unitaire à la cible
 
 Le sizing combine capital/equity, risque accepté, distance au stop, volatilité,

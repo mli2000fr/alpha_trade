@@ -1,5 +1,9 @@
 # Audit du consensus des modèles directionnels OOF
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Objectif
 
 Cette expérience vérifie si plusieurs modèles directionnels déjà entraînés
@@ -111,7 +115,7 @@ Le dossier produit contient :
 ## Résultat de la campagne du 6 septembre 2026
 
 Artefact canonique :
-[oof-consensus-20260906-0802c8](../../artifacts/models/shared_directional/oof-consensus-20260906-0802c8/report.json).
+oof-consensus-20260906-0802c8 — référence historique absente localement : `../../artifacts/models/shared_directional/oof-consensus-20260906-0802c8/report.json`.
 
 | Horizon | Familles | Lignes OOF communes | IC quotidien | LONG signé | SHORT signé | Spread haut-bas | Verdict |
 |---:|---:|---:|---:|---:|---:|---:|---|

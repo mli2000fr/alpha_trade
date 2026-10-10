@@ -1,3 +1,7 @@
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Un backtest LONG à +35 % pendant un marché où presque toutes les actions montent ne prouve pas que le modèle a de l’alpha. Il peut simplement avoir capturé le bêta du marché.
 
 Pour ton système, je ferais un chantier séparé, par exemple E27 — LONG Alpha Attribution, dont la question n’est plus « est-ce que le portefeuille gagne ? », mais :

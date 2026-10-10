@@ -1,5 +1,9 @@
 # Pré-live et montée progressive du capital
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Deux niveaux
 
 `execution_engine/preflight.py`, appelé par `scripts/run_pre_live_checklist.py`, vérifie l’environnement courant. `risk_management/pre_live_checklist.py` formalise les gates de gouvernance shadow, paper et live progressif. L’un ne remplace pas l’autre.

@@ -1,5 +1,9 @@
 # Synthèses des expériences historiques
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Archives intégrales : [campagnes Global Ranking](campagnes_global_ranking/README.md) et [archives ML complémentaires](archives_ml/README.md).
 
 Autres audits et verdicts datés : [archives de recherche complémentaires](archives_recherche/README.md).

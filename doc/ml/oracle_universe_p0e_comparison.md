@@ -1,5 +1,9 @@
 # P0e — Comparaison OOF ancien Oracle 400 vs Balanced 400
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Verdict
 
 Le batch `model-factory-20260908183941-7826b4`, entraîné sur le nouvel univers

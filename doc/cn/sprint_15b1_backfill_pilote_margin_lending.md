@@ -1,5 +1,9 @@
 # Sprint 15-B1 — Backfill pilote `融资融券` SSE/SZSE, 2018–2025
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Suite exécutée : [15-B2 — rapprochement des listes et contrat PIT](./sprint_15b2_eligibilite_et_contrat_pit.md). Les constats ci-dessous décrivent l'état du pilote B1 ; B2 a depuis rapproché les 16 listes Shenzhen, sans lever les blocages SSE/vintages.
 
 **Exécuté le 28 septembre 2026. Verdict : `GO_BACKFILL_RESEARCH`, mais `NO_GO_FEATURES_PIT` et `NO_GO_SPRINT16_B2` tant que l'éligibilité historique et la disponibilité/révision des données ne sont pas résolues.** Il s'agit de financement sur marge et de prêt de titres, non du money-flow Eastmoney du Sprint 15-A0.

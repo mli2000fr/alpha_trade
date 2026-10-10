@@ -1,5 +1,9 @@
 # Sprint 10-C — Qualification de davantage d'historique Oracle OOF FR
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Conclusion du 3 octobre 2026
 
 **Suite exécutée :** la [tentative de réparation 10-C1](sprint_10c1_reparation_fold3.md)

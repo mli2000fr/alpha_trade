@@ -1,5 +1,9 @@
 # Options FR : POC transactions MiFIR + référentiel FIRDS
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Décision et état au 6 octobre 2026
 
 Suite au GO, un batch quotidien partiel pour tout l'univers FR est maintenant

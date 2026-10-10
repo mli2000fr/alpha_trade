@@ -1,5 +1,9 @@
 # Sprint 10-B — Oracle amplitude CN_A, évaluation Walk-Forward
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Question et portée
 
 Le Sprint 10-B demande si les features **price-only** disponibles avant

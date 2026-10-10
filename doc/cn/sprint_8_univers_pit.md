@@ -1,5 +1,9 @@
 # Sprint 8 — Univers chinois quotidien Point-in-Time
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Statut au 25 septembre 2026 : **backfill 2018–2025 et gate PIT terminés, `PASS` technique**. Voir la [validation finale](sprint_8_validation_finale_2026_09_25.md). Ce travail ne branche pas encore le ML, le backtest de production ou le live CN.
 
 ## Objectif et frontière temporelle

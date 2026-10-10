@@ -1,5 +1,9 @@
 # Publication quotidienne des barres FR en staging SQL
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Livraison du 9 octobre 2026
 
 Le batch existant `fr_daily_bars_sync` collecte toujours EODHD en fichiers

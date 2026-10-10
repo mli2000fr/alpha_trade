@@ -1,5 +1,9 @@
 # Chantier `smart_sector_cap` — Verdict C0/C1/C2 (2026-08-27)
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Famille homogène 2022-01-01 → 2024-12-31, commande PROD identique pour les 3 runs
 (engine-mode pipeline, batch ef2cd0, cap count=2, `--sector-cap-mode` varie).
 Source des métriques : **logs** (`logs/smart_c0|smart_c1|smart_c2.log`) — source unique fiable.

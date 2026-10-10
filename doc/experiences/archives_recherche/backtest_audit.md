@@ -1,5 +1,9 @@
 # Audit du backtest `20260817_165433_2785da86` (+63.9% sur 1 an 5 mois)
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 > **Date de l'audit** : 2026-08-17
 > **Auteur** : revue technique (audit profond demandé car le résultat semblait « trop beau »)
 > **Usage** : document de revue — peut être transmis à un relecteur externe (GPT) pour contre-analyse

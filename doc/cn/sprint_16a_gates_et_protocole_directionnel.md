@@ -1,5 +1,9 @@
 # Sprint 16-A — Éligibilité des familles et protocole directionnel CN
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 État au 1er octobre 2026 : **16-A réalisé (audit et cadre de pré-enregistrement), campagne 16-B non ouverte**. Les seuils propres à une nouvelle famille devront encore être figés avant son premier test : ce document n'est pas un pré-enregistrement chiffré de 16-B. Ce sprint n'entraîne aucun modèle, ne lit aucune issue prospective D7 et ne change ni les batchs, ni le serving, ni le backtest. Il formalise le [Sprint 16 du plan](./sprint_planning_integration_marche_chinois.md) à partir des preuves déjà produites en Sprint 15. Le Sprint 16 n'avait pas auparavant de livrable distinct nommé « 16-A ».
 
 ## Question et unités de comparaison

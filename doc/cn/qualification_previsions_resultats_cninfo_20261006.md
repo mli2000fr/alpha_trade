@@ -1,5 +1,9 @@
 # Prévisions de résultats CN — qualification avant nouveau POC
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Date : 6 octobre 2026. Décision : conserver `cn_akshare_enrichment`
 désactivé, sans endpoints. Aucun nouveau téléchargement de données métier,
 aucune écriture SQL, aucun entraînement ni activation planifiée pendant cet audit.

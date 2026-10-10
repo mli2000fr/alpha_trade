@@ -1,5 +1,9 @@
 # Recherche vs Pipeline — TP / SL / Trailing : pourquoi +175 % vs +9 % ?
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 **Date :** 2026-08-21 — **Objet :** expliquer l'écart de profil entre le backtest
 **recherche** et le backtest **pipeline**, sur le même univers B25 long-only, avec
 chiffres vérifiés sur les 208 trades partagés (prix d'entrée identiques à 100 %).

@@ -1,5 +1,9 @@
 # Pilote de faisabilité des données de prêt de titres après Oracle
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Décision du 1er octobre 2026
 
 **`SAMPLE_READY / BLOCKED_NO_PROVIDER_HISTORY`**. L'Oracle d'amplitude corrigé garde une AUC OOF de 0,7581, mais le rejeu directionnel D1/D10 reste à 0,4811. Le projet n'a toujours pas de panel historique point-in-time de frais d'emprunt et de quantité disponible. Le statut Alpaca courant, le short interest périodique et le short volume déjà présents ne permettent pas de tester cette hypothèse sur les neuf folds 2021–2025 ; le short volume ne mesure d'ailleurs pas les positions ouvertes ou le stock empruntable, comme le précise [FINRA](https://www.finra.org/rules-guidance/notices/information-notice-051019).

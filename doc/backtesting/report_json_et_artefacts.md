@@ -1,5 +1,9 @@
 # `report.json` et artefacts de backtesting
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Rôle
 
 `report.json` est le contrat machine entre moteur, IHM, tests et analyses. Le producteur principal est `backtesting/report.py`. Le contrat minimal et sa validation résident dans `backtesting/report_schema.py`; `backtesting/report_schema_pydantic.py` offre un adaptateur Pydantic v2 optionnel.

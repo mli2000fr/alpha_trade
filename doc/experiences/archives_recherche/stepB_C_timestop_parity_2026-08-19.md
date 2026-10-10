@@ -1,5 +1,9 @@
 # 🟡 Étapes B + C — Time-stop parity test sur baseline post-fix TP + décision
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 **Date** : 2026-08-19
 **Base** : baseline canonique post-fix TP (`cmp_b25_h20_{2025,2026}_postfix_tp_m8`)
 **Méthode** : replay mécanique validé (match baseline vs officiel : **99% (2025) / 100% (2026)**) — seule différence : `time_stop` évalué en parallèle du trailing à partir de J20 (`max_business_days=20`, `min_tp_progress_ratio=0.5`, `near_zero=0.005`).

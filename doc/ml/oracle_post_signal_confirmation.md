@@ -1,5 +1,9 @@
 # E9 — Confirmation directionnelle après le signal Oracle
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Verdict
 
 E9-A est `NO_GO`. E9-B (lifecycle canonique) n'est pas ouvert. Le serving, le backtest applicatif et le live restent inchangés.

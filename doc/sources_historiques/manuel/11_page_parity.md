@@ -1,5 +1,9 @@
 # 11. Page 🔀 Parité Backtest ↔ Live
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## À quoi sert cette page
 
 Comparer les décisions **simulées** (backtest) aux décisions **réelles**
@@ -28,6 +32,6 @@ premières semaines.
 
 ## Pour aller plus loin
 
-- Doc technique : [doc/backtesting.md](../backup/backtesting.md) + sous-section
+- Doc technique : doc/backtesting.md — référence historique absente localement : `../backup/backtesting.md` + sous-section
   parité.
 

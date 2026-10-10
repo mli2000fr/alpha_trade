@@ -1,5 +1,9 @@
 # Sprint 18-B — Shadow d'exécution CN_A, sans broker
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Ce qui est livré
 
 Le module `service/market/cn_shadow_execution_18b.py` permet de produire une **preuve prospective, en trois temps**, pour une intention CN_A explicite. Il n'importe aucun client Alpaca, n'appelle aucune API d'ordres, ne modifie aucune table et n'est pas planifié. Il réutilise le contrat daté CN du Sprint 12-A ; le replay de portefeuille historique 12-B reste séparé.

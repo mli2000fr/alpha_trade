@@ -1,5 +1,9 @@
 # Sprint 6-C France — identités, benchmark de recherche et secteurs
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 État au 3 octobre 2026 : `GO_6C_RESEARCH_PRICE_ONLY`. L'identité de recherche et le benchmark prix sont construits, versionnés et persistés dans `alpha_trade_fr`. Les secteurs historiques restent `UNKNOWN`. Le GO permet de préparer un panel de recherche sur les prix ; il ne clôt pas le gate économique et tradable du Sprint 6 global.
 
 ## Comprendre les trois références

@@ -1,4 +1,9 @@
 # E45 — Crash-test catastrophe au VRAI seuil −15 % : KEEP vs WORST_50 vs ALL
+
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Verdict airbag (2026-08-22) — seuil B4 gelé, aucun tuning
 
 > **Protocole** : produire de VRAIS trips du breaker B4 (DD ≤ −15 %) **sans baisser le seuil**, via des

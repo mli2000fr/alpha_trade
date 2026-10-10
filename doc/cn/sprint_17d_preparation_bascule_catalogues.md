@@ -1,5 +1,9 @@
 # Sprint 17-D — Préparation de la bascule des catalogues CN (sans activation)
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 État au 1er octobre 2026 : **préparation seulement**. Les quatre tâches prospectives D6/D9/D10 restent installées et lisent `batch.yaml`. Aucun déplacement de section, réinstallation, changement d'horaire, de base ou de serving n'est autorisé avant au moins un cycle réel D6 → D9 → D10 → qualité 17-C cohérent. La clôture opérationnelle complète de 17-C exige toujours sept séances ouvertes consécutives ; un premier cycle ne la remplace pas.
 
 ## Pourquoi un simple déplacement YAML casserait le flux

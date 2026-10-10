@@ -1,5 +1,9 @@
 # France — état actuel et parcours documentaire
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 État rapproché des sources le **10 octobre 2026**. Marché FR_EQ, base
 alpha_trade_fr isolée, alias fr_primary, EUR, calendrier XPAR.
 Le contexte marché reste désactivé pour l'exécution broker ; les collectes

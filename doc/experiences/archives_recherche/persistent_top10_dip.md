@@ -1,5 +1,9 @@
 # persistent_top10_dip_validation — 2026-08-27
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Validation du signal « GlobalRank TOP10 persistant + baisse récente » (DIP).
 Aucun réentraînement, aucun changement risk/PROD. Période **2022-2024**.
 Configurations pré-enregistrées : N ∈ {3,4,5}, X ∈ {2%, 3%}.

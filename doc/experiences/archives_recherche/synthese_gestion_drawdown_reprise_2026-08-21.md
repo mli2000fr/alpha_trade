@@ -1,5 +1,9 @@
 # Synthèse — Gestion du Drawdown et reprise d'activité (2026-08-21)
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 > Document autonome : décrit le système de gestion du risque de drawdown en place
 > (circuit breaker adaptatif B4 + force-close), comment le portefeuille **reprend
 > l'activité** après un épisode de drawdown, et ce que les tests récents (E32, E33)

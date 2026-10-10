@@ -1,5 +1,9 @@
 # Sprint 7-A — Dictionnaire et panel France price-only
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 État au 3 octobre 2026 : **`GO_7A_RESEARCH_PANEL`**. Le panel de recherche a été construit et reconstruit avec le même hash. Aucune cible, aucun entraînement et aucune écriture en base ne sont déclenchés par ce service. Le GO valide la construction et la traçabilité du panel ; il ne prouve pas un signal prédictif ni une disponibilité de publication historique contractuelle.
 
 ## Périmètre et population

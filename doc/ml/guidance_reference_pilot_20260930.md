@@ -1,5 +1,9 @@
 # Pilote de référence guidance — 30 septembre 2026
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 Statut : **REVIEW_READY_PARTIAL_EVIDENCE_NOT_ML_READY**. Propositions d'annotation par l'assistant, non vérité terrain indépendante. Aucun modèle entraîné, aucun rendement utilisé, aucune modification du parseur, de la base ou du serving.
 
 ## Résultat utile pour la recherche D1/D10

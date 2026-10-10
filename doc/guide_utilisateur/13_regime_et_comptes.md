@@ -1,5 +1,9 @@
 # Régime marché et comptes broker
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Régime Marché
 
 La page affiche le mode effectif, un badge, un résumé et la trace de décision. La trace est plus importante que le seul libellé : elle indique données disponibles, règles et fallback. L’expander de configuration lit `config.yaml > market_regimes`; il ne prouve pas qu’un ancien run utilisait la configuration actuellement affichée.

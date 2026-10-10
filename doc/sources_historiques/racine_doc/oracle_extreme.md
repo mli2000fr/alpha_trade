@@ -1,5 +1,9 @@
 # Oracle Extreme — Gate d'univers LONG (composant officiel E6→E13)
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 **Statut :** composant intégré au code (config + `cascade_select` + tests ✅ 54/54),
 **câblé au backtest CLI** (`--cascade-rank-mode extreme_gate` + variantes E17/E18),
 **non câblé au pipeline live** (voir [§8 État du câblage](#8-etat-du-cablage-et-to-do)).
@@ -24,7 +28,7 @@
 - [`doc/mode_cascade.md`](mode_cascade.md) — les **7 modes de cascade** (`ml`, `oracle`,
   `oracle_filter`, `oracle_pool`, `oracle_rerank`, `extreme_gate`, `random`) et comment
   combiner Global Rank × Oracle Extreme (dont la clarification « pourquoi B25 »).
-- [`doc/calibration_oracle_exterme.md`](calibration_oracle_exterme.md) — calibration de
+- [`doc/calibration_oracle_exterme.md`](../../experiences/archives_recherche/calibration_oracle_exterme.md) — calibration de
   `proba_extreme` (`none` | `rank` | `isotonic`) et la différence entre les méthodes.
 
 ---

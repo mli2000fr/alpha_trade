@@ -1,5 +1,9 @@
 # Batchs de collecte Forward PIT
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Repère actuel et périmètre historique
 
 Rapprochement du 10/10/2026 : le
@@ -11,8 +15,8 @@ contrat de collecte US ; FR/CN ont leurs runners et historiques séparés.
 
 ## Pilotage depuis l'IHM
 
-La page **Workflow & Orchestration → Batch** constitue le catalogue opérationnel de
-des catalogues du marché sélectionné. Elle affiche finalité, priorité P0 à P4,
+La page **Workflow & Orchestration → Batch** constitue le catalogue opérationnel
+du marché sélectionné. Elle affiche finalité, priorité P0 à P4,
 les tables alimentées, le calendrier configuré et l'état réel de la tâche Windows.
 Elle rapproche également la dernière exécution du Planificateur avec le dernier run
 présent dans pit_collection_runs (volumes demandés, reçus, persistés, alertes et
@@ -76,7 +80,7 @@ Principes invariants :
 
 | Périmètre | Batchs | Contrat |
 |---|---|---|
-| Univers tradable stable | `market_cap_sync`, `earnings_calendar_sync`, `analyst_snapshot_collection`, `latest_quotes_sync`, `daily_bars_sync`, `pit_data_quality_daily`, `borrow_status_snapshot`, `business_quant_analyst_snapshot`, `oracle_options_indicative_snapshot`, `options_delayed_bars_sync`, `oracle_opening_window_sync` | fichier `config/univers_batch/univers_filtred_tradable.txt`, complet, sans TOP20 ni limite implicite |
+| Univers tradable stable | `market_cap_sync`, `earnings_calendar_sync`, `analyst_snapshot_collection`, `latest_quotes_sync`, `daily_bars_sync`, `borrow_status_snapshot`, `business_quant_analyst_snapshot`, `oracle_options_indicative_snapshot`, `options_delayed_bars_sync`, `oracle_opening_window_sync` | fichier `config/univers_batch/univers_filtred_tradable.txt`, complet, sans TOP20 ni limite implicite ; population, pas autorisation des familles désactivées |
 | Futurs collecteurs par symbole | `auction_imbalance_sync`, `securities_lending_sync`, `official_options_nbbo_sync` | le même fichier est déjà déclaré ; les collecteurs restent désactivés tant que source, stockage et qualité ne sont pas validés |
 | Découverte market-wide | `security_master_snapshot` | toutes les cotations disponibles afin de détecter nouveaux titres, changements et disparitions |
 | Événements market-wide | `corporate_actions_sync` | flux global afin de ne pas manquer une action affectant un titre entrant, sortant ou détenu |
@@ -89,29 +93,29 @@ Le TOP20 est une **sortie de modèle**, recalculée après entraînement ou à c
 
 ## Inventaire opérationnel
 
-| Priorité | Batch | Source | Table(s) normalisée(s) | État initial |
+| Priorité | Batch | Source | Table(s) normalisée(s) | État au 10/10/2026 |
 |---|---|---|---|---|
 | P0 | `daily_bars_sync` | Business Quant `/quotes`, mode `eod` | `stock_bars_daily_versions` RAW | actif |
-| P0 | `latest_quotes_sync` | Alpaca historique IEX | `stock_quote_snapshots` | actif ; J-7 à J, reprise idempotente |
+| P0 | `latest_quotes_sync` | Alpaca historique IEX | `stock_quote_snapshots` | autonome désactivé ; intégré à l'étape 4 de us_pipeline, J−7/J |
 | P0 | `security_master_snapshot` | Nasdaq Symbol Directory quotidien, Business Quant Universe hebdomadaire | `security_master_snapshots`, `security_master_changes` | actif |
 | P0 | `corporate_actions_sync` | Business Quant market-wide + Alpaca | `corporate_action_source_events` | actif |
 | P0 | `sec_edgar_incremental` | SEC daily master index + submissions | `sec_filing_raw` | actif |
-| P0 | `pit_data_quality_daily` | contrôles locaux | `pit_data_quality_metrics`, `pit_data_quality_issues` | désactivé, contrôle manuel facultatif |
+| historique | `pit_data_quality_daily` | anciens contrôles locaux | `pit_data_quality_metrics`, `pit_data_quality_issues` | retiré du catalogue ; aucune réactivation planifiée |
 | P0 | `ml_artifacts_backup` | système de fichiers local | `backups/ml/ml_artifacts_*.tar.gz` | actif ; samedi 01:00 Paris ; rétention configurable (`keep`) |
 | P0 | `db_core_backup` | MySQL local / `mysqldump` | `backups/db/alpha_trade_without_news_*.sql.gz` | actif ; dimanche 01:00 Paris ; toute la base sauf `news_raw` ; 5 archives |
 | P0 | `db_news_raw_backup` | MySQL local / `mysqldump` | `backups/db/alpha_trade_news_raw_*.sql.gz` | actif ; chaque dimanche, heure de Paris configurée dans `batch.yaml` ; `news_raw` seule ; 3 archives |
 | P1 | `borrow_status_snapshot` | Alpaca Assets | `stock_borrow_status_snapshots` | actif |
-| P1 | `analyst_snapshot_collection` | Yahoo Finance/yfinance | consensus, tendances/révisions EPS, targets et recommandations | actif, recherche personnelle/éducative uniquement |
+| P1 | `analyst_snapshot_collection` | Yahoo Finance/yfinance | consensus, tendances/révisions EPS, targets et recommandations | désactivé : `BLOCKED_YAHOO_AUTOMATED_ACCESS` |
 | P1 | `business_quant_analyst_snapshot` | Business Quant `/estimates` | `stock_analyst_consensus_snapshots` | remplacé par Yahoo, désactivé |
-| P1 | `finra_short_volume_sync` | FINRA Consolidated NMS public | `stock_short_volume_daily` | actif, recherche uniquement |
+| P1 | `finra_short_volume_sync` | FINRA Consolidated NMS public | `stock_short_volume_daily` | désactivé : `BLOCKED_FINRA_PREDICTIVE_USE` |
 | P2 | `oracle_options_indicative_snapshot` | Alpaca Basic indicative | `stock_option_snapshots` | actif, recherche uniquement |
 | P2 | `options_delayed_bars_sync` | Alpaca historique retardé, provenance non attestée | `stock_option_contract_versions`, `stock_option_bars_delayed` | actif, recherche uniquement |
 | P2 | `option_contract_adjustment_sync` | RSS officiel OCC | `option_contract_adjustments` | actif, métadonnées prospectives |
 | P2 | `official_options_nbbo_sync` | fournisseur requis | — | bloqué : aucune source NBBO gratuite |
-| P3 | `oracle_opening_window_sync` | Alpaca SIP historique 1 minute | `stock_opening_window_bars`, `stock_opening_window_bar_versions` | actif, recherche et entrée retardée uniquement |
+| P3 | `oracle_opening_window_sync` | Alpaca IEX historique 1 minute | `stock_opening_window_bars`, `stock_opening_window_bar_versions` | recherche active ; volume non consolidé, pas prix d'exécution officiel qualifié |
 | P3 | `sec_corporate_events_normalize` | RAW SEC 8‑K/6‑K | `sec_corporate_events` | actif |
 | P4 | `sec_institutional_ownership_normalize` | RAW SEC 13F/13D/13G | `sec_ownership_snapshots` | actif |
-| P4 | `fred_alfred_vintage_sync` | FRED/ALFRED | `macro_vintage_observations` | actif |
+| P4 | `fred_alfred_vintage_sync` | FRED/ALFRED | `macro_vintage_observations` | désactivé : `BLOCKED_FRED_ARCHIVE_ML_RIGHTS` |
 | attente | `auction_imbalance_sync` | Nasdaq NOII/NYSE live payants ; Web NYSE post-auction limité | — | `BLOCKED_NO_FREE_OFFICIAL_FEED` ; [POC séparé](../ml/nyse_auction_history_poc.md) |
 | attente | `securities_lending_sync` | fournisseur requis | — | désactivé |
 
@@ -320,7 +324,7 @@ Configuration active :
       max_exhibits_per_filing: 10
       max_exhibit_bytes: 8388608
 
-Le lookback normal reste de trois jours ouvrés. Activer l’option ne constitue
+Le lookback configuré est de sept jours ouvrés. Activer l’option ne constitue
 donc pas un backfill historique complet ; un rattrapage doit temporairement
 élargir lookback_days ou utiliser une campagne dédiée.
 
@@ -337,10 +341,10 @@ Les barres d'options retardées et les ajustements OCC suivent un contrat distin
 Par défaut, le service charge tout le fichier. `max_symbols` n’est jamais une
 limite implicite de production ; il reste accepté uniquement lorsqu’il est fourni
 explicitement pour un smoke test. Au 12 septembre 2026, le fichier contient
-1 798 symboles uniques. Le batch options est actif sur ces 1 798 titres : il ne
-reçoit ni TOP20, ni identifiant de batch Oracle, ni limite de symboles. Le pilote
-opening-window reste désactivé tant que sa capacité Business Quant n'est pas
-validée.
+1 798 symboles uniques. Le batch options utilise le fichier complet : il ne
+reçoit ni TOP20 ni identifiant de batch Oracle. Ce nombre reste un cliché,
+pas un plafond codé. Opening-window est maintenant un collecteur Alpaca IEX
+actif, et non un pilote Business Quant à activer.
 
 Le collecteur options réduit le volume au niveau **des contrats**, pas au niveau
 des actions :
@@ -378,7 +382,10 @@ La collecte est prospective : changer ultérieurement de modèle ou de TOP20 ne 
 
 `finra_short_volume_sync` télécharge le fichier public Consolidated NMS sur une fenêtre glissante de sept jours, puis conserve seulement les symboles de `config/univers_batch/univers_filtred_tradable.txt`. Le passage unique à 23 h New York privilégie la disponibilité de la publication du jour. Une ligne strictement identique est ignorée par sa clé incluant le hash ; une correction crée une nouvelle version auditable. Le payload source complet est conservé dans `pit_raw_payloads`.
 
-Le verdict ML historique `NO_GO` est conservé : le short volume ne devient ni une feature active ni un gate de trading. La collecte continue néanmoins afin de constituer un historique prospectif réutilisable si une nouvelle formulation, un nouvel univers ou une interaction de features justifie un retest.
+Le verdict ML historique `NO_GO` est conservé. **La collecte est arrêtée** :
+`BLOCKED_FINRA_PREDICTIVE_USE`, même si le handler existe. Les détails de
+fenêtre décrivent ses capacités techniques, pas une consigne de réactivation
+ni une validation des droits.
 
 ### FRED/ALFRED
 
@@ -386,11 +393,17 @@ Le batch conserve pour chaque observation la valeur, `realtime_start`, `realtime
 
 ## Qualité et alertes
 
+FRED/ALFRED est **bloqué** par `BLOCKED_FRED_ARCHIVE_ML_RIGHTS`.
+Posséder une clé ne lève pas ce verrou. La description de son stockage
+ci-dessus explique seulement le contrat implémenté.
+
 `pit_data_quality_daily` vérifie au minimum : âge des barres Business Quant, âge du security master, âge du borrow snapshot, âge du dernier vintage macro, derniers états métier échoués sur 24 heures et couverture sur sept jours de l’univers configuré. Le seuil de couverture par défaut est 90 %. Le compteur `failed_runs_24h` retient uniquement le dernier run de chaque batch métier : un échec corrigé par une relance réussie ne reste plus critique pendant 24 heures. Les anciens échecs de `pit_data_quality_daily` sont également exclus afin que le moniteur n’entretienne pas sa propre alerte.
 
-Avant un contrôle manuel, lancer `sec_edgar_incremental`, `finra_short_volume_sync` et `fred_alfred_vintage_sync`. Ces trois collecteurs sont indépendants et peuvent s’exécuter en parallèle. Attendre leur terminaison avant `pit_data_quality_daily` : ce dernier ne collecte rien et évalue l’état déjà persisté ; un ancien dernier run `FAILED` ou une table macro encore vide est donc volontairement critique.
-
-`pit_data_quality_daily` est désactivé par défaut (`enabled: false`, statut `MANUAL_CONTROL_ONLY`). Cette désactivation n’interrompt aucune collecte et ne prive les modèles d’aucune donnée : elle supprime seulement l’audit et ses notifications planifiées. Pour un contrôle ponctuel, le réactiver temporairement après la fin des trois collecteurs supervisés.
+Ces contrôles et tables sont historiques : `pit_data_quality_daily` est
+**retiré du catalogue US**, pas simplement désactivé temporairement. Ne pas
+réactiver FINRA ou FRED pour satisfaire un ancien contrôle ; leurs blocages
+droits/prudence priment. Les contrôles de couverture intégrés aux importations,
+au risque et aux nouvelles entrées restent indépendants.
 
 Pour `market_cap_sync`, la couverture minimale opérationnelle est fixée à 95 %. Une couverture supérieure ou égale à ce seuil produit un statut `COMPLETED`, zéro échec et zéro alerte ; les symboles non couverts restent néanmoins conservés dans `details_json` (`uncovered_count` et `uncovered_symbols`). En dessous de 95 %, le run échoue de manière bloquante.
 
@@ -420,7 +433,7 @@ Un batch désactivé ou ignoré parce qu’une instance est déjà active ne gé
 ## Mise en service
 
 1. Appliquer `alembic upgrade head` avant le premier lancement.
-2. Définir `BUSINESS_QUANT_API_KEY`, les identifiants Alpaca déjà utilisés par l’application, `KEY_FRED` et `SEC_EDGAR_USER_AGENT`.
+2. Définir les secrets requis par les seules familles autorisées et actives : `BUSINESS_QUANT_API_KEY`, identifiants Alpaca ou `SEC_EDGAR_USER_AGENT` selon le batch. Ne pas activer FRED par la seule présence de `KEY_FRED`.
 3. Vérifier les chemins `symbols_file` et laisser désactivés les pilotes marqués `PENDING_*` ou `ENABLE_AFTER_*`. Pour le batch options actif, vérifier que les identifiants Alpaca configurés donnent accès aux endpoints Data et Options.
 4. Tester un batch manuellement avec :
 
@@ -438,8 +451,14 @@ Le mode `-DryRun` appelle le fournisseur et valide le parsing mais n’écrit ni
 
 ## Activation progressive recommandée
 
-Commencer par P0 et observer une semaine les taux de couverture et corrections. Activer ensuite borrow P1. Les options et opening window exigent d’abord un producteur fiable de l’univers Oracle quotidien. Business Quant analyste doit rester désactivé jusqu’à comparaison du coût et du contenu avec Yahoo. Auction imbalance, prêt de titres complet et options NBBO restent des contrats de données à pourvoir, pas des collecteurs simulés.
-## Pipeline US quotidien 1 à 9 — 7 octobre 2026
+Observer les couvertures et corrections des familles déjà actives, sans élargir
+les droits implicitement. Les options et opening-window collectent l'univers
+stable complet, **sans dépendre d'un TOP20 Oracle quotidien**. Le consensus
+Yahoo est bloqué ; Business Quant reste remplacé/désactivé. Auction imbalance,
+prêt de titres complet et NBBO restent des contrats à pourvoir, pas des
+collecteurs simulés. [Catalogue courant](catalogue_batchs_actuel.md).
+
+## Pipeline US quotidien paramétrable 1 à 14
 
 Le batch `us_pipeline` enchaîne les étapes configurées dans `config.yaml → us_pipeline.steps` ou `steps_friday` (1 à 14), à 22:45 Europe/Paris, lundi–vendredi après clôture US. T1 est exclu et LIVE interdit ; `execution_mode: paper` et `account_id: default` sont raccordés. Les étapes 11/12 en PAPER et 13/14 même en simulation exigent un compte configuré paper ; aucun ordre sans étape 12. 13 synchronise les opérations sur titres, 14 les applique au ledger à la date de séance ; arrêt au premier échec. Voir [le guide dédié](us_pipeline.md).
 

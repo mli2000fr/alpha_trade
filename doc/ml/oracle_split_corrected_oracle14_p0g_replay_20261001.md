@@ -1,5 +1,9 @@
 # Oracle O0 réentraîné après correction des splits — 14 folds OOF, puis P0g
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Résultat
 
 Le réentraînement hors base de l'Oracle d'amplitude O0 est terminé sur les **14 folds OOF gelés** du batch `model-factory-20260909051302-323684`. Les prix NVIDIA antérieurs aux splits 2021 et 2024 et les cibles Oracle recalculées ont été appliqués en mémoire. Les 168 features du profil `oracle.json`, les 2 908 295 observations de test, les dates des folds, la purge H20 et la garde `oracle_available_date` restent celles du protocole P0f.

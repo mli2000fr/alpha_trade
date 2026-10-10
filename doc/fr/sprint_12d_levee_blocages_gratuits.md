@@ -1,5 +1,9 @@
 # Sprint 12-D — Levée gratuite des réserves économiques FR
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 État vérifié le 4 octobre 2026. **Avancement partiel, pas de GO économique.**
 Cette étape ne commande aucun extrait et ne modifie ni les tables, ni les
 prix canoniques, ni les modèles, ni les batchs en cours. Les politiques H5,

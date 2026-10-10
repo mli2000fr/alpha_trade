@@ -1,5 +1,9 @@
 # Couverture des pages IHM
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Cette matrice est dérivée de `ihm/services/navigation.py`. Une page officielle doit avoir une source et au moins un chapitre opérateur. Les helpers internes sous `ihm/pages/_...` ne sont pas des pages de navigation autonomes.
 
 | Section | Page / clé | Source | Guide principal |
@@ -30,5 +34,7 @@ Cette matrice est dérivée de `ihm/services/navigation.py`. Une page officielle
 
 ## Contrôle de maintenance
 
+Les groupes abrégés de cette matrice sont des repères documentaires. Les libellés
+déclarés et modules actuels figurent dans la [navigation générée](../reference/navigation_generee.md) ;
+le regroupement affiché est construit par `get_navigation_sections()`.
 Lorsqu’une entrée change dans `NAVIGATION_PAGES` ou `get_navigation_sections()`, mettre à jour cette matrice, le schéma du README et le chapitre concerné. Vérifier ensuite les services appelés par la page : un libellé de bouton ne suffit pas à documenter ses effets.
-

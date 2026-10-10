@@ -1,5 +1,9 @@
 # Calibrations de poids et Diagnostic ML
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Calibrations
 
 La page filtre les runs par scope, régime, horizon, fenêtre et statut de promotion live. Le détail expose meilleurs poids, candidats, historique et drifts inter-segments. Une calibration terminée n’est pas automatiquement éligible.

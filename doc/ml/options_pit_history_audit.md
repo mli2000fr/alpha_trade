@@ -1,5 +1,9 @@
 # E8-A — Audit de l'historique options PIT
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Verdict
 
 E8-A est terminé en `BLOCKED_NO_DENSE_PIT_HISTORY`. L'artefact canonique est :

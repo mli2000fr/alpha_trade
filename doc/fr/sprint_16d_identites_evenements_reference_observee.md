@@ -1,5 +1,9 @@
 # Sprint 16-D — Identités, événements réservés et référence connue à la décision
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 État : qualification technique et revue documentaire du 6 octobre 2026.
 Suite : [16-E — preuves locales et décision réelle](sprint_16e_preuves_et_decision_reelle.md).
 La suite a reçu la pièce Oeneo et confirmé le paiement annoncé SPIE dans

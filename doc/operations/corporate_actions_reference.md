@@ -1,5 +1,9 @@
 # Corporate actions — dividendes, splits et réconciliation
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Retour : [corporate actions](../17_corporate_actions.md)
 
 `provider.py` définit l'interface et implémentations Alpaca/EODHD. `engine.py` orchestre sync/apply ; `processors.py` applique ; `db_io.py` persiste ; `reconciliation.py` vérifie ; Yahoo sert de cross-check.

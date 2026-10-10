@@ -1,5 +1,9 @@
 # Splits Oracle : prix et labels reconstruits, replay P0g — 30 septembre 2026
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 Statut : **replay P0g à gate Oracle OOF figé terminé ; NO_GO_DIRECTION inchangé**.
 Tous les calculs ont utilisé des copies de recherche. Aucune barre, cible, prédiction
 ou modèle canonique n'a été réécrit en base ; aucun serving n'a été activé.

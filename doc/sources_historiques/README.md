@@ -1,5 +1,9 @@
 # Sources historiques conservées
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Les fichiers de ce dossier préservent intégralement les informations retirées des anciens emplacements. Ils constituent des preuves historiques, pas le contrat actuel. Pour chaque sujet, utiliser la destination normative indiquée dans [la matrice de migration](../MIGRATION_BACKUP.md).
 
 En cas d’écart, l’ordre de vérité est : code et migrations, tests contractuels, configuration effective, documentation maintenue, puis seulement ces archives. Toute commande, table, métrique, valeur, provider ou seuil trouvé ici doit être revérifié avant usage.

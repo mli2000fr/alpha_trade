@@ -1,5 +1,9 @@
 # ADR FR-0001 — Marché France et isolation physique
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 - Date : 2 octobre 2026
 - Statut : accepté pour les Sprints 0–1 ; ingestion, ML, backtest et live FR non activés
 - Décision du propriétaire : une base séparée `alpha_trade_fr`, déjà créée

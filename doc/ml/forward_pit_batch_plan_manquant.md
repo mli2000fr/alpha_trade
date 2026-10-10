@@ -1,5 +1,9 @@
 # Sources de données complémentaires pour améliorer la classification D1/D10
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Contexte
 
 L’objectif de ces différents batchs est d’enrichir le pipeline de données afin d’améliorer la capacité du modèle à distinguer les mouvements extrêmes haussiers et baissiers, notamment dans le cadre du problème de classification **D1/D10**.

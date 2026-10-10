@@ -2,6 +2,10 @@
 
 # Étude d’opportunité — Extension d’α-Trade au marché actions chinois
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 > **Mise à jour d’architecture — 19 septembre 2026.** Les conclusions fournisseurs et marché de cette étude restent utiles. La cible technique définitive est toutefois : base US `alpha_trade`, base Chine `alpha_trade_cn`, code et contrat canonique partagés, routage explicite par `market_code`/`database_alias`, et fichiers CN suffixés `_cn` (`config_cn.yaml`, `batch_cn.yaml`, profils et univers). Toute formulation plus ancienne suggérant une base physique unique est remplacée par cette décision et par [l’architecture normative](./architecture_bases_batchs_configuration_cn.md).
 
 **Objet :** Évaluer l’intérêt de développer une déclinaison d’α-Trade sur le marché chinois et déterminer les fournisseurs de données adaptés à un POC.  

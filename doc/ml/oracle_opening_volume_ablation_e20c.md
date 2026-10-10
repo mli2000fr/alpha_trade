@@ -1,5 +1,9 @@
 # E20-C — Ablation incrémentale du volume d’ouverture
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Verdict
 
 E20-C est terminé avec le verdict pré-enregistré `NO_GO_INCREMENTAL_VOLUME`.

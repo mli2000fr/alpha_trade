@@ -1,5 +1,9 @@
 # US — Audit figé de capture des mouvements H20 ≥50 %
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Protocole enregistré avant le calcul — 6 octobre 2026
 
 Objectif : vérifier si les grandes variations déjà visibles dans les listes

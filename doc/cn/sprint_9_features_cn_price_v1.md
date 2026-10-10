@@ -1,5 +1,9 @@
 # Sprint 9 — Panel de features CN_A `cn_price_v1`
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Périmètre et état
 
 Le Sprint 9 construit un **panel de recherche price-only, point-in-time**, à partir de

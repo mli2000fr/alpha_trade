@@ -1,5 +1,9 @@
 # Sprint 14-A — Sélection de marché et vue CN_A de recherche isolée
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Résultat
 
 Les pages **Pipeline**, **Diagnostic ML** et **Backtesting** affichent

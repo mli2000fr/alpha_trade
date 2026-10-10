@@ -1,5 +1,9 @@
 # 9. Page 📑 Corporate Actions — dividendes, splits, etc.
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## À quoi sert cette page
 
 Voir les **événements corporate** (dividendes, splits, fusions, spin-offs)
@@ -57,6 +61,6 @@ Actions ». Options :
 
 ## Pour aller plus loin
 
-- Doc technique : [doc/corporate_actions.md](../backup/corporate_actions.md).
+- Doc technique : doc/corporate_actions.md — référence historique absente localement : `../backup/corporate_actions.md`.
 - Glossaire : [30_glossaire_financier.md](30_glossaire_financier.md).
 

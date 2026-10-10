@@ -1,5 +1,9 @@
 # Migration du reste de l’ancien répertoire `doc`
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Ce registre couvre tous les fichiers qui restaient hors `doc/refactor`. Les références globales sont conservées comme sources historiques ; les expériences sont archivées sans devenir normatives. Le code, les migrations, tests et configurations effectives restent la vérité.
 
 | Ancien fichier | Classement | Référence courante |

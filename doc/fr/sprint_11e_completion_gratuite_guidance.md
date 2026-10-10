@@ -1,5 +1,9 @@
 # Sprint 11-E — Complément gratuit et dossier de seconde revue guidance
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Date : 4 octobre 2026. Marché FR. Recherche uniquement.
 
 **Actualisation v4 :** consulter [11-F, sources gratuites et seconde revue](sprint_11f_sources_gratuites_et_seconde_revue.md).

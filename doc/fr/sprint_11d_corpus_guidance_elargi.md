@@ -1,5 +1,9 @@
 # Sprint 11-D — Élargissement et validation du corpus de guidance FR
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 **Suite datée 11-E :** [complément gratuit et dossier de seconde revue](sprint_11e_completion_gratuite_guidance.md).
 Les chiffres ci-dessous décrivent la vague11-D figée. La suite collecte126 PDF
 supplémentaires et propose15 paires cumulées11-D/11-E (9 UP/6 DOWN), encore sans

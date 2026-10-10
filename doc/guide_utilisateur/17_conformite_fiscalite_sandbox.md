@@ -1,5 +1,9 @@
 # Compliance, fiscalité et sandbox health
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Compliance & Audit
 
 La page agrège chaîne HMAC, drill DR, vulnérabilités, couverture, mutation, TLAPS, fuzzing et sandbox. Elle peut relancer certains jobs, exporter un snapshot et produire un PDF. Un statut indisponible n’est pas vert ; un job `skipped` faute d’outil n’est pas une preuve réussie.

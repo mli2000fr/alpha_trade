@@ -1,5 +1,9 @@
 # Sprint 5 FR — exceptions d'identité prioritaires
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 État au 2 octobre 2026 : **preuves partielles ; aucun GO canonique global**. Ce document traite les exceptions d'identité et de cycle de vie qui concentrent une part importante des barres 2018–2020 sans couple ISIN/MIC observé dans le rejeu FIRDS. Il ne modifie ni les archives EODHD ni les tables FR.
 
 ## Décisions applicables au futur manifeste

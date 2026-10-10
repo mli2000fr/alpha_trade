@@ -1,5 +1,9 @@
 # Sprint 5 FR — intervalles ESMA, prix historiques, radiés, actions sur titres
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 État au 2 octobre 2026 : **audit en cours ; aucun `GO` canonique**. Ce document complète le [sous-ensemble vérifié](sprint_5_sous_ensemble_verifie.md) et la [clôture du Sprint 5](sprint_5_cloture_2026-10-02.md). Aucune table FR canonique ni aucun backtest n'a été alimenté par les contrôles ci-dessous.
 
 **Décision de périmètre :** les barres 2016–2017 restent archivées pour la recherche et l'audit, mais ne sont pas candidates à la promotion canonique, au ML validé ni au backtest FR. Le premier périmètre candidat commence en **2018**, sans GO automatique au 1er janvier : seules les dates couvertes par un intervalle de cotation et toutes les autres preuves requises pourront être admises. Le premier Full ESMA utilisé date du 6 janvier 2018 ; les dates antérieures et les épisodes censurés à gauche restent hors preuve.

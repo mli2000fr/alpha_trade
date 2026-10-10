@@ -1,5 +1,9 @@
 # Ajouter ou faire évoluer une table
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Principe
 
 Une table n’est pas terminée quand son DDL existe. Il faut aligner migration Alembic, repository, transactions/idempotence, producteurs, consommateurs, tests, observabilité, rétention et documentation. Le graphe `revision/down_revision` fait autorité ; ne jamais modifier une migration déjà appliquée.

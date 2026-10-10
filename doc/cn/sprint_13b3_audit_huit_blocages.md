@@ -1,5 +1,9 @@
 # Sprint 13-B3 — Audit des blocages révélés par cinq seeds
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Périmètre et résultat initial
 
 Le [replay de robustesse](../../artifacts/cn/economic/sprint13b/sprint13b-273492bdfbcf1230/report.json)

@@ -1,5 +1,9 @@
 # CN_A — Convention de radiation et contrat de négociabilité PIT
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Statut au 25 septembre 2026 : **contrat figé, testé et utilisé par les 1 942 snapshots du Sprint 8 ; audit global `PASS`**. Ce document complète l'[audit Sprint 7-B](sprint_7b_audit_final_2026_09_24.md) et la [validation Sprint 8](sprint_8_validation_finale_2026_09_25.md).
 
 ## Date de radiation : borne inclusive, avec exception terminale explicite

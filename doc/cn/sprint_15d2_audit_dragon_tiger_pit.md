@@ -1,5 +1,9 @@
 # Sprint 15-D2 — Audit Dragon/Tiger historique SSE/SZSE
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Audit réalisé le 29 septembre 2026. **Verdict : source et identité des événements validées sur quatre séances échantillons ; contrat PIT historique et intérêt directionnel non démontrés.** Aucun entraînement, table, batch quotidien, backtest ou serving n'a été modifié.
 
 ## 1. Question et protocole verrouillé

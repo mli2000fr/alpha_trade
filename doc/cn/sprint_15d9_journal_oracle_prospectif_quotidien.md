@@ -1,5 +1,9 @@
 # Sprint 15-D9 — journal quotidien Oracle CN prospectif
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Périmètre
 
 Le batch `cn_oracle_prospective_daily` de [batch.yaml](../../batch.yaml) constitue une chaîne **de recherche uniquement** : séance CN close J → collecte BaoStock canonique J → préflight → score Oracle H20 TOP20 pour la prochaine séance ouverte K → export D8 immuable. Il ne lance aucun ordre, ne change pas le serving et n'apparie pas encore les événements Dragon/Tiger D7. Le premier score manuel du 8 octobre reste dans son dossier initial et est reconnu comme déjà publié, jamais remplacé.

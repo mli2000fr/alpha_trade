@@ -1,5 +1,9 @@
 # Comparaison des fournisseurs de données Chine pour Alpha-Trade
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Décision opérationnelle du 22 septembre 2026
 
 Le premier socle est désormais **gratuit** : BaoStock fournit le référentiel, le calendrier, les barres, les statuts ST/suspension, les facteurs et les indices. AKShare est réservé aux enrichissements validés endpoint par endpoint. RQData et Tushare ne sont plus des dépendances du POC ; ils pourront être évalués plus tard pour les données directionnelles.

@@ -1,5 +1,9 @@
 # Actualisation des fournisseurs Chine
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Décision gratuite actuelle
 
 Le fournisseur opérationnel initial est **BaoStock**. Il ne nécessite ni token ni abonnement. **AKShare** est un complément expérimental non bloquant. **RQData** est un produit d’essai/payant et ne doit pas être décrit comme une dépendance gratuite permanente. **Tushare** reste techniquement disponible mais désactivé, car il n’est pas accessible dans le contexte utilisateur actuel.

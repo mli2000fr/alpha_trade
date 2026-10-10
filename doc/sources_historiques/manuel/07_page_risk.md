@@ -1,5 +1,9 @@
 # 7. Page ⚖️ Risk — gestion du risque
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## À quoi sert cette page
 
 Voir les **décisions de risque** : combien acheter de chaque ligne, où
@@ -96,6 +100,6 @@ Voir [20_gestion_petit_capital_2000eur.md](20_gestion_petit_capital_2000eur.md).
 
 ## Pour aller plus loin
 
-- Doc technique : [doc/risk_management.md](../backup/risk_management.md).
+- Doc technique : doc/risk_management.md — référence historique absente localement : `../backup/risk_management.md`.
 - Glossaire : [30_glossaire_financier.md](30_glossaire_financier.md).
 

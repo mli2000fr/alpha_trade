@@ -1,5 +1,9 @@
 # 40. Workflow type swing trader débutant ~2 000 €
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 > Journée type, heure par heure, pour une routine **swing trade discipline
 > totale**. Adapté à un actif en France (UTC+1/+2) tradant sur Alpaca US.
 

@@ -1,5 +1,9 @@
 # Sprint 5 France — finalisation du GO limité 2018–2026
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Date de décision : 3 octobre 2026.
 
 ## Verdict

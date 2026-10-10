@@ -1,5 +1,9 @@
 # Sprint 13-B2 — Remédiation des positions détenues
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Objet et garde-fous
 
 Le diagnostic 13-B initial a produit 40/40 sous-runs, dont 8 invalides :

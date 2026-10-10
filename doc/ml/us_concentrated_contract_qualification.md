@@ -1,5 +1,9 @@
 # Sélections concentrées US — MP/BAND et contrat du moteur
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 Audit et correction du 6 octobre 2026. Suite du [protocole de préparation](us_concentrated_replay_protocol.md).
 **Mise à jour : contrat technique corrigé et validé sur fixtures synthétiques**
 (section 8). Les sections 1–7 conservent le constat initial et ses réserves.

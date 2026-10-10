@@ -1,5 +1,9 @@
 # Catalogue opérationnel des batchs — 10 octobre 2026
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Inventaire rapproché de `ihm/services/batch_management.py`, des trois YAML,
 des runners et des lanceurs. « Actif » décrit la configuration ; cela ne
 prouve ni installation Windows, ni réussite du dernier run, ni GO ML.

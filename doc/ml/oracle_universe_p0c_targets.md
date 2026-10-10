@@ -1,5 +1,9 @@
 # P0c — Audit des cibles Oracle corrigées de la volatilité
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Question
 
 P0b a construit 3 926 243 observations H20 avec un univers quotidien bar-only

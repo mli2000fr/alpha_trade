@@ -1,5 +1,9 @@
 # EXPÉRIENCE V2 — Temporal D1/D10 Tail Direction Classifier
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## 0. Objectif général
 
 Cette campagne remplace complètement l’ancienne approche centrée principalement sur les features observées au seul jour `J`.

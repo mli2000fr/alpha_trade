@@ -1,5 +1,9 @@
 # Sprint 6-B France — historique et liquidité PIT J+1
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Date de clôture : 3 octobre 2026. Verdict : **`GO_6B_TRAINING_UNIVERSE`**.
 
 Le Sprint 6-B résout le premier état `UNKNOWN` du contrat 6-A : il détermine quelles observations France possèdent assez d’historique et de liquidité pour alimenter ultérieurement un panel d’entraînement. Il ne rend toujours aucune ligne tradable ou servable.

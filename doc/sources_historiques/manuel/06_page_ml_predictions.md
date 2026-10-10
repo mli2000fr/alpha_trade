@@ -1,5 +1,9 @@
 # 6. Page 🤖 ML / Prédictions — comprendre le modèle d'IA
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## À quoi sert cette page
 
 Voir et gérer les **modèles de Machine Learning** qui prédisent la
@@ -99,6 +103,6 @@ tester. Voir [20_gestion_petit_capital_2000eur.md](20_gestion_petit_capital_2000
 
 ## Pour aller plus loin
 
-- Détails techniques : [doc/modelFactory.md](../backup/modelFactory.md).
+- Détails techniques : doc/modelFactory.md — référence historique absente localement : `../backup/modelFactory.md`.
 - Backtester avec/sans ML : [10_page_backtesting.md](10_page_backtesting.md).
 

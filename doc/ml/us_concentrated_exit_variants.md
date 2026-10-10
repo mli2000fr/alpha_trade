@@ -1,5 +1,9 @@
 # Expérience LONG — sans TP, sortie vingt séances après l'entrée
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## 1. Protocole figé le 7 octobre 2026
 
 Convention demandée par l'utilisateur : entrée à J+1, puis sortie à la clôture

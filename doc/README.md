@@ -1,11 +1,22 @@
 # Documentation Alpha Trade — référentiel fonctionnel et opérationnel
 
-**Mise à jour ciblée du 10 octobre 2026** : commencer par
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
+**Révision documentaire du 10 octobre 2026** : commencer par
 [l'état actuel de l'implémentation](ETAT_ACTUEL_IMPLEMENTATION.md) et
 [le catalogue courant des batchs](operations/catalogue_batchs_actuel.md).
-Les guides centraux ont été rapprochés des sources ; les inventaires API et
-les comptes rendus historiques ne sont pas intégralement régénérés.
-[Périmètre et vérifications de cette mise à jour](AUDIT_MISE_A_JOUR_20261010.md).
+Les contrats d'exploitation ont été rapprochés des sources, les inventaires
+API régénérés et tout le corpus classé entre courant, recherche, plans et archives.
+Les résultats historiques sont conservés, pas réévalués ni promus en production.
+[Bilan et limites de la révision complète](AUDIT_COMPLET_DOCUMENTATION_20261010.md).
+
+Accès à **tous les documents** : [index par domaine](INDEX.md) et
+[registre exhaustif](audit/registre_documentaire.md). Références automatiques :
+[modules](reference/modules_generes.md), [clés de configuration](reference/configuration_generee.md),
+[batchs](reference/batchs_generes.md), [pages IHM](reference/navigation_generee.md),
+[DDL et migrations des trois marchés](reference/schema_et_migrations_generes.md).
 
 Suivi exhaustif des archives : [migration de `doc/backup`](MIGRATION_BACKUP.md).
 
@@ -89,4 +100,8 @@ Les comptes rendus d'expériences restent disponibles dans les dossiers de reche
 notamment `doc/ml`, `doc/cn` et `doc/fr`, et dans les archives. Leurs dates,
 protocoles et résultats ne sont pas réécrits lors d'une mise à jour opérationnelle.
 
-Ne sont volontairement pas reproduits : tableaux détaillés par batch, listes de seeds, journaux d'itérations, prompts d'analyse, variantes abandonnées et métriques intermédiaires. Une expérience n'est décrite comme fonctionnalité que si le code actuel l'intègre effectivement et que la configuration permet de l'activer.
+Ces éléments ne sont pas recopiés dans les guides généraux : tableaux détaillés
+par batch, seeds, journaux, prompts, variantes abandonnées et métriques
+intermédiaires restent dans leurs comptes rendus indexés. Une expérience n'est
+décrite comme fonctionnalité que si le code actuel l'intègre effectivement ;
+configuration active, droits et validation du serving restent des conditions distinctes.

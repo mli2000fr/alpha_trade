@@ -1,5 +1,9 @@
 # POC France — faisabilité des révisions de guidance (120 émetteurs)
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 **Dernier état, 11-F v4 :** [151 PDF, 23 paires proposées et seconde revue](sprint_11f_sources_gratuites_et_seconde_revue.md).
 13 UP/10 DOWN non encore validés indépendamment ; 26 observations recoupées
 dans le pool Oracle, train trop peu exposé. Pas de fit ni de gain démontré.

@@ -1,10 +1,14 @@
 # Oracle Extreme — labels, univers, calendrier et tables
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Retour : [dossier Oracle](README.md)
 
 ## Construction de l’univers
 
-`build_labels()` commence par charger les couples `(date, symbol)` de `global_rank_history` pour le batch et l’horizon. Il compare ensuite cet ensemble au run synthétique `model_predictions` dont l’id est `<batch_id>_globalrank_synth`.
+Dans le mode par défaut `static_bars`, `build_labels()` charge les couples `(date, symbol)` de `global_rank_history` pour le batch et l’horizon. Si ces ranks existent, il compare cet ensemble au run synthétique `model_predictions` dont l’id est `<batch_id>_globalrank_synth`.
 
 `check_universe_equality()` publie tailles, écarts et échantillons. Avec `strict_universe=True`, la moindre divergence arrête le run. Avec false, le code utilise l’univers des ranks et journalise l’écart ; ce mode est un outil d’arbitrage, pas une garantie de parité.
 
@@ -15,17 +19,37 @@ Deux fallbacks standalone existent si aucun rank n’est disponible :
 
 Ces fallbacks permettent `--oracle-model-only`, mais ils ne sont pas identiques à l’univers historique du Global Ranking. Le summary doit préciser le chemin utilisé.
 
+Deux modes explicites existent aussi : `pit_dynamic_bars` construit une population
+quotidienne à partir des barres et exige symboles/bornes ; `stored_membership`
+répare les labels en conservant les membres historiques de chaque date. Ce dernier
+interdit de restreindre les symboles ; `prediction_dates` est réservé à cette
+réparation. Une population dynamique de recherche n'est pas automatiquement
+l'univers tradable du serving.
+
 ## Prix et rendement futur
 
-La matrice de prix lit `COALESCE(adj_close, close)` dans `stock_bars_daily`, ordonne par date/symbole/source, garde le dernier doublon puis pivote et applique `ffill`.
+La matrice lit `COALESCE(adj_close, close)` dans `stock_bars_daily`, exclut les
+barres `is_filled`, ordonne par date/symbole/source et garde le dernier doublon.
+Elle est réindexée sur les **séances NYSE**, pas sur les seuls jours présents
+dans les prix. Un calendrier indisponible provoque un échec.
 
 Pour une date D et une position `pos` dans l’index :
 
-`future_return = close[pos + horizon] / close[pos] - 1`.
+`future_return_raw = raw_close[D+H] / raw_close[D] - 1`.
 
-L’exit date est la date de séance à `pos+horizon`. L’available date est la séance suivante si elle existe. Les dernières dates sans horizon futur complet ne sont pas stockées.
+Les deux extrémités doivent avoir une vraie barre. Le `ffill` de la vue `close`
+sert uniquement à la compatibilité/calendrier : **il ne fabrique pas les targets**.
+L'exit date D+H et la disponibilité D+H+1 viennent du calendrier, indépendamment
+de la présence d'une barre ce jour-là. Si D+H dépasse la grille de prix observée,
+la date est sautée ; si la séance existe mais la barre du symbole manque, une
+ligne invalide est conservée avec son motif.
 
-Le `ffill` mérite une attention particulière : il permet une matrice dense mais peut faire porter un prix ancien à un symbole suspendu/délisté. Les audits de qualité doivent mesurer l’âge effectif des observations et ne pas confondre disponibilité matricielle et tradabilité.
+La qualification rejette, dans l'ordre, `missing_start_bar`, `missing_exit_bar`,
+`nonpositive_price`, `price_source_mismatch`, `known_security_discontinuity` et
+`extreme_unadjusted_price_jump`. Ce dernier contrôle détecte dans le chemin les
+ruptures de ratio ≥20 ou ≤1/20 entre observations. Le rendement brut fini reste
+auditable, mais `future_return` est NULL si la qualité échoue. Ces contrôles ne
+prouvent pas à eux seuls la tradabilité ou toutes les actions sur titres.
 
 ## Rang cross-sectionnel
 
@@ -35,7 +59,9 @@ Le `ffill` mérite une attention particulière : il permet une matrice dense mai
 - `oracle_decile = ceil(percentile × 10)`, borné 1–10 ;
 - `oracle_extreme10 = percentile >= 1-top_pct OR percentile <= top_pct`.
 
-Un minimum de 20 observations finies est exigé par date. Sous ce seuil, les rows restent présentes mais les champs de rang/label sont nulls.
+Un minimum de 20 rendements finis **et qualifiés** est exigé par date. Sous ce
+seuil, les rows restent présentes mais les champs de rang/label sont NULL, même
+si `target_quality_valid=1` pour certains titres.
 
 La méthode `rank(method="max")` affecte les égalités. La proportion positive peut dépasser exactement 20 % si beaucoup d’égalités touchent les seuils. Les rapports doivent publier population et taux positif réels.
 
@@ -49,7 +75,11 @@ Clé primaire : `prediction_date, symbol, batch_id, horizon`.
 | `symbol` | symbole dans l’univers |
 | `batch_id` | batch source |
 | `horizon` | nombre de séances futures |
-| `future_return` | rendement réalisé |
+| `future_return_raw` | rendement brut calculable, même si sa qualité est rejetée |
+| `future_return` | rendement réalisé qualifié, sinon NULL ; fraction, pas pourcentage |
+| `target_quality_valid` | qualification des prix/du chemin |
+| `target_quality_reason` | premier motif d'invalidation |
+| `price_start_source`, `price_end_source` | provenance des deux extrémités |
 | `oracle_pct_rank` | percentile futur intra-date |
 | `oracle_decile` | décile futur |
 | `oracle_extreme10` | appartenance à une queue |
@@ -59,13 +89,18 @@ Clé primaire : `prediction_date, symbol, batch_id, horizon`.
 
 Les index couvrent batch/date et available date. L’upsert remplace les valeurs calculées pour une même clé et met à jour `created_at`.
 
+Ce builder est US : son SQL écrit `alpha_trade.global_oracle_labels`. Il ne faut
+pas le lancer pour CN/FR en supposant une adaptation automatique du schéma.
+
 ## Persistance incrémentale
 
 Les écritures SQL sont chunkées par 2 000 rows. La boucle flush les rows accumulées à partir de 5 000 afin qu’une interruption ne perde pas tout le calcul. Chaque flush appelle d’abord l’assertion de disponibilité.
 
-Le run peut donc laisser un préfixe cohérent mais partiel. Le summary contient rows, labeled, unavailable, skipped dates et symboles. Une reprise est idempotente grâce à la clé primaire et à `ON DUPLICATE KEY UPDATE`.
+Le run peut donc laisser un préfixe cohérent mais partiel. Le summary contient rows, labeled, unavailable, skipped dates, symboles, `n_quality_invalid` et `quality_reasons`. Une reprise est idempotente grâce à la clé primaire et à `ON DUPLICATE KEY UPDATE`.
 
-En dry-run, aucune écriture n’est réalisée et le summary porte `status=dry_run`. La validation T1 est néanmoins exécutée sur les rows restant en mémoire. Pour un très gros dry-run, noter que le chemin n’effectue pas les flushs intermédiaires persistants.
+En dry-run, aucune écriture **SQL** n'est réalisée et le summary porte
+`status=dry_run`. Un export Parquet demandé peut écrire un fichier local.
+La validation T1 est exécutée sur les rows en mémoire ; pas de flush SQL intermédiaire.
 
 ## Table `oracle_extreme_predictions`
 
@@ -96,7 +131,6 @@ Cette table cumule les campagnes. Une lecture sans batch mélangerait des modèl
 3. Mesurer valeurs nulles et taux positif.
 4. Vérifier `exit_date > prediction_date`.
 5. Vérifier `available_date > prediction_date`.
-6. Inspecter fin de série et symboles avec ffill long.
+6. Inspecter fin de série, barres absentes et motifs de qualification ; ne jamais utiliser la vue ffill pour réparer une target.
 7. Relancer une plage et confirmer idempotence.
 8. Rapprocher le batch et l’horizon des consumers.
-

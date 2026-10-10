@@ -1,5 +1,9 @@
 # US — Audit PIT et lineage de l'expérience ratio D10/D1
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 Date : 4 octobre 2026. Audit des trois étapes autorisées : scores Oracle,
 disponibilité macro/sentiment, puis correction et rejeu identique **si une
 correction documentée est possible**.

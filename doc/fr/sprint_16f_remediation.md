@@ -1,5 +1,9 @@
 # Sprint 16-F — Remédiation prospective
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 **Mise à jour du 8 octobre :** confirmation exécutée à 18:53 avec coupure
 inchangée à 09:00 ; master frais couvrant le 7 octobre, 244 features calculables,
 233 passages locaux hors continuité, zéro candidat libéré. Voir le

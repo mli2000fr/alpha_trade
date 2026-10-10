@@ -1,5 +1,9 @@
 # E21-B2 — Rôles des fourchettes : protocole de validation
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Contrat
 
 `statement_role` classe chaque fourchette dollar en NEW_FORECAST,

@@ -1,5 +1,9 @@
 # TOP10 Oracle — provenance et faiblesse relative pré-entrée
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Objectif et périmètre
 
 Suite de l'[audit de contexte 2024](us_top10_2024_context_audit.md).

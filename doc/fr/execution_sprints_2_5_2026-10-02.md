@@ -1,5 +1,9 @@
 # France — exécution des Sprints 2 à 5 (2 octobre 2026)
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Ce document est un **état vérifié**, à lire avec le [planning](sprint_planning_integration_marche_francais.md). Il ne constitue pas un GO pour l'entraînement français. Aucun batch US/CN ni entraînement en cours n'a été modifié.
 
 **Mise à jour Sprint 5 :** la [finalisation limitée 2018–2026](sprint_5_finalisation_go_limite_2018_2026.md) passe désormais à `GO_RESEARCH_J1`. L'historique public Euronext corrobore 34 radiés récents ; avec les deux déjà présents, le manifeste contient 36 radiés sur 330 titres (10,91 %). Le GO reste exclusivement recherche J+1 : canonique, production, live et serving restent bloqués.

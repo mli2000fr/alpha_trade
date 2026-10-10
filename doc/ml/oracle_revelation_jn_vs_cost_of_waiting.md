@@ -1,5 +1,9 @@
 # Oracle TOP20 H20 — révélation D1/D10 à J+N et coût économique de l'attente
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 Date : 17 septembre 2026. Statut : **diagnostic descriptif terminé, aucune politique promue**.
 
 ## Question

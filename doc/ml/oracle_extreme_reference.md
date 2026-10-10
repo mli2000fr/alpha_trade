@@ -1,5 +1,9 @@
 # Oracle Extreme O0 — référence technique
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Contrats détaillés : [dossier Oracle Extreme complet](oracle/README.md).
 
 Retour : [références ML](README.md) · [présentation](../08_ml_oracle_extreme.md)
@@ -10,7 +14,12 @@ Oracle détecte l'appartenance à une queue de mouvement futur. `proba_extreme` 
 
 ## Dataset et anti-fuite
 
-`build_labels.py` construit MFE/MAE/retours futurs et labels sur l'horizon. `dataset.py` joint uniquement les features disponibles. `leakage.py` interdit noms futurs/oracle et vérifie `available_at <= prediction cutoff`, cutoff train et absence de lecture future.
+`build_labels.py` calcule le rendement close→close à D+H sur les vraies barres,
+qualifie ses prix/ruptures puis calcule rang, décile et label extrême. Il ne
+construit **pas MFE/MAE** : les cibles path-aware/barrières sont des recherches
+distinctes. `dataset.py` assemble le contrat de features ; `leakage.py` contrôle
+les noms/colonnes et la disponibilité des labels aux cutoffs. Ces gardes ne
+prouvent pas à elles seules la disponibilité PIT de chaque source brute.
 
 O0 exclut `global_rank_20`. Toute variante qui l'ajoute est une autre expérience et doit porter un autre contrat.
 
@@ -44,7 +53,10 @@ La recherche sépare selection folds et final folds. Réutiliser les final folds
 
 ## Promotion
 
-Reproduire OOS multi-fold/seeds, vérifier calibration/monotonie, top pool, concentration et coûts. Puis rejouer avec lifecycle PROD exact. Un résultat issu de labels stop 3.5 ATR/time-stop ON ne valide pas un lifecycle stop 2.5 ATR/time-stop neutralisé.
+Reproduire OOS multi-fold/seeds, vérifier calibration/monotonie, top pool,
+concentration et coûts. Puis rejouer avec lifecycle PROD exact. Le label Oracle
+close→close ne possède ni SL ni TP ; une recherche path-aware avec stop/time-stop
+doit être distinguée de ce label et ne valide pas un autre lifecycle d'exécution.
 
 ## Persistance et audit
 

@@ -1,5 +1,9 @@
 # Sprint 15-B8 — Ablation directionnelle des données de marge SZSE
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 29 septembre 2026. Suite du [préflight B7](./sprint_15b7_jointures_2021_preflight_directionnel.md), suivant le [protocole B6 pré-enregistré](./sprint_15b6_calendrier_et_extension_oracle_oof.md).
 
 ## Objet et limites

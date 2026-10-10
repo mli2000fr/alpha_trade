@@ -1,5 +1,9 @@
 # TODO — Reprise et clôture du Sprint 12 France
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Plan / TODO : ne vaut ni validation des données, ni autorisation broker. Les dépendances et blocages actuels priment sur l'ordre des sprints. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Date de référence : 4 octobre 2026.
 
 **Après 13-D :** [robustesse exploratoire](sprint_13d_robustesse_economique.md)

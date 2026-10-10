@@ -1,5 +1,9 @@
 # Fiabilité EODHD France — comparaison élargie avec Euronext
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Protocole du 3 octobre 2026
 
 Objectif : mesurer une **concordance de données** sur plusieurs titres et

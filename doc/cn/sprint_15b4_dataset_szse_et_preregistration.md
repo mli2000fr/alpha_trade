@@ -1,5 +1,9 @@
 # Sprint 15-B4 — Dataset quotidien Shenzhen et pré-enregistrement
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 28 septembre 2026. Suite de [15-B3](./sprint_15b3_qualification_blocages.md).
 
 **État au 29 septembre 2026 : collecte complète 2018–2025 et audit final terminés. 1 942 séances, aucun échec, audit PASS_COLLECTION_AUDIT_PROXY_ONLY.** Aucune performance directionnelle n'est mesurée et aucun modèle n'est entraîné dans cette tranche. La préparation des features reste une étape distincte.

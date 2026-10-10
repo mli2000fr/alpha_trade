@@ -1,5 +1,9 @@
 # Sprint 16-F — Confirmation verrouillée sur une ouverture réelle
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 État au 7 octobre 2026 : **confirmation exécutée à 14 h 57, coupure maintenue
 à 9 h Paris ; 242 features sur 330, zéro candidat, shadow bloqué**.
 La [remédiation prospective](sprint_16f_remediation.md) est implémentée ;

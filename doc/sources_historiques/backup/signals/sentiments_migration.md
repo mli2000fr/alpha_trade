@@ -1,5 +1,9 @@
 # Migration des résultats du pipeline « Import + score + history_backfill + relevance_backfill auto »
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 > Date d'analyse : 2026-05-10  
 > Périmètre : bouton **7.bis Import des news brutes** dans la page pipeline, puis exécution déportée sur un autre PC et réinjection des résultats sur le PC principal.
 

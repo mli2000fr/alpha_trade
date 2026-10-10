@@ -1,5 +1,9 @@
 # Alpha Trade — Documentation Fonctionnelle
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 > *Version : 0.5.0 — Dernière mise à jour : 2026-07-11 (cutover ML-first long/short)*
 
 <!-- primary_provider: eodhd -->
@@ -59,7 +63,7 @@
 > Le contrat nominal est désormais ML-first. Le scanner, le selector, le sentiment
 > et le macro produisent du contexte, des diagnostics ou des vetos post-ML ; ils
 > ne choisissent ni le côté ni le rang principal. Le guide métier et opérateur
-> détaillé se trouve dans [`synthese_long_short.md`](synthese_long_short.md).
+> détaillé se trouve dans [`synthese_long_short.md`](../../experiences/archives_ml/synthese_long_short.md).
 
 ---
 
@@ -869,7 +873,7 @@ prédiction `flat` ou inverser `long` en `short`.
 Le backtest de parité doit utiliser l'univers PIT et les prédictions persistées
 avec `engine_mode=pipeline` et `ml_pit_strategy=use-persisted`. L'ordre complet
 de préparation et de lancement est documenté dans
-[`synthese_long_short.md`](synthese_long_short.md#82-ordre-obligatoire-pour-préparer-et-lancer-un-backtest).
+[`synthese_long_short.md`](../../experiences/archives_ml/synthese_long_short.md).
 
-Voir également [`calcul_tp_tl.md`](calcul_tp_tl.md) pour les formules de
+Voir également [`calcul_tp_tl.md`](../backup/execution/calcul_tp_tl.md) pour les formules de
 protections directionnelles.

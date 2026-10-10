@@ -1,5 +1,9 @@
 # Oracle H20 — mesure appariée de l'effet des corrections numériques
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Statut et objectif
 
 GO utilisateur du 7 octobre 2026. Audit numérique complet, **24 entraînements

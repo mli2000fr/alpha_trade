@@ -1,5 +1,9 @@
 # Sprint 18-D — Port OMS complet et doubles mock/replay
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Résultat
 
 Le contrat `ExecutionBrokerPort` de `execution_engine/broker_router.py` reflète désormais **toutes les opérations réellement appelées** par l'exécuteur, le watcher, la synchronisation, la CLI et le kill switch. Les composants OMS concernés sont annotés contre ce port, non contre la classe concrète `BrokerAdapter`. L'adaptateur Alpaca existant conserve ses méthodes, ses payloads, son routage et ses effets US ; aucun algorithme d'ordre US n'a été remplacé.

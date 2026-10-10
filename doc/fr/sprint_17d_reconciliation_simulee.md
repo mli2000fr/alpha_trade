@@ -1,5 +1,9 @@
 # Sprint 17-D — Réconciliation synthétique et clôture des accès en lecture
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Situation au 9 octobre 2026 (Paris)
 
 La nouvelle lecture Trading212 Invest **DEMO EUR** réussit sur les six endpoints,

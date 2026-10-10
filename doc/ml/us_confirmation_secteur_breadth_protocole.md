@@ -1,5 +1,9 @@
 # US — Confirmation figée force relative / breadth et régime LONG
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 Protocole enregistré le 4 octobre 2026 avant calcul des résultats de ces
 filtres. Recherche seule : pas de fit, pas de changement de modèle, pas
 d'écriture SQL, pas de modification de configuration de production.

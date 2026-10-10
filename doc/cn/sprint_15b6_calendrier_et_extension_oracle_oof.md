@@ -1,5 +1,9 @@
 # Sprint 15-B6 — Calendrier réalisable et extension Oracle OOF
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 29 septembre 2026. Suite de [15-B5](./sprint_15b5_features_et_jointures_temporelles.md).
 
 **État actualisé : audit terminé et nouvelle campagne pré-enregistrée. Les deux entraînements Oracle OOF 2021 sont terminés (`OOS_RESEARCH_ONLY`) ; leurs jointures et les gates réels sont audités en [15-B7](./sprint_15b7_jointures_2021_preflight_directionnel.md). Aucun entraînement directionnel, aucune modification de serving ou écriture en base.**

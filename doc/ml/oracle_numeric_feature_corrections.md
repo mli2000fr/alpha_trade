@@ -1,5 +1,9 @@
 # Correction des facteurs et ratios EXPERT — 7 octobre 2026
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Périmètre et décision
 
 À la suite de [l'audit H20](us_oracle_h20_dataset_quality_audit.md), l'utilisateur

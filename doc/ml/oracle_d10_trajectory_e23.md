@@ -1,5 +1,9 @@
 # E23 — D10 one-vs-rest après Oracle avec trajectoires J−10 à J
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Statut
 
 **TERMINÉ / NO_GO.** Le run complet pré-enregistré rejette la baseline D10-only

@@ -1,5 +1,9 @@
 # Sprint 15-D7a — rattrapage canonique CN 2026
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Objet et frontière temporelle
 
 Le protocole Dragon/Tiger 15-D7 requiert des candidats Oracle réellement prédits sur des séances 2026. La base `alpha_trade_cn` s'arrêtait au 31 décembre 2025 pour les barres canoniques. Ce rattrapage ajoute les séances closes du 1er janvier au 29 septembre 2026 ; il ne reconstitue ni prédictions prospectives passées, ni horodatages PIT de 2026 antérieurs à la collecte.

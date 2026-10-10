@@ -1,5 +1,9 @@
 # Installation et démarrage
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Le bootstrap ci-dessous concerne le parcours **US**. Pour CN/FR, créer/résoudre
 leur base isolée et appliquer les DDL/migrations propres au marché :
 [architecture DB](15_base_de_donnees.md), [CN](cn/README.md), [FR](fr/README.md).

@@ -1,5 +1,9 @@
 # Sprint 6 — Socle de données CN gratuit avec BaoStock
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## 1. Décision et état
 
 Le premier chemin opérationnel Chine d’Alpha-Trade repose désormais sur des sources gratuites :

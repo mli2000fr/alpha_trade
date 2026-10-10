@@ -1,5 +1,9 @@
 # 🟢 C2+B4 — Contrôleur de drawdown robuste : GO LIVE PROD (2026-08-21)
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 **Date** : 2026-08-21
 **Statut** : **C2+B4 = GO LIVE PROD** (config.yaml `policy: b4` actif, décision utilisateur 2026-08-21). Le gate « période paper représentative » était la porte d'entrée prévue ; elle est **remplacée par décision directe GO live** (validation backtest + parité logique prod jugées suffisantes). Le gate quotidien de parité reste en place comme garde opérationnelle. **Rollback = `policy: b0`.**
 **Règle de gel** : `backtesting/adaptive_breaker.py`, seuils B4, C2 = **FROZEN**. Toute anomalie PROD = problème d'intégration/parité d'abord, **jamais** une raison de retuner le modèle.

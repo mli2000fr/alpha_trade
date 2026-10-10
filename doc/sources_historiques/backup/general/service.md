@@ -1,5 +1,9 @@
 # Service — Guide d'usage
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Objectif
 
 Ce document résume le rôle du dossier `service/` et les usages utiles pour :
@@ -297,7 +301,7 @@ python -m pytest tests/test_phase1_http_retry.py tests/test_clientAlpaca.py test
 | `stooq` | `service/stooq/` | `cleaning_audit_runs.cross_check_anomalies` | best-effort | P3 |
 | `tiingo` | `service/tiingo/` | `(réservé, pas de table prod)` | inactif | — |
 
-> Matrice détaillée table-par-table : voir [`doc/data_lineage_matrix.md`](data_lineage_matrix.md).
+> Matrice détaillée table-par-table : voir [`doc/data_lineage_matrix.md`](../data/data_lineage_matrix.md).
 
 ---
 

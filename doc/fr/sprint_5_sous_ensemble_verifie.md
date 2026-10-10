@@ -1,5 +1,9 @@
 # Sprint 5 France — qualification d'un sous-ensemble limité
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Date : 2 octobre 2026. Cette procédure met en œuvre la décision de rechercher un **GO limité à un sous-ensemble vérifié**. Elle n'accorde pas encore le GO : le bilan automatique établit un pool de vérification, puis bloque toute promotion canonique tant que les preuves externes manquent. L'audit est reproductible par `python -m service.fr.sprint5_subset_audit` (identifiants FR en environnement) ; sortie détaillée : `artifacts/fr/eodhd/backfill_2016/sprint5_subset_audit.json`.
 
 ## Résultat du tri initial

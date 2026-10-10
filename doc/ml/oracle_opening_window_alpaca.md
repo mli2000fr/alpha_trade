@@ -1,5 +1,9 @@
 # Oracle Opening Window — collecte Alpaca SIP PIT
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Finalité
 
 `oracle_opening_window_sync` construit prospectivement un historique minute du

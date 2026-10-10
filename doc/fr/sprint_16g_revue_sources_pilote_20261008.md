@@ -1,5 +1,9 @@
 # Sprint 16-G — revue ciblée des preuves du pilote, 8 octobre 2026
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Conclusion opérationnelle
 
 La recherche documentaire sur AIR.PA, OR.PA et SAN.PA apporte des

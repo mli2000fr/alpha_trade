@@ -1,5 +1,9 @@
 # Sprint 14-A — Consultation France isolée dans l'IHM et la CLI
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 5 octobre 2026. GO du propriétaire pour commencer le Sprint 14.
 Cette première tranche est implémentée et désormais complétée par le
 [14-B : lancement et suivi des replays](sprint_14b_lancement_replay_et_suivi.md).

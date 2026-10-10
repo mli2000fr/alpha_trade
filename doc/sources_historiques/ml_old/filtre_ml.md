@@ -1,5 +1,9 @@
 # 🔍 Filtre ML — Diagnostics batch pour live & backtest
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 > **Créé le** : 2026-07-23  
 > **Module** : `modelFactory/batch_diagnostics.py`  
 > **Table** : `alpha_trade.model_batch_diagnostics`  
@@ -151,7 +155,7 @@ batch_diagnostics:
 
 ### §7.0 — Règles de filtrage par seuils absolus
 
-Ces règles (issues de [`analyse_ml.md`](../prompt/analyse_ml.md#70-règle-de-filtrage--quels-symboles-trader))
+Ces règles (issues de [`analyse_ml.md`](../../ml/README.md))
 complètent le système de classement relatif existant. Elles utilisent des
 **seuils absolus** sur les F1 par classe plutôt que le rang.
 

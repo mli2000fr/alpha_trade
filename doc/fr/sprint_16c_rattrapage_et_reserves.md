@@ -1,5 +1,9 @@
 # Sprint 16-C — Rattrapage de démarrage et qualification des réserves
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## État au lancement, 6 octobre 2026
 
 **Collecte terminée et audit de warmup réalisé ; ni clôture complète 16-C ni GO shadow.**

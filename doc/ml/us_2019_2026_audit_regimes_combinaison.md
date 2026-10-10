@@ -1,5 +1,9 @@
 # US — Audit des régimes de la combinaison D10, 2019–2026 T1
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 **Mise à jour du 4 octobre 2026 après alimentation :** les indices macro
 2026 sont désormais complets sur les dates testées. Voir le
 [recalcul du régime T1](us_2026_regime_macro_actualise.md). Les réserves

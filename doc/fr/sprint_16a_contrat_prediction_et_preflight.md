@@ -1,5 +1,9 @@
 # Sprint 16-A — Contrat de préparation de la prédiction France
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## État au 6 octobre 2026
 
 **16-A livré : préparation et contrôles hors ligne. Pas de GO serving, shadow ou trading.**

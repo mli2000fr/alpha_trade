@@ -1,5 +1,9 @@
 # Synthèse Per-Sector — α-Trade (contexte pour recherche de leviers)
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 > **Date** : 2026-08-15
 > **But de ce document** : donner à une IA externe (GPT) un contexte **précis et détaillé** sur la partie « per-sector » du projet α-Trade, pour qu'elle cherche des **leviers d'amélioration** sans refaire des erreurs déjà testées.
 > **Sources** : `doc/ml/module_model_factory.md`, `doc/ml/features_ml.md`, `doc/ml/analyse_oos.txt`, `prompt/ml/ml_todo_1.md`, `doc/ml_todo.md`, code `modelFactory/`.

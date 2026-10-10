@@ -1,5 +1,9 @@
 # US — Audit des autorisations de collecte des batchs
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 Date de vérification : 6 octobre 2026. Périmètre : catalogue `US_EQ` effectivement présenté par la page Batch, fournisseurs réellement appelés et conditions publiques officielles.
 
 ## 1. Conclusion et limites

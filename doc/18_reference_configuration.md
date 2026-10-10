@@ -1,5 +1,9 @@
 # Référence de configuration
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 `config.yaml` porte le profil US et les options communes, complétés par les
 defaults des dataclasses, flags CLI et préférences IHM. Toujours journaliser
 la configuration effective ; ni un défaut Python ni un YAML isolé ne la décrivent seul.
@@ -22,7 +26,16 @@ marché et les fichiers concernés. [Inventaire courant](operations/catalogue_ba
 
 ## Chargement du fichier
 
-`common/config_loader.py` fournit le chargement YAML commun. `ALPHA_TRADE_CONFIG_PATH` peut remplacer le chemin par défaut. Lorsqu’un chemin est passé explicitement au loader, le code applique ses règles de priorité et permet un override temporaire via context manager, notamment pour les tests.
+`common/config_loader.py` fournit le chargement YAML commun. Un chemin explicite
+**autre que le `config.yaml` racine** a priorité ; pour le chemin par défaut
+(y compris ce `config.yaml` explicite), `ALPHA_TRADE_CONFIG_PATH` peut le remplacer.
+Le même principe s'applique au catalogue via `ALPHA_TRADE_BATCH_CONFIG_PATH`.
+Les context managers d'override restaurent l'environnement après utilisation.
+Ne pas supposer qu'un appel passant le chemin racine neutralise l'override.
+
+L'[inventaire de toutes les clés présentes](reference/configuration_generee.md)
+est généré sans valeurs ni secrets. Il complète cette explication, sans déduire
+qu'une clé déclarée est consommée partout.
 
 Un fichier absent ou un YAML invalide doit être traité comme une erreur de configuration au point où sa présence est requise. Le loader ne valide pas à lui seul toutes les sections métier : chaque dataclass ou résolveur valide ensuite types, bornes, énumérations et combinaisons.
 

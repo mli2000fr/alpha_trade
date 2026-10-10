@@ -1,5 +1,9 @@
 # E21-B4 — Validation indépendante du lecteur de tableaux
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 > **Piste fermée — CLOSED / SUSPENDED_DATA_NOT_READY, 15 septembre 2026.**
 > Les itérations B4 à B8 sont terminées. Aucun B9 ne doit être lancé avec la
 > chaîne actuelle et aucun candidat extrait ne doit devenir un label ML.

@@ -1,5 +1,9 @@
 # Sprint 11-B — Stress économique indicatif du veto D1 CN_A
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Décision
 
 **Sprint 11-B exécuté ; déploiement non autorisé.** L'objectif était de

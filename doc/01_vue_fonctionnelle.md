@@ -1,5 +1,9 @@
 # Vue fonctionnelle
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Alpha Trade regroupe recherche, ML, backtests et exploitation de stratégies actions.
 Le parcours US dispose du risque, des ordres Alpaca et des protections. CN et FR
 ont des bases, collectes et replays séparés ; leurs contextes n'autorisent pas

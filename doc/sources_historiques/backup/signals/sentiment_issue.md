@@ -1,5 +1,9 @@
 # Diagnostic et reprise — pipeline `event_sentiment`
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Objet
 
 Ce document trace le diagnostic, les corrections apportées et la reprise opératoire effectuée pour le pipeline sentiment, avec priorité sur le flux IHM **7.bis** (`scripts/windows/import_news_and_score_pending.ps1`) et sur le drift schéma/code bloquant l’alimentation de `ticker_daily_sentiment_features` / `sector_daily_sentiment_features`.

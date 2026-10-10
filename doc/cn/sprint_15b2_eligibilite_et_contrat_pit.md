@@ -1,5 +1,9 @@
 # Sprint 15-B2 — Éligibilité historique et contrat PIT de financement/prêt
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Suite exécutée : [15-B3 — qualification des blocages](./sprint_15b3_qualification_blocages.md), avec extension aux listes Shenzhen des 40 séances et réconciliation des mêmes mesures détail/résumé. Les constats ci-dessous restent ceux de B2.
 
 Audit exécuté le 28 septembre 2026. **Audit terminé ; qualification PIT stricte non obtenue.** Ce document complète [15-B1](./sprint_15b1_backfill_pilote_margin_lending.md), sans transformer ses archives en données immédiatement utilisables par le ML.

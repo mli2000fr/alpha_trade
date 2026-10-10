@@ -1,5 +1,9 @@
 # 12-C — Qualification des preuves d'exécution FR
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Bilan au4octobre2026
 
 La demande est de qualifier les preuves avant le comparatif économique réel.

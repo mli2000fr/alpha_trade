@@ -1,5 +1,9 @@
 # Sprint 15-D11 — Cumul prospectif D7, sans connaissance des issues
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Le [journal D10](./sprint_15d10_appariement_d7_quotidien.md) produit un appariement indépendant par séance de décision. D11 additionne ces seules séances pour savoir **si le protocole D7 dispose enfin d'un échantillon exploitable**. Il ne lit jamais les rendements futurs, les déciles D1/D10, les labels, les ordres ou les résultats de backtest.
 
 ## Entrées admises

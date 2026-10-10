@@ -1,5 +1,9 @@
 # E19-B — Bibliothèque d’alphas fondamentaux PIT
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## 1. Pré-enregistrement
 
 Ce protocole est figé avant le premier calcul de performance E19-B. Toute

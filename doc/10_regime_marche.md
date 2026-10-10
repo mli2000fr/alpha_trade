@@ -1,5 +1,9 @@
 # Régime de marché
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Le moteur `service/market/` produit un `MarketRegimeSnapshot` injecté au risque et au backtest. Il est conçu avec providers injectables pour conserver les mêmes règles entre live et replay.
 
 ## Bloc IHM d'étude Oracle × ATR — état actuel

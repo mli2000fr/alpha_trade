@@ -1,5 +1,9 @@
 # Guide utilisateur de l’application
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Mise à jour ciblée du **10 octobre 2026** :
 [état actuel](../ETAT_ACTUEL_IMPLEMENTATION.md),
 [batchs et marchés](19_batchs_et_marches.md). Les chapitres métier décrivent

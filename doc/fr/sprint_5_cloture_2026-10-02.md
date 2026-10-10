@@ -1,5 +1,9 @@
 # Sprint 5 France — clôture technique et décision de gate
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Date : 2 octobre 2026. Ce document clôt **l'exécution technique de collecte et de staging** du Sprint 5, mais **pas son gate d'admission au canonique / ML**. Verdict formel : `NO_GO_CANONICAL_AND_ML`. Le verdict est recalculable avec `python -m service.fr.sprint5_gate` et archivé dans `artifacts/fr/eodhd/backfill_2016/sprint5_gate.json`.
 
 **Décision ultérieure de périmètre :** le premier univers canonique/ML/backtest FR ne cherchera pas à admettre les dates 2016–2017. Elles demeurent dans l'archive brute et les audits, mais la validation nécessaire au GO limité porte sur **2018 et après**, avec date d'entrée propre à chaque instrument et sans lever les autres gates.

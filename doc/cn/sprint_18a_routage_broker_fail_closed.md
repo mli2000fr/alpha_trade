@@ -1,5 +1,9 @@
 # Sprint 18-A — Contrat broker et verrou de marché
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Résultat et périmètre
 
 Le moteur d'ordres existant reste **US_EQ / Alpaca**. Un contrat d'exécution minimal et un routeur de marché explicite sont introduits dans `execution_engine/broker_router.py`. Une demande `CN_A`, `CN_BJ`, française ou sans marché est refusée **avant** de construire un client broker. L'adaptateur Alpaca applique aussi son propre verrou `US_EQ`, afin qu'un appel direct ne contourne pas le routeur.

@@ -1,5 +1,9 @@
 # P0d — Univers Oracle équilibré de 400 symboles
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Décision
 
 P0d produit un nouvel échantillon de recherche de 400 symboles à partir de

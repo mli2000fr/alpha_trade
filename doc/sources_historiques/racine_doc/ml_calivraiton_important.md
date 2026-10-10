@@ -1,3 +1,7 @@
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 si le modèle ou l'univers change radicalement, il ne faut pas seulement recalibrer le ML ; il faut requalifier toute la chaîne qui dépend de la distribution des trades.
 
 Je garderais cependant certaines règles comme architecture de départ plutôt que de tout remettre à zéro.

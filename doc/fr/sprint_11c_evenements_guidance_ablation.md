@@ -1,5 +1,9 @@
 # Sprint 11-C — disponibilité, revue de guidance et ablation événementielle
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 **Suite documentaire11-E :** [complément gratuit et seconde revue](sprint_11e_completion_gratuite_guidance.md).
 Les résultats AMF/DILA ci-dessous restent figés, aucun modèle refait. La suite
 propose15 paires documentaires11-D/11-E (9 UP/6 DOWN), sans gain D1/D10 testé :

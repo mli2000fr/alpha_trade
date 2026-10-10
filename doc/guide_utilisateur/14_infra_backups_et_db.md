@@ -1,5 +1,9 @@
 # Infra, sauvegardes et administration DB
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Infra & Backups
 
 La page regroupe métriques, archives ML, dumps DB et reset ML. Les compteurs peuvent être actifs, no-op ou indisponibles selon dépendances ; un zéro après redémarrage n’est pas une preuve d’absence d’événement car le registre Prometheus est local au processus.

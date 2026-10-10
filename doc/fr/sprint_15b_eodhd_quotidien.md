@@ -1,5 +1,9 @@
 # Sprint 15-B — Collecte EODHD quotidienne France, J−7/J
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 5 octobre 2026. Collecteur implémenté, tests et deux passages réels réussis
 sur trois titres. `fr_daily_bars_sync` est `enabled: true`, `ACTIVE_RESEARCH`
 dans `batch_fr.yaml`. Aucune tâche Windows installée automatiquement.

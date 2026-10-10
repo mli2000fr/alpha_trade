@@ -1,5 +1,9 @@
 # Validation statistique et promotion
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Retour : [références Backtesting](README.md)
 
 `bootstrap_trades` rééchantillonne les trades ; le block bootstrap préserve des blocs temporels. `parameter_sensitivity` vérifie la stabilité autour du paramètre choisi. `deflated_sharpe_ratio` tient compte de non-normalité/essais ; `multiple_testing_correction` ajuste les tests ; `compute_promotion_score` agrège des gates.

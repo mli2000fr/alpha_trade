@@ -1,5 +1,9 @@
 # Synthèse des tests — Gate Extreme vs B25 & ablation du rôle per-symbol (E16→E17)
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 **Contexte** : alpha-trade, backtest production-parity, preset `capital_2001_5000`, capital initial **4 000 $**,
 période **2025-01-02 → 2026-05-29**, moteur CLI production complet (preset + risk + sizing + coûts canoniques).
 Modèle per-symbol = **B25** (batch `model-factory-20260811223551-ef2cd0`). Oracle O0 OOS walk-forward 2025/2026.

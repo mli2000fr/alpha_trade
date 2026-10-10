@@ -1,5 +1,9 @@
 # État actuel de l'implémentation — 10 octobre 2026
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Ce document rapproche les guides du **code et des fichiers de configuration
 présents dans le dépôt**. Il ne certifie ni l'état d'une base déployée, ni la
 santé des tâches Windows, ni une performance économique. Les comptes rendus de
@@ -213,11 +217,17 @@ vendues par ce seul contrôle. [Étude](ml/oracle_atr_market_regime_daily.md).
 
 ## 7. Périmètre et entretien de cette mise à jour
 
-660 Markdown sont présents sous doc au début de l'audit. Les pages d'entrée,
-guides opérateur et contrats transverses cités ici ont été rapprochés des
-sources ciblées ; **pas une revue ligne par ligne de ces 660 documents ni de
-tous les modules**. Les inventaires API anciens et résultats historiques ne
-sont pas présentés comme régénérés/validés dans leur totalité.
+La révision élargie part de 665 Markdown. Tout le corpus est indexé et classé ;
+les liens locaux sont vérifiés, les déclarations Python des packages inventoriés
+sont régénérées depuis l'AST. Les guides opérateur et contrats transverses ont
+été rapprochés de leurs consommateurs actuels. Cela ne certifie ni chaque
+assertion historique ni les performances des expériences : leurs chiffres
+d'origine sont conservés et leurs consignes ne valent pas autorisation actuelle.
+
+[Bilan complet](AUDIT_COMPLET_DOCUMENTATION_20261010.md),
+[registre](audit/registre_documentaire.md) et [références générées](api/README.md).
+La maintenance locale se fait avec `scripts/refresh_documentation.py` et
+`scripts/generate_doc_index.py`, sans appel fournisseur ni connexion SQL.
 
 À chaque évolution : lire le consommateur de configuration, le builder de
 commande, le service métier et ses tests ; corriger le guide correspondant,

@@ -1,5 +1,9 @@
 # Sprint 13-B — Préparation des tapes et du reporting économique France
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Date : 4 octobre 2026. Statut **PREPARED_REPLAY_BLOCKED**.
 Cette préparation suit le [gel 13-A](sprint_13a_protocole_validation_economique.md).
 Les performances économiques réelles ne sont toujours pas calculées : les

@@ -1,5 +1,9 @@
 # Sprint 12-B — Moteur de rejeu économique FR
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 État au 4 octobre 2026 : **moteur de recherche implémenté et testé ; rejeu des
 données historiques réelles encore bloqué par leurs preuves**. Ce n'est ni une
 mise en production, ni un GO de rentabilité, ni une clôture de tout le Sprint12.

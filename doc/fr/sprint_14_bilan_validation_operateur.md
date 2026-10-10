@@ -1,5 +1,9 @@
 # Sprint 14 France — Bilan de validation du parcours opérateur recherche
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Date : 5 octobre 2026. Décision : **terminé pour le périmètre de recherche
 livré**, consultation des campagnes et reproduction d'une cellule économique
 figée. Aucun GO économique, paper, live ou serving.

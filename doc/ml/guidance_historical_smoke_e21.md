@@ -1,5 +1,9 @@
 # E21 — Backfill historique et validation manuelle de guidance
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Résultat du 14 septembre 2026
 
 Le correctif des URL du collecteur est appliqué. Le smoke historique a récupéré

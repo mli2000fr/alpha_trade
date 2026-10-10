@@ -1,5 +1,9 @@
 # Horaires FR/CN — présence du PC, 10 octobre 2026
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Le PC est disponible avant 07:30 et à partir de **20:00 Europe/Paris**.
 Les horaires ci-dessous concernent les batchs actifs ; les collecteurs bloqués
 pour droits/prudence restent désactivés. `us_pipeline` reste à 22:45, inchangé.

@@ -1,5 +1,9 @@
 # Audit des splits et des cibles D1/D10 Oracle — 30 septembre 2026
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 Statut initial : **quarantaine de recherche produite**. Un
 [replay P0g sur labels corrigés](oracle_split_corrected_p0g_replay_20260930.md)
 a ensuite été exécuté à gate Oracle OOF figé. Batch gelé

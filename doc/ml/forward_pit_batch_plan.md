@@ -1,5 +1,9 @@
 # Plan des batchs Forward PIT — P0 à P4
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 > État d’implémentation : le socle décrit ici est réalisé par la migration
 > `0075_forward_pit_collection`, le service `service/forward_pit/batch.py` et
 > les sections correspondantes de `batch.yaml`. Le guide d’exploitation complet

@@ -1,5 +1,9 @@
 # Sprint 15-E — Référentiel ESMA quotidien et prérequis INPI
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 5 octobre 2026. Collecte gratuite publique ESMA, fichiers de recherche FR
 uniquement. Ce n'est ni une promotion SQL ni une réparation de l'historique.
 

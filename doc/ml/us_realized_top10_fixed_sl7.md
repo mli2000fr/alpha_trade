@@ -1,5 +1,9 @@
 # Dix plus grands mouvements H20 réellement observés — SL initial 7 %
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Contrat demandé le 7 octobre 2026
 
 Simulation contrefactuelle : dix titres par date classés par valeur absolue du
