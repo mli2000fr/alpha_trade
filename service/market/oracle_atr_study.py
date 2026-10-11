@@ -19,11 +19,12 @@ from common.universe_files import load_universe_file_symbols
 from modelFactory.oracle.artifact_contract import resolve_oracle_artifact_horizon
 
 TABLE = 'oracle_atr_market_regime_daily'
-CALCULATION_VERSION = 'oracle_atr_v6_intersection_order'
+CALCULATION_VERSION = 'oracle_atr_v7_path_max_prices'
 MOVEMENT_FIELDS = ('real_oracle_top_returns_pct', 'intersection_returns_pct',
                    'predicted_oracle_top_returns_pct', 'atr_top_returns_pct',
                    'predicted_oracle_score_order_returns_pct',
                    'intersection_oracle_score_order_returns_pct')
+PEAK_FIELD = 'predicted_oracle_score_order_max_prices'
 MACRO_FIELDS = ['vix', 'vix9d', 'ten_y', 'vxn', 'vix3m', 'move',
                 'yield_10y_5d_pct', 'sentiment_score']
 
@@ -188,7 +189,7 @@ def summarize_day(scores, atr, labels, macro, *, as_of: date,
                        'expected_available_date': str(expected_available_date) if expected_available_date else None,
                        'target_evaluated_count': n, 'lists': quality}
     result = {'regime_mode': macro.get('mode') if macro is not None else None,
-              **movements,
+              **movements, PEAK_FIELD: None,
               'missing_returns_policy': policy,
               'movement_quality': json.dumps(quality_payload, allow_nan=False),
               **{k: macro.get(k) if macro is not None else None for k in MACRO_FIELDS},
@@ -205,12 +206,61 @@ def summarize_day(scores, atr, labels, macro, *, as_of: date,
     return {k: None if pd.isna(v) else v for k, v in result.items()}
 
 
+def attach_price_peaks(row, maxima, *, horizon, policy):
+    """Same initial TOP-N as score-order returns; no ranking by the future peak."""
+    metadata = json.loads(row['movement_quality'])
+    source = metadata['lists'].get('predicted_oracle_score_order_returns_pct', {})
+    selection = source.get('selection_symbols', [])
+    qualified_returns = set(source.get('value_symbols', []))
+    known, missing, reasons = [], [], {}
+    for symbol in selection:
+        peak = maxima.get(symbol, {})
+        value = peak.get('max_price')
+        if symbol not in qualified_returns:
+            reason = source.get('missing_reasons', {}).get(symbol, 'LABEL_UNQUALIFIED')
+        elif value is None or not np.isfinite(value) or value <= 0:
+            reason = peak.get('reason') or 'PRICE_PATH_MISSING'
+        else:
+            known.append(symbol)
+            continue
+        missing.append(symbol)
+        reasons[symbol] = reason
+    info = {
+        'requested_count': len(selection), 'known_count': len(known),
+        'missing_count': len(missing), 'coverage_pct': 100*len(known)/len(selection) if selection else None,
+        'selection_symbols': selection, 'value_symbols': known,
+        'original_selection_positions': [selection.index(s)+1 for s in known],
+        'missing_symbols': missing, 'missing_reasons': reasons,
+        'selection_basis': 'INITIAL_PREDICTED_ORACLE_TOP_N',
+        'status': 'COMPLETE' if selection and not missing else 'PARTIAL' if known else 'UNAVAILABLE',
+        'unit': 'USD_SIGNAL_DAY_PRICE_SCALE', 'statistic': 'MAX_DAILY_HIGH',
+        'window': f'J+1..J+{horizon} NYSE sessions (inclusive)', 'horizon': horizon,
+        'price_basis': 'high[t] * (adj_close[t]/close[t]) / (adj_close[J]/close[J])',
+        'rounding_decimals': 6,
+        'value_details': {s: maxima[s] for s in known},
+        'research_only_future_information': True,
+    }
+    metadata['lists'][PEAK_FIELD] = info
+    row[PEAK_FIELD] = (json.dumps([round(maxima[s]['max_price'], 6) for s in known], allow_nan=False)
+                      if known and (policy == 'partial' or not missing) else None)
+    row['movement_quality'] = json.dumps(metadata, allow_nan=False)
+    details = row['quality_details']
+    issues = [item for item in ('' if pd.isna(details) else details).split(',')
+              if item and item != 'INCOMPLETE_PREDICTED_MAX_PRICES']
+    if missing:
+        issues.append('INCOMPLETE_PREDICTED_MAX_PRICES')
+    row['quality_details'] = ','.join(dict.fromkeys(issues)) or None
+    row['status'] = ('COMPLETE' if not issues else
+                     'PARTIAL' if policy == 'partial' and row['evaluated_count'] else 'INCOMPLETE')
+    return row
+
+
 def run(*, batch_id: str, symbol_source: str, start_date: str, end_date: str,
         artifacts_dir='artifacts/models', engine=None, progress_callback=None,
         date_batch_size: int = 20, resume: bool = True,
         trade_dates: list[str] | None = None, missing_returns_policy=None) -> dict:
     policy = resolve_returns_policy(missing_returns_policy)
-    version = CALCULATION_VERSION if policy == 'partial' else 'oracle_atr_v5_strict_returns'
+    version = CALCULATION_VERSION if policy == 'partial' else 'oracle_atr_v7_strict_max_prices'
     if not isinstance(date_batch_size, int) or isinstance(date_batch_size, bool) or date_batch_size < 1:
         raise ValueError('date_batch_size doit être un entier strictement positif')
     start, end = date.fromisoformat(start_date), date.fromisoformat(end_date)
@@ -233,7 +283,7 @@ def run(*, batch_id: str, symbol_source: str, start_date: str, end_date: str,
         if conn.execute(text('SELECT DATABASE()')).scalar() != 'alpha_trade':
             raise ValueError('Cette étude US exige la base alpha_trade')
         # Check migration before doing costly price reads.
-        conn.execute(text(f'SELECT trade_date,{",".join(MOVEMENT_FIELDS)},movement_quality,missing_returns_policy FROM {TABLE} LIMIT 0'))
+        conn.execute(text(f'SELECT trade_date,{",".join(MOVEMENT_FIELDS)},{PEAK_FIELD},movement_quality,missing_returns_policy FROM {TABLE} LIMIT 0'))
         completed = set()
         if resume:
             completed = {str(d)[:10] for d in conn.execute(text(
@@ -312,6 +362,12 @@ def _calculate_tranche(engine, symbols, days, batch_id, horizon, as_of, policy='
             missing_returns_policy=policy, expected_available_date=availability[date.fromisoformat(day)][1])
         row.update(trade_date=day)
         records.append(row)
+    from service.market.oracle_path_maxima import load_price_peaks
+    selections = {row['trade_date']: json.loads(row['movement_quality'])['lists'].get(
+        'predicted_oracle_score_order_returns_pct', {}).get('selection_symbols', []) for row in records}
+    maxima = load_price_peaks(engine, selections, labels, horizon=horizon, as_of=as_of)
+    for row in records:
+        attach_price_peaks(row, maxima.get(row['trade_date'], {}), horizon=horizon, policy=policy)
     return records
 
 

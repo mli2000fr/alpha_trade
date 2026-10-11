@@ -429,7 +429,10 @@ def _render_oracle_atr_study() -> None:
     st.caption('Listes de rendements réalisés signés, arrondis en % entiers. En mode partiel, seules les valeurs '
                'connues sont conservées, sans remplacement des titres sélectionnés. Le TOP réalisé est alors '
                'celui des titres évaluables, pas nécessairement celui de tout l’univers. '
-               'movement_quality conserve les symboles, les positions d’origine et la couverture. Migration 0095 nécessaire.')
+               'movement_quality conserve les symboles, les positions d’origine et la couverture. '
+               'La liste predicted_oracle_score_order_max_prices donne aussi les plus hauts J+1 à J+H '
+               'en dollars sur l’échelle de J, dans l’ordre Oracle, pas des rendements ni des prévisions. '
+               'Migration 0102 nécessaire ; recalculer pour alimenter cette nouvelle colonne.')
     sources = list_universe_file_sources()
     if not sources:
         st.warning('Aucun univers texte disponible dans config/univers/.')
