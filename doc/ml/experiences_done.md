@@ -2493,3 +2493,15 @@ conditionnel février **0,502**, mars **0,535**. Aucun gain directionnel stable
 démontré, aucun modèle ou filtre promu. Disponibilité PIT/provenance non certifiées,
 lacune options le 2 février, deux mois et rendements chevauchants.
 [Méthode, horizons et limites](alpaca_options_feb_mar_2024_directional_audit.md).
+
+## 2026-10-11 — News/sentiment et mouvement du même jour, US 2025–2026
+
+Audit SELECT uniquement de 367 851 observations article/titre, univers tradable
+actuel de 1 790 titres. Seuil >0,9, groupes positifs/négatifs/mixtes distincts,
+publications séparées avant ouverture, en séance et après clôture. Association
+clôture veille→clôture : positif +0,611 % / +0,535 %, négatif −0,547 % / −0,569 %
+(2025/2026). Avant ouverture, relation principalement dans le gap ; continuation
+après ouverture faible et instable. Aucune vue PIT admissible avec les dernières
+dates de mise à jour : **association descriptive, pas GO prédictif/trading**.
+Aucune API, écriture SQL, modification de modèle ou batch. Trois tests passés.
+[Résultats, protocole et limites](us_news_same_day_sentiment_audit.md).

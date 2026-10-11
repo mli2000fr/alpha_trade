@@ -40,7 +40,9 @@ def aggregate(news):
     groups = news.groupby(['day','symbol'], as_index=False).agg(
         articles=('article_id','size'), positive=('positive_score',lambda x:x.gt(.9).any()),
         negative=('negative_score',lambda x:x.gt(.9).any()))
-    groups['group'] = np.select([groups.positive & groups.negative, groups.positive, groups.negative],
+    positive=groups.positive.to_numpy(dtype=bool)
+    negative=groups.negative.to_numpy(dtype=bool)
+    groups['group'] = np.select([positive & negative, positive, negative],
                                ['mixed','positive_only','negative_only'], default='no_strong_score')
     return groups
 
