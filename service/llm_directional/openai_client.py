@@ -1,6 +1,7 @@
 """Responses API with web search only; no broker, SQL or arbitrary tool exposed."""
 import json
 import os
+from copy import deepcopy
 import requests
 
 PROTOCOL_VERSION = 'oracle-web-directional-v4'
@@ -46,7 +47,7 @@ SCHEMA = {
 }
 
 
-def build_request(context, config):
+def _web_request(context, config):
     allowed = 'LONG, SHORT, ABSTAIN' if config.allow_short else 'LONG, ABSTAIN (SHORT forbidden)'
     return {'model': config.model, 'store': False, 'instructions': INSTRUCTIONS + '\nAllowed decisions: ' + allowed,
             'input': json.dumps(context, ensure_ascii=False, allow_nan=False),
@@ -58,24 +59,95 @@ def build_request(context, config):
                                 'strict': True, 'schema': SCHEMA}}}
 
 
+def build_request(context, config):
+    web = _web_request(context, config)
+    if config.provider == 'openai':
+        return web  # Byte-for-byte request contract for historical GPT runs.
+    return {'provider': 'deepseek', 'web_provider': 'openai', 'web_request': web,
+            'analysis_model': config.deepseek_model,
+            'analysis_max_tokens': config.max_output_tokens,
+            'context': context, 'allow_short': config.allow_short}
+
+
+def deepseek_output(response):
+    """Reconstruct evidence from archived actual providers, never model-made citations."""
+    web = response.get('web_response') or {}
+    raw = response.get('analysis_response') or {}
+    choice = (raw.get('choices') or [{}])[0]
+    content = (choice.get('message') or {}).get('content')
+    searches = [item for item in web.get('output', [])
+                if item.get('type') == 'web_search_call' and item.get('status') == 'completed']
+    annotations = [annotation for item in web.get('output', []) if item.get('type') == 'message'
+                   for part in item.get('content', []) if part.get('type') == 'output_text'
+                   for annotation in part.get('annotations', []) if annotation.get('type') == 'url_citation']
+    complete = (web.get('status') == 'completed' and bool(searches)
+                and choice.get('finish_reason') == 'stop'
+                and isinstance(content, str) and bool(content.strip()))
+    return {'status': 'completed' if complete else 'incomplete',
+            'output': deepcopy(searches) + [{'type': 'message', 'content': [
+                {'type': 'output_text', 'text': content if isinstance(content, str) else '',
+                 'annotations': deepcopy(annotations)}]}]}
+
+
 class ResponsesClient:
     def __init__(self, config, session=None):
         self.config = config
         self.key = os.environ.get(config.api_key_env, '')
         if not self.key:
             raise ValueError('OPENAI_API_KEY absente')
+        self.deepseek_key = os.environ.get(config.deepseek_api_key_env, '')
+        if config.provider == 'deepseek' and not self.deepseek_key:
+            raise ValueError('DEEPSEEK_API_KEY absente ; DeepSeek nécessite aussi OPENAI_API_KEY pour le Web')
         from common.verified_http import verified_session
         self.session = session if session is not None else verified_session()
 
     def __call__(self, payload):
+        if self.config.provider == 'deepseek':
+            return self._deepseek(payload)
+        return self._post('https://api.openai.com/v1/responses', payload, self.key, 'OpenAI')
+
+    def _post(self, url, payload, key, provider):
         # No retry: a timeout may already have consumed a paid response.
         try:
-            response = self.session.post('https://api.openai.com/v1/responses', json=payload,
-                headers={'Authorization': f'Bearer {self.key}'},
+            response = self.session.post(url, json=payload,
+                headers={'Authorization': f'Bearer {key}'},
                 timeout=(10, self.config.timeout_seconds), allow_redirects=False)
         except requests.RequestException as exc:
-            raise RuntimeError(f'OpenAI transport {type(exc).__name__}; pas de retry automatique') from None
+            raise RuntimeError(f'{provider} transport {type(exc).__name__}; pas de retry automatique') from None
         if response.status_code != 200:
             # Never log headers or provider error bodies which may echo sensitive input.
-            raise RuntimeError(f'OpenAI HTTP {response.status_code}; request_id={response.headers.get("x-request-id", "unknown")}')
-        return response.json()
+            raise RuntimeError(f'{provider} HTTP {response.status_code}; request_id={response.headers.get("x-request-id", "unknown")}')
+        try:
+            result = response.json()
+        except ValueError:
+            raise RuntimeError(f'{provider} réponse JSON invalide') from None
+        if not isinstance(result, dict):
+            raise RuntimeError(f'{provider} réponse JSON non objet')
+        return result
+
+    def _deepseek(self, payload):
+        # DeepSeek built-in web tools are not supported. Do not invent search traces.
+        web = self._post('https://api.openai.com/v1/responses', payload['web_request'], self.key, 'OpenAI Web')
+        searches = [item for item in web.get('output', [])
+                    if item.get('type') == 'web_search_call' and item.get('status') == 'completed']
+        if web.get('status') != 'completed' or not searches:
+            return {'status': 'failed', 'output': [], 'provider': 'deepseek',
+                    'web_response': web, 'error': 'Recherche Web incomplète ; analyse non lancée'}
+        instructions = (INSTRUCTIONS + '\nWeb research was performed separately. Use ONLY the supplied web evidence; '
+            'do not claim you browsed. Make your own assessment, not a copy of the preliminary assessment. '
+            'Allowed decisions: ' + ('LONG, SHORT, ABSTAIN' if payload['allow_short'] else 'LONG, ABSTAIN')
+            + '\nReturn json matching this schema: ' + json.dumps(SCHEMA))
+        analysis = {'model': payload['analysis_model'], 'max_tokens': payload['analysis_max_tokens'],
+                    'response_format': {'type': 'json_object'},
+                    'messages': [{'role': 'system', 'content': instructions},
+                                 {'role': 'user', 'content': json.dumps({'context': payload['context'],
+                                     'web_evidence': web}, ensure_ascii=False, allow_nan=False)}]}
+        try:
+            raw = self._post('https://api.deepseek.com/chat/completions', analysis, self.deepseek_key, 'DeepSeek')
+        except RuntimeError as exc:
+            # Preserve the paid Web evidence even if the second provider fails.
+            return {'status': 'failed', 'output': [], 'provider': 'deepseek',
+                    'web_response': web, 'analysis_request': analysis, 'error': str(exc)}
+        archived = {'provider': 'deepseek', 'web_response': web,
+                    'analysis_request': analysis, 'analysis_response': raw}
+        return dict(archived, **deepseek_output(archived))

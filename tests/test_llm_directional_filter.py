@@ -55,12 +55,13 @@ def test_actual_yaml_defaults():
     # Deployment model is user-configurable; the factory default is tested
     # through build_request below, not imposed on the user's config.yaml.
     assert isinstance(cfg.model, str) and cfg.model.strip()
-    assert build_request({}, cfg)['model'] == cfg.model
+    request = build_request({}, cfg)
+    assert (request['web_request']['model'] if cfg.provider == 'deepseek' else request['model']) == cfg.model
     assert 1 <= cfg.oracle_top_n <= 100  # User configuration, not a pinned factory default.
     # Deployment max_selected is user-configurable (currently 3); factory default
     # remains 5, tested separately. Never overwrite a user's YAML to satisfy a test.
     assert 0 <= cfg.max_selected <= cfg.oracle_top_n
-    assert cfg.enabled
+    assert isinstance(cfg.enabled, bool)  # The user may disable the IHM default.
     assert cfg.default_symbol_source == 'universe-file:univers_filtred_tradable.txt'
     assert cfg.default_oracle_batch_id == 'model-factory-20261003082853-e98332'
 
@@ -342,6 +343,28 @@ def test_old_protocol_cannot_be_reinterpreted_for_trading(isolated):
         conn.execute(update(runs).values(protocol_version='oracle-web-directional-v2'))
     with pytest.raises(ValueError, match='protocole'):
         runner.qualified_selection(isolated, 'test-run', date(2026, 10, 7), 'default', now=NOW)
+
+
+def test_deepseek_archived_selection_and_report(isolated):
+    from service.llm_directional.openai_client import deepseek_output
+    from service.llm_directional.report import report
+    def client(request):
+        web = response(request['context']['symbol'])
+        raw = {'choices': [{'finish_reason': 'stop', 'message': {
+            'content': web['output'][1]['content'][0]['text']}}]}
+        archive = {'web_response': web, 'analysis_response': raw}
+        return dict(archive, **deepseek_output(archive))
+    summary = runner.analyze(engine=isolated, batch_id='batch-test', trade_date=date(2026, 10, 7),
+        symbol_source='universe-file:test.txt', config=FilterConfig(enabled=True, provider='deepseek', max_selected=1),
+        inputs=[dict(symbol=s, oracle_rank=i+1, oracle_score=.9-i*.1) for i, s in enumerate(['ABC', 'XYZ'])],
+        client=client, run_id='test-run', check_account=False)
+    assert summary['selected'] == ['ABC']
+    _, selected = runner.qualified_selection(isolated, 'test-run', date(2026, 10, 7), 'default', now=NOW)
+    assert [row['symbol'] for row in selected] == ['ABC']
+    view = report(isolated, 'test-run')
+    assert view['provider_label'] == 'DeepSeek' and view['analysis_model'] == 'deepseek-flash'
+    # Current deployment is GPT: historical reporting/risk must use the archive.
+    assert view['provider'] == 'deepseek'  # Never relabel an archived run from current YAML.
 
 
 def test_research_run_is_archived_but_cannot_feed_risk(isolated):

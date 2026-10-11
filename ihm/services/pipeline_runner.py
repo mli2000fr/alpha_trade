@@ -2862,7 +2862,7 @@ def _wrap_llm_command(phase: str, command: list[str], options: PipelineLaunchOpt
     if enabled is None:
         enabled = bool(profile and profile.enabled)
     if type(enabled) is not bool:
-        raise ValueError('Choix protections GPT : booléen requis')
+        raise ValueError('Choix protections LLM : booléen requis')
     if (enabled or filter_config.allow_short) and phase in ('risk', 'execute'):
         # MOO/GTC protections require whole shares. Preserve the legacy command
         # byte-for-byte when GPT or its dedicated protections are disabled.

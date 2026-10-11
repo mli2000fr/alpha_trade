@@ -1370,7 +1370,8 @@ def _run_pipeline_workflow(
                 trade_date=signal_day,
                 llm_filter_run_id=options.llm_filter_run_id or f'llm-{uuid.uuid4().hex}',
                 force_trade_date_to_latest_snapshot=False)
-            _append_workflow_event(managed, f"Séance signal Oracle / GPT figée : {signal_day} (étapes 10/11/12).")
+            from service.llm_directional.config import load_filter_config
+            _append_workflow_event(managed, f"Séance signal Oracle / {load_filter_config().provider_label} figée : {signal_day} (étapes 10/11/12).")
         child_run_ids: list[str] = []
         child_runs_with_summary: dict[str, dict[str, object]] = {}
 

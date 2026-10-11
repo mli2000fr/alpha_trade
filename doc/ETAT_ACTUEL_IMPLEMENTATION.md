@@ -53,7 +53,7 @@ Valeurs locales : `cascade.oracle_atr_enabled: true`, mais
 modifie ni l'entraînement ni les scores stockés. Son effet dépend du parcours
 de sélection effectivement utilisé.
 
-### Oracle → GPT + recherche Web → risque → PAPER
+### Oracle → GPT / DeepSeek + recherche Web → risque → PAPER
 
 Implémentation : `service/llm_directional/{config,runner,validation,pipeline,
 risk_adapter,protections,repository}.py`, builders IHM et moteur d'exécution.
@@ -61,22 +61,27 @@ risk_adapter,protections,repository}.py`, builders IHM et moteur d'exécution.
 
 | Paramètre | Configuration locale actuelle | Défaut du composant sans option YAML |
 | --- | --- | --- |
-| activation IHM | enabled=true | false |
+| activation IHM | enabled=false (décochée) | false |
 | univers | universe-file:univers_filtred_tradable.txt | idem |
 | batch Oracle | model-factory-20261003082853-e98332 | idem |
-| nombre analysé / plafond retenu | 20 / 3 | 10 / 5 |
+| nombre analysé / plafond retenu | 10 / 3 | 10 / 5 |
 | SHORT autorisé | true | false |
 | SL spécifique | 7 % | 7 % dans ProtectionProfile |
 | sortie spécifique | ouverture séance 21, séance d'entrée = 1 | idem |
 | trailing spécifique | 15 % | 20 % dans ProtectionProfile |
 
-Le modèle demandé par la configuration est `gpt-6.1-sol`, clé via
-`OPENAI_API_KEY`. Ce document décrit la requête du code ; il ne certifie pas
+Au 11 octobre, `provider: openai` sélectionne GPT, modèle `gpt-6-luna`, clé via
+`OPENAI_API_KEY`. `provider: deepseek` sélectionne `deepseek_model` (par défaut
+`deepseek-flash`) et `DEEPSEEK_API_KEY`, **en conservant OpenAI pour la recherche
+Web traçable** : les deux clés et les deux facturations sont alors nécessaires.
+Les libellés IHM sont dynamiques et les anciennes analyses restent liées à leur
+configuration archivée. Aucun changement des protections ou des tailles de sélection.
+Ce document décrit la requête du code ; il ne certifie pas
 la disponibilité du modèle pour un compte API ni la gratuité de l'appel.
 
 Les N premiers sont pris par **score Oracle décroissant**, départagés par
 symbole. Ce sont des nombres de titres, pas des TOP N %. Pas d'intersection ATR
-ajoutée implicitement dans ce filtre. GPT cherche des éléments documentés et
+ajoutée implicitement dans ce filtre. Le LLM utilise des éléments documentés et
 répond LONG, SHORT ou abstention ; sa confidence est **non calibrée**.
 Sélection par confidence décroissante, puis rang Oracle, plafonnée à K au total.
 Une seule réponse invalide fait échouer le run ; aucune sélection partielle
@@ -91,7 +96,7 @@ Une analyse expirée ou déjà consommée ne doit pas être recyclée pour de no
 Archivage US : `llm_directional_runs`, `llm_directional_assessments`, puis
 `llm_directional_evaluations` pour l'évaluation future. Requête, réponse brute,
 empreintes, sources, décision, candidats retenus/non retenus et lien risque
-sont conservés. Les dates de publication rapportées par GPT ne sont **pas
+sont conservés. Les dates de publication rapportées par le LLM ne sont **pas
 certifiées indépendamment** (`source_timestamps_verified=False`).
 
 Compte `default` Alpaca PAPER seulement. SHORT : compte autorisé, actif

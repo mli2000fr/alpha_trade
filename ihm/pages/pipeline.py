@@ -26,6 +26,7 @@ from database.connection import get_sqlalchemy_engine
 from database.selector_reference import list_symbols_for_source, normalize_start_symbol
 from modelFactory.db_registry import load_symbols_for_source
 from modelFactory.oracle.artifact_contract import oracle_horizon_badge
+from service.llm_directional.config import load_filter_config
 
 from ihm.components.watcher_documentation import render_watcher_documentation_panel
 from ihm.pages import run_page_if_standalone
@@ -1212,7 +1213,7 @@ def _render_ml_scope_block(
         command_preview_options = _ml_prediction_scope_options(command_preview_options)
         if options.llm_filter_enabled and not command_preview_options.llm_filter_enabled:
             st.caption(
-                "Le filtre GPT + recherche Web ne s'applique pas à ce bouton historique/Oracle shadow. "
+                f"Le filtre {load_filter_config().provider_label} + recherche Web ne s'applique pas à ce bouton historique/Oracle shadow. "
                 "Cette prédiction sera lancée sans LLM ; le filtre reste activé pour le parcours PAPER du jour."
             )
     st.caption("Commande du bouton ci-dessous :")
@@ -1580,10 +1581,9 @@ def _render_launchable_step_panel(
                 if options.llm_filter_enabled:
                     # One explicit selector for both prediction and GPT; never reuse a stale LIVE choice.
                     _live_selected = options.ml_predict_batch_id or ""
-                    st.caption(f"📦 Batch Oracle du filtre GPT : `{_live_selected}`")
-                    from service.llm_directional.config import load_filter_config
                     _filter = load_filter_config()
-                    st.caption(f"GPT : {'LONG / SHORT / ABSTENTION' if _filter.allow_short else 'LONG / ABSTENTION'} — "
+                    st.caption(f"📦 Batch Oracle du filtre {_filter.provider_label} : `{_live_selected}`")
+                    st.caption(f"{_filter.provider_label} : {'LONG / SHORT / ABSTENTION' if _filter.allow_short else 'LONG / ABSTENTION'} — "
                                f"maximum {_filter.max_selected} titres au total, PAPER uniquement. "
                                "SHORT : actions entières, autorisation broker et emprunt ETB obligatoires.")
                 elif f"pipeline_ml_live_predict_batch_id_{step.key}" not in st.session_state:
@@ -1630,7 +1630,7 @@ def _render_launchable_step_panel(
                 _live_command = build_pipeline_command(step.key, _live_opts)
                 if options.llm_filter_enabled:
                     _signal_day = _live_command[_live_command.index('--trade-date') + 1]
-                    st.caption(f"📅 Séance signal Oracle / GPT : {_signal_day} — même date pour risque et exécution ; ce n'est pas la date du fill.")
+                    st.caption(f"📅 Séance signal Oracle / {load_filter_config().provider_label} : {_signal_day} — même date pour risque et exécution ; ce n'est pas la date du fill.")
                 st.code(
                     format_command_for_display(_live_command),
                     language="powershell",
@@ -1834,7 +1834,7 @@ def render() -> None:
         return
 
     options, live_confirmed = _build_launch_options()
-    with st.expander('🌐 Audit des sélections GPT + Web — PAPER'):
+    with st.expander(f'🌐 Audit des sélections {load_filter_config().provider_label} + Web — PAPER'):
         _llm_audit_id = st.text_input('Identifiant analyse à consulter',
             value=options.llm_filter_run_id or '', key='llm_directional_audit_id')
         if st.button('Consulter la sélection et les motifs', key='llm_directional_audit_load',
@@ -1844,6 +1844,8 @@ def render() -> None:
                 from service.llm_directional.report import report as _llm_report
                 _llm_audit = _llm_report(get_sqlalchemy_engine(), _llm_audit_id.strip())
                 st.caption(f"{_llm_audit['status']} · {_llm_audit['trade_date']} · batch {_llm_audit['batch_id']}")
+                st.caption(f"Fournisseur archivé : {_llm_audit['provider_label']} / {_llm_audit['analysis_model']} ; "
+                           f"Web OpenAI / {_llm_audit['web_model']}")
                 st.warning(_llm_audit['warning'])
                 st.dataframe(_llm_audit['candidates'], use_container_width=True)
                 st.json(_llm_audit['configuration'])

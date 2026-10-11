@@ -5,7 +5,7 @@ import re
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlsplit
 from jsonschema import validate
-from .openai_client import SCHEMA
+from .openai_client import SCHEMA, deepseek_output
 
 FRESH_QUALIFICATIONS = frozenset({'fresh_timestamp_claim', 'fresh_date_claim'})
 
@@ -56,8 +56,10 @@ def _publication_status(value, now, max_age_days):
 
 
 def parse_response(response, symbol, config, observed_at):
+    if config.provider == 'deepseek':
+        response = deepseek_output(response)
     if response.get('status') != 'completed':
-        raise ValueError('Réponse OpenAI incomplète/refusée')
+        raise ValueError(f'Réponse {config.provider_label} incomplète/refusée')
     searches, texts, known = [], [], set()
     for item in response.get('output', []):
         if item.get('type') == 'web_search_call' and item.get('status') == 'completed':

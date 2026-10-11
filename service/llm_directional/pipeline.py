@@ -49,7 +49,7 @@ def main():
         args.trade_date = resolve_us_signal_date(requested_date).isoformat()
         from datetime import date
         validate_analysis_window(date.fromisoformat(args.trade_date))
-        print(f'Date signal US figée : {requested_date} → {args.trade_date} (Oracle et GPT)', flush=True)
+        print(f'Date signal US figée : {requested_date} → {args.trade_date} (Oracle et {load_filter_config().provider_label})', flush=True)
     # Risk/execution keep the exact archived date; qualified_selection checks it
     # before downstream processes. Never fall back to another analysis run.
     command = pin_command_date(command, args.phase, args.trade_date)
@@ -63,7 +63,7 @@ def main():
         if config.protections is not None and args.specific_protections is not None:
             config = replace(config, protections=replace(config.protections, enabled=args.specific_protections))
         elif args.specific_protections:
-            raise ValueError('Configuration des protections GPT absente')
+            raise ValueError(f'Configuration des protections {config.provider_label} absente')
         from database.run_business_summaries import emit_run_summary
         emit_run_summary(analyze(engine=engine, batch_id=args.batch_id, trade_date=args.trade_date,
             symbol_source=args.symbol_source, capital_preset_key=args.capital_preset_key,
@@ -132,7 +132,7 @@ def _validate_targets(targets, holdings, selected, trade_date):
     seen = set()
     for target in targets:
         if target['symbol'] in seen:
-            raise ValueError('Cibles GPT dupliquées ; exécution bloquée')
+            raise ValueError('Cibles LLM dupliquées ; exécution bloquée')
         seen.add(target['symbol'])
         if str(target['trade_date']) != str(trade_date) or target['account_id'] != 'default':
             raise ValueError('Cible risque hors date/compte')
@@ -147,9 +147,9 @@ def _validate_targets(targets, holdings, selected, trade_date):
             raise ValueError('Position broker non qualifiée ; exécution bloquée')
         if selected.get(target['symbol']) == direction:
             if direction == 'short' and not qty.is_integer():
-                raise ValueError('SHORT GPT : quantité entière requise')
+                raise ValueError('SHORT LLM : quantité entière requise')
             if held and str(held.get('side')) != direction:
-                raise ValueError('Position opposée existante : retournement GPT interdit')
+                raise ValueError('Position opposée existante : retournement LLM interdit')
             if direction == 'short' and qty > held_qty:
                 shorts.append(target['symbol'])
             continue
@@ -161,7 +161,7 @@ def _validate_targets(targets, holdings, selected, trade_date):
 def _check_protection_choice(run, choice):
     from .protections import archived_profile
     if choice is not None and choice != bool(archived_profile(run['config_json'])):
-        raise ValueError('Protections différentes de l’analyse GPT figée ; utiliser le même choix ou une nouvelle analyse')
+        raise ValueError('Protections différentes de l’analyse LLM figée ; utiliser le même choix ou une nouvelle analyse')
 
 
 def _check_watcher_ready(engine, run):
@@ -172,7 +172,7 @@ def _check_watcher_ready(engine, run):
     from execution_engine.db_io import ExecutionRepository
     repo = ExecutionRepository(engine)
     if not repo.is_watcher_healthy(account_id='default'):
-        raise ValueError('Protections GPT : watcher continu du compte default absent ou périmé. '
+        raise ValueError('Protections LLM : watcher continu du compte default absent ou périmé. '
                          'Pipeline → Watcher protections → Démarrer service local, avant étape 12.')
     if short_enabled:
         _check_short_watcher_code(repo)
@@ -182,7 +182,7 @@ def _check_short_watcher_code(repo):
     """Do not trust a healthy heartbeat from a process running pre-SHORT code."""
     from service.forward_pit.watcher_startup import healthy_service, PROJECT_ROOT
     if not healthy_service(repo, 'default'):
-        raise ValueError('Watcher local PAPER absent ; SHORT GPT bloqué')
+        raise ValueError('Watcher local PAPER absent ; SHORT LLM bloqué')
     import psutil
     with repo.engine.connect() as conn:
         pid = conn.execute(text("""SELECT pid FROM watcher_heartbeats

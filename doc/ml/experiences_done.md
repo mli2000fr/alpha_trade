@@ -2459,3 +2459,37 @@ schémas conservés : **1 115 261 lignes supprimées**, six contrôles post-comm
 `backups/db/yahoo_consensus_before_clear/20261010T215706Z/manifest.json`.
 Anciens dumps, résultats d'expériences et données options non supprimés. Aucun
 autre batch modifié ou blocage levé ; ne pas réinjecter les archives automatiquement.
+
+## 2026-10-11 — Filtre Oracle : choix GPT / DeepSeek
+
+Livraison technique, pas une nouvelle validation directionnelle : paramètre
+`llm_directional_filter.provider`, libellés IHM dynamiques, décisions et protections
+PAPER inchangées. DeepSeek analyse les preuves Web OpenAI, les deux API sont
+nécessaires et facturées ; pas de recherche Web native DeepSeek supposée.
+Configuration, requêtes et RAW des deux fournisseurs archivés ; anciens runs GPT
+compatibles, aucun fallback automatique. Tests simulés, aucun appel LLM payant,
+ordre ou écriture SQL de production pour cette livraison.
+**519 tests passent** ; accès réel DeepSeek non testé avec la clé utilisateur.
+[Guide et limites](oracle_llm_directional_filter.md#choix-du-fournisseur--mise-à-jour-du-11-octobre-2026).
+
+## 2026-10-11 — Comparaison réelle GPT / DeepSeek, 11 titres
+
+Diagnostic demandé, recherche uniquement, mêmes entrées parent et mêmes preuves
+Web GPT réutilisées par DeepSeek ; pas une comparaison indépendante aveugle.
+GPT : 11 réponses valides, **1 LONG / 3 SHORT / 7 ABSTAIN**. DeepSeek : neuf
+réponses valides, **1 SHORT / 8 ABSTAIN**, deux réponses tronquées (FICO/FMC,
+budget 6 000 tokens partagé avec le raisonnement). **Aucun candidat éligible**.
+Résultat global PARTIAL_FAILED ; aucun retry, risque ou ordre. Le budget DeepSeek
+reste à qualifier avant usage opérationnel, aucun avantage prédictif démontré.
+[Protocole, tableau par titre et erreurs](llm_gpt_deepseek_comparison_11.md).
+
+## 2026-10-11 — Options historiques février–mars 2024 × TOP20 Oracle
+
+Audit SELECT seulement des barres déjà téléchargées, sans interrompre le backfill.
+Signal figé volume CALL moins PUT en log, paire ATM même strike/échéance proche
+de vingt jours. 10 994 observations sans Oracle ; 2 714 dans le TOP20 prédit
+H20, déciles réels conservés sur l'univers complet. H20 AUC **0,519 → 0,509** ;
+conditionnel février **0,502**, mars **0,535**. Aucun gain directionnel stable
+démontré, aucun modèle ou filtre promu. Disponibilité PIT/provenance non certifiées,
+lacune options le 2 février, deux mois et rendements chevauchants.
+[Méthode, horizons et limites](alpaca_options_feb_mar_2024_directional_audit.md).

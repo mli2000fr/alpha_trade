@@ -1,4 +1,4 @@
-"""Frozen, prospective protection policy for new GPT-selected US PAPER entries.
+"""Frozen, prospective protection policy for new LLM-selected US PAPER entries.
 
 The existing llm_directional_runs.config_json is the durable source, not today's
 YAML. No extra table is necessary. Ordinary, manual, FR and CN trades are excluded.
@@ -50,7 +50,7 @@ def profile_for_risk(engine, risk_run_id, symbol, *, account_id, broker_mode):
             FROM llm_directional_runs WHERE risk_run_id=:risk AND account_id='default'
             AND status='COMPLETED' '''), {'risk': risk_run_id}).mappings().all()
     if len(rows) > 1:
-        raise ValueError('Plusieurs analyses GPT liées au même risque')
+        raise ValueError('Plusieurs analyses LLM liées au même risque')
     if not rows or symbol not in json.loads(rows[0]['selected_json']):
         return None
     return archived_profile(rows[0]['config_json'])
@@ -60,7 +60,7 @@ def scoped_execution_config(config, profile):
     if profile is None or not profile.enabled:
         return config
     if config.market_code != 'US_EQ' or config.broker_mode != 'paper' or config.resolved_account_id != 'default':
-        raise ValueError('Protections GPT réservées au compte default US PAPER')
+        raise ValueError('Protections LLM réservées au compte default US PAPER')
     return replace(config, llm_protection_profile=asdict(profile),
                    trailing_pct_override=profile.trailing_stop_pct,
                    swing_only=False,  # Dedicated stops must protect from the fill, not tomorrow.
@@ -83,7 +83,7 @@ def safe_trailing_trigger(fill_price, profile, side='buy'):
 
 
 def persist_order(repo, intent, order, *, account_id):
-    """Critical GPT protection lineage must not silently fail to persist."""
+    """Critical LLM protection lineage must not silently fail to persist."""
     from execution_engine.order_intents import intent_to_alpaca_payload
     repo.upsert_execution_order_request_from_intent(intent, account_id=account_id, status=order.status)
     repo.upsert_execution_broker_order(intent, order, account_id=account_id,
@@ -118,7 +118,7 @@ def exit_open(opened_at, profile, *, calendar=None):
     calendar = calendar or get_market_calendar('US_EQ', allow_us_weekday_fallback=False)
     sessions = [s for s in calendar.sessions(day, day+timedelta(days=profile.exit_session*3+32)) if s.is_open]
     if not sessions or sessions[0].session_date != day or len(sessions) < profile.exit_session:
-        raise ValueError('Calendrier US insuffisant pour la sortie GPT')
+        raise ValueError('Calendrier US insuffisant pour la sortie LLM')
     due = sessions[profile.exit_session-1]
     if due.open_at_utc is None:
         raise ValueError('Heure officielle d’ouverture US absente')
@@ -163,7 +163,7 @@ def apply_scheduled_exit(watcher, row, profile, metrics, *, now=None):
     account = str(row['account_id'])
     broker_mode = str(row.get('broker_mode') or 'paper')
     if account != 'default' or broker_mode != 'paper':
-        raise ValueError('Sortie temporelle GPT réservée au compte default PAPER')
+        raise ValueError('Sortie temporelle LLM réservée au compte default PAPER')
     parent, symbol = str(row['parent_intent_id']), str(row['symbol'])
     if watcher._repo.has_open_exit_order_for_symbol(account_id=account, symbol=symbol):
         return
@@ -171,14 +171,14 @@ def apply_scheduled_exit(watcher, row, profile, metrics, *, now=None):
     children = watcher._repo.load_open_child_orders(parent)
     for child in children:
         if not child.broker_order_id:
-            raise RuntimeError('Protection sans identifiant broker ; sortie GPT bloquée')
+            raise RuntimeError('Protection sans identifiant broker ; sortie LLM bloquée')
         if not broker.cancel_broker_order(child.broker_order_id):
-            raise RuntimeError('Annulation non confirmée ; sortie GPT bloquée')
+            raise RuntimeError('Annulation non confirmée ; sortie LLM bloquée')
         latest = broker.poll_order_status(child.broker_order_id, child.intent_id)
         if latest.status == OrderStatus.FILLED:
             return
         if latest.status not in {OrderStatus.CANCELED, OrderStatus.EXPIRED, OrderStatus.REJECTED}:
-            raise RuntimeError('Protection encore active ; nouvelle vente GPT interdite')
+            raise RuntimeError('Protection encore active ; nouvelle vente LLM interdite')
         child_intent = watcher._build_existing_child_intent(
             _parent_context(parent, row), child,
             IntentRole.TRAILING_STOP if child.order_type == 'trailing_stop' else IntentRole.INITIAL_STOP)
@@ -191,7 +191,7 @@ def apply_scheduled_exit(watcher, row, profile, metrics, *, now=None):
     if qty <= 0:
         return
     if not is_effectively_integer_quantity(qty):
-        raise ValueError('Quantité fractionnaire : sortie MOO GPT indisponible')
+        raise ValueError('Quantité fractionnaire : sortie MOO LLM indisponible')
     # An expired/rejected opening order must not prevent a late market recovery.
     # Stable within one attempt/session; a later session is a distinct retry.
     attempt = action if action == 'MOO' else f'{action}:{now.astimezone(ZoneInfo("America/New_York")).date()}'
@@ -204,10 +204,10 @@ def apply_scheduled_exit(watcher, row, profile, metrics, *, now=None):
         time_in_force='opg' if action == 'MOO' else None)
     order = submit_order(watcher._repo, broker, intent, account_id=account)
     if order.status in {OrderStatus.REJECTED, OrderStatus.FAILED}:
-        raise RuntimeError('Sortie temporelle GPT rejetée : réconciliation et réarmement requis')
+        raise RuntimeError('Sortie temporelle LLM rejetée : réconciliation et réarmement requis')
     metrics['time_stop_submitted'] = int(metrics.get('time_stop_submitted', 0)) + 1
     watcher._persist_event(make_event(intent.exec_run_id, EventType.ORDER_SUBMITTED,
-        f'GPT sortie séance {profile.exit_session} : {action} {symbol}', symbol=symbol,
+        f'LLM sortie séance {profile.exit_session} : {action} {symbol}', symbol=symbol,
         intent_id=intent.intent_id, broker_order_id=order.broker_order_id,
         payload={'policy': asdict(profile), 'due_open_utc': due.isoformat(),
                  'action': action, 'late': action != 'MOO', 'time_in_force': intent.time_in_force or 'day'}))

@@ -1,4 +1,80 @@
-# Filtre directionnel Oracle → GPT + Web → risque → PAPER
+# Filtre directionnel Oracle → GPT / DeepSeek + Web → risque → PAPER
+
+## Choix du fournisseur — mise à jour du 11 octobre 2026
+
+À la demande de l'utilisateur, `enabled: false` laisse désormais la case du
+filtre **décochée par défaut**, quel que soit le fournisseur. L'activation
+manuelle dans l'IHM reste possible. Une session déjà ouverte peut conserver
+son choix précédent ; le décocher une fois dans cette session.
+
+Le choix se fait dans `config.yaml`, section `llm_directional_filter` :
+
+```yaml
+provider: openai  # openai = GPT ; deepseek = analyse DeepSeek
+model: gpt-6-luna  # Modèle OpenAI : analyse GPT ou collecte Web pour DeepSeek
+api_key_env: OPENAI_API_KEY
+deepseek_model: deepseek-flash
+deepseek_api_key_env: DEEPSEEK_API_KEY
+```
+
+Changer uniquement `provider` permet de conserver les modèles et paramètres de
+chaque branche. Les noms de variables désignent les secrets d'environnement,
+jamais des clés à inscrire en YAML. GPT reste sélectionné par défaut. Les libellés
+du filtre, des univers, du batch Oracle et des protections suivent le fournisseur
+configuré ; le rapport d'une ancienne analyse indique son fournisseur **archivé**.
+
+**DeepSeek ne remplace pas le moteur de recherche Web.** Sa documentation
+[Responses API](https://api-docs.deepseek.com/api/create-response/) indique que
+les outils intégrés sont ignorés. Le mode livré est donc **hybride** :
+
+1. OpenAI effectue la recherche Web traçable avec la requête existante.
+2. DeepSeek reçoit le contexte Oracle et la réponse Web archivée, puis produit
+   sa propre décision JSON via Chat Completions.
+3. La validation locale exige les mêmes identités, sources récentes réellement
+   rencontrées, seuils, fenêtre prospective et protections PAPER.
+
+Ce mode exige **OPENAI_API_KEY et DEEPSEEK_API_KEY**, et facture **les deux API**.
+Le modèle DeepSeek est configurable ; `deepseek-flash` figure dans l'exemple
+officiel [JSON Output](https://api-docs.deepseek.com/guides/json_mode/).
+Le préflight vérifie son accès réel, pas un remplacement automatique.
+DeepSeek n'ouvre pas les pages lui-même et ne reçoit pas leur texte intégral
+certifié : il exploite les traces et la synthèse OpenAI, incluant l'avis préliminaire.
+Il ne s'agit donc ni d'une recherche DeepSeek autonome, ni d'une comparaison
+indépendante des fournisseurs. Aucun gain directionnel n'est démontré.
+
+Les réponses des deux fournisseurs et la requête DeepSeek effective sont
+archivées dans `llm_directional_assessments.response_json` ; la configuration
+figée dans `llm_directional_runs.config_json` conserve le fournisseur et les deux
+modèles. Les tables existantes suffisent, aucune migration n'est nécessaire.
+Si DeepSeek échoue après la recherche, la réponse Web est conservée mais le run
+ne publie aucun candidat. Une réponse tronquée, vide ou sans Web qualifiable
+ne devient pas une décision exploitable. Pas de retry payant ni de fallback GPT.
+La relecture reconstruite utilise les vrais RAW archivés, jamais des citations
+ajoutées par DeepSeek. Les anciens runs sans champ `provider` restent GPT et
+gardent leur contrat de requête existant.
+
+Contrôle préalable, sans génération payante :
+
+```powershell
+python -m service.llm_directional.preflight --check-api
+```
+
+Cette commande consulte les métadonnées modèles, vérifie les clés sans les
+afficher, les tables et le compte principal PAPER. Elle ne garantit pas un futur
+appel réussi. Les étapes 10/11/12 et `us_pipeline` utilisent la même configuration.
+Tests locaux simulés uniquement pour cette livraison : pas d'appel LLM payant,
+pas d'ordre, pas de modification des données SQL ou des modèles Oracle.
+Validation : **519 tests passent** (filtre, sources, archives, SHORT, protections,
+dates US, workflow, batch et IHM). L'accès réel au modèle DeepSeek reste à
+vérifier avec la clé de l'utilisateur ; aucun succès API réel n'est revendiqué.
+
+**Test réel ultérieur du 11 octobre :** accès confirmé et comparaison autorisée
+sur les 11 titres précédents, avec preuves Web partagées. GPT : 11 réponses valides,
+1 LONG / 3 SHORT / 7 ABSTAIN. DeepSeek : 9 réponses valides, 1 SHORT / 8 ABSTAIN,
+deux JSON tronqués par le budget de 6 000 tokens incluant le raisonnement.
+Zéro candidat éligible, aucun risque/ordre. La branche DeepSeek est FAILED,
+comparaison PARTIAL_FAILED ; son transport fonctionne mais le budget nécessite
+une qualification avant usage opérationnel. [Comparatif détaillé](llm_gpt_deepseek_comparison_11.md).
 
 <!-- doc-status:start -->
 > Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).

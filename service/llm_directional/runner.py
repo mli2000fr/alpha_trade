@@ -110,6 +110,8 @@ def analyze(*, engine, batch_id, trade_date, symbol_source, capital_preset_key='
         protocol_version=PROTOCOL_VERSION)
     items, errors = [], []
     try:
+        logging.info('Filtre %s modèle=%s ; Web OpenAI modèle=%s ; PAPER uniquement',
+                     config.provider_label, config.analysis_model, config.model)
         client = client or ResponsesClient(config)
         for context in contexts:
             request = build_request(json.loads(dumps(context)), config)
