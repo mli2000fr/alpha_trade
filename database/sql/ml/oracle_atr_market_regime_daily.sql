@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.oracle_atr_market_regime_daily (
  intersection_oracle_score_order_returns_pct JSON NULL COMMENT 'Intersection Oracle ATR: rendements connus en ordre score Oracle decroissant, sans remplacement',
  predicted_oracle_top_returns_pct JSON NULL COMMENT 'N premiers scores Oracle: rendements connus signes en % sans remplacement',
  predicted_oracle_score_order_returns_pct JSON NULL COMMENT 'Rendements connus des N premiers Oracle, ordre score sans reclassement ni remplacement',
+ predicted_oracle_score_order_max_prices JSON NULL COMMENT 'N premiers Oracle en ordre score: max high J+1..J+H, USD sur echelle prix J; retrospectif',
  atr_top_returns_pct JSON NULL COMMENT 'N premiers ATR20/prix: rendements connus signes en % sans remplacement',
  missing_returns_policy VARCHAR(16) NOT NULL DEFAULT 'strict',
  movement_quality JSON NULL COMMENT 'Couverture, ordre des symboles et inconnus de chaque liste; TOP reel partiel explicite',

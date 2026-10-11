@@ -2536,3 +2536,31 @@ après ouverture faible et instable. Aucune vue PIT admissible avec les dernièr
 dates de mise à jour : **association descriptive, pas GO prédictif/trading**.
 Aucune API, écriture SQL, modification de modèle ou batch. Trois tests passés.
 [Résultats, protocole et limites](us_news_same_day_sentiment_audit.md).
+
+## 2026-10-11 — P-PATH-0 : D1/D10 du mouvement dominant pendant vingt séances
+
+Audit terminé, lectures SQL seulement, aucun entraînement ni modification de
+modèle, label SQL, batch ou ordre. Depuis la clôture ajustée J, retenir la plus
+grande excursion absolue parmi les high/low J+1…J20, avec son signe ; égalités
+ambiguës exclues. Déciles calculés sur l'univers complet quotidien scoré avant
+l'étude du pool Oracle TOP20 % ∩ ATR TOP20 %, pas sur le seul pool sélectionné.
+
+2 743 313 observations, 1 790 titres, 1 555 dates ; 419 168 observations appariées
+dans le pool sur 1 533 dates. 174 entrées du profil : 129 features + score Oracle
+et 44 alias de rang monotone. Développement 2020–2022, orientations figées avec
+labels déjà disponibles, confirmation 2023/2024 partielle/2025/2026 partielle.
+
+Environ **15 % des observations changent de signe**, mais la majorité des D1/D10
+reste dans la même queue. **Aucune des dix pistes choisies sur le développement
+ne passe la confirmation**. AUC D1/D10 parcours 2025→2026 : score Oracle
+0,5321→0,4929 ; ATR20 0,5357→0,4996 ; volatilité60 0,5360→0,4898.
+Sensibilités sur les clôtures, grandes plages intraday et horizons non superposés
+archivées. Verdict `NO_STABLE_UNIVARIATE_DOMINANT_PATH_SEPARATION` : pas un verdict
+sur un nouveau modèle multivarié ou toutes les données de l'application.
+
+2026 non vierge et couverture conditionnelle : 21 dates mai/juin sous 95 %,
+labels archivés non qualifiés le 3 septembre ; aucune réparation SQL ici.
+News/sentiment, consensus et VIX ne sont pas dans ce profil, donc non testés.
+**41 tests ciblés passent**. Un éventuel Oracle entraîné sur l'amplitude du
+parcours reste un protocole distinct, non lancé.
+[Contrat, résultats et limites](oracle_dominant_path_separability_h20.md).

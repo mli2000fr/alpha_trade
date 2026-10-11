@@ -108,6 +108,8 @@ def test_run_upserts_only_aggregate_and_repeat_has_same_keys():
          patch('service.market.oracle_atr_study.load_universe_file_symbols',return_value=list(scores.symbol)), \
          patch('service.market.oracle_atr_study._get_nyse_calendar',return_value=calendar), \
          patch('service.market.oracle_atr_study.load_oracle_atr_by_date',return_value={'2025-01-02':atr}), \
+         patch('service.market.oracle_path_maxima.load_price_peaks',return_value={
+             '2025-01-02': {s: {'max_price': 20.} for s in scores.symbol}}), \
          patch('service.market.oracle_atr_study.pd.read_sql',side_effect=[pd.DataFrame([macro]),scores,labels]*2):
         for _ in range(2):
             result=run(batch_id='batch',symbol_source='universe-file:test.txt',
