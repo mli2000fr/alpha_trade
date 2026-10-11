@@ -1,5 +1,9 @@
 # US — Audit de la dégradation du bundle ancien, janvier–mars 2026
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Statut au 5 octobre 2026
 
 Le diagnostic directionnel et la comparaison de six contextes figés sont calculés.

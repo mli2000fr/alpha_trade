@@ -1,5 +1,9 @@
 # Tapes historiques des sélections Oracle concentrées
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## État au 7 octobre 2026
 
 L'assembleur est implémenté ; le pilote du 2 janvier 2025 est terminé.

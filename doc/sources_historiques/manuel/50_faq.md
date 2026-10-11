@@ -1,5 +1,9 @@
 # 50. FAQ — questions fréquentes des débutants
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Démarrage
 
 ### ❓ Combien de temps avant de pouvoir gagner de l'argent ?
@@ -127,7 +131,7 @@ préférez un ETF MSCI World en DCA.
 
 Oui via les paramètres (page Settings) et le code Python. Mais cela
 demande une bonne compréhension. Lisez d'abord
-[doc/selector.md](../backup/selector.md) et [doc/risk_management.md](../backup/risk_management.md).
+doc/selector.md — référence historique absente localement : `../backup/selector.md` et doc/risk_management.md — référence historique absente localement : `../backup/risk_management.md`.
 
 ## Questions opérateur (session mai 2026)
 

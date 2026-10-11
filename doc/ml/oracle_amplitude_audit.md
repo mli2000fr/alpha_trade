@@ -1,5 +1,9 @@
 # E6 — Audit direction-neutral de l’amplitude Oracle
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Décision recherchée
 
 Les expériences E2 à E5 n’ont pas trouvé de signal directionnel OOF suffisamment

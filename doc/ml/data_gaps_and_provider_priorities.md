@@ -1,5 +1,9 @@
 # Données manquantes et priorités fournisseurs pour la recherche ML
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## 1. Objet du document
 
 Ce document recense les expériences ML qui sont bloquées, suspendues ou restées non concluantes principalement à cause d'un manque de données. Il sert de cahier des charges pour rechercher et comparer des fournisseurs.

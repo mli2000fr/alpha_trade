@@ -1,5 +1,9 @@
 # E19-A2 — Contrat PIT fondamental
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## 1. Statut
 
 E19-A2 corrige le contrat applicatif identifié par E19-A. Le code, le schéma et

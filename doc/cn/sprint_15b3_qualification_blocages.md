@@ -1,5 +1,9 @@
 # Sprint 15-B3 — Qualification des blocages financement/prêt de titres
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Suite préparée : [15-B4 — dataset quotidien et pré-enregistrement](./sprint_15b4_dataset_szse_et_preregistration.md). Collecteur et smoke validés ; collecte complète encore à lancer.
 
 Exécuté le 28 septembre 2026. Suite de [15-B2](./sprint_15b2_eligibilite_et_contrat_pit.md).

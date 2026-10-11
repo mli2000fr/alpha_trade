@@ -1,6 +1,27 @@
 # Catalogue des modules et fichiers clés
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Ce catalogue aide à localiser rapidement le propriétaire d'un comportement. Les fonctions privées ne sont pas une API stable ; partir du point d'entrée public, puis suivre les appels.
+
+## Parcours ajoutés : repères du 10 octobre 2026
+
+| Propriétaire | Fonction actuelle |
+| --- | --- |
+| common/market_context.py, common/config_loader.py | marché explicite, capacités, choix des fichiers de configuration |
+| database/router.py, config/databases.yaml | bases physiques US/CN/FR et allowlists |
+| ihm/services/batch_management.py, ihm/pages/batches.py | catalogues séparés, tâches Windows, état, commandes et blocages |
+| service/forward_pit/batch.py, us_pipeline.py, recovery_gate.py, watcher_startup.py | collectes US, workflow planifié 1–14, secours et prérequis watcher |
+| service/llm_directional/ | Oracle → GPT/Web prospectif → risque/PAPER, archivage et protections figées |
+| service/market/oracle_atr_study.py, new_entry_data_guard.py | étude rétrospective et contrôle live séparés |
+| service/baostock/, dataIntegrityEngine/cn_*, modelFactory/cn_* | données/recherche/replay CN ; propriétaires quotidiens bloqués selon catalogue |
+| service/fr/, service/inpi/ | collecte, staging, preuves et qualification FR ; droits/capacités contrôlés |
+
+Ce tableau explique les responsabilités. L'[inventaire statique complet](reference/modules_generes.md)
+et les [API régénérées](api/README.md) donnent les chemins et signatures actuels,
+y compris les scripts et les migrations US/CN/FR. [État actuel](ETAT_ACTUEL_IMPLEMENTATION.md).
 
 ## `core/`
 
@@ -37,6 +58,10 @@ Ce catalogue aide à localiser rapidement le propriétaire d'un comportement. Le
 
 ## `modelFactory/`
 
+`analyst_research/` est un propriétaire distinct : collecte, parseurs, disponibilité,
+features et monitoring des snapshots analystes. Son existence ne signifie pas que
+le batch consensus soit autorisé/actif ; consulter le catalogue et les blocages.
+
 `cli.py` construit la configuration et distribue train/predict. `orchestrator.py` séquence les familles. `data_loader.py`, `dataset.py`, `features.py`, `labeling.py` forment la donnée. `trainer*.py`, `global_model.py`, `global_ranking.py` entraînent. `evaluation.py`, `calibration.py`, `champion_selection.py` gouvernent. `predictor.py`, `run_predict.py` infèrent. `db_registry.py`, `report.py`, `runtime_status.py` persistent et exposent l'état. Les sous-dossiers `oracle/`, `global_direction/`, `dip_research/` et `directional_data_research/` ont des objectifs spécialisés.
 
 ## `risk_management/`
@@ -61,4 +86,3 @@ Ce catalogue aide à localiser rapidement le propriétaire d'un comportement. Le
 - `lineage/` : graphe de traçabilité ;
 - `tax/wash_sale.py` : règles wash-sale ;
 - `formal/` : invariants et vérification formelle.
-

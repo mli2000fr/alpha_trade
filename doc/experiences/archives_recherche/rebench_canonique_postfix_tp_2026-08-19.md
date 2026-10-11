@@ -1,5 +1,9 @@
 # 📊 Étape A — Re-benchmark canonique post-fix TP (B25 P14 m8)
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 **Date** : 2026-08-19
 **Méthode** : re-run exact des runs production-parity sur le HEAD actuel (contient le fix `take_profit_price`, commit `26cfa346` inclus), **même commande CLI** que l'original (reconstituée depuis `_console.log` du benchmark).
 

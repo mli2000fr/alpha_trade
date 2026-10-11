@@ -1,5 +1,9 @@
 # Sandbox health nocturne
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 `ihm/services/sandbox_health_loader.py` lit `artifacts/sandbox_runs/_rollup.json` et `<date>/health.json`. Absence ou JSON invalide retourne `{}` : distinguer « aucune preuve lisible » d’un run vert. La page et l’aide sont dans `ihm/pages/sandbox_health.py` et `ihm/help/sandbox_health.yaml`.
 
 ## Triage

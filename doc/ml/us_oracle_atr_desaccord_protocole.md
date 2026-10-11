@@ -1,5 +1,9 @@
 # US — Audit figé du désaccord Oracle × ATR
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 4 octobre 2026, protocole avant résultats. Aucun entraînement, SQL write,
 modèle ou batch modifié. Réutilisation des panels causaux déjà calculés
 2019–2025 et janvier–mars 2026 du batch H20 e98332.

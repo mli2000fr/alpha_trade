@@ -1,5 +1,9 @@
 # IHM — Guide d'usage
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Objectif
 
 Ce document résume le fonctionnement du module `ihm/` et les commandes utiles pour :
@@ -650,7 +654,7 @@ envoyé automatiquement aux destinataires configurés.
 ### 11.1 Comportement
 
 - Hook branché côté backend dans
-  [`ihm/services/process_registry.py`](../../ihm/services/process_registry.py)
+  [`ihm/services/process_registry.py`](../../../../ihm/services/process_registry.py)
   via `_dispatch_finished_notification(...)`, appelé après
   `_finalize_if_needed` (steps) et `_finalize_workflow_record` (workflows).
 - Les **sous-runs** d'un workflow (`parent_run_id != None`) sont **ignorés** :
@@ -689,7 +693,7 @@ workflow pipeline** :
 
 Préférences persistées dans
 `artifacts/ihm_preferences/notifications.json` (gérées par
-[`ihm/services/notifications_preferences.py`](../../ihm/services/notifications_preferences.py)).
+[`ihm/services/notifications_preferences.py`](../../../../ihm/services/notifications_preferences.py)).
 **Destinataire par défaut** si aucun fichier n'existe : `gamer.2000.fr@gmail.com`.
 
 ### 11.4 Configuration SMTP

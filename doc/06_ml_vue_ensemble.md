@@ -1,5 +1,9 @@
 # Module ML — vue d'ensemble
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Documents spécialisés
 
 - [Orchestration train/predict et artefacts](ml/orchestration_train_predict.md)
@@ -14,7 +18,17 @@ Ce document positionne les familles. Les documents spécialisés détaillent les
 
 ## Modes CLI
 
-Le point d'entrée est `python -m modelFactory`. Les modes principaux sont `train` et `predict`; des politiques de reconstruction/rafraîchissement existent pour les batches. Les sources autorisées incluent `tradable-universe`, `stock-bars-daily` et `ticket-recherche`, mais la production ML-first utilise `tradable-universe`.
+Le point d'entrée US général est `python -m modelFactory`, modes train/predict.
+Les sources comprennent tradable-universe, stock-bars-daily, ticket-recherche
+et universe-file:<fichier>. Le batch US courant transmet un fichier commun ;
+le risque contrôle ensuite l'univers tradable. CN/FR ont des commandes dédiées
+et des bases isolées, pas une invocation US avec des tickers étrangers.
+
+Oracle-only, classement global et modèle directionnel ne sont pas équivalents.
+Le filtre GPT prospectif PAPER est dans service/llm_directional, pas un nouveau
+modèle entraîné : il archive des analyses non calibrées et leur sélection.
+Les recherches de direction faible/D1-D10 restent des expériences, pas une
+preuve de performance du serving. [État actuel](ETAT_ACTUEL_IMPLEMENTATION.md).
 
 ## Familles de modèles
 

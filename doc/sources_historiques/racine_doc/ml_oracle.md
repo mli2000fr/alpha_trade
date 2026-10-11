@@ -1,5 +1,9 @@
 # Spécification — Oracle Layer au-dessus du Global Model
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 > **Statut** : 📐 Spécification (2026-08-18) — révisée suite au retour opérateur (même jour)
 > **Contexte** : analyse Oracle du run `20260817_205031_2a2836d1`
 > **Objectif** : construire une **Oracle Layer** (TOP / BOTTOM) qui apprend, sur

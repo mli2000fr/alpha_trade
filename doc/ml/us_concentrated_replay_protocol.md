@@ -1,5 +1,9 @@
 # Sélections Oracle concentrées — protocole exploratoire et préparation
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 Pré-enregistrement du 6 octobre 2026. **Cette étape prépare les candidats
 et les preuves de prix ; elle ne calcule aucun portefeuille ni PnL.**
 Suite de la [qualification des prix suspects](us_extreme50_price_qualification.md).

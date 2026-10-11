@@ -1,5 +1,16 @@
 # Page Batch — périmètres US, CN et FR séparés
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
+Actualisé le **10 octobre 2026** : [catalogue courant](operations/catalogue_batchs_actuel.md)
+et [guide opérateur](guide_utilisateur/19_batchs_et_marches.md).
+US : 25 entrées/16 activées ; CN : 10/3 ; FR : 13/9. Ces chiffres décrivent
+les YAML, pas installation ou réussite. Les blocages droits/prudence restent
+noirs avec ⛔ ⚖️, les échecs opérationnels rouges/gras. Les horaires FR/CN
+actuels sont [ici](operations/horaires_fr_cn_presence_pc.md).
+
 5 octobre 2026. Workflow & Orchestration → Batch → **Périmètre des batchs** :
 États-Unis (US), Chine (CN), France (FR). US reste le défaut ; l'ancien choix
 US/CN combiné est ramené vers US pour les sessions déjà ouvertes.

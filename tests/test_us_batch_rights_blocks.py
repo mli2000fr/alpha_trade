@@ -12,7 +12,6 @@ from service.forward_pit import batch
 
 ROOT = Path(__file__).resolve().parents[1]
 BLOCKS = [
-    ("analyst_snapshot_collection", "BLOCKED_YAHOO_AUTOMATED_ACCESS"),
     ("fred_alfred_vintage_sync", "BLOCKED_FRED_ARCHIVE_ML_RIGHTS"),
     ("finra_short_volume_sync", "BLOCKED_FINRA_PREDICTIVE_USE"),
 ]
@@ -27,7 +26,7 @@ def test_us_block_is_visible_and_enabled_toggle_cannot_unlock(name, status):
     assert not replace(spec, enabled=True).runnable
 
 
-@pytest.mark.parametrize("name,status", BLOCKS[1:])
+@pytest.mark.parametrize("name,status", BLOCKS)
 @pytest.mark.parametrize("enabled", [False, True])
 def test_forward_direct_cli_stops_before_sql_and_handler(monkeypatch, name, status, enabled):
     monkeypatch.setattr(batch, "load_batch_config", lambda path: {name: {"enabled": enabled, "status": status}})
@@ -46,7 +45,7 @@ def test_forward_direct_cli_stops_before_sql_and_handler(monkeypatch, name, stat
 @pytest.mark.parametrize("enabled", [False, True])
 def test_analyst_direct_cli_cannot_collect_when_blocked(monkeypatch, capsys, enabled):
     monkeypatch.setattr(analyst, "load_batch_config", lambda: {
-        "analyst_snapshot_collection": {"enabled": enabled, "status": BLOCKS[0][1]}})
+        "analyst_snapshot_collection": {"enabled": enabled, "status": "BLOCKED_YAHOO_AUTOMATED_ACCESS"}})
 
     def forbidden(*args, **kwargs):
         pytest.fail("Blocked analyst CLI must not resolve universe or collect")

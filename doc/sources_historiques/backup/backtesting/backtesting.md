@@ -1,5 +1,9 @@
 # Backtesting & Backfill — guide d’usage
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 > Mise à jour : mai 2026
 > Références principales : `backtesting/`, `ihm/pages/backtesting.py`, `ihm/services/backtesting_runner.py`
 

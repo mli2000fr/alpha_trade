@@ -1,5 +1,32 @@
 # Étude quotidienne Oracle × ATR et régime de marché
 
+## Ajout du 11 octobre 2026 — ordre Oracle de l'intersection
+
+`intersection_oracle_score_order_returns_pct` contient les rendements réalisés
+des mêmes titres que l'intersection **Oracle TOP20 ∩ ATR TOP20**, mais conservés
+dans l'ordre décroissant de `proba_extreme` ; égalités départagées par symbole.
+Pas de reclassement par rendement futur. Exemple : l'ordre prédit donne
+`[1,-10,20]`, tandis que l'ordre d'amplitude réalisée donne `[20,-10,1]`.
+Ces nombres sont des résultats futurs signés, en pourcentages arrondis à l'entier,
+pas des scores/prévisions de rendement ni des profits de portefeuille.
+
+En mode partiel, les rendements inconnus sont omis sans remplacer les titres,
+en conservant l'ordre relatif. `movement_quality.lists` expose la sélection,
+les symboles de chaque valeur, leurs positions initiales et les manquants.
+En mode strict, une intersection incomplète laisse cette nouvelle liste à NULL.
+L'ancienne `intersection_returns_pct` conserve son comportement historique.
+
+SQL : `database/sql/ml/oracle_atr_intersection_score_order_migration.sql` ;
+Alembic `0101_oatr_intersection_order` (US uniquement). Nouvelle version de calcul
+`oracle_atr_v6_intersection_order` : les lignes anciennes seront recalculées à
+la prochaine alimentation, même si elles étaient complètes en version v5.
+L'ajout de colonne seul ne remplit pas les lignes historiques. Aucun recalcul
+historique ni changement de modèle ou sélection live demandé ici.
+
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## À quoi sert cette table ?
 
 `alpha_trade.oracle_atr_market_regime_daily` rapproche les indicateurs macro du

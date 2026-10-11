@@ -1,5 +1,9 @@
 # S7 — Feature whitelist per-symbol : mécanisme implémenté, expérience NO-GO
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 **Date** : 2026-08-18
 **Statut** : ❌ NO-GO (piste fermée proprement — l'infrastructure reste disponible, désactivée par défaut)
 **Modèles de référence** : B25 (Global Ranking) gelé ; BL (comportement legacy per-symbol) reste la référence.

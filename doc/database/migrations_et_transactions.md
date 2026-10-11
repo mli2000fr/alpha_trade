@@ -1,8 +1,20 @@
 # Migrations, transactions et idempotence
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Retour : [base de données](../15_base_de_donnees.md)
 
-Alembic versionne le schéma dans `alembic/versions/`. Une migration ajoute/modifie DDL, index et backfill avec stratégie downgrade lorsque réaliste. Ne jamais réécrire une révision appliquée. Tester upgrade depuis la révision précédente sur une copie et vérifier volumes/locks.
+Les migrations sont **séparées par base** : US `alembic/versions/`, CN
+`alembic_cn/versions/`, FR `alembic_fr/versions/`. Choisir le fichier `.ini`
+du marché et vérifier son alias/base avant toute commande ; un `upgrade head`
+US ne migre pas alpha_trade_cn ou alpha_trade_fr. Les DDL SQL livrés ne prouvent
+pas leur déploiement. [Inventaire des trois graphes et DDL](../reference/schema_et_migrations_generes.md).
+
+Une migration ajoute/modifie DDL, index et backfill avec stratégie downgrade
+lorsque réaliste. Ne jamais réécrire une révision appliquée. Tester upgrade
+depuis la révision précédente sur une copie et vérifier volumes/locks.
 
 ## Cycle d’une migration
 

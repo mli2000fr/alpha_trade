@@ -1,5 +1,9 @@
 # Sprint 8-B — Revue des chemins extrêmes et support réel des folds
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Réalisé le 3 octobre 2026, à la suite des [labels Sprint 8-A](sprint_8a_labels_et_contrat_evaluation.md). **Aucun entraînement, aucune modification de cible, aucun assouplissement des gates.** Le lot mesure le support après jointure aux features et produit un dossier vérifiable des chemins extrêmes.
 
 ## 1. Résultat et décision

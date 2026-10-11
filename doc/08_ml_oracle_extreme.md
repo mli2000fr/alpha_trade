@@ -1,6 +1,33 @@
 # ML — Oracle Extreme O0
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Documentation approfondie : [dossier Oracle Extreme complet](ml/oracle/README.md).
+
+## Parcours actuels — 10 octobre 2026
+
+L'horizon est celui de l'artefact Oracle (`oracle_horizon`), pas un H20
+supposé à partir du modèle Per-Symbol. H5/H10/H15/H20 doivent être affichés et
+comparés avec leurs propres labels/folds/maturité. Un label futur ou une liste
+de rendements réalisés ne fournit pas une direction prédite.
+
+La sélection Oracle × ATR compatible backtest/live est décrite dans
+[le gate d'amplitude](ml/oracle_atr_amplitude_gate.md). Elle ne réentraîne pas
+l'Oracle et ne change pas ses probabilités ; les activations de cascade/live
+restent séparées. Le booléen ATR local est true mais le serving Oracle tradable
+reste off et extreme_gate.enabled=false : vérifier le parcours réellement activé.
+
+Le [filtre GPT PAPER](ml/oracle_llm_directional_filter.md) est une autre branche :
+N premiers au score Oracle, analyse prospective avec Web, LONG/SHORT/abstention,
+puis risque. Il n'ajoute pas implicitement ATR. N=20/K=3 configurés actuellement,
+pas TOP20 % ; confidence non calibrée, aucune preuve de gain automatique.
+
+L'[étude quotidienne Oracle × ATR](ml/oracle_atr_market_regime_daily.md) conserve
+les futurs réalisés, cinq listes entières signées et leur couverture. La liste
+`predicted_oracle_score_order_returns_pct` garde l'ordre prédit ; le signe est
+le résultat réel, jamais une sortie directionnelle de l'Oracle.
 
 ## But
 

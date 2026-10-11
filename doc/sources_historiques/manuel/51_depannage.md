@@ -1,5 +1,9 @@
 # 51. Dépannage
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## 1. « Ma page est vide »
 
 | Cause | Solution |
@@ -157,8 +161,8 @@ Si rien ne marche :
 2. Notez le **step concerné**.
 3. Rassemblez les logs des 5 dernières minutes.
 4. Consultez la documentation technique :
-   - [doc/runbook_24_7.md](../backup/runbook_24_7.md)
-   - [doc/runbook_provider_incident.md](../backup/runbook_provider_incident.md)
+   - [doc/runbook_24_7.md](../../operations/us_pipeline.md)
+   - [doc/runbook_provider_incident.md](../backup/operations/runbook_provider_incident.md)
 5. En dernier recours : ouvrez une issue sur le dépôt en joignant logs +
    contexte.
 

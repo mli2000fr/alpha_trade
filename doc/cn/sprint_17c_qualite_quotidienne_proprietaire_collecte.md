@@ -1,5 +1,9 @@
 # Sprint 17-C — Propriétaire unique de la collecte CN et qualité quotidienne
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 État du 1er octobre 2026. Le code, la configuration et la tâche de contrôle sont installés ; **la preuve de sept séances réelles consécutives n'existe pas encore**. Le marché CN est fermé du 1er au 7 octobre dans le [calendrier opérationnel 2026](../../config/research_cn/sprint15d6_cn_calendar_2026.yaml). La première séance éligible est le **8 octobre 2026**. Aucune tâche D6/D9/D10 n'a été réinstallée ou déplacée par ce sprint.
 
 ## Décision d'architecture : D9 écrit, 17-C observe

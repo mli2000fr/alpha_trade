@@ -1,5 +1,9 @@
 # Sizing, ATR, Kelly, liquidité et levier
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Retour : [références Risk](README.md)
 
 `StopCalculator` produit `StopLevels` et valide qu'un stop long est sous l'entrée et un stop short au-dessus. Le risque par action est la distance absolue entrée-stop. `PositionSizer` divise le budget de perte par cette distance puis applique limites de poids et quantités.

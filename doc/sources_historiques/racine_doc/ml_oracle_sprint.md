@@ -1,5 +1,9 @@
 # Plan de sprint — Oracle Layer (TOP / BOTTOM)
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 > **⚠️ REFACTOR 2026-08-19** : le modèle **Oracle TOP est renommé Oracle Extreme**
 > (cible `oracle_extreme10 = oracle_top10 ∪ oracle_bottom10` = détection de gros
 > mouvement H20, PAS la direction — cf. E0/D0/D1/D1d). Le modèle **Oracle BOTTOM est

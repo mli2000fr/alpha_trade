@@ -1,5 +1,9 @@
 # Sprint 10-A — Références directionnelles dans le TOP20 Oracle H5
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Protocole figé avant résultats de ce lot — 3 octobre 2026
 
 Premier diagnostic du Sprint 10, pas un entraînement de modèle directionnel ni la clôture du sprint. H5 prix-only, folds 4/5/6 du Sprint 9-A ; H10/H20 et benchmark restent bloqués en couverture. 2026 demeure réservée. Les périodes de développement ont déjà été inspectées pour l'amplitude : ce n'est pas une confirmation finale indépendante.

@@ -1,5 +1,9 @@
 # Supervision, notifications et sécurité
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Voir aussi [failover broker](broker_failover.md), [pré-live](pre_live_et_progression.md) et [sandbox health](sandbox_health.md).
 
 Retour : [IHM et opérations](../16_ihm_et_operations.md)

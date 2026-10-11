@@ -1,5 +1,9 @@
 # Expériences Global Ranking et per-sector — synthèse
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Retour : [dossier technique Global Ranking](../ml/global_ranking/README.md)
 
 Références courantes : [per-symbol](../ml/per_symbol/README.md) ·

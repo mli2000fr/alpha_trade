@@ -1,5 +1,9 @@
 # Sprint planning détaillé — intégration du marché français dans α-Trade
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Plan / TODO : ne vaut ni validation des données, ni autorisation broker. Les dépendances et blocages actuels priment sur l'ordre des sprints. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 État de référence : 1er octobre 2026. Ce document est un **plan de mise en œuvre**, pas le constat que les sprints sont réalisés. Pour l'état effectivement exécuté des Sprints 2 à 5 au 2 octobre, lire [le rapport d'exécution](execution_sprints_2_5_2026-10-02.md). Il complète [l'étude France](etude_integration_marche_francais.md) et [le POC guidance](poc_guidance_120_emetteurs.md), et prend pour référence l'architecture effectivement présente dans le code et le [planning CN](../cn/sprint_planning_integration_marche_chinois.md).
 
 Le [Sprint 5](sprint_5_finalisation_go_limite_2018_2026.md) est désormais clos avec `GO_RESEARCH_J1` sur 2018–2026 : 561 001 barres, 330 titres dont 36 radiés (10,91 %) et 2 209 séances admissibles. La source publique Euronext a corroboré exactement 5 733 séances de 34 radiés récents, en complément des deux radiés déjà couverts. Ce GO autorise uniquement les travaux ML/backtest de recherche avec disponibilité J+1 ; aucune table canonique, aucun live, aucun paper trading et aucun serving ne sont autorisés. Les actions sur titres économiques, la preuve PIT stricte et la chaîne TLS du POC restent à fermer. Les barres 2016–2017 restent archivées mais hors du premier périmètre exploitable.

@@ -1,5 +1,9 @@
 # Sprint 7-A — Canonicalisation pilote du marché chinois
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Statut et objectif
 
 **Statut : GO — pilote exécuté et audité le 22 septembre 2026.** Rapport final : `artifacts/cn/sprint7a/sprint7a-20260922055348/report.json`.

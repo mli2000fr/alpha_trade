@@ -1,5 +1,9 @@
 # Cascade de sélection et modes de ranking
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 > Mise à jour du 4 octobre 2026 : les modes Extreme Gate disposent du
 > [filtre d’amplitude Oracle × ATR20](ml/oracle_atr_amplitude_gate.md), activé
 > par défaut via `cascade.oracle_atr_enabled`. Il intervient aussi dans la

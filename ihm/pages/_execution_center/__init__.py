@@ -2592,15 +2592,19 @@ def _render_corporate_actions_block(trade_date: str) -> dict[str, Any]:
             "À activer après le 1er sync pour éviter de re-balayer un long historique chaque jour."
         )
 
-    st.markdown("#### Paramètres Backfill historique EODHD (B3)")
+    from ihm.services.pipeline_runner import _resolve_bars_provider_for_ihm
+    backfill_provider = _resolve_bars_provider_for_ihm()
+    st.markdown(f"#### Paramètres Backfill historique {backfill_provider.upper()} (B3)")
     st.caption(
-        "Ces réglages pilotent `python -m dataIntegrityEngine.backfill_eodhd_history`. "
+        "Le fournisseur suit `market_data.bars_provider`, comme l'étape 1. "
+        "Alpaca utilise `market_data.alpaca_backfill_feed` (SIP par défaut) et le compte sélectionné. "
         "Par défaut, l'IHM lance B3 en `write` pour persister dans `stock_bars` / `stock_bars_daily`. "
-        "Si tu décoches le mode écriture, le script reste en `dry-run` : il interroge EODHD pour estimer le volume attendu, "
+        "Si tu décoches le mode écriture, le script reste en `dry-run` : il interroge le fournisseur pour estimer le volume attendu, "
         "mais n'insère aucune ligne en base."
     )
     st.caption(
-        "Mode write : la DB prime sur le bookmark ; symboles déjà frais (J-7) sautés automatiquement."
+        "EODHD : symboles déjà frais (J-7) sautés en write. Alpaca : reprise par fenêtre/flux/compte/mode, "
+        "sans ignorer un ancien trou parce qu'une barre récente existe. La profondeur dépend de la couverture réelle."
     )
     bf_col1, bf_col2, bf_col3 = st.columns([1, 2, 2])
     with bf_col1:
@@ -2612,14 +2616,14 @@ def _render_corporate_actions_block(trade_date: str) -> dict[str, Any]:
                 value=_session_state_int("pipeline_eodhd_backfill_years", 30),
                 step=1,
                 key="pipeline_eodhd_backfill_years",
-                help="30 ans par défaut (profondeur historique maximale EODHD pour robustesse ML/backtest). Coût quota EODHD identique quelle que soit la profondeur (1 appel par symbole).",
+                help="Profondeur demandée, non garantie par le fournisseur. Alpaca pagine l'historique disponible ; aucun fallback automatique.",
             )
         )
         eodhd_backfill_resume = st.checkbox(
             "B3 — reprendre via bookmark",
             value=_session_state_bool("pipeline_eodhd_backfill_resume", True),
             key="pipeline_eodhd_backfill_resume",
-            help="Si coché, relit `artifacts/eodhd_cache/backfill_state.json` et saute les symboles déjà terminés.",
+            help="Reprise propre au fournisseur : EODHD sous artifacts/eodhd_cache ; Alpaca sous artifacts/alpaca_backfill (fenêtre, flux, compte et mode isolés).",
         )
     with bf_col2:
         eodhd_backfill_symbols = str(
@@ -2639,6 +2643,7 @@ def _render_corporate_actions_block(trade_date: str) -> dict[str, Any]:
         )
         if eodhd_backfill_write:
             st.success("B3 sera lancé en mode `write` et insérera dans les tables.")
+            st.warning("Les barres existantes aux mêmes clés seront mises à jour. Qualifier les ajustements avant un changement de fournisseur.")
         else:
             st.warning("B3 sera lancé en mode `dry-run` : appels API réels, mais 0 insert DB.")
 
@@ -3347,7 +3352,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         from service.llm_directional.config import load_filter_config
         _llm_config = load_filter_config()
         llm_filter_enabled = st.checkbox(
-            '🌐 Filtrage GPT + recherche Web après Oracle — PAPER uniquement',
+            f'🌐 Filtrage {_llm_config.provider_label} + recherche Web après Oracle — PAPER uniquement',
             value=bool(st.session_state.get('pipeline_llm_filter_enabled', _llm_config.enabled)),
             key='pipeline_llm_filter_enabled',
             help='Analyse prospective des premiers scores Oracle, archivage en base, puis LONG/SHORT/abstention '
@@ -3356,14 +3361,20 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         llm_oracle_batch_id = None
         llm_specific_protections = False
         if llm_filter_enabled:
-            st.caption(f"Directions GPT autorisées : {'LONG / SHORT / ABSTENTION' if _llm_config.allow_short else 'LONG / ABSTENTION'}. "
+            st.caption(f'Analyse : {_llm_config.provider_label} / {_llm_config.analysis_model}. '
+                       f'Recherche Web : OpenAI / {_llm_config.model}. '
+                       'Choix dans config.yaml → llm_directional_filter.provider.')
+            if _llm_config.provider == 'deepseek':
+                st.info('DeepSeek analyse les preuves Web obtenues via OpenAI. Les deux clés API sont nécessaires ; '
+                        'les deux fournisseurs sont facturés. Aucun remplacement silencieux de modèle.')
+            st.caption(f"Directions {_llm_config.provider_label} autorisées : {'LONG / SHORT / ABSTENTION' if _llm_config.allow_short else 'LONG / ABSTENTION'}. "
                        f"Maximum {_llm_config.max_selected} titres au total. Les SHORT restent soumis au régime, "
                        "au risque et à une disponibilité easy-to-borrow Alpaca confirmée.")
             llm_specific_protections = st.checkbox(
-                '🛡️ Protections spécifiques GPT — SL / sortie temporelle / trailing',
+                f'🛡️ Protections spécifiques {_llm_config.provider_label} — SL / sortie temporelle / trailing',
                 value=bool(_llm_config.protections and _llm_config.protections.enabled),
                 key='pipeline_llm_specific_protections',
-                help='Uniquement pour les nouvelles positions GPT du compte principal PAPER. '
+                help=f'Uniquement pour les nouvelles positions {_llm_config.provider_label} du compte principal PAPER. '
                      'Décochée : protections historiques inchangées. Valeurs dans config.yaml.')
             if llm_specific_protections:
                 _p = _llm_config.protections
@@ -3380,9 +3391,9 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             from common.universe_files import list_universe_file_sources
             _llm_sources = ['tradable-universe', *list_universe_file_sources()]
             if _llm_config.default_symbol_source not in _llm_sources:
-                st.error(f'Univers GPT configuré indisponible : {_llm_config.default_symbol_source}')
+                st.error(f'Univers {_llm_config.provider_label} configuré indisponible : {_llm_config.default_symbol_source}')
                 st.stop()
-            ml_predict_symbol_source = st.selectbox('Univers Oracle → filtre GPT (même périmètre)',
+            ml_predict_symbol_source = st.selectbox(f'Univers Oracle → filtre {_llm_config.provider_label} (même périmètre)',
                 options=_llm_sources, index=_llm_sources.index(_llm_config.default_symbol_source),
                 key='pipeline_llm_symbol_source',
                 help='Utilisé aussi par la prédiction du workflow. Le filtre ne reclasse pas un autre univers.')
@@ -3392,13 +3403,13 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 *(p.name for p in _llm_champions.iterdir() if p.is_dir())
             }) if _llm_champions.is_dir() else [_llm_config.default_oracle_batch_id]
             llm_oracle_batch_id = st.selectbox(
-                'Batch Oracle → filtre GPT (même modèle)', options=_llm_batches,
+                f'Batch Oracle → filtre {_llm_config.provider_label} (même modèle)', options=_llm_batches,
                 index=_llm_batches.index(_llm_config.default_oracle_batch_id),
                 key='pipeline_llm_oracle_batch_id',
                 help='Défaut : llm_directional_filter.default_oracle_batch_id dans config.yaml. '
                      'Utilisé par la prédiction et le filtre ; aucun fallback vers un autre batch.')
             st.warning(f'Compte principal default PAPER uniquement. Oracle TOP{_llm_config.oracle_top_n} → '
-                       f'0 à {_llm_config.max_selected} LONG. Paramètres dans config.yaml. '
+                       f'0 à {_llm_config.max_selected} titres LONG/SHORT selon configuration. Paramètres dans config.yaml. '
                        'Recherche Web facturée ; pas de backtest historique Web. Kelly, LIVE, '
                        'hors séance et rééquilibrage automatique interdits.')
             llm_filter_run_id = st.text_input('Identifiant analyse LLM (vide = nouveau run pour le workflow)',

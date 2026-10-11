@@ -1,5 +1,9 @@
 # Sprint 3 — Contexte marché sur les runs, batches et univers
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Statut
 
 Sprint terminé le 20 septembre 2026. Gate : **GO**.

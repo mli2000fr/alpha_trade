@@ -12,7 +12,7 @@ def validate_short_broker(broker, symbols, *, account=None):
     from .runner import assert_paper_account
     assert_paper_account('default')
     if AccountRegistry.get().resolve('default').long_only:
-        raise ValueError('Compte default long_only : SHORT GPT interdit')
+        raise ValueError('Compte default long_only : SHORT LLM interdit')
     account = account if account is not None else broker.get_account()
     if (account.get('shorting_enabled') is not True or account.get('trading_blocked')
             or account.get('account_blocked')):
@@ -24,7 +24,7 @@ def validate_short_broker(broker, symbols, *, account=None):
         if (asset.get('symbol') != symbol or asset.get('status') != 'active'
                 or any(asset.get(k) is not True for k in
                        ('tradable', 'marginable', 'shortable', 'easy_to_borrow'))):
-            raise ValueError(f'SHORT GPT bloqué : actif {symbol} non qualifié/ETB')
+            raise ValueError(f'SHORT LLM bloqué : actif {symbol} non qualifié/ETB')
         evidence[symbol] = {'provider': 'alpaca_paper_asset', 'observed_at': str(utcnow()),
                             'shortable': True, 'easy_to_borrow': True}
     return evidence
@@ -75,7 +75,7 @@ def load_candidates(engine, run_id, trade_date, account_id, universe_run_id, uni
 def build_entries(builder, candidates, prices, sector_map, trade_date, return_matrix):
     from risk_management.models import SelectionScore
     if any(c.side not in ('long', 'short') for c in candidates):
-        raise ValueError('Direction GPT inconnue')
+        raise ValueError('Direction LLM inconnue')
     if any(c.side == 'short' for c in candidates) and not builder._cfg.short_selling_enabled:
         raise ValueError('SHORT désactivé par la configuration risque')
     from service.market.new_entry_data_guard import validate_entry_prices

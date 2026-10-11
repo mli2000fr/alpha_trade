@@ -1,5 +1,9 @@
 # Sprint 10-C — Global ranking signé CN_A et test conditionnel Oracle
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Question
 
 Le Sprint 10-B a confirmé un signal d'**amplitude** CN face à une baseline

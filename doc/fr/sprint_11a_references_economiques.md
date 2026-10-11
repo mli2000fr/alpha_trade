@@ -1,5 +1,9 @@
 # Sprint 11-A économique — références simples et aptitude au rejeu
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Mise à jour4 octobre2026 : [qualification partielle et scénario de coûts](sprint_12a_couts_taxes_operations_sur_titres.md).
 Tarification générique configurée selon le choix utilisateur (1EUR/ordre,
 spread complet5bps, slippage5bps) ; taux TTF historiques vérifiés et moteur

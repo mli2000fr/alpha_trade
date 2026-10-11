@@ -1,5 +1,9 @@
 # Sprint 13-D — Robustesse économique exploratoire figée
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Statut et conclusion
 
 Expérience terminée le 4 octobre 2026 : **96/96 cellules exécutées, zéro blocage**.

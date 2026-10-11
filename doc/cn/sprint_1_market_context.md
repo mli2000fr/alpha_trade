@@ -1,5 +1,9 @@
 # Sprint 1 — MarketContext et registre de marchés
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 > Date de clôture : 19 septembre 2026  
 > Branche : develop_cn  
 > État : **GO**  

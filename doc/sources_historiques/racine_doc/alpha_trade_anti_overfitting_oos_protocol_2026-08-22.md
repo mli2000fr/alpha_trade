@@ -1,5 +1,9 @@
 # α-Trade — Synthèse anti-overfitting et protocole de validation OOS
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 **Date : 2026-08-22**  
 **Objet :** conserver une trace méthodologique des risques d'overfitting accumulés pendant les travaux de recherche, définir ce qui peut encore être considéré comme validé, et établir les règles à suivre avant toute nouvelle optimisation.
 

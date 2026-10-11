@@ -1,5 +1,9 @@
 # Oracle Extreme — inférence, persistance et gate quotidien
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Retour : [dossier Oracle](README.md)
 
 ## Champions et sélection PIT
@@ -11,6 +15,27 @@ Si D précède tous les folds, le code choisit le premier champion et suppose so
 Les features viennent du manifeste et sont intersectées avec le dataset. Si le contrat contient `global_rank_20`, les ranks sont requis ; O0 les ignore. Les labels sont optionnels en prédiction forward.
 
 Les boosters sont chargés à la demande et cachés par fold. Une erreur sur une date est journalisée puis les autres dates continuent : rapprocher dates attendues et rows écrites.
+
+L'horizon se lit dans le profil de l'artefact Oracle ; H20 n'est que le repli
+legacy lorsque la metadata manque. Un horizon demandé incompatible est refusé.
+Les profils de recherche `pit_dynamic_bars` ne deviennent pas des champions
+serving ordinaires : ils passent par leur chemin shadow/recherche contrôlé.
+
+## Date et échecs du CLI prospectif US — 10 octobre 2026
+
+La date de signal est résolue par `common/us_signal_date.py`, puis figée pour
+Oracle, GPT et les étapes aval. En mode prospectif, un lancement hors séance
+(week-end, jour férié ou avant l'ouverture suivante) peut résoudre la dernière
+séance US clôturée ; il ne doit pas scorer la date civile Paris par accident.
+Le filtre GPT vérifie aussi sa fenêtre close → prochaine ouverture avant
+l'inférence : aucune recherche Web historique ni Oracle shadow dans ce filtre.
+
+Une sortie Oracle-only `no_predictions`, vide ou en erreur provoque désormais
+un code retour non nul avant le GPT. « Predictions: 0 rows » n'est pas un succès
+de l'étape 10. Inspecter le dataset, le contrat de features, l'artefact et les
+erreurs par date ; ne pas lancer risque/exécution sur un autre batch/date en repli.
+[Contrat du filtre](../oracle_llm_directional_filter.md) ·
+[Pipeline planifié](../../operations/us_pipeline.md).
 
 ## Persistance
 

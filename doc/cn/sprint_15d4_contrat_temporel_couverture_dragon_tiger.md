@@ -1,5 +1,9 @@
 # Sprint 15-D4 — Contrat temporel et couverture Dragon/Tiger × Oracle
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Audit du 30 septembre 2026. **Verdict : couverture suffisante pour un examen exploratoire, mais archive non certifiée PIT et aucun GO ML.** Aucun modèle, table, batch, backtest ou serving modifié.
 
 ## Question et périmètre

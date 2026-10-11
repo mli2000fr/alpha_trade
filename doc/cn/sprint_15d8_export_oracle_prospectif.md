@@ -1,5 +1,9 @@
 # Sprint 15-D8 — export Oracle CN H20 prospectif, recherche uniquement
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Statut et objectif
 
 Le code d'export avant ouverture est livré, sans promotion au serving et sans ordre de bourse. Le rattrapage initial du [Sprint 15-D7a](./sprint_15d7a_rattrapage_canonique_2026.md) s'arrêtait au 29 septembre ; la collecte D8 a ensuite couvert la séance du 30 septembre. Le premier score réel a été publié le 30 septembre pour la décision ouverte du **8 octobre 2026**, avant son cutoff. Les rattrapages antérieurs ne sont pas transformés en scores produits à l'époque.

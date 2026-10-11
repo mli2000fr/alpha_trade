@@ -19,10 +19,11 @@ from common.universe_files import load_universe_file_symbols
 from modelFactory.oracle.artifact_contract import resolve_oracle_artifact_horizon
 
 TABLE = 'oracle_atr_market_regime_daily'
-CALCULATION_VERSION = 'oracle_atr_v5_partial_returns'
+CALCULATION_VERSION = 'oracle_atr_v6_intersection_order'
 MOVEMENT_FIELDS = ('real_oracle_top_returns_pct', 'intersection_returns_pct',
                    'predicted_oracle_top_returns_pct', 'atr_top_returns_pct',
-                   'predicted_oracle_score_order_returns_pct')
+                   'predicted_oracle_score_order_returns_pct',
+                   'intersection_oracle_score_order_returns_pct')
 MACRO_FIELDS = ['vix', 'vix9d', 'ten_y', 'vxn', 'vix3m', 'move',
                 'yield_10y_5d_pct', 'sentiment_score']
 
@@ -137,15 +138,18 @@ def summarize_day(scores, atr, labels, macro, *, as_of: date,
             Decimal('1'), rounding=ROUND_HALF_UP)) for s in ordered]
         return json.dumps(values, allow_nan=False)
 
+    score_map = dict(zip(scores.loc[finite, 'symbol'], score_values[finite]))
+    intersection_score_order = sorted(selected, key=lambda s: (-score_map[s], str(s)))
     if n:
         # Existing intersection was already partial; expose its full initial scope.
         movements['intersection_returns_pct'] = serialize('intersection_returns_pct', sorted(selected))
+        movements['intersection_oracle_score_order_returns_pct'] = serialize(
+            'intersection_oracle_score_order_returns_pct', intersection_score_order, keep_order=True)
         if policy == 'strict':
             # Preserve the legacy intersection's known-only serialization.
             known_intersection = sorted(selected & set(returns), key=lambda s: (-abs(returns[s]), str(s)))
             movements['intersection_returns_pct'] = json.dumps([int((Decimal(str(returns[s]))*100).quantize(
                 Decimal('1'), rounding=ROUND_HALF_UP)) for s in known_intersection])
-        score_map = dict(zip(scores.loc[finite, 'symbol'], score_values[finite]))
         oracle_top = sorted(score_map, key=lambda s: (-score_map[s], str(s)))[:n]
         movements['predicted_oracle_score_order_returns_pct'] = serialize(
             'predicted_oracle_score_order_returns_pct', oracle_top, keep_order=True)
@@ -176,7 +180,9 @@ def summarize_day(scores, atr, labels, macro, *, as_of: date,
     else:
         # Never turn an immature/empty date into an apparently successful [] list.
         for field in MOVEMENT_FIELDS:
-            serialize(field, sorted(selected) if field == 'intersection_returns_pct' else [],
+            selection = (sorted(selected) if field == 'intersection_returns_pct' else
+                         intersection_score_order if field == 'intersection_oracle_score_order_returns_pct' else [])
+            serialize(field, selection, keep_order=field == 'intersection_oracle_score_order_returns_pct',
                       population=list(ranks) if field == 'real_oracle_top_returns_pct' else None)
     quality_payload = {'policy': policy,
                        'expected_available_date': str(expected_available_date) if expected_available_date else None,

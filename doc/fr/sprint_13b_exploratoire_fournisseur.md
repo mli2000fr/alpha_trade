@@ -1,5 +1,9 @@
 # 13-B exploratoire fournisseur — comparaison économique distincte
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Autorisation et statut
 
 **Mise à jour après réparation :** la [passe 13-C](sprint_13c_reparations_decision_economique.md)

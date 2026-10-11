@@ -1,5 +1,9 @@
 # Correctif Pipeline — filtre GPT et boutons de prédiction historique
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Cause et correction du 9 octobre 2026
 
 Le filtre GPT/recherche Web peut être coché par défaut pour le parcours

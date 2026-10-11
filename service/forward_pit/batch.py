@@ -18,7 +18,7 @@ import ssl
 import sys
 import time
 import uuid
-from dataclasses import dataclass, field
+from service.forward_pit.outcomes import Outcome, BatchRunError
 from decimal import Decimal, InvalidOperation
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -63,26 +63,6 @@ ALPACA_DATA_URL = "https://data.alpaca.markets"
 ALPACA_PAPER_URL = "https://paper-api.alpaca.markets"
 
 PENDING_BATCHES = {"auction_imbalance_sync", "securities_lending_sync", "official_options_nbbo_sync"}
-
-
-@dataclass
-class Outcome:
-    requested: int = 0
-    received: int = 0
-
-    persisted: int = 0
-    empty: int = 0
-    failed: int = 0
-    warnings: list[str] = field(default_factory=list)
-    details: dict[str, Any] = field(default_factory=dict)
-
-
-class BatchRunError(RuntimeError):
-    """Échec bloquant conservant les compteurs déjà produits par le handler."""
-
-    def __init__(self, message: str, outcome: Outcome):
-        super().__init__(message)
-        self.outcome = outcome
 
 
 def _json(value: Any) -> str:
@@ -2296,7 +2276,25 @@ def us_pipeline(engine, cfg, run_id, dry_run):
     return execute_pipeline(engine, cfg, run_id, dry_run)
 
 
+def public_macro_snapshot_sync(engine, cfg, run_id, dry_run):
+    from service.forward_pit.public_macro import collect
+    return collect(engine, cfg, run_id, dry_run)
+
+
+def eodhd_consensus_snapshot(engine, cfg, run_id, dry_run):
+    from service.eodhd.consensus_snapshot import collect
+    return collect(engine, cfg, run_id, dry_run)
+
+
+def eodhd_ipo_calendar_sync(engine, cfg, run_id, dry_run):
+    from service.eodhd.ipo_calendar import collect
+    return collect(engine, cfg, run_id, dry_run)
+
+
 HANDLERS: dict[str, Callable[[Engine, dict[str, Any], str, bool], Outcome]] = {
+    "eodhd_ipo_calendar_sync": eodhd_ipo_calendar_sync,
+    "eodhd_consensus_snapshot": eodhd_consensus_snapshot,
+    "public_macro_snapshot_sync": public_macro_snapshot_sync,
     "us_pipeline": us_pipeline,
     "ml_artifacts_backup": ml_artifacts_backup,
     "db_core_backup": database_backup,
@@ -2321,9 +2319,14 @@ HANDLERS: dict[str, Callable[[Engine, dict[str, Any], str, bool], Outcome]] = {
 }
 
 
-def execute(batch_name: str, *, dry_run: bool = False, config_path: str | None = None) -> tuple[str, Outcome]:
+def execute(batch_name: str, *, dry_run: bool = False, config_path: str | None = None,
+            ipo_backfill_dates: tuple[str, str] | None = None) -> tuple[str, Outcome]:
     config = load_batch_config(config_path); cfg = config.get(batch_name)
     if not isinstance(cfg, dict): raise KeyError(f"Section {batch_name} absente de batch.yaml")
+    if ipo_backfill_dates is not None:
+        if batch_name != 'eodhd_ipo_calendar_sync':
+            raise ValueError('IPO backfill dates only supported for IPO batch')
+        cfg = dict(cfg, start_date=ipo_backfill_dates[0], end_date=ipo_backfill_dates[1], backfill=True)
     # A rights block survives an enabled-only toggle, including direct CLI calls.
     if not cfg.get("enabled", False) or str(cfg.get("status") or "").startswith("BLOCKED_"):
         status = str(cfg.get("status") or "DISABLED")
@@ -2334,8 +2337,8 @@ def execute(batch_name: str, *, dry_run: bool = False, config_path: str | None =
         raise KeyError(f"Aucun handler pour {batch_name}")
     run_id = f"{batch_name}-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}"
     engine = get_sqlalchemy_engine(); started = _utcnow()
-    if batch_name == 'us_pipeline' and engine.url.database != 'alpha_trade':
-        raise ValueError('US pipeline requires alpha_trade; refusing cross-market run')
+    if batch_name in ('us_pipeline', 'public_macro_snapshot_sync', 'eodhd_consensus_snapshot', 'eodhd_ipo_calendar_sync') and engine.url.database != 'alpha_trade':
+        raise ValueError('US pipeline/public macro requires alpha_trade; refusing cross-market run')
     if not dry_run:
         with engine.begin() as conn:
             conn.execute(text("""INSERT INTO pit_collection_runs(run_id,batch_name,provider,status,started_at)

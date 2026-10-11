@@ -1,5 +1,9 @@
 # Modèle per-sector — dossier technique complet
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Le modèle per-sector mutualise les observations des symboles d’un même secteur.
 Dans le code courant, il entraîne effectivement LightGBM et CatBoost ; le
 challenger LSTM sectoriel est explicitement marqué non implémenté et `skipped`.

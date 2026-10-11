@@ -1,5 +1,9 @@
 # Forward PIT Collector — sources gratuites vérifiées pour P0 à P4
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 **Date de vérification : 2026-09-12**  
 **Objectif :** construire, à partir d'aujourd'hui, un historique *point-in-time* (PIT) propre en collectant chaque jour les données disponibles gratuitement, plutôt que d'acheter immédiatement un historique 2016–2025.
 

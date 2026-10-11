@@ -23,6 +23,7 @@ def test_navigation_sidebar_order_matches_pipeline_then_support_pages() -> None:
         "parity",
         "ml_diagnostics",
         "fundamentals",
+        "intraday_bars",
         "db_admin",
         "settings",
         # Sprint S19.4 / S19.5 — nouvelles pages institutionnelles

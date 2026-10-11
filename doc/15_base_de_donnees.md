@@ -1,5 +1,9 @@
 # Base de données et persistance
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Documents spécialisés
 
 - [Schéma métier et ownership des tables](database/schema_metier.md)
@@ -9,7 +13,21 @@
 
 ## Architecture
 
-`database/connection.py` construit l'engine SQLAlchemy depuis `config.yaml` et `LOGIN_DB`/`PASSWORD_DB`. Les repositories dans `database/repositories/` encapsulent actifs, barres, quotes, scores et run summaries. Les modules métier possèdent aussi des `db_io.py` spécialisés.
+Le chemin legacy US `database/connection.py` construit l'engine SQLAlchemy depuis
+`config.yaml` et `LOGIN_DB`/`PASSWORD_DB`. Les parcours multi-marchés utilisent
+`database/router.py`, les contextes et `config/databases.yaml` :
+
+| Marché | Alias | Base isolée |
+| --- | --- | --- |
+| US_EQ | us_primary | alpha_trade |
+| CN_A | cn_primary | alpha_trade_cn |
+| FR_EQ | fr_primary | alpha_trade_fr |
+
+Les credentials CN/FR peuvent reprendre ceux de l'US, mais les données et
+allowlists restent séparées. FR refuse une base physique différente. Ne pas
+utiliser le fallback US pour contourner une erreur de résolution FR/CN.
+Les repositories dans `database/repositories/` et les `db_io.py` métier
+conservent leur ownership. État de référence : [synthèse](ETAT_ACTUEL_IMPLEMENTATION.md).
 
 En pratique, la connexion commune utilise les défauts `localhost` et `alpha_trade`, remplaçables par `DB_HOST` et `DB_NAME` lorsqu’aucun argument explicite différent n’est fourni. Le DSN est MySQL/PyMySQL en `utf8mb4`. Engine et session factory sont mis en cache dans le processus : changer l’environnement après leur première résolution ne recrée pas automatiquement l’engine.
 
@@ -43,7 +61,34 @@ En pratique, la connexion commune utilise les défauts `localhost` et `alpha_tra
 
 Les noms exacts et colonnes sont définis par les migrations Alembic et les DDL ; consulter la révision courante plutôt qu'un ancien diagramme.
 
+## Familles ajoutées et frontières de publication
+
+- US Forward PIT : pit_collection_runs, pit_raw_payloads et tables métier
+  SEC, borrow, options, opening window, référentiel et versions de barres.
+  `stock_bars_daily_versions` Business Quant n'est pas automatiquement la
+  table canonique stock_bars_daily.
+- US GPT : llm_directional_runs, llm_directional_assessments,
+  llm_directional_evaluations ; requête/réponse, sources, configuration figée,
+  sélection et lien risque. Ce ne sont pas des ordres broker.
+- US étude : oracle_atr_market_regime_daily, alimentée par tranches/upsert.
+  Ses listes signées sont des rendements futurs réalisés à maturité, pas une
+  prédiction directionnelle. `partial` est une politique, pas un statut d'échec.
+- FR quotidien : fr_ingestion_runs, fr_raw_payloads,
+  fr_provider_bars_staging, fr_staging_progress ; fichiers versionnés pour
+  les autres familles. Pas de promotion automatique au canonique FR.
+- CN : instruments, séances, barres, facteurs et statuts propres à CN ;
+  les fichiers de runs D9/D10/17-C ne sont pas pit_collection_runs US.
+
+[Catalogue des batchs et destinations](operations/catalogue_batchs_actuel.md).
+Une table prévue dans un DDL n'est pas une preuve que la migration est appliquée.
+
 ## Migrations
+
+Les commandes ci-dessous décrivent le graphe Alembic historique. Vérifier sa
+cible avant toute application ; **ne pas supposer qu'upgrade head migre les
+trois bases**. Les scripts/DDL et contrôles de schéma CN/FR sont propres au
+parcours concerné. Sauvegarde, sélection explicite du marché/base et examen
+du SQL sont indispensables avant une mutation.
 
 ```powershell
 alembic current
@@ -56,6 +101,18 @@ Une nouvelle migration doit être additive et réversible lorsque possible, déf
 Le répertoire canonique est `alembic/versions/`. Le graphe `revision/down_revision`, et non l’ordre lexical des noms, fait autorité. `alembic.ini` contient un DSN factice ; la connexion réelle est résolue par l’environnement Alembic/runtime.
 
 ## Idempotence
+
+### Barres intraday US
+
+`alpha_trade.stock_bars_intraday` conserve les OHLCV bruts Alpaca/EODHD par symbole,
+début d'intervalle UTC, intervalle et source (clé primaire anti-doublon).
+La table est indépendante de `stock_bars_daily` ; `observed_at` conserve l'heure
+de récupération réelle, pas une disponibilité historique supposée. Les lots
+de 500 barres sont commitées pendant le backfill. DDL
+`database/sql/stock/stock_bars_intraday.sql`, migration `0097_stock_bars_intraday`.
+Colonne `provider` explicite ajoutée par `0098_intraday_provider` ; `data_source`
+sépare aussi IEX de SIP et empêche l'écrasement d'un flux par l'autre.
+[Guide de collecte et limites](operations/backfill_intraday_us.md).
 
 Les imports utilisent upsert, clés naturelles et bookmarks. Les runs utilisent des identifiants uniques. Les corporate actions ont event/application distincts. Les ordres conservent identifiants internes et broker. Une reprise doit vérifier l'état existant avant insertion ou envoi.
 

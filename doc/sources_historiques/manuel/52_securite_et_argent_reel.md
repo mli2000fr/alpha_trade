@@ -1,5 +1,9 @@
 # 52. Sécurité & passage en argent réel — checklist obligatoire
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 > ⚠️ **Lisez ce document en entier avant tout passage en mode `live`.**
 > Pas de raccourci. Pas d'exception.
 
@@ -144,7 +148,7 @@ Cela peut sembler ridicule. Ça ne l'est pas.
 
 ## Pour aller plus loin
 
-- [doc/pre_live_checklist.md](../backup/pre_live_checklist.md) — checklist
+- [doc/pre_live_checklist.md](../../operations/pre_live_et_progression.md) — checklist
   technique complète (audience opérateur expert).
-- [doc/runbook_24_7.md](../backup/runbook_24_7.md).
+- [doc/runbook_24_7.md](../../operations/us_pipeline.md).
 

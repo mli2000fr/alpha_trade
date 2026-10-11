@@ -1,5 +1,9 @@
 # Guidance — vérification SEC et instant de décision, 30 septembre 2026
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 Statut : **BLOCKED_FOR_ML_EVIDENCE_IMPROVED**. Suite bornée aux cinq candidats du pilote, sans nouvelles sociétés, sans rendements et sans entraînement. Le pilote original et son formulaire de revue indépendante sont préservés.
 
 ## Ce qui a été vérifié

@@ -1,5 +1,9 @@
 # Sprint 16 — Clôture bornée du 8 octobre 2026
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Décision finale
 
 **Infrastructure livrée, validation shadow bloquée par les données.**

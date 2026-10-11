@@ -1,5 +1,9 @@
 # Sprint 15-D5 — Préflight directionnel Dragon/Tiger et observation prospective
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Audit exécuté le 30 septembre 2026. **Verdict : NO_GO pour entraînement/backtest/serving historique ; GO pour constituer un journal prospectif de recherche des publications officielles.** Aucun modèle, table, batch planifié, portefeuille ou serving n'a été modifié.
 
 ## Pourquoi ne pas lancer immédiatement une ablation

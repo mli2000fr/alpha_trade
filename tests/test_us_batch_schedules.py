@@ -14,6 +14,7 @@ PARIS = ZoneInfo("Europe/Paris")
 # of successful runs on 2026-10-10; roughly 2 * worst duration + 30 min,
 # with a 45 min floor and rounding upwards (see operational document).
 BUDGET_MINUTES = {
+    "public_macro_snapshot_sync": 45,
     "market_cap_sync": 190,
     "sec_edgar_incremental": 90,
     "db_news_raw_backup": 65,

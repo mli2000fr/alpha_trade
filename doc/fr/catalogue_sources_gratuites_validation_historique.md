@@ -1,5 +1,9 @@
 # Catalogue des sources gratuites — validation historique du marché FR
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Actualisation guidance 11-F — 4 octobre 2026, dossier v4
 
 [Sources, limites et procédure de seconde revue](sprint_11f_sources_gratuites_et_seconde_revue.md).

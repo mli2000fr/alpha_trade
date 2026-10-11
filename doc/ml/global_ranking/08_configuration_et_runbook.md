@@ -1,5 +1,9 @@
 # 8 — Configuration et runbook
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Paramètres structurants
 
 | Paramètre | Effet |
@@ -36,7 +40,7 @@ accessible ; contrat `ranking_raw_target` explicite.
 ## Vérifier un batch terminé
 
 - statut du run et entrée globale ;
-- cinq horizons présents ou fallbacks expliqués ;
+- tous les horizons demandés par la campagne présents dans le manifeste, ou fallbacks expliqués (pas nécessairement cinq) ;
 - manifeste lisible ;
 - modèle chargeable pour chaque horizon ;
 - champions, IC, IR, splits positifs et spreads ;

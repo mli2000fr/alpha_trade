@@ -1,6 +1,27 @@
 # US — Audit des autorisations de collecte des batchs
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 Date de vérification : 6 octobre 2026. Périmètre : catalogue `US_EQ` effectivement présenté par la page Batch, fournisseurs réellement appelés et conditions publiques officielles.
+
+**Dernière mise à jour opérationnelle, 10 octobre 2026 :** après une réactivation
+temporaire et le retrait de la borne du 10 novembre, l'utilisateur a de nouveau
+désactivé `analyst_snapshot_collection` US : `enabled: false`, statut
+`BLOCKED_YAHOO_AUTOMATED_ACCESS`. La permission Yahoo reste non confirmée.
+Aucun autre blocage FR/CN/US n'est levé. Les six tables de consensus Yahoo ont
+ensuite été vidées sur demande explicite le 10 octobre 2026 : 1 115 261 lignes,
+contrôle post-commit à zéro. Les anciennes archives et résultats sur fichiers
+restent conservés, avec sauvegarde ciblée préalable dans
+`backups/db/yahoo_consensus_before_clear/20261010T215706Z/` ; aucun nouveau téléchargement autorisé par cette
+mise à jour. EODHD est envisagé, pas encore activé pour cette collecte.
+[État actuel et historique](yahoo_analyst_pit.md).
+
+Complément du 10 octobre : [consensus EODHD et macro producteurs publics](consensus_eodhd_macro_publics_20261010.md).
+EODHD consensus : 403 actuel, pas d'achat ; confirmation spécifique des droits
+restante. BLS/H15 : premiers snapshots archivés prospectivement, distincts de
+FRED. Cette évolution ne lève aucun des trois blocages Yahoo/FINRA/FRED.
 
 ## 1. Conclusion et limites
 

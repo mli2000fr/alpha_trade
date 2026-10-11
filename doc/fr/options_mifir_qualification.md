@@ -1,5 +1,9 @@
 # Qualification options FR — premier passage univers et unités
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Résultat du 6 octobre 2026 (séance du 5 octobre)
 
 Le GO portait sur l'audit de la collecte partielle et la qualification des quantités,

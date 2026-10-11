@@ -1,5 +1,9 @@
 # 5. Page 📊 Screening — l'univers des candidats
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## À quoi sert cette page
 
 Consulter la table `stock_scores` produite par les étapes Screener +
@@ -73,5 +77,5 @@ Si le tableau est vide :
 ## Pour aller plus loin
 
 - Modifier les filtres : page **⚙️ Paramètres / Santé** → onglet « Selector ».
-- Comprendre le score : [doc technique selector](../backup/selector.md).
+- Comprendre le score : doc technique selector — référence historique absente localement : `../backup/selector.md`.
 

@@ -1,5 +1,22 @@
 # Page ML / Prédictions — gouvernance, serving et audit
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
+## Oracle, horizons et filtre prospectif actuels
+
+Les listes de batches/diagnostics Oracle doivent être lues avec l'horizon de
+l'artefact : H5/H10/H15/H20 ne se comparent pas via des labels H20 imposés.
+Un Oracle-only peut avoir des prédictions spécialisées sans modèle Per-Symbol.
+L'amplitude n'est pas une direction et les signes des listes réalisées de
+l'étude Oracle × ATR ne sont pas des prédictions de signe.
+
+Le filtre GPT PAPER est lancé depuis Pipeline et archivé en llm_directional_* ;
+il ne crée pas de fausses probabilités dans model_predictions. Les budgets,
+sources, réponses et réserves doivent être audités séparément des métriques ML.
+[État et parcours actuels](../ETAT_ACTUEL_IMPLEMENTATION.md).
+
 ## Modèle conceptuel
 
 La page rapproche quatre plans qui peuvent diverger temporairement :

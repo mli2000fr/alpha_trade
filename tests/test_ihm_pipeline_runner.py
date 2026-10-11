@@ -154,24 +154,67 @@ def test_get_pipeline_auxiliary_steps_contains_expected_keys() -> None:
 
 
 def test_build_pipeline_command_analyst_snapshot_collect() -> None:
-    """B4 — la commande IHM correspond au CLI `collect_yahoo_analyst_snapshots.py`."""
-    # Défaut → write-db (collection réelle, univers figé analyst_research)
-    cmd = build_pipeline_command("analyst_snapshot_collect", PipelineLaunchOptions())
-    assert cmd[1] == "-u"
-    assert cmd[2].replace("\\", "/").endswith("scripts/collect_yahoo_analyst_snapshots.py")
-    assert cmd[3] == "--universe"
-    assert cmd[4] == "analyst_research"
-    assert "--write-db" in cmd
-    # dry-run + resume + symboles (surcharge univers)
+    """B4 blocked before generating any command, including dry-run/manual overrides."""
+    with pytest.raises(ValueError, match="DROITS / PRUDENCE"):
+        build_pipeline_command("analyst_snapshot_collect", PipelineLaunchOptions())
     opts = PipelineLaunchOptions(
         analyst_snapshot_write_db=False,
         analyst_snapshot_resume=True,
         analyst_snapshot_symbols="AAPL, MSFT",
     )
-    cmd2 = build_pipeline_command("analyst_snapshot_collect", opts)
-    assert "--write-db" not in cmd2
-    assert "--resume" in cmd2
-    assert cmd2[cmd2.index("--symbols") + 1] == "AAPL,MSFT"
+    with pytest.raises(ValueError, match="DROITS / PRUDENCE"):
+        build_pipeline_command("analyst_snapshot_collect", opts)
+    step = next(step for step in get_pipeline_auxiliary_steps() if step.key == "analyst_snapshot_collect")
+    assert step.blocked_reason and "autorisation" in step.blocked_reason
+
+
+def test_b4_panel_disables_button_without_building_command(monkeypatch) -> None:
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    from ihm.pages import pipeline as page
+    labels = []
+    buttons = []
+    def expander(label, **kwargs):
+        labels.append(label)
+        return nullcontext()
+    monkeypatch.setattr(page, "st", SimpleNamespace(expander=expander,
+        markdown=lambda *a, **k: None, caption=lambda *a, **k: None,
+        button=lambda *a, **k: buttons.append(k)))
+    monkeypatch.setattr(page, "_render_step_result", lambda *a: None)
+    def forbidden(*args):
+        raise AssertionError("Blocked B4 must not generate a command preview")
+    monkeypatch.setattr(page, "build_pipeline_command", forbidden)
+    step = next(s for s in get_pipeline_auxiliary_steps() if s.key == "analyst_snapshot_collect")
+    page._render_launchable_step_panel(step, PipelineLaunchOptions(), False, {},
+        workflow_active=False, active_by_step={}, all_runs=[], latest_by_step={},
+        dependency_diagnostic=None, live_guard={})
+    assert "⛔ ⚖️ DROITS / PRUDENCE" in labels[0]
+    assert buttons[0]["disabled"] is True
+
+
+@pytest.mark.parametrize('provider,module_name',[('eodhd','backfill_eodhd_history'),('alpaca','backfill_alpaca_history')])
+def test_b3_routes_same_provider_as_step_one(monkeypatch,provider,module_name):
+    monkeypatch.setattr(pipeline_runner,'_resolve_bars_provider_for_ihm',lambda:provider)
+    import common.config_loader
+    monkeypatch.setattr(common.config_loader,'load_config',lambda:{'market_data':{'bars_provider':provider,'alpaca_backfill_feed':'sip'}})
+    options=PipelineLaunchOptions(account_id='test1',eodhd_backfill_years=4,
+        eodhd_backfill_symbols='AAPL, MSFT',eodhd_backfill_write=False,eodhd_backfill_resume=False)
+    command=build_pipeline_command('eodhd_backfill_history',options)
+    assert command[3]=='dataIntegrityEngine.'+module_name
+    assert command[command.index('--years')+1]=='4'
+    assert '--write' not in command and '--no-resume' in command
+    assert command[command.index('--symbols')+1:]==['AAPL','MSFT']
+    if provider=='alpaca':
+        assert command[command.index('--feed')+1]=='sip'
+        assert command[command.index('--account')+1]=='test1'
+    else:assert '--feed' not in command and '--account' not in command
+    step=next(s for s in get_pipeline_auxiliary_steps() if s.num=='B3')
+    assert provider.upper() in pipeline_runner.resolve_step_display_name(step)
+
+
+def test_b3_invalid_provider_fails_closed(monkeypatch):
+    monkeypatch.setattr(pipeline_runner,'_resolve_bars_provider_for_ihm',lambda:'unknown')
+    with pytest.raises(ValueError,match='bars_provider'):build_pipeline_command('eodhd_backfill_history',PipelineLaunchOptions())
 
 
 def test_get_pipeline_workflow_steps_defaults_to_live_ml_first_without_training() -> None:

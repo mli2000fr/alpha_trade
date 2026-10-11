@@ -1,5 +1,9 @@
 # 📊 Features ML — Documentation des paramètres
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 > Fichier de référence listant chaque flag `--include-*` / `--target-*`, son rôle, les features concernées, et le statut de propagation dans les 4 modes d'entraînement.
 >
 > Dernière mise à jour : 2026-08-14 (vérifié contre le code source)

@@ -1,5 +1,9 @@
 # Sprint 15-D10 — Journal quotidien de l'appariement D7
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Le batch `cn_dragon_tiger_daily_match` de [batch.yaml](../../batch.yaml) automatise **uniquement l'appariement de recherche sans issues futures** défini par [D7](./sprint_15d7_protocole_appariement_dragon_tiger.md). Il n'entraîne rien, ne lit pas les labels D1/D10, ne modifie ni la base CN, ni le serving, ni le trading.
 
 ## Séquence et temporalité

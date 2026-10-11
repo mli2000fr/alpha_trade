@@ -215,6 +215,19 @@ if (-not $collectionEnabled -or $collectionStatus.StartsWith('BLOCKED_')) {
     exit 0
 }
 
+# La borne d'essai s'applique aussi à -Force : aucun appel après expiration.
+if ($collectionStatus.StartsWith('ACTIVE_RESEARCH_TRIAL') -or
+    ($cfg -and ($cfg.PSObject.Properties.Name -contains 'trial_end_date_exclusive'))) {
+    $trialCode = 'import sys; from common.config_loader import load_batch_config; from analyst_research.trial_policy import trial_skip_reason; reason=trial_skip_reason(load_batch_config().get(''analyst_snapshot_collection'') or {}); print(reason or ''''); sys.exit(10 if reason else 0)'
+    $trialResult = @(& $resolvedPython -c $trialCode 2>&1)
+    $trialExit = $LASTEXITCODE
+    if ($trialExit -ne 0) {
+        Write-StatusLine ("[{0}] SKIP analyst_snapshot_collect - trial gate exit={1}: {2}" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $trialExit, ($trialResult -join ' '))
+        if ($trialExit -eq 10) { exit 0 }
+        exit 1
+    }
+}
+
 # Le second trigger est un filet de sécurité, pas une seconde collecte.
 # Un lancement manuel avec -Force contourne toujours ce contrôle.
 $isRecovery = $false

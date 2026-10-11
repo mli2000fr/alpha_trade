@@ -1,5 +1,9 @@
 # Sprint 10-A — Validation des labels Oracle CN_A 2018–2025
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Verdict
 
 `PASS_LABELS_PRICE_ONLY` sur les huit années et les quatre horizons H5, H10,

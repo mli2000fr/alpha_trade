@@ -1,5 +1,9 @@
 # Sprint 13-A — Gel du protocole économique France et contrôle des gates
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Suite technique préparée : [13-B — tapes et reporting](sprint_13b_assemblage_tapes_reporting.md).
 
 Date : 4 octobre 2026. Nouveau GO utilisateur pour commencer Sprint 13, après

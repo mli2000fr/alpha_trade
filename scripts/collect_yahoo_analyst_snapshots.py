@@ -41,6 +41,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 from analyst_research.available_at import snapshot_date_of
 from analyst_research.collector import run_collection
 from analyst_research.universe import resolve_universe
+from analyst_research.trial_policy import trial_skip_reason
 from common.config_loader import load_batch_config
 from database.repositories.analyst_snapshots import AnalystSnapshotRepository
 
@@ -91,6 +92,11 @@ def main(argv: list[str] | None = None) -> int:
     if not cfg.get("enabled", True) or status.startswith("BLOCKED_"):
         print(json.dumps({"status": "SKIPPED_" + (status or "DISABLED"),
                           "reason": "Collecte désactivée ou droits non qualifiés"}, ensure_ascii=False))
+        return 0
+    trial_reason = trial_skip_reason(cfg)
+    if trial_reason:
+        print(json.dumps({"status": "SKIPPED_" + trial_reason,
+                          "reason": "Essai prospectif hors fenêtre ; aucun appel Yahoo"}, ensure_ascii=False))
         return 0
     _setup_logging(args.log_file or cfg.get("log_file"))
 

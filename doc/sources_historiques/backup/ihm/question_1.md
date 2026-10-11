@@ -1,5 +1,9 @@
 # Réponses détaillées à `doc/question.txt`
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 > Document rédigé à partir du code, de la documentation et des tests présents dans le workspace.
 > 
 > Sources principales vérifiées : `backtesting/data_loader.py`, `backtesting/resilience.py`, `modelFactory/predictor.py`, `modelFactory/features.py`, `modelFactory/champion_selection.py`, `event_sentiment/history_backfill.py`, `event_sentiment/signal_aggregator.py`, `ihm/pages/*.py`, `ihm/services/*.py`, `execution_engine/*.py`, `risk_management/cli.py`, `config.yaml`, ainsi que les docs `doc/*.md`.

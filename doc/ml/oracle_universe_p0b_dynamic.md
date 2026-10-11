@@ -1,5 +1,9 @@
 # P0b — Reconstruction dynamique bar-only de l'univers Oracle
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Objectif
 
 P0b mesure l'effet d'un univers quotidien construit sans rétropager les

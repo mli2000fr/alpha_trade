@@ -1,9 +1,143 @@
-# Filtre directionnel Oracle → GPT + Web → risque → PAPER
+# Filtre directionnel Oracle → GPT / DeepSeek + Web → risque → PAPER
+
+## Choix du fournisseur — mise à jour du 11 octobre 2026
+
+À la demande de l'utilisateur, `enabled: false` laisse désormais la case du
+filtre **décochée par défaut**, quel que soit le fournisseur. L'activation
+manuelle dans l'IHM reste possible. Une session déjà ouverte peut conserver
+son choix précédent ; le décocher une fois dans cette session.
+
+Le choix se fait dans `config.yaml`, section `llm_directional_filter` :
+
+```yaml
+provider: openai  # openai = GPT ; deepseek = analyse DeepSeek
+model: gpt-6-luna  # Modèle OpenAI : analyse GPT ou collecte Web pour DeepSeek
+api_key_env: OPENAI_API_KEY
+deepseek_model: deepseek-flash
+deepseek_api_key_env: DEEPSEEK_API_KEY
+```
+
+Changer uniquement `provider` permet de conserver les modèles et paramètres de
+chaque branche. Les noms de variables désignent les secrets d'environnement,
+jamais des clés à inscrire en YAML. GPT reste sélectionné par défaut. Les libellés
+du filtre, des univers, du batch Oracle et des protections suivent le fournisseur
+configuré ; le rapport d'une ancienne analyse indique son fournisseur **archivé**.
+
+**DeepSeek ne remplace pas le moteur de recherche Web.** Sa documentation
+[Responses API](https://api-docs.deepseek.com/api/create-response/) indique que
+les outils intégrés sont ignorés. Le mode livré est donc **hybride** :
+
+1. OpenAI effectue la recherche Web traçable avec la requête existante.
+2. DeepSeek reçoit le contexte Oracle et la réponse Web archivée, puis produit
+   sa propre décision JSON via Chat Completions.
+3. La validation locale exige les mêmes identités, sources récentes réellement
+   rencontrées, seuils, fenêtre prospective et protections PAPER.
+
+Ce mode exige **OPENAI_API_KEY et DEEPSEEK_API_KEY**, et facture **les deux API**.
+Le modèle DeepSeek est configurable ; `deepseek-flash` figure dans l'exemple
+officiel [JSON Output](https://api-docs.deepseek.com/guides/json_mode/).
+Le préflight vérifie son accès réel, pas un remplacement automatique.
+DeepSeek n'ouvre pas les pages lui-même et ne reçoit pas leur texte intégral
+certifié : il exploite les traces et la synthèse OpenAI, incluant l'avis préliminaire.
+Il ne s'agit donc ni d'une recherche DeepSeek autonome, ni d'une comparaison
+indépendante des fournisseurs. Aucun gain directionnel n'est démontré.
+
+Les réponses des deux fournisseurs et la requête DeepSeek effective sont
+archivées dans `llm_directional_assessments.response_json` ; la configuration
+figée dans `llm_directional_runs.config_json` conserve le fournisseur et les deux
+modèles. Les tables existantes suffisent, aucune migration n'est nécessaire.
+Si DeepSeek échoue après la recherche, la réponse Web est conservée mais le run
+ne publie aucun candidat. Une réponse tronquée, vide ou sans Web qualifiable
+ne devient pas une décision exploitable. Pas de retry payant ni de fallback GPT.
+La relecture reconstruite utilise les vrais RAW archivés, jamais des citations
+ajoutées par DeepSeek. Les anciens runs sans champ `provider` restent GPT et
+gardent leur contrat de requête existant.
+
+Contrôle préalable, sans génération payante :
+
+```powershell
+python -m service.llm_directional.preflight --check-api
+```
+
+Cette commande consulte les métadonnées modèles, vérifie les clés sans les
+afficher, les tables et le compte principal PAPER. Elle ne garantit pas un futur
+appel réussi. Les étapes 10/11/12 et `us_pipeline` utilisent la même configuration.
+Tests locaux simulés uniquement pour cette livraison : pas d'appel LLM payant,
+pas d'ordre, pas de modification des données SQL ou des modèles Oracle.
+Validation : **519 tests passent** (filtre, sources, archives, SHORT, protections,
+dates US, workflow, batch et IHM). L'accès réel au modèle DeepSeek reste à
+vérifier avec la clé de l'utilisateur ; aucun succès API réel n'est revendiqué.
+
+**Test réel ultérieur du 11 octobre :** accès confirmé et comparaison autorisée
+sur les 11 titres précédents, avec preuves Web partagées. GPT : 11 réponses valides,
+1 LONG / 3 SHORT / 7 ABSTAIN. DeepSeek : 9 réponses valides, 1 SHORT / 8 ABSTAIN,
+deux JSON tronqués par le budget de 6 000 tokens incluant le raisonnement.
+Zéro candidat éligible, aucun risque/ordre. La branche DeepSeek est FAILED,
+comparaison PARTIAL_FAILED ; son transport fonctionne mais le budget nécessite
+une qualification avant usage opérationnel. [Comparatif détaillé](llm_gpt_deepseek_comparison_11.md).
+
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
 
 Implémentation du 8 octobre 2026. Marché US exclusivement. **Expérience prospective,
 non validée économiquement : aucun gain directionnel ou rendement n’est garanti.**
 
 ## 1. Objectif et périmètre
+
+### Date unique Oracle / GPT / risque / exécution — correctif du 10 octobre 2026
+
+Le run manuel `20261010_124947_48e1fd11` utilisait le bon batch Oracle mais la
+date du samedi 10 octobre : Oracle calculait zéro score et le filtre GPT
+refusait une date hors séance. La commande Oracle ne recevait pas la date du
+wrapper, et son retour d'erreur était alors affiché avec un code de succès.
+
+Le parcours prospectif utilise désormais une **séance signal US unique** :
+
+- samedi/dimanche/jour férié : séance précédente selon le calendrier NYSE ;
+- aujourd'hui avant l'ouverture NYSE : séance précédente ;
+- après minuit Paris alors que New York est encore la veille : date NY de la
+  veille, puis résolution de sa séance ; aucun saut vers le nouveau jour Paris ;
+- séance explicitement sélectionnée dans le passé : conservée, jamais avancée
+  pour faire passer une analyse expirée ;
+- séance courante pendant le marché : données non définitives, analyse bloquée
+  avant la clôture ; une sélection future ne devient pas un signal du passé.
+
+Exemple : samedi **10/10/2026** → signal **09/10/2026**, valide pour une analyse
+Web prospective jusqu'avant l'ouverture de la séance suivante. Le calendrier
+gère jours fériés, demi-séances et changement d'heure NY/Paris, sans règle
+approximative « lundi–vendredi ».
+
+La commande affichée et celle exécutée contiennent : date du wrapper
+`--trade-date J`, Oracle `--universe-date J`, risque `--trade-date J`, exécution
+`--date J`. Le registre fige la date au lancement ; le workflow la conserve.
+La page Pipeline affiche la séance Oracle/GPT à côté de la commande LIVE.
+La **date signal n'est pas la date de fill** : l'entrée broker peut être ultérieure.
+
+Le wrapper revalide la fenêtre `clôture J ≤ maintenant < ouverture suivante`
+**avant** le sous-processus Oracle et avant l'accès DB/broker. Il n'autorise
+aucune recherche Web historique. Oracle-only renvoie un code non nul si le
+calcul échoue ou produit zéro score ; GPT n'est alors pas appelé. La synthèse
+Oracle quotidienne est limitée à J au lieu de réécrire tout l'historique.
+Une date valide ne garantit pas la présence des cours, des features ou des
+scores : les contrôles de couverture restent obligatoires.
+
+11/12 exigent toujours l'identifiant exact d'une analyse réussie, sa date,
+son compte PAPER, ses protections figées et le lien au run risque. Aucun
+fallback « dernier run », aucune autorisation d'ordre liée au seul changement
+de date. Aucune migration SQL ni réinstallation des tâches nécessaire ;
+rafraîchir/redémarrer l'IHM si elle conserve le code chargé précédemment.
+
+Vérification locale du correctif : **479 tests passent**, sans appel GPT ni
+ordre broker. Couverture : week-end, jours fériés/demi-séances, pré-ouverture,
+minuit Paris et changement d'heure, transmission des dates 10/11/12,
+précontrôle avant calcul et arrêt sur zéro score Oracle. Deux tests existants
+de `tests/test_ihm_pipeline_e2e.py` restent en écart, hors de ce correctif :
+les clés du bloc sentiment et le défaut `margin` attendu comme `cash` par
+le test. Ils ont été exclus du dernier passage vert ; leurs fonctions dans
+`ihm/pages/_execution_center` et leur configuration n'ont pas été modifiées.
+Ce contrôle local ne remplace pas la relance réelle de l'étape 10 ni ne
+garantit la disponibilité des scores au 09/10/2026.
 
 ### Extension LONG/SHORT — 10 octobre 2026
 
@@ -191,11 +325,18 @@ Une réponse LONG/SHORT n’est éligible que si (SHORT exige aussi `allow_short
 4. la note atteint `min_confidence` ;
 5. au moins `min_sources` URL distinctes sont récentes et présentes parmi les
    sources/citations réellement renvoyées par l’outil ;
-6. les dates retenues comportent un fuseau, ne sont pas futures et respectent
-   `max_source_age_days`.
+6. les preuves retenues sont récentes et non futures : horodatage avec fuseau,
+   ou date seule dont l'intervalle complet de publication possible est dans
+   la fenêtre `max_source_age_days` (protocole v4, section 13) ;
+7. aucune URL citée dans l'analyse n'est non traçable ou invalide : ces URL sont
+   exclues et bloquent conservativement l'éligibilité de ce titre.
 
 Une réponse ABSTAIN reste une réponse valide même si les sources récentes sont
-insuffisantes. Une réponse techniquement invalide fait échouer **tout le run**,
+insuffisantes. Une date imprécise ne devient pas une erreur technique : elle reste
+archivée ; une date seule n'est comptée que si son intervalle complet est qualifié.
+Un LONG/SHORT
+sans preuves suffisantes est une abstention de sélection (`ABSTAIN_UNQUALIFIED`),
+sans modifier la décision brute du modèle. Une réponse techniquement invalide fait échouer **tout le run**,
 au lieu de trader silencieusement un sous-ensemble incomplet.
 
 Les LONG et SHORT éligibles sont triés ensemble par note décroissante, puis rang Oracle croissant,
@@ -391,7 +532,7 @@ slippage, suspensions, annulations ou indisponibilité du service restent possib
 
 Le workflow s’arrête en cas d’échec. Une abstention complète n’envoie aucun nouvel
 ordre. Les listes `config.yaml → us_pipeline.steps` / `steps_friday` définissent
-les étapes du batch quotidien (de 1 à 12). Le filtre GPT n'est pas activé
+les étapes du batch quotidien (de 1 à 14). Le filtre GPT n'est pas activé
 implicitement par ces listes ou les cases de la session IHM ; voir le guide
 `doc/operations/us_pipeline.md` pour le mode et le plan configurés.
 
@@ -494,3 +635,175 @@ propres écritures habituelles ; ces trois tables concernent le filtre et son au
 - `ihm/services/pipeline_runner.py`, `process_registry.py` : commandes et workflow.
 - `risk_management/cli.py`, `portfolio_builder.py` : réutilisation du moteur réel.
 - `tests/test_llm_directional_filter.py` : tests de la nouvelle fonctionnalité.
+
+## 12. Dates imprécises, abstentions et erreurs techniques — correctif du 10 octobre 2026
+
+Cette section décrit le premier correctif **v3**, remplacé pour les nouvelles
+analyses par le **v4** décrit en section 13. Les résultats historiques v3 ne sont
+pas réécrits.
+
+Le protocole `oracle-web-directional-v3` distingue désormais la qualité des
+preuves de la validité technique de la réponse. Aucun seuil, modèle, compte ou
+paramètre de risque n'est changé par ce correctif.
+
+- Date seule, sans heure (`2026-10-07`) : conservée exactement, classée `date_only`.
+- Heure sans fuseau : conservée exactement, classée `missing_timezone`.
+- Date absente ou illisible : conservée comme telle, non qualifiée.
+- Date future ou trop ancienne : non comptée dans `fresh_source_count`.
+- Horodatage précis et récent : compte une fois par URL distincte ; reste une
+  déclaration non certifiée PIT (`source_timestamps_verified=false`).
+- URL absente des sources/citations de la recherche terminée, ou URL invalide :
+  exclue de `sources`, conservée dans `excluded_sources` et la réponse brute.
+  Sa présence empêche toute sélection directionnelle du titre, même si d'autres
+  sources sont datées. Elle ne transforme pas une réponse ABSTAIN en erreur technique.
+
+Le prompt interdit d'inventer une heure ou un fuseau. `published_at` n'est jamais
+complété par une heure de minuit ni par le fuseau de collecte.
+`source_qualifications` conserve le statut de chaque preuve ; `selection_blockers`
+explique l'inéligibilité. Ces champs dérivés sont stockés dans `assessment_json`
+et visibles dans le rapport d'audit ; aucune migration SQL n'est nécessaire.
+
+`assessment_outcome` distingue `ELIGIBLE`, `ABSTAIN` (décision explicite du modèle)
+et `ABSTAIN_UNQUALIFIED` (LONG/SHORT déclaré mais non sélectionnable). Les trois
+issues sont techniquement `VALID`. Un run ne contenant que des abstentions est
+`COMPLETED`, avec zéro candidat sélectionné et zéro échec ; aucune nouvelle entrée
+n'est publiée. Les compteurs `abstained_count`, `eligible_count`,
+`excluded_source_count` et `unqualified_source_count` sont distincts des erreurs.
+Une erreur HTTP/transport, une réponse incomplète/refusée, l'absence de recherche
+terminée, un JSON/schéma invalide ou une identité non vérifiée restent bloquants
+pour l'ensemble du run.
+
+La relecture **sans appel API et sans écriture SQL** du run
+`llm-820db154cbfa4f23a6ac214cc8ce9434` donne 20 abstentions valides et zéro titre
+éligible. Parmi les 111 références : 51 dates seules, 47 dates absentes,
+4 URL non traçables exclues, 6 horodatages récents déclarés et 3 trop anciens.
+La correction ne crée donc pas de signal LONG/SHORT sur ces réponses.
+
+Le statut historique `FAILED`, les réponses brutes, leurs empreintes et les
+requêtes de ce run restent inchangés. Les anciens protocoles ne sont pas promus
+automatiquement aux étapes 11/12 : la validation avant risque exige le protocole
+courant et la requête exacte. Redémarrer l'IHM pour charger le correctif avant
+une future analyse prospective ; ne pas réinterpréter un ancien run pour trader.
+
+Validation locale : **211 tests ciblés passent** (filtre, abstentions, traçabilité,
+SHORT, protections, dates et commandes historiques), avec API/broker simulés et
+base SQLite isolée. Rapport :
+`artifacts/research/llm_directional_implementation/evidence-v3-tests.xml`.
+Aucun nouvel appel GPT, aucun ordre ni aucune écriture en base réelle pendant
+cette validation. Les réglages utilisateur de `config.yaml` sont préservés.
+
+## 13. Dates calendaires et pages ouvertes — protocole v4 et diagnostic des 11 titres
+
+Le protocole `oracle-web-directional-v4` corrige deux restrictions excessives :
+
+- Une URL exacte provenant d'une action `open_page` ou `find_in_page` **terminée**
+  est désormais traçable, au même titre que les sources/citations renvoyées.
+  Une action échouée ou en cours ne suffit pas. Une URL voisine ou inventée reste
+  exclue. Contrat officiel :
+  [OpenAI Web search — output et citations](https://developers.openai.com/api/docs/guides/tools-web-search).
+- Une date seule `YYYY-MM-DD` n'est pas transformée en horodatage. Elle est
+  conservée exactement. On construit uniquement les **bornes de son intervalle
+  possible**, en couvrant les fuseaux UTC−12 à UTC+14 : début du jour UTC moins
+  14 heures, fin du jour UTC plus 12 heures (borne finale exclusive).
+  Ces 50 heures doivent être **entièrement** comprises entre collecte moins
+  `max_source_age_days` et collecte pour compter comme `fresh_date_claim`.
+
+Les bornes sont archivées dans `source_qualifications` sous
+`possible_publication_start_utc` et `possible_publication_end_utc_exclusive` ;
+ce ne sont pas des heures de publication attestées. Un intervalle chevauchant
+une limite est `date_only_ambiguous` et ne compte pas. Un intervalle entièrement
+trop ancien/futur est `stale_date_claim`/`future_date_claim`. Une heure précise
+sans fuseau reste non qualifiée. Les dates absentes ou invalides ne comptent pas.
+
+`fresh_source_count` compte les URL distinctes qualifiées à la précision horaire
+ou journalière. Cela reste une qualification **des déclarations du modèle**,
+pas une vérification indépendante des publications ni une certification PIT.
+`source_timestamps_verified=false` reste inchangé. Le prompt distingue la date
+de publication d'un article des dates de prix, d'événements futurs ou de mise à
+jour d'une page. Le seuil de confiance, le modèle et les protections ne sont pas
+assouplis.
+
+### Run parent et sélection bornée
+
+Run parent : `llm-bc155d0d71484217b0bdc98cd9e06c7d`, modèle `gpt-6-luna`,
+séance signal 9 octobre 2026, 100 analyses VALID, protocole v3. Décisions brutes :
+89 ABSTAIN, 3 LONG (PENG, ICHR, CLS) et 8 SHORT
+(SSTK, FICO, QFIN, FMC, CWH, ABR, APP, HUBG). Les 11 décisions directionnelles
+ont une confiance de 0,61 à 0,72, sous le seuil de 0,75.
+
+La requalification locale des anciennes réponses ne change aucune ligne du
+parent et ne rend aucun de ces 11 titres éligible : le seuil de confiance suffit
+encore à les exclure. PENG, ICHR et APP disposent désormais d'au moins deux URL
+récentes déclarées, sans URL exclue ; leur seul blocage restant est la confiance.
+Une des quatre références de HUBG est effectivement ouverte et reconnue, les
+autres URL non traçables restent exclues.
+
+### Nouvelle analyse autorisée, recherche uniquement
+
+À la demande de l'utilisateur, une nouvelle analyse est limitée à ces **11 titres**,
+avec le même modèle et les paramètres archivés du parent. Les prix, le rang et
+les scores Oracle d'entrée sont conservés ; le nouveau modèle ne reçoit pas ses
+précédentes décisions, pour limiter l'ancrage. Les contrôles de la fenêtre
+prospective sont maintenus. Le service ne relance ni Oracle ni les étapes 11/12.
+
+Identifiant : `llm-research-11-20261010-v4`. Réponses et requêtes brutes sont
+archivées dans `llm_directional_runs` et `llm_directional_assessments`, sans
+écraser le parent. Le snapshot contient `research_only=true` et `parent_run_id` ;
+`qualified_selection` refuse tout passage de ce run au risque/exécution,
+même si certains titres deviennent éligibles à la recherche.
+
+Points d'entrée : `service/llm_directional/research_rerun.py`. Commande bornée :
+
+```powershell
+python -u -m service.llm_directional.research_rerun --parent-run-id llm-bc155d0d71484217b0bdc98cd9e06c7d --symbols SSTK,FICO,PENG,QFIN,FMC,ICHR,CWH,ABR,CLS,APP,HUBG --run-id llm-research-11-20261010-v4 --output-dir artifacts/research/llm_directional/requalification-11-20261010-v4
+```
+
+**Ne pas relancer automatiquement cette commande** : le même identifiant est
+refusé avant les appels ; choisir un nouvel identifiant nécessite une nouvelle
+autorisation pour éviter de consommer des appels payants en double. Le service
+ne fait pas de retry implicite après un timeout.
+
+Suivi : `run.log`, puis `report.json` et `baseline.json` dans le répertoire ci-dessus.
+La sélection a été faite après observation du premier run : ce diagnostic ne
+mesure ni la performance directionnelle ni un avantage économique OOS.
+Ne pas promouvoir les éventuels changements de confiance comme un gain prédictif.
+
+### Résultat de la réanalyse du 10 octobre 2026
+
+Run `llm-research-11-20261010-v4` **COMPLETED** : 11 réponses VALID archivées,
+zéro erreur technique, zéro candidat éligible, zéro passage au risque/exécution.
+Début 19:41:50, fin 19:46:44 (Paris). Modèle `gpt-6-luna`, confiance minimale 0,75,
+deux URL récentes distinctes requises : paramètres inchangés.
+
+| Symbole | Premier avis | Nouvel avis | Nouvelle confiance subjective | URL récentes qualifiées | Retenu |
+|---|---|---|---:|---:|---|
+| SSTK | SHORT | SHORT | 0,61 | 0 | Non |
+| FICO | SHORT | ABSTAIN | 0,72 | 2 | Non |
+| PENG | LONG | LONG | 0,66 | 2 | Non |
+| QFIN | SHORT | SHORT | 0,59 | 1 | Non |
+| FMC | SHORT | SHORT | 0,66 | 2 | Non |
+| ICHR | LONG | ABSTAIN | 0,76 | 2 | Non |
+| CWH | SHORT | SHORT | 0,66 | 2 | Non |
+| ABR | SHORT | SHORT | 0,66 | 1 | Non |
+| CLS | LONG | ABSTAIN | 0,76 | 2 | Non |
+| APP | SHORT | ABSTAIN | 0,74 | 4 | Non |
+| HUBG | SHORT | SHORT | 0,72 | 4 | Non |
+
+Décisions brutes : **1 LONG, 6 SHORT, 4 ABSTAIN**. Les sept avis directionnels
+restent tous sous 0,75. Huit analyses ont désormais au moins deux sources récentes
+qualifiées ; les dates ne sont donc plus un blocage systématique. Trois URL
+non traçables restent exclues (QFIN, ICHR et HUBG) ; elles ne sont pas blanchies
+pour produire une sélection. Les confiances 0,76 de ICHR et CLS accompagnent une
+décision ABSTAIN, pas un LONG/SHORT : elles ne doivent pas être interprétées comme
+une probabilité de hausse/baisse.
+
+Conclusion bornée : la correction technique fonctionne, mais ce second passage
+ne fournit aucun candidat respectant le protocole figé. Il ne démontre ni
+l'impossibilité de prédire la direction, ni un avantage économique du filtre.
+Ne pas diminuer le seuil après observation pour transformer ce résultat en succès.
+
+Validation isolée finale : **228 tests ciblés passent**, plus 22 tests documentaires.
+Rapport : `artifacts/research/llm_directional_implementation/evidence-v4-tests.xml`.
+Les nouveaux appels API réels sont limités aux 11 titres expressément autorisés ;
+les 89 autres ne sont pas réanalysés. Les anciennes réponses et le run parent
+restent conservés ; le nouveau snapshot est marqué recherche uniquement.

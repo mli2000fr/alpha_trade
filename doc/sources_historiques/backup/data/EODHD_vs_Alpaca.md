@@ -1,5 +1,9 @@
 # EODHD vs Alpaca (IEX) — usage réel du volume dans l'application
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 > Date d'analyse : 2026-05-10
 > 
 > Objet : déterminer si payer `EODHD` est rentable dans **cette** application, en traçant précisément où la donnée de `volume` est ingérée, stockée, lue et transformée.

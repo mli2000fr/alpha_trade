@@ -1,5 +1,9 @@
 # Temporal D1/D10 V2
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Statut et verdict final
 
 Campagne Dataset A terminée le 7 septembre 2026 : **`NO_GO_DATASET_A`**.
@@ -213,4 +217,4 @@ Artefact final :
 La configuration figée est
 [`config/research/temporal_d1d10_v2.json`](../../config/research/temporal_d1d10_v2.json).
 Le protocole scientifique complet reste décrit dans
-[`prompt/todo_tail_direction_classifier_V2.md`](../../prompt/todo_tail_direction_classifier_V2.md).
+`prompt/todo_tail_direction_classifier_V2.md` — référence historique absente localement : `../../prompt/todo_tail_direction_classifier_V2.md`.

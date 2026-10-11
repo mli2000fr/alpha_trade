@@ -1,5 +1,9 @@
 # Sprint 9 — Validation du panel CN 2018–2025
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Date : 25 septembre 2026. Profil : `cn_price_v1`. Source des décisions :
 univers `CN_A` point-in-time du Sprint 8. Benchmark : CSI 300
 `sh.000300`. Aucun entraînement ni backtest n'a été lancé dans ce sprint.

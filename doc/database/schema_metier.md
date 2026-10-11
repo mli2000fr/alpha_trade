@@ -1,8 +1,24 @@
 # Schéma métier et ownership des tables
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Retour : [base de données](../15_base_de_donnees.md)
 
 Les migrations Alembic et les DDL sous `database/sql/` sont la vérité des colonnes/contraintes. Cette carte indique le propriétaire d'écriture ; elle n'est pas un DDL.
+
+## Trois bases, trois contrats
+
+US utilise `alpha_trade`, CN `alpha_trade_cn` et FR `alpha_trade_fr`, résolues
+par `database/router.py` et les profils de marché. Les schémas ne sont pas
+interchangeables : un même nom comme `stock_bars_daily` ne suffit pas à choisir
+le bon loader. Les arbres `alembic`, `alembic_cn` et `alembic_fr` évoluent
+séparément. Voir le [registre DDL/migrations](../reference/schema_et_migrations_generes.md)
+et les guides [CN](../cn/README.md)/[FR](../fr/README.md).
+
+La carte ci-dessous décrit principalement le parcours historique US. Elle ne
+doit pas servir à inventer les tables manquantes dans les deux autres bases.
 
 | Domaine | Tables principales | Writer |
 |---|---|---|
@@ -33,6 +49,29 @@ Clés usuelles combinent symbol/date, run id et account id. Les tables multi-com
 ### ML
 
 `model_training_batch` et `model_training_run` identifient données et entraînements. Registry, metrics, governance et `champion_history` portent la sélection. `model_predictions` contient les inférences auditées. `global_rank_history`, `global_oracle_labels` et `oracle_extreme_predictions` ont des contrats spécialisés.
+
+### Collectes et études US spécialisées
+
+`pit_collection_runs` et `pit_raw_payloads` tracent les passages et versions
+reçues ; ce ne sont pas des tables de sélection du portefeuille. Le statut
+actif/autorisé du catalogue reste distinct de la présence de données anciennes.
+`oracle_atr_market_regime_daily` conserve l'étude rétrospective quotidienne,
+y compris les listes de rendements **réalisés**, couverture et politique de
+listes partielles : ne pas les traiter comme prédictions disponibles à J.
+
+Le filtre GPT écrit `llm_directional_runs`, `llm_directional_assessments` et
+`llm_directional_evaluations`. Les assessments archivés ne deviennent des
+candidats risque qu'après validation du run, de la date, du marché et du scope.
+Voir les contrats [GPT](../ml/oracle_llm_directional_filter.md) et
+[Oracle × ATR](../ml/oracle_atr_market_regime_daily.md).
+
+### Staging FR
+
+`fr_provider_universe_staging`, `fr_provider_bars_staging`,
+`fr_provider_actions_staging` et `fr_staging_progress` enregistrent la collecte
+fournisseur et sa reprise. Leur remplissage ne prouve ni qualification PIT ni
+promotion dans les tables canoniques. Les DDL FR distinguent ensuite référentiel,
+barres fournisseur/canoniques, anomalies, univers et recherches relatives.
 
 ### Risque et exécution
 

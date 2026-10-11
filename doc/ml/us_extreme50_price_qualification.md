@@ -1,5 +1,9 @@
 # Qualification des très grands mouvements US avant rejeu économique
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 Date de revue : 6 octobre 2026. **Qualification partielle terminée ; aucun
 rejeu économique lancé, aucune modification des prix, labels ou modèles.**
 

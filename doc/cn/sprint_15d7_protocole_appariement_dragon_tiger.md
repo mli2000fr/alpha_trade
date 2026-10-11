@@ -1,5 +1,9 @@
 # Sprint 15-D7 — Protocole apparié Dragon/Tiger, sans lecture des issues
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 État au 30 septembre 2026 : **pré-enregistrement et moteur d'appariement outcome-blind livrés**. Aucun entraînement, backtest ou changement de serving D7. La première exécution réelle du préflight est [ici](../../artifacts/research/cn_dragon_tiger_15d7/preflight-20260930/report.json) : une séance prospective exploitable pour l'audit temporel, 64 lignes de motifs, 60 titres distincts. Un export Oracle OOS de recherche existe désormais pour la décision du 8 octobre, mais D7 ne l'apparie pas avant que son cutoff soit passé ; aucun résultat directionnel n'est acquis.
 
 ## Audit complémentaire de l'export Oracle 2026

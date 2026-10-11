@@ -1,5 +1,9 @@
 # TODO de reprise — Oracle CN × Dragon/Tiger, sprints 15-D7 à 15-D11
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Plan / TODO : ne vaut ni validation des données, ni autorisation broker. Les dépendances et blocages actuels priment sur l'ordre des sprints. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 **État figé au 30 septembre 2026.** Ce document sert de point de reprise lorsque les observations prospectives seront disponibles. Il ne constitue pas une validation de la direction D1/D10 ni une autorisation de déploiement. Les contrats complets sont dans [D6](./sprint_15d6_collecte_prospective_dragon_tiger.md), [D7](./sprint_15d7_protocole_appariement_dragon_tiger.md), [D8](./sprint_15d8_export_oracle_prospectif.md), [D9](./sprint_15d9_journal_oracle_prospectif_quotidien.md), [D10](./sprint_15d10_appariement_d7_quotidien.md) et [D11](./sprint_15d11_cumul_d7_outcome_blind.md). Le fichier [batch.yaml](../../batch.yaml) reste la source des horaires.
 
 La vérification opérationnelle avant le premier passage est détaillée dans le [préflight du 8 octobre](./preflight_premier_cycle_2026_10_08.md), notamment l'heure **02:30 Paris** du snapshot D6 avant ouverture et la surveillance des notifications.

@@ -1,5 +1,9 @@
 # Sprint 15-C0 — Audit des analystes et prévisions PIT (CN_A)
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Audit du 29 septembre 2026. **Verdict : NO-GO pour entraîner sur un historique PIT 2018–2025 avec les données actuellement disponibles.** Aucun modèle, batch, table ou serving n'a été modifié. Une collecte prospective reste envisageable, sous réserve des droits et de la qualité de la source.
 
 ## Objectif et contrat de données

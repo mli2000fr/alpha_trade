@@ -1,5 +1,9 @@
 # Global Ranking — dossier technique complet
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Le Global Ranking est le modèle cross-sectionnel multi-symboles de l’application.
 À chaque date et pour chaque horizon actif, il classe les titres relativement à
 l’univers disponible. Sa sortie est un percentile dans `[0,1]` : une valeur

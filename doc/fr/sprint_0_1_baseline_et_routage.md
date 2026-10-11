@@ -1,5 +1,9 @@
 # Sprints 0–1 France — audit de référence et route isolée
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 État : 2 octobre 2026. Voir l'[ADR de décision](adr_0001_contrat_marche_et_isolation.md) et le [planning complet](sprint_planning_integration_marche_francais.md). Ce rapport décrit ce qui a été **vérifié**, non les sprints futurs.
 
 ## Sprint 0 — constat du code et de la base

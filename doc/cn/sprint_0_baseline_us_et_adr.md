@@ -1,5 +1,9 @@
 # Sprint 0 — Baseline US, ADR et remédiation
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 > Date : 19 septembre 2026  
 > Commit de départ : 324c626a8a8e4578c9547473f0a5fd5994c13603  
 > Branche : develop_cn  

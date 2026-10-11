@@ -1,5 +1,9 @@
 # P-MATH-0 — Audit non paramétrique de séparabilité D1/D10
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Statut
 
 **TERMINÉ / NO_STABLE_SEPARATION.** Recherche uniquement : aucune écriture SQL,

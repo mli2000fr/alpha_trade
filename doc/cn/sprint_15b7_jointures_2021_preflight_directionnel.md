@@ -1,5 +1,9 @@
 # Sprint 15-B7 — Jointures Oracle 2021 et préflight directionnel réel
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 29 septembre 2026. Suite de [15-B6](./sprint_15b6_calendrier_et_extension_oracle_oof.md). Rapport canonique : [report.json](../../artifacts/research/cn_margin_lending/sprint15b7_preflight_v2/report.json).
 
 **Verdict : `PASS_ACTUAL_FOLD_GATES_PROXY_ONLY`.** Les huit couples semestre × tâche satisfont les gates de population, classes et calendrier. Cela autorise à *étudier* le signal directionnel dans la campagne pré-enregistrée B6 ; cela ne démontre aucun gain de prédiction. Aucun modèle directionnel n'a été entraîné, aucun backtest économique n'a été exécuté, aucune table ni aucun serving n'ont été modifiés. `strict_ml_allowed=false`, `training_ready=false`, `serving_enabled=false`.

@@ -1,5 +1,9 @@
 # E17 — Bibliothèque d’alphas directionnels price-only à H60/H120
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## 1. Décision
 
 E17 est terminé avec le verdict **`NO_GO` pour une stratégie directionnelle

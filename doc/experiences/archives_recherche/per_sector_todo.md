@@ -1,5 +1,9 @@
 # Per-Sector — Dossier de décision pour GPT
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 > **Date** : 2026-08-15 (mis à jour 2026-08-16 — benchmark gate B41 en production-parity)
 > **Objet** : dossier complet (contexte, méthodologie, tests exécutés, résultats chiffrés) pour qu'une IA externe **tranche la suite à donner** à la piste per-sector d'α-Trade.
 > **Document complémentaire** : `doc/per_sector.md` (architecture, historique, règles de ré-entrée).

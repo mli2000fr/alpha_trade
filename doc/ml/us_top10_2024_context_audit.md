@@ -1,5 +1,9 @@
 # Pourquoi le TOP10 Oracle LONG se dégrade en 2024
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 Audit réalisé le 7 octobre 2026, sans entraînement, accès SQL, veto supplémentaire
 ou modification des paramètres. Script : `scripts/research/us_top10_2024_context_audit.py`.
 Artefacts : `artifacts/research/us_concentrated_replay/top10-2024-context-20261007-v1`.

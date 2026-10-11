@@ -1,6 +1,17 @@
 # Services externes et adaptateurs
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Le package `service/` isole les communications externes et les politiques de retry/cache/télémétrie.
+
+## Connecteur présent ≠ collecte autorisée/active
+
+État du 10/10/2026 : [catalogue effectif](operations/catalogue_batchs_actuel.md).
+Les statuts droits/prudence du projet sont des décisions conservatrices, pas
+un avis juridique universel. Ne pas réactiver un usage bloqué parce que son
+client Python fonctionne ou qu'une page est publique.
 
 ## Matrice
 
@@ -15,6 +26,25 @@ Le package `service/` isole les communications externes et les politiques de ret
 | SEC EDGAR | `service/sec/` | company facts, XBRL, earnings |
 | FMP | `service/fmp/` | provider financier alternatif |
 | IBKR | `service/ibkr/` | client/credentials expérimental ou auxiliaire |
+| Business Quant | `service/forward_pit/` | RAW/versioning, référentiel/actions ; pas remplacement canonique EODHD validé |
+| OpenAI avec Web | `service/llm_directional/` | analyse prospective Oracle, archivage, filtrage PAPER ; appels payants selon compte |
+| BaoStock | `service/baostock/` | historique CN et connecteur conservé ; collecte D9 bloquée droits/prudence |
+| Sources FR | `service/fr/` | ESMA/FIRDS, EODHD, AMF, DILA, MiFIR différé, qualification/archivage |
+| INPI | `service/inpi/` | comptes FR, connecteur conservé ; collecte suspendue pour conditions de rétention |
+| Trading212 | `service/fr/trading212_*` | lectures DEMO EUR et bancs de qualification ; pas broker autonome autorisé |
+
+Alpaca IEX n'est pas un volume consolidé. Les options indicatives et barres
+différées ne fournissent pas un NBBO historique complet. OCC fournit une
+brique d'ajustements de contrats, pas les quotes/greeks manquants. MiFIR FR
+reste partiel/quarantaine et n'apporte pas automatiquement OI, IV ou NBBO.
+
+Collectes actuellement bloquées : consensus Yahoo US/FR, FRED archive pour
+usage ML, FINRA pour usage prédictif, CN SSE/SZSE automatisé et BaoStock D9,
+INPI rétention FR. Le fallback capitalisation Yahoo/Finnhub reste une autre
+famille configurée ; ne pas en déduire une autorisation générale Yahoo.
+IBKR n'est pas une source quotidienne securities_lending active par sa seule
+présence dans le dépôt. Les sources manquantes restent explicites, jamais
+remplies avec des données indicatives rebaptisées officielles.
 
 ## Résilience
 

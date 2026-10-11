@@ -1,5 +1,9 @@
 # Stock Screener — référence
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Retour : [vue signaux](../13_screener_selector_sentiment.md)
 
 `stock_screener.py` orchestre le traitement par chunks/processus ; `pipeline.py` contient les calculs purs ; `db_io.py` charge et persiste ; `models.py` définit config, métriques chunk et rapport.

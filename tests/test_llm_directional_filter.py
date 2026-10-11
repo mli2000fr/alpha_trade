@@ -52,12 +52,16 @@ def test_parameters_and_zero_selection():
 
 def test_actual_yaml_defaults():
     cfg = load_filter_config()
-    assert cfg.model == 'gpt-6.1-sol'
+    # Deployment model is user-configurable; the factory default is tested
+    # through build_request below, not imposed on the user's config.yaml.
+    assert isinstance(cfg.model, str) and cfg.model.strip()
+    request = build_request({}, cfg)
+    assert (request['web_request']['model'] if cfg.provider == 'deepseek' else request['model']) == cfg.model
     assert 1 <= cfg.oracle_top_n <= 100  # User configuration, not a pinned factory default.
     # Deployment max_selected is user-configurable (currently 3); factory default
     # remains 5, tested separately. Never overwrite a user's YAML to satisfy a test.
     assert 0 <= cfg.max_selected <= cfg.oracle_top_n
-    assert cfg.enabled
+    assert isinstance(cfg.enabled, bool)  # The user may disable the IHM default.
     assert cfg.default_symbol_source == 'universe-file:univers_filtred_tradable.txt'
     assert cfg.default_oracle_batch_id == 'model-factory-20261003082853-e98332'
 
@@ -107,7 +111,7 @@ def test_valid_response():
 
 
 @pytest.mark.parametrize('mutation', ['missing_search', 'wrong_symbol', 'unverified_identity',
-    'fake_url', 'no_timezone', 'incomplete', 'nan', 'extra_field', 'refusal'])
+    'incomplete', 'nan', 'extra_field', 'refusal'])
 def test_invalid_response(mutation):
     raw = response()
     value = json.loads(raw['output'][1]['content'][0]['text'])
@@ -117,10 +121,6 @@ def test_invalid_response(mutation):
         value['symbol'] = 'OTHER'
     elif mutation == 'unverified_identity':
         value['identity_verified'] = False
-    elif mutation == 'fake_url':
-        value['sources'][0]['url'] = 'https://invented.example/source'
-    elif mutation == 'no_timezone':
-        value['sources'][0]['published_at'] = '2026-10-07'
     elif mutation == 'incomplete':
         raw['status'] = 'incomplete'
     elif mutation == 'nan':
@@ -144,6 +144,111 @@ def test_unqualified_evidence_abstains(kind):
             source['published_at'] = {'old': '2020-01-01T00:00:00Z',
                 'future': '2027-01-01T00:00:00Z', 'null': None}[kind]
     raw['output'][1]['content'][0]['text'] = json.dumps(value)
+    assert not parse_response(raw, 'ABC', FilterConfig(), NOW)['eligible']
+
+
+@pytest.mark.parametrize('value,status', [
+    ('2026-10-07', 'date_only_ambiguous'),
+    ('2026-10-07T18:00:00', 'missing_timezone'),
+    ('2026-10', 'invalid_publication_date'),
+    ('unknown', 'invalid_publication_date'),
+    ('2026-02-30', 'invalid_publication_date'),
+    ('9999-12-31', 'invalid_publication_date'),
+    (None, 'missing_publication_date'),
+    ('', 'missing_publication_date'),
+    ('2027-01-01T00:00:00Z', 'future_publication_date'),
+    ('2020-01-01T00:00:00Z', 'stale_publication_date'),
+])
+@pytest.mark.parametrize('decision', ['ABSTAIN', 'LONG', 'SHORT'])
+def test_imprecise_dates_are_preserved_not_invented(value, status, decision):
+    raw = response(decision=decision)
+    data = json.loads(raw['output'][1]['content'][0]['text'])
+    for source in data['sources']:
+        source['published_at'] = value
+    raw['output'][1]['content'][0]['text'] = json.dumps(data)
+    before = copy.deepcopy(raw)
+    parsed = parse_response(raw, 'ABC', FilterConfig(allow_short=True), NOW)
+    assert raw == before
+    assert parsed['sources'] == data['sources']
+    assert all(q['qualification'] == status for q in parsed['source_qualifications'])
+    assert parsed['fresh_source_count'] == 0 and not parsed['eligible']
+    assert parsed['assessment_outcome'] == ('ABSTAIN' if decision == 'ABSTAIN' else 'ABSTAIN_UNQUALIFIED')
+    assert not parsed['source_timestamps_verified']
+
+
+@pytest.mark.parametrize('url,reason', [
+    ('https://invented.example/source', 'untraceable_url'),
+    ('file:///private', 'invalid_url'),
+    ('https://[broken', 'invalid_url'),
+])
+@pytest.mark.parametrize('decision', ['ABSTAIN', 'LONG', 'SHORT'])
+def test_untraceable_urls_excluded_even_with_other_fresh_sources(url, reason, decision):
+    raw = response(decision=decision)
+    data = json.loads(raw['output'][1]['content'][0]['text'])
+    bad = dict(data['sources'][0], url=url)
+    data['sources'].append(bad)
+    raw['output'][1]['content'][0]['text'] = json.dumps(data)
+    parsed = parse_response(raw, 'ABC', FilterConfig(allow_short=True), NOW)
+    assert parsed['fresh_source_count'] == 2
+    assert len(parsed['sources']) == 2 and bad not in parsed['sources']
+    assert parsed['excluded_sources'] == [dict(bad, exclusion_reason=reason)]
+    assert not parsed['eligible']
+    assert 'excluded_untraceable_sources' in parsed['selection_blockers']
+
+
+def test_fresh_urls_are_unique_and_aware_clock_preserves_instant():
+    raw = response()
+    data = json.loads(raw['output'][1]['content'][0]['text'])
+    data['sources'][1] = dict(data['sources'][0])
+    raw['output'][1]['content'][0]['text'] = json.dumps(data)
+    parsed = parse_response(raw, 'ABC', FilterConfig(), NOW)
+    assert parsed['fresh_source_count'] == 1 and not parsed['eligible']
+    # Same instant in another timezone must produce the same qualification.
+    clock = NOW.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=-8)))
+    assert parse_response(response(), 'ABC', FilterConfig(), clock) == parse_response(
+        response(), 'ABC', FilterConfig(), NOW)
+
+
+@pytest.mark.parametrize('value,status', [
+    ('2026-10-06', 'fresh_date_claim'),
+    ('2026-10-07', 'date_only_ambiguous'),
+    ('2026-09-07', 'date_only_ambiguous'),
+    ('2026-09-06', 'stale_date_claim'),
+    ('2026-10-09', 'future_date_claim'),
+])
+def test_calendar_date_bounds_qualify_without_fabricated_time(value, status):
+    raw = response()
+    data = json.loads(raw['output'][1]['content'][0]['text'])
+    for source in data['sources']:
+        source['published_at'] = value
+    raw['output'][1]['content'][0]['text'] = json.dumps(data)
+    parsed = parse_response(raw, 'ABC', FilterConfig(), NOW)
+    assert all(q['qualification'] == status for q in parsed['source_qualifications'])
+    assert all(s['published_at'] == value for s in parsed['sources'])
+    assert parsed['eligible'] == (status == 'fresh_date_claim')
+    assert parsed['fresh_source_count'] == (2 if status == 'fresh_date_claim' else 0)
+    assert not parsed['source_timestamps_verified']
+    for q in parsed['source_qualifications']:
+        start = datetime.fromisoformat(q['possible_publication_start_utc'])
+        end = datetime.fromisoformat(q['possible_publication_end_utc_exclusive'])
+        assert end - start == timedelta(hours=50)
+
+
+@pytest.mark.parametrize('action', ['open_page', 'find_in_page'])
+@pytest.mark.parametrize('status', ['completed', 'failed', 'in_progress'])
+def test_direct_page_trace_requires_completed_action_and_exact_url(action, status):
+    raw = response()
+    data = json.loads(raw['output'][1]['content'][0]['text'])
+    url = 'https://issuer.example/release'
+    data['sources'][0]['url'] = url
+    raw['output'][1]['content'][0]['text'] = json.dumps(data)
+    raw['output'].append({'type': 'web_search_call', 'status': status,
+                         'action': {'type': action, 'url': url}})
+    parsed = parse_response(raw, 'ABC', FilterConfig(), NOW)
+    assert parsed['eligible'] == (status == 'completed')
+    assert len(parsed['excluded_sources']) == (0 if status == 'completed' else 1)
+    data['sources'][0]['url'] = url + '-invented'
+    raw['output'][1]['content'][0]['text'] = json.dumps(data)
     assert not parse_response(raw, 'ABC', FilterConfig(), NOW)['eligible']
 
 
@@ -186,6 +291,126 @@ def test_persist_all_candidates_and_selection(isolated):
     assert all(i['response_sha256'] for i in items)
     _, selected = runner.qualified_selection(isolated, 'test-run', date(2026, 10, 7), 'default', now=NOW)
     assert selected[0]['symbol'] == 'ABC'
+
+
+@pytest.mark.parametrize('decision', ['ABSTAIN', 'LONG', 'SHORT'])
+def test_valid_abstentions_complete_without_selection_and_keep_raw(isolated, decision):
+    from service.llm_directional.report import report
+    def client(request):
+        raw = response(json.loads(request['input'])['symbol'], decision=decision)
+        data = json.loads(raw['output'][1]['content'][0]['text'])
+        data['sources'][0]['published_at'] = '2026-10-07'
+        data['sources'][1]['url'] = 'https://invented.example/source'
+        raw['output'][1]['content'][0]['text'] = json.dumps(data)
+        return raw
+    summary = analyze(isolated, client)
+    assert summary['status'] == 'completed' and summary['failed'] == 0
+    assert summary['selected'] == [] and summary['abstained_count'] == 2
+    assert summary['excluded_source_count'] == 2 and summary['unqualified_source_count'] == 4
+    run, items = Repository(isolated).get('test-run')
+    assert run['status'] == 'COMPLETED' and all(i['status'] == 'VALID' for i in items)
+    for item in items:
+        raw = json.loads(item['response_json'])
+        assert digest(raw) == item['response_sha256']
+        assert len(json.loads(item['sources_json'])) == 1
+        assert json.loads(raw['output'][1]['content'][0]['text'])['sources'][0]['published_at'] == '2026-10-07'
+    _, selected = runner.qualified_selection(isolated, 'test-run', date(2026, 10, 7), 'default', now=NOW)
+    assert selected == []
+    view = report(isolated, 'test-run')
+    outcome = 'ABSTAIN' if decision == 'ABSTAIN' else 'ABSTAIN_UNQUALIFIED'
+    assert all(r['assessment_outcome'] == outcome and r['excluded_sources'] for r in view['candidates'])
+
+
+def test_unqualified_assessment_does_not_block_other_qualified_candidates(isolated):
+    def client(request):
+        symbol = json.loads(request['input'])['symbol']
+        raw = response(symbol)
+        if symbol == 'XYZ':
+            data = json.loads(raw['output'][1]['content'][0]['text'])
+            data['sources'][0]['published_at'] = '2026-10-07'
+            raw['output'][1]['content'][0]['text'] = json.dumps(data)
+        return raw
+    summary = analyze(isolated, client)
+    assert summary['selected'] == ['ABC']
+    assert summary['abstained_count'] == 1 and summary['eligible_count'] == 1
+    _, selected = runner.qualified_selection(isolated, 'test-run', date(2026, 10, 7), 'default', now=NOW)
+    assert [s['symbol'] for s in selected] == ['ABC']
+
+
+def test_old_protocol_cannot_be_reinterpreted_for_trading(isolated):
+    analyze(isolated, lambda request: response(json.loads(request['input'])['symbol']))
+    with isolated.begin() as conn:
+        conn.execute(update(runs).values(protocol_version='oracle-web-directional-v2'))
+    with pytest.raises(ValueError, match='protocole'):
+        runner.qualified_selection(isolated, 'test-run', date(2026, 10, 7), 'default', now=NOW)
+
+
+def test_deepseek_archived_selection_and_report(isolated):
+    from service.llm_directional.openai_client import deepseek_output
+    from service.llm_directional.report import report
+    def client(request):
+        web = response(request['context']['symbol'])
+        raw = {'choices': [{'finish_reason': 'stop', 'message': {
+            'content': web['output'][1]['content'][0]['text']}}]}
+        archive = {'web_response': web, 'analysis_response': raw}
+        return dict(archive, **deepseek_output(archive))
+    summary = runner.analyze(engine=isolated, batch_id='batch-test', trade_date=date(2026, 10, 7),
+        symbol_source='universe-file:test.txt', config=FilterConfig(enabled=True, provider='deepseek', max_selected=1),
+        inputs=[dict(symbol=s, oracle_rank=i+1, oracle_score=.9-i*.1) for i, s in enumerate(['ABC', 'XYZ'])],
+        client=client, run_id='test-run', check_account=False)
+    assert summary['selected'] == ['ABC']
+    _, selected = runner.qualified_selection(isolated, 'test-run', date(2026, 10, 7), 'default', now=NOW)
+    assert [row['symbol'] for row in selected] == ['ABC']
+    view = report(isolated, 'test-run')
+    assert view['provider_label'] == 'DeepSeek' and view['analysis_model'] == 'deepseek-flash'
+    # Current deployment is GPT: historical reporting/risk must use the archive.
+    assert view['provider'] == 'deepseek'  # Never relabel an archived run from current YAML.
+
+
+def test_research_run_is_archived_but_cannot_feed_risk(isolated):
+    summary = analyze(isolated, lambda request: response(json.loads(request['input'])['symbol']),
+                      research_parent_run_id='parent-test')
+    assert summary['selected'] == ['ABC']
+    with pytest.raises(ValueError, match='recherche'):
+        runner.qualified_selection(isolated, 'test-run', date(2026, 10, 7), 'default', now=NOW)
+
+
+def test_subset_rerun_preserves_inputs_and_model_without_anchoring(isolated, tmp_path):
+    from service.llm_directional.research_rerun import rerun
+    analyze(isolated, lambda request: response(json.loads(request['input'])['symbol'],
+                                               decision='LONG' if json.loads(request['input'])['symbol'] == 'ABC' else 'ABSTAIN'))
+    parent, old = Repository(isolated).get('test-run')
+    calls = []
+    def client(request):
+        calls.append(request)
+        return response('ABC')
+    view = rerun(engine=isolated, parent_run_id='test-run', expected_symbols=['ABC'],
+                 run_id='research-test', output_dir=tmp_path, client=client)
+    assert len(calls) == 1 and calls[0]['model'] == json.loads(parent['config_json'])['model']
+    context = json.loads(calls[0]['input'])
+    assert context == json.loads(parent['input_json'])['candidates'][0]
+    assert 'decision' not in context
+    assert view['research_only'] and (tmp_path / 'report.json').exists()
+    assert Repository(isolated).get('test-run') == (parent, old)
+    with pytest.raises(ValueError, match='recherche'):
+        runner.qualified_selection(isolated, 'research-test', date(2026, 10, 7), 'default', now=NOW)
+    with pytest.raises(ValueError, match='Sous-ensemble'):
+        rerun(engine=isolated, parent_run_id='test-run', expected_symbols=['XYZ'],
+              run_id='bad-research', output_dir=tmp_path, client=client)
+    assert len(calls) == 1  # No paid call when the authorized subset is wrong.
+
+
+def test_subset_accepts_only_storage_rounding_and_keeps_hashed_score(isolated):
+    from service.llm_directional.research_rerun import prepare_subset
+    analyze(isolated, lambda request: response(json.loads(request['input'])['symbol']))
+    with isolated.begin() as conn:
+        conn.execute(update(assessments).where(assessments.c.symbol == 'ABC').values(oracle_score=.9000004))
+    _, _, _, chosen, _ = prepare_subset(isolated, 'test-run', ['ABC', 'XYZ'])
+    assert chosen[0]['oracle_score'] == .9
+    with isolated.begin() as conn:
+        conn.execute(update(assessments).where(assessments.c.symbol == 'ABC').values(oracle_score=.91))
+    with pytest.raises(ValueError, match='Classement'):
+        prepare_subset(isolated, 'test-run', ['ABC', 'XYZ'])
 
 
 @pytest.mark.parametrize('field,value', [

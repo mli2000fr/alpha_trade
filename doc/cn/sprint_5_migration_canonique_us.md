@@ -1,5 +1,9 @@
 # Sprint 5 — Migration canonique US vers `instrument_id`
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## 1. Résultat recherché
 
 Le Sprint 5 retire `symbol` de son rôle d’identité technique. Un ticker reste

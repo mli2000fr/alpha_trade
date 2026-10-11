@@ -1,5 +1,9 @@
 # Guidance : audit de faisabilité du 30 septembre 2026
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 **Verdict : faisabilité documentaire ponctuelle confirmée ; DATA_NOT_READY pour un test directionnel.** Deux révisions explicites de ventes sont retrouvées, mais chez un seul émetteur. L'audit ne justifie ni un entraînement D1/D10 ni la réouverture du parseur E21 sous forme d'une B9.
 
 ## Périmètre et traçabilité

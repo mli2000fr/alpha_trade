@@ -1,5 +1,9 @@
 # Sprint 15-D6 — Observations Dragon/Tiger prospectives, deux passages CN
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Mise en place le 30 septembre 2026. **Deux tâches Windows de recherche sont installées ; aucun modèle, label, table CN/US, backtest ou serving n'est alimenté par ces observations.** Le premier passage manuel avant ouverture est terminé. La qualification PIT et les droits d'exploitation restent ouverts.
 
 ## Horaires et calendrier

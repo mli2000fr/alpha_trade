@@ -1,5 +1,9 @@
 # E16 — Reconstruction PIT de l’univers tradable et réplication E12/E15
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Verdict
 
 **`NO_GO_OR_BLOCKED`.** E16 couvre 1 764/1 764 séances Oracle et

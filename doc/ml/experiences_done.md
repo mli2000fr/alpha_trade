@@ -1,5 +1,113 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-11 — Collecteur consensus EODHD prospectif
+
+Souscription Calendar & News signalée par l'utilisateur ; compte et Trends HTTP 200.
+194 lignes reçues sur deux titres en un appel par le nouveau collecteur, sans
+écriture SQL pendant ce smoke. Nouvelle table dédiée et migration 0099 ;
+aucune table Yahoo utilisée. Batch `eodhd_consensus_snapshot` initialement livré
+désactivé, puis activé à la demande utilisateur ; 22h15 Paris / secours
+conditionnel 4h15, notifications. Collecte élargie aux symboles de stock_bars_daily.
+Dates fiscales conservées sans leur attribuer une disponibilité historique PIT.
+Révisions baisse 7 jours absentes : NULL, non zéro. Aucun nouveau résultat ML.
+Remédiation du même jour : le seuil de consensus 95 % est limité au fichier
+tradable (1 778/1 790 déjà couverts, 99,33 %), les réponses vides et symboles
+invalides sont distingués des pannes techniques. Un symbole 404 ne coupe plus
+les sous-lots suivants ; smoke sans SQL sur ACHR.WS + ALLO : un identifiant
+invalide, ALLO reçu avec 84 lignes, zéro panne technique. Compteurs d'échec
+partagés entre module importé et CLI `python -m` ; anciens runs non réécrits.
+[Mise en service et contrat](../operations/eodhd_consensus_snapshot.md).
+
+## 2026-10-11 — Audit de remplacement des barres US EODHD par Alpaca SIP
+
+Deux études de recherche, sans SQL écrit ni changement de production :
+[échantillon de 24 titres et sensibilité du champion Oracle au volume](us_daily_alpaca_eodhd_oracle_audit.md), puis
+[univers entier, janvier–septembre 2026](us_sip_daily_universe_2026_audit.md).
+1 790 titres interrogés, 1 692 avec historique SIP, 313 408 barres comparées aux lignes locales toutes marquées EODHD.
+99,501 % des couples titre/date ont leurs quatre prix à moins de 1 % ; 98 absences, dont 96 OTC identifiés actuellement.
+1 563 couples sur 148 titres divergent de plus de 1 % ; contrôle raw/split des vingt principaux cas effectué.
+Volumes quasi figés locaux repérés ; aucun prix ni volume corrigé.
+436 correspondances supplémentaires par remapping sont archivées séparément, non intégrées automatiquement.
+Verdict : candidat sérieux à la substitution sur un périmètre qualifié, pas remplacement intégral validé ni résiliation EODHD.
+L'effet économique et les classements Oracle complets ne sont pas testés dans l'audit étendu.
+
+## 2026-10-10 — Nouvelle désactivation de la collecte analystes Yahoo US
+
+L'utilisateur a de nouveau désactivé `analyst_snapshot_collection`.
+État vérifié dans `batch.yaml` : `enabled: false`,
+`BLOCKED_YAHOO_AUTOMATED_ACCESS`. La réactivation temporaire et le retrait
+de l'expiration décrits plus bas sont historiques, plus l'état courant.
+Les données restaurées et les analyses sont conservées ; aucun effacement,
+appel fournisseur ou changement de tâche Windows effectué pour cette mise à jour.
+EODHD Calendar & News envisagé pour la collecte prospective, sans activation
+ou achat confirmé. [État actuel](yahoo_analyst_pit.md).
+
+## 2026-10-10 — Restauration consensus Yahoo et premier test directionnel
+
+Sauvegarde du 4 octobre : 1 080 167 lignes réinjectées dans les six tables
+analystes, sans écrasement ; contrôle ultérieur, zéro ligne archivée manquante.
+Analyse sur les 1 790 titres tradables actuels, disponibilité PIT validée,
+entrée prochaine ouverture, H3/H5/H10/H20 sans entraînement.
+Révisions EPS nettes 30 jours : H10 AUC 0,679 sur dix dates ; TOP20 des scores,
+D10 16,53 % contre 10,47 %, D1 6,59 % contre 10,23 %. Pas encore de révisions
+matures à H20. Objectifs H20 instables et augmentant aussi D1 ; recommandations
+sans gain de sélection TOP20. Échantillon court et chevauchant, aucune promotion
+ni preuve économique. Quatre tests ciblés passent.
+[Protocole, restauration et résultats](analyst_archive_restore_directional_20261010.md).
+
+Suite du même jour : contrôle de momentum20 et des secteurs actuels non PIT,
+sans entraînement. Sur la même couverture H10, AUC révisions30 brutes 0,695,
+neutralisées 0,595 ; le TOP20 neutralisé donne D10 7,16 % contre baseline
+11,26 %, malgré une AUC supérieure à 0,5. Les dix dates H10 ne fournissent
+qu'une date sans chevauchement. Aucun GO économique : continuer la collecte
+et confirmer sur de nouvelles périodes. Objectifs/recommandations testés sans
+avantage de sélection convaincant ; niveaux EPS/revenus, nombre d'analystes et
+références EPS J−7/30/60/90 non testés isolément. Un mois de snapshots ne crée
+pas quatre mois de décisions PIT. Un test de contrôle supplémentaire passe.
+
+## 2026-10-10 — Historique : réactivation temporaire Yahoo US, arrêt manuel
+
+Sur GO explicite de l'utilisateur, `analyst_snapshot_collection` avait été réactivé
+depuis le 10 octobre : statut
+`ACTIVE_RESEARCH_RIGHTS_UNCONFIRMED`, permission Yahoo toujours non confirmée.
+Tâche `AlphaTrade-AnalystSnapshot`, 22h Paris / secours conditionnel 4h, univers
+`config/univers_batch/univers_filtred_tradable.txt`, notifications existantes.
+Sur demande ultérieure de l'utilisateur, la borne du 10 novembre est retirée :
+arrêt manuel via `enabled: false`, sans réinstallation de la tâche.
+Pas de modèle ni de décision de trading raccordés.
+133 tests ciblés passent ; tâche Windows vérifiée Ready, actions masquées,
+timezone machine Romance Standard Time. Aucun téléchargement immédiat lancé
+dans cette réactivation, aucun nouveau résultat directionnel. Bilan à faire après
+un mois (couverture, vraies révisions, rollover, rendements à maturité), puis
+arrêt ou nouvelle décision explicite. Les autres blocages US/FR/CN restent inchangés.
+[Détails et suivi](yahoo_analyst_pit.md).
+
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
+Repère de lecture du **10 octobre 2026** : ce registre conserve les résultats
+et lancements **datés**. Une section « en cours » décrit son état au moment
+de l'inscription, pas nécessairement un processus encore actif aujourd'hui.
+Pour les paramètres/branches actuellement raccordés, voir
+[l'état de l'implémentation](../ETAT_ACTUEL_IMPLEMENTATION.md). La présente
+mise à jour documentaire ne requalifie aucun résultat ni ne promeut un modèle.
+
+## US — Collectes prospectives : audit de couverture et direction courte
+
+10 octobre 2026 : audit terminé sur les **1 790 titres** du fichier tradable.
+Options indicatives : 231 519 lignes / 1 651 titres ; barres options retardées :
+188 444 / 1 569 ; disponibilité short : 36 554 / 1 751 ; news/sentiment du mois :
+11 581 / 1 268. Consensus analyste et short volume FINRA vides/suspendus.
+Contrôle figé sans entraînement : AUC D1/D10 H5 volume call/put 0,547,
+H3 OI call/put 0,547 ; associations faibles, chevauchement, recul trop court,
+aucune promotion ni PnL. Aucune option encore mature H20 au 9 octobre.
+Deux réserves SEC identifiées : extraction 8-K/6-K très insuffisante et
+`issuer_symbol` 13F alimenté avec le symbole du déclarant ; non corrigées ici.
+Aucune écriture SQL, configuration modifiée, collecte externe ou ordre.
+Cinq tests de recherche passent. Voir
+[audit détaillé et suites bornées](us_collectes_prospectives_direction_audit_20261010.md).
+
 ## US — TOP10 Oracle H20 corrigé : backtests annuels 2020–2026 en cours
 
 7 octobre 2026 : lancement de sept années × quatre variantes de sortie,
@@ -870,7 +978,7 @@ contient les rapports détaillés batch par batch :
 | B15–B19 | transformations T1/T2/T3 et profondeur/folds | [B15](<../experiences/campagnes_global_ranking/test/B15 Short + SPY + T1.md>), [B16](<../experiences/campagnes_global_ranking/test/B16 Short + SPY + T2.md>), [B17](<../experiences/campagnes_global_ranking/test/B17 Short + SPY + T3.md>), [B18](<../experiences/campagnes_global_ranking/test/B18 Short + SPY + from 2011 + max 8 slits.md>), [B19](<../experiences/campagnes_global_ranking/test/B19 Short + SPY + from 2011 + max 16 slits.md>) |
 | B20–B27 | YetiRank, QueryRMSE, QuerySoftMax, puis variantes CAPM | [B20](<../experiences/campagnes_global_ranking/test/B20 Short + SPY + YetiRank.md>), [B21](<../experiences/campagnes_global_ranking/test/B21 Short + SPY + QueryRMSE.md>), [B22](<../experiences/campagnes_global_ranking/test/B22 Short + SPY + QuerySoftMax.md>), [B25](<../experiences/campagnes_global_ranking/test/B25 Short + SPY + CAPM + YetiRank.md>), [B26](<../experiences/campagnes_global_ranking/test/B26 Short + SPY + CAPM + QueryRMSE.md>), [B27](<../experiences/campagnes_global_ranking/test/B27 Short + SPY + CAPM + QuerySoftMax.md>) |
 | B30–B34 | P1–P3, fondamentaux, historique scores, secteur, screener avec YetiRank | [B30](<../experiences/campagnes_global_ranking/test/B30 Short + SPY + YetiRank +  P1-3.md>), [B31](<../experiences/campagnes_global_ranking/test/B31 Short + SPY + Fondamentaux + YetiRank.md>), [B32](<../experiences/campagnes_global_ranking/test/B32 Short + SPY + Score histo + YetiRank.md>), [B33](<../experiences/campagnes_global_ranking/test/B33 Short + SPY + sectoriel + YetiRank.md>), [B34](<../experiences/campagnes_global_ranking/test/B34 scores screnner + YetiRank.md>) |
-| B35–B39 | univers 196/300/393 et challenger XGBoost rank | [B35](<../experiences/campagnes_global_ranking/test/B35 B25 + symbols 196.md>), [B36](<../experiences/campagnes_global_ranking/test/B36 B20 + symbols 196.md>), [B37](<../experiences/campagnes_global_ranking/test/B37 B25 + symbols 393.md>), [B38](<../experiences/campagnes_global_ranking/test/B38 B25 avec 300 symblos (parmi les 400).md>), [B39](<../experiences/campagnes_global_ranking/test/B39-B25-XGBoost-rank-ndcg-P3-3.md>) |
+| B35–B39 | univers 196/300/393 et challenger XGBoost rank | [B35](<../experiences/campagnes_global_ranking/test/B35 B25 + symbols 196.md>), [B36](<../experiences/campagnes_global_ranking/test/B36 B20 + symbols 196.md>), [B37](<../experiences/campagnes_global_ranking/test/B37 B25 + symbols 393.md>), [B38](../experiences/campagnes_global_ranking/test/B38%20B25%20avec%20300%20symblos%20%28parmi%20les%20400%29.md), [B39](<../experiences/campagnes_global_ranking/test/B39-B25-XGBoost-rank-ndcg-P3-3.md>) |
 | B40–B44 | volume features, configurations B4/B20/B25 et extension train 2024 | [B40](<../experiences/campagnes_global_ranking/test/B40-B4-volume-features-P3-5.md>), [B41](<../experiences/campagnes_global_ranking/test/B41-B25-volume-features-P3-5.md>), [B42](<../experiences/campagnes_global_ranking/test/B42-B20-volume-features-P3-5.md>), [B44](<../experiences/campagnes_global_ranking/test/B44-B41-config-global-only-train-end-2024-12-31.md>) |
 | Synthèse Global/Per-Sector | comparaison de tous les horizons, champions, splits, régimes et backtests | [Rapport comparatif](<../experiences/campagnes_global_ranking/test/test_global_per_sector.md>), [synthèse durable](../experiences/global_ranking_et_per_sector.md) |
 
@@ -2316,3 +2424,115 @@ Accès au modèle confirmé par HTTP 200 le 8 octobre après un premier contrôl
 `401 invalid_api_key` : blocage levé. Aucune analyse payante ni ordre lancé ;
 le premier cycle Responses/Web reste à valider. Le batch planifié 1–9 est inchangé.
 Voir [le fonctionnement complet](oracle_llm_directional_filter.md).
+
+## 2026-10-10 — Consensus EODHD / macro producteurs publics / short volume
+
+[Qualification, preuves, exploitation et limites PIT](consensus_eodhd_macro_publics_20261010.md).
+Consensus : compte EODHD HTTP 200, `/calendar/trends` AAPL.US HTTP 403 ; aucun
+achat, aucun payload de consensus archivé, produit/droits à confirmer.
+Macro : première tranche BLS/H15, 4+5 séries, **107 versions persistées** ;
+seconde exécution **0 nouvelle version / 107 inchangées**. Nouvelle table US,
+SQL/Alembic 0096, batch public actif installé à 23:15 Paris lun–ven, TLS vérifié,
+timestamps réels et révisions append-only. Pas de reconstitution historique PIT,
+pas de raccordement automatique aux modèles ; VIX/VXN/VIX3M/MOVE inchangés.
+BEA/G17/Census et indices privés restent hors première tranche.
+Short volume laissé désactivé : droits non levés, aucun bénéfice directionnel
+stable démontré justifiant une dépense. **Pas une nouvelle expérience D1/D10**,
+pas d'entraînement ni de trading lancé.
+
+## 2026-10-10 — Pilote historique options Alpaca : volume call/put
+
+[Protocole, accès et limites](alpaca_options_historical_volume_pilot.md).
+Accès du compte principal confirmé : catalogue expiré AAPL et 12 barres de
+janvier 2025 reçus en HTTP 200. Le paramètre `feed=opra` est refusé par
+l'endpoint bars ; provenance laissée `UNVERIFIED_OPRA`, pas de NBBO imputé.
+Pilote figé sur janvier 2025 et 40 titres liquides sélectionnés avec les volumes
+de décembre 2024 dans l'univers tradable actuel ; paires ATM à 20 DTE,
+H3/H5/H10/H20, labels D1/D10 du plein univers qualifié. Aucun entraînement,
+écriture SQL, ordre, modification de batch ou promotion live. Ce premier test
+ne récupère pas de série historique OI/IV/Greeks. Résultats dans
+`artifacts/research/alpaca_options_history/20261010-volume-pilot/report.json`.
+
+Résultat terminé : **174 391 barres**, **719 paires titre/jour**, **37 titres**,
+20 dates d'entrée, aucune erreur API. AUC H3/H5/H10/H20 :
+**0,510 / 0,493 / 0,475 / 0,593**. H20 : 145 observations extrêmes, moitiés
+0,566 / 0,625, mais forte superposition des rendements et aucune date avec assez
+d'extrêmes pour l'AUC quotidienne (minimum 20). **Accès historique confirmé,
+avantage stable non démontré**. Le signal apparié ATM n'est pas une réplication
+du volume agrégé de l'audit prospectif ; pas de conclusion économique.
+
+Sondage du début d'historique : **18 janvier 2024** observé pour chacun de
+12 contrats CALL/PUT AAPL/MSFT/SPY, échéances février/mars 2024 ; 300 barres
+journalières, première barre minute à 14:30 UTC, zéro barre sur la requête
+antérieure depuis janvier 2023, réponses HTTP 200. Date plus ancienne que
+février 2024 annoncé par la documentation, mais uniquement une frontière
+observée sur cet échantillon et ce compte, pas une garantie exhaustive.
+Preuves : `artifacts/research/alpaca_options_history/20261010-first-day/report.json`.
+
+### Suite opérationnelle autorisée — backfill options US
+
+[Backfill SQL, périmètre, contrôles et reprise](alpaca_options_history_backfill.md).
+Demande distincte : remplir `stock_option_bars_delayed` du 20/01/2024 au
+09/10/2026 sur les 1 790 titres du fichier tradable ; première séance le 22/01.
+Barres **1Day**, paires ATM aux DTE 5/10/20 (tolérance 5), pas une chaîne complète.
+Premier contrôle réel : 54 lignes A/AA insérées et relues ; cinq tests passent.
+**Backfill complet lancé, pas déclaré terminé** : 60 860 tranches symbole/mois,
+progression/RAW archivés, reprise et insertions courtes sans écraser l'existant.
+`available_at` garde la réception réelle ; pas de snapshots/OI/IV/Greeks
+rétrospectifs, pas de nouvelle conclusion directionnelle ni d'ordre.
+
+## 2026-10-10 — Vidage demandé des six tables consensus Yahoo US
+
+Collecte désactivée, aucun collecteur actif et dépendances vérifiées. Suppression
+transactionnelle des seules six tables du batch `analyst_snapshot_collection`,
+schémas conservés : **1 115 261 lignes supprimées**, six contrôles post-commit
+à zéro. Sauvegarde ciblée préalable avec DDL, lignes JSONL compressées et hashes :
+`backups/db/yahoo_consensus_before_clear/20261010T215706Z/manifest.json`.
+Anciens dumps, résultats d'expériences et données options non supprimés. Aucun
+autre batch modifié ou blocage levé ; ne pas réinjecter les archives automatiquement.
+
+## 2026-10-11 — Filtre Oracle : choix GPT / DeepSeek
+
+Livraison technique, pas une nouvelle validation directionnelle : paramètre
+`llm_directional_filter.provider`, libellés IHM dynamiques, décisions et protections
+PAPER inchangées. DeepSeek analyse les preuves Web OpenAI, les deux API sont
+nécessaires et facturées ; pas de recherche Web native DeepSeek supposée.
+Configuration, requêtes et RAW des deux fournisseurs archivés ; anciens runs GPT
+compatibles, aucun fallback automatique. Tests simulés, aucun appel LLM payant,
+ordre ou écriture SQL de production pour cette livraison.
+**519 tests passent** ; accès réel DeepSeek non testé avec la clé utilisateur.
+[Guide et limites](oracle_llm_directional_filter.md#choix-du-fournisseur--mise-à-jour-du-11-octobre-2026).
+
+## 2026-10-11 — Comparaison réelle GPT / DeepSeek, 11 titres
+
+Diagnostic demandé, recherche uniquement, mêmes entrées parent et mêmes preuves
+Web GPT réutilisées par DeepSeek ; pas une comparaison indépendante aveugle.
+GPT : 11 réponses valides, **1 LONG / 3 SHORT / 7 ABSTAIN**. DeepSeek : neuf
+réponses valides, **1 SHORT / 8 ABSTAIN**, deux réponses tronquées (FICO/FMC,
+budget 6 000 tokens partagé avec le raisonnement). **Aucun candidat éligible**.
+Résultat global PARTIAL_FAILED ; aucun retry, risque ou ordre. Le budget DeepSeek
+reste à qualifier avant usage opérationnel, aucun avantage prédictif démontré.
+[Protocole, tableau par titre et erreurs](llm_gpt_deepseek_comparison_11.md).
+
+## 2026-10-11 — Options historiques février–mars 2024 × TOP20 Oracle
+
+Audit SELECT seulement des barres déjà téléchargées, sans interrompre le backfill.
+Signal figé volume CALL moins PUT en log, paire ATM même strike/échéance proche
+de vingt jours. 10 994 observations sans Oracle ; 2 714 dans le TOP20 prédit
+H20, déciles réels conservés sur l'univers complet. H20 AUC **0,519 → 0,509** ;
+conditionnel février **0,502**, mars **0,535**. Aucun gain directionnel stable
+démontré, aucun modèle ou filtre promu. Disponibilité PIT/provenance non certifiées,
+lacune options le 2 février, deux mois et rendements chevauchants.
+[Méthode, horizons et limites](alpaca_options_feb_mar_2024_directional_audit.md).
+
+## 2026-10-11 — News/sentiment et mouvement du même jour, US 2025–2026
+
+Audit SELECT uniquement de 367 851 observations article/titre, univers tradable
+actuel de 1 790 titres. Seuil >0,9, groupes positifs/négatifs/mixtes distincts,
+publications séparées avant ouverture, en séance et après clôture. Association
+clôture veille→clôture : positif +0,611 % / +0,535 %, négatif −0,547 % / −0,569 %
+(2025/2026). Avant ouverture, relation principalement dans le gap ; continuation
+après ouverture faible et instable. Aucune vue PIT admissible avec les dernières
+dates de mise à jour : **association descriptive, pas GO prédictif/trading**.
+Aucune API, écriture SQL, modification de modèle ou batch. Trois tests passés.
+[Résultats, protocole et limites](us_news_same_day_sentiment_audit.md).

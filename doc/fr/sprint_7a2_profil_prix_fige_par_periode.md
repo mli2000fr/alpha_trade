@@ -1,5 +1,9 @@
 # Sprint 7-A2 — Profil prix figé et qualification par période
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Gel réalisé le 3 octobre 2026, avant toute feature benchmark et avant tout entraînement France. Ce document complète le [panel 7-A](sprint_7a_panel_features_price_only.md), sans modifier ni supprimer son profil complet.
 
 ## Décision et portée
