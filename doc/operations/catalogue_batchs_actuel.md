@@ -9,6 +9,16 @@ des runners et des lanceurs. « Actif » décrit la configuration ; cela ne
 prouve ni installation Windows, ni réussite du dernier run, ni GO ML.
 Les commandes de la carte IHM font autorité pour le launcher et le catalogue.
 
+Ajout du 11 octobre : **`eodhd_consensus_snapshot`** (P1), activé dans `batch.yaml`,
+table dédiée EODHD, principal 22h15 Paris / secours conditionnel 4h15.
+Accès vérifié HTTP 200 après souscription Calendar & News ; aucune table Yahoo
+utilisée. [Champs, SQL 0099, activation et limites PIT](eodhd_consensus_snapshot.md).
+
+Ajout du 11 octobre : **`eodhd_ipo_calendar_sync`** (P2), activé et tâche Windows
+`AlphaTrade-EodhdIpoCalendarSync` installée. Principal 1h / secours conditionnel
+5h Paris, tous les jours ; tables dédiées créées, backfill mensuel 2016–2026 lancé.
+[Périmètre, champs, reprise et limites PIT](eodhd_ipo_calendar.md).
+
 ## US — batch.yaml, 26 entrées, 17 actives
 
 | Batch | État actuel | Fournisseur / stockage principal |

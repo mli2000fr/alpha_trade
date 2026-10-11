@@ -32,6 +32,18 @@ de trading ni disponibilité des données.
 
 ## Parcours conseillé pour un nouvel arrivant
 
+Nouvelle collecte US : [barres intraday Alpaca / EODHD — page, table et reprise](operations/backfill_intraday_us.md),
+intervalle 5 minutes par défaut, indépendante des barres journalières.
+Nouvelle collecte du 11 octobre : [consensus EODHD prospectif](operations/eodhd_consensus_snapshot.md),
+table dédiée sans Yahoo, accès HTTP 200 vérifié, batch activé dans `batch.yaml` ; tâche Windows à installer.
+
+[Calendrier IPO EODHD](operations/eodhd_ipo_calendar.md) : tables dédiées,
+collecte filtrée sur `stock_bars_daily`, 1h Paris / secours 5h, backfill depuis 2016.
+
+Audit US du 11 octobre : [prix journaliers Alpaca/EODHD et sensibilité Oracle au volume](ml/us_daily_alpaca_eodhd_oracle_audit.md).
+Le SIP historique est une piste de substitution ; aucune bascule ni résiliation validée par cet échantillon.
+[Audit étendu sur les 1 790 titres, janvier–septembre 2026](ml/us_sip_daily_universe_2026_audit.md) : couverture, absences OTC et exceptions d'ajustement/prix/volume.
+
 1. [Vue fonctionnelle](01_vue_fonctionnelle.md) : ce que fait le produit et les concepts métier.
 2. [Architecture globale](02_architecture_globale.md) : flux, frontières et dépendances.
 3. [Installation et prise en main](03_installation_et_demarrage.md).

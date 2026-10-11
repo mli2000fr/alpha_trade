@@ -28,6 +28,7 @@ ENDPOINT_COSTS: dict[str, int] = {
     "eod": 1,
     "splits": 1,
     "dividends": 1,
+    "intraday": 5,
 }
 
 DEFAULT_DAILY_QUOTA = 100_000

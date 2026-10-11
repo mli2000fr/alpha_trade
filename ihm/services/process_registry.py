@@ -1918,6 +1918,27 @@ def stop_pipeline_run(run_id: str) -> bool:
     return True
 
 
+def delete_pipeline_history_run(run_id: str, *, expected_step_key: str) -> bool:
+    """Retire un run terminal de la liste, sans supprimer ses données ni logs.
+
+    La marque persistante empêche la recovery disque de réafficher le run.
+    Les processus actifs et les runs d'une autre étape sont toujours refusés.
+    """
+    with _REGISTRY_LOCK:
+        index = _read_history_index()
+        record = index.get(run_id)
+        if record is None:
+            return False
+        if record.get("step_key") != expected_step_key:
+            raise ValueError("Ce run appartient à une autre étape")
+        if (run_id in _ACTIVE_RUNS or run_id in _ACTIVE_WORKFLOWS
+                or record.get("status") not in {"completed", "failed", "timeout", "stopped"}):
+            raise ValueError("Arrêtez le run et attendez sa fin avant de le supprimer")
+        index[run_id] = {**record, "history_deleted": True}
+        _write_history_index(index)
+    return True
+
+
 def load_pipeline_history() -> list[dict[str, object]]:
     """Charge l'historique persistant des runs IHM.
 
@@ -1950,7 +1971,7 @@ def load_pipeline_history() -> list[dict[str, object]]:
         index = normalized_index
         if mutated:
             _write_history_index(index)
-    history = list(index.values())
+    history = [record for record in index.values() if not record.get("history_deleted")]
     history.sort(
         key=lambda item: str(item.get("finished_at") or item.get("executed_at") or ""),
         reverse=True,

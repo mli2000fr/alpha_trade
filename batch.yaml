@@ -18,8 +18,8 @@ us_pipeline:
   market_code: US_EQ
   provider: internal_pipeline
   timezone: Europe/Paris
-  run_hours: "22"
-  run_minutes: "45"
+  run_hours: "23"
+  run_minutes: "05"
   run_days: "1,2,3,4,5"
   symbols_file: &us_pipeline_universe config/univers_batch/univers_filtred_tradable.txt
   bars_collection:
@@ -268,6 +268,58 @@ earnings_calendar_sync:
   forward_days: 30
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   log_file: log/batch/earnings_calendar.txt
+
+eodhd_ipo_calendar_sync:
+  priority: P2
+  description: "Archiver le calendrier IPO EODHD (dates prévues/réalisées, prix, statut) pour les symboles distincts de stock_bars_daily. Recherche et suivi du référentiel ; aucun signal D1/D10 démontré."
+  tables: "pit_collection_runs,pit_raw_payloads,stock_ipo_eodhd_history,eodhd_ipo_collection_windows"
+  enabled: true
+  status: RESEARCH_ONLY
+  market_code: US_EQ
+  provider: eodhd
+  timezone: Europe/Paris
+  symbol_source: stock_bars_daily
+  universe_scope: stock_bars_daily
+  lookback_days: 7
+  forward_days: 21
+  sleep_seconds: 1.1
+  run_hours: "1"
+  run_minutes: "0"
+  recovery_run_hours: "5"
+  recovery_run_minutes: "0"
+  recovery_success_lookback_hours: 6
+  run_days: "0,1,2,3,4,5,6"
+  log_file: log/batch/eodhd_ipo_calendar_sync.txt
+  coverage_description: "J-7 à J+21 ; secours conditionnel 5h Paris. Backfill mensuel depuis 2016, reprise en base par fenêtre et hash de l'univers."
+  research_notice: "RECHERCHE UNIQUEMENT — l'API IPO est marché entier par dates ; les observations normalisées sont filtrées sur les symboles distincts de stock_bars_daily, les réponses brutes sont archivées. Les nouvelles IPO sans barres ne sont PAS ajoutées automatiquement. Réception réelle UTC, historique événementiel non certifié PIT ancien. Zéro prix/quantité fournisseur = inconnu. Versions modifiées ajoutées sans écrasement. Absence d'IPO dans le périmètre n'est pas un échec. Mail/Telegram via launcher habituel."
+
+eodhd_consensus_snapshot:
+  priority: P1
+  description: "Archiver chaque jour le consensus EPS/revenus et les tendances/révisions EPS EODHD pour construire un historique prospectif de recherche directionnelle."
+  tables: "pit_collection_runs,pit_raw_payloads,stock_analyst_consensus_eodhd_history"
+  enabled: true
+  status: RESEARCH_ONLY
+  market_code: US_EQ
+  provider: eodhd
+  timezone: Europe/Paris
+  symbol_source: stock_bars_daily
+  universe_scope: stock_bars_daily
+  batch_size: 20
+  sleep_seconds: 1.1
+  min_coverage: 0.95
+  # Contrôle du consensus uniquement sur le périmètre utile, pas sur tous les radiés/ETF.
+  coverage_symbols_file: config/univers_batch/univers_filtred_tradable.txt
+  coverage_description: "Collecte de tous les symboles stock_bars_daily ; seuil de consensus 95 % uniquement sur config/univers_batch/univers_filtred_tradable.txt. Absences/identifiants invalides distingués des erreurs techniques."
+  run_hours: "22"
+  run_minutes: "15"
+  recovery_run_hours: "4"
+  recovery_run_minutes: "15"
+  recovery_success_lookback_hours: 10
+  log_file: log/batch/eodhd_consensus_snapshot.txt
+  # 0=dimanche, 6=samedi : snapshots courants non reconstructibles, même hors séance.
+  run_days: "0,1,2,3,4,5,6"
+  activation_requirement: "Activé le 11/10/2026 ; table dédiée créée dans alpha_trade. Installer/réinstaller la tâche Windows depuis l'IHM. Accès Calendar & News testé HTTP 200."
+  research_notice: "RECHERCHE UNIQUEMENT — réponses brutes archivées, toutes périodes fiscales conservées avec réception UTC réelle. Les anciennes dates fiscales ne sont PAS des snapshots PIT anciens. Pas de remplissage rétroactif J-7/J : passage de secours conditionnel. Révisions à la baisse à 7 jours absentes du smoke : NULL, jamais zéro inventé. Identités fiscales, unités et disponibilité à qualifier avant ML/backtest ; aucune transmission automatique à un LLM externe. Yahoo reste bloqué ; objectifs de cours et recommandations non collectés ici."
 
 # Collecte prospective Yahoo analyst (RESEARCH ONLY).
 # Historique PIT append-only dans MySQL : consensus EPS/revenue, objectifs de

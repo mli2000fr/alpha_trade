@@ -715,6 +715,7 @@ class PipelineStepDefinition:
     tables: str
     deps: str
     account_usage: AccountUsage = "none"
+    blocked_reason: str | None = None
 
 
 def parse_pipeline_step_number(step_num: str) -> int | None:
@@ -941,20 +942,26 @@ PIPELINE_AUXILIARY_STEPS: tuple[PipelineStepDefinition, ...] = (
     PipelineStepDefinition(
         key="eodhd_backfill_history",
         num="B3",
-        name="Backfill historique EODHD",
-        desc="One-shot : remplit `stock_bars` + `stock_bars_daily` avec l'historique long "
-             "EODHD (5 ans par défaut, jusqu'à 30 ans pour ML). Bookmark idempotent dans "
-             "`artifacts/eodhd_cache/backfill_state.json`. Coût ~1 call/symbole. "
+        name="Backfill historique (Alpaca / EODHD)",
+        desc="Remplit stock_bars et stock_bars_daily selon market_data.bars_provider, comme l'étape 1. "
+             "Alpaca : flux market_data.alpaca_backfill_feed (SIP par défaut), compte sélectionné, "
+             "séances clôturées uniquement, reprise par symbole, sans fallback ni remapping implicite. "
+             "EODHD : historique long selon la couverture du fournisseur, bookmark dans "
+             "artifacts/eodhd_cache/backfill_state.json. "
              "Depuis l'IHM, le mode par défaut est `write` pour persister directement dans la base ; "
              "il reste possible de repasser en dry-run en décochant `B3 — mode écriture`. "
-             "Utile au démarrage initial post-cutover `bars_provider=eodhd`.",
+             "La profondeur demandée ne garantit pas la disponibilité. Écriture : les clés existantes sont mises à jour.",
         tables="stock_bars, stock_bars_daily",
         deps="import_alpaca_assets (univers requis)",
+        account_usage="alpaca",
     ),
     PipelineStepDefinition(
         key="analyst_snapshot_collect",
         num="B4",
         name="Collecte Analyst Yahoo (directionnel)",
+        blocked_reason="DROITS / PRUDENCE — collecte automatisée Yahoo suspendue : autorisation non qualifiée. "
+                       "Ne pas lancer, même pour la recherche. Déblocage uniquement après autorisation écrite "
+                       "couvrant automatisation, archivage et usages analytiques/ML, ou remplacement par un fournisseur qualifié.",
         desc="Collecte prospective PIT Yahoo Finance via yfinance (EPS/revenue estimates, tendances "
              "et révisions EPS, price targets, recommandations) dans les tables append-only "
              "`stock_analyst_*_history`. RECHERCHE PERSONNELLE/ÉDUCATIVE UNIQUEMENT : source non "
@@ -1006,6 +1013,8 @@ def resolve_step_display_name(step: PipelineStepDefinition) -> str:
     if step.key == "import_alpaca_bar":
         provider = _resolve_bars_provider_for_ihm().upper()
         return f"Import Bars {provider} + rattrapage auto"
+    if step.key == "eodhd_backfill_history":
+        return f"Backfill historique {_resolve_bars_provider_for_ihm().upper()}"
     return step.name
 
 
@@ -1730,6 +1739,10 @@ def _build_chained_ps_commands(
 
 def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> list[str]:
     """Construit la commande subprocess correspondant à une étape."""
+    blocked_step = next((step for step in (*PIPELINE_STEPS, *PIPELINE_AUXILIARY_STEPS)
+                         if step.key == step_key and step.blocked_reason), None)
+    if blocked_step is not None:
+        raise ValueError(blocked_step.blocked_reason)
     trade_date = _normalize_trade_date(options.trade_date)
     run_id = _normalize_run_id(options.execution_run_id)
     account_id = (options.account_id or "").strip() or None
@@ -1866,12 +1879,19 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     if step_key == "eodhd_backfill_history":
-        # Phase 5 plan_eodhd.md §6 : backfill historique long via EODHD /eod
+        provider = _resolve_bars_provider_for_ihm()
+        if provider not in ('alpaca','eodhd'):
+            raise ValueError('market_data.bars_provider doit être alpaca ou eodhd')
         command = [
             sys.executable, "-u", "-m",
-            "dataIntegrityEngine.backfill_eodhd_history",
+            "dataIntegrityEngine.backfill_eodhd_history" if provider == 'eodhd' else "dataIntegrityEngine.backfill_alpaca_history",
             "--years", str(int(options.eodhd_backfill_years or 30)),
         ]
+        if provider == 'alpaca':
+            from common.config_loader import load_config
+            feed = str(((load_config() or {}).get('market_data') or {}).get('alpaca_backfill_feed','sip')).lower()
+            if feed not in ('iex','sip'):raise ValueError('market_data.alpaca_backfill_feed doit être iex ou sip')
+            command.extend(['--feed',feed,'--account',account_id or 'default'])
         if options.eodhd_backfill_write:
             command.append("--write")
         # Reprise sur bookmark par défaut ; --no-resume pour forcer

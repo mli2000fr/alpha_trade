@@ -68,6 +68,7 @@ SUPPORT_NAVIGATION_PAGES: tuple[NavigationPage, ...] = (
     NavigationPage("🔀 Parité Backtest ↔ Live", "parity", "ihm.pages.parity", "support"),
     NavigationPage("🩺 Diagnostic ML", "ml_diagnostics", "ihm.pages.ml_diagnostics", "support"),
     NavigationPage("📊 Fondamentaux", "fundamentals", "ihm.pages.fundamentals", "support"),
+    NavigationPage("🕒 Barres intraday", "intraday_bars", "ihm.pages.intraday_bars", "support"),
     NavigationPage("🗃️ Administration DB", "db_admin", "ihm.pages.db_admin", "support"),
     NavigationPage("⚙️ Paramètres / Santé", "settings", "ihm.pages.settings", "support"),
     # Sprint S19.4 / S19.5 — nouvelles pages institutionnelles
@@ -145,6 +146,7 @@ def get_navigation_sections() -> tuple[NavigationSection, ...]:
                 _get_page("ml"),
                 _get_page("ml_diagnostics"),
                 _get_page("fundamentals"),
+                _get_page("intraday_bars"),
             ),
         ),
         NavigationSection(

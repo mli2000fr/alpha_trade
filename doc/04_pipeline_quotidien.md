@@ -10,6 +10,46 @@ une sélection personnalisée conserve explicitement 13/14. T1 reste hors quotid
 CN/FR ont des blocs et runners propres : cette chaîne Alpaca ne s'applique pas
 implicitement à ces marchés. [État multi-marchés](ETAT_ACTUEL_IMPLEMENTATION.md).
 
+### B4 — Collecte Analyst Yahoo : ⛔ ⚖️ DROITS / PRUDENCE
+
+B4 est conservé pour identification mais bloqué dans l'IHM et côté service de
+lancement : bouton désactivé, aucun aperçu de commande exécutable. Ce blocage
+ne dépend pas d'un simple changement `enabled` dans `batch.yaml`.
+Une autorisation couvrant automatisation, archivage et usages analytiques/ML,
+ou un fournisseur alternatif qualifié, est nécessaire avant une réactivation.
+Les autres étapes du pipeline ne sont pas concernées. Aucun effacement de données
+ni arrêt d'un processus existant n'est associé à ce changement du 11 octobre 2026.
+
+### B3 — Backfill historique selon le fournisseur des barres
+
+B3 suit désormais `market_data.bars_provider`, comme l'étape 1. Son nom affiché
+est dynamique (EODHD ou ALPACA). La clé interne et les anciens noms d'options
+`eodhd_backfill_*` restent conservés pour compatibilité des paramètres IHM.
+
+- `eodhd` : commande existante `dataIntegrityEngine.backfill_eodhd_history` ;
+  mécanisme EODHD et comportement de reprise inchangés.
+- `alpaca` : `dataIntegrityEngine.backfill_alpaca_history`, compte sélectionné,
+  flux `market_data.alpaca_backfill_feed: sip` par défaut (`iex` également permis),
+  ajustement split-only, pagination et arrêt sur problème de droits/quota.
+  Aucun fallback SIP → IEX, aucun remapping automatique d'identité.
+
+Les historiques Alpaca sont bornés aux séances déjà clôturées avec 20 minutes
+de marge ; la profondeur demandée n'est pas une garantie de disponibilité.
+Les tables sont `stock_bars` (clé daily `1D` / 09:30 NY) et `stock_bars_daily`.
+Une transaction par symbole couvre les deux tables ; le bookmark avance après
+commit uniquement. Les réponses et états sont isolés sous
+`artifacts/alpaca_backfill` par fenêtre, flux, compte, univers et mode.
+Une exécution dry-run ne peut pas faire ignorer une future exécution write.
+Un historique vide reste explicitement signalé, sans fallback.
+
+Le dry-run effectue de vrais appels API, mais ne persiste aucune barre.
+**En write, les barres existantes aux mêmes clés sont mises à jour** : qualifier
+les différences d'ajustement avant bascule. Aucun téléchargement ni changement
+du fournisseur actuel n'a été lancé lors de cette implémentation.
+
+Attention : `alpaca_backfill_feed` configure **B3 uniquement** ; le flux de
+l'import quotidien de l'étape 1 n'a pas été modifié par cette évolution.
+
 ## Batch planifié us_pipeline — configuration du 10/10/2026
 
 `batch.yaml` règle son horaire (22:45 Europe/Paris, séances US lundi–vendredi),
