@@ -1,5 +1,9 @@
 # Audit du code et roadmap d’intégration du marché chinois
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Plan / TODO : ne vaut ni validation des données, ni autorisation broker. Les dépendances et blocages actuels priment sur l'ordre des sprints. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Mise à jour fournisseur — 22 septembre 2026
 
 La première implémentation opérationnelle utilise BaoStock gratuitement. AKShare reste un enrichissement optionnel ; RQData et Tushare sont reportés. Le connecteur et le staging actifs sont décrits dans [sprint_6_sources_gratuites_baostock.md](./sprint_6_sources_gratuites_baostock.md). Cette mise à jour prévaut sur les passages historiques qui présentent Tushare comme première source.

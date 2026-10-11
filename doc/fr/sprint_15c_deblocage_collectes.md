@@ -1,5 +1,9 @@
 # Sprint 15-C — Déblocage des collectes possibles
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 État courant et preuves de sauvegarde/exploitation : [bilan 15-G du 6 octobre
 2026](sprint_15g_bilan_cloture_operationnelle.md). Les tableaux de blocage
 ci-dessous décrivent la tranche initiale, pas l'état actualisé de tous les batchs.

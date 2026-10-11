@@ -1,5 +1,9 @@
 # Sprint 8-A — Labels France et contrat d'évaluation
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Réalisé le 3 octobre 2026. **GO limité aux labels bruts de recherche**, pas aux rendements économiques ni à l'entraînement. Ce lot complète les panels [prix figé](sprint_7a2_profil_prix_fige_par_periode.md) et [benchmark relatif](sprint_7b_features_relatives_benchmark.md). Aucune base, IHM, tâche planifiée, pipeline US/CN ou modèle de serving n'est modifié.
 
 ## 1. Convention temporelle et rendement

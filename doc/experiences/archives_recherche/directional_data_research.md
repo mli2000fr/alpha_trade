@@ -1,5 +1,9 @@
 # DirectionalDataResearch — Recherche de données directionnelles
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 > Suite à la clôture de `GlobalDirection` (**NO-GO** : direction non observable avec
 > les 182 features actuelles), cette branche cherche de **nouvelles familles de
 > données signées** capables de séparer les futurs mauvais longs (D1-D5) des bons

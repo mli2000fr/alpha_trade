@@ -1,5 +1,9 @@
 # Sprint 13-C — Décision économique sur les replays CN_A figés
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Statut
 
 Audit descriptif en lecture seule terminé le 27/09/2026. Le

@@ -1,5 +1,9 @@
 # Sprint 13 France — Bilan, limites et conditions de reprise
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Date : 4 octobre 2026. Ce document est le point d'entrée pour reprendre le
 travail sans confondre résultats exploratoires et validation stricte.
 

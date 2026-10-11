@@ -1,5 +1,9 @@
 # US 2019–2025 — Confirmation descriptive M+V et audit des mois défavorables
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Protocole fixé avant calcul, 4 octobre 2026
 
 Demande : tester la combinaison momentum120 + volatilité60/ATR20 entre

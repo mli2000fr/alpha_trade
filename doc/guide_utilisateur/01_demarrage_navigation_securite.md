@@ -1,5 +1,9 @@
 # Démarrage, navigation et sécurité opérateur
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Avant d’ouvrir l’application
 
 L’application repose sur plusieurs états externes : base de données, fichiers
@@ -102,5 +106,5 @@ redémarrage de l’IHM peuvent rester suivis par leur PID et leur artefact de r
 | target | position souhaitée après risque, pas encore un fill |
 | reconciliation | rapprochement entre état attendu, base et broker |
 
-Pour le vocabulaire métier complet, utiliser également la page Glossaire et les
+Pour le vocabulaire métier complet, utiliser également la page Glossaire et
 le [glossaire unifié](../20_glossaire.md).

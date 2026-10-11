@@ -1,5 +1,9 @@
 # Sprint 15-A — Catalogue et orchestration opérationnelle France
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 5 octobre 2026. GO Sprint 15 reçu. Première tranche implémentée ; **le Sprint
 15 complet n'est pas terminé**. La semaine de collecte, les collecteurs
 quotidiens fournisseur et la preuve de restauration restent à réaliser.

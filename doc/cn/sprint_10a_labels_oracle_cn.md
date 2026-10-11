@@ -1,5 +1,9 @@
 # Sprint 10-A — Labels Oracle CN_A H5/H10/H15/H20
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Objet et frontières
 
 Le Sprint 10-A construit des **cibles futures de recherche**, sans entraîner

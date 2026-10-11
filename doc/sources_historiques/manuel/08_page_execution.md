@@ -1,5 +1,9 @@
 # 8. Page 🚀 Execution — envoyer les ordres au broker
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## À quoi sert cette page
 
 Voir et superviser les **runs d'exécution** : quels ordres ont été envoyés
@@ -183,6 +187,6 @@ Voir la checklist détaillée :
 
 ## Pour aller plus loin
 
-- Doc technique : [doc/execution_engine.md](../backup/execution_engine.md).
+- Doc technique : doc/execution_engine.md — référence historique absente localement : `../backup/execution_engine.md`.
 - Watcher : [12_page_supervision_ops.md](12_page_supervision_ops.md).
 

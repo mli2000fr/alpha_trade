@@ -1,5 +1,31 @@
 # Dépannage et questions fréquentes
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
+## Pourquoi partial alors que missing_count vaut zéro ?
+
+Dans oracle_atr_market_regime_daily, missing_returns_policy est le mode choisi,
+pas le résultat. Lire movement_quality/statut, compteurs et couverture : une
+séance peut être complète avec la politique partial. Les futures listes ne sont
+pas des prédictions LONG/SHORT ; un rendement immature ne doit pas être mis à zéro.
+
+## Pourquoi actif ne signifie pas collecte opérationnelle ?
+
+enabled décrit la configuration ; vérifier installation, dernier run et source
+amont. CN D10/17-C peuvent rester actifs tout en manquant D6/D9 bloqués. FR
+daily bars publie en staging, pas automatiquement dans les tables canoniques.
+Rouge/gras = échec opérationnel ; noir ⛔ ⚖️ = droits/prudence à ne pas contourner.
+[Catalogue](../operations/catalogue_batchs_actuel.md).
+
+## Pourquoi GPT coché dans l'IHM n'est pas lancé par us_pipeline ?
+
+Le scheduler construit des options fraîches, pas celles de la session Streamlit.
+Son llm_filter_enabled reste false. Le filtre activé explicitement dans Pipeline
+est prospectif PAPER/default, après clôture J et avant ouverture suivante ; il
+n'est pas compatible avec une recherche Web historique/shadow.
+
 ## Méthode générale
 
 Toujours diagnostiquer du plus haut niveau vers l’objet fautif : workflow → run

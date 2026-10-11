@@ -1,5 +1,9 @@
 # E6-B0 — Faisabilité des options après Oracle
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Résultat
 
 E6-A a démontré une forte concentration OOF de l’amplitude dans le TOP20 Oracle.
@@ -244,10 +248,10 @@ risque seraient différents.
 
 Artefacts canoniques :
 
-- [H3 — 14 DTE](../../artifacts/models/shared_directional/oracle-options-dte-20260906-h3-0802c8/report.json) ;
-- [H5 — 21 DTE](../../artifacts/models/shared_directional/oracle-options-dte-20260906-h5-0802c8/report.json) ;
-- [H10 — 28 DTE](../../artifacts/models/shared_directional/oracle-options-dte-20260906-h10-0802c8/report.json) ;
-- [H20 — 45 DTE](../../artifacts/models/shared_directional/oracle-options-dte-20260906-h20-0802c8/report.json).
+- H3 — 14 DTE — référence historique absente localement : `../../artifacts/models/shared_directional/oracle-options-dte-20260906-h3-0802c8/report.json` ;
+- H5 — 21 DTE — référence historique absente localement : `../../artifacts/models/shared_directional/oracle-options-dte-20260906-h5-0802c8/report.json` ;
+- H10 — 28 DTE — référence historique absente localement : `../../artifacts/models/shared_directional/oracle-options-dte-20260906-h10-0802c8/report.json` ;
+- H20 — 45 DTE — référence historique absente localement : `../../artifacts/models/shared_directional/oracle-options-dte-20260906-h20-0802c8/report.json`.
 
 Limite de traçabilité : le champ `experiment` interne des quatre rapports garde
 le nom générique `E6_B1_oracle_options_rest_pilot_v1`. L’identification E6-B2

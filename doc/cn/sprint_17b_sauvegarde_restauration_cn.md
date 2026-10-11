@@ -1,5 +1,9 @@
 # Sprint 17-B — Sauvegarde et restauration isolées de la base CN
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Ce sprint traite le finding critique du [17-A](./sprint_17a_audit_exploitation_cn.md) : `alpha_trade_cn` n'avait pas de sauvegarde planifiée. Le périmètre est **CN_A / `cn_primary` uniquement**. Les deux sauvegardes US de `batch.yaml`, leur répertoire `backups/db` et les tâches D6/D9/D10 restent inchangés. Ce chantier ne valide ni stratégie de trading ni signal D1/D10.
 
 ## Contrat de sauvegarde

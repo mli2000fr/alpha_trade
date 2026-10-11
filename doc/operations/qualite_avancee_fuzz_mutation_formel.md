@@ -1,5 +1,9 @@
 # Qualité avancée : fuzzing, mutation et vérification formelle
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Positionnement
 
 Ces outils complètent les tests classiques. Ils ne prouvent pas seuls le système en production : chacun vérifie un modèle, un espace d’entrées ou la capacité des tests à détecter des changements.

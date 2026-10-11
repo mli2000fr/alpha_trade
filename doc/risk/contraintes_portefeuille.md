@@ -1,5 +1,9 @@
 # Contraintes et optimisation du portefeuille
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Retour : [références Risk](README.md)
 
 Les contraintes portent sur portefeuille existant + deltas. Gross somme les absolus, net soustrait shorts. Caps : position, secteur, nombre, sleeves, gross/net, corrélation, facteurs, capacité et buying power.

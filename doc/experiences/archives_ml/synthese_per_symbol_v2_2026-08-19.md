@@ -1,5 +1,9 @@
 # Campagne Per-Symbol Directional v2 — F0/F1/F2/F3a/F3b : VERDICT NO-GO (2026-08-19)
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Résumé exécutif
 
 La campagne **Per-Symbol Directional v2** (features directionnelles per-symbol dédiées au swing, opposées au ranking global B25) a été conduite de bout en bout : F0 (baseline legacy) → F1 (Trend/Volatility) → F2 (Momentum/Structure) → F3a (Relative Strength) → F3b (Volume).

@@ -1,5 +1,9 @@
 # ML Refactor 1 - Plan concret d'amelioration de l'entrainement
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## 1. Pourquoi ce travail est necessaire
 
 La campagne du 2026-07-12 a entraine 2067 symboles. Les moyennes par symbole sont :

@@ -1,5 +1,9 @@
 # Sprint 4 — Calendrier et PIT multi-marchés
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 > Statut : **GO** — 20 septembre 2026  
 > Migration : `0086_market_calendar_pit` appliquée sur `alpha_trade`  
 > Portée : infrastructure temporelle US/CN ; aucune donnée instrument CN chargée.

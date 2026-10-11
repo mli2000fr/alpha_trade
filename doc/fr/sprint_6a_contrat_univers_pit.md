@@ -1,5 +1,9 @@
 # Sprint 6-A France — contrat d’univers PIT
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Date de clôture : 3 octobre 2026. Verdict : **`GO_6A_CONTRACT_ONLY`**.
 
 Le Sprint 6-A transforme le `GO_RESEARCH_J1` du Sprint 5 en un contrat exploitable sans lui attribuer des garanties qu’il ne possède pas. Il sépare quatre périmètres qui ne doivent jamais être confondus :

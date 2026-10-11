@@ -1,4 +1,8 @@
-﻿# Alpha Trade — Documentation Technique
+# Alpha Trade — Documentation Technique
+
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
 
 > *Version : 0.5.0 — Python ≥ 3.12 — Dernière mise à jour : 2026-07-11 (cutover ML-first long/short)*
 
@@ -23,7 +27,7 @@
 > canoniques), `doc/CHANGELOG.md` (journal documentaire).
 >
 > Le contrat détaillé du pipeline ML-first, des côtés long/short et du backtest
-> PIT est décrit dans [`synthese_long_short.md`](synthese_long_short.md).
+> PIT est décrit dans [`synthese_long_short.md`](../../experiences/archives_ml/synthese_long_short.md).
 
 ---
 

@@ -1,5 +1,9 @@
 # US 2025 — Combinaison de features candidates D10
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Protocole fixé avant calcul, le 4 octobre 2026
 
 Expérience exploratoire uniquement : les familles ont été choisies à partir

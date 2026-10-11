@@ -7,8 +7,11 @@ from .protections import ProtectionProfile
 @dataclass(frozen=True)
 class FilterConfig:
     enabled: bool = False
+    provider: str = 'openai'  # Absent in archived runs: preserve GPT semantics.
     model: str = 'gpt-6.1-sol'
     api_key_env: str = 'OPENAI_API_KEY'
+    deepseek_model: str = 'deepseek-flash'
+    deepseek_api_key_env: str = 'DEEPSEEK_API_KEY'
     default_symbol_source: str = 'universe-file:univers_filtred_tradable.txt'
     default_oracle_batch_id: str = 'model-factory-20261003082853-e98332'
     oracle_top_n: int = 10
@@ -57,8 +60,20 @@ class FilterConfig:
             raise ValueError('min_oracle_coverage_ratio doit être dans ]0,1]')
         if self.account_id != 'default':
             raise ValueError('Filtre LLM réservé au compte principal default PAPER')
-        if not self.model or self.api_key_env != 'OPENAI_API_KEY':
-            raise ValueError('Modèle requis et clé OPENAI_API_KEY exclusivement')
+        if self.provider not in ('openai', 'deepseek'):
+            raise ValueError('provider doit être openai ou deepseek')
+        if not isinstance(self.model, str) or not self.model.strip() or self.api_key_env != 'OPENAI_API_KEY':
+            raise ValueError('Modèle Web OpenAI requis et clé OPENAI_API_KEY exclusivement')
+        if not isinstance(self.deepseek_model, str) or not self.deepseek_model.strip() or self.deepseek_api_key_env != 'DEEPSEEK_API_KEY':
+            raise ValueError('Modèle DeepSeek requis et clé DEEPSEEK_API_KEY exclusivement')
+
+    @property
+    def provider_label(self):
+        return 'DeepSeek' if self.provider == 'deepseek' else 'GPT'
+
+    @property
+    def analysis_model(self):
+        return self.deepseek_model if self.provider == 'deepseek' else self.model
 
     def snapshot(self):
         return asdict(self)  # Contains only the environment variable NAME, never its value.

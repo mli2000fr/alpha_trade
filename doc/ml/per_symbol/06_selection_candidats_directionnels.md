@@ -1,5 +1,9 @@
 # 6 — Sélection des bons candidats per-symbol par direction
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Objectif
 
 La page **Diagnostic ML** permet de construire, pour un batch ternaire contenant

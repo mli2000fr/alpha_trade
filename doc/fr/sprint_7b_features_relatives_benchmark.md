@@ -1,5 +1,9 @@
 # Sprint 7-B — Features relatives au benchmark France
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Réalisé le 3 octobre 2026. Ce lot enrichit le [profil prix figé 7-A2](sprint_7a2_profil_prix_fige_par_periode.md) sans le modifier : **14 features prix + 12 features benchmark = 26 features**. Il construit un panel de recherche et mesure sa couverture ; aucun modèle n'est entraîné, aucune conclusion de prédictivité Oracle ou D1/D10 n'est acquise.
 
 ## Quelle référence de marché ?

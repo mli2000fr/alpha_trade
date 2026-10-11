@@ -1,5 +1,9 @@
 # US — Audit des discontinuités restantes après cinq exclusions
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 Date : 7 octobre 2026. Statut : contrôle terminé, réserves historiques ouvertes.
 
 ## Conclusion

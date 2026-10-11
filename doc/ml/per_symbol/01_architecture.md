@@ -1,5 +1,9 @@
 # 1 — Architecture et responsabilités per-symbol
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 `train_symbol` crée un `run_id` unique, enregistre le run si la base est
 disponible, dérive une seed du symbole et refuse un historique inférieur à
 `min_history_days`. Une panne du registre DB est journalisée puis l’entraînement

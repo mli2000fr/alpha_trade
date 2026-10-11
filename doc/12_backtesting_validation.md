@@ -1,5 +1,9 @@
 # Backtesting, parité et validation
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Documents spécialisés
 
 - [Architecture de replay broker-like](backtesting/replay_broker_like.md)
@@ -8,6 +12,26 @@
 - [Validation statistique et promotion](backtesting/validation_statistique.md)
 
 `backtesting/` rejoue signaux, risque et exécution avec données PIT et coûts réalistes. Sa fonction n'est pas seulement de calculer un PnL : il doit falsifier les hypothèses et mesurer la transférabilité au live.
+
+## Marché et contrat effectivement qualifié
+
+Au 10/10/2026, les vues US/CN/FR de Backtesting utilisent des parcours propres.
+La CLI US décrite ci-dessous ne devient pas un replay CN/FR par une base renommée.
+Isoler profils, instrument IDs, univers, calendrier, actions sur titres et coûts.
+CN inclut notamment T+1/limites/statuts ; FR distingue commissions, spread,
+slippage et TTF conditionnelle à l'éligibilité. Les preuves manquantes ne sont
+pas des exonérations fiscales ni des cours valides.
+
+Les frais FR génériques et le spread/slippage supposés restent configurables,
+pas un tarif broker certifié. Un replay fournisseur/exploratoire ou shadow local
+n'est pas une parité live démontrée. Lire les réserves des sprints avant promotion.
+[France](fr/README.md), [Chine](cn/README.md), [état actuel](ETAT_ACTUEL_IMPLEMENTATION.md).
+
+Pas de recherche Web GPT historique : le filtre actuel est prospectif PAPER.
+Les listes réalisées Oracle × ATR et simulations « meilleurs futurs réels »
+sont des diagnostics/oracles ex post, jamais des signaux disponibles à J.
+La sélection Oracle × ATR a un [contrat indépendant](ml/oracle_atr_amplitude_gate.md)
+dans les parcours compatibles ; vérifier les flags et comparer à univers égal.
 
 ## CLI
 

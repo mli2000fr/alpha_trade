@@ -1364,9 +1364,14 @@ def _run_pipeline_workflow(
         completed_steps = 0
         if options.llm_filter_enabled:
             from dataclasses import replace as _llm_replace
+            from common.us_signal_date import resolve_us_signal_date
+            signal_day = resolve_us_signal_date(options.trade_date).isoformat()
             options = _llm_replace(options,
+                trade_date=signal_day,
                 llm_filter_run_id=options.llm_filter_run_id or f'llm-{uuid.uuid4().hex}',
                 force_trade_date_to_latest_snapshot=False)
+            from service.llm_directional.config import load_filter_config
+            _append_workflow_event(managed, f"Séance signal Oracle / {load_filter_config().provider_label} figée : {signal_day} (étapes 10/11/12).")
         child_run_ids: list[str] = []
         child_runs_with_summary: dict[str, dict[str, object]] = {}
 
@@ -1647,6 +1652,9 @@ def start_pipeline_run(
                 exc_info=True,
             )
 
+    if options.llm_filter_enabled and step_key in ('ml_predict', 'risk_management', 'execution'):
+        from common.us_signal_date import resolve_us_signal_date
+        options = _dc_replace(options, trade_date=resolve_us_signal_date(options.trade_date).isoformat())
     command = build_pipeline_command(step_key, options)
     return start_managed_run(
         step_key=step_key,

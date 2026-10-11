@@ -1,4 +1,9 @@
 # E44 — Test catastrophe B4 : KEEP vs CLOSE_ALL vs CLOSE_LONGS
+
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Attribution par side du force-close à DD ≥ 8 % (Vague 1)
 
 **Date** : 2026-08-22 — **Chantier** : E44 (recherche uniquement, PROD non modifié)

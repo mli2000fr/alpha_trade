@@ -3,10 +3,12 @@ import argparse
 import json
 from sqlalchemy import select
 from .repository import Repository, evaluations, dumps
+from .config import FilterConfig
 
 
 def report(engine, run_id):
     run, items = Repository(engine).get(run_id)
+    config = FilterConfig(**json.loads(run['config_json']))
     rows = []
     for item in items:
         parsed = json.loads(item['assessment_json'] or '{}')
@@ -14,6 +16,11 @@ def report(engine, run_id):
             'oracle_score_amplitude': item['oracle_score'], 'status': item['status'],
             'decision': parsed.get('decision'), 'confidence_uncalibrated': parsed.get('confidence'),
             'eligible': parsed.get('eligible', False), 'selected': item['selected'],
+            'assessment_outcome': parsed.get('assessment_outcome'),
+            'fresh_source_count': parsed.get('fresh_source_count'),
+            'selection_blockers': parsed.get('selection_blockers', []),
+            'source_qualifications': parsed.get('source_qualifications', []),
+            'excluded_sources': parsed.get('excluded_sources', []),
             'bull_case': parsed.get('bull_case'), 'bear_case': parsed.get('bear_case'),
             'sources': parsed.get('sources', []), 'error': item['error_message']})
     with engine.connect() as conn:
@@ -24,6 +31,10 @@ def report(engine, run_id):
         row['directional_gross_return_pct'] = (-row['return_pct'] if decision == 'SHORT'
                                                else row['return_pct'] if decision == 'LONG' else None)
     return {'run_id': run_id, 'trade_date': str(run['trade_date']), 'batch_id': run['batch_id'],
+            'provider': config.provider, 'provider_label': config.provider_label,
+            'analysis_model': config.analysis_model, 'web_provider': 'openai', 'web_model': config.model,
+            'research_only': json.loads(run['input_json']).get('research_only', False),
+            'parent_run_id': json.loads(run['input_json']).get('parent_run_id'),
             'status': run['status'], 'started_at_utc': str(run['started_at']),
             'completed_at_utc': str(run['completed_at']), 'risk_run_id': run['risk_run_id'],
             'execution_started_at_utc': str(run['execution_started_at']),

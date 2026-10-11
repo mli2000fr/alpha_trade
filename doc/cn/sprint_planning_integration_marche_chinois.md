@@ -1,5 +1,9 @@
 # Sprint planning détaillé — Intégration du marché chinois dans α-Trade
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Plan / TODO : ne vaut ni validation des données, ni autorisation broker. Les dépendances et blocages actuels priment sur l'ordre des sprints. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 > Document d’exécution associé à `roadmap_integration_marche_chinois_audit_code.md`.  
 > Date : 19 septembre 2026.  
 > Cible : une intégration durable US + Chine permettant ingestion, recherche, entraînement, prédiction et backtest ; paper/live vient ensuite.  

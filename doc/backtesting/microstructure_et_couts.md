@@ -1,5 +1,9 @@
 # Microstructure, coûts et résolution intrabar
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Retour : [références Backtesting](README.md)
 
 `ExecutionModelConfig`, `SlippageConfig` et `MicrostructureConfig` figent le contrat. `compute_adv_usd` mesure la capacité. `should_skip_entry_for_gap` bloque un open trop éloigné. `compute_execution_price` applique spread et impact contre le trader. `should_split_order` borne la participation.

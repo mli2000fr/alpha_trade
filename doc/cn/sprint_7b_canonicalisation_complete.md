@@ -1,5 +1,9 @@
 # Sprint 7-B — Canonicalisation complète et couverture historique CN
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Statut
 
 **Implémentation terminée le 22 septembre 2026. Backfill 217/217 terminé le 24 septembre 2026 ; audit de qualité détaillé effectué, gate complet conditionnel.** Voir [l'audit après backfill](./sprint_7b_audit_final_2026_09_24.md).

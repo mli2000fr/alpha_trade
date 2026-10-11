@@ -1,5 +1,9 @@
 # Sprint 15-B5 — Fenêtres de marge et jointures temporelles Oracle
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 29 septembre 2026. Suite du [dataset B4](./sprint_15b4_dataset_szse_et_preregistration.md).
 
 ## Périmètre et statut

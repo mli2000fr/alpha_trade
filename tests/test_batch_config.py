@@ -9,6 +9,7 @@ from common.config_loader import load_batch_config, resolve_batch_config_path
 ROOT = Path(__file__).resolve().parents[1]
 WINDOWS = ROOT / "scripts" / "windows"
 BATCH_SECTIONS = {
+    "public_macro_snapshot_sync",
     "us_pipeline",
     "cn_dragon_tiger_after_close", "cn_dragon_tiger_before_open",
     "cn_oracle_prospective_daily", "cn_dragon_tiger_daily_match",

@@ -1,5 +1,9 @@
 # Sprint 13-A2 — Normalisation ciblée des actions d'entreprise CN
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Objet et état
 
 **Collecte et audit terminés le 26/09/2026.** Les 13 984 réponses

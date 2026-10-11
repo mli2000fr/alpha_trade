@@ -1,5 +1,9 @@
 # E21-B — Extraction structurée et comparabilité de la guidance
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 > **Statut final — CLOSED / SUSPENDED_DATA_NOT_READY (15 septembre 2026).**
 > La piste est fermée après E21-B8/V5. Aucun E21-B9 n'est prévu, aucune donnée
 > issue de cet extracteur ne doit alimenter un entraînement, un backtest, le

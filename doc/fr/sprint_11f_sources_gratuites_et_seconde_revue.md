@@ -1,5 +1,9 @@
 # Sprint 11-F — Sources gratuites, comparabilité et seconde revue
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 État vérifié le 4 octobre 2026. Recherche FR uniquement.
 
 **Suite :** [11-G, seconde passe documentaire](sprint_11g_seconde_passe_documentaire.md)

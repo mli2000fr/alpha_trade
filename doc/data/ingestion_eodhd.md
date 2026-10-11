@@ -1,5 +1,9 @@
 # Ingestion EODHD et backfill historique
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Retour : [références Data](README.md) · [vue globale](../05_donnees_et_univers_pit.md)
 
 ## Périmètre et code de référence
@@ -8,7 +12,10 @@ La façade `dataIntegrityEngine/import_eodhd_bar.py` conserve des symboles patch
 
 ## Routage du provider
 
-Le CLI lit `market_data.bars_provider`. Si la valeur n'est pas `eodhd`, il n'appelle aucun endpoint et publie un summary de no-op. Il n'existe pas de fallback automatique vers Alpaca : changer de source est une décision opérateur parce que couverture, volume et provenance changent.
+Le CLI lit `market_data.bars_provider`. Hors `eodhd`, un import autonome produit
+un no-op ; avec `--require-target-coverage`, le provider incompatible est une
+erreur avant tout appel. Il n'existe pas de fallback automatique vers Alpaca.
+Couverture, volume et provenance ne sont pas interchangeables.
 
 ## Algorithme du run daily
 
@@ -34,9 +41,33 @@ flowchart TD
   Q --> R[Cross-check + run summary]
 ```
 
-La date cible est la dernière séance résolue par le calendrier. L'offset de publication bulk est lu mais la résolution actuelle repose sur la dernière date de marché. L'univers explicite est normalisé en uppercase/dédoublonné ; sinon les filtres éligibles de `database.assets` s'appliquent.
+Sans cible explicite, `eodhd/readiness.py` résout la dernière séance dont la
+clôture NYSE réelle plus `eodhd.bulk_publish_offset_hours` est passée (défaut
+Python deux heures, borne 0–24). Pas de simple date civile ou repli jours ouvrés.
+Ce délai est une hypothèse opérationnelle, pas une garantie de publication.
+L'univers explicite est normalisé/dédoublonné ; `--symbol-source universe-file:...`
+et `--symbols` sont incompatibles. Un fichier explicite vide est bloquant, sans
+repli vers tous les actifs. Sinon l'univers DB éligible s'applique.
 
-Le bulk est indexé sur les symboles projet. Une ligne déjà présente à la même date compte comme up-to-date. `resolve_missing_fetch_window` détermine le catch-up entre dernière barre et cible en tenant compte de la couverture bulk. Les symboles sans historique absents du bulk utilisent un budget de fallback, 100 par défaut.
+Le bulk est indexé sur les symboles projet. Hors contrôle renforcé, une ligne
+déjà présente à la même date compte comme up-to-date. Avec
+`--require-target-coverage`, `refresh_target_date` permet de rafraîchir J.
+`resolve_missing_fetch_window` détermine le catch-up entre dernière barre et
+cible selon la couverture bulk. Les symboles sans historique absents du bulk
+utilisent un budget de fallback, 100 par défaut.
+
+## Contrôle quotidien renforcé du pipeline US
+
+Le pipeline fige J, transmet `--target-date`, `--write`, un univers explicite,
+`--wait-for-publication` et `--require-target-coverage`. L'attente est bornée
+pour une cible future et tient compte de la clôture effective (demi-séances
+comprises), puis le contrôle relit les cours **canoniques committés de J**.
+Il exige par défaut 95 % de l'univers et la présence indépendante du benchmark
+SPY : OHLCV positifs/cohérents, `is_filled=0`. J−1 ne satisfait jamais ce gate.
+
+Une couverture insuffisante ou un contrôle SQL impossible conserve les compteurs
+d'import, publie `FAILED` et retourne 1. Les commits déjà effectués restent
+présents ; on répare/rejoue l'import avant les étapes aval, sans rollback global.
 
 Les preferred/series explicitement reconnues non supportées ne consomment pas inutilement le fallback. En write, elles peuvent mettre `bars_available=false` dans metadata. Un symbole non trouvé et une panne provider ont des compteurs différents.
 
@@ -61,7 +92,12 @@ Le tracker comptabilise appels utilisés/échoués. Le circuit est vérifié ava
 | Option | Défaut | Effet |
 |---|---:|---|
 | `--symbols` | univers DB | sous-univers explicite |
-| `--target-date` | dernière séance | cible ISO |
+| `--target-date` | dernière séance publiée | cible ISO |
+| `--symbol-source` | absent | fichier explicite ; incompatible avec --symbols |
+| `--wait-for-publication` | faux | exige une cible ; attente en mode write |
+| `--require-target-coverage` | faux | exige cible, write et univers explicite ; gate exact J |
+| `--min-target-coverage` | 0,95 | ratio minimal dans ]0,1] |
+| `--benchmark-symbol` | SPY | doit être disponible en plus du ratio d'univers |
 | `--per-symbol-limit` | 100 | budget recovery sans bulk/historique |
 | `--commit-every-symbols` | 100 | fréquence commits, 0 = final |
 | `--dry-run` | actif | aucune écriture |

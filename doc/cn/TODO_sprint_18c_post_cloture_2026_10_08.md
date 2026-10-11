@@ -1,5 +1,9 @@
 # TODO — Sprint 18-C après la clôture CN du 8 octobre 2026
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Plan / TODO : ne vaut ni validation des données, ni autorisation broker. Les dépendances et blocages actuels priment sur l'ordre des sprints. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 **Statut au 1er octobre : en attente de la séance du 8 octobre. Ne rien lancer maintenant.** Le plan prospectif de 12 intentions est déjà figé ; le contrat de recherche CN 2026 est installé et le préflight est `READY_FOR_RESEARCH_ATTEMPT`. Aucun job quotidien shadow n'est installé.
 
 ## À faire après clôture, manuellement

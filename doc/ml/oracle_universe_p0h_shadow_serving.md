@@ -1,5 +1,9 @@
 # P0h — Serving shadow de l'Oracle à univers PIT dynamique
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Statut
 
 P0h est implémenté en `SHADOW_ONLY`. Il permet de produire des scores avec un

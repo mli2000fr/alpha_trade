@@ -1,5 +1,9 @@
 # Architecture de replay broker-like
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Retour : [références Backtesting](README.md)
 
 Le replay reproduit les couches, pas seulement les rendements. `signal_replay` produit les candidats ; `risk_bridge` appelle le contrat portefeuille ; `execution_replay` simule tentatives/fills ; `execution_lifecycle_replay` crée les protections ; `protection_watcher_replay` déclenche leurs transitions ; `exit_lifecycle_replay` produit les sorties.

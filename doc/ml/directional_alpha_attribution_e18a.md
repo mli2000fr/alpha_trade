@@ -1,5 +1,9 @@
 # E18-A — Attribution bêta, secteurs et régimes du momentum résiduel H120
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## 1. Verdict
 
 E18-A conclut **`MARKET_OR_SECTOR_EXPOSURE`**. L’analyse détaillée précise que

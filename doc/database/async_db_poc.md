@@ -1,5 +1,9 @@
 # Accès base asynchrone — POC opt-in
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Statut
 
 L’async n’est pas le chemin de production par défaut. `database/async_engine.py` ne l’active que lorsque `ALPHA_TRADE_ASYNC_DB` vaut `1`, `true`, `yes` ou `on`. Si toggle, SQLAlchemy asyncio, driver ou DSN manque, les helpers retournent `None`; l’appelant doit reprendre le chemin synchrone.

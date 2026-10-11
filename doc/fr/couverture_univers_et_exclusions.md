@@ -1,5 +1,9 @@
 # Couverture de l'univers France et motifs d'exclusion
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 État mesuré le 3 octobre 2026, depuis les archives EODHD téléchargées au 1er octobre 2026. Les chiffres décrivent la couverture de notre application, et non une liste exhaustive de toutes les entreprises françaises.
 
 ## Univers disponible et univers exploitable

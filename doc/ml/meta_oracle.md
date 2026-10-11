@@ -1,5 +1,9 @@
 # Meta-Oracle — filtre des faux positifs Oracle
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Contrat autoritatif corrigé
 
 Cette campagne est research-only. Batch recommandé : `model-factory-20260909051302-323684`. Le shadow 2025-07-14 → 2026-06-30 reste un holdout fermé jusqu'au gel du contrat.

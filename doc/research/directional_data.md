@@ -1,5 +1,9 @@
 # Recherche de données directionnelles
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Retour : [recherche](README.md)
 
 Le sous-package teste si de nouvelles données séparent le bon et le mauvais côté dans le pool Oracle avant d'entraîner un modèle complexe. Les familles actuelles couvrent short interest, news sentiment, earnings revisions et analyst revisions.

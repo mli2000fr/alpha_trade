@@ -1,5 +1,9 @@
 # 7 — Métriques, diagnostics et historique
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## IC de rang
 
 `compute_ic_rank` calcule la corrélation de Spearman entre scores prédits et

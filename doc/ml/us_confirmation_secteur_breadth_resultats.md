@@ -1,5 +1,9 @@
 # US — Résultats régime LONG, force relative et breadth
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 **Actualisation macro 2026 :** [recalcul avec couverture complète](us_2026_regime_macro_actualise.md).
 Le constat initial d'absence macro ci-dessous décrit l'état du premier run.
 Le nouveau calcul bloque les LONG le 30 mars, conserve 1 651 candidats

@@ -2636,9 +2636,15 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
 
     if step_key == "ml_predict":
         _predict_artifacts_dir = ml_artifacts_dir
-        _bid = options.ml_predict_batch_id or options.ml_live_predict_batch_id
+        # Historical and LIVE selectors are independent. A stale backtest choice
+        # must not override the explicitly selected LIVE batch.
+        if options.llm_filter_enabled or options.ml_predict_use_historical_range:
+            _bid = options.ml_predict_batch_id or options.ml_live_predict_batch_id
+        else:
+            _bid = options.ml_live_predict_batch_id or options.ml_predict_batch_id
         if _bid:
-            _predict_artifacts_dir = f"{ml_artifacts_dir}/{_bid}"
+            _root = Path(ml_artifacts_dir)
+            _predict_artifacts_dir = str(_root if _root.name == _bid else _root / _bid)
         command = [
             sys.executable,
             "-u",
@@ -2838,9 +2844,12 @@ def _wrap_llm_command(phase: str, command: list[str], options: PipelineLaunchOpt
     batch = options.ml_predict_batch_id or options.ml_live_predict_batch_id
     if phase == 'predict' and not batch:
         raise ValueError('Sélectionner explicitement un batch Oracle pour le filtre LLM')
+    from common.us_signal_date import resolve_us_signal_date, pin_command_date
+    signal_date = resolve_us_signal_date(options.trade_date or _llm_today_ny()).isoformat()
+    command = pin_command_date(command, phase, signal_date)
     wrapped = [sys.executable, '-u', '-m', 'service.llm_directional.pipeline',
                '--phase', phase, '--run-id', options.llm_filter_run_id or 'auto',
-               '--trade-date', options.trade_date or _llm_today_ny(),
+               '--trade-date', signal_date,
                '--symbol-source', options.ml_predict_symbol_source,
                '--capital-preset-key', options.capital_preset_key or 'capital_2001_5000',
                '--command-json', json.dumps(command)]
@@ -2853,7 +2862,7 @@ def _wrap_llm_command(phase: str, command: list[str], options: PipelineLaunchOpt
     if enabled is None:
         enabled = bool(profile and profile.enabled)
     if type(enabled) is not bool:
-        raise ValueError('Choix protections GPT : booléen requis')
+        raise ValueError('Choix protections LLM : booléen requis')
     if (enabled or filter_config.allow_short) and phase in ('risk', 'execute'):
         # MOO/GTC protections require whole shares. Preserve the legacy command
         # byte-for-byte when GPT or its dedicated protections are disabled.

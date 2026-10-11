@@ -1,5 +1,9 @@
 # PENN, ROKU et GH — Diagnostic des probabilités LONG presque constantes
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Verdict du 5 octobre 2026
 
 **Cause historique exacte non déterminable avec les artefacts disponibles.**

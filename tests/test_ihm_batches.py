@@ -406,11 +406,11 @@ def test_technical_or_provider_block_does_not_show_rights_badge(status):
 
 
 @pytest.mark.parametrize("market,expected", [
-    ("US_EQ", {"analyst_snapshot_collection", "fred_alfred_vintage_sync", "finra_short_volume_sync"}),
+    ("US_EQ", {"fred_alfred_vintage_sync", "finra_short_volume_sync"}),
     ("CN_A", {"cn_oracle_prospective_daily", "cn_dragon_tiger_after_close", "cn_dragon_tiger_before_open"}),
     ("FR_EQ", {"fr_fundamentals_sync", "fr_consensus_snapshot"}),
 ])
-def test_rights_badge_covers_all_eight_blocked_collectors_across_markets(market, expected):
+def test_rights_badge_covers_remaining_blocked_collectors_across_markets(market, expected):
     actual = {s.name for s in batches.load_market_batch_specs(market)
               if s.status in batches.RIGHTS_BLOCK_STATUSES}
     assert actual == expected

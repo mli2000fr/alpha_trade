@@ -1,5 +1,9 @@
 # Sprint 10-C3 — priorité à la réparation documentaire du fold 7
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Décision
 
 Le Sprint 10 doit être traité avant le Sprint 11. L'audit général de fiabilité

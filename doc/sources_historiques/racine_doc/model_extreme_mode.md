@@ -1,5 +1,9 @@
 # Modèle Oracle Extreme — Modes d'entraînement & dépendance à `global_rank_history`
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 **Statut :** synthèse de référence (2026-08-28) — explique **pourquoi** l'Oracle Extreme
 échoue (`empty dataset → skipped → compté failed`) en mode **after-sequence**, et comment
 l'entraîner correctement en **standalone**.
@@ -407,4 +411,4 @@ flowchart TD
 - [`doc/ml_oracle_sprint.md`](ml_oracle_sprint.md) — sprint de construction Oracle.
 - [`doc/oracle_extreme.md`](oracle_extreme.md) — l'Oracle Extreme comme gate d'univers LONG.
 - [`doc/mode_cascade.md`](mode_cascade.md) — les 7 modes de cascade (Global Rank × Oracle).
-- [`doc/calibration_oracle_exterme.md`](calibration_oracle_exterme.md) — calibration de `proba_extreme`.
+- [`doc/calibration_oracle_exterme.md`](../../experiences/archives_recherche/calibration_oracle_exterme.md) — calibration de `proba_extreme`.

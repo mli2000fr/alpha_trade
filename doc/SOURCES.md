@@ -1,6 +1,15 @@
 # Traçabilité de la refonte documentaire
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Méthode
+
+La première refonte ci-dessous est une trace historique. Elle est complétée
+par la [révision de tout le corpus du 10 octobre 2026](AUDIT_COMPLET_DOCUMENTATION_20261010.md).
+Le [registre](audit/registre_documentaire.md) classe tous les fichiers ; les
+[empreintes AST](audit/inventaire_sources.json) localisent les déclarations courantes.
 
 La refonte a inventorié l'ensemble de `doc/` (184 fichiers au démarrage) puis analysé les packages source, points d'entrée, classes/fonctions, configuration, migrations et tests. Les documents historiques ont été utilisés pour repérer vocabulaire, décisions et sujets, puis vérifiés contre le code.
 
@@ -16,10 +25,16 @@ La refonte a inventorié l'ensemble de `doc/` (184 fichiers au démarrage) puis 
 - régime : `service/market/` ;
 - exécution : `run_execution.py`, `execution_engine/` ;
 - backtest : `backtesting/` ;
-- persistance : `database/`, `alembic/` ;
+- persistance : `database/`, `alembic/`, `alembic_cn/`, `alembic_fr/`, `database/router.py` ;
 - IHM : `ihm/` ;
 - dépendances et outils : `pyproject.toml`, `pytest.ini`, `.importlinter` ;
-- configuration runtime : `config.yaml` et dataclasses de chaque package.
+- configuration runtime : `config.yaml`, `config_cn.yaml`, `config_fr.yaml`,
+  contextes `config/markets`, router `config/databases.yaml` et dataclasses ;
+- batchs : `batch.yaml`, `batch_cn.yaml`, `batch_fr.yaml`,
+  `ihm/services/batch_management.py` et launchers Windows ;
+- calendrier de signal US : `common/us_signal_date.py`, CLI et wrappers GPT ;
+- maintenance documentaire : `scripts/refresh_documentation.py`,
+  `scripts/generate_doc_index.py` (lecture statique, sans exécution métier).
 
 ## Limites et maintenance
 

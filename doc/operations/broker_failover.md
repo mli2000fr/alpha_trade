@@ -1,5 +1,9 @@
 # Failover broker Alpaca vers IBKR
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Doctrine codée
 
 `service/broker_failover.py` fournit `FailoverBrokerClient`. Le primaire reçoit toutes les opérations tant que son circuit est fermé. Après trois erreurs de lecture consécutives par défaut, les lectures basculent sur le secondaire et toutes les écritures restent suspendues. Une réussite secondaire ne réarme jamais le primaire.

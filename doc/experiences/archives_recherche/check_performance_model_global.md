@@ -1,5 +1,9 @@
 # Check Performance — Modèle Global (LONG Alpha Attribution)
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 **Date** : 2026-08-21
 **Univers** : `config/ticket_recherche.txt` (400 tickers, identique à `ticket_mid_cap_400.txt`)
 **Modèle** : Global Ranking B25 (`model-factory-20260811223551-ef2cd0`, colonne `global_rank_20`)

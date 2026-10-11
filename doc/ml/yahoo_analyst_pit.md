@@ -1,6 +1,68 @@
 # Snapshots analystes Yahoo Finance — contrat PIT de recherche
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Objectif et périmètre
+
+### État actuel — nouvelle désactivation le 10 octobre 2026
+
+L'utilisateur a de nouveau désactivé `analyst_snapshot_collection` US.
+Configuration vérifiée : `enabled: false`, statut
+`BLOCKED_YAHOO_AUTOMATED_ACCESS`. Aucun nouveau téléchargement Yahoo,
+y compris manuel, tant que ce blocage est présent. La tâche installée peut
+rester en place : le launcher vérifie ces paramètres avant les appels.
+Le statut bloqué ne serait pas levé par le seul passage de `enabled` à `true`.
+
+Mise à jour ultérieure le 10 octobre 2026 : sur demande explicite, les six
+tables de ce batch ont été vidées et vérifiées après commit : **1 115 261 lignes
+supprimées**, zéro ligne restante dans chacune. Les schémas sont conservés et
+la collecte reste désactivée. Une sauvegarde ciblée préalable est conservée dans
+`backups/db/yahoo_consensus_before_clear/20261010T215706Z/`, avec manifeste et hashes.
+Les anciens dumps et résultats exploratoires sur fichiers n'ont pas été supprimés.
+Leurs réserves de droits et de qualification restent applicables ; pas de
+restauration ni d'exploitation automatique de ces archives.
+EODHD Calendar & News est envisagé pour une collecte prospective de remplacement,
+mais aucun nouvel abonnement ou batch de remplacement n'est confirmé ici.
+[Restauration et analyse](analyst_archive_restore_directional_20261010.md).
+
+### Historique — réactivation temporaire puis retrait de la borne automatique
+
+Le batch US avait été réactivé le **10 octobre 2026**, sans expiration automatique.
+`batch.yaml` portait alors `ACTIVE_RESEARCH_RIGHTS_UNCONFIRMED` et `enabled: true`,
+sans `trial_start_date` ni `trial_end_date_exclusive`.
+À la demande de l'utilisateur, l'arrêt des nouveaux appels prévu le 10 novembre
+avait été retiré ; cette réactivation est désormais remplacée par la désactivation ci-dessus.
+La tâche existante lit cette configuration à chaque passage ; aucune réinstallation
+n'est nécessaire pour supprimer cette borne.
+
+**Permission Yahoo non confirmée.** Le GO de l'utilisateur autorise la
+réactivation dans Alpha Trade, mais n'est pas une permission du fournisseur.
+Les restrictions contractuelles documentées dans
+[l'audit de droits](audit_autorisations_collectes_us_20261006.md) ne sont pas levées.
+Pas de redistribution ni de promotion automatique des données vers ML/LIVE.
+Les collectes Yahoo FR, FRED et FINRA restent bloquées.
+
+Configuration conservée mais inactive : univers `config/univers_batch/univers_filtred_tradable.txt`. Passage principal
+à **22 h Paris**, secours conditionnel à **4 h Paris** avec contrôle de succès
+récent, `--resume` et stockage quotidien idempotent existants. Les notifications
+email/Telegram restent celles du launcher ; un appel Python direct ne les envoie pas.
+Après un mois : couverture par famille, nombre de vraies révisions (pas simplement
+nombre de snapshots), contrôles de rollover fiscal, rendement H3/H5/H10 à maturité.
+H20 exige vingt séances futures après chaque observation : un bilan après un mois
+ne permettra pas d'évaluer les derniers snapshots à H20. Aucun bénéfice directionnel
+n'est présumé, aucun entraînement/backtest automatique n'est ajouté.
+
+Installation/réinstallation (référence technique uniquement ; ne lève pas le blocage) :
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File F:\projets\scripts\windows\install_analyst_snapshot_task.ps1
+```
+
+Suivi : page **Workflow & Orchestration → Batch → US**, table
+`analyst_snapshot_collection_run` et log `F:\projets\log\batch\analyst_snapshots.txt`.
+Arrêt manuel : `enabled: false`. Le bilan conseillé après un mois ne déclenche aucun arrêt.
 
 Le batch `analyst_snapshot_collection` construit à partir de sa date d'activation
 un historique prospectif des informations analystes observées sur

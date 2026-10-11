@@ -1,5 +1,9 @@
 # Sprint 11-G - Seconde passe documentaire, non indépendante
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Date : 4 octobre 2026. Dossier source : `second-review-20261004-v4`.
 
 Suite : [11-H — arbitrages proposés et disponibilité PIT](sprint_11h_arbitrage_et_disponibilite_pit.md).

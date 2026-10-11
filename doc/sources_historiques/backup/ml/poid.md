@@ -1,5 +1,9 @@
 # Répartition des Poids dans la Chaîne de Décision
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 > Synthèse générée le 2026-06-20 — source : codebase Alpha Trade
 
 La chaîne de décision s'articule en **4 niveaux de fusion successifs** :

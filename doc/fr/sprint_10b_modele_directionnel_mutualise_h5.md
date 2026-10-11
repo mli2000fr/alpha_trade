@@ -1,5 +1,9 @@
 # Sprint 10-B — Pilote directionnel mutualisé H5, train conditionnel Oracle OOF
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Protocole fixé avant les fits — 3 octobre 2026
 
 H5 prix-only, 14 features figées FR. Les périodes de développement ont déjà été examinées en 9-A et 10-A : **aucun résultat de ce lot n'est une confirmation finale indépendante**. 2026 non utilisée ; H10/H20 non admis en couverture. Aucun SQL, serving, live, US/CN ou tâche planifiée modifié.

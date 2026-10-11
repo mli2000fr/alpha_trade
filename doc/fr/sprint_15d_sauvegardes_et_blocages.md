@@ -1,5 +1,9 @@
 # Sprint 15-D — Sauvegardes vérifiées et référentiels encore bloqués
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 **Actualisation du 6 octobre 2026 :** la seconde qualification artefacts
 `backups/fr/qualification/20261005T193256-a4610757/report.json` porte
 `EXTRACTION_VERIFIED` (14 448 fichiers). `fr_artifacts_backup` est désormais

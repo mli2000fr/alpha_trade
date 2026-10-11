@@ -1,5 +1,9 @@
 # Comprendre le trading Long/Short ML-first de bout en bout
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 > Guide fonctionnel et opérationnel du pipeline PIT, du ML ternaire, du risque, de l'exécution et du backtest. Révision du 2026-07-11.
 
 ## Partie 1 - Public, mode d'emploi et parcours

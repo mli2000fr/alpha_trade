@@ -1,5 +1,9 @@
 # 1. Démarrage rapide — installer et lancer l'IHM
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 > Objectif : à la fin de ce manuel vous voyez la page d'accueil de l'IHM
 > dans votre navigateur. Temps estimé : **30 min**.
 

@@ -1,5 +1,9 @@
 # Sprint 18-C — Pilote shadow prospectif Oracle CN
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Objet et frontière de sécurité
 
 Le pilote relie l'export Oracle H20 prospectif du Sprint 15-D8 au moteur d'exécution **hypothétique** du Sprint 18-B. Il ne constitue ni une stratégie directionnelle validée, ni un backtest, ni une instruction de trading. Le routeur 18-A continue d'interdire tout ordre paper/live CN. Le module `service/market/cn_shadow_runner_18c.py` n'appelle aucun broker et n'écrit dans aucune table ; ses seules sorties sont des preuves JSON sous `artifacts/research/cn_shadow_18c/`.

@@ -1,5 +1,9 @@
 # Sprint 15-D3 — Robustesse historique Dragon/Tiger 2018–2025
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Audit achevé le 30 septembre 2026. **Verdict : réconciliation des identités confirmée sur l'échantillon historique, intégrité structurelle des sièges plausible ; pas de certification PIT, pas de GO ML.** Aucun modèle, batch quotidien, table, backtest ou serving n'a été modifié.
 
 ## Périmètre pré-enregistré

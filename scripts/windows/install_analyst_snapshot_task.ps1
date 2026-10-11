@@ -153,6 +153,7 @@ $triggers = @($hours | ForEach-Object {
 # ── Action : powershell -File <launcher> ──
 $argumentList = @(
     '-NoProfile',
+    '-WindowStyle', 'Hidden',
     '-ExecutionPolicy', 'Bypass',
     '-File', ('"{0}"' -f $launcherPath),
     '-WorkspacePath', ('"{0}"' -f $resolvedWorkspace),

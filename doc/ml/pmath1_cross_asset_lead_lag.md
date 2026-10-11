@@ -1,5 +1,9 @@
 # P-MATH-1 — relations cross-asset lead-lag sur résidus
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Question de recherche
 
 P-MATH-0 a montré que les 84 variables d'état connues ne séparent pas de façon

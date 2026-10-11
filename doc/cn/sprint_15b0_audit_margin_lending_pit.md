@@ -1,5 +1,9 @@
 # Sprint 15-B0 — Audit financement sur marge et prêt de titres CN
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 **État au 27 septembre 2026 : `GO_SOURCE_CANDIDATE` pour un backfill de recherche depuis les bourses ; `NO_GO_ML_PIT_YET` pour l'ablation B2 du Sprint 16.** Des relevés journaliers par titre de 2018, 2020 et 2025 sont réellement accessibles depuis la France. Leur profondeur complète, leurs corrections et le contrat de disponibilité historique restent à démontrer. Aucun batch ni modèle de production n'est activé par B0.
 
 ## Pourquoi cette famille est différente de 15A

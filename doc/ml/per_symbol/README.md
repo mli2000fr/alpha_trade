@@ -1,5 +1,9 @@
 # Modèle per-symbol — dossier technique complet
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Le modèle per-symbol entraîne une famille de challengers pour chaque ticker à
 partir de son historique et de contextes optionnels. La gouvernance choisit une
 route de serving propre au symbole. Une absence ou une route inéligible peut

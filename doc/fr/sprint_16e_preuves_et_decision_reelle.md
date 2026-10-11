@@ -1,5 +1,9 @@
 # Sprint 16-E — Preuves locales et contrôle à une ouverture réelle
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 État au 6 octobre 2026, après 21 h Paris : outils livrés, preuves partielles
 archivées et contrôles exécutés. **Shadow toujours interdit.** La confirmation
 à une nouvelle ouverture n'a pas encore eu lieu ; ne pas clôturer le Sprint 16

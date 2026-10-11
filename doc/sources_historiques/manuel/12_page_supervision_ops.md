@@ -1,5 +1,9 @@
 # 12. Page 🛟 Supervision Ops
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## À quoi sert cette page
 
 Surveiller les **processus en arrière-plan** : pipeline qui tournent encore,
@@ -65,6 +69,6 @@ Tableau de tous les runs des 30 derniers jours, filtres par module / statut.
 
 ## Pour aller plus loin
 
-- Doc technique : [doc/watcher.md](../backup/watcher.md).
-- Runbook 24/7 : [doc/runbook_24_7.md](../backup/runbook_24_7.md).
+- Doc technique : [doc/watcher.md](../backup/execution/watcher.md).
+- Runbook 24/7 : [doc/runbook_24_7.md](../../operations/us_pipeline.md).
 

@@ -1,5 +1,9 @@
 # Guidance après Oracle Extreme — recouvrement et dates officielles (30 septembre 2026)
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 Statut : **INCONCLUSIVE / ZERO_PIT_ELIGIBLE**. Recherche descriptive sur le batch OOF historique `model-factory-20260909051302-323684`. Aucun modèle D1/D10 entraîné, aucune mesure de performance directionnelle, aucune modification de serving. Les fichiers structurés et les scripts de lecture seule sont dans `work/guidance_pit_followup_20260930/`.
 
 ## Résultat qui change la priorité

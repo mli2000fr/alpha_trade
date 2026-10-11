@@ -1,5 +1,9 @@
 # Parité live/backtest
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Retour : [références Backtesting](README.md)
 
 `parity.py` compare décisions live et replay indexées par symbole. Il normalise action/quantité, applique tolérance relative 5 % et absolue 1 action par défaut, puis classe missing/action/quantity mismatches. Le seuil global de divergence par défaut est 10 %.

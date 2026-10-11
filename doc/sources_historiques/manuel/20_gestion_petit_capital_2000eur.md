@@ -1,5 +1,9 @@
 # 20. Guide micro-compte ~2 000 € — paramétrage et bonnes pratiques
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 > Ce manuel est **incontournable** si vous démarrez avec ~2 000 € (~2 150 USD).
 
 ## ⚠️ Avertissement préalable
@@ -21,7 +25,7 @@ Le moteur a été initialement calibré pour des comptes ≥ 50 000 USD. À
   élevées.
 
 Le preset `capital_0_2000` (Sprint S26) corrige ces 3 points. Voir
-[doc/audit/preset_petit_capital_2000eur.md](../audit/preset_petit_capital_2000eur.md)
+[doc/audit/preset_petit_capital_2000eur.md](../../risk/capital_sizing_et_fractionnement.md)
 pour le détail des valeurs.
 
 ## 2. Activation dans l'IHM

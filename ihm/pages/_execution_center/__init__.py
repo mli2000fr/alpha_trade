@@ -3347,7 +3347,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         from service.llm_directional.config import load_filter_config
         _llm_config = load_filter_config()
         llm_filter_enabled = st.checkbox(
-            '🌐 Filtrage GPT + recherche Web après Oracle — PAPER uniquement',
+            f'🌐 Filtrage {_llm_config.provider_label} + recherche Web après Oracle — PAPER uniquement',
             value=bool(st.session_state.get('pipeline_llm_filter_enabled', _llm_config.enabled)),
             key='pipeline_llm_filter_enabled',
             help='Analyse prospective des premiers scores Oracle, archivage en base, puis LONG/SHORT/abstention '
@@ -3356,14 +3356,20 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         llm_oracle_batch_id = None
         llm_specific_protections = False
         if llm_filter_enabled:
-            st.caption(f"Directions GPT autorisées : {'LONG / SHORT / ABSTENTION' if _llm_config.allow_short else 'LONG / ABSTENTION'}. "
+            st.caption(f'Analyse : {_llm_config.provider_label} / {_llm_config.analysis_model}. '
+                       f'Recherche Web : OpenAI / {_llm_config.model}. '
+                       'Choix dans config.yaml → llm_directional_filter.provider.')
+            if _llm_config.provider == 'deepseek':
+                st.info('DeepSeek analyse les preuves Web obtenues via OpenAI. Les deux clés API sont nécessaires ; '
+                        'les deux fournisseurs sont facturés. Aucun remplacement silencieux de modèle.')
+            st.caption(f"Directions {_llm_config.provider_label} autorisées : {'LONG / SHORT / ABSTENTION' if _llm_config.allow_short else 'LONG / ABSTENTION'}. "
                        f"Maximum {_llm_config.max_selected} titres au total. Les SHORT restent soumis au régime, "
                        "au risque et à une disponibilité easy-to-borrow Alpaca confirmée.")
             llm_specific_protections = st.checkbox(
-                '🛡️ Protections spécifiques GPT — SL / sortie temporelle / trailing',
+                f'🛡️ Protections spécifiques {_llm_config.provider_label} — SL / sortie temporelle / trailing',
                 value=bool(_llm_config.protections and _llm_config.protections.enabled),
                 key='pipeline_llm_specific_protections',
-                help='Uniquement pour les nouvelles positions GPT du compte principal PAPER. '
+                help=f'Uniquement pour les nouvelles positions {_llm_config.provider_label} du compte principal PAPER. '
                      'Décochée : protections historiques inchangées. Valeurs dans config.yaml.')
             if llm_specific_protections:
                 _p = _llm_config.protections
@@ -3380,9 +3386,9 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             from common.universe_files import list_universe_file_sources
             _llm_sources = ['tradable-universe', *list_universe_file_sources()]
             if _llm_config.default_symbol_source not in _llm_sources:
-                st.error(f'Univers GPT configuré indisponible : {_llm_config.default_symbol_source}')
+                st.error(f'Univers {_llm_config.provider_label} configuré indisponible : {_llm_config.default_symbol_source}')
                 st.stop()
-            ml_predict_symbol_source = st.selectbox('Univers Oracle → filtre GPT (même périmètre)',
+            ml_predict_symbol_source = st.selectbox(f'Univers Oracle → filtre {_llm_config.provider_label} (même périmètre)',
                 options=_llm_sources, index=_llm_sources.index(_llm_config.default_symbol_source),
                 key='pipeline_llm_symbol_source',
                 help='Utilisé aussi par la prédiction du workflow. Le filtre ne reclasse pas un autre univers.')
@@ -3392,13 +3398,13 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 *(p.name for p in _llm_champions.iterdir() if p.is_dir())
             }) if _llm_champions.is_dir() else [_llm_config.default_oracle_batch_id]
             llm_oracle_batch_id = st.selectbox(
-                'Batch Oracle → filtre GPT (même modèle)', options=_llm_batches,
+                f'Batch Oracle → filtre {_llm_config.provider_label} (même modèle)', options=_llm_batches,
                 index=_llm_batches.index(_llm_config.default_oracle_batch_id),
                 key='pipeline_llm_oracle_batch_id',
                 help='Défaut : llm_directional_filter.default_oracle_batch_id dans config.yaml. '
                      'Utilisé par la prédiction et le filtre ; aucun fallback vers un autre batch.')
             st.warning(f'Compte principal default PAPER uniquement. Oracle TOP{_llm_config.oracle_top_n} → '
-                       f'0 à {_llm_config.max_selected} LONG. Paramètres dans config.yaml. '
+                       f'0 à {_llm_config.max_selected} titres LONG/SHORT selon configuration. Paramètres dans config.yaml. '
                        'Recherche Web facturée ; pas de backtest historique Web. Kelly, LIVE, '
                        'hors séance et rééquilibrage automatique interdits.')
             llm_filter_run_id = st.text_input('Identifiant analyse LLM (vide = nouveau run pour le workflow)',

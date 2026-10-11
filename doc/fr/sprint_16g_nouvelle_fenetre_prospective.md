@@ -1,5 +1,9 @@
 # Sprint 16-G — nouvelle fenêtre prospective distincte
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 **Statut final : préparation archivée, sans lancement automatique le 13 octobre.**
 Le Sprint 16 est clos administrativement avec validation shadow bloquée :
 [décision et qualification bornée](sprint_16_cloture_bornee.md).

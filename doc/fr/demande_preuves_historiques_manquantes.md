@@ -1,5 +1,9 @@
 # FR — Bilan public gratuit et demande ciblée de preuves historiques
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 État au 4 octobre 2026. Référence : comparaison économique des folds 6/7,
 H5 LONG cash, capital 4 000 EUR, politiques ATR TOP20 / Oracle TOP20 / contrôle
 uniforme. Aucun modèle réentraîné, aucune performance 2026 consultée.

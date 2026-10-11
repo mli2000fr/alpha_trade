@@ -1,5 +1,9 @@
 # persistent_tail_price_confirmation — 2026-08-27
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Archive conservée pour traçabilité : les commandes, paramètres et promotions ci-dessous décrivent leur époque, pas une consigne actuelle. Ne pas réactiver un batch sur la base de ce texte. [Référence actuelle](../../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 Expérience **diagnostique** (aucun réentraînement, aucun changement risk/PROD).
 Question : la combinaison **persistance dans une queue du ranking (N jours)** +
 **confirmation du prix (ret_N)** sélectionne-t-elle davantage de vrais bons

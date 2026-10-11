@@ -281,7 +281,7 @@ analyst_snapshot_collection:
   status: BLOCKED_YAHOO_AUTOMATED_ACCESS
   provider: yahoo_finance_via_yfinance
   timezone: Europe/Paris
-  research_notice: "BLOQUÉ — Yahoo exige une permission préalable pour la collecte automatisée. La recherche personnelle, yfinance et la quarantaine ne remplacent pas cette permission. Aucun nouveau téléchargement ne doit être lancé, même manuellement. Données existantes conservées sans décision de purge. Voir doc/ml/audit_autorisations_collectes_us_20261006.md."
+  research_notice: "BLOQUÉ — Yahoo exige une permission préalable pour la collecte automatisée. La recherche personnelle, yfinance et la quarantaine ne remplacent pas cette permission. Aucun nouveau téléchargement ne doit être lancé, même manuellement. Les six tables de ce batch ont été vidées le 10 octobre 2026 à la demande utilisateur ; sauvegarde ciblée conservée hors base. Voir doc/ml/audit_autorisations_collectes_us_20261006.md."
   activation_requirement: "Obtenir une autorisation écrite Yahoo couvrant automatisation, archivage des snapshots et usages analytiques/ML, ou qualifier un autre fournisseur."
   unlock_steps:
     - "Archiver la permission et son périmètre ; vérifier conservation, usages dérivés et redistribution."
@@ -596,6 +596,28 @@ sec_institutional_ownership_normalize:
   forms: "13F-HR,13F-HR/A,SC 13D,SC 13D/A,SC 13G,SC 13G/A"
   log_file: log/batch/sec_institutional_ownership_normalize.txt
 
+public_macro_snapshot_sync:
+  priority: P4
+  market_code: US_EQ
+  description: "Archiver directement les producteurs publics : inflation/emploi BLS et taux nominaux/fed funds effectifs H15 de la Réserve fédérale. Versions prospectives, sans reconstruire artificiellement les vintages historiques."
+  tables: "pit_collection_runs,pit_raw_payloads,macro_public_observation_versions"
+  enabled: true
+  status: ACTIVE_RESEARCH_ONLY
+  providers: [bls, federal_reserve_board]
+  provider: bls,federal_reserve_board
+  universe_scope: macro_series
+  timezone: Europe/Paris
+  # H15 diffusé l'après-midi US : 23:15 Paris, hors absence 07:30–20:00.
+  run_hours: "23"
+  run_minutes: "15"
+  run_days: "1,2,3,4,5"
+  bls_lookback_years: 2
+  bls_series: [CUSR0000SA0, CUSR0000SA0L1E, LNS14000000, CES0000000001]
+  research_notice: "Collecte producteur public, pas FRED. available_at = première réception UTC ; les révisions restent versionnées. H15 : cinq dates récentes ; BLS : deux années courantes/revisées, pas leurs anciens vintages. Aucun branchement automatique aux modèles ou au moteur de régime ; VIX/VXN/VIX3M/MOVE inchangés. Compteurs demandés/reçus = requêtes fournisseur, persistés = nouvelles versions. Notifications mail/Telegram via launcher commun."
+  activation_requirement: "Table 0096 et smoke BLS/H15 validés le 10/10/2026 ; tâche Windows installée. Réinstaller depuis la page Batch si nécessaire ; aucun abonnement ni clé nécessaire. Qualification de consommation ML/live distincte."
+  execution_notice: "23:15 Europe/Paris. Fenêtre glissante officielle : cinq dates H15 et deux années BLS ; une panne de plus de cinq séances peut perdre des publications H15. La reprise n'invente pas l'heure de disponibilité des données manquées."
+  log_file: log/batch/public_macro_snapshot_sync.txt
+
 fred_alfred_vintage_sync:
   priority: P4
   description: "Conserver les vintages macro réellement disponibles afin d'éviter toute fuite provenant des révisions économiques futures."
@@ -621,7 +643,7 @@ fred_alfred_vintage_sync:
 
 finra_short_volume_sync:
   priority: P1
-  description: "Collecter prospectivement le short volume quotidien FINRA consolidé comme donnée de recherche, sans le promouvoir automatiquement comme signal ML."
+  description: "Short volume en attente : aucun avantage directionnel stable démontré ne justifie une dépense ; maintien du blocage de droits FINRA et absence de collecte."
   tables: "pit_collection_runs,pit_raw_payloads,stock_short_volume_daily"
   # Gratuité des fichiers FINRA != permission de constituer une base prédictive.
   enabled: false

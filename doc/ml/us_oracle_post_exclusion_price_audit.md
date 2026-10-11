@@ -1,5 +1,9 @@
 # Oracle US — contrôle après retrait de KNTK et AMTB
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Conclusion
 
 Le retrait de KNTK et AMTB élimine les trois maxima initialement observés,

@@ -1,5 +1,9 @@
 # Sprint 7-B — Audit après backfill du 24 septembre 2026
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 ## Verdict
 
 Le backfill historique 2018–2025 est terminé : **217/217 lots `COMPLETED`, aucun lot en échec**. Les contrôles intégrés renvoient `PASS` : **5 405/5 405 actions mappées et dotées de barres** et **31/31 segments board × année** au-dessus du seuil de couverture de 95 %.

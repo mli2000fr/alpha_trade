@@ -1,5 +1,9 @@
 # Premier cycle CN du 8 octobre 2026 — contrôle avant ouverture
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 État au 1er octobre : **préparation terminée, cycle réel non encore observé**. Ce contrôle ne remplace ni les rapports D6/D9/D10, ni le gate de sept séances ouvertes de 17-C. Ne pas lancer les collecteurs hors de leur fenêtre pour fabriquer une preuve PIT.
 
 ## Horaires à surveiller

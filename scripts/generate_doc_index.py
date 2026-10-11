@@ -12,6 +12,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
+from urllib.parse import quote
 
 LOGGER = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -26,6 +27,23 @@ _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 def _category(path: Path) -> str:
     name = path.name.lower()
     parts = path.relative_to(DOC_DIR).parts
+    domain = parts[0]
+    if domain in {"sources_historiques", "experiences"}:
+        return "Archives et expériences historiques"
+    if domain == "api" or domain == "reference":
+        return "Références du code et configuration"
+    if domain == "cn":
+        return "Marché chinois — CN"
+    if domain == "fr":
+        return "Marché français — FR"
+    if domain == "ml":
+        return "ML — contrats et recherche US"
+    if domain == "audit":
+        return "Registre documentaire et audit"
+    if domain in {"operations", "guide_utilisateur", "data", "database", "execution", "risk", "signals", "research", "architecture", "backtesting"}:
+        return {"operations": "Exploitation et batchs", "guide_utilisateur": "Guide utilisateur IHM", "data": "Données et ingestion", "database": "Bases et migrations", "execution": "Exécution et protections", "risk": "Risque et portefeuille", "signals": "Signaux et sentiment", "research": "Recherche transverse", "architecture": "Architecture", "backtesting": "Backtests et validation"}[domain]
+    if len(parts) == 1 and (name[:2].isdigit() or name in {"readme.md", "etat_actuel_implementation.md"}):
+        return "Documentation centrale actuelle"
     if name in {"conventions.md", "changelog.md", "doc_fonctionnelle.md", "doc_technique.md"}:
         return "Documentation centrale"
     if "architecture" in parts:
@@ -50,6 +68,7 @@ def _category(path: Path) -> str:
 
 def _sanitize_markdown_for_meta_extraction(text: str) -> str:
     sanitized = text.lstrip("\ufeff")
+    sanitized = re.sub(r"<!-- doc-status:start -->.*?<!-- doc-status:end -->", "", sanitized, flags=re.S)
     sanitized = _FENCED_CODE_BLOCK_RE.sub("", sanitized)
     sanitized = _HTML_COMMENT_RE.sub("", sanitized)
     return sanitized
@@ -57,6 +76,13 @@ def _sanitize_markdown_for_meta_extraction(text: str) -> str:
 
 def _escape_markdown_table_cell(value: str) -> str:
     return " ".join(value.replace("|", r"\|").split())
+
+
+def _plain_link_labels(value: str) -> str:
+    # Descriptions originate in other directories. Reusing their relative
+    # hyperlinks in INDEX would silently change the link base (and truncating
+    # a hyperlink to 140 characters would also produce invalid Markdown).
+    return re.sub(r"\[([^\]]+)\]\([^\n]*?\)", r"\1", value)
 
 
 def _read_meta(path: Path) -> tuple[str, str]:
@@ -105,7 +131,7 @@ def generate() -> str:
         "",
     ]
     for cat in sorted(by_cat):
-        anchor = cat.lower().replace(" & ", "-").replace(" ", "-")
+        anchor = re.sub(r"[^\w\- ]", "", cat.lower()).replace(" ", "-")
         out.append(f"* [{cat}](#{anchor}) ({len(by_cat[cat])})")
     out.append("")
 
@@ -114,11 +140,11 @@ def generate() -> str:
         out.append("")
         out.append("| Document | Titre | Description |")
         out.append("|---|---|---|")
-        for title, path, desc in sorted(by_cat[cat], key=lambda x: x[1].name):
+        for title, path, desc in sorted(by_cat[cat], key=lambda x: x[1].as_posix()):
             rel = path.relative_to(DOC_DIR).as_posix()
-            escaped_title = _escape_markdown_table_cell(title)
-            short_desc = _escape_markdown_table_cell((desc or "—")[:140])
-            out.append(f"| [`{rel}`]({rel}) | {escaped_title} | {short_desc} |")
+            escaped_title = _escape_markdown_table_cell(_plain_link_labels(title))
+            short_desc = _escape_markdown_table_cell(_plain_link_labels(desc or "—")[:140])
+            out.append(f"| [`{rel}`]({quote(rel, safe='/.' )}) | {escaped_title} | {short_desc} |")
         out.append("")
     return "\n".join(out) + "\n"
 

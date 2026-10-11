@@ -1,5 +1,9 @@
 # Sprint 15-D1 — Pilote des prévisions de résultats CN sous proxy PIT
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
+<!-- doc-status:end -->
+
 Réalisé le 29 septembre 2026. **Verdict : faisabilité documentaire confirmée, mais pas de GO pour un entraînement historique ni pour le serving.** Les annonces de prévisions des émetteurs existent dans l'archive officielle CNINFO et une correction a été contrôlée dans son PDF. En revanche, le seul inventaire de masse trouvé est une archive Eastmoney actuelle, pas un journal historique des versions. Le signal récent est rare sur les décisions Oracle TOP20.
 
 Ce pilote n'a modifié ni les tables CN, ni les features, ni les modèles, ni les règles de backtest/live. Il a produit des artefacts de recherche seulement.

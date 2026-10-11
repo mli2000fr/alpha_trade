@@ -1,5 +1,9 @@
 # Architecture Chine — Bases, batchs et configurations `_cn`
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 > Complément obligatoire à la roadmap et au sprint planning d’intégration du marché chinois.  
 > Date : 19 septembre 2026.  
 > Décision : code et contrats communs, isolation physique des données par marché et fichiers de configuration CN explicitement suffixés `_cn`.

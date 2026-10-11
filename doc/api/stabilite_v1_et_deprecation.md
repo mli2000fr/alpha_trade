@@ -1,5 +1,9 @@
 # Stabilité de l’API v1 et dépréciation
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+<!-- doc-status:end -->
+
 ## Objet
 
 Cette référence décrit le contrat de compatibilité des façades Python du projet. Les noms explicitement exportés par les `__init__.py` sont les points d’entrée maintenus. Les inventaires du dossier `api/` facilitent la lecture du code, mais ne transforment pas tous les symboles importables en API stable.

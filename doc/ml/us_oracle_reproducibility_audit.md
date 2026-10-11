@@ -1,5 +1,9 @@
 # Oracle US — audit de reproductibilité et chronologie du batch e98332
 
+<!-- doc-status:start -->
+> Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](experiences_done.md).
+<!-- doc-status:end -->
+
 ## Résumé de décision
 
 Batch : `model-factory-20261003082853-e98332`, Oracle amplitude H20.
