@@ -156,6 +156,20 @@ def _do_request(
 # ---------------------------------------------------------------------------
 
 
+def fetch_intraday(symbol: str, *, start_epoch: int, end_epoch: int, interval: str = '5m',
+                   session=None, tracker=None) -> list[dict]:
+    """Native raw OHLCV, UTC start timestamps; cost 5. No invented adjustment/VWAP."""
+    limits={'1m':120,'5m':600,'1h':7200}
+    if interval not in limits or end_epoch<=start_epoch or end_epoch-start_epoch>limits[interval]*86400:
+        raise ValueError('Invalid intraday interval/time range')
+    payload=_do_request(endpoint='intraday',url=f'{_get_base_url()}/intraday/{to_eodhd(symbol)}',
+        params={'api_token':_get_token(),'fmt':'json','interval':interval,'from':start_epoch,'to':end_epoch},
+        session=session,tracker=tracker or get_default_tracker(),feature='intraday_backfill')
+    if not isinstance(payload,list):
+        raise EodhdBarsFetchError(f'Unexpected intraday payload: {type(payload).__name__}')
+    return payload
+
+
 def fetch_eod_bulk(
     *,
     date: Optional[str] = None,

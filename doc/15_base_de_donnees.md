@@ -102,6 +102,16 @@ Le répertoire canonique est `alembic/versions/`. Le graphe `revision/down_revis
 
 ## Idempotence
 
+### Barres intraday US
+
+`alpha_trade.stock_bars_intraday` conserve les OHLCV bruts EODHD par symbole,
+début d'intervalle UTC, intervalle et source (clé primaire anti-doublon).
+La table est indépendante de `stock_bars_daily` ; `observed_at` conserve l'heure
+de récupération réelle, pas une disponibilité historique supposée. Les lots
+de 500 barres sont commitées pendant le backfill. DDL
+`database/sql/stock/stock_bars_intraday.sql`, migration `0097_stock_bars_intraday`.
+[Guide de collecte et limites](operations/backfill_intraday_us.md).
+
 Les imports utilisent upsert, clés naturelles et bookmarks. Les runs utilisent des identifiants uniques. Les corporate actions ont event/application distincts. Les ordres conservent identifiants internes et broker. Une reprise doit vérifier l'état existant avant insertion ou envoi.
 
 ## Audit et intégrité

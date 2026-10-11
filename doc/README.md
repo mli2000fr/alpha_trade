@@ -32,6 +32,9 @@ de trading ni disponibilité des données.
 
 ## Parcours conseillé pour un nouvel arrivant
 
+Nouvelle collecte US : [barres intraday EODHD — page, table et reprise](operations/backfill_intraday_us.md),
+intervalle 5 minutes par défaut, indépendante des barres journalières.
+
 1. [Vue fonctionnelle](01_vue_fonctionnelle.md) : ce que fait le produit et les concepts métier.
 2. [Architecture globale](02_architecture_globale.md) : flux, frontières et dépendances.
 3. [Installation et prise en main](03_installation_et_demarrage.md).
