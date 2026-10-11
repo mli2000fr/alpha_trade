@@ -46,6 +46,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_all_enabled_forward_batches_have_handlers() -> None:
     expected = {
+        "eodhd_ipo_calendar_sync",
+        "eodhd_consensus_snapshot",
         "public_macro_snapshot_sync",
         "us_pipeline",
         "ml_artifacts_backup",

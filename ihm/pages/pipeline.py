@@ -1513,6 +1513,16 @@ def _render_launchable_step_panel(
     dependency_diagnostic: dict[str, object] | None,
     live_guard: dict[str, object],
 ) -> None:
+    blocked_reason = getattr(step, "blocked_reason", None)
+    if blocked_reason:
+        with st.expander(f"**⛔ ⚖️ DROITS / PRUDENCE — {step.num}. {resolve_step_display_name(step)}**", expanded=False):
+            st.markdown(blocked_reason)
+            st.markdown(f"**Tables concernées** : `{step.tables}`")
+            st.caption("Aucun lancement ni aperçu de commande exécutable. Le blocage s'applique également côté service.")
+            st.button("⛔ Collecte bloquée — droits / prudence", key=f"run_pipeline_step_{step.key}",
+                      disabled=True, use_container_width=True)
+            _render_step_result(latest_by_step.get(step.key))
+        return
     command_preview = format_command_for_display(build_pipeline_command(step.key, options))
     with st.expander(f"**{step.num}. {resolve_step_display_name(step)}**", expanded=False):
         info_col, action_col = st.columns([5, 2])

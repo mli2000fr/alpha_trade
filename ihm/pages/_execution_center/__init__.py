@@ -2592,15 +2592,19 @@ def _render_corporate_actions_block(trade_date: str) -> dict[str, Any]:
             "À activer après le 1er sync pour éviter de re-balayer un long historique chaque jour."
         )
 
-    st.markdown("#### Paramètres Backfill historique EODHD (B3)")
+    from ihm.services.pipeline_runner import _resolve_bars_provider_for_ihm
+    backfill_provider = _resolve_bars_provider_for_ihm()
+    st.markdown(f"#### Paramètres Backfill historique {backfill_provider.upper()} (B3)")
     st.caption(
-        "Ces réglages pilotent `python -m dataIntegrityEngine.backfill_eodhd_history`. "
+        "Le fournisseur suit `market_data.bars_provider`, comme l'étape 1. "
+        "Alpaca utilise `market_data.alpaca_backfill_feed` (SIP par défaut) et le compte sélectionné. "
         "Par défaut, l'IHM lance B3 en `write` pour persister dans `stock_bars` / `stock_bars_daily`. "
-        "Si tu décoches le mode écriture, le script reste en `dry-run` : il interroge EODHD pour estimer le volume attendu, "
+        "Si tu décoches le mode écriture, le script reste en `dry-run` : il interroge le fournisseur pour estimer le volume attendu, "
         "mais n'insère aucune ligne en base."
     )
     st.caption(
-        "Mode write : la DB prime sur le bookmark ; symboles déjà frais (J-7) sautés automatiquement."
+        "EODHD : symboles déjà frais (J-7) sautés en write. Alpaca : reprise par fenêtre/flux/compte/mode, "
+        "sans ignorer un ancien trou parce qu'une barre récente existe. La profondeur dépend de la couverture réelle."
     )
     bf_col1, bf_col2, bf_col3 = st.columns([1, 2, 2])
     with bf_col1:
@@ -2612,14 +2616,14 @@ def _render_corporate_actions_block(trade_date: str) -> dict[str, Any]:
                 value=_session_state_int("pipeline_eodhd_backfill_years", 30),
                 step=1,
                 key="pipeline_eodhd_backfill_years",
-                help="30 ans par défaut (profondeur historique maximale EODHD pour robustesse ML/backtest). Coût quota EODHD identique quelle que soit la profondeur (1 appel par symbole).",
+                help="Profondeur demandée, non garantie par le fournisseur. Alpaca pagine l'historique disponible ; aucun fallback automatique.",
             )
         )
         eodhd_backfill_resume = st.checkbox(
             "B3 — reprendre via bookmark",
             value=_session_state_bool("pipeline_eodhd_backfill_resume", True),
             key="pipeline_eodhd_backfill_resume",
-            help="Si coché, relit `artifacts/eodhd_cache/backfill_state.json` et saute les symboles déjà terminés.",
+            help="Reprise propre au fournisseur : EODHD sous artifacts/eodhd_cache ; Alpaca sous artifacts/alpaca_backfill (fenêtre, flux, compte et mode isolés).",
         )
     with bf_col2:
         eodhd_backfill_symbols = str(
@@ -2639,6 +2643,7 @@ def _render_corporate_actions_block(trade_date: str) -> dict[str, Any]:
         )
         if eodhd_backfill_write:
             st.success("B3 sera lancé en mode `write` et insérera dans les tables.")
+            st.warning("Les barres existantes aux mêmes clés seront mises à jour. Qualifier les ajustements avant un changement de fournisseur.")
         else:
             st.warning("B3 sera lancé en mode `dry-run` : appels API réels, mais 0 insert DB.")
 

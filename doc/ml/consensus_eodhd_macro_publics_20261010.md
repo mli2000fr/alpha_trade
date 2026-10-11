@@ -2,6 +2,12 @@
 
 ## Décisions et preuves réelles
 
+**Mise à jour du 11 octobre 2026** : après souscription Calendar & News signalée
+par l'utilisateur, compte et `/calendar/trends` répondent HTTP 200. Les constats
+403 ci-dessous sont des preuves datées antérieures, pas l'accès actuel.
+[Collecteur EODHD dédié et smoke](../operations/eodhd_consensus_snapshot.md).
+Yahoo reste bloqué ; aucun historique PIT ancien n'est ajouté par l'abonnement.
+
 Mise à jour du même jour : l'utilisateur a de nouveau désactivé la collecte
 analystes Yahoo US (`enabled: false`, `BLOCKED_YAHOO_AUTOMATED_ACCESS`).
 Les données restaurées sont conservées ; Calendar & News est envisagé pour

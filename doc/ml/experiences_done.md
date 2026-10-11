@@ -1,5 +1,36 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-11 — Collecteur consensus EODHD prospectif
+
+Souscription Calendar & News signalée par l'utilisateur ; compte et Trends HTTP 200.
+194 lignes reçues sur deux titres en un appel par le nouveau collecteur, sans
+écriture SQL pendant ce smoke. Nouvelle table dédiée et migration 0099 ;
+aucune table Yahoo utilisée. Batch `eodhd_consensus_snapshot` initialement livré
+désactivé, puis activé à la demande utilisateur ; 22h15 Paris / secours
+conditionnel 4h15, notifications. Collecte élargie aux symboles de stock_bars_daily.
+Dates fiscales conservées sans leur attribuer une disponibilité historique PIT.
+Révisions baisse 7 jours absentes : NULL, non zéro. Aucun nouveau résultat ML.
+Remédiation du même jour : le seuil de consensus 95 % est limité au fichier
+tradable (1 778/1 790 déjà couverts, 99,33 %), les réponses vides et symboles
+invalides sont distingués des pannes techniques. Un symbole 404 ne coupe plus
+les sous-lots suivants ; smoke sans SQL sur ACHR.WS + ALLO : un identifiant
+invalide, ALLO reçu avec 84 lignes, zéro panne technique. Compteurs d'échec
+partagés entre module importé et CLI `python -m` ; anciens runs non réécrits.
+[Mise en service et contrat](../operations/eodhd_consensus_snapshot.md).
+
+## 2026-10-11 — Audit de remplacement des barres US EODHD par Alpaca SIP
+
+Deux études de recherche, sans SQL écrit ni changement de production :
+[échantillon de 24 titres et sensibilité du champion Oracle au volume](us_daily_alpaca_eodhd_oracle_audit.md), puis
+[univers entier, janvier–septembre 2026](us_sip_daily_universe_2026_audit.md).
+1 790 titres interrogés, 1 692 avec historique SIP, 313 408 barres comparées aux lignes locales toutes marquées EODHD.
+99,501 % des couples titre/date ont leurs quatre prix à moins de 1 % ; 98 absences, dont 96 OTC identifiés actuellement.
+1 563 couples sur 148 titres divergent de plus de 1 % ; contrôle raw/split des vingt principaux cas effectué.
+Volumes quasi figés locaux repérés ; aucun prix ni volume corrigé.
+436 correspondances supplémentaires par remapping sont archivées séparément, non intégrées automatiquement.
+Verdict : candidat sérieux à la substitution sur un périmètre qualifié, pas remplacement intégral validé ni résiliation EODHD.
+L'effet économique et les classements Oracle complets ne sont pas testés dans l'audit étendu.
+
 ## 2026-10-10 — Nouvelle désactivation de la collecte analystes Yahoo US
 
 L'utilisateur a de nouveau désactivé `analyst_snapshot_collection`.

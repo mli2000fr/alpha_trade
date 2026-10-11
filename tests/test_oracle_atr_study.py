@@ -343,6 +343,23 @@ def test_tied_selection_uses_symbol_not_future_return():
     assert json.loads(out['predicted_oracle_top_returns_pct']) == [20, -10, 1]
     assert json.loads(out['predicted_oracle_score_order_returns_pct']) == [1, -10, 20]
     assert json.loads(out['intersection_returns_pct']) == [90, 20, -10]
+    assert json.loads(out['intersection_oracle_score_order_returns_pct']) == [-10,20,90]
+
+
+def test_intersection_score_order_keeps_original_order_and_missing_positions():
+    scores, atr, labels, macro = frames()
+    labels.loc[labels.symbol.eq('9'), 'future_return'] = .01
+    labels.loc[labels.symbol.eq('8'), 'target_quality_valid'] = 0
+    out = summarize_day(scores, atr, labels, macro, as_of=date(2026,1,1), missing_returns_policy='partial')
+    field = 'intersection_oracle_score_order_returns_pct'
+    assert json.loads(out[field]) == [1,-10]
+    quality = json.loads(out['movement_quality'])['lists'][field]
+    assert quality['selection_symbols'] == ['9','8','7']
+    assert quality['value_symbols'] == ['9','7']
+    assert quality['original_selection_positions'] == [1,3]
+    assert quality['missing_symbols'] == ['8']
+    strict = summarize_day(scores, atr, labels, macro, as_of=date(2026,1,1), missing_returns_policy='strict')
+    assert strict[field] is None
 
 
 def test_new_version_preflight_and_resume_query(tranche_environment):

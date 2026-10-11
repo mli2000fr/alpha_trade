@@ -9,6 +9,11 @@ database:
   password: "${PASSWORD_DB}"
   name: alpha_trade
 
+intraday_backfill:
+  provider: alpaca  # alpaca | eodhd ; défaut de la page et de la commande.
+  alpaca_feed: sip  # iex | sip ; jamais de remplacement silencieux entre flux.
+  account_id: default  # Clés du compte principal via le registre Alpaca existant.
+
 us_pipeline:
   # Sélection fonctionnelle du batch us_pipeline ; horaires/univers dans batch.yaml.
   # Entiers uniques 1..14, ordre d'exécution toujours numérique, arrêt au premier échec.
@@ -475,6 +480,7 @@ screener:
 # ---------------------------------------------------------------------------
 market_data:
   bars_provider: eodhd   # alpaca | eodhd  (défaut recommandé : eodhd — pilotable depuis IHM › Paramètres)
+  alpaca_backfill_feed: sip  # B3 seulement si bars_provider=alpaca : sip | iex, sans fallback. L'étape 1 reste inchangée.
 
   # ── Provider quotes live (mode latest) ──
   # `quotes_provider_live` : provider principal pour les snapshots bid/ask temps réel.

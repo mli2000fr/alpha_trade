@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.stock_bars_intraday (
     bar_timestamp DATETIME(6) NOT NULL COMMENT 'Start of interval in UTC',
     interval_code VARCHAR(3) NOT NULL DEFAULT '5m',
     data_source VARCHAR(32) NOT NULL DEFAULT 'eodhd_intraday',
+    provider VARCHAR(16) NOT NULL DEFAULT 'eodhd' COMMENT 'alpaca or eodhd; data_source also distinguishes IEX/SIP',
     market_code VARCHAR(16) NOT NULL DEFAULT 'US_EQ',
     provider_symbol VARCHAR(40) NOT NULL,
     bar_end_timestamp DATETIME(6) NOT NULL COMMENT 'Exclusive interval end UTC',
