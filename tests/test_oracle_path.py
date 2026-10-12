@@ -258,6 +258,7 @@ def test_full_training_widget_path_mode_and_command():
         st.session_state["test_path_command"] = build_pipeline_command("ml_train", options)
         st.session_state["test_path_enabled"] = options.ml_oracle_path_model_only
     at = AppTest.from_function(app)
+    at.session_state["pipeline_ml_oracle_barrier_model_only"] = False
     at.session_state["pipeline_ml_oracle_path_model_only"] = True
     at.session_state["pipeline_ml_directional_profiles_enabled"] = True
     at.session_state["pipeline_ml_enable_oracle_model"] = True

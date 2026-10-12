@@ -346,6 +346,29 @@ def test_cli_rejects_barrier_overrides_without_mode_before_db(monkeypatch):
     assert exc.value.code == 2
 
 
+def test_pipeline_default_barrier_selected_and_terminal_unchecked():
+    from streamlit.testing.v1 import AppTest
+    def app():
+        import streamlit as st
+        from ihm.pages._execution_center import _build_launch_options
+        from ihm.services.pipeline_runner import build_pipeline_command
+        options, _ = _build_launch_options()
+        st.session_state["barrier_command"] = build_pipeline_command("ml_train", options)
+    at = AppTest.from_function(app).run(timeout=30)
+    assert not at.exception
+    assert at.checkbox(key="pipeline_ml_oracle_barrier_model_only").value is True
+    assert at.checkbox(key="pipeline_ml_enable_oracle_model").value is False
+    command = at.session_state["barrier_command"]
+    assert "--oracle-barrier-model-only" in command
+    assert "--enable-oracle-model" not in command
+    assert command[command.index("--training-end-date") + 1] == "2023-12-31"
+    at.checkbox(key="pipeline_ml_oracle_barrier_model_only").uncheck().run(timeout=30)
+    assert not at.exception
+    assert at.checkbox(key="pipeline_ml_oracle_barrier_model_only").value is False
+    assert at.checkbox(key="pipeline_ml_enable_oracle_model").value is False
+    assert "--oracle-barrier-model-only" not in at.session_state["barrier_command"]
+
+
 def test_pipeline_complete_widget_and_mutually_exclusive_modes():
     from streamlit.testing.v1 import AppTest
     def app():

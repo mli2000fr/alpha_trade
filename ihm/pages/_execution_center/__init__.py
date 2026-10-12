@@ -3417,7 +3417,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 help='Pour lancer 11/12 séparément, recopier le run_id affiché après étape 10. Ne pas utiliser auto.') or None
         ml_oracle_barrier_model_only = st.checkbox(
             "🎯 Oracle TP avant SL — amplitude + direction LONG/SHORT, recherche uniquement",
-            value=_session_state_bool("pipeline_ml_oracle_barrier_model_only", False),
+            value=_session_state_bool("pipeline_ml_oracle_barrier_model_only", True),
             key="pipeline_ml_oracle_barrier_model_only",
             help="Deux modèles LONG/SHORT : TP atteint avant SL, sinon échec/expiration. Barrières configurées dans config.yaml/oracle_barrier. Ne remplace aucun Oracle existant.",
         )
@@ -3965,7 +3965,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             # (audit O0≈O1), on entraîne l'Oracle en ablation O0 SANS global_rank_20.
             ml_enable_oracle_model = st.checkbox(
                 "🔮 Entraîner aussi le modèle Oracle Extreme (O0 sans rank global)",
-                value=_session_state_bool("pipeline_ml_enable_oracle_model", DEFAULT_ML_ENABLE_ORACLE_MODEL),
+                value=_session_state_bool("pipeline_ml_enable_oracle_model", False),
                 key="pipeline_ml_enable_oracle_model",
                 disabled=ml_oracle_research_only,
                 help="Ajoute `--enable-oracle-model`. Entraîne le modèle Oracle Extreme (détection d'extrêmes H20, ablation O0 sans global_rank_20) en fin de séquence, en plus du per-symbol/per-sector et du modèle global (si activé).",
