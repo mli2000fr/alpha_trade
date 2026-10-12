@@ -14,6 +14,21 @@ intraday_backfill:
   alpaca_feed: sip  # iex | sip ; jamais de remplacement silencieux entre flux.
   account_id: default  # Clés du compte principal via le registre Alpaca existant.
 
+oracle_barrier:
+  # Modèle séparé « TP avant SL », uniquement entraînement/recherche. Aucun changement LIVE.
+  # Fractions : 0.20 = 20 %. Entrée J+1 open ; 20 séances incluant l'entrée ; expiration J+21 open.
+  # Paramètres archivés avec le modèle : changement = nouvelle campagne d'entraînement.
+  take_profit_pct: 0.20
+  stop_loss_pct: 0.07
+  max_sessions: 20
+
+oracle_backtest:
+  # Sorties des replays Oracle configurés ; fractions : 0.20 = 20 %.
+  # Aucun effet sur les labels d'entraînement, l'exécution PAPER/LIVE ou les positions ouvertes.
+  # Depuis le fill J+1 : TP/SL fixes, sans trailing ; expiration à l'open de la 21e séance.
+  take_profit_pct: 0.20
+  stop_loss_pct: 0.10
+
 us_pipeline:
   # Sélection fonctionnelle du batch us_pipeline ; horaires/univers dans batch.yaml.
   # Entiers uniques 1..14, ordre d'exécution toujours numérique, arrêt au premier échec.

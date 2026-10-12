@@ -17,7 +17,7 @@ import pandas as pd
 from sqlalchemy import bindparam, inspect, text
 
 from service.market.oracle_atr_repair import save
-from service.market.oracle_atr_study import PEAK_FIELD, TABLE, attach_price_peaks
+from service.market.oracle_atr_study import PEAK_FIELD, PEAK_PCT_FIELD, TABLE, attach_price_peaks
 from service.market.oracle_path_maxima import load_price_peaks
 
 LOG = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ KEYS = ['trade_date', 'universe_hash', 'oracle_batch_id', 'oracle_horizon']
 def persist_peaks(engine, records):
     """An UPDATE cannot introduce new study identities or change old returns."""
     if records:
-        assignments = [PEAK_FIELD, 'movement_quality', 'status', 'quality_details']
+        assignments = [PEAK_FIELD, PEAK_PCT_FIELD, 'movement_quality', 'status', 'quality_details']
         statement = text(f'UPDATE {TABLE} SET '+','.join(f'{c}=:{c}' for c in assignments)
             +' WHERE '+' AND '.join(f'{c}=:{c}' for c in KEYS))
         with engine.begin() as conn:
@@ -63,12 +63,17 @@ def run(*, output_dir, start_date='2020-01-01', end_date='2026-09-30',
         'code_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         'helpers_sha256': {name: hashlib.sha256(Path(name).read_bytes()).hexdigest() for name in [
             'service/market/oracle_atr_study.py', 'service/market/oracle_path_maxima.py']},
-        'updated_fields': [PEAK_FIELD, 'movement_quality', 'status', 'quality_details'],
+        'updated_fields': [PEAK_FIELD, PEAK_PCT_FIELD, 'movement_quality', 'status', 'quality_details'],
         'preserves_original_selection': True, 'training': False, 'source_sql_writes': False})
-    if apply and PEAK_FIELD not in {c['name'] for c in inspect(engine).get_columns(TABLE)}:
+    if apply:
+        existing = {c['name'] for c in inspect(engine).get_columns(TABLE)}
         with engine.begin() as conn:
-            conn.execute(text(f'ALTER TABLE alpha_trade.{TABLE} ADD COLUMN {PEAK_FIELD} JSON NULL '
-                "COMMENT 'Oracle score order: max high J+1..J+H in signal-day USD price scale; research only'"))
+            for column, description in [
+                (PEAK_FIELD, 'Oracle score order: max high J+1..J+H in signal-day USD price scale; research only'),
+                (PEAK_PCT_FIELD, 'Oracle score order: dominant signed high/low excursion J+1..J+H, integer pct; research only')]:
+                if column not in existing:
+                    conn.execute(text(f'ALTER TABLE alpha_trade.{TABLE} ADD COLUMN {column} JSON NULL '
+                                      f"COMMENT '{description}'"))
     if 'missing_returns_policy' not in rows or 'movement_quality' not in rows:
         raise ValueError('Migration de qualité 0095 nécessaire avant le remplissage des pics')
     days = sorted({str(day)[:10] for day in rows.trade_date})

@@ -714,10 +714,10 @@ class PortfolioBuilder:
         snapshot and reserves held/pending positions and actual buying power.
         The default directional contract is unchanged.
         """
-        if selection_policy not in {'directional', 'oracle_pure_long', 'oracle_web_llm_long', 'oracle_web_llm_directional'}:
+        if selection_policy not in {'directional', 'oracle_pure_long', 'oracle_pure_short', 'oracle_web_llm_long', 'oracle_web_llm_directional'}:
             raise ValueError('Unknown portfolio selection policy')
         # This flag means explicit non-probabilistic policy, not forced LONG.
-        oracle_long_only = selection_policy in {'oracle_pure_long', 'oracle_web_llm_long', 'oracle_web_llm_directional'}
+        oracle_long_only = selection_policy in {'oracle_pure_long', 'oracle_pure_short', 'oracle_web_llm_long', 'oracle_web_llm_directional'}
         operational = self.operational_snapshot if oracle_long_only else None
         if oracle_long_only:
             from risk_management.operational_data import OperationalDataSnapshot
@@ -733,10 +733,11 @@ class PortfolioBuilder:
                 raise ValueError('Oracle amplitude cannot supply directional Kelly probabilities')
             if self._portfolio_optimizer is not None:
                 raise ValueError('Oracle optimizer requires separately qualified directional edges')
-            allowed_sides = ('buy', 'long', 'sell', 'short') if selection_policy == 'oracle_web_llm_directional' else ('buy', 'long')
+            allowed_sides = (('sell', 'short') if selection_policy == 'oracle_pure_short' else
+                ('buy', 'long', 'sell', 'short') if selection_policy == 'oracle_web_llm_directional' else ('buy', 'long'))
             if any(c.side not in allowed_sides for c in candidates):
                 raise ValueError('Oracle pure policy is LONG-only')
-            if (selection_policy == 'oracle_web_llm_directional' and not self._cfg.short_selling_enabled
+            if (selection_policy in {'oracle_pure_short', 'oracle_web_llm_directional'} and not self._cfg.short_selling_enabled
                     and any(c.side in ('short', 'sell') for c in candidates)):
                 raise ValueError('SHORT désactivé par la configuration risque')
             if len({c.symbol for c in candidates}) != len(candidates):

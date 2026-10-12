@@ -1296,6 +1296,12 @@ def _render_ml_predict_scope_block(
     if not _batches_df.empty:
         for _, _row in _batches_df.iterrows():
             _bid = str(_row["batch_id"])
+            from modelFactory.oracle_path.train import is_path_batch
+            if is_path_batch(Path("artifacts/models"), _bid):
+                continue  # parcours research must not become a terminal/live Oracle
+            from modelFactory.oracle_barrier.train import is_barrier_batch
+            if is_barrier_batch(Path("artifacts/models"), _bid):
+                continue  # first-touch research must not become a terminal/live Oracle
             _comment = str(_row.get("comment") or "").strip()
             _started = str(_row.get("started_at") or "")[:16]
             _h_badge = oracle_horizon_badge(_bid)

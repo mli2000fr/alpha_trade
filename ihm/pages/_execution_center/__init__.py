@@ -3415,10 +3415,45 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             llm_filter_run_id = st.text_input('Identifiant analyse LLM (vide = nouveau run pour le workflow)',
                 key='pipeline_llm_filter_run_id',
                 help='Pour lancer 11/12 séparément, recopier le run_id affiché après étape 10. Ne pas utiliser auto.') or None
+        ml_oracle_barrier_model_only = st.checkbox(
+            "🎯 Oracle TP avant SL — amplitude + direction LONG/SHORT, recherche uniquement",
+            value=_session_state_bool("pipeline_ml_oracle_barrier_model_only", False),
+            key="pipeline_ml_oracle_barrier_model_only",
+            help="Deux modèles LONG/SHORT : TP atteint avant SL, sinon échec/expiration. Barrières configurées dans config.yaml/oracle_barrier. Ne remplace aucun Oracle existant.",
+        )
+        _barrier_config = None
+        if ml_oracle_barrier_model_only:
+            from modelFactory.config import load_oracle_barrier_config
+            _barrier_config = load_oracle_barrier_config()
+            st.session_state["pipeline_ml_oracle_path_model_only"] = False
+            st.info(f"TP {_barrier_config.take_profit_pct:.0%} ; SL {_barrier_config.stop_loss_pct:.0%} ; "
+                    f"{_barrier_config.max_sessions} séances, entrée J+1 open et sortie à l'ouverture suivante. "
+                    "Deux LightGBM LONG/SHORT, données ambiguës exclues, walk-forward obligatoire. "
+                    "Dates de début ET fin à renseigner dans 9. ML Train. Paramètres dans config.yaml/oracle_barrier. "
+                    "Artefacts oracle_barrier séparés ; aucune promotion PAPER/LIVE.")
+        ml_oracle_path_model_only = st.checkbox(
+            "🔮 Oracle Extreme parcours H20 — modèle séparé, recherche uniquement",
+            value=_session_state_bool("pipeline_ml_oracle_path_model_only", False),
+            key="pipeline_ml_oracle_path_model_only",
+            disabled=ml_oracle_barrier_model_only,
+            help="Entraîne uniquement le nouveau classifieur d'amplitude maximale pendant J+1 à J+20. Ne remplace ni l'Oracle terminal ni le modèle PAPER/LIVE.",
+        )
+        ml_oracle_research_only = ml_oracle_path_model_only or ml_oracle_barrier_model_only
+        if ml_oracle_research_only:
+            st.session_state["pipeline_ml_directional_profiles_enabled"] = False
+            st.session_state["pipeline_ml_enable_oracle_model"] = False
+            st.session_state["pipeline_ml_oracle_model_only"] = False
+            st.session_state["pipeline_ml_walkforward"] = True
+        if ml_oracle_path_model_only:
+            st.info("Oracle parcours : H20 fixe, LightGBM CPU, validation walk-forward obligatoire. "
+                    "Choisir les dates de début ET fin dans 9. ML Train. "
+                    "Les options Global/per-symbol et les cibles directionnelles ne sont pas utilisées. "
+                    "Modèles, labels et scores OOF séparés dans oracle_path ; aucune promotion en production.")
         ml_directional_profiles_enabled = st.checkbox(
             "🧭 Bundle Oracle + deux modèles Per-Symbol LONG/SHORT",
             value=_session_state_bool("pipeline_ml_directional_profiles_enabled", False),
             key="pipeline_ml_directional_profiles_enabled",
+            disabled=ml_oracle_research_only,
             help="Entraîne dans un seul batch l'Oracle Extreme global puis deux champions par symbole, avec des contrats de features LONG et SHORT indépendants.",
         )
         oracle_profiles = discover_feature_profiles("oracle") or ["oracle.json"]
@@ -3932,9 +3967,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 "🔮 Entraîner aussi le modèle Oracle Extreme (O0 sans rank global)",
                 value=_session_state_bool("pipeline_ml_enable_oracle_model", DEFAULT_ML_ENABLE_ORACLE_MODEL),
                 key="pipeline_ml_enable_oracle_model",
+                disabled=ml_oracle_research_only,
                 help="Ajoute `--enable-oracle-model`. Entraîne le modèle Oracle Extreme (détection d'extrêmes H20, ablation O0 sans global_rank_20) en fin de séquence, en plus du per-symbol/per-sector et du modèle global (si activé).",
             )
-            if ml_enable_oracle_model and not ml_directional_profiles_enabled:
+            if (ml_enable_oracle_model or ml_oracle_research_only) and not ml_directional_profiles_enabled:
                 _standalone_oracle_profiles = ["dynamic", *oracle_profiles]
                 ml_standalone_oracle_feature_profile = cast(str, st.selectbox(
                     "Features du modèle Oracle Extreme",
@@ -3947,6 +3983,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         "Un fichier JSON remplace ce choix et impose exclusivement son contrat de features."
                     ),
                 ))
+                if ml_oracle_research_only:
+                    st.session_state["pipeline_ml_oracle_universe_mode"] = "static_bars"
                 ml_oracle_universe_mode = cast(str, st.selectbox(
                     "Univers historique des labels Oracle",
                     options=["static_bars", "pit_dynamic_bars"],
@@ -3957,6 +3995,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                         else "PIT dynamique quotidien — gates P0b (expérience P0f)"
                     ),
                     key="pipeline_ml_oracle_universe_mode",
+                    disabled=ml_oracle_research_only,
                     help=(
                         "Le mode PIT recalcule chaque jour l'admission depuis les barres, avant les labels "
                         "et les rangs de features. Il force Oracle Extreme ONLY et produit un batch de recherche non servable."
@@ -4263,6 +4302,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 "Activer walk-forward",
                 value=_session_state_bool("pipeline_ml_walkforward", DEFAULT_ML_WALKFORWARD),
                 key="pipeline_ml_walkforward",
+                disabled=ml_oracle_research_only,
                 help="Activé par défaut en swing prod (cf. audit_global). Désactiver uniquement pour debug rapide.",
             )
         with ml_wf_col2:
@@ -5138,6 +5178,11 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_exclude_per_symbol_per_sector=bool(ml_exclude_per_symbol_per_sector),
             ml_enable_oracle_model=bool(ml_enable_oracle_model),
             ml_oracle_model_only=bool(ml_oracle_model_only),
+            ml_oracle_path_model_only=bool(ml_oracle_path_model_only),
+            ml_oracle_barrier_model_only=bool(ml_oracle_barrier_model_only),
+            ml_oracle_barrier_tp_pct=_barrier_config.take_profit_pct if _barrier_config else None,
+            ml_oracle_barrier_sl_pct=_barrier_config.stop_loss_pct if _barrier_config else None,
+            ml_oracle_barrier_max_sessions=_barrier_config.max_sessions if _barrier_config else None,
             ml_oracle_universe_mode=str(ml_oracle_universe_mode),
             ml_enable_global_stacking=bool(ml_enable_global_stacking),
             ml_global_champion=bool(ml_global_champion),

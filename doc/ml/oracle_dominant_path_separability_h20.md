@@ -229,3 +229,7 @@ comparer les deux contrats sur les mêmes features/folds et mesurer leur capture
 des grandes excursions, avant de confondre détection d'amplitude et direction.
 Un modèle multivarié directionnel constituerait aussi un test distinct, pas un
 résultat déjà obtenu ici. Aucun de ces entraînements n'a été lancé.
+
+Suite autorisée le 11 octobre : [mode d'entraînement Oracle parcours H20](oracle_path_training.md)
+implémenté avec checkbox Pipeline et artefacts séparés. Aucun entraînement de
+campagne réelle lancé ; cela ne modifie pas le verdict directionnel ci-dessus.

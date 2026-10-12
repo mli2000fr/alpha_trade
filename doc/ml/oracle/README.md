@@ -17,6 +17,20 @@ Ce dossier décrit la couche Oracle telle qu’elle existe dans le code actuel. 
 
 ## Résumé du contrat actuel
 
+Depuis le 11 octobre 2026, une branche indépendante **Oracle Extreme parcours
+H20** est disponible à l'entraînement depuis Pipeline. Elle vise le maximum
+absolu pendant vingt séances, avec modèles et labels locaux distincts, sans
+remplacement ni promotion du modèle terminal. [Notice IHM et contrat](../oracle_path_training.md).
+
+Une troisième branche **TP avant SL** apprend désormais deux succès LONG/SHORT,
+depuis l'open J+1, avec TP 20 %, SL 7 % et vingt séances configurables.
+Elle est isolée dans `oracle_barrier`, sans serving. Le batch utilisateur
+`model-factory-20261011221400-867a1e` est entraîné : 12 folds et premier
+[audit TOP10](../oracle_barrier_top10_audit_20261012.md), sans avantage stable
+du choix automatique LONG/SHORT ni preuve de profit net.
+Ses cibles ne sont ni les déciles terminaux ni le maximum absolu du parcours.
+[Notice IHM et contrat](../oracle_barrier_training.md).
+
 Oracle Extreme estime `P(mouvement cross-sectionnel extrême à H | information disponible à D)`. La cible positive réunit le TOP 10 % et le BOTTOM 10 % des rendements futurs du jour. Le modèle mesure donc une magnitude/opportunité extrême, pas une direction. Le contrat historique reste H20, mais un entraînement Oracle seul peut maintenant fixer H avec `--oracle-horizon` afin de comparer proprement H5/H10/H15/H20.
 
 ```mermaid
