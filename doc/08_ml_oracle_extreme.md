@@ -6,6 +6,21 @@
 
 Documentation approfondie : [dossier Oracle Extreme complet](ml/oracle/README.md).
 
+Nouveau mode de recherche indépendant au 11 octobre 2026 :
+[Oracle Extreme parcours H20](ml/oracle_path_training.md). Checkbox dédiée dans
+Pipeline, cible maximum absolu sur J+1…J20, artefacts locaux séparés. L'Oracle
+terminal et son utilisation actuelle ne changent pas ; aucun entraînement réel
+ni avantage du nouveau modèle n'est encore établi.
+
+Branche supplémentaire, livrée le 12 octobre : [Oracle TP avant SL](ml/oracle_barrier_training.md),
+avec deux modèles de succès LONG/SHORT, TP 20 %, SL 7 %, vingt séances configurables.
+Ce changement permet de tester l'ordre des mouvements plutôt que le seul résultat
+final ; il ne démontre pas encore de direction fiable. Mode recherche isolé,
+non raccordé au trading, sans remplacement de l'Oracle historique.
+Le premier batch réel est désormais entraîné ; [audit TOP10 du 12 octobre](ml/oracle_barrier_top10_audit_20261012.md) :
+classement LONG/SHORT informatif séparément, comparaison directe des scores
+non fiable pour choisir le sens, sans promotion ni PnL.
+
 ## Parcours actuels — 10 octobre 2026
 
 L'horizon est celui de l'artefact Oracle (`oracle_horizon`), pas un H20

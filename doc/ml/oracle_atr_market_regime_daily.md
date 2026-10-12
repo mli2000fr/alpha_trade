@@ -1,5 +1,253 @@
 # Étude quotidienne Oracle × ATR et régime de marché
 
+## Complément du 11 octobre 2026 — maximum absolu signé en pourcentage
+
+Nouvelle colonne JSON **`predicted_oracle_score_order_max_returns_pct`** : pour
+les mêmes N premiers scores Oracle, elle conserve **le plus fort mouvement
+absolu du chemin J+1..J+H, hausse ou baisse, avec son signe**. Pas de retri par
+résultat futur et aucun remplacement des titres manquants. Chaque valeur est
+arrondie à l'entier (`ROUND_HALF_UP`), mais le choix du côté dominant compare
+les pourcentages **précis avant arrondi**.
+
+```text
+up_pct   = 100 × (maximum des HIGH comparables / clôture J − 1)
+down_pct = 100 × (minimum des LOW comparables / clôture J − 1)
+valeur   = up_pct si abs(up_pct) >= abs(down_pct), sinon down_pct
+```
+
+Les LOW suivent exactement la même base d'ajustement que les HIGH ci-dessous.
+Le jour J n'est pas dans la fenêtre future. En cas d'égalité exacte des
+amplitudes non arrondies, le côté hausse est conservé, règle explicite et stable.
+Ce n'est **ni le rendement terminal à J20, ni la seule hausse maximale, ni un
+gain réellement encaissé**, ni une information disponible à J pour le live.
+
+Exemple vérifié : **AMR, signal du 10 février 2020**, référence **5,67 $**.
+
+| Mesure | Valeur précise | Liste entière |
+| --- | ---: | ---: |
+| Sommet HIGH du 20 février : 6,93 $ | +22,22 % | Prix maximal : 7 |
+| Creux LOW du 9 mars : 3,935 $ | −30,60 % | Maximum absolu signé : **−31** |
+| Clôture finale du 10 mars : 4,17 $ | −26,46 % | Rendement H20 : **−26** |
+
+Ainsi, **26 > 22**, mais le chemin contient une baisse encore plus importante
+que le résultat terminal : c'est **−31** qui est retenu dans la nouvelle liste.
+La colonne `predicted_oracle_score_order_max_prices` reste une liste de prix
+HIGH en dollars, arrondis à l'entier ; elle n'est pas transformée silencieusement
+en pourcentages.
+
+`movement_quality.lists.predicted_oracle_score_order_max_returns_pct` conserve
+les symboles/positions, couverture, motifs d'omission, unité `PERCENT`,
+statistique `MAX_ABSOLUTE_SIGNED_HIGH_LOW_RETURN`, règle de départage et
+`value_details.<symbol>` : prix de référence précis, sommet/creux, leurs dates,
+les deux pourcentages précis, côté/date dominants et disponibilité. Un
+manquant n'est pas remplacé par zéro ou par le rendement H20 : mode `partial`
+→ liste partielle ; mode `strict` → NULL. Joindre les listes par symbole,
+**pas par indice seul** si leurs couvertures diffèrent.
+
+Migration dédiée **0103_oatr_max_returns** ; SQL manuel :
+`database/sql/ml/oracle_atr_max_returns_migration.sql`. Le bloc **Régime Marché
+→ Alimenter l'étude Oracle × ATR** et le backfill des prix calculent désormais
+aussi cette liste. La reprise ne saute une ancienne ligne COMPLETE v7 que si
+la nouvelle liste est également renseignée.
+
+Pour compléter les seules lignes existantes, en conservant les anciens prix,
+rendements H20, sélections, macros et D1/D10 :
+
+```powershell
+python -u -m service.market.oracle_atr_peak_returns_backfill --output-dir artifacts/research/oracle_atr_max_prices/<nouveau-dossier> --start-date 2020-01-01 --end-date 2026-09-30 --date-batch-size 20 --apply
+```
+
+Le script relit les HIGH/LOW qualifiés et vérifie leur accord avec le sommet et
+le prix J précis déjà archivés. Aucun appariement silencieux de prix corrigés
+avec des anciens prix incompatibles. Sauvegarde Parquet/DDL avant ajout de la
+colonne, UPDATE par clé complète et petites transactions ; contrôle concurrent
+des anciennes listes/métadonnées/statuts avant chaque écriture. Sans `--apply`,
+calcul et rapport seulement. Les anciens rendements finaux et les prix sources
+ne sont pas modifiés. Suivi : `progress.json`, puis `report.json`.
+
+### Arrondi des prix existants
+
+Les **1 681 listes de prix non NULL** ont été arrondies en base et vérifiées
+contre leur sauvegarde : prix précis et ordre conservés dans les métadonnées.
+Pour la ligne du 10 février 2020, `[6.93,1.98,12.466733,32.55,7.11]` est devenu
+**`[7,2,12,33,7]`**. Rapport/sauvegarde :
+`artifacts/research/oracle_atr_max_prices/round-integers-20261011-v1/`.
+
+### Remplissage du maximum absolu signé terminé
+
+Les **1 695 dates existantes** ont été traitées : **1 681 listes renseignées**,
+**461 142 valeurs qualifiées**, 1 106 listes COMPLETE et 575 PARTIAL. Les
+**14 dates non évaluables** restent NULL ; aucun maximum provisoire inventé.
+La ligne du 10 février 2020 conserve les rendements H20
+`[-26,-30,6,-36,-13]` et les prix `[7,2,12,33,7]` ; sa nouvelle liste dominante
+commence par **`[-31,-43,21,-48,-26]`**, symboles AMR/AR/ANAB/HOV/DAC dans le même
+ordre. **166 tests ciblés/non-régression réussis**. Rapport et sauvegarde avant
+les UPDATE :
+`artifacts/research/oracle_atr_max_prices/dominant-returns-20261011-v1/`.
+Le test préalable sur une date et sa sauvegarde avant ajout de la colonne
+restent dans `dominant-returns-20261011-smoke/`. Aucun nouvel entraînement lancé.
+Vérification complète dans `verification.json` : les **461 142 valeurs** sont
+recalculées depuis leurs prix précis, les 1 695 clés et **36 anciennes colonnes**
+(hors clés/statut/métadonnées/date de modification) sont identiques à la
+sauvegarde ; toutes les métadonnées antérieures restent identiques également.
+
+### Limite : amplitude dominante n'est pas résultat d'une position protégée
+
+Ces listes restent descriptives. AMR fournit un contre-exemple utile : avec
+entrée à l'ouverture de J+1 (**5,73 $**, le 11 février 2020), TP de **20 %** et
+SL de **7 %**, les barres journalières placent le TP LONG le **20 février** avant
+son SL le **27 février**. Le SL SHORT est atteint dès le **11 février**, avant
+son TP le **6 mars**. Le creux dominant −31 % ne signifie donc pas qu'un SHORT
+protégé aurait pu l'encaisser. Ceci vérifie l'ordre des journées, pas les fills
+réels ni une performance après coûts. Les touches TP/SL au sein d'une même
+bougie resteraient ambiguës.
+
+Une cible future « TP atteint avant SL et avant l'échéance » est une hypothèse
+distincte, à qualifier avec entrée J+1, gaps, coûts et résolution intraday.
+TP/SL/horizon devront être configurables et figés dans les artefacts du modèle ;
+un changement de barrière nécessitera un nouvel entraînement. **Cette nouvelle
+cible de trading n'est pas implémentée ni entraînée ici.** Ne pas interpréter
+la nouvelle liste rétrospective comme des labels de trades gagnants.
+
+## Ajout du 11 octobre 2026 — prix maximal du chemin en ordre Oracle
+
+Nouvelle colonne JSON : **`predicted_oracle_score_order_max_prices`**.
+Elle utilise les **mêmes N=`evaluated_count` premiers scores Oracle** que
+`predicted_oracle_score_order_returns_pct`, sélectionnés avant toute lecture du
+futur, dans l'ordre décroissant de `proba_extreme` (égalité : symbole).
+Ce n'est pas le TOP de l'intersection : comme la colonne de référence demandée,
+ce sont les premiers Oracle de l'univers scoré ; N provient de l'intersection
+évaluable. Aucun reclassement selon le prix maximal futur.
+
+Chaque valeur est le **maximum des HIGH journaliers entre J+1 et J+H inclus**,
+où H est l'horizon de l'artefact (20 dans l'étude actuelle), sur les séances NYSE.
+J lui-même est exclu : une bougie connue le jour du signal n'est pas un mouvement
+futur. Exemple sans ajustement : clôture J à 20 $, HIGH J+9 à 32 $, clôture J+20
+à 15 $ → la nouvelle valeur est **32**, même si le rendement final est −25 %.
+Il s'agit d'un **prix**, pas d'un rendement de +60 %, d'un score Oracle ou d'un
+profit qu'une stratégie aurait effectivement encaissé.
+
+Les prix sont comparables **sur l'échelle du prix de J** :
+
+```text
+high_comparable[t] = high[t] × (adj_close[t] / close[t])
+                            / (adj_close[J] / close[J])
+```
+
+Même base d'ajustement que les labels, avec retour à l'échelle nominale de J.
+Une division 2:1 ne fabrique donc pas une chute/moitié de sommet artificielle.
+Cette base peut inclure les dividendes selon `adj_close` : elle n'est pas toujours
+le cours brut coté à la date du sommet, ni une reconstruction certifiée des
+opérations sur titres. Sans ajustement, c'est exactement le HIGH brut.
+Le fallback `adj_close` absent → `close` suit le contrat des labels ; les autres
+contrôles de chemin restent impératifs. Depuis le 11 octobre, la liste contient
+des **prix arrondis à l'entier le plus proche**, règle `ROUND_HALF_UP` (6,93 → 7 ;
+32,5 → 33), pas des pourcentages. Les prix non arrondis restent dans
+`movement_quality.lists.predicted_oracle_score_order_max_prices.value_details`.
+Un prix inférieur à 0,50 $ peut devenir 0 dans cette liste de présentation :
+utiliser les valeurs précises pour tout calcul, jamais les entiers affichés.
+
+Exemple vérifié en base : **10 février 2020, AMR**, premier au score Oracle de la
+sélection : clôture J **5,67 $**, sommet **6,93 $ le 20 février**, soit **+22,22 %**
+relativement à J, et rendement final arrondi **−26 % le 10 mars (J20)**. Ces deux
+valeurs ne se contredisent pas : l'une est un prix intermédiaire en dollars,
+l'autre un rendement terminal en pourcentage. Ce champ ne représente pas non
+plus l'excursion absolue dominante high/low ; il conserve le sommet HIGH.
+
+### Disponibilité et qualification
+
+- Observation complète : barre J et chacune des H séances futures attendues,
+  OHLC positif/cohérent, volume positif et `is_filled=0`.
+- Source, instrument et type d'ajustement stables et identifiables ; aucune
+  rupture d'identité répertoriée, ni saut ajusté inexpliqué ≥20x ou ≤1/20x.
+- Rendement J→J+H cohérent avec le label archivé ; pas de fusion silencieuse
+  entre les anciens rendements et des prix corrigés incompatibles.
+- Disponible seulement à la séance suivante, comme le label Oracle. Pas de
+  maximum provisoire affiché comme un maximum H20 définitif.
+- Les grandes plages `high/low >=1.5` restent signalées pour revue : ce drapeau
+  n'est ni une correction automatique ni une preuve indépendante des HIGH.
+
+En mode `partial`, un chemin non qualifié est omis, **sans candidat de
+remplacement**. En mode `strict`, un manquant laisse la liste entière à NULL.
+Les trous de cette liste peuvent différer de ceux des rendements finaux :
+connaître les deux clôtures terminales ne prouve pas les vingt HIGH intermédiaires.
+Toujours joindre les valeurs par symbole/position, pas par seul indice entre
+deux listes partielles. Les listes précédentes ne sont pas modifiées.
+
+`movement_quality.lists.predicted_oracle_score_order_max_prices` expose :
+sélection initiale, ordre des symboles réellement présents, positions initiales,
+couverture, inconnus et motifs, unité, horizon/base d'ajustement ;
+`value_details.<symbol>` conserve la date du sommet (première si égalité),
+le prix de référence J, le facteur d'ajustement et les réserves de plage intraday.
+Une réserve ajoute `INCOMPLETE_PREDICTED_MAX_PRICES` et un statut PARTIAL/INCOMPLETE.
+
+**Information future rétrospective uniquement : jamais une feature disponible
+à J, ni un filtre d'entrée live.** Le modèle Oracle, la sélection opérationnelle,
+les prix sources et les labels ne sont pas modifiés.
+
+### Mise en service et remplissage
+
+SQL : `database/sql/ml/oracle_atr_max_prices_migration.sql` ; création à jour :
+`database/sql/ml/oracle_atr_market_regime_daily.sql` ; migration Alembic
+`0102_oatr_max_prices`, US uniquement. Ne pas lancer toutes les anciennes
+migrations pour ajouter cette colonne, ni estampiller artificiellement la base.
+
+Le bloc **Régime Marché → Alimenter l'étude Oracle × ATR** calcule désormais
+cette liste automatiquement par tranches. Versions actuelles :
+`oracle_atr_v7_path_max_prices` en partiel, `oracle_atr_v7_strict_max_prices` en
+strict. Les mentions v5/v6 ci-dessous sont des états historiques ; une ancienne
+ligne COMPLETE n'est plus suffisante pour sauter le calcul v7.
+
+Remplissage ciblé des seules lignes déjà existantes, sans recalcul des anciens
+rendements/proportions/sélections :
+
+```powershell
+python -u -m service.market.oracle_atr_peak_backfill --output-dir artifacts/research/oracle_atr_max_prices/<nouveau-dossier> --start-date 2020-01-01 --end-date 2026-09-30 --date-batch-size 20 --apply
+```
+
+Sans `--apply`, calcul/rapport seulement. Avant toute écriture : sauvegarde
+complète des lignes de la fenêtre en Parquet et du DDL dans `protocol.json`.
+Chaque tranche est validée séparément ; un arrêt conserve les précédentes.
+Une relance dans un **nouveau** dossier peut recalculer les mêmes clés par UPDATE,
+sans doublons. `progress.json`, `report.json` et les Parquet de tranche conservent
+les résultats et réserves. Aucune écriture dans les autres tables.
+
+### Remplissage réellement terminé le 11 octobre 2026
+
+La colonne est ajoutée à la base US locale. Le journal Alembic, encore en 0088,
+n'est pas estampillé et les migrations intermédiaires ne sont pas lancées.
+
+Les **1 695 lignes existantes** de 2020 au 30 septembre 2026 sont traitées par
+tranches de vingt. Résultat de la nouvelle liste :
+
+- **1 681 listes renseignées**, soit **461 142 prix maximaux qualifiés** ;
+- 1 106 listes COMPLETE et 575 PARTIAL (statut de la liste, pas forcément celui
+  de toute la journée, dont les macros/anciennes listes peuvent avoir des réserves) ;
+- **14 listes à NULL**, du 11 au 30 septembre 2026, non évaluables selon la
+  disponibilité des labels H20 au 11 octobre. Recalcul après maturité/prix/labels
+  requis ; ne pas remplir avec un maximum partiel de période.
+
+Les omissions recensées concernent 1 015 chemins à barre manquante, remplie ou
+invalide (dont volume/OHLC), 144 labels à sortie manquante et un label à entrée
+manquante. Ce sont des occurrences titre/date, pas 1 160 titres distincts.
+
+Vérifications en lecture seule : 1 681 listes contrôlées (taille, symboles,
+positions originales, ordre, nombres positifs finis) ; recalcul indépendant
+d'un sommet par année 2020–2026 depuis les barres. **39 anciennes colonnes**,
+incluant les six listes de rendements et les proportions D1/D10, sont identiques
+à la sauvegarde originale sur les 1 695 lignes. Aucun doublon ajouté.
+117 tests ciblés/non-régression réussis.
+
+Rapport terminé :
+`artifacts/research/oracle_atr_max_prices/max-prices-20261011-v2/report.json`.
+Le premier passage v1 est arrêté après 160 lignes persistées pour une
+optimisation des conversions de prix. Les 160 listes sont identiques entre les
+deux versions ; v2 recalcule toute la fenêtre. La sauvegarde **avant le premier
+ajout et changement de métadonnées** reste en v1 (`study_before.parquet`, DDL
+dans `protocol.json`) ; v2 conserve aussi son état de départ, déjà enrichi sur
+les 160 premières lignes. Aucun modèle, batch planifié, prix source, label ou
+ordre broker n'a été modifié.
+
 ## Ajout du 11 octobre 2026 — ordre Oracle de l'intersection
 
 `intersection_oracle_score_order_returns_pct` contient les rendements réalisés
@@ -86,7 +334,7 @@ python -u -m service.market.oracle_atr_study --batch-id <batch_oracle> --symbol-
 
 ## Préconditions et données absentes
 
-- Migrations **0089 à 0095** nécessaires à cette table, ou exécution du SQL de création à jour
+- Migrations **0089 à 0095**, **0101** et **0102** nécessaires à cette table, ou exécution du SQL de création à jour
   `database/sql/ml/oracle_atr_market_regime_daily.sql`.
 - Scores du batch dans `oracle_extreme_predictions`, sur la période souhaitée.
 - Barres ajustées dans `stock_bars_daily`, avec au moins 21 barres valides avant

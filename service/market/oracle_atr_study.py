@@ -19,11 +19,13 @@ from common.universe_files import load_universe_file_symbols
 from modelFactory.oracle.artifact_contract import resolve_oracle_artifact_horizon
 
 TABLE = 'oracle_atr_market_regime_daily'
-CALCULATION_VERSION = 'oracle_atr_v6_intersection_order'
+CALCULATION_VERSION = 'oracle_atr_v7_path_max_prices'
 MOVEMENT_FIELDS = ('real_oracle_top_returns_pct', 'intersection_returns_pct',
                    'predicted_oracle_top_returns_pct', 'atr_top_returns_pct',
                    'predicted_oracle_score_order_returns_pct',
                    'intersection_oracle_score_order_returns_pct')
+PEAK_FIELD = 'predicted_oracle_score_order_max_prices'
+PEAK_PCT_FIELD = 'predicted_oracle_score_order_max_returns_pct'
 MACRO_FIELDS = ['vix', 'vix9d', 'ten_y', 'vxn', 'vix3m', 'move',
                 'yield_10y_5d_pct', 'sentiment_score']
 
@@ -188,7 +190,7 @@ def summarize_day(scores, atr, labels, macro, *, as_of: date,
                        'expected_available_date': str(expected_available_date) if expected_available_date else None,
                        'target_evaluated_count': n, 'lists': quality}
     result = {'regime_mode': macro.get('mode') if macro is not None else None,
-              **movements,
+              **movements, PEAK_FIELD: None, PEAK_PCT_FIELD: None,
               'missing_returns_policy': policy,
               'movement_quality': json.dumps(quality_payload, allow_nan=False),
               **{k: macro.get(k) if macro is not None else None for k in MACRO_FIELDS},
@@ -205,12 +207,158 @@ def summarize_day(scores, atr, labels, macro, *, as_of: date,
     return {k: None if pd.isna(v) else v for k, v in result.items()}
 
 
+def attach_price_peaks(row, maxima, *, horizon, policy):
+    """Same initial TOP-N as score-order returns; no ranking by the future peak."""
+    metadata = json.loads(row['movement_quality'])
+    source = metadata['lists'].get('predicted_oracle_score_order_returns_pct', {})
+    selection = source.get('selection_symbols', [])
+    qualified_returns = set(source.get('value_symbols', []))
+    known, missing, reasons = [], [], {}
+    for symbol in selection:
+        peak = maxima.get(symbol, {})
+        value = peak.get('max_price')
+        if symbol not in qualified_returns:
+            reason = source.get('missing_reasons', {}).get(symbol, 'LABEL_UNQUALIFIED')
+        elif value is None or not np.isfinite(value) or value <= 0:
+            reason = peak.get('reason') or 'PRICE_PATH_MISSING'
+        else:
+            known.append(symbol)
+            continue
+        missing.append(symbol)
+        reasons[symbol] = reason
+    info = {
+        'requested_count': len(selection), 'known_count': len(known),
+        'missing_count': len(missing), 'coverage_pct': 100*len(known)/len(selection) if selection else None,
+        'selection_symbols': selection, 'value_symbols': known,
+        'original_selection_positions': [selection.index(s)+1 for s in known],
+        'missing_symbols': missing, 'missing_reasons': reasons,
+        'selection_basis': 'INITIAL_PREDICTED_ORACLE_TOP_N',
+        'status': 'COMPLETE' if selection and not missing else 'PARTIAL' if known else 'UNAVAILABLE',
+        'unit': 'USD_SIGNAL_DAY_PRICE_SCALE', 'statistic': 'MAX_DAILY_HIGH',
+        'window': f'J+1..J+{horizon} NYSE sessions (inclusive)', 'horizon': horizon,
+        'price_basis': 'high[t] * (adj_close[t]/close[t]) / (adj_close[J]/close[J])',
+        'rounding_decimals': 0, 'rounding_mode': 'ROUND_HALF_UP',
+        'unrounded_value_location': 'value_details.<symbol>.max_price',
+        'value_details': {s: maxima[s] for s in known},
+        'research_only_future_information': True,
+    }
+    metadata['lists'][PEAK_FIELD] = info
+    row[PEAK_FIELD] = (json.dumps([int(Decimal(str(maxima[s]['max_price'])).quantize(
+                         Decimal('1'), rounding=ROUND_HALF_UP)) for s in known], allow_nan=False)
+                      if known and (policy == 'partial' or not missing) else None)
+    row['movement_quality'] = json.dumps(metadata, allow_nan=False)
+    details = row['quality_details']
+    issues = [item for item in ('' if pd.isna(details) else details).split(',')
+              if item and item != 'INCOMPLETE_PREDICTED_MAX_PRICES']
+    if missing:
+        issues.append('INCOMPLETE_PREDICTED_MAX_PRICES')
+    row['quality_details'] = ','.join(dict.fromkeys(issues)) or None
+    row['status'] = ('COMPLETE' if not issues else
+                     'PARTIAL' if policy == 'partial' and row['evaluated_count'] else 'INCOMPLETE')
+    return attach_peak_returns(row, policy=policy)
+
+
+def attach_peak_returns(row, *, policy=None, maxima=None):
+    """Dominant signed HIGH/LOW excursion from precise J baseline; never a signal.
+
+    Compare unrounded percentages, keep the larger absolute excursion and its
+    sign (positive on exact ties). Do not substitute the terminal H20 return.
+    A historical backfill can supply newly qualified paths; their original HIGH
+    and J close must agree with the archived price list before pairing its LOW.
+    """
+    metadata = json.loads(row['movement_quality'])
+    policy = resolve_returns_policy(policy or row.get('missing_returns_policy') or metadata.get('policy', 'strict'))
+    source = metadata['lists'].get(PEAK_FIELD, {})
+    selection = source.get('selection_symbols', [])
+    if len(selection) != len(set(selection)):
+        raise ValueError('Doublons dans la sélection des prix maximaux')
+    qualified = set(source.get('value_symbols', []))
+    known, missing, reasons, values, precise = [], [], {}, [], {}
+
+    def positive_finite(value):
+        try:
+            return not isinstance(value, bool) and np.isfinite(float(value)) and float(value) > 0
+        except (TypeError, ValueError, OverflowError):
+            return False
+
+    for symbol in selection:
+        details = source.get('value_details', {}).get(symbol, {})
+        path = details if maxima is None else maxima.get(symbol, {})
+        if symbol not in qualified:
+            reason = source.get('missing_reasons', {}).get(symbol, 'PRICE_PATH_MISSING')
+        elif source.get('unit') != 'USD_SIGNAL_DAY_PRICE_SCALE':
+            reason = 'PEAK_PRICE_UNIT_UNQUALIFIED'
+        else:
+            maximum, anchor = details.get('max_price'), details.get('anchor_close')
+            minimum = path.get('min_price')
+            if not positive_finite(maximum):
+                reason = 'PEAK_PRICE_MISSING_OR_INVALID'
+            elif not positive_finite(anchor):
+                reason = 'ANCHOR_CLOSE_MISSING_OR_INVALID'
+            elif path.get('reason'):
+                reason = path['reason']
+            elif not positive_finite(minimum):
+                reason = 'MIN_PRICE_MISSING_OR_INVALID'
+            elif maxima is not None and (not positive_finite(path.get('max_price'))
+                    or not positive_finite(path.get('anchor_close'))
+                    or not np.isclose(float(path['max_price']), float(maximum), rtol=1e-10, atol=1e-10)
+                    or not np.isclose(float(path['anchor_close']), float(anchor), rtol=1e-10, atol=1e-10)):
+                reason = 'ARCHIVED_PEAK_VS_CURRENT_PATH_MISMATCH'
+            elif float(minimum) > float(maximum):
+                reason = 'INVALID_HIGH_LOW_PATH'
+            else:
+                up = (Decimal(str(maximum))/Decimal(str(anchor))-1)*100
+                down = (Decimal(str(minimum))/Decimal(str(anchor))-1)*100
+                value = up if abs(up) >= abs(down) else down
+                known.append(symbol)
+                values.append(int(value.quantize(Decimal('1'), rounding=ROUND_HALF_UP)))
+                precise[symbol] = {'max_return_pct': float(value), 'up_return_pct': float(up),
+                    'down_return_pct': float(down), 'anchor_close': float(anchor),
+                    'max_price': float(maximum), 'min_price': float(minimum),
+                    'max_date': path.get('max_date'), 'min_date': path.get('min_date'),
+                    'dominant_side': 'UP' if abs(up) >= abs(down) else 'DOWN',
+                    'extreme_date': path.get('max_date') if abs(up) >= abs(down) else path.get('min_date'),
+                    'exit_date': path.get('exit_date'), 'available_date': path.get('available_date')}
+                continue
+        missing.append(symbol)
+        reasons[symbol] = reason
+    info = {
+        'requested_count': len(selection), 'known_count': len(known),
+        'missing_count': len(missing), 'coverage_pct': 100*len(known)/len(selection) if selection else None,
+        'selection_symbols': selection, 'value_symbols': known,
+        'original_selection_positions': [selection.index(s)+1 for s in known],
+        'missing_symbols': missing, 'missing_reasons': reasons,
+        'selection_basis': 'INITIAL_PREDICTED_ORACLE_TOP_N',
+        'status': 'COMPLETE' if selection and not missing else 'PARTIAL' if known else 'UNAVAILABLE',
+        'unit': 'PERCENT', 'statistic': 'MAX_ABSOLUTE_SIGNED_HIGH_LOW_RETURN',
+        'window': source.get('window'), 'horizon': source.get('horizon'),
+        'return_basis': 'argmax_abs(100*(max_high/close_J-1), 100*(min_low/close_J-1)); retain sign',
+        'tie_breaker': 'UP_ON_EXACT_UNROUNDED_TIE',
+        'baseline_and_price_details': f'lists.{PEAK_FIELD}.value_details',
+        'rounding_decimals': 0, 'rounding_mode': 'ROUND_HALF_UP',
+        'value_details': precise, 'research_only_future_information': True,
+    }
+    metadata['lists'][PEAK_PCT_FIELD] = info
+    row[PEAK_PCT_FIELD] = (json.dumps(values, allow_nan=False)
+        if known and (policy == 'partial' or not missing) else None)
+    row['movement_quality'] = json.dumps(metadata, allow_nan=False)
+    details = row.get('quality_details')
+    issues = [item for item in ('' if pd.isna(details) else details).split(',')
+              if item and item != 'INCOMPLETE_PREDICTED_MAX_RETURNS']
+    if missing:
+        issues.append('INCOMPLETE_PREDICTED_MAX_RETURNS')
+    row['quality_details'] = ','.join(dict.fromkeys(issues)) or None
+    row['status'] = ('COMPLETE' if not issues else
+                     'PARTIAL' if policy == 'partial' and row['evaluated_count'] else 'INCOMPLETE')
+    return row
+
+
 def run(*, batch_id: str, symbol_source: str, start_date: str, end_date: str,
         artifacts_dir='artifacts/models', engine=None, progress_callback=None,
         date_batch_size: int = 20, resume: bool = True,
         trade_dates: list[str] | None = None, missing_returns_policy=None) -> dict:
     policy = resolve_returns_policy(missing_returns_policy)
-    version = CALCULATION_VERSION if policy == 'partial' else 'oracle_atr_v5_strict_returns'
+    version = CALCULATION_VERSION if policy == 'partial' else 'oracle_atr_v7_strict_max_prices'
     if not isinstance(date_batch_size, int) or isinstance(date_batch_size, bool) or date_batch_size < 1:
         raise ValueError('date_batch_size doit être un entier strictement positif')
     start, end = date.fromisoformat(start_date), date.fromisoformat(end_date)
@@ -233,13 +381,13 @@ def run(*, batch_id: str, symbol_source: str, start_date: str, end_date: str,
         if conn.execute(text('SELECT DATABASE()')).scalar() != 'alpha_trade':
             raise ValueError('Cette étude US exige la base alpha_trade')
         # Check migration before doing costly price reads.
-        conn.execute(text(f'SELECT trade_date,{",".join(MOVEMENT_FIELDS)},movement_quality,missing_returns_policy FROM {TABLE} LIMIT 0'))
+        conn.execute(text(f'SELECT trade_date,{",".join(MOVEMENT_FIELDS)},{PEAK_FIELD},{PEAK_PCT_FIELD},movement_quality,missing_returns_policy FROM {TABLE} LIMIT 0'))
         completed = set()
         if resume:
             completed = {str(d)[:10] for d in conn.execute(text(
                 f'SELECT trade_date FROM {TABLE} WHERE universe_hash=:hash AND oracle_batch_id=:batch '
                 "AND oracle_horizon=:horizon AND status='COMPLETE' AND calculation_version=:version "
-                'AND trade_date BETWEEN :start AND :end'),
+                f'AND {PEAK_PCT_FIELD} IS NOT NULL AND trade_date BETWEEN :start AND :end'),
                 {'hash': universe_hash, 'batch': batch_id, 'horizon': horizon, 'start': start, 'end': end,
                  'version': version}).scalars().all()}
     calendar = _get_nyse_calendar()
@@ -312,6 +460,12 @@ def _calculate_tranche(engine, symbols, days, batch_id, horizon, as_of, policy='
             missing_returns_policy=policy, expected_available_date=availability[date.fromisoformat(day)][1])
         row.update(trade_date=day)
         records.append(row)
+    from service.market.oracle_path_maxima import load_price_peaks
+    selections = {row['trade_date']: json.loads(row['movement_quality'])['lists'].get(
+        'predicted_oracle_score_order_returns_pct', {}).get('selection_symbols', []) for row in records}
+    maxima = load_price_peaks(engine, selections, labels, horizon=horizon, as_of=as_of)
+    for row in records:
+        attach_price_peaks(row, maxima.get(row['trade_date'], {}), horizon=horizon, policy=policy)
     return records
 
 

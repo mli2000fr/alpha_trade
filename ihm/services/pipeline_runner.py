@@ -408,6 +408,11 @@ class PipelineLaunchOptions:
     ml_exclude_per_symbol_per_sector: bool = DEFAULT_ML_EXCLUDE_PER_SYMBOL_PER_SECTOR  # 2026-08-28
     ml_enable_oracle_model: bool = DEFAULT_ML_ENABLE_ORACLE_MODEL  # 2026-08-20 : Oracle Extreme (O0)
     ml_oracle_model_only: bool = DEFAULT_ML_ORACLE_MODEL_ONLY      # 2026-08-20 : Oracle ONLY
+    ml_oracle_path_model_only: bool = False  # modèle parcours H20 distinct, recherche
+    ml_oracle_barrier_model_only: bool = False  # modèle TP avant SL, recherche
+    ml_oracle_barrier_tp_pct: float | None = None  # None = config.yaml
+    ml_oracle_barrier_sl_pct: float | None = None
+    ml_oracle_barrier_max_sessions: int | None = None
     ml_directional_profiles_enabled: bool = False
     ml_oracle_horizon: int = 20
     ml_oracle_feature_profile: str = "oracle.json"
@@ -2489,7 +2494,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--training-end-date", ml_training_end_date])
         if ml_train_start_symbol:
             command.extend(["--start-symbol", ml_train_start_symbol])
-        if options.ml_global_model_only and not options.ml_directional_profiles_enabled:
+        if options.ml_global_model_only and not options.ml_directional_profiles_enabled and not options.ml_oracle_path_model_only and not options.ml_oracle_barrier_model_only:
             # P0-6 : --global-model-only active déjà --enable-global-model implicitement
             # côté cli → on ne l'émet pas ici pour éviter le doublon dans la commande.
             # 2026-08-28 : si exclude_per_symbol_per_sector est coché, on ne l'émet
@@ -2498,10 +2503,31 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.append("--global-model-only")
         # 2026-08-28 : Exclude per-symbol & per-sector (garde Global Ranking + Oracle)
         if (options.ml_exclude_per_symbol_per_sector and not options.ml_global_model_only
-                and not options.ml_directional_profiles_enabled):
+                and not options.ml_directional_profiles_enabled and not options.ml_oracle_path_model_only and not options.ml_oracle_barrier_model_only):
             command.append("--exclude-per-symbol-per-sector")
         # Oracle Extreme (O0) — 2026-08-20
-        if options.ml_directional_profiles_enabled:
+        if options.ml_oracle_barrier_model_only:
+            if options.ml_oracle_path_model_only or options.ml_directional_profiles_enabled:
+                raise ValueError("Choisir TP avant SL OU Oracle parcours/bundle.")
+            from modelFactory.config import load_oracle_barrier_config, OracleBarrierConfig
+            values = asdict(load_oracle_barrier_config())
+            values.update({name: value for name, value in {
+                "take_profit_pct": options.ml_oracle_barrier_tp_pct,
+                "stop_loss_pct": options.ml_oracle_barrier_sl_pct,
+                "max_sessions": options.ml_oracle_barrier_max_sessions}.items() if value is not None})
+            barrier = OracleBarrierConfig(**values)
+            command.extend(["--oracle-barrier-model-only", "--oracle-barrier-tp-pct", str(barrier.take_profit_pct),
+                "--oracle-barrier-sl-pct", str(barrier.stop_loss_pct),
+                "--oracle-barrier-max-sessions", str(barrier.max_sessions)])
+            if options.ml_standalone_oracle_feature_profile != "dynamic":
+                command.extend(["--standalone-oracle-feature-profile", options.ml_standalone_oracle_feature_profile])
+        elif options.ml_oracle_path_model_only:
+            if options.ml_directional_profiles_enabled:
+                raise ValueError("Choisir Oracle parcours OU le bundle Oracle terminal.")
+            command.extend(["--oracle-path-model-only", "--oracle-horizon", "20"])
+            if options.ml_standalone_oracle_feature_profile != "dynamic":
+                command.extend(["--standalone-oracle-feature-profile", options.ml_standalone_oracle_feature_profile])
+        elif options.ml_directional_profiles_enabled:
             command.extend([
                 "--directional-feature-profiles",
                 "--oracle-horizon", str(int(options.ml_oracle_horizon)),
@@ -2578,19 +2604,19 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.append("--compare-lightgbm")
         if options.ml_enable_catboost:
             command.append("--enable-catboost")
-        if options.ml_enable_global_model and not options.ml_global_model_only:
+        if options.ml_enable_global_model and not options.ml_global_model_only and not options.ml_oracle_barrier_model_only:
             # global-model-only active déjà --enable-global-model (implicite cli).
             command.append("--enable-global-model")
-        if (options.ml_enable_global_model or options.ml_global_model_only) and not options.ml_global_champion:
+        if (options.ml_enable_global_model or options.ml_global_model_only) and not options.ml_global_champion and not options.ml_oracle_barrier_model_only:
             # P3-3 : en mode champion, --global-model-name est REDONDANT
             # (--global-champion force les 3 candidats LightGBM/CatBoost/XGBoost
             # côté core et ignore model_name) → on ne l'émet pas.
             command.extend(["--global-model-name", options.ml_global_model_name])
-        if options.ml_global_champion:
+        if options.ml_global_champion and not options.ml_oracle_barrier_model_only:
             # P3-3 : --global-champion entraîne les 3 candidats
             # (CatBoost + LightGBM + XGBoost) côté core.
             command.append("--global-champion")
-        if options.ml_enable_global_stacking:
+        if options.ml_enable_global_stacking and not options.ml_oracle_barrier_model_only:
             command.append("--enable-global-stacking")
         if options.ml_enable_cross_sectional:
             command.append("--enable-cross-sectional")

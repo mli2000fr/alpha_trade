@@ -62,7 +62,8 @@ def test_missing_report_distinguishes_future_h20_from_data_holes():
     out = explain_day(scores, {'A': 1}, labels, as_of=date(2026, 10, 10),
                       available_date=date(2026, 10, 12))
     assert out['reason'] == 'H20_NOT_YET_AVAILABLE'
-    assert len(out['null_fields']) == 5
+    from service.market.oracle_atr_study import MOVEMENT_FIELDS
+    assert len(out['null_fields']) == len(MOVEMENT_FIELDS)
 
 
 def test_missing_availability_can_be_repaired_without_touching_returns():

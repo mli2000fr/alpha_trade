@@ -23,7 +23,12 @@ from risk_management.operational_data import BacktestOperationalDataAdapter
 class OraclePortfolioLedger(BacktestEngine):
     """Own ONE native cash/positions ledger throughout all daily decisions."""
 
-    def __init__(self, config, *, opens, close, high, low, volume, sector_map):
+    def __init__(self, config, *, opens, close, high, low, volume, sector_map, entry_side='buy'):
+        if entry_side not in {'buy', 'sell'}:
+            raise ValueError('Explicit Oracle ledger entry side must be buy or sell')
+        if entry_side == 'sell' and config.trading_constraints.account_type != 'margin':
+            raise ValueError('SHORT ledger requires a margin account')
+        self.entry_side = entry_side
         super().__init__(config)
         if (not config.require_replay_quantities or not config.require_replay_protections
                 or not config.use_canonical_costs or config.exposure_multiplier != 1
@@ -104,8 +109,8 @@ class OraclePortfolioLedger(BacktestEngine):
             idx = self.days.searchsorted(pd.Timestamp(decision), side='right')
             if idx >= len(self.days) or self.days[idx] != self.current_day:
                 raise ValueError('Approved order is not for this next session')
-            if entry.side != 'buy':
-                raise ValueError('Oracle ledger policy is LONG-only')
+            if entry.side != self.entry_side:
+                raise ValueError(f'Oracle ledger policy requires {self.entry_side} entries')
         phase3 = simulate_phase3_execution_replay(approved, execution_config=execution_config,
             open_df=self.opens.loc[:self.current_day], risk_run_id_prefix='chronological_oracle',
             enforce_live_gap_filter=True)
@@ -139,7 +144,9 @@ class OraclePortfolioLedger(BacktestEngine):
                     drawdown_allocation_scale=1., diagnostics=self.diagnostics)
                 if symbol in self.state.positions:
                     if abs(self.state.positions[symbol].quantity-float(row.filled_qty)) > 1e-6:
-                        raise AssertionError('Approved quantity changed')
+                        raise AssertionError(f'Approved quantity changed: {symbol} '
+                            f'approved={float(row.filled_qty)!r}, '
+                            f'booked={self.state.positions[symbol].quantity!r}')
                     opened.append(symbol)
                     self.protections[symbol] = replace(phase4,
                         signals_df=phase4.signals_df.loc[phase4.signals_df.symbol.eq(symbol)].copy())
@@ -207,13 +214,17 @@ class OraclePortfolioLedger(BacktestEngine):
                 opening = float(self.opens.at[self.current_day, symbol])
                 effective = row.get('watcher_transition_effective_date')
                 active = trailing_enabled and pd.notna(effective) and pd.Timestamp(effective) <= self.current_day
-                prior_high = highs.loc[highs.index < self.current_day, symbol].dropna()
-                peak = max(position.entry_price, float(prior_high.max())) if len(prior_high) else position.entry_price
-                stop = peak * (1-float(row.replay_trailing_stop_pct)) if active else float(row.replay_initial_stop_price)
-                if opening <= stop:
+                short = position.side == 'sell'
+                prior = (lows if short else highs).loc[highs.index < self.current_day, symbol].dropna()
+                extreme = ((min(position.entry_price, float(prior.min())) if short else
+                            max(position.entry_price, float(prior.max()))) if len(prior) else position.entry_price)
+                stop = extreme * (1+float(row.replay_trailing_stop_pct) if short else
+                                  1-float(row.replay_trailing_stop_pct)) if active else float(row.replay_initial_stop_price)
+                if (opening >= stop if short else opening <= stop):
                     exits.append({'symbol': symbol, 'exit_date': self.current_day, 'exit_price': opening,
                         'exit_reason': 'trailing_stop_gap_open' if active else 'initial_stop_gap_open'})
-                elif take_profit_enabled and opening >= float(row.replay_take_profit_price):
+                elif take_profit_enabled and (opening <= float(row.replay_take_profit_price) if short else
+                                               opening >= float(row.replay_take_profit_price)):
                     exits.append({'symbol': symbol, 'exit_date': self.current_day,
                         'exit_price': float(row.replay_take_profit_price), 'exit_reason': 'take_profit_gap_limit'})
             else:
@@ -338,11 +349,12 @@ class OraclePortfolioLedger(BacktestEngine):
             roles = ['stop'] + (['limit'] if take_profit_enabled else [])
             for role in roles:
                 orders.append({'id': f'{symbol}-{position.entry_date}-{role}', 'symbol': symbol,
-                    'side': 'sell', 'type': role, 'qty': position.quantity, 'status': 'new'})
+                    'side': 'buy' if position.side == 'sell' else 'sell',
+                    'type': role, 'qty': position.quantity, 'status': 'new'})
         return BacktestOperationalDataAdapter.build(account_id='chronological_oracle',
             account={'equity': equity, 'cash': self.state.settled_cash+self.state.unsettled_cash,
                 'settled_cash': self.state.settled_cash, 'buying_power': max(budget, 0.)},
-            positions=[{'symbol': s, 'qty': p.quantity, 'side': 'long',
+            positions=[{'symbol': s, 'qty': p.quantity, 'side': 'short' if p.side == 'sell' else 'long',
                 'avg_entry_price': p.entry_price, 'current_price': float(self.close.at[self.current_day, s])}
                 for s, p in self.state.positions.items()], orders=orders,
             as_of=datetime.combine(self.current_day.date(), time(16), tzinfo=ZoneInfo('America/New_York')),

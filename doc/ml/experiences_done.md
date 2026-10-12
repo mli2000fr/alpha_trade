@@ -1,5 +1,148 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-12 — Oracle SHORT forcé TP20/SL10 : six cas, NO-GO promotion
+
+Demande utilisateur : forcer SHORT uniquement sur la tête SHORT figée, TOP10,
+TOP20, TOP50, mêmes inputs réparés 2025 et décisions 2026 jusqu'au 3 septembre.
+TP20/SL10 depuis le fill J+1, sans trailing, rachat à l'ouverture de la 21e
+séance détenue ; 4 000 USD réinitialisés par cas. Aucun entraînement, SQL,
+appel fournisseur, ordre broker ou changement de réglage PAPER/LIVE.
+Contrôle natif TOP10 2026 : zéro trade, SHORT autorisé seulement sur deux dates
+CP. Scénario forcé distinct : permission SHORT en NORMAL ajoutée explicitement
+pour cette recherche, sans bypass des autres contraintes/cash-only/close-only.
+Cap natif cinq SHORT, actions entières, emprunt supposé disponible et 0,3 %/an ;
+locates/rappels/taux historiques/dividendes compensateurs non modélisés.
+RARE exposait un défaut de partial fills synthétiques : 9 → 8,999999999 → 8
+au commit. Contrôles V1/V2 conservés FAILED ; remplissages SHORT entiers corrigés,
+pas de modification du chemin LONG par défaut. 240 tests ciblés passent.
+Grille finale `short-forced-grid-20261012-v1` : **6/6 terminés exploratoires**, 347
+positions auditées, empreintes vérifiées, cash max 2,73e-12 USD. TOP10 2026
+reproduit exactement le contrôle V3 sur trades économiques.
+Rendements 2025 / 2026 : TOP10 **+1,54 % / −14,50 %**, TOP20 **+1,21 % /
+−14,10 %**, TOP50 **+1,21 % / −10,64 %**. DD 2026 −16,09 / −16,11 / −15,91 %.
+Le profit LONG antérieur ne s'inverse pas simplement pour produire un SHORT.
+NO_GO_FORCED_SHORT_PROMOTION_TP20_SL10 ; ni avantage stable, ni emprunt historique
+qualifié, ni serving promu. Pas d'optimisation sur les pertes 2026.
+[Protocole, résultats, comptes et limites](oracle_short_tp20_sl10_20261012.md).
+
+## 2026-10-12 — Trailing Oracle TP20/SL10 : 35 cas vérifiés, NO-GO promotion
+
+Précision utilisateur avant lancement : TP20/SL10 fixe. Trailing10 primaire,
+sensibilités 5 et 15 %, deux modèles déjà figés, TOP10/20/50, 2025 et décisions
+2026 jusqu'au 3 septembre. 36 nouveaux cas face aux références OFF déjà auditées.
+Activation uniquement lorsque le stop suiveur ne relâche plus le SL initial ;
+plus haut observé en J applicable à partir de J+1, gaps et collisions conservateurs,
+vingt séances détenues puis sortie à l'ouverture de la 21e séance.
+Recherche LONG seule : aucune production, SQL, entraînement ou ordre courtier.
+24 tests nouveaux passent ; quatre cas de contrôle V2 terminés, deux OFF reproduits
+exactement, 296 sorties trailing contrôlées avec les plus hauts antérieurs.
+Campagne terminée dans `trailing-grid-20261012-v1` : 35 cas stricts vérifiés,
+un cas ancien TOP50/trailing5 2026 bloqué par LBRDK/20 juillet à volume nul.
+Statut global conservé FAILED/PARTIAL_FAILED ; aucun PnL du cas arrêté n'est publié.
+8 565 transactions et 6 227 sorties trailing auditées contre high antérieur,
+activation sans relâcher le SL et gap au prix d'ouverture ; cash max 5,00e-12 USD.
+Tous les 18 cas du nouveau modèle terminent : trailing moins rentable dans 17/18,
+DD amélioré dans seulement 2/18. TOP10 nouveau sans trailing +12,39 % / +18,93 %,
+trailing10 −0,09 % / +7,90 % ; trailing15 +0,84 % / +15,97 %.
+Ancien trailing5 meilleur en 2025, non confirmé sur les cas 2026 terminés.
+Piste SIP LBRDK archivée mais OHLC différents aussi : pas de volume opportuniste
+ajouté ; identité/chemin, inputs et scores communs à qualifier avant reprise.
+Régression ciblée complète : 192 tests passent.
+NO_GO_TRAILING_PROMOTION_TP20_SL10 ; ni optimum, entraînement, SQL ou live.
+Rapport indépendant partiel : `partial-summary.json` / `partial-summary.md`.
+[Protocole et suivi](oracle_trailing_grid_20261012.md).
+
+## 2026-10-12 — Grille TP/SL 2025–2026 terminée, 2026 débloqué
+
+Warm-up AVB/SPY archivé en SELECT uniquement. Contrôle de 380 dates × 129 features
+antérieures à l'anomalie sans écart ; 405 lignes AVB régénérées et rangs quotidiens
+communs recalculés, mêmes modèles entraînés. Scores 2025 strictement inchangés ;
+AVB ne figure plus dans TOP10/20/50 du nouveau modèle, sans exclusion de l'univers.
+Deux contrôles stricts TOP10 2026 terminés, cash réconcilié, aucune fraction
+inconnue : TP20/SL7 ancien +9,03 %, nouveau +21,20 % après les dernières sorties.
+Trois corrections de volume fournisseur déjà archivées, BAND/GPRE/ATEX le 18/06,
+intégrées également aux features et rangs communs : 365 dates × 129 features
+par titre avant correction sans écart. Scores 2025 inchangés ; 172 anciens scores
+2026 changent, aucune nouvelle tête ne change. Ces preuves restent non PIT.
+Campagne de cinq couples TP/SL + référence commune, deux années, deux modèles
+et TOP10/20/50 : **72 cas terminés strictement, aucun échec**, V2 finale. Les
+36 cas 2025 sont réutilisés après preuve exacte des inputs jusqu'à la queue
+du 30/01 ; tous les cas 2026 repartent de zéro. V1 conservée : six échecs BAND.
+14 119 transactions et cash vérifiés, erreur maximale 6,37 × 10⁻¹² USD ;
+168 tests ciblés passent. Nouveau LONG supérieur dans 35/36 comparaisons,
+exception TOP50 2026 TP10/SL7. TOP10 nouveau TP20/SL5 : +17,11 % en 2025,
++11,21 % en 2026 ; TP20/SL10 : +12,39 % / +18,93 % ; référence +7,33 % / +21,20 %.
+Pas de couple dominant tous les nombres/périodes, ni GO LONG/SHORT ou live.
+Aucun entraînement,
+SQL écrit, modèle modifié, changement de production ou ordre courtier.
+[Protocole, résultats complets et réserves](oracle_tp_sl_grid_20261012.md).
+
+## 2026-10-12 — Rejeu AVB 2026 : lifecycle livré, validation prédictive réservée
+
+État historique du premier scénario ; remédiation et grille finales ci-dessus.
+
+Six scénarios LONG terminés, mêmes scores figés et TOP10/20/50 ; trois contrôles
+stricts restent bloqués par la valeur/date inconnues des fractions. AVB converti
+une fois en 2,793 actions du successeur, protections et expiry conservés ; aucun
+prix post-radiation AVB fabriqué ni titre retiré. 657 dates rapprochées en SIP :
+632 prix d'origine inchangés, seulement 25 dates de base mixte restaurées.
+**Une contamination des features est confirmée** : fausse baisse AVB −63,69 %
+le 13/07 contre +1,40 % en prix d'origine. Les sélections du nouveau modèle sont
+donc réservées malgré le raccordement d'exécution. Son scénario cash + actions
+entières, créance non valorisée exclue, donne +18,60 % / +17,47 % / +17,47 % après
+sorties ; ce n'est ni une validation prédictive ni un rendement complet du
+patrimoine. Aucun entraînement, score modifié, SQL écrit ou ordre courtier.
+15 nouveaux tests spécifiques réussis ; erreurs de réconciliation cash <10⁻¹¹ USD.
+[Rapport qualifié, réserves et traitement d'une exclusion AVB](oracle_merger_replay_2026_20261012.md).
+
+## 2026-10-12 — Comparaison figée ancien/nouveau Oracle : TOP10/20/50
+
+État historique, avant correction des features AVB/volumes ; la grille finale
+ci-dessus remplace les résultats 2026, sans effacer les premières archives.
+
+Nombres de titres, pas pourcentages. Deux branches figées, même univers de
+1 790 titres et même archive de features, période externe 2025 → 03/09/2026.
+Ancien Oracle H20 corrigé contre tête LONG TP-avant-SL du batch `867a1e`.
+Même SL 7 %, TP 20 %, entrée J+1, expiry 21e séance à l'ouverture, sans trailing.
+Mesures par candidat terminées : aucune des six comparaisons annuelles/count
+ne démontre un taux TP supérieur pour le nouveau modèle. Direction automatique
+0,55 : uniquement quelques SHORT 2025 sans TP, abstention complète en 2026.
+**Six portefeuilles 2025 terminés** : cohorte close ancien/nouveau LONG,
+TOP10 −5,42 % / +7,33 %, TOP20 −3,61 % / +12,05 %, TOP50 −4,91 % / +17,37 % ;
+drawdowns plus faibles pour le nouveau. La queue ajoute janvier 2026 ; les
+rendements au 31/12 sont distingués dans le rapport. **2026 non confirmé** :
+remédiation cash-only terminée ; neuf portefeuilles complets / trois bloqués.
+Ancien 2026, cohorte close : TOP10 +6,11 %, TOP20 −1,01 %, TOP50 +4,53 %.
+Nouveaux replays bloqués par
+la conversion réelle AVB → VMRK au 17/08. Pas de titre retiré après observation,
+de liquidation fictive, de prix remplis, de promotion ni changement en production.
+Une révision de `selector_short_score`
+en SQL est documentée ; les inputs communs archivés ne sont pas écrasés.
+130 tests ciblés réussis (64 modèle/audit, 66 comparaison/replay).
+Bootstrap descriptif par blocs de vingt séances, inconnus conservés avec bornes.
+Aucun entraînement, SQL écrit ou ordre courtier. Diagnostic borné AVB via
+Alpaca SIP en GET uniquement et preuves publiques émetteur de la fusion.
+[Protocole et résultats](oracle_barrier_comparison_top10_20_50_20261012.md).
+
+## 2026-10-12 — Oracle TP avant SL : première campagne réelle et audit TOP10
+
+Batch utilisateur `model-factory-20261011221400-867a1e` terminé : 1 790 titres,
+173 features, 12 folds, OOF 2018-07-05 → 2024-07-09 (2025/2026 non testées).
+Audit sur les dix premiers titres par séance, pas TOP10 % ; TP 20 % avant SL 7 %,
+vingt séances, entrée J+1, seuil et modèles inchangés, inconnus non remplacés.
+TOP10 LONG : TP 24,41 %, SHORT : 16,42 %. Maximum des deux scores puis argmax
+sans seuil (diagnostic séparé) : 22,05 % contre 24,18 % toujours LONG sur les
+mêmes observations qualifiées. Politique figée seuil 0,55 : 403 choix / 15 120,
+24,63 % de TP contre 25,87 % toujours LONG sur les mêmes 402 choix qualifiés.
+Argmax dégradé en 2023 et 2024 partielle ; en 2024, 1 241 SHORT / 59 LONG,
+TP 8,15 % contre 20,38 % toujours LONG sur les mêmes candidats. Scores SHORT
+surestimant globalement la fréquence TP 2024, sans preuve que la calibration
+résoudrait le problème. Aucun calibrateur appris sur le test, aucun bug déclaré.
+Contrôles de checksums, chronologie et comptages ; 64 tests ciblés passent.
+Aucun réentraînement, modèle modifié, SQL écrit, ordre ou PnL portefeuille.
+Verdict : classement par sens informatif, choix LONG/SHORT **non promu**.
+[Protocole, résultats annuels/folds et suite](oracle_barrier_top10_audit_20261012.md).
+
 ## 2026-10-11 — Collecteur consensus EODHD prospectif
 
 Souscription Calendar & News signalée par l'utilisateur ; compte et Trends HTTP 200.
@@ -2536,3 +2679,56 @@ après ouverture faible et instable. Aucune vue PIT admissible avec les dernièr
 dates de mise à jour : **association descriptive, pas GO prédictif/trading**.
 Aucune API, écriture SQL, modification de modèle ou batch. Trois tests passés.
 [Résultats, protocole et limites](us_news_same_day_sentiment_audit.md).
+
+## 2026-10-11 — P-PATH-0 : D1/D10 du mouvement dominant pendant vingt séances
+
+Audit terminé, lectures SQL seulement, aucun entraînement ni modification de
+modèle, label SQL, batch ou ordre. Depuis la clôture ajustée J, retenir la plus
+grande excursion absolue parmi les high/low J+1…J20, avec son signe ; égalités
+ambiguës exclues. Déciles calculés sur l'univers complet quotidien scoré avant
+l'étude du pool Oracle TOP20 % ∩ ATR TOP20 %, pas sur le seul pool sélectionné.
+
+2 743 313 observations, 1 790 titres, 1 555 dates ; 419 168 observations appariées
+dans le pool sur 1 533 dates. 174 entrées du profil : 129 features + score Oracle
+et 44 alias de rang monotone. Développement 2020–2022, orientations figées avec
+labels déjà disponibles, confirmation 2023/2024 partielle/2025/2026 partielle.
+
+Environ **15 % des observations changent de signe**, mais la majorité des D1/D10
+reste dans la même queue. **Aucune des dix pistes choisies sur le développement
+ne passe la confirmation**. AUC D1/D10 parcours 2025→2026 : score Oracle
+0,5321→0,4929 ; ATR20 0,5357→0,4996 ; volatilité60 0,5360→0,4898.
+Sensibilités sur les clôtures, grandes plages intraday et horizons non superposés
+archivées. Verdict `NO_STABLE_UNIVARIATE_DOMINANT_PATH_SEPARATION` : pas un verdict
+sur un nouveau modèle multivarié ou toutes les données de l'application.
+
+2026 non vierge et couverture conditionnelle : 21 dates mai/juin sous 95 %,
+labels archivés non qualifiés le 3 septembre ; aucune réparation SQL ici.
+News/sentiment, consensus et VIX ne sont pas dans ce profil, donc non testés.
+**41 tests ciblés passent**. Un éventuel Oracle entraîné sur l'amplitude du
+parcours reste un protocole distinct, non lancé.
+[Contrat, résultats et limites](oracle_dominant_path_separability_h20.md).
+
+## 2026-10-11 — Oracle parcours H20 : mode séparé livré
+
+Implémentation du training LightGBM et checkbox Pipeline, **pas un résultat de
+performance sur l'univers réel**. Nouvelle cible TOP20 % des amplitudes maximales
+HIGH/LOW entre J+1 et J20, disponibilité J21, WF purgé, checkpoints par tranche
+et fold. Artefacts `oracle_path`, sans écriture dans les tables Oracle terminal.
+L'Oracle actuel reste inchangé ; nouveau mode décoché par défaut et non servable.
+Un entraînement minuscule sur données synthétiques valide techniquement les
+modèles/OOS et la reprise, sans base externe. La campagne utilisateur reste à lancer.
+[Guide d'entraînement IHM](oracle_path_training.md).
+
+## 2026-10-12 — Oracle TP avant SL : mode LONG/SHORT séparé
+
+Implémentation autorisée avec direction, **pas un résultat prédictif ou économique**.
+Deux classifieurs LightGBM globaux distincts : TP 20 % avant SL 7 %, entrée J+1 open,
+vingt séances, expiration à l'open J21 ; paramètres configurables et archivés.
+La chronologie des contacts prime sur le signe terminal et le maximum absolu.
+Gaps résolus à l'open, double contact intrabar exclu par sens, SL jamais ressuscité,
+disponibilité conservatrice J22, WF purgé et abstention sur scores faibles/égaux.
+Les rapports comparent aussi aux baselines directionnelles toujours LONG/SHORT.
+Artefacts `oracle_barrier`, sans remplacer Oracle terminal/parcours ni leurs tables.
+Case Pipeline décochée par défaut, recherche non servable, aucun ordre ni campagne
+utilisateur lancé. Validation technique sur données synthétiques seulement.
+[Guide et protocole](oracle_barrier_training.md).
