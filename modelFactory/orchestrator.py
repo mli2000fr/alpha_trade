@@ -830,6 +830,8 @@ def run_training_batch(
         Liste de TrainResult.
     """
     batch_id = batch_id or f"model-factory-{datetime.now(timezone.utc):%Y%m%d%H%M%S}-{uuid4().hex[:6]}"
+    if (cfg.data.oracle_path_model_only or cfg.data.oracle_barrier_model_only) and mode != "rebuild-all":
+        raise ValueError("Oracle parcours/TP avant SL : utiliser rebuild-all ; reprise par checkpoints du même batch.")
     cfg = _with_batch_artifacts_dir(cfg, batch_id)
     directional_bundle_serving_ready: bool | None = None
     directional_cfgs: tuple[TrainingConfig, ...] = (cfg,)
@@ -1164,6 +1166,34 @@ def run_training_batch(
     )
     results: list[TrainResult] = []
     _oracle_result: dict[str, Any] | None = None
+
+    if cfg.data.oracle_barrier_model_only:
+        from modelFactory.oracle_barrier.train import train_oracle_barrier
+
+        update_runtime_status(current_phase="oracle_barrier", progress_item="__ORACLE_BARRIER__")
+        try:
+            outcome = train_oracle_barrier(cfg, engine, batch_id, _global_symbols)
+            results.append(TrainResult("__ORACLE_BARRIER__", batch_id, "completed", metrics=outcome))
+        except Exception as exc:
+            LOGGER.exception("Oracle TP avant SL failed")
+            results.append(TrainResult("__ORACLE_BARRIER__", batch_id, "failed", skip_reason=str(exc)))
+        update_runtime_status(current_phase="batch_completed" if results[0].status == "completed" else "batch_failed",
+                              progress_current=1, progress_total=1)
+        return results
+
+    if cfg.data.oracle_path_model_only:
+        from modelFactory.oracle_path.train import train_oracle_path
+
+        update_runtime_status(current_phase="oracle_path", progress_item="__ORACLE_PATH__")
+        try:
+            outcome = train_oracle_path(cfg, engine, batch_id, _global_symbols)
+            results.append(TrainResult("__ORACLE_PATH__", batch_id, "completed", metrics=outcome))
+        except Exception as exc:
+            LOGGER.exception("Oracle parcours H20 failed")
+            results.append(TrainResult("__ORACLE_PATH__", batch_id, "failed", skip_reason=str(exc)))
+        update_runtime_status(current_phase="batch_completed" if results[0].status == "completed" else "batch_failed",
+                              progress_current=1, progress_total=1)
+        return results
 
     # Dans un bundle conditionnel, l'Oracle doit impérativement être entraîné
     # en premier : ses seules prédictions de test Walk-Forward définissent les

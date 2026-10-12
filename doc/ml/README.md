@@ -12,6 +12,15 @@
 - [Étude quotidienne : rendements réalisés et mode partiel](oracle_atr_market_regime_daily.md).
 - [Oracle → GPT/Web → risque → PAPER LONG/SHORT](oracle_llm_directional_filter.md).
 - [Registre daté des expériences](experiences_done.md) : pas une liste de branches promues.
+- [Oracle Extreme parcours H20 : entraînement séparé depuis l'IHM](oracle_path_training.md).
+- [Oracle TP avant SL : amplitude + direction LONG/SHORT, TP 20 % configurable](oracle_barrier_training.md).
+- [Oracle TP avant SL : premier audit TOP10 réel et limites du choix LONG/SHORT](oracle_barrier_top10_audit_20261012.md).
+- [Comparaison Oracle terminal / TP avant SL sur TOP10, TOP20 et TOP50](oracle_barrier_comparison_top10_20_50_20261012.md).
+- [Rejeu 2026 AVB : conversion livrée, fractions et features encore réservées](oracle_merger_replay_2026_20261012.md).
+- [2026 débloqué : grille des cinq couples TP/SL terminée, 72 cas](oracle_tp_sl_grid_20261012.md).
+- [Trailing Oracle TP20/SL10 : 35 cas vérifiés, bénéfice non confirmé, un blocage LBRDK](oracle_trailing_grid_20261012.md).
+- [Sorties des replays Oracle configurées : TP 20 % / SL 10 %, sans trailing](oracle_backtest_exit_policy.md).
+- [Oracle SHORT forcé : protocole exploratoire TP20/SL10 et limites d'emprunt](oracle_short_tp20_sl10_20261012.md).
 
 Les références de recherche ci-dessous conservent leurs verdicts et réserves.
 Une source proposée dans un ancien plan ne devient pas une collecte autorisée

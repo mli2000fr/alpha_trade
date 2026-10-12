@@ -82,7 +82,15 @@ def run_portfolio(*, frames, scores, sectors, macro, market_config, policy, vari
                   output, max_days=None, quality=None, initial_stop_pct=None,
                   reject_constrained_entries=False,
                   start_date='2025-01-01', end_date='2026-09-30',
-                  early_weakness_fraction=None, session_factory=OraclePortfolioSession):
+                  early_weakness_fraction=None, session_factory=OraclePortfolioSession,
+                  ledger_factory=None, expiry_open_sessions=None, decision_end_date=None,
+                  protection_options=None, research_allow_short_normal=False):
+    # Research-only extension. Existing replay variants retain their contracts.
+    if type(research_allow_short_normal) is not bool:
+        raise ValueError('Explicit boolean research SHORT permission required')
+    if expiry_open_sessions is not None and (isinstance(expiry_open_sessions, bool)
+            or not isinstance(expiry_open_sessions, int) or expiry_open_sessions < 1):
+        raise ValueError('Expiry open sessions must be a positive integer')
     if early_weakness_fraction is not None and early_weakness_fraction not in (.5, 1.):
         raise ValueError('Early weakness fraction must be 0.5 or 1')
     start, end = pd.Timestamp(start_date), pd.Timestamp(end_date)
@@ -98,7 +106,11 @@ def run_portfolio(*, frames, scores, sectors, macro, market_config, policy, vari
         raise ValueError('Empty replay calendar')
     cfg = frozen_backtest_config(days[0], days[-1])
     cfg.reject_constrained_replay_entries = reject_constrained_entries
-    if initial_stop_pct is None:
+    if ledger_factory is not None:
+        if initial_stop_pct is not None:
+            raise ValueError('Specify a research ledger OR initial_stop_pct')
+        ledger = ledger_factory(cfg, **frames, sector_map=sectors)
+    elif initial_stop_pct is None:
         ledger = OraclePortfolioLedger(cfg, **frames, sector_map=sectors)
     else:
         from scripts.research.us_concentrated_fixed_stop import FixedInitialStopLedger
@@ -123,6 +135,10 @@ def run_portfolio(*, frames, scores, sectors, macro, market_config, policy, vari
     queued_weakness, weakness_audits = [], []
     v = VARIANTS[variant]
     options = dict(take_profit_enabled=v['tp'], trailing_enabled=v['trailing'])
+    if protection_options is not None:
+        if set(protection_options) != set(options) or any(type(x) is not bool for x in protection_options.values()):
+            raise ValueError('Explicit boolean TP/trailing protection options required')
+        options = dict(protection_options)
 
     def record_exits(trades, day):
         for trade in trades:
@@ -137,6 +153,10 @@ def run_portfolio(*, frames, scores, sectors, macro, market_config, policy, vari
     try:
         for index, day in enumerate(days):
             ledger.begin_day(day)
+            # Optional research-only CA adapter; ordinary replay is unchanged.
+            if hasattr(ledger, 'corporate_action_open'):
+                pending, queued_steps = ledger.corporate_action_open(
+                    session, pending, queued_steps, day)
             for symbol in ledger.state.positions:
                 if not pd.notna(frames['volume'].at[day, symbol]) or frames['volume'].at[day, symbol] <= 0:
                     raise ValueError(f'Unqualified held-position volume {symbol}/{day.date()}')
@@ -145,6 +165,14 @@ def run_portfolio(*, frames, scores, sectors, macro, market_config, policy, vari
                         ledger.state.positions[symbol].entry_date, day)]
                     if observed.is_filled.fillna(0).ne(0).any() or observed.instrument_id.dropna().nunique() > 1:
                         raise ValueError(f'Unqualified held-position filled/identity path {symbol}/{day.date()}')
+            if expiry_open_sessions is not None:
+                # Time order is due at the open after exactly H holding sessions.
+                # Do not expose that session's high/low before this market exit.
+                expiry = [dict(symbol=symbol, exit_date=day,
+                    exit_price=ledger.opens.at[day, symbol], exit_reason='expiry_open')
+                    for symbol, position in ledger.state.positions.items()
+                    if ledger.days.get_loc(day)-position.entry_idx >= expiry_open_sessions]
+                record_exits(ledger.close_resolved(expiry, phase='open'), day)
             record_exits(ledger.apply_observed_protections(phase='open', **options), day)
             for step in queued_steps:
                 if step.action in {OrderAction.REDUCE, OrderAction.LIQUIDATE} and step.symbol in ledger.state.positions:
@@ -181,6 +209,10 @@ def run_portfolio(*, frames, scores, sectors, macro, market_config, policy, vari
             scheduled = []
             for symbol, position in ledger.state.positions.items():
                 age = ledger.days.get_loc(day)-position.entry_idx
+                if expiry_open_sessions is not None:
+                    if day == days[-1]:
+                        raise ValueError('Insufficient expiry tail: position still open at terminal session')
+                    continue
                 if day == days[-1] or (v['holding_sessions'] is not None and age >= v['holding_sessions']):
                     scheduled.append(dict(symbol=symbol, exit_date=day,
                         exit_price=ledger.close.at[day, symbol],
@@ -204,11 +236,34 @@ def run_portfolio(*, frames, scores, sectors, macro, market_config, policy, vari
                             return_at_decision=ret, relative_spy_at_decision=relative))
             equity = ledger.mark_close()
             if pd.Timestamp(day) not in macro.frame.index:
+                if (expiry_open_sessions is not None and decision_end_date is not None
+                        and day > pd.Timestamp(decision_end_date) and not ledger.state.positions):
+                    # No position and no further entry decision: a macro value
+                    # cannot affect this cash-only expiry tail. Never fill it.
+                    pending, queued_steps = [], []
+                    previous_equity = equity
+                    ledger.finish_day()
+                    ledger.daily[-1]['gross_notional'] = 0.
+                    regimes.append({'date': day, 'mode': None,
+                        'data_quality': 'NOT_REQUIRED_CASH_ONLY_EXPIRY_TAIL', 'queued_entries': 0})
+                    if index % 10 == 0 or day == days[-1]:
+                        pd.DataFrame(ledger.daily).to_parquet(output/'daily.partial.parquet', index=False)
+                        atomic_json(output/'progress.json', {'status': 'RUNNING', 'completed': index+1,
+                            'total': len(days), 'date': str(day.date()), 'positions': 0,
+                            'closed_legs': len(ledger.state.closed_trades)})
+                    continue
                 raise ValueError(f'Missing macro date {day.date()}')
             regime = build_snapshot(day.date(), config=market_config, equity=equity,
                 execution_context='backtest', macro_provider=macro, use_cache=False,
                 sentiment_score_provider=lambda lookback: macro.value(day, 'sentiment_score'),
                 previous_state=regime_state)
+            if research_allow_short_normal:
+                if session.strategy_side != 'sell':
+                    raise ValueError('Research SHORT permission requires an explicit SHORT session')
+                if regime.mode == 'normal' and regime.allow_new_entries:
+                    # Isolated counterfactual experiment, NOT a live macro fix.
+                    # No bypass of close-only/cash-only, sector or risk budgets.
+                    regime = replace(regime,allowed_short_entries=True)
             regime_state = regime.next_state
             transition = RegimeStateMachine().evaluate_from_snapshot(previous_mode, regime)
             previous_mode = transition.to_state
@@ -229,6 +284,8 @@ def run_portfolio(*, frames, scores, sectors, macro, market_config, policy, vari
                 breaker.update_adaptive(equity, max(history[-window:]) if window > 0 else max(history))
             breaker.update_regime_streak(regime.mode, equity)
             day_scores = groups.get(day, scores.iloc[:0]).rename(columns={'date': 'trade_date'})
+            if decision_end_date is not None and day > pd.Timestamp(decision_end_date):
+                day_scores = day_scores.iloc[:0]
             # Contemporaneous eligibility only. Never use retrospective path flags.
             valid = frames['close'].loc[day].gt(0) & frames['volume'].loc[day].gt(0)
             day_scores = day_scores.loc[day_scores.symbol.isin(valid.index[valid])]
@@ -246,7 +303,8 @@ def run_portfolio(*, frames, scores, sectors, macro, market_config, policy, vari
                 pending = []
             decisions.extend({'decision_date': day, **asdict(entry)} for entry in pending)
             regimes.append({'date': day, 'mode': regime.mode, 'data_quality': regime.data_quality,
-                'allow_long': regime.allowed_long_entries, 'risk_multiplier': session.resolved_config.risk_multiplier,
+                'allow_long': regime.allowed_long_entries, 'allow_short': regime.allowed_short_entries,
+                'risk_multiplier': session.resolved_config.risk_multiplier,
                 'breaker_scale': breaker.allocation_scale(entry_mode=regime.mode),
                 'spy_regime': spy_regimes[day.date()], 'queued_entries': len(pending)})
             previous_equity = equity
@@ -298,6 +356,13 @@ def run_portfolio(*, frames, scores, sectors, macro, market_config, policy, vari
             'explicit_entry_rejections': sum(len(a.get('explicit_entry_rejections', []))
                 for a in ledger.execution_audits),
             'sizing_unchanged': True, 'trailing_unchanged': True}
+        report.update(expiry_open_sessions=expiry_open_sessions,
+                      decision_end_date=str(decision_end_date) if decision_end_date else None,
+                      protection_options=options,
+                      research_allow_short_normal=research_allow_short_normal)
+        if hasattr(ledger, 'corporate_action_report'):
+            report.update(ledger.corporate_action_report())
+            atomic_json(output/'corporate-actions.json', ledger.corporate_action_audits)
         atomic_json(output/'report.json', report)
         atomic_json(output/'progress.json', {'status': 'COMPLETED', 'completed': len(days), 'total': len(days)})
         return report

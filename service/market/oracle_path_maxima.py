@@ -38,6 +38,7 @@ def _prepare_path(bars, sessions, symbol):
             'valid': valid.to_numpy(), 'present': raw.close.notna().to_numpy(),
             'close': raw.close.to_numpy(dtype=float), 'adjusted': adjusted.to_numpy(dtype=float),
             'factor': factor.to_numpy(dtype=float), 'high': raw.high.to_numpy(dtype=float),
+            'low': raw.low.to_numpy(dtype=float),
             'range_review': (raw.high/raw.low >= 1.5).to_numpy(),
             'lineage': {column: values[column].fillna('UNKNOWN').astype(str).str.strip().str.upper().to_numpy()
                         for column in ['instrument_id', 'data_source', 'data_adjustment']}}
@@ -49,7 +50,7 @@ def _peak_from_prepared(path, *, symbol, trade_date, horizon, as_of, future_retu
     day = pd.Timestamp(trade_date).normalize()
     sessions = path['sessions']
     position = path['positions'].get(day, -1)
-    result = {'max_price': None, 'max_date': None, 'reason': None,
+    result = {'max_price': None, 'max_date': None, 'min_price': None, 'min_date': None, 'reason': None,
               'expected_sessions': horizon, 'observed_sessions': 0}
 
     def unavailable(reason):
@@ -85,10 +86,13 @@ def _peak_from_prepared(path, *, symbol, trade_date, horizon, as_of, future_retu
             terminal, float(archived), rtol=1e-7, atol=1e-8):
         return unavailable('ARCHIVED_RETURN_VS_CURRENT_BARS_MISMATCH')
     highs = path['high'][future]*path['factor'][future]/path['factor'][position]
+    lows = path['low'][future]*path['factor'][future]/path['factor'][position]
     best = int(np.argmax(highs))  # Earliest exchange day if identical peaks.
+    worst = int(np.argmin(lows))
     peak_day = sessions[position+1+best]
     return {**result, 'max_price': float(highs[best]),
             'max_date': str(peak_day.date()),
+            'min_price': float(lows[worst]), 'min_date': str(sessions[position+1+worst].date()),
             'anchor_close': float(path['close'][position]),
             'anchor_adjustment_factor': float(path['factor'][position]),
             'exit_date': str(end.date()), 'available_date': str(available.date()),

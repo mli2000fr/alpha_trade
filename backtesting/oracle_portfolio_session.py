@@ -32,7 +32,12 @@ class OraclePortfolioSession:
     """One persistent risk session per portfolio, never one per trade date."""
 
     def __init__(self, config: RiskConfig, *, sector_map: dict[str, str],
-                 market_regimes_config=None, account_long_only: bool):
+                 market_regimes_config=None, account_long_only: bool, strategy_side: str = 'buy'):
+        if strategy_side not in {'buy', 'sell'}:
+            raise ValueError('Explicit Oracle strategy side must be buy or sell')
+        if strategy_side == 'sell' and (account_long_only or not config.short_selling_enabled):
+            raise ValueError('SHORT strategy requires a short-enabled account/risk policy')
+        self.strategy_side = strategy_side
         self.config = config
         self.sectors = dict(sector_map)
         self.market_config = market_regimes_config
@@ -81,7 +86,11 @@ class OraclePortfolioSession:
         if not scores.empty and not pd.to_datetime(scores.trade_date).dt.date.eq(day).all():
             raise ValueError('Candidate date mismatch')
         candidates = [SelectionScore(str(r.symbol), self.sectors.get(str(r.symbol), 'Unknown'),
-            float(r.proba_extreme), score_source='oracle_amplitude', snapshot_date=day)
+            float(r.proba_extreme), score_source='oracle_amplitude', snapshot_date=day,
+            side=self.strategy_side,
+            selector_signal_mode='oracle_pure_short' if self.strategy_side == 'sell' else None,
+            selection_explanation=('Explicit research SHORT strategy; ranked by frozen SHORT head'
+                                   if self.strategy_side == 'sell' else None))
             for r in scores.itertuples(index=False)]
         cutoff = pd.Timestamp(day)
         def history(frame):
@@ -119,7 +128,7 @@ class OraclePortfolioSession:
             cfg = apply_vol_target_to_risk_config(cfg, self.vol_target)
         if circuit_breaker is not None:
             circuit_breaker.is_active()
-            scale = circuit_breaker.allocation_scale(entry_mode=regime.mode, side='buy')
+            scale = circuit_breaker.allocation_scale(entry_mode=regime.mode, side=self.strategy_side)
             cfg = cfg.with_overrides(risk_multiplier=cfg.risk_multiplier * scale)
         # Trackers may mutate during build. A failed build cannot be replayed
         # into this same in-memory session and counted a second time.
@@ -133,7 +142,7 @@ class OraclePortfolioSession:
         builder.set_operational_snapshot(snapshot)
         entries = builder.build(candidates, prices, trade_date=day,
             return_matrix=_build_return_matrix(closes, day, symbols, cfg.correlation_lookback_days),
-            selection_policy='oracle_pure_long')
+            selection_policy='oracle_pure_short' if self.strategy_side == 'sell' else 'oracle_pure_long')
         self.last_decision, self.previous_equity = day, equity
         self.resolved_config = cfg
         self.failed = False
@@ -162,9 +171,9 @@ class OraclePortfolioSession:
         if not entry and (realized_pnl is None or not math.isfinite(realized_pnl)):
             raise ValueError('Closed-position net PnL required')
         if entry:
-            self.trades.record(symbol, day, side='buy')
+            self.trades.record(symbol, day, side=self.strategy_side)
         else:
-            self.losses.record(symbol, realized_pnl, day, side='buy')
+            self.losses.record(symbol, realized_pnl, day, side=self.strategy_side)
         self.events.add(event_id)
         self._event_payloads[event_id] = payload
         self.last_event = day

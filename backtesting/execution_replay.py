@@ -132,6 +132,7 @@ def _build_synthetic_fill_attempts(
     execution_day: pd.Timestamp,
     target_qty: float,
     symbol: str = "",
+    whole_shares: bool = False,
 ) -> list[_SyntheticFillAttempt]:
     base_dt = execution_day.date()
     submitted_at = datetime.combine(base_dt, time(14, 30), tzinfo=timezone.utc)
@@ -144,6 +145,8 @@ def _build_synthetic_fill_attempts(
     final_retry_submitted_at = datetime.combine(base_dt, time(14, 45), tzinfo=timezone.utc)
     retry_fill_at = datetime.combine(base_dt, time(14, 46), tzinfo=timezone.utc)
     normalized_target_qty = max(float(target_qty), 0.0)
+    if whole_shares and not normalized_target_qty.is_integer():
+        raise ValueError('Synthetic SHORT fills require a whole-share target')
     # resubmit_chain_id déterministe : basé sur symbol + date + qty pour garantir la reproductibilité
     _chain_seed = f"{symbol}_{base_dt}_{normalized_target_qty:.4f}"
     resubmit_chain_id = f"retry_chain_{hashlib.md5(_chain_seed.encode(), usedforsecurity=False).hexdigest()[:10]}"
@@ -165,7 +168,8 @@ def _build_synthetic_fill_attempts(
             )
         ]
 
-    first_fill_qty = normalize_share_quantity(normalized_target_qty * 0.6)
+    first_fill_qty = (float(int(normalized_target_qty * 0.6)) if whole_shares else
+                      normalize_share_quantity(normalized_target_qty * 0.6))
     if normalized_target_qty >= 1.0 and first_fill_qty < 1.0:
         first_fill_qty = 1.0
     if first_fill_qty >= normalized_target_qty:
@@ -455,6 +459,7 @@ def simulate_phase3_execution_replay(
             execution_day=execution_day,
             target_qty=float(target.target_shares),
             symbol=target.symbol,
+            whole_shares=target.side == 'sell',
         )
         intent_fills = _execution_fills_from_attempts(
             intent=intent,

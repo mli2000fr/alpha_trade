@@ -4,6 +4,37 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
+import math
+
+
+@dataclass(frozen=True, slots=True)
+class OracleBarrierConfig:
+    """Independent, frozen first-touch research contract (fractions, not percents)."""
+
+    take_profit_pct: float = 0.20
+    stop_loss_pct: float = 0.07
+    max_sessions: int = 20
+
+    def __post_init__(self) -> None:
+        for name in ("take_profit_pct", "stop_loss_pct"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 < value < 1:
+                raise ValueError(f"oracle_barrier.{name} doit être une fraction dans ]0,1[.")
+        if isinstance(self.max_sessions, bool) or not isinstance(self.max_sessions, int) or not 1 <= self.max_sessions <= 60:
+            raise ValueError("oracle_barrier.max_sessions doit être un entier entre 1 et 60.")
+
+
+def load_oracle_barrier_config(path=None) -> OracleBarrierConfig:
+    from common.config_loader import load_config
+    values = (load_config(path) or {}).get("oracle_barrier", {})
+    if values is None:
+        values = {}
+    if not isinstance(values, dict):
+        raise ValueError("oracle_barrier doit être un objet YAML.")
+    unknown = set(values) - {"take_profit_pct", "stop_loss_pct", "max_sessions"}
+    if unknown:
+        raise ValueError(f"Clés oracle_barrier inconnues : {sorted(unknown)}")
+    return OracleBarrierConfig(**values)
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +84,8 @@ class DataConfig:
     #  strict (anti-leakage T2) après la séquence globale.
     enable_oracle_model: bool = False  # entraîne AUSSI l'Oracle Extreme (O0) en fin de séquence
     oracle_model_only: bool = False    # entraîne UNIQUEMENT l'Oracle Extreme — skip global, per-symbol, per-sector
+    oracle_path_model_only: bool = False  # cible parcours H20, artefacts distincts, recherche uniquement
+    oracle_barrier_model_only: bool = False  # TP avant SL, deux cibles LONG/SHORT indépendantes
     sector_use_symbol_feature: bool = True  # D1 (2026-08-15) : per-sector, False = ablation de la feature catégorielle 'symbol'
     enable_cross_sectional_features: bool = False  # percentiles + secteur (momentum, alpha intra-secteur)
     include_directional_features: bool = False  # 2026-08-23 : liste restreinte 'direction' (sous-ensemble des features cross-sectionnelles/sectorielles)
@@ -522,6 +555,7 @@ class TrainingConfig:
     oracle_universe_mode: str = "static_bars"
     # Horizon propre à l'Oracle Extreme. H20 reste le contrat par défaut.
     oracle_horizon: int = 20
+    oracle_barrier: OracleBarrierConfig = field(default_factory=OracleBarrierConfig)
     long_feature_profile: str = "long.json"
     short_feature_profile: str = "short.json"
     model_role: str = "direction_legacy"  # direction_legacy | direction_long | direction_short
@@ -544,6 +578,29 @@ class TrainingConfig:
             raise ValueError("oracle_universe_mode invalide.")
         if self.oracle_horizon < 1:
             raise ValueError("oracle_horizon doit être >= 1.")
+        if self.data.oracle_path_model_only:
+            if self.data.enable_oracle_model or self.data.oracle_model_only or self.directional_profiles_enabled or self.data.oracle_barrier_model_only:
+                raise ValueError("Oracle parcours et Oracle terminal/bundle sont des modes séparés.")
+            if self.oracle_horizon != 20 or self.oracle_universe_mode != "static_bars":
+                raise ValueError("Oracle parcours requiert H20 et un univers statique explicite.")
+            if not self.walk_forward.enabled:
+                raise ValueError("Oracle parcours requiert --walkforward (validation hors échantillon).")
+            if self.walk_forward.step_size < self.walk_forward.test_size:
+                raise ValueError("Oracle parcours requiert wf step >= wf test (OOF sans doublons).")
+            if self.data.training_start_date is None or self.data.training_end_date is None:
+                raise ValueError("Oracle parcours requiert les dates de début et fin d'entraînement.")
+        if self.data.oracle_barrier_model_only:
+            if (self.data.enable_oracle_model or self.data.oracle_model_only or self.data.oracle_path_model_only
+                    or self.data.global_model_only or self.directional_profiles_enabled):
+                raise ValueError("Oracle TP avant SL : modes séparés, sans Oracle terminal/parcours/global/bundle.")
+            if self.oracle_universe_mode != "static_bars":
+                raise ValueError("Oracle TP avant SL requiert un univers statique explicite.")
+            if self.data.benchmark_symbol != "SPY":
+                raise ValueError("Oracle TP avant SL : le générateur partagé utilise actuellement SPY.")
+            if not self.walk_forward.enabled or self.walk_forward.step_size < self.walk_forward.test_size:
+                raise ValueError("Oracle TP avant SL requiert walk-forward et step >= test.")
+            if self.data.training_start_date is None or self.data.training_end_date is None:
+                raise ValueError("Oracle TP avant SL requiert les dates de début et fin d'entraînement.")
         if self.oracle_universe_mode == "pit_dynamic_bars" and not self.data.oracle_model_only:
             raise ValueError("L'univers Oracle PIT dynamique requiert oracle_model_only=True.")
         if self.oracle_universe_mode == "pit_dynamic_bars" and self.directional_profiles_enabled:

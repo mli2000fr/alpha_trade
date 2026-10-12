@@ -7,7 +7,7 @@ import logging
 import subprocess
 import sys
 import threading
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -36,6 +36,8 @@ from modelFactory.config import (
     TargetOptimizationConfig,
     TrainingConfig,
     WalkForwardConfig,
+    load_oracle_barrier_config,
+    OracleBarrierConfig,
 )
 from modelFactory.reproducibility import apply_reproducibility
 from modelFactory.runtime_status import increment_runtime_counter, reset_runtime_status, snapshot_runtime_status, update_runtime_status
@@ -774,6 +776,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Entraîne AUSSI le modèle Oracle Extreme (ablation O0, sans global_rank_20) en fin de séquence globale. Le rank B25 étant redondant avec les features PIT (audit 2026-08-20), on entraîne O0 sans global_rank_20.")
     p.add_argument("--oracle-model-only", action="store_true", default=False,
                    help="Entraîne UNIQUEMENT le modèle Oracle Extreme (O0). Skip le Global Model, le per-symbol et le per-sector. Active implicitement --enable-oracle-model.")
+    p.add_argument("--oracle-path-model-only", action="store_true", default=False,
+                   help="Oracle parcours H20 séparé : TOP20%% du maximum absolu des excursions J+1..J+20. Recherche uniquement, aucun remplacement de l'Oracle terminal.")
+    p.add_argument("--oracle-barrier-model-only", action="store_true", default=False,
+                   help="Modèle séparé TP avant SL, LONG/SHORT ; entrée J+1 open. Paramètres oracle_barrier dans config.yaml ; recherche uniquement.")
+    p.add_argument("--oracle-barrier-tp-pct", type=float, default=None, help="Fraction TP (0.20 = 20%%). Défaut config.yaml.")
+    p.add_argument("--oracle-barrier-sl-pct", type=float, default=None, help="Fraction SL (0.07 = 7%%). Défaut config.yaml.")
+    p.add_argument("--oracle-barrier-max-sessions", type=int, default=None, help="Séances de détention, entrée incluse. Défaut config.yaml.")
     p.add_argument("--enable-global-stacking", action="store_true", default=False,
                    help="Utilise la prédiction du Global Model comme feature (Approche 2 — Stacking)")
     p.add_argument("--enable-global-challenger", action="store_true", default=False,
@@ -887,6 +896,17 @@ def main(args: list[str] | None = None) -> None:
     )
 
     # P0-6 : --global-model-only active implicitement le Global Model
+    if opts.oracle_path_model_only and (opts.mode != "train" or opts.market_code != "US_EQ"):
+        parser.error("--oracle-path-model-only est réservé à train / US_EQ")
+    if opts.oracle_barrier_model_only and (opts.mode != "train" or opts.market_code != "US_EQ"):
+        parser.error("--oracle-barrier-model-only est réservé à train / US_EQ")
+    barrier_overrides = {name: value for name, value in {
+        "take_profit_pct": opts.oracle_barrier_tp_pct, "stop_loss_pct": opts.oracle_barrier_sl_pct,
+        "max_sessions": opts.oracle_barrier_max_sessions}.items() if value is not None}
+    if barrier_overrides and not opts.oracle_barrier_model_only:
+        parser.error("Les paramètres oracle-barrier requièrent --oracle-barrier-model-only")
+    barrier_config = (replace(load_oracle_barrier_config(), **barrier_overrides)
+                      if opts.oracle_barrier_model_only else OracleBarrierConfig())
     if opts.global_model_only:
         opts.enable_global_model = True
 
@@ -934,6 +954,8 @@ def main(args: list[str] | None = None) -> None:
             exclude_per_symbol_per_sector=opts.exclude_per_symbol_per_sector,
             enable_oracle_model=opts.enable_oracle_model,
             oracle_model_only=opts.oracle_model_only,
+            oracle_path_model_only=opts.oracle_path_model_only,
+            oracle_barrier_model_only=opts.oracle_barrier_model_only,
             sector_use_symbol_feature=opts.sector_symbol_feature,
             enable_cross_sectional_features=opts.enable_cross_sectional,
             include_directional_features=getattr(opts, "include_directional_features", False),
@@ -1067,6 +1089,7 @@ def main(args: list[str] | None = None) -> None:
         standalone_oracle_feature_profile=opts.standalone_oracle_feature_profile,
         oracle_universe_mode=opts.oracle_universe_mode,
         oracle_horizon=int(opts.oracle_horizon or 20),
+        oracle_barrier=barrier_config,
         long_feature_profile=opts.long_feature_profile,
         short_feature_profile=opts.short_feature_profile,
     )
@@ -1310,6 +1333,13 @@ def main(args: list[str] | None = None) -> None:
             or _resolve_predict_batch_id(Path(opts.artifacts_dir), historical=historical_predict_enabled)
         )
         _batch_mode = detect_batch_training_mode(engine, _batch_id) if _batch_id else "per_symbol"
+        if _batch_id:
+            from modelFactory.oracle_path.train import is_path_batch
+            if is_path_batch(Path(opts.artifacts_dir), _batch_id):
+                raise ValueError("Oracle parcours H20 est un modèle de recherche distinct, non raccordé au predict/live terminal.")
+            from modelFactory.oracle_barrier.train import is_barrier_batch
+            if is_barrier_batch(Path(opts.artifacts_dir), _batch_id):
+                raise ValueError("Oracle TP avant SL est un modèle de recherche distinct, non raccordé au predict/live terminal.")
         _per_sector = _batch_mode == "per_sector"
         # Le batch contient-il des modèles per-symbol/per-sector ?
         # Si NON (batch global-only / rank-driven), inutile de tenter le prédit

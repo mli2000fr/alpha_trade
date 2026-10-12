@@ -14,6 +14,21 @@ intraday_backfill:
   alpaca_feed: sip  # iex | sip ; jamais de remplacement silencieux entre flux.
   account_id: default  # Clés du compte principal via le registre Alpaca existant.
 
+oracle_barrier:
+  # Modèle séparé « TP avant SL », uniquement entraînement/recherche. Aucun changement LIVE.
+  # Fractions : 0.20 = 20 %. Entrée J+1 open ; 20 séances incluant l'entrée ; expiration J+21 open.
+  # Paramètres archivés avec le modèle : changement = nouvelle campagne d'entraînement.
+  take_profit_pct: 0.20
+  stop_loss_pct: 0.10
+  max_sessions: 20
+
+oracle_backtest:
+  # Sorties des replays Oracle configurés ; fractions : 0.20 = 20 %.
+  # Aucun effet sur les labels d'entraînement, l'exécution PAPER/LIVE ou les positions ouvertes.
+  # Depuis le fill J+1 : TP/SL fixes, sans trailing ; expiration à l'open de la 21e séance.
+  take_profit_pct: 0.20
+  stop_loss_pct: 0.10
+
 us_pipeline:
   # Sélection fonctionnelle du batch us_pipeline ; horaires/univers dans batch.yaml.
   # Entiers uniques 1..14, ordre d'exécution toujours numérique, arrêt au premier échec.
@@ -34,7 +49,7 @@ llm_directional_filter:
   deepseek_model: deepseek-flash
   deepseek_api_key_env: DEEPSEEK_API_KEY
   default_symbol_source: universe-file:univers_filtred_tradable.txt
-  default_oracle_batch_id: model-factory-20261003082853-e98332
+  default_oracle_batch_id: model-factory-20261012183840-6d6569
   oracle_top_n: 10  # Nombre de premiers scores Oracle à analyser (pas de tri par rendement futur).
   max_selected: 3   # Plafond, jamais un quota obligatoire ; 0 candidat reste possible.
   min_oracle_coverage_ratio: 0.90  # Bloque un classement issu d’une prédiction partielle.
@@ -572,7 +587,7 @@ batch_diagnostics:
   # Batch de diagnostics à utiliser pour le live (étape 11 Risk).
   # Laisser vide (ou absent) pour utiliser automatiquement le dernier batch.
   # Renseigner un batch_id explicite permet de figer les filtres (ex: batch promu).
-  live_batch_id: "model-factory-20260811223551-ef2cd0"
+  live_batch_id: "model-factory-20261012183840-6d6569"
 
   # Horizon de la cascade ML à utiliser en LIVE (colonne global_rank_{H} du
   # filtre TOP/BOTTOM). null/vide = best_horizon du batch (metadata, calculé à
@@ -585,7 +600,7 @@ batch_diagnostics:
   # Laisser vide pour utiliser automatiquement le dernier batch (⚠️ look-ahead
   # si le dernier batch est postérieur à la période backtestée).
   # Renseigner un batch_id explicite pour un backtest PIT-safe.
-  backtest_batch_id: "model-factory-20260811223551-ef2cd0"
+  backtest_batch_id: "model-factory-20261012183840-6d6569"
 
   # Horizon de la cascade ML à utiliser en BACKTEST (même logique que
   # live_horizon). null/vide = best_horizon du batch ; explicite = force H.
