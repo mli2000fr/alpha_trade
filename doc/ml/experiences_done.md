@@ -1,5 +1,141 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-13 — Trois challengers TP20/SL10 terminés : aucun avantage robuste à promouvoir
+
+GO explicite pour `model-factory-20261012183840-6d6569`, dans l'ordre :
+filtre d'entrée avec TP20/SL10 inchangés ; sortie quotidienne avec stop dur ;
+choix TP/SL prédéfini et sizing adapté. **Pas de réduction progressive
+d'exposition**, pas de cumul des challengers ni modification live.
+Fit OOF 2018–2021, validation 2022, trois années exploratoires 2024–2026
+partiel ; TOP10 primaire, TOP20/TOP50 secondaires. 36 nouveaux replays
+terminés, zéro échec en version finale :27 cas des trois expériences et9
+contrôles de sizing. 59 tests ciblés, audit `THREE_CHALLENGERS_VERIFIED`.
+
+| Année | Baseline TOP10 | Sortie quotidienne | TP/SL personnalisés |
+| --- | ---: | ---: | ---: |
+| 2024 | −2,26 % | −2,01 % | +14,22 % |
+| 2025 | −12,01 % | +4,96 % | −12,23 % |
+| 2026 partiel | +28,71 % | +1,83 % | +5,67 % |
+
+Le filtre au seuil figé0,50 n'ouvre aucun trade ; AUC de validation0,50021,
+scores de test0,4121–0,4286. Aucun gain démontré par cette abstention totale.
+Sortie quotidienne avec SL10/TP20 durs : DD TOP10 réduit sur les trois années,
+mais fort sacrifice de gains en2026 et pertes nouvelles sur TOP20/50 en2024.
+TP/SL personnalisés : avantage2024 TOP10,2025 non corrigée, gains2026 sacrifiés.
+Les profils choisis sont presque toujours TP10/SL7 ; pas de preuve que la
+personnalisation apporte plus qu'un tel profil fixe. Aucun test supplémentaire
+de profils/seuils lancé après lecture des résultats.
+
+Le contrôle TP20/SL10 avec sizing adapté reproduit exactement les neuf
+baselines, trades compris. Inférences des cinq heads, profils exécutés,
+chronologie, candidats, disponibilité des labels, cash et sourcehashes vérifiés.
+V1 bloquée par une queue de features vide ; V2 corrige seulement l'alignement
+d'index du benchmark. Poids d'entrée/sortie et labels OOF inchangés, canaris
+et causalité par préfixe vérifiés. Versions échouées conservées.
+Pas d'entraînement de l'Oracle original, SQL, broker, batch ou configuration
+live modifiés. Aucun challenger promu ou empilé ; tests déjà observés,
+réserves survivants/secteurs/prix/vintages inchangées.
+[Protocole et résultats détaillés](oracle_challengers_20261013.md).
+Artefacts : `artifacts/research/us_oracle_challengers/20261013-v2`.
+
+## 2026-10-13 — Garde progressive Oracle TOP50 : NO-GO intégration
+
+GO utilisateur « fait ton choix » : une seule règle figée, pas de modèle
+supplémentaire. TP20/SL10 `6d6569`, TOP50 LONG, mêmes scores/prix/coûts/lifecycle
+que la baseline. À J, rendement cinq séances d'un panier composé des TOP50
+connus chaque veille ; baisse absolue et relative SPY confirmée deux/quatre
+séances → risque de nouvelles entrées plafonné à 50/25 %, reprise confirmée.
+Régime macro/B4, stops, TP et échéance vingt séances inchangés. Cinq séances
+initiales de warmup à 25 %, historique continu, capital annuel 4 000 USD.
+
+| Année | Rendement baseline → garde | DD baseline → garde |
+| --- | ---: | ---: |
+| 2024 | +16,44 % → +5,02 % | −8,46 % → −9,16 % |
+| 2025 | −6,05 % → −3,00 % | −16,26 % → −18,25 % |
+| 2026 partiel | +21,43 % → +7,38 % | −9,10 % → −7,92 % |
+
+La baisse de perte annuelle 2025 ne valide pas la protection : signaux de
+février −482,42 USD contre −424,27 USD, DD aggravé, réduction B4 retardée du
+3 au 27 mars par la trajectoire différente du portefeuille. L'exposition
+effectivement atteinte peut augmenter malgré des tailles plafonnées, car
+les entrées/slots et protections de portefeuille sont dépendants du chemin.
+Forte perte de rendement en 2024/2026 : règle non intégrée ni réoptimisée.
+
+Trois nouveaux replays terminés, 46 tests ciblés passent. Audit des trois
+années, des candidats, de la causalité par préfixe, protections, cash et
+empreintes : `THREE_YEARS_AND_CAUSAL_TAPE_VERIFIED`. Années déjà observées,
+réserves survivants/secteurs actuels/prix et vintages non certifiés inchangées.
+Aucun training, SQL, broker, configuration live ou batch modifié ; aucun
+challenger ML suspendu lancé. [Protocole et résultats](oracle_exposure_guard_20261013.md).
+Artefacts : `artifacts/research/us_oracle_exposure_guard/20261013-v1`.
+
+## 2026-10-12 — Trois nouveaux modèles Oracle, TOP50 : neuf cas comparables
+
+Identifiants utilisateur : `834576` **parcours H20**, pas Oracle terminal ;
+`a769bb` TP20/SL7 ; `6d6569` TP20/SL10. Même univers de 1 790 titres, mêmes
+173 features et fold 2023-01-05, poids figés. Aucun nouveau training, SQL,
+batch, ordre broker ou challenger d'entrée/sortie/sizing lancé.
+
+Comparaison des classements, **LONG uniquement, TP20/SL10 commun aux trois**,
+trailing OFF, vingt séances, 4 000 USD réinitialisés par cas, contraintes et
+coûts natifs, mêmes inputs réparés et lifecycle. Les noms SL7/SL10 décrivent
+les labels d'entraînement, pas des protections différentes dans cette expérience.
+2026 : décisions jusqu'au 3 septembre puis dénouements ; pas une année complète.
+
+| Année | Parcours H20 | Training TP20/SL7 | Training TP20/SL10 |
+| ---: | ---: | ---: | ---: |
+| 2024 | +6,00 % | +2,03 % | +16,44 % |
+| 2025 | −7,84 % | −13,98 % | −6,05 % |
+| 2026 partiel | +8,64 % | +17,36 % | +21,43 % |
+
+TP20/SL10 meilleur rendement des trois cohortes, mais 2025 reste perdante.
+TP20/SL7 a le DD minimal 2026 (−5,79 % contre −9,10 % pour TP20/SL10), pas
+sur les deux années précédentes. Neuf cas achevés et audités : mêmes candidats
+avant inférence/prix/macro/lifecycle, protections et cash contrôlés ; les trois
+références TP20/SL10 reproduisent exactement la baseline précédente.
+Réserves communes survivants/secteurs actuels, vintages macro non certifiées,
+prix ajustés fournisseur et corporate actions simulées ; aucune promotion LIVE.
+
+Artefacts : `artifacts/research/us_three_oracle_comparison/20261012-top50-v1`,
+rapports par année et global avec gains/pertes, compteurs, DD, tapes par cas,
+`completion-audit.json`. [Protocole et résultats complets](comparaison_trois_oracles_top50_20261012.md).
+
+## 2026-10-12 — Nouveau batch TP20/SL10 : baseline 2024–2026, neuf cas vérifiés
+
+Modèle utilisateur `model-factory-20261012183840-6d6569`, deux têtes entraînées
+TP20/SL10 ; dernier fold archivé utilisable 2023-01-05, pas un refit implicite
+de tout 2023. Baseline **LONG uniquement**, TOP10/20/50, 4 000 USD par année,
+TP20/SL10 au fill J+1, trailing OFF, sortie à l'ouverture de la 21e séance.
+Décisions 2026 arrêtées au 3 septembre ; cohortes dénouées ensuite.
+
+V1–V5 conservent les échecs AVB/TOELY. Features AVB et volumes BAND/GPRE/ATEX
+raccordés aux prix locaux, rangs recalculés sans fit : scores 2024/2025 inchangés.
+V6 qualifie TOELY → TELWY via les corporate actions Alpaca et les prix EODHD
+archivés du successeur ; aucun titre retiré, aucune imputation de prix manquant.
+Neuf cas terminés, contrats SL/TP/expiry et cash vérifiés, portfolios clos,
+six références 2024/2025 reproduites exactement sur trades et compteurs.
+
+Rendements TOP10 / TOP20 / TOP50 :
+
+- 2024 : **−2,26 % / +16,44 % / +16,44 %**.
+- 2025 : **−12,01 % / −7,03 % / −6,05 %**.
+- 2026 partiel : **+28,71 % / +21,43 % / +21,43 %**.
+
+TOP10 2026 : capital final 5 148,37 USD, net +1 148,37 USD, 140 positions,
+51,43 % gagnantes, DD maximal −8,66 %. TOP20/50 identiques en 2024 et 2026
+sur les trades exécutés, pas seulement les chiffres arrondis.
+Recherche réservée : survivants/secteurs actuels, données ajustées actuelles,
+macro/selector vintage non certifiée, migration de protections simulée et
+exécutabilité historique Alpaca des ADR OTC non démontrée. La perte 2025
+empêche de déclarer un avantage stable ou une promotion LIVE.
+
+**Arrêt demandé par l'utilisateur après baseline : aucun challenger lancé.**
+Les pistes filtre d'entrée, sortie quotidienne et TP/SL personnalisés restent
+des protocoles préparatoires, nécessitant nouveau GO et qualification lifecycle.
+Résultats : `artifacts/research/us_oracle_tp20_sl10_new/20261012-v6`, rapports
+annuels, `baseline-report.md/json`, `completion-audit.json` et tapes par cas.
+[Protocole, chiffres et limites](oracle_tp20_sl10_new_baseline_and_challengers_20261012.md).
+
 ## 2026-10-12 — Oracle SHORT forcé TP20/SL10 : six cas, NO-GO promotion
 
 Demande utilisateur : forcer SHORT uniquement sur la tête SHORT figée, TOP10,

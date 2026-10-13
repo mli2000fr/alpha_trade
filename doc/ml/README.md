@@ -21,6 +21,10 @@
 - [Trailing Oracle TP20/SL10 : 35 cas vérifiés, bénéfice non confirmé, un blocage LBRDK](oracle_trailing_grid_20261012.md).
 - [Sorties des replays Oracle configurées : TP 20 % / SL 10 %, sans trailing](oracle_backtest_exit_policy.md).
 - [Oracle SHORT forcé : protocole exploratoire TP20/SL10 et limites d'emprunt](oracle_short_tp20_sl10_20261012.md).
+- [Nouveau modèle TP20/SL10 : baseline 2024–2026 terminée](oracle_tp20_sl10_new_baseline_and_challengers_20261012.md).
+- [Trois challengers terminés : entrée, sortie quotidienne, TP/SL personnalisés — avantage non robuste](oracle_challengers_20261013.md).
+- [Comparaison des trois nouveaux modèles Oracle : TOP50, exécution commune TP20/SL10](comparaison_trois_oracles_top50_20261012.md).
+- [Garde progressive Oracle TOP50 : trois années auditées, NO-GO intégration](oracle_exposure_guard_20261013.md).
 
 Les références de recherche ci-dessous conservent leurs verdicts et réserves.
 Une source proposée dans un ancien plan ne devient pas une collecte autorisée
