@@ -1,5 +1,11 @@
 # GPT sur les news du TOP10 Oracle — préparation du T1 2025
 
+> Historique de préparation conservé. Le GO payant distinct a ensuite été donné
+> le 14 octobre, initialement plafonné à 0,50 USD puis porté par l'utilisateur
+> à 1 USD pendant la collecte. Le processus déjà lancé conserve sa limite plus
+> stricte de 0,50 USD, sans refaire les appels payés. Les fichiers de préparation
+> scellés ne sont pas réécrits par l'analyse ni par le replay.
+
 Demande : élargir le pilote de septembre aux **60 séances US du 1er janvier au
 31 mars 2025**, dix titres par séance. GO de préparation obtenu le 14 octobre.
 
@@ -192,6 +198,25 @@ Références du run : `protocol.json`, `scores-ready.json`, `prepare.json`,
 et sans troncature ; 1 833 associations de métadonnées lues avant sélection des
 fenêtres précises des candidats. Les captures de corps sont conservées en lots.
 
-**Prochaine décision utilisateur : autoriser ou non les 213 appels GPT avec un
-plafond de tokens de 0,50 USD.** Le solde restant n'est pas supposé suffisant et
-aucun lancement automatique n'est prévu.
+Cette étape attendait un GO payant distinct, obtenu ensuite : les 213 requêtes
+préparées sont traitées une seule fois. Le solde restant n'est pas supposé et
+aucun nouvel appel ne remplace automatiquement une réponse mal qualifiée.
+
+### Complément de budget et qualification après le GO
+
+La borne initiale de 0,4992202 USD utilisait le tarif d'entrée ordinaire ; elle
+**n'incluait pas la majoration des écritures de cache**. Ce n'est donc pas une
+borne garantie tous cas compris. Le compteur de continuation inclut cette
+majoration (0,125 contre 0,10 USD/M tokens), ignore prudemment la remise des
+lectures de cache et vérifie avant chaque nouvel appel : dépense cumulée
+conservatrice + coût maximal du prochain appel <= 0,50 USD. Les taxes, le change
+et les autres tâches du compte restent exclus. Aucun budget accru n'est requis
+pour terminer ce lot si cette garde continue de passer.
+
+Le premier contrôle de citations a arrêté le traitement après 12 réponses sur
+une citation PLTR absente du texte. La réponse brute reste inchangée et n'est
+pas repayée. La continuation distingue `UNKNOWN_INVALID_RESPONSE` d'`ABSTAIN` :
+une réponse invalide ne peut déclencher de veto. S'il en reste, la comparaison
+financière porte explicitement sur **les seuls avis valides**, pas sur un filtre
+entièrement qualifié. Les prompts, extraits, dates, seuils et règles de trading
+restent inchangés. Les réponses sont scellées avant lecture des résultats futurs.

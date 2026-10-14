@@ -41,8 +41,10 @@
 - [TOP5 Oracle parcours : une entrée par épisode de signal — six portefeuilles, veto non favorable](oracle_path_signal_episodes_resultats_20261014.md).
 - [News factuelles nouvelles : audit des textes terminé, test historique bloqué par la disponibilité des versions](news_materiality_feasibility_20261014.md).
 - [Archive prospective des textes et associations : collecte existante raccordée, disponibilité confirmée après commit](../signals/news_version_archive.md).
+- [Cache SQL des analyses GPT de news : 221 réponses importées, réutilisation lot/article et reprise sans nouvel appel](../signals/news_analysis_cache.md).
 - [Pilote GPT sur les cinq premières séances de septembre 2026 : huit appels, aucun veto, aucun gain additionnel démontré](news_gpt_septembre_pilote_20261014.md).
-- [TOP10 + GPT, janvier–mars 2025 : préparation terminée, 213 appels chiffrés, aucun appel payant lancé](news_gpt_top10_t1_2025_preparation_20261014.md).
+- [TOP10 + GPT, janvier–mars 2025 : préparation, reproduction et limites PIT](news_gpt_top10_t1_2025_preparation_20261014.md).
+- [TOP10 + GPT, T1 2025 terminé : −12,25 % contre −6,20 %, 213 appels / 0,089 USD, avantage rétrospectif non validé](news_gpt_top10_t1_2025_resultats_20261014.md).
 - Oracle parcours : défaut d'entraînement depuis le 13 octobre ; raccordement
   ML Predict/backtest/live avec lineage, sans direction apprise ni promotion automatique.
 - [Oracle TP avant SL : amplitude + direction LONG/SHORT, TP 20 % configurable](oracle_barrier_training.md).

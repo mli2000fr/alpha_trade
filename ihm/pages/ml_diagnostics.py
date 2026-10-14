@@ -39,6 +39,17 @@ from ihm.services.directional_prediction_diagnostics import (
 from modelFactory.report import generate_batch_report
 from modelFactory.db_registry import audit_batch_delete, audit_batch_delete_attempt, delete_batch_rows
 from modelFactory.oracle.artifact_contract import resolve_oracle_artifact_horizon
+from ihm.services.oracle_path_diagnostics import (
+    artifact_signature as _path_artifact_signature,
+    is_path_model,
+    load_path_artifacts,
+    metadata_dict,
+    read_sql_periods as _path_sql_periods,
+)
+from ihm.components.oracle_path_diagnostics import (
+    render_model as _render_path_model,
+    render_periods as _render_path_periods,
+)
 
 # ── Chargement config (fallback silencieux si absent) ──
 _MIN_RISING_HORIZONS_DEFAULT = 4
@@ -458,6 +469,25 @@ def _cached_global_rank_all(batch_id: str, horizon: int) -> pd.DataFrame:
 def _cached_oracle_oos(batch_id: str) -> tuple[str | None, pd.DataFrame]:
     """Prédictions Oracle Extreme du batch (grosse requête, 10 min)."""
     return _load_latest_oracle_oos(batch_id)
+
+
+@st.cache_data(ttl=120, show_spinner=False, max_entries=8)
+def _cached_path_artifacts(batch_id: str, root: str, signature: tuple) -> dict[str, Any]:
+    """Invalidate on changed folds/weights, not merely on the batch identifier."""
+    return load_path_artifacts(batch_id, root)
+
+
+def _path_view(batch_id: str, batch: pd.Series) -> dict[str, Any]:
+    root = resolve_batch_artifacts_root(batch_id, batch.get("metadata_json"))
+    return _cached_path_artifacts(batch_id, str(root), _path_artifact_signature(batch_id, root))
+
+
+def _is_path_model(batch_id: str, batch: pd.Series) -> bool:
+    try:
+        root = resolve_batch_artifacts_root(batch_id, batch.get("metadata_json"))
+    except (ValueError, OSError):
+        return False
+    return is_path_model(batch_id, batch.get("metadata_json"), root)
 
 
 def _run_strategy_backtest(
@@ -2030,16 +2060,15 @@ def _render_delete_batch_button(selected_batch: str, artifacts_dir: Path) -> Non
 
 def _batch_trains_oracle(batch: pd.Series) -> bool:
     """Détecte si le batch a entraîné la couche Oracle Extreme (O0)."""
-    try:
-        _meta = _json.loads(str(batch.get("metadata_json") or "")) if batch.get("metadata_json") else {}
-    except Exception:
-        _meta = {}
+    _meta = metadata_dict(batch.get("metadata_json"))
     if not isinstance(_meta, dict):
         return False
     if _meta.get("oracle") or _meta.get("oracle_extreme"):
         return True
     _co = _meta.get("cli_options") or {}
-    if isinstance(_co, dict) and bool(_co.get("enable_oracle_model")):
+    if isinstance(_co, dict) and any(_co.get(key) is True for key in (
+        "enable_oracle_model", "oracle_model_only", "oracle_path_model_only"
+    )):
         return True
     return False
 
@@ -2067,10 +2096,12 @@ def _oracle_periods(batch_id: str) -> list[dict[str, Any]]:
         # mettre dans le cache partagé de 5 minutes : la prédiction Oracle écrit
         # désormais par lots et cette vue sert précisément à suivre sa progression.
         _tbl = safe_query(ORACLE_TABLE_PERIODS_QUERY, {"batch_id": batch_id})
-        if not _tbl.empty:
+        if not _tbl.empty and int(_tbl.iloc[0].get("nb_dates") or 0) > 0:
             _r = _tbl.iloc[0]
             _mn = pd.Timestamp(_r["min_date"])
             _mx = pd.Timestamp(_r["max_date"])
+            if pd.isna(_mn) or pd.isna(_mx):
+                return out
             out.append({"Type": "🔥 Oracle extreme",
                         "Période": f"{_mn.date()} → {_mx.date()}",
                         "Jours": int(_r["nb_dates"] or 0),
@@ -2819,7 +2850,7 @@ def _render_oracle_quality(batch_id: str, row: pd.Series) -> None:
         st.caption("ℹ️ Colonne cible (`oracle_extreme10`) absente — AUC/precision/calibration non calculées.")
 
 
-def _render_prediction_periods(batch_id: str, batch: pd.Series) -> None:
+def _render_prediction_periods(batch_id: str, batch: pd.Series, *, path_view=None, path_sql=None) -> None:
     """Bouton « Périodes de prédictions » au-dessus du Modèle global.
 
     Affiche, pour le batch sélectionné, les périodes où il existe des
@@ -2833,6 +2864,12 @@ def _render_prediction_periods(batch_id: str, batch: pd.Series) -> None:
         "🔍 Périodes de prédictions du batch", key=_key,
         help="Affiche les périodes et la couverture des prédictions selon le contrat réel du batch.",
     ):
+        return
+
+    if _is_path_model(batch_id, batch):
+        view = path_view if path_view is not None else _path_view(batch_id, batch)
+        sql = path_sql if path_sql is not None else _path_sql_periods(get_engine(), batch_id, view)
+        _render_path_periods(view, sql)
         return
 
     def _fmt(d) -> str:
@@ -3114,6 +3151,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
     except (OSError, ValueError):
         _batch_contract = {"is_directional_bundle": False, "kind": "legacy"}
     _is_directional_bundle = bool(_batch_contract.get("is_directional_bundle"))
+    _is_path = _is_path_model(batch_id, row)
 
     # ── Bouton téléchargement ──
     safe_bid = batch_id.replace("/", "_").replace("\\", "_")[:64]
@@ -3123,6 +3161,12 @@ def _render_batch_detail(batch: pd.Series) -> None:
     # Nettoie les caractères problématiques pour un nom de fichier
     _dl_name = _dl_name.replace("/", "_").replace("\\", "_").replace(":", "_").replace("*", "_").replace("?", "_").replace("\"", "_").replace("<", "_").replace(">", "_").replace("|", "_")[:120]
     engine = get_engine()
+    _path_diagnostic = None
+    _path_sql = None
+    if _is_path:
+        with st.spinner("Vérification du contrat Oracle parcours et des périodes OOF…"):
+            _path_diagnostic = _path_view(batch_id, row)
+        _path_sql = _path_sql_periods(engine, batch_id, _path_diagnostic)
     if engine is not None:
         col_dl, col_del = st.columns([3, 1])
         with col_dl:
@@ -3132,7 +3176,17 @@ def _render_batch_detail(batch: pd.Series) -> None:
                 # quand l'utilisateur clique (« Générer »), puis on propose le
                 # téléchargement. Évite ~30 s de blocage à CHAQUE rerun (sélection
                 # de batch, clic sur un bouton, confirmation de suppression…).
-                if _is_directional_bundle:
+                if _is_path:
+                    if _path_diagnostic and _path_diagnostic.get("ready"):
+                        from modelFactory.oracle_path.train import format_report
+                        st.download_button(
+                            "📥 Rapport Oracle parcours (.md)",
+                            data=format_report(_path_diagnostic["report"]),
+                            file_name=f"{_dl_name}.md", mime="text/markdown", key=f"dl_path_{safe_bid}",
+                        )
+                    else:
+                        st.info("Rapport parcours indisponible tant que ses artefacts ne sont pas qualifiés.")
+                elif _is_directional_bundle:
                     st.info(
                         "Le rapport historique fusionne les rôles et est donc désactivé pour ce bundle. "
                         "Utilisez les vues LONG/SHORT de cette page et le fichier d'audit des candidats."
@@ -3203,8 +3257,12 @@ def _render_batch_detail(batch: pd.Series) -> None:
         st.metric("Terminé le", str(row.get("finished_at", "—")))
 
     with col2:
+        if _is_path:
+            st.metric("Modèle", "Oracle parcours H20")
+            st.metric("Cible", "Amplitude maximale — TOP20 %")
+            st.metric("Direction apprise", "Aucune")
         # IC Rank du Global Ranking Model
-        ic_val = row.get("ic_rank")
+        ic_val = None if _is_path else row.get("ic_rank")
         if ic_val is not None and str(ic_val) not in ("None", "nan", ""):
             ic_display = f"{float(ic_val):.4f}"
             ic_help = "IC Rank (Spearman) du Global Ranking Model — >0.03 = utile, >0.05 = bon"
@@ -3217,7 +3275,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
                       help="IC Information Ratio = IC Mean / IC Std. >0.5 = bon, >1.0 = exceptionnel. "
                            "Mesure la stabilité du signal dans le temps.")
         # 🏆 Champion Global Model (par horizon)
-        _meta_raw = row.get("metadata_json")
+        _meta_raw = None if _is_path else row.get("metadata_json")
         if _meta_raw and str(_meta_raw) not in ("None", "nan", ""):
             try:
                 import json as _json2
@@ -3237,7 +3295,7 @@ def _render_batch_detail(batch: pd.Series) -> None:
             except Exception:
                 pass
         # Stacking Global Rank
-        _stacking_val = row.get("stacking_enabled")
+        _stacking_val = None if _is_path else row.get("stacking_enabled")
         if _stacking_val is not None:
             _stacking_bool = bool(int(_stacking_val))
             _stacking_label = "📥 Oui" if _stacking_bool else "📥 Non"
@@ -3249,8 +3307,11 @@ def _render_batch_detail(batch: pd.Series) -> None:
         st.metric("Date fin training", str(row.get("training_end_date", "—")))
         st.metric("Date univers", str(row.get("universe_date", "—")))
         st.metric("Nb symboles demandés", str(row.get("requested_symbol_count", "—")))
-        st.metric("Complétés / Skippés / Échecs",
-                  f"{row.get('symbols_completed', 0)} / {row.get('symbols_skipped', 0)} / {row.get('symbols_failed', 0)}")
+        if _is_path:
+            st.metric("Folds terminés", str((_path_diagnostic or {}).get("report", {}).get("n_folds", "—")))
+        else:
+            st.metric("Complétés / Skippés / Échecs",
+                      f"{row.get('symbols_completed', 0)} / {row.get('symbols_skipped', 0)} / {row.get('symbols_failed', 0)}")
         failure = row.get("failure_reason")
         if failure and str(failure) != "None" and str(failure) != "nan":
             st.metric("Raison échec", str(failure)[:100] + "…" if len(str(failure)) > 100 else str(failure))
@@ -3261,6 +3322,11 @@ def _render_batch_detail(batch: pd.Series) -> None:
             st.code(str(cmd), language="powershell")
 
     st.markdown("")
+
+    if _is_path:
+        _render_prediction_periods(batch_id, row, path_view=_path_diagnostic, path_sql=_path_sql)
+        _render_path_model(_path_diagnostic, _path_sql)
+        return  # Never build terminal labels or render directional/global metrics for this target.
 
     # ── P0-8 (2026-08-07) : bannière batch en cours ──
     _batch_status = str(row.get("status", "")).strip().lower()
@@ -4219,6 +4285,10 @@ def render() -> None:
     # Formater les colonnes pour l'affichage
     display_df = batches_df.copy()
     if "batch_id" in display_df.columns:
+        display_df["type_oracle"] = [
+            "Parcours H20" if _is_path_model(str(item["batch_id"]), item) else "Autre / historique"
+            for _, item in batches_df.iterrows()
+        ]
         display_df["oracle_horizon"] = [
             (f"H{h}" if h is not None else "—")
             for h in (
@@ -4253,7 +4323,7 @@ def render() -> None:
             (c[:60] + "…") if c != "—" and len(c) > 60 else c for c in cleaned_comments
         ]
         # Réordonne les colonnes : batch_id, group, status, puis le reste.
-        _ordered = ["batch_id", "oracle_horizon", "group", "status"]
+        _ordered = ["batch_id", "type_oracle", "oracle_horizon", "group", "status"]
         display_df = display_df[
             [c for c in _ordered if c in display_df.columns]
             + [c for c in display_df.columns if c not in _ordered]

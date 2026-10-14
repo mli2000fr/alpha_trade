@@ -5,6 +5,18 @@ Depuis le 13 octobre, le filtre peut aussi recevoir les scores d'un
 folds et de la lineage. Ces scores prédisent l'amplitude, pas LONG/SHORT.
 Le filtre directionnel reste indépendant et PAPER uniquement.
 
+## 15 octobre 2026 — cache des news stockées, distinct du Web quotidien
+
+Les analyses de recherche sur les articles déjà en base peuvent être conservées
+et réutilisées dans les nouvelles tables `llm_news_analysis_*`. Les 221 réponses
+des pilotes T1 2025/septembre 2026 ont été importées sans nouvel appel. Ce cache
+préserve la distinction avis sur un article / avis sur un lot à une date.
+
+**Il ne remplace pas la recherche Web prospective de cette page ni ses tables
+`llm_directional_runs` / `llm_directional_assessments`.** Une réponse historique
+ne constitue pas une vérification de la fraîcheur des informations du jour.
+[Tables, anti-doublon, commandes de réutilisation et limites](../signals/news_analysis_cache.md).
+
 ## Choix du fournisseur — mise à jour du 11 octobre 2026
 
 À la demande de l'utilisateur, `enabled: false` laisse désormais la case du

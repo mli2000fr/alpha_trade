@@ -1,8 +1,68 @@
 # Registre des expériences ML réalisées
 
-## 2026-10-14 — TOP10 + GPT T1 2025 : préparation terminée, analyse payante non lancée
+## 2026-10-15 — cache SQL des avis GPT : 221 réponses conservées, aucun nouvel appel
 
-**`PREPARED_AWAITING_PAID_ANALYSIS_GO`**, pas une expérience financière terminée.
+Demande explicite distincte après les deux pilotes. Quatre nouvelles tables
+`llm_news_analysis_*` dans `alpha_trade`, schéma canonique/migration0105 et
+installation ciblée sans upgrade global. 221 réponses importées,203valides et
+18invalides ;912associations article/lot et2snapshots complets de recherche.
+Seconde importation :221réutilisations,0doublon et0appelAPI.
+
+Relecture autonome SQL, cléOpenAI absente du processus et HTTP bloqué :les600avis
+duT1 et25dupilote septembre reproduisent décisions,veto etrangs des originaux.
+Les réponses restent des lots titre/date,pas des avis unitaires inventés.
+Service unitaire séparé avec clé versionnée(article/texte/symbole/modèle/prompt),
+réservation atomique,RAW avant validation,absence de retry sur issue inconnue.
+Ancien article présent dans un lot :pas de paiement unitaire implicite.
+
+Ni nouvel entraînement/PnL,ordre ou collecte,batch/config/pipelineWeb modifié.
+Disponibilité SQL à l'import réel,pas antidatée ;pas de promotion ou gain
+directionnel démontré par le cache. Les constats financiers ci-dessous restent
+inchangés.92tests isolés passent,dont27du cache.
+[Tables,preuves et réutilisation](../signals/news_analysis_cache.md).
+
+## 2026-10-14 — TOP10 + GPT T1 2025 terminé : moins de pertes, signal partiel non PIT
+
+GO payant obtenu après la préparation ci-dessous. Plafond initial 0,50 USD porté
+à 1 USD par l'utilisateur ; processus maintenu à sa limite plus stricte de 0,50.
+**213 réponses payées uniques, 0 retry/Web, 0,0887963 USD**, écritures de cache
+incluses. Oracle parcours CatBoost annuel2025 `model-factory-20261014113226-102eca`,
+fold causal2024-12-05 inchangé. TOP10 sur60séances :600couples,35titres.
+
+26BULLISH/26BEARISH/143ABSTAIN ;18réponses invalides (15citations,3JSON) gardées
+UNKNOWN sans veto ni nouvel appel,387sans texte qualifié sans appel. Premier
+arrêtPLTR après12réponses, puis continuation stricte avant toute lecture du PnL.
+Réponses scellées avant les résultats futurs. Correction du budget conservateur
+pour inclure la majoration de cache omise dans l'estimation initiale.
+
+Deux portefeuilles natifs continus, LONG,4 000USD,levier<=2,TP20/SL5,sans trailing,
+entrée prochainopen,expiration après20séances,risque/frais/financement identiques,
+aucun renforcement ni remplacementTOP11. **Oracle seul3 509,82USD,−12,25%,DD−24,34%,
+41positions7gagnantes/34perdantes ; vetoGPT valide3 751,81USD,−6,20%,DD−16,99%,
+42positions8gagnantes/34perdantes.** Écart+242,00USD avantAPI,+241,91USD après.
+Avantage en février(−23,02%→−16,39%),pas en janvier/mars. Dernières entrées20février,
+sorties7mars ; queue prévue jusqu'au30avril sans position restante.
+
+26veto mais seulement3achats directement présents dans la baseline :TSLA21janvier,
+AOSL6février,GPRE7février, tous perdants(−162,49USD au total). Ce total ne remplace
+pas l'écart final :sizing/capital/réentrées changent. Trois cas ne prouvent pas
+un signal stable. Diagnostic individuel BULLISH :3TPavantSL/21trajectoires
+qualifiées,contre4/20BEARISH ; pas de validation d'un classifieur directionnel.
+
+**COMPLETED_PARTIAL_SIGNAL_EXPLORATORY_NOT_PIT**,pas de promotion. Textes importés
+enmai2026,LLM susceptible de connaître la suite,références actuelles,vintage macro
+réservé,univers statique,aucun holdout indépendant.65tests isolés et audit horsligne
+réussis ;réconciliation exacte,TP/SL vérifiés,aucune API pendant l'évaluation.
+Aucun SQL écrit,entraînement,ordre ou changement de modèle/batch/config.
+
+Run : `artifacts/research/us_news_gpt_q1_2025/20261014-v2` ;résultat final
+`q1-results.json`,audit`paid-completion-audit.json`. Le`report.json` de préparation
+reste inchangé. [Protocole, mois, coûts, erreurs et attribution](news_gpt_top10_t1_2025_resultats_20261014.md).
+
+## 2026-10-14 — TOP10 + GPT T1 2025 : état de préparation avant le GO payant
+
+**`PREPARED_AWAITING_PAID_ANALYSIS_GO` à cette étape historique**, avant le run
+payant et financier terminé dans l'entrée ci-dessus.
 GO borné à préparer et chiffrer avant consommation de crédit. CatBoost annuel
 2025 `model-factory-20261014113226-102eca`, fold causal `2024-12-05`, poids inchangés.
 107 399 couples observables scorés à nouveau sans entraînement : TOP10 de 60 séances,
