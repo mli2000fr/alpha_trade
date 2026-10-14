@@ -1,5 +1,11 @@
 # État actuel de l'implémentation — 10 octobre 2026
 
+> Ajout du 13 octobre 2026 : Oracle Extreme parcours H20 est le défaut du
+> formulaire d'entraînement US et possède un raccordement ML Predict/backtest/live.
+> Score d'amplitude seul, lineage des folds vérifiée ; politique LONG-only
+> explicite ou abstention, pas une direction prédite. Aucun compte activé
+> automatiquement. [Contrat à jour](ml/oracle_path_training.md).
+
 <!-- doc-status:start -->
 > Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](ETAT_ACTUEL_IMPLEMENTATION.md).
 <!-- doc-status:end -->

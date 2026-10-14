@@ -3398,10 +3398,12 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 key='pipeline_llm_symbol_source',
                 help='Utilisé aussi par la prédiction du workflow. Le filtre ne reclasse pas un autre univers.')
             _llm_champions = Path('artifacts/models/oracle/champions')
+            from modelFactory.oracle_path.predict import discover_path_batches
             _llm_batches = sorted({
                 _llm_config.default_oracle_batch_id,
                 *(p.name for p in _llm_champions.iterdir() if p.is_dir())
             }) if _llm_champions.is_dir() else [_llm_config.default_oracle_batch_id]
+            _llm_batches = sorted(set(_llm_batches) | set(discover_path_batches()))
             llm_oracle_batch_id = st.selectbox(
                 f'Batch Oracle → filtre {_llm_config.provider_label} (même modèle)', options=_llm_batches,
                 index=_llm_batches.index(_llm_config.default_oracle_batch_id),
@@ -3417,7 +3419,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 help='Pour lancer 11/12 séparément, recopier le run_id affiché après étape 10. Ne pas utiliser auto.') or None
         ml_oracle_barrier_model_only = st.checkbox(
             "🎯 Oracle TP avant SL — amplitude + direction LONG/SHORT, recherche uniquement",
-            value=_session_state_bool("pipeline_ml_oracle_barrier_model_only", True),
+            value=_session_state_bool("pipeline_ml_oracle_barrier_model_only", False),
             key="pipeline_ml_oracle_barrier_model_only",
             help="Deux modèles LONG/SHORT : TP atteint avant SL, sinon échec/expiration. Barrières configurées dans config.yaml/oracle_barrier. Ne remplace aucun Oracle existant.",
         )
@@ -3432,11 +3434,11 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     "Dates de début ET fin à renseigner dans 9. ML Train. Paramètres dans config.yaml/oracle_barrier. "
                     "Artefacts oracle_barrier séparés ; aucune promotion PAPER/LIVE.")
         ml_oracle_path_model_only = st.checkbox(
-            "🔮 Oracle Extreme parcours H20 — modèle séparé, recherche uniquement",
-            value=_session_state_bool("pipeline_ml_oracle_path_model_only", False),
+            "🔮 Oracle Extreme parcours H20 — modèle séparé",
+            value=_session_state_bool("pipeline_ml_oracle_path_model_only", True),
             key="pipeline_ml_oracle_path_model_only",
             disabled=ml_oracle_barrier_model_only,
-            help="Entraîne uniquement le nouveau classifieur d'amplitude maximale pendant J+1 à J+20. Ne remplace ni l'Oracle terminal ni le modèle PAPER/LIVE.",
+            help="Un seul classifieur : amplitude maximale, hausse ou baisse, pendant J+1 à J+20. Utilisable avec ML Predict/backtest/live ; ne prédit pas la direction.",
         )
         ml_oracle_research_only = ml_oracle_path_model_only or ml_oracle_barrier_model_only
         if ml_oracle_research_only:
@@ -3444,11 +3446,16 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             st.session_state["pipeline_ml_enable_oracle_model"] = False
             st.session_state["pipeline_ml_oracle_model_only"] = False
             st.session_state["pipeline_ml_walkforward"] = True
+            for _unused_global_key in ("pipeline_ml_enable_global_model", "pipeline_ml_global_champion",
+                                       "pipeline_ml_global_model_only", "pipeline_ml_enable_global_stacking"):
+                st.session_state[_unused_global_key] = False
         if ml_oracle_path_model_only:
             st.info("Oracle parcours : H20 fixe, LightGBM CPU, validation walk-forward obligatoire. "
                     "Choisir les dates de début ET fin dans 9. ML Train. "
                     "Les options Global/per-symbol et les cibles directionnelles ne sont pas utilisées. "
-                    "Modèles, labels et scores OOF séparés dans oracle_path ; aucune promotion en production.")
+                    "Modèles et labels séparés dans oracle_path. Scores raccordés à ML Predict/backtest/live, "
+                    "mais sans direction : LONG-only est une politique explicite, ou utiliser un filtre directionnel. "
+                    "Aucun compte ni ordre n'est activé par cette case.")
         ml_directional_profiles_enabled = st.checkbox(
             "🧭 Bundle Oracle + deux modèles Per-Symbol LONG/SHORT",
             value=_session_state_bool("pipeline_ml_directional_profiles_enabled", False),
@@ -3554,17 +3561,22 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 disabled=ml_directional_profiles_enabled,
                 help="Ajoute `--include-short-score` pour intégrer le score baissier composite (trend+RSI+SMA) comme feature ML indépendante.",
             )
+            if ml_oracle_path_model_only:
+                st.session_state["pipeline_ml_enable_lightgbm"] = True
             ml_enable_lightgbm = st.checkbox(
-                "Entraîner aussi LightGBM (challenger)",
+                "LightGBM — candidat de base Oracle parcours" if ml_oracle_path_model_only else "Entraîner aussi LightGBM (challenger)",
                 value=_session_state_bool("pipeline_ml_enable_lightgbm", DEFAULT_ML_ENABLE_LIGHTGBM),
                 key="pipeline_ml_enable_lightgbm",
-                help="Ajoute `--compare-lightgbm`. LightGBM excelle sur données tabulaires peu profondes.",
+                disabled=ml_oracle_path_model_only,
+                help="LightGBM est toujours entraîné dans le mode parcours. CatBoost est le challenger optionnel." if ml_oracle_path_model_only else "Ajoute `--compare-lightgbm`.",
             )
             ml_enable_catboost = st.checkbox(
-                "Entraîner aussi CatBoost (challenger)",
+                "Comparer CatBoost à LightGBM — Oracle parcours" if ml_oracle_path_model_only else "Entraîner aussi CatBoost (challenger)",
                 value=_session_state_bool("pipeline_ml_enable_catboost", DEFAULT_ML_ENABLE_CATBOOST),
                 key="pipeline_ml_enable_catboost",
-                help="Ajoute `--enable-catboost`. CatBoost gère bien les features catégorielles et le faible volume de données.",
+                help=("Même cible, mêmes features et folds. Champion choisi sur l'AUC de validation uniquement ; "
+                      "comparaison hors échantillon archivée. Sans cette case : LightGBM seul. Aucun LSTM dans ce mode."
+                      if ml_oracle_path_model_only else "Ajoute `--enable-catboost` pour entraîner le challenger CatBoost."),
             )
         with ml_opt_col2:
             ml_include_macro_vix = st.checkbox(
@@ -3911,6 +3923,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 "Entraîner aussi un modèle global multi-symboles",
                 value=_session_state_bool("pipeline_ml_enable_global_model", DEFAULT_ML_ENABLE_GLOBAL_MODEL),
                 key="pipeline_ml_enable_global_model",
+                disabled=ml_oracle_research_only,
                 help="Ajoute `--enable-global-model`. Entraîne un modèle tabulaire (CatBoost/LightGBM) sur tous les symboles en walk-forward pour produire `global_pred_long` PIT-safe.",
             )
             # Auto-décochage : si le modèle global est décoché, le champion Global
@@ -5102,6 +5115,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             llm_filter_run_id=llm_filter_run_id,
             llm_specific_protections=llm_specific_protections,
             ml_predict_batch_id=llm_oracle_batch_id if llm_filter_enabled else None,
+            ml_live_predict_batch_id=(str(st.session_state.get("pipeline_ml_live_predict_batch_id_ml_predict", "")) or None)
+                if not llm_filter_enabled else None,
             trade_date=trade_date,
             capital_preset_key=capital_preset_key,
             force_trade_date_to_latest_snapshot=bool(force_trade_date_to_latest_snapshot),

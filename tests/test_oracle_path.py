@@ -172,7 +172,7 @@ def test_isolation_fit_resume_and_real_lightgbm(tmp_path, monkeypatch):
     result = trainer.train_oracle_path(cfg, object(), "fixture-path", symbols)
     assert result["status"] == "completed"
     assert result["n_folds"] == 2
-    assert result["serving_ready"] is False
+    assert result["serving_ready"] is True
     root = cfg.artifacts_dir / "oracle_path"
     assert (root / "folds" / result["folds"][0]["fold_start"] / "path_model.txt").is_file()
     assert not (cfg.artifacts_dir / "oracle").exists()

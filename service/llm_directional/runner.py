@@ -24,6 +24,12 @@ def load_inputs(engine, batch_id, trade_date, symbol_source, config, capital_pre
     horizon = resolve_oracle_artifact_horizon(batch_id, 'artifacts/models')
     if horizon != config.horizon:
         raise ValueError(f'Horizon Oracle {horizon} incompatible avec filtre H{config.horizon}')
+    from modelFactory.oracle_path.train import is_path_batch
+    path_oracle = is_path_batch('artifacts/models', batch_id)
+    if path_oracle:
+        from modelFactory.oracle.predictions_store import load_oracle_predictions
+        # Do not bypass path lineage just because Web analysis reads raw SQL.
+        load_oracle_predictions(engine, batch_id=batch_id, start_date=str(trade_date), end_date=str(trade_date))
     from modelFactory.db_registry import load_symbols_for_source
     symbols = load_symbols_for_source(engine, symbol_source, trade_date=trade_date,
                                      capital_preset_key=capital_preset_key)
@@ -57,6 +63,8 @@ def load_inputs(engine, batch_id, trade_date, symbol_source, config, capital_pre
                            'issuer_reference': dict(identity), 'observed_at_utc': str(utcnow()),
                            'trade_date': str(trade_date), 'horizon_sessions': config.horizon,
                            'prices_through_decision_date': [dict(bar) for bar in bars]})
+            if path_oracle:
+                result[-1].update(oracle_target='path_amplitude_J1_J20', oracle_directional=False)
     if not result:
         raise ValueError('Oracle absent pour cette date/batch/univers; aucun fallback')
     return result

@@ -3679,6 +3679,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
                         batch_id=_oracle_batch_id,
                         start_date=str(start),
                         end_date=str(end),
+                        artifacts_dir=Path(args.artifacts_dir),
                     )
                     if _oos_df.empty:
                         _safe_print(
@@ -3702,6 +3703,17 @@ def _run_backtest(args: argparse.Namespace) -> None:
                         )
                     )
                     raise SystemExit(2)
+                from modelFactory.oracle_path.train import is_path_batch
+                if _oracle_batch_id and is_path_batch(args.artifacts_dir, _oracle_batch_id):
+                    from common.config_loader import load_config as _path_config
+                    if ((_path_config().get("oracle_path") or {}).get("direction_policy", "abstain")) != "long_only":
+                        raise SystemExit("Backtest parcours LONG-only : politique oracle_path.direction_policy=long_only requise.")
+                    if _rank_mode_eff != "extreme_gate":
+                        raise SystemExit("Oracle parcours seul : utiliser cascade-rank-mode extreme_gate (amplitude, politique LONG-only).")
+                    if bool(getattr(args, "extreme_gate_shorts", False)):
+                        raise SystemExit("Oracle parcours : aucune direction SHORT implicite; utiliser un filtre directionnel qualifié.")
+                    args.extreme_gate_per_symbol = "bypass"
+                    _safe_print("   Oracle parcours H20 : score d'amplitude seul, politique LONG-only explicite (pas de probabilité directionnelle).\n")
                 # ── Calibration optionnelle de proba_extreme (oracle.calibration) ──
                 _cal_flag = str(getattr(args, "oracle_calibration", "none") or "none").strip().lower()
                 if (
@@ -3724,6 +3736,9 @@ def _run_backtest(args: argparse.Namespace) -> None:
                     )
                     _cal_flag = "none"
                 if _cal_flag not in ("none", "identity"):
+                    from modelFactory.oracle_path.train import is_path_batch
+                    if _oracle_batch_id and is_path_batch(args.artifacts_dir, _oracle_batch_id):
+                        raise SystemExit("Oracle parcours : aucun calibrateur terminal H20 applicable au score d'amplitude.")
                     try:
                         from modelFactory.oracle.combine import apply_oracle_calibration
                         _oos_df = apply_oracle_calibration(_oos_df, method=_cal_flag)

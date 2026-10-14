@@ -1,5 +1,10 @@
 # Filtre directionnel Oracle → GPT / DeepSeek + Web → risque → PAPER
 
+Depuis le 13 octobre, le filtre peut aussi recevoir les scores d'un
+[Oracle parcours H20 raccordé](oracle_path_training.md), après contrôle des
+folds et de la lineage. Ces scores prédisent l'amplitude, pas LONG/SHORT.
+Le filtre directionnel reste indépendant et PAPER uniquement.
+
 ## Choix du fournisseur — mise à jour du 11 octobre 2026
 
 À la demande de l'utilisateur, `enabled: false` laisse désormais la case du

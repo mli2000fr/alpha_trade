@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 from collections.abc import Callable
 from pathlib import Path
@@ -30,6 +31,7 @@ ML_RESET_TABLES: list[str] = [
     "model_predictions",
     "global_rank_history",
     "oracle_extreme_predictions",
+    "oracle_path_prediction_lineage",
     "global_oracle_labels",
     # Métadonnées / métriques des runs
     "model_governance",
@@ -114,6 +116,11 @@ def reset_ml_data(
     Retourne ``{"tables_cleared": [...], "dirs_deleted": [...], "errors": [...],
     "log": [...], "blocked_dirs": [...], "blocked_runs": [...]}``.
     """
+    # A mocked SQL engine does NOT make filesystem/process deletion harmless.
+    # Fail before any side effect if a pytest test forgot its disposable root.
+    if (not dry_run and os.environ.get("PYTEST_CURRENT_TEST")
+            and PROJECT_ROOT.resolve() == Path(__file__).resolve().parents[2]):
+        raise RuntimeError("Reset ML pendant un test : PROJECT_ROOT doit être isolé dans un répertoire temporaire.")
     engine = get_sqlalchemy_engine()
     tables_cleared: list[str] = []
     dirs_deleted: list[str] = []
@@ -133,7 +140,7 @@ def reset_ml_data(
 
     # 1. Arrêter les runs actifs (backtests IHM + pipelines IHM) pour pouvoir
     #    supprimer leurs répertoires sans conflit de fichiers ouverts.
-    if stop_active:
+    if stop_active and not dry_run:
         _report("🔎 Recherche des runs IHM actifs (backtests + pipelines)…")
 
         # 1a. Backtests IHM

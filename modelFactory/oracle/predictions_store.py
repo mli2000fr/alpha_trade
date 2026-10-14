@@ -117,6 +117,7 @@ def load_oracle_predictions(
     start_date: str | None = None,
     end_date: str | None = None,
     require_batch: bool = True,
+    artifacts_dir: str = "artifacts/models",
 ) -> pd.DataFrame:
     """Lit les prédictions OOS Oracle Extreme de la table, filtrées STRICTEMENT par batch.
 
@@ -158,5 +159,30 @@ def load_oracle_predictions(
 
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"])
+        from modelFactory.oracle_path.train import is_path_batch
+        if is_path_batch(artifacts_dir, batch_id):
+            from modelFactory.oracle_path.predict import load_contract
+            from modelFactory.oracle_path.train import digest
+            root, _, _, folds = load_contract(artifacts_dir, batch_id)
+            lineage_sql = sql.replace(
+                "SELECT prediction_date AS `date`, symbol, proba_extreme, future_return, "
+                "       oracle_extreme10, fold_start ",
+                "SELECT prediction_date AS `date`, symbol, fold_start, model_available_date, "
+                "target_name, target_horizon, model_sha256, feature_profile_sha256 ",
+            ).replace(ORACLE_PREDICTIONS_TABLE, "alpha_trade.oracle_path_prediction_lineage")
+            lineage = pd.read_sql(text(lineage_sql), engine, params=params)
+            lineage["date"] = pd.to_datetime(lineage["date"])
+            merged = df.merge(lineage, on=["date", "symbol"], how="left", validate="one_to_one",
+                suffixes=("", "_lineage"))
+            if (len(merged) != len(df) or merged.model_available_date.isna().any()
+                    or not merged.target_name.eq("oracle_path_extreme20").all()
+                    or not merged.target_horizon.eq(20).all()
+                    or not pd.to_datetime(merged.model_available_date).lt(merged.date).all()
+                    or not merged.feature_profile_sha256.eq(digest(root/"feature_profile.json")).all()
+                    or not pd.to_datetime(merged.fold_start).eq(pd.to_datetime(merged.fold_start_lineage)).all()
+                    or not merged.model_sha256.eq(merged.fold_start.astype(str).str[:10].map(
+                        {k: v["model_sha256"] for k, v in folds.items()})).all()
+                    or merged[["future_return", "oracle_extreme10"]].notna().any().any()):
+                raise ValueError("Lineage Oracle parcours manquante, incohérente ou non causale")
     LOGGER.info("load_oracle_predictions batch=%s rows=%d", batch_id, len(df))
     return df

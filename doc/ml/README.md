@@ -1,5 +1,13 @@
 # Références ML
 
+> 13 octobre 2026 : les modèles US et leurs données ML dérivées ont été supprimés
+> à la demande de l'utilisateur. Trois nouvelles campagnes TP20/SL10 fournies ensuite
+> ont terminé leur évaluation annuelle hors ligne : neuf cas audités,
+> résultats contrastés ; aucune promotion live.
+> Les sources et les marchés CN/FR sont conservés.
+> [Périmètre et contrôles de la remise à zéro](remise_a_zero_us_20261013.md).
+> [Protocole des trois modèles annuels 2024–2026](oracle_modeles_annuels_20261013.md).
+
 <!-- doc-status:start -->
 > Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
 <!-- doc-status:end -->
@@ -13,6 +21,17 @@
 - [Oracle → GPT/Web → risque → PAPER LONG/SHORT](oracle_llm_directional_filter.md).
 - [Registre daté des expériences](experiences_done.md) : pas une liste de branches promues.
 - [Oracle Extreme parcours H20 : entraînement séparé depuis l'IHM](oracle_path_training.md).
+- [Oracle parcours : comparaison LightGBM/CatBoost, sélection sur validation, pas de LSTM initial](oracle_path_comparaison_20261013.md).
+- [Oracle parcours : confirmation 2024–2026 avec modèles figés et couverture TOP-K](oracle_path_confirmation_2024_2026.md).
+- [Oracle parcours : challenger LSTM global, séquences causales et copies tabulaires appariées](oracle_path_lstm_comparaison_20261013.md).
+- [Oracle parcours LightGBM : backtest économique TOP10/20/50, TP20/SL10 sans trailing](oracle_path_backtest_economique_20261013.md).
+- [Oracle parcours LightGBM : audit des pertes, trajectoires, coûts, régimes et réentrées](oracle_path_audit_pertes_20261013.md).
+- [Oracle parcours : qualification univariée d'un filtre d'entrée TP20 avant SL10](oracle_path_filtre_entree_separabilite_20261014.md).
+- [Audit des anciens signaux directionnels faibles et de leur réutilisation](signaux_directionnels_faibles_audit_20261014.md).
+- [News très positives J/J−1/J−2 : hausse pendant H0…H20, pas seulement à H20](news_positives_parcours_h20_20261014.md).
+- [News après entrée : confirmation et sorties au prochain open, TP20/SL10 maintenus](news_post_entree_sortie_20261014.md).
+- Oracle parcours : défaut d'entraînement depuis le 13 octobre ; raccordement
+  ML Predict/backtest/live avec lineage, sans direction apprise ni promotion automatique.
 - [Oracle TP avant SL : amplitude + direction LONG/SHORT, TP 20 % configurable](oracle_barrier_training.md).
 - [Oracle TP avant SL : premier audit TOP10 réel et limites du choix LONG/SHORT](oracle_barrier_top10_audit_20261012.md).
 - [Comparaison Oracle terminal / TP avant SL sur TOP10, TOP20 et TOP50](oracle_barrier_comparison_top10_20_50_20261012.md).

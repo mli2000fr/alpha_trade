@@ -1199,6 +1199,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--correlation-lookback-days", type=int, default=60)
     p.add_argument("--correlation-min-overlap", type=int, default=40)
     p.add_argument("--enable-kelly-sizing", action="store_true", default=False)
+    p.add_argument("--oracle-artifacts-dir", default="artifacts/models",
+        help="Racine des artefacts du batch Oracle explicitement sélectionné")
     # P2 (2026-06-27) — exclure les candidats sans modèle ML entraîné
     p.add_argument("--filter-no-ml", action="store_true", default=False, help="Exclure les sélections sans modèle ML entraîné (absence dans model_predictions).")
     p.add_argument("--allow-fractional-shares", action="store_true", default=False)
@@ -1934,12 +1936,18 @@ def main(args: list[str] | None = None) -> None:
                 else _cascade_live_config.get("live_oracle_pool_pct", 0.20)
             )
             _prediction_symbols = list(universe_symbols)
+            from modelFactory.oracle_path.train import is_path_batch
+            _path_amplitude_policy = bool(_oracle_live_batch) and is_path_batch(args.oracle_artifacts_dir, _oracle_live_batch)
+            if _path_amplitude_policy and _oracle_live_policy == "off":
+                raise SystemExit("Oracle parcours live exige une politique Oracle/tradable explicite, pas off.")
+            if _path_amplitude_policy and args.enable_kelly_sizing:
+                raise SystemExit("Kelly interdit sur un rang d'amplitude Oracle parcours non directionnel.")
             if _oracle_live_policy != "off":
                 if not 0.0 < _oracle_live_pool <= 1.0:
                     raise SystemExit("oracle_pool_pct live doit appartenir à ]0, 1].")
                 if not _oracle_live_batch:
                     raise SystemExit("Aucun batch Oracle/serving disponible pour le gate live.")
-                _oracle_live_horizon = resolve_oracle_artifact_horizon(_oracle_live_batch)
+                _oracle_live_horizon = resolve_oracle_artifact_horizon(_oracle_live_batch, args.oracle_artifacts_dir)
                 if _oracle_live_horizon is None:
                     raise SystemExit(
                         "Contrat Oracle live introuvable : "
@@ -1961,6 +1969,7 @@ def main(args: list[str] | None = None) -> None:
                     trade_date,
                     batch_id=_oracle_live_batch,
                     symbols=(None if _oracle_live_policy == "top20_then_filter" else universe_symbols),
+                    **({"artifacts_dir": args.oracle_artifacts_dir} if _path_amplitude_policy else {}),
                 )
                 if not _oracle_scores:
                     raise SystemExit(
@@ -2000,10 +2009,18 @@ def main(args: list[str] | None = None) -> None:
                     _prediction_symbols,
                     trade_date,
                     batch_id=(_oracle_live_batch or None),
-                    sources=(["per_symbol"] if _oracle_live_policy != "off" else None),
+                    sources=(["oracle_path_policy"] if _path_amplitude_policy else
+                             (["per_symbol"] if _oracle_live_policy != "off" else None)),
                 )
                 if ml_gate_state.enabled else {}
             )
+            if _path_amplitude_policy:
+                _path_direction_policy = str((_root_live_config.get("oracle_path") or {}).get("direction_policy", "abstain"))
+                if _path_direction_policy not in ("long_only", "abstain"):
+                    raise SystemExit("Politique Oracle parcours inconnue.")
+                # No stale fallback or another batch/source may create an entry.
+                predictions = {s: p for s, p in predictions.items() if p.prediction_date == trade_date
+                    and p.predicted_side in ("long", "flat") and _path_direction_policy == "long_only"}
             LOGGER.info("Predictions chargees pour %d symboles.", len(predictions))
 
             ml_coverage_gate = evaluate_ml_coverage_gate(
@@ -2034,10 +2051,10 @@ def main(args: list[str] | None = None) -> None:
                         symbol=symbol,
                         trade_date=trade_date,
                         predicted_side=pred.predicted_side,
-                        proba_long=pred.proba_long,
+                        proba_long=float(_oracle_percentiles[symbol]) if _path_amplitude_policy and pred.predicted_side == "long" else pred.proba_long,
                         proba_flat=pred.proba_flat,
                         proba_short=pred.proba_short,
-                        proba=pred.predicted_proba,
+                        proba=float(_oracle_percentiles[symbol]) if _path_amplitude_policy and pred.predicted_side == "long" else pred.predicted_proba,
                         model_run_id=pred.run_id,
                         universe_run_id=universe_run_id,
                         research_only=pred.research_only,
@@ -2046,6 +2063,10 @@ def main(args: list[str] | None = None) -> None:
                     LOGGER.warning("MLRankedCandidate construction failed for %s: %s", symbol, exc)
                     continue
                 if candidate.is_actionable():
+                    if _path_amplitude_policy:
+                        candidate = replace(candidate, lineage={**candidate.lineage,
+                            "score_semantics": "amplitude_rank_not_directional_probability",
+                            "direction_policy": "long_only", "oracle_batch_id": _oracle_live_batch})
                     candidates.append(candidate)
             # Apply ML rankings (longs then shorts, each by p_side descending)
             longs, shorts = _ml_rank(candidates)
