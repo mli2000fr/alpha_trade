@@ -1,5 +1,48 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-14 — Oracle parcours TOP5 : protections dynamiques figées NO_GO
+
+Une seule règle exploratoire, six portefeuilles FIXED/DYNAMIC sur 2024–2026.
+Même source, modèles/folds, TOP5 LONG, frais, sizing et plafond ×2 que la grille.
+SL dur 5 % partout. Profil choisi à J, ancré au fill J+1 et retenu pour la position :
+DEFENSIVE trailing10/TP10 si régime/market weakness ; TREND trailing20/TP30
+si tendance/breadth/force relative positives et VIX≤20 ; référence trailing15/TP20
+sinon ou si données insuffisantes. Pas de mise à jour quotidienne des pourcentages.
+Pas d'entraînement, SQL ni courtier ; pas de nouveau holdout car périodes déjà vues.
+40 tests réussis et protocole figé avant PnL. Six cas complets sans échec ;
+sources/fichiers revérifiés, trois témoins identiques trade/curve aux références.
+FIXED → DYNAMIC : 2024 −16,74 →−25,96 % ; 2025 +9,93 →−1,75 % ;
+2026 janvier–septembre +36,14 →−21,31 %. DD −32,83/−20,91/−26,19 %
+→−35,26/−28,40/−39,68 %. Moins bon sur les trois périodes, aucun avantage
+transversal. NO_GO pour cette règle, pas de promotion ni d'ajustement après pertes.
+Artefact `us_oracle_path_dynamic_protections/20261014-v2`.
+[Règles, temporalité, contrôles et réserves](oracle_path_protections_dynamiques_20261014.md).
+
+## 2026-10-14 — Oracle parcours TOP5 : grille levier ×2 terminée, aucun profil positif trois ans
+
+GO reçu pour les trois modèles `a4bd20` (2024), `155d09` (2025), `4df571`
+(2026 jusqu'au 30 septembre). Folds causaux vérifiés : validation disponible avant
+chaque année ; champions CatBoost / LightGBM / CatBoost archivés, sans sélection
+sur les profits. Univers commun 1 790 titres, mêmes 173 features.
+TOP5 LONG, pas de renforcement du titre détenu, pas de sortie forcée H20/fin annuelle.
+48 profils par année : SL5/7/10, trailing OFF/10/15/20, TP OFF/10/20/30.
+Capital 4 000 USD, plafond d'entrée ×2, intérêts simulés 6,5 % ACT/360, coûts natifs,
+garde-fous conservés ; equity terminale inclut les positions ouvertes.
+144/144 cas terminés sans échec à 09:47 Paris dans
+`us_oracle_path_top5_leverage/20261014-v3`, sources/fichiers revérifiés.
+Meilleurs observés par année : 2024 SL10/trailing20/TP20 +4,83 % (DD −39,29 %) ;
+2025 SL5/trailing20/TP30 +184,83 % (DD −19,26 %) ; 2026 SL10/sans trailing/sans TP
++77,62 % (DD −38,39 %), essentiellement latent : huit positions ouvertes,
+PnL réalisé −1 247,82 USD contre latent +4 548,28 USD.
+Meilleure moyenne SL5/trailing20/TP30 : −33,96 / +184,83 / −10,73 %.
+Aucun profil positif sur les trois périodes ; 1/48, 34/48 et 13/48 positifs
+respectivement. Meilleure pire année observée SL5/trailing15/TP20 :
+−16,74 / +9,93 / +36,14 %, DD pire −32,83 %. Pas de trailing stable démontré,
+pas de promotion du meilleur profil sélectionné sur les mêmes résultats.
+Dividendes et marginabilité historique réservés :
+ce n'est pas une parité courtier ni un rendement total certifiés.
+[Protocole détaillé, sources et suivi](oracle_path_top5_levier_grid_20261014.md).
+
 ## 2026-10-14 — News après entrée : confirmation et sortie négative
 
 GO et douze cas hors ligne terminés. Dernière baseline Oracle parcours LightGBM,

@@ -30,6 +30,8 @@
 - [Audit des anciens signaux directionnels faibles et de leur réutilisation](signaux_directionnels_faibles_audit_20261014.md).
 - [News très positives J/J−1/J−2 : hausse pendant H0…H20, pas seulement à H20](news_positives_parcours_h20_20261014.md).
 - [News après entrée : confirmation et sorties au prochain open, TP20/SL10 maintenus](news_post_entree_sortie_20261014.md).
+- [Oracle parcours TOP5 : grille SL/trailing/TP avec levier ×2, portefeuille et réserves](oracle_path_top5_levier_grid_20261014.md).
+- [Oracle parcours TOP5 : règle figée de protections à l'entrée selon régime, VIX, breadth et force relative](oracle_path_protections_dynamiques_20261014.md).
 - Oracle parcours : défaut d'entraînement depuis le 13 octobre ; raccordement
   ML Predict/backtest/live avec lineage, sans direction apprise ni promotion automatique.
 - [Oracle TP avant SL : amplitude + direction LONG/SHORT, TP 20 % configurable](oracle_barrier_training.md).
