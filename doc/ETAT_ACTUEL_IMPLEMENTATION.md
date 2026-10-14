@@ -1,5 +1,11 @@
 # État actuel de l'implémentation — 10 octobre 2026
 
+> Ajout du 14 octobre 2026 : archive prospective des news US raccordée à la
+> collecte existante, versions de textes/payloads et associations conservées,
+> disponibilité confirmée après commit. Trois tables créées dans `alpha_trade`,
+> pas de reconstitution rétroactive ni de nouveau signal financier validé.
+> [Contrat et exploitation](signals/news_version_archive.md).
+
 > Ajout du 13 octobre 2026 : Oracle Extreme parcours H20 est le défaut du
 > formulaire d'entraînement US et possède un raccordement ML Predict/backtest/live.
 > Score d'amplitude seul, lineage des folds vérifiée ; politique LONG-only

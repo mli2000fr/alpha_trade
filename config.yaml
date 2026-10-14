@@ -15,6 +15,9 @@ intraday_backfill:
   account_id: default  # Clés du compte principal via le registre Alpaca existant.
 
 oracle_path:
+  # Entraînement : lightgbm | catboost | auto (comparaison sur validation).
+  # Défaut IHM seulement ; un batch déjà entraîné conserve son contrat archivé.
+  training_backend: auto
   # Oracle unique : TOP20 % des amplitudes maximales durant J+1..J+20, sans direction.
   # Politique explicite sans filtre directionnel : long_only | abstain.
   # LONG-only est une stratégie, pas une probabilité de hausse. LLM reste optionnel/PAPER.

@@ -26,6 +26,13 @@ Défaillances : modèle Transformers absent, provider quota, article sans mappin
 
 `news_raw` conserve l'article/provider/timestamps/payload. `news_ticker_map` représente la relation article-symbole. Les tables sentiment séparent résultat article et attribution ticker. `macro_event_audit` trace règles macro. Les features daily ticker/secteur sont les sorties consommables.
 
+Depuis le 14 octobre 2026, la collecte de production archive aussi les nouvelles
+versions dans `news_raw_versions` et `news_ticker_map_versions`. Les reçus
+`news_archive_observations` prouvent une disponibilité locale confirmée après
+commit ; aucune date historique de collecte n'est inventée. Les deux tables
+courantes restent mutables et les scores de sentiment ne sont pas versionnés
+par cette évolution. [Installation, reprise et lecture avant décision](news_version_archive.md).
+
 ## Ingestion
 
 Le CLI accepte fenêtres UTC, symboles et options provider/batch. Les checkpoints empêchent de reprendre depuis zéro. La déduplication doit utiliser une identité provider stable ; titre seul est insuffisant.

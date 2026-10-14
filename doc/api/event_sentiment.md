@@ -1,6 +1,6 @@
 # Inventaire API — event_sentiment
 
-Extraction AST du 2026-10-10 ; aucune importation ni exécution métier.
+Extraction AST du 2026-10-14 ; aucune importation ni exécution métier.
 
 Classes, fonctions de module et méthodes déclarées ; fonctions imbriquées exclues.
 Les symboles `_...` sont internes. Signature présente ≠ API publique stable.
@@ -50,49 +50,51 @@ Source SHA-256 : `70d13f89ef1519b5f62b1f95eaa6aaa3e8e7b95d499623e77ad1baab430d6d
 
 ## `event_sentiment/db_io.py`
 
-Source SHA-256 : `d07cfb56a10427dd6f625087a6f8b0180af2880ee7020c3983d5e22e87ca8e8e`
+Source SHA-256 : `01e86c0df0302fad4d14609a90fe7d7da89349f332ffe9858f634929b21f7bf8`
 
-- [EventSentimentRepository](../../event_sentiment/db_io.py) — ligne 24 : `class EventSentimentRepository`
-- [EventSentimentRepository.__init__](../../event_sentiment/db_io.py) — ligne 25 : `def __init__(self) -> None`
-- [EventSentimentRepository._table](../../event_sentiment/db_io.py) — ligne 30 : `def _table(self, table_name: str) -> Table`
-- [EventSentimentRepository._normalize_mysql_scalar](../../event_sentiment/db_io.py) — ligne 36 : `def _normalize_mysql_scalar(value: Any) -> Any`
-- [EventSentimentRepository._normalize_mysql_records](../../event_sentiment/db_io.py) — ligne 50 : `def _normalize_mysql_records(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]`
-- [EventSentimentRepository._resolve_rowcount](../../event_sentiment/db_io.py) — ligne 57 : `def _resolve_rowcount(raw_rowcount: Any) -> int`
-- [EventSentimentRepository._upsert_batch_size](../../event_sentiment/db_io.py) — ligne 65 : `def _upsert_batch_size() -> int`
-- [EventSentimentRepository._chunk_records](../../event_sentiment/db_io.py) — ligne 82 : `def _chunk_records(records: list[dict[str, Any]], batch_size: int) -> list[list[dict[str, Any]]]`
-- [EventSentimentRepository._upsert_retry_attempts](../../event_sentiment/db_io.py) — ligne 88 : `def _upsert_retry_attempts() -> int`
-- [EventSentimentRepository._upsert_retry_backoff_seconds](../../event_sentiment/db_io.py) — ligne 105 : `def _upsert_retry_backoff_seconds() -> float`
-- [EventSentimentRepository._is_retryable_mysql_operational_error](../../event_sentiment/db_io.py) — ligne 122 : `def _is_retryable_mysql_operational_error(exc: OperationalError) -> bool`
-- [EventSentimentRepository._upsert](../../event_sentiment/db_io.py) — ligne 133 : `def _upsert(self, table_name: str, records: list[dict[str, Any]], key_columns: set[str]) -> int`
-- [EventSentimentRepository._normalize_symbol](../../event_sentiment/db_io.py) — ligne 210 : `def _normalize_symbol(symbol: str) -> str`
-- [EventSentimentRepository._build_contextual_relevance_filters](../../event_sentiment/db_io.py) — ligne 217 : `def _build_contextual_relevance_filters(min_relevance: float) -> tuple[list[str], dict[str, float]]`
-- [EventSentimentRepository._build_pending_article_query](../../event_sentiment/db_io.py) — ligne 236 : `def _build_pending_article_query(self, *, count_only: bool, start_date: date | None=None, end_date: date | None=None, ingestion_source: str | None=None, symbols: list[str] | None=None)`
-- [EventSentimentRepository.get_checkpoint](../../event_sentiment/db_io.py) — ligne 292 : `def get_checkpoint(self, source_name: str, symbol: str) -> dict[str, Any] | None`
-- [EventSentimentRepository.get_checkpoints](../../event_sentiment/db_io.py) — ligne 309 : `def get_checkpoints(self, source_name: str, symbols: list[str]) -> dict[str, dict[str, Any]]`
-- [EventSentimentRepository.load_tradable_universe_symbols](../../event_sentiment/db_io.py) — ligne 330 : `def load_tradable_universe_symbols(self) -> list[str]`
-- [EventSentimentRepository.list_scored_trade_dates](../../event_sentiment/db_io.py) — ligne 360 : `def list_scored_trade_dates(self, start_date: date | None=None, end_date: date | None=None, ingestion_source: str | None=None) -> list[date]`
-- [EventSentimentRepository.upsert_checkpoint](../../event_sentiment/db_io.py) — ligne 389 : `def upsert_checkpoint(self, source_name: str, symbol: str, watermark_published_at_utc: datetime | None, next_page_token: str | None, status: str, last_error: str | None=None) -> None`
-- [EventSentimentRepository._checkpoint_stage_column](../../event_sentiment/db_io.py) — ligne 412 : `def _checkpoint_stage_column(stage: str) -> str`
-- [EventSentimentRepository.touch_checkpoint_stage](../../event_sentiment/db_io.py) — ligne 424 : `def touch_checkpoint_stage(self, source_name: str, symbols: list[str], *, stage: str, touched_at: datetime | None=None) -> int`
-- [EventSentimentRepository.list_ticker_map_symbols](../../event_sentiment/db_io.py) — ligne 451 : `def list_ticker_map_symbols(self, *, start_date: date | None=None, end_date: date | None=None, ingestion_source: str | None=None, symbols: list[str] | None=None) -> list[str]`
-- [EventSentimentRepository.get_signal_aggregator_guard_status](../../event_sentiment/db_io.py) — ligne 490 : `def get_signal_aggregator_guard_status(self, *, source_name: str, symbols: list[str]) -> dict[str, Any]`
-- [EventSentimentRepository.get_existing_article_ids](../../event_sentiment/db_io.py) — ligne 540 : `def get_existing_article_ids(self, article_ids: list[str]) -> set[str]`
-- [EventSentimentRepository.get_article_ids_by_dedupe_hashes](../../event_sentiment/db_io.py) — ligne 550 : `def get_article_ids_by_dedupe_hashes(self, ingestion_source: str, dedupe_hashes: list[str]) -> dict[str, str]`
-- [EventSentimentRepository.upsert_news_raw](../../event_sentiment/db_io.py) — ligne 580 : `def upsert_news_raw(self, records: list[dict[str, Any]]) -> int`
-- [EventSentimentRepository.upsert_news_ticker_map](../../event_sentiment/db_io.py) — ligne 588 : `def upsert_news_ticker_map(self, records: list[dict[str, Any]]) -> int`
-- [EventSentimentRepository.upsert_news_sentiment](../../event_sentiment/db_io.py) — ligne 600 : `def upsert_news_sentiment(self, records: list[dict[str, Any]]) -> int`
-- [EventSentimentRepository.upsert_news_ticker_sentiment](../../event_sentiment/db_io.py) — ligne 603 : `def upsert_news_ticker_sentiment(self, records: list[dict[str, Any]]) -> int`
-- [EventSentimentRepository.load_pending_contextual_pairs](../../event_sentiment/db_io.py) — ligne 611 : `def load_pending_contextual_pairs(self, limit: int=5000, min_relevance: float=0.0, *, start_date: date | None=None, end_date: date | None=None, symbols: list[str] | None=None, ingestion_source: str | None=None) -> list[dict[str, Any]]`
-- [EventSentimentRepository.count_pending_contextual_pairs](../../event_sentiment/db_io.py) — ligne 691 : `def count_pending_contextual_pairs(self, *, min_relevance: float=0.0, start_date: date | None=None, end_date: date | None=None, symbols: list[str] | None=None, ingestion_source: str | None=None) -> int`
-- [EventSentimentRepository.iter_ticker_map_for_relevance_backfill](../../event_sentiment/db_io.py) — ligne 753 : `def iter_ticker_map_for_relevance_backfill(self, batch_size: int=500, start_date: date | None=None, end_date: date | None=None, symbols: list[str] | None=None, ingestion_source: str | None=None, rescore_all: bool=False)`
-- [EventSentimentRepository.delete_ticker_map_below_score](../../event_sentiment/db_io.py) — ligne 841 : `def delete_ticker_map_below_score(self, threshold: float, start_date: date | None=None, end_date: date | None=None, symbols: list[str] | None=None, ingestion_source: str | None=None) -> int`
-- [EventSentimentRepository.get_active_finbert_fingerprints](../../event_sentiment/db_io.py) — ligne 889 : `def get_active_finbert_fingerprints(self, trade_date: date) -> list[str]`
-- [EventSentimentRepository.upsert_macro_event_audit](../../event_sentiment/db_io.py) — ligne 918 : `def upsert_macro_event_audit(self, records: list[dict[str, Any]]) -> int`
-- [EventSentimentRepository.upsert_ticker_daily_features](../../event_sentiment/db_io.py) — ligne 930 : `def upsert_ticker_daily_features(self, records: list[dict[str, Any]]) -> int`
-- [EventSentimentRepository.upsert_sector_daily_features](../../event_sentiment/db_io.py) — ligne 933 : `def upsert_sector_daily_features(self, records: list[dict[str, Any]]) -> int`
-- [EventSentimentRepository.count_pending_articles](../../event_sentiment/db_io.py) — ligne 936 : `def count_pending_articles(self, *, start_date: date | None=None, end_date: date | None=None, ingestion_source: str | None=None, symbols: list[str] | None=None) -> int`
-- [EventSentimentRepository.load_pending_articles](../../event_sentiment/db_io.py) — ligne 954 : `def load_pending_articles(self, limit: int=1000, *, start_date: date | None=None, end_date: date | None=None, ingestion_source: str | None=None, symbols: list[str] | None=None) -> list[dict[str, Any]]`
-- [EventSentimentRepository.load_feature_frames](../../event_sentiment/db_io.py) — ligne 976 : `def load_feature_frames(self, start_date: date | None=None, end_date: date | None=None, trade_dates: list[date] | None=None, ingestion_source: str | None=None, ticker_symbols: list[str] | None=None) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]`
+- [EventSentimentRepository](../../event_sentiment/db_io.py) — ligne 25 : `class EventSentimentRepository`
+- [EventSentimentRepository.__init__](../../event_sentiment/db_io.py) — ligne 26 : `def __init__(self) -> None`
+- [EventSentimentRepository._table](../../event_sentiment/db_io.py) — ligne 31 : `def _table(self, table_name: str) -> Table`
+- [EventSentimentRepository._normalize_mysql_scalar](../../event_sentiment/db_io.py) — ligne 37 : `def _normalize_mysql_scalar(value: Any) -> Any`
+- [EventSentimentRepository._normalize_mysql_records](../../event_sentiment/db_io.py) — ligne 51 : `def _normalize_mysql_records(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]`
+- [EventSentimentRepository._resolve_rowcount](../../event_sentiment/db_io.py) — ligne 58 : `def _resolve_rowcount(raw_rowcount: Any) -> int`
+- [EventSentimentRepository._upsert_batch_size](../../event_sentiment/db_io.py) — ligne 66 : `def _upsert_batch_size() -> int`
+- [EventSentimentRepository._chunk_records](../../event_sentiment/db_io.py) — ligne 83 : `def _chunk_records(records: list[dict[str, Any]], batch_size: int) -> list[list[dict[str, Any]]]`
+- [EventSentimentRepository._upsert_retry_attempts](../../event_sentiment/db_io.py) — ligne 89 : `def _upsert_retry_attempts() -> int`
+- [EventSentimentRepository._upsert_retry_backoff_seconds](../../event_sentiment/db_io.py) — ligne 106 : `def _upsert_retry_backoff_seconds() -> float`
+- [EventSentimentRepository._is_retryable_mysql_operational_error](../../event_sentiment/db_io.py) — ligne 123 : `def _is_retryable_mysql_operational_error(exc: OperationalError) -> bool`
+- [EventSentimentRepository._upsert](../../event_sentiment/db_io.py) — ligne 134 : `def _upsert(self, table_name: str, records: list[dict[str, Any]], key_columns: set[str], *, connection=None) -> int`
+- [EventSentimentRepository._normalize_symbol](../../event_sentiment/db_io.py) — ligne 219 : `def _normalize_symbol(symbol: str) -> str`
+- [EventSentimentRepository._build_contextual_relevance_filters](../../event_sentiment/db_io.py) — ligne 226 : `def _build_contextual_relevance_filters(min_relevance: float) -> tuple[list[str], dict[str, float]]`
+- [EventSentimentRepository._build_pending_article_query](../../event_sentiment/db_io.py) — ligne 245 : `def _build_pending_article_query(self, *, count_only: bool, start_date: date | None=None, end_date: date | None=None, ingestion_source: str | None=None, symbols: list[str] | None=None)`
+- [EventSentimentRepository.get_checkpoint](../../event_sentiment/db_io.py) — ligne 301 : `def get_checkpoint(self, source_name: str, symbol: str) -> dict[str, Any] | None`
+- [EventSentimentRepository.get_checkpoints](../../event_sentiment/db_io.py) — ligne 318 : `def get_checkpoints(self, source_name: str, symbols: list[str]) -> dict[str, dict[str, Any]]`
+- [EventSentimentRepository.load_tradable_universe_symbols](../../event_sentiment/db_io.py) — ligne 339 : `def load_tradable_universe_symbols(self) -> list[str]`
+- [EventSentimentRepository.list_scored_trade_dates](../../event_sentiment/db_io.py) — ligne 369 : `def list_scored_trade_dates(self, start_date: date | None=None, end_date: date | None=None, ingestion_source: str | None=None) -> list[date]`
+- [EventSentimentRepository.upsert_checkpoint](../../event_sentiment/db_io.py) — ligne 398 : `def upsert_checkpoint(self, source_name: str, symbol: str, watermark_published_at_utc: datetime | None, next_page_token: str | None, status: str, last_error: str | None=None) -> None`
+- [EventSentimentRepository._checkpoint_stage_column](../../event_sentiment/db_io.py) — ligne 421 : `def _checkpoint_stage_column(stage: str) -> str`
+- [EventSentimentRepository.touch_checkpoint_stage](../../event_sentiment/db_io.py) — ligne 433 : `def touch_checkpoint_stage(self, source_name: str, symbols: list[str], *, stage: str, touched_at: datetime | None=None) -> int`
+- [EventSentimentRepository.list_ticker_map_symbols](../../event_sentiment/db_io.py) — ligne 460 : `def list_ticker_map_symbols(self, *, start_date: date | None=None, end_date: date | None=None, ingestion_source: str | None=None, symbols: list[str] | None=None) -> list[str]`
+- [EventSentimentRepository.get_signal_aggregator_guard_status](../../event_sentiment/db_io.py) — ligne 499 : `def get_signal_aggregator_guard_status(self, *, source_name: str, symbols: list[str]) -> dict[str, Any]`
+- [EventSentimentRepository.get_existing_article_ids](../../event_sentiment/db_io.py) — ligne 549 : `def get_existing_article_ids(self, article_ids: list[str]) -> set[str]`
+- [EventSentimentRepository.get_article_ids_by_dedupe_hashes](../../event_sentiment/db_io.py) — ligne 559 : `def get_article_ids_by_dedupe_hashes(self, ingestion_source: str, dedupe_hashes: list[str]) -> dict[str, str]`
+- [EventSentimentRepository.upsert_news_raw](../../event_sentiment/db_io.py) — ligne 589 : `def upsert_news_raw(self, records: list[dict[str, Any]]) -> int`
+- [EventSentimentRepository._news_archive_retry](../../event_sentiment/db_io.py) — ligne 592 : `def _news_archive_retry(self, operation)`
+- [EventSentimentRepository.persist_news_page](../../event_sentiment/db_io.py) — ligne 602 : `def persist_news_page(self, records: list[dict[str, Any]], ticker_rows=None, *, mapping_context=None) -> dict[str, int]`
+- [EventSentimentRepository.upsert_news_ticker_map](../../event_sentiment/db_io.py) — ligne 617 : `def upsert_news_ticker_map(self, records: list[dict[str, Any]]) -> int`
+- [EventSentimentRepository.upsert_news_sentiment](../../event_sentiment/db_io.py) — ligne 621 : `def upsert_news_sentiment(self, records: list[dict[str, Any]]) -> int`
+- [EventSentimentRepository.upsert_news_ticker_sentiment](../../event_sentiment/db_io.py) — ligne 624 : `def upsert_news_ticker_sentiment(self, records: list[dict[str, Any]]) -> int`
+- [EventSentimentRepository.load_pending_contextual_pairs](../../event_sentiment/db_io.py) — ligne 632 : `def load_pending_contextual_pairs(self, limit: int=5000, min_relevance: float=0.0, *, start_date: date | None=None, end_date: date | None=None, symbols: list[str] | None=None, ingestion_source: str | None=None) -> list[dict[str, Any]]`
+- [EventSentimentRepository.count_pending_contextual_pairs](../../event_sentiment/db_io.py) — ligne 712 : `def count_pending_contextual_pairs(self, *, min_relevance: float=0.0, start_date: date | None=None, end_date: date | None=None, symbols: list[str] | None=None, ingestion_source: str | None=None) -> int`
+- [EventSentimentRepository.iter_ticker_map_for_relevance_backfill](../../event_sentiment/db_io.py) — ligne 774 : `def iter_ticker_map_for_relevance_backfill(self, batch_size: int=500, start_date: date | None=None, end_date: date | None=None, symbols: list[str] | None=None, ingestion_source: str | None=None, rescore_all: bool=False)`
+- [EventSentimentRepository.delete_ticker_map_below_score](../../event_sentiment/db_io.py) — ligne 862 : `def delete_ticker_map_below_score(self, threshold: float, start_date: date | None=None, end_date: date | None=None, symbols: list[str] | None=None, ingestion_source: str | None=None) -> int`
+- [EventSentimentRepository.get_active_finbert_fingerprints](../../event_sentiment/db_io.py) — ligne 910 : `def get_active_finbert_fingerprints(self, trade_date: date) -> list[str]`
+- [EventSentimentRepository.upsert_macro_event_audit](../../event_sentiment/db_io.py) — ligne 939 : `def upsert_macro_event_audit(self, records: list[dict[str, Any]]) -> int`
+- [EventSentimentRepository.upsert_ticker_daily_features](../../event_sentiment/db_io.py) — ligne 951 : `def upsert_ticker_daily_features(self, records: list[dict[str, Any]]) -> int`
+- [EventSentimentRepository.upsert_sector_daily_features](../../event_sentiment/db_io.py) — ligne 954 : `def upsert_sector_daily_features(self, records: list[dict[str, Any]]) -> int`
+- [EventSentimentRepository.count_pending_articles](../../event_sentiment/db_io.py) — ligne 957 : `def count_pending_articles(self, *, start_date: date | None=None, end_date: date | None=None, ingestion_source: str | None=None, symbols: list[str] | None=None) -> int`
+- [EventSentimentRepository.load_pending_articles](../../event_sentiment/db_io.py) — ligne 975 : `def load_pending_articles(self, limit: int=1000, *, start_date: date | None=None, end_date: date | None=None, ingestion_source: str | None=None, symbols: list[str] | None=None) -> list[dict[str, Any]]`
+- [EventSentimentRepository.load_feature_frames](../../event_sentiment/db_io.py) — ligne 997 : `def load_feature_frames(self, start_date: date | None=None, end_date: date | None=None, trade_dates: list[date] | None=None, ingestion_source: str | None=None, ticker_symbols: list[str] | None=None) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]`
 
 ## `event_sentiment/event_sentiment_pipeline.py`
 
@@ -142,17 +144,18 @@ Source SHA-256 : `8b608e178d4e6891e3d188dfa61447c586704f4484bd2177dc53dda62a1276
 
 ## `event_sentiment/ingestion.py`
 
-Source SHA-256 : `107dde5e3a10993a863fdf6a1b9b24328eab5a3ee5fc89f1e20640e97ebe4515`
+Source SHA-256 : `dee92cda9a19758bc01f51ee810a1bf38f5fab249c5f24990504db9a08bdb283`
 
-- [_resolve_iter_news_pages](../../event_sentiment/ingestion.py) — ligne 34 : `def _resolve_iter_news_pages(provider: str) -> Callable[..., Any]`
-- [NewsIngestionService](../../event_sentiment/ingestion.py) — ligne 43 : `class NewsIngestionService`
-- [NewsIngestionService.__init__](../../event_sentiment/ingestion.py) — ligne 44 : `def __init__(self, repository, config) -> None`
-- [NewsIngestionService._normalize_article](../../event_sentiment/ingestion.py) — ligne 74 : `def _normalize_article(self, payload: dict[str, Any]) -> NormalizedNewsArticle`
-- [NewsIngestionService._normalize_symbol_list](../../event_sentiment/ingestion.py) — ligne 114 : `def _normalize_symbol_list(symbols: list[str] | None) -> list[str]`
-- [NewsIngestionService._resolve_symbol_start](../../event_sentiment/ingestion.py) — ligne 119 : `def _resolve_symbol_start(self, symbol: str, start_utc: datetime | None, end_utc: datetime) -> datetime`
-- [NewsIngestionService._resolve_persisted_article_ids](../../event_sentiment/ingestion.py) — ligne 128 : `def _resolve_persisted_article_ids(self, raw_rows: list[dict[str, Any]]) -> dict[str, str]`
-- [NewsIngestionService._run_symbol](../../event_sentiment/ingestion.py) — ligne 149 : `def _run_symbol(self, symbol: str, start_utc: datetime, end_utc: datetime, resume_checkpoint: bool) -> dict[str, int]`
-- [NewsIngestionService.run](../../event_sentiment/ingestion.py) — ligne 382 : `def run(self, start_utc: datetime | None, end_utc: datetime, symbols: list[str] | None=None, symbol_start_overrides: dict[str, datetime] | None=None, symbol_resume_overrides: dict[str, bool] | None=None, resume_checkpoints: bool=True, progress_callback: Callable[[dict[str, object]], None] | None=None) -> dict[str, int]`
+- [_resolve_iter_news_pages](../../event_sentiment/ingestion.py) — ligne 36 : `def _resolve_iter_news_pages(provider: str) -> Callable[..., Any]`
+- [NewsIngestionService](../../event_sentiment/ingestion.py) — ligne 45 : `class NewsIngestionService`
+- [NewsIngestionService.__init__](../../event_sentiment/ingestion.py) — ligne 46 : `def __init__(self, repository, config) -> None`
+- [NewsIngestionService._normalize_article](../../event_sentiment/ingestion.py) — ligne 76 : `def _normalize_article(self, payload: dict[str, Any]) -> NormalizedNewsArticle`
+- [NewsIngestionService._normalize_symbol_list](../../event_sentiment/ingestion.py) — ligne 116 : `def _normalize_symbol_list(symbols: list[str] | None) -> list[str]`
+- [NewsIngestionService._resolve_symbol_start](../../event_sentiment/ingestion.py) — ligne 121 : `def _resolve_symbol_start(self, symbol: str, start_utc: datetime | None, end_utc: datetime) -> datetime`
+- [NewsIngestionService._resolve_persisted_article_ids](../../event_sentiment/ingestion.py) — ligne 130 : `def _resolve_persisted_article_ids(self, raw_rows: list[dict[str, Any]]) -> dict[str, str]`
+- [NewsIngestionService._run_symbol](../../event_sentiment/ingestion.py) — ligne 151 : `def _run_symbol(self, symbol: str, start_utc: datetime, end_utc: datetime, resume_checkpoint: bool) -> dict[str, int]`
+- [NewsIngestionService._persist_legacy_page](../../event_sentiment/ingestion.py) — ligne 339 : `def _persist_legacy_page(self, raw_rows, ticker_rows, symbol)`
+- [NewsIngestionService.run](../../event_sentiment/ingestion.py) — ligne 370 : `def run(self, start_utc: datetime | None, end_utc: datetime, symbols: list[str] | None=None, symbol_start_overrides: dict[str, datetime] | None=None, symbol_resume_overrides: dict[str, bool] | None=None, resume_checkpoints: bool=True, progress_callback: Callable[[dict[str, object]], None] | None=None) -> dict[str, int]`
 
 ## `event_sentiment/macro_rules.py`
 
@@ -182,6 +185,27 @@ Source SHA-256 : `cbb39695e97aac2cf1b0abbf159e0c36f1105ffa4298fc386d0aa447be0ca2
 - [SentimentRecord](../../event_sentiment/models.py) — ligne 26 : `class SentimentRecord`
 - [ContextualSentimentRecord](../../event_sentiment/models.py) — ligne 46 : `class ContextualSentimentRecord`
 - [MacroImpactRecord](../../event_sentiment/models.py) — ligne 76 : `class MacroImpactRecord`
+
+## `event_sentiment/news_archive.py`
+
+Source SHA-256 : `4b0a37cfd1a3a19b6793ab89056d815323a223929869030e02d7b2b4e3ceeef3`
+
+- [utc_now](../../event_sentiment/news_archive.py) — ligne 80 : `def utc_now() -> datetime`
+- [json_value](../../event_sentiment/news_archive.py) — ligne 84 : `def json_value(value: Any) -> Any`
+- [decode_json](../../event_sentiment/news_archive.py) — ligne 101 : `def decode_json(value)`
+- [canonical_hash](../../event_sentiment/news_archive.py) — ligne 109 : `def canonical_hash(value) -> str`
+- [publication_details](../../event_sentiment/news_archive.py) — ligne 115 : `def publication_details(payload)`
+- [raw_snapshot](../../event_sentiment/news_archive.py) — ligne 137 : `def raw_snapshot(record, canonical_id, observed_at)`
+- [mapping_snapshot](../../event_sentiment/news_archive.py) — ligne 153 : `def mapping_snapshot(article_id, raw_version_id, rows, context, complete, observed_at)`
+- [_insert_version](../../event_sentiment/news_archive.py) — ligne 168 : `def _insert_version(conn, table, value)`
+- [_observe](../../event_sentiment/news_archive.py) — ligne 183 : `def _observe(conn, batch_id, article_id, stream, origin, observed_at, *, raw_id=None, map_id=None)`
+- [seal_observations](../../event_sentiment/news_archive.py) — ligne 195 : `def seal_observations(engine, batch_id, expected)`
+- [persist_page](../../event_sentiment/news_archive.py) — ligne 212 : `def persist_page(repo, raw_rows, ticker_rows=None, *, mapping_context=None)`
+- [persist_mapping_refresh](../../event_sentiment/news_archive.py) — ligne 286 : `def persist_mapping_refresh(repo, rows)`
+- [status](../../event_sentiment/news_archive.py) — ligne 325 : `def status(engine)`
+- [install](../../event_sentiment/news_archive.py) — ligne 344 : `def install(engine)`
+- [load_article_as_of](../../event_sentiment/news_archive.py) — ligne 369 : `def load_article_as_of(conn, article_id, cutoff)`
+- [main](../../event_sentiment/news_archive.py) — ligne 390 : `def main()`
 
 ## `event_sentiment/pipeline.py`
 

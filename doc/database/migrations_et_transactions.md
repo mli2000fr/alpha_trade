@@ -41,6 +41,17 @@ Exemples : barre = symbole + timestamp + source/convention ; univers = run + sym
 
 ## Frontières transactionnelles
 
+### Archive des news US — ajout du 14 octobre 2026
+
+`0104_news_versions` crée trois tables sans backfill. La collecte écrit projection,
+versions et observations en attente dans une même transaction, puis confirme leur
+disponibilité après commit. Un reçu non confirmé reste exclu ; l'erreur empêche la
+validation du checkpoint. Le downgrade refuse une purge implicite des preuves.
+L'[installeur ciblé](../signals/news_version_archive.md) ne migre pas les autres
+fonctionnalités et ne change pas le marqueur Alembic local, constaté en retard.
+
+### Autres frontières métier
+
 Une transaction protège un invariant cohérent, pas nécessairement tout un long run. Une publication d’univers ne doit pas exposer des membres sans run publié. Une application de dividende relie application et ledger. La DB et le broker ne peuvent pas former une transaction atomique : états, identifiants idempotents et réconciliation comblent cette limite.
 
 Les commits par chunks réduisent locks et mémoire mais exposent un état partiel. Checkpoint et summary indiquent alors la dernière unité validée.

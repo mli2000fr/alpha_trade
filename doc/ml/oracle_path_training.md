@@ -37,18 +37,64 @@ Après un training terminé, sélectionner **ce nouveau batch parcours** dans
 l'étape 10 avant de poursuivre : la case de training n'effectue ni conversion
 des anciens modèles ni promotion du batch de production.
 
-Depuis le 13 octobre, le mode entraîne **LightGBM CPU**, plus **CatBoost CPU** si
-la case « Comparer CatBoost à LightGBM — Oracle parcours » est cochée (défaut
-IHM ; CLI : `--enable-catboost`). La décocher conserve LightGBM seul.
-Les deux candidats utilisent exactement les mêmes labels, features et
-train/validation/test chronologiques. Les paramètres avancés de chacun et le
-nombre de workers sont repris. CatBoost utilise **Logloss** pour cette cible
-binaire, indépendamment du réglage générique RMSE/YetiRank.
+### Choisir LightGBM, CatBoost ou comparaison automatique
 
-Le champion de **chaque fold** est celui dont l'**AUC de validation** est la plus
-élevée ; égalité exacte → LightGBM. L'early stopping utilise seulement la
-validation. Les résultats du test ne choisissent ni champion, ni seuil, ni
-hyperparamètre. On déploie un seul score d'amplitude, pas une moyenne des deux.
+Depuis le **14 octobre**, sous la case Oracle parcours, la liste
+**« Algorithme — Oracle Extreme parcours H20 »** remplace les cases challengers
+spécifiques à ce mode.
+
+| Choix | Entraînement | Modèle utilisé ensuite |
+| --- | --- | --- |
+| LightGBM | LightGBM CPU uniquement | LightGBM dans chaque fold |
+| CatBoost | CatBoost CPU uniquement | CatBoost dans chaque fold |
+| Comparaison automatique | Les deux, mêmes labels/features/folds | Meilleure AUC de validation par fold ; égalité exacte → LightGBM |
+
+Le défaut IHM est **comparaison automatique**, configurable :
+
+```yaml
+oracle_path:
+  training_backend: auto  # lightgbm | catboost | auto
+  direction_policy: long_only
+```
+
+Ce défaut concerne le nouveau widget d'entraînement, pas le modèle déjà chargé.
+Une session IHM existante conserve son choix. La commande prévisualisée contient
+`--oracle-path-backend lightgbm`, `--oracle-path-backend catboost` ou
+`--oracle-path-backend auto`. Pour imposer CatBoost, sélectionner **CatBoost**
+avant de lancer **9. ML Train**, puis sélectionner le nouveau batch dans
+**10. ML Predict**. Changer la liste ne convertit pas les poids existants.
+Le champ générique « champion par défaut » ne remplace pas ce choix dédié.
+
+L'option dédiée est prioritaire sur `--compare-lightgbm` / `--enable-catboost`.
+Les anciennes commandes **sans** cette option restent compatibles : LightGBM
+seul sans `--enable-catboost`, comparaison des deux avec ce flag. Un backend
+explicite hors `--oracle-path-model-only` est refusé. Les modes terminal, TP avant
+SL et les marchés CN/FR ne reçoivent pas de backend Oracle parcours implicite.
+
+Le choix est inscrit dans `protocol.json`, `feature_profile.json`, `report.json`
+et dans le champion de chaque fold. ML Predict et les chemins backtest/live
+chargent le contrat archivé : ils ne relisent pas le défaut de l'IHM/YAML pour
+changer d'algorithme. Backend incohérent, poids absent/corrompu ou demande de
+reprise avec un autre choix → échec explicite, sans fallback ni remplacement.
+Les anciens modèles continuent de se charger avec leur contrat legacy inchangé.
+Les recherches antérieures conservent aussi leurs empreintes de code originales :
+leurs résultats restent consultables, mais une reprise avec le code modifié peut
+être refusée par le contrôle SHA. Ne pas réécrire ces empreintes pour contourner
+le contrôle ; un nouveau protocole/dossier est nécessaire pour un nouveau replay.
+
+Validation de cette évolution : **267 tests ciblés réussis**, incluant les trois
+choix du widget et du CLI, petits entraînements CPU réels, reprise, rechargement,
+rejet de poids corrompus/choix incohérents et absence d'override à la prédiction.
+Les trois campagnes annuelles existantes restent chargeables en lecture seule,
+14 folds chacune. Aucun nouveau training de production ou ordre lancé.
+
+Les paramètres avancés de chaque algorithme et le nombre de workers sont repris.
+CatBoost utilise **Logloss** pour cette cible binaire, indépendamment du réglage
+générique RMSE/YetiRank. L'early stopping utilise seulement la validation.
+En comparaison automatique, le champion de chaque fold est choisi sur l'AUC
+de validation ; en choix unique, il est imposé, pas rechoisi sur l'AUC.
+Les résultats du test ne choisissent ni champion, ni seuil, ni hyperparamètre.
+On déploie un seul score d'amplitude, pas une moyenne des deux.
 Les métriques des deux candidats et du champion sont archivées hors échantillon :
 AUC, précision/rappel TOP10 %/TOP20 %, précision et amplitude moyenne des **10,
 20 et 50 premiers titres**. Ces dernières exigent au moins ce nombre de titres
@@ -117,14 +163,14 @@ Chaque lancement IHM crée un nouveau batch sous :
 
 | Artefact | Usage |
 | --- | --- |
-| `protocol.json` | Cible, univers, paramètres, registre, empreinte, comparaison activée et `serving_ready=true` (capacité technique uniquement) |
+| `protocol.json` | Cible, univers, paramètres, registre, empreinte, backend demandé/politique de sélection et `serving_ready=true` (capacité technique uniquement) |
 | `progress.json` | Phase dataset/fold, progression, état COMPLETED/FAILED et erreur |
 | `chunks/NNNN/` | Barres cibles archivées, features, chemins bruts et empreintes SHA-256 |
 | `labels.parquet` | Tous les chemins observés, raisons de réservation et labels parcours |
 | `quality.json` | Couverture, titres absents, warm-up et motifs de rejet |
 | `feature_profile.json` | Ordre exact des features et générateur |
-| `folds/<date>/path_model.txt` | Candidat LightGBM de chaque fold |
-| `folds/<date>/catboost_model.cbm` | Candidat CatBoost si comparaison demandée |
+| `folds/<date>/path_model.txt` | Poids LightGBM en choix LightGBM ou automatique |
+| `folds/<date>/catboost_model.cbm` | Poids CatBoost en choix CatBoost ou automatique |
 | `folds/<date>/done.json` | Champion, critère de sélection, métriques validation/test séparées, hashes des deux modèles et du test |
 | `folds/<date>/oof.parquet` | Scores et résultats réels du test de ce fold |
 | `oof_predictions.parquet` | Ensemble des tests, scores de chaque candidat et du champion, sans doublon date/titre |

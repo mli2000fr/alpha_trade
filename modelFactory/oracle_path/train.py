@@ -25,6 +25,7 @@ from modelFactory.oracle.security_continuity import load_security_discontinuitie
 from modelFactory.oracle.train import precision_recall_at_top_pct, roc_auc
 from modelFactory.oracle.walk_forward import build_folds_adaptive
 from modelFactory.oracle_path import HORIZON, MODE, SCORE, TARGET
+from modelFactory.oracle_path.backend import resolve_backend, candidates_for, selection_policy, DECLARATIONS, NAMES
 from modelFactory.oracle_path.labels import classify, load_bars, symbol_paths
 from modelFactory.runtime_status import update_runtime_status
 
@@ -71,7 +72,9 @@ def format_report(report):
              "Cible : TOP20 % de l'amplitude absolue maximale entre J+1 et J+20, depuis le close ajusté J.",
              "Ce score ne donne ni la direction ni un prix de sortie exécutable.", "",
              f"Batch : {report['batch_id']} ; features : {report['n_features']} ; folds : {report['n_folds']}.", "",
-             "Champion par fold : AUC de validation ; égalité exacte → LightGBM. Aucun choix sur le test.", "",
+             (f"Algorithme imposé : {report['training_backend']}. Aucun choix du modèle sur validation/test."
+              if report.get('selection')=='explicit_backend' else
+              "Champion par fold : AUC de validation ; égalité exacte → LightGBM. Aucun choix sur le test."), "",
              "| Fold test | Champion | AUC | Précision TOP10 % | Précision TOP20 % | Amplitude moyenne TOP10 % |",
              "| --- | --- | ---: | ---: | ---: | ---: |"]
     def value(number):
@@ -222,6 +225,11 @@ def select_champion(validation):
 def fit_folds(dataset, columns, cfg, root, progress):
     """Checkpoint each complete model/OOS pair; bad/missing artifacts are not reused."""
     wf = cfg.walk_forward
+    requested=cfg.oracle_path_backend
+    backend_mode=resolve_backend(requested,enable_catboost=cfg.baseline.enable_catboost)
+    required=candidates_for(backend_mode)
+    selection=selection_policy(requested)
+    expected_files={NAMES[b] for b in required}|{'oof.parquet'}
     if wf.step_size < wf.test_size:
         raise ValueError("Oracle parcours : wf step doit être >= wf test (pas de tests OOF dupliqués)")
     folds = build_folds_adaptive(dataset, min_train_dates=wf.min_train_size,
@@ -236,8 +244,12 @@ def fit_folds(dataset, columns, cfg, root, progress):
         complete = folder / "done.json"
         if complete.exists():
             saved = json.loads(complete.read_text(encoding="utf-8"))
-            if cfg.baseline.enable_catboost and set(saved.get("validation_candidates", {})) != {"lightgbm", "catboost"}:
-                raise ValueError("Oracle parcours : checkpoint sans comparaison demandée ; nouveau batch requis")
+            if (set(saved.get('validation_candidates',{}))!=set(required)
+                    or saved.get('champion',{}).get('selection')!=selection
+                    or set(saved.get('files',{}))!=expected_files
+                    or (backend_mode!='auto' and saved.get('champion',{}).get('backend')!=backend_mode)
+                    or (backend_mode=='auto' and saved.get('champion',{}).get('backend')!=select_champion(saved.get('validation_candidates',{})))):
+                raise ValueError('Oracle parcours : checkpoint différent du backend demandé ; nouveau batch requis')
             if all((folder / name).is_file() and digest(folder / name) == checksum
                    for name, checksum in saved["files"].items()):
                 parts.append(pd.read_parquet(folder / "oof.parquet"))
@@ -253,8 +265,10 @@ def fit_folds(dataset, columns, cfg, root, progress):
             skipped.append({"fold_start": str(fold["t_start"]), "reason": "EMPTY_OR_CONSTANT_TARGET"})
             continue
         progress("training_fold", number, len(folds), str(fold["t_start"]))
-        models = {"lightgbm": train_model(train, val, columns, cfg)}
-        if cfg.baseline.enable_catboost:
+        models = {}
+        if 'lightgbm' in required:
+            models['lightgbm']=train_model(train,val,columns,cfg)
+        if 'catboost' in required:
             progress("training_catboost_fold", number, len(folds), str(fold["t_start"]))
             models["catboost"] = train_catboost(train, val, columns, cfg)
         validation = {}
@@ -262,7 +276,7 @@ def fit_folds(dataset, columns, cfg, root, progress):
             frame = val[["date", "symbol", TARGET, "path_amplitude"]].copy()
             frame[SCORE] = model_probabilities(model, backend, val[columns])
             validation[backend] = metrics(frame)
-        champion = select_champion(validation)
+        champion = select_champion(validation) if backend_mode=='auto' else backend_mode
         model_files = {"lightgbm": "path_model.txt", "catboost": "catboost_model.cbm"}
         for backend, model in models.items():
             model.save_model(str(folder / model_files[backend]))
@@ -283,7 +297,7 @@ def fit_folds(dataset, columns, cfg, root, progress):
                                 for backend in models}, **metrics(oof)}
         atomic_json(complete, {"metrics": summary,
             "champion": {"backend": champion, "model_file": model_files[champion],
-                         "selection": "validation_auc; exact_tie_lightgbm"},
+                         "selection": selection},
             "validation_candidates": validation,
             "files": {name: digest(folder / name) for name in
                       [*(model_files[b] for b in models), "oof.parquet"]}})
@@ -299,7 +313,7 @@ def fit_folds(dataset, columns, cfg, root, progress):
     candidates = {backend: metrics(oof.assign(**{SCORE: oof[f"score_{backend}"]}))
                   for backend in ("lightgbm", "catboost") if f"score_{backend}" in oof}
     return {"folds": summaries, "skipped_folds": skipped, "overall": metrics(oof),
-            "comparison_oof": candidates, "selection": "validation_auc; exact_tie_lightgbm",
+            "comparison_oof": candidates, "selection": selection, 'training_backend':backend_mode,
             "n_folds": len(summaries)}
 
 
@@ -320,16 +334,24 @@ def train_oracle_path(cfg, engine, batch_id, symbols):
     profile = load_feature_profile("oracle", cfg.standalone_oracle_feature_profile) if cfg.standalone_oracle_feature_profile else None
     options = _oracle_generator_options(cfg, profile)
     registry = load_security_discontinuities()
+    backend=resolve_backend(cfg.oracle_path_backend,enable_catboost=cfg.baseline.enable_catboost)
+    training_config=asdict(cfg)
+    if cfg.oracle_path_backend is None:
+        # Keep the pre-existing legacy protocol fingerprint on resume.
+        training_config.pop('oracle_path_backend',None)
     protocol = {"schema_version": 1, "mode": MODE, "batch_id": batch_id, "serving_ready": True,
         "target": TARGET, "score": SCORE, "horizon": HORIZON, "top_fraction": .2,
         "min_daily_coverage": .95, "min_daily_universe": 20, "universe": symbols,
-        "training_config": asdict(cfg), "generator_options": options, "profile": profile,
+        "training_config": training_config, "generator_options": options, "profile": profile,
         "security_discontinuities": {s: [asdict(e) for e in events] for s, events in registry.items()},
         "price_basis": "adjusted_close_J; adjusted_high_low_J+1..J+20; adj_close_fallback=close; available_J+21",
         "universe_bias": "static_current_file; not historical PIT membership",
-        "backend": "lightgbm_catboost_cpu" if cfg.baseline.enable_catboost else "lightgbm_cpu"}
-    if cfg.baseline.enable_catboost:
+        "backend": DECLARATIONS[backend]}
+    if backend=='auto':
         protocol.update(champion_selection="validation_auc; exact_tie_lightgbm", catboost_objective="Logloss")
+    if cfg.oracle_path_backend is not None:
+        protocol.update(training_backend=backend,champion_selection=selection_policy(backend))
+        if backend=='catboost':protocol.update(catboost_objective='Logloss')
     fingerprint = sha256(json.dumps(protocol, sort_keys=True, default=str).encode()).hexdigest()
     protocol_path = root / "protocol.json"
     if protocol_path.exists():
@@ -397,8 +419,10 @@ def train_oracle_path(cfg, engine, batch_id, symbols):
         whitelist = profile.get("feature_whitelist") if profile else (
             cfg.data.feature_whitelist if cfg.data.feature_whitelist_enabled else None)
         columns = feature_columns(features, options, whitelist)
-        atomic_json(root / "feature_profile.json", {"mode": MODE, "serving_ready": True,
-            "feature_columns": columns, "generator_options": options, "target": TARGET})
+        feature_profile={"mode": MODE, "serving_ready": True,
+            "feature_columns": columns, "generator_options": options, "target": TARGET}
+        if cfg.oracle_path_backend is not None:feature_profile['training_backend']=backend
+        atomic_json(root / "feature_profile.json",feature_profile)
         if features.duplicated(["date", "symbol"]).any():
             raise ValueError("Oracle parcours : doublons de features")
         dataset = features[["date", "symbol", *columns]].merge(

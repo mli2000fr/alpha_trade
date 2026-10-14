@@ -11,6 +11,7 @@ from sqlalchemy import text
 from modelFactory.oracle.dataset import build_feature_matrix
 from modelFactory.oracle_path import MODE, TARGET, HORIZON
 from modelFactory.oracle_path.train import digest, restore_ranks, model_probabilities, select_champion
+from modelFactory.oracle_path.backend import CHOICES, NAMES, DECLARATIONS, candidates_for, selection_policy
 
 LOGGER = logging.getLogger(__name__)
 
@@ -41,6 +42,12 @@ def load_contract(artifacts_dir, batch_id):
         raise ValueError('Profil Oracle parcours invalide')
     if profile.get('generator_options') != protocol.get('generator_options'):
         raise ValueError('Générateur du profil différent du training')
+    requested=protocol.get('training_backend')
+    if requested is not None:
+        if (requested not in CHOICES or protocol.get('backend')!=DECLARATIONS[requested]
+                or profile.get('training_backend')!=requested or report.get('training_backend')!=requested
+                or protocol.get('champion_selection')!=selection_policy(requested)):
+            raise ValueError('Contrat de backend Oracle parcours incohérent')
     folds = {}
     for folder in sorted((root/'folds').iterdir()):
         if not (folder/'done.json').is_file():
@@ -50,6 +57,19 @@ def load_contract(artifacts_dir, batch_id):
         backend, name = champion.get('backend'), champion.get('model_file')
         if {'lightgbm': 'path_model.txt', 'catboost': 'catboost_model.cbm'}.get(backend) != name:
             raise ValueError('Backend/poids Oracle parcours invalide')
+        if requested is not None:
+            required=candidates_for(requested)
+            validation=done.get('validation_candidates',{})
+            if (set(validation)!=set(required) or champion.get('selection')!=selection_policy(requested)
+                    or (requested!='auto' and backend!=requested)):
+                raise ValueError('Backend du fold différent du choix explicite Oracle parcours')
+            if requested=='auto' and select_champion(validation)!=backend:
+                raise ValueError('Sélection automatique Oracle parcours invalide')
+            for candidate_backend in required:
+                candidate=NAMES[candidate_backend]
+                checksum=done.get('files',{}).get(candidate)
+                if not checksum or not (folder/candidate).is_file() or digest(folder/candidate)!=checksum:
+                    raise ValueError('Poids du backend Oracle parcours absents/corrompus')
         if protocol.get('backend') == 'lightgbm_catboost_cpu':
             validation = done.get('validation_candidates', {})
             if (set(validation) != {'lightgbm', 'catboost'} or select_champion(validation) != backend

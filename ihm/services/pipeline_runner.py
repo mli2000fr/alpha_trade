@@ -409,6 +409,7 @@ class PipelineLaunchOptions:
     ml_enable_oracle_model: bool = DEFAULT_ML_ENABLE_ORACLE_MODEL  # 2026-08-20 : Oracle Extreme (O0)
     ml_oracle_model_only: bool = DEFAULT_ML_ORACLE_MODEL_ONLY      # 2026-08-20 : Oracle ONLY
     ml_oracle_path_model_only: bool = False  # modèle parcours H20 distinct ; défaut IHM True
+    ml_oracle_path_backend: str | None = None  # explicite IHM ; None conserve les anciens flags.
     ml_oracle_barrier_model_only: bool = False  # modèle TP avant SL, recherche
     ml_oracle_barrier_tp_pct: float | None = None  # None = config.yaml
     ml_oracle_barrier_sl_pct: float | None = None
@@ -2358,6 +2359,9 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     if step_key == "ml_train":
+        from modelFactory.oracle_path.backend import resolve_backend
+        path_backend=(resolve_backend(options.ml_oracle_path_backend,enable_catboost=options.ml_enable_catboost)
+                      if options.ml_oracle_path_model_only else None)
         effective_target_mode = (
             "ternary" if options.ml_directional_profiles_enabled else options.ml_target_mode
         )
@@ -2475,7 +2479,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
                 "--catboost-loss-function", str(options.ml_catboost_loss_function),
             ] if options.ml_catboost_tuning_enabled else []),
             "--default-champion",
-            "lightgbm" if options.ml_oracle_path_model_only else options.ml_default_champion,
+            ("catboost" if path_backend=='catboost' else "lightgbm") if options.ml_oracle_path_model_only else options.ml_default_champion,
             "--heartbeat-interval-seconds",
             str(options.ml_heartbeat_interval_seconds),
             "--log-level",
@@ -2525,6 +2529,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             if options.ml_directional_profiles_enabled:
                 raise ValueError("Choisir Oracle parcours OU le bundle Oracle terminal.")
             command.extend(["--oracle-path-model-only", "--oracle-horizon", "20"])
+            if options.ml_oracle_path_backend is not None:
+                command.extend(['--oracle-path-backend',path_backend])
             if options.ml_standalone_oracle_feature_profile != "dynamic":
                 command.extend(["--standalone-oracle-feature-profile", options.ml_standalone_oracle_feature_profile])
         elif options.ml_directional_profiles_enabled:
@@ -2600,9 +2606,9 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.append("--exclude-ticket-symbols")
         if options.ml_debug_train:
             command.append("--debug-train")
-        if options.ml_enable_lightgbm:
+        if (path_backend in ('lightgbm','auto') if path_backend else options.ml_enable_lightgbm):
             command.append("--compare-lightgbm")
-        if options.ml_enable_catboost:
+        if (path_backend in ('catboost','auto') if path_backend else options.ml_enable_catboost):
             command.append("--enable-catboost")
         if options.ml_enable_global_model and not options.ml_global_model_only and not options.ml_oracle_barrier_model_only and not options.ml_oracle_path_model_only:
             # global-model-only active déjà --enable-global-model (implicite cli).

@@ -32,6 +32,17 @@
 - [News après entrée : confirmation et sorties au prochain open, TP20/SL10 maintenus](news_post_entree_sortie_20261014.md).
 - [Oracle parcours TOP5 : grille SL/trailing/TP avec levier ×2, portefeuille et réserves](oracle_path_top5_levier_grid_20261014.md).
 - [Oracle parcours TOP5 : règle figée de protections à l'entrée selon régime, VIX, breadth et force relative](oracle_path_protections_dynamiques_20261014.md).
+- [Oracle parcours TOP5 : comparaison économique appariée des poids LightGBM/CatBoost](oracle_path_comparaison_economique_backends_20261014.md).
+- [Oracle parcours TOP5 : faisabilité de protections personnalisées, plafond rétrospectif sans apprentissage](oracle_path_protections_apprentissage_faisabilite_20261014.md).
+- [Protections personnalisées : dataset OOF et variables à J qualifiés, trois nouveaux modèles annuels enregistrés](oracle_path_protections_dataset_oof_20261014.md).
+- [Sélecteur des trois profils entraîné et douze portefeuilles annuels : NO_GO, choix LARGE constant](oracle_path_selecteur_protections_20261014.md).
+- [TOP5 Oracle parcours : stops SL5, récupération ultérieure et distance ATR — diagnostic terminé, pas preuve de gain](oracle_path_stop_recovery_resultats_20261014.md).
+- [TOP5 Oracle parcours : SL5 contre ATR20 borné à risque constant — six portefeuilles, avantage non stable](oracle_path_atr_stop_resultats_20261014.md).
+- [TOP5 Oracle parcours : une entrée par épisode de signal — six portefeuilles, veto non favorable](oracle_path_signal_episodes_resultats_20261014.md).
+- [News factuelles nouvelles : audit des textes terminé, test historique bloqué par la disponibilité des versions](news_materiality_feasibility_20261014.md).
+- [Archive prospective des textes et associations : collecte existante raccordée, disponibilité confirmée après commit](../signals/news_version_archive.md).
+- [Pilote GPT sur les cinq premières séances de septembre 2026 : huit appels, aucun veto, aucun gain additionnel démontré](news_gpt_septembre_pilote_20261014.md).
+- [TOP10 + GPT, janvier–mars 2025 : préparation terminée, 213 appels chiffrés, aucun appel payant lancé](news_gpt_top10_t1_2025_preparation_20261014.md).
 - Oracle parcours : défaut d'entraînement depuis le 13 octobre ; raccordement
   ML Predict/backtest/live avec lineage, sans direction apprise ni promotion automatique.
 - [Oracle TP avant SL : amplitude + direction LONG/SHORT, TP 20 % configurable](oracle_barrier_training.md).

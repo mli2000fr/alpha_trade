@@ -16,6 +16,12 @@ Chaque sortie matérielle doit être rattachable à sources, date de disponibili
 transformation, version/configuration et run. Pour ML, ajouter batch/artefact ;
 pour trading, décision/request/ordre/fill.
 
+Pour les news US, l'[archive prospective](../signals/news_version_archive.md)
+conserve texte/payload, date fournisseur et précision, associations et politique,
+empreintes et observations de disponibilité après commit. Cela ne qualifie pas
+automatiquement l'identité de l'émetteur, la complétude du corps ou du flux, ni
+les anciennes versions des scores FinBERT. Ne pas antidater un backfill.
+
 ## Contrôles
 
 - clés et contraintes DB ;

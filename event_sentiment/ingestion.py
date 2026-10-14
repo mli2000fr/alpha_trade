@@ -1,6 +1,7 @@
 ﻿import hashlib
 import logging
 import time
+from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 import dateutil.parser
@@ -10,6 +11,7 @@ from event_sentiment.mapping import EntitySectorMapper
 from event_sentiment.models import NormalizedNewsArticle
 from event_sentiment.relevance import (
     DEFAULT_WEIGHTS,
+    RELEVANCE_VERSION,
     RelevanceWeights,
     score_article_symbol,
 )
@@ -292,92 +294,78 @@ class NewsIngestionService:
                                 row["relevance_score"] = relevance.score
                                 row["relevance_components"] = relevance.components
                             ticker_rows.append(row)
-                    summary["landed"] += self.repository.upsert_news_raw(raw_rows)
-                    persisted_article_ids = self._resolve_persisted_article_ids(raw_rows)
-                    remapped_ticker_rows: list[dict[str, Any]] = []
-                    remapped_pairs = 0
-                    for row in ticker_rows:
-                        payload = dict(row)
-                        canonical_article_id = persisted_article_ids.get(payload["article_id"], payload["article_id"])
-                        if canonical_article_id != payload["article_id"]:
-                            remapped_pairs += 1
-                            payload["article_id"] = canonical_article_id
-                        remapped_ticker_rows.append(payload)
-                    if remapped_pairs:
-                        LOGGER.info(
-                            "Remap article_id appliqué avant news_ticker_map | provider=%s symbol=%s remapped_pairs=%s",
-                            self.config.provider_name,
-                            symbol,
-                            remapped_pairs,
-                        )
-                    existing_parent_ids: set[str] = set()
-                    if remapped_ticker_rows:
-                        existing_parent_ids = set(
-                            self.repository.get_existing_article_ids(
-                                sorted(
-                                    {
-                                        str(row["article_id"])
-                                        for row in remapped_ticker_rows
-                                        if row.get("article_id")
-                                    }
-                                )
-                            )
-                        )
-                    persistable_ticker_rows = [
-                        row
-                        for row in remapped_ticker_rows
-                        if str(row.get("article_id") or "") in existing_parent_ids
-                    ]
-                    orphan_ticker_rows = len(remapped_ticker_rows) - len(persistable_ticker_rows)
-                    if orphan_ticker_rows:
-                        missing_article_ids = sorted(
-                            {
-                                str(row["article_id"])
-                                for row in remapped_ticker_rows
-                                if str(row.get("article_id") or "") not in existing_parent_ids
-                            }
-                        )
-                        LOGGER.warning(
-                            "Lignes news_ticker_map ignorées faute de parent news_raw | provider=%s symbol=%s orphan_rows=%s missing_article_ids=%s",
-                            self.config.provider_name,
-                            symbol,
-                            orphan_ticker_rows,
-                            missing_article_ids[:5],
-                        )
-                    summary["ticker_maps"] += self.repository.upsert_news_ticker_map(persistable_ticker_rows)
+                    page_writer = getattr(self.repository, "persist_news_page", None)
+                    if callable(page_writer):
+                        stats = page_writer(raw_rows, ticker_rows, mapping_context={
+                            "queried_symbol": symbol,
+                            "provider": self.config.provider_name,
+                            "window_start_utc": start_utc.isoformat(),
+                            "window_end_utc": end_utc.isoformat(),
+                            "ticker_relevance_mode": self._ticker_relevance_mode,
+                            "max_tickers_per_article": self._max_tickers_per_article,
+                            "min_relevance_score": self._min_relevance_score,
+                            "relevance_version": RELEVANCE_VERSION,
+                            "relevance_weights": asdict(self._relevance_weights),
+                            "identity_qualified": False,
+                        })
+                        summary["landed"] += stats["landed"]
+                        summary["ticker_maps"] += stats["ticker_maps"]
+                    else:
+                        # Compatibility with legacy repository implementations;
+                        # the production repository always uses the atomic writer.
+                        landed, mapped = self._persist_legacy_page(raw_rows, ticker_rows, symbol)
+                        summary["landed"] += landed
+                        summary["ticker_maps"] += mapped
                     watermark = max(article.published_at_utc for article in normalized).replace(tzinfo=None)
                     self.repository.upsert_checkpoint(self.config.source_name, symbol, watermark, next_token, "running")
                     page_token = next_token
                     LOGGER.info(
                         "News ingestion page | symbol=%s fetched=%s deduped=%s landed=%s ticker_maps=%s next_token=%s",
-                        symbol,
-                        len(normalized),
-                        len(existing),
-                        len(raw_rows),
-                        len(persistable_ticker_rows),
-                        next_token,
+                        symbol, len(normalized), len(existing), len(raw_rows), len(ticker_rows), next_token,
                     )
                     if not next_token:
                         break
                     time.sleep(self.config.sleep_between_requests)
             self.repository.upsert_checkpoint(
-                self.config.source_name,
-                symbol,
-                end_utc.replace(tzinfo=None),
-                None,
-                "success",
+                self.config.source_name, symbol, end_utc.replace(tzinfo=None), None, "success",
             )
             return summary
         except Exception as exc:
             self.repository.upsert_checkpoint(
-                self.config.source_name,
-                symbol,
-                previous_watermark,
-                page_token,
-                "failed",
-                last_error=str(exc),
+                self.config.source_name, symbol, previous_watermark, page_token, "failed", last_error=str(exc),
             )
             raise
+
+    def _persist_legacy_page(self, raw_rows, ticker_rows, symbol):
+        landed = self.repository.upsert_news_raw(raw_rows)
+        persisted_article_ids = self._resolve_persisted_article_ids(raw_rows)
+        remapped_ticker_rows = []
+        remapped_pairs = 0
+        for row in ticker_rows:
+            payload = dict(row)
+            canonical_id = persisted_article_ids.get(payload["article_id"], payload["article_id"])
+            if canonical_id != payload["article_id"]:
+                remapped_pairs += 1
+                payload["article_id"] = canonical_id
+            remapped_ticker_rows.append(payload)
+        if remapped_pairs:
+            LOGGER.info(
+                "Remap article_id appliqué avant news_ticker_map | provider=%s symbol=%s remapped_pairs=%s",
+                self.config.provider_name, symbol, remapped_pairs,
+            )
+        parent_ids = set(self.repository.get_existing_article_ids(sorted({
+            str(row["article_id"]) for row in remapped_ticker_rows if row.get("article_id")
+        }))) if remapped_ticker_rows else set()
+        persistable = [row for row in remapped_ticker_rows if str(row.get("article_id") or "") in parent_ids]
+        orphan_count = len(remapped_ticker_rows)-len(persistable)
+        if orphan_count:
+            missing_ids = sorted({str(row["article_id"]) for row in remapped_ticker_rows
+                if str(row.get("article_id") or "") not in parent_ids})
+            LOGGER.warning(
+                "Lignes news_ticker_map ignorées faute de parent news_raw | provider=%s symbol=%s orphan_rows=%s missing_article_ids=%s",
+                self.config.provider_name, symbol, orphan_count, missing_ids[:5],
+            )
+        return landed, self.repository.upsert_news_ticker_map(persistable)
 
     def run(
         self,

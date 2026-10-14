@@ -1,5 +1,438 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-14 — TOP10 + GPT T1 2025 : préparation terminée, analyse payante non lancée
+
+**`PREPARED_AWAITING_PAID_ANALYSIS_GO`**, pas une expérience financière terminée.
+GO borné à préparer et chiffrer avant consommation de crédit. CatBoost annuel
+2025 `model-factory-20261014113226-102eca`, fold causal `2024-12-05`, poids inchangés.
+107 399 couples observables scorés à nouveau sans entraînement : TOP10 de 60 séances,
+600 couples titre/date, 35 titres. Les 300 TOP5 de référence sont reproduits
+exactement, scores et admission à J compris. Aucun choix sur les résultats futurs.
+
+News existantes, fenêtre figée 24 h avant clôture, même protocole que le pilote :
+213/600 cas avec news qualifiées pour le paquet ; 387 UNKNOWN ; 885 associations,
+880 articles distincts, 573 extraits tronqués. Zéro texte du jour historiquement
+admissible à la garde conservatrice : insertions en mai 2026. Risque de mémoire
+du LLM sur 2025 explicite. Pas de certification PIT ni d'avantage prédictif établi.
+
+**213 appels GPT préparés, 0 effectué, 0 USD consommé.** Projection empirique
+environ 0,07 USD ; borne conservatrice de tokens 0,4992202 USD ; plafond futur
+proposé 0,50 USD, soumis à GO distinct. Aucun prix/rendement futur dans les
+paquets, ni calcul financier. Présence des seules clés futures date/symbole
+vérifiée pour les 600 fenêtres, jusqu'à l'expiration maximale du 30 avril 2025 ;
+ce n'est pas une qualification des OHLCV ou des actions sur titres.
+
+41 tests isolés et audit de préparation hors ligne réussis. Arrêt technique v1
+avant news sur l'emplacement de `oracle_rank`, corrigé sans changer de protocole ;
+**v2 est le run de référence**. Aucun batch/config/modèle de production ou SQL
+modifié, aucun téléchargement fournisseur, appel GPT/Web ou ordre courtier.
+
+Run : `artifacts/research/us_news_gpt_q1_2025/20261014-v2`.
+[Couverture, budget, réserves et prochaine décision](news_gpt_top10_t1_2025_preparation_20261014.md).
+
+## 2026-10-14 — GPT sur news stockées de septembre : pilote terminé, aucun veto
+
+GO explicite, crédit API réduit. TOP5 CatBoost parcours annuel2026, cinq premières
+séances :1/2/3/4/8septembre. 25couples titre/date, huit titres distincts, 27articles
+dans les24h avant clôture. Publication seule : import des textes2–3octobre,
+zéro texte du jour qualifié PIT local. Étude exploratoire distincte de la famille
+dilution-only, jamais une réparation du précédent gate historique.
+
+GPT configuré `gpt-6-luna`, uniquement textes stockés, sans Web/outil/prix futur.
+Huit appels réussis, aucune relance ;17cas sans news gardés UNKNOWN. Sept
+ABSTAIN, un BULLISH (MRVL4septembre), zéro BEARISH. Citations exactes vérifiées ;
+19/27extraits tronqués. Règle primaire figée : veto LONG si fait matériel baissier,
+identité correspondante, citations valides et confiance>=0,75. **Aucun veto.**
+19 750tokens d'entrée/796sortie, coût estimé brut **0,002373USD**, plafond avant
+appel0,0176142USD<0,05USD. Ni solde interrogé ni seuils relâchés après les résultats.
+
+Deux portefeuilles natifs appariés, capital4000USD, levier<=2, SL5/TP20 sans
+trailing, expiration après20séances, frais/spread/slippage/financement identiques :
+**4881,17USD, +22,03%, DD clôtures−5,27%, 9positions closes,4gagnantes/5perdantes**
+dans les deux cas, courbes/trades strictement égaux. **Gain additionnel GPT nul**,
+avant sa petite dépense API. Le seul avis BULLISH MRVL touche SL5 dans le diagnostic
+individuel ; il n'est pas acheté dans le portefeuille sous contraintes. Les25
+diagnostics ne sont pas25ordres ni un test BULLISH-only. Aucun alpha établi.
+
+Arrêt technique initial sur la macro manquante des5–7octobre, avant PnL. Script
+initial conservé ; continuation hors ligne déléguant au garde natif existant,
+sans interpolation/neutralisation : toutes les positions étaient sorties
+le23septembre ; ces dates sont cash-only et ne nécessitent plus de macro.
+Aucun nouvel appel GPT et aucun garde de risque désactivé. 28tests isolés et
+audit final hors ligne réussis. Ni SQL écrit, batch/config/modèle changé ni ordre.
+Textes/mappings historiques non immuables, mémoire LLM non maîtrisée, métadonnées
+actuelles et petit échantillon répétitif interdisent une conclusion prédictive.
+
+Run : `artifacts/research/us_news_gpt_september/20261014-v1`.
+[Protocole, huit avis, résultats financiers et réserves](news_gpt_septembre_pilote_20261014.md).
+
+## 2026-10-14 — Infrastructure news : archive prospective livrée, pas de nouveau test financier
+
+GO distinct obtenu après le blocage de faisabilité ci-dessous. Collecte existante
+raccordée à `news_raw_versions`, `news_ticker_map_versions` et
+`news_archive_observations` dans `alpha_trade`. Textes/payloads distincts et
+associations/politique conservés, empreintes et ordre des changements A/B/A,
+disponibilité UTC confirmée après commit. Doublons inchangés sans nouvelle
+version, reprises non antidatées et reçus en attente exclus. Les mises à jour
+partielles et relectures de lignes anciennes sont distinguées des collectes.
+
+Trois tables créées vides par DDL ciblé, aucun backfill ni modification des
+anciennes news. Marqueur local0088 conservé ; pas d'upgrade global intermédiaire.
+Migration canonique0104 et guide d'exploitation livrés. Aucun appel fournisseur
+supplémentaire, modèle réentraîné, planning/activation/étapes de batch modifiés
+ou ordre courtier. Seule la liste des tables touchées de `us_pipeline` est complétée.
+Les anciens scores de sentiment ne deviennent pas immuables. L'identité de
+l'émetteur, la complétude des textes/flux et l'alpha restent à qualifier.
+
+91 tests ciblés et smoke natif MySQL sur copies temporaires de session réussis.
+Aucune fausse news persistée dans les tables réelles ; archive vide au déploiement.
+
+[Contrat, statut, reprise, rétention et limites](../signals/news_version_archive.md).
+
+## 2026-10-14 — News factuelles nouvelles : faisabilité terminée, historique non qualifié
+
+**Clôturé au gate de données : `BLOCKED_HISTORICAL_TEXT_PIT`.** Une seule famille
+figée avant tout rendement : annonce nouvelle de financement primaire en actions,
+comme éventuel veto d'un achat Oracle. Cible envisagée TP20 avant SL5 sous vingt
+séances, mais **aucune cible/prix futur/PnL chargé ni calculé** dans cette étude.
+Ce n'est pas une nouvelle preuve négative du sentiment ni une optimisation du stop.
+
+TOP5 d'origine des CatBoost annuels, janvier/juillet 2025 et janvier/juillet2026 :
+420 décisions titre/séance. Lecture SQL strictement SELECT, sources autorisées
+de l'étude EODHD/Alpaca, trente jours de contexte. Résultat observé EODHD seul,
+10 168 associations et 8 958 articles, zéro troncature ou requête manquante en v5.
+Les archives de scores de sentiment ne conservent pas les corps ; `news_raw`
+les conserve mais ses upserts et ceux des mappings ne versionnent pas tout l'historique.
+
+2025 : aucun ancien texte passant la garde stricte avant clôture. 2026 :92/210
+décisions ont un ancien texte admissible au diagnostic, toutes en juillet ;
+**zéro article des dernières24h qualifié sur les deux années étudiées**.
+Les publications2025 ont été insérées en2026. Absence de version admissible
+ne devient ni absence d'événement ni sentiment neutre.
+
+Deux annonces présélectionnées dans le contexte, mais aucune dans la fenêtre
+des TOP5 effectifs à J : Marvel Biosciences canadien associé au MRVL US, identité
+à exclure ; DigitalOcean avec émission et rachat de convertibles, dilution nette
+non qualifiée, pas d'étiquette baissière automatique. Échantillon de14 pièces
+contrôlé techniquement ; deux aperçus payants/incomplets repérés malgré>200caractères.
+Pas de revue humaine indépendante et pas d'annotation exhaustive de tous les corps.
+
+L'extracteur d'audit a été corrigé pour les payloads stockés en chaînesJSON :
+10 004 publications précises/cohérentes,164 réservées à minuit. **Ne pas utiliser
+le rapport préliminairev4**, remplacé parv5. Aucun payload SQL n'a été modifié.
+Les arrêts SQL bornésv1/v2/v3 sont conservés comme essais techniques, pas comme
+variantes de trading. Aucun seuil ou famille ajusté après lecture de rendements.
+
+10 tests ciblés réussis ; empreintes, panneau recalculé, extraits et clôture
+NYSE anticipée vérifiés hors ligne. Aucune écriture SQL, API fournisseur/LLM,
+nouvelle collecte, modification de modèle/batch/configlive ou ordre courtier.
+Les données ne sont pas à jeter ; l'alpha de nouveauté n'est ni démontré ni réfuté.
+Une suite demanderait d'abord versions prospectives, identités et contenu qualifiés,
+avec un nouveau GO avant toute modification de collecte.
+
+Artefacts finaux : `artifacts/research/us_news_materiality_feasibility/20261014-v5`.
+[Protocole, résultats de disponibilité et réserves](news_materiality_feasibility_20261014.md).
+
+## 2026-10-14 — TOP5 Oracle parcours : une entrée exécutée par épisode, NO_GO
+
+**Terminé, clôturé sans intégration.** Six cas complets, zéro échec technique,
+verdict`NO_GO_STABLE_EPISODE_ENTRY_ADVANTAGE`. Mêmes CatBoost annuels
+437ed1/102eca/bc35a7 que les comparaisons précédentes. LONG TOP5 en ordre de
+score, SL5/TP20/trailing15, budget2 % equity, capital4000USD annuel, plafond
+entrée levier2, coûts/financement/risque natifs conservés. Aucun entraînement,
+SQL, ordre courtier ou changementLIVE/batch.
+
+Règle figée : une présence continue au TOP5 original = un épisode. Une absence
+observée puis retour réarme. Qualité/risk refusé ne crée pas un épisode ; seul
+un achat effectivement committé le consomme. Pas de remplacement par le rang6,
+pas de cooldown optimisé, aucune vente imposée aux positions existantes.
+Épisodes et capital réinitialisés par année, première présence censurée à gauche.
+
+Gate opérationnel de10 réentrées par an passé27/43/44, sans sélectionner selon
+leur PnL : ces réentrées contribuaient−322,89/−47,77/+507,83USD réalisés au
+témoin. Leur suppression ne simule pas un gain par simple soustraction.
+
+| Période | Rendement témoin | Une entrée/épisode | DD témoin | DD règle |
+| --- | ---: | ---: | ---: | ---: |
+| 2024 | −16,74 % | −47,93 % | −32,83 % | −50,75 % |
+| 2025 | +33,12 % | +32,40 % | −21,79 % | −28,15 % |
+| 2026 au30septembre | +36,14 % | −12,23 % | −26,19 % | −23,99 % |
+
+Taux gagnants clos règle13,39/28,33/20,62 %, contre20,53/29,29/26,71 %.
+Achats exécutés128/122/99, zéro réentrée même épisode dans le challenger ;
+maximum1 fill/épisode vérifié. Trois témoins aux trades/courbes exactement
+identiques aux archives FIXED_REFERENCE. Le filtre modifie aussi capital,
+quantités et opportunités suivantes : l'attribution rétrospective initiale ne
+prédisait pas cet effet économique complet.
+
+50 tests ciblés réussis, dont neuf nouveaux. Épisodes/préfixes, rejets non
+consommants, callbacks idempotents, causalité des compteurs de fills, stops et
+réconciliation financière vérifiés. Seconde revue technique du même assistant,
+pas humain indépendant. Périodes déjà inspectées et réserves de données natives
+maintenues. Pas de variante sur ces pertes ni promotion du veto.
+
+Artefacts : `artifacts/research/us_oracle_path_signal_episodes/20261014-v1`.
+[Protocole](oracle_path_signal_episodes_20261014.md) ;
+[résultats financiers et contrôles](oracle_path_signal_episodes_resultats_20261014.md).
+
+## 2026-10-14 — TOP5 Oracle parcours : stop ATR contre SL5, avantage non stable
+
+**Terminé et clôturé sans intégration.** Verdict
+`NO_GO_STABLE_ATR_STOP_ADVANTAGE`. Six portefeuilles complets, zéro échec,
+parité exacte des trois témoins avec les anciens FIXED_REFERENCE.
+
+Nouveaux Oracles CatBoost annuels :2024
+`model-factory-20261014113215-437ed1` ;2025
+`model-factory-20261014113226-102eca` ;2026
+`model-factory-20261014113232-bc35a7`. Mêmes TOP5/admissions connues à J,
+LONG explicite, score d'amplitude non directionnel, pas de remplacement futur.
+
+Règle unique figée avant calcul : SL=`clip(ATR20_J/close_J,5 %,10 %)` contre
+SL5 fixe, TP20/trailing15 identiques, aucun balayage de coefficient.
+Budget nominal2 % equity inchangé avant contraintes natives ; quantité adaptée
+au stop, jamais hausse du budget `.4*SL` pour le brasATR. Fraction choisieJ,
+ancrée au fillJ+1, jamais desserrée ensuite ; risque effectif du gap contrôlé.
+Capital4000USD réinitialisé par année/bras, plafond entrée levier2, frais et
+financement6,5 % ACT/360, garde-fous natifs conservés, aucune vente forcéeH20
+ou terminale ; capital final avec latent des positions ouvertes.
+
+| Période | Rendement SL5 | Rendement ATR | DD SL5 | DD ATR | Gagnants clos SL5 / ATR |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 2024 | −16,74 % | −28,91 % | −32,83 % | −32,03 % | 20,53 % / 19,29 % |
+| 2025 | +33,12 % | +42,02 % | −21,79 % | −18,66 % | 29,29 % / 34,06 % |
+| 2026 au30septembre | +36,14 % | −26,41 % | −26,19 % | −35,44 % | 26,71 % / 21,57 % |
+
+SL ATR exécuté médian5,87/7,30/7,85 %. Levier brut moyen
+SL5→ATR :1,03→0,90 /0,83→0,85 /0,48→0,41. Le budget de risque constant
+n'impose pas des capitalisations/expositions identiques à chaque date : sorties,
+réinvestissements et état des garde-fous divergent. L'amélioration2025 ne
+justifie pas l'ATR uniquement sur cette année connue a posteriori.
+
+41 tests ciblés réussis ; préfixes ATR des2361 décisions de risque vérifiés,
+stops/risque des fills, lots clos, cash/latent/financement/DD et témoins audités.
+Seconde vérification technique du même assistant, pas revue humaine indépendante.
+Les six casv2 ont exactement les mêmes trades/courbes quev1 ;v2 corrige
+uniquement un libellé hérité indiquant sizing inchangé dans le brasATR.
+Copie du runner originalv1 et empreinte conservées. Aucune hypothèse retunée.
+
+Artefacts finaux : `artifacts/research/us_oracle_path_atr_stop/20261014-v2`.
+[Protocole](oracle_path_atr_stop_20261014.md) ;
+[résultats financiers, risques et réserves](oracle_path_atr_stop_resultats_20261014.md).
+Pas d'entraînement, SQL, ordre courtier, batch ou YAMLlive modifié. Les périodes
+déjà observées, prix ajustés actuels, survivants/secteurs nonPIT, dividendes
+incomplets et marge/fills hypothétiques restent réservés. Le SL5 reste témoin
+de recherche, pas stratégie garantie gagnante ; aucun autre multiplicateurATR
+ni profil lancé automatiquement après ce NO_GO.
+
+## 2026-10-14 — TOP5 Oracle parcours : diagnostic des stops SL5 et récupérations
+
+**Terminé, pas de nouveau portefeuille ni d'entraînement.** Référence réelle
+des portefeuilles simulés SL5/trailing15/TP20, nouveaux modèles CatBoost
+annuels437ed1/102eca/bc35a7. LONG TOP5 en ordre de score ;437 lots clos,
+281 sorties au stop initial (gaps compris), trailing stops séparés.
+
+Fenêtre20 séances depuis l'entrée incluse, suivi strictement après la séance
+du stop, aucun remplissage avec des prix non qualifiés ou un autre titre.
+
+| Période | Stops qualifiés | HIGH atteint ensuite +20 % | +20 % avant SL10 depuis l'entrée, sans trailing |
+| --- | ---: | ---: | ---: |
+| 2024 | 101 | 14,85 % | 12,87 % |
+| 2025 | 82 | 26,83 % | 15,85 % |
+| 2026 partiel | 96 | 33,33 % | 18,75 % |
+
+ATR20/prix médian des lots clos5,94/7,44/8,27 % ; stop5 % médian
+0,84/0,67/0,60 ATR.81,46/99,29/99,32 % des entrées ont un stop <1 ATR.
+Pas une preuve de séparation : la quasi-totalité2025/2026 appartient à cette
+tranche. Recul médian post-stop dans la fenêtre20, tous stops qualifiés :
+−11,57/−15,03/−13,92 % ; récupérer ultérieurement n'est pas sans risque.
+
+À60séances : récupération45,10/51,81/61,45 %, mais seulement
+21,57/24,10/20,48 % atteignent +20 % avant un SL10 depuis l'entrée, sans
+trailing. Treize fenêtres2026 immatures réservées ; deux stops hors suivi20.
+Coûts/sizing/réinvestissements NON recalculés : ces taux ne sont pas du PnL.
+Sensibilité sans fenêtres chevauchantes, bornes intraday et motifs conservés.
+
+31 tests ciblés réussis (huit nouveaux et23 du diagnostic réutilisé) ; seconde vérification technique du même assistant
+sur547 fenêtres qualifiées, empreintes/437 ATR à J/prix/denominateurs vérifiés.
+Ni SQL ni modèle/batch/live modifiés. Verdict`HINDSIGHT_RECOVERY_NOT_STRATEGY_PROFIT`.
+Suite ATR à risque financier constant uniquement après nouveauGO, pas de
+paramètre optimal choisi ici ni d'intégration automatique.
+
+Artefacts : `artifacts/research/us_oracle_path_stop_recovery/20261014-v1`.
+[Protocole](oracle_path_stop_recovery_20261014.md) ;
+[résultats et réserves](oracle_path_stop_recovery_resultats_20261014.md).
+
+## 2026-10-14 — Sélecteur de protections entraîné : NO_GO, équivalent au profil LARGE fixe
+
+**Statut : expérience terminée et clôturée sans intégration.** Verdict
+`NO_GO_STABLE_PERSONALIZATION`. Douze portefeuilles complets, zéro échec.
+Ce résultat porte sur ce sélecteur et ces variables, pas sur l'impossibilité
+universelle de personnaliser des protections.
+
+Trois profils figés, choisis à l'entrée et conservés pendant la position :
+
+| Profil | SL dur | Trailing | TP |
+| --- | ---: | ---: | ---: |
+| COURT | 5 % | 10 % | 10 % |
+| REFERENCE | 5 % | 15 % | 20 % |
+| LARGE | 5 % | 20 % | 30 % |
+
+Deux petites régressions LightGBM CPU prédisent les avantages unitaires nets
+COURT−REFERENCE et LARGE−REFERENCE, en points de rendement, pas des probabilités.
+Profondeur 2, quatre feuilles, minimum 150 lignes/feuille, learning rate 0,03,
+L1=0,1/L2=10, maximum 150 itérations, early stopping 15 sur 2022 seulement.
+24 features à J, pondération égale par date, labels à 60 séances purgés.
+Développement 2018–2021, validation 2022, contrôle 2023 sans refit.
+
+Oracles annuels utilisés, sans réentraînement ni changement de champion :
+
+| Test | Modèle | Fold causal |
+| --- | --- | --- |
+| 2024 | `model-factory-20261014113215-437ed1` | 2023-12-05 |
+| 2025 | `model-factory-20261014113226-102eca` | 2024-12-05 |
+| 2026 | `model-factory-20261014113232-bc35a7` | 2025-12-10 |
+
+Scores recalculés sur le pool observable avant qualification future. Le fit
+retient cinq itérations pour COURT et une pour LARGE. Avantages prédits COURT
+tous négatifs (−1,053…−0,728 points), LARGE tous positifs (+0,290…+0,412),
+REFERENCE=0 : le sélecteur choisit **toujours LARGE**, sur validation 2022,
+contrôle 2023 et les 1 260/1 250/933 décisions annuelles qualifiées.
+Les sorties numériques varient légèrement, mais pas le profil choisi ;
+aucune personnalisation utile ni bug de choix démontré.
+Le constant sélectionné uniquement sur validation 2022 est COURT.
+Aucun réglage n'a été ajusté aux résultats des tests.
+
+Portefeuilles : capital initial 4 000 USD réinitialisé par année, TOP5 LONG,
+plafond de levier ×2, frais/financement/risque natifs, sans renforcement ni
+expiration H20/liquidation finale. Capital final avec positions ouvertes MTM.
+**2026 est partielle, jusqu'au 30 septembre.**
+
+| Période | COURT fixe | REFERENCE fixe | LARGE fixe | Sélecteur appris |
+| --- | ---: | ---: | ---: | ---: |
+| 2024 | −23,10 % | −16,74 % | −33,96 % | −33,96 % |
+| 2025 | +7,01 % | +33,12 % | +20,71 % | +20,71 % |
+| 2026 partielle | −9,37 % | +36,14 % | −10,73 % | −10,73 % |
+
+DD maximal du sélecteur : −40,90/−24,11/−39,84 %, contre
+−32,83/−21,79/−26,19 % pour REFERENCE. Moins bon en rendement et DD que
+REFERENCE dans chaque période ; ne bat COURT qu'en 2025. REFERENCE reste
+perdante en 2024 : sa supériorité relative ne prouve pas une stratégie rentable.
+
+**56 tests ciblés réussis.** Trades et courbes LEARNED exactement identiques
+à FIXED_LARGE sur les trois années ; lots/protections/equity/cash/décisions
+revérifiés dans `completion-audit.json`. Modifier les labels de contrôle 2023
+dans une fixture ne change pas les poids appris. Aucun SQL/courtier/batch/live
+touché. Périodes déjà examinées, univers actuel, historiques ajustés, dividendes
+incomplets, secteur et vintages macro non PIT certifiés : réserves conservées.
+
+**Décision : ne pas intégrer ce sélecteur, ni ajouter des profils plus fins
+ou optimiser un seuil à partir de ces pertes dans cette expérience.** La marge
+théorique du diagnostic précédent n'a pas été transformée en avantage appris.
+Toute nouvelle hypothèse nécessitera un protocole distinct et un nouveau GO.
+Run : `artifacts/research/us_oracle_path_protection_selector/20261014-v1`.
+[Protocole et douze résultats financiers](oracle_path_selecteur_protections_20261014.md).
+
+## 2026-10-14 — Protections personnalisées : dataset OOF qualifié, sélecteur pas entraîné
+
+Suite GO à la préparation des variables à J et des exemples antérieurs.
+Trois profils SL5 figés : trailing10/TP10, trailing15/TP20, trailing20/TP30.
+Les dix folds de recherche CatBoost2018–2023, toujours présents, scorent le
+pool observable complet avant qualité future :2 152 562 lignes,6300 TOP5.
+Tous les anciens OOF reproduits avec écart zéro sur leurs2 146 823 clés.
+24 variables de prix/volume/benchmark/rang recalculées causalement, archives
+float32 comparées,404 canaris de préfixe exacts sur148 titres. Pas de macro
+à lineage de publication inconnue, news, consensus, secteurs ou score selector
+comme nouvelle feature. Le périmètre/rang de l'Oracle hérite cependant du
+selector_short_score amont réservé ; pas de certification PIT fournisseur.
+
+Fenêtre60 séances J+1 incluse, ouverte MTM, labels disponibles communément
+à J+60.5115 outcomes qualifiés ;1185 exclusions conservées (1109 gaps>3 %,67
+J non qualifiés,9 prix futurs inconnus),464 labels purgés aux frontières.
+Splits prêts :3342 développement2018–2021,752 validation2022,557 contrôle2023.
+209/65/39 exemples non chevauchants seulement : prudence sur taille effective.
+35 tests ciblés réussis et revue séparée de comptes/features/targets/purges.
+Verdict `READY_FOR_EXPLORATORY_PILOT_NOT_TRAINED`, aucune fit/SQL/courtier/live.
+
+Modèles annuels fournis désormais :2024 `model-factory-20261014113215-437ed1`,
+2025 `model-factory-20261014113226-102eca`,2026 `model-factory-20261014113232-bc35a7`.
+CatBoost explicite, mêmes173 features et1790 titres ; poids/folds causaux
+2023-12-05/2024-12-05/2025-12-10 vérifiés. Pas de nouveaux scores annuels,
+backtests ou remplacement des résultats de leurs prédécesseurs dans cette étape.
+Cette entrée décrit l'étape de préparation, alors sans entraînement. Le GO
+suivant a depuis été exécuté : voir l'entrée du sélecteur ci-dessus, clôturée
+`NO_GO_STABLE_PERSONALIZATION`. Le dataset qualifié reste conservé.
+Run `us_oracle_path_protection_dataset/20261014-v1`.
+[Dataset, modèles, qualification et limites](oracle_path_protections_dataset_oof_20261014.md).
+
+## 2026-10-14 — Oracle parcours TOP5 : espace de personnalisation matériel, apprentissage non démontré
+
+GO borné à l'audit, aucune fit/écriture SQL/ordre/évolution live. Sélections
+CatBoost TOP5 archivées des trois folds annuels ; profils figés SL5 partout,
+COURT trailing10/TP10, REFERENCE trailing15/TP20, LARGE trailing20/TP30.
+Fenêtre principale60 séances, entrée incluse, ouverte valorisée sans vente
+fictive ; contrôle20 séances. Coûts unitaires plats, pas de capital/sizing/
+réinvestissement ni de PnL portefeuille. Scores avant exclusion future,
+échantillon commun sans remplacer les candidats ; métadonnées de folds causales.
+
+Six cohortes v2 terminées/vérifiées. À60 : 1 155/1 109/504 candidats qualifiés
+2024/2025/2026 (2026 décisions jusqu'au16juillet). Surplus moyen du meilleur
+profil connu après coup face au meilleur constant : +3,68/+3,91/+3,25 points
+de rendement unitaire, **pas de rendement annuel réalisable**. Après espacement
+des candidats d'un même titre : +2,36/+4,41/+2,14 points, seulement105/79/56
+observations. Critère matériel préfigé atteint, pas de signal appris démontré.
+Environ50 % de résultats identiques entre profils ; 63,20/62,76/62,10 %
+perdent avec les trois. Le sélecteur parfait ne sauve donc pas la majorité
+des perdants de cet échantillon. Peu de blocs, borne basse nulle pour le
+non-chevauchant2026 ; cinq titres expliquent37–45 % du gain théorique.
+
+51 tests ciblés passent. 437 sorties de protection CatBoost de référence
+reproduites exactement en date/prix/motif, sans prétendre à la parité complète
+du portefeuille. Revue séparée des six cohortes, comptes/coûts/chronologie
+et empreintes présents vérifiés. Précontrôle v1 arrêté : anciens modèles
+remplacés dans artifacts/models ; 18 fichiers originaux absents documentés,
+aucun rescore/substitution avec les nouveaux modèles ni réécriture des anciens
+hashes. Les scores archivés restent vérifiés ; poids non revérifiables aujourd'hui.
+Périodes déjà vues, pas de holdout indépendant, pas de promotion.
+Verdict `MATERIAL_HINDSIGHT_SPACE_NOT_LEARNABILITY` ; prochain GO nécessaire
+pour qualification des features à J et données d'apprentissage OOF antérieures.
+Run `us_oracle_path_protection_headroom/20261014-v2`.
+[Protocole, résultats, exclusions et réserves](oracle_path_protections_apprentissage_faisabilite_20261014.md).
+
+## 2026-10-14 — Oracle parcours : choix explicite du backend livré
+
+IHM « Algorithme — Oracle Extreme parcours H20 » : LightGBM seul, CatBoost seul,
+comparaison automatique sur validation. Défaut IHM `oracle_path.training_backend:
+auto` dans config.yaml ; option dédiée `--oracle-path-backend` prioritaire sur
+les flags challengers génériques. Choix gelé dans protocol/profile/report et folds,
+repris par Predict/backtest/live ; aucun changement aux anciens batchs ou poids.
+Compatibilité CLI legacy conservée, reprises avec changement de choix refusées,
+pas de fallback silencieux à l'inférence. Petits entraînements CPU de fixtures,
+widget/CLI, reprise et corruption testés ; aucun entraînement de production,
+ordre, SQL ni nouveau backtest économique lancé pour cette évolution.
+267 tests ciblés réussis ; trois anciens modèles annuels chargeables avec
+leurs 14 folds et poids inchangés. Les empreintes des anciennes recherches
+ne sont pas réécrites pour masquer cette évolution du code.
+[Utilisation et contrat](oracle_path_training.md#choisir-lightgbm-catboost-ou-comparaison-automatique).
+
+## 2026-10-14 — Oracle parcours TOP5 : avantage économique apparié CatBoost observé
+
+Deux poids archivés de chaque fold annuel, sans réentraînement ni sélection sur
+profits : six portefeuilles sur 2024, 2025, 2026 jusqu'au 30 septembre.
+Même population, features, train/validation, prix, macro et risque. TOP5 LONG,
+SL5/trailing15/TP20, capital 4 000 USD, plafond ×2, frais et financement inchangés.
+Pas de renforcement ni expiration H20/liquidation terminale. 37 tests réussis.
+Scores/membership/qualité des champions précédents reproduits exactement ;
+six portefeuilles complets sans échec, sources/fichiers revérifiés et trois témoins
+identiques trade/curve aux références. LightGBM / CatBoost :
+2024 −34,83 /−16,74 %, 2025 +9,93 /+33,12 %, 2026 +11,11 /+36,14 %.
+DD respectifs −39,44 /−32,83 %, −20,91 /−21,79 %, −25,74 /−26,19 %.
+CatBoost supérieur en rendement et PnL réalisé sur trois périodes, pas en DD
+partout. 2024 perdante pour les deux ; pas de solution par simple backend.
+Recouvrement TOP5 : 70,48 /76,96 /73,69 % selon année. Périodes/protections déjà
+inspectées, pas un nouveau holdout ; aucune promotion live ni modification SQL/batch.
+Run `us_oracle_path_backend_economic/20261014-v1`.
+[Protocole, modèles et contrôles](oracle_path_comparaison_economique_backends_20261014.md).
+
 ## 2026-10-14 — Oracle parcours TOP5 : protections dynamiques figées NO_GO
 
 Une seule règle exploratoire, six portefeuilles FIXED/DYNAMIC sur 2024–2026.

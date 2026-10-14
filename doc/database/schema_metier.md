@@ -26,6 +26,7 @@ doit pas servir à inventer les tables manquantes dans les deux autres bases.
 | qualité | cleaning audit latest/runs | Sanitizer |
 | univers | tradable universe runs/history | common publisher |
 | signaux | scores/latest/history, news et features sentiment | screener/selector/sentiment |
+| archive news US | news_raw_versions, news_ticker_map_versions, news_archive_observations | EventSentimentRepository / collecte existante |
 | ML | training runs, registry, metrics, governance, predictions, ranks, Oracle | modelFactory |
 | risque | decisions, targets, journals/états | risk_management |
 | exécution | runs, snapshots, requests, orders, fills, positions, lots, events, reconciliation | execution_engine |
@@ -33,6 +34,12 @@ doit pas servir à inventer les tables manquantes dans les deux autres bases.
 | CA | events, applications, cash ledger | corporate_actions |
 
 Les consumers ne doivent pas écrire dans la table d'un autre domaine hors repository/API prévu. Latest est une vue opérationnelle mutable ; history/run est nécessaire au PIT/audit.
+
+L'[archive versionnée des news US](../signals/news_version_archive.md) ne remplace
+pas `news_raw`/`news_ticker_map`. Elle conserve les snapshots distincts et leurs
+changements d'état observés prospectivement. Une disponibilité nulle n'est pas
+admissible au backtest ; utiliser une observation confirmée avant le cutoff,
+pas la date de publication ou la première observation de la version seule.
 
 Clés usuelles combinent symbol/date, run id et account id. Les tables multi-comptes doivent toujours filtrer account. Les dates économiques, dates de disponibilité et timestamps d'ingestion doivent rester distincts lorsqu'ils existent.
 
