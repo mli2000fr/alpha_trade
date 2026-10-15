@@ -15,6 +15,18 @@ ne sont ni supprimées, ni déclarées rétroactivement disponibles à leur date
 publication. L'[audit historique](../ml/news_materiality_feasibility_20261014.md)
 reste bloqué sur ses données : livrer le stockage ne démontre aucun gain ML.
 
+**Complément du 15 octobre 2026** : un
+[outil de qualification prospective des financements primaires](../ml/news_events_prospectifs_qualification_20261015.md)
+consomme ces versions en lecture seule et prépare les revues sans publier de
+signal. Les trois tables étaient d'abord vides. Une continuation pilote bornée
+a ensuite produit 55 versions de texte, 55 versions de mappings et 110 observations,
+sans reçu en attente. Neuf textes ont été relus techniquement ; zéro nouvelle
+annonce de financement qualifiée, pas de gain directionnel démontré.
+Le correctif TLS via confiance système est limité au pilote ; les processus de
+collecte ordinaires ne sont pas modifiés et leur succès nocturne reste à vérifier.
+Ce complément ne change ni le writer, ni les batchs, ni le statut non versionné
+des scores de sentiment décrit ci-dessous.
+
 ## Tables dans `alpha_trade`
 
 | Table | Contenu et clé |

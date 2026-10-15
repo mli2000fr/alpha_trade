@@ -1,0 +1,16 @@
+{
+  "extends": "config/research/oracle_path_profit_filter_tp10_sl10.json",
+  "experiment": "ORACLE_PATH_CONDITIONAL_LONG_PROFIT_TP15_SL7",
+  "amendment": "User requested TP15/SL7 instead of TP10/SL10 before any label, fitting or economic replay",
+  "target_overrides": {
+    "take_profit_pct": 0.15,
+    "stop_loss_pct": 0.07
+  },
+  "comparison_amendment": {
+    "protection_source": "target_in_this_protocol_not_parent_replay_protections",
+    "source_replay_used_as": "data_calendar_native_guards_and_cost_template_only",
+    "fresh_all_long_control_required": true,
+    "reuse_parent_economic_results": false,
+    "risk_budget_pct_before_native_guards": 0.028
+  }
+}

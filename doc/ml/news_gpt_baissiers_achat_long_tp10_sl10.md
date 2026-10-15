@@ -143,8 +143,10 @@ L'inversion LONG des avis BEARISH, avec TP10/SL10, est bénéficiaire sur deux
 années sur trois dans cette simulation, mais **ne résout pas 2026** et présente
 un DD allant jusqu'à près de 32 %. Elle n'établit ni rentabilité transversale
 ni capacité de GPT à prédire systématiquement à l'envers. Aucune promotion live.
-Il manque notamment un témoin LONG non inversé aux mêmes TP10/SL10, même risque
-et même période pour isoler un avantage de sélection ; il n'a pas été lancé ici.
+Le périmètre initial ne comprenait pas de témoin LONG non inversé aux mêmes
+TP10/SL10. **Complément du 15 octobre : les témoins BULLISH et TOP20 entier sont
+désormais terminés et audités dans une expérience distincte**, sans réécriture
+de ces résultats. [Comparaison aux mêmes règles et conclusion](news_gpt_comparaison_long_tp10_sl10.md).
 Les comparaisons aux anciens TP20/SL5 ou au LONG >=0,90 TP20/SL10 ne séparent
 pas l'effet du sens, de la sélection, des protections et du chemin du capital.
 

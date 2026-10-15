@@ -14,6 +14,11 @@
 
 ## Contrats opérationnels actuels — 10 octobre 2026
 
+- [News prospectives : pilote réel archivé, neuf textes relus ; zéro nouvelle annonce qualifiée et réserves d'identité](news_events_prospectifs_qualification_20261015.md).
+- [Projection hypothétique : 70 % de trades gagnants TP20/SL10 — pas un backtest ni une preuve de modèle](projection_hypothetique_70pct_tp20_sl10_20261015.md).
+- [Point 2 terminé : filtre net TP15/SL7 — cibles natives auditées, un fit, NO_GO en validation/contrôle](oracle_path_profit_filter_tp15_sl7_resultats_20261015.md).
+- [Point 2 : filtre de rentabilité Oracle parcours — protocole actif TP15/SL7, aucun entraînement](oracle_path_profit_filter_tp15_sl7_20261015.md).
+- [Comparaison LONG TP10/SL10 : avis BEARISH, avis BULLISH et TOP20 sans filtre, règles identiques](news_gpt_comparaison_long_tp10_sl10.md).
 - [Expérience inverse : acheter en LONG les 734 avis GPT baissiers, TP10/SL10](news_gpt_baissiers_achat_long_tp10_sl10.md).
 - [Confiance GPT : gains/pertes par tranche LONG/SHORT et nouveau LONG >=0,90 TP20/SL10](news_gpt_confiance_tranches_2024_2026.md).
 - [Vente à découvert des seuls 734 avis GPT baissiers : régimes natifs/variante recherche, emprunt hypothétique](news_gpt_baissiers_short_backtest_2024_2026.md).

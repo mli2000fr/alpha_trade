@@ -1,5 +1,183 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-15 — news prospectives : pilote réel et lecture technique terminés
+
+Famille conservée du protocole antérieur : annonces nouvelles de financement
+primaire par émission d'actions. Nouveau dossier de recherche sur les seules
+archives versionnées, univers tradable courant de 1 790 titres ; aucune sélection
+par résultat futur. Dépistage vers revue, réserves d'identité/date/nouveauté,
+citations exactes et montants littéraux ; pas de signal LONG/SHORT automatique.
+
+Premières lectures : archives vides, rapports initiaux conservés. Continuation
+bornée : problème TLS diagnostiqué, contexte système vérifié limité au pilote,
+12 titres/12 tentatives EODHD maximum dans la reprise, une page par titre.
+55 versions de texte, 55 mappings versionnés et 110 observations confirmées ;
+checkpoints de production inchangés. Aucune disponibilité passée reconstruite.
+
+Qualification V3 : 112 couples article/titre ; revue technique du même assistant
+sur 13 couples/neuf textes. Seul texte présélectionné : rappel d'un financement
+SNPS de 2025, également associé à ses concurrents. Confusions KEYS UK/US et
+SO/SCCO dans les témoins. **Zéro nouvelle annonce qualifiée**, pas une absence
+prouvée dans l'univers ni une seconde revue humaine indépendante.
+
+73 tests ciblés passent. Appels EODHD et écritures news/archives limités au pilote,
+zéro GPT payant, entraînement, ordre ou batch modifié. TLS des collectes ordinaires
+reste à vérifier : le pilote ne modifie pas leur configuration.
+Ce n'est pas un résultat financier : sentiment versionné, réaction prix et
+comparaison TP20/SL10 restent hors de cette livraison.
+[Fonctionnement, résultat et reprise](news_events_prospectifs_qualification_20261015.md).
+
+## 2026-10-15 — projection hypothétique 70 % gagnants TP20/SL10
+
+À la demande de l'utilisateur : projeter l'effet de70 % de trades LONG gagnants.
+Simulation **synthétique, sans modèle ni historique**, séparée des expériences
+échouées. Scénario principal suppose70 % de TP+20 % et30 % de SL−10 % sans gap,
+4 000 USD au départ,25 % du capital courant par entrée, une position à la fois,
+sans levier, coûts8bps/sens et réinvestissement.20/50/100 trades donnent
+6 745/14 771/54 545 USD, **sans annualisation ni promesse de rendement**.
+Sensibilité aux gains moyens plus faibles et aux pertes groupées :70 % de
+réussite n'interdit pas un drawdown de53,73 % dans un stress de30 pertes
+consécutives. Pas de parité native/live ou de preuve que70 % soit atteignable.
+Six tests passent ; zéro SQL/API/apprentissage/ordre ou changement de production.
+[Hypothèses, résultats et limites](projection_hypothetique_70pct_tp20_sl10_20261015.md).
+
+## 2026-10-15 — point 2 terminé : filtre net TP15/SL7, NO_GO
+
+Continuation autorisée : construire les cibles, vérifier la parité native et
+entraîner un seul petit filtre si les gates de données passent. Oracle parcours
+CatBoost inchangé, **20 premiers titres**, LONG TP15/SL7 sans trailing, expiration
+open J+21, labels disponibles J+22. Pas de recherche de nouveaux paramètres.
+
+25 200 candidats historiques conservés avant labels, 24 852 admissibles à J,
+**20 875 labels connus** dans la v2. Cibles comptabilisées par les primitives
+natives sur états isolés, coûts des deux notionnels et financement de référence
+50 % à 6,5 % ACT/360. 24 sondes de ledger complet et préfixes sur 293 titres
+vérifiés. Les cibles ne sont pas des PnL de portefeuille.
+
+Incident technique documenté : v1 arrêtée par couverture validation **79,98008 %**
+au lieu des 80 % fixés. Un rejet flottant de gap exact CUK 6,00 → 6,18 différait
+du moteur natif. V2 séparée appelle la fonction native sur **tout** l'historique,
+sans epsilon ni seuil modifié : cinq cas changent (trois gains, deux pertes),
+25 195 lignes strictement identiques. Couverture validation corrigée à 80 % exacts.
+V1/code/manifeste/verdict conservés ; aucune retouche à partir des signes futurs.
+
+Fit 2018–2021 : **14 201** exemples, validation 2022 : **3 642**, contrôle 2023
+partiel : **2 278**, après purge J+22. LightGBM profondeur3/sept feuilles,
+maximum150/early stopping15, 24 features J, poids égaux par date ; itération
+retenue **1**, aucun refit. Seuil 0,50 et autres gates inchangés.
+
+| Mesure | Validation 2022 | Contrôle 2023 partiel |
+| --- | ---: | ---: |
+| AUC quotidienne moyenne | **0,4656** | **0,4772** |
+| Brier filtre | 0,210225 | 0,257302 |
+| Brier constant témoin | 0,210094 | 0,257355 |
+| Candidats acceptés à 0,50 | **0 / 3 642** | **0 / 2 278** |
+
+**`NO_GO_CONDITIONAL_NET_PROFIT_FILTER`.** AUC sous le gate 0,53, Brier non
+amélioré en validation et aucune activité. Lift inconnu, pas « gain en cash ».
+Ne pas abaisser le seuil ou inverser les scores après lecture de ces résultats.
+Les 24 features varient dans le fit ; scores/cash/dates recontrôlés, pas un
+diagnostic fondé seulement sur une erreur technique ou des inputs constants.
+
+55 tests ciblés passent. Audit final du fit : 268 entrées/fichiers source et
+quatre sorties vérifiées, scores reproduits et métriques recalculées. Un fit,
+**zéro inférence récente ou backtest 2024–2026**, aucun SQL/API/GPT/ordre ou
+changement de production. Modèle de recherche archivé, piste non promue.
+[Bilan, parité, incident et résultats complets](oracle_path_profit_filter_tp15_sl7_resultats_20261015.md).
+
+## 2026-10-15 — amendement du point 2 : TP15/SL7 avant tout apprentissage
+
+Choix explicite de l'utilisateur : **TP +15 %, SL −7 %**, à la place de TP10/SL10.
+Pas d'autre changement de TOP20, durée vingt séances, absence de trailing,
+features, périodes, modèle auxiliaire ou seuil 0,50. Formule du budget risque
+`0,4 × SL` conservée, donc 2,8 % avant gardes natives.
+Témoin sans filtre et variante filtrée devront tous deux utiliser TP15/SL7 :
+nouvelle baseline exigée, aucun capital/PnL TP10/SL10 recyclé comme ce témoin.
+
+Version initiale et scores/prix conservés, nouveau protocole de recherche et
+dossier `us_oracle_path_profit_filter/20261015-tp15-sl7-protocol-v1` séparés.
+Zéro nouvelle cible, entraînement, replay, accès SQL/API/courtier ou changement
+de production. La population est réutilisable, pas les anciens outcomes.
+Préparation exécutée, statut `PREPARED_NOT_TRAINED` ; 22 tests ciblés passent,
+empreintes recontrôlées et paramètres parent TP10/SL10 conservés.
+[Protocole actif TP15/SL7](oracle_path_profit_filter_tp15_sl7_20261015.md).
+
+## 2026-10-15 — point 2 : filtre net après Oracle parcours, préparation sans entraînement
+
+Version initiale TP10/SL10, remplacée pour la suite par l'amendement TP15/SL7
+ci-dessus ; aucun des anciens résultats n'est réécrit.
+
+**Audit/protocole terminés, pas un nouveau résultat ML.** Le principe de prédire
+la rentabilité nette d'un trade après Oracle existait déjà dans E3-A et le
+challenger d'entrée du 13 octobre, expirations positives incluses. Verdict
+`PARTIAL_DUPLICATE_BOUNDED_REPLICATION_ONLY` : pas une nouvelle famille de signal.
+Différence bornée proposée : Oracle parcours CatBoost actuel, **20 premiers
+titres**, filtre LONG TP10/SL10, un seul petit LightGBM, seuil fixé 0,50.
+
+Dix caches OOF observables contrôlés, 2 152 562 scores, reproduction des anciens
+scores CatBoost avec écart maximal zéro. Population reconstruite **avant futurs
+labels** : 25 200 candidats, 1 260 séances, 293 titres, juillet 2018–juillet 2023.
+72 tranches de prix / 3 409 276 lignes vérifiées par empreintes. Modèles annuels
+`437ed1` / `102eca` / `bc35a7` et 13 780 candidats récents contrôlés ; pas de
+réentraînement ni de sélection des candidats sur leur rendement futur.
+
+Protocole : entrée prochain open, TP10/SL10, sans trailing, expiration open J+21,
+labels disponibles J+22, 24 features à J, fit 2018–2021, validation 2022 et contrôle
+2023 purgés. 2024–2026 déjà explorés, jamais présentés comme holdout vierge.
+Cible standardisée nette de coûts natifs et financement de référence, **pas**
+le PnL exact du futur portefeuille. Parité du labeler et couverture à qualifier
+avant fit ; anciens résultats TOP5/60 séances non recyclés comme nouvelles cibles.
+Gates préparés et arrêt si échec, sans seuil retouché sur les pertes récentes.
+
+Dossier `us_oracle_path_profit_filter/20261015-protocol-v1`, statut
+`PREPARED_NOT_TRAINED` : zéro entraînement, label calculé, replay économique,
+appel API/SQL/courtier ou changement de production. Prochaine étape sur nouveau
+GO : cibles/parité native, features J, couverture et purge, puis éventuel fit.
+31 tests ciblés passent ; contrôle final séparé des 235 entrées et cinq sorties,
+population sans label futur, bornes/ordre vérifiés. Pas de parité de nouvelles
+cibles revendiquée : elles ne sont pas encore implémentées.
+[Audit des doublons, inventaire et protocole](oracle_path_profit_filter_tp10_sl10_20261015.md).
+
+## 2026-10-15 — contrôles LONG TP10/SL10 appariés : avantage de l'inversion non stable
+
+GO point 1 : comparer achats des avis BEARISH, achats des avis BULLISH et TOP20
+entier sans filtre, **tous LONG TP10/SL10**, mêmes modèles annuels
+`437ed1` / `102eca` / `bc35a7`, mêmes prix, risque, coûts et financement.
+Aucun seuil de confiance ajouté. 4 000 USD par an, levier maximal x2, sans
+trailing, entrée prochain open, expiration vingt séances, pas de renforcement.
+734/913 avis valides bruts, 732/911 admissibles à J ; le témoin entier conserve
+aussi avis inconnus/invalides/ABSTAIN. Neuf cas : trois BEARISH repris après
+vérification, **six nouveaux témoins**, aucun nouvel appel GPT.
+
+| Année | BEARISH LONG | BULLISH LONG | TOP20 entier LONG |
+| --- | ---: | ---: | ---: |
+| 2024 | +55,88 % | −26,04 % | −17,24 % |
+| 2025 | +20,80 % | −2,35 % | +14,66 % |
+| 2026 au 30/09 | −18,82 % | −14,04 % | −19,67 % |
+
+Bornes civiles avec positions ouvertes valorisées. DD, dans le même ordre :
+2024 −16,48/−30,08/−40,16 % ; 2025 −28,24/−29,40/−34,37 % ;
+2026 −31,98/−28,77/−34,93 %. Après fermeture des cohortes anciennes :
+2024 +62,04/−26,04/−7,40 % ; 2025 +20,89/+2,95/+26,04 %.
+L'avantage civil 2025 de l'inversion contre le témoin entier disparaît après
+la queue : **−5,15 points** ; 2026, avantage de seulement +0,84 point contre
+TOP20 entier, mais −4,78 points contre BULLISH et perte absolue importante.
+
+Achats 294/289/560 ; clôturées 292/287/552 ; gagnantes/perdantes
+161/131,155/132,299/253, taux gagnants 55,14/54,01/54,17 %.
+Deux/deux/huit positions encore ouvertes en 2026. Exposition non appariée :
+2026 brut moyen/equity 0,385/0,569/0,883 ; pas de preuve d'alpha à risque égal.
+**Conclusion : intérêt rétrospectif surtout en 2024, pas d'inversion GPT robuste
+à promouvoir.** Les années et l'hypothèse ont déjà été examinées, news/LLM et
+macro non certifiés PIT, secteurs actuels, dividendes/marge incomplets.
+
+Neuf cas terminés sans échec économique, audités quotidiennement ; 16 tests
+ciblés passent. Premier lancement bloqué avant simulation par des conversions
+LF/CRLF Python : équivalence SHA256 prouvée et archivée, sans modification des
+anciens manifestes ni tolérance pour un changement de contenu/configuration.
+Zéro entraînement, écriture SQL, ordre courtier ou modification de production.
+[Protocole, capitaux, queues, exposition et bilan](news_gpt_comparaison_long_tp10_sl10.md).
+
 ## 2026-10-15 — inversion des 734 avis BEARISH en achats LONG TP10/SL10
 
 Demande explicite : acheter en LONG les avis GPT baissiers valides, sans seuil
@@ -28,8 +206,9 @@ soit **55,14 % / 44,86 %** ; aucune addition trompeuse des rendements annuels.
 
 **Conclusion : positif en 2024/2025, perdant en 2026 ; avantage stable non démontré.**
 Hypothèse postérieure aux pertes déjà observées. Pas de témoin LONG aux mêmes
-TP10/SL10 lancé ici ; l'écart avec les anciens SHORT TP20/SL5 n'isole pas l'effet
-de l'inversion. News/LLM non certifiés PIT, secteurs actuels, dividendes et marge
+TP10/SL10 dans ce périmètre initial ; les témoins ont depuis été évalués dans
+la comparaison appariée du 15 octobre ci-dessus. L'écart avec les anciens SHORT
+TP20/SL5 n'isole pas l'effet de l'inversion. News/LLM non certifiés PIT, secteurs actuels, dividendes et marge
 non entièrement qualifiés : recherche uniquement, pas de promotion live.
 
 Trois cas terminés sans échec, audit journalier des comptes/protections/entrées
