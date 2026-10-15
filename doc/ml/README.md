@@ -14,6 +14,7 @@
 
 ## Contrats opérationnels actuels — 10 octobre 2026
 
+- [Expérience inverse : acheter en LONG les 734 avis GPT baissiers, TP10/SL10](news_gpt_baissiers_achat_long_tp10_sl10.md).
 - [Confiance GPT : gains/pertes par tranche LONG/SHORT et nouveau LONG >=0,90 TP20/SL10](news_gpt_confiance_tranches_2024_2026.md).
 - [Vente à découvert des seuls 734 avis GPT baissiers : régimes natifs/variante recherche, emprunt hypothétique](news_gpt_baissiers_short_backtest_2024_2026.md).
 - [Achat des seuls 913 avis GPT haussiers : backtests annuels 2024–2026, TP20/SL5 et témoin Oracle](news_gpt_haussiers_backtest_2024_2026.md).

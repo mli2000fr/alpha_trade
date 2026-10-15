@@ -1,5 +1,42 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-15 — inversion des 734 avis BEARISH en achats LONG TP10/SL10
+
+Demande explicite : acheter en LONG les avis GPT baissiers valides, sans seuil
+de confiance ajouté. Modèles annuels `437ed1` / `102eca` / `bc35a7`, même TOP20
+figé et mêmes réponses archivées. **734 avis**, 732 admissibles à J avant risque ;
+pas de remplacement hors TOP20, priorité au score Oracle original.
+
+Trois portefeuilles : 4 000 USD réinitialisés annuellement, levier d'entrée <=2,
+cap de position 40 % avant gardes, budget risque `0,4 x SL`, entrée à l'open
+suivant, **TP10/SL10**, sans trailing, expiration à l'open après vingt séances.
+Régimes, risque, coûts et financement natifs conservés ; LONG fractionnaire
+possible, aucun frais d'emprunt SHORT.
+
+| Année | Capital à fin d'année / 30 septembre 2026 | Rendement civil | DD civil | Achats | Gagnantes / perdantes de cohorte clôturée |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 2024 | 6 235,36 USD | +55,88 % | −16,48 % | 82 | 48 / 34 |
+| 2025 | 4 832,07 USD | +20,80 % | −28,24 % | 130 | 75 / 55 |
+| 2026 au 30/09 | 3 247,12 USD | −18,82 % | −31,98 % | 82 | 38 / 42 |
+
+Taux gagnants des cohortes : **58,54 % / 57,69 % / 47,50 %**. Les cohortes
+2024/2025 incluent leurs sorties de début d'année suivante, sans nouvelle décision :
+capitaux après fermeture **6 481,76 / 4 835,69 USD**, soit +62,04 / +20,89 %.
+En 2026, deux positions APP/FICO restent ouvertes, latent −63,87 USD inclus.
+Total : 294 achats, 292 clôturées, **161 gagnantes / 131 perdantes**,
+soit **55,14 % / 44,86 %** ; aucune addition trompeuse des rendements annuels.
+
+**Conclusion : positif en 2024/2025, perdant en 2026 ; avantage stable non démontré.**
+Hypothèse postérieure aux pertes déjà observées. Pas de témoin LONG aux mêmes
+TP10/SL10 lancé ici ; l'écart avec les anciens SHORT TP20/SL5 n'isole pas l'effet
+de l'inversion. News/LLM non certifiés PIT, secteurs actuels, dividendes et marge
+non entièrement qualifiés : recherche uniquement, pas de promotion live.
+
+Trois cas terminés sans échec, audit journalier des comptes/protections/entrées
+passé, 27 tests ciblés réussis. Zéro nouvel appel GPT, entraînement, écriture SQL,
+ordre courtier ou modification du moteur partagé et de la configuration.
+[Protocole, résultats et réserves](news_gpt_baissiers_achat_long_tp10_sl10.md).
+
 ## 2026-10-15 — confiance GPT et LONG >=0,90 TP20/SL10 : clôturée, non concluante
 
 **Statut : expérience terminée et archivée ; variante non retenue pour le live.**
