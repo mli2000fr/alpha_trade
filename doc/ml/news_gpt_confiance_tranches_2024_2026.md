@@ -12,6 +12,12 @@ gagnant n'est démontrée. Le nouveau portefeuille LONG >=0,90 TP20/SL10 ne conf
 pas non plus une rentabilité régulière.** Ce sont des résultats exploratoires,
 pas une calibration ni une validation indépendante.
 
+**Statut de clôture : variante non concluante, non retenue pour le live.**
+Ne pas poursuivre une optimisation des seuils sur ces mêmes années. Une reprise
+éventuelle nécessiterait un protocole figé et une période prospective encore
+non examinée, avec disponibilité PIT vérifiée et baseline comparable.
+Cette conclusion ne signifie pas que toutes les données de news sont inutiles.
+
 ## Sources, population et conventions
 
 Campagne commune : 2024-01-01 au 2026-09-30, TOP20 Oracle par séance.

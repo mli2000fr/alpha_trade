@@ -1,28 +1,53 @@
 # Registre des expériences ML réalisées
 
-## 2026-10-15 — confiance GPT : pas de progression stable ; LONG >=0,90 TP20/SL10 contrasté
+## 2026-10-15 — confiance GPT et LONG >=0,90 TP20/SL10 : clôturée, non concluante
 
-Attribution des positions exécutées/clôturées des précédents TP20/SL5 :335LONG,
-167SHORT (profil recherche SHORT autorisé en normal), jambes regroupées et
-positions ouvertes exclues. Cinq tranches figées, aucun balayage de seuils.
-LONG>=0,90 :16/65gagnantes,24,62 %,PnL−262,57USD contre74/270,27,41 %,
-+3 061,67USD sous0,90. SHORT>=0,90 :13/67,19,40 %,−692,55USD contre25/100,
-25,00 %,+476,95USD. PnL net de frais de trade/emprunt, financement non attribué.
-Confiance haute favorable au taux gagnant en2026, défavorable en2024/2025 :
-pas de relation croissante stable ni calibration. >=0,95 :seulement11LONG/25SHORT.
-Attribution descriptive des exécutés, pas portefeuille rebalancé par tranche.
+**Statut : expérience terminée et archivée ; variante non retenue pour le live.**
+Aucun avantage suffisamment stable démontré. Ce bilan porte sur ce filtre et
+ces protections, pas sur l'inutilité de toutes les informations des news.
 
-Demande précédente conservée :trois nouveaux portefeuilles LONG>=0,90,
-**TP20/SL10**, mêmes modèles annuels437ed1/102eca/bc35a7.163avis25/53/85,
-74achats,73fermées(28gagnantes/45perdantes) et uneVICRouverte au30/09/2026.
-Capital annuel initial4 000USD,levier<=2,sans trailing,expiration20séances,
-coûts et financement/régimes natifs. Capitaux3 226,05/4 019,75/3 454,23USD,
-rendements−19,35/+0,49/−13,64 %,DD−25,06/−18,55/−20,61 %.
-Effet conjoint seuil+SL, pas attribution de causalité à la confiance.
+Comparaison par tranche à **TP20/SL5 inchangé** : 335 positions LONG et 167 SHORT
+clôturées (SHORT autorisé aussi en régime normal uniquement dans la recherche).
+Jambes regroupées, positions ouvertes exclues, cinq tranches figées et aucun
+balayage de seuils. Au seuil >=0,90 :
 
-Trois cas terminés et audités quotidiennement,30tests ciblés passent.
-Zéro nouvel appelGPT,entraînement,écritureSQL,ordre ou changement de production.
-NonPIT/LLM,secteurs et emprunt historiques non qualifiés :recherche uniquement.
+- LONG : 16/65 gagnantes, **24,62 %**, PnL −262,57 USD ; sous 0,90 : 74/270,
+  **27,41 %**, +3 061,67 USD ;
+- SHORT : 13/67 gagnantes, **19,40 %**, PnL −692,55 USD ; sous 0,90 : 25/100,
+  **25,00 %**, +476,95 USD.
+
+PnL net de frais de transaction/emprunt, financement non attribué aux positions.
+La confiance haute améliore le taux gagnant en 2026, pas en 2024/2025 : aucune
+progression stable ni calibration. Groupe >=0,95 : seulement 11 LONG / 25 SHORT.
+Attribution descriptive des exécutés, pas portefeuilles de tranches à capital égal.
+
+Test distinct demandé : **LONG uniquement, avis BULLISH/VALID et confiance
+>=0,90, TP +20 % / SL −10 %**, modèles annuels `437ed1` / `102eca` / `bc35a7`.
+163 avis retenus (25/53/85), puis 74 achats après risque/exécution. Départ de
+4 000 USD indépendant chaque année, levier d'entrée maximal x2, sans trailing,
+expiration à l'open après vingt séances ; coûts, financement et régimes natifs.
+
+| Année | Capital final civil | Rendement | DD maximal civil | Gagnantes / perdantes clôturées | Taux gagnant |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 2024 | 3 226,05 USD | −19,35 % | −25,06 % | 2 / 10 | 16,67 % |
+| 2025 | 4 019,75 USD | +0,49 % | −18,55 % | 15 / 17 | 46,88 % |
+| 2026 au 30/09 | 3 454,23 USD | −13,64 % | −20,61 % | 11 / 18 | 37,93 % |
+
+Au total : **28 gagnantes / 45 perdantes**, soit **38,36 % / 61,64 %** sur les
+73 positions clôturées. Une VICR encore ouverte au 30/09/2026 : latent inclus
+dans le capital, exclue du taux gagnant. Effet conjoint du seuil et du SL :
+aucun effet causal isolé de la confiance n'est revendiqué.
+
+**Conclusion : pas exploitable en production en l'état.** Deux années perdantes
+et une année presque à l'équilibre, avec DD de 18,55 % à 25,06 %. Ne pas chercher
+le « bon seuil » après coup sur les mêmes années. Une éventuelle reprise devra
+utiliser un protocole figé, des données prospectives réellement disponibles avant
+décision et une période encore non examinée, contre une baseline comparable.
+L'historique non certifié PIT, la mémoire future du LLM, les secteurs actuels
+et les hypothèses d'emprunt SHORT restent des réserves, pas des détails résolus.
+
+Trois nouveaux cas terminés et audités quotidiennement ; 30 tests ciblés passent.
+Zéro nouvel appel GPT, entraînement, écriture SQL, ordre ou changement de production.
 [Tranches, résultats annuels, comptes et réserves](news_gpt_confiance_tranches_2024_2026.md).
 
 ## 2026-10-15 — 734 avis GPT baissiers : douze backtests SHORT audités, pas de rentabilité stable
