@@ -1,5 +1,11 @@
 # Analyses GPT des news : stockage SQL et réutilisation sans nouvel appel
 
+Extension distincte autorisée le 15 octobre :
+[campagne TOP20 Oracle parcours 2024–septembre 2026, plafond de nouveaux appels 8 USD](../ml/news_gpt_top20_historique_2024_2026.md).
+Elle utilise les mêmes tables ; les effectifs ci-dessous décrivent l'import
+initial, pas le nombre courant après cette nouvelle campagne. Son état réel est
+dans son `progress.json`/`report.json` ; aucune réussite n'est présumée ici.
+
 Livraison du **15 octobre 2026**, à la demande de l'utilisateur. US uniquement,
 base `alpha_trade`. Ni nouveau test payant, entraînement, ordre, batch ni changement
 des règles du portefeuille. Le cache est distinct du filtre quotidien GPT/Web.

@@ -14,6 +14,10 @@
 
 ## Contrats opérationnels actuels — 10 octobre 2026
 
+- [Confiance GPT : gains/pertes par tranche LONG/SHORT et nouveau LONG >=0,90 TP20/SL10](news_gpt_confiance_tranches_2024_2026.md).
+- [Vente à découvert des seuls 734 avis GPT baissiers : régimes natifs/variante recherche, emprunt hypothétique](news_gpt_baissiers_short_backtest_2024_2026.md).
+- [Achat des seuls 913 avis GPT haussiers : backtests annuels 2024–2026, TP20/SL5 et témoin Oracle](news_gpt_haussiers_backtest_2024_2026.md).
+- [GPT sur TOP20 Oracle parcours, 2024–septembre 2026 : modèles annuels, cache SQL et plafond de 8 USD](news_gpt_top20_historique_2024_2026.md).
 - [État de l'implémentation US/CN/FR](../ETAT_ACTUEL_IMPLEMENTATION.md).
 - [Oracle TOP20 tradable, backtest et live](oracle_tradable_top20_backtest_live.md).
 - [Gate d'amplitude Oracle × ATR](oracle_atr_amplitude_gate.md).
@@ -21,6 +25,7 @@
 - [Oracle → GPT/Web → risque → PAPER LONG/SHORT](oracle_llm_directional_filter.md).
 - [Registre daté des expériences](experiences_done.md) : pas une liste de branches promues.
 - [Oracle Extreme parcours H20 : entraînement séparé depuis l'IHM](oracle_path_training.md).
+- [Diagnostic ML adapté au parcours H20 : périodes SQL/OOF, amplitude TOP10/20/50 et filiation](diagnostic_oracle_parcours_h20.md).
 - [Oracle parcours : comparaison LightGBM/CatBoost, sélection sur validation, pas de LSTM initial](oracle_path_comparaison_20261013.md).
 - [Oracle parcours : confirmation 2024–2026 avec modèles figés et couverture TOP-K](oracle_path_confirmation_2024_2026.md).
 - [Oracle parcours : challenger LSTM global, séquences causales et copies tabulaires appariées](oracle_path_lstm_comparaison_20261013.md).

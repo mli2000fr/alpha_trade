@@ -64,6 +64,16 @@ def render_model(view,sql):
             'Amplitude 10 titres (%)':'{:.2f}'},na_rep='—'),use_container_width=True,hide_index=True)
         st.caption('Les labels d’entraînement et de validation doivent être disponibles avant les périodes suivantes. '
             'Les fichiers OOF de chaque fold et les poids ont été vérifiés ; aucun recalcul de labels n’est lancé par cette page.')
+    comparisons=report.get('comparison_oof') or {}
+    if len(comparisons)>1:
+        with st.expander('Comparaison LightGBM / CatBoost hors échantillon',expanded=False):
+            values=[{'Algorithme':name,'AUC':metrics.get('auc'),
+                'Précision 10 titres':metrics.get('precision_top_10_titles'),
+                'Amplitude 10 titres (%)':metrics.get('mean_path_amplitude_top_10_titles_pct')}
+                for name,metrics in comparisons.items()]
+            st.dataframe(pd.DataFrame(values).style.format({'AUC':'{:.3f}','Précision 10 titres':'{:.1%}',
+                'Amplitude 10 titres (%)':'{:.2f}'},na_rep='—'),use_container_width=True,hide_index=True)
+            st.caption('Comparaison diagnostique seulement : ces résultats de test ne rechoisissent pas le champion sélectionné sur validation.')
     with st.expander('Qualité et couverture des trajectoires',expanded=False):
         quality=report.get('quality') or {}
         st.json(quality)

@@ -8,6 +8,11 @@ de batch n'est lancé lors de ce raccordement.
 
 ## Lancer depuis l'IHM
 
+Depuis le 15 octobre, **Diagnostic ML** dispose d'une vue dédiée au parcours H20 :
+périodes SQL et OOF séparées, métriques d'amplitude TOP10/20/50 titres, détail des
+folds et rapport parcours. Les anciens diagnostics terminaux ne sont pas appliqués
+à ce mode. [Fonctionnement et contrôles de la page](diagnostic_oracle_parcours_h20.md).
+
 1. Ouvrir **Workflow & Orchestration → Pipeline**, marché **US**.
 2. Déplier **⚙️ Paramètres d'exécution**, puis **Paramètres Model Factory**.
 3. **🔮 Oracle Extreme parcours H20 — modèle séparé** est désormais cochée

@@ -1,5 +1,107 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-15 — confiance GPT : pas de progression stable ; LONG >=0,90 TP20/SL10 contrasté
+
+Attribution des positions exécutées/clôturées des précédents TP20/SL5 :335LONG,
+167SHORT (profil recherche SHORT autorisé en normal), jambes regroupées et
+positions ouvertes exclues. Cinq tranches figées, aucun balayage de seuils.
+LONG>=0,90 :16/65gagnantes,24,62 %,PnL−262,57USD contre74/270,27,41 %,
++3 061,67USD sous0,90. SHORT>=0,90 :13/67,19,40 %,−692,55USD contre25/100,
+25,00 %,+476,95USD. PnL net de frais de trade/emprunt, financement non attribué.
+Confiance haute favorable au taux gagnant en2026, défavorable en2024/2025 :
+pas de relation croissante stable ni calibration. >=0,95 :seulement11LONG/25SHORT.
+Attribution descriptive des exécutés, pas portefeuille rebalancé par tranche.
+
+Demande précédente conservée :trois nouveaux portefeuilles LONG>=0,90,
+**TP20/SL10**, mêmes modèles annuels437ed1/102eca/bc35a7.163avis25/53/85,
+74achats,73fermées(28gagnantes/45perdantes) et uneVICRouverte au30/09/2026.
+Capital annuel initial4 000USD,levier<=2,sans trailing,expiration20séances,
+coûts et financement/régimes natifs. Capitaux3 226,05/4 019,75/3 454,23USD,
+rendements−19,35/+0,49/−13,64 %,DD−25,06/−18,55/−20,61 %.
+Effet conjoint seuil+SL, pas attribution de causalité à la confiance.
+
+Trois cas terminés et audités quotidiennement,30tests ciblés passent.
+Zéro nouvel appelGPT,entraînement,écritureSQL,ordre ou changement de production.
+NonPIT/LLM,secteurs et emprunt historiques non qualifiés :recherche uniquement.
+[Tranches, résultats annuels, comptes et réserves](news_gpt_confiance_tranches_2024_2026.md).
+
+## 2026-10-15 — 734 avis GPT baissiers : douze backtests SHORT audités, pas de rentabilité stable
+
+Mêmes trois modèles annuels Oracle parcours `437ed1`/`102eca`/`bc35a7`, TOP20
+et réponses SQL de la campagne terminée. **734 couples BEARISH/VALID**, 150 titres,
+732 admissibles à J ; pas de nouveau seuil de confiance. Direction issue du
+filtre GPT, pas d'une tête SHORT entraînée. Classement par score Oracle original.
+
+4 000 USD réinitialisés chaque année, levier d'entrée <=2, TP20/SL5, sans trailing,
+expiration à l'open après vingt séances ; quantités entières, cash/risque natifs.
+Deux profils séparés : permissions natives inchangées, et permission locale de
+SHORT en normal, **sans changement de production**. Témoin TOP20 entier SHORT
+dans chacun. 12 cas terminés, aucun échec ; 37 tests ciblés passent.
+
+Avec SHORT autorisé en normal : capitaux à fin 2024/2025 et au 30/09/2026
+**3 101,34 / 4 909,75 / 3 831,99 USD**, rendements **−22,47 / +22,74 / −4,20 %**,
+DD **−27,16 / −13,39 / −23,58 %**. Entrées55/37/77 ; gagnantes/perdantes
+fermées11/44,10/27,17/58 ; deux positions2026 encore ouvertes, latent inclus.
+Témoin sans filtre :−35,89/−26,74/−32,26 %, DD−44,96/−31,84/−40,95 %.
+Avantage relatif sur ces trois années, mais deux années perdantes, exposition
+non appariée et pas de confirmation indépendante. Avec régime natif :0/5/0
+entrées, capital4 000/3 799,94/4 000USD ; cinq perdantes en2025, témoin+2,07 %.
+
+Emprunt supposé disponible à0,3 %/an, pas de recalls/dividendes compensatoires
+historiquement qualifiés ; marge hypothétique. NonPIT news/LLM et secteurs actuels.
+Pas une preuve de SHORT historiquement exécutable, ni promotion live.
+Audit journalier cash/dette/MTM/emprunt/protections/expiration et empreintes passé.
+Zéro nouvel appelGPT, entraînement, écritureSQL, ordre ou changement du moteur.
+[Protocole, résultats par profil et réserves](news_gpt_baissiers_short_backtest_2024_2026.md).
+
+## 2026-10-15 — achat des seuls avis GPT haussiers : six backtests audités, avantage non uniforme
+
+Trois modèles annuels explicitement demandés, mêmes sélections TOP20 que la
+campagne SQL. 913 couples BULLISH/VALID (126 titres), aucun seuil de confiance
+ajouté ; deux entrées KLAC non qualifiées à J écartées, sans regarder le futur.
+Portefeuille LONG 4 000 USD réinitialisé chaque année, levier d'entrée <=2,
+TP20/SL5, sans trailing, expiration à l'open après20séances ; coûts, financement,
+risque et régimes natifs. Témoin TOP20 entier avec règles identiques.
+
+Capitaux **à fin d'année / 30 septembre2026** pour GPT :
+**2 947,62 / 6 991,65 / 4 607,48 USD**, rendements−26,31%/+74,79%/+15,19%,
+DD−32,61%/−15,89%/−25,16%. Témoin :2 874,82/8 086,91/4 038,88USD,
+−28,13%/+102,17%/+0,97%, DD−38,14%/−26,25%/−36,60%.
+Après fermeture des cohortes anciennes :GPT2 947,62/7 138,62USD contre
+témoin3 001,25/8 787,65USD ; l'avantage civil2024 ne tient pas après la queue.
+
+Achats filtrés78/115/146 ; fermées gagnantes/perdantes15/63,40/75,35/107 ;
+quatre positions2026 encore ouvertes, latent inclus au30/09 sans vente fictive.
+Moins d'exposition et DD plus bas, mais pas de domination régulière du rendement
+ni d'appariement d'exposition. Recherche nonPIT, pas de promotion.
+
+Six cas terminés et audités,14tests ciblés passent. Expirations contrôlées à20
+séances, TP/SL et capital réconciliés. Zéro nouvel appelGPT, entraînement,
+écritureSQL, ordre courtier ou modification du moteur partagé.
+[Protocole, résultats détaillés et réserves](news_gpt_haussiers_backtest_2024_2026.md).
+
+## 2026-10-15 — TOP20 Oracle + GPT 2024–2026 : campagne lancée, pas de résultat économique
+
+Demande explicite : les trois modèles annuels `437ed1` (2024), `102eca` (2025),
+`bc35a7` (2026), du 1er janvier 2024 au 30 septembre 2026, TOP20 par séance.
+Préparation complète de 689 séances / 13 780 couples ; 5 827 lots avec articles,
+7 953 sans texte qualifié, deux requêtes trop volumineuses. 213 anciennes analyses
+du T1 sont réutilisables gratuitement. Les scores proviennent du SQL courant,
+avec filiation et folds annuels pré-année vérifiés, sans réentraînement.
+
+Campagne GPT `gpt-6-luna` lancée le 15 octobre à 00:49 Paris, **8 USD maximum de
+nouveaux appels**, réservations concurrentes persistantes, pas de retry payant.
+Quatre tables `llm_news_analysis_*` : réponses immédiates et snapshots mensuels
+complets, y compris inconnus. 37 tests ciblés passent. Ni PnL, ordres, modèle,
+batch ni configuration de production modifiés. News importées/révisables et
+métadonnées actuelles : recherche exploratoire, pas certification PIT historique.
+**En cours au lancement de cette entrée** : seul le bilan du run atteste la fin.
+Mise à jour : collecte terminée,33mois/689séances,5 612nouveaux appels et
+213réutilisations,2,502154USD sur8USD. Avis913BULLISH/734BEARISH/3 823ABSTAIN ;
+355réponses invalides,7 953sans news qualifiée et2lots trop volumineux gardés
+inconnus. Les33snapshots mensuels terminés et réponses sont confirmés enSQL.
+[Protocole, sauvegarde, limites et suivi](news_gpt_top20_historique_2024_2026.md).
+
 ## 2026-10-15 — cache SQL des avis GPT : 221 réponses conservées, aucun nouvel appel
 
 Demande explicite distincte après les deux pilotes. Quatre nouvelles tables

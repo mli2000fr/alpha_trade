@@ -102,6 +102,17 @@ def test_signature_includes_oof_and_model_files(artifacts):
     assert before!=diag.artifact_signature('batch',parent)
 
 
+def test_terminal_oof_schema_cannot_replace_path_target(artifacts):
+    parent,root=artifacts;folder=root/'folds/2023-12-01'
+    pd.DataFrame({'date':pd.to_datetime(['2023-12-01']*2),'symbol':['A','B'],
+        'oracle_extreme10':[1,0],'future_return':[.2,-.1]}).to_parquet(folder/'oof.parquet')
+    done=json.loads((folder/'done.json').read_text())
+    done['files']['oof.parquet']=sha256((folder/'oof.parquet').read_bytes()).hexdigest()
+    (folder/'done.json').write_text(json.dumps(done))
+    view=diag.load_path_artifacts('batch',parent)
+    assert not view['ready'] and any('Schéma OOF' in message for message in view['errors'])
+
+
 def test_top_ten_titles_not_ten_percent_and_amplitude_already_percent():
     rows=diag.top_k_rows({'overall':{'precision_top_10_titles':.8,'mean_path_amplitude_top_10_titles_pct':32.5}})
     assert rows[0]['Sélection']=='10 premiers titres'
@@ -121,6 +132,7 @@ class Engine:
         self.rows,self.lineage,self.fail_lineage=rows,lineage,fail_lineage;self.calls=[]
     @contextmanager
     def connect(self):yield self
+    def execution_options(self,**options):self.isolation=options['isolation_level'];return self
     def execute(self,statement,params):
         sql=str(statement);self.calls.append((sql,params))
         assert sql.lstrip().upper().startswith('SELECT') and params['batch_id']=='batch'
@@ -139,6 +151,7 @@ def test_sql_filter_and_causal_lineage_are_batch_scoped(artifacts):
     result=diag.read_sql_periods(engine,'batch',view)
     assert result['coverage']['n_rows']==4 and result['matching_lineage_rows']==4 and not result['errors']
     assert len(engine.calls)==2
+    assert engine.isolation=='REPEATABLE READ'
     assert 'p.future_return IS NULL' in engine.calls[1][0]
 
 
@@ -152,6 +165,21 @@ def test_unavailable_or_wrong_database_never_invents_empty_success():
     assert diag.read_sql_periods(None,'batch',{})['errors']
     engine=Engine();engine.url=SimpleNamespace(database='alpha_trade_cn')
     assert diag.read_sql_periods(engine,'batch',{})['errors'] and not engine.calls
+
+
+def test_connection_error_is_displayable_not_a_page_crash():
+    engine=Engine()
+    def fail():raise RuntimeError('offline')
+    engine.connect=fail
+    assert diag.read_sql_periods(engine,'batch',{})['errors']
+
+
+def test_legacy_oracle_empty_aggregate_has_no_nat_period(monkeypatch):
+    from ihm.pages import ml_diagnostics as page
+    monkeypatch.setattr(page,'safe_query',lambda *args:pd.DataFrame([
+        dict(min_date=None,max_date=None,nb_dates=0,nb_symbols=0)]))
+    assert page._oracle_periods('batch')==[]
+    assert page._batch_trains_oracle(pd.Series({'metadata_json':{'cli_options':{'oracle_path_model_only':True}}}))
 
 
 def test_page_path_branch_never_reads_terminal_labels_or_legacy_metrics(artifacts,monkeypatch):

@@ -70,6 +70,9 @@ def load_path_artifacts(batch_id,artifacts_root):
             done=json.loads((verified_root/'folds'/name/'done.json').read_text(encoding='utf-8'))
             oof=verified_root/'folds'/name/'oof.parquet'
             if done['files'].get('oof.parquet')!=digest(oof):raise ValueError('Prédictions OOF corrompues : '+name)
+            from pyarrow.parquet import read_schema
+            if not {'date','symbol',TARGET,'proba_path_extreme','path_amplitude'}.issubset(read_schema(oof).names):
+                raise ValueError('Schéma OOF différent de la cible parcours : '+name)
             keys=pd.read_parquet(oof,columns=['date','symbol'])
             keys['date']=pd.to_datetime(keys.date,errors='raise').dt.normalize()
             if keys.empty or keys.isna().any().any() or keys.duplicated(['date','symbol']).any():
@@ -115,6 +118,10 @@ def read_sql_periods(engine,batch_id,view):
         result['errors'].append('Connexion SQL impossible ('+type(exc).__name__+').')
         return result
     with connection as conn:
+        if hasattr(conn,'execution_options'):
+            # Scores and lineage are committed together by predict. Keep the two
+            # aggregates in one stable read snapshot while collection continues.
+            conn=conn.execution_options(isolation_level='REPEATABLE READ')
         try:result['coverage']=dict(conn.execute(text(SQL_PERIODS),{'batch_id':batch_id}).mappings().one())
         except Exception as exc:
             result['errors'].append('Lecture des prédictions SQL impossible ('+type(exc).__name__+').')
