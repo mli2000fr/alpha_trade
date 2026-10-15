@@ -39,8 +39,11 @@ Pas de trailing dans ce contrat de recherche.
 1. **Workflow & Orchestration → Pipeline**, marché **US**.
 2. Déplier **⚙️ Paramètres d'exécution → Paramètres Model Factory**.
 3. Vérifier **🎯 Oracle TP avant SL — amplitude + direction LONG/SHORT, recherche uniquement**.
-   Depuis le 12 octobre 2026, cette case est cochée par défaut et **Entraîner aussi
-   le modèle Oracle Extreme** est décochée. Les choix manuels sont conservés en session.
+   Depuis le 13 octobre 2026, cette case est **décochée par défaut** ; le défaut
+   est [Oracle Extreme parcours H20](oracle_path_training.md), un classifieur
+   d'amplitude unique. Décocher parcours avant de sélectionner TP avant SL.
+   **Entraîner aussi le modèle Oracle Extreme** reste décochée. Les choix manuels
+   sont conservés en session.
    Oracle terminal, Oracle parcours et bundle
    per-symbol ne sont pas combinés à ce lancement.
 4. Choisir le jeu **expert** et les familles souhaitées, ou un profil JSON de

@@ -37,6 +37,18 @@ def load_oracle_barrier_config(path=None) -> OracleBarrierConfig:
     return OracleBarrierConfig(**values)
 
 
+def load_oracle_path_training_backend(path=None) -> str:
+    from common.config_loader import load_config
+    from modelFactory.oracle_path.backend import resolve_backend
+    values=(load_config(path) or {}).get('oracle_path',{})
+    if values is None:values={}
+    if not isinstance(values,dict):
+        raise ValueError('oracle_path doit être un objet YAML.')
+    requested=values.get('training_backend','auto')
+    if requested is None:raise ValueError('oracle_path.training_backend ne peut pas être null.')
+    return resolve_backend(requested)
+
+
 @dataclass(frozen=True, slots=True)
 class DataConfig:
     """Paramètres de chargement et préparation des données."""
@@ -84,7 +96,7 @@ class DataConfig:
     #  strict (anti-leakage T2) après la séquence globale.
     enable_oracle_model: bool = False  # entraîne AUSSI l'Oracle Extreme (O0) en fin de séquence
     oracle_model_only: bool = False    # entraîne UNIQUEMENT l'Oracle Extreme — skip global, per-symbol, per-sector
-    oracle_path_model_only: bool = False  # cible parcours H20, artefacts distincts, recherche uniquement
+    oracle_path_model_only: bool = False  # cible parcours H20, artefacts distincts et inférence d'amplitude
     oracle_barrier_model_only: bool = False  # TP avant SL, deux cibles LONG/SHORT indépendantes
     sector_use_symbol_feature: bool = True  # D1 (2026-08-15) : per-sector, False = ablation de la feature catégorielle 'symbol'
     enable_cross_sectional_features: bool = False  # percentiles + secteur (momentum, alpha intra-secteur)
@@ -555,6 +567,7 @@ class TrainingConfig:
     oracle_universe_mode: str = "static_bars"
     # Horizon propre à l'Oracle Extreme. H20 reste le contrat par défaut.
     oracle_horizon: int = 20
+    oracle_path_backend: str | None = None  # None preserves legacy --enable-catboost behaviour.
     oracle_barrier: OracleBarrierConfig = field(default_factory=OracleBarrierConfig)
     long_feature_profile: str = "long.json"
     short_feature_profile: str = "short.json"
@@ -578,6 +591,11 @@ class TrainingConfig:
             raise ValueError("oracle_universe_mode invalide.")
         if self.oracle_horizon < 1:
             raise ValueError("oracle_horizon doit être >= 1.")
+        if self.oracle_path_backend is not None:
+            from modelFactory.oracle_path.backend import resolve_backend
+            resolve_backend(self.oracle_path_backend)
+            if not self.data.oracle_path_model_only:
+                raise ValueError('Oracle parcours : backend explicite réservé au mode parcours.')
         if self.data.oracle_path_model_only:
             if self.data.enable_oracle_model or self.data.oracle_model_only or self.directional_profiles_enabled or self.data.oracle_barrier_model_only:
                 raise ValueError("Oracle parcours et Oracle terminal/bundle sont des modes séparés.")

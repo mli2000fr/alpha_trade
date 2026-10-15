@@ -127,6 +127,13 @@ Un lancement CLI direct du runner ne remplace pas le launcher de notification.
 
 ## Qualification ultérieure
 
+État constaté en lecture seule le **14 octobre 2026** : 959 094 lignes,
+5 742 symboles, **trois dates** de snapshot (11–13 octobre). Aucun des marqueurs
+d'identité fiscale, d'unités ou de PIT historique n'est encore qualifié.
+Ces comptes n'attestent ni une couverture exhaustive, ni un historique
+directionnel H20 mature, ni une réussite de tous les runs. Les anciennes preuves
+de smoke restent des constats datés, pas l'état actuel en base.
+
 `RESEARCH_ONLY`, `units_qualified=false`, `fiscal_identity_qualified=false`,
 `historical_pit_qualified=false`. La réception prospective est tracée mais la
 date fiscale, devise, échelle, corrections et disponibilité avant décision

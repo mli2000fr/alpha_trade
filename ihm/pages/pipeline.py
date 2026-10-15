@@ -1297,14 +1297,15 @@ def _render_ml_predict_scope_block(
         for _, _row in _batches_df.iterrows():
             _bid = str(_row["batch_id"])
             from modelFactory.oracle_path.train import is_path_batch
-            if is_path_batch(Path("artifacts/models"), _bid):
-                continue  # parcours research must not become a terminal/live Oracle
+            _path_badge = "Parcours H20" if is_path_batch(Path("artifacts/models"), _bid) else ""
             from modelFactory.oracle_barrier.train import is_barrier_batch
             if is_barrier_batch(Path("artifacts/models"), _bid):
                 continue  # first-touch research must not become a terminal/live Oracle
             _comment = str(_row.get("comment") or "").strip()
             _started = str(_row.get("started_at") or "")[:16]
             _h_badge = oracle_horizon_badge(_bid)
+            if _path_badge:
+                _h_badge = _path_badge
             _label = f"{_bid} — {_h_badge + ' — ' if _h_badge else ''}{_started}"
             if _comment:
                 _label += f" — {_comment[:60]}"
@@ -1586,6 +1587,9 @@ def _render_launchable_step_panel(
                 if not _live_batches_df.empty:
                     for _, _row in _live_batches_df.iterrows():
                         _bid = str(_row["batch_id"])
+                        from modelFactory.oracle_barrier.train import is_barrier_batch
+                        if is_barrier_batch(Path("artifacts/models"), _bid):
+                            continue
                         _comment = str(_row.get("comment") or "").strip()
                         _started = str(_row.get("started_at") or "")[:16]
                         _h_badge = oracle_horizon_badge(_bid)

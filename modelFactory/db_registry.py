@@ -97,6 +97,7 @@ PREDICTION_SOURCE_PER_SYMBOL = "per_symbol"
 PREDICTION_SOURCE_PER_SECTOR = "per_sector"
 PREDICTION_SOURCE_GLOBAL_RANK_SYNTH = "global_rank_synth"
 PREDICTION_SOURCE_ORACLE_SYNTH = "oracle_synth"
+PREDICTION_SOURCE_ORACLE_PATH_POLICY = "oracle_path_policy"  # rang d'amplitude + politique, pas probabilité directionnelle
 
 # Ordre de priorité par défaut pour la déduplication déterministe (le plus
 # prioritaire = le plus fiable / le plus riche en infos). Utilisé côté cascade.
@@ -104,6 +105,7 @@ _PREDICTION_SOURCE_PRIORITY: dict[str, int] = {
     PREDICTION_SOURCE_PER_SYMBOL: 0,
     PREDICTION_SOURCE_GLOBAL_RANK_SYNTH: 1,
     PREDICTION_SOURCE_ORACLE_SYNTH: 2,
+    PREDICTION_SOURCE_ORACLE_PATH_POLICY: 2,
     PREDICTION_SOURCE_PER_SECTOR: 3,
 }
 

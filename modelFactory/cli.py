@@ -778,6 +778,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Entraîne UNIQUEMENT le modèle Oracle Extreme (O0). Skip le Global Model, le per-symbol et le per-sector. Active implicitement --enable-oracle-model.")
     p.add_argument("--oracle-path-model-only", action="store_true", default=False,
                    help="Oracle parcours H20 séparé : TOP20%% du maximum absolu des excursions J+1..J+20. Recherche uniquement, aucun remplacement de l'Oracle terminal.")
+    p.add_argument('--oracle-path-backend',choices=['lightgbm','catboost','auto'],default=None,
+                   help='Oracle parcours : algorithme unique ou comparaison automatique sur validation. Prioritaire sur les flags challengers legacy.')
     p.add_argument("--oracle-barrier-model-only", action="store_true", default=False,
                    help="Modèle séparé TP avant SL, LONG/SHORT ; entrée J+1 open. Paramètres oracle_barrier dans config.yaml ; recherche uniquement.")
     p.add_argument("--oracle-barrier-tp-pct", type=float, default=None, help="Fraction TP (0.20 = 20%%). Défaut config.yaml.")
@@ -898,6 +900,8 @@ def main(args: list[str] | None = None) -> None:
     # P0-6 : --global-model-only active implicitement le Global Model
     if opts.oracle_path_model_only and (opts.mode != "train" or opts.market_code != "US_EQ"):
         parser.error("--oracle-path-model-only est réservé à train / US_EQ")
+    if opts.oracle_path_backend is not None and not opts.oracle_path_model_only:
+        parser.error('--oracle-path-backend requiert --oracle-path-model-only')
     if opts.oracle_barrier_model_only and (opts.mode != "train" or opts.market_code != "US_EQ"):
         parser.error("--oracle-barrier-model-only est réservé à train / US_EQ")
     barrier_overrides = {name: value for name, value in {
@@ -1089,6 +1093,7 @@ def main(args: list[str] | None = None) -> None:
         standalone_oracle_feature_profile=opts.standalone_oracle_feature_profile,
         oracle_universe_mode=opts.oracle_universe_mode,
         oracle_horizon=int(opts.oracle_horizon or 20),
+        oracle_path_backend=opts.oracle_path_backend,
         oracle_barrier=barrier_config,
         long_feature_profile=opts.long_feature_profile,
         short_feature_profile=opts.short_feature_profile,
@@ -1333,10 +1338,12 @@ def main(args: list[str] | None = None) -> None:
             or _resolve_predict_batch_id(Path(opts.artifacts_dir), historical=historical_predict_enabled)
         )
         _batch_mode = detect_batch_training_mode(engine, _batch_id) if _batch_id else "per_symbol"
+        _is_path_oracle = False
         if _batch_id:
             from modelFactory.oracle_path.train import is_path_batch
-            if is_path_batch(Path(opts.artifacts_dir), _batch_id):
-                raise ValueError("Oracle parcours H20 est un modèle de recherche distinct, non raccordé au predict/live terminal.")
+            _is_path_oracle = is_path_batch(Path(opts.artifacts_dir), _batch_id)
+            if _is_path_oracle and (opts.market_code != "US_EQ" or bool(getattr(opts, "oracle_shadow", False))):
+                raise ValueError("Oracle parcours H20 : US uniquement, pas de mode Oracle shadow dynamique.")
             from modelFactory.oracle_barrier.train import is_barrier_batch
             if is_barrier_batch(Path(opts.artifacts_dir), _batch_id):
                 raise ValueError("Oracle TP avant SL est un modèle de recherche distinct, non raccordé au predict/live terminal.")
@@ -1397,6 +1404,8 @@ def main(args: list[str] | None = None) -> None:
                         else "predict standard Oracle (remplit oracle_extreme_predictions)"
                     ),
                 )
+        if _is_path_oracle:
+            _oracle_only = True
         LOGGER.info(
             "predict dispatch: batch=%s training_mode=%s → flux %s",
             _batch_id or "none",
@@ -1467,12 +1476,18 @@ def main(args: list[str] | None = None) -> None:
                 if historical_predict_enabled else _oracle_start
             )
             from modelFactory.oracle.predict_history import predict_oracle_extreme_history
-            _oracle_out = predict_oracle_extreme_history(
-                engine, _batch_id, _oracle_start, _oracle_end,
-                horizon=getattr(opts, "oracle_horizon", None),
-                symbols=list(symbols) if bool(getattr(opts, "oracle_shadow", False)) else None,
-                shadow_mode=bool(getattr(opts, "oracle_shadow", False)),
-            )
+            if _is_path_oracle:
+                from modelFactory.oracle_path.predict import predict_oracle_path_history
+                _oracle_out = predict_oracle_path_history(engine, _batch_id, _oracle_start, _oracle_end,
+                    artifacts_dir=Path(opts.artifacts_dir), symbols=list(symbols),
+                    horizon=getattr(opts, "oracle_horizon", None))
+            else:
+                _oracle_out = predict_oracle_extreme_history(
+                    engine, _batch_id, _oracle_start, _oracle_end,
+                    horizon=getattr(opts, "oracle_horizon", None),
+                    symbols=list(symbols) if bool(getattr(opts, "oracle_shadow", False)) else None,
+                    shadow_mode=bool(getattr(opts, "oracle_shadow", False)),
+                )
             LOGGER.info("predict oracle-only batch=%s result=%s", _batch_id, _oracle_out)
             if (
                 not _oracle_out
@@ -1520,12 +1535,17 @@ def main(args: list[str] | None = None) -> None:
                         _batch_id,
                         start=_oracle_start,
                         end=_oracle_end,
+                        **({"artifacts_dir": Path(opts.artifacts_dir)} if _is_path_oracle else {}),
                     )
+                    if _is_path_oracle:
+                        _require_live_synthesis(_synth_res, day=_oracle_end, batch_id=_batch_id)
                     LOGGER.info(
                         "predict oracle-only batch=%s sync model_predictions result=%s",
                         _batch_id, _synth_res,
                     )
                 except Exception as _synth_exc:  # noqa: BLE001
+                    if _is_path_oracle:
+                        raise RuntimeError("Publication de la politique Oracle parcours échouée") from _synth_exc
                     LOGGER.warning(
                         "predict oracle-only batch=%s sync model_predictions FAILED (non-bloquant): %s",
                         _batch_id, _synth_exc,
@@ -1534,6 +1554,7 @@ def main(args: list[str] | None = None) -> None:
             preds = load_oracle_predictions(
                 engine, batch_id=_batch_id,
                 start_date=_oracle_start, end_date=_oracle_end,
+                **({"artifacts_dir": Path(opts.artifacts_dir)} if _is_path_oracle else {}),
             )
             persisted_incrementally = True
             _dates_with_data = 1 if not preds.empty else 0

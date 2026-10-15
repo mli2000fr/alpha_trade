@@ -8,6 +8,7 @@ from typing import Any
 import pandas as pd
 from sqlalchemy import MetaData, Table, bindparam, func, text
 from sqlalchemy.dialects.mysql import insert as mysql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import OperationalError
 
 from database.connection import get_sqlalchemy_engine
@@ -130,7 +131,7 @@ class EventSentimentRepository:
             return False
         return errno in {1205, 1213}
 
-    def _upsert(self, table_name: str, records: list[dict[str, Any]], key_columns: set[str]) -> int:
+    def _upsert(self, table_name: str, records: list[dict[str, Any]], key_columns: set[str], *, connection=None) -> int:
         if not records:
             return 0
         table = self._table(table_name)
@@ -150,7 +151,8 @@ class EventSentimentRepository:
             if key_column not in records[0]:
                 raise KeyError(f"Clé d'upsert absente pour {table_name}: {key_column}")
         batch_size = self._upsert_batch_size()
-        retry_attempts = self._upsert_retry_attempts()
+        # An externally owned transaction is retried as a WHOLE by its owner.
+        retry_attempts = self._upsert_retry_attempts() if connection is None else 1
         retry_backoff_seconds = self._upsert_retry_backoff_seconds()
         record_batches = self._chunk_records(records, batch_size)
         if len(record_batches) > 1:
@@ -162,18 +164,25 @@ class EventSentimentRepository:
                 len(record_batches),
             )
         for batch_index, batch_records in enumerate(record_batches, start=1):
-            stmt = mysql_insert(table).values(batch_records)
+            use_sqlite = connection is not None and connection.dialect.name == "sqlite"
+            stmt = (sqlite_insert(table) if use_sqlite else mysql_insert(table)).values(batch_records)
+            incoming = stmt.excluded if use_sqlite else stmt.inserted
             update_cols = {
-                column.name: stmt.inserted[column.name]
+                column.name: incoming[column.name]
                 for column in table.c.values()
                 if column.name in batch_records[0] and column.name not in key_columns
             }
             if "updated_at" in table.c:
                 update_cols["updated_at"] = func.current_timestamp()
+            statement = (stmt.on_conflict_do_update(index_elements=sorted(key_columns), set_=update_cols)
+                if use_sqlite else stmt.on_duplicate_key_update(**update_cols))
             for attempt in range(1, retry_attempts + 1):
                 try:
-                    with self.engine.begin() as conn:
-                        conn.execute(stmt.on_duplicate_key_update(**update_cols))
+                    if connection is not None:
+                        connection.execute(statement)
+                    else:
+                        with self.engine.begin() as conn:
+                            conn.execute(statement)
                     break
                 except OperationalError as exc:
                     if self._is_retryable_mysql_operational_error(exc) and attempt < retry_attempts:
@@ -578,24 +587,36 @@ class EventSentimentRepository:
         }
 
     def upsert_news_raw(self, records: list[dict[str, Any]]) -> int:
-        serializable: list[dict[str, Any]] = []
-        for row in records:
-            payload = dict(row)
-            payload["raw_payload"] = json.dumps(payload["raw_payload"], ensure_ascii=False)
-            serializable.append(payload)
-        return self._upsert("news_raw", serializable, key_columns={"article_id"})
+        return self.persist_news_page(records)["landed"]
+
+    def _news_archive_retry(self, operation):
+        for attempt in range(1, self._upsert_retry_attempts()+1):
+            try:
+                return operation()
+            except OperationalError as exc:
+                if not self._is_retryable_mysql_operational_error(exc) or attempt == self._upsert_retry_attempts():
+                    raise
+                LOGGER.warning("News archive: transaction retry %d after database lock", attempt)
+                time.sleep(self._upsert_retry_backoff_seconds()*attempt)
+
+    def persist_news_page(self, records: list[dict[str, Any]], ticker_rows=None, *, mapping_context=None) -> dict[str, int]:
+        """Collect once, atomically project and archive; seal availability after commit.
+
+        Migration 0104 is mandatory. Archive failure is never silently skipped.
+        No provider calls, old-row backfill or sentiment/model changes here.
+        """
+        from event_sentiment.news_archive import persist_page
+        stats = self._news_archive_retry(lambda: persist_page(self,
+            self._normalize_mysql_records(records),
+            self._normalize_mysql_records(ticker_rows) if ticker_rows is not None else None,
+            mapping_context=mapping_context))
+        LOGGER.info("News archive | articles=%d maps=%d new_raw_versions=%d new_map_versions=%d state_changes=%d",
+            stats["landed"],stats["ticker_maps"],stats["raw_versions"],stats["map_versions"],stats["observations"])
+        return stats
 
     def upsert_news_ticker_map(self, records: list[dict[str, Any]]) -> int:
-        # ``relevance_components`` est un dict côté ingestion (mode
-        # ``scored``) ; MySQL JSON attend une chaîne JSON.
-        serializable: list[dict[str, Any]] = []
-        for row in records:
-            payload = dict(row)
-            components = payload.get("relevance_components")
-            if isinstance(components, (dict, list)):
-                payload["relevance_components"] = json.dumps(components, ensure_ascii=False)
-            serializable.append(payload)
-        return self._upsert("news_ticker_map", serializable, key_columns={"article_id", "symbol"})
+        from event_sentiment.news_archive import persist_mapping_refresh
+        return self._news_archive_retry(lambda: persist_mapping_refresh(self,self._normalize_mysql_records(records)))
 
     def upsert_news_sentiment(self, records: list[dict[str, Any]]) -> int:
         return self._upsert("news_sentiment", records, key_columns={"article_id"})

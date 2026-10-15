@@ -63,7 +63,9 @@ def test_actual_yaml_defaults():
     assert 0 <= cfg.max_selected <= cfg.oracle_top_n
     assert isinstance(cfg.enabled, bool)  # The user may disable the IHM default.
     assert cfg.default_symbol_source == 'universe-file:univers_filtred_tradable.txt'
-    assert cfg.default_oracle_batch_id == 'model-factory-20261003082853-e98332'
+    # A model may be replaced/reset by the user; never pin a deleted campaign
+    # or change production config merely to satisfy this deployment test.
+    assert isinstance(cfg.default_oracle_batch_id, str) and cfg.default_oracle_batch_id.strip()
 
 
 def test_custom_selection_defaults_from_yaml(tmp_path):
