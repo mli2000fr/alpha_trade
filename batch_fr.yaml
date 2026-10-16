@@ -52,12 +52,26 @@ fr_daily_bars_sync:
   priority: P0
   provider: EODHD
   run_hours: "22"
-  universe_scope: "config/universe_fr_s6c.yaml (contrat FR, pas fichier univers US)"
+  universe_scope: "S6C FR avec migration PERR → ALPER ; Lhyfe exclu (LHYFE.PA, nouveau mnémonique ALHYF). Pas fichier univers US."
   description: "Collecter J-7/J des OHLCV FR puis publier les versions validées en staging SQL de recherche ; aucune barre canonique ni activation LIVE."
   publish_daily_staging: true # FR uniquement ; false conserve le mode fichiers seul. Pas une canonicalisation.
   identities_file: artifacts/fr/sprint6c_reference/identities.jsonl.gz
+  # Migration datée de code fournisseur, pas fusion ni remplacement des archives historiques.
+  provider_symbol_migrations:
+    - old_symbol: PERR.PA
+      new_symbol: ALPER.PA
+      isin: FR0000061459
+      effective_from: "2026-09-07"
+      new_mic: ALXP
+      currency: EUR
+      evidence_url: https://live.euronext.com/fr/product/equities/FR0000061459-XPAR
+      provider_checked_at: "2026-10-16T20:25:09.581026+00:00"
+  # Retrait demandé par l'utilisateur le 16/10 : Lhyfe (nouveau mnémonique ALHYF)
+  # figure encore comme LHYFE.PA dans S6C. Exclu de la collecte ET de sa couverture.
+  # Aucun effacement historique, aucune substitution Allemagne/UK/SIP US.
+  excluded_symbols: [LHYFE.PA]
   request_interval_seconds: 0.5
-  max_symbol_requests: 400 # 294 titres actifs du référentiel S6C actuel ; stop si budget dépassé.
+  max_symbol_requests: 400 # 293 titres après exclusion Lhyfe ; stop si budget dépassé.
   after_close_hour_paris: 22
   tables: "fr_ingestion_runs, fr_raw_payloads, fr_provider_bars_staging, fr_staging_progress ; fichiers:artifacts/fr/operations/eodhd_daily"
   coverage_description: "J-7/J après 22h Paris ; avant 22h : J-7/J-1. Reprise explicite, relance normale rafraîchissant les corrections."

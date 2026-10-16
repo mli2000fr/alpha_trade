@@ -184,13 +184,17 @@ def _handle(name, cfg, result, *, dry_run, today, resume=False, max_symbols=None
         # collection may publish its validated archives but remains FAILED.
         if publication_enabled and not dry_run and result.get('state_path'):
             begin,end=map(date.fromisoformat,result['window'])
-            from service.fr.eodhd_daily_15b import symbols_from_identities
-            selected=symbols_from_identities(identities)[:max_symbols] if max_symbols is not None else None
+            from service.fr.eodhd_daily_15b import symbol_windows
+            migrations=cfg.get('provider_symbol_migrations')
+            exclusions=cfg.get('excluded_symbols')
+            selected=list(symbol_windows(identities,begin,end,migrations,
+                excluded_symbols=exclusions))[:max_symbols] if max_symbols is not None else None
             report_path=OPS/'staging_runs'/f'{uuid.uuid4().hex}.json'
             result['sql_writes']=True
             result['staging_report_path']=str(report_path)
             publication=publish_staging(start=begin,end=end,write=True,root=OPS/'eodhd_daily',
-                                       identities=identities,output=report_path,selected_symbols=selected)
+                                       identities=identities,output=report_path,selected_symbols=selected,
+                                       symbol_migrations=migrations,excluded_symbols=exclusions)
             result['daily_sql_publication']=publication
             result['sql_persisted_count']=publication['new_staging_rows']
             if publication['status']!='COMPLETED':

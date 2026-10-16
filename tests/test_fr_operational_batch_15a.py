@@ -115,12 +115,14 @@ def test_daily_smoke_sql_scope_matches_collection_scope(monkeypatch):
     from service.fr import eodhd_daily_15b, publish_daily_bars_staging
     cfg=runner.load_section('fr_daily_bars_sync',runner.ROOT/'batch_fr.yaml')
     monkeypatch.setattr(eodhd_daily_15b,'collect',lambda cfg,result,**kw:result.update(state_path='checkpoint',window=['2026-10-01','2026-10-08']))
-    monkeypatch.setattr(eodhd_daily_15b,'symbols_from_identities',lambda path:['AB.PA','AC.PA','AD.PA'])
+    monkeypatch.setattr(eodhd_daily_15b,'symbol_windows',lambda path,start,end,migrations,**kw:
+        {s:(start,end) for s in ['AB.PA','AC.PA','AD.PA']})
     seen=[]
     monkeypatch.setattr(publish_daily_bars_staging,'run',lambda **kw:(seen.append(kw),
         {'status':'COMPLETED','new_staging_rows':0})[1])
     runner._handle('fr_daily_bars_sync',cfg,{},dry_run=False,today=None,max_symbols=2)
     assert seen[0]['selected_symbols']==['AB.PA','AC.PA']
+    assert seen[0]['excluded_symbols']==cfg.get('excluded_symbols')
 
 
 def test_db_backup_uses_fr_route_and_required_identity(tmp_path, monkeypatch):

@@ -27,15 +27,17 @@ TABLES = ('stock_bars_daily', 'fr_provider_bars_staging', 'fr_provider_bars_dail
 TARGETS = ('LHYFE.PA', 'PERR.PA', 'ALBOU.PA', 'ARTO.PA', 'MLCHE.PA', 'MLNMA.PA')
 
 
-def coverage(symbols, sessions, observed):
+def coverage(symbols, sessions, observed, *, symbol_sessions=None):
     """Provider records are presence, not tradability or independent proof."""
     details = []
+    expected = 0
     for symbol in symbols:
+        expected_days = sessions if symbol_sessions is None else symbol_sessions[symbol]
+        expected += len(expected_days)
         seen = set(observed.get(symbol, ()))
-        missing = [str(d) for d in sessions if str(d) not in seen]
-        details.append({'symbol': symbol, 'present': len(sessions)-len(missing),
+        missing = [str(d) for d in expected_days if str(d) not in seen]
+        details.append({'symbol': symbol, 'present': len(expected_days)-len(missing),
                         'missing_sessions': missing})
-    expected = len(symbols)*len(sessions)
     present = sum(r['present'] for r in details)
     return {'symbols': len(symbols), 'sessions': [str(d) for d in sessions],
             'expected_symbol_sessions': expected, 'present_symbol_sessions': present,
@@ -79,11 +81,13 @@ def audit_sql(conn, symbols, sessions):
     return result
 
 
-def audit_files(symbols, sessions, *, root=ROOT, daily_root=None):
+def audit_files(symbols, sessions, *, root=ROOT, daily_root=None, symbol_sessions=None):
     observed = {}; malformed = []; retained = []
     daily_root = daily_root or root/'artifacts/fr/operations/eodhd_daily'
     latest = daily_root/'latest'
     for symbol in symbols:
+        expected_days = sessions if symbol_sessions is None else symbol_sessions[symbol]
+        expected_dates = {str(d) for d in expected_days}
         path = latest/(hashlib.sha256(symbol.encode()).hexdigest()+'.json')
         if not path.exists():
             continue
@@ -91,9 +95,9 @@ def audit_files(symbols, sessions, *, root=ROOT, daily_root=None):
         if payload.get('market_code') != 'FR_EQ' or payload.get('symbol') != symbol:
             malformed.append(symbol); continue
         reserve = payload.get('last_coverage', {}).get('retained_old_rows_not_reconfirmed', [])
-        retained.extend({'symbol': symbol, 'date': d} for d in reserve if d in {str(s) for s in sessions})
+        retained.extend({'symbol': symbol, 'date': d} for d in reserve if d in expected_dates)
         for day, record in payload.get('bars', {}).items():
-            if day not in {str(d) for d in sessions}:
+            if day not in expected_dates:
                 continue
             try:
                 parsed, quality, _ = classify_bar(record['row'], set(sessions))
@@ -109,7 +113,7 @@ def audit_files(symbols, sessions, *, root=ROOT, daily_root=None):
             except (ValueError, KeyError, TypeError):
                 malformed.append(f'{symbol}/{day}'); continue
             observed.setdefault(symbol, set()).add(day)
-    result = coverage(symbols, sessions, observed)
+    result = coverage(symbols, sessions, observed, symbol_sessions=symbol_sessions)
     result['malformed_or_unverifiable'] = malformed
     result['retained_rows_not_reconfirmed'] = retained
     unconfirmed = sum(r['date'] in observed.get(r['symbol'], ()) for r in retained)

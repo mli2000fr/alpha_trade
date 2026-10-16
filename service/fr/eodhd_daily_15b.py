@@ -52,6 +52,62 @@ def symbols_from_identities(path: Path) -> list[str]:
     return symbols
 
 
+def exclude_symbols(windows, excluded_symbols=None):
+    """Operational scope only: never edit the frozen reference or old data."""
+    if excluded_symbols is None:
+        return windows
+    if (not isinstance(excluded_symbols, list)
+            or any(not isinstance(s, str) for s in excluded_symbols)
+            or len(set(excluded_symbols)) != len(excluded_symbols)
+            or not set(excluded_symbols).issubset(windows)):
+        raise ValueError('excluded_symbols : liste unique de codes présents dans l’univers FR requise')
+    selected = {s: bounds for s, bounds in windows.items() if s not in excluded_symbols}
+    if not selected:
+        raise ValueError('Univers FR vide après exclusions')
+    return selected
+
+
+def symbol_windows(path, start, end, migrations=None, *, excluded_symbols=None):
+    """Reviewed, dated provider-code changes; no cross-venue substitution.
+
+    Keep the frozen reference and old archives unchanged. New provider codes
+    are collected/staged under their real names, never under a legacy alias.
+    """
+    windows = {s: (start, end) for s in symbols_from_identities(path)}
+    if migrations is None:
+        return exclude_symbols(windows, excluded_symbols)
+    if not isinstance(migrations, list):
+        raise ValueError('provider_symbol_migrations doit être une liste')
+    with gzip.open(path, 'rt', encoding='utf-8') as stream:
+        records = [json.loads(line) for line in stream if line.strip()]
+    seen = set()
+    replacements = set()
+    for migration in migrations:
+        old, new = migration['old_symbol'], migration['new_symbol']
+        matching = [r for r in records if r.get('provider_symbol') == old
+                    and r.get('identity_state') == 'VERIFIED_RESEARCH'
+                    and r.get('provider_status_current') == 'active']
+        if (old in seen or new in replacements or new in windows or old not in windows
+                or old == new or not isinstance(new, str) or not new.endswith('.PA')
+                or not new[:-3].isalnum() or len(matching) != 1
+                or matching[0].get('isin') != migration['isin']
+                or migration.get('currency') != 'EUR' or migration.get('new_mic') != 'ALXP'
+                or not migration.get('evidence_url', '').startswith('https://')
+                or not migration.get('provider_checked_at')):
+            raise ValueError('Migration code FR non qualifiée, ambiguë ou hors Paris')
+        effective = date.fromisoformat(migration['effective_from'])
+        observed = datetime.fromisoformat(migration['provider_checked_at'])
+        if observed.tzinfo is None or observed > datetime.now(UTC):
+            raise ValueError('Date de vérification fournisseur invalide')
+        seen.add(old); replacements.add(new)
+        del windows[old]
+        if start < effective:
+            windows[old] = (start, min(end, effective-timedelta(days=1)))
+        if end >= effective:
+            windows[new] = (max(start, effective), end)
+    return exclude_symbols(dict(sorted(windows.items())), excluded_symbols)
+
+
 def collect(cfg: dict, result: dict, *, root: Path, identities: Path, dry_run=False,
             today: date | None = None, resume=False, max_symbols: int | None = None,
             selected_symbols: list[str] | None = None):
@@ -69,7 +125,9 @@ def collect(cfg: dict, result: dict, *, root: Path, identities: Path, dry_run=Fa
     # Never request an unfinished current session. Scheduler normally runs 22h Paris.
     end = day if today is not None or now.hour >= close_hour else day-timedelta(days=1)
     start = day-timedelta(days=lookback)
-    symbols = symbols_from_identities(identities)
+    windows = symbol_windows(identities, start, end, cfg.get('provider_symbol_migrations'),
+                             excluded_symbols=cfg.get('excluded_symbols'))
+    symbols = list(windows)
     if selected_symbols is not None:
         if (not selected_symbols or len(selected_symbols) != len(set(selected_symbols))
                 or not set(selected_symbols).issubset(symbols)):
@@ -86,6 +144,11 @@ def collect(cfg: dict, result: dict, *, root: Path, identities: Path, dry_run=Fa
                   sql_writes=False, universe_sha256=hashlib.sha256(identities.read_bytes()).hexdigest(),
                   unchanged_rows=0, changed_rows=0, resumed_symbols=0, errors=[],
                   universe_basis='FROZEN_S6C_CURRENT_ACTIVE_NOT_DAILY_MASTER')
+    if cfg.get('excluded_symbols'):
+        result['excluded_symbols'] = cfg['excluded_symbols']
+    if cfg.get('provider_symbol_migrations'):
+        result['provider_symbol_migrations'] = cfg['provider_symbol_migrations']
+        result['symbol_request_windows'] = {s: [str(d) for d in windows[s]] for s in symbols}
     if dry_run:
         return
     token = os.environ.get('EODHD_API_TOKEN')
@@ -103,8 +166,10 @@ def collect(cfg: dict, result: dict, *, root: Path, identities: Path, dry_run=Fa
         state_path = root/'windows'/f'{start}_{end}.json'
         state = json.loads(state_path.read_text(encoding='utf-8')) if state_path.exists() else {'symbols': {}}
         state.update(window=[str(start),str(end)], market_code='FR_EQ')
-        sessions = set(get_market_calendar('FR_EQ').session_dates(start, end))
+        calendar = get_market_calendar('FR_EQ')
         for index, symbol in enumerate(symbols, 1):
+            symbol_start, symbol_end = windows[symbol]
+            sessions = set(calendar.session_dates(symbol_start, symbol_end))
             key = hashlib.sha256(symbol.encode()).hexdigest()
             prior = state['symbols'].get(symbol, {})
             # Resume only explicit; regular reruns refetch to discover vendor corrections.
@@ -114,14 +179,15 @@ def collect(cfg: dict, result: dict, *, root: Path, identities: Path, dry_run=Fa
                 latest = root/'latest'/f'{key}.json'
                 if (raw.exists() and latest.exists()
                     and hashlib.sha256(raw.read_bytes()).hexdigest() == prior['sha256']
-                    and hashlib.sha256(latest.read_bytes()).hexdigest() == prior.get('latest_sha256')):
+                    and hashlib.sha256(latest.read_bytes()).hexdigest() == prior.get('latest_sha256')
+                    and json.loads(raw.read_text(encoding='utf-8')).get('window') == [str(symbol_start),str(symbol_end)]):
                     result['resumed_symbols'] += 1
                     continue
             try:
-                rows = _fetch(f'eod/{quote(symbol, safe=".")}', token, {'from':str(start),'to':str(end),'period':'d'}, pace=pace)
+                rows = _fetch(f'eod/{quote(symbol, safe=".")}', token, {'from':str(symbol_start),'to':str(symbol_end),'period':'d'}, pace=pace)
                 observed = datetime.now(UTC).isoformat()
                 result['received_count'] += 1
-                raw_content = {'symbol':symbol,'window':[str(start),str(end)],'rows':rows}
+                raw_content = {'symbol':symbol,'window':[str(symbol_start),str(symbol_end)],'rows':rows}
                 payload = json.dumps(raw_content, ensure_ascii=False, sort_keys=True, default=str).encode()
                 digest = hashlib.sha256(payload).hexdigest()
                 raw = root/'raw'/f'{digest}.json'
@@ -131,12 +197,12 @@ def collect(cfg: dict, result: dict, *, root: Path, identities: Path, dry_run=Fa
                 if hashlib.sha256(raw.read_bytes()).hexdigest() != digest:
                     raise ValueError('Archive brute corrompue')
                 atomic(root/'observations'/key/f'{datetime.now(UTC):%Y%m%dT%H%M%S%fZ}-{uuid.uuid4().hex[:8]}.json',
-                       {'symbol':symbol,'window':[str(start),str(end)],'observed_at':observed,
+                       {'symbol':symbol,'window':[str(symbol_start),str(symbol_end)],'observed_at':observed,
                         'available_at':observed,'raw_sha256':digest,'rows':len(rows)})
                 prepared = {}
                 for row in rows:
                     session, quality, _ = classify_bar(row, sessions)
-                    if not start <= session <= end or str(session) in prepared:
+                    if not symbol_start <= session <= symbol_end or str(session) in prepared:
                         raise ValueError('Date hors fenêtre ou dupliquée')
                     if quality not in ('VALID','ZERO_VOLUME'):
                         raise ValueError(f'Barre quarantinée {session}: {quality}')
@@ -158,7 +224,7 @@ def collect(cfg: dict, result: dict, *, root: Path, identities: Path, dry_run=Fa
                     changed += int(old is not None)
                     latest['bars'][session] = item
                     persisted += 1
-                latest['last_coverage'] = {'window': [str(start), str(end)],
+                latest['last_coverage'] = {'window': [str(symbol_start), str(symbol_end)],
                     'missing_sessions': missing, 'observed_at': observed,
                     'raw_sha256': digest,
                     'retained_old_rows_not_reconfirmed': [s for s in missing if s in latest['bars']]}
