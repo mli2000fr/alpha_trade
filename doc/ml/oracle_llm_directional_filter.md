@@ -19,10 +19,13 @@ ne constitue pas une vérification de la fraîcheur des informations du jour.
 
 ## Choix du fournisseur — mise à jour du 11 octobre 2026
 
-À la demande de l'utilisateur, `enabled: false` laisse désormais la case du
-filtre **décochée par défaut**, quel que soit le fournisseur. L'activation
-manuelle dans l'IHM reste possible. Une session déjà ouverte peut conserver
-son choix précédent ; le décocher une fois dans cette session.
+Mise à jour du 16 octobre : à la demande de l'utilisateur, `enabled: true`
+laisse la case du filtre **cochée par défaut**, quel que soit le fournisseur.
+La désactivation manuelle dans l'IHM reste possible ; une session déjà ouverte
+peut conserver son choix précédent. Ce paramètre active aussi le filtre du
+batch `us_pipeline` si 10/11/12 sont sélectionnées, indépendamment de l'état IHM.
+Le modèle explicite, l'identifiant commun, l'univers batch et les protections
+sont décrits dans [le contrat du batch](../operations/us_pipeline.md).
 
 Le choix se fait dans `config.yaml`, section `llm_directional_filter` :
 

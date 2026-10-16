@@ -157,62 +157,38 @@ fr_fundamentals_sync:
   log_file: log/batch_fr/fr_fundamentals_sync.txt
 
 fr_consensus_snapshot:
-  enabled: false # Aucune permission explicite de collecte automatisée Yahoo démontrée.
-  status: BLOCKED_YAHOO_AUTOMATED_ACCESS
+  enabled: true # Activation EODHD demandée par l'utilisateur le 15/10/2026 ; aucun fallback Yahoo.
+  status: ACTIVE_RESEARCH
   priority: P3
-  provider: yahoo_finance_research
+  provider: eodhd
   run_hours: "20"
+  run_days: "0,1,2,3,4,5,6" # Snapshots courants, également utiles le week-end.
   identities_file: artifacts/fr/sprint6c_reference/identities.jsonl.gz
   universe_mode: all_verified_active
   pilot_symbols: [OR.PA, SU.PA, BN.PA]
-  identity_checks:
-    OR.PA:
-      isin: FR0000120321
-      yahoo_long_name: "L'Oréal S.A."
-      official_url: https://www.loreal-finance.com/fr/laction
-      reviewed_on: "2026-10-05"
-    SU.PA:
-      isin: FR0000121972
-      yahoo_long_name: "Schneider Electric S.E."
-      official_url: https://live.euronext.com/en/product/equities/FR0000121972-XPAR
-      reviewed_on: "2026-10-05"
-    BN.PA:
-      isin: FR0000120644
-      yahoo_long_name: "Danone S.A."
-      official_url: https://www.danone.com/investors/shareholders/faq-and-contact.html
-      reviewed_on: "2026-10-05"
   max_symbols_per_run: 400
-  max_endpoint_calls_per_day: 2400 # 7 méthodes x 294 titres = 2058 ; marge bornée pour les reprises, pas un quota fournisseur.
-  archive_extra_methods: [get_eps_revisions, get_recommendations, get_upgrades_downgrades]
-  max_attempts_per_symbol_per_day: 2
-  request_interval_seconds: 1.5
-  description: "Consensus prospectif Yahoo sur l'univers FR S6C actif vérifié : recommandations, objectifs, EPS/revenus et tendances EPS. Collecte de recherche uniquement, en quarantaine."
-  tables: "aucune SQL; fichiers:artifacts/fr/operations/fr_consensus_snapshot"
-  universe_scope: "330 identités du référentiel S6C, 294 marquées actives ; marchés Paris XPAR/ALXP/XMLI, exclusions ISIN/alias et noms Yahoo explicites. Pas tous les titres Euronext."
+  max_endpoint_calls_per_day: 400 # Une requête Trends par titre, compteur réservé avant appel ; quota global EODHD également respecté.
+  request_interval_seconds: 1.1
+  description: "Consensus EPS/revenus, tendances EPS et compteurs de révisions EODHD sur l'univers FR S6C actif vérifié. Historique prospectif de recherche isolé de l'US et de Yahoo."
+  tables: "alpha_trade_fr.eodhd_consensus_raw_payloads,alpha_trade_fr.stock_analyst_consensus_eodhd_history"
+  universe_scope: "Référentiel FR S6C courant actif et vérifié, marchés Paris XPAR/ALXP/XMLI ; ambiguïtés ISIN/symbole exclues. Pas tous les titres Euronext."
   coverage_description: "Snapshot réellement observé à J, reprise des titres incomplets du jour ; les succès ne sont pas rechargés le même jour. Pas de reconstruction J-7/J."
   research_notice: >-
-    **BATCH BLOQUÉ — AUTORISATION YAHOO DE COLLECTE AUTOMATISÉE NON DÉMONTRÉE.**
-    Les conditions Yahoo restreignent la collecte automatisée sans permission préalable expresse.
-    yfinance, la gratuité et la mention recherche uniquement ne constituent pas cette permission.
-    Obtenir une autorisation explicite applicable ou remplacer la source par un fournisseur licencié.
-    Ne pas réactiver ni diffuser les archives avant revue. Voir doc/fr/audit_autorisations_collectes_20261006.md.
-    Yahoo non officiel, recherche uniquement. Parcours du référentiel actif, pas garantie de consensus sur tous les titres.
-    Ambiguïtés, noms contradictoires et absences sont explicités ; un nom concordant ne certifie pas un ISIN Yahoo.
-    Historique construit uniquement à partir des vraies observations UTC ; pas de reconstruction du passé avec les valeurs reçues aujourd'hui.
-    **AVANT UTILISATION :** qualifier identités, devises, unités, exercices fiscaux et droits d'usage.
-    Construire les features de révision entre snapshots réellement collectés et comparables : même titre,
-    même indicateur, même exercice, même devise et même unité ; un changement d'exercice n'est pas une révision.
-    Contrôler chaque nouveau snapshot et calculer ses révisions après qualification ; les données manquantes restent manquantes.
-    À chaque décision ML/backtest/live, imposer available_at antérieur à l'heure de décision.
-    Tester l'apport hors échantillon contre une baseline sans consensus, avec purge des horizons futurs
-    et résultats LONG/SHORT séparés ; réévaluer périodiquement ou après changement important, pas à chaque collecte.
-    Ces étapes de promotion ne sont pas encore réalisées par la collecte : aucun gain D1/D10 démontré.
-    Aucun SQL ni modèle modifié par ce batch. Voir doc/fr/consensus_collecte_quotidienne.md.
-    Archivage renforcé : réponse info complète, tableaux de révisions EPS et recommandations disponibles,
-    reçus par endpoint même si le passage est ensuite interrompu, version et heures UTC.
-    Exercices/unités restent non qualifiés. La sauvegarde fr_artifacts_backup couvre la quarantaine.
-  activation_requirement: "BLOQUÉ : obtenir et conserver une permission explicite de Yahoo pour cette collecte automatisée, ou remplacer la source par un fournisseur licencié. Le GO utilisateur historique ne remplace pas l'autorisation du fournisseur. Promotion ML/backtest séparée."
-  unlock_steps: ["Obtenir une permission écrite applicable de Yahoo ou un contrat fournisseur autorisant la collecte automatisée", "Vérifier stockage, usages personnels/professionnels, quotas et droits de redistribution", "Adapter et tester le collecteur si la source change ; documenter la revue avant de lever le blocage", "Qualifier séparément les archives et la promotion ML/backtest"]
+    **SOURCE EODHD — YAHOO RESTE BLOQUÉ, AUCUN FALLBACK YAHOO.**
+    Accès /calendar/trends confirmé avec l'abonnement existant sur OR.PA, SU.PA, BN.PA et AI.PA.
+    EPS/revenus (moyenne, bornes, analystes), tendances EPS J-7/30/60/90 et compteurs de révisions disponibles.
+    Pas d'objectifs de cours ni de recommandations achat/conserver/vendre dans cette collecte.
+    Tables dédiées dans alpha_trade_fr ; aucune écriture dans alpha_trade ou les tables Yahoo.
+    Réponses brutes complètes et observations UTC réelles, première normalisation quotidienne conservée.
+    Les anciennes dates fiscales renvoyées aujourd'hui ne constituent PAS des snapshots PIT anciens.
+    Absence normale de consensus distinguée d'un échec technique ; pas de seuil arbitraire de 95 % sur cet univers FR.
+    **RECHERCHE EN QUARANTAINE :** identités fiscales, devise, unité, exercice et disponibilité à qualifier avant ML/backtest/live.
+    Devise absente = NULL, jamais EUR inventé. Aucun signal D1/D10 ni ordre automatique.
+    Construire les révisions entre snapshots comparables réellement observés ; ne pas confondre un changement d'exercice avec une révision.
+    Notifications email/Telegram par le launcher FR commun. Archives SQL incluses dans fr_db_backup, fichiers dans fr_artifacts_backup.
+    Voir doc/fr/consensus_eodhd_collecte_quotidienne.md.
+  activation_requirement: "Source EODHD activée sur demande utilisateur ; accès FR et deux tables de recherche vérifiés. Installer/réinstaller la tâche depuis l'IHM ; aucune permission Yahoo supposée, pas de redistribution."
+  unlock_steps: ["Vérifier le schéma EODHD dans alpha_trade_fr et le smoke", "Installer/réinstaller la tâche FR", "Qualifier séparément devises/unités/exercices et révisions avant ML/backtest"]
   log_file: log/batch_fr/fr_consensus_snapshot.txt
 
 fr_borrow_snapshot:

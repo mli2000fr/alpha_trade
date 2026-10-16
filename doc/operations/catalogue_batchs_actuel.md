@@ -1,5 +1,10 @@
 # Catalogue opérationnel des batchs — 10 octobre 2026
 
+Ajout du 16 octobre : **`eodhd_news_ingestion_sync`**, P1, activé et tâche Windows
+installée : 20h30 Paris tous les jours, même fichier tradable que le pipeline.
+Ingestion/archives uniquement, sans FinBERT/LLM ; workflow et scoring du vendredi
+inchangés. [Fonctionnement, smoke réel et limites](eodhd_news_ingestion_sync.md).
+
 <!-- doc-status:start -->
 > Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
 <!-- doc-status:end -->
@@ -8,6 +13,12 @@ Inventaire rapproché de `ihm/services/batch_management.py`, des trois YAML,
 des runners et des lanceurs. « Actif » décrit la configuration ; cela ne
 prouve ni installation Windows, ni réussite du dernier run, ni GO ML.
 Les commandes de la carte IHM font autorité pour le launcher et le catalogue.
+
+Ajout du 15 octobre : **`fr_consensus_snapshot`** utilise désormais EODHD, pas
+Yahoo ; accès et stockage FR testés, deux tables dédiées dans `alpha_trade_fr`.
+Statut `ACTIVE_RESEARCH`, `enabled:true` sur demande utilisateur le 15 octobre,
+20h Paris tous les jours, notifications FR communes. Aucun batch US modifié.
+[Champs, reprise, compteurs et limites PIT](../fr/consensus_eodhd_collecte_quotidienne.md).
 
 Ajout du 11 octobre : **`eodhd_consensus_snapshot`** (P1), activé dans `batch.yaml`,
 table dédiée EODHD, principal 22h15 Paris / secours conditionnel 4h15.
@@ -113,7 +124,7 @@ signifient pas chaîne quotidienne CN opérationnelle.
 | fr_db_backup | Actif | alpha_trade_fr → backups/fr/db, keep=3 |
 | fr_artifacts_backup | Actif | artifacts/fr + artifacts/models/fr_eq → backups/fr/artifacts, keep=3 |
 | fr_fundamentals_sync | ⛔ Droits/prudence | BLOCKED_INPI_RETENTION |
-| fr_consensus_snapshot | ⛔ Droits/prudence | BLOCKED_YAHOO_AUTOMATED_ACCESS |
+| fr_consensus_snapshot | Activé par configuration, source EODHD testée | ACTIVE_RESEARCH — installer/réinstaller la tâche Windows |
 | fr_borrow_snapshot | Fournisseur manquant | PENDING_PROVIDER |
 | fr_options_snapshot | Source complète manquante | PENDING_PROVIDER ; MiFIR partiel ne remplace pas ce contrat complet |
 

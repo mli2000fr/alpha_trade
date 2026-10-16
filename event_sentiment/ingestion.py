@@ -6,6 +6,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 import dateutil.parser
 import requests
+from common.verified_http import verified_session
+from service._http_retry import _redact_sensitive_text
 from event_sentiment.trading_calendar import TradingCalendarAligner
 from event_sentiment.mapping import EntitySectorMapper
 from event_sentiment.models import NormalizedNewsArticle
@@ -43,7 +45,7 @@ def _resolve_iter_news_pages(provider: str) -> Callable[..., Any]:
 
 
 class NewsIngestionService:
-    def __init__(self, repository, config) -> None:
+    def __init__(self, repository, config, *, session_factory=None) -> None:
         self.repository = repository
         self.config = config
         self.aligner = TradingCalendarAligner(
@@ -54,6 +56,7 @@ class NewsIngestionService:
         # ne porte pas ``news_provider`` et on retombe alors sur Alpaca
         # (comportement historique).
         provider = getattr(config, "news_provider", "alpaca")
+        self._session_factory = session_factory or (verified_session if provider == 'eodhd' else requests.Session)
         self._iter_news_pages: Callable[..., Any] = _resolve_iter_news_pages(provider)
         self._ticker_relevance_mode = getattr(
             config, "provider_ticker_relevance_mode", "provider_default"
@@ -178,7 +181,7 @@ class NewsIngestionService:
         )
 
         try:
-            with requests.Session() as session:
+            with self._session_factory() as session:
                 for articles, next_token in self._iter_news_pages(
                     start_utc=start_utc,
                     end_utc=end_utc,
@@ -188,7 +191,14 @@ class NewsIngestionService:
                     session=session,
                 ):
                     if not articles:
-                        break
+                        if not next_token:
+                            break
+                        # A page can be emptied by the exact UTC filter, while
+                        # later provider pages still belong to the window.
+                        page_token = next_token
+                        self.repository.upsert_checkpoint(self.config.source_name, symbol,
+                            previous_watermark, page_token, "running")
+                        continue
                     normalized = [self._normalize_article(payload) for payload in articles]
                     summary["fetched"] += len(normalized)
                     # Garde-fou Niveau 1 : on filtre les articles « bruyants »
@@ -332,7 +342,7 @@ class NewsIngestionService:
             return summary
         except Exception as exc:
             self.repository.upsert_checkpoint(
-                self.config.source_name, symbol, previous_watermark, page_token, "failed", last_error=str(exc),
+                self.config.source_name, symbol, previous_watermark, page_token, "failed", last_error=_redact_sensitive_text(str(exc)),
             )
             raise
 

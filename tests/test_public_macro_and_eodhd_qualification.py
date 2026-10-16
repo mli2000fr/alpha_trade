@@ -72,6 +72,28 @@ def test_h15_missing_coverage_fails_closed():
         macro.parse_h15(h15_body().replace('10-year', 'unknown'))
 
 
+@pytest.mark.parametrize('header', ['2026<br>Oct<br>12*', '2026 Oct 12 <sup>*</sup>'])
+def test_h15_holiday_date_annotation_preserved_without_inventing_values(header):
+    body = h15_body().replace('2026<br>Oct<br>8', header)
+    rows = macro.parse_h15(body)
+    assert {row['period_start'] for row in rows} == {date(2026, 10, 12)}
+    assert all('"date_header_annotated":true' in row['metadata_json'] for row in rows)
+    assert all('*' in row['metadata_json'] for row in rows)
+    assert next(row for row in rows if row['metric_key']=='FED_FUNDS_EFFECTIVE_DAILY')['value_num'] is None
+
+
+@pytest.mark.parametrize('header', ['2026 Oct 12garbage', '2026 Oct 12**', '2026 Oct 32*'])
+def test_h15_unknown_or_invalid_date_stays_rejected(header):
+    with pytest.raises(ValueError):
+        macro.parse_h15(h15_body().replace('2026<br>Oct<br>8', header))
+
+
+def test_h15_duplicate_dates_rejected():
+    body=h15_body().replace('</thead>', '<tr><th id="col2">2026 Oct 8*</th></tr></thead>')
+    with pytest.raises(ValueError,match='Duplicate'):
+        macro.parse_h15(body)
+
+
 @pytest.mark.parametrize('value', ['nan', 'inf', 'abc', '4.1*'])
 def test_numbers_fail_closed(value):
     with pytest.raises(ValueError):

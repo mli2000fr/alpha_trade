@@ -1,5 +1,13 @@
 # Qualification prospective des news : pilote financement primaire
 
+> Remédiation du 16 octobre : [transport sécurisé et ingestion quotidienne séparée](../operations/eodhd_news_ingestion_sync.md)
+> livrés après les constats ci-dessous. Le transport ordinaire a maintenant été
+> corrigé ; smoke réel et reprise vérifiés, pas encore une qualification directionnelle.
+
+> Suite du 16 octobre : [faisabilité collecte et intraday](news_financement_faisabilite_20261016.md).
+> Corpus inchangé, collecte ordinaire non certifiée, quatre fenêtres techniques
+> complètes mais aucune annonce nouvelle qualifiée. Aucun test financier lancé.
+
 Livraison du 15 octobre 2026. **Outil livré, collecte pilote réelle et lecture
 technique terminées ; zéro nouvelle annonce qualifiée dans cet échantillon.**
 Ce n'est ni un modèle directionnel, ni un filtre live, ni un nouveau résultat

@@ -48,14 +48,21 @@ def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def read_snapshot(conn, since, cutoff, cap=2000):
+def read_snapshot(conn, since, cutoff, cap=2000, *, article_start=None, article_end=None):
     """One bounded transaction supplied by caller. Truncation blocks all approval."""
     obs, raw, maps = archive.OBSERVATIONS, archive.RAW_VERSIONS, archive.MAP_VERSIONS
     start = since.replace(tzinfo=None)
     end = cutoff.replace(tzinfo=None)
+    if article_start is not None and article_end is not None and article_start >= article_end:
+        raise ValueError('Invalid half-open article ID partition')
+    bounds = []
+    if article_start is not None:
+        bounds.append(obs.c.article_id >= article_start)
+    if article_end is not None:
+        bounds.append(obs.c.article_id < article_end)
     ids = list(conn.execute(select(obs.c.article_id).where(
         obs.c.available_at >= start, obs.c.available_at < end,
-        obs.c.observed_at < end, obs.c.origin == 'PROVIDER_COLLECTION')
+        obs.c.observed_at < end, obs.c.origin == 'PROVIDER_COLLECTION', *bounds)
         .distinct().order_by(obs.c.article_id).limit(cap + 1)).scalars())
     pending = conn.execute(select(func.count()).select_from(obs).where(
         obs.c.available_at.is_(None), obs.c.observed_at < end)).scalar_one()

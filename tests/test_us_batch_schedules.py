@@ -14,6 +14,9 @@ PARIS = ZoneInfo("Europe/Paris")
 # of successful runs on 2026-10-10; roughly 2 * worst duration + 30 min,
 # with a 45 min floor and rounding upwards (see operational document).
 BUDGET_MINUTES = {
+    "eodhd_news_ingestion_sync": 125,  # HTTP deadline 120 min plus in-flight request/commit margin.
+    "eodhd_consensus_snapshot": 90,
+    "eodhd_ipo_calendar_sync": 45,
     "public_macro_snapshot_sync": 45,
     "market_cap_sync": 190,
     "sec_edgar_incremental": 90,
@@ -49,7 +52,7 @@ def test_every_active_us_batch_is_checked_except_unchanged_pipeline():
     assert active == set(BUDGET_MINUTES) | {"us_pipeline"}
     pipeline = CONFIG["us_pipeline"]
     assert pipeline["timezone"] == "Europe/Paris"
-    assert pipeline["run_hours"] == "22" and pipeline["run_minutes"] == "45"
+    assert pipeline["run_hours"] == "23" and pipeline["run_minutes"] == "05"
     assert pipeline["run_days"] == "1,2,3,4,5"
     assert "recovery_run_hours" not in pipeline
 
@@ -80,6 +83,11 @@ def test_snapshot_recoveries_stay_same_configured_day_and_after_principal():
         cfg = CONFIG[name]
         passages = list(_passages(cfg))
         if len(passages) == 2:
+            if name == "eodhd_consensus_snapshot":
+                # Newer snapshot collector has a next-morning Paris recovery.
+                delta = ((passages[1][1]*60+passages[1][2])-(passages[0][1]*60+passages[0][2])) % (24*60)
+                assert 0 < delta/60 < cfg['recovery_success_lookback_hours'] < 24
+                continue
             _, hour, minute = passages[0]
             _, recovery_hour, recovery_minute = passages[1]
             delta_hours = ((recovery_hour * 60 + recovery_minute) - (hour * 60 + minute)) / 60

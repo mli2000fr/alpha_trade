@@ -10,6 +10,14 @@ from ihm.services import process_registry
 from ihm.services.pipeline_runner import PAGE_SENTIMENT_DEFAULTS, pipeline_page_default_options
 
 
+@pytest.fixture(autouse=True)
+def legacy_llm_policy(monkeypatch):
+    # Existing orchestration tests exercise the non-LLM route independently
+    # of the user's deployment opt-in. The LLM route has dedicated tests.
+    from service.llm_directional.config import FilterConfig
+    monkeypatch.setattr(us_pipeline, 'load_filter_config', lambda: FilterConfig(enabled=False))
+
+
 def configured_policy():
     import yaml
     return yaml.safe_load((Path(__file__).resolve().parents[1] / 'batch.yaml').read_text(encoding='utf-8'))

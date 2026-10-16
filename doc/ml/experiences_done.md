@@ -1,5 +1,242 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-16 — janvier 2026, TOP10 Oracle et avis GPT archivés, parcours TP20/SL10
+
+**Terminé et audité**, modèle parcours `model-factory-20261014113232-bc35a7`,
+fold causal `2025-12-10` : 20 séances, 200 sélections, 28 titres, pas TOP10 %.
+110 lots avec textes (409 articles distincts), dont 26 BULLISH, huit BEARISH,
+71 ABSTAIN et cinq réponses invalides ; 90 autres sans texte admissible.
+Snapshots SQL/cache exacts contrôlés et reparsés, zéro nouvel appel payant.
+
+Entrée J+1, 20 séances, TP20/SL10, sans trailing. Tous les 200 chemins
+journaliers qualifiés, fin jusqu'au 2 mars ; aucune ambiguïté journalière.
+LONG : TOP10 complet 81/200 TP avant SL (**40,50 %**), avis haussiers 9/26
+(**34,62 %**) ; stops 48,50 % contre 57,69 %. Terminal J20 moyen +7,33 %
+contre −4,97 %, métrique distincte d'une sortie aux barrières ou d'un PnL.
+SHORT secondaire sur les huit BEARISH : 1/8 TP (12,50 %), 6/8 stops, 1/8 timeout.
+
+Comparaison par date avec avis haussiers : −7,78 points de taux TP. Forte
+concentration COHR/LMND, douze des 26 avis ; aucune exclusion postérieure.
+Pas d'amélioration démontrée sur ce mois, pas de règle contrariante promue.
+Histoire news/LLM non PIT strict, univers courant, chemins chevauchants :
+ni holdout indépendant ni portefeuille avec coûts/capital. 11 tests dédiés
+passent, 400 chemins LONG/SHORT revérifiés offline. Aucun modèle, batch,
+univers actif, ordre ou table modifié. Coût API supplémentaire nul.
+[Bilan historique détaillé](news_oracle_top10_janvier_2026.md).
+
+## 2026-10-16 — test descriptif news/prix 5m réellement calculé, pas de signal validé
+
+Périmètre distinct du financement : 27 couples avec sujet rapproché, labels
+qualitatifs figés avant extraction (12 favorables, trois défavorables, 12
+mixtes/neutres). Aucun score FinBERT disponible sur ces couples au contrôle ;
+pas d'inférence/API ni de score de confiance inventé. Prix Alpaca SIP déjà
+présents, 5m raw, calendrier réel ; zéro collecte ou écriture SQL.
+
+10 fenêtres complètes sur deux dates : cinq favorables, deux défavorables,
+trois mixtes/neutres. Après 30 minutes : moyenne −0,5494 % pour les favorables
+(3/5 hausses), +0,0503 % pour les défavorables (1/2 baisse), −0,5168 % pour les
+mixtes/neutres. Cas affichés intégralement, avant/gap/après distingués ; variations
+de cours, pas rendements de portefeuille. Quatre des cinq favorables montaient
+déjà dans la fenêtre avant ; aucune causalité démontrée.
+
+Lecture horaire postérieure explicitement marquée : trois favorables en séance
++0,2484 % après, deux hors séance −1,7461 %, sans validation d'un filtre horaire.
+Panneau après réception réelle : zéro fenêtre complète ; les dix fenêtres de
+publication finissaient avant réception. Tonalité rétrospective non disponible
+alors. Ni gain prédictif/PnL, ni résultat généralisable à Oracle/H20/FinBERT.
+Modèles, batchs, univers actifs et ordres inchangés.
+[Résultats, cas et protocole](news_prix_descriptif_20261016.md).
+
+## 2026-10-16 — clôture du corpus de financement présélectionné éligible
+
+Quatre dernières lectures terminées ; **40/40 textes éligibles**, 73/73
+associations présélectionnées examinées, plus les 20 témoins antérieurs :
+60 textes distincts / 93 couples. Trois familles de reprises (IonQ, Iambic,
+Bending Spoons) regroupent sept articles et 14 associations, pas 14 émissions
+des tickers associés. Leurs émetteurs ne sont pas dans le fichier figé.
+
+Registre final des 40 articles avec citations et disponibilités réelles.
+BN préférentielles, GSK shelf de plans salariés, CWT dette, AEP/SNPS anciennes
+levées : aucune promotion en nouveau financement primaire ordinaire qualifié.
+BN reste un candidat préférentiel distinct, pas un événement déclaré neutre.
+Nouveauté/histoire antérieure non certifiées ; liste d'événements entièrement
+qualifiés pour l'expérience vide. Ni absence globale d'événements dans les
+6 720 articles, ni backtest négatif, ni revue humaine indépendante.
+
+Diagnostic figé clôturé, sans nouvel élargissement. Aucune collecte, API LLM,
+lecture/écriture SQL, modèle, batch, univers actif ou ordre modifié pendant
+cette étape. 69 tests ciblés passent. Les collectes quotidiennes existantes
+restent inchangées ; pas d'entraînement ou de test financier lancé.
+[Bilan final et référentiel](news_financement_cloture_corpus_20261016.md).
+
+## 2026-10-16 — seconde revue bornée des news de financement, sans rendement
+
+20 textes présélectionnés et 10 témoins nouveaux, sélection figée par empreinte,
+un couple par texte, exclusion des textes du premier lot. Tous les corps lus :
+zéro nouveau financement primaire entièrement qualifié pour le titre associé.
+GSK : shelf ADS de plans salariés, pas cash levé prouvé ; CWT : dette, pas actions ;
+offres IonQ/Iambic/Bending Spoons : autres émetteurs, hors fichier courant figé.
+NICE : collision TSXV Ni-Co Energy, pas émission du titre US. Mapping contextuel
+non assimilé à une erreur fournisseur ; aucune suppression de news.
+
+Un financement de Bending Spoons dans un témoin non présélectionné expose une
+limite de rappel des mots-clés, sans changement après coup des règles figées.
+Réserve de réutilisation signalée pour deux notices MSCI, sans avis juridique
+ni modification des batchs. Total des deux lots : 56 textes distincts, dont
+36/40 présélectionnés éligibles ; quatre textes nouveaux restent non lus.
+
+Lecture SQL uniquement : une fenêtre intraday complète (TSM, sans financement
+qualifié), 23 manquantes/invalides, deux trop proches d'une limite de séance,
+quatre futures au cutoff inchangé. Aucun rendement, API fournisseur/LLM,
+écriture SQL, entraînement ou backtest. 64 tests ciblés passent.
+[Bilan, preuves et limites](news_financement_seconde_revue_20261016.md).
+
+## 2026-10-16 — rattrapage intraday ciblé réussi, pas encore de signal qualifié
+
+Sur autorisation explicite, 15 titres du sous-univers de recherche téléchargés
+en Alpaca SIP 5m, compte `default`, du 13 au 15 octobre inclus. Lot
+`intraday-8e54e4efc373af722a2c` COMPLETED à 16h18:39 Paris ; 15/15 tranches,
+zéro échec/vide/rejet. Contrôle SQL READ ONLY : 4 776 lignes réellement en
+`stock_bars_intraday`, bon flux/marché/dates, zéro barre synthétique.
+
+Les 30 couples d'origine comptent maintenant 10 fenêtres complètes (contre zéro),
+14 encore incomplètes, une réserve d'ouverture et cinq futures à la borne
+originale. Réception des barres non rétrodatée. Zéro événement nouveau entièrement
+qualifié, donc pas de mesure directionnelle, entraînement ou backtest économique.
+News, modèles, prix quotidiens, univers tradable et batchs inchangés ; seul le
+sous-univers de recherche est créé. Le 16 reste hors de ce téléchargement.
+[Bilan, SQL de contrôle et couverture](news_financement_identites_intraday_20261016.md).
+
+## 2026-10-16 — suite identités et cause des trous intraday, sans expérience financière
+
+Sur les 30 symboles déjà revus : dernières barres locales au 9 octobre pour 29,
+aucune pour EADSY. Les trois plans intraday existants s'arrêtent au 10 octobre :
+les annonces des 14–16 sont hors téléchargement, sans preuve d'une panne fournisseur.
+Garde-fou de recherche : deux collisions explicites SUN/RGLD réservées, 25
+ancrages à relire, trois sans ancre ; aucune approbation d'émetteur, même avec
+une mention explicite US. Pas d'intégration aux collecteurs ni aux modèles.
+
+Demande de rattrapage technique préparée pour 15 sujets rapprochés, Alpaca SIP
+5m, 13–15 octobre, pas exécutée. Le 16 reste différé par la règle de fin avant
+la date NY courante. Disponibilité réelle des news non rétrodatée ; ce lot ne
+constitue pas un test économique exécutable. 80 tests de recherche passent.
+Zéro téléchargement, API LLM, écriture SQL, modification de batch, entraînement
+ou calcul de performance.
+[Bilan et demande détaillée](news_financement_identites_intraday_20261016.md).
+
+## 2026-10-16 — collecte news complète validée, revue financement et couverture intraday
+
+Run final `eodhd_news_ingestion_sync-20261016121131-5ed4d540` COMPLETED :
+1 790 checkpoints du cycle réussis, zéro anomalie d'intégrité dans les 6 558
+mappings de ce passage ; compteurs SQL/fichier concordants. Dernier passage :
+1 005 titres terminés + 785 SKIP, 3 568 versions brutes nouvelles, zéro échec.
+
+Corpus figé sans troncature : 6 720 articles / 11 399 couples, export en quatre
+partitions vérifiées. Revue stable sans sélection par prix : 20 cas et 10 témoins,
+26 corps lus, citations exactes, aucun nouveau financement primaire entièrement
+qualifié dans cet échantillon. Collisions SUN/RGLD entre marchés, rappels anciens,
+liens annexes et autres émetteurs distingués. BN : émission préférentielle
+identifiée, à qualifier séparément, pas assimilation à une émission ordinaire.
+Pas de conclusion d'absence dans le corpus restant ni de revue humaine indépendante.
+
+Intraday : zéro fenêtre complète ; 24 sans barres, une trop proche de l'ouverture,
+cinq non achevées à la borne. L'ingestion quotidienne séparée est correctement
+prise en compte ; le scoring hebdomadaire n'est pas réputé quotidien.
+Disponibilité réelle conservée : rattrapage initial, pas historique de signal.
+74 tests de recherche passent ; zéro appel fournisseur/LLM, entraînement,
+rendement, backtest économique, écriture SQL ou ordre pendant cette validation.
+[Bilan, preuves, limites et suite bornée](news_financement_validation_revue_20261016.md).
+
+## 2026-10-16 — corrections opérationnelles Fed et reprises news, sans nouveau test financier
+
+H15 : date annotée `2026 Oct 12*` désormais lue strictement, note conservée,
+25 observations réelles vérifiées sans SQL ; valeurs absentes non imputées.
+News EODHD : retries bornés configurables 3 × 30 s/page, titre lent isolé,
+pause persistante 30 min après trois titres incomplets consécutifs, pas de
+faux échecs pour les titres bloqués avant appel. Compteurs structurés préservés
+en SQL/notifications. 406 tests ciblés passent. Les deux sondes réelles G/GABC
+restent en timeout ; pas de collecte complète, entraînement, backtest ou ordre.
+[Guide opérationnel et limites](../operations/eodhd_news_ingestion_sync.md).
+
+## 2026-10-16 — premier run news finalisé FAILED, archives partielles conservées
+
+Run `eodhd_news_ingestion_sync-20261015223851-cf9bbe96` terminé à 01h01 Paris,
+22 min 48 s : 1 790 demandés, 668 terminés + 1 SKIP, 3 échecs et 1 118 non
+parcourus. 3 496 occurrences reçues, 2 738 versions brutes nouvelles, 144 titres
+sans article, 676 tentatives. Timeout HTTP G.US, puis circuit ouvert pour GABC
+et GAIN ; pas un dépassement du plafond run/jour ou une nouvelle panne TLS.
+
+Validation finale READ ONLY : compteurs SQL/fichier concordants ; 3 318 mappings
+du run sans reçu non scellé/référence brute manquante/autre fournisseur. Données
+partielles conservées en quarantaine, 671 checkpoints réussis dans le cycle
+avec les trois smokes. **`FAILED_OR_INCOMPLETE_VALIDATION`**, pas un corpus global
+ni une preuve de signal D1/D10. Lectures intermédiaires non promues.
+
+Email accepté par SMTP/Telegram ERROR consignés par le launcher. Aucun nouveau
+fetch, SQL write, modèle, scoring, backtest ou ordre pendant l'audit final ;
+aucune relance ni modification de batch. Suivi arrêté après bilan, tâche
+quotidienne inchangée. [Bilan final et reprise proposée](news_financement_premier_passage_20261016.md).
+
+## 2026-10-16 — premier run news complet lancé, contrôle/revue intermédiaires
+
+Continuation : passage manuel de `eodhd_news_ingestion_sync` sur 1 790 titres,
+run `eodhd_news_ingestion_sync-20261015223851-cf9bbe96`, début 00h38 Paris.
+**Encore en cours à la remise**, pas un succès final annoncé. Contrôle READ ONLY
+à 00h43 : 125 terminés, 1 665 restants, 600 occurrences, 530 nouvelles versions,
+20 titres sans article et zéro échec ; intégrité de 563 mappings du run sans
+reçu non scellé/référence brute manquante. Compteurs SQL finalisés seulement à la fin.
+
+Revue précoce bornée : cinq couples présélectionnés/deux textes sur une seule
+IPO Iambic (IAM), associés à ABBV/NVDA/TAK. Émetteur différent, cinq réservés,
+zéro signal qualifié pour ces titres ; IAM hors univers, pas ajouté. Pas une
+revue indépendante ni une absence d'événement prouvée. Autres articles non revus.
+Validateur final préparé, 64 tests recherche passent. Aucun modèle, scoring,
+LLM ou ordre ; seuls les appels/écritures news du collecteur lancé continuent.
+[Suivi, lectures et contrôle final](news_financement_premier_passage_20261016.md).
+
+## 2026-10-16 — remédiation ingestion news quotidienne livrée, pas un signal
+
+Transport EODHD corrigé via `common.verified_http` (Certifi + racines Windows,
+certificat/hostname vérifiés), sans `verify=False` ni override global.
+Page UTC filtrée vide avec suite conservée ; JSON d'erreur plus assimilé à zéro news.
+
+Nouveau `eodhd_news_ingestion_sync` activé et tâche Windows installée, 20h30
+Paris sept jours/semaine sur 1 790 titres du fichier tradable ; J−7/J, namespace
+quotidien séparé, plafonds tentatives/durée, reprises et compteurs préservés.
+Listes/horaires du pipeline US et scoring du vendredi inchangés.
+
+Smoke réel CSCO/IRTC/WHD : 3 appels, 48 occurrences reçues, 46 articles soumis,
+18 nouvelles versions brutes, 46 mappings versionnés et 64 reçus ajoutés ;
+0 erreur. Reprise du même cycle : 3 SKIP, 0 appel/écriture news supplémentaire.
+Contrôle : 73 raw versions, 101 map versions, 174 observations, aucune non scellée.
+350 tests ciblés passent. Aucun FinBERT, GPT, modèle, rendement ou ordre.
+Pas une qualification de toutes les news/identités ni de la première collecte
+planifiée complète. [Contrat et preuves](../operations/eodhd_news_ingestion_sync.md).
+
+## 2026-10-16 — émissions primaires + réaction intraday : faisabilité bloquée
+
+GO qualification/collecte/couverture, sans entraînement ni comparaison financière.
+Archives inchangées : 55 articles, 110 reçus confirmés, 112 couples dans l'univers
+tradable courant. Requalification des mêmes neuf textes/13 couples : trois
+présélections = un rappel SNPS 2025, **zéro nouvelle annonce primaire qualifiée**,
+pas une preuve d'absence dans le marché. Revue du même assistant, non indépendante.
+
+Barres 5m brutes, calendrier NYSE, fenêtres avant/après 30 min sans mélange
+SIP/IEX : quatre couples complets (témoins, pas des événements qualifiés), 95
+manquants/invalides, 13 trop proches des bornes de séance ; zéro fenêtre complète
+parmi les présélections. Aucun rendement, label D1/D10 ou PnL calculé.
+
+Cause opérationnelle constatée : étape 8 absente du lundi–jeudi dans config et
+plans US récents, présente seulement vendredi. Checkpoints `news_ingested_at`
+tous NULL, statuts success anciens non probants pour l'archive. Une seule sonde
+HTTPS du transport ordinaire reproduit l'erreur de certificat ; le transport
+système du pilote n'avait pas corrigé la production.
+
+**`BLOCKED_DATA_FEASIBILITY`**, pas NO_GO directionnel. Rapport V2 après correction
+de sérialisation d'un compteur MySQL ; V1 partielle conservée. Zéro SQL write,
+GPT, modèle, ordre ou batch/config modifié. 81 tests ciblés passent.
+[Preuves, limites et prochaine borne](news_financement_faisabilite_20261016.md).
+
 ## 2026-10-15 — news prospectives : pilote réel et lecture technique terminés
 
 Famille conservée du protocole antérieur : annonces nouvelles de financement

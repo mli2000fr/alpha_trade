@@ -248,6 +248,8 @@ def read_fr_consensus_state(spec: BatchSpec) -> dict | None:
     if spec.name != 'fr_consensus_snapshot':
         return None
     root = PROJECT_ROOT/'artifacts/fr/operations/fr_consensus_snapshot/days'
+    if getattr(spec,'raw_config',{}).get('provider') == 'eodhd':
+        root = root.parent/'eodhd'/'days'
     paths = sorted(root.glob('????-??-??.json'), reverse=True)
     if not paths:
         return None
@@ -257,6 +259,8 @@ def read_fr_consensus_state(spec: BatchSpec) -> dict | None:
     state = json.loads(path.read_text(encoding='utf-8'))
     if state.get('market_code') != 'FR_EQ' or state.get('day') != path.stem:
         raise ValueError('Checkpoint consensus hors périmètre FR/date')
+    if getattr(spec,'raw_config',{}).get('provider')=='eodhd' and state.get('provider')!='eodhd':
+        raise ValueError('Checkpoint consensus de fournisseur différent')
     return state
 
 

@@ -31,7 +31,18 @@ les collectes US/CN, la redistribution et les futurs usages par des tiers
 nécessitent leur propre audit. Un statut `ACTIVE_RESEARCH` ou une quarantaine
 n'est **jamais** une autorisation juridique.
 
-## Tableau complet
+## Mise à jour du 15 octobre 2026 — consensus remplacé
+
+`fr_consensus_snapshot` ne collecte plus Yahoo : le nouveau collecteur utilise
+l'API EODHD Earnings Trends sous l'abonnement existant, avec accès FR et stockage
+isolé testés. Le blocage `BLOCKED_YAHOO_AUTOMATED_ACCESS` est retiré **pour ce batch
+remplacé**, pas pour une collecte Yahoo. Catalogue activé (`enabled:true`)
+sur demande utilisateur le 15 octobre ; tâche Windows à installer/réinstaller.
+Les réserves d'usage contractuel EODHD et de promotion
+ML/PIT restent applicables. [Contrat courant](consensus_eodhd_collecte_quotidienne.md).
+Le tableau ci-dessous documente l'état de l'audit du 6 octobre.
+
+## Tableau complet historique
 
 Suite à l'autorisation utilisateur après remise de l'audit, les deux sections
 Yahoo et INPI sont maintenant désactivées et portent respectivement

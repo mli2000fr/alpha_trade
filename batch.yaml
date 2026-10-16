@@ -293,6 +293,48 @@ eodhd_ipo_calendar_sync:
   coverage_description: "J-7 à J+21 ; secours conditionnel 5h Paris. Backfill mensuel depuis 2016, reprise en base par fenêtre et hash de l'univers."
   research_notice: "RECHERCHE UNIQUEMENT — l'API IPO est marché entier par dates ; les observations normalisées sont filtrées sur les symboles distincts de stock_bars_daily, les réponses brutes sont archivées. Les nouvelles IPO sans barres ne sont PAS ajoutées automatiquement. Réception réelle UTC, historique événementiel non certifié PIT ancien. Zéro prix/quantité fournisseur = inconnu. Versions modifiées ajoutées sans écrasement. Absence d'IPO dans le périmètre n'est pas un échec. Mail/Telegram via launcher habituel."
 
+eodhd_news_ingestion_sync:
+  priority: P1
+  enabled: true
+  status: ACTIVE_RESEARCH_ONLY
+  market_code: US_EQ
+  provider: eodhd
+  timezone: Europe/Paris
+  run_hours: "20"
+  run_minutes: "30"
+  run_days: "0,1,2,3,4,5,6"
+  symbols_file: config/univers_batch/univers_filtred_tradable.txt
+  lookback_days: 7
+  page_limit: 100
+  request_interval_seconds: 0.25
+  max_http_attempts_per_run: 4000
+  max_http_attempts_per_day: 4000
+  max_http_attempts_per_symbol: 25
+  max_duration_minutes: 120
+  max_consecutive_failures: 3
+  http_timeout_seconds: 30
+  http_max_attempts: 3
+  failure_cooldown_seconds: 1800
+  description: "Ingestion quotidienne des news EODHD et archivage prospectif, sans FinBERT, LLM ni signal. Séparée du traitement complet du vendredi."
+  tables: "pit_collection_runs,news_raw,news_ticker_map,news_raw_versions,news_ticker_map_versions,news_archive_observations,news_ingestion_checkpoint"
+  universe_scope: "Même fichier tradable que us_pipeline ; ne certifie pas un univers historique PIT."
+  coverage_description: "Relecture J-7/J des publications ; reprise des titres incomplets. Disponibilité réelle à la collecte, jamais rétrodatée."
+  execution_notice: "20h30 Paris, tous les jours ; budget local 120 min avant prochain appel réseau (une requête déjà en cours peut finir après). Hors absence PC 7h30-20h, us_pipeline inchangé."
+  research_notice: >-
+    **COLLECTE SEULE : aucun score sentiment, modèle, filtre directionnel ou ordre.**
+    L'étape 8 complète du pipeline reste configurée le vendredi, listes et horaires inchangés.
+    Même writer atomique et archives versionnées, sans nouvelles tables.
+    Checkpoints eodhd_news_daily isolés des watermarks eodhd_news du pipeline.
+    Succès du titre depuis le dernier créneau 20h30 Paris -> SKIP ; incomplet -> reprise depuis offset zéro, versions dédupliquées.
+    Absence de news normale ; accès refusé, schéma invalide, erreur TLS, quota ou pagination incomplète ne sont pas des succès.
+    Demandés = titres ; reçus = occurrences d'articles ; persistés = nouvelles versions brutes, pas nombre d'upserts.
+    Plafonds HTTP incluant retries, quota local journalier et suivi global EODHD (5 unités/tentative).
+    Timeout 30 s et 3 tentatives/page configurables ; titre lent isolé, arrêt après 3 titres incomplets consécutifs avec pause persistante de 30 min.
+    Une relance pendant la pause n'interroge aucun titre ; les non-interrogés restent en attente, sans faux échecs par symbole.
+    Mapping fournisseur non qualifié : vérifier émetteur/nouveauté avant utilisation ML.
+    Notifications mail/Telegram via launcher commun. Voir doc/operations/eodhd_news_ingestion_sync.md.
+  log_file: log/batch/eodhd_news_ingestion_sync.txt
+
 eodhd_consensus_snapshot:
   priority: P1
   description: "Archiver chaque jour le consensus EPS/revenus et les tendances/révisions EPS EODHD pour construire un historique prospectif de recherche directionnelle."

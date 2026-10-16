@@ -9,6 +9,7 @@ from common.config_loader import load_batch_config, resolve_batch_config_path
 ROOT = Path(__file__).resolve().parents[1]
 WINDOWS = ROOT / "scripts" / "windows"
 BATCH_SECTIONS = {
+    "eodhd_news_ingestion_sync", "eodhd_consensus_snapshot", "eodhd_ipo_calendar_sync",
     "public_macro_snapshot_sync",
     "us_pipeline",
     "cn_dragon_tiger_after_close", "cn_dragon_tiger_before_open",
@@ -72,6 +73,7 @@ def test_each_scheduled_batch_has_at_most_one_daily_execution_time() -> None:
 def test_non_reconstructible_snapshots_have_one_conditional_recovery() -> None:
     batch = yaml.safe_load((ROOT / "batch.yaml").read_text(encoding="utf-8"))
     snapshots = {
+        "eodhd_consensus_snapshot", "eodhd_ipo_calendar_sync",
         "security_master_snapshot",
         "market_cap_sync",
         "analyst_snapshot_collection",

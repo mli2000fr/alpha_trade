@@ -45,24 +45,24 @@ us_pipeline:
   # Aucune insertion automatique des étapes omises ; leurs prérequis doivent exister.
   execution_mode: paper  # Aucun ordre sans étape 12 sélectionnée.
   account_id: default    # 11/12 en PAPER et 13/14 (même en simulation) exigent un compte paper.
-  steps: [1, 2, 3, 4, 5, 6, 7, 9]  # Séances US lundi–jeudi.
-  steps_friday: [1, 2, 3, 4, 5, 6, 7, 8, 9]  # Séance US vendredi, liste figée même après minuit.
+  steps: [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12]  # Séances US lundi–jeudi.
+  steps_friday: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]  # Séance US vendredi, liste figée même après minuit.
 
 llm_directional_filter:
-  # Opt-in, recherche prospective et exécution PAPER uniquement. Aucun historique Web simulé.
-  enabled: false  # Checkbox IHM décochée par défaut ; activation manuelle possible.
-  provider: deepseek  # openai (GPT) ou deepseek ; libellés IHM automatiques.
+  # Recherche prospective et exécution PAPER uniquement. Aucun historique Web simulé.
+  enabled: true  # Checkbox IHM cochée par défaut ; désactivation manuelle possible.
+  provider: openai  # openai (GPT) ou deepseek ; libellés IHM automatiques.
   # En mode DeepSeek, OpenAI reste la source Web traçable : les DEUX API sont facturées.
   model: gpt-6-luna
   api_key_env: OPENAI_API_KEY
   deepseek_model: deepseek-flash
   deepseek_api_key_env: DEEPSEEK_API_KEY
   default_symbol_source: universe-file:univers_filtred_tradable.txt
-  default_oracle_batch_id: RETRAIN_US_MODEL_REQUIRED  # Aucun modèle US après remise à zéro ; remplacer par le nouvel ID entraîné.
+  default_oracle_batch_id: model-factory-20261016180250-3b0515  # Aucun modèle US après remise à zéro ; remplacer par le nouvel ID entraîné.
   oracle_top_n: 10  # Nombre de premiers scores Oracle à analyser (pas de tri par rendement futur).
-  max_selected: 3   # Plafond, jamais un quota obligatoire ; 0 candidat reste possible.
+  max_selected: 5   # Plafond, jamais un quota obligatoire ; 0 candidat reste possible.
   min_oracle_coverage_ratio: 0.90  # Bloque un classement issu d’une prédiction partielle.
-  min_confidence: 0.75  # Note LLM non calibrée, pas une probabilité de rendement.
+  min_confidence: 0.5  # Note LLM non calibrée, pas une probabilité de rendement.
   min_sources: 2
   max_source_age_days: 30
   max_run_age_hours: 24

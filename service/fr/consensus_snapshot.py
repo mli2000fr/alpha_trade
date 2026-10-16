@@ -89,6 +89,12 @@ def numeric_field(value, field):
 
 def collect(cfg, result, *, root, identities, dry_run=False, max_symbols=None,
             ticker_factory=None, sleep=time.sleep):
+    if cfg.get('provider') == 'eodhd':
+        from service.fr.eodhd_consensus_daily import collect as collect_eodhd
+        return collect_eodhd(cfg,result,root=root,identities=identities,
+            dry_run=dry_run,max_symbols=max_symbols,sleep=sleep)
+    if ticker_factory is None and not dry_run:
+        raise RuntimeError('Yahoo FR bloqué ; utiliser le fournisseur EODHD qualifié')
     if cfg.get('universe_mode') == 'all_verified_active':
         from service.fr.consensus_daily import collect_daily
         return collect_daily(cfg, result, root=root, identities=identities,

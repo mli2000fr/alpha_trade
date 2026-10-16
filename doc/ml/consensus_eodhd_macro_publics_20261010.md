@@ -59,6 +59,20 @@ Le contrôle conserve seulement état HTTP, compteurs et schéma ; un HTTP 200 n
 
 ## 2. Macro : périmètre réellement livré
 
+**Correctif du 16 octobre 2026** : H15 affichait `2026 Oct 12*`, dont l'astérisque
+de note faisait échouer la lecture. Le parseur accepte désormais ce suffixe
+précis et conserve l'en-tête brut/son annotation en métadonnées (parser v2).
+Les autres suffixes inconnus, dates invalides et colonnes dupliquées restent
+rejetés. Les valeurs `n.a.` ne sont pas imputées. Le changement de métadonnées
+peut créer une nouvelle version technique au premier passage, pas nécessairement
+une révision du taux. Disponibilité FIRST_OBSERVED et anciens enregistrements
+inchangés, aucune rétrodatation.
+
+Vérification réelle sans SQL : HTTP 200, 25 observations sur cinq dates
+(8, 9, 12, 13 et 14 octobre), cinq observations sous la date annotée et quatre
+valeurs absentes conservées. 406 tests ciblés du périmètre Fed/news/runner
+passent. Pas de collecte macro complète relancée dans cette correction.
+
 | Producteur | Identifiant natif | Mesure et unité | Correspondance à qualifier |
 | --- | --- | --- | --- |
 | BLS | CUSR0000SA0 | CPI ensemble, CVS, indice base 1982–1984=100 | CPIAUCSL |
