@@ -18,7 +18,7 @@ from sqlalchemy import text
 
 from common.market_calendar import get_market_calendar
 from database.router import get_market_engine
-from service.fr.eodhd_daily_15b import atomic, symbols_from_identities
+from service.fr.eodhd_daily_15b import atomic, symbols_from_identities, symbol_windows
 from service.fr.load_eodhd_staging import classify_bar
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -35,7 +35,7 @@ def timestamp(value):
     return stamp.astimezone(UTC).replace(tzinfo=None)
 
 
-def prepare(root, symbols, start, end):
+def prepare(root, symbols, start, end, *, windows=None):
     """Validate entire archived payload before any SQL. Invalid payloads quarantined."""
     sessions = set(get_market_calendar('FR_EQ').session_dates(start, end))
     if not sessions or not 0 <= (end-start).days <= 31:
@@ -90,7 +90,8 @@ def prepare(root, symbols, start, end):
                 seen.add(day)
                 if quality not in ('VALID','ZERO_VOLUME'):
                     raise ValueError('Unqualified source OHLCV')
-                if day in sessions:
+                bounds = (windows or {}).get(meta['symbol'], (start, end))
+                if day in sessions and bounds[0] <= day <= bounds[1]:
                     rows.append({'day':day,'quality':quality,**fields})
             if not rows:
                 empty += 1; continue
@@ -151,7 +152,8 @@ def publish_payload(conn, payload, *, run_id, published_at):
     return len(new_rows)
 
 
-def run(*, start, end, write=False, root=None, identities=None, output=None, selected_symbols=None):
+def run(*, start, end, write=False, root=None, identities=None, output=None, selected_symbols=None,
+        symbol_migrations=None, excluded_symbols=None):
     root = (root or ROOT/'artifacts/fr/operations/eodhd_daily').resolve()
     identities = (identities or ROOT/'artifacts/fr/sprint6c_reference/identities.jsonl.gz').resolve()
     if not all(p.is_relative_to((ROOT/'artifacts/fr').resolve()) for p in (root,identities)):
@@ -171,18 +173,26 @@ def run(*, start, end, write=False, root=None, identities=None, output=None, sel
             'window':[str(start),str(end)],'new_staging_rows':0,'unchanged_staging_rows':0,
             'committed_payloads':0,'failed_payloads':0}
     try:
-        symbols=symbols_from_identities(identities)
+        windows=symbol_windows(identities,start,end,symbol_migrations,excluded_symbols=excluded_symbols)
+        result['excluded_symbols']=excluded_symbols or []
+        symbols=list(windows)
         if selected_symbols is not None:
             if (not selected_symbols or len(selected_symbols)!=len(set(selected_symbols))
                     or not set(selected_symbols).issubset(symbols)):
                 raise ValueError('Publication subset outside verified daily FR universe')
             symbols=sorted(selected_symbols)
         result['selected_symbol_count']=len(symbols)
-        payloads,errors,empty=prepare(root,symbols,start,end)
+        payloads,errors,empty=prepare(root,symbols,start,end,windows=windows)
         result.update(candidate_payloads=len(payloads),candidate_rows=sum(len(p['rows']) for p in payloads),
                       source_errors=errors,empty_or_outside_payloads=empty)
         from service.fr.collection_coverage_remediation import audit_files
-        coverage=audit_files(symbols,get_market_calendar('FR_EQ').session_dates(start,end),daily_root=root)
+        calendar=get_market_calendar('FR_EQ')
+        symbol_sessions={s:calendar.session_dates(*windows[s]) for s in symbols}
+        coverage=audit_files(symbols,calendar.session_dates(start,end),daily_root=root,
+                             symbol_sessions=symbol_sessions)
+        if symbol_migrations:
+            result['provider_symbol_migrations']=symbol_migrations
+            result['symbol_request_windows']={s:[str(d) for d in windows[s]] for s in symbols}
         result['source_file_coverage']={k:coverage[k] for k in (
             'expected_symbol_sessions','present_symbol_sessions','coverage_pct',
             'current_response_confirmed_symbol_sessions','current_response_confirmed_coverage_pct',
@@ -195,7 +205,9 @@ def run(*, start, end, write=False, root=None, identities=None, output=None, sel
         engine=get_market_engine('FR_EQ',database_alias='fr_primary')
         now=datetime.now(UTC).replace(tzinfo=None)
         config_hash=hashlib.sha256(json.dumps({'classifier':CLASSIFIER,'window':result['window'],'symbols':symbols,
-                     'universe_sha256':hashlib.sha256(identities.read_bytes()).hexdigest()},sort_keys=True).encode()).hexdigest()
+                     'universe_sha256':hashlib.sha256(identities.read_bytes()).hexdigest(),
+                     'provider_symbol_migrations':symbol_migrations,
+                     'excluded_symbols':excluded_symbols},sort_keys=True).encode()).hexdigest()
         with engine.begin() as conn:
             assert_fr(conn)
             conn.execute(text('''INSERT INTO fr_ingestion_runs

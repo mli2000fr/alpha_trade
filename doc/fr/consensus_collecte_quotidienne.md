@@ -1,10 +1,17 @@
 # Consensus FR — collecte prospective en quarantaine et promotion future
 
+> **Remplacé le 15 octobre 2026 :** le batch utilise désormais **EODHD**, pas
+> Yahoo. Deux tables dédiées dans `alpha_trade_fr`, stockage et reprise testés.
+> `enabled:true` sur demande utilisateur le 15 octobre ; statut `ACTIVE_RESEARCH`.
+> **Guide courant : [consensus EODHD](consensus_eodhd_collecte_quotidienne.md).**
+> Le contenu ci-dessous conserve l'historique Yahoo du 5–6 octobre et ne décrit
+> plus le fonctionnement courant. Aucun fallback Yahoo n'est réactivé.
+
 <!-- doc-status:start -->
-> Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
+> Statut documentaire au 2026-10-15 — Archive historique Yahoo. Le guide opérationnel courant est [la collecte EODHD](consensus_eodhd_collecte_quotidienne.md). Les anciens résultats ne prouvent ni état actuel ni permission Yahoo.
 <!-- doc-status:end -->
 
-## Autorisation et périmètre courant
+## Historique : autorisation et périmètre au 5–6 octobre
 
 **Mise à jour du 6 octobre 2026 : batch suspendu**, `enabled: false`,
 `BLOCKED_YAHOO_AUTOMATED_ACCESS`. L'autorisation utilisateur du pilote ne prouve

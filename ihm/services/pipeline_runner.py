@@ -408,7 +408,8 @@ class PipelineLaunchOptions:
     ml_exclude_per_symbol_per_sector: bool = DEFAULT_ML_EXCLUDE_PER_SYMBOL_PER_SECTOR  # 2026-08-28
     ml_enable_oracle_model: bool = DEFAULT_ML_ENABLE_ORACLE_MODEL  # 2026-08-20 : Oracle Extreme (O0)
     ml_oracle_model_only: bool = DEFAULT_ML_ORACLE_MODEL_ONLY      # 2026-08-20 : Oracle ONLY
-    ml_oracle_path_model_only: bool = False  # modèle parcours H20 distinct, recherche
+    ml_oracle_path_model_only: bool = False  # modèle parcours H20 distinct ; défaut IHM True
+    ml_oracle_path_backend: str | None = None  # explicite IHM ; None conserve les anciens flags.
     ml_oracle_barrier_model_only: bool = False  # modèle TP avant SL, recherche
     ml_oracle_barrier_tp_pct: float | None = None  # None = config.yaml
     ml_oracle_barrier_sl_pct: float | None = None
@@ -1699,6 +1700,7 @@ def is_gpu_available() -> bool:
 def _build_chained_ps_commands(
     steps: list[tuple[str, list[str]]],
     title: str | None = None,
+    *, prelude: str | None = None, final_log_command: list[str] | None = None,
 ) -> list[str]:
     """Chaîne N commandes Python via PowerShell inline avec labels de progression.
 
@@ -1719,6 +1721,8 @@ def _build_chained_ps_commands(
         f"Push-Location '{project_root_escaped}'",
         "$ec = 0",
     ]
+    if prelude:
+        parts.append(prelude)
     if title:
         safe_title = title.replace("'", "''")
         divider = "=" * 60
@@ -1737,6 +1741,10 @@ def _build_chained_ps_commands(
             f" $ec = $LASTEXITCODE"
             f" }}"
         )
+    if final_log_command:
+        # Log even when a substep failed, but never erase its exit code.
+        final_command = ' '.join(_quote(arg) for arg in final_log_command)
+        parts.append(f'& {final_command}; if ($ec -eq 0 -and $LASTEXITCODE -ne 0) {{ $ec = $LASTEXITCODE }}')
     parts.extend(["Pop-Location", "exit $ec"])
     ps_script = "; ".join(parts)
     return ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_script]
@@ -2127,6 +2135,15 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             resume_from_checkpoint=bool(options.news_import_resume_from_checkpoint),
             force_symbol_source=True,
         )
+        # A daily workflow is not an implicit one-year historical backfill.
+        from event_sentiment.import_runtime import load_import_runtime
+        if not import_start_date:
+            cmd0.extend(['--lookback-days',str(load_import_runtime().pipeline_lookback_days)])
+        cmd0.append('--continue-on-symbol-error')
+        cmd0.extend(['--summary-path','$newsImportSummary'])
+        summary_root = str(PROJECT_ROOT/'artifacts/news_import_runs').replace("'", "''")
+        summary_prelude = (f"$newsImportSummary = Join-Path '{summary_root}' "
+                           "('stage8-' + [guid]::NewGuid().ToString('N') + '.json')")
         cmd1 = _build_sentiment_standard_command(
             options,
             sentiment_start_utc=sentiment_start_utc,
@@ -2165,7 +2182,10 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
                 ("Scoring FinBERT contextuel (scope univers tradable / override CSV)", cmd4),
                 ("Agregation features : ticker=univers tradable, secteur=scope large importe", cmd3),
             ],
-            title="ETAPE 7 — Sentiment Pipeline",
+            title="ETAPE 8 — Sentiment Pipeline",
+            prelude=summary_prelude,
+            final_log_command=[sys.executable,'-u','-m','event_sentiment.import_runtime',
+                               '--report','$newsImportSummary'],
         )
 
     if step_key == "relevance_backfill":
@@ -2358,6 +2378,9 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     if step_key == "ml_train":
+        from modelFactory.oracle_path.backend import resolve_backend
+        path_backend=(resolve_backend(options.ml_oracle_path_backend,enable_catboost=options.ml_enable_catboost)
+                      if options.ml_oracle_path_model_only else None)
         effective_target_mode = (
             "ternary" if options.ml_directional_profiles_enabled else options.ml_target_mode
         )
@@ -2475,7 +2498,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
                 "--catboost-loss-function", str(options.ml_catboost_loss_function),
             ] if options.ml_catboost_tuning_enabled else []),
             "--default-champion",
-            options.ml_default_champion,
+            ("catboost" if path_backend=='catboost' else "lightgbm") if options.ml_oracle_path_model_only else options.ml_default_champion,
             "--heartbeat-interval-seconds",
             str(options.ml_heartbeat_interval_seconds),
             "--log-level",
@@ -2525,6 +2548,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             if options.ml_directional_profiles_enabled:
                 raise ValueError("Choisir Oracle parcours OU le bundle Oracle terminal.")
             command.extend(["--oracle-path-model-only", "--oracle-horizon", "20"])
+            if options.ml_oracle_path_backend is not None:
+                command.extend(['--oracle-path-backend',path_backend])
             if options.ml_standalone_oracle_feature_profile != "dynamic":
                 command.extend(["--standalone-oracle-feature-profile", options.ml_standalone_oracle_feature_profile])
         elif options.ml_directional_profiles_enabled:
@@ -2600,23 +2625,23 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.append("--exclude-ticket-symbols")
         if options.ml_debug_train:
             command.append("--debug-train")
-        if options.ml_enable_lightgbm:
+        if (path_backend in ('lightgbm','auto') if path_backend else options.ml_enable_lightgbm):
             command.append("--compare-lightgbm")
-        if options.ml_enable_catboost:
+        if (path_backend in ('catboost','auto') if path_backend else options.ml_enable_catboost):
             command.append("--enable-catboost")
-        if options.ml_enable_global_model and not options.ml_global_model_only and not options.ml_oracle_barrier_model_only:
+        if options.ml_enable_global_model and not options.ml_global_model_only and not options.ml_oracle_barrier_model_only and not options.ml_oracle_path_model_only:
             # global-model-only active déjà --enable-global-model (implicite cli).
             command.append("--enable-global-model")
-        if (options.ml_enable_global_model or options.ml_global_model_only) and not options.ml_global_champion and not options.ml_oracle_barrier_model_only:
+        if (options.ml_enable_global_model or options.ml_global_model_only) and not options.ml_global_champion and not options.ml_oracle_barrier_model_only and not options.ml_oracle_path_model_only:
             # P3-3 : en mode champion, --global-model-name est REDONDANT
             # (--global-champion force les 3 candidats LightGBM/CatBoost/XGBoost
             # côté core et ignore model_name) → on ne l'émet pas.
             command.extend(["--global-model-name", options.ml_global_model_name])
-        if options.ml_global_champion and not options.ml_oracle_barrier_model_only:
+        if options.ml_global_champion and not options.ml_oracle_barrier_model_only and not options.ml_oracle_path_model_only:
             # P3-3 : --global-champion entraîne les 3 candidats
             # (CatBoost + LightGBM + XGBoost) côté core.
             command.append("--global-champion")
-        if options.ml_enable_global_stacking and not options.ml_oracle_barrier_model_only:
+        if options.ml_enable_global_stacking and not options.ml_oracle_barrier_model_only and not options.ml_oracle_path_model_only:
             command.append("--enable-global-stacking")
         if options.ml_enable_cross_sectional:
             command.append("--enable-cross-sectional")
@@ -2793,6 +2818,15 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--trade-date", trade_date])
         if account_id:
             command.extend(["--account", account_id])
+        # Keep step 11 on the same standalone path batch as step 10. No
+        # cross-batch fallback; the model gives amplitude, policy gives LONG.
+        _path_batch = options.ml_live_predict_batch_id or options.ml_predict_batch_id
+        if _path_batch and not options.llm_filter_enabled:
+            from modelFactory.oracle_path.train import is_path_batch
+            if is_path_batch(options.ml_artifacts_dir, _path_batch):
+                command.extend(["--oracle-batch-id", _path_batch,
+                    "--oracle-tradable-policy", "filter_then_top20",
+                    "--oracle-artifacts-dir", options.ml_artifacts_dir])
         # ── V1 Multi-Horizon : injecter best_horizon (SIZING only) ──
         # --best-horizon alimente RiskConfig.best_horizon → maps stop/TP.
         # Par défaut on utilise `batch_diagnostics.live_horizon` (config.yaml,

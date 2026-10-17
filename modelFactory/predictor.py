@@ -42,6 +42,7 @@ from modelFactory.dataset import FeatureScaler
 from modelFactory.db_registry import (
     PREDICTION_SOURCE_GLOBAL_RANK_SYNTH,
     PREDICTION_SOURCE_ORACLE_SYNTH,
+    PREDICTION_SOURCE_ORACLE_PATH_POLICY,
     PREDICTION_SOURCE_PER_SECTOR,
     PREDICTION_SOURCE_PER_SYMBOL,
     insert_predictions,
@@ -3877,7 +3878,7 @@ def apply_cascade_to_predictions(
 
         def _prio(row_source: object) -> tuple[int, int]:
             _s = str(row_source or "").strip().lower()
-            if _oracle_first and _s == PREDICTION_SOURCE_ORACLE_SYNTH:
+            if _oracle_first and _s in (PREDICTION_SOURCE_ORACLE_SYNTH, PREDICTION_SOURCE_ORACLE_PATH_POLICY):
                 return (0, 1)
             if _oracle_first and _s == PREDICTION_SOURCE_GLOBAL_RANK_SYNTH:
                 return (1, 2)
@@ -3885,6 +3886,7 @@ def apply_cascade_to_predictions(
                 PREDICTION_SOURCE_PER_SYMBOL: (0, 0),
                 PREDICTION_SOURCE_GLOBAL_RANK_SYNTH: (1, 2),
                 PREDICTION_SOURCE_ORACLE_SYNTH: (2, 1),
+                PREDICTION_SOURCE_ORACLE_PATH_POLICY: (2, 1),
                 PREDICTION_SOURCE_PER_SECTOR: (3, 3),
             }
             return _order.get(_s, (4, 4))

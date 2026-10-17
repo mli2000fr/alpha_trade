@@ -1,6 +1,6 @@
 # DDL et graphe des migrations présents dans le dépôt
 
-Inventaire statique au 2026-10-10, **pas un schéma déployé**. Aucun SQL exécuté.
+Inventaire statique au 2026-10-14, **pas un schéma déployé**. Aucun SQL exécuté.
 Les tables peuvent être définies à plusieurs endroits ou migrées depuis un DDL initial.
 Le graphe des révisions et les ALTER ultérieurs priment sur un CREATE isolé.
 Les migrations US ne s'appliquent pas automatiquement aux bases CN/FR.
@@ -107,6 +107,14 @@ Les migrations US ne s'appliquent pas automatiquement aux bases CN/FR.
 | [alembic/versions/0094_oracle_atr_score_order.py](../../alembic/versions/0094_oracle_atr_score_order.py) | `0094_oracle_atr_score_order` | `0093_llm_directional` |
 | [alembic/versions/0095_oracle_atr_partial_returns.py](../../alembic/versions/0095_oracle_atr_partial_returns.py) | `0095_oracle_atr_partial_returns` | `0094_oracle_atr_score_order` |
 | [alembic/versions/0096_public_macro_versions.py](../../alembic/versions/0096_public_macro_versions.py) | `0096_public_macro_versions` | `0095_oracle_atr_partial_returns` |
+| [alembic/versions/0097_stock_bars_intraday.py](../../alembic/versions/0097_stock_bars_intraday.py) | `0097_stock_bars_intraday` | `0096_public_macro_versions` |
+| [alembic/versions/0098_intraday_provider.py](../../alembic/versions/0098_intraday_provider.py) | `0098_intraday_provider` | `0097_stock_bars_intraday` |
+| [alembic/versions/0099_eodhd_consensus.py](../../alembic/versions/0099_eodhd_consensus.py) | `0099_eodhd_consensus` | `0098_intraday_provider` |
+| [alembic/versions/0100_eodhd_ipo.py](../../alembic/versions/0100_eodhd_ipo.py) | `0100_eodhd_ipo` | `0099_eodhd_consensus` |
+| [alembic/versions/0101_oracle_atr_intersection_order.py](../../alembic/versions/0101_oracle_atr_intersection_order.py) | `0101_oatr_intersection_order` | `0100_eodhd_ipo` |
+| [alembic/versions/0102_oracle_atr_max_prices.py](../../alembic/versions/0102_oracle_atr_max_prices.py) | `0102_oatr_max_prices` | `0101_oatr_intersection_order` |
+| [alembic/versions/0103_oracle_atr_max_returns.py](../../alembic/versions/0103_oracle_atr_max_returns.py) | `0103_oatr_max_returns` | `0102_oatr_max_prices` |
+| [alembic/versions/0104_news_versions.py](../../alembic/versions/0104_news_versions.py) | `0104_news_versions` | `0103_oatr_max_returns` |
 | [alembic_cn/versions/0001_tushare_raw_staging.py](../../alembic_cn/versions/0001_tushare_raw_staging.py) | `0001_tushare_raw_staging` | `None` |
 | [alembic_cn/versions/0002_tushare_raw_run_lineage.py](../../alembic_cn/versions/0002_tushare_raw_run_lineage.py) | `0002_tushare_raw_run_lineage` | `0001_tushare_raw_staging` |
 | [alembic_cn/versions/0003_provider_neutral_staging.py](../../alembic_cn/versions/0003_provider_neutral_staging.py) | `0003_provider_neutral_staging` | `0002_tushare_raw_run_lineage` |
@@ -139,12 +147,13 @@ Les migrations US ne s'appliquent pas automatiquement aux bases CN/FR.
 | `alpha_trade.corporate_actions_applications` | [database/sql/corporate_actions/corporate_actions_applications.sql](../../database/sql/corporate_actions/corporate_actions_applications.sql) |
 | `alpha_trade.corporate_actions_audit_runs` | [database/sql/corporate_actions/corporate_actions_audit_runs.sql](../../database/sql/corporate_actions/corporate_actions_audit_runs.sql) |
 | `alpha_trade.corporate_actions_events` | [database/sql/corporate_actions/corporate_actions_events.sql](../../database/sql/corporate_actions/corporate_actions_events.sql) |
+| `alpha_trade.eodhd_ipo_collection_windows` | [database/sql/forward_pit/stock_ipo_eodhd_history.sql](../../database/sql/forward_pit/stock_ipo_eodhd_history.sql) |
 | `alpha_trade.execution_kill_switch_runs` | [database/sql/execution/execution_kill_switch_runs.sql](../../database/sql/execution/execution_kill_switch_runs.sql) |
 | `alpha_trade.global_oracle_labels` | [database/sql/ml/global_oracle_labels.sql](../../database/sql/ml/global_oracle_labels.sql) |
 | `alpha_trade.global_rank_history` | [database/sql/ml/global_rank_history.sql](../../database/sql/ml/global_rank_history.sql) |
 | `alpha_trade.macro_event_audit` | [database/sql/news/init_event_sentiment.sql](../../database/sql/news/init_event_sentiment.sql), [database/sql/news/macro_event_audit.sql](../../database/sql/news/macro_event_audit.sql) |
+| `alpha_trade.macro_public_observation_versions` | [database/sql/forward_pit/forward_pit_tables.sql](../../database/sql/forward_pit/forward_pit_tables.sql), [database/sql/forward_pit/public_macro_observation_versions.sql](../../database/sql/forward_pit/public_macro_observation_versions.sql) |
 | `alpha_trade.macro_vintage_observations` | [database/sql/forward_pit/forward_pit_tables.sql](../../database/sql/forward_pit/forward_pit_tables.sql) |
-| `alpha_trade.macro_public_observation_versions` | [database/sql/forward_pit/public_macro_observation_versions.sql](../../database/sql/forward_pit/public_macro_observation_versions.sql), [DDL Forward PIT](../../database/sql/forward_pit/forward_pit_tables.sql) |
 | `alpha_trade.ml_drift_runs` | [database/sql/ml/ml_drift_runs.sql](../../database/sql/ml/ml_drift_runs.sql) |
 | `alpha_trade.model_batch_diagnostics` | [database/sql/ml/model_batch_diagnostics.sql](../../database/sql/ml/model_batch_diagnostics.sql) |
 | `alpha_trade.model_governance` | [database/sql/ml/model_governance.sql](../../database/sql/ml/model_governance.sql) |
@@ -162,6 +171,7 @@ Les migrations US ne s'appliquent pas automatiquement aux bases CN/FR.
 | `alpha_trade.option_contract_adjustments` | [database/sql/forward_pit/forward_pit_tables.sql](../../database/sql/forward_pit/forward_pit_tables.sql), [database/sql/migration_0079_delayed_options_and_occ_adjustments.sql](../../database/sql/migration_0079_delayed_options_and_occ_adjustments.sql) |
 | `alpha_trade.oracle_atr_market_regime_daily` | [database/sql/ml/oracle_atr_market_regime_daily.sql](../../database/sql/ml/oracle_atr_market_regime_daily.sql) |
 | `alpha_trade.oracle_extreme_predictions` | [database/sql/oracle/oracle_extreme_predictions.sql](../../database/sql/oracle/oracle_extreme_predictions.sql) |
+| `alpha_trade.oracle_path_prediction_lineage` | [database/sql/oracle/oracle_path_prediction_lineage.sql](../../database/sql/oracle/oracle_path_prediction_lineage.sql) |
 | `alpha_trade.pit_collection_runs` | [database/sql/forward_pit/forward_pit_tables.sql](../../database/sql/forward_pit/forward_pit_tables.sql) |
 | `alpha_trade.pit_data_quality_issues` | [database/sql/forward_pit/forward_pit_tables.sql](../../database/sql/forward_pit/forward_pit_tables.sql) |
 | `alpha_trade.pit_data_quality_metrics` | [database/sql/forward_pit/forward_pit_tables.sql](../../database/sql/forward_pit/forward_pit_tables.sql) |
@@ -175,13 +185,16 @@ Les migrations US ne s'appliquent pas automatiquement aux bases CN/FR.
 | `alpha_trade.security_master_changes` | [database/sql/forward_pit/forward_pit_tables.sql](../../database/sql/forward_pit/forward_pit_tables.sql) |
 | `alpha_trade.security_master_snapshots` | [database/sql/forward_pit/forward_pit_tables.sql](../../database/sql/forward_pit/forward_pit_tables.sql) |
 | `alpha_trade.shadow_drift_runs` | [database/sql/risk/shadow_drift_runs.sql](../../database/sql/risk/shadow_drift_runs.sql) |
+| `alpha_trade.stock_analyst_consensus_eodhd_history` | [database/sql/forward_pit/stock_analyst_consensus_eodhd_history.sql](../../database/sql/forward_pit/stock_analyst_consensus_eodhd_history.sql) |
 | `alpha_trade.stock_analyst_consensus_snapshots` | [database/sql/forward_pit/forward_pit_tables.sql](../../database/sql/forward_pit/forward_pit_tables.sql) |
 | `alpha_trade.stock_bars` | [database/sql/stock/stock_bars.sql](../../database/sql/stock/stock_bars.sql) |
 | `alpha_trade.stock_bars_daily` | [database/sql/stock/stock_bars_daily.sql](../../database/sql/stock/stock_bars_daily.sql) |
 | `alpha_trade.stock_bars_daily_versions` | [database/sql/forward_pit/forward_pit_tables.sql](../../database/sql/forward_pit/forward_pit_tables.sql) |
+| `alpha_trade.stock_bars_intraday` | [database/sql/stock/stock_bars_intraday.sql](../../database/sql/stock/stock_bars_intraday.sql) |
 | `alpha_trade.stock_borrow_status_snapshots` | [database/sql/forward_pit/forward_pit_tables.sql](../../database/sql/forward_pit/forward_pit_tables.sql) |
 | `alpha_trade.stock_earnings_calendar` | [database/sql/stock/stock_earnings_calendar.sql](../../database/sql/stock/stock_earnings_calendar.sql) |
 | `alpha_trade.stock_fundamentals_daily` | [database/sql/stock/stock_fundamentals_daily.sql](../../database/sql/stock/stock_fundamentals_daily.sql) |
+| `alpha_trade.stock_ipo_eodhd_history` | [database/sql/forward_pit/stock_ipo_eodhd_history.sql](../../database/sql/forward_pit/stock_ipo_eodhd_history.sql) |
 | `alpha_trade.stock_macro_indicators_daily` | [database/sql/stock/stock_macro_indicators_daily.sql](../../database/sql/stock/stock_macro_indicators_daily.sql) |
 | `alpha_trade.stock_metadata` | [database/sql/stock/stock_metadata.sql](../../database/sql/stock/stock_metadata.sql) |
 | `alpha_trade.stock_opening_window_bar_versions` | [database/sql/forward_pit/forward_pit_tables.sql](../../database/sql/forward_pit/forward_pit_tables.sql), [database/sql/migration_0078_alpaca_opening_window_pit.sql](../../database/sql/migration_0078_alpaca_opening_window_pit.sql) |
@@ -254,6 +267,9 @@ Les migrations US ne s'appliquent pas automatiquement aux bases CN/FR.
 | `markets` | [database/sql/cn/migration_cn_0004_canonical_market_pilot.sql](../../database/sql/cn/migration_cn_0004_canonical_market_pilot.sql), [database/sql/fr/migration_fr_0001_reference.sql](../../database/sql/fr/migration_fr_0001_reference.sql), [database/sql/market/markets.sql](../../database/sql/market/markets.sql) |
 | `model_directional_oos_metrics` | [database/sql/ml/model_directional_oos_metrics.sql](../../database/sql/ml/model_directional_oos_metrics.sql) |
 | `model_serving_batch` | [database/sql/ml/model_serving_batch.sql](../../database/sql/ml/model_serving_batch.sql) |
+| `news_archive_observations` | [database/sql/news/news_archive_versions.sql](../../database/sql/news/news_archive_versions.sql) |
+| `news_raw_versions` | [database/sql/news/news_archive_versions.sql](../../database/sql/news/news_archive_versions.sql) |
+| `news_ticker_map_versions` | [database/sql/news/news_archive_versions.sql](../../database/sql/news/news_archive_versions.sql) |
 | `portfolio_targets` | [database/sql/risk/portfolio_targets.sql](../../database/sql/risk/portfolio_targets.sql) |
 | `risk_decisions` | [database/sql/risk/risk_decisions.sql](../../database/sql/risk/risk_decisions.sql) |
 | `run_business_summaries` | [database/sql/run_business_summaries.sql](../../database/sql/run_business_summaries.sql) |

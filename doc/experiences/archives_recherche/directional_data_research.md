@@ -121,6 +121,12 @@ pour toute future famille de données.
 
 ## Famille 5 — analyst (surprise earnings / days-to-earnings) (2026-08-27)
 
+> Relecture du 14 octobre 2026 : le code joint les valeurs courantes par
+> `earnings_date`, sans heure de publication ni vintage d'estimation.
+> L'ancienne qualification « PIT strict » n'est donc pas démontrée. Les résultats
+> ci-dessous sont conservés comme diagnostic historique, non comme signal PIT
+> utilisable. [Audit actuel](../../ml/signaux_directionnels_faibles_audit_20261014.md).
+
 `modelFactory/directional_data_research/analyst_revisions.py` →
 `artifacts/directional_data_research_analyst.csv`.
 

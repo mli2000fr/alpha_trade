@@ -41,10 +41,12 @@ from typing import Any, Iterator, Optional
 import requests
 import dateutil.parser
 
-from service._http_retry import RetryPolicy, request_with_retry
+from service._http_retry import RetryPolicy, request_with_retry, CircuitBreaker, DEFAULT_CIRCUIT_BREAKER
 from service._telemetry import bump as _telemetry_bump
 from service.eodhd.accounts import EodhdAccountRegistry, EodhdAuthError
 from service.eodhd.symbols import from_eodhd, to_eodhd
+from common.verified_http import verified_session
+from service._http_retry import _redact_sensitive_text
 
 LOGGER = logging.getLogger(__name__)
 
@@ -54,14 +56,19 @@ DEFAULT_MAX_ATTEMPTS = 5
 DEFAULT_BACKOFF_SECONDS = 1.0
 TELEMETRY_CLIENT = "eodhd"
 
-# Quota tracker volontairement non utilisé ici : l'endpoint ``/news`` est
-# facturé séparément côté plan All-In-One et n'a pas le même profil que
-# les EOD bars / splits / dividends. On laisse le tracker hors path news
-# pour ne pas couper les appels EOD si jamais le quota saute côté news.
+# Le client générique ne réserve pas de quota lui-même (compatibilité legacy).
+# eodhd_news_ingestion_sync le fait dans son transport, AVANT chaque tentative
+# réelle, retries compris : plafonds locaux + tracker global, coût conservateur 5.
 
 
 class EodhdNewsFetchError(RuntimeError):
     """Erreur technique lors d'un fetch EODHD news."""
+
+    def __init__(self, message, *, status_code=None, terminal=False):
+        super().__init__(message)
+        self.status_code = status_code
+        self.terminal = terminal
+        self.partial_summary = {}
 
 
 def _to_utc(value: datetime) -> datetime:
@@ -87,7 +94,7 @@ def _get_token() -> str:
     try:
         return EodhdAccountRegistry.get().get_token()
     except EodhdAuthError as exc:
-        raise EodhdNewsFetchError(str(exc)) from exc
+        raise EodhdNewsFetchError(str(exc), terminal=True) from exc
 
 
 def _get_base_url() -> str:
@@ -206,6 +213,8 @@ def fetch_news_page(
     limit: int = 50,
     offset: int = 0,
     session: Optional[requests.Session] = None,
+    retry_policy: Optional[RetryPolicy] = None,
+    breaker: Optional[CircuitBreaker] = DEFAULT_CIRCUIT_BREAKER,
 ) -> tuple[list[dict[str, Any]], Optional[str]]:
     """Récupère **une** page EODHD pour le 1er symbole de ``symbols``.
 
@@ -240,15 +249,17 @@ def fetch_news_page(
     }
 
     owned_session = session is None
-    client = session or requests.Session()
+    client = session or verified_session()
     _telemetry_bump(TELEMETRY_CLIENT, "requests_total")
     try:
+        retry_options = {'breaker': breaker} if breaker is not DEFAULT_CIRCUIT_BREAKER else {}
         response = request_with_retry(
             client,
             "GET",
             url,
             params=params,
-            policy=_retry_policy(),
+            policy=retry_policy or _retry_policy(),
+            **retry_options,
         )
         data = response.json()
         _telemetry_bump(TELEMETRY_CLIENT, "success_total")
@@ -262,11 +273,13 @@ def fetch_news_page(
         elif status in (401, 403):
             _telemetry_bump(TELEMETRY_CLIENT, "auth_error_total")
         raise EodhdNewsFetchError(
-            f"EODHD HTTP {status} sur /news symbol={eodhd_symbol}: {exc}"
+            f"EODHD HTTP {status} sur /news symbol={eodhd_symbol}: {_redact_sensitive_text(str(exc))}",
+            status_code=status, terminal=status in (401,403,429),
         ) from exc
     except requests.exceptions.RequestException as exc:
         raise EodhdNewsFetchError(
-            f"EODHD erreur réseau /news symbol={eodhd_symbol}: {exc}"
+            f"EODHD erreur réseau /news symbol={eodhd_symbol}: {_redact_sensitive_text(str(exc))}",
+            terminal=isinstance(exc, requests.exceptions.SSLError),
         ) from exc
     finally:
         if owned_session:
@@ -277,7 +290,7 @@ def fetch_news_page(
         if isinstance(data, dict) and isinstance(data.get("data"), list):
             data = data["data"]
         else:
-            data = []
+            raise EodhdNewsFetchError('EODHD /news: schéma JSON inattendu, pas une absence de news')
 
     page_size = len(data)
     collected: list[dict[str, Any]] = []
@@ -315,6 +328,8 @@ def iter_news_pages(
     limit: int = 50,
     page_token: Optional[str] = None,
     session: Optional[requests.Session] = None,
+    retry_policy: Optional[RetryPolicy] = None,
+    breaker: Optional[CircuitBreaker] = DEFAULT_CIRCUIT_BREAKER,
 ) -> Iterator[tuple[list[dict[str, Any]], Optional[str]]]:
     """Itérateur compatible avec :func:`service.alpaca.clientNewsAlpaca.iter_news_pages`.
 
@@ -338,6 +353,8 @@ def iter_news_pages(
             limit=limit,
             offset=offset,
             session=session,
+            retry_policy=retry_policy,
+            breaker=breaker,
         )
         yield articles, next_token
         if not next_token:

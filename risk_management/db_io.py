@@ -521,7 +521,7 @@ class RiskRepository:
 
         0067 : ``sources`` restreint par ORIGINE (colonne ``source``) —
         ``per_symbol`` | ``per_sector`` | ``global_rank_synth`` | ``oracle_synth``.
-        None = toutes (rétro-compatible).
+        None = origines ordinaires, hors oracle_path_policy (amplitude non directionnelle).
         """
         if not symbols:
             return {}
@@ -560,6 +560,10 @@ class RiskRepository:
         _inner_source_select = "prediction.source AS source" if _has_source else "NULL AS source"
         _outer_source_select = ", ranked.source AS source" if _has_source else ", NULL AS source"
         source_condition = ""
+        if sources is None and _has_source:
+            # An amplitude policy is not a per-symbol directional model. It
+            # requires an explicitly selected Oracle batch/gate upstream.
+            source_condition = " AND COALESCE(prediction.source, '') <> 'oracle_path_policy'"
         if sources:
             unique_sources = sorted({str(s).strip().lower() for s in sources if s})
             if unique_sources:
@@ -619,11 +623,20 @@ class RiskRepository:
         *,
         batch_id: str,
         symbols: list[str] | None = None,
+        artifacts_dir: str = "artifacts/models",
     ) -> dict[str, float]:
         """Charge les scores Oracle de la date exacte, avec batch obligatoire."""
         normalized_batch = str(batch_id or "").strip()
         if not normalized_batch:
             raise ValueError("batch_id Oracle obligatoire pour le gate live.")
+        from modelFactory.oracle_path.train import is_path_batch
+        if is_path_batch(artifacts_dir, normalized_batch):
+            from modelFactory.oracle.predictions_store import load_oracle_predictions
+            frame = load_oracle_predictions(self.engine, batch_id=normalized_batch,
+                start_date=str(trade_date), end_date=str(trade_date), artifacts_dir=artifacts_dir)
+            if symbols is not None:
+                frame = frame.loc[frame.symbol.isin({str(s).strip().upper() for s in symbols})]
+            return dict(zip(frame.symbol, frame.proba_extreme))
         params: dict[str, Any] = {
             "batch_id": normalized_batch,
             "trade_date": trade_date,

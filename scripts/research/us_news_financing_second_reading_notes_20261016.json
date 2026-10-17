@@ -1,0 +1,152 @@
+{
+  "eodhd:284f645238ef5c3ebf89c096": {
+    "issuer": "Anthropic", "identity_symbols": [], "event_type": "OTHER", "category": "OTHER_ISSUER_IPO_SPECULATION",
+    "quote": "Anthropic has been preparing for what could be a blockbuster initial public offering.",
+    "notes": "Market roundup: ASML raises operating guidance; potential IPO concerns Anthropic, not ASML. No priced primary ASML issue is established. Archive assertions not independently verified."
+  },
+  "eodhd:b88edfdc31d11591e5582c14": {
+    "issuer": "BigBear.ai", "identity_symbols": ["BBAI"], "event_type": "OTHER", "category": "OTHER_ISSUER_HISTORICAL_CONVERSION",
+    "quote": "partly due to the conversion of $124.6 million in convertible notes into roughly 38.1 million shares",
+    "notes": "Retrospective balance-sheet dilution of BBAI, while PLTR is a competitor. Neither a new PLTR financing nor a newly announced cash issue."
+  },
+  "eodhd:1451fe85e341d5901cf09a5a": {
+    "issuer": "Anthropic", "identity_symbols": [], "event_type": "OTHER", "category": "OTHER_ISSUER_IPO_SPECULATION",
+    "quote": "The report comes as Anthropic looks to rally investors for a blockbuster initial public offering in the coming month",
+    "notes": "Anthropic revenue/IPO outlook, not a new NVDA share issue. No priced offering or NVDA issuer identity established."
+  },
+  "eodhd:c7db47f336acfea95f14fba8": {
+    "issuer": "GSK", "identity_symbols": ["GSK"], "event_type": "SHELF_ONLY", "category": "EMPLOYEE_ADS_REGISTRATION_NOT_EXECUTED_RAISE", "instrument_class": "EMPLOYEE_PLAN_ADS_REGISTRATION",
+    "quote": "filing a US shelf registration for up to $3.0498b of American Depositary Shares tied to its employee share ownership plans",
+    "notes": "Body identifies GSK, but an employee-plan ADS registration ceiling is not proof of new cash raised, issued share count, issue date or priced common offering. Underlying filing, ADR terms and earlier announcements are not in this reviewed evidence. LSE price must not be treated as the US ADS price."
+  },
+  "eodhd:441af0eafc4321d9a4e546ef": {
+    "issuer": "Ni-Co Energy Inc.", "identity_symbols": [], "event_type": "OTHER", "category": "CROSS_MARKET_TICKER_COLLISION",
+    "quote": "(TSXV: NICE)",
+    "notes": "TSXV mineral explorer Ni-Co Energy is not the US NICE software issuer. Bell-ringing ceremony recalls a July listing/IPO; no new US NICE primary financing. No current metadata lookup or historical identity certification performed."
+  },
+  "eodhd:b3883986f16118c2d6c488e1": {
+    "issuer": "Iambic Therapeutics", "identity_symbols": ["IAM"], "event_type": "PRIMARY_EQUITY_FINANCING", "category": "OTHER_ISSUER_REPEATED_IPO", "instrument_class": "IPO_COMMON_SHARES",
+    "quote": "priced the offering of roughly 9.4M shares at $16.00",
+    "notes": "Iambic IAM is issuer; ABBV is a collaborator/backer. Same IPO family as the first lot, not a separate ABBV raise. IAM not added to the universe. First announcement history is not certified."
+  },
+  "eodhd:4a21cb9f08f921c8830d022f": {
+    "issuer": "MSCI Inc.", "identity_symbols": ["MSCI"], "event_type": "OTHER", "category": "INDEX_POLICY_NOT_ISSUER_FINANCING",
+    "quote": "MSCI announced the launch of a consultation on a proposal to reclassify the MSCI Indonesia Indexes",
+    "notes": "Index classification/free-float policy, not an MSCI stock issue. Third-party use restrictions are present in the archived notice: no ML/production authorization inferred from API delivery. Separate rights qualification required before reuse beyond this bounded audit."
+  },
+  "eodhd:f61873ab2a0dcd7ceb5c503a": {
+    "issuer": "Aflac Incorporated", "identity_symbols": ["AFL"], "event_type": "OTHER", "category": "CREDIT_RATING_EXISTING_SHELF",
+    "quote": "all existing Long-Term Issue Credit Ratings (Long-Term IRs) of Aflac",
+    "notes": "Ratings affirmed on existing debt and indicative securities under an existing shelf. Not a new priced equity issue; credit lines and old debt are not new common dilution."
+  },
+  "eodhd:01e7dd2925f3354c452fa0df": {
+    "issuer": "Tesla / SpaceX", "identity_symbols": ["TSLA"], "event_type": "OTHER", "category": "MERGER_RUMOUR_OLD_IPO",
+    "quote": "A rumored merger of Musk's two most valuable companies",
+    "notes": "Speculative merger/pay package and recalled June SpaceX IPO; no confirmed new Tesla primary financing. Stock exchange ratio and rumours are not treated as verified transaction facts."
+  },
+  "eodhd:05b73e8a127fdcee05c52124": {
+    "issuer": "Bending Spoons", "identity_symbols": [], "event_type": "PRIMARY_EQUITY_FINANCING", "category": "OTHER_ISSUER_PLACEMENT", "instrument_class": "NEW_COMMON_SHARES",
+    "quote": "a private placement of 10 million newly issued shares at $33.00 each",
+    "notes": "Capital raise belongs to Bending Spoons, not BAC, which is discussed for a fine and earnings. Same placement family also appears in the Bloomberg control transcript. No new event attached to BAC or universe extension."
+  },
+  "eodhd:f178c70b928e09fcf2a255a7": {
+    "issuer": "Leidos", "identity_symbols": ["LDOS"], "event_type": "OTHER", "category": "VALUATION_COMMENTARY_NOT_ISSUANCE",
+    "quote": "Share repurchases have amplified shareholder returns",
+    "notes": "Investment commentary, old corporate split and historical repurchases, not a new equity financing. Historical price performance quoted in the body was not used for sample selection."
+  },
+  "eodhd:41856dbfe44e7b8c4be35588": {
+    "issuer": "Anthropic", "identity_symbols": [], "event_type": "OTHER", "category": "OTHER_ISSUER_IPO_SPECULATION",
+    "quote": "Anthropic plans to raise as much as $100 billion",
+    "notes": "Roundup discusses possible Anthropic IPO and TSMC results. Potential proceeds are not a completed raise and are not TSM financing. Anthropic stories are one subject family, not independent NVDA/ASML/TSM events."
+  },
+  "eodhd:8a31f2df2120009d2729eebc": {
+    "issuer": "Jio Platforms", "identity_symbols": [], "event_type": "PRIMARY_EQUITY_FINANCING", "category": "OTHER_ISSUER_FOREIGN_IPO", "instrument_class": "INDIAN_IPO",
+    "quote": "the offering of up to 270 million new shares",
+    "notes": "Jio is the proposed issuer; Google/Meta are historical investors. No new GOOGL issue. Pricing band, subscription dates and linked PDFs remain archive claims, not independently checked documents. Currency and foreign listing not normalized into a US trade."
+  },
+  "eodhd:4c34608863989813d44977d9": {
+    "issuer": "Stack Infrastructure Inc.", "identity_symbols": [], "event_type": "DEBT_ONLY", "category": "SUBSIDIARY_LOAN_NOT_PARENT_EQUITY", "instrument_class": "PROPOSED_LOAN",
+    "quote": "Stack Infrastructure Inc. is seeking an A$8.6 billion ($6 billion) loan",
+    "notes": "Proposed debt of owned company Stack, not a new OWL common-share issue. Blue Owl is the owner; declined comment is not confirmation of final loan closing. IPO references concern other businesses."
+  },
+  "eodhd:10094aed6210f04b5f063c42": {
+    "issuer": "Anthropic / market roundup", "identity_symbols": [], "event_type": "OTHER", "category": "INDEX_NAME_CONTEXT_NOT_SPGl_FINANCING",
+    "quote": "reportedly eyeing a blockbuster initial public offering",
+    "notes": "IPO speculation concerns Anthropic. S&P/TSX/S&P index mentions do not identify SPGI as a financing issuer. No SPGI primary issue demonstrated."
+  },
+  "eodhd:06970de68421b15510f30a9c": {
+    "issuer": "California Water Service Group", "identity_symbols": ["CWT"], "event_type": "DEBT_ONLY", "category": "PRICED_DEBT_NOT_COMMON_EQUITY", "instrument_class": "SENIOR_NOTES_AND_FIRST_MORTGAGE_BONDS",
+    "quote": "(Group, NYSE: CWT) today announced the pricing of $125,000,000",
+    "notes": "New pricing described: parent senior notes USD125m and subsidiary first-mortgage bonds USD150m, expected closing by Dec31. Both debt; private placement does not imply equity. Common-stock issuance wording elsewhere is risk boilerplate, not a second announced transaction. Prior-announcement completeness not certified."
+  },
+  "eodhd:532efc1c6f244967762172f3": {
+    "issuer": "IonQ", "identity_symbols": ["IONQ"], "event_type": "PRIMARY_EQUITY_FINANCING", "category": "OTHER_ISSUER_COMMON_AND_WARRANTS", "instrument_class": "COMMON_SHARES_PREFUNDED_AND_ADDITIONAL_WARRANTS",
+    "quote": "IonQ (NYSE: IONQ)",
+    "notes": "Issuer announcement explicitly describes 20.5m common shares, 29.5m pre-funded warrants and additional warrants. NVDA is a technology partner, not issuer. Same IonQ financing family as first-lot BAC roundup. Do not count USD2bn for NVDA or as independent events across articles. No underlying SEC document or earlier history fetched."
+  },
+  "eodhd:dcc6ad4a3bddfe28568e98d2": {
+    "issuer": "Moonshot AI", "identity_symbols": [], "event_type": "OTHER", "category": "OTHER_ISSUER_BANK_MANDATE_DISCUSSION",
+    "quote": "The talks didn’t lead to a formal mandate in the end.",
+    "notes": "Moonshot potential Hong Kong IPO; Tencent is a backer and BAC a bank formerly in talks. No Tencent primary issue or confirmed priced IPO."
+  },
+  "eodhd:8aaa5bf193133651bd93eee3": {
+    "issuer": "Firmus", "identity_symbols": [], "event_type": "OTHER", "category": "OTHER_ISSUER_WITHDRAWN_IPO",
+    "quote": "It pulled the plug on the deal on Friday",
+    "notes": "Withdrawn Firmus listing and sector debt commentary. NVDA is a backer, not a new share issuer. Cancellation recalled from an earlier Friday, not a newly completed cash raise."
+  },
+  "eodhd:db335e099231fc59c3afa3f3": {
+    "issuer": "MSCI Inc.", "identity_symbols": ["MSCI"], "event_type": "OTHER", "category": "INDEX_POLICY_NOT_ISSUER_FINANCING",
+    "quote": "MSCI announced that it will apply a freeze on certain index related changes for Turkish equity securities",
+    "notes": "Index/free-float policy, not an MSCI capital raise. Securities/share-count language is an index rule. Archived use restrictions require separate rights review before ML/production reuse; no authorization inferred."
+  },
+  "eodhd:a8f8f92a7a7b25ba1a6995bd": {
+    "issuer": "National Retail Federation", "identity_symbols": [], "event_type": "OTHER", "category": "SECTOR_FORECAST_CONTROL",
+    "quote": "The National Retail Federation issued its annual holiday forecast on Thursday.",
+    "notes": "Sector sales/hiring forecast, not a TGT announcement or equity issue. No missed primary issue identified by reading this full control body."
+  },
+  "eodhd:791e52be535c3e5427a0e091": {
+    "issuer": "Alice / Inflection AI / AI21", "identity_symbols": [], "event_type": "OTHER", "category": "TECHNOLOGY_PARTNER_CONTROL",
+    "quote": "Alice announced the results of two collaborations",
+    "notes": "Model-safety collaborations, NVIDIA platform partner. AI21 past cumulative funding is background; no new NVDA stock issue. Archive technology claims not independently verified."
+  },
+  "eodhd:b60c619fcac766efe82a7e69": {
+    "issuer": "Phanes Therapeutics", "identity_symbols": [], "event_type": "OTHER", "category": "CLINICAL_PARTNER_CONTROL",
+    "quote": "In 2023, Phanes entered into a clinical collaboration agreement with Merck",
+    "notes": "First patient dosed in Phanes trial; Merck is a clinical collaborator. No MRK financing or new common-share issue."
+  },
+  "eodhd:5e652cd266750041e7e08a00": {
+    "issuer": "Fastenal", "identity_symbols": ["FAST"], "event_type": "OTHER", "category": "EARNINGS_RETROSPECTIVE_CONTROL",
+    "quote": "Fastenal reported revenues of $2.39 billion",
+    "notes": "Quarterly peer-results retrospective. No new primary financing found in the control. Historical body returns not used as sample criteria or measured by this research."
+  },
+  "eodhd:edebe79a2965247e575341af": {
+    "issuer": "Bending Spoons", "identity_symbols": [], "event_type": "OTHER", "category": "OTHER_ISSUER_FINANCING_IN_CONTROL",
+    "quote": "Berkshire Hathaway agreed to invest an additional 330 million in the Italian technology conglomerate",
+    "notes": "Transcript confirms a financing topic missed by the keyword screen, for Bending Spoons, not mapped BAC. It does not itself specify newly issued vs secondary shares; the screened midday article separately says newly issued. No automatic novelty/identity promotion. BAC subject is regulatory fine. Demonstrates screening recall limitation, not a neutral control."
+  },
+  "eodhd:76707027ae015ce4ff38c0c2": {
+    "issuer": "PNC Financial Services Group", "identity_symbols": ["PNC"], "event_type": "OTHER", "category": "EARNINGS_CONTROL",
+    "quote": "PNC Financial Services Group Inc. reported third-quarter revenue that missed analysts' estimates",
+    "notes": "Earnings, investment securities and prior acquisition, not new common-share financing. Unrelated insider-sale title is a recommended story, not PNC action."
+  },
+  "eodhd:7da40d1d2d4ca5dc283ee7ce": {
+    "issuer": "Rio Tinto", "identity_symbols": ["RIO"], "event_type": "OTHER", "category": "OPERATING_GUIDANCE_CONTROL",
+    "quote": "The copper output guidance remains unchanged",
+    "notes": "Production and operating guidance commentary; no new primary stock issue. Guidance not promoted to a verified revision pair in this financing-only audit."
+  },
+  "eodhd:39be35858c11f6d51aa8b563": {
+    "issuer": "Merck", "identity_symbols": ["MRK"], "event_type": "OTHER", "category": "EARNINGS_RETROSPECTIVE_CONTROL",
+    "quote": "Merck (NYSE:MRK)",
+    "notes": "Peer earnings retrospective with Merck section; no financing found. Historical corporate spinoffs and relative stock returns are not new equity issues or sample criteria."
+  },
+  "eodhd:c62a523a550a1cf7fc4d4fc4": {
+    "issuer": "Baidu", "identity_symbols": ["BIDU"], "event_type": "OTHER", "category": "CONSENSUS_VALUATION_CONTROL",
+    "quote": "Over the last 30 days, the Zacks Consensus Estimate remained unchanged.",
+    "notes": "Consensus/valuation commentary, no primary share issue. Article rank/claimed correlations are not a direction label or a measured result of this audit."
+  },
+  "eodhd:61deb4690ac2e7fc1be81e2d": {
+    "issuer": "Deckers / Urban Outfitters", "identity_symbols": ["DECK"], "event_type": "OTHER", "category": "COMMERCIAL_COLLABORATION_CONTROL",
+    "quote": "Urban Outfitters announced it reunited with Deckers' UGG brand this fall",
+    "notes": "Retail collaboration, not Deckers capital raise. Narratives/fair-value forecasts and buyback references not treated as new financing events."
+  }
+}

@@ -6,6 +6,19 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def isolate_reset_filesystem_and_processes(tmp_path, monkeypatch):
+    """Every reset test must target only its disposable workspace, never F:/projets."""
+    from ihm.services import ml_reset, backtesting_registry, process_registry
+    safe_root = tmp_path / "isolated_reset_workspace"
+    safe_root.mkdir()
+    monkeypatch.setattr(ml_reset, "PROJECT_ROOT", safe_root)
+    monkeypatch.setattr(backtesting_registry, "list_active_backtesting_runs", lambda: [])
+    monkeypatch.setattr(process_registry, "list_active_pipeline_runs", lambda: [])
+    monkeypatch.setattr(backtesting_registry, "stop_backtesting_run", lambda *a, **k: pytest.fail("real process stop forbidden"))
+    monkeypatch.setattr(process_registry, "stop_pipeline_run", lambda *a, **k: pytest.fail("real process stop forbidden"))
+
+
 class TestMlResetCatalog:
     def test_reset_tables_cover_all_ml_sources(self) -> None:
         from ihm.services.ml_reset import ML_RESET_TABLES
@@ -46,6 +59,13 @@ class TestMlResetCatalog:
 
 
 class TestResetMlData:
+    def test_real_workspace_rejected_before_any_side_effect(self, monkeypatch):
+        from ihm.services import ml_reset
+        monkeypatch.setattr(ml_reset, "PROJECT_ROOT", Path(ml_reset.__file__).resolve().parents[2])
+        monkeypatch.setattr(ml_reset, "get_sqlalchemy_engine", lambda: pytest.fail("must fail before SQL"))
+        with pytest.raises(RuntimeError, match="doit être isolé"):
+            ml_reset.reset_ml_data(stop_active=True, dry_run=False)
+
     def test_dry_run_reports_expected_without_deleting(self, monkeypatch) -> None:
         from ihm.services import ml_reset
 
@@ -90,15 +110,13 @@ class TestResetMlData:
         (base / "artifacts" / "per_symbol_v2").mkdir(parents=True)
 
         monkeypatch.setattr(ml_reset, "get_sqlalchemy_engine", lambda: _FakeEngine())
+        monkeypatch.setattr(ml_reset, "PROJECT_ROOT", base)
         # list_active_backtesting_runs est importé localement dans reset_ml_data
         # depuis ihm.services.backtesting_registry → on patch la source.
         import ihm.services.backtesting_registry as _reg
 
         monkeypatch.setattr(_reg, "list_active_backtesting_runs", lambda: [])
-        # Redirige PROJECT_ROOT implicite : la fonction utilise Path("F:/projets").
-        # Pour un test hermétique on monkeypatch le module Path via un patch ciblé
-        # est complexe (Path est un type). On vérifie plutôt la logique DB + que la
-        # fonction ne lève pas avec des dossiers absents.
+        # The temporary workspace is mandatory even on a developer's Windows PC.
         result = ml_reset.reset_ml_data(stop_active=True, dry_run=False)
 
         # Le reset DB a bien tenté un DELETE par table (ordre FK respecté).
@@ -106,7 +124,8 @@ class TestResetMlData:
         assert delete_tables == ml_reset.ML_RESET_TABLES
         assert "SET FOREIGN_KEY_CHECKS = 0" in " ".join(executed)
 
-        # Aucune erreur côté service (les dossiers F:/projets/... sont absents dans le CI)
+        assert not (base / "artifacts" / "models").exists()
+        # No real workspace or live process was touched.
         assert isinstance(result, dict)
 
 

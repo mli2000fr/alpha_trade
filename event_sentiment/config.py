@@ -29,6 +29,8 @@ class EventSentimentConfig:
     regular_session_maps_to_same_day: bool = False
     checkpoint_overlap_minutes: int = 60
     initial_backfill_days: int = 365
+    news_request_timeout_seconds: int = 45
+    news_max_attempts: int = 3
     candidate_reactivation_backfill_days: int = 365
 
     finbert_model_name: str = "ProsusAI/finbert"
@@ -80,6 +82,10 @@ class EventSentimentConfig:
     contextual_scoring_max_pairs_per_run: int = 5000
 
     def __post_init__(self) -> None:
+        if type(self.news_request_timeout_seconds) is not int or not 5 <= self.news_request_timeout_seconds <= 180:
+            raise ValueError('news_request_timeout_seconds: entier 5..180 requis')
+        if type(self.news_max_attempts) is not int or not 1 <= self.news_max_attempts <= 5:
+            raise ValueError('news_max_attempts: entier 1..5 requis')
         if self.page_limit < 1:
             raise ValueError("page_limit doit être >= 1.")
         if self.sleep_between_requests < 0:

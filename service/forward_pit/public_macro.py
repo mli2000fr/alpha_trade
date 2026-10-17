@@ -109,9 +109,20 @@ def parse_h15(body):
     if table is None or table.thead is None or table.tbody is None:
         raise ValueError('H15 official table missing')
     dates = {}
+    date_headers = {}
     for cell in table.thead.find_all('th'):
         if cell.get('id', '').startswith('col'):
-            dates[cell['id']] = datetime.strptime(cell.get_text(' ', strip=True), '%Y %b %d').date()
+            raw_header = cell.get_text(' ', strip=True)
+            # H15 marks holidays with an asterisk (e.g. 2026 Oct 12*).
+            # Accept only that known suffix, not arbitrary trailing garbage.
+            match = re.fullmatch(r'(\d{4}\s+[A-Za-z]{3}\s+\d{1,2})\s*(\*?)', raw_header)
+            if not match:
+                raise ValueError('Unrecognized H15 date header: ' + raw_header)
+            day = datetime.strptime(match[1], '%Y %b %d').date()
+            if cell['id'] in dates or day in dates.values():
+                raise ValueError('Duplicate H15 date header')
+            dates[cell['id']] = day
+            date_headers[cell['id']] = raw_header
     if not dates:
         raise ValueError('H15 date headers missing')
     rows, expected = [], set(H15_SERIES.values()) | {'FED_FUNDS_EFFECTIVE_DAILY'}
@@ -143,7 +154,9 @@ def parse_h15(body):
             rows.append(observation('federal_reserve_board', 'H15_' + metric, metric,
                                     day, day, 'daily', cell.get_text(strip=True), 'percent',
                                     {'rate_type': 'effective' if metric.startswith('FED_FUNDS')
-                                     else 'nominal_constant_maturity', 'parser_version': 1}))
+                                     else 'nominal_constant_maturity', 'parser_version': 2,
+                                     'date_header_raw': date_headers[columns[0]],
+                                     'date_header_annotated': date_headers[columns[0]].endswith('*')}))
     if {r['metric_key'] for r in rows} != expected:
         raise ValueError('H15 requested instrument coverage incomplete')
     _validate_unique(rows)

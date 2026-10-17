@@ -1,5 +1,30 @@
 # État actuel de l'implémentation — 10 octobre 2026
 
+> Ajout du 16 octobre : transport news EODHD sécurisé corrigé et ingestion seule
+> quotidienne `eodhd_news_ingestion_sync` activée/installée à 20h30 Paris.
+> Trois titres testés, 48 occurrences reçues, 18 versions brutes nouvelles ;
+> reprise sans appel. Ni scoring quotidien ni modèle directionnel livré.
+> [Contrat opérationnel](operations/eodhd_news_ingestion_sync.md).
+
+> Ajout du 15 octobre 2026 : `fr_consensus_snapshot` remplace Yahoo par EODHD.
+> Accès FR confirmé, deux tables dédiées créées dans `alpha_trade_fr`, 166 lignes
+> normalisées sur trois titres et reprise sans doublon vérifiées. Statut recherche,
+> `enabled:true` sur demande utilisateur le 15 octobre ; tâche Windows à installer/
+> réinstaller depuis l'IHM. Aucun signal ou modèle promu.
+> [Contrat et activation](fr/consensus_eodhd_collecte_quotidienne.md).
+
+> Ajout du 14 octobre 2026 : archive prospective des news US raccordée à la
+> collecte existante, versions de textes/payloads et associations conservées,
+> disponibilité confirmée après commit. Trois tables créées dans `alpha_trade`,
+> pas de reconstitution rétroactive ni de nouveau signal financier validé.
+> [Contrat et exploitation](signals/news_version_archive.md).
+
+> Ajout du 13 octobre 2026 : Oracle Extreme parcours H20 est le défaut du
+> formulaire d'entraînement US et possède un raccordement ML Predict/backtest/live.
+> Score d'amplitude seul, lineage des folds vérifiée ; politique LONG-only
+> explicite ou abstention, pas une direction prédite. Aucun compte activé
+> automatiquement. [Contrat à jour](ml/oracle_path_training.md).
+
 <!-- doc-status:start -->
 > Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](ETAT_ACTUEL_IMPLEMENTATION.md).
 <!-- doc-status:end -->

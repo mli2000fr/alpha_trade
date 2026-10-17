@@ -210,9 +210,12 @@ def test_modes_stay_separate(tmp_path, changes):
         training_config(tmp_path, **changes)
 
 
-def test_cli_and_pipeline_command_default_and_custom_barriers():
+@pytest.mark.parametrize("configured_sl", [.07, .10])
+def test_cli_and_pipeline_command_default_and_custom_barriers(monkeypatch, configured_sl):
     from modelFactory.cli import build_arg_parser
     from ihm.services.pipeline_runner import PipelineLaunchOptions, build_pipeline_command
+    monkeypatch.setattr("common.config_loader.load_config", lambda *args, **kwargs: {
+        "oracle_barrier": {"take_profit_pct": .20, "stop_loss_pct": configured_sl, "max_sessions": 20}})
     parser = build_arg_parser()
     assert not parser.parse_args(["--mode", "train"]).oracle_barrier_model_only
     opts = PipelineLaunchOptions(ml_oracle_barrier_model_only=True, ml_oracle_model_only=True,
@@ -223,7 +226,7 @@ def test_cli_and_pipeline_command_default_and_custom_barriers():
     assert "--oracle-path-model-only" not in command and "--global-model-only" not in command
     assert "--enable-global-model" not in command and "--enable-global-stacking" not in command
     parsed = parser.parse_args(command[4:])
-    assert parsed.oracle_barrier_tp_pct == .20 and parsed.oracle_barrier_sl_pct == .07
+    assert parsed.oracle_barrier_tp_pct == .20 and parsed.oracle_barrier_sl_pct == configured_sl
     assert parsed.oracle_barrier_max_sessions == 20
     custom = parser.parse_args(build_pipeline_command("ml_train", replace(opts,
         ml_oracle_barrier_tp_pct=.15, ml_oracle_barrier_sl_pct=.05, ml_oracle_barrier_max_sessions=10))[4:])
@@ -346,7 +349,7 @@ def test_cli_rejects_barrier_overrides_without_mode_before_db(monkeypatch):
     assert exc.value.code == 2
 
 
-def test_pipeline_default_barrier_selected_and_terminal_unchecked():
+def test_pipeline_default_path_selected_and_barrier_terminal_unchecked():
     from streamlit.testing.v1 import AppTest
     def app():
         import streamlit as st
@@ -356,15 +359,19 @@ def test_pipeline_default_barrier_selected_and_terminal_unchecked():
         st.session_state["barrier_command"] = build_pipeline_command("ml_train", options)
     at = AppTest.from_function(app).run(timeout=30)
     assert not at.exception
-    assert at.checkbox(key="pipeline_ml_oracle_barrier_model_only").value is True
+    assert at.checkbox(key="pipeline_ml_oracle_barrier_model_only").value is False
+    assert at.checkbox(key="pipeline_ml_oracle_path_model_only").value is True
+    assert at.checkbox(key="pipeline_ml_oracle_path_model_only").label == "🔮 Oracle Extreme parcours H20 — modèle séparé"
     assert at.checkbox(key="pipeline_ml_enable_oracle_model").value is False
     command = at.session_state["barrier_command"]
-    assert "--oracle-barrier-model-only" in command
+    assert "--oracle-path-model-only" in command
+    assert "--oracle-barrier-model-only" not in command
     assert "--enable-oracle-model" not in command
     assert command[command.index("--training-end-date") + 1] == "2023-12-31"
-    at.checkbox(key="pipeline_ml_oracle_barrier_model_only").uncheck().run(timeout=30)
+    at.checkbox(key="pipeline_ml_oracle_path_model_only").uncheck().run(timeout=30)
     assert not at.exception
     assert at.checkbox(key="pipeline_ml_oracle_barrier_model_only").value is False
+    assert at.checkbox(key="pipeline_ml_oracle_path_model_only").value is False
     assert at.checkbox(key="pipeline_ml_enable_oracle_model").value is False
     assert "--oracle-barrier-model-only" not in at.session_state["barrier_command"]
 

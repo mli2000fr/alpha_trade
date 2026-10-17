@@ -2291,7 +2291,13 @@ def eodhd_ipo_calendar_sync(engine, cfg, run_id, dry_run):
     return collect(engine, cfg, run_id, dry_run)
 
 
+def eodhd_news_ingestion_sync(engine, cfg, run_id, dry_run):
+    from service.eodhd.news_ingestion_daily import collect
+    return collect(engine, cfg, run_id, dry_run)
+
+
 HANDLERS: dict[str, Callable[[Engine, dict[str, Any], str, bool], Outcome]] = {
+    "eodhd_news_ingestion_sync": eodhd_news_ingestion_sync,
     "eodhd_ipo_calendar_sync": eodhd_ipo_calendar_sync,
     "eodhd_consensus_snapshot": eodhd_consensus_snapshot,
     "public_macro_snapshot_sync": public_macro_snapshot_sync,
@@ -2337,7 +2343,7 @@ def execute(batch_name: str, *, dry_run: bool = False, config_path: str | None =
         raise KeyError(f"Aucun handler pour {batch_name}")
     run_id = f"{batch_name}-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}"
     engine = get_sqlalchemy_engine(); started = _utcnow()
-    if batch_name in ('us_pipeline', 'public_macro_snapshot_sync', 'eodhd_consensus_snapshot', 'eodhd_ipo_calendar_sync') and engine.url.database != 'alpha_trade':
+    if batch_name in ('us_pipeline', 'public_macro_snapshot_sync', 'eodhd_consensus_snapshot', 'eodhd_ipo_calendar_sync', 'eodhd_news_ingestion_sync') and engine.url.database != 'alpha_trade':
         raise ValueError('US pipeline/public macro requires alpha_trade; refusing cross-market run')
     if not dry_run:
         with engine.begin() as conn:
@@ -2365,7 +2371,9 @@ def execute(batch_name: str, *, dry_run: bool = False, config_path: str | None =
                     "received": failure_outcome.received,
                     "persisted": failure_outcome.persisted,
                     "empty": failure_outcome.empty,
-                    "failed": max(1, failure_outcome.failed),
+                    # A structured global stop can have zero failed symbols
+                    # and many pending ones. FAILED status records the run error.
+                    "failed": failure_outcome.failed,
                     "warnings": len(failure_outcome.warnings),
                     "details": _json(
                         failure_outcome.details | {"warnings": failure_outcome.warnings}
@@ -2398,7 +2406,7 @@ def main() -> None:
             "batch": args.batch,
             "status": "FAILED",
             **failure_outcome.__dict__,
-            "failed": max(1, failure_outcome.failed),
+            "failed": failure_outcome.failed,
             "warning_count": len(failure_outcome.warnings),
             "error_message": str(exc),
         }

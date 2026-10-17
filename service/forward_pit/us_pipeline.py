@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 from common.market_calendar import get_market_calendar
 from common.config_loader import load_config
+from service.llm_directional.config import load_filter_config
 from ihm.services.pipeline_runner import (
     build_pipeline_command, get_pipeline_steps, pipeline_page_default_options,
 )
@@ -107,6 +108,32 @@ def collection_options(options, cfg, day):
     return replace(options, **values)
 
 
+def llm_options(options, steps, *, config=None):
+    """Bind scheduled 10/11/12 to the explicit LLM policy, never UI state.
+
+    Collection-only runs do not invoke or validate the optional LLM service.
+    A fresh scheduled selection requires step 10; never adopt a latest LLM run.
+    The batch's shared collection universe remains authoritative.
+    """
+    numbers = {step.num for step in steps}
+    if not numbers.intersection({'10', '11', '12'}):
+        return options
+    config = config if config is not None else load_filter_config()
+    if not config.enabled:
+        return options
+    if '10' not in numbers:
+        raise ValueError('us_pipeline : filtre LLM actif, inclure étape 10 avant 11/12 ; aucun fallback latest')
+    if options.execution_mode != 'paper' or options.account_id != 'default':
+        raise ValueError('us_pipeline : filtre LLM réservé au compte default PAPER')
+    import uuid
+    return replace(options,
+        llm_filter_enabled=True,
+        llm_filter_run_id=f'llm-{uuid.uuid4().hex}',
+        llm_specific_protections=bool(config.protections and config.protections.enabled),
+        ml_predict_batch_id=config.default_oracle_batch_id,
+        ml_live_predict_batch_id=config.default_oracle_batch_id)
+
+
 def session_plan(now, *, calendar=None):
     """No weekday-only fallback; date is the actual NY session, frozen once."""
     if now.tzinfo is None:
@@ -142,6 +169,7 @@ def execute_pipeline(engine, cfg, run_id, dry_run, *, now=None):
     steps_key, steps = session_steps(policy, day)
     options = collection_options(pipeline_page_default_options(trade_date=str(day)), cfg, day)
     options = execution_options(options, policy, steps)
+    options = llm_options(options, steps)
     plan = dict(market_code='US_EQ', trade_date=str(day), defaults='FRESH_PIPELINE_PAGE',
         date_override='PIN_CURRENT_US_SESSION_NO_OLD_SNAPSHOT', options=asdict(options),
         steps=[dict(number=s.num, key=s.key, command=build_pipeline_command(s.key, options)) for s in steps],

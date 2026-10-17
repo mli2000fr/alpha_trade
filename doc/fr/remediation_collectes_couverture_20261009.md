@@ -66,6 +66,12 @@ réécrits ni leurs modèles réentraînés.
 
 ## Rattrapage des prix et réserves
 
+Mise à jour du 16 octobre : la réserve PERR ci-dessous est désormais réparée
+pour la collecte quotidienne via `ALPER.PA` depuis le 7 septembre ; six séances
+du 9–16 octobre ont été publiées en staging. Lhyfe reste indisponible chez
+EODHD Paris (ALHYF : HTTP 404). [Correction datée et preuves](correctif_barres_perrier_lhyfe_20261016.md).
+Les chiffres ci-dessous restent ceux de l'audit historique du 9 octobre.
+
 | Code | Résultat | Décision |
 | --- | --- | --- |
 | ALBOU.PA | Barre du 8 octobre récupérée | Fichier versionné actualisé |

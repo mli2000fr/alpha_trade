@@ -11,7 +11,8 @@
 `us_pipeline.steps` pour les séances US du lundi au jeudi, et
 `us_pipeline.steps_friday` pour celles du vendredi. T1 (entraînement) reste
 exclu. Les étapes 13 et 14 sont autorisées uniquement si elles sont sélectionnées.
-Configuration actuelle :
+Exemple pour activer les étapes jusqu'à l'exécution PAPER (les listes réellement
+utilisées restent celles du fichier `config.yaml`, cet exemple ne les modifie pas) :
 
 ```yaml
 us_pipeline:
@@ -77,9 +78,48 @@ commandes, affichage du workflow et maintien du planning. Les tests de workflow
 n'exécutent que des commandes locales factices ; aucun batch fournisseur ni
 ordre broker n'a été lancé pour qualifier ce changement.
 
-Le filtre GPT n'est pas implicitement
-activé par la checkbox par défaut de l'IHM : les options fraîches du batch
-restent indépendantes de l'état d'une session interactive.
+### Raccordement Oracle → LLM → PAPER — 16 octobre 2026
+
+Le batch lit désormais `config.yaml → llm_directional_filter` lorsque sa liste
+contient 10, 11 ou 12. L'état d'une session IHM n'est jamais repris :
+
+- `enabled: true` active le filtre dans le batch, pas seulement sa case IHM ;
+- `default_oracle_batch_id` fixe explicitement le modèle pour la prédiction et
+  le filtre, sans auto-détection d'un autre batch ;
+- `provider` choisit GPT (`openai`) ou DeepSeek ; `oracle_top_n` fixe le nombre
+  de scores Oracle analysés et `max_selected` leur plafond de sélection ;
+- l'univers reste le fichier commun `batch.yaml → us_pipeline.symbols_file`,
+  utilisé aussi par la prédiction. `default_symbol_source` est le défaut du
+  sélecteur IHM et ne remplace pas l'univers du batch planifié ;
+- un identifiant LLM neuf est créé avant le plan et partagé entre 10/11/12,
+  avec la même séance US. Aucun ancien run n'est repris implicitement ;
+- 10 prédit puis analyse, 11 contrôle le risque et dimensionne les cibles,
+  **12 seulement** envoie les ordres PAPER autorisés. Zéro à trois candidats
+  dans la configuration du 16 octobre, pas trois achats garantis : classement
+  des avis éligibles par confiance décroissante, puis rang Oracle ;
+- le profil `protections` activé/désactivé est transmis aux trois étapes ;
+  le watcher automatique avant 12 et les contrôles métier restent obligatoires.
+
+Avec le filtre actif, inclure 11/12 sans 10 bloque avant le workflow : une nouvelle
+sélection doit être produite dans ce même passage. Le compte doit être `default`
+et le mode `paper` (y compris pour un passage LLM limité à 10). Les refus LIVE,
+Kelly, recherche historique/shadow, hors séance et rééquilibrage automatique
+restent actifs. La fenêtre Web est comprise entre la clôture J et l'ouverture
+de la prochaine séance ; dépasser cette fenêtre interdit la publication.
+
+Un passage sans 10/11/12 n'active pas le service LLM. Avec `enabled: false`,
+le parcours non-LLM historique est conservé. Activer ce raccordement ne change
+ni les listes `steps` / `steps_friday`, ni les horaires, ni la tâche Windows.
+Au dernier contrôle du 16 octobre, la configuration utilisateur inclut désormais
+10/11/12 dans les deux listes, avec `paper` et `default` : ces étapes utiliseront
+donc le filtre activé au prochain passage. Le correctif de code n'a pas édité
+ces listes ; les vérifier avant un lancement réel.
+Les appels Web/LLM seront facturés uniquement lors d'un véritable passage 10,
+pas lors de la génération locale d'un plan à blanc.
+
+Validation locale : 326 tests ciblés réussis (orchestration, nouveau raccordement,
+watcher, filtre, SHORT, protections et date de séance). Les workflows et services sont simulés ; aucun appel payant, ordre,
+écriture SQL métier, entraînement ou collecte n'a été lancé.
 
 La case **Protections spécifiques GPT** (SL 7 %, sortie à l'ouverture
 de la 21e séance, trailing **15 % dans la configuration actuelle** ; défaut

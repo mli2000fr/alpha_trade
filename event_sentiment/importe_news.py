@@ -1,5 +1,8 @@
 import argparse
 import logging
+import json
+from pathlib import Path
+import uuid
 from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import text
@@ -13,6 +16,8 @@ from database.connection import get_sqlalchemy_engine
 from event_sentiment.ingestion import NewsIngestionService
 from event_sentiment.config import EventSentimentConfig
 from event_sentiment.db_io import EventSentimentRepository
+from event_sentiment.import_runtime import load_import_runtime, write_report, coverage_decision
+from service._http_retry import _redact_sensitive_text
 
 STOCK_BARS_DAILY_WARNING_THRESHOLD = 2000
 
@@ -236,7 +241,9 @@ def _resolve_checkpoint_aware_import_scope(
         checkpoint = checkpoints.get(symbol) or {}
         watermark = _coerce_utc_datetime(checkpoint.get("watermark_published_at_utc"))
         updated_at = _coerce_utc_datetime(checkpoint.get("updated_at"))
-        anchor = watermark or updated_at
+        successful = (checkpoint.get('status') in ('success', 'completed')
+                      or ('status' not in checkpoint and watermark is not None))
+        anchor = (watermark or updated_at) if successful else None
         if anchor is None:
             selected_symbols.append(symbol)
             start_overrides[symbol] = start_utc
@@ -261,7 +268,8 @@ def _resolve_checkpoint_aware_import_scope(
 
         selected_symbols.append(symbol)
         start_overrides[symbol] = effective_start
-        resume_overrides[symbol] = watermark is not None
+        # EODHD offsets cannot be reused after changing from/to.
+        resume_overrides[symbol] = watermark is not None and getattr(config,'news_provider','eodhd') != 'eodhd'
 
     return selected_symbols, start_overrides, resume_overrides, skipped_symbols
 
@@ -284,6 +292,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--end-date", type=str, required=False, help="Date de fin au format YYYY-MM-DD (ex: 2024-05-10). Par défaut: aujourd'hui.")
+    parser.add_argument('--lookback-days',type=int,default=None,
+                        help='Fenêtre récente si --start-date absent ; étape 8 : défaut configurable J-7/J.')
+    parser.add_argument('--continue-on-symbol-error',action='store_true',
+                        help='Isoler les erreurs fournisseur ; poursuivre si couverture configurée suffisante, sinon code 1.')
+    parser.add_argument('--summary-path',type=Path,default=None,
+                        help='Rapport final explicite, lu par le bilan de fin d’étape 8.')
     parser.add_argument(
         "--symbols",
         type=str,
@@ -371,6 +385,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main():
     parser = build_arg_parser()
     args = parser.parse_args()
+    runtime = load_import_runtime()
+    if args.summary_path is not None and args.summary_path.exists():
+        parser.error('--summary-path existe déjà ; choisir un nouveau rapport')
+    if args.lookback_days is not None and not 1 <= args.lookback_days <= 36500:
+        parser.error('--lookback-days doit être entre 1 et 36500')
 
     if args.end_date:
         end_date = datetime.strptime(args.end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
@@ -398,10 +417,17 @@ def main():
     logger.info("%s symbols trouvés.", len(symbols))
     if not symbols:
         logger.warning("Aucun symbole à importer ; exécution terminée sans appel provider.")
+        if args.summary_path is not None:
+            write_report(args.summary_path,dict(status='COMPLETED',requested=0,failed_symbols=[],
+                succeeded_symbols=0,skipped_symbols=0,unattempted_symbols=0,success_ratio=1.,
+                coverage_status='COMPLETE',collection_complete=True,
+                note='Univers vide : aucune requête fournisseur'))
         return
 
     config_overrides: dict[str, object] = {
         "provider_ticker_relevance_mode": args.ticker_relevance_mode,
+        'news_request_timeout_seconds': runtime.request_timeout_seconds,
+        'news_max_attempts': runtime.max_attempts,
     }
     if args.min_relevance_score is not None:
         config_overrides["min_relevance_score"] = float(args.min_relevance_score)
@@ -409,10 +435,11 @@ def main():
     if args.start_date:
         start_date = datetime.strptime(args.start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     else:
-        start_date = end_date - timedelta(days=int(config.initial_backfill_days))
+        days = args.lookback_days if args.lookback_days is not None else int(config.initial_backfill_days)
+        start_date = end_date - timedelta(days=days)
         logger.info(
-            "Date de debut implicite derivee du provider | initial_backfill_days=%s start=%s end=%s",
-            config.initial_backfill_days,
+            "Fenêtre import demandée | lookback_days=%s origine=%s start=%s end=%s ; checkpoints appliqués ensuite",
+            days, 'lookback_days' if args.lookback_days is not None else 'initial_backfill_days',
             start_date,
             end_date,
         )
@@ -420,6 +447,8 @@ def main():
 
     symbol_start_overrides: dict[str, datetime] | None = None
     symbol_resume_overrides: dict[str, bool] | None = None
+    requested_symbols = len(symbols)
+    skipped_symbols = 0
     if args.resume_checkpoints:
         symbols, resolved_start_overrides, resolved_resume_overrides, skipped_symbols = _resolve_checkpoint_aware_import_scope(
             symbols=symbols,
@@ -439,33 +468,93 @@ def main():
         )
         if not symbols:
             logger.warning("Tous les symboles sont déjà à jour d'après news_ingestion_checkpoint ; aucun import provider nécessaire.")
-            return
 
+    totals = dict(fetched=0,deduped=0,landed=0,ticker_maps=0)
+    attempted = succeeded = consecutive = 0
+    blocking_error = False
+    errors = []
+    run_id = 'news-import-'+uuid.uuid4().hex
+    directory = Path(__file__).resolve().parents[1]/'artifacts/news_import_runs'/run_id
+    state = dict(run_id=run_id,provider=args.news_provider,source_name=config.source_name,
+                 window=[start_date.isoformat(),end_date.isoformat()],requested=requested_symbols,
+                 skipped_symbols=skipped_symbols,status='RUNNING',finished_at=None)
+    if args.continue_on_symbol_error:
+        write_report(directory/'progress.json',state)
     batch_size = max(1, int(args.batch_size))
     for i in range(0, len(symbols), batch_size):
         batch = symbols[i:i+batch_size]
         logger.info(f"Traitement batch {i//batch_size+1} ({len(batch)} symbols): {batch}")
+        resilience = {}
+        if args.continue_on_symbol_error:
+            def progress(payload):
+                write_report(directory/'progress.json',{**state,
+                    'attempted_symbols':attempted+payload['current_symbol_index'],
+                    'current_symbol':payload['current_symbol'],
+                    'effective_window_policy':'CHECKPOINT_SUCCESS_ONLY_REPLAY_EODHD_OFFSET_ZERO'})
+            resilience = dict(continue_on_symbol_error=True,
+                max_consecutive_failures=runtime.max_consecutive_symbol_failures,
+                initial_consecutive_failures=consecutive,progress_callback=progress)
+        scope = {}
         if args.resume_checkpoints:
-            batch_start_overrides = {symbol: symbol_start_overrides[symbol] for symbol in batch} if symbol_start_overrides else None
-            batch_resume_overrides = {symbol: symbol_resume_overrides[symbol] for symbol in batch} if symbol_resume_overrides else None
-            summary = ingestion.run(
-                start_utc=start_date,
-                end_utc=end_date,
-                symbols=batch,
-                symbol_start_overrides=batch_start_overrides,
-                symbol_resume_overrides=batch_resume_overrides,
-                resume_checkpoints=False,
-            )
-        else:
-            summary = ingestion.run(
-                start_utc=start_date,
-                end_utc=end_date,
-                symbols=batch,
-                resume_checkpoints=False,
-            )
+            scope = dict(
+                symbol_start_overrides={s:symbol_start_overrides[s] for s in batch} if symbol_start_overrides else None,
+                symbol_resume_overrides={s:symbol_resume_overrides[s] for s in batch} if symbol_resume_overrides else None)
+        try:
+            summary = ingestion.run(start_utc=start_date,end_utc=end_date,symbols=batch,
+                                    resume_checkpoints=False,**scope,**resilience)
+        except Exception as exc:
+            # SQL/programming errors are never downgraded to per-symbol skips.
+            state.update(status='FAILED',finished_at=datetime.now(timezone.utc).isoformat(),
+                         error=_redact_sensitive_text(str(exc))[:500],failed_symbols=errors,
+                         last_committed_batch_metrics=dict(totals),
+                         note='Interrupted batch counters may be partial; consult checkpoints, no success inferred')
+            if args.continue_on_symbol_error:
+                write_report(directory/'progress.json',state)
+                write_report(directory/'report.json',state)
+            if args.summary_path is not None:
+                write_report(args.summary_path,state)
+            raise
         logger.info(f"Résultat batch {i//batch_size+1}: {summary}")
+        for key in totals:
+            totals[key] += summary.get(key,0)
+        attempted += summary.get('attempted_symbols',len(batch))
+        succeeded += summary.get('succeeded_symbols',len(batch))
+        errors.extend(summary.get('failed_symbols',[]))
+        consecutive = summary.get('consecutive_failures',0)
+        blocking_error = blocking_error or bool(summary.get('blocking_error')) or any(
+            e.get('blocking_error') or e.get('status_code') in (401,403,429)
+            for e in summary.get('failed_symbols',[]))
+        if args.continue_on_symbol_error:
+            state.update(attempted_symbols=attempted,succeeded_symbols=succeeded,
+                         failed_symbols=errors,unattempted_symbols=len(symbols)-attempted,metrics=totals)
+            write_report(directory/'progress.json',state)
+        if summary.get('aborted'):
+            logger.error('Arrêt borné de l’import : erreur globale/circuit ou échecs consécutifs ; titres restants non exécutés.')
+            break
 
-    logger.info("Import des news terminé.")
+    decision=coverage_decision(requested_symbols,succeeded,skipped_symbols,
+        runtime.min_success_ratio if args.continue_on_symbol_error else 1.,blocking_error=blocking_error)
+    incomplete = not decision['coverage_accepted']
+    state.update(**decision,status='INCOMPLETE' if incomplete else 'COMPLETED',finished_at=datetime.now(timezone.utc).isoformat(),
+                 attempted_symbols=attempted,succeeded_symbols=succeeded,failed_symbols=errors,
+                 unattempted_symbols=len(symbols)-attempted,metrics=totals,
+                 counter_units=dict(requested='symbols',received='successful_or_skipped_symbols',persisted='news_rows'))
+    if args.continue_on_symbol_error:
+        write_report(directory/'progress.json',state)
+        write_report(directory/'report.json',state)
+        logger.info('Bilan import : %s ; rapport=%s',state['status'],directory/'report.json')
+    if args.summary_path is not None:
+        write_report(args.summary_path,state)
+    logger.info('Bilan import news : %s symbole(s) KO / %s ; %s non exécuté(s) ; couverture %.2f%% ; %s',
+                len(errors),requested_symbols,len(symbols)-attempted,100*decision['success_ratio'],decision['coverage_status'])
+    print('::alpha_trade_run_summary::'+json.dumps(dict(batch='news_import',status=state['status'],
+        requested=requested_symbols,received=succeeded+skipped_symbols,persisted=totals['landed'],
+        failed=len(errors),warning_count=int(decision['coverage_status']=='PARTIAL_ACCEPTED'),
+        error_message=f'{len(errors)} titre(s) en échec ; {len(symbols)-attempted} non exécuté(s)' if incomplete else '',
+        details=state),ensure_ascii=False),flush=True)
+    if incomplete:
+        raise SystemExit(1)
+    logger.info("Import des news terminé ; couverture acceptée selon le seuil configuré.")
 
 if __name__ == "__main__":
     main()

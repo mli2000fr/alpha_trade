@@ -84,7 +84,8 @@ def run_portfolio(*, frames, scores, sectors, macro, market_config, policy, vari
                   start_date='2025-01-01', end_date='2026-09-30',
                   early_weakness_fraction=None, session_factory=OraclePortfolioSession,
                   ledger_factory=None, expiry_open_sessions=None, decision_end_date=None,
-                  protection_options=None, research_allow_short_normal=False):
+                  protection_options=None, research_allow_short_normal=False,
+                  daily_exit_policy=None):
     # Research-only extension. Existing replay variants retain their contracts.
     if type(research_allow_short_normal) is not bool:
         raise ValueError('Explicit boolean research SHORT permission required')
@@ -133,6 +134,7 @@ def run_portfolio(*, frames, scores, sectors, macro, market_config, policy, vari
     previous_mode, previous_equity = RegimeState.NORMAL, cfg.initial_equity
     decisions, regimes, transitions = [], [], []
     queued_weakness, weakness_audits = [], []
+    queued_learned_exits, learned_exit_audits = [], []
     v = VARIANTS[variant]
     options = dict(take_profit_enabled=v['tp'], trailing_enabled=v['trailing'])
     if protection_options is not None:
@@ -196,6 +198,16 @@ def run_portfolio(*, frames, scores, sectors, macro, market_config, policy, vari
                 weakness_audits.append(dict(order, execution_date=day, executed_quantity=quantity,
                                             status='EXECUTED'))
             queued_weakness = []
+            for order in queued_learned_exits:
+                position = ledger.state.positions.get(order['symbol'])
+                if position is None or position.entry_date != order['entry_date']:
+                    learned_exit_audits.append(dict(order, execution_date=day, status='ALREADY_CLOSED'))
+                    continue
+                record_exits(ledger.close_resolved([dict(symbol=order['symbol'],exit_date=day,
+                    exit_price=ledger.opens.at[day,order['symbol']],exit_reason='learned_exit_next_open')],
+                    phase='open'),day)
+                learned_exit_audits.append(dict(order,execution_date=day,status='EXECUTED'))
+            queued_learned_exits = []
             if pending:
                 # Risk owns completed-position concentration history. Native
                 # primitives may record partial legs; synchronize before entry
@@ -234,6 +246,19 @@ def run_portfolio(*, frames, scores, sectors, macro, market_config, policy, vari
                         queued_weakness.append(dict(symbol=symbol, entry_date=position.entry_date,
                             decision_date=day, quantity=position.quantity*early_weakness_fraction,
                             return_at_decision=ret, relative_spy_at_decision=relative))
+            if daily_exit_policy is not None and day != days[-1]:
+                # The policy receives close-known histories ONLY. Stops/TP have
+                # already executed intraday and cannot be revoked by this model.
+                observed={key:frame.loc[:day] for key,frame in frames.items()}
+                queued_learned_exits=daily_exit_policy(day,ledger,observed)
+                seen=set()
+                for order in queued_learned_exits:
+                    symbol=order['symbol']
+                    if symbol in seen or symbol not in ledger.state.positions:
+                        raise ValueError('Invalid learned-exit position identity')
+                    if pd.Timestamp(order['decision_date']) != day or pd.Timestamp(order['entry_date']) != ledger.state.positions[symbol].entry_date:
+                        raise ValueError('Learned exit must be decided at current close')
+                    seen.add(symbol)
             equity = ledger.mark_close()
             if pd.Timestamp(day) not in macro.frame.index:
                 if (expiry_open_sessions is not None and decision_end_date is not None
@@ -328,6 +353,8 @@ def run_portfolio(*, frames, scores, sectors, macro, market_config, policy, vari
         atomic_json(output/'regimes.json', regimes)
         atomic_json(output/'transitions.json', transitions)
         atomic_json(output/'early_weakness_orders.json', weakness_audits)
+        if daily_exit_policy is not None:
+            atomic_json(output/'learned_exit_orders.json',learned_exit_audits)
         atomic_json(output/'executions.json', ledger.execution_audits)
         atomic_json(output/'entry_rejections.json', [r for a in ledger.execution_audits
             for r in a.get('explicit_entry_rejections', [])])

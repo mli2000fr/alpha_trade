@@ -25,12 +25,11 @@ def test_fr_catalog_has_only_fr_and_defaults(tmp_path):
     assert all(s.name.startswith('fr_') and s.timezone == 'Europe/Paris' for s in specs)
     assert all(s.raw_config['database_alias'] == 'fr_primary' for s in specs)
     assert {s.name for s in specs if s.runnable} == {'fr_calendar_snapshot', 'fr_daily_bars_sync',
-        'fr_corporate_actions_sync','fr_amf_short_sync','fr_dila_disclosures_sync', 'fr_db_backup','fr_security_master_sync','fr_artifacts_backup','fr_options_mifir_trade_sync'}
+        'fr_corporate_actions_sync','fr_amf_short_sync','fr_dila_disclosures_sync', 'fr_db_backup','fr_security_master_sync','fr_artifacts_backup','fr_options_mifir_trade_sync','fr_consensus_snapshot'}
     assert all('univers_batch' not in s.symbols_file for s in specs)
 
 
-@pytest.mark.parametrize('name,status', [('fr_consensus_snapshot', 'BLOCKED_YAHOO_AUTOMATED_ACCESS'),
-                                       ('fr_fundamentals_sync', 'BLOCKED_INPI_RETENTION')])
+@pytest.mark.parametrize('name,status', [('fr_fundamentals_sync', 'BLOCKED_INPI_RETENTION')])
 def test_legal_blocks_remain_non_runnable_even_if_enabled_is_toggled(tmp_path, monkeypatch, name, status):
     monkeypatch.setattr(runner, 'OPS', tmp_path/'ops')
     spec = next(s for s in batch_management.load_batch_specs(str(config(tmp_path))) if s.name == name)
@@ -116,12 +115,14 @@ def test_daily_smoke_sql_scope_matches_collection_scope(monkeypatch):
     from service.fr import eodhd_daily_15b, publish_daily_bars_staging
     cfg=runner.load_section('fr_daily_bars_sync',runner.ROOT/'batch_fr.yaml')
     monkeypatch.setattr(eodhd_daily_15b,'collect',lambda cfg,result,**kw:result.update(state_path='checkpoint',window=['2026-10-01','2026-10-08']))
-    monkeypatch.setattr(eodhd_daily_15b,'symbols_from_identities',lambda path:['AB.PA','AC.PA','AD.PA'])
+    monkeypatch.setattr(eodhd_daily_15b,'symbol_windows',lambda path,start,end,migrations,**kw:
+        {s:(start,end) for s in ['AB.PA','AC.PA','AD.PA']})
     seen=[]
     monkeypatch.setattr(publish_daily_bars_staging,'run',lambda **kw:(seen.append(kw),
         {'status':'COMPLETED','new_staging_rows':0})[1])
     runner._handle('fr_daily_bars_sync',cfg,{},dry_run=False,today=None,max_symbols=2)
     assert seen[0]['selected_symbols']==['AB.PA','AC.PA']
+    assert seen[0]['excluded_symbols']==cfg.get('excluded_symbols')
 
 
 def test_db_backup_uses_fr_route_and_required_identity(tmp_path, monkeypatch):

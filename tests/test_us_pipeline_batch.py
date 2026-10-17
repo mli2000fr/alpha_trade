@@ -10,6 +10,14 @@ from ihm.services import process_registry
 from ihm.services.pipeline_runner import PAGE_SENTIMENT_DEFAULTS, pipeline_page_default_options
 
 
+@pytest.fixture(autouse=True)
+def legacy_llm_policy(monkeypatch):
+    # Existing orchestration tests exercise the non-LLM route independently
+    # of the user's deployment opt-in. The LLM route has dedicated tests.
+    from service.llm_directional.config import FilterConfig
+    monkeypatch.setattr(us_pipeline, 'load_filter_config', lambda: FilterConfig(enabled=False))
+
+
 def configured_policy():
     import yaml
     return yaml.safe_load((Path(__file__).resolve().parents[1] / 'batch.yaml').read_text(encoding='utf-8'))
@@ -194,7 +202,11 @@ def test_catalogue_has_schedule_and_generic_commands():
     from ihm.services.batch_management import load_market_batch_specs, build_install_command, build_run_command
     spec = next(s for s in load_market_batch_specs('US_EQ') if s.name == 'us_pipeline')
     assert spec.enabled and spec.timezone == 'Europe/Paris'
-    assert spec.run_hours == ('22',) and spec.run_minutes == ('45',)
+    # The user's schedule is configurable (currently 23:05), not a fixed
+    # factory 22:45. Verify that the catalogue preserves the declared values.
+    declared = configured_policy()['us_pipeline']
+    assert spec.run_hours == tuple(str(declared['run_hours']).split(','))
+    assert spec.run_minutes == tuple(str(declared['run_minutes']).split(','))
     assert spec.run_days == ('1','2','3','4','5')
     assert 'us_pipeline' in build_install_command(spec)
     assert 'us_pipeline' in build_run_command(spec)

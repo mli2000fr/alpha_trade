@@ -196,6 +196,14 @@ def test_fetch_news_page_filters_outside_window(monkeypatch: pytest.MonkeyPatch)
     assert captured["calls"][0]["params"]["to"] == "2026-04-16"
 
 
+def test_error_object_is_not_silently_treated_as_empty_news(monkeypatch):
+    fake, _ = _fake_request_factory([{'error':'unexpected schema'}])
+    monkeypatch.setattr(news_client,'request_with_retry',fake)
+    with pytest.raises(news_client.EodhdNewsFetchError,match='schéma'):
+        news_client.fetch_news_page(start_utc=datetime(2026,4,15,tzinfo=timezone.utc),
+            end_utc=datetime(2026,4,16,tzinfo=timezone.utc),symbols=['AAPL'])
+
+
 def test_fetch_news_page_accepts_native_provider_symbol(monkeypatch: pytest.MonkeyPatch) -> None:
     pages = [[_raw_article(title="Native query", date_iso="2026-04-15T12:00:00+00:00", link="https://x/native")]]
     fake, captured = _fake_request_factory(pages)

@@ -66,6 +66,23 @@ def test_provider_registry_covers_supported_providers() -> None:
     assert set(PROVIDER_REGISTRY) == {"alpaca", "finnhub", "eodhd"}
 
 
+def test_empty_filtered_page_with_next_token_does_not_skip_remaining_news(monkeypatch):
+    def pages(**kwargs):
+        yield [],'100'
+        yield [_make_payload('fixture',['AAPL'])],None
+    monkeypatch.setitem(ingestion_mod.NEWS_PROVIDERS,'eodhd',pages)
+    service=ingestion_mod.NewsIngestionService(_StubRepo(),EventSentimentConfig.for_provider('eodhd'))
+    result=service.run(start_utc=datetime(2026,4,15,tzinfo=timezone.utc),
+        end_utc=datetime(2026,4,16,tzinfo=timezone.utc),symbols=['AAPL'])
+    assert result['fetched']==1 and result['landed']==1
+
+
+def test_eodhd_ingestion_uses_verified_session_factory():
+    from common.verified_http import verified_session
+    service=ingestion_mod.NewsIngestionService(_StubRepo(),EventSentimentConfig.for_provider('eodhd'))
+    assert service._session_factory is verified_session
+
+
 def test_config_for_provider_eodhd_sets_source_name() -> None:
     cfg = EventSentimentConfig.for_provider("eodhd")
     assert cfg.news_provider == "eodhd"

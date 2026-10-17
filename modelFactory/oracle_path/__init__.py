@@ -1,4 +1,4 @@
-"""Independent research Oracle for maximum H20 path amplitude (not terminal returns)."""
+"""Independent Oracle for maximum H20 path amplitude, not terminal returns or direction."""
 
 TARGET = "oracle_path_extreme20"
 SCORE = "proba_path_extreme"

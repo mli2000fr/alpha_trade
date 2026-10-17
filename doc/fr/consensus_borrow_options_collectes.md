@@ -4,7 +4,19 @@
 > Statut documentaire au 2026-10-10 — Recherche / preuve datée : protocole et résultats conservés. Implémentation expérimentale ≠ promotion ML/LIVE ; les commandes restent à confronter aux droits et au catalogue actuels. [Référence actuelle](README.md).
 <!-- doc-status:end -->
 
-## État courant : collecte quotidienne activée en quarantaine
+## État courant au 15 octobre 2026
+
+`fr_consensus_snapshot` utilise désormais **EODHD /calendar/trends** ; accès et
+stockage vérifiés sur trois titres FR (166 lignes normalisées), reprise sans
+doublon ni nouvel appel. Deux tables dédiées dans `alpha_trade_fr`. Yahoo n'est
+pas réactivé. Statut `ACTIVE_RESEARCH`, `enabled:true` sur demande utilisateur
+le 15 octobre ; installation/réinstallation Windows à effectuer depuis l'IHM. Voir
+[guide courant EODHD](consensus_eodhd_collecte_quotidienne.md).
+
+Les mentions Yahoo/activation ci-dessous sont l'historique du 5–6 octobre,
+pas la configuration actuelle. INPI conserve sa réserve de rétention.
+
+## Historique : état du 5–6 octobre
 
 **État courant au 6 octobre : consensus Yahoo et fondamentaux INPI suspendus**
 après l'audit des droits. Leur état actif mentionné ci-dessous est historique.

@@ -11,6 +11,11 @@ de recherche explicitement actives ont leur catalogue propre batch_fr.yaml.
 
 ## Pour reprendre l'application
 
+Actualisation du **15 octobre 2026** : [consensus quotidien EODHD](consensus_eodhd_collecte_quotidienne.md)
+remplace Yahoo ; accès FR, 166 lignes de smoke et reprise idempotente vérifiés.
+Stockage dans deux tables dédiées `alpha_trade_fr`, catalogue activé sur demande
+utilisateur le 15 octobre ; installer/réinstaller la tâche Windows depuis l'IHM.
+
 1. [État multi-marchés et parcours actuels](../ETAT_ACTUEL_IMPLEMENTATION.md).
 2. [Catalogue des batchs actifs/bloqués](../operations/catalogue_batchs_actuel.md),
    [horaires compatibles avec le PC](../operations/horaires_fr_cn_presence_pc.md).

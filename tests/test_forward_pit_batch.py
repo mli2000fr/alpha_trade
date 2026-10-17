@@ -46,6 +46,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_all_enabled_forward_batches_have_handlers() -> None:
     expected = {
+        "eodhd_news_ingestion_sync",
         "eodhd_ipo_calendar_sync",
         "eodhd_consensus_snapshot",
         "public_macro_snapshot_sync",
@@ -866,12 +867,13 @@ def test_http_error_message_redacts_query_credentials() -> None:
     assert "api_key=***" in message
 
 
-def test_main_preserves_quality_failure_counters(monkeypatch, capsys) -> None:
+@pytest.mark.parametrize('failed_count',[3,0])
+def test_main_preserves_quality_failure_counters(monkeypatch, capsys, failed_count) -> None:
     outcome = batch_module.Outcome(
         requested=6,
         received=6,
         persisted=6,
-        failed=3,
+        failed=failed_count,
         warnings=["one warning"],
         details={
             "critical": 3,
@@ -896,7 +898,8 @@ def test_main_preserves_quality_failure_counters(monkeypatch, capsys) -> None:
     assert summary["requested"] == 6
     assert summary["received"] == 6
     assert summary["persisted"] == 6
-    assert summary["failed"] == 3
+    assert summary["failed"] == failed_count
+    assert summary["status"] == 'FAILED'
     assert summary["warning_count"] == 1
     assert (
         summary["details"]["critical_checks"][0]["name"]
@@ -904,7 +907,8 @@ def test_main_preserves_quality_failure_counters(monkeypatch, capsys) -> None:
     )
 
 
-def test_execute_persists_counters_from_blocking_quality_failure(monkeypatch) -> None:
+@pytest.mark.parametrize('failed_count',[3,0])
+def test_execute_persists_counters_from_blocking_quality_failure(monkeypatch, failed_count) -> None:
     calls: list[tuple[str, dict | None]] = []
 
     class Connection:
@@ -930,7 +934,7 @@ def test_execute_persists_counters_from_blocking_quality_failure(monkeypatch) ->
         requested=6,
         received=6,
         persisted=6,
-        failed=3,
+        failed=failed_count,
         warnings=["warning"],
         details={"critical": 3},
     )
@@ -957,5 +961,5 @@ def test_execute_persists_counters_from_blocking_quality_failure(monkeypatch) ->
     assert params["requested"] == 6
     assert params["received"] == 6
     assert params["persisted"] == 6
-    assert params["failed"] == 3
+    assert params["failed"] == failed_count
     assert json.loads(params["details"])["critical"] == 3

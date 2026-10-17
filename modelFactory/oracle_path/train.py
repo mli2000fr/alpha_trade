@@ -25,6 +25,7 @@ from modelFactory.oracle.security_continuity import load_security_discontinuitie
 from modelFactory.oracle.train import precision_recall_at_top_pct, roc_auc
 from modelFactory.oracle.walk_forward import build_folds_adaptive
 from modelFactory.oracle_path import HORIZON, MODE, SCORE, TARGET
+from modelFactory.oracle_path.backend import resolve_backend, candidates_for, selection_policy, DECLARATIONS, NAMES
 from modelFactory.oracle_path.labels import classify, load_bars, symbol_paths
 from modelFactory.runtime_status import update_runtime_status
 
@@ -67,17 +68,28 @@ def is_path_batch(artifacts_dir, batch_id):
 
 
 def format_report(report):
-    lines = ["# Oracle Extreme parcours H20", "", "Modèle de recherche séparé ; aucune promotion PAPER/LIVE.",
+    lines = ["# Oracle Extreme parcours H20", "", "Classifieur d'amplitude séparé, raccordé à predict/backtest/live ; aucune activation de compte automatique.",
              "Cible : TOP20 % de l'amplitude absolue maximale entre J+1 et J+20, depuis le close ajusté J.",
              "Ce score ne donne ni la direction ni un prix de sortie exécutable.", "",
              f"Batch : {report['batch_id']} ; features : {report['n_features']} ; folds : {report['n_folds']}.", "",
-             "| Fold test | AUC | Précision TOP10 | Précision TOP20 | Amplitude moyenne TOP10 |",
-             "| --- | ---: | ---: | ---: | ---: |"]
+             (f"Algorithme imposé : {report['training_backend']}. Aucun choix du modèle sur validation/test."
+              if report.get('selection')=='explicit_backend' else
+              "Champion par fold : AUC de validation ; égalité exacte → LightGBM. Aucun choix sur le test."), "",
+             "| Fold test | Champion | AUC | Précision TOP10 % | Précision TOP20 % | Amplitude moyenne TOP10 % |",
+             "| --- | --- | ---: | ---: | ---: | ---: |"]
     def value(number):
         return "—" if number is None else f"{number:.4f}"
     for fold in report["folds"]:
-        lines.append(f"| {fold['fold_start']} | {value(fold['auc'])} | {value(fold['precision_at_10pct'])} | "
+        lines.append(f"| {fold['fold_start']} | {fold.get('selected_backend', 'lightgbm')} | {value(fold['auc'])} | {value(fold['precision_at_10pct'])} | "
                      f"{value(fold['precision_at_20pct'])} | {value(fold['mean_path_amplitude_top10_pct'])} % |")
+    lines.extend(["", "## Comparaison hors échantillon (diagnostic, pas sélection du champion)", "",
+                  "| Algorithme | AUC | Précision 10 titres | Amplitude 10 titres | Amplitude 20 titres | Amplitude 50 titres |",
+                  "| --- | ---: | ---: | ---: | ---: | ---: |"])
+    for backend, candidate in report.get("comparison_oof", {}).items():
+        lines.append(f"| {backend} | {value(candidate['auc'])} | {value(candidate['precision_top_10_titles'])} | "
+                     f"{value(candidate['mean_path_amplitude_top_10_titles_pct'])} % | "
+                     f"{value(candidate['mean_path_amplitude_top_20_titles_pct'])} % | "
+                     f"{value(candidate['mean_path_amplitude_top_50_titles_pct'])} % |")
     lines.extend(["", "Les amplitudes sont des maxima observés a posteriori, pas des gains réalisables.",
                   "Univers de fichier statique : biais de survivance possible. Prix ajustés actuels : pas de garantie PIT des révisions.",
                   "Voir quality.json pour les exclusions et report.json pour la couverture et les métriques complètes."])
@@ -148,6 +160,13 @@ def metrics(frame):
             baseline.append(float(group.path_amplitude.mean()))
         result[f"mean_path_amplitude_top{label}_pct"] = 100 * float(np.mean(selected)) if selected else None
         result[f"mean_path_amplitude_universe_pct"] = 100 * float(np.mean(baseline)) if baseline else None
+    for count in (10, 20, 50):
+        selected = [g.sort_values([SCORE, "symbol"], ascending=[False, True]).head(count)
+                    for _, g in frame.groupby("date") if len(g) >= count]
+        result[f"precision_top_{count}_titles"] = float(np.mean([g[TARGET].mean() for g in selected])) if selected else None
+        result[f"mean_path_amplitude_top_{count}_titles_pct"] = 100 * float(np.mean(
+            [g.path_amplitude.mean() for g in selected])) if selected else None
+        result[f"dates_top_{count}_titles"] = len(selected)
     return result
 
 
@@ -171,9 +190,46 @@ def train_model(train, val, columns, cfg):
                      valid_sets=[validation], callbacks=callbacks)
 
 
+def train_catboost(train, val, columns, cfg):
+    """Same numerical matrix/target and validation; no ranking loss for this classifier."""
+    from catboost import CatBoostClassifier
+    b = cfg.baseline
+    model = CatBoostClassifier(iterations=b.catboost_iterations, depth=b.catboost_depth,
+        learning_rate=b.catboost_learning_rate, l2_leaf_reg=b.catboost_l2_leaf_reg,
+        border_count=b.catboost_border_count, random_strength=b.catboost_random_strength,
+        bootstrap_type="Bayesian", bagging_temperature=b.catboost_bagging_temperature,
+        od_type=b.catboost_od_type, od_wait=b.catboost_od_wait, loss_function="Logloss",
+        eval_metric="AUC", random_seed=cfg.reproducibility.seed, thread_count=cfg.max_workers,
+        task_type="CPU", allow_writing_files=False, verbose=False)
+    model.fit(train[columns], train[TARGET].astype(int),
+              eval_set=(val[columns], val[TARGET].astype(int)), use_best_model=True)
+    return model
+
+
+def model_probabilities(model, backend, matrix):
+    values = (model.predict_proba(matrix)[:, 1] if backend == "catboost"
+              else model.predict(matrix, num_threads=4))
+    values = np.asarray(values, dtype=float)
+    if not np.isfinite(values).all() or ((values < 0) | (values > 1)).any():
+        raise ValueError("Oracle parcours : probabilités invalides")
+    return values
+
+
+def select_champion(validation):
+    """Frozen validation AUC, exact tie => LightGBM. No test data accepted here."""
+    if any(v.get("auc") is None or not np.isfinite(v["auc"]) for v in validation.values()):
+        raise ValueError("Oracle parcours : AUC de validation non qualifiée")
+    return max(validation, key=lambda name: (validation[name]["auc"], name == "lightgbm"))
+
+
 def fit_folds(dataset, columns, cfg, root, progress):
     """Checkpoint each complete model/OOS pair; bad/missing artifacts are not reused."""
     wf = cfg.walk_forward
+    requested=cfg.oracle_path_backend
+    backend_mode=resolve_backend(requested,enable_catboost=cfg.baseline.enable_catboost)
+    required=candidates_for(backend_mode)
+    selection=selection_policy(requested)
+    expected_files={NAMES[b] for b in required}|{'oof.parquet'}
     if wf.step_size < wf.test_size:
         raise ValueError("Oracle parcours : wf step doit être >= wf test (pas de tests OOF dupliqués)")
     folds = build_folds_adaptive(dataset, min_train_dates=wf.min_train_size,
@@ -188,6 +244,12 @@ def fit_folds(dataset, columns, cfg, root, progress):
         complete = folder / "done.json"
         if complete.exists():
             saved = json.loads(complete.read_text(encoding="utf-8"))
+            if (set(saved.get('validation_candidates',{}))!=set(required)
+                    or saved.get('champion',{}).get('selection')!=selection
+                    or set(saved.get('files',{}))!=expected_files
+                    or (backend_mode!='auto' and saved.get('champion',{}).get('backend')!=backend_mode)
+                    or (backend_mode=='auto' and saved.get('champion',{}).get('backend')!=select_champion(saved.get('validation_candidates',{})))):
+                raise ValueError('Oracle parcours : checkpoint différent du backend demandé ; nouveau batch requis')
             if all((folder / name).is_file() and digest(folder / name) == checksum
                    for name, checksum in saved["files"].items()):
                 parts.append(pd.read_parquet(folder / "oof.parquet"))
@@ -199,25 +261,46 @@ def fit_folds(dataset, columns, cfg, root, progress):
         val = dataset[dataset.date.isin(fold["val_dates"])
                       & (dataset.oracle_available_date < pd.Timestamp(fold["t_start"]))]
         test = dataset[dataset.date.isin(fold["test_dates"])]
-        if any(frame.empty or frame[TARGET].nunique() < 2 for frame in (train, val, test)):
+        if test.empty or any(frame.empty or frame[TARGET].nunique() < 2 for frame in (train, val)):
             skipped.append({"fold_start": str(fold["t_start"]), "reason": "EMPTY_OR_CONSTANT_TARGET"})
             continue
         progress("training_fold", number, len(folds), str(fold["t_start"]))
-        model = train_model(train, val, columns, cfg)
+        models = {}
+        if 'lightgbm' in required:
+            models['lightgbm']=train_model(train,val,columns,cfg)
+        if 'catboost' in required:
+            progress("training_catboost_fold", number, len(folds), str(fold["t_start"]))
+            models["catboost"] = train_catboost(train, val, columns, cfg)
+        validation = {}
+        for backend, model in models.items():
+            frame = val[["date", "symbol", TARGET, "path_amplitude"]].copy()
+            frame[SCORE] = model_probabilities(model, backend, val[columns])
+            validation[backend] = metrics(frame)
+        champion = select_champion(validation) if backend_mode=='auto' else backend_mode
+        model_files = {"lightgbm": "path_model.txt", "catboost": "catboost_model.cbm"}
+        for backend, model in models.items():
+            model.save_model(str(folder / model_files[backend]))
         oof = test[["date", "symbol", TARGET, "path_amplitude", "terminal_return",
                     "up_excursion", "down_excursion", "oracle_available_date"]].copy()
-        oof[SCORE] = model.predict(test[columns])
-        if not np.isfinite(oof[SCORE]).all():
-            raise ValueError("Oracle parcours : scores non finis")
+        for backend, model in models.items():
+            oof[f"score_{backend}"] = model_probabilities(model, backend, test[columns])
+        oof[SCORE] = oof[f"score_{champion}"]
+        oof["selected_backend"] = champion
         oof["fold_start"] = str(fold["t_start"])
-        model.save_model(str(folder / "path_model.txt"))
         oof.to_parquet(folder / "oof.parquet", index=False)
         summary = {"fold_start": str(fold["t_start"]), "n_train": len(train), "n_val": len(val),
             "train_available_max": str(train.oracle_available_date.max()),
             "val_start": str(fold["val_start"]), "val_available_max": str(val.oracle_available_date.max()),
-            "test_start": str(fold["t_start"]), "test_end": str(fold["t_end"]), **metrics(oof)}
+            "test_start": str(fold["t_start"]), "test_end": str(fold["t_end"]),
+            "selected_backend": champion, "validation_candidates": validation,
+            "test_candidates": {backend: metrics(oof.assign(**{SCORE: oof[f"score_{backend}"]}))
+                                for backend in models}, **metrics(oof)}
         atomic_json(complete, {"metrics": summary,
-                              "files": {name: digest(folder / name) for name in ("path_model.txt", "oof.parquet")}})
+            "champion": {"backend": champion, "model_file": model_files[champion],
+                         "selection": selection},
+            "validation_candidates": validation,
+            "files": {name: digest(folder / name) for name in
+                      [*(model_files[b] for b in models), "oof.parquet"]}})
         summaries.append(summary)
         parts.append(oof)
         LOGGER.info("Oracle parcours fold terminé : %s", summary)
@@ -227,7 +310,11 @@ def fit_folds(dataset, columns, cfg, root, progress):
     if oof.duplicated(["date", "symbol"]).any():
         raise ValueError("Oracle parcours : doublons OOF")
     oof.to_parquet(root / "oof_predictions.parquet", index=False)
-    return {"folds": summaries, "skipped_folds": skipped, "overall": metrics(oof), "n_folds": len(summaries)}
+    candidates = {backend: metrics(oof.assign(**{SCORE: oof[f"score_{backend}"]}))
+                  for backend in ("lightgbm", "catboost") if f"score_{backend}" in oof}
+    return {"folds": summaries, "skipped_folds": skipped, "overall": metrics(oof),
+            "comparison_oof": candidates, "selection": selection, 'training_backend':backend_mode,
+            "n_folds": len(summaries)}
 
 
 def train_oracle_path(cfg, engine, batch_id, symbols):
@@ -247,13 +334,24 @@ def train_oracle_path(cfg, engine, batch_id, symbols):
     profile = load_feature_profile("oracle", cfg.standalone_oracle_feature_profile) if cfg.standalone_oracle_feature_profile else None
     options = _oracle_generator_options(cfg, profile)
     registry = load_security_discontinuities()
-    protocol = {"schema_version": 1, "mode": MODE, "batch_id": batch_id, "serving_ready": False,
+    backend=resolve_backend(cfg.oracle_path_backend,enable_catboost=cfg.baseline.enable_catboost)
+    training_config=asdict(cfg)
+    if cfg.oracle_path_backend is None:
+        # Keep the pre-existing legacy protocol fingerprint on resume.
+        training_config.pop('oracle_path_backend',None)
+    protocol = {"schema_version": 1, "mode": MODE, "batch_id": batch_id, "serving_ready": True,
         "target": TARGET, "score": SCORE, "horizon": HORIZON, "top_fraction": .2,
         "min_daily_coverage": .95, "min_daily_universe": 20, "universe": symbols,
-        "training_config": asdict(cfg), "generator_options": options, "profile": profile,
+        "training_config": training_config, "generator_options": options, "profile": profile,
         "security_discontinuities": {s: [asdict(e) for e in events] for s, events in registry.items()},
         "price_basis": "adjusted_close_J; adjusted_high_low_J+1..J+20; adj_close_fallback=close; available_J+21",
-        "universe_bias": "static_current_file; not historical PIT membership", "backend": "lightgbm_cpu"}
+        "universe_bias": "static_current_file; not historical PIT membership",
+        "backend": DECLARATIONS[backend]}
+    if backend=='auto':
+        protocol.update(champion_selection="validation_auc; exact_tie_lightgbm", catboost_objective="Logloss")
+    if cfg.oracle_path_backend is not None:
+        protocol.update(training_backend=backend,champion_selection=selection_policy(backend))
+        if backend=='catboost':protocol.update(catboost_objective='Logloss')
     fingerprint = sha256(json.dumps(protocol, sort_keys=True, default=str).encode()).hexdigest()
     protocol_path = root / "protocol.json"
     if protocol_path.exists():
@@ -321,8 +419,10 @@ def train_oracle_path(cfg, engine, batch_id, symbols):
         whitelist = profile.get("feature_whitelist") if profile else (
             cfg.data.feature_whitelist if cfg.data.feature_whitelist_enabled else None)
         columns = feature_columns(features, options, whitelist)
-        atomic_json(root / "feature_profile.json", {"mode": MODE, "serving_ready": False,
-            "feature_columns": columns, "generator_options": options, "target": TARGET})
+        feature_profile={"mode": MODE, "serving_ready": True,
+            "feature_columns": columns, "generator_options": options, "target": TARGET}
+        if cfg.oracle_path_backend is not None:feature_profile['training_backend']=backend
+        atomic_json(root / "feature_profile.json",feature_profile)
         if features.duplicated(["date", "symbol"]).any():
             raise ValueError("Oracle parcours : doublons de features")
         dataset = features[["date", "symbol", *columns]].merge(
@@ -334,7 +434,7 @@ def train_oracle_path(cfg, engine, batch_id, symbols):
         if len(dataset) != quality["eligible_targets"]:
             raise ValueError("Oracle parcours : features manquantes pour des labels éligibles ; voir quality.json")
         result = fit_folds(dataset, columns, cfg, root, progress)
-        report = {"status": "completed", "mode": MODE, "batch_id": batch_id, "serving_ready": False,
+        report = {"status": "completed", "mode": MODE, "batch_id": batch_id, "serving_ready": True,
                   "artifact_root": str(root), "quality": quality, "n_features": len(columns), **result}
         atomic_json(root / "report.json", report)
         (root / "report.md").write_text(format_report(report), encoding="utf-8")

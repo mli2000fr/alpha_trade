@@ -94,6 +94,7 @@ FUNCTIONALITY_TABLES: dict[str, tuple[str, ...]] = {
         "global_oracle_labels",
         "global_rank_history",
         "oracle_extreme_predictions",
+        "oracle_path_prediction_lineage",
     ),
     "Fondamentaux / SEC": (
         "sec_filing_documents",

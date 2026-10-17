@@ -1,15 +1,20 @@
 ﻿import hashlib
 import logging
 import time
+from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 import dateutil.parser
 import requests
+from common.verified_http import verified_session
+from service._http_retry import _redact_sensitive_text, RetryPolicy, CircuitOpenError
+from service.eodhd.news_client import EodhdNewsFetchError
 from event_sentiment.trading_calendar import TradingCalendarAligner
 from event_sentiment.mapping import EntitySectorMapper
 from event_sentiment.models import NormalizedNewsArticle
 from event_sentiment.relevance import (
     DEFAULT_WEIGHTS,
+    RELEVANCE_VERSION,
     RelevanceWeights,
     score_article_symbol,
 )
@@ -41,7 +46,7 @@ def _resolve_iter_news_pages(provider: str) -> Callable[..., Any]:
 
 
 class NewsIngestionService:
-    def __init__(self, repository, config) -> None:
+    def __init__(self, repository, config, *, session_factory=None) -> None:
         self.repository = repository
         self.config = config
         self.aligner = TradingCalendarAligner(
@@ -52,6 +57,7 @@ class NewsIngestionService:
         # ne porte pas ``news_provider`` et on retombe alors sur Alpaca
         # (comportement historique).
         provider = getattr(config, "news_provider", "alpaca")
+        self._session_factory = session_factory or (verified_session if provider == 'eodhd' else requests.Session)
         self._iter_news_pages: Callable[..., Any] = _resolve_iter_news_pages(provider)
         self._ticker_relevance_mode = getattr(
             config, "provider_ticker_relevance_mode", "provider_default"
@@ -164,7 +170,10 @@ class NewsIngestionService:
             "relevance_scored": 0,
         }
         checkpoint = self.repository.get_checkpoint(self.config.source_name, symbol)
-        page_token = checkpoint["next_page_token"] if checkpoint and resume_checkpoint else None
+        # EODHD offsets belong to one exact window/order. Replaying from zero
+        # is idempotent and avoids missing pages when a resumed window changes.
+        eodhd = getattr(self.config, 'news_provider', None) == 'eodhd'
+        page_token = checkpoint["next_page_token"] if checkpoint and resume_checkpoint and not eodhd else None
         previous_watermark = checkpoint["watermark_published_at_utc"] if checkpoint else None
 
         self.repository.upsert_checkpoint(
@@ -176,7 +185,12 @@ class NewsIngestionService:
         )
 
         try:
-            with requests.Session() as session:
+            with self._session_factory() as session:
+                transport = {}
+                if eodhd:
+                    transport['retry_policy'] = RetryPolicy(
+                        timeout_seconds=getattr(self.config,'news_request_timeout_seconds',45),
+                        max_attempts=getattr(self.config,'news_max_attempts',3), base_delay_seconds=1.,max_delay_seconds=30.)
                 for articles, next_token in self._iter_news_pages(
                     start_utc=start_utc,
                     end_utc=end_utc,
@@ -184,9 +198,17 @@ class NewsIngestionService:
                     limit=self.config.page_limit,
                     page_token=page_token,
                     session=session,
+                    **transport,
                 ):
                     if not articles:
-                        break
+                        if not next_token:
+                            break
+                        # A page can be emptied by the exact UTC filter, while
+                        # later provider pages still belong to the window.
+                        page_token = next_token
+                        self.repository.upsert_checkpoint(self.config.source_name, symbol,
+                            previous_watermark, page_token, "running")
+                        continue
                     normalized = [self._normalize_article(payload) for payload in articles]
                     summary["fetched"] += len(normalized)
                     # Garde-fou Niveau 1 : on filtre les articles « bruyants »
@@ -292,92 +314,81 @@ class NewsIngestionService:
                                 row["relevance_score"] = relevance.score
                                 row["relevance_components"] = relevance.components
                             ticker_rows.append(row)
-                    summary["landed"] += self.repository.upsert_news_raw(raw_rows)
-                    persisted_article_ids = self._resolve_persisted_article_ids(raw_rows)
-                    remapped_ticker_rows: list[dict[str, Any]] = []
-                    remapped_pairs = 0
-                    for row in ticker_rows:
-                        payload = dict(row)
-                        canonical_article_id = persisted_article_ids.get(payload["article_id"], payload["article_id"])
-                        if canonical_article_id != payload["article_id"]:
-                            remapped_pairs += 1
-                            payload["article_id"] = canonical_article_id
-                        remapped_ticker_rows.append(payload)
-                    if remapped_pairs:
-                        LOGGER.info(
-                            "Remap article_id appliqué avant news_ticker_map | provider=%s symbol=%s remapped_pairs=%s",
-                            self.config.provider_name,
-                            symbol,
-                            remapped_pairs,
-                        )
-                    existing_parent_ids: set[str] = set()
-                    if remapped_ticker_rows:
-                        existing_parent_ids = set(
-                            self.repository.get_existing_article_ids(
-                                sorted(
-                                    {
-                                        str(row["article_id"])
-                                        for row in remapped_ticker_rows
-                                        if row.get("article_id")
-                                    }
-                                )
-                            )
-                        )
-                    persistable_ticker_rows = [
-                        row
-                        for row in remapped_ticker_rows
-                        if str(row.get("article_id") or "") in existing_parent_ids
-                    ]
-                    orphan_ticker_rows = len(remapped_ticker_rows) - len(persistable_ticker_rows)
-                    if orphan_ticker_rows:
-                        missing_article_ids = sorted(
-                            {
-                                str(row["article_id"])
-                                for row in remapped_ticker_rows
-                                if str(row.get("article_id") or "") not in existing_parent_ids
-                            }
-                        )
-                        LOGGER.warning(
-                            "Lignes news_ticker_map ignorées faute de parent news_raw | provider=%s symbol=%s orphan_rows=%s missing_article_ids=%s",
-                            self.config.provider_name,
-                            symbol,
-                            orphan_ticker_rows,
-                            missing_article_ids[:5],
-                        )
-                    summary["ticker_maps"] += self.repository.upsert_news_ticker_map(persistable_ticker_rows)
-                    watermark = max(article.published_at_utc for article in normalized).replace(tzinfo=None)
+                    page_writer = getattr(self.repository, "persist_news_page", None)
+                    if callable(page_writer):
+                        stats = page_writer(raw_rows, ticker_rows, mapping_context={
+                            "queried_symbol": symbol,
+                            "provider": self.config.provider_name,
+                            "window_start_utc": start_utc.isoformat(),
+                            "window_end_utc": end_utc.isoformat(),
+                            "ticker_relevance_mode": self._ticker_relevance_mode,
+                            "max_tickers_per_article": self._max_tickers_per_article,
+                            "min_relevance_score": self._min_relevance_score,
+                            "relevance_version": RELEVANCE_VERSION,
+                            "relevance_weights": asdict(self._relevance_weights),
+                            "identity_qualified": False,
+                        })
+                        summary["landed"] += stats["landed"]
+                        summary["ticker_maps"] += stats["ticker_maps"]
+                    else:
+                        # Compatibility with legacy repository implementations;
+                        # the production repository always uses the atomic writer.
+                        landed, mapped = self._persist_legacy_page(raw_rows, ticker_rows, symbol)
+                        summary["landed"] += landed
+                        summary["ticker_maps"] += mapped
+                    watermark = (previous_watermark if eodhd else
+                                 max(article.published_at_utc for article in normalized).replace(tzinfo=None))
                     self.repository.upsert_checkpoint(self.config.source_name, symbol, watermark, next_token, "running")
                     page_token = next_token
                     LOGGER.info(
                         "News ingestion page | symbol=%s fetched=%s deduped=%s landed=%s ticker_maps=%s next_token=%s",
-                        symbol,
-                        len(normalized),
-                        len(existing),
-                        len(raw_rows),
-                        len(persistable_ticker_rows),
-                        next_token,
+                        symbol, len(normalized), len(existing), len(raw_rows), len(ticker_rows), next_token,
                     )
                     if not next_token:
                         break
                     time.sleep(self.config.sleep_between_requests)
             self.repository.upsert_checkpoint(
-                self.config.source_name,
-                symbol,
-                end_utc.replace(tzinfo=None),
-                None,
-                "success",
+                self.config.source_name, symbol, end_utc.replace(tzinfo=None), None, "success",
             )
             return summary
         except Exception as exc:
+            if isinstance(exc, EodhdNewsFetchError):
+                exc.partial_summary = dict(summary)
             self.repository.upsert_checkpoint(
-                self.config.source_name,
-                symbol,
-                previous_watermark,
-                page_token,
-                "failed",
-                last_error=str(exc),
+                self.config.source_name, symbol, previous_watermark, page_token, "failed", last_error=_redact_sensitive_text(str(exc)),
             )
             raise
+
+    def _persist_legacy_page(self, raw_rows, ticker_rows, symbol):
+        landed = self.repository.upsert_news_raw(raw_rows)
+        persisted_article_ids = self._resolve_persisted_article_ids(raw_rows)
+        remapped_ticker_rows = []
+        remapped_pairs = 0
+        for row in ticker_rows:
+            payload = dict(row)
+            canonical_id = persisted_article_ids.get(payload["article_id"], payload["article_id"])
+            if canonical_id != payload["article_id"]:
+                remapped_pairs += 1
+                payload["article_id"] = canonical_id
+            remapped_ticker_rows.append(payload)
+        if remapped_pairs:
+            LOGGER.info(
+                "Remap article_id appliqué avant news_ticker_map | provider=%s symbol=%s remapped_pairs=%s",
+                self.config.provider_name, symbol, remapped_pairs,
+            )
+        parent_ids = set(self.repository.get_existing_article_ids(sorted({
+            str(row["article_id"]) for row in remapped_ticker_rows if row.get("article_id")
+        }))) if remapped_ticker_rows else set()
+        persistable = [row for row in remapped_ticker_rows if str(row.get("article_id") or "") in parent_ids]
+        orphan_count = len(remapped_ticker_rows)-len(persistable)
+        if orphan_count:
+            missing_ids = sorted({str(row["article_id"]) for row in remapped_ticker_rows
+                if str(row.get("article_id") or "") not in parent_ids})
+            LOGGER.warning(
+                "Lignes news_ticker_map ignorées faute de parent news_raw | provider=%s symbol=%s orphan_rows=%s missing_article_ids=%s",
+                self.config.provider_name, symbol, orphan_count, missing_ids[:5],
+            )
+        return landed, self.repository.upsert_news_ticker_map(persistable)
 
     def run(
         self,
@@ -388,7 +399,10 @@ class NewsIngestionService:
         symbol_resume_overrides: dict[str, bool] | None = None,
         resume_checkpoints: bool = True,
         progress_callback: Callable[[dict[str, object]], None] | None = None,
-    ) -> dict[str, int]:
+        continue_on_symbol_error: bool = False,
+        max_consecutive_failures: int = 3,
+        initial_consecutive_failures: int = 0,
+    ) -> dict[str, Any]:
         summary = {
             "fetched": 0,
             "deduped": 0,
@@ -401,24 +415,49 @@ class NewsIngestionService:
         }
         normalized_symbols = self._normalize_symbol_list(symbols)
         total_symbols = len(normalized_symbols)
+        if type(max_consecutive_failures) is not int or max_consecutive_failures < 1:
+            raise ValueError('max_consecutive_failures doit être un entier positif')
+        metric_keys = tuple(summary)
+        failures = []
+        attempted = succeeded = 0
+        consecutive = initial_consecutive_failures
+        aborted = False
+        blocking_error = False
         for index, symbol in enumerate(normalized_symbols, start=1):
             effective_start = (
                 symbol_start_overrides.get(symbol)
                 if symbol_start_overrides and symbol in symbol_start_overrides
                 else self._resolve_symbol_start(symbol, start_utc=start_utc, end_utc=end_utc)
             )
-            symbol_summary = self._run_symbol(
-                symbol=symbol,
-                start_utc=effective_start,
-                end_utc=end_utc,
-                resume_checkpoint=(
-                    symbol_resume_overrides.get(symbol)
-                    if symbol_resume_overrides and symbol in symbol_resume_overrides
-                    else resume_checkpoints and start_utc is None
-                ),
-            )
-            for key in summary:
-                summary[key] += symbol_summary[key]
+            attempted += 1
+            try:
+                symbol_summary = self._run_symbol(
+                    symbol=symbol,
+                    start_utc=effective_start,
+                    end_utc=end_utc,
+                    resume_checkpoint=(
+                        symbol_resume_overrides.get(symbol)
+                        if symbol_resume_overrides and symbol in symbol_resume_overrides
+                        else resume_checkpoints and start_utc is None
+                    ),
+                )
+                succeeded += 1
+                consecutive = 0
+            except (EodhdNewsFetchError, CircuitOpenError) as exc:
+                if not continue_on_symbol_error:
+                    raise
+                consecutive += 1
+                message = _redact_sensitive_text(str(exc))[:500]
+                failures.append(dict(symbol=symbol,error=message,
+                    status_code=getattr(exc,'status_code',None),start_utc=effective_start.isoformat(),
+                    blocking_error=bool(getattr(exc,'terminal',False))))
+                blocking_error = bool(getattr(exc,'terminal',False))
+                symbol_summary = getattr(exc, 'partial_summary', {})
+                aborted = (getattr(exc,'terminal',False) or isinstance(exc,CircuitOpenError)
+                           or consecutive >= max_consecutive_failures)
+                LOGGER.error('Import news incomplet | symbol=%s erreur=%s arrêt_global=%s',symbol,message,aborted)
+            for key in metric_keys:
+                summary[key] += symbol_summary.get(key, 0)
             if progress_callback is not None:
                 progress_callback(
                     {
@@ -428,4 +467,11 @@ class NewsIngestionService:
                         "current_symbol_total": total_symbols,
                     }
                 )
+            if aborted:
+                break
+        if continue_on_symbol_error:
+            summary.update(status='INCOMPLETE' if failures else 'COMPLETED',
+                attempted_symbols=attempted,succeeded_symbols=succeeded,failed_symbols=failures,
+                failed_count=len(failures),unattempted_symbols=total_symbols-attempted,
+                aborted=aborted,consecutive_failures=consecutive,blocking_error=blocking_error)
         return summary

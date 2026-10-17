@@ -28,6 +28,14 @@ def resolve_oracle_artifact_horizon(
         return None
     root = Path(artifacts_root)
     batch_root = root if root.name == normalized else root / normalized
+    path_protocol = batch_root / "oracle_path" / "protocol.json"
+    if path_protocol.is_file():
+        try:
+            payload = json.loads(path_protocol.read_text(encoding="utf-8"))
+            if payload.get("mode") == "oracle_path_h20" and payload.get("batch_id") == normalized:
+                return _positive_horizon(payload.get("horizon"))
+        except (OSError, ValueError, TypeError):
+            return None
     candidates = (
         batch_root / "oracle" / "feature_profile.json",
         root / "oracle" / "champions" / normalized / "feature_profile.json",
