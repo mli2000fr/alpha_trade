@@ -18,11 +18,11 @@ révision Alembic non estampillée. Backfill lancé à 15h37 Paris, 130 fenêtre
 GET `/api/calendar/ipos?from=...&to=...&fmt=json`, authentification EODHD existante,
 quota partagé, HTTPS vérifié. API marché entier, sans filtre symbole côté serveur.
 **Depuis le 18 octobre 2026**, normalisation filtrée sur
-`config/univers_batch/univers_filtred_tradable.txt`, comme `us_pipeline` :
+`config/univers_batch/stock_bars_daily.txt`, indépendamment de `us_pipeline` :
 `symbol_source: universe-file`, `symbols_file` vers ce fichier. Il contient
-1 790 titres au changement et est relu à chaque lancement. Aucun filtre
-`is_tradable=1` supplémentaire. Le fichier exporté `stock_bars_daily.txt`
-n'est pas utilisé. L'API reste marché entier : ce filtre réduit les observations
+13 105 titres au changement et est relu à chaque lancement. Cet export n'est
+pas régénéré automatiquement depuis SQL. Aucun filtre actif/tradable supplémentaire.
+L'API reste marché entier : ce filtre réduit les observations
 normalisées, pas le nombre de requêtes calendrier par fenêtre.
 
 Historique : le mode `stock_bars_daily` (environ 13 105 symboles) avait été
@@ -35,7 +35,7 @@ Relance effective le 11 octobre 2026 à 15h53 Paris : 13 105 symboles, période
 `log/batch/eodhd-ipo-stock-bars-daily-2016-20261011-v1/stderr.log` et `stdout.log`.
 Le lancement ne certifie pas l'achèvement : le statut final figure dans le résumé
 du stdout et dans `pit_collection_runs`.
-Les nouvelles introductions absentes du fichier tradable restent uniquement
+Les nouvelles introductions absentes du fichier étendu restent uniquement
 dans la réponse brute archivée : aucune addition automatique à l'univers.
 Les anciennes observations hors fichier restent conservées. Les checkpoints
 IPO dépendent du hash des symboles : un périmètre changé entraîne leur relecture

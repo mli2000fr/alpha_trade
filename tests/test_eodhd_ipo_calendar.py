@@ -68,7 +68,7 @@ def test_catalog_schedule_and_universe():
     from ihm.services.batch_management import load_batch_specs,build_run_command
     spec=next(s for s in load_batch_specs() if s.name==mod.BATCH)
     assert spec.enabled
-    assert spec.symbols_file=='config/univers_batch/univers_filtred_tradable.txt'
+    assert spec.symbols_file=='config/univers_batch/stock_bars_daily.txt'
     assert spec.raw_config['symbol_source']=='universe-file'
     assert spec.universe_scope==spec.symbols_file
     assert spec.raw_config['run_hours']=='1'

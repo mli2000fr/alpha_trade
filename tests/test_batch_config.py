@@ -213,28 +213,52 @@ def test_every_batch_has_ui_catalogue_metadata() -> None:
             assert len(config.get("unlock_steps") or []) >= 2, name
 
 
-def test_every_symbol_scoped_batch_uses_stable_tradable_universe() -> None:
+def test_other_symbol_scoped_batches_keep_the_tradable_universe() -> None:
     batch = yaml.safe_load((ROOT / "batch.yaml").read_text(encoding="utf-8"))
     expected = "config/univers_batch/univers_filtred_tradable.txt"
     names = (
-        "market_cap_sync",
         "earnings_calendar_sync",
         "analyst_snapshot_collection",
         "latest_quotes_sync",
         "daily_bars_sync",
-        "borrow_status_snapshot",
         "business_quant_analyst_snapshot",
-        "oracle_options_indicative_snapshot",
-        "oracle_opening_window_sync",
         "finra_short_volume_sync",
         "auction_imbalance_sync",
         "securities_lending_sync",
         "official_options_nbbo_sync",
-        "options_delayed_bars_sync",
     )
     for name in names:
         assert batch[name]["symbols_file"] == expected
         assert "max_symbols" not in batch[name]
+
+
+def test_eight_collectors_use_the_extended_daily_file_without_changing_pipeline() -> None:
+    from service.forward_pit.batch import _collection_symbols
+    from common.universe_files import load_universe_file_symbols
+    from service.eodhd.consensus_snapshot import load_symbols
+    batch = load_batch_config()
+    expected = 'config/univers_batch/stock_bars_daily.txt'
+    reference = set(_collection_symbols({'symbols_file':expected}))
+    assert reference
+    names = ('eodhd_consensus_snapshot','eodhd_ipo_calendar_sync','market_cap_sync',
+             'borrow_status_snapshot','eodhd_news_ingestion_sync','options_delayed_bars_sync',
+             'oracle_options_indicative_snapshot','oracle_opening_window_sync')
+    for name in names:
+        config = batch[name]
+        assert config['symbols_file'] == expected, name
+        assert config['universe_scope'] == expected, name
+        assert 'max_symbols' not in config and not config.get('selected_symbols'), name
+        if name in ('eodhd_consensus_snapshot','eodhd_ipo_calendar_sync'):
+            symbols = load_symbols(None,config)  # No database required for the file source.
+        elif name == 'eodhd_news_ingestion_sync':
+            symbols = load_universe_file_symbols('universe-file:'+config['symbols_file'])
+        else:
+            symbols = _collection_symbols(config)
+        assert set(symbols) == reference, name
+    tradable = 'config/univers_batch/univers_filtred_tradable.txt'
+    assert batch['us_pipeline']['symbols_file'] == tradable
+    assert batch['eodhd_consensus_snapshot']['coverage_symbols_file'] == tradable
+    assert batch['eodhd_consensus_snapshot']['min_coverage'] == .95
 
 
 def test_latest_quotes_batch_uses_safe_idempotent_catchup_window() -> None:
@@ -262,7 +286,7 @@ def test_options_batch_is_active_research_only_and_never_top20_scoped() -> None:
     assert options["status"] == "ACTIVE_RESEARCH_ONLY"
     assert options["provider"] == "alpaca"
     assert options["feed"] == "indicative"
-    assert options["symbols_file"] == "config/univers_batch/univers_filtred_tradable.txt"
+    assert options["symbols_file"] == "config/univers_batch/stock_bars_daily.txt"
     assert options["target_dtes"] == "5,10,20"
     assert "max_symbols" not in options
     assert "oracle_batch_id" not in options
@@ -276,7 +300,7 @@ def test_delayed_option_batches_are_explicitly_research_only() -> None:
     nbbo = batch["official_options_nbbo_sync"]
     assert bars["enabled"] is True
     assert bars["status"] == "ACTIVE_RESEARCH_ONLY"
-    assert bars["symbols_file"] == "config/univers_batch/univers_filtred_tradable.txt"
+    assert bars["symbols_file"] == "config/univers_batch/stock_bars_daily.txt"
     assert "UNVERIFIED_OPRA" in bars["research_notice"]
     assert occ["enabled"] is True
     assert occ["universe_scope"] == "market_wide_options_adjustments"
@@ -291,7 +315,7 @@ def test_opening_window_batch_uses_delayed_sip_on_full_stable_universe() -> None
     assert opening["provider"] == "alpaca"
     assert opening["feed"] == "sip"
     assert opening["adjustment"] == "raw"
-    assert opening["symbols_file"] == "config/univers_batch/univers_filtred_tradable.txt"
+    assert opening["symbols_file"] == "config/univers_batch/stock_bars_daily.txt"
     assert opening["window_start"] == "04:00"
     assert opening["window_end"] == "10:30"
     assert opening["minimum_sip_delay_minutes"] >= 16

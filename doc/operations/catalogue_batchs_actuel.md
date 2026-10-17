@@ -1,15 +1,19 @@
 # Catalogue opérationnel des batchs — 10 octobre 2026
 
-Mise à jour du 18 octobre : **`eodhd_consensus_snapshot` et
-`eodhd_ipo_calendar_sync` utilisent désormais
-`config/univers_batch/univers_filtred_tradable.txt`**, comme `us_pipeline`,
-et non l'ensemble des symboles de `stock_bars_daily`. Le consensus contrôle
-sa couverture de 95 % sur ce même fichier ; les IPO sont filtrées après réception
-du calendrier marché entier. Historique déjà stocké, horaires, secours et
-notifications conservés. Les autres batchs ne changent pas de périmètre.
+Mise à jour du 18 octobre : **huit collecteurs utilisent l'export fixe
+`config/univers_batch/stock_bars_daily.txt`** : `eodhd_consensus_snapshot`,
+`eodhd_ipo_calendar_sync`, `market_cap_sync`, `borrow_status_snapshot`,
+`eodhd_news_ingestion_sync`, `options_delayed_bars_sync`,
+`oracle_options_indicative_snapshot` et `oracle_opening_window_sync`.
+Il contient 13 105 symboles et n'est pas régénéré automatiquement depuis SQL.
+Le consensus conserve son contrôle de couverture de 95 % sur le fichier tradable.
+Les IPO restent filtrées après réception du calendrier marché entier.
+`us_pipeline` et les autres batchs restent inchangés. Historique, horaires,
+secours, notifications et budgets conservés ; les news peuvent être incomplètes
+sur ce périmètre élargi avec les plafonds actuels.
 
 Ajout du 16 octobre : **`eodhd_news_ingestion_sync`**, P1, activé et tâche Windows
-installée : 20h30 Paris tous les jours, même fichier tradable que le pipeline.
+installée : 20h30 Paris tous les jours ; univers actuel étendu précisé ci-dessus.
 Ingestion/archives uniquement, sans FinBERT/LLM ; workflow et scoring du vendredi
 inchangés. [Fonctionnement, smoke réel et limites](eodhd_news_ingestion_sync.md).
 

@@ -123,10 +123,10 @@ def test_catalog_has_universe_notifications_recovery_and_no_yahoo():
     spec=next(s for s in load_batch_specs() if s.name==mod.BATCH)
     assert spec.enabled
     assert spec.raw_config['status'] == 'RESEARCH_ONLY'
-    assert spec.symbols_file == 'config/univers_batch/univers_filtred_tradable.txt'
+    assert spec.symbols_file == 'config/univers_batch/stock_bars_daily.txt'
     assert spec.universe_scope == spec.symbols_file
     assert spec.raw_config['symbol_source'] == 'universe-file'
-    assert spec.raw_config['coverage_symbols_file'] == spec.symbols_file
+    assert spec.raw_config['coverage_symbols_file'] == 'config/univers_batch/univers_filtred_tradable.txt'
     assert spec.raw_config['recovery_run_hours']=='4'
     assert not any('stock_analyst_estimate_history'==t for t in spec.tables)
     assert 'install_forward_pit_task.ps1' in ' '.join(build_install_command(spec))

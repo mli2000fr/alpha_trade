@@ -89,23 +89,23 @@ commité entièrement, puis la reprise passe au suivant. Aucun tableau incomplet
 n'est déclaré complet via un simple checkpoint fichier.
 
 **Univers courant depuis le 18 octobre 2026 :**
-`config/univers_batch/univers_filtred_tradable.txt`, comme `us_pipeline`.
-Configuration : `symbol_source: universe-file`, `symbols_file` et
-`coverage_symbols_file` pointant sur ce même fichier. Il contient 1 790 titres
-au changement ; il est relu au lancement. Aucun filtre `is_tradable=1`, TOP20 ou
-TOP10 supplémentaire n'est appliqué. La résolution de cet univers ne consulte
-plus `stock_bars_daily` et ne dépend pas de la présence de barres pour ces titres.
+`config/univers_batch/stock_bars_daily.txt`, export fixe de **13 105 symboles**
+au changement. Configuration : `symbol_source: universe-file`, `symbols_file`
+vers cet export. Le fichier est relu au lancement, mais n'est pas régénéré depuis
+SQL automatiquement. Aucun filtre actif/tradable, TOP20 ou TOP10 n'est appliqué.
+`us_pipeline` reste sur son fichier tradable de 1 790 titres.
 
 L'univers large de 13 105 symboles de `stock_bars_daily`, utilisé auparavant,
 reste un mode pris en charge explicitement, mais n'est plus celui configuré.
 Ses anciennes observations SQL et archives restent conservées sans modification.
-Le fichier exporté `config/univers_batch/stock_bars_daily.txt` n'est pas utilisé
-par ce batch. Les anciennes preuves et métriques gardent leur périmètre daté.
+Le mode courant utilise ce fichier exporté, pas une requête SQL d'univers.
+Les anciennes preuves et métriques gardent leur périmètre daté.
 
-Le seuil de couverture de 95 % porte sur le même fichier que la collecte ;
-absence de consensus et erreur technique restent distinguées. Lots de 20 titres,
-pause 1,1 seconde : au plus environ 90 appels pour un passage complet sur
-1 790 titres hors retries/subdivision et titres déjà collectés ce jour-là.
+Le seuil de couverture de 95 % reste limité à
+`config/univers_batch/univers_filtred_tradable.txt` (`coverage_symbols_file`),
+pas à l'ensemble des ETF/radiés de l'export. Absence de consensus et erreur
+technique restent distinguées. Lots de 20 titres, pause 1,1 seconde : environ
+656 appels pour 13 105 titres, hors retries/subdivision et titres déjà collectés.
 Quota et retries du client EODHD
 existant ; HTTPS vérifié. 401/403/quota/circuit arrêtent la collecte, sans repli Yahoo.
 Une couverture inférieure à 95 % du fichier tradable ou une erreur technique
@@ -116,7 +116,9 @@ explicitement liés aux symboles, sont isolés par subdivision puis consignés d
 technique. Une erreur technique locale est enregistrée sans abandon des
 sous-lots frères ; auth/quota/circuit interrompent le run avec compteurs détaillés.
 Les symboles sans consensus ou invalides dans le fichier tradable réduisent sa
-couverture ; les titres hors fichier ne sont plus demandés. Le changement prend
+couverture ; les absences hors de cette référence n'affectent que la couverture
+globale descriptive. Les titres sont demandés selon le fichier étendu.
+Le changement prend
 effet au prochain lancement, sans nouveau téléchargement ni écriture SQL lors
 de cette modification de configuration. Horaires, secours et notifications
 restent inchangés ; pas de nouvelle installation Windows nécessaire pour le

@@ -93,8 +93,14 @@ avec lanceur masqué, mode Interactive et contrôle horaire commun.
 
 - **20h30 Europe/Paris, tous les jours**, week-end compris ; news possibles
   hors des séances. Respect de l'absence PC 7h30–20h.
-- Univers : `config/univers_batch/univers_filtred_tradable.txt`, **1 790 titres**
-  au contrôle ; identique au fichier du workflow US, pas l'univers de toute la base.
+- Univers depuis le 18 octobre : `config/univers_batch/stock_bars_daily.txt`,
+  **13 105 titres** dans cet export fixe. Il est relu à chaque lancement, sans
+  actualisation SQL automatique. Le workflow US garde son fichier tradable.
+  Les anciens bilans de 1 790 titres restent des constats de l'ancien périmètre.
+- Durée (120 minutes) et budgets (4 000 tentatives HTTP par passage/jour) inchangés :
+  **un passage ne peut pas couvrir les 13 105 titres avec ces plafonds**.
+  Une collecte arrêtée sur limite reste incomplète et conserve ses checkpoints ;
+  l'univers élargi ne vaut pas promesse de couverture quotidienne intégrale.
 - Aucun changement de l'horaire de `us_pipeline` (23h05), de ses étapes
   lundi–jeudi `[1,2,3,4,5,6,7,9]` ou vendredi `[1,2,3,4,5,6,7,8,9]`.
 - **Ingestion seulement : pas de FinBERT, GPT/DeepSeek, features, modèle ou ordre.**

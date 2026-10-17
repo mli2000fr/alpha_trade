@@ -234,13 +234,14 @@ def test_counters_count_archive_versions_not_upsert_rows(monkeypatch):
     assert repo.outcome.persisted==2 and repo.outcome.details['archive']==stats
 
 
-def test_catalog_is_daily_at_night_same_universe_no_changes_to_pipeline_lists():
+def test_catalog_is_daily_at_night_extended_universe_no_changes_to_pipeline_lists():
     cfg=yaml.safe_load(Path('batch.yaml').read_text(encoding='utf-8'))
     application=yaml.safe_load(Path('config.yaml').read_text(encoding='utf-8'))
     section=cfg[daily.BATCH]
     assert section['enabled'] and section['run_hours']=='20' and section['run_minutes']=='30'
     assert section['timezone']=='Europe/Paris' and section['run_days']=='0,1,2,3,4,5,6'
-    assert section['symbols_file']==cfg['us_pipeline']['symbols_file']
+    assert section['symbols_file']=='config/univers_batch/stock_bars_daily.txt'
+    assert cfg['us_pipeline']['symbols_file']=='config/univers_batch/univers_filtred_tradable.txt'
     assert section['max_duration_minutes']<=120
     # User-controlled daily steps can include 10/11/12; this collector does
     # not impose the historical factory list on the scheduled workflow.
