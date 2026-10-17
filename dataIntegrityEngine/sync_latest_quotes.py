@@ -4,6 +4,7 @@ import argparse
 import itertools
 import json
 import logging
+import math
 import re
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, cast
@@ -14,6 +15,8 @@ import requests
 from sqlalchemy import bindparam, text
 
 from common.market_calendar import get_nyse_session_bounds, nyse_session_dates
+from common.quote_quality import archive_quote, historical_quote_feed, quote_invalid_reason
+from common.verified_http import verified_session
 from common.utils import configure_root_logging
 from database.cleaning_audits import record_quotes_audit_run
 from database.connection import get_sqlalchemy_engine
@@ -34,7 +37,7 @@ from service.yahoo.clientYahooFinance import (
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_BATCH_SIZE = 200
-DEFAULT_QUOTES_PROVIDER_LIVE = "yahoo"
+DEFAULT_QUOTES_PROVIDER_LIVE = "alpaca"
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 MARKET_TZ = ZoneInfo("America/New_York")
 QUOTE_IEX_BIAS_PROXY_NAME = "same_session_mid_vs_stock_bars_daily_close"
@@ -259,10 +262,11 @@ def _symbol_has_any_quotes_in_window(
     *,
     session: requests.Session,
     account_id: str | None = None,
+    feed: str | None = None,
 ) -> bool:
     """Vérifie en 1 seul appel API si le symbole a au moins une quote
     dans la fenêtre [from_date, to_date]. Évite le traitement jour par jour
-    coûteux pour les symboles sans couverture IEX."""
+    coûteux pour les symboles sans couverture sur le flux demandé."""
     range_open_utc, _ = get_nyse_session_bounds(from_date)
     _, range_close_utc = get_nyse_session_bounds(to_date)
     quote = fetch_latest_historical_quote_in_window(
@@ -271,6 +275,7 @@ def _symbol_has_any_quotes_in_window(
         end=_to_iso_zulu(range_close_utc),
         session=session,
         account_id=account_id,
+        feed=historical_quote_feed(feed),
     )
     return isinstance(quote, dict)
 
@@ -281,6 +286,7 @@ def _fetch_near_close_quote_for_session(
     *,
     session: requests.Session,
     account_id: str | None = None,
+    feed: str | None = None,
 ) -> tuple[dict[str, object] | None, int | None, tuple[datetime, datetime] | None]:
     for window_index, (window_start, window_end) in enumerate(_session_window(session_date), start=1):
         quote = fetch_latest_historical_quote_in_window(
@@ -289,6 +295,7 @@ def _fetch_near_close_quote_for_session(
             end=_to_iso_zulu(window_end),
             session=session,
             account_id=account_id,
+            feed=historical_quote_feed(feed),
         )
         if isinstance(quote, dict):
             return cast(dict[str, object], quote), window_index, (window_start, window_end)
@@ -327,7 +334,7 @@ def _log_historical_symbol_summary(
 def _compute_spread_bps(bid_price: float | None, ask_price: float | None) -> float | None:
     if bid_price is None or ask_price is None:
         return None
-    if bid_price <= 0 or ask_price <= 0:
+    if not math.isfinite(bid_price) or not math.isfinite(ask_price) or bid_price <= 0 or ask_price < bid_price:
         return None
     mid = (bid_price + ask_price) / 2.0
     if mid <= 0:
@@ -695,12 +702,19 @@ def sync_latest_quotes(
     to_date: date | None = None,
     symbol_source: str | None = None,
     start_symbol: str | None = None,
+    feed: str | None = None,
 ) -> dict[str, int]:
     if batch_size < 1:
         raise ValueError("batch_size doit être supérieur ou égal à 1.")
 
     resolved_from_date, resolved_to_date = _normalize_quote_window(from_date, to_date)
     mode = "historical" if resolved_from_date is not None and resolved_to_date is not None else "latest"
+    historical_feed = historical_quote_feed(feed) if mode == "historical" else None
+    expected_quote_dates = tuple(nyse_session_dates(resolved_from_date, resolved_to_date)) if mode == "historical" else ()
+    if historical_feed == "sip" and expected_quote_dates:
+        _, end_utc = get_nyse_session_bounds(expected_quote_dates[-1])
+        if end_utc > datetime.now(timezone.utc) - timedelta(minutes=15):
+            raise ValueError("Quotes SIP historiques : attendre au moins 15 minutes après la clôture de la dernière séance demandée")
 
     resolved_symbol_source = normalize_symbol_source(symbol_source)
     resolved_start_symbol = normalize_start_symbol(start_symbol)
@@ -729,7 +743,7 @@ def sync_latest_quotes(
         )
         return summary
 
-    session = requests.Session()
+    session = verified_session()
     account_cycler = _resolve_account_cycler()
     # Résolution du/des provider(s) live (mode latest uniquement)
     primary_fn, primary_name, secondary_fn = _resolve_latest_quotes_fetcher()
@@ -745,6 +759,8 @@ def sync_latest_quotes(
                 try:
                     payload = primary_fn(batch, session=session, account_id=_bump_account(account_cycler))
                 except Exception:
+                    if primary_name == "alpaca" and secondary_fn is None:
+                        raise
                     LOGGER.warning(
                         "Quotes provider primary='%s' a echoue — tentative fallback",
                         primary_name,
@@ -786,13 +802,14 @@ def sync_latest_quotes(
                     used_provider,
                 )
         else:
-            expected_quote_dates = tuple(nyse_session_dates(resolved_from_date, resolved_to_date))
+            LOGGER.info("Quotes historiques : provider=alpaca feed=%s, sans fallback ; reprise requalifiée par flux/provenance", historical_feed)
             for index, symbol in enumerate(symbols, start=1):
                 resume_state = get_quote_snapshot_resume_state(
                     symbol,
                     from_date=resolved_from_date,
                     to_date=resolved_to_date,
                     expected_dates=expected_quote_dates,
+                    required_feed=historical_feed,
                 )
                 expected_days = _to_int(resume_state.get("expected_days", 0))
                 stored_days = _to_int(resume_state.get("stored_days", 0))
@@ -862,8 +879,9 @@ def sync_latest_quotes(
                 years_with_quotes: set[int] = set()
                 years_checked = 0
                 for check_year in all_years:
-                    year_start = date(check_year, 1, 1)
-                    year_end = date(check_year, 12, 31)
+                    # Basic SIP rejects a query ending in the future/recent 15m.
+                    year_start = max(date(check_year, 1, 1), resolved_from_date)
+                    year_end = min(date(check_year, 12, 31), expected_quote_dates[-1])
                     year_missing_days = sum(
                         len(nyse_session_dates(max(r_start, year_start), min(r_end, year_end)))
                         for r_start, r_end in missing_ranges
@@ -882,6 +900,11 @@ def sync_latest_quotes(
                         )
                         continue
 
+                    # Rolling daily runs need no duplicate pre-check request.
+                    if (year_end - year_start).days <= 31:
+                        years_with_quotes.add(check_year)
+                        continue
+
                     years_checked += 1
                     if _symbol_has_any_quotes_in_window(
                         symbol,
@@ -889,13 +912,14 @@ def sync_latest_quotes(
                         year_end,
                         session=session,
                         account_id=_bump_account(account_cycler),
+                        feed=historical_feed,
                     ):
                         years_with_quotes.add(check_year)
                     else:
                         year_open_utc, _ = get_nyse_session_bounds(year_start)
                         _, year_close_utc = get_nyse_session_bounds(year_end)
                         LOGGER.info(
-                            "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s pct=%.2f symbol=%s stage=skip_year_no_quotes_iex year=%s window_utc=%s..%s missing_days=%s total_rows_upserted=%s",
+                            "Sync latest quotes | mode=historical symbol_source=%s progress=%s/%s pct=%.2f symbol=%s stage=skip_year_no_quotes year=%s window_utc=%s..%s missing_days=%s total_rows_upserted=%s",
                             resolved_symbol_source,
                             index,
                             len(symbols),
@@ -973,13 +997,23 @@ def sync_latest_quotes(
                                 session_date,
                                 session=session,
                                 account_id=_bump_account(account_cycler),
+                                feed=historical_feed,
                             )
                             symbol_api_calls += 1
                             if quote is not None:
                                 row = _build_quote_snapshot_row(symbol, quote, fallback_utc_now=run_utc_now)
                                 row["quote_date"] = session_date
-                                symbol_rows.append(row)
-                                symbol_fetched_days += 1
+                                evidence = archive_quote(symbol, session_date, historical_feed, quote, _utc_now_naive())
+                                invalid_reason = quote_invalid_reason(row, session_date)
+                                if invalid_reason:
+                                    summary["invalid_quotes"] = summary.get("invalid_quotes", 0) + 1
+                                    LOGGER.warning("Quote historique exclue symbol=%s date=%s feed=%s reason=%s archive=%s",
+                                                   symbol, session_date, historical_feed, invalid_reason, evidence["raw_payload_path"])
+                                else:
+                                    row.update(evidence, quality_status="VALID_RTH")
+                                    row["source_timestamp"] = row["quote_timestamp"]
+                                    symbol_rows.append(row)
+                                    symbol_fetched_days += 1
 
                             # ── UPSERT incremental tous les N rows ──
                             if len(symbol_rows) >= HISTORICAL_UPSERT_BATCH_ROWS:
@@ -1066,6 +1100,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--start-symbol", type=str, default=None, help="Symbole optionnel à partir duquel commencer (les symboles alphabétiquement avant sont sautés)")
     parser.add_argument("--limit", type=int, default=None, help="Nombre maximum de symboles")
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE, help="Taille de batch pour l'appel latest quotes")
+    parser.add_argument("--feed", choices=("sip",), default=None,
+                        help="Flux historique (config.yaml market_data.quotes_historical_feed, défaut sip), aucun fallback")
     return parser
 
 
@@ -1096,6 +1132,8 @@ def main() -> None:
         }
         if resolved_start_symbol:
             sync_kwargs["start_symbol"] = resolved_start_symbol
+        if getattr(args, "feed", None):
+            sync_kwargs["feed"] = args.feed
         summary = sync_latest_quotes(
             **sync_kwargs,
         )
@@ -1197,6 +1235,7 @@ def main() -> None:
             "started_at": started_at.isoformat(timespec="seconds"),
             "finished_at": finished_at.isoformat(timespec="seconds"),
             "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
+            "quotes_feed": historical_quote_feed(getattr(args, "feed", None)) if resolved_from_date else "latest_unspecified",
             "from_date": args.from_date,
             "to_date": args.to_date,
             "symbol_source": normalize_symbol_source(args.symbol_source),

@@ -36,6 +36,7 @@ from common.market_calendar import is_trading_day, nyse_session_dates
 from database.connection import get_sqlalchemy_engine
 from risk_management.liquidity import BorrowStatus, alpaca_borrow_status
 from service.alpaca.clientAlpaca import fetch_alpaca_assets, get_alpaca_credentials
+from service.alpaca.sip_reference import historical_sip_snapshots
 from service.forward_pit.options_delayed import (
     option_contract_adjustment_sync,
     options_delayed_bars_sync,
@@ -1481,15 +1482,11 @@ def options_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool
         for chunk in _chunks(symbols, stock_chunk_size):
             if request_pause > 0:
                 time.sleep(request_pause)
-            payload, status = _request_json(
-                session, f"{ALPACA_DATA_URL}/v2/stocks/snapshots",
-                params={"symbols": ",".join(chunk), "feed": "iex"},
-                headers=headers,
-            )
+            payload, status = historical_sip_snapshots(session,chunk,headers,_request_json)
             if not dry:
                 _raw(
                     conn, run_id, "oracle_options_indicative_snapshot", "alpaca",
-                    "/v2/stocks/snapshots", "UNDERLYING:" + ",".join(chunk),
+                    "/v2/stocks/bars?feed=sip&timeframe=1Min", "UNDERLYING:" + ",".join(chunk),
                     payload, status, observed,
                 )
             if isinstance(payload, dict):
@@ -2051,6 +2048,7 @@ def latest_quotes_sync_batch(
     del engine  # La persistance canonique est gérée par sync_latest_quotes.
     from dataIntegrityEngine.sync_latest_quotes import sync_latest_quotes
     from database.cleaning_audits import record_quotes_audit_run
+    from common.quote_quality import historical_quote_feed
 
     symbols = _collection_symbols(cfg)
     lookback_days = max(0, int(cfg.get("lookback_days", 5)))
@@ -2069,7 +2067,7 @@ def latest_quotes_sync_batch(
             "lookback_days": lookback_days,
             "batch_size": batch_size,
             "symbol_source": symbol_source,
-            "feed": "iex",
+            "feed": historical_quote_feed(),
             "expected_sessions": len(nyse_session_dates(from_date, to_date)),
         },
     )

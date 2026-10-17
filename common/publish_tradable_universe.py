@@ -21,6 +21,7 @@ from common.instrument_policy import excluded_collective_instrument_reason
 from common.market_cap import compute_sec_market_cap, load_market_cap_config
 from common.tradable_universe import UniverseMember, begin_universe_run, fail_universe_run, publish_universe_run
 from database.connection import get_sqlalchemy_engine
+from common.quote_quality import PROVENANCE_COLUMNS, qualified_quote
 
 
 def _require_tables(engine: Engine) -> None:
@@ -48,7 +49,8 @@ def _load_source_scope(engine: Engine, snapshot_date: date, preset_key: str) -> 
                 WHERE snapshot_date = :snapshot_date
                   AND capital_preset_key = :preset_key
                   AND status = 'completed'
-                  AND is_canonical = 1
+                  AND data_quality_grade = 'degraded'
+                  AND market_code = 'US_EQ'
                   AND rows_written = rows_expected
                 ORDER BY finished_at DESC
                 LIMIT 1
@@ -93,7 +95,7 @@ def _load_objective_context(
         quotes = pd.read_sql(
             text(
                 f"""
-                SELECT q.symbol, q.spread_bps
+                SELECT q.*
                 FROM stock_quote_snapshots q
                 INNER JOIN (
                     SELECT symbol, MAX(quote_date) AS max_date
@@ -112,6 +114,12 @@ def _load_objective_context(
                 **symbol_params,
             },
         )
+        # Legacy/unknown or single-venue quotes must not masquerade as SIP.
+        if not PROVENANCE_COLUMNS.issubset(quotes.columns):
+            raise RuntimeError("Migration 0106_quote_provenance requise avant publication")
+        if not quotes.empty:
+            quotes = quotes.loc[[qualified_quote(row, pd.Timestamp(row["quote_date"]).date(), "sip")
+                                 for row in quotes.to_dict(orient="records")]]
         if market_cap_provider == "sec_edgar":
             market_value_column = "shares_outstanding"
             source_value = "SEC_EDGAR"
@@ -260,6 +268,8 @@ def publish_full_tradable_universe(
     market_code: str = "US_EQ",
 ) -> str:
     """Publish an immutable full-quality run from the exact screener run."""
+    if str(market_code).strip().upper() != "US_EQ":
+        raise ValueError("Ce publieur de quotes SIP est réservé au marché US_EQ")
     _require_tables(engine)
     preset = require_capital_preset(capital_preset_key)
     thresholds = build_selector_config_kwargs_from_preset(preset)
@@ -383,6 +393,9 @@ def publish_full_tradable_universe(
         )
 
     fingerprint_payload = {
+        "quote_policy": "alpaca_sip_valid_rth_15m_archive_v1",
+        "quote_inputs_sha256": hashlib.sha256(quotes.sort_values("symbol").to_json(
+            orient="records", date_format="iso").encode()).hexdigest(),
         "source_run_id": source_run["universe_run_id"],
         "source_fingerprint": source_run["config_fingerprint"],
         "preset_key": preset.key,

@@ -391,7 +391,7 @@ analyst_snapshot_collection:
   recovery_success_lookback_hours: 10
   log_file: log/batch/analyst_snapshots.txt
 
-# Snapshot bid/ask quotidien Alpaca IEX avec rattrapage idempotent J-7 -> J.
+# Snapshot bid/ask historique Alpaca SIP avec rattrapage idempotent J-7 -> J.
 # L'horaire est exprimé en heure de New York afin de suivre automatiquement
 # les changements d'heure US/France et de démarrer après la clôture régulière.
 latest_quotes_sync:
@@ -405,7 +405,7 @@ latest_quotes_sync:
   unlock_steps:
     - "Inclure 4 dans config.yaml → us_pipeline.steps pour maintenir la collecte quotidienne."
     - "Si une planification autonome est nécessaire, retirer d'abord l'étape 4 du pipeline avant réactivation pour éviter le doublon."
-  provider: alpaca_iex
+  provider: alpaca_sip
   timezone: America/New_York
   run_hours: "17"
   run_minutes: "15"
@@ -413,7 +413,7 @@ latest_quotes_sync:
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   lookback_days: 7
   batch_size: 200
-  research_notice: "Planification autonome désactivée : collecte exécutée à l'étape 4 de us_pipeline, même univers et J-7/J. Ne pas réactiver en parallèle ; le collecteur CLI reste disponible manuellement. Quotes Alpaca Basic IEX, pas SIP/NBBO consolidé."
+  research_notice: "Planification autonome désactivée : collecte exécutée à l'étape 4 de us_pipeline, même univers et J-7/J. Ne pas réactiver en parallèle. Quotes historiques SIP consolidées (config.yaml market_data.quotes_historical_feed), après clôture +15 min, sans fallback IEX ; archivage brut et reprise requalifiée par flux/provenance."
   log_file: log/batch/latest_quotes_sync.txt
 
 # Tous les horaires sont exprimés dans timezone et interprétés par le lanceur.

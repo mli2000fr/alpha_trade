@@ -1530,6 +1530,8 @@ def _render_launchable_step_panel(
                       disabled=True, use_container_width=True)
             _render_step_result(latest_by_step.get(step.key))
         return
+    from ihm.services.llm_manual_handoff import bind_manual_handoff
+    options, llm_handoff = bind_manual_handoff(step.key, options, all_runs)
     command_preview = format_command_for_display(build_pipeline_command(step.key, options))
     with st.expander(f"**{step.num}. {resolve_step_display_name(step)}**", expanded=False):
         info_col, action_col = st.columns([5, 2])
@@ -1542,6 +1544,17 @@ def _render_launchable_step_panel(
                 st.caption(f"🏦 Cette étape utilise le compte Alpaca sélectionné : `{options.account_id or 'default'}`")
             else:
                 st.caption("🌐 Cette étape est globale et n'utilise pas le sélecteur de compte Alpaca.")
+            if llm_handoff is not None:
+                if llm_handoff.error:
+                    st.warning(llm_handoff.error)
+                elif llm_handoff.manual:
+                    st.caption(f"Analyse LLM explicitement renseignée : `{llm_handoff.run_id}`. "
+                               "Les contrôles de date, compte, validité et consommation restent obligatoires.")
+                else:
+                    st.info(f"Analyse LLM préremplie automatiquement : `{llm_handoff.run_id}` — "
+                            f"étape {llm_handoff.source_step} terminée le {llm_handoff.finished_at_paris} (Paris).")
+                    st.caption(f"Lancement source : `{llm_handoff.source_run_id}`. "
+                               "Ce préremplissage ne valide pas le risque et ne lance aucun ordre.")
             if step.key in {"sync_latest_quotes", "sync_earnings_calendar"}:
                 _render_dependency_health_inline(step.key, dependency_diagnostic)
             if step.key == "execution":
@@ -1658,6 +1671,8 @@ def _render_launchable_step_panel(
 
             execution_locked = step.key == "execution" and options.execution_mode == "live" and not live_confirmed
             state_machine_lock_reason = _pipeline_state_machine_lock_reason(step.key, latest_by_step)
+            if llm_handoff is not None and llm_handoff.error:
+                state_machine_lock_reason = llm_handoff.error
             live_guard_lock_reason = (
                 "Gel IHM actif : un run d'exécution live est encore en cours."
                 if bool(live_guard.get("active", False))

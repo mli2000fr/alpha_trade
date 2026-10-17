@@ -11,7 +11,7 @@ database:
 
 intraday_backfill:
   provider: alpaca  # alpaca | eodhd ; défaut de la page et de la commande.
-  alpaca_feed: sip  # iex | sip ; jamais de remplacement silencieux entre flux.
+  alpaca_feed: sip  # SIP obligatoire ; les anciens plans IEX ne sont pas réutilisés.
   account_id: default  # Clés du compte principal via le registre Alpaca existant.
 
 oracle_path:
@@ -502,7 +502,7 @@ screener:
 # ---------------------------------------------------------------------------
 # Source primaire des barres OHLCV (`stock_bars` + `stock_bars_daily`).
 # Voir prompt/iex/plan_eodhd.md.
-# - alpaca : comportement historique (Alpaca/IEX, biais volume IEX).
+# - alpaca : SIP historique, borne end retardée de vingt minutes, sans fallback IEX.
 # - eodhd  : EODHD bulk EOD (volume consolidé proxy, recommandé).
 # - Aucun fallback automatique inter-provider n'est implémenté : le switch est
 #   explicite via `market_data.bars_provider` (config/IHM). En cas d'échec du
@@ -513,15 +513,17 @@ screener:
 # ---------------------------------------------------------------------------
 market_data:
   bars_provider: eodhd   # alpaca | eodhd  (défaut recommandé : eodhd — pilotable depuis IHM › Paramètres)
-  alpaca_backfill_feed: sip  # B3 seulement si bars_provider=alpaca : sip | iex, sans fallback. L'étape 1 reste inchangée.
+  alpaca_backfill_feed: sip  # SIP pour les téléchargements Alpaca ; aucun fallback IEX.
 
   # ── Provider quotes live (mode latest) ──
   # `quotes_provider_live` : provider principal pour les snapshots bid/ask temps réel.
-  #   Valeurs : 'yahoo' (défaut) | 'alpaca'
-  # `quotes_provider_live_second` : provider de secours si le principal échoue
-  #   ou ne retourne aucune donnée. Optionnel.
-  quotes_provider_live: yahoo
-  quotes_provider_live_second: alpaca
+  #   Politique courante : 'alpaca', SIP explicite, droits temps réel requis.
+  # `quotes_provider_live_second` reste vide : un refus SIP doit rester visible.
+  quotes_provider_live: alpaca  # SIP explicite ; HTTP 403 si le compte n'a pas les droits temps réel.
+  quotes_provider_live_second: null  # Aucun fallback de fournisseur/flux pour masquer un refus SIP.
+  # Quotes historiques de clôture (étape 4) : SIP consolidé, end vieux de >=15 min.
+  # Aucun fallback IEX ; les lignes sans ce flux/provenance seront requalifiées.
+  quotes_historical_feed: sip
 
 # ---------------------------------------------------------------------------
 # Capitalisation utilisée pour publier l'univers tradable PIT.

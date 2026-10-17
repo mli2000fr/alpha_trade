@@ -23,6 +23,12 @@ from modelFactory.db_registry import load_tradable_universe_symbols
 from risk_management.db_io import RiskRepository
 
 
+@pytest.fixture(autouse=True)
+def _stub_archive_verification(monkeypatch):
+    # Other gates are covered here; real archive validation has separate tests.
+    monkeypatch.setattr("common.quote_quality.quote_evidence_valid", lambda row: True)
+
+
 @pytest.fixture()
 def engine():
     database = create_engine("sqlite:///:memory:")
@@ -55,7 +61,19 @@ def engine():
                 """
             )
         )
-        connection.execute(text("CREATE TABLE stock_quote_snapshots (symbol VARCHAR(32), quote_date DATE, spread_bps FLOAT)"))
+        connection.execute(text("""CREATE TABLE stock_quote_snapshots (
+            symbol VARCHAR(32), quote_date DATE, spread_bps FLOAT,
+            quote_timestamp DATETIME, source_timestamp DATETIME, bid_price FLOAT, ask_price FLOAT,
+            bid_size FLOAT DEFAULT 100, ask_size FLOAT DEFAULT 100,
+            provider TEXT DEFAULT 'alpaca', feed TEXT DEFAULT 'sip',
+            quality_status TEXT DEFAULT 'VALID_RTH', collected_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            raw_payload_sha256 TEXT DEFAULT '0000000000000000000000000000000000000000000000000000000000000000',
+            raw_payload_path TEXT DEFAULT 'fixture.json')"""))
+        connection.execute(text("""CREATE TRIGGER fixture_quote AFTER INSERT ON stock_quote_snapshots BEGIN
+            UPDATE stock_quote_snapshots SET bid_price=100,
+                ask_price=100*(20000+NEW.spread_bps)/(20000-NEW.spread_bps),
+                quote_timestamp=NEW.quote_date || ' 21:00:00'
+            WHERE rowid=NEW.rowid; END"""))
         connection.execute(text("CREATE TABLE stock_earnings_calendar (symbol VARCHAR(32), earnings_date DATE)"))
         connection.execute(
             text(
@@ -195,7 +213,7 @@ def test_publish_full_universe_applies_objective_context_without_mutating_source
     publish_universe_run(engine, "source-degraded", source_members)
     with engine.begin() as connection:
         connection.execute(
-            text("INSERT INTO stock_quote_snapshots VALUES (:symbol, :quote_date, :spread_bps)"),
+            text("INSERT INTO stock_quote_snapshots (symbol, quote_date, spread_bps) VALUES (:symbol, :quote_date, :spread_bps)"),
             [
                 {"symbol": "AAPL", "quote_date": snapshot_date, "spread_bps": 5.0},
                 {"symbol": "WIDE", "quote_date": snapshot_date, "spread_bps": 500.0},
@@ -276,7 +294,7 @@ def test_publish_full_universe_sec_rejects_stale_shares(engine) -> None:
     )
     with engine.begin() as connection:
         connection.execute(
-            text("INSERT INTO stock_quote_snapshots VALUES ('AAPL', :d, 5.0)"),
+            text("INSERT INTO stock_quote_snapshots (symbol, quote_date, spread_bps) VALUES ('AAPL', :d, 5.0)"),
             {"d": snapshot_date},
         )
         connection.execute(
@@ -327,7 +345,7 @@ def test_publish_full_universe_can_switch_back_to_eodhd(engine) -> None:
     )
     with engine.begin() as connection:
         connection.execute(
-            text("INSERT INTO stock_quote_snapshots VALUES ('AAPL', :d, 5.0)"),
+            text("INSERT INTO stock_quote_snapshots (symbol, quote_date, spread_bps) VALUES ('AAPL', :d, 5.0)"),
             {"d": snapshot_date},
         )
         connection.execute(
@@ -387,7 +405,7 @@ def test_publish_full_universe_liquidity_only_ignores_market_cap(engine) -> None
     )
     with engine.begin() as connection:
         connection.execute(
-            text("INSERT INTO stock_quote_snapshots VALUES ('AAPL', :d, 5.0)"),
+            text("INSERT INTO stock_quote_snapshots (symbol, quote_date, spread_bps) VALUES ('AAPL', :d, 5.0)"),
             {"d": snapshot_date},
         )
         # Valeur volontairement périmée et sous le seuil : elle ne doit être ni
@@ -442,7 +460,7 @@ def test_publish_chain_prefers_yahoo_and_excludes_etf(engine) -> None:
     )
     with engine.begin() as connection:
         connection.execute(
-            text("INSERT INTO stock_quote_snapshots VALUES (:symbol, :d, 5.0)"),
+            text("INSERT INTO stock_quote_snapshots (symbol, quote_date, spread_bps) VALUES (:symbol, :d, 5.0)"),
             [{"symbol": "AAPL", "d": snapshot_date}, {"symbol": "SPY", "d": snapshot_date}],
         )
         connection.execute(
@@ -565,3 +583,24 @@ def test_backtest_scope_resolves_each_date_asof_its_canonical_universe(engine) -
 
     assert scope["universe_run_id"].tolist() == ["first", "second"]
     assert scope["symbol"].tolist() == ["AAPL", "AAPL"]
+
+
+def test_republication_uses_original_screener_not_previous_full_rejections(engine):
+    day = date(2025, 1, 2)
+    begin_universe_run(engine, universe_run_id="screener-source", snapshot_date=day,
+                       capital_preset_key=DEFAULT_CAPITAL_PRESET_KEY,
+                       config_fingerprint="source", rows_expected=1, data_quality_grade="degraded")
+    publish_universe_run(engine, "screener-source", [UniverseMember(
+        "AAPL", True, "tradable", history_days=600, close_price=200,
+        adv_usd=50_000_000, data_quality_grade="degraded")])
+    with engine.begin() as c:
+        c.execute(text("INSERT INTO stock_quote_snapshots (symbol,quote_date,spread_bps) VALUES ('AAPL',:day,500)"),{"day":day})
+    first = publish_full_tradable_universe(engine,snapshot_date=day,market_cap_policy="liquidity_only")
+    with engine.connect() as c:
+        assert c.execute(text("SELECT tradability_reason_code FROM tradable_universe_history WHERE universe_run_id=:uid"),{"uid":first}).scalar_one() == "spread_above_maximum"
+    with engine.begin() as c:
+        c.execute(text("UPDATE stock_quote_snapshots SET spread_bps=5, ask_price=100*(20000.0+5)/(20000-5)"))
+    second = publish_full_tradable_universe(engine,snapshot_date=day,market_cap_policy="liquidity_only")
+    with engine.connect() as c:
+        assert c.execute(text("SELECT is_tradable FROM tradable_universe_history WHERE universe_run_id=:uid"),{"uid":second}).scalar_one() == 1
+        assert c.execute(text("SELECT is_tradable FROM tradable_universe_history WHERE universe_run_id=:uid"),{"uid":first}).scalar_one() == 0

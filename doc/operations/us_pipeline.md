@@ -12,6 +12,20 @@ cibles risque, puis ordres/exécutions observées. Voir le
 [contrat des notifications](pipeline_telegram_10_11_12.md), notamment la distinction
 entre ordre en attente et exécution réellement remplie.
 
+Depuis le correctif du 17 octobre, l’étape 4 utilise les **quotes historiques
+SIP**, selon `market_data.quotes_historical_feed: sip`, sans repli IEX. Les
+anciennes lignes sont requalifiées par flux et provenance à la reprise ;
+l’étape 6 republie depuis le snapshot Screener d’origine. Voir le
+[correctif quotes SIP et ses contrôles](correctif_quotes_sip_20261017.md).
+
+La [politique SIP du projet](migration_iex_vers_sip.md) s’applique aussi aux
+collecteurs de barres Alpaca, aux références actions utilisées par les options
+et aux nouvelles entrées. Le compte principal refuse actuellement le SIP temps
+réel (HTTP 403) : **l’étape 12 ne peut donc pas ouvrir de nouvelles positions**,
+même après approbation risque. Les sorties et protections déjà présentes restent
+sur leur chemin distinct ; aucun fallback IEX n’est autorisé. Le SIP historique
+retardé reste accessible, mais ne remplace pas une quote temps réel d’exécution.
+
 `us_pipeline`, déclaré dans `batch.yaml`, enchaîne les étapes sélectionnées dans
 `config.yaml`, dans le même moteur de workflow que la page Pipeline :
 `us_pipeline.steps` pour les séances US du lundi au jeudi, et

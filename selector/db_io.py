@@ -605,10 +605,13 @@ def fetch_quote_snapshots(
     if not symbols:
         return pd.DataFrame(columns=empty_columns)
 
+    from common.quote_quality import PROVENANCE_COLUMNS, qualified_quote
+    if not PROVENANCE_COLUMNS.issubset(available_columns):
+        LOGGER.warning("Quotes legacy sans provenance SIP ignorées ; migration requise")
+        return pd.DataFrame(columns=empty_columns)
+
     effective_reference_date = reference_date or date.today()
-    select_clause = "q.symbol, q.quote_date, q.spread_bps"
-    if select_extra:
-        select_clause = select_clause + ", " + ", ".join(select_extra)
+    select_clause = "q.*"
 
     stmt = text(
         f"""
@@ -634,6 +637,9 @@ def fetch_quote_snapshots(
         LOGGER.warning("Lecture stock_quote_snapshots indisponible; filtre de spread desactive.")
         return pd.DataFrame(columns=empty_columns)
     normalized_quotes = quotes_df.copy()
+    if not normalized_quotes.empty:
+        normalized_quotes = normalized_quotes.loc[[qualified_quote(row,pd.Timestamp(row['quote_date']).date())
+                                                  for row in normalized_quotes.to_dict(orient='records')]]
     for column in empty_columns:
         if column not in normalized_quotes.columns:
             normalized_quotes[column] = pd.NA
@@ -645,15 +651,7 @@ def fetch_quote_snapshots(
     normalized_quotes["quote_age_days"] = (
         pd.Timestamp(effective_reference_date).normalize() - quote_dates.dt.normalize()
     ).dt.days.where(quote_dates.notna(), pd.NA)
-    normalized_quotes["quote_source"] = pd.Series("alpaca_quote_snapshots", index=normalized_quotes.index, dtype="object")
-    normalized_quotes.loc[
-        normalized_quotes["quote_age_days"].fillna(9999).astype(float) <= 0,
-        "quote_source",
-    ] = "alpaca_latest_snapshot"
-    normalized_quotes.loc[
-        normalized_quotes["quote_age_days"].fillna(9999).astype(float) > 0,
-        "quote_source",
-    ] = "alpaca_historical_snapshot"
+    normalized_quotes["quote_source"] = pd.Series("alpaca_sip", index=normalized_quotes.index, dtype="object")
     normalized_quotes["quote_size_quality"] = pd.Series("missing", index=normalized_quotes.index, dtype="object")
     two_sided_mask = bid_size.gt(0) & ask_size.gt(0)
     normalized_quotes.loc[two_sided_mask, "quote_size_quality"] = "thin"

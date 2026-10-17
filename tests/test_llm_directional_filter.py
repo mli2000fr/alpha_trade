@@ -426,6 +426,54 @@ def test_archived_ranking_and_request_match_input_snapshot(isolated, field, valu
         runner.qualified_selection(isolated, 'test-run', date(2026, 10, 7), 'default', now=NOW)
 
 
+@pytest.mark.parametrize('score', [
+    .8597901389016575, .8273404691012134, .8265708936510576,
+    .8103805002112237, .81038049, .7883627480639596, .0123456789, 0., 1.,
+])
+@pytest.mark.parametrize('representation', ['exact', 'binary32', 'mysql_text'])
+def test_score_storage_representation_matches_without_changing_rank(score, representation):
+    import struct
+    single = struct.unpack('!f', struct.pack('!f', score))[0]
+    stored = {'exact': score, 'binary32': single, 'mysql_text': float(format(single, '.6g'))}[representation]
+    assert runner._oracle_score_matches_snapshot(stored, score)
+
+
+@pytest.mark.parametrize('stored', [None, True, False, '0.85979', float('nan'), float('inf'),
+                                  -.1, 1.1, .859791, .8597902389016575])
+def test_unexplained_score_change_is_not_a_rounding_exception(stored):
+    assert not runner._oracle_score_matches_snapshot(stored, .8597901389016575)
+
+
+def test_paper_selection_accepts_mysql_float_roundtrip_and_keeps_hashed_score(isolated):
+    contexts = [dict(symbol='ABC', oracle_rank=1, oracle_score=.8597901389016575),
+                dict(symbol='XYZ', oracle_rank=2, oracle_score=.8273404691012134)]
+    runner.analyze(engine=isolated, batch_id='batch-test', trade_date=date(2026, 10, 7),
+        symbol_source='universe-file:test.txt', config=FilterConfig(enabled=True, max_selected=2),
+        inputs=contexts, client=lambda request: response(json.loads(request['input'])['symbol']),
+        run_id='float-roundtrip', check_account=False)
+    with isolated.begin() as conn:
+        conn.execute(update(assessments).where(assessments.c.symbol == 'ABC').values(oracle_score=.85979))
+        conn.execute(update(assessments).where(assessments.c.symbol == 'XYZ').values(oracle_score=.82734))
+    _, chosen = runner.qualified_selection(isolated, 'float-roundtrip', date(2026, 10, 7), 'default', now=NOW)
+    assert [item['symbol'] for item in chosen] == ['ABC', 'XYZ']
+    assert [item['oracle_score'] for item in chosen] == [context['oracle_score'] for context in contexts]
+    # The SQL archive remains intact; no repair of historical responses needed.
+    _, archived = Repository(isolated).get('float-roundtrip')
+    assert archived[0]['oracle_score'] == .85979
+
+
+def test_score_fix_does_not_accept_a_changed_request(isolated):
+    analyze(isolated, lambda request: response(json.loads(request['input'])['symbol']))
+    _, items = Repository(isolated).get('test-run')
+    request = json.loads(items[0]['request_json'])
+    request['model'] = 'other-model'
+    with isolated.begin() as conn:
+        conn.execute(update(assessments).where(assessments.c.symbol == 'ABC')
+                     .values(request_json=dumps(request)))
+    with pytest.raises(ValueError, match='Requête LLM incompatible'):
+        runner.qualified_selection(isolated, 'test-run', date(2026, 10, 7), 'default', now=NOW)
+
+
 def test_raw_persisted_before_validation(isolated, monkeypatch):
     original = runner.parse_response
     def parsing(raw, symbol, config, observed):

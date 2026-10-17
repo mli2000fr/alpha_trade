@@ -1364,7 +1364,7 @@ def test_iter_eligible_symbol_chunks_excludes_blocked_history_statuses_in_sql() 
     assert chunks == [["AAA"]]
 
 
-def test_run_supports_strict_swing_preset_filters() -> None:
+def test_run_supports_strict_swing_preset_filters(monkeypatch) -> None:
     engine = _create_shared_sqlite_engine()
     with engine.begin() as conn:
         conn.execute(
@@ -1503,6 +1503,11 @@ def test_run_supports_strict_swing_preset_filters() -> None:
         config=AlphaScannerConfig.strict_swing_cash(selection_size=5, chunk_size=2, max_workers=1, min_beta_126=None),
     )
     scanner.snapshot_date_override = date(2026, 4, 22)
+    # This test isolates the price/RS/earnings gates. SIP provenance is
+    # exercised by test_sip_project_policy with a real sealed SQLite fixture.
+    monkeypatch.setattr(scanner,'fetch_quote_snapshots',lambda *a,**k:pd.DataFrame([
+        {'symbol':'AAA','quote_date':date(2026,4,22),'spread_bps':12.0,'quote_source':'alpaca_sip'},
+        {'symbol':'BBB','quote_date':date(2026,4,22),'spread_bps':40.0,'quote_source':'alpaca_sip'}]))
 
     result = scanner.run()
 

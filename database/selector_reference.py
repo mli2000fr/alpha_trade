@@ -114,6 +114,11 @@ def upsert_quote_snapshots(records: Iterable[dict[str, Any]]) -> int:
 
     table = get_stock_quote_snapshots_table()
     available_columns = {column.name for column in table.columns.values()}
+    from common.quote_quality import PROVENANCE_COLUMNS
+    if any(row.get("quality_status") for row in rows) and not PROVENANCE_COLUMNS.issubset(available_columns):
+        raise RuntimeError("Migration 0106_quote_provenance requise avant collecte historique")
+    # A legacy/latest overwrite must never inherit a previous SIP qualification.
+    rows = [{**row, **{key: row.get(key) for key in PROVENANCE_COLUMNS if key in available_columns}} for row in rows]
     rows = [{key: value for key, value in row.items() if key in available_columns} for row in rows]
     rows = [row for row in rows if {"symbol", "quote_date"}.issubset(row)]
     if not rows:
@@ -135,6 +140,8 @@ def upsert_quote_snapshots(records: Iterable[dict[str, Any]]) -> int:
             inserted_updates["ask_size"] = stmt.inserted.ask_size
         if "spread_bps" in available_columns:
             inserted_updates["spread_bps"] = stmt.inserted.spread_bps
+        for key in PROVENANCE_COLUMNS.intersection(available_columns):
+            inserted_updates[key] = getattr(stmt.inserted, key)
         update_dict: dict[str, Any] = dict(inserted_updates)
         if "last_updated" in available_columns:
             update_dict["last_updated"] = func.current_timestamp()
@@ -200,6 +207,7 @@ def get_quote_snapshot_resume_state(
     from_date: date,
     to_date: date,
     expected_dates: Iterable[date] | None = None,
+    required_feed: str | None = None,
 ) -> dict[str, object]:
     cleaned_symbol = str(symbol or "").strip().upper()
     if not cleaned_symbol:
@@ -223,7 +231,7 @@ def get_quote_snapshot_resume_state(
         stored_raw = conn.execute(
             text(
                 """
-                SELECT DISTINCT quote_date
+                SELECT *
                 FROM stock_quote_snapshots
                 WHERE symbol = :symbol
                   AND quote_date BETWEEN :from_date AND :to_date
@@ -231,7 +239,7 @@ def get_quote_snapshot_resume_state(
                 """
             ),
             params,
-        ).scalars().all()
+        ).mappings().all()
 
     expected_sequence: list[date] = [
         normalized
@@ -242,7 +250,8 @@ def get_quote_snapshot_resume_state(
     stored_dates: set[date] = {
         normalized
         for raw in stored_raw
-        if (normalized := _coerce_sql_date(raw)) is not None
+        if (normalized := _coerce_sql_date(raw["quote_date"])) is not None
+        and (required_feed is None or _qualified_resume_quote(raw, normalized, required_feed))
     }
     missing_dates: list[date] = sorted(expected_dates_set.difference(stored_dates))
     missing_ranges = _collapse_contiguous_dates(missing_dates, expected_order=expected_sequence)
@@ -256,6 +265,11 @@ def get_quote_snapshot_resume_state(
         "first_missing_date": missing_dates[0] if missing_dates else None,
         "missing_ranges": missing_ranges,
     }
+
+
+def _qualified_resume_quote(row, day, feed):
+    from common.quote_quality import qualified_quote
+    return qualified_quote(row, day, feed)
 
 
 def upsert_earnings_calendar(records: Iterable[dict[str, Any]]) -> int:

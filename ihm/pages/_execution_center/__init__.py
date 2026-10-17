@@ -3416,7 +3416,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                        'hors séance et rééquilibrage automatique interdits.')
             llm_filter_run_id = st.text_input('Identifiant analyse LLM (vide = nouveau run pour le workflow)',
                 key='pipeline_llm_filter_run_id',
-                help='Pour lancer 11/12 séparément, recopier le run_id affiché après étape 10. Ne pas utiliser auto.') or None
+                help='Vide : nouveau run pour un workflow incluant 10 ; pour les boutons séparés, '
+                     '11 reprend le dernier 10 réussi et 12 le dernier 11 réussi du compte et de la séance. '
+                     'Le bloc de l’étape indique l’identifiant et la date de fin source. '
+                     'Renseigner un identifiant ici force un choix explicite. Ne pas utiliser auto.') or None
         ml_oracle_barrier_model_only = st.checkbox(
             "🎯 Oracle TP avant SL — amplitude + direction LONG/SHORT, recherche uniquement",
             value=_session_state_bool("pipeline_ml_oracle_barrier_model_only", False),
@@ -3892,7 +3895,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                             str(st.session_state.get("pipeline_ml_liquidity_spread_fallback_mode", DEFAULT_ML_LIQUIDITY_SPREAD_FALLBACK_MODE))
                         ),
                         key="pipeline_ml_liquidity_spread_fallback_mode",
-                        help="pass = laisse passer si pas de quote (best-effort) | reject = rejette le symbole (strict) | warn_only = passe mais alerte si couverture < 95%%. Les small caps sans couverture IEX sont souvent sans quote.",
+                        help="pass = laisse passer le contrôle de liquidité sans quote | reject = rejette le symbole | warn_only = alerte si couverture < 95%%. Indépendamment de ce choix, les nouvelles entrées Alpaca exigent une quote SIP temps réel valide ; aucun fallback IEX.",
                     )
                 with liq_spread_col3:
                     ml_liquidity_spread_max_quote_age_days = int(

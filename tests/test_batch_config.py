@@ -244,7 +244,7 @@ def test_latest_quotes_batch_uses_safe_idempotent_catchup_window() -> None:
     assert quotes['status'] == 'INTEGRATED_IN_US_PIPELINE'
     assert batch['us_pipeline']['quotes_collection']['lookback_days'] == 7
     assert quotes["priority"] == "P0"
-    assert quotes["provider"] == "alpaca_iex"
+    assert quotes["provider"] == "alpaca_sip"
     assert quotes["timezone"] == "America/New_York"
     assert quotes["run_hours"] == "17"
     assert quotes["run_minutes"] == "15"

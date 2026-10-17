@@ -11,6 +11,22 @@ ordres/exécutions observées à l’étape 12. Le fournisseur est celui archiv�
 l’analyse, pas un libellé GPT figé. Voir
 [notifications et limites](../operations/pipeline_telegram_10_11_12.md).
 
+Correctif du 17 octobre : le contrôle avant risque reconnaît la représentation
+MySQL `FLOAT` du score Oracle sans modifier le classement ni la requête ;
+le score du snapshot vérifié reste la référence. Voir le
+[diagnostic et la reprise de l’étape 11](../operations/correctif_llm_risk_score_20261017.md).
+
+Le lecteur d’état du régime reconnaît également l’objet vide `{}` écrit par
+`save_regime_state(None)` : absence d’état précédent, pas un régime « normal »
+imposé. Le calcul et les gardes restent obligatoires. Voir le
+[correctif du cache et la réservation risque à reprendre](../operations/correctif_etat_regime_vide_20261017.md).
+
+Le risque reprend le **preset d’univers archivé dans l’analyse LLM**, même si
+l’equity réelle a changé de tranche. Cela ne modifie ni le capital disponible,
+ni les paramètres de sizing ou de risque, toujours calculés avec l’equity réelle.
+Un titre LLM hors de l’univers tradable reste exclu. Voir le
+[correctif de cohérence du preset d’univers](../operations/correctif_preset_univers_llm_20261017.md).
+
 ## 15 octobre 2026 — cache des news stockées, distinct du Web quotidien
 
 Les analyses de recherche sur les articles déjà en base peuvent être conservées
@@ -550,9 +566,17 @@ slippage, suspensions, annulations ou indisponibilité du service restent possib
 5. Lancer un workflow comprenant 10 → 11 → 12 : un identifiant LLM unique est
    partagé entre les trois étapes. L’étape 12 utilise PAPER même si le mode global
    affiché était simulate ; LIVE est refusé, jamais converti silencieusement.
-6. Pour lancer les étapes séparément : copier le `run_id` renvoyé par l’étape 10
-   dans le champ **Identifiant analyse LLM** avant 11 puis 12. Ne pas utiliser auto
-   pour risque/exécution. Réutiliser un run déjà consommé échoue volontairement.
+6. Pour lancer les étapes séparément : laisser **Identifiant analyse LLM** vide.
+   Le bloc 11 reprend automatiquement l’identifiant exact du dernier lancement
+   10 terminé avec succès pour le compte, la séance, le modèle et l’univers
+   sélectionnés. Il affiche cet identifiant et la **date de fin de 10 en heure
+   de Paris** ; l’aperçu et le bouton utilisent le même identifiant. Le bloc 12
+   reprend ensuite celui du dernier 11 réussi. Un échec plus récent ne provoque
+   aucun repli silencieux vers une ancienne réussite. Un identifiant renseigné
+   explicitement dans les paramètres conserve la priorité. Ne pas utiliser auto
+   pour risque/exécution. La validité, la fraîcheur et la non-consommation du run
+   restent contrôlées côté serveur ; aucun ordre n’est envoyé par le préremplissage.
+   Voir [la reprise manuelle et ses limites](../operations/llm_reprise_manuelle_10_11.md).
 7. Dans **« Audit des sélections GPT + Web — PAPER »**, saisir l’identifiant pour
    consulter tous les titres, les motifs, sources, configuration et évaluations.
 

@@ -6,7 +6,7 @@ from database.repositories._base import Repository
 
 
 class QuotesRepository(Repository):
-    """Repository des snapshots de quotes IEX (NBBO)."""
+    """Snapshots bid/ask avec provenance ; IEX n'est pas un NBBO consolidé."""
 
     def get_table(self):  # pragma: no cover - thin wrapper
         return _legacy.get_stock_quote_snapshots_table()

@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 import requests
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
+from service.alpaca.sip_reference import historical_sip_snapshots
 
 LOGGER = logging.getLogger(__name__)
 ALPACA_DATA_URL = "https://data.alpaca.markets"
@@ -164,9 +165,9 @@ def options_delayed_bars_sync(engine: Engine, cfg: dict[str, Any], run_id: str, 
     with requests.Session() as session, engine.begin() as conn:
         shared._configure_alpaca_session(session, use_system_trust_store=bool(cfg.get("use_system_trust_store", True)))
         for chunk_no, chunk in enumerate(shared._chunks(symbols, int(cfg.get("stock_snapshot_batch_size", 100))), 1):
-            payload, status = shared._request_json(session, f"{ALPACA_DATA_URL}/v2/stocks/snapshots", params={"symbols": ",".join(chunk), "feed": "iex"}, headers=headers)
+            payload, status = historical_sip_snapshots(session,chunk,headers,shared._request_json)
             if not dry:
-                shared._raw(conn, run_id, "options_delayed_bars_sync", "alpaca", "/v2/stocks/snapshots", f"chunk:{chunk_no}", payload, status, observed)
+                shared._raw(conn, run_id, "options_delayed_bars_sync", "alpaca", "/v2/stocks/bars?feed=sip&timeframe=1Min", f"chunk:{chunk_no}", payload, status, observed)
             for symbol, item in payload.items() if isinstance(payload, dict) else []:
                 price = shared._underlying_price(item) if isinstance(item, dict) else None
                 if price:
@@ -304,7 +305,7 @@ def main(argv: list[str] | None = None) -> int:
     with requests.Session() as session:
         shared._configure_alpaca_session(session, use_system_trust_store=True)
         for underlying in [x.strip().upper() for x in args.symbols.split(",") if x.strip()]:
-            stock, _ = shared._request_json(session, f"{ALPACA_DATA_URL}/v2/stocks/{underlying}/bars", params={"timeframe": "1Day", "start": day.isoformat(), "end": (day + timedelta(days=1)).isoformat(), "feed": "iex", "limit": 1}, headers=headers)
+            stock, _ = shared._request_json(session, f"{ALPACA_DATA_URL}/v2/stocks/{underlying}/bars", params={"timeframe": "1Day", "start": day.isoformat(), "end": (day + timedelta(days=1)).isoformat(), "feed": "sip", "limit": 1}, headers=headers)
             stock_bars = stock.get("bars") or []
             spot = _float(stock_bars[-1].get("c")) if stock_bars else None
             if not spot:

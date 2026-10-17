@@ -13,7 +13,7 @@ class DailyHistoryBlocked(RuntimeError):
 
 
 def fetch_daily_history(symbol,*,start,end,feed='sip',account_id='default',session=None,now=None):
-    if feed not in ('sip','iex'):raise ValueError('Invalid daily Alpaca feed')
+    if feed != 'sip':raise ValueError('SIP daily obligatoire, aucun fallback IEX')
     now=now or datetime.now(timezone.utc)
     boundary=datetime.fromisoformat(end).replace(tzinfo=ZoneInfo('America/New_York'))+timedelta(days=1)
     cutoff=min(boundary.astimezone(timezone.utc),now-timedelta(minutes=20))

@@ -12,12 +12,11 @@ Avant Phase 3.2.c ce module n'était qu'une façade ré-exportant
   rétro-compatible pour ne pas casser les imports historiques (IHM, scripts
   ``prompt/fix_swing/``…).
 
-Phase 3.3.c/d ajoute deux extensions IEX :
+Compatibilité historique Phase 3.3.c/d :
 
-- ``max_spread_bps_iex`` + ``min_quote_size`` : relâchement contrôlé du
-  filtre ``spread_bps`` quand le carnet IEX est mince (``bid_size`` /
-  ``ask_size`` faibles) — le rejet "spread trop large" est levé seulement si
-  les tailles dépassent ``min_quote_size``.
+- ``max_spread_bps_iex`` + ``min_quote_size`` : anciennes clés conservées
+  pour lire les configurations/archives. Depuis le 17 octobre 2026, le selector
+  SIP ne les utilise plus pour relâcher le filtre ``spread_bps``.
 - ``market_cap_max_age_days`` : TTL appliqué au filtre ``market_cap`` à
   partir de ``stock_metadata.market_cap_refreshed_at`` (alimenté en Phase
   3.1.e). ``None`` = TTL désactivé.

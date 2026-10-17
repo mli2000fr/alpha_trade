@@ -825,7 +825,9 @@ def _with_updates(record: PipelineRunRecord, **updates: object) -> PipelineRunRe
 
 
 def _extract_run_summary(line: str) -> dict[str, object] | None:
-    cleaned = line.strip()
+    # Child libraries (notably modelFactory) can leave a color reset directly
+    # before the next process's final summary. It is still a structured event.
+    cleaned = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', line).strip()
     if not cleaned.startswith(RUN_SUMMARY_PREFIX):
         return None
     payload = cleaned[len(RUN_SUMMARY_PREFIX):].strip()

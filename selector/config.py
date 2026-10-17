@@ -297,7 +297,7 @@ class AlphaScannerConfig:
     min_market_cap: float | None = None
     min_beta_126: float | None = None
     max_spread_bps: float | None = None
-    # Phase 3.3.c — extensions IEX : relâchement contrôlé du filtre spread.
+    # Compatibilité archives uniquement : le selector SIP ne relâche plus le spread.
     max_spread_bps_iex: float | None = None
     min_quote_size: float | None = None
     # Phase 3.3.d — TTL appliqué au filtre ``min_market_cap``.

@@ -37,9 +37,10 @@ def _alpaca_retry_policy() -> RetryPolicy:
 #: Feeds supportés par l'API Alpaca data v2.
 #: ``iex`` = feed gratuit (~2-3% du volume consolidé US — biais documenté
 #: dans ``doc/dataIntegrityEngine.md`` et ``audit_global.md``).
-#: ``sip`` = feed consolidé payant.
+#: ``sip`` = consolidé ; temps réel sous abonnement, historique accessible
+#: sans abonnement temps réel si la borne end est vieille d'au moins 15 min.
 AlpacaFeed = Literal["iex", "sip"]
-DEFAULT_FEED: AlpacaFeed = "iex"
+DEFAULT_FEED: AlpacaFeed = "sip"
 _VALID_FEEDS: frozenset[str] = frozenset({"iex", "sip"})
 
 LOGGER = logging.getLogger(__name__)
@@ -220,8 +221,8 @@ def fetch_bars(
     """Récupère les bars Alpaca pour un symbole et gère la pagination et les timeouts.
 
     ``feed`` est validé contre :data:`_VALID_FEEDS`. La valeur par défaut
-    (``"iex"``) reflète l'offre Alpaca gratuite consommée par le projet ;
-    tout autre choix doit être explicite et est tracé dans les logs
+    (``"sip"``) est consolidée. Les requêtes historiques sont bornées à
+    maintenant moins vingt minutes, sans fallback vers IEX. Les overrides sont tracés
     (audit_service.md, audit_dataIntegrityEngine.md).
     """
     if feed not in _VALID_FEEDS:
@@ -229,6 +230,8 @@ def fetch_bars(
             f"feed='{feed}' invalide pour Alpaca data v2. "
             f"Valeurs acceptées : {sorted(_VALID_FEEDS)}."
         )
+    if feed != "sip":
+        raise ValueError("Collecte de barres : SIP obligatoire, aucun fallback IEX")
     if feed != DEFAULT_FEED:
         LOGGER.info(
             "Alpaca bars | feed override actif: feed=%s (défaut=%s) symbol=%s",
@@ -242,8 +245,9 @@ def fetch_bars(
         # adjustment=split : série canonique du projet pour le swing trading actions.
         # Les splits sont neutralisés, mais les dividendes ne réécrivent pas le passé.
         "adjustment": "split",
-        # feed explicite (Phase 1 refactor) : par défaut IEX (offre Alpaca gratuite).
+        # SIP historique : ne jamais inclure la fenêtre récente réservée aux abonnés.
         "feed": feed,
+        "end": (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat(),
         # RTH uniquement (09:30–16:00 EST) : exclure les données pre/post-market.
         # "extended_hours": "false",
         "limit": 5000,
@@ -312,8 +316,11 @@ def fetch_latest_quotes(
     symbols: list[str],
     session: Optional[requests.Session] = None,
     account_id: Optional[str] = None,
+    feed: AlpacaFeed = "sip",
 ) -> dict[str, dict[str, Any]]:
     """Récupère les dernières quotes Alpaca pour une liste de symboles."""
+    if feed != "sip":
+        raise ValueError("Quotes temps réel : SIP obligatoire, aucun fallback IEX")
     if not symbols:
         return {}
 
@@ -332,7 +339,7 @@ def fetch_latest_quotes(
         response = request_with_retry(
             client, "GET", ALPACA_LATEST_QUOTES_ENDPOINT,
             headers=_build_headers(account_id),
-            params={"symbols": ",".join(normalized_symbols)},
+            params={"symbols": ",".join(normalized_symbols), "feed": "sip"},
             policy=_alpaca_retry_policy(),
         )
         payload = response.json()

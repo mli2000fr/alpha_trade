@@ -297,6 +297,11 @@ def insert_bars(session, symbol: str, bars: list[dict[str, Any]], timeframe: str
 
     _, stock_bars = _get_tables()
     records = _build_bar_records(symbol, bars, timeframe)
+    for row in records:
+        row.update(data_source="alpaca_sip", data_adjustment="split")
+    # These records come from fetch_bars' SIP default. Never depend on a
+    # historical SQL server default that still says alpaca_iex.
+    records = [{k:v for k,v in row.items() if k in stock_bars.c} for row in records]
 
     if not records:
         LOGGER.warning("insert_bars | aucune barre valide apres sanitization | symbol=%s total_brut=%s", symbol, len(bars))
@@ -312,6 +317,9 @@ def insert_bars(session, symbol: str, bars: list[dict[str, Any]], timeframe: str
         "trade_count": stmt.inserted.trade_count,
         "vwa_price": stmt.inserted.vwa_price,
     }
+    for key in ("data_source", "data_adjustment"):
+        if key in stock_bars.c:
+            update_dict[key] = getattr(stmt.inserted, key)
     try:
         session.execute(stmt.on_duplicate_key_update(**update_dict))
         session.commit()

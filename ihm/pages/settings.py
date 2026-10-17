@@ -121,7 +121,7 @@ div[data-testid="stFileUploader"] [data-testid="stFileUploaderDropzoneInstructio
 
 BARS_PROVIDER_LABELS: dict[str, str] = {
     "eodhd": " EODHD (recommandé — bulk EOD, volume consolidé)",
-    "alpaca": " Alpaca / IEX (historique, biais volume IEX)",
+    "alpaca": " Alpaca / SIP historique consolidé",
 }
 _MARKET_REGIME_LABELS_STR = {str(key): value for key, value in MARKET_REGIME_LABELS.items()}
 _PRESET_STYLE_LABELS_STR = {str(key): value for key, value in PRESET_STYLE_LABELS.items()}
@@ -132,8 +132,8 @@ BARS_PROVIDER_HELP: dict[str, str] = {
         "Aucun fallback automatique vers Alpaca n'est effectué si EODHD échoue."
     ),
     "alpaca": (
-        "Source primaire = Alpaca/IEX (comportement historique). EODHD inutilisé. "
-        "Aucun cross-check Stooq. À réserver aux tests de non-régression. Si `bars_provider=eodhd`, "
+        "Source primaire = Alpaca/SIP historique (end retardé d'au moins vingt minutes). EODHD inutilisé. "
+        "Aucun fallback IEX. Aucun cross-check Stooq. Si `bars_provider=eodhd`, "
         "le module Alpaca daily devient un no-op contrôlé."
     ),
 }
@@ -219,7 +219,7 @@ def _render_bars_provider_settings():
         )
         st.caption(BARS_PROVIDER_HELP.get(selected, ""))
         st.info(
-            "Mode opératoire recommandé : **EODHD primaire** pour les barres daily ; **Alpaca/IEX** seulement en rétrocompatibilité. "
+            "Barres daily : **EODHD** ou **Alpaca/SIP historique**, selon le fournisseur sélectionné. "
             "Quand EODHD est actif, `import_alpaca_bar` doit être compris comme un no-op contrôlé."
         )
         st.caption(

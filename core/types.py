@@ -40,8 +40,8 @@ Convention projet : ``"split"`` partout (cf. CHECK SQL `chk_bars_adj`,
 Feed = Literal["iex", "sip"]
 """Feed Alpaca data v2.
 
-Convention projet : ``"iex"`` par défaut (offre gratuite, biais documenté
-dans `audit_dataIntegrityEngine.md`).
+Convention projet : ``"sip"`` par défaut ; historique retardé accessible,
+temps réel soumis aux droits du compte. IEX est une provenance legacy.
 """
 
 OrderSide = Literal["buy", "sell"]

@@ -30,6 +30,8 @@ ALLOWED_EODHD_KEYS = {
 
 ALLOWED_MARKET_DATA_KEYS = {
     "bars_provider",
+    "alpaca_backfill_feed",
+    "quotes_historical_feed",
     "quotes_provider_live",
     "quotes_provider_live_second",
 }

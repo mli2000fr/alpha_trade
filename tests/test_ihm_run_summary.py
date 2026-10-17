@@ -578,7 +578,7 @@ def test_build_run_summary_caption_uses_sync_latest_quotes_bias_metrics_mapping(
 
     assert "symboles=120" in caption
     assert "rows upsert=118" in caption
-    assert "biais iex=42.5" in caption
+    assert "écart quote/close (proxy)=42.5" in caption
     assert "obs. biais=90" in caption
 
 

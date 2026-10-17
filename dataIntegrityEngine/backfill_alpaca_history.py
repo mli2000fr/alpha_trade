@@ -60,7 +60,7 @@ def completed_window(years,now=None):
 
 def run_backfill(*,years=30,symbols=None,dry_run=True,resume=True,feed='sip',account_id='default',
                  output_root=Path('artifacts/alpaca_backfill'),session=None,now=None):
-    if not 1<=years<=30 or feed not in ('iex','sip'):raise ValueError('Invalid history years/feed')
+    if not 1<=years<=30 or feed != 'sip':raise ValueError('Invalid history years/feed: SIP required')
     start,end=completed_window(years,now)
     own=session is None;db=session or SessionLocal()
     result=dict(provider='alpaca',feed=feed,mode='dry_run' if dry_run else 'write',start_date=start,end_date=end,
@@ -125,7 +125,7 @@ def run_backfill(*,years=30,symbols=None,dry_run=True,resume=True,feed='sip',acc
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--years',type=int,default=30);parser.add_argument('--symbols',nargs='+')
-    parser.add_argument('--account',default='default');parser.add_argument('--feed',choices=('iex','sip'))
+    parser.add_argument('--account',default='default');parser.add_argument('--feed',choices=('sip',))
     mode=parser.add_mutually_exclusive_group()
     mode.add_argument('--write',action='store_true');mode.add_argument('--dry-run',action='store_true')
     group=parser.add_mutually_exclusive_group();group.add_argument('--resume',dest='resume',action='store_true',default=True)

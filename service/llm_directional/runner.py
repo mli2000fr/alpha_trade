@@ -3,6 +3,7 @@ import argparse
 import json
 import logging
 import math
+import struct
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import text, bindparam
@@ -177,6 +178,20 @@ def analyze(*, engine, batch_id, trade_date, symbol_source, capital_preset_key='
                 for item in items for q in item['source_qualifications'])}
 
 
+def _oracle_score_matches_snapshot(stored, reference):
+    """Accept only known representations of the immutable snapshot score.
+
+    MySQL FLOAT stores binary32; its text protocol may return six significant
+    digits. No generic tolerance: other score changes remain incompatible, and
+    neither the ranking nor the request is rebuilt from the rounded SQL column.
+    """
+    if any(type(value) not in (int, float) or not math.isfinite(value)
+           or not 0 <= value <= 1 for value in (stored, reference)):
+        return False
+    binary32 = struct.unpack('!f', struct.pack('!f', reference))[0]
+    return stored in (reference, binary32, float(format(binary32, '.6g')))
+
+
 def qualified_selection(engine, run_id, trade_date, account_id, *, now=None, allow_consumed=False):
     assert_paper_account(account_id)
     run, items = Repository(engine).get(run_id)
@@ -203,10 +218,12 @@ def qualified_selection(engine, run_id, trade_date, account_id, *, now=None, all
         raise ValueError('Candidats archivés incompatibles avec le snapshot')
     for item in items:
         context = expected_by_symbol[item['symbol']]
-        if (item['oracle_rank'] != context['oracle_rank']
-                or item['oracle_score'] != context['oracle_score']
-                or json.loads(item['request_json']) != build_request(context, config)):
-            raise ValueError('Classement ou requête LLM incompatible avec le snapshot')
+        if item['oracle_rank'] != context['oracle_rank']:
+            raise ValueError(f"Rang Oracle incompatible avec le snapshot : {item['symbol']}")
+        if not _oracle_score_matches_snapshot(item['oracle_score'], context['oracle_score']):
+            raise ValueError(f"Score Oracle incompatible avec le snapshot : {item['symbol']}")
+        if json.loads(item['request_json']) != build_request(context, config):
+            raise ValueError(f"Requête LLM incompatible avec le snapshot : {item['symbol']}")
         if digest(json.loads(item['response_json'])) != item['response_sha256']:
             raise ValueError('Réponse LLM altérée')
         parsed = parse_response(json.loads(item['response_json']), item['symbol'], config, item['observed_at'])
@@ -217,7 +234,11 @@ def qualified_selection(engine, run_id, trade_date, account_id, *, now=None, all
     decisions = [dict(json.loads(i['assessment_json']), oracle_rank=i['oracle_rank']) for i in items]
     if selected != select_symbols(decisions, config):
         raise ValueError('Sélection LLM incohérente')
-    return run, [next(i for i in items if i['symbol'] == symbol) for symbol in selected]
+    # Preserve the full-precision, hashed evidence in downstream risk lineage.
+    # SQL archives are never rewritten and selected order remains unchanged.
+    return run, [dict(next(i for i in items if i['symbol'] == symbol),
+                      oracle_score=expected_by_symbol[symbol]['oracle_score'])
+                 for symbol in selected]
 
 
 def main():

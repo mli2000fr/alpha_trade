@@ -1903,7 +1903,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         if provider == 'alpaca':
             from common.config_loader import load_config
             feed = str(((load_config() or {}).get('market_data') or {}).get('alpaca_backfill_feed','sip')).lower()
-            if feed not in ('iex','sip'):raise ValueError('market_data.alpaca_backfill_feed doit être iex ou sip')
+            if feed != 'sip':raise ValueError('market_data.alpaca_backfill_feed doit être sip')
             command.extend(['--feed',feed,'--account',account_id or 'default'])
         if options.eodhd_backfill_write:
             command.append("--write")
