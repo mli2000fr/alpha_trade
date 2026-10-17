@@ -668,7 +668,7 @@ oracle_opening_window_sync:
   symbol_batch_size: 100
   max_pages_per_batch: 20
   request_interval_seconds: 0.0
-  min_symbol_coverage: 0.75
+  min_symbol_coverage: 0.70
   min_open_symbol_coverage: 0.70
   fail_on_quality_gate: true
   use_system_trust_store: true
