@@ -1,5 +1,10 @@
 # Ingestion quotidienne des news US EODHD — 16 octobre 2026
 
+Mise à jour du 17 octobre : la résilience de **l'étape 8 Sentiment Pipeline**
+est décrite dans [le contrat de reprise](sentiment_pipeline_reprise_20261017.md).
+Cette étape utilise `eodhd_news`, distinct du namespace `eodhd_news_daily` de ce
+batch ; aucune fusion de checkpoints ni modification de sa planification.
+
 ## Dernier bilan vérifié — cycle complet terminé
 
 Run `eodhd_news_ingestion_sync-20261016121131-5ed4d540` terminé OK à **14h59 Paris**,

@@ -1700,6 +1700,7 @@ def is_gpu_available() -> bool:
 def _build_chained_ps_commands(
     steps: list[tuple[str, list[str]]],
     title: str | None = None,
+    *, prelude: str | None = None, final_log_command: list[str] | None = None,
 ) -> list[str]:
     """Chaîne N commandes Python via PowerShell inline avec labels de progression.
 
@@ -1720,6 +1721,8 @@ def _build_chained_ps_commands(
         f"Push-Location '{project_root_escaped}'",
         "$ec = 0",
     ]
+    if prelude:
+        parts.append(prelude)
     if title:
         safe_title = title.replace("'", "''")
         divider = "=" * 60
@@ -1738,6 +1741,10 @@ def _build_chained_ps_commands(
             f" $ec = $LASTEXITCODE"
             f" }}"
         )
+    if final_log_command:
+        # Log even when a substep failed, but never erase its exit code.
+        final_command = ' '.join(_quote(arg) for arg in final_log_command)
+        parts.append(f'& {final_command}; if ($ec -eq 0 -and $LASTEXITCODE -ne 0) {{ $ec = $LASTEXITCODE }}')
     parts.extend(["Pop-Location", "exit $ec"])
     ps_script = "; ".join(parts)
     return ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_script]
@@ -2128,6 +2135,15 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             resume_from_checkpoint=bool(options.news_import_resume_from_checkpoint),
             force_symbol_source=True,
         )
+        # A daily workflow is not an implicit one-year historical backfill.
+        from event_sentiment.import_runtime import load_import_runtime
+        if not import_start_date:
+            cmd0.extend(['--lookback-days',str(load_import_runtime().pipeline_lookback_days)])
+        cmd0.append('--continue-on-symbol-error')
+        cmd0.extend(['--summary-path','$newsImportSummary'])
+        summary_root = str(PROJECT_ROOT/'artifacts/news_import_runs').replace("'", "''")
+        summary_prelude = (f"$newsImportSummary = Join-Path '{summary_root}' "
+                           "('stage8-' + [guid]::NewGuid().ToString('N') + '.json')")
         cmd1 = _build_sentiment_standard_command(
             options,
             sentiment_start_utc=sentiment_start_utc,
@@ -2166,7 +2182,10 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
                 ("Scoring FinBERT contextuel (scope univers tradable / override CSV)", cmd4),
                 ("Agregation features : ticker=univers tradable, secteur=scope large importe", cmd3),
             ],
-            title="ETAPE 7 — Sentiment Pipeline",
+            title="ETAPE 8 — Sentiment Pipeline",
+            prelude=summary_prelude,
+            final_log_command=[sys.executable,'-u','-m','event_sentiment.import_runtime',
+                               '--report','$newsImportSummary'],
         )
 
     if step_key == "relevance_backfill":

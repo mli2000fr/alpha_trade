@@ -7,7 +7,8 @@ from typing import Any, Callable
 import dateutil.parser
 import requests
 from common.verified_http import verified_session
-from service._http_retry import _redact_sensitive_text
+from service._http_retry import _redact_sensitive_text, RetryPolicy, CircuitOpenError
+from service.eodhd.news_client import EodhdNewsFetchError
 from event_sentiment.trading_calendar import TradingCalendarAligner
 from event_sentiment.mapping import EntitySectorMapper
 from event_sentiment.models import NormalizedNewsArticle
@@ -169,7 +170,10 @@ class NewsIngestionService:
             "relevance_scored": 0,
         }
         checkpoint = self.repository.get_checkpoint(self.config.source_name, symbol)
-        page_token = checkpoint["next_page_token"] if checkpoint and resume_checkpoint else None
+        # EODHD offsets belong to one exact window/order. Replaying from zero
+        # is idempotent and avoids missing pages when a resumed window changes.
+        eodhd = getattr(self.config, 'news_provider', None) == 'eodhd'
+        page_token = checkpoint["next_page_token"] if checkpoint and resume_checkpoint and not eodhd else None
         previous_watermark = checkpoint["watermark_published_at_utc"] if checkpoint else None
 
         self.repository.upsert_checkpoint(
@@ -182,6 +186,11 @@ class NewsIngestionService:
 
         try:
             with self._session_factory() as session:
+                transport = {}
+                if eodhd:
+                    transport['retry_policy'] = RetryPolicy(
+                        timeout_seconds=getattr(self.config,'news_request_timeout_seconds',45),
+                        max_attempts=getattr(self.config,'news_max_attempts',3), base_delay_seconds=1.,max_delay_seconds=30.)
                 for articles, next_token in self._iter_news_pages(
                     start_utc=start_utc,
                     end_utc=end_utc,
@@ -189,6 +198,7 @@ class NewsIngestionService:
                     limit=self.config.page_limit,
                     page_token=page_token,
                     session=session,
+                    **transport,
                 ):
                     if not articles:
                         if not next_token:
@@ -326,7 +336,8 @@ class NewsIngestionService:
                         landed, mapped = self._persist_legacy_page(raw_rows, ticker_rows, symbol)
                         summary["landed"] += landed
                         summary["ticker_maps"] += mapped
-                    watermark = max(article.published_at_utc for article in normalized).replace(tzinfo=None)
+                    watermark = (previous_watermark if eodhd else
+                                 max(article.published_at_utc for article in normalized).replace(tzinfo=None))
                     self.repository.upsert_checkpoint(self.config.source_name, symbol, watermark, next_token, "running")
                     page_token = next_token
                     LOGGER.info(
@@ -341,6 +352,8 @@ class NewsIngestionService:
             )
             return summary
         except Exception as exc:
+            if isinstance(exc, EodhdNewsFetchError):
+                exc.partial_summary = dict(summary)
             self.repository.upsert_checkpoint(
                 self.config.source_name, symbol, previous_watermark, page_token, "failed", last_error=_redact_sensitive_text(str(exc)),
             )
@@ -386,7 +399,10 @@ class NewsIngestionService:
         symbol_resume_overrides: dict[str, bool] | None = None,
         resume_checkpoints: bool = True,
         progress_callback: Callable[[dict[str, object]], None] | None = None,
-    ) -> dict[str, int]:
+        continue_on_symbol_error: bool = False,
+        max_consecutive_failures: int = 3,
+        initial_consecutive_failures: int = 0,
+    ) -> dict[str, Any]:
         summary = {
             "fetched": 0,
             "deduped": 0,
@@ -399,24 +415,49 @@ class NewsIngestionService:
         }
         normalized_symbols = self._normalize_symbol_list(symbols)
         total_symbols = len(normalized_symbols)
+        if type(max_consecutive_failures) is not int or max_consecutive_failures < 1:
+            raise ValueError('max_consecutive_failures doit être un entier positif')
+        metric_keys = tuple(summary)
+        failures = []
+        attempted = succeeded = 0
+        consecutive = initial_consecutive_failures
+        aborted = False
+        blocking_error = False
         for index, symbol in enumerate(normalized_symbols, start=1):
             effective_start = (
                 symbol_start_overrides.get(symbol)
                 if symbol_start_overrides and symbol in symbol_start_overrides
                 else self._resolve_symbol_start(symbol, start_utc=start_utc, end_utc=end_utc)
             )
-            symbol_summary = self._run_symbol(
-                symbol=symbol,
-                start_utc=effective_start,
-                end_utc=end_utc,
-                resume_checkpoint=(
-                    symbol_resume_overrides.get(symbol)
-                    if symbol_resume_overrides and symbol in symbol_resume_overrides
-                    else resume_checkpoints and start_utc is None
-                ),
-            )
-            for key in summary:
-                summary[key] += symbol_summary[key]
+            attempted += 1
+            try:
+                symbol_summary = self._run_symbol(
+                    symbol=symbol,
+                    start_utc=effective_start,
+                    end_utc=end_utc,
+                    resume_checkpoint=(
+                        symbol_resume_overrides.get(symbol)
+                        if symbol_resume_overrides and symbol in symbol_resume_overrides
+                        else resume_checkpoints and start_utc is None
+                    ),
+                )
+                succeeded += 1
+                consecutive = 0
+            except (EodhdNewsFetchError, CircuitOpenError) as exc:
+                if not continue_on_symbol_error:
+                    raise
+                consecutive += 1
+                message = _redact_sensitive_text(str(exc))[:500]
+                failures.append(dict(symbol=symbol,error=message,
+                    status_code=getattr(exc,'status_code',None),start_utc=effective_start.isoformat(),
+                    blocking_error=bool(getattr(exc,'terminal',False))))
+                blocking_error = bool(getattr(exc,'terminal',False))
+                symbol_summary = getattr(exc, 'partial_summary', {})
+                aborted = (getattr(exc,'terminal',False) or isinstance(exc,CircuitOpenError)
+                           or consecutive >= max_consecutive_failures)
+                LOGGER.error('Import news incomplet | symbol=%s erreur=%s arrêt_global=%s',symbol,message,aborted)
+            for key in metric_keys:
+                summary[key] += symbol_summary.get(key, 0)
             if progress_callback is not None:
                 progress_callback(
                     {
@@ -426,4 +467,11 @@ class NewsIngestionService:
                         "current_symbol_total": total_symbols,
                     }
                 )
+            if aborted:
+                break
+        if continue_on_symbol_error:
+            summary.update(status='INCOMPLETE' if failures else 'COMPLETED',
+                attempted_symbols=attempted,succeeded_symbols=succeeded,failed_symbols=failures,
+                failed_count=len(failures),unattempted_symbols=total_symbols-attempted,
+                aborted=aborted,consecutive_failures=consecutive,blocking_error=blocking_error)
         return summary

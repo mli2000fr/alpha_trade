@@ -295,7 +295,7 @@ def test_resolve_checkpoint_aware_import_scope_uses_watermarks_and_skips_up_to_d
     assert skipped == 1
     assert start_overrides["MSFT"] == datetime(2026, 4, 9, 23, 0, tzinfo=timezone.utc)
     assert start_overrides["NVDA"] == datetime(2026, 4, 1, tzinfo=timezone.utc)
-    assert resume_overrides == {"MSFT": True, "NVDA": False}
+    assert resume_overrides == {"MSFT": False, "NVDA": False}  # EODHD offset restarts at zero.
 
 
 def test_importe_news_main_can_resume_from_checkpoints(monkeypatch) -> None:
@@ -338,7 +338,7 @@ def test_importe_news_main_can_resume_from_checkpoints(monkeypatch) -> None:
     assert len(service.calls) == 1
     assert service.calls[0]["symbols"] == ["AAPL"]
     assert service.calls[0]["resume_checkpoints"] is False
-    assert service.calls[0]["symbol_resume_overrides"] == {"AAPL": True}
+    assert service.calls[0]["symbol_resume_overrides"] == {"AAPL": False}
     assert service.calls[0]["symbol_start_overrides"] == {
         "AAPL": datetime(2026, 4, 11, 23, 0, tzinfo=timezone.utc)
     }

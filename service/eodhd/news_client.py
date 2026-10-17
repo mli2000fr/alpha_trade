@@ -64,6 +64,12 @@ TELEMETRY_CLIENT = "eodhd"
 class EodhdNewsFetchError(RuntimeError):
     """Erreur technique lors d'un fetch EODHD news."""
 
+    def __init__(self, message, *, status_code=None, terminal=False):
+        super().__init__(message)
+        self.status_code = status_code
+        self.terminal = terminal
+        self.partial_summary = {}
+
 
 def _to_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
@@ -88,7 +94,7 @@ def _get_token() -> str:
     try:
         return EodhdAccountRegistry.get().get_token()
     except EodhdAuthError as exc:
-        raise EodhdNewsFetchError(str(exc)) from exc
+        raise EodhdNewsFetchError(str(exc), terminal=True) from exc
 
 
 def _get_base_url() -> str:
@@ -267,11 +273,13 @@ def fetch_news_page(
         elif status in (401, 403):
             _telemetry_bump(TELEMETRY_CLIENT, "auth_error_total")
         raise EodhdNewsFetchError(
-            f"EODHD HTTP {status} sur /news symbol={eodhd_symbol}: {_redact_sensitive_text(str(exc))}"
+            f"EODHD HTTP {status} sur /news symbol={eodhd_symbol}: {_redact_sensitive_text(str(exc))}",
+            status_code=status, terminal=status in (401,403,429),
         ) from exc
     except requests.exceptions.RequestException as exc:
         raise EodhdNewsFetchError(
-            f"EODHD erreur réseau /news symbol={eodhd_symbol}: {_redact_sensitive_text(str(exc))}"
+            f"EODHD erreur réseau /news symbol={eodhd_symbol}: {_redact_sensitive_text(str(exc))}",
+            terminal=isinstance(exc, requests.exceptions.SSLError),
         ) from exc
     finally:
         if owned_session:

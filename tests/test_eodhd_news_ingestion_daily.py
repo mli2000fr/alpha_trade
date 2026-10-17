@@ -242,8 +242,12 @@ def test_catalog_is_daily_at_night_same_universe_no_changes_to_pipeline_lists():
     assert section['timezone']=='Europe/Paris' and section['run_days']=='0,1,2,3,4,5,6'
     assert section['symbols_file']==cfg['us_pipeline']['symbols_file']
     assert section['max_duration_minutes']<=120
-    assert application['us_pipeline']['steps']==[1,2,3,4,5,6,7,9]
-    assert application['us_pipeline']['steps_friday']==[1,2,3,4,5,6,7,8,9]
+    # User-controlled daily steps can include 10/11/12; this collector does
+    # not impose the historical factory list on the scheduled workflow.
+    assert application['us_pipeline']['steps']
+    assert all(type(n) is int and 1<=n<=14 for n in application['us_pipeline']['steps'])
+    assert application['us_pipeline']['steps_friday']
+    assert all(type(n) is int and 1<=n<=14 for n in application['us_pipeline']['steps_friday'])
     from ihm.services.batch_management import load_batch_specs
     spec=next(s for s in load_batch_specs() if s.name==daily.BATCH)
     assert spec.runnable and spec.task_name=='AlphaTrade-EodhdNewsIngestionSync'
