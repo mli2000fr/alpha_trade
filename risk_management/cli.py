@@ -2880,6 +2880,9 @@ def main(args: list[str] | None = None) -> None:
         temporary_path.replace(summary_path)
     emit_run_summary(summary)
 
+    from service.pipeline_telegram import notify_risk
+    notify_risk(getattr(repo, 'engine', None), summary, effective_account_id or resolved_account_scope or 'default')
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

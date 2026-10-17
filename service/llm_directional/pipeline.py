@@ -58,16 +58,25 @@ def main():
     engine = get_sqlalchemy_engine()
     repo = Repository(engine)
     if args.phase == 'predict':
-        subprocess.run(command, check=True)
         config = replace(load_filter_config(), enabled=True)  # explicit IHM opt-in
         if config.protections is not None and args.specific_protections is not None:
             config = replace(config, protections=replace(config.protections, enabled=args.specific_protections))
         elif args.specific_protections:
             raise ValueError(f'Configuration des protections {config.provider_label} absente')
         from database.run_business_summaries import emit_run_summary
-        emit_run_summary(analyze(engine=engine, batch_id=args.batch_id, trade_date=args.trade_date,
-            symbol_source=args.symbol_source, capital_preset_key=args.capital_preset_key,
-            run_id=args.run_id, config=config))
+        from service.pipeline_telegram import notify_llm
+        from .repository import utcnow
+        attempted_at = utcnow()
+        try:
+            subprocess.run(command, check=True)
+            result = analyze(engine=engine, batch_id=args.batch_id, trade_date=args.trade_date,
+                symbol_source=args.symbol_source, capital_preset_key=args.capital_preset_key,
+                run_id=args.run_id, config=config)
+        finally:
+            # Archive-only, best effort, including technical failures (not abstentions).
+            notify_llm(engine, args.run_id, attempted_at=attempted_at,
+                       trade_date=args.trade_date, provider_label=config.provider_label)
+        emit_run_summary(result)
     elif args.phase == 'risk':
         from datetime import date
         run, _ = qualified_selection(engine, args.run_id, date.fromisoformat(args.trade_date), 'default')
@@ -102,12 +111,16 @@ def main():
             raise ValueError('Risque exact non lié; aucun fallback latest')
         if not json.loads(run['selected_json']):
             print('Abstention LLM : aucune nouvelle exécution.', flush=True)
+            from service.pipeline_telegram import notify_execution_skipped
+            notify_execution_skipped(args.run_id, args.trade_date, 'abstention du filtre LLM')
             return
         with engine.connect() as conn:
             targets = conn.execute(text('''SELECT symbol, side, shares, trade_date, account_id
                 FROM portfolio_targets WHERE run_id=:run'''), {'run': run['risk_run_id']}).mappings().all()
         if not targets:
             print('Risque : aucune cible publiée, aucune exécution.', flush=True)
+            from service.pipeline_telegram import notify_execution_skipped
+            notify_execution_skipped(args.run_id, args.trade_date, 'aucune cible publiée par le risque')
             return
         _check_watcher_ready(engine, run)
         from service.alpaca.trading_client import AlpacaTradingClient

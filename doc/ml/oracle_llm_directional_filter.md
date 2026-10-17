@@ -5,6 +5,12 @@ Depuis le 13 octobre, le filtre peut aussi recevoir les scores d'un
 folds et de la lineage. Ces scores prédisent l'amplitude, pas LONG/SHORT.
 Le filtre directionnel reste indépendant et PAPER uniquement.
 
+Depuis le 17 octobre 2026, un Telegram accompagne la sélection de l’étape 10
+(ou ses motifs d’abstention/échec), les cibles risque de l’étape 11 et les
+ordres/exécutions observées à l’étape 12. Le fournisseur est celui archivé pour
+l’analyse, pas un libellé GPT figé. Voir
+[notifications et limites](../operations/pipeline_telegram_10_11_12.md).
+
 ## 15 octobre 2026 — cache des news stockées, distinct du Web quotidien
 
 Les analyses de recherche sur les articles déjà en base peuvent être conservées

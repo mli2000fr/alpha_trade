@@ -1802,6 +1802,9 @@ def run(
         temporary_summary_path.replace(target_summary_path)
     emit_run_summary(summary)
 
+    from service.pipeline_telegram import notify_execution
+    notify_execution(getattr(repo, 'engine', None), summary)
+
     # Sprint S2 / A-018 — option ``--auto-watcher`` : lance le watcher de
     # protection en post-run (mode once) sans bloquer le shell.
     if auto_watcher:

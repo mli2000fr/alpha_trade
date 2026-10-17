@@ -6,6 +6,12 @@
 
 ## Périmètre
 
+Depuis le 17 octobre 2026, les étapes 10 (si filtre LLM activé), 11 et 12 PAPER
+envoient également leurs détails sur Telegram : sélection LLM et abstentions,
+cibles risque, puis ordres/exécutions observées. Voir le
+[contrat des notifications](pipeline_telegram_10_11_12.md), notamment la distinction
+entre ordre en attente et exécution réellement remplie.
+
 `us_pipeline`, déclaré dans `batch.yaml`, enchaîne les étapes sélectionnées dans
 `config.yaml`, dans le même moteur de workflow que la page Pipeline :
 `us_pipeline.steps` pour les séances US du lundi au jeudi, et
