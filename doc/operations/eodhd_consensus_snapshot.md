@@ -88,20 +88,25 @@ Les snapshots déjà présents à la date New York sont ignorés ; un symbole es
 commité entièrement, puis la reprise passe au suivant. Aucun tableau incomplet
 n'est déclaré complet via un simple checkpoint fichier.
 
-Univers actuel : tous les symboles distincts non vides de `alpha_trade.stock_bars_daily`
-(`symbol_source: stock_bars_daily`), pas TOP20 ni TOP10 ni univers PIT filtré.
-Modification demandée le 11 octobre 2026 : 13 105 symboles bruts en base,
-normalisés/dédupliqués avant appels ; aucune sélection de date ou de tradabilité.
-Le fichier tradable n'est plus utilisé pour cette collecte. Les preuves de smoke
-antérieures concernaient son ancien périmètre. Des radiés, ETF ou titres sans
-consensus peuvent être présents : réponse vide ne signifie pas panne, et le
-seuil de couverture de 95 % s'applique désormais uniquement au fichier
-`config/univers_batch/univers_filtred_tradable.txt` (`coverage_symbols_file`).
-La couverture de l'univers large reste une mesure descriptive (`overall_coverage`),
-pas un motif d'échec en soi. Les titres du fichier absents de la table de barres
-restent dans le dénominateur et sont signalés : aucune réduction silencieuse.
-Lots de 20 titres, pause 1,1 seconde, environ 656 appels pour 13 105 titres hors
-retries/subdivision des symboles invalides. Quota et retries du client EODHD
+**Univers courant depuis le 18 octobre 2026 :**
+`config/univers_batch/univers_filtred_tradable.txt`, comme `us_pipeline`.
+Configuration : `symbol_source: universe-file`, `symbols_file` et
+`coverage_symbols_file` pointant sur ce même fichier. Il contient 1 790 titres
+au changement ; il est relu au lancement. Aucun filtre `is_tradable=1`, TOP20 ou
+TOP10 supplémentaire n'est appliqué. La résolution de cet univers ne consulte
+plus `stock_bars_daily` et ne dépend pas de la présence de barres pour ces titres.
+
+L'univers large de 13 105 symboles de `stock_bars_daily`, utilisé auparavant,
+reste un mode pris en charge explicitement, mais n'est plus celui configuré.
+Ses anciennes observations SQL et archives restent conservées sans modification.
+Le fichier exporté `config/univers_batch/stock_bars_daily.txt` n'est pas utilisé
+par ce batch. Les anciennes preuves et métriques gardent leur périmètre daté.
+
+Le seuil de couverture de 95 % porte sur le même fichier que la collecte ;
+absence de consensus et erreur technique restent distinguées. Lots de 20 titres,
+pause 1,1 seconde : au plus environ 90 appels pour un passage complet sur
+1 790 titres hors retries/subdivision et titres déjà collectés ce jour-là.
+Quota et retries du client EODHD
 existant ; HTTPS vérifié. 401/403/quota/circuit arrêtent la collecte, sans repli Yahoo.
 Une couverture inférieure à 95 % du fichier tradable ou une erreur technique
 fait échouer le run. Les réponses vides sont distinctes des échecs techniques :
@@ -111,7 +116,11 @@ explicitement liés aux symboles, sont isolés par subdivision puis consignés d
 technique. Une erreur technique locale est enregistrée sans abandon des
 sous-lots frères ; auth/quota/circuit interrompent le run avec compteurs détaillés.
 Les symboles sans consensus ou invalides dans le fichier tradable réduisent sa
-couverture ; hors fichier, ils n'entraînent pas une alerte à eux seuls.
+couverture ; les titres hors fichier ne sont plus demandés. Le changement prend
+effet au prochain lancement, sans nouveau téléchargement ni écriture SQL lors
+de cette modification de configuration. Horaires, secours et notifications
+restent inchangés ; pas de nouvelle installation Windows nécessaire pour le
+seul changement d'univers, le launcher relisant `batch.yaml` à chaque lancement.
 
 Le 11 octobre, les types partagés `Outcome` et `BatchRunError` ont été déplacés
 dans `service/forward_pit/outcomes.py` pour préserver les compteurs lorsque le

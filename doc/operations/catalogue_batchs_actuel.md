@@ -1,5 +1,13 @@
 # Catalogue opérationnel des batchs — 10 octobre 2026
 
+Mise à jour du 18 octobre : **`eodhd_consensus_snapshot` et
+`eodhd_ipo_calendar_sync` utilisent désormais
+`config/univers_batch/univers_filtred_tradable.txt`**, comme `us_pipeline`,
+et non l'ensemble des symboles de `stock_bars_daily`. Le consensus contrôle
+sa couverture de 95 % sur ce même fichier ; les IPO sont filtrées après réception
+du calendrier marché entier. Historique déjà stocké, horaires, secours et
+notifications conservés. Les autres batchs ne changent pas de périmètre.
+
 Ajout du 16 octobre : **`eodhd_news_ingestion_sync`**, P1, activé et tâche Windows
 installée : 20h30 Paris tous les jours, même fichier tradable que le pipeline.
 Ingestion/archives uniquement, sans FinBERT/LLM ; workflow et scoring du vendredi

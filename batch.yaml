@@ -271,15 +271,16 @@ earnings_calendar_sync:
 
 eodhd_ipo_calendar_sync:
   priority: P2
-  description: "Archiver le calendrier IPO EODHD (dates prévues/réalisées, prix, statut) pour les symboles distincts de stock_bars_daily. Recherche et suivi du référentiel ; aucun signal D1/D10 démontré."
+  description: "Archiver le calendrier IPO EODHD (dates prévues/réalisées, prix, statut) pour les titres du fichier univers tradable partagé avec us_pipeline. Recherche et suivi du référentiel ; aucun signal D1/D10 démontré."
   tables: "pit_collection_runs,pit_raw_payloads,stock_ipo_eodhd_history,eodhd_ipo_collection_windows"
   enabled: true
   status: RESEARCH_ONLY
   market_code: US_EQ
   provider: eodhd
   timezone: Europe/Paris
-  symbol_source: stock_bars_daily
-  universe_scope: stock_bars_daily
+  symbol_source: universe-file
+  symbols_file: config/univers_batch/univers_filtred_tradable.txt
+  universe_scope: config/univers_batch/univers_filtred_tradable.txt
   lookback_days: 7
   forward_days: 21
   sleep_seconds: 1.1
@@ -291,7 +292,7 @@ eodhd_ipo_calendar_sync:
   run_days: "0,1,2,3,4,5,6"
   log_file: log/batch/eodhd_ipo_calendar_sync.txt
   coverage_description: "J-7 à J+21 ; secours conditionnel 5h Paris. Backfill mensuel depuis 2016, reprise en base par fenêtre et hash de l'univers."
-  research_notice: "RECHERCHE UNIQUEMENT — l'API IPO est marché entier par dates ; les observations normalisées sont filtrées sur les symboles distincts de stock_bars_daily, les réponses brutes sont archivées. Les nouvelles IPO sans barres ne sont PAS ajoutées automatiquement. Réception réelle UTC, historique événementiel non certifié PIT ancien. Zéro prix/quantité fournisseur = inconnu. Versions modifiées ajoutées sans écrasement. Absence d'IPO dans le périmètre n'est pas un échec. Mail/Telegram via launcher habituel."
+  research_notice: "RECHERCHE UNIQUEMENT — l'API IPO est marché entier par dates ; les observations normalisées sont filtrées sur config/univers_batch/univers_filtred_tradable.txt, les réponses brutes sont archivées. Les IPO absentes du fichier ne sont PAS ajoutées automatiquement. Les observations déjà stockées hors fichier restent conservées. Réception réelle UTC, historique événementiel non certifié PIT ancien. Zéro prix/quantité fournisseur = inconnu. Versions modifiées ajoutées sans écrasement. Absence d'IPO dans le périmètre n'est pas un échec. Mail/Telegram via launcher habituel."
 
 eodhd_news_ingestion_sync:
   priority: P1
@@ -344,14 +345,15 @@ eodhd_consensus_snapshot:
   market_code: US_EQ
   provider: eodhd
   timezone: Europe/Paris
-  symbol_source: stock_bars_daily
-  universe_scope: stock_bars_daily
+  symbol_source: universe-file
+  symbols_file: config/univers_batch/univers_filtred_tradable.txt
+  universe_scope: config/univers_batch/univers_filtred_tradable.txt
   batch_size: 20
   sleep_seconds: 1.1
   min_coverage: 0.95
-  # Contrôle du consensus uniquement sur le périmètre utile, pas sur tous les radiés/ETF.
+  # Même fichier pour la collecte et le contrôle de couverture ; aucun filtre is_tradable implicite.
   coverage_symbols_file: config/univers_batch/univers_filtred_tradable.txt
-  coverage_description: "Collecte de tous les symboles stock_bars_daily ; seuil de consensus 95 % uniquement sur config/univers_batch/univers_filtred_tradable.txt. Absences/identifiants invalides distingués des erreurs techniques."
+  coverage_description: "Collecte et contrôle de consensus 95 % sur config/univers_batch/univers_filtred_tradable.txt, même univers que us_pipeline. Les anciennes observations hors fichier restent conservées. Absences/identifiants invalides distingués des erreurs techniques."
   run_hours: "22"
   run_minutes: "15"
   recovery_run_hours: "4"

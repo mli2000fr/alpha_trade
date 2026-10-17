@@ -123,9 +123,10 @@ def test_catalog_has_universe_notifications_recovery_and_no_yahoo():
     spec=next(s for s in load_batch_specs() if s.name==mod.BATCH)
     assert spec.enabled
     assert spec.raw_config['status'] == 'RESEARCH_ONLY'
-    assert not spec.symbols_file
-    assert spec.universe_scope == 'stock_bars_daily'
-    assert spec.raw_config['symbol_source'] == 'stock_bars_daily'
+    assert spec.symbols_file == 'config/univers_batch/univers_filtred_tradable.txt'
+    assert spec.universe_scope == spec.symbols_file
+    assert spec.raw_config['symbol_source'] == 'universe-file'
+    assert spec.raw_config['coverage_symbols_file'] == spec.symbols_file
     assert spec.raw_config['recovery_run_hours']=='4'
     assert not any('stock_analyst_estimate_history'==t for t in spec.tables)
     assert 'install_forward_pit_task.ps1' in ' '.join(build_install_command(spec))
@@ -138,6 +139,15 @@ def test_database_universe_normalized_and_limited():
     engine.connect.return_value.__enter__.return_value.execute.return_value.scalars.return_value.all.return_value = [' z ', 'ABC', 'abc', '']
     assert mod.load_symbols(engine, {'symbol_source':'stock_bars_daily'}) == ['ABC', 'Z']
     assert mod.load_symbols(engine, {'symbol_source':'stock_bars_daily','max_symbols':1}) == ['ABC']
+
+
+def test_file_universe_is_read_without_querying_the_database(tmp_path):
+    path = tmp_path / 'symbols.txt'
+    path.write_text(' z,ABC,abc;DEF\n', encoding='utf-8')
+    engine = MagicMock()
+    cfg = {'symbol_source':'universe-file', 'symbols_file':str(path)}
+    assert mod.load_symbols(engine, cfg) == ['ABC','DEF','Z']
+    engine.connect.assert_not_called()
 
 
 def test_database_universe_rejects_other_market():

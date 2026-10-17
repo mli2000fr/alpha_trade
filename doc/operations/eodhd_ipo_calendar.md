@@ -17,10 +17,16 @@ révision Alembic non estampillée. Backfill lancé à 15h37 Paris, 130 fenêtre
 
 GET `/api/calendar/ipos?from=...&to=...&fmt=json`, authentification EODHD existante,
 quota partagé, HTTPS vérifié. API marché entier, sans filtre symbole côté serveur.
-Normalisation filtrée sur les symboles distincts non vides de
-`alpha_trade.stock_bars_daily` (`symbol_source: stock_bars_daily`), à la demande
-utilisateur le 11 octobre 2026 : environ 13 105 symboles avant normalisation.
-L'ancien fichier tradable n'est plus utilisé. Le premier backfill, achevé avec
+**Depuis le 18 octobre 2026**, normalisation filtrée sur
+`config/univers_batch/univers_filtred_tradable.txt`, comme `us_pipeline` :
+`symbol_source: universe-file`, `symbols_file` vers ce fichier. Il contient
+1 790 titres au changement et est relu à chaque lancement. Aucun filtre
+`is_tradable=1` supplémentaire. Le fichier exporté `stock_bars_daily.txt`
+n'est pas utilisé. L'API reste marché entier : ce filtre réduit les observations
+normalisées, pas le nombre de requêtes calendrier par fenêtre.
+
+Historique : le mode `stock_bars_daily` (environ 13 105 symboles) avait été
+configuré le 11 octobre 2026. Le premier backfill, achevé avec
 130 fenêtres et 208 observations insérées, utilisait encore ses 1 790 symboles.
 Relancer la même commande depuis 2016 relit les fenêtres avec le nouveau hash
 d'univers ; les anciennes observations restent conservées sans écrasement.
@@ -29,8 +35,13 @@ Relance effective le 11 octobre 2026 à 15h53 Paris : 13 105 symboles, période
 `log/batch/eodhd-ipo-stock-bars-daily-2016-20261011-v1/stderr.log` et `stdout.log`.
 Le lancement ne certifie pas l'achèvement : le statut final figure dans le résumé
 du stdout et dans `pit_collection_runs`.
-Les nouvelles introductions absentes de la table de barres restent uniquement dans la
-réponse brute archivée : aucune addition automatique à l'univers.
+Les nouvelles introductions absentes du fichier tradable restent uniquement
+dans la réponse brute archivée : aucune addition automatique à l'univers.
+Les anciennes observations hors fichier restent conservées. Les checkpoints
+IPO dépendent du hash des symboles : un périmètre changé entraîne leur relecture
+lors d'un futur passage/backfill demandé, pas pendant cette modification.
+Horaires, secours et notifications restent inchangés. Le launcher relit le
+fichier YAML ; aucune réinstallation Windows ni collecte n'a été lancée ici.
 
 `stock_ipo_eodhd_history` conserve symbole, nom, place, devise, dates de première
 cotation prévue/effective, dépôt/amendement, statut fournisseur, fourchette,
