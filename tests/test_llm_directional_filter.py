@@ -55,8 +55,14 @@ def test_actual_yaml_defaults():
     # Deployment model is user-configurable; the factory default is tested
     # through build_request below, not imposed on the user's config.yaml.
     assert isinstance(cfg.model, str) and cfg.model.strip()
-    request = build_request({}, cfg)
-    assert (request['web_request']['model'] if cfg.provider == 'deepseek' else request['model']) == cfg.model
+    from service.llm_directional.prompts import VERSION,DEEPSEEK_SEARCH_VERSION
+    context=dict(symbol='ABC',analysis_mode=cfg.analysis_mode,
+        analysis_protocol=(DEEPSEEK_SEARCH_VERSION if cfg.provider=='deepseek'
+            and cfg.analysis_mode=='web_search' else VERSION),evidence_cutoff_utc='2026-10-18T22:00:00Z')
+    request=build_request(context,cfg)
+    model=(request.get('analysis_model') or request.get('analysis_request',{}).get('model')
+           or request.get('model'))
+    assert model==cfg.analysis_model
     assert 1 <= cfg.oracle_top_n <= 100  # User configuration, not a pinned factory default.
     # Deployment max_selected is user-configurable (currently 3); factory default
     # remains 5, tested separately. Never overwrite a user's YAML to satisfy a test.
@@ -476,12 +482,12 @@ def test_score_fix_does_not_accept_a_changed_request(isolated):
 
 def test_raw_persisted_before_validation(isolated, monkeypatch):
     original = runner.parse_response
-    def parsing(raw, symbol, config, observed):
+    def parsing(raw, symbol, config, observed, context=None):
         _, items = Repository(isolated).get('test-run')
         item = next(i for i in items if i['symbol'] == symbol)
         assert item['status'] == 'RECEIVED'
         assert item['response_sha256'] == digest(raw)
-        return original(raw, symbol, config, observed)
+        return original(raw, symbol, config, observed,context=context)
     monkeypatch.setattr(runner, 'parse_response', parsing)
     analyze(isolated, lambda request: response(json.loads(request['input'])['symbol']))
 

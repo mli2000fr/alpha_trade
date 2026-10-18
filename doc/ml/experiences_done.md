@@ -1,5 +1,21 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-19 — DeepSeek Web natif, sans relais GPT
+
+**Livraison technique, pas une validation directionnelle.** Pour les nouvelles
+analyses `provider: deepseek` / `analysis_mode: web_search`, Search/Fetch DeepSeek
+remplace la recherche OpenAI ; analyse par le modèle DeepSeek configuré, même
+consensus local et même objectif de tendance LONG/SHORT/ABSTAIN. Clé DeepSeek seule,
+appels Web bornés, aucun fallback GPT ni retry payant automatique. Requêtes,
+réponses, dates et consommation archivées dans les tables LLM existantes ; URL
+inventées et dates modifiées rejetées. Anciens runs hybrides v4/v5 revalidables,
+pas réécrits ni renvoyés aux API. GPT Web et les deux modes locaux conservés.
+Configuration actuelle GPT/local non changée. **749 tests de régression passent**,
+dont les contrôles de relecture v5/v6 et du préflight sans OpenAI.
+Tests simulés uniquement : aucun
+appel fournisseur payant, ordre, modèle ou donnée SQL de production modifié.
+[Fonctionnement et réglages](llm_modes_consensus.md#recherche-native-deepseek--19-octobre-2026).
+
 ## 2026-10-18 — anciens avantages et complémentarité sur le TOP10 Oracle parcours
 
 **TERMINÉ / `NO_STABLE_TOP10_COMPLEMENTARITY` — aucune promotion.**
@@ -4191,6 +4207,9 @@ Anciens dumps, résultats d'expériences et données options non supprimés. Auc
 autre batch modifié ou blocage levé ; ne pas réinjecter les archives automatiquement.
 
 ## 2026-10-11 — Filtre Oracle : choix GPT / DeepSeek
+
+> Contrat historique du 11 octobre ; remplacé pour les nouveaux runs Web
+> DeepSeek le 19 octobre par Search/Fetch natifs, sans OpenAI. Archives conservées.
 
 Livraison technique, pas une nouvelle validation directionnelle : paramètre
 `llm_directional_filter.provider`, libellés IHM dynamiques, décisions et protections

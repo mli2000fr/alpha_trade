@@ -385,6 +385,26 @@ def test_batch_title_prefers_newer_business_success_to_stale_windows_failure() -
     )
 
 
+@pytest.mark.parametrize('last_status',[None,'SUCCESS','FAILED'])
+def test_replaced_news_batch_title_is_normal_without_hiding_historical_failure(last_status):
+    from ihm.pages import batches as page
+    row={'status':last_status} if last_status else None
+    task={'state':'Ready','last_result':1,'last_run_time':'2026-10-18T20:30:00+02:00'}
+    title=page._batch_title(['P1','⏸️ Désactivé dans batch.yaml'],'eodhd_news_ingestion_sync',row,task,
+                           catalog_status='DISABLED_REPLACED_BY_PIPELINE')
+    assert ':red[' not in title and '**' not in title and '⚖️' not in title
+    assert 'Désactivé' in title and 'eodhd_news_ingestion_sync' in title
+    assert row==({'status':last_status} if last_status else None)
+
+
+def test_news_collector_is_disabled_in_catalog_with_explicit_pipeline_replacement():
+    spec=next(s for s in batches.load_market_batch_specs('US_EQ') if s.name=='eodhd_news_ingestion_sync')
+    assert not spec.enabled and not spec.runnable
+    assert spec.status=='DISABLED_REPLACED_BY_PIPELINE'
+    assert 'étape 8' in spec.description and 'us_pipeline' in spec.description
+    assert 'vendredi' in spec.research_notice and 'quotidienne/week-end' in spec.research_notice
+
+
 @pytest.mark.parametrize("status", sorted(batches.RIGHTS_BLOCK_STATUSES))
 @pytest.mark.parametrize("last_status", [None, "SUCCESS", "FAILED"])
 def test_rights_block_title_remains_visible_regardless_of_last_run(status, last_status):

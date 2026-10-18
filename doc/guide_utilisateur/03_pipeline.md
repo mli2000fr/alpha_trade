@@ -6,6 +6,17 @@
 
 ## Repères actuels US/CN/FR et filtre GPT
 
+**19/10/2026 — filtre LLM :** le libellé indique le fournisseur et le mode choisi
+dans `config.yaml → llm_directional_filter.analysis_mode` (`web_search` ou
+`local_data_only`). Le mode local ne recherche rien sur Internet. Les deux modes
+reçoivent le consensus EODHD et les news archivées recevables, avec dates et
+réserves de qualification. Ils demandent une tendance, pas une prévision TP/SL.
+Le réglage courant reste GPT en mode local. Pour DeepSeek avec recherche,
+choisir `provider: deepseek` et `analysis_mode: web_search` : Search/Fetch et
+analyse DeepSeek natifs, seule `DEEPSEEK_API_KEY` requise, aucun appel OpenAI.
+L'IHM affiche ce parcours. Les anciens runs ne changent pas.
+[Détail des modes et conditions d’abstention](../ml/llm_modes_consensus.md).
+
 Au 10/10/2026, choisir le parcours marché avant de configurer les blocs. CN/FR
 restent recherche/replay, pas les étapes Alpaca US appliquées à leurs bases.
 Les fichiers de config/univers sont proposés dans les sélecteurs compatibles,

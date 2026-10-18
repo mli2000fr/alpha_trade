@@ -302,8 +302,12 @@ eodhd_ipo_calendar_sync:
 
 eodhd_news_ingestion_sync:
   priority: P1
-  enabled: true
-  status: ACTIVE_RESEARCH_ONLY
+  enabled: false
+  status: DISABLED_REPLACED_BY_PIPELINE
+  activation_requirement: "Désactivation volontaire : l'étape 8 de us_pipeline suffit au besoin retenu. Réactivation uniquement sur décision explicite de rétablir la collecte autonome élargie."
+  unlock_steps:
+    - "Vérifier si la cadence et l'univers de l'étape 8 ne suffisent plus ; aucun élargissement automatique du pipeline."
+    - "Après accord explicite, remettre enabled à true et le statut actif, puis vérifier la tâche planifiée et la couverture."
   market_code: US_EQ
   provider: eodhd
   timezone: Europe/Paris
@@ -322,12 +326,17 @@ eodhd_news_ingestion_sync:
   http_timeout_seconds: 30
   http_max_attempts: 3
   failure_cooldown_seconds: 1800
-  description: "Ingestion quotidienne des news EODHD et archivage prospectif, sans FinBERT, LLM ni signal. Séparée du traitement complet du vendredi."
+  description: "DÉSACTIVÉ volontairement : l'étape 8 Sentiment Pipeline de us_pipeline suffit au besoin retenu (collecte, archivage et sentiments). Évite une collecte autonome supplémentaire ; ce n'est ni une panne ni un blocage de droits."
   tables: "pit_collection_runs,news_raw,news_ticker_map,news_raw_versions,news_ticker_map_versions,news_archive_observations,news_ingestion_checkpoint"
   universe_scope: config/univers_batch/stock_bars_daily.txt
   coverage_description: "Relecture J-7/J des publications ; reprise des titres incomplets. Disponibilité réelle à la collecte, jamais rétrodatée."
-  execution_notice: "20h30 Paris, tous les jours ; budget local 120 min avant prochain appel réseau (une requête déjà en cours peut finir après). Hors absence PC 7h30-20h, us_pipeline inchangé."
+  execution_notice: "DÉSACTIVÉ : aucune nouvelle collecte autonome, même avec -Force. Ancien créneau conservé : 20h30 Paris tous les jours. Collecte assurée par l'étape 8 selon us_pipeline.steps / steps_friday, inchangés (vendredi actuellement)."
   research_notice: >-
+    **DÉSACTIVÉ LE 19/10/2026 SUR DÉCISION UTILISATEUR : l'étape 8 de us_pipeline suffit au besoin retenu.**
+    Titre normal dans l'IHM ; historique visible vidé sur demande le 19/10/2026, copie récupérable dans backups/operations_history/eodhd_news_ingestion_sync.
+    Ce choix ne rend pas les deux périmètres équivalents : la collecte élargie quotidienne/week-end sur stock_bars_daily.txt est suspendue.
+    Le pipeline reste limité à univers_filtred_tradable.txt et à ses étapes configurées (8 le vendredi actuellement), sans élargissement ni ajout automatique de jour.
+    Données et archives existantes conservées. Paramètres ci-dessous conservés pour une éventuelle réactivation explicite.
     **COLLECTE SEULE : aucun score sentiment, modèle, filtre directionnel ou ordre.**
     L'étape 8 complète du pipeline reste configurée le vendredi, listes et horaires inchangés.
     Même writer atomique et archives versionnées, sans nouvelles tables.

@@ -148,8 +148,16 @@ de smoke restent des constats datés, pas l'état actuel en base.
 `RESEARCH_ONLY`, `units_qualified=false`, `fiscal_identity_qualified=false`,
 `historical_pit_qualified=false`. La réception prospective est tracée mais la
 date fiscale, devise, échelle, corrections et disponibilité avant décision
-doivent être qualifiées avant ML/backtest. Ni entraînement ni filtre live ni
-envoi de données à un LLM externe ne sont branchés ici.
+doivent être qualifiées avant ML/backtest. Aucun entraînement ou filtre LIVE
+n’est déclenché par ce collecteur.
+
+Depuis le **19 octobre 2026**, les nouvelles analyses LLM PAPER de l’étape 10
+lisent un contexte borné de cette table et l’envoient au fournisseur LLM choisi,
+dans les modes `web_search` et `local_data_only`. Le collecteur ne lance toujours
+aucun LLM. Les réserves d’unités/périodes et RESEARCH_ONLY sont conservées ;
+ces valeurs non qualifiées ne peuvent pas autoriser seules une sélection locale.
+Le paquet reçu avant le cutoff est archivé, sans transformer les références
+J−7/30/60/90 en collectes historiques. [Contrat et configuration](../ml/llm_modes_consensus.md).
 L'abonnement donne l'accès technique, pas une autorisation universelle de
 redistribution : usages privés/licence et conservation doivent rester conformes.
 

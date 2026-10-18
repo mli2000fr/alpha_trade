@@ -141,6 +141,12 @@ def _non_selection_reason(*, selected, parsed, state, run_status, config, quota_
                 reasons.append('Sources récentes qualifiées insuffisantes' + detail)
             elif code == 'short_not_allowed':
                 reasons.append('SHORT non autorisé dans cette analyse')
+            elif code == 'insufficient_qualified_local_sources':
+                reasons.append('Preuves locales qualifiées insuffisantes ; consensus/news non qualifiés ne suffisent pas')
+            elif code == 'excluded_untraceable_local_sources':
+                reasons.append('Référence locale ou citation non traçable')
+            elif code == 'identity_not_confirmed':
+                reasons.append('Identité du titre non confirmée')
             else:
                 reasons.append('Blocage archivé : ' + str(code)[:120])
         if not reasons:

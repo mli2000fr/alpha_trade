@@ -1217,7 +1217,7 @@ def _render_ml_scope_block(
         command_preview_options = _ml_prediction_scope_options(command_preview_options)
         if options.llm_filter_enabled and not command_preview_options.llm_filter_enabled:
             st.caption(
-                f"Le filtre {load_filter_config().provider_label} + recherche Web ne s'applique pas à ce bouton historique/Oracle shadow. "
+                f"Le filtre prospectif {load_filter_config().provider_label} ({load_filter_config().mode_label}) ne s'applique pas à ce bouton historique/Oracle shadow. "
                 "Cette prédiction sera lancée sans LLM ; le filtre reste activé pour le parcours PAPER du jour."
             )
     st.caption("Commande du bouton ci-dessous :")
@@ -1991,7 +1991,7 @@ def render() -> None:
         return
 
     options, live_confirmed = _build_launch_options()
-    with st.expander(f'🌐 Audit des sélections {load_filter_config().provider_label} + Web — PAPER'):
+    with st.expander(f'🌐 Audit des sélections {load_filter_config().provider_label} — {load_filter_config().mode_label} — PAPER'):
         _llm_audit_id = st.text_input('Identifiant analyse à consulter',
             value=options.llm_filter_run_id or '', key='llm_directional_audit_id')
         if st.button('Consulter la sélection et les motifs', key='llm_directional_audit_load',
@@ -2002,7 +2002,7 @@ def render() -> None:
                 _llm_audit = _llm_report(get_sqlalchemy_engine(), _llm_audit_id.strip())
                 st.caption(f"{_llm_audit['status']} · {_llm_audit['trade_date']} · batch {_llm_audit['batch_id']}")
                 st.caption(f"Fournisseur archivé : {_llm_audit['provider_label']} / {_llm_audit['analysis_model']} ; "
-                           f"Web OpenAI / {_llm_audit['web_model']}")
+                           + (f"Web {_llm_audit['web_provider']} / {_llm_audit['web_model']}" if _llm_audit['web_model'] else 'Sans recherche Web'))
                 st.warning(_llm_audit['warning'])
                 st.dataframe(_llm_audit['candidates'], use_container_width=True)
                 st.json(_llm_audit['configuration'])

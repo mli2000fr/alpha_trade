@@ -1,4 +1,14 @@
-# Filtre directionnel Oracle → GPT / DeepSeek + Web → risque → PAPER
+# Filtre directionnel Oracle → GPT / DeepSeek → risque → PAPER
+
+**Évolution du 19 octobre 2026 :** deux prompts et deux modes configurables,
+`web_search` (Web + données locales) et `local_data_only` (aucun Web). Les nouvelles
+analyses transmettent le consensus EODHD et un échantillon de news archivées
+reçus avant le cutoff réel. Le LLM juge une **tendance**, sans objectif TP/SL.
+Les données non qualifiées restent provisoires ; aucun changement de protections.
+Voir le [contrat actuel des modes et preuves locales](llm_modes_consensus.md).
+DeepSeek Web utilise désormais ses propres API Search/Fetch, sans OpenAI ; les
+anciens runs hybrides restent revalidables mais ne sont plus renvoyés aux API.
+Les descriptions historiques v4 ne doivent pas être appliquées au mode local.
 
 Depuis le 13 octobre, le filtre peut aussi recevoir les scores d'un
 [Oracle parcours H20 raccordé](oracle_path_training.md), après contrôle des
@@ -250,7 +260,7 @@ Le choix se fait dans `config.yaml`, section `llm_directional_filter` :
 
 ```yaml
 provider: openai  # openai = GPT ; deepseek = analyse DeepSeek
-model: gpt-6-luna  # Modèle OpenAI : analyse GPT ou collecte Web pour DeepSeek
+model: gpt-6-luna  # Modèle de la branche GPT uniquement
 api_key_env: OPENAI_API_KEY
 deepseek_model: deepseek-flash
 deepseek_api_key_env: DEEPSEEK_API_KEY
@@ -262,35 +272,23 @@ jamais des clés à inscrire en YAML. GPT reste sélectionné par défaut. Les l
 du filtre, des univers, du batch Oracle et des protections suivent le fournisseur
 configuré ; le rapport d'une ancienne analyse indique son fournisseur **archivé**.
 
-**DeepSeek ne remplace pas le moteur de recherche Web.** Sa documentation
-[Responses API](https://api-docs.deepseek.com/api/create-response/) indique que
-les outils intégrés sont ignorés. Le mode livré est donc **hybride** :
+**Depuis le 19 octobre : DeepSeek Web est natif**, via ses API
+[Search & Fetch](https://api-docs.deepseek.com/guides/search/), puis Chat Completions.
+Seule **DEEPSEEK_API_KEY** est requise : aucun appel ni synthèse OpenAI. Le modèle
+`deepseek_model` reste configurable, sans remplacement automatique. Consensus et
+news locaux sont également transmis. Les anciennes analyses hybrides du 11 octobre
+conservent leur contrat historique pour relecture, mais aucun nouveau relais GPT
+n'est autorisé. Le comparatif à preuves GPT partagées reste une archive historique.
 
-1. OpenAI effectue la recherche Web traçable avec la requête existante.
-2. DeepSeek reçoit le contexte Oracle et la réponse Web archivée, puis produit
-   sa propre décision JSON via Chat Completions.
-3. La validation locale exige les mêmes identités, sources récentes réellement
-   rencontrées, seuils, fenêtre prospective et protections PAPER.
-
-Ce mode exige **OPENAI_API_KEY et DEEPSEEK_API_KEY**, et facture **les deux API**.
-Le modèle DeepSeek est configurable ; `deepseek-flash` figure dans l'exemple
-officiel [JSON Output](https://api-docs.deepseek.com/guides/json_mode/).
-Le préflight vérifie son accès réel, pas un remplacement automatique.
-DeepSeek n'ouvre pas les pages lui-même et ne reçoit pas leur texte intégral
-certifié : il exploite les traces et la synthèse OpenAI, incluant l'avis préliminaire.
-Il ne s'agit donc ni d'une recherche DeepSeek autonome, ni d'une comparaison
-indépendante des fournisseurs. Aucun gain directionnel n'est démontré.
-
-Les réponses des deux fournisseurs et la requête DeepSeek effective sont
-archivées dans `llm_directional_assessments.response_json` ; la configuration
-figée dans `llm_directional_runs.config_json` conserve le fournisseur et les deux
-modèles. Les tables existantes suffisent, aucune migration n'est nécessaire.
-Si DeepSeek échoue après la recherche, la réponse Web est conservée mais le run
-ne publie aucun candidat. Une réponse tronquée, vide ou sans Web qualifiable
-ne devient pas une décision exploitable. Pas de retry payant ni de fallback GPT.
-La relecture reconstruite utilise les vrais RAW archivés, jamais des citations
-ajoutées par DeepSeek. Les anciens runs sans champ `provider` restent GPT et
-gardent leur contrat de requête existant.
+Par défaut, deux recherches et deux pages Fetch au plus par titre, puis une analyse.
+`max_tool_calls` borne Search + Fetch ; les dates inconnues restent inconnues.
+Requêtes/réponses brutes, horodatages, prompt exact, textes fournis et consommation
+sont conservés dans `llm_directional_assessments.response_json`. Les URL réellement
+renvoyées, dates fournisseur, sources fraîches et seuils sont contrôlés avant
+publication. Une erreur conserve les preuves déjà reçues et ne publie aucun
+candidat. Pas de retry payant ni de fallback GPT. Pas de migration SQL.
+[Contrat complet et paramètres](llm_modes_consensus.md#recherche-native-deepseek--19-octobre-2026).
+Aucun avantage directionnel ni accès API réel n'est démontré par les tests simulés.
 
 Contrôle préalable, sans génération payante :
 
