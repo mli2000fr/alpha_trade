@@ -6,6 +6,30 @@
 
 ## Périmètre
 
+Depuis le 18 octobre, **10. ML Predict** contient aussi un tableau des dix premiers
+titres par score Oracle avec l'avis et la confiance GPT/DeepSeek archivés. Il
+respecte la séance, le modèle, l'univers, le preset et le compte sélectionnés ;
+aucun appel LLM supplémentaire. Une confiance LLM n'est pas une probabilité
+calibrée et une sélection n'est pas un ordre exécuté. Voir le
+[contrat du tableau](../ml/oracle_llm_directional_filter.md).
+
+L'étape **11. Risk Management** contient également un tableau lié à l'analyse
+LLM et au run risque **exacts** (ou au run métier du dernier lancement sans LLM) :
+décisions, cibles, quantités, prix de sizing, protections et motifs. Avec LLM,
+seuls les titres publiés comme retenus à l’étape 10 sont affichés, dans l’ordre
+Oracle, même s’ils sont ensuite refusés par le risque. Les colonnes **Retenu par
+le filtre** et **Motif de non-sélection LLM** sont retirées du tableau 11 uniquement.
+Le tableau 10 reste inchangé ; sans LLM, la vue ordinaire du risque demeure.
+La vue distingue exclusion avant sizing, rejet du risque et cible publiée.
+Aucun recalcul de risque, appel broker ou ordre depuis cet affichage.
+Les tableaux 10/11 proposent la colonne **Graphique**, avec un bouton **📈 Voir**
+par symbole. La popin permet **1 an / 6 mois / 1 mois**, depuis les seules barres
+locales et jusqu'à la date de l'analyse, sans téléchargement ni écriture SQL.
+La popin propose aussi le bloc **Consensus analystes EODHD — valeurs et
+explications** : snapshots/périodes, valeurs documentées, qualifications et
+historique local, borné à la fin de J New York. Ce n’est pas une nouvelle
+analyse LLM ni un signal transmis au risque.
+
 Depuis le 18 octobre 2026, le bloc **B2** secteurs/fondamentaux utilise Finnhub
 par défaut et ne propose plus Yahoo. B2 est auxiliaire, pas l'étape quotidienne
 2 (Data Sanitizer) : les listes numériques de `us_pipeline` ne le lancent pas.

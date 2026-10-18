@@ -51,6 +51,8 @@ def test_pipeline_render_renders_import_news_panel_outside_auto_refresh_fragment
     monkeypatch.setattr(pipeline, "_render_workflow_launcher", lambda *args, **kwargs: None)
     monkeypatch.setattr(pipeline, "_render_runtime_center", lambda *args, **kwargs: None)
     monkeypatch.setattr(pipeline, "_render_step_panels", lambda *args, **kwargs: render_markers.append("fragment"))
+    monkeypatch.setattr(pipeline, "render_pending_local_symbol_bars_dialog",
+                        lambda: render_markers.append("dialog-outside-fragment"))
     monkeypatch.setattr(
         pipeline,
         "_build_pipeline_run_context",
@@ -64,7 +66,7 @@ def test_pipeline_render_renders_import_news_panel_outside_auto_refresh_fragment
 
     pipeline.render()
 
-    assert render_markers == ["fragment"]
+    assert render_markers == ["fragment", "dialog-outside-fragment"]
     assert panel_calls == [
         (
             False,

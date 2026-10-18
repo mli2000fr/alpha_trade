@@ -5,6 +5,196 @@ Depuis le 13 octobre, le filtre peut aussi recevoir les scores d'un
 folds et de la lineage. Ces scores prédisent l'amplitude, pas LONG/SHORT.
 Le filtre directionnel reste indépendant et PAPER uniquement.
 
+## Tableau intégré à « 10. ML Predict » — 18 octobre 2026
+
+Sous le résultat de l'étape, le bloc **TOP 10 Oracle — avis GPT / DeepSeek**
+affiche le rang, le symbole, le score Oracle, l'avis LONG/SHORT ou
+NEUTRE / ABSTENTION, la confiance LLM en pourcentage, le statut et l'indication
+« retenu par le filtre ». **La confiance n'est pas une probabilité de gain
+calibrée** ; le score Oracle porte sur l'amplitude, pas la direction.
+
+Les colonnes **Dernier prix ($)** et **Date du prix** reprennent la dernière
+clôture positive/finie fournie au LLM dans `input_json.candidates[].prices_through_decision_date`,
+sans dépasser la séance de l'analyse. Ce n'est **pas un prix temps réel** ni
+une nouvelle consultation fournisseur. La date reste explicite si seul un prix
+plus ancien était archivé. Prix absent/invalide : cellule vide, pas de zéro ou
+de cours actuel substitué. Le calcul des scores et la sélection restent inchangés.
+
+Les deux tableaux (10 et 11) affichent **Nom de l’entreprise** immédiatement
+après le symbole, depuis `stock_metadata.company_name`, en une lecture groupée
+par tableau. Nom manquant/vide ou symbole absent du référentiel : cellule vide,
+sans retirer le titre ni modifier son ordre. Dans le parcours sans filtre, cela
+inclut les cibles du risque hors snapshot LLM. Avec filtre, le tableau 11 est
+limité aux titres retenus à l’étape 10. Il s'agit du **libellé actuel du
+référentiel**, pas d'une preuve d'identité historique PIT ; les archives, scores,
+décisions et règles de sélection restent inchangés. Aucun appel fournisseur.
+
+Correctif du 18/10/2026 : le clic **Voir** est un événement transitoire, sans
+valeur d’état persistante de même nom (celle-ci masquait le symbole cliqué et
+empêchait l’ouverture). La clé du composant est versionnée pour éliminer cet
+ancien état dans les sessions ouvertes. Tests de l’événement réel Streamlit
+pour les tableaux 10/11 : ouverture, fermeture, réouverture du même titre et
+refus d’un symbole absent du tableau. Aucune modification des sélections/ordres.
+
+Correctif complémentaire des périodes : le tableau demande un rerun de page
+avant d’ouvrir la popin hors du fragment Pipeline rafraîchi toutes les deux
+secondes. Sinon ce rafraîchissement supprimait le handler du dialogue imbriqué :
+les boutons restaient visibles mais ne recalculaient plus le graphique. La
+requête d’ouverture est consommée une seule fois ; la fermeture ne réouvre pas
+la popin. Chaque période sélectionne sa fenêtre SQL et renouvelle le graphique
+et ses axes (y compris après un zoom). Aucun téléchargement ni ordre.
+Vérification navigateur sur `tests/fixtures/prediction_review_dialog_app.py`,
+avec données fictives et timer de 2 secondes : 262 barres sur un an → 132 sur
+six mois → 23 sur un mois → retour à 262 sur un an. Les fenêtres et axes
+changent effectivement après plusieurs rafraîchissements du parent. Ce test
+d’interface ne constitue pas un audit de couverture des prix en production.
+
+La popin contient aussi **Consensus analystes EODHD — valeurs et explications** :
+choix parmi les 90 dernières dates de collecte accessibles, puis période fiscale
+et horizon ; EPS/revenus, tendances et compteurs de révisions, avec la valeur,
+le nom SQL et l’explication de chaque champ. Qualifications et traçabilité sont
+visibles, ainsi que les écarts descriptifs EPS et au plus 30 observations réellement
+collectées pour la même période/horizon. Aucun objectif de cours ou avis Yahoo
+n’est ajouté. `NULL` reste inconnu ; aucune devise/échelle ni conversion des
+croissances fournisseur n’est inventée. Les pourcentages des variations EPS ne
+sont calculés que sur une référence strictement positive.
+
+La consultation est bornée à la fin de J New York : `snapshot_date <= J` et
+réception `available_at`/`observed_at` strictement avant minuit New York de J+1
+(conversion UTC tenant compte de l’heure d’été). Cela **ne reconstitue pas le
+snapshot exact du LLM**, ni une disponibilité avant son heure précise de décision.
+Le statut RESEARCH_ONLY et les marqueurs non qualifiés ne sont pas promus ;
+ces données ne modifient ni Oracle/LLM, ni risque/exécution. Aucun téléchargement,
+appel LLM ou SQL écrit. Table absente ou lecture impossible : avertissement sans
+secrets ; absence de consensus ≠ avis neutre ; absence de barres n’empêche pas
+la consultation du consensus. Code : `ihm/services/consensus_review.py` et
+`ihm/components/symbol_consensus_panel.py`.
+
+Dans chacun des deux tableaux, la colonne **Graphique**, juste après le symbole,
+contient un vrai bouton **📈 Voir** par ligne, sans durée dans le libellé. Les
+anciens boutons sous les tableaux sont retirés. Un clic ouvre une popin native
+avec chandeliers OHLC journaliers, volumes et détail des barres. Elle propose
+les boutons **1 an / 6 mois / 1 mois**, avec 1 an sélectionné initialement.
+Chaque fenêtre est calendaire et se termine à la **séance de l'analyse** : aucune
+barre ultérieure n'est ajoutée à une ancienne sélection. Zoom et déplacement
+sont disponibles dans le graphique. Fermeture par la croix, Échap ou Fermer.
+
+Le tableau interactif utilise le composant natif Streamlit v2 (validé sur 1.58),
+avec défilement et tri visuel par en-tête ; le rang/symbole et l'action restent
+visibles au défilement horizontal. Le tri n'affecte pas les décisions archivées.
+Le clic transporte le **symbole**, pas le numéro visuel de ligne, puis vérifie
+qu'il appartient au tableau courant. Les textes sont insérés comme texte, pas
+interprétés en HTML. Aucun script CDN, lien vers une autre page ou accès au DOM
+extérieur du composant n'est nécessaire.
+
+Source exclusive : `alpha_trade.stock_bars_daily` en lecture seule, requête liée
+au symbole et bornée en dates, déclenchée à l'ouverture ou au changement de
+période (cache mémoire 60 secondes, séparé par symbole/date/période).
+Pas de téléchargement EODHD/Alpaca/Stooq, appel LLM, écriture SQL,
+ni fallback réseau. Cette popin locale est distincte de l'ancien dialogue
+générique réseau des autres pages. Une période demandée n'est pas une garantie
+de couverture complète : absence de données signalée, trous non comblés.
+Les barres remplies/statut inconnu ou OHLC invalides sont exclues du dessin avec
+un avertissement ; volumes absents/invalides laissés vides, jamais remplacés par
+zéro. Les sources enregistrées et les dates réelles sont affichées, sans
+requalification automatique des prix pour une exécution.
+
+Composants : `ihm/components/prediction_review_table.py` et
+`ihm/components/local_symbol_bars_dialog.py`. Tests : tri/clic du code client,
+événements validés en Python, montage du tableau, ouverture/fermeture et choix
+des périodes avec Streamlit AppTest (`tests/test_prediction_review_table.py`,
+`tests/test_local_symbol_bars_dialog.py`).
+Vérification FUN sur 16/10/2025–16/10/2026 : 252 barres présentes, dernière clôture
+8,11 USD, source `eodhd_eod`, sans exclusion ni appel fournisseur.
+
+La colonne **Motif de non-sélection** traduit les `selection_blockers` archivés :
+sources non traçables/invalides, sources récentes insuffisantes, confiance sous
+le seuil (avec la valeur et le seuil archivés), SHORT non autorisé. Plusieurs
+motifs sont cumulés. Elle distingue également abstention, attente, erreur
+technique et échec global. Pour un titre retenu, elle affiche « — ».
+Un plafond de sélection n'est invoqué que si la sélection archivée correspond
+au classement complet des candidats admissibles par confiance, rang Oracle puis
+symbole ; le contrôle n'est pas limité aux dix lignes visibles. Si l'archive ne
+permet pas d'expliquer le rejet, le tableau dit « motif non renseigné » au lieu
+d'inventer une raison. Les règles de sélection et les archives ne sont pas modifiées.
+
+Le classement suit le score Oracle décroissant du snapshot archivé : pas de
+reclassement par confiance, de tri par rendement futur ni d'affichage des seuls
+titres retenus. Le plafond d'affichage est dix ; si moins de candidats ont été
+analysés, le bloc n'en invente pas. Les erreurs techniques et les réponses encore
+attendues sont distinguées de l'abstention valide ; une confiance absente n'est
+pas remplacée par zéro.
+
+Sources lues : `llm_directional_runs.input_json` pour les candidats et leur ordre,
+`config_json` pour le fournisseur/modèle réellement utilisé, et
+`llm_directional_assessments.assessment_json` pour les réponses validées. Le bloc
+choisit la **dernière tentative du même périmètre**, même si elle a échoué ou
+est encore en cours : date de séance US, modèle Oracle, univers, preset et compte.
+Il exclut les essais de recherche et ne réutilise pas une ancienne réussite pour
+masquer un échec plus récent. Identifiant, séance, modèle et horodatage Paris sont
+affichés explicitement. La date de séance utilise le même résolveur US que le
+pipeline (par exemple une date de week-end résolue vers la séance pertinente).
+
+Affichage en lecture seule, rafraîchi avec le panneau Pipeline (cache maximal
+cinq secondes), sans nouvel appel GPT/DeepSeek, écriture SQL ni ordre. On peut
+consulter une archive même après avoir décoché le filtre ; cela ne relance pas
+l'analyse. Sans archive pour le périmètre choisi, un message l'explique au lieu
+de substituer les réponses d'une autre date ou d'un autre modèle. « Retenu » ne
+vaut ni approbation risque ni exécution ; les contrôles et transmissions exactes
+de run_id des étapes 11/12 restent inchangés.
+
+Implémentation : `ihm/services/llm_prediction_review.py`, rendu dans
+`ihm/pages/pipeline.py`. Tests : `tests/test_llm_prediction_review.py`.
+
+## Contrats risque et orchestration
+
+### Tableau de l’étape 11 — 18 octobre 2026
+
+Le bloc **Décisions du risque — Oracle / LLM et portefeuille cible**, dans
+**11. Risk Management**, affiche uniquement les titres publiés comme retenus
+par l’étape 10 (`llm_directional_runs.selected_json` de l’analyse exacte), dans
+l’ordre du score Oracle. Il ne reprend pas tout le TOP10. Les colonnes
+**Retenu par le filtre** et **Motif de non-sélection LLM** sont retirées de ce
+tableau uniquement ; le tableau 10 reste inchangé. Il ajoute décision
+risque, présence d'une cible publiée, sens cible, quantité validée, prix/date de
+référence du sizing, montant cible, stop initial, TP de prix et motif risque.
+Les prix de l'analyse LLM et du sizing restent séparés, sans cotation temps réel.
+Une sortie à durée fixe n'est pas affichée comme un TP de prix ; une valeur non
+enregistrée reste vide.
+
+Le tableau suit l'**identifiant LLM exact transmis à l'étape 11**, puis son
+`llm_directional_runs.risk_run_id`, avec contrôle du compte et de la séance. Il
+ne choisit jamais le dernier portefeuille SQL arbitraire. Les données viennent
+de `risk_decisions`, `portfolio_targets` et du résumé métier de ce run exact.
+Sans filtre LLM, l'identifiant métier du dernier lancement risque du compte est
+utilisé, jamais une ancienne réussite substituée à un nouvel échec sans résumé.
+Les colonnes optionnelles absentes du schéma déployé ne sont pas inventées.
+
+Distinctions affichées :
+
+- non retenu par le LLM → absent du tableau 11, toujours consultable dans le tableau 10 ;
+- rejet/réduction du sizing → décision et motif persistés ;
+- préfiltrage qualité → `new_entry_data_rejections` du résumé ;
+- exclusion de tradabilité → motif du **run univers figé utilisé**, si cette preuve existe ;
+- absence de décision individuelle → explicitement signalée, sans motif ni quantité zéro inventés ;
+- run non lié, inachevé ou échoué → attente/résultats partiels, aucune cible présentée comme publiée.
+
+Un titre retenu à l’étape 10 reste visible même au-delà du rang Oracle 10, ou
+s’il est ensuite refusé par le risque. Les autres décisions/cibles (par exemple
+positions déjà détenues) restent enregistrées, sans être affichées dans cette
+vue LLM. Sans filtre LLM, la vue ordinaire des décisions/cibles risque demeure ;
+les rangs/confiances absents ne sont pas synthétisés.
+Une cible n'est **pas un ordre exécuté**, son montant n'est pas un montant de
+fill. La vue n'appelle ni LLM, ni broker, ni sizing ; aucune écriture SQL et
+aucun ordre. Implémentation : `ihm/services/risk_prediction_review.py`.
+
+Vérification sur `llm-fa604bed142d41a7be61012432c1fc6e`, lié au risque
+`caa4f9d088d440b6` (séance 16/10/2026) : zéro cible et zéro décision persistées.
+FUN, non retenu par le filtre LLM (source non traçable), reste consultable au
+tableau 10 mais n’apparaît plus au tableau 11. Seul FMC, retenu LLM, y apparaît :
+il est exclu avant sizing par le snapshot univers `close_below_minimum`.
+Ces résultats ne sont ni un refus broker, ni une exécution de marché.
+
 Depuis le 18 octobre, le snapshot courant du compte principal PAPER est distinct
 de la date du signal J : capture et sizing doivent être après clôture J et avant
 l'ouverture suivante, avec une capture d'au plus cinq minutes. Aucun timestamp

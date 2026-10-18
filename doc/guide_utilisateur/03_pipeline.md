@@ -19,6 +19,48 @@ wrapper GPT, pas l'entraînement Oracle. N=20 candidats/K=3 retenus localement,
 LONG/SHORT/abstention ; les nombres ne sont pas des pourcentages.
 Pas d'ATR implicite dans ce classement au score Oracle.
 
+Depuis le 18/10/2026, ouvrir **10. ML Predict** pour consulter le nouveau tableau
+**TOP 10 Oracle — avis GPT / DeepSeek**, sous le résultat du lancement. Il présente
+les dix premiers par score Oracle, l'avis LONG/SHORT/NEUTRE, la confiance en % et
+les titres retenus. **Dernier prix ($)** et **Date du prix** affichent la dernière
+clôture fournie au LLM dans cette analyse, pas un cours temps réel.
+Dans les tableaux 10 et 11, **Nom de l’entreprise** vient du champ actuel
+`stock_metadata.company_name` et apparaît après le symbole ; vide si non renseigné.
+La colonne **Motif de non-sélection** explique les exclusions
+(sources, confiance, abstention, plafond de sélection ou erreur/attente), sans
+nouvel appel LLM. Fournisseur, séance, modèle et identifiant de l'analyse sont
+indiqués. Les réponses proviennent des archives : rafraîchir la page ne rappelle
+pas le LLM. La confiance est subjective, **pas une probabilité de gain calibrée**.
+Sans analyse du même univers/preset/modèle/séance, un message explique l'absence ;
+les erreurs et les réponses encore attendues ne sont pas affichées comme neutres.
+
+Dans les tableaux **10 et 11**, la colonne **Graphique** propose **📈 Voir** sur
+chaque ligne. La popin affiche chandeliers journaliers, volumes et détail OHLCV,
+avec les boutons de période **1 an / 6 mois / 1 mois** (1 an par défaut).
+Elle utilise uniquement les barres déjà en base, jusqu'à la séance de l'analyse
+(pas de prix futurs pour une ancienne analyse). Zoom possible, puis
+fermer avec la croix, Échap ou Fermer. Aucun téléchargement supplémentaire ;
+les données absentes ou écartées du graphique sont signalées.
+
+Dans cette même popin, ouvrir **Consensus analystes EODHD — valeurs et
+explications** pour choisir une date de collecte puis une période fiscale.
+Les tableaux expliquent EPS, chiffre d’affaires, références J−7/30/60/90,
+révisions, qualification et provenance, champ par champ. Un historique des
+observations réellement collectées est proposé sans mélanger les exercices.
+La vue s’arrête à la fin de la séance datée J (journée New York), pas à une
+heure de décision certifiée. Elle ne prouve pas que le LLM a utilisé ces valeurs.
+Les unités inconnues et données RESEARCH_ONLY restent signalées ; aucune
+prédiction, collecte, qualification ou exécution n’est déclenchée par ce bloc.
+
+Dans **11. Risk Management**, avec filtre LLM, le bloc **Décisions du risque**
+affiche seulement les titres retenus à l’étape 10, et non tout le TOP10. Les
+colonnes **Retenu par le filtre** et **Motif de non-sélection LLM** n’y figurent
+plus ; le tableau 10 reste inchangé. Les décisions/cibles du risque exact restent
+affichées : quantité validée, sens, montant cible, SL/TP de prix et motifs.
+Un titre retenu à l’étape 10 mais refusé par le risque reste visible. Sans filtre
+LLM, la vue ordinaire des décisions/cibles risque demeure. Un run inachevé reste indiqué
+comme tel ; une cible n'est pas un ordre exécuté. Le tableau est en lecture seule.
+
 10 prépare scores et analyse prospective après clôture J, avant ouverture
 suivante ; 11 consomme son run exact ; 12 transmet les targets PAPER/default.
 La case de protections spécifiques fige SL=7 %, sortie à l'ouverture séance 21,
