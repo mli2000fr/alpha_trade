@@ -51,7 +51,7 @@ Ajout du 11 octobre : **`eodhd_ipo_calendar_sync`** (P2), activé et tâche Wind
 | security_master_snapshot | Actif | Nasdaq directory / Business Quant → security_master_snapshots, security_master_changes |
 | corporate_actions_sync | Actif | Business Quant / Alpaca → corporate_action_source_events ; distinct de l'application portefeuille |
 | sec_edgar_incremental | Actif | SEC → sec_filing_raw, sec_filing_documents ; primaire et annexes EX-99 selon option |
-| market_cap_sync | Actif | SEC primaire, Yahoo puis Finnhub fallback → stock_fundamentals_daily |
+| market_cap_sync | Actif | Faits SEC/Finnhub → stock_fundamentals_daily ; capitalisations SEC × clôture qualifiée puis Finnhub → stock_market_cap_daily ; mesures séparées grand univers/tradable, sans Yahoo |
 | borrow_status_snapshot | Actif | Alpaca → stock_borrow_status_snapshots ; disponibilité indicative ETB, pas coût de prêt complet |
 | oracle_options_indicative_snapshot | Recherche active | Alpaca → stock_option_snapshots ; données indicatives, pas NBBO officiel certifié |
 | options_delayed_bars_sync | Recherche active | Alpaca → stock_option_contract_versions, stock_option_bars_delayed ; pas quotes NBBO |
@@ -79,9 +79,10 @@ chaque observation sans doublon métier. Les noms de fournisseur absents du YAML
 ne rendent pas une normalisation locale indépendante de sa source amont SEC.
 
 La collecte de capitalisation n'impose pas un filtre : `config.yaml/market_cap`
-est actuellement en **liquidity_only**. Le fallback Yahoo du batch capitalisation
-n'est pas le batch de consensus Yahoo ; les restrictions de ce dernier ne
-doivent pas être extrapolées à une autorisation générale des autres usages.
+est actuellement en **liquidity_only**. Depuis le 18/10/2026, le batch de
+capitalisation et le publieur ne sélectionnent plus Yahoo : SEC puis Finnhub.
+Le retrait n'autorise aucune autre collecte Yahoo encore présente dans les
+anciens outils. [Mesure de couverture et limites](retrait_yahoo_capitalisations_pipeline_20261018.md).
 
 ### us_pipeline
 

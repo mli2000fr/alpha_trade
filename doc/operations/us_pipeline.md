@@ -6,6 +6,12 @@
 
 ## Périmètre
 
+Depuis le 18 octobre 2026, le bloc **B2** secteurs/fondamentaux utilise Finnhub
+par défaut et ne propose plus Yahoo. B2 est auxiliaire, pas l'étape quotidienne
+2 (Data Sanitizer) : les listes numériques de `us_pipeline` ne le lancent pas.
+L'étape 13 conserve Alpaca/EODHD mais passe explicitement `--cross-check none` ;
+le CLI refuse désormais Yahoo. [Retrait et couverture SEC/Finnhub](retrait_yahoo_capitalisations_pipeline_20261018.md).
+
 Depuis le 17 octobre 2026, les étapes 10 (si filtre LLM activé), 11 et 12 PAPER
 envoient également leurs détails sur Telegram : sélection LLM et abstentions,
 cibles risque, puis ordres/exécutions observées. Voir le

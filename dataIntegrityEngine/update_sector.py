@@ -33,16 +33,13 @@ from service.finnhub.clientFinnhub import (
 	MIN_REQUEST_INTERVAL_SECONDS,
 	fetch_symbol_fundamentals_record as fetch_finnhub_fundamentals_record,
 )
-from service.yahoo.clientYahooFinance import (
-	fetch_symbol_fundamentals_record as fetch_yahoo_fundamentals_record,
-)
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_LOG_EVERY = 50
 DEFAULT_REFRESH_STALE_DAYS = 30
 NOT_AVAILABLE = "N/A"
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
-FundamentalsProvider = Literal["yahoo_finance", "eodhd", "finnhub", "fmp"]
+FundamentalsProvider = Literal["eodhd", "finnhub", "fmp"]
 DEFAULT_PROVIDER_FALLBACK: FundamentalsProvider = "finnhub"
 
 
@@ -69,18 +66,15 @@ def update_stock_metadata_sector(symbol: str, sector: str) -> int:
 
 
 def _normalize_provider(provider: str) -> FundamentalsProvider:
-	normalized = str(provider or "yahoo_finance").strip().lower()
+	normalized = str(provider or "finnhub").strip().lower()
 	provider_aliases = {
-		"yahoo": "yahoo_finance",
-		"yahoo_finance": "yahoo_finance",
-		"yfinance": "yahoo_finance",
 		"eodhd": "eodhd",
 		"finnhub": "finnhub",
 		"fmp": "fmp",
-		"sec": "sec",  # SEC EDGAR ne fournit pas sector/market_cap → fallback Yahoo
+		"sec": "sec",  # Compatibilité historique : secteurs via EODHD, jamais Yahoo.
 	}
 	if normalized not in provider_aliases:
-		raise ValueError("provider doit être 'yahoo_finance', 'eodhd', 'finnhub', 'fmp' ou 'sec'.")
+		raise ValueError("provider doit être 'eodhd', 'finnhub', 'fmp' ou 'sec' ; Yahoo retiré du bloc B2.")
 	normalized = provider_aliases[normalized]
 	return normalized  # type: ignore[return-value]
 
@@ -186,8 +180,6 @@ def _fetch_fundamentals(
 	provider: FundamentalsProvider,
 	session: requests.Session,
 ) -> dict[str, Any]:
-	if provider == "yahoo_finance":
-		return fetch_yahoo_fundamentals_record(symbol, session=session)
 	if provider == "finnhub":
 		return fetch_finnhub_fundamentals_record(symbol, session=session)
 	if provider == "fmp":
@@ -236,7 +228,7 @@ def update_missing_sectors(
 	log_every: int = DEFAULT_LOG_EVERY,
 	*,
 	refresh_stale_days: int | None = None,
-	provider: FundamentalsProvider = "yahoo_finance",
+	provider: FundamentalsProvider = "finnhub",
 	overwrite_existing: bool = False,
 	explicit_symbols: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -422,13 +414,13 @@ def update_missing_sectors(
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
-	parser = argparse.ArgumentParser(description="Met à jour stock_metadata.provider_sector et market_cap depuis Yahoo Finance, EODHD ou Finnhub")
+	parser = argparse.ArgumentParser(description="Met à jour stock_metadata.provider_sector et market_cap depuis Finnhub, EODHD ou FMP, sans Yahoo")
 	parser.add_argument("--limit", type=int, default=None, help="Nombre maximum de symboles à traiter")
 	parser.add_argument(
 		"--provider",
 		type=str,
-		choices=("yahoo_finance", "eodhd", "finnhub", "fmp", "sec"),
-		default="yahoo_finance",
+		choices=("eodhd", "finnhub", "fmp", "sec"),
+		default="finnhub",
 		help="Source fundamentals utilisée pour provider_sector et market_cap.",
 	)
 	parser.add_argument(

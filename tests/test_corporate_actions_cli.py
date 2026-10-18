@@ -70,7 +70,7 @@ def test_run_sync_invokes_engine(monkeypatch):
         def sync(self, **kwargs):
             called.update(kwargs)
             return {'ok': True}
-    monkeypatch.setattr(cli, 'AlpacaCorporateActionProvider', lambda **kw: None)
+    monkeypatch.setattr(cli, 'build_corporate_action_provider', lambda **kw: DummyProvider())
     monkeypatch.setattr(cli, 'CorporateActionRepository', lambda: DummyRepo())
     monkeypatch.setattr(cli, 'CorporateActionEngine', lambda provider, repo, account_id=None: DummyEngine())
     f = io.StringIO()
@@ -88,7 +88,7 @@ def test_run_apply_invokes_engine(monkeypatch):
         def apply(self, as_of=None):
             called['as_of'] = as_of
             return {'ok': True}
-    monkeypatch.setattr(cli, 'AlpacaCorporateActionProvider', lambda **kw: None)
+    monkeypatch.setattr(cli, 'build_corporate_action_provider', lambda **kw: DummyProvider())
     monkeypatch.setattr(cli, 'CorporateActionRepository', lambda: DummyRepo())
     monkeypatch.setattr(cli, 'CorporateActionEngine', lambda provider, repo=None, account_id=None: DummyEngine())
     f = io.StringIO()
@@ -117,7 +117,7 @@ def test_run_all_invokes_both(monkeypatch):
         def apply(self, as_of=None):
             apply_called['as_of'] = as_of
             return {'ok': True}
-    monkeypatch.setattr(cli, 'AlpacaCorporateActionProvider', lambda **kw: None)
+    monkeypatch.setattr(cli, 'build_corporate_action_provider', lambda **kw: DummyProvider())
     monkeypatch.setattr(cli, 'CorporateActionRepository', lambda: DummyRepo())
     monkeypatch.setattr(cli, 'CorporateActionEngine', lambda provider, repo, account_id=None: DummyEngine())
     f = io.StringIO()

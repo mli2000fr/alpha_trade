@@ -20,55 +20,6 @@ from database.run_business_summaries import build_summary_run_id, emit_run_summa
 LOGGER = logging.getLogger(__name__)
 
 
-def _run_cross_check_yahoo(
-    repo: CorporateActionRepository,
-    *,
-    start_date: date,
-    end_date: date,
-    symbols: list[str] | None,
-) -> tuple[list[dict[str, object]], dict[str, int]]:
-    """Phase 5.3.c â€” exÃ©cute un cross-check Yahoo (best-effort, jamais bloquant).
-
-    Retourne ``(anomalies, stats)`` oÃ¹ ``stats`` contient
-    ``{"yahoo_events": N, "ingested_events": M, "anomalies": K}``.
-    """
-    try:
-        from corporate_actions.cross_check_yahoo import (
-            YahooDividendCrossCheckProvider,
-            diff_dividends,
-        )
-    except Exception:
-        LOGGER.warning("Cross-check Yahoo indisponible (import Ã©choue).", exc_info=True)
-        return [], {"yahoo_events": 0, "ingested_events": 0, "anomalies": 0}
-
-    try:
-        ingested = repo.load_dividend_events_in_range(
-            start_date=start_date, end_date=end_date, symbols=symbols
-        )
-    except Exception:
-        LOGGER.warning("Cross-check Yahoo : echec chargement events ingÃ©rÃ©s.", exc_info=True)
-        return [], {"yahoo_events": 0, "ingested_events": 0, "anomalies": 0}
-
-    if not symbols:
-        # Sans liste explicite, on cross-check au moins les symboles ingÃ©rÃ©s.
-        symbols = sorted({ev.symbol for ev in ingested})
-
-    yahoo_provider = YahooDividendCrossCheckProvider()
-    yahoo_events = yahoo_provider.fetch_events(
-        symbols=symbols, start_date=start_date, end_date=end_date
-    )
-    anomalies = diff_dividends(ingested=ingested, yahoo=yahoo_events)
-    LOGGER.info(
-        "Cross-check Yahoo termine | ingested=%d yahoo=%d anomalies=%d",
-        len(ingested), len(yahoo_events), len(anomalies),
-    )
-    return anomalies, {
-        "yahoo_events": len(yahoo_events),
-        "ingested_events": len(ingested),
-        "anomalies": len(anomalies),
-    }
-
-
 def _emit_and_persist_summary(
     *,
     summary: dict[str, object],
@@ -152,9 +103,9 @@ def _build_parser() -> argparse.ArgumentParser:
     sync_p.add_argument("--account", type=str, default=None, help="ID du compte Alpaca multi-comptes.")
     sync_p.add_argument(
         "--cross-check",
-        choices=("none", "yahoo"),
-        default="yahoo",
-        help="Cross-check des dividendes ingérés contre Yahoo Finance (best-effort). Défaut S13 : yahoo. Utiliser --cross-check none pour désactiver.",
+        choices=("none",),
+        default="none",
+        help="Aucun contrôle Yahoo ; collecte principale Alpaca/EODHD inchangée.",
     )
 
     # --- apply ---
@@ -188,9 +139,9 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--account", type=str, default=None, help="ID du compte Alpaca multi-comptes.")
     run_p.add_argument(
         "--cross-check",
-        choices=("none", "yahoo"),
-        default="yahoo",
-        help="Phase 5.3.c — cross-check des dividendes ingérés contre Yahoo Finance (yfinance requis). Défaut S13 : yahoo. Utiliser --cross-check none pour désactiver.",
+        choices=("none",),
+        default="none",
+        help="Aucun contrôle Yahoo ; collecte principale Alpaca/EODHD inchangée.",
     )
 
     return parser
@@ -388,6 +339,8 @@ def _resolve_sync_symbols_bar(args: argparse.Namespace, repo: CorporateActionRep
 
 
 def _run_sync(args: argparse.Namespace) -> None:
+    if getattr(args, "cross_check", "none") != "none":
+        raise ValueError("Cross-check Yahoo retiré ; utiliser none")
     account_id = getattr(args, "account", None)
     provider = build_corporate_action_provider(account_id=account_id)
     repo = CorporateActionRepository()
@@ -414,10 +367,6 @@ def _run_sync(args: argparse.Namespace) -> None:
     finished_at = datetime.now()
     cross_check_anomalies: list[dict[str, object]] | None = None
     cross_check_stats: dict[str, int] = {}
-    if getattr(args, "cross_check", "none") == "yahoo":
-        cross_check_anomalies, cross_check_stats = _run_cross_check_yahoo(
-            repo, start_date=start_date, end_date=end_date, symbols=symbols
-        )
     summary = {
         "run_id": build_summary_run_id("ca-sync"),
         "started_at": started_at.isoformat(timespec="seconds"),
@@ -558,6 +507,8 @@ def _run_status(_args: argparse.Namespace) -> None:
 
 
 def _run_all(args: argparse.Namespace) -> None:
+    if getattr(args, "cross_check", "none") != "none":
+        raise ValueError("Cross-check Yahoo retiré ; utiliser none")
     """EnchaÃ®ne sync puis apply dans un seul appel CLI."""
     print("[RUN] Demarrage de l'ingestion des corporate actions...")
     account_id = getattr(args, "account", None)
@@ -595,10 +546,6 @@ def _run_all(args: argparse.Namespace) -> None:
     sync_finished_at = datetime.now()
     cross_check_anomalies: list[dict[str, object]] | None = None
     cross_check_stats: dict[str, int] = {}
-    if getattr(args, "cross_check", "none") == "yahoo":
-        cross_check_anomalies, cross_check_stats = _run_cross_check_yahoo(
-            repo, start_date=start_date, end_date=end_date, symbols=symbols
-        )
     _emit_and_persist_summary(
         summary={
             **sync_summary,

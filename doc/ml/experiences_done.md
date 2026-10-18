@@ -1,5 +1,89 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-18 — anciens avantages et complémentarité sur le TOP10 Oracle parcours
+
+**TERMINÉ / `NO_STABLE_TOP10_COMPLEMENTARITY` — aucune promotion.**
+Réévaluation locale des anciens scores/règles : dix bras plus douze scores E23
+descriptifs, six combinaisons figées, trois retenus parmi les dix originaux.
+1 049 dates 2022–2026, dont 1 027 complètes / 3 081 sélections comparables.
+D10 parcours seul : D10 **30,57 %**, D1 **23,79 %** ; combinaison équipondérée
+avec anti-D1 CatBoost : **31,61 % / 22,07 %**, contre **29,11 % / 25,61 %**
+pour les trois premiers Oracle. Petit gain moyen, dégradation des deux critères
+en 2024 ; zéro recette passe les gates. Confirmation 2023–2026 : +0,51 point
+D10, −1,67 point D1 ; p Holm 1,000 / 0,936. Momentum/ATR n'ajoute pas de gain
+stable. E17 seulement 85 dates complètes, inconclusif sur toute la période.
+E23 : 42 dates complètes seulement, population filtrée sur labels futurs,
+descriptif interdit comme entrée de recette ; 18 archives OOF absentes non
+recréées. Aucune conclusion globale contre tous les anciens modèles.
+Références à effectif égal, couverture/PIT distingués ; sources bloquées non
+restaurées. Aucun entraînement, SQL, fournisseur/LLM, ordre, PnL ou modèle servi
+modifié ; 87 tests ciblés passent et empreintes revérifiées. Dossier v2 de
+référence, v1 conservé (sélections identiques, correction Holm renforcée).
+Pas de nouveau holdout indépendant, pas de performance économique démontrée.
+[Protocole et bilan](complementarite_anciens_signaux_top10_20261018.md).
+
+## 2026-10-18 — TOP10, CatBoost trois classes et score P(D10)−P(D1)
+
+**TERMINÉ / `NO_STABLE_CATBOOST_TOP10_DIRECTION` — aucune promotion.** Un seul réglage CatBoost MultiClass figé
+(profondeur 3, 200 itérations, L2 10), 24 features J/variations 5–10 séances,
+train/test sur les dix candidats Oracle causaux uniquement. D1, D2–D9 et D10
+présents ; score de classement P(D10)−P(D1). Témoin logistique aux mêmes trois
+classes pour isoler le non-linéaire, ancienne logistique D10/rest reproduite,
+ordre Oracle conservé. Shortlist trois parmi dix, cinq/dix en sensibilités.
+Périodes historiques déjà vues, couverture future contrôlée sur dates communes,
+pas de SQL, fournisseur/LLM, ordre, PnL ou modèle servi modifié.
+Même cohorte de 1 027 dates complètes / 3 081 sélections : CatBoost D10 **29,60 %**,
+logistique trois classes **29,63 %**, ancien filtre D10 **30,57 %**, Oracle
+**29,11 %**. D1 respectifs **23,47 / 23,56 / 23,79 / 25,61 %**. Amélioration
+Brier3 contre logistique en confirmation (p Holm 0,036), pas de gain de
+concentration D10 significatif/robuste ; validation 2022 échouée et zéro période
+de confirmation passe tous les gates. Anciens scores reproduits à écart zéro,
+cinq modèles sauvés/rechargés et probabilités reproduites ; 80 tests passent.
+Pas de balayage de paramètres, nouveau backtest ou promotion après échec.
+[Protocole et bilan](direction_top10_catboost_trois_classes_20261018.md).
+
+## 2026-10-18 — apprentissage directionnel exclusivement TOP10 Oracle
+
+**TERMINÉ / `NO_STABLE_TOP10_DIRECTION` — aucune promotion.** Nouveau GO et périmètre explicite : les dix
+premiers scores Oracle seulement, au train comme au test ; la campagne
+précédente apprenait sur TOP20 %. Six bras commun/secteur/hiérarchique × J ou
+trajectoires 5/10 séances. D10/rest et D1/rest sont les tâches pratiques sur les
+dix, déciles intermédiaires conservés ; D1/D10 seul reste secondaire théorique.
+Shortlist de recherche figée à trois parmi dix, sensibilités cinq/dix ; comparaison
+aux trois premiers Oracle originaux. Archives locales, zéro SQL/fournisseur/LLM,
+aucun modèle servi, ordre ou batch modifié. Même période déjà observée,
+secteurs actuels non PIT : pas un nouveau holdout indépendant.
+19 300 couples TOP10, dont 10 490 en évaluation 2022–2026. Zéro des douze gates
+pratiques passe. Global PATH D10/rest AUC 0,5072 ; secteur PATH 0,5125 ;
+hiérarchie PATH 0,5102. Global PATH choisissant trois des dix : D10 moyens
+30,52 % contre 29,12 % pour les trois premiers Oracle, D1 23,84 % contre
+25,59 %. Effet surtout en 2025 ; 2022 se dégrade, 2026 augmente aussi D1.
+Pas de choix de fenêtre/bras après résultat. Support titre limité ; aucun
+modèle servi changé, 51 tests ciblés passent, quinze fichiers de prédictions
+et toutes les dates d'apprentissage contrôlés, sources revérifiées.
+[Protocole et bilan TOP10](direction_top10_seulement_20261018.md).
+
+## 2026-10-18 — diagnostic hiérarchique D1/D10 secteur/titre et trajectoires
+
+**TERMINÉ / `NO_STABLE_GROUP_STRUCTURE` — aucune promotion.** Protocole figé avant résultats : référence
+commune contre corrections sectorielles régularisées et résidus par titre ;
+photographie à J contre variations sur cinq/dix séances consécutives. Trois
+tâches distinctes : D1/D10 théorique, D10/rest et D1/rest dans Oracle TOP20 %.
+Déciles terminaux globaux H20, pas redéfinis par secteur ni confondus avec
+le signe de l'excursion. Validation 2022, confirmations historiques 2023–2026.
+Archives locales, anciens scores Oracle reproduits ; secteurs actuels non PIT
+et années récentes déjà observées. Aucun modèle servi, batch, ordre ou table
+modifié ; petites régressions uniquement diagnostiques. Aucun appel payant.
+670 602 candidats historiques TOP20 %, dont 375 754 en évaluation 2022–2026.
+D1/D10 : AUC quotidienne globale J 0,4908, globale trajectoires 0,4899,
+secteur trajectoires 0,4859, hiérarchie trajectoires 0,4782. Petit effet D1/reste
+hiérarchique (AUC 0,5263), mais Brier dégradé dans les cinq périodes ; aucun
+des douze gates ne passe. 2023 partiel ; 2026 vingt dates inconnues pour
+couverture des chemins <95 %, pas assimilées à des baisses. Scores Oracle
+originaux reproduits à écart zéro ; empreintes revérifiées, 32 tests ciblés
+passent. Aucun entraînement spécialisé supplémentaire justifié par ce test.
+[Protocole, réserves et suivi](direction_hierarchique_secteur_titre_20261018.md).
+
 ## 2026-10-16 — janvier 2026, TOP10 Oracle et avis GPT archivés, parcours TP20/SL10
 
 **Terminé et audité**, modèle parcours `model-factory-20261014113232-bc35a7`,

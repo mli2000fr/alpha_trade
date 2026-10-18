@@ -179,8 +179,13 @@ def test_latest_quotes_batch_delegates_to_idempotent_historical_sync(monkeypatch
     assert audits[0]["status"] == "success"
 
 
-def test_market_cap_sync_uses_targeted_sec_yahoo_finnhub_fallbacks(monkeypatch) -> None:
+def test_market_cap_sync_uses_targeted_sec_finnhub_fallback_only(monkeypatch) -> None:
     from modelFactory import fundamental_features
+    from service.forward_pit import market_cap_calculations as calc
+    monkeypatch.setattr(calc,'require_schema',lambda e:None)
+    monkeypatch.setattr(calc,'reference_session',lambda *a,**k:date(2026,10,16))
+    monkeypatch.setattr(calc,'calculate_sec',lambda *a,**k:dict(symbols={'AAA','BBB'},persisted=2,details={}))
+    monkeypatch.setattr(calc,'calculate_finnhub',lambda *a,**k:dict(symbols={'CCC'},persisted=1,details={}))
 
     monkeypatch.setattr(batch_module, "_symbols", lambda _cfg: ["AAA", "BBB", "CCC"])
 
@@ -194,10 +199,8 @@ def test_market_cap_sync_uses_targeted_sec_yahoo_finnhub_fallbacks(monkeypatch) 
     def covered(_engine, symbols, _as_of, _max_age, sources):
         if sources == ("SEC_EDGAR",):
             return {"AAA", "BBB"}
-        if sources == ("YAHOO FINANCE",):
-            return set()
         if sources == ("FINNHUB",):
-            return set(symbols)
+            return set(symbols) if calls[-1][0] == 'finnhub' else set()
         raise AssertionError(sources)
 
     monkeypatch.setattr(fundamental_features, "fetch_and_store_fundamentals", fetch)
@@ -206,7 +209,7 @@ def test_market_cap_sync_uses_targeted_sec_yahoo_finnhub_fallbacks(monkeypatch) 
         object(),
         {
             "primary_provider": "sec",
-            "fallback_providers": "yahoo_finance,finnhub",
+            "fallback_providers": "finnhub",
             "min_coverage_ratio": 0.99,
         },
         "market-cap-run",
@@ -215,15 +218,14 @@ def test_market_cap_sync_uses_targeted_sec_yahoo_finnhub_fallbacks(monkeypatch) 
 
     assert calls == [
         ("sec", ["AAA", "BBB", "CCC"]),
-        ("yahoo_finance", ["CCC"]),
         ("finnhub", ["CCC"]),
     ]
     assert outcome.requested == 3
     assert outcome.received == 3
-    assert outcome.persisted == 5
+    assert outcome.persisted == 7
     assert outcome.failed == 0
     assert outcome.warnings == []
-    assert outcome.details["strategy"] == "sec_edgar_then_yahoo_then_finnhub"
+    assert outcome.details["strategy"] == "sec_edgar_then_finnhub"
     assert outcome.details["providers"]["sec"]["eligible_symbols"] == 2
 
 
@@ -708,6 +710,8 @@ def test_alpaca_pagination_follows_tokens_without_silent_truncation(monkeypatch)
 
 
 def test_alpaca_system_trust_adapter_is_only_mounted_when_requested(monkeypatch) -> None:
+    # Pure mounting test: do not touch system TLS key-log paths/certificates.
+    monkeypatch.setattr("service.forward_pit.batch.ssl.create_default_context", lambda: object())
     class FakeSession:
         def __init__(self) -> None:
             self.mounts: list[tuple[str, object]] = []

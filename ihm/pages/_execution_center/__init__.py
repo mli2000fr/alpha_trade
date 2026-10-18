@@ -2361,12 +2361,14 @@ def _render_data_integrity_block() -> dict[str, Any]:
                 key="pipeline_data_integrity_fundamentals_limit",
             )
         )
-        fundamentals_provider_options = ("yahoo_finance", "eodhd", "finnhub")
+        fundamentals_provider_options = ("finnhub", "eodhd")
         current_fundamentals_provider = str(
-            st.session_state.get("pipeline_data_integrity_fundamentals_provider", "yahoo_finance")
+            st.session_state.get("pipeline_data_integrity_fundamentals_provider", "finnhub")
         ).strip().lower()
         if current_fundamentals_provider not in fundamentals_provider_options:
-            current_fundamentals_provider = "yahoo_finance"
+            current_fundamentals_provider = "finnhub"
+        # Écarter aussi une ancienne sélection Yahoo persistée dans Streamlit.
+        st.session_state["pipeline_data_integrity_fundamentals_provider"] = current_fundamentals_provider
         data_integrity_fundamentals_provider = cast(
             str,
             st.selectbox(
@@ -2376,7 +2378,7 @@ def _render_data_integrity_block() -> dict[str, Any]:
                 key="pipeline_data_integrity_fundamentals_provider",
                 help=(
                     "Provider utilisé par l'étape B2 pour récupérer `sector` et `market_cap`. "
-                    "Défaut recommandé : Yahoo Finance via `yfinance`. Si l'endpoint `fundamentals` EODHD est refusé par le compte courant (401/403), "
+                    "Finnhub par défaut, sans Yahoo. La classification fournisseur reste à harmoniser avec les secteurs de l'application. Si EODHD est refusé (401/403), "
                     "le backend bascule automatiquement vers Finnhub pour éviter un run B2 en erreur sur tout l'univers."
                 ),
             ),
@@ -5394,7 +5396,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             data_integrity_earnings_batch_size=int(data_integrity_earnings_batch_size),
             data_integrity_earnings_resume=bool(data_integrity_earnings_resume),
             data_integrity_fundamentals_limit=_to_optional_positive_int(data_integrity_fundamentals_limit),
-            data_integrity_fundamentals_provider=cast(Any, data_integrity_fundamentals_provider or "yahoo_finance"),
+            data_integrity_fundamentals_provider=cast(Any, data_integrity_fundamentals_provider or "finnhub"),
             data_integrity_fundamentals_overwrite_existing=bool(data_integrity_fundamentals_overwrite_existing),
             data_integrity_fundamentals_sleep_seconds=float(data_integrity_fundamentals_sleep_seconds),
             data_integrity_fundamentals_log_every=int(data_integrity_fundamentals_log_every),

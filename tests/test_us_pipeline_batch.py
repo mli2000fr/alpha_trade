@@ -122,6 +122,9 @@ def test_default_options_match_page_preset_and_sentiment():
 
 
 def setup_run(monkeypatch, tmp_path):
+    # Orchestration contract fixture, independent of the user's current bars
+    # provider. Target-date coverage is currently qualified on EODHD only.
+    monkeypatch.setattr('ihm.services.pipeline_runner._resolve_bars_provider_for_ihm', lambda: 'eodhd')
     monkeypatch.setattr(us_pipeline, 'ROOT', tmp_path)
     monkeypatch.setattr(us_pipeline, 'session_plan', lambda now: (date(2026, 10, 7), None))
     monkeypatch.setattr(us_pipeline, 'load_pipeline_policy', lambda: {'steps':list(range(1,10))})

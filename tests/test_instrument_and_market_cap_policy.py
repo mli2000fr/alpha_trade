@@ -22,7 +22,7 @@ def test_collective_instrument_policy_keeps_companies_reits_and_adrs() -> None:
     assert excluded_collective_instrument_reason("Invesco QQQ Trust") is not None
 
 
-def test_yahoo_is_preferred_when_both_sources_are_fresh() -> None:
+def test_yahoo_is_excluded_even_when_fresh() -> None:
     rows = pd.DataFrame(
         [
             {
@@ -44,12 +44,12 @@ def test_yahoo_is_preferred_when_both_sources_are_fresh() -> None:
         rows,
         snapshot_date=date(2025, 1, 2),
         max_age_days=365,
-        provider="yahoo_then_finnhub",
+        provider="finnhub",
     )
 
     assert len(selected) == 1
-    assert selected.iloc[0]["market_cap_source"] == "YAHOO FINANCE"
-    assert selected.iloc[0]["market_value"] == 2_500_000_000.0
+    assert selected.iloc[0]["market_cap_source"] == "FINNHUB"
+    assert selected.iloc[0]["market_value"] == 3_000_000_000.0
 
 
 def test_fresh_finnhub_replaces_stale_yahoo() -> None:
@@ -74,7 +74,7 @@ def test_fresh_finnhub_replaces_stale_yahoo() -> None:
         rows,
         snapshot_date=date(2025, 1, 2),
         max_age_days=365,
-        provider="yahoo_then_finnhub",
+        provider="finnhub",
     )
 
     assert selected.iloc[0]["market_cap_source"] == "FINNHUB"
@@ -93,14 +93,14 @@ def test_composite_prefers_fresh_sec_shares_over_snapshots() -> None:
 
     selected = _select_market_cap_rows(
         rows, snapshot_date=date(2025, 1, 2), max_age_days=365,
-        provider="sec_edgar_then_yahoo_then_finnhub",
+        provider="sec_edgar_then_finnhub",
     )
 
     assert selected.iloc[0]["market_cap_source"] == "SEC_EDGAR"
     assert selected.iloc[0]["market_value"] == 50_000_000.0
 
 
-def test_composite_falls_back_to_yahoo_when_sec_is_stale() -> None:
+def test_composite_falls_back_to_finnhub_when_sec_is_stale() -> None:
     rows = pd.DataFrame([
         {"symbol": "ABC", "market_value": 50_000_000.0,
          "market_cap_reference_date": "2022-01-01", "market_cap_source": "SEC_EDGAR"},
@@ -112,7 +112,7 @@ def test_composite_falls_back_to_yahoo_when_sec_is_stale() -> None:
 
     selected = _select_market_cap_rows(
         rows, snapshot_date=date(2025, 1, 2), max_age_days=365,
-        provider="sec_edgar_then_yahoo_then_finnhub",
+        provider="sec_edgar_then_finnhub",
     )
 
-    assert selected.iloc[0]["market_cap_source"] == "YAHOO FINANCE"
+    assert selected.iloc[0]["market_cap_source"] == "FINNHUB"

@@ -345,7 +345,7 @@ ExecutionTrailingTrigger = Literal["multiple_r", "profit_pct"]
 PipelineExecutionStatus = Literal["starting", "running", "completed", "failed", "timeout"]
 WorkflowStartStep = Literal["1", "3"]
 SentimentScoringMode = Literal["standard_only", "contextual_only", "standard_and_contextual"]
-FundamentalsProvider = Literal["yahoo_finance", "eodhd", "finnhub"]
+FundamentalsProvider = Literal["eodhd", "finnhub"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -657,7 +657,7 @@ class PipelineLaunchOptions:
     data_integrity_earnings_batch_size: int = DEFAULT_DATA_INTEGRITY_EARNINGS_BATCH_SIZE
     data_integrity_earnings_resume: bool = DEFAULT_DATA_INTEGRITY_EARNINGS_RESUME
     data_integrity_fundamentals_limit: int | None = None
-    data_integrity_fundamentals_provider: FundamentalsProvider = "yahoo_finance"
+    data_integrity_fundamentals_provider: FundamentalsProvider = "finnhub"
     data_integrity_fundamentals_overwrite_existing: bool = False
     data_integrity_fundamentals_sleep_seconds: float = DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS
     data_integrity_fundamentals_log_every: int = DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY
@@ -912,7 +912,7 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
         key="corporate_actions_sync",
         num="13",
         name="Corporate Actions Sync",
-        desc="Recupere dividendes/splits pour les symboles detenus en portefeuille. Provider selectionne automatiquement via market_data.bars_provider (alpaca ou eodhd) ; Yahoo cross-check toujours appele. (Phase 6 EODHD)",
+        desc="Récupère dividendes/splits pour les symboles détenus en portefeuille. Fournisseur sélectionné via market_data.bars_provider (Alpaca ou EODHD), sans cross-check Yahoo.",
         tables="corporate_actions_events",
         deps="execution (broker_positions_snapshots requis)",
         account_usage="alpaca",
@@ -941,7 +941,7 @@ PIPELINE_AUXILIARY_STEPS: tuple[PipelineStepDefinition, ...] = (
         key="update_sector",
         num="B2",
         name="Mise à jour fondamentaux",
-        desc="Enrichit `stock_metadata` avec `sector` et `market_cap` via Yahoo Finance, EODHD ou Finnhub (défaut Yahoo Finance / `yfinance`), avec option d'écrasement des valeurs existantes. Si l'endpoint fundamentals EODHD est refusé par le compte (401/403), le backend bascule automatiquement vers Finnhub pour terminer le run.",
+        desc="Enrichit `stock_metadata` avec secteur et capitalisation via Finnhub par défaut, ou EODHD, sans Yahoo. EODHD refusé (401/403) : fallback Finnhub. Classification fournisseur à harmoniser ; valeurs absentes non inventées.",
         tables="stock_metadata",
         deps="import_alpaca_assets (recommandé) ou univers déjà chargé",
     ),
@@ -1870,8 +1870,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     if step_key == "update_sector":
         fundamentals_provider = (
             options.data_integrity_fundamentals_provider
-            if options.data_integrity_fundamentals_provider in {"yahoo_finance", "eodhd", "finnhub", "fmp"}
-            else "yahoo_finance"
+            if options.data_integrity_fundamentals_provider in {"eodhd", "finnhub", "fmp"}
+            else "finnhub"
         )
         command = [
             sys.executable,
@@ -1940,7 +1940,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     if step_key == "corporate_actions_sync":
         # --portfolio-only : sync uniquement les symboles détenus en portefeuille
         # pas de --skip-existing : on re-interroge Alpaca à chaque fois pour ne rater aucun nouvel événement
-        command = [sys.executable, "-u", "-m", "corporate_actions", "sync", "--portfolio-only"]
+        command = [sys.executable, "-u", "-m", "corporate_actions", "sync", "--portfolio-only", "--cross-check", "none"]
         if options.corporate_actions_skip_existing:
             command.append("--skip-existing")
         if options.corporate_actions_batch_size and options.corporate_actions_batch_size > 0:

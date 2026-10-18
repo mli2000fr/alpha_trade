@@ -7,7 +7,14 @@
 ## Sources et capitalisation : contrats distincts
 
 La page historique concerne principalement les fondamentaux US. Le batch
-market_cap_sync est composite SEC primaire puis Yahoo/Finnhub en fallback.
+market_cap_sync est composite SEC primaire puis Finnhub, **sans Yahoo depuis
+le 18/10/2026**. Le bloc auxiliaire B2 du Pipeline utilise également Finnhub par
+défaut ; il ne faut pas le confondre avec l'étape quotidienne 2 Data Sanitizer.
+[Contrat et couverture mesurée](../operations/retrait_yahoo_capitalisations_pipeline_20261018.md).
+Le produit actions SEC × dernière clôture qualifiée et son complément Finnhub
+sont réellement enregistrés dans `stock_market_cap_daily`, avec les entrées,
+sources, dates et heure du calcul. Aucun écrasement des anciens faits SEC ;
+les observations nouvelles sont disponibles au plus tôt J+1 UTC.
 La commande modelFactory.fundamental_features --provider sec reconstruit les
 faits/features SEC : ce n'est pas une simple collecte de market cap actuelle
 sur une fenêtre J−10/J. Publication, disponibilité et prix doivent être alignés.

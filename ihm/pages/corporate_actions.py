@@ -65,9 +65,10 @@ def render() -> None:
                 step=5,
                 key="ca_sync_batch_size",
             )
+            st.session_state["ca_sync_cross_check"] = "none"
             sync_cross_check = st.selectbox(
                 "Cross-check dividendes",
-                options=["none", "yahoo"],
+                options=["none"],
                 index=0,
                 key="ca_sync_cross_check",
             )

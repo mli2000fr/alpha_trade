@@ -89,6 +89,7 @@ def engine():
                     symbol VARCHAR(32) NOT NULL,
                     trade_date DATE NOT NULL,
                     shares_outstanding BIGINT,
+                    available_date DATE,
                     market_cap FLOAT,
                     source VARCHAR(32) NOT NULL
                 )
@@ -486,7 +487,7 @@ def test_publish_chain_prefers_yahoo_and_excludes_etf(engine) -> None:
         engine,
         snapshot_date=snapshot_date,
         capital_preset_key=DEFAULT_CAPITAL_PRESET_KEY,
-        market_cap_provider="yahoo_then_finnhub",
+        market_cap_provider="finnhub",
         market_cap_policy="strict",
     )
 
@@ -498,7 +499,7 @@ def test_publish_chain_prefers_yahoo_and_excludes_etf(engine) -> None:
     )
     rows = resolution.frame.set_index("symbol")
     assert bool(rows.loc["AAPL", "is_tradable"]) is True
-    assert rows.loc["AAPL", "market_cap"] == pytest.approx(3_000_000_000_000.0)
+    assert rows.loc["AAPL", "market_cap"] == pytest.approx(3_100_000_000_000.0)
     assert bool(rows.loc["SPY", "is_tradable"]) is False
     assert rows.loc["SPY", "tradability_reason_code"] == "excluded_etf_or_etn"
 

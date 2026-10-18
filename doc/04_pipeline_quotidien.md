@@ -22,6 +22,12 @@ ni arrêt d'un processus existant n'est associé à ce changement du 11 octobre 
 
 ### B3 — Backfill historique selon le fournisseur des barres
 
+**Mise à jour 18/10/2026 :** le bloc auxiliaire B2 secteurs/fondamentaux utilise
+Finnhub par défaut, sans choix Yahoo ; il est distinct de l'étape 2 quotidienne
+Data Sanitizer. À l'étape 13, le contrôle Yahoo des dividendes est retiré ;
+la collecte principale Alpaca/EODHD reste inchangée.
+[Contrat détaillé et couverture](operations/retrait_yahoo_capitalisations_pipeline_20261018.md).
+
 B3 suit désormais `market_data.bars_provider`, comme l'étape 1. Son nom affiché
 est dynamique (EODHD ou ALPACA). La clé interne et les anciens noms d'options
 `eodhd_backfill_*` restent conservés pour compatibilité des paramètres IHM.

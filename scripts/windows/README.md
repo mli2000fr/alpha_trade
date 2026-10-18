@@ -237,29 +237,42 @@ puis renseigner `LOGIN_DB` / `PASSWORD_DB` dans `earnings_calendar.env`.
 
 ---
 
-## Job planifié — Capitalisations Yahoo + Finnhub
+## Job planifié — Capitalisations SEC + Finnhub, sans Yahoo
 
-La tâche **`AlphaTrade-MarketCapSync`** collecte deux snapshots distincts dans
-`stock_fundamentals_daily` : Yahoo d'abord, puis Finnhub. La sélection runtime
-`yahoo_then_finnhub` conserve Yahoo en priorité et utilise Finnhub seulement si
-Yahoo est absent ou périmé.
+La tâche **`AlphaTrade-MarketCapSync`** rafraîchit les actions SEC puis complète
+avec des snapshots Finnhub dans `stock_fundamentals_daily`, sans Yahoo.
+Le produit actions SEC × clôture qualifiée et le complément Finnhub sont
+enregistrés dans `stock_market_cap_daily`, sans réécrire les faits SEC.
+La sélection runtime est `sec_edgar_then_finnhub` ; seules les observations
+disponibles avant la décision sont éligibles. Voir
+[le contrat du retrait et la couverture mesurée](../../doc/operations/retrait_yahoo_capitalisations_pipeline_20261018.md).
 
 Configuration :
 
 ```yaml
 market_cap_sync:
-  run_hours: "11,23"
+  run_hours: "20"
+  recovery_run_hours: "23"
   run_days: "1,4"  # lundi et jeudi ; 0=dimanche
-  symbols_file: config/univers_batch/univers_filtred_tradable.txt
-  providers: "yahoo_finance,finnhub"
+  symbols_file: config/univers_batch/stock_bars_daily.txt
+  provider: sec_edgar_then_finnhub
+  primary_provider: sec
+  fallback_providers: "finnhub"
+  finnhub_request_interval_seconds: 1.1
+  finnhub_refresh_after_days: 3
+  close_confirmation_delay_minutes: 30
+  coverage_reference_symbols_file: config/univers_batch/univers_filtred_tradable.txt
+  min_coverage_ratio: 0.95
   log_file: log/batch/market_cap_sync.txt
 ```
 
 Le launcher est volontairement fail-closed : si le fichier d'univers manque, il
-n'élargit pas la collecte aux 13 000 symboles. Un mutex et le réglage Windows
+n'élargit pas silencieusement la collecte. Le grand fichier est ici explicitement
+sélectionné, pas un fallback. Un mutex et le réglage Windows
 `MultipleInstances IgnoreNew` empêchent les chevauchements. Une relance le même
 jour est idempotente car chaque source fait un upsert sur
-`(symbol, trade_date, source)`. À la fin, succès ou échec déclenche les
+`(symbol, trade_date, source)` ; les capitalisations dérivées sont dédupliquées
+par empreinte des entrées et jour réel d'observation. À la fin, succès ou échec déclenche les
 notifications **email et Telegram** via `scripts/send_batch_email.py`; les
 avertissements de collecte partielle sont inclus.
 

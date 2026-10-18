@@ -198,7 +198,7 @@ LINEAGE_SPEC: tuple[LineageEntry, ...] = (
     # 5. Corporate actions
     LineageEntry("corporate_actions_events", "corporate_actions.engine",
                  "reconciliation, accounting",
-                 "EODHD div/split, Alpaca CA, Yahoo (cross-check)",
+                 "EODHD div/split, Alpaca CA ; cross-check Yahoo retiré le 2026-10-18",
                  "**EODHD (primaire)**", "daily", "P1", SECTIONS_ORDER[4]),
     LineageEntry("corporate_actions_audit_runs *(Phase 5.3.b)*",
                  "corporate_actions.reconciliation", "ops",

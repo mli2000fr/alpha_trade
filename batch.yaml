@@ -222,15 +222,15 @@ db_news_raw_backup:
   log_file: log/batch/db_news_raw_backup.txt
 
 # Collecte composite de capitalisation. SEC EDGAR est la source primaire PIT :
-# dernier shares_outstanding disponible × cours à J. Yahoo puis Finnhub ne sont
-# interrogés que pour les symboles non couverts par la source précédente.
+# dernier shares_outstanding disponible × cours à J. Finnhub complète les
+# trous, sans Yahoo ; une couverture identique n'est pas présumée.
 market_cap_sync:
   priority: P0
   enabled: true
   status: ACTIVE
   timezone: Europe/Paris
-  description: "Maintenir les actions en circulation SEC PIT, puis compléter uniquement les trous avec Yahoo et Finnhub pour l'éligibilité tradable et la neutralisation market-cap."
-  tables: "stock_fundamentals_daily"
+  description: "Calculer et enregistrer la capitalisation (actions SEC × clôture qualifiée), puis compléter avec Finnhub, sans Yahoo. Couverture mesurée sur le grand univers et sur le fichier tradable."
+  tables: "stock_fundamentals_daily,stock_market_cap_daily"
   run_hours: "20"
   recovery_run_hours: "23"
   recovery_run_minutes: "0"
@@ -239,14 +239,18 @@ market_cap_sync:
   # Export statique des symboles daily ; indépendant du fichier tradable du pipeline.
   symbols_file: config/univers_batch/stock_bars_daily.txt
   universe_scope: config/univers_batch/stock_bars_daily.txt
-  provider: sec_edgar_then_yahoo_then_finnhub
+  provider: sec_edgar_then_finnhub
   primary_provider: sec
-  fallback_providers: "yahoo_finance,finnhub"
+  fallback_providers: "finnhub"
+  finnhub_request_interval_seconds: 1.1
+  finnhub_refresh_after_days: 3
+  close_confirmation_delay_minutes: 30
+  coverage_reference_symbols_file: config/univers_batch/univers_filtred_tradable.txt
   sec_lookback_days: 30
   max_age_days: 365
   min_coverage_ratio: 0.95
   execution_notice: "Principal 20:00 Paris lundi/jeudi ; secours 23:00 le même jour uniquement sans succès récent. Les fallbacks observent l'état courant, pas un état préouverture reconstitué."
-  research_notice: "Chaîne composite : SEC officielle et PIT en priorité ; Yahoo non officiel puis Finnhub servent uniquement de fallback de couverture."
+  research_notice: "SEC × dernière clôture NYSE confirmée (30 min) → stock_market_cap_daily, puis Finnhub si le calcul n'est pas qualifié. Cours absents/remplis/IEX, ADR/classes ambiguës ou split connu depuis la mesure des actions : pas de produit inventé. Observations UTC datées du calcul et disponibles J+1, jamais antidatées au dépôt SEC. Les appels Finnhub sont espacés ; circuit ouvert → reliquat différé. Seuil 95 % sur le grand fichier inchangé."
   log_file: log/batch/market_cap_sync.txt
 
 # Synchronisation du calendrier earnings Finnhub.

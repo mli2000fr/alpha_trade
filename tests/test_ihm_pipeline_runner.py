@@ -1017,7 +1017,7 @@ def test_build_pipeline_command_data_integrity_auxiliary_steps() -> None:
     ]
 
 
-def test_build_pipeline_command_update_sector_uses_yahoo_finance_by_default() -> None:
+def test_build_pipeline_command_update_sector_uses_finnhub_by_default() -> None:
     command = build_pipeline_command("update_sector", PipelineLaunchOptions())
 
     assert command == [
@@ -1026,7 +1026,7 @@ def test_build_pipeline_command_update_sector_uses_yahoo_finance_by_default() ->
         "-m",
         "dataIntegrityEngine.update_sector",
         "--provider",
-        "yahoo_finance",
+        "finnhub",
         "--sleep-seconds",
         str(PipelineLaunchOptions().data_integrity_fundamentals_sleep_seconds),
         "--log-every",

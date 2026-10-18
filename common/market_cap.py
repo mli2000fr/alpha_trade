@@ -3,12 +3,13 @@
 sec_edgar calcule la capitalisation a la date demandee avec le dernier nombre
 d'actions publie avant cette date et le cours du jour. Les autres providers
 lisent une capitalisation positive persistee avant la date demandee.
-sec_edgar_then_yahoo_then_finnhub privilégie le calcul SEC, puis choisit Yahoo
-et enfin Finnhub si la source précédente est absente ou périmée.
+sec_edgar_then_finnhub privilégie le calcul SEC puis Finnhub si la source
+précédente est absente ou périmée. Aucun fallback Yahoo.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 from typing import Any
 
 from common.config_loader import load_config
@@ -16,8 +17,7 @@ from common.config_loader import load_config
 
 SUPPORTED_MARKET_CAP_PROVIDERS = frozenset(
     {
-        "sec_edgar", "eodhd", "yahoo_then_finnhub",
-        "sec_edgar_then_yahoo_then_finnhub",
+        "sec_edgar", "eodhd", "finnhub", "sec_edgar_then_finnhub",
     }
 )
 SUPPORTED_MARKET_CAP_POLICIES = frozenset({"strict", "liquidity_only"})
@@ -38,17 +38,15 @@ def _normalize_provider(value: Any) -> str:
         "edgar": "sec_edgar",
         "sec_edgar": "sec_edgar",
         "eodhd": "eodhd",
-        "yahoo_then_finnhub": "yahoo_then_finnhub",
-        "yahoo-finnhub": "yahoo_then_finnhub",
-        "yahoo_finnhub": "yahoo_then_finnhub",
-        "sec_edgar_then_yahoo_then_finnhub": "sec_edgar_then_yahoo_then_finnhub",
-        "sec_then_yahoo_then_finnhub": "sec_edgar_then_yahoo_then_finnhub",
+        "finnhub": "finnhub",
+        "sec_edgar_then_finnhub": "sec_edgar_then_finnhub",
+        "sec_then_finnhub": "sec_edgar_then_finnhub",
     }
     normalized = aliases.get(provider, provider)
     if normalized not in SUPPORTED_MARKET_CAP_PROVIDERS:
         raise ValueError(
             "market_cap.provider doit etre 'sec_edgar', 'eodhd' "
-            "'yahoo_then_finnhub' ou 'sec_edgar_then_yahoo_then_finnhub' "
+            "'finnhub' ou 'sec_edgar_then_finnhub' (Yahoo retiré) "
             f"(recu: {provider!r})."
         )
     return normalized
@@ -99,11 +97,12 @@ def compute_sec_market_cap(close_price: Any, shares_outstanding: Any) -> float |
     try:
         close = float(close_price)
         shares = float(shares_outstanding)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
-    if close <= 0 or shares <= 0:
+    if not isfinite(close) or not isfinite(shares) or close <= 0 or shares <= 0:
         return None
-    return close * shares
+    result = close * shares
+    return result if isfinite(result) else None
 
 
 __all__ = [

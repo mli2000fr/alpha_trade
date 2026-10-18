@@ -529,9 +529,9 @@ market_data:
 # Capitalisation utilisée pour publier l'univers tradable PIT.
 # - sec_edgar : gratuit ; dernier shares_outstanding publié avant J × close[J].
 # - eodhd     : dernière market_cap EODHD persistée avant J.
-# - sec_edgar_then_yahoo_then_finnhub : SEC PIT prioritaire, puis Yahoo et
+# - sec_edgar_then_finnhub : SEC PIT prioritaire, puis
 #   Finnhub uniquement si les actions en circulation SEC sont absentes/périmées.
-# - yahoo_then_finnhub : mode legacy, Yahoo prioritaire puis Finnhub.
+# - finnhub : capitalisation positive Finnhub persistée avant J, sans Yahoo.
 # max_age_days contrôle l'âge maximal du dépôt SEC ou du snapshot EODHD.
 # En strict, une valeur absente/périmée est rejetée (fail-closed).
 # En liquidity_only, provider/max_age_days/missing_policy restent configurés
@@ -550,7 +550,7 @@ new_entry_data_guard:
 market_cap:
   # strict = capitalisation obligatoire ; liquidity_only = aucun filtre de capitalisation.
   policy: liquidity_only                         # strict | liquidity_only
-  provider: sec_edgar_then_yahoo_then_finnhub  # sec_edgar | eodhd | yahoo_then_finnhub | sec_edgar_then_yahoo_then_finnhub
+  provider: sec_edgar_then_finnhub  # sec_edgar | eodhd | finnhub | sec_edgar_then_finnhub
   max_age_days: 365
   missing_policy: reject
 
