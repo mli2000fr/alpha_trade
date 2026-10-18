@@ -2,6 +2,12 @@
 
 Mise à jour du 17 octobre 2026 — marché US, filtre GPT/DeepSeek PAPER.
 
+Correctif du 18 octobre : le risque courant peut utiliser un signal J avec un
+snapshot PAPER réellement capturé après J, sous contrôles de fraîcheur et avant
+l'ouverture suivante. Le cas sans candidats est également corrigé. Voir le
+[contrat snapshot et la reprise contrôlée](correctif_risque_llm_snapshot_20261018.md).
+Un verrou déjà pris n'est pas remis à zéro automatiquement après erreur.
+
 ## Utilisation
 
 1. Dans Pipeline, laisser le champ global **Identifiant analyse LLM** vide.

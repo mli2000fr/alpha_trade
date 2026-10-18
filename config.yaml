@@ -512,7 +512,7 @@ screener:
 # toujours sur Alpaca quel que soit ce flag.
 # ---------------------------------------------------------------------------
 market_data:
-  bars_provider: eodhd   # alpaca | eodhd  (défaut recommandé : eodhd — pilotable depuis IHM › Paramètres)
+  bars_provider: alpaca   # alpaca | eodhd  (défaut recommandé : eodhd — pilotable depuis IHM › Paramètres)
   alpaca_backfill_feed: sip  # SIP pour les téléchargements Alpaca ; aucun fallback IEX.
 
   # ── Provider quotes live (mode latest) ──

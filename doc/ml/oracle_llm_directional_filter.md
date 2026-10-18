@@ -5,6 +5,13 @@ Depuis le 13 octobre, le filtre peut aussi recevoir les scores d'un
 folds et de la lineage. Ces scores prédisent l'amplitude, pas LONG/SHORT.
 Le filtre directionnel reste indépendant et PAPER uniquement.
 
+Depuis le 18 octobre, le snapshot courant du compte principal PAPER est distinct
+de la date du signal J : capture et sizing doivent être après clôture J et avant
+l'ouverture suivante, avec une capture d'au plus cinq minutes. Aucun timestamp
+n'est rétrodaté ; les replays gardent leur contrat historique. Le cas sans
+candidat admissible est testé. Voir le
+[correctif risque et ses gardes](../operations/correctif_risque_llm_snapshot_20261018.md).
+
 Depuis le 17 octobre 2026, un Telegram accompagne la sélection de l’étape 10
 (ou ses motifs d’abstention/échec), les cibles risque de l’étape 11 et les
 ordres/exécutions observées à l’étape 12. Le fournisseur est celui archivé pour

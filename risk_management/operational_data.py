@@ -7,7 +7,7 @@ regime transitions, portfolio optimization and reconciliation.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping
 
 from execution_engine.broker_adapter import BrokerAdapter
@@ -81,6 +81,40 @@ class OperationalDataSnapshot:
             open_orders=normalized_orders,
             fills=tuple(fills),
         )
+
+
+def validate_llm_paper_snapshot(
+    snapshot: OperationalDataSnapshot,
+    trade_date: date,
+    *,
+    now: datetime | None = None,
+    calendar=None,
+) -> None:
+    """A current PAPER account funds a prior close signal, without backdating.
+
+    Only the explicit default-account LLM broker path may use this contract.
+    Historical/replay snapshots retain their exact decision-date requirement.
+    Both capture and sizing must fall in [J close, next session open), and a
+    capture older than five minutes (or dated in the future) is rejected.
+    """
+    account = snapshot.account
+    if account.account_id != 'default' or account.source != 'broker:paper:llm':
+        raise ValueError('Snapshot LLM : compte principal PAPER courant requis')
+    stamp = account.as_of
+    now = now or datetime.now(timezone.utc)
+    if not isinstance(stamp, datetime) or stamp.tzinfo is None or now.tzinfo is None:
+        raise ValueError('Snapshot LLM : horodatages timezone-aware requis')
+    stamp, now = stamp.astimezone(timezone.utc), now.astimezone(timezone.utc)
+    if not timedelta(0) <= now-stamp <= timedelta(minutes=5):
+        raise ValueError('Snapshot LLM : capture périmée ou datée du futur')
+    from common.market_calendar import get_market_calendar
+    calendar = calendar or get_market_calendar('US_EQ', allow_us_weekday_fallback=False)
+    if trade_date not in calendar.session_dates(trade_date, trade_date):
+        raise ValueError('Snapshot LLM : date signal hors séance US')
+    _, close = calendar.session_bounds(trade_date)
+    next_open, _ = calendar.session_bounds(calendar.next_session(trade_date))
+    if not close <= stamp <= now < next_open:
+        raise ValueError('Snapshot LLM : capture et risque requis après clôture J et avant ouverture suivante')
 
 
 class LiveBrokerOperationalDataAdapter:
