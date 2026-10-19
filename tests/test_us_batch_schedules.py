@@ -14,7 +14,6 @@ PARIS = ZoneInfo("Europe/Paris")
 # of successful runs on 2026-10-10; roughly 2 * worst duration + 30 min,
 # with a 45 min floor and rounding upwards (see operational document).
 BUDGET_MINUTES = {
-    "eodhd_news_ingestion_sync": 125,  # HTTP deadline 120 min plus in-flight request/commit margin.
     "eodhd_consensus_snapshot": 90,
     "eodhd_ipo_calendar_sync": 45,
     "public_macro_snapshot_sync": 45,

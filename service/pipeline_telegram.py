@@ -137,6 +137,9 @@ def _direction(side, role='entry'):
 
 
 BLOCKERS = {
+    'insufficient_qualified_local_sources': 'preuves locales qualifiées insuffisantes',
+    'excluded_untraceable_local_sources': 'références locales non traçables exclues',
+    'identity_not_confirmed': 'identité non confirmée',
     'insufficient_fresh_sources': 'sources récentes qualifiées insuffisantes',
     'excluded_untraceable_sources': 'sources non traçables exclues',
     'confidence_below_threshold': 'note de confiance sous le seuil',
@@ -154,6 +157,7 @@ def llm_message(run, items):
              f"Séance {run['trade_date']} · compte {run['account_id']}",
              f"Analyse {run['run_id']} · modèle {model}",
              f"État : {run['status']}"]
+    lines.append('Mode : '+('données locales uniquement' if config.get('analysis_mode')=='local_data_only' else 'recherche Web'))
     by_symbol = {row['symbol']: row for row in items}
     if completed and selected:
         lines.append(f'Titres retenus : {len(selected)}')

@@ -41,9 +41,11 @@ def prepare_subset(engine, parent_run_id, expected_symbols):
         if (context['oracle_rank'] != item['oracle_rank'] or not math.isclose(
                 context['oracle_score'], item['oracle_score'], rel_tol=0, abs_tol=5e-7)):
             raise ValueError('Classement parent altéré')
-        if json.loads(json.loads(item['request_json'])['input']) != context:
+        request=json.loads(item['request_json'])
+        requested_context=request.get('context') if request.get('provider')=='deepseek' else json.loads(request['input'])
+        if requested_context != context:
             raise ValueError('Requête parent incompatible avec le snapshot')
-        revised = parse_response(raw, item['symbol'], config, item['observed_at'])
+        revised = parse_response(raw, item['symbol'], config, item['observed_at'],context=context)
         chosen.append(context)  # Never feed the previous verdict to the new model.
         baseline.append({'symbol': item['symbol'], 'oracle_rank': item['oracle_rank'],
             'original_decision': previous['decision'], 'original_confidence': previous['confidence'],

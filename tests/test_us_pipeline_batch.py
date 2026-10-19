@@ -23,9 +23,10 @@ def configured_policy():
     return yaml.safe_load((Path(__file__).resolve().parents[1] / 'batch.yaml').read_text(encoding='utf-8'))
 
 
-def test_common_universe_and_collection_windows(monkeypatch):
+@pytest.mark.parametrize('provider', ['eodhd', 'alpaca'])
+def test_common_universe_and_collection_windows(monkeypatch, provider):
     from ihm.services.pipeline_runner import build_pipeline_command
-    monkeypatch.setattr('ihm.services.pipeline_runner._resolve_bars_provider_for_ihm', lambda: 'eodhd')
+    monkeypatch.setattr('ihm.services.pipeline_runner._resolve_bars_provider_for_ihm', lambda: provider)
     cfg = configured_policy()
     policy = cfg['us_pipeline']
     options = us_pipeline.collection_options(pipeline_page_default_options(trade_date='2026-10-07'),
@@ -49,6 +50,8 @@ def test_common_universe_and_collection_windows(monkeypatch):
     assert options.eodhd_import_wait_for_publication
     assert options.eodhd_import_require_target_coverage
     command = build_pipeline_command('import_alpaca_bar', options)
+    assert command[3] == ('dataIntegrityEngine.import_eodhd_bar' if provider == 'eodhd'
+                          else 'dataIntegrityEngine.import_alpaca_session')
     assert command[command.index('--target-date')+1] == '2026-10-07'
     assert command[command.index('--symbol-source')+1] == source
     assert '--require-target-coverage' in command and '--wait-for-publication' in command
@@ -123,7 +126,8 @@ def test_default_options_match_page_preset_and_sentiment():
 
 def setup_run(monkeypatch, tmp_path):
     # Orchestration contract fixture, independent of the user's current bars
-    # provider. Target-date coverage is currently qualified on EODHD only.
+    # provider. The shared orchestration is independent of the importer;
+    # both provider commands are covered by the parametrized scope test.
     monkeypatch.setattr('ihm.services.pipeline_runner._resolve_bars_provider_for_ihm', lambda: 'eodhd')
     monkeypatch.setattr(us_pipeline, 'ROOT', tmp_path)
     monkeypatch.setattr(us_pipeline, 'session_plan', lambda now: (date(2026, 10, 7), None))

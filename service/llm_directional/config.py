@@ -28,6 +28,28 @@ class FilterConfig:
     horizon: int = 20
     allow_short: bool = False  # Explicit opt-in; absent in historical LONG-only snapshots.
     protections: ProtectionProfile | dict | None = None
+    analysis_mode: str = 'web_search'
+    consensus_max_periods: int = 4
+    consensus_history_count: int = 3
+    consensus_max_age_days: int = 7
+    local_news_max_articles: int = 8
+    local_news_max_chars: int = 2400
+    min_local_sources: int = 1
+    deepseek_search_queries: int = 2
+    deepseek_search_results: int = 5
+    deepseek_fetch_pages: int = 2
+    deepseek_web_text_chars: int = 6000
+    evidence_consensus_max_age_hours: int = 72
+    evidence_news_max_age_days: int = 7
+    evidence_news_max_receipt_age_hours: int = 72
+    evidence_calendar_max_age_hours: int = 72
+    evidence_sec_max_age_days: int = 14
+    evidence_sec_max_documents: int = 3
+    evidence_sec_excerpt_chars: int = 1800
+    evidence_fundamental_max_fetch_age_days: int = 45
+    evidence_fundamental_max_filing_age_days: int = 120
+    evidence_fundamental_max_period_age_days: int = 200
+    evidence_context_max_age_minutes: int = 30
 
     def __post_init__(self):
         if isinstance(self.protections, dict):
@@ -40,6 +62,17 @@ class FilterConfig:
             ('max_run_age_hours', 1, 48), ('timeout_seconds', 10, 600),
             ('max_output_tokens', 1000, 32000), ('max_tool_calls', 1, 20),
             ('horizon', 1, 60),
+            ('consensus_max_periods',1,8), ('consensus_history_count',0,10),
+            ('consensus_max_age_days',1,30), ('local_news_max_articles',0,20),
+            ('local_news_max_chars',300,6000), ('min_local_sources',1,20),
+            ('deepseek_search_queries',1,2), ('deepseek_search_results',1,10),
+            ('deepseek_fetch_pages',0,5), ('deepseek_web_text_chars',500,12000),
+            ('evidence_consensus_max_age_hours',1,168), ('evidence_news_max_age_days',1,30),
+            ('evidence_news_max_receipt_age_hours',1,168), ('evidence_calendar_max_age_hours',1,168),
+            ('evidence_sec_max_age_days',1,60), ('evidence_sec_max_documents',0,5),
+            ('evidence_sec_excerpt_chars',500,4000), ('evidence_fundamental_max_fetch_age_days',1,90),
+            ('evidence_fundamental_max_filing_age_days',30,180), ('evidence_fundamental_max_period_age_days',90,400),
+            ('evidence_context_max_age_minutes',1,120),
         ):
             value = getattr(self, name)
             if type(value) is not int or not minimum <= value <= maximum:
@@ -48,6 +81,8 @@ class FilterConfig:
             raise ValueError('enabled doit être booléen')
         if type(self.allow_short) is not bool:
             raise ValueError('allow_short doit être booléen')
+        if self.analysis_mode not in ('web_search','local_data_only'):
+            raise ValueError('analysis_mode doit être web_search ou local_data_only')
         if not isinstance(self.default_symbol_source, str) or not self.default_symbol_source.strip():
             raise ValueError('default_symbol_source doit être une source non vide')
         if (not isinstance(self.default_oracle_batch_id, str)
@@ -75,13 +110,17 @@ class FilterConfig:
     def analysis_model(self):
         return self.deepseek_model if self.provider == 'deepseek' else self.model
 
+    @property
+    def mode_label(self):
+        return 'données locales uniquement' if self.analysis_mode=='local_data_only' else 'recherche Web + données locales'
+
     def snapshot(self):
         return asdict(self)  # Contains only the environment variable NAME, never its value.
 
 
 def load_filter_config(path=None):
     from common.config_loader import load_config
-    values = (load_config(path) or {}).get('llm_directional_filter') or {}
+    values = dict((load_config(path) or {}).get('llm_directional_filter') or {})
     unknown = set(values) - set(FilterConfig.__dataclass_fields__)
     if unknown:
         raise ValueError(f'Options LLM inconnues: {sorted(unknown)}')

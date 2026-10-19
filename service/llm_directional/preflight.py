@@ -20,27 +20,30 @@ def main():
     Repository(engine)
     missing = set(metadata.tables) - set(inspect(engine).get_table_names())
     print(f'Compte default PAPER; Oracle TOP{config.oracle_top_n} -> au plus {config.max_selected} titres; '
-          f'{config.provider_label} / {config.analysis_model}; Web OpenAI / {config.model}')
+          f'{config.provider_label} / {config.analysis_model}; mode={config.analysis_mode}')
     print('Tables : ' + ('OK' if not missing else 'manquantes '+','.join(sorted(missing))))
     key = os.environ.get(config.api_key_env)
-    print(config.api_key_env + ' : ' + ('présente (valeur non affichée)' if key else 'absente'))
+    if config.provider=='openai':
+        print(config.api_key_env + ' : ' + ('présente (valeur non affichée)' if key else 'absente'))
     deepseek_key = os.environ.get(config.deepseek_api_key_env) if config.provider == 'deepseek' else None
     if config.provider == 'deepseek':
         print(config.deepseek_api_key_env + ' : ' + ('présente (valeur non affichée)' if deepseek_key else 'absente'))
-    if not key or missing or (config.provider == 'deepseek' and not deepseek_key):
+    needs_openai=config.provider=='openai'
+    if (needs_openai and not key) or missing or (config.provider == 'deepseek' and not deepseek_key):
         raise SystemExit(1)
     if args.check_api:
         from common.verified_http import verified_session
-        try:
-            response = verified_session().get(f'https://api.openai.com/v1/models/{config.model}',
-                headers={'Authorization': f'Bearer {key}'}, timeout=(10, 20), allow_redirects=False)
-        except Exception as exc:
-            print(f'Accès API indisponible : {type(exc).__name__} (TLS reste vérifié)')
-            raise SystemExit(1) from None
-        print(f'Modèle {config.model} : HTTP {response.status_code}')
-        if response.status_code != 200:
-            print('Vérifier clé, projet et accès au modèle. Aucun modèle de remplacement automatique.')
-            raise SystemExit(1)
+        if needs_openai:
+            try:
+                response = verified_session().get(f'https://api.openai.com/v1/models/{config.model}',
+                    headers={'Authorization': f'Bearer {key}'}, timeout=(10, 20), allow_redirects=False)
+            except Exception as exc:
+                print(f'Accès API indisponible : {type(exc).__name__} (TLS reste vérifié)')
+                raise SystemExit(1) from None
+            print(f'Modèle {config.model} : HTTP {response.status_code}')
+            if response.status_code != 200:
+                print('Vérifier clé, projet et accès au modèle. Aucun modèle de remplacement automatique.')
+                raise SystemExit(1)
         if config.provider == 'deepseek':
             try:
                 response = verified_session().get('https://api.deepseek.com/models',

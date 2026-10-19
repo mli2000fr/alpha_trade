@@ -45,7 +45,7 @@ us_pipeline:
   # Aucune insertion automatique des étapes omises ; leurs prérequis doivent exister.
   execution_mode: paper  # Aucun ordre sans étape 12 sélectionnée.
   account_id: default    # 11/12 en PAPER et 13/14 (même en simulation) exigent un compte paper.
-  steps: [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12]  # Séances US lundi–jeudi.
+  steps: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]  # Séances US lundi–jeudi.
   steps_friday: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]  # Séance US vendredi, liste figée même après minuit.
 
 sentiment_news_ingestion:
@@ -58,14 +58,39 @@ sentiment_news_ingestion:
   min_success_ratio: 0.95  # >=95 % des titres demandés : poursuivre malgré des échecs isolés.
 
 llm_directional_filter:
+  analysis_mode: local_data_only  # web_search | local_data_only (sans aucun appel Web).
+  # Le LLM évalue une tendance LONG/SHORT/ABSTAIN sur horizon, sans objectif TP/SL.
+  consensus_max_periods: 4
+  consensus_history_count: 3
+  consensus_max_age_days: 7
+  local_news_max_articles: 8  # Uniquement versions archivées avec reçus antérieurs à l'analyse.
+  local_news_max_chars: 2400  # Par article, troncature explicitement signalée.
+  min_local_sources: 1  # Preuves locales citées ET qualifiées ; aucune promotion de RESEARCH_ONLY.
+  # Prochaines analyses v7 : uniquement faits récents, paquet borné ; aucune requalification SQL.
+  evidence_consensus_max_age_hours: 72
+  evidence_news_max_age_days: 7
+  evidence_news_max_receipt_age_hours: 72
+  evidence_calendar_max_age_hours: 72
+  evidence_sec_max_age_days: 14
+  evidence_sec_max_documents: 3
+  evidence_sec_excerpt_chars: 1800
+  evidence_fundamental_max_fetch_age_days: 45  # Fraîcheur de récupération des derniers comptes connus.
+  evidence_fundamental_max_filing_age_days: 120
+  evidence_fundamental_max_period_age_days: 200
+  evidence_context_max_age_minutes: 30  # Bloque un appel trop tardif ; pas de refresh implicite à mi-run.
   # Recherche prospective et exécution PAPER uniquement. Aucun historique Web simulé.
   enabled: true  # Checkbox IHM cochée par défaut ; désactivation manuelle possible.
   provider: openai  # openai (GPT) ou deepseek ; libellés IHM automatiques.
-  # En mode DeepSeek, OpenAI reste la source Web traçable : les DEUX API sont facturées.
+  # DeepSeek Web : Search/Fetch + analyse DeepSeek natifs, seule DEEPSEEK_API_KEY nécessaire.
   model: gpt-6-luna
   api_key_env: OPENAI_API_KEY
   deepseek_model: deepseek-flash
   deepseek_api_key_env: DEEPSEEK_API_KEY
+  # Limites par symbole ; max_tool_calls borne le total Search + Fetch (analyse exclue).
+  deepseek_search_queries: 2
+  deepseek_search_results: 5
+  deepseek_fetch_pages: 2
+  deepseek_web_text_chars: 6000
   default_symbol_source: universe-file:univers_filtred_tradable.txt
   default_oracle_batch_id: model-factory-20261016180250-3b0515  # Aucun modèle US après remise à zéro ; remplacer par le nouvel ID entraîné.
   oracle_top_n: 10  # Nombre de premiers scores Oracle à analyser (pas de tri par rendement futur).
@@ -512,7 +537,7 @@ screener:
 # toujours sur Alpaca quel que soit ce flag.
 # ---------------------------------------------------------------------------
 market_data:
-  bars_provider: alpaca   # alpaca | eodhd  (défaut recommandé : eodhd — pilotable depuis IHM › Paramètres)
+  bars_provider: alpaca   # alpaca | eodhd ; contrôle J de us_pipeline raccordé aux deux fournisseurs.
   alpaca_backfill_feed: sip  # SIP pour les téléchargements Alpaca ; aucun fallback IEX.
 
   # ── Provider quotes live (mode latest) ──

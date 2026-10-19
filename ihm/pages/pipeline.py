@@ -27,8 +27,12 @@ from database.selector_reference import list_symbols_for_source, normalize_start
 from modelFactory.db_registry import load_symbols_for_source
 from modelFactory.oracle.artifact_contract import oracle_horizon_badge
 from service.llm_directional.config import load_filter_config
+from ihm.services.llm_prediction_review import load_prediction_review
+from ihm.services.risk_prediction_review import load_risk_prediction_review
 
 from ihm.components.watcher_documentation import render_watcher_documentation_panel
+from ihm.components.prediction_review_table import render_prediction_review_table
+from ihm.components.local_symbol_bars_dialog import render_pending_local_symbol_bars_dialog
 from ihm.pages import run_page_if_standalone
 from ihm.services.cn_research_market import render_cn_research_view, select_market
 from ihm.pages._alpha_scanner_diagnostics import (
@@ -1213,7 +1217,7 @@ def _render_ml_scope_block(
         command_preview_options = _ml_prediction_scope_options(command_preview_options)
         if options.llm_filter_enabled and not command_preview_options.llm_filter_enabled:
             st.caption(
-                f"Le filtre {load_filter_config().provider_label} + recherche Web ne s'applique pas à ce bouton historique/Oracle shadow. "
+                f"Le filtre prospectif {load_filter_config().provider_label} ({load_filter_config().mode_label}) ne s'applique pas à ce bouton historique/Oracle shadow. "
                 "Cette prédiction sera lancée sans LLM ; le filtre reste activé pour le parcours PAPER du jour."
             )
     st.caption("Commande du bouton ci-dessous :")
@@ -1427,6 +1431,117 @@ def _render_ml_predict_scope_block(
         source_attr="ml_predict_symbol_source",
         historical_range=True,
     )
+
+
+@st.cache_data(ttl=5, show_spinner=False)
+def _load_prediction_review_cached(**scope):
+    return load_prediction_review(get_sqlalchemy_engine(), **scope)
+
+
+def _render_ml_predict_review(options: PipelineLaunchOptions) -> None:
+    """Display archived decisions only; never invoke the LLM or trading path."""
+    from common.us_signal_date import resolve_us_signal_date
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+
+    st.markdown('#### TOP Oracle — avis GPT / DeepSeek')
+    batch = (options.ml_predict_batch_id or options.ml_live_predict_batch_id
+             or st.session_state.get('pipeline_ml_live_predict_batch_id_ml_predict'))
+    if not batch:
+        st.info('Sélectionnez un modèle Oracle pour consulter les réponses enregistrées après l’étape 10.')
+        return
+    try:
+        day = resolve_us_signal_date(options.trade_date or None)
+        review = _load_prediction_review_cached(trade_date=day, batch_id=batch,
+            symbol_source=options.ml_predict_symbol_source,
+            account_id=options.account_id or 'default',
+            capital_preset_key=options.capital_preset_key or 'capital_2001_5000')
+    except Exception:
+        st.warning('Résultats Oracle/LLM indisponibles : impossible de lire les archives pour ce périmètre. '
+                   'Aucune ancienne analyse d’un autre périmètre n’est substituée.')
+        return
+    if review is None:
+        st.info(f'Aucune analyse GPT/DeepSeek enregistrée pour la séance {day}, ce modèle, cet univers et ce preset. '
+                'Le tableau apparaît après le lancement de l’étape 10 avec le filtre LLM activé.')
+        return
+    label = review['provider_label']
+    stamp = review['completed_at'] or review['started_at']
+    if isinstance(stamp, datetime):
+        stamp = stamp.replace(tzinfo=timezone.utc) if stamp.tzinfo is None else stamp
+        stamp = stamp.astimezone(ZoneInfo('Europe/Paris')).strftime('%d/%m/%Y %H:%M:%S %Z')
+    st.caption(f"Dernière analyse archivée de ce périmètre : `{review['run_id']}` · séance {review['trade_date']} · "
+               f"modèle Oracle `{review['batch_id']}` · {label} / {review['model']} · "
+               f"{review['status']} · {'terminée' if review['completed_at'] else 'démarrée'} le {stamp} (Paris).")
+    if review['status'] != 'COMPLETED':
+        st.warning('Analyse en cours ou échouée : réponses partielles uniquement, aucune sélection publiée. '
+                   'Aucun remplacement par une ancienne analyse réussie.')
+    if not review['rows']:
+        st.info('Aucun candidat présent dans le snapshot archivé.')
+        return
+    import pandas as pd
+    frame=pd.DataFrame(review['rows']).rename(columns={
+        'Avis LLM': f'Avis {label}', 'Confiance LLM (%)': f'Confiance {label} (%)'})
+    render_prediction_review_table(frame,key=f"pipeline_10_table_{review['run_id']}",trade_date=review['trade_date'])
+    st.caption('Ordre initial décroissant du score Oracle, pas de la confiance LLM ; tous les candidats sont affichés, '
+               'pas seulement les retenus. La confiance est une note subjective non calibrée, pas une probabilité '
+               'de gain. NEUTRE / ABSTENTION n’est pas une erreur technique. '
+               'Le dernier prix est la clôture archivée fournie au LLM, pas une cotation temps réel. '
+               'Nom de l’entreprise : libellé actuel de stock_metadata. '
+               '« Retenu » ne signifie ni approuvé par le risque, ni exécuté. Lecture seule, aucun appel payant.')
+    if review['candidate_count'] < 10:
+        st.caption(f"{review['candidate_count']} candidat(s) dans cette analyse : aucun titre supplémentaire inventé.")
+
+
+@st.cache_data(ttl=5, show_spinner=False)
+def _load_risk_prediction_review_cached(**scope):
+    """Risk display restricted to the exact published step-10 selection."""
+    return load_risk_prediction_review(get_sqlalchemy_engine(), **scope)
+
+
+def _render_risk_prediction_review(options: PipelineLaunchOptions, all_runs) -> None:
+    from common.us_signal_date import resolve_us_signal_date
+    st.markdown('#### Décisions du risque — Oracle / LLM et portefeuille cible')
+    account = options.account_id or 'default'
+    llm_id = options.llm_filter_run_id if options.llm_filter_enabled else None
+    risk_id = None
+    if options.llm_filter_enabled and not llm_id:
+        st.info('Aucune analyse LLM exacte liée à cette étape. Terminez l’étape 10 ou renseignez son identifiant pour consulter le risque associé.')
+        return
+    if not llm_id:
+        records = [r for r in all_runs if r.get('step_key') == 'risk_management'
+            and (r.get('account_id') or 'default') == account and not r.get('history_deleted')]
+        source = max(records, key=lambda r: str(r.get('executed_at') or r.get('actual_started_at') or ''), default=None)
+        summary = (source or {}).get('run_summary') or {}
+        if not isinstance(summary, dict) or not summary.get('run_id'):
+            st.info('Aucun identifiant métier risque disponible sur le dernier lancement de ce compte. Aucun ancien résultat n’est substitué.')
+            return
+        risk_id, llm_id = summary['run_id'], summary.get('llm_filter_run_id')
+    try:
+        review = _load_risk_prediction_review_cached(trade_date=resolve_us_signal_date(options.trade_date or None),
+            account_id=account, llm_run_id=llm_id, risk_run_id=risk_id)
+    except Exception:
+        st.warning('Résultats risque indisponibles ou liaison/date/compte incompatibles. Aucun autre run n’est utilisé à leur place.')
+        return
+    st.caption(f"Séance {review['trade_date']} · compte `{review['account_id']}` · risque `{review['run_id'] or 'non encore lié'}` · "
+               f"analyse LLM `{review['llm_run_id'] or 'sans filtre'}` · état {review['status']}.")
+    if review['status'] != 'COMPLETED':
+        st.warning('Risque non confirmé terminé : résultats partiels ou en attente, aucune cible présentée comme publiée.')
+    if not review['rows']:
+        st.info('Aucun titre retenu à l’étape 10 pour cette analyse.' if review['llm_run_id'] else
+                'Aucune décision ni cible enregistrée pour ce run exact. Cela ne signifie pas qu’un ordre a été exécuté.')
+        return
+    import pandas as pd
+    frame = pd.DataFrame(review['rows']).drop(columns=[
+        'Retenu par le filtre','Retenu par le filtre LLM','Motif de non-sélection','Motif de non-sélection LLM'],
+        errors='ignore').rename(columns={'Avis LLM': f"Avis {review['provider_label'] or 'LLM'}"})
+    render_prediction_review_table(frame,key=f"pipeline_11_table_{review['run_id'] or review['llm_run_id']}",trade_date=review['trade_date'])
+    st.caption(('Lecture seule du run exact : uniquement les titres retenus à l’étape 10, même si le risque les refuse ensuite. '
+                if review['llm_run_id'] else 'Lecture seule des décisions/cibles du run risque sans filtre LLM. ')
+               +
+               'Cible publiée = portefeuille cible, pas un ordre exécuté ; montant et prix sont ceux du sizing, pas un prix de fill. '
+               'Confiance LLM non calibrée ; dernier prix LLM archivé, pas temps réel. '
+               'Nom de l’entreprise : libellé actuel de stock_metadata. '
+               'Une protection absente reste vide (une sortie à durée fixe n’est pas un TP de prix). Aucun appel LLM, broker ou ordre.')
 
 
 def _build_pipeline_run_context() -> tuple[
@@ -1802,6 +1917,13 @@ def _render_launchable_step_panel(
 
         _render_step_result(latest_by_step.get(step.key))
 
+        if step.key == 'ml_predict':
+            st.divider()
+            _render_ml_predict_review(options)
+        elif step.key == 'risk_management':
+            st.divider()
+            _render_risk_prediction_review(options, all_runs)
+
 
 @st.fragment(run_every="2s")
 def _render_step_panels(
@@ -1869,7 +1991,7 @@ def render() -> None:
         return
 
     options, live_confirmed = _build_launch_options()
-    with st.expander(f'🌐 Audit des sélections {load_filter_config().provider_label} + Web — PAPER'):
+    with st.expander(f'🌐 Audit des sélections {load_filter_config().provider_label} — {load_filter_config().mode_label} — PAPER'):
         _llm_audit_id = st.text_input('Identifiant analyse à consulter',
             value=options.llm_filter_run_id or '', key='llm_directional_audit_id')
         if st.button('Consulter la sélection et les motifs', key='llm_directional_audit_load',
@@ -1880,7 +2002,7 @@ def render() -> None:
                 _llm_audit = _llm_report(get_sqlalchemy_engine(), _llm_audit_id.strip())
                 st.caption(f"{_llm_audit['status']} · {_llm_audit['trade_date']} · batch {_llm_audit['batch_id']}")
                 st.caption(f"Fournisseur archivé : {_llm_audit['provider_label']} / {_llm_audit['analysis_model']} ; "
-                           f"Web OpenAI / {_llm_audit['web_model']}")
+                           + (f"Web {_llm_audit['web_provider']} / {_llm_audit['web_model']}" if _llm_audit['web_model'] else 'Sans recherche Web'))
                 st.warning(_llm_audit['warning'])
                 st.dataframe(_llm_audit['candidates'], use_container_width=True)
                 st.json(_llm_audit['configuration'])
@@ -1899,6 +2021,9 @@ def render() -> None:
     _render_workflow_launcher(options, live_confirmed, db_config)
     _render_runtime_center()
     _render_step_panels(options, live_confirmed, db_config, live_guard)
+    # Keep the dialog independent from the 2-second polling fragment: its
+    # period widgets must remain registered after each pipeline refresh.
+    render_pending_local_symbol_bars_dialog()
 
     _, all_runs, latest_by_step, workflow_active, active_by_step = _build_pipeline_run_context()
     _render_import_news_panel(

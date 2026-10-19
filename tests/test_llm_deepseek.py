@@ -5,7 +5,7 @@ from datetime import datetime
 from types import SimpleNamespace
 import pytest
 from service.llm_directional.config import FilterConfig, load_filter_config
-from service.llm_directional.openai_client import ResponsesClient, build_request
+from service.llm_directional.openai_client import ResponsesClient, build_request, deepseek_output
 from service.llm_directional.validation import parse_response
 
 
@@ -31,6 +31,15 @@ def session_for(web, finish='stop', mutate=None, code=200):
         return SimpleNamespace(status_code=200 if len(calls) == 1 else code,
                                headers={}, json=lambda: web if len(calls) == 1 else raw)
     return SimpleNamespace(post=post), calls
+
+
+def legacy_archive(web,finish='stop',mutate=None):
+    answer=json.loads(web['output'][-1]['content'][0]['text'])
+    if mutate:
+        mutate(answer)
+    archived=dict(provider='deepseek',web_response=web,
+        analysis_response={'choices':[{'finish_reason':finish,'message':{'content':json.dumps(answer)}}]})
+    return dict(archived,**deepseek_output(archived))
 
 
 @pytest.fixture
@@ -60,20 +69,19 @@ def test_deepseek_requires_both_keys(monkeypatch):
         ResponsesClient(FilterConfig(provider='deepseek'))
 
 
-def test_deepseek_transport_archive_and_parse(credentials):
+def test_deepseek_legacy_archive_still_parses_but_no_new_relay(credentials):
     config = FilterConfig(provider='deepseek', deepseek_model='deepseek-flash')
     web = web_response()
     session, calls = session_for(web)
     request = build_request({'symbol': 'ABC'}, config)
-    archived = ResponsesClient(config, session)(request)
+    with pytest.raises(ValueError,match='nouvelle analyse native'):
+        ResponsesClient(config,session)(request)
+    assert not calls
+    archived = legacy_archive(web)
     parsed = parse_response(archived, 'ABC', config, datetime(2026, 10, 7, 22))
     assert parsed['eligible'] and parsed['decision'] == 'LONG'
     assert archived['web_response'] == web and archived['analysis_response']['choices']
-    assert calls[0][0] == 'https://api.openai.com/v1/responses'
-    assert calls[1][0] == 'https://api.deepseek.com/chat/completions'
-    assert calls[1][1]['json']['model'] == config.deepseek_model
-    assert calls[1][1]['json']['response_format'] == {'type': 'json_object'}
-    assert all(call[1]['allow_redirects'] is False for call in calls)
+    assert request['web_provider']=='openai'  # Frozen old request rebuild, never sent again.
     serialized = json.dumps(archived) + json.dumps(request) + json.dumps(config.snapshot())
     assert 'test-openai-not-a-real-key' not in serialized
     assert 'test-deepseek-not-a-real-key' not in serialized
@@ -81,8 +89,7 @@ def test_deepseek_transport_archive_and_parse(credentials):
 
 def test_deepseek_cannot_invent_web_trace(credentials):
     cfg = FilterConfig(provider='deepseek')
-    session, _ = session_for(web_response(), mutate=lambda a: a['sources'][0].update(url='https://invented.example'))
-    raw = ResponsesClient(cfg, session)(build_request({'symbol': 'ABC'}, cfg))
+    raw = legacy_archive(web_response(),mutate=lambda a:a['sources'][0].update(url='https://invented.example'))
     # A fabricated URL even inserted into the convenience output must not qualify.
     raw['output'][0]['action']['sources'] = copy.deepcopy(raw['output'][0]['action']['sources'])
     raw['output'][0]['action']['sources'].append({'url': 'https://invented.example'})
@@ -90,12 +97,10 @@ def test_deepseek_cannot_invent_web_trace(credentials):
     assert not parsed['eligible'] and parsed['excluded_sources']
 
 
-@pytest.mark.parametrize('finish,code', [('length', 200), ('stop', 403)])
-def test_deepseek_failure_keeps_web_and_blocks(credentials, finish, code):
+def test_deepseek_legacy_truncated_archive_blocks(credentials):
     cfg = FilterConfig(provider='deepseek')
-    session, calls = session_for(web_response(), finish=finish, code=code)
-    raw = ResponsesClient(cfg, session)(build_request({'symbol': 'ABC'}, cfg))
-    assert raw['web_response']['status'] == 'completed' and len(calls) == 2
+    raw=legacy_archive(web_response(),finish='length')
+    assert raw['web_response']['status'] == 'completed'
     with pytest.raises(ValueError, match='DeepSeek'):
         parse_response(raw, 'ABC', cfg, datetime(2026, 10, 7, 22))
 
@@ -104,8 +109,7 @@ def test_no_web_no_deepseek_call(credentials):
     cfg = FilterConfig(provider='deepseek')
     web = web_response()
     web['output'] = web['output'][1:]
-    session, calls = session_for(web)
-    raw = ResponsesClient(cfg, session)(build_request({'symbol': 'ABC'}, cfg))
-    assert len(calls) == 1 and raw['status'] == 'failed'
+    raw=legacy_archive(web)
+    assert raw['status'] == 'incomplete'
     with pytest.raises(ValueError):
         parse_response(raw, 'ABC', cfg, datetime(2026, 10, 7, 22))

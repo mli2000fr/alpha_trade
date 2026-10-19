@@ -1864,7 +1864,19 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
                     options.eodhd_import_benchmark_symbol])
             return command
         if options.eodhd_import_require_target_coverage:
-            raise ValueError('Le contrat de cours J du batch US est qualifié pour EODHD ; import Alpaca non raccordé à ce contrôle')
+            if provider != 'alpaca':
+                raise ValueError('market_data.bars_provider doit être alpaca ou eodhd')
+            if not options.eodhd_import_target_date or not options.eodhd_import_symbol_source:
+                raise ValueError('Import SIP quotidien : date J et source univers explicites requises')
+            command = [sys.executable, '-u', '-m', 'dataIntegrityEngine.import_alpaca_session',
+                '--write', '--require-target-coverage', '--target-date', options.eodhd_import_target_date,
+                '--symbol-source', options.eodhd_import_symbol_source,
+                '--min-target-coverage', str(options.eodhd_import_min_target_coverage),
+                '--benchmark-symbol', options.eodhd_import_benchmark_symbol,
+                '--account', account_id or 'default']
+            if options.eodhd_import_wait_for_publication:
+                command.append('--wait-for-publication')
+            return command
         return [sys.executable, "-u", "-m", "dataIntegrityEngine.import_alpaca_bar"]
 
     if step_key == "update_sector":

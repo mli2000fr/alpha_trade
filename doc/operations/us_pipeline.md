@@ -6,6 +6,52 @@
 
 ## Périmètre
 
+Le 19 octobre 2026, le collecteur autonome `eodhd_news_ingestion_sync` est
+désactivé sur demande utilisateur : l'étape 8 suffit au besoin retenu. Les listes
+`steps` / `steps_friday` et l'univers de `us_pipeline` déterminent la cadence de
+l'étape 8 ; vérifier ces listes dans `config.yaml` (actuellement toutes deux 1–12).
+Pas de remplacement implicite de l'ancienne collecte élargie/week-end.
+[Désactivation et historique](eodhd_news_ingestion_sync.md).
+
+Depuis le 19 octobre 2026, `llm_directional_filter.analysis_mode` choisit
+`web_search` ou `local_data_only` (valeur actuellement configurée).
+Le consensus local reçu avant l’analyse est joint dans les deux modes ; en local,
+aucune recherche Web ni appel OpenAI lorsque le fournisseur est DeepSeek. Deux
+prompts distincts évaluent une tendance LONG/SHORT/ABSTAIN, pas un TP avant SL.
+Les preuves non qualifiées ne sont pas promues automatiquement et peuvent
+conduire à une abstention. En DeepSeek Web, la recherche utilise maintenant ses API
+Search/Fetch puis l'analyse DeepSeek, sans OpenAI ; seule `DEEPSEEK_API_KEY` est
+nécessaire. Les nouveaux runs utilisent désormais le protocole **v7**, avec
+calendrier, SEC et résumé prix/volume/fondamentaux filtrés selon leur fraîcheur ;
+un paquet expiré ou un cours J non qualifié bloque les appels concernés. Les anciennes archives
+restent revalidables. Le fournisseur et le mode courants ne sont pas modifiés.
+[Configuration, limites et archives](../ml/llm_modes_consensus.md).
+[Règles de fraîcheur et aperçu réel](../ml/llm_preuves_fraiches_20261019.md).
+
+Depuis le 18 octobre, **10. ML Predict** contient aussi un tableau des dix premiers
+titres par score Oracle avec l'avis et la confiance GPT/DeepSeek archivés. Il
+respecte la séance, le modèle, l'univers, le preset et le compte sélectionnés ;
+aucun appel LLM supplémentaire. Une confiance LLM n'est pas une probabilité
+calibrée et une sélection n'est pas un ordre exécuté. Voir le
+[contrat du tableau](../ml/oracle_llm_directional_filter.md).
+
+L'étape **11. Risk Management** contient également un tableau lié à l'analyse
+LLM et au run risque **exacts** (ou au run métier du dernier lancement sans LLM) :
+décisions, cibles, quantités, prix de sizing, protections et motifs. Avec LLM,
+seuls les titres publiés comme retenus à l’étape 10 sont affichés, dans l’ordre
+Oracle, même s’ils sont ensuite refusés par le risque. Les colonnes **Retenu par
+le filtre** et **Motif de non-sélection LLM** sont retirées du tableau 11 uniquement.
+Le tableau 10 reste inchangé ; sans LLM, la vue ordinaire du risque demeure.
+La vue distingue exclusion avant sizing, rejet du risque et cible publiée.
+Aucun recalcul de risque, appel broker ou ordre depuis cet affichage.
+Les tableaux 10/11 proposent la colonne **Graphique**, avec un bouton **📈 Voir**
+par symbole. La popin permet **1 an / 6 mois / 1 mois**, depuis les seules barres
+locales et jusqu'à la date de l'analyse, sans téléchargement ni écriture SQL.
+La popin propose aussi le bloc **Consensus analystes EODHD — valeurs et
+explications** : snapshots/périodes, valeurs documentées, qualifications et
+historique local, borné à la fin de J New York. Ce n’est pas une nouvelle
+analyse LLM ni un signal transmis au risque.
+
 Depuis le 18 octobre 2026, le bloc **B2** secteurs/fondamentaux utilise Finnhub
 par défaut et ne propose plus Yahoo. B2 est auxiliaire, pas l'étape quotidienne
 2 (Data Sanitizer) : les listes numériques de `us_pipeline` ne le lancent pas.
@@ -222,13 +268,14 @@ Un échec interrompt l'enchaînement : les étapes suivantes ne sont pas lancée
 
 ## Horaire et séance
 
-- Heure principale : **22:45 Europe/Paris**, du lundi au vendredi.
+- Heure principale configurée : **23:05 Europe/Paris**, du lundi au vendredi (horaire inchangé par le correctif SIP du 19 octobre).
 - Le service vérifie le calendrier US strict, sans supposer qu'un lundi–vendredi est forcément négociable. Un jour férié US est ignoré.
-- La séance doit être clôturée. 22:45 Paris est postérieure à la clôture régulière US, y compris pendant les semaines de décalage entre les changements d'heure européens et américains.
+- La séance doit être clôturée. L'horaire configuré est postérieur à la clôture régulière US, y compris pendant les semaines de décalage entre les changements d'heure européens et américains.
 - La date de séance New York est figée au début du traitement, même si le workflow passe minuit à Paris.
-- Depuis le correctif du 9 octobre, l'étape 1 EODHD reçoit cette date avec
-  `--target-date` et attend la clôture US + `config.yaml → eodhd.bulk_publish_offset_hours`.
-  Avec 2 h : un démarrage à 22:45 Paris attend généralement minuit avant l'import,
+- L'étape 1 reçoit cette date avec `--target-date`, quel que soit le fournisseur
+  choisi dans `market_data.bars_provider`. Alpaca SIP attend clôture +20 minutes ;
+  EODHD attend clôture + `config.yaml → eodhd.bulk_publish_offset_hours`.
+  Avec EODHD et 2 h : un démarrage à 23:05 Paris attend généralement minuit avant l'import,
   ou 23 h pendant le décalage d'heure automnal Europe/US. L'attente est journalisée
   chaque minute ; le PC doit rester allumé. L'heure Windows n'est pas modifiée.
 - Le rabattement automatique vers un ancien snapshot est désactivé pour ce batch quotidien. C'est la seule adaptation volontaire par rapport à cette option de la page interactive.
@@ -248,7 +295,7 @@ Cela désigne une page fraîche, et non les modifications temporaires conservée
 
 | Étape | Application du fichier |
 |---|---|
-| 1 — Barres EODHD | `--symbol-source` sur le fichier commun ; SPY ajouté pour les features benchmark ; `--target-date J`, attente fournisseur et contrôle bloquant des cours J |
+| 1 — Barres Alpaca SIP / EODHD | `--symbol-source` sur le fichier commun ; SPY ajouté pour les features benchmark ; `--target-date J`, attente propre au fournisseur et contrôle bloquant des cours J |
 | 3 — Screener | `--custom-universe-file`, prioritaire sur l'univers du screener dans config.yaml |
 | 4 — Quotes | `--symbol-source universe-file:config/univers_batch/univers_filtred_tradable.txt` ; fenêtre J−7/J, lot 200 |
 | 5 — Earnings | Même source ; Finnhub, J−7/J+30, lot 50, reprise activée |
@@ -286,11 +333,59 @@ existante est conservée ; aucune migration n'est nécessaire.
 
 Le délai de 2 h est une précaution configurable, pas une garantie de disponibilité
 EODHD. La couverture reste contrôlée après cette attente. Le calendrier US est
-strict, sans fallback lundi-vendredi. Un changement de fournisseur vers Alpaca
-bloque ce contrat quotidien plutôt que d'ignorer les paramètres de date/univers.
-Les imports manuels non raccordés à ce contrat gardent leurs autres options.
+strict, sans fallback lundi-vendredi. **Depuis le 19 octobre, Alpaca SIP est
+raccordé à ce contrat quotidien**, via `dataIntegrityEngine.import_alpaca_session`.
+Le fournisseur EODHD conserve son chemin existant. Les imports manuels sans
+contrôle J conservent leurs autres options.
 
-Pour un rattrapage manuel, remplacer J ci-dessous par la séance voulue :
+### Raccordement Alpaca SIP — 19 octobre 2026
+
+Le run du 19 octobre à 23:05 échouait avant la première étape : le générateur
+de commandes refusait encore Alpaca quand le contrôle J était demandé, malgré
+`market_data.bars_provider: alpaca`. Ce refus local est supprimé au profit d'un
+import de séance qualifié, pas d'une désactivation du contrôle.
+
+- Même J et même fichier que les autres étapes ; SPY ajouté hors dénominateur
+  de l'univers s'il n'y figure pas déjà.
+- SIP historique exclusivement, `adjustment=split`, sans remappage des tickers,
+  sans IEX et sans repli EODHD. La requête est bornée à J et à maintenant moins
+  vingt minutes ; attente de clôture +20 min si nécessaire, calendrier strict
+  incluant jours fériés et séances courtes.
+- Rafraîchissement des sept derniers jours calendaires ; si l'historique est
+  plus ancien, reprise depuis sa dernière date jusqu'à J. Sans historique,
+  profondeur initiale héritée de l'import Alpaca : onze ans.
+- Upsert dans `stock_bars` (clé canonique J à 09:30 NY, `1D`) et
+  `stock_bars_daily`, avec un commit par symbole pour les deux tables.
+  Une reprise rafraîchit les mêmes clés sans ajouter de doublons.
+- Contrôle après commits : J exact, OHLC cohérents, volume positif, non rempli,
+  provenance `alpaca_sip` / `split` et valeurs identiques dans les deux tables.
+  Les anciennes lignes IEX/EODHD ne peuvent pas valider le contrôle SIP.
+- Un symbole dont le téléchargement, la validation ou le commit échoue, ou sans
+  barre J reçue, ne compte pas dans la couverture, même si une ancienne ligne
+  existe. Les absents sont listés ; 95 % restent suffisants si SPY est qualifié.
+  Refus d'accès/quota SIP : arrêt et échec, même avec des lignes préexistantes.
+  Erreur de lecture du contrôle : échec avec compteurs d'import conservés.
+
+Le changement ne touche pas les autorisations SIP temps réel, les protections
+des positions, le choix LLM ni les étapes de risque/exécution. Aucun pipeline
+complet ni ordre n'est lancé pendant les tests.
+
+Validation : **315 tests ciblés passent** (import de séance, chemin historique,
+seuil exact de 95 %, SPY obligatoire, refus de droits, rollback, cohérence des
+deux tables, choix fournisseur, EODHD, batch et protections SIP). Le contrôle
+SQL a également été exécuté sur MySQL en lecture seule pour AAPL/SPY au
+16 octobre : requête valide, couverture SIP qualifiée absente pour cet
+échantillon. Ce n'est ni un import réel ni une preuve de couverture J de tout
+l'univers ; celle-ci sera mesurée à l'exécution. Pas de migration de tables.
+
+Rattrapage limité à l'import, avec la configuration Alpaca active :
+
+```powershell
+python -u -m dataIntegrityEngine.import_alpaca_session --write --target-date YYYY-MM-DD --symbol-source universe-file:config/univers_batch/univers_filtred_tradable.txt --wait-for-publication --require-target-coverage --min-target-coverage 0.95 --benchmark-symbol SPY --account default
+```
+
+Pour un rattrapage manuel **avec `bars_provider: eodhd`**, remplacer J ci-dessous
+par la séance voulue (avec Alpaca, utiliser la commande SIP ci-dessus) :
 
 ```powershell
 python -u -m dataIntegrityEngine.import_eodhd_bar --write --target-date YYYY-MM-DD --symbol-source universe-file:config/univers_batch/univers_filtred_tradable.txt --wait-for-publication --require-target-coverage --min-target-coverage 0.95 --benchmark-symbol SPY --commit-every-symbols 100 --no-stooq-cross-check

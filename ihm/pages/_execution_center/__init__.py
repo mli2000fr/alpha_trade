@@ -3354,7 +3354,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         from service.llm_directional.config import load_filter_config
         _llm_config = load_filter_config()
         llm_filter_enabled = st.checkbox(
-            f'🌐 Filtrage {_llm_config.provider_label} + recherche Web après Oracle — PAPER uniquement',
+            f'🌐 Filtrage {_llm_config.provider_label} — {_llm_config.mode_label} après Oracle — PAPER uniquement',
             value=bool(st.session_state.get('pipeline_llm_filter_enabled', _llm_config.enabled)),
             key='pipeline_llm_filter_enabled',
             help='Analyse prospective des premiers scores Oracle, archivage en base, puis LONG/SHORT/abstention '
@@ -3364,11 +3364,16 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         llm_specific_protections = False
         if llm_filter_enabled:
             st.caption(f'Analyse : {_llm_config.provider_label} / {_llm_config.analysis_model}. '
-                       f'Recherche Web : OpenAI / {_llm_config.model}. '
-                       'Choix dans config.yaml → llm_directional_filter.provider.')
-            if _llm_config.provider == 'deepseek':
-                st.info('DeepSeek analyse les preuves Web obtenues via OpenAI. Les deux clés API sont nécessaires ; '
-                        'les deux fournisseurs sont facturés. Aucun remplacement silencieux de modèle.')
+                       f'Mode : {_llm_config.mode_label}. '
+                       'Choix dans config.yaml → llm_directional_filter.provider / analysis_mode.')
+            if _llm_config.provider == 'deepseek' and _llm_config.analysis_mode=='web_search':
+                st.info('Recherche Web native DeepSeek (Search / Fetch), puis analyse DeepSeek avec le consensus local. '
+                        'Seule DEEPSEEK_API_KEY est nécessaire ; aucun appel OpenAI. '
+                        'Les recherches et l’analyse restent facturées par DeepSeek. Aucun changement silencieux de modèle.')
+            elif _llm_config.analysis_mode=='local_data_only':
+                st.info('Aucune recherche Web : consensus et news archivées reçus avant l’analyse uniquement. '
+                        'Les données non qualifiées restent du contexte ; preuves insuffisantes → abstention. '
+                        'Le LLM évalue une tendance, pas un objectif TP/SL.')
             st.caption(f"Directions {_llm_config.provider_label} autorisées : {'LONG / SHORT / ABSTENTION' if _llm_config.allow_short else 'LONG / ABSTENTION'}. "
                        f"Maximum {_llm_config.max_selected} titres au total. Les SHORT restent soumis au régime, "
                        "au risque et à une disponibilité easy-to-borrow Alpaca confirmée.")

@@ -1,5 +1,35 @@
 # Ingestion quotidienne des news US EODHD — 16 octobre 2026
 
+## État courant — désactivé volontairement le 19 octobre 2026
+
+Décision utilisateur : **l'étape 8 Sentiment Pipeline de `us_pipeline` suffit
+au besoin retenu**. `batch.yaml` fixe `enabled: false` et
+`status: DISABLED_REPLACED_BY_PIPELINE` pour éviter une collecte autonome
+supplémentaire. Le launcher respecte cette désactivation même avec `-Force`.
+Le titre reste normal (sans rouge ni gras d'alerte) dans la page Batchs ; les
+anciens échecs ne sont pas requalifiés en succès.
+Ce n'est ni une panne ni un blocage de droits.
+
+Sur demande distincte du 19 octobre, l'historique visible a été vidé :
+**12 lignes** de `pit_collection_runs` supprimées pour ce seul batch, **5 entrées**
+IHM terminales masquées (marque persistante, sans supprimer leurs fichiers), et
+ancien journal déplacé dans la sauvegarde ciblée. Contrôle SQL final : zéro
+exécution restante pour ce nom. Copie récupérable des lignes, entrées IHM et
+journal sous `backups/operations_history/eodhd_news_ingestion_sync/20261018T224658Z/`
+(horodatage UTC, correspondant au 19 octobre en France).
+Articles, mappings, versions, reçus d'archive, checkpoints, budgets/cooldown et
+rapports de recherche conservés. Aucun autre historique de batch supprimé.
+Les bilans chiffrés ci-dessous restent historiques ; leurs lignes SQL sont
+désormais dans cette sauvegarde, pas dans l'historique courant de l'IHM.
+
+Les paramètres, données et archives sont conservés. L'étape 8 et les autres
+batchs ne sont pas modifiés : **actuellement, étape 8 le vendredi**, fenêtre
+d'import par défaut de sept jours, univers `univers_filtred_tradable.txt`.
+Cela ne remplace pas à l'identique l'ancienne collecte quotidienne/week-end sur
+l'univers élargi `stock_bars_daily.txt` ; celle-ci est suspendue volontairement.
+Les sections ci-dessous décrivent l'historique et le contrat avant désactivation,
+pas une planification encore active.
+
 Mise à jour du 17 octobre : la résilience de **l'étape 8 Sentiment Pipeline**
 est décrite dans [le contrat de reprise](sentiment_pipeline_reprise_20261017.md).
 Cette étape utilise `eodhd_news`, distinct du namespace `eodhd_news_daily` de ce
