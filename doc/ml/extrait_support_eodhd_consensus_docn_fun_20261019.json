@@ -1,0 +1,15 @@
+{
+  "description": "Selected fields transcribed from locally verified received Calendar/Trends items; not a complete API response. Observation dates are our collection dates, not vendor-certified historical vintages. Currency and scale are intentionally unspecified pending provider clarification.",
+  "endpoint": "/calendar/trends",
+  "local_evidence_report": "artifacts/research/us_consensus_identity_review/20261019-v1/report.json",
+  "records": [
+    {"observed_date": "2026-10-11", "code": "DOCN.US", "date": "2026-09-30", "period": "0q", "earningsEstimateAvg": "0.3180", "revenueEstimateAvg": "306657240", "earningsEstimateNumberOfAnalysts": 17, "revenueEstimateNumberOfAnalysts": 15},
+    {"observed_date": "2026-10-18", "code": "DOCN.US", "date": "2026-09-30", "period": "0q", "earningsEstimateAvg": "0.3186", "revenueEstimateAvg": "306723910", "earningsEstimateNumberOfAnalysts": 17, "revenueEstimateNumberOfAnalysts": 15},
+    {"observed_date": "2026-10-11", "code": "DOCN.US", "date": "2026-09-30", "period": "+1q", "earningsEstimateAvg": "0.2842", "revenueEstimateAvg": "299713730", "earningsEstimateNumberOfAnalysts": 16, "revenueEstimateNumberOfAnalysts": 13},
+    {"observed_date": "2026-10-18", "code": "DOCN.US", "date": "2026-09-30", "period": "+1q", "earningsEstimateAvg": "0.2842", "revenueEstimateAvg": "299713730", "earningsEstimateNumberOfAnalysts": 16, "revenueEstimateNumberOfAnalysts": 13},
+    {"observed_date": "2026-10-11", "code": "FUN.US", "date": "2026-09-30", "period": "0q", "earningsEstimateAvg": "2.0934", "revenueEstimateAvg": "1170267190", "earningsEstimateNumberOfAnalysts": 5, "revenueEstimateNumberOfAnalysts": 13},
+    {"observed_date": "2026-10-18", "code": "FUN.US", "date": "2026-09-30", "period": "0q", "earningsEstimateAvg": "2.0811", "revenueEstimateAvg": "1168235510", "earningsEstimateNumberOfAnalysts": 5, "revenueEstimateNumberOfAnalysts": 13},
+    {"observed_date": "2026-10-11", "code": "FUN.US", "date": "2026-09-30", "period": "+1q", "earningsEstimateAvg": "2.1470", "revenueEstimateAvg": "1225022610", "earningsEstimateNumberOfAnalysts": 6, "revenueEstimateNumberOfAnalysts": 13},
+    {"observed_date": "2026-10-18", "code": "FUN.US", "date": "2026-09-30", "period": "+1q", "earningsEstimateAvg": "2.1470", "revenueEstimateAvg": "1225022610", "earningsEstimateNumberOfAnalysts": 6, "revenueEstimateNumberOfAnalysts": 13}
+  ]
+}
