@@ -786,13 +786,17 @@ def test_inputs_rank_predicted_score_not_future_returns_and_respect_scope(isolat
     monkeypatch.setattr(artifact, 'resolve_oracle_artifact_horizon', lambda *a: 20)
     with isolated.begin() as conn:
         conn.execute(text('CREATE TABLE oracle_extreme_predictions (symbol TEXT, proba_extreme REAL, prediction_date TEXT, batch_id TEXT, future_return REAL)'))
-        conn.execute(text('CREATE TABLE stock_bars_daily (symbol TEXT, date TEXT, close REAL, is_filled INT)'))
+        conn.execute(text('''CREATE TABLE stock_bars_daily (symbol TEXT, date TEXT, close REAL, is_filled INT,
+            open REAL,high REAL,low REAL,volume INT,data_source TEXT,data_adjustment TEXT,
+            ingested_at DATETIME,last_updated DATETIME)'''))
         conn.execute(text('CREATE TABLE stock_metadata (symbol TEXT, company_name TEXT, exchange TEXT)'))
         for symbol, score, future in [('AAA', .8, 100.), ('BBB', .9, -5.), ('CCC', .9, 2.), ('OTHER', 1., 10.)]:
             conn.execute(text('INSERT INTO oracle_extreme_predictions VALUES (:s,:p,:d,:b,:r)'),
                 {'s':symbol,'p':score,'d':'2026-10-07','b':'b','r':future})
-            conn.execute(text('INSERT INTO stock_bars_daily VALUES (:s,:d,100,0)'), {'s':symbol,'d':'2026-10-07'})
-            conn.execute(text('INSERT INTO stock_bars_daily VALUES (:s,:d,999,0)'), {'s':symbol,'d':'2027-01-01'})
+            conn.execute(text('''INSERT INTO stock_bars_daily VALUES (:s,:d,100,0,99,101,98,1000,
+                'alpaca_sip','raw','2026-10-07 21:00:00','2026-10-07 21:00:00')'''), {'s':symbol,'d':'2026-10-07'})
+            conn.execute(text('''INSERT INTO stock_bars_daily VALUES (:s,:d,999,0,998,1000,997,1000,
+                'alpaca_sip','raw','2027-01-01 21:00:00','2027-01-01 21:00:00')'''), {'s':symbol,'d':'2027-01-01'})
             conn.execute(text('INSERT INTO stock_metadata VALUES (:s,:n,:e)'), {'s':symbol,'n':symbol+' Corp','e':'NASDAQ'})
     contexts = runner.load_inputs(isolated, 'b', date(2026,10,7), 'test',
         FilterConfig(oracle_top_n=2,max_selected=1), 'capital_2001_5000')

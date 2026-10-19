@@ -1,5 +1,13 @@
 # Données des batchs US à transmettre au LLM — audit du 19 octobre 2026
 
+**Suite implémentée après cet audit :** le
+[paquet frais v7](llm_preuves_fraiches_20261019.md) ajoute calendrier, SEC et
+résumés prix/volume/fondamentaux aux prochaines analyses, avec contrôles de
+fraîcheur. L'inventaire ci-dessous conserve ses constatations et son périmètre
+historiques ; les paragraphes « constructeur actuel » décrivent l'état audité
+avant cette livraison, pas le nouveau payload v7. Pas de qualification SQL
+automatique ni de réécriture du run v4 existant.
+
 ## Conclusion
 
 Oui : en priorité, **calendrier des résultats et documents SEC**, puis un résumé

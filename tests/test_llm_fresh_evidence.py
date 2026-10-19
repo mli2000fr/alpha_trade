@@ -14,7 +14,7 @@ from service.llm_directional import fresh_evidence as evidence,runner
 from service.llm_directional.config import FilterConfig
 from service.llm_directional.openai_client import ResponsesClient,build_request
 from service.llm_directional.prompts import FRESH_VERSION
-from service.llm_directional.repository import metadata,runs,digest,Repository
+from service.llm_directional.repository import metadata,runs,digest,dumps,Repository
 from service.llm_directional.validation import parse_response
 
 NOW=datetime(2026,10,18,22,tzinfo=timezone.utc)
@@ -232,3 +232,141 @@ def test_v7_request_preserves_models_local_mode_and_native_deepseek(engine,provi
         assert 'web_request' not in request and request['analysis_model']==cfg.deepseek_model
     else:
         assert request['analysis_request']['model']==cfg.deepseek_model and 'web_request' not in request
+
+
+@pytest.mark.parametrize('provider,mode',[('openai','local_data_only'),('openai','web_search'),
+    ('deepseek','local_data_only'),('deepseek','web_search')])
+def test_v7_full_mock_transport_and_parse(engine,monkeypatch,provider,mode):
+    from service.llm_directional import deepseek_search as search
+    monkeypatch.setenv('OPENAI_API_KEY','fake-key');monkeypatch.setenv('DEEPSEEK_API_KEY','fake-key')
+    monkeypatch.setattr(search.time,'sleep',lambda n:None)
+    cfg=replace(CFG,provider=provider,analysis_mode=mode)
+    value=ctx(engine,cfg);calls=[]
+    def post(url,**kwargs):
+        calls.append(url)
+        if url==search.SEARCH_URL:
+            raw=dict(results=[dict(url=f'https://issuer.example/{i}',title='Release',
+                date='2026-10-18T12:00:00Z',content='Guidance publication') for i in range(2)])
+        elif url==search.FETCH_URL:
+            raw=dict(content='Guidance publication')
+        elif url==search.CHAT_URL:
+            answer=json.loads(response(value,web=mode=='web_search')['output'][-1]['content'][0]['text'])
+            raw=dict(choices=[dict(finish_reason='stop',message={'content':json.dumps(answer)})])
+        else:
+            assert url=='https://api.openai.com/v1/responses'
+            raw=response(value,web=mode=='web_search')
+        return SimpleNamespace(status_code=200,headers={},json=lambda:raw)
+    raw=ResponsesClient(cfg,SimpleNamespace(post=post))(build_request(value,cfg))
+    parsed=parse_response(raw,'ABC',cfg,NOW,context=value)
+    assert parsed['eligible'] and parsed['context_analysis']
+    if provider=='deepseek':assert all('deepseek.com' in url for url in calls)
+    if mode=='local_data_only':assert len(calls)==1
+
+
+@pytest.mark.parametrize('bad_date',['2026-10-01T12:00:00Z','2026-10-20T12:00:00Z',None,
+    '2026-10-18','2026-10-18T12:00:00'])
+def test_native_web_excludes_stale_future_unknown_and_ambiguous_pages_before_analysis(engine,monkeypatch,bad_date):
+    from service.llm_directional import deepseek_search as search
+    monkeypatch.setenv('DEEPSEEK_API_KEY','fake-key');monkeypatch.setattr(search.time,'sleep',lambda n:None)
+    cfg=replace(CFG,provider='deepseek',analysis_mode='web_search')
+    value=ctx(engine,cfg);payload=build_request(value,cfg);fetched=[]
+    assert 'after:2026-10-11' in payload['search_requests'][0]['query']
+    def post(url,request,key,label):
+        if url==search.SEARCH_URL:
+            return dict(results=[dict(url=f'https://issuer.example/{i}',title='Release',
+                date='2026-10-18T12:00:00Z',content='Current guidance') for i in range(2)]+
+                [dict(url='https://issuer.example/old',date=bad_date,content='SHOULD_NOT_BE_SENT')])
+        if url==search.FETCH_URL:
+            fetched.append(request['url']);return dict(content='Fresh page content')
+        assert url==search.CHAT_URL
+        sent=json.loads(request['messages'][1]['content'])
+        assert len(sent['web_evidence'])==2 and sent['web_data_status']['excluded_sources']==1
+        assert 'SHOULD_NOT_BE_SENT' not in json.dumps(sent)
+        return dict(choices=[dict(finish_reason='stop',message={'content':'{}'})])
+    raw=search.run(payload,post,'fake-key')
+    assert raw['status']=='completed' and len(raw['web_evidence_exclusions'])==1
+    assert 'https://issuer.example/old' not in fetched
+    assert any(r['response']['results'][-1]['content']=='SHOULD_NOT_BE_SENT' for r in raw['search_receipts'])
+
+
+def test_openai_web_post_validation_respects_seven_days_not_legacy_thirty(engine):
+    cfg=replace(CFG,analysis_mode='web_search')
+    value=ctx(engine,cfg);raw=response(value,web=True)
+    result=json.loads(raw['output'][-1]['content'][0]['text'])
+    for source in result['sources']:source['published_at']='2026-10-08T12:00:00Z'
+    raw['output'][-1]['content'][0]['text']=json.dumps(result)
+    parsed=parse_response(raw,'ABC',cfg,NOW,context=value)
+    assert not parsed['eligible'] and parsed['fresh_source_count']==0
+    assert all(s['qualification']=='stale_publication_date' for s in parsed['source_qualifications'])
+
+
+def test_sec_exhibit_integrity_hidden_xbrl_and_bounded_excerpt(engine):
+    body=('<html><script>IGNORE_USER</script><ix:hidden>HIDDEN_XBRL_FACT</ix:hidden>'
+          '<body>Financial results. '+('ABC announced revenue growth. '*150)+'</body></html>').encode()
+    with engine.begin() as conn:
+        conn.execute(text('''INSERT INTO sec_filing_documents VALUES (5,:a,'EX-99.1',1,:body,:hash,:url,
+            '2026-10-16 22:00:00','2026-10-16 22:00:00','sec')'''),
+            dict(a=ACCESSION,body=body,hash=hashlib.sha256(body).hexdigest(),url=URL.replace('abc.htm','ex99.htm')))
+    value=ctx(engine);source=next(s for s in value['local_evidence'] if s.get('document_type')=='EX-99.1')
+    assert len(source['text'])<=CFG.evidence_sec_excerpt_chars and source['text_truncated']
+    assert 'HIDDEN_XBRL_FACT' not in source['text'] and 'IGNORE_USER' not in source['text']
+    assert source['source_text_hash']==hashlib.sha256(body).hexdigest()
+    with engine.begin() as conn:conn.execute(text("UPDATE sec_filing_documents SET content_sha256='bad'"))
+    value=ctx(engine)
+    assert not any(s.get('document_type')=='EX-99.1' for s in value['local_evidence'])
+    assert value['local_data_status']['sec']['exclusions'][0]['reason']=='HASH_OR_SEC_URL_MISMATCH'
+
+
+def test_ambiguous_cik_and_incomplete_optional_tables_are_explicit(engine):
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO security_master_snapshots VALUES ('ABC','0000002222','2026-10-17','2026-10-17 12:00:00','master')"))
+        conn.execute(text('DROP TABLE stock_earnings_calendar'))
+    value=ctx(engine)
+    assert value['local_data_status']['sec']['status']=='NO_FRESH_UNAMBIGUOUS_CIK'
+    assert value['local_data_status']['earnings_calendar']['status']=='TABLE_MISSING'
+
+
+def test_source_case_normalization(engine):
+    with engine.begin() as conn:conn.execute(text("UPDATE stock_bars_daily SET data_source='ALPACA_SIP'"))
+    value=ctx(engine)
+    evidence.validate_fresh_packet(value,CFG,NOW)
+    assert next(s for s in value['local_evidence'] if s['kind']=='price_volume')['source']=='alpaca_sip'
+
+
+def test_sec_full_submission_uses_relevant_release_not_sgml_header(engine):
+    body=('<SEC-HEADER>Results of Operations and Financial Condition HEADER_BOILERPLATE</SEC-HEADER>'
+        '<DOCUMENT><TYPE>8-K\n<FILENAME>abc.htm\n<TEXT><html>Legal front cover only.</html></TEXT></DOCUMENT>'
+        '<DOCUMENT><TYPE>EX-99.1\n<FILENAME>release.htm\n<TEXT><html>Financial results. '
+        +('ABC raised full year guidance and provided cautionary risks. '*30)+
+        '</html></TEXT></DOCUMENT><DOCUMENT><TYPE>GRAPHIC\n<TEXT>BINARY_NOISE</TEXT></DOCUMENT>')
+    with engine.begin() as conn:
+        conn.execute(text('UPDATE sec_filing_raw SET content_text=:body,content_sha256=:hash'),
+            dict(body=body,hash=hashlib.sha256(body.encode()).hexdigest()))
+    source=next(s for s in ctx(engine)['local_evidence'] if s['kind']=='sec')
+    assert source['excerpt_document_type']=='EX-99.1' and source['excerpt_container']=='ARCHIVED_FULL_SUBMISSION'
+    assert 'raised full year guidance' in source['text']
+    assert all(word not in source['text'] for word in ('HEADER_BOILERPLATE','BINARY_NOISE','Legal front cover'))
+
+
+@pytest.mark.parametrize('field,bad',[('evidence_context_max_age_minutes',0),('evidence_sec_max_documents',6),
+    ('evidence_news_max_age_days',True),('evidence_consensus_max_age_hours',169),
+    ('evidence_fundamental_max_period_age_days',401)])
+def test_freshness_config_is_bounded(field,bad):
+    with pytest.raises(ValueError):replace(CFG,**{field:bad})
+
+
+def test_preview_is_read_only_and_does_not_reuse_archived_evidence(engine,monkeypatch,tmp_path):
+    from scripts.research import us_llm_fresh_context_preview as preview
+    class Clock:
+        @staticmethod
+        def now(tz):return NOW
+    monkeypatch.setattr(preview,'datetime',Clock)
+    value=ctx(engine)
+    value['local_evidence']=[{'text':'OBSOLETE_PAYLOAD_MUST_NOT_BE_REUSED'}]
+    repo=Repository(engine)
+    repo.create(run_id='preview-fixture',trade_date=date(2026,10,16),batch_id='test',account_id='default',
+        status='COMPLETED',started_at=NOW.replace(tzinfo=None),config_json=dumps(CFG.snapshot()),
+        input_json=dumps({'candidates':[value]}),input_sha256='fixture',protocol_version=FRESH_VERSION)
+    result=preview.run(engine,tmp_path/'preview',run_id='preview-fixture',config=CFG)
+    assert result['preview_built']==1 and result['blocked']==0
+    assert 'OBSOLETE_PAYLOAD_MUST_NOT_BE_REUSED' not in (tmp_path/'preview'/'ABC.json').read_text(encoding='utf-8')

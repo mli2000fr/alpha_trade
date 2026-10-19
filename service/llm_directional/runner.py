@@ -124,6 +124,11 @@ def analyze(*, engine, batch_id, trade_date, symbol_source, capital_preset_key='
                      config.provider_label, config.analysis_model, config.analysis_mode)
         client = client or ResponsesClient(config)
         for context in contexts:
+            if context.get('freshness_policy'):
+                logging.info('Contexte LLM %s cutoff=%s sources=%s statuts=%s exclusions=%d',
+                    context['symbol'],context['evidence_cutoff_utc'],len(context.get('local_evidence',[])),
+                    ','.join(f"{k}:{v['status']}" for k,v in context.get('local_data_status',{}).items()),
+                    len(context.get('evidence_exclusions',[])))
             request = build_request(json.loads(dumps(context)), config)
             response, parsed, error, status = None, None, None, 'FAILED'
             observed = utcnow()

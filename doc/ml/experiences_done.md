@@ -1,5 +1,253 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-19 — TOP10 H10, confirmation trois clôtures J−1/J/J+1, TP10/SL5
+
+**TERMINÉ / EXPLORATOIRE / PAS DE PROMOTION.** Périmètre précisé par
+l'utilisateur : dix premiers scores du nouvel Oracle amplitude H10 à J, pas
+TOP20 %. LONG si clôtures ajustées J−1<J<J+1, SHORT si strictement décroissantes,
+sinon abstention. Entrée openJ+2 après confirmation ; dix séances entrée comprise,
+expiration closeJ+11, TP10/SL5 sans trailing. Référence mêmes titres/entrée/risque,
+sans confirmation ; mêmes frais et gaps non plafonnés. 2024/2025 et signaux2026
+jusqu'au1er septembre, sans reclassement/remplacement par le futur.
+LONG confirmés **+0,046/−0,679/−0,097 %** par occasion,
+**37,31/32,22/34,90 %** gagnants ; SHORT **−1,208/−1,107/−0,936 %**,
+**30,82/30,10/30,51 %** gagnants. Sens combinés **−0,669/−0,904/−0,500 %**.
+Référence tous LONG sans filtre **+0,110/+0,232/+0,127 %** ; confirmation de sens
+moins bonne que tous LONG sur les mêmes couples confirmés. Sans chevauchement,
+combiné −0,381/−0,630/+0,072 % : pas de résultat transversal.
+6 690 couples, tous qualifiés, 48–52 % confirmés ; stop5 dépassable par gap.
+**105 tests passent**, 13 380 issues vérifiées par calcul scalaire ; audit
+`PASS_EXPLORATORY_ONLY`. Pas rendement annuel de capital, pas nouveau modèle
+directionnel. Aucun entraînement, API/LLM, SQL ou changement de production.
+[Règles, résultats LONG/SHORT, contrôles et risques](oracle_top10_confirmation_trois_seances_tp10_sl5_20261019.md).
+
+## 2026-10-19 — Prix suspects puis véritables modèles parcours H10 contre H20
+
+**TERMINÉ / SIX MODÈLES DE RECHERCHE / PAS DE PROMOTION.** Qualification bornée
+des ruptures KLAC/DD/MLI/SBS : 22 lectures SIP archivées, 3 420 lignes normalisées
+dans une copie seulement ; base DD/Qnity et TOELY réservées, features après
+rupture exclues sans supprimer globalement les symboles. Sensibilité des anciens
+LONG TOP20 % filtrés inchangée ; pas de correction SQL ni de preuve absolue
+indépendante pour les 711 anciennes lignes DD remises à l'échelle uniforme.
+Deux modèles d'amplitude dédiés H10/H20 par année 2024/2025/2026, CatBoost figé,
+mêmes 172 features, mêmes lignes, 504 dates train/126 validation et embargo21.
+TOP20 % prédit avant qualité future ; TP10/SL10, LONG et SHORT séparés,
+durées10 et20 pour séparer effet modèle et effet durée. Ce n'est pas un nouveau
+classifieur de direction ou une reproduction des anciens scores annuels.
+LONG durée10 H10 : **+0,054/+0,425/+0,112 %**, H20
+**+0,078/+0,400/+0,083 %** par occasion (2024/2025/2026 au 1er septembre).
+Durée20 H10 : +0,196/+0,551/+0,112 %, H20 +0,222/+0,510/+0,062 %.
+SHORT moyens tous négatifs. TOP20 % communs à 95,1–95,6 % ; précision vrai TOP20 %
+d'amplitude environ46–50 % pour les deux modèles, sans gain directionnel robuste.
+Supplément LONG face à tous les titres observables non confirmé dans les trois
+années ; faibles différences H10/H20 changent de signe après2024. Couverture
+exécution ≥98,9 %, mais précision amplitude2026 seulement87,7 % des sélections
+qualifiées pour le vrai H20 (vingt dates sous le seuil de couverture95 %),
+sans remplacement des manquants. Moyennes après frictions hypothétiques,
+pas des rendements annuels de capital ou une décision live.
+**91 tests passent**, audit `PASS_EXPLORATORY_ONLY` ; modèles `serving_ready:false`.
+Aucun SQL/ordre/LLM, changement de modèle, batch ou configuration de production.
+[Prix, protocole, résultats, couvertures et contrôles](oracle_h10_h20_prix_et_comparaison_20261019.md).
+
+## 2026-10-19 — Même Oracle H20, sorties H5/H10/H20 sans réentraînement
+
+**TERMINÉ / EXPLORATOIRE / PAS DE PROMOTION / RÉSERVE PRIX.** GO pour comparer
+la durée avant un éventuel nouveau modèle. Deux périmètres : TOP20 % Oracle et
+univers tradable complet (1 790 titres) ; mêmes couples 2025–2026 et adhésions
+H20 historiques par titre/sens figées, TP10/SL10 et TP10 sans SL. Entrée open J+1,
+sortie close-N si aucun seuil, N=5/10/20 ; mêmes frais et gaps/collisions. Contrôle
+sans chevauchement conserve les mêmes épisodes espacés sur vingt séances.
+LONG TOP20 % SL10 : H5 +0,34/−0,19 %, H10 +0,92/−0,41 %, H20 +1,25/−0,26 %
+(2025/2026). Sans SL : H5 +0,75/+0,13 %, H10 +1,66/+0,52 %, H20 +3,11/+1,10 %.
+Univers complet LONG SL10 : H5 −0,03/−0,04 %, H10 +0,18/+0,03 %, H20 +0,30/+0,28 %.
+SHORT filtrés restent négatifs aux trois durées ; pas de choix LONG/SHORT stable.
+Sans chevauchement TOP20 % LONG sans SL, H10 +2,41/+0,81 % contre H20
++3,69/+0,36 % : pas d'horizon dominant transversal. Direction terminale LONG du
+filtre sans SL en 2026 : 49,50 % à H5, 49,35 % à H10, 50,77 % à H20 ; distincte du
+taux gagnant avec TP. Durée courte limite certaines pertes mais coupe des profits.
+Moyennes par occasion après frictions supposées, pas des rendements annuels de
+capital ; capital recyclé et réentrées H5 supplémentaires non simulés.
+83 tests passent ; parité exacte H20 sur 2 964 136 lignes et audit des douze
+combinaisons. Aucun SQL/API/LLM, entraînement, changement modèle/production ou
+ordre. Aucun Oracle H10 dédié testé ; ne pas confondre cette comparaison de sortie
+avec l'apprentissage d'une nouvelle cible ou une preuve d'impossibilité à H10.
+[Résultats, conventions, risques et contrôles](oracle_comparaison_detention_h5_h10_h20_20261019.md).
+
+## 2026-10-19 — TOP20 % Oracle contre univers complet : TP10/SL10 et TP10 sans SL
+
+**DEUX PÉRIMÈTRES TERMINÉS / EXPLORATOIRE / RÉSERVE PRIX / PAS DE PROMOTION.**
+TOP20 % des scores Oracle prédits, et non vingt titres ou TOP10 ; score DESC,
+symbole ASC, `ceil(0,20 × N scorés)`, classement avant qualité future, sans
+remplacement. 350–358 titres par séance, univers complet 1 790 titres. Modèles
+annuels parcours CatBoost 437ed1/102eca/bc35a7 ; scores SQL existants et lineage
+lus en transaction SELECT-only, rangs archivés reproduits sur les 689 séances.
+2024 historique ; évaluations 2025–2026 matures jusqu'au 1er septembre 2026.
+Filtre titre/sens causal inchangé, appris dans chaque périmètre et séparément
+pour chaque protection ; références tous LONG/SHORT et contrôle filtre appris
+sur l'univers complet puis intersecté TOP20 % fournis.
+LONG TOP20 % filtrés SL10 : +1,25/−0,26 % par occasion, 58,58/50,30 % gagnantes.
+Sans SL : +3,11/+1,10 %, 71,76/65,20 %, mais contrôle sans chevauchement
++3,69/+0,36 %, contre tous TOP20 % LONG +1,32/+1,29 % : supplément non confirmé
+en 2026. Sens choisi combiné : SL10 −0,37/−0,83 %, sans SL −0,13/+0,06 % ;
+sans chevauchement ce dernier devient −0,29/−1,42 %. Pas de signal stable.
+Les résultats univers complet TP10 v2 sont réutilisés à l'identique et vérifiés.
+Sans SL, baisses contraires >10 % avant barre de sortie dans au moins
+34,53/47,11 % des LONG retenus ; pertes et prix/OST suspects restent réservés.
+57 tests passent. Aucun nouvel entraînement, changement modèle/production,
+appel fournisseur/LLM, écriture SQL ou ordre. Ce sont des moyennes nettes après
+frictions hypothétiques, pas des rendements annuels de capital.
+[Périmètres, résultats détaillés, risques et contrôles](oracle_top20pct_et_univers_complet_tp10_20261019.md).
+
+## 2026-10-19 — Univers complet : TP10/SL10 et TP10 sans SL
+
+**DEUX TESTS TERMINÉS / EXPLORATOIRES / RÉSERVE PRIX / PAS DE PROMOTION.**
+Même 1 790 titres et mêmes fenêtres qualifiées que TP20/SL7. 2024 historique,
+sélections mensuelles causales en 2025–2026, règles de confiance inchangées ;
+labels et adhésions propres à chaque protection. « Juste TP10 » = sans SL,
+expiration close20 incluant l'entrée J+1, sans trailing ni moteur de marge réel.
+LONG TP10/SL10 : 52,56/53,01 % d'occasions gagnantes, moyennes nettes
++0,30/+0,28 %. LONG sans SL : 58,89/61,18 %, +0,87/+0,92 %. SHORT restent
+négatifs ; sens choisi combiné : −0,69/−0,54 % avec SL10, −0,60/−0,28 % sans SL.
+Moyennes par occasion après frictions hypothétiques, pas rendements annuels
+de portefeuille. Contrôles sans chevauchement et ancienne sélection figée inclus.
+Supplément LONG face à tous LONG incertain dans les deux années ; pertes et
+mouvements contraires plus grands sans SL. Second semestre 2026 LONG négatif.
+Croisement secondaire TOP10, sans SL, LONG : 454/661 occasions, 73,57/80,94 %
+gagnantes, +3,42/+4,50 % ; sans chevauchement +2,34/+2,41 %, pas de supplément
+robuste du filtre face à tous TOP10 LONG (+3,18/+2,57 % sans chevauchement).
+À conserver comme résultat exploratoire de sortie, pas preuve directionnelle
+ou autorisation live sans SL. Prix/OST suspects hérités non corrigés.
+50 tests passent ; v2 corrige les touches exactes à ±10 % (tolérance numérique
+relative 1e−12), v1 conservé mais supplanté. Aucune modification de modèle,
+donnée SQL, univers/batch de production, aucun API/LLM, entraînement ou ordre.
+[Protocoles, chiffres LONG/SHORT, risques et contrôles](univers_tradable_tp10_sl10_et_sans_sl_20261019.md).
+
+## 2026-10-19 — Univers tradable complet : confiance historique par titre/sens
+
+**TERMINÉ SUR LES 1 790 TITRES / EXPLORATOIRE / RÉSERVE PRIX / PAS DE PROMOTION.**
+Fichier `config/univers_batch/univers_filtred_tradable.txt`, aucun filtre Oracle
+dans le test principal. 1 233 310 couples séance/titre examinés, 1 192 036
+fenêtres qualifiées ; chaque titre couvert chaque année. Historique initial
+2024 ; sélection mensuelle 2025–2026 avec les mêmes règles que le test TOP10 :
+minimum huit fenêtres sans chevauchement, maturité avant sélection, Wilson90,
+net positif/supérieur au global et stabilité des deux moitiés. TP20/SL7, mêmes
+coûts hypothétiques, sans apprentissage d'un nouveau prédicteur.
+525 titres distincts effectivement retenus, 77–226 qualifiés par mois.
+LONG qualifiés : TP-first 17,14/16,75 % mais seulement 41,07/34,98 % d'occasions
+positives, moyennes nettes +1,01/−0,04 % en 2025/2026. SHORT : −1,99/−1,53 %.
+Sens choisi combiné : moyennes **−0,33/−0,58 % par occasion**, contrôles sans
+chevauchement **−0,35/−0,44 %**. Pas des rendements annuels de portefeuille.
+Croisement secondaire avec TOP10 original : 986/775 occasions, moyennes
+−0,33/−1,45 %, pas d'avantage stable par rapport au TOP10 tous LONG.
+96 lignes de pertes extrêmes sur douze symboles signalées, dont KLAC à échelles
+apparemment incohérentes : prix/OST non indépendamment qualifiés, aucune
+correction ou suppression SQL. Omission ex post des deux lignes extrêmes
+sélectionnées en 2025 : moyenne combinée reste négative ; aucune en 2026.
+Univers courant survivant, sélections multiples non corrigées, années déjà
+explorées : pas d'univers définitif « titres faciles » démontré par cette règle.
+31 tests passent ; parité sur 13 356 parcours TOP10 et 8 316 lignes avec coûts ;
+empreintes et 1 790 parties vérifiées. Aucun SQL/API/LLM, entraînement, ordre,
+changement d'univers, modèle, batch ou production.
+[Périmètre complet, résultats, couverture et réserve prix](univers_tradable_complet_confiance_directionnelle_20261019.md).
+
+## 2026-10-19 — TOP10 : univers de confiance causal par titre/sens
+
+**TERMINÉ / EXPLORATOIRE / PAS D'UNIVERS PROMU.** 2024 historique initial,
+sélection mensuelle 2025–2026 sur 504 séances antérieures ; maturité complète
+strictement avant sélection, minimum huit fenêtres sans chevauchement par
+titre/sens, borne Wilson90 TP supérieure au global passé, moyenne nette
+positive/supérieure au global et stabilité des deux moitiés historiques.
+TP20/SL7 inchangés, frictions hypothétiques et emprunt SHORT ; pas de nouveau
+prédicteur directionnel ni GPT. Aucun remplacement hors des dix rangs Oracle.
+2025 : 158 occasions retenues (LONG MXL/APP, SHORT TXG/GPRE), TP-first 36,08 %,
+moyenne nette par occasion +2,59 % ; mais seulement quinze fenêtres sans
+chevauchement, TP 3/15 et moyenne −2,82 %. Second semestre : dix-sept occasions,
+zéro TP, moyenne −7,14 %. 2026 : 56 occasions MXL LONG seules, TP 35,71 %, moyenne
++2,40 % ; seulement cinq fenêtres, trois TP. Pas de généralisation diversifiée ;
+2026 équivaut à toujours LONG sur MXL. Couverture 6,32/3,38 % des occasions,
+majorité des autres titres insuffisamment documentés, pas jugés « mauvais ».
+Différences appariées 2025 incertaines ; années déjà explorées, pas de holdout
+nouveau. Moyennes par occasion, **pas rendements de portefeuille**.
+23 tests passent ; deux calculs mêmes adhésions/sélections ; aucune connexion
+SQL/API/LLM, aucun entraînement, ordre, modification d'univers/modèle/batch.
+[Protocole, contrôles de chevauchement et résultats](top10_univers_confiance_par_titre_20261019.md).
+
+## 2026-10-19 — TOP10 Oracle : liquidité, gaps et parcours TP20/SL7
+
+**TERMINÉ / EXPLORATOIRE / PAS DE FILTRE PROMU.** Trois modèles annuels parcours
+du 14 octobre, dix rangs originaux ; 6 678 occasions matures, LONG et SHORT
+séparément, sans modèle directionnel ni GPT. Entrée J+1 open, vingt séances
+incluant l'entrée, TP20/SL7 fixes, collisions OHLC stop-first et gaps au prix
+d'ouverture. Pas un portefeuille ni une mesure de rendement économique.
+Filtre figé ADV20 ≥20 M$ + max gap absolu20 <7 % : taux TP-first LONG par date
+21,39→21,12 % / 29,84→29,86 % / 27,03→26,71 % en 2024/2025/2026 ; ne conserve
+que 35,00 / 32,32 / 38,72 % des occasions. SHORT : 11,67→12,30 % /
+14,32→14,48 % / 18,06→18,59 %, mais intervalles appariés du combiné incluant
+zéro, effets individuels instables. Parmi les LONG finalement haussiers,
+37,52 / 41,15 / 52,07 % avaient été stoppés avant TP. Observation future,
+pas signal causal d'entrée ni justification d'élargir le stop.
+Capitalisation small/mid/large non testable proprement : aucun snapshot
+admissible avant les occasions matures ; pas de substitution par les valeurs
+actuelles. 2026 mature jusqu'au 1er septembre, observation jusqu'au 30 septembre.
+22 tests passent ; SQL lecture seule pour l'export borné, aucun API/LLM,
+entraînement, ordre, changement de modèle/batch ou écriture SQL.
+[Protocole, couverture et résultats](top10_liquidite_gaps_parcours_tp20_sl7_20261019.md).
+
+## 2026-10-19 — TOP10 Oracle parcours tous SHORT, TP20/SL7
+
+**CALCULS TERMINÉS / EXPLORATOIRE / RÉSERVE RÉGIME 2025 — aucune promotion.**
+Trois modèles annuels parcours CatBoost du 14 octobre, univers courant 1 790 ;
+dix rangs d'amplitude originaux, pas de tête SHORT ni GPT, aucun entraînement.
+Capital 4 000 USD par cohorte, levier d'entrée ≤2, TP20/SL7 au fill, trailing OFF,
+expiration à l'open après vingt séances détenues, quantités entières et contrôles
+portefeuille natifs. Emprunt hypothétique 0,3 %/an ; indemnisation des dividendes
+non exhaustive, shortabilité historique non certifiée.
+2024 : **−29,29 %, 2 828,29 $, DD −38,33 %, 31 gagnants/78 perdants** (queue
+d'expiration jusqu'au 03/02/2025 ; au 31/12 : −27,47 %). 2025 : **+8,20 %,
+4 328,16 $, DD −19,28 %, 9/16**, mais seulement 25 entrées jusqu'à mars :
+177 séances NORMAL avec quota SHORT nul, transition défensive incapable de
+sortir avec compteurs de calme/sortie transmis à zéro. **Pas un résultat continu
+2025 validé** ; aucune correction du moteur appliquée. 2026 au 30/09 :
+**−35,57 %, 2 577,06 $, DD −42,57 %, 25/67**, quatre positions ouvertes valorisées.
+Expositions moyennes 0,82× / 0,19× / 0,44×. 504 empreintes revérifiées, deux
+replays reproduisent les mêmes equity/trades/DD ; 18 tests préalables passent.
+Pas d'API/LLM, SQL, broker, changement de modèle ou de batch de production.
+[Protocole, chiffres et anomalie de régime](oracle_top10_short_tp20_sl7_20261019.md).
+
+## 2026-10-19 — premier bilan TOP10 Oracle et consensus collecté le 11 octobre
+
+**DESCRIPTIF / H20 NON MATURE — aucune promotion.** Classement du vendredi
+9 octobre repris du run archivé (le 11 était dimanche), ancien modèle
+`model-factory-20261003082853-e98332`, dix rangs originaux sans sélection GPT.
+Consensus du 11 reçu avant l'ouverture du 12, prix observés jusqu'au 16 : cinq
+séances. EPS J−7 amélioré : une hausse sur cinq ; dégradé : une baisse sur trois.
+Concordance signe/cours 2/8 ; solde des révisions 30 j : 2/9. Neutres exclus,
+aucun seuil optimisé. Pas un verdict définitif sur le consensus, ni une mesure
+de l'exactitude de l'EPS réalisé, ni une validation D1/D10. Réserves fiscales/
+unités maintenues ; compteur baisses 7 j absent des dix payloads, non imputé.
+Hauts/bas du parcours conservés, H20 au 6 novembre ; archive et prix de référence
+contrôlés. Source prix unique, SPY/opérations sur titres connus examinés.
+Aucun API/LLM, SQL, modèle, batch ou ordre modifié ; 11 tests ciblés passent.
+[Bilan et prix par titre](oracle_top10_consensus_11oct2026_premier_bilan.md).
+
+## 2026-10-19 — contexte LLM frais : calendrier, SEC, prix/volume et fondamentaux
+
+**Livraison technique, pas une validation D1/D10.** Protocole v7 pour les futures
+analyses GPT/DeepSeek, local/Web : limites de réception/publication propres à
+chaque famille, dernier cours de séance clôturée obligatoire, extraits bornés,
+preuves provisoires distinguées des sources directionnelles recevables. SEC :
+CIK/URL/hash/fin de collecte, retrait des en-têtes SGML et extraction EX-99 utile.
+Pas de tables brutes, pas de promotion SQL des consensus/news non qualifiés.
+DeepSeek exclut les pages périmées/non datées avant analyse ; GPT Web impose
+le filtre dans le prompt puis au contrôle de réponse. Archives v4/v5/v6 préservées.
+Aperçu en base, lecture seule, sélection archivée de dix titres du 16 octobre :
+10 calendriers/prix, consensus provisoire, 48 news sur neuf titres, un dépôt SEC
+recevable (FMC), zéro fondamental passant tous les critères sur ce périmètre.
+Aucun appel LLM/fournisseur payant, entraînement, ordre ou écriture SQL.
+**802 tests passent**, dont 53 contrôles v7 dédiés ; aucune performance
+économique ou amélioration directionnelle revendiquée.
+[Contrat, réglages et bilan](llm_preuves_fraiches_20261019.md).
+
 ## 2026-10-19 — DeepSeek Web natif, sans relais GPT
 
 **Livraison technique, pas une validation directionnelle.** Pour les nouvelles

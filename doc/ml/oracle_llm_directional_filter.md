@@ -5,6 +5,10 @@
 analyses transmettent le consensus EODHD et un échantillon de news archivées
 reçus avant le cutoff réel. Le LLM juge une **tendance**, sans objectif TP/SL.
 Les données non qualifiées restent provisoires ; aucun changement de protections.
+Le [contrat frais v7](llm_preuves_fraiches_20261019.md) est maintenant actif pour
+les nouvelles analyses : calendrier, extraits SEC utiles et résumés prix/volume/
+fondamentaux, contrôles de réception et d'ancienneté. Prix de la dernière séance
+clôturée obligatoire ; aucun repli sur un cours ancien. Les archives restent inchangées.
 Voir le [contrat actuel des modes et preuves locales](llm_modes_consensus.md).
 DeepSeek Web utilise désormais ses propres API Search/Fetch, sans OpenAI ; les
 anciens runs hybrides restent revalidables mais ne sont plus renvoyés aux API.

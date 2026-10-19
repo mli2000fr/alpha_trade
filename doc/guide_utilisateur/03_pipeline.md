@@ -15,6 +15,10 @@ Le réglage courant reste GPT en mode local. Pour DeepSeek avec recherche,
 choisir `provider: deepseek` et `analysis_mode: web_search` : Search/Fetch et
 analyse DeepSeek natifs, seule `DEEPSEEK_API_KEY` requise, aucun appel OpenAI.
 L'IHM affiche ce parcours. Les anciens runs ne changent pas.
+Les nouvelles analyses v7 joignent aussi calendrier, extraits SEC et résumés
+prix/volume/fondamentaux recevables. Données périmées exclues, dernière séance
+clôturée obligatoire ; une famille manquante est signalée et peut conduire à
+l'abstention. [Détail de fraîcheur et limites](../ml/llm_preuves_fraiches_20261019.md).
 [Détail des modes et conditions d’abstention](../ml/llm_modes_consensus.md).
 
 Au 10/10/2026, choisir le parcours marché avant de configurer les blocs. CN/FR

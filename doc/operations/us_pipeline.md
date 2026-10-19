@@ -8,9 +8,10 @@
 
 Le 19 octobre 2026, le collecteur autonome `eodhd_news_ingestion_sync` est
 désactivé sur demande utilisateur : l'étape 8 suffit au besoin retenu. Les listes
-`steps` / `steps_friday` et l'univers de `us_pipeline` restent inchangés : étape 8
-le vendredi actuellement, pas de remplacement quotidien implicite de l'ancienne
-collecte élargie/week-end. [Désactivation et historique](eodhd_news_ingestion_sync.md).
+`steps` / `steps_friday` et l'univers de `us_pipeline` déterminent la cadence de
+l'étape 8 ; vérifier ces listes dans `config.yaml` (actuellement toutes deux 1–12).
+Pas de remplacement implicite de l'ancienne collecte élargie/week-end.
+[Désactivation et historique](eodhd_news_ingestion_sync.md).
 
 Depuis le 19 octobre 2026, `llm_directional_filter.analysis_mode` choisit
 `web_search` ou `local_data_only` (valeur actuellement configurée).
@@ -20,9 +21,12 @@ prompts distincts évaluent une tendance LONG/SHORT/ABSTAIN, pas un TP avant SL.
 Les preuves non qualifiées ne sont pas promues automatiquement et peuvent
 conduire à une abstention. En DeepSeek Web, la recherche utilise maintenant ses API
 Search/Fetch puis l'analyse DeepSeek, sans OpenAI ; seule `DEEPSEEK_API_KEY` est
-nécessaire. Les nouveaux runs utilisent le protocole v6 ; les anciennes archives
+nécessaire. Les nouveaux runs utilisent désormais le protocole **v7**, avec
+calendrier, SEC et résumé prix/volume/fondamentaux filtrés selon leur fraîcheur ;
+un paquet expiré ou un cours J non qualifié bloque les appels concernés. Les anciennes archives
 restent revalidables. Le fournisseur et le mode courants ne sont pas modifiés.
 [Configuration, limites et archives](../ml/llm_modes_consensus.md).
+[Règles de fraîcheur et aperçu réel](../ml/llm_preuves_fraiches_20261019.md).
 
 Depuis le 18 octobre, **10. ML Predict** contient aussi un tableau des dix premiers
 titres par score Oracle avec l'avis et la confiance GPT/DeepSeek archivés. Il

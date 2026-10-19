@@ -10,7 +10,7 @@ import re
 import time
 from urllib.parse import urlsplit
 
-from .prompts import native_search_protocol, instructions, response_schema
+from .prompts import FRESH_VERSION, native_search_protocol, instructions, response_schema
 
 SEARCH_URL='https://api.deepseek.com/v1/tools/search'
 FETCH_URL='https://api.deepseek.com/v1/tools/fetch'
@@ -48,7 +48,8 @@ def build_request(context,config,base_schema):
     symbol=re.sub(r'[^A-Za-z0-9.\-]',' ',context['symbol']).strip()[:16]
     issuer=re.sub(r'[^\w .\-]',' ',str(context.get('issuer_reference',{}).get('company_name') or ''),flags=re.UNICODE)
     identity=f'{symbol} {issuer}'.strip()[:45]
-    since=(cutoff-timedelta(days=config.max_source_age_days)).date().isoformat()
+    max_age=min(config.max_source_age_days,config.evidence_news_max_age_days) if context['analysis_protocol']==FRESH_VERSION else config.max_source_age_days
+    since=(cutoff-timedelta(days=max_age)).date().isoformat()
     until=(cutoff+timedelta(days=1)).date().isoformat()
     suffixes=('earnings guidance outlook','risks dilution debt SEC')
     searches=[dict(query=f'{identity} {tail} after:{since} before:{until}',
@@ -56,7 +57,7 @@ def build_request(context,config,base_schema):
               for tail in suffixes[:min(config.deepseek_search_queries,config.max_tool_calls)]]
     if any(not 1<=len(r['query'])<=128 for r in searches):
         raise ValueError('Requête DeepSeek hors limite de 128 caractères')
-    return dict(provider='deepseek',web_provider='deepseek',analysis_mode='web_search',
+    request=dict(provider='deepseek',web_provider='deepseek',analysis_mode='web_search',
         analysis_protocol=context['analysis_protocol'],search_requests=searches,
         fetch_max_pages=min(config.deepseek_fetch_pages,max(0,config.max_tool_calls-len(searches))),
         max_web_calls=config.max_tool_calls,text_chars=config.deepseek_web_text_chars,
@@ -69,6 +70,9 @@ def build_request(context,config,base_schema):
             'Copy published_at exactly from the supplied provider_date (null if unknown); '
             'retrieval time, upcoming event dates and page updates are NOT publication dates. '
             'Return json matching: '+json.dumps(response_schema(base_schema,context['analysis_protocol'])),context=context)
+    if context['analysis_protocol']==FRESH_VERSION:
+        request['web_freshness']=dict(cutoff_utc=cutoff.isoformat(),max_age_days=max_age)
+    return request
 
 
 def _utc_now():
@@ -92,6 +96,23 @@ def evidence(searches,fetches,text_chars):
                 page_fetched=bool(page and page.get('content')),
                 provenance='DeepSeek Search/Fetch; publication date unverified')
     return list(values.values())
+
+
+def fresh_evidence(payload,sources):
+    """V7 pre-analysis filter; legacy archives keep their exact input contract."""
+    if payload['analysis_protocol']!=FRESH_VERSION:
+        return sources,[]
+    from .validation import FRESH_QUALIFICATIONS,_publication_status
+    policy=payload['web_freshness']
+    cutoff=datetime.fromisoformat(policy['cutoff_utc'])
+    accepted=[];excluded=[]
+    for source in sources:
+        status=_publication_status(source['provider_date'],cutoff,policy['max_age_days'])
+        if status in FRESH_QUALIFICATIONS:
+            accepted.append(source)
+        else:
+            excluded.append(dict(url=source['url'],provider_date=source['provider_date'],reason=status))
+    return accepted,excluded
 
 
 def run(payload,post,key):
@@ -133,7 +154,7 @@ def run(payload,post,key):
                 if item.get('date') is not None and not isinstance(item['date'],str):
                     raise RuntimeError('DeepSeek Search date invalide')
         # Fetch only URLs really returned by Search, never model-supplied URLs.
-        sources=evidence(archive['search_receipts'],[],payload['text_chars'])
+        sources,_=fresh_evidence(payload,evidence(archive['search_receipts'],[],payload['text_chars']))
         for item in sources[:payload['fetch_max_pages']]:
             try:
                 raw=call(FETCH_URL,dict(url=item['url']),'DeepSeek Fetch',archive['fetch_receipts'])
@@ -144,11 +165,16 @@ def run(payload,post,key):
             if not isinstance(raw.get('content'),str) or not isinstance(raw.get('title',''),str):
                 raise RuntimeError('DeepSeek Fetch contenu invalide')
         archive['web_status']='completed'
-        web=evidence(archive['search_receipts'],archive['fetch_receipts'],payload['text_chars'])
+        web,excluded=fresh_evidence(payload,evidence(archive['search_receipts'],archive['fetch_receipts'],payload['text_chars']))
+        user_input=dict(context=payload['context'],web_evidence=web)
+        if payload['analysis_protocol']==FRESH_VERSION:
+            archive['web_evidence_exclusions']=excluded
+            user_input['web_data_status']=dict(fresh_sources=len(web),excluded_sources=len(excluded),
+                caveat='Excluded or undated search results are not proof that no event exists; abstain when evidence is insufficient.')
         analysis=dict(model=payload['analysis_model'],max_tokens=payload['analysis_max_tokens'],
             response_format={'type':'json_object'},messages=[
                 dict(role='system',content=payload['analysis_instructions']),
-                dict(role='user',content=json.dumps(dict(context=payload['context'],web_evidence=web),
+                dict(role='user',content=json.dumps(user_input,
                     ensure_ascii=False,allow_nan=False))])
         archive['analysis_request']=analysis
         archive['analysis_started_at_utc']=_utc_now()

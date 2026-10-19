@@ -6,10 +6,13 @@ nouveau branchement opérationnel effectué par cet audit.
 
 Livraison du 19 octobre 2026. Les nouvelles analyses opérationnelles de l’étape
 10 figent le contexte local puis utilisent l’un des **deux prompts distincts**
-de `service/llm_directional/prompts.py`. Le protocole est
-`oracle-local-evidence-trend-v5` pour GPT/local et
-`oracle-deepseek-search-trend-v6` pour DeepSeek Web natif. Les anciennes archives
-v4/v5 restent lues et validées avec leur contrat historique, sans réécriture.
+de `service/llm_directional/prompts.py`. Le protocole courant est désormais
+`oracle-fresh-evidence-trend-v7` pour les quatre parcours. Il ajoute le calendrier,
+les extraits SEC et les résumés prix/volume/fondamentaux, avec contrôles de fraîcheur
+par famille. [Contrat v7 et aperçu réel](llm_preuves_fraiches_20261019.md).
+Les descriptions v5/v6 ci-dessous restent l'historique du socle ; les limites v7
+plus restrictives font foi pour les nouvelles analyses. Les archives v4/v5/v6
+restent lues avec leur contrat historique, sans réécriture.
 
 ## Choisir le mode dans config.yaml
 
@@ -33,7 +36,8 @@ Les étapes 11/12 utilisent son identifiant exact, pas les nouvelles valeurs YAM
 Aucun repli automatique entre modes/fournisseurs, aucune génération payante de
 validation lancée lors de cette livraison. Le mode local réduit les appels
 externes, mais les textes transmis et la réponse consomment toujours des tokens.
-Le Web conserve `min_sources` et `max_source_age_days`. Le local utilise
+Le Web conserve `min_sources` ; en v7 sa fenêtre est le minimum de
+`max_source_age_days` et `evidence_news_max_age_days`. Le local utilise
 `min_local_sources` ; le seuil de confiance et le plafond de sélection restent
 communs. Les modèles configurés ne sont pas remplacés.
 

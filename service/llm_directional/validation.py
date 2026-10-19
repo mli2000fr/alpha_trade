@@ -2,6 +2,7 @@
 import json
 import math
 import re
+from dataclasses import replace
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlsplit
 from jsonschema import validate
@@ -231,7 +232,9 @@ def parse_response(response, symbol, config, observed_at, context=None):
         from .fresh_evidence import validate_fresh_packet
         validate_fresh_packet(context,config,observed_at)
     if not local:
-        result=_parse_web_response(response,symbol,config,observed_at,response_schema=response_schema(SCHEMA,version))
+        web_config=(replace(config,max_source_age_days=min(config.max_source_age_days,config.evidence_news_max_age_days))
+                    if version==FRESH_VERSION else config)
+        result=_parse_web_response(response,symbol,web_config,observed_at,response_schema=response_schema(SCHEMA,version))
     else:
         normalized=deepseek_output(response) if config.provider=='deepseek' else response
         if normalized.get('status')!='completed':

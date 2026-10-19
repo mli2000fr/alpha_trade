@@ -75,9 +75,12 @@ def existing_sources(ctx,cfg,cutoff):
                         or avg is not None and lo is not None and avg<lo
                         or avg is not None and hi is not None and avg>hi):
                     reason='INCONSISTENT_CONSENSUS_RANGE'
-            source['prior_actual_snapshots']=[dict(old,role='HISTORICAL_COMPARISON',eligible_for_direction=False)
-                for old in source.get('prior_actual_snapshots',[])
-                if fresh(old['available_at_utc'],cutoff,hours=cfg.evidence_consensus_max_age_hours)]
+            history=[]
+            for old in source.get('prior_actual_snapshots',[]):
+                checked,discarded=existing_sources({'local_evidence':[old]},cfg,cutoff)
+                history.extend(dict(s,role='HISTORICAL_COMPARISON',eligible_for_direction=False) for s in checked)
+                excluded.extend(discarded)
+            source['prior_actual_snapshots']=history
             source['context_qualification']=('UPSTREAM_QUALIFIED' if source['eligible_for_direction']
                                              else 'FRESH_CONTEXT_ONLY_UNQUALIFIED_UNITS_OR_PERIOD')
         else:
@@ -128,7 +131,29 @@ def sec_url(url,cik,accession):
         return False
 
 
-def clean_excerpt(body,limit):
+def body_document(body):
+    """SEC full submissions contain headers/binary exhibits, not just primary HTML.
+
+    Select an embedded EX-99 release first when present, otherwise the primary
+    filing's TEXT. Keep the full archived submission hash as provenance.
+    """
+    candidates=[]
+    for block in re.findall(r'<DOCUMENT\b[^>]*>(.*?)</DOCUMENT\s*>',body,re.I|re.S):
+        kind=re.search(r'<TYPE>\s*([^\r\n<]+)',block,re.I)
+        content=re.search(r'<TEXT\b[^>]*>(.*?)</TEXT\s*>',block,re.I|re.S)
+        if not kind or not content:
+            continue
+        form=kind.group(1).strip().upper()
+        if form.startswith('EX-99') or form in ('8-K','8-K/A','6-K','6-K/A','10-Q','10-Q/A','10-K','10-K/A'):
+            candidates.append((0 if form.startswith('EX-99') else 1,content.group(1),form))
+    if candidates:
+        _,selected,form=min(candidates,key=lambda item:item[0])
+        return selected,form
+    # Plain HTML remains unchanged; remove a standalone submission header if any.
+    return re.split(r'</SEC-HEADER\s*>',body,flags=re.I)[-1],None
+
+
+def clean_excerpt(body,limit,*,prefer_lead=False):
     # No execution, no URL access. Text extraction only; preserve numeric tokens.
     soup=BeautifulSoup(body,'html.parser')
     for tag in soup.find_all(['script','style','noscript','template','ix:hidden']):
@@ -136,7 +161,9 @@ def clean_excerpt(body,limit):
     value=re.sub(r'\s+',' ',soup.get_text(' ',strip=True)).strip()
     match=re.search(r'\b(results of operations|financial results|guidance|outlook|equity offering|'
                     r'public offering|private placement|credit agreement|material agreement)\b',value,re.I)
-    start=max(0,match.start()-200) if match else 0
+    # A release's lead contains the issuer, announcement and key figures. Do not
+    # jump to a late generic 'outlook' mention/safe-harbor section instead.
+    start=max(0,match.start()-200) if match and not prefer_lead else 0
     return value[start:start+limit],start>0 or len(value)>limit
 
 
@@ -194,7 +221,9 @@ def sec(conn,ctx,cfg,cutoff,names):
                 excluded.append(dict(accession=row['accession_number'],reason='HASH_OR_SEC_URL_MISMATCH'));continue
             if not fresh(received,cutoff,days=cfg.evidence_sec_max_age_days):
                 excluded.append(dict(accession=row['accession_number'],reason='STALE_SEC_RECEIPT'));continue
-            excerpt,truncated=clean_excerpt(body.decode('utf-8',errors='replace'),cfg.evidence_sec_excerpt_chars)
+            document,embedded_type=body_document(body.decode('utf-8',errors='replace'))
+            excerpt,truncated=clean_excerpt(document,cfg.evidence_sec_excerpt_chars,
+                prefer_lead=(embedded_type or document_type).startswith('EX-99'))
             if len(excerpt)<100:
                 excluded.append(dict(accession=row['accession_number'],reason='NO_SUBSTANTIVE_TEXT'));continue
             source=dict(source_id=f"sec:{row['accession_number']}:{identifier}:{expected_hash}",kind='sec',
@@ -202,6 +231,8 @@ def sec(conn,ctx,cfg,cutoff,names):
                 publication_precision='FILING_DATE_ONLY',acceptance_datetime_raw=str(row['acceptance_datetime']),
                 source_text_hash=expected_hash,accession=row['accession_number'],cik=cik,url=url,
                 symbol=ctx['symbol'],form=row['form_type'],document_type=document_type,
+                excerpt_document_type=embedded_type or document_type,
+                excerpt_container='ARCHIVED_FULL_SUBMISSION' if embedded_type else 'ARCHIVED_DOCUMENT',
                 text_truncated=truncated,identity_qualified=True,integrity_qualified=True,
                 freshness_qualified=True,eligible_for_direction=True,
                 context_qualification='CIK_HASH_COMPLETED_RUN_VERIFIED_PRIMARY_SOURCE',
@@ -268,6 +299,8 @@ def market(conn,ctx,cfg,cutoff,names):
         ORDER BY `date` DESC LIMIT 21'''
     params=dict(symbol=ctx['symbol'],day=trade,since=trade-timedelta(days=45),cutoff=cutoff.replace(tzinfo=None))
     raw=[dict(r) for r in conn.execute(text(q),params).mappings()]
+    for row in raw:
+        row['data_source']=str(row['data_source']).lower()
     if not raw or day(raw[0]['date'])!=trade:
         raise ValueError(f"Cours J manquant/périmé pour {ctx['symbol']} ; pas de repli J-1")
     allowed={'eodhd','eodhd_eod','alpaca_sip'}
@@ -375,6 +408,10 @@ def validate_fresh_packet(context,config,now,*,before_call=False):
             raise ValueError('Preuve reçue après cutoff')
         if kind=='consensus':
             ok=fresh(received,cutoff,hours=config.evidence_consensus_max_age_hours)
+            if any(not fresh(old['available_at_utc'],cutoff,hours=config.evidence_consensus_max_age_hours)
+                   or old.get('role')!='HISTORICAL_COMPARISON' or old.get('eligible_for_direction') is not False
+                   for old in source.get('prior_actual_snapshots',[])):
+                raise ValueError('Historique de consensus périmé/non étiqueté')
         elif kind=='news':
             ok=(fresh(received,cutoff,hours=config.evidence_news_max_receipt_age_hours)
                 and fresh(source['publication_utc'],cutoff,days=config.evidence_news_max_age_days))

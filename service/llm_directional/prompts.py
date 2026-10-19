@@ -77,6 +77,8 @@ def schema(base):
 
 FRESH_INSTRUCTIONS='''
 Use only the supplied fresh evidence packet and, in Web mode, traceable recent Web evidence.
+For Web evidence respect freshness_policy.news_publication_max_age_days relative to evidence_cutoff_utc.
+Do not use undated, stale or future pages as current directional evidence; date-only ambiguity must remain explicit.
 Read local_data_status: missing, expired, inconsistent or unqualified data are NOT current facts.
 Never infer an event's absence from a missing source. No stale data or remembered facts may fill a gap.
 Separate qualified factual context from evidence eligible_for_direction; a calendar date, price pattern,
