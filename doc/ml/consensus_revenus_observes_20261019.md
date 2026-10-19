@@ -2,6 +2,9 @@
 
 ## Conclusion
 
+Extension séparée après GO : [TOP20 % Oracle — 349 titres, couverture et réserves](consensus_revenus_top20pct_20261019.md).
+Le pilote TOP10 et ses artefacts ci-dessous restent inchangés.
+
 **Pilote exécuté et audité ; efficacité H10 pas encore mesurable.**
 Les observations archivées permettent de calculer des variations de consensus
 de revenus, sans utiliser l'EPS ni ses conventions inconnues. Le TOP10 récent

@@ -1,5 +1,26 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-19 — Revenus seuls : extension séparée au TOP20 % Oracle
+
+**EXTENSION CALCULÉE ET AUDITÉE / UNE COHORTE / H10 IMMATURE.**
+Même hypothèse revenus seuls, `0q` et cutoffs avant ouvertures successives,
+EPS exclu, TP10/SL5 sur dix séances inchangé. Classement contemporain du
+16 octobre : 1 743 scores → **349 titres**, dont TOP10 séparé des 339 suivants.
+346 paires présentes, 338 techniquement cohérentes ; **64 variations à nombre
+d'analystes inchangé** (36 hausses / 28 baisses), pas 64 trades qualifiés.
+233 stables à nombre inchangé, 26 variations avec nombre changé séparées.
+Trois paires absentes (TKOMY/HUBG/AA), huit revenus non positifs/manquants
+réservés, sans remplacement par les rangs suivants.
+692 lignes raccordées à 518 enveloppes déjà archivées, 346/346 paires,
+aucune enveloppe invalide. Devise/période appuyées seulement pour DOCN/FUN :
+les deux mêmes motifs TOP10, pas d'autres signaux promus. Maturité cohorte
+le 30 octobre après clôture ; aucun prix futur, win-rate, AUC ou PnL lu/calculé.
+234 tests ciblés passent, dont 23 nouveaux ; audit des 349 rangs/dates : PASS.
+Extension exploratoire après examen du TOP10, pas confirmation indépendante.
+Aucun appel fournisseur/LLM, entraînement, SQL écrit, changement de production
+ou ordre. Ancien pilote scellé conservé.
+[Protocole, groupes, réserves et suite](consensus_revenus_top20pct_20261019.md).
+
 ## 2026-10-19 — Consensus revenus seuls entre vrais snapshots `0q`
 
 **PILOTE EXÉCUTÉ ET AUDITÉ / H10 IMMATURE / PAS DE RÉSULTAT D'EFFICACITÉ.**
