@@ -183,6 +183,17 @@ Cette reconstitution plus large n'a pas été lancée dans le travail borné aux
 93 cas. Aucun nouvel apprentissage n'est justifié avec sept accords, encore
 moins une promotion live ou une affirmation d'efficacité directionnelle.
 
+## Complément du 20 octobre : nouvelle cohorte Q1 2024
+
+La suite a été réalisée sur une population neuve, sans utiliser les 93 anciens
+cas comme condition d'admission : 51 dépôts candidats, 24 présents au TOP10 de
+leur séance de réaction, cinq tableaux trimestriels appuyés après revue.
+Aucun accord admissible comptes/réaction dans ce petit périmètre ; ce n'est
+pas un test de rentabilité. Identités et couverture restent partielles, et
+TAL confirme le risque d'annonce antérieure au dépôt SEC.
+[Population, comptes, chronologie et réserves](qualification_consensus_annonces_sec_20261020.md).
+Les sept anciens accords et leurs réserves restent conservés dans ce document.
+
 ## Scripts, archives et vérifications
 
 - `us_earnings_release_reconstruction.py` : protocole, découverte, acquisition,

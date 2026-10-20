@@ -127,6 +127,15 @@ d'amplitude. Les bras futurs devront partager les mêmes prix, coûts et règles
 **30 octobre 2026, 20 h UTC / 21 h Paris**, sous réserve de prix qualifiés.
 Pas de win-rate, AUC ou PnL calculé, pas de signal promu.
 
+## Qualification publique complémentaire du 20 octobre 2026
+
+Les 62 réserves ont désormais un dossier séparé : 58 devises de présentation
+identifiées (56 USD, BILI CNY, STNE BRL), quatre non résolues ; quatre nouvelles
+correspondances trimestre/revenus appuyées, TWLO/FIVN/ENTG/AKAM. Les 58 autres
+restent réservées. Ce complément n'écrase ni le pilote ni les preuves datées
+du 19 ; il ne démontre aucun avantage directionnel.
+[Bilan, sources, CSV des 62 cas et limites](qualification_consensus_annonces_sec_20261020.md).
+
 ## Suite bornée
 
 1. Prioriser la qualification devise/période des 62 variations encore réservées,
