@@ -2,6 +2,10 @@
 
 ## Correction livrée
 
+Complément du **20 octobre** : le bouton standard de l'étape 4, auparavant sans
+dates et donc encore en mode temps réel, est désormais historique par défaut.
+[Configuration, gel des dates et vérification](pipeline_quotes_historiques_defaut_20261020.md).
+
 Le contrôle des spreads ne doit pas confondre le bid/ask d’une seule place IEX
 avec un bid/ask consolidé. Le seuil du preset n’a pas été relevé.
 

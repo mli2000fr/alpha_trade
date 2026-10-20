@@ -64,9 +64,13 @@ cibles risque, puis ordres/exécutions observées. Voir le
 [contrat des notifications](pipeline_telegram_10_11_12.md), notamment la distinction
 entre ordre en attente et exécution réellement remplie.
 
-Depuis le correctif du 17 octobre, l’étape 4 utilise les **quotes historiques
-SIP**, selon `market_data.quotes_historical_feed: sip`, sans repli IEX. Les
-anciennes lignes sont requalifiées par flux et provenance à la reprise ;
+Le correctif du 17 octobre qualifie les **quotes historiques SIP**, selon
+`market_data.quotes_historical_feed: sip`, sans repli IEX. Depuis le **20 octobre**,
+le bouton standard de l'étape 4 utilise aussi ce mode par défaut : dernière
+séance clôturée +20 min, fenêtre de sept jours et fichier configuré dans
+`market_data.pipeline_quotes`. Le mode temps réel reste explicitement optionnel.
+Voir [le correctif des défauts IHM, configuration et test réel](pipeline_quotes_historiques_defaut_20261020.md).
+Les anciennes lignes sont requalifiées par flux et provenance à la reprise ;
 l’étape 6 republie depuis le snapshot Screener d’origine. Voir le
 [correctif quotes SIP et ses contrôles](correctif_quotes_sip_20261017.md).
 

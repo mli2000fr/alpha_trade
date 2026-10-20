@@ -549,6 +549,12 @@ market_data:
   # Quotes historiques de clôture (étape 4) : SIP consolidé, end vieux de >=15 min.
   # Aucun fallback IEX ; les lignes sans ce flux/provenance seront requalifiées.
   quotes_historical_feed: sip
+  # Étape 4 manuelle : ne pas appeler /quotes/latest implicitement.
+  # Le batch us_pipeline conserve sa propre fenêtre historique J-7/J figée.
+  pipeline_quotes:
+    mode: historical  # historical | latest ; latest exige les droits SIP temps réel.
+    symbol_source: universe-file:config/univers_batch/univers_filtred_tradable.txt
+    lookback_days: 7  # jours calendaires avant la dernière séance clôturée +20 min.
 
 # ---------------------------------------------------------------------------
 # Capitalisation utilisée pour publier l'univers tradable PIT.

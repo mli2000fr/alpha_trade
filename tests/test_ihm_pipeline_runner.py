@@ -850,7 +850,8 @@ def test_build_pipeline_command_signal_aggregator_exposes_supported_backend_opti
 def test_build_pipeline_command_selector_reference_sync_steps() -> None:
     quotes_command = build_pipeline_command(
         "sync_latest_quotes",
-        PipelineLaunchOptions(data_integrity_quotes_limit=120, data_integrity_quotes_batch_size=80),
+        PipelineLaunchOptions(data_integrity_quotes_limit=120, data_integrity_quotes_batch_size=80,
+            data_integrity_quotes_from_date='2026-04-10', data_integrity_quotes_to_date='2026-04-17'),
     )
     earnings_command = build_pipeline_command(
         "sync_earnings_calendar",
@@ -873,9 +874,15 @@ def test_build_pipeline_command_selector_reference_sync_steps() -> None:
         "--batch-size",
         "80",
         "--symbol-source",
-        "active-tradable",
+        "universe-file:config/univers_batch/univers_filtred_tradable.txt",
+        "--from-date",
+        "2026-04-10",
+        "--to-date",
+        "2026-04-17",
         "--limit",
         "120",
+        "--feed",
+        "sip",
     ]
     assert earnings_command == [
         earnings_command[0],
@@ -930,6 +937,8 @@ def test_build_pipeline_command_sync_latest_quotes_accepts_historical_period() -
         "AAG",
         "--limit",
         "25",
+        "--feed",
+        "sip",
     ]
 
 
