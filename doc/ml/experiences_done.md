@@ -1,5 +1,94 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-20 — LONG H20, capital partagé et ajout sur gagnant
+
+**CALCUL TERMINÉ / RECHERCHE CONDITIONNELLE / PAS DE PROMOTION DU RENFORCEMENT.**
+Compte unique continu 4 000 USD, 2025→30septembre2026, sans levier, cash>=0,
+huit titres maximum, poids25% à l'achat, risque planifié2%equity figé par campagne.
+213 campagnes parent qualifiées (119/94), Oracle PATH_H20 CatBoost OOS de
+recherche TOP10, pas LightGBM production. Aucune campagne intraday2024 qualifiée.
+Cohorte21séances complètes=47,98/55,29% des campagnes admises : biais de sélection
+sur qualité future, survivants ; résultat PAS sur tout le TOP10 historique.
+
+Première nouvelle cassure LONG de la borne haute de veille confirmée par deux
+closes5m, entrée au prochain open. SL5/trailing15, pas TP, sortie open dernière
+barreJ20, protections distinctes par lot. Entrée complète / demi-position témoin /
+demi-position+un ajout après deux closes>=+5%, plafond de risque non augmenté,
+pas rechargé par gains, refus conservés. Ni moyenne à la baisse ni réentrée après
+sortie. Chronologie5m, cash partagé, vente intrabar ne finance pas open antérieur.
+Moteur de recherche séparé : **PAS parité complète native PAPER/live**, pas secteurs/
+corrélations/circuitbreakers/dividendes/taxes/fills réels. Coûts8bps/jambe et
+stress25bps entièrement rejoué avec nouvelles quantités/cash, pas mêmes fills.
+
+Rendement2025/2026, puis capital final depuis4000USD : entrée complète
+**+19,76/+13,46%, 5435,25USD** ; demi-position **+12,92/+33,19%, 6016,01USD** ;
+ajout **+18,20/+21,74%, 5755,91USD**. Année2026 reprend le capital/positions
+fin2025, pas remiseà4000. DD annuels : complet−28,20/−21,49%, demi−14,38/−15,56%,
+ajout−20,35/−24,49%. Gagnants campagnes : complet27,88/30,49%, demi28,18/35,48%,
+ajout23,15/26,97%. Stress capitaux4750,13 /5336,56 /4985,44USD : même classement.
+
+Ajout +320,66USD contre complet mais **−260,10USD contre demi**, avantage contre
+demi seulement2025, pas2026. 186/203/197 campagnes initiales achetées ;91ajouts.
+Exposition moyenne complète59,67/56,70%, demi37,54/36,70%, ajout46,98/45,24%.
+La disponibilité du cash et les quantités entières changent les entrées ;98
+quantités initiales communes diffèrent ajout/demi. Lots ajoutés+120,43USD, PAS
+leur contribution incrémentale causale. Forte concentration des gains ; années
+déjà étudiées, pas holdout neuf. Aucun seuil retouché sur ces résultats.
+
+42tests (25nouveaux+17parents),80chemins aléatoires supplémentaires ; contrôle
+séparé signaux/stops/sizing/cash/equity **PASS_SHARED_CASH_RESEARCH_AUDIT** :
+1353lots,2706achats/ventes,203868marques,1470ordres/tentatives. Même assistant,
+pas humain indépendant. Verdict `EXPLORATORY_ONLY_NO_PROMOTION`.
+Archives réutilisées hors ligne, aucun API/LLM/entraînement/SQL écrit/ordre ou
+changement batch/modèle/config trading.
+[Protocole, bilans annuels, stress, couverture, comptabilité et limites](oracle_portefeuille_renforcement_gagnant_20261020.md).
+
+## 2026-10-20 — Campagnes TOP10 H20, H5/H10/H15/H20 et seconde tentative bornée
+
+**TERMINÉ / PAS D'AVANTAGE STABLE DE RÉENTRÉE / AUCUNE PROMOTION.** Même
+Oracle PATH_H20 CatBoost OOS de recherche, mêmes TOP10 à J pour quatre durées
+de campagne, attente comprise. 6 690 signaux, admission anticipée commune avec
+blocage vingt séances par titre : 673 campagnes, dont 255/248/170 en 2024/25/26.
+662 873 barres SIP 5m existantes en READ ONLY ; cohorte commune de 21 séances
+J..J20 avec contrôle daily/base : **0/119/94 campagnes qualifiées**. 2024 absent,
+couverture 2025/26 conditionnelle 47,98/55,29 %, pas totalité du TOP10.
+
+Deux closes 5m de nouvelle cassure de la borne de veille, entrée au prochain
+open ; SL5 %, trailing15 % mis à jour après barre complète, aucun TP, expiration
+à l'open de la dernière barre de J+H. Au plus deux tentatives avec confirmations
+fraîches après sortie, pas stop-and-reverse automatique. 1 000 USD indépendants
+par campagne, sans levier, actions entières ; plafond planifié 20 USD, partagé
+10+10 pour deux tentatives, réduit par pertes et pas rechargé par gains. Témoins
+une entrée 20 USD et une entrée 10 USD pour séparer sizing et réentrée. BOTH et
+LONG_ONLY figés ; SHORT hypothétique, pas de locates qualifiés. 8 bps/jambe,
+emprunt 0,3 % annualisé ; stress25 bps comptable sur les mêmes fills, sans nouvelle
+simulation du budget à ce tarif. Pas de compte partagé ni de rendement annuel.
+
+**LONG_ONLY une entrée plein budget**, moyenne nette/campagne 2025→2026 :
+H5 **−0,303/+0,213 %**, H10 **+0,105/+0,480 %**, H15 **+0,383/+0,495 %**,
+H20 **+0,658/+0,670 %**. H20 IC95 [−0,317 ; +1,187] % / [−0,432 ; +1,778] %,
+zéro inclus. H20 stress +0,532/+0,581 % ; gagnants actifs 33,05/32,00 %,
+médianes négatives. Les trois meilleurs CLF/PLTR/SNDX puis DOCN/TTMI/WDC
+représentent 65/90 % du solde agrégé des campagnes indépendantes : concentration,
+pas PnL portefeuille. Aucun horizon choisi après observation comme champion.
+
+Contraste principal BOTH H20 deux contre une : **+0,160 point en 2025 /
+−0,244 point en 2026**, IC incluant zéro. BOTH une entrée −0,017/−0,141 %,
+deux +0,143/−0,384 %. LONG_ONLY deux +0,350/+0,199 %, inférieur au plein budget ;
+incrément contre une demi-taille positif +0,064/+0,095 point mais non établi.
+Granularité des actions entières et non-entrées conservées : pas de confusion
+entre direction et budget. Gap MP SHORT 31,92→48,10 USD en juillet 2025 :
+−194,96 USD sur une allocation 1 000, pas perte plafonnée à 2 % ; demi-taille
+−97,48 bloquant la réentrée. Aucun prix réparé.
+
+17 tests dont 200 chemins aléatoires ; 5 112 bras / 4 983 fills recalculés
+séparément, audit signaux/grilles/base daily/trailing/budget/ledger PASS.
+Même assistant, pas revue humaine indépendante. Verdict
+`NO_STABLE_PRIMARY_REENTRY_ADVANTAGE`. LONG simple à confirmer séparément,
+pas stratégie prouvée ; aucun entraînement, téléchargement, SQL écrit, LLM,
+ordre ou changement de production.
+[Protocole, résultats H5/H10/H15/H20, couverture, sizing et risque de gaps](oracle_campagnes_h5_h10_h15_h20_20261020.md).
+
 ## 2026-10-20 — Retour à la moyenne intraday SIP : règle figée non rentable
 
 **TERMINÉ / NO_GO DE CETTE RÈGLE / AUCUNE PROMOTION.** Nouvelle expérience à

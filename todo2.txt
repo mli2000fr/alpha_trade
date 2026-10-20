@@ -1,1 +1,25 @@
-sur le batch latest_quotes_sync  , selon info sur dernier run, j'ai  Début 2026-09-15 21:15:02.796374 · Fin 2026-09-15 21:50:40.809599 · demandés 1798 · reçus 1660 · persistés 1660 · échecs 0 · alertes 0 , par contre, dans notification, j'ai tous à 0
+Oui : deux pistes méritent d’être retenues pour notre Oracle, mais ces pages restent des introductions, pas des preuves de rentabilité.
+J’ai pu lire BigQuant, Qbot, Wayland et AllTick — retrouvé à une nouvelle adresse. Zhihu refuse l’accès : je ne prétends donc pas avoir analysé cet article.
+1. Renforcer une position gagnante — ma priorité
+La partie CTA de Qbot décrit l’augmentation de l’exposition lorsque la tendance se développe. C’est la famille du pyramiding, également définie par Interactive Brokers.
+Pour Alpha Trade, l’adaptation serait :
+- entrer avec une position initiale réduite ;
+- autoriser un seul renforcement, uniquement après une progression favorable confirmée ;
+- conserver un plafond commun de notionnel et de risque planifié ;
+- ne jamais renforcer une position perdante.
+C’est différent de notre dernière expérience : nous avons testé une seconde entrée après sortie, pas un ajout à une position encore ouverte et gagnante. Je n’ai pas retrouvé ce contrat précis dans le registre.
+Cela correspond à notre observation récente : peu de gagnants, mais certains très importants. Toutefois, renforcer peut aussi acheter trop tard et amplifier le retournement. Le stop ne garantit pas le budget de perte en présence d’un gap.
+2. Conditionner le suivi à une tendance persistante du titre
+Wayland propose notamment ADX, moyennes mobiles et confirmation sur plusieurs périodes.
+L’hypothèse adaptée serait : parmi les titres Oracle, accompagner ceux dont la tendance se construit, plutôt que chaque cassure isolée.
+Réserve importante : ADX, momentum et compression/expansion de volatilité existent déjà dans nos features. Ce ne sont donc pas des informations nouvelles. L’ADX mesure une force de tendance, pas à lui seul son sens. Il faudrait tester une règle d’utilisation précise, sans multiplier les seuils après observation.
+Ce que je ne relancerais pas maintenant
+Famille proposée	Mon avis pour notre application
+Moyennes mobiles, momentum, retour à la moyenne	Déjà largement explorés ; changer leur nom ne crée pas une nouvelle piste.
+Grid et martingale	Mauvaise priorité sur des titres susceptibles de fortes tendances adverses.
+Gamma scalping / variations d’IV	Distinct du straddle passif déjà testé, mais exige des historiques d’options, quotes et coûts qualifiés.
+Assemblage de stratégies	La diversification ne transforme pas automatiquement plusieurs stratégies perdantes en stratégie rentable.
+
+
+BigQuant insiste justement sur les coûts, les tests hors échantillon et le risque de sur-optimisation.
+Mon choix : confirmer d’abord le LONG simple H20 avec capital partagé, puis comparer un unique renforcement gagnant à l’entrée complète initiale, au même plafond de risque. Pas de nouveau modèle nécessaire pour ce premier essai. Aucun calcul ni changement lancé ici.

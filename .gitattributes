@@ -28,3 +28,7 @@
 /tests/test_us_self_tender_*.py text eol=lf
 /scripts/research/us_intraday_mean_reversion*.py text eol=lf
 /tests/test_us_intraday_mean_reversion.py text eol=lf
+/scripts/research/us_oracle_campaign*.py text eol=lf
+/tests/test_us_oracle_campaign.py text eol=lf
+/scripts/research/us_oracle_pyramiding*.py text eol=lf
+/tests/test_us_oracle_pyramiding.py text eol=lf
