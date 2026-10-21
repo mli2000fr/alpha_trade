@@ -6,6 +6,14 @@
 
 ## Périmètre
 
+Le **21 octobre 2026**, correction de la finalisation `SKIPPED` compatible avec
+la base (motif dans `details_json`), isolation des anciennes barres SIP invalides
+sans relâcher J, et conservation du ratio de couverture dans le résumé parent.
+Le faux RUNNING de 09h29 est réconcilié ; le run nocturne reste en échec de
+couverture **1 648/1 790 (92,1 %), seuil 95 % inchangé**. Audit des 142 absents,
+sans retrait automatique d'univers ni nouvelle exécution d'ordres :
+[correctifs, reçus et décision restante](us_pipeline_correctifs_20261021.md).
+
 Le 19 octobre 2026, le collecteur autonome `eodhd_news_ingestion_sync` est
 désactivé sur demande utilisateur : l'étape 8 suffit au besoin retenu. Les listes
 `steps` / `steps_friday` et l'univers de `us_pipeline` déterminent la cadence de
@@ -64,9 +72,13 @@ cibles risque, puis ordres/exécutions observées. Voir le
 [contrat des notifications](pipeline_telegram_10_11_12.md), notamment la distinction
 entre ordre en attente et exécution réellement remplie.
 
-Depuis le correctif du 17 octobre, l’étape 4 utilise les **quotes historiques
-SIP**, selon `market_data.quotes_historical_feed: sip`, sans repli IEX. Les
-anciennes lignes sont requalifiées par flux et provenance à la reprise ;
+Le correctif du 17 octobre qualifie les **quotes historiques SIP**, selon
+`market_data.quotes_historical_feed: sip`, sans repli IEX. Depuis le **20 octobre**,
+le bouton standard de l'étape 4 utilise aussi ce mode par défaut : dernière
+séance clôturée +20 min, fenêtre de sept jours et fichier configuré dans
+`market_data.pipeline_quotes`. Le mode temps réel reste explicitement optionnel.
+Voir [le correctif des défauts IHM, configuration et test réel](pipeline_quotes_historiques_defaut_20261020.md).
+Les anciennes lignes sont requalifiées par flux et provenance à la reprise ;
 l’étape 6 republie depuis le snapshot Screener d’origine. Voir le
 [correctif quotes SIP et ses contrôles](correctif_quotes_sip_20261017.md).
 

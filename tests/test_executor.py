@@ -5,6 +5,8 @@ from dataclasses import replace
 from datetime import UTC, date, datetime
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from execution_engine.audit import build_execution_run_summary
 from execution_engine.broker_adapter import BrokerAdapter
 from execution_engine.config import ExecutionConfig
@@ -13,6 +15,15 @@ from execution_engine.executor import ProductionExecutor
 from execution_engine.models import BrokerOrder, EventType, ExecutionPosition, ExecutionTarget, OrderStatus
 from execution_engine.oco_manager import OcoManager
 from execution_engine.order_intents import build_entry_intents
+
+
+@pytest.fixture(autouse=True)
+def qualified_daily_data_for_executor_unit_tests():
+    # These tests isolate order/account orchestration, not a live SQL query.
+    # Real bar qualifications have their dedicated test_new_entry_data_guard
+    # suite. A rejection is also tested explicitly below, not bypassed in code.
+    with patch('service.market.new_entry_data_guard.check_new_entry_data', return_value={}):
+        yield
 
 
 def _target(sym: str = "AAPL") -> ExecutionTarget:
@@ -46,9 +57,29 @@ def _accepted_order(intent_id: str = "i1", symbol: str = "AAPL") -> BrokerOrder:
     )
 
 
+def test_winner_step12_stages_approved_budget_not_immediate_broker_buy():
+    from common.winner_pyramiding import WinnerPyramidingConfig
+    from execution_engine.winner_campaign_store import WinnerCampaignStore
+    from sqlalchemy import create_engine
+    cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True,
+        winner_pyramiding=WinnerPyramidingConfig(enabled=True))
+    target = replace(_target(), trade_date=date(2026, 10, 16))
+    executor, repo, broker, _ = _make_executor(cfg, [target])
+    broker.get_all_positions.return_value = []
+    store = WinnerCampaignStore(create_engine('sqlite://'))
+    with patch('execution_engine.winner_plans.require_campaign_watcher') as healthy, patch(
+            'execution_engine.winner_campaign_store.WinnerCampaignStore', return_value=store):
+        metrics = executor.execute_run('r1', date(2026, 10, 16))
+    assert metrics.get('winner_plans_armed') == 1, metrics
+    healthy.assert_called_once()
+    broker.submit_intent.assert_not_called()
+    assert store.rows()[0]['state']['risk_budget'] == 1000.
+
+
 def _make_executor(config: ExecutionConfig | None = None, targets: list[ExecutionTarget] | None = None) -> tuple[ProductionExecutor, MagicMock, MagicMock, MagicMock]:
     cfg = config or ExecutionConfig(dry_run=True, allow_outside_rth=True)
     repo = MagicMock(spec=ExecutionRepository)
+    repo.engine = MagicMock(name='offline_engine')
     repo.load_portfolio_targets.return_value = targets or [_target()]
     repo.load_submitted_idempotency_keys.return_value = set()
     repo.acquire_execution_lock.return_value = True
@@ -86,6 +117,15 @@ def _make_executor(config: ExecutionConfig | None = None, targets: list[Executio
 
 
 class TestExecutor:
+    def test_unqualified_daily_data_still_blocks_broker_entry(self) -> None:
+        cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True)
+        executor, _, broker, _ = _make_executor(cfg)
+        with patch('service.market.new_entry_data_guard.check_new_entry_data',
+                return_value={'AAPL': 'STALE_OR_MISSING_BAR'}):
+            result = executor.execute_run('r1', date(2026, 4, 18))
+        assert result['submitted'] == 0
+        broker.submit_intent.assert_not_called()
+
     def test_build_execution_run_summary_computes_fill_rate(self) -> None:
         summary = build_execution_run_summary(
             {

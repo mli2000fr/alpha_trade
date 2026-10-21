@@ -56,6 +56,8 @@ def test_missing_target_cannot_reuse_old_rows(monkeypatch):
     assert result['status']=='FAILED' and result['failed_symbols']==1
     assert gate.call_args.kwargs['excluded_symbols']=={'A'}
     assert result['rows_upserted_stock_bars_daily']==2
+    assert result['symbol_failures']==[dict(symbol='A',reason='NO_TARGET_BAR',
+        target_date=str(DAY),received_rows=1,latest_qualified_provider_date='2026-10-16')]
 
 
 def test_commit_failure_keeps_only_committed_counters(monkeypatch):
@@ -95,6 +97,55 @@ def test_rights_quota_failure_stops_even_if_preexisting_coverage(monkeypatch):
     assert fetch.call_count==1 and result['status']=='FAILED'
     assert result['stopped_reason']=='account_rights_or_quota'
     kw['session'].commit.assert_not_called()
+    assert result['pending_symbols']==2
+    assert result['pending_symbol_list']==['B','SPY']
+
+
+def test_older_invalid_bar_does_not_discard_valid_target(monkeypatch):
+    kw,fetch,daily,raw,gate=environment(monkeypatch)
+    invalid={**bar('2026-10-16'),'v':0,'n':0,'vw':0}
+    fetch.side_effect=lambda symbol,**kw: [invalid,bar()] if symbol=='A' else [bar()]
+    result=module.run(target_date=DAY,symbols=['A'],**kw)
+    assert result['status']=='COMPLETED'
+    assert result['failed_symbols']==0 and result['warning_count']==1
+    assert len(result['rejected_history_bars'])==1
+    assert result['rejected_history_bars'][0]['date']=='2026-10-16'
+    assert all(row['date']==DAY for row in daily)
+    assert all(row['timestamp']=='2026-10-19 09:30:00' for row in raw)
+    assert gate.call_args.kwargs['excluded_symbols']==set()
+
+
+def test_invalid_target_blocks_symbol_and_cannot_reuse_existing_rows(monkeypatch):
+    kw,fetch,daily,raw,gate=environment(monkeypatch)
+    invalid={**bar(),'v':0,'n':0,'vw':0}
+    fetch.side_effect=lambda symbol,**kw: [bar('2026-10-16'),invalid] if symbol=='A' else [bar()]
+    result=module.run(target_date=DAY,symbols=['A'],**kw)
+    assert result['failed_symbol_list']==['A']
+    assert result['symbol_failures'][0]['reason']=='IMPORT_ERROR'
+    assert all(row['symbol']=='SPY' for row in daily)
+    assert gate.call_args.kwargs['excluded_symbols']=={'A'}
+
+
+def test_duplicate_dates_not_salvaged():
+    with pytest.raises(ValueError,match='Duplicate'):
+        module.convert_session_window('A',[bar(),bar()],'2026-10-12',DAY)
+
+
+def test_ambiguous_timestamp_not_salvaged():
+    with pytest.raises(ValueError):
+        module.convert_session_window('A',[{**bar(),'t':'2026-10-19T04:00:00'}],'2026-10-12',DAY)
+
+
+def test_invalid_old_row_without_target_does_not_qualify_target(monkeypatch):
+    kw,fetch,daily,raw,gate=environment(monkeypatch)
+    invalid={**bar('2026-10-16'),'v':0,'n':0,'vw':0}
+    fetch.side_effect=lambda symbol,**kw: [bar('2026-10-15'),invalid] if symbol=='A' else [bar()]
+    gate.return_value={'status':'FAILED','covered':0,'requested':1,'coverage_ratio':0,'benchmark_available':True}
+    result=module.run(target_date=DAY,symbols=['A'],**kw)
+    assert result['status']=='FAILED' and result['failed_symbol_list']==['A']
+    assert len(result['rejected_history_bars'])==1
+    assert result['symbol_failures'][0]['reason']=='NO_TARGET_BAR'
+    assert gate.call_args.kwargs['excluded_symbols']=={'A'}
 
 
 def test_readback_failure_preserves_committed_counters(monkeypatch):

@@ -642,6 +642,7 @@ class PipelineLaunchOptions:
     signal_aggregator_time_decay_half_life_days: float = DEFAULT_SIGNAL_AGGREGATOR_TIME_DECAY_HALF_LIFE_DAYS
     signal_aggregator_log_level: str = DEFAULT_SIGNAL_AGGREGATOR_LOG_LEVEL
     data_integrity_quotes_symbol_source: DataIntegritySymbolSource | None = None
+    data_integrity_quotes_mode: Literal['historical', 'latest'] | None = None
     data_integrity_quotes_from_date: str | None = None
     data_integrity_quotes_to_date: str | None = None
     data_integrity_quotes_start_symbol: str | None = None
@@ -822,7 +823,7 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
         key="sync_latest_quotes",
         num="4",
         name="Sync Latest Quotes",
-        desc="Snapshot des dernières quotes Alpaca pour alimenter `stock_quote_snapshots` et le filtre de spread.",
+        desc="Quotes historiques SIP de clôture par défaut, sur l'univers configuré, pour `stock_quote_snapshots` et le filtre de spread. Le temps réel reste un choix explicite exigeant les droits SIP.",
         tables="stock_quote_snapshots",
         deps="stock_screener",
     ),
@@ -1752,6 +1753,9 @@ def _build_chained_ps_commands(
 
 def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> list[str]:
     """Construit la commande subprocess correspondant à une étape."""
+    if step_key == 'sync_latest_quotes':
+        from ihm.services.pipeline_quote_scope import resolve_quote_scope
+        options = resolve_quote_scope(options)
     blocked_step = next((step for step in (*PIPELINE_STEPS, *PIPELINE_AUXILIARY_STEPS)
                          if step.key == step_key and step.blocked_reason), None)
     if blocked_step is not None:
@@ -2030,6 +2034,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--start-symbol", quotes_start_symbol])
         if quotes_limit is not None:
             command.extend(["--limit", str(quotes_limit)])
+        command.extend(['--feed', 'sip'])
         return command
 
     if step_key == "sync_earnings_calendar":

@@ -79,3 +79,29 @@ def test_pipeline_workflow_propagates_workflow_correlation_id(monkeypatch, tmp_p
         assert child_record["parent_run_id"] == workflow_record.run_id
         assert child_record["workflow_correlation_id"] == workflow_record.run_id
 
+
+def test_workflow_freezes_quote_scope_before_starting_children(monkeypatch,tmp_path):
+    """The only subprocess is a local print; no quote collection or orders."""
+    from datetime import datetime
+    import ihm.services.pipeline_quote_scope as scope
+    _configure_tmp_storage(monkeypatch,tmp_path)
+    steps=(PipelineStepDefinition('sync_latest_quotes','4','Quotes','','','—'),)
+    monkeypatch.setattr(registry,'get_pipeline_workflow_steps',lambda **kw:steps)
+    original=scope.resolve_quote_scope
+    seen=[]
+    def pinned(options):
+        seen.append(options)
+        return original(options,config={},now=datetime.fromisoformat('2026-10-20T08:02:00+02:00'))
+    monkeypatch.setattr(scope,'resolve_quote_scope',pinned)
+    child_options=[]
+    def command(step,options):
+        child_options.append(options)
+        return [sys.executable,'-c',"print('isolated quote command',flush=True)"]
+    monkeypatch.setattr(registry,'build_pipeline_command',command)
+    record=registry.start_pipeline_workflow(PipelineLaunchOptions(trade_date='2026-10-20'))
+    snapshot=_wait_for_final_snapshot(record.run_id)
+    assert snapshot['status']=='completed' and len(seen)==1 and len(child_options)==1
+    assert child_options[0].data_integrity_quotes_to_date=='2026-10-19'
+    assert child_options[0].data_integrity_quotes_from_date=='2026-10-12'
+    assert child_options[0].data_integrity_quotes_symbol_source==scope.DEFAULT_SOURCE
+

@@ -23,6 +23,7 @@ Le module est PURE (aucune I/O, aucune dépendance) pour être testable unitaire
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 
 # Seuil de déclenchement GELÉ à 15% (on teste le RECOVERY, pas le trip).
 TRIP_DD_PCT = 0.15
@@ -46,6 +47,37 @@ RELAPSE_DD_PTS = 0.03
 # conditionné au RR >= 50% ; seule différence B4/B4a).
 B4_BULL_STREAK_ALLOC = 0.50
 B4A_BULL_STREAK_ALLOC = 0.75
+
+# B4/B4a monetary comparisons only. Signed cash, marks and PnL are NEVER rounded.
+# Equivalent sums can differ by ~1e-11USD and must not create a new trough,
+# reset a3-session streak, or move an allocation50%->10%. At ordinary account
+# sizes one MICROdollar is immaterial; the ULP term only covers float resolution
+# for much larger accounts. This is not a tolerance on allocation mismatches.
+B4_MONEY_ABS_TOL_USD = 1e-6
+B4_MONEY_ULPS = 32
+
+
+def _b4_money_tolerance(*amounts: float) -> float:
+    return max(B4_MONEY_ABS_TOL_USD, B4_MONEY_ULPS * max(math.ulp(float(v)) for v in amounts))
+
+
+def _b4_money_ge(amount: float, threshold: float) -> bool:
+    return amount >= threshold or threshold-amount <= _b4_money_tolerance(amount, threshold)
+
+
+def _b4_money_le(amount: float, threshold: float) -> bool:
+    return amount <= threshold or amount-threshold <= _b4_money_tolerance(amount, threshold)
+
+
+def _b4_new_trough(equity: float, trough: float) -> bool:
+    return trough-equity > _b4_money_tolerance(equity, trough)
+
+
+def _b4_recovered_fraction(episode: BreakerEpisode, equity: float, fraction: float) -> bool:
+    # Compare MONEY at the recovery boundary, not an ill-conditioned ratio.
+    # Keep the legacy zero-span convention (recovery_ratio==1).
+    span=episode.peak-episode.trough
+    return span<=0 or _b4_money_ge(equity,episode.trough+fraction*span)
 
 
 @dataclass
@@ -183,19 +215,18 @@ def b4_allocation(
         episode.rearm_start_dd = None
         return B4_FLOOR
     reg = str(regime).strip().upper() if regime is not None else ""
-    rr = recovery_ratio(episode, equity)
     cap = B4_FLOOR
     if reg == "REBOUND":
         if episode.favorable_streak >= HYSTERESIS_FAVORABLE_DAYS:
             cap = max(cap, 0.25)
-        if rr >= B4_RR_25:
+        if _b4_recovered_fraction(episode, equity, B4_RR_25):
             cap = max(cap, 0.50)
     elif reg == "BULL":
         if episode.favorable_streak >= HYSTERESIS_FAVORABLE_DAYS:
             cap = max(cap, bull_streak_level)
-        if rr >= B4_RR_25:
+        if _b4_recovered_fraction(episode, equity, B4_RR_25):
             cap = max(cap, 0.75)
-        if rr >= B4_RR_50:
+        if _b4_recovered_fraction(episode, equity, B4_RR_50):
             cap = max(cap, 1.00)
     # Début de réarmement : on mémorise le DD pour la détection de RELAPSE.
     if cap > B4_FLOOR and episode.rearm_start_dd is None:
@@ -221,9 +252,9 @@ def _b4_check_relapse(episode: BreakerEpisode, equity: float, prev_trough: float
     """
     if episode.rearm_start_dd is None:
         return
-    new_trough = equity < prev_trough
-    dd = _dd_pct(episode, equity)
-    dd_worsened = (dd - episode.rearm_start_dd) >= RELAPSE_DD_PTS
+    new_trough = _b4_new_trough(equity, prev_trough)
+    boundary=episode.peak*(1.0-episode.rearm_start_dd-RELAPSE_DD_PTS)
+    dd_worsened = episode.peak>0 and _b4_money_le(equity,boundary)
     if new_trough or dd_worsened:
         episode.allocation = B4_FLOOR
         episode.favorable_streak = 0
@@ -266,14 +297,19 @@ def trip_or_recover(episode: BreakerEpisode, equity: float, peak_equity: float, 
         dd = 0.0
         if peak_equity > 0:
             dd = (peak_equity - equity) / peak_equity
-        if dd >= max_dd_pct:
+        if policy in ('b4','b4a'):
+            trip=peak_equity>0 and _b4_money_le(equity,peak_equity*(1.0-max_dd_pct))
+        else:
+            trip=dd >= max_dd_pct
+        if trip:
             episode.tripped = True
             episode.peak = float(peak_equity)   # HWM figé au moment du trip
             episode.trough = float(min(peak_equity, equity))
         return
     # Déjà trippé : suivre le trough.
     prev_trough = episode.trough
-    if equity < episode.trough:
+    lower=_b4_new_trough(equity,episode.trough) if policy in ('b4','b4a') else equity < episode.trough
+    if lower:
         episode.trough = equity
     # B4/B4a — RELAPSE anti-rechute (avant le calcul d'allocation).
     if policy in ("b4", "b4a"):
@@ -281,7 +317,8 @@ def trip_or_recover(episode: BreakerEpisode, equity: float, peak_equity: float, 
     # Fin d'épisode.
     if policy in ("b1", "b3", "b4", "b4a"):
         rr = recovery_ratio(episode, equity)
-        if rr >= 0.90 and episode.allocation >= 0.999:
+        recovered=_b4_recovered_fraction(episode,equity,.90) if policy in ('b4','b4a') else rr >= .90
+        if recovered and episode.allocation >= 0.999:
             episode.tripped = False
             episode.allocation = 1.0
             episode.favorable_streak = 0

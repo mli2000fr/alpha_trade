@@ -211,6 +211,9 @@ class ProductionExecutor:
         lock_acquired = False
 
         try:
+            if self._cfg.winner_pyramiding.enabled:
+                from execution_engine.winner_plans import require_runtime_ready
+                require_runtime_ready()  # Never silently fall back to immediate legacy buys.
             # Phase 1 — Init
             events.append(make_event(exec_run_id, EventType.RUN_STARTED, f"Exec run {exec_run_id} started"))
             lock_acquired = self._repo.acquire_execution_lock(account_id=resolved_account_id, exec_run_id=exec_run_id)
@@ -521,13 +524,26 @@ class ProductionExecutor:
                 )
             except Exception:
                 _exposure_mult_live = 1.0
+            approved_targets = list(targets)
+            campaign_targets = {t.symbol: t for t in targets if self._cfg.winner_pyramiding.enabled
+                and str(t.side or 'long').lower() in ('long', 'buy')}
             targets, leverage_target_summary = apply_live_leverage_to_targets(
-                targets=targets,
+                targets=[t for t in targets if t.symbol not in campaign_targets],
                 effective_leverage=account_state.effective_leverage,
                 active=account_state.leverage_active,
                 allow_fractional_shares=self._cfg.allow_fractional_shares,
                 exposure_multiplier=_exposure_mult_live,
             )
+            if campaign_targets:
+                # Capital capacity is not permission to multiply a frozen
+                # step11 campaign risk budget or its approved full quantity.
+                scaled = {t.symbol: t for t in targets}
+                targets = [campaign_targets.get(t.symbol) or scaled[t.symbol] for t in approved_targets]
+                leverage_target_summary['gross_exposure_before'] = sum(t.target_weight for t in approved_targets)
+                leverage_target_summary['gross_exposure_after'] = sum(t.target_weight for t in targets)
+                leverage_target_summary['total_target_notional_before'] = sum(t.target_shares*t.entry_price for t in approved_targets)
+                leverage_target_summary['total_target_notional_after'] = sum(t.target_shares*t.entry_price for t in targets)
+                metrics['winner_frozen_budgets_not_scaled'] = len(campaign_targets)
             metrics["leverage_target_scale"] = round(float(leverage_target_summary["target_scale"]), 4)
             metrics["targets_scaled_for_leverage"] = int(leverage_target_summary["scaled_targets"])
             metrics["gross_exposure_before_leverage"] = round(float(leverage_target_summary["gross_exposure_before"]), 6)
@@ -670,6 +686,37 @@ class ProductionExecutor:
                 LOGGER.debug("Corporate actions check skipped: %s", exc)
 
             # Phase 3 — Build intents, filter duplicates
+            if self._cfg.winner_pyramiding.enabled:
+                if self._cfg.auto_rebalance_on_reconcile:
+                    raise ValueError('Winner campaigns cannot use legacy auto-rebalance reconciliation')
+                from execution_engine.winner_campaign_store import WinnerCampaignStore
+                from execution_engine.winner_plans import stage_targets
+                if self._cfg.dry_run:
+                    # A dry-run must not leave a real plan for a later watcher.
+                    metrics['winner_plans_preview'] = [t.symbol for t in targets
+                        if str(t.side or 'long').lower() in ('long', 'buy')]
+                    targets = [t for t in targets if str(t.side or 'long').lower() not in ('long', 'buy')]
+                    plans = []
+                elif self._cfg.blocks_new_entries:
+                    metrics['winner_plans_blocked_by_regime'] = len(targets)
+                    targets, plans = [], []
+                else:
+                    from execution_engine.winner_plans import require_campaign_watcher
+                    require_campaign_watcher(self._repo, self._cfg)
+                    positions = self._broker.get_all_positions()
+                    held = {str(p['symbol']).upper() for p in positions if float(p.get('qty') or 0) != 0}
+                    if any(str(t.symbol).upper() in held and str(t.side or 'long').lower() in ('long', 'buy') for t in targets):
+                        raise ValueError('Winner admission cannot adopt/average an already-held position')
+                    targets, plans = stage_targets(WinnerCampaignStore(self._repo.engine),
+                        targets, self._cfg, exec_run_id)
+                metrics['winner_plans'] = plans
+                metrics['winner_plans_armed'] = sum(p['outcome'] == 'PLAN_ARMED' for p in plans)
+                metrics['winner_plans_existing'] = len(plans)-metrics['winner_plans_armed']
+                for plan in plans:
+                    events.append(make_event(exec_run_id, EventType.PRECHECK_OK,
+                        f"Winner {plan['outcome']}: {plan['symbol']} ; aucun achat immédiat",
+                        symbol=plan['symbol'], payload=plan))
+                target_by_symbol = {t.symbol: t for t in targets}
             entry_intents = build_entry_intents(
                 targets, self._cfg, exec_run_id,
                 decision_fingerprints=self._decision_fingerprints,

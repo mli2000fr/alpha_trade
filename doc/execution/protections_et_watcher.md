@@ -6,6 +6,17 @@
 
 Retour : [références Execution](README.md)
 
+## Raccordement demandé le 21 octobre 2026 : confirmation intraday et ajout
+
+Un contrat séparé raccorde le stockage des plans dans
+`alpha_trade.execution_winner_campaigns`, la confirmation cinq minutes et
+l'échéance après vingt séances, vente à l'ouverture de la 21e. **Étape 12,
+watcher et revalidation native intraday sont raccordés et testés hors ligne**,
+ainsi que le replay avec capital partagé/frais/levier. Le mécanisme reste
+désactivé par défaut ; qualification PAPER réelle encore nécessaire.
+Pas de garantie d'open si le PC est éteint ni de parité bid/ask sur des bougies.
+[État livré, commande de replay et limites](renforcement_gagnant.md).
+
 ## Profil GPT PAPER distinct du profil ordinaire
 
 Actualisation du 10/10/2026 : les règles ordinaires TP/SL ci-dessous ne doivent

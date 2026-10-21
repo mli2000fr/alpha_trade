@@ -19,6 +19,7 @@ from dataIntegrityEngine.sync_latest_quotes import estimate_sync_latest_quotes_c
 from common.tradable_universe import load_tradable_universe_for_period
 from common.universe_files import (
     list_universe_file_sources,
+    is_universe_file_source,
     normalize_universe_file_source,
     universe_file_source_labels,
 )
@@ -196,7 +197,11 @@ def _trade_date_or_today(options: PipelineLaunchOptions) -> date:
 
 @st.cache_data(ttl=60, show_spinner=False)
 def _resolve_data_integrity_scope_preview(symbol_source: str, start_symbol: str | None = None) -> dict[str, object]:
-    cli_symbol_source = DATA_INTEGRITY_SYMBOL_SOURCE_TO_CLI.get(symbol_source, "active-tradable")
+    cli_symbol_source = DATA_INTEGRITY_SYMBOL_SOURCE_TO_CLI.get(symbol_source)
+    if cli_symbol_source is None:
+        if not is_universe_file_source(symbol_source):
+            raise ValueError('Univers de synchronisation inconnu ; pas de repli vers active-tradable')
+        cli_symbol_source = normalize_universe_file_source(symbol_source)
     normalized_start_symbol = normalize_start_symbol(start_symbol)
     symbols = list_symbols_for_source(cli_symbol_source, start_symbol=normalized_start_symbol)
     return {
@@ -252,6 +257,8 @@ def _render_period_sync_block(
     all_runs: list[dict[str, object]],
 ) -> None:
     if step_key == "sync_latest_quotes":
+        from ihm.services.pipeline_quote_scope import resolve_quote_scope
+        options = resolve_quote_scope(options)
         start_key = QUOTE_HISTORY_START_DATE_KEY
         end_key = QUOTE_HISTORY_END_DATE_KEY
         symbol_source_key = QUOTE_HISTORY_SYMBOL_SOURCE_KEY
@@ -311,15 +318,18 @@ def _render_period_sync_block(
             getattr(options, source_attr, DEFAULT_UNIVERSE_FILE_SOURCE) or DEFAULT_UNIVERSE_FILE_SOURCE,
         )
     ).strip().lower()
-    if current_symbol_source not in DATA_INTEGRITY_SYMBOL_SOURCE_OPTIONS:
+    symbol_source_options = DATA_INTEGRITY_SYMBOL_SOURCE_OPTIONS
+    if is_universe_file_source(current_symbol_source) and current_symbol_source not in symbol_source_options:
+        symbol_source_options = (*symbol_source_options, current_symbol_source)
+    if current_symbol_source not in symbol_source_options:
         current_symbol_source = DEFAULT_UNIVERSE_FILE_SOURCE
         st.session_state[symbol_source_key] = current_symbol_source
 
     selected_symbol_source = str(
         st.selectbox(
             "Univers de symboles à synchroniser",
-            options=DATA_INTEGRITY_SYMBOL_SOURCE_OPTIONS,
-            index=DATA_INTEGRITY_SYMBOL_SOURCE_OPTIONS.index(current_symbol_source),
+            options=symbol_source_options,
+            index=symbol_source_options.index(current_symbol_source),
             key=symbol_source_key,
             format_func=lambda value: DATA_INTEGRITY_SYMBOL_SOURCE_LABELS.get(str(value), str(value)),
             help=(
@@ -459,6 +469,7 @@ def _render_period_sync_block(
                 source_attr: cast(Any, selected_symbol_source),
                 override_keys[0]: cast(Any, selected_start.isoformat()),
                 override_keys[1]: cast(Any, selected_end.isoformat()),
+                **({'data_integrity_quotes_mode':'historical'} if step_key == 'sync_latest_quotes' else {}),
                 **({start_symbol_attr: cast(Any, normalized_start_symbol)} if start_symbol_attr is not None else {}),
                 **({"data_integrity_earnings_provider": selected_provider} if selected_provider else {}),
             },
@@ -1647,12 +1658,29 @@ def _render_launchable_step_panel(
         return
     from ihm.services.llm_manual_handoff import bind_manual_handoff
     options, llm_handoff = bind_manual_handoff(step.key, options, all_runs)
+    if step.key == 'sync_latest_quotes':
+        from ihm.services.pipeline_quote_scope import resolve_quote_scope
+        try:
+            options = resolve_quote_scope(options)
+        except Exception as exc:
+            with st.expander(f"**{step.num}. {resolve_step_display_name(step)}**", expanded=True):
+                st.error(f'Préparation des quotes impossible : {exc}. Aucun appel temps réel de secours.')
+                st.button('Collecte quotes indisponible',key=f'run_pipeline_step_{step.key}',disabled=True)
+                _render_step_result(latest_by_step.get(step.key))
+            return
     command_preview = format_command_for_display(build_pipeline_command(step.key, options))
     with st.expander(f"**{step.num}. {resolve_step_display_name(step)}**", expanded=False):
         info_col, action_col = st.columns([5, 2])
 
         with info_col:
             st.markdown(f"**Description** : {step.desc}")
+            if step.key == 'sync_latest_quotes':
+                if options.data_integrity_quotes_mode == 'historical':
+                    st.info(f"Quotes SIP historiques : {options.data_integrity_quotes_from_date} → "
+                            f"{options.data_integrity_quotes_to_date}. Univers : "
+                            f"{options.data_integrity_quotes_symbol_source}. Aucun appel SIP temps réel.")
+                else:
+                    st.warning('Mode temps réel SIP explicitement sélectionné : droits Alpaca requis ; un refus 403 bloque sans fallback.')
             st.markdown(f"**Tables impactées** : `{step.tables}`")
             st.markdown(f"**Dépendances** : {step.deps}")
             if step.account_usage == "alpaca":

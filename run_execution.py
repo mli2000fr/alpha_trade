@@ -1127,13 +1127,18 @@ def run(
             file=sys.stderr,
         )
 
+    from common.winner_pyramiding import load_winner_pyramiding_config
     config   = ExecutionConfig(
         **preset,
         account_id=account_id,
         leverage=leverage_cfg,
         trailing_stop=load_trailing_stop_config_from_yaml(),
         time_stop=load_time_stop_config_from_yaml(),
+        winner_pyramiding=load_winner_pyramiding_config(),
     )
+    if config.winner_pyramiding.enabled:
+        from execution_engine.winner_plans import require_runtime_ready
+        require_runtime_ready()  # Before constructing any broker client.
     repo     = ExecutionRepository()
     from execution_engine.broker_router import BrokerRouter
     BrokerRouter.validate(config)

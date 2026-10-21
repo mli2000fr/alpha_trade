@@ -2276,11 +2276,27 @@ def _render_data_integrity_block() -> dict[str, Any]:
     st.markdown("#### Paramètres Data Integrity")
     st.caption(
         "Ces réglages reflètent les options réellement disponibles côté `dataIntegrityEngine` pour les étapes quotes, earnings et fondamentaux. "
-        "`0` sur un champ `limit` signifie : univers complet éligible."
+        "`0` sur un champ `limit` signifie : tout le périmètre choisi."
     )
 
     di_col1, di_col2, di_col3 = st.columns(3)
     with di_col1:
+        from ihm.services.pipeline_quote_scope import quote_defaults
+        _quote_defaults = quote_defaults()
+        _quote_modes = ('historical', 'latest')
+        _quote_mode_key = 'pipeline_data_integrity_quotes_mode_v2'
+        _quote_mode = st.session_state.get(_quote_mode_key, _quote_defaults['mode'])
+        if _quote_mode not in _quote_modes:
+            _quote_mode = _quote_defaults['mode']
+            st.session_state[_quote_mode_key] = _quote_mode
+        data_integrity_quotes_mode = st.selectbox(
+            'Quotes — mode de collecte', options=_quote_modes,
+            index=_quote_modes.index(_quote_mode), key=_quote_mode_key,
+            format_func=lambda value: {'historical':'Historique SIP de clôture (recommandé)',
+                'latest':'Temps réel SIP — abonnement requis'}[value],
+            help='Historique : dernière séance US clôturée depuis au moins 20 minutes. Aucun fallback IEX.')
+        st.caption(f"Univers par défaut des quotes : `{_quote_defaults['symbol_source']}`. "
+                   'Un univers personnalisé peut être choisi dans le bloc historique de l’étape 4.')
         data_integrity_quotes_limit = int(
             st.number_input(
                 "Latest Quotes — limite optionnelle",
@@ -2490,6 +2506,7 @@ def _render_data_integrity_block() -> dict[str, Any]:
 
     return {
         "data_integrity_quotes_limit": data_integrity_quotes_limit,
+        "data_integrity_quotes_mode": data_integrity_quotes_mode,
         "data_integrity_quotes_batch_size": data_integrity_quotes_batch_size,
         "data_integrity_earnings_limit": data_integrity_earnings_limit,
         "data_integrity_earnings_batch_size": data_integrity_earnings_batch_size,
@@ -5091,6 +5108,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
 
         # === BLOCK 8/9 : Data Integrity (extrait — _render_data_integrity_block) ===
         _di_vars = _render_data_integrity_block()
+        data_integrity_quotes_mode = _di_vars.get('data_integrity_quotes_mode')
         data_integrity_quotes_limit = _di_vars["data_integrity_quotes_limit"]
         data_integrity_quotes_batch_size = _di_vars["data_integrity_quotes_batch_size"]
         data_integrity_earnings_limit = _di_vars["data_integrity_earnings_limit"]
@@ -5392,6 +5410,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             screener_first_pass_window_days=int(screener_first_pass_window_days),
             screener_enable_two_pass_loading=bool(screener_enable_two_pass_loading),
             data_integrity_quotes_limit=_to_optional_positive_int(data_integrity_quotes_limit),
+            data_integrity_quotes_mode=data_integrity_quotes_mode,
             data_integrity_quotes_batch_size=int(data_integrity_quotes_batch_size),
             data_integrity_earnings_from_date=effective_earnings_from_date,
             data_integrity_earnings_to_date=effective_earnings_to_date,

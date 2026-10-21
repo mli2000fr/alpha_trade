@@ -1,0 +1,1554 @@
+{
+  "parent": "artifacts/research/us_activist_13d/extension-2024-20261020-v1",
+  "reviewer": "Same assistant, not independent human review",
+  "extension_price_outcomes_read_before_review": false,
+  "Q1_pilot_outcomes_previously_seen": true,
+  "scope": "140preselected2024originals, no outcome replacement.40noncurrentroute hash sample not delisted census. Explicit actions unchanged. NRXS/SMP remain documentary unknown, not automatic non-events.",
+  "cases": [
+    {
+      "accession": "0001193125-24-000765",
+      "subject_cik": "0001967478",
+      "decision": "EXCLUDE_ROUTINE_INSIDER_ROLE",
+      "notes": "Existing chairman/officer/director role and ordinary ownership; no new concrete independent intervention demand in the reviewed original.",
+      "clauses": [
+        {
+          "filename": "d574687dsc13d.htm",
+          "contains": "ITEM 4. Purpose of Transaction. The information set forth in or incorporated by reference in Item 3 and Item 6 of this Schedule 13D is hereby incorporated by reference in"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-24-000776",
+      "subject_cik": "0001034665",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001193125-24-000777",
+      "subject_cik": "0001137393",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001193125-24-000780",
+      "subject_cik": "0001071899",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001193125-24-000781",
+      "subject_cik": "0000887394",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001193125-24-000783",
+      "subject_cik": "0000897269",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001193125-24-000786",
+      "subject_cik": "0000894242",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001193125-24-000787",
+      "subject_cik": "0001181187",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001193125-24-000792",
+      "subject_cik": "0000835948",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001193125-24-000795",
+      "subject_cik": "0001176194",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0000921895-24-000066",
+      "symbol": "GIL",
+      "subject_cik": "0001061894",
+      "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "clauses": [
+        {
+          "filename": "sc13d12418013_01082024.htm",
+          "contains": "In the first public letter issued to the Board on December 14"
+        },
+        {
+          "filename": "sc13d12418013_01082024.htm",
+          "contains": "reinstate Mr. Chamandy to the Board and as CEO"
+        }
+      ],
+      "notes": "BrowningWest current explicit campaign to change directors and CEO; several public letters predateJan8initial13D, therefore NOT a new campaign announcement or executableDec14price. CommonShares/CUSIP375916103 in13Dcover, GILNYSEticker in original attached letter. Ongoing campaign admitted only after actualfiling.",
+      "earlier_public_action_date": "2023-12-14",
+      "identity_clause": {
+        "filename": "ex991to13d12418013_01082024.htm",
+        "contains": "Gildan Activewear Inc. (NYSE: GIL) (TSX: GIL)"
+      }
+    },
+    {
+      "accession": "0000950103-24-000454",
+      "symbol": "CARR",
+      "subject_cik": "0001783180",
+      "decision": "EXCLUDE_ACQUISITION_CONSIDERATION",
+      "clauses": [
+        {
+          "filename": "dp205022_sc13d.htm",
+          "contains": "as a result of the consummation of the transactions contemplated by the Purchase Agreement"
+        }
+      ],
+      "notes": "Viessmann stockconsideration and contractual boardseat after acquisition, not an independent activist campaign; incidental futuremaydiscuss not new intervention.",
+      "earlier_public_action_date": null
+    },
+    {
+      "accession": "0001104659-24-002996",
+      "symbol": "CODI",
+      "subject_cik": "0001345126",
+      "decision": "EXCLUDE_DONATION",
+      "clauses": [
+        {
+          "filename": "tm243072d2_sc13d.htm",
+          "contains": "through a charitable donation as described in Item 3"
+        }
+      ],
+      "notes": "Charitable transfer, not activist buying or campaign.",
+      "earlier_public_action_date": null
+    },
+    {
+      "accession": "0001140361-24-002515",
+      "subject_cik": "0001820872",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investment intent, possible future actions or general management dialogue only. No current named nomination, issued demand or specific already-made operational/capital proposal under the frozen rule. CleverLeaves delisting considered but no concrete intervention demand certified; NCNO/HLIT dialogue alone is insufficient, as for VAC/SNN/HR.",
+      "clauses": [
+        {
+          "filename": "ef20018927_sc13d.htm",
+          "contains": "Item 4. Purpose of the Transaction. The responses to Items 2, 3, 5 and 6 of this Schedule 13D are incorporated into this Item 4 by reference. The Reporting Person benefic"
+        }
+      ]
+    },
+    {
+      "accession": "0001013594-24-000055",
+      "symbol": "BJRI",
+      "subject_cik": "0001013488",
+      "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "clauses": [
+        {
+          "filename": "bjsr13d-011824.htm",
+          "contains": "now is an opportune time to explore strategic alternatives"
+        },
+        {
+          "filename": "bjsr13d-011824.htm",
+          "contains": "determined to file this Schedule 13D, in part to encourage the Board to pursue such opportunities diligently"
+        }
+      ],
+      "notes": "Fund1Investments explicitly rejects standalone strategy after managementdiscussions and urges strategic alternatives/sale. More concrete than baremaydiscuss but nonbindingrequest, not a firm offer. CommonStock/CUSIP09180C106cover. Original earlier10K needed to supportJan2024ticker, not use laterMarchletter to backdate it.",
+      "earlier_public_action_date": null
+    },
+    {
+      "accession": "0001398344-24-000853",
+      "symbol": "TPL",
+      "subject_cik": "0001811074",
+      "decision": "SECONDARY_GOVERNANCE_ONLY",
+      "clauses": [
+        {
+          "filename": "fp0086902-1_ex7b.htm",
+          "contains": "We hereby submit the following proposal and supporting statement"
+        },
+        {
+          "filename": "fp0086902-1_ex7b.htm",
+          "contains": "The stockholders urge the Board to seek stockholder approval"
+        }
+      ],
+      "notes": "Actual14a8shareholderproposal asking transactionapproval, but no current namedboardnomination/operatingchange/saleprocess. Keep as separate governance-only descriptive case, not expand primarydefinition to improve a result. Original attachedjointagreement identifiesTPL.",
+      "earlier_public_action_date": "2024-01-17",
+      "identity_clause": {
+        "filename": "fp0086902-1_ex7a.htm",
+        "contains": "Texas Pacific Land Corp.(TPL)"
+      }
+    },
+    {
+      "accession": "0001193125-24-014767",
+      "subject_cik": "0000894871",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "d713936dsc13d.htm",
+          "contains": "ITEM 4. Purpose of Transaction. Each of the Reporting Persons acquired their original position in the Issuer’s Common Stock for investment purposes. Agreement to Oppose t"
+        }
+      ]
+    },
+    {
+      "accession": "0001829126-24-000567",
+      "subject_cik": "0001467761",
+      "decision": "EXCLUDE_ROUTINE_INSIDER_ROLE",
+      "notes": "Existing chairman/officer/director role and ordinary ownership; no new concrete independent intervention demand in the reviewed original.",
+      "clauses": [
+        {
+          "filename": "miniminc_sc13d.htm",
+          "contains": "Item 4. Purpose of Transaction . On December 28, 2023, the Issuer’s Board of Directors elected the Reporting Person as a director of the Issuer’s Board of Directors. The "
+        }
+      ]
+    },
+    {
+      "accession": "0000919574-24-000598",
+      "subject_cik": "0001690585",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "d10944180_13d.htm",
+          "contains": "Item 4 Purpose of Transaction The Reporting Persons acquired the shares of Common Stock because they believe the Common Stock are undervalued and represent an attractive "
+        }
+      ]
+    },
+    {
+      "accession": "0001062993-24-001904",
+      "symbol": "BSTZ",
+      "subject_cik": "0001768666",
+      "decision": "EXCLUDE_GENERIC_MAY_INTERVENE",
+      "clauses": [
+        {
+          "filename": "formsc13d.htm",
+          "contains": "may nominate one or more individuals as nominees for election to the Board"
+        }
+      ],
+      "notes": "Saba generic optionalfutureactions on closedendfund; no concretecurrentproposal/nomination in this initialfiling. Not enough to follow as activism solely because of investor reputation.",
+      "earlier_public_action_date": null
+    },
+    {
+      "accession": "0001104659-24-010593",
+      "subject_cik": "0001964630",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "tm245046d1_sc13d.htm",
+          "contains": "Item 4. Purpose of Transaction The information set forth in or incorporated by reference in Item 3 and Item 6 of this Schedule 13D is hereby incorporated by reference in "
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-24-012282",
+      "subject_cik": "0001792581",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investment intent, possible future actions or general management dialogue only. No current named nomination, issued demand or specific already-made operational/capital proposal under the frozen rule. CleverLeaves delisting considered but no concrete intervention demand certified; NCNO/HLIT dialogue alone is insufficient, as for VAC/SNN/HR.",
+      "clauses": [
+        {
+          "filename": "tm245661d1_sc13d.htm",
+          "contains": "Item 4. Purpose of Transaction. The Reporting Person does not have any present plans or proposals of the types set forth in paragraphs (a) through (j) of Item 4 of Schedu"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-24-025781",
+      "symbol": "MANU",
+      "subject_cik": "0001549107",
+      "decision": "EXCLUDE_ACQUISITION_CONTROL",
+      "clauses": [
+        {
+          "filename": "tm2333644d15_sc13d.htm",
+          "contains": "on the terms of the Transaction Agreement and the other transaction documents related to the Offer"
+        }
+      ],
+      "notes": "Trawlers acquisition/controltransaction already addressed by a tenderoffer, not separate independent activist campaign. Do not count acquisition-relatedboardrights as new activism.",
+      "earlier_public_action_date": null
+    },
+    {
+      "accession": "0001193125-24-041581",
+      "subject_cik": "0001730463",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0000038777-24-000049",
+      "subject_cik": "0001762562",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0000038777-24-000050",
+      "subject_cik": "0001794041",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001213900-24-017666",
+      "symbol": "CRTO",
+      "subject_cik": "0001576427",
+      "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "clauses": [
+        {
+          "filename": "ea0200636-13dpetrus_criteo.htm",
+          "contains": "On February 22, 2024, the Reporting Persons sent a public letter"
+        },
+        {
+          "filename": "ea0200636-13dpetrus_criteo.htm",
+          "contains": "initiate a comprehensive strategic review, including to evaluate all ownership options"
+        }
+      ],
+      "notes": "Petrus explicitpublished demands investor day, up150m selftender, strategicreview and boardrefresh. LetterFeb22precedesFeb27filing; noFeb22entryassigned.13DcoverAmericanDepositaryShares1ordinaryshare/CUSIP226718104. OriginalFeb23annualreport should confirmCRTOADSlisting beforefiling.",
+      "earlier_public_action_date": "2024-02-22"
+    },
+    {
+      "accession": "0001493152-24-008748",
+      "subject_cik": "0001080657",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investment intent, possible future actions or general management dialogue only. No current named nomination, issued demand or specific already-made operational/capital proposal under the frozen rule. CleverLeaves delisting considered but no concrete intervention demand certified; NCNO/HLIT dialogue alone is insufficient, as for VAC/SNN/HR.",
+      "clauses": [
+        {
+          "filename": "formsc13d.htm",
+          "contains": "Item 4. Purpose of Transaction All of the Issuer’s securities owned by the Reporting Person have been acquired for investment purposes only. The Reporting Person has no p"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-24-031497",
+      "symbol": "BJRI",
+      "subject_cik": "0001013488",
+      "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "clauses": [
+        {
+          "filename": "tm248155d1_sc13d.htm",
+          "contains": "Reduce the current cost structure by $50 million"
+        },
+        {
+          "filename": "tm248155d1_sc13d.htm",
+          "contains": "delivered to the Issuer formal notice"
+        }
+      ],
+      "notes": "DistinctPWPartners/Atlas activist campaign, publicletterFeb20andnominationFeb28. Keep documented but common60session issuerblock fromJan18Fund1filing admits no secondBJRIentry. Do not call the campaigns identical; no price-outcome-baseddedup.",
+      "earlier_public_action_date": "2024-02-20",
+      "identity_clause": {
+        "filename": "tm248155d1_ex99-3.htm",
+        "contains": "(Nasdaq: BJRI )"
+      }
+    },
+    {
+      "accession": "0000950142-24-000702",
+      "subject_cik": "0000910073",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "eh240458147_13d-nycb.htm",
+          "contains": "Item 4. Purpose of Transaction. On March 7, 2024, the Issuer entered into an Investment Agreement (the “ Original Investment Agreement ”) with the Liberty Purchaser. On M"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-24-072901",
+      "symbol": "RYTM",
+      "subject_cik": "0001649904",
+      "decision": "EXCLUDE_PRELIMINARY_FINANCING_DISCUSSIONS",
+      "clauses": [
+        {
+          "filename": "d813811dsc13d.htm",
+          "contains": "There is no certainty that these discussions will continue"
+        }
+      ],
+      "notes": "Financingdiscussion/potentialgovernancerights and genericinvestmentintent, not announcedconcreteactivist intervention under primaryrule.",
+      "earlier_public_action_date": null
+    },
+    {
+      "accession": "0001623632-24-000428",
+      "subject_cik": "0001805890",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001193125-24-081594",
+      "subject_cik": "0001867102",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investment intent, possible future actions or general management dialogue only. No current named nomination, issued demand or specific already-made operational/capital proposal under the frozen rule. CleverLeaves delisting considered but no concrete intervention demand certified; NCNO/HLIT dialogue alone is insufficient, as for VAC/SNN/HR.",
+      "clauses": [
+        {
+          "filename": "d744149dsc13d.htm",
+          "contains": "Item 4. Purpose of Transaction The information set forth in or incorporated by reference in Item 3 and Item 6 of this Schedule 13D is hereby incorporated by reference in "
+        }
+      ]
+    },
+    {
+      "accession": "0002018265-24-000002",
+      "subject_cik": "0001888151",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investment intent, possible future actions or general management dialogue only. No current named nomination, issued demand or specific already-made operational/capital proposal under the frozen rule. CleverLeaves delisting considered but no concrete intervention demand certified; NCNO/HLIT dialogue alone is insufficient, as for VAC/SNN/HR.",
+      "clauses": [
+        {
+          "filename": "13d_bcan.htm",
+          "contains": "Item 4. Purpose of Transaction. The Reporting Persons acquired the securities described in Item 5 in the ordinary course of business for investment purposes because of th"
+        }
+      ]
+    },
+    {
+      "accession": "0001085146-24-001646",
+      "subject_cik": "0001995668",
+      "decision": "EXCLUDE_FUND_SEED_OR_PREFERRED_CLASS",
+      "notes": "Fund seeding or preferred-share investment, not a directional common-share activist campaign. BTT is preferred RVMTP, OXLC preferred; do not apply their filings to the common ticker.",
+      "clauses": [
+        {
+          "filename": "mmioxainitial_40824.htm",
+          "contains": "ITEM 4. PURPOSE OF TRANSACTION: The reported securities were acquired solely to seed and support the Fund."
+        }
+      ]
+    },
+    {
+      "accession": "0001493152-24-013789",
+      "subject_cik": "0000354963",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "formsc13d.htm",
+          "contains": "Item 4. Purpose of Transaction. ECP Investment Agreement On April 1, 2024, pursuant to an investment agreement dated October 24, 2023 (the “Investment Agreement”), by and"
+        }
+      ]
+    },
+    {
+      "accession": "0001140361-24-019704",
+      "subject_cik": "0001386716",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "ef20026874_sc13d.htm",
+          "contains": "Item 4. Purpose of Transaction. On April 9, 2024, as disclosed in the Issuer’s Form 6-K filed with the SEC on April 9, 2024, the Issuer participated in a merger with Eagl"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-24-048774",
+      "subject_cik": "0001340243",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0000902664-24-002998",
+      "subject_cik": "0001524358",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investment intent, possible future actions or general management dialogue only. No current named nomination, issued demand or specific already-made operational/capital proposal under the frozen rule. CleverLeaves delisting considered but no concrete intervention demand certified; NCNO/HLIT dialogue alone is insufficient, as for VAC/SNN/HR.",
+      "clauses": [
+        {
+          "filename": "p24-1511sc13d.htm",
+          "contains": "Item 4. PURPOSE OF TRANSACTION. The Reporting Persons purchased the Shares to which this Schedule 13D relates for investment purposes in the ordinary course of business. "
+        }
+      ]
+    },
+    {
+      "accession": "0000950170-24-045983",
+      "subject_cik": "0000866729",
+      "decision": "EXCLUDE_DISPOSITION_OR_OWNERSHIP_UPDATE",
+      "notes": "Estate/portfolio/insider sale, unit purchase/exchange or ordinary ownership update; no new concrete activist intervention. Some are amendments mislabeled as initial by index/form type; do not treat as new campaigns.",
+      "clauses": [
+        {
+          "filename": "iole_lucchese_13-d_4.17.htm",
+          "contains": "Item 4. Purpose of Transaction Item 4 of the Schedule 13D is hereby supplemented as follows: On April 18, 2024 the Estate agreed to sell 400,000 shares of Common Stock to"
+        }
+      ]
+    },
+    {
+      "accession": "0001140361-24-021785",
+      "subject_cik": "0001170300",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001140361-24-021787",
+      "subject_cik": "0001140411",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001140361-24-021788",
+      "subject_cik": "0001140392",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001140361-24-021789",
+      "subject_cik": "0001170299",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001140361-24-021790",
+      "subject_cik": "0001181506",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001140361-24-021791",
+      "subject_cik": "0001140410",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001140361-24-021792",
+      "subject_cik": "0001170311",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001140361-24-021793",
+      "subject_cik": "0001181505",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001140361-24-021794",
+      "subject_cik": "0001181504",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0000921895-24-000953",
+      "subject_cik": "0000851310",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investment intent, possible future actions or general management dialogue only. No current named nomination, issued demand or specific already-made operational/capital proposal under the frozen rule. CleverLeaves delisting considered but no concrete intervention demand certified; NCNO/HLIT dialogue alone is insufficient, as for VAC/SNN/HR.",
+      "clauses": [
+        {
+          "filename": "sc13d06777023_04262024.htm",
+          "contains": "Item 4. Purpose of Transaction . The Shares held by the Investment Vehicles were purchased based on the Reporting Persons’ belief that the Shares, when purchased, were un"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-24-055825",
+      "subject_cik": "0001865248",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "tm2413248d1_sc13da.htm",
+          "contains": "Item 4 Purpose of Transaction Sponsor Handover On April 19, 2024, the Issuer’s prior sponsor CEMAC Sponsor LP, a Cayman Islands exempted limited partnership (the “Prior S"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-24-132234",
+      "subject_cik": "0001855747",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "d835249dsc13d.htm",
+          "contains": "Item 4. Purpose of Transaction. The Reporting Persons acquired the securities reported herein for investment purposes, subject to the following: The information in Item 6"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-24-133450",
+      "subject_cik": "0001137391",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001193125-24-133451",
+      "subject_cik": "0001528437",
+      "decision": "EXCLUDE_FUND_SEED_OR_PREFERRED_CLASS",
+      "notes": "Fund seeding or preferred-share investment, not a directional common-share activist campaign. BTT is preferred RVMTP, OXLC preferred; do not apply their filings to the common ticker.",
+      "clauses": [
+        {
+          "filename": "d825278dsc13d.htm",
+          "contains": "Item 4 Purpose of the Transaction Capital Strategies purchased the RVMTP Shares for investment purposes. Capital Strategies acquired the RVMTP Shares in connection with t"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-24-133461",
+      "subject_cik": "0001083839",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001193125-24-133464",
+      "subject_cik": "0001051004",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0000038777-24-000072",
+      "subject_cik": "0001080014",
+      "decision": "EXCLUDE_MISLABELED_13G",
+      "notes": "Index and SGML type say13D, but the actual original document is explicitly SCHEDULE13G. No fabricated Item4 or activist signal.",
+      "clauses": [
+        {
+          "filename": "inno24in.htm",
+          "contains": "inno24in.htm - Generated by SEC Publisher for SEC Filing CUSIP NO. 45781M101 13G Page 1 of 14 UNITED STATES SECURITIES AND EXCHANGE COMMISSION Washington, D.C. 20549 SCHE"
+        }
+      ]
+    },
+    {
+      "accession": "0000950103-24-006446",
+      "subject_cik": "0001014763",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001552781-24-000294",
+      "subject_cik": "0001764757",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001552781-24-000295",
+      "subject_cik": "0001855612",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001552781-24-000296",
+      "subject_cik": "0001832483",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001104659-24-059406",
+      "subject_cik": "0001976719",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investment intent, possible future actions or general management dialogue only. No current named nomination, issued demand or specific already-made operational/capital proposal under the frozen rule. CleverLeaves delisting considered but no concrete intervention demand certified; NCNO/HLIT dialogue alone is insufficient, as for VAC/SNN/HR.",
+      "clauses": [
+        {
+          "filename": "tm2413963d2_sc13d.htm",
+          "contains": "Item 4. Purpose of Transaction. The information contained in Item 3 above and Item 6 below is incorporated herein by reference. The acquisition of the Units as described "
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-24-062145",
+      "subject_cik": "0001819615",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investment intent, possible future actions or general management dialogue only. No current named nomination, issued demand or specific already-made operational/capital proposal under the frozen rule. CleverLeaves delisting considered but no concrete intervention demand certified; NCNO/HLIT dialogue alone is insufficient, as for VAC/SNN/HR.",
+      "clauses": [
+        {
+          "filename": "tm2414668d1_sc13d.htm",
+          "contains": "ITEM 4. PURPOSE OF TRANSACTION The Reporting Persons acquired their Shares because they believe that the Shares are undervalued and represent an attractive investment opp"
+        }
+      ]
+    },
+    {
+      "accession": "0000921895-24-001274",
+      "subject_cik": "0000354963",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "sc13d10826004_05162024.htm",
+          "contains": "Item 4. Purpose of Transaction . The Reporting Persons believe that the Shares represent an attractive investment opportunity. Depending upon overall market conditions, o"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-24-065143",
+      "subject_cik": "0001887944",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001104659-24-066397",
+      "subject_cik": "0001809587",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investment intent, possible future actions or general management dialogue only. No current named nomination, issued demand or specific already-made operational/capital proposal under the frozen rule. CleverLeaves delisting considered but no concrete intervention demand certified; NCNO/HLIT dialogue alone is insufficient, as for VAC/SNN/HR.",
+      "clauses": [
+        {
+          "filename": "tm2415930d1_sc13d.htm",
+          "contains": "Item 4. Purpose of Transaction. The information set forth in Item 3 is hereby incorporated by reference in its entirety. The beneficial ownership that is the subject of t"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-24-066790",
+      "subject_cik": "0001625414",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "tm2415668d1_sc13d.htm",
+          "contains": "Item 4. Purpose of Transaction As described in Item 3 above and Item 6 below, this Statement is being filed in connection with the acquisition of the Class A Ordinary Sha"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-24-149933",
+      "subject_cik": "0000701288",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0000950142-24-001548",
+      "subject_cik": "0002007919",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "eh240491006_13d-lappe.htm",
+          "contains": "Item 4. Purpose of Transaction. The information set forth under Item 3 above is incorporated by reference herein. CUSIP No. 45720N103 SCHEDULE 13D Page 4 of 6 Mr. Lappe a"
+        }
+      ]
+    },
+    {
+      "accession": "0001085146-24-002696",
+      "subject_cik": "0001114995",
+      "decision": "EXCLUDE_DISPOSITION_OR_OWNERSHIP_UPDATE",
+      "notes": "Estate/portfolio/insider sale, unit purchase/exchange or ordinary ownership update; no new concrete activist intervention. Some are amendments mislabeled as initial by index/form type; do not treat as new campaigns.",
+      "clauses": [
+        {
+          "filename": "piainitial_61024.htm",
+          "contains": "ITEM 4. PURPOSE OF TRANSACTION: N/A as this was a disposal of securities."
+        }
+      ]
+    },
+    {
+      "accession": "0000950170-24-073806",
+      "subject_cik": "0000914208",
+      "decision": "EXCLUDE_DISPOSITION_OR_OWNERSHIP_UPDATE",
+      "notes": "Estate/portfolio/insider sale, unit purchase/exchange or ordinary ownership update; no new concrete activist intervention. Some are amendments mislabeled as initial by index/form type; do not treat as new campaigns.",
+      "clauses": [
+        {
+          "filename": "ivz_13d_amendment_no_10.htm",
+          "contains": "Item 4. Purpose of Transaction Item 4 of the Schedule 13D is hereby amended and supplemented by adding the following: The sales of Shares by Reporting Persons reported be"
+        }
+      ]
+    },
+    {
+      "accession": "0001140361-24-030569",
+      "subject_cik": "0001614806",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001193125-24-167017",
+      "subject_cik": "0001740332",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "d857888dsc13d.htm",
+          "contains": "ITEM 4. PURPOSE OF TRANSACTION As of the date of this filing, pursuant to the Investment Agreement and the Certificate of Designations (each, as described below in “Item "
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-24-075687",
+      "subject_cik": "0001681087",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investment intent, possible future actions or general management dialogue only. No current named nomination, issued demand or specific already-made operational/capital proposal under the frozen rule. CleverLeaves delisting considered but no concrete intervention demand certified; NCNO/HLIT dialogue alone is insufficient, as for VAC/SNN/HR.",
+      "clauses": [
+        {
+          "filename": "tm2418377d1_sc13d.htm",
+          "contains": "Item 4. Purpose of Transaction The Reporting Persons purchased the aforementioned securities for investment purposes with the aim of increasing the value of their investm"
+        }
+      ]
+    },
+    {
+      "accession": "0001493152-24-025694",
+      "subject_cik": "0001305168",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "formsc13d.htm",
+          "contains": "Item 4. Purpose of Transaction. Mr. Suriyakumar acquired all of the shares of Common Stock beneficially owned by him for investment purposes, and to ensure that his inter"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-24-175123",
+      "subject_cik": "0001999001",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "d862594dsc13d.htm",
+          "contains": "Item 4. Purpose of Transaction. On July 1, 2024, Former Six Flags completed the previously announced merger of equals transaction contemplated by the Agreement and Plan o"
+        }
+      ]
+    },
+    {
+      "accession": "0001451693-24-000004",
+      "subject_cik": "0001844505",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investment intent, possible future actions or general management dialogue only. No current named nomination, issued demand or specific already-made operational/capital proposal under the frozen rule. CleverLeaves delisting considered but no concrete intervention demand certified; NCNO/HLIT dialogue alone is insufficient, as for VAC/SNN/HR.",
+      "clauses": [
+        {
+          "filename": "sc13d2024-07x02gigacquisit.htm",
+          "contains": "Item 4. Purpose of Transaction The Reporting Persons acquired the securities described in this Schedule 13D for investment purposes and intend to review their investments"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-24-176400",
+      "subject_cik": "0001800682",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0000902664-24-004633",
+      "subject_cik": "0000845982",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investment intent, possible future actions or general management dialogue only. No current named nomination, issued demand or specific already-made operational/capital proposal under the frozen rule. CleverLeaves delisting considered but no concrete intervention demand certified; NCNO/HLIT dialogue alone is insufficient, as for VAC/SNN/HR.",
+      "clauses": [
+        {
+          "filename": "p24-2324sc13d.htm",
+          "contains": "Item 4. PURPOSE OF TRANSACTION The Reporting Person acquired the Ordinary Shares to which this Schedule 13D relates for investment purposes in the ordinary course of busi"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-24-078572",
+      "subject_cik": "0001609253",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "tm2418891d1_sc13d.htm",
+          "contains": "Item 4. Purpose of Transaction. Business Combination On February 7, 2024, an Agreement and Plan of Merger (the “Merger Agreement”) was entered into among the Issuer, Petr"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-24-078573",
+      "subject_cik": "0001609253",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "tm2418891d2_sc13d.htm",
+          "contains": "Item 4. Purpose of Transaction. Business Combination On July 1, 2024 (the “Closing Date”), pursuant to an Agreement and Plan of Merger, dated as of February 7, 2024 (the "
+        }
+      ]
+    },
+    {
+      "accession": "0000038777-24-000109",
+      "subject_cik": "0002018545",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001193125-24-177792",
+      "subject_cik": "0002013745",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "d727169dsc13d.htm",
+          "contains": "Item 4. Purpose of Transaction The information contained in Item 1 above regarding the Restructuring Agreement, the Conversion Agreement and the Transactions is incorpora"
+        }
+      ]
+    },
+    {
+      "accession": "0000902664-24-004719",
+      "subject_cik": "0000891103",
+      "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "symbol": "MTCH",
+      "clauses": [
+        {
+          "filename": "p24-2369exhibit991.htm",
+          "contains": "Match should focus on achieving at least 40% margins"
+        }
+      ],
+      "notes": "Starboard original attached July15 letter: concrete margin target, accelerated repurchases and strategic sale comparison. No first worldwide announcement claim.",
+      "earlier_public_action_date": "2024-07-15"
+    },
+    {
+      "accession": "0001193125-24-179101",
+      "subject_cik": "0001570827",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "d852499dsc13d.htm",
+          "contains": "ITEM 4. PURPOSE OF TRANSACTION. As a result of the transactions contemplated by the Contribution Agreement, subject to customary closing conditions and regulatory approva"
+        }
+      ]
+    },
+    {
+      "accession": "0001213900-24-061776",
+      "subject_cik": "0001947861",
+      "decision": "EXCLUDE_ROUTINE_INSIDER_ROLE",
+      "notes": "Existing chairman/officer/director role and ordinary ownership; no new concrete independent intervention demand in the reviewed original.",
+      "clauses": [
+        {
+          "filename": "ea0209453-13ddoudakian_natur.htm",
+          "contains": "Item 4. Purpose of Transaction The information set forth in Items 3 and 5 is hereby incorporated by reference in its entirety in this Item 4. Upon the consummation of the"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-24-186422",
+      "subject_cik": "0001618732",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "d810708dsc13d.htm",
+          "contains": "Item 4. Purpose of Transaction The information set forth in Items 3 and 6 of this Schedule 13D is incorporated by reference in its entirety into this Item 4. The Reportin"
+        }
+      ]
+    },
+    {
+      "accession": "0001013762-24-002146",
+      "subject_cik": "0001170858",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "ea0210164-13dequatorial_comp.htm",
+          "contains": "Item 4. Purpose of Transaction The information set forth in or incorporated by reference in Item 3 of this Schedule 13D is hereby incorporated by reference in its entiret"
+        }
+      ]
+    },
+    {
+      "accession": "0001013762-24-002223",
+      "subject_cik": "0001304492",
+      "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "symbol": "ATEX",
+      "clauses": [
+        {
+          "filename": "ea0210213-13dheard_anterix.htm",
+          "contains": "naming Mr. Heard as a director candidate"
+        }
+      ],
+      "notes": "Independent investor named in issuer proxy for director election, converts13Gto13D. Consensual nomination, not necessarily adversarial activism; report separately as sensitivity rather than silently equating to public confrontation.",
+      "earlier_public_action_date": "2024-07-03"
+    },
+    {
+      "accession": "0001493152-24-029644",
+      "subject_cik": "0001747079",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "formsc13d.htm",
+          "contains": "Item 4. Purpose of Transaction On July 25, 2024, the Issuer entered into an Agreement and Plan of Merger (the “Merger Agreement”) with SG Parent LLC, a Delaware limited l"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-24-190088",
+      "subject_cik": "0000890447",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "d874451dsc13d.htm",
+          "contains": "Item 4. Purpose of Transaction. All of the Common Stock and warrants of the Issuer reported on this Schedule 13D were acquired in the ordinary course of business for inve"
+        }
+      ]
+    },
+    {
+      "accession": "0001062993-24-014277",
+      "subject_cik": "0001260729",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investment intent, possible future actions or general management dialogue only. No current named nomination, issued demand or specific already-made operational/capital proposal under the frozen rule. CleverLeaves delisting considered but no concrete intervention demand certified; NCNO/HLIT dialogue alone is insufficient, as for VAC/SNN/HR.",
+      "clauses": [
+        {
+          "filename": "formsc13d.htm",
+          "contains": "Item 4. PURPOSE OF TRANSACTION The Reporting Persons acquired the Common Shares to which this Schedule 13D relates in the ordinary course of business for investment purpo"
+        }
+      ]
+    },
+    {
+      "accession": "0000919574-24-004221",
+      "subject_cik": "0001423221",
+      "decision": "EXCLUDE_OBSERVER_RIGHT_WITHOUT_CURRENT_DEMAND",
+      "notes": "NX has a board-observer agreement and general dialogue, not a named current board nomination or concrete intervention demand.",
+      "clauses": [
+        {
+          "filename": "d11415762_13d.htm",
+          "contains": "Item 4. Purpose of Transaction. The Reporting Persons have entered into a dialogue with the Issuer’s management and will seek to increase shareholder value by entering in"
+        }
+      ]
+    },
+    {
+      "accession": "0001062993-24-014350",
+      "subject_cik": "0001379400",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investment intent, possible future actions or general management dialogue only. No current named nomination, issued demand or specific already-made operational/capital proposal under the frozen rule. CleverLeaves delisting considered but no concrete intervention demand certified; NCNO/HLIT dialogue alone is insufficient, as for VAC/SNN/HR.",
+      "clauses": [
+        {
+          "filename": "formsc13d.htm",
+          "contains": "Item 4. PURPOSE OF TRANSACTION The Reporting Persons acquired the Common Shares to which this Schedule 13D relates in the ordinary course of business for investment purpo"
+        }
+      ]
+    },
+    {
+      "accession": "0000902664-24-004970",
+      "subject_cik": "0000092380",
+      "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "symbol": "LUV",
+      "clauses": [
+        {
+          "filename": "p24-2469sc13d.htm",
+          "contains": "the identification of a new CEO and a new independent Board Chair"
+        }
+      ],
+      "notes": "Elliott concrete board/CEO changes, lettersJune10/July8 predateAug5filing. Oversized original retrieved in separate bounded40MiB capture before semantic freeze, no quality-based removal.",
+      "earlier_public_action_date": "2024-06-10"
+    },
+    {
+      "accession": "0001292814-24-002966",
+      "subject_cik": "0001170858",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "esp20240805_sc13d.htm",
+          "contains": "Item 4. Purpose of Transaction In December 2023, the privatization of SABESP was approved pursuant to São Paulo State Law No. 17,853/2023. The privatization was conducted"
+        }
+      ]
+    },
+    {
+      "accession": "0001437749-24-025235",
+      "subject_cik": "0001866501",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001062993-24-015101",
+      "subject_cik": "0000916618",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investment intent, possible future actions or general management dialogue only. No current named nomination, issued demand or specific already-made operational/capital proposal under the frozen rule. CleverLeaves delisting considered but no concrete intervention demand certified; NCNO/HLIT dialogue alone is insufficient, as for VAC/SNN/HR.",
+      "clauses": [
+        {
+          "filename": "formsc13d.htm",
+          "contains": "Item 4. PURPOSE OF TRANSACTION The Reporting Persons acquired the Common Shares to which this Schedule 13D relates in the ordinary course of business for investment purpo"
+        }
+      ]
+    },
+    {
+      "accession": "0000807249-24-000095",
+      "subject_cik": "0000093389",
+      "decision": "RESERVED_SECTION4_NOT_RECOVERED",
+      "notes": "SMP original captured in full, but no reliable purpose section recovered. Do not turn absence of extracted text into no-event; retain documentary unknown.",
+      "clauses": [
+        {
+          "filename": "smp_00a.htm",
+          "contains": "SECURITIES AND EXCHANGE COMMISSION Washington, D.C. 20549 SCHEDULE 13D Under the Securities Exchange Act of 1934 Standard Motor Products, Inc. (Name of Issuer) Common Sto"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-24-090874",
+      "subject_cik": "0000803578",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "tm2421930d1_sc13d.htm",
+          "contains": "Item 4. Purpose of Transaction. The Common Shares to which this Schedule 13D relates were acquired by the Reporting Persons pursuant to the merger (the “ Merger ”) contem"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-24-203869",
+      "subject_cik": "0001064728",
+      "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "symbol": "BTU",
+      "clauses": [
+        {
+          "filename": "d817154dsc13d.htm",
+          "contains": "a shareholder return plan focused on share buybacks"
+        }
+      ],
+      "notes": "Original discloses already-made specific suggestions on buybacks, PowderRiverBasin and Centurion stake monetization; not mere futuremaydiscuss. Earlierpublicdate notcertified.",
+      "earlier_public_action_date": null
+    },
+    {
+      "accession": "0001213900-24-071584",
+      "subject_cik": "0001841125",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "ea0211995-13dgolden_bolt.htm",
+          "contains": "Item 4. Purpose of Transaction The information in the Explanatory Note and Items 3 and 6 of this Schedule 13D is incorporated herein by reference. The Reporting Persons a"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-24-092245",
+      "subject_cik": "0001958140",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "tm2422419d2_sc13d.htm",
+          "contains": "Item 4. Purpose of Transaction. Mr. McGuirk is filing this Schedule 13D to report his acquisition of sole voting power in respect of Included Matters (which may be deemed"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-24-098259",
+      "subject_cik": "0000908937",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "tm2423473d3_sc13d.htm",
+          "contains": "Item 4. Purpose of Transaction The information set forth in Item 3 of this Schedule 13D is hereby incorporated by reference into this Item 4."
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-24-098956",
+      "subject_cik": "0000908937",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investment intent, possible future actions or general management dialogue only. No current named nomination, issued demand or specific already-made operational/capital proposal under the frozen rule. CleverLeaves delisting considered but no concrete intervention demand certified; NCNO/HLIT dialogue alone is insufficient, as for VAC/SNN/HR.",
+      "clauses": [
+        {
+          "filename": "tm2423791d1_sc13d.htm",
+          "contains": "Item 4. Purpose of the Transaction Mr. Malone holds and has acquired the shares of Common Stock described herein for investment purposes. Mr. Malone does not have any pre"
+        }
+      ]
+    },
+    {
+      "accession": "0000950142-24-002364",
+      "subject_cik": "0000084129",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001193125-24-218932",
+      "subject_cik": "0001042893",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "d617270dsc13d.htm",
+          "contains": "Item 4. Purpose of Transaction On September 6, 2024 (the “Closing Date”), the Issuer consummated the business combination pursuant to that certain Agreement and Plan of M"
+        }
+      ]
+    },
+    {
+      "accession": "0000950142-24-002417",
+      "subject_cik": "0001823144",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "eh240532606_13d-cmpo.htm",
+          "contains": "ITEM 4. PURPOSE OF TRANSACTION. The information set forth or incorporated in Item 3 and Item 6 is hereby incorporated by reference in its entirety into this Item 4. The R"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-24-102046",
+      "subject_cik": "0001953926",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investment intent, possible future actions or general management dialogue only. No current named nomination, issued demand or specific already-made operational/capital proposal under the frozen rule. CleverLeaves delisting considered but no concrete intervention demand certified; NCNO/HLIT dialogue alone is insufficient, as for VAC/SNN/HR.",
+      "clauses": [
+        {
+          "filename": "tm2424514d1_sc13d.htm",
+          "contains": "Item 4. Purpose of Transaction The Reporting Persons purchased the aforementioned securities for investment purposes with the aim of increasing the value of their investm"
+        }
+      ]
+    },
+    {
+      "accession": "0001213900-24-080818",
+      "subject_cik": "0001930313",
+      "decision": "EXCLUDE_ROUTINE_INSIDER_ROLE",
+      "notes": "Existing chairman/officer/director role and ordinary ownership; no new concrete independent intervention demand in the reviewed original.",
+      "clauses": [
+        {
+          "filename": "ea0214263-13daikawa_sbc.htm",
+          "contains": "Item 4. Purpose of Transaction The Reporting Person holds 94,462,433 shares of the Issuer’s common stock, consisting of Merger Consideration Shares and Conversion Shares,"
+        }
+      ]
+    },
+    {
+      "accession": "0001140361-24-042733",
+      "subject_cik": "0001534504",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investment intent, possible future actions or general management dialogue only. No current named nomination, issued demand or specific already-made operational/capital proposal under the frozen rule. CleverLeaves delisting considered but no concrete intervention demand certified; NCNO/HLIT dialogue alone is insufficient, as for VAC/SNN/HR.",
+      "clauses": [
+        {
+          "filename": "ef20036684_sc13d.htm",
+          "contains": "Item 4. Purpose of the Transaction The Reporting Persons acquired the Class A Common Shares described in Item 3 above for investment purposes and did not acquire such Cla"
+        }
+      ]
+    },
+    {
+      "accession": "0001213900-24-087323",
+      "subject_cik": "0001843162",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "ea0217443-13dchicago_chicago.htm",
+          "contains": "Item 4. Purpose of Transaction. The information contained in Item 3 above and Item 6 below is incorporated herein by reference. The purpose of the Loan Portfolio Acquisit"
+        }
+      ]
+    },
+    {
+      "accession": "0000902664-24-005842",
+      "subject_cik": "0000842633",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investment intent, possible future actions or general management dialogue only. No current named nomination, issued demand or specific already-made operational/capital proposal under the frozen rule. CleverLeaves delisting considered but no concrete intervention demand certified; NCNO/HLIT dialogue alone is insufficient, as for VAC/SNN/HR.",
+      "clauses": [
+        {
+          "filename": "p24-2960sc13d.htm",
+          "contains": "Item 4. PURPOSE OF TRANSACTION The Reporting Persons believe that the securities of the Issuer are undervalued and represent an attractive investment opportunity. Althoug"
+        }
+      ]
+    },
+    {
+      "accession": "0001213900-24-087890",
+      "subject_cik": "0001592000",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0002022936-24-000016",
+      "subject_cik": "0001469395",
+      "decision": "EXCLUDE_DISPOSITION_OR_OWNERSHIP_UPDATE",
+      "notes": "Estate/portfolio/insider sale, unit purchase/exchange or ordinary ownership update; no new concrete activist intervention. Some are amendments mislabeled as initial by index/form type; do not treat as new campaigns.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Marcos Marcelo Mindlin purchases and sells Shares as market opportunities arise. The transactions that are the subject of this Schedule 13D were executed in response to s"
+        }
+      ]
+    },
+    {
+      "accession": "0000807249-24-000141",
+      "subject_cik": "0001260729",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investment intent, possible future actions or general management dialogue only. No current named nomination, issued demand or specific already-made operational/capital proposal under the frozen rule. CleverLeaves delisting considered but no concrete intervention demand certified; NCNO/HLIT dialogue alone is insufficient, as for VAC/SNN/HR.",
+      "clauses": [
+        {
+          "filename": "gdv_00.htm",
+          "contains": "Item 4. Purpose of Transaction Each of the Reporting Persons has purchased and holds the Securities reported by it for investment for one or more accounts over which it h"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-24-109978",
+      "subject_cik": "0001821159",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "tm2426534d1_sc13d.htm",
+          "contains": "Item 4. Purpose of Transaction. The information set forth in Items 3 and 6 of this Schedule 13D is incorporated by reference in its entirety into this Item 4. The Reporti"
+        }
+      ]
+    },
+    {
+      "accession": "0000902664-24-005919",
+      "subject_cik": "0001902733",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investment intent, possible future actions or general management dialogue only. No current named nomination, issued demand or specific already-made operational/capital proposal under the frozen rule. CleverLeaves delisting considered but no concrete intervention demand certified; NCNO/HLIT dialogue alone is insufficient, as for VAC/SNN/HR.",
+      "clauses": [
+        {
+          "filename": "p24-3011sc13d.htm",
+          "contains": "Item 4. PURPOSE OF TRANSACTION The Reporting Persons believe that the securities of the Issuer are undervalued and represent an attractive investment opportunity. The Rep"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-24-244214",
+      "subject_cik": "0001878313",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investment intent, possible future actions or general management dialogue only. No current named nomination, issued demand or specific already-made operational/capital proposal under the frozen rule. CleverLeaves delisting considered but no concrete intervention demand certified; NCNO/HLIT dialogue alone is insufficient, as for VAC/SNN/HR.",
+      "clauses": [
+        {
+          "filename": "d901744dsc13d.htm",
+          "contains": "Item 4. Purpose of Transaction. The Reporting Person acquired the Common Stock reported in this Statement for investment purposes. The Reporting Person may in the future "
+        }
+      ]
+    },
+    {
+      "accession": "0001140361-24-044419",
+      "subject_cik": "0001056285",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "ef20037797_sc13d.htm",
+          "contains": "Item 4. Purpose of Transaction. Pursuant to a secured Term Loan Credit Agreement, dated October 21, 2024 (the “Credit Agreement”), the Reporting Person agreed provide $17"
+        }
+      ]
+    },
+    {
+      "accession": "0000950170-24-122379",
+      "subject_cik": "0000825313",
+      "decision": "EXCLUDE_DISPOSITION_OR_OWNERSHIP_UPDATE",
+      "notes": "Estate/portfolio/insider sale, unit purchase/exchange or ordinary ownership update; no new concrete activist intervention. Some are amendments mislabeled as initial by index/form type; do not treat as new campaigns.",
+      "clauses": [
+        {
+          "filename": "abhlp_13-d_11.6.24.htm",
+          "contains": "ITEM 4. PURPOSE OF TRANSACTION Item 4 of the Schedule 13D is hereby amended by inserting the following paragraph at the end thereof: On November 4, 2024, EQH purchased 70"
+        }
+      ]
+    },
+    {
+      "accession": "0000950170-24-122382",
+      "subject_cik": "0001109448",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "clauses": [],
+      "notes": "Actual SUBJECT COMPANY is outside current tradable mapping; index route was through investor/filer. Not part of the separately fixed noncurrent hash probe. Preserve target identity; never assign price to filer ticker."
+    },
+    {
+      "accession": "0001214659-24-018485",
+      "subject_cik": "0000046129",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investment intent, possible future actions or general management dialogue only. No current named nomination, issued demand or specific already-made operational/capital proposal under the frozen rule. CleverLeaves delisting considered but no concrete intervention demand certified; NCNO/HLIT dialogue alone is insufficient, as for VAC/SNN/HR.",
+      "clauses": [
+        {
+          "filename": "p115243sc13d.htm",
+          "contains": "Item 4. Purpose of Transaction. The Shares acquired by the Reporting Persons have been acquired for the purpose of making an investment in the Issuer. Each of the Reporti"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-24-115320",
+      "subject_cik": "0001172358",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investment intent, possible future actions or general management dialogue only. No current named nomination, issued demand or specific already-made operational/capital proposal under the frozen rule. CleverLeaves delisting considered but no concrete intervention demand certified; NCNO/HLIT dialogue alone is insufficient, as for VAC/SNN/HR.",
+      "clauses": [
+        {
+          "filename": "tm2427441d1_sc13d.htm",
+          "contains": "Item 4. Purpose of Transaction. The securities covered by this Schedule 13D were acquired for investment purposes. Except as set forth above, the Reporting Persons have n"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-24-116684",
+      "subject_cik": "0000931584",
+      "decision": "EXCLUDE_MERGER_ARBITRAGE",
+      "notes": "Shares acquired after an already-announced acquisition to receive merger consideration, not activist intervention.",
+      "clauses": [
+        {
+          "filename": "tm2428204d1_sc13d.htm",
+          "contains": "ITEM 4. PURPOSE OF TRANSACTION The Reporting Persons acquired the 557,729 Shares reported herein on behalf of the Funds after the public announcement of the Merger Agreem"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-24-119436",
+      "subject_cik": "0001495222",
+      "decision": "EXCLUDE_FUND_SEED_OR_PREFERRED_CLASS",
+      "notes": "Fund seeding or preferred-share investment, not a directional common-share activist campaign. BTT is preferred RVMTP, OXLC preferred; do not apply their filings to the common ticker.",
+      "clauses": [
+        {
+          "filename": "tm2428550d1_sc13d.htm",
+          "contains": "ITEM 4. PURPOSE OF TRANSACTION. EPCM caused the Accounts to acquire the Preferred Shares they hold for investment purposes and will continue to analyze such investments o"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-24-260509",
+      "subject_cik": "0002042694",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "d600235dsc13d.htm",
+          "contains": "Item 4. Purpose of Transaction. Business Combination On November 8, 2024, pursuant to that certain Arrangement Agreement and Plan of Merger, dated as of June 16, 2024 (as"
+        }
+      ]
+    },
+    {
+      "accession": "0001185185-24-001162",
+      "subject_cik": "0000744825",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investment intent, possible future actions or general management dialogue only. No current named nomination, issued demand or specific already-made operational/capital proposal under the frozen rule. CleverLeaves delisting considered but no concrete intervention demand certified; NCNO/HLIT dialogue alone is insufficient, as for VAC/SNN/HR.",
+      "clauses": [
+        {
+          "filename": "zucker20241120_sc13d.htm",
+          "contains": "Item 4. Purpose of Transaction. TIGH II acquired the Shares for investment purposes. TIGH II continually reviews the performance of this investment and its investment alt"
+        }
+      ]
+    },
+    {
+      "accession": "0001084991-24-000128",
+      "subject_cik": "0001084991",
+      "decision": "EXCLUDE_DISPOSITION_OR_OWNERSHIP_UPDATE",
+      "notes": "Estate/portfolio/insider sale, unit purchase/exchange or ordinary ownership update; no new concrete activist intervention. Some are amendments mislabeled as initial by index/form type; do not treat as new campaigns.",
+      "clauses": [
+        {
+          "filename": "staylor13d.htm",
+          "contains": "Item 4. Purpose of Transaction. (a) On November 21, 2024, the Reporting Person sold 38,479 shares of Common Stock in the Company (the “ Stock Sale ”) pursuant to a Rule 1"
+        }
+      ]
+    },
+    {
+      "accession": "0001213900-24-102372",
+      "subject_cik": "0001720116",
+      "decision": "EXCLUDE_DISPOSITION_OR_OWNERSHIP_UPDATE",
+      "notes": "Estate/portfolio/insider sale, unit purchase/exchange or ordinary ownership update; no new concrete activist intervention. Some are amendments mislabeled as initial by index/form type; do not treat as new campaigns.",
+      "clauses": [
+        {
+          "filename": "ea022256201-13dderek_red.htm",
+          "contains": "ITEM 4. PURPOSE OF TRANSACTION. The Reporting Persons mutually agreed to each sell on the same date and for the same price, 10,000 shares of Common Stock, for an aggregat"
+        }
+      ]
+    },
+    {
+      "accession": "0001193805-24-001416",
+      "subject_cik": "0001360604",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investment intent, possible future actions or general management dialogue only. No current named nomination, issued demand or specific already-made operational/capital proposal under the frozen rule. CleverLeaves delisting considered but no concrete intervention demand certified; NCNO/HLIT dialogue alone is insufficient, as for VAC/SNN/HR.",
+      "clauses": [
+        {
+          "filename": "sc13d06297371_11262024.htm",
+          "contains": "Item 4. Purpose of Transaction . The Reporting Persons purchased the Shares based on the Reporting Persons’ belief that the Shares, when purchased, were undervalued and r"
+        }
+      ]
+    },
+    {
+      "accession": "0001539497-24-002570",
+      "subject_cik": "0000915779",
+      "decision": "EXCLUDE_FINANCING_DISPUTE_NO_CONCRETE_CAMPAIGN",
+      "notes": "DAKT ongoing general governance dialogue plus a disputed forced conversion of AltaFox convertible notes. No concrete nomination/public operational demand in this original; do not infer a later activist campaign.",
+      "clauses": [
+        {
+          "filename": "n4695_x1-sc13d.htm",
+          "contains": "Item 4. Purpose of Transaction . The Reporting Persons purchased the Shares based on their belief that the Shares, when purchased, were undervalued and constituted an att"
+        }
+      ]
+    },
+    {
+      "accession": "0001622627-24-000064",
+      "subject_cik": "0001933567",
+      "decision": "RESERVED_ROUTINE_NOMINATION_VS_FINANCING",
+      "notes": "Neuraxis actual director appointment is reported alongside conversion-blocked preferred ownership. No explicit activist demand or evidence separating appointment from financing rights in this short filing. Preserve ambiguity, not a classified non-event or known price loss.",
+      "clauses": [
+        {
+          "filename": "rosalind_nrsx_13d_nov202.htm",
+          "contains": "Item 4. Purpose of Transaction On November 19, 2024, the Board appointed Dr. Aharon to the Board, effective January 1, 2025."
+        }
+      ]
+    },
+    {
+      "accession": "0001683168-24-008597",
+      "subject_cik": "0001814287",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "pillo_sc13d.htm",
+          "contains": "Item 4. Purpose of Transaction. The Reporting Persons acquired beneficial ownership of their shares of Common Stock for investment purposes pursuant to the Share Purchase"
+        }
+      ]
+    },
+    {
+      "accession": "0001213900-24-108928",
+      "subject_cik": "0001765850",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "ea022473903-13dprest_prest.htm",
+          "contains": "Item 4. Purpose of Transaction . The information regarding the Transfers set forth in Item 3 above is incorporated into this Item 4 by reference. All of the Class B Ordin"
+        }
+      ]
+    },
+    {
+      "accession": "0001140361-24-049960",
+      "subject_cik": "0000104169",
+      "decision": "EXCLUDE_FAMILY_TRANSFER",
+      "notes": "Walton family managing interests transferred for no consideration; current ownership reporting, not a new outside activist campaign.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Prior to December 18, 2024, Alice L. Walton, Jim C. Walton, S. Robson Walton, and the John T. Walton Estate Trust (of which Alice L. Walton, Jim C. Walton, and S. Robson "
+        }
+      ]
+    },
+    {
+      "accession": "0000950170-24-139133",
+      "subject_cik": "0000825313",
+      "decision": "EXCLUDE_DISPOSITION_OR_OWNERSHIP_UPDATE",
+      "notes": "Estate/portfolio/insider sale, unit purchase/exchange or ordinary ownership update; no new concrete activist intervention. Some are amendments mislabeled as initial by index/form type; do not treat as new campaigns.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Item 4 of the Schedule 13D is hereby amended by inserting the following paragraph at the end thereof: On December 19, 2024, AllianceBernstein L.P (\"AB\") entered into an a"
+        }
+      ]
+    },
+    {
+      "accession": "0000950170-24-139216",
+      "subject_cik": "0001616533",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Ownership results from an acquisition, financing, spin-off, sponsor handover, control/family proxy or restructuring; related contractual board rights are not an independent activist demand. Arena competing acquisition and ARC management buyout stay excluded under the same acquisition-control rule. Do not reclassify a financing just because investor board rights exist.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in Item 6 of this Schedule 13D is hereby incorporated by reference. The Reporting Persons acquired the Preferred Shares reported in this Schedul"
+        }
+      ]
+    },
+    {
+      "accession": "0001140361-24-050146",
+      "subject_cik": "0000098222",
+      "decision": "EXCLUDE_ROUTINE_INSIDER_ROLE",
+      "notes": "Existing chairman/officer/director role and ordinary ownership; no new concrete independent intervention demand in the reviewed original.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Mr. Robotti serves on the Board of Directors of the Issuer and on the Compensation and Human Capital Committee and the Nominating and Governance of the Board of Directors"
+        }
+      ]
+    },
+    {
+      "accession": "0001829126-24-008574",
+      "subject_cik": "0002012706",
+      "decision": "EXCLUDE_ROUTINE_INSIDER_ROLE",
+      "notes": "Existing chairman/officer/director role and ordinary ownership; no new concrete independent intervention demand in the reviewed original.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in Item 3 of this statement is incorporated by reference herein. The securities described in this statement are being held by the Reporting Pers"
+        }
+      ]
+    }
+  ]
+}

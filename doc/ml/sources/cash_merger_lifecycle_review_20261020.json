@@ -1,0 +1,35 @@
+{
+  "reviewer":"Same assistant, not independent human review or legal advice",
+  "document_review":{
+    "0001140361-24-006876":"RYZB: HSR waiting period expired9Feb, remaining conditions/litigation; not completion",
+    "0001140361-24-008300":"RYZB: funding description updated, no financing condition; not completion",
+    "0001140361-24-009146":"RYZB: offer expired, EXPECTED acceptance/closing26Feb, not yet completed in this filing",
+    "0001140361-24-009377":"RYZB: actual acquisition/merger26Feb, cash right, no broker credit date",
+    "0001104659-24-030212":"SNCE: shareholder litigation disclosures, not abandonment",
+    "0001104659-24-033261":"SNCE: expiration11Marend, merger completed12Mar, cash right",
+    "0001104659-24-033266":"SNCE: actual12Mar closing/acceptance, cash right, no actual broker credit date",
+    "0001104659-24-028791":"CBAY: demand letters/draft complaints, not abandonment",
+    "0001104659-24-032741":"CBAY: HSR expiry8Mar and condition text modified; plaintext includes deleted text, not a certified full semantic diff",
+    "0001104659-24-034997":"CBAY: litigation update, not abandonment",
+    "0001104659-24-036695":"CBAY: books-and-records demand letters, not abandonment",
+    "0001193125-24-072728":"CBAY: executive employment/tax treatment, not deal termination",
+    "0001104659-24-037575":"CBAY: expiry and accepted payment, EXPECTED merger22Mar, not sole proof of completion",
+    "0001193125-24-074701":"CBAY: actual merger22Mar, cash right and delisting request",
+    "0001628280-24-010229":"NGM: earnings disclosure, not deal termination",
+    "0001140361-24-014854":"NGM: fairness/ownership/go-private disclosure, rollover structure, not new cash price",
+    "0001140361-24-018184":"NGM: actual merger5Apr, public non-rollover cash rights; shares cease trading before opening",
+    "0001193125-24-088076":"NGM: actual5Apr closing, rollover excluded, cash right",
+    "0000950170-24-032178":"SCTL: Nasdaq minimum-price compliance, not merger completion",
+    "0001193125-24-070126":"SCTL: warrant cancellation notice, not public common share price change",
+    "0001193125-24-082678":"SCTL: litigation disclosure, not abandonment",
+    "0001193125-24-089290":"SCTL: actual merger8Apr, acceptance and cash right",
+    "0001193125-24-089300":"SCTL: actual8Apr closing; credit agreements terminated does NOT mean merger abandoned"
+  },
+  "outcomes":[
+    {"symbol":"RYZB","completed_on":"2024-02-26","final_cash_usd":62.5,"evidence":{"accession":"0001140361-24-009377","filename":"ef20022333_8k.htm","contains":"On February 26, 2024, Bristol-Myers Squibb Company, a Delaware corporation (“ Parent ”), completed the previously announced acquisition of RayzeBio"},"cash_evidence":{"accession":"0001140361-24-009377","filename":"ef20022333_8k.htm","contains":"$62.50 per Share in cash"}},
+    {"symbol":"SNCE","completed_on":"2024-03-12","final_cash_usd":5.75,"evidence":{"accession":"0001104659-24-033261","filename":"tm248561d2_sctota.htm","contains":"Parent completed its acquisition of Science 37 by consummating the Merger on March 12, 2024"},"cash_evidence":{"accession":"0001104659-24-033266","filename":"tm244329d1_8k.htm","contains":"$5.75 per Share"}},
+    {"symbol":"CBAY","completed_on":"2024-03-22","final_cash_usd":32.5,"evidence":{"accession":"0001193125-24-074701","filename":"d817708d8k.htm","contains":"on March 22, 2024, Purchaser merged with and into the Company"},"cash_evidence":{"accession":"0001193125-24-074701","filename":"d817708d8k.htm","contains":"$32.50 per Share"}},
+    {"symbol":"NGM","completed_on":"2024-04-05","final_cash_usd":1.55,"evidence":{"accession":"0001140361-24-018184","filename":"ny20026095x1_sctota.htm","contains":"Parent and Purchaser completed the acquisition of NGM on April 5, 2024"},"cash_evidence":{"accession":"0001193125-24-088076","filename":"d813269d8k.htm","contains":"$1.55 per share of Common Stock in cash"},"reserve":"Cash applies only to public NON-ROLLOVER shares eligible under the contract, not insiders who rolled shares or appraisal exclusions."},
+    {"symbol":"SCTL","completed_on":"2024-04-08","final_cash_usd":1.1,"evidence":{"accession":"0001193125-24-089290","filename":"d827235dsctota.htm","contains":"On April 8, 2024, Parent and Purchaser completed the acquisition of SCTL"},"cash_evidence":{"accession":"0001193125-24-089300","filename":"d805028d8k.htm","contains":"$1.10 per Share"}}
+  ]
+}

@@ -1,0 +1,2620 @@
+{
+  "parent": "artifacts/research/us_activist_13d/confirmation-2025-2026-20261020-v1",
+  "reviewer": "Same assistant, not independent human review",
+  "price_outcomes_read_before_review": false,
+  "prior_2024_results_already_observed": true,
+  "criteria": "Same explicit current intervention rule, not all13D. Date-specific named forward nomination, definite publiccampaign or specific already-made operating/capital request. Completed isolateddirectorroles not silently promoted into campaigns; boundarycases reserved. Antimergerprotest is not biddercontrol. PBTislistedroyaltytrustunits, notoperatingcompanycommonstock; reportinstrumenttype separately.",
+  "selection": "222initialindexaccessions frozen before review/prices, dedupcofilers, CURRENT1790route plus10outside perquarter hashprobe. Not a completehistoricaluniverse/delistedcensus. No originalsourceorcase replacedbyfutureoutcome.",
+  "cases": [
+    {
+      "accession": "0000950157-25-000042",
+      "subject_cik": "0000091576",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in or incorporated by reference in Item 3 and Item 6 of this Schedule 13D is hereby incorporated by reference in its entirety into thi"
+        }
+      ]
+    },
+    {
+      "accession": "0000950170-25-004293",
+      "subject_cik": "0001433660",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "On the Closing Date, the Closing occurred and the Reporting Person became the beneficial owner of 5,044,720 shares of the Common Stock of the Issuer as a portio"
+        }
+      ]
+    },
+    {
+      "accession": "0001178913-25-000139",
+      "subject_cik": "0001742692",
+      "decision": "EXCLUDE_ROUTINE_INSIDER_ROLE",
+      "notes": "Existingdirector/officer/manager/ownerrole withgeneralinvestmentintent andpossiblefutureactions; nocurrentindependentcampaign inreviewedoriginal.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in Item 3 of this Schedule 13D is incorporated herein by reference. The Reporting Person serves as Chief Executive Officer and member "
+        }
+      ]
+    },
+    {
+      "accession": "0001214659-25-000866",
+      "subject_cik": "0001045942",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Person acquired the shares of Common Stock held by the Reporting Person for investment purposes. The Reporting Person intends to review and evalua"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-25-005688",
+      "subject_cik": "0000814052",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons acquired the securities reported herein for investment purposes. The Reporting Persons intend to evaluate this investment in the Issuer on"
+        }
+      ]
+    },
+    {
+      "accession": "0001654954-25-000824",
+      "subject_cik": "0001141197",
+      "decision": "EXCLUDE_ROUTINE_INSIDER_ROLE",
+      "notes": "Existingdirector/officer/manager/ownerrole withgeneralinvestmentintent andpossiblefutureactions; nocurrentindependentcampaign inreviewedoriginal.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons acquired the securities for investment purposes. In the future, depending on general market and economic conditions affecting the Company "
+        }
+      ]
+    },
+    {
+      "accession": "0000919574-25-000562",
+      "subject_cik": "0001331284",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Scorpio acquired the securities reported herein for investment purposes in the ordinary course of business because of its belief that the Issuer presents an att"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-25-007336",
+      "subject_cik": "0001544522",
+      "decision": "EXCLUDE_DISPOSITION_OR_OWNERSHIP_UPDATE",
+      "notes": "Freshworksamendmentreportsdatedsales, no currentactivistaction.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Item 4 of the Statement is hereby amended and supplemented by adding the following at the end thereof: On December 9, 2024, the Reporting Persons completed a sa"
+        }
+      ]
+    },
+    {
+      "accession": "0000950170-25-011213",
+      "subject_cik": "0001789832",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The purpose of the GIP Transaction was for BlackRock to acquire the business and assets of GIP Parent. GIP Parent acquired the GIP securities described in this "
+        }
+      ]
+    },
+    {
+      "accession": "0000950170-25-011215",
+      "subject_cik": "0001567683",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The purpose of the GIP Transaction was for BlackRock to acquire the business and assets of GIP Parent. GIP Parent acquired the GIP securities described in this "
+        }
+      ]
+    },
+    {
+      "accession": "0001139032-25-000002",
+      "subject_cik": "0001069202",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Mr. Norris acquired the Shares beneficially owned by him for investment. Mr. Norris does not have any plans, nor has he made proposals, which relate to or would"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-25-009798",
+      "subject_cik": "0001937926",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "notes": "Original SUBJECT issuer outsidecurrenttradablemapping, indexedthroughinvestor/filer. Not partoffrozenoutside-routehashprobe; no price assignedtofilerticker.",
+      "clauses": []
+    },
+    {
+      "accession": "0000950170-25-015735",
+      "subject_cik": "0001973266",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in Items 3 and 6 of this Schedule 13D is hereby incorporated by reference into this Item 4. The Reporting Persons acquired the securit"
+        }
+      ]
+    },
+    {
+      "accession": "0000950170-25-015761",
+      "subject_cik": "0001973266",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in Items 2, 3 and 6 hereof is hereby incorporated by reference into this Item 4. The Reporting Persons may be deemed to have acquired "
+        }
+      ]
+    },
+    {
+      "accession": "0000950170-25-017180",
+      "subject_cik": "0001414932",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons continuously evaluate the businesses and prospects of the Issuer and its subsidiaries, alternative investment opportunities and all other "
+        }
+      ]
+    },
+    {
+      "accession": "0000950170-25-017296",
+      "subject_cik": "0001780312",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "notes": "Original SUBJECT issuer outsidecurrenttradablemapping, indexedthroughinvestor/filer. Not partoffrozenoutside-routehashprobe; no price assignedtofilerticker.",
+      "clauses": []
+    },
+    {
+      "accession": "0001418812-25-000002",
+      "subject_cik": "0001560385",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The responses to Items 3, 5 and 6 of this Schedule 13D are incorporated herein by reference. The Reporting Persons acquired the securities of the Issuer reporte"
+        }
+      ]
+    },
+    {
+      "accession": "0000921895-25-000362",
+      "subject_cik": "0001565228",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons acquired the shares of Common Stock reported herein in open market transactions because of their belief that the securities were undervalu"
+        }
+      ]
+    },
+    {
+      "accession": "0000950170-25-021181",
+      "subject_cik": "0002017206",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "notes": "Original SUBJECT issuer outsidecurrenttradablemapping, indexedthroughinvestor/filer. Not partoffrozenoutside-routehashprobe; no price assignedtofilerticker.",
+      "clauses": []
+    },
+    {
+      "accession": "0000950170-25-021481",
+      "subject_cik": "0000879407",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "notes": "Original SUBJECT issuer outsidecurrenttradablemapping, indexedthroughinvestor/filer. Not partoffrozenoutside-routehashprobe; no price assignedtofilerticker.",
+      "clauses": []
+    },
+    {
+      "accession": "0001104659-25-014235",
+      "subject_cik": "0001173382",
+      "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "symbol": "CAE",
+      "case_kind": "CONSENSUAL_FORWARD_NOMINATION",
+      "instrument_kind": "COMMON_EQUITY",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Person intends to nominate Louis Tetu for election"
+        }
+      ],
+      "earlier_public_action_date": "2025-02-13",
+      "notes": "Executed nomination agreement and named candidate for forthcoming2025meeting; not merely a possible board discussion. Keep consensual nomination distinct from public adversarial demand."
+    },
+    {
+      "accession": "0001839882-25-009559",
+      "subject_cik": "0002036042",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in or incorporated by reference in Items 2, 3, 5 and 6 of this Schedule 13D is incorporated by reference in its entirety into this Ite"
+        }
+      ]
+    },
+    {
+      "accession": "0000921895-25-000609",
+      "subject_cik": "0002013745",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Person purchased the Shares based on the Reporting Person's belief that the Shares, when purchased, were undervalued and represented an attractive"
+        }
+      ]
+    },
+    {
+      "accession": "0001213900-25-017155",
+      "subject_cik": "0001690080",
+      "decision": "EXCLUDE_ROUTINE_INSIDER_ROLE",
+      "notes": "Existingdirector/officer/manager/ownerrole withgeneralinvestmentintent andpossiblefutureactions; nocurrentindependentcampaign inreviewedoriginal.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in Item 3 is hereby incorporated by reference into this Item 4. The Reporting Person acquired the securities for investment purposes. "
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-25-018553",
+      "subject_cik": "0000832988",
+      "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "symbol": "SIG",
+      "case_kind": "PUBLIC_STRATEGIC_DEMAND",
+      "instrument_kind": "COMMON_EQUITY",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "including its immediate sale"
+        }
+      ],
+      "earlier_public_action_date": "2025-02-27",
+      "notes": "Actual attached letter sentFeb27 asks strategicoptions/immediatesale. Investor asks issuer to run process, is not a bidder acquiring control."
+    },
+    {
+      "accession": "0001104659-25-020048",
+      "subject_cik": "0001495932",
+      "decision": "EXCLUDE_DISPOSITION_OR_OWNERSHIP_UPDATE",
+      "notes": "Insider/estate/portfolio sale, exit or repurchase update. No concretecurrentindependentintervention. Do notpromoteamislabeledinitialamendment.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Person acquired the shares of Common Stock of the Issuer for investment purposes. Except as set forth below, the Reporting Person does not have an"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-25-020057",
+      "subject_cik": "0001495932",
+      "decision": "EXCLUDE_DISPOSITION_OR_OWNERSHIP_UPDATE",
+      "notes": "Insider/estate/portfolio sale, exit or repurchase update. No concretecurrentindependentintervention. Do notpromoteamislabeledinitialamendment.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Person acquired the shares of Common Stock of the Issuer for investment purposes. Except as set forth below, the Reporting Person does not have an"
+        }
+      ]
+    },
+    {
+      "accession": "0001214659-25-004133",
+      "subject_cik": "0001746473",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons purchased the Common Stock reported hereunder for investment purposes, and such purchases were made in the Reporting Persons' ordinary cou"
+        }
+      ]
+    },
+    {
+      "accession": "0000919574-25-001904",
+      "subject_cik": "0001029145",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "notes": "Original SUBJECT issuer outsidecurrenttradablemapping, indexedthroughinvestor/filer. Not partoffrozenoutside-routehashprobe; no price assignedtofilerticker.",
+      "clauses": []
+    },
+    {
+      "accession": "0001415889-25-008727",
+      "subject_cik": "0000816761",
+      "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "symbol": "TDC",
+      "case_kind": "SPECIFIC_PRIVATE_REQUEST_DISCLOSED",
+      "instrument_kind": "COMMON_EQUITY",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "the Issuer should establish an executive committee"
+        }
+      ],
+      "earlier_public_action_date": null,
+      "notes": "Original recounts actualMarch14call requesting shareholderrepresentative and executivecommittee/operating priorities. Privatecall date not assumed publicMarch14; entry after13D only."
+    },
+    {
+      "accession": "0000892712-25-000043",
+      "subject_cik": "0000009389",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "All securities have been acquired for investment purposes only by the Reporting Person on behalf of Client Accounts. From time to time, the Reporting Person and"
+        }
+      ]
+    },
+    {
+      "accession": "0001013762-25-001801",
+      "subject_cik": "0001970622",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "To the extent required by Item 4, the information contained in Item 3 and Item 6 are incorporated herein by reference. The Reporting Persons do not have any pre"
+        }
+      ]
+    },
+    {
+      "accession": "0001013762-25-002195",
+      "subject_cik": "0002002236",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Person acquired all of the Shares beneficially owned by her as part of a group reorganization on December 1, 2023. The Reporting Person holds the "
+        }
+      ]
+    },
+    {
+      "accession": "0000950170-25-051626",
+      "subject_cik": "0000891166",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The response to Item 3 is incorporated by reference herein. Mr. Donaghy does not presently have any plan(s) or proposal(s) which relates to or would result in a"
+        }
+      ]
+    },
+    {
+      "accession": "0001361570-25-000007",
+      "subject_cik": "0001288847",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Person acquired shares of Five9 Inc. as part of its investment strategy, considering the clarity and robustness of the issuer's long-term strategy"
+        }
+      ]
+    },
+    {
+      "accession": "0000950170-25-057182",
+      "subject_cik": "0000886977",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Person acquired the Common Stock to which this Schedule 13D relates for investment purposes in the ordinary course of business. The Reporting Pers"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-25-041824",
+      "subject_cik": "0001861737",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in Item 3 is hereby incorporated by reference in its entirety. Except as set forth herein, the Reporting Persons do not have any prese"
+        }
+      ]
+    },
+    {
+      "accession": "0000950170-25-062146",
+      "subject_cik": "0001798749",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons own 19.99% of the Company in the aggregate, based upon the Company's aggregate outstanding shares as of April 28, 2025. The Reporting Pers"
+        }
+      ]
+    },
+    {
+      "accession": "0001373604-25-000074",
+      "subject_cik": "0001880438",
+      "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "symbol": "ANTX",
+      "case_kind": "PUBLIC_LIQUIDATION_DEMAND",
+      "instrument_kind": "COMMON_EQUITY",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "an orderly winddown, liquidation, and capital return"
+        }
+      ],
+      "earlier_public_action_date": "2025-05-07",
+      "notes": "Outside-current-route hashprobe, concreteletterMay7. Not assumed to have prices, historicalticker or Oraclecoverage; missing outcomes retained."
+    },
+    {
+      "accession": "0002064726-25-000001",
+      "subject_cik": "0000707179",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in Items 3 and 6 of this Statement is hereby incorporated by reference into this Item 4. The Reporting Person acquired the securities "
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-25-046333",
+      "subject_cik": "0001368622",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons acquired their shares of Common Stock as an investment in the ordinary course of business. Immediately following the Effective Time, David"
+        }
+      ]
+    },
+    {
+      "accession": "0001140361-25-018202",
+      "subject_cik": "0001649749",
+      "decision": "EXCLUDE_ESTATE_AND_INSIDER_OWNERSHIP",
+      "notes": "Estatecoexecutors, ordinarydirectorrole and personalinvestment; no independentcampaign.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information in Item 3 above is hereby incorporated by reference. Each of James Jonathan Ayers and James Austin McPherson acquired and presently holds the sh"
+        }
+      ]
+    },
+    {
+      "accession": "0001213900-25-041660",
+      "subject_cik": "0001720116",
+      "decision": "EXCLUDE_DISPOSITION_OR_OWNERSHIP_UPDATE",
+      "notes": "Insider/estate/portfolio sale, exit or repurchase update. No concretecurrentindependentintervention. Do notpromoteamislabeledinitialamendment.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons mutually agreed that (i) Messrs. Dubner, MacLachlan and Reilly would each sell 10,000 shares of Common Stock and (ii) Mr. Dell would sell "
+        }
+      ]
+    },
+    {
+      "accession": "0001418812-25-000016",
+      "subject_cik": "0001805284",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The responses to Items 3, 5 and 6 of this Schedule 13D are incorporated herein by reference. The Reporting Persons acquired the securities of the Issuer reporte"
+        }
+      ]
+    },
+    {
+      "accession": "0001829126-25-003724",
+      "subject_cik": "0001682639",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "(a) - (c) On November 22, 2022, Fund and Fund II entered into a Loan and Security Agreement, and related agreements (collectively, the \"Agreement\"), by and amon"
+        }
+      ]
+    },
+    {
+      "accession": "0000950103-25-006385",
+      "subject_cik": "0001802768",
+      "decision": "EXCLUDE_ROUTINE_INSIDER_ROLE",
+      "notes": "Existingdirector/officer/manager/ownerrole withgeneralinvestmentintent andpossiblefutureactions; nocurrentindependentcampaign inreviewedoriginal.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information in Items 3, 5 and 6 of this Schedule 13D is incorporated herein by reference. Each Reporting Person acquired the securities described in this Sc"
+        }
+      ]
+    },
+    {
+      "accession": "0000950170-25-076981",
+      "subject_cik": "0001108426",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Merger Agreement On May 18, 2025, the Issuer, Troy ParentCo LLC (\"Parent\"), a Delaware limited liability company, and Troy Merger Sub Inc., a New Mexico corpora"
+        }
+      ]
+    },
+    {
+      "accession": "0001213900-25-048513",
+      "subject_cik": "0001922446",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "On January 24, 2025, Diversified Energy Company plc, a public limited company incorporated in England and Wales (the \"Issuer\"), Maverick Natural Resources, LLC,"
+        }
+      ]
+    },
+    {
+      "accession": "0001292814-25-002308",
+      "subject_cik": "0001464591",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "GASA acquired the Reported Securities through open market purchases on the NYSE. The Reporting Persons hold the Reported Securities for investment purposes. Dep"
+        }
+      ]
+    },
+    {
+      "accession": "0001213900-25-050762",
+      "subject_cik": "0001173313",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Certain of the Issuer's shareholders sought to grant the Reporting Person voting rights with respect to such shareholder's shares."
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-25-057322",
+      "subject_cik": "0001953926",
+      "decision": "EXCLUDE_ROUTINE_INSIDER_ROLE",
+      "notes": "Existingdirector/officer/manager/ownerrole withgeneralinvestmentintent andpossiblefutureactions; nocurrentindependentcampaign inreviewedoriginal.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in Item 3 of this Statement is incorporated herein by reference. Mr. Moulder serves as the Chairman of the Issuer's Board of Directors"
+        }
+      ]
+    },
+    {
+      "accession": "0000921895-25-001728",
+      "subject_cik": "0001704720",
+      "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "symbol": "CNNE",
+      "case_kind": "FORMAL_NOMINATION",
+      "instrument_kind": "COMMON_EQUITY",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "nominating a slate of highly qualified director candidates"
+        }
+      ],
+      "earlier_public_action_date": "2024-12-19",
+      "notes": "Current2025nomination campaign described with namedcandidates. December2024nominationletter predates June9filing; no firstannouncementalpha or backdatedentry."
+    },
+    {
+      "accession": "0001829126-25-004393",
+      "subject_cik": "0002053927",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Person acquired the founder shares and the Placement Units for investment purposes. The Reporting Person serves as the sponsor of the Issuer, whic"
+        }
+      ]
+    },
+    {
+      "accession": "0000919574-25-003576",
+      "subject_cik": "0001819253",
+      "decision": "RESERVED_APPOINTMENT_VS_CURRENT_INTERVENTION",
+      "notes": "BTMD merelyreportsexistingJune5directorappointment. No explicit nominationcampaign/request inoriginal; do not broadenprimarydefinition to allinvestorboardservice.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons originally acquired the Common Stock for investment purposes. The Reporting Persons are filing this initial Schedule 13D to report that Ri"
+        }
+      ]
+    },
+    {
+      "accession": "0000928785-25-000007",
+      "subject_cik": "0001354272",
+      "decision": "EXCLUDE_TRADING_INVENTORY",
+      "notes": "StandardBanklicensedbrokertrading/hedginginventory, no concreteissuerintervention.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Standard Bank is a licensed bank and Financial Service provider in South Africa. SBG Securities Pty Ltd is a subsidiary of the Standard Bank Group and is the eq"
+        }
+      ]
+    },
+    {
+      "accession": "0000950170-25-093838",
+      "subject_cik": "0001919246",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "notes": "Original SUBJECT issuer outsidecurrenttradablemapping, indexedthroughinvestor/filer. Not partoffrozenoutside-routehashprobe; no price assignedtofilerticker.",
+      "clauses": []
+    },
+    {
+      "accession": "0000950170-25-093943",
+      "subject_cik": "0001784254",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "BlackRockHPSassetacquisitionaccounting, notissueractivism.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The purpose of the HPS Transaction was for BlackRock to acquire the business and assets of the HPS Entities. The HPS Entities acquired the securities described "
+        }
+      ]
+    },
+    {
+      "accession": "0001193805-25-000968",
+      "subject_cik": "0001526520",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons purchased the Shares based on the Reporting Persons' belief that the Shares, when purchased, were undervalued and represented an attractiv"
+        }
+      ]
+    },
+    {
+      "accession": "0001641172-25-017892",
+      "subject_cik": "0001262976",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons hold the Shares they beneficially own for investment purposes. The Reporting Persons last reported their beneficial ownership of the Issue"
+        }
+      ]
+    },
+    {
+      "accession": "0001140361-25-025077",
+      "subject_cik": "0001996862",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "BG boardnominees andshareholderagreement contingent ontransactionclosing, not independent intervention.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth or incorporated by reference in Items 3, 5 and 6 of this Schedule 13D is incorporated by reference into this Item 4. The Reporting Per"
+        }
+      ]
+    },
+    {
+      "accession": "0000950142-25-001861",
+      "subject_cik": "0001805284",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "On June 30, 2025, Rocket completed the collapse of its \"Up-C\" structure pursuant to the Transaction Agreement. Pursuant to the Transaction Agreement, each RHI s"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-25-066494",
+      "subject_cik": "0001996862",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "BG CPPIB rights contingent onacquisitionclosing, no independentdemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth or incorporated by reference in Items 3, 5 and 6 of this Schedule 13D is incorporated by reference into this Item 4. The Reporting Per"
+        }
+      ]
+    },
+    {
+      "accession": "0000950170-25-095910",
+      "subject_cik": "0001769759",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "notes": "Original SUBJECT issuer outsidecurrenttradablemapping, indexedthroughinvestor/filer. Not partoffrozenoutside-routehashprobe; no price assignedtofilerticker.",
+      "clauses": []
+    },
+    {
+      "accession": "0001104659-25-068336",
+      "subject_cik": "0002057463",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "GCIlibertydistribution/spinownership and existingchair, no separateintervention.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Person acquired beneficial ownership of the shares reported on this Statement pursuant to the Distribution, which was completed on July 14, 2025. "
+        }
+      ]
+    },
+    {
+      "accession": "0000919574-25-004119",
+      "subject_cik": "0001326200",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Person acquired the securities reported herein for investment purposes in the ordinary course of business because of its belief that the Issuer pr"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-25-073258",
+      "subject_cik": "0001877787",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Open Market Purchases From April 16, 2025 through June 27, 2025, two indirect wholly owned subsidiaries of Temasek purchased, in a series of open market transac"
+        }
+      ]
+    },
+    {
+      "accession": "0000921895-25-002118",
+      "subject_cik": "0000084748",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons purchased the Shares based on the Reporting Persons' belief that the Shares, when purchased, were undervalued and represented an attractiv"
+        }
+      ]
+    },
+    {
+      "accession": "0001315863-25-000573",
+      "subject_cik": "0001425355",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information in Item 6 is incorporated herein by reference. Securities Purchase Agreement On July 27, 2025, the Issuer entered into securities purchase agree"
+        }
+      ]
+    },
+    {
+      "accession": "0000950103-25-010123",
+      "subject_cik": "0001050825",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "notes": "Original SUBJECT issuer outsidecurrenttradablemapping, indexedthroughinvestor/filer. Not partoffrozenoutside-routehashprobe; no price assignedtofilerticker.",
+      "clauses": []
+    },
+    {
+      "accession": "0001962221-25-000003",
+      "subject_cik": "0001396814",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons purchased Common Shares on 8/1/2025, 8/4/2025, and 8/5/2025 with the intent to influence the Issuer, but without the intention to take ful"
+        }
+      ]
+    },
+    {
+      "accession": "0001011438-25-000411",
+      "subject_cik": "0001808220",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "GoHealthlendersreceiveequityinrefinancing.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "On August 6, 2025, in connection with its refinancing transactions, the Issuer and certain of its subsidiaries entered into Amendment No. 14 to that certain Cre"
+        }
+      ]
+    },
+    {
+      "accession": "0001140361-25-030628",
+      "subject_cik": "0001359841",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "notes": "Original SUBJECT issuer outsidecurrenttradablemapping, indexedthroughinvestor/filer. Not partoffrozenoutside-routehashprobe; no price assignedtofilerticker.",
+      "clauses": []
+    },
+    {
+      "accession": "0001683168-25-005932",
+      "subject_cik": "0001611046",
+      "decision": "EXCLUDE_ROUTINE_INSIDER_ROLE",
+      "notes": "Existingdirector/officer/manager/ownerrole withgeneralinvestmentintent andpossiblefutureactions; nocurrentindependentcampaign inreviewedoriginal.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The acquisition by the Reporting Persons of the Shares (as hereinafter defined) as described herein was effected because of the belief that the Shares represent"
+        }
+      ]
+    },
+    {
+      "accession": "0001185185-25-000963",
+      "subject_cik": "0002070602",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Founder Shares On April 16, 2025, the Sponsor paid $25,000 to cover certain of Issuer's offering and formation costs in exchange for 5,750,000 Class B ordinary "
+        }
+      ]
+    },
+    {
+      "accession": "0001999371-25-011273",
+      "subject_cik": "0001809122",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "notes": "Original SUBJECT issuer outsidecurrenttradablemapping, indexedthroughinvestor/filer. Not partoffrozenoutside-routehashprobe; no price assignedtofilerticker.",
+      "clauses": []
+    },
+    {
+      "accession": "0001104659-25-079251",
+      "subject_cik": "0001207179",
+      "decision": "EXCLUDE_ROUTINE_INSIDER_ROLE",
+      "notes": "GLNGexistingdirectorrole/genericownership; nocurrentnomination orconcretedemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Each of the Reporting Persons reports that neither it nor, to its knowledge, any of the other persons named in Item 2 of this Schedule 13D, currently has any pl"
+        }
+      ]
+    },
+    {
+      "accession": "0000950142-25-002245",
+      "subject_cik": "0001529274",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons acquired the common stock reported herein for investment purposes. Consistent with such purposes, the Reporting Persons may engage in comm"
+        }
+      ]
+    },
+    {
+      "accession": "0000905148-25-003073",
+      "subject_cik": "0001794515",
+      "decision": "EXCLUDE_ROUTINE_INSIDER_ROLE",
+      "notes": "Existingdirector/officer/manager/ownerrole withgeneralinvestmentintent andpossiblefutureactions; nocurrentindependentcampaign inreviewedoriginal.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons acquired the Common Stock for investment purposes. Owen Wurzbacher, who serves as the Chief Investment Officer of HighSage Ventures LLC, s"
+        }
+      ]
+    },
+    {
+      "accession": "0001193805-25-001231",
+      "subject_cik": "0000701347",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons purchased the Shares based on the Reporting Persons' belief that the Shares, when purchased, were undervalued and represented an attractiv"
+        }
+      ]
+    },
+    {
+      "accession": "0000950170-25-111487",
+      "subject_cik": "0002074176",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information in Items 3 and 6 is incorporated herein by reference. All of the shares of Class A common stock, par value 0.000001 per share (\"Class A Common S"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-25-084149",
+      "subject_cik": "0001674168",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "All of the securities that are held by AP Fresco and MAPS Equity and that may be deemed to be beneficially owned by the Reporting Persons, as reported herein, w"
+        }
+      ]
+    },
+    {
+      "accession": "0000928785-25-000021",
+      "subject_cik": "0001303523",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Standard Bank is a licensed bank and Financial Service provider in South Africa. SBG Securities Pty Ltd is a subsidiary of the Standard Bank Group and is the eq"
+        }
+      ]
+    },
+    {
+      "accession": "0000928785-25-000024",
+      "subject_cik": "0001303523",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Standard Bank is a licensed bank and Financial Service provider in South Africa. SBG Securities Pty Ltd is a subsidiary of the Standard Bank Group and is the eq"
+        }
+      ]
+    },
+    {
+      "accession": "0000921895-25-002532",
+      "subject_cik": "0001786352",
+      "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "symbol": "BILL",
+      "case_kind": "ANNOUNCED_NOMINATION_PLAN",
+      "instrument_kind": "COMMON_EQUITY",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "intend to nominate a slate of highly qualified director candidates"
+        }
+      ],
+      "earlier_public_action_date": null,
+      "notes": "Definite announced intent to nominate a slate at specified2025AnnualMeeting, not generic maynominate. No claim nominations alreadydelivered/names certified."
+    },
+    {
+      "accession": "0000950170-25-113757",
+      "subject_cik": "0001944885",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Originalstructuredpurposeisexactly Investment; no concretecampaign isreported.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Investment"
+        }
+      ]
+    },
+    {
+      "accession": "0000950157-25-000787",
+      "subject_cik": "0001564708",
+      "decision": "EXCLUDE_DISPOSITION_OR_OWNERSHIP_UPDATE",
+      "notes": "Insider/estate/portfolio sale, exit or repurchase update. No concretecurrentindependentintervention. Do notpromoteamislabeledinitialamendment.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons have sold all of their beneficial ownership of the Shares. The filing of this Schedule 13D constitutes an exit filing for the Reporting Pe"
+        }
+      ]
+    },
+    {
+      "accession": "0000950157-25-000788",
+      "subject_cik": "0001754301",
+      "decision": "EXCLUDE_DISPOSITION_OR_OWNERSHIP_UPDATE",
+      "notes": "Insider/estate/portfolio sale, exit or repurchase update. No concretecurrentindependentintervention. Do notpromoteamislabeledinitialamendment.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons have sold all of their beneficial ownership of the Shares. The filing of this Schedule 13D constitutes an exit filing for the Reporting Pe"
+        }
+      ]
+    },
+    {
+      "accession": "0000950170-25-114565",
+      "subject_cik": "0001564708",
+      "decision": "EXCLUDE_CONTROL_FAMILY_RESTRUCTURING",
+      "notes": "NewsCorpMurdochfamilyholdingandchair, no specificcurrentindependentintervention.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in Items 3 and 6 of this Schedule 13D is incorporated by reference in its entirety into this Item 4. The Reporting Persons initially a"
+        }
+      ]
+    },
+    {
+      "accession": "0000950170-25-114595",
+      "subject_cik": "0001754301",
+      "decision": "EXCLUDE_CONTROL_FAMILY_RESTRUCTURING",
+      "notes": "FoxMurdochfamilyholdingandchair, no specificcurrentindependentintervention.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in Items 3 and 6 of this Schedule 13D is incorporated by reference in its entirety into this Item 4. The Reporting Persons initially a"
+        }
+      ]
+    },
+    {
+      "accession": "0001213900-25-087881",
+      "subject_cik": "0001920406",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons acquired the securities reported herein as a result of or in connection with the Merger. As of the date hereof, the Reporting Persons cont"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-25-207482",
+      "subject_cik": "0001796022",
+      "decision": "EXCLUDE_ROUTINE_INSIDER_ROLE",
+      "notes": "Existingdirector/officer/manager/ownerrole withgeneralinvestmentintent andpossiblefutureactions; nocurrentindependentcampaign inreviewedoriginal.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Person acquired, and presently holds, Class A Common Stock, Class B Common Stock and Class B Units for investment purposes. Except as otherwise de"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-25-207501",
+      "subject_cik": "0001796022",
+      "decision": "EXCLUDE_ROUTINE_INSIDER_ROLE",
+      "notes": "Existingdirector/officer/manager/ownerrole withgeneralinvestmentintent andpossiblefutureactions; nocurrentindependentcampaign inreviewedoriginal.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Person acquired, and presently holds, Class A Common Stock, Class B Common Stock and Class B Units for investment purposes. In August 2025, Mr. Fe"
+        }
+      ]
+    },
+    {
+      "accession": "0001493152-25-014292",
+      "subject_cik": "0001892492",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth or incorporated in Item 3 and Item 6 is hereby incorporated by reference in its entirety into this Item 4. The Reporting Persons acqui"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-25-210003",
+      "subject_cik": "0000718937",
+      "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "symbol": "STAA",
+      "case_kind": "PUBLIC_OPPOSITION_TO_SALE",
+      "instrument_kind": "COMMON_EQUITY",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "presently intend to vote against the Proposed Merger"
+        }
+      ],
+      "earlier_public_action_date": null,
+      "notes": "Actual publicopenletter opposing sale and soliciting shareholderattention; not bidder financing/control or passive mergerarb. Broader eventtype reported separately."
+    },
+    {
+      "accession": "0001213900-25-090272",
+      "subject_cik": "0000095029",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in Item 3 of this Schedule 13D is incorporated by reference into this Item 4. The Reporting Person acquired the Shares of the Issuer, "
+        }
+      ]
+    },
+    {
+      "accession": "0000070858-25-000368",
+      "subject_cik": "0001232860",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "notes": "Original SUBJECT issuer outsidecurrenttradablemapping, indexedthroughinvestor/filer. Not partoffrozenoutside-routehashprobe; no price assignedtofilerticker.",
+      "clauses": []
+    },
+    {
+      "accession": "0001376474-25-000820",
+      "subject_cik": "0001997403",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons acquired the Issuer's common stock for investment purposes. None of the Reporting Persons have any plans or proposals which relate to or w"
+        }
+      ]
+    },
+    {
+      "accession": "0001085146-25-005770",
+      "subject_cik": "0001393726",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "On September 26, 2025, Tiptree Inc. (\"Tiptree\"), entered into an Agreement and Plan of Merger (the \"Merger Agreement\") by and among Tiptree, DB Insurance Co., L"
+        }
+      ]
+    },
+    {
+      "accession": "0001085146-25-005771",
+      "subject_cik": "0001393726",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "On September 26, 2025, Tiptree Inc. (\"Tiptree\"), entered into an Agreement and Plan of Merger (the \"Merger Agreement\") by and among Tiptree, DB Insurance Co., L"
+        }
+      ]
+    },
+    {
+      "accession": "0001539497-25-002580",
+      "subject_cik": "0001520697",
+      "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "symbol": "ACHC",
+      "case_kind": "PUBLIC_STRATEGIC_DEMAND",
+      "instrument_kind": "COMMON_EQUITY",
+      "clauses": [
+        {
+          "filename": "exh4.htm",
+          "contains": "the Board must immediately initiate a formal strategic review process"
+        }
+      ],
+      "earlier_public_action_date": "2025-10-01",
+      "notes": "Concrete demanded formalreview/partial-or-fullsale in original attachedOct1letter; references priorprivateletters and EngineSept24publiccampaign, so not worldwidefirstcertification."
+    },
+    {
+      "accession": "0000919574-25-005987",
+      "subject_cik": "0001386716",
+      "decision": "RESERVED_APPOINTMENT_VS_CURRENT_INTERVENTION",
+      "notes": "SBLK merelyreportsOctober3appointment afterinvestment. Keepboundarycase separate, no explicitcampaign inoriginal. Not automaticallytreatedassuccess/nonevent.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "On October 3, 2025, Mr. Mikkel Storm Weum, an investment director of Seatankers Management AS (\"Seatankers\"), an entity that is related to the Reporting Persons"
+        }
+      ]
+    },
+    {
+      "accession": "0000070858-25-000381",
+      "subject_cik": "0001832871",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "notes": "Original SUBJECT issuer outsidecurrenttradablemapping, indexedthroughinvestor/filer. Not partoffrozenoutside-routehashprobe; no price assignedtofilerticker.",
+      "clauses": []
+    },
+    {
+      "accession": "0001493152-25-017669",
+      "subject_cik": "0000924396",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons purchased the shares for investment purposes. The Reporting Persons currently do not have any plans or intentions to control or influence "
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-25-098559",
+      "subject_cik": "0000319654",
+      "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "symbol": "PBT",
+      "case_kind": "TRUST_UNIT_RESTRUCTURING_PROPOSAL",
+      "instrument_kind": "LISTED_ROYALTY_TRUST_UNITS",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "SoftVest Advisors will file preliminary proxy materials"
+        }
+      ],
+      "earlier_public_action_date": "2025-10-09",
+      "notes": "Executed coordinationagreement for proxy campaign supporting trustindenturereformation/corporateconversion. Listedroyaltytrustunits, NOT operatingcompanycommonstock; disclose instrumentcategory, no basketclaim that alltargets are companies."
+    },
+    {
+      "accession": "0001829126-25-008079",
+      "subject_cik": "0002000756",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "On June 15, 2023, the Issuer entered into that certain Merger Agreement, by and among the Issuer, Global Star Acquisition Inc., a Delaware corporation (\"Global "
+        }
+      ]
+    },
+    {
+      "accession": "0002085726-25-000004",
+      "subject_cik": "0001509745",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in or incorporated by reference in Item 3 of this Schedule 13D is hereby incorporated by reference in its entirety into this Item 4. I"
+        }
+      ]
+    },
+    {
+      "accession": "0000912282-25-001148",
+      "subject_cik": "0001790169",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "On September 20, 2025, the Reporting Person was appointed as a director and as the Chairman of the Board of the Issuer. On October 22, 2025, the Issuer's shareh"
+        }
+      ]
+    },
+    {
+      "accession": "0001623632-25-001475",
+      "subject_cik": "0001598646",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "notes": "Original SUBJECT issuer outsidecurrenttradablemapping, indexedthroughinvestor/filer. Not partoffrozenoutside-routehashprobe; no price assignedtofilerticker.",
+      "clauses": []
+    },
+    {
+      "accession": "0001104659-25-103842",
+      "subject_cik": "0001464591",
+      "decision": "EXCLUDE_ACQUISITION_CONTROL",
+      "notes": "GPRKbidderproposesbuyingallshares for9USD, sameacquirerexclusionas2024.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "On October 29, 2025, the Reporting Person issued a press release publicly announcing that it had submitted a proposal (the \"Proposal\") to the Board of Directors"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-25-270033",
+      "subject_cik": "0001979887",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information in Item 3 of this Schedule 13D is incorporated in this Item 4 by reference. The Reporting Persons hold the securities described in this Schedule"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-25-276183",
+      "subject_cik": "0001393726",
+      "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "symbol": "TIPT",
+      "case_kind": "PUBLIC_OPPOSITION_TO_SALE",
+      "instrument_kind": "COMMON_EQUITY",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "presently intend to vote against the Fortegra Transaction"
+        }
+      ],
+      "earlier_public_action_date": "2025-11-10",
+      "notes": "ActualNov10publicletter asks holders to oppose subsidiarysale/value/tax/capitalallocation. Not acquisitionconsideration filingsSept30, not acquirercontrol."
+    },
+    {
+      "accession": "0001493152-25-022024",
+      "subject_cik": "0001826397",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The disclosure set forth above in Item 3 of the Schedule 13D is hereby incorporated by reference in its entirety into this Item 4. On November 5, 2025, the Boar"
+        }
+      ]
+    },
+    {
+      "accession": "0001213900-25-110177",
+      "subject_cik": "0001720116",
+      "decision": "EXCLUDE_DISPOSITION_OR_OWNERSHIP_UPDATE",
+      "notes": "Insider/estate/portfolio sale, exit or repurchase update. No concretecurrentindependentintervention. Do notpromoteamislabeledinitialamendment.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons mutually agreed that (i) Messrs. Dubner, MacLachlan and Reilly would each sell 15,000 shares of Common Stock and (ii) Mr. Dell would sell "
+        }
+      ]
+    },
+    {
+      "accession": "0001341401-25-000039",
+      "subject_cik": "0000717954",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Stock was acquired for investment purposes in the ordinary course of business. As such, the Filer may purchase, hold, vote, trade, dispose, sell or otherwis"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-25-294130",
+      "subject_cik": "0000915840",
+      "decision": "EXCLUDE_ROUTINE_INSIDER_ROLE",
+      "notes": "Existingdirector/officer/manager/ownerrole withgeneralinvestmentintent andpossiblefutureactions; nocurrentindependentcampaign inreviewedoriginal.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The disclosure provided in Item 3 above is incorporated herein by reference. The Reporting Person serves as Chairman, President and Chief Executive Officer of t"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-25-117151",
+      "subject_cik": "0001674862",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons acquired the Shares to which this Schedule 13D relates because they believe the Shares represent an attractive investment opportunity. The"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-25-305566",
+      "subject_cik": "0001713407",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "notes": "Original SUBJECT issuer outsidecurrenttradablemapping, indexedthroughinvestor/filer. Not partoffrozenoutside-routehashprobe; no price assignedtofilerticker.",
+      "clauses": []
+    },
+    {
+      "accession": "0001193125-25-307237",
+      "subject_cik": "0001327318",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "notes": "Original SUBJECT issuer outsidecurrenttradablemapping, indexedthroughinvestor/filer. Not partoffrozenoutside-routehashprobe; no price assignedtofilerticker.",
+      "clauses": []
+    },
+    {
+      "accession": "0001193125-25-310146",
+      "subject_cik": "0001261654",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons acquired the Common Stock for investment purposes, and such purposes were made in the Reporting Persons' ordinary course of business. In p"
+        }
+      ]
+    },
+    {
+      "accession": "0001493152-25-026280",
+      "subject_cik": "0000080172",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The response to Item 3 of this Schedule is incorporated herein by reference. The Reporting Persons acquired 362,250 shares of Common Stock over which they exerc"
+        }
+      ]
+    },
+    {
+      "accession": "0000807249-25-000176",
+      "subject_cik": "0000062234",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Each of the Reporting Persons has purchased and holds the Securities reported by it for investment for one or more accounts over which it has shared, sole, or b"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-25-316177",
+      "subject_cik": "0000011544",
+      "decision": "EXCLUDE_CONTRACTUAL_RIGHTS_ONLY",
+      "notes": "WRBfutureconditionalnominationright afterMarch2026regulatoryapproval, nonamedcurrentnomination/action. Strategicownershipcontractnotcurrentcampaign.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Calculations of the Reporting Persons' beneficial ownership on the cover pages and in Item 5(a) of this Statement are based on 380,021,174 shares of Common Stoc"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-25-316616",
+      "subject_cik": "0000011544",
+      "decision": "EXCLUDE_CONTRACTUAL_RIGHTS_ONLY",
+      "notes": "WRBsamecontractualconditionalfutureboardrights, not independentnewintervention.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Calculations of the Reporting Persons' beneficial ownership on the cover pages and in Item 5(a) of this Statement are based on 380,021,174 shares of Common Stoc"
+        }
+      ]
+    },
+    {
+      "accession": "0001654954-25-013917",
+      "subject_cik": "0000933972",
+      "decision": "RESERVED_LETTER_NOT_YET_DELIVERED",
+      "notes": "SCWOoppositiontoannouncedreverse-split, butletter explicitlytobedelivered, no actualdeliveredproposal inoriginal. Do not manufacturecompletedcampaign.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "On December 10, 2025, Mr. Davis contacted Messrs. Nagar and McKnight separately to express his views regarding the current management of the Issuer, including h"
+        }
+      ]
+    },
+    {
+      "accession": "0002056058-25-000003",
+      "subject_cik": "0000019871",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Person acquired the shares for investment purposes. The Reporting Person and Walter W. Morrissey previously may have been deemed to constitute a \""
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-25-326263",
+      "subject_cik": "0001651311",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "notes": "Original SUBJECT issuer outsidecurrenttradablemapping, indexedthroughinvestor/filer. Not partoffrozenoutside-routehashprobe; no price assignedtofilerticker.",
+      "clauses": []
+    },
+    {
+      "accession": "0001193125-25-326955",
+      "subject_cik": "0000810332",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "notes": "Original SUBJECT issuer outsidecurrenttradablemapping, indexedthroughinvestor/filer. Not partoffrozenoutside-routehashprobe; no price assignedtofilerticker.",
+      "clauses": []
+    },
+    {
+      "accession": "0001193125-25-327245",
+      "subject_cik": "0002089126",
+      "decision": "EXCLUDE_FUND_MANAGER_OWNERSHIP",
+      "notes": "Privatefund/adviserownership, not directionalindependentcommon-sharecampaign.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in Item 2 is incorporated herein by reference. The Reporting Persons have acquired the securities reported herein for investment purpo"
+        }
+      ]
+    },
+    {
+      "accession": "0001493152-25-028429",
+      "subject_cik": "0001983324",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons do not have any present plans or proposals that relate to or would result in any of the actions described in subparagraphs (a) through (j)"
+        }
+      ]
+    },
+    {
+      "accession": "0001140361-25-046373",
+      "subject_cik": "0001655891",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "TRMDblockpurchaseclosingconditionalboardchair, acquisitioncontractrights not independentcurrentcampaign.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "On September 11, 2025, Hafnia entered into a sale and purchase agreement dated September 11, 2025 (the \"Sale and Purchase Agreement\") by and between OCM Njord H"
+        }
+      ]
+    },
+    {
+      "accession": "0001213900-26-001578",
+      "subject_cik": "0002012096",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "To effect a change in the ultimate beneficial ownership of the Company's shares held indirectly through Bliss On Limited, following the sale of the entire issue"
+        }
+      ]
+    },
+    {
+      "accession": "0002097627-26-000007",
+      "subject_cik": "0001006045",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons hold shares of Series B Preferred Stock and the Note for investment purposes. The Reporting Persons intend to communicate, directly or thr"
+        }
+      ]
+    },
+    {
+      "accession": "0002103027-26-000002",
+      "subject_cik": "0001522727",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons acquired the Common Units reported in this Schedule 13D for investment purposes as part of the consideration payable in connection with th"
+        }
+      ]
+    },
+    {
+      "accession": "0001361570-26-000001",
+      "subject_cik": "0001773383",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Person acquired shares of Dynatrace Inc. as part of its investment strategy, which includes considering the clarity and robustness of the issuer's"
+        }
+      ]
+    },
+    {
+      "accession": "0001213900-26-005986",
+      "subject_cik": "0001989930",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in Item 3 above is incorporated into this Item 4 by reference. Except as set forth in this Schedule 13D, the Reporting Person currentl"
+        }
+      ]
+    },
+    {
+      "accession": "0001361570-26-000003",
+      "subject_cik": "0001707753",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Person acquired shares of ELASTIC NV as part of its investment strategy, which includes considering the clarity and robustness of the issuer's lon"
+        }
+      ]
+    },
+    {
+      "accession": "0000902664-26-000513",
+      "subject_cik": "0001441683",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons acquired the securities of the Issuer reported herein based on their belief that the securities were undervalued and represented an attrac"
+        }
+      ]
+    },
+    {
+      "accession": "0001213900-26-011574",
+      "subject_cik": "0002087361",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Founder Shares In connection with the organization of the Issuer, on August 22, 2025, our sponsor paid $25,000, or approximately $0.003 per share, to cover cert"
+        }
+      ]
+    },
+    {
+      "accession": "0001999371-26-002511",
+      "subject_cik": "0001829794",
+      "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "symbol": "EMPD",
+      "case_kind": "PUBLIC_LIQUIDATION_DEMAND",
+      "instrument_kind": "COMMON_EQUITY",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "undertake the immediate sale of all bitcoin owned by the Issuer"
+        }
+      ],
+      "earlier_public_action_date": "2026-02-03",
+      "notes": "Outside-routehashprobe, actualFeb3boardletter requestsnewCEO, reconstitutedboard, bitcoinliquidation/distribution. No price or identity coverage assumed."
+    },
+    {
+      "accession": "0000919574-26-000622",
+      "subject_cik": "0001772253",
+      "decision": "EXCLUDE_ROUTINE_INSIDER_ROLE",
+      "notes": "FLNGfilingrecountsMay2025already-completedappointment, nine monthsold, genericongoingboardrole, nocurrentnomination/interventionrequest.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "On May 8, 2025, Mr. Mikkel Storm Weum, employed as an investment director of Seatankers Management AS (\"Seatankers\"), an entity that is related to the Reporting"
+        }
+      ]
+    },
+    {
+      "accession": "0000950142-26-000320",
+      "subject_cik": "0001858681",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth under Item 3 above is incorporated by reference herein. Stockholders Agreement On January 27, 2025, the Reporting Person became a part"
+        }
+      ]
+    },
+    {
+      "accession": "0000038777-26-000052",
+      "subject_cik": "0002063946",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "notes": "Original SUBJECT issuer outsidecurrenttradablemapping, indexedthroughinvestor/filer. Not partoffrozenoutside-routehashprobe; no price assignedtofilerticker.",
+      "clauses": []
+    },
+    {
+      "accession": "0000038777-26-000054",
+      "subject_cik": "0002063946",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "notes": "Original SUBJECT issuer outsidecurrenttradablemapping, indexedthroughinvestor/filer. Not partoffrozenoutside-routehashprobe; no price assignedtofilerticker.",
+      "clauses": []
+    },
+    {
+      "accession": "0001104659-26-012643",
+      "subject_cik": "0000350698",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "ANordinaryinvestmentandpossiblechanges, explicitnocurrentintentionplanproposal.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons acquired the shares of Common Stock for investment purposes, from working capital. The Reporting Persons intend to continuously review and"
+        }
+      ]
+    },
+    {
+      "accession": "0001140361-26-004673",
+      "subject_cik": "0000860730",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "On February 6, 2026, certain dispositions and acquisitions of Shares (the \"Exchange\") occurred pursuant to an Exchange Agreement, dated as of that date (the \"Ex"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-26-046597",
+      "subject_cik": "0001591588",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in Item 3 of this Schedule 13D is incorporated by reference in its entirety into this Item 4. Based on the 24,644,386 issued and outst"
+        }
+      ]
+    },
+    {
+      "accession": "0000898432-26-000092",
+      "subject_cik": "0001467761",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in Item 3 of this Schedule 13D is incorporated herein by reference. Except as described herein, the Reporting Persons do not have any "
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-26-051323",
+      "subject_cik": "0001778922",
+      "decision": "EXCLUDE_ROUTINE_INSIDER_ROLE",
+      "notes": "Existingdirector/officer/manager/ownerrole withgeneralinvestmentintent andpossiblefutureactions; nocurrentindependentcampaign inreviewedoriginal.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in Item 3 of this Statement is incorporated herein by reference. The Reporting Persons hold the securities of the Issuer for general i"
+        }
+      ]
+    },
+    {
+      "accession": "0001643560-26-000006",
+      "subject_cik": "0001829959",
+      "decision": "EXCLUDE_ROUTINE_INSIDER_ROLE",
+      "notes": "Existingdirector/officer/manager/ownerrole withgeneralinvestmentintent andpossiblefutureactions; nocurrentindependentcampaign inreviewedoriginal.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons acquired beneficial ownership of the Common Shares reported herein for investment purposes, and such acquisitions were made in the Reporti"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-26-057057",
+      "subject_cik": "0000866729",
+      "decision": "EXCLUDE_ESTATE_AND_INSIDER_OWNERSHIP",
+      "notes": "SCHLbyoperationoflawestateholding, ordinaryexecutivedirectorrole.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Ms. Lucchese is filing this statement on Schedule 13D to report its acquisition, through operation of law, of beneficial ownership of more than 5% of the outsta"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-26-057702",
+      "subject_cik": "0000912615",
+      "decision": "EXCLUDE_DISPOSITION_OR_OWNERSHIP_UPDATE",
+      "notes": "URBNpercentageincreasefromreducedsharedenominator, no acquisition orintervention.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Mr. Hayne is filing this Schedule 13D because his percentage beneficial ownership increased as a result of a decrease in the shares outstanding reported by the "
+        }
+      ]
+    },
+    {
+      "accession": "0000921895-26-000511",
+      "subject_cik": "0001412408",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons purchased the Shares based on the Reporting Persons' belief that the Shares, when purchased, were undervalued and represented an attractiv"
+        }
+      ]
+    },
+    {
+      "accession": "0000912282-26-000366",
+      "subject_cik": "0001307954",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "All of the shares of Common Stock reported herein were acquired for investment purposes. The Reporting Person intends to evaluate his investment in the shares o"
+        }
+      ]
+    },
+    {
+      "accession": "0000921895-26-000515",
+      "subject_cik": "0001726445",
+      "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "symbol": "SEER",
+      "case_kind": "SPECIFIC_PRIVATE_REQUEST_DISCLOSED",
+      "instrument_kind": "COMMON_EQUITY",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "including commencing a strategic review process"
+        }
+      ],
+      "earlier_public_action_date": null,
+      "notes": "Outside-routehashprobe. Originaldiscloses already-engaged conversations specifically about commencingreview, unlike genericfuturemaydiscuss. Actualreviewstart or publicletter notcertified."
+    },
+    {
+      "accession": "0001193125-26-071713",
+      "subject_cik": "0001345126",
+      "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "symbol": "CODI",
+      "case_kind": "PUBLIC_LIQUIDATION_DEMAND",
+      "instrument_kind": "COMMON_EQUITY",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "immediately commence a strategic review process and orderly liquidation"
+        }
+      ],
+      "earlier_public_action_date": "2026-02-24",
+      "notes": "ActualFeb24ADWopenletter requestedreview/orderlyliquidation; not2024donation. Entry afterFeb25filing only."
+    },
+    {
+      "accession": "0000950103-26-002793",
+      "subject_cik": "0001825570",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Each Reporting Person acquired the securities described in this Schedule 13D for investment purposes and intends to review its investments in the Issuer on a co"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-26-021571",
+      "subject_cik": "0001432364",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "notes": "Original SUBJECT issuer outsidecurrenttradablemapping, indexedthroughinvestor/filer. Not partoffrozenoutside-routehashprobe; no price assignedtofilerticker.",
+      "clauses": []
+    },
+    {
+      "accession": "0001193125-26-086018",
+      "subject_cik": "0000890196",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "notes": "Original SUBJECT issuer outsidecurrenttradablemapping, indexedthroughinvestor/filer. Not partoffrozenoutside-routehashprobe; no price assignedtofilerticker.",
+      "clauses": []
+    },
+    {
+      "accession": "0000921895-26-000591",
+      "subject_cik": "0001084048",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons purchased the Shares based on the Reporting Persons' belief that the Shares, when purchased, were undervalued and represented an attractiv"
+        }
+      ]
+    },
+    {
+      "accession": "0000921895-26-000616",
+      "subject_cik": "0000708821",
+      "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "symbol": "PAR",
+      "case_kind": "PUBLIC_STRATEGIC_DEMAND",
+      "instrument_kind": "COMMON_EQUITY",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "immediately launch a fulsome strategic review process"
+        }
+      ],
+      "earlier_public_action_date": "2026-03-04",
+      "notes": "March4originalopenletter, specificreviewrequest toconsideralternatives; no use of its quoted prices/targets as outcome labels."
+    },
+    {
+      "accession": "0000807249-26-000024",
+      "subject_cik": "0000097134",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Each of the Reporting Persons has purchased and holds the Securities reported by it for investment for one or more accounts over which it has shared, sole, or b"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-26-103535",
+      "subject_cik": "0001464591",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in Items 3 and 6 of this Schedule 13D is incorporated by reference in its entirety into this Item 4. The Reporting Persons acquired be"
+        }
+      ]
+    },
+    {
+      "accession": "0001213900-26-027189",
+      "subject_cik": "0001666134",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons acquired the securities of the Issuer reported herein based on their belief that the securities were undervalued and represented an attrac"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-26-106280",
+      "subject_cik": "0001089063",
+      "decision": "EXCLUDE_CONTROL_FAMILY_RESTRUCTURING",
+      "notes": "DKStrustbeneficialownershiponly, no specificplans.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Overbrook235 LLC does not have any plans or proposals that relate to or would result in any of the matters listed in Item 4 of Schedule 13D except that, from ti"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-26-106285",
+      "subject_cik": "0001089063",
+      "decision": "EXCLUDE_CONTROL_FAMILY_RESTRUCTURING",
+      "notes": "DKSfamilyshares/equityawards/trustholding, no specificplans.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Michael E. Stack does not have any plans or proposals which relate to or would result in any of the matters listed in Item 4 of Schedule 13D except that, from t"
+        }
+      ]
+    },
+    {
+      "accession": "0000950103-26-003802",
+      "subject_cik": "0000717954",
+      "decision": "EXCLUDE_ACQUISITION_CONTROL",
+      "notes": "Cintas acquirercontrol/takeover, not shareholders demandingissuerchange.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Items 3 and 5 are incorporated by reference in this Item 4 as if fully set forth herein. The purpose of the Mergers (as defined below) is for Cintas Corporation"
+        }
+      ]
+    },
+    {
+      "accession": "0000921895-26-000805",
+      "subject_cik": "0001120970",
+      "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "symbol": "LODE",
+      "case_kind": "COOPERATION_AGREEMENT_BOARD_CHANGE",
+      "instrument_kind": "COMMON_EQUITY",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "appointed Donald A. Colvin, Robert M. Spence and Steven Y. Pei"
+        }
+      ],
+      "earlier_public_action_date": "2026-03-23",
+      "notes": "Outside-routehashprobe, executedcooperationagreement adds3specifieddirectors and schedulesretirements. Concreteboardrenewal, not isolatedroutineinsiderownership filing."
+    },
+    {
+      "accession": "0001104659-26-036913",
+      "subject_cik": "0001654795",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "notes": "Original SUBJECT issuer outsidecurrenttradablemapping, indexedthroughinvestor/filer. Not partoffrozenoutside-routehashprobe; no price assignedtofilerticker.",
+      "clauses": []
+    },
+    {
+      "accession": "0000902664-26-001830",
+      "subject_cik": "0001529274",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Person acquired the Shares because it believes the Shares are undervalued and represent an attractive investment opportunity."
+        }
+      ]
+    },
+    {
+      "accession": "0001652795-26-000005",
+      "subject_cik": "0001534701",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "This filing is made to formally record the Reporting Owners 10 percent interest and to facilitate the Institutional Repatriation and asset reconciliation of equ"
+        }
+      ]
+    },
+    {
+      "accession": "0001140361-26-013348",
+      "subject_cik": "0000007789",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons acquired the shares of Common Stock reported herein for investment purposes. In connection with the completion of the Merger, Wende L. Kot"
+        }
+      ]
+    },
+    {
+      "accession": "0001493152-26-015315",
+      "subject_cik": "0000913353",
+      "decision": "EXCLUDE_ROUTINE_INSIDER_ROLE",
+      "notes": "Existingdirector/officer/manager/ownerrole withgeneralinvestmentintent andpossiblefutureactions; nocurrentindependentcampaign inreviewedoriginal.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons are filing this statement solely because as of March 31, 2026, the Reporting Persons' beneficial ownership of the Issuer's Shares exceeded"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-26-040979",
+      "subject_cik": "0001589526",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Share Purchase Agreement On February 15, 2026, the Issuer and its wholly owned subsidiary, Blue Bird Body Company, a Georgia corporation (collectively, \"Blue Bi"
+        }
+      ]
+    },
+    {
+      "accession": "0001178913-26-002039",
+      "subject_cik": "0001742692",
+      "decision": "EXCLUDE_ROUTINE_INSIDER_ROLE",
+      "notes": "Existingdirector/officer/manager/ownerrole withgeneralinvestmentintent andpossiblefutureactions; nocurrentindependentcampaign inreviewedoriginal.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in Item 3 of this Schedule 13D is incorporated herein by reference. The Reporting Person serves as Chief Technology Officer and member"
+        }
+      ]
+    },
+    {
+      "accession": "0001654954-26-004008",
+      "subject_cik": "0001082733",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Person acquired the securities for investment purposes and in connection with the transactions described in Item 3, including the Issuer's propose"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-26-202033",
+      "subject_cik": "0000791908",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "notes": "Original SUBJECT issuer outsidecurrenttradablemapping, indexedthroughinvestor/filer. Not partoffrozenoutside-routehashprobe; no price assignedtofilerticker.",
+      "clauses": []
+    },
+    {
+      "accession": "0001493152-26-020941",
+      "subject_cik": "0001583771",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Common Stock owned by each of the Reporting Persons has been acquired for investment purposes. The Reporting Person may make further acquisitions of the Com"
+        }
+      ]
+    },
+    {
+      "accession": "0001654954-26-004283",
+      "subject_cik": "0001082733",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Person acquired the securities for investment purposes and in connection with compensation for services rendered to the Issuer. The Reporting Pers"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-26-202465",
+      "subject_cik": "0001065088",
+      "decision": "EXCLUDE_ACQUISITION_CONTROL",
+      "notes": "EBAYGameStop proposaltoacquireallshares, biddercontrol notindependentactivist.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Person believes that the Issuer's Common Stock is undervalued and represents an attractive investment opportunity. On May 3, 2026, GameStop delive"
+        }
+      ]
+    },
+    {
+      "accession": "0001140361-26-019621",
+      "subject_cik": "0002002660",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "On April 30, 2026, PSUS Holdings acquired 1,000,000 Preferred Shares in a private placement conducted in connection with the initial public offering of the Issu"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-26-058142",
+      "subject_cik": "0001495222",
+      "decision": "EXCLUDE_PREFERRED_CLASS",
+      "notes": "OXLCpreferredshares, do notassignfilingtocommonticker.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "EPCM caused the Accounts to acquire the Preferred Shares they hold for investment purposes and will continue to analyze such investments on an ongoing basis. EP"
+        }
+      ]
+    },
+    {
+      "accession": "0001213900-26-053940",
+      "subject_cik": "0002102155",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Pursuant to the Securities Subscription Agreement dated as of December 15, 2025, between the Sponsor and the Issuer as more fully described in Item 6 of this Se"
+        }
+      ]
+    },
+    {
+      "accession": "0000038777-26-000149",
+      "subject_cik": "0001762562",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "notes": "Original SUBJECT issuer outsidecurrenttradablemapping, indexedthroughinvestor/filer. Not partoffrozenoutside-routehashprobe; no price assignedtofilerticker.",
+      "clauses": []
+    },
+    {
+      "accession": "0002007997-26-000002",
+      "subject_cik": "0001828972",
+      "decision": "EXCLUDE_DISPOSITION_OR_OWNERSHIP_UPDATE",
+      "notes": "Insider/estate/portfolio sale, exit or repurchase update. No concretecurrentindependentintervention. Do notpromoteamislabeledinitialamendment.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Disposition of a material number of securities"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-26-063172",
+      "subject_cik": "0001649752",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "notes": "Original SUBJECT issuer outsidecurrenttradablemapping, indexedthroughinvestor/filer. Not partoffrozenoutside-routehashprobe; no price assignedtofilerticker.",
+      "clauses": []
+    },
+    {
+      "accession": "0001999371-26-011002",
+      "subject_cik": "0001882782",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in or incorporated by reference in Items 2, 3, 5 and 6 of this Schedule 13D is incorporated by reference in its entirety into this Ite"
+        }
+      ]
+    },
+    {
+      "accession": "0000921895-26-001441",
+      "subject_cik": "0001315257",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons purchased the Shares based on the Reporting Persons' belief that the Shares, when purchased, were substantially undervalued. Depending upo"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-26-252011",
+      "subject_cik": "0001720116",
+      "decision": "EXCLUDE_DISPOSITION_OR_OWNERSHIP_UPDATE",
+      "notes": "Insider/estate/portfolio sale, exit or repurchase update. No concretecurrentindependentintervention. Do notpromoteamislabeledinitialamendment.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons mutually agreed that (i) Messrs. Dubner, MacLachlan and Reilly would each sell 12,000 shares of Common Stock and (ii) Mr. Dell would sell "
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-26-070708",
+      "subject_cik": "0000028917",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in Item 6 of this Schedule 13D is incorporated herein by reference. Merger Agreement On June 4, 2026, the Issuer completed the transac"
+        }
+      ]
+    },
+    {
+      "accession": "0001140361-26-024531",
+      "subject_cik": "0001004702",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in Items 3 and 6 of this Statement is hereby incorporated by reference into this Item 4. The Warburg Pincus Reporting Persons benefici"
+        }
+      ]
+    },
+    {
+      "accession": "0002069861-26-000005",
+      "subject_cik": "0001096296",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "For investment purposes only. I do not exercise any management control of the company, though I do perform consulting services for the issuer through my company"
+        }
+      ]
+    },
+    {
+      "accession": "0001094891-26-000240",
+      "subject_cik": "0002088626",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "On July 9, 2025, Casper Holding LP, a sponsor of the Issuer, acquired an aggregate of 2,300,000 ordinary shares for an aggregate purchase price of $25,000 (the "
+        }
+      ]
+    },
+    {
+      "accession": "0001605484-26-000052",
+      "subject_cik": "0002049662",
+      "decision": "EXCLUDE_TARGET_OUTSIDE_MAIN_COHORT",
+      "notes": "Original SUBJECT issuer outsidecurrenttradablemapping, indexedthroughinvestor/filer. Not partoffrozenoutside-routehashprobe; no price assignedtofilerticker.",
+      "clauses": []
+    },
+    {
+      "accession": "0001140361-26-026121",
+      "subject_cik": "0001422183",
+      "decision": "EXCLUDE_ROUTINE_INSIDER_ROLE",
+      "notes": "Existingdirector/officer/manager/ownerrole withgeneralinvestmentintent andpossiblefutureactions; nocurrentindependentcampaign inreviewedoriginal.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in Items 3 and 6 of this Schedule 13D is hereby incorporated by reference into this Item 4. The Reporting Persons acquired the securit"
+        }
+      ]
+    },
+    {
+      "accession": "0000919574-26-004098",
+      "subject_cik": "0001456772",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The response to Item 3 of this Schedule 13D is incorporated by reference herein. The Reporting Persons acquired the Secured Exit Notes and the Common Shares in "
+        }
+      ]
+    },
+    {
+      "accession": "0000902664-26-002944",
+      "subject_cik": "0001529274",
+      "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "symbol": "ALKT",
+      "case_kind": "SPECIFIC_PRIVATE_REQUEST_DISCLOSED",
+      "instrument_kind": "COMMON_EQUITY",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "exploring a sale, including by engaging with multiple parties"
+        }
+      ],
+      "earlier_public_action_date": null,
+      "notes": "Disclosedalready-held discussions of sale withmultipleinterestedparties andboardleadership. April1filingonlyundervalued had no concreteaction and didnotstartblock."
+    },
+    {
+      "accession": "0000950157-26-000772",
+      "subject_cik": "0001549107",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in each of (i) Item 4 of the Original Schedule 13D included herein as Exhibit B and (ii) Item 4 of Amendment No. 1 included herein as "
+        }
+      ]
+    },
+    {
+      "accession": "0000905148-26-003216",
+      "subject_cik": "0001451809",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The responses to Item 3 and Item 6 of this Schedule 13D are incorporated herein by reference. The Reporting Persons acquired the securities reported herein for "
+        }
+      ]
+    },
+    {
+      "accession": "0000921895-26-001883",
+      "subject_cik": "0000357301",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons purchased the Shares based on the Reporting Persons' belief that the Shares, when purchased, were undervalued and represented an attractiv"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-26-330596",
+      "subject_cik": "0001314727",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons acquired the Common Stock for investment purposes, and such purposes were made in the Reporting Persons' ordinary course of business. In p"
+        }
+      ]
+    },
+    {
+      "accession": "0000902664-26-003374",
+      "subject_cik": "0000752642",
+      "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "symbol": "UMH",
+      "case_kind": "PUBLIC_STRATEGIC_DEMAND",
+      "instrument_kind": "COMMON_EQUITY",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "calling for the Board to undertake a comprehensive review of strategic alternatives"
+        }
+      ],
+      "earlier_public_action_date": "2026-07-13",
+      "notes": "OriginalJuly13Erezletter attached, review/potentialsale; filingAug11delayed. Preserve60sessionimmaturity atSep30."
+    },
+    {
+      "accession": "0001104659-26-096713",
+      "subject_cik": "0001674168",
+      "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "symbol": "HGV",
+      "case_kind": "NAMED_BOARD_REPRESENTATION_REQUEST",
+      "instrument_kind": "COMMON_EQUITY",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "to request support for any confirmation, vote or other action related thereto"
+        }
+      ],
+      "earlier_public_action_date": null,
+      "notes": "Originalreportsinitiatedcommunications requesting supportforSosin/boardrepresentation, not just generalfuturemaydiscuss. No claim a formal slate was delivered; reporttype."
+    },
+    {
+      "accession": "0001493152-26-038983",
+      "subject_cik": "0002084227",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Mr. Akimoto received the 135,454,900 shares of the Issuer's common stock, pursuant to a share exchange agreement between the Issuer and Advasa, Co., Ltd. (\"Adva"
+        }
+      ]
+    },
+    {
+      "accession": "0000905148-26-003844",
+      "subject_cik": "0001031203",
+      "decision": "RESERVED_PRELIMINARY_BOARD_DISCUSSION",
+      "notes": "GPIpossibleofferofseat discussed forBenjaminHart, no announcednomination or definitivecurrentrequest; preserveboundarycase ratherthantreatingpossibleplansascertain.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Person initially reported its beneficial ownership of greater-than-5% of the shares of Common Stock on Schedule 13G, most recently amended on Augu"
+        }
+      ]
+    },
+    {
+      "accession": "0001493152-26-039879",
+      "subject_cik": "0000916076",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Shareholders Agreement On the Closing Date, the Issuer, LNH and, solely for purposes of the standstill provisions set forth therein, FGI, entered into a shareho"
+        }
+      ]
+    },
+    {
+      "accession": "0001999371-26-018562",
+      "subject_cik": "0000909327",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Item 6 of this Schedule 13D is hereby incorporated herein by reference. The Fanny Parties and SH entered into a shareholders' agreement, effective as of August "
+        }
+      ]
+    },
+    {
+      "accession": "0001140361-26-035412",
+      "subject_cik": "0001861795",
+      "decision": "EXCLUDE_ACQUISITION_CONTROL",
+      "notes": "DefinitiveHealthcareAdventprivatizationproposal, not independentactivism.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Proposal On September 1, 2026, Advent LP, on behalf of the Advent GPE IX Funds (as defined herein) and the Advent Global Technology Funds (as defined herein) (c"
+        }
+      ]
+    },
+    {
+      "accession": "0001361570-26-000017",
+      "subject_cik": "0001773383",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Person acquired shares of Dynatrace Inc as part of its investment strategy, which includes considering the clarity and robustness of the issuer's "
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-26-106028",
+      "subject_cik": "0001495932",
+      "decision": "EXCLUDE_DISPOSITION_OR_OWNERSHIP_UPDATE",
+      "notes": "Insider/estate/portfolio sale, exit or repurchase update. No concretecurrentindependentintervention. Do notpromoteamislabeledinitialamendment.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "On September 3, 2026, the Issuer entered into a stock purchase agreement with Frank A. Selden, as trustee of the Gratitude 2022 Trust, to purchase 8,693,290 sha"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-26-106446",
+      "subject_cik": "0001500435",
+      "decision": "EXCLUDE_ROUTINE_INSIDER_ROLE",
+      "notes": "GPROexistingCEO/chairpersoninvestmentrole, generalfuturemayactions notindependentcampaign.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in Items 3 and 6 of this Schedule 13D is hereby incorporated by reference into this Item 4. Mr. Woodman serves as Chief Executive Offi"
+        }
+      ]
+    },
+    {
+      "accession": "0001213900-26-098398",
+      "subject_cik": "0002092967",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Person acquired the Common Shares for investment purposes through a series of related transactions, each of which is described below, as well as t"
+        }
+      ]
+    },
+    {
+      "accession": "0000947871-26-000861",
+      "subject_cik": "0001970622",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth or incorporated by reference in Item 6 of this Schedule 13D is incorporated by reference into this Item 4. The Reporting Persons inten"
+        }
+      ]
+    },
+    {
+      "accession": "0001193125-26-389440",
+      "subject_cik": "0001562401",
+      "decision": "EXCLUDE_ROUTINE_INSIDER_ROLE",
+      "notes": "Existingdirector/officer/manager/ownerrole withgeneralinvestmentintent andpossiblefutureactions; nocurrentindependentcampaign inreviewedoriginal.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The purpose of the acquisition of Shares by the Reporting Person is for investment as part of the general investment portfolio of the Reporting Person. This Sch"
+        }
+      ]
+    },
+    {
+      "accession": "0000902664-26-003832",
+      "subject_cik": "0000812011",
+      "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "symbol": "MTN",
+      "case_kind": "FORMAL_NOMINATION",
+      "instrument_kind": "COMMON_EQUITY",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "notice (the \"Nomination Notice\") of its intention to nominate"
+        }
+      ],
+      "earlier_public_action_date": "2026-09-10",
+      "notes": "Named4nominees, dateddeliverednotice. Sep17entry notmatureH20/H60atSep30; retainasIMMATURE, neverloss."
+    },
+    {
+      "accession": "0001361570-26-000020",
+      "subject_cik": "0001773383",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Person acquired shares of Dynatrace Inc as part of its investment strategy, which includes considering the clarity and robustness of the issuer's "
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-26-108394",
+      "subject_cik": "0001738906",
+      "decision": "EXCLUDE_ACQUISITION_CONTROL",
+      "notes": "111consortiumprivatizationproposal, acquirerratherthanindependentcampaign.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "On September 16, 2026, Gang Yu, Junling Liu, Sunny Bay Global Limited and Huadeng Tech BioArray Ventures Ltd (collectively, the Consortium) entered into a conso"
+        }
+      ]
+    },
+    {
+      "accession": "0001213900-26-100950",
+      "subject_cik": "0001739174",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons acquired the shares for investment purposes, and have the right to an additional 65,000 shares as described above. The Reporting Persons m"
+        }
+      ]
+    },
+    {
+      "accession": "0001104659-26-108753",
+      "subject_cik": "0001412095",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "On March 11, 2026, PRIME OCEAN HOLDINGS LIMITED (the \"Transferor\") and JMD CORPORATE SERVICES LIMITED (the \"Transferee\") entered into a share transfer agreement"
+        }
+      ]
+    },
+    {
+      "accession": "0002152025-26-000004",
+      "subject_cik": "0001095565",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in Item 3 of this Schedule is incorporated herein by reference. WJRJJ purchased shares of the Company's common stock pursuant to a Sec"
+        }
+      ]
+    },
+    {
+      "accession": "0000950142-26-002581",
+      "subject_cik": "0001948864",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "Merger Agreement On September 17, 2026 (the \"Closing Date\"), the Issuer completed the previously announced Merger (as defined below) pursuant to the Agreement a"
+        }
+      ]
+    },
+    {
+      "accession": "0000904853-26-000006",
+      "subject_cik": "0000930236",
+      "decision": "EXCLUDE_NO_CONCRETE_CURRENT_ACTION",
+      "notes": "Investmentintent/generalmanagementdialogue or possiblefutureplans only. Nominationpossibility/genericmay isnotannouncedconcretenomination,strategic/operational/capitaldemand.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The Reporting Persons acquired the shares of Common Stock to which this Schedule 13D relates for investment purposes because they believe they represent an attr"
+        }
+      ]
+    },
+    {
+      "accession": "0001140361-26-037699",
+      "subject_cik": "0000037785",
+      "decision": "EXCLUDE_ACQUISITION_FINANCING_OR_RESTRUCTURING",
+      "notes": "Acquisition, privateplacement, preferred/loan, sponsor, spin-off, assetmanagementorcorporaterestructuringcontext; contractualboardrightsisnotindependentcampaign. Nooutcomeselection.",
+      "clauses": [
+        {
+          "filename": "primary_doc.xml",
+          "contains": "The information set forth in Item 3 of this Schedule 13D is hereby incorporated by reference in its entirety into this Item 4. In connection with the Stock Purc"
+        }
+      ]
+    }
+  ]
+}

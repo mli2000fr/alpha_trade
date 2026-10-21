@@ -8,5 +8,6 @@
 2. [Protections et watcher](protections_et_watcher.md)
 3. [Réconciliation et TCA](reconciliation_et_tca.md)
 4. [Adaptateur IBKR](ibkr.md)
+5. [Campagnes LONG et renforcement gagnant — watcher, risque et replay intraday](renforcement_gagnant.md)
 
 Retour : [vue globale de l'exécution](../11_execution_et_protections.md).
