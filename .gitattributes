@@ -32,3 +32,7 @@
 /tests/test_us_oracle_campaign.py text eol=lf
 /scripts/research/us_oracle_pyramiding*.py text eol=lf
 /tests/test_us_oracle_pyramiding.py text eol=lf
+/backtesting/research_intraday_native.py text eol=lf
+/scripts/research/us_intraday_fidelity*.py text eol=lf
+/tests/test_research_intraday_native.py text eol=lf
+/tests/test_us_intraday_fidelity*.py text eol=lf

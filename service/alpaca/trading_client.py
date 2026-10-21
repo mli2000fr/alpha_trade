@@ -57,10 +57,16 @@ class AlpacaTradingClient:
         url = f"{self.base_url}{path}"
         kwargs.setdefault("timeout", _DEFAULT_TIMEOUT)  # type: ignore[arg-type]
         last_exc: Exception | None = None
-        for attempt in range(_MAX_RETRIES + 1):
+        payload = kwargs.get('json')
+        durable_campaign_mutation = (method.upper() in ('POST', 'PATCH') and isinstance(payload, dict)
+            and str(payload.get('client_order_id') or '').startswith('wp-'))
+        for attempt in range(1 if durable_campaign_mutation else _MAX_RETRIES + 1):
             try:
                 resp = self._session.request(method, url, **kwargs)  # type: ignore[arg-type]
                 if resp.status_code == 429 or resp.status_code >= 500:
+                    if durable_campaign_mutation:
+                        raise BrokerApiError(resp.status_code,
+                            'Campaign mutation uncertain: reconcile exact client ID before any retry', resp.text)
                     delay = _BACKOFF_BASE * (2 ** attempt)
                     LOGGER.warning("Broker %s %s → %s, retry in %.1fs", method, path, resp.status_code, delay)
                     time.sleep(delay)
@@ -71,6 +77,8 @@ class AlpacaTradingClient:
                     return {}
                 return resp.json()  # type: ignore[no-any-return]
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+                if durable_campaign_mutation:
+                    raise  # A POST/PATCH timeout is not proof that the order was refused.
                 last_exc = exc
                 delay = _BACKOFF_BASE * (2 ** attempt)
                 LOGGER.warning("Broker %s %s → %s, retry in %.1fs", method, path, type(exc).__name__, delay)

@@ -9,6 +9,8 @@ Pour Alpha Trade, l’adaptation serait :
 - ne jamais renforcer une position perdante.
 C’est différent de notre dernière expérience : nous avons testé une seconde entrée après sortie, pas un ajout à une position encore ouverte et gagnante. Je n’ai pas retrouvé ce contrat précis dans le registre.
 Cela correspond à notre observation récente : peu de gagnants, mais certains très importants. Toutefois, renforcer peut aussi acheter trop tard et amplifier le retournement. Le stop ne garantit pas le budget de perte en présence d’un gap.
+
+
 2. Conditionner le suivi à une tendance persistante du titre
 Wayland propose notamment ADX, moyennes mobiles et confirmation sur plusieurs périodes.
 L’hypothèse adaptée serait : parmi les titres Oracle, accompagner ceux dont la tendance se construit, plutôt que chaque cassure isolée.
@@ -23,3 +25,22 @@ Assemblage de stratégies	La diversification ne transforme pas automatiquement p
 
 BigQuant insiste justement sur les coûts, les tests hors échantillon et le risque de sur-optimisation.
 Mon choix : confirmer d’abord le LONG simple H20 avec capital partagé, puis comparer un unique renforcement gagnant à l’entrée complète initiale, au même plafond de risque. Pas de nouveau modèle nécessaire pour ce premier essai. Aucun calcul ni changement lancé ici.
+
+
+
+
+
+-------------------------
+
+Le plus intéressant pour Alpha Trade est la construction du portefeuille, plutôt qu’un nouveau modèle directionnel.
+1. Éviter dix titres qui représentent le même pari.
+   Plusieurs valeurs Oracle peuvent être fortement corrélées et perdre ensemble. Le chapitre 16 propose de contrôler ces risques communs. Nous avons déjà des composants de corrélation, mais leur effet n’est pas intégralement reproduit dans la grille actuelle. Une expérience ciblée serait pertinente, sans changer Oracle. Chapitre 16
+2. Chercher une combinaison robuste, pas uniquement la plus rentable.
+   Après notre grille, vérifier si les paramètres voisins restent satisfaisants, si quelques titres expliquent tous les gains et si l’avantage résiste aux coûts. Le meilleur résultat parmi beaucoup d’essais peut simplement être chanceux. Chapitre 7
+3. Examiner les périodes de transition de régime.
+   Le livre souligne les faux changements et les états incertains. Cela mérite un diagnostic, mais pas de relancer automatiquement nos protections dynamiques déjà défavorables. Chapitre 13
+4. Utiliser le LLM pour extraire des faits nouveaux.
+   Comparer annonces, guidance et résultats sourcés paraît plus défendable que lui demander directement LONG/SHORT. Cela rejoint notre piste SEC, sans démontrer encore un avantage. Chapitre 14
+Je n’y ai pas trouvé de recette démontrée résolvant notre problème D1/D10. Plusieurs exemples sont pédagogiques, pas des résultats reproductibles.
+Ma recommandation : terminer la grille B4, analyser sa robustesse, puis tester un contrôle de concentration/corrélation.
+J’ai sauvegardé la revue chapitre par chapitre et les propositions dans [la synthèse détaillée](F:/projets/doc/ml/lecture_wayland_quant_book_20261021.md). Aucun nouveau test ni changement de production lancé.

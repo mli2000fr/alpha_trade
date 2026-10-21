@@ -851,6 +851,21 @@ def build_rebalance_buy_intent(
 
 def _resolve_alpaca_time_in_force(intent: OrderIntent, config: ExecutionConfig | None = None) -> str:
     if intent.time_in_force is not None:
+        if intent.winner_campaign_id is not None:
+            if (config is None or config.market_code != 'US_EQ'
+                    or not intent.winner_campaign_id.startswith('wp-')
+                    or intent.broker_mode != config.broker_mode
+                    or not is_effectively_integer_quantity(intent.qty) or intent.qty <= 0
+                    or intent.side not in ('buy', 'sell')):
+                raise ValueError('Invalid scoped winner campaign order')
+            if (intent.time_in_force == 'ioc' and intent.order_type == 'limit'
+                    and intent.intent_role == IntentRole.ENTRY and intent.side == 'buy'
+                    and intent.limit_price is not None and intent.limit_price > 0):
+                return 'ioc'
+            if (intent.time_in_force == 'opg' and intent.order_type == 'market'
+                    and intent.intent_role == IntentRole.EXIT and intent.side == 'sell'):
+                return 'opg'
+            raise ValueError('Campaign TIF restricted to LONG limit IOC entries / MOO exits')
         if (intent.time_in_force != 'opg' or intent.order_type != 'market'
                 or intent.intent_role != IntentRole.EXIT or intent.side not in ('buy', 'sell')
                 or intent.broker_mode != 'paper' or not is_effectively_integer_quantity(intent.qty)):
@@ -917,6 +932,10 @@ def build_oco_protection_payload(
         oco_id = _make_id()
     # client_order_id stable et unique par exec_run_id + symbol + oco_id pour idempotence et traçabilité
     client_order_id = f"oco-{_alpaca_client_order_id(parent.exec_run_id, parent.symbol, 'oco_protection', 'sell', qty)}-{oco_id}"
+    if tp_intent.winner_campaign_id is not None:
+        if tp_intent.winner_campaign_id != stop_intent.winner_campaign_id or not tp_intent.submission_key:
+            raise ValueError('Inconsistent durable campaign OCO lineage')
+        client_order_id = tp_intent.submission_key  # Recover a lost OCO POST by exact client ID.
 
     take_profit: dict[str, str] = {"limit_price": str(tp_intent.limit_price)}
     stop_loss: dict[str, str] = {"stop_price": str(stop_intent.stop_price)}

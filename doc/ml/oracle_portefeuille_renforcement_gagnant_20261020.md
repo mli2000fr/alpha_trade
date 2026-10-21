@@ -201,6 +201,12 @@ preuve que ces gagnants auraient été identifiés d'avance.
 
 ## Conclusion et prochaine décision
 
+Complément du21octobre : l'utilisateur a autorisé le renforcement de la fidélité
+LONG/SHORT avant optimisation. L'adaptateur de composants natifs et l'inventaire
+READ ONLY sont livrés ; pas encore parité complète ni nouveau PnL. Les résultats
+ci-dessous restent ceux de la simulation initiale, non recalculés avec cet
+adaptateur. [État détaillé et preuves manquantes](fidelite_backtest_intraday_long_short_20261021.md).
+
 **Calcul et audit terminés** : `PASS_SHARED_CASH_RESEARCH_AUDIT`, six variantes,
 1 353 lots, 2 706 achats/ventes, 203 868 marques de compte et 1 470 ordres/tentatives
 contrôlés. Vérification séparée des premiers signaux, prix, stops, quantités,
@@ -220,6 +226,16 @@ l'exécution et des opérations sur titres. Aucun modèle, donnée SQL, batch,
 ordre PAPER/live ou configuration de production n'a changé.
 
 ## Reproduction et traces
+
+Complément d'implémentation du 21 octobre : un GO ultérieur a autorisé le
+raccordement backtest / live. Admission étape 12, watcher, risque natif frais et
+replay intraday sont raccordés, avec tests hors ligne. **Désactivé par défaut,
+qualification PAPER opérationnelle non réalisée** ; aucun ordre ni table de
+production créé. L'échéance demandée est désormais H séances depuis
+la première entrée effectivement exécutée, puis ouverture de la suivante : elle
+diffère de l'ancienne échéance Oracle de cette recherche. Les anciens résultats
+ne valident donc pas automatiquement ce nouveau contrat.
+[État livré, commande et limites de parité](../execution/renforcement_gagnant.md).
 
 Dossier : `artifacts/research/us_oracle_pyramiding/20261020-v1`.
 

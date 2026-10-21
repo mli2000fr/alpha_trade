@@ -472,6 +472,8 @@ class BacktestResult:
     trade_events_df: pd.DataFrame = field(default_factory=pd.DataFrame)
     diagnostics: BacktestDiagnostics = field(default_factory=BacktestDiagnostics)
     drawdown_breaker_df: pd.DataFrame = field(default_factory=pd.DataFrame)
+    # Campaign replay: actual five-minute marks, not fake daily sessions.
+    intraday_equity_curve: pd.DataFrame = field(default_factory=pd.DataFrame)
     # P2 (2026-06-25) : snapshot des trackers pour persistence cross-run
     tracker_snapshot: dict[str, object] | None = None
     wrapper: SimpleNamespace = field(init=False)
@@ -769,6 +771,10 @@ class BacktestEngine:
         # L'ancien paramètre s'appelait ``open`` et ombrait la builtin Python.
         # P1 — spread réel par ticker (stock_quote_snapshots).
         spread_df: pd.DataFrame | None = None,
+        intraday_source=None,
+        winner_research_assumptions: bool = False,
+        winner_progress=None,
+        winner_corporate_actions=None,
         **legacy_kwargs,
     ) -> BacktestResult:
         """Lance le backtest.
@@ -792,6 +798,15 @@ class BacktestEngine:
                 "BacktestEngine.run requiert open_df, close, high, low et signals_df."
             )
         cfg = self.config
+        from common.winner_pyramiding import load_winner_pyramiding_config
+        winner_policy = (cfg.exec_config.winner_pyramiding if cfg.exec_config is not None
+            else load_winner_pyramiding_config())
+        if winner_policy.enabled:
+            from backtesting.winner_intraday import run_winner_replay
+            return run_winner_replay(self, open_df=open_df, close=close, high=high, low=low,
+                signals_df=signals_df, volume=volume, sector_map=sector_map,
+                intraday_source=intraday_source, research_assumptions=winner_research_assumptions,
+                progress=winner_progress, corporate_actions=winner_corporate_actions)
         constraints = cfg.trading_constraints
 
         signals = signals_df.copy()

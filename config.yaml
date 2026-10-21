@@ -9,6 +9,24 @@ database:
   password: "${PASSWORD_DB}"
   name: alpha_trade
 
+# Campagnes LONG US : configuration partagée backtest / watcher.
+# Raccordement testé hors ligne ; laisser désactivé avant qualification PAPER/SIP réelle.
+# Les fractions 0.05/0.15 désignent 5 %/15 %, pas des points de pourcentage.
+winner_pyramiding:
+  enabled: false
+  initial_position_fraction: 0.5  # 0.5 = demi-position ; 1.0 = complète.
+  reinforcement_enabled: false  # Un seul ajout gagnant, jamais de moyenne à la baisse.
+  reinforcement_trigger_pct: 0.05
+  confirmation_bars: 2  # Clôtures consécutives de bougies régulières de 5 minutes.
+  stop_loss_pct: 0.07
+  take_profit_pct: null  # null = pas de TP en prix.
+  trailing_stop_pct: 0.15  # Ne peut jamais desserrer le stop initial.
+  horizon_sessions: 20  # Entrée incluse ; sortie à l'ouverture de la 21e séance.
+  entry_valid_sessions: 20  # Attente maximale après le signal, distincte de la détention.
+  max_quote_age_seconds: 60
+  max_bar_delay_seconds: 60
+  cost_reserve_bps_per_leg: 25  # Réserve de sizing, pas le tarif comptable réel.
+
 intraday_backfill:
   provider: alpaca  # alpaca | eodhd ; défaut de la page et de la commande.
   alpaca_feed: sip  # SIP obligatoire ; les anciens plans IEX ne sont pas réutilisés.

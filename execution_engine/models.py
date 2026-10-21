@@ -160,6 +160,7 @@ class OrderIntent:
     # ── Point 11 : traçabilité décision → ordre → fill → protection ──
     decision_fingerprint: str | None = None
     time_in_force: str | None = None  # Explicit MOO for the scoped GPT time exit.
+    winner_campaign_id: str | None = None  # Durable intraday campaign, never inferred from a symbol.
 
 
 @dataclass(frozen=True, slots=True)

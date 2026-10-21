@@ -1,5 +1,220 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-21 — Oracle TOP10 : filtre de tendance persistante, LONG / SHORT
+
+**TERMINÉ / 8 COMPTES AUDITÉS / PAS DE PROMOTION.** Une règle d'entrée figée :
+pour chacune des trois séances précédentes, LONG close>EMA20>EMA50, pente EMA20
+sur cinq séances positive, ADX14≥20 ; SHORT miroir avec même ADX. Aucun prix
+du jour d'entrée, pas de retry après refus, pas de sortie de tendance ajoutée.
+Même cohorte conditionnelle213campagnes/72titres, CatBoost PATH_H20 recherche,
+SL7/TR15/H20depuisOracle/sansTP, demi-position,1x,4kannuels,B4DD15/coûts figés.
+Quatre témoins recalculés : reproduction exacte des transactions/positions et
+métriques scellées. Huit audits cash/exits/risque passent ; second calcul
+scalaire des426signaux et coûts passe,107tests réussis. Anciennes copies du
+code vérifiées ; quatre évolutions dormantes depuis raccordement runtime
+explicitement consignées, pas de contournement silencieux de provenance.
+LONG rendement2025/2026sans→avec :+26,83→+1,29% /+16,94→+13,11%, DD22,36→14,08%
+/20,32→13,93%. SHORT−24,72→−15,07% /−25,61→−2,23%, DD37,05→21,61% /27,63→5,97%.
+TradesLONG100→7/73→18 ; SHORT94→28/61→6. Exposition nettement réduite,
+pas d'amélioration stable du taux gagnant, SHORT encore négatif avant coûts.
+Pas de témoin exposition-appariée ni holdout neuf : baisse du risque ne prouve
+pas un alpha directionnel. Pas tout TOP10 historique/paritélive complète.
+Aucun entraînement/API/SQLécrit/ordre ou paramètre de production changé.
+Dossier `artifacts/research/us_oracle_persistent_trend/20261021-v1`.
+[Règle, résultats détaillés, attribution et limites](oracle_tendance_persistante_20261021.md).
+
+## 2026-10-21 — Attribution des pertes SHORT, sans nouveau backtest
+
+Quatre grilles scellées ×2/×1/×1+B4DD20/×1+B4DD15 relues : aucun des
+144profilsSHORT positif dans chaque année2025/2026au30septembre. Attribution
+indépendante des288comptesSHORTDD15 : identités prix/frais/emprunt/MTM passent,
+erreur<9e-12USD, pas erreur de signe détectée. Référence SL7/TR15/H20/sansTP
+DD15 :−24,72/−25,61%, gagnants27,66/19,67%, rapportgain/perte1,66/1,70, seuil
+d'équilibre descriptif37,59/37,04%. PnLprix avantcoûts−903,42/−970,01USD,
+coûtsemprunt simulés3,56/1,66USD : frais nonexplicationprincipale. Seulement
+3/144profils2025 marginalementpositifs avantcoûts (meilleur+16,80USD),0/144en2026.
+GapsAPP/MP2025−258,91/−227,45USD corroborés temporellement par publications
+émetteurs ; calendrierAPP annoncé avantentrée, MPnouvelleannoncelejourdugap,
+pas preuveanticipationpossible. Pertes subsistent horsdeuxpirestrades et en
+régimeSPYSLIDE ; faussesconfirmations et restitutionsdegains, aucunveto
+prédictifnouveaudémontré. Oracleparcourscibleamplitude non signée, pas LONG/SHORT.
+Cohorte213campagnes/72titres, couverturefutureconditionnelle ; anciencontrat
+d'échéance, pas testdunouveauwatcher. Trois testsunitaires passent. Sources et
+tables/modèles/paramètres/ordres inchangés. Rapportv2 corrige explicitement la
+censureterminaledes11signauxSHORT2025 enfin d'année, V1conservée.
+[Analyse et limites](pourquoi_short_perdant_20261021.md).
+
+## 2026-10-21 — Campagnes gagnantes : raccordement risque watcher / replay intraday
+
+**IMPLÉMENTATION ET TESTS HORS LIGNE ; AUCUN NOUVEAU RÉSULTAT ÉCONOMIQUE.**
+Étape12 admet une cible LONG approuvée dans un plan durable, pas un achat
+immédiat. Budget/quantité approuvés ne sont plus multipliés par le levier ou
+l'overlay d'exposition pour ces campagnes. Watcher : signal cinq minutes puis
+revalidation NativeWinnerRisk / RiskCheckerImpl / ConstraintChecker, contexte
+réel frais compte/mode, SIP, daily, régime, corrélation/concentration, réserves
+et capital. État B4 durable par compte/mode, pas reset du pic à chaque boucle
+ni cinq-minutes comptées comme journées favorables. Outbox avant POST, reprise
+sans doublon, fills partiels/protections/échéance et réarmement après rejet
+confirmé de sortie testés. H20 depuis première entrée réelle, open séance21.
+BacktestEngine route explicitement le mécanisme vers le même coordinateur,
+cash partagé/règlement/frais/financement/plafond levier natif. CLI READ ONLY
+`backtesting.winner_campaign_replay` : scores Oracle parcours déjà calculés,
+lineage/hashes validés avant classement ; aucune sélection par labels futurs.
+Prix raw SIP réguliers5m seulement, métadonnées actuelles nonPIT déclarées,
+frais/fills hypothétiques OHLC, pas tape macro complète ni paritélivecertifiée.
+Manque candidat => INCOMPLETE_COVERAGE ; manque détenu => FAILED. Dividendes
+cash qualifiés traités ; split/autre lifecycle détenu non qualifié => refus.
+Rapports annuels, DD5m, gagnants/perdants, durées et capital moyen engagés.
+**322 tests réussis**, rapport `artifacts/tmp/winner-delivery-final-20261021-v3.xml`.
+YAML `winner_pyramiding.enabled=false` conservé. Aucune nouvelle collecte,
+écriture SQL de production, entraînement, LLM ou ordre. Qualification PAPER
+broker/SIP réelle et disponibilité PC à l'open restent des prérequis distincts.
+[Guide, commandes et périmètre exact](../execution/renforcement_gagnant.md).
+
+## 2026-10-21 — Grille B4 15 % contre 20 % : comparaison appariée lancée
+
+**198 TESTS PASS / QUATRE PILOTES PASS / GRILLE576 EN COURS.** Après modification
+utilisateur du preset `capital_2001_5000`, seuil effectif confirmé15% ; seul
+champ de contrôle différent du témoin20%, autres règles B4/liquidations
+inchangées et vérifiées. Nouveau runner dédié réutilisant le ledger/les audits
+et toutes les données/régimes figés du20% byte-identiques, sans modifier les
+sources ou résultats précédents. Même144politiquesLONG+144SHORT parannée,
+4k indépendants2025/2026au30septembre, plafond×1, frais/sizing/SL/trailing/H/TP,
+213campagnes/72titres et réserves inchangés. Pas plafondDDgaranti15%, ni hardhalt
+pertejour3%, ni paritélivecomplète. Tous576cas recalculés ; pas de mélange.
+Nouveau dossier `artifacts/research/us_intraday_protection_grid/20261021-1x-risk-dd15-v1`.
+Tableau attendu `comparison-dd15-vs-dd20.csv`, revue dédiée `threshold-review.json`.
+Bilancompletàattendre ; aucun nouveau modèle/LLM/API/SQLécrit/ordre oubatchmodifié.
+[Protocole, contrôles et suivi](grille_intraday_dd15_vs_dd20_20261021.md).
+
+## 2026-10-21 — Grille ×1 avec composants de protection de production
+
+**V2 TERMINÉE : 576/576 AUDITS PASS, ZÉRO ÉCHEC ; V1 PARTIAL_FAILED CONSERVÉE.**
+187 tests passent, les quatre cas SHORT2025 auparavant rejetés et quatre
+pilotes LONG/SHORT2025/2026 passent les audits stricts. Des écarts de sommation
+d'environ4e-12USD provoquaient de faux nouveaux creux, reset de streak et
+allocation10%au lieu de50%. Comparaisons monétaires B4/B4a stabilisées dans
+la fonction partagée production/backtest, aucun arrondi de cash/PnL ni seuil
+de risque changé ; audit inchangé. B0–B3 non-régression bit à bit. Sources et
+résultats v1 conservés ; paramètres/entrées v1 repris byte-identiques en v2,
+sans recharger YAML. **Tous les576cas recalculés**, aucune fusion572+4.
+V2 terminée en21min23s ; sources/entrées/576fichiers de cas et marqueurs
+revérifiés, `PASS_COMPLETED_RISK_GRID_REVIEW`, erreur max1,46e-11USD.
+Référence×1 conservée, overlay via CircuitBreaker B4 et RiskCheckerImpl réels ;
+configuration canonique capital_2001_5000 figée :DD20%, pertejour3%observée,
+fenêtre252séances, force-close50%du nombredepositions. Facteur B4 appliqué aux
+quantités, sorties natives avec frais/borrow ; ciblesindividuelles/grilleparent
+conservées, **pas tous les paramètres du preset ni tout PortfolioBuilder/live**.
+Cadence quotidienneàl'open après stops connus, SPY SMA50/200 de séance antérieure,
+437/437régimes disponibles, état persistantparannée. Réservescode : B4is_active
+ne crée pas de hardhaltjournalier3% ; passageExecutor audité journalise le facteur
+sans redimensionner dans ce passage, nouveau replay le raccorde explicitement.
+Exécuteur/configuration inchangés ; seule la correction numérique de la
+fonction B4 partagée touche aussi le risque de production. Pas de garantie
+de DD plafonné20%. Audits flux/exits/snapshotsrisque/traceB4/quantités passent
+sur les8cas de contrôle et les576cas complets. LONGpositifs25/144en2025,
+128/144en2026au30septembre,23politiquespositives surlesdeux ; SHORT0/144parannée.
+Profil LONGdéjàsuivi SL7/trailing15/H20/sansTP : rendementavecB4+16,25/+31,67%,
+capitalfinal4649,86/5266,82USDdepuis4000annuelsindépendants, DD26,93/20,88%,
+gagnants36,00/36,71%, capitalmoyenengagé2317,86/2784,57USD. SansB4mêmeprofil
++33,15/+31,67%, DD30,68/20,88% : protection2025partielle auprixdumoinsderendement,
+aucundéclenchement2026. 100/144LONG2025 et9/144LONG2026 voientleurDDdiminuer,
+pasaméliorationuniverselle. 420/576DDdépassent20%. H15SL7/trailing15/sansTP
+meilleurminimumannuelobservé LONG+20,91/+21,73%, DD26,61/19,14%, maischoix
+aprèsrésultats, paschampionOOSneuf. Cohorte213/72titres et réservesdeparité/
+survivants/qualitéfuture inchangées. Aucune promotionlive ou nouveaucalcul lancé.
+Dossier `artifacts/research/us_intraday_protection_grid/20261021-1x-risk-v2`.
+[Remédiation et preuves](remediation_numerique_b4_20261021.md).
+[Protocole, limites et suivi](grille_intraday_risque_production_20261021.md).
+[Résultats et métriques annuelles](grille_intraday_risque_production_resultats_20261021.md).
+
+## 2026-10-21 — Même grille intraday sans levier : comparaison ×1 / ×2
+
+**TERMINÉ / 576CAS PASS / COMPARAISON ×1–×2 DISPONIBLE.**
+576simulations2025/2026 :144politiquesLONG+144SHORTparannée, mêmes données/
+candidats/SL/trailing/H/TP/frais/borrow/maintenance/4kannuels que le×2.
+Seul budgetglobal/pouvoir d'achat/gross aux nouvelles entrées passe de2xà1x ;
+cible de demi-position individuelle inchangée, pas division mécanique du PnL
+ou de toutes les tailles. CashLONG nonemprunté, SHORT conserve emprunt de titres
+supposé/coût0,3%annual252. Dérive de ratio des positions existantes non
+rééquilibrée automatiquement, mêmes stops et maintenance. Run2x scellé conservé.
+Nouveau dossier `artifacts/research/us_intraday_protection_grid/20261021-1x-v1`.
+576/576terminés sanséchec en19min36s, audits/hashes/admissions1xvalidés. Profil
+LONGSL7/trailing15/H20/sansTP :+33,15/+31,67%, DD30,68/20,88%, capitalfinal
+5325,83/5266,82USD, capitalmoyenengagé2992,38/2784,57USD. AucunSHORTpositif.
+Mêmes métriques, comparaison politique par politique dans
+`comparison-1x-vs-2x.csv`. Pasentraînement/SQL/API/LLM/ordre/configproduction,
+ni promotionlive. [Protocole et suivi](grille_intraday_sans_levier_20261021.md).
+
+## 2026-10-21 — Grille intraday LONG/SHORT, levier ×2, 2025–2026
+
+**CALCUL TERMINÉ / 576 AUDITS PASS / LONG CONDITIONNEL / SHORT NON RETENU.**
+144 politiques par sens : SL3/5/7, trailingOFF/10/15/20, J+H5/10/15/20,
+TPOFF/10/20 ; deux années =>576 comptes annuels indépendants de4000USD.
+Levier natif explicitement2x, financement6,5%ACT/360, frais8bps/jambe,
+SHORT hypothétique0,3%annual252, maintenance et refus documentés. Demi-position
+sans ajout, max8titres, pas rendement simplement multiplié par deux. Entrées
+TOP10/cassures5m de la même cohorte213campagnes qualifiées,119/94,72titres,
+CatBoost PATH_H20 de recherche, biais survivants/qualité future ; pas tout le
+TOP10 original ni parité complète live. Capital moyen engagé/brut/%equity,
+débit financé, levier observé, DD, gagnants/perdants, gains/pertes et détentions
+séances/calendaires sauvegardés par politique/année.98tests passent, quatre
+essais annuels/sens audités ; aucune promotion de stratégie. Aucun SQL/API/
+LLM/entraînement/ordre/config production. Dossier
+`artifacts/research/us_intraday_protection_grid/20261021-v1`.
+576/576terminés,0échec,22min20s ; hashes/markers vérifiés, écart maximal
+cash/equity1,82e-11USD (`final-review.json`). LONG46/144politiques positives2025,
+139/144en2026,44/144surlesdeux ; SHORT0/144chaqueannée. Profil illustratif
+SL7/trailing15/H20/sansTP : **+55,73/+71,76 %**, capital final **6229,38/6870,28USD**,
+DD **34,64/29,56 %**, gagnants **37,25/38,10 %**, capital brut moyen engagé
+**4723,41/5061,03USD**, ratio moyen **90,30/84,47 %**, levier max **1,90/1,83**.
+Gains/pertes moyens **+200,25/−83,26USD** en2025, **+234,66/−88,32USD** en2026 ;
+détention gagnants/perdants **15,45/5,25** puis **15,03/5,19séances**. Septpositions
+2025restentMTM,aucune2026. Trailing20 mêmeSL/H/sansTP :+56,96/+64,25%,DD37,14/33,79%.
+Classements choisis APRÈS lecture des576résultats, pas champion présélectionné
+ni holdout neuf. Tous LONGH5 négatifs2025, tous positifs2026 ; gains concentrés
+surquelquestitres. Aucune promotion live, parité historique complète nonqualifiée.
+[Protocole, limites, définition des mesures et suivi](grille_intraday_long_short_20261021.md).
+
+## 2026-10-21 — Fidélité intraday LONG/SHORT : composants natifs et inventaire
+
+**ADAPTATEUR LIVRÉ / PARITÉ COMPLÈTE BLOQUÉE / AUCUNE OPTIMISATION NI NOUVEAU PnL.**
+GO renforcer LONG et SHORT avant la grille de paramètres. Nouveau module
+`backtesting/research_intraday_native.py`, sans modifier le moteur historique :
+booking entrées/sorties, cash/PnL, gross/buyingpower, coûts canoniques et durée
+d'emprunt natifs ; PositionSizer/ConstraintChecker, helpers directionnels et
+résolution conservatrice communs. Calendrier quotidien distinct des barres5m,
+vente intrabar ne finance pas open antérieur, stops/échéances avant achats,
+quantités entières, anti-doublon trackers, reprise interdite après mutation échouée.
+SHORT proceeds non assimilés à du capital libre ; pas de levier2implicite.
+Splits ajustent quantité/niveaux sans nouveau cash ; dividendes LONG positifs /
+SHORT négatifs, droit dateex et cash datepaiement distincts/idempotents. Fraction
+cash-in-lieu/identité/modalités inconnues refusées. Taux emprunt strict lié à sa
+convention native252 explicite, pas assimilation aux frais HTB calendrier360.
+
+Strict : reçus quotes/contexte risque/CA, emprunt additionnel SHORT ; mode
+hypothèses nommé séparément. PAS tout PortfolioBuilder intraday/regime/corrélation,
+watcher/armement/partialfills ou liquidations de marge réels. Une quote historique
+téléchargée maintenant peut servir à une simulation datée avec hypothèse de
+latence, mais pas prouver un reçu d'application ancien : jamais antidater.
+
+Même213campagnes parent,119/94 en2025/26,426premiers signaux LONG/SHORT audités,
+pas426événements indépendants. CatBoost PATH_H20 OOS TOP10 de recherche, biais
+survivants/trajectoires21séances complètes ;2024absent. READ ONLY/ROLLBACK sur72titres :
+31630quotes quotidiennes,1008snapshotsborrow,0journalCA applicatif. **0/426**quote
+candidate fraîche à l'entrée même au niveau timestampmarché ;1/213SHORTsnapshot
+borrow candidat, pas coûts/locates qualifiés. Complément autre table stagingCA :
+20événements/13titres (13cash_dividend Alpaca,7dividendBusinessQuant), pas preuve
+de couverture complète/modalités/payloads/déduplication. Données inconnues≠zéro.
+
+**83tests passent**,41nouveaux+42nonrégression,60sorties aléatoires comparées aux
+flux signés ; audit scalaire signaux/compteurs/hashes PASS, même assistant pas
+humain indépendant. Verdict `NATIVE_COMPONENTS_IMPROVED_HISTORICAL_FULL_PARITY_NOT_QUALIFIED`.
+Dossier faisant foi `artifacts/research/us_intraday_fidelity/20261021-v2`, v1
+prototype conservé/supplanté avec copie des sources. Aucun modèle/batch/config
+de production modifié, aucun API/LLM/SQL écrit/ordre/entraînement ou grille288.
+[Composants partagés, inventaire, preuves manquantes, tests et reproduction](fidelite_backtest_intraday_long_short_20261021.md).
+
 ## 2026-10-20 — LONG H20, capital partagé et ajout sur gagnant
 
 **CALCUL TERMINÉ / RECHERCHE CONDITIONNELLE / PAS DE PROMOTION DU RENFORCEMENT.**

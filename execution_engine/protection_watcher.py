@@ -8,7 +8,7 @@ import time
 from uuid import uuid4
 from collections import defaultdict
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any, Callable, cast
 
 from common.utils import configure_root_logging
@@ -77,6 +77,14 @@ def _build_summary(
         "time_stop_triggered": int(metrics.get("time_stop_triggered", 0) or 0),
         "time_stop_submitted": int(metrics.get("time_stop_submitted", 0) or 0),
         "time_stop_failed": int(metrics.get("time_stop_failed", 0) or 0),
+        "winner_plans_watched": int(metrics.get('winner_plans_watched', 0)),
+        "winner_buys_submitted": int(metrics.get('winner_buys_submitted', 0)),
+        "winner_protections_submitted": int(metrics.get('winner_protections_submitted', 0)),
+        "winner_stops_tightened": int(metrics.get('winner_stops_tightened', 0)),
+        "winner_exits_submitted": int(metrics.get('winner_exits_submitted', 0)),
+        "winner_entries_blocked": int(metrics.get('winner_entries_blocked', 0)),
+        "winner_failures": int(metrics.get('winner_failures', 0)),
+        "winner_details": metrics.get('winner_details', []),
         "broker_mode": metrics.get("broker_mode"),
         "account_id": metrics.get("account_id"),
     }
@@ -157,6 +165,7 @@ class ProtectionTransitionWatcher:
         self._default_broker_mode = default_broker_mode
         self._broker_cache: dict[tuple[str, str | None], ExecutionBrokerPort] = {}
         self._config_cache: dict[tuple[str, str | None], ExecutionConfig] = {}
+        self._winner_market_cache = {}
 
     def run(
         self,
@@ -209,6 +218,11 @@ class ProtectionTransitionWatcher:
             }
         )
 
+        # Campaign plans exist before any filled ENTRY; do not condition their
+        # scan on pending protection items or on metrics_by_run being nonempty.
+        managed_symbols = self._run_winner_campaigns(metrics_by_run,
+            account_id=account_id, exec_run_id=exec_run_id, limit=limit)
+
         for item in items:
             run_metrics = metrics_by_run[item.source_exec_run_id]
             run_metrics["source_exec_run_id"] = item.source_exec_run_id
@@ -258,6 +272,8 @@ class ProtectionTransitionWatcher:
         for position_row in orphan_positions:
             position_account_id = str(position_row.get("account_id") or account_id or "default")
             broker_mode = str(position_row.get("broker_mode") or "paper")
+            if (position_account_id, broker_mode, str(position_row.get('symbol') or '').upper()) in managed_symbols:
+                continue  # A campaign fill is not a manual orphan buy.
             try:
                 adoption = adopt_orphan_buy(
                     self._repo,
@@ -357,6 +373,56 @@ class ProtectionTransitionWatcher:
                 LOGGER.debug("Persistance run_business_summaries indisponible pour le watcher protections.", exc_info=True)
             emit_run_summary(summary)
         return summaries
+
+    def _run_winner_campaigns(self, metrics_by_run, *, account_id, exec_run_id, limit):
+        from sqlalchemy.engine import Engine
+        from execution_engine.winner_campaign_store import WinnerCampaignStore
+        from execution_engine.winner_runtime import WinnerCampaignRuntime
+        from execution_engine.winner_broker import NativeWinnerBroker
+        from execution_engine.winner_market import NativeWinnerMarket, NativeWinnerRisk
+        engine = getattr(self._repo, 'engine', None)
+        if not isinstance(engine, Engine):
+            return set()  # Legacy unit test doubles; no implicit DB construction.
+        store = WinnerCampaignStore(engine)
+        # Absence is normal before opt-in. A SQL failure is not absence: let the
+        # cycle fail without reconstructing campaign stops under a legacy policy.
+        records = store.rows(account_id, self._default_broker_mode)
+        if exec_run_id is not None:
+            records = [r for r in records if r['state']['exec_run_id'] == exec_run_id]
+        managed = {(r['state']['account_id'], r['state']['broker_mode'], r['state']['symbol']) for r in records}
+        groups = {}
+        for record in records:
+            key = record['state']['account_id'], record['state']['broker_mode']
+            groups.setdefault(key, []).append(record)
+        for (account, mode), group in groups.items():
+            cfg, broker = self._config_for(mode, account), self._broker_for(mode, account)
+            # Entry enable/disable is refreshed each cycle; old campaigns keep
+            # their frozen protections. A watcher need not restart to stop buys.
+            from common.winner_pyramiding import load_winner_pyramiding_config
+            cfg = replace(cfg, winner_pyramiding=load_winner_pyramiding_config())
+            # Never starve already-held protections behind a long queue of
+            # unfilled plans. All held campaigns are serviced; rotate admissions.
+            held = [r for r in group if any(l['remaining'] for l in r['state']['lots'])]
+            waiting = [r for r in group if not any(l['remaining'] for l in r['state']['lots'])]
+            if waiting:
+                shift = int(datetime.now(UTC).timestamp()//60) % len(waiting)
+                waiting = waiting[shift:]+waiting[:shift]
+            scanned = held+waiting[:max(0, limit-len(held))]
+            key = account, mode
+            if key not in self._winner_market_cache:
+                self._winner_market_cache[key] = NativeWinnerMarket(engine, account)
+            summary = WinnerCampaignRuntime(store, self._repo, NativeWinnerBroker(self._repo, broker, cfg), cfg,
+                market=self._winner_market_cache[key], risk=NativeWinnerRisk(self._repo, broker, cfg)).run(scanned)
+            source = group[0]['state']['exec_run_id']
+            metrics = metrics_by_run[source]
+            metrics.update(source_exec_run_id=source, account_id=account, broker_mode=mode,
+                trade_date=group[0]['state']['signal_date'], **summary)
+            metrics['watched_items'] += summary['winner_plans_watched']
+            if summary['winner_failures']:
+                metrics['status'] = 'FAILED'
+            if summary['winner_details']:
+                LOGGER.warning('Winner campaigns: %s', summary['winner_details'])
+        return managed
 
     def _load_watch_inputs(
         self,
@@ -830,6 +896,8 @@ class ProtectionTransitionWatcher:
         *,
         use_manual_buy_stop: bool = False,
     ) -> None:
+        if str(row.get('parent_intent_id') or '').startswith('wp-'):
+            return  # Dedicated coordinator owns this campaign's frozen profile.
         symbol = str(row["symbol"]).strip().upper()
         fill_qty = float(row.get("fill_qty") or 0.0)
         fill_price = float(row.get("fill_price") or 0.0)
@@ -1343,6 +1411,8 @@ class ProtectionTransitionWatcher:
         time_stop_exec_run_id = f"watch-time-stop-{build_run_id()}"
 
         for row in candidates:
+            if str(row.get('parent_intent_id') or '').startswith('wp-'):
+                continue
             symbol = str(row.get("symbol") or "").strip().upper()
             if not symbol:
                 continue
@@ -1477,6 +1547,8 @@ class ProtectionTransitionWatcher:
                 LOGGER.warning("Time Stop submit failed for %s: %s", symbol, exc, exc_info=True)
 
     def _process_item(self, item: ProtectionWatchItem, metrics: dict[str, Any]) -> None:
+        if item.parent_intent_id.startswith('wp-'):
+            return  # Never replace a campaign stop with ordinary/GPT parameters.
         if not item.initial_stop_broker_order_id:
             metrics["submit_failed_items"] += 1
             return
@@ -2094,6 +2166,7 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     def config_factory(broker_mode: str, account_id: str | None) -> ExecutionConfig:
+        from common.winner_pyramiding import load_winner_pyramiding_config
         return ExecutionConfig(
             broker_mode=broker_mode,
             account_id=account_id,
@@ -2104,6 +2177,7 @@ def main(argv: list[str] | None = None) -> None:
             trailing_activation_r_multiple=args.trailing_activation_r_multiple,
             trailing_activation_profit_pct=args.trailing_activation_profit_pct,
             time_stop=load_time_stop_config_from_yaml(),
+            winner_pyramiding=load_winner_pyramiding_config(),
         )
 
     def broker_factory(broker_mode: str, account_id: str | None) -> ExecutionBrokerPort:

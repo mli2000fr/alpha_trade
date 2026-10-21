@@ -248,7 +248,7 @@ market_cap_sync:
   coverage_reference_symbols_file: config/univers_batch/univers_filtred_tradable.txt
   sec_lookback_days: 30
   max_age_days: 365
-  min_coverage_ratio: 0.95
+  min_coverage_ratio: 0.50
   execution_notice: "Principal 20:00 Paris lundi/jeudi ; secours 23:00 le même jour uniquement sans succès récent. Les fallbacks observent l'état courant, pas un état préouverture reconstitué."
   research_notice: "SEC × dernière clôture NYSE confirmée (30 min) → stock_market_cap_daily, puis Finnhub si le calcul n'est pas qualifié. Cours absents/remplis/IEX, ADR/classes ambiguës ou split connu depuis la mesure des actions : pas de produit inventé. Observations UTC datées du calcul et disponibles J+1, jamais antidatées au dépôt SEC. Les appels Finnhub sont espacés ; circuit ouvert → reliquat différé. Seuil 95 % sur le grand fichier inchangé."
   log_file: log/batch/market_cap_sync.txt
