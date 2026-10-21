@@ -1,6 +1,6 @@
 """Causal closing-quote microstructure audit inside the Oracle TOP20 pool.
 
-The source is the last historical Alpaca/IEX quote observed during session J.
+The current source is the last qualified historical Alpaca/SIP quote during session J.
 The decision cutoff is 16:00 America/New_York and the earliest tradable entry
 is J+1. This module is diagnostic only: it does not train or promote a model.
 """
@@ -57,7 +57,8 @@ def load_closing_quotes(
     quote_query = text(
         "SELECT symbol, quote_date, quote_timestamp, bid_price, ask_price, "
         "bid_size, ask_size, spread_bps FROM stock_quote_snapshots "
-        "WHERE symbol IN :symbols AND quote_date BETWEEN :start AND :end"
+        "WHERE symbol IN :symbols AND quote_date BETWEEN :start AND :end "
+        "AND provider='alpaca' AND feed='sip' AND quality_status='VALID_RTH'"
     ).bindparams(bindparam("symbols", expanding=True))
     close_query = text(
         "SELECT symbol, `date`, close FROM stock_bars_daily "
@@ -265,7 +266,7 @@ def main() -> None:
         "window": {"start": args.start_date, "end": args.end_date},
         "horizon": args.horizon,
         "pool_pct": args.pool_pct,
-        "source": "stock_quote_snapshots / Alpaca IEX",
+        "source": "stock_quote_snapshots / Alpaca SIP (historical retrieval)",
         "labels_source": str(args.labels_parquet) if args.labels_parquet else "database",
         "oracle_pool_source": str(args.oracle_pool_parquet) if args.oracle_pool_parquet else "OOF artifact resolver",
         "decision_cutoff": "16:00 America/New_York on J",
@@ -277,7 +278,7 @@ def main() -> None:
         "feature_coverage": feature_coverage,
         "gates": gates,
         "limitations": [
-            "one last IEX quote per day, not NBBO/SIP",
+            "one closing SIP quote per day, not the complete intraday quote path; retrieval is retrospective",
             "no trades, aggressor side, order book, premarket or opening range",
             "diagnostic discovery only; no model promotion or backtest authorization",
         ],

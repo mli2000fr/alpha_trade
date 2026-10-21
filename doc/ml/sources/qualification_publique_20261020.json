@@ -1,0 +1,25 @@
+{
+  "reviewer": "same_assistant_not_independent_human",
+  "scope": "Issuer reporting currency and explicit target revenue quarter; not certification of a vendor record, historical receipt, analyst identity or performance.",
+  "periods": {
+    "TWLO": {"quote_index": 0, "accession": "0001447669-26-000088", "end": "2026-09-30", "required": ["revenue range", "third quarter ending"], "note": "Revenue outlook explicitly tied to the quarter end in the same paragraph."},
+    "FIVN": {"quote_index": 1, "accession": "0001288847-26-000121", "end": "2026-09-30", "required": ["GUIDANCE", "Three Months Ending"], "companion": "For the third quarter of 2026, Five9 expects to report:", "companion_required": "Revenue in the range of $316.0 to $322.0 million", "note": "Quarterly revenue outlook and dated guidance reconciliation are in the same earnings release. The convertible-note window in the 10-Q is rejected."},
+    "ENTG": {"quote_index": 0, "accession": "0001101302-26-000146", "end": "2026-09-26", "required": ["third quarter ending", "expects sales"], "note": "Explicit quarter ending September 26, normalized by vendor to September 30; preserve both dates, no arbitrary early-next-month rule."},
+    "AKAM": {"quote_index": 2, "accession": "0001086222-26-000083", "end": "2026-09-30", "required": ["third quarter", "Revenue (in millions)"], "note": "Revenue guidance table with separate quarter and annual columns. The two debt-conversion quotes are rejected."}
+  },
+  "currency_text": {
+    "BILI": {"accession": "0001193125-26-157842", "currency": "CNY", "literal": "Our reporting currency is the Renminbi", "note": "USD translations are for reader convenience, not the reporting currency. Trends denomination is still unconfirmed."},
+    "STNE": {"accession": "0002070979-26-000170", "currency": "BRL", "literal": "is stated in reais, our functional and presentation currency", "note": "USD convenience translations must not override the explicit presentation currency. Trends denomination is still unconfirmed."}
+  },
+  "rejected_period_candidates": {
+    "CCOI": "Debt retirement gain and adjusted EBITDA context, not explicit target-quarter revenue outlook.",
+    "SDGR": "Quarterly ACV outlook is not quarterly revenue. A forward-looking legal paragraph does not identify the revenue scope.",
+    "BRBR": "Timing of legal payment is not revenue-quarter proof.",
+    "ROAD": "SOFR loan margin and balance-sheet timing are not target revenue-quarter proof.",
+    "HP": "Preliminary operational results for a completed fiscal quarter/year; not treated as an unreported future quarterly revenue outlook."
+  },
+  "event_tables": {
+    "HLF": {"accession": "0001157523-24-000245", "exhibit": "EX-99.1", "table": 3, "header": "Three Months Ended December 31 Year Ended December 31 2023 2022 2023 2022", "revenue_label": "Worldwide Net sales", "operating_label": "Operating income", "scale": 1000000, "scale_literal": "in millions", "current_column": 0, "prior_column": 1},
+    "TAL": {"accession": "0001104659-24-007227", "exhibit": "EX-99.1", "table": 6, "header": "For the Three Months Ended November 30, For the Nine Months Ended November 30, 2022 2023 2022 2023", "revenue_label": "Net revenues", "operating_label": "Loss from operations", "scale": 1000, "scale_literal": "In thousands of U.S. dollars", "current_column": 1, "prior_column": 0, "prior_release_date": "2024-01-25", "prior_release_literal": "January 25, 2024", "note": "The release is dated January 25, SEC acceptance is January 26. Keep the prior-release reserve: do not label the SEC-proxy reaction as a new announcement."}
+  }
+}

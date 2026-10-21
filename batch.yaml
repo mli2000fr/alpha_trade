@@ -24,8 +24,8 @@ us_pipeline:
   symbols_file: &us_pipeline_universe config/univers_batch/univers_filtred_tradable.txt
   bars_collection:
     # Étape 1 : date J explicite, même univers, SPY ajouté pour les features.
-    # Attend clôture US + eodhd.bulk_publish_offset_hours (config.yaml).
-    min_coverage_ratio: 0.95
+    # EODHD : clôture + eodhd.bulk_publish_offset_hours ; Alpaca SIP : clôture +20 min.
+    min_coverage_ratio: 0.90
     benchmark_symbol: SPY
   # Ces deux collectes remplacent désormais leurs planifications autonomes.
   quotes_collection: &us_pipeline_quotes
@@ -41,9 +41,9 @@ us_pipeline:
   description: "Enchaîner les étapes de la page Pipeline (1 à 14) : config.yaml → us_pipeline.steps pour les séances US lundi–jeudi ; us_pipeline.steps_friday pour le vendredi. Liste figée au lancement, même après minuit, avec les défauts partagés de l'IHM. 13 : sync des opérations sur titres ; 14 : application au portefeuille PAPER."
   tables: "stock_bars,stock_bars_daily,cleaning_audit_latest,cleaning_audit_runs,stock_scores,stock_scores_history,stock_quote_snapshots,stock_earnings_calendar,tradable_universe_runs,tradable_universe_history,news_raw,news_ticker_map,news_raw_versions,news_ticker_map_versions,news_archive_observations,news_sentiment,news_ticker_sentiment,macro_event_audit,ticker_daily_sentiment_features,sector_daily_sentiment_features,news_ingestion_checkpoint,pit_collection_runs,corporate_actions_events,corporate_actions_applications,portfolio_cash_ledger"
   universe_scope: "Univers commun config/univers_batch/univers_filtred_tradable.txt : barres (SPY ajouté), screener, quotes, earnings, import news, scoring ticker et prédiction si l'étape 10 est sélectionnée. Les autres étapes conservent leurs périmètres natifs ou les résultats précédents."
-  coverage_description: "Séance US J figée au lancement, même après minuit. Étape 1 EODHD : contrôle des cours J non remplis, couverture minimale bars_collection.min_coverage_ratio (95 %) et SPY obligatoire. Absence → arrêt, pas de repli vers J-1. Jours fériés exclus ; pas de second passage."
-  execution_notice: "22:45 Europe/Paris, lundi–vendredi après clôture US. Choix selon séance US figée : steps lundi–jeudi, steps_friday vendredi ; jours fériés exclus. L'étape 1 attend clôture + eodhd.bulk_publish_offset_hours (2 h), avec logs d'attente : généralement minuit Paris, 23 h lors du décalage d'heure automnal. PC allumé nécessaire. execution_mode: paper ; account_id: default. Aucun ordre sans étape 12 ; compte PAPER exigé pour 11/12 et pour 13/14 même en simulation, LIVE interdit. T1 exclu ; 13/14 uniquement si sélectionnés. Arrêt au premier échec ; verrou partagé avec l'IHM. Compteurs en étapes, pas en lignes SQL."
-  research_notice: "Défauts Pipeline partagés, preset capital_2001_5000. Étape 1 : date J et univers explicites, upsert sans doublons, délai fournisseur puis contrôle en base ; si bars_provider n'est plus EODHD, ce contrat d'import bloque au lieu de passer silencieusement. Univers commun pour étapes 3/4/5 et import/scoring ticker de 8 ; quotes J-7/J, earnings J-7/J+30. Les sessions IHM ne sont pas modifiées."
+  coverage_description: "Séance US J figée au lancement, même après minuit. Étape 1 selon market_data.bars_provider (Alpaca SIP ou EODHD) : cours J non remplis, couverture minimale bars_collection.min_coverage_ratio (95 %) et SPY obligatoire. SIP : même provenance split dans stock_bars et stock_bars_daily. Insuffisant → arrêt, pas de repli vers J-1. Jours fériés exclus ; pas de second passage."
+  execution_notice: "23:05 Europe/Paris, lundi–vendredi après clôture US. Choix selon séance US figée : steps lundi–jeudi, steps_friday vendredi ; jours fériés exclus. Étape 1 : attente clôture +20 min pour Alpaca SIP ; clôture + eodhd.bulk_publish_offset_hours (2 h) pour EODHD. Attente journalisée, PC allumé nécessaire. execution_mode: paper ; account_id: default. Aucun ordre sans étape 12 ; compte PAPER exigé pour 11/12 et pour 13/14 même en simulation, LIVE interdit. T1 exclu ; 13/14 uniquement si sélectionnés. Arrêt au premier échec ; verrou partagé avec l'IHM. Compteurs en étapes, pas en lignes SQL."
+  research_notice: "Défauts Pipeline partagés, preset capital_2001_5000. Étape 1 : date J et univers explicites, upsert sans doublons, délai fournisseur puis contrôle en base. Alpaca SIP raccordé au contrôle J ; refus de droits/quota bloque sans fallback IEX/EODHD. Univers commun pour étapes 3/4/5 et import/scoring ticker de 8 ; quotes J-7/J, earnings J-7/J+30. Les sessions IHM ne sont pas modifiées."
   log_file: log/batch/us_pipeline.txt
 
 # Sprint 15-D6 : observations officielles CN strictement de recherche.
@@ -222,29 +222,35 @@ db_news_raw_backup:
   log_file: log/batch/db_news_raw_backup.txt
 
 # Collecte composite de capitalisation. SEC EDGAR est la source primaire PIT :
-# dernier shares_outstanding disponible × cours à J. Yahoo puis Finnhub ne sont
-# interrogés que pour les symboles non couverts par la source précédente.
+# dernier shares_outstanding disponible × cours à J. Finnhub complète les
+# trous, sans Yahoo ; une couverture identique n'est pas présumée.
 market_cap_sync:
   priority: P0
   enabled: true
   status: ACTIVE
   timezone: Europe/Paris
-  description: "Maintenir les actions en circulation SEC PIT, puis compléter uniquement les trous avec Yahoo et Finnhub pour l'éligibilité tradable et la neutralisation market-cap."
-  tables: "stock_fundamentals_daily"
+  description: "Calculer et enregistrer la capitalisation (actions SEC × clôture qualifiée), puis compléter avec Finnhub, sans Yahoo. Couverture mesurée sur le grand univers et sur le fichier tradable."
+  tables: "stock_fundamentals_daily,stock_market_cap_daily"
   run_hours: "20"
   recovery_run_hours: "23"
   recovery_run_minutes: "0"
   recovery_success_lookback_hours: 12
   run_days: "1,4"
-  symbols_file: config/univers_batch/univers_filtred_tradable.txt
-  provider: sec_edgar_then_yahoo_then_finnhub
+  # Export statique des symboles daily ; indépendant du fichier tradable du pipeline.
+  symbols_file: config/univers_batch/stock_bars_daily.txt
+  universe_scope: config/univers_batch/stock_bars_daily.txt
+  provider: sec_edgar_then_finnhub
   primary_provider: sec
-  fallback_providers: "yahoo_finance,finnhub"
+  fallback_providers: "finnhub"
+  finnhub_request_interval_seconds: 1.1
+  finnhub_refresh_after_days: 3
+  close_confirmation_delay_minutes: 30
+  coverage_reference_symbols_file: config/univers_batch/univers_filtred_tradable.txt
   sec_lookback_days: 30
   max_age_days: 365
-  min_coverage_ratio: 0.95
+  min_coverage_ratio: 0.50
   execution_notice: "Principal 20:00 Paris lundi/jeudi ; secours 23:00 le même jour uniquement sans succès récent. Les fallbacks observent l'état courant, pas un état préouverture reconstitué."
-  research_notice: "Chaîne composite : SEC officielle et PIT en priorité ; Yahoo non officiel puis Finnhub servent uniquement de fallback de couverture."
+  research_notice: "SEC × dernière clôture NYSE confirmée (30 min) → stock_market_cap_daily, puis Finnhub si le calcul n'est pas qualifié. Cours absents/remplis/IEX, ADR/classes ambiguës ou split connu depuis la mesure des actions : pas de produit inventé. Observations UTC datées du calcul et disponibles J+1, jamais antidatées au dépôt SEC. Les appels Finnhub sont espacés ; circuit ouvert → reliquat différé. Seuil 95 % sur le grand fichier inchangé."
   log_file: log/batch/market_cap_sync.txt
 
 # Synchronisation du calendrier earnings Finnhub.
@@ -271,15 +277,16 @@ earnings_calendar_sync:
 
 eodhd_ipo_calendar_sync:
   priority: P2
-  description: "Archiver le calendrier IPO EODHD (dates prévues/réalisées, prix, statut) pour les symboles distincts de stock_bars_daily. Recherche et suivi du référentiel ; aucun signal D1/D10 démontré."
+  description: "Archiver le calendrier IPO EODHD (dates prévues/réalisées, prix, statut) pour les titres du fichier stock_bars_daily.txt. Recherche et suivi du référentiel ; aucun signal D1/D10 démontré."
   tables: "pit_collection_runs,pit_raw_payloads,stock_ipo_eodhd_history,eodhd_ipo_collection_windows"
   enabled: true
   status: RESEARCH_ONLY
   market_code: US_EQ
   provider: eodhd
   timezone: Europe/Paris
-  symbol_source: stock_bars_daily
-  universe_scope: stock_bars_daily
+  symbol_source: universe-file
+  symbols_file: config/univers_batch/stock_bars_daily.txt
+  universe_scope: config/univers_batch/stock_bars_daily.txt
   lookback_days: 7
   forward_days: 21
   sleep_seconds: 1.1
@@ -291,19 +298,23 @@ eodhd_ipo_calendar_sync:
   run_days: "0,1,2,3,4,5,6"
   log_file: log/batch/eodhd_ipo_calendar_sync.txt
   coverage_description: "J-7 à J+21 ; secours conditionnel 5h Paris. Backfill mensuel depuis 2016, reprise en base par fenêtre et hash de l'univers."
-  research_notice: "RECHERCHE UNIQUEMENT — l'API IPO est marché entier par dates ; les observations normalisées sont filtrées sur les symboles distincts de stock_bars_daily, les réponses brutes sont archivées. Les nouvelles IPO sans barres ne sont PAS ajoutées automatiquement. Réception réelle UTC, historique événementiel non certifié PIT ancien. Zéro prix/quantité fournisseur = inconnu. Versions modifiées ajoutées sans écrasement. Absence d'IPO dans le périmètre n'est pas un échec. Mail/Telegram via launcher habituel."
+  research_notice: "RECHERCHE UNIQUEMENT — l'API IPO est marché entier par dates ; les observations normalisées sont filtrées sur config/univers_batch/stock_bars_daily.txt, les réponses brutes sont archivées. Export statique, pas une requête SQL à chaque passage. Les IPO absentes du fichier ne sont PAS ajoutées automatiquement. Les observations déjà stockées hors fichier restent conservées. Réception réelle UTC, historique événementiel non certifié PIT ancien. Zéro prix/quantité fournisseur = inconnu. Versions modifiées ajoutées sans écrasement. Absence d'IPO dans le périmètre n'est pas un échec. Mail/Telegram via launcher habituel."
 
 eodhd_news_ingestion_sync:
   priority: P1
-  enabled: true
-  status: ACTIVE_RESEARCH_ONLY
+  enabled: false
+  status: DISABLED_REPLACED_BY_PIPELINE
+  activation_requirement: "Désactivation volontaire : l'étape 8 de us_pipeline suffit au besoin retenu. Réactivation uniquement sur décision explicite de rétablir la collecte autonome élargie."
+  unlock_steps:
+    - "Vérifier si la cadence et l'univers de l'étape 8 ne suffisent plus ; aucun élargissement automatique du pipeline."
+    - "Après accord explicite, remettre enabled à true et le statut actif, puis vérifier la tâche planifiée et la couverture."
   market_code: US_EQ
   provider: eodhd
   timezone: Europe/Paris
   run_hours: "20"
   run_minutes: "30"
   run_days: "0,1,2,3,4,5,6"
-  symbols_file: config/univers_batch/univers_filtred_tradable.txt
+  symbols_file: config/univers_batch/stock_bars_daily.txt
   lookback_days: 7
   page_limit: 100
   request_interval_seconds: 0.25
@@ -315,12 +326,17 @@ eodhd_news_ingestion_sync:
   http_timeout_seconds: 30
   http_max_attempts: 3
   failure_cooldown_seconds: 1800
-  description: "Ingestion quotidienne des news EODHD et archivage prospectif, sans FinBERT, LLM ni signal. Séparée du traitement complet du vendredi."
+  description: "DÉSACTIVÉ volontairement : l'étape 8 Sentiment Pipeline de us_pipeline suffit au besoin retenu (collecte, archivage et sentiments). Évite une collecte autonome supplémentaire ; ce n'est ni une panne ni un blocage de droits."
   tables: "pit_collection_runs,news_raw,news_ticker_map,news_raw_versions,news_ticker_map_versions,news_archive_observations,news_ingestion_checkpoint"
-  universe_scope: "Même fichier tradable que us_pipeline ; ne certifie pas un univers historique PIT."
+  universe_scope: config/univers_batch/stock_bars_daily.txt
   coverage_description: "Relecture J-7/J des publications ; reprise des titres incomplets. Disponibilité réelle à la collecte, jamais rétrodatée."
-  execution_notice: "20h30 Paris, tous les jours ; budget local 120 min avant prochain appel réseau (une requête déjà en cours peut finir après). Hors absence PC 7h30-20h, us_pipeline inchangé."
+  execution_notice: "DÉSACTIVÉ : aucune nouvelle collecte autonome, même avec -Force. Ancien créneau conservé : 20h30 Paris tous les jours. Collecte assurée par l'étape 8 selon us_pipeline.steps / steps_friday, inchangés (vendredi actuellement)."
   research_notice: >-
+    **DÉSACTIVÉ LE 19/10/2026 SUR DÉCISION UTILISATEUR : l'étape 8 de us_pipeline suffit au besoin retenu.**
+    Titre normal dans l'IHM ; historique visible vidé sur demande le 19/10/2026, copie récupérable dans backups/operations_history/eodhd_news_ingestion_sync.
+    Ce choix ne rend pas les deux périmètres équivalents : la collecte élargie quotidienne/week-end sur stock_bars_daily.txt est suspendue.
+    Le pipeline reste limité à univers_filtred_tradable.txt et à ses étapes configurées (8 le vendredi actuellement), sans élargissement ni ajout automatique de jour.
+    Données et archives existantes conservées. Paramètres ci-dessous conservés pour une éventuelle réactivation explicite.
     **COLLECTE SEULE : aucun score sentiment, modèle, filtre directionnel ou ordre.**
     L'étape 8 complète du pipeline reste configurée le vendredi, listes et horaires inchangés.
     Même writer atomique et archives versionnées, sans nouvelles tables.
@@ -332,6 +348,8 @@ eodhd_news_ingestion_sync:
     Timeout 30 s et 3 tentatives/page configurables ; titre lent isolé, arrêt après 3 titres incomplets consécutifs avec pause persistante de 30 min.
     Une relance pendant la pause n'interroge aucun titre ; les non-interrogés restent en attente, sans faux échecs par symbole.
     Mapping fournisseur non qualifié : vérifier émetteur/nouveauté avant utilisation ML.
+    Univers étendu stock_bars_daily.txt, indépendant du pipeline ; export statique.
+    Budgets inchangés : la durée ou le quota peuvent laisser une collecte incomplète sur cet univers élargi.
     Notifications mail/Telegram via launcher commun. Voir doc/operations/eodhd_news_ingestion_sync.md.
   log_file: log/batch/eodhd_news_ingestion_sync.txt
 
@@ -344,14 +362,15 @@ eodhd_consensus_snapshot:
   market_code: US_EQ
   provider: eodhd
   timezone: Europe/Paris
-  symbol_source: stock_bars_daily
-  universe_scope: stock_bars_daily
+  symbol_source: universe-file
+  symbols_file: config/univers_batch/stock_bars_daily.txt
+  universe_scope: config/univers_batch/stock_bars_daily.txt
   batch_size: 20
   sleep_seconds: 1.1
   min_coverage: 0.95
-  # Contrôle du consensus uniquement sur le périmètre utile, pas sur tous les radiés/ETF.
+  # Collecte étendue ; contrôle conservé sur le fichier tradable utile au pipeline.
   coverage_symbols_file: config/univers_batch/univers_filtred_tradable.txt
-  coverage_description: "Collecte de tous les symboles stock_bars_daily ; seuil de consensus 95 % uniquement sur config/univers_batch/univers_filtred_tradable.txt. Absences/identifiants invalides distingués des erreurs techniques."
+  coverage_description: "Collecte sur config/univers_batch/stock_bars_daily.txt ; contrôle de consensus 95 % conservé uniquement sur config/univers_batch/univers_filtred_tradable.txt. Absences/identifiants invalides distingués des erreurs techniques ; anciennes observations conservées."
   run_hours: "22"
   run_minutes: "15"
   recovery_run_hours: "4"
@@ -391,7 +410,7 @@ analyst_snapshot_collection:
   recovery_success_lookback_hours: 10
   log_file: log/batch/analyst_snapshots.txt
 
-# Snapshot bid/ask quotidien Alpaca IEX avec rattrapage idempotent J-7 -> J.
+# Snapshot bid/ask historique Alpaca SIP avec rattrapage idempotent J-7 -> J.
 # L'horaire est exprimé en heure de New York afin de suivre automatiquement
 # les changements d'heure US/France et de démarrer après la clôture régulière.
 latest_quotes_sync:
@@ -405,7 +424,7 @@ latest_quotes_sync:
   unlock_steps:
     - "Inclure 4 dans config.yaml → us_pipeline.steps pour maintenir la collecte quotidienne."
     - "Si une planification autonome est nécessaire, retirer d'abord l'étape 4 du pipeline avant réactivation pour éviter le doublon."
-  provider: alpaca_iex
+  provider: alpaca_sip
   timezone: America/New_York
   run_hours: "17"
   run_minutes: "15"
@@ -413,7 +432,7 @@ latest_quotes_sync:
   symbols_file: config/univers_batch/univers_filtred_tradable.txt
   lookback_days: 7
   batch_size: 200
-  research_notice: "Planification autonome désactivée : collecte exécutée à l'étape 4 de us_pipeline, même univers et J-7/J. Ne pas réactiver en parallèle ; le collecteur CLI reste disponible manuellement. Quotes Alpaca Basic IEX, pas SIP/NBBO consolidé."
+  research_notice: "Planification autonome désactivée : collecte exécutée à l'étape 4 de us_pipeline, même univers et J-7/J. Ne pas réactiver en parallèle. Quotes historiques SIP consolidées (config.yaml market_data.quotes_historical_feed), après clôture +15 min, sans fallback IEX ; archivage brut et reprise requalifiée par flux/provenance."
   log_file: log/batch/latest_quotes_sync.txt
 
 # Tous les horaires sont exprimés dans timezone et interprétés par le lanceur.
@@ -502,7 +521,8 @@ borrow_status_snapshot:
   description: "Historiser la disponibilité short Alpaca et distinguer easy-to-borrow, locate requis et titre non shortable au moment de décision."
   tables: "pit_collection_runs,pit_raw_payloads,stock_borrow_status_snapshots"
   enabled: true
-  symbols_file: config/univers_batch/univers_filtred_tradable.txt
+  symbols_file: config/univers_batch/stock_bars_daily.txt
+  universe_scope: config/univers_batch/stock_bars_daily.txt
   provider: alpaca
   timezone: America/New_York
   # Snapshot du soir, plus de prétention à observer la disponibilité préouverture.
@@ -542,7 +562,7 @@ business_quant_analyst_snapshot:
 
 oracle_options_indicative_snapshot:
   priority: P2
-  description: "Construire prospectivement un historique PIT de chaînes d'options Alpaca indicatives sur tout l'univers tradable stable, sans dépendre du TOP20 d'un Oracle."
+  description: "Construire prospectivement un historique PIT de chaînes d'options Alpaca indicatives sur l'univers du fichier stock_bars_daily.txt, sans dépendre du TOP20 d'un Oracle."
   tables: "pit_collection_runs,pit_raw_payloads,stock_option_snapshots"
   enabled: true
   status: ACTIVE_RESEARCH_ONLY
@@ -557,7 +577,8 @@ oracle_options_indicative_snapshot:
   recovery_run_minutes: "20"
   recovery_success_lookback_hours: 8
   run_days: "1,2,3,4,5"
-  symbols_file: config/univers_batch/univers_filtred_tradable.txt
+  symbols_file: config/univers_batch/stock_bars_daily.txt
+  universe_scope: config/univers_batch/stock_bars_daily.txt
   target_dtes: "5,10,20"
   dte_tolerance_days: 4
   moneyness_min: 0.80
@@ -594,7 +615,8 @@ options_delayed_bars_sync:
   recovery_run_minutes: "0"
   recovery_success_lookback_hours: 8
   run_days: "1,2,3,4,5"
-  symbols_file: config/univers_batch/univers_filtred_tradable.txt
+  symbols_file: config/univers_batch/stock_bars_daily.txt
+  universe_scope: config/univers_batch/stock_bars_daily.txt
   target_dtes: "5,10,20"
   dte_tolerance_days: 5
   timeframe: 30Min
@@ -632,7 +654,7 @@ option_contract_adjustment_sync:
 
 oracle_opening_window_sync:
   priority: P3
-  description: "Collecter en SIP consolidé les prix minute du prémarché et de l'ouverture sur tout l'univers tradable stable, pour recherche directionnelle et politiques d'entrée retardée."
+  description: "Collecter en SIP consolidé les prix minute du prémarché et de l'ouverture sur l'univers du fichier stock_bars_daily.txt, pour recherche directionnelle et politiques d'entrée retardée."
   tables: "pit_collection_runs,pit_raw_payloads,stock_opening_window_bars,stock_opening_window_bar_versions"
   enabled: true
   status: ACTIVE_RESEARCH_ONLY
@@ -646,7 +668,8 @@ oracle_opening_window_sync:
   run_hours: "15"
   run_minutes: "50"
   run_days: "1,2,3,4,5"
-  symbols_file: config/univers_batch/univers_filtred_tradable.txt
+  symbols_file: config/univers_batch/stock_bars_daily.txt
+  universe_scope: config/univers_batch/stock_bars_daily.txt
   window_start: "04:00"
   window_end: "10:30"
   research_feature_mode: price_only
@@ -658,7 +681,7 @@ oracle_opening_window_sync:
   symbol_batch_size: 100
   max_pages_per_batch: 20
   request_interval_seconds: 0.0
-  min_symbol_coverage: 0.75
+  min_symbol_coverage: 0.70
   min_open_symbol_coverage: 0.70
   fail_on_quality_gate: true
   use_system_trust_store: true

@@ -73,14 +73,15 @@ Principes invariants :
 - aucune disparition du security master ne devient automatiquement un delisting ;
 - aucune source expérimentale n’est activée sans fournisseur et quota validés.
 - timestamps persistés en UTC ; la date de séance reste calculée en heure New York.
-- tout batch par symbole utilise `config/univers_batch/univers_filtred_tradable.txt` ; l'absence du fichier est bloquante et ne déclenche aucun repli vers un univers dynamique ;
+- chaque batch par symbole lit le fichier déclaré dans `symbols_file` ; depuis le 18 octobre, huit collecteurs utilisent l'export étendu `stock_bars_daily.txt` (tableau ci-dessous), les autres gardent le fichier tradable. L'absence du fichier est bloquante, sans repli vers un univers dynamique ;
 - seuls les flux de découverte ou intrinsèquement globaux restent market-wide : security master, corporate actions, dépôts SEC et séries macro.
 
 ### Contrat d'univers des batchs
 
 | Périmètre | Batchs | Contrat |
 |---|---|---|
-| Univers tradable stable | `market_cap_sync`, `earnings_calendar_sync`, `analyst_snapshot_collection`, `latest_quotes_sync`, `daily_bars_sync`, `borrow_status_snapshot`, `business_quant_analyst_snapshot`, `oracle_options_indicative_snapshot`, `options_delayed_bars_sync`, `oracle_opening_window_sync` | fichier `config/univers_batch/univers_filtred_tradable.txt`, complet, sans TOP20 ni limite implicite ; population, pas autorisation des familles désactivées |
+| Export daily étendu | `eodhd_consensus_snapshot`, `eodhd_ipo_calendar_sync`, `market_cap_sync`, `borrow_status_snapshot`, `eodhd_news_ingestion_sync`, `oracle_options_indicative_snapshot`, `options_delayed_bars_sync`, `oracle_opening_window_sync` | fichier `config/univers_batch/stock_bars_daily.txt`, 13 105 symboles au changement, sans limite implicite ni actualisation SQL automatique. Consensus : contrôle de couverture conservé sur le fichier tradable. Budgets inchangés, notamment plafond news de 4 000 tentatives/jour : couverture intégrale quotidienne non garantie |
+| Univers tradable stable | `earnings_calendar_sync`, `analyst_snapshot_collection`, `latest_quotes_sync`, `daily_bars_sync`, `business_quant_analyst_snapshot` | fichier `config/univers_batch/univers_filtred_tradable.txt`, sans TOP20 ni limite implicite ; population, pas autorisation des familles désactivées. Le pipeline conserve aussi ce fichier |
 | Futurs collecteurs par symbole | `auction_imbalance_sync`, `securities_lending_sync`, `official_options_nbbo_sync` | le même fichier est déjà déclaré ; les collecteurs restent désactivés tant que source, stockage et qualité ne sont pas validés |
 | Découverte market-wide | `security_master_snapshot` | toutes les cotations disponibles afin de détecter nouveaux titres, changements et disparitions |
 | Événements market-wide | `corporate_actions_sync` | flux global afin de ne pas manquer une action affectant un titre entrant, sortant ou détenu |
@@ -120,7 +121,7 @@ Le TOP20 est une **sortie de modèle**, recalculée après entraînement ou à c
 | attente | `auction_imbalance_sync` | Nasdaq NOII/NYSE live payants ; Web NYSE post-auction limité | — | `BLOCKED_NO_FREE_OFFICIAL_FEED` ; [POC séparé](../ml/nyse_auction_history_poc.md) |
 | attente | `securities_lending_sync` | fournisseur requis | — | désactivé |
 
-Les batchs `earnings_calendar_sync` et `market_cap_sync` ne font pas doublon. Le premier stocke calendrier/estimates/actuals d’earnings. Le second rafraîchit les faits SEC nécessaires à la capitalisation PIT, puis interroge Yahoo uniquement pour les symboles sans couverture SEC fraîche et Finnhub uniquement pour les trous restants. `market_cap_sync` passe par le handler et le lanceur Forward PIT commun : son état et ses compteurs survivent donc à un redémarrage de l’IHM dans `pit_collection_runs`.
+Les batchs `earnings_calendar_sync` et `market_cap_sync` ne font pas doublon. Le premier stocke calendrier/estimates/actuals d’earnings. Depuis le 18 octobre 2026, le second rafraîchit les faits SEC, calcule actions × clôture qualifiée et enregistre le résultat dans `stock_market_cap_daily`, puis complète avec Finnhub ; **aucun appel ni fallback Yahoo**. Les faits d'origine restent dans `stock_fundamentals_daily`, sans antidatage du nouveau calcul. `market_cap_sync` passe par le handler et le lanceur Forward PIT commun : son état et ses compteurs survivent donc à un redémarrage de l’IHM dans `pit_collection_runs`. [Contrat, installation et couverture mesurée](retrait_yahoo_capitalisations_pipeline_20261018.md).
 
 ### Politique de rattrapage J−7/J
 
@@ -143,8 +144,8 @@ Les normalisations `sec_corporate_events_normalize` et
 `sec_institutional_ownership_normalize` ne dépendent pas d'une fenêtre : elles
 reprennent tout dépôt RAW encore absent de leur table cible.
 
-Les snapshots `security_master_snapshot`, `market_cap_sync` (fallbacks
-Yahoo/Finnhub), `analyst_snapshot_collection`, `borrow_status_snapshot` et
+Les snapshots `security_master_snapshot`, `market_cap_sync` (fallback
+Finnhub uniquement), `analyst_snapshot_collection`, `borrow_status_snapshot` et
 `oracle_options_indicative_snapshot` ne peuvent pas recréer fidèlement un état
 historique manqué. Le RSS de `option_contract_adjustment_sync` n'offre pas non
 plus de paramètre J−7/J garanti. Enfin, `options_delayed_bars_sync` expose des
@@ -331,11 +332,11 @@ donc pas un backfill historique complet ; un rattrapage doit temporairement
 
 ### Borrow, analystes, options et ouverture
 
-Alpaca Assets permet de suivre `shortable`, `easy_to_borrow`, `marginable` et `tradable` plusieurs fois par séance. L'endpoint renvoie globalement les actifs Alpaca : le payload RAW global est conservé pour audit, mais seules les actions US appartenant à `config/univers_batch/univers_filtred_tradable.txt` sont normalisées dans `stock_borrow_status_snapshots`. Cela ne fournit ni borrow fee, ni utilization, ni lendable supply.
+Alpaca Assets permet de suivre `shortable`, `easy_to_borrow`, `marginable` et `tradable` plusieurs fois par séance. L'endpoint renvoie globalement les actifs Alpaca : le payload RAW global est conservé pour audit, mais seules les actions US appartenant à `config/univers_batch/stock_bars_daily.txt` sont normalisées dans `stock_borrow_status_snapshots` depuis le 18 octobre 2026. Cela ne fournit ni borrow fee, ni utilization, ni lendable supply ; tous les titres du fichier ne sont pas nécessairement présents chez Alpaca.
 
 Le batch analyste Yahoo existant respecte désormais `enabled: false`, distingue couverture EPS et REVENUE et ne tourne plus deux fois le même jour avec un `resume` rendant le second passage vide. Business Quant analyste est un challenger désactivé. Sa population cible est l’univers stable `config/univers_batch/univers_filtred_tradable.txt`, et non la sélection d’un modèle Oracle courant.
 
-Les trois collecteurs de recherche `business_quant_analyst_snapshot`, `oracle_options_indicative_snapshot` et `oracle_opening_window_sync` utilisent le même univers tradable stable. Ce contrat évite un biais de sélection : un TOP20 produit aujourd’hui par un batch donné ne doit pas décider quelles données seront disponibles demain pour réentraîner ou backtester un autre Oracle, un autre horizon, un modèle Per-Symbol ou un ranker. Les noms historiques contenant `oracle_` sont conservés pour compatibilité, mais ne signifient plus que la collecte est limitée au TOP20. Le contrat détaillé Alpaca de la fenêtre d'ouverture est documenté dans [`../ml/oracle_opening_window_alpaca.md`](../ml/oracle_opening_window_alpaca.md).
+Les collecteurs `oracle_options_indicative_snapshot` et `oracle_opening_window_sync` utilisent désormais l'export daily étendu ; le challenger désactivé `business_quant_analyst_snapshot` conserve le fichier tradable. Tous ces périmètres restent indépendants d'un TOP20 Oracle courant : un modèle ne décide pas quelles données seront disponibles pour les recherches futures. Les noms historiques `oracle_` ne limitent pas la collecte aux prédictions. Contrat de la fenêtre d'ouverture : [`../ml/oracle_opening_window_alpaca.md`](../ml/oracle_opening_window_alpaca.md).
 
 Les barres d'options retardées et les ajustements OCC suivent un contrat distinct détaillé dans [`../ml/options_delayed_alpaca_occ.md`](../ml/options_delayed_alpaca_occ.md). Ils ne transforment pas Alpaca en source NBBO officielle.
 
@@ -414,6 +415,15 @@ droits/prudence priment. Les contrôles de couverture intégrés aux importation
 au risque et aux nouvelles entrées restent indépendants.
 
 Pour `market_cap_sync`, la couverture minimale opérationnelle est fixée à 95 %. Une couverture supérieure ou égale à ce seuil produit un statut `COMPLETED`, zéro échec et zéro alerte ; les symboles non couverts restent néanmoins conservés dans `details_json` (`uncovered_count` et `uncovered_symbols`). En dessous de 95 %, le run échoue de manière bloquante.
+
+Ce seuil reste appliqué aux 13 105 symboles du fichier de collecte, pas aux seuls
+titres tradable. `coverage_scopes` et le log de fin distinguent grand fichier et
+référence tradable, sans changer le critère de succès. La couverture porte sur
+les capitalisations calculées/enregistrées, pas les actions SEC seules.
+Calcul local du 18/10, cutoff de disponibilité au 19/10 : 3 689/13 105 couverts
+(28,15 %), dont 1 784/1 790 tradable (99,66 %). Une nouvelle collecte fournisseur
+n'a pas été lancée ; les anciens audits d'entrées seules ne mesurent pas ce
+critère plus strict. Une seconde matérialisation identique ajoute zéro doublon.
 
 Une anomalie critique crée une ligne dans `pit_data_quality_issues`, fait échouer le batch qualité et déclenche la notification du lanceur. Cet échec transporte néanmoins l’`Outcome` complet : `requested_count`, `received_count`, `persisted_count`, `failed_count`, avertissements et liste `critical_checks` sont conservés dans `pit_collection_runs` et dans le résumé envoyé aux notifications.
 

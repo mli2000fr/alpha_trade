@@ -1,5 +1,14 @@
 # État actuel de l'implémentation — 10 octobre 2026
 
+> Mise à jour du 19 octobre : `eodhd_news_ingestion_sync` **désactivé volontairement**
+> (`enabled:false`, `DISABLED_REPLACED_BY_PIPELINE`). L'étape 8 de `us_pipeline`
+> suffit au besoin retenu par l'utilisateur ; son périmètre et ses jours restent
+> inchangés (vendredi actuellement). L'ancienne collecte quotidienne élargie/week-end
+> est suspendue, données conservées. Titre normal dans l'IHM ; l'historique visible
+> a ensuite été vidé sur demande (12 exécutions SQL, 5 entrées IHM ; copie récupérable).
+> Ce choix remplace l'activation décrite au 16 octobre ci-dessous.
+> [État opérationnel courant](operations/eodhd_news_ingestion_sync.md).
+
 > Ajout du 16 octobre : transport news EODHD sécurisé corrigé et ingestion seule
 > quotidienne `eodhd_news_ingestion_sync` activée/installée à 20h30 Paris.
 > Trois titres testés, 48 occurrences reçues, 18 versions brutes nouvelles ;
@@ -95,10 +104,12 @@ risk_adapter,protections,repository}.py`, builders IHM et moteur d'exécution.
 | sortie spécifique | ouverture séance 21, séance d'entrée = 1 | idem |
 | trailing spécifique | 15 % | 20 % dans ProtectionProfile |
 
-Au 11 octobre, `provider: openai` sélectionne GPT, modèle `gpt-6-luna`, clé via
+Au 19 octobre, `provider: openai` sélectionne GPT, modèle `gpt-6-luna`, clé via
 `OPENAI_API_KEY`. `provider: deepseek` sélectionne `deepseek_model` (par défaut
-`deepseek-flash`) et `DEEPSEEK_API_KEY`, **en conservant OpenAI pour la recherche
-Web traçable** : les deux clés et les deux facturations sont alors nécessaires.
+`deepseek-flash`) et `DEEPSEEK_API_KEY`. En `analysis_mode: web_search`, Search/Fetch
+et l'analyse sont désormais **natifs DeepSeek, sans appel OpenAI**. En
+`local_data_only`, aucun Web. Les deux modes reçoivent le consensus local figé.
+[Paramètres, archivage et limites](ml/llm_modes_consensus.md).
 Les libellés IHM sont dynamiques et les anciennes analyses restent liées à leur
 configuration archivée. Aucun changement des protections ou des tailles de sélection.
 Ce document décrit la requête du code ; il ne certifie pas

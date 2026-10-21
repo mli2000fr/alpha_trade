@@ -1,0 +1,26 @@
+{
+  "DOCN": {
+    "components": {"issuer_identity": true, "exact_target_period": true, "consensus_currency_scale": false, "consensus_eps_basis": false, "metric_comparability": false},
+    "eps_evidence_scope": "ISSUER_NON_GAAP_GUIDANCE_NOT_VENDOR_CONSENSUS_FIELD",
+    "findings": [
+      "Official issuer release identifies DigitalOcean Holdings, DOCN, quarter ending2026-09-30; same date as provider target.",
+      "Issuer revenue guidance uses millions of dollars and EPS guidance diluted non-GAAP. Context only: not a definition of EODHD earningsEstimateAvg.",
+      "Received 0q mean EPS rises0.3180->0.3186 and revenue306657240->306723910 between11 and18Oct; counts remain17EPS/15revenue. Unchanged counts do not prove unchanged contributor identities.",
+      "For the same fiscal end2026-09-30, +1q has a different unchanged mean0.2842. Preserve both raw horizons; do not treat them as interchangeable latest consensus."
+    ],
+    "missing": ["Field-specific GAAP/adjusted/dilution and constituent adjustment definition for calendar/trends earningsEstimateAvg", "Explicit per-record reporting currency and revenue scale", "Authoritative semantics/current-vintage selection when0q and+1q coexist for the same period"],
+    "sources": ["docn_q2", "provider_calendar", "provider_glossary", "local received raw items and SEC companyfacts CIK0001582961"]
+  },
+  "FUN": {
+    "components": {"issuer_identity": true, "exact_target_period": false, "consensus_currency_scale": false, "consensus_eps_basis": false, "metric_comparability": false},
+    "eps_evidence_scope": "ISSUER_REPORT_AND_GENERIC_ACTUAL_EPS_NOT_VENDOR_CONSENSUS_FIELD",
+    "findings": [
+      "SEC issuer document is Six Flags Entertainment Corporation, NYSE FUN, CIK1999001, post-merger issuer context; not legacy Cedar Fair solely from ticker.",
+      "Official Q2 release states quarter ended2026-06-28 while provider has2026-06-30. No automatic mapping of provider2026-09-30 to an exact fiscal quarter end is certified.",
+      "Issuer notice announces Q3 results5Nov2026 premarket; it does not establish exact target-quarter end or vendor EPS definition.",
+      "Received0q EPS2.0934->2.0811 and revenue1170267190->1168235510; counts5EPS/13revenue unchanged. This is a vendor aggregate change, not a proven company guidance cut."
+    ],
+    "missing": ["Official provider mapping from normalized quarter/year anchors to actual FUN fiscal endpoints", "Post-merger entity scope for these exact consensus records", "Field-specific EPS accounting/dilution definition and revenue currency/scale", "Current-vintage semantics of repeated raw horizons"],
+    "sources": ["fun_q2", "fun_notice", "provider_calendar", "provider_glossary", "local received raw items and SEC companyfacts CIK0001999001"]
+  }
+}

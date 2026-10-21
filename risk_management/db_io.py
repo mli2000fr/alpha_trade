@@ -786,8 +786,6 @@ class RiskRepository:
         if not symbols:
             return pd.DataFrame()
 
-        import pandas as pd
-
         stock_score_columns = self._get_table_columns("stock_scores_history")
         if not stock_score_columns:
             LOGGER.warning("load_factor_columns_asof: stock_scores_history indisponible")

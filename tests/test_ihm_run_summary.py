@@ -9,6 +9,19 @@ from ihm.services.run_summary import (
 )
 
 
+def test_workflow_coverage_keeps_full_last_snapshot_not_integer_counters():
+    first=dict(coverage_ratio=.8,minimum=.95,requested=100,covered=80,
+        missing_symbols=['A'],benchmark_available=False,status='FAILED')
+    last=dict(coverage_ratio=1648/1790,minimum=.95,requested=1790,covered=1648,
+        missing_symbols=['B'],benchmark_available=True,status='FAILED',target_date='2026-10-20')
+    result=aggregate_workflow_run_summary([
+        dict(run_id='one',step_key='import_alpaca_bar',run_summary={'target_coverage':first}),
+        dict(run_id='two',step_key='import_alpaca_bar',run_summary={'target_coverage':last})])
+    assert result['target_coverage']==last
+    assert result['target_coverage']['minimum']==.95
+    assert result['target_coverage']['coverage_ratio']>0.92
+
+
 def test_aggregate_workflow_run_summary_merges_numeric_and_nested_counters() -> None:
     aggregated = aggregate_workflow_run_summary(
         [
@@ -578,7 +591,7 @@ def test_build_run_summary_caption_uses_sync_latest_quotes_bias_metrics_mapping(
 
     assert "symboles=120" in caption
     assert "rows upsert=118" in caption
-    assert "biais iex=42.5" in caption
+    assert "écart quote/close (proxy)=42.5" in caption
     assert "obs. biais=90" in caption
 
 

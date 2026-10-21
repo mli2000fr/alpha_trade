@@ -1,6 +1,26 @@
 """Explicit LLM direction; subjective confidence never becomes a probability."""
 import json
+import logging
 from .runner import qualified_selection
+
+LOGGER = logging.getLogger(__name__)
+
+
+def archived_universe_preset(engine, run_id, trade_date, account_id):
+    """Universe lineage is fixed by the qualified analysis, not account equity.
+
+    This selects ONLY the published universe. It never supplies capital,
+    sizing parameters or risk budgets from the preset's equity range.
+    """
+    from common.capital_presets import get_capital_preset_by_key
+    run, _ = qualified_selection(engine, run_id, trade_date, account_id)
+    key = json.loads(run['input_json']).get('capital_preset_key')
+    if not isinstance(key, str) or not key or key != key.strip():
+        raise ValueError('Preset d’univers absent ou invalide dans le snapshot LLM ; aucun fallback equity')
+    preset = get_capital_preset_by_key(key)
+    if preset is None:
+        raise ValueError(f'Preset d’univers LLM inconnu : {key} ; aucun fallback equity')
+    return preset
 
 
 def validate_short_broker(broker, symbols, *, account=None):
@@ -69,6 +89,9 @@ def load_candidates(engine, run_id, trade_date, account_id, universe_run_id, uni
                 'confidence_uncalibrated': assessment['confidence'],
                 'oracle_score': item['oracle_score'], 'selection_source': 'oracle_web_llm_directional',
                 'borrow_evidence': borrow.get(item['symbol'])}))
+    excluded = [item['symbol'] for item in selected if item['symbol'] not in universe]
+    LOGGER.info('Risque LLM %s : retenus LLM=%d, candidats admissibles=%d, hors univers tradable=%s',
+                run_id, len(selected), len(result), ','.join(excluded) or 'aucun')
     return result
 
 

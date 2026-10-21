@@ -232,7 +232,7 @@ class MarketDataPort(Protocol):
         start_date: Optional[str] = None,
         *,
         adjustment: Adjustment = "split",
-        feed: Feed = "iex",
+        feed: Feed = "sip",
     ) -> list[dict[str, Any]]:
         """Retourne les bars OHLCV bruts (format provider) pour ``symbol``."""
         ...
@@ -240,7 +240,7 @@ class MarketDataPort(Protocol):
     def fetch_latest_quotes(
         self, symbols: Sequence[Symbol | str]
     ) -> dict[str, dict[str, Any]]:
-        """Retourne les dernières quotes (NBBO IEX) par symbole."""
+        """Retourne les dernières quotes SIP par symbole (droits temps réel requis)."""
         ...
 
 
@@ -254,7 +254,7 @@ class BarsRepository(Protocol):
         bars: pd.DataFrame,
         *,
         data_adjustment: str = "split",
-        data_source: str = "alpaca_iex",
+        data_source: str = "alpaca_sip",
     ) -> int:
         """Insère/met à jour des bars. Retourne le nb de lignes affectées."""
         ...

@@ -6,7 +6,7 @@
 
 Retour : [corporate actions](../17_corporate_actions.md)
 
-`provider.py` définit l'interface et implémentations Alpaca/EODHD. `engine.py` orchestre sync/apply ; `processors.py` applique ; `db_io.py` persiste ; `reconciliation.py` vérifie ; Yahoo sert de cross-check.
+`provider.py` définit l'interface et implémentations Alpaca/EODHD. `engine.py` orchestre sync/apply ; `processors.py` applique ; `db_io.py` persiste ; `reconciliation.py` vérifie. Depuis le 18/10/2026, le cross-check Yahoo est retiré des commandes sync/run, de l'étape 13 et de la page IHM ; `--cross-check none` est la seule valeur acceptée. Le fournisseur principal est inchangé.
 
 La sync normalise type, symbole, dates, ratio/montant et provider vers un événement unique. Le scope portfolio-only part des positions broker snapshot. L'application crée une row distincte liée à l'événement.
 
@@ -99,7 +99,7 @@ Les options sync incluent symbols, all-symbols/portfolio-only, skip-existing, ba
 
 ## Réconciliation
 
-Après apply, comparer quantité et cost basis attendus aux positions broker, puis cash ledger aux relevés. `CaReconcileDiff` décrit les écarts. Le cross-check Yahoo compare les dividendes mais ne réécrit pas le provider canonique sans décision explicite.
+Après apply, comparer quantité et cost basis attendus aux positions broker, puis cash ledger aux relevés. `CaReconcileDiff` décrit les écarts. Aucun contrôle Yahoo n'est exécuté ; les anciennes anomalies restent des traces historiques et ne sont pas supprimées.
 
 ## Scénarios de panne
 

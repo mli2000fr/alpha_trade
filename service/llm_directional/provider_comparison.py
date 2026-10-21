@@ -56,6 +56,9 @@ def comparison_rows(gpt, deepseek):
 
 
 def run(engine, output, *, write=False):
+    if write:
+        raise ValueError('Comparatif historique à preuves OpenAI partagées archivé ; '
+                         'nouveau protocole requis pour comparer les recherches natives DeepSeek/GPT')
     parent, snapshot, old, contexts, baseline = prepare_subset(engine, PARENT, SYMBOLS)
     current = load_filter_config()
     config = replace(old, enabled=True, provider='openai', model=current.model,

@@ -105,6 +105,9 @@ def collection_options(options, cfg, day):
         if name == 'earnings':
             values[prefix+'provider'] = policy.get('provider', 'finnhub')
             values[prefix+'resume'] = True
+        else:
+            # The scheduled session contract is always historical, never RT.
+            values[prefix+'mode'] = 'historical'
     return replace(options, **values)
 
 

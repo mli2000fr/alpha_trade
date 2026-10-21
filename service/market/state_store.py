@@ -6,12 +6,14 @@ Cette première version R9.0 reste volontairement minimale et portable.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 from service.market.models import MarketRegimeState
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_STATE_PATH = PROJECT_ROOT / "artifacts" / "market_regime" / "state" / "latest.json"
+LOGGER = logging.getLogger(__name__)
 
 
 def load_regime_state(path: Path | None = None) -> MarketRegimeState | None:
@@ -19,8 +21,15 @@ def load_regime_state(path: Path | None = None) -> MarketRegimeState | None:
     if not state_path.is_file():
         return None
     payload = json.loads(state_path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
+    # save_regime_state(None) intentionally writes this empty-state sentinel.
+    # It is absence of previous hysteresis state, NOT a qualified normal regime.
+    if payload == {}:
+        LOGGER.info("État de régime persistant vide : aucun état précédent ; snapshot du jour à recalculer.")
         return None
+    if not isinstance(payload, dict):
+        raise ValueError("État de régime invalide : objet JSON attendu")
+    if "trade_date" not in payload:
+        raise ValueError("État de régime incomplet : trade_date absent")
     return MarketRegimeState.from_dict(payload)
 
 

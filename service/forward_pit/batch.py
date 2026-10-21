@@ -36,6 +36,7 @@ from common.market_calendar import is_trading_day, nyse_session_dates
 from database.connection import get_sqlalchemy_engine
 from risk_management.liquidity import BorrowStatus, alpaca_borrow_status
 from service.alpaca.clientAlpaca import fetch_alpaca_assets, get_alpaca_credentials
+from service.alpaca.sip_reference import historical_sip_snapshots
 from service.forward_pit.options_delayed import (
     option_contract_adjustment_sync,
     options_delayed_bars_sync,
@@ -793,23 +794,22 @@ def market_cap_sync(
 ) -> Outcome:
     """Rafraîchit la capitalisation avec SEC primaire et fallbacks ciblés.
 
-    La SEC fournit le nombre d'actions PIT, que le publieur d'univers multiplie
-    par le cours de la date demandée. Yahoo puis Finnhub ne sont interrogés que
-    pour les symboles sans ``shares_outstanding`` SEC frais.
+    Calcule et stocke SEC actions × dernière clôture qualifiée dans
+    stock_market_cap_daily, sans réécrire les faits de dépôt SEC. Finnhub
+    complète les symboles sans capitalisation SEC calculable.
     """
     symbols = _symbols(cfg)
     primary = str(cfg.get("primary_provider") or "sec").strip().lower()
     fallbacks = [
         item.strip().lower()
-        for item in str(cfg.get("fallback_providers") or "yahoo_finance,finnhub").split(",")
+        for item in str(cfg.get("fallback_providers") or "finnhub").split(",")
         if item.strip()
     ]
     if primary != "sec":
         raise ValueError("market_cap_sync.primary_provider doit être 'sec'")
-    if fallbacks != ["yahoo_finance", "finnhub"]:
+    if fallbacks != ["finnhub"]:
         raise ValueError(
-            "market_cap_sync.fallback_providers doit respecter l'ordre "
-            "'yahoo_finance,finnhub'"
+            "market_cap_sync.fallback_providers doit être 'finnhub' ; Yahoo retiré"
         )
     if not symbols:
         raise ValueError("market_cap_sync: univers vide")
@@ -821,11 +821,11 @@ def market_cap_sync(
         raise ValueError("market_cap_sync.min_coverage_ratio doit être compris entre 0 et 1")
 
     # Les compteurs globaux portent sur l'univers, pas sur la somme des appels
-    # aux trois fournisseurs. Le détail des tentatives reste par provider.
+    # aux deux fournisseurs. Le détail des tentatives reste par provider.
     outcome = Outcome(requested=len(symbols))
     if dry:
         outcome.details.update({
-            "strategy": "sec_edgar_then_yahoo_then_finnhub",
+            "strategy": "sec_edgar_then_finnhub",
             "symbols": len(symbols),
             "sec_lookback_days": sec_lookback_days,
             "max_age_days": max_age_days,
@@ -833,6 +833,9 @@ def market_cap_sync(
         return outcome
 
     from modelFactory.fundamental_features import fetch_and_store_fundamentals
+    from service.forward_pit import market_cap_calculations as cap_calculations
+    # Fail before any provider call when the additive schema is not installed.
+    cap_calculations.require_schema(engine)
 
     today = date.today()
     target_date = today + timedelta(days=1)
@@ -853,6 +856,7 @@ def market_cap_sync(
             "requested_symbols": len(candidates),
             "stored": stored,
             "failed": failed,
+            "deferred": max(0, int(result.get("deferred") or 0)),
             "error_samples": [str(error) for error in (result.get("errors") or [])][:20],
         }
 
@@ -860,33 +864,55 @@ def market_cap_sync(
         "sec", symbols,
         start_date=sec_start.isoformat(), end_date=today.isoformat(),
     )
-    sec_covered = _market_cap_covered_symbols(
-        engine, symbols, target_date, max_age_days, ("SEC_EDGAR",)
-    )
+    calculated_at = datetime.now(UTC)
+    price_date = cap_calculations.reference_session(calculated_at,
+        delay_minutes=int(cfg.get("close_confirmation_delay_minutes", 30)))
+    sec_caps = cap_calculations.calculate_sec(engine, symbols, as_of=target_date,
+        max_age_days=max_age_days, price_date=price_date, now=calculated_at, run_id=run_id)
+    sec_covered = sec_caps["symbols"]
+    outcome.persisted += sec_caps["persisted"]
 
-    yahoo_candidates = sorted(set(symbols) - sec_covered)
-    _run_provider("yahoo_finance", yahoo_candidates)
-    yahoo_covered = _market_cap_covered_symbols(
-        engine, yahoo_candidates, target_date, max_age_days, ("YAHOO FINANCE",)
+    finnhub_scope = sorted(set(symbols) - sec_covered)
+    finnhub_before = _market_cap_covered_symbols(
+        engine, finnhub_scope, target_date, max_age_days, ("FINNHUB",)
     )
-
-    finnhub_candidates = sorted(set(yahoo_candidates) - yahoo_covered)
-    _run_provider("finnhub", finnhub_candidates)
-    finnhub_covered = _market_cap_covered_symbols(
-        engine, finnhub_candidates, target_date, max_age_days, ("FINNHUB",)
+    refresh_days = int(cfg.get("finnhub_refresh_after_days", 3))
+    if refresh_days < 1:
+        raise ValueError("market_cap_sync.finnhub_refresh_after_days doit être >=1")
+    # Coverage can tolerate older records; that is not a collection-cache TTL.
+    # Refresh normally on Monday/Thursday, reuse recent observations on retry.
+    finnhub_recent = _market_cap_covered_symbols(
+        engine, finnhub_scope, target_date, min(max_age_days, refresh_days), ("FINNHUB",)
     )
+    finnhub_candidates = sorted(set(finnhub_scope) - finnhub_recent)
+    _run_provider("finnhub", finnhub_candidates,
+                  sleep_seconds=float(cfg.get("finnhub_request_interval_seconds", 1.1)),
+                  stop_on_circuit_open=True)
+    fh_caps = cap_calculations.calculate_finnhub(engine, finnhub_scope, as_of=target_date,
+        max_age_days=max_age_days, now=datetime.now(UTC), run_id=run_id)
+    finnhub_covered = fh_caps["symbols"]
+    outcome.persisted += fh_caps["persisted"]
 
-    covered = sec_covered | yahoo_covered | finnhub_covered
+    covered = sec_covered | finnhub_covered
     uncovered = sorted(set(symbols) - covered)
     outcome.received = len(covered)
     outcome.empty = len(uncovered)
     coverage_ratio = len(covered) / len(symbols)
     provider_details["sec"]["eligible_symbols"] = len(sec_covered)
-    provider_details["yahoo_finance"]["eligible_symbols"] = len(yahoo_covered)
     provider_details["finnhub"]["eligible_symbols"] = len(finnhub_covered)
+    provider_details["finnhub"]["fresh_before_run"] = len(finnhub_before)
+    provider_details["finnhub"]["reused_recent_count"] = len(finnhub_recent)
+    provider_details["finnhub"]["refresh_after_days"] = refresh_days
+    provider_details["finnhub"]["newly_covered"] = len(finnhub_covered - finnhub_before)
+
+    coverage_scopes = {"collection": _market_cap_scope_coverage(symbols, sec_covered, finnhub_covered)}
+    if cfg.get("coverage_reference_symbols_file"):
+        reference = _symbols({"symbols_file": cfg["coverage_reference_symbols_file"]})
+        coverage_scopes["tradable_reference"] = _market_cap_scope_coverage(reference, sec_covered, finnhub_covered)
+        coverage_scopes["tradable_reference"]["outside_collection_count"] = len(set(reference) - set(symbols))
 
     outcome.details.update({
-        "strategy": "sec_edgar_then_yahoo_then_finnhub",
+        "strategy": "sec_edgar_then_finnhub",
         "providers": provider_details,
         "symbols": len(symbols),
         "covered_symbols": len(covered),
@@ -898,11 +924,28 @@ def market_cap_sync(
         "target_available_date": target_date.isoformat(),
         "sec_lookback_days": sec_lookback_days,
         "max_age_days": max_age_days,
+        "coverage_scopes": coverage_scopes,
+        "coverage_basis": "calculated_and_stored_SEC_cap_or_stored_Finnhub_cap",
+        "calculation": {"sec": sec_caps["details"], "finnhub": fh_caps["details"],
+                        "table": "stock_market_cap_daily", "price_date": price_date.isoformat(),
+                        "persisted_unit": "raw_fundamental_rows_plus_derived_cap_observations"},
     })
+    LOGGER.info("market_cap_sync couverture sans Yahoo: %s", _json(coverage_scopes))
     _apply_market_cap_coverage_policy(
         outcome, uncovered, coverage_ratio, min_coverage_ratio,
     )
     return outcome
+
+
+def _market_cap_scope_coverage(symbols, sec_covered, finnhub_covered) -> dict[str, Any]:
+    scope = set(symbols)
+    sec = scope & set(sec_covered)
+    finnhub = scope & set(finnhub_covered)
+    covered = sec | finnhub
+    return {"requested_symbols": len(scope), "sec_covered": len(sec),
+            "finnhub_incremental_covered": len(finnhub - sec), "covered_symbols": len(covered),
+            "coverage_ratio": len(covered) / len(scope) if scope else None,
+            "uncovered_count": len(scope - covered), "uncovered_symbols": sorted(scope - covered)[:100]}
 
 
 def _apply_market_cap_coverage_policy(
@@ -1481,15 +1524,11 @@ def options_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool
         for chunk in _chunks(symbols, stock_chunk_size):
             if request_pause > 0:
                 time.sleep(request_pause)
-            payload, status = _request_json(
-                session, f"{ALPACA_DATA_URL}/v2/stocks/snapshots",
-                params={"symbols": ",".join(chunk), "feed": "iex"},
-                headers=headers,
-            )
+            payload, status = historical_sip_snapshots(session,chunk,headers,_request_json)
             if not dry:
                 _raw(
                     conn, run_id, "oracle_options_indicative_snapshot", "alpaca",
-                    "/v2/stocks/snapshots", "UNDERLYING:" + ",".join(chunk),
+                    "/v2/stocks/bars?feed=sip&timeframe=1Min", "UNDERLYING:" + ",".join(chunk),
                     payload, status, observed,
                 )
             if isinstance(payload, dict):
@@ -2051,6 +2090,7 @@ def latest_quotes_sync_batch(
     del engine  # La persistance canonique est gérée par sync_latest_quotes.
     from dataIntegrityEngine.sync_latest_quotes import sync_latest_quotes
     from database.cleaning_audits import record_quotes_audit_run
+    from common.quote_quality import historical_quote_feed
 
     symbols = _collection_symbols(cfg)
     lookback_days = max(0, int(cfg.get("lookback_days", 5)))
@@ -2069,7 +2109,7 @@ def latest_quotes_sync_batch(
             "lookback_days": lookback_days,
             "batch_size": batch_size,
             "symbol_source": symbol_source,
-            "feed": "iex",
+            "feed": historical_quote_feed(),
             "expected_sessions": len(nyse_session_dates(from_date, to_date)),
         },
     )
@@ -2349,13 +2389,25 @@ def execute(batch_name: str, *, dry_run: bool = False, config_path: str | None =
         with engine.begin() as conn:
             conn.execute(text("""INSERT INTO pit_collection_runs(run_id,batch_name,provider,status,started_at)
                 VALUES (:run,:batch,:provider,'RUNNING',:started)"""), {"run": run_id, "batch": batch_name, "provider": str(cfg.get("provider") or cfg.get("providers") or ""), "started": started})
+    outcome = None
     try:
         outcome = handler(engine, cfg, run_id, dry_run)
         status = "DRY_RUN" if dry_run else ("COMPLETED_WITH_WARNINGS" if outcome.warnings or outcome.failed else "COMPLETED")
         if batch_name == 'us_pipeline' and outcome.details.get('skip_reason'):
-            status = 'SKIPPED_' + outcome.details['skip_reason']
+            # Stable database lifecycle status (VARCHAR(24)). The precise reason
+            # remains in details_json; concatenation exceeded the column width
+            # and left an already-finished, skipped run falsely RUNNING.
+            status = 'SKIPPED'
+        # Final persistence belongs to the protected lifecycle too: if it fails,
+        # attempt to seal FAILED instead of silently leaving a RUNNING row.
+        if not dry_run:
+            with engine.begin() as conn:
+                conn.execute(text("""UPDATE pit_collection_runs SET status=:status,finished_at=:finished,requested_count=:requested,
+                    received_count=:received,persisted_count=:persisted,empty_count=:empty,failed_count=:failed,
+                    warning_count=:warnings,details_json=:details WHERE run_id=:run"""), {"status": status, "finished": _utcnow(), "requested": outcome.requested, "received": outcome.received, "persisted": outcome.persisted, "empty": outcome.empty, "failed": outcome.failed, "warnings": len(outcome.warnings), "details": _json(outcome.details | {"warnings": outcome.warnings}), "run": run_id})
     except Exception as exc:
-        failure_outcome = exc.outcome if isinstance(exc, BatchRunError) else Outcome(failed=1)
+        failure_outcome = exc.outcome if isinstance(exc, BatchRunError) else (
+            outcome if outcome is not None else Outcome(failed=1))
         if not dry_run:
             with engine.begin() as conn:
                 conn.execute(text("""UPDATE pit_collection_runs
@@ -2380,12 +2432,9 @@ def execute(batch_name: str, *, dry_run: bool = False, config_path: str | None =
                     ),
                     "run": run_id,
                 })
+        if outcome is not None and not isinstance(exc, BatchRunError):
+            raise BatchRunError(str(exc), failure_outcome) from exc
         raise
-    if not dry_run:
-        with engine.begin() as conn:
-            conn.execute(text("""UPDATE pit_collection_runs SET status=:status,finished_at=:finished,requested_count=:requested,
-                received_count=:received,persisted_count=:persisted,empty_count=:empty,failed_count=:failed,
-                warning_count=:warnings,details_json=:details WHERE run_id=:run"""), {"status": status, "finished": _utcnow(), "requested": outcome.requested, "received": outcome.received, "persisted": outcome.persisted, "empty": outcome.empty, "failed": outcome.failed, "warnings": len(outcome.warnings), "details": _json(outcome.details | {"warnings": outcome.warnings}), "run": run_id})
     return status, outcome
 
 

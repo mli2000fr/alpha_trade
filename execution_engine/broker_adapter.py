@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime
 from typing import Any
 
 from execution_engine.config import ExecutionConfig
-from execution_engine.models import BrokerOrder, CancelResult, OrderIntent
+from execution_engine.models import BrokerOrder, CancelResult, OrderIntent, IntentRole
 from execution_engine.order_intents import build_oco_protection_payload, intent_to_alpaca_payload
 from execution_engine.state_machine import map_alpaca_status
 from service.alpaca.clientAlpaca import fetch_latest_quotes
@@ -30,6 +31,16 @@ class BrokerAdapter:
 
     def submit_intent(self, intent: OrderIntent) -> BrokerOrder:
         payload = intent_to_alpaca_payload(intent, config=self._config)
+        if intent.intent_role in (IntentRole.ENTRY, IntentRole.REBALANCE_BUY):
+            # Never let a permissive liquidity gate or a previously approved
+            # risk target bypass missing real-time SIP entitlement.
+            try:
+                quote = fetch_latest_quotes([intent.symbol], account_id=self._config.account_id).get(intent.symbol.upper())
+                bid, ask = float(quote["bp"]), float(quote["ap"])
+                if not all(math.isfinite(v) for v in (bid,ask)) or bid <= 0 or ask < bid:
+                    raise ValueError("invalid SIP quote")
+            except Exception as exc:
+                raise BrokerApiError(403, "Nouvelle entrée bloquée : quote SIP temps réel indisponible ; aucun fallback IEX") from exc
         resp = self._client.submit_order(payload)
         return self._resp_to_broker_order(resp, intent.intent_id)
 

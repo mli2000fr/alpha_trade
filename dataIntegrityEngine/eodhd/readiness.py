@@ -61,7 +61,8 @@ def wait_for_publication(day, config, *, now_fn=None, sleep_fn=None, calendar=No
     return ready_at
 
 
-def target_coverage(engine, symbols, day, *, benchmark='SPY', minimum=.95):
+def target_coverage(engine, symbols, day, *, benchmark='SPY', minimum=.95,
+                    required_source=None, excluded_symbols=(), require_raw=False):
     """Read committed canonical bars; older/future/filled/invalid bars never qualify."""
     if not math.isfinite(minimum) or not 0 < minimum <= 1:
         raise ValueError('Couverture minimale attendue dans ]0,1]')
@@ -71,14 +72,32 @@ def target_coverage(engine, symbols, day, *, benchmark='SPY', minimum=.95):
     benchmark = str(benchmark).strip().upper()
     if not benchmark:
         raise ValueError('Benchmark de contrôle vide')
-    query = text('''SELECT symbol FROM stock_bars_daily
+    sql = '''SELECT symbol FROM stock_bars_daily
         WHERE `date`=:day AND symbol IN :symbols AND is_filled=0
           AND `open`>0 AND high>0 AND low>0 AND `close`>0 AND volume>0
           AND high>=low AND high>=`open` AND high>=`close` AND low<=`open` AND low<=`close`
-    ''').bindparams(bindparam('symbols', expanding=True))
+    '''
+    if required_source:
+        sql += ' AND data_source=:source AND data_adjustment=\'split\''
+    if require_raw:
+        # Both consumers must see the same committed daily observation.
+        sql += ''' AND EXISTS (SELECT 1 FROM stock_bars b
+            WHERE b.symbol=stock_bars_daily.symbol AND b.timeframe='1D'
+              AND b.timestamp=:raw_timestamp AND b.data_source=:source
+              AND b.data_adjustment='split'
+              AND b.open_price=stock_bars_daily.open AND b.high_price=stock_bars_daily.high
+              AND b.low_price=stock_bars_daily.low AND b.close_price=stock_bars_daily.close
+              AND b.volume=stock_bars_daily.volume)'''
+    if require_raw and not required_source:
+        raise ValueError('Source requise pour le contrôle des deux tables')
+    query = text(sql).bindparams(bindparam('symbols', expanding=True))
+    params = {'day': day, 'symbols': sorted(set(universe) | {benchmark})}
+    if required_source:
+        params.update(source=required_source, raw_timestamp=f'{day} 09:30:00')
     with engine.connect() as conn:
         present = {str(s).strip().upper() for s in conn.execute(query,
-            {'day': day, 'symbols': sorted(set(universe) | {benchmark})}).scalars()}
+            params).scalars()}
+    present -= {str(s).strip().upper() for s in excluded_symbols}
     missing = sorted(set(universe) - present)
     ratio = (len(universe) - len(missing)) / len(universe)
     result = dict(target_date=str(day), requested=len(universe),

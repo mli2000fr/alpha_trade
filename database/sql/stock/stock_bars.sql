@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS alpha_trade.stock_bars (
     ingested_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     -- Provenance & convention de prix (Phase 1 refactor — audit_global.md §6).
     data_adjustment VARCHAR(16) NOT NULL DEFAULT 'split' COMMENT 'Convention Alpaca : split (canonique) | raw | dividend | all',
-    data_source VARCHAR(16) NOT NULL DEFAULT 'alpaca_iex' COMMENT 'Origine des barres : alpaca_iex | alpaca_sip | eodhd_eod | stooq | yahoo',
+    data_source VARCHAR(16) NOT NULL DEFAULT 'alpaca_sip' COMMENT 'Origine des barres : alpaca_sip | eodhd_eod | stooq | yahoo ; alpaca_iex legacy',
     UNIQUE KEY uq_stock_bars_symbol_timeframe_timestamp (symbol, timeframe, `timestamp`),
     KEY idx_stock_bars_symbol_timestamp (symbol, `timestamp`),
     CONSTRAINT chk_bars_adj CHECK (data_adjustment = 'split')

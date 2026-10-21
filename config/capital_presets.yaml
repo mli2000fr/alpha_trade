@@ -1,3 +1,5 @@
+# Les justifications et clés *_iex ci-dessous sont historiques/compatibilité.
+# Depuis le 17/10/2026, elles ne relâchent plus le spread : seuil SIP strict.
 presets:
 - key: capital_0_2000
   label: 0 → 2 000 $ (micro-compte)
@@ -150,7 +152,7 @@ presets:
     risk_max_position_weight: 0.25
     risk_max_sector_weight: 0.5
     risk_min_position_notional: 155.0
-    risk_max_drawdown_pct: 0.20
+    risk_max_drawdown_pct: 0.15
     risk_max_daily_loss_pct: 0.03
     risk_drawdown_rolling_peak_window_days: 252
     risk_degraded_entry_allocation_pct: 0.06

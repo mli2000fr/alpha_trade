@@ -149,6 +149,13 @@ def test_ihm_cli_contract_pipeline_steps_emit_python_module_invocations() -> Non
 
     options = PipelineLaunchOptions()
     for step in (*PIPELINE_STEPS, *PIPELINE_AUXILIARY_STEPS):
+        if step.blocked_reason:
+            # A rights-blocked collector must not become launchable just to
+            # satisfy the generic command-shape contract.
+            with pytest.raises(ValueError) as caught:
+                build_pipeline_command(step.key, options)
+            assert str(caught.value) == step.blocked_reason
+            continue
         command = build_pipeline_command(step.key, options)
         assert command, f"Step {step.key} : commande vide"
 

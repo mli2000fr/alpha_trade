@@ -17,6 +17,16 @@ from risk_management.models import AccountRiskSnapshot, PortfolioEntry, Selectio
 from service.market.models import MarketRegimeSnapshot
 
 
+@pytest.fixture(autouse=True)
+def _isolate_market_regime_runtime(monkeypatch, tmp_path):
+    # Unit tests must not fetch live macro data or overwrite the application's
+    # real latest.json. Regime-specific tests below install their own snapshots;
+    # the real loader/builder bridge is covered in test_market_regime_state_store.
+    import service.market.state_store as state_store
+    monkeypatch.setattr(state_store, 'DEFAULT_STATE_PATH', tmp_path / 'market_state.json')
+    monkeypatch.setattr(cli, '_resolve_market_regime_snapshot', lambda *a, **kw: None)
+
+
 def test_live_borrow_provider_blocks_short_when_asset_api_fails(monkeypatch) -> None:
     import service.alpaca.clientAlpaca as alpaca_module
 

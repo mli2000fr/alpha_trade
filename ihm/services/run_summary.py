@@ -64,7 +64,7 @@ RUN_SUMMARY_METRICS: dict[str, list[tuple[str, str]]] = {
     "sync_latest_quotes": [
         ("Symboles", "symbols"),
         ("Rows upsert", "rows_upserted"),
-        ("Biais IEX", "quote_iex_vs_consolidated_bps"),
+        ("Écart quote/close (proxy)", "quote_iex_vs_consolidated_bps"),
         ("Obs. biais", "quote_iex_vs_consolidated_observations"),
         ("Batch", "batch_size"),
     ],
@@ -487,6 +487,9 @@ def get_run_summary_metric_items(record: Mapping[str, object] | None) -> list[tu
         return []
 
     specs = RUN_SUMMARY_METRICS.get(_step_key(record), [])
+    if _step_key(record) == "sync_latest_quotes" and summary.get("quotes_feed") == "sip":
+        specs = [("Écart mid/close SIP" if key == "quote_iex_vs_consolidated_bps" else label, key)
+                 for label, key in specs]
     if specs:
         items = [(label, summary.get(key)) for label, key in specs if summary.get(key) not in (None, "")]
         if _step_key(record) == "stock_screener":
@@ -922,8 +925,9 @@ def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[st
         max_abs_date = str(summary.get("max_quote_iex_vs_consolidated_date") or "").strip()
         proxy_name = str(summary.get("quote_iex_vs_consolidated_proxy") or "same_session_mid_vs_stock_bars_daily_close").strip()
         if proxy_status == "ok" and observations > 0 and mean_abs_bps is not None:
+            feed_label = str(summary.get("quotes_feed") or "non précisé").upper()
             line = (
-                "Proxy biais quotes IEX vs close consolidée : "
+                f"Proxy biais quotes {feed_label} vs close consolidée : "
                 f"moyenne absolue={mean_abs_bps:.2f} bps"
             )
             if mean_signed_bps is not None:
@@ -940,7 +944,7 @@ def get_run_summary_detail_lines(record: Mapping[str, object] | None) -> list[st
                 lines.append(max_line + ".")
         elif proxy_status == "unavailable":
             lines.append(
-                "Proxy biais quotes IEX vs close consolidée indisponible : aucun appariement exploitable "
+                "Proxy quote/close indisponible : aucun appariement exploitable "
                 "entre `stock_quote_snapshots` et `stock_bars_daily` sur la fenêtre du run."
             )
 
@@ -1186,7 +1190,12 @@ def aggregate_workflow_run_summary(child_runs: Iterable[Mapping[str, object]]) -
         for key, value in summary.items():
             if key in _SUMMARY_METADATA_KEYS:
                 continue
-            if isinstance(value, Mapping):
+            if key == 'target_coverage' and isinstance(value, Mapping):
+                # A qualified exact-session snapshot, not additive integer
+                # counters. Preserve ratio, threshold, benchmark and reasons.
+                # Previously .92067 and .95 were both flattened to integer 0.
+                aggregated[key] = dict(value)
+            elif isinstance(value, Mapping):
                 _merge_nested_counts(aggregated, key, value)
             elif isinstance(value, (list, tuple, set)):
                 union_target = list_unions.setdefault(key, set())

@@ -38,7 +38,7 @@ def intraday_defaults():
     cfg=(load_config() or {}).get('intraday_backfill') or {}
     result=dict(provider=cfg.get('provider','alpaca'),alpaca_feed=cfg.get('alpaca_feed','sip'),
                 account_id=cfg.get('account_id','default'))
-    if result['provider'] not in ('alpaca','eodhd') or result['alpaca_feed'] not in ('iex','sip'):
+    if result['provider'] not in ('alpaca','eodhd') or result['alpaca_feed'] != 'sip':
         raise ValueError('Configuration intraday provider/feed invalide')
     if not isinstance(result['account_id'],str) or not result['account_id'].strip():
         raise ValueError('Compte Alpaca intraday invalide')
@@ -103,7 +103,7 @@ def build_plan(start, end, source, interval, chunk_days, *, provider=None, alpac
     provider=provider or defaults['provider']
     alpaca_feed=alpaca_feed or defaults['alpaca_feed']
     account_id=account_id or defaults['account_id']
-    if provider not in ('alpaca','eodhd') or alpaca_feed not in ('iex','sip'):
+    if provider not in ('alpaca','eodhd') or alpaca_feed != 'sip':
         raise ValueError('Fournisseur/flux intraday invalide')
     if interval not in INTERVAL_SECONDS: raise ValueError('Intervalle invalide')
     if provider=='eodhd' and interval=='1m' and chunk_days>119:
@@ -193,7 +193,9 @@ def emit(state):
 def run(plan, *, refresh=False, sleep_seconds=1., max_tasks=None):
     if not math.isfinite(sleep_seconds) or sleep_seconds<.2: raise ValueError('Pause minimale 0,2 s')
     provider=plan.get('provider','eodhd')
-    feed=plan.get('alpaca_feed','iex')
+    feed=plan.get('alpaca_feed','sip')
+    if provider=='alpaca' and feed!='sip':
+        raise ValueError('Ancien plan IEX : créer un nouveau plan SIP ; ne pas réétiqueter ni réutiliser le cache IEX')
     data_source='eodhd_intraday' if provider=='eodhd' else 'alpaca_'+feed
     root=ROOT/('artifacts/eodhd_intraday_backfill' if plan.get('version',1)==1 else 'artifacts/intraday_backfill')/plan['plan_id']
     root.mkdir(parents=True,exist_ok=True)
@@ -303,7 +305,7 @@ def main():
     parser.add_argument('--end-date',type=date.fromisoformat,required=True)
     parser.add_argument('--symbol-source',default=DEFAULT_SOURCE)
     parser.add_argument('--provider',choices=('alpaca','eodhd'),help='Défaut : config.yaml intraday_backfill.provider')
-    parser.add_argument('--alpaca-feed',choices=('iex','sip'),help='Pas de fallback implicite')
+    parser.add_argument('--alpaca-feed',choices=('sip',),help='SIP uniquement, pas de fallback implicite')
     parser.add_argument('--account-id',help='Compte Alpaca, défaut configurable')
     parser.add_argument('--interval',choices=tuple(INTERVAL_SECONDS),default='5m')
     parser.add_argument('--chunk-days',type=int,default=30)

@@ -199,7 +199,7 @@ def run_locked(args, root, archive):
     expected={'symbols_file':args.symbols_file,'universe_sha256':hashlib.sha256(source).hexdigest(),
         'symbols':symbols,'start_date':start.isoformat(),'end_date':end.isoformat(),
         'table':TABLE,'timeframe':'1Day','account_id':'default','target_dtes':[5,10,20],'dte_tolerance':5,
-        'spot':'historical IEX daily raw close, used only to select ATM strike; not consolidated stock volume',
+        'spot':'historical SIP daily raw close, used only to select ATM strike; no IEX cache reuse',
         'provenance':'UNVERIFIED_OPRA','available_at':'actual archived API retrieval timestamp',
         'contract_filter':'matching standard root, size 100, same-strike call/put pairs',
         'sql_effect':'INSERT IGNORE only; no overwrite/delete/DDL; raw and metadata kept in files'}
@@ -259,7 +259,7 @@ def run_locked(args, root, archive):
                     records=client.pages(DATA+'/v2/stocks/bars',{'symbols':','.join(remaining[offset:offset+100]),
                         'timeframe':'1Day','start':datetime.combine(month_start,datetime.min.time(),NY).isoformat(),
                         'end':datetime.combine(month_end+timedelta(days=1),datetime.min.time(),NY).isoformat(),
-                        'adjustment':'raw','feed':'iex','limit':10000,'sort':'asc'})
+                        'adjustment':'raw','feed':'sip','limit':10000,'sort':'asc'})
                     for rec in records:
                         for symbol,items in (rec['payload'].get('bars') or {}).items():
                             for item in items:
@@ -312,7 +312,7 @@ def run_locked(args, root, archive):
                             'catalog_contracts':len(catalog),'selected_contracts':len(chosen),
                             'session_count':len(days),'missing_spot_days':len(days)-len(daily),
                             'missing_selected_bars':missing,'rejected_bars':rejected,'write':args.write,
-                            'reason':None if rows else ('NO_RAW_IEX_SPOT' if not daily else 'NO_SELECTED_BARS_OR_STANDARD_PAIRS')}
+                            'reason':None if rows else ('NO_RAW_SIP_SPOT' if not daily else 'NO_SELECTED_BARS_OR_STANDARD_PAIRS')}
                         statuses[task]=result
                         if args.write:atomic_json(root/'tasks'/f'{task}.json',result)
                         LOGGER.info('%s rows=%s inserted=%s missing=%s completed=%s/%s',task,len(rows),persisted,missing,

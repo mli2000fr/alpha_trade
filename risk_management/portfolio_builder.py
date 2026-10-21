@@ -723,7 +723,13 @@ class PortfolioBuilder:
             from risk_management.operational_data import OperationalDataSnapshot
             if not isinstance(operational, OperationalDataSnapshot):
                 raise ValueError('Oracle LONG requires an explicit operational snapshot')
-            if trade_date is None or operational.account.as_of.date() != trade_date:
+            if trade_date is None:
+                raise ValueError('Oracle operational snapshot must match decision date')
+            if (selection_policy in {'oracle_web_llm_long', 'oracle_web_llm_directional'}
+                    and operational.account.source == 'broker:paper:llm'):
+                from risk_management.operational_data import validate_llm_paper_snapshot
+                validate_llm_paper_snapshot(operational, trade_date)
+            elif operational.account.as_of.date() != trade_date:
                 raise ValueError('Oracle operational snapshot must match decision date')
             if not np.isfinite(operational.account.equity) or operational.account.equity <= 0:
                 raise ValueError('Invalid operational equity')

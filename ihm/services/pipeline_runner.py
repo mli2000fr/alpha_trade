@@ -345,7 +345,7 @@ ExecutionTrailingTrigger = Literal["multiple_r", "profit_pct"]
 PipelineExecutionStatus = Literal["starting", "running", "completed", "failed", "timeout"]
 WorkflowStartStep = Literal["1", "3"]
 SentimentScoringMode = Literal["standard_only", "contextual_only", "standard_and_contextual"]
-FundamentalsProvider = Literal["yahoo_finance", "eodhd", "finnhub"]
+FundamentalsProvider = Literal["eodhd", "finnhub"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -642,6 +642,7 @@ class PipelineLaunchOptions:
     signal_aggregator_time_decay_half_life_days: float = DEFAULT_SIGNAL_AGGREGATOR_TIME_DECAY_HALF_LIFE_DAYS
     signal_aggregator_log_level: str = DEFAULT_SIGNAL_AGGREGATOR_LOG_LEVEL
     data_integrity_quotes_symbol_source: DataIntegritySymbolSource | None = None
+    data_integrity_quotes_mode: Literal['historical', 'latest'] | None = None
     data_integrity_quotes_from_date: str | None = None
     data_integrity_quotes_to_date: str | None = None
     data_integrity_quotes_start_symbol: str | None = None
@@ -657,7 +658,7 @@ class PipelineLaunchOptions:
     data_integrity_earnings_batch_size: int = DEFAULT_DATA_INTEGRITY_EARNINGS_BATCH_SIZE
     data_integrity_earnings_resume: bool = DEFAULT_DATA_INTEGRITY_EARNINGS_RESUME
     data_integrity_fundamentals_limit: int | None = None
-    data_integrity_fundamentals_provider: FundamentalsProvider = "yahoo_finance"
+    data_integrity_fundamentals_provider: FundamentalsProvider = "finnhub"
     data_integrity_fundamentals_overwrite_existing: bool = False
     data_integrity_fundamentals_sleep_seconds: float = DEFAULT_DATA_INTEGRITY_PROVIDER_SLEEP_SECONDS
     data_integrity_fundamentals_log_every: int = DEFAULT_DATA_INTEGRITY_FUNDAMENTALS_LOG_EVERY
@@ -822,7 +823,7 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
         key="sync_latest_quotes",
         num="4",
         name="Sync Latest Quotes",
-        desc="Snapshot des dernières quotes Alpaca pour alimenter `stock_quote_snapshots` et le filtre de spread.",
+        desc="Quotes historiques SIP de clôture par défaut, sur l'univers configuré, pour `stock_quote_snapshots` et le filtre de spread. Le temps réel reste un choix explicite exigeant les droits SIP.",
         tables="stock_quote_snapshots",
         deps="stock_screener",
     ),
@@ -912,7 +913,7 @@ PIPELINE_STEPS: tuple[PipelineStepDefinition, ...] = (
         key="corporate_actions_sync",
         num="13",
         name="Corporate Actions Sync",
-        desc="Recupere dividendes/splits pour les symboles detenus en portefeuille. Provider selectionne automatiquement via market_data.bars_provider (alpaca ou eodhd) ; Yahoo cross-check toujours appele. (Phase 6 EODHD)",
+        desc="Récupère dividendes/splits pour les symboles détenus en portefeuille. Fournisseur sélectionné via market_data.bars_provider (Alpaca ou EODHD), sans cross-check Yahoo.",
         tables="corporate_actions_events",
         deps="execution (broker_positions_snapshots requis)",
         account_usage="alpaca",
@@ -941,7 +942,7 @@ PIPELINE_AUXILIARY_STEPS: tuple[PipelineStepDefinition, ...] = (
         key="update_sector",
         num="B2",
         name="Mise à jour fondamentaux",
-        desc="Enrichit `stock_metadata` avec `sector` et `market_cap` via Yahoo Finance, EODHD ou Finnhub (défaut Yahoo Finance / `yfinance`), avec option d'écrasement des valeurs existantes. Si l'endpoint fundamentals EODHD est refusé par le compte (401/403), le backend bascule automatiquement vers Finnhub pour terminer le run.",
+        desc="Enrichit `stock_metadata` avec secteur et capitalisation via Finnhub par défaut, ou EODHD, sans Yahoo. EODHD refusé (401/403) : fallback Finnhub. Classification fournisseur à harmoniser ; valeurs absentes non inventées.",
         tables="stock_metadata",
         deps="import_alpaca_assets (recommandé) ou univers déjà chargé",
     ),
@@ -1752,6 +1753,9 @@ def _build_chained_ps_commands(
 
 def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> list[str]:
     """Construit la commande subprocess correspondant à une étape."""
+    if step_key == 'sync_latest_quotes':
+        from ihm.services.pipeline_quote_scope import resolve_quote_scope
+        options = resolve_quote_scope(options)
     blocked_step = next((step for step in (*PIPELINE_STEPS, *PIPELINE_AUXILIARY_STEPS)
                          if step.key == step_key and step.blocked_reason), None)
     if blocked_step is not None:
@@ -1864,14 +1868,26 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
                     options.eodhd_import_benchmark_symbol])
             return command
         if options.eodhd_import_require_target_coverage:
-            raise ValueError('Le contrat de cours J du batch US est qualifié pour EODHD ; import Alpaca non raccordé à ce contrôle')
+            if provider != 'alpaca':
+                raise ValueError('market_data.bars_provider doit être alpaca ou eodhd')
+            if not options.eodhd_import_target_date or not options.eodhd_import_symbol_source:
+                raise ValueError('Import SIP quotidien : date J et source univers explicites requises')
+            command = [sys.executable, '-u', '-m', 'dataIntegrityEngine.import_alpaca_session',
+                '--write', '--require-target-coverage', '--target-date', options.eodhd_import_target_date,
+                '--symbol-source', options.eodhd_import_symbol_source,
+                '--min-target-coverage', str(options.eodhd_import_min_target_coverage),
+                '--benchmark-symbol', options.eodhd_import_benchmark_symbol,
+                '--account', account_id or 'default']
+            if options.eodhd_import_wait_for_publication:
+                command.append('--wait-for-publication')
+            return command
         return [sys.executable, "-u", "-m", "dataIntegrityEngine.import_alpaca_bar"]
 
     if step_key == "update_sector":
         fundamentals_provider = (
             options.data_integrity_fundamentals_provider
-            if options.data_integrity_fundamentals_provider in {"yahoo_finance", "eodhd", "finnhub", "fmp"}
-            else "yahoo_finance"
+            if options.data_integrity_fundamentals_provider in {"eodhd", "finnhub", "fmp"}
+            else "finnhub"
         )
         command = [
             sys.executable,
@@ -1903,7 +1919,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         if provider == 'alpaca':
             from common.config_loader import load_config
             feed = str(((load_config() or {}).get('market_data') or {}).get('alpaca_backfill_feed','sip')).lower()
-            if feed not in ('iex','sip'):raise ValueError('market_data.alpaca_backfill_feed doit être iex ou sip')
+            if feed != 'sip':raise ValueError('market_data.alpaca_backfill_feed doit être sip')
             command.extend(['--feed',feed,'--account',account_id or 'default'])
         if options.eodhd_backfill_write:
             command.append("--write")
@@ -1940,7 +1956,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
     if step_key == "corporate_actions_sync":
         # --portfolio-only : sync uniquement les symboles détenus en portefeuille
         # pas de --skip-existing : on re-interroge Alpaca à chaque fois pour ne rater aucun nouvel événement
-        command = [sys.executable, "-u", "-m", "corporate_actions", "sync", "--portfolio-only"]
+        command = [sys.executable, "-u", "-m", "corporate_actions", "sync", "--portfolio-only", "--cross-check", "none"]
         if options.corporate_actions_skip_existing:
             command.append("--skip-existing")
         if options.corporate_actions_batch_size and options.corporate_actions_batch_size > 0:
@@ -2018,6 +2034,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--start-symbol", quotes_start_symbol])
         if quotes_limit is not None:
             command.extend(["--limit", str(quotes_limit)])
+        command.extend(['--feed', 'sip'])
         return command
 
     if step_key == "sync_earnings_calendar":

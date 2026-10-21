@@ -825,7 +825,9 @@ def _with_updates(record: PipelineRunRecord, **updates: object) -> PipelineRunRe
 
 
 def _extract_run_summary(line: str) -> dict[str, object] | None:
-    cleaned = line.strip()
+    # Child libraries (notably modelFactory) can leave a color reset directly
+    # before the next process's final summary. It is still a structured event.
+    cleaned = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', line).strip()
     if not cleaned.startswith(RUN_SUMMARY_PREFIX):
         return None
     payload = cleaned[len(RUN_SUMMARY_PREFIX):].strip()
@@ -1372,6 +1374,13 @@ def _run_pipeline_workflow(
                 force_trade_date_to_latest_snapshot=False)
             from service.llm_directional.config import load_filter_config
             _append_workflow_event(managed, f"Séance signal Oracle / {load_filter_config().provider_label} figée : {signal_day} (étapes 10/11/12).")
+        if any(step.key == 'sync_latest_quotes' for step in steps):
+            from ihm.services.pipeline_quote_scope import resolve_quote_scope
+            options = resolve_quote_scope(options)
+            _append_workflow_event(managed,
+                f"Quotes figées : mode={options.data_integrity_quotes_mode} "
+                f"du {options.data_integrity_quotes_from_date} au {options.data_integrity_quotes_to_date}, "
+                f"univers={options.data_integrity_quotes_symbol_source}.")
         child_run_ids: list[str] = []
         child_runs_with_summary: dict[str, dict[str, object]] = {}
 

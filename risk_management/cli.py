@@ -82,6 +82,25 @@ def _emit_live_progress(
     )
 
 
+def _load_tradable_universe_for_risk(
+    repo, *, trade_date, effective_equity, llm_filter_run_id=None, account_id='default',
+):
+    if llm_filter_run_id:
+        from service.llm_directional.risk_adapter import archived_universe_preset
+        preset = archived_universe_preset(repo.engine, llm_filter_run_id, trade_date, account_id)
+        source = 'llm_archived_input'
+        LOGGER.info('Univers risque LLM : preset archivé=%s run=%s ; equity sizing réelle=%.2f (inchangée)',
+                    preset.key, llm_filter_run_id, effective_equity)
+    else:
+        preset = resolve_capital_preset_for_equity(effective_equity)
+        if preset is None:
+            raise SystemExit("Aucun preset capital ne permet de résoudre l'univers tradable live.")
+        source = 'account_equity'
+    # No fallback to another preset, file or incomplete publication.
+    universe = repo.load_tradable_universe_asof(trade_date, preset.key)
+    return universe, preset.key, source
+
+
 def _resolve_market_regime_snapshot(
     trade_date: date,
     effective_equity: float,
@@ -183,7 +202,7 @@ def _load_live_spread_snapshots(
             bid=_optional_quote_float(quote.get("bp")),
             ask=_optional_quote_float(quote.get("ap")),
             quote_time=quote_time,
-            source="alpaca",
+            source="alpaca_sip",
         )
     return snapshots
 
@@ -1847,10 +1866,11 @@ def main(args: list[str] | None = None) -> None:
     else:
         breakout_tracker = BreakoutConfirmationTracker(min_breakout_days=config.min_breakout_days)
 
-    resolved_capital_preset = resolve_capital_preset_for_equity(effective_equity)
-    if resolved_capital_preset is None:
-        raise SystemExit("Aucun preset capital ne permet de résoudre l'univers tradable live.")
-    universe = repo.load_tradable_universe_asof(trade_date, resolved_capital_preset.key)
+    universe, universe_capital_preset_key, universe_preset_source = _load_tradable_universe_for_risk(
+        repo, trade_date=trade_date, effective_equity=effective_equity,
+        llm_filter_run_id=args.llm_filter_run_id,
+        account_id=effective_account_id or resolved_account_scope or 'default',
+    )
     if universe.data_quality_grade.strip().lower() != "full":
         raise SystemExit(
             "L'univers tradable live doit être de qualité full; "
@@ -1861,7 +1881,9 @@ def main(args: list[str] | None = None) -> None:
     universe_symbol_count = len(universe_symbols)
     LOGGER.info("Univers tradable ML-first chargé: run=%s symbols=%d", universe_run_id, universe_symbol_count)
     _emit_live_progress(
-        dict(progress_context, targeted_symbols=universe_symbol_count),
+        dict(progress_context, targeted_symbols=universe_symbol_count,
+             universe_capital_preset_key=universe_capital_preset_key,
+             universe_preset_source=universe_preset_source),
         current=2,
         total=progress_total_steps,
         label="🛡️ Progression risk management — chargement des candidats",
@@ -2720,6 +2742,10 @@ def main(args: list[str] | None = None) -> None:
         "finished_at": finished_at.isoformat(timespec="seconds"),
         "duration_seconds": round((finished_at - started_at).total_seconds(), 2),
         "loaded_candidates": len(candidates),
+        "universe_run_id": universe_run_id,
+        "universe_capital_preset_key": universe_capital_preset_key,
+        "universe_preset_source": universe_preset_source,
+        "llm_filter_run_id": args.llm_filter_run_id,
         "targeted_symbols": len(entries),
         "accepted_symbols": len(accepted_entries),
         "reduced_symbols": len(reduced_entries),
@@ -2879,6 +2905,9 @@ def main(args: list[str] | None = None) -> None:
         temporary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
         temporary_path.replace(summary_path)
     emit_run_summary(summary)
+
+    from service.pipeline_telegram import notify_risk
+    notify_risk(getattr(repo, 'engine', None), summary, effective_account_id or resolved_account_scope or 'default')
 
 
 if __name__ == "__main__":

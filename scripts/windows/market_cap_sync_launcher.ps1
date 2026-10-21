@@ -1,7 +1,7 @@
 # Launcher de compatibilité pour market_cap_sync.
 # La configuration batch.yaml est lue par le launcher Forward PIT commun.
 # L'orchestration métier est centralisée dans service.forward_pit.batch afin
-# que SEC -> Yahoo -> Finnhub, les compteurs SQL et les notifications restent
+# que SEC -> Finnhub (sans Yahoo), les compteurs SQL et les notifications restent
 # identiques entre tâche Windows, IHM et lancement manuel.
 [CmdletBinding()]
 param(

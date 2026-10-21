@@ -55,9 +55,23 @@ class BrokerStateSynchronizer:
             LOGGER.warning("Impossible de relire les ordres broker récents pour account_id=%s", account_id, exc_info=True)
             raw_orders = []
 
+        # OCO children can receive broker-generated client IDs. An unlinked
+        # child for an active campaign belongs to its reconciliation outbox,
+        # never to the legacy manual-orphan adoption path.
+        campaign_symbols = set()
+        from sqlalchemy.engine import Engine
+        if isinstance(getattr(self._repo, 'engine', None), Engine):
+            from execution_engine.winner_campaign_store import WinnerCampaignStore
+            store = WinnerCampaignStore(self._repo.engine)
+            if store.exists():
+                campaign_symbols = {r['state']['symbol'] for r in store.rows(account_id, self._broker_mode)}
         for raw_order in raw_orders:
             request = self._resolve_request(account_id=account_id, raw_order=raw_order)
             if request is None:
+                if (str(raw_order.get('client_order_id') or '').startswith('wp-')
+                        or raw_order.get('symbol') in campaign_symbols):
+                    metrics['unmatched_orders'] += 1
+                    continue  # Durable campaign outbox, not a manual orphan.
                 # Sprint 2026-05 — adoption d'ordre orphelin (Q5/Q6 FAQ).
                 # Tout ordre filled / partiellement filled non rattaché à un
                 # OrderIntent est intégré au journal canonique.
@@ -88,6 +102,12 @@ class BrokerStateSynchronizer:
                 raw_response=raw_order,
             )
             metrics["orders_synced"] += 1
+
+            if request.request_id.startswith('wp-'):
+                # The campaign coordinator journals real fill receipts under
+                # its account lock. Never duplicate them or invent a fill hour
+                # from this observation's updated_at timestamp.
+                continue
 
             existing_filled_qty = self._repo.load_cumulative_filled_qty(request_id=request.request_id)
             missing_fill_qty = max(float(broker_order.filled_qty) - float(existing_filled_qty), 0.0)

@@ -88,20 +88,25 @@ Les snapshots déjà présents à la date New York sont ignorés ; un symbole es
 commité entièrement, puis la reprise passe au suivant. Aucun tableau incomplet
 n'est déclaré complet via un simple checkpoint fichier.
 
-Univers actuel : tous les symboles distincts non vides de `alpha_trade.stock_bars_daily`
-(`symbol_source: stock_bars_daily`), pas TOP20 ni TOP10 ni univers PIT filtré.
-Modification demandée le 11 octobre 2026 : 13 105 symboles bruts en base,
-normalisés/dédupliqués avant appels ; aucune sélection de date ou de tradabilité.
-Le fichier tradable n'est plus utilisé pour cette collecte. Les preuves de smoke
-antérieures concernaient son ancien périmètre. Des radiés, ETF ou titres sans
-consensus peuvent être présents : réponse vide ne signifie pas panne, et le
-seuil de couverture de 95 % s'applique désormais uniquement au fichier
-`config/univers_batch/univers_filtred_tradable.txt` (`coverage_symbols_file`).
-La couverture de l'univers large reste une mesure descriptive (`overall_coverage`),
-pas un motif d'échec en soi. Les titres du fichier absents de la table de barres
-restent dans le dénominateur et sont signalés : aucune réduction silencieuse.
-Lots de 20 titres, pause 1,1 seconde, environ 656 appels pour 13 105 titres hors
-retries/subdivision des symboles invalides. Quota et retries du client EODHD
+**Univers courant depuis le 18 octobre 2026 :**
+`config/univers_batch/stock_bars_daily.txt`, export fixe de **13 105 symboles**
+au changement. Configuration : `symbol_source: universe-file`, `symbols_file`
+vers cet export. Le fichier est relu au lancement, mais n'est pas régénéré depuis
+SQL automatiquement. Aucun filtre actif/tradable, TOP20 ou TOP10 n'est appliqué.
+`us_pipeline` reste sur son fichier tradable de 1 790 titres.
+
+L'univers large de 13 105 symboles de `stock_bars_daily`, utilisé auparavant,
+reste un mode pris en charge explicitement, mais n'est plus celui configuré.
+Ses anciennes observations SQL et archives restent conservées sans modification.
+Le mode courant utilise ce fichier exporté, pas une requête SQL d'univers.
+Les anciennes preuves et métriques gardent leur périmètre daté.
+
+Le seuil de couverture de 95 % reste limité à
+`config/univers_batch/univers_filtred_tradable.txt` (`coverage_symbols_file`),
+pas à l'ensemble des ETF/radiés de l'export. Absence de consensus et erreur
+technique restent distinguées. Lots de 20 titres, pause 1,1 seconde : environ
+656 appels pour 13 105 titres, hors retries/subdivision et titres déjà collectés.
+Quota et retries du client EODHD
 existant ; HTTPS vérifié. 401/403/quota/circuit arrêtent la collecte, sans repli Yahoo.
 Une couverture inférieure à 95 % du fichier tradable ou une erreur technique
 fait échouer le run. Les réponses vides sont distinctes des échecs techniques :
@@ -111,7 +116,13 @@ explicitement liés aux symboles, sont isolés par subdivision puis consignés d
 technique. Une erreur technique locale est enregistrée sans abandon des
 sous-lots frères ; auth/quota/circuit interrompent le run avec compteurs détaillés.
 Les symboles sans consensus ou invalides dans le fichier tradable réduisent sa
-couverture ; hors fichier, ils n'entraînent pas une alerte à eux seuls.
+couverture ; les absences hors de cette référence n'affectent que la couverture
+globale descriptive. Les titres sont demandés selon le fichier étendu.
+Le changement prend
+effet au prochain lancement, sans nouveau téléchargement ni écriture SQL lors
+de cette modification de configuration. Horaires, secours et notifications
+restent inchangés ; pas de nouvelle installation Windows nécessaire pour le
+seul changement d'univers, le launcher relisant `batch.yaml` à chaque lancement.
 
 Le 11 octobre, les types partagés `Outcome` et `BatchRunError` ont été déplacés
 dans `service/forward_pit/outcomes.py` pour préserver les compteurs lorsque le
@@ -137,8 +148,16 @@ de smoke restent des constats datés, pas l'état actuel en base.
 `RESEARCH_ONLY`, `units_qualified=false`, `fiscal_identity_qualified=false`,
 `historical_pit_qualified=false`. La réception prospective est tracée mais la
 date fiscale, devise, échelle, corrections et disponibilité avant décision
-doivent être qualifiées avant ML/backtest. Ni entraînement ni filtre live ni
-envoi de données à un LLM externe ne sont branchés ici.
+doivent être qualifiées avant ML/backtest. Aucun entraînement ou filtre LIVE
+n’est déclenché par ce collecteur.
+
+Depuis le **19 octobre 2026**, les nouvelles analyses LLM PAPER de l’étape 10
+lisent un contexte borné de cette table et l’envoient au fournisseur LLM choisi,
+dans les modes `web_search` et `local_data_only`. Le collecteur ne lance toujours
+aucun LLM. Les réserves d’unités/périodes et RESEARCH_ONLY sont conservées ;
+ces valeurs non qualifiées ne peuvent pas autoriser seules une sélection locale.
+Le paquet reçu avant le cutoff est archivé, sans transformer les références
+J−7/30/60/90 en collectes historiques. [Contrat et configuration](../ml/llm_modes_consensus.md).
 L'abonnement donne l'accès technique, pas une autorisation universelle de
 redistribution : usages privés/licence et conservation doivent rester conformes.
 

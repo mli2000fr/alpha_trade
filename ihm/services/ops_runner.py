@@ -97,7 +97,7 @@ OPS_COMMAND_CATALOG: dict[OpsCommandKey, OpsCommandSpec] = {
         label="Corporate Actions — sync",
         description=(
             "Lance `python -m corporate_actions sync` avec scope portefeuille par défaut, "
-            "et cross-check Yahoo optionnel pour les dividendes."
+            "sans cross-check Yahoo."
         ),
         icon="🔄",
     ),
@@ -307,8 +307,9 @@ def build_ops_command(key: OpsCommandKey, **kwargs: Any) -> list[str]:
         if batch_size not in (None, ""):
             cmd.extend(["--batch-size", str(batch_size)])
         cross_check = str(kwargs.get("cross_check") or "none").strip().lower()
-        if cross_check in {"none", "yahoo"}:
-            cmd.extend(["--cross-check", cross_check])
+        if cross_check != "none":
+            raise ValueError("Cross-check Yahoo retiré ; utiliser none")
+        cmd.extend(["--cross-check", "none"])
         account = str(kwargs.get("account") or "").strip()
         if account:
             cmd.extend(["--account", account])

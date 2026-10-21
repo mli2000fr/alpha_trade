@@ -1,0 +1,62 @@
+{
+  "reviewer": "Same assistant; documentary cross-check, not independent human review",
+  "parent": "artifacts/research/us_buyback_pilot/20261020-v2",
+  "cases": [
+    {
+      "symbol": "DBX",
+      "decision": "CANDIDATE_MULTICLASS_RECONCILIATION_REQUIRED",
+      "quotes": ["Common stock repurchases", "Proceeds from issuance of common stock, net of taxes withheld", "Class A common stock - 2,400.0 shares authorized and 256.0 shares issued and outstanding", "Class B common stock - 475.0 shares authorized and 80.7 shares issued and outstanding"],
+      "notes": "539.9m USD cash repurchases, 338m SBC expense. Cash issuance2.5m is net of taxes withheld, not gross share creation. ClassA256.0m/ClassB80.7m versus267.2m/82.2m, ClassC0; manually observed totals336.7m/349.4m. Not permissible to use ClassA change alone or subtract SBC dollars as share issuance. Financing leases require cash-capacity adjustment.",
+      "fully_qualified": false
+    },
+    {
+      "symbol": "RPRX",
+      "decision": "RESERVED_CLASS_EXCHANGES_AND_BUSINESS_SPECIFIC_CASHFLOW",
+      "quotes": ["Repurchases of Class A ordinary shares", "Proceeds from revolving credit facility", "Repayment of long-term debt"],
+      "notes": "304.759m USD repurchases but ClassA count446.692m versus443.166m; ClassB150.743m versus164.058m. A rising ClassA count is not evidence of aggregate dilution without exchange/noncontrolling structure reconciliation. Missing common issuance tag is not zero; generic CFO-capex does not capture royalty-asset investment economics.",
+      "fully_qualified": false
+    },
+    {
+      "symbol": "WRB",
+      "decision": "RESERVED_INSURANCE_CASHFLOW_AND_MULTIPLE_SECURITIES",
+      "quotes": ["W. R. BERKLEY CORP", "Net (payments) proceeds from issuance of debt", "Proceeds from sale of equity securities"],
+      "notes": "537.163m cash repurchases and undimensioned common shares256544757/264546100. Equity securities sale proceeds can be investment portfolio sales, NOT issuer share issuance. Insurance CFO and productive capex are not an industrial-company FCF screen. Preferred listings distinguished from common stock.",
+      "fully_qualified": false
+    },
+    {
+      "symbol": "JEF",
+      "decision": "RESERVED_FINANCIAL_BUSINESS_AND_CAPITAL_STRUCTURE",
+      "quotes": ["JEFFERIES FINANCIAL GROUP INC.", "Proceeds from conversion of common to preferred shares", "Proceeds from short-term borrowings"],
+      "notes": "169.402m cash common repurchases, common shares210626642/226129626. Cashflow includes conversion of common to preferred and large trading/financing balances. Negative generic CFO is not itself a reliable short signal for a broker-dealer.",
+      "fully_qualified": false
+    },
+    {
+      "symbol": "WTTR",
+      "decision": "RESERVED_UPC_CLASSES_NONCONTROLLING_INTERESTS_AND_ACQUISITIONS",
+      "quotes": ["Select Water Solutions, Inc.", "Proceeds from share issuance", "Issuance of shares for acquisitions", "All repurchased shares were retired."],
+      "notes": "61.770m USD common repurchase cash includes context of employee withholding; cashflow equity issuance shown as explicit zero in2023 under a tag outside our fixed cash-issuance allowlist. ClassA102172863/109389528; ClassB16221101 unchanged. Noncash acquisition shares and noncontrolling ownership need reconciliation before total-common-share calculation.",
+      "fully_qualified": false
+    },
+    {
+      "symbol": "CL",
+      "decision": "CANDIDATE_CAPEX_MAPPING_AND_BENEFIT_PROGRAM_SCOPE_REQUIRED",
+      "quotes": ["COLGATE-PALMOLIVE COMPANY", "Capital expenditures ( 705 ) ( 696 ) ( 567 )", "Proceeds from exercise of stock options", "Purchases of treasury shares"],
+      "notes": "1128m USD repurchases, option exercise proceeds380m, common shares821412769/830212606. Reported capex705m has tag PaymentsToAcquireProductiveAssets, absent from our fixed PaymentsToAcquirePropertyPlantAndEquipment mapping; CFO3745m minus capex705m=3040m proxy. Thus missing generic tag is NOT missing economic data. Compensation/benefit-program repurchases and other financing18m require semantic classification. No automatic post-result alias merge.",
+      "fully_qualified": false
+    },
+    {
+      "symbol": "HCSG",
+      "decision": "DOCUMENTED_NUMERIC_CANDIDATE_NOT_DIRECTIONAL_VALIDATION",
+      "quotes": ["The Company’s Common Stock is traded under the symbol “HCSG”", "73,341 and 74,088 shares outstanding", "Reissuance of treasury stock pursuant to Dividend Reinvestment Plan", "Proceeds from the exercise of stock options", "Short-term borrowings, net of repayments", "Payments of statutory withholding on net issuance of restricted stock units"],
+      "notes": "Annual2023 USD thousands: cash treasury purchases11283, operating cash43498, capex5406; CFO-capex38092. DRIP and options cash both explicitly0, not missing. Share count73341000/74088000 down1.00826%, includes effect of noncash compensation. Withholding871 separate from repurchases; short-term borrowing net0 in2023, not proof of no outstanding debt. Single common class and historical trading symbol supported; this is one issuer-year, not a representative efficacy sample or a first buyback announcement.",
+      "fully_qualified": false
+    },
+    {
+      "symbol": "GSBD",
+      "decision": "RESERVED_DOCUMENT_SIZE_LIMIT",
+      "quotes": [],
+      "notes": "Primary annual report exceeded8MiB capture bound. No alternative issuer substituted, no absent repurchase field converted to zero. No truncated document analyzed as complete.",
+      "fully_qualified": false
+    }
+  ]
+}

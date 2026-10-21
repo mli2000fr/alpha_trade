@@ -477,6 +477,8 @@ def fetch_and_store_fundamentals(
     provider: str = "eodhd",
     start_date: str | None = None,
     end_date: str | None = None,
+    sleep_seconds: float | None = None,
+    stop_on_circuit_open: bool = False,
 ) -> dict[str, Any]:
     """Fetch fundamentals and store in ``stock_fundamentals_daily``.
 
@@ -508,6 +510,12 @@ def fetch_and_store_fundamentals(
     import time as _time
     from datetime import date as _date_cls
     from datetime import datetime as _dt_cls
+    from service._http_retry import CircuitOpenError
+
+    if sleep_seconds is None:
+        sleep_seconds = 1.1 if provider == "finnhub" else 0.25
+    if not np.isfinite(sleep_seconds) or sleep_seconds < (1.1 if provider == "finnhub" else 0):
+        raise ValueError("Intervalle Finnhub >=1.1 seconde, autre fournisseur >=0")
 
     try:
         from database.connection import get_sqlalchemy_engine
@@ -529,8 +537,9 @@ def fetch_and_store_fundamentals(
     stored = 0
     failed = 0
     errors: list[str] = []
+    deferred = 0
 
-    for symbol in symbols:
+    for index, symbol in enumerate(symbols):
         try:
             normalized = str(symbol).strip().upper()
 
@@ -646,18 +655,23 @@ def fetch_and_store_fundamentals(
                     )
 
         except Exception as exc:
+            if provider == "finnhub" and stop_on_circuit_open and isinstance(exc, CircuitOpenError):
+                deferred = len(symbols) - index
+                errors.append(f"Finnhub circuit ouvert : {deferred} symboles différés, couverture incomplète")
+                LOGGER.warning("Finnhub circuit ouvert : arrêt des appels, %d symboles différés", deferred)
+                break
             failed += 1
             errors.append(f"{symbol}: {exc}")
             LOGGER.warning("fetch_and_store_fundamentals failed for %s: %s", symbol, exc)
 
         # Respect rate limits
-        _time.sleep(0.25)
+        _time.sleep(sleep_seconds)
 
     LOGGER.info(
         "fetch_and_store_fundamentals done: stored=%d failed=%d symbols=%d",
         stored, failed, len(symbols),
     )
-    return {"stored": stored, "failed": failed, "errors": errors}
+    return {"stored": stored, "failed": failed, "errors": errors, "deferred": deferred}
 
 
 def _extract_quarterly_fundamentals(
@@ -1179,15 +1193,11 @@ def main() -> None:
         from common.market_cap import load_market_cap_config
         configured_provider = load_market_cap_config().provider
         if configured_provider in {
-            "sec_edgar", "sec_edgar_then_yahoo_then_finnhub",
+            "sec_edgar", "sec_edgar_then_finnhub",
         }:
             # La CLI unitaire exécute uniquement la branche primaire. La chaîne
             # de fallback ciblée est orchestrée par market_cap_sync.
             effective_provider = "sec"
-        elif configured_provider == "yahoo_then_finnhub":
-            # La collecte primaire reste explicite ; le fallback est résolu
-            # par le publieur entre les snapshots déjà persistés.
-            effective_provider = "yahoo_finance"
         else:
             effective_provider = configured_provider
 

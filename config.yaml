@@ -9,9 +9,33 @@ database:
   password: "${PASSWORD_DB}"
   name: alpha_trade
 
+# Campagnes LONG US : configuration partagée backtest / watcher.
+# Raccordement testé hors ligne ; laisser désactivé avant qualification PAPER/SIP réelle.
+# Les fractions 0.05/0.15 désignent 5 %/15 %, pas des points de pourcentage.
+# SL7 / trailing20 / H20 / TP20
+# +14,13 % en 2025 et +32,52 % en 2026. Pire DD annuel de 20,85 %. C'est un candidat intéressant si l'objectif est de privilégier un compromis rendement/risque relativement plus prudent au sein de cette zone.
+# SL7 / trailing OFF / H20 / TP20
+# +18,38 % en 2025 et +31,08 % en 2026. Pire DD annuel de 21,12 %. Cette variante permet aussi d'évaluer si le trailing stop apporte réellement une amélioration.
+# SL7 / trailing20 / H20 / sans TP
+# +19,40 % en 2025 et +32,80 % en 2026. Pire DD annuel de 24,13 %. Candidat intéressant pour examiner l'effet de laisser courir les gains.
+winner_pyramiding:
+  enabled: false
+  initial_position_fraction: 0.5  # 0.5 = demi-position ; 1.0 = complète.
+  reinforcement_enabled: false  # Un seul ajout gagnant, jamais de moyenne à la baisse.
+  reinforcement_trigger_pct: 0.05
+  confirmation_bars: 2  # Clôtures consécutives de bougies régulières de 5 minutes.
+  stop_loss_pct: 0.07
+  take_profit_pct: null  # null = pas de TP en prix.
+  trailing_stop_pct: 0.15  # Ne peut jamais desserrer le stop initial.
+  horizon_sessions: 20  # Entrée incluse ; sortie à l'ouverture de la 21e séance.
+  entry_valid_sessions: 20  # Attente maximale après le signal, distincte de la détention.
+  max_quote_age_seconds: 60
+  max_bar_delay_seconds: 60
+  cost_reserve_bps_per_leg: 25  # Réserve de sizing, pas le tarif comptable réel.
+
 intraday_backfill:
   provider: alpaca  # alpaca | eodhd ; défaut de la page et de la commande.
-  alpaca_feed: sip  # iex | sip ; jamais de remplacement silencieux entre flux.
+  alpaca_feed: sip  # SIP obligatoire ; les anciens plans IEX ne sont pas réutilisés.
   account_id: default  # Clés du compte principal via le registre Alpaca existant.
 
 oracle_path:
@@ -58,14 +82,39 @@ sentiment_news_ingestion:
   min_success_ratio: 0.95  # >=95 % des titres demandés : poursuivre malgré des échecs isolés.
 
 llm_directional_filter:
+  analysis_mode: local_data_only  # web_search | local_data_only (sans aucun appel Web).
+  # Le LLM évalue une tendance LONG/SHORT/ABSTAIN sur horizon, sans objectif TP/SL.
+  consensus_max_periods: 4
+  consensus_history_count: 3
+  consensus_max_age_days: 7
+  local_news_max_articles: 8  # Uniquement versions archivées avec reçus antérieurs à l'analyse.
+  local_news_max_chars: 2400  # Par article, troncature explicitement signalée.
+  min_local_sources: 1  # Preuves locales citées ET qualifiées ; aucune promotion de RESEARCH_ONLY.
+  # Prochaines analyses v7 : uniquement faits récents, paquet borné ; aucune requalification SQL.
+  evidence_consensus_max_age_hours: 72
+  evidence_news_max_age_days: 7
+  evidence_news_max_receipt_age_hours: 72
+  evidence_calendar_max_age_hours: 72
+  evidence_sec_max_age_days: 14
+  evidence_sec_max_documents: 3
+  evidence_sec_excerpt_chars: 1800
+  evidence_fundamental_max_fetch_age_days: 45  # Fraîcheur de récupération des derniers comptes connus.
+  evidence_fundamental_max_filing_age_days: 120
+  evidence_fundamental_max_period_age_days: 200
+  evidence_context_max_age_minutes: 30  # Bloque un appel trop tardif ; pas de refresh implicite à mi-run.
   # Recherche prospective et exécution PAPER uniquement. Aucun historique Web simulé.
   enabled: true  # Checkbox IHM cochée par défaut ; désactivation manuelle possible.
   provider: openai  # openai (GPT) ou deepseek ; libellés IHM automatiques.
-  # En mode DeepSeek, OpenAI reste la source Web traçable : les DEUX API sont facturées.
+  # DeepSeek Web : Search/Fetch + analyse DeepSeek natifs, seule DEEPSEEK_API_KEY nécessaire.
   model: gpt-6-luna
   api_key_env: OPENAI_API_KEY
   deepseek_model: deepseek-flash
   deepseek_api_key_env: DEEPSEEK_API_KEY
+  # Limites par symbole ; max_tool_calls borne le total Search + Fetch (analyse exclue).
+  deepseek_search_queries: 2
+  deepseek_search_results: 5
+  deepseek_fetch_pages: 2
+  deepseek_web_text_chars: 6000
   default_symbol_source: universe-file:univers_filtred_tradable.txt
   default_oracle_batch_id: model-factory-20261016180250-3b0515  # Aucun modèle US après remise à zéro ; remplacer par le nouvel ID entraîné.
   oracle_top_n: 10  # Nombre de premiers scores Oracle à analyser (pas de tri par rendement futur).
@@ -502,7 +551,7 @@ screener:
 # ---------------------------------------------------------------------------
 # Source primaire des barres OHLCV (`stock_bars` + `stock_bars_daily`).
 # Voir prompt/iex/plan_eodhd.md.
-# - alpaca : comportement historique (Alpaca/IEX, biais volume IEX).
+# - alpaca : SIP historique, borne end retardée de vingt minutes, sans fallback IEX.
 # - eodhd  : EODHD bulk EOD (volume consolidé proxy, recommandé).
 # - Aucun fallback automatique inter-provider n'est implémenté : le switch est
 #   explicite via `market_data.bars_provider` (config/IHM). En cas d'échec du
@@ -512,24 +561,32 @@ screener:
 # toujours sur Alpaca quel que soit ce flag.
 # ---------------------------------------------------------------------------
 market_data:
-  bars_provider: eodhd   # alpaca | eodhd  (défaut recommandé : eodhd — pilotable depuis IHM › Paramètres)
-  alpaca_backfill_feed: sip  # B3 seulement si bars_provider=alpaca : sip | iex, sans fallback. L'étape 1 reste inchangée.
+  bars_provider: alpaca   # alpaca | eodhd ; contrôle J de us_pipeline raccordé aux deux fournisseurs.
+  alpaca_backfill_feed: sip  # SIP pour les téléchargements Alpaca ; aucun fallback IEX.
 
   # ── Provider quotes live (mode latest) ──
   # `quotes_provider_live` : provider principal pour les snapshots bid/ask temps réel.
-  #   Valeurs : 'yahoo' (défaut) | 'alpaca'
-  # `quotes_provider_live_second` : provider de secours si le principal échoue
-  #   ou ne retourne aucune donnée. Optionnel.
-  quotes_provider_live: yahoo
-  quotes_provider_live_second: alpaca
+  #   Politique courante : 'alpaca', SIP explicite, droits temps réel requis.
+  # `quotes_provider_live_second` reste vide : un refus SIP doit rester visible.
+  quotes_provider_live: alpaca  # SIP explicite ; HTTP 403 si le compte n'a pas les droits temps réel.
+  quotes_provider_live_second: null  # Aucun fallback de fournisseur/flux pour masquer un refus SIP.
+  # Quotes historiques de clôture (étape 4) : SIP consolidé, end vieux de >=15 min.
+  # Aucun fallback IEX ; les lignes sans ce flux/provenance seront requalifiées.
+  quotes_historical_feed: sip
+  # Étape 4 manuelle : ne pas appeler /quotes/latest implicitement.
+  # Le batch us_pipeline conserve sa propre fenêtre historique J-7/J figée.
+  pipeline_quotes:
+    mode: historical  # historical | latest ; latest exige les droits SIP temps réel.
+    symbol_source: universe-file:config/univers_batch/univers_filtred_tradable.txt
+    lookback_days: 7  # jours calendaires avant la dernière séance clôturée +20 min.
 
 # ---------------------------------------------------------------------------
 # Capitalisation utilisée pour publier l'univers tradable PIT.
 # - sec_edgar : gratuit ; dernier shares_outstanding publié avant J × close[J].
 # - eodhd     : dernière market_cap EODHD persistée avant J.
-# - sec_edgar_then_yahoo_then_finnhub : SEC PIT prioritaire, puis Yahoo et
+# - sec_edgar_then_finnhub : SEC PIT prioritaire, puis
 #   Finnhub uniquement si les actions en circulation SEC sont absentes/périmées.
-# - yahoo_then_finnhub : mode legacy, Yahoo prioritaire puis Finnhub.
+# - finnhub : capitalisation positive Finnhub persistée avant J, sans Yahoo.
 # max_age_days contrôle l'âge maximal du dépôt SEC ou du snapshot EODHD.
 # En strict, une valeur absente/périmée est rejetée (fail-closed).
 # En liquidity_only, provider/max_age_days/missing_policy restent configurés
@@ -548,7 +605,7 @@ new_entry_data_guard:
 market_cap:
   # strict = capitalisation obligatoire ; liquidity_only = aucun filtre de capitalisation.
   policy: liquidity_only                         # strict | liquidity_only
-  provider: sec_edgar_then_yahoo_then_finnhub  # sec_edgar | eodhd | yahoo_then_finnhub | sec_edgar_then_yahoo_then_finnhub
+  provider: sec_edgar_then_finnhub  # sec_edgar | eodhd | finnhub | sec_edgar_then_finnhub
   max_age_days: 365
   missing_policy: reject
 

@@ -21,7 +21,7 @@ def build_command(start:date,end:date,source:str,interval='5m',chunk_days=30,ref
     defaults=intraday_defaults()
     provider=provider or defaults['provider'];alpaca_feed=alpaca_feed or defaults['alpaca_feed']
     account_id=account_id or defaults['account_id']
-    if provider not in ('alpaca','eodhd') or alpaca_feed not in ('iex','sip'):raise ValueError('Fournisseur/flux invalide')
+    if provider not in ('alpaca','eodhd') or alpaca_feed != 'sip':raise ValueError('Fournisseur/flux invalide : SIP obligatoire')
     if end<start:raise ValueError('La date de fin precede la date de debut')
     if interval not in ('1m','5m','1h'):raise ValueError('Intervalle invalide')
     if source not in universe_options():raise ValueError('Univers non disponible')

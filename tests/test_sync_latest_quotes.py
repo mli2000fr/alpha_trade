@@ -22,13 +22,14 @@ from dataIntegrityEngine.sync_latest_quotes import (
 
 
 @pytest.fixture(autouse=True)
-def _stub_symbol_has_any_quotes(monkeypatch):
+def _stub_symbol_has_any_quotes(monkeypatch, tmp_path):
     """Quick-check IEX : toujours True pour que les tests historiques passent."""
     monkeypatch.setattr(
         sync_latest_quotes,
         "_symbol_has_any_quotes_in_window",
-        lambda symbol, from_date, to_date, *, session, account_id=None: True,
+        lambda symbol, from_date, to_date, *, session, account_id=None, feed=None: True,
     )
+    monkeypatch.setattr("common.quote_quality.ARCHIVE_ROOT", tmp_path / "artifacts" / "quotes")
 
 
 class TestParseAlpacaTimestamp:
@@ -144,7 +145,7 @@ def test_sync_latest_quotes_historical_keeps_latest_quote_per_market_day(monkeyp
     monkeypatch.setattr(
         sync_latest_quotes,
         "get_quote_snapshot_resume_state",
-        lambda symbol, from_date, to_date, expected_dates=None: {
+        lambda symbol, from_date, to_date, expected_dates=None, required_feed=None: {
             "symbol": symbol,
             "has_expected_days": True,
             "is_complete": False,
@@ -158,12 +159,12 @@ def test_sync_latest_quotes_historical_keeps_latest_quote_per_market_day(monkeyp
     # Simule _fetch_near_close_quote_for_session : renvoie une quote différente par jour
     _call_count = {"count": 0}
 
-    def _stub_fetch_near_close(symbol, session_date, *, session, account_id=None):
+    def _stub_fetch_near_close(symbol, session_date, *, session, account_id=None, feed=None):
         _call_count["count"] += 1
         if _call_count["count"] == 1:
             return {"bp": 100.0, "ap": 100.5, "bs": 21, "as": 22, "t": "2026-04-29T20:00:00Z"}, 1, None
         else:
-            return {"bp": 101.0, "ap": 101.4, "bs": 31, "as": 32, "t": "2026-04-30T19:30:00Z"}, 1, None
+            return {"bp": 101.0, "ap": 101.4, "bs": 31, "as": 32, "t": "2026-04-30T19:55:00Z"}, 1, None
 
     monkeypatch.setattr(sync_latest_quotes, "_fetch_near_close_quote_for_session", _stub_fetch_near_close)
     monkeypatch.setattr(sync_latest_quotes, "upsert_quote_snapshots", lambda rows: captured_rows.extend(rows) or len(rows))
@@ -178,7 +179,7 @@ def test_sync_latest_quotes_historical_keeps_latest_quote_per_market_day(monkeyp
     assert summary == {"symbols": 1, "rows_upserted": 2}
     assert [row["quote_date"] for row in captured_rows] == [date(2026, 4, 29), date(2026, 4, 30)]
     assert captured_rows[0]["quote_timestamp"] == datetime(2026, 4, 29, 20, 0, 0)
-    assert captured_rows[1]["quote_timestamp"] == datetime(2026, 4, 30, 19, 30, 0)
+    assert captured_rows[1]["quote_timestamp"] == datetime(2026, 4, 30, 19, 55, 0)
 
 
 def test_sync_latest_quotes_rejects_inverted_historical_period() -> None:
@@ -253,7 +254,7 @@ def test_sync_latest_quotes_emits_historical_progress_logs(monkeypatch, caplog) 
     monkeypatch.setattr(
         sync_latest_quotes,
         "get_quote_snapshot_resume_state",
-        lambda symbol, from_date, to_date, expected_dates=None: {
+        lambda symbol, from_date, to_date, expected_dates=None, required_feed=None: {
             "symbol": symbol,
             "has_expected_days": True,
             "is_complete": False,
@@ -267,7 +268,7 @@ def test_sync_latest_quotes_emits_historical_progress_logs(monkeypatch, caplog) 
     monkeypatch.setattr(
         sync_latest_quotes,
         "_fetch_near_close_quote_for_session",
-        lambda symbol, session_date, *, session, account_id=None: (
+        lambda symbol, session_date, *, session, account_id=None, feed=None: (
             {"bp": 100.0, "ap": 100.5, "bs": 10, "as": 12, "t": "2026-04-29T20:00:00Z"}
             if session_date == date(2026, 4, 29)
             else {"bp": 101.0, "ap": 101.3, "bs": 8, "as": 9, "t": "2026-04-30T20:00:00Z"},
@@ -310,7 +311,7 @@ def test_sync_latest_quotes_historical_skips_symbol_when_period_already_covered(
     monkeypatch.setattr(
         sync_latest_quotes,
         "get_quote_snapshot_resume_state",
-        lambda symbol, from_date, to_date, expected_dates=None: {
+        lambda symbol, from_date, to_date, expected_dates=None, required_feed=None: {
             "symbol": symbol,
             "has_expected_days": True,
             "is_complete": True,
@@ -324,7 +325,7 @@ def test_sync_latest_quotes_historical_skips_symbol_when_period_already_covered(
     monkeypatch.setattr(
         sync_latest_quotes,
         "_fetch_near_close_quote_for_session",
-        lambda symbol, session_date, *, session, account_id=None: fetch_calls.append((symbol, session_date)) or (None, None, None),
+        lambda symbol, session_date, *, session, account_id=None, feed=None: fetch_calls.append((symbol, session_date)) or (None, None, None),
     )
     monkeypatch.setattr(sync_latest_quotes, "upsert_quote_snapshots", lambda rows: len(rows))
 
@@ -352,7 +353,7 @@ def test_sync_latest_quotes_historical_resumes_from_first_missing_date(monkeypat
     monkeypatch.setattr(
         sync_latest_quotes,
         "get_quote_snapshot_resume_state",
-        lambda symbol, from_date, to_date, expected_dates=None: {
+        lambda symbol, from_date, to_date, expected_dates=None, required_feed=None: {
             "symbol": symbol,
             "has_expected_days": True,
             "is_complete": False,
@@ -366,7 +367,7 @@ def test_sync_latest_quotes_historical_resumes_from_first_missing_date(monkeypat
     monkeypatch.setattr(
         sync_latest_quotes,
         "_fetch_near_close_quote_for_session",
-        lambda symbol, session_date, *, session, account_id=None: fetch_calls.append((symbol, session_date))
+        lambda symbol, session_date, *, session, account_id=None, feed=None: fetch_calls.append((symbol, session_date))
         or ({"bp": 100.0, "ap": 100.5, "bs": 10, "as": 12, "t": "2026-05-05T20:00:00Z"}, 1, None),
     )
     monkeypatch.setattr(sync_latest_quotes, "upsert_quote_snapshots", lambda rows: len(rows))
@@ -390,7 +391,7 @@ def test_sync_latest_quotes_historical_fetches_only_missing_ranges(monkeypatch) 
     monkeypatch.setattr(
         sync_latest_quotes,
         "get_quote_snapshot_resume_state",
-        lambda symbol, from_date, to_date, expected_dates=None: {
+        lambda symbol, from_date, to_date, expected_dates=None, required_feed=None: {
             "symbol": symbol,
             "has_expected_days": True,
             "is_complete": False,
@@ -405,7 +406,7 @@ def test_sync_latest_quotes_historical_fetches_only_missing_ranges(monkeypatch) 
         },
     )
 
-    def _stub_fetch(symbol, session_date, *, session, account_id=None):
+    def _stub_fetch(symbol, session_date, *, session, account_id=None, feed=None):
         fetch_calls.append((symbol, session_date))
         ts = session_date.isoformat() + "T20:00:00Z"
         return {"bp": 100.0, "ap": 100.5, "bs": 10, "as": 12, "t": ts}, 1, None
@@ -435,7 +436,7 @@ def test_sync_latest_quotes_historical_persists_once_per_symbol(monkeypatch, cap
     monkeypatch.setattr(
         sync_latest_quotes,
         "get_quote_snapshot_resume_state",
-        lambda symbol, from_date, to_date, expected_dates=None: {
+        lambda symbol, from_date, to_date, expected_dates=None, required_feed=None: {
             "symbol": symbol,
             "has_expected_days": True,
             "is_complete": False,
@@ -447,7 +448,7 @@ def test_sync_latest_quotes_historical_persists_once_per_symbol(monkeypatch, cap
         },
     )
 
-    def _stub_fetch(symbol, session_date, *, session, account_id=None):
+    def _stub_fetch(symbol, session_date, *, session, account_id=None, feed=None):
         ts = session_date.isoformat() + "T20:00:00Z"
         return {"bp": 100.0, "ap": 100.5, "bs": 10, "as": 12, "t": ts}, 1, None
 
@@ -484,7 +485,7 @@ def test_sync_latest_quotes_historical_skips_days_without_any_quote(monkeypatch,
     monkeypatch.setattr(
         sync_latest_quotes,
         "get_quote_snapshot_resume_state",
-        lambda symbol, from_date, to_date, expected_dates=None: {
+        lambda symbol, from_date, to_date, expected_dates=None, required_feed=None: {
             "symbol": symbol,
             "has_expected_days": True,
             "is_complete": False,
@@ -499,7 +500,7 @@ def test_sync_latest_quotes_historical_skips_days_without_any_quote(monkeypatch,
     monkeypatch.setattr(
         sync_latest_quotes,
         "_fetch_near_close_quote_for_session",
-        lambda symbol, session_date, *, session, account_id=None: fetch_calls.append((symbol, session_date)) or (None, None, None),
+        lambda symbol, session_date, *, session, account_id=None, feed=None: fetch_calls.append((symbol, session_date)) or (None, None, None),
     )
     monkeypatch.setattr(sync_latest_quotes, "upsert_quote_snapshots", lambda rows: len(rows))
 

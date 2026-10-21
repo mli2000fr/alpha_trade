@@ -17,13 +17,13 @@ Elles ne remplacent pas `official_options_nbbo_sync`. Aucun endpoint gratuit val
 
 ### Univers et calendrier
 
-Le batch parcourt tout `config/univers_batch/univers_filtred_tradable.txt`, sans dépendre du TOP20 d'un Oracle. Il s'exécute après la clôture options, avec un retard minimum de 16 minutes. Deux passages quotidiens permettent de rattraper une exécution manquée ; les contraintes uniques évitent les doublons métier tandis que les payloads RAW et les runs restent historisés.
+Depuis le 18 octobre 2026, le batch parcourt `config/univers_batch/stock_bars_daily.txt` (export fixe de 13 105 symboles), sans dépendre du TOP20 d'un Oracle ni régénérer le fichier depuis SQL. Les titres sans options ne deviennent pas des contrats fictifs. Il s'exécute après clôture, avec un retard minimum de 16 minutes. Le second passage est conditionnel à l'absence de succès récent ; les contraintes uniques évitent les doublons et les payloads RAW/runs restent historisés. Aucun horaire ni budget n'a changé lors de l'élargissement.
 
 ### Sélection déterministe des contrats
 
 Pour chaque sous-jacent :
 
-1. récupérer un prix de référence IEX ;
+1. récupérer un prix de référence actions SIP retardé (pas une quote temps réel d'exécution) ;
 2. interroger le catalogue de contrats actifs ;
 3. chercher les échéances les plus proches des DTE 5, 10 et 20, dans une tolérance de cinq jours ;
 4. retenir un CALL et un PUT dont le strike est le plus proche du spot pour chaque échéance ;

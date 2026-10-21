@@ -5,7 +5,7 @@ Extrait de ``selector.alpha_scanner``. Contient :
 
 - ``apply_filters_with_stats(merged_df, config)`` : applique tous les filtres
   (historique, prix, liquidité, volatilité, ATR, RSI, MA200, high 52w, weekly
-  trend, market_cap + TTL, beta, spread + relâchement IEX, earnings blackout,
+  trend, market_cap + TTL, beta, spread SIP strict, earnings blackout,
   liquidité scores, sanitizer, anomalies, missing days) et retourne le DataFrame
   filtré + un dict de stats granulaires (consommé par le ``run_summary``).
 - ``log_filter_stats(stats)`` : logger INFO compact d'une exécution.
@@ -243,7 +243,7 @@ def apply_filters_with_stats(
             ]
     after_beta = len(filtered)
 
-    # Phase 3.3.c — filtre spread avec relâchement IEX contrôlé.
+    # SIP : seuil strict, sans ancien relâchement IEX.
     rejected_spread_iex_relaxed = 0
     if config.max_spread_bps is not None:
         if "spread_bps" not in filtered.columns:
@@ -270,35 +270,9 @@ def apply_filters_with_stats(
                         stale_quote_count,
                     )
 
-            if (
-                config.max_spread_bps_iex is not None
-                and config.min_quote_size is not None
-                and "bid_size" in filtered.columns
-                and "ask_size" in filtered.columns
-            ):
-                bid_size = pd.to_numeric(filtered["bid_size"], errors="coerce")
-                ask_size = pd.to_numeric(filtered["ask_size"], errors="coerce")
-                iex_mask = (
-                    spread_numeric.notna()
-                    & (spread_numeric > config.max_spread_bps)
-                    & (spread_numeric <= config.max_spread_bps_iex)
-                    & bid_size.notna()
-                    & ask_size.notna()
-                    & (bid_size >= config.min_quote_size)
-                    & (ask_size >= config.min_quote_size)
-                )
-                rejected_spread_iex_relaxed = int(iex_mask.sum())
-                if rejected_spread_iex_relaxed:
-                    LOGGER.info(
-                        "Relâchement IEX spread | strict=%s bps relâché<=%s bps min_size=%s rescues=%s",
-                        config.max_spread_bps,
-                        config.max_spread_bps_iex,
-                        config.min_quote_size,
-                        rejected_spread_iex_relaxed,
-                    )
-                filtered = filtered[strict_mask | iex_mask | stale_quote_mask]
-            else:
-                filtered = filtered[strict_mask | stale_quote_mask]
+            # Legacy IEX relaxation must never loosen a consolidated SIP spread.
+            # Deprecated config/stat keys remain readable for old run archives.
+            filtered = filtered[strict_mask | stale_quote_mask]
     after_spread = len(filtered)
 
     if config.earnings_blackout_days is not None:

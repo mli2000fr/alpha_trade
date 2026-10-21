@@ -542,9 +542,8 @@ def test_alpha_scanner_config_rejects_unknown_data_quality_mode() -> None:
         AlphaScannerConfig(spread_data_quality_mode="skip")
 
 
-def test_apply_filters_iex_relaxation_rescues_thick_book() -> None:
-    """Phase 3.3.c — un titre dépassant max_spread_bps mais sous max_spread_bps_iex
-    et avec bid_size/ask_size >= min_quote_size doit être conservé."""
+def test_apply_filters_legacy_iex_relaxation_cannot_loosen_sip_spread() -> None:
+    """Legacy config keys cannot weaken the consolidated spread threshold."""
     scanner = _make_scanner(
         AlphaScannerConfig(
             max_spread_bps=25.0,
@@ -570,9 +569,9 @@ def test_apply_filters_iex_relaxation_rescues_thick_book() -> None:
 
     filtered, stats = scanner._apply_filters_with_stats(merged_df)
 
-    assert sorted(filtered["symbol"].tolist()) == ["RESCUE", "STRICT"]
-    assert stats["rescued_spread_iex"] == 1
-    assert stats["rejected_spread"] == 2
+    assert sorted(filtered["symbol"].tolist()) == ["STRICT"]
+    assert stats["rescued_spread_iex"] == 0
+    assert stats["rejected_spread"] == 3
 
 
 def test_apply_filters_ignores_stale_quotes_for_spread_filter() -> None:
@@ -621,7 +620,7 @@ def test_apply_filters_ignores_stale_quotes_for_spread_filter() -> None:
     assert stats["rejected_spread"] == 1
 
 
-def test_fetch_quote_snapshots_normalizes_missing_optional_columns(monkeypatch) -> None:
+def test_fetch_quote_snapshots_rejects_legacy_missing_provenance(monkeypatch) -> None:
     scanner = _make_scanner()
     monkeypatch.setattr(
         scanner,
@@ -640,10 +639,7 @@ def test_fetch_quote_snapshots_normalizes_missing_optional_columns(monkeypatch) 
     quotes_df = scanner.fetch_quote_snapshots(["AAPL"], reference_date=date(2026, 4, 30))
 
     assert {"symbol", "quote_date", "quote_timestamp", "spread_bps", "bid_size", "ask_size"}.issubset(quotes_df.columns)
-    assert quotes_df.loc[0, "symbol"] == "AAPL"
-    assert pd.isna(quotes_df.loc[0, "quote_timestamp"])
-    assert pd.isna(quotes_df.loc[0, "bid_size"])
-    assert pd.isna(quotes_df.loc[0, "ask_size"])
+    assert quotes_df.empty
 
 
 def test_merge_optional_symbol_overlays_tolerates_quotes_without_quote_timestamp() -> None:

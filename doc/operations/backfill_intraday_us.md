@@ -1,18 +1,25 @@
 # Backfill des barres intraday US — Alpaca / EODHD
 
-État au 11 octobre 2026 : table, service CLI et page IHM livrés. La table a été
+État initial au 11 octobre 2026 : table, service CLI et page IHM livrés. La table a été
 créée dans `alpha_trade` ; aucun téléchargement massif n'a été lancé. Les tests
 SQL d'insertion, de mise à jour et d'idempotence ont été annulés en transaction.
 La colonne `provider` est déployée. Un petit test HTTP AAPL du 2 janvier 2025
 (14:30–15:00 UTC) a retourné 7 barres pour IEX et 7 pour SIP avec le compte
 principal, sans insertion SQL. Ce smoke ne prouve pas la couverture de l'univers.
 
+**Mise à jour du 17 octobre 2026 : SIP obligatoire pour toute nouvelle collecte
+Alpaca.** Le sélecteur et les commandes n’acceptent plus IEX. Un ancien plan IEX
+est refusé avant accès SQL ou réutilisation des archives : créer un nouveau plan
+SIP et réellement télécharger les données. L’inventaire opérationnel trouve
+62 117 194 barres `alpaca_sip` et aucune barre `alpaca_iex` dans cette table.
+Voir la [politique et le bilan de migration](migration_iex_vers_sip.md).
+
 ## Utilisation dans l'IHM
 
 Ouvrir **Analyse & Recherche → 🕒 Barres intraday**. Choisir :
 
 - le fournisseur **Alpaca par défaut** ou EODHD ;
-- le flux Alpaca **SIP par défaut** ou IEX, sans fallback automatique ;
+- le flux Alpaca **SIP uniquement**, sans fallback automatique ;
 - la date de début et la date de fin, inclusives, en dates New York ;
 - un fichier univers parmi les fichiers proposés ; par défaut
   `config/univers_batch/univers_filtred_tradable.txt` ;
@@ -27,8 +34,8 @@ disponibles dans la page. Aucun batch quotidien existant n'est modifié.
 Dans **Exécution à suivre**, **Arrêter le run** arrête le processus sélectionné.
 Après son arrêt ou sa fin, **Supprimer de la liste** retire cette exécution de
 l'historique visible. Les barres SQL, logs et points de reprise restent conservés.
-La suppression d'un run actif est refusée. Changer le défaut vers SIP ne modifie
-pas les téléchargements IEX déjà lancés ; les deux flux restent séparés.
+La suppression d'un run actif est refusée. Aucun ancien fichier IEX n’est
+réétiqueté SIP ; les archives anciennes restent identifiées par leur vrai flux.
 Le bloc de logs a une hauteur de 350 pixels et un défilement interne (100 dernières
 lignes). `INFO` indique une progression, pas un échec : les anciens préfixes
 `[stderr]` identifient un flux de sortie. Les nouveaux lancements écrivent les
@@ -81,7 +88,7 @@ uniquement un univers US.
 | `trade_date` | date calendaire New York, pas une date décalée vers la prochaine séance |
 | `session_tag` | pré-marché, séance régulière, post-marché ou jour non négociable selon calendrier US |
 | OHLC, `volume` | données brutes fournisseur validées, pas de remplissage de trous |
-| `data_source`, `data_adjustment` | `alpaca_iex`, `alpaca_sip` ou `eodhd_intraday` ; `raw` |
+| `data_source`, `data_adjustment` | nouvelles collectes : `alpaca_sip` ou `eodhd_intraday` ; `raw`. `alpaca_iex` reste reconnaissable comme provenance historique, non collectée |
 | `observed_at` | heure réelle de récupération ; ce n'est pas une preuve de disponibilité historique |
 | `payload_hash`, `run_id` | empreinte de la barre et plan de téléchargement |
 

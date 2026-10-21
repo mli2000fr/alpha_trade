@@ -69,8 +69,8 @@ def render():
         format_func=lambda x:{'alpaca':'Alpaca','eodhd':'EODHD'}[x],key='intraday_provider')
     feed=defaults['alpaca_feed'];account_id=defaults['account_id']
     if provider=='alpaca':
-        feed=st.selectbox('Flux Alpaca',('iex','sip'),index=('iex','sip').index(feed),key='intraday_feed')
-        st.caption(f'Compte Alpaca : {account_id}. IEX : volume partiel, trous possibles. SIP : accès à vérifier, sans fallback vers IEX.')
+        feed=st.selectbox('Flux Alpaca',('sip',),index=0,key='intraday_feed')
+        st.caption(f'Compte Alpaca : {account_id}. SIP historique uniquement ; aucun fallback IEX. Un ancien plan IEX exige un nouveau plan et un vrai téléchargement SIP.')
     else:
         st.caption('EODHD : accès EOD + Intraday ou All-in-One nécessaire ; le forfait EOD seul ne suffit pas.')
     st.caption('Prix bruts non ajustés, heures UTC ; dates et séances New York. Aucune barre manquante remplie. '

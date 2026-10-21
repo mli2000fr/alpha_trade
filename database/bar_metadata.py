@@ -72,9 +72,9 @@ def insert_bars(conn, symbol: str, bars: list[dict[str, Any]], timeframe: str) -
     if not bars:
         return 0
     sql = text("""
-        INSERT INTO stock_bars (symbol, timestamp, timeframe, open_price, high_price, low_price, close_price, volume, trade_count, vwa_price)
-        VALUES (:symbol, :timestamp, :timeframe, :open_price, :high_price, :low_price, :close_price, :volume, :trade_count, :vwa_price)
-        ON DUPLICATE KEY UPDATE open_price=VALUES(open_price), high_price=VALUES(high_price), low_price=VALUES(low_price), close_price=VALUES(close_price), volume=VALUES(volume), trade_count=VALUES(trade_count), vwa_price=VALUES(vwa_price)
+        INSERT INTO stock_bars (symbol, timestamp, timeframe, open_price, high_price, low_price, close_price, volume, trade_count, vwa_price, data_source, data_adjustment)
+        VALUES (:symbol, :timestamp, :timeframe, :open_price, :high_price, :low_price, :close_price, :volume, :trade_count, :vwa_price, :data_source, 'split')
+        ON DUPLICATE KEY UPDATE open_price=VALUES(open_price), high_price=VALUES(high_price), low_price=VALUES(low_price), close_price=VALUES(close_price), volume=VALUES(volume), trade_count=VALUES(trade_count), vwa_price=VALUES(vwa_price), data_source=VALUES(data_source), data_adjustment=VALUES(data_adjustment)
     """)
     params = []
     for bar in bars:
@@ -89,7 +89,8 @@ def insert_bars(conn, symbol: str, bars: list[dict[str, Any]], timeframe: str) -
             "close_price": bar['c'],
             "volume": bar['v'],
             "trade_count": bar.get('n', 0),
-            "vwa_price": bar.get('vw', None)
+            "vwa_price": bar.get('vw', None),
+            "data_source": bar.get('ds', 'alpaca_sip'),
         })
     with conn.begin():
         for param in params:

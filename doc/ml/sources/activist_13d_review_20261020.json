@@ -1,0 +1,74 @@
+{
+  "parent": "artifacts/research/us_activist_13d/20261020-v1",
+  "reviewer": "Same assistant; not independent human review",
+  "price_outcomes_read_before_review": false,
+  "notes": "Interpret explicit actions, not investor prestige or future outcomes. Original filing may describe an already public campaign. Primary common60session admission is fixed before all price checks.",
+  "cases": [
+    {
+      "accession": "0000921895-24-000066", "symbol": "GIL", "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "filename": "sc13d12418013_01082024.htm",
+      "contains": "In the first public letter issued to the Board on December 14",
+      "action_contains": "reinstate Mr. Chamandy to the Board and as CEO",
+      "identity_filename": "ex991to13d12418013_01082024.htm", "identity_contains": "Gildan Activewear Inc. (NYSE: GIL) (TSX: GIL)",
+      "earlier_public_action_date": "2023-12-14", "first_worldwide_announcement_certified": false,
+      "notes": "BrowningWest current explicit campaign to change directors and CEO; several public letters predateJan8initial13D, therefore NOT a new campaign announcement or executableDec14price. CommonShares/CUSIP375916103 in13Dcover, GILNYSEticker in original attached letter. Ongoing campaign admitted only after actualfiling."
+    },
+    {
+      "accession": "0000950103-24-000454", "symbol": "CARR", "decision": "EXCLUDE_ACQUISITION_CONSIDERATION",
+      "filename": "dp205022_sc13d.htm", "contains": "as a result of the consummation of the transactions contemplated by the Purchase Agreement",
+      "notes": "Viessmann stockconsideration and contractual boardseat after acquisition, not an independent activist campaign; incidental futuremaydiscuss not new intervention."
+    },
+    {
+      "accession": "0001104659-24-002996", "symbol": "CODI", "decision": "EXCLUDE_DONATION",
+      "filename": "tm243072d2_sc13d.htm", "contains": "through a charitable donation as described in Item 3",
+      "notes": "Charitable transfer, not activist buying or campaign."
+    },
+    {
+      "accession": "0001013594-24-000055", "symbol": "BJRI", "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "filename": "bjsr13d-011824.htm", "contains": "now is an opportune time to explore strategic alternatives",
+      "action_contains": "determined to file this Schedule 13D, in part to encourage the Board to pursue such opportunities diligently",
+      "identity_requires_prefiling_10k": true,
+      "earlier_public_action_date": null, "first_worldwide_announcement_certified": false,
+      "notes": "Fund1Investments explicitly rejects standalone strategy after managementdiscussions and urges strategic alternatives/sale. More concrete than baremaydiscuss but nonbindingrequest, not a firm offer. CommonStock/CUSIP09180C106cover. Original earlier10K needed to supportJan2024ticker, not use laterMarchletter to backdate it."
+    },
+    {
+      "accession": "0001398344-24-000853", "symbol": "TPL", "decision": "SECONDARY_GOVERNANCE_ONLY",
+      "filename": "fp0086902-1_ex7b.htm", "contains": "We hereby submit the following proposal and supporting statement",
+      "action_contains": "The stockholders urge the Board to seek stockholder approval",
+      "identity_filename": "fp0086902-1_ex7a.htm", "identity_contains": "Texas Pacific Land Corp.(TPL)",
+      "earlier_public_action_date": "2024-01-17", "first_worldwide_announcement_certified": false,
+      "notes": "Actual14a8shareholderproposal asking transactionapproval, but no current namedboardnomination/operatingchange/saleprocess. Keep as separate governance-only descriptive case, not expand primarydefinition to improve a result. Original attachedjointagreement identifiesTPL."
+    },
+    {
+      "accession": "0001062993-24-001904", "symbol": "BSTZ", "decision": "EXCLUDE_GENERIC_MAY_INTERVENE",
+      "filename": "formsc13d.htm", "contains": "may nominate one or more individuals as nominees for election to the Board",
+      "notes": "Saba generic optionalfutureactions on closedendfund; no concretecurrentproposal/nomination in this initialfiling. Not enough to follow as activism solely because of investor reputation."
+    },
+    {
+      "accession": "0001104659-24-025781", "symbol": "MANU", "decision": "EXCLUDE_ACQUISITION_CONTROL",
+      "filename": "tm2333644d15_sc13d.htm", "contains": "on the terms of the Transaction Agreement and the other transaction documents related to the Offer",
+      "notes": "Trawlers acquisition/controltransaction already addressed by a tenderoffer, not separate independent activist campaign. Do not count acquisition-relatedboardrights as new activism."
+    },
+    {
+      "accession": "0001213900-24-017666", "symbol": "CRTO", "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "filename": "ea0200636-13dpetrus_criteo.htm", "contains": "On February 22, 2024, the Reporting Persons sent a public letter",
+      "action_contains": "initiate a comprehensive strategic review, including to evaluate all ownership options",
+      "identity_requires_prefiling_10k": true,
+      "earlier_public_action_date": "2024-02-22", "first_worldwide_announcement_certified": false,
+      "notes": "Petrus explicitpublished demands investor day, up150m selftender, strategicreview and boardrefresh. LetterFeb22precedesFeb27filing; noFeb22entryassigned.13DcoverAmericanDepositaryShares1ordinaryshare/CUSIP226718104. OriginalFeb23annualreport should confirmCRTOADSlisting beforefiling."
+    },
+    {
+      "accession": "0001104659-24-031497", "symbol": "BJRI", "decision": "PRIMARY_EXPLICIT_INTERVENTION",
+      "filename": "tm248155d1_sc13d.htm", "contains": "Reduce the current cost structure by $50 million",
+      "action_contains": "delivered to the Issuer formal notice",
+      "identity_filename": "tm248155d1_ex99-3.htm", "identity_contains": "(Nasdaq: BJRI )",
+      "earlier_public_action_date": "2024-02-20", "first_worldwide_announcement_certified": false,
+      "notes": "DistinctPWPartners/Atlas activist campaign, publicletterFeb20andnominationFeb28. Keep documented but common60session issuerblock fromJan18Fund1filing admits no secondBJRIentry. Do not call the campaigns identical; no price-outcome-baseddedup."
+    },
+    {
+      "accession": "0001193125-24-072901", "symbol": "RYTM", "decision": "EXCLUDE_PRELIMINARY_FINANCING_DISCUSSIONS",
+      "filename": "d813811dsc13d.htm", "contains": "There is no certainty that these discussions will continue",
+      "notes": "Financingdiscussion/potentialgovernancerights and genericinvestmentintent, not announcedconcreteactivist intervention under primaryrule."
+    }
+  ]
+}

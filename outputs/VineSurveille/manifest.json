@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Vine Surveille",
+  "version": "1.0.11",
+  "minimum_chrome_version": "120",
+  "description": "Surveillance Vine : tranches aléatoires configurables, horaires, photos et alertes Telegram.",
+  "permissions": [
+    "alarms",
+    "storage",
+    "scripting",
+    "notifications"
+  ],
+  "host_permissions": [
+    "https://www.amazon.fr/*",
+    "https://api.telegram.org/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "icons": {
+    "128": "icon.png"
+  }
+}

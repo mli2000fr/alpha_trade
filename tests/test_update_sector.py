@@ -138,10 +138,10 @@ def test_update_missing_sectors_merges_stale_market_cap_targets(monkeypatch) -> 
     assert summary["updated"] == 3
 
 
-def test_build_arg_parser_defaults_to_yahoo_finance() -> None:
+def test_build_arg_parser_defaults_to_finnhub() -> None:
     args = update_sector._build_arg_parser().parse_args([])
 
-    assert args.provider == "yahoo_finance"
+    assert args.provider == "finnhub"
 
 
 def test_update_missing_sectors_does_not_overwrite_existing_values_by_default(monkeypatch) -> None:
@@ -185,7 +185,7 @@ def test_update_missing_sectors_overwrite_existing_targets_all_eligible_symbols(
     monkeypatch.setattr(update_sector.time, "sleep", lambda seconds: None)
     monkeypatch.setattr(
         update_sector,
-	    "fetch_yahoo_fundamentals_record",
+	    "fetch_finnhub_fundamentals_record",
         lambda symbol, session=None: {"sector": f"Sector-{symbol}", "market_cap": 99.0},
     )
     monkeypatch.setattr(
@@ -196,7 +196,7 @@ def test_update_missing_sectors_overwrite_existing_targets_all_eligible_symbols(
 
     summary = update_sector.update_missing_sectors(sleep_seconds=0.0, overwrite_existing=True)
 
-    assert summary["provider"] == "yahoo_finance"
+    assert summary["provider"] == "finnhub"
     assert summary["overwrite_existing"] is True
     assert summary["total"] == 2
     assert summary["updated"] == 2

@@ -8,6 +8,7 @@ from typing import Any, Literal, cast
 
 from common.quantity_utils import QUANTITY_EPSILON, is_effectively_integer_quantity
 from common.config_loader import load_config
+from common.winner_pyramiding import WinnerPyramidingConfig, load_winner_pyramiding_config
 from service.market import parse_trailing_stop
 
 
@@ -278,8 +279,12 @@ class ExecutionConfig:
 
     # --- Time stop : coupe manuelle si stagnation prolongée ---
     time_stop: TimeStopConfig = field(default_factory=TimeStopConfig)
+    # An explicit frozen value overrides YAML (replay / existing campaigns).
+    winner_pyramiding: WinnerPyramidingConfig = field(default_factory=load_winner_pyramiding_config)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.winner_pyramiding, WinnerPyramidingConfig):
+            raise ValueError('winner_pyramiding doit être une WinnerPyramidingConfig validée.')
         if self.broker_mode not in ("paper", "live"):
             raise ValueError("broker_mode doit être 'paper' ou 'live'.")
         if self.llm_protection_profile is not None:

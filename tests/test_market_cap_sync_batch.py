@@ -18,10 +18,14 @@ def test_market_cap_sync_config_contract() -> None:
         "recovery_run_minutes": "0",
         "recovery_success_lookback_hours": 12,
         "run_days": "1,4",
-        "symbols_file": "config/univers_batch/univers_filtred_tradable.txt",
-        "provider": "sec_edgar_then_yahoo_then_finnhub",
+        "symbols_file": "config/univers_batch/stock_bars_daily.txt",
+        "provider": "sec_edgar_then_finnhub",
         "primary_provider": "sec",
-        "fallback_providers": "yahoo_finance,finnhub",
+        "fallback_providers": "finnhub",
+        "finnhub_request_interval_seconds": 1.1,
+        "finnhub_refresh_after_days": 3,
+        "close_confirmation_delay_minutes": 30,
+        "coverage_reference_symbols_file": "config/univers_batch/univers_filtred_tradable.txt",
         "sec_lookback_days": 30,
         "max_age_days": 365,
         "min_coverage_ratio": 0.95,
@@ -29,7 +33,7 @@ def test_market_cap_sync_config_contract() -> None:
     }
     assert {key: sync[key] for key in expected} == expected
     assert sync["priority"] == "P0"
-    assert sync["tables"] == "stock_fundamentals_daily"
+    assert sync["tables"] == "stock_fundamentals_daily,stock_market_cap_daily"
     assert str(sync["description"]).strip()
 
 

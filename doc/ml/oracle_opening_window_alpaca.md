@@ -8,8 +8,8 @@
 
 `oracle_opening_window_sync` construit prospectivement un historique minute du
 prémarché et du début de séance US. Malgré son nom historique, la collecte
-n'est jamais limitée aux candidats d'un Oracle. Elle couvre intégralement
-`config/univers_batch/univers_filtred_tradable.txt` afin d'éviter qu'un modèle
+n'est jamais limitée aux candidats d'un Oracle. Elle cible depuis le 18 octobre 2026
+`config/univers_batch/stock_bars_daily.txt` (export fixe, 13 105 symboles) afin d'éviter qu'un modèle
 ou un TOP20 courant décide des données qui seront disponibles pour les futures
 recherches.
 
@@ -36,7 +36,7 @@ collecteur les conserve pour les audits ou expériences ultérieures.
 | Timeframe | `1Min` |
 | Ajustement | `raw` |
 | Fenêtre | 04:00–10:30 `America/New_York` |
-| Population | univers tradable stable complet |
+| Population | fichier `config/univers_batch/stock_bars_daily.txt`, sans filtre actif/tradable ni régénération SQL automatique ; présence effective des barres à contrôler |
 | Lot | 100 symboles par défaut |
 | Pagination | jusqu'à disparition de `next_page_token` |
 | Limite | 10 000 barres par page |
@@ -60,7 +60,7 @@ les changements d'heure US.
 ## Flux
 
 ```text
-univers_filtred_tradable.txt
+stock_bars_daily.txt
         │
         ├─ lots de 100 symboles
         │

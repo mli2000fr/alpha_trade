@@ -186,6 +186,10 @@ def _batch_title(
     # Do not label missing-provider or technical blocks as legal restrictions.
     if catalog_status in RIGHTS_BLOCK_STATUSES:
         return f"**⛔ ⚖️ DROITS / PRUDENCE — {title}**"
+    if catalog_status == 'DISABLED_REPLACED_BY_PIPELINE':
+        # Intentional retirement, not an active incident. Historical failures
+        # remain visible in the detail panel; never rewrite their run status.
+        return title
     if _last_run_failed(row) or _windows_last_run_failed(task, row):
         return f":red[**{title}**]"
     return title
@@ -301,7 +305,10 @@ def _render_batch(
                 f"Corriger le statut {spec.status} et passer enabled à true dans {Path(spec.catalog_path).name} "
                 "uniquement après validation opérationnelle."
             )
-            st.error(f"🔴 Activation bloquée — {requirement}")
+            if spec.status=='DISABLED_REPLACED_BY_PIPELINE':
+                st.info(f"⏸️ Désactivation volontaire — {requirement}")
+            else:
+                st.error(f"🔴 Activation bloquée — {requirement}")
             if spec.unlock_steps:
                 st.markdown("**Comment le débloquer :**")
                 for index, step in enumerate(spec.unlock_steps, start=1):

@@ -1,5 +1,35 @@
 # Ingestion quotidienne des news US EODHD — 16 octobre 2026
 
+## État courant — désactivé volontairement le 19 octobre 2026
+
+Décision utilisateur : **l'étape 8 Sentiment Pipeline de `us_pipeline` suffit
+au besoin retenu**. `batch.yaml` fixe `enabled: false` et
+`status: DISABLED_REPLACED_BY_PIPELINE` pour éviter une collecte autonome
+supplémentaire. Le launcher respecte cette désactivation même avec `-Force`.
+Le titre reste normal (sans rouge ni gras d'alerte) dans la page Batchs ; les
+anciens échecs ne sont pas requalifiés en succès.
+Ce n'est ni une panne ni un blocage de droits.
+
+Sur demande distincte du 19 octobre, l'historique visible a été vidé :
+**12 lignes** de `pit_collection_runs` supprimées pour ce seul batch, **5 entrées**
+IHM terminales masquées (marque persistante, sans supprimer leurs fichiers), et
+ancien journal déplacé dans la sauvegarde ciblée. Contrôle SQL final : zéro
+exécution restante pour ce nom. Copie récupérable des lignes, entrées IHM et
+journal sous `backups/operations_history/eodhd_news_ingestion_sync/20261018T224658Z/`
+(horodatage UTC, correspondant au 19 octobre en France).
+Articles, mappings, versions, reçus d'archive, checkpoints, budgets/cooldown et
+rapports de recherche conservés. Aucun autre historique de batch supprimé.
+Les bilans chiffrés ci-dessous restent historiques ; leurs lignes SQL sont
+désormais dans cette sauvegarde, pas dans l'historique courant de l'IHM.
+
+Les paramètres, données et archives sont conservés. L'étape 8 et les autres
+batchs ne sont pas modifiés : **actuellement, étape 8 le vendredi**, fenêtre
+d'import par défaut de sept jours, univers `univers_filtred_tradable.txt`.
+Cela ne remplace pas à l'identique l'ancienne collecte quotidienne/week-end sur
+l'univers élargi `stock_bars_daily.txt` ; celle-ci est suspendue volontairement.
+Les sections ci-dessous décrivent l'historique et le contrat avant désactivation,
+pas une planification encore active.
+
 Mise à jour du 17 octobre : la résilience de **l'étape 8 Sentiment Pipeline**
 est décrite dans [le contrat de reprise](sentiment_pipeline_reprise_20261017.md).
 Cette étape utilise `eodhd_news`, distinct du namespace `eodhd_news_daily` de ce
@@ -93,8 +123,14 @@ avec lanceur masqué, mode Interactive et contrôle horaire commun.
 
 - **20h30 Europe/Paris, tous les jours**, week-end compris ; news possibles
   hors des séances. Respect de l'absence PC 7h30–20h.
-- Univers : `config/univers_batch/univers_filtred_tradable.txt`, **1 790 titres**
-  au contrôle ; identique au fichier du workflow US, pas l'univers de toute la base.
+- Univers depuis le 18 octobre : `config/univers_batch/stock_bars_daily.txt`,
+  **13 105 titres** dans cet export fixe. Il est relu à chaque lancement, sans
+  actualisation SQL automatique. Le workflow US garde son fichier tradable.
+  Les anciens bilans de 1 790 titres restent des constats de l'ancien périmètre.
+- Durée (120 minutes) et budgets (4 000 tentatives HTTP par passage/jour) inchangés :
+  **un passage ne peut pas couvrir les 13 105 titres avec ces plafonds**.
+  Une collecte arrêtée sur limite reste incomplète et conserve ses checkpoints ;
+  l'univers élargi ne vaut pas promesse de couverture quotidienne intégrale.
 - Aucun changement de l'horaire de `us_pipeline` (23h05), de ses étapes
   lundi–jeudi `[1,2,3,4,5,6,7,9]` ou vendredi `[1,2,3,4,5,6,7,8,9]`.
 - **Ingestion seulement : pas de FinBERT, GPT/DeepSeek, features, modèle ou ordre.**

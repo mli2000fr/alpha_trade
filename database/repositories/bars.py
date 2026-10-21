@@ -19,7 +19,7 @@ class BarsRepository(Repository):
 
     Lit/écrit avec la convention canonique ``data_adjustment='split'``
     (CHECK `chk_daily_adj`). La colonne ``data_source`` est renseignée
-    par défaut à ``alpaca_iex``.
+    par défaut à ``alpaca_sip``.
     """
 
     def load_bars(
@@ -62,7 +62,7 @@ class BarsRepository(Repository):
         bars: pd.DataFrame,
         *,
         data_adjustment: str = "split",
-        data_source: str = "alpaca_iex",
+        data_source: str = "alpaca_sip",
     ) -> int:
         raise NotImplementedError(
             "upsert_bars sera branché Phase 3.1 (migration sanitizer_db_ops)."

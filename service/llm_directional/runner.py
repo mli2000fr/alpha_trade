@@ -3,6 +3,7 @@ import argparse
 import json
 import logging
 import math
+import struct
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import text, bindparam
@@ -67,7 +68,8 @@ def load_inputs(engine, batch_id, trade_date, symbol_source, config, capital_pre
                 result[-1].update(oracle_target='path_amplitude_J1_J20', oracle_directional=False)
     if not result:
         raise ValueError('Oracle absent pour cette date/batch/univers; aucun fallback')
-    return result
+    from .fresh_evidence import enrich_contexts
+    return enrich_contexts(engine,result,config,datetime.now(timezone.utc))
 
 
 def validate_analysis_window(trade_date, *, now=None, calendar=None):
@@ -115,17 +117,24 @@ def analyze(*, engine, batch_id, trade_date, symbol_source, capital_preset_key='
     repo.create(run_id=run_id, trade_date=trade_date, batch_id=batch_id,
         account_id=config.account_id, status='RUNNING', started_at=started,
         config_json=dumps(config.snapshot()), input_json=dumps(snapshot), input_sha256=digest(snapshot),
-        protocol_version=PROTOCOL_VERSION)
+        protocol_version=_protocol(contexts))
     items, errors = [], []
     try:
-        logging.info('Filtre %s modèle=%s ; Web OpenAI modèle=%s ; PAPER uniquement',
-                     config.provider_label, config.analysis_model, config.model)
+        logging.info('Filtre %s modèle=%s ; mode=%s ; PAPER uniquement',
+                     config.provider_label, config.analysis_model, config.analysis_mode)
         client = client or ResponsesClient(config)
         for context in contexts:
+            if context.get('freshness_policy'):
+                logging.info('Contexte LLM %s cutoff=%s sources=%s statuts=%s exclusions=%d',
+                    context['symbol'],context['evidence_cutoff_utc'],len(context.get('local_evidence',[])),
+                    ','.join(f"{k}:{v['status']}" for k,v in context.get('local_data_status',{}).items()),
+                    len(context.get('evidence_exclusions',[])))
             request = build_request(json.loads(dumps(context)), config)
             response, parsed, error, status = None, None, None, 'FAILED'
             observed = utcnow()
             try:
+                from .fresh_evidence import validate_fresh_packet
+                validate_fresh_packet(context,config,observed,before_call=True)
                 response = client(request)
                 observed = utcnow()
             except Exception as exc:
@@ -139,7 +148,7 @@ def analyze(*, engine, batch_id, trade_date, symbol_source, capital_preset_key='
             try:
                 if error:
                     raise RuntimeError(error)
-                parsed = parse_response(response, context['symbol'], config, observed)
+                parsed = parse_response(response, context['symbol'], config, observed, context=context)
                 parsed['oracle_rank'] = context['oracle_rank']
                 items.append(parsed)
                 status = 'VALID'
@@ -148,10 +157,11 @@ def analyze(*, engine, batch_id, trade_date, symbol_source, capital_preset_key='
                 error = f'{type(exc).__name__}: {str(exc)[:600]}'
                 errors.append(f'{context["symbol"]}: {error}')
             repo.finalize_assessment(run_id, context['symbol'], status=status, parsed=parsed, error=error)
-            logging.info('LLM %d/%d %s %s outcome=%s fresh_sources=%s blockers=%s',
+            logging.info('LLM %d/%d %s %s outcome=%s fresh_web_sources=%s fresh_local_sources=%s blockers=%s',
                 len(items)+len(errors), len(contexts), context['symbol'], status,
                 parsed['assessment_outcome'] if parsed else 'TECHNICAL_ERROR',
                 parsed['fresh_source_count'] if parsed else '-',
+                parsed.get('fresh_local_source_count',0) if parsed else '-',
                 ','.join(parsed['selection_blockers']) if parsed else error)
         # A slow Web call must not publish a selection after the next open.
         validate_analysis_window(trade_date)
@@ -169,12 +179,28 @@ def analyze(*, engine, batch_id, trade_date, symbol_source, capital_preset_key='
     return {'run_id': run_id, 'status': 'completed', 'requested': len(contexts),
             'received': len(items), 'persisted': len(items), 'selected': selected,
             'failed': 0, 'warning_count': 0,
+            'analysis_mode': config.analysis_mode,
+            'fresh_local_source_count': sum(item.get('fresh_local_source_count',0) for item in items),
             'eligible_count': sum(item['eligible'] for item in items),
             'abstained_count': sum(not item['eligible'] for item in items),
             'excluded_source_count': sum(len(item['excluded_sources']) for item in items),
             'unqualified_source_count': sum(
                 q['qualification'] not in FRESH_QUALIFICATIONS
                 for item in items for q in item['source_qualifications'])}
+
+
+def _oracle_score_matches_snapshot(stored, reference):
+    """Accept only known representations of the immutable snapshot score.
+
+    MySQL FLOAT stores binary32; its text protocol may return six significant
+    digits. No generic tolerance: other score changes remain incompatible, and
+    neither the ranking nor the request is rebuilt from the rounded SQL column.
+    """
+    if any(type(value) not in (int, float) or not math.isfinite(value)
+           or not 0 <= value <= 1 for value in (stored, reference)):
+        return False
+    binary32 = struct.unpack('!f', struct.pack('!f', reference))[0]
+    return stored in (reference, binary32, float(format(binary32, '.6g')))
 
 
 def qualified_selection(engine, run_id, trade_date, account_id, *, now=None, allow_consumed=False):
@@ -188,11 +214,11 @@ def qualified_selection(engine, run_id, trade_date, account_id, *, now=None, all
         raise ValueError('Analyse LLM expirée ou datée du futur')
     if not allow_consumed and (run['risk_run_id'] or run['execution_started_at']):
         raise ValueError('Run LLM déjà consommé; pas de nouvelles cibles implicites')
-    if run['protocol_version'] != PROTOCOL_VERSION:
-        raise ValueError('Version du protocole LLM incompatible')
     snapshot = json.loads(run['input_json'])
     if digest(snapshot) != run['input_sha256']:
         raise ValueError('Snapshot LLM altéré')
+    if run['protocol_version'] != _protocol(snapshot.get('candidates')):
+        raise ValueError('Version du protocole LLM incompatible')
     if snapshot.get('research_only'):
         raise ValueError('Run LLM de recherche uniquement : risque/exécution interdits')
     expected = snapshot['candidates']
@@ -203,13 +229,15 @@ def qualified_selection(engine, run_id, trade_date, account_id, *, now=None, all
         raise ValueError('Candidats archivés incompatibles avec le snapshot')
     for item in items:
         context = expected_by_symbol[item['symbol']]
-        if (item['oracle_rank'] != context['oracle_rank']
-                or item['oracle_score'] != context['oracle_score']
-                or json.loads(item['request_json']) != build_request(context, config)):
-            raise ValueError('Classement ou requête LLM incompatible avec le snapshot')
+        if item['oracle_rank'] != context['oracle_rank']:
+            raise ValueError(f"Rang Oracle incompatible avec le snapshot : {item['symbol']}")
+        if not _oracle_score_matches_snapshot(item['oracle_score'], context['oracle_score']):
+            raise ValueError(f"Score Oracle incompatible avec le snapshot : {item['symbol']}")
+        if json.loads(item['request_json']) != build_request(context, config):
+            raise ValueError(f"Requête LLM incompatible avec le snapshot : {item['symbol']}")
         if digest(json.loads(item['response_json'])) != item['response_sha256']:
             raise ValueError('Réponse LLM altérée')
-        parsed = parse_response(json.loads(item['response_json']), item['symbol'], config, item['observed_at'])
+        parsed = parse_response(json.loads(item['response_json']), item['symbol'], config, item['observed_at'],context=context)
         saved = json.loads(item['assessment_json'])
         if any(saved.get(key) != value for key, value in parsed.items()):
             raise ValueError('Assessment LLM incohérent avec réponse brute')
@@ -217,7 +245,21 @@ def qualified_selection(engine, run_id, trade_date, account_id, *, now=None, all
     decisions = [dict(json.loads(i['assessment_json']), oracle_rank=i['oracle_rank']) for i in items]
     if selected != select_symbols(decisions, config):
         raise ValueError('Sélection LLM incohérente')
-    return run, [next(i for i in items if i['symbol'] == symbol) for symbol in selected]
+    # Preserve the full-precision, hashed evidence in downstream risk lineage.
+    # SQL archives are never rewritten and selected order remains unchanged.
+    return run, [dict(next(i for i in items if i['symbol'] == symbol),
+                      oracle_score=expected_by_symbol[symbol]['oracle_score'])
+                 for symbol in selected]
+
+
+def _protocol(contexts):
+    from .prompts import VERSION, DEEPSEEK_SEARCH_VERSION,FRESH_VERSION
+    if not isinstance(contexts,list) or not contexts or any(not isinstance(c,dict) for c in contexts):
+        raise ValueError('Candidats de protocole LLM invalides')
+    versions={context.get('analysis_protocol',PROTOCOL_VERSION) for context in contexts}
+    if len(versions)!=1 or not versions.issubset({PROTOCOL_VERSION,VERSION,DEEPSEEK_SEARCH_VERSION,FRESH_VERSION}):
+        raise ValueError('Protocoles LLM absents/incompatibles/mélangés')
+    return next(iter(versions))
 
 
 def main():

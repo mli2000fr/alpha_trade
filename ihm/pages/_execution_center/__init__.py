@@ -2276,11 +2276,27 @@ def _render_data_integrity_block() -> dict[str, Any]:
     st.markdown("#### Paramètres Data Integrity")
     st.caption(
         "Ces réglages reflètent les options réellement disponibles côté `dataIntegrityEngine` pour les étapes quotes, earnings et fondamentaux. "
-        "`0` sur un champ `limit` signifie : univers complet éligible."
+        "`0` sur un champ `limit` signifie : tout le périmètre choisi."
     )
 
     di_col1, di_col2, di_col3 = st.columns(3)
     with di_col1:
+        from ihm.services.pipeline_quote_scope import quote_defaults
+        _quote_defaults = quote_defaults()
+        _quote_modes = ('historical', 'latest')
+        _quote_mode_key = 'pipeline_data_integrity_quotes_mode_v2'
+        _quote_mode = st.session_state.get(_quote_mode_key, _quote_defaults['mode'])
+        if _quote_mode not in _quote_modes:
+            _quote_mode = _quote_defaults['mode']
+            st.session_state[_quote_mode_key] = _quote_mode
+        data_integrity_quotes_mode = st.selectbox(
+            'Quotes — mode de collecte', options=_quote_modes,
+            index=_quote_modes.index(_quote_mode), key=_quote_mode_key,
+            format_func=lambda value: {'historical':'Historique SIP de clôture (recommandé)',
+                'latest':'Temps réel SIP — abonnement requis'}[value],
+            help='Historique : dernière séance US clôturée depuis au moins 20 minutes. Aucun fallback IEX.')
+        st.caption(f"Univers par défaut des quotes : `{_quote_defaults['symbol_source']}`. "
+                   'Un univers personnalisé peut être choisi dans le bloc historique de l’étape 4.')
         data_integrity_quotes_limit = int(
             st.number_input(
                 "Latest Quotes — limite optionnelle",
@@ -2361,12 +2377,14 @@ def _render_data_integrity_block() -> dict[str, Any]:
                 key="pipeline_data_integrity_fundamentals_limit",
             )
         )
-        fundamentals_provider_options = ("yahoo_finance", "eodhd", "finnhub")
+        fundamentals_provider_options = ("finnhub", "eodhd")
         current_fundamentals_provider = str(
-            st.session_state.get("pipeline_data_integrity_fundamentals_provider", "yahoo_finance")
+            st.session_state.get("pipeline_data_integrity_fundamentals_provider", "finnhub")
         ).strip().lower()
         if current_fundamentals_provider not in fundamentals_provider_options:
-            current_fundamentals_provider = "yahoo_finance"
+            current_fundamentals_provider = "finnhub"
+        # Écarter aussi une ancienne sélection Yahoo persistée dans Streamlit.
+        st.session_state["pipeline_data_integrity_fundamentals_provider"] = current_fundamentals_provider
         data_integrity_fundamentals_provider = cast(
             str,
             st.selectbox(
@@ -2376,7 +2394,7 @@ def _render_data_integrity_block() -> dict[str, Any]:
                 key="pipeline_data_integrity_fundamentals_provider",
                 help=(
                     "Provider utilisé par l'étape B2 pour récupérer `sector` et `market_cap`. "
-                    "Défaut recommandé : Yahoo Finance via `yfinance`. Si l'endpoint `fundamentals` EODHD est refusé par le compte courant (401/403), "
+                    "Finnhub par défaut, sans Yahoo. La classification fournisseur reste à harmoniser avec les secteurs de l'application. Si EODHD est refusé (401/403), "
                     "le backend bascule automatiquement vers Finnhub pour éviter un run B2 en erreur sur tout l'univers."
                 ),
             ),
@@ -2488,6 +2506,7 @@ def _render_data_integrity_block() -> dict[str, Any]:
 
     return {
         "data_integrity_quotes_limit": data_integrity_quotes_limit,
+        "data_integrity_quotes_mode": data_integrity_quotes_mode,
         "data_integrity_quotes_batch_size": data_integrity_quotes_batch_size,
         "data_integrity_earnings_limit": data_integrity_earnings_limit,
         "data_integrity_earnings_batch_size": data_integrity_earnings_batch_size,
@@ -3352,7 +3371,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         from service.llm_directional.config import load_filter_config
         _llm_config = load_filter_config()
         llm_filter_enabled = st.checkbox(
-            f'🌐 Filtrage {_llm_config.provider_label} + recherche Web après Oracle — PAPER uniquement',
+            f'🌐 Filtrage {_llm_config.provider_label} — {_llm_config.mode_label} après Oracle — PAPER uniquement',
             value=bool(st.session_state.get('pipeline_llm_filter_enabled', _llm_config.enabled)),
             key='pipeline_llm_filter_enabled',
             help='Analyse prospective des premiers scores Oracle, archivage en base, puis LONG/SHORT/abstention '
@@ -3362,11 +3381,16 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         llm_specific_protections = False
         if llm_filter_enabled:
             st.caption(f'Analyse : {_llm_config.provider_label} / {_llm_config.analysis_model}. '
-                       f'Recherche Web : OpenAI / {_llm_config.model}. '
-                       'Choix dans config.yaml → llm_directional_filter.provider.')
-            if _llm_config.provider == 'deepseek':
-                st.info('DeepSeek analyse les preuves Web obtenues via OpenAI. Les deux clés API sont nécessaires ; '
-                        'les deux fournisseurs sont facturés. Aucun remplacement silencieux de modèle.')
+                       f'Mode : {_llm_config.mode_label}. '
+                       'Choix dans config.yaml → llm_directional_filter.provider / analysis_mode.')
+            if _llm_config.provider == 'deepseek' and _llm_config.analysis_mode=='web_search':
+                st.info('Recherche Web native DeepSeek (Search / Fetch), puis analyse DeepSeek avec le consensus local. '
+                        'Seule DEEPSEEK_API_KEY est nécessaire ; aucun appel OpenAI. '
+                        'Les recherches et l’analyse restent facturées par DeepSeek. Aucun changement silencieux de modèle.')
+            elif _llm_config.analysis_mode=='local_data_only':
+                st.info('Aucune recherche Web : consensus et news archivées reçus avant l’analyse uniquement. '
+                        'Les données non qualifiées restent du contexte ; preuves insuffisantes → abstention. '
+                        'Le LLM évalue une tendance, pas un objectif TP/SL.')
             st.caption(f"Directions {_llm_config.provider_label} autorisées : {'LONG / SHORT / ABSTENTION' if _llm_config.allow_short else 'LONG / ABSTENTION'}. "
                        f"Maximum {_llm_config.max_selected} titres au total. Les SHORT restent soumis au régime, "
                        "au risque et à une disponibilité easy-to-borrow Alpaca confirmée.")
@@ -3416,7 +3440,10 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                        'hors séance et rééquilibrage automatique interdits.')
             llm_filter_run_id = st.text_input('Identifiant analyse LLM (vide = nouveau run pour le workflow)',
                 key='pipeline_llm_filter_run_id',
-                help='Pour lancer 11/12 séparément, recopier le run_id affiché après étape 10. Ne pas utiliser auto.') or None
+                help='Vide : nouveau run pour un workflow incluant 10 ; pour les boutons séparés, '
+                     '11 reprend le dernier 10 réussi et 12 le dernier 11 réussi du compte et de la séance. '
+                     'Le bloc de l’étape indique l’identifiant et la date de fin source. '
+                     'Renseigner un identifiant ici force un choix explicite. Ne pas utiliser auto.') or None
         ml_oracle_barrier_model_only = st.checkbox(
             "🎯 Oracle TP avant SL — amplitude + direction LONG/SHORT, recherche uniquement",
             value=_session_state_bool("pipeline_ml_oracle_barrier_model_only", False),
@@ -3892,7 +3919,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                             str(st.session_state.get("pipeline_ml_liquidity_spread_fallback_mode", DEFAULT_ML_LIQUIDITY_SPREAD_FALLBACK_MODE))
                         ),
                         key="pipeline_ml_liquidity_spread_fallback_mode",
-                        help="pass = laisse passer si pas de quote (best-effort) | reject = rejette le symbole (strict) | warn_only = passe mais alerte si couverture < 95%%. Les small caps sans couverture IEX sont souvent sans quote.",
+                        help="pass = laisse passer le contrôle de liquidité sans quote | reject = rejette le symbole | warn_only = alerte si couverture < 95%%. Indépendamment de ce choix, les nouvelles entrées Alpaca exigent une quote SIP temps réel valide ; aucun fallback IEX.",
                     )
                 with liq_spread_col3:
                     ml_liquidity_spread_max_quote_age_days = int(
@@ -5081,6 +5108,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
 
         # === BLOCK 8/9 : Data Integrity (extrait — _render_data_integrity_block) ===
         _di_vars = _render_data_integrity_block()
+        data_integrity_quotes_mode = _di_vars.get('data_integrity_quotes_mode')
         data_integrity_quotes_limit = _di_vars["data_integrity_quotes_limit"]
         data_integrity_quotes_batch_size = _di_vars["data_integrity_quotes_batch_size"]
         data_integrity_earnings_limit = _di_vars["data_integrity_earnings_limit"]
@@ -5382,6 +5410,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             screener_first_pass_window_days=int(screener_first_pass_window_days),
             screener_enable_two_pass_loading=bool(screener_enable_two_pass_loading),
             data_integrity_quotes_limit=_to_optional_positive_int(data_integrity_quotes_limit),
+            data_integrity_quotes_mode=data_integrity_quotes_mode,
             data_integrity_quotes_batch_size=int(data_integrity_quotes_batch_size),
             data_integrity_earnings_from_date=effective_earnings_from_date,
             data_integrity_earnings_to_date=effective_earnings_to_date,
@@ -5391,7 +5420,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             data_integrity_earnings_batch_size=int(data_integrity_earnings_batch_size),
             data_integrity_earnings_resume=bool(data_integrity_earnings_resume),
             data_integrity_fundamentals_limit=_to_optional_positive_int(data_integrity_fundamentals_limit),
-            data_integrity_fundamentals_provider=cast(Any, data_integrity_fundamentals_provider or "yahoo_finance"),
+            data_integrity_fundamentals_provider=cast(Any, data_integrity_fundamentals_provider or "finnhub"),
             data_integrity_fundamentals_overwrite_existing=bool(data_integrity_fundamentals_overwrite_existing),
             data_integrity_fundamentals_sleep_seconds=float(data_integrity_fundamentals_sleep_seconds),
             data_integrity_fundamentals_log_every=int(data_integrity_fundamentals_log_every),

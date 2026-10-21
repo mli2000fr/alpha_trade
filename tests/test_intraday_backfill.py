@@ -196,9 +196,10 @@ def test_provider_feed_in_plan_identity(tmp_path,monkeypatch):
     monkeypatch.setattr(backfill,'load_universe_file_symbols',lambda *a,**k:['ABC'])
     monkeypatch.setattr(backfill,'resolve_universe_file_path',lambda *a,**k:universe)
     args=(date(2025,1,2),date(2025,1,3),'universe-file:universe.txt','5m',30)
-    plans=[backfill.build_plan(*args,provider=p,alpaca_feed=f) for p,f in [('alpaca','iex'),('alpaca','sip'),('eodhd','iex')]]
-    assert len({p['plan_id'] for p in plans})==3
-    assert plans[0]['estimated_api_credits'] is None and plans[2]['estimated_api_credits']==5
+    plans=[backfill.build_plan(*args,provider=p,alpaca_feed='sip') for p in ['alpaca','eodhd']]
+    assert len({p['plan_id'] for p in plans})==2
+    assert plans[0]['estimated_api_credits'] is None and plans[1]['estimated_api_credits']==5
+    with pytest.raises(ValueError):backfill.build_plan(*args,provider='alpaca',alpaca_feed='iex')
 
 
 def test_configuration_defaults_and_cli_options(monkeypatch):
@@ -246,7 +247,7 @@ def test_alpaca_http_exception_stops_no_feed_fallback(monkeypatch,code):
 
 
 def test_alpaca_run_persists_explicit_provider_and_resumes(tmp_path,monkeypatch):
-    plan=dict(version=2,provider='alpaca',alpaca_feed='iex',account_id='default',plan_id='alpaca-test',
+    plan=dict(version=2,provider='alpaca',alpaca_feed='sip',account_id='default',plan_id='alpaca-test',
         tasks=1,symbols=['ABC'],ranges=[['2025-01-02','2025-01-03']],interval='5m')
     monkeypatch.setattr(backfill,'ROOT',tmp_path)
     monkeypatch.setattr(backfill,'get_sqlalchemy_engine',lambda:MagicMock())
@@ -260,7 +261,7 @@ def test_alpaca_run_persists_explicit_provider_and_resumes(tmp_path,monkeypatch)
     fetch=MagicMock(return_value=[sample()]);monkeypatch.setattr(backfill,'fetch_alpaca_intraday',fetch)
     assert backfill.run(plan)['status']=='COMPLETED'
     assert backfill.run(plan)['skipped']==1 and fetch.call_count==1
-    assert saved[0]['provider']=='alpaca' and saved[0]['data_source']=='alpaca_iex'
+    assert saved[0]['provider']=='alpaca' and saved[0]['data_source']=='alpaca_sip'
     assert saved[0]['provider_symbol']=='ABC'
 
 

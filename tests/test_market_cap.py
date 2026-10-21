@@ -27,18 +27,24 @@ def test_market_cap_config_supports_explicit_eodhd_switch() -> None:
     assert cfg.max_age_days == 45
 
 
-def test_market_cap_config_supports_yahoo_then_finnhub() -> None:
+def test_market_cap_config_supports_finnhub() -> None:
     cfg = load_market_cap_config(
-        config={"market_cap": {"provider": "yahoo_then_finnhub"}}
+        config={"market_cap": {"provider": "finnhub"}}
     )
-    assert cfg.provider == "yahoo_then_finnhub"
+    assert cfg.provider == "finnhub"
 
 
 def test_market_cap_config_supports_sec_first_composite() -> None:
     cfg = load_market_cap_config(
-        config={"market_cap": {"provider": "sec_edgar_then_yahoo_then_finnhub"}}
+        config={"market_cap": {"provider": "sec_edgar_then_finnhub"}}
     )
-    assert cfg.provider == "sec_edgar_then_yahoo_then_finnhub"
+    assert cfg.provider == "sec_edgar_then_finnhub"
+
+
+@pytest.mark.parametrize('provider', ['yahoo_then_finnhub', 'sec_edgar_then_yahoo_then_finnhub', 'yahoo_finance'])
+def test_old_yahoo_strategy_rejected_not_silently_reused(provider):
+    with pytest.raises(ValueError, match='Yahoo retiré'):
+        load_market_cap_config(config={'market_cap': {'provider': provider}})
 
 
 def test_market_cap_config_supports_liquidity_only_policy_and_override() -> None:

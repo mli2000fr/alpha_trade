@@ -11,10 +11,10 @@ class AlpacaIntradayBlocked(RuntimeError):
     """Authentication, entitlement or exhausted rate limit: stop the backfill."""
 
 
-def fetch_intraday(symbol, *, start_epoch, end_epoch, interval='5m', feed='iex',
+def fetch_intraday(symbol, *, start_epoch, end_epoch, interval='5m', feed='sip',
                    account_id='default', session=None, sleep_seconds=1.):
     timeframes={'1m':'1Min','5m':'5Min','1h':'1Hour'}
-    if interval not in timeframes or feed not in ('iex','sip') or end_epoch<=start_epoch:
+    if interval not in timeframes or feed != 'sip' or end_epoch<=start_epoch:
         raise ValueError('Invalid Alpaca intraday interval/feed/range')
     if not account_id or sleep_seconds<.2:
         raise ValueError('Invalid Alpaca account/pause')
