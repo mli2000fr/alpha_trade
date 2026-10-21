@@ -1,5 +1,38 @@
 # Registre des expériences ML réalisées
 
+> **Reprise après téléchargement intraday 2020–2025** :
+> [note complète du futur sélecteur de configurations Winner](TODO_reprise_selecteur_configurations_winner_20261021.md).
+> Téléchargement annoncé d'environ trois jours ; extension 2016–2019 seulement
+> envisagée. À la reprise : couverture réelle puis scores Oracle OOS, pas
+> entraînement ou relance automatique. L'audit contextuel ci-dessous est terminé.
+
+## 2026-10-21 — Winner intraday : facteurs de choix des protections non confirmés
+
+**TERMINÉ / PAS D'ENTRAÎNEMENT / NO_GO_CONTEXT_NOT_CONFIRMED.** Six profils figés,
+référence SL7/TR15/H20/sansTP et voisins SL5/TR10/TR20/H15/TP10. Contrat actuel :
+trois bougies même séance pour la cassure, vingt séances depuis l'entrée puis
+open21 ; pas ancien OracleJ+H, pas renforcement. 213 campagnes LONG CatBoost
+PATH_H20 TOP10 recherche héritées, pas tout TOP10 ni champion production.
+Snapshot SQL READ ONLY523941barres/72titres ; aucune API fournisseur/LLM/SQLécrit/
+configuration/ordre. 204 fenêtres communes qualifiées, cinq lacunes et quatre
+immatures au30septembre réservées pour tous les profils. 169 observations après
+espacement par symbole :95/74 ; seulement84labels2025 disponibles avant2026.
+Prix connus veille uniquement :régime SPY,ATR%,momentum relatif,vol20/60,délai.
+Rendements unitaires moyens référence+4,60/+3,11% ; H15+3,70/+3,91%, PAS rendements
+annuels de portefeuille. Surplus parfait rétrospectif+3,46/+5,95points ;52,63/
+44,59%perdent avec tous profils. Choix par état figé sur2025 :2026régime−0,35point,
+momentumrelatif−0,48,volatilité−0,58 contre constant choisi2025 ;ATR/délai choisissent
+toujours référence. Frais25même signe, intervalles mensuels traversentzéro,
+états rares, H22026seulement11observations. Aucun facteur ne passe la confirmation.
+Macro437lignes/secteurs72courants archivés NONPIT, pas prédicteurs primaires ;
+pas verdict sur toutes interactions ni modèle multivarié non entraîné.
+84tests ciblés passent ; reconstruction scalaire2448chemins et204entrées,
+erreurmax5,69e−14point, choix/purge/espacement vérifiés. Mêmeassistant,pas revue
+humaine indépendante. Biais hérités de couverture future/survivants/prix retraités,
+années déjà vues, pas sizing/cash/risque/levier/PnL portefeuille ni paritélive.
+Dossier `artifacts/research/us_winner_context_headroom/20261021-v1`.
+[Protocole, profils, résultats et limites](winner_protections_contexte_20261021.md).
+
 ## 2026-10-21 — LLM factuel : dossier SEC borné, sans appel fournisseur
 
 **PRÉPARATION/REVUE TERMINÉES, PAS DE BENCHMARK LLM OU TEST ÉCONOMIQUE.**
