@@ -1190,7 +1190,12 @@ def aggregate_workflow_run_summary(child_runs: Iterable[Mapping[str, object]]) -
         for key, value in summary.items():
             if key in _SUMMARY_METADATA_KEYS:
                 continue
-            if isinstance(value, Mapping):
+            if key == 'target_coverage' and isinstance(value, Mapping):
+                # A qualified exact-session snapshot, not additive integer
+                # counters. Preserve ratio, threshold, benchmark and reasons.
+                # Previously .92067 and .95 were both flattened to integer 0.
+                aggregated[key] = dict(value)
+            elif isinstance(value, Mapping):
                 _merge_nested_counts(aggregated, key, value)
             elif isinstance(value, (list, tuple, set)):
                 union_target = list_unions.setdefault(key, set())

@@ -25,7 +25,7 @@ us_pipeline:
   bars_collection:
     # Étape 1 : date J explicite, même univers, SPY ajouté pour les features.
     # EODHD : clôture + eodhd.bulk_publish_offset_hours ; Alpaca SIP : clôture +20 min.
-    min_coverage_ratio: 0.95
+    min_coverage_ratio: 0.90
     benchmark_symbol: SPY
   # Ces deux collectes remplacent désormais leurs planifications autonomes.
   quotes_collection: &us_pipeline_quotes

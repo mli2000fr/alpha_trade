@@ -2389,13 +2389,25 @@ def execute(batch_name: str, *, dry_run: bool = False, config_path: str | None =
         with engine.begin() as conn:
             conn.execute(text("""INSERT INTO pit_collection_runs(run_id,batch_name,provider,status,started_at)
                 VALUES (:run,:batch,:provider,'RUNNING',:started)"""), {"run": run_id, "batch": batch_name, "provider": str(cfg.get("provider") or cfg.get("providers") or ""), "started": started})
+    outcome = None
     try:
         outcome = handler(engine, cfg, run_id, dry_run)
         status = "DRY_RUN" if dry_run else ("COMPLETED_WITH_WARNINGS" if outcome.warnings or outcome.failed else "COMPLETED")
         if batch_name == 'us_pipeline' and outcome.details.get('skip_reason'):
-            status = 'SKIPPED_' + outcome.details['skip_reason']
+            # Stable database lifecycle status (VARCHAR(24)). The precise reason
+            # remains in details_json; concatenation exceeded the column width
+            # and left an already-finished, skipped run falsely RUNNING.
+            status = 'SKIPPED'
+        # Final persistence belongs to the protected lifecycle too: if it fails,
+        # attempt to seal FAILED instead of silently leaving a RUNNING row.
+        if not dry_run:
+            with engine.begin() as conn:
+                conn.execute(text("""UPDATE pit_collection_runs SET status=:status,finished_at=:finished,requested_count=:requested,
+                    received_count=:received,persisted_count=:persisted,empty_count=:empty,failed_count=:failed,
+                    warning_count=:warnings,details_json=:details WHERE run_id=:run"""), {"status": status, "finished": _utcnow(), "requested": outcome.requested, "received": outcome.received, "persisted": outcome.persisted, "empty": outcome.empty, "failed": outcome.failed, "warnings": len(outcome.warnings), "details": _json(outcome.details | {"warnings": outcome.warnings}), "run": run_id})
     except Exception as exc:
-        failure_outcome = exc.outcome if isinstance(exc, BatchRunError) else Outcome(failed=1)
+        failure_outcome = exc.outcome if isinstance(exc, BatchRunError) else (
+            outcome if outcome is not None else Outcome(failed=1))
         if not dry_run:
             with engine.begin() as conn:
                 conn.execute(text("""UPDATE pit_collection_runs
@@ -2420,12 +2432,9 @@ def execute(batch_name: str, *, dry_run: bool = False, config_path: str | None =
                     ),
                     "run": run_id,
                 })
+        if outcome is not None and not isinstance(exc, BatchRunError):
+            raise BatchRunError(str(exc), failure_outcome) from exc
         raise
-    if not dry_run:
-        with engine.begin() as conn:
-            conn.execute(text("""UPDATE pit_collection_runs SET status=:status,finished_at=:finished,requested_count=:requested,
-                received_count=:received,persisted_count=:persisted,empty_count=:empty,failed_count=:failed,
-                warning_count=:warnings,details_json=:details WHERE run_id=:run"""), {"status": status, "finished": _utcnow(), "requested": outcome.requested, "received": outcome.received, "persisted": outcome.persisted, "empty": outcome.empty, "failed": outcome.failed, "warnings": len(outcome.warnings), "details": _json(outcome.details | {"warnings": outcome.warnings}), "run": run_id})
     return status, outcome
 
 

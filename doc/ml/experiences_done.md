@@ -1,8 +1,116 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-21 — LLM factuel : dossier SEC borné, sans appel fournisseur
+
+**PRÉPARATION/REVUE TERMINÉES, PAS DE BENCHMARK LLM OU TEST ÉCONOMIQUE.**
+24 dépôts de la cohorte Q1 2024 TOP10 CatBoost de recherche repris sans sélection
+par rendement futur : 12 résultats, deux préliminaires dont Chemours avec réserves,
+cinq déclarations de capital, deux avis calendaires, un PDF non extrait et deux
+annexes manquantes. 21 dépôts lisibles, 30 citations thématiques exactes, 32 reçus
+vérifiés. Bilibili : un avis de réunion pour la même période ne suffit pas à
+déclarer le vrai communiqué répétitif ; correction interprétative séparée,
+anciens artefacts scellés inchangés. Chemours : retard/examen interne ET chiffres
+annuels préliminaires, pas un communiqué trimestriel final ordinaire.
+Prompt factuel séparé, citations/offsets, unités/périodes/bases inconnues à null,
+abstention, aucune recommandation LONG/SHORT. Nouveauté non établie sans paire
+comparable antérieure. Requêtes séparées des annotations et sans prix/outcomes.
+19 requêtes tronquées ; images/PDF/annexes/passages omis inconnus, pas preuve
+d'absence. Cinq anciens tableaux/vingt cellules re-rattachés aux sources,
+pas nouvelle vérité terrain indépendante ni mesure d'exactitude LLM.
+24 tests ciblés passent dont 16 nouveaux ; 53 empreintes de sorties et les 24 paquets vérifiés.
+Première publication mondiale/réception historique locale/identité non certifiées :
+aucun événement économique admis dans ce dossier, pas un taux de réussite nul.
+Comparaison réaction seule contre faits+réaction non lancée. Aucun appel payant,
+SQL écrit, entraînement, ordre ou réglage de production. Même assistant,
+pas seconde revue humaine indépendante. Dossier
+`artifacts/research/us_llm_factual_readiness/20261021-v1`.
+[Revue, contrat, exemples et limites](llm_faits_nouveaux_20261021.md).
+
+## 2026-10-21 — Transitions de régime : diagnostic causal / pas de veto validé
+
+**TERMINÉ /24COMPTES EXISTANTS / AUCUN NOUVEAU BACKTEST OU FILTRE.** Primaire
+SL7/TR15/H20/sansTP/1x/B4DD15, cinqvoisinsensensibilité. RégimeprixSPYSMA50/200
+deveille seulement, pasmacrorégimeVIX/MOVE. Warmupavant2025,reproduction437/437
+contextes ; phasecausaleD0–D4depuisdernierchangement contrestable, pasgrillefenêtres.
+13changements2025dont3retourssous5séances ;21en2026dont13retours, outcomesrétro.
+RéférenceLONGPnLrécent/stable2025+171,16/+902,11USD ;2026−344,72/+1022,49USD.
+MassepertesLONG22,33/34,84%pour22,80/35,29%desséances :pasconcentrationcalendaire
+disproportionnée. LONG2026récent−435,37USDlotsdétenus,+90,65USDlotsachetéslejour ;
+cohortesd'entréerécentes22,73%gagnants22tradeset−760,18USDsurviecomplète,contre
+39,22%/51/+1437,95USDstables. NeconfondrepasPnLdujour etPnLdelaviedutrade.
+ContrasteBULLrécent2025positif/2026négatif, CORRECTIONeffetinverse ;4/6profilsLONG
+2026récentnégatifmaisSL5/TR10inverse. SHORT2025récentpresqueneutre/2026défavorable.
+Unseuldes5tripsB4référencetombedansD0–D4 ;B4répondauDD,pasàuneobligationde
+couperaupremierchangement. ReprisesLONG65séances2025/31en2026,censuresséparées.
+Auditindépendantcash+inventaire5244compte-jours,erreurmax1,71e-12USD,14testspassent ;
+mêmeassistant,pasrevuehumaineindépendante. FenêtresPREetretoursrapidesrétrospectifs,
+pasfeaturesniPITinventé. Réservescohorte213/72,futurecoverage/survivants/annéesdéjàvues/
+ancienhorizon/absenceparitélive. Aucunmodèle/API/LLM/SQLécrit/ordre/config changé.
+Dossier `artifacts/research/us_oracle_regime_transitions/20261021-v1`.
+[Protocole, résultats, positions anciennes/nouvelles et B4](oracle_transitions_regime_20261021.md).
+
+## 2026-10-21 — Robustesse de la grille DD15 : voisinages et86contrefactuels
+
+**TERMINÉ V2 /86REJEUX AUDITÉS / LONG CONDITIONNEL, PAS DE PROMOTION / SHORTNONRETENU.**
+Tous144profils/sens relus, graphe une dimension/un cran :LONG14positifs deuxannées,
+un plateau descriptif centre+75%voisinspositifs (référenceSL7/TR15/H20/sansTP).
+RéférenceLONG4/5voisinspositifs, mais ampleurs instables etTP10négatif2025.
+Critères déclarés avant nouveauxcalculs, annéesdéjàvues, pasvalidationexante.
+Même213campagnes/72titresCatBoostPATH_H20recherche,1x/4kannuels/B4DD15,
+ancienhorizonOracleJ+H, pasnouveauruntime.86rejeux bornés :4témoins,24frais25bps,
+24retards5m,4stressconjoints,16suppressionsdesprincipauxcontributeurs,14trimestres
+sansnouvellesentrées. Cash/sizing/admissions/B4/coûts réellement recalculés.
+V1 interrompue sur comparaison datesmémoire/JSON ; conservéeavecsource/note.
+V2 compareexportsdes2côtés, tous86recalculés, pasfusion. Quatretémoins exacts
+transactions/marques5m/positions ; auditscash/exits/B4/coûts86/86passent,
+6907lotsvérifiés séparément, erreurmaxcoûts1,34e-11USD,105tests réussis.
+RéférenceLONG2025/26+26,83/+16,94% ; frais25+19,57/+4,62%, délai5m+37,51/+4,91%,
+conjoint+33,58/+4,09%.3/6profilsLONGrestentpositifsauxdeuxstressindividuels,
+marges parfois<1%.SansMP/PLTR/SNDXensemble2025−12,33% ; sansMU2026+0,47%,
+sansMU/DOCN/QDELensemble+5,64% (interactions, pasadditivité).SansentréesT22026
+−0,38%, mais2025+43,16%, pasvétosaisonnierprédictif. SHORT43/43rejeuxnégatifs.
+Conclusion :LONGpasuniquepicisolémaisconcentration/cheminfragiles, pasvalidation
+largeouchoixnouveauchampion. Risquesgaps/DD etbiaisfuturs/survivants/PITmaintenus.
+PasLLM/API/SQLécrit/entraînement/modèle/univers/configproduction/ordre changé.
+Dossierfaisantfoi `artifacts/research/us_oracle_grid_robustness/20261021-v2`.
+[Protocole, tous les résultats et limites](oracle_robustesse_grille_20261021.md).
+
+## 2026-10-21 — Construction portefeuille : contrôle de corrélation aux détenus
+
+**TERMINÉ / 12COMPTES AUDITÉS / PAS D'AMÉLIORATION DÉMONTRÉE / AUCUNE PROMOTION.**
+Point1Wayland, distinct de la tendance abandonnée. Un seuil figé issu du profil
+Pearson canonique :0,90,40rendements précédant la séance,25observations communes.
+Contrôle natif paire par paire contre positions détenues, LONG/SHORT séparés,
+prix split-adjusted sans ffill ; insuffisance distinguée de corrélation élevée.
+Mêmes213campagnes/72titres, CatBoostPATH_H20recherche,1x/4kannuels,B4DD15,
+SL7/TR15/sansTP/OracleJ20/coûts figés. Témoin, filtre et taille réduite fixée
+avantcalcul ; cette dernière n'est pas un témoin parfaitement exposition-apparié.
+Quatre témoins reproduits exactement ;12audits cash/exits/risque passent,
+112tests réussis. Audit séparé1266entrées/1053paires et heldstates chronologiques,
+erreurcorr≤4,45e-16/coûts≤5,46e-12USD, mêmeassistant pas revuehumaineindépendante.
+Unseulrefus :STX/WDC18février2026,rho0,910321 ; zéro refusdata. STXauraitperdu
+61,56USD mais sa suppression modifie ensuite B4/capital/tailles/sorties.
+LONG2025+26,83%inchangé ; LONG2026+16,94→+0,07%,DD20,32→21,88% ; SHORT2025/26
+−24,72/−25,61%inchangés. Contrôle taille réduite LONG+6,73/+30,56%, DD16,96/15,34%,
+pas preuve de supériorité stable. Filtre presque inactif ; moyenne corrélation
+détenus2026LONG0,3267→0,3361, pas réductionglobale démontrée. Forte dépendance
+de chemin, ni nouveau seuil ni activation ; facteurs/bêta/secteurs non testés.
+Réserves couverturefuture/survivants/dailyretraité/annéesdéjàvues/paritéhéritées.
+Aucun API/SQLécrit/entraînement/ordre ou réglageproduction changé.
+Dossier `artifacts/research/us_oracle_portfolio_correlation/20261021-v1`.
+[Protocole, résultats, contrôle taille et attribution STX/B4](oracle_diversification_correlation_20261021.md).
+
 ## 2026-10-21 — Oracle TOP10 : filtre de tendance persistante, LONG / SHORT
 
-**TERMINÉ / 8 COMPTES AUDITÉS / PAS DE PROMOTION.** Une règle d'entrée figée :
+**ABANDONNÉE — décision utilisateur du 21 octobre 2026 / 8 COMPTES AUDITÉS / AUCUNE ACTIVATION.**
+La règle testée n'apporte pas d'amélioration directionnelle stable : forte
+réduction des occasions et des gains LONG, SHORT toujours perdant. La baisse
+du drawdown accompagne une moindre exposition, sans avantage propre démontré.
+Aucun nouvel essai ou ajustement de seuil prévu sur cette piste ; résultats
+et artefacts conservés pour traçabilité. Cette décision concerne la règle
+testée, pas toutes les méthodes de suivi de tendance.
+
+Une règle d'entrée figée :
 pour chacune des trois séances précédentes, LONG close>EMA20>EMA50, pente EMA20
 sur cinq séances positive, ADX14≥20 ; SHORT miroir avec même ADX. Aucun prix
 du jour d'entrée, pas de retry après refus, pas de sortie de tendance ajoutée.

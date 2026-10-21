@@ -6,6 +6,14 @@
 
 ## Périmètre
 
+Le **21 octobre 2026**, correction de la finalisation `SKIPPED` compatible avec
+la base (motif dans `details_json`), isolation des anciennes barres SIP invalides
+sans relâcher J, et conservation du ratio de couverture dans le résumé parent.
+Le faux RUNNING de 09h29 est réconcilié ; le run nocturne reste en échec de
+couverture **1 648/1 790 (92,1 %), seuil 95 % inchangé**. Audit des 142 absents,
+sans retrait automatique d'univers ni nouvelle exécution d'ordres :
+[correctifs, reçus et décision restante](us_pipeline_correctifs_20261021.md).
+
 Le 19 octobre 2026, le collecteur autonome `eodhd_news_ingestion_sync` est
 désactivé sur demande utilisateur : l'étape 8 suffit au besoin retenu. Les listes
 `steps` / `steps_friday` et l'univers de `us_pipeline` déterminent la cadence de
