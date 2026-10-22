@@ -6,6 +6,66 @@
 > envisagée. À la reprise : couverture réelle puis scores Oracle OOS, pas
 > entraînement ou relance automatique. L'audit contextuel ci-dessous est terminé.
 
+## 2026-10-21 — FMZ : revue documentaire de 1 000 stratégies, pas nouveau backtest
+
+**CRIBLAGE TERMINÉ / 24 LECTURES DE CODE CIBLÉES / AUCUNE PROMOTION.**
+Plage GitHub inclusive premier1-2-3→The-Bollinger-Band, commit
+`7853bb2bf262c4567ac238d3552d97f0e50cb801` :1 000 contenus intégraux/empreintes
+Git vérifiés, zéro échec ; pas revue manuelle ligne à ligne des 1 000 codes.
+Inventaire individuel, archives locales et annotations des24sources conservés.
+Deux hypothèses proposées sans lancement :compression→expansion avant cassure,
+et prise de bénéfice partielle avec stop dur/trailing du solde. Pas preuve de
+direction ou de rentabilité. EMA/RSI/MACD/ATR/VWAP recouvrent largement nos
+features ; E20-C/retour à la moyenne/tendance abandonnée restent négatifs,
+pas relancés sous un autre nom. Écarts code/titre relevés :Donchian filtres
+inutilisés/lookahead à qualifier ; dernier Bollinger moyenne à la baisse ;
+script pyramiding annonçant unSL sans ordre stop ; «IA» sans modèle appris.
+16marqueurslookahead_on/97multi-timeframes/878crypto :alertes textuelles,
+pas autant de bugs prouvés. Huit tests ciblés ; aucun code distant exécuté,
+modèle entraîné, backtest, LLM, API marché, SQL écrit, ordre ou config changé.
+Téléchargements Alpaca non modifiés. Suite proposée uniquement aprèsGO et
+couverture/ScoresOracleOOS qualifiés. Dossier
+`artifacts/research/fmz_strategy_review/20261021-v1`.
+[Pistes, limites, sources et inventaire](fmz_strategies_revue_20261021.md).
+
+**Suite au 22 octobre : lecture du périmètre de 1 000 documents terminée.**
+Lecture séquentielle texte utile+code jusqu'au 1 000 inclus, distincte du
+premier criblage automatique et des 24 lectures ciblées. À la demande de
+l'utilisateur, le [fichier des seules pistes à tenter](fmz_pistes_a_tester.md)
+exclut les doublons/rejets. P01compression puis cassure, P02sortiepartielle,
+P03premierretestconfirmé d'un niveau déjàcassé (adaptation proposée, pas
+comportement certifié du script source). P04 ajoutée après lecture des lots
+101–300 : Dual Thrust, seuils autour de l'ouverture calculés avec les seules
+séances antérieures, distincts de la cassure du haut/bas de J déjà rejetée.
+Pas reprise des inversions sans stop du bot crypto ni preuve de rentabilité.
+Deux hypothèses de sortie ajoutées après lecture 301–500 : **P05 canal des
+creux antérieurs avec stop dur et ratchet**, distinct du stop en pourcentage
+ou ATR ; **P06 protection de 50 % du gain atteint après activation illustrative
+à +10 %**, distincte de la prise partielle et du simple retard du trailing E15.
+Paramètres illustratifs, aucun optimum ni rendement établi ; protocoles,
+chronologie, coûts, gaps et réserves d'implémentation dans le fichier des pistes.
+Lecture 501–900 : une hypothèse supplémentaire, **P07 balayage d'un creux récent,
+grande fourchette, clôture dans le quart supérieur, puis reprise confirmée**,
+inspirée du document 797. Pas simple changement de seuil RSI : son code n'utilise
+aucun RSI. Comparaison isolée au même déclencheur sans filtre ; attente,
+annulation, frais et occasions manquées à qualifier. Sept pistes au total,
+aucun rendement démontré. Les variantes redondantes n'encombrent pas le suivi.
+Le document 708 est le README/index du dépôt : structure et texte examinés,
+pas lecture des 5 810 pages qu'il référence. Plusieurs exemples techniques
+font également partie du décompte ; pas 1 000 stratégies distinctes validées.
+Tranche 901–1000 : aucune nouvelle hypothèse suffisamment distincte des sept
+retenues et des tests antérieurs. Fin au document 1 000
+`The-Bollinger-Band-Automated-Trading-Strategy.md`.
+Périmètre demandé clôturé ; les 5 807 Markdown du dépôt ne sont pas tous lus.
+Paquets tronqués relus en lots réduits ; grands fichiers lus en plusieurs
+parties, notamment 356/388/456/499/618/641/644/861. Images et liens secondaires
+non certifiés. Sources archivées conservées ; prose promotionnelle répétitive,
+tables d'arguments dupliquées et commentaires // isolés parfois omis de
+l'affichage compact, instructions exécutables examinées sans les exécuter.
+Aucun nouveau backtest, entraînement, appel LLM ou écriture SQL.
+Checkpoint technique séparé :
+`artifacts/research/fmz_strategy_review/20261021-v1/reading_progress.json`.
+
 ## 2026-10-21 — Winner intraday : facteurs de choix des protections non confirmés
 
 **TERMINÉ / PAS D'ENTRAÎNEMENT / NO_GO_CONTEXT_NOT_CONFIRMED.** Six profils figés,
