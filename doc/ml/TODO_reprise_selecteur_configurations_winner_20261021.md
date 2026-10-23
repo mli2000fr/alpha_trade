@@ -1,5 +1,17 @@
 # NOTE DE REPRISE — modèle de choix des configurations Winner / Oracle
 
+> **Reprise du23octobre2026 : GO du sélecteur global TOP100.**
+> Après validation des scores causaux dès02/06/2017 et lancement des grilles
+> natives1x/2x, un nouveau run construit les exemples, puis entraîne si leur
+> nombre qualifié suffit :2017–2024 apprentissage,2025validation,2026testTOP10.
+> Premièreversion protections/horizon uniquement, autres réglages fixes ;
+> macro révisable et secteursnonPIT horsfeatures. À l'inscription, construction
+> lancée, aucun fit ni résultat final encore disponible. Voir le
+> [protocole figé](winner_selecteur_global_top100_protocole_20261023.md) et
+> `artifacts/research/us_winner_global_selector/20261023-v1/progress.json`.
+> Le corps ci-dessous conserve le plan et les constats antérieurs ; ne pas
+> relancer ces anciens essais ni les présenter comme le nouveau résultat.
+
 **Rédigée le 21 octobre 2026, fuseau Europe/Paris.**
 
 ## 0. Reprendre ici en cinq minutes

@@ -1,10 +1,661 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-23 — Grilles natives1x/2x : réparation du pilotage et reprise conservatrice
+
+GO de réparation après constat de résumésglobaux figés et absence de2020
+malgré2017terminé en1x. Piles des deuxpilotes lues sans injection : attente
+dans `ProcessPoolExecutor.shutdown(wait=True)`. Après arrêt ciblé desquatre
+workers de recherche identifiés (PID/parent/création/module), tracebackoriginal
+révélé sur lesdeux : **PermissionError lisant `year-2017.json`** pendant les
+remplacements atomiquesWindows. L'exception faisait sortir du pilote, mais la
+fermeture du pool attendait les deuxannées, masquant l'erreur et bloquant
+l'enchaînement. Aucun batch, collecte, broker ou autre modèle arrêté.
+
+Nouveau superviseur indépendant des sources/protocoles économiques scellés :
+retriesJSONbornés, statut temporairement illisible conservant dernièrevaleur,
+sous-processus annuels indépendants, deuxmaximumpargrille, erreurs immédiates,
+reprise des seuls comptes manquants et saut des années complètes. **18tests
+passent**. Pas de changement de profils, frais, prix, risque, levier, métriques
+ou classement ; pas d'écritureSQL/fournisseur/ordre.
+
+Avant relance, vérificationSHA256 et reçu des comptes conservés : **459en1x,
+407en2x**, dont300comptes2017 déjàterminés en1x. Aucunrapport terminé effacé
+ou altéré. Seuls les profils interrompus, nonencore scellés, sont rejoués.
+Reprise des mêmes dossiers sous amendement `supervisor-v2/amendment.json`.
+Première preuve d'enchaînement : snapshot2020 démarré en1x (38/77titres au
+snapshot de contrôle),2019 repris ;2x reprend2017/2019. Vérifier les compteurs
+vivants pour l'état actuel, pas ces instantanés. Les reçus préservés restent
+comparés au contenu lors de la finalisation.
+
+[Cause et commandes corrigées](winner_grilles_reparation_pilotage_20261023.md).
+Reprises : module `scripts.research.us_winner_grid_supervisor_repair_20261023`,
+`--kind 1x` ou `--kind 2x`. Ne plus utiliser les anciens pilotes sur ces mêmes
+dossiers. Le sélecteurglobal terminé et ses poids ne sont pas modifiés.
+
+## 2026-10-23 — Sélecteur global Winner TOP100 : dataset et entraînement lancés
+
+GO utilisateur après contrôle des deux grilles :149/3000comptes1x et20/3000
+comptes2x au snapshot initial, sans erreur ; les deux calculs sont conservés.
+Nouveau run séparé TOP100 causal, apprentissage02/06/2017–2024, validation2025
+et test2026au30/09 sur **TOP10 primaire**. Six configurations SL/TP/trailing/
+horizon fixées avant résultats ; HALF/confirmation2/attente20/sansajout fixes.
+Un LightGBM global CPU, pas unmodèle parsymbole ; cible avantage netunitaire
+contreREFERENCE, pas probabilitéLONG/SHORT ni rendement annuelportefeuille.
+
+Douze tests passent ; smoke de126comparaisons de sorties vectorielles/scalaires
+sur archives SIP réelles passé. Dataset parsymbole avec reprise, fenêtres
+nonchevauchantes et maturité communeJ+41 ; labels tardifs fin2024/2025/2026
+exclus du split concerné. Macrovintages et secteursnonPIT exclus des features :
+premièreversion prix/volume du titre et contexteprixSPY, pas une qualification
+implicite de toutes les tablesmacro/consensus. Attente de fin complète2018
+avant les nouveaux snapshots ; aucun nouveau téléchargement.
+
+**Construction des données lancée ; pas encore de modèle entraîné ni de
+résultat validé à cette inscription.** Fit automatique seulement si effectifs
+qualifiés suffisants ; paramètres fixes, référenceconstante choisie2025,
+test2026sansrefit. Résultats unitaires et bootstrap mensuel avant éventuel
+rejeuportefeuille séparé. Aucun SQLwrite, fournisseur/GPT, ordre, changement
+YAML/Oracle ou modification des grilles actives. Réserves de survivants,
+couverturefuture, OST et annéesdéjàétudiées maintenues.
+[Protocole complet](winner_selecteur_global_top100_protocole_20261023.md).
+Canonique : `artifacts/research/us_winner_global_selector/20261023-v1/`.
+Suivi `progress.json`, logs `log/winner-global-selector-top100-20261023-v1.*.log`.
+
+## 2026-10-23 — Grille Winner parallèle avec plafond d'exposition2x
+
+GO utilisateur : deuxième run avec levier2x, sans arrêter ni modifier le1x.
+Même300profils/3000comptesannuels, mêmeTOP10/cohorte, mêmes archives annuelles
+copiées et vérifiées parSHA256 depuis le1x ; aucun appelSQL oufournisseur
+supplémentaire pour ce run. Adaptateur limité au processus, sources1x scellées
+inchangées. Plafondbrut risque1→2, compte margin/pouvoird'achat2x explicites.
+Budget derisque partrade, sizingHALF, maxpositions/secteur, B4DD15 et frais
+inchangés : **pas d'exposition2x garantie ni de quantités doublées**.
+
+Neuf tests passent (dont la grille native initiale). Smoke20séances2017
+terminé et audité :2achats/2sorties, cash/frais/confirmation. L'exposition
+maximale de ce smoke n'est que0,256x : ce n'est pas une preuve d'utilisation
+du levier, ni une mesure de son apport. Runcomplet lancé avec2workers distincts
+en parallèle du1x. Capitalbrut/equity moyen etmax, fractiondesséances5m au-dessus
+de1x, capitalemprunté et financement publiés, puis comparaison appariée des
+comptes terminés. Pas deTOP3 ni de verdictglobal à ce stade.
+
+Réserves de couverturefuture, universsurvivant, secteursactuels, OST et OHLC
+inchangées. Les années nonencore archivées attendent le snapshot1x, sans
+nouvelle collecte. [Protocole2x](winner_grille_native_2x_2017_2026_protocole_20261023.md).
+Canonique : `artifacts/research/us_winner_native_grid_2017_2026/20261023-2x-v1/`.
+Progression `progress.json`, reprise par le module
+`scripts.research.us_winner_native_grid_2x_2017_2026_20261023 --phase run --workers 2`.
+
+## 2026-10-23 — Grille Winner native 2017–2026 : lancée, pas de résultat final
+
+GO explicite après validation du02/06/2017–30/09/2026. **300profilsLONG,
+3 000comptesannuels**, moteur Winner natif, HALF sans ajout,4000USDannuels,
+8bps/jambe, B4DD15 et plafond brut1x conservés (pas de2x forcé contre le risque).
+SL3/5/7, trailingOFF/3/10/15/20, TP OFF/7/10/15/20, détention5/10/15/20 puis
+ouverture suivante. TOP10 causal fixé avant couverture, pas de remplacement.
+16tests passent ; smoke2017vingtséances avec2achats/2sorties, audit scalaire,
+cash/frais et entrée passés. Calcul complet lancé avec2processus maximum.
+
+**Réserve majeure : 213/1470signaux2017 couverts** sur la fenêtre commune
+attente+détention ; les1 257autres restent exclus explicitement. Résultat sur
+sous-ensemble, pas sur tout leTOP10 ni preuve de parité live totale. Couverture
+future/survivants/secteursactuels/OST nonexhaustifs demeurent des biais.
+2018traitée après fin du rattrapage en cours ; pas de fournisseur relancé par
+la grille. Sources scellées, snapshotsSQL READONLY et checkpoints parcompte.
+TOP3 choisi sur2017–2023 puis2024–2026 publié sans réajustement ; années déjà
+vues, pas holdoutindépendant. **Pas deTOP3 ni de promotion à ce stade.**
+[Protocole](winner_grille_native_2017_2026_protocole_20261023.md),
+[suivi/reprise](winner_grille_native_2017_2026_suivi_20261023.md).
+Canonique : `artifacts/research/us_winner_native_grid_2017_2026/20261023-v1/`.
+
+## 2026-10-23 — Grille Winner : période acceptée, scores causaux figés
+
+L'utilisateur confirme **02/06/2017–30/09/2026**, avec 2016–début2017 en
+amorçage. Qualification label-free du TOP10 sur **2 345 séances / 23 450 lignes**,
+347 titres distincts, aucune date attendue sans scores. OOF préférés sur
+1 983 dates ; SQL avec lineage causale vérifiée sur 362 dates absentes des OOF.
+Modèle `437ed1` jusqu'en2024, `102eca` en2025, `bc35a7` en2026, sans sélection
+selon PnL. Disponibilité train/validation strictement antérieure ; rang1..10,
+aucun doublon. Six tests passent. Snapshot valide v2 (v1 non finalisé après
+erreur technique de sérialisation, corrigée avant v2).
+
+**Grille économique non lancée, TOP3 non calculé** : qualification intraday,
+daily/OST et protocole fini restent nécessaires. Rattrapage2018 relancé
+séparément sur demande utilisateur, sans refresh, après HTTP429 ; il progresse.
+Les six tests et les scores présents ne certifient pas la couverture des prix.
+Aucun entraînement, fournisseur ni écritureSQL dans la qualification des scores.
+[Périmètre validé et suite](winner_grille_2017_2026_perimetre_valide_20261023.md).
+Canonique : `artifacts/research/us_winner_grid_scores_2017_2026/20261023-v2/`.
+
 > **Reprise après téléchargement intraday 2020–2025** :
 > [note complète du futur sélecteur de configurations Winner](TODO_reprise_selecteur_configurations_winner_20261021.md).
 > Téléchargement annoncé d'environ trois jours ; extension 2016–2019 seulement
 > envisagée. À la reprise : couverture réelle puis scores Oracle OOS, pas
 > entraînement ou relance automatique. L'audit contextuel ci-dessous est terminé.
+
+## 2026-10-23 — Grille2016–2026 : précontrôle terminé, période exacte non testable
+
+Demande de grille longue etTOP3 après téléchargement5m. **Aucun rejeu économique
+nouveau lancé, aucunTOP3 inventé.** ArchivesOOF des quatre modèles et44requêtes
+indexéesREADONLY examinées ; deux tests passent. Plus ancienOracle causal au
+02/06/2017 (`437ed1`), pas2016. Les archivesOOF existent avant2024 même si la
+lineageSQL n'a pas de lignes2016–2023. Ne pas appliquer un modèle futur à2016.
+
+Backfills2016–2017/2019/2020–2024 affichentCOMPLETED, mais2018 conserve un run
+BLOCKED18679/23270après429 et un plan de reprise affichéRUNNING192/44750.
+LeSIP2025–2026 affiche aussiRUNNING23914/39380, avec2026déjàCOMPLETEDdans un
+autre plan. Compteurs reçus, pas preuve de processus vivant ou de séances
+complètes ; qualification titre×séance encore à faire, pas de relance fournisseur.
+
+Choix demandé : utiliser2016–début2017 pour amorçage et tester02/06/2017–30/09/2026,
+ou étudier unOracle antérieur pour inclure réellement2016. Pas d'entraînement,
+écritureSQL, changement de production ou fallback caché. Grille/critèreTOP3
+à sceller après confirmation du périmètre, sans mélanger l'ancienne grilleJ+H
+et le contratWinner depuis le fill.
+[Préparation détaillée](winner_grille_2016_2026_preparation_20261023.md).
+Canonique : `artifacts/research/us_winner_grid_history_readiness/20261023-v1/`.
+
+## 2026-10-23 — Winner SL3/TP15/TR3/open11 : mieux queTP7 ici, 2025 toujours perdante
+
+GO pour relever uniquement le TP7→15 %. SL3/TR3/open11, attente20, TOP10Oracle
+parcoursH20, confirmation5m, HALF sans ajout, capital4000USDannuel, coûts8bps,
+risqueB4DD15 et plafond effectif1x inchangés. Même cohorte1428/1027 et mêmes
+archives scellées ; aucune nouvelle collecte, SQL, entraînement, ordre ou
+modification de production. Différences de cash et d'activité après les premières
+sorties possibles, pas de taille initiale augmentée à cause du TP seul.
+
+**TERMINÉ ET AUDITÉ / PAS DE PROMOTION.** TP15en2025 :−7,45 %, DD10,00 %,
+58gagnants/124perdants, taux31,87 %, capital3702,14USD ; TP7−8,68 %,DD9,68 %,
+taux31,46 %. TP15en2026au30/09 :+7,72 %,DD3,63 %,69/104,taux39,88 %,
+capital4308,79USD ; TP7+4,30 %,DD3,67 %,taux39,31 %. Rendement amélioré de
+1,23/3,42points, DD2025 légèrement aggravé ; pas domination sur tous critères.
+
+Capital brut moyen236,38/284,20USD, gains moyens14,69/19,30USD contre pertes
+9,28/10,03. Le trailing reste dominant : seulement2/5sortiesTP15, aucuneopen11.
+Gagnant médian+2,10/+2,82 %, pas+15 %. Une position ouverte valorisée en2026.
+Ne pas interpréter la variation comme une preuve directionnelle ni « optimum ».
+
+Adaptateur local de l'ancien lanceur ET du scalaire, sans réécrire les sources
+TP7 scellées. **29tests passent**, smoke5séances11achats/11sorties, puis deux
+comptes complets :356achats/355sorties vérifiés àTP15 explicite. Cash/frais/
+positions/PnL/DD passent ; comparaisonTP7/TP15 et sources scellées revérifiées.
+RéférencesTP7 réutilisées, pas rejouées. Années déjà vues, limitesPIT/OST/quotes
+héritées, aucune nouvelle grille ou activation automatique.
+[Protocole](winner_sl3_tp15_tr3_open11_protocole_20261023.md).
+[Bilan et comparaison](winner_sl3_tp15_tr3_open11_bilan_20261023.md).
+Canonique : `artifacts/research/us_winner_sl3_tp15_tr3_open11/20261023-v1/`.
+
+## 2026-10-23 — Winner SL3/TP7/TR3/open11 : taux gagnant supérieur, pas de gain transversal
+
+GO explicite après l'audit des pertes. Variante unique, pas grille : stop3 %,
+TP7 %, trailing3 % sur hauts déjà connus, dix séances depuis le fill entrée
+incluse puis vente open11. Mêmeattente20/mêmesTOP10/mêmeconfirmation5m/HALF,
+sans ajout. Pas de nouveau modèleOracleH10 : l'Oracle d'amplitude resteH20.
+
+Même cohorte native1428/1027 sur2510/1880signaux, mêmes4000USDannuels/coûts8bps/
+risqueB4DD15/plafond effectif1x. Même formule de sizing, pas quantités identiques
+quandSLchange. Référence WINNER_ONLY SL7/TR15/open21 déjà auditée réutilisée,
+pas le HALF_CONTROL+12,92 %. Fichiers existants scellés, aucun nouvel accèsSQL,
+provider, entraînement, ordre, batch, YAML ou moteur modifié.
+
+**TERMINÉ ET AUDITÉ / PAS DE PROMOTION.** Variante2025 :−8,68 %, DD9,68 %,
+56gagnants/122perdants, taux31,46 %, capital3652,94USD ; témoin−11,83 %,
+DD15,73 %,16,98 %gagnants. Variante2026au30/09 :+4,30 %, DD3,67 %,68/105,
+taux39,31 %, capital4172,07USD ; témoin+19,96 %,DD10,92 %,31,67 %gagnants.
+
+Trailing3 coupe les grands gains : gagnant médian net+2,02/+2,94 %, pas+7 %.
+Capital utilisé moyen206,65/241,62USD, contre340,90/1844,19témoin ; DD non comparé
+à risque égal. Durées gagnantes1,95/1,82séances, perdantes1,46/1,44. Zéro sortie
+open11 : tous les trades fermés touchent une protection avant ; une position
+2026reste ouverte valorisée. Pas de causalité isolée entre les quatre paramètres.
+
+24tests passent ; smoke5séances11achats/11sorties audités. Deux années complètes
+ensuite,352achats/351sorties scalaires et cash/frais/prix/chronologie/DD passent.
+Sources/rapport scellés vérifiés. Références auditées réutilisées, pas rejouées.
+Risque gaps/collision stop-prioritaire/TPgap plafonné pris en compte, pas de
+garantie d'exécution réelle. Aucune nouvelle grille ou activation automatique.
+[Protocole](winner_sl3_tp7_tr3_open11_protocole_20261023.md).
+[Bilan complet](winner_sl3_tp7_tr3_open11_bilan_20261023.md).
+Canonique : `artifacts/research/us_winner_sl3_tp7_tr3_open11/20261023-v1/`.
+
+## 2026-10-23 — Winner seul : audit des pertes, pas de filtre d'entrée confirmé
+
+**TERMINÉ / AUDIT DESCRIPTIF / AUCUNE PROMOTION.** 179 achats archivés du
+Winner natif SL7/TR15 : 173 clôtures (2025 :9gagnants/44perdants ;2026 :38/82),
+six ouverts censurés. Pas un nouveau backtest ni l'ancien HALF_CONTROL+12,92 %.
+
+12/44 et29/82pertes avaient atteint au moins+7 % avant leur sortie, avec bornes
+OHLC sans supposer le high avant le stop. Flags non exclusifs de rebond après
+stop à clôture+7 % :20/44 et38/76fenêtres complètes ; délais médians5,57/7,11jours
+calendaires, baisse intermédiaire médiane d'au moins11,31/10,21 % depuis l'entrée.
+Ce n'est pas une preuve pour élargir/supprimer le SL. Faux départ immédiat :3/44
+et7/82 ; partition exclusive complète publiée, six fenêtres futures2026 censurées.
+
+Onze sondes pré-entrée figées, médianes/AUC et couverture parannée ; pas de
+confirmation stable dans le sens prévu. Exemple gap :0,659→0,481 ; faibleATR :
+0,386→0,592. Pas de seuil/signe retourné après observation. Couverture titres
+33/53 et109/120 ; contrôle sans chevauchement2025 seulement3gagnants, AUC réservée.
+173préfixes et audit scalaire des173chemins/44cellules passent,12tests ciblés.
+
+Inventaire OST parent VIDE, pas une preuve d'absence ; raw/PIT réservés.
+P06 protégeait déjà les gains sans confirmation transversale : ne pas refaire
+passer cette idée pour une nouvelle preuve. Aucun entraînement, SQL, provider,
+ordre, nouvelle règle ou changement de production.
+[Protocole](winner_audit_pertes_protocole_20261023.md),
+[bilan et fichiers](winner_audit_pertes_bilan_20261023.md).
+Correction d'horlogeV2 : STOP natif enFINde5m, pas début. Bougie de sortie
+réservée pour bornes ambiguës et premierbarpostsortie récupéré. Audit scalaire
+corrigé passe, mêmescatégories/effectifs/chiffresprincipaux et sondes d'entrée
+exactement identiques ; une observation immédiate2025 est maintenant inconnue.
+[Amendement](winner_audit_pertes_amendement_horloge_20261023.md).
+Canonique : `artifacts/research/us_winner_loss_diagnostics/20261023-v2/`.
+
+## 2026-10-22/23 — Veto Winner natif ET réplication +12,92 % : non confirmé
+
+GO économique après l'audit de tendance : six comptes2025/2026 comparant Winner
+seul à KEEP7 et KEEP5, ratio volatilité20/60 faible d'abord figé, priorité Oracle
+conservée entre les retenus, aucun remplacement TOP11 ni sélection de vrais
+perdants futurs. Règle déjà non validée2022/maxT ; expérience exploratoire après
+lecture des périodes récentes, pas de promotion ni holdout indépendant.
+
+Coordinateur Winner actuel, risques natifs, capital4000USD indépendant par
+année/bras, SL7/TR15/sansTP, HALF, sans renforcement, deux clôtures5m ; vingt
+séances depuis le fill puis vente open21. Plafond risque1x conservé malgré
+levier YAML autorisé2x ; DD15, coûts canoniques et financement6,5%/252. Deux
+overlays factoriels non qualifiés exclus identiquement, Pearson conservé.
+
+Anciennes213campagnes de rangs différents non mélangées. Snapshot existant
+READ ONLY :4 262 675SIP5m/131titres. Candidats initiaux2510/1880, cohortes communes
+1428/1027 (attente+détention complètes) ; biais de couverture future et univers
+survivant. Douze réservesJ2026. Secteurs actuels, daily split ancien, inventaire
+OST non certifié exhaustif : pas parité broker/PIT intégrale.
+
+V1 échec de staging2025 car full=1 donne HALFentier0 ; processus arrêté,
+pas de PnL partiel promu. V2 adaptateur refuse seulement ces plans selon la
+fonction native, sans taille/budget augmenté ; six comptes entièrement rejoués.
+Cache readonly du calendrier officiel testé, code V1 scellé conservé.
+
+**TERMINÉ / 32tests / AUDIT DES SIX COMPTES PASSÉ.** Rendements2025 témoin/Garder7/
+Garder5 :−11,83/+0,51/+3,98 % ;2026 :+19,96/+1,57/+7,61 %. DD2026 :10,92/12,57/
+12,21 %. Le filtre dégrade2026, y compris taux gagnant31,67→27,27/28,57 %.
+617achats et65échéances vérifiés, cash/frais/PnL réconciliés. Activité2025 du
+témoin réduite parB4 dès10avril : effet capital/risque, pas seule direction.
+
+GO parallèle pour la vraie question « améliorer+12,92 % » : ancien HALF_CONTROL
+SL5/TR15, compte4000continu, échéanceJ+20 depuis Oracle, risque planifié2 %, pas
+B4. Seul veto modifié. Quatre tableaux de chacun des témoins8/25bps exactement
+reproduits,30tests et6reconstructions passent. Frais8bps : témoin2025/2026
++12,92/+33,19 %, Garder7+13,86/+14,53 %, Garder5+15,60/+11,87 %. Capital cumulé
+6016,01contre5216,21/5173,03USD ; DD plus faible via moins d'exposition. Même
+non-confirmation sous25bps.416dates J connues, une laissée sans filtre.
+
+Ni comparaison à risque égal, ni holdout indépendant ; deux années déjà vues,
+sonde initiale non validée2022/maxT. Aucun seuil adapté, aucune promotion.
+[Bilan des deux protocoles](winner_filtre_bas_classement_bilan_20261023.md).
+Aucun entraînement, écritureSQL, téléchargement, batch, modèle, ordre ou YAML
+production modifié. Aucun suivi automatique créé.
+[Suivi et commandes](winner_filtre_bas_classement_suivi_20261022.md),
+[protocole](winner_filtre_bas_classement_protocole_20261022.md).
+Canonique : `artifacts/research/us_winner_bottom_rank_filter/20261022-v2/`.
+
+## 2026-10-22 — TOP10 Oracle parcours : tri par tendance sur vingt séances, pas de signal stable
+
+**AUDIT UNIVARIÉ TERMINÉ / PAS D'ENTRAÎNEMENT / PAS DE PROMOTION.** Cible différente
+du seul rendement H20 : moyenne des vingt rendements de clôture depuis open J+1,
+avec persistance et recul préalable séparés. TOP3/TOP5 au sein des mêmes TOP10
+CatBoost parcours OOF puis modèles annuels `437ed1`/`102eca`/`bc35a7`, sans ATR,
+consensus, remplacement TOP11 ni vente fictive au sommet. Dix-huit sondes prix/
+force relative, cinq champs marché et rang/score Oracle en témoins ; pas les
+173 features amont. Liens avec E3/E14/TP-avant-SL/filtre TP15SL7 explicités.
+
+19 490 candidats/1 949 décisions/324 titres ; 17 230 observations sur 1 723 dates
+TOP10 complètes après contrôles/purge, 317 titres. Anciens caches EODHD split,
+pas nouvel audit SIP ; univers survivant et vintages PIT réservés. 2026 comparé
+jusqu'au 10 septembre, maturité au cutoff archivé 9 octobre. Quatorze décisions
+encore inconnues dans ce cache, douze candidats J non qualifiés excluent leurs
+dates entières ; aucune substitution. 420 candidats de bord purgés.
+
+Meilleure sonde en découverte : **volatilité20/volatilité60 faible d'abord**.
+IC quotidien découverte +0,0534, validation2022 −0,0674, contrôle2023 +0,0435,
+2024 −0,0337, 2025 +0,1101, 2026 +0,0880. Gain d'aire TOP3/TOP5 2025
++1,972/+1,179 points et 2026 +1,307/+1,539, mais validation −0,902/−1,425.
+En 2025 le recul préalable augmente malgré meilleure aire/persistance. Aucune
+sonde ne passe les gates avant confirmation ; meilleure p maxT 0,629>0,05.
+Les chiffres d'aire ne sont ni taux de trades gagnants ni rendements portefeuille.
+Pas de choix de nouvelle règle sur les seules années récentes favorables.
+
+29 tests ; revue scalaire 19 161 parcours/20 métriques, 34 448 IC quotidiens,
+300 politiques ; second audit reproduit 18 p maxT et 12 intervalles d'aire.
+498 préfixes récents contrôlés. Même assistant, pas seconde revue humaine.
+V1 format de date arrêté avant labels, V2 normalisation de lecture seulement,
+sans réécrire le code gelé ni les prix. Aucun modèle, SQL, batch, API/LLM, ordre,
+configuration production, entraînement ou téléchargement changé.
+Verdict `NO_STABLE_UNIVARIATE_PATH_TREND_RANKING`, pas preuve d'impossibilité
+multivariée. Nouvelle suite uniquement après GO distinct.
+[Bilan](oracle_tri_tendance_parcours_bilan_20261022.md),
+[protocole](oracle_tri_tendance_parcours_protocole_20261022.md).
+Canonique : `artifacts/research/us_oracle_path_trend_ranking/20261022-v2/`.
+
+## 2026-10-22 — Consensus : trois variations et sortie inverse, H5 non évaluable
+
+**CALCUL BORNÉ TERMINÉ / EFFECTIF INSUFFISANT / PAS DE PROMOTION.** Même univers
+1 790et13 448paires réelles ; variation seuleA contre trois variations identiquesB
+sur troisopensNYSEsuccessifs/quatreobservations liées,même0q/ancrage/nombre
+d'analystes≥3. C=mêmesentréesB,sortie au premier open où une variation inverse
+comparable est connue aprèsH1 ; aucune vente rétroactive,stop dur maintenu.
+TP10/SL5fixes du contratconsensus,sans trailing ; H5primaire,H1/H3secondaires.
+12signaux/9titres/deuxdates16et19octobre,4LONG/8SHORT,contre1 299variations simples.
+Pas de seuil assoupli. Prix actualisés READ ONLY restent limités au20octobre,
+SIPsplitseul ; V1préparation conservée,V2validateur adapté à cette base avant résultats.
+
+H1B/C12cas,50 %gagnants,+0,028 %brut/−0,132 %après16bpsillustratifs ; H3septcas
+surune date,42,86 %,+0,377/+0,217 %,médiane−0,337 %. TroisLONGpositifs/quatreSHORT
+négatifs àH3,aucune conclusion sur ce petit effectif. Contrôles mêmes protections/
+entrées toujoursLONGH3+1,180 %,supérieurau résultat signé ; dates et cas appariés.
+DeltaC−B0,aucune sortie inverse dans les fenêtres entièrement disponibles.
+CMEinverse21octobre identifié,mais openSIP21absent,pas rendement de vente inventé.
+H5zérocasB/Cévaluable :septchemins matures incomplets(prix21/22),cinqimmatures
+jusqu'au23close. Aucun H10retour lu,aucune performance portefeuille/annuelle.
+
+RéservesUTC/contributeurs/devise/trimestre/OST héritées ; doublons de positions
+possibles dans les opportunités brutes,contrôle sans chevauchement séparé.
+105tests passent,dont22nouveaux ; revue technique13 448séquences/1 835parcours,
+même assistant,pas revue humaine indépendante. Pas de modèle,SQL,batch,API/LLM,
+ordre,entraînement ou téléchargement modifié. Reprise sur nouveauGOavecprix/
+maturités et observations futures réelles,sans modifier les anciennes entrées.
+[Bilan et reprise](consensus_confirmation_sortie_bilan_20261022.md),
+[protocole](consensus_confirmation_sortie_protocole_20261022.md).
+Canonique : `artifacts/research/us_consensus_confirmation_exit/20261022-v2/`.
+
+## 2026-10-22 — Consensus EODHD actualisé : copie fidèle, réserve UTC, direction courte non validée
+
+**AUDIT TERMINÉ / PAS DE PROMOTION.** Cutoff22octobre20:15:54UTC, table globale
+3 528 509lignes/5 743titres ; univers tradable1 790,1 778couverts chaque jour
+11–21octobre.22octobreRUNNING au cutoff,57titres partiels non traités comme succès/échec.
+Export proche-périodes`0q/0y`57 800lignes :57 800copies/hash/champs cohérents ;
+112/112items échantillonnés dans87enveloppes.15intervalles incohérents sur
+ORCL(EPS11dates)/EXE(revenus4dates),confirmés15/15dans les réponses archivées.
+
+**Horloge ingestion non qualifiée UTC** : MySQLpar défautSYSTEM/Paris,+2h,
+ingestion_at parCURRENT_TIMESTAMP contre observed/available/runUTC ;57 626lignes
+terminées semblent ingérées après fin du run. Max conservateur retarde les
+reçus ; retirer l'ingestion ne change aucun premier open admissible de ce
+périmètre. Aucune correction SQL appliquée ni rétroactivité certifiée.
+
+13 448paires/1 693titres/huitdates ; revenus0q même ancrage,réceptions réelles
+avant deux opens,≥3analystes,nombre inchangé primaire. Prix multi-sources parent
+réservés avant résultat ; enfantSIPseul immuable,mêmes features/cutoff,prix12–20octobre.
+H1primaire937occasions/cinqdates,48,24 %bon sens,−0,171 %brut/−0,331 %après16bps
+illustratifs ; H3 621/quatre,43,48 %,−0,423 %brut ; H5 239/deux,38,91 %,−0,950 %.
+Sans chevauchement H3 217/deux etH5 27/une,seules contraintes d'échantillon,
+pas PnL ni rejet universel. Contrôles mêmes cas toujoursLONG/SHORT etSPY fournis.
+
+EPS/changements conjoints également non confirmés. DOWN7absent des57 800items
+natifs,pas imputé0. Diagnostic rolling séparé **post-hoc**,cinqchampsUP30−DOWN30
+etEPSactuel−J7/30/60/90 : H1sur sixdates,48,10–49,37 %corrects,moyennes signées
+négatives ; H3/H5également non favorables. BasesEPS/contributeurs/devise/période
+restent réservés. Aucun H10retour lu,ancienpilote19octobre attend30octobre.
+83tests passent,revue technique13 448paires/38 276prixscalaires,même assistant,
+pas revue humaine indépendante. Pas de modèle,SQL,batch,fournisseur/LLM,ordre,
+entraînement ou téléchargement modifié. Pas de comparaison réalisé/consensus
+sur base comptable certifiée inventée.
+[Bilan complet et réserves](consensus_fiabilite_bilan_20261022.md),
+[protocole](consensus_fiabilite_protocole_20261022.md).
+Canonique : `artifacts/research/us_consensus_reliability/20261022-v1/sip-only-v2/`.
+
+## 2026-10-22 — News : sensibilité par titre/ton, aucun sous-univers validé
+
+**AUDIT RÉTROSPECTIF TERMINÉ / PAS DE SOUS-UNIVERS PRODUCTION.** Univers courant
+1 790 titres, 1 752 avec news ; publications2025–septembre2026, 365 053 lignes,
+688 heures UTC minuit réservées, 364 365 lignes horodatées/185 374 groupes titre/open.
+Décision premier open strictement après publication+5min ; rendement restant
+open→closeH1/5/10/20, pas prix supposé immédiatement après article. Fenêtres
+réservées chronologiquement tous tons avant prix, comparaison SPY et secteur
+actuel hors titre (non PIT). 2025 sélection, listes figées pour2026, années déjà explorées.
+
+H5 primaire : 2 936 cellules titre/ton, seulement5 avec effectif minimal,
+aucun candidat. H1 : cinq candidats avant correction (ATI/CAH positifs,
+CCJ/OXY/UNH négatifs), 227observations2026, alignement excèsSPY53,30 %, moyenne
+signée brute+0,084 %, après16bps illustratifs−0,076 % par occasion ; pas rendement
+de portefeuille. UNH seul conserve un proxy positif, sans validation multiple.
+H10aucun ; H20GIS négatif, joli résultat2026 mais seulement5observations contre10requises.
+**Zéro candidat après BH5 % à chacun des quatre horizons.** Pas de seuil abaissé.
+
+Zéro disponibilité historique établie avant entrée par les updated_at archivés,
+pas de vintages immuables. Routage des titres d'articles par mots-clés seulement,
+pas événements nouveaux/émetteurs qualifiés ni test consensus/autres features.
+668lignes terminales>50 % réservées, OST/prix non entièrement certifiés ; pas
+suppression opportuniste. 23tests passent ; revue technique distincte11 138cellules,
+1 658rendements scalaires, même assistant/pas revue humaine indépendante.
+Aucun modèle, entraînement, fournisseur/LLM, ordre, SQL écrit, batch ou téléchargement
+modifié. Pas de croisementTOP10/backtest lancé faute de liste qualifiée.
+[Protocole](news_sensibilite_par_titre_protocole_20261022.md),
+[bilan et candidats non promus](news_sensibilite_par_titre_bilan_20261022.md).
+Canonique : `artifacts/research/us_news_symbol_sensitivity/20261022-v1`.
+
+## 2026-10-22 — FMZ P07 : rejet baissier, zéro motif couvert, pas de backtest
+
+**TERMINÉ / INSUFFICIENT_P07_FREQUENCY_NO_BACKTEST / AUCUNE PROMOTION.**
+
+**Décision utilisateur : P07 mise de côté dans sa forme actuelle.** Aucun
+signal sur les 112 occasions couvertes ; efficacité économique non mesurée,
+pas une stratégie démontrée perdante. Aucun ajustement des seuils ni intégration
+en production. Reprise seulement sur un échantillon nettement plus large et
+correctement qualifié, avec protocole figé et nouveau GO ; aucune relance automatique.
+
+Phase bornée couverture/fréquence avant tout PnL : nouveau low strict sur10séances,
+plus grande amplitude stricte et clôture dans quart supérieur. Puis une clôture5m
+>hautJ, open suivant même séance, J1/J2 seulement, invalidation si creuxJ cassé
+avant entrée ou gap de l'open sous le creux ; pas annulation avec le futur low
+de la bougie d'entrée. Pas de RSI, retest, SHORT ou nouveau trailing.
+
+213campagnes initiales de recherche,112occasions/38titres avec lookback complet (58/54paran),
+101inconnues non assimilées à un faux motif. **Zéro motif et zéro signalP07**.
+Sixcas cumulent creux+amplitude, mais aucun n'atteint75 % de position de clôture :
+ASAN, FUTU, BLMN, CLF, TROX, MU. Aucun seuil abaissé, aucun rendement de ces cas analysé.
+Le contrôle cassure sans motif émet43signaux, pas des gains démontrés.
+Après espacement OracleJ40,37/36occasions mais zéro signal, contre30signaux/10titres/
+6mois requis chaque année. Arrêt conforme au gate ; **aucun backtest économique,
+rendement, PnL, taux gagnant ou DD calculé**. Pas preuve d'inefficacité universelle.
+
+**272tests**, dont30P07 ; audit distinct213dossiers/112features et comptes/
+inconnus/espacement. Même assistant, pas revue humaine indépendante. Cohorte
+CatBoost PATH_H20 survivante/conditionnelle, pas tout le TOP10 ni LightGBM production.
+Pas de filtre nouveau par maturité/cheminH20 ; biais hérités et couverture
+incomplète restent.2024non simulée, années déjà explorées, PIT/identités/actions
+non entièrement qualifiés. Aucun SQL, fournisseur, LLM, entraînement, ordre ou
+changement de production ; téléchargements non touchés. Aucun élargissement ou réentraînement lancé.
+[Protocole](oracle_rejection_p07_20261022.md),
+[bilan détaillé](oracle_rejection_p07_bilan_20261022.md).
+Canonique : `artifacts/research/us_oracle_rejection_p07/20261022-v1`.
+Sept hypothèses FMZ traitées : cinq non confirmées, P04 effectif insuffisant, P07 arrêt fréquence,
+pas sept backtests ni preuve d'inefficacité universelle. Catalogue des non-testées clôturé.
+
+## 2026-10-22 — FMZ P04 : Dual Thrust J1, échantillon insuffisant
+
+**TERMINÉ / INSUFFICIENT_P04_SAMPLE / AUCUNE PROMOTION.** N4séances raw
+complètes jusqu'à OracleJ, `R=max(maxH-minC,maxC-minL)`, seuils à J1open±0,5R
+fixes. Première clôture5m hors bande : UP→LONG au prochain open même séance,
+DOWN→abstention définitive, pas inversion/réessai. TIME_LONG achète toujoursLONG
+au même premier hit UP ou DOWN ; autres contrôles Winner20séances, WinnerJ1deux
+clôtures, HIGH_June clôture. SL7/TR15/sansTP,20séances entrée incluse puis open21,
+demi-cible,sansadd,4 000USD annuels,1x,frais8/25bps,natifs/B4DD15 inchangés.
+
+213campagnes initiales,108/37titres communs ;101lookbacks manquants,1chemin
+incomplet,3maturités réservés identiquement. P04 n'émet que **4/4signaux**, tous
+exécutés en2025/2026au30septembre. À8bps : P04 **−9,70/+20,60 %**, DD **11,68/6,12 %**,
+capital final **3 612,04/4 823,93USD**,0/4puis3/1gagnants/perdants. À25bps P04
+**−10,00/+20,21 %**. Winner commun **+1,01/−9,00 %**, J1_WINNER **−17,04/+10,67 %**,
+HIGH_J **−16,17/+18,86 %**, TIME_LONG **−11,92/+8,70 %**. Ancienne ancre séparée
+reproduite à l'octet près ; ne pas confondre changement de cohorte et règle.
+
+TTMI560,10USD contribue **68 % du gain net2026** ; très faible capital moyen
+engagé77,26/362,26USD. Après espacement de toutes les occasions OracleJ40,
+seuls3/4signaux sur3/4titres, contre30/10requis par an. Surplus unitaire vsWinner
+**−1,19/−0,38point**, ICmensuels sans borne basse positive ; aucune validation
+du beau rendement2026, mais pas preuve d'inefficacité universelle. Aucun seuil
+réajusté. Pas de SHORT économique qualifié, pas de prolongation de l'horizon.
+
+**242tests**, dont29P04 ; précontrôle213sélections avant PnL,24audits cash/
+sorties/B4, quatre ancres exactes,108bandes,206signaux et412rendements revérifiés.
+Même assistant, pas revue humaine indépendante. Cohorte CatBoost PATH_H20 de
+recherche conditionnelle aux signaux/chemins/survivants, pas tout le TOP10 ni
+LightGBM production.2024 non simulée, années déjà explorées, PIT/identités/actions/
+quotes/latence non entièrement qualifiés, pas parité live complète. Aucun SQL,
+fournisseur, LLM, entraînement, ordre ou production modifié ; téléchargements non touchés.
+[Protocole](oracle_dual_thrust_p04_20261022.md),
+[bilan détaillé](oracle_dual_thrust_p04_bilan_20261022.md).
+Canonique : `artifacts/research/us_oracle_dual_thrust_p04/20261022-v1`.
+P04 quitte les non-testées, reste non concluante ; seuleP07reste non lancée.
+
+## 2026-10-22 — FMZ P03 : premier retest confirmé, pas de confirmation
+
+**TERMINÉ / NO_GO_P03_NOT_CONFIRMED / AUCUNE PROMOTION.** Premier Winner
+seulement, niveau précédent figé. Tolérance1×dernierATR20Wilder5m de la séance
+précédente raw complète ; premier retest puis deux clôtures strictement après,
+open contigu suivant. Low sous borne basse invalide avant reprise ; fenêtre
+12bougies/une heure, même séance. Témoin attente6bougies/30minutes préfixées,
+pas délai choisi depuis le futur retest. SL7/TR15/H20open21,sansTP,demi-cible,
+sansadd,4 000USD annuels,1x,frais8/25bps,composants natifs/B4DD15 inchangés.
+
+213campagnes initiales de recherche CatBoost PATH_H20 ;204/70titres communs,
+5réserves de chemin et4de maturité. Ancre P01/200campagnes séparée et exacte,
+car la couverture commune nouvelle diffère. À8bps2025/2026au30septembre :
+Winner commun **+24,61/+1,94 %**, attente **+0,68/+6,76 %**, P03 **+5,72/−10,42 %**.
+DDP03 **22,50/19,48 %**,51/37trades fermés,31,37/32,43 % gagnants, capital final
+**4 228,65/3 583,16USD**. À25bps P03 **+5,52/−11,48 %**.102signaux sur204occasions,
+délai médian15minutes, prix médian **+0,16 %** vsWinner : pas assurance d'acheter
+moins cher. Minimums atteints :39/30signaux non chevauchants sur30/23titres.
+Surplus unitaire P03−Winner **−2,77/−3,64points**, P03−attente **−0,51/−2,14point**,
+ICmensuels recouvrent zéro. Aucune confirmation transversale, pas de seuil ajusté.
+
+**213tests**, dont29P03 ; précontrôle213sélections/ATR avant PnL, quatre ancres
+exactes, seize audits cash/sorties/B4,423signaux et846rendements unitaires revérifiés.
+Même assistant, pas revue humaine indépendante. Cohorte conditionnelle aux signaux,
+chemins futurs/survivants ; pas tout le TOP10 ni LightGBM production.2024 non simulée,
+années déjà explorées, PIT/identités/actions/quotes/latence non entièrement qualifiés,
+pas parité live complète. Aucun SQL, fournisseur, LLM, entraînement, ordre ou
+production modifié ; téléchargements non touchés.
+[Protocole](oracle_retest_p03_20261022.md), [bilan détaillé](oracle_retest_p03_bilan_20261022.md).
+Canonique : `artifacts/research/us_oracle_retest_p03/20261022-v1`.
+P03 quitte les pistes à tenter ; seules P04/P07 restent non lancées.
+
+## 2026-10-22 — FMZ P05 : canal des dix creux, pas de confirmation
+
+**TERMINÉ / NO_GO_P05_NOT_CONFIRMED / AUCUNE PROMOTION.** Même entrée Winner,
+SL7 % immédiat, vingt séances depuis entrée puis open21. Remplacer seulement
+TR15 par le minimum des dix dernières séances complètes, remontée monotone
+après clôture et active à l'open suivant ; pas de TP, partiel, add ou filtre.
+Mêmes4 000USD annuels,1x,demi-cible,composants natifs/B4DD15,frais8/25bps.
+
+Sur200campagnes initiales,109/36titres ont l'historique nécessaire ;91 réservées
+identiquement dans les deux bras, sans interpolation de prix ajustés. Ancre
+complète conservée et reproduite, mais comparaison pertinente au **Winner commun**.
+À8bps en2025/2026au30septembre : commun **+2,08/−8,60 %**, P05 **−10,54/−10,18 %**,
+DDP05 **18,98/20,64 %** contre15,42/18,96 %. Capital finalP05 **3 578,33/3 592,94USD**,
+45/33trades fermés,22,22/18,18 % gagnants. À25bps P05 **−12,90/−11,01 %**.
+Unitaire non chevauchant37/33occasions : surplus **−1,61/+0,82point**, intervalles
+mensuels recouvrant zéro. Minimums atteints, confirmation transversale échouée.
+
+**184tests**, dont24P05 ; quatre ancres exactes, douze replays contrôlés
+cash/sorties/B4,5 668canaux,436rendements unitaires et1 245mises à jour revérifiés.
+V1 conservée non validée : arrondi vectoriel du vérificateur divergent d'un cent ;
+v2 corrige l'audit scalaire, sans changer la stratégie.68fichiers d'exécution
+v1/v2 identiques à l'octet près. Même assistant, pas revue humaine indépendante.
+Population CatBoost PATH_H20 recherche conditionnelle aux chemins/historiques
+complets/survivants ; pas tout le TOP10 ni LightGBM production.2024 non simulée,
+années déjà explorées, couverture d'opérations sur titres incomplète, pas parité
+live complète. Aucun entraînement, SQL, fournisseur, LLM, ordre ou production modifié.
+[Protocole](oracle_low_channel_p05_20261022.md),
+[bilan détaillé](oracle_low_channel_p05_bilan_20261022.md).
+Canonique : `artifacts/research/us_oracle_low_channel_p05/20261022-v2`.
+P05 quitte les pistes à tenter ; seules P03/P04/P07 restent non lancées.
+
+## 2026-10-22 — FMZ P06 : protection de50 % du gain après+10 %, pas transversal
+
+**TERMINÉ / NO_GO_P06_NOT_CONFIRMED / AUCUNE PROMOTION.** Après mise à jour du
+registre P02, protocole figé P06 seule : mêmes entrées Winner deux clôtures5m,
+SL7 %,20séances depuis entrée puis open21. Remplacer TR15 par le stop
+`E+0,50*(P-E)` après sommet observé+10 %, arrondi au cent, sans vente partielle,
+TP, renforcement ou reset d'échéance. Stop nouveau seulement après bougie close,
+gap adverse au prix exécutable. Mêmes4 000USD annuels,1x,demi-cible,B4DD15,
+frais8/25bps. Population200campagnes/69titres conditionnelle aux chemins futurs
+complets/survivants, Oracle CatBoost PATH H20 recherche ; pas le TOP10 quotidien
+complet/LightGBM production, pas de2024 simulée,2025/2026déjà explorées.
+
+À8bps, Winner **+20,09/+1,94 %**, P06 **+7,25/+13,97 %** en2025/2026au30septembre.
+DDP06 **19,30/18,93 %**, gagnants **40/56 %**,95/75trades fermés, capital final
+**4 290,19/4 558,87USD**. À25bps P06 **−1,28/+9,33 %**. Surplus unitaire non
+chevauchant P06−Winner **−2,03/−2,72points**, intervalles mensuels sans confirmation
+positive. Effectifs suffisants, critères transversaux échouent ; pas de seuil ajusté.
+
+**160tests**, dont19P06 ; quatre témoins reproduits exactement, huit replays
+audités cash/sorties/B4,800rendements unitaires et160événements d'activation
+revérifiés par arithmétique distincte. Même assistant, pas revue humaine indépendante.
+Aucune modification de production/SQL/fournisseur/LLM, aucun entraînement ou ordre.
+[Protocole](oracle_gain_lock_p06_20261022.md),
+[bilan détaillé](oracle_gain_lock_p06_bilan_20261022.md).
+Canonique : `artifacts/research/us_oracle_gain_lock_p06/20261022-v1`.
+P06 quitte les pistes à tester ; quatre autres pistes FMZ restent non lancées.
+
+## 2026-10-22 — FMZ P02 : confirmation Winner + vente50 %@+10 %, pas transversal
+
+**TERMINÉ / NO_GO_P02_NOT_CONFIRMED / AUCUNE PROMOTION.** Entrée Winner existante
+confirmée dans `config.yaml` : deux clôtures5m au-dessus du haut brut de la veille
+après franchissement, open suivant ; pas simple attente5min ni deux bougies vertes.
+Même entrée dans les deux bras, pas deP01. Variante : céder une fois la moitié
+entière à+10 %, solde SL7/TR15,20séances depuis entrée puis open21, sans BE/add.
+Mêmes4 000USD annuels,1x,demi-cible,composants natifs/B4DD15,frais8puis25bps.
+
+Périmètre200campagnes/69titres CatBoost PATH H20 recherche, conditionnel aux
+chemins/survivants ; pas le TOP10 quotidien complet ni LightGBM production.
+2025/2026 déjà étudiées,2024 non simulée. À8bps, Winner **+20,09/+1,94 %**,
+P02 **−7,18/+28,07 %** ; DDP02 **21,03/20,05 %**, gagnants **38,89/53,52 %**
+contre33,33/36,07 %. Capital final P02 **3 712,97/5 122,95USD**,90/71campagnes
+fermées ; les34/33ventes partielles ne sont pas des trades gagnants indépendants.
+À25bps P02 **−7,54/+26,68 %**. B4/cash changent admissions/exposition ; sur
+mêmes entrées unitaires non chevauchantes, surplus P02 **−1,46/−0,93point**.
+Taux gagnant plus élevé ≠ avantage transversal : critères préfixés échouent.
+
+**141tests** dont21P02 ; quatre témoins reproduits exactement, huit portefeuilles
+audités cash/quantités/sorties/B4,800rendements unitaires vérifiés séparément.
+Frais d'entrée répartis au prorata, solde/stop/peak/échéance conservés, résultat
+de campagne compté une fois dans les pertes consécutives, pas de cash rétroactif.
+Aucun accès SQL/fournisseur/LLM, entraînement, ordre ou changement de production.
+[Protocole](oracle_partial_p02_20261022.md),
+[bilan détaillé](oracle_partial_p02_bilan_20261022.md).
+Canonique : `artifacts/research/us_oracle_partial_p02/20261022-v1`.
+Cinq pistes FMZ non lancées restent dans le suivi ; P02 quitte la liste à tester.
+
+## 2026-10-22 — FMZ P01 : compression puis cassure, pas de confirmation transversale
+
+**TERMINÉ / NO_GO_P01_NOT_CONFIRMED / AUCUNE PROMOTION.** Règle figée avant
+résultats : BB20/2, KC EMA20/ATR20×1,5, trois barres de compression, libération
+depuis au plus six barres, puis deux clôtures de cassure du haut de la veille.
+Trois bras LONG : Winner, attente/warmup seule, P01. Mêmes SL7/TR15/sansTP,
+vingt séances depuis entrée puis open21, demi-cible,4 000USD annuels,1x,
+composants natifs et B4DD15 ; frais8puis25bps parjambe. Pas parité live complète.
+
+200/213campagnes,69titres communs ;8réserves de chemins et5de maturité,
+sans remplacement. Cohorte CatBoost PATH H20 de recherche conditionnelle aux
+chemins futurs complets/survivants, pas tout le TOP10 ni LightGBM de production.
+2024 non simulée. À8bps, rendements2025/2026 : Winner **+20,09/+1,94 %**,
+warmup **+21,78/−15,84 %**, P01 **+38,82/−12,22 %** ; DDP01 **16,58/18,76 %**.
+P01 :48/39trades fermés,33,33/28,21 % gagnants ; capital final5 552,64/3 511,24USD.
+À25bps P01 **+35,25/−12,84 %**. Amélioration face au warmup, mais dégradation
+face au Winner usuel en2026. Le surplus unitaire non chevauchant P01−warmup
+vaut−0,81/+0,44point : intervalles mensuels recouvrant zéro et semestre2026
+juillet–septembre négatif. Minimums d'effectifs passent, confirmation échoue.
+
+**120tests**,504signaux et1 008rendements unitaires revérifiés par arithmétique
+séparée ; douze portefeuilles avec reconstruction cash/sorties/B4. V1 conservée
+non validée après écart d'un cent GLW (`1-0,07` vs `0,93`) ; v2 corrige seulement
+l'expression d'arrondi de l'adaptateur et rejoue tout, sans retoucher les seuils.
+Aucun entraînement, fournisseur, SQL, ordre, modèle/batch/config production changé.
+[Protocole](oracle_compression_p01_20261022.md),
+[bilan et résultats détaillés](oracle_compression_p01_bilan_20261022.md).
+Canonique : `artifacts/research/us_oracle_compression_p01/20261022-v2`.
+Les six autres pistes FMZ restent non lancées ; P01 quitte la liste à tester.
 
 ## 2026-10-21 — FMZ : revue documentaire de 1 000 stratégies, pas nouveau backtest
 

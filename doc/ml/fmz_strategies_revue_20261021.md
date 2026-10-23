@@ -8,9 +8,20 @@ Date : 21 octobre 2026. Statut : **REVUE DOCUMENTAIRE / AUCUN BACKTEST LANCÉ**.
 > Le présent document conserve le bilan du premier criblage et des24lectures
 > ciblées ; les compteurs de ce premier criblage restent historiques.
 > Mise à jour du suivi au 22 octobre : les 1 000 documents du périmètre sont
-> examinés, jusqu'à The-Bollinger-Band inclus. Sept hypothèses dans le fichier
-> actualisé ; aucune piste supplémentaire après la tranche 901–1000 et aucune
-> nouvelle performance calculée. Ce n'est pas la lecture des 5 807 Markdown.
+> examinés, jusqu'à The-Bollinger-Band inclus. Sept hypothèses retenues à la
+> clôture de lecture ; aucune supplémentaire après la tranche 901–1000.
+> Depuis, [P01](oracle_compression_p01_bilan_20261022.md) et
+> [P02](oracle_partial_p02_bilan_20261022.md),
+> [P06](oracle_gain_lock_p06_bilan_20261022.md) et
+> [P05](oracle_low_channel_p05_bilan_20261022.md) et
+> [P03](oracle_retest_p03_bilan_20261022.md) ont été testées et non confirmées
+> transversalement. [P04](oracle_dual_thrust_p04_bilan_20261022.md) est testée,
+> mais son effectif est insuffisant pour conclure.
+> [P07](oracle_rejection_p07_bilan_20261022.md) est clôturée au contrôle de
+> fréquence : zéro motif sur112occasions couvertes, **aucun backtest économique**.
+> Les sept hypothèses sont traitées, aucune promotion ; pas sept preuves
+> d'inefficacité universelle. Ce n'est pas la
+> lecture des 5 807 Markdown ni une promotion de stratégie.
 > Le 708 est le README/index, pas une stratégie ; ses 5 810 liens ne sont pas
 > autant de pages lues. Exemples techniques inclus, images non certifiées.
 
