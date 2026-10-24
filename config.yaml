@@ -75,7 +75,8 @@ us_pipeline:
 sentiment_news_ingestion:
   # Étape 8 uniquement : sans date de début explicite, import récent borné ;
   # un backfill historique reste possible via --start-date / --end-date.
-  pipeline_lookback_days: 7
+  pipeline_lookback_days: 21  # Maximum quotidien ; les checkpoints réduisent l'import par titre.
+  pipeline_feature_recalc_days: 52  # Dates calendaires inclusives de features à recalculer ; indépendant de l'import.
   request_timeout_seconds: 45  # Par tentative réseau, pas pour le run entier.
   max_attempts: 3
   max_consecutive_symbol_failures: 3  # Arrêt des appels, puis décision selon couverture et erreurs critiques.

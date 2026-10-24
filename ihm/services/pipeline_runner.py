@@ -1339,12 +1339,18 @@ def _build_sentiment_history_backfill_command(
     ticker_symbol_source: str | None = None,
     ticker_max_symbols: int | None = None,
     ingestion_source: str | None = None,
+    recent_days: int | None = None,
 ) -> list[str]:
     command = [sys.executable, "-u", "-m", "event_sentiment.history_backfill"]
     if sentiment_start_utc:
         command.extend(["--start-date", str(sentiment_start_utc)[:10]])
     if sentiment_end_utc:
         command.extend(["--end-date", str(sentiment_end_utc)[:10]])
+    if recent_days is not None:
+        if sentiment_start_utc:
+            raise ValueError('Daily sentiment window cannot override an explicit historical start')
+        command.extend(['--recent-days', str(recent_days)])
+        command.append('--resume-features')
     if ingestion_source:
         command.extend(["--ingestion-source", ingestion_source])
     if ticker_symbols:
@@ -2154,8 +2160,11 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         )
         # A daily workflow is not an implicit one-year historical backfill.
         from event_sentiment.import_runtime import load_import_runtime
+        sentiment_recent_days = None
         if not import_start_date:
-            cmd0.extend(['--lookback-days',str(load_import_runtime().pipeline_lookback_days)])
+            sentiment_runtime = load_import_runtime()
+            sentiment_recent_days = sentiment_runtime.pipeline_feature_recalc_days
+            cmd0.extend(['--lookback-days',str(sentiment_runtime.pipeline_lookback_days)])
         cmd0.append('--continue-on-symbol-error')
         cmd0.extend(['--summary-path','$newsImportSummary'])
         summary_root = str(PROJECT_ROOT/'artifacts/news_import_runs').replace("'", "''")
@@ -2178,10 +2187,12 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         )
         cmd3 = _build_sentiment_history_backfill_command(
             sentiment_start_utc=sentiment_start_utc,
-            sentiment_end_utc=sentiment_end_utc,
+            sentiment_end_utc=(sentiment_end_utc or _normalize_optional_date(options.trade_date))
+                if sentiment_recent_days is not None else sentiment_end_utc,
             ticker_symbols=sentiment_scope_symbols,
             ticker_symbol_source=sentiment_scope_symbol_source,
             ingestion_source=options.sentiment_news_provider,
+            recent_days=sentiment_recent_days,
         )
         cmd4 = _build_sentiment_contextual_command(
             options,

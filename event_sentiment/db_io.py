@@ -951,6 +951,34 @@ class EventSentimentRepository:
     def upsert_ticker_daily_features(self, records: list[dict[str, Any]]) -> int:
         return self._upsert("ticker_daily_sentiment_features", records, key_columns={"symbol", "trade_date"})
 
+    def load_existing_daily_features(
+        self, start_date: date, end_date: date, *, ticker_symbols: list[str] | None = None,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Read the bounded persisted state, not a global MAX that can hide holes.
+
+        Feature tables have no provider key: compare their actual values with the
+        requested provider's recomputation instead of inferring provider coverage.
+        """
+        frames = []
+        with self.engine.connect() as conn:
+            for table_name, key in (
+                ('ticker_daily_sentiment_features', 'symbol'),
+                ('sector_daily_sentiment_features', 'sector'),
+            ):
+                params: dict[str, Any] = {'start_date': start_date, 'end_date': end_date}
+                filters = 'trade_date >= :start_date AND trade_date <= :end_date'
+                if key == 'symbol' and ticker_symbols is not None:
+                    if not ticker_symbols:
+                        frames.append(pd.DataFrame())
+                        continue
+                    filters += ' AND symbol IN :symbols'
+                    params['symbols'] = sorted({self._normalize_symbol(s) for s in ticker_symbols})
+                stmt = text(f'SELECT * FROM {table_name} WHERE {filters}')
+                if 'symbols' in params:
+                    stmt = stmt.bindparams(bindparam('symbols', expanding=True))
+                frames.append(pd.DataFrame(conn.execute(stmt, params).mappings().all()))
+        return frames[0], frames[1]
+
     def upsert_sector_daily_features(self, records: list[dict[str, Any]]) -> int:
         return self._upsert("sector_daily_sentiment_features", records, key_columns={"sector", "trade_date"})
 

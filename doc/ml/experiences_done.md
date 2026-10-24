@@ -1,5 +1,93 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-24 — Winner TOP20 2017 : comparaison TP20 contre absence de TP
+
+GO pour ajouter uniquement un TP à 20 % au test de capacité : position
+complète, SL5, sans trailing, H20/open21, vingt positions maximum, dix entrées
+par titre sur 180 jours. Rejouer séparément les deux couvertures (stricte et
+assouplie) avec les mêmes archives et comparer chacune à son bras sans TP
+terminé. Portefeuille entier, risque B4/DD15, frais et cap brut 1x inchangés.
+Un TP peut modifier les entrées suivantes ; les pics observés ne remplacent
+donc pas un replay. Gaps TP plafonnés et collision SL d'abord inchangés,
+audits cash/prix/sorties stricts. Pas de qualification de données raccourcie
+après une sortie TP favorable. Sources précédentes et production inchangées.
+**29 tests ciblés passent**. Nouveau run séparé lancé : première variante
+stricte effectivement à 7/147 séances lors de la vérification initiale, aucun
+résultat TP20 présumé. Hypothèse rétrospective issue des pics observés, non holdout ; biais
+de couverture future et limites OHLC/PIT hérités explicitement conservés.
+[Protocole et suivi](winner_top20_tp20_2017_protocole_20261024.md).
+
+## 2026-10-24 — Winner TOP20 2017 : capacité assouplie, test autorisé
+
+Même SL5/sans trailing/sans TP/H20, mais position complète, vingt places LONG,
+dix entrées par titre sur 180 jours. Contrôle séparé conservant la qualification
+Jsignal..Jsignal+40, puis couverture moins restrictive à l'entrée jusqu'à
+Jentrée+20. Baseline archivée demi-position/huit places/cinq entrées inchangée.
+La vérification des données futures reste un biais de sélection déclaré,
+pas un filtre causal utilisable en production ; aucune bougie ou prix inventé.
+61 observations daily passées, secteur/corrélation, risque B4/DD15, frais,
+exclusion après trois pertes/90 jours conservés, cap brut 1x. Audit strict de
+chaque achat/sortie et du cash, avec contrôle des lacunes pendant détention.
+Deux replays locaux supplémentaires seulement, archives scellées, pas de SQL,
+fournisseur, entraînement, ordre ni modification des quatre runs existants.
+**23 tests ciblés passent**. Le worker séparé est lancé le 24 octobre ;
+lecture des archives scellées effectivement constatée, deux bras à exécuter.
+À ce stade aucun rendement du nouveau protocole n'est établi.
+[Protocole, limites et suivi](winner_top20_capacity_2017_protocole_20261024.md).
+
+## 2026-10-24 — Winner : extension commune de la qualification des centimes
+
+GO pour qualifier les autres arrêts 2020 x2, 2021/2022/2023 x1/x2, et les
+éventuels autres cas du même mécanisme dans les quatre grilles. Compagnon
+versionné, sources scellées et ancien correctif 2020 x1 inchangés. Reproduction
+du trade fautif obligatoire, explication numérique précise, puis replay corrigé
+avec audit strict inchangé. Contrôle SHA256 de tous les comptes conservés.
+Un niveau initial potentiellement changé est détecté dans un compte EXPI/2022
+déjà terminé : replay et parité économique obligatoires avant conservation.
+Deux workers supplémentaires maximum, priorité basse, qualifications avant
+reprises longues, verrous annuels partagés et finalisation globale seulement
+après complétude vérifiée. Aucun succès de qualification présumé au lancement,
+ni entraînement, SQL, fournisseur, ordre ou modification de production.
+**46 tests ciblés passent**. Lancement du compagnon vérifié le 24 octobre :
+sept cas connus dans la file ; diagnostics 2021 et 2022 x1 effectivement en
+cours sur leurs archives, autres cas en attente. Cela ne signifie pas que les
+sept qualifications sont déjà réussies. Le suivi vivant fait foi.
+[Gates, suivi et limites](winner_qualification_centimes_commune_20261024.md).
+
+## 2026-10-23 — Winner 2020 : correction du prix reconstitué avant protections
+
+Incident TOP10 x1 au profil `SL5_TROFF_H5_TP20`, après 104 comptes terminés.
+Rejeu ciblé reproduisant CNK : 48 actions achetées 11,30 USD le 22 septembre
+2020 ; la multiplication/division du prix moyen produit 11,300000000000002,
+puis stop 10,74 au lieu de 10,73 attendu. Audit strict maintenu, pas de
+tolérance élargie ni de bougie supprimée. Adaptateur process-local borné aux
+premiers fills complets IOC ; les sources natives scellées des quatre runs
+ne sont pas éditées. Validation du profil fautif avant reprise des profils
+manquants, avec conservation et vérification des rapports antérieurs.
+13 539 achats antérieurs contrôlés : aucun niveau initial SL/TP modifié.
+**36 tests passent**. Le rejeu correctif isolé du profil défaillant termine
+les 253 séances 2020 : **132 BUY_FILL et 129 sorties scalaires vérifiés**,
+statut `PASS_SCALAR_EXITS_CASH_FEES_AND_ENTRIES`. Reprise x1 de l'année
+principale lancée après cette validation, avec les 104 comptes conservés.
+Le suivi `year-2020.json` indique l'avancement ; seule une résolution finale
+scellée autorise à considérer l'ancien incident du superviseur comme résolu.
+Pas de correction live déclarée ni de résultat économique nouveau ici.
+[Diagnostic, périmètre et reprise](winner_2020_correctif_centime_20261023.md).
+
+## 2026-10-23 — Comparaison Winner TOP20/TOP50 2017 sans levier : lancement autorisé
+
+Deux grilles exploratoires de 300 profils, mêmes règles que TOP10 et plafond
+d'exposition effective 1x. Période du 2 juin au 31 décembre 2017, capital 4 000 USD,
+HALF sans renforcement, 8 positions maximum, frais et risque natif inchangés.
+Scores TOP100 déjà archivés, identité exacte du TOP10 vérifiée, aucune nouvelle
+prédiction ni entraînement. Snapshots TOP10 conservés ; ajouts SQL READ ONLY
+pour les rangs supplémentaires, aucun téléchargement fournisseur ni écriture SQL.
+Comparaisons finales à profil identique, capital utilisé, DD, taux gagnant,
+couverture et temps sans position. Pas de résultat économique annoncé ici.
+Les deux grilles décennales continuent sans modification. Biais de couverture
+future, univers survivant et 2017 partiel restent explicites.
+[Protocole et suivi](winner_top20_top50_2017_protocole_20261023.md).
+
 ## 2026-10-23 — Grilles natives1x/2x : réparation du pilotage et reprise conservatrice
 
 GO de réparation après constat de résumésglobaux figés et absence de2020

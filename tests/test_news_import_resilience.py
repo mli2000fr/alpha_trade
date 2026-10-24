@@ -283,11 +283,14 @@ def test_report_atomic_replacement_retries_windows_lock(monkeypatch,tmp_path):
     assert not list(tmp_path.glob('*.tmp'))
 
 
-def test_pipeline_only_bounded_by_default_explicit_history_stays(monkeypatch):
+@pytest.mark.parametrize('recalc_days', [30, 52])
+def test_pipeline_only_bounded_by_default_explicit_history_stays(monkeypatch, recalc_days):
     from ihm.services.pipeline_runner import PipelineLaunchOptions,build_pipeline_command
-    monkeypatch.setattr('event_sentiment.import_runtime.load_import_runtime',lambda:ImportRuntime(pipeline_lookback_days=7))
+    monkeypatch.setattr('event_sentiment.import_runtime.load_import_runtime',lambda:ImportRuntime(
+        pipeline_lookback_days=7, pipeline_feature_recalc_days=recalc_days))
     script=build_pipeline_command('sentiment_pipeline',PipelineLaunchOptions())[-1]
     assert '--lookback-days 7' in script and '--continue-on-symbol-error' in script
+    assert f'--recent-days {recalc_days}' in script and '--resume-features' in script
     assert '--resume-checkpoints' in script and 'ETAPE 8' in script
     historical=build_pipeline_command('sentiment_pipeline',PipelineLaunchOptions(
         sentiment_start_utc='2025-01-01T00:00:00Z',sentiment_end_utc='2025-03-31T23:59:59Z'))[-1]
@@ -295,7 +298,10 @@ def test_pipeline_only_bounded_by_default_explicit_history_stays(monkeypatch):
     assert 'if ($ec -eq 0)' in historical  # No scoring after incomplete import.
 
 
-@pytest.mark.parametrize('key,value',[('pipeline_lookback_days',0),('request_timeout_seconds',True),
+@pytest.mark.parametrize('key,value',[('pipeline_lookback_days',0),
+    ('pipeline_feature_recalc_days',0),('pipeline_feature_recalc_days',366),
+    ('pipeline_feature_recalc_days',True),('pipeline_feature_recalc_days',1.5),
+    ('request_timeout_seconds',True),
     ('max_attempts',0),('max_consecutive_symbol_failures',0)])
 def test_invalid_runtime(key,value):
     with pytest.raises(ValueError): ImportRuntime(**{key:value})

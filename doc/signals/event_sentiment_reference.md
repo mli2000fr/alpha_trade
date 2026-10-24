@@ -18,6 +18,19 @@ Le score modèle est converti depuis probabilités positive/neutral/negative. La
 
 Une news publiée après cutoff est disponible à la séance suivante. Le backfill doit reproduire ce mapping. Les tables finales sont `ticker_daily_sentiment_features` et `sector_daily_sentiment_features`, avec tables raw/map/sentiment/audit/checkpoint en amont.
 
+Depuis le 24 octobre 2026, l'étape 8 quotidienne agrège seulement les N dernières
+dates calendaires (N = `sentiment_news_ingestion.pipeline_feature_recalc_days`, 52 par
+défaut), avec fin ancrée sur la séance du workflow si disponible. Le contexte
+de 45 jours reste relu avant la première date cible pour les indicateurs ;
+seules les lignes cibles manquantes ou modifiées sont enregistrées avec
+`--resume-features`. La comparaison par titre/secteur répare les trous et les
+corrections dans la fenêtre sans réécrire les lignes identiques. L'import est
+plafonné à J−21/J puis réduit par checkpoint, avec recouvrement technique et
+dédoublonnage (`pipeline_lookback_days: 21`, indépendant du recalcul 52 jours).
+Les 52 dates cibles sont recalculées ; le contexte supplémentaire n'est que lu.
+La reconstruction de dix années
+reste un mode de maintenance, pas une action quotidienne implicite.
+
 Le fusionneur utilise les poids quant/sentiment/macro du contrat effectif et neutralise une composante inactive. Il met à jour le contexte, sans devenir ranking souverain.
 
 Défaillances : modèle Transformers absent, provider quota, article sans mapping, score invalide, checkpoint incompatible et historique sparse. Chaque cas doit avoir compteur/fallback documenté.
