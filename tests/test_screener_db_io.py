@@ -432,7 +432,8 @@ def test_load_spy_return_6m_reads_daily_table(monkeypatch) -> None:
     assert result == pytest.approx(0.1)
     assert "FROM stock_bars_daily" in str(captured["stmt"])
     assert "COALESCE(adj_close, `close`) AS close_price" in str(captured["stmt"])
-    assert captured["params"] == {"symbol": "SPY"}
+    assert captured["params"] == {"symbol": "SPY", "required_data_source": "eodhd_eod",
+                                  "alternate_data_source": "alpaca_sip"}
 
 
 def test_screener_config_from_dict_ignores_legacy_timeframe() -> None:

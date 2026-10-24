@@ -164,6 +164,8 @@ def load_risk_prediction_review(engine, *, trade_date, account_id='default',
                 selected_symbols)
     return dict(run_id=risk_run_id, llm_run_id=llm_run_id, trade_date=str(day), account_id=account_id,
         status=status, provider_label=llm['provider_label'] if llm else None,
+        scoring_mode=llm.get('scoring_mode','legacy_confidence') if llm else 'legacy_confidence',
+        score_thresholds=llm.get('score_thresholds') if llm else None,
         finished_at=summary.get('finished_at'),
         rows=add_company_names(engine, risk_review_rows(llm['rows'] if llm else [], decisions, targets,
             status=status, summary=summary, universe_exclusions=exclusions,selected_symbols=selected_symbols)),

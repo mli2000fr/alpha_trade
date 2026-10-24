@@ -19,6 +19,8 @@ def report(engine, run_id):
         rows.append({'symbol': item['symbol'], 'oracle_rank': item['oracle_rank'],
             'oracle_score_amplitude': item['oracle_score'], 'status': item['status'],
             'decision': parsed.get('decision'), 'confidence_uncalibrated': parsed.get('confidence'),
+            'direction_score': parsed.get('direction_score'),
+            'direction_score_policy': parsed.get('direction_score_policy'),
             'eligible': parsed.get('eligible', False), 'selected': item['selected'],
             'assessment_outcome': parsed.get('assessment_outcome'),
             'fresh_source_count': parsed.get('fresh_source_count'),

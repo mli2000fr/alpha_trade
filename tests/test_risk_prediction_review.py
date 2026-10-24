@@ -243,6 +243,20 @@ def test_ui_uses_exact_handoff_and_shows_risk_columns(engine,fake_ui,monkeypatch
         'Motif de non-sélection LLM'} & set(frame.columns)
 
 
+def test_ui_risk_score_column_comes_from_exact_step10_selection(engine,fake_ui,monkeypatch):
+    pipeline,calls=fake_ui
+    review=load(engine)
+    review['scoring_mode']='direction_1_10'
+    for row in review['rows']:
+        row['Score directionnel LLM (/10)']=9
+    monkeypatch.setattr(pipeline,'_load_risk_prediction_review_cached',lambda **kw:review)
+    pipeline._render_risk_prediction_review(pipeline.PipelineLaunchOptions(
+        llm_filter_enabled=True,llm_filter_run_id='llm-one'),[])
+    frame=calls['dataframe'][0]
+    assert list(frame['Symbole'])==['AAA'] and frame.iloc[0]['Score GPT (/10)']==9
+    assert not any('Confiance' in name for name in frame.columns)
+
+
 def test_ui_without_exact_llm_link_does_not_query_latest(fake_ui,monkeypatch):
     pipeline,calls=fake_ui
     monkeypatch.setattr(pipeline,'_load_risk_prediction_review_cached',lambda **kw:pytest.fail('no latest lookup'))

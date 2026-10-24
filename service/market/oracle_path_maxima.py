@@ -6,6 +6,7 @@ from datetime import date
 import numpy as np
 import pandas as pd
 from sqlalchemy import bindparam, text
+from common.daily_bar_sources import select_daily_bars
 
 from modelFactory.oracle.build_labels import nyse_sessions
 from modelFactory.oracle.security_continuity import (
@@ -137,6 +138,7 @@ def load_price_peaks(engine, selections, labels, *, horizon, as_of: date):
         for offset in range(0, len(symbols), 150):
             chunk = symbols[offset:offset+150]
             bars = pd.read_sql(query, conn, params={'symbols': chunk, 'start': min(wanted), 'end': end.date()})
+            bars = select_daily_bars(bars)
             groups = {symbol: group for symbol, group in bars.groupby('symbol')}
             prepared = {symbol: _prepare_path(groups.get(symbol, bars.iloc[:0]), sessions, symbol) for symbol in chunk}
             for day, selection in wanted.items():

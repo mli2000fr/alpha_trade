@@ -1,5 +1,39 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-24 — Winner TOP20 2020–2024 : choix mensuel sur 30/50 séances valorisées
+
+GO pour deux portefeuilles adaptatifs avec classement sur les trente ou
+cinquante derniers rendements de séance, positions ouvertes valorisées à la
+clôture. Six profils fixes déclarés avant le run (SL5/H20 sans TP, avec trailing15,
+avec TP20, SL3/TR10/TP7/H10, SL5/TR15/H15, SL7/H20). Six comptes shadow continus
+depuis juillet 2019 alimentent les choix ; deux comptes adaptatifs et deux
+témoins fixes commencent début 2020 à 4 000 USD, sans reset jusqu'à fin 2024.
+Pas de modèle entraîné ni de concaténation artificielle de rendements annuels.
+Profil choisi avant la première ouverture du mois, appliqué à l'entrée réelle ;
+les positions financées gardent leurs protections, les plans non tentés peuvent
+être réarmés sans prolongation. Position complète, cap brut 1x, vingt places,
+dix entrées/180 jours, risque B4/DD15, frais et secteur/corrélation conservés.
+Archives TOP100 causales déjà scellées ⇒ TOP20, 333 titres distincts plus SPY.
+Lectures SQL READ ONLY si nécessaire, pas de fournisseur, SQLwrite, LLM, ordre
+ou changement des autres grilles. Couverture future commune/secteurs actuels,
+univers survivant et périodes déjà examinées : comparaison exploratoire,
+aucun holdout neuf ou avantage présumé. **48 tests ciblés passent**, dont
+replays natifs au changement de mois, profils financés immuables, horizon
+effectif selon policy, cutoff/N+1 clôtures et invariance aux données futures.
+Préparation terminée : 334 snapshots (333 titres et SPY). Premier replay
+interrompu par un défaut de périmètre de l'adaptateur mensuel : le passage de
+sortie avant ouverture traitait aussi des campagnes non échues, sans bougies.
+Correction versionnée conservant le sous-ensemble demandé et ses seuls plans
+de remplacement ; sources précédentes scellées inchangées, aucun profil,
+risque ou frais modifié. **55 tests ciblés passent**, dont reproduction de
+l'erreur et replay natif de deux positions à échéances distinctes. Reprise
+effectivement relancée le 24 octobre à 15 h 46 Paris sur les archives existantes,
+sans lecture SQL ni téléchargement : premier compte shadow à 2/1 386 séances
+au contrôle initial, dix comptes au total. Aucun résultat économique mensuel
+encore disponible.
+[Correctif, amendement et suivi](winner_monthly_scope_repair_20261024.md).
+[Protocole complet, paramètres, suivi et limites](winner_selection_mensuelle_30_50_20261024.md).
+
 ## 2026-10-24 — Winner TOP20 2017 : comparaison TP20 contre absence de TP
 
 GO pour ajouter uniquement un TP à 20 % au test de capacité : position

@@ -1,12 +1,19 @@
 # Filtre directionnel Oracle → GPT / DeepSeek → risque → PAPER
 
+**24 octobre 2026 — nouveau score d'orientation v8 :** les nouvelles analyses
+utilisent `direction_score` entier de 1 à 10 ; LONG si strictement supérieur à
+`llm_directional_filter.long_score_threshold` (8), SHORT si strictement inférieur
+à `short_score_threshold` (3), neutre sinon. Mode et seuils sont archivés par
+run. Les tableaux 10/11 affichent le score /10, sans convertir les anciennes
+confiances. [Contrat actuel, stockage et compatibilité](llm_score_directionnel_v8.md).
+
 **Évolution du 19 octobre 2026 :** deux prompts et deux modes configurables,
 `web_search` (Web + données locales) et `local_data_only` (aucun Web). Les nouvelles
 analyses transmettent le consensus EODHD et un échantillon de news archivées
 reçus avant le cutoff réel. Le LLM juge une **tendance**, sans objectif TP/SL.
 Les données non qualifiées restent provisoires ; aucun changement de protections.
-Le [contrat frais v7](llm_preuves_fraiches_20261019.md) est maintenant actif pour
-les nouvelles analyses : calendrier, extraits SEC utiles et résumés prix/volume/
+Le [contrat frais v7](llm_preuves_fraiches_20261019.md), conservé dans v8, fournit
+le calendrier, les extraits SEC utiles et les résumés prix/volume/
 fondamentaux, contrôles de réception et d'ancienneté. Prix de la dernière séance
 clôturée obligatoire ; aucun repli sur un cours ancien. Les archives restent inchangées.
 Voir le [contrat actuel des modes et preuves locales](llm_modes_consensus.md).
@@ -21,7 +28,7 @@ Le filtre directionnel reste indépendant et PAPER uniquement.
 
 ## Tableau intégré à « 10. ML Predict » — 18 octobre 2026
 
-Sous le résultat de l'étape, le bloc **TOP 10 Oracle — avis GPT / DeepSeek**
+Sous le résultat de l'étape, le bloc **TOP Oracle — avis GPT / DeepSeek**
 affiche le rang, le symbole, le score Oracle, l'avis LONG/SHORT ou
 NEUTRE / ABSTENTION, la confiance LLM en pourcentage, le statut et l'indication
 « retenu par le filtre ». **La confiance n'est pas une probabilité de gain
@@ -466,7 +473,8 @@ flowchart TD
 ```
 
 **N = `oracle_top_n` et K = `max_selected`, configurables dans `config.yaml`.**
-Défauts du composant : N=10, K=5 ; configuration locale actuelle : N=20, K=3.
+Depuis le 24 octobre : défauts du composant et YAML N=20, K=5. Le tableau 10
+affiche jusqu'au N archivé du run, sans troncature implicite à dix lignes.
 Ce sont des nombres de titres, pas des pourcentages.
 Le classement initial utilise uniquement `proba_extreme DESC, symbol ASC` ; il
 n’utilise jamais les rendements futurs ni un classement Oracle réalisé.

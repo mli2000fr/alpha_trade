@@ -1,17 +1,22 @@
-"""Two distinct v5 evidence prompts. Legacy v4 remains immutable in openai_client."""
+"""Versioned v5-v8 local/Web prompts; historical request contracts stay immutable."""
 from copy import deepcopy
 
 VERSION='oracle-local-evidence-trend-v5'
 DEEPSEEK_SEARCH_VERSION='oracle-deepseek-search-trend-v6'
 FRESH_VERSION='oracle-fresh-evidence-trend-v7'
+SCORE_VERSION='oracle-fresh-evidence-direction-score-v8'
+
+
+def fresh_protocol(version):
+    return version in (FRESH_VERSION, SCORE_VERSION)
 
 
 def has_local_evidence(context):
-    return context.get('analysis_protocol') in (VERSION, DEEPSEEK_SEARCH_VERSION,FRESH_VERSION)
+    return context.get('analysis_protocol') in (VERSION, DEEPSEEK_SEARCH_VERSION,FRESH_VERSION,SCORE_VERSION)
 
 
 def native_search_protocol(version):
-    return version in (DEEPSEEK_SEARCH_VERSION,FRESH_VERSION)
+    return version in (DEEPSEEK_SEARCH_VERSION,FRESH_VERSION,SCORE_VERSION)
 
 LOCAL_INSTRUCTIONS='''You are a conservative US equity research filter using LOCAL DATA ONLY.
 No Web, tools, outside knowledge, remembered events, guessed dates or invented news.
@@ -98,13 +103,49 @@ Do not override paper-only protections, borrow checks, capital limits or the exe
 
 
 def instructions(mode,version=None):
+    if version == SCORE_VERSION:
+        base = LOCAL_INSTRUCTIONS if mode == 'local_data_only' else WEB_INSTRUCTIONS
+        # Preserve v4-v7 prompts byte-for-byte. Only v8 uses ordinal direction.
+        base = base.replace('choose ABSTAIN, not a fabricated case',
+            'use a middle direction score, not a fabricated directional case')
+        base = base.replace('Oracle detects amplitude, not direction. Evaluate LONG, SHORT when allowed, or ABSTAIN.',
+            'Oracle detects amplitude, not direction. Evaluate bearish and bullish evidence impartially.')
+        base = base.replace('Do not force LONG or SHORT.', 'Do not force an extreme direction score.')
+        base = base.replace('Choose LONG, SHORT when allowed, or ABSTAIN, with a subjective evidence confidence, NOT a calibrated probability.',
+            'Provide an ordinal direction score and a separate subjective evidence confidence, neither a calibrated probability.')
+        return base + FRESH_INSTRUCTIONS + '''
+Return direction_score: an INTEGER from 1 to 10; do not output a decision field.
+1 is the strongest evidence-supported bearish tendency; 10 is the strongest bullish tendency.
+2-4 are bearish-leaning; 5-6 are mixed/indeterminate; 7-9 are bullish-leaning.
+Missing, stale or conflicting evidence should move the score toward 5-6, never force a trade.
+The application derives LONG only above direction_score_policy.long_score_threshold,
+SHORT only below direction_score_policy.short_score_threshold; both comparisons are STRICT.
+Boundary scores and scores between thresholds are neutral. These cutoffs do not calibrate probabilities.
+Assess qualitative tendency DURING the next horizon_sessions trading sessions, not only the final close.
+Do not forecast TP/SL success, an exact future price/return, or guaranteed profitability.
+Explain supporting/opposing facts and uncertainty. Ignore whether short execution is enabled when
+assessing direction; the application separately enforces short permissions and borrow checks.
+confidence remains a separate evidence-quality audit field (0..1), NOT direction_score/10,
+NOT a profit probability, and NOT the v8 selection threshold. No orders, sizing or risk changes.
+'''
     return ((LOCAL_INSTRUCTIONS if mode=='local_data_only' else WEB_INSTRUCTIONS)+TREND_INSTRUCTIONS
             +(FRESH_INSTRUCTIONS if version==FRESH_VERSION else ''))
 
 
 def response_schema(base,version=None):
     value=schema(base)
-    if version==FRESH_VERSION:
+    if fresh_protocol(version):
         value['properties']['context_analysis']={'type':'string'}
         value['required'].append('context_analysis')
+    if version == SCORE_VERSION:
+        del value['properties']['decision']
+        value['required'].remove('decision')
+        value['properties']['direction_score']={'type':'integer','enum':list(range(1,11))}
+        value['required'].append('direction_score')
     return value
+
+
+def output_policy(context, config):
+    if context.get('analysis_protocol') == SCORE_VERSION:
+        return '\nReturn direction_score 1..10; the application derives direction using the frozen direction_score_policy. Do not output decision.'
+    return '\nAllowed decisions: '+('LONG, SHORT, ABSTAIN' if config.allow_short else 'LONG, ABSTAIN (SHORT forbidden)')

@@ -14,10 +14,14 @@ class FilterConfig:
     deepseek_api_key_env: str = 'DEEPSEEK_API_KEY'
     default_symbol_source: str = 'universe-file:univers_filtred_tradable.txt'
     default_oracle_batch_id: str = 'model-factory-20261003082853-e98332'
-    oracle_top_n: int = 10
+    oracle_top_n: int = 20
     max_selected: int = 5
     min_oracle_coverage_ratio: float = .90
     min_confidence: float = .75
+    # Absent from old archived configurations: preserve their exact semantics.
+    scoring_mode: str = 'legacy_confidence'
+    long_score_threshold: int = 8
+    short_score_threshold: int = 3
     min_sources: int = 2
     max_source_age_days: int = 30
     max_run_age_hours: int = 24
@@ -26,6 +30,7 @@ class FilterConfig:
     max_tool_calls: int = 5
     account_id: str = 'default'
     horizon: int = 20
+    allow_long: bool = True  # Missing from historical snapshots: LONG remains allowed.
     allow_short: bool = False  # Explicit opt-in; absent in historical LONG-only snapshots.
     protections: ProtectionProfile | dict | None = None
     analysis_mode: str = 'web_search'
@@ -52,6 +57,11 @@ class FilterConfig:
     evidence_context_max_age_minutes: int = 30
 
     def __post_init__(self):
+        if self.scoring_mode not in ('legacy_confidence', 'direction_1_10'):
+            raise ValueError('scoring_mode : legacy_confidence | direction_1_10')
+        if (type(self.short_score_threshold) is not int or type(self.long_score_threshold) is not int
+                or not 1 <= self.short_score_threshold < self.long_score_threshold <= 10):
+            raise ValueError('Seuils score : entiers 1 <= short_score_threshold < long_score_threshold <= 10')
         if isinstance(self.protections, dict):
             object.__setattr__(self, 'protections', ProtectionProfile(**self.protections))
         elif self.protections is not None and not isinstance(self.protections, ProtectionProfile):
@@ -79,8 +89,9 @@ class FilterConfig:
                 raise ValueError(f'{name}: entier entre {minimum} et {maximum} requis')
         if type(self.enabled) is not bool:
             raise ValueError('enabled doit être booléen')
-        if type(self.allow_short) is not bool:
-            raise ValueError('allow_short doit être booléen')
+        for name in ('allow_long', 'allow_short'):
+            if type(getattr(self, name)) is not bool:
+                raise ValueError(f'{name} doit être booléen')
         if self.analysis_mode not in ('web_search','local_data_only'):
             raise ValueError('analysis_mode doit être web_search ou local_data_only')
         if not isinstance(self.default_symbol_source, str) or not self.default_symbol_source.strip():

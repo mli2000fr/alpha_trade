@@ -205,6 +205,8 @@ def _load_price_frame(
 	cutoff_lower: date,
 	as_of_date: Optional[date] = None,
 ) -> pd.DataFrame:
+	from common.daily_bar_sources import daily_source_filter
+	source_filter, source_params = daily_source_filter()
 	query = """
 		SELECT symbol,
 		       `date` AS `timestamp`,
@@ -219,7 +221,9 @@ def _load_price_frame(
 	params: dict = {
 		"symbols": symbols,
 		"cutoff_lower": cutoff_lower,
+		**source_params,
 	}
+	query += source_filter + '\n'
 	if as_of_date is not None:
 		query += "  AND `date` <= :cutoff_upper\n"
 		params["cutoff_upper"] = as_of_date
@@ -290,6 +294,8 @@ def load_historical_range_stats_for_symbols(
 	cutoff_lower = ref_date - timedelta(days=config.historical_range_lookback_days)
 	# Phase 3.2.a : exclure les barres forward-filled du sanitizer pour ne pas
 	# polluer min/max historiques (pic figé par un fill long > seuil bas etc.).
+	from common.daily_bar_sources import daily_source_filter
+	source_filter, source_params = daily_source_filter()
 	query = """
 		SELECT symbol,
 		       MIN(low) AS hist_low,
@@ -302,7 +308,9 @@ def load_historical_range_stats_for_symbols(
 	params: dict = {
 		"symbols": symbols,
 		"cutoff_lower": cutoff_lower,
+		**source_params,
 	}
+	query += source_filter + '\n'
 	if as_of_date is not None:
 		query += "  AND `date` <= :cutoff_upper\n"
 		params["cutoff_upper"] = as_of_date
@@ -328,7 +336,10 @@ def load_spy_return_6m(
 		FROM stock_bars_daily
 		WHERE symbol = :symbol
 	"""
-	params: dict = {"symbol": config.benchmark_symbol}
+	from common.daily_bar_sources import daily_source_filter
+	source_filter, source_params = daily_source_filter()
+	query += source_filter + '\n'
+	params: dict = {"symbol": config.benchmark_symbol, **source_params}
 	if as_of_date is not None:
 		query += "  AND `date` <= :cutoff_upper\n"
 		params["cutoff_upper"] = as_of_date

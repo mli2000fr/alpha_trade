@@ -143,7 +143,9 @@ BLOCKERS = {
     'insufficient_fresh_sources': 'sources récentes qualifiées insuffisantes',
     'excluded_untraceable_sources': 'sources non traçables exclues',
     'confidence_below_threshold': 'note de confiance sous le seuil',
+    'direction_score_neutral': 'score entre les seuils directionnels : neutre',
     'short_not_allowed': 'SHORT non autorisé',
+    'long_not_allowed': 'LONG non autorisé',
 }
 
 
@@ -158,12 +160,17 @@ def llm_message(run, items):
              f"Analyse {run['run_id']} · modèle {model}",
              f"État : {run['status']}"]
     lines.append('Mode : '+('données locales uniquement' if config.get('analysis_mode')=='local_data_only' else 'recherche Web'))
+    if config.get('scoring_mode')=='direction_1_10':
+        lines.append(f"Orientation 1–10 : LONG > {config.get('long_score_threshold',8)}, "
+                     f"SHORT < {config.get('short_score_threshold',3)}, sinon neutre.")
     by_symbol = {row['symbol']: row for row in items}
     if completed and selected:
         lines.append(f'Titres retenus : {len(selected)}')
         for symbol in selected:
             parsed = json.loads(by_symbol[symbol]['assessment_json'])
-            lines.append(f"• {symbol} — {parsed['decision']} — note de confiance {_fmt(parsed['confidence'], 3)}")
+            note=(f"score d’orientation {parsed['direction_score']}/10" if 'direction_score' in parsed else
+                  f"note de confiance {_fmt(parsed['confidence'], 3)}")
+            lines.append(f"• {symbol} — {parsed['decision']} — {note}")
         lines.append('Note déclarée par le LLM, pas une probabilité calibrée. Validation risque encore requise.')
     else:
         lines.append('Aucun titre publié.')
@@ -178,7 +185,8 @@ def llm_message(run, items):
             else:
                 reasons = [BLOCKERS.get(code, str(code)) for code in parsed.get('selection_blockers', [])]
                 if parsed.get('decision') == 'ABSTAIN':
-                    reasons.insert(0, 'ABSTAIN : le LLM ne retient pas de direction')
+                    reasons.insert(0, 'NEUTRE : score entre les seuils du run' if 'direction_score' in parsed else
+                                   'ABSTAIN : le LLM ne retient pas de direction')
                 reason = '; '.join(reasons) or 'éligible mais non publié (limite de sélection ou échec global)'
             lines.append(f"• {row['symbol']} : {reason}")
             if parsed and row.get('status') == 'VALID' and parsed.get('decision') == 'ABSTAIN':

@@ -16,7 +16,7 @@ from bs4 import BeautifulSoup
 from sqlalchemy import inspect,text
 
 from .local_evidence import enrich_contexts as legacy_contexts,_utc
-from .prompts import FRESH_VERSION
+from .prompts import FRESH_VERSION, SCORE_VERSION, fresh_protocol
 from .repository import dumps,digest
 
 NY=ZoneInfo('America/New_York')
@@ -296,9 +296,15 @@ def market(conn,ctx,cfg,cutoff,names):
     q='''SELECT symbol,`date`,open,high,low,close,volume,is_filled,data_source,data_adjustment,
         ingested_at,last_updated FROM stock_bars_daily WHERE symbol=:symbol AND `date`<=:day
         AND `date`>=:since AND ingested_at<:cutoff AND last_updated<:cutoff
-        ORDER BY `date` DESC LIMIT 21'''
+        ORDER BY `date` DESC'''
     params=dict(symbol=ctx['symbol'],day=trade,since=trade-timedelta(days=45),cutoff=cutoff.replace(tzinfo=None))
     raw=[dict(r) for r in conn.execute(text(q),params).mappings()]
+    # Select only among rows actually available before cutoff; do not let a
+    # later preferred revision hide an available alternate row. Limit AFTER.
+    if raw:
+        import pandas as pd
+        from common.daily_bar_sources import select_daily_bars
+        raw=select_daily_bars(pd.DataFrame(raw)).head(21).to_dict('records')
     for row in raw:
         row['data_source']=str(row['data_source']).lower()
     if not raw or day(raw[0]['date'])!=trade:
@@ -366,7 +372,10 @@ def enrich_contexts(engine,contexts,config,cutoff):
     names=set(inspect(engine).get_table_names());result=[]
     with engine.connect() as conn:
         for ctx in base:
-            ctx['analysis_protocol']=FRESH_VERSION
+            ctx['analysis_protocol']=SCORE_VERSION if config.scoring_mode=='direction_1_10' else FRESH_VERSION
+            if ctx['analysis_protocol']==SCORE_VERSION:
+                from .direction_score import score_policy
+                ctx['direction_score_policy']=score_policy(config)
             sources,exclusions=existing_sources(ctx,config,cutoff)
             statuses=ctx['local_data_status']
             for kind in ('consensus','news'):
@@ -395,8 +404,12 @@ def enrich_contexts(engine,contexts,config,cutoff):
 
 
 def validate_fresh_packet(context,config,now,*,before_call=False):
-    if context.get('analysis_protocol')!=FRESH_VERSION:
+    if not fresh_protocol(context.get('analysis_protocol')):
         return
+    if context.get('analysis_protocol')==SCORE_VERSION:
+        from .direction_score import score_policy
+        if config.scoring_mode!='direction_1_10' or context.get('direction_score_policy')!=score_policy(config):
+            raise ValueError('Politique de score directionnel différente du snapshot')
     cutoff=_utc(context['evidence_cutoff_utc']);now=_utc(now)
     if cutoff>now or before_call and now-cutoff>timedelta(minutes=config.evidence_context_max_age_minutes):
         raise ValueError('Contexte LLM expiré/futur ; relancer une nouvelle analyse, aucun refresh implicite')

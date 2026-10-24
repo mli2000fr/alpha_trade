@@ -11,6 +11,7 @@ from .config import load_filter_config, FilterConfig
 from .repository import Repository, dumps, digest, utcnow
 from .openai_client import ResponsesClient, build_request, PROTOCOL_VERSION
 from .validation import parse_response, select_symbols, FRESH_QUALIFICATIONS
+from common.daily_bar_sources import daily_source_filter
 
 
 def assert_paper_account(account_id='default'):
@@ -51,9 +52,11 @@ def load_inputs(engine, batch_id, trade_date, symbol_source, config, capital_pre
             if not math.isfinite(score) or not 0 <= score <= 1:
                 raise ValueError('Score Oracle invalide')
             # Restrict bars to J and earlier; identity is checked independently on the Web.
-            bars = conn.execute(text('''SELECT date, close FROM stock_bars_daily
+            source_filter, source_params = daily_source_filter()
+            bars = conn.execute(text(f'''SELECT date, close FROM stock_bars_daily
                 WHERE symbol=:symbol AND date<=:day AND is_filled=0
-                ORDER BY date DESC LIMIT 21'''), {'symbol': row['symbol'], 'day': trade_date}).mappings().all()
+                {source_filter} ORDER BY date DESC LIMIT 21'''),
+                {'symbol': row['symbol'], 'day': trade_date, **source_params}).mappings().all()
             if not bars or str(bars[0]['date'])[:10] != str(trade_date):
                 raise ValueError(f'Cours J absent pour {row["symbol"]}')
             identity = conn.execute(text('''SELECT company_name, exchange FROM stock_metadata
@@ -109,6 +112,9 @@ def analyze(*, engine, batch_id, trade_date, symbol_source, capital_preset_key='
         raise ValueError('Nombre de candidats incohérent')
     if len({c['symbol'] for c in contexts}) != len(contexts):
         raise ValueError('Candidats dupliqués')
+    from .prompts import SCORE_VERSION
+    if any((c.get('analysis_protocol')==SCORE_VERSION)!=(config.scoring_mode=='direction_1_10') for c in contexts):
+        raise ValueError('Nouveau run : protocole de réponse incompatible avec scoring_mode')
     snapshot = {'symbol_source': symbol_source, 'capital_preset_key': capital_preset_key,
                 'candidates': contexts}
     if research_parent_run_id is not None:
@@ -163,6 +169,10 @@ def analyze(*, engine, batch_id, trade_date, symbol_source, capital_preset_key='
                 parsed['fresh_source_count'] if parsed else '-',
                 parsed.get('fresh_local_source_count',0) if parsed else '-',
                 ','.join(parsed['selection_blockers']) if parsed else error)
+            if parsed and 'direction_score' in parsed:
+                logging.info('LLM orientation %s score=%s/10 direction=%s LONG>%s SHORT<%s eligible=%s',
+                    context['symbol'],parsed['direction_score'],parsed['decision'],
+                    config.long_score_threshold,config.short_score_threshold,parsed['eligible'])
         # A slow Web call must not publish a selection after the next open.
         validate_analysis_window(trade_date)
         selected = [] if errors else select_symbols(items, config)
@@ -253,11 +263,11 @@ def qualified_selection(engine, run_id, trade_date, account_id, *, now=None, all
 
 
 def _protocol(contexts):
-    from .prompts import VERSION, DEEPSEEK_SEARCH_VERSION,FRESH_VERSION
+    from .prompts import VERSION, DEEPSEEK_SEARCH_VERSION,FRESH_VERSION,SCORE_VERSION
     if not isinstance(contexts,list) or not contexts or any(not isinstance(c,dict) for c in contexts):
         raise ValueError('Candidats de protocole LLM invalides')
     versions={context.get('analysis_protocol',PROTOCOL_VERSION) for context in contexts}
-    if len(versions)!=1 or not versions.issubset({PROTOCOL_VERSION,VERSION,DEEPSEEK_SEARCH_VERSION,FRESH_VERSION}):
+    if len(versions)!=1 or not versions.issubset({PROTOCOL_VERSION,VERSION,DEEPSEEK_SEARCH_VERSION,FRESH_VERSION,SCORE_VERSION}):
         raise ValueError('Protocoles LLM absents/incompatibles/mélangés')
     return next(iter(versions))
 
