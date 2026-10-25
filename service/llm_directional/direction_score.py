@@ -14,8 +14,12 @@ def score_decision(score, config):
             'SHORT' if score < config.short_score_threshold else 'ABSTAIN')
 
 
-def apply_score(result, config):
-    result['decision'] = score_decision(result['direction_score'], config)
+def apply_score(result, config, *, separated=False):
+    if separated:
+        from .trend_evidence import trend_decision
+        result['decision'] = trend_decision(result, config)
+    else:
+        result['decision'] = score_decision(result['direction_score'], config)
     result['direction_score_policy'] = score_policy(config)
     return result
 

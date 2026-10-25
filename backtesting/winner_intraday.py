@@ -145,7 +145,8 @@ class ReplayBroker:
             if intent.time_in_force == 'opg':
                 raw['queued_moo'] = True
             else:
-                self.close(intent.symbol, intent.qty, price, intent.intent_id, 'HORIZON_LATE_MARKET')
+                reason=next((o.get('exit_reason') for o in state['operations'] if o['key']==intent.intent_id),None)
+                self.close(intent.symbol, intent.qty, price, intent.intent_id, reason or 'HORIZON_LATE_MARKET')
         elif intent.order_type != 'stop':
             raise ValueError('Unsupported replay order')
         return SimpleNamespace(broker_order_id=intent.intent_id)
@@ -305,6 +306,8 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
     if base_risk.policy != 'b0' and first_seed not in regimes:
         raise ValueError('Adaptive risk requires prior SPY SMA50/200 history')
     guard = CampaignRiskState(base_risk, observations=[(first_seed, cfg.initial_equity)], regimes=regimes)
+    from backtesting.winner_global_liquidation import GlobalLiquidation
+    liquidation=GlobalLiquidation(cfg,base_risk,exec_cfg)
     daily_equity, marks, audit, breaker_marks, coverage = [], [], [], [], set()
     returns = close.pct_change(fill_method=None)
     cache = {}
@@ -337,6 +340,8 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
         return group is not None and len(group) == int((closing-opening).total_seconds()/300)
 
     def admit(signal_day, stamp):
+        if liquidation.blocks_entries:
+            return
         rows = selected.loc[selected.trade_date.eq(signal_day)]
         if rows.empty:
             return
@@ -371,6 +376,13 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
     for index, session in enumerate(sessions):
         day, opening, closing = session.session_date, session.open_at_utc, session.close_at_utc
         book.settle(day)
+        prior_day = previous if index == 0 else sessions[index-1].session_date
+        if liquidation.resume(opening,book):
+            # Only the cycle risk episode is reset. Global DD/peak never reset.
+            guard=CampaignRiskState(base_risk,observations=[(prior_day,book.equity())],
+                regimes={prior_day:regimes.get(prior_day)})
+            # No stale pre-pause plans: only the latest prior-session signal.
+            admit(prior_day,opening-timedelta(seconds=1))
         records = store.rows()
         symbols = sorted({r['state']['symbol'] for r in records})
         prior_day = previous if index == 0 else sessions[index-1].session_date
@@ -416,6 +428,8 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
             risk = replace(base_risk, account_equity=book.equity())
             evaluated = guard.evaluate(day, book.equity(), regimes.get(prior_day), daily_pnl=book.equity()-
                 (daily_equity[-1][1] if daily_equity else cfg.initial_equity))
+            liquidation.observe(stamp,book.equity(),book,evaluated)
+            liquidation.execute(stamp,store,repo,book,exec_cfg)
             records = store.rows()
             def source(state, now):
                 symbol = state['symbol']
@@ -434,6 +448,8 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
 
             def recheck(state, version, quantity, snapshot, now, kind):
                 from execution_engine.winner_live_risk import concentration_allowed
+                if liquidation.blocks_entries:
+                    raise ValueError('Global drawdown emergency halt blocks all new entries and additions')
                 vol = 1.
                 if risk.target_annual_vol:
                     vol_decision = evaluate_vol_target(returns.loc[returns.index <= pd.Timestamp(prior_day)].get(
@@ -490,9 +506,14 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
             book.now = stamp+timedelta(minutes=5)
             book.resolve(bars, opening=False)
             book.marks.update({s: float(b['close']) for s, b in bars.items()})
+            if liquidation.enabled:
+                close_evaluation=guard.evaluate(day,book.equity(),regimes.get(prior_day),daily_pnl=book.equity()-
+                    (daily_equity[-1][1] if daily_equity else cfg.initial_equity))
+                liquidation.observe(stamp+timedelta(minutes=5),book.equity(),book,close_evaluation)
             marks.append((stamp+timedelta(minutes=5), book.equity(), book.gross()))
             breaker_marks.append(dict(timestamp=stamp, peak=evaluated['reference_peak'],
-                allocation=evaluated['allocation_scale'], active=evaluated['active']))
+                allocation=evaluated['allocation_scale'], active=evaluated['active'],
+                global_halted=liquidation.halted,cycle_stopped=liquidation.cycle_stopped,cycle=liquidation.cycle))
         # Reconcile last-bar fills and terminal campaigns before the next
         # signal is admitted; no buying at the just-closed session.
         closed_cfg = replace(exec_cfg, winner_pyramiding=replace(policy, enabled=False))
@@ -519,4 +540,5 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
         dividends_receivable=sum(c['amount'] for c in book.claims), settled_cash=book.cash,
         unsettled_cash=sum(v for _, v in book.unsettled), gross=book.gross(),
         open_positions=book.positions(), campaigns=len(store.records), policy=policy.__dict__))
+    result.tracker_snapshot['winner_replay']['global_liquidation']=liquidation.summary()
     return result

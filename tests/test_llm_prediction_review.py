@@ -38,7 +38,7 @@ def test_long_permission_blocker_is_explained_without_hiding_opinion():
     view=review_rows(candidates(1),[row],run_status='COMPLETED',config={'allow_long':False})[0]
     assert view['Avis LLM']=='LONG' and view['Score directionnel LLM (/10)']==9
     assert not view['Retenu par le filtre']
-    assert 'LONG non autorisé' in view['Motif de non-sélection LLM']
+    assert 'LONG non autorisé' in view['Motif de non-sélection']
 
 
 @pytest.fixture

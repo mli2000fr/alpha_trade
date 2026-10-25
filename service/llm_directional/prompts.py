@@ -1,22 +1,27 @@
-"""Versioned v5-v8 local/Web prompts; historical request contracts stay immutable."""
+"""Versioned v5-v9 local/Web prompts; historical request contracts stay immutable."""
 from copy import deepcopy
 
 VERSION='oracle-local-evidence-trend-v5'
 DEEPSEEK_SEARCH_VERSION='oracle-deepseek-search-trend-v6'
 FRESH_VERSION='oracle-fresh-evidence-trend-v7'
 SCORE_VERSION='oracle-fresh-evidence-direction-score-v8'
+TREND_EVIDENCE_VERSION='oracle-direction-evidence-v9'
+
+
+def score_protocol(version):
+    return version in (SCORE_VERSION, TREND_EVIDENCE_VERSION)
 
 
 def fresh_protocol(version):
-    return version in (FRESH_VERSION, SCORE_VERSION)
+    return version in (FRESH_VERSION, SCORE_VERSION, TREND_EVIDENCE_VERSION)
 
 
 def has_local_evidence(context):
-    return context.get('analysis_protocol') in (VERSION, DEEPSEEK_SEARCH_VERSION,FRESH_VERSION,SCORE_VERSION)
+    return context.get('analysis_protocol') in (VERSION, DEEPSEEK_SEARCH_VERSION,FRESH_VERSION,SCORE_VERSION,TREND_EVIDENCE_VERSION)
 
 
 def native_search_protocol(version):
-    return version in (DEEPSEEK_SEARCH_VERSION,FRESH_VERSION,SCORE_VERSION)
+    return version in (DEEPSEEK_SEARCH_VERSION,FRESH_VERSION,SCORE_VERSION,TREND_EVIDENCE_VERSION)
 
 LOCAL_INSTRUCTIONS='''You are a conservative US equity research filter using LOCAL DATA ONLY.
 No Web, tools, outside knowledge, remembered events, guessed dates or invented news.
@@ -103,6 +108,42 @@ Do not override paper-only protections, borrow checks, capital limits or the exe
 
 
 def instructions(mode,version=None):
+    if version == TREND_EVIDENCE_VERSION:
+        base = LOCAL_INSTRUCTIONS if mode == 'local_data_only' else WEB_INSTRUCTIONS
+        base = base.replace('Only records marked eligible_for_direction may independently support a directional selection.',
+            'Only records marked eligible_for_direction may independently authorize retention. Provisional context may inform an explicitly tentative tendency, never execution eligibility.')
+        base = base.replace('If identity or qualified directional evidence is insufficient, choose ABSTAIN, not a fabricated case.',
+            'If issuer identity is uncertain or there is no usable basis for estimating tendency, return trend_status UNDETERMINABLE and direction_score null. Missing execution-grade evidence alone does not make usable provisional context neutral.')
+        base = base.replace('Oracle detects amplitude, not direction. Evaluate LONG, SHORT when allowed, or ABSTAIN.',
+            'Oracle detects amplitude, not direction. Assess bullish and bearish tendency independently of trade authorization.')
+        base = base.replace('Choose LONG, SHORT when allowed, or ABSTAIN, with a subjective evidence confidence, NOT a calibrated probability.',
+            'Assess an ordinal tendency or UNDETERMINABLE, separately from evidence quality and execution authorization.')
+        base = base.replace('Do not force LONG or SHORT.', 'Do not force a directional opinion or any distribution of scores.')
+        fresh = FRESH_INSTRUCTIONS.replace('Context-only sources cannot independently authorize a direction.',
+            'Context-only sources cannot independently authorize retention or execution; they may inform a clearly provisional tendency.')
+        return base + fresh + '''
+Separate THREE concepts: estimated tendency, evidence sufficiency, and application retention.
+Return trend_status ASSESSED with direction_score an INTEGER 1..10 if usable, issuer-attributable
+information permits a tentative assessment. Return UNDETERMINABLE with direction_score null when
+identity is uncertain, information is absent/unusable, or you cannot assess tendency. Never replace
+missing information with 5. Score 5-6 means genuinely mixed/balanced usable information.
+Rubric: 1-2 strongly bearish, 3-4 moderately bearish, 5-6 balanced/mixed,
+7-8 moderately bullish, 9-10 strongly bullish. More extreme requires stronger net supporting
+information, not just a high Oracle amplitude score. Do not force ranking, quotas, LONG or SHORT.
+Evaluate qualitative tendency DURING the next horizon_sessions, not only the final close or TP/SL.
+Return evidence_quality SUFFICIENT, PARTIAL, or INSUFFICIENT and a non-empty evidence_explanation.
+SUFFICIENT requires identity established and current, traceable, qualified directional evidence.
+PARTIAL means some usable context exists but material qualification/coverage limitations remain.
+INSUFFICIENT means no usable directional basis or unresolved issuer identity. It is valid to express
+a tentative tendency with PARTIAL evidence; never claim it authorizes a trade. Do not certify units,
+fiscal identity, issuer mapping or PIT just because data are present. The application independently
+checks evidence, may downgrade your quality assessment and enforces permissions and score thresholds.
+Ignore LONG/SHORT execution permissions when estimating tendency. No decision field is requested.
+confidence remains a separate subjective audit field, not a profit probability or selection threshold.
+For local_evidence.quote copy ONE exact contiguous substring of the supplied source text, preserving
+field order and punctuation. Never reorder JSON keys or join separate fragments into one quote.
+No invented facts, exact future prices, guarantees, orders, sizing or changes to risk protections.
+'''
     if version == SCORE_VERSION:
         base = LOCAL_INSTRUCTIONS if mode == 'local_data_only' else WEB_INSTRUCTIONS
         # Preserve v4-v7 prompts byte-for-byte. Only v8 uses ordinal direction.
@@ -137,15 +178,23 @@ def response_schema(base,version=None):
     if fresh_protocol(version):
         value['properties']['context_analysis']={'type':'string'}
         value['required'].append('context_analysis')
-    if version == SCORE_VERSION:
+    if score_protocol(version):
         del value['properties']['decision']
         value['required'].remove('decision')
         value['properties']['direction_score']={'type':'integer','enum':list(range(1,11))}
         value['required'].append('direction_score')
+    if version == TREND_EVIDENCE_VERSION:
+        value['properties']['direction_score']={'type':['integer','null'],'enum':[*range(1,11),None]}
+        value['properties']['trend_status']={'type':'string','enum':['ASSESSED','UNDETERMINABLE']}
+        value['properties']['evidence_quality']={'type':'string','enum':['SUFFICIENT','PARTIAL','INSUFFICIENT']}
+        value['properties']['evidence_explanation']={'type':'string'}
+        value['required']+=['trend_status','evidence_quality','evidence_explanation']
     return value
 
 
 def output_policy(context, config):
+    if context.get('analysis_protocol') == TREND_EVIDENCE_VERSION:
+        return '\nReturn tendency (1..10 or null), trend_status and evidence quality separately. The application alone applies the frozen direction_score_policy and retention checks. Do not output decision.'
     if context.get('analysis_protocol') == SCORE_VERSION:
         return '\nReturn direction_score 1..10; the application derives direction using the frozen direction_score_policy. Do not output decision.'
     return '\nAllowed decisions: '+('LONG, SHORT, ABSTAIN' if config.allow_short else 'LONG, ABSTAIN (SHORT forbidden)')

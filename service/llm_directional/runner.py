@@ -112,8 +112,9 @@ def analyze(*, engine, batch_id, trade_date, symbol_source, capital_preset_key='
         raise ValueError('Nombre de candidats incohérent')
     if len({c['symbol'] for c in contexts}) != len(contexts):
         raise ValueError('Candidats dupliqués')
-    from .prompts import SCORE_VERSION
-    if any((c.get('analysis_protocol')==SCORE_VERSION)!=(config.scoring_mode=='direction_1_10') for c in contexts):
+    from .prompts import TREND_EVIDENCE_VERSION, score_protocol
+    if any(score_protocol(c.get('analysis_protocol'))!=(config.scoring_mode=='direction_1_10')
+           or (c.get('analysis_protocol')==TREND_EVIDENCE_VERSION)!=config.separate_trend_evidence for c in contexts):
         raise ValueError('Nouveau run : protocole de réponse incompatible avec scoring_mode')
     snapshot = {'symbol_source': symbol_source, 'capital_preset_key': capital_preset_key,
                 'candidates': contexts}
@@ -170,9 +171,15 @@ def analyze(*, engine, batch_id, trade_date, symbol_source, capital_preset_key='
                 parsed.get('fresh_local_source_count',0) if parsed else '-',
                 ','.join(parsed['selection_blockers']) if parsed else error)
             if parsed and 'direction_score' in parsed:
-                logging.info('LLM orientation %s score=%s/10 direction=%s LONG>%s SHORT<%s eligible=%s',
-                    context['symbol'],parsed['direction_score'],parsed['decision'],
-                    config.long_score_threshold,config.short_score_threshold,parsed['eligible'])
+                if 'trend_status' in parsed:
+                    logging.info('LLM tendance %s statut=%s score=%s preuves=%s declaration_llm=%s retenable=%s',
+                        context['symbol'],parsed['trend_status'],
+                        str(parsed['direction_score'])+'/10' if parsed['direction_score'] is not None else 'INDETERMINABLE',
+                        parsed['evidence_quality'],parsed['reported_evidence_quality'],parsed['eligible'])
+                else:
+                    logging.info('LLM orientation %s score=%s/10 direction=%s LONG>%s SHORT<%s eligible=%s',
+                        context['symbol'],parsed['direction_score'],parsed['decision'],
+                        config.long_score_threshold,config.short_score_threshold,parsed['eligible'])
         # A slow Web call must not publish a selection after the next open.
         validate_analysis_window(trade_date)
         selected = [] if errors else select_symbols(items, config)
@@ -190,6 +197,10 @@ def analyze(*, engine, batch_id, trade_date, symbol_source, capital_preset_key='
             'received': len(items), 'persisted': len(items), 'selected': selected,
             'failed': 0, 'warning_count': 0,
             'analysis_mode': config.analysis_mode,
+            **({'trend_assessed_count':sum(i['trend_status']=='ASSESSED' for i in items),
+                'trend_undeterminable_count':sum(i['trend_status']=='UNDETERMINABLE' for i in items),
+                'evidence_quality_counts':{q:sum(i['evidence_quality']==q for i in items)
+                    for q in ('SUFFICIENT','PARTIAL','INSUFFICIENT')}} if config.separate_trend_evidence else {}),
             'fresh_local_source_count': sum(item.get('fresh_local_source_count',0) for item in items),
             'eligible_count': sum(item['eligible'] for item in items),
             'abstained_count': sum(not item['eligible'] for item in items),
@@ -231,6 +242,9 @@ def qualified_selection(engine, run_id, trade_date, account_id, *, now=None, all
         raise ValueError('Version du protocole LLM incompatible')
     if snapshot.get('research_only'):
         raise ValueError('Run LLM de recherche uniquement : risque/exécution interdits')
+    if snapshot.get('resume'):
+        from .resume_failed import validate_resume_lineage
+        validate_resume_lineage(engine,run,snapshot,now)
     expected = snapshot['candidates']
     if len(items) != len(expected) or any(i['status'] != 'VALID' for i in items):
         raise ValueError('Archivage incomplet')
@@ -243,8 +257,17 @@ def qualified_selection(engine, run_id, trade_date, account_id, *, now=None, all
             raise ValueError(f"Rang Oracle incompatible avec le snapshot : {item['symbol']}")
         if not _oracle_score_matches_snapshot(item['oracle_score'], context['oracle_score']):
             raise ValueError(f"Score Oracle incompatible avec le snapshot : {item['symbol']}")
-        if json.loads(item['request_json']) != build_request(context, config):
-            raise ValueError(f"Requête LLM incompatible avec le snapshot : {item['symbol']}")
+        archived_request=json.loads(item['request_json'])
+        expected_request=build_request(context, config)
+        if archived_request != expected_request:
+            # A refreshed resume packet may have a different JSON key order.
+            # Lineage above stays mandatory; inherited/ordinary requests stay strict.
+            resumed_retry=(snapshot.get('resume') and
+                item['symbol'] in snapshot['resume']['retried_symbols'] and
+                config.provider=='openai' and config.analysis_mode=='local_data_only')
+            from .resume_failed import equivalent_resumed_request
+            if not resumed_retry or not equivalent_resumed_request(archived_request,expected_request):
+                raise ValueError(f"Requête LLM incompatible avec le snapshot : {item['symbol']}")
         if digest(json.loads(item['response_json'])) != item['response_sha256']:
             raise ValueError('Réponse LLM altérée')
         parsed = parse_response(json.loads(item['response_json']), item['symbol'], config, item['observed_at'],context=context)
@@ -263,11 +286,11 @@ def qualified_selection(engine, run_id, trade_date, account_id, *, now=None, all
 
 
 def _protocol(contexts):
-    from .prompts import VERSION, DEEPSEEK_SEARCH_VERSION,FRESH_VERSION,SCORE_VERSION
+    from .prompts import VERSION, DEEPSEEK_SEARCH_VERSION,FRESH_VERSION,SCORE_VERSION,TREND_EVIDENCE_VERSION
     if not isinstance(contexts,list) or not contexts or any(not isinstance(c,dict) for c in contexts):
         raise ValueError('Candidats de protocole LLM invalides')
     versions={context.get('analysis_protocol',PROTOCOL_VERSION) for context in contexts}
-    if len(versions)!=1 or not versions.issubset({PROTOCOL_VERSION,VERSION,DEEPSEEK_SEARCH_VERSION,FRESH_VERSION,SCORE_VERSION}):
+    if len(versions)!=1 or not versions.issubset({PROTOCOL_VERSION,VERSION,DEEPSEEK_SEARCH_VERSION,FRESH_VERSION,SCORE_VERSION,TREND_EVIDENCE_VERSION}):
         raise ValueError('Protocoles LLM absents/incompatibles/mélangés')
     return next(iter(versions))
 

@@ -101,8 +101,11 @@ def test_risk_sizing_uses_seven_percent_not_atr():
     assert RiskConfig().stop_distance(100,2) == 4
 
 
-def test_step_commands_ignore_checkbox_without_gpt_and_restore_defaults():
+@pytest.mark.parametrize('allow_short',[True,False])
+def test_step_commands_ignore_checkbox_without_gpt_and_restore_defaults(monkeypatch,allow_short):
     from ihm.services.pipeline_runner import PipelineLaunchOptions, build_pipeline_command
+    cfg=replace(load_filter_config(),allow_short=allow_short)
+    monkeypatch.setattr('service.llm_directional.config.load_filter_config',lambda *a,**kw:cfg)
     base = PipelineLaunchOptions(trade_date='2026-10-09')
     assert build_pipeline_command('execution',replace(base,llm_specific_protections=True)) == build_pipeline_command('execution',base)
     for enabled in (True, False):
@@ -111,7 +114,7 @@ def test_step_commands_ignore_checkbox_without_gpt_and_restore_defaults():
         command = build_pipeline_command('execution',opts)
         assert ('--specific-protections' if enabled else '--no-specific-protections') in command
         inner=json.loads(command[command.index('--command-json')+1])
-        assert '--allow-fractional-shares' not in inner  # SHORT also requires whole shares.
+        assert ('--allow-fractional-shares' not in inner)==(enabled or allow_short)
 
 
 def test_changing_checkbox_after_analysis_fails_before_orders():

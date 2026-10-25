@@ -1499,6 +1499,12 @@ def _render_ml_predict_review(options: PipelineLaunchOptions) -> None:
         st.caption(f"Score d’orientation : 1 = fortement baissier, 10 = fortement haussier ; "
             f"seuils archivés LONG > {thresholds['long_score_threshold']}, SHORT < {thresholds['short_score_threshold']}, sinon neutre. "
             'Ce score n’est pas une probabilité ; les preuves doivent toujours être qualifiées.')
+    if review.get('separate_trend_evidence'):
+        st.caption('Tendance et sélection sont distinctes : 5–6 = informations utilisables mixtes ; '
+                   '« Indéterminable » = aucune estimation exploitable, sans score inventé. '
+                   'Un avis peut être provisoire avec des preuves partielles ; seules des preuves suffisantes '
+                   'selon les contrôles de l’application permettent une sélection. La qualité déclarée par le LLM '
+                   'est affichée séparément et ne remplace pas ces contrôles.')
     score_notice=('Le score est une orientation subjective non calibrée, pas une probabilité de gain. '
                   if review.get('scoring_mode')=='direction_1_10' else
                   'La confiance est une note subjective non calibrée, pas une probabilité de gain. ')
@@ -1555,6 +1561,9 @@ def _render_risk_prediction_review(options: PipelineLaunchOptions, all_runs) -> 
         'Retenu par le filtre','Retenu par le filtre LLM','Motif de non-sélection','Motif de non-sélection LLM'],
         errors='ignore')
     render_prediction_review_table(frame,key=f"pipeline_11_table_{review['run_id'] or review['llm_run_id']}",trade_date=review['trade_date'])
+    if review.get('separate_trend_evidence'):
+        st.caption('Tendance et qualité des preuves relues dans l’analyse exacte de l’étape 10. '
+                   'Une tendance estimée n’est pas une autorisation d’ordre ; les contrôles de risque restent distincts.')
     st.caption(('Lecture seule du run exact : uniquement les titres retenus à l’étape 10, même si le risque les refuse ensuite. '
                 if review['llm_run_id'] else 'Lecture seule des décisions/cibles du run risque sans filtre LLM. ')
                +

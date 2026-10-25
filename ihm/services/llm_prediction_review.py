@@ -130,7 +130,8 @@ def _non_selection_reason(*, selected, parsed, state, run_status, config, quota_
         reasons.append('Analyse globale échouée ou interrompue : aucune sélection publiée')
     if state == 'VALID':
         if parsed.get('decision') == 'ABSTAIN':
-            reasons.append('Direction non retenue par les seuils du run' if 'direction_score' in parsed else
+            reasons.append('Tendance indéterminable : aucune estimation exploitable' if parsed.get('trend_status')=='UNDETERMINABLE' else
+                           'Direction non retenue par les seuils du run' if 'direction_score' in parsed else
                            'Abstention du LLM : aucune direction retenue')
         blockers = parsed.get('selection_blockers')
         for code in blockers if isinstance(blockers, list) else []:
@@ -151,6 +152,12 @@ def _non_selection_reason(*, selected, parsed, state, run_status, config, quota_
                 reasons.append('SHORT non autorisé dans cette analyse')
             elif code == 'long_not_allowed':
                 reasons.append('LONG non autorisé dans cette analyse')
+            elif code == 'trend_undeterminable':
+                reasons.append('Données insuffisantes pour estimer la tendance ; pas une neutralité estimée')
+            elif code == 'evidence_partial':
+                reasons.append('Avis provisoire uniquement : preuves partielles, sélection interdite')
+            elif code == 'evidence_insufficient':
+                reasons.append('Preuves insuffisantes : sélection interdite, quel que soit le score')
             elif code == 'insufficient_qualified_local_sources':
                 reasons.append('Preuves locales qualifiées insuffisantes ; consensus/news non qualifiés ne suffisent pas')
             elif code == 'excluded_untraceable_local_sources':
@@ -215,6 +222,9 @@ def review_rows(candidates, items, *, run_status, limit=10, config=None, selecte
                 direction_score = value if type(value) is int and 1 <= value <= 10 else None
                 if raw_decision in ('LONG', 'SHORT', 'ABSTAIN') and confidence is not None:
                     decision = {'LONG': 'LONG', 'SHORT': 'SHORT', 'ABSTAIN': 'NEUTRE / ABSTENTION'}[raw_decision]
+                    if parsed.get('trend_status') in ('ASSESSED','UNDETERMINABLE'):
+                        decision = ('INDÉTERMINABLE' if direction_score is None else
+                                    'BAISSIÈRE' if direction_score<=4 else 'HAUSSIÈRE' if direction_score>=7 else 'MIXTE / NEUTRE')
                     # A failed/unfinished run cannot publish even a valid individual answer.
                     selected = run_status == 'COMPLETED' and bool(item.get('selected'))
                 else:
@@ -237,6 +247,11 @@ def review_rows(candidates, items, *, run_status, limit=10, config=None, selecte
                 state=state, run_status=run_status, config=config,
                 quota_excluded=candidate['symbol'] in quota_excluded),
             'État de l’analyse': state})
+        if config.get('separate_trend_evidence') or 'trend_status' in parsed:
+            from service.llm_directional.trend_evidence import QUALITY_LABELS
+            rows[-1].update({'Qualité des preuves':QUALITY_LABELS.get(parsed.get('evidence_quality'),'Non évaluée'),
+                'Qualité déclarée LLM':QUALITY_LABELS.get(parsed.get('reported_evidence_quality'),'Non évaluée'),
+                'Explication des preuves (LLM)':parsed.get('evidence_explanation')})
     return rows
 
 
@@ -287,6 +302,7 @@ def load_prediction_review(engine, *, trade_date, batch_id, symbol_source,
     run['provider_label'] = 'DeepSeek' if provider == 'deepseek' else 'GPT' if provider == 'openai' else str(provider)
     run['model'] = config.get('deepseek_model') if provider == 'deepseek' else config.get('model')
     run['scoring_mode'] = config.get('scoring_mode','legacy_confidence')
+    run['separate_trend_evidence'] = config.get('separate_trend_evidence',False)
     run['score_thresholds'] = {k: config.get(k,default) for k,default in [('long_score_threshold',8),('short_score_threshold',3)]}
     selected_symbols = json.loads(run.pop('selected_json') or 'null')
     run['rows'] = review_rows(snapshot.get('candidates'), items, run_status=run['status'], limit=effective_limit,
@@ -308,4 +324,4 @@ def display_review_frame(rows, label, scoring_mode='legacy_confidence'):
     else:
         frame=frame.drop(columns=['Score directionnel LLM (/10)'],errors='ignore').rename(
             columns={'Confiance LLM (%)':f'Confiance historique {label} (%)'})
-    return frame.rename(columns={'Avis LLM':f'Avis {label}'})
+    return frame.rename(columns={'Avis LLM':f'Tendance {label}' if 'Qualité des preuves' in frame else f'Avis {label}'})

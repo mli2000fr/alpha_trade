@@ -16,7 +16,7 @@ from bs4 import BeautifulSoup
 from sqlalchemy import inspect,text
 
 from .local_evidence import enrich_contexts as legacy_contexts,_utc
-from .prompts import FRESH_VERSION, SCORE_VERSION, fresh_protocol
+from .prompts import FRESH_VERSION, SCORE_VERSION, TREND_EVIDENCE_VERSION, fresh_protocol, score_protocol
 from .repository import dumps,digest
 
 NY=ZoneInfo('America/New_York')
@@ -373,7 +373,9 @@ def enrich_contexts(engine,contexts,config,cutoff):
     with engine.connect() as conn:
         for ctx in base:
             ctx['analysis_protocol']=SCORE_VERSION if config.scoring_mode=='direction_1_10' else FRESH_VERSION
-            if ctx['analysis_protocol']==SCORE_VERSION:
+            if config.separate_trend_evidence:
+                ctx['analysis_protocol']=TREND_EVIDENCE_VERSION
+            if score_protocol(ctx['analysis_protocol']):
                 from .direction_score import score_policy
                 ctx['direction_score_policy']=score_policy(config)
             sources,exclusions=existing_sources(ctx,config,cutoff)
@@ -406,10 +408,12 @@ def enrich_contexts(engine,contexts,config,cutoff):
 def validate_fresh_packet(context,config,now,*,before_call=False):
     if not fresh_protocol(context.get('analysis_protocol')):
         return
-    if context.get('analysis_protocol')==SCORE_VERSION:
+    if score_protocol(context.get('analysis_protocol')):
         from .direction_score import score_policy
         if config.scoring_mode!='direction_1_10' or context.get('direction_score_policy')!=score_policy(config):
             raise ValueError('Politique de score directionnel différente du snapshot')
+        if (context['analysis_protocol']==TREND_EVIDENCE_VERSION)!=config.separate_trend_evidence:
+            raise ValueError('Séparation tendance/preuves différente du snapshot')
     cutoff=_utc(context['evidence_cutoff_utc']);now=_utc(now)
     if cutoff>now or before_call and now-cutoff>timedelta(minutes=config.evidence_context_max_age_minutes):
         raise ValueError('Contexte LLM expiré/futur ; relancer une nouvelle analyse, aucun refresh implicite')

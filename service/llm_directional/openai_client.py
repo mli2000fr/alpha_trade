@@ -67,13 +67,13 @@ def _web_request(context, config):
 
 
 def build_request(context, config):
-    from .prompts import VERSION, DEEPSEEK_SEARCH_VERSION,FRESH_VERSION, SCORE_VERSION, fresh_protocol, instructions,response_schema,output_policy
+    from .prompts import VERSION, DEEPSEEK_SEARCH_VERSION,FRESH_VERSION, SCORE_VERSION, TREND_EVIDENCE_VERSION, fresh_protocol, instructions,response_schema,output_policy
     version=context.get('analysis_protocol')
     if version==DEEPSEEK_SEARCH_VERSION or fresh_protocol(version) and config.provider=='deepseek' and config.analysis_mode=='web_search':
         from .deepseek_search import build_request as native_request
         return native_request(context,config,SCHEMA)
     if config.analysis_mode=='local_data_only':
-        if version not in (VERSION,FRESH_VERSION,SCORE_VERSION) or context.get('analysis_mode')!='local_data_only':
+        if version not in (VERSION,FRESH_VERSION,SCORE_VERSION,TREND_EVIDENCE_VERSION) or context.get('analysis_mode')!='local_data_only':
             raise ValueError('Contexte local versionné requis ; aucun repli Web')
         system=instructions('local_data_only',version)+output_policy(context,config)
         if config.provider=='deepseek':

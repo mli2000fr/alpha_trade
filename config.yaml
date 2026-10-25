@@ -84,6 +84,7 @@ sentiment_news_ingestion:
 
 llm_directional_filter:
   scoring_mode: direction_1_10  # Prochaines analyses ; archives anciennes inchangées.
+  separate_trend_evidence: true  # v9 : tendance 1–10 ou indéterminable, preuves et sélection séparées.
   long_score_threshold: 7  # LONG si score strictement supérieur à ce seuil.
   short_score_threshold: 4  # SHORT si score strictement inférieur à ce seuil ; entre les deux : neutre.
   analysis_mode: local_data_only  # web_search | local_data_only (sans aucun appel Web).
@@ -128,8 +129,8 @@ llm_directional_filter:
   min_sources: 2
   max_source_age_days: 30
   max_run_age_hours: 24
-  timeout_seconds: 120
-  max_output_tokens: 6000
+  timeout_seconds: 300
+  max_output_tokens: 20000
   max_tool_calls: 5
   account_id: default
   horizon: 20
@@ -460,6 +461,10 @@ risk_management:
   # (JSON {secteur: facteur}, cf. config/p21_sector_multipliers.json).
   sizing_mode: "atr"
   # sector_multipliers_path: "config/p21_sector_multipliers.json"
+  # Concentration : maximum de nouvelles entrées sur un même titre,
+  # dans une fenêtre glissante exprimée en jours calendaires.
+  concentration_max_trades_per_symbol: 10
+  concentration_window_calendar_days: 180
   # ── E46 (2026-08-22) : multiplicateur d'exposition PUR — PROD vs BACKTEST ──
   # Scale le sizing des entrées LONG et SHORT SANS toucher CP-V2 / B4 / WORST_50 / 6L/2S.
   #   1.0  = comportement inchangé (rollback).

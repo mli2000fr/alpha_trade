@@ -20,6 +20,7 @@ class FilterConfig:
     min_confidence: float = .75
     # Absent from old archived configurations: preserve their exact semantics.
     scoring_mode: str = 'legacy_confidence'
+    separate_trend_evidence: bool = False  # Missing from archives: preserve v4-v8 contracts.
     long_score_threshold: int = 8
     short_score_threshold: int = 3
     min_sources: int = 2
@@ -59,6 +60,10 @@ class FilterConfig:
     def __post_init__(self):
         if self.scoring_mode not in ('legacy_confidence', 'direction_1_10'):
             raise ValueError('scoring_mode : legacy_confidence | direction_1_10')
+        if type(self.separate_trend_evidence) is not bool:
+            raise ValueError('separate_trend_evidence doit être booléen')
+        if self.separate_trend_evidence and self.scoring_mode != 'direction_1_10':
+            raise ValueError('separate_trend_evidence exige scoring_mode direction_1_10')
         if (type(self.short_score_threshold) is not int or type(self.long_score_threshold) is not int
                 or not 1 <= self.short_score_threshold < self.long_score_threshold <= 10):
             raise ValueError('Seuils score : entiers 1 <= short_score_threshold < long_score_threshold <= 10')

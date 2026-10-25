@@ -1,5 +1,9 @@
 # Étape 10 — score d'orientation LLM de 1 à 10
 
+**Suite opérationnelle :** [v9 — tendance et preuves séparées](llm_tendance_preuves_v9.md),
+activée par `separate_trend_evidence: true`. Ce document décrit le contrat v8
+conservé pour les archives et lorsque cette nouvelle option est désactivée.
+
 Livraison du 24 octobre 2026. GPT et DeepSeek, en mode local ou Web, utilisent
 le protocole `oracle-fresh-evidence-direction-score-v8` pour les **nouvelles**
 analyses configurées ainsi :
@@ -120,6 +124,14 @@ Suivi TOP configurable (24 octobre 2026) : **457 tests ciblés passent**, dont
 l'analyse des vingt candidats avec plafond de cinq sélections, l'affichage
 des vingt lignes et la compatibilité des anciennes archives. Aucun appel
 fournisseur ni ordre n'a été lancé pour cette validation.
+
+Suivi autorisations LONG/SHORT (24 octobre 2026) : **582 tests ciblés passent**.
+Couverture des quatre combinaisons des booléens, modes local/Web, ancien
+format, conservation du score, motifs IHM/Telegram, configuration archivée
+pour le risque et protections PAPER. Les tests ne supposent plus SHORT actif
+dans le YAML de l'utilisateur ; aucune API payante, base de production ou
+transaction broker n'a été sollicitée.
+
 La configuration courante a été chargée et ses six bornes 1/2/3/8/9/10
 vérifiées. Les sources scellées des trois runs grille/mensuel restent valides.
 

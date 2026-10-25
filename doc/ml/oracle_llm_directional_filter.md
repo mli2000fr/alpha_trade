@@ -1,5 +1,11 @@
 # Filtre directionnel Oracle → GPT / DeepSeek → risque → PAPER
 
+**Contrat courant : v9, tendance et preuves séparées.** L'option
+`separate_trend_evidence: true` autorise un score nul pour « indéterminable » et
+distingue l'avis provisoire de la sélection, sans relâcher les contrôles.
+[Configuration, stockage, affichage et compatibilité v9](llm_tendance_preuves_v9.md).
+Les sections v8 et antérieures ci-dessous restent l'historique des contrats.
+
 **24 octobre 2026 — nouveau score d'orientation v8 :** les nouvelles analyses
 utilisent `direction_score` entier de 1 à 10 ; LONG si strictement supérieur à
 `llm_directional_filter.long_score_threshold` (8), SHORT si strictement inférieur
@@ -504,6 +510,7 @@ llm_directional_filter:
   max_tool_calls: 5
   account_id: default
   horizon: 20
+  allow_long: true
   allow_short: true
   protections:
     enabled: true
@@ -537,7 +544,8 @@ par les contrôles existants. Le filtre désactivé conserve le fonctionnement h
 | `max_selected` | Entier 0–N, plafond de sélection ; zéro désactive toute sélection sans effacer l’audit |
 | `min_oracle_coverage_ratio` | Fraction minimale de l’univers avec un score Oracle exact pour J ; évite un TOP N issu d’un import partiel |
 | `min_confidence` | Seuil d’une **note subjective non calibrée** ; 0,75 ne signifie pas 75 % de chances du mouvement prévu |
-| `allow_short` | Autorise SHORT, défaut du composant false, activé localement. Le plafond K est commun aux LONG et SHORT, pas doublé. |
+| `allow_long` | Autorise à retenir LONG, défaut true. False conserve score/avis mais exclut le candidat avec un motif explicite. |
+| `allow_short` | Autorise à retenir SHORT, défaut du composant false. Indépendant de LONG ; le plafond K est commun aux deux sens, pas doublé. |
 | `min_sources` | Nombre minimal d’URL distinctes, réellement rencontrées par la recherche et datées récemment |
 | `max_source_age_days` | Âge maximal des dates de publication déclarées dans la réponse |
 | `max_run_age_hours` | Expiration du résultat pour risque/exécution, au plus 48 h |
@@ -566,7 +574,8 @@ Une absence d'argument haussier n'est pas une thèse baissière. Le prompt exige
 des preuves de baisse et l'examen du risque de squeeze ; l'empruntabilité ne
 peut jamais être déclarée par GPT à la place du broker.
 
-Une réponse LONG/SHORT n’est éligible que si (SHORT exige aussi `allow_short: true`) :
+Une réponse LONG/SHORT n’est éligible que si son sens est autorisé
+(`allow_long: true` ou `allow_short: true`, configuration figée dans le run) :
 
 1. le statut API est `completed`, avec au moins une recherche Web terminée ;
 2. le JSON respecte le schéma et le symbole demandé ;

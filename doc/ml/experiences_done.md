@@ -1,5 +1,296 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-25 — Priorité à la reprise2024, sans interrompre2022
+
+La file centimes legacy était limitée à un worker occupé par1x2022 : pas de
+données ni d'autorisation fournisseur manquantes. À la demande utilisateur,
+remplacement du seul ordonnanceur, worker2022 adopté et maintenu. Deux slots
+au total incluant2022 ; reprise1x2024 prioritaire (214/300 déjà conservés),
+puis qualification et reprise2x2024 (213/300). Anciennes sources/règles DD,
+verrous annuels, comptes scellés et audit conservés.3 tests de sélection de
+priorité passent. Worker2024 démarré, reçu d'adoption et suivi dans
+`artifacts/operations/winner-2024-priority-20261025-v1`. Aucun SQL/API/ordre
+ni changement de production. Ne pas confondre reprise active avec achèvement.
+[Protocole de reprise](winner_reprise_prioritaire_2024_20261025.md).
+
+## 2026-10-25 — Août2026 SHORT, veto GPT7–9/6–9 avec/sans confirmation
+
+Six comptes SHORT et deux témoins LONG terminés, même cohorte237/420 TOP20,
+4000USD,demi-position,cap1x,SL7/sansTP/sansTR/open21,frais8pb/jambe.
+Emprunt supposé0,3%/an, non certifié ; max5 SHORT conservé du profil.
+Direct sans veto/7–9/6–9 :**−0,45/−0,25/+0,09%**, DD−7,41/−6,03/−6,84%,
+18/16/16 clôtures,27,78/31,25/31,25% gagnantes. Confirmés :
+**−5,11/−4,68/−4,58%**,20 clôtures et1 position valorisée chacun,15% gagnantes.
+130/237 excursions dominantes baissières,106 haussières,1 égalité : faible taux
+LONG n'implique pas une majorité écrasante SHORT ni rentabilité du miroir.
+Les22 pertes LONG Winner viennent toutes du SL ;5 positions restent ouvertes.
+14 tests passent ; reproduction intégrale des2 témoins LONG (achats/sorties/
+courbes5m), comptabilité/risque/loan/sorties scalaires SHORT contrôlés.
+MeilleurSHORT seulement+3,57USD, aucun avantage robuste démontré, confirmation
+défavorable sur ce mois. GPT nonPIT/couverture future/seuils rétrospectifs,
+pas de holdout ni promotion. Aucun SQL/API/GPT/ordre/changement production.
+[Résultats et limites](gpt_short_aout_2026_resultats.md).
+
+## 2026-10-25 — Août2026 : entrée directe J+1 sans confirmation Winner, quatre filtres GPT
+
+À la demande utilisateur après les faibles taux gagnants, suppression de la
+confirmation/cassure et de l'attente d'entrée Winner. Achat proposé uniquement
+à l'ouverture J+1 ; refus annulé, aucun retry ultérieur du même plan. Maintien
+du sizing demi-position, capital4000USD partagé, cap1x, SL7/sansTP/sansTR/open21,
+risque/frais natifs et même cohorte237/420. Pas de SQL/API/LLM ni changement live.
+
+Sans veto :**3856,40USD/−3,59 %**, DD−13,85 %,21 clôtures/3 gains/18 pertes,
+14,29 % gagnantes. Veto1–3 :**3831,55USD/−4,21 %**, DD−13,88 %,21/2/19,
+9,52 %. Veto1–4 :**3941,83USD/−1,45 %**, DD−11,16 %,17/2/15,11,76 %.
+Veto1–5 :**3933,41USD/−1,66 %**, DD−11,36 %,19/3/16,15,79 %.
+
+Tous les directs sont clôturés au30septembre. Les témoins Winner à filtre
+identique valent3942,06/3942,06/4019,44/3968,81USD avec encore4–5 positions
+valorisées : taux clôturés non directement comparables en maturité. Rendement
+direct inférieur dans les quatre cas ; retirer la confirmation ne résout pas
+la faiblesse observée sur ce mois.11 tests passent,78 achats/78 sorties
+scalaires, cash/frais/PnL/DD audités ;109 niveaux SL7 des comparateurs vérifiés
+inchangés. GPT non PIT, couverture future et petit mois déjà observé : aucune
+validation indépendante ni promotion.
+[Résultats et comparaisons détaillés](gpt_veto_direct_open_aout_2026_resultats.md).
+
+## 2026-10-25 — Winner LONG août2026 : élargir le veto GPT à1–5 n'améliore pas1–4
+
+Un seul nouveau compte, mêmes archives GPT et237 signaux qualifiés/420,
+SL7/sansTP/sansTR/H20-open21, demi-position sans renfort,4000USD,cap1x,
+frais8pb/jambe et B4 natif. Les trois comparateurs sont repris après audit
+des empreintes. Aucun SQL/API/LLM, entraînement, ordre ou changement live.
+
+Veto1–5 :193 avis d'origine,86 signaux admissibles/17 sociétés exclus,
+soit12 scores5 supplémentaires contre1–4. Avis invalides/sans score conservés
+comme avant ; veto à la création du plan, pas à chaque fill ni sur les
+positions déjà ouvertes. **3968,81USD/−0,78 %**, DD−10,05 %,25 achats,
+21 clôtures (2 gains/19 pertes,9,52 %),4 positions ouvertes valorisées,
+capital utilisé moyen1318,49USD.15 tests passent,25 entrées/21 sorties
+scalaires et cash/frais/PnL/DD audités ; sources et résultats vérifiés.
+
+Contre Winner seul/veto1–3 :+26,75USD/+0,67point. Contre1–4
+(4019,44USD/+0,49 %) :**−50,64USD/−1,27point**, sans amélioration du taux
+gagnant. PnL clôturé+3,04USD mais absence de la position MRVL contribuant
++53,67USD en latent au1–4. Les parcours de portefeuille et de concentration
+diffèrent : pas une attribution directe à un seul score5. Résultat exploratoire
+sur un mois GPT rétrospectif non PIT et seuil élargi après observation ;
+aucune robustesse ni promotion démontrée.
+[Comparaison complète et limites](winner_veto_gpt_1_5_aout_2026_resultats.md).
+
+## 2026-10-25 — TOP20 mensuel100, DD15/pause trois mois sans plafond global (en attente des références)
+
+Variante supplémentaire demandée : même contrat DD15 de cycle/liquidation
+totale/pause trois mois calendaires/reprise sur capital restant, sans plafond
+DD25. La mention initiale DD20 est interprétée selon la règle détaillée DD15,
+annoncée avant lancement. Seule la fenêtre mensuelle passe à100 séances,
+soit100 rendements et101 clôtures antérieures au mois évalué.
+
+Compte évalué de janvier2020 à décembre2024,4000USD,TOP20,FULL,cap1x,frais et
+profils identiques aux variantes30/50. Les six références DD15 identiques déjà
+en cours sont réutilisées après audit et scellement : aucun second calcul
+de ces six comptes. Le worker attend leurs rapports puis rejoue seulement
+`MONTHLY_100`, sans attendre les quatre autres comptes du parent.
+
+**33 tests passent** : causalité100 séances, calendrier complet, politiques
+incompatibles rejetées, dépendances et restauration des adaptateurs, contrôles
+DD15 existants. Aucun résultat économique disponible à ce stade. Pas de
+SQL/API/LLM, entraînement, ordre ni changement de production.
+[Protocole et suivi](winner_monthly100_cycle15_pause3m_20261025.md).
+
+## 2026-10-25 — Sélection mensuelle TOP20 : DD15 de cycle, pause trois mois, sans plafond global (en cours)
+
+Variante demandée après les résultats DD20/pause3m/global25. À chaque baisse
+de 15 % depuis le sommet du cycle : liquidation totale au prochain prix
+observable, annulation des plans, trois mois calendaires de pause, puis
+nouveau cycle sur le capital restant avec remise à zéro B4/DD de cycle.
+Aucun apport et aucun plafond global caché ; le DD historique reste mesuré.
+Plusieurs cycles peuvent cumuler des pertes bien supérieures à 15 % ou 25 %.
+
+Six shadows recalculés, deux sélections mensuelles30/50 et deux témoins fixes,
+TOP20 original, positions complètes, cap1x, mêmes profils/frais/risques hors
+amendement. Adaptateur limité au processus de recherche ; aucune source
+originale scellée ni configuration de production modifiée. Pas de SQL/API/LLM,
+entraînement ou ordre. **73 tests passent** et un smoke de vingt séances sur
+archives réelles est audité ; il ne compte pas comme un résultat complet.
+Série des dix comptes lancée dans un dossier séparé ; verdict économique
+en attente. [Protocole, règles et suivi](winner_monthly_cycle15_pause3m_20261025.md).
+
+## 2026-10-25 — Winner TOP20 : investigation contrôlée de l'écart des dates de départ (en cours)
+
+SL5/sans TP/sans trailing/H20, position complète : le compte continu depuis
+juillet 2019 termine à 23 810,29 $, contre 5 178,78 $ pour le compte neuf
+de janvier 2020. Les politiques effectives et archives sont identiques,
+mais pas l'état du portefeuille : 7 980,17 $ et six positions héritées à
+fin 2019. Sur 2020–2024, le premier gagne encore +198,37 % contre +29,47 % :
+le seul cumul de 2019 n'explique pas l'écart. En 2022, 64 contre 2 407
+tentatives refusées pour risque/capacité ; ne pas les confondre avec des
+titres indépendants ni attribuer tous ces refus au drawdown sans détail.
+
+Trois replays locaux successifs lancés : reproduction intégrale du témoin,
+départ neuf 2020 avec le même capital 7 980,1667511581745 $, puis compte
+hérité avec seule mémoire B4 réinitialisée fin 2019. Chaque clôture/flux du
+témoin doit être reproduit ; mêmes sources scellées, ancien moteur isolé,
+observateurs sans changement de décision, audits cash/frais/entrées/sorties.
+**13 tests passent avec le moteur historique**. Pas de SQL/API/LLM/ordre,
+modèle ni modification en production. Aucun verdict causal à ce stade.
+Le reset B4 est une intervention diagnostique, pas une stratégie proposée.
+[Protocole, hypothèses et suivi](winner_ecart_dates_depart_audit_20261025.md).
+
+Premier mécanisme établi dans le contrat : à allocation B4 de 6 %, le budget
+de risque/SL5 réserve incluse ne finance pas le minimum de 155 $ tant que
+l'equity reste sous 11 392,50 $, avant autres contraintes. Un compte de
+6 000 $ est ainsi plafonné à 81,63 $ par entrée, contre 258,67 $ à 19 012 $.
+Cela peut créer des trajectoires non proportionnelles, mais la contribution
+effective à l'écart final reste à mesurer par les replays.
+[Calcul et précautions d'interprétation](winner_ecart_dates_depart_constats_20261025.md).
+
+## 2026-10-25 — Winner LONG : veto GPT1–4, amélioration exploratoire d'août
+
+Extension utilisateur du veto1–3, sans nouveau GPT, SQL, fournisseur, modèle
+ou ordre. Même TOP20 août2026, cohorte237/420, SL7 sansTP/sansTR, H20/open21,
+demi-position sans ajout, compte4000USD, cap1x et risques/frais identiques.
+Témoin scellé déjà audité réutilisé ; un seul compte nouveau, sources et
+entrées vérifiées identiques. Avis VALID1–4 uniquement, veto avant création
+du plan, sans annuler les plans antérieurs, sans remplacer par TOP21.
+
+172 avis1–4 d'origine,74 admissibles (contre4 pour1–3). **4019,44USD/+0,49%**
+contre3942,06USD/−1,45% au témoin : **+77,39USD/+1,93point**. DD−9,87% contre
+−11,55%.26 achats,21 clôtures (2 gains/19 pertes,9,52%), cinq positions
+ouvertes valorisées dans le capital final. PnL clôturé gagnant+58,02USD,
+perdant−374,24USD ; capital utilisé moyen1475,57USD, frais9,94USD.
+
+Six clôtures du témoin absentes (toutes perdantes), trois nouvelles également
+perdantes : l'avantage du portefeuille n'est pas une attribution causale aux
+seuls trades supprimés.26 entrées/21 sorties scalaires et cash/frais/DD
+audités ;12 tests passent. GPT non PIT, petit mois, biais de couverture future
+et seuil élargi après résultat1–3 : **pas de robustesse ni de promotion live**.
+[Protocole, résultats et limites](winner_veto_gpt_aout_2026.md).
+
+Complément sur **chacun des74 signaux exclus**, indépendamment du capital ou
+des positions déjà ouvertes : en achat LONG systématique openJ+1, SL7 fixe,
+sansTP/TR, open21 et8pb/côté, **11 gagnants /63 perdants** (14,86%/85,14%).
+Après première confirmation Winner :**5 gagnants/51 perdants/18 encore ouverts**
+au30septembre, aucun sans entrée. Ce ne sont pas les trades du portefeuille :
+15 sociétés, cas répétés/chevauchants ; les18 ouverts ne sont pas assimilés
+à des pertes.130 sorties scalaires/vectorielles et74 confirmations natives
+contrôlées,2 nouveaux tests passent, aucun API/SQL. Archive `signal-outcomes-v1`
+du run1–4. Le « zéro gagnant exclu » ne valait que pour les clôtures du témoin.
+
+## 2026-10-25 — Winner LONG SL7/sansTP/sansTR : veto GPT1–3 d'août sans effet
+
+GO utilisateur, puis amendement avant lancement : SL7 fixe, trailing et TP
+désactivés dans les deux bras, H20/open21 depuis fill.420 TOP20 d'août2026,
+mêmes avis GPT déjà archivés, demi-position sans ajout, compte4000USD, cap
+effectif1x, risques B4/DD15 de la référence native et8pb/jambe. Ne pas confondre
+avec les expériences de liquidation DD25/pause. Suivi jusqu'au30 septembre,
+positions ouvertes valorisées sans sortie terminale fictive. Aucun nouvel appel
+GPT, entraînement, fournisseur, SQLwrite ou ordre ; configuration inchangée.
+
+237 signaux communs qualifiés,183 exclus pour couverture SIP ;30 avis de score3,
+dont4 admissibles au veto (CCOI trois dates, MXL une). Avis invalides/null gardés,
+aucun TOP21 de remplacement. Veto avant création du plan uniquement, sans
+annulation d'un plan antérieur ni vente d'une position ouverte.
+
+**Deux comptes exactement égaux** en trades et courbes :3942,06USD,−1,45%,
+DD−11,55%,29 achats,24 clôtures (2 gagnantes/22 perdantes,8,33%),5 positions
+ouvertes. PnL des gains/pertes clôturés+58,02/−445,77USD, capital utilisé moyen
+1551,74USD. **Écart du veto0USD** ; aucun achat effectif modifié, autres plans
+valides pouvant subsister. Pas de preuve que le veto au moment du fill soit
+équivalent : il n'a pas été testé, ni ajouté après observation.
+
+58 entrées et48 sorties scalaires auditées, cash/frais/DD réconciliés,10 tests
+passent. Incident de consolidation `run.lock` Windows corrigé par finaliseur
+séparé sans rejouer les deux comptes ; source/rapports originaux inchangés,
+amendement et ancien échec conservés. Historique GPT non PIT, petit échantillon,
+biais de couverture future et pas de parité live complète. **Pas de promotion.**
+[Protocole et résultat](winner_veto_gpt_aout_2026.md).
+
+## 2026-10-25 — GPT TOP20 août2026 : deux excursions H20 et ordre des extrêmes
+
+21 séances,420 couples de37 titres, Oracle annuel2026 parcours H20 figé avant
+2026. GPT `gpt-6-luna`, prompt tendance/preuves v9 plus divulgation historique,
+sans Web : news publiées sur7 jours et prix/volume arrêtés à J. Consensus
+collecté seulement depuis octobre exclu d'août. Entrée de référence J+1 open,
+20 séances incluses, hausse maximale ET baisse minimale avec leurs premiers
+timestamps5min, ordre indéterminé dans une même bougie. Pas de PnL ni d'ordre.
+
+420 réponses archivées dans `llm_news_analysis_research_runs`, coût estimé
+0,57057 USD sur plafond4 :315 valides,104 citations exactes non traçables et
+une réponse incomplète, toutes conservées sans retry payé.242 parcours5min
+complets,178 incomplets non promus ;164 croisements avis valide/parcours complet.
+Sur107 avis orientés hors égalité, côté dominant correct42,99%, contre43,93%
+toujours-LONG et56,07% toujours-SHORT sur les mêmes lignes. Sans chevauchement
+par symbole :20 cas,45% corrects. Score7 :32 cas complets,9 LONG dominants,
+23 SHORT ; excursions moyennes+9,66%/−18,83%, sommet avant creux81,25%.
+Ce n'est ni un taux de trades gagnants ni la validation d'un filtre inversé.
+
+Bug d'évaluation SQL Decimal comparé à float corrigé par module de reprise
+séparé : source/protocole/avis initiaux scellés et inchangés, amendement explicite,
+29 tests passent,242 timestamps/prix extrêmes comparés aux Decimal originaux.
+Aucun appel supplémentaire. Aucune réponse valide ne franchit les seuils live
+>8 LONG / <3 SHORT. **Pas d'avantage directionnel démontré** : historique
+reconstruit non PIT, univers survivant, petit échantillon et horizons chevauchants.
+[Protocole, bilan et réserves](gpt_top20_aout_2026_deux_extremes.md).
+
+## 2026-10-24 — Reprise des anciennes grilles, protocole d'origine conservé
+
+L'utilisateur demande de reprendre les autres calculs stoppés et confirme que
+les anciens runs gardent leurs règles. Reprise effectivement lancée vers
+23h55 Paris : grilles TOP10 1x et2x, TOP50/2017, compagnon de qualification
+des centimes et ancienne sélection mensuelle. TOP20/2017 reste terminé,
+non recalculé. Les deux nouvelles séries DD poursuivent séparément.
+
+Copies scellées des deux modules moteur d'avant le changement DD chargées
+dans des processus isolés et héritées par leurs sous-processus. Le moteur
+courant n'est pas restauré ; aucune règle DD25/pause20 n'est ajoutée aux
+anciennes combinaisons. Vérification explicite des sources effectivement
+chargées et de tous les autres hashes, sans désactivation générale du contrôle.
+**7 tests passent**, dont replay natif dans un sous-processus neuf prouvant
+l'absence de la configuration/du moteur de liquidation nouvelle dans l'ancien.
+
+1567/3000 et1039/3000 rapports des grilles1x/2x conservés, TOP50 à149/300,
+ancien mensuel à2/10. Les combinaisons terminées sont vérifiées puis ignorées ;
+une combinaison ou un compte interrompu est recalculé depuis son propre début,
+sans prétendre restaurer un portefeuille intraday non checkpointé. Au plus cinq
+workers anciens, pas de doublon de millésime avec le compagnon de correctif.
+Les snapshots2018/2026 manquants peuvent être lus en SQL READ ONLY selon le
+protocole initial ; pas d'écriture SQL, fournisseur, LLM, entraînement ou ordre.
+[Isolation, reçus et suivi](winner_legacy_resume_20261024.md).
+
+## 2026-10-24 — Winner mensuel : liquidation DD15 et deux variantes de coupure
+
+Huit calculs précédents stoppés à la demande utilisateur, superviseurs compris,
+rapports déjà terminés conservés. La première version avait le sizing B4/DD15
+mais pas les ventes globales configurées : ne pas attribuer ses performances
+à une liquidation réellement exécutée. Nouveau raccordement causal aux
+campagnes/quantités résiduelles, annulations confirmées, cash et frais natifs.
+À DD15, vente des50 % de positions les moins favorables en PnL latent dollars,
+arrondi par nombre de lignes ; pas de halving répété à chaque bougie.
+
+Deux séries autorisées de dix comptes sur les mêmes archives TOP20,4000 USD,
+cap1x, position complète sans ajout, mêmes six profils et choix mensuels30/50 :
+`hard25` liquide totalement à25 % de DD historique et s'arrête définitivement ;
+`cooldown20` liquide à20 % de DD du cycle, attend trois mois calendaires puis
+reprend avec capital restant et signaux récents, **sans effacer le cap global25**.
+L'épisode B4 et le pic local sont seuls réinitialisés. Les gaps/frais peuvent
+faire dépasser les seuils : aucun DD artificiellement plafonné. Chaque règle
+recalcule ses propres shadows ; pas de mélange avec les anciennes courbes.
+
+Validation ciblée et non-régression : **180 tests passent**, dont coupure15/25, priorité des stops,
+absence de double vente, revente au prochain open connu avec gap, pause de
+trois mois/fins de mois/DST/jour férié, reprise native avec signaux récents et
+conservation du pic global. Les deux replays courts de21 séances sur archives
+passent l'audit scalaire/cash/frais. Les deux séries complètes sont effectivement
+relancées le24 octobre vers21h49 Paris : premiers comptes shadow en cours,
+0/10 terminé par variante au démarrage. Progrès dans les deux dossiers du
+protocole, reçus de tests et sources scellés séparément. Aucun résultat
+économique nouveau annoncé à ce stade. Sans SQL,
+fournisseur, LLM, entraînement, ordre ou modification des seuils YAML de production.
+Périodes déjà examinées, secteurs non PIT et filtre de couverture future :
+toujours exploratoire, pas de parité live complète.
+[Protocole et deux dossiers](winner_monthly_dd15_dd25_20261024.md).
+
 ## 2026-10-24 — Winner TOP20 2020–2024 : choix mensuel sur 30/50 séances valorisées
 
 GO pour deux portefeuilles adaptatifs avec classement sur les trente ou
