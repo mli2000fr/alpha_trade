@@ -1,25 +1,4 @@
-Voici d’autres approches documentées :
-Approche	D’où vient l’avantage recherché ?	Pertinence pour Alpha Trade
-Sélection multifactorielle	Combiner valorisation, qualité financière, momentum et signaux courts pour classer beaucoup d’actions. Robeco	Accessible, mais généralement plus diversifiée et moins centrée sur dix titres extrêmes.
-Révisions des bénéfices	Identifier les entreprises dont les perspectives s’améliorent ou se dégradent, en corrigeant les biais des analystes. Robeco	Directement pertinente pour la direction ; notre historique collecté reste court.
-Suivi de tendance multi-actifs	Accompagner les tendances sur indices, obligations, devises et matières premières. AQR	Testable, mais c’est une autre stratégie que prédire le TOP10 Oracle sur vingt séances.
-Événementiel	Évaluer une opération précise : acquisition, restructuration, scission, etc., avec ses modalités et ses risques. Man Group	Intéressant pour sélectionner seulement quelques situations explicables, avec abstention ailleurs.
-Trading de volatilité/options	Exploiter un écart entre le prix de la protection et le risque attendu, avec couverture et risque de pertes extrêmes. AQR	Potentiellement lié à notre Oracle d’amplitude, mais exige des prix d’options qualifiés.
-Tenue de marché	Fournir des prix acheteur/vendeur et gérer le risque d’inventaire. Citadel Securities	Peu adaptée à notre infrastructure actuelle ; ce n’est pas du swing trading classique.
+/F:/projets/doc/ml/TODO_reprise_selecteur_configurations_winner_20261021.md  reprise
 
------------------------------
 
-consensus, revenir après la cloture du 30/10:
-consensus_revenus_top20pct_20261019.md
-L’extension au TOP20 % est terminée et auditée :
-- 349 titres sélectionnés, dont 346 avec deux observations comparables.
-- 64 variations à nombre d’analystes inchangé : 36 hausses et 28 baisses.
-- Seuls DOCN et FUN restent suffisamment documentés ; les autres nécessitent encore une qualification devise/période.
-Ce ne sont pas encore des résultats prédictifs : la cohorte arrive à maturité H10 le 30 octobre après clôture.
-
---------------
-
-continue next:
-Ces 24 candidats — 14 LONG, 10 SHORT — ne sont pas des trades gagnants : leur efficacité reste à mesurer.
-Le blocage principal est concret : un dépôt trimestriel peut répéter une annonce antérieure. Pour OXM, les résultats étaient annoncés le 3 septembre, avant le dépôt du 4.
-Suite utile : retrouver les véritables annonces SEC des 93 cas présélectionnés, puis recaler les décisions. Ces documents sont publics ; pas besoin du consensus EODHD pour avancer. L’échantillon TOP10 restera néanmoins petit.
+F:/projets/doc/ml/fmz_pistes_a_tester.md

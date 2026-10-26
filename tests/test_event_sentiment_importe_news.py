@@ -298,6 +298,27 @@ def test_resolve_checkpoint_aware_import_scope_uses_watermarks_and_skips_up_to_d
     assert resume_overrides == {"MSFT": False, "NVDA": False}  # EODHD offset restarts at zero.
 
 
+def test_twenty_one_day_import_is_reduced_by_each_successful_checkpoint():
+    from datetime import timedelta
+    from event_sentiment.config import EventSentimentConfig
+    end = datetime(2026, 10, 24, tzinfo=timezone.utc)
+    class Repository:
+        def get_checkpoints(self, *_):
+            return {
+                'SEVEN': dict(status='success', watermark_published_at_utc=end-timedelta(days=7)),
+                'OLD': dict(status='success', watermark_published_at_utc=end-timedelta(days=90)),
+                'FAILED': dict(status='failed', watermark_published_at_utc=end-timedelta(days=2)),
+                'CURRENT': dict(status='success', watermark_published_at_utc=end),
+            }
+    symbols, starts, resumes, skipped = importe_news._resolve_checkpoint_aware_import_scope(
+        symbols=['SEVEN', 'OLD', 'NEW', 'FAILED', 'CURRENT'], start_utc=end-timedelta(days=21), end_utc=end,
+        repository=Repository(), config=EventSentimentConfig.for_provider('eodhd'), logger=logging.getLogger(__name__))
+    assert symbols == ['SEVEN', 'OLD', 'NEW', 'FAILED'] and skipped == 1
+    assert starts['SEVEN'] == end-timedelta(days=7, hours=1)  # Existing safety overlap, not 21 days again.
+    assert all(starts[s] == end-timedelta(days=21) for s in ['OLD', 'NEW', 'FAILED'])
+    assert not any(resumes.values())  # Changed EODHD date window must restart pagination offsets.
+
+
 def test_importe_news_main_can_resume_from_checkpoints(monkeypatch) -> None:
     captured: dict[str, object] = {}
 

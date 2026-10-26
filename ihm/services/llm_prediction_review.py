@@ -108,12 +108,16 @@ def _quota_exclusions(candidates, items, config, selected_symbols):
         confidence = _score(parsed.get('confidence'))
         if (parsed.get('eligible') is True and not parsed.get('selection_blockers')
                 and parsed.get('decision') in ('LONG', 'SHORT') and confidence is not None):
-            eligible.append((item['symbol'], confidence))
-    eligible.sort(key=lambda row: (-row[1], ranks[row[0]], row[0]))
-    expected = [symbol for symbol, _ in eligible[:cap]]
+            eligible.append(dict(parsed,symbol=item['symbol'],oracle_rank=ranks[item['symbol']]))
+    from service.llm_directional.direction_score import selection_sort_key
+    try:
+        eligible.sort(key=selection_sort_key)
+    except (ValueError,TypeError,KeyError):
+        return set()
+    expected = [item['symbol'] for item in eligible[:cap]]
     if selected_symbols != expected:
         return set()  # Never invent a cap explanation for an inconsistent archive.
-    return {symbol for symbol, _ in eligible[cap:]}
+    return {item['symbol'] for item in eligible[cap:]}
 
 
 def _non_selection_reason(*, selected, parsed, state, run_status, config, quota_excluded):
@@ -126,10 +130,15 @@ def _non_selection_reason(*, selected, parsed, state, run_status, config, quota_
         reasons.append('Analyse globale échouée ou interrompue : aucune sélection publiée')
     if state == 'VALID':
         if parsed.get('decision') == 'ABSTAIN':
-            reasons.append('Abstention du LLM : aucune direction retenue')
+            reasons.append('Tendance indéterminable : aucune estimation exploitable' if parsed.get('trend_status')=='UNDETERMINABLE' else
+                           'Direction non retenue par les seuils du run' if 'direction_score' in parsed else
+                           'Abstention du LLM : aucune direction retenue')
         blockers = parsed.get('selection_blockers')
         for code in blockers if isinstance(blockers, list) else []:
-            if code == 'excluded_untraceable_sources':
+            if code == 'direction_score_neutral':
+                low, high = config.get('short_score_threshold',3), config.get('long_score_threshold',8)
+                reasons.append(f'Score directionnel neutre : {parsed.get("direction_score")}/10 ; LONG > {high}, SHORT < {low}')
+            elif code == 'excluded_untraceable_sources':
                 reasons.append('Source(s) citée(s) non traçable(s) ou URL invalide(s)')
             elif code == 'confidence_below_threshold':
                 confidence, threshold = _score(parsed.get('confidence')), _score(config.get('min_confidence'))
@@ -141,6 +150,14 @@ def _non_selection_reason(*, selected, parsed, state, run_status, config, quota_
                 reasons.append('Sources récentes qualifiées insuffisantes' + detail)
             elif code == 'short_not_allowed':
                 reasons.append('SHORT non autorisé dans cette analyse')
+            elif code == 'long_not_allowed':
+                reasons.append('LONG non autorisé dans cette analyse')
+            elif code == 'trend_undeterminable':
+                reasons.append('Données insuffisantes pour estimer la tendance ; pas une neutralité estimée')
+            elif code == 'evidence_partial':
+                reasons.append('Avis provisoire uniquement : preuves partielles, sélection interdite')
+            elif code == 'evidence_insufficient':
+                reasons.append('Preuves insuffisantes : sélection interdite, quel que soit le score')
             elif code == 'insufficient_qualified_local_sources':
                 reasons.append('Preuves locales qualifiées insuffisantes ; consensus/news non qualifiés ne suffisent pas')
             elif code == 'excluded_untraceable_local_sources':
@@ -153,7 +170,8 @@ def _non_selection_reason(*, selected, parsed, state, run_status, config, quota_
             if quota_excluded:
                 reasons.append('Sélection désactivée : nombre maximal de titres retenus fixé à 0'
                     if config['max_selected'] == 0 else
-                    f"Admissible, mais hors des {config['max_selected']} titres retenus après classement par confiance LLM")
+                    f"Admissible, mais hors des {config['max_selected']} titres retenus après classement par "
+                    + ('intensité directionnelle' if config.get('scoring_mode')=='direction_1_10' else 'confiance LLM'))
             elif parsed.get('eligible') is True:
                 reasons.append('Admissible, mais non retenu : motif non renseigné dans l’archive')
             else:
@@ -188,6 +206,7 @@ def review_rows(candidates, items, *, run_status, limit=10, config=None, selecte
     for candidate in ordered:
         item = by_symbol.get(candidate['symbol'])
         decision, confidence, state = 'Non analysé', None, 'Absent'
+        direction_score = None
         selected = False
         parsed = {}
         if item:
@@ -199,8 +218,13 @@ def review_rows(candidates, items, *, run_status, limit=10, config=None, selecte
                     parsed = {}
                 raw_decision = parsed.get('decision')
                 confidence = _score(parsed.get('confidence'))
+                value = parsed.get('direction_score')
+                direction_score = value if type(value) is int and 1 <= value <= 10 else None
                 if raw_decision in ('LONG', 'SHORT', 'ABSTAIN') and confidence is not None:
                     decision = {'LONG': 'LONG', 'SHORT': 'SHORT', 'ABSTAIN': 'NEUTRE / ABSTENTION'}[raw_decision]
+                    if parsed.get('trend_status') in ('ASSESSED','UNDETERMINABLE'):
+                        decision = ('INDÉTERMINABLE' if direction_score is None else
+                                    'BAISSIÈRE' if direction_score<=4 else 'HAUSSIÈRE' if direction_score>=7 else 'MIXTE / NEUTRE')
                     # A failed/unfinished run cannot publish even a valid individual answer.
                     selected = run_status == 'COMPLETED' and bool(item.get('selected'))
                 else:
@@ -216,17 +240,23 @@ def review_rows(candidates, items, *, run_status, limit=10, config=None, selecte
             'Symbole': candidate['symbol'], 'Dernier prix ($)': last_price, 'Date du prix': price_date,
             'Score Oracle': float(candidate['oracle_score']),
             'Avis LLM': decision,
+            'Score directionnel LLM (/10)': direction_score,
             'Confiance LLM (%)': round(confidence * 100, 2) if confidence is not None else None,
             'Retenu par le filtre': selected,
             'Motif de non-sélection': _non_selection_reason(selected=selected, parsed=parsed,
                 state=state, run_status=run_status, config=config,
                 quota_excluded=candidate['symbol'] in quota_excluded),
             'État de l’analyse': state})
+        if config.get('separate_trend_evidence') or 'trend_status' in parsed:
+            from service.llm_directional.trend_evidence import QUALITY_LABELS
+            rows[-1].update({'Qualité des preuves':QUALITY_LABELS.get(parsed.get('evidence_quality'),'Non évaluée'),
+                'Qualité déclarée LLM':QUALITY_LABELS.get(parsed.get('reported_evidence_quality'),'Non évaluée'),
+                'Explication des preuves (LLM)':parsed.get('evidence_explanation')})
     return rows
 
 
 def load_prediction_review(engine, *, trade_date, batch_id, symbol_source,
-                          account_id='default', capital_preset_key='capital_2001_5000', limit=10,
+                          account_id='default', capital_preset_key='capital_2001_5000', limit=None,
                           analysis_run_id=None):
     """Latest attempt for this exact scope, never latest successful/other scope.
 
@@ -259,13 +289,39 @@ def load_prediction_review(engine, *, trade_date, batch_id, symbol_source,
             assessments.c.status, assessments.c.assessment_json, assessments.c.selected)
             .where(assessments.c.run_id == run['run_id'])).mappings()]
     config = _object(run.pop('config_json'))
+    # Respect the exact run, not today's YAML. Legacy snapshots without this
+    # field keep their historical TOP10 display; new runs archive their N.
+    archived_top_n = config.get('oracle_top_n',10)
+    if type(archived_top_n) is not int or not 1 <= archived_top_n <= 100:
+        raise ValueError('Nombre de candidats Oracle archivé invalide')
+    effective_limit = archived_top_n if limit is None else limit
+    run['oracle_top_n'] = archived_top_n
+    run['max_selected'] = config.get('max_selected',5)
     run.pop('input_json')
     provider = config.get('provider', 'openai')
     run['provider_label'] = 'DeepSeek' if provider == 'deepseek' else 'GPT' if provider == 'openai' else str(provider)
     run['model'] = config.get('deepseek_model') if provider == 'deepseek' else config.get('model')
+    run['scoring_mode'] = config.get('scoring_mode','legacy_confidence')
+    run['separate_trend_evidence'] = config.get('separate_trend_evidence',False)
+    run['score_thresholds'] = {k: config.get(k,default) for k,default in [('long_score_threshold',8),('short_score_threshold',3)]}
     selected_symbols = json.loads(run.pop('selected_json') or 'null')
-    run['rows'] = review_rows(snapshot.get('candidates'), items, run_status=run['status'], limit=limit,
+    run['rows'] = review_rows(snapshot.get('candidates'), items, run_status=run['status'], limit=effective_limit,
         config=config, selected_symbols=selected_symbols, trade_date=run['trade_date'])
     run['rows'] = add_company_names(engine, run['rows'])
     run['candidate_count'] = len(snapshot['candidates'])
     return run
+
+
+def display_review_frame(rows, label, scoring_mode='legacy_confidence'):
+    """Shared step-10/11 labels; never manufacture a /10 score for legacy runs."""
+    import pandas as pd
+    frame=pd.DataFrame(rows)
+    if scoring_mode=='direction_1_10':
+        frame=frame.drop(columns=['Confiance LLM (%)'],errors='ignore').rename(
+            columns={'Score directionnel LLM (/10)':f'Score {label} (/10)'})
+        if f'Score {label} (/10)' in frame:
+            frame[f'Score {label} (/10)']=pd.array(frame[f'Score {label} (/10)'],dtype='Int64')
+    else:
+        frame=frame.drop(columns=['Score directionnel LLM (/10)'],errors='ignore').rename(
+            columns={'Confiance LLM (%)':f'Confiance historique {label} (%)'})
+    return frame.rename(columns={'Avis LLM':f'Tendance {label}' if 'Qualité des preuves' in frame else f'Avis {label}'})

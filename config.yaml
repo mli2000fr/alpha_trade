@@ -75,13 +75,18 @@ us_pipeline:
 sentiment_news_ingestion:
   # Étape 8 uniquement : sans date de début explicite, import récent borné ;
   # un backfill historique reste possible via --start-date / --end-date.
-  pipeline_lookback_days: 7
+  pipeline_lookback_days: 21  # Maximum quotidien ; les checkpoints réduisent l'import par titre.
+  pipeline_feature_recalc_days: 52  # Dates calendaires inclusives de features à recalculer ; indépendant de l'import.
   request_timeout_seconds: 45  # Par tentative réseau, pas pour le run entier.
   max_attempts: 3
   max_consecutive_symbol_failures: 3  # Arrêt des appels, puis décision selon couverture et erreurs critiques.
   min_success_ratio: 0.95  # >=95 % des titres demandés : poursuivre malgré des échecs isolés.
 
 llm_directional_filter:
+  scoring_mode: direction_1_10  # Prochaines analyses ; archives anciennes inchangées.
+  separate_trend_evidence: true  # v9 : tendance 1–10 ou indéterminable, preuves et sélection séparées.
+  long_score_threshold: 7  # LONG si score strictement supérieur à ce seuil.
+  short_score_threshold: 4  # SHORT si score strictement inférieur à ce seuil ; entre les deux : neutre.
   analysis_mode: local_data_only  # web_search | local_data_only (sans aucun appel Web).
   # Le LLM évalue une tendance LONG/SHORT/ABSTAIN sur horizon, sans objectif TP/SL.
   consensus_max_periods: 4
@@ -117,19 +122,20 @@ llm_directional_filter:
   deepseek_web_text_chars: 6000
   default_symbol_source: universe-file:univers_filtred_tradable.txt
   default_oracle_batch_id: model-factory-20261016180250-3b0515  # Aucun modèle US après remise à zéro ; remplacer par le nouvel ID entraîné.
-  oracle_top_n: 10  # Nombre de premiers scores Oracle à analyser (pas de tri par rendement futur).
-  max_selected: 5   # Plafond, jamais un quota obligatoire ; 0 candidat reste possible.
+  oracle_top_n: 20  # Nombre de premiers scores Oracle à analyser (1–100), dans l'ordre du score prédit.
+  max_selected: 10   # Plafond, jamais un quota obligatoire ; 0 candidat reste possible.
   min_oracle_coverage_ratio: 0.90  # Bloque un classement issu d’une prédiction partielle.
-  min_confidence: 0.5  # Note LLM non calibrée, pas une probabilité de rendement.
+  min_confidence: 0.5  # Archives/mode legacy uniquement ; v8 sélectionne selon les seuils de direction.
   min_sources: 2
   max_source_age_days: 30
   max_run_age_hours: 24
-  timeout_seconds: 120
-  max_output_tokens: 6000
+  timeout_seconds: 300
+  max_output_tokens: 20000
   max_tool_calls: 5
   account_id: default
   horizon: 20
-  allow_short: true  # LLM peut sélectionner LONG/SHORT ; ordres compte default PAPER, ETB uniquement.
+  allow_long: true  # Autorise à retenir les LONG qualifiés ; false = exclus sans changer leur score.
+  allow_short: false  # Autorise à retenir les SHORT qualifiés ; PAPER default, ETB uniquement.
   protections:
     enabled: true  # Case IHM par défaut ; effet uniquement avec filtre LLM PAPER.
     stop_loss_pct: 0.07  # SL depuis le prix réellement exécuté, pas depuis le close J.
@@ -455,6 +461,10 @@ risk_management:
   # (JSON {secteur: facteur}, cf. config/p21_sector_multipliers.json).
   sizing_mode: "atr"
   # sector_multipliers_path: "config/p21_sector_multipliers.json"
+  # Concentration : maximum de nouvelles entrées sur un même titre,
+  # dans une fenêtre glissante exprimée en jours calendaires.
+  concentration_max_trades_per_symbol: 10
+  concentration_window_calendar_days: 180
   # ── E46 (2026-08-22) : multiplicateur d'exposition PUR — PROD vs BACKTEST ──
   # Scale le sizing des entrées LONG et SHORT SANS toucher CP-V2 / B4 / WORST_50 / 6L/2S.
   #   1.0  = comportement inchangé (rollback).
@@ -561,6 +571,9 @@ screener:
 # toujours sur Alpaca quel que soit ce flag.
 # ---------------------------------------------------------------------------
 market_data:
+  # Lecture daily US : départage EODHD/SIP par symbole + séance, sans supprimer l'autre ligne.
+  # Si la source préférée est absente, utiliser l'autre ; aucun fallback IEX.
+  daily_bars_preferred_source: eodhd  # eodhd | alpaca_sip ; indépendant du téléchargement/quotes/intraday.
   bars_provider: alpaca   # alpaca | eodhd ; contrôle J de us_pipeline raccordé aux deux fournisseurs.
   alpaca_backfill_feed: sip  # SIP pour les téléchargements Alpaca ; aucun fallback IEX.
 

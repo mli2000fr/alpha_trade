@@ -1476,6 +1476,8 @@ def _render_ml_predict_review(options: PipelineLaunchOptions) -> None:
                 'Le tableau apparaît après le lancement de l’étape 10 avec le filtre LLM activé.')
         return
     label = review['provider_label']
+    st.caption(f"Périmètre archivé : TOP {review.get('oracle_top_n',10)} Oracle ; "
+               f"{review['candidate_count']} candidat(s), au plus {review.get('max_selected',5)} retenu(s) après filtrage.")
     stamp = review['completed_at'] or review['started_at']
     if isinstance(stamp, datetime):
         stamp = stamp.replace(tzinfo=timezone.utc) if stamp.tzinfo is None else stamp
@@ -1489,17 +1491,29 @@ def _render_ml_predict_review(options: PipelineLaunchOptions) -> None:
     if not review['rows']:
         st.info('Aucun candidat présent dans le snapshot archivé.')
         return
-    import pandas as pd
-    frame=pd.DataFrame(review['rows']).rename(columns={
-        'Avis LLM': f'Avis {label}', 'Confiance LLM (%)': f'Confiance {label} (%)'})
+    from ihm.services.llm_prediction_review import display_review_frame
+    frame=display_review_frame(review['rows'],label,review.get('scoring_mode','legacy_confidence'))
     render_prediction_review_table(frame,key=f"pipeline_10_table_{review['run_id']}",trade_date=review['trade_date'])
-    st.caption('Ordre initial décroissant du score Oracle, pas de la confiance LLM ; tous les candidats sont affichés, '
-               'pas seulement les retenus. La confiance est une note subjective non calibrée, pas une probabilité '
-               'de gain. NEUTRE / ABSTENTION n’est pas une erreur technique. '
+    if review.get('scoring_mode')=='direction_1_10':
+        thresholds=review['score_thresholds']
+        st.caption(f"Score d’orientation : 1 = fortement baissier, 10 = fortement haussier ; "
+            f"seuils archivés LONG > {thresholds['long_score_threshold']}, SHORT < {thresholds['short_score_threshold']}, sinon neutre. "
+            'Ce score n’est pas une probabilité ; les preuves doivent toujours être qualifiées.')
+    if review.get('separate_trend_evidence'):
+        st.caption('Tendance et sélection sont distinctes : 5–6 = informations utilisables mixtes ; '
+                   '« Indéterminable » = aucune estimation exploitable, sans score inventé. '
+                   'Un avis peut être provisoire avec des preuves partielles ; seules des preuves suffisantes '
+                   'selon les contrôles de l’application permettent une sélection. La qualité déclarée par le LLM '
+                   'est affichée séparément et ne remplace pas ces contrôles.')
+    score_notice=('Le score est une orientation subjective non calibrée, pas une probabilité de gain. '
+                  if review.get('scoring_mode')=='direction_1_10' else
+                  'La confiance est une note subjective non calibrée, pas une probabilité de gain. ')
+    st.caption('Ordre initial décroissant du score Oracle, pas de la note LLM ; tous les candidats sont affichés, '
+               'pas seulement les retenus. '+score_notice+'NEUTRE / ABSTENTION n’est pas une erreur technique. '
                'Le dernier prix est la clôture archivée fournie au LLM, pas une cotation temps réel. '
                'Nom de l’entreprise : libellé actuel de stock_metadata. '
                '« Retenu » ne signifie ni approuvé par le risque, ni exécuté. Lecture seule, aucun appel payant.')
-    if review['candidate_count'] < 10:
+    if review['candidate_count'] < review.get('oracle_top_n',10):
         st.caption(f"{review['candidate_count']} candidat(s) dans cette analyse : aucun titre supplémentaire inventé.")
 
 
@@ -1541,16 +1555,20 @@ def _render_risk_prediction_review(options: PipelineLaunchOptions, all_runs) -> 
         st.info('Aucun titre retenu à l’étape 10 pour cette analyse.' if review['llm_run_id'] else
                 'Aucune décision ni cible enregistrée pour ce run exact. Cela ne signifie pas qu’un ordre a été exécuté.')
         return
-    import pandas as pd
-    frame = pd.DataFrame(review['rows']).drop(columns=[
+    from ihm.services.llm_prediction_review import display_review_frame
+    frame = display_review_frame(review['rows'],review['provider_label'] or 'LLM',
+        review.get('scoring_mode','legacy_confidence')).drop(columns=[
         'Retenu par le filtre','Retenu par le filtre LLM','Motif de non-sélection','Motif de non-sélection LLM'],
-        errors='ignore').rename(columns={'Avis LLM': f"Avis {review['provider_label'] or 'LLM'}"})
+        errors='ignore')
     render_prediction_review_table(frame,key=f"pipeline_11_table_{review['run_id'] or review['llm_run_id']}",trade_date=review['trade_date'])
+    if review.get('separate_trend_evidence'):
+        st.caption('Tendance et qualité des preuves relues dans l’analyse exacte de l’étape 10. '
+                   'Une tendance estimée n’est pas une autorisation d’ordre ; les contrôles de risque restent distincts.')
     st.caption(('Lecture seule du run exact : uniquement les titres retenus à l’étape 10, même si le risque les refuse ensuite. '
                 if review['llm_run_id'] else 'Lecture seule des décisions/cibles du run risque sans filtre LLM. ')
                +
                'Cible publiée = portefeuille cible, pas un ordre exécuté ; montant et prix sont ceux du sizing, pas un prix de fill. '
-               'Confiance LLM non calibrée ; dernier prix LLM archivé, pas temps réel. '
+               'Score d’orientation (ou confiance historique) non calibré ; dernier prix LLM archivé, pas temps réel. '
                'Nom de l’entreprise : libellé actuel de stock_metadata. '
                'Une protection absente reste vide (une sortie à durée fixe n’est pas un TP de prix). Aucun appel LLM, broker ou ordre.')
 

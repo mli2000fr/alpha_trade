@@ -11,7 +11,8 @@ from common.config_loader import load_config
 
 @dataclass(frozen=True)
 class ImportRuntime:
-    pipeline_lookback_days: int = 7
+    pipeline_lookback_days: int = 21
+    pipeline_feature_recalc_days: int = 52
     request_timeout_seconds: int = 45
     max_attempts: int = 3
     max_consecutive_symbol_failures: int = 3
@@ -22,6 +23,7 @@ class ImportRuntime:
                 or not 0 < self.min_success_ratio <= 1):
             raise ValueError('sentiment_news_ingestion.min_success_ratio: nombre dans ]0,1] requis')
         for key, low, high in [('pipeline_lookback_days',1,365),
+                ('pipeline_feature_recalc_days',1,365),
                 ('request_timeout_seconds',5,180),('max_attempts',1,5),
                 ('max_consecutive_symbol_failures',1,20)]:
             value=getattr(self,key)

@@ -12,6 +12,7 @@ from sqlalchemy import text
 
 from database.repositories._base import Repository
 from database.repositories.instruments import InstrumentRepository
+from common.daily_bar_sources import select_daily_bars
 
 
 class BarsRepository(Repository):
@@ -54,7 +55,9 @@ class BarsRepository(Repository):
             "ORDER BY date ASC"
         )
         with self.connect() as conn:
-            return pd.read_sql(sql, conn, params=params)
+            frame = pd.read_sql(sql, conn, params=params)
+        # CN/FR have their own canonicalisation contracts, not US feed priority.
+        return select_daily_bars(frame) if market_code == 'US_EQ' else frame
 
     def upsert_bars(  # pragma: no cover - Phase 3.1
         self,

@@ -1,50 +1,15 @@
-La meilleure prochaine étape est d’exploiter l’asymétrie des deux modèles de risque E3-A2.
-Piste 1 — Direction par côté le moins dangereux
-Les modèles de risque ont une AUC d’environ 0,73 des deux côtés. Pour chaque événement Oracle :
-risque LONG  = percentile quotidien de P(perte LONG <= -20 %)
-risque SHORT = percentile quotidien de P(perte SHORT <= -20 %)
+options_oracle_topn_resultats_20261026.txt
 
-si risque LONG nettement inférieur → candidat LONG
-si risque SHORT nettement inférieur → candidat SHORT
-sinon → abstention
-Ce n’est pas la même chose que prédire le rendement. On demande :
-« Dans quel sens la perte catastrophique est-elle la moins probable ? »
+Sur les derniers tests conditionnés aux sélections Oracle, voici les AUC de chaque signal séparément :
+Sélection	Parcours évalué	Volume CALL/PUT	Open interest CALL/PUT	Observations / dates contribuant à l’AUC
+TOP10	H5	0,625	0,875	7 / 2
+TOP20	H5	0,778	0,792	44 / 6
+TOP50	H5	0,577	0,651	151 / 8
+TOP10	H10	0,833	0,500	8 / 2
+TOP20	H10	0,683	0,679	52 / 8
+TOP50	H10	0,504	0,638	160 / 10
 
-Diagnostic OOF peu coûteux, sans réentraînement :
-- politique sans abstention ;
-- marges de rang 0,10 / 0,20 / 0,30 ;
-- marge 0,20 comme politique primaire préfixée ;
-- rendement net du côté choisi ;
-- comparaison avec always-LONG, always-SHORT et choix aléatoire 50/50 ;
-- précision directionnelle, couverture, CVaR et résultats par fold/semestre.
-C’est la priorité numéro 1, car les modèles existent déjà et leur signal de risque est stable.
-Piste 2 — Modèle « première barrière touchée »
-Si la piste 1 échoue, la formulation directionnelle la plus propre restante est un modèle de risques concurrents :
-UP_FIRST       : barrière haussière touchée en premier
-DOWN_FIRST     : barrière baissière touchée en premier
-AMBIGUOUS      : les deux touchées dans la même barre
-NO_TOUCH       : aucune touchée avant H20
-Contrairement à E3-A, on ne rejoue plus deux trades indépendants. On observe un seul chemin et on apprend directement quel mouvement survient en premier.
-Deux variantes :
-- CatBoost multiclasses, simple et rapide ;
-- modèle de survie à risques concurrents, plus élaboré, prédisant chaque jour la probabilité du premier franchissement.
-C’est probablement la meilleure nouvelle formulation de cible pour répondre réellement à D1 contre D10.
-Piste 3 — Experts par régime, mais strictement encadrés
-N4X2 dépendait fortement du régime. Ce n’est pas forcément un défaut si le régime devient explicitement le mécanisme de routage :
-Oracle
-  → régime PIT calculé uniquement avec prix/breadth disponibles
-  → expert risk-on / risk-off / neutral
-  → direction ou abstention
-Il faudrait limiter à 2–3 régimes préfixés et exiger plusieurs folds valides par régime. Sans cela, le risque d’overfitting est très élevé.
-Piste 4 — Nouvelles données réellement signées
-Les données Eroya déjà testées n’ont pas apporté la direction. Les deux sources externes encore crédibles seraient :
-- surface d’options historique PIT : skew put/call, variation d’open interest, term structure, IV relative, flux directionnels ;
-- microstructure : order imbalance, pression bid/ask, clôture contre VWAP, flux de grosses transactions.
-Elles sont plus coûteuses à collecter et doivent être quotidiennes, denses et PIT. Les niveaux agrégés occasionnels ne suffiront pas.
-Mon ordre recommandé
-1. E3-D : direction par asymétrie du tail-risk, sans réentraînement.
-2. Si signal : calibration imbriquée puis confirmation.
-3. Si échec : E4 première barrière touchée.
-4. Si E4 échoue : considérer que les features prix journalières actuelles ne contiennent pas suffisamment de direction.
-5. Ensuite seulement : options/microstructure ou experts de régime.
-La piste E3-D est la dernière expérience immédiate à fort rapport information/coût. Elle peut être exécutée directement à partir de shared-path-utility-20260906071731-0802c8.
+
+Lecture : l’OI paraît plus intéressant à H5 ; à H10, le résultat dépend du périmètre. Les chiffres TOP10 sont particulièrement fragiles : seulement deux dates comparables.
+À H20, les effectifs ne permettent pas de conclusion défendable.
+Attention : ce sont des sélections issues de l’Oracle parcours H20, évaluées ensuite sur les parcours H5/H10 avant SL10. Une AUC de 0,875 ne signifie pas 87,5 % de trades gagnants. Les données sont partielles et l’audit rétrospectif ; aucun de ces signaux n’est encore validé pour le trading.

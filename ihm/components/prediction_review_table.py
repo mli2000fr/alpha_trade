@@ -101,7 +101,7 @@ def _cell(value, column):
     if isinstance(value, (int,float)):
         if not math.isfinite(value):
             return dict(text='—',sort=None,numeric=False)
-        if column=='Rang Oracle':
+        if column=='Rang Oracle' or '(/10)' in column:
             label=str(int(value))
         elif 'Confiance' in column:
             label=f'{value:.2f} %'

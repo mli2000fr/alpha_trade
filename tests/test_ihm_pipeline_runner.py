@@ -719,6 +719,35 @@ def test_build_pipeline_command_sentiment_pipeline_can_disable_checkpoint_resume
     assert "--resume-checkpoints" not in command[-1]
 
 
+def test_daily_sentiment_features_are_bounded_and_pinned_to_workflow_date(monkeypatch) -> None:
+    from event_sentiment.import_runtime import ImportRuntime
+    monkeypatch.setattr('event_sentiment.import_runtime.load_import_runtime',lambda:ImportRuntime(
+        pipeline_lookback_days=3, pipeline_feature_recalc_days=52))
+    script=build_pipeline_command('sentiment_pipeline',PipelineLaunchOptions(trade_date='2026-10-23'))[-1]
+    assert '--lookback-days 3' in script
+    features=script.split('event_sentiment.history_backfill',1)[1]
+    assert '--recent-days 52' in features
+    assert '--resume-features' in features
+    assert '--end-date 2026-10-23' in features
+
+
+def test_daily_sentiment_without_pinned_date_resolves_recent_window_at_runtime() -> None:
+    script=build_pipeline_command('sentiment_pipeline',PipelineLaunchOptions())[-1]
+    assert '--recent-days 52' in script
+    assert '--lookback-days 21' in script
+    assert '--resume-features' in script
+    assert '--years' not in script
+
+
+def test_explicit_sentiment_history_keeps_selected_bounds() -> None:
+    script=build_pipeline_command('sentiment_pipeline',PipelineLaunchOptions(
+        sentiment_start_utc='2020-01-01T00:00:00Z',sentiment_end_utc='2020-12-31T23:59:59Z'))[-1]
+    features=script.split('event_sentiment.history_backfill',1)[1]
+    assert '--recent-days' not in features
+    assert '--resume-features' not in features
+    assert '--start-date 2020-01-01' in features and '--end-date 2020-12-31' in features
+
+
 def test_build_pipeline_command_sentiment_pipeline_supports_contextual_phase_with_explicit_thresholds() -> None:
     command = build_pipeline_command(
         "sentiment_pipeline",

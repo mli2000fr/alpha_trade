@@ -33,6 +33,14 @@ def annotated(row, **values):
     return dict(row, assessment_json=dumps(parsed))
 
 
+def test_long_permission_blocker_is_explained_without_hiding_opinion():
+    row=annotated(item(selected=False),eligible=False,selection_blockers=['long_not_allowed'],direction_score=9)
+    view=review_rows(candidates(1),[row],run_status='COMPLETED',config={'allow_long':False})[0]
+    assert view['Avis LLM']=='LONG' and view['Score directionnel LLM (/10)']==9
+    assert not view['Retenu par le filtre']
+    assert 'LONG non autorisé' in view['Motif de non-sélection']
+
+
 @pytest.fixture
 def engine():
     engine = create_engine('sqlite:///:memory:')
@@ -225,6 +233,30 @@ def test_archived_provider_and_model_not_current_config(engine):
     assert review['provider_label'] == 'DeepSeek' and review['model'] == 'deepseek-archived'
 
 
+def test_archived_top20_default_view_not_truncated_to_ten_and_explicit_limit_still_works(engine):
+    archive(engine)
+    with engine.begin() as conn:
+        row=conn.execute(runs.select().where(runs.c.run_id=='llm-one')).mappings().one()
+        snapshot=json.loads(row['input_json']);snapshot['candidates']=candidates(20)
+        config=json.loads(row['config_json']);config.update(oracle_top_n=20,max_selected=5)
+        from service.llm_directional.repository import digest
+        conn.execute(runs.update().where(runs.c.run_id=='llm-one').values(
+            config_json=dumps(config),input_json=dumps(snapshot),input_sha256=digest(snapshot)))
+    review=load_prediction_review(engine,**SCOPE)
+    assert review['oracle_top_n']==20 and review['max_selected']==5
+    assert len(review['rows'])==20
+    assert [r['Symbole'] for r in review['rows']]==[f'S{i:02}' for i in range(1,21)]
+    assert len(load_prediction_review(engine,**SCOPE,limit=7)['rows'])==7
+
+
+def test_legacy_archive_without_n_keeps_top10_despite_factory_default20(engine):
+    from service.llm_directional.config import FilterConfig
+    assert FilterConfig().oracle_top_n==20
+    archive(engine)
+    review=load_prediction_review(engine,**SCOPE)
+    assert review['oracle_top_n']==10 and len(review['rows'])==10
+
+
 def test_company_names_use_metadata_keep_order_and_missing_symbols(engine):
     archive(engine, rows=[item()])
     rows = load_prediction_review(engine, **SCOPE)['rows']
@@ -287,13 +319,37 @@ def test_ui_displays_archive_with_dynamic_label_and_non_calibrated_notice(engine
     assert scopes == [SCOPE]
     frame = calls['dataframe'][0]
     assert frame.iloc[0]['Symbole'] == 'S01' and 'Avis DeepSeek' in frame.columns
-    assert frame.iloc[0]['Confiance DeepSeek (%)'] == 90
+    assert frame.iloc[0]['Confiance historique DeepSeek (%)'] == 90
     assert 'Motif de non-sélection' in frame.columns
     assert frame.iloc[0]['Dernier prix ($)'] == 11.1256
     assert frame.iloc[0]['Date du prix'] == DAY
     assert frame.iloc[0]['Nom de l’entreprise'] == 'Example Company'
     assert any('subjective non calibrée' in msg and 'Lecture seule' in msg for msg in calls['caption'])
     assert any('llm-one' in msg and 'DeepSeek / deepseek-archived' in msg for msg in calls['caption'])
+
+
+def test_ui_new_score_column_and_archived_strict_thresholds(engine,fake_ui,monkeypatch):
+    pipeline,calls=fake_ui
+    archive(engine,rows=[annotated(item(),direction_score=9)])
+    review=load_prediction_review(engine,**SCOPE)
+    review.update(scoring_mode='direction_1_10',score_thresholds={'long_score_threshold':8,'short_score_threshold':3})
+    monkeypatch.setattr(pipeline,'_load_prediction_review_cached',lambda **kw:review)
+    pipeline._render_ml_predict_review(pipeline.PipelineLaunchOptions(ml_predict_batch_id='oracle-test'))
+    frame=calls['dataframe'][0]
+    assert frame.iloc[0]['Score GPT (/10)']==9
+    assert not any('Confiance' in name for name in frame.columns)
+    assert any('LONG > 8, SHORT < 3' in message for message in calls['caption'])
+
+
+def test_ui_displays_all_twenty_candidates_from_archived_n(engine,fake_ui,monkeypatch):
+    pipeline,calls=fake_ui
+    archive(engine)
+    review=load_prediction_review(engine,**SCOPE)
+    review.update(oracle_top_n=20,candidate_count=20,rows=review_rows(candidates(20),[],run_status='COMPLETED',limit=20))
+    monkeypatch.setattr(pipeline,'_load_prediction_review_cached',lambda **kw:review)
+    pipeline._render_ml_predict_review(pipeline.PipelineLaunchOptions(ml_predict_batch_id='oracle-test'))
+    assert len(calls['dataframe'][0])==20
+    assert any('TOP 20 Oracle' in text for text in calls['caption'])
 
 
 def test_ui_read_error_never_exposes_secrets_or_prevents_predict(fake_ui, monkeypatch):

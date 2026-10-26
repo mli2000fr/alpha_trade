@@ -56,7 +56,7 @@ def _publication_status(value, now, max_age_days):
     return 'fresh_timestamp_claim'
 
 
-def _parse_web_response(response, symbol, config, observed_at, *, response_schema=None):
+def _parse_web_response(response, symbol, config, observed_at, *, response_schema=None, score_mode=False, separated=False):
     provider_dates=None
     from .prompts import native_search_protocol
     if (config.provider=='deepseek' and native_search_protocol(response.get('analysis_protocol'))
@@ -91,7 +91,10 @@ def _parse_web_response(response, symbol, config, observed_at, *, response_schem
         raise ValueError('Aucune recherche Web terminée')
     result = json.loads(''.join(texts))
     validate(result, response_schema or SCHEMA)
-    if result['symbol'] != symbol or not result['identity_verified']:
+    if score_mode:
+        from .direction_score import apply_score
+        apply_score(result, config, separated=separated)
+    if result['symbol'] != symbol or not result['identity_verified'] and not separated:
         raise ValueError('Identité du titre non vérifiée')
     if isinstance(result['confidence'], bool) or not math.isfinite(result['confidence']):
         raise ValueError('Note non numérique/finie')
@@ -123,16 +126,20 @@ def _parse_web_response(response, symbol, config, observed_at, *, response_schem
         if status in FRESH_QUALIFICATIONS:
             fresh.add(url)
     blockers = []
+    if separated and not result['identity_verified']:
+        blockers.append('identity_not_confirmed')
     if len(fresh) < config.min_sources:
         blockers.append('insufficient_fresh_sources')
     if excluded:
         # The directional reasoning may depend on an excluded claim. Do not
         # silently endorse that reasoning just because other sources are dated.
         blockers.append('excluded_untraceable_sources')
-    if result['confidence'] < config.min_confidence:
+    if not score_mode and result['confidence'] < config.min_confidence:
         blockers.append('confidence_below_threshold')
     if result['decision'] == 'SHORT' and not config.allow_short:
         blockers.append('short_not_allowed')
+    if result['decision'] == 'LONG' and not config.allow_long:
+        blockers.append('long_not_allowed')
     # An ABSTAIN remains a valid assessment even when recent sources are insufficient.
     result['eligible'] = result['decision'] != 'ABSTAIN' and not blockers
     result['assessment_outcome'] = ('ABSTAIN' if result['decision'] == 'ABSTAIN'
@@ -190,16 +197,16 @@ def _local_qualifications(result,context,config,observed_at):
             fresh &= cutoff-timedelta(days=config.max_source_age_days)<=publication<cutoff
             ready=source.get('identity_qualified') is True
         elif source['kind']=='sec':
-            from .prompts import FRESH_VERSION
-            if context.get('analysis_protocol')!=FRESH_VERSION:
+            from .prompts import fresh_protocol
+            if not fresh_protocol(context.get('analysis_protocol')):
                 raise ValueError('Type de preuve incompatible avec le protocole')
             from .fresh_evidence import day,sec_url,NY
             fresh &= cutoff.astimezone(NY).date()-timedelta(days=config.evidence_sec_max_age_days)<=day(source['publication_date'])<=cutoff.astimezone(NY).date()
             ready=(source.get('identity_qualified') is True and source.get('integrity_qualified') is True
                 and sec_url(source.get('url'),source.get('cik'),source.get('accession','')))
         elif source['kind'] in ('earnings_calendar','price_volume','fundamentals'):
-            from .prompts import FRESH_VERSION
-            if context.get('analysis_protocol')!=FRESH_VERSION:
+            from .prompts import fresh_protocol
+            if not fresh_protocol(context.get('analysis_protocol')):
                 raise ValueError('Type de contexte incompatible')
             ready=False  # Contextual facts, never sufficient directional evidence.
             status='qualified_factual_context_only'
@@ -213,10 +220,14 @@ def _local_qualifications(result,context,config,observed_at):
 
 
 def parse_response(response, symbol, config, observed_at, context=None):
-    from .prompts import DEEPSEEK_SEARCH_VERSION,FRESH_VERSION,has_local_evidence,response_schema
+    from .prompts import DEEPSEEK_SEARCH_VERSION,FRESH_VERSION,TREND_EVIDENCE_VERSION,score_protocol,fresh_protocol,has_local_evidence,response_schema
     upgraded=context is not None and has_local_evidence(context)
     version=context.get('analysis_protocol') if context else None
-    if context and (version==DEEPSEEK_SEARCH_VERSION or version==FRESH_VERSION and config.provider=='deepseek' and config.analysis_mode=='web_search'):
+    score_mode=score_protocol(version)
+    separated=version==TREND_EVIDENCE_VERSION
+    if score_mode and config.scoring_mode!='direction_1_10':
+        raise ValueError('Protocole de score incompatible avec la configuration')
+    if context and (version==DEEPSEEK_SEARCH_VERSION or fresh_protocol(version) and config.provider=='deepseek' and config.analysis_mode=='web_search'):
         if (config.provider!='deepseek' or config.analysis_mode!='web_search'
                 or response.get('analysis_protocol')!=version
                 or response.get('web_provider')!='deepseek' or response.get('analysis_mode')!='web_search'):
@@ -228,13 +239,13 @@ def parse_response(response, symbol, config, observed_at, context=None):
         return _parse_web_response(response,symbol,config,observed_at)
     if context.get('symbol')!=symbol or context.get('analysis_mode')!=config.analysis_mode:
         raise ValueError('Mode/symbole du contexte incompatible')
-    if version==FRESH_VERSION:
+    if fresh_protocol(version):
         from .fresh_evidence import validate_fresh_packet
         validate_fresh_packet(context,config,observed_at)
     if not local:
         web_config=(replace(config,max_source_age_days=min(config.max_source_age_days,config.evidence_news_max_age_days))
-                    if version==FRESH_VERSION else config)
-        result=_parse_web_response(response,symbol,web_config,observed_at,response_schema=response_schema(SCHEMA,version))
+                    if fresh_protocol(version) else config)
+        result=_parse_web_response(response,symbol,web_config,observed_at,response_schema=response_schema(SCHEMA,version),score_mode=score_mode,separated=separated)
     else:
         normalized=deepseek_output(response) if config.provider=='deepseek' else response
         if normalized.get('status')!='completed':
@@ -247,6 +258,9 @@ def parse_response(response, symbol, config, observed_at, context=None):
             raise ValueError('Refus du modèle')
         result=json.loads(''.join(p.get('text','') for p in parts if p.get('type')=='output_text'))
         validate(result,response_schema(SCHEMA,version))
+        if score_mode:
+            from .direction_score import apply_score
+            apply_score(result, config, separated=separated)
         if result['symbol']!=symbol or result['sources']:
             raise ValueError('Symbole incorrect ou sources Web interdites en mode local')
         if type(result['confidence']) not in (int,float) or not math.isfinite(result['confidence']):
@@ -254,15 +268,17 @@ def parse_response(response, symbol, config, observed_at, context=None):
         blockers=[]
         if not result['identity_verified']:
             blockers.append('identity_not_confirmed')
-        if result['confidence']<config.min_confidence:
+        if not score_mode and result['confidence']<config.min_confidence:
             blockers.append('confidence_below_threshold')
         if result['decision']=='SHORT' and not config.allow_short:
             blockers.append('short_not_allowed')
+        if result['decision']=='LONG' and not config.allow_long:
+            blockers.append('long_not_allowed')
         result.update(selection_blockers=blockers,sources=[],excluded_sources=[],
             source_qualifications=[],fresh_source_count=0,source_timestamps_verified=False)
     if not result['consensus_analysis'].strip():
         raise ValueError('Analyse du consensus absente ; expliciter les données manquantes si nécessaire')
-    if version==FRESH_VERSION and not result['context_analysis'].strip():
+    if fresh_protocol(version) and not result['context_analysis'].strip():
         raise ValueError('Analyse du contexte frais absente')
     qualifications,qualified,excluded=_local_qualifications(result,context,config,observed_at)
     result.update(local_source_qualifications=qualifications,excluded_local_sources=excluded,
@@ -272,6 +288,11 @@ def parse_response(response, symbol, config, observed_at, context=None):
         result['selection_blockers'].append('excluded_untraceable_local_sources')
     if local and len(qualified)<config.min_local_sources:
         result['selection_blockers'].append('insufficient_qualified_local_sources')
+    if score_mode and result['decision']=='ABSTAIN' and result.get('direction_score') is not None:
+        result['selection_blockers'].append('direction_score_neutral')
+    if separated:
+        from .trend_evidence import qualify_evidence
+        qualify_evidence(result)
     result['eligible']=result['decision']!='ABSTAIN' and not result['selection_blockers']
     result['assessment_outcome']=('ABSTAIN' if result['decision']=='ABSTAIN' else
         'ELIGIBLE' if result['eligible'] else 'ABSTAIN_UNQUALIFIED')
@@ -280,5 +301,22 @@ def parse_response(response, symbol, config, observed_at, context=None):
 
 def select_symbols(items, config):
     eligible = [item for item in items if item['eligible']]
-    eligible.sort(key=lambda item: (-item['confidence'], item['oracle_rank'], item['symbol']))
+    for item in eligible:
+        if (item.get('decision') == 'LONG' and not config.allow_long
+                or item.get('decision') == 'SHORT' and not config.allow_short):
+            raise ValueError('Sélection direction non autorisée incohérente')
+    from .direction_score import selection_sort_key, score_decision
+    if config.scoring_mode=='direction_1_10':
+        for item in items:
+            if config.separate_trend_evidence:
+                from .trend_evidence import trend_decision
+                expected=trend_decision(item,config)
+                if item['eligible'] and (item.get('evidence_quality')!='SUFFICIENT'
+                        or item.get('retention_evidence_verified') is not True or item.get('selection_blockers')):
+                    raise ValueError('Sélection avec preuves insuffisantes incohérente')
+            else:
+                expected=score_decision(item.get('direction_score'),config)
+            if item['decision']!=expected or item['eligible'] and (expected=='ABSTAIN' or expected=='SHORT' and not config.allow_short):
+                raise ValueError('Sélection score/direction incohérente')
+    eligible.sort(key=selection_sort_key)
     return [item['symbol'] for item in eligible[:config.max_selected]]

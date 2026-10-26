@@ -126,6 +126,21 @@ def test_packet_is_bounded_fresh_and_read_only(engine):
     assert parse_response(response(value),'ABC',CFG,NOW,context=value)['eligible']
 
 
+@pytest.mark.parametrize('future', [False, True])
+def test_price_pair_priority_respects_cutoff_before_limiting_history(engine, future):
+    with engine.begin() as conn:
+        conn.execute(text('''INSERT INTO stock_bars_daily
+            SELECT symbol,date,open,high,low,close+0.5,volume+500,is_filled,'eodhd_eod',
+                data_adjustment,:available,:available FROM stock_bars_daily
+            WHERE data_source='alpaca_sip' '''),
+            {'available': '2026-10-19 01:00:00' if future else '2026-10-17 01:00:00'})
+    value = ctx(engine)
+    prices = value['prices_through_decision_date']
+    assert len(prices) == 21
+    assert prices[-1]['date'] == '2026-10-16'
+    assert prices[-1]['close'] == (31. if future else 31.5)
+
+
 @pytest.mark.parametrize('sql,kind',[
     ("UPDATE stock_earnings_calendar SET last_updated='2026-10-01'",'earnings_calendar'),
     ("UPDATE stock_fundamentals_daily SET fetched_at='2026-08-01'",'fundamentals'),

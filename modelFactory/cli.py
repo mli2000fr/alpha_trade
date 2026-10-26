@@ -335,13 +335,15 @@ def _require_live_synthesis(result: dict, *, day: str, batch_id: str) -> None:
 
 
 def _resolve_last_bar_date(engine) -> date | None:
-    """Dernière barre eodhd disponible (utilisée comme date live des rangs per-sector)."""
+    """Dernière barre daily disponible selon la préférence commune US."""
     try:
         from sqlalchemy import text
+        from common.daily_bar_sources import daily_source_filter
+        source_filter, source_params = daily_source_filter()
 
         with engine.connect() as conn:
             row = conn.execute(
-                text("SELECT MAX(`date`) FROM stock_bars_daily WHERE data_source='eodhd_eod'")
+                text("SELECT MAX(`date`) FROM stock_bars_daily WHERE 1=1 "+source_filter), source_params
             ).fetchone()
         return row[0] if row and row[0] else None
     except Exception:

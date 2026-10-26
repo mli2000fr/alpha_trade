@@ -437,11 +437,14 @@ def fetch_market_data(engine: Engine, config: AlphaScannerConfig, symbols: Seque
     if not symbols:
         return pd.DataFrame(columns=PRICE_COLUMNS)
     LOGGER.debug("Chargement market data | symboles=%s", len(symbols))
+    from common.daily_bar_sources import daily_source_filter
+    source_filter, source_params = daily_source_filter() if config.price_table == 'stock_bars_daily' else ('', {})
     stmt = text(
         f"""
         SELECT symbol, date, close, volume, high, low
         FROM {config.price_table}
         WHERE symbol IN :symbols
+        {source_filter}
         ORDER BY symbol, date
         """
     ).bindparams(bindparam("symbols", expanding=True))
@@ -449,7 +452,7 @@ def fetch_market_data(engine: Engine, config: AlphaScannerConfig, symbols: Seque
         market_data = pd.read_sql_query(
             stmt,
             engine,
-            params=cast(dict[str, Any], {"symbols": list(symbols)}),
+            params=cast(dict[str, Any], {"symbols": list(symbols), **source_params}),
         )
     except SQLAlchemyError as exc:
         LOGGER.exception("Echec lecture %s pour %s symboles.", config.price_table, len(symbols))
@@ -551,12 +554,15 @@ def fetch_instrument_metadata(
 def load_benchmark_returns(
     engine: Engine, config: AlphaScannerConfig, start_date: date, end_date: date
 ) -> pd.DataFrame:
+    from common.daily_bar_sources import daily_source_filter
+    source_filter, source_params = daily_source_filter() if config.price_table == 'stock_bars_daily' else ('', {})
     stmt = text(
         f"""
         SELECT date, close
         FROM {config.price_table}
         WHERE symbol = 'SPY'
           AND date BETWEEN :start_date AND :end_date
+          {source_filter}
         ORDER BY date
         """
     )
@@ -564,7 +570,7 @@ def load_benchmark_returns(
         benchmark_df = pd.read_sql_query(
             stmt,
             engine,
-            params={"start_date": start_date, "end_date": end_date},
+            params={"start_date": start_date, "end_date": end_date, **source_params},
         )
     except SQLAlchemyError:
         LOGGER.warning("Lecture benchmark SPY indisponible pour le calcul du beta.")
@@ -770,6 +776,8 @@ def build_preselection_rejection_audit(
 
     history_status_enabled = "history_status" in metadata_columns
     history_status_select = "sm.history_status" if history_status_enabled else "NULL AS history_status"
+    from common.daily_bar_sources import daily_source_filter
+    source_filter, source_params = daily_source_filter() if config.price_table == 'stock_bars_daily' else ('', {})
     stmt = text(
         f"""
         WITH ranked AS (
@@ -780,6 +788,7 @@ def build_preselection_rejection_audit(
                    volume,
                    ROW_NUMBER() OVER (PARTITION BY instrument_id ORDER BY date DESC) AS rn
             FROM {config.price_table}
+            WHERE 1=1 {source_filter}
         ), aggregated AS (
             SELECT instrument_id,
                    symbol,
@@ -808,7 +817,7 @@ def build_preselection_rejection_audit(
         audit_df = pd.read_sql_query(
             stmt,
             engine,
-            params={"liquidity_lookback_days": config.liquidity_lookback_days},
+            params={"liquidity_lookback_days": config.liquidity_lookback_days, **source_params},
         )
     except SQLAlchemyError:
         LOGGER.warning("Audit des rejets de pré-sélection indisponible.", exc_info=True)
@@ -892,6 +901,8 @@ def iter_eligible_symbol_chunks(
                  OR LOWER(TRIM(sm.history_status)) IN ({eligible_statuses})
               )
         """
+    from common.daily_bar_sources import daily_source_filter
+    source_filter, source_params = daily_source_filter() if config.price_table == 'stock_bars_daily' else ('', {})
     stmt = text(
         f"""
         WITH ranked AS (
@@ -902,6 +913,7 @@ def iter_eligible_symbol_chunks(
                    volume,
                    ROW_NUMBER() OVER (PARTITION BY instrument_id ORDER BY date DESC) AS rn
             FROM {config.price_table}
+            WHERE 1=1 {source_filter}
         ), eligible AS (
             SELECT r.symbol
             FROM ranked r
@@ -934,6 +946,7 @@ def iter_eligible_symbol_chunks(
                         "liquidity_threshold": config.liquidity_threshold,
                         "limit": config.chunk_size,
                         "offset": offset,
+                        **source_params,
                     },
                 ).fetchall()
         except SQLAlchemyError as exc:

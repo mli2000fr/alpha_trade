@@ -172,6 +172,8 @@ def test_event_sentiment_cli_main_forwards_perf_overrides(monkeypatch) -> None:
 
 
 def test_event_sentiment_pipeline_emits_live_progress(monkeypatch) -> None:
+    # Ingestion.run is stubbed below: its unused mapper must not open real SQL.
+    monkeypatch.setattr('event_sentiment.ingestion.EntitySectorMapper', lambda: object())
     class _DummyRepository:
         def load_candidate_symbols(self):
             return ["AAPL", "MSFT"]
@@ -298,6 +300,7 @@ def test_event_sentiment_cli_forwards_zero_pending_max_batches_as_unlimited(monk
 
 
 def test_event_sentiment_pipeline_contextual_only_forwards_scope_to_repository(monkeypatch) -> None:
+    monkeypatch.setattr('event_sentiment.ingestion.EntitySectorMapper', lambda: object())
     class _DummyRepository:
         def __init__(self) -> None:
             self.contextual_kwargs: dict[str, object] | None = None
@@ -362,6 +365,7 @@ def test_event_sentiment_pipeline_contextual_only_forwards_scope_to_repository(m
 
 
 def test_event_sentiment_pipeline_emits_contextual_batch_progress(monkeypatch) -> None:
+    monkeypatch.setattr('event_sentiment.ingestion.EntitySectorMapper', lambda: object())
     class _DummyRepository:
         def __init__(self) -> None:
             self.pending_pairs = [

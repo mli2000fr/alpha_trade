@@ -6,6 +6,19 @@
 
 ## Périmètre
 
+Le **24 octobre 2026**, l'agrégation des features de l'étape 8 quotidienne est
+bornée à `sentiment_news_ingestion.pipeline_feature_recalc_days` (52) dates calendaires
+inclusives. La date de séance du workflow est conservée après minuit, sauf
+fin sentiment explicitement choisie. Lecture du buffer de 45 jours inchangée,
+écriture des seules lignes récentes manquantes ou modifiées (reprise par
+symbole et secteur, trous inclus) ; pas de bootstrap décennal implicite.
+L'import J−21/J est réduit par les checkpoints réussis, avec recouvrement
+technique de frontière et dédoublonnage des articles. Il utilise séparément
+`pipeline_lookback_days: 21`. Les 52 jours sont recalculés même si l'import
+n'a rattrapé que 7 jours ; un contexte plus ancien reste lu pour les moyennes.
+Les backfills historiques explicitement demandés restent disponibles.
+[Bornes, checkpoints et limites](sentiment_pipeline_reprise_20261017.md).
+
 Le **21 octobre 2026**, correction de la finalisation `SKIPPED` compatible avec
 la base (motif dans `details_json`), isolation des anciennes barres SIP invalides
 sans relâcher J, et conservation du ratio de couverture dans le résumé parent.
@@ -17,7 +30,8 @@ sans retrait automatique d'univers ni nouvelle exécution d'ordres :
 Le 19 octobre 2026, le collecteur autonome `eodhd_news_ingestion_sync` est
 désactivé sur demande utilisateur : l'étape 8 suffit au besoin retenu. Les listes
 `steps` / `steps_friday` et l'univers de `us_pipeline` déterminent la cadence de
-l'étape 8 ; vérifier ces listes dans `config.yaml` (actuellement toutes deux 1–12).
+l'étape 8 ; vérifier ces listes dans `config.yaml` (actuellement 1–12 hors étape 8
+du lundi au jeudi, et 1–12 le vendredi).
 Pas de remplacement implicite de l'ancienne collecte élargie/week-end.
 [Désactivation et historique](eodhd_news_ingestion_sync.md).
 
