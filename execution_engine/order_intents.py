@@ -862,10 +862,15 @@ def _resolve_alpaca_time_in_force(intent: OrderIntent, config: ExecutionConfig |
                     and intent.intent_role == IntentRole.ENTRY and intent.side == 'buy'
                     and intent.limit_price is not None and intent.limit_price > 0):
                 return 'ioc'
+            if (intent.time_in_force == 'day' and intent.winner_entry_mode == 'standard'
+                    and intent.intent_role == IntentRole.ENTRY and intent.side == 'buy'
+                    and (intent.order_type == 'market' or intent.order_type == 'limit'
+                         and intent.limit_price is not None and intent.limit_price > 0)):
+                return 'day'
             if (intent.time_in_force == 'opg' and intent.order_type == 'market'
                     and intent.intent_role == IntentRole.EXIT and intent.side == 'sell'):
                 return 'opg'
-            raise ValueError('Campaign TIF restricted to LONG limit IOC entries / MOO exits')
+            raise ValueError('Campaign TIF restricted to LONG IOC/standard DAY entries / MOO exits')
         if (intent.time_in_force != 'opg' or intent.order_type != 'market'
                 or intent.intent_role != IntentRole.EXIT or intent.side not in ('buy', 'sell')
                 or intent.broker_mode != 'paper' or not is_effectively_integer_quantity(intent.qty)):

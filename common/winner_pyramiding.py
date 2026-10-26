@@ -40,7 +40,7 @@ class WinnerPyramidingConfig:
                 continue
             if type(value) not in (float, int) or not math.isfinite(value) or not 0 < value < 1:
                 raise ValueError(f'winner_pyramiding.{key}: fraction in(0,1) required')
-        for key, lo, hi in [('confirmation_bars', 1, 12), ('max_quote_age_seconds', 1, 300),
+        for key, lo, hi in [('confirmation_bars', 0, 12), ('max_quote_age_seconds', 1, 300),
                 ('max_bar_delay_seconds', 1, 300), ('entry_valid_sessions', 1, 60)]:
             if type(getattr(self, key)) is not int or not lo <= getattr(self, key) <= hi:
                 raise ValueError(f'winner_pyramiding.{key}: integer in[{lo},{hi}] required')
@@ -114,6 +114,9 @@ def confirmed_breakout(bars, prior_session_high, policy, *, now):
     evidence and is ignored. No next-bar open is known or assumed in live.
     The previous session's high must be supplied from qualified daily data.
     """
+    # Zero is a separate standard-order path, never a vacuous breakout.
+    if policy.confirmation_bars == 0:
+        return False
     if not math.isfinite(float(prior_session_high)) or prior_session_high <= 0:
         return False
     count = policy.confirmation_bars
@@ -213,7 +216,9 @@ def confirmed_winner(state, bars, *, now):
     p = WinnerPyramidingConfig(**state['policy'])
     if not state['lots']:
         return False
-    tail = fresh_completed_bars(bars, p, now=now, count=p.confirmation_bars)
+    # Zero disables initial confirmation only. An add still needs at least
+    # one completed regular-session bar above its own winning threshold.
+    tail = fresh_completed_bars(bars, p, now=now, count=max(1, p.confirmation_bars))
     if not tail:
         return False
     first_fill = aware(state['first_fill_at'])

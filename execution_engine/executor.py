@@ -707,14 +707,32 @@ class ProductionExecutor:
                     held = {str(p['symbol']).upper() for p in positions if float(p.get('qty') or 0) != 0}
                     if any(str(t.symbol).upper() in held and str(t.side or 'long').lower() in ('long', 'buy') for t in targets):
                         raise ValueError('Winner admission cannot adopt/average an already-held position')
-                    targets, plans = stage_targets(WinnerCampaignStore(self._repo.engine),
+                    campaign_store = WinnerCampaignStore(self._repo.engine)
+                    targets, plans = stage_targets(campaign_store,
                         targets, self._cfg, exec_run_id)
+                    if self._cfg.winner_pyramiding.confirmation_bars == 0:
+                        from execution_engine.winner_standard_entry import submit_standard_plans
+                        standard_result = submit_standard_plans(campaign_store, self._repo,
+                            self._broker, self._cfg, plans)
+                        metrics['winner_standard_entry'] = standard_result
+                        metrics['submitted'] += standard_result['winner_buys_submitted']
+                        metrics['filled'] += standard_result.get('standard_filled_orders', 0)
+                        LOGGER.info('Winner confirmation=0: soumis=%s exécutés=%s bloqués=%s détails=%s',
+                            standard_result['winner_buys_submitted'],
+                            standard_result.get('standard_filled_orders', 0),
+                            standard_result.get('winner_entries_blocked', 0),
+                            standard_result.get('winner_details', []))
+                        if standard_result.get('requires_reconciliation'):
+                            raise RuntimeError('Winner standard entry requires broker reconciliation; '
+                                'durable campaign preserved, no automatic resubmission authorized')
                 metrics['winner_plans'] = plans
                 metrics['winner_plans_armed'] = sum(p['outcome'] == 'PLAN_ARMED' for p in plans)
                 metrics['winner_plans_existing'] = len(plans)-metrics['winner_plans_armed']
                 for plan in plans:
                     events.append(make_event(exec_run_id, EventType.PRECHECK_OK,
-                        f"Winner {plan['outcome']}: {plan['symbol']} ; aucun achat immédiat",
+                        f"Winner {plan['outcome']}: {plan['symbol']} ; "
+                        + ('entrée standard sans confirmation (voir bilan de soumission)'
+                           if self._cfg.winner_pyramiding.confirmation_bars == 0 else 'attente de confirmation'),
                         symbol=plan['symbol'], payload=plan))
                 target_by_symbol = {t.symbol: t for t in targets}
             entry_intents = build_entry_intents(

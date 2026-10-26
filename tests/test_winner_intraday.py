@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+pytestmark = pytest.mark.usefixtures('isolated_winner_config')
+
 from backtesting.simulator import BacktestConfig, BacktestEngine
 from backtesting.trading_constraints import TradingConstraintConfig
 from common.market_calendar import get_market_calendar
@@ -64,6 +66,38 @@ def test_actual_runtime_risk_cash_and_costs_are_connected():
     first_exposure = marks.loc[marks.gross.gt(0)].iloc[0]
     assert first_exposure.timestamp.hour == 13 and first_exposure.timestamp.minute == 50
     assert not result.drawdown_breaker_df.empty
+
+
+def test_zero_market_entry_fills_first_open_without_confirmation_and_still_exits_open21():
+    cfg, args, _ = fixture(last=date(2026, 11, 18), confirmation_bars=0)
+    result = BacktestEngine(cfg).run(**args)
+    buys = result.trade_events_df.loc[result.trade_events_df.event.eq('BUY_FILL')]
+    assert buys.iloc[0].time == pd.Timestamp('2026-10-19T13:30:00Z')
+    trade = result.closed_trades_df.iloc[0]
+    assert trade.entry_price == 100. and trade.exit_reason == 'HORIZON_OPEN'
+    assert trade.exit_date == pd.Timestamp('2026-11-16T14:30:00Z')
+    assert result.tracker_snapshot['winner_replay']['costs'] > 0
+    assert 'observed 5m opens only' in result.tracker_snapshot['winner_replay']['standard_entry_assumptions']
+
+
+def test_zero_resting_day_limit_cannot_fill_from_a_future_low_and_expires():
+    cfg, args, raw = fixture(confirmation_bars=0)
+    cfg.exec_config = replace(cfg.exec_config, entry_order_type='limit', limit_price_buffer_bps=-100)
+    for day in (cfg.start_date, cfg.end_date):
+        raw[(day, 'AAA')].loc[:, 'low'] = 95.  # Opens stay >99; don't infer intrabar fill.
+    result = BacktestEngine(cfg).run(**args)
+    assert not result.trade_events_df.event.eq('BUY_FILL').any()
+    assert result.tracker_snapshot['winner_replay']['gross'] == 0
+
+
+def test_zero_day_limit_waits_for_a_qualified_later_open_instead_of_becoming_ioc():
+    cfg, args, raw = fixture(confirmation_bars=0)
+    cfg.exec_config = replace(cfg.exec_config, entry_order_type='limit', limit_price_buffer_bps=-100)
+    raw[(cfg.start_date, 'AAA')].loc[2, ['open', 'close', 'high', 'low']] = [98., 98., 98.1, 97.9]
+    result = BacktestEngine(cfg).run(**args)
+    buys = result.trade_events_df.loc[result.trade_events_df.event.eq('BUY_FILL')]
+    assert buys.iloc[0].time == pd.Timestamp('2026-10-19T13:40:00Z')
+    assert buys.iloc[0].price == 98.
 
 
 def test_shared_capital_and_explicit_two_x_not_fake_independent_deposits():

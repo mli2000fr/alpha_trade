@@ -60,7 +60,12 @@ class NativeWinnerRisk:
         today = now.astimezone(ZoneInfo('America/New_York')).date()
         sessions = [s for s in cal.sessions(today-timedelta(days=14), today) if s.is_open]
         current = next((s for s in sessions if s.session_date == today), None)
-        if current is None or not current.open_at_utc <= now < current.close_at_utc:
+        from execution_engine.winner_standard_entry import standard_initial, standard_entry_window
+        standard = kind == 'ENTRY' and standard_initial(state)
+        if standard:
+            if not standard_entry_window(state, now):
+                raise ValueError('Outside standard Winner submission window')
+        elif current is None or not current.open_at_utc <= now < current.close_at_utc:
             raise ValueError('Fresh entry reapproval requires regular US trading hours')
         prior = [s for s in sessions if s.close_at_utc < now][-1].session_date
         rejected = check_new_entry_data(engine, [state['symbol']], prior, now=now)

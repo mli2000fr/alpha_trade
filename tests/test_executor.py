@@ -7,6 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures('isolated_winner_config')
+
 from execution_engine.audit import build_execution_run_summary
 from execution_engine.broker_adapter import BrokerAdapter
 from execution_engine.config import ExecutionConfig
@@ -74,6 +76,34 @@ def test_winner_step12_stages_approved_budget_not_immediate_broker_buy():
     healthy.assert_called_once()
     broker.submit_intent.assert_not_called()
     assert store.rows()[0]['state']['risk_budget'] == 1000.
+
+
+@pytest.mark.parametrize('needs_review', [False, True])
+def test_winner_zero_step12_submits_standard_path_but_not_legacy_buy_or_protections(needs_review):
+    from common.winner_pyramiding import WinnerPyramidingConfig
+    from execution_engine.winner_campaign_store import WinnerCampaignStore
+    from sqlalchemy import create_engine
+    cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True,
+        winner_pyramiding=WinnerPyramidingConfig(enabled=True, confirmation_bars=0))
+    target = replace(_target(), trade_date=date(2026, 10, 16))
+    executor, repo, broker, oco = _make_executor(cfg, [target])
+    broker.get_all_positions.return_value = []
+    store = WinnerCampaignStore(create_engine('sqlite://'))
+    with patch('execution_engine.winner_plans.require_campaign_watcher') as healthy, patch(
+            'execution_engine.winner_campaign_store.WinnerCampaignStore', return_value=store), patch(
+            'execution_engine.winner_standard_entry.submit_standard_plans',
+            return_value=dict(winner_buys_submitted=1, requires_reconciliation=needs_review)) as standard:
+        result = executor.execute_run('r1', date(2026, 10, 16))
+    healthy.assert_called_once()
+    standard.assert_called_once()
+    assert result['winner_standard_entry']['winner_buys_submitted'] == 1
+    assert result['submitted'] == 1
+    if needs_review:
+        assert result['status'] == 'FAILED'
+    else:
+        assert result['winner_plans_armed'] == 1 and result['status'] == 'COMPLETED'
+    broker.submit_intent.assert_not_called()  # No duplicate through the legacy loop.
+    assert store.rows()[0]['state']['policy']['confirmation_bars'] == 0
 
 
 def _make_executor(config: ExecutionConfig | None = None, targets: list[ExecutionTarget] | None = None) -> tuple[ProductionExecutor, MagicMock, MagicMock, MagicMock]:

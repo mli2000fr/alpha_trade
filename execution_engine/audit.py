@@ -156,6 +156,7 @@ def build_execution_run_summary(
         "winner_plans_armed": int(metrics.get('winner_plans_armed', 0)),
         "winner_plans_existing": int(metrics.get('winner_plans_existing', 0)),
         "winner_plans": metrics.get('winner_plans', []),
+        "winner_standard_entry": metrics.get('winner_standard_entry'),
         "rebalance_submitted_orders": int(metrics.get("rebalance_submitted", 0) or 0),
         "rebalance_failed_orders": int(metrics.get("rebalance_failed", 0) or 0),
         "constraint_blocked_orders": int(metrics.get("constraint_blocked", 0) or 0),
