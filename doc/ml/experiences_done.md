@@ -1,5 +1,307 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-26 — US : options dans TOP10/20/50 Oracle, indice H5 TOP20 non confirmé
+
+Audit conditionnel demandé après l'audit large :NpremiersOracle AVANT options/
+labels, sans remplacementN+1. Modèles parcoursH20 existantsbc35a7septembre et
+3b0515octobre, aucunOracleparcoursH5/H10 trouvé, aucun nouveau fit/inférence.
+16dates de scores≥95%univers1790 ;23octobre1647/1790réservé, autres trous
+explicites. OptionsEODHDcouvertes24/160TOP10,56/320TOP20,178/800TOP50.
+Même cible excursion surH5/H10/H20 avant propreSL10, pas clôture ni futurTOP.
+H5 AUCvolume/OI/mix50/50 :TOP10 0,625/0,875/0,750 surSEPTobservations/deuxdates
+à deuxclasses(23issues totales) ;TOP20 0,778/0,792/0,894 sur44/sixdates(54total) ;
+TOP50 0,577/0,651/0,658 sur151/huitdates(172total). H10mix0,750/0,705/0,602.
+H20 :0issueTOP10 ;4TOP20toutesLONG ;21TOP50dont2SHORT, seuleAUCquotidienne sur
+QUATREcas/UNEdate :1,0noninterprétable comme preuve. NonchevauchementH5 au plus
+UNEdate informative, zéroH20. Couverture faible, répétitions et univers survivant.
+Tous résultatsEODHD rétrospectifs :scoresseptembrecréésenoctobre, folds causaux
+mais pas preuve physiqueas-of. SIPTOP50 cinqcasH5créésavantdécision :AUC0,75
+identiqueaux troisbras, pas confirmation ;0TOP10/unTOP20,0H10/H20.
+24tests, revue264scores/792parcours/114AUC, labelsparent/rangs/hashes vérifiés.
+Aucunpoidsoptimisé,SQLécrit,fournisseur/LLM,ordreouproductionchangé.
+INDICE_CONDITIONNEL_H5_TOP20_A_CONFIRMER, pas de modèle/filtre promu.
+[Bilan et distinction Oracle H20/issues H5](options_oracle_topn_resultats_20261026.md).
+
+## 2026-10-26 — US : mélange volume call/put et OI, pas de gain incrémental démontré
+
+GO pour combinaison unique50/50 des rangs, sans entraînement/poids optimisés.
+Univers tradable1790, pas seulementTOP10 ; deux preuves réellement reçues avant
+décision09:25NY, entrée suivante, plus grande excursion avant SL10 propre à
+LONG/SHORT, ambiguïtés daily réservées. Pas la cible terminale des anciens0,547.
+314945snapshots/261004barres30Min exportés READ ONLY, prixEODHD/SIP séparés.
+Amendement avant issues :collecte prospective30Min au lieu de backfill1Day ;
+aucun mélange/fallback de prix, aucune source bloquée. EODHD4566scores as-of,
+796titres :H5 4137labels/20dates, AUCvolume0,5286/OI0,5507/mix0,5482 ;
+H10 3631/15dates :0,5452/0,5262/0,5436 ;H20primaire406/139titres/5dates :
+0,5396/0,4926/0,5244. Mélange inférieur au meilleur composant aux trois horizons.
+Contrôles H-espacés même constat, H20 seulement84observations/UNEdate.
+Première observation/titre :petits gains groupés H5/H10, pasH20 ni confirmation.
+SIPsecondaire415labelsH5/150titres/5dates :0,5227/0,5671/0,5594 ;0H10/H20.
+16tests passent ; revue5267scores/8602parcours/135AUC, anciennes4150valeursvolume
+et4045OI reproduites écart0. Sources/sorties scellées, même assistant pas revue
+humaine indépendante. Aucun fournisseur/LLM/SQLécrit/ordre/modèle/batch changé.
+Pas de rendement ni filtre validé ; aucune nouvelle recherche de poids autorisée
+par ces résultats. [Bilan, contrôles et limites](options_volume_oi_combinaison_resultats_20261026.md).
+
+## 2026-10-26 — FR : mélange prix/AMF figé, petit gain exploratoire seulement
+
+Une combinaison unique sans entraînement/recherche de poids :50%prix(mom5/20
+équipondérés)/50%variationAMF mêmes détenteurs. Rangs calculés avant tout filtre
+par issue future ; trois comparateurs sur mêmes titres/dates, pas de zéro pour
+absence AMF. H5 :287observations/50titres/6dates, AUC prix0,5769, AMF0,5292,
+mélange0,5885 (+0,0116), amélioration5/6dates. Sans chevauchement :95observations,
+deuxdates seulement, prix0,5945→mélange0,6151. Première observation/titre :
+AUCpoolée0,6705→0,6933. Sensibilité retrait d'une date : écart moyen toujours
+positif,+0,0069…+0,0252, pas une validation OOS. H10 :47titres/UNEdate,
+prix0,6118/AMF0,5736/mélange0,6609, nonconfirmatoire. H20 :0label mûr.
+Petit indice de complémentarité, aucun filtre ou modèle promu, poids inchangés.
+Huit tests passent, sceaux source vérifiés,477scores as-of archivés. Aucun SQL/
+API/LLM/entraînement/ordre/changement batch. Période déjà vue, fenêtres répétées
+et biais hérités ; aucune AUC convertie en taux gagnant ou promesse de rendement.
+[Protocole, détail par date et limites](../fr/p0_p1_combinaison_egale_resultats_20261026.md).
+
+## 2026-10-26 — FR P0/P1 : audit protégéSL10, H20 nonmûr, indices courts non validés
+
+Six collectes de marché et deux sauvegardes,293codes actifs de collecte, pas
+uniquementTOP10. Sources autorisées, SQLalpha_trade_fr SELECT/rollback et archives
+locales seulement ; aucun entraînement/API/LLM/ordre/changement production.
+Cible : maximum favorable avant stop10% propre à LONG/SHORT, pas clôtureH20 ;
+gaps/ordre intraday inconnu/mêmes bougies conservés comme bornes/ambiguïtés.
+Premiers snapshots5octobre→entrée6octobre ; prix au23octobre :14séances,
+**0labelH20 mûr**, première fin théorique2novembre. Pas de backdating des dates
+économiques AMF/DILA. ConsensusP3/INPIP2/optionsP3 hors périmètre, sources bloquées
+non utilisées. H5/H10 secondaires : variations AMF AUC0,526/0,529 sur8/3dates
+informatives, mais première observation par titre0,478/0,477 ; pas confirmé.
+Momentum5 AUC0,556/0,594 sur6/1dates seulement. DILA860documents/214ISIN,
+métadonnées sans texte/guidance qualifiée, pas de direction attribuée.
+13tests passent. Revue hors ligne conserve l'archive initiale et retire l'ancien
+aliasPERR du warmup pour les décisions d'octobre (ALPER seul), sans changer
+les labels valides/AUC. NO_H20_DIRECTIONAL_VALIDATION_POSSIBLE_YET, aucune promotion.
+[Bilan, couverture, résultats et limites](../fr/audit_directionnel_p0_p1_resultats_20261026.md).
+
+## 2026-10-26 — TOP10×2 arrêté à la demande humaine, TOP10×1 préservé
+
+Arrêt des superviseur/workers×2 et de leurs reprises, sans arrêt récursif du
+superviseur partagé. Les six processus×1 (wrappers et workers) sont restés actifs.
+1 441 rapports×2 terminés conservés, empreintes inchangées avant/après ; aucune
+suppression ni compte partiel promu. État STOPPED_BY_USER et marqueurs durables,
+pas de reprise×2 autorisée automatiquement. Ordonnanceur remplacé par×1 uniquement,
+avec adoption du2023×1 existant ; le superviseur/replay2026×1 original continue.
+Six tests ciblés passent. Sources legacy, paramètres économiques et profils
+restent inchangés ; aucun SQL/API/LLM/entraînement/ordre/changement production.
+Reçus : `artifacts/operations/winner-stop-top10-2x-20261026-v1`.
+[Périmètre et convention d'arrêt](winner_arret_top10_2x_20261026.md).
+
+## 2026-10-26 — Consolidation TOP50 réparée et file des grilles reprise
+
+Incident de sérialisation seulement : les champs facultatifs de traçabilité
+absents dans les anciens comptes devenaient NaN lors de la réunion aux comptes
+corrigés. Adaptateur isolé NaN→null pour ces deux métadonnées dans le seul bilan
+TOP50 ; métriques financières non finies et infinis toujours refusés.
+Les300rapports et tous leurs fichiers sont vérifiés avant/après, inchangés ;
+le CSV financier reste identique octet par octet. TOP20/TOP50 désormais600/600,
+consolidation terminée. Aucun compte rejoué, aucune tolérance économique modifiée.
+25tests passent. Nouvel ordonnanceur versionné pour reprendre la file ; adoption
+du worker2024×2 existant, sans interruption des deux2026. Deux nouveaux workers
+au maximum et trois centimes en incluant l'adopté ; contrôle commande/PID/date
+de création, verrous et garde mémoire. Les cas qualifiés reprennent, sans écraser
+les comptes scellés ni relancer des échecs bloqués. Moteurs legacy exacts conservés.
+Reçus : `artifacts/operations/winner-consolidation-resume-20261026-v1`.
+Aucun SQL/API/LLM/entraînement/ordre ni changement de production ; pas de nouvelle
+conclusion de performance. [Incident, correctif et règles de reprise](winner_consolidation_reprise_20261026.md).
+
+## 2026-10-26 — Pause20 et repriseSL1 terminées : pas d'amélioration globale
+
+Deux comptes TOP20 LONG,4kUSD,min70USD,complets/cap1x,sansTP/TR/open21,2020–24.
+Après DD15 du cycle : liquidation puis20séances complètes de pause. RepriseSL5
+simple :10 007,19USD/+150,18%,DD−66,16%,575clôtures,25,74% gagnantes.
+RepriseSL1 pendant20séances puisSL5 (lotsSL1 jamais élargis) :7 034,62USD/
++75,87%,DD−41,06%,743clôtures,14,80% gagnantes ;333achatsSL5/416SL1.
+21contre17liquidations de cycle. Empreintes sources/sorties revérifiées,
+audits terminés et parité des courbes avant première reprise confirmée.
+Les deux variantes ont moins de rendement et un DD plus profond que le témoin
+SL5 sans pause13 641,66USD/+241,04%/DD−36,25%. Aucune promotion.
+Le seuilDD15 local n'est pas un plafond du DD historique ; les cycles de
+pertes se cumulent. Graphique six variantes terminées+SPY dans
+`artifacts/research/us_winner_completed_spy_visuals/20261026-v2`.
+Consolidation locale seulement, aucun nouveau replay/API/SQL/ordre/changement
+production. Historique exploratoire déjà vu, biais hérités, pas holdout vierge.
+[Résultats globaux et annuels, conventions et limites](winner_pause20_bilan_20261026.md).
+
+## 2026-10-26 — DD15 : pause20 puis reprise SL1 pendant20 séances
+
+Variante supplémentaire lancée, sans remplacer le témoin pause20/SL5 en cours.
+TOP20 LONG, 4 000 USD, minimum70 USD, positions complètes, cap1x, sans TP ni
+trailing, détention20 séances puis sortie open21, compte continu2020–2024.
+Après DD15 du cycle : liquidation intégrale, vingt séances NYSE complètes de
+pause, puis nouvelles entrées SL1 pendant vingt séances (reprise incluse).
+Ensuite, seules les nouvelles entrées reviennent SL5 : les lots déjà entrés
+sous SL1 le conservent. Tout nouveau DD15 recommence le cycle entier ; aucun
+apport ni plafond historique caché. Les plans non tentés changent de profil
+sans prolonger leur échéance. Plafond d'admission historiqueSL3 inchangé.
+19 tests passent (sept dédiés et douze du témoin pause20), sources et paramètres
+communs vérifiés avant lancement. Comparaison globale/annuelle aux témoins sans
+pause, pause3mois et pause20/SL5 ; parité des courbes avant la première reprise
+contrôlée lorsque le témoin est disponible. Résultats en attente dans
+`artifacts/research/us_winner_pause20_restart_sl1/20261026-v1`.
+Archives locales uniquement, aucun SQL/API/LLM/entraînement/ordre ni changement
+production. Recherche exploratoire avec biais hérités, pas une validation OOS
+vierge ; SL1 et DD15 ne garantissent pas une borne des pertes ou du DD total.
+[Protocole et conventions des deux fenêtres](winner_pause20_restart_sl1_protocole_20261026.md).
+
+## 2026-10-26 — DD15/min70 : pause vingt séances lancée
+
+Un compte TOP20,4kUSD,minimum70USD,FULL/cap1x,SL5/sansTP/TR/open21,2020–24,
+identique au test DD15/pause3mois sauf durée/unité de pause. Après liquidation,
+jour courant exclu,20séances NYSE complètes bloquées, reprise à la21e ouverture
+suivante. Fériés/week-ends exclus, séances abrégées comptées, DST respecté.
+Reset local sur vrai solde sans apport, aucun plafond global caché, DDhistorique
+toujours mesuré.41tests passent dont reprise native avec signal frais, corruption
+audit et calendrier fériés/DST ; aucune modification des anciens moteurs/fichiers.
+Configuration effective0mois/20séances, contrôleur isolé. Les témoins sans pause
+et3mois audités sont réutilisés, non recalculés. Comparaison globale/annuelle
+prévue dans `us_winner_cycle15_pause20_min70/20261026-v1`, résultat en attente.
+Archives uniquement, aucun SQL/API/LLM/entraînement/ordre/changement production.
+Exploratoire et biais hérités, pas de promotion ni garantie DD15.
+[Protocole et convention de décompte](winner_cycle15_pause20_min70_protocole_20261026.md).
+
+## 2026-10-25 — SL3/min70 : lancé pour comparaison SL1/SL3/SL5
+
+Un nouveau replay TOP20,4kUSD,minimum70USD,2020–24,FULL/cap1x,SL3/sansTP/TR/
+open21. Même B4 natif, frais et plafond d'admission historiqueSL3 ; pas de
+nouvelle pause/liquidation globale dans les trois bras. Témoins SL1 et SL5
+réutilisés après contrôle sources/fichiers/configurations, pas recalculés.
+Dix tests passent dont stop natif3% effectif et restauration des adaptateurs.
+Runner existant réutilisé sans modification de ses fichiers, processus isolé
+avec moteurs archivés identiques. Run `us_winner_sl3_min70/20261025-v1` lancé,
+résultat et consolidation globale/annuelle des trois cas en attente de l'audit.
+Archives seulement, aucun SQL/API/LLM/entraînement/ordre/changement production.
+Historique déjà observé et biais hérités, pas de promotion.
+[Protocole et sorties](winner_sl3_min70_protocole_20261025.md).
+
+## 2026-10-25 — SL5/min70 : comparaison DD15 de cycle/pause trois mois lancée
+
+Un nouveau compte TOP20,4kUSD continu2020–24, minimum70USD, FULL/cap1x,
+SL5/sansTP/TR/open21, mêmes frais8pb/jambe et paramètres hors coupe-circuit.
+Témoin audité réutilisé :13641,66USD/+241,04%,DD−36,25%,1022clôtures.
+Amendement : liquidation100% au DD15 observé du cycle, pause3mois calendaires,
+reprise sur vrai capital restant/reset B4local, aucun apport/plafond DD25 caché.
+DDhistorique conservé ; seuil15% n'est pas une perte maximale garantie.
+Vingt séances de parité préalable moteur courant désactivé/témoin archivé,
+avant compte complet ; pas de certification de parité moteur sur toute l'histoire.
+29tests passent, configurations hors cycle et sources actuelles/archivées vérifiées.
+Run `artifacts/research/us_winner_cycle15_min70/20261025-v1`, lancement séparé.
+Résultat économique en attente, pas de nouveau signal prédictif ni promotion.
+Archives uniquement, aucun SQL/API/LLM/entraînement/ordre/changement production.
+[Protocole et limites](winner_cycle15_min70_protocole_20261025.md).
+
+## 2026-10-25 — Anticiper les mauvaises périodes Winner TOP20 : aucun veto robuste
+
+Audit des deux comptes SL5/SL1 min70,4kUSD continu2020–24, sans nouveau replay.
+Six signaux bornés et connus avant l'entrée : SPY/SMA50, volSPY20/médiane126,
+breadth20TOP20<50%, momentum20relatif, ATR20≥5%, PF des20dernières clôtures<1.
+Choix d'UN signal sur2020–22 purgé avant2023 : breadthTOP20 faible. Écart net
+unitaire flag−autre, développement−4,005points, mais **+0,734en2023/+6,185en2024**.
+Même inversion SL1 :+1,189/+0,240point. Pas de retournement opportuniste du filtre.
+PF20 faible : défavorable2024(−2,179points) mais favorable2023(+4,471points).
+ATR/vol changent aussi de signe, aucun secours transversal. Le B4 réduisait déjà
+le budget de177/186entréesSL5 évaluables2024 ; pas de plafond global de détention.
+Cinq tests,12canaris de préfixe exacts,103recalculs santé et dates/B4 contrôlés.
+Sources/archives inchangées ; années vues, OOF/couverture future/admission native,
+pas holdout ni effet causal d'un capital filtré. **NO_ROBUST_EARLY_WARNING_VALIDATED**.
+Aucune modification de production, SQL/API/LLM/entraînement/replay/ordre.
+[Bilan complet, règles et réserves](winner_anticipation_resultats_20261025.md).
+
+## 2026-10-25 — TOP20 SL1 sans TP/trailing H20, minimum70 : lancé
+
+Un nouveau compte2020–2024 compare SL1 au SL5/min70 en cours, capital4000USD,
+TOP20 original, positions complètes, cap1x, mêmes frais/risque/B4/concentration.
+Seul le SL effectif des campagnes passe5→1%. Aucun TP/trailing, sortie open21,
+pas de nouvelle pause/liquidation globale. Admission SL3/plafond de quantité
+historiques conservés : pas d'augmentation artificielle de taille pour SL1.
+Sept tests passent dont stop natif à1%, refus d'élargissement de quantité et
+comparaison des dates de configuration sérialisées sans ignorer de différence.
+Run `artifacts/research/us_winner_sl1_min70/20261025-v1`, résultat en attente.
+Audit indépendant et résultats annuels prévus ; comparaison si témoin terminé,
+sinon attente explicite du témoin. Archives locales seulement, aucun SQL/API/GPT/
+entraînement/ordre/changement de production. Historique exploratoire/nonPIT,
+pas de promesse de réduction du DD malgré le stop plus serré.
+[Protocole figé](winner_sl1_min70_protocole_20261025.md).
+
+## 2026-10-25 — Minimum de position 70 USD, compte neuf 4 000 USD : lancé
+
+Un replay supplémentaire 2020–2024 reprend le témoin TOP20 terminé à
+5 178,78 USD (+29,47 %), avec UNE modification : minimum notionnel 155 → 70 USD.
+Mêmes archives, moteur historique isolé, positions complètes, cap1x, risque
+1,25 %, SL5/sansTP/TR/open21, B4/DD15 original, ni pause ni liquidation globale
+ajoutée. Pas de reprise des presets actuels ou d'héritage2019. Neuf tests passent ;
+comparaison exhaustive de configuration et contrôle natif du minimum.
+Run `artifacts/research/us_winner_min70_4000/20261025-v1`, lancé le25octobre.
+Résultat encore en attente ; audit monétaire/sorties/entrées/coverage et annuel
+prévu. Recherche exploratoire/nonPIT/couverture future, aucune promotion.
+Aucun SQL/API/GPT/entraînement/ordre/changement de production.
+[Protocole figé](winner_min70_4000_protocole_20261025.md).
+
+## 2026-10-25 — SL5/H20 avec pauses, dépôt7980,17USD : comparaison à capital égal terminée
+
+Un nouveau compte fixe2020–24, TOP20,FULL,cap1x,SL5/sansTP/sansTR/open21,
+frais8pb/jambe et risque identiques à la référence DD15/pause4000USD.
+Seul le dépôt/equity initial passe au montant EXACT7980,1667511581745USD
+du témoin neuf sans pause déjà terminé à39598,15USD. Pas de positions/plans
+hérités de2019, pas de sélection mensuelle ni nouveau calcul du témoin.
+Liquidation totale DD15 de cycle, pause3mois calendaires, reprise au capital
+restant/reset local B4 ; pas de plafond DD25 historique ni recapitalisation.
+25 tests passent dont replay natif de liquidation avec dépôt7980USD.
+Audit monétaire adapté explicitement au dépôt, pas d'hypothèse4000USD cachée.
+Run terminé et audité sous`artifacts/research/us_winner_cycle15_matched_capital/20261025-v1`.
+Avec pauses :**27196,44USD/+240,80%,DD−39,61%**,370 clôtures,96 gains/274
+pertes,25,95% gagnantes, capital investi moyen7738,91USD(35,36%equity),
+11 liquidations/11 reprises,7 positions finales valorisées. Sans pauses :
+39598,15USD/+396,21%,DD−35,82%,1027 clôtures/22,10% gagnantes.
+Écart avec pauses :**−12401,70USD**,DD plus profond3,79points. Contrairement
+au test4000USD, aucune amélioration économique/réduction du DD historique
+ici.377 achats/327 sorties ordinaires/43 globales, pauses/reset/cash/frais/
+positions/DD audités ; sources et fichiers vérifiés après exécution.
+Archives locales existantes, aucun SQL/API/GPT/entraînement/ordre/changement
+production. Sensibilité au capital/trajectoire, pas de promotion ni de garantie.
+[Résultats et limites](winner_cycle15_capital_7980_resultats_20261025.md).
+
+## 2026-10-25 — Sélections mensuelles30/50/100 DD15/pause3mois terminées
+
+TOP20,FULL,4000USD continu2020–24,cap1x,frais inclus. Liquidation DD15 de cycle,
+pause trois mois, réarmement sur capital restant, sans plafond historique.
+30séances :7704,43USD/+92,61%,DD−45,08%,479 clôtures/26,10% gagnantes.
+50 :8698,06USD/+117,45%,DD−45,55%,408/26,96%.100 :7133,55USD/+78,34%,
+DD−50,37%,399/28,57%.11 liquidations et11 reprises chacun ; positions finales
+valorisées. Les références fixes à MÊMES règles DD15/pause font mieux :
+SL5sansTP/TR/H20,+243,11%,DD−33,94% ; TR15,+173,60%,DD−39,45%.
+Pas d'avantage démontré de la sélection mensuelle,100 non supérieur à30/50.
+Seuil15 local n'est pas un DD historique plafonné. Audits complets, historique
+déjà observé/nonPIT/couverture future, pas de promotion ni changement live.
+[Bilan complet](winner_monthly_cycle15_30_50_100_bilan_20261025.md).
+
+## 2026-10-25 — Audit contrôlé de l'écart départ2019/départ2020 terminé
+
+Témoin+495,26% reproduit à l'identique :4000USDjuillet2019→23810,29fin2024,
+dont7980,17USD déjà atteints fin2019. Compte neuf2020avec4000→5178,78(+29,47%,
+DD−48,76%). Neuf2020avec7980,17→39598,15(+396,21%,DD−35,82%),contre+198,37%
+sur2020–24 pour le compte continu hérité. Capital et état font bifurquer les
+contraintes non linéaires, pas un simple multiplicateur de gains. Réinitialiser
+seulement B4 fin2019 n'a AUCUN effet sur le témoin. Ne pas attribuer le résultat
+aux seuls seuils155USD/6% : traces2022effectives surtout10%, pas6%.
+Trois comptes audités, pas de changement de stratégie ni de garantie future.
+[Résultats et limites de causalité](winner_ecart_dates_depart_resultats_20261025.md).
+
+## 2026-10-25 — TOP50/2017 : qualification du centime et reprise prioritaires
+
+Arrêt253/300 surSL7/TR10/H15/TP15,13,68!=13,69. Réutiliser le correctif
+FIRST_FULL_FILL_AVERAGE_V1 après preuve réelle, conserver253 comptes scellés,
+valider les éventuelles dérives antérieures, puis reprendre sans nouvel audit
+assoupli. Nouveau superviseur adopte2022/2024 sans arrêt, troisième slot dédié
+TOP50.6 tests de sélection/adoption passent. Qualification démarrée, pas encore
+un achèvement300/300. Aucun SQL/API/LLM/ordre/production ni règles DD changées.
+[Protocole d'incident](winner_incident_top50_2017_20261025.md).
+
 ## 2026-10-25 — Priorité à la reprise2024, sans interrompre2022
 
 La file centimes legacy était limitée à un worker occupé par1x2022 : pas de
