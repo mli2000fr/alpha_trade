@@ -1,5 +1,101 @@
 # Étape 8 — Sentiment Pipeline : délais et reprise, 17 octobre 2026
 
+## Évolution du 24 octobre : import 21 jours, recalcul 52 jours
+
+Deux fenêtres indépendantes dans `sentiment_news_ingestion` :
+`pipeline_lookback_days: 21` pour l'import et
+`pipeline_feature_recalc_days: 52` pour les dates de features à recalculer.
+Cela remplace le premier réglage de 7 jours, puis le réglage partagé de 21
+jours. Une plage historique explicitement choisie reste prioritaire.
+
+- **Import** : fenêtre UTC J−21/J, réduite par le checkpoint réussi de chaque
+  titre. Un watermark vieux de 7 jours ne redemande pas 21 jours. Un titre
+  sans checkpoint ou en échec repart au plus à J−21. Un titre déjà à jour
+  n'appelle pas le fournisseur. Le recouvrement existant de 60 minutes est
+  conservé à la frontière (et la granularité fournisseur peut être journalière) ;
+  les clés d'articles dédoublonnent les enregistrements. Ce n'est donc pas une
+  promesse de zéro réponse fournisseur déjà vue.
+- **Calcul** : `--recent-days 52 --resume-features`, jusqu'à la date de séance
+  figée du workflow, ou la fin sentiment explicite, sinon la date New York.
+  Les **52 dates calendaires cibles sont recalculées**, fin incluse (J−51 à J).
+  Exemple : fin 24/10/2026 ⇒ cibles 03/09–24/10/2026, y compris les données
+  déjà en base antérieures à la fenêtre d'import. Relire **45 jours avant la
+  première date cible** reste nécessaire pour les indicateurs glissants : ce
+  contexte supplémentaire n'est ni retéléchargé ni enregistré. La lecture peut
+  donc couvrir 97 dates calendaires, les cibles restant strictement limitées
+  aux 52 jours (et aux dates scorées disponibles, sans zéros inventés).
+- **Écriture incrémentale** : comparaison avec les features déjà disponibles
+  par `(symbol, trade_date)` et `(sector, trade_date)`. Les lignes identiques
+  ne sont pas réécrites ; les nouvelles lignes, les trous et les valeurs
+  modifiées dans la fenêtre sont enregistrés. Cela répare aussi une news
+  scorée tardivement sans se fier au seul MAX(date) global, qui masquerait les
+  titres en retard. Une nouvelle version de features est une modification.
+  Les identifiants et horodatages administratifs SQL ne sont pas comparés.
+
+Un arrêt après une partie des upserts est repris lors du prochain lancement
+par comparaison de l'état réellement persisté. Les erreurs de lecture SQL ne
+sont jamais transformées en « déjà à jour ». Aucun nouveau checkpoint ou
+changement de schéma n'est nécessaire. Les logs `resume_features` distinguent
+lignes à écrire et lignes inchangées ; zéro écriture peut être normal.
+
+Le mode historique explicite conserve la réécriture complète choisie ; le
+CLI exige `--recent-days` pour autoriser `--resume-features`. Un retard au-delà
+de 21 jours pour la collecte ou 52 jours pour les features exige un backfill
+explicite. Le scoring des articles déjà
+stockés reste un traitement des scores manquants, éventuellement plus anciens :
+ce changement ne le limite pas silencieusement à 21 jours.
+
+**294 tests ciblés passent**, sans API réelle, connexion MySQL ni exécution du pipeline réel :
+reprise import à 7 jours, plafond 21, recalcul 52 jours indépendant, checkpoint en échec,
+trous et corrections anciens dans la fenêtre, absence de réécriture inchangée,
+version, indépendance ticker/secteur, contexte 45 jours et mode historique.
+Le processus déjà en cours n'a été ni interrompu ni relancé : ses commandes
+déjà construites ne sont pas remplacées par cette évolution.
+
+## Premier correctif du 24 octobre : agrégation récente, pas dix années
+
+Le run du 23 octobre à 23h23 importe bien les sept derniers jours de news,
+mais sa sous-étape `[5/5]` était lancée sans bornes et reconstruisait par défaut
+les features de dix années : 25/10/2016–23/10/2026, 40 lots. Ce traitement
+relisait les données déjà stockées ; ce n'était pas un téléchargement décennal.
+
+Pour les **nouveaux lancements** de l'étape 8 sans début explicite, l'agrégation
+reçoit maintenant `--recent-days N`, où N vient du même paramètre
+`sentiment_news_ingestion.pipeline_lookback_days` (7 lors de ce premier correctif,
+21 après l'évolution ci-dessus).
+Ce sont N dates calendaires inclusives, avec priorité à `sentiment_end_utc`
+explicite, puis à `trade_date` du workflow si définie, sinon à la date courante
+de New York au démarrage de l'agrégation. L'import news conserve sa fenêtre UTC
+J−N/J et ses checkpoints ; le périmètre d'import n'est pas changé ici.
+
+L'agrégation borne dès la requête la recherche des dates scorées, puis relit
+le buffer existant de **45 jours avant la première date cible** pour les
+fenêtres glissantes 3/5/10/20. Seules les dates cibles sont persistées ; le
+contexte ne déclenche ni téléchargement ni réécriture de tout l'historique.
+Les checkpoints `features_aggregated` sont limités aux dates réellement
+produites, pas à tous les anciens mappings. Un manque de dates scorées reste
+un échec explicite, jamais un repli vers dix années ou des zéros inventés.
+
+Une plage historique explicitement demandée reste prioritaire et inchangée.
+Le CLI de maintenance sans `--recent-days` conserve son mode historique.
+`--recent-days` refuse `--start-date` et `--years` simultanés. Une vieille
+correction/backlog scoré hors fenêtre récente demande une reconstruction
+ciblée ; ce mode ne certifie pas la remise à jour de tout l'ancien historique.
+
+Le processus déjà lancé conserve sa commande d'origine et son code chargé :
+il n'est pas interrompu, relancé ou déclaré terminé par ce correctif. Aucun
+run de production, appel fournisseur, scoring réel, SQL de maintenance ou
+ordre n'est lancé pour valider le changement.
+
+Validation du correctif : **227 tests ciblés passent**, sans fournisseur/base
+réels. Ils portent sur le
+nombre de jours inclusif, l'ancrage New York et la séance figée après minuit,
+la requête de dates bornée dès le départ, le buffer de calcul inchangé, la
+parité des features récentes avec le calcul historique, les écritures limitées
+aux dates cibles, les checkpoints bornés et la conservation des plages de
+maintenance explicites. Les tests de progression isolent le mapper inutilisé
+pour ne pas tenter une connexion MySQL réelle pendant un test unitaire.
+
 ## Évolution demandée : seuil de 95 % et bilan final des symboles KO
 
 `sentiment_news_ingestion.min_success_ratio: 0.95` dans `config.yaml` autorise
@@ -66,14 +162,15 @@ Dans `config.yaml` :
 
 ```yaml
 sentiment_news_ingestion:
-  pipeline_lookback_days: 7
+  pipeline_lookback_days: 21
+  pipeline_feature_recalc_days: 52
   request_timeout_seconds: 45
   max_attempts: 3
   max_consecutive_symbol_failures: 3
   min_success_ratio: 0.95
 ```
 
-- Étape 8 sans début explicite : **J−7/J**, fin UTC courante, puis reprise dans
+- Étape 8 sans début explicite : **J−21/J**, fin UTC courante, puis reprise dans
   cette fenêtre selon les checkpoints de la même source. Ce périmètre récent
   ne certifie pas un rattrapage de l'historique antérieur.
 - Un début explicitement choisi dans l'IHM reste prioritaire. Le CLI historique
@@ -90,7 +187,7 @@ sentiment_news_ingestion:
   `FAILED` ; elles ne sont pas traitées comme de simples titres ignorés.
 
 La commande générée contient `--continue-on-symbol-error`,
-`--resume-checkpoints` si activé dans l'IHM, et `--lookback-days 7` sans début
+`--resume-checkpoints` si activé dans l'IHM, et `--lookback-days 21` sans début
 explicite. La chaîne reste import → pertinence → FinBERT standard → contextuel
 → features. **Couverture sous le seuil ou erreur globale bloquante = code 1 :
 les sous-étapes suivantes ne démarrent pas**. Une couverture partielle acceptée

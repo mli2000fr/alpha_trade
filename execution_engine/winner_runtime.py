@@ -80,6 +80,16 @@ class WinnerCampaignRuntime:
         self.rearm_failed_exit()
         self.protect()
         self.reconcile_lots()
+        if (self.state['policy']['confirmation_bars'] == 0
+                and (not self.config.winner_pyramiding.enabled or self.config.blocks_new_entries
+                     or self.now >= aware(self.state['entry_expires_at']))):
+            # A queued standard order is still a possible future buy. Disabling
+            # entries cancels its remainder, but never discards a raced fill.
+            for operation in self.pending():
+                if operation['action'] == 'ENTRY' and operation.get('broker_id'):
+                    self.broker.cancel(operation['broker_id'])
+            self.reconcile()
+            self.protect()
         if self.pending():
             if any(o['action'] == 'EXIT' and o['status'] in ('RESERVED', 'UNKNOWN') for o in self.pending()):
                 raise ValueError('Horizon sell response unknown after protection cancel; urgent broker reconciliation required')
@@ -94,9 +104,17 @@ class WinnerCampaignRuntime:
             self.state['status'] = 'EXPIRED'
             self.save()
             return
-        if not self.state['lots'] and (not self.config.winner_pyramiding.enabled
-                or self.now < aware(self.state['earliest_entry_open'])):
-            return
+        from execution_engine.winner_standard_entry import (standard_initial, standard_entry_window,
+            standard_order_terms)
+        standard = standard_initial(self.state)
+        if not self.state['lots']:
+            if not self.config.winner_pyramiding.enabled:
+                return
+            if standard:
+                if not standard_entry_window(self.state, self.now):
+                    return
+            elif self.now < aware(self.state['earliest_entry_open']):
+                return
         try:
             snapshot = self.market(self.state, self.now)
         except Exception as exc:
@@ -127,15 +145,19 @@ class WinnerCampaignRuntime:
             if quantity < 1:
                 self.blocked(approved.get('reason', 'NATIVE_RISK_REJECTED'))
                 return
-            # Limit IOC bounds the fill price, never promises a next-bar open.
-            limit = entry_limit(approved['limit_price'])
-            if limit > approved['limit_price']+1e-8:
+            # Zero uses the frozen standard order, not a fake breakout/IOC.
+            order_type, limit = (standard_order_terms(self.state) if standard and kind == 'ENTRY'
+                                 else ('limit', entry_limit(approved['limit_price'])))
+            if limit is not None and limit > approved['limit_price']+1e-8:
                 raise ValueError('Risk approval must cover the rounded executable price')
             self.version, key = reserve_operation(self.store, self.state, self.version,
                 action=kind, quantity=quantity, approval=approved, now=self.now)
             reserved = True
             operation = self.state['operations'][-1]
-            intent = make_intent(self.state, key, quantity=quantity, price=limit, tif='ioc')
+            intent = make_intent(self.state, key, quantity=quantity, order_type=order_type,
+                price=limit if limit is not None else float(self.state['target']['entry_price']),
+                tif='day' if standard and kind == 'ENTRY' else 'ioc',
+                entry_mode='standard' if standard and kind == 'ENTRY' else None)
             operation['intent'] = asdict(intent)
             self.state['parents'][intent.intent_id] = dict(action=kind, booked_quantity=0, booked_notional=0.)
             self.save()  # The exact OMS intent survives a crash before HTTP.
@@ -259,7 +281,8 @@ class WinnerCampaignRuntime:
             return
         average = float(raw.get('filled_avg_price') or 0)
         price = (quantity*average-parent['booked_notional'])/delta
-        if not math.isfinite(price) or price <= 0 or price > intent.limit_price+1e-6:
+        if (not math.isfinite(price) or price <= 0
+                or intent.limit_price is not None and price > intent.limit_price+1e-6):
             raise ValueError('Invalid cumulative fill price / IOC limit breached')
         try:
             stamp = self.broker.actual_fill_time(raw, self.state)

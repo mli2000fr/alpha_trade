@@ -47,6 +47,9 @@ def reapprove_campaign(state, version, proposed, snapshot, now, kind, *, context
     if spread > context['max_spread_bps']:
         raise ValueError('Native maximum spread exceeded')
     price = entry_limit(ask)
+    from execution_engine.winner_standard_entry import standard_initial, standard_risk_price
+    if kind == 'ENTRY' and standard_initial(state):
+        price = standard_risk_price(state, price)
     cfg = context['risk_config']
     if cfg.enforce_net_exposure or cfg.max_long_short_correlation is not None:
         raise ValueError('Campaign adapter does not qualify market-neutral / cross-leg overlays')

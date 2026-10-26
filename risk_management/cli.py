@@ -1205,6 +1205,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--trade-date", type=str, default=None, help="YYYY-MM-DD (défaut: aujourd'hui)")
     p.add_argument("--summary-path", type=str, default=None, help="Chemin de sortie atomique du résumé JSON du run.")
     p.add_argument('--llm-filter-run-id', help='Analyse Oracle/Web directionnelle exacte, PAPER uniquement')
+    p.add_argument('--options-filter-run-id', help='Run exact du filtre volume/OI Oracle, PAPER uniquement')
     p.add_argument("--dry-run", action="store_true", default=False)
     p.add_argument(
         "--run-mode",
@@ -1375,6 +1376,18 @@ def main(args: list[str] | None = None) -> None:
     trade_date = datetime.strptime(args.trade_date, "%Y-%m-%d").date() if args.trade_date else date.today()
     raw_account_id = (args.account or "").strip() or None
     args.llm_filter_run_id = getattr(args, 'llm_filter_run_id', None)
+    args.options_filter_run_id = getattr(args, 'options_filter_run_id', None)
+    options_filter_report = None
+    if args.options_filter_run_id:
+        from service.options_directional.store import qualified
+        from service.llm_directional.runner import assert_paper_account
+        assert_paper_account(raw_account_id or 'default')
+        if args.run_mode != 'paper' or args.llm_filter_run_id or args.enable_kelly_sizing:
+            raise ValueError('Filtre options : PAPER seul, sans LLM ni Kelly')
+        if not args.oracle_batch_id:
+            raise ValueError('Filtre options : batch Oracle explicite requis')
+        options_filter_report = qualified(args.options_filter_run_id, trade_date=trade_date,
+            batch_id=args.oracle_batch_id, account_id=raw_account_id or 'default')
     if args.llm_filter_run_id:
         from service.llm_directional.runner import assert_paper_account
         assert_paper_account(raw_account_id or 'default')
@@ -2141,6 +2154,12 @@ def main(args: list[str] | None = None) -> None:
             candidates = [*longs, *shorts]
             LOGGER.info("MLRankedCandidate construits: %d longs + %d shorts", len(longs), len(shorts))
 
+        if options_filter_report is not None:
+            from service.options_directional.risk_adapter import filter_candidates
+            before_options = len(candidates)
+            candidates = filter_candidates(candidates, options_filter_report)
+            LOGGER.info('OPTIONS_FILTER risque=%s candidats_avant=%d candidats_LONG_après=%d',
+                        args.options_filter_run_id, before_options, len(candidates))
         # Symbols list for loading prices/win_rates/returns
         if run_mode in (RiskRunMode.PAPER, RiskRunMode.LIVE):
             from service.market.new_entry_data_guard import check_new_entry_data
@@ -2746,6 +2765,7 @@ def main(args: list[str] | None = None) -> None:
         "universe_capital_preset_key": universe_capital_preset_key,
         "universe_preset_source": universe_preset_source,
         "llm_filter_run_id": args.llm_filter_run_id,
+        "options_filter_run_id": args.options_filter_run_id,
         "targeted_symbols": len(entries),
         "accepted_symbols": len(accepted_entries),
         "reduced_symbols": len(reduced_entries),

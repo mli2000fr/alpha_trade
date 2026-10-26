@@ -123,7 +123,9 @@ def llm_options(options, steps, *, config=None):
         return options
     config = config if config is not None else load_filter_config()
     if not config.enabled:
-        return options
+        # The shared switch also overrides stale launch/session options.
+        return replace(options, llm_filter_enabled=False, llm_filter_run_id=None,
+                       llm_specific_protections=False)
     if '10' not in numbers:
         raise ValueError('us_pipeline : filtre LLM actif, inclure étape 10 avant 11/12 ; aucun fallback latest')
     if options.execution_mode != 'paper' or options.account_id != 'default':
@@ -135,6 +137,25 @@ def llm_options(options, steps, *, config=None):
         llm_specific_protections=bool(config.protections and config.protections.enabled),
         ml_predict_batch_id=config.default_oracle_batch_id,
         ml_live_predict_batch_id=config.default_oracle_batch_id)
+
+
+def options_filter_options(options, steps, *, config=None):
+    if not {s.num for s in steps}.intersection({'10', '11', '12'}):
+        return options
+    from service.options_directional.config import load_options_filter_config
+    config = config if config is not None else load_options_filter_config()
+    if not config.enabled:
+        return replace(options, options_filter_enabled=False, options_filter_run_id=None)
+    if options.llm_filter_enabled:
+        raise ValueError('us_pipeline : choisir un seul filtre LLM ou options, pas de cumul implicite')
+    if '10' not in {s.num for s in steps}:
+        raise ValueError('us_pipeline : filtre options actif, inclure étape 10 avant 11/12')
+    if options.execution_mode != 'paper' or options.account_id != 'default':
+        raise ValueError('us_pipeline : filtre options réservé à default PAPER')
+    import uuid
+    return replace(options, options_filter_enabled=True, options_filter_run_id=f'opt-{uuid.uuid4().hex}',
+                   ml_predict_batch_id=config.default_oracle_batch_id,
+                   ml_live_predict_batch_id=config.default_oracle_batch_id)
 
 
 def session_plan(now, *, calendar=None):
@@ -173,6 +194,7 @@ def execute_pipeline(engine, cfg, run_id, dry_run, *, now=None):
     options = collection_options(pipeline_page_default_options(trade_date=str(day)), cfg, day)
     options = execution_options(options, policy, steps)
     options = llm_options(options, steps)
+    options = options_filter_options(options, steps)
     plan = dict(market_code='US_EQ', trade_date=str(day), defaults='FRESH_PIPELINE_PAGE',
         date_override='PIN_CURRENT_US_SESSION_NO_OLD_SNAPSHOT', options=asdict(options),
         steps=[dict(number=s.num, key=s.key, command=build_pipeline_command(s.key, options)) for s in steps],

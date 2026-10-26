@@ -5,6 +5,7 @@ import math
 from datetime import date, timedelta
 from sqlalchemy import text, select
 from .repository import Repository, evaluations, utcnow, dumps, digest
+from common.daily_bar_sources import daily_source_filter
 
 
 def evaluate(engine, run_id, *, as_of=None, horizons=(5, 10, 20)):
@@ -41,9 +42,11 @@ def evaluate(engine, run_id, *, as_of=None, horizons=(5, 10, 20)):
                     evaluations.c.horizon == horizon)).first()
                 if exists:
                     continue  # Immutable already observed evaluation, no overwrite.
-                bars = conn.execute(text('''SELECT date, open, close, adj_close, is_filled
+                source_filter, source_params = daily_source_filter()
+                bars = conn.execute(text(f'''SELECT date, open, close, adj_close, is_filled
                     FROM stock_bars_daily WHERE symbol=:symbol AND date>=:start AND date<=:end
-                    ORDER BY date'''), {'symbol': item['symbol'], 'start': day, 'end': exit_day}).mappings().all()
+                    {source_filter} ORDER BY date'''),
+                    {'symbol': item['symbol'], 'start': day, 'end': exit_day, **source_params}).mappings().all()
                 label = conn.execute(text('''SELECT oracle_decile, oracle_available_date, target_quality_valid
                     FROM global_oracle_labels WHERE batch_id=:batch AND symbol=:symbol
                     AND prediction_date=:day AND horizon=:horizon'''),

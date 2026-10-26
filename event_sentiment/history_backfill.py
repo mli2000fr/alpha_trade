@@ -4,13 +4,18 @@ import argparse
 import contextlib
 import json
 import logging
+import math
 import os
 import threading
 import time
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
+from numbers import Number
 from typing import Any, Iterator, Literal, Sequence, cast
 from uuid import uuid4
+from zoneinfo import ZoneInfo
+
+import pandas as pd
 
 from common.utils import configure_root_logging
 from event_sentiment.aggregation import build_sector_daily_features, build_ticker_daily_features
@@ -24,8 +29,50 @@ HEARTBEAT_INTERVAL_ENV = "EVENT_SENTIMENT_HISTORY_HEARTBEAT_SECONDS"
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 30.0
 
 
+def _recent_window(recent_days: int, end_date: date | None = None) -> tuple[date, date]:
+    """Inclusive target dates; the separate feature history buffer is unchanged."""
+    if type(recent_days) is not int or not 1 <= recent_days <= 365:
+        raise ValueError('recent_days must be an integer in 1..365')
+    end = end_date or datetime.now(timezone.utc).astimezone(ZoneInfo('America/New_York')).date()
+    return end - timedelta(days=recent_days - 1), end
+
+
 def _utc_now_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _pending_feature_rows(features: pd.DataFrame, existing: pd.DataFrame, key: str) -> pd.DataFrame:
+    """Persist missing/changed rows only, including holes and late news corrections.
+
+    Compare business columns, not SQL timestamps/IDs. Never use a universe-wide
+    MAX(date): one up-to-date ticker must not hide a lagging ticker or sector.
+    """
+    if features.empty or existing.empty:
+        return features
+    stored = {
+        (row[key], pd.Timestamp(row['trade_date']).date()): row
+        for row in existing.to_dict(orient='records')
+    }
+
+    def equal(left: object, right: object) -> bool:
+        left_missing, right_missing = bool(pd.isna(left)), bool(pd.isna(right))
+        if left_missing or right_missing:
+            return left_missing and right_missing
+        if isinstance(left, Number) and isinstance(right, Number):
+            # DOUBLE storage / deterministic pandas arithmetic round-off only.
+            return math.isclose(float(left), float(right), rel_tol=1e-12, abs_tol=1e-12)
+        if isinstance(left, (datetime, pd.Timestamp)) or isinstance(right, (datetime, pd.Timestamp)):
+            return pd.Timestamp(left) == pd.Timestamp(right)
+        return left == right
+
+    pending = []
+    for row in features.to_dict(orient='records'):
+        old = stored.get((row[key], pd.Timestamp(row['trade_date']).date()))
+        pending.append(old is None or any(
+            column not in old or not equal(value, old[column])
+            for column, value in row.items() if column not in (key, 'trade_date')
+        ))
+    return features.loc[pending].copy()
 
 
 def _resolve_heartbeat_interval_seconds() -> float:
@@ -114,7 +161,11 @@ class EventSentimentHistoryBackfillService:
         end_date: date | None = None,
         years: int | None = None,
         ingestion_source: str | None = None,
+        recent_days: int | None = None,
     ) -> tuple[date, date]:
+        if recent_days is not None and (start_date is not None or years is not None):
+            raise ValueError('recent_days cannot be combined with start_date or years')
+        recent_start, recent_end = _recent_window(recent_days, end_date) if recent_days is not None else (None, None)
         with _log_phase(
             "history_backfill.resolve_bounds.scored_dates",
             requested_start_date=start_date,
@@ -122,12 +173,20 @@ class EventSentimentHistoryBackfillService:
             years=years,
             ingestion_source=ingestion_source,
         ):
-            scored_dates = self.repository.list_scored_trade_dates(ingestion_source=ingestion_source)
+            if recent_days is not None:
+                LOGGER.info('Daily sentiment aggregation target | recent_days=%s start=%s end=%s history_buffer_days=%s',
+                    recent_days, recent_start, recent_end, self.config.feature_history_buffer_days)
+                scored_dates = self.repository.list_scored_trade_dates(
+                    start_date=recent_start, end_date=recent_end, ingestion_source=ingestion_source)
+            else:
+                scored_dates = self.repository.list_scored_trade_dates(ingestion_source=ingestion_source)
         if not scored_dates:
             raise RuntimeError("Aucune date scorée disponible dans news_raw/news_sentiment pour reconstruire l'historique.")
 
-        resolved_end = end_date or max(scored_dates)
-        if start_date is not None:
+        resolved_end = recent_end if recent_days is not None else end_date or max(scored_dates)
+        if recent_days is not None:
+            resolved_start = recent_start
+        elif start_date is not None:
             resolved_start = start_date
         else:
             lookback_years = years or self.config.bootstrap_default_years
@@ -173,7 +232,11 @@ class EventSentimentHistoryBackfillService:
         *,
         ingestion_source: str | None = None,
         ticker_symbols: list[str] | None = None,
+        recent_days: int | None = None,
+        resume_features: bool = False,
     ) -> EventSentimentHistoryBackfillResult:
+        if resume_features and recent_days is None:
+            raise ValueError('resume_features requires recent_days; historical rebuild remains explicit')
         normalized_ticker_symbols = sorted({str(symbol).strip().upper() for symbol in (ticker_symbols or []) if str(symbol).strip()})
         LOGGER.info(
             "Event sentiment history backfill started | requested_start_date=%s requested_end_date=%s years=%s batch_days=%s ingestion_source=%s ticker_symbol_count=%s",
@@ -189,6 +252,7 @@ class EventSentimentHistoryBackfillService:
             end_date=end_date,
             years=years,
             ingestion_source=ingestion_source,
+            recent_days=recent_days,
         )
         with _log_phase(
             "history_backfill.list_trade_dates",
@@ -297,6 +361,17 @@ class EventSentimentHistoryBackfillService:
                 ].copy()
             ticker_features = ticker_features[ticker_features["trade_date"].isin(target_date_set)].copy()
             sector_features = sector_features[sector_features["trade_date"].isin(target_date_set)].copy()
+            if resume_features:
+                existing_ticker, existing_sector = self.repository.load_existing_daily_features(
+                    min(target_dates), max(target_dates), ticker_symbols=normalized_ticker_symbols or None)
+                ticker_before, sector_before = len(ticker_features), len(sector_features)
+                ticker_features = _pending_feature_rows(ticker_features, existing_ticker, 'symbol')
+                sector_features = _pending_feature_rows(sector_features, existing_sector, 'sector')
+                LOGGER.info(
+                    'history_backfill.resume_features | batch=%s/%s ticker_pending=%s ticker_unchanged=%s '
+                    'sector_pending=%s sector_unchanged=%s',
+                    batch_index, len(date_batches), len(ticker_features), ticker_before-len(ticker_features),
+                    len(sector_features), sector_before-len(sector_features))
             LOGGER.info(
                 "history_backfill.filtered_features | batch=%s/%s ticker_rows=%s sector_rows=%s target_dates=%s",
                 batch_index,
@@ -329,7 +404,9 @@ class EventSentimentHistoryBackfillService:
                 sector_rows_upserted,
             )
 
-        if ticker_rows_upserted == 0 and sector_rows_upserted == 0:
+        if ticker_rows_upserted == 0 and sector_rows_upserted == 0 and resume_features:
+            LOGGER.info('Reprise features : aucune écriture nécessaire dans la fenêtre récente (état inchangé ou sans ligne produite).')
+        elif ticker_rows_upserted == 0 and sector_rows_upserted == 0:
             LOGGER.warning(
                 "Event sentiment history backfill completed with zero inserted rows | trade_dates=%s window=[%s -> %s] ingestion_source=%s ticker_symbol_count=%s",
                 len(trade_dates),
@@ -363,6 +440,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--start-date", type=str, default=None, help="Date de début ISO (YYYY-MM-DD).")
     parser.add_argument("--end-date", type=str, default=None, help="Date de fin ISO (YYYY-MM-DD).")
     parser.add_argument("--years", type=int, default=None, help="Lookback par défaut si start-date absent. Défaut config bootstrap_default_years.")
+    parser.add_argument('--recent-days', type=int, default=None,
+        help='Agrégation quotidienne : N dates calendaires inclusives jusqu’à end-date, sinon date courante New York ; incompatible avec start-date/years.')
+    parser.add_argument('--resume-features', action='store_true',
+        help='Avec recent-days : écrire seulement les lignes manquantes ou modifiées, sans ignorer les trous par titre/secteur.')
     parser.add_argument("--batch-days", type=int, default=None, help="Nombre de trade_dates par batch de reconstruction.")
     parser.add_argument(
         "--ingestion-source",
@@ -391,6 +472,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
+    if args.resume_features and args.recent_days is None:
+        parser.error('--resume-features exige --recent-days')
+    if args.recent_days is not None:
+        if args.start_date is not None or args.years is not None:
+            parser.error('--recent-days incompatible avec --start-date et --years')
+        if not 1 <= args.recent_days <= 365:
+            parser.error('--recent-days doit être compris entre 1 et 365')
     configure_root_logging(
         level=getattr(logging, args.log_level),
         log_path="./log/event_sentiment_history_backfill.log",
@@ -403,7 +491,7 @@ def main(argv: list[str] | None = None) -> int:
     ticker_symbols: list[str] | None = None
     effective_ticker_symbol_source: str | None = None
     LOGGER.info(
-        "history_backfill CLI started | start_date=%s end_date=%s years=%s batch_days=%s ingestion_source=%s ticker_symbols_provided=%s ticker_symbol_source=%s ticker_max_symbols=%s heartbeat_interval_seconds=%.1f",
+        "history_backfill CLI started | start_date=%s end_date=%s years=%s batch_days=%s ingestion_source=%s ticker_symbols_provided=%s ticker_symbol_source=%s ticker_max_symbols=%s heartbeat_interval_seconds=%.1f recent_days=%s",
         start_date,
         end_date,
         args.years,
@@ -413,6 +501,7 @@ def main(argv: list[str] | None = None) -> int:
         args.ticker_symbol_source,
         args.ticker_max_symbols,
         _resolve_heartbeat_interval_seconds(),
+        args.recent_days,
     )
     if args.ticker_symbols or args.ticker_symbol_source:
         with _log_phase(
@@ -446,7 +535,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
     started_at = _utc_now_naive()
-    result = service.backfill(
+    backfill_kwargs = dict(
         start_date=start_date,
         end_date=end_date,
         years=args.years,
@@ -454,10 +543,15 @@ def main(argv: list[str] | None = None) -> int:
         ingestion_source=str(args.ingestion_source or "").strip().lower() or None,
         ticker_symbols=ticker_symbols,
     )
+    if args.recent_days is not None:
+        backfill_kwargs['recent_days'] = args.recent_days
+    if args.resume_features:
+        backfill_kwargs['resume_features'] = True
+    result = service.backfill(**backfill_kwargs)
     checkpoint_provider = cast(Literal["alpaca", "finnhub", "eodhd"], str(args.ingestion_source or "eodhd").strip().lower() or "eodhd")
     checkpoint_symbols = service.repository.list_ticker_map_symbols(
-        start_date=start_date,
-        end_date=end_date,
+        start_date=result.start_date,
+        end_date=result.end_date,
         ingestion_source=str(args.ingestion_source or "").strip().lower() or None,
         symbols=ticker_symbols,
     )
@@ -477,6 +571,8 @@ def main(argv: list[str] | None = None) -> int:
             "ingestion_source": str(args.ingestion_source or "").strip().lower() or None,
             "ticker_symbol_source": effective_ticker_symbol_source,
             "ticker_symbol_count": len(ticker_symbols or []),
+            "recent_days": args.recent_days,
+            "resume_features": args.resume_features,
             **asdict(result),
         }
     )

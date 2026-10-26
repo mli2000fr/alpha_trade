@@ -14,7 +14,6 @@ class NativeWinnerMarket:
 
     def __call__(self, state, now):
         from service.alpaca.intraday_bars import fetch_intraday
-        from service.alpaca.clientAlpaca import fetch_latest_quotes
         now = aware(now)
         cal = get_market_calendar('US_EQ', allow_us_weekday_fallback=False)
         day = now.astimezone(ZoneInfo('America/New_York')).date()
@@ -23,6 +22,12 @@ class NativeWinnerMarket:
         if not previous:
             raise ValueError('Official prior completed US session missing')
         previous_day = previous[-1].session_date
+        from execution_engine.winner_standard_entry import standard_initial
+        if standard_initial(state):
+            # No breakout/high/5m history is needed to submit a standard entry.
+            # A missing real-time SIP quote still blocks it in native risk.
+            return self.with_quote(state, dict(bars=[], prior_session=previous_day, feed='sip',
+                prior_session_high=None, ask=None, bid=None))
         # An after-close scan may tighten an existing stop, but cannot qualify
         # a new entry: the shared confirmation contract requires an open RTH.
         lookback = timedelta(minutes=5*(state['policy']['confirmation_bars']+2))
@@ -52,7 +57,7 @@ class NativeWinnerMarket:
         # Same RAW basis as today's five-minute bars. Fully split-adjusted
         # historical daily highs cannot be mixed with raw execution prices.
         key = state['symbol'], previous_day
-        if key not in self.prior_highs:
+        if state['policy']['confirmation_bars'] > 0 and key not in self.prior_highs:
             prior_session = previous[-1]
             raw_prior = fetch_intraday(state['symbol'], start_epoch=prior_session.open_at_utc.timestamp(),
                 end_epoch=prior_session.close_at_utc.timestamp(), interval='5m', feed='sip', account_id=self.account_id)
@@ -65,8 +70,12 @@ class NativeWinnerMarket:
                 if not all(math.isfinite(v) and v > 0 for v in (op, hi, lo, cl)) or not lo <= min(op, cl) <= max(op, cl) <= hi:
                     raise ValueError('Unqualified prior raw SIP OHLC')
             self.prior_highs[key] = max(float(r['high']) for r in selected)
-        snapshot = dict(bars=bars, prior_session_high=self.prior_highs[key],
+        snapshot = dict(bars=bars, prior_session_high=self.prior_highs.get(key),
             prior_session=previous_day, ask=None, bid=None, feed='sip')
+        return self.with_quote(state, snapshot)
+
+    def with_quote(self, state, snapshot):
+        from service.alpaca.clientAlpaca import fetch_latest_quotes
         try:
             quote = fetch_latest_quotes([state['symbol']], account_id=self.account_id)[state['symbol']]
             if not all(math.isfinite(float(quote[k])) and float(quote[k]) > 0 for k in ('as', 'bs')):

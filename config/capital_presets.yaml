@@ -37,10 +37,10 @@ presets:
   values:
     risk_account_equity: __DETECTED_EQUITY__
     risk_per_trade_pct: 0.01
-    risk_max_positions: 5
+    risk_max_positions: 20
     risk_max_position_weight: 0.35
     risk_max_sector_weight: 0.55
-    risk_min_position_notional: 500.0
+    risk_min_position_notional: 70.0
     risk_max_drawdown_pct: 0.15
     risk_max_daily_loss_pct: 0.025
     risk_drawdown_rolling_peak_window_days: 252
@@ -148,10 +148,10 @@ presets:
   values:
     risk_account_equity: __DETECTED_EQUITY__
     risk_per_trade_pct: 0.0125
-    risk_max_positions: 8 
+    risk_max_positions: 20
     risk_max_position_weight: 0.25
     risk_max_sector_weight: 0.5
-    risk_min_position_notional: 155.0
+    risk_min_position_notional: 70.0
     risk_max_drawdown_pct: 0.15
     risk_max_daily_loss_pct: 0.03
     risk_drawdown_rolling_peak_window_days: 252
@@ -256,7 +256,7 @@ presets:
   values:
     risk_account_equity: __DETECTED_EQUITY__
     risk_per_trade_pct: 0.0175
-    risk_max_positions: 10
+    risk_max_positions: 20
     risk_max_position_weight: 0.18
     risk_max_sector_weight: 0.35
     risk_min_position_notional: 200.0
@@ -355,7 +355,7 @@ presets:
   values:
     risk_account_equity: __DETECTED_EQUITY__
     risk_per_trade_pct: 0.015
-    risk_max_positions: 12
+    risk_max_positions: 20
     risk_max_position_weight: 0.15
     risk_max_sector_weight: 0.3
     risk_min_position_notional: 300.0

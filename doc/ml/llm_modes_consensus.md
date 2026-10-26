@@ -1,5 +1,16 @@
 # Oracle → filtre LLM : Web ou données locales
 
+**Contrat courant — v9 :** `separate_trend_evidence: true` distingue tendance
+1–10 ou indéterminable, qualité des preuves et sélection, pour GPT/DeepSeek dans
+les deux modes. [Contrat v9](llm_tendance_preuves_v9.md). Sans l'option dans une
+archive, les contrats v4–v8 restent applicables sans conversion.
+
+Depuis le 24 octobre 2026, le mode courant `scoring_mode: direction_1_10`
+utilise le protocole v8, score /10 et seuils stricts configurables, dans les
+quatre parcours fournisseur × mode. [Contrat v8 et compatibilité des archives](llm_score_directionnel_v8.md).
+Les descriptions v5–v7 ci-dessous documentent le socle et les archives, pas une
+conversion des anciennes notes de confiance.
+
 Audit complémentaire : [quelles données des batchs ajouter au contexte LLM](audit_donnees_batchs_contexte_llm_20261019.md).
 Inventaire en base, couvertures/fraîcheur et réserves de qualification ; aucun
 nouveau branchement opérationnel effectué par cet audit.

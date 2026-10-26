@@ -11,6 +11,13 @@ de recherche explicitement actives ont leur catalogue propre batch_fr.yaml.
 
 ## Pour reprendre l'application
 
+Audit du **26 octobre 2026** : [direction LONG/SHORT des collectes P0/P1](audit_directionnel_p0_p1_resultats_20261026.md).
+Six collectes de marché auditées,293codes courants ; aucune fenêtre H20 mûre
+depuis les premiers snapshots réellement reçus le5octobre. H5/H10 restent
+exploratoires, sans signal validé ni modification des batchs.
+[Combinaison prix/AMF à poids égaux](p0_p1_combinaison_egale_resultats_20261026.md) :
+petit gain de classement H5 sur50titres/sixdates seulement, pas de validation H20.
+
 Actualisation du **15 octobre 2026** : [consensus quotidien EODHD](consensus_eodhd_collecte_quotidienne.md)
 remplace Yahoo ; accès FR, 166 lignes de smoke et reprise idempotente vérifiés.
 Stockage dans deux tables dédiées `alpha_trade_fr`, catalogue activé sur demande

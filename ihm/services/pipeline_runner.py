@@ -356,6 +356,8 @@ class PipelineLaunchOptions:
     llm_filter_enabled: bool = False
     llm_filter_run_id: str | None = None
     llm_specific_protections: bool | None = None  # None = default from config.yaml.
+    options_filter_enabled: bool = False
+    options_filter_run_id: str | None = None
     trade_date: str | None = None
     capital_preset_key: str | None = None
     # Si True, écrase ``trade_date`` au lancement par le snapshot_date le plus
@@ -1339,12 +1341,18 @@ def _build_sentiment_history_backfill_command(
     ticker_symbol_source: str | None = None,
     ticker_max_symbols: int | None = None,
     ingestion_source: str | None = None,
+    recent_days: int | None = None,
 ) -> list[str]:
     command = [sys.executable, "-u", "-m", "event_sentiment.history_backfill"]
     if sentiment_start_utc:
         command.extend(["--start-date", str(sentiment_start_utc)[:10]])
     if sentiment_end_utc:
         command.extend(["--end-date", str(sentiment_end_utc)[:10]])
+    if recent_days is not None:
+        if sentiment_start_utc:
+            raise ValueError('Daily sentiment window cannot override an explicit historical start')
+        command.extend(['--recent-days', str(recent_days)])
+        command.append('--resume-features')
     if ingestion_source:
         command.extend(["--ingestion-source", ingestion_source])
     if ticker_symbols:
@@ -2154,8 +2162,11 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         )
         # A daily workflow is not an implicit one-year historical backfill.
         from event_sentiment.import_runtime import load_import_runtime
+        sentiment_recent_days = None
         if not import_start_date:
-            cmd0.extend(['--lookback-days',str(load_import_runtime().pipeline_lookback_days)])
+            sentiment_runtime = load_import_runtime()
+            sentiment_recent_days = sentiment_runtime.pipeline_feature_recalc_days
+            cmd0.extend(['--lookback-days',str(sentiment_runtime.pipeline_lookback_days)])
         cmd0.append('--continue-on-symbol-error')
         cmd0.extend(['--summary-path','$newsImportSummary'])
         summary_root = str(PROJECT_ROOT/'artifacts/news_import_runs').replace("'", "''")
@@ -2178,10 +2189,12 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         )
         cmd3 = _build_sentiment_history_backfill_command(
             sentiment_start_utc=sentiment_start_utc,
-            sentiment_end_utc=sentiment_end_utc,
+            sentiment_end_utc=(sentiment_end_utc or _normalize_optional_date(options.trade_date))
+                if sentiment_recent_days is not None else sentiment_end_utc,
             ticker_symbols=sentiment_scope_symbols,
             ticker_symbol_source=sentiment_scope_symbol_source,
             ingestion_source=options.sentiment_news_provider,
+            recent_days=sentiment_recent_days,
         )
         cmd4 = _build_sentiment_contextual_command(
             options,
@@ -2730,6 +2743,9 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             _bid = options.ml_predict_batch_id or options.ml_live_predict_batch_id
         else:
             _bid = options.ml_live_predict_batch_id or options.ml_predict_batch_id
+        if options.options_filter_enabled and not _bid:
+            from service.options_directional.config import load_options_filter_config
+            _bid = load_options_filter_config().default_oracle_batch_id
         if _bid:
             _root = Path(ml_artifacts_dir)
             _predict_artifacts_dir = str(_root if _root.name == _bid else _root / _bid)
@@ -2764,7 +2780,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--predict-max-date-workers", str(options.ml_predict_max_date_workers)])
         if options.ml_oracle_shadow:
             command.append("--oracle-shadow")
-        return _wrap_llm_command('predict', command, options) if options.llm_filter_enabled else command
+        return _wrap_directional_command('predict', command, options)
 
     if step_key == "risk_management":
         command = [
@@ -2864,7 +2880,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
                 pass  # best-effort : fallback H10 du dataclass
         if _best_h is not None:
             command.extend(["--best-horizon", str(_best_h)])
-        return _wrap_llm_command('risk', command, options) if options.llm_filter_enabled else command
+        return _wrap_directional_command('risk', command, options)
 
     if step_key == "execution":
         command = [sys.executable, "-u", str(PROJECT_ROOT / "run_execution.py"), options.execution_mode]
@@ -2910,7 +2926,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             command.extend(["--approval-token", str(options.execution_live_approval_token)])
         if options.execution_run_plan_file:
             command.extend(["--run-plan-file", str(options.execution_run_plan_file)])
-        return _wrap_llm_command('execute', command, options) if options.llm_filter_enabled else command
+        return _wrap_directional_command('execute', command, options)
 
     if step_key == "corporate_actions_apply":
         command = [sys.executable, "-u", "-m", "corporate_actions", "apply"]
@@ -2921,6 +2937,36 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return command
 
     raise KeyError(f"Étape de pipeline inconnue : {step_key}")
+
+
+def _wrap_directional_command(phase: str, command: list[str], options: PipelineLaunchOptions) -> list[str]:
+    if options.llm_filter_enabled and options.options_filter_enabled:
+        raise ValueError('Choisir un seul filtre après Oracle : LLM ou options ; cumul non qualifié')
+    if options.llm_filter_enabled:
+        return _wrap_llm_command(phase, command, options)
+    if not options.options_filter_enabled:
+        return command
+    from service.options_directional.config import load_options_filter_config
+    config = load_options_filter_config()
+    if not config.enabled:
+        raise ValueError('Filtre options désactivé dans config.yaml')
+    if (options.execution_mode != 'paper' or (options.account_id or 'default') != 'default'
+            or options.allow_outside_rth or options.auto_rebalance):
+        raise ValueError('Filtre options : compte principal PAPER, sans rééquilibrage automatique ni hors séance')
+    if options.ml_predict_use_historical_range or options.ml_oracle_shadow:
+        raise ValueError('Filtre options prospectif uniquement, pas historique/shadow')
+    if options.risk_enable_kelly:
+        raise ValueError('Filtre options : sizing Kelly interdit, score non calibré')
+    batch = options.ml_live_predict_batch_id or options.ml_predict_batch_id or config.default_oracle_batch_id
+    from common.us_signal_date import resolve_us_signal_date, pin_command_date
+    day = resolve_us_signal_date(options.trade_date or _llm_today_ny()).isoformat()
+    command = pin_command_date(command, phase, day)
+    return [sys.executable, '-u', '-m', 'service.options_directional.pipeline',
+            '--phase', phase, '--run-id', options.options_filter_run_id or 'auto',
+            '--trade-date', day, '--batch-id', batch,
+            '--symbol-source', options.ml_predict_symbol_source,
+            '--capital-preset-key', options.capital_preset_key or 'capital_2001_5000',
+            '--artifacts-dir', options.ml_artifacts_dir, '--command-json', json.dumps(command)]
 
 
 def _wrap_llm_command(phase: str, command: list[str], options: PipelineLaunchOptions) -> list[str]:

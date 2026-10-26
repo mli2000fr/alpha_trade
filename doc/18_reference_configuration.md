@@ -26,6 +26,12 @@ marché et les fichiers concernés. [Inventaire courant](operations/catalogue_ba
 
 ## Chargement du fichier
 
+Préférence de lecture des bougies US :
+`market_data.daily_bars_preferred_source: eodhd` (`eodhd | alpaca_sip`).
+Elle départage les deux sources pour une même séance, sans modifier le
+fournisseur de collecte `market_data.bars_provider` ni les flux intraday/quotes.
+[Contrat, lecteurs raccordés et limites actuelles](operations/daily_bars_source_preference.md).
+
 `common/config_loader.py` fournit le chargement YAML commun. Un chemin explicite
 **autre que le `config.yaml` racine** a priorité ; pour le chemin par défaut
 (y compris ce `config.yaml` explicite), `ALPHA_TRADE_CONFIG_PATH` peut le remplacer.

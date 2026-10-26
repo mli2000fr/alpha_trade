@@ -109,7 +109,7 @@ class WinnerCampaignStore:
             old = json.loads(previous['state_json'])
             # A trailing update or restart must not change the risk admission.
             for key in ('campaign_id', 'symbol', 'account_id', 'broker_mode', 'risk_run_id',
-                    'policy', 'account_policy', 'full_quantity', 'initial_quantity', 'risk_budget', 'target',
+                    'policy', 'account_policy', 'entry_policy', 'full_quantity', 'initial_quantity', 'risk_budget', 'target',
                     'exec_run_id', 'signal_date', 'created_at', 'earliest_entry_open', 'entry_expires_at'):
                 if json.dumps(old.get(key), sort_keys=True, default=str) != json.dumps(state.get(key), sort_keys=True, default=str):
                     raise ValueError(f'Frozen campaign field cannot change: {key}')

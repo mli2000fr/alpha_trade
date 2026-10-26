@@ -213,7 +213,7 @@ def load_price_history_df(
     lb = (pd.Timestamp(trade_date) - pd.Timedelta(days=(persist_days + extra_days) * 2 + 7)).date().isoformat()
     ph = ",".join(["%s"] * len(symbols))
     query = (
-        "SELECT date, symbol, close FROM stock_bars_daily "
+        "SELECT date, symbol, close, data_source FROM stock_bars_daily "
         f"WHERE symbol IN ({ph}) AND date BETWEEN %s AND %s "
         "ORDER BY symbol, date"
     )
@@ -225,6 +225,8 @@ def load_price_history_df(
         return pd.DataFrame()
     if df.empty:
         return df
+    from common.daily_bar_sources import select_daily_bars
+    df = select_daily_bars(df)
     df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.normalize()
     df["symbol"] = df["symbol"].astype(str).str.upper()
     return df.dropna(subset=["close"])

@@ -20,6 +20,7 @@ from sqlalchemy.engine import Engine
 from backtesting.fidelity import PitHistoryRequiredError, ScoreLoadDiagnostics, ScoreLoadResult
 from common.capital_presets import DEFAULT_CAPITAL_PRESET_KEY
 from common.tradable_universe import UniverseResolution, resolve_universe_asof
+from common.daily_bar_sources import daily_source_filter, preferred_daily_source
 
 LOGGER = logging.getLogger(__name__)
 BACKTEST_REQUIRED_BARS_DATA_SOURCE = "eodhd_eod"
@@ -104,21 +105,16 @@ def get_required_bars_source_filter(
     table_name: str = "stock_bars_daily",
     table_alias: str | None = None,
 ) -> tuple[str, dict[str, str]]:
-    """Retourne un fragment SQL imposant la source canonique EODHD.
-
-    Le backtesting doit désormais s'exécuter uniquement sur les barres issues
-    d'EODHD, même si la table contient un mélange de providers historiques.
-    """
+    """Daily US read preference; use the other known source only on absent days."""
     columns = _get_table_columns(engine, table_name, required=True)
     if not columns:
         raise RuntimeError(f"La table {table_name} est introuvable ou inaccessible.")
     if "data_source" not in columns:
         raise RuntimeError(
-            f"La colonne {table_name}.data_source est requise pour forcer le backtest sur "
-            f"{BACKTEST_REQUIRED_BARS_DATA_SOURCE}."
+            f"La colonne {table_name}.data_source est requise pour sélectionner EODHD/Alpaca SIP."
         )
-    qualified = f"{table_alias}.data_source" if table_alias else "`data_source`"
-    return f"AND {qualified} = :required_data_source", {"required_data_source": BACKTEST_REQUIRED_BARS_DATA_SOURCE}
+    date_col = _resolve_bars_date_column(columns, table_name)
+    return daily_source_filter(alias=table_alias or table_name, date_column=date_col)
 
 
 def _resolve_bars_date_column(columns: set[str], table_name: str) -> str:
@@ -137,22 +133,13 @@ def preflight_required_bars_data_source(
     *,
     table_name: str = "stock_bars_daily",
 ) -> dict[str, Any]:
-    """Valide la présence de la source OHLCV requise sur la fenêtre demandée.
-
-    Le backtesting canonique consomme uniquement ``data_source='eodhd_eod'``.
-    Cette pré-vérification rend explicites :
-    - l'absence de colonne ``data_source`` ;
-    - l'absence totale de barres sur la fenêtre ;
-    - l'absence de barres ``eodhd_eod`` sur la fenêtre ;
-    - l'existence éventuelle d'un mix de sources (status ``warning``).
-    """
+    """Validate known US daily feeds, exposing preferred and mixed-source coverage."""
     columns = _get_table_columns(engine, table_name, required=True)
     if not columns:
         raise RuntimeError(f"La table {table_name} est introuvable ou inaccessible.")
     if "data_source" not in columns:
         raise RuntimeError(
-            f"La colonne {table_name}.data_source est requise pour pré-valider le backtesting sur "
-            f"{BACKTEST_REQUIRED_BARS_DATA_SOURCE}."
+            f"La colonne {table_name}.data_source est requise pour pré-valider EODHD/Alpaca SIP."
         )
     date_col = _resolve_bars_date_column(columns, table_name)
 
@@ -181,11 +168,13 @@ def preflight_required_bars_data_source(
             f"Aucune barre OHLCV disponible dans {table_name} sur [{start} → {end}]."
         )
 
-    required_rows = int(counts.get(BACKTEST_REQUIRED_BARS_DATA_SOURCE, 0))
-    if required_rows <= 0:
+    preferred = preferred_daily_source()
+    required_rows = int(counts.get(preferred, 0))
+    compatible_rows = sum(counts.get(source, 0) for source in ('eodhd_eod', 'alpaca_sip'))
+    if compatible_rows <= 0:
         available = ", ".join(sorted(counts)) or "aucune"
         raise RuntimeError(
-            f"Préflight OHLCV échoué : aucune barre `{BACKTEST_REQUIRED_BARS_DATA_SOURCE}` dans {table_name} "
+            f"Préflight OHLCV échoué : aucune barre EODHD/Alpaca SIP dans {table_name} "
             f"sur [{start} → {end}] (sources observées: {available})."
         )
 
@@ -198,7 +187,9 @@ def preflight_required_bars_data_source(
         "date_column": date_col,
         "start_date": start.isoformat(),
         "end_date": end.isoformat(),
-        "required_data_source": BACKTEST_REQUIRED_BARS_DATA_SOURCE,
+        "required_data_source": preferred,
+        "source_policy": "preferred_then_other_by_symbol_session",
+        "compatible_rows": int(compatible_rows),
         "status": status,
         "degraded_reasons": degraded_reasons,
         "rows_total": rows_total,

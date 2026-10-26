@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+pytestmark = pytest.mark.usefixtures('isolated_winner_config')
+
 from common.winner_risk_state import CampaignRiskState
 from execution_engine.winner_live_risk import NativeWinnerRisk
 from execution_engine.winner_risk import reapprove_campaign

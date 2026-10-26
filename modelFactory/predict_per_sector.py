@@ -31,12 +31,15 @@ DEFAULT_BATCH_ID = "model-factory-20260811223551-ef2cd0"  # B25 champion promu 2
 
 
 def _last_bar_date() -> date | None:
-    from sqlalchemy import create_engine, text
+    from sqlalchemy import text
+    from database.connection import get_sqlalchemy_engine
+    from common.daily_bar_sources import daily_source_filter
 
-    engine = create_engine("mysql+pymysql://root:root@localhost/alpha_trade", future=True)
+    engine = get_sqlalchemy_engine(db_name='alpha_trade')
+    source_filter, source_params = daily_source_filter()
     with engine.connect() as conn:
         row = conn.execute(
-            text("SELECT MAX(date) FROM stock_bars_daily WHERE data_source='eodhd_eod'")
+            text("SELECT MAX(date) FROM stock_bars_daily WHERE 1=1 "+source_filter), source_params
         ).fetchone()
     return row[0] if row and row[0] else None
 

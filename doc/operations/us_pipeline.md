@@ -6,6 +6,40 @@
 
 ## Périmètre
 
+Le **26 octobre 2026**, ajout du filtre options expérimental après Oracle,
+activé par défaut dans la page et le batch :
+`options_directional_filter.enabled: true`, défaut de code TOP20.
+Le fichier utilisateur a été ajusté pendant le raccordement à TOP50 / seuil 0.70 ;
+ces valeurs configurées sont conservées.
+Volume/OI en rangs 50/50, au maximum moitié supérieure des titres couverts en
+LONG uniquement, sans SHORT automatique ; sources absentes/périmées exclues,
+pas de remplacement N+1. GPT reste désactivé. Identifiant exact partagé 10/11/12,
+archives locales séparées et vérification des cibles avant PAPER.
+[Règles, raccordement, limites et archives](options_directional_filter.md).
+
+Le **26 octobre 2026**, le filtrage GPT/DeepSeek est désactivé sur demande :
+`config.yaml → llm_directional_filter.enabled: false`. La case Pipeline est
+décochée et indisponible tant que cette bascule est désactivée, y compris dans
+une ancienne session où elle était cochée. Le batch `us_pipeline` efface les
+options LLM résiduelles avant de construire les commandes 10/11/12 : prédiction
+Oracle, risque et exécution suivent le parcours sans LLM. Les archives d'analyses,
+paramètres de modèle, étapes planifiées et protections des positions existantes
+ne sont pas supprimés ni modifiés. Cette bascule ne stoppe pas rétroactivement
+un processus déjà lancé.
+
+Le **24 octobre 2026**, l'agrégation des features de l'étape 8 quotidienne est
+bornée à `sentiment_news_ingestion.pipeline_feature_recalc_days` (52) dates calendaires
+inclusives. La date de séance du workflow est conservée après minuit, sauf
+fin sentiment explicitement choisie. Lecture du buffer de 45 jours inchangée,
+écriture des seules lignes récentes manquantes ou modifiées (reprise par
+symbole et secteur, trous inclus) ; pas de bootstrap décennal implicite.
+L'import J−21/J est réduit par les checkpoints réussis, avec recouvrement
+technique de frontière et dédoublonnage des articles. Il utilise séparément
+`pipeline_lookback_days: 21`. Les 52 jours sont recalculés même si l'import
+n'a rattrapé que 7 jours ; un contexte plus ancien reste lu pour les moyennes.
+Les backfills historiques explicitement demandés restent disponibles.
+[Bornes, checkpoints et limites](sentiment_pipeline_reprise_20261017.md).
+
 Le **21 octobre 2026**, correction de la finalisation `SKIPPED` compatible avec
 la base (motif dans `details_json`), isolation des anciennes barres SIP invalides
 sans relâcher J, et conservation du ratio de couverture dans le résumé parent.
@@ -17,7 +51,8 @@ sans retrait automatique d'univers ni nouvelle exécution d'ordres :
 Le 19 octobre 2026, le collecteur autonome `eodhd_news_ingestion_sync` est
 désactivé sur demande utilisateur : l'étape 8 suffit au besoin retenu. Les listes
 `steps` / `steps_friday` et l'univers de `us_pipeline` déterminent la cadence de
-l'étape 8 ; vérifier ces listes dans `config.yaml` (actuellement toutes deux 1–12).
+l'étape 8 ; vérifier ces listes dans `config.yaml` (actuellement 1–12 hors étape 8
+du lundi au jeudi, et 1–12 le vendredi).
 Pas de remplacement implicite de l'ancienne collecte élargie/week-end.
 [Désactivation et historique](eodhd_news_ingestion_sync.md).
 

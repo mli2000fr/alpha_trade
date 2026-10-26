@@ -143,7 +143,12 @@ BLOCKERS = {
     'insufficient_fresh_sources': 'sources récentes qualifiées insuffisantes',
     'excluded_untraceable_sources': 'sources non traçables exclues',
     'confidence_below_threshold': 'note de confiance sous le seuil',
+    'direction_score_neutral': 'score entre les seuils directionnels : neutre',
     'short_not_allowed': 'SHORT non autorisé',
+    'long_not_allowed': 'LONG non autorisé',
+    'trend_undeterminable': 'tendance indéterminable, pas de score inventé',
+    'evidence_partial': 'preuves partielles : avis provisoire, sélection interdite',
+    'evidence_insufficient': 'preuves insuffisantes : sélection interdite',
 }
 
 
@@ -158,12 +163,22 @@ def llm_message(run, items):
              f"Analyse {run['run_id']} · modèle {model}",
              f"État : {run['status']}"]
     lines.append('Mode : '+('données locales uniquement' if config.get('analysis_mode')=='local_data_only' else 'recherche Web'))
+    if config.get('scoring_mode')=='direction_1_10':
+        lines.append(f"Orientation 1–10 : LONG > {config.get('long_score_threshold',8)}, "
+                     f"SHORT < {config.get('short_score_threshold',3)}, sinon neutre.")
+    if config.get('separate_trend_evidence'):
+        lines.append('Tendance ≠ sélection : indéterminable sans score ; preuves partielles/insuffisantes bloquantes.')
     by_symbol = {row['symbol']: row for row in items}
     if completed and selected:
         lines.append(f'Titres retenus : {len(selected)}')
         for symbol in selected:
             parsed = json.loads(by_symbol[symbol]['assessment_json'])
-            lines.append(f"• {symbol} — {parsed['decision']} — note de confiance {_fmt(parsed['confidence'], 3)}")
+            note=(f"score d’orientation {parsed['direction_score']}/10" if 'direction_score' in parsed else
+                  f"note de confiance {_fmt(parsed['confidence'], 3)}")
+            if 'trend_status' in parsed:
+                from service.llm_directional.trend_evidence import QUALITY_LABELS
+                note+=f" — preuves {QUALITY_LABELS.get(parsed.get('evidence_quality'),'non évaluées').lower()}"
+            lines.append(f"• {symbol} — {parsed['decision']} — {note}")
         lines.append('Note déclarée par le LLM, pas une probabilité calibrée. Validation risque encore requise.')
     else:
         lines.append('Aucun titre publié.')
@@ -178,9 +193,17 @@ def llm_message(run, items):
             else:
                 reasons = [BLOCKERS.get(code, str(code)) for code in parsed.get('selection_blockers', [])]
                 if parsed.get('decision') == 'ABSTAIN':
-                    reasons.insert(0, 'ABSTAIN : le LLM ne retient pas de direction')
+                    reasons.insert(0, 'INDÉTERMINABLE : aucune estimation exploitable' if parsed.get('trend_status')=='UNDETERMINABLE' else
+                                     'NEUTRE : score entre les seuils du run' if 'direction_score' in parsed else
+                                   'ABSTAIN : le LLM ne retient pas de direction')
                 reason = '; '.join(reasons) or 'éligible mais non publié (limite de sélection ou échec global)'
-            lines.append(f"• {row['symbol']} : {reason}")
+            detail=''
+            if parsed and 'trend_status' in parsed:
+                from service.llm_directional.trend_evidence import QUALITY_LABELS
+                score=parsed.get('direction_score')
+                detail=('tendance indéterminable' if score is None else f'tendance {score}/10')
+                detail+=f" ; preuves {QUALITY_LABELS.get(parsed.get('evidence_quality'),'non évaluées').lower()} ; "
+            lines.append(f"• {row['symbol']} : {detail}{reason}")
             if parsed and row.get('status') == 'VALID' and parsed.get('decision') == 'ABSTAIN':
                 for field, label in [('bull_case', 'Argument haussier'), ('bear_case', 'Argument baissier')]:
                     argument = ' '.join(str(parsed.get(field) or '').split())

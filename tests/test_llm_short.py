@@ -23,7 +23,7 @@ from tests.test_llm_specific_protections import parent, watcher, row
 
 
 def test_config_and_prompt():
-    assert load_filter_config().allow_short is True
+    assert type(load_filter_config().allow_short) is bool  # Deployment permission is user-editable.
     assert FilterConfig().allow_short is False
     with pytest.raises(ValueError):
         FilterConfig(allow_short='true')

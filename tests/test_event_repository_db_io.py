@@ -115,6 +115,27 @@ def _make_repository() -> EventSentimentRepository:
     return cast(EventSentimentRepository, object.__new__(EventSentimentRepository))
 
 
+def test_existing_daily_features_are_bounded_and_keep_sector_scope_broad():
+    from sqlalchemy import create_engine, text
+    repo = _make_repository()
+    repo.engine = create_engine('sqlite:///:memory:')
+    with repo.engine.begin() as conn:
+        for table, key in [('ticker_daily_sentiment_features', 'symbol'), ('sector_daily_sentiment_features', 'sector')]:
+            conn.execute(text(f'CREATE TABLE {table} ({key} TEXT, trade_date DATE, feature_version TEXT)'))
+            conn.execute(text(f'INSERT INTO {table} VALUES (:key, :day, :version)'), [
+                dict(key='A', day='2026-01-01', version='v2'),
+                dict(key='A', day='2026-01-05', version='v2'),
+                dict(key='B', day='2026-01-05', version='v1'),
+                dict(key='A', day='2026-01-07', version='v2')])
+    ticker, sector = repo.load_existing_daily_features(date(2026, 1, 5), date(2026, 1, 6), ticker_symbols=[' a ', 'A'])
+    assert ticker.symbol.tolist() == ['A']
+    assert sector.sector.tolist() == ['A', 'B']
+    assert sector.feature_version.tolist() == ['v2', 'v1']  # Version changes must be detectable.
+    ticker, sector = repo.load_existing_daily_features(date(2026, 1, 5), date(2026, 1, 6), ticker_symbols=[])
+    assert ticker.empty and len(sector) == 2
+    repo.engine.dispose()
+
+
 def test_upsert_normalizes_pandas_nat_to_none(monkeypatch) -> None:
     repository = _make_repository()
     repository.engine = _FakeEngine()

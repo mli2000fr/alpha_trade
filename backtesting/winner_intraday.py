@@ -47,8 +47,8 @@ class MemoryCampaignStore:
         old = self.records[state['campaign_id']]
         if old['version'] != version:
             raise RuntimeError('Replay CAS version conflict')
-        for k in ('policy', 'account_policy', 'risk_budget', 'full_quantity', 'initial_quantity', 'account_id', 'broker_mode'):
-            if old['state'][k] != state[k]:
+        for k in ('policy', 'account_policy', 'entry_policy', 'risk_budget', 'full_quantity', 'initial_quantity', 'account_id', 'broker_mode'):
+            if old['state'].get(k) != state.get(k):
                 raise ValueError('Frozen replay campaign field changed')
         if old['state']['due_open'] is not None and state['due_open'] != old['state']['due_open']:
             raise ValueError('Replay reinforcement cannot reset horizon')
@@ -73,9 +73,16 @@ class ReplayBroker:
     def gross(self):
         return sum(l['remaining']*self.marks[l['symbol']] for l in self.lots.values())
 
-    def capacity(self):
-        return self.engine._resolve_available_entry_budget(constraints=self.constraints,
+    def pending_entries(self, exclude=None):
+        return [dict(symbol=r['symbol'], side='buy',
+            notional=float(r['qty'])*float(r['limit_price'])) for k, r in self.orders.items()
+            if k != exclude and r.get('side') == 'buy' and r['status'] == 'new'
+            and r.get('time_in_force') == 'day' and r.get('limit_price') is not None]
+
+    def capacity(self, exclude=None):
+        available = self.engine._resolve_available_entry_budget(constraints=self.constraints,
             settled_cash=self.cash, current_equity=self.equity(), current_gross_notional=self.gross())
+        return max(available-sum(p['notional']*(1+self.fee) for p in self.pending_entries(exclude)), 0.)
 
     def settle(self, day):
         self.cash += sum(v for due, v in self.unsettled if due <= day)
@@ -126,29 +133,41 @@ class ReplayBroker:
         self.intents[intent.intent_id] = intent
         raw = dict(id=intent.intent_id, type=intent.order_type, status='new', filled_qty='0',
             filled_avg_price=None, client_order_id=intent.submission_key, qty=str(intent.qty),
-            side=intent.side, stop_price=intent.stop_price, limit_price=intent.limit_price)
+            side=intent.side, symbol=intent.symbol, time_in_force=intent.time_in_force,
+            stop_price=intent.stop_price, limit_price=intent.limit_price)
         self.orders[intent.intent_id] = raw
         price = self.marks[intent.symbol]
         if intent.side == 'buy':
-            if price > intent.limit_price+1e-8 or intent.qty*price*(1+self.fee) > self.capacity()+1e-6:
+            self.fill_buy(intent, raw, price, state['campaign_id'])
+            if raw['status'] == 'new' and intent.time_in_force != 'day':
                 raw['status'] = 'canceled'  # IOC: no deferred or retroactive fill.
-            else:
-                self.cash -= intent.qty*price*(1+self.fee)
-                self.fees += intent.qty*price*self.fee
-                self.lots[intent.intent_id] = dict(symbol=intent.symbol, quantity=intent.qty,
-                    remaining=intent.qty, entry=price, entry_time=self.now, entry_fee=intent.qty*price*self.fee,
-                    campaign_id=state['campaign_id'])
-                self.events.append(dict(time=self.now, symbol=intent.symbol, event='BUY_FILL',
-                    quantity=intent.qty, price=price, costs=intent.qty*price*self.fee))
-                self.filled(raw, intent.qty, price)
         elif intent.intent_role == 'exit':
             if intent.time_in_force == 'opg':
                 raw['queued_moo'] = True
             else:
-                self.close(intent.symbol, intent.qty, price, intent.intent_id, 'HORIZON_LATE_MARKET')
+                reason=next((o.get('exit_reason') for o in state['operations'] if o['key']==intent.intent_id),None)
+                self.close(intent.symbol, intent.qty, price, intent.intent_id, reason or 'HORIZON_LATE_MARKET')
         elif intent.order_type != 'stop':
             raise ValueError('Unsupported replay order')
         return SimpleNamespace(broker_order_id=intent.intent_id)
+
+    def fill_buy(self, intent, raw, price, campaign_id):
+        if ((intent.limit_price is not None and price > intent.limit_price+1e-8)
+                or intent.qty*price*(1+self.fee) > self.capacity(exclude=intent.intent_id)+1e-6):
+            return
+        self.cash -= intent.qty*price*(1+self.fee)
+        self.fees += intent.qty*price*self.fee
+        self.lots[intent.intent_id] = dict(symbol=intent.symbol, quantity=intent.qty,
+            remaining=intent.qty, entry=price, entry_time=self.now, entry_fee=intent.qty*price*self.fee,
+            campaign_id=campaign_id)
+        self.events.append(dict(time=self.now, symbol=intent.symbol, event='BUY_FILL',
+            quantity=intent.qty, price=price, costs=intent.qty*price*self.fee))
+        self.filled(raw, intent.qty, price)
+
+    def expire_day_entries(self):
+        for raw in self.orders.values():
+            if raw.get('side') == 'buy' and raw.get('time_in_force') == 'day' and raw['status'] == 'new':
+                raw['status'] = 'expired'
 
     def filled(self, raw, qty, price):
         raw.update(status='filled', filled_qty=str(qty), filled_avg_price=str(price), filled_at=self.now.isoformat())
@@ -233,6 +252,11 @@ class ReplayBroker:
             if intent.symbol not in bars:
                 continue
             bar = bars[intent.symbol]
+            if opening and intent.side == 'buy' and intent.time_in_force == 'day':
+                # Conservative 5m replay: resting DAY limits execute only at
+                # observed opens, never using a future low to invent a fill.
+                self.fill_buy(intent, raw, float(bar['open']), intent.winner_campaign_id)
+                continue
             if opening and raw.get('queued_moo'):
                 self.close(intent.symbol, intent.qty, float(bar['open']), key, 'HORIZON_OPEN')
                 continue
@@ -305,6 +329,8 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
     if base_risk.policy != 'b0' and first_seed not in regimes:
         raise ValueError('Adaptive risk requires prior SPY SMA50/200 history')
     guard = CampaignRiskState(base_risk, observations=[(first_seed, cfg.initial_equity)], regimes=regimes)
+    from backtesting.winner_global_liquidation import GlobalLiquidation
+    liquidation=GlobalLiquidation(cfg,base_risk,exec_cfg)
     daily_equity, marks, audit, breaker_marks, coverage = [], [], [], [], set()
     returns = close.pct_change(fill_method=None)
     cache = {}
@@ -337,6 +363,8 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
         return group is not None and len(group) == int((closing-opening).total_seconds()/300)
 
     def admit(signal_day, stamp):
+        if liquidation.blocks_entries:
+            return
         rows = selected.loc[selected.trade_date.eq(signal_day)]
         if rows.empty:
             return
@@ -371,6 +399,13 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
     for index, session in enumerate(sessions):
         day, opening, closing = session.session_date, session.open_at_utc, session.close_at_utc
         book.settle(day)
+        prior_day = previous if index == 0 else sessions[index-1].session_date
+        if liquidation.resume(opening,book):
+            # Only the cycle risk episode is reset. Global DD/peak never reset.
+            guard=CampaignRiskState(base_risk,observations=[(prior_day,book.equity())],
+                regimes={prior_day:regimes.get(prior_day)})
+            # No stale pre-pause plans: only the latest prior-session signal.
+            admit(prior_day,opening-timedelta(seconds=1))
         records = store.rows()
         symbols = sorted({r['state']['symbol'] for r in records})
         prior_day = previous if index == 0 else sessions[index-1].session_date
@@ -416,6 +451,8 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
             risk = replace(base_risk, account_equity=book.equity())
             evaluated = guard.evaluate(day, book.equity(), regimes.get(prior_day), daily_pnl=book.equity()-
                 (daily_equity[-1][1] if daily_equity else cfg.initial_equity))
+            liquidation.observe(stamp,book.equity(),book,evaluated)
+            liquidation.execute(stamp,store,repo,book,exec_cfg)
             records = store.rows()
             def source(state, now):
                 symbol = state['symbol']
@@ -434,6 +471,8 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
 
             def recheck(state, version, quantity, snapshot, now, kind):
                 from execution_engine.winner_live_risk import concentration_allowed
+                if liquidation.blocks_entries:
+                    raise ValueError('Global drawdown emergency halt blocks all new entries and additions')
                 vol = 1.
                 if risk.target_annual_vol:
                     vol_decision = evaluate_vol_target(returns.loc[returns.index <= pd.Timestamp(prior_day)].get(
@@ -471,7 +510,7 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
                 concentration = concentration_allowed(fills, current, candidate, day, kind)
                 ctx = dict(account_id=state['account_id'], broker_mode=state['broker_mode'], captured_at=now,
                     equity=book.equity(), available_buying_power=book.capacity(), positions=positions,
-                    pending_entries=[], sector_map=sectors, risk_config=current,
+                    pending_entries=book.pending_entries(), sector_map=sectors, risk_config=current,
                     circuit_breaker=evaluated['circuit_breaker'], breaker_qualified=True,
                     allocation_scale=evaluated['allocation_scale'], return_matrix=past_returns,
                     adv_usd=adv, cost_reserve_pct=fee, max_spread_bps=50., volatility_allocation_scale=vol,
@@ -490,11 +529,17 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
             book.now = stamp+timedelta(minutes=5)
             book.resolve(bars, opening=False)
             book.marks.update({s: float(b['close']) for s, b in bars.items()})
+            if liquidation.enabled:
+                close_evaluation=guard.evaluate(day,book.equity(),regimes.get(prior_day),daily_pnl=book.equity()-
+                    (daily_equity[-1][1] if daily_equity else cfg.initial_equity))
+                liquidation.observe(stamp+timedelta(minutes=5),book.equity(),book,close_evaluation)
             marks.append((stamp+timedelta(minutes=5), book.equity(), book.gross()))
             breaker_marks.append(dict(timestamp=stamp, peak=evaluated['reference_peak'],
-                allocation=evaluated['allocation_scale'], active=evaluated['active']))
+                allocation=evaluated['allocation_scale'], active=evaluated['active'],
+                global_halted=liquidation.halted,cycle_stopped=liquidation.cycle_stopped,cycle=liquidation.cycle))
         # Reconcile last-bar fills and terminal campaigns before the next
         # signal is admitted; no buying at the just-closed session.
+        book.expire_day_entries()
         closed_cfg = replace(exec_cfg, winner_pyramiding=replace(policy, enabled=False))
         final = WinnerCampaignRuntime(store, repo, book, closed_cfg, market=source, risk=recheck, now=closing).run(store.rows())
         if final['winner_failures']:
@@ -519,4 +564,9 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
         dividends_receivable=sum(c['amount'] for c in book.claims), settled_cash=book.cash,
         unsettled_cash=sum(v for _, v in book.unsettled), gross=book.gross(),
         open_positions=book.positions(), campaigns=len(store.records), policy=policy.__dict__))
+    result.tracker_snapshot['winner_replay']['global_liquidation']=liquidation.summary()
+    if policy.confirmation_bars == 0:
+        result.tracker_snapshot['winner_replay']['standard_entry_assumptions'] = (
+            'Regular-session observed 5m opens only; no historical pre-open SIP quotes; '
+            'DAY limits expire at session close; no intrabar limit-fill inference.')
     return result

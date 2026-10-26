@@ -57,6 +57,19 @@ def test_provider_and_selection_order(provider, label, model):
     assert '0.82' in message and 'pas une probabilité calibrée' in message
 
 
+def test_new_orientation_score_and_strict_thresholds_are_not_confidence_percentages():
+    run=archived()
+    config=json.loads(run['config_json'])
+    config.update(scoring_mode='direction_1_10',long_score_threshold=8,short_score_threshold=3)
+    run['config_json']=json.dumps(config)
+    item=assessment()
+    parsed=json.loads(item['assessment_json']);parsed['direction_score']=9
+    item['assessment_json']=json.dumps(parsed)
+    message=alerts.llm_message(run,[item])
+    assert 'score d’orientation 9/10' in message and 'LONG > 8' in message and 'SHORT < 3' in message
+    assert 'note de confiance 0.82' not in message
+
+
 def test_no_selection_explains_abstentions_and_qualification():
     message = alerts.llm_message(archived(selected=()), [
         assessment(decision='ABSTAIN'),
@@ -65,6 +78,11 @@ def test_no_selection_explains_abstentions_and_qualification():
     assert 'Aucun titre publié' in message
     for phrase in ('ABSTAIN', 'sous le seuil', 'sources récentes', 'non traçables', 'SHORT non autorisé'):
         assert phrase in message
+
+
+def test_disabled_long_has_explicit_telegram_reason():
+    message=alerts.llm_message(archived(selected=()),[assessment(blockers=('long_not_allowed',))])
+    assert 'LONG non autorisé' in message
 
 
 def test_technical_failure_is_not_valid_abstention():

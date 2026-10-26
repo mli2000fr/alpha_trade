@@ -97,6 +97,11 @@ class BacktestConfig:
     end_date: date
     initial_equity: float = 100_000.0
     risk_config: RiskConfig | None = None
+    # Explicit replay-only capital stop: total liquidation and no automatic rearm.
+    winner_global_drawdown_halt: bool = False
+    winner_hard_drawdown_pct: float | None = None  # Optional historical-peak emergency stop, replay only.
+    winner_cycle_drawdown_pct: float | None = None  # Optional cycle liquidation + calendar cooldown.
+    winner_drawdown_cooldown_months: int = 0
     exec_config: ExecutionConfig | None = None
 
     # Paramètres bracket (défauts = production)

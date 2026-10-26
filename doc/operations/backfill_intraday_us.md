@@ -114,6 +114,45 @@ signifie pas que toutes les migrations précédentes sont déployées.
 
 ## Reprise, stockage et qualification
 
+### Reprise ciblée de 2018 — 23 octobre 2026
+
+Le plan `intraday-5dfcdc71cfaf4819ed1b` (SIP brut 5 minutes, compte
+`default`, univers figé de 1 790 titres) s'est arrêté le 23 octobre à
+03:02 UTC sur un HTTP **429**, après les tentatives HTTP automatiques.
+La tranche en échec était `HOV`, du 28 octobre au 27 novembre 2018
+exclusif. Le code regroupe 401/403/429 dans un même message
+« compte/droits/quota » ; ici le code observé est bien une limitation
+de requêtes, pas une preuve de refus des droits SIP historiques.
+
+L'inventaire des checkpoints avant reprise donnait :
+
+- 14 719 tranches avec barres et 3 960 réponses vides déjà traitées ;
+- une tranche en échec et 4 590 non commencées, soit **4 591 à reprendre** ;
+- aucune archive brute disponible pour ces tranches restantes.
+
+Aucun processus intraday actif n'a été trouvé avant la relance. Le plan
+2018–2019 `intraday-75d9f29edb1bb670e48c`, affiché `RUNNING` dans un
+ancien fichier, n'a pas été relancé : ce statut seul ne prouve pas qu'un
+processus tourne. La reprise utilise le plan 2018 d'origine, **sans
+`--refresh`**, avec `--expected-plan-id` et une pause de 2 secondes entre
+requêtes/pages. Elle ignore les 18 679 checkpoints terminés, sans modifier
+les autres téléchargements ni les paramètres de production.
+
+Relance effectuée le **23 octobre à 10:08 Paris**. Premier résultat vérifié :
+HOV a fourni 1 540 barres, soumises à la persistance sans rejet ; le
+collecteur est ensuite passé à HP. Ce constat confirme le redémarrage,
+pas la fin du rattrapage ni la complétude de toutes les séances.
+
+Suivi du passage :
+
+- progression : `artifacts/intraday_backfill/intraday-5dfcdc71cfaf4819ed1b/progress.json` ;
+- logs : `log/intraday-2018-resume-20261023-100812.stdout.log` et
+  `log/intraday-2018-resume-20261023-100812.stderr.log` ;
+- `report.json` peut encore contenir le bilan de l'ancien passage bloqué
+  jusqu'à la fin du nouveau passage : lire la progression et les logs
+  courants. Les réponses `EMPTY` restent à qualifier, sans les assimiler
+  automatiquement à des séances complètes.
+
 Chaque plan fige son univers, son empreinte et ses dates sous
 `artifacts/intraday_backfill/intraday-<empreinte>/` :
 

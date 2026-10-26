@@ -29,11 +29,12 @@ def response(symbol='ABC', confidence=.9, decision='LONG'):
 
 @pytest.mark.parametrize('kwargs', [
     {'oracle_top_n': 0}, {'oracle_top_n': True}, {'oracle_top_n': 101},
-    {'max_selected': 11}, {'max_selected': -1}, {'max_selected': 2.5},
+    {'oracle_top_n': 10, 'max_selected': 11}, {'max_selected': -1}, {'max_selected': 2.5},
     {'min_confidence': float('nan')}, {'min_confidence': 1.1}, {'min_sources': 0},
     {'account_id': 'test1'}, {'timeout_seconds': 0}, {'enabled': 'true'},
     {'default_symbol_source': ''}, {'default_symbol_source': None},
     {'default_oracle_batch_id': ''}, {'default_oracle_batch_id': '../batch'},
+    {'allow_long': 'true'}, {'allow_long': 1}, {'allow_short': 'false'}, {'allow_short': 0},
 ])
 def test_invalid_config(kwargs):
     with pytest.raises(ValueError):
@@ -46,8 +47,19 @@ def test_parameters_and_zero_selection():
     assert len(select_symbols(items, cfg)) == 7
     assert select_symbols(items, replace(cfg, max_selected=0)) == []
     assert select_symbols([], cfg) == []
-    assert FilterConfig().oracle_top_n == 10
+    assert FilterConfig().oracle_top_n == 20
     assert FilterConfig().max_selected == 5
+    assert FilterConfig().allow_long is True
+    assert FilterConfig().allow_short is False
+
+
+@pytest.mark.parametrize('allow_long,allow_short',[(True,True),(True,False),(False,True),(False,False)])
+def test_legacy_direction_permissions(allow_long,allow_short):
+    config=FilterConfig(allow_long=allow_long,allow_short=allow_short)
+    for decision,allowed in [('LONG',allow_long),('SHORT',allow_short)]:
+        result=parse_response(response(decision=decision),'ABC',config,NOW)
+        assert result['decision']==decision and result['eligible']==allowed
+        assert (decision.lower()+'_not_allowed' in result['selection_blockers'])==(not allowed)
 
 
 def test_actual_yaml_defaults():
@@ -299,6 +311,21 @@ def test_persist_all_candidates_and_selection(isolated):
     assert all(i['response_sha256'] for i in items)
     _, selected = runner.qualified_selection(isolated, 'test-run', date(2026, 10, 7), 'default', now=NOW)
     assert selected[0]['symbol'] == 'ABC'
+
+
+def test_default_twenty_candidates_are_all_analyzed_but_only_five_selected(isolated):
+    contexts=[dict(symbol=f'S{i:02}',oracle_rank=i,oracle_score=1-i/100) for i in range(1,21)]
+    called=[]
+    def client(request):
+        symbol=json.loads(request['input'])['symbol'];called.append(symbol)
+        return response(symbol)
+    result=runner.analyze(engine=isolated,batch_id='batch-test',trade_date=date(2026,10,7),
+        symbol_source='universe-file:test.txt',config=FilterConfig(enabled=True),inputs=contexts,
+        client=client,run_id='twenty',check_account=False)
+    assert len(called)==20 and result['received']==20
+    assert result['selected']==[f'S{i:02}' for i in range(1,6)]
+    run,items=Repository(isolated).get('twenty')
+    assert json.loads(run['config_json'])['oracle_top_n']==20 and len(items)==20
 
 
 @pytest.mark.parametrize('decision', ['ABSTAIN', 'LONG', 'SHORT'])
@@ -632,7 +659,7 @@ def test_filtered_report_preserves_rejected_candidates(isolated):
     result = report(isolated, 'test-run')
     assert len(result['candidates']) == 2
     assert result['candidates'][1]['selected'] is False
-    assert result['configuration']['oracle_top_n'] == 10
+    assert result['configuration']['oracle_top_n'] == 20
     assert result['configuration']['max_selected'] == 1
 
 
@@ -825,12 +852,12 @@ def test_evaluation_all_candidates_maturity_and_no_duplicates(isolated, monkeypa
         schedule=lambda start_date,end_date: pd.DataFrame(index=pd.bdate_range(start_date,end_date))))
     days = pd.bdate_range('2026-10-07', periods=6)
     with isolated.begin() as conn:
-        conn.execute(text('CREATE TABLE stock_bars_daily (symbol TEXT, date TEXT, open REAL, close REAL, adj_close REAL, is_filled INT)'))
+        conn.execute(text("CREATE TABLE stock_bars_daily (symbol TEXT, date TEXT, open REAL, close REAL, adj_close REAL, is_filled INT, data_source TEXT DEFAULT 'eodhd_eod')"))
         conn.execute(text('CREATE TABLE global_oracle_labels (symbol TEXT, prediction_date TEXT, batch_id TEXT, horizon INT, oracle_decile INT, oracle_available_date TEXT, target_quality_valid INT)'))
         for symbol in ['ABC', 'XYZ']:
             for i, day in enumerate(days):
                 price = 110. if i == 5 else 100.
-                conn.execute(text('INSERT INTO stock_bars_daily VALUES (:s,:d,100,:p,:p,0)'),
+                conn.execute(text('INSERT INTO stock_bars_daily (symbol,date,open,close,adj_close,is_filled) VALUES (:s,:d,100,:p,:p,0)'),
                     {'s':symbol,'d':day.date().isoformat(),'p':price})
             conn.execute(text('INSERT INTO global_oracle_labels VALUES (:s,:d,:b,5,10,:a,1)'),
                 {'s':symbol,'d':'2026-10-07','b':'batch-test','a':'2026-10-15'})

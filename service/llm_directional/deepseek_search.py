@@ -10,7 +10,7 @@ import re
 import time
 from urllib.parse import urlsplit
 
-from .prompts import FRESH_VERSION, native_search_protocol, instructions, response_schema
+from .prompts import FRESH_VERSION, fresh_protocol, native_search_protocol, instructions, response_schema, output_policy
 
 SEARCH_URL='https://api.deepseek.com/v1/tools/search'
 FETCH_URL='https://api.deepseek.com/v1/tools/fetch'
@@ -48,7 +48,7 @@ def build_request(context,config,base_schema):
     symbol=re.sub(r'[^A-Za-z0-9.\-]',' ',context['symbol']).strip()[:16]
     issuer=re.sub(r'[^\w .\-]',' ',str(context.get('issuer_reference',{}).get('company_name') or ''),flags=re.UNICODE)
     identity=f'{symbol} {issuer}'.strip()[:45]
-    max_age=min(config.max_source_age_days,config.evidence_news_max_age_days) if context['analysis_protocol']==FRESH_VERSION else config.max_source_age_days
+    max_age=min(config.max_source_age_days,config.evidence_news_max_age_days) if fresh_protocol(context['analysis_protocol']) else config.max_source_age_days
     since=(cutoff-timedelta(days=max_age)).date().isoformat()
     until=(cutoff+timedelta(days=1)).date().isoformat()
     suffixes=('earnings guidance outlook','risks dilution debt SEC')
@@ -62,15 +62,14 @@ def build_request(context,config,base_schema):
         fetch_max_pages=min(config.deepseek_fetch_pages,max(0,config.max_tool_calls-len(searches))),
         max_web_calls=config.max_tool_calls,text_chars=config.deepseek_web_text_chars,
         analysis_model=config.deepseek_model,analysis_max_tokens=config.max_output_tokens,
-        analysis_instructions=instructions('web_search',context['analysis_protocol'])+'\nAllowed decisions: '+(
-            'LONG, SHORT, ABSTAIN' if config.allow_short else 'LONG, ABSTAIN (SHORT forbidden)')+
+        analysis_instructions=instructions('web_search',context['analysis_protocol'])+output_policy(context,config)+
             '\nSearch and optional Fetch were performed separately through DeepSeek. '
             'Use ONLY the supplied data and Web evidence. Search summaries are not full page reads. '
             'A fetched page is marked explicitly. Do not claim you independently browsed. '
             'Copy published_at exactly from the supplied provider_date (null if unknown); '
             'retrieval time, upcoming event dates and page updates are NOT publication dates. '
             'Return json matching: '+json.dumps(response_schema(base_schema,context['analysis_protocol'])),context=context)
-    if context['analysis_protocol']==FRESH_VERSION:
+    if fresh_protocol(context['analysis_protocol']):
         request['web_freshness']=dict(cutoff_utc=cutoff.isoformat(),max_age_days=max_age)
     return request
 
@@ -100,7 +99,7 @@ def evidence(searches,fetches,text_chars):
 
 def fresh_evidence(payload,sources):
     """V7 pre-analysis filter; legacy archives keep their exact input contract."""
-    if payload['analysis_protocol']!=FRESH_VERSION:
+    if not fresh_protocol(payload['analysis_protocol']):
         return sources,[]
     from .validation import FRESH_QUALIFICATIONS,_publication_status
     policy=payload['web_freshness']
@@ -167,7 +166,7 @@ def run(payload,post,key):
         archive['web_status']='completed'
         web,excluded=fresh_evidence(payload,evidence(archive['search_receipts'],archive['fetch_receipts'],payload['text_chars']))
         user_input=dict(context=payload['context'],web_evidence=web)
-        if payload['analysis_protocol']==FRESH_VERSION:
+        if fresh_protocol(payload['analysis_protocol']):
             archive['web_evidence_exclusions']=excluded
             user_input['web_data_status']=dict(fresh_sources=len(web),excluded_sources=len(excluded),
                 caveat='Excluded or undated search results are not proof that no event exists; abstain when evidence is insufficient.')

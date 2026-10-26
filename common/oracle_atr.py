@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from sqlalchemy import bindparam, text
+from common.daily_bar_sources import select_daily_bars
 
 LOGGER = logging.getLogger(__name__)
 
@@ -54,13 +55,13 @@ def load_oracle_atr_by_date(engine: Any, symbols: list[str], dates: list[str]) -
     start = (pd.Timestamp(min(target)) - pd.Timedelta(days=90)).date()
     end = pd.Timestamp(max(target)).date()
     symbols = sorted({str(s).strip().upper() for s in symbols})
-    query = text('SELECT date,symbol,high,low,close,adj_close FROM stock_bars_daily '
+    query = text('SELECT date,symbol,high,low,close,adj_close,data_source FROM stock_bars_daily '
                  'WHERE symbol IN :symbols AND date BETWEEN :start AND :end').bindparams(bindparam('symbols', expanding=True))
     output: dict[str, dict[str, float]] = {day: {} for day in target}
     with engine.connect() as conn:
         for offset in range(0, len(symbols), 150):
             bars = pd.read_sql(query, conn, params={'symbols': symbols[offset:offset+150], 'start': start, 'end': end})
-            panel = atr20_percent_panel(bars)
+            panel = atr20_percent_panel(select_daily_bars(bars))
             if panel.empty:
                 continue
             panel['day'] = panel.date.dt.strftime('%Y-%m-%d')

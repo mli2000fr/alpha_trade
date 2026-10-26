@@ -8,6 +8,7 @@ from typing import Any, cast
 import pandas as pd
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
+from common.daily_bar_sources import select_daily_bars
 
 LOGGER = logging.getLogger(__name__)
 
@@ -319,15 +320,18 @@ def load_symbol_bars(
         where_clause += " AND `date` <= :end_date"
         params["end_date"] = end_date
     query = text(
-        "SELECT symbol, `date`, `open`, high, low, `close`, volume, adj_close, vwap, daily_return, is_filled "
+        "SELECT symbol, `date`, `open`, high, low, `close`, volume, adj_close, vwap, daily_return, is_filled, data_source "
         f"FROM stock_bars_daily {where_clause} ORDER BY `date`"
     )
     with engine.connect() as conn:
         df = pd.read_sql(query, conn, params=params, parse_dates=["date"])
+    df = select_daily_bars(df)
     if not df.empty:
         event_time = pd.to_datetime(df["date"], errors="coerce").dt.tz_localize("UTC")
         df["event_time"] = event_time
         df["available_at"] = event_time + pd.Timedelta(hours=21)
+        if 'data_source' in df:
+            df['bar_data_source'] = df['data_source']
         df["data_source"] = "stock_bars_daily"
         # ── Price convention (Section 17 Point 2.3) ────────────────────
         from common.price_convention import PriceConvention, declare_price_convention
@@ -408,12 +412,12 @@ def _load_universe_bars_chunk(
         params["end_date"] = end_date
     where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
     query = text(
-        "SELECT symbol, `date`, `open`, high, low, `close`, volume, adj_close, vwap, daily_return, is_filled "
+        "SELECT symbol, `date`, `open`, high, low, `close`, volume, adj_close, vwap, daily_return, is_filled, data_source "
         f"FROM stock_bars_daily {where_clause} ORDER BY symbol, `date`"
     )
     with engine.connect() as conn:
         df = pd.read_sql(query, conn, params=params, parse_dates=["date"])
-    return df
+    return select_daily_bars(df)
 
 
 def load_symbol_sentiment(
