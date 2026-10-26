@@ -17,6 +17,17 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
+@pytest.fixture
+def isolated_winner_config(monkeypatch):
+    """Winner unit tests must not enable orders/read the user's edited policy."""
+    from common.config_loader import load_config
+
+    def isolated(*args, **kwargs):
+        return dict(load_config(*args, **kwargs), winner_pyramiding={})
+
+    monkeypatch.setattr('common.config_loader.load_config', isolated)
+
+
 @pytest.fixture(autouse=True)
 def _restore_logging_state_between_tests():
     """Empêche une configuration CLI de désactiver les logs des tests suivants."""

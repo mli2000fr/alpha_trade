@@ -18,14 +18,14 @@ def client_key(value):
 
 
 def make_intent(state, key, *, quantity, side='buy', role=IntentRole.ENTRY,
-        order_type='limit', price=None, stop=None, parent=None, tif=None):
+        order_type='limit', price=None, stop=None, parent=None, tif=None, entry_mode=None):
     return OrderIntent(intent_id=client_key(key), risk_run_id=state['risk_run_id'],
         exec_run_id=state['exec_run_id'], symbol=state['symbol'], side=side,
         qty=quantity, order_type=order_type, limit_price=price if order_type == 'limit' else None,
         trail_percent=None, broker_mode=state['broker_mode'], parent_intent_id=parent,
         intent_role=role, idempotency_key=client_key(key), decision_price=float(price or stop or 0),
         stop_price=stop, submission_key=client_key(key), time_in_force=tif,
-        winner_campaign_id=state['campaign_id'])
+        winner_campaign_id=state['campaign_id'], winner_entry_mode=entry_mode)
 
 
 class NativeWinnerBroker:

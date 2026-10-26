@@ -6,6 +6,8 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
+pytestmark = pytest.mark.usefixtures('isolated_winner_config')
+
 from backtesting.simulator import BacktestEngine,BacktestConfig
 from backtesting.winner_global_liquidation import GlobalLiquidation,close_campaign
 from execution_engine.config import ExecutionConfig

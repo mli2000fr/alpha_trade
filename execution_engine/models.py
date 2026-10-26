@@ -161,6 +161,7 @@ class OrderIntent:
     decision_fingerprint: str | None = None
     time_in_force: str | None = None  # Explicit MOO for the scoped GPT time exit.
     winner_campaign_id: str | None = None  # Durable intraday campaign, never inferred from a symbol.
+    winner_entry_mode: str | None = None  # "standard" only for zero-confirmation DAY buys.
 
 
 @dataclass(frozen=True, slots=True)

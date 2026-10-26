@@ -19,14 +19,14 @@ database:
 # SL7 / trailing20 / H20 / sans TP
 # +19,40 % en 2025 et +32,80 % en 2026. Pire DD annuel de 24,13 %. Candidat intéressant pour examiner l'effet de laisser courir les gains.
 winner_pyramiding:
-  enabled: false
-  initial_position_fraction: 0.5  # 0.5 = demi-position ; 1.0 = complète.
+  enabled: true
+  initial_position_fraction: 1.0  # 0.5 = demi-position ; 1.0 = complète.
   reinforcement_enabled: false  # Un seul ajout gagnant, jamais de moyenne à la baisse.
   reinforcement_trigger_pct: 0.05
-  confirmation_bars: 2  # Clôtures consécutives de bougies régulières de 5 minutes.
-  stop_loss_pct: 0.07
-  take_profit_pct: null  # null = pas de TP en prix.
-  trailing_stop_pct: 0.15  # Ne peut jamais desserrer le stop initial.
+  confirmation_bars: 0  # 0 = ordre standard DAY sans confirmation ; 1–12 = clôtures 5m de cassure.
+  stop_loss_pct: 0.05
+  take_profit_pct: 0.18  # null = pas de TP en prix.
+  trailing_stop_pct: 0.1  # Ne peut jamais desserrer le stop initial.
   horizon_sessions: 20  # Entrée incluse ; sortie à l'ouverture de la 21e séance.
   entry_valid_sessions: 20  # Attente maximale après le signal, distincte de la détention.
   max_quote_age_seconds: 60

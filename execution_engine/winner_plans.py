@@ -50,7 +50,8 @@ def require_campaign_watcher(repo, config):
             or flag('--broker-mode', 'paper') != config.broker_mode or '--exec-run-id' in command):
         raise ValueError('Campaign watcher process has incompatible mode/account/scope')
     files = ['winner_runtime.py', 'winner_live_risk.py', 'winner_risk.py', 'winner_broker.py',
-        'winner_market.py', 'winner_campaign_store.py', 'winner_plans.py', 'protection_watcher.py']
+        'winner_market.py', 'winner_campaign_store.py', 'winner_plans.py', 'winner_standard_entry.py',
+        'protection_watcher.py']
     if process.create_time() < max(expected.with_name(n).stat().st_mtime for n in files):
         raise ValueError('Restart watcher: process predates the campaign implementation')
 
@@ -90,6 +91,12 @@ def plan_from_target(target, config, exec_run_id, *, now=None, calendar=None):
         created_at=now.isoformat(), earliest_entry_open=aware(sessions[1].open_at_utc).isoformat(),
         entry_expires_at=expires.isoformat(), target=asdict(target), parents={}, operations=[],
         admission='STEP11_APPROVED_RECHECK_REQUIRED')
+    if policy.confirmation_bars == 0:
+        state['entry_policy'] = dict(order_type=config.entry_order_type,
+            limit_price_buffer_bps=config.limit_price_buffer_bps,
+            max_entry_gap_pct=config.max_entry_gap_pct, submission_window=config.submission_window)
+        from execution_engine.winner_standard_entry import standard_order_terms
+        standard_order_terms(state)  # Validate before persisting any plans.
     return state
 
 
@@ -136,6 +143,12 @@ def next_plan_action(state, bars, *, now, prior_session_high=None,
     if not new_entries_enabled:
         return dict(action='ENTRIES_DISABLED')
     if not state['lots']:
+        if p.confirmation_bars == 0:
+            from execution_engine.winner_standard_entry import standard_entry_window
+            if state.get('initial_attempted'):
+                return dict(action='INITIAL_ALREADY_ATTEMPTED')
+            return (dict(action='ENTRY_SIGNAL', max_quantity=state['initial_quantity'])
+                if standard_entry_window(state, now) else dict(action='WAIT_SUBMISSION_WINDOW'))
         if now < aware(state['earliest_entry_open']):
             return dict(action='WAIT_ENTRY_SESSION')
         if state.get('initial_attempted'):
@@ -162,8 +175,12 @@ def reserve_operation(store, state, version, *, action, quantity, approval, now)
         raise ValueError('Terminal campaign')
     if state.get('due_open') and now >= aware(state['due_open']):
         raise ValueError('Campaign deadline reached; no further buys')
-    if action == 'ENTRY' and not aware(state['earliest_entry_open']) <= now < aware(state['entry_expires_at']):
-        raise ValueError('Outside approved campaign entry window')
+    if action == 'ENTRY':
+        from execution_engine.winner_standard_entry import standard_initial, standard_entry_window
+        allowed = (standard_entry_window(state, now) if standard_initial(state) else
+                   aware(state['earliest_entry_open']) <= now < aware(state['entry_expires_at']))
+        if not allowed:
+            raise ValueError('Outside approved campaign entry window')
     if any(o['status'] in ('RESERVED', 'UNKNOWN', 'SUBMITTED') for o in state['operations']):
         raise ValueError('Unresolved operation; reconcile before retry')
     if (approval.get('producer') != 'native_intraday_risk'

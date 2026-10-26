@@ -6,6 +6,8 @@ from unittest.mock import MagicMock
 import pytest
 import requests
 
+pytestmark = pytest.mark.usefixtures('isolated_winner_config')
+
 from execution_engine.config import ExecutionConfig
 from execution_engine.models import IntentRole
 from execution_engine.order_intents import build_oco_protection_payload, intent_to_alpaca_payload
