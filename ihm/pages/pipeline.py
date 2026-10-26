@@ -1258,7 +1258,7 @@ def _ml_prediction_scope_options(options: PipelineLaunchOptions) -> PipelineLaun
     Only this local copy is changed; global checkbox and runner guards remain.
     """
     if options.ml_predict_use_historical_range or options.ml_oracle_shadow:
-        return replace(options, llm_filter_enabled=False)
+        return replace(options, llm_filter_enabled=False, options_filter_enabled=False)
     return options
 
 
@@ -1521,6 +1521,43 @@ def _render_ml_predict_review(options: PipelineLaunchOptions) -> None:
 def _load_risk_prediction_review_cached(**scope):
     """Risk display restricted to the exact published step-10 selection."""
     return load_risk_prediction_review(get_sqlalchemy_engine(), **scope)
+
+
+def _render_options_filter_review(options: PipelineLaunchOptions, all_runs) -> None:
+    import pandas as pd
+    from common.us_signal_date import resolve_us_signal_date
+    from service.options_directional.store import qualified
+    st.markdown('#### TOP Oracle — filtre volume options + OI')
+    records = [r for r in all_runs if r.get('step_key') == 'ml_predict'
+               and (r.get('account_id') or 'default') == (options.account_id or 'default')
+               and not r.get('history_deleted')]
+    source = max(records, key=lambda r: str(r.get('executed_at') or r.get('actual_started_at') or ''), default={})
+    run_id = (source.get('run_summary') or {}).get('options_filter_run_id')
+    if not run_id:
+        st.info('Aucun résultat options lié au dernier lancement de l’étape 10. Aucun ancien run substitué.')
+        return
+    try:
+        from service.options_directional.config import load_options_filter_config
+        batch = options.ml_live_predict_batch_id or options.ml_predict_batch_id or load_options_filter_config().default_oracle_batch_id
+        report = qualified(run_id, trade_date=resolve_us_signal_date(options.trade_date or None),
+                           batch_id=batch, account_id=options.account_id or 'default',
+                           symbol_source=options.ml_predict_symbol_source,
+                           capital_preset_key=options.capital_preset_key or 'capital_2001_5000')
+    except (ValueError, KeyError, OSError):
+        st.warning('Résultat options expiré ou incompatible avec la date/modèle/univers courant. Aucun remplacement implicite.')
+        return
+    st.caption(f"Run `{run_id}` · séance {report['trade_date']} · cutoff {report['cutoff_utc']} · "
+               f"couverts {report['covered']}/{len(report['rows'])} · retenus LONG {len(report['selected'])}.")
+    reasons = {'MISSING_OR_STALE_OPTIONS': 'Options absentes/périmées',
+               'INSUFFICIENT_COVERED_COHORT': 'Trop peu de titres couverts',
+               'SCORE_NOT_ABOVE_THRESHOLD': 'Score insuffisant ou neutre',
+               'OUTSIDE_UPPER_HALF': 'Hors moitié supérieure', 'SELECTED_LONG': 'Retenu LONG'}
+    frame = pd.DataFrame([{'Rang Oracle': r['oracle_rank'], 'Symbole': r['symbol'],
+        'Score volume': r.get('volume_score'), 'Score OI': r.get('oi_score'),
+        'Moyenne 50/50': r.get('combined_score'), 'Retenu LONG': r['selected'],
+        'Motif': reasons.get(r['reason'], r['reason'])} for r in report['rows']])
+    st.dataframe(frame, hide_index=True, use_container_width=True)
+    st.caption('Scores relatifs, pas des probabilités. Les contrôles de risque peuvent encore refuser une entrée. Aucun SHORT automatique.')
 
 
 def _render_risk_prediction_review(options: PipelineLaunchOptions, all_runs) -> None:
@@ -1965,7 +2002,10 @@ def _render_launchable_step_panel(
 
         if step.key == 'ml_predict':
             st.divider()
-            _render_ml_predict_review(options)
+            if options.options_filter_enabled:
+                _render_options_filter_review(options, all_runs)
+            else:
+                _render_ml_predict_review(options)
         elif step.key == 'risk_management':
             st.divider()
             _render_risk_prediction_review(options, all_runs)

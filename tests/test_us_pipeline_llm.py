@@ -20,6 +20,13 @@ def config():
         protections=dict(enabled=True, stop_loss_pct=.07, trailing_stop_pct=.15, exit_session=21))
 
 
+@pytest.fixture(autouse=True)
+def isolate_optional_options_gate(monkeypatch):
+    from service.options_directional.config import OptionsFilterConfig
+    monkeypatch.setattr('service.options_directional.config.load_options_filter_config',
+                        lambda: OptionsFilterConfig(enabled=False))
+
+
 def options():
     return replace(pipeline_page_default_options(trade_date='2026-10-16'),
         execution_mode='paper', account_id='default',
@@ -69,7 +76,25 @@ def test_collection_only_does_not_load_llm(monkeypatch):
 def test_disabled_preserves_old_route(config):
     original = options()
     assert us_pipeline.llm_options(original, us_pipeline.selected_steps([10, 11, 12]),
-                                   config=replace(config, enabled=False)) is original
+                                   config=replace(config, enabled=False)) == replace(
+                                       original, llm_specific_protections=False)
+
+
+def test_disabled_clears_stale_llm_options_without_changing_oracle(monkeypatch, config):
+    monkeypatch.setattr('common.us_signal_date.resolve_us_signal_date', lambda *a: date(2026, 10, 16))
+    original = replace(options(), llm_filter_enabled=True, llm_filter_run_id='llm-old',
+                       llm_specific_protections=True, ml_predict_batch_id='model-factory-kept',
+                       ml_live_predict_batch_id='model-factory-kept')
+    steps = us_pipeline.selected_steps([10, 11, 12])
+    result = us_pipeline.llm_options(original, steps, config=replace(config, enabled=False))
+    assert not result.llm_filter_enabled
+    assert result.llm_filter_run_id is None
+    assert not result.llm_specific_protections
+    assert result.ml_predict_batch_id == result.ml_live_predict_batch_id == 'model-factory-kept'
+    for step in steps:
+        command = build_pipeline_command(step.key, result)
+        assert 'service.llm_directional.pipeline' not in command
+        assert '--llm-filter-run-id' not in command
 
 
 @pytest.mark.parametrize('numbers', [[11], [12], [11, 12]])

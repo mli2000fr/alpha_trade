@@ -1,5 +1,10 @@
 # US : options dans les TOP10/20/50 Oracle, indice H5 mais effectifs insuffisants
 
+**Rectification d'inventaire,26octobre :**des références de recherche parcoursH10
+existent hors catalogue de production, sous `us_h10_h20_frozen_comparison`.
+Elles n'ont pas été utilisées ici et leurs scores2026 s'arrêtent avant les
+options prospectives. [Qualification et rectification complète](anciens_signaux_perimetres_et_reprises_20261026.md#4-rectification-de-linventaire-h10-précédent).
+
 26 octobre 2026. **AUDIT CONDITIONNEL TERMINÉ / EXPLORATOIRE / PAS DE PROMOTION.**
 
 ## Réponse au périmètre demandé

@@ -1364,6 +1364,14 @@ def _run_pipeline_workflow(
         _update_workflow_record(managed, status="running", workflow_total_steps=total_steps, workflow_completed_steps=0)
 
         completed_steps = 0
+        if options.options_filter_enabled:
+            from dataclasses import replace as _options_replace
+            from common.us_signal_date import resolve_us_signal_date
+            signal_day = resolve_us_signal_date(options.trade_date).isoformat()
+            options = _options_replace(options, trade_date=signal_day,
+                options_filter_run_id=options.options_filter_run_id or f'opt-{uuid.uuid4().hex}',
+                force_trade_date_to_latest_snapshot=False)
+            _append_workflow_event(managed, f'Séance Oracle / filtre options figée : {signal_day}, run={options.options_filter_run_id}.')
         if options.llm_filter_enabled:
             from dataclasses import replace as _llm_replace
             from common.us_signal_date import resolve_us_signal_date
@@ -1641,7 +1649,7 @@ def start_pipeline_run(
     # avec une sélection classée dans stock_scores_history. Permet de continuer un
     # workflow démarré la veille même après réouverture de la session Streamlit
     # (qui a réinitialisé trade_date à date.today()).
-    if not options.llm_filter_enabled and getattr(options, "force_trade_date_to_latest_snapshot", False) and (options.trade_date or "").strip():
+    if not options.llm_filter_enabled and not options.options_filter_enabled and getattr(options, "force_trade_date_to_latest_snapshot", False) and (options.trade_date or "").strip():
         try:
             from ihm.services.queries import resolve_latest_selection_snapshot_date
 
@@ -1661,7 +1669,7 @@ def start_pipeline_run(
                 exc_info=True,
             )
 
-    if options.llm_filter_enabled and step_key in ('ml_predict', 'risk_management', 'execution'):
+    if (options.llm_filter_enabled or options.options_filter_enabled) and step_key in ('ml_predict', 'risk_management', 'execution'):
         from common.us_signal_date import resolve_us_signal_date
         options = _dc_replace(options, trade_date=resolve_us_signal_date(options.trade_date).isoformat())
     command = build_pipeline_command(step_key, options)

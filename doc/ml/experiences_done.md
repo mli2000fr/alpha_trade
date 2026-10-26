@@ -1,5 +1,26 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-26 — US : classement par périmètre, pas de relance ancienne qualifiée
+
+37familles scientifiques classées ;288rubriques du registre indexées comme
+mentions documentaires, pas autant d'expériences indépendantes ni de périmètres
+certifiés. Distinction univers/TOP20POURCENT/NpremiersTITRES/GlobalRank/autre
+horizon/autre instant. Nombreuses reprises déjà faitesTOP10/20/50 :direction,
+antiD1/composites, sondesprix, news/GPT/lifecycle, macro et optionsprospectives.
+SourcesYahoo bloquées, surpriseEPS nonPIT, E23archivesfiltréesparfutur exclues ;
+18références OOFanciennes vérifiées, zéro fichier présent, aucune restauration.
+Candidat janvier2025volumeATM AUCinitiale0,593 :contrôle technique AVANT nouvelles
+issues, H20TOP10/20/50 seulement15/45/73paires sur2/3/4sociétés(APP/PLTR/TSLA/NVDA),
+H10recherche30/53/79paires sur3/4/5sociétés. Vintagehistorique noncertifié,
+couverture nonreprésentative :pas de nouvelle AUC/PnL calculée ni de reprise
+présentée comme qualifiée. Pas de meilleurpoids/horizon choisi sur ces manques.
+Rectification :vrais modèles parcoursH10 DE RECHERCHE existent hors catalogue
+production depuis19octobre ;scores2026 arrêtés1septembre, pas de jointure directe
+aux optionsprospectives mi-septembre. Leur existence ne modifie aucun résultat
+de l'audit précédent sur OracleH20. Six tests passent, sources/sorties scellées.
+NoSQL/API/LLM/fit/inférence/ordre/changementproduction, archives seulement.
+[Classement, couverture et correction d'inventaire](anciens_signaux_perimetres_et_reprises_20261026.md).
+
 ## 2026-10-26 — US : options dans TOP10/20/50 Oracle, indice H5 TOP20 non confirmé
 
 Audit conditionnel demandé après l'audit large :NpremiersOracle AVANT options/

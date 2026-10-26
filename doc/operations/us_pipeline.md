@@ -6,6 +6,27 @@
 
 ## Périmètre
 
+Le **26 octobre 2026**, ajout du filtre options expérimental après Oracle,
+activé par défaut dans la page et le batch :
+`options_directional_filter.enabled: true`, défaut de code TOP20.
+Le fichier utilisateur a été ajusté pendant le raccordement à TOP50 / seuil 0.70 ;
+ces valeurs configurées sont conservées.
+Volume/OI en rangs 50/50, au maximum moitié supérieure des titres couverts en
+LONG uniquement, sans SHORT automatique ; sources absentes/périmées exclues,
+pas de remplacement N+1. GPT reste désactivé. Identifiant exact partagé 10/11/12,
+archives locales séparées et vérification des cibles avant PAPER.
+[Règles, raccordement, limites et archives](options_directional_filter.md).
+
+Le **26 octobre 2026**, le filtrage GPT/DeepSeek est désactivé sur demande :
+`config.yaml → llm_directional_filter.enabled: false`. La case Pipeline est
+décochée et indisponible tant que cette bascule est désactivée, y compris dans
+une ancienne session où elle était cochée. Le batch `us_pipeline` efface les
+options LLM résiduelles avant de construire les commandes 10/11/12 : prédiction
+Oracle, risque et exécution suivent le parcours sans LLM. Les archives d'analyses,
+paramètres de modèle, étapes planifiées et protections des positions existantes
+ne sont pas supprimés ni modifiés. Cette bascule ne stoppe pas rétroactivement
+un processus déjà lancé.
+
 Le **24 octobre 2026**, l'agrégation des features de l'étape 8 quotidienne est
 bornée à `sentiment_news_ingestion.pipeline_feature_recalc_days` (52) dates calendaires
 inclusives. La date de séance du workflow est conservée après minuit, sauf

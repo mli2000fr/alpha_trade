@@ -468,6 +468,45 @@ def _session_state_bool(key: str, default: bool) -> bool:
     return coerced
 
 
+def _render_llm_filter_toggle(config) -> bool:
+    """The global switch overrides a checkbox retained by an older UI session."""
+    key = 'pipeline_llm_filter_enabled'
+    if not config.enabled:
+        st.session_state[key] = False
+    selected = st.checkbox(
+        f'🌐 Filtrage {config.provider_label} — {config.mode_label} après Oracle — PAPER uniquement',
+        value=_session_state_bool(key, config.enabled),
+        key=key,
+        disabled=not config.enabled,
+        help='Activation globale : config.yaml → llm_directional_filter.enabled. '
+             'Analyse prospective des premiers scores Oracle, archivage en base, puis LONG/SHORT/abstention. '
+             'Aucun gain démontré.')
+    if not config.enabled:
+        st.caption('Filtrage GPT/DeepSeek désactivé dans config.yaml : aucun appel LLM dans le pipeline ni us_pipeline.')
+    return bool(config.enabled and selected)
+
+
+def _render_options_filter_toggle(config, *, llm_enabled=False, paper_allowed=True) -> bool:
+    key = 'pipeline_options_filter_enabled'
+    if not config.enabled:
+        st.session_state[key] = False
+    selected = st.checkbox('📊 Filtrage options — volume CALL/PUT + OI après Oracle — PAPER uniquement',
+        value=_session_state_bool(key, config.enabled), key=key,
+        disabled=not config.enabled or llm_enabled or not paper_allowed,
+        help='config.yaml → options_directional_filter. TOP fixé avant disponibilité des options ; '
+             'moitié supérieure couverte en LONG uniquement, aucun SHORT automatique.')
+    if selected and config.enabled:
+        st.caption(f'Expérimental : TOP{config.oracle_top_n} Oracle → moyenne 50/50 des rangs volume et OI ; '
+                   f'au moins {config.min_covered} titres couverts, score strictement > {config.min_combined_score:.2f}. '
+                   'Données absentes/périmées : exclusion sans remplacement. '
+                   'OI indicative, provenance OPRA du volume non certifiée ; aucune rentabilité validée.')
+    if llm_enabled:
+        st.caption('Filtre options non appliqué : le cumul avec GPT/DeepSeek n’est pas qualifié.')
+    elif not paper_allowed:
+        st.caption('Filtre options non appliqué : sélectionner le compte principal default en mode paper.')
+    return bool(config.enabled and selected and not llm_enabled and paper_allowed)
+
+
 def _ensure_normalized_ml_train_preset_session_state(session_state: dict[str, object]) -> str:
     raw_value = cast(str | None, session_state.get(ML_TRAIN_PRESET_KEY))
     normalized = _normalize_ml_train_preset_key(raw_value)
@@ -3370,12 +3409,14 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         ml_predict_symbol_source = "tradable-universe"
         from service.llm_directional.config import load_filter_config
         _llm_config = load_filter_config()
-        llm_filter_enabled = st.checkbox(
-            f'🌐 Filtrage {_llm_config.provider_label} — {_llm_config.mode_label} après Oracle — PAPER uniquement',
-            value=bool(st.session_state.get('pipeline_llm_filter_enabled', _llm_config.enabled)),
-            key='pipeline_llm_filter_enabled',
-            help='Analyse prospective des premiers scores Oracle, archivage en base, puis LONG/SHORT/abstention '
-                 'selon config.yaml. Aucun gain démontré.')
+        llm_filter_enabled = _render_llm_filter_toggle(_llm_config)
+        from service.options_directional.config import load_options_filter_config
+        _options_config = load_options_filter_config()
+        options_filter_enabled = _render_options_filter_toggle(_options_config,
+            llm_enabled=llm_filter_enabled,
+            paper_allowed=execution_mode == 'paper' and selected_account_id == 'default')
+        if options_filter_enabled:
+            ml_predict_symbol_source = default_universe_file_source_or('tradable-universe')
         llm_filter_run_id = None
         llm_oracle_batch_id = None
         llm_specific_protections = False
@@ -5148,7 +5189,9 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             llm_filter_enabled=bool(llm_filter_enabled),
             llm_filter_run_id=llm_filter_run_id,
             llm_specific_protections=llm_specific_protections,
-            ml_predict_batch_id=llm_oracle_batch_id if llm_filter_enabled else None,
+            options_filter_enabled=options_filter_enabled,
+            ml_predict_batch_id=llm_oracle_batch_id if llm_filter_enabled else
+                (_options_config.default_oracle_batch_id if options_filter_enabled else None),
             ml_live_predict_batch_id=(str(st.session_state.get("pipeline_ml_live_predict_batch_id_ml_predict", "")) or None)
                 if not llm_filter_enabled else None,
             trade_date=trade_date,
