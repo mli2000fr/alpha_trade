@@ -16,6 +16,9 @@ def legacy_llm_policy(monkeypatch):
     # of the user's deployment opt-in. The LLM route has dedicated tests.
     from service.llm_directional.config import FilterConfig
     monkeypatch.setattr(us_pipeline, 'load_filter_config', lambda: FilterConfig(enabled=False))
+    from service.options_directional.config import OptionsFilterConfig
+    monkeypatch.setattr('service.options_directional.config.load_options_filter_config',
+                        lambda: OptionsFilterConfig(enabled=False))
 
 
 def configured_policy():

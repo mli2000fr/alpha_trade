@@ -82,6 +82,15 @@ sentiment_news_ingestion:
   max_consecutive_symbol_failures: 3  # Arrêt des appels, puis décision selon couverture et erreurs critiques.
   min_success_ratio: 0.95  # >=95 % des titres demandés : poursuivre malgré des échecs isolés.
 
+options_directional_filter:
+  enabled: true  # Filtre expérimental options après Oracle ; IHM et us_pipeline, PAPER uniquement.
+  oracle_top_n: 50  # Nombre de titres, pas 20 % ; TOP fixé avant disponibilité des options.
+  min_combined_score: 0.5  # Retenir LONG si score strictement supérieur ; ce n'est pas une probabilité.
+  min_covered: 4  # Moins de 4 titres avec volume ET OI frais : aucun retenu, sans fallback.
+  min_oracle_coverage_ratio: 0.95
+  max_age_hours: 72  # Fenêtre clôture J -> ouverture J+1 toujours obligatoire, week-end inclus.
+  default_oracle_batch_id: model-factory-20261016180250-3b0515
+
 llm_directional_filter:
   scoring_mode: direction_1_10  # Prochaines analyses ; archives anciennes inchangées.
   separate_trend_evidence: true  # v9 : tendance 1–10 ou indéterminable, preuves et sélection séparées.
@@ -108,7 +117,7 @@ llm_directional_filter:
   evidence_fundamental_max_period_age_days: 200
   evidence_context_max_age_minutes: 30  # Bloque un appel trop tardif ; pas de refresh implicite à mi-run.
   # Recherche prospective et exécution PAPER uniquement. Aucun historique Web simulé.
-  enabled: true  # Checkbox IHM cochée par défaut ; désactivation manuelle possible.
+  enabled: false  # Filtrage GPT/DeepSeek désactivé dans l'IHM et le batch us_pipeline.
   provider: openai  # openai (GPT) ou deepseek ; libellés IHM automatiques.
   # DeepSeek Web : Search/Fetch + analyse DeepSeek natifs, seule DEEPSEEK_API_KEY nécessaire.
   model: gpt-6-luna
