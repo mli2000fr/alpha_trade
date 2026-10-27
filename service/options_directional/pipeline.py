@@ -96,7 +96,6 @@ def main():
     run_id, folder = report['run_id'], directory(report['run_id'])
     print(f'Filtre options exact : {run_id} ; séance {args.trade_date} ; cutoff {report["cutoff_utc"]}', flush=True)
     if args.phase == 'risk':
-        write_new(folder/'risk.claim.json', dict(started_at=datetime.now(timezone.utc).isoformat()))
         command = _flag(command, '--run-mode', 'paper')
         command = _flag(command, '--account', 'default')
         command = _flag(command, '--options-filter-run-id', run_id)
@@ -104,13 +103,16 @@ def main():
         command = _flag(command, '--oracle-tradable-policy', 'filter_then_top20')
         command = _flag(command, '--oracle-artifacts-dir', args.artifacts_dir)
         command = _flag(command, '--summary-path', str(folder/'risk_summary.json'))
-        subprocess.run(command, check=True)
-        summary = json.loads((folder/'risk_summary.json').read_text(encoding='utf-8'))
-        if (summary.get('options_filter_run_id') != run_id or not summary.get('run_id')
-                or summary.get('dry_run') or summary.get('run_mode') != 'paper'):
-            raise ValueError('Résumé risque options non publié ou incompatible')
-        write_new(folder/'risk_binding.json', dict(risk_run_id=summary['run_id'],
-            summary_sha256=digest(summary), report_sha256=digest(report)))
+        from .risk_attempts import risk_attempt
+        with risk_attempt(folder, report) as attempt:
+            command = _flag(command, '--options-risk-attempt-id', attempt['attempt_id'])
+            subprocess.run(command, check=True)
+            summary = json.loads((folder/'risk_summary.json').read_text(encoding='utf-8'))
+            if (summary.get('options_filter_run_id') != run_id or not summary.get('run_id')
+                    or summary.get('dry_run') or summary.get('run_mode') != 'paper'):
+                raise ValueError('Résumé risque options non publié ou incompatible')
+            write_new(folder/'risk_binding.json', dict(risk_run_id=summary['run_id'],
+                summary_sha256=digest(summary), report_sha256=digest(report)))
     else:
         binding = json.loads((folder/'risk_binding.json').read_text(encoding='utf-8'))
         summary = json.loads((folder/'risk_summary.json').read_text(encoding='utf-8'))

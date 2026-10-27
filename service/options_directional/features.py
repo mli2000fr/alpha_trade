@@ -6,6 +6,7 @@ No labels, future prices, fitting or historical backfill are read here.
 import math
 import numpy as np
 import pandas as pd
+from common.options_directional_contract import DTE_MIN, DTE_MAX, DTE_TARGET, ATM_MAX_DISTANCE
 
 
 def _rows(frame, day, cutoff, *, volume=False):
@@ -32,7 +33,7 @@ def _rows(frame, day, cutoff, *, volume=False):
     root = frame.contract_symbol.str.replace(r'\d{6}[CP]\d{8}$', '', regex=True)
     frame = frame[root.eq(frame.symbol.str.replace('.', '', regex=False))].copy()
     frame['dte'] = (frame.expiration_date - pd.Timestamp(day)).dt.days
-    return frame[frame.dte.between(15, 25)].copy()
+    return frame[frame.dte.between(DTE_MIN, DTE_MAX)].copy()
 
 
 def _latest(frame, keys, values):
@@ -58,13 +59,13 @@ def build_features(snapshots, volumes, spots, day, cutoff):
                  ['open_interest', 'strike', 'expiration_date', 'option_type', 'payload_hash'])
     oi['spot'] = oi.symbol.map(spots)
     oi['distance'] = (oi.strike / oi.spot - 1).abs()
-    oi = oi[oi.distance.le(.05) & oi.open_interest.ge(0) & np.isfinite(oi.open_interest)].copy()
+    oi = oi[oi.distance.le(ATM_MAX_DISTANCE) & oi.open_interest.ge(0) & np.isfinite(oi.open_interest)].copy()
     keys = ['symbol', 'expiration_date', 'strike']
     oi = oi[oi.option_type.eq('CALL')].merge(oi[oi.option_type.eq('PUT')], on=keys,
         suffixes=('_call', '_put'), validate='one_to_one')
     if oi.empty:
         return {}
-    oi['tenor_distance'] = (oi.dte_call - 20).abs()
+    oi['tenor_distance'] = (oi.dte_call - DTE_TARGET).abs()
     oi = oi.sort_values(['symbol', 'tenor_distance', 'distance_call', 'expiration_date', 'strike'],
                         kind='stable').drop_duplicates('symbol')
     oi = oi[['symbol', 'expiration_date', 'open_interest_call', 'open_interest_put',
@@ -82,7 +83,7 @@ def build_features(snapshots, volumes, spots, day, cutoff):
         on=['symbol', 'expiration_date'], suffixes=('_call', '_put'), validate='one_to_one')
     if flow.empty:
         return {}
-    flow['tenor_distance'] = (flow.dte_call - 20).abs()
+    flow['tenor_distance'] = (flow.dte_call - DTE_TARGET).abs()
     flow = flow.sort_values(['symbol', 'tenor_distance', 'expiration_date'], kind='stable').drop_duplicates('symbol')
     paired = flow.merge(oi, on='symbol', suffixes=('_volume', '_oi'), validate='one_to_one')
     result = {}

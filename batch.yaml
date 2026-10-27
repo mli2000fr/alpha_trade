@@ -580,7 +580,8 @@ oracle_options_indicative_snapshot:
   symbols_file: config/univers_batch/stock_bars_daily.txt
   universe_scope: config/univers_batch/stock_bars_daily.txt
   target_dtes: "5,10,20"
-  dte_tolerance_days: 4
+  dte_tolerance_days: 5  # Inclut J+25, comme le filtre volume/OI et le batch de volumes.
+  ensure_directional_oi_pair: true  # Compléter la surface avec une paire CALL/PUT au même strike, après contrôles.
   moneyness_min: 0.80
   moneyness_max: 1.20
   # Un contrat le plus proche de chaque cible, par CALL/PUT et expiration.

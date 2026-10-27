@@ -34,6 +34,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from common.config_loader import load_batch_config
 from common.market_calendar import is_trading_day, nyse_session_dates
+from common.options_directional_contract import DTE_MIN, DTE_MAX, DTE_TARGET, ATM_MAX_DISTANCE
 from database.connection import get_sqlalchemy_engine
 from risk_management.liquidity import BorrowStatus, alpaca_borrow_status
 from service.alpaca.clientAlpaca import fetch_alpaca_assets, get_alpaca_credentials
@@ -623,6 +624,57 @@ def _underlying_price(snapshot: dict[str, Any]) -> float | None:
         if price > 0:
             return price
     return None
+
+
+def _option_expiration_window(
+    as_of: date, targets: tuple[int, ...], tolerance: int, *, ensure_directional_pair: bool = True,
+) -> tuple[date, date]:
+    if not targets or min(targets) <= 0 or tolerance < 0:
+        raise ValueError('Cibles DTE positives et tolérance >=0 requises')
+    lower, upper = max(1, min(targets) - tolerance), max(targets) + tolerance
+    if ensure_directional_pair:
+        lower, upper = min(lower, DTE_MIN), max(upper, DTE_MAX)
+    return as_of + timedelta(days=lower), as_of + timedelta(days=upper)
+
+
+def _option_open_interest(metadata: dict[str, Any]) -> int | None:
+    raw = metadata.get('open_interest')
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        value = Decimal(str(raw))
+        return int(value) if value.is_finite() and value >= 0 and value == value.to_integral_value() else None
+    except (InvalidOperation, ValueError, OverflowError):
+        return None
+
+
+def _select_directional_oi_pair(eligible, metadata, *, symbol, spot, as_of, min_open_interest):
+    """Joint same-strike selection AFTER the unchanged liquidity/OI guards.
+
+    Adds at most two contracts to the legacy research surface. Unknown OI is
+    never inferred from a quote and adjusted roots cannot replace the issuer.
+    """
+    if not spot > 0:
+        return set()
+    pairs = {}
+    for contract in eligible:
+        expiry, strike, side = _option_contract_parts(contract)
+        root = re.sub(r'\d{6}[CP]\d{8}$', '', contract)
+        if (root != symbol.replace('.', '') or expiry is None or strike is None or strike <= 0
+                or not DTE_MIN <= (expiry - as_of).days <= DTE_MAX
+                or abs(strike / spot - 1) > ATM_MAX_DISTANCE):
+            continue
+        oi = _option_open_interest(metadata.get(contract) or {})
+        if oi is None or oi < min_open_interest:
+            continue
+        pairs.setdefault((expiry, strike), {})[side] = contract
+    matched = [(expiry, strike, sides) for (expiry, strike), sides in pairs.items()
+               if {'CALL', 'PUT'}.issubset(sides)]
+    if not matched:
+        return set()
+    _, _, sides = min(matched, key=lambda x: (abs((x[0] - as_of).days - DTE_TARGET),
+                                             abs(x[1] / spot - 1), x[0], x[1]))
+    return {sides['CALL'],sides['PUT']}
 
 
 def _option_is_liquid(
@@ -1544,7 +1596,10 @@ def options_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool
     }))
     if not moneyness_targets:
         raise ValueError("moneyness_targets ne peut pas être vide")
-    tolerance = int(cfg.get("dte_tolerance_days", 4))
+    tolerance = int(cfg.get("dte_tolerance_days", 5))
+    ensure_directional_pair = cfg.get('ensure_directional_oi_pair', True)
+    if type(ensure_directional_pair) is not bool:
+        raise ValueError('ensure_directional_oi_pair doit être booléen')
     moneyness_min = float(cfg.get("moneyness_min", 0.80))
     moneyness_max = float(cfg.get("moneyness_max", 1.20))
     if not 0 < moneyness_min < 1 < moneyness_max:
@@ -1561,8 +1616,9 @@ def options_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool
     max_consecutive_failures = int(cfg.get("max_consecutive_failures", 5))
     max_failure_ratio = float(cfg.get("max_failure_ratio", 0.05))
     as_of = datetime.now(ZoneInfo("America/New_York")).date()
-    min_expiry = as_of + timedelta(days=max(1, min(target_dtes) - tolerance))
-    max_expiry = as_of + timedelta(days=max(target_dtes) + tolerance)
+    min_expiry, max_expiry = _option_expiration_window(
+        as_of, target_dtes, tolerance, ensure_directional_pair=ensure_directional_pair,
+    )
     observed = _utcnow()
     key, secret = get_alpaca_credentials()
     headers = {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret}
@@ -1573,6 +1629,9 @@ def options_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool
         "symbols_without_spot": 0, "snapshot_pages": 0,
         "contract_pages": 0, "contracts_before_filters": 0,
         "contracts_after_filters": 0, "contract_metadata_failures": 0,
+        "symbols_with_directional_oi_pair": 0, "symbols_without_directional_oi_pair": 0,
+        "directional_pair_contracts_added": 0, "contracts_rejected_liquidity": 0,
+        "contracts_rejected_open_interest": 0,
     }
     with requests.Session() as session, engine.begin() as conn:
         _configure_alpaca_session(
@@ -1706,28 +1765,43 @@ def options_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool
                         f"{symbol}: open interest indisponible ({exc})"
                     )
 
-            kept_for_symbol = 0
+            # Preserve the legacy sample, but supplement it with a joint pair
+            # from the full qualifying chain, not two independently chosen sides.
+            eligible = {}
             for contract, item in snapshots.items():
-                if contract not in selected_contracts:
-                    continue
                 expiry, strike, option_type = _option_contract_parts(contract)
-                if expiry not in selected_expiries or strike is None or option_type is None:
+                if (expiry is None or not min_expiry <= expiry <= max_expiry
+                        or strike is None or option_type is None):
                     continue
                 if not _option_is_liquid(
                     item, min_bid=min_bid, max_relative_spread=max_relative_spread,
                     require_two_sided_quote=require_two_sided,
                 ):
+                    details['contracts_rejected_liquidity'] += 1
                     continue
                 contract_meta = metadata.get(contract) or {}
-                raw_oi = contract_meta.get("open_interest")
-                try:
-                    open_interest = int(raw_oi) if raw_oi is not None else None
-                except (TypeError, ValueError):
-                    open_interest = None
+                open_interest = _option_open_interest(contract_meta)
                 if open_interest is None and not allow_missing_oi:
+                    details['contracts_rejected_open_interest'] += 1
                     continue
                 if open_interest is not None and open_interest < min_open_interest:
+                    details['contracts_rejected_open_interest'] += 1
                     continue
+                eligible[contract] = (item, contract_meta, open_interest)
+            if ensure_directional_pair:
+                pair = _select_directional_oi_pair(
+                    eligible, metadata, symbol=symbol, spot=spot,
+                    as_of=as_of, min_open_interest=min_open_interest,
+                )
+                if pair:
+                    details['symbols_with_directional_oi_pair'] += 1
+                details['directional_pair_contracts_added'] += len(pair - selected_contracts)
+                selected_contracts |= pair
+            kept_for_symbol = 0
+            for contract, (item, contract_meta, open_interest) in eligible.items():
+                if contract not in selected_contracts:
+                    continue
+                expiry, strike, option_type = _option_contract_parts(contract)
                 kept_for_symbol += 1
                 outcome.received += 1
                 if dry:
@@ -1761,6 +1835,13 @@ def options_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool
                 details["symbols_without_options"] += 1
                 outcome.empty += 1
 
+    if ensure_directional_pair:
+        details['symbols_without_directional_oi_pair'] = len(symbols) - details['symbols_with_directional_oi_pair']
+        LOGGER.info(
+            'Paires OI directionnelles CALL/PUT: qualifiées=%s sans_paire=%s contrats_ajoutés=%s',
+            details['symbols_with_directional_oi_pair'], details['symbols_without_directional_oi_pair'],
+            details['directional_pair_contracts_added'],
+        )
     outcome.details.update(details)
     outcome.details.update({
         "feed": feed, "target_dtes": list(target_dtes),
@@ -1768,6 +1849,9 @@ def options_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool
         "expiration_window": [min_expiry.isoformat(), max_expiry.isoformat()],
         "moneyness": [moneyness_min, moneyness_max],
         "volume_status": "not_available_in_alpaca_chain_snapshot",
+        "ensure_directional_oi_pair": ensure_directional_pair,
+        "directional_surface": {"dte_min": DTE_MIN, "dte_max": DTE_MAX,
+                                "target_dte": DTE_TARGET, "atm_max_distance": ATM_MAX_DISTANCE},
     })
     if outcome.received == 0:
         raise RuntimeError("Snapshots options Alpaca vides après filtres pour tout l'univers")

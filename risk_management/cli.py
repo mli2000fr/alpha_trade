@@ -84,13 +84,22 @@ def _emit_live_progress(
 
 def _load_tradable_universe_for_risk(
     repo, *, trade_date, effective_equity, llm_filter_run_id=None, account_id='default',
+    options_filter_report=None,
 ):
+    if llm_filter_run_id and options_filter_report is not None:
+        raise ValueError('Un seul filtre après Oracle : LLM ou options')
     if llm_filter_run_id:
         from service.llm_directional.risk_adapter import archived_universe_preset
         preset = archived_universe_preset(repo.engine, llm_filter_run_id, trade_date, account_id)
         source = 'llm_archived_input'
         LOGGER.info('Univers risque LLM : preset archivé=%s run=%s ; equity sizing réelle=%.2f (inchangée)',
                     preset.key, llm_filter_run_id, effective_equity)
+    elif options_filter_report is not None:
+        from service.options_directional.risk_adapter import archived_universe_preset
+        preset = archived_universe_preset(options_filter_report, trade_date, account_id)
+        source = 'options_archived_input'
+        LOGGER.info('Univers risque options : preset archivé=%s run=%s ; equity sizing réelle=%.2f (inchangée)',
+                    preset.key, options_filter_report['run_id'], effective_equity)
     else:
         preset = resolve_capital_preset_for_equity(effective_equity)
         if preset is None:
@@ -1206,6 +1215,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--summary-path", type=str, default=None, help="Chemin de sortie atomique du résumé JSON du run.")
     p.add_argument('--llm-filter-run-id', help='Analyse Oracle/Web directionnelle exacte, PAPER uniquement')
     p.add_argument('--options-filter-run-id', help='Run exact du filtre volume/OI Oracle, PAPER uniquement')
+    p.add_argument('--options-risk-attempt-id', help=argparse.SUPPRESS)
     p.add_argument("--dry-run", action="store_true", default=False)
     p.add_argument(
         "--run-mode",
@@ -1879,11 +1889,25 @@ def main(args: list[str] | None = None) -> None:
     else:
         breakout_tracker = BreakoutConfirmationTracker(min_breakout_days=config.min_breakout_days)
 
-    universe, universe_capital_preset_key, universe_preset_source = _load_tradable_universe_for_risk(
-        repo, trade_date=trade_date, effective_equity=effective_equity,
-        llm_filter_run_id=args.llm_filter_run_id,
-        account_id=effective_account_id or resolved_account_scope or 'default',
-    )
+    try:
+        universe, universe_capital_preset_key, universe_preset_source = _load_tradable_universe_for_risk(
+            repo, trade_date=trade_date, effective_equity=effective_equity,
+            llm_filter_run_id=args.llm_filter_run_id,
+            account_id=effective_account_id or resolved_account_scope or 'default',
+            options_filter_report=options_filter_report,
+        )
+    except (Exception, SystemExit) as exc:
+        # This narrow checkpoint precedes creation/publication of risk decisions
+        # and portfolio targets. Later failures must NEVER grant automatic retry.
+        attempt_id = getattr(args, 'options_risk_attempt_id', None)
+        if options_filter_report is not None and attempt_id and args.summary_path:
+            from service.options_directional.risk_attempts import record_universe_lookup_failure
+            try:
+                record_universe_lookup_failure(Path(args.summary_path).parent, attempt_id,
+                                               options_filter_report, exc)
+            except Exception:
+                LOGGER.exception('Impossible de sceller la preuve de reprise risque ; verrou conservé')
+        raise
     if universe.data_quality_grade.strip().lower() != "full":
         raise SystemExit(
             "L'univers tradable live doit être de qualité full; "
@@ -1934,6 +1958,8 @@ def main(args: list[str] | None = None) -> None:
     )
 
     candidates: list[MLRankedCandidate] = []
+    _path_amplitude_policy = False
+    _oracle_live_batch = ''
     spread_snapshots: dict[str, object] = {}
     borrow_snapshots: dict[str, object] = {}
     liquidity_gate: object | None = None
@@ -2429,8 +2455,14 @@ def main(args: list[str] | None = None) -> None:
 
         # ── Point 12 : vérification compatibilité modèle ────────────
         # LLM uses its audited Oracle/Web contract, not a synthetic per-symbol probability.
-        _compat = ({'compatible': True, 'issues': [], 'champion_count': 0, 'model_versions': {}}
-                   if args.llm_filter_run_id else _check_model_compatibility(predictions))
+        if args.llm_filter_run_id:
+            _compat = {'compatible': True, 'issues': [], 'champion_count': 0, 'model_versions': {}}
+        elif _path_amplitude_policy:
+            from risk_management.oracle_path_contract import check_compatibility
+            _compat = check_compatibility(repo.engine, predictions, batch_id=_oracle_live_batch,
+                trade_date=trade_date, artifacts_dir=args.oracle_artifacts_dir)
+        else:
+            _compat = _check_model_compatibility(predictions)
         if not _compat["compatible"]:
             LOGGER.error(
                 "MODEL_INCOMPATIBLE issues=%s — blocage des entrées",
@@ -2456,7 +2488,10 @@ def main(args: list[str] | None = None) -> None:
         # ── Section 17 Point 6.4 : gate de fraîcheur avant entrées ───────
         freshness_blocked = False
         freshness_result = None
-        if not config.dry_run and _compat["compatible"] and not args.llm_filter_run_id:
+        if (not config.dry_run and _compat["compatible"] and not args.llm_filter_run_id
+                and not _path_amplitude_policy):
+            # Oracle parcours already enforces closed J, publication delay,
+            # UTC creation cutoffs and next-open expiry in its signed contract.
             try:
                 from risk_management.freshness_gate import FreshnessConfig, FreshnessGate
 

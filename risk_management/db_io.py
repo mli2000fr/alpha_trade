@@ -433,6 +433,9 @@ class RiskRepository:
         params: dict[str, Any] = {f"s{i}": s for i, s in enumerate(symbols)}
         params["trade_date"] = trade_date
         params["row_limit"] = atr_window + 1
+        from common.daily_bar_sources import daily_source_filter
+        source_filter, source_params = daily_source_filter()
+        params.update(source_params)
         query = text(f"""
             WITH ranked AS (
                 SELECT
@@ -446,6 +449,7 @@ class RiskRepository:
                 FROM stock_bars_daily
                 WHERE symbol IN ({placeholders})
                   AND `date` <= :trade_date
+                  {source_filter}
             )
             SELECT symbol, trade_day, close_price, high_price, low_price, volume
             FROM ranked
@@ -860,6 +864,9 @@ class RiskRepository:
         params: dict[str, Any] = {f"s{i}": s for i, s in enumerate(symbols)}
         params["trade_date"] = trade_date
         params["row_limit"] = lookback_days + 1
+        from common.daily_bar_sources import daily_source_filter
+        source_filter, source_params = daily_source_filter()
+        params.update(source_params)
         query = text(f"""
             SELECT symbol, trade_day AS `date`, close_price
             FROM (
@@ -868,6 +875,7 @@ class RiskRepository:
                 FROM stock_bars_daily
                 WHERE symbol IN ({placeholders})
                   AND `date` <= :trade_date
+                  {source_filter}
             ) ranked
             WHERE rn <= :row_limit
         """)

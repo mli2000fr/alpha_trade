@@ -377,12 +377,18 @@ actif, et non un pilote Business Quant à activer.
 Le collecteur options réduit le volume au niveau **des contrats**, pas au niveau
 des actions :
 
-- cours du sous-jacent obtenu par snapshots actions Alpaca IEX, par lots de 100 ;
+- cours du sous-jacent obtenu par référence historique actions Alpaca SIP, par lots de 100 ;
 - fenêtre de strikes comprise par défaut entre 80 % et 120 % du sous-jacent ;
 - expirations interrogées autour de DTE 5, 10 et 20, puis conservation de
   l'expiration disponible la plus proche de chacun de ces trois horizons ;
 - pour chaque expiration et côté CALL/PUT, un contrat est retenu au plus près
   de chaque moneyness cible 0,85/0,90/0,95/1,00/1,05/1,10/1,15 ;
+- depuis le correctif du 27 octobre 2026, `dte_tolerance_days: 5` inclut J+25.
+  `ensure_directional_oi_pair: true` garantit que la fenêtre interrogée couvre
+  au moins J+15 à J+25 et complète l'échantillon, après contrôles, par au plus
+  une paire CALL/PUT de même strike/échéance avec OI connue, à moins de 5 %
+  du cours de référence. Les compteurs avec/sans paire et les contrats ajoutés
+  permettent de vérifier la couverture réellement obtenue ;
 - quote bid/ask bilatérale, bid d'au moins 0,01 USD et spread relatif maximal de
   100 % ;
 - open interest d'au moins 10 lorsqu'Alpaca le fournit ; une valeur manquante ne

@@ -1,5 +1,26 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-27 — US : consensus dans TOP10/20/50 Oracle et complément volume/OI
+
+Audit borné hors ligne sur les mêmes cohortes scellées que l'audit options :
+16 dates de scores >=95 % de l'univers1790 ; rangs des 27982 lignes reproduits
+depuis les scores bruts. Consensus disponible dans l'intersection sur une seule
+entrée,19octobre. RévisionsEPS30 couvertes8/16/43cas enTOP10/20/50 ; EPSactuel
+vsJ−30:8/16/42 ; variationrevenus réellementobservée:9/17/43. Reçus/hash/raw,
+ancrage0q,cutoff09:25NY,comptages/valeurscohérents ; réservesEODHD conservées.
+H5SIP :AUC révisions30 noncalculableTOP10(huitSHORT),0,654TOP20(16cas),
+0,315TOP50(43). EPS30:noncalculable/0,821(16)/0,487(42) ; revenus:
+0,563(9)/0,567(17)/0,543(42). Une seule date,TOP20seulementtroisLONGsur16,
+pas validation. EODHDprimaire sansbarres19–23octdansl'archive,pasfallback.
+Mélangeunique50%options/50%révisions30 :couverturecommuneSIP0/1/5cas ;
+TOP50AUC0,750options→0,875mélange surCINQcas/UNEdate,nonconfirmatoire.
+H10/H20:zéroissuemûre ; aucunPnL ni tauxgagnant extrapolé. Dixréférencessources
+parentsontévolué:réserveexplicite,archivesintactes,ancienssceauxinchangés.
+35tests(11nouveaux) ;relecturemêmeassistant:15fichiers,7680lignes,72comptages,
+144AUCpairwise. AucunSQL/API/LLM/fit/inférence/ordre/changementproduction.
+PAS_DE_PROMOTION_CONSENSUS_OPTIONS ;petitindiceEPS30TOP20àobserverhorséchantillon.
+[Bilan, tableaux et limites](consensus_options_topn_resultats_20261027.md).
+
 ## 2026-10-26 — US : classement par périmètre, pas de relance ancienne qualifiée
 
 37familles scientifiques classées ;288rubriques du registre indexées comme

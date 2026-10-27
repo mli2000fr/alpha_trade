@@ -28,8 +28,12 @@ from ihm.services.pipeline_runner import PipelineLaunchOptions, PipelineStepDefi
 #      éviter qu'une assertion précoce laisse un lock fichier orphelin.
 # ---------------------------------------------------------------------------
 @pytest.fixture(autouse=True)
-def _reset_process_registry_state(tmp_path):
+def _reset_process_registry_state(tmp_path, monkeypatch):
     """Garantit l'état initial du registry + lock dir avant ET après chaque test."""
+    # These process lifecycle tests must never use the operator's SQL or SMTP
+    # configuration; notification/persistence behavior has its own test suites.
+    monkeypatch.setattr(registry, '_dispatch_finished_notification', lambda *a, **kw: None)
+    monkeypatch.setattr(registry, 'persist_pipeline_run_record_summary', lambda *a, **kw: None)
     locks_dir = tmp_path / ".locks"
     locks_dir.mkdir(parents=True, exist_ok=True)
     pipeline_lock.set_locks_dir_for_tests(locks_dir)

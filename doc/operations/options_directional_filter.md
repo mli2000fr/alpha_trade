@@ -84,6 +84,51 @@ Ce score est le même quel que soit l'horizon ensuite observé dans l'audit H5/H
 Il ne transforme pas l'Oracle en modèle directionnel calibré et ne change pas
 l'horizon de détention, le SL, le TP ou le trailing du portefeuille.
 
+## Collecte OI alignée sur le filtre (27 octobre 2026)
+
+Le diagnostic de la sélection `opt-d1682793383e4fedb878c37c4dfdf6ff`
+(séance du 26 octobre) retrouve **6 titres calculables sur le TOP50**, dont
+2 retenus ; 44 n'ont pas les deux features qualifiées. Ce n'est pas une absence
+de score Oracle. La collecte OI s'arrêtait à J+24 alors que le filtre accepte
+J+25 : l'échéance mensuelle du 20 novembre était ainsi exclue. Des strikes
+CALL/PUT choisis séparément pouvaient aussi ne plus former de paire après
+les contrôles de cotation et d'OI.
+
+Dans `batch.yaml → oracle_options_indicative_snapshot` :
+
+```yaml
+dte_tolerance_days: 5
+ensure_directional_oi_pair: true
+```
+
+Le collecteur couvre désormais au moins J+15 à J+25 inclus lorsque cette option
+est active. Il conserve son échantillonnage historique et ajoute, si nécessaire,
+au plus deux contrats constituant une paire CALL/PUT au **même strike et à la
+même échéance**, dans les 5 % du cours de référence collecté du sous-jacent.
+La paire est choisie après les contrôles existants de bid/ask, spread et OI
+minimal, par proximité de J+20 puis du strike. Une racine ajustée ne peut pas
+remplacer le sous-jacent demandé. Aucune OI manquante n'est inventée.
+Le filtre conserve son contrôle final par rapport au close J.
+
+Les détails de collecte et le log final indiquent les titres avec/sans paire
+qualifiée, les contrats ajoutés, les rejets de liquidité et d'OI. « Sans paire »
+inclut aussi les titres sans cours, sans chaîne ou en échec technique ; cela ne
+signifie pas que tous ces titres sont dépourvus d'options. La fenêtre 15–25 jours
+et la cible J+20 sont partagées entre collecteur et filtre dans
+`common/options_directional_contract.py`.
+
+La modification est **prospective** : elle ne remplit pas rétroactivement l'OI
+du 26 octobre. Une nouvelle collecte puis une nouvelle étape 10 sont nécessaires
+pour mesurer la couverture obtenue. Aucun batch ni ordre n'a été relancé pour
+cette livraison. Le volume CALL/PUT doit toujours être disponible séparément ;
+une meilleure collecte OI ne garantit pas un score pour tous les titres.
+
+Tests hors ligne : fenêtre J+25, paire ajoutée réellement exploitable par le
+calcul de features, absence de paire/OI, rejets de cotations, conservation de
+l'échantillon historique et désactivation explicite de l'ajout de paire.
+Validation ciblée : **110 tests réussis**, sans appel fournisseur ni écriture SQL
+de production (collecteur, filtre, commandes et orchestration).
+
 ## Raccordement 10 → 11 → 12
 
 Le module `service.options_directional.pipeline` orchestre les trois phases.
@@ -97,6 +142,18 @@ et fige la séance US. Le batch exige l'étape 10 si 11/12 utilisent le filtre.
   capital, sizing et protections. Le filtre options est un veto supplémentaire
   sur les nouvelles entrées LONG, pas un remplacement de ces contrôles. Le résumé
   risque contient `options_filter_run_id` et est lié au rapport par empreintes.
+  Le preset d'univers est celui du rapport options qualifié
+  (`capital_preset_key`), et non un autre preset recalculé depuis le solde du
+  compte. L'equity réelle, les budgets de risque et les règles de sizing restent
+  inchangés. Un preset absent/inconnu, une publication incomplète ou un symbole
+  non tradable restent bloquants ; aucun fallback vers un autre univers.
+  Oracle parcours est contrôlé via son contrat signé et la lineage causale des
+  scores/politiques de J, pas via l'ancien registre de modèles par symbole.
+  La fraîcheur suit la séance clôturée J avant l'ouverture J+1 ; les exigences
+  distinctes de quotes SIP et protections restent inchangées. Les paires de
+  barres EODHD/SIP suivent `market_data.daily_bars_preferred_source` ; les vrais
+  doublons ambigus restent bloquants, sans choisir une ligne valide de secours
+  quand la ligne du fournisseur préféré est invalide.
 - **12** : run risque lié explicitement, aucune recherche « latest targets ».
   Contrôle supplémentaire des cibles contre la sélection et les positions broker :
   pas de nouvelle exposition hors sélection, mais les réductions de positions
@@ -108,9 +165,35 @@ compte. Un résultat plus récent invalide ne fait pas revenir à une ancienne
 sélection. L'identifiant et le cutoff sont journalisés. Si 10 est relancé après
 11, refaire 11 sur ce nouveau résultat avant 12 ; pas de substitution d'un ancien
 run risque. Un run ayant déjà une tentative risque/exécution n'est pas rejoué
-automatiquement : vérifier son état avant toute reprise.
+automatiquement, sauf l'échec précisément qualifié ci-dessous.
 Modifier les paramètres ne recalcule pas un ancien rapport : relancer 10 pour
 produire une nouvelle sélection et reprendre ensuite 11/12 sur celle-ci.
+
+Un workflow personnalisé **11 → 12**, sans étape 10, résout et fige également
+ce rapport existant au démarrage. Il ne crée pas un nouvel identifiant `opt-...`
+sans analyse associée et ne refait pas une sélection « latest » entre 11 et 12.
+Un identifiant explicite reste prioritaire : s'il est introuvable ou non qualifié,
+le workflow s'arrête sans substitution. Seul un workflow incluant 10 génère un
+nouvel identifiant pour une nouvelle analyse.
+
+### Reprise après échec du chargement d'univers (27 octobre 2026)
+
+Un verrou système `risk.lock` interdit deux tentatives de risque simultanées sur
+la même sélection. Chaque tentative possède un identifiant unique dans
+`risk.claim.json`. Si le chargement de l'univers échoue **avant toute publication
+de décisions/cibles**, le CLI scelle
+`risk.prepublication_failure.<attempt_id>.json`, lié à la tentative et au rapport
+par empreintes. Un nouvel appel de l'étape 11 peut alors archiver le claim dans
+`risk_attempts/<attempt_id>/risk.claim.json` et refaire le calcul de risque.
+L'ancienne preuve est conservée ; le rapport options n'est jamais remplacé.
+
+Les contrôles de séance, fraîcheur, compte et intégrité sont réappliqués.
+L'absence de preuve, un ancien claim sans identifiant, une erreur à un stade
+ultérieur, un résumé (même partiel), un binding ou une tentative d'exécution
+interdisent cette reprise automatique. Une erreur inconnue n'est pas assimilée
+à une absence de publication. L'étape 12 conserve son claim à usage unique.
+Les anciens claims exigent une vérification et une libération ciblées, jamais
+une suppression globale des verrous.
 
 La fenêtre autorisée reste clôture J ≤ maintenant < ouverture de la séance US
 suivante, plus `max_age_hours: 72`. Les boutons historiques/shadow ignorent ce
@@ -129,6 +212,8 @@ IHM exclut le cumul, batch refuse une double activation explicite.
   aussi émis dans le résumé d'étape. Un échec récent de ce périmètre interdit
   de substituer automatiquement une ancienne sélection réussie aux étapes 11/12 ;
 - après 11 : `risk.claim.json`, `risk_summary.json`, `risk_binding.json` ;
+- contrôle des reprises 11 : `risk.lock`, preuves d'échec prépublication et
+  claims antérieurs archivés dans `risk_attempts/` ;
 - avant une tentative 12 : `execution.claim.json`.
 
 **Pas de nouvelle table SQL métier** : archives dédiées sur disque ; le résumé
