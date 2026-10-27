@@ -11,6 +11,25 @@ de recherche explicitement actives ont leur catalogue propre batch_fr.yaml.
 
 ## Pour reprendre l'application
 
+Collecte du **27 octobre 2026** : [open interest public Euronext Paris](options_open_interest_public.md),
+batch `fr_options_open_interest_sync`, trois tables `fr_option_oi_public_*`.
+Les OI numériques CALL/PUT sont distingués des absences et valeurs invalides.
+Dates OI/expiration exactes non prouvées : ces observations restent exclues
+du filtre directionnel et des modèles. Cela complète MiFIR sans modifier ses tables.
+
+Stockage du **27 octobre 2026** : les [batchs FR publient désormais leurs données
+et archives en SQL de recherche](batchs_stockage_sql_20261027.md). Calendrier,
+référentiel, actions sur titres, positions AMF et annonces DILA ont leurs tables ;
+les barres, le consensus et les options conservent leurs stockages existants.
+Historique importé et reprise sans doublons vérifiée. Les batchs bloqués ne sont
+pas réactivés ; les fichiers bruts restent conservés comme preuves.
+
+Actualisation du **27 octobre 2026** : les [options MiFIR/FIRDS ont désormais
+quatre tables SQL de recherche](options_mifir_stockage_sql.md) dans `alpha_trade_fr`.
+Archives du 5 au 26 octobre importées, batch raccordé et reprise sans doublon
+vérifiée. Les sources brutes sont conservées ; OI et qualification de volume
+restent absents, sans promotion vers ML/trading.
+
 Audit du **26 octobre 2026** : [direction LONG/SHORT des collectes P0/P1](audit_directionnel_p0_p1_resultats_20261026.md).
 Six collectes de marché auditées,293codes courants ; aucune fenêtre H20 mûre
 depuis les premiers snapshots réellement reçus le5octobre. H5/H10 restent

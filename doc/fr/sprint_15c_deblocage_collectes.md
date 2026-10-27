@@ -10,6 +10,12 @@ ci-dessous décrivent la tranche initiale, pas l'état actualisé de tous les ba
 
 ## Mise à jour du 6 octobre 2026 — retrait du contrôle planifié
 
+Actualisation du **27 octobre 2026** : les [archives et données des batchs FR
+ont été importées en SQL de recherche](batchs_stockage_sql_20261027.md), avec
+raccordement des prochaines exécutions. Les descriptions « fichiers seuls »
+ci-dessous restent l'historique de la livraison du 5–6 octobre. Le contrôle
+planifié retiré n'est pas réactivé.
+
 `fr_pit_quality_daily` est retiré de `batch_fr.yaml`, de la page Batch et
 du planificateur Windows à la demande de l'utilisateur. Il lisait uniquement
 les rapports des collecteurs et archivait un bilan local : aucune nouvelle

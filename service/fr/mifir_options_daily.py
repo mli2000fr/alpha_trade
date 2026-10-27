@@ -1,4 +1,4 @@
-"""Prospective FR MiFIR/FIRDS collection; file quarantine only, never canonical SQL."""
+"""Prospective FR MiFIR/FIRDS files and dedicated research SQL, never canonical data."""
 from datetime import datetime, timedelta
 import hashlib
 import json
@@ -26,7 +26,37 @@ def _archive(root, raw, receipt):
 
 
 def collect(cfg, result, *, root, identities, dry_run=False, max_symbols=None,
-            fetch=None, clock=None):
+            fetch=None, clock=None, engine=None):
+    from service.fr import mifir_options_store as store
+    if dry_run:
+        return _collect_files(cfg, result, root=root, identities=identities, dry_run=True,
+                              max_symbols=max_symbols, fetch=fetch, clock=clock)
+    if cfg.get('sql_storage_enabled', True) is not True:
+        raise ValueError('Stockage SQL recherche MiFIR FR requis pour une collecte complète')
+    owned = engine is None
+    engine = engine if engine is not None else store.engine_fr()
+    try:
+        store.check_schema(engine)  # Before provider calls; migrations remain explicit.
+        result.update(sql_writes=True, database='alpha_trade_fr', sql_tables=list(store.TABLES))
+
+        def persist(attempt):
+            try:
+                stats = store.persist_archive(engine, root, result.get('snapshot_path'), attempt)
+                result.update(stats)
+                print('FR MiFIR SQL : ' + json.dumps(stats, sort_keys=True), flush=True)
+            except Exception as exc:
+                result['sql_persistence_error'] = str(exc)
+                raise
+
+        return _collect_files(cfg, result, root=root, identities=identities,
+                              max_symbols=max_symbols, fetch=fetch, clock=clock, sql_writer=persist)
+    finally:
+        if owned:
+            engine.dispose()
+
+
+def _collect_files(cfg, result, *, root, identities, dry_run=False, max_symbols=None,
+                   fetch=None, clock=None, sql_writer=None):
     fetch = source.fetch if fetch is None else fetch
     current = clock or datetime.now(ZoneInfo('Europe/Paris'))
     if current.tzinfo is None:
@@ -118,3 +148,5 @@ def collect(cfg, result, *, root, identities, dry_run=False, max_symbols=None,
     finally:
         atomic(attempt.with_suffix('.json'), {'receipts': receipts, 'result': result,
             'finished_at': source.now(), 'collection_complete': complete})
+        if sql_writer:
+            sql_writer(attempt.with_suffix('.json'))

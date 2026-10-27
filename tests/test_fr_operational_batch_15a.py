@@ -9,6 +9,17 @@ from service.fr import operational_batch_15a as runner
 from ihm.services import batch_management
 
 
+@pytest.fixture(autouse=True)
+def isolated_sql_archive(monkeypatch):
+    from service.fr import batch_research_store as storage
+    class Engine:
+        def dispose(self):
+            pass
+    monkeypatch.setattr(storage, 'engine_fr', Engine)
+    monkeypatch.setattr(storage, 'check_schema', lambda engine: None)
+    monkeypatch.setattr(storage, 'publish_batch', lambda *a, **kw: dict(status='IMPORTED'))
+
+
 def config(tmp_path, name='fr_calendar_snapshot', **changes):
     payload = yaml.safe_load((runner.ROOT/'batch_fr.yaml').read_text(encoding='utf-8'))
     payload[name].update(changes)
@@ -19,13 +30,13 @@ def config(tmp_path, name='fr_calendar_snapshot', **changes):
 
 def test_fr_catalog_has_only_fr_and_defaults(tmp_path):
     specs = batch_management.load_batch_specs(str(config(tmp_path)))
-    assert len(specs) == 13
+    assert len(specs) == 14
     assert 'fr_pit_quality_daily' not in {s.name for s in specs}
     assert 'fr_consensus_borrow_options' not in {s.name for s in specs}
     assert all(s.name.startswith('fr_') and s.timezone == 'Europe/Paris' for s in specs)
     assert all(s.raw_config['database_alias'] == 'fr_primary' for s in specs)
     assert {s.name for s in specs if s.runnable} == {'fr_calendar_snapshot', 'fr_daily_bars_sync',
-        'fr_corporate_actions_sync','fr_amf_short_sync','fr_dila_disclosures_sync', 'fr_db_backup','fr_security_master_sync','fr_artifacts_backup','fr_options_mifir_trade_sync','fr_consensus_snapshot'}
+        'fr_corporate_actions_sync','fr_amf_short_sync','fr_dila_disclosures_sync', 'fr_db_backup','fr_security_master_sync','fr_artifacts_backup','fr_options_mifir_trade_sync','fr_consensus_snapshot','fr_options_open_interest_sync'}
     assert all('univers_batch' not in s.symbols_file for s in specs)
 
 

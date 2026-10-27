@@ -7,12 +7,37 @@ defaults:
   calendar: XPAR
   canonical_writes_enabled: false
   serving_enabled: false
+  archive_research_sql: true # Miroir SQL des archives et reçus FR, sans promotion canonique.
   enabled: false
   status: PENDING_QUALIFICATION
   run_minutes: "0"
   run_days: "1,2,3,4,5"
   lookback_days: 7
   license: source_specific_review_required
+
+fr_options_open_interest_sync:
+  enabled: true
+  status: ACTIVE_RESEARCH
+  priority: P1
+  provider: Euronext_public
+  identities_file: artifacts/fr/sprint6c_reference/identities.jsonl.gz
+  run_hours: "6,20"
+  run_minutes: "30"
+  run_days: "1,2,3,4,5,6"
+  request_interval_seconds: 1.0
+  max_http_requests: 800
+  max_products: 200
+  max_directory_pages: 12
+  max_maturity_months: 3
+  max_runtime_seconds: 1200
+  exclude_weeklies: true
+  exclude_minis: true
+  universe_scope: "Identités S6C FR vérifiées actives, jointure ISIN exacte avec les options Paris publiques ; pas tous les titres n'ont des options."
+  description: "Observer l'open interest CALL/PUT des chaînes publiques Euronext Paris ; réponses brutes et contrats en SQL FR de recherche."
+  tables: "fr_option_oi_public_runs,fr_option_oi_public_responses,fr_option_oi_public_contracts,fr_batch_research_documents,fr_batch_research_file_versions"
+  coverage_description: "Deux observations lun-sam à 6h30/20h30 Paris, trois premiers mois proposés par produit standard ; weeklies et minis exclus. Aucun historique reconstruit."
+  research_notice: "OI décimaux ou identiques au règlement exclus du champ numérique. Date de référence OI et jour réel d'expiration inconnus : pas de filtre directionnel/ML. Valeurs et lacunes brutes conservées. Arrêt sur refus HTTP, robots ou budget."
+  log_file: log/batch_fr/fr_options_open_interest_sync.txt
 
 fr_calendar_snapshot:
   enabled: true
@@ -22,8 +47,8 @@ fr_calendar_snapshot:
   run_hours: "6"
   run_days: "0"
   days_ahead: 370
-  description: "Archiver le calendrier XPAR utilisé par la recherche, avec source et horaires UTC. Pas une preuve officielle ni une écriture de market_sessions."
-  tables: "aucune; fichiers:artifacts/fr/operations/calendar"
+  description: "Archiver le calendrier XPAR en fichiers et SQL de recherche, avec source et horaires UTC. Pas une preuve officielle ni une écriture de market_sessions."
+  tables: "fr_calendar_sessions_research,fr_batch_research_documents,fr_batch_research_file_versions"
   coverage_description: "J-7 à J+370, calendrier de bibliothèque XPAR ; relance idempotente par date d'observation."
   research_notice: "Calendrier de bibliothèque, pas validation des exceptions officielles Euronext."
   log_file: log/batch_fr/fr_calendar_snapshot.txt
@@ -39,8 +64,8 @@ fr_security_master_sync:
   max_archive_requests: 128
   run_hours: "5"
   description: "Observer les changements ESMA ISIN/MIC des 330 identités S6C ; fichiers versionnés, sans mise à jour canonique ni nouveaux tickers automatiques."
-  tables: "aucune SQL; fichiers:artifacts/fr/operations/fr_security_master_sync"
-  activation_requirement: "Deux passages réels validés le 05/10/2026 : 9/9 archives, zéro doublon de version, checkpoint au 04/10. Pas de promotion SQL ni de réparation des lacunes historiques."
+  tables: "fr_reference_versions_research,fr_batch_research_documents,fr_batch_research_file_versions"
+  activation_requirement: "Référentiel versionné en fichiers et SQL de recherche ; aucune promotion vers instruments canoniques ni réparation des lacunes historiques."
   coverage_description: "Passage 5h Paris avant absence 7h30-20h ; publications jusqu'à J-1, recouvrement 7 jours, rattrapage borné à 31 jours. Fragments absents : checkpoint non avancé."
   research_notice: "Passage avancé à 5h Paris : aucune garantie de publication ESMA à cette heure. Si des fragments arrivent ensuite, ils attendent le prochain passage ; ne pas considérer le référentiel complet avant décision. 330 ISIN S6C figés ; available_at réel après téléchargement/contrôles/rejeu. Lacunes historiques toujours bloquantes ; aucune promotion du shadow. Le launcher horaire installé relit cette configuration."
   unlock_steps: ["Installer la tâche FR depuis la page Batch", "Surveiller les fragments ESMA et la continuité récente", "Qualifier séparément découverte nouveaux titres et promotion SQL"]
@@ -54,7 +79,7 @@ fr_daily_bars_sync:
   run_hours: "22"
   universe_scope: "S6C FR avec migration PERR → ALPER ; Lhyfe exclu (LHYFE.PA, nouveau mnémonique ALHYF). Pas fichier univers US."
   description: "Collecter J-7/J des OHLCV FR puis publier les versions validées en staging SQL de recherche ; aucune barre canonique ni activation LIVE."
-  publish_daily_staging: true # FR uniquement ; false conserve le mode fichiers seul. Pas une canonicalisation.
+  publish_daily_staging: true # Publication OHLCV staging ; le miroir SQL des archives est indépendant. Pas une canonicalisation.
   identities_file: artifacts/fr/sprint6c_reference/identities.jsonl.gz
   # Migration datée de code fournisseur, pas fusion ni remplacement des archives historiques.
   provider_symbol_migrations:
@@ -91,9 +116,9 @@ fr_corporate_actions_sync:
   provider: EODHD_public_evidence
   run_hours: "23"
   description: "Dividendes/splits et corrections fournisseur, preuves publiques et dates de disponibilité ; inconnus explicites."
-  tables: "aucune SQL; fichiers versionnés:artifacts/fr/operations/fr_corporate_actions_sync"
+  tables: "fr_corporate_actions_research,fr_batch_research_documents,fr_batch_research_file_versions"
   coverage_description: "J-31/J fournisseur pour le warmup, dividendes et splits ; deux requêtes par titre. Réponse vide = observation fournisseur, pas preuve officielle d'absence d'événement."
-  activation_requirement: "Collecte fichiers validée sur 3 titres/deux passages ; validation cash/actions/paiement et publication SQL restent ouvertes."
+  activation_requirement: "Archives et observations publiées en SQL de recherche ; validation cash/actions/paiement et promotion canonique restent séparées."
   research_notice: "Remédiation 16-F : couverture 31 jours, reprise explicite et remplacement JSON atomique avec tentatives bornées Windows. Vérifier les 21 séances XPAR réellement couvertes (31 jours ne les garantissent pas autour de tous les jours fériés). Dates/valeurs fournisseur non promues comme preuves officielles ; aucun shadow autorisé."
   log_file: log/batch_fr/fr_corporate_actions_sync.txt
 
@@ -105,9 +130,9 @@ fr_amf_short_sync:
   provider: AMF_public
   run_hours: "21"
   description: "Positions courtes publiques AMF : versions, seuils de publication et available_at prudent. Pas le short interest complet."
-  tables: "aucune SQL; fichiers versionnés:artifacts/fr/operations/fr_amf_short_sync"
+  tables: "fr_amf_positions_research,fr_batch_research_documents,fr_batch_research_file_versions"
   coverage_description: "Snapshot de l'export AMF complet courant ; historique reconstruit, pas vintage historique."
-  activation_requirement: "Deux passages réels validés ; intégration SQL et features directionnelles non autorisées."
+  activation_requirement: "Stockage SQL de recherche raccordé sur demande utilisateur ; aucune feature directionnelle ni promotion automatique."
   research_notice: "Licence Ouverte 2.0, positions publiques censurées par seuil ; absence n'est pas zéro. Lignes historiques incohérentes conservées en quarantaine."
   log_file: log/batch_fr/fr_amf_short_sync.txt
 
@@ -120,7 +145,7 @@ fr_dila_disclosures_sync:
   run_hours: "21"
   run_minutes: "30"
   description: "Annonces et pièces publiques, hashes, publication/observation PIT, quota et erreurs de téléchargement visibles."
-  tables: "aucune SQL; fichiers versionnés:artifacts/fr/operations/fr_dila_disclosures_sync"
+  tables: "fr_dila_disclosures_research,fr_batch_research_documents,fr_batch_research_file_versions"
   coverage_description: "J-7/J sur la date de transmission AMF ; métadonnées pour les ISIN vérifiés, versions conservées."
   activation_requirement: "Deux passages réels validés ; extraction des documents et revue indépendante des paires guidance restent ouvertes."
   research_notice: "Métadonnées uniquement, pas téléchargement des PDF ni signal directionnel. Horodatages invalides en quarantaine ; available_at est l'observation effective."
@@ -144,7 +169,7 @@ fr_fundamentals_sync:
   password_env: INPI_PASSWORD
   run_hours: "20"
   description: "Collecte sécurisée INPI étendue à toutes les identités FR S6C correctement reliées à un SIREN ; ambiguïtés exclues, archives en quarantaine, reprise et quotas."
-  tables: "aucune SQL; fichiers:artifacts/fr/operations/fr_fundamentals_sync/quarantine et observations"
+  tables: "fr_batch_research_documents,fr_batch_research_file_versions"
   universe_scope: "330 identités FR S6C recherchées ; seules correspondances ISIN/LEI/SIREN vérifiées sont collectées. Étrangers, ambiguïtés et validations insuffisantes exclus avec motifs."
   coverage_description: "Lots de 25 émetteurs au plus, pagination et documents repris au checkpoint ; jusqu'à 500 appels/run et 5000/jour UTC, revue des documents tous les 7 jours. Pas de reconstruction PIT historique."
   activation_requirement: "SUSPENDU PAR PRUDENCE : l'accès INPI aux comptes publics est autorisé, mais le traitement des documents ultérieurement retirés et de leurs copies archivées/sauvegardées n'est pas complet. Qualifier les obligations du compte et implémenter/valider cette gestion avant réactivation. Voir doc/fr/audit_autorisations_collectes_20261006.md."
@@ -164,7 +189,8 @@ fr_fundamentals_sync:
     À chaque décision, n'utiliser que les données effectivement disponibles avant son heure.
     Tester les features qualifiées hors échantillon contre une baseline sans fondamentaux INPI avant toute promotion,
     puis réévaluer périodiquement ou après changement important, pas à chaque collecte.
-    Aucune écriture SQL, aucune alimentation des features. Voir doc/fr/inpi_univers_collecte_securisee.md.
+    Mapping et reçus existants archivés en SQL de recherche ; aucune nouvelle collecte ni alimentation des features.
+    La gestion des retraits devra également couvrir ces copies SQL. Voir doc/fr/inpi_univers_collecte_securisee.md.
     Archivage renforcé : comptes publics complets, horodatages, preuves de mapping par passage,
     pages de références et motifs d'exclusion conservés. PDFs/annexes non collectés ; contenus confidentiels/retirés non archivés.
     La sauvegarde fr_artifacts_backup inclut ces fichiers via artifacts/fr.
@@ -229,8 +255,9 @@ fr_options_mifir_trade_sync:
   max_source_age_days: 7
   max_reference_calls: 80
   request_sleep_seconds: 0.5
-  tables: []
-  description: "Transactions options différées Paris MiFIR + référentiel public FIRDS, pour tout l'univers FR vérifié et actif. Archivage fichiers de recherche uniquement."
+  sql_storage_enabled: true
+  tables: "fr_option_mifir_snapshots,fr_option_mifir_contracts,fr_option_mifir_trades,fr_option_mifir_observations"
+  description: "Transactions options différées Paris MiFIR + référentiel public FIRDS, pour tout l'univers FR vérifié et actif. Archives sources et tables SQL de recherche dédiées dans alpha_trade_fr."
   activation_requirement: "Collecteur implémenté ; activer puis installer. Usage interne et attribution ESMA ; aucune redistribution payante sans licence."
   research_notice: "COLLECTE PARTIELLE EN QUARANTAINE : prix, quantités déclarées, strike, échéance, call/put. Aucun OI, NBBO, Greeks ni historique d'ajustement. Unités de quantité et référence historique non qualifiées ; interdit ML/backtest avant qualification. Titres sans transaction affichés, sans conclure qu'ils n'ont pas d'options. Remplace la piste Excel retirée, PAS le batch options complet. Voir doc/fr/options_mifir_collecte_quotidienne.md."
   execution_notice: "06h Europe/Paris, avant absence 7h30-20h : fichier du précédent jour de négociation, conservé brièvement par la source. Si non publié à cette heure, risque de collecte manquée ; pas de reconstruction J-7/J garantie. Reprise FIRDS dans la même journée, archives dédupliquées ; notifications mail/Telegram via le launcher commun."

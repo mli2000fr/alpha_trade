@@ -10,6 +10,13 @@ from test_fr_mifir_options_poc import reference, trade, zipped
 
 
 def setup(monkeypatch):
+    from service.fr import mifir_options_store as store
+    class Engine:
+        def dispose(self):
+            pass
+    monkeypatch.setattr(store, 'engine_fr', Engine)
+    monkeypatch.setattr(store, 'check_schema', lambda engine: None)
+    monkeypatch.setattr(store, 'persist_archive', lambda *args: dict(sql_snapshots=0))
     monkeypatch.setattr(daily, 'reference_scope', lambda path:
         (2, {'OTHER.PA': ({'isin': 'FR0000120321'}, []),
              'BN.PA': ({'isin': 'FR0000120644'}, [])}, []))

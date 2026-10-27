@@ -16,7 +16,8 @@ ROOT = Path(__file__).resolve().parents[2]
 OPS = ROOT / "artifacts/fr/operations"
 IMPLEMENTED = {"fr_calendar_snapshot", "fr_db_backup", "fr_artifacts_backup", "fr_daily_bars_sync",
                "fr_corporate_actions_sync", "fr_amf_short_sync", "fr_dila_disclosures_sync", "fr_pit_quality_daily",
-               "fr_security_master_sync", "fr_fundamentals_sync", "fr_consensus_snapshot", "fr_options_mifir_trade_sync"}
+               "fr_security_master_sync", "fr_fundamentals_sync", "fr_consensus_snapshot", "fr_options_mifir_trade_sync",
+               "fr_options_open_interest_sync"}
 
 
 def load_section(name: str, config_path: Path) -> dict:
@@ -28,6 +29,8 @@ def load_section(name: str, config_path: Path) -> dict:
         raise ValueError("Batch réservé à FR_EQ / fr_primary / XPAR")
     if section.get("canonical_writes_enabled") is not False or section.get("serving_enabled") is not False:
         raise ValueError("Écritures canoniques et serving interdits pour cette tranche")
+    if type(section.get('archive_research_sql', False)) is not bool:
+        raise ValueError('archive_research_sql doit être booléen')
     return section
 
 
@@ -39,6 +42,7 @@ def run(name: str, *, config_path: Path = ROOT / "batch_fr.yaml", dry_run=False,
               "persisted_count": 0, "failed_count": 0, "warning_count": 0, "dry_run": dry_run,
               "canonical_writes": False, "serving_enabled": False}
     result['limited_smoke'] = max_symbols is not None
+    archive_engine = None
     try:
         cfg = load_section(name, config_path)
         result["provider"] = cfg.get("provider", "unknown")
@@ -47,7 +51,19 @@ def run(name: str, *, config_path: Path = ROOT / "batch_fr.yaml", dry_run=False,
         elif name not in IMPLEMENTED:
             raise ValueError("Collecteur FR non implémenté/qualifié : aucun fallback US")
         else:
-            _handle(name, cfg, result, dry_run=dry_run, today=today, resume=resume, max_symbols=max_symbols)
+            if not dry_run and cfg.get('archive_research_sql', False):
+                from service.fr import batch_research_store as storage
+                archive_engine = storage.engine_fr()
+                storage.check_schema(archive_engine)  # Fail before any provider request.
+            try:
+                _handle(name, cfg, result, dry_run=dry_run, today=today, resume=resume, max_symbols=max_symbols)
+            except Exception as exc:
+                result['collection_error'] = str(exc)
+                raise
+            finally:
+                if archive_engine is not None:
+                    result['research_sql_archive'] = storage.publish_batch(archive_engine, name, operations=OPS)
+                    result['sql_writes'] = True
             result["status"] = "DRY_RUN" if dry_run else "SUCCESS"
     except Exception as exc:
         result.update(status="FAILED", failed_count=max(1, result["failed_count"]), error_message=str(exc))
@@ -59,10 +75,39 @@ def run(name: str, *, config_path: Path = ROOT / "batch_fr.yaml", dry_run=False,
         path = folder / f"{now:%Y%m%dT%H%M%S%fZ}-{uuid.uuid4().hex[:8]}.json"
         with path.open("x", encoding="utf-8") as stream:
             json.dump(result, stream, ensure_ascii=False, indent=2, default=str)
+        if archive_engine is not None:
+            try:
+                storage.publish_batch(archive_engine, name, operations=OPS, paths=[path])
+            except Exception as exc:
+                result.update(status='FAILED', failed_count=max(1, result['failed_count']),
+                              error_message='Archivage SQL du reçu FR : '+str(exc))
+                from service.inpi.files import atomic
+                atomic(path, result)
+            finally:
+                archive_engine.dispose()
     return result
 
 
 def _handle(name, cfg, result, *, dry_run, today, resume=False, max_symbols=None):
+    if name == 'fr_options_open_interest_sync':
+        from service.fr.public_options_oi import collect
+        identities = (ROOT / str(cfg['identities_file'])).resolve()
+        if not identities.is_relative_to((ROOT/'artifacts/fr').resolve()):
+            raise ValueError('Identités OI hors périmètre FR')
+        root = OPS/name
+        if dry_run:
+            collect(cfg, result, root=root, identities=identities, dry_run=True, max_symbols=max_symbols)
+            return
+        root.mkdir(parents=True, exist_ok=True)
+        lock = root/'.lock'
+        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        with os.fdopen(fd, 'w') as stream:
+            stream.write(str(os.getpid()))
+        try:
+            collect(cfg, result, root=root, identities=identities, max_symbols=max_symbols)
+        finally:
+            lock.unlink(missing_ok=True)
+        return
     if name == 'fr_options_mifir_trade_sync':
         from service.fr.mifir_options_daily import collect
         identities = (ROOT / str(cfg['identities_file'])).resolve()

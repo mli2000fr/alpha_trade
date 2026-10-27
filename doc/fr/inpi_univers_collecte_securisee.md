@@ -6,6 +6,11 @@
 
 ## État au 5 octobre 2026
 
+Stockage au **27 octobre 2026** : les [mappings et reçus de batch déjà archivés
+sont conservés en SQL de recherche](batchs_stockage_sql_20261027.md). Aucun compte
+supplémentaire n'est téléchargé ni rendu exploitable. Le blocage de rétention
+reste actif et devra couvrir ces copies SQL lors de sa future remédiation.
+
 **Mise à jour du 6 octobre : suspension de prudence**, `enabled: false`,
 `BLOCKED_INPI_RETENTION`. L'accès API aux comptes publics est autorisé ; le
 blocage concerne la gestion des retraits ultérieurs, des archives et des backups.

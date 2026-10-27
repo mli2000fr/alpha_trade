@@ -18,12 +18,30 @@ fr_daily_bars_sync:
   publish_daily_staging: true
 ```
 
-`false` revient au mode fichiers seuls. Ce booléen ne modifie pas les gardes
+`false` coupe cette publication OHLCV en staging ; depuis le 27 octobre 2026,
+le miroir commun des archives peut continuer indépendamment à les stocker en SQL
+de recherche. Ce booléen ne modifie pas les gardes
 `canonical_writes_enabled: false` et `serving_enabled: false`. Un dry-run ne
 publie jamais. Un smoke limité conserve le même sous-ensemble pour la collecte
 et le SQL ; les collectes légalement bloquées restent bloquées.
 
 ## Tables et périmètre
+
+### Vérification Alpaca SIP pour Paris — 27 octobre 2026
+
+Le téléchargement US est configuré avec `market_data.bars_provider: alpaca` et
+`alpaca_backfill_feed: sip` dans `config.yaml`. Cela n'étend pas la couverture
+du fournisseur aux titres cotés à Paris. La documentation officielle Alpaca
+limite cette couverture aux **US Stocks & ETFs** ; SIP consolide les places US :
+[couverture Alpaca](https://docs.alpaca.markets/us/docs/about-market-data-api).
+
+Un test réel unique sur `OR.PA`, `SU.PA`, `BN.PA`, du 20 au 26 octobre 2026,
+avec une borne historique et `feed=sip`, a renvoyé **HTTP 200, aucune barre**.
+Le succès HTTP ne prouve pas la couverture. Reçu :
+`artifacts/fr/research/alpaca_sip_paris_probe_20261027/211718134534.json`.
+Aucune écriture SQL, modification de fournisseur ou substitution d'ADR US.
+Le batch FR conserve EODHD pour les barres Paris ; le remplacement par SIP
+ne peut donc pas être réalisé à univers et place de cotation identiques.
 
 Le service `service/fr/publish_daily_bars_staging.py` écrit exclusivement dans :
 
@@ -36,9 +54,10 @@ Le dataset `eod_daily` distingue ces payloads du backfill historique. Aucune
 écriture dans `stock_bars_daily`, `fr_provider_bars_daily`, `instruments`,
 `market_sessions` ou `fr_corporate_actions`. Aucune promotion implicite d'identité,
 de segment de cotation, de modèle ou de prix qualifié indépendamment.
-**La publication des autres collectes quotidiennes n'est pas livrée par ce
-service** : corporate actions, AMF/DILA et référentiel restent sous leur contrat
-de fichiers actuel. Il ne faut pas annoncer que toutes les familles sont en SQL.
+Ce service reste dédié aux barres. Depuis le 27 octobre 2026, un
+[raccordement distinct au runner](batchs_stockage_sql_20261027.md) stocke aussi
+corporate actions, AMF/DILA, calendrier et référentiel en SQL de recherche.
+Ces tables ne sont pas une promotion vers les tables métier canoniques.
 
 Les tables nécessaires existent déjà, avec la colonne `classifier_version`
 de la migration FR 0005. Aucune nouvelle migration/Alembic ni table n'a été
