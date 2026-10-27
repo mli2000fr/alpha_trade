@@ -20,6 +20,11 @@ toujours du fichier et sont affichées dans l'IHM puis figées par run.
 
 1. Prédiction Oracle parcours, séance US exacte J et modèle explicite. Couverture
    minimale du classement : `min_oracle_coverage_ratio: 0.95` de l'univers choisi.
+   Les horodatages MySQL `TIMESTAMP` des scores et de leur lineage sont
+   comparés au cutoff par `UNIX_TIMESTAMP`, puis archivés en UTC. Le fuseau
+   SQL local (`SYSTEM`, Paris, DST) ne doit ni masquer les scores déjà produits,
+   ni rendre admissible une ligne future. Le lecteur ne modifie pas le fuseau
+   global/session SQL et ne supprime pas le contrôle de disponibilité.
 2. Fixer les `oracle_top_n: 20` premiers par score décroissant, symbole croissant
    en cas d'égalité. **20 titres**, pas 20 %. Aucun titre N+1 ne remplace un absent.
 3. Sur les seuls titres doublement couverts : volume CALL/PUT, OI CALL/PUT,
@@ -106,6 +111,11 @@ IHM exclut le cumul, batch refuse une double activation explicite.
 
 - `inputs.json` : univers, classement Oracle et lignes sources lues, sans prix futur ;
 - `report.json`, `seal.json` : configuration figée, cutoff, scores, motifs et empreintes ;
+- `failure.json` si la couverture Oracle est insuffisante : date/modèle/univers,
+  couverture réelle, seuil et liste complète des titres sans score ; aucun
+  rapport de sélection ni sceau de réussite n'est publié. Les compteurs sont
+  aussi émis dans le résumé d'étape. Un échec récent de ce périmètre interdit
+  de substituer automatiquement une ancienne sélection réussie aux étapes 11/12 ;
 - après 11 : `risk.claim.json`, `risk_summary.json`, `risk_binding.json` ;
 - avant une tentative 12 : `execution.claim.json`.
 

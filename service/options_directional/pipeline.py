@@ -66,14 +66,27 @@ def main():
     if engine.url.database != 'alpha_trade':
         raise ValueError('Filtre options réservé à la base US alpha_trade')
     if args.phase == 'predict':
-        from .runner import analyze
+        from .runner import analyze, OracleCoverageError
         run_id = f'opt-{uuid.uuid4().hex}' if args.run_id == 'auto' else args.run_id
         if directory(run_id).exists():
             raise ValueError('Run options déjà présent ; pas de remplacement implicite')
         subprocess.run(command, check=True)
-        report = analyze(engine, run_id=run_id, batch_id=args.batch_id, trade_date=args.trade_date,
-            symbol_source=args.symbol_source, capital_preset_key=args.capital_preset_key,
-            artifacts_dir=args.artifacts_dir, config=config)
+        try:
+            report = analyze(engine, run_id=run_id, batch_id=args.batch_id, trade_date=args.trade_date,
+                symbol_source=args.symbol_source, capital_preset_key=args.capital_preset_key,
+                artifacts_dir=args.artifacts_dir, config=config)
+        except OracleCoverageError as exc:
+            folder = directory(run_id)
+            folder.mkdir(parents=True, exist_ok=False)
+            failure = dict(context, run_id=run_id, status='FAILED', phase='ORACLE_COVERAGE',
+                cutoff_utc=datetime.now(timezone.utc).isoformat(), diagnostics=exc.diagnostics,
+                error=str(exc), selection_published=False)
+            write_new(folder/'failure.json', failure)
+            emit_run_summary(dict(run_id=run_id, options_filter_run_id=run_id, status='failed',
+                requested=exc.diagnostics['requested_count'], received=exc.diagnostics['prediction_count'],
+                persisted=0, failed=len(exc.diagnostics['missing_symbols']), trade_date=args.trade_date,
+                diagnostics=exc.diagnostics, failure_path=str(folder/'failure.json')))
+            raise
         emit_run_summary(dict(run_id=run_id, options_filter_run_id=run_id, status='completed',
             requested=len(report['rows']), received=report['covered'], selected=report['selected'],
             persisted=len(report['rows']), failed=0, trade_date=args.trade_date,
