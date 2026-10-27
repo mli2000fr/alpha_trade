@@ -178,6 +178,7 @@ from ihm.services.pipeline_ml_defaults import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_ML_PREDICT_SYMBOL_SOURCE = "universe-file:univers_filtred_tradable.txt"
 DEFAULT_SCREENER_CONFIG = ScreenerConfig.strict_swing_cash()
 
 
@@ -488,7 +489,7 @@ class PipelineLaunchOptions:
     ml_train_symbol_source: MLTrainSymbolSource = default_universe_file_source_or("tradable-universe")
     ml_train_start_symbol: str | None = None
     ml_comment: str | None = None
-    ml_predict_symbol_source: MLTrainSymbolSource = default_universe_file_source_or("tradable-universe")
+    ml_predict_symbol_source: MLTrainSymbolSource = DEFAULT_ML_PREDICT_SYMBOL_SOURCE
     ml_predict_use_historical_range: bool = False
     ml_predict_batch_id: str | None = None
     ml_live_predict_batch_id: str | None = None

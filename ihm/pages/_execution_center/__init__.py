@@ -45,6 +45,7 @@ from common.universe_files import default_universe_file_source_or
 from ihm.services.pipeline_runner import (
     PAGE_SENTIMENT_DEFAULTS,
     DEFAULT_PIPELINE_CAPITAL_PRESET_KEY,
+    DEFAULT_ML_PREDICT_SYMBOL_SOURCE,
 )
 from modelFactory.feature_profiles import (
     DIRECTIONAL_TARGET_DOWN_THRESHOLD,
@@ -3406,7 +3407,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
 
         st.caption("Chaque lancement ML Train crée une campagne complète et isolée.")
         ml_train_symbol_source = default_universe_file_source_or("tradable-universe")
-        ml_predict_symbol_source = "tradable-universe"
+        ml_predict_symbol_source = DEFAULT_ML_PREDICT_SYMBOL_SOURCE
         from service.llm_directional.config import load_filter_config
         _llm_config = load_filter_config()
         llm_filter_enabled = _render_llm_filter_toggle(_llm_config)
@@ -3415,8 +3416,6 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         options_filter_enabled = _render_options_filter_toggle(_options_config,
             llm_enabled=llm_filter_enabled,
             paper_allowed=execution_mode == 'paper' and selected_account_id == 'default')
-        if options_filter_enabled:
-            ml_predict_symbol_source = default_universe_file_source_or('tradable-universe')
         llm_filter_run_id = None
         llm_oracle_batch_id = None
         llm_specific_protections = False

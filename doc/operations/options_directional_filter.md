@@ -11,6 +11,18 @@ achat de données, téléchargement additionnel ou entraînement n'est effectué
 ce filtre. Ne pas confondre cette activation expérimentale avec une validation
 de rentabilité. Les règles de backtest existantes ne sont pas modifiées.
 
+### Univers de prédiction par défaut (27 octobre 2026)
+
+La page Pipeline (workflow et bloc **10. ML Predict**) utilise par défaut
+`universe-file:univers_filtred_tradable.txt`, résolu dans `config/univers/`.
+Le batch `us_pipeline` conserve son chemin explicite
+`config/univers_batch/univers_filtred_tradable.txt` dans `batch.yaml`.
+La sélection d'un modèle ne réapplique plus automatiquement son ancien fichier
+d'entraînement, notamment `oracle_balanced_400_202512.txt`. Une session déjà
+ouverte sur cet ancien défaut est migrée une seule fois ; les choix manuels
+ultérieurs restent possibles. Aucun fichier d'univers ni contrat de modèle
+n'est modifié, et les symboles hors contrat restent refusés.
+
 ## Règle figée
 
 Les valeurs ci-dessous décrivent les défauts initiaux du code (TOP20, seuil 0.50).
