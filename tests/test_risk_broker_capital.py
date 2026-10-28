@@ -92,24 +92,28 @@ def test_current_account_overnight_freshness_is_checked():
 
 
 @pytest.mark.parametrize('mode',['paper','live'])
-def test_cli_passes_broker_equity_to_config_even_when_cli_requests_100000(monkeypatch,mode):
+@pytest.mark.parametrize('account,equity',[('default',1974.30),('test1',3500.),('test2',8000.)])
+def test_cli_passes_broker_equity_to_config_even_when_cli_requests_100000(monkeypatch,mode,account,equity):
     from risk_management import config
-    data,raw=capture(mode=mode)
-    monkeypatch.setattr(broker_account,'capture_current_account',lambda account,run_mode:(data,raw))
+    data,raw=capture(broker(equity=str(equity)),mode=mode,account=account)
+    def capture_expected(requested,run_mode):
+        assert requested==account and run_mode==mode
+        return data,raw
+    monkeypatch.setattr(broker_account,'capture_current_account',capture_expected)
     monkeypatch.setattr(cli,'configure_root_logging',lambda **kw:None)
     class Repo:
-        def load_account_risk_snapshot(self,account,day):
-            assert account=='default'
+        def load_account_risk_snapshot(self,requested,day):
+            assert requested==account
             return None
         def load_account_equity_breakdown(self,*a):pytest.fail('No cached fallback in PAPER/LIVE')
     monkeypatch.setattr(cli,'RiskRepository',Repo)
     class ConfigReached(Exception):pass
     def load(equity,cli_overrides,**kw):
-        assert equity==1974.30 and cli_overrides['account_equity']==1974.30
+        assert equity==float(raw['equity']) and cli_overrides['account_equity']==float(raw['equity'])
         raise ConfigReached()
     monkeypatch.setattr(config,'load_risk_config',load)
     with pytest.raises(ConfigReached):
-        cli.main(['--run-mode',mode,'--trade-date','2026-10-27','--account','default','--account-equity','100000','--dry-run'])
+        cli.main(['--run-mode',mode,'--trade-date','2026-10-27','--account',account,'--account-equity','100000','--dry-run'])
 
 
 def test_cli_blocks_before_any_target_if_broker_unavailable(monkeypatch):

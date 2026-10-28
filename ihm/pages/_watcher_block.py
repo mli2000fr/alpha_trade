@@ -181,7 +181,7 @@ def _render_watcher_launch_controls(options: PipelineLaunchOptions) -> None:
         multi_account_enabled = st.checkbox(
             f"🌐 Tous les comptes Alpaca ({len(available_account_ids)} : "
             f"{', '.join(available_account_ids)})",
-            value=False,
+            value=True,
             key="pipeline_watcher_multi_account_toggle",
             help=(
                 "Quand cochée, lance un processus watcher par compte Alpaca déclaré. "

@@ -16,14 +16,15 @@ REPORT = dict(run_id='opt-'+'a'*32, status='COMPLETED', trade_date=str(DAY),
 
 
 @pytest.mark.parametrize('equity', [1500., 1974.30, 4000., 12000.])
-def test_options_keeps_archived_preset_without_changing_equity(monkeypatch, equity):
+@pytest.mark.parametrize('account', ['default','test1','test2'])
+def test_options_keeps_archived_preset_without_changing_equity(monkeypatch, equity, account):
     resolver = Mock(side_effect=AssertionError('No implicit equity universe fallback'))
     monkeypatch.setattr(cli, 'resolve_capital_preset_for_equity', resolver)
     repo = SimpleNamespace(load_tradable_universe_asof=Mock(return_value='exact-universe'))
     cfg = RiskConfig(account_equity=equity)
     fingerprint = cfg.fingerprint
     assert cli._load_tradable_universe_for_risk(repo, trade_date=DAY,
-        effective_equity=cfg.account_equity, options_filter_report=REPORT) == (
+        effective_equity=cfg.account_equity, options_filter_report=REPORT,account_id=account) == (
             'exact-universe', 'capital_2001_5000', 'options_archived_input')
     repo.load_tradable_universe_asof.assert_called_once_with(DAY, 'capital_2001_5000')
     resolver.assert_not_called()

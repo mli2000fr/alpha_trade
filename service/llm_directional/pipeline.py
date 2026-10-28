@@ -136,7 +136,7 @@ def main():
         subprocess.run([*command, '--run-id', run['risk_run_id'], '--account', 'default'], check=True)
 
 
-def _validate_targets(targets, holdings, selected, trade_date):
+def _validate_targets(targets, holdings, selected, trade_date,*,account_id='default'):
     """New exposure must match the archived direction. Other targets only reduce.
 
     Never convert an opposite held position into a new position in one order.
@@ -147,7 +147,7 @@ def _validate_targets(targets, holdings, selected, trade_date):
         if target['symbol'] in seen:
             raise ValueError('Cibles LLM dupliquées ; exécution bloquée')
         seen.add(target['symbol'])
-        if str(target['trade_date']) != str(trade_date) or target['account_id'] != 'default':
+        if str(target['trade_date']) != str(trade_date) or target['account_id'] != account_id:
             raise ValueError('Cible risque hors date/compte')
         side, qty = str(target['side']).lower(), float(target['shares'])
         if side not in ('long', 'buy', 'short', 'sell') or not math.isfinite(qty) or qty < 0:

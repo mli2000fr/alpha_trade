@@ -1542,7 +1542,6 @@ def _render_options_filter_review(options: PipelineLaunchOptions, all_runs) -> N
     from ihm.services.options_prediction_review import load_options_prediction_review
     st.markdown('#### TOP Oracle — filtre volume options + OI')
     records = [r for r in all_runs if r.get('step_key') == 'ml_predict'
-               and (r.get('account_id') or 'default') == (options.account_id or 'default')
                and not r.get('history_deleted')]
     source = max(records, key=lambda r: str(r.get('executed_at') or r.get('actual_started_at') or ''), default={})
     run_id = (source.get('run_summary') or {}).get('options_filter_run_id')
@@ -1555,12 +1554,13 @@ def _render_options_filter_review(options: PipelineLaunchOptions, all_runs) -> N
         report = load_options_prediction_review(run_id, trade_date=resolve_us_signal_date(options.trade_date or None),
                            batch_id=batch, account_id=options.account_id or 'default',
                            symbol_source=options.ml_predict_symbol_source,
-                           capital_preset_key=options.capital_preset_key or 'capital_2001_5000')
+                           capital_preset_key=options.capital_preset_key or 'capital_2001_5000',shared_selection=True)
     except (ValueError, KeyError, OSError) as exc:
         st.warning(f'Résultat options non affichable : {exc}. Aucun ancien run substitué.')
         return
     st.caption(f"Run `{run_id}` · séance {report['trade_date']} · cutoff {report['cutoff_utc']} · "
                f"couverts {report['covered']}/{len(report['rows'])} · retenus LONG {len(report['selected'])}.")
+    st.caption(f"Sélection commune aux comptes PAPER ; risque et exécution pour `{options.account_id or 'default'}`.")
     reasons = {'MISSING_OR_STALE_OPTIONS': 'Options absentes/périmées',
                'INSUFFICIENT_COVERED_COHORT': 'Trop peu de titres couverts',
                'SCORE_NOT_ABOVE_THRESHOLD': 'Score insuffisant ou neutre',

@@ -16,6 +16,7 @@ def options():
 
 
 def test_batch_enabled_binds_all_commands_same_id_day_model(monkeypatch):
+    monkeypatch.setattr(us_pipeline,'require_paper_account',lambda account:None)
     monkeypatch.setattr('common.us_signal_date.resolve_us_signal_date', lambda *a: date(2026,10,16))
     steps = us_pipeline.selected_steps([10,11,12])
     bound = us_pipeline.options_filter_options(options(), steps, config=OptionsFilterConfig(enabled=True))
@@ -31,6 +32,23 @@ def test_batch_enabled_binds_all_commands_same_id_day_model(monkeypatch):
         assert 'service.llm_directional.pipeline' not in inner
         if phase=='predict':
             assert inner[inner.index('--batch-id')+1] == bound.ml_predict_batch_id
+
+
+@pytest.mark.parametrize('account',['test1','test2'])
+def test_secondary_paper_account_is_carried_by_all_wrapped_commands(monkeypatch,account):
+    checked=[]
+    monkeypatch.setattr(us_pipeline,'require_paper_account',lambda value:checked.append(value))
+    monkeypatch.setattr('common.us_signal_date.resolve_us_signal_date',lambda *a:date(2026,10,16))
+    steps=us_pipeline.selected_steps([10,11,12])
+    bound=us_pipeline.options_filter_options(replace(options(),account_id=account),steps,
+        config=OptionsFilterConfig(enabled=True))
+    assert checked==[account]
+    for step in steps:
+        cmd=build_pipeline_command(step.key,bound)
+        assert cmd[cmd.index('--account')+1]==account
+        inner=json.loads(cmd[cmd.index('--command-json')+1])
+        if step.num!='10':
+            assert inner[inner.index('--account')+1]==account
 
 
 @pytest.mark.parametrize('numbers', [[11], [12], [11,12]])
@@ -49,8 +67,8 @@ def test_disabled_and_collection_only_do_not_activate_filter():
 
 
 @pytest.mark.parametrize('kwargs', [dict(execution_mode='live'), dict(execution_mode='simulate'),
-                                    dict(account_id='test1'), dict(llm_filter_enabled=True)])
-def test_no_live_other_account_or_implicit_llm_combination(kwargs):
+                                    dict(llm_filter_enabled=True)])
+def test_no_live_or_implicit_llm_combination(kwargs):
     with pytest.raises(ValueError):
         us_pipeline.options_filter_options(replace(options(), **kwargs), us_pipeline.selected_steps([10]),
                                           config=OptionsFilterConfig(enabled=True))

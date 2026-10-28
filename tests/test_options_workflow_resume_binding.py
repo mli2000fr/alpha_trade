@@ -54,11 +54,18 @@ def test_unknown_explicit_id_never_falls_back_to_another_analysis(env):
 
 
 @pytest.mark.parametrize('change', [dict(ml_predict_batch_id='other-model'),
-    dict(ml_predict_symbol_source='universe-file:other.txt'), dict(capital_preset_key='capital_0_2000'),
-    dict(account_id='test1')])
+    dict(ml_predict_symbol_source='universe-file:other.txt')])
 def test_other_context_never_reuses_report(env, change):
     with pytest.raises(ValueError, match='Aucun filtre options'):
         process_registry._bind_options_workflow_run(options(**change), steps('risk_management','execution'))
+
+
+@pytest.mark.parametrize('account', ['default','test1','test2'])
+def test_shared_selection_keeps_archived_universe_for_other_account_presets(env, account):
+    bound=process_registry._bind_options_workflow_run(
+        options(account_id=account,capital_preset_key='capital_0_2000'),steps('risk_management','execution'))
+    assert bound.options_filter_run_id==RUN
+    assert bound.account_id==account
 
 
 def test_tampered_latest_analysis_blocks_before_launch(env):

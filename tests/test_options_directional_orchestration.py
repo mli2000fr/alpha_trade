@@ -19,6 +19,12 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline, 'validate_window', lambda *a, **k: None)
     monkeypatch.setattr(pipeline, 'load_options_filter_config', lambda: OptionsFilterConfig(enabled=True))
     monkeypatch.setattr('service.llm_directional.runner.assert_paper_account', lambda *a: None)
+    def resolve_account(account_id):
+        if account_id not in ('default', 'test1', 'test2', 'live-account'):
+            raise ValueError('Compte incompatible ou inconnu')
+        return SimpleNamespace(account_id=account_id, mode='live' if account_id=='live-account' else 'paper')
+    monkeypatch.setattr('service.alpaca.accounts.AccountRegistry.get',
+        lambda: SimpleNamespace(resolve=resolve_account))
     monkeypatch.setattr('common.us_signal_date.resolve_us_signal_date', lambda *a: date(2026,10,16))
     engine = SimpleNamespace(url=SimpleNamespace(database='alpha_trade'))
     monkeypatch.setattr('database.connection.get_sqlalchemy_engine', lambda: engine)
@@ -30,21 +36,22 @@ def env(monkeypatch, tmp_path):
     # Freeze the reader clock, not the qualification/hash implementation.
     real_qualified = store.qualified
     monkeypatch.setattr(store, 'qualified', lambda run_id, **kwargs: real_qualified(run_id, now=NOW, **kwargs))
-    monkeypatch.setattr(pipeline, 'qualified', store.qualified)
     calls = []
     def fake_subprocess(command, check):
         assert check is True
         calls.append(command)
         if 'risk_management' in command:
             path = command[command.index('--summary-path')+1]
-            store.write_new(__import__('pathlib').Path(path), dict(run_id='risk-exact', run_mode='paper',
+            account = command[command.index('--account')+1]
+            risk_id = 'risk-exact' if account=='default' else 'risk-'+account
+            store.write_new(__import__('pathlib').Path(path), dict(run_id=risk_id, account_id=account, run_mode='paper',
                 dry_run=False, options_filter_run_id=RUN))
     monkeypatch.setattr(pipeline.subprocess, 'run', fake_subprocess)
-    def invoke(phase, command, run_id=RUN):
+    def invoke(phase, command, run_id=RUN, account_id='default'):
         import sys
         monkeypatch.setattr(sys, 'argv', ['options', '--phase',phase,'--run-id',run_id,
             '--trade-date','2026-10-16','--batch-id','model-test','--symbol-source','universe-file:test.txt',
-            '--command-json',json.dumps(command)])
+            '--account',account_id,'--command-json',json.dumps(command)])
         pipeline.main()
     return invoke, calls, engine, report
 

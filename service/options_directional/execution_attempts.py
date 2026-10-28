@@ -7,7 +7,8 @@ import re
 import uuid
 
 from .risk_attempts import risk_lock
-from .store import directory, digest, write_new
+from .store import digest, write_new
+from .accounts import (consumer_directory,require_paper_account,shared_qualified,validate_risk_binding)
 
 ACTIVE = ContextVar('options_execution_attempt', default=None)
 
@@ -32,6 +33,7 @@ def _effects(folder, attempt_id):
 
 @contextmanager
 def execution_attempt(folder, report, binding):
+    account_id=binding.get('account_id','default')
     with risk_lock(folder, lock_name='execution.lock'):
         path = folder/'execution.claim.json'
         if (folder/'execution.result.json').exists():
@@ -49,6 +51,8 @@ def execution_attempt(folder, report, binding):
                 risk_run_id=binding['risk_run_id'], claim_sha256=digest(previous),
                 report_sha256=digest(report), binding_sha256=digest(binding))
             if (any(previous.get(k) != v for k, v in expected.items() if k != 'claim_sha256')
+                    or previous.get('account_id','default')!=account_id
+                    or proof.get('account_id','default')!=account_id
                     or any(proof.get(k) != v for k, v in expected.items())
                     or proof.get('phase') != 'before_execution_side_effects' or proof.get('retryable') is not True):
                 raise ValueError('Preuve de reprise exécution altérée ou incompatible')
@@ -56,11 +60,13 @@ def execution_attempt(folder, report, binding):
             archive.mkdir(parents=True, exist_ok=False)
             path.rename(archive/'execution.claim.json')
         claim = dict(attempt_id=uuid.uuid4().hex, run_id=report['run_id'],
+            account_id=account_id,
             risk_run_id=binding['risk_run_id'], report_sha256=digest(report),
             binding_sha256=digest(binding), started_at=datetime.now(timezone.utc).isoformat())
         write_new(path, claim)
         yield claim
         write_new(folder/'execution.result.json', dict(attempt_id=claim['attempt_id'],
+            account_id=account_id,
             run_id=report['run_id'], risk_run_id=binding['risk_run_id'],
             claim_sha256=digest(claim), status='CHILD_COMPLETED',
             finished_at=datetime.now(timezone.utc).isoformat()))
@@ -68,11 +74,13 @@ def execution_attempt(folder, report, binding):
 
 @contextmanager
 def execution_child_guard(run_id, attempt_id, *, risk_run_id, mode, account_id, trade_date):
-    folder = directory(run_id)
+    require_paper_account(account_id)
+    folder = consumer_directory(run_id,account_id)
     _attempt_id(attempt_id)
-    report, binding, claim = [_read(folder/name) for name in
-        ('report.json', 'risk_binding.json', 'execution.claim.json')]
-    if (mode != 'paper' or account_id != 'default' or str(trade_date) != report['trade_date']
+    report=shared_qualified(run_id,trade_date=trade_date,account_id=account_id)
+    binding,claim,summary=[_read(folder/name) for name in ('risk_binding.json','execution.claim.json','risk_summary.json')]
+    validate_risk_binding(report,binding,summary,account_id)
+    if (mode != 'paper' or claim.get('account_id','default')!=account_id or str(trade_date) != report['trade_date']
             or binding['risk_run_id'] != risk_run_id or claim.get('risk_run_id') != risk_run_id
             or claim.get('run_id') != run_id or claim.get('attempt_id') != attempt_id
             or claim.get('report_sha256') != digest(report) or claim.get('binding_sha256') != digest(binding)
@@ -87,6 +95,7 @@ def execution_child_guard(run_id, attempt_id, *, risk_run_id, mode, account_id, 
         # checkpoint cannot authorize another execution, even if no fills appear.
         if not state['financial_effects_possible'] and not _effects(folder, attempt_id).exists():
             write_new(_failure(folder, attempt_id), dict(attempt_id=attempt_id, run_id=run_id,
+                account_id=account_id,
                 risk_run_id=risk_run_id, claim_sha256=digest(claim), report_sha256=digest(report),
                 binding_sha256=digest(binding), phase='before_execution_side_effects', retryable=True,
                 error_type=type(error).__name__, failed_at=datetime.now(timezone.utc).isoformat()))
@@ -101,7 +110,7 @@ def mark_execution_effects_possible(*, risk_run_id, mode, account_id):
     if state is None:
         return  # Non-options callers retain their existing execution contract.
     claim = state['claim']
-    if mode != 'paper' or account_id != 'default' or risk_run_id != claim['risk_run_id']:
+    if mode != 'paper' or account_id != claim.get('account_id','default') or risk_run_id != claim['risk_run_id']:
         raise ValueError('Routage différent de la tentative exécution approuvée')
     state['financial_effects_possible'] = True
     write_new(_effects(state['folder'], claim['attempt_id']), dict(attempt_id=claim['attempt_id'],

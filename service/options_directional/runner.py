@@ -127,7 +127,7 @@ def load_inputs(engine, *, batch_id, trade_date, symbol_source, capital_preset_k
 
 
 def analyze(engine, *, run_id, batch_id, trade_date, symbol_source, capital_preset_key,
-            artifacts_dir='artifacts/models', config=None, now=None, root=None):
+            artifacts_dir='artifacts/models', config=None, now=None, root=None,producer_account_id='default'):
     config = config or load_options_filter_config()
     if not config.enabled:
         raise ValueError('options_directional_filter.enabled=false')
@@ -141,7 +141,7 @@ def analyze(engine, *, run_id, batch_id, trade_date, symbol_source, capital_pres
     selected = [r['symbol'] for r in rows if r['selected']]
     validate_window(trade_date, now if injected_clock else datetime.now(timezone.utc))
     report = seal(run_id, dict(run_id=run_id, status='COMPLETED', trade_date=str(trade_date),
-        batch_id=batch_id, account_id='default', symbol_source=symbol_source,
+        batch_id=batch_id, account_id=producer_account_id, selection_scope='SHARED_MARKET',symbol_source=symbol_source,
         capital_preset_key=capital_preset_key, config=config.snapshot(), cutoff_utc=now.isoformat(),
         rows=rows, selected=selected, covered=sum(r['reason'] != 'MISSING_OR_STALE_OPTIONS' for r in rows),
         semantics='experimental_relative_options_activity_not_probability', side_policy='LONG_ONLY',

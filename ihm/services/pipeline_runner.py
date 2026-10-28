@@ -2957,9 +2957,9 @@ def _wrap_directional_command(phase: str, command: list[str], options: PipelineL
     config = load_options_filter_config()
     if not config.enabled:
         raise ValueError('Filtre options désactivé dans config.yaml')
-    if (options.execution_mode != 'paper' or (options.account_id or 'default') != 'default'
+    if (options.execution_mode != 'paper'
             or options.allow_outside_rth or options.auto_rebalance):
-        raise ValueError('Filtre options : compte principal PAPER, sans rééquilibrage automatique ni hors séance')
+        raise ValueError('Filtre options : PAPER, sans rééquilibrage automatique ni hors séance')
     if options.ml_predict_use_historical_range or options.ml_oracle_shadow:
         raise ValueError('Filtre options prospectif uniquement, pas historique/shadow')
     if options.risk_enable_kelly:
@@ -2970,6 +2970,7 @@ def _wrap_directional_command(phase: str, command: list[str], options: PipelineL
     command = pin_command_date(command, phase, day)
     return [sys.executable, '-u', '-m', 'service.options_directional.pipeline',
             '--phase', phase, '--run-id', options.options_filter_run_id or 'auto',
+            '--account',options.account_id or 'default',
             '--trade-date', day, '--batch-id', batch,
             '--symbol-source', options.ml_predict_symbol_source,
             '--capital-preset-key', options.capital_preset_key or 'capital_2001_5000',

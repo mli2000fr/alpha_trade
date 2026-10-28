@@ -8,7 +8,7 @@ from service.options_directional import store
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
-def load_options_prediction_review(run_id, *, symbol_source, project_root=None, **context):
+def load_options_prediction_review(run_id, *, symbol_source, project_root=None,shared_selection=False, **context):
     """Accept a display alias only when both files match the sealed universe.
 
     The exact stored source is still used for all normal date/account/model,
@@ -27,4 +27,7 @@ def load_options_prediction_review(run_id, *, symbol_source, project_root=None, 
         frozen = inputs.get('universe')
         if not isinstance(frozen,list) or not frozen or symbols(saved_source) != set(frozen) or symbols(symbol_source) != set(frozen):
             raise ValueError('Filtre options incompatible : le contenu des univers diffère du snapshot')
+    if shared_selection:
+        from service.options_directional.accounts import shared_qualified
+        return shared_qualified(run_id,symbol_source=saved_source,**context)
     return store.qualified(run_id,symbol_source=saved_source,**context)

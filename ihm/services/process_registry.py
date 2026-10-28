@@ -1306,7 +1306,7 @@ def _bind_options_workflow_run(options, steps):
     from dataclasses import replace
     from common.us_signal_date import resolve_us_signal_date
     from service.options_directional.config import load_options_filter_config
-    from service.options_directional.store import latest_matching, qualified
+    from service.options_directional.accounts import shared_latest_matching, shared_qualified
 
     signal_day = resolve_us_signal_date(options.trade_date).isoformat()
     keys = {step.key for step in steps}
@@ -1320,7 +1320,7 @@ def _bind_options_workflow_run(options, steps):
             batch_id=options.ml_live_predict_batch_id or options.ml_predict_batch_id or config.default_oracle_batch_id,
             symbol_source=options.ml_predict_symbol_source,
             capital_preset_key=options.capital_preset_key or 'capital_2001_5000')
-        report = qualified(run_id, **context) if run_id and run_id != 'auto' else latest_matching(**context)
+        report = shared_qualified(run_id, **context) if run_id and run_id != 'auto' else shared_latest_matching(**context)
         run_id = report['run_id']
     return replace(options, trade_date=signal_day, options_filter_run_id=run_id,
                    force_trade_date_to_latest_snapshot=False)
