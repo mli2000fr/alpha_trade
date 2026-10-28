@@ -117,6 +117,11 @@ dossier de reprise ci-dessus. Les journaux montrent également une tentative
 de trailing générique rejetée par le broker pour quantité déjà réservée ;
 elle n'a pas remplacé ni annulé les stops OCO vérifiés.
 
+À la demande suivante, le trailing figé de P et OKTA a été désactivé et la
+collecte intraday inutile supprimée pour ces positions. Les cycles rechargés
+ne produisent plus les 403 décrits ci-dessus. Les stops/TP et l'échéance sont
+conservés : voir [la désactivation auditée](winner_trailing_disabled.md).
+
 ## Validation
 
 169 tests ciblés passent : contrat SQL de 32 caractères avec clés étrangères,

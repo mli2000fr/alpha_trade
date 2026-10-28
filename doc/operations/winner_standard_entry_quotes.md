@@ -61,6 +61,11 @@ et les confirmations qui utilisent les bougies SIP 5m récentes conservent
 leur dépendance aux données intraday. Les stops déjà posés chez le broker
 restent indépendants de l'absence de quote.
 
+Depuis la désactivation explicite du trailing de P/OKTA le 28 octobre, leurs
+positions ne demandent plus de bougies 5m ni de quotes lorsque trailing et
+renforcement sont tous deux désactivés. Les SL/TP, réconciliations et échéances
+continuent : voir [le suivi sans intraday inutile](winner_trailing_disabled.md).
+
 Une modification du code Winner demande un redémarrage du watcher. Modifier
 le YAML seul ne réécrit ni les plans existants ni la tentative verrouillée
 `opt-917380c30aab40cbb99362b3ead15e7c`.

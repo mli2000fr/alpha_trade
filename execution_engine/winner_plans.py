@@ -36,6 +36,7 @@ def require_current_watcher_code(process):
     dependencies = [root / name for name in files] + [
         root.parent / 'risk_management' / name for name in
         ('live_factor_context.py', 'factor_inputs.py', 'factor_model.py', 'config.py')]
+    dependencies.append(root.parent/'common'/'winner_pyramiding.py')
     if process.create_time() < max(path.stat().st_mtime for path in dependencies):
         raise ValueError('Redémarrer le watcher : son processus est antérieur à la mise à jour Winner')
 

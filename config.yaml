@@ -30,7 +30,7 @@ winner_pyramiding:
   standard_entry_quote_check_enabled: false
   stop_loss_pct: 0.05
   take_profit_pct: 0.18  # null = pas de TP en prix.
-  trailing_stop_pct: null # Ne peut jamais desserrer le stop initial.
+  trailing_stop_pct: null # Trailing désactivé ; SL, TP et sortie temporelle conservés.
   horizon_sessions: 20  # Entrée incluse ; sortie à l'ouverture de la 21e séance.
   entry_valid_sessions: 20  # Attente maximale après le signal, distincte de la détention.
   max_quote_age_seconds: 60

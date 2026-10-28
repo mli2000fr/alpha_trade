@@ -66,6 +66,16 @@ def load_winner_pyramiding_config(raw=None):
     return WinnerPyramidingConfig(**section)
 
 
+def held_market_data_required(state):
+    """Held campaigns need market signals only for trailing or reinforcement.
+
+    Broker fill/protection reconciliation and the frozen horizon remain the
+    runtime's responsibility even when no five-minute market data is needed.
+    """
+    policy = WinnerPyramidingConfig(**state['policy'])
+    return policy.trailing_stop_pct is not None or policy.reinforcement_enabled
+
+
 def aware(value):
     value = datetime.fromisoformat(value.replace('Z', '+00:00')) if isinstance(value, str) else value
     if not isinstance(value, datetime) or value.tzinfo is None:

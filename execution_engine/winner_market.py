@@ -34,6 +34,11 @@ class NativeWinnerMarket:
                 # No fabricated bid/ask, timestamp or real-time qualification.
                 return snapshot | dict(standard_entry_quote_check_enabled=False)
             return self.with_quote(state, snapshot)
+        from common.winner_pyramiding import held_market_data_required
+        if state['lots'] and not held_market_data_required(state):
+            return dict(bars=[], prior_session=previous_day, prior_session_high=None,
+                ask=None, bid=None, feed=None, market_data_required=False,
+                market_data_skip_reason='TRAILING_AND_REINFORCEMENT_DISABLED')
         # An after-close scan may tighten an existing stop, but cannot qualify
         # a new entry: the shared confirmation contract requires an open RTH.
         lookback = timedelta(minutes=5*(state['policy']['confirmation_bars']+2))

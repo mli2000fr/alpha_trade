@@ -107,6 +107,11 @@ class WinnerCampaignRuntime:
             self.state['status'] = 'EXPIRED'
             self.save()
             return
+        from common.winner_pyramiding import held_market_data_required
+        if self.state['lots'] and not held_market_data_required(self.state):
+            # Reconciliation, missing protections and due-open exits above
+            # still run. There is no trailing or add signal left to observe.
+            return
         from execution_engine.winner_standard_entry import (standard_initial, standard_entry_window,
             standard_order_terms)
         standard = standard_initial(self.state)
