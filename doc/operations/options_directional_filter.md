@@ -4,7 +4,9 @@
 
 `config.yaml → options_directional_filter.enabled: true` active le défaut du
 batch `us_pipeline` et de la case **📊 Filtrage options — volume CALL/PUT + OI
-après Oracle — PAPER uniquement**. Le compte doit être `default` en mode PAPER.
+après Oracle — PAPER uniquement**. Le compte doit être déclaré en mode PAPER.
+La sélection peut être réutilisée pour les autres comptes PAPER ; le risque et
+l'exécution sont calculés séparément, voir [le parcours multi-comptes](options_filter_multi_account.md).
 Une case décochée désactive le filtre pour le lancement IHM, pas pour le batch.
 `enabled: false` coupe les deux. GPT/DeepSeek reste désactivé ; aucun appel LLM,
 achat de données, téléchargement additionnel ou entraînement n'est effectué par
@@ -29,9 +31,10 @@ Le tableau de l'étape 10 accepte désormais les deux identifiants de fichier
 ci-dessus comme alias **d'affichage uniquement**, si leurs listes de symboles
 sont toutes deux identiques à l'univers conservé dans les entrées scellées.
 Une simple égalité de nom de fichier ne suffit pas. Le rapport reste inchangé,
-avec sa source exacte, et les contrôles de date, modèle, compte, preset,
-empreintes, âge et fenêtre de séance sont conservés. La qualification utilisée
-par le risque et l'exécution reste stricte ; aucun nouvel appel de prédiction,
+avec sa source exacte, et les contrôles de date, modèle, univers,
+empreintes, âge et fenêtre de séance sont conservés. Le compte producteur et le
+preset d'univers archivé ne sont pas remplacés par ceux du consommateur. Le
+risque et l'exécution sont liés au compte consommateur ; aucun nouvel appel de prédiction,
 de collecte ou d'ordre n'est nécessaire pour corriger l'affichage.
 
 Incident vérifié : le dernier batch de la séance du 27 octobre a publié
@@ -185,11 +188,13 @@ et fige la séance US. Le batch exige l'étape 10 si 11/12 utilisent le filtre.
   existantes restent possibles. Les protections/watcher existants ne sont pas retirés.
 
 Pour des lancements manuels séparés, 11/12 utilisent le rapport le plus récent
-correspondant **exactement** à la séance, au modèle, à l'univers, au preset et au
-compte. Un résultat plus récent invalide ne fait pas revenir à une ancienne
+correspondant **exactement** à la séance, au modèle et à l'univers.
+Le preset d'univers reste celui des entrées archivées. Le changement de compte
+ne refait pas cette sélection : les décisions de risque, cibles et tentatives
+d'exécution appartiennent au compte consommateur. Un résultat plus récent invalide ne fait pas revenir à une ancienne
 sélection. L'identifiant et le cutoff sont journalisés. Si 10 est relancé après
 11, refaire 11 sur ce nouveau résultat avant 12 ; pas de substitution d'un ancien
-run risque. Un run ayant déjà une tentative risque/exécution n'est pas rejoué
+run risque. Un run ayant déjà une tentative risque/exécution pour ce compte n'est pas rejoué
 automatiquement, sauf l'échec précisément qualifié ci-dessous.
 Modifier les paramètres ne recalcule pas un ancien rapport : relancer 10 pour
 produire une nouvelle sélection et reprendre ensuite 11/12 sur celle-ci.
@@ -204,7 +209,7 @@ nouvel identifiant pour une nouvelle analyse.
 ### Reprise après échec du chargement d'univers (27 octobre 2026)
 
 Un verrou système `risk.lock` interdit deux tentatives de risque simultanées sur
-la même sélection. Chaque tentative possède un identifiant unique dans
+la même sélection pour le même compte. Chaque tentative possède un identifiant unique dans
 `risk.claim.json`. Si le chargement de l'univers échoue **avant toute publication
 de décisions/cibles**, le CLI scelle
 `risk.prepublication_failure.<attempt_id>.json`, lié à la tentative et au rapport
@@ -240,6 +245,12 @@ IHM exclut le cumul, batch refuse une double activation explicite.
 - contrôle des reprises 11 : `risk.lock`, preuves d'échec prépublication et
   claims antérieurs archivés dans `risk_attempts/` ;
 - avant une tentative 12 : `execution.claim.json`.
+
+Ces fichiers de risque/exécution restent à la racine pour `default`, afin de
+conserver ses anciens verrous et ses exécutions déjà consommées. Pour les autres
+comptes, ils sont dans `accounts/account-<identifiant>-<empreinte>/` ; le rapport,
+les entrées et le sceau de sélection restent communs. Aucun fichier existant
+n'est déplacé ni remis à zéro.
 
 **Pas de nouvelle table SQL métier** : archives dédiées sur disque ; le résumé
 ordinaire du pipeline en référence l'identifiant et le chemin. Les tables LLM ne

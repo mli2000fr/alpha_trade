@@ -504,7 +504,7 @@ def _render_options_filter_toggle(config, *, llm_enabled=False, paper_allowed=Tr
     if llm_enabled:
         st.caption('Filtre options non appliqué : le cumul avec GPT/DeepSeek n’est pas qualifié.')
     elif not paper_allowed:
-        st.caption('Filtre options non appliqué : sélectionner le compte principal default en mode paper.')
+        st.caption('Filtre options non appliqué : sélectionner un compte déclaré en mode paper.')
     return bool(config.enabled and selected and not llm_enabled and paper_allowed)
 
 
@@ -3419,7 +3419,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         _options_config = load_options_filter_config()
         options_filter_enabled = _render_options_filter_toggle(_options_config,
             llm_enabled=llm_filter_enabled,
-            paper_allowed=execution_mode == 'paper' and selected_account_id == 'default')
+            paper_allowed=execution_mode == 'paper')
         llm_filter_run_id = None
         llm_oracle_batch_id = None
         llm_specific_protections = False

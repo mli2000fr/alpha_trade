@@ -264,7 +264,8 @@ def test_cli_module_executes_main_with_help() -> None:
     assert "Module de gestion de risque Alpha Trade" in result.stdout
 
 
-def test_cli_shadow_mode_forces_dry_run_and_shadow_compare(monkeypatch, tmp_path) -> None:
+@pytest.mark.parametrize('account', ['test1','test2'])
+def test_cli_shadow_mode_forces_dry_run_and_shadow_compare(monkeypatch, tmp_path, account) -> None:
     captured: dict[str, object] = {}
 
     class _FakeRepo(_BaseFakeRepo):
@@ -303,12 +304,13 @@ def test_cli_shadow_mode_forces_dry_run_and_shadow_compare(monkeypatch, tmp_path
         lambda **kwargs: captured.setdefault("shadow_compare", kwargs) or {"status": "compared"},
     )
 
-    cli.main(["--trade-date", "2026-05-01", "--run-mode", "shadow"])
+    cli.main(["--trade-date", "2026-05-01", "--run-mode", "shadow", "--account", account])
 
     assert captured["shadow_compare"]["enabled"] is True
     assert captured["shadow_compare"]["dry_run"] is True
     assert captured["summary"]["run_mode"] == "shadow"
     assert captured["summary"]["dry_run"] is True
+    assert captured["summary"]["account_id"] == account
 
 
 def test_cli_blocks_new_targets_when_mlops_gate_is_closed(monkeypatch, tmp_path) -> None:

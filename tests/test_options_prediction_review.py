@@ -57,3 +57,11 @@ def test_tampered_archive_is_blocked(tmp_path,monkeypatch):
     with pytest.raises(ValueError):
         load_options_prediction_review(RUN,symbol_source='universe-file:test.txt',
             project_root=tmp_path,root=root,trade_date=DAY,now=NOW)
+
+
+def test_other_account_can_display_shared_selection_with_identical_alias(tmp_path,monkeypatch):
+    root,_,_=setup(tmp_path,monkeypatch)
+    review=load_options_prediction_review(RUN,symbol_source='universe-file:test.txt',
+        project_root=tmp_path,root=root,trade_date=DAY,now=NOW,
+        account_id='test1',capital_preset_key='capital_0_2000',shared_selection=True)
+    assert review['selected']==['A'] and review['account_id']=='default'

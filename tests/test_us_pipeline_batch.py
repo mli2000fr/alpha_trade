@@ -372,7 +372,8 @@ def test_installer_handles_legacy_task_without_touching_running_job():
 def test_paper_options_and_account_reach_workflow_and_commands(monkeypatch, tmp_path):
     engine, cfg = setup_run(monkeypatch, tmp_path)
     monkeypatch.setattr(us_pipeline, 'load_pipeline_policy', lambda: {
-        'steps':[10,11,12], 'execution_mode':'paper', 'account_id':'default'})
+        'steps':[10,11,12], 'execution_mode':'paper', 'account_id':'default',
+        'run_other_paper_accounts':False})
     verified = []
     monkeypatch.setattr(us_pipeline, 'require_paper_account', verified.append)
     seen = {}

@@ -150,8 +150,9 @@ def options_filter_options(options, steps, *, config=None):
         raise ValueError('us_pipeline : choisir un seul filtre LLM ou options, pas de cumul implicite')
     if '10' not in {s.num for s in steps}:
         raise ValueError('us_pipeline : filtre options actif, inclure étape 10 avant 11/12')
-    if options.execution_mode != 'paper' or options.account_id != 'default':
-        raise ValueError('us_pipeline : filtre options réservé à default PAPER')
+    if options.execution_mode != 'paper':
+        raise ValueError('us_pipeline : filtre options réservé aux comptes PAPER')
+    require_paper_account(options.account_id or 'default')
     import uuid
     return replace(options, options_filter_enabled=True, options_filter_run_id=f'opt-{uuid.uuid4().hex}',
                    ml_predict_batch_id=config.default_oracle_batch_id,
@@ -178,6 +179,21 @@ def session_plan(now, *, calendar=None):
     return day, None
 
 
+def additional_paper_accounts(options, policy, steps):
+    """Freeze the secondary account list; never duplicate prediction or use LIVE."""
+    enabled = policy.get('run_other_paper_accounts', True)
+    if type(enabled) is not bool:
+        raise ValueError('us_pipeline.run_other_paper_accounts must be boolean')
+    if not enabled or options.execution_mode != 'paper' or not {'11', '12'} <= {s.num for s in steps}:
+        return ()
+    if options.llm_filter_enabled:
+        raise ValueError('us_pipeline : filtre LLM limité à default ; mettre run_other_paper_accounts: false')
+    from service.alpaca.accounts import AccountRegistry
+    # Registry objects contain credentials; only their identifiers leave here.
+    return tuple(dict.fromkeys(a.account_id for a in AccountRegistry().list_accounts()
+        if a.mode == 'paper' and a.account_id != options.account_id))
+
+
 def execute_pipeline(engine, cfg, run_id, dry_run, *, now=None):
     # Lazy import prevents the registration module from forming an import cycle.
     from service.forward_pit.batch import Outcome, BatchRunError
@@ -195,6 +211,9 @@ def execute_pipeline(engine, cfg, run_id, dry_run, *, now=None):
     options = execution_options(options, policy, steps)
     options = llm_options(options, steps)
     options = options_filter_options(options, steps)
+    other_accounts = additional_paper_accounts(options, policy, steps)
+    secondary_steps = selected_steps([11, 12])
+    account_plans = [(replace(options, account_id=account), secondary_steps) for account in other_accounts]
     plan = dict(market_code='US_EQ', trade_date=str(day), defaults='FRESH_PIPELINE_PAGE',
         date_override='PIN_CURRENT_US_SESSION_NO_OLD_SNAPSHOT', options=asdict(options),
         steps=[dict(number=s.num, key=s.key, command=build_pipeline_command(s.key, options)) for s in steps],
@@ -204,9 +223,15 @@ def execute_pipeline(engine, cfg, run_id, dry_run, *, now=None):
         counter_unit='pipeline_steps', training=False,
         account_id=options.account_id,
         execution_mode=options.execution_mode,
+        run_other_paper_accounts=policy.get('run_other_paper_accounts', True),
+        other_paper_accounts=list(other_accounts),
+        additional_account_workflows=[dict(account_id=account_options.account_id,
+            selected_step_numbers=[11, 12],
+            steps=[dict(number=s.num, key=s.key, command=build_pipeline_command(s.key, account_options))
+                   for s in account_steps]) for account_options, account_steps in account_plans],
         watcher_before_execution=any(s.num=='12' for s in steps) and options.execution_mode=='paper',
         execution_orders=any(s.num=='12' for s in steps) and options.execution_mode=='paper')
-    outcome = Outcome(requested=len(steps), details=plan)
+    outcome = Outcome(requested=len(steps)+2*len(other_accounts), details=plan)
     if dry_run:
         LOGGER.info('US pipeline plan: %s', json.dumps(plan, default=str))
         return outcome
@@ -218,48 +243,66 @@ def execute_pipeline(engine, cfg, run_id, dry_run, *, now=None):
             return None
         from service.forward_pit.watcher_startup import ensure_watcher
         result = ensure_watcher(engine, current_options, directory=directory, stop_event=stop_event)
-        outcome.details['watcher_before_execution_result'] = result
+        outcome.details.setdefault('watcher_before_execution_results', {})[current_options.account_id] = result
+        if current_options.account_id == options.account_id:
+            outcome.details['watcher_before_execution_result'] = result
         return result
-    try:
-        record = start_pipeline_workflow(options, db_config={'name': 'alpha_trade'},
-            selected_step_keys=tuple(s.key for s in steps), before_step=before_step)
-    except Exception as exc:
-        outcome.failed = 1
-        raise BatchRunError(f'US pipeline could not start: {exc}', outcome) from exc
-    outcome.details.update(workflow_run_id=record.run_id, plan_path=str(directory/'plan.json'))
-    LOGGER.info('US pipeline workflow=%s trade_date=%s source=%s steps=%s',
-        record.run_id, day, plan['steps_configuration_source'], plan['selected_step_numbers'])
-    previous = None
-    while True:
+    outcome.details.update(plan_path=str(directory/'plan.json'), account_workflows=[])
+    for account_options, account_steps in [(options, steps), *account_plans]:
+        account = account_options.account_id
+        outcome.details['active_account_id'] = account
         try:
-            snapshot = poll_pipeline_run(record.run_id)
+            record = start_pipeline_workflow(account_options, db_config={'name': 'alpha_trade'},
+                selected_step_keys=tuple(s.key for s in account_steps), before_step=before_step)
         except Exception as exc:
             outcome.failed = 1
-            raise BatchRunError(f'US workflow monitoring failed: {exc}', outcome) from exc
-        if snapshot is None:
-            outcome.failed = 1
-            raise BatchRunError('US workflow monitoring lost; no subsequent workflow launched', outcome)
-        completed = int(snapshot.get('workflow_completed_steps') or 0)
-        outcome.received = completed
-        outcome.persisted = completed
-        progress = (completed, snapshot.get('workflow_current_step_label'))
-        if progress != previous:
-            LOGGER.info('US pipeline %d/%d step=%s', completed, len(steps), progress[1])
-            previous = progress
-        if snapshot.get('status') not in ('starting', 'running', 'scheduled'):
-            outcome.details['workflow_status'] = snapshot.get('status')
-            outcome.details['workflow_summary'] = snapshot.get('run_summary') or {}
-            outcome.details['workflow_log'] = snapshot.get('combined_path')
-            if snapshot.get('status') != 'completed' or completed != len(steps):
+            outcome.details['failed_account_id'] = account
+            raise BatchRunError(f'US pipeline could not start account={account}: {exc}', outcome) from exc
+        account_result = dict(account_id=account, workflow_run_id=record.run_id,
+            selected_step_numbers=[int(s.num) for s in account_steps], status='running')
+        outcome.details['account_workflows'].append(account_result)
+        outcome.details['current_workflow_run_id'] = record.run_id
+        if account == options.account_id:
+            outcome.details['workflow_run_id'] = record.run_id
+        LOGGER.info('US pipeline account=%s workflow=%s trade_date=%s steps=%s',
+            account, record.run_id, day, account_result['selected_step_numbers'])
+        previous, offset = None, outcome.persisted
+        while True:
+            try:
+                snapshot = poll_pipeline_run(record.run_id)
+            except Exception as exc:
                 outcome.failed = 1
-                failed_step = progress[1] or 'voir journal workflow'
-                children = snapshot.get('workflow_child_run_ids') or []
-                if children:
-                    last_child = poll_pipeline_run(children[-1]) or {}
-                    failed_step = last_child.get('step_label') or failed_step
-                    outcome.details['failed_child_run_id'] = children[-1]
-                    outcome.details['failed_child_returncode'] = last_child.get('returncode')
-                raise BatchRunError(f'US pipeline interrupted after {completed}/{len(steps)} steps ({failed_step}); '
-                    f'status={snapshot.get("status")} workflow={record.run_id}', outcome)
-            return outcome
-        time.sleep(.5)
+                outcome.details['failed_account_id'] = account
+                raise BatchRunError(f'US workflow monitoring failed account={account}: {exc}', outcome) from exc
+            if snapshot is None:
+                outcome.failed = 1
+                outcome.details['failed_account_id'] = account
+                raise BatchRunError(f'US workflow monitoring lost account={account}; no subsequent workflow launched', outcome)
+            completed = int(snapshot.get('workflow_completed_steps') or 0)
+            outcome.received = outcome.persisted = offset + completed
+            progress = (completed, snapshot.get('workflow_current_step_label'))
+            if progress != previous:
+                LOGGER.info('US pipeline account=%s %d/%d step=%s; total=%d/%d',
+                    account, completed, len(account_steps), progress[1], outcome.persisted, outcome.requested)
+                previous = progress
+            if snapshot.get('status') not in ('starting', 'running', 'scheduled'):
+                account_result.update(status=snapshot.get('status'), completed_steps=completed,
+                    summary=snapshot.get('run_summary') or {}, log=snapshot.get('combined_path'))
+                outcome.details['workflow_status'] = snapshot.get('status')
+                outcome.details['workflow_summary'] = account_result['summary']
+                outcome.details['workflow_log'] = account_result['log']
+                if snapshot.get('status') != 'completed' or completed != len(account_steps):
+                    outcome.failed = 1
+                    outcome.details['failed_account_id'] = account
+                    failed_step = progress[1] or 'voir journal workflow'
+                    children = snapshot.get('workflow_child_run_ids') or []
+                    if children:
+                        last_child = poll_pipeline_run(children[-1]) or {}
+                        failed_step = last_child.get('step_label') or failed_step
+                        outcome.details['failed_child_run_id'] = children[-1]
+                        outcome.details['failed_child_returncode'] = last_child.get('returncode')
+                    raise BatchRunError(f'US pipeline interrupted after {completed}/{len(account_steps)} steps ({failed_step}); '
+                        f'account={account} status={snapshot.get("status")} workflow={record.run_id}', outcome)
+                break
+            time.sleep(.5)
+    return outcome

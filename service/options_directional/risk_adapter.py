@@ -2,11 +2,11 @@
 from dataclasses import replace
 
 
-def archived_universe_preset(report, trade_date, account_id='default'):
+def archived_universe_preset(report, trade_date, account_id='default',*,shared_selection=False):
     """Use the already-qualified selection's universe, never its sizing equity."""
     from common.capital_presets import get_capital_preset_by_key
     if (report.get('status') != 'COMPLETED' or report.get('trade_date') != str(trade_date)
-            or report.get('account_id') != account_id or not report.get('run_id')):
+            or (not shared_selection and report.get('account_id') != account_id) or not report.get('run_id')):
         raise ValueError('Snapshot options incompatible avec le risque')
     key = report.get('capital_preset_key')
     if not isinstance(key, str) or not key or key != key.strip():

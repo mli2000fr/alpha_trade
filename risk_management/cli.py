@@ -96,7 +96,7 @@ def _load_tradable_universe_for_risk(
                     preset.key, llm_filter_run_id, effective_equity)
     elif options_filter_report is not None:
         from service.options_directional.risk_adapter import archived_universe_preset
-        preset = archived_universe_preset(options_filter_report, trade_date, account_id)
+        preset = archived_universe_preset(options_filter_report, trade_date, account_id,shared_selection=True)
         source = 'options_archived_input'
         LOGGER.info('Univers risque options : preset archivé=%s run=%s ; equity sizing réelle=%.2f (inchangée)',
                     preset.key, options_filter_report['run_id'], effective_equity)
@@ -1415,15 +1415,24 @@ def main(args: list[str] | None = None) -> None:
     args.options_filter_run_id = getattr(args, 'options_filter_run_id', None)
     options_filter_report = None
     if args.options_filter_run_id:
-        from service.options_directional.store import qualified
-        from service.llm_directional.runner import assert_paper_account
-        assert_paper_account(raw_account_id or 'default')
+        from service.options_directional.accounts import shared_qualified,require_paper_account,consumer_directory
+        require_paper_account(raw_account_id or 'default')
         if args.run_mode != 'paper' or args.llm_filter_run_id or args.enable_kelly_sizing:
             raise ValueError('Filtre options : PAPER seul, sans LLM ni Kelly')
         if not args.oracle_batch_id:
             raise ValueError('Filtre options : batch Oracle explicite requis')
-        options_filter_report = qualified(args.options_filter_run_id, trade_date=trade_date,
+        options_filter_report = shared_qualified(args.options_filter_run_id, trade_date=trade_date,
             batch_id=args.oracle_batch_id, account_id=raw_account_id or 'default')
+        attempt=getattr(args,'options_risk_attempt_id',None)
+        if attempt:
+            folder=consumer_directory(args.options_filter_run_id,raw_account_id or 'default')
+            claim=json.loads((folder/'risk.claim.json').read_text(encoding='utf-8'))
+            from service.options_directional.store import digest
+            if (not args.summary_path or Path(args.summary_path).resolve()!=(folder/'risk_summary.json').resolve()
+                    or claim.get('attempt_id')!=attempt or claim.get('run_id')!=args.options_filter_run_id
+                    or claim.get('account_id','default')!=(raw_account_id or 'default')
+                    or claim.get('report_sha256')!=digest(options_filter_report)):
+                raise ValueError('Tentative risque options hors compte ou altérée')
     if args.llm_filter_run_id:
         from service.llm_directional.runner import assert_paper_account
         assert_paper_account(raw_account_id or 'default')
@@ -1930,7 +1939,7 @@ def main(args: list[str] | None = None) -> None:
             from service.options_directional.risk_attempts import record_universe_lookup_failure
             try:
                 record_universe_lookup_failure(Path(args.summary_path).parent, attempt_id,
-                                               options_filter_report, exc)
+                                               options_filter_report, exc,account_id=effective_account_id or resolved_account_scope or 'default')
             except Exception:
                 LOGGER.exception('Impossible de sceller la preuve de reprise risque ; verrou conservé')
         raise
@@ -2767,6 +2776,7 @@ def main(args: list[str] | None = None) -> None:
     finished_at = datetime.now()
     summary = {
         "run_id": run_id,
+        "account_id": effective_account_id or resolved_account_scope,
         "trade_date": trade_date.isoformat(),
         "started_at": started_at.isoformat(timespec="seconds"),
         "finished_at": finished_at.isoformat(timespec="seconds"),
