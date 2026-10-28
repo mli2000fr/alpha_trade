@@ -21,6 +21,7 @@ Tous ces horaires sont en Europe/Paris. Les jours configurés restent inchangés
 | fr_amf_short_sync | lundi–vendredi 21:00 | 2 s | 45 min |
 | fr_dila_disclosures_sync | lundi–vendredi 21:30 | 1,6 s | 45 min |
 | fr_options_mifir_trade_sync | lundi–samedi 06:00 (anciennement 07:00) | 42 s, échec inclus | 45 min |
+| fr_options_open_interest_sync | lundi–samedi 06:30 et 20:30, ajouté le 27/10 | Nouveau collecteur public | Budget 20 min, plus une éventuelle requête de 30 s en cours ; avant 07:30 |
 | fr_db_backup | dimanche 03:00 | pas de run quotidien archivé observé | 90 min, provision |
 | fr_artifacts_backup | samedi 02:00 | 23 min 51 s | 90 min |
 

@@ -123,17 +123,22 @@ contrôlée 17-D. Doublon entre catalogues refusé. Historique CN : fichiers
 de runs et artefacts CN, pas pit_collection_runs US. D10/17-C activés ne
 signifient pas chaîne quotidienne CN opérationnelle.
 
-## FR — batch_fr.yaml, 13 entrées, 9 actives
+## FR — batch_fr.yaml, 14 entrées, 11 actives
+
+Depuis le **28 octobre**, `defaults.storage_backend: sql` impose le
+[stockage SQL principal](../fr/stockage_sql_principal_20261028.md), y compris
+réponses, checkpoints et bilans. L'ancien `archive_research_sql` est supprimé.
 
 | Batch | État actuel | Source / destination |
 | --- | --- | --- |
-| fr_calendar_snapshot | Recherche active | Bibliothèque XPAR → fichiers calendrier |
-| fr_security_master_sync | Recherche active | ESMA/Euronext → référentiel versionné, fichiers |
-| fr_daily_bars_sync | Recherche active | EODHD → fichiers et staging SQL FR, pas canonique |
-| fr_corporate_actions_sync | Recherche active | EODHD/preuves publiques → fichiers versionnés |
-| fr_amf_short_sync | Recherche active | Export public AMF → fichiers ; positions déclarées, pas borrow |
-| fr_dila_disclosures_sync | Recherche active | DILA info financière → métadonnées versionnées |
-| fr_options_mifir_trade_sync | Recherche active, quarantaine | Transactions différées Euronext + FIRDS → fichiers ; ni OI ni NBBO complet |
+| fr_calendar_snapshot | Recherche active | Bibliothèque XPAR → `fr_calendar_sessions_research` et archives |
+| fr_security_master_sync | Recherche active | ESMA/Euronext → `fr_reference_versions_research` et archives |
+| fr_daily_bars_sync | Recherche active | EODHD → réponses, reprise et staging SQL FR, pas canonique |
+| fr_corporate_actions_sync | Recherche active | EODHD → `fr_corporate_actions_research` et archives |
+| fr_amf_short_sync | Recherche active | Export public AMF → `fr_amf_positions_research` ; positions déclarées, pas borrow |
+| fr_dila_disclosures_sync | Recherche active | DILA → `fr_dila_disclosures_research`, métadonnées versionnées |
+| fr_options_mifir_trade_sync | Recherche active, quarantaine | Transactions différées Euronext + FIRDS → réponses brutes SQL et quatre tables `fr_option_mifir_*` dans `alpha_trade_fr` ; ni OI ni NBBO complet. [Stockage SQL et reprise](../fr/options_mifir_stockage_sql.md) |
+| fr_options_open_interest_sync | Recherche active, OI publique non qualifiée | Chaînes publiques Euronext Paris → trois tables `fr_option_oi_public_*` ; 6h30 et 20h30 Paris lun-sam. Dates OI/expiration inconnues, anomalies conservées, aucun filtre directionnel. [Contrat de collecte](../fr/options_open_interest_public.md) |
 | fr_db_backup | Actif | alpha_trade_fr → backups/fr/db, keep=3 |
 | fr_artifacts_backup | Actif | artifacts/fr + artifacts/models/fr_eq → backups/fr/artifacts, keep=3 |
 | fr_fundamentals_sync | ⛔ Droits/prudence | BLOCKED_INPI_RETENTION |
@@ -142,8 +147,10 @@ signifient pas chaîne quotidienne CN opérationnelle.
 | fr_options_snapshot | Source complète manquante | PENDING_PROVIDER ; MiFIR partiel ne remplace pas ce contrat complet |
 
 Le staging quotidien utilise fr_ingestion_runs, fr_raw_payloads,
-fr_provider_bars_staging et fr_staging_progress. Les autres familles ne sont
-pas automatiquement normalisées dans les tables métier. Rapports de runner :
+fr_provider_bars_staging et fr_staging_progress. Depuis le 27 octobre, les
+[familles complémentaires et archives sont aussi en SQL de recherche](../fr/batchs_stockage_sql_20261027.md),
+avec `fr_batch_research_documents` et `fr_batch_research_file_versions` pour les
+preuves et reçus. Aucun remplissage canonique automatique. Rapports de runner :
 artifacts/fr/operations/runs/<batch>/*.json. Le statut SUCCESS ne prouve pas
 une libération PIT, fiscale, économique ou broker.
 

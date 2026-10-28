@@ -1,9 +1,11 @@
-"""FR-only EODHD consensus: dedicated SQL research tables + raw file receipts.
+"""FR-only EODHD consensus: primary SQL responses, normalized data and checkpoints.
 
 No Yahoo, US fallback, historical PIT claim, canonical features or serving.
 Daily first normalized observation wins; subsequent raw responses stay archived.
 """
 from __future__ import annotations
+
+from service.fr.collection_storage import (active, read_bytes, read_text, exists, paths, write_bytes, identity_rows, take_lock, release_lock)
 
 import argparse
 from datetime import UTC, datetime
@@ -24,7 +26,7 @@ from service.eodhd.clientEodhd import (_do_request, _get_base_url, _get_token,
     _redact_sensitive_text, EodhdPermissionError, EodhdSymbolNotFound)
 from service.eodhd.quota import get_default_tracker, EodhdQuotaExceeded, EodhdCircuitOpen
 from service.fr.consensus_daily import reference_scope
-from service.inpi.files import atomic
+from service.fr.collection_storage import write_json as atomic
 
 ROOT = Path(__file__).resolve().parents[2]
 RAW_TABLE = 'eodhd_consensus_raw_payloads'
@@ -63,7 +65,7 @@ def install():
         with engine.begin() as conn:
             if conn.execute(text('SELECT DATABASE()')).scalar_one() != 'alpha_trade_fr':
                 raise ValueError('Base physique FR contradictoire')
-            for statement in DDL.read_text(encoding='utf-8').split(';'):
+            for statement in read_text(DDL,encoding='utf-8').split(';'):
                 if statement.strip():
                     conn.execute(text(statement))
         check_schema(engine)
@@ -112,15 +114,17 @@ def persist(engine,root,symbol,reference,reference_hash,payload,observed,run_id,
     raw_hash=hashlib.sha256(payload_json.encode()).hexdigest()
     objects=root/'raw'
     obj=objects/f'{raw_hash}.json'
-    if not obj.exists():
-        atomic(obj,payload)
-    if digest(json.loads(obj.read_text(encoding='utf-8'))) != raw_hash:
-        raise ValueError('Archive brute consensus EODHD corrompue')
+    if not active():
+        if not exists(obj):
+            atomic(obj,payload)
+        if digest(json.loads(read_text(obj,encoding='utf-8'))) != raw_hash:
+            raise ValueError('Archive brute consensus EODHD corrompue')
     # atomic() uses a different JSON whitespace layout; bind actual file bytes too.
     receipt=root/'receipts'/f'{run_id}-{symbol}.json'
-    atomic(receipt,dict(provider='eodhd',endpoint='/calendar/trends',symbol=symbol,
-        observed_at=observed.isoformat(),raw_hash=raw_hash,object_sha256=hashlib.sha256(obj.read_bytes()).hexdigest(),
-        reference_identity=reference,reference_sha256=reference_hash,ml_eligible=False))
+    if not active():
+        atomic(receipt,dict(provider='eodhd',endpoint='/calendar/trends',symbol=symbol,
+            observed_at=observed.isoformat(),raw_hash=raw_hash,object_sha256=hashlib.sha256(read_bytes(obj)).hexdigest(),
+            reference_identity=reference,reference_sha256=reference_hash,ml_eligible=False))
     stamp=observed.astimezone(UTC).replace(tzinfo=None)
     with engine.begin() as conn:
         inserted=conn.execute(text(f'INSERT INTO {RAW_TABLE} '
@@ -182,7 +186,7 @@ def collect(cfg,result,*,root,identities,dry_run=False,max_symbols=None,engine=N
         scope=dict(list(scope.items())[:max_symbols])
     if not scope or len(scope)>cap:
         raise ValueError('Univers FR consensus vide ou au-delà du plafond')
-    reference_hash=hashlib.sha256(identities.read_bytes()).hexdigest()
+    reference_hash=hashlib.sha256(read_bytes(identities)).hexdigest()
     now=datetime.now(UTC)
     day=now.astimezone(ZoneInfo('Europe/Paris')).date().isoformat()
     storage=root/'eodhd'
@@ -199,7 +203,7 @@ def collect(cfg,result,*,root,identities,dry_run=False,max_symbols=None,engine=N
     engine=engine or engine_fr()
     try:
         check_schema(engine)  # Before any API call, no automatic DDL.
-        state=json.loads(checkpoint.read_text(encoding='utf-8')) if checkpoint.exists() else dict(
+        state=json.loads(read_text(checkpoint,encoding='utf-8')) if exists(checkpoint) else dict(
             day=day,market_code='FR_EQ',provider='eodhd',universe_sha256=reference_hash,
             endpoint_calls=0,symbols={})
         if (state.get('provider'),state.get('market_code'),state.get('universe_sha256'),state.get('day')) != ('eodhd','FR_EQ',reference_hash,day):
@@ -276,7 +280,7 @@ if __name__=='__main__':
     if args.install_schema:
         report=install()
     else:
-        if args.output is None or args.output.exists():
+        if args.output is None or exists(args.output):
             parser.error('--output doit désigner un nouveau dossier FR')
         output=args.output.resolve()
         if not output.is_relative_to((ROOT/'artifacts/fr').resolve()):

@@ -4,6 +4,7 @@ No extended-hours execution, no substitute for fresh native risk approval.
 All entry terms are frozen at admission; later YAML changes cannot widen them.
 """
 from datetime import timedelta
+from decimal import Decimal, ROUND_FLOOR
 import math
 from zoneinfo import ZoneInfo
 
@@ -13,6 +14,24 @@ from common.winner_pyramiding import aware
 
 def standard_initial(state):
     return state['policy']['confirmation_bars'] == 0 and not state['lots']
+
+
+def standard_quote_check_required(state, *, config=None, kind='ENTRY'):
+    """Both frozen admission and current policy must explicitly allow no quote.
+
+    Legacy campaigns default to checked. ADD and confirmed breakouts always
+    require current quotes; this option never changes protections or exits.
+    """
+    if kind != 'ENTRY' or not standard_initial(state):
+        return True
+    if state['policy'].get('standard_entry_quote_check_enabled', True) is not False:
+        return True
+    if config is None:
+        from common.winner_pyramiding import load_winner_pyramiding_config
+        policy = load_winner_pyramiding_config()
+    else:
+        policy = config.winner_pyramiding
+    return policy.standard_entry_quote_check_enabled
 
 
 def standard_entry_window(state, now):
@@ -39,7 +58,13 @@ def standard_entry_window(state, now):
     return terms['submission_window'] in ('both', 'pre_open' if preopen else 'post_close')
 
 
-def standard_order_terms(state):
+def standard_order_terms(state, *, quote_check_enabled=True):
+    """Preserve quoted orders; without quotes bound LONG price at the broker.
+
+    The frozen gap becomes an upper purchase-price ceiling, not a claim that
+    a current symmetric gap was observed. An already stricter limit stays so.
+    With no gap ceiling, use the frozen standard limit buffer.
+    """
     terms = state.get('entry_policy') or {}
     order_type = terms.get('order_type')
     reference = float(state['target']['entry_price'])
@@ -49,15 +74,35 @@ def standard_order_terms(state):
              if order_type == 'limit' else None)
     if limit is not None and (not math.isfinite(limit) or limit <= 0):
         raise ValueError('Invalid standard entry limit')
+    if type(quote_check_enabled) is not bool:
+        raise ValueError('Quote check policy must be boolean')
+    if not quote_check_enabled:
+        if not standard_initial(state) or state['policy'].get('standard_entry_quote_check_enabled', True) is not False:
+            raise ValueError('Explicit unchecked standard initial admission required')
+        gap = float(terms['max_entry_gap_pct'])
+        buffer = float(terms['limit_price_buffer_bps'])
+        if not math.isfinite(gap) or not 0 <= gap < 1 or not math.isfinite(buffer):
+            raise ValueError('Invalid frozen price ceiling')
+        multiplier = Decimal(1)+(Decimal(str(gap)) if gap > 0 else Decimal(str(buffer))/10000)
+        ceiling = Decimal(str(reference))*multiplier
+        if order_type == 'limit':
+            # Do not widen an original stricter limit. Calculate in Decimal
+            # before flooring so rounding can never cross either ceiling.
+            ceiling = min(ceiling, Decimal(str(reference))*(1+Decimal(str(buffer))/10000))
+        tick = Decimal('.01') if ceiling >= 1 else Decimal('.0001')
+        limit = float(ceiling.quantize(tick, rounding=ROUND_FLOOR))
+        if not math.isfinite(limit) or limit <= 0:
+            raise ValueError('Invalid bounded standard entry limit')
+        return 'limit', limit
     return order_type, limit
 
 
-def standard_risk_price(state, ask):
+def standard_risk_price(state, ask, *, quote_check_enabled=True):
     """Reserve for a higher limit too; never enlarge the step-11 quantity."""
-    _, limit = standard_order_terms(state)
+    _, limit = standard_order_terms(state, quote_check_enabled=quote_check_enabled)
     reference = float(state['target']['entry_price'])
     gap = float(state['entry_policy']['max_entry_gap_pct'])
-    if gap > 0 and abs(ask/reference-1) > gap:
+    if quote_check_enabled and gap > 0 and abs(ask/reference-1) > gap:
         raise ValueError('Standard entry gap exceeds approved maximum')
     return max(ask, limit or ask)
 
@@ -73,7 +118,7 @@ def submit_standard_plans(store, repo, broker, config, plans):
     from execution_engine.winner_market import NativeWinnerMarket
     from execution_engine.winner_live_risk import NativeWinnerRisk
     runtime = WinnerCampaignRuntime(store, repo, NativeWinnerBroker(repo, broker, config), config,
-        market=NativeWinnerMarket(repo.engine, config.resolved_account_id),
+        market=NativeWinnerMarket(repo.engine, config.resolved_account_id, config),
         risk=NativeWinnerRisk(repo, broker, config))
     runtime.metrics['standard_orders'] = []
     runtime.metrics['standard_filled_orders'] = 0

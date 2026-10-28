@@ -5,6 +5,8 @@ Rechecks archive new observations separately; they do not overwrite collectors.
 """
 from __future__ import annotations
 
+from service.fr.collection_storage import (active, read_bytes, read_text, exists, paths, write_bytes, identity_rows, take_lock, release_lock)
+
 import argparse
 import hashlib
 import json
@@ -89,9 +91,9 @@ def audit_files(symbols, sessions, *, root=ROOT, daily_root=None, symbol_session
         expected_days = sessions if symbol_sessions is None else symbol_sessions[symbol]
         expected_dates = {str(d) for d in expected_days}
         path = latest/(hashlib.sha256(symbol.encode()).hexdigest()+'.json')
-        if not path.exists():
+        if not exists(path):
             continue
-        payload = json.loads(path.read_text(encoding='utf-8'))
+        payload = json.loads(read_text(path,encoding='utf-8'))
         if payload.get('market_code') != 'FR_EQ' or payload.get('symbol') != symbol:
             malformed.append(symbol); continue
         reserve = payload.get('last_coverage', {}).get('retained_old_rows_not_reconfirmed', [])
@@ -104,10 +106,10 @@ def audit_files(symbols, sessions, *, root=ROOT, daily_root=None, symbol_session
                 stamp = datetime.fromisoformat(record['available_at'])
                 raw = daily_root/'raw'/f"{record['raw_sha256']}.json"
                 if (str(parsed) != day or quality not in ('VALID', 'ZERO_VOLUME')
-                        or stamp.tzinfo is None or not raw.exists()
-                        or hashlib.sha256(raw.read_bytes()).hexdigest() != record['raw_sha256']):
+                        or stamp.tzinfo is None or not exists(raw)
+                        or hashlib.sha256(read_bytes(raw)).hexdigest() != record['raw_sha256']):
                     raise ValueError('Invalid evidence')
-                original = json.loads(raw.read_text(encoding='utf-8'))
+                original = json.loads(read_text(raw,encoding='utf-8'))
                 if original.get('symbol') != symbol or record['row'] not in original.get('rows', []):
                     raise ValueError('Row absent from referenced raw payload')
             except (ValueError, KeyError, TypeError):
@@ -128,7 +130,7 @@ def dila_reserves(*, root=ROOT):
     directory = root/'artifacts/fr/operations/fr_dila_disclosures_sync'
     findings = []
     for path in sorted((directory/'quarantine').glob('*.json')):
-        payload = json.loads(path.read_text(encoding='utf-8'))
+        payload = json.loads(read_text(path,encoding='utf-8'))
         for row in payload.get('rejected', []):
             from service.fr.event_data_qualification_11b import public_day
             findings.append({'raw_sha256': path.stem,

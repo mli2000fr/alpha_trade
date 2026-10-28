@@ -84,13 +84,22 @@ def _emit_live_progress(
 
 def _load_tradable_universe_for_risk(
     repo, *, trade_date, effective_equity, llm_filter_run_id=None, account_id='default',
+    options_filter_report=None,
 ):
+    if llm_filter_run_id and options_filter_report is not None:
+        raise ValueError('Un seul filtre après Oracle : LLM ou options')
     if llm_filter_run_id:
         from service.llm_directional.risk_adapter import archived_universe_preset
         preset = archived_universe_preset(repo.engine, llm_filter_run_id, trade_date, account_id)
         source = 'llm_archived_input'
         LOGGER.info('Univers risque LLM : preset archivé=%s run=%s ; equity sizing réelle=%.2f (inchangée)',
                     preset.key, llm_filter_run_id, effective_equity)
+    elif options_filter_report is not None:
+        from service.options_directional.risk_adapter import archived_universe_preset
+        preset = archived_universe_preset(options_filter_report, trade_date, account_id)
+        source = 'options_archived_input'
+        LOGGER.info('Univers risque options : preset archivé=%s run=%s ; equity sizing réelle=%.2f (inchangée)',
+                    preset.key, options_filter_report['run_id'], effective_equity)
     else:
         preset = resolve_capital_preset_for_equity(effective_equity)
         if preset is None:
@@ -182,9 +191,9 @@ def _load_live_spread_snapshots(
     *,
     account_id: str,
 ) -> dict[str, object]:
-    """Charge les quotes Alpaca et les normalise pour le gate de liquidité."""
+    """Charge les quotes consolidées du fournisseur configuré pour le risque."""
     from risk_management.liquidity import SpreadSnapshot
-    from service.alpaca.clientAlpaca import fetch_latest_quotes
+    from service.market.live_quotes import fetch_latest_quotes, validate_live_quote
 
     try:
         raw_quotes = fetch_latest_quotes(symbols, account_id=account_id)
@@ -196,18 +205,40 @@ def _load_live_spread_snapshots(
     for symbol, quote in raw_quotes.items():
         if not isinstance(quote, dict):
             continue
+        try:
+            validate_live_quote(quote)
+        except (ValueError, TypeError, KeyError, OverflowError):
+            LOGGER.warning('Quote live non qualifiée pour %s ; entrée bloquée', symbol)
+            continue
         quote_time = _parse_quote_time(quote.get("t"))
         snapshots[str(symbol).strip().upper()] = SpreadSnapshot(
             symbol=str(symbol).strip().upper(),
             bid=_optional_quote_float(quote.get("bp")),
             ask=_optional_quote_float(quote.get("ap")),
             quote_time=quote_time,
-            source="alpaca_sip",
+            source=quote['source'],
         )
     return snapshots
 
 
 # ── Section 17 Point 9 : provider borrow PIT ────────────────────────────────
+
+def _load_risk_liquidity_inputs(config, symbols, *, account_id, trade_date):
+    """Step-11 spread switch never disables ADV, borrow or execution gates."""
+    from risk_management.liquidity import LiquidityGate
+    enabled = config.quote_spread_check_enabled
+    gate = LiquidityGate(quote_spread_check_enabled=enabled, require_fresh_quote=enabled)
+    if enabled:
+        spreads = _load_live_spread_snapshots(symbols, account_id=account_id)
+    else:
+        spreads = {}
+        LOGGER.info(
+            'Étape 11 : contrôle quote/spread désactivé '
+            '(risk_management.quote_spread_check_enabled=false) ; aucun appel SIP latest quotes / Tradier'
+        )
+    borrow = _load_live_borrow_snapshots(symbols, account_id=account_id, trade_date=trade_date)
+    return gate, spreads, borrow
+
 
 def _load_live_borrow_snapshots(
     symbols: list[str],
@@ -686,6 +717,9 @@ def _build_preflight_data_quality(
         if snapshot_trade_date is not None
         else None
     )
+    captured_at = getattr(account_snapshot,'captured_at',None)
+    if captured_at is not None:
+        snapshot_freshness_days=max((datetime.now(captured_at.tzinfo)-captured_at).days,0)
     equity_source = snapshot_source or "cli_account_equity_fallback"
     equity_fallback_used = account_snapshot is None
     equity_status = "ok"
@@ -700,6 +734,7 @@ def _build_preflight_data_quality(
         "source": equity_source,
         "fallback_used": equity_fallback_used,
         "snapshot_trade_date": snapshot_trade_date.isoformat() if snapshot_trade_date is not None else None,
+        "captured_at": captured_at.isoformat() if captured_at is not None else None,
         "freshness_days": snapshot_freshness_days,
         "effective_equity": round(float(effective_equity), 2),
         "requested_equity": round(float(requested_equity), 2),
@@ -1206,6 +1241,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--summary-path", type=str, default=None, help="Chemin de sortie atomique du résumé JSON du run.")
     p.add_argument('--llm-filter-run-id', help='Analyse Oracle/Web directionnelle exacte, PAPER uniquement')
     p.add_argument('--options-filter-run-id', help='Run exact du filtre volume/OI Oracle, PAPER uniquement')
+    p.add_argument('--options-risk-attempt-id', help=argparse.SUPPRESS)
     p.add_argument("--dry-run", action="store_true", default=False)
     p.add_argument(
         "--run-mode",
@@ -1409,11 +1445,19 @@ def main(args: list[str] | None = None) -> None:
     shadow_compare_summary: dict[str, object] | None = None
     postmortem_artifacts: list[object] = []
     model_compatibility: dict[str, object] = {}
-    # L'IHM transmet systématiquement `--account default`. On considère cette
-    # valeur comme un compte implicite : si aucun snapshot n'est disponible, on
-    # fallback sur `--account-equity` plutôt que de bloquer le pipeline.
-    requested_account_id = None if (raw_account_id is None or raw_account_id.lower() == "default") else raw_account_id
+    broker_risk = args.run_mode in ('paper','live')
     resolved_account_scope = raw_account_id or "default"
+    # PAPER/LIVE always address the selected account explicitly, including default.
+    requested_account_id = (resolved_account_scope if broker_risk else
+        None if raw_account_id is None or raw_account_id.lower() == "default" else raw_account_id)
+    broker_capture = None
+    if broker_risk:
+        if args.llm_filter_run_id:
+            from service.llm_directional.risk_adapter import capture_paper_snapshot
+            broker_capture = capture_paper_snapshot()
+        else:
+            from risk_management.broker_account import capture_current_account
+            broker_capture = capture_current_account(resolved_account_scope,args.run_mode)
 
     # ── long_only par compte (config.yaml → alpaca.accounts) ──────────
     # Si le compte est en long-only, on force max_short_positions=0 : le blocage
@@ -1444,17 +1488,17 @@ def main(args: list[str] | None = None) -> None:
     except Exception:
         _sector_map_for_builder = {}
     account_snapshot = repo.load_account_risk_snapshot(requested_account_id, trade_date)
+    if broker_capture is not None:
+        from risk_management.broker_account import risk_snapshot
+        account_snapshot = risk_snapshot(*broker_capture,previous=account_snapshot)
     effective_account_id = account_snapshot.account_id if account_snapshot is not None else requested_account_id
-    equity_breakdown = repo.load_account_equity_breakdown(effective_account_id, trade_date)
+    equity_breakdown = (dict(source=account_snapshot.source,cash=account_snapshot.cash,
+        buying_power=account_snapshot.buying_power,equity=account_snapshot.equity)
+        if broker_capture is not None else repo.load_account_equity_breakdown(effective_account_id, trade_date))
     if account_snapshot is None:
-        # Fallback systématique sur --account-equity quand aucun snapshot broker
-        # n'est disponible. Cas typiques :
-        #   - premier run de la journée pour un compte (broker_account_snapshots
-        #     n'est rempli qu'après l'étape 12 — Execution paper/live).
-        #   - switch vers un compte qui n'a jamais exécuté l'étape 12.
-        #   - mode simulate (jamais d'écriture broker_account_snapshots).
-        # Le sizing utilise --account-equity de l'IHM ; le risque est borné
-        # par cette valeur, donc safe même en multi-comptes.
+        if broker_risk:
+            raise ValueError('Compte broker réel requis pour PAPER/LIVE ; aucun fallback de capital')
+        # Simulations only may use the capital configured by the caller.
         effective_equity = requested_equity
         pnl_snapshot = PnLSnapshot(
             portfolio_high_watermark=effective_equity,
@@ -1462,15 +1506,14 @@ def main(args: list[str] | None = None) -> None:
             daily_pnl=0.0,
         )
         LOGGER.warning(
-            "Aucun account_risk_snapshot pour account=%s date=%s ; fallback sur --account-equity=%.2f. "
-            "Pour utiliser l'equity broker reel, lancez l'etape 12 (Execution paper/live) sur ce compte.",
+            "Simulation sans account_risk_snapshot pour account=%s date=%s ; capital configuré --account-equity=%.2f.",
             raw_account_id or "default",
             trade_date,
             effective_equity,
         )
     else:
         effective_equity = float(account_snapshot.equity)
-        if account_snapshot.trade_date < trade_date and requested_equity > 0:
+        if not broker_risk and account_snapshot.trade_date < trade_date and requested_equity > 0:
             capped_equity = min(effective_equity, requested_equity)
             if capped_equity < effective_equity:
                 LOGGER.warning(
@@ -1509,91 +1552,81 @@ def main(args: list[str] | None = None) -> None:
             account_snapshot.buying_power,
         )
 
-    # ── Section 17 Point 8 : snapshot opérationnel réel ─────────────────
-    operational_snapshot = None
-    try:
-        from datetime import datetime as _dt, timezone as _tz
-
-        from risk_management.operational_data import OperationalDataSnapshot
-        from risk_management.transition_handler import OpenOrder, OpenPosition
-
-        # Construire le snapshot opérationnel à partir des données disponibles
-        account_as_of = (
-            _dt.combine(account_snapshot.trade_date, _dt.min.time(), tzinfo=_tz.utc)
-            if account_snapshot is not None
-            else _dt.now(_tz.utc)
-        )
-        account_data: dict[str, object] = {
-            "equity": effective_equity,
-            "cash": float(getattr(account_snapshot, "cash", 0.0) or 0.0) if account_snapshot is not None else 0.0,
-            "settled_cash": float(getattr(account_snapshot, "cash", 0.0) or 0.0) if account_snapshot is not None else 0.0,
-            "buying_power": float(getattr(account_snapshot, "buying_power", effective_equity * 2.0) or effective_equity * 2.0)
-            if account_snapshot is not None
-            else effective_equity * 2.0,
-        }
-
-        # Charger les positions existantes depuis les décisions de risque précédentes
-        existing_positions: list[OpenPosition] = []
-        if account_snapshot is not None and hasattr(repo, "load_risk_decisions_for_date"):
-            try:
-                prev_decisions = repo.load_risk_decisions_for_date(
-                    trade_date, account_id=effective_account_id or resolved_account_scope
-                )
-                if not prev_decisions.empty:
-                    for _, row in prev_decisions.iterrows():
-                        sym = str(row.get("symbol") or "").strip().upper()
-                        side_raw = str(row.get("side") or "").strip().lower()
-                        if not sym or side_raw not in ("buy", "sell"):
-                            continue
-                        qty = float(row.get("approved_shares", 0) or 0)
-                        if qty <= 0:
-                            continue
-                        existing_positions.append(
-                            OpenPosition(
-                                symbol=sym,
-                                side="short" if side_raw == "sell" else "long",
-                                quantity=qty,
-                                avg_entry_price=float(row.get("entry_price", 0) or 0),
-                            )
-                        )
-            except Exception:
-                LOGGER.debug("Impossible de charger les positions existantes pour le snapshot opérationnel.", exc_info=True)
-
-        operational_snapshot = OperationalDataSnapshot.from_raw(
-            account_id=effective_account_id or resolved_account_scope,
-            account=account_data,
-            positions=[
-                {"symbol": p.symbol, "side": p.side, "qty": p.quantity,
-                 "avg_entry_price": p.avg_entry_price, "current_price": p.avg_entry_price}
-                for p in existing_positions
-            ],
-            orders=[],  # les ordres ouverts sont gérés par l'executor
-            source="risk_cli_account_snapshot",
-            as_of=account_as_of,
-        )
-        LOGGER.info(
-            "Snapshot opérationnel construit | account=%s equity=%.2f positions=%d",
-            operational_snapshot.account.account_id,
-            operational_snapshot.account.equity,
-            len(operational_snapshot.positions),
-        )
-    except Exception:
-        LOGGER.warning("Construction du snapshot opérationnel échouée — le pipeline continue sans.", exc_info=True)
+    # A broker capture includes actual cash, buying power, positions and open orders.
+    if broker_capture is not None:
+        operational_snapshot = broker_capture[0]
+    else:
+        # ── Section 17 Point 8 : snapshot opérationnel réel ─────────────────
         operational_snapshot = None
+        try:
+            from datetime import datetime as _dt, timezone as _tz
 
-    if args.llm_filter_run_id:
-        from service.llm_directional.risk_adapter import capture_paper_snapshot
-        operational_snapshot, _llm_broker_account = capture_paper_snapshot()
-        effective_account_id = 'default'
-        effective_equity = operational_snapshot.account.equity
-        _previous_peak = account_snapshot.high_watermark if account_snapshot is not None else effective_equity
-        _last_equity = float(_llm_broker_account.get('last_equity') or effective_equity)
-        pnl_snapshot = PnLSnapshot(portfolio_high_watermark=max(_previous_peak, effective_equity),
-            portfolio_current_value=effective_equity, daily_pnl=effective_equity - _last_equity)
-        if args.risk_budget_dollars is not None:
-            if not 0 < args.risk_budget_dollars < effective_equity:
-                raise ValueError('Budget risque incompatible avec equity PAPER réelle')
-            args.risk_per_trade_pct = args.risk_budget_dollars / effective_equity
+            from risk_management.operational_data import OperationalDataSnapshot
+            from risk_management.transition_handler import OpenOrder, OpenPosition
+
+            # Construire le snapshot opérationnel à partir des données disponibles
+            account_as_of = (
+                _dt.combine(account_snapshot.trade_date, _dt.min.time(), tzinfo=_tz.utc)
+                if account_snapshot is not None
+                else _dt.now(_tz.utc)
+            )
+            account_data: dict[str, object] = {
+                "equity": effective_equity,
+                "cash": float(getattr(account_snapshot, "cash", 0.0) or 0.0) if account_snapshot is not None else 0.0,
+                "settled_cash": float(getattr(account_snapshot, "cash", 0.0) or 0.0) if account_snapshot is not None else 0.0,
+                "buying_power": float(getattr(account_snapshot, "buying_power", effective_equity * 2.0) or effective_equity * 2.0)
+                if account_snapshot is not None
+                else effective_equity * 2.0,
+            }
+
+            # Charger les positions existantes depuis les décisions de risque précédentes
+            existing_positions: list[OpenPosition] = []
+            if account_snapshot is not None and hasattr(repo, "load_risk_decisions_for_date"):
+                try:
+                    prev_decisions = repo.load_risk_decisions_for_date(
+                        trade_date, account_id=effective_account_id or resolved_account_scope
+                    )
+                    if not prev_decisions.empty:
+                        for _, row in prev_decisions.iterrows():
+                            sym = str(row.get("symbol") or "").strip().upper()
+                            side_raw = str(row.get("side") or "").strip().lower()
+                            if not sym or side_raw not in ("buy", "sell"):
+                                continue
+                            qty = float(row.get("approved_shares", 0) or 0)
+                            if qty <= 0:
+                                continue
+                            existing_positions.append(
+                                OpenPosition(
+                                    symbol=sym,
+                                    side="short" if side_raw == "sell" else "long",
+                                    quantity=qty,
+                                    avg_entry_price=float(row.get("entry_price", 0) or 0),
+                                )
+                            )
+                except Exception:
+                    LOGGER.debug("Impossible de charger les positions existantes pour le snapshot opérationnel.", exc_info=True)
+
+            operational_snapshot = OperationalDataSnapshot.from_raw(
+                account_id=effective_account_id or resolved_account_scope,
+                account=account_data,
+                positions=[
+                    {"symbol": p.symbol, "side": p.side, "qty": p.quantity,
+                     "avg_entry_price": p.avg_entry_price, "current_price": p.avg_entry_price}
+                    for p in existing_positions
+                ],
+                orders=[],  # les ordres ouverts sont gérés par l'executor
+                source="risk_cli_account_snapshot",
+                as_of=account_as_of,
+            )
+            LOGGER.info(
+                "Snapshot opérationnel construit | account=%s equity=%.2f positions=%d",
+                operational_snapshot.account.account_id,
+                operational_snapshot.account.equity,
+                len(operational_snapshot.positions),
+            )
+        except Exception:
+            LOGGER.warning("Construction du snapshot opérationnel échouée — le pipeline continue sans.", exc_info=True)
+            operational_snapshot = None
 
     progress_total_steps = 8
     progress_context: dict[str, object] = {
@@ -1823,6 +1856,9 @@ def main(args: list[str] | None = None) -> None:
         if account_snapshot is not None
         else None
     )
+    if getattr(account_snapshot,'captured_at',None) is not None:
+        stamp=account_snapshot.captured_at
+        snapshot_freshness_days=max((datetime.now(stamp.tzinfo)-stamp).days,0)
 
     circuit_breaker = CircuitBreaker(config, pnl_snapshot)
     circuit_breaker.notify_if_active()
@@ -1879,11 +1915,25 @@ def main(args: list[str] | None = None) -> None:
     else:
         breakout_tracker = BreakoutConfirmationTracker(min_breakout_days=config.min_breakout_days)
 
-    universe, universe_capital_preset_key, universe_preset_source = _load_tradable_universe_for_risk(
-        repo, trade_date=trade_date, effective_equity=effective_equity,
-        llm_filter_run_id=args.llm_filter_run_id,
-        account_id=effective_account_id or resolved_account_scope or 'default',
-    )
+    try:
+        universe, universe_capital_preset_key, universe_preset_source = _load_tradable_universe_for_risk(
+            repo, trade_date=trade_date, effective_equity=effective_equity,
+            llm_filter_run_id=args.llm_filter_run_id,
+            account_id=effective_account_id or resolved_account_scope or 'default',
+            options_filter_report=options_filter_report,
+        )
+    except (Exception, SystemExit) as exc:
+        # This narrow checkpoint precedes creation/publication of risk decisions
+        # and portfolio targets. Later failures must NEVER grant automatic retry.
+        attempt_id = getattr(args, 'options_risk_attempt_id', None)
+        if options_filter_report is not None and attempt_id and args.summary_path:
+            from service.options_directional.risk_attempts import record_universe_lookup_failure
+            try:
+                record_universe_lookup_failure(Path(args.summary_path).parent, attempt_id,
+                                               options_filter_report, exc)
+            except Exception:
+                LOGGER.exception('Impossible de sceller la preuve de reprise risque ; verrou conservé')
+        raise
     if universe.data_quality_grade.strip().lower() != "full":
         raise SystemExit(
             "L'univers tradable live doit être de qualité full; "
@@ -1934,6 +1984,8 @@ def main(args: list[str] | None = None) -> None:
     )
 
     candidates: list[MLRankedCandidate] = []
+    _path_amplitude_policy = False
+    _oracle_live_batch = ''
     spread_snapshots: dict[str, object] = {}
     borrow_snapshots: dict[str, object] = {}
     liquidity_gate: object | None = None
@@ -2288,16 +2340,8 @@ def main(args: list[str] | None = None) -> None:
 
         liquidity_gate = None
         if not config.dry_run:
-            from risk_management.liquidity import LiquidityGate
-
-            liquidity_gate = LiquidityGate()
-            spread_snapshots = _load_live_spread_snapshots(
-                symbols,
-                account_id=effective_account_id,
-            )
-            # ── Section 17 Point 9 : charger les statuts borrow PIT ─────
-            borrow_snapshots = _load_live_borrow_snapshots(
-                symbols,
+            liquidity_gate, spread_snapshots, borrow_snapshots = _load_risk_liquidity_inputs(
+                config, symbols,
                 account_id=effective_account_id or resolved_account_scope,
                 trade_date=trade_date,
             )
@@ -2340,69 +2384,24 @@ def main(args: list[str] | None = None) -> None:
         if operational_snapshot is not None and hasattr(builder, "set_operational_snapshot"):
             builder.set_operational_snapshot(operational_snapshot)
         # ── Factor risk model (Priorité 3) : construire les exposures ──
-        if config.enable_factor_model:
-            try:
-                from risk_management.factor_model import (
-                    build_exposures_from_score_frame,
-                    build_factor_returns,
-                    estimate_factor_covariance,
-                )
-                # Charger les colonnes factorielles depuis stock_scores_history
-                factor_df = repo.load_factor_columns_asof(
-                    [c.symbol for c in candidates],
-                    trade_date,
-                )
-                if not factor_df.empty:
-                    factor_exposures_raw = build_exposures_from_score_frame(
-                        factor_df, trade_date,
-                    )
-                    factor_exposures_live: dict[str, object] = {
-                        sym: exp for sym, exp in factor_exposures_raw.items()
-                    }
-                    # Construire les rendements factoriels
-                    if not return_matrix.empty:
-                        factor_returns = build_factor_returns(
-                            symbols=list(factor_exposures_live.keys()),
-                            close_prices=return_matrix,
-                            benchmark_prices=None,
-                            factor_exposures_map=factor_exposures_raw,
-                        )
-                        factor_cov_live = estimate_factor_covariance(
-                            factor_returns,
-                            lookback_days=config.factor_lookback_days,
-                            ewma_half_life=config.factor_ewma_half_life,
-                            estimation_date=trade_date,
-                            stock_returns=return_matrix,
-                        ) if factor_returns is not None else None
-                        # Recréer le builder avec le modèle factoriel
-                        builder = PortfolioBuilder(
-                            config,
-                            pnl=pnl_snapshot,
-                            circuit_breaker=circuit_breaker,
-                            regime_snapshot=regime_snapshot,
-                            regime_transition=regime_transition,
-                            rotation_state=rotation_state,
-                            breakout_tracker=breakout_tracker,
-                            factor_exposures=factor_exposures_live,
-                            factor_covariance=factor_cov_live,
-                            sector_map=_sector_map_for_builder,
-                        )
-                        if operational_snapshot is not None and hasattr(builder, "set_operational_snapshot"):
-                            builder.set_operational_snapshot(operational_snapshot)
-                        LOGGER.info(
-                            "Factor model enabled: %d exposures, %d factor names",
-                            len(factor_exposures_live),
-                            len(getattr(factor_cov_live, "factor_names", [])),
-                        )
-                    else:
-                        LOGGER.warning("Factor model: no return matrix, skipping covariance estimation")
-                else:
-                    LOGGER.warning("Factor model: no factor columns loaded from DB")
-            except Exception:
-                LOGGER.warning(
-                    "Factor model setup failed for live pipeline",
-                    exc_info=True,
-                )
+        if config.enable_factor_model and candidates:
+            from risk_management.live_factor_context import load_live_factor_context
+            factor_symbols = {c.symbol for c in candidates}
+            if operational_snapshot is not None:
+                factor_symbols.update(p.symbol for p in operational_snapshot.positions)
+                factor_symbols.update(o.symbol for o in operational_snapshot.open_orders)
+            factor_context = load_live_factor_context(repo.engine, sorted(factor_symbols),
+                trade_date, datetime.now(timezone.utc), config)
+            factor_cov_live = factor_context['covariance']
+            builder = PortfolioBuilder(config, pnl=pnl_snapshot, circuit_breaker=circuit_breaker,
+                regime_snapshot=regime_snapshot, regime_transition=regime_transition,
+                rotation_state=rotation_state, breakout_tracker=breakout_tracker,
+                factor_exposures=factor_context['exposures'], factor_covariance=factor_cov_live,
+                sector_map=_sector_map_for_builder)
+            if operational_snapshot is not None and hasattr(builder, 'set_operational_snapshot'):
+                builder.set_operational_snapshot(operational_snapshot)
+            LOGGER.info('Factor context qualified: cross_section=%s factors=%s snapshot=%s',
+                factor_context['universe_count'], factor_context['factor_names'], factor_context['snapshot_hash'])
         set_directional_win_rates = getattr(builder, "set_directional_win_rates", None)
         if callable(set_directional_win_rates):
             set_directional_win_rates(directional_win_rates)
@@ -2429,8 +2428,14 @@ def main(args: list[str] | None = None) -> None:
 
         # ── Point 12 : vérification compatibilité modèle ────────────
         # LLM uses its audited Oracle/Web contract, not a synthetic per-symbol probability.
-        _compat = ({'compatible': True, 'issues': [], 'champion_count': 0, 'model_versions': {}}
-                   if args.llm_filter_run_id else _check_model_compatibility(predictions))
+        if args.llm_filter_run_id:
+            _compat = {'compatible': True, 'issues': [], 'champion_count': 0, 'model_versions': {}}
+        elif _path_amplitude_policy:
+            from risk_management.oracle_path_contract import check_compatibility
+            _compat = check_compatibility(repo.engine, predictions, batch_id=_oracle_live_batch,
+                trade_date=trade_date, artifacts_dir=args.oracle_artifacts_dir)
+        else:
+            _compat = _check_model_compatibility(predictions)
         if not _compat["compatible"]:
             LOGGER.error(
                 "MODEL_INCOMPATIBLE issues=%s — blocage des entrées",
@@ -2456,7 +2461,10 @@ def main(args: list[str] | None = None) -> None:
         # ── Section 17 Point 6.4 : gate de fraîcheur avant entrées ───────
         freshness_blocked = False
         freshness_result = None
-        if not config.dry_run and _compat["compatible"] and not args.llm_filter_run_id:
+        if (not config.dry_run and _compat["compatible"] and not args.llm_filter_run_id
+                and not _path_amplitude_policy):
+            # Oracle parcours already enforces closed J, publication delay,
+            # UTC creation cutoffs and next-open expiry in its signed contract.
             try:
                 from risk_management.freshness_gate import FreshnessConfig, FreshnessGate
 
@@ -2530,6 +2538,9 @@ def main(args: list[str] | None = None) -> None:
                         "risk batch_diagnostics score boost skipped: %s", _bt_exc,
                     )
 
+            if broker_capture is not None and not args.llm_filter_run_id:
+                from risk_management.operational_data import validate_current_broker_snapshot
+                validate_current_broker_snapshot(operational_snapshot,trade_date)
             if args.llm_filter_run_id:
                 from service.llm_directional.risk_adapter import build_entries
                 entries = build_entries(builder, candidates, prices, _sector_map_for_builder,
@@ -2818,9 +2829,12 @@ def main(args: list[str] | None = None) -> None:
         "dry_run": bool(config.dry_run),
         "run_mode": run_mode.value,
         "effective_equity": round(float(effective_equity), 2),
-        "account_equity": round(float(args.account_equity), 2),
+        "account_equity": round(float(effective_equity), 2),
+        "requested_account_equity": round(float(requested_equity), 2),
         "risk_budget_dollars": round(float(args.risk_budget_dollars), 2) if args.risk_budget_dollars is not None else None,
         "equity_source": equity_source,
+        "equity_captured_at": (getattr(account_snapshot,'captured_at',None).isoformat()
+            if getattr(account_snapshot,'captured_at',None) is not None else None),
         "equity_fallback_used": equity_fallback_used,
         "snapshot_freshness_days": snapshot_freshness_days,
         "account_snapshot_trade_date": account_snapshot.trade_date.isoformat() if account_snapshot is not None else None,
@@ -2857,6 +2871,8 @@ def main(args: list[str] | None = None) -> None:
         },
         # ── Section 17 Point 9 : liquidité et borrow ────────────────────
         "liquidity_market_data": {
+            "quote_spread_check_enabled": config.quote_spread_check_enabled,
+            "quote_spread_checked": liquidity_gate is not None and config.quote_spread_check_enabled,
             "spread_symbols_loaded": len(spread_snapshots),
             "borrow_symbols_loaded": len(borrow_snapshots),
             "borrow_etb_count": sum(1 for b in borrow_snapshots.values() if hasattr(b, "status") and str(getattr(b, "status", "")).startswith("easy")),

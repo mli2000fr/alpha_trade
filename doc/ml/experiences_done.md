@@ -1,5 +1,47 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-28 — US : spread IEX contre SIP dans TOP10/20/50 Oracle
+
+Audit de qualité des quotes, sans entraînement/inférence/backtest économique.
+Oracle parcours `model-factory-20261016180250-3b0515`, univers tradable 1790.
+Classements préexistants avant ouverture, signaux16/23/26oct → quotes19/26/27oct,
+09h35/12h00/15h55NY. 62titres distincts,450couples,900réponsesHTTP200 archivées,
+zéroerreurtechnique ; cotations au même cutoff historique, jamais postérieures.
+Critères watcher quote≤60s,tailles>0,spread≤0,50% :TOP10 SIP60/90 IEX21/90 ;
+TOP20 SIP128/180 IEX35/180 ;TOP50 SIP316/450 IEX92/450. RefusIEX parmi acceptéesSIP :
+65,00%/72,66%/70,89%. TOP50 224refus supplémentaires :220spread,4fraîcheur ;
+zéroIEXaccepté/SIPrefusé. Sixabsences communes aux deux flux, jamais spreadzéro.
+Spreads médians propres aux flux TOP50 :IEX6,18%,SIP0,27% sur444quotesvalides ;
+sur412couples frais≤60s,excèsmédianIEX−SIP5,18pointsde%. Critères30/300s concordants.
+Réserve :23/26oct scores92,01%univers<95%contrat. Sur seul19oct qualifié97,37%,
+TOP50 SIP105/150 vsIEX36/150,69refus supplémentaires :mêmeconclusion pratique.
+Troisséances répétées/corrélées,aucunPnL ni bénéfice supposé des occasions exclues.
+12tests ;recalcul séparé mêmeassistant4500cellules,900réponses scellées,7sources
+inchangées ;pasrevuehumaineindépendante. AucunSQLécrit/LLM/ordre/changementproduction.
+**PAS_DE_REMPLACEMENT_DIRECT_SIP_PAR_IEX** pour le contrôle des entrées Oracle.
+[Protocole, résultats et limites](audit_spread_iex_sip_oracle_20261028.md).
+
+## 2026-10-27 — US : consensus dans TOP10/20/50 Oracle et complément volume/OI
+
+Audit borné hors ligne sur les mêmes cohortes scellées que l'audit options :
+16 dates de scores >=95 % de l'univers1790 ; rangs des 27982 lignes reproduits
+depuis les scores bruts. Consensus disponible dans l'intersection sur une seule
+entrée,19octobre. RévisionsEPS30 couvertes8/16/43cas enTOP10/20/50 ; EPSactuel
+vsJ−30:8/16/42 ; variationrevenus réellementobservée:9/17/43. Reçus/hash/raw,
+ancrage0q,cutoff09:25NY,comptages/valeurscohérents ; réservesEODHD conservées.
+H5SIP :AUC révisions30 noncalculableTOP10(huitSHORT),0,654TOP20(16cas),
+0,315TOP50(43). EPS30:noncalculable/0,821(16)/0,487(42) ; revenus:
+0,563(9)/0,567(17)/0,543(42). Une seule date,TOP20seulementtroisLONGsur16,
+pas validation. EODHDprimaire sansbarres19–23octdansl'archive,pasfallback.
+Mélangeunique50%options/50%révisions30 :couverturecommuneSIP0/1/5cas ;
+TOP50AUC0,750options→0,875mélange surCINQcas/UNEdate,nonconfirmatoire.
+H10/H20:zéroissuemûre ; aucunPnL ni tauxgagnant extrapolé. Dixréférencessources
+parentsontévolué:réserveexplicite,archivesintactes,ancienssceauxinchangés.
+35tests(11nouveaux) ;relecturemêmeassistant:15fichiers,7680lignes,72comptages,
+144AUCpairwise. AucunSQL/API/LLM/fit/inférence/ordre/changementproduction.
+PAS_DE_PROMOTION_CONSENSUS_OPTIONS ;petitindiceEPS30TOP20àobserverhorséchantillon.
+[Bilan, tableaux et limites](consensus_options_topn_resultats_20261027.md).
+
 ## 2026-10-26 — US : classement par périmètre, pas de relance ancienne qualifiée
 
 37familles scientifiques classées ;288rubriques du registre indexées comme

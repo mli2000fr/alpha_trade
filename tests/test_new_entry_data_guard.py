@@ -37,6 +37,52 @@ def test_complete_real_bars_pass_missing_symbol_rejected():
         'MISSING': 'MISSING_OR_DUPLICATE_SESSIONS'}
 
 
+@pytest.mark.parametrize('preference', ['eodhd','alpaca_sip'])
+def test_known_provider_pair_uses_configured_whole_row(preference):
+    frame, sessions = bars()
+    alternate = frame.iloc[-5:].copy()
+    alternate['data_source'] = 'alpaca_sip'
+    paired = pd.concat([frame,alternate], ignore_index=True)
+    assert validate_entry_bars(paired,['GOOD'],sessions,now=NOW,
+        raw_config={'market_data':{'daily_bars_preferred_source':preference}}) == {}
+    # No data fallback if the preferred row exists but is invalid.
+    bad_source = 'eodhd_eod' if preference == 'eodhd' else 'alpaca_sip'
+    paired.loc[(paired.date == sessions[-1]) & paired.data_source.eq(bad_source),'close'] = float('nan')
+    assert validate_entry_bars(paired,['GOOD'],sessions,now=NOW,
+        raw_config={'market_data':{'daily_bars_preferred_source':preference}}) == {'GOOD':'INVALID_OHLCV'}
+
+
+def test_ambiguous_symbol_does_not_block_other_healthy_candidate():
+    frame,sessions=bars()
+    ambiguous=frame.copy(); ambiguous['symbol']='BAD'
+    duplicate=ambiguous.iloc[-1:].copy(); duplicate['data_source']='alpaca_iex'
+    paired=pd.concat([frame,ambiguous,duplicate],ignore_index=True)
+    assert validate_entry_bars(paired,['GOOD','BAD'],sessions,now=NOW,raw_config={}) == {
+        'BAD':'MISSING_OR_DUPLICATE_SESSIONS'}
+
+
+@pytest.mark.parametrize('column,value,reason', [
+    ('is_filled',1,'SYNTHETIC_OR_UNKNOWN_BAR'),
+    ('data_adjustment','all','UNQUALIFIED_PRICE_SOURCE_OR_ADJUSTMENT'),
+    ('last_updated','2026-10-10 00:00:00','BAR_NOT_YET_AVAILABLE'),
+])
+def test_invalid_preferred_metadata_never_falls_back_to_valid_alternative(column,value,reason):
+    frame,sessions=bars()
+    alternate=frame.iloc[-1:].copy(); alternate['data_source']='alpaca_sip'
+    frame.loc[frame.index[-1],column]=value
+    assert validate_entry_bars(pd.concat([frame,alternate],ignore_index=True),['GOOD'],sessions,
+        now=NOW,raw_config={'market_data':{'daily_bars_preferred_source':'eodhd'}}) == {'GOOD':reason}
+
+
+def test_october_27_preopen_requires_only_october_26_closed_bars():
+    now=datetime(2026,10,27,7,tzinfo=timezone.utc)
+    sessions=entry_sessions(date(2026,10,26),now=now)
+    assert sessions[-1] == date(2026,10,26)
+    assert date(2026,10,27) not in sessions
+    with pytest.raises(ValueError,match='dernière séance'):
+        entry_sessions(date(2026,10,27),now=now)
+
+
 @pytest.mark.parametrize('column,value,reason', [
     ('close', float('nan'), 'INVALID_OHLCV'), ('volume', 0, 'INVALID_OHLCV'),
     ('high', 8., 'INCONSISTENT_OHLC'), ('is_filled', 1, 'SYNTHETIC_OR_UNKNOWN_BAR'),
@@ -78,6 +124,7 @@ def test_sql_failure_and_other_market_never_allow_entry():
     assert 'alpha_trade' in check_new_entry_data(engine, ['GOOD'], date(2026,10,8), now=NOW, raw_config={})['GOOD']
 
 
+@pytest.mark.usefixtures('isolated_winner_config')
 def test_executor_rechecks_before_reserving_or_sending_entry(monkeypatch):
     from execution_engine.executor import ProductionExecutor
     from execution_engine.config import ExecutionConfig

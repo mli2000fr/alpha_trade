@@ -1,9 +1,11 @@
-"""FIRDS daily reference observations for the verified FR subset, files only.
+"""FIRDS daily reference observations, SQL primary for operational FR collectors.
 
 Never repairs inherited history gaps or promotes tradability/SQL instruments.
 All delta fragments are checked before a new checkpoint can be published.
 """
 from __future__ import annotations
+
+from service.fr.collection_storage import (active, read_bytes, read_text, exists, paths, write_bytes, identity_rows, take_lock, release_lock)
 
 import copy
 from datetime import UTC, date, datetime, timedelta
@@ -123,11 +125,11 @@ def collect(cfg,result,*,root,identities,base_path,dry_run=False,today=None):
     max_days=int(cfg.get('max_catchup_days',31))
     overlap=int(cfg.get('lookback_days',7))
     if not 1<=max_days<=31 or not 1<=overlap<=31: raise ValueError('Fenêtre ESMA 1..31 jours requise')
-    base_bytes=base_path.read_bytes()
+    base_bytes=read_bytes(base_path)
     base_hash=hashlib.sha256(base_bytes).hexdigest()
     base=json.loads(base_bytes)
     checkpoint_path=root/'checkpoint.json'
-    prior=json.loads(checkpoint_path.read_text(encoding='utf-8')) if checkpoint_path.exists() else initial_checkpoint(base,identities,base_hash)
+    prior=json.loads(read_text(checkpoint_path,encoding='utf-8')) if exists(checkpoint_path) else initial_checkpoint(base,identities,base_hash)
     if prior.get('market_code')!='FR_EQ' or prior.get('base_sha256')!=base_hash:
         raise ValueError('Checkpoint FR/base historique modifiés : audit requis')
     if set(r['isin'] for r in prior['symbols'])!={r['isin'] for r in reference(identities) if r.get('identity_state')=='VERIFIED_RESEARCH'}:
@@ -158,9 +160,10 @@ def collect(cfg,result,*,root,identities,base_path,dry_run=False,today=None):
     paths=[]
     for item in items:
         print('ESMA archive '+item['file'],flush=True)
-        proof=_download(item,root/'archives',context)
+        from service.fr.collection_storage import esma_download
+        proof=esma_download(item,root/'archives',context) if active() else _download(item,root/'archives',context)
         path=root/'archives'/item['date'][:4]/item['file']
-        proof={**proof,**_check(path,item['md5'])}
+        proof={**proof,**(_check(path,item['md5']) if not active() else {})}
         paths.append((item,path,proof))
         result['received_count']+=1
     # An index receipt is not the availability of the complete downloaded,

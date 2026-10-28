@@ -105,6 +105,20 @@ def tick(cfg, store, repo, broker, *, now=NOW, source=market, guard=approve):
     return WinnerCampaignRuntime(store, repo, broker, cfg, market=source, risk=guard, now=now).run(store.rows())
 
 
+def test_watcher_lock_owners_fit_sql_and_are_unique_even_with_identical_clock():
+    cfg, store, repo, broker = setup()
+    records = store.rows()
+    # The account is busy: no risk/order path may run, but each coordinator
+    # must use a distinct SQL-compatible owner (never deterministic by time).
+    repo.acquire_execution_lock.return_value = False
+    for _ in range(2):
+        WinnerCampaignRuntime(store, repo, broker, cfg, market=market, risk=approve, now=NOW).run(records)
+    owners = [call.kwargs['exec_run_id'] for call in repo.acquire_execution_lock.call_args_list]
+    assert len(set(owners)) == 2 and all(len(owner) <= 32 for owner in owners)
+    repo.release_execution_lock.assert_not_called()
+    assert broker.calls == []
+
+
 def test_stage_watch_first_buy_protection_restart_no_duplicate():
     cfg, store, repo, broker = setup()
     result = tick(cfg, store, repo, broker)
@@ -140,6 +154,44 @@ def test_no_order_found_after_unknown_post_does_not_authorize_retry():
     tick(cfg, store, repo, broker)
     assert len(broker.calls) == 1
     assert store.rows()[0]['state']['operations'][0]['status'] == 'UNKNOWN'
+
+
+def test_audited_pre_http_failure_can_resume_same_broker_key_with_fresh_risk(monkeypatch):
+    from copy import deepcopy
+    from dataclasses import replace
+    from execution_engine import winner_runtime
+    from execution_engine.winner_broker import make_intent
+    cfg,store,repo,broker=setup()
+    real_submit=broker.submit
+    def local_failure(state,intent):
+        raise RuntimeError('local SQL failure before broker HTTP')
+    broker.submit=local_failure
+    monkeypatch.setattr(winner_runtime,'make_intent',lambda *a,**kw: (
+        lambda intent:replace(intent,intent_id=intent.submission_key))(make_intent(*a,**kw)))
+    tick(cfg,store,repo,broker)
+    assert not broker.calls
+    monkeypatch.setattr(winner_runtime,'make_intent',make_intent)
+    tick(cfg,store,repo,broker)
+    row=store.rows()[0];sample=row['state'];old=deepcopy(sample['operations'][0])
+    assert old['status']=='UNKNOWN' and len(old['intent']['intent_id'])==39
+    # This state change models only an explicit, separately audited operator
+    # recovery. No runtime path automatically releases UNKNOWN operations.
+    sample['operations'][0]['status']='ABORTED_BEFORE_SUBMIT'
+    sample['initial_attempted']=False
+    store.save(sample,row['version'])
+    broker.submit=real_submit
+    checks=[]
+    def fresh(*args):
+        checks.append(args[1])
+        return approve(*args)
+    result=tick(cfg,store,repo,broker,guard=fresh)
+    assert result['winner_buys_submitted']==1 and len(broker.calls)==1 and len(checks)==1
+    sent=broker.calls[0]
+    assert len(sent.intent_id)==32 and sent.submission_key==old['intent']['submission_key']
+    after=store.rows()[0]['state']
+    assert after['operations'][0]['intent']==old['intent']
+    tick(cfg,store,repo,broker)
+    assert len(broker.calls)==1
 
 
 def test_disabled_entries_do_not_stop_existing_protection_or_deadline():

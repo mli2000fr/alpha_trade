@@ -6,6 +6,12 @@
 
 ## Résultat du 6 octobre 2026 (séance du 5 octobre)
 
+Actualisation du stockage au **27 octobre 2026** : les fichiers sont conservés,
+mais les collectes et archives quotidiennes sont aussi [importées dans quatre
+tables SQL de recherche](options_mifir_stockage_sql.md). La livraison ci-dessous
+du 6 octobre reste une preuve historique ; elle ne lève toujours pas les réserves
+sur les unités, l'OI ou la qualification des ajustements.
+
 Le GO portait sur l'audit de la collecte partielle et la qualification des quantités,
 pas sur l'activation du besoin options complet. Le runner a effectué une collecte
 réelle, sans SQL ni modèle modifié. La commande Python directe utilisée pour cet

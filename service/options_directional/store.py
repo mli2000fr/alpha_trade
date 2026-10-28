@@ -84,7 +84,7 @@ def latest_matching(**kwargs):
     """Manual 11/12 only: latest exact context, never another date/batch/account."""
     root = kwargs.get('root') or ROOT
     matches = []
-    for file in Path(root).glob('opt-*/report.json'):
+    for file in (*Path(root).glob('opt-*/report.json'), *Path(root).glob('opt-*/failure.json')):
         try:
             report = json.loads(file.read_text(encoding='utf-8'))
         except (FileNotFoundError, json.JSONDecodeError):
@@ -95,5 +95,8 @@ def latest_matching(**kwargs):
     if not matches:
         raise ValueError('Aucun filtre options terminé pour cette date/modèle/univers ; lancer étape 10')
     latest = max(matches, key=lambda r: (r['cutoff_utc'], r['run_id']))
+    if latest.get('status') != 'COMPLETED':
+        raise ValueError('Dernière analyse options échouée pour ce périmètre ; '
+                         'aucune ancienne sélection substituée. Corriger puis relancer étape 10.')
     # A newer corrupt/expired exact-context run must fail, never silently use an older selection.
     return qualified(latest['run_id'], **kwargs)

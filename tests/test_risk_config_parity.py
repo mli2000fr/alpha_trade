@@ -449,7 +449,7 @@ def test_factor_constraints_on_sized_weights_no_exposures() -> None:
     violations = check_factor_constraints_on_sized_weights(
         {"AAPL": 0.05}, {}, cov
     )
-    assert len(violations) == 0
+    assert violations == ['factor_beta_inputs_unqualified:Missing/nonfinite market beta: AAPL']
 
 
 def test_freshness_gate_blocks_critical_stale() -> None:

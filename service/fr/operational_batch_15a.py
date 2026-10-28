@@ -1,4 +1,4 @@
-"""Isolated FR operations. Local run records; unqualified collectors fail closed."""
+"""Isolated FR operations. SQL primary data/state/runs; unqualified collectors fail closed."""
 from __future__ import annotations
 
 import argparse
@@ -11,12 +11,14 @@ import uuid
 import os
 
 from common.config_loader import load_batch_config
+from service.fr.collection_storage import active, take_lock, release_lock, write_json as atomic
 
 ROOT = Path(__file__).resolve().parents[2]
 OPS = ROOT / "artifacts/fr/operations"
 IMPLEMENTED = {"fr_calendar_snapshot", "fr_db_backup", "fr_artifacts_backup", "fr_daily_bars_sync",
                "fr_corporate_actions_sync", "fr_amf_short_sync", "fr_dila_disclosures_sync", "fr_pit_quality_daily",
-               "fr_security_master_sync", "fr_fundamentals_sync", "fr_consensus_snapshot", "fr_options_mifir_trade_sync"}
+               "fr_security_master_sync", "fr_fundamentals_sync", "fr_consensus_snapshot", "fr_options_mifir_trade_sync",
+               "fr_options_open_interest_sync"}
 
 
 def load_section(name: str, config_path: Path) -> dict:
@@ -28,41 +30,74 @@ def load_section(name: str, config_path: Path) -> dict:
         raise ValueError("Batch réservé à FR_EQ / fr_primary / XPAR")
     if section.get("canonical_writes_enabled") is not False or section.get("serving_enabled") is not False:
         raise ValueError("Écritures canoniques et serving interdits pour cette tranche")
+    if section.get('storage_backend') != 'sql':
+        raise ValueError('Les batchs FR exigent storage_backend: sql')
+    if 'archive_research_sql' in section:
+        raise ValueError('archive_research_sql est retiré : utiliser storage_backend: sql')
     return section
 
 
-def run(name: str, *, config_path: Path = ROOT / "batch_fr.yaml", dry_run=False, today: date | None = None,
-        resume=False, max_symbols: int | None = None) -> dict:
+def run(name: str, *, config_path: Path = ROOT / "batch_fr.yaml", dry_run=False, today=None,
+        resume=False, max_symbols=None) -> dict:
+    from service.fr import collection_storage as storage
+    from service.fr.batch_research_store import engine_fr
     now = datetime.now(UTC)
-    result = {"batch": name, "market_code": "FR_EQ", "provider": "unknown", "status": "RUNNING",
-              "started_at": now.isoformat(), "requested_count": 0, "received_count": 0,
-              "persisted_count": 0, "failed_count": 0, "warning_count": 0, "dry_run": dry_run,
-              "canonical_writes": False, "serving_enabled": False}
-    result['limited_smoke'] = max_symbols is not None
+    result = dict(batch=name,market_code='FR_EQ',provider='unknown',status='RUNNING',
+        started_at=now.isoformat(),requested_count=0,received_count=0,persisted_count=0,
+        failed_count=0,warning_count=0,dry_run=dry_run,canonical_writes=False,serving_enabled=False,
+        limited_smoke=max_symbols is not None,storage_backend='sql')
+    operational_run_id='fr-operation-'+uuid.uuid4().hex
+    result['operational_run_id']=operational_run_id
+    engine=repository=None
     try:
-        cfg = load_section(name, config_path)
-        result["provider"] = cfg.get("provider", "unknown")
-        if not dry_run and (not cfg.get("enabled") or cfg.get("status") not in ("ACTIVE", "ACTIVE_RESEARCH")):
-            result["status"] = "SKIPPED_DISABLED_OR_UNQUALIFIED"
+        cfg=load_section(name,config_path)
+        result['provider']=cfg.get('provider','unknown')
+        if not dry_run and (not cfg.get('enabled') or cfg.get('status') not in ('ACTIVE','ACTIVE_RESEARCH')):
+            result['status']='SKIPPED_DISABLED_OR_UNQUALIFIED'
         elif name not in IMPLEMENTED:
-            raise ValueError("Collecteur FR non implémenté/qualifié : aucun fallback US")
+            raise ValueError('Collecteur FR non implémenté/qualifié : aucun fallback US')
         else:
-            _handle(name, cfg, result, dry_run=dry_run, today=today, resume=resume, max_symbols=max_symbols)
-            result["status"] = "DRY_RUN" if dry_run else "SUCCESS"
+            engine=engine_fr()
+            repository=storage.Repository(engine)
+            repository.check_schema()
+            with storage.use(repository), repository.lock(name):
+                if not dry_run:
+                    repository.save_run(operational_run_id,result)
+                    repository.current_result=(operational_run_id,result)
+                _handle(name,cfg,result,dry_run=dry_run,today=today,resume=resume,max_symbols=max_symbols)
+            result['status']='DRY_RUN' if dry_run else 'SUCCESS'
     except Exception as exc:
-        result.update(status="FAILED", failed_count=max(1, result["failed_count"]), error_message=str(exc))
-    result["finished_at"] = datetime.now(UTC).isoformat()
-    if not dry_run:
-        # Even a malformed config gets an observable failure; no SQL connection.
-        folder = OPS / "runs" / (name if name.startswith("fr_") and name.replace("_", "").isalnum() else "invalid")
-        folder.mkdir(parents=True, exist_ok=True)
-        path = folder / f"{now:%Y%m%dT%H%M%S%fZ}-{uuid.uuid4().hex[:8]}.json"
-        with path.open("x", encoding="utf-8") as stream:
-            json.dump(result, stream, ensure_ascii=False, indent=2, default=str)
+        result.update(status='FAILED',failed_count=max(1,result['failed_count']),error_message=str(exc))
+    finally:
+        result['finished_at']=datetime.now(UTC).isoformat()
+        if repository is not None and not dry_run:
+            try:
+                result['sql_writes']=True
+                repository.save_run(operational_run_id,result)
+            except Exception as exc:
+                result.update(status='FAILED',failed_count=max(1,result['failed_count']),
+                    error_message='Enregistrement SQL du bilan FR : '+str(exc))
+        if engine is not None:
+            engine.dispose()
     return result
 
 
 def _handle(name, cfg, result, *, dry_run, today, resume=False, max_symbols=None):
+    if name == 'fr_options_open_interest_sync':
+        from service.fr.public_options_oi import collect
+        identities = (ROOT / str(cfg['identities_file'])).resolve()
+        if not identities.is_relative_to((ROOT/'artifacts/fr').resolve()):
+            raise ValueError('Identités OI hors périmètre FR')
+        root = OPS/name
+        if dry_run:
+            collect(cfg, result, root=root, identities=identities, dry_run=True, max_symbols=max_symbols)
+            return
+        lock = take_lock(root/'.lock')
+        try:
+            collect(cfg, result, root=root, identities=identities, max_symbols=max_symbols)
+        finally:
+            release_lock(lock)
+        return
     if name == 'fr_options_mifir_trade_sync':
         from service.fr.mifir_options_daily import collect
         identities = (ROOT / str(cfg['identities_file'])).resolve()
@@ -72,15 +107,11 @@ def _handle(name, cfg, result, *, dry_run, today, resume=False, max_symbols=None
         if dry_run:
             collect(cfg, result, root=root, identities=identities, dry_run=True, max_symbols=max_symbols)
             return
-        root.mkdir(parents=True, exist_ok=True)
-        lock = root/'.lock'
-        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        with os.fdopen(fd, 'w') as stream:
-            stream.write(str(os.getpid()))
+        lock = take_lock(root/'.lock')
         try:
             collect(cfg, result, root=root, identities=identities, max_symbols=max_symbols)
         finally:
-            lock.unlink(missing_ok=True)
+            release_lock(lock)
         return
     if name == 'fr_consensus_snapshot':
         from service.fr.consensus_snapshot import collect
@@ -91,15 +122,11 @@ def _handle(name, cfg, result, *, dry_run, today, resume=False, max_symbols=None
         if dry_run:
             collect(cfg, result, root=root, identities=identities, dry_run=True, max_symbols=max_symbols)
             return
-        root.mkdir(parents=True, exist_ok=True)
-        lock = root/'.lock'
-        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        with os.fdopen(fd, 'w') as stream:
-            stream.write(str(os.getpid()))
+        lock = take_lock(root/'.lock')
         try:
             collect(cfg, result, root=root, identities=identities, max_symbols=max_symbols)
         finally:
-            lock.unlink(missing_ok=True)
+            release_lock(lock)
         return
     if name == 'fr_fundamentals_sync':
         from service.inpi.universe_collection import collect
@@ -110,14 +137,10 @@ def _handle(name, cfg, result, *, dry_run, today, resume=False, max_symbols=None
         if dry_run:
             collect(cfg,result,root=root,manifest_path=manifest,dry_run=True,max_symbols=max_symbols)
             return
-        root.mkdir(parents=True,exist_ok=True)
-        lock=root/'.lock'
-        try: fd=os.open(lock,os.O_CREAT|os.O_EXCL|os.O_WRONLY)
-        except FileExistsError: raise RuntimeError('Collecte INPI déjà verrouillée : vérifier le processus') from None
-        with os.fdopen(fd,'w') as stream: stream.write(str(os.getpid()))
+        lock = take_lock(root/'.lock')
         try:
             collect(cfg,result,root=root,manifest_path=manifest,max_symbols=max_symbols)
-        finally: lock.unlink(missing_ok=True)
+        finally: release_lock(lock)
         return
     if name == 'fr_security_master_sync':
         from service.fr.security_master_daily_15e import collect
@@ -129,14 +152,10 @@ def _handle(name, cfg, result, *, dry_run, today, resume=False, max_symbols=None
         if dry_run:
             collect(cfg,result,root=root,identities=identities,base_path=baseline,dry_run=True,today=today)
             return
-        root.mkdir(parents=True,exist_ok=True)
-        lock=root/'.lock'
-        try: fd=os.open(lock,os.O_CREAT|os.O_EXCL|os.O_WRONLY)
-        except FileExistsError: raise RuntimeError('Référentiel FR déjà verrouillé : vérifier le processus') from None
-        with os.fdopen(fd,'w') as stream: stream.write(str(os.getpid()))
+        lock = take_lock(root/'.lock')
         try:
             collect(cfg,result,root=root,identities=identities,base_path=baseline,today=today)
-        finally: lock.unlink(missing_ok=True)
+        finally: release_lock(lock)
         return
     if name in ('fr_corporate_actions_sync','fr_amf_short_sync','fr_dila_disclosures_sync','fr_pit_quality_daily'):
         from service.fr import operational_collectors_15c as collectors
@@ -153,19 +172,17 @@ def _handle(name, cfg, result, *, dry_run, today, resume=False, max_symbols=None
             else:
                 collectors.public_collection(name,cfg,result,root=root,identities=identities,dry_run=True,today=today)
             return
-        root.mkdir(parents=True,exist_ok=True)
-        lock=root/'.lock'
-        try: fd=os.open(lock,os.O_CREAT|os.O_EXCL|os.O_WRONLY)
-        except FileExistsError: raise RuntimeError('Batch FR verrouillé : vérifier le processus avant suppression manuelle') from None
-        with os.fdopen(fd,'w') as stream: stream.write(str(os.getpid()))
+        lock = take_lock(root/'.lock')
         try:
             if name=='fr_corporate_actions_sync':
-                collectors.corporate(cfg,result,root=root,identities=identities,today=today,resume=resume,max_symbols=max_symbols)
+                collectors.corporate(cfg,result,root=root,identities=identities,today=today,
+                                     resume=resume,max_symbols=max_symbols)
             else:
                 collectors.public_collection(name,cfg,result,root=root,identities=identities,today=today)
-        finally: lock.unlink(missing_ok=True)
+        finally:
+            release_lock(lock)
         return
-    if name == "fr_daily_bars_sync":
+    if name == 'fr_daily_bars_sync':
         from service.fr.eodhd_daily_15b import collect
         from service.fr.publish_daily_bars_staging import run as publish_staging
         identities = (ROOT / str(cfg['identities_file'])).resolve()
@@ -215,12 +232,8 @@ def _handle(name, cfg, result, *, dry_run, today, resume=False, max_symbols=None
             raise ValueError("Calendrier XPAR vide")
         if not dry_run:
             target = OPS / "calendar" / f"{day}.json"
-            target.parent.mkdir(parents=True, exist_ok=True)
-            # Only this observation day is refreshed; previous snapshots remain.
-            temporary = target.with_suffix(".tmp")
-            temporary.write_text(json.dumps({"market_code": "FR_EQ", "observed_at": datetime.now(UTC).isoformat(),
-                "evidence_state": "LIBRARY_CALENDAR_NOT_OFFICIAL_PROOF", "sessions": rows}, default=str, indent=2), encoding="utf-8")
-            temporary.replace(target)
+            atomic(target, {"market_code":"FR_EQ","observed_at":datetime.now(UTC).isoformat(),
+                "evidence_state":"LIBRARY_CALENDAR_NOT_OFFICIAL_PROOF","sessions":rows})
             result["persisted_count"] = len(rows)
             result["snapshot_path"] = str(target)
         return
@@ -266,12 +279,23 @@ def _handle(name, cfg, result, *, dry_run, today, resume=False, max_symbols=None
 
 
 def latest_run(name: str) -> dict | None:
-    if not name.startswith("fr_") or not name.replace("_", "").isalnum():
-        raise ValueError("Nom batch FR invalide")
-    paths = sorted((OPS / "runs" / name).glob("*.json"), reverse=True)
-    if not paths:
-        return None
-    return json.loads(paths[0].read_text(encoding="utf-8"))
+    if not name.startswith('fr_') or not name.replace('_','').isalnum():
+        raise ValueError('Nom batch FR invalide')
+    from sqlalchemy import text
+    from service.fr.batch_research_store import engine_fr
+    engine=engine_fr()
+    try:
+        with engine.connect() as c:
+            row=c.execute(text('SELECT summary_json FROM fr_collection_runs WHERE batch_name=:name '
+                'ORDER BY started_at DESC LIMIT 1'),dict(name=name)).scalar_one_or_none()
+            if row is None:
+                row=c.execute(text('SELECT d.document_json FROM fr_batch_research_file_versions f '
+                    'JOIN fr_batch_research_documents d USING(document_id) WHERE f.batch_name=:name '
+                    'AND f.relative_path LIKE :prefix ORDER BY f.file_modified_at DESC,f.imported_at DESC LIMIT 1'),
+                    dict(name=name,prefix='runs/'+name+'/%')).scalar_one_or_none()
+        return json.loads(row) if row else None
+    finally:
+        engine.dispose()
 
 
 def main():

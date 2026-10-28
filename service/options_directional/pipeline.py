@@ -66,14 +66,27 @@ def main():
     if engine.url.database != 'alpha_trade':
         raise ValueError('Filtre options réservé à la base US alpha_trade')
     if args.phase == 'predict':
-        from .runner import analyze
+        from .runner import analyze, OracleCoverageError
         run_id = f'opt-{uuid.uuid4().hex}' if args.run_id == 'auto' else args.run_id
         if directory(run_id).exists():
             raise ValueError('Run options déjà présent ; pas de remplacement implicite')
         subprocess.run(command, check=True)
-        report = analyze(engine, run_id=run_id, batch_id=args.batch_id, trade_date=args.trade_date,
-            symbol_source=args.symbol_source, capital_preset_key=args.capital_preset_key,
-            artifacts_dir=args.artifacts_dir, config=config)
+        try:
+            report = analyze(engine, run_id=run_id, batch_id=args.batch_id, trade_date=args.trade_date,
+                symbol_source=args.symbol_source, capital_preset_key=args.capital_preset_key,
+                artifacts_dir=args.artifacts_dir, config=config)
+        except OracleCoverageError as exc:
+            folder = directory(run_id)
+            folder.mkdir(parents=True, exist_ok=False)
+            failure = dict(context, run_id=run_id, status='FAILED', phase='ORACLE_COVERAGE',
+                cutoff_utc=datetime.now(timezone.utc).isoformat(), diagnostics=exc.diagnostics,
+                error=str(exc), selection_published=False)
+            write_new(folder/'failure.json', failure)
+            emit_run_summary(dict(run_id=run_id, options_filter_run_id=run_id, status='failed',
+                requested=exc.diagnostics['requested_count'], received=exc.diagnostics['prediction_count'],
+                persisted=0, failed=len(exc.diagnostics['missing_symbols']), trade_date=args.trade_date,
+                diagnostics=exc.diagnostics, failure_path=str(folder/'failure.json')))
+            raise
         emit_run_summary(dict(run_id=run_id, options_filter_run_id=run_id, status='completed',
             requested=len(report['rows']), received=report['covered'], selected=report['selected'],
             persisted=len(report['rows']), failed=0, trade_date=args.trade_date,
@@ -83,7 +96,6 @@ def main():
     run_id, folder = report['run_id'], directory(report['run_id'])
     print(f'Filtre options exact : {run_id} ; séance {args.trade_date} ; cutoff {report["cutoff_utc"]}', flush=True)
     if args.phase == 'risk':
-        write_new(folder/'risk.claim.json', dict(started_at=datetime.now(timezone.utc).isoformat()))
         command = _flag(command, '--run-mode', 'paper')
         command = _flag(command, '--account', 'default')
         command = _flag(command, '--options-filter-run-id', run_id)
@@ -91,13 +103,16 @@ def main():
         command = _flag(command, '--oracle-tradable-policy', 'filter_then_top20')
         command = _flag(command, '--oracle-artifacts-dir', args.artifacts_dir)
         command = _flag(command, '--summary-path', str(folder/'risk_summary.json'))
-        subprocess.run(command, check=True)
-        summary = json.loads((folder/'risk_summary.json').read_text(encoding='utf-8'))
-        if (summary.get('options_filter_run_id') != run_id or not summary.get('run_id')
-                or summary.get('dry_run') or summary.get('run_mode') != 'paper'):
-            raise ValueError('Résumé risque options non publié ou incompatible')
-        write_new(folder/'risk_binding.json', dict(risk_run_id=summary['run_id'],
-            summary_sha256=digest(summary), report_sha256=digest(report)))
+        from .risk_attempts import risk_attempt
+        with risk_attempt(folder, report) as attempt:
+            command = _flag(command, '--options-risk-attempt-id', attempt['attempt_id'])
+            subprocess.run(command, check=True)
+            summary = json.loads((folder/'risk_summary.json').read_text(encoding='utf-8'))
+            if (summary.get('options_filter_run_id') != run_id or not summary.get('run_id')
+                    or summary.get('dry_run') or summary.get('run_mode') != 'paper'):
+                raise ValueError('Résumé risque options non publié ou incompatible')
+            write_new(folder/'risk_binding.json', dict(risk_run_id=summary['run_id'],
+                summary_sha256=digest(summary), report_sha256=digest(report)))
     else:
         binding = json.loads((folder/'risk_binding.json').read_text(encoding='utf-8'))
         summary = json.loads((folder/'risk_summary.json').read_text(encoding='utf-8'))
@@ -118,9 +133,12 @@ def main():
         broker = AlpacaTradingClient(broker_mode='paper', account_id='default')
         holdings = {p['symbol']: p for p in broker.get_positions()}
         _validate_targets(targets, holdings, {s: 'long' for s in report['selected']}, args.trade_date)
-        write_new(folder/'execution.claim.json', dict(started_at=datetime.now(timezone.utc).isoformat()))
         command = _flag(_flag(command, '--run-id', binding['risk_run_id']), '--account', 'default')
-        subprocess.run(command, check=True)
+        from .execution_attempts import execution_attempt
+        with execution_attempt(folder, report, binding) as attempt:
+            command = _flag(command, '--options-filter-run-id', run_id)
+            command = _flag(command, '--options-execution-attempt-id', attempt['attempt_id'])
+            subprocess.run(command, check=True)
 
 
 if __name__ == '__main__':

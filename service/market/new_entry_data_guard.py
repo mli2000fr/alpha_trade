@@ -2,12 +2,16 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import logging
 
 import numpy as np
 import pandas as pd
 from sqlalchemy import bindparam, text
 
 from common.market_calendar import _get_nyse_calendar
+from common.daily_bar_sources import select_daily_bars
+
+LOGGER = logging.getLogger(__name__)
 
 
 def entry_sessions(trade_date, *, now=None, min_sessions=61, publication_delay_minutes=15):
@@ -31,7 +35,7 @@ def entry_sessions(trade_date, *, now=None, min_sessions=61, publication_delay_m
     return sessions
 
 
-def validate_entry_bars(frame, symbols, sessions, *, now):
+def validate_entry_bars(frame, symbols, sessions, *, now, raw_config=None):
     """Every required session must have one real, finite, positive OHLCV bar."""
     rejected = {}
     required = {'symbol', 'date', 'open', 'high', 'low', 'close', 'volume',
@@ -40,6 +44,14 @@ def validate_entry_bars(frame, symbols, sessions, *, now):
         return {symbol: 'BAR_METADATA_MISSING' for symbol in symbols}
     for symbol in symbols:
         rows = frame.loc[frame.symbol.eq(symbol)].copy()
+        try:
+            rows = select_daily_bars(rows, config=raw_config)
+        except ValueError as exc:
+            # Never arbitrarily keep one row within a provider, or let an
+            # ambiguous symbol prevent validation of the other candidates.
+            LOGGER.error('BAR_SOURCE_SELECTION_REJECTED %s: %s', symbol, exc)
+            rejected[symbol] = 'MISSING_OR_DUPLICATE_SESSIONS'
+            continue
         days = pd.to_datetime(rows['date'], errors='coerce').dt.date
         if days.duplicated().any() or set(days) != set(sessions):
             rejected[symbol] = 'MISSING_OR_DUPLICATE_SESSIONS'
@@ -96,7 +108,7 @@ def check_new_entry_data(engine, symbols, trade_date, *, now=None, required_sess
                 'WHERE symbol IN :symbols AND date BETWEEN :start AND :end')
             statement = statement.bindparams(bindparam('symbols', expanding=True))
             frame = pd.read_sql(statement, conn, params={'symbols': symbols, 'start': sessions[0], 'end': sessions[-1]})
-        return validate_entry_bars(frame, symbols, sessions, now=now)
+        return validate_entry_bars(frame, symbols, sessions, now=now, raw_config=raw_config)
     except Exception as exc:
         return {symbol: f'DATA_GUARD_UNAVAILABLE: {exc}' for symbol in symbols}
 

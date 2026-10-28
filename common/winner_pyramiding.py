@@ -19,6 +19,7 @@ class WinnerPyramidingConfig:
     reinforcement_enabled: bool = False
     reinforcement_trigger_pct: float = .05
     confirmation_bars: int = 2
+    standard_entry_quote_check_enabled: bool = True
     stop_loss_pct: float = .05
     take_profit_pct: float | None = None
     trailing_stop_pct: float | None = .15
@@ -29,7 +30,7 @@ class WinnerPyramidingConfig:
     cost_reserve_bps_per_leg: float = 25.
 
     def __post_init__(self):
-        for key in ('enabled', 'reinforcement_enabled'):
+        for key in ('enabled', 'reinforcement_enabled', 'standard_entry_quote_check_enabled'):
             if type(getattr(self, key)) is not bool:
                 raise ValueError(f'winner_pyramiding.{key}: boolean required')
         if type(self.initial_position_fraction) not in (int, float) or self.initial_position_fraction not in (.5, 1.):
@@ -63,6 +64,16 @@ def load_winner_pyramiding_config(raw=None):
     if not isinstance(section, dict):
         raise ValueError('winner_pyramiding must be a mapping')
     return WinnerPyramidingConfig(**section)
+
+
+def held_market_data_required(state):
+    """Held campaigns need market signals only for trailing or reinforcement.
+
+    Broker fill/protection reconciliation and the frozen horizon remain the
+    runtime's responsibility even when no five-minute market data is needed.
+    """
+    policy = WinnerPyramidingConfig(**state['policy'])
+    return policy.trailing_stop_pct is not None or policy.reinforcement_enabled
 
 
 def aware(value):

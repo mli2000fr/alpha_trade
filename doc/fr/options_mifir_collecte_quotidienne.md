@@ -6,12 +6,15 @@
 
 ## Statut et activation
 
-Le batch `fr_options_mifir_trade_sync` est implémenté, mais livré avec
-`enabled: false` dans `batch_fr.yaml`. Il apparaît dans **Workflow & Orchestration
-→ Batch → France**, au même titre que les autres collectes FR.
+État au **27 octobre 2026** : le batch `fr_options_mifir_trade_sync` est actif,
+avec `enabled: true`, `status: ACTIVE_RESEARCH` et `sql_storage_enabled: true`
+dans `batch_fr.yaml`. Il apparaît dans **Workflow & Orchestration → Batch → France**.
+Il conserve les fichiers sources et alimente désormais quatre tables SQL de
+recherche dédiées dans `alpha_trade_fr`. Les archives antérieures ont été importées :
+[schéma, compteurs, reprise et requêtes](options_mifir_stockage_sql.md).
 
-Pour l'utiliser : passer cette section à `enabled: true`, conserver
-`status: ACTIVE_RESEARCH`, puis installer/réinstaller le batch depuis cette page.
+Pour une nouvelle installation : appliquer la migration FR `0009`, puis
+installer/réinstaller le batch depuis cette page.
 Le bouton d'exécution immédiate utilise le même launcher et les mêmes notifications
 mail/Telegram que les autres batchs FR. Les destinataires et secrets restent ceux
 du système de notification existant. L'installation et l'activation ne sont pas
@@ -46,8 +49,9 @@ NBBO, tailles bid/ask, Greeks complets et historique qualifié des ajustements.
 La quantité déclarée n'est pas encore certifiée comme un volume de contrats :
 pas de ratio put/call de volumes certifié. Le champ correspondant reste nul.
 
-Toutes les observations restent `ml_eligible: false`, sans écriture canonique,
-sans insertion SQL et sans utilisation par les modèles/backtests. La référence
+Toutes les observations restent `ml_eligible: false`, sans écriture canonique
+et sans utilisation par les modèles/backtests. Les insertions SQL portent uniquement
+sur les tables de recherche `fr_option_mifir_*`. La référence
 FIRDS courante ne constitue pas une preuve historique PIT qualifiée. L'heure
 de disponibilité conservatrice est l'heure d'observation de la collecte ; on
 ne remplace pas cette heure par la publication initiale du trade.
@@ -92,6 +96,13 @@ entre lots. Aucun contournement de refus d'accès, authentification ou CAPTCHA.
 ## Stockage, déduplication et erreurs
 
 Racine : `artifacts/fr/operations/fr_options_mifir_trade_sync/`.
+
+Les fichiers ci-dessous sont conservés. Depuis le 27 octobre 2026, ils sont aussi
+représentés dans `fr_option_mifir_snapshots`, `fr_option_mifir_contracts`,
+`fr_option_mifir_trades` et `fr_option_mifir_observations`. Les compteurs SQL sont
+distincts des compteurs historiques exprimés en titres sous-jacents. Un schéma
+absent bloque avant les appels fournisseur ; un échec SQL rend le batch FAILED,
+avec les fichiers préservés pour reprise hors ligne. Aucun DDL automatique.
 
 - `objects/<sha256>` : objets sources bruts, contrôlés avant réutilisation ;
 - `checkpoints/<date-collecte>/<hash-requête>.json` : reçus FIRDS pour reprendre

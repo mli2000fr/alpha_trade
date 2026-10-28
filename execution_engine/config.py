@@ -447,7 +447,7 @@ class ProtectionWatcherServiceConfig:
 
     interval_seconds: float = 30.0
     idle_interval_seconds: float = 120.0
-    heartbeat_interval_seconds: float = 300.0
+    heartbeat_interval_seconds: float = 60.0
     max_iterations: int | None = None
     stop_when_idle: bool = False
     max_consecutive_failures: int = 3

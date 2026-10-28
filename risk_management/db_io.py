@@ -433,6 +433,9 @@ class RiskRepository:
         params: dict[str, Any] = {f"s{i}": s for i, s in enumerate(symbols)}
         params["trade_date"] = trade_date
         params["row_limit"] = atr_window + 1
+        from common.daily_bar_sources import daily_source_filter
+        source_filter, source_params = daily_source_filter()
+        params.update(source_params)
         query = text(f"""
             WITH ranked AS (
                 SELECT
@@ -446,6 +449,7 @@ class RiskRepository:
                 FROM stock_bars_daily
                 WHERE symbol IN ({placeholders})
                   AND `date` <= :trade_date
+                  {source_filter}
             )
             SELECT symbol, trade_day, close_price, high_price, low_price, volume
             FROM ranked
@@ -768,7 +772,13 @@ class RiskRepository:
     def load_factor_columns_asof(
         self, symbols: list[str], trade_date: date,
     ) -> pd.DataFrame:
-        """Charge les colonnes factorielles (beta_126, market_cap, trend_score)
+        """Lecture historique legacy des colonnes factorielles.
+
+        Le chemin live qualifié utilise désormais live_factor_context et
+        stock_risk_factor_inputs (publication horodatée, univers non filtré).
+        Ne pas remplacer des NULL historiques par des réparations connues plus tard.
+
+        Charge les colonnes factorielles (beta_126, market_cap, trend_score)
         depuis stock_scores_history pour le modèle de risque factoriel (Priorité 3).
 
         Parameters
@@ -860,6 +870,9 @@ class RiskRepository:
         params: dict[str, Any] = {f"s{i}": s for i, s in enumerate(symbols)}
         params["trade_date"] = trade_date
         params["row_limit"] = lookback_days + 1
+        from common.daily_bar_sources import daily_source_filter
+        source_filter, source_params = daily_source_filter()
+        params.update(source_params)
         query = text(f"""
             SELECT symbol, trade_day AS `date`, close_price
             FROM (
@@ -868,6 +881,7 @@ class RiskRepository:
                 FROM stock_bars_daily
                 WHERE symbol IN ({placeholders})
                   AND `date` <= :trade_date
+                  {source_filter}
             ) ranked
             WHERE rn <= :row_limit
         """)

@@ -112,6 +112,7 @@ from ihm.pages._workflow import (
 from ihm.services.db import get_runtime_db_config
 from ihm.services.ml_artifacts import list_ml_artifact_symbols
 from ihm.services.pipeline_runner import (
+    DEFAULT_ML_PREDICT_SYMBOL_SOURCE,
     build_pipeline_command,
     format_command_for_display,
     resolve_step_display_name,
@@ -124,6 +125,7 @@ from ihm.services.queries import get_execution_live_guard
 UNIVERSE_FILE_SOURCES = list_universe_file_sources()
 DEFAULT_UNIVERSE_FILE_SOURCE = UNIVERSE_FILE_SOURCES[0] if UNIVERSE_FILE_SOURCES else "tradable-universe"
 ML_PREDICT_BATCH_SOURCE_SYNC_KEY = "pipeline_ml_predict_source_synced_batch_id"
+ML_PREDICT_SOURCE_DEFAULT_VERSION_KEY = "pipeline_ml_predict_source_default_v2"
 ML_TRAIN_SYMBOL_SOURCE_OPTIONS = (
     "stock-bars-daily",
     "tradable-universe",
@@ -1288,6 +1290,16 @@ def _render_ml_train_scope_block(
     )
 
 
+def _prime_ml_predict_symbol_source() -> None:
+    """Migrate the former automatic default once; keep subsequent manual choices."""
+    key = "pipeline_ml_predict_symbol_source"
+    if not st.session_state.get(ML_PREDICT_SOURCE_DEFAULT_VERSION_KEY):
+        if st.session_state.get(key) in (None, "", "universe-file:oracle_balanced_400_202512.txt"):
+            st.session_state[key] = DEFAULT_ML_PREDICT_SYMBOL_SOURCE
+        st.session_state[ML_PREDICT_SOURCE_DEFAULT_VERSION_KEY] = True
+    st.session_state.setdefault(key, DEFAULT_ML_PREDICT_SYMBOL_SOURCE)
+
+
 def _render_ml_predict_scope_block(
     options: PipelineLaunchOptions,
     *,
@@ -1298,6 +1310,8 @@ def _render_ml_predict_scope_block(
 ) -> None:
     # ── Sélecteur de batch ML ──
     from ihm.services.queries import safe_query
+
+    _prime_ml_predict_symbol_source()
 
     # Tous les batchs complétés (pas de LIMIT : l'utilisateur veut pouvoir
     # rejouer un backtest avec un batch ancien, ex. B25 ou plus vieux).
@@ -1374,10 +1388,8 @@ def _render_ml_predict_scope_block(
             _dynamic_oracle_batch = False
     _last_synced_batch = str(st.session_state.get(ML_PREDICT_BATCH_SOURCE_SYNC_KEY, ""))
     if _selected_batch and _last_synced_batch != str(_selected_batch):
-        if _normalized_batch_source in ML_TRAIN_SYMBOL_SOURCE_OPTIONS:
-            st.session_state["pipeline_ml_predict_symbol_source"] = _normalized_batch_source
-        else:
-            st.session_state["pipeline_ml_predict_symbol_source"] = DEFAULT_UNIVERSE_FILE_SOURCE
+        # The training registry is informative, not an instruction to replace
+        # the requested prediction universe (its file may have changed since training).
         st.session_state["pipeline_ml_oracle_shadow"] = _dynamic_oracle_batch
         st.session_state[ML_PREDICT_BATCH_SOURCE_SYNC_KEY] = str(_selected_batch)
 
@@ -1411,14 +1423,15 @@ def _render_ml_predict_scope_block(
     if _selected_batch and _normalized_batch_source:
         if _normalized_batch_source in ML_TRAIN_SYMBOL_SOURCE_OPTIONS:
             st.caption(
-                "🌐 Univers d’entraînement repris par défaut : "
-                f"`{ML_TRAIN_SYMBOL_SOURCE_LABELS.get(_normalized_batch_source, _normalized_batch_source)}`."
+                "🌐 Univers enregistré à l’entraînement (informatif) : "
+                f"`{ML_TRAIN_SYMBOL_SOURCE_LABELS.get(_normalized_batch_source, _normalized_batch_source)}`. "
+                "Il ne remplace pas l’univers de prédiction sélectionné ci-dessous."
             )
         else:
             st.warning(
                 "L’univers d’entraînement enregistré pour ce batch n’est plus disponible : "
-                f"`{_batch_source}`. Le premier fichier disponible est sélectionné par défaut : "
-                f"`{ML_TRAIN_SYMBOL_SOURCE_LABELS.get(DEFAULT_UNIVERSE_FILE_SOURCE, DEFAULT_UNIVERSE_FILE_SOURCE)}`."
+                f"`{_batch_source}`. L’univers de prédiction sélectionné ci-dessous est conservé ; "
+                "sa compatibilité avec le contrat du modèle reste obligatoire."
             )
 
     _predict_workers = st.number_input(
@@ -1526,7 +1539,7 @@ def _load_risk_prediction_review_cached(**scope):
 def _render_options_filter_review(options: PipelineLaunchOptions, all_runs) -> None:
     import pandas as pd
     from common.us_signal_date import resolve_us_signal_date
-    from service.options_directional.store import qualified
+    from ihm.services.options_prediction_review import load_options_prediction_review
     st.markdown('#### TOP Oracle — filtre volume options + OI')
     records = [r for r in all_runs if r.get('step_key') == 'ml_predict'
                and (r.get('account_id') or 'default') == (options.account_id or 'default')
@@ -1539,12 +1552,12 @@ def _render_options_filter_review(options: PipelineLaunchOptions, all_runs) -> N
     try:
         from service.options_directional.config import load_options_filter_config
         batch = options.ml_live_predict_batch_id or options.ml_predict_batch_id or load_options_filter_config().default_oracle_batch_id
-        report = qualified(run_id, trade_date=resolve_us_signal_date(options.trade_date or None),
+        report = load_options_prediction_review(run_id, trade_date=resolve_us_signal_date(options.trade_date or None),
                            batch_id=batch, account_id=options.account_id or 'default',
                            symbol_source=options.ml_predict_symbol_source,
                            capital_preset_key=options.capital_preset_key or 'capital_2001_5000')
-    except (ValueError, KeyError, OSError):
-        st.warning('Résultat options expiré ou incompatible avec la date/modèle/univers courant. Aucun remplacement implicite.')
+    except (ValueError, KeyError, OSError) as exc:
+        st.warning(f'Résultat options non affichable : {exc}. Aucun ancien run substitué.')
         return
     st.caption(f"Run `{run_id}` · séance {report['trade_date']} · cutoff {report['cutoff_utc']} · "
                f"couverts {report['covered']}/{len(report['rows'])} · retenus LONG {len(report['selected'])}.")

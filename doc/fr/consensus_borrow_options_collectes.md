@@ -6,6 +6,12 @@
 
 ## État courant au 15 octobre 2026
 
+Complément du **27 octobre 2026** : `fr_options_mifir_trade_sync`, actif, conserve
+ses archives et alimente désormais les [tables SQL MiFIR de recherche](options_mifir_stockage_sql.md).
+L'historique des fichiers a été importé ; OI et volumes en contrats qualifiés
+restent indisponibles. Les descriptions plus anciennes « fichiers uniquement »
+ne décrivent plus le stockage courant.
+
 `fr_consensus_snapshot` utilise désormais **EODHD /calendar/trends** ; accès et
 stockage vérifiés sur trois titres FR (166 lignes normalisées), reprise sans
 doublon ni nouvel appel. Deux tables dédiées dans `alpha_trade_fr`. Yahoo n'est

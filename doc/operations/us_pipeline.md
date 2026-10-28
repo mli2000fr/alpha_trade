@@ -6,6 +6,12 @@
 
 ## Périmètre
 
+**28 octobre 2026 : [capital broker obligatoire à l'étape 11](risque_capital_broker_20261028.md).**
+En PAPER/LIVE, le risque relit le compte sélectionné, ses positions et ses
+ordres ouverts. Aucun repli sur les 100 000 $ par défaut. Le mode du calcul
+risque est transmis explicitement par le Pipeline ; le capital saisi est réservé
+à la recherche shadow/dry-run. Aucun assouplissement des contrôles SIP.
+
 Le **26 octobre 2026**, ajout du filtre options expérimental après Oracle,
 activé par défaut dans la page et le batch :
 `options_directional_filter.enabled: true`, défaut de code TOP20.

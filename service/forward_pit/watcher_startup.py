@@ -71,7 +71,8 @@ def healthy_service(repo, account_id):
         raise RuntimeError('Watcher existant non vérifiable sur cet ordinateur ; étape 12 bloquée')
     import psutil
     try:
-        command = psutil.Process(int(row['pid'])).cmdline()
+        process = psutil.Process(int(row['pid']))
+        command = process.cmdline()
     except psutil.NoSuchProcess:
         return False
     except (psutil.AccessDenied, TypeError, ValueError) as exc:
@@ -80,6 +81,8 @@ def healthy_service(repo, account_id):
     # cannot provide the required continuous protection of new entries.
     if not _is_watcher_command(command) or not _compatible(command, account_id):
         raise RuntimeError('Watcher existant incompatible (mode/compte/périmètre) ; étape 12 bloquée')
+    from execution_engine.winner_plans import require_current_watcher_code
+    require_current_watcher_code(process)
     return True
 
 

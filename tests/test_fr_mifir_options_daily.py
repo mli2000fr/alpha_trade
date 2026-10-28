@@ -10,6 +10,13 @@ from test_fr_mifir_options_poc import reference, trade, zipped
 
 
 def setup(monkeypatch):
+    from service.fr import mifir_options_store as store
+    class Engine:
+        def dispose(self):
+            pass
+    monkeypatch.setattr(store, 'engine_fr', Engine)
+    monkeypatch.setattr(store, 'check_schema', lambda engine: None)
+    monkeypatch.setattr(store, 'persist_archive', lambda *args: dict(sql_snapshots=0))
     monkeypatch.setattr(daily, 'reference_scope', lambda path:
         (2, {'OTHER.PA': ({'isin': 'FR0000120321'}, []),
              'BN.PA': ({'isin': 'FR0000120644'}, [])}, []))
@@ -105,6 +112,11 @@ def test_batch_visible_with_common_launcher():
 def test_runner_preserves_failure_counts_and_emits_failed_status(tmp_path, monkeypatch):
     from service.fr import operational_batch_15a as runner
     monkeypatch.setattr(runner, 'OPS', tmp_path/'operations')
+    from service.fr import collection_storage as primary,batch_research_store
+    from fr_sql_primary_helpers import sqlite_primary
+    e=sqlite_primary(tmp_path/'runner.sqlite')
+    monkeypatch.setattr(primary.Repository,'check_schema',lambda self:None)
+    monkeypatch.setattr(batch_research_store,'engine_fr',lambda:e)
     monkeypatch.setattr(runner, 'load_section', lambda *a: {
         'enabled': True, 'status': 'ACTIVE_RESEARCH', 'provider': 'test'})
     def failing(name, cfg, result, **kw):

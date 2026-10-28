@@ -86,6 +86,27 @@ Une étape peut être lancée seule ou dans un workflow. Le résultat structuré
 
 Un processus terminé n’est pas nécessairement un succès métier : rapprocher code retour, summary et tables attendues. Une sortie sans summary final est suspecte. Les artefacts sont sous `artifacts/ihm_pipeline_runs/`; leur rotation ne remplace pas l’audit en base.
 
+### Actualisation des journaux Pipeline — 27 octobre 2026
+
+Le cache de l'historique est indexé sur la révision du fichier
+`history_index.json` (chemin, date de modification haute précision, taille).
+Un nouveau run déjà terminé entre deux rafraîchissements devient ainsi visible
+sans attendre l'expiration du cache de 60 secondes. La sélection d'un nouveau
+lancement n'est plus perdue si son entrée d'historique n'est pas encore visible ;
+le registre est consulté directement pour cette entrée.
+
+La vue automatique suit le nouveau lancement. Un choix manuel d'un ancien run
+reste possible : son identifiant et sa date de lancement sont affichés au-dessus
+du journal, avec un avertissement et le bouton **Afficher le run le plus récent /
+actif**. **Rafraîchir maintenant** invalide explicitement le cache. Les résultats
+des blocs d'étape sont ordonnés par date de lancement, et non par la fin tardive
+d'une ancienne exécution. Aucun ancien journal n'est supprimé ou remplacé.
+
+Vérification : 110 tests passent (`test_pipeline_log_freshness`,
+`test_pages_pipeline`, `test_pipeline_historical_llm_scope`,
+`test_options_workflow_resume_binding`). Aucun lancement métier nécessaire pour
+tester ces changements d'affichage.
+
 ## Verrou pipeline/backtest
 
 `pipeline_lock.py` empêche workflow pipeline et backtest de partager simultanément `stock_scores`, `stock_bars_daily` et les artefacts ML. Les locks JSON résident dans `artifacts/ihm_pipeline_runs/.locks/` et contiennent scope, owner, run id, PID et date.

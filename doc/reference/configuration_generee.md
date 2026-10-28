@@ -241,6 +241,7 @@ Priorités et contrats : [guide configuration](../18_reference_configuration.md)
 | `risk_management.use_factor_correlation_filter` | bool |
 | `risk_management.factor_correlation_threshold` | float |
 | `risk_management.max_portfolio_beta` | float |
+| `risk_management.beta_exposure_basis` | str |
 | `risk_management.max_factor_concentration_pct` | float |
 | `risk_management.min_factor_diversification` | int |
 | `risk_management.factor_ewma_half_life` | int |

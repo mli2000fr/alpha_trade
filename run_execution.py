@@ -28,6 +28,7 @@ import os
 import subprocess
 import sys
 from collections.abc import Iterable
+from contextlib import nullcontext
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal, cast
@@ -609,21 +610,26 @@ def _load_pre_submission_spreads(
     *,
     account_id: str,
 ) -> dict[str, object]:
-    """Charge les spreads live (bid/ask) depuis l'API Alpaca pour le gate pré-soumission."""
+    """Charge les spreads consolidés du fournisseur configuré, avant soumission."""
     from risk_management.liquidity import SpreadSnapshot
-    from service.alpaca.clientAlpaca import fetch_latest_quotes
+    from service.market.live_quotes import fetch_latest_quotes, validate_live_quote
 
     if not symbols:
         return {}
     try:
         raw_quotes = fetch_latest_quotes(symbols, account_id=account_id)
     except Exception:
-        LOGGER.warning("Pre-submission spreads indisponibles (API Alpaca quotes).", exc_info=True)
+        LOGGER.warning("Pre-submission spreads indisponibles (fournisseur quotes configuré).", exc_info=True)
         return {}
 
     snapshots: dict[str, SpreadSnapshot] = {}
     for sym, quote in raw_quotes.items():
         if not isinstance(quote, dict):
+            continue
+        try:
+            validate_live_quote(quote, max_age_seconds=30)
+        except (ValueError, TypeError, KeyError, OverflowError):
+            LOGGER.warning('Quote pré-soumission non qualifiée pour %s ; entrée bloquée', sym)
             continue
         quote_time_str = quote.get("t")
         quote_time = None
@@ -645,7 +651,7 @@ def _load_pre_submission_spreads(
             bid=bid if bid and bid > 0 else None,
             ask=ask if ask and ask > 0 else None,
             quote_time=quote_time,
-            source="alpaca",
+            source=quote['source'],
         )
     return snapshots
 
@@ -717,12 +723,12 @@ def _load_pre_submission_adv_vol(
 
     Returns (adv_dict, daily_vol_dict).
     """
-    from risk_management.db_io import RiskDbIo
-
     if not symbols:
         return {}, {}
     try:
-        repo = RiskDbIo()
+        from risk_management.db_io import RiskRepository
+
+        repo = RiskRepository()
         prices = repo.load_prices_asof(symbols=symbols, trade_date=trade_date, atr_window=20)
     except Exception:
         LOGGER.warning("Pre-submission ADV/vol indisponibles (DB).", exc_info=True)
@@ -730,11 +736,16 @@ def _load_pre_submission_adv_vol(
 
     adv: dict[str, float] = {}
     daily_vol: dict[str, float] = {}
+    from math import isfinite
+
     for sym, pi in prices.items():
-        if pi.adv_usd is not None and pi.adv_usd > 0:
+        if pi.adv_usd is not None and isfinite(pi.adv_usd) and pi.adv_usd > 0:
             adv[sym] = float(pi.adv_usd)
-        if pi.atr_20 is not None and pi.last_close > 0:
-            daily_vol[sym] = float(pi.atr_20 / pi.last_close)
+        if (pi.atr_20 is not None and isfinite(pi.atr_20) and pi.atr_20 >= 0
+                and isfinite(pi.last_close) and pi.last_close > 0):
+            value = float(pi.atr_20 / pi.last_close)
+            if isfinite(value):
+                daily_vol[sym] = value
     return adv, daily_vol
 
 
@@ -1189,23 +1200,15 @@ def run(
     _spy_regime_map: dict | None = None
     if _cb_policy != "b0":
         try:
-            import sqlalchemy as _sa
             from backtesting.regime_trailing import compute_regime
             from database.connection import get_sqlalchemy_engine as _get_engine
+            from common.daily_bar_sources import load_daily_close_series
             _eng = _get_engine()
-            _spy_start = datetime.now() - timedelta(days=400)
-            with _eng.connect() as _conn:
-                _spy_rows = _conn.execute(_sa.text(
-                    "SELECT `date`, COALESCE(adj_close, `close`) "
-                    "FROM stock_bars_daily WHERE symbol='SPY' "
-                    "AND data_source = :ds AND `date` >= :s ORDER BY `date`"
-                ), {"ds": "eodhd_eod", "s": _spy_start.date()}).fetchall()
             import pandas as _pd
-            _spy_series = _pd.Series(
-                [float(r[1]) for r in _spy_rows],
-                index=_pd.to_datetime([r[0] for r in _spy_rows]),
-            )
-            _spy_series = _spy_series[~_spy_series.index.duplicated(keep="last")].sort_index()
+            # Match campaign reapproval: same raw daily source priority and
+            # explicit completed-session cutoff, including recent SIP-only days.
+            _spy_series = load_daily_close_series(_eng, 'SPY', trade_date_val)
+            _spy_series = _spy_series.loc[_spy_series.index >= _pd.Timestamp(trade_date_val)-_pd.Timedelta(days=400)]
             _regime_series = compute_regime(_spy_series)
             _spy_regime_map = {
                 _pd.Timestamp(ts).date(): str(r)
@@ -1452,6 +1455,10 @@ def run(
         account_id=config.resolved_account_id,
     )
     if _pre_sub_symbols and not config.dry_run:
+        if (config.winner_pyramiding.enabled and config.winner_pyramiding.confirmation_bars == 0
+                and not config.winner_pyramiding.standard_entry_quote_check_enabled):
+            LOGGER.warning('Winner standard : contrôle quote désactivé pour les nouvelles campagnes ; '
+                'le préchargement commun des spreads reste indépendant et son absence ne qualifie pas un prix temps réel')
         _pre_spreads = _load_pre_submission_spreads(
             _pre_sub_symbols,
             account_id=config.resolved_account_id or "default",
@@ -1476,6 +1483,17 @@ def run(
                 "Pre-submission data wired: %d spreads, %d borrows, %d ADV, %d vol",
                 len(_pre_spreads), len(_pre_borrows), len(_pre_adv), len(_pre_vol),
             )
+
+    # Reject an obsolete/missing watcher before any transition order or plan.
+    # Keep the executor's second check immediately before campaign staging.
+    if config.winner_pyramiding.enabled and not config.dry_run and not config.blocks_new_entries:
+        from execution_engine.winner_plans import require_campaign_watcher
+        require_campaign_watcher(repo, config)
+
+    # Durable options checkpoint: from here an order or a Winner plan may exist.
+    # Errors beyond it must never authorize an automatic execution retry.
+    from service.options_directional.execution_attempts import mark_execution_effects_possible
+    mark_execution_effects_possible(risk_run_id=run_id, mode=mode, account_id=config.resolved_account_id)
 
     # ── Point 10 : exécuter le plan de transition AVANT les nouvelles entrées ──
     _transition_counters: dict[str, int] = {}
@@ -1662,6 +1680,7 @@ def run(
                 LOGGER.warning("daily_reconciliation: snapshot compte broker indisponible", exc_info=True)
 
         _target_positions = []
+        _oms_evidence_loaded = False
         _exec_run_id = str(metrics.get("exec_run_id") or "")
         if _exec_run_id:
             try:
@@ -1701,8 +1720,41 @@ def run(
                 )
                 _internal_cash_raw = _internal_ledger.get("calculated_cash")
                 _internal_pnl_raw = _internal_ledger.get("calculated_pnl")
+                _oms_evidence_loaded = True
             except Exception:
                 LOGGER.warning("daily_reconciliation: preuves OMS persistées indisponibles", exc_info=True)
+        if (_oms_evidence_loaded and metrics.get('winner_plans')
+                and int(metrics.get('submitted', 0) or 0) == 0
+                and int(metrics.get('filled', 0) or 0) == 0
+                and not _intended_orders and not _submitted_orders and not _broker_fills_raw):
+            try:
+                from execution_engine.winner_campaign_store import WinnerCampaignStore
+                from execution_engine.winner_reconciliation import defer_unsubmitted_campaign_targets
+                records = WinnerCampaignStore(repo.engine).rows(account=config.resolved_account_id,
+                    broker_mode=config.broker_mode)
+                adjusted, deferred = defer_unsubmitted_campaign_targets(_target_positions, records,
+                    exec_run_id=_exec_run_id, risk_run_id=run_id, account_id=config.resolved_account_id,
+                    broker_mode=config.broker_mode)
+                if deferred:
+                    summary['pending_winner_targets'] = deferred
+                    summary['position_reconciliation_basis'] = 'DURABLE_WINNER_PLANS_WITHOUT_ORDER_OR_FILL'
+                    _target_positions = adjusted
+            except Exception:
+                LOGGER.warning('Réconciliation Winner : preuve des plans indisponible ; contrôle conservé', exc_info=True)
+        # A proposal which failed before any OMS intent/submission is not a
+        # holding. Still reconcile actual broker positions, orders and stops:
+        # an unexpected position must continue to raise an alert.
+        if (str(metrics.get('status', '')).upper() == 'FAILED'
+                and _oms_evidence_loaded
+                and metrics.get('error_message') in (
+                    'Restart watcher: process predates the campaign implementation',
+                    'Redémarrer le watcher : son processus est antérieur à la mise à jour Winner')
+                and int(metrics.get('submitted', 0) or 0) == 0
+                and int(metrics.get('filled', 0) or 0) == 0
+                and not _intended_orders and not _submitted_orders and not _broker_fills_raw):
+            summary['unexecuted_targets'] = _target_positions
+            summary['position_reconciliation_basis'] = 'NO_SUBMITTED_TARGETS_AFTER_FAILURE'
+            _target_positions = []
         _rec_result: object = _daily_rec.reconcile(
             trade_date=trade_date_val or date.today(),
             intended_orders=_intended_orders,
@@ -1863,10 +1915,16 @@ def run(
     targets_n  = metrics.get("targets", 0)
     submitted_n = metrics.get("submitted", 0)
 
-    if failed > 0:
+    if str(metrics.get('status', '')).upper() == 'FAILED':
+        print(f"{RED}[ECHEC] {metrics.get('error_message') or 'Échec du moteur : consulter execution_events.'}{RESET}")
+    elif failed > 0:
         print(f"{YELLOW}[!] Certains ordres ont echoue. Consulte la table execution_events.{RESET}")
     elif targets_n == 0:
         print(f"{YELLOW}[!] Aucune cible trouvee. Verifie que portfolio_targets est alimente.{RESET}")
+    elif metrics.get('winner_plans') and submitted_n == 0 and not PRESETS[mode]["dry_run"]:
+        print(f"{YELLOW}[ATTENTE] Plans Winner enregistrés ; aucun ordre envoyé. Le watcher reprendra la revalidation.{RESET}")
+        for detail in (metrics.get('winner_standard_entry') or {}).get('winner_details', []):
+            print(f"{YELLOW}    {detail.get('symbol', '')} : {detail.get('reason', 'motif indisponible')}{RESET}")
     elif targets_n > 0 and submitted_n == 0 and not PRESETS[mode]["dry_run"]:
         print(f"{YELLOW}[!] {targets_n} cible(s) chargee(s) mais AUCUN ordre soumis.{RESET}")
         if constraint_blocked > 0:
@@ -1879,13 +1937,10 @@ def run(
                 f"(cash vs margin) et les events `INTENT_SKIPPED_ACCOUNT_CONSTRAINT`.{RESET}"
             )
         else:
-            print(f"{YELLOW}    Cause probable : marche ferme (week-end ou hors RTH).{RESET}")
-            print(f"{YELLOW}    Prochaine ouverture : lundi 09:30 ET.{RESET}")
-            print(f"{YELLOW}    Pour forcer la soumission : coche 'Execution hors RTH' dans l'IHM ou ajoute --allow-outside-rth{RESET}")
+            print(f"{YELLOW}    Vérifier les décisions et motifs de blocage dans execution_events et le bilan Winner.{RESET}")
     elif submitted_n > 0 and metrics.get("filled", 0) == 0 and not PRESETS[mode]["dry_run"]:
         print(f"{GREEN}[OK] {submitted_n} ordre(s) soumis chez Alpaca.{RESET}")
-        print(f"{YELLOW}    Marche actuellement ferme -> les ordres seront remplis a l'ouverture.{RESET}")
-        print(f"{YELLOW}    Les ordres 'day' expirent si non remplis en fin de prochaine seance.{RESET}")
+        print(f"{YELLOW}    Exécution non confirmée : vérifier le statut broker des ordres en attente.{RESET}")
     else:
         print(f"{GREEN}[OK] Run termine avec succes.{RESET}")
     return summary
@@ -1919,6 +1974,8 @@ Exemples :
     p.add_argument("--date",              dest="trade_date",      metavar="YYYY-MM-DD", help="Date du run (ex: 2026-04-18)")
     p.add_argument("--run-id",            dest="run_id",          metavar="RUN_ID",     help="risk_run_id precis")
     p.add_argument("--summary-path",      dest="summary_path",    metavar="PATH",       help="Chemin de sortie atomique du résumé JSON d'exécution")
+    p.add_argument('--options-filter-run-id', help=argparse.SUPPRESS)
+    p.add_argument('--options-execution-attempt-id', help=argparse.SUPPRESS)
     p.add_argument("--debug",             action="store_true",                          help="Active les logs DEBUG")
     p.add_argument("--allow-fractional-shares", dest="allow_fractional_shares", action="store_true", help="Active les quantités fractionnaires côté exécution quand le broker/le moteur le supporte")
     p.add_argument("--allow-outside-rth",      dest="allow_outside_rth",  action="store_true", help="Execute meme si marche ferme (week-end / hors RTH)")
@@ -2067,9 +2124,16 @@ def main() -> None:
         config_path = args.config_path
         summary_path = args.summary_path
 
-    with override_config_path(config_path):
+    guard = nullcontext()
+    options_run = getattr(args, 'options_filter_run_id', None)
+    options_attempt = getattr(args, 'options_execution_attempt_id', None)
+    if options_run is not None or options_attempt is not None:
+        from service.options_directional.execution_attempts import execution_child_guard
+        guard = execution_child_guard(options_run, options_attempt, risk_run_id=run_id,
+            mode=mode, account_id=account_id, trade_date=trade_date)
+    with override_config_path(config_path), guard:
         abort_missing_env(account_id=account_id, mode=mode)
-        run(
+        summary = run(
             mode,
             run_id,
             trade_date,
@@ -2095,6 +2159,8 @@ def main() -> None:
             run_plan_file=run_plan_file,
             summary_path=summary_path,
         )
+        if isinstance(summary, dict) and str(summary.get('status', '')).upper() == 'FAILED':
+            raise SystemExit(1)
 
 
 if __name__ == "__main__":

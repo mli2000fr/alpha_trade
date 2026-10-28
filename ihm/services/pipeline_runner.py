@@ -178,6 +178,7 @@ from ihm.services.pipeline_ml_defaults import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_ML_PREDICT_SYMBOL_SOURCE = "universe-file:univers_filtred_tradable.txt"
 DEFAULT_SCREENER_CONFIG = ScreenerConfig.strict_swing_cash()
 
 
@@ -488,7 +489,7 @@ class PipelineLaunchOptions:
     ml_train_symbol_source: MLTrainSymbolSource = default_universe_file_source_or("tradable-universe")
     ml_train_start_symbol: str | None = None
     ml_comment: str | None = None
-    ml_predict_symbol_source: MLTrainSymbolSource = default_universe_file_source_or("tradable-universe")
+    ml_predict_symbol_source: MLTrainSymbolSource = DEFAULT_ML_PREDICT_SYMBOL_SOURCE
     ml_predict_use_historical_range: bool = False
     ml_predict_batch_id: str | None = None
     ml_live_predict_batch_id: str | None = None
@@ -2783,11 +2784,17 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return _wrap_directional_command('predict', command, options)
 
     if step_key == "risk_management":
+        # Risk planning uses the selected broker environment even when step 12
+        # simulates the orders. Only an explicit risk dry-run uses research capital.
+        risk_mode = ('shadow' if options.risk_dry_run else
+                     'live' if options.execution_mode == 'live' else 'paper')
         command = [
             sys.executable,
             "-u",
             "-m",
             "risk_management",
+            "--run-mode",
+            risk_mode,
             "--account-equity",
             str(options.risk_account_equity),
             "--risk-per-trade-pct",

@@ -1166,7 +1166,7 @@ def test_build_pipeline_command_ml_steps() -> None:
     # Predict
     assert predict_cmd[:6] == [predict_cmd[0], "-u", "-m", "modelFactory", "--mode", "predict"]
     assert predict_cmd[predict_cmd.index("--accelerator") + 1] == "gpu"
-    assert predict_cmd[predict_cmd.index("--symbol-source") + 1] == default_universe_file_source_or("tradable-universe")
+    assert predict_cmd[predict_cmd.index("--symbol-source") + 1] == "universe-file:univers_filtred_tradable.txt"
     assert "--artifacts-dir" in predict_cmd
     assert "--batch-id" not in predict_cmd
 

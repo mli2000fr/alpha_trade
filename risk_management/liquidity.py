@@ -519,12 +519,14 @@ class LiquidityGateResult:
     adv_ok: bool = True
     participation_pct: float | None = None
     estimated_slippage_bps: float | None = None
+    quote_spread_checked: bool = True
 
     def to_dict(self) -> dict[str, object]:
         return {
             "go": self.go,
             "reason": self.reason,
             "spread_ok": self.spread_ok,
+            "quote_spread_checked": self.quote_spread_checked,
             "borrow_ok": self.borrow_ok,
             "adv_ok": self.adv_ok,
             "participation_pct": (
@@ -557,6 +559,10 @@ class LiquidityGate:
         Slippage total maximum acceptable (None = pas de limite).
     block_htb_without_locate : bool
         Si True, bloque les shorts HTB sans locate confirmé.
+    quote_spread_check_enabled : bool
+        False ignore la quote et son veto, sans désactiver ADV, borrow et
+        estimation du slippage. Le CLI de l'étape 11 fournit son réglage ;
+        les autres appelants restent stricts par défaut.
     """
 
     participation_limit: ParticipationLimit = field(default_factory=ParticipationLimit)
@@ -565,6 +571,12 @@ class LiquidityGate:
     require_fresh_quote: bool = True
     max_slippage_bps: float | None = 200.0  # 2% max slippage
     block_htb_without_locate: bool = True
+    # Strict by default for standalone/execution callers. Step 11 supplies its config.
+    quote_spread_check_enabled: bool = True
+
+    def __post_init__(self):
+        if type(self.quote_spread_check_enabled) is not bool:
+            raise ValueError('quote_spread_check_enabled doit être booléen')
 
     def evaluate(
         self,
@@ -600,13 +612,15 @@ class LiquidityGate:
         LiquidityGateResult
         """
         reasons: list[str] = []
+        if not self.quote_spread_check_enabled:
+            spread = None  # Not checked, never a zero/valid spread invented from missing data.
         spread_ok = True
         borrow_ok = True
         adv_ok = True
 
         # ── 1. Spread ──────────────────────────────────────────────────
         if spread is None:
-            if self.require_fresh_quote:
+            if self.require_fresh_quote and self.quote_spread_check_enabled:
                 spread_ok = False
                 reasons.append("quote_snapshot_manquant")
         else:
@@ -687,6 +701,7 @@ class LiquidityGate:
                 adv_ok=adv_ok,
                 participation_pct=participation_pct,
                 estimated_slippage_bps=estimated_slippage_bps,
+                quote_spread_checked=self.quote_spread_check_enabled,
             )
 
         return LiquidityGateResult(
@@ -697,6 +712,7 @@ class LiquidityGate:
             adv_ok=adv_ok,
             participation_pct=participation_pct,
             estimated_slippage_bps=estimated_slippage_bps,
+            quote_spread_checked=self.quote_spread_check_enabled,
         )
 
 

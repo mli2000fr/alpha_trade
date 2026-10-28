@@ -30,9 +30,11 @@ import requests
 from requests.adapters import HTTPAdapter
 from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.exc import SQLAlchemyError
 
 from common.config_loader import load_batch_config
 from common.market_calendar import is_trading_day, nyse_session_dates
+from common.options_directional_contract import DTE_MIN, DTE_MAX, DTE_TARGET, ATM_MAX_DISTANCE
 from database.connection import get_sqlalchemy_engine
 from risk_management.liquidity import BorrowStatus, alpaca_borrow_status
 from service.alpaca.clientAlpaca import fetch_alpaca_assets, get_alpaca_credentials
@@ -624,6 +626,57 @@ def _underlying_price(snapshot: dict[str, Any]) -> float | None:
     return None
 
 
+def _option_expiration_window(
+    as_of: date, targets: tuple[int, ...], tolerance: int, *, ensure_directional_pair: bool = True,
+) -> tuple[date, date]:
+    if not targets or min(targets) <= 0 or tolerance < 0:
+        raise ValueError('Cibles DTE positives et tolérance >=0 requises')
+    lower, upper = max(1, min(targets) - tolerance), max(targets) + tolerance
+    if ensure_directional_pair:
+        lower, upper = min(lower, DTE_MIN), max(upper, DTE_MAX)
+    return as_of + timedelta(days=lower), as_of + timedelta(days=upper)
+
+
+def _option_open_interest(metadata: dict[str, Any]) -> int | None:
+    raw = metadata.get('open_interest')
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        value = Decimal(str(raw))
+        return int(value) if value.is_finite() and value >= 0 and value == value.to_integral_value() else None
+    except (InvalidOperation, ValueError, OverflowError):
+        return None
+
+
+def _select_directional_oi_pair(eligible, metadata, *, symbol, spot, as_of, min_open_interest):
+    """Joint same-strike selection AFTER the unchanged liquidity/OI guards.
+
+    Adds at most two contracts to the legacy research surface. Unknown OI is
+    never inferred from a quote and adjusted roots cannot replace the issuer.
+    """
+    if not spot > 0:
+        return set()
+    pairs = {}
+    for contract in eligible:
+        expiry, strike, side = _option_contract_parts(contract)
+        root = re.sub(r'\d{6}[CP]\d{8}$', '', contract)
+        if (root != symbol.replace('.', '') or expiry is None or strike is None or strike <= 0
+                or not DTE_MIN <= (expiry - as_of).days <= DTE_MAX
+                or abs(strike / spot - 1) > ATM_MAX_DISTANCE):
+            continue
+        oi = _option_open_interest(metadata.get(contract) or {})
+        if oi is None or oi < min_open_interest:
+            continue
+        pairs.setdefault((expiry, strike), {})[side] = contract
+    matched = [(expiry, strike, sides) for (expiry, strike), sides in pairs.items()
+               if {'CALL', 'PUT'}.issubset(sides)]
+    if not matched:
+        return set()
+    _, _, sides = min(matched, key=lambda x: (abs((x[0] - as_of).days - DTE_TARGET),
+                                             abs(x[1] / spot - 1), x[0], x[1]))
+    return {sides['CALL'],sides['PUT']}
+
+
 def _option_is_liquid(
     item: dict[str, Any], *, min_bid: float, max_relative_spread: float,
     require_two_sided_quote: bool,
@@ -1166,6 +1219,28 @@ def corporate_actions_sync(engine: Engine, cfg: dict[str, Any], run_id: str, dry
     return outcome
 
 
+def _sec_cik_symbols(rows):
+    """An issuer CIK is not necessarily one share class/ticker. Never pick last."""
+    choices: dict[str, set[str]] = {}
+    for row in rows:
+        cik = str(row.cik).strip().zfill(10)
+        symbol = str(row.symbol or '').strip().upper()
+        if symbol:
+            choices.setdefault(cik, set()).add(symbol)
+    return ({cik: next(iter(symbols)) for cik, symbols in choices.items() if len(symbols) == 1},
+            {cik: sorted(symbols) for cik, symbols in choices.items() if len(symbols) > 1})
+
+
+def _sec_filing_symbol(item, existing, latest_symbol):
+    """Accession/issuer identity is immutable; enrichment is not a ticker migration."""
+    if existing:
+        if str(existing['cik']).strip().zfill(10) != item['cik']:
+            raise ValueError('SEC_ACCESSION_CIK_MISMATCH: existing issuer differs from index')
+        if existing['symbol'] is not None:
+            return existing['symbol']
+    return latest_symbol
+
+
 def sec_edgar_incremental(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool) -> Outcome:
     user_agent = (os.getenv(str(cfg.get("user_agent_env", "SEC_EDGAR_USER_AGENT"))) or SEC_USER_AGENT_DEFAULT).strip()
     if not user_agent:
@@ -1185,6 +1260,9 @@ def sec_edgar_incremental(engine: Engine, cfg: dict[str, Any], run_id: str, dry:
     max_exhibit_bytes = max(1024, int(cfg.get("max_exhibit_bytes", 8 * 1024 * 1024)))
     max_requests_per_second = max(1, int(cfg.get("max_requests_per_second", 8)))
     document_errors: list[dict[str, str]] = []
+    persistence_errors: list[dict[str, str]] = []
+    preserved_symbol_changes: list[dict[str, str]] = []
+    filings_persisted = 0
     primary_fallbacks = 0
     oversized_primary_documents = 0
     exhibit_totals: dict[str, Any] = {
@@ -1192,12 +1270,12 @@ def sec_edgar_incremental(engine: Engine, cfg: dict[str, Any], run_id: str, dry:
         "skipped_existing": 0, "oversized": 0, "errors": [],
     }
     with engine.connect() as conn:
-        cik_symbols = {
-            str(row.cik).zfill(10): row.symbol
-            for row in conn.execute(text("""SELECT s.cik,s.symbol FROM security_master_snapshots s
-                JOIN (SELECT cik,MAX(snapshot_date) d FROM security_master_snapshots WHERE cik IS NOT NULL GROUP BY cik) x
-                ON x.cik=s.cik AND x.d=s.snapshot_date""")).fetchall()
-        }
+        cik_symbols, ambiguous_ciks = _sec_cik_symbols(conn.execute(text("""
+            SELECT s.cik,s.symbol FROM security_master_snapshots s
+            JOIN (SELECT cik,MAX(snapshot_date) d FROM security_master_snapshots
+                  WHERE cik IS NOT NULL AND available_at<=:observed AND snapshot_date<=:day GROUP BY cik) x
+            ON x.cik=s.cik AND x.d=s.snapshot_date WHERE s.available_at<=:observed"""),
+            {"observed": observed, "day": sec_today}).fetchall())
     with requests.Session() as session:
         headers = {"User-Agent": user_agent, "Accept-Encoding": "gzip, deflate"}
         indexed_rows: dict[str, dict[str, Any]] = {}
@@ -1241,9 +1319,20 @@ def sec_edgar_incremental(engine: Engine, cfg: dict[str, Any], run_id: str, dry:
             )
             outcome.warnings.append(f"Index SEC non encore disponible: {unavailable}")
         for item in rows:
-            with engine.connect() as conn:
-                existing = conn.execute(text("""SELECT id,content_text IS NOT NULL AS has_content
-                    FROM sec_filing_raw WHERE accession_number=:a"""), {"a": item["accession"]}).mappings().first()
+            try:
+                with engine.connect() as conn:
+                    existing = conn.execute(text("""SELECT id,cik,symbol,content_text IS NOT NULL AS has_content
+                        FROM sec_filing_raw WHERE accession_number=:a"""), {"a": item["accession"]}).mappings().first()
+                latest_symbol = cik_symbols.get(item['cik'])
+                symbol = _sec_filing_symbol(item, existing, latest_symbol)
+            except (SQLAlchemyError, ValueError) as exc:
+                outcome.failed += 1
+                persistence_errors.append({'accession': item['accession'], 'phase': 'identity_lookup',
+                    'error': _safe_error_message(exc)})
+                continue
+            if existing and latest_symbol and symbol != latest_symbol:
+                preserved_symbol_changes.append(dict(accession=item['accession'],
+                    stored_symbol=symbol, latest_symbol=latest_symbol))
             needs_primary = not existing or (
                 cfg.get("download_primary_documents", True) and not bool(existing["has_content"])
             )
@@ -1283,19 +1372,30 @@ def sec_edgar_incremental(engine: Engine, cfg: dict[str, Any], run_id: str, dry:
                     })
                 time.sleep(1 / max_requests_per_second)
             if not dry and needs_primary:
-                with engine.begin() as conn:
-                    result = conn.execute(text("""INSERT INTO sec_filing_raw
+                try:
+                    with engine.begin() as conn:
+                        result = conn.execute(text("""INSERT INTO sec_filing_raw
                         (accession_number,cik,symbol,company_name,form_type,filing_date,acceptance_datetime,primary_document,filing_url,content_sha256,content_text,observed_at,available_at,run_id,amendment)
                         VALUES (:accession,:cik,:symbol,:company,:form,:filing_date,:acceptance,:primary_document,:url,:hash,:content,:observed,:observed,:run,:amendment)
                         ON DUPLICATE KEY UPDATE
-                          symbol=COALESCE(VALUES(symbol),symbol),
+                          symbol=COALESCE(symbol,VALUES(symbol)),
                           acceptance_datetime=COALESCE(VALUES(acceptance_datetime),acceptance_datetime),
                           primary_document=COALESCE(VALUES(primary_document),primary_document),
                           filing_url=COALESCE(VALUES(filing_url),filing_url),
                           content_sha256=COALESCE(VALUES(content_sha256),content_sha256),
                           content_text=COALESCE(VALUES(content_text),content_text),
-                          observed_at=VALUES(observed_at),available_at=VALUES(available_at),run_id=VALUES(run_id)"""), {**item, "symbol": cik_symbols.get(item["cik"]), "acceptance": acceptance, "primary_document": primary_document, "url": content_url, "hash": hashlib.sha256((content or "").encode(errors="ignore")).hexdigest() if content else None, "content": content, "observed": observed, "run": run_id, "amendment": item["form"].endswith("/A")})
-                    outcome.persisted += max(0, result.rowcount)
+                          observed_at=VALUES(observed_at),available_at=VALUES(available_at),run_id=VALUES(run_id)"""), {**item, "symbol": symbol, "acceptance": acceptance, "primary_document": primary_document, "url": content_url, "hash": hashlib.sha256((content or "").encode(errors="ignore")).hexdigest() if content else None, "content": content, "observed": observed, "run": run_id, "amendment": item["form"].endswith("/A")})
+                    # MySQL reports 2 for an updated row. Count filings, not SQL effects.
+                    persisted = int(result.rowcount > 0)
+                    filings_persisted += persisted
+                    outcome.persisted += persisted
+                except SQLAlchemyError as exc:
+                    outcome.failed += 1
+                    persistence_errors.append({'accession': item['accession'], 'phase': 'metadata_write',
+                        'error': _safe_error_message(exc)})
+                    LOGGER.warning('SEC metadata rejected; accession=%s; continuing other filings: %s',
+                        item['accession'], _safe_error_message(exc))
+                    continue
             if download_exhibits and not dry:
                 try:
                     exhibit_result = _download_sec_exhibits(
@@ -1324,6 +1424,13 @@ def sec_edgar_incremental(engine: Engine, cfg: dict[str, Any], run_id: str, dry:
         "primary_document_fallbacks": primary_fallbacks,
         "oversized_primary_documents": oversized_primary_documents,
         "document_errors": document_errors[:50],
+        "filings_persisted": filings_persisted,
+        "persistence_error_count": len(persistence_errors),
+        "persistence_errors": persistence_errors[:50],
+        "preserved_symbol_change_count": len(preserved_symbol_changes),
+        "preserved_symbol_changes": preserved_symbol_changes[:50],
+        "ambiguous_cik_count": len(ambiguous_ciks),
+        "ambiguous_cik_symbols": dict(list(sorted(ambiguous_ciks.items()))[:50]),
         "download_exhibits": download_exhibits,
         "exhibit_type_prefixes": list(exhibit_prefixes),
         "max_exhibits_per_filing": max_exhibits,
@@ -1340,6 +1447,10 @@ def sec_edgar_incremental(engine: Engine, cfg: dict[str, Any], run_id: str, dry:
             f"{len(exhibit_totals['errors'])} annexe(s) SEC indisponible(s) ou trop volumineuse(s); métadonnées conservées"
         )
     if not rows: outcome.warnings.append("Aucun filing correspondant dans les daily indexes disponibles")
+    if persistence_errors:
+        raise BatchRunError(
+            f'{len(persistence_errors)} dépôt(s) SEC non persisté(s) : identités/erreurs SQL isolées ; '
+            'collecte partielle, autres dépôts conservés, reprise nécessaire', outcome)
     return outcome
 
 
@@ -1485,7 +1596,10 @@ def options_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool
     }))
     if not moneyness_targets:
         raise ValueError("moneyness_targets ne peut pas être vide")
-    tolerance = int(cfg.get("dte_tolerance_days", 4))
+    tolerance = int(cfg.get("dte_tolerance_days", 5))
+    ensure_directional_pair = cfg.get('ensure_directional_oi_pair', True)
+    if type(ensure_directional_pair) is not bool:
+        raise ValueError('ensure_directional_oi_pair doit être booléen')
     moneyness_min = float(cfg.get("moneyness_min", 0.80))
     moneyness_max = float(cfg.get("moneyness_max", 1.20))
     if not 0 < moneyness_min < 1 < moneyness_max:
@@ -1502,8 +1616,9 @@ def options_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool
     max_consecutive_failures = int(cfg.get("max_consecutive_failures", 5))
     max_failure_ratio = float(cfg.get("max_failure_ratio", 0.05))
     as_of = datetime.now(ZoneInfo("America/New_York")).date()
-    min_expiry = as_of + timedelta(days=max(1, min(target_dtes) - tolerance))
-    max_expiry = as_of + timedelta(days=max(target_dtes) + tolerance)
+    min_expiry, max_expiry = _option_expiration_window(
+        as_of, target_dtes, tolerance, ensure_directional_pair=ensure_directional_pair,
+    )
     observed = _utcnow()
     key, secret = get_alpaca_credentials()
     headers = {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret}
@@ -1514,6 +1629,9 @@ def options_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool
         "symbols_without_spot": 0, "snapshot_pages": 0,
         "contract_pages": 0, "contracts_before_filters": 0,
         "contracts_after_filters": 0, "contract_metadata_failures": 0,
+        "symbols_with_directional_oi_pair": 0, "symbols_without_directional_oi_pair": 0,
+        "directional_pair_contracts_added": 0, "contracts_rejected_liquidity": 0,
+        "contracts_rejected_open_interest": 0,
     }
     with requests.Session() as session, engine.begin() as conn:
         _configure_alpaca_session(
@@ -1647,28 +1765,43 @@ def options_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool
                         f"{symbol}: open interest indisponible ({exc})"
                     )
 
-            kept_for_symbol = 0
+            # Preserve the legacy sample, but supplement it with a joint pair
+            # from the full qualifying chain, not two independently chosen sides.
+            eligible = {}
             for contract, item in snapshots.items():
-                if contract not in selected_contracts:
-                    continue
                 expiry, strike, option_type = _option_contract_parts(contract)
-                if expiry not in selected_expiries or strike is None or option_type is None:
+                if (expiry is None or not min_expiry <= expiry <= max_expiry
+                        or strike is None or option_type is None):
                     continue
                 if not _option_is_liquid(
                     item, min_bid=min_bid, max_relative_spread=max_relative_spread,
                     require_two_sided_quote=require_two_sided,
                 ):
+                    details['contracts_rejected_liquidity'] += 1
                     continue
                 contract_meta = metadata.get(contract) or {}
-                raw_oi = contract_meta.get("open_interest")
-                try:
-                    open_interest = int(raw_oi) if raw_oi is not None else None
-                except (TypeError, ValueError):
-                    open_interest = None
+                open_interest = _option_open_interest(contract_meta)
                 if open_interest is None and not allow_missing_oi:
+                    details['contracts_rejected_open_interest'] += 1
                     continue
                 if open_interest is not None and open_interest < min_open_interest:
+                    details['contracts_rejected_open_interest'] += 1
                     continue
+                eligible[contract] = (item, contract_meta, open_interest)
+            if ensure_directional_pair:
+                pair = _select_directional_oi_pair(
+                    eligible, metadata, symbol=symbol, spot=spot,
+                    as_of=as_of, min_open_interest=min_open_interest,
+                )
+                if pair:
+                    details['symbols_with_directional_oi_pair'] += 1
+                details['directional_pair_contracts_added'] += len(pair - selected_contracts)
+                selected_contracts |= pair
+            kept_for_symbol = 0
+            for contract, (item, contract_meta, open_interest) in eligible.items():
+                if contract not in selected_contracts:
+                    continue
+                expiry, strike, option_type = _option_contract_parts(contract)
                 kept_for_symbol += 1
                 outcome.received += 1
                 if dry:
@@ -1702,6 +1835,13 @@ def options_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool
                 details["symbols_without_options"] += 1
                 outcome.empty += 1
 
+    if ensure_directional_pair:
+        details['symbols_without_directional_oi_pair'] = len(symbols) - details['symbols_with_directional_oi_pair']
+        LOGGER.info(
+            'Paires OI directionnelles CALL/PUT: qualifiées=%s sans_paire=%s contrats_ajoutés=%s',
+            details['symbols_with_directional_oi_pair'], details['symbols_without_directional_oi_pair'],
+            details['directional_pair_contracts_added'],
+        )
     outcome.details.update(details)
     outcome.details.update({
         "feed": feed, "target_dtes": list(target_dtes),
@@ -1709,6 +1849,9 @@ def options_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool
         "expiration_window": [min_expiry.isoformat(), max_expiry.isoformat()],
         "moneyness": [moneyness_min, moneyness_max],
         "volume_status": "not_available_in_alpaca_chain_snapshot",
+        "ensure_directional_oi_pair": ensure_directional_pair,
+        "directional_surface": {"dte_min": DTE_MIN, "dte_max": DTE_MAX,
+                                "target_dte": DTE_TARGET, "atm_max_distance": ATM_MAX_DISTANCE},
     })
     if outcome.received == 0:
         raise RuntimeError("Snapshots options Alpaca vides après filtres pour tout l'univers")

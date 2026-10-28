@@ -127,6 +127,26 @@ def test_technical_prediction_failure_never_runs_filter(env, monkeypatch):
         invoke('predict',['python','-u','-m','modelFactory'],run_id='opt-'+'c'*32)
 
 
+def test_failed_coverage_keeps_diagnostics_without_publishing_or_reusing_old_selection(env, monkeypatch):
+    from service.options_directional.runner import OracleCoverageError
+    invoke,calls,_,_ = env
+    failed_id = 'opt-'+'e'*32
+    def fail(*args, **kwargs):
+        raise OracleCoverageError(rows=[dict(symbol='A')], symbols=['A','B'],
+            batch_id='model-test', trade_date='2026-10-16', required_ratio=.95)
+    monkeypatch.setattr('service.options_directional.runner.analyze', fail)
+    with pytest.raises(OracleCoverageError):
+        invoke('predict', ['python','-u','-m','modelFactory'], run_id=failed_id)
+    folder = store.directory(failed_id)
+    failure = json.loads((folder/'failure.json').read_text(encoding='utf-8'))
+    assert failure['status'] == 'FAILED' and not failure['selection_published']
+    assert failure['diagnostics']['missing_symbols'] == ['B']
+    assert not (folder/'report.json').exists() and not (folder/'risk.claim.json').exists()
+    with pytest.raises(ValueError, match='Dernière analyse options échouée'):
+        store.latest_matching(trade_date='2026-10-16',batch_id='model-test',account_id='default',
+            symbol_source='universe-file:test.txt',capital_preset_key='capital_2001_5000')
+
+
 def test_latest_exact_run_is_not_replaced_by_older_if_corrupted(env):
     invoke,calls,_,report = env
     newer = 'opt-'+'d'*32

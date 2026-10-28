@@ -2149,7 +2149,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--trailing-activation-profit-pct", type=float, default=0.03)
     parser.add_argument("--service-interval-seconds", type=float, default=30.0)
     parser.add_argument("--idle-interval-seconds", type=float, default=120.0)
-    parser.add_argument("--heartbeat-interval-seconds", type=float, default=300.0)
+    parser.add_argument("--heartbeat-interval-seconds", type=float, default=60.0)
     parser.add_argument("--max-iterations", type=int, default=None)
     parser.add_argument("--stop-when-idle", action="store_true")
     parser.add_argument("--max-consecutive-failures", type=int, default=3)
@@ -2184,7 +2184,8 @@ def main(argv: list[str] | None = None) -> None:
         config = config_factory(broker_mode, account_id)
         from execution_engine.broker_router import BrokerRouter
         BrokerRouter.validate(config)
-        client = AlpacaTradingClient(broker_mode=broker_mode, account_id=account_id)
+        from common.verified_http import verified_session
+        client = AlpacaTradingClient(broker_mode=broker_mode, account_id=account_id, session=verified_session())
         return BrokerRouter(us_factory=lambda cfg: BrokerAdapter(client, cfg)).resolve(config)
 
     repo = ExecutionRepository()
