@@ -105,6 +105,20 @@ def tick(cfg, store, repo, broker, *, now=NOW, source=market, guard=approve):
     return WinnerCampaignRuntime(store, repo, broker, cfg, market=source, risk=guard, now=now).run(store.rows())
 
 
+def test_watcher_lock_owners_fit_sql_and_are_unique_even_with_identical_clock():
+    cfg, store, repo, broker = setup()
+    records = store.rows()
+    # The account is busy: no risk/order path may run, but each coordinator
+    # must use a distinct SQL-compatible owner (never deterministic by time).
+    repo.acquire_execution_lock.return_value = False
+    for _ in range(2):
+        WinnerCampaignRuntime(store, repo, broker, cfg, market=market, risk=approve, now=NOW).run(records)
+    owners = [call.kwargs['exec_run_id'] for call in repo.acquire_execution_lock.call_args_list]
+    assert len(set(owners)) == 2 and all(len(owner) <= 32 for owner in owners)
+    repo.release_execution_lock.assert_not_called()
+    assert broker.calls == []
+
+
 def test_stage_watch_first_buy_protection_restart_no_duplicate():
     cfg, store, repo, broker = setup()
     result = tick(cfg, store, repo, broker)

@@ -30,7 +30,16 @@ class BrokerAdapter:
 
     def submit_intent(self, intent: OrderIntent) -> BrokerOrder:
         payload = intent_to_alpaca_payload(intent, config=self._config)
-        if intent.intent_role in (IntentRole.ENTRY, IntentRole.REBALANCE_BUY):
+        policy = self._config.winner_pyramiding
+        standard_without_quote = (policy.enabled and policy.confirmation_bars == 0
+            and not policy.standard_entry_quote_check_enabled
+            and intent.intent_role == IntentRole.ENTRY and intent.winner_entry_mode == 'standard'
+            and bool(intent.winner_campaign_id))
+        if standard_without_quote:
+            if intent.order_type != 'limit' or intent.limit_price is None or intent.limit_price <= 0:
+                raise BrokerApiError(422, 'Entrée standard sans cotation : ordre limite borné obligatoire')
+            LOGGER.warning('Entrée standard %s : contrôle quote temps réel désactivé explicitement ; prix de référence approuvé', intent.symbol)
+        if intent.intent_role in (IntentRole.ENTRY, IntentRole.REBALANCE_BUY) and not standard_without_quote:
             # A prior risk target cannot bypass a fresh consolidated quote.
             try:
                 quote = fetch_latest_quotes([intent.symbol], account_id=self._config.account_id).get(intent.symbol.upper())

@@ -26,6 +26,17 @@ def require_runtime_ready():
             'aucun ordre autorisé. Conserver enabled: false.')
 
 
+def require_current_watcher_code(process):
+    """Reject a running interpreter which has not loaded the current campaign code."""
+    from pathlib import Path
+    root = Path(__file__).parent
+    files = ['winner_runtime.py', 'winner_live_risk.py', 'winner_risk.py', 'winner_broker.py',
+        'winner_market.py', 'winner_campaign_store.py', 'winner_plans.py', 'winner_standard_entry.py',
+        'protection_watcher.py']
+    if process.create_time() < max((root / name).stat().st_mtime for name in files):
+        raise ValueError('Redémarrer le watcher : son processus est antérieur à la mise à jour Winner')
+
+
 def require_campaign_watcher(repo, config):
     """Require the actual local account-wide process, not merely an old heartbeat."""
     import socket
@@ -49,11 +60,7 @@ def require_campaign_watcher(repo, config):
     if (not script_ok or flag('--mode') != 'service' or flag('--account', 'default') != config.resolved_account_id
             or flag('--broker-mode', 'paper') != config.broker_mode or '--exec-run-id' in command):
         raise ValueError('Campaign watcher process has incompatible mode/account/scope')
-    files = ['winner_runtime.py', 'winner_live_risk.py', 'winner_risk.py', 'winner_broker.py',
-        'winner_market.py', 'winner_campaign_store.py', 'winner_plans.py', 'winner_standard_entry.py',
-        'protection_watcher.py']
-    if process.create_time() < max(expected.with_name(n).stat().st_mtime for n in files):
-        raise ValueError('Restart watcher: process predates the campaign implementation')
+    require_current_watcher_code(process)
 
 
 def plan_from_target(target, config, exec_run_id, *, now=None, calendar=None):
@@ -96,7 +103,7 @@ def plan_from_target(target, config, exec_run_id, *, now=None, calendar=None):
             limit_price_buffer_bps=config.limit_price_buffer_bps,
             max_entry_gap_pct=config.max_entry_gap_pct, submission_window=config.submission_window)
         from execution_engine.winner_standard_entry import standard_order_terms
-        standard_order_terms(state)  # Validate before persisting any plans.
+        standard_order_terms(state, quote_check_enabled=policy.standard_entry_quote_check_enabled)
     return state
 
 
@@ -183,6 +190,19 @@ def reserve_operation(store, state, version, *, action, quantity, approval, now)
             raise ValueError('Outside approved campaign entry window')
     if any(o['status'] in ('RESERVED', 'UNKNOWN', 'SUBMITTED') for o in state['operations']):
         raise ValueError('Unresolved operation; reconcile before retry')
+    from execution_engine.winner_standard_entry import standard_initial
+    no_quote_approval = (action == 'ENTRY' and standard_initial(state)
+        and state['policy'].get('standard_entry_quote_check_enabled', True) is False
+        and approval.get('standard_entry_quote_check_enabled') is False
+        and approval.get('realtime_sip_qualified') is False
+        and approval.get('price_basis') == 'bounded_standard_limit'
+        and bool(approval.get('reference_price_asof')))
+    if no_quote_approval:
+        from execution_engine.winner_standard_entry import standard_order_terms
+        order_type, cap = standard_order_terms(state, quote_check_enabled=False)
+        no_quote_approval = (approval.get('order_type') == order_type
+            and approval.get('order_limit_price') == cap
+            and float(approval.get('limit_price', 0)) >= cap)
     if (approval.get('producer') != 'native_intraday_risk'
             or approval.get('campaign_id') != state['campaign_id']
             or approval.get('account_id') != state['account_id']
@@ -190,7 +210,7 @@ def reserve_operation(store, state, version, *, action, quantity, approval, now)
             or approval.get('state_version') != version
             or approval.get('side') != 'buy'
             or approval.get('entry_data_qualified') is not True
-            or approval.get('realtime_sip_qualified') is not True
+            or not (approval.get('realtime_sip_qualified') is True or no_quote_approval)
             or approval.get('regime_qualified') is not True
             or not approval.get('config_hash') or not approval.get('portfolio_hash')
             or approval.get('qualified') is not True

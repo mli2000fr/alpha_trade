@@ -8,6 +8,16 @@ class _Record:
         self.run_id = run_id
 
 
+def test_service_default_heartbeat_fits_winner_freshness_guard():
+    from execution_engine.config import ProtectionWatcherServiceConfig
+    from execution_engine.protection_watcher import parse_args
+    command = watcher_runtime.build_watcher_command(mode='service', account_id='default')
+    cadence = float(command[command.index('--heartbeat-interval-seconds')+1])
+    idle = float(command[command.index('--idle-interval-seconds')+1])
+    assert cadence == ProtectionWatcherServiceConfig().heartbeat_interval_seconds == parse_args([]).heartbeat_interval_seconds
+    assert cadence + idle <= 180  # A normal idle cycle must not invalidate readiness.
+
+
 def test_build_watcher_command_supports_once_and_service_modes() -> None:
     once_command = watcher_runtime.build_watcher_command(mode="once", account_id="acct-1", limit=25)
     service_command = watcher_runtime.build_watcher_command(

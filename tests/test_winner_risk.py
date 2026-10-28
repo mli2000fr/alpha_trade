@@ -29,6 +29,16 @@ def context(cfg=None):
         cost_reserve_pct=.0025, volatility_allocation_scale=1., adv_usd=10000000.)
 
 
+def test_campaign_risk_uses_observed_equity_for_both_preset_and_sizing():
+    from execution_engine.winner_live_risk import campaign_risk_config
+    low = campaign_risk_config(1974.30)
+    high = campaign_risk_config(100000.)
+    assert low.account_equity == 1974.30 and high.account_equity == 100000.
+    assert low.fingerprint != high.fingerprint
+    # The budget must scale from actual equity, not a hidden 100k default.
+    assert low.account_equity*low.risk_per_trade_pct < high.account_equity*high.risk_per_trade_pct
+
+
 def data():
     cfg, store, _, _ = setup()
     state = store.rows()[0]['state']

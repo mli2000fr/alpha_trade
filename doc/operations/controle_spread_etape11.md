@@ -31,6 +31,9 @@ bid/ask ni spread nul n'est inventé. Il ne modifie pas la sélection des fourni
 de barres historiques, les critères de données options ou les contrôles d'univers.
 
 Les contrôles distincts avant envoi d'ordre et du watcher restent actifs. Une
+exception configurable existe pour l'entrée standard Winner avec
+`confirmation_bars: 0` : voir [son réglage dédié](winner_standard_entry_quotes.md).
+En dehors de cette exception explicite, une
 décision de risque acceptée peut donc encore être bloquée avant achat faute de
 quote récente qualifiée. Le réglage n'accorde pas l'accès SIP et ne constitue
 pas une désactivation générale des gardes d'exécution.

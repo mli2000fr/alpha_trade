@@ -9,6 +9,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime, time, timedelta
 import logging
 import math
+import uuid
 from zoneinfo import ZoneInfo
 
 from common.winner_pyramiding import (WinnerPyramidingConfig, add_fill, aware,
@@ -36,7 +37,9 @@ class WinnerCampaignRuntime:
         if not records:
             return self.metrics
         account = self.config.resolved_account_id
-        lock_id = 'winner-watch-'+client_key(self.now.isoformat()+account)
+        # execution_locks.locked_by_run_id is VARCHAR(32). A fresh owner is
+        # also required when two coordinators share the same clock instant.
+        lock_id = 'ww-'+uuid.uuid4().hex[:29]
         if not self.repo.acquire_execution_lock(account_id=account, exec_run_id=lock_id):
             self.metrics['winner_entries_blocked'] += len(records)
             self.metrics['winner_details'].append({'reason': 'ACCOUNT_EXECUTION_LOCKED'})
@@ -146,7 +149,8 @@ class WinnerCampaignRuntime:
                 self.blocked(approved.get('reason', 'NATIVE_RISK_REJECTED'))
                 return
             # Zero uses the frozen standard order, not a fake breakout/IOC.
-            order_type, limit = (standard_order_terms(self.state) if standard and kind == 'ENTRY'
+            order_type, limit = (standard_order_terms(self.state,
+                quote_check_enabled=approved.get('standard_entry_quote_check_enabled', True)) if standard and kind == 'ENTRY'
                                  else ('limit', entry_limit(approved['limit_price'])))
             if limit is not None and limit > approved['limit_price']+1e-8:
                 raise ValueError('Risk approval must cover the rounded executable price')

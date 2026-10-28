@@ -47,6 +47,12 @@ class NativeWinnerBroker:
         return self.client._request('GET', f'/v2/orders/{broker_id}', params={'nested': 'true'})
 
     def submit(self, state, intent):
+        if intent.winner_entry_mode == 'standard':
+            from execution_engine.winner_standard_entry import standard_quote_check_required, standard_order_terms
+            if not standard_quote_check_required(state, config=self.config):
+                expected_type, cap = standard_order_terms(state, quote_check_enabled=False)
+                if intent.order_type != expected_type or intent.limit_price != cap or intent.time_in_force != 'day':
+                    raise ValueError('Unchecked standard entry differs from its bounded frozen terms')
         self.repo.upsert_execution_order_request_from_intent(intent,
             account_id=state['account_id'], status='NEW')
         try:

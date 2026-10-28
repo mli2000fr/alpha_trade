@@ -71,3 +71,36 @@ def daily_source_filter(*, alias='stock_bars_daily', date_column='date', config=
               AND preferred_daily_bar.`{date_column}` = {alias}.`{date_column}`
               AND preferred_daily_bar.data_source = :required_data_source))'''
     return sql, dict(required_data_source=preferred, alternate_data_source=other)
+
+
+def load_daily_close_series(engine, symbol, asof, *, config=None):
+    """Qualified raw closes through one completed session, with canonical priority.
+
+    Preserve duplicate/source checks: never average feeds, keep an arbitrary
+    duplicate, invent missing sessions or read prices after the decision date.
+    """
+    from sqlalchemy import text
+    cutoff = pd.Timestamp(asof)
+    if pd.isna(cutoff) or cutoff.tzinfo is not None or cutoff != cutoff.normalize():
+        raise ValueError('Daily close cutoff must be an explicit session date')
+    symbol = str(symbol).strip().upper()
+    if not symbol:
+        raise ValueError('Daily close symbol required')
+    with engine.connect() as conn:
+        rows = conn.execute(text('SELECT symbol, date, close, data_source FROM stock_bars_daily '
+            'WHERE symbol=:symbol AND date<=:asof ORDER BY date'),
+            {'symbol': symbol, 'asof': cutoff.date()}).mappings().all()
+    frame = pd.DataFrame(rows, columns=['symbol', 'date', 'close', 'data_source'])
+    if frame.empty:
+        raise ValueError(f'{symbol}: daily closes unavailable')
+    if not frame['data_source'].isin(SOURCES.values()).all():
+        raise ValueError(f'{symbol}: unqualified daily source')
+    frame['date'] = pd.to_datetime(frame['date'], errors='raise')
+    frame = select_daily_bars(frame, config=config).sort_values('date')
+    values = pd.to_numeric(frame['close'], errors='raise').astype(float)
+    import numpy as np
+    if (not np.isfinite(values).all() or (values <= 0).any()
+            or (frame['date'] > cutoff).any() or frame['date'].max() != cutoff
+            or (frame['date'] != frame['date'].dt.normalize()).any()):
+        raise ValueError(f'{symbol}: invalid or missing as-of daily close')
+    return pd.Series(values.to_numpy(), index=pd.DatetimeIndex(frame['date']), name='close')

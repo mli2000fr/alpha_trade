@@ -8,8 +8,9 @@ from common.winner_pyramiding import aware
 
 
 class NativeWinnerMarket:
-    def __init__(self, engine, account_id):
+    def __init__(self, engine, account_id, config=None):
         self.engine, self.account_id = engine, account_id
+        self.config = config
         self.prior_highs = {}
 
     def __call__(self, state, now):
@@ -26,8 +27,13 @@ class NativeWinnerMarket:
         if standard_initial(state):
             # No breakout/high/5m history is needed to submit a standard entry.
             # A missing real-time SIP quote still blocks it in native risk.
-            return self.with_quote(state, dict(bars=[], prior_session=previous_day, feed='sip',
-                prior_session_high=None, ask=None, bid=None))
+            snapshot = dict(bars=[], prior_session=previous_day, feed='sip',
+                prior_session_high=None, ask=None, bid=None)
+            from execution_engine.winner_standard_entry import standard_quote_check_required
+            if not standard_quote_check_required(state, config=self.config):
+                # No fabricated bid/ask, timestamp or real-time qualification.
+                return snapshot | dict(standard_entry_quote_check_enabled=False)
+            return self.with_quote(state, snapshot)
         # An after-close scan may tighten an existing stop, but cannot qualify
         # a new entry: the shared confirmation contract requires an open RTH.
         lookback = timedelta(minutes=5*(state['policy']['confirmation_bars']+2))

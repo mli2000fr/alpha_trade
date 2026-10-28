@@ -24,6 +24,10 @@ winner_pyramiding:
   reinforcement_enabled: false  # Un seul ajout gagnant, jamais de moyenne à la baisse.
   reinforcement_trigger_pct: 0.05
   confirmation_bars: 0  # 0 = ordre standard DAY sans confirmation ; 1–12 = clôtures 5m de cassure.
+  # Entrée standard uniquement : false = ordre limite DAY, sans contrôle bid/ask temps réel.
+  # Plafond issu du gap maximal figé (sinon buffer limite), sizing au prix maximal.
+  # Confirmation 5m, renforcement, SL/TP/trailing et verrous restent indépendants.
+  standard_entry_quote_check_enabled: false
   stop_loss_pct: 0.05
   take_profit_pct: 0.18  # null = pas de TP en prix.
   trailing_stop_pct: 0.1  # Ne peut jamais desserrer le stop initial.

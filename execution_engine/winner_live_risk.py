@@ -50,9 +50,12 @@ class NativeWinnerRisk:
             raise ValueError('Campaign risk routing mismatch')
         # Fail before querying portfolio state if no fresh consolidated quote is usable.
         from service.market.live_quotes import validate_campaign_quote
-        validate_campaign_quote(snapshot, now=now, max_age_seconds=state['policy']['max_quote_age_seconds'])
-        if not 0 <= (now-aware(snapshot['quote_time'])).total_seconds() <= state['policy']['max_quote_age_seconds']:
-            raise ValueError('SIP quote stale/future')
+        from execution_engine.winner_standard_entry import standard_quote_check_required
+        quote_required = standard_quote_check_required(state, config=self.config, kind=kind)
+        if quote_required:
+            validate_campaign_quote(snapshot, now=now, max_age_seconds=state['policy']['max_quote_age_seconds'])
+            if not 0 <= (now-aware(snapshot['quote_time'])).total_seconds() <= state['policy']['max_quote_age_seconds']:
+                raise ValueError('SIP quote stale/future')
         engine, account, mode = self.repo.engine, state['account_id'], state['broker_mode']
         if engine.dialect.name != 'mysql' or engine.url.database != 'alpha_trade':
             raise ValueError('Actual campaign risk collector requires US alpha_trade')
@@ -72,6 +75,7 @@ class NativeWinnerRisk:
         if rejected:
             raise ValueError(str(rejected))
         raw_account = self.broker.get_account_snapshot()
+        account_observed_at = self.clock()
         if any(raw_account.get(k) is True for k in ('trading_blocked', 'account_blocked', 'trade_suspended_by_user')):
             raise ValueError('Broker account blocks trading')
         # The watcher's generic defaults are cash/no-leverage. Preserve the
@@ -80,7 +84,7 @@ class NativeWinnerRisk:
         account_cfg = account_config_for_campaign(self.config, state)
         capacity = build_account_constraint_state(account_cfg,
             SimpleNamespace(get_account_snapshot=lambda: raw_account))
-        cfg = load_risk_config(equity=capacity.equity)
+        cfg = campaign_risk_config(capacity.equity)
         risk_repo = RiskRepository(engine)
         raw_config = load_config()
         regime_config = parse_market_regimes(raw_config.get('market_regimes'))
@@ -147,6 +151,10 @@ class NativeWinnerRisk:
         prices = risk_repo.load_prices_asof([state['symbol']], prior)
         if state['symbol'] not in prices:
             raise ValueError('Prior-session native price/ATR/ADV unavailable')
+        price_info = prices[state['symbol']]
+        if not quote_required and (price_info.price_asof_date != prior
+                or not math.isfinite(float(price_info.last_close)) or price_info.last_close <= 0):
+            raise ValueError('Standard entry requires a qualified prior-session close')
         returns = risk_repo.load_return_matrix_asof(sorted(set(symbols+['SPY'])), prior,
             max(252, cfg.correlation_lookback_days, cfg.vol_target_lookback_days))
         vol_scale = 1.
@@ -158,13 +166,9 @@ class NativeWinnerRisk:
                 raise ValueError('Native volatility target unqualified: '+decision.reason)
             vol_scale = min(1., float(decision.scaler))
         # SPY price history (not returns) qualifies the native SMA50/200 regime.
-        with engine.connect() as conn:
-            spy_rows = conn.execute(text("SELECT date, close FROM stock_bars_daily WHERE symbol='SPY' "
-                'AND date<=:prior ORDER BY date'), {'prior': prior}).all()
-        if len({r[0] for r in spy_rows}) != len(spy_rows):
-            raise ValueError('SPY daily source ambiguous')
+        from common.daily_bar_sources import load_daily_close_series
+        spy = load_daily_close_series(engine, 'SPY', prior, config=raw_config)
         from backtesting.regime_trailing import compute_regime
-        spy = pd.Series([float(r[1]) for r in spy_rows], index=pd.to_datetime([r[0] for r in spy_rows]))
         regimes = {pd.Timestamp(k).date(): v for k, v in compute_regime(spy).dropna().items()}
         observations = {}
         for row in history:
@@ -176,6 +180,10 @@ class NativeWinnerRisk:
                 observed_day = candidates[-1].session_date
                 if observed_day <= prior:
                     observations[observed_day] = max(observations.get(observed_day, 0.), float(row['equity']))
+        factor_context = None
+        if cfg.enable_factor_model:
+            from risk_management.live_factor_context import load_live_factor_context
+            factor_context = load_live_factor_context(engine, symbols, prior, self.clock(), cfg)
         store = WinnerCampaignStore(engine)
         saved, guard_version = store.get_guard(account, mode)
         if not observations and not saved:
@@ -192,7 +200,9 @@ class NativeWinnerRisk:
         allowed = not self.config.blocks_new_entries
         if regime is not None:
             allowed = allowed and not regime.blocks_entry_for(state['symbol'], sector_map.get(state['symbol'], ''), side='buy')[0]
-        return dict(account_id=account, broker_mode=mode, captured_at=self.clock(), equity=capacity.equity,
+        return dict(account_id=account, broker_mode=mode, captured_at=account_observed_at, equity=capacity.equity,
+            standard_entry_quote_check_enabled=quote_required,
+            reference_price=price_info.last_close, reference_price_asof=price_info.price_asof_date,
             available_buying_power=available, positions=positions, pending_entries=pending,
             sector_map=sector_map, risk_config=cfg, circuit_breaker=evaluated['circuit_breaker'],
             breaker_qualified=True, allocation_scale=evaluated['allocation_scale'], return_matrix=returns[symbols].tail(cfg.correlation_lookback_days),
@@ -201,7 +211,15 @@ class NativeWinnerRisk:
             entry_data_qualified=True, regime_qualified=not regime_enabled or regime is not None,
             concentration_qualified=True, concentration_allowed=concentration,
             corporate_actions_qualified=not any(e.symbol == state['symbol'] for e in pending_ca),
-            entries_allowed=allowed, factor_qualified=not cfg.enable_factor_model)
+            entries_allowed=allowed, factor_qualified=not cfg.enable_factor_model or factor_context is not None,
+            factor_context=factor_context, factor_asof_date=prior)
+
+
+def campaign_risk_config(equity):
+    """Equity selects a preset; the actual sizing equity needs its own override."""
+    if not math.isfinite(float(equity)) or equity <= 0:
+        raise ValueError('Positive actual broker equity required')
+    return load_risk_config(equity=equity, cli_overrides={'account_equity': equity})
 
 
 def account_config_for_campaign(config, state, current=None):
