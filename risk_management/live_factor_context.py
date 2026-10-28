@@ -38,6 +38,11 @@ def qualify_factor_context(frame, prices, stock_returns, required, asof, cutoff,
     """Pure qualification; supplied inputs must carry their actual availability."""
     if frame.empty or frame.symbol.duplicated().any():
         raise ValueError('Risk factor input snapshot absent/duplicated')
+    stock_returns = stock_returns.copy()
+    stock_returns.index = pd.DatetimeIndex(pd.to_datetime(stock_returns.index))
+    if (stock_returns.index.hasnans or not stock_returns.index.is_unique
+            or stock_returns.index.tz is not None or (stock_returns.index.date > asof).any()):
+        raise ValueError('Unqualified stock-return session index')
     cutoff = pd.Timestamp(cutoff)
     if cutoff.tzinfo is None:
         raise ValueError('Factor context cutoff requires timezone')
@@ -111,6 +116,7 @@ def factor_violations(context, weights, cfg, *, candidate, other_sides=None):
         raise ValueError('Missing held/pending factor exposure or residual risk')
     violations = check_factor_constraints_on_sized_weights(weights, exposures, covariance,
         max_portfolio_beta=cfg.max_portfolio_beta,
+        beta_exposure_basis=cfg.beta_exposure_basis,
         max_factor_concentration=cfg.max_factor_concentration_pct,
         min_factor_diversification=cfg.min_factor_diversification)
     if cfg.use_factor_correlation_filter:

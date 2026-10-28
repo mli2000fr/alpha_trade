@@ -307,7 +307,11 @@ class WinnerCampaignRuntime:
     def emergency_stop(self, parent, quantity, price, cumulative):
         # A reserved operation is deliberately not retried after ambiguity.
         key = parent.intent_id+'-unqualified-'+str(cumulative)
-        existing = next((o for o in self.state['operations'] if o['key'] == client_key(key)), None)
+        # SQL request identity and broker identity are distinct. Reconcile the
+        # durable client key, including older operations whose key used it too.
+        broker_key = client_key(key)
+        existing = next((o for o in self.state['operations']
+            if o.get('intent', {}).get('submission_key') == broker_key or o['key'] == broker_key), None)
         if existing:
             return
         p = WinnerPyramidingConfig(**self.state['policy'])

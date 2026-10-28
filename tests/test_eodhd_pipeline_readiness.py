@@ -138,6 +138,23 @@ def test_cli_coverage_read_failure_preserves_import_counters(monkeypatch):
     assert summaries[-1]['stopped_reason'] == 'target_date_coverage_check_failed'
 
 
+def test_daily_factor_proxies_have_their_own_complete_coverage_gate(monkeypatch):
+    events,summaries=cli_environment(monkeypatch)
+    from dataIntegrityEngine import import_eodhd_bar as shim
+    monkeypatch.setattr(shim,'_load_config_safe',lambda: {'market_data':{'bars_provider':'eodhd'},
+        'risk_management':{'enable_factor_model':True}})
+    calls=[]
+    def coverage(engine,symbols,day,**kw):
+        calls.append((symbols,kw))
+        return {'status':'PASSED' if symbols==['A','B'] else 'FAILED'}
+    monkeypatch.setattr(readiness,'target_coverage',coverage)
+    assert cli.main(['--write','--target-date','2026-10-08','--symbol-source','universe-file:test.txt',
+        '--require-target-coverage'])==1
+    assert events[0][1]['symbols']==['A','B','SPY','IWM','MTUM']
+    assert calls[1][1]['minimum']==1.
+    assert summaries[-1]['stopped_reason']=='factor_proxy_coverage_insufficient'
+
+
 def test_empty_explicit_universe_never_falls_back(monkeypatch):
     events, _ = cli_environment(monkeypatch)
     from common import universe_files

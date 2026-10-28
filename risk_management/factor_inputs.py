@@ -21,7 +21,7 @@ from database.risk_factor_inputs import snapshots, require_schema
 from selector.config import AlphaScannerConfig
 from selector.factors import compute_factor_frame
 
-PROTOCOL = 'daily-risk-inputs-unfiltered-v1'
+PROTOCOL = 'daily-risk-inputs-unfiltered-v2'
 UNIVERSE = 'universe-file:config/univers_batch/univers_filtred_tradable.txt'
 HISTORY_SESSIONS = 272
 CAP_MAX_AGE_DAYS = 30
@@ -38,7 +38,7 @@ def universe(required=()):
 
 
 def universe_hash(symbols):
-    return hashlib.sha256(','.join(sorted(set(symbols))).encode()).hexdigest()
+    return hashlib.sha256((PROTOCOL+'|'+','.join(sorted(set(symbols)))).encode()).hexdigest()
 
 
 def expected_sessions(asof):

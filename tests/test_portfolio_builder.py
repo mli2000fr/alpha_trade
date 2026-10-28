@@ -81,6 +81,56 @@ def test_build_respects_max_positions() -> None:
     assert len(accepted) <= 3
 
 
+def test_final_factor_limit_violation_cannot_publish_executable_targets():
+    from datetime import date
+    from risk_management.models import FactorExposures
+    from risk_management.factor_model import FactorCovariance
+    candidates=_candidates()[:2]
+    exposures={c.symbol:FactorExposures(c.symbol,date(2026,10,27),2.,1.,1.) for c in candidates}
+    covariance=FactorCovariance(np.eye(3),['market','size','momentum'],
+        {c.symbol:.05 for c in candidates},date(2026,10,27))
+    builder=PortfolioBuilder(_cfg(enable_factor_model=True),factor_exposures=exposures,
+        factor_covariance=covariance)
+    entries=builder.build(candidates,_prices(),predictions=_long_predictions([c.symbol for c in candidates]))
+    assert entries and all(e.approved_shares==0 for e in entries)
+    assert any('final_beta_exceeded' in e.decision_reason for e in entries)
+
+
+def test_account_beta_budget_does_not_discard_high_beta_before_sizing():
+    from datetime import date
+    from risk_management.models import FactorExposures
+    from risk_management.factor_model import FactorCovariance
+    candidates=_candidates()[:3]
+    exposures={c.symbol:FactorExposures(c.symbol,date(2026,10,27),3.,3.,3.) for c in candidates}
+    covariance=FactorCovariance(np.eye(3),['market','size','momentum'],
+        {c.symbol:.05 for c in candidates},date(2026,10,27))
+    builder=PortfolioBuilder(_cfg(enable_factor_model=True,beta_exposure_basis='account_equity'),
+        factor_exposures=exposures,factor_covariance=covariance)
+    entries=builder.build(candidates,_prices(),predictions=_long_predictions([c.symbol for c in candidates]))
+    assert len([e for e in entries if e.approved_shares>0])==3
+    assert sum(e.target_weight*3 for e in entries)<=1.2
+
+
+def test_account_beta_final_check_includes_existing_positions():
+    from datetime import date,datetime,UTC
+    from risk_management.models import FactorExposures
+    from risk_management.factor_model import FactorCovariance
+    from risk_management.operational_data import BacktestOperationalDataAdapter
+    day=date(2026,10,27)
+    exposures={s:FactorExposures(s,day,3.,3.,3.) for s in ('AAPL','HELD')}
+    covariance=FactorCovariance(np.eye(3),['market','size','momentum'],
+        {s:.05 for s in exposures},day)
+    builder=PortfolioBuilder(_cfg(enable_factor_model=True,beta_exposure_basis='account_equity'),
+        factor_exposures=exposures,factor_covariance=covariance)
+    builder.set_operational_snapshot(BacktestOperationalDataAdapter.build(account_id='default',
+        account=dict(equity=100000.,cash=65000.,settled_cash=65000.,buying_power=65000.),
+        positions=[dict(symbol='HELD',side='long',qty='350',avg_entry_price='100',current_price='100')],
+        as_of=datetime(2026,10,28,12,tzinfo=UTC)))
+    entries=builder.build(_candidates()[:1],_prices(),predictions=_long_predictions(['AAPL']))
+    assert entries and all(e.approved_shares==0 for e in entries)
+    assert any('final_beta_exceeded' in e.decision_reason for e in entries)
+
+
 def test_regime_transition_blocks_long_entries_without_changing_ml_side() -> None:
     candidates = _candidates()[:1]
     transition = RegimeTransition(

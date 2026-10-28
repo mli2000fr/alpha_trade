@@ -185,8 +185,11 @@ class RiskConfig:
     use_factor_correlation_filter: bool = False
     # Seuil de corrélation implicite max pour le filtre factoriel (Phase E).
     factor_correlation_threshold: float = 0.70
-    # Beta moyen pondéré maximum du portefeuille (Phase D).
+    # Market-beta budget, relative to account equity or legacy invested capital.
     max_portfolio_beta: float = 1.2
+    # Preserve old serialized/research defaults; production YAML explicitly
+    # selects account_equity without implicitly rewriting historical replays.
+    beta_exposure_basis: str = 'invested_capital'
     # Part maximale du risque total venant d'un seul facteur (Phase D).
     max_factor_concentration_pct: float = 0.60
     # Nombre minimum de facteurs avec contribution > 10% (Phase D).
@@ -343,8 +346,11 @@ class RiskConfig:
         # --- Factor model validations (Priorité 3) ---
         if self.factor_correlation_threshold <= 0 or self.factor_correlation_threshold > 1:
             raise ValueError("factor_correlation_threshold doit être dans ]0, 1].")
-        if self.max_portfolio_beta <= 0:
+        import math
+        if not math.isfinite(self.max_portfolio_beta) or self.max_portfolio_beta <= 0:
             raise ValueError("max_portfolio_beta doit être > 0.")
+        if self.beta_exposure_basis not in ('account_equity', 'invested_capital'):
+            raise ValueError('beta_exposure_basis doit être account_equity ou invested_capital.')
         if not (0 < self.max_factor_concentration_pct <= 1):
             raise ValueError("max_factor_concentration_pct doit être dans ]0, 1].")
         if self.min_factor_diversification < 1:

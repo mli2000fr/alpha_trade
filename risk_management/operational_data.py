@@ -244,6 +244,8 @@ def _normalize_order(raw: Mapping[str, Any]) -> OpenOrder:
         quantity=_required_positive_float(raw, "qty"),
         filled_quantity=_optional_float(raw.get("filled_qty"), default=0.0),
         status=str(raw.get("status") or "open").strip().lower(),
+        limit_price=float(raw['limit_price']) if raw.get('limit_price') is not None else None,
+        stop_price=float(raw['stop_price']) if raw.get('stop_price') is not None else None,
     )
 
 

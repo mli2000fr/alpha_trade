@@ -17,9 +17,18 @@ def client_key(value):
     return 'wp-'+hashlib.sha256(value.encode()).hexdigest()[:36]
 
 
+def request_key(value):
+    """OMS request IDs and parent/fill FKs are VARCHAR(32).
+
+    The broker's stable client_order_id remains unchanged (39 characters).
+    Separate namespaces preserve broker reconciliation across this correction.
+    """
+    return hashlib.sha256(('winner-oms:'+value).encode()).hexdigest()[:32]
+
+
 def make_intent(state, key, *, quantity, side='buy', role=IntentRole.ENTRY,
         order_type='limit', price=None, stop=None, parent=None, tif=None, entry_mode=None):
-    return OrderIntent(intent_id=client_key(key), risk_run_id=state['risk_run_id'],
+    return OrderIntent(intent_id=request_key(key), risk_run_id=state['risk_run_id'],
         exec_run_id=state['exec_run_id'], symbol=state['symbol'], side=side,
         qty=quantity, order_type=order_type, limit_price=price if order_type == 'limit' else None,
         trail_percent=None, broker_mode=state['broker_mode'], parent_intent_id=parent,

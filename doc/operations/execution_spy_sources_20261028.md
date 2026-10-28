@@ -80,3 +80,11 @@ Les mêmes plans et leurs plafonds de 3 % sont conservés, sans nouvelle
 admission. Une prévalidation a trouvé puis corrigé l'usage du capital par
 défaut dans le collecteur de risque. Le blocage restant est factoriel
 (expositions non qualifiées, champs sources nuls) ; il est maintenu.
+
+### Suite : qualification des facteurs raccordée
+
+L'alimentation a ensuite été réparée et la revalidation factorielle raccordée
+au watcher. Le motif actuel est un dépassement des plafonds configurés,
+et non des expositions absentes : voir
+[la qualification des facteurs US](risk_factor_inputs.md). Les deux plans
+restent en attente sans nouvel ordre.

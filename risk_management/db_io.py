@@ -772,7 +772,13 @@ class RiskRepository:
     def load_factor_columns_asof(
         self, symbols: list[str], trade_date: date,
     ) -> pd.DataFrame:
-        """Charge les colonnes factorielles (beta_126, market_cap, trend_score)
+        """Lecture historique legacy des colonnes factorielles.
+
+        Le chemin live qualifié utilise désormais live_factor_context et
+        stock_risk_factor_inputs (publication horodatée, univers non filtré).
+        Ne pas remplacer des NULL historiques par des réparations connues plus tard.
+
+        Charge les colonnes factorielles (beta_126, market_cap, trend_score)
         depuis stock_scores_history pour le modèle de risque factoriel (Priorité 3).
 
         Parameters

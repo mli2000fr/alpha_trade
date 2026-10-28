@@ -33,7 +33,10 @@ def require_current_watcher_code(process):
     files = ['winner_runtime.py', 'winner_live_risk.py', 'winner_risk.py', 'winner_broker.py',
         'winner_market.py', 'winner_campaign_store.py', 'winner_plans.py', 'winner_standard_entry.py',
         'protection_watcher.py']
-    if process.create_time() < max((root / name).stat().st_mtime for name in files):
+    dependencies = [root / name for name in files] + [
+        root.parent / 'risk_management' / name for name in
+        ('live_factor_context.py', 'factor_inputs.py', 'factor_model.py', 'config.py')]
+    if process.create_time() < max(path.stat().st_mtime for path in dependencies):
         raise ValueError('Redémarrer le watcher : son processus est antérieur à la mise à jour Winner')
 
 

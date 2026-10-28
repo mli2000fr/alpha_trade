@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import text
 
 from common.config_loader import load_config
+from common.risk_factor_proxies import required_factor_proxies
 from common.universe_files import load_universe_file_symbols
 from core.run_summary import attach_schema_version
 from database.connection import SessionLocal, get_sqlalchemy_engine
@@ -97,11 +98,12 @@ def run(*, target_date, symbols, benchmark='SPY', minimum=.95, wait=False,
     if not universe or not benchmark:
         raise ValueError('Univers explicite et benchmark non vides requis')
     day = date.fromisoformat(str(target_date))
+    proxies = required_factor_proxies(config)
     await_session(day, wait=wait, now_fn=now_fn, sleep_fn=sleep_fn, calendar=calendar)
     own = session is None
     db = session if session is not None else SessionLocal()
     summary = dict(provider='alpaca', feed='sip', target_date=str(day), mode='write',
-        targeted_symbols=len(set(universe) | {benchmark}), universe_symbols=len(universe),
+        targeted_symbols=len(set(universe) | {benchmark} | set(proxies)), universe_symbols=len(universe),
         successful_symbols=0, failed_symbols=0,
         inserted_bars=0, rows_upserted_stock_bars=0, rows_upserted_stock_bars_daily=0,
         errors=0, symbol_errors=[], symbol_failures=[], rejected_history_bars=[], status='RUNNING')
@@ -109,7 +111,7 @@ def run(*, target_date, symbols, benchmark='SPY', minimum=.95, wait=False,
     try:
         if db.execute(text('SELECT DATABASE()')).scalar() != 'alpha_trade':
             raise ValueError('US database alpha_trade required')
-        imports = list(dict.fromkeys([*universe, benchmark]))
+        imports = list(dict.fromkeys([*universe, benchmark, *proxies]))
         latest = _get_latest_bar_dates(db, imports)
         for index, symbol in enumerate(imports, 1):
             # Refresh seven calendar days even when J exists. Catch up older
@@ -168,6 +170,15 @@ def run(*, target_date, symbols, benchmark='SPY', minimum=.95, wait=False,
                 universe, str(day), benchmark=benchmark, minimum=minimum,
                 required_source='alpaca_sip', excluded_symbols=failed, require_raw=True)
             summary['target_coverage'] = gate
+            if proxies:
+                proxy_gate = target_coverage(engine if engine is not None else get_sqlalchemy_engine(),
+                    list(proxies), str(day), benchmark='SPY', minimum=1.,
+                    required_source='alpaca_sip', excluded_symbols=failed, require_raw=True)
+                summary['factor_proxy_coverage'] = proxy_gate
+                if proxy_gate['status'] != 'PASSED':
+                    summary['errors'] += 1
+                    summary.setdefault('stopped_reason', 'factor_proxy_coverage_insufficient')
+                    summary['error_message'] = 'Cours J SPY/IWM/MTUM incomplets ; qualification factorielle bloquée'
             if gate['status'] != 'PASSED':
                 summary['errors'] += 1
                 summary.setdefault('stopped_reason', 'target_date_coverage_insufficient')

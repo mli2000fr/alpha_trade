@@ -30,7 +30,7 @@ winner_pyramiding:
   standard_entry_quote_check_enabled: false
   stop_loss_pct: 0.05
   take_profit_pct: 0.18  # null = pas de TP en prix.
-  trailing_stop_pct: 0.1  # Ne peut jamais desserrer le stop initial.
+  trailing_stop_pct: null # Ne peut jamais desserrer le stop initial.
   horizon_sessions: 20  # Entrée incluse ; sortie à l'ouverture de la 21e séance.
   entry_valid_sessions: 20  # Attente maximale après le signal, distincte de la détention.
   max_quote_age_seconds: 60
@@ -555,7 +555,9 @@ risk_management:
   enable_factor_model: true
   use_factor_correlation_filter: true    # remplace Pearson par la corrélation implicite
   factor_correlation_threshold: 0.70     # seuil de corrélation implicite max
-  max_portfolio_beta: 1.2                # beta moyen pondéré maximum du book
+  max_portfolio_beta: 1.2                # plafond de l'exposition bêta selon la base ci-dessous
+  beta_exposure_basis: account_equity   # somme |notionnel × bêta| / equity ; liquidités et levier pris en compte
+                                        # invested_capital = ancien bêta moyen du seul capital investi
   max_factor_concentration_pct: 0.60     # max 60% du risque venant d'un seul facteur
   min_factor_diversification: 2          # au moins 2 facteurs avec contribution > 10%
   factor_ewma_half_life: 60              # demi-vie EWMA en jours

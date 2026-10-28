@@ -60,6 +60,28 @@ def test_missing_target_cannot_reuse_old_rows(monkeypatch):
         target_date=str(DAY),received_rows=1,latest_qualified_provider_date='2026-10-16')]
 
 
+def test_factor_proxies_are_collected_daily_outside_stock_universe(monkeypatch):
+    kw,fetch,_,_,gate=environment(monkeypatch)
+    kw['config']={**CFG,'risk_management':{'enable_factor_model':True}}
+    result=module.run(target_date=DAY,symbols=['A'],**kw)
+    assert [call.args[0] for call in fetch.call_args_list]==['A','SPY','IWM','MTUM']
+    assert result['universe_symbols']==1 and result['targeted_symbols']==4
+    assert gate.call_args.args[1]==['SPY','IWM','MTUM']
+    assert gate.call_args.kwargs['minimum']==1.
+    assert result['status']=='COMPLETED'
+
+
+def test_passing_stock_coverage_cannot_hide_missing_factor_proxy(monkeypatch):
+    kw,fetch,_,_,gate=environment(monkeypatch)
+    kw['config']={**CFG,'risk_management':{'enable_factor_model':True}}
+    fetch.side_effect=lambda symbol,**kw: [] if symbol=='MTUM' else [bar()]
+    gate.side_effect=[{'status':'PASSED'},{'status':'FAILED'}]
+    result=module.run(target_date=DAY,symbols=['A'],**kw)
+    assert result['status']=='FAILED'
+    assert result['stopped_reason']=='factor_proxy_coverage_insufficient'
+    assert result['failed_symbol_list']==['MTUM']
+
+
 def test_commit_failure_keeps_only_committed_counters(monkeypatch):
     kw, _, _, _, gate = environment(monkeypatch)
     kw['session'].commit.side_effect=[RuntimeError('write failed'),None]

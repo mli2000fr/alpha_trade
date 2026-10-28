@@ -41,6 +41,15 @@ def test_qualification_requires_actual_inputs_and_residuals():
     assert context['value_factor'].startswith('NOT_MODELED')
 
 
+def test_sql_date_return_index_joins_same_observed_sessions_as_timestamp_index():
+    frame,prices,returns=evidence()
+    original=qualify_factor_context(frame,prices,returns,['S0'],DAY,NOW,RiskConfig())
+    returns.index=returns.index.date
+    from_sql=qualify_factor_context(frame,prices,returns,['S0'],DAY,NOW,RiskConfig())
+    assert from_sql['snapshot_hash']==original['snapshot_hash']
+    assert from_sql['covariance'].specific_variances==original['covariance'].specific_variances
+
+
 @pytest.mark.parametrize('kind', ['future','missing_beta','missing_symbol','stale_proxy','no_proxy','short_universe'])
 def test_no_imputation_or_qualification_with_missing_future_or_stale_evidence(kind):
     frame,prices,returns=evidence()

@@ -108,3 +108,26 @@ chargées au 27 octobre pour P/OKTA sont toutes nulles et le collecteur ne
 qualifie pas leurs expositions. Ce contrôle n'est pas désactivé et aucun
 ordre n'a été envoyé lors de ces prévalidations. Les captures immuables
 figurent dans `artifacts/operations/winner_no_quote_limit_20261028/`.
+
+### Suite : alimentation factorielle réparée le 28 octobre
+
+Le blocage technique décrit ci-dessus est corrigé : publication dédiée hors
+filtre du scanner et contexte factoriel qualifié partagé entre l'étape 11 et
+le watcher. P et OKTA restent refusés par les limites réelles conservées
+(bêtas 3,02 et 1,80 pour un plafond de 1,20 ; diversification insuffisante pour
+OKTA). Le watcher rechargé confirme zéro achat. Voir
+[l'alimentation et les preuves](risk_factor_inputs.md).
+
+### Adaptation suivante : budget bêta du compte
+
+Sur demande de l'utilisateur, le calcul actif est ensuite passé à
+`beta_exposure_basis: account_equity`, avec le plafond 1,20 conservé.
+P passe désormais le bêta, OKTA reste refusé pour diversification. Le premier
+cycle a révélé un incident OMS distinct avant soumission de P (identifiant
+de 39 caractères pour une colonne limitée à 32) ; aucun achat n'a été envoyé.
+Voir [le contrat et l'état vérifié](risk_beta_budget.md).
+
+L'incident OMS a ensuite été corrigé, sans élargir les colonnes SQL et sans
+changer l'identifiant courtier. L'historique de l'échec est conservé et une
+reprise unique de P a été auditée : voir
+[les identifiants Winner et la reprise](winner_request_ids.md).

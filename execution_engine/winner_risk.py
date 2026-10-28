@@ -164,6 +164,7 @@ def reapprove_campaign(state, version, proposed, snapshot, now, kind, *, context
         quantity = math.floor(checker.check_position_size(symbol, quantity, price, side='buy',
             adv_usd=context.get('adv_usd'), selection_rank=state['target'].get('selection_rank')))
     factor_rejections = []
+    factor_beta_exposure = None
     if quantity > 0 and cfg.enable_factor_model:
         from risk_management.live_factor_context import factor_violations
         weights = {}
@@ -174,6 +175,9 @@ def reapprove_campaign(state, version, proposed, snapshot, now, kind, *, context
             sign = -1 if pending['side'] in ('short','sell') else 1
             weights[pending['symbol']] = weights.get(pending['symbol'],0.)+sign*pending['notional']/cfg.account_equity
         weights[symbol] = weights.get(symbol,0.)+quantity*price/cfg.account_equity
+        from risk_management.factor_model import portfolio_beta_exposure
+        factor_beta_exposure = portfolio_beta_exposure(weights,context['factor_context']['exposures'],
+            basis=cfg.beta_exposure_basis)
         factor_rejections = factor_violations(context['factor_context'],weights,cfg,candidate=symbol,
             other_sides=side_by_symbol)
         if factor_rejections:
@@ -191,6 +195,9 @@ def reapprove_campaign(state, version, proposed, snapshot, now, kind, *, context
             and float(state['entry_policy']['max_entry_gap_pct']) > 0),
         reference_price_asof=str(context.get('reference_price_asof')) if not quote_required else None,
         factor_model_checked=cfg.enable_factor_model,
+        factor_beta_basis=cfg.beta_exposure_basis if cfg.enable_factor_model else None,
+        factor_beta_exposure=factor_beta_exposure,
+        factor_beta_limit=cfg.max_portfolio_beta if cfg.enable_factor_model else None,
         factor_snapshot_hash=context['factor_context']['snapshot_hash'] if cfg.enable_factor_model else None,
         factor_rejections=factor_rejections,
         qualified=True, max_quantity=quantity, limit_price=price, config_hash=cfg.fingerprint,

@@ -565,6 +565,9 @@ def test_cli_main_passes_ternary_short_predictions_without_pre_tagging(monkeypat
         lambda config, market_regimes_config=None, equity=None: replace(
             config,
             short_selling_enabled=True,
+            # This routing test supplies no factor data or SQL repository.
+            # Actual enabled-factor qualification is exercised separately.
+            enable_factor_model=False,
         ),
     )
 
