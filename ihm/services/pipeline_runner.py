@@ -2784,11 +2784,17 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return _wrap_directional_command('predict', command, options)
 
     if step_key == "risk_management":
+        # Risk planning uses the selected broker environment even when step 12
+        # simulates the orders. Only an explicit risk dry-run uses research capital.
+        risk_mode = ('shadow' if options.risk_dry_run else
+                     'live' if options.execution_mode == 'live' else 'paper')
         command = [
             sys.executable,
             "-u",
             "-m",
             "risk_management",
+            "--run-mode",
+            risk_mode,
             "--account-equity",
             str(options.risk_account_equity),
             "--risk-per-trade-pct",

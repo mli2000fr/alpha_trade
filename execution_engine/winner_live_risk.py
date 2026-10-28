@@ -48,9 +48,9 @@ class NativeWinnerRisk:
         if (state['account_id'] != self.config.resolved_account_id
                 or state['broker_mode'] != self.config.broker_mode or self.config.market_code != 'US_EQ'):
             raise ValueError('Campaign risk routing mismatch')
-        # Fail before querying portfolio state if no fresh SIP quote is usable.
-        if snapshot.get('feed') != 'sip' or snapshot.get('quote_error') or snapshot.get('ask') is None:
-            raise ValueError('SIP realtime unavailable; no fallback')
+        # Fail before querying portfolio state if no fresh consolidated quote is usable.
+        from service.market.live_quotes import validate_campaign_quote
+        validate_campaign_quote(snapshot, now=now, max_age_seconds=state['policy']['max_quote_age_seconds'])
         if not 0 <= (now-aware(snapshot['quote_time'])).total_seconds() <= state['policy']['max_quote_age_seconds']:
             raise ValueError('SIP quote stale/future')
         engine, account, mode = self.repo.engine, state['account_id'], state['broker_mode']

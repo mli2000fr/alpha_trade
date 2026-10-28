@@ -292,6 +292,6 @@ def test_zero_initial_market_source_does_not_download_breakout_bars(monkeypatch)
     monkeypatch.setattr('service.alpaca.intraday_bars.fetch_intraday',
                         lambda *a, **kw: pytest.fail('No initial 5m confirmation required'))
     monkeypatch.setattr('service.alpaca.clientAlpaca.fetch_latest_quotes', lambda *a, **kw:
-        {'TEST': dict(ap=101, bp=100.9, **{'as': 10, 'bs': 10}, t=QUEUED.isoformat())})
+        {'TEST': dict(ap=101, bp=100.9, **{'as': 10, 'bs': 10}, t=datetime.now(UTC).isoformat())})
     snapshot = NativeWinnerMarket(None, 'default')(parts[1].rows()[0]['state'], QUEUED)
     assert snapshot['bars'] == [] and snapshot['feed'] == 'sip' and snapshot['ask'] == 101

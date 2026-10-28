@@ -117,6 +117,28 @@ def validate_llm_paper_snapshot(
         raise ValueError('Snapshot LLM : capture et risque requis après clôture J et avant ouverture suivante')
 
 
+def validate_current_broker_snapshot(snapshot,trade_date,*,now=None,calendar=None):
+    """A fresh broker account can fund last-close signals before the next open."""
+    account=snapshot.account
+    if account.source not in ('broker:paper:risk','broker:live:risk'):
+        raise ValueError('Snapshot broker risque courant requis')
+    now=now or datetime.now(timezone.utc)
+    stamp=account.as_of
+    if stamp.tzinfo is None or now.tzinfo is None:
+        raise ValueError('Horodatage timezone-aware requis pour le compte broker')
+    if not 0 <= (now-stamp).total_seconds() <= 300:
+        raise ValueError('Snapshot compte broker périmé ou futur')
+    if stamp.date()!=trade_date:
+        from common.market_calendar import get_market_calendar
+        calendar=calendar or get_market_calendar('US_EQ',allow_us_weekday_fallback=False)
+        if trade_date not in calendar.session_dates(trade_date,trade_date):
+            raise ValueError('Date signal hors séance US')
+        _,close=calendar.session_bounds(trade_date)
+        next_open,_=calendar.session_bounds(calendar.next_session(trade_date))
+        if not close <= stamp <= now < next_open:
+            raise ValueError('Compte courant requis après clôture J et avant ouverture suivante')
+
+
 class LiveBrokerOperationalDataAdapter:
     """Builds a fail-closed risk snapshot from the current broker state."""
 

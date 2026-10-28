@@ -18,6 +18,13 @@ Après arrondi fractionnaire, recalculer notionnel, risque et limites. ATR nul/n
 
 Le calcul reçoit au minimum equity, cash/buying power, prix d'entrée, ATR/stop, côté, conviction, limites de poids, liquidité et état de régime. Les positions existantes réduisent la capacité disponible. Une equity de config n'est pas interchangeable avec l'equity broker en paper/live.
 
+Depuis le **28 octobre 2026**, la capture courante du compte est obligatoire
+en PAPER/LIVE : aucun snapshot SQL ancien ni montant CLI ne remplace son equity.
+Les positions, ordres ouverts et le buying power proviennent de la même capture.
+API indisponible ou capture invalide : aucune nouvelle cible publiée. Le capital
+configuré reste disponible en recherche shadow/dry-run.
+[Contrat, horloges et validation](../operations/risque_capital_broker_20261028.md).
+
 ## StopCalculator
 
 `compute_initial_stop_price` expose le calcul fonctionnel et `is_stop_valid` vérifie la géométrie. `StopLevels` conserve niveaux/raisons. Les distances peuvent dépendre du côté et de paramètres ATR/risk. Le stop doit rester positif et du bon côté de l'entrée.
@@ -43,6 +50,19 @@ Si l'historique directionnel est indisponible, le fallback défini par `KellyFal
 ## Liquidité
 
 `SpreadSnapshot` conserve bid/ask/spread/fraîcheur. `BorrowSnapshot` qualifie la disponibilité short. `ParticipationLimit` borne la part d'ADV. `SlippageEstimator` estime l'impact. `LiquidityGate` produit un résultat structuré avant entrée.
+
+À l'étape 11, `config.yaml → risk_management.quote_spread_check_enabled` vaut
+`false` par défaut : aucun appel aux dernières quotes SIP et aucun veto de
+spread absent, périmé ou trop large à cette étape. ADV, participation, estimation
+du slippage et borrow restent contrôlés. `true` rétablit le contrôle strict.
+Le résultat trace `quote_spread_checked` ; désactivé ne signifie pas spread
+mesuré à zéro. Les contrôles avant envoi et du watcher restent distincts et
+peuvent toujours bloquer une entrée faute de quote qualifiée.
+Voir [le fonctionnement et l'accès SIP](../operations/controle_spread_etape11.md).
+Le fournisseur de bid/ask est commun au risque, à la pré-soumission et au
+watcher : `market_data.quotes_provider_live` accepte `alpaca` (SIP) et `tradier`
+(consolidé de production). Le broker d'ordres reste Alpaca. Voir
+[les conditions et la qualification Tradier](../operations/tradier_quotes.md).
 
 `PreSubmissionGate` refait un contrôle proche de l'envoi. `_borrow_degraded` détecte une détérioration entre décision et submit. Une quote plus ancienne que le seuil ou un borrow devenu unavailable doit bloquer selon côté/politique.
 

@@ -449,6 +449,9 @@ selector:
 # (TrailingStopConfig) via ``service.market.parse_trailing_stop``.
 # ---------------------------------------------------------------------------
 risk_management:
+  # Étape 11 uniquement : false = pas d'appel aux dernières quotes SIP ni de veto bid/ask.
+  # ADV, participation, slippage estimé, borrow et contrôles d'exécution restent distincts.
+  quote_spread_check_enabled: false
   empirical_calibration:
     # Politique de fallback live pour `weights_calibration_runs`.
     # Chaque niveau tente de résoudre un segment éligible (`eligible_for_live=1`).
@@ -587,11 +590,14 @@ market_data:
   alpaca_backfill_feed: sip  # SIP pour les téléchargements Alpaca ; aucun fallback IEX.
 
   # ── Provider quotes live (mode latest) ──
-  # `quotes_provider_live` : provider principal pour les snapshots bid/ask temps réel.
-  #   Politique courante : 'alpaca', SIP explicite, droits temps réel requis.
-  # `quotes_provider_live_second` reste vide : un refus SIP doit rester visible.
+  # Quotes bid/ask risque, pré-soumission et watcher : alpaca (SIP) | tradier (consolidé).
+  # Garder alpaca jusqu'au test du jeton Tradier de production. Ne change pas le broker d'ordres.
   quotes_provider_live: alpaca  # SIP explicite ; HTTP 403 si le compte n'a pas les droits temps réel.
   quotes_provider_live_second: null  # Aucun fallback de fournisseur/flux pour masquer un refus SIP.
+  tradier:
+    environment: production  # Le sandbox est différé et interdit pour qualifier une entrée.
+    token_env: TRADIER_API_TOKEN  # Jeton de production dans l'environnement, jamais dans ce fichier.
+    batch_size: 100  # Requêtes groupées GET /v1/markets/quotes ; aucun ordre Tradier.
   # Quotes historiques de clôture (étape 4) : SIP consolidé, end vieux de >=15 min.
   # Aucun fallback IEX ; les lignes sans ce flux/provenance seront requalifiées.
   quotes_historical_feed: sip

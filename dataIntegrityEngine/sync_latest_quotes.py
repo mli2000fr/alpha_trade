@@ -31,6 +31,7 @@ from service.alpaca.clientAlpaca import (
     fetch_latest_historical_quote_in_window,
     fetch_latest_quotes,
 )
+from service.tradier.quotes import fetch_latest_quotes as fetch_latest_quotes_tradier
 from service.yahoo.clientYahooFinance import (
     fetch_latest_quotes_yahoo,
 )
@@ -206,7 +207,7 @@ def _resolve_latest_quotes_fetcher() -> tuple[
 ]:
     """Résout le(s) provider(s) de quotes live depuis ``config.yaml``.
 
-    - ``market_data.quotes_provider_live`` (défaut ``"yahoo"``)
+    - ``market_data.quotes_provider_live`` (défaut ``"alpaca"``, ou ``"tradier"``)
     - ``market_data.quotes_provider_live_second`` (optionnel)
 
     Returns ``(primary_fn, primary_name, secondary_fn)``.
@@ -223,6 +224,7 @@ def _resolve_latest_quotes_fetcher() -> tuple[
 
     provider_map: dict[str, object] = {
         "alpaca": fetch_latest_quotes,
+        "tradier": fetch_latest_quotes_tradier,
         "yahoo": fetch_latest_quotes_yahoo,
     }
 
@@ -759,7 +761,7 @@ def sync_latest_quotes(
                 try:
                     payload = primary_fn(batch, session=session, account_id=_bump_account(account_cycler))
                 except Exception:
-                    if primary_name == "alpaca" and secondary_fn is None:
+                    if primary_name in ("alpaca", "tradier") and secondary_fn is None:
                         raise
                     LOGGER.warning(
                         "Quotes provider primary='%s' a echoue — tentative fallback",
@@ -786,6 +788,11 @@ def sync_latest_quotes(
                     if not quote:
                         continue
                     rows.append(_build_quote_snapshot_row(symbol, quote, fallback_utc_now=run_utc_now))
+                    if primary_name == 'tradier':
+                        # Latest is not historical closing evidence; never label it SIP/VALID_RTH.
+                        rows[-1].update(provider='tradier', feed='consolidated',
+                                        source_timestamp=rows[-1]['quote_timestamp'],
+                                        collected_at=run_utc_now)
                 batch_upserted = upsert_quote_snapshots(rows)
                 summary["rows_upserted"] += batch_upserted
                 batch_index = (start // batch_size) + 1

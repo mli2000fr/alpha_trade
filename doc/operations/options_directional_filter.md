@@ -23,6 +23,24 @@ ouverte sur cet ancien défaut est migrée une seule fois ; les choix manuels
 ultérieurs restent possibles. Aucun fichier d'univers ni contrat de modèle
 n'est modifié, et les symboles hors contrat restent refusés.
 
+### Affichage du tableau après un batch (28 octobre 2026)
+
+Le tableau de l'étape 10 accepte désormais les deux identifiants de fichier
+ci-dessus comme alias **d'affichage uniquement**, si leurs listes de symboles
+sont toutes deux identiques à l'univers conservé dans les entrées scellées.
+Une simple égalité de nom de fichier ne suffit pas. Le rapport reste inchangé,
+avec sa source exacte, et les contrôles de date, modèle, compte, preset,
+empreintes, âge et fenêtre de séance sont conservés. La qualification utilisée
+par le risque et l'exécution reste stricte ; aucun nouvel appel de prédiction,
+de collecte ou d'ordre n'est nécessaire pour corriger l'affichage.
+
+Incident vérifié : le dernier batch de la séance du 27 octobre a publié
+`opt-1cb6b98e226e42a19910a6b807c9195a`, **50 lignes Oracle, 26 couvertes,
+13 retenues LONG**. Les deux fichiers d'univers avaient la même empreinte,
+mais leur comparaison textuelle masquait le tableau. Le lecteur IHM corrigé
+retrouve les 50 lignes. Un autre contexte incompatible affiche désormais son
+motif précis, sans remplacer le run par une ancienne sélection.
+
 ## Règle figée
 
 Les valeurs ci-dessous décrivent les défauts initiaux du code (TOP20, seuil 0.50).
@@ -149,8 +167,11 @@ et fige la séance US. Le batch exige l'étape 10 si 11/12 utilisent le filtre.
   non tradable restent bloquants ; aucun fallback vers un autre univers.
   Oracle parcours est contrôlé via son contrat signé et la lineage causale des
   scores/politiques de J, pas via l'ancien registre de modèles par symbole.
-  La fraîcheur suit la séance clôturée J avant l'ouverture J+1 ; les exigences
-  distinctes de quotes SIP et protections restent inchangées. Les paires de
+  La fraîcheur suit la séance clôturée J avant l'ouverture J+1. Le contrôle de
+  quotes SIP du risque est optionnel via
+  `risk_management.quote_spread_check_enabled` (défaut `false`) ; les contrôles
+  d'exécution et protections restent distincts, voir
+  [le réglage dédié](controle_spread_etape11.md). Les paires de
   barres EODHD/SIP suivent `market_data.daily_bars_preferred_source` ; les vrais
   doublons ambigus restent bloquants, sans choisir une ligne valide de secours
   quand la ligne du fournisseur préféré est invalide.

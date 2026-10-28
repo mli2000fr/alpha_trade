@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import math
 from datetime import datetime
 from typing import Any
 
@@ -10,7 +9,7 @@ from execution_engine.config import ExecutionConfig
 from execution_engine.models import BrokerOrder, CancelResult, OrderIntent, IntentRole
 from execution_engine.order_intents import build_oco_protection_payload, intent_to_alpaca_payload
 from execution_engine.state_machine import map_alpaca_status
-from service.alpaca.clientAlpaca import fetch_latest_quotes
+from service.market.live_quotes import fetch_latest_quotes, validate_live_quote
 from service.alpaca.trading_client import AlpacaTradingClient, BrokerApiError
 
 LOGGER = logging.getLogger(__name__)
@@ -32,15 +31,12 @@ class BrokerAdapter:
     def submit_intent(self, intent: OrderIntent) -> BrokerOrder:
         payload = intent_to_alpaca_payload(intent, config=self._config)
         if intent.intent_role in (IntentRole.ENTRY, IntentRole.REBALANCE_BUY):
-            # Never let a permissive liquidity gate or a previously approved
-            # risk target bypass missing real-time SIP entitlement.
+            # A prior risk target cannot bypass a fresh consolidated quote.
             try:
                 quote = fetch_latest_quotes([intent.symbol], account_id=self._config.account_id).get(intent.symbol.upper())
-                bid, ask = float(quote["bp"]), float(quote["ap"])
-                if not all(math.isfinite(v) for v in (bid,ask)) or bid <= 0 or ask < bid:
-                    raise ValueError("invalid SIP quote")
+                validate_live_quote(quote, max_age_seconds=30)
             except Exception as exc:
-                raise BrokerApiError(403, "Nouvelle entrée bloquée : quote SIP temps réel indisponible ; aucun fallback IEX") from exc
+                raise BrokerApiError(403, "Nouvelle entrée bloquée : quote consolidée temps réel indisponible (Alpaca SIP/Tradier) ; aucun fallback IEX") from exc
         resp = self._client.submit_order(payload)
         return self._resp_to_broker_order(resp, intent.intent_id)
 
@@ -225,6 +221,7 @@ class BrokerAdapter:
             quotes = fetch_latest_quotes([symbol], account_id=self._config.account_id)
             quote = quotes.get(symbol) or quotes.get(symbol.upper())
             if isinstance(quote, dict):
+                validate_live_quote(quote)
                 bid = quote.get("bp")
                 ask = quote.get("ap")
                 if bid not in (None, "") and ask not in (None, ""):
@@ -234,7 +231,7 @@ class BrokerAdapter:
                 if bid not in (None, ""):
                     return float(bid)
         except Exception:
-            LOGGER.debug("Quote Alpaca indisponible pour %s lors de l'évaluation trailing.", symbol, exc_info=True)
+            LOGGER.debug("Quote consolidée indisponible pour %s lors de l'évaluation trailing.", symbol, exc_info=True)
         return None
 
     def broker_order_from_api(self, payload: dict[str, Any], *, intent_id: str = "") -> BrokerOrder:

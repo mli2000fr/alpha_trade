@@ -10,14 +10,17 @@ from ihm.services import batch_management
 
 
 @pytest.fixture(autouse=True)
-def isolated_sql_archive(monkeypatch):
-    from service.fr import batch_research_store as storage
-    class Engine:
-        def dispose(self):
-            pass
-    monkeypatch.setattr(storage, 'engine_fr', Engine)
-    monkeypatch.setattr(storage, 'check_schema', lambda engine: None)
-    monkeypatch.setattr(storage, 'publish_batch', lambda *a, **kw: dict(status='IMPORTED'))
+def isolated_sql_archive(monkeypatch,tmp_path):
+    from service.fr import batch_research_store as storage,collection_storage as primary
+    from fr_sql_primary_helpers import sqlite_primary
+    engine=sqlite_primary(tmp_path/'runner.sqlite')
+    real=primary.Repository
+    monkeypatch.setattr(real,'check_schema',lambda self:None)
+    monkeypatch.setattr(primary,'Repository',lambda e:real(e,root=tmp_path/'fr'))
+    monkeypatch.setattr(storage,'engine_fr',lambda:engine)
+    monkeypatch.setattr(runner,'OPS',tmp_path/'fr/operations')
+    yield engine
+    engine.dispose()
 
 
 def config(tmp_path, name='fr_calendar_snapshot', **changes):
@@ -42,7 +45,7 @@ def test_fr_catalog_has_only_fr_and_defaults(tmp_path):
 
 @pytest.mark.parametrize('name,status', [('fr_fundamentals_sync', 'BLOCKED_INPI_RETENTION')])
 def test_legal_blocks_remain_non_runnable_even_if_enabled_is_toggled(tmp_path, monkeypatch, name, status):
-    monkeypatch.setattr(runner, 'OPS', tmp_path/'ops')
+    monkeypatch.setattr(runner, 'OPS', tmp_path/'fr/operations')
     spec = next(s for s in batch_management.load_batch_specs(str(config(tmp_path))) if s.name == name)
     assert not spec.enabled and not spec.runnable
     assert spec.status == status and spec.unlock_steps and spec.research_notice
@@ -65,35 +68,34 @@ def test_rejects_cross_market_or_serving_config(tmp_path, field, value):
 
 def test_calendar_snapshot_is_idempotent_and_records_runs(tmp_path, monkeypatch):
     from common import market_calendar
-    monkeypatch.setattr(runner, 'OPS', tmp_path/'ops')
+    monkeypatch.setattr(runner, 'OPS', tmp_path/'fr/operations')
     path = config(tmp_path)
     first = runner.run('fr_calendar_snapshot', config_path=path, today=date(2026,10,5))
     second = runner.run('fr_calendar_snapshot', config_path=path, today=date(2026,10,5))
     assert first['status'] == second['status'] == 'SUCCESS'
     assert first['persisted_count'] == second['persisted_count'] > 200
-    assert len(list((tmp_path/'ops/calendar').glob('*.json'))) == 1
-    assert len(list((tmp_path/'ops/runs/fr_calendar_snapshot').glob('*.json'))) == 2
+    assert not (tmp_path/'fr/operations').exists()
     assert runner.latest_run('fr_calendar_snapshot')['status'] == 'SUCCESS'
 
 
 def test_disabled_cannot_collect_and_unimplemented_cannot_be_activated(tmp_path, monkeypatch):
-    monkeypatch.setattr(runner, 'OPS', tmp_path/'ops')
+    monkeypatch.setattr(runner, 'OPS', tmp_path/'fr/operations')
     path = config(tmp_path, 'fr_security_master_sync',enabled=False)
     assert runner.run('fr_security_master_sync', config_path=path)['status'] == 'SKIPPED_DISABLED_OR_UNQUALIFIED'
     path = config(tmp_path, 'fr_borrow_snapshot', enabled=True, status='ACTIVE')
     result = runner.run('fr_borrow_snapshot', config_path=path)
     assert result['status'] == 'FAILED'
     assert 'non implémenté' in result['error_message']
-    assert runner.latest_run('fr_borrow_snapshot')['failed_count'] == 1
+    assert runner.latest_run('fr_borrow_snapshot') is None
 
 
 def test_dry_run_no_disk_writes(tmp_path, monkeypatch):
-    monkeypatch.setattr(runner, 'OPS', tmp_path/'ops')
+    monkeypatch.setattr(runner, 'OPS', tmp_path/'fr/operations')
     path = config(tmp_path)
     result = runner.run('fr_calendar_snapshot', config_path=path, dry_run=True)
     assert result['status'] == 'DRY_RUN'
     assert result['persisted_count'] == 0
-    assert not (tmp_path/'ops').exists()
+    assert not (tmp_path/'fr/operations').exists()
 
 
 def test_partial_daily_collection_publishes_but_does_not_mask_failure(monkeypatch):

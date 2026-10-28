@@ -2894,12 +2894,16 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             )
         with col2:
             risk_account_equity = st.number_input(
-                "Equity pour le module Risk",
+                "Capital de recherche pour le risque (shadow)",
                 min_value=0.0,
                 value=_session_state_float("pipeline_risk_account_equity", 100_000.0),
                 step=1_000.0,
                 format="%.2f",
                 key="pipeline_risk_account_equity",
+                disabled=not st.session_state.get('pipeline_risk_dry_run',False),
+                help="Utilisé seulement en recherche shadow / dry-run. Le planning PAPER/LIVE relit "
+                     "l'equity réelle du compte sélectionné, même si les ordres de l'étape 12 sont simulés. "
+                     "Si le broker est indisponible, aucune nouvelle cible n'est publiée.",
             )
         with col3:
             execution_mode = cast(

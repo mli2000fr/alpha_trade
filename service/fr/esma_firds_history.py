@@ -30,7 +30,8 @@ def _value(parent: ET.Element | None, path: str) -> str | None:
 
 def archive_records(path: Path, target_isins: set[str], target_mics: set[str]):
     """Stream les seuls couples cibles ; ne charge jamais le XML complet en mémoire."""
-    with zipfile.ZipFile(path) as archive:
+    from service.fr.collection_storage import zip_source
+    with zipfile.ZipFile(zip_source(path)) as archive:
         names = archive.namelist()
         if len(names) != 1 or not names[0].endswith(".xml"):
             raise ValueError(f"archive FIRDS inattendue : {path.name}")

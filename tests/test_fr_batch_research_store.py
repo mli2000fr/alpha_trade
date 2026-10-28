@@ -194,20 +194,21 @@ def test_runner_fails_before_collection_if_sql_unavailable(tmp_path,monkeypatch)
 
 
 def test_runner_partial_collection_is_imported_but_still_failed(tmp_path,monkeypatch):
-    monkeypatch.setattr(runner,'OPS',tmp_path/'ops')
-    monkeypatch.setattr(runner,'load_section',lambda *a: dict(enabled=True,status='ACTIVE',archive_research_sql=True))
-    fake=SimpleNamespace(dispose=lambda:None)
-    monkeypatch.setattr(store,'engine_fr',lambda:fake)
-    monkeypatch.setattr(store,'check_schema',lambda e:None)
-    seen=[]
-    monkeypatch.setattr(store,'publish_batch',lambda *a,**kw: seen.append(kw) or dict(records_inserted=1))
+    from service.fr import collection_storage as primary
+    from fr_sql_primary_helpers import sqlite_primary
+    engine=sqlite_primary(tmp_path/'runner.sqlite')
+    monkeypatch.setattr(runner,'load_section',lambda *a:dict(enabled=True,status='ACTIVE'))
+    monkeypatch.setattr(store,'engine_fr',lambda:engine)
+    monkeypatch.setattr(primary.Repository,'check_schema',lambda self:None)
+    monkeypatch.setattr(store,'publish_batch',lambda *a,**kw:pytest.fail('No file mirror in operational runs'))
     def fail(name,cfg,result,**kw):
         result['persisted_count']=1
         raise RuntimeError('Source partial')
     monkeypatch.setattr(runner,'_handle',fail)
     result=runner.run('fr_calendar_snapshot')
     assert result['status']=='FAILED' and result['persisted_count']==1
-    assert result['research_sql_archive']['records_inserted']==1 and len(seen)==2
+    assert runner.latest_run('fr_calendar_snapshot')['status']=='FAILED'
+    assert 'research_sql_archive' not in result
 
 
 def test_disabled_batch_stays_disabled_without_sql_or_provider(tmp_path,monkeypatch):
@@ -237,17 +238,20 @@ def test_mysql_publication_releases_batch_lock_even_on_failure(monkeypatch):
 
 
 def test_runner_receipt_sql_failure_cannot_leave_local_success(tmp_path,monkeypatch):
+    from contextlib import nullcontext
+    from service.fr import collection_storage as primary
     monkeypatch.setattr(runner,'OPS',tmp_path/'ops')
-    monkeypatch.setattr(runner,'load_section',lambda *a: dict(enabled=True,status='ACTIVE',archive_research_sql=True))
+    monkeypatch.setattr(runner,'load_section',lambda *a:dict(enabled=True,status='ACTIVE'))
     monkeypatch.setattr(store,'engine_fr',lambda:SimpleNamespace(dispose=lambda:None))
-    monkeypatch.setattr(store,'check_schema',lambda e:None)
     monkeypatch.setattr(runner,'_handle',lambda *a,**kw:None)
-    def publish(*a,**kw):
-        if kw.get('paths'):
-            raise RuntimeError('Receipt SQL failed')
-        return dict(records_inserted=0)
-    monkeypatch.setattr(store,'publish_batch',publish)
+    class Repository:
+        def __init__(self,engine): self.calls=0
+        def check_schema(self): pass
+        def lock(self,name):return nullcontext()
+        def save_run(self,*args):
+            self.calls+=1
+            if self.calls==2: raise RuntimeError('Receipt SQL failed')
+    monkeypatch.setattr(primary,'Repository',Repository)
     result=runner.run('fr_calendar_snapshot')
     assert result['status']=='FAILED' and 'Receipt SQL failed' in result['error_message']
-    path=next((tmp_path/'ops/runs/fr_calendar_snapshot').glob('*.json'))
-    assert json.loads(path.read_text())['status']=='FAILED'
+    assert not (tmp_path/'ops').exists()

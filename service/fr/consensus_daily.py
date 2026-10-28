@@ -30,8 +30,8 @@ def normal_name(value):
 
 
 def reference_scope(path):
-    with gzip.open(path, 'rt', encoding='utf-8') as stream:
-        rows = [json.loads(line) for line in stream if line.strip()]
+    from service.fr.collection_storage import identity_rows
+    rows = identity_rows(path)
     groups, isin_groups = defaultdict(list), defaultdict(set)
     excluded = []
     for row in rows:

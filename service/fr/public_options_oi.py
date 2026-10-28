@@ -5,6 +5,8 @@ commercial feed, endpoint probing, inferred expiry day or invented OI date.
 """
 from __future__ import annotations
 
+from service.fr.collection_storage import (active, read_bytes, read_text, exists, paths, write_bytes, identity_rows, take_lock, release_lock)
+
 from collections import Counter
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
@@ -23,7 +25,7 @@ from sqlalchemy import text
 from common.public_data_http import verified_session
 from database.router import get_market_engine
 from service.fr.consensus_daily import reference_scope
-from service.inpi.files import atomic
+from service.fr.collection_storage import write_json as atomic
 
 BASE = 'https://live.euronext.com'
 DIRECTORY = BASE + '/en/markets/paris/stock-options/list'
@@ -280,12 +282,11 @@ def collect(cfg, result, *, root, identities, dry_run=False, max_symbols=None,
                 response_id = digest((run+':'+str(result['http_requests'])).encode())
                 raw_hash = digest(body)
                 target = root/'raw'/raw_hash
-                target.parent.mkdir(parents=True, exist_ok=True)
-                if not target.exists():
-                    with target.open('xb') as stream:
-                        stream.write(body)
-                if digest(target.read_bytes()) != raw_hash:
-                    raise ValueError('Archive OI publique corrompue')
+                if not active():
+                    if not exists(target):
+                        write_bytes(target,body)
+                    if digest(read_bytes(target)) != raw_hash:
+                        raise ValueError('Archive OI publique corrompue')
                 with engine.begin() as conn:
                     insert(conn, TABLES[1], [dict(response_id=response_id, run_id=run, endpoint=url, method=method,
                         request_json=encoded(params or {}), http_status=code, body_sha256=raw_hash, body=body,

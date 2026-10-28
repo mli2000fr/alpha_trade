@@ -1,5 +1,10 @@
 # Publication quotidienne des barres FR en staging SQL
 
+> **28 octobre 2026 : [SQL est le stockage principal](stockage_sql_principal_20261028.md).**
+> Le batch lit désormais réponses, observations, dernières versions et checkpoints
+> depuis SQL, puis publie les barres validées en staging. Le fonctionnement
+> historique par fichiers décrit dans la livraison du 9 octobre est remplacé.
+
 <!-- doc-status:start -->
 > Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
 <!-- doc-status:end -->

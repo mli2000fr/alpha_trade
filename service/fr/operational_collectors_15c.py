@@ -1,5 +1,7 @@
-"""FR daily vendor/public observations. Files only; no canonical SQL promotion."""
+"""FR observations. Operational data/state go directly to SQL, without canonical promotion."""
 from __future__ import annotations
+
+from service.fr.collection_storage import (active, read_bytes, read_text, exists, paths, write_bytes, identity_rows, take_lock, release_lock)
 
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -20,8 +22,7 @@ DILA = 'https://www.info-financiere.gouv.fr/api/explore/v2.0/catalog/datasets/fl
 
 
 def reference(path):
-    with gzip.open(path, 'rt', encoding='utf-8') as stream:
-        return [json.loads(line) for line in stream if line.strip()]
+    return identity_rows(path)
 
 
 def window(cfg, today=None):
@@ -36,9 +37,9 @@ def archive(root, payload):
     content = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode()
     digest = hashlib.sha256(content).hexdigest()
     path = root/'raw'/f'{digest}.json'
-    if not path.exists():
+    if not exists(path):
         atomic(path, payload)
-    if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+    if hashlib.sha256(read_bytes(path)).hexdigest() != digest:
         raise ValueError('Archive FR corrompue')
     return digest
 
@@ -88,16 +89,16 @@ def corporate(cfg, result, *, root, identities, dry_run=False, today=None, resum
     token=os.environ.get('EODHD_API_TOKEN')
     if not token: raise ValueError('EODHD_API_TOKEN absent')
     state_path=root/'windows'/f'{start}_{end}.json'
-    state=json.loads(state_path.read_text(encoding='utf-8')) if state_path.exists() else {'payloads':{}}
+    state=json.loads(read_text(state_path,encoding='utf-8')) if exists(state_path) else {'payloads':{}}
     for symbol in symbols:
         for kind in ('div','splits'):
             key=hashlib.sha256(f'{symbol}:{kind}'.encode()).hexdigest()
             latest=root/'latest'/f'{key}.json'
             prior=state['payloads'].get(key,{})
-            if resume and prior.get('status') == 'COMPLETED' and latest.exists():
+            if resume and prior.get('status') == 'COMPLETED' and exists(latest):
                 raw=root/'raw'/f"{prior['sha256']}.json"
-                if (raw.exists() and hashlib.sha256(raw.read_bytes()).hexdigest()==prior['sha256']
-                    and hashlib.sha256(latest.read_bytes()).hexdigest()==prior.get('latest_sha256')):
+                if (exists(raw) and hashlib.sha256(read_bytes(raw)).hexdigest()==prior['sha256']
+                    and hashlib.sha256(read_bytes(latest)).hexdigest()==prior.get('latest_sha256')):
                     result['resumed_count']+=1
                     continue
             try:
@@ -106,13 +107,13 @@ def corporate(cfg, result, *, root, identities, dry_run=False, today=None, resum
                 digest=archive(root,{'symbol':symbol,'kind':kind,'window':[str(start),str(end)],'rows':rows})
                 observe(root,{'symbol':symbol,'kind':kind,'raw_sha256':digest,'window':[str(start),str(end)]})
                 rows=validate_actions(rows,kind,start,end)
-                old=json.loads(latest.read_text(encoding='utf-8')) if latest.exists() else {'events':{}}
+                old=json.loads(read_text(latest,encoding='utf-8')) if exists(latest) else {'events':{}}
                 current={d:v for d,v in old['events'].items() if not str(start)<=d<=str(end)}
                 for row in rows:
                     current.setdefault(row['date'],[]).append(row)
                 for events in current.values(): events.sort(key=lambda r:json.dumps(r,sort_keys=True))
                 changed=current!=old['events']
-                if changed or not latest.exists():
+                if changed or not exists(latest):
                     atomic(latest,{'market_code':'FR_EQ','symbol':symbol,'kind':kind,'events':current,
                         'raw_sha256':digest,'available_at':datetime.now(UTC).isoformat(),
                         'evidence_state':'VENDOR_OBSERVATION_NOT_VALIDATED_CORPORATE_ACTION'})
@@ -120,7 +121,7 @@ def corporate(cfg, result, *, root, identities, dry_run=False, today=None, resum
                     result['changed_count']+=int(bool(old.get('events')) and changed)
                 else: result['unchanged_count']+=1
                 state['payloads'][key]={'status':'COMPLETED','sha256':digest,
-                    'latest_sha256':hashlib.sha256(latest.read_bytes()).hexdigest()}
+                    'latest_sha256':hashlib.sha256(read_bytes(latest)).hexdigest()}
             except Exception as exc:
                 result['failed_count']+=1
                 result['errors'].append({'symbol':symbol,'kind':kind,'error':str(exc)[:240]})
@@ -174,7 +175,7 @@ def public_collection(name,cfg,result,*,root,identities,dry_run=False,today=None
     result['received_count']=1
     observe(root,{'raw_sha256':digest,'window':[str(start),str(end)],'scope':scope})
     latest=root/'latest.json'
-    prior=json.loads(latest.read_text(encoding='utf-8')) if latest.exists() else {'records':{}}
+    prior=json.loads(read_text(latest,encoding='utf-8')) if exists(latest) else {'records':{}}
     # AMF full export replaces the view; DILA window merges versions by full-content hash.
     current={} if name=='fr_amf_short_sync' else dict(prior['records'])
     for row in rows:
@@ -194,8 +195,12 @@ def quality(cfg,result,*,operations,dry_run=False,today=None):
     if not names or any(n not in allowed for n in names):
         raise ValueError('Dépendance de supervision FR non autorisée')
     for name in names:
-        paths=sorted((operations/'runs'/name).glob('*.json'),reverse=True)
-        row=json.loads(paths[0].read_text(encoding='utf-8')) if paths else None
+        if active():
+            from service.fr.operational_batch_15a import latest_run
+            row=latest_run(name)
+        else:
+            run_paths=sorted(paths(operations/'runs'/name),reverse=True)
+            row=json.loads(read_text(run_paths[0],encoding='utf-8')) if run_paths else None
         stamp=datetime.fromisoformat(row['finished_at']) if row else None
         age=(now-stamp).total_seconds()/3600 if stamp else None
         ok=bool(row and row['status']=='SUCCESS' and not row.get('limited_smoke') and age is not None and 0<=age<=float(cfg['max_run_age_hours']))

@@ -17,6 +17,7 @@ class RiskConfig:
     account_equity: float = 100_000.0
     risk_per_trade_pct: float = 0.01
     atr_window: int = 20
+    quote_spread_check_enabled: bool = False  # Step 11 only; execution checks are separate.
 
     # ── V1 Multi-Horizon Risk (2026-08-09) ──
     # Stop = ATR × atr_stop_multiple[H]
@@ -265,6 +266,8 @@ class RiskConfig:
     max_long_short_correlation: float | None = None
 
     def __post_init__(self) -> None:
+        if type(self.quote_spread_check_enabled) is not bool:
+            raise ValueError('quote_spread_check_enabled doit être booléen')
         if self.account_equity <= 0:
             raise ValueError("account_equity doit être > 0.")
         if not 0 < self.risk_per_trade_pct < 1:

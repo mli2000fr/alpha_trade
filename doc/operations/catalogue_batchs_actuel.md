@@ -125,15 +125,19 @@ signifient pas chaîne quotidienne CN opérationnelle.
 
 ## FR — batch_fr.yaml, 14 entrées, 11 actives
 
+Depuis le **28 octobre**, `defaults.storage_backend: sql` impose le
+[stockage SQL principal](../fr/stockage_sql_principal_20261028.md), y compris
+réponses, checkpoints et bilans. L'ancien `archive_research_sql` est supprimé.
+
 | Batch | État actuel | Source / destination |
 | --- | --- | --- |
 | fr_calendar_snapshot | Recherche active | Bibliothèque XPAR → `fr_calendar_sessions_research` et archives |
 | fr_security_master_sync | Recherche active | ESMA/Euronext → `fr_reference_versions_research` et archives |
-| fr_daily_bars_sync | Recherche active | EODHD → fichiers et staging SQL FR, pas canonique |
+| fr_daily_bars_sync | Recherche active | EODHD → réponses, reprise et staging SQL FR, pas canonique |
 | fr_corporate_actions_sync | Recherche active | EODHD → `fr_corporate_actions_research` et archives |
 | fr_amf_short_sync | Recherche active | Export public AMF → `fr_amf_positions_research` ; positions déclarées, pas borrow |
 | fr_dila_disclosures_sync | Recherche active | DILA → `fr_dila_disclosures_research`, métadonnées versionnées |
-| fr_options_mifir_trade_sync | Recherche active, quarantaine | Transactions différées Euronext + FIRDS → fichiers sources et quatre tables `fr_option_mifir_*` dans `alpha_trade_fr` ; ni OI ni NBBO complet. [Stockage SQL et reprise](../fr/options_mifir_stockage_sql.md) |
+| fr_options_mifir_trade_sync | Recherche active, quarantaine | Transactions différées Euronext + FIRDS → réponses brutes SQL et quatre tables `fr_option_mifir_*` dans `alpha_trade_fr` ; ni OI ni NBBO complet. [Stockage SQL et reprise](../fr/options_mifir_stockage_sql.md) |
 | fr_options_open_interest_sync | Recherche active, OI publique non qualifiée | Chaînes publiques Euronext Paris → trois tables `fr_option_oi_public_*` ; 6h30 et 20h30 Paris lun-sam. Dates OI/expiration inconnues, anomalies conservées, aucun filtre directionnel. [Contrat de collecte](../fr/options_open_interest_public.md) |
 | fr_db_backup | Actif | alpha_trade_fr → backups/fr/db, keep=3 |
 | fr_artifacts_backup | Actif | artifacts/fr + artifacts/models/fr_eq → backups/fr/artifacts, keep=3 |

@@ -24,7 +24,7 @@ def test_no_new_entry_without_sip_even_with_an_old_risk_target(monkeypatch,role)
     http=MagicMock()
     monkeypatch.setattr('execution_engine.broker_adapter.fetch_latest_quotes',MagicMock(side_effect=RuntimeError('403')))
     adapter=BrokerAdapter(http,ExecutionConfig())
-    with pytest.raises(Exception,match='SIP temps réel'):
+    with pytest.raises(Exception,match='consolidée temps réel'):
         adapter.submit_intent(intent(role))
     http.submit_order.assert_not_called()
 
@@ -40,7 +40,8 @@ def test_existing_exit_does_not_require_sip_permission(monkeypatch):
 @pytest.mark.parametrize('side',['buy','sell'])
 def test_valid_sip_access_allows_long_or_short_entry(monkeypatch,side):
     http=MagicMock();http.submit_order.return_value={'id':'test','symbol':'AAPL','status':'new'}
-    quote=MagicMock(return_value={'AAPL':{'bp':100,'ap':100.05}})
+    quote=MagicMock(return_value={'AAPL':{'bp':100,'ap':100.05,
+        't':datetime.now(timezone.utc).isoformat(), 'provider':'alpaca', 'feed':'sip', 'is_realtime':True}})
     monkeypatch.setattr('execution_engine.broker_adapter.fetch_latest_quotes',quote)
     row=replace(intent(IntentRole.ENTRY),side=side)
     BrokerAdapter(http,ExecutionConfig()).submit_intent(row)
@@ -51,7 +52,7 @@ def test_valid_sip_access_allows_long_or_short_entry(monkeypatch,side):
 def test_invalid_sip_quote_cannot_open_a_position(monkeypatch,quote):
     http=MagicMock()
     monkeypatch.setattr('execution_engine.broker_adapter.fetch_latest_quotes',lambda *a,**k:{'AAPL':quote})
-    with pytest.raises(Exception,match='SIP temps réel'):
+    with pytest.raises(Exception,match='consolidée temps réel'):
         BrokerAdapter(http,ExecutionConfig()).submit_intent(intent(IntentRole.ENTRY))
     http.submit_order.assert_not_called()
 

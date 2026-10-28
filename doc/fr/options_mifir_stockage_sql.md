@@ -1,5 +1,9 @@
 # Options FR — tables de recherche MiFIR/FIRDS
 
+> Depuis le **28 octobre 2026**, [SQL est le stockage principal](stockage_sql_principal_20261028.md),
+> pour les sources, checkpoints, snapshots et bilans. Les descriptions et
+> commandes d'import de fichiers ci-dessous concernent les archives antérieures.
+
 Livraison et import vérifiés le **27 octobre 2026**. Le batch concerné est
 `fr_options_mifir_trade_sync`, toujours actif à 06h Paris du lundi au samedi.
 La source, les horaires, l'univers FR et les notifications sont conservés.

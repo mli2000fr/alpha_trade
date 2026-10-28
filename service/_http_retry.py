@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from threading import Lock
-from typing import Any, cast
+from typing import Any, Callable, cast
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
@@ -178,6 +178,7 @@ def request_with_retry(
     *,
     policy: RetryPolicy | None = None,
     breaker: CircuitBreaker | None = DEFAULT_CIRCUIT_BREAKER,
+    retry_response: Callable[[requests.Response], bool] | None = None,
     **request_kwargs: Any,
 ) -> requests.Response:
     """Effectue une requête HTTP avec retry exponentiel + circuit breaker.
@@ -187,6 +188,8 @@ def request_with_retry(
     - 5xx, timeouts, erreurs réseau : retry selon ``policy``.
     - Le circuit breaker est interrogé *avant* chaque tentative et alimenté
       par les succès / échecs.
+    - ``retry_response`` qualifie une erreur fournisseur particulière (ex. le
+      HTTP 400 Quota Violation de Tradier), sans rendre tous les 400 retryables.
     """
     pol = policy or RetryPolicy()
     request_kwargs.setdefault("timeout", pol.timeout_seconds)
@@ -198,7 +201,7 @@ def request_with_retry(
             breaker.check(host)
         try:
             response: requests.Response = _ensure_response(_perform_request(session, method, url, request_kwargs))
-            if response.status_code in RETRYABLE_HTTP_STATUS:
+            if response.status_code in RETRYABLE_HTTP_STATUS or (retry_response is not None and retry_response(response)):
                 raise _RetryableHttpError(response)
             response.raise_for_status()
             if breaker is not None:

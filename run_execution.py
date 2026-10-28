@@ -609,21 +609,26 @@ def _load_pre_submission_spreads(
     *,
     account_id: str,
 ) -> dict[str, object]:
-    """Charge les spreads live (bid/ask) depuis l'API Alpaca pour le gate pré-soumission."""
+    """Charge les spreads consolidés du fournisseur configuré, avant soumission."""
     from risk_management.liquidity import SpreadSnapshot
-    from service.alpaca.clientAlpaca import fetch_latest_quotes
+    from service.market.live_quotes import fetch_latest_quotes, validate_live_quote
 
     if not symbols:
         return {}
     try:
         raw_quotes = fetch_latest_quotes(symbols, account_id=account_id)
     except Exception:
-        LOGGER.warning("Pre-submission spreads indisponibles (API Alpaca quotes).", exc_info=True)
+        LOGGER.warning("Pre-submission spreads indisponibles (fournisseur quotes configuré).", exc_info=True)
         return {}
 
     snapshots: dict[str, SpreadSnapshot] = {}
     for sym, quote in raw_quotes.items():
         if not isinstance(quote, dict):
+            continue
+        try:
+            validate_live_quote(quote, max_age_seconds=30)
+        except (ValueError, TypeError, KeyError, OverflowError):
+            LOGGER.warning('Quote pré-soumission non qualifiée pour %s ; entrée bloquée', sym)
             continue
         quote_time_str = quote.get("t")
         quote_time = None
@@ -645,7 +650,7 @@ def _load_pre_submission_spreads(
             bid=bid if bid and bid > 0 else None,
             ask=ask if ask and ask > 0 else None,
             quote_time=quote_time,
-            source="alpaca",
+            source=quote['source'],
         )
     return snapshots
 

@@ -5,6 +5,8 @@ No price table, feature store, eligibility flag or US schema is modified.
 """
 from __future__ import annotations
 
+from service.fr.collection_storage import (active, read_bytes, read_text, exists, paths, write_bytes, identity_rows, take_lock, release_lock)
+
 import argparse
 from collections import Counter
 from datetime import UTC, datetime
@@ -17,7 +19,7 @@ from sqlalchemy import text
 
 from database.router import get_market_engine
 from service.fr import mifir_options_poc as source
-from service.inpi.files import atomic
+from service.fr.collection_storage import write_json as atomic
 
 ROOT = Path(__file__).resolve().parents[2]
 ARCHIVES = ROOT / 'artifacts/fr/operations/fr_options_mifir_trade_sync'
@@ -64,7 +66,7 @@ def load_snapshot(path, root=ARCHIVES):
     """Check source hashes and replay the archived parser, without network calls."""
     root = Path(root).resolve()
     path = _inside(root / 'snapshots', path)
-    raw = path.read_bytes()
+    raw = read_bytes(path)
     data = json.loads(raw)
     for flag in ('ml_eligible', 'canonical', 'historical_pit_qualified'):
         if data.get(flag) is not False:
@@ -84,7 +86,7 @@ def load_snapshot(path, root=ARCHIVES):
         key = receipt['sha256']
         if len(key) != 64 or any(c not in '0123456789abcdef' for c in key):
             raise ValueError('Empreinte source invalide')
-        blob = (root / 'objects' / key).read_bytes()
+        blob = read_bytes(root / 'objects' / key)
         if digest(blob) != key:
             raise ValueError('Source brute options corrompue')
         if stamp(receipt['received_at']) > observed:
@@ -225,7 +227,7 @@ def store_prepared(conn, prepared):
 
 def load_attempt(path, root=ARCHIVES):
     path = _inside(Path(root) / 'attempts', path)
-    raw = path.read_bytes()
+    raw = read_bytes(path)
     data = json.loads(raw)
     result = data['result']
     if result.get('ml_eligible') is not False or result.get('historical_pit_qualified') is not False:
@@ -298,7 +300,7 @@ def main():
     parser.add_argument('--archive-root', type=Path, default=ARCHIVES)
     parser.add_argument('--report', type=Path)
     args = parser.parse_args()
-    if args.report and args.report.exists():
+    if args.report and exists(args.report):
         raise FileExistsError('Rapport existant, utiliser un nouveau chemin')
     engine = engine_fr() if args.apply else None
     try:

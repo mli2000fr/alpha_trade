@@ -1539,7 +1539,7 @@ def _load_risk_prediction_review_cached(**scope):
 def _render_options_filter_review(options: PipelineLaunchOptions, all_runs) -> None:
     import pandas as pd
     from common.us_signal_date import resolve_us_signal_date
-    from service.options_directional.store import qualified
+    from ihm.services.options_prediction_review import load_options_prediction_review
     st.markdown('#### TOP Oracle — filtre volume options + OI')
     records = [r for r in all_runs if r.get('step_key') == 'ml_predict'
                and (r.get('account_id') or 'default') == (options.account_id or 'default')
@@ -1552,12 +1552,12 @@ def _render_options_filter_review(options: PipelineLaunchOptions, all_runs) -> N
     try:
         from service.options_directional.config import load_options_filter_config
         batch = options.ml_live_predict_batch_id or options.ml_predict_batch_id or load_options_filter_config().default_oracle_batch_id
-        report = qualified(run_id, trade_date=resolve_us_signal_date(options.trade_date or None),
+        report = load_options_prediction_review(run_id, trade_date=resolve_us_signal_date(options.trade_date or None),
                            batch_id=batch, account_id=options.account_id or 'default',
                            symbol_source=options.ml_predict_symbol_source,
                            capital_preset_key=options.capital_preset_key or 'capital_2001_5000')
-    except (ValueError, KeyError, OSError):
-        st.warning('Résultat options expiré ou incompatible avec la date/modèle/univers courant. Aucun remplacement implicite.')
+    except (ValueError, KeyError, OSError) as exc:
+        st.warning(f'Résultat options non affichable : {exc}. Aucun ancien run substitué.')
         return
     st.caption(f"Run `{run_id}` · séance {report['trade_date']} · cutoff {report['cutoff_utc']} · "
                f"couverts {report['covered']}/{len(report['rows'])} · retenus LONG {len(report['selected'])}.")

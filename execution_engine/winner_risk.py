@@ -37,8 +37,8 @@ def reapprove_campaign(state, version, proposed, snapshot, now, kind, *, context
         raise ValueError('Unqualified native entry data / regime / concentration / corporate actions')
     if context.get('entries_allowed') is not True:
         raise ValueError('Native regime blocks new LONG entries')
-    if snapshot.get('feed') != 'sip' or snapshot.get('quote_error'):
-        raise ValueError('Real-time SIP quote required')
+    from service.market.live_quotes import validate_campaign_quote
+    validate_campaign_quote(snapshot, now=now, max_age_seconds=policy.max_quote_age_seconds)
     bid, ask = float(snapshot['bid']), float(snapshot['ask'])
     if (not all(math.isfinite(x) and x > 0 for x in (bid, ask)) or bid > ask
             or not 0 <= (now-aware(snapshot['quote_time'])).total_seconds() <= policy.max_quote_age_seconds):

@@ -1,4 +1,5 @@
-"""Prospective FR MiFIR/FIRDS files and dedicated research SQL, never canonical data."""
+"""Prospective FR MiFIR/FIRDS SQL primary sources and dedicated research tables."""
+from service.fr.collection_storage import (active, read_bytes, read_text, exists, paths, write_bytes, identity_rows, take_lock, release_lock)
 from datetime import datetime, timedelta
 import hashlib
 import json
@@ -7,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 from service.fr.consensus_daily import reference_scope
 from service.fr import mifir_options_poc as source
-from service.inpi.files import atomic
+from service.fr.collection_storage import write_json as atomic
 
 
 def _archive(root, raw, receipt):
@@ -15,13 +16,11 @@ def _archive(root, raw, receipt):
     if receipt.get('sha256') != digest:
         raise ValueError('Source receipt checksum mismatch')
     path = root/'objects'/digest
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
-            raise ValueError('Corrupted archived source')
+    if exists(path):
+        if hashlib.sha256(read_bytes(path)).hexdigest() != digest:
+            raise ValueError('Corrupted source SQL object')
     else:
-        with path.open('xb') as stream:
-            stream.write(raw)
+        write_bytes(path,raw)
     return {'object': str(path), **receipt}
 
 
@@ -101,10 +100,10 @@ def _collect_files(cfg, result, *, root, identities, dry_run=False, max_symbols=
             requested = isins[offset:offset+80]
             url = source.query_url(requested)
             cache = root/'checkpoints'/day.isoformat()/(hashlib.sha256(url.encode()).hexdigest()+'.json')
-            if cache.exists():
-                entry = json.loads(cache.read_text(encoding='utf-8'))
+            if exists(cache):
+                entry = json.loads(read_text(cache,encoding='utf-8'))
                 blob = root/'objects'/entry['sha256']
-                payload = blob.read_bytes()
+                payload = read_bytes(blob)
                 if hashlib.sha256(payload).hexdigest() != entry['sha256'] or entry.get('url') != url:
                     raise ValueError('Corrupted FIRDS resume checkpoint')
             else:
@@ -132,7 +131,7 @@ def _collect_files(cfg, result, *, root, identities, dry_run=False, max_symbols=
         key = hashlib.sha256(json.dumps({'trades': receipts[1]['sha256'], 'docs': docs,
             'universe': universe}, sort_keys=True).encode()).hexdigest()
         target = root/'snapshots'/f'{key}.json'
-        if not target.exists():
+        if not exists(target):
             atomic(target, {'analysis': analysis, 'observed_at': observed, 'available_at': observed,
                 'reference_receipts': receipts, 'source_disclaimer': disclaimer,
                 'universe': universe, 'excluded_identities': excluded,

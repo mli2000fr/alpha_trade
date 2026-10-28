@@ -1,5 +1,10 @@
 # Batchs FR — stockage SQL des données et archives
 
+> **Historique de transition du 27 octobre.** Depuis le 28 octobre,
+> [SQL est le stockage principal](stockage_sql_principal_20261028.md) :
+> l'option `archive_research_sql` est retirée, les nouvelles collectes ne
+> passent plus par des fichiers et les checkpoints sont relus depuis SQL.
+
 Livraison du **27 octobre 2026**, base physique **`alpha_trade_fr`** uniquement.
 La migration `0010_fr_batch_research_storage` complète les tables options de
 la migration 0009 et les stockages barres/consensus déjà existants.
@@ -88,7 +93,7 @@ Les tables canoniques `instruments`, `market_sessions`, `stock_bars_daily` et
 `fr_corporate_actions` ne sont pas alimentées par ce miroir. Les garde-fous
 `canonical_writes_enabled: false` et `serving_enabled: false` restent inchangés.
 
-## Raccordement des prochaines exécutions
+## Ancien raccordement du 27 octobre, remplacé le 28
 
 `batch_fr.yaml → defaults.archive_research_sql: true` active le raccordement dans
 `service.fr.operational_batch_15a`. Le runner vérifie le schéma **avant les appels

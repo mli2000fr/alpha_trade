@@ -11,6 +11,11 @@ de recherche explicitement actives ont leur catalogue propre batch_fr.yaml.
 
 ## Pour reprendre l'application
 
+**28 octobre 2026 : [SQL devient le stockage principal des collectes](stockage_sql_principal_20261028.md).**
+`storage_backend: sql` remplace `archive_research_sql`. Données, réponses,
+checkpoints et bilans sont écrits et relus en base ; la page Batch lit les
+bilans SQL. Les anciens fichiers sont conservés mais ne servent plus à la reprise.
+
 Collecte du **27 octobre 2026** : [open interest public Euronext Paris](options_open_interest_public.md),
 batch `fr_options_open_interest_sync`, trois tables `fr_option_oi_public_*`.
 Les OI numériques CALL/PUT sont distingués des absences et valeurs invalides.

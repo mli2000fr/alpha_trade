@@ -5,6 +5,10 @@ Ajout du 27 octobre 2026 sur demande utilisateur. Batch
 `alpha_trade_fr`. Collecte anonyme des réponses de la page publique, sans
 abonnement commercial ni utilisation d'un compte courtier.
 
+**Depuis le 28 octobre : [SQL est le stockage principal](stockage_sql_principal_20261028.md).**
+Réponses, progression et bilans sont écrits directement en base. Les chemins
+de ressources hérités ne désignent plus des fichiers à écrire ou relire.
+
 ## Périmètre et horaires
 
 Configuration dans `batch_fr.yaml`, section `fr_options_open_interest_sync` :
@@ -67,10 +71,10 @@ Les réponses sont engagées avant parsing ; un parsing échoué conserve le bru
 avec `available_at=NULL`. Contrats et statut de parsing sont engagés ensemble,
 puis la disponibilité SQL est estampillée à l'heure réelle après commit.
 
-Copies locales sous `artifacts/fr/operations/fr_options_open_interest_sync/` :
-`raw/`, `receipts/`, `reports/`. Les reçus/rapports JSON sont également archivés
-par le miroir `fr_batch_research_documents` / `fr_batch_research_file_versions`.
-Les corps HTML/JSON complets sont déjà dans la table dédiée des réponses.
+Les corps HTML/JSON complets sont dans la table dédiée des réponses.
+Progression et bilans sont conservés dans les ressources SQL communes et
+`fr_collection_runs`. Les nouvelles acquisitions ne créent plus de copies
+locales `raw/`, `receipts/` ou `reports/`. Les anciens fichiers sont conservés.
 
 ## Qualité : ne pas confondre une valeur avec une preuve d'OI exploitable
 
@@ -107,13 +111,21 @@ python -u -m service.fr.operational_batch_15a --batch fr_options_open_interest_s
 Dans la page Batch FR, même lancement manuel et installation Windows que les
 autres collecteurs FR. Nom de tâche : `AlphaTrade-FrOptionsOpenInterestSync`.
 Le launcher relit les horaires du YAML ; chaque passage est protégé par le
-mutex Windows et le verrou local du collecteur.
+mutex Windows et le verrou MySQL du collecteur.
 
 Log : `log/batch_fr/fr_options_open_interest_sync.txt` pour un lancement via
-le launcher. Bilan final : `artifacts/fr/operations/runs/fr_options_open_interest_sync/*.json`.
-Avancement : `artifacts/fr/operations/fr_options_open_interest_sync/progress.json`,
-avec identifiant du passage, requêtes, observations et erreurs ; mise à jour par produit.
-Ne pas supprimer un verrou sans vérifier que le processus propriétaire est terminé.
+le launcher. Avancement et bilan : page Batch FR ou requête SQL :
+
+```sql
+SELECT operational_run_id, status, started_at, finished_at, summary_json
+FROM alpha_trade_fr.fr_collection_runs
+WHERE batch_name = 'fr_options_open_interest_sync'
+ORDER BY started_at DESC LIMIT 1;
+```
+
+Les statistiques sont actualisées pendant les écritures SQL, puis le bilan
+final est enregistré. L'heure de fin du passage et `data_status` distinguent
+une acquisition terminée d'une qualification financière encore partielle.
 
 ## Validation
 
@@ -136,7 +148,9 @@ après exécution ; aucune performance directionnelle n'est déduite de ce test.
   FR via `wscript.exe //B`, catalogue `batch_fr.yaml`, workspace `F:\projets`.
 - Premier passage complet lancé : `fr-public-oi-20261027213946-583a33d4`,
   294 titres de référence, 98 produits correspondant à 62 titres découverts.
-  **Encore en cours lors de cette vérification ; aucun succès complet annoncé.**
+  Terminé depuis : **62 titres avec chaîne publique, 16 184 observations,
+  zéro erreur technique**. Les données restent PARTIAL pour qualification,
+  sans prétendre que les 294 titres disposent tous d'options.
 - Contrôle SQL en lecture seule à 21:43:36 UTC : 137 corps de réponse vérifiés
   par SHA256 ; 4 992 observations, dont 422 CALL numériques, 2 074 CALL
   manquants et 2 496 PUT invalides. Les dates exactes restent NULL et les

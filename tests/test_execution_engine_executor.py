@@ -11,6 +11,7 @@ from execution_engine import executor as executor_module
 from execution_engine.config import ExecutionConfig, LeverageConfig
 from execution_engine.executor import ProductionExecutor, _AccountConstraintState
 from execution_engine.models import BrokerOrder, EventType, OrderIntent, OrderStatus
+from common.winner_pyramiding import WinnerPyramidingConfig
 
 
 def _make_parent_intent() -> OrderIntent:
@@ -198,7 +199,8 @@ def test_should_defer_children_for_swing_only() -> None:
 
 def test_execute_run_emits_live_progress_payloads(monkeypatch) -> None:
     progress_payloads: list[dict[str, object]] = []
-    config = ExecutionConfig(dry_run=True, allow_outside_rth=True, inter_order_delay_ms=0, poll_interval_seconds=0.01)
+    config = ExecutionConfig(dry_run=True, allow_outside_rth=True, inter_order_delay_ms=0, poll_interval_seconds=0.01,
+                             winner_pyramiding=WinnerPyramidingConfig(enabled=False))
     repo = MagicMock()
     repo.acquire_execution_lock.return_value = True
     repo.load_portfolio_targets.return_value = [
@@ -250,6 +252,7 @@ def test_execute_run_emits_live_progress_payloads(monkeypatch) -> None:
 
 def test_execute_run_applies_live_regime_guards_before_building_intents(monkeypatch) -> None:
     config = ExecutionConfig(
+        winner_pyramiding=WinnerPyramidingConfig(enabled=False),
         dry_run=True,
         allow_outside_rth=True,
         inter_order_delay_ms=0,
@@ -324,6 +327,7 @@ def test_execute_run_applies_live_regime_guards_before_building_intents(monkeypa
 
 def test_execute_run_applies_live_gross_exposure_guard_before_building_intents(monkeypatch) -> None:
     config = ExecutionConfig(
+        winner_pyramiding=WinnerPyramidingConfig(enabled=False),
         dry_run=True,
         allow_outside_rth=True,
         inter_order_delay_ms=0,

@@ -1,4 +1,4 @@
-"""Read-only SIP evidence for campaign signals. No order or SQL mutation."""
+"""Read-only SIP bars and configured consolidated quotes for campaign signals."""
 from datetime import UTC, datetime, timedelta
 import math
 from zoneinfo import ZoneInfo
@@ -75,13 +75,13 @@ class NativeWinnerMarket:
         return self.with_quote(state, snapshot)
 
     def with_quote(self, state, snapshot):
-        from service.alpaca.clientAlpaca import fetch_latest_quotes
+        from service.market.live_quotes import fetch_latest_quotes, validate_live_quote
         try:
             quote = fetch_latest_quotes([state['symbol']], account_id=self.account_id)[state['symbol']]
-            if not all(math.isfinite(float(quote[k])) and float(quote[k]) > 0 for k in ('as', 'bs')):
-                raise ValueError('SIP bid/ask size missing or zero')
+            validate_live_quote(quote, max_age_seconds=state['policy']['max_quote_age_seconds'], require_sizes=True)
             snapshot.update(ask=float(quote['ap']), bid=float(quote['bp']),
-                quote_time=aware(quote['t']), raw_quote=quote)
+                quote_time=aware(quote['t']), raw_quote=quote,
+                quote_provider=quote['provider'], quote_feed=quote['feed'], quote_source=quote['source'])
         except Exception as exc:
             # Historical bars can still tighten an existing stop. No real-time
             # quote means no new entry or add; there is no IEX fallback.

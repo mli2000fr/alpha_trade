@@ -729,6 +729,9 @@ class PortfolioBuilder:
                     and operational.account.source == 'broker:paper:llm'):
                 from risk_management.operational_data import validate_llm_paper_snapshot
                 validate_llm_paper_snapshot(operational, trade_date)
+            elif operational.account.source in {'broker:paper:risk','broker:live:risk'}:
+                from risk_management.operational_data import validate_current_broker_snapshot
+                validate_current_broker_snapshot(operational,trade_date)
             elif operational.account.as_of.date() != trade_date:
                 raise ValueError('Oracle operational snapshot must match decision date')
             if not np.isfinite(operational.account.equity) or operational.account.equity <= 0:
