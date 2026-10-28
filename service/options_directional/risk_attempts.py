@@ -10,9 +10,9 @@ from .store import digest, write_new
 
 
 @contextmanager
-def risk_lock(folder):
+def risk_lock(folder, *, lock_name='risk.lock'):
     # Kernel lock, released on process death. The durable claim is separate.
-    with (folder/'risk.lock').open('a+b') as handle:
+    with (folder/lock_name).open('a+b') as handle:
         handle.seek(0)
         if not handle.read(1):
             handle.write(b'0')

@@ -133,9 +133,12 @@ def main():
         broker = AlpacaTradingClient(broker_mode='paper', account_id='default')
         holdings = {p['symbol']: p for p in broker.get_positions()}
         _validate_targets(targets, holdings, {s: 'long' for s in report['selected']}, args.trade_date)
-        write_new(folder/'execution.claim.json', dict(started_at=datetime.now(timezone.utc).isoformat()))
         command = _flag(_flag(command, '--run-id', binding['risk_run_id']), '--account', 'default')
-        subprocess.run(command, check=True)
+        from .execution_attempts import execution_attempt
+        with execution_attempt(folder, report, binding) as attempt:
+            command = _flag(command, '--options-filter-run-id', run_id)
+            command = _flag(command, '--options-execution-attempt-id', attempt['attempt_id'])
+            subprocess.run(command, check=True)
 
 
 if __name__ == '__main__':

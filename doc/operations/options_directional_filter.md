@@ -176,6 +176,10 @@ et fige la séance US. Le batch exige l'étape 10 si 11/12 utilisent le filtre.
   doublons ambigus restent bloquants, sans choisir une ligne valide de secours
   quand la ligne du fournisseur préféré est invalide.
 - **12** : run risque lié explicitement, aucune recherche « latest targets ».
+  Les tentatives sont sérialisées et une reprise n'est permise qu'avec une
+  preuve liée à l'enfant d'échec avant toute possibilité d'ordre ou de plan.
+  Une issue ambiguë ou une exécution terminée reste bloquée ; voir
+  [les règles et l'incident du 28 octobre](options_execution_reprise_20261028.md).
   Contrôle supplémentaire des cibles contre la sélection et les positions broker :
   pas de nouvelle exposition hors sélection, mais les réductions de positions
   existantes restent possibles. Les protections/watcher existants ne sont pas retirés.

@@ -29,6 +29,12 @@ def response(payload, status=200):
 @pytest.fixture(autouse=True)
 def token(monkeypatch):
     monkeypatch.setenv('TRADIER_API_TOKEN', 'test-token-never-real')
+    # Quote freshness must not depend on how long preceding test modules run.
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return NOW.astimezone(tz) if tz is not None else NOW.replace(tzinfo=None)
+    monkeypatch.setattr(live_quotes, 'datetime', FixedDateTime)
 
 
 def call(monkeypatch, rows, symbols=None, settings=None):

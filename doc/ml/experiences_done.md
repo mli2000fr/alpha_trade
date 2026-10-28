@@ -1,5 +1,26 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-28 — US : spread IEX contre SIP dans TOP10/20/50 Oracle
+
+Audit de qualité des quotes, sans entraînement/inférence/backtest économique.
+Oracle parcours `model-factory-20261016180250-3b0515`, univers tradable 1790.
+Classements préexistants avant ouverture, signaux16/23/26oct → quotes19/26/27oct,
+09h35/12h00/15h55NY. 62titres distincts,450couples,900réponsesHTTP200 archivées,
+zéroerreurtechnique ; cotations au même cutoff historique, jamais postérieures.
+Critères watcher quote≤60s,tailles>0,spread≤0,50% :TOP10 SIP60/90 IEX21/90 ;
+TOP20 SIP128/180 IEX35/180 ;TOP50 SIP316/450 IEX92/450. RefusIEX parmi acceptéesSIP :
+65,00%/72,66%/70,89%. TOP50 224refus supplémentaires :220spread,4fraîcheur ;
+zéroIEXaccepté/SIPrefusé. Sixabsences communes aux deux flux, jamais spreadzéro.
+Spreads médians propres aux flux TOP50 :IEX6,18%,SIP0,27% sur444quotesvalides ;
+sur412couples frais≤60s,excèsmédianIEX−SIP5,18pointsde%. Critères30/300s concordants.
+Réserve :23/26oct scores92,01%univers<95%contrat. Sur seul19oct qualifié97,37%,
+TOP50 SIP105/150 vsIEX36/150,69refus supplémentaires :mêmeconclusion pratique.
+Troisséances répétées/corrélées,aucunPnL ni bénéfice supposé des occasions exclues.
+12tests ;recalcul séparé mêmeassistant4500cellules,900réponses scellées,7sources
+inchangées ;pasrevuehumaineindépendante. AucunSQLécrit/LLM/ordre/changementproduction.
+**PAS_DE_REMPLACEMENT_DIRECT_SIP_PAR_IEX** pour le contrôle des entrées Oracle.
+[Protocole, résultats et limites](audit_spread_iex_sip_oracle_20261028.md).
+
 ## 2026-10-27 — US : consensus dans TOP10/20/50 Oracle et complément volume/OI
 
 Audit borné hors ligne sur les mêmes cohortes scellées que l'audit options :

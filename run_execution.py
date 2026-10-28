@@ -28,6 +28,7 @@ import os
 import subprocess
 import sys
 from collections.abc import Iterable
+from contextlib import nullcontext
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal, cast
@@ -722,12 +723,12 @@ def _load_pre_submission_adv_vol(
 
     Returns (adv_dict, daily_vol_dict).
     """
-    from risk_management.db_io import RiskDbIo
-
     if not symbols:
         return {}, {}
     try:
-        repo = RiskDbIo()
+        from risk_management.db_io import RiskRepository
+
+        repo = RiskRepository()
         prices = repo.load_prices_asof(symbols=symbols, trade_date=trade_date, atr_window=20)
     except Exception:
         LOGGER.warning("Pre-submission ADV/vol indisponibles (DB).", exc_info=True)
@@ -735,11 +736,16 @@ def _load_pre_submission_adv_vol(
 
     adv: dict[str, float] = {}
     daily_vol: dict[str, float] = {}
+    from math import isfinite
+
     for sym, pi in prices.items():
-        if pi.adv_usd is not None and pi.adv_usd > 0:
+        if pi.adv_usd is not None and isfinite(pi.adv_usd) and pi.adv_usd > 0:
             adv[sym] = float(pi.adv_usd)
-        if pi.atr_20 is not None and pi.last_close > 0:
-            daily_vol[sym] = float(pi.atr_20 / pi.last_close)
+        if (pi.atr_20 is not None and isfinite(pi.atr_20) and pi.atr_20 >= 0
+                and isfinite(pi.last_close) and pi.last_close > 0):
+            value = float(pi.atr_20 / pi.last_close)
+            if isfinite(value):
+                daily_vol[sym] = value
     return adv, daily_vol
 
 
@@ -1482,6 +1488,11 @@ def run(
                 len(_pre_spreads), len(_pre_borrows), len(_pre_adv), len(_pre_vol),
             )
 
+    # Durable options checkpoint: from here an order or a Winner plan may exist.
+    # Errors beyond it must never authorize an automatic execution retry.
+    from service.options_directional.execution_attempts import mark_execution_effects_possible
+    mark_execution_effects_possible(risk_run_id=run_id, mode=mode, account_id=config.resolved_account_id)
+
     # ── Point 10 : exécuter le plan de transition AVANT les nouvelles entrées ──
     _transition_counters: dict[str, int] = {}
     if run_id and trade_date_val and not config.dry_run:
@@ -1924,6 +1935,8 @@ Exemples :
     p.add_argument("--date",              dest="trade_date",      metavar="YYYY-MM-DD", help="Date du run (ex: 2026-04-18)")
     p.add_argument("--run-id",            dest="run_id",          metavar="RUN_ID",     help="risk_run_id precis")
     p.add_argument("--summary-path",      dest="summary_path",    metavar="PATH",       help="Chemin de sortie atomique du résumé JSON d'exécution")
+    p.add_argument('--options-filter-run-id', help=argparse.SUPPRESS)
+    p.add_argument('--options-execution-attempt-id', help=argparse.SUPPRESS)
     p.add_argument("--debug",             action="store_true",                          help="Active les logs DEBUG")
     p.add_argument("--allow-fractional-shares", dest="allow_fractional_shares", action="store_true", help="Active les quantités fractionnaires côté exécution quand le broker/le moteur le supporte")
     p.add_argument("--allow-outside-rth",      dest="allow_outside_rth",  action="store_true", help="Execute meme si marche ferme (week-end / hors RTH)")
@@ -2072,7 +2085,14 @@ def main() -> None:
         config_path = args.config_path
         summary_path = args.summary_path
 
-    with override_config_path(config_path):
+    guard = nullcontext()
+    options_run = getattr(args, 'options_filter_run_id', None)
+    options_attempt = getattr(args, 'options_execution_attempt_id', None)
+    if options_run is not None or options_attempt is not None:
+        from service.options_directional.execution_attempts import execution_child_guard
+        guard = execution_child_guard(options_run, options_attempt, risk_run_id=run_id,
+            mode=mode, account_id=account_id, trade_date=trade_date)
+    with override_config_path(config_path), guard:
         abort_missing_env(account_id=account_id, mode=mode)
         run(
             mode,

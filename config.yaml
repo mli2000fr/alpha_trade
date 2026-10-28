@@ -276,7 +276,7 @@ leverage:
 market_regimes:
   enabled: true                             # bascule globale (off par défaut)
   cache_ttl_seconds: 300
-  enforce_min_notional: 155                  # cf. plan §C16, compatible Alpaca
+  enforce_min_notional: 70                  # cf. plan §C16, compatible Alpaca
   allow_neutral_fallback_on_missing_macro_data: true
   macro_pit_mode_backtest: asof_inclusive    # asof_inclusive | j_minus_1_strict
   # Source des donnees macro (VIX, 10Y) : `stooq` (gratuit, sans cle),
@@ -383,7 +383,7 @@ market_regimes:
 
   sector_limits:
     enabled: true
-    max_tickers_per_sector: 2
+    max_tickers_per_sector: 4
 
   earnings_shield:
     enabled: false
