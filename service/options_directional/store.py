@@ -54,8 +54,8 @@ def validate_window(day, now=None, calendar=None):
         raise ValueError('Filtre options : attendre clôture J et agir avant ouverture J+1')
 
 
-def qualified(run_id, *, trade_date, batch_id=None, account_id='default', symbol_source=None,
-              capital_preset_key=None, now=None, root=None):
+def sealed_report(run_id, *, root=None):
+    """Immutable evidence for historical display; never an entry authorization."""
     folder = directory(run_id, root)
     report, inputs, seal_data = [json.loads((folder / name).read_text(encoding='utf-8'))
                                 for name in ('report.json', 'inputs.json', 'seal.json')]
@@ -64,6 +64,15 @@ def qualified(run_id, *, trade_date, batch_id=None, account_id='default', symbol
         raise ValueError('Archive filtre options altérée')
     if report['status'] != 'COMPLETED' or report['run_id'] != run_id:
         raise ValueError('Filtre options non finalisé')
+    selected = [r['symbol'] for r in report['rows'] if r['selected']]
+    if selected != report['selected'] or len(selected) != len(set(selected)):
+        raise ValueError('Sélection options incohérente')
+    return report
+
+
+def qualified(run_id, *, trade_date, batch_id=None, account_id='default', symbol_source=None,
+              capital_preset_key=None, now=None, root=None):
+    report = sealed_report(run_id, root=root)
     for key, value in [('trade_date', str(trade_date)), ('account_id', account_id),
                        ('batch_id', batch_id), ('symbol_source', symbol_source),
                        ('capital_preset_key', capital_preset_key)]:
@@ -74,9 +83,6 @@ def qualified(run_id, *, trade_date, batch_id=None, account_id='default', symbol
     if not cutoff <= now <= cutoff + timedelta(hours=report['config']['max_age_hours']):
         raise ValueError('Filtre options périmé ou futur')
     validate_window(trade_date, now)
-    selected = [r['symbol'] for r in report['rows'] if r['selected']]
-    if selected != report['selected'] or len(selected) != len(set(selected)):
-        raise ValueError('Sélection options incohérente')
     return report
 
 

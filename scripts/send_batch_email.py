@@ -158,7 +158,7 @@ def _build_metrics(args, log_text: str) -> dict[str, object]:
     error_message = args.error_message or _extract_error_message(
         log_text, summary, status=args.status,
     )
-    return {
+    metrics = {
         "requested": requested,
         "received": received,
         "persisted": persisted,
@@ -167,6 +167,32 @@ def _build_metrics(args, log_text: str) -> dict[str, object]:
 
         "error_message": error_message,
     }
+    for item in reversed(summaries):
+        details=item.get('details')
+        recovery=details.get('yahoo_reference_recovery') if isinstance(details,dict) else None
+        if isinstance(recovery,dict):
+            metrics['yahoo_reference_recovery']={k:v for k,v in recovery.items() if k!='references'}
+            break
+    return metrics
+
+
+def _yahoo_recovery_message(metrics):
+    recovery=metrics.get('yahoo_reference_recovery')
+    if not isinstance(recovery,dict):return ''
+    if not recovery.get('enabled'):return 'ℹ️ Yahoo : rattrapage désactivé'
+    status=recovery.get('status')
+    code=recovery.get('stop_http_status')
+    if status=='STOPPED_RATE_LIMIT':label='🚦 Yahoo : LIMITE ATTEINTE (429) — rattrapage arrêté'
+    elif status=='STOPPED_ACCESS_DENIED':label=f'⛔ Yahoo : ACCÈS REFUSÉ ({code}) — rattrapage arrêté'
+    elif str(status).startswith('STOPPED'):label='⚠️ Yahoo : rattrapage interrompu ('+str(status)+')'
+    elif status=='WAITING_FOR_SESSION_CLOSE':label='⏳ Yahoo : attente de clôture, aucun prix partiel utilisé'
+    else:label='✅ Yahoo : rattrapage terminé'
+    try:elapsed=max(0.,float(recovery.get('elapsed_seconds') or 0))
+    except (TypeError,ValueError):elapsed=0.
+    return (f'{label} · {_as_count(recovery.get("calls"))} appels en {elapsed:.1f} s '
+        '(pauses incluses) · '+str(_as_count(recovery.get('recovered')))+' références récupérées, '
+        +str(_as_count(recovery.get('cache_hits')))+' depuis le cache · '
+        +str(_as_count(recovery.get('remaining')))+' titres restant sans référence')
 
 def _send_telegram_status(args) -> bool:
     """Envoie un message Telegram de fin de batch (OK/ERROR) — best-effort.
@@ -212,6 +238,8 @@ def _send_telegram_status(args) -> bool:
     )
     if args.status == "ERROR" and metrics.get("error_message"):
         lines.append(f"Erreur : {metrics['error_message']}")
+    yahoo_message=_yahoo_recovery_message(metrics)
+    if yahoo_message:lines.append(yahoo_message)
 
     warnings = list(getattr(args, "warning", None) or [])
     if warnings:
@@ -282,6 +310,9 @@ def main() -> int:
         "passage_label": PASSAGE_LABELS.get(args.passage, args.passage),
         "logs_du_run": log_lines,
     }
+    if 'yahoo_reference_recovery' in metrics:
+        payload['yahoo_reference_recovery']=metrics['yahoo_reference_recovery']
+        payload['yahoo_reference_recovery_message']=_yahoo_recovery_message(metrics)
 
     from ihm.services.email_notifier import send_notification
 

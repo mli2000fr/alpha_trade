@@ -1,4 +1,4 @@
-"""Step 11 read-only view: exact LLM → risk link, never a SQL latest target."""
+"""Step 11 read-only view: exact LLM/options → risk, never a SQL latest target."""
 import math
 import json
 
@@ -71,6 +71,7 @@ def _universe_exclusions(engine, summary, day, symbols):
                 universe.c.status == 'completed', history.c.is_tradable == 0,
                 history.c.symbol.in_(symbols))).mappings().all()
     labels = {'close_below_minimum': 'Cours inférieur au minimum autorisé',
+        'earnings_blackout': 'Période de protection autour de la publication des résultats',
         'spread_above_maximum': 'Spread supérieur au maximum autorisé',
         'quote_unavailable': 'Quote qualifiée indisponible',
         'market_cap_unavailable': 'Capitalisation indisponible',
@@ -81,6 +82,41 @@ def _universe_exclusions(engine, summary, day, symbols):
         + f" ({r['tradability_reason_code']})" for r in rows}
 
 
+def _options_selection(summary, day, account, risk_run_id):
+    """Relate this exact account's risk to its immutable step-10 selection.
+
+    Historical display deliberately does not authorize a new entry or relax
+    qualified()'s age/session checks used by risk/execution.
+    """
+    from service.options_directional import store
+    from service.options_directional.accounts import consumer_directory, validate_risk_binding
+    identifier=summary['options_filter_run_id']
+    report=store.sealed_report(identifier)
+    folder=consumer_directory(identifier,account)
+    binding=json.loads((folder/'risk_binding.json').read_text(encoding='utf-8'))
+    archived=json.loads((folder/'risk_summary.json').read_text(encoding='utf-8'))
+    validate_risk_binding(report,binding,archived,account)
+    if (report['trade_date']!=str(day) or archived.get('trade_date')!=str(day)
+            or binding['risk_run_id']!=risk_run_id or summary.get('run_id')!=risk_run_id
+            or summary.get('account_id', 'default')!=account):
+        raise ValueError('Liaison exacte options → risque/date/compte incompatible')
+    inputs=json.loads((store.directory(identifier)/'inputs.json').read_text(encoding='utf-8'))
+    price_rows={}
+    for raw in inputs.get('prices',[]):
+        if _day(raw.get('date'))==day:
+            price_rows.setdefault(raw.get('symbol'),[]).append(raw)
+    rows=[]
+    for item in report['rows']:
+        if not item['selected']:continue
+        prices=price_rows.get(item['symbol'],[])
+        price=_number(prices[0].get('close')) if len(prices)==1 else None
+        rows.append({'Rang Oracle':item['oracle_rank'],'Symbole':item['symbol'],
+            'Score Oracle':item['oracle_score'],'Score options (volume + OI)':item.get('combined_score'),
+            'Dernier prix ($)':price,'Date du prix':day if price is not None else None,
+            'Sens retenu étape 10':'LONG'})
+    return report, rows
+
+
 def risk_review_rows(llm_rows, decisions, targets, *, status, summary=None, universe_exclusions=None,
                      selected_symbols=None):
     summary, exclusions = summary or {}, universe_exclusions or {}
@@ -88,7 +124,7 @@ def risk_review_rows(llm_rows, decisions, targets, *, status, summary=None, univ
     dec, tgt = {r['symbol']: r for r in decisions}, {r['symbol']: r for r in targets}
     symbols = set(selected_symbols) if selected_symbols is not None else set(dec) | set(tgt)
     if selected_symbols is not None and not symbols.issubset(base):
-        raise ValueError('Titre retenu à l’étape 10 absent du snapshot LLM')
+        raise ValueError('Titre retenu à l’étape 10 absent du snapshot')
     rows = []
     for symbol in sorted(symbols, key=lambda s: (base.get(s, {}).get('Rang Oracle') or 999999, s)):
         original = base.get(symbol, {})
@@ -135,6 +171,7 @@ def load_risk_prediction_review(engine, *, trade_date, account_id='default',
     if day is None or not (llm_run_id or risk_run_id):
         raise ValueError('Date et identifiant risque/LLM exacts requis')
     llm, selected_symbols = None, None
+    options_report, options_rows = None, []
     if llm_run_id:
         with engine.connect() as conn:
             record = conn.execute(select(runs.c.batch_id, runs.c.input_json, runs.c.risk_run_id,
@@ -157,17 +194,22 @@ def load_risk_prediction_review(engine, *, trade_date, account_id='default',
         summary, status = _summary(engine, risk_run_id, day, account_id)
         if summary.get('llm_filter_run_id') and summary['llm_filter_run_id'] != llm_run_id:
             raise ValueError('Le résumé risque concerne une autre analyse LLM')
+        if summary.get('options_filter_run_id'):
+            if llm_run_id:raise ValueError('Filtres LLM/options simultanés non qualifiés')
+            options_report, options_rows = _options_selection(summary,day,account_id,risk_run_id)
+            selected_symbols=options_report['selected']
         decisions = _risk_rows(engine, 'risk_decisions', risk_run_id, day, account_id)
         targets = _risk_rows(engine, 'portfolio_targets', risk_run_id, day, account_id)
-        if llm:
+        if llm or options_report is not None:
             exclusions = _universe_exclusions(engine, summary, day,
                 selected_symbols)
     return dict(run_id=risk_run_id, llm_run_id=llm_run_id, trade_date=str(day), account_id=account_id,
+        options_filter_run_id=options_report['run_id'] if options_report else None,
         status=status, provider_label=llm['provider_label'] if llm else None,
         scoring_mode=llm.get('scoring_mode','legacy_confidence') if llm else 'legacy_confidence',
         separate_trend_evidence=llm.get('separate_trend_evidence',False) if llm else False,
         score_thresholds=llm.get('score_thresholds') if llm else None,
         finished_at=summary.get('finished_at'),
-        rows=add_company_names(engine, risk_review_rows(llm['rows'] if llm else [], decisions, targets,
+        rows=add_company_names(engine, risk_review_rows(llm['rows'] if llm else options_rows, decisions, targets,
             status=status, summary=summary, universe_exclusions=exclusions,selected_symbols=selected_symbols)),
         target_count=len(targets), decision_count=len(decisions))

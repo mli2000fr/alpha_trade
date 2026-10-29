@@ -384,6 +384,7 @@ def test_build_pipeline_command_propagates_risk_shadow_compare_options() -> None
     assert risk_command[risk_command.index("--shadow-compare-run-id") + 1] == "risk-ref-001"
 
 
+@pytest.mark.usefixtures('isolated_winner_config')
 def test_build_pipeline_command_propagates_allow_fractional_shares_to_risk_and_execution() -> None:
     options = PipelineLaunchOptions(
         trade_date="2026-06-09",

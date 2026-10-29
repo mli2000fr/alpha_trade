@@ -47,9 +47,13 @@ motif précis, sans remplacer le run par une ancienne sélection.
 ## Règle figée
 
 Les valeurs ci-dessous décrivent les défauts initiaux du code (TOP20, seuil 0.50).
-Pendant le raccordement, le fichier utilisateur a été modifié à **TOP50 et seuil
-0.70** ; ces modifications sont conservées. Les valeurs effectives proviennent
-toujours du fichier et sont affichées dans l'IHM puis figées par run.
+Pendant le raccordement, le fichier utilisateur avait été modifié à **TOP50 et
+seuil 0.70**. À la demande du 29 octobre 2026, le périmètre courant revient à
+**TOP20** (`options_directional_filter.oracle_top_n: 20`) pour les prochaines
+analyses de l'IHM et du batch `us_pipeline`. Le seuil observé dans le fichier
+lors de cette intervention est 0.50 ; il n'a pas été changé. Les valeurs
+effectives proviennent toujours du fichier, sont affichées dans l'IHM puis
+figées par run. Les anciens résultats TOP50 restent des archives TOP50.
 
 1. Prédiction Oracle parcours, séance US exacte J et modèle explicite. Couverture
    minimale du classement : `min_oracle_coverage_ratio: 0.95` de l'univers choisi.
@@ -86,6 +90,12 @@ un classement insuffisant ou une erreur technique échoue, sans retour implicite
 au pipeline non filtré.
 
 ## Sources et limites
+
+Depuis le 29 octobre, les deux collecteurs d'options peuvent compléter les
+références de prix Alpaca manquantes par une clôture Yahoo qualifiée, uniquement
+sur le fichier tradable : [fonctionnement, activation et notifications](options_yahoo_reference_recovery.md).
+Ce prix sert à sélectionner les contrats collectés ; les quotes d'exécution et
+les cours du modèle ne sont pas remplacés. Les données CALL/PUT restent Alpaca.
 
 - `stock_option_snapshots` : Alpaca, `feed=indicative`, réception/observation J.
 - `stock_option_bars_delayed` : Alpaca, `timeframe=30Min`, timestamp de barre J
@@ -151,6 +161,11 @@ Validation ciblée : **110 tests réussis**, sans appel fournisseur ni écriture
 de production (collecteur, filtre, commandes et orchestration).
 
 ## Raccordement 10 → 11 → 12
+
+Correction du 29 octobre : le tableau 11 reprend **tous** les retenus du filtre
+exact, y compris les exclusions avant sizing. Oracle parcours utilise le risque
+LONG natif sans fabriquer d'edge directionnel ; les contrôles de portefeuille
+restent appliqués. Voir [incident, contrat et validation](options_risque_affichage_edge_20261029.md).
 
 Le module `service.options_directional.pipeline` orchestre les trois phases.
 Un workflow crée un ID `opt-<32 caractères hexadécimaux>`, partagé entre ses étapes,

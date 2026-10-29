@@ -78,6 +78,9 @@ def plan_from_target(target, config, exec_run_id, *, now=None, calendar=None):
     symbol = str(target.symbol).strip().upper()
     if not symbol or not target.risk_run_id or not exec_run_id:
         raise ValueError('Approved target lineage missing')
+    if (not math.isfinite(float(target.target_shares)) or target.target_shares <= 0
+            or not float(target.target_shares).is_integer()):
+        raise ValueError('Winner requires a whole-share step11 target; rerun risk with Winner active')
     risk_budget = target.risk_budget_dollars
     if risk_budget is None or not math.isfinite(float(risk_budget)) or risk_budget <= 0:
         raise ValueError('Missing explicit step11 campaign risk budget')

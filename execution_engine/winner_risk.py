@@ -198,6 +198,9 @@ def reapprove_campaign(state, version, proposed, snapshot, now, kind, *, context
         factor_beta_basis=cfg.beta_exposure_basis if cfg.enable_factor_model else None,
         factor_beta_exposure=factor_beta_exposure,
         factor_beta_limit=cfg.max_portfolio_beta if cfg.enable_factor_model else None,
+        factor_diversification_check_enabled=cfg.enable_factor_model and cfg.factor_diversification_check_enabled,
+        factor_min_diversification=(cfg.effective_min_factor_diversification
+            if cfg.enable_factor_model and cfg.factor_diversification_check_enabled else None),
         factor_snapshot_hash=context['factor_context']['snapshot_hash'] if cfg.enable_factor_model else None,
         factor_rejections=factor_rejections,
         qualified=True, max_quantity=quantity, limit_price=price, config_hash=cfg.fingerprint,

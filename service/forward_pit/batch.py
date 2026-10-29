@@ -18,7 +18,7 @@ import ssl
 import sys
 import time
 import uuid
-from service.forward_pit.outcomes import Outcome, BatchRunError
+from service.forward_pit.outcomes import Outcome, BatchRunError, preserve_outcome
 from decimal import Decimal, InvalidOperation
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -1633,7 +1633,7 @@ def options_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool
         "directional_pair_contracts_added": 0, "contracts_rejected_liquidity": 0,
         "contracts_rejected_open_interest": 0,
     }
-    with requests.Session() as session, engine.begin() as conn:
+    with preserve_outcome(outcome), requests.Session() as session, engine.begin() as conn:
         _configure_alpaca_session(
             session,
             use_system_trust_store=bool(cfg.get("use_system_trust_store", True)),
@@ -1655,6 +1655,12 @@ def options_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool
                         price = _underlying_price(item)
                         if price is not None:
                             prices[str(symbol).upper()] = price
+        from service.forward_pit.yahoo_option_references import recover_references
+        alpaca_prices_count=len(prices)
+        prices=recover_references(engine,cfg,prices=prices,symbols=symbols,day=as_of,
+            run_id=run_id,batch_name='oracle_options_indicative_snapshot',outcome=outcome,session=session,dry=dry)
+        observed=_utcnow()  # Options cannot be available before a recovered reference was received.
+        outcome.details['symbols_with_alpaca_spot']=alpaca_prices_count
         details["symbols_with_spot"] = len(prices)
         details["symbols_without_spot"] = len(symbols) - len(prices)
 
@@ -1797,6 +1803,7 @@ def options_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool
                     details['symbols_with_directional_oi_pair'] += 1
                 details['directional_pair_contracts_added'] += len(pair - selected_contracts)
                 selected_contracts |= pair
+            symbol_observed=_utcnow()
             kept_for_symbol = 0
             for contract, (item, contract_meta, open_interest) in eligible.items():
                 if contract not in selected_contracts:
@@ -1812,7 +1819,7 @@ def options_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool
                 params = {
                     "provider": "alpaca", "feed": feed, "underlying": symbol,
                     "contract": contract, "expiry": expiry, "strike": strike,
-                    "otype": option_type, "observed": observed,
+                    "otype": option_type, "observed": symbol_observed,
                     "provider_ts": _dt(quote.get("t") or trade.get("t")),
                     "bid": quote.get("bp"), "ask": quote.get("ap"),
                     "bid_size": quote.get("bs"), "ask_size": quote.get("as"),
@@ -1854,11 +1861,10 @@ def options_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool
                                 "target_dte": DTE_TARGET, "atm_max_distance": ATM_MAX_DISTANCE},
     })
     if outcome.received == 0:
-        raise RuntimeError("Snapshots options Alpaca vides après filtres pour tout l'univers")
+        raise BatchRunError("Snapshots options Alpaca vides après filtres pour tout l'univers",outcome)
     if symbols and outcome.failed / len(symbols) > max_failure_ratio:
-        raise RuntimeError(
-            f"Taux d'échec Alpaca options excessif: {outcome.failed}/{len(symbols)}"
-        )
+        raise BatchRunError(
+            f"Taux d'échec Alpaca options excessif: {outcome.failed}/{len(symbols)}",outcome)
     return outcome
 
 

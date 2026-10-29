@@ -1575,7 +1575,11 @@ def _render_options_filter_review(options: PipelineLaunchOptions, all_runs) -> N
 
 def _render_risk_prediction_review(options: PipelineLaunchOptions, all_runs) -> None:
     from common.us_signal_date import resolve_us_signal_date
-    st.markdown('#### Décisions du risque — Oracle / LLM et portefeuille cible')
+    st.markdown('#### Décisions du risque — Oracle / filtres et portefeuille cible')
+    from common.winner_pyramiding import load_winner_pyramiding_config
+    if load_winner_pyramiding_config().enabled:
+        st.caption('Winner actif : actions entières uniquement aux étapes 11 et 12 ; '
+                   'l’option de quantités fractionnaires est ignorée pendant son activation.')
     account = options.account_id or 'default'
     llm_id = options.llm_filter_run_id if options.llm_filter_enabled else None
     risk_id = None
@@ -1597,8 +1601,10 @@ def _render_risk_prediction_review(options: PipelineLaunchOptions, all_runs) -> 
     except Exception:
         st.warning('Résultats risque indisponibles ou liaison/date/compte incompatibles. Aucun autre run n’est utilisé à leur place.')
         return
+    selection_label=(f"filtre options `{review['options_filter_run_id']}`" if review.get('options_filter_run_id')
+                     else f"analyse LLM `{review['llm_run_id'] or 'sans filtre'}`")
     st.caption(f"Séance {review['trade_date']} · compte `{review['account_id']}` · risque `{review['run_id'] or 'non encore lié'}` · "
-               f"analyse LLM `{review['llm_run_id'] or 'sans filtre'}` · état {review['status']}.")
+               f"{selection_label} · état {review['status']}.")
     if review['status'] != 'COMPLETED':
         st.warning('Risque non confirmé terminé : résultats partiels ou en attente, aucune cible présentée comme publiée.')
     if not review['rows']:
@@ -1614,11 +1620,15 @@ def _render_risk_prediction_review(options: PipelineLaunchOptions, all_runs) -> 
     if review.get('separate_trend_evidence'):
         st.caption('Tendance et qualité des preuves relues dans l’analyse exacte de l’étape 10. '
                    'Une tendance estimée n’est pas une autorisation d’ordre ; les contrôles de risque restent distincts.')
-    st.caption(('Lecture seule du run exact : uniquement les titres retenus à l’étape 10, même si le risque les refuse ensuite. '
-                if review['llm_run_id'] else 'Lecture seule des décisions/cibles du run risque sans filtre LLM. ')
+    st.caption(('Lecture seule du run exact : tous les titres retenus à l’étape 10, y compris les exclusions avant sizing. '
+                if review['llm_run_id'] or review.get('options_filter_run_id') else 'Lecture seule des décisions/cibles du run risque sans filtre LLM. ')
                +
                'Cible publiée = portefeuille cible, pas un ordre exécuté ; montant et prix sont ceux du sizing, pas un prix de fill. '
-               'Score d’orientation (ou confiance historique) non calibré ; dernier prix LLM archivé, pas temps réel. '
+               +
+               ('Scores Oracle/options relatifs, pas des probabilités ; dernier cours J archivé, pas temps réel. '
+                if review.get('options_filter_run_id') else
+                'Score d’orientation (ou confiance historique) non calibré ; dernier prix LLM archivé, pas temps réel. ')
+               +
                'Nom de l’entreprise : libellé actuel de stock_metadata. '
                'Une protection absente reste vide (une sortie à durée fixe n’est pas un TP de prix). Aucun appel LLM, broker ou ordre.')
 

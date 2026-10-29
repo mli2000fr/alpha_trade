@@ -138,6 +138,44 @@ Un lancement CLI direct du runner ne remplace pas le launcher de notification.
 
 ## Qualification ultérieure
 
+### Couverture mesurée le 29 octobre 2026
+
+Audit SQL en lecture seule des sept dernières dates terminées sur le fichier
+courant, **22–28 octobre inclus** (jours calendaires, week-end compris). Le run
+du 29 octobre est encore RUNNING au cutoff et n'entre pas dans la moyenne.
+
+| Périmètre | Titres avec au moins un consensus | Couverture moyenne |
+| --- | ---: | ---: |
+| `stock_bars_daily.txt` | 5 745 / 13 105 | **43,84 %** |
+| Sous-ensemble `univers_filtred_tradable.txt` | 1 778 / 1 790 | **99,33 %** |
+
+Ces valeurs sont identiques sur les sept dates. Dernier run terminé :
+`eodhd_consensus_snapshot-20261028211502-53a38d25`. Sur le grand univers :
+7 326 absences de consensus, 34 symboles invalides, zéro échec technique ;
+la couverture globale ne doit pas être interprétée comme un taux de panne.
+La moyenne est de **956 requêtes HTTP** par passage, regroupement par 20 et
+isolation récursive des symboles invalides inclus. Ce sont des requêtes
+logiques du collecteur, pas un nombre garanti d'échanges réseau après retries
+ni un calcul de points de facturation du fournisseur.
+
+La couverture signifie au moins une ligne de période/horizon pour le titre,
+pas l'absence de NULL dans tous les champs, une période fiscale qualifiée ou
+une efficacité directionnelle. Le seuil de 95 % porte toujours sur les tradables.
+
+Comparaison hypothétique avec le collecteur Yahoo installé (`yfinance` 1.4.1) :
+EPS, revenus, tendances et révisions partagent le module `earningsTrend`, soit
+environ une requête de données par titre. L'ancien collecteur ajoute
+`financialData` pour les objectifs et `recommendationTrend` pour les recommandations,
+soit environ trois requêtes par titre. Pour 13 105 titres : environ
+13 105 requêtes pour le seul équivalent consensus, ou 39 315 avec les deux
+familles supplémentaires ; pour 1 790 titres : 1 790 ou 5 370.
+Ces ordres de grandeur excluent cookies/crumb, authentification, reprises et
+erreurs ; ils ne promettent ni l'accès ni la même couverture Yahoo. Aucune
+collecte consensus Yahoo ou modification de batch déclenchée par cet audit.
+
+Preuve : `artifacts/operations/consensus_coverage_audit/20261029T211901Z/report.json`.
+Script : `scripts/operations/audit_consensus_run_coverage_20261029.py`.
+
 État constaté en lecture seule le **14 octobre 2026** : 959 094 lignes,
 5 742 symboles, **trois dates** de snapshot (11–13 octobre). Aucun des marqueurs
 d'identité fiscale, d'unités ou de PIT historique n'est encore qualifié.

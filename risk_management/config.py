@@ -194,6 +194,12 @@ class RiskConfig:
     max_factor_concentration_pct: float = 0.60
     # Nombre minimum de facteurs avec contribution > 10% (Phase D).
     min_factor_diversification: int = 2
+    # Historic snapshots retain the gate; production YAML can disable only it.
+    factor_diversification_check_enabled: bool = True
+    # Optional prospective rule, evaluated against current account equity.
+    # None preserves serialized historical configurations without this rule.
+    factor_diversification_small_account_threshold: float | None = None
+    factor_diversification_small_account_min: int = 1
     # Demi-vie EWMA pour l'estimation de la covariance factorielle (Phase B).
     factor_ewma_half_life: int = 60
     # Fenêtre de lookback pour l'estimation factorielle en jours (Phase B).
@@ -353,8 +359,17 @@ class RiskConfig:
             raise ValueError('beta_exposure_basis doit être account_equity ou invested_capital.')
         if not (0 < self.max_factor_concentration_pct <= 1):
             raise ValueError("max_factor_concentration_pct doit être dans ]0, 1].")
-        if self.min_factor_diversification < 1:
+        if type(self.min_factor_diversification) is not int or self.min_factor_diversification < 1:
             raise ValueError("min_factor_diversification doit être >= 1.")
+        if type(self.factor_diversification_check_enabled) is not bool:
+            raise ValueError('factor_diversification_check_enabled doit être un booléen.')
+        if (type(self.factor_diversification_small_account_min) is not int
+                or self.factor_diversification_small_account_min < 1):
+            raise ValueError('factor_diversification_small_account_min doit être un entier >= 1.')
+        threshold = self.factor_diversification_small_account_threshold
+        if threshold is not None and (isinstance(threshold, bool)
+                or not isinstance(threshold, (int,float)) or not math.isfinite(threshold) or threshold <= 0):
+            raise ValueError('factor_diversification_small_account_threshold doit être positif fini ou null.')
         if self.factor_ewma_half_life < 2:
             raise ValueError("factor_ewma_half_life doit être >= 2.")
         if self.factor_lookback_days < 20:
@@ -424,6 +439,18 @@ class RiskConfig:
         payload = self.to_dict(exclude_defaults=False)
         canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+    @property
+    def effective_min_factor_diversification(self) -> int:
+        """Strictly below the configured equity threshold; no buying-power basis."""
+        threshold = self.factor_diversification_small_account_threshold
+        if threshold is not None:
+            import math
+            if not math.isfinite(self.account_equity) or self.account_equity <= 0:
+                raise ValueError('Capital du compte non qualifié pour la diversification factorielle')
+            if self.account_equity < threshold:
+                return self.factor_diversification_small_account_min
+        return self.min_factor_diversification
 
     def to_dict(self, *, exclude_defaults: bool = True) -> dict[str, object]:
         """Sérialise la config en dictionnaire.
@@ -730,6 +757,19 @@ def load_risk_config(
         equity=equity,
         **overrides,
     )
+
+    # Winner's broker protections and MOO exits require whole shares. Apply
+    # this before sizing, even if a preset or CLI requested fractions.
+    from common.winner_pyramiding import load_winner_pyramiding_config
+    if load_winner_pyramiding_config(full_cfg).enabled:
+        if config.allow_fractional_shares:
+            _logger.info('Winner actif : quantités entières imposées avant le sizing ; option fractionnaire ignorée.')
+        config = config.with_overrides(allow_fractional_shares=False)
+
+    _logger.info('Diversification factorielle : contrôle_actif=%s capital=%.2f minimum_effectif=%d '
+                 'minimum_normal=%d seuil_petit_compte=%s', config.factor_diversification_check_enabled, config.account_equity,
+                 config.effective_min_factor_diversification, config.min_factor_diversification,
+                 config.factor_diversification_small_account_threshold)
 
     # 3. Logguer le fingerprint pour audit
     _logger.info(
