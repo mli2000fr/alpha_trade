@@ -1,0 +1,22 @@
+{
+  "protocol": "us-weak-signals-original-top-titles-20261029-v1",
+  "years": [2020, 2021, 2022, 2023, 2024],
+  "tops": [20, 50],
+  "methods": ["VOL60", "E2", "E3", "PMATH0"],
+  "oracle": "archived causal path-amplitude LightGBM; final January2023 fold frozen for missing July–December2023",
+  "ranking": "original Oracle ranks before any future label or quality exclusion; no replacement",
+  "features_profile": "config/features/shared_direction/shared.json",
+  "min_train_dates": 252,
+  "validation_dates": 63,
+  "history_change": "New reconstructed experiment: original504train+126validation impossible before2020 using causal scores beginning2018-07-05",
+  "training": "annual expanding, labels strictly mature before validation/test boundary; no feature/parameter selection on2020–24",
+  "catboost": {"iterations":600,"depth":6,"learning_rate":0.03,"l2_leaf_reg":5.0,"random_seed":42,"thread_count":2,"early_stopping_rounds":60},
+  "vol60_orientation": "positive fixed, not selected by year",
+  "terminal": {"horizons":[3,20],"base":"adjusted close J","exit":"adjusted close J+H","availability":"J+H+1","full_path_required":true},
+  "E2": {"target":"terminal_return_h3 >= 0.03","threshold":0.03},
+  "E3": {"target":"e3_long_net_return > 0","entry":"J+1 open","atr":"Wilder14 through J only; reset on missing or changed identity/source","stop_atr_mult":2.5,"tp_atr_mult":3.0,"tp_cap_pct":0.07,"min_atr_entry_pct":0.001,"max_entry_gap_pct":0.03,"held_sessions":20,"entry_session_included":true,"time_exit":"close of twentieth held session","same_bar":"SL first except a gap resolves before intrabar","gap_stop":"open","gap_tp":"TP limit conservative","roundtrip_cost_bps":16,"availability":"J+21 for all outcomes","correction":"OriginalE3 used entry-day ATR and skipped entry-day barriers; never claimed identical replication"},
+  "PMATH0": {"tasks":["D1_VS_D10","D10_VS_REST","D1_VS_REST"],"global_deciles":"ceil(rank(method=max,pct=True)*10) on qualified full observable feature universe, not on TOP50","min_label_universe":20,"min_daily_label_coverage":0.95,"config":"config/research/pmath0_separability.json"},
+  "evaluation": {"yearly":true,"daily_auc_min_each_class":2,"pooled_auc":"descriptive only","nonoverlap":"fixed global session offset, H-spaced; no best offset selection","repeated_symbols":true,"fresh_holdout":false,"automatic_promotion":false},
+  "max_parallel_workers":2,
+  "provider_calls":false,"sql_writes":false,"production_model_changes":false,"broker_calls":false,"LLM_calls":false
+}
