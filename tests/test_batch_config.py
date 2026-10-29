@@ -37,7 +37,8 @@ def test_batch_configuration_is_separated_from_application_config() -> None:
 
     assert set(batch) == BATCH_SECTIONS
     assert (BATCH_SECTIONS - {'us_pipeline'}).isdisjoint(application)
-    assert set(application['us_pipeline']) == {'steps','steps_friday','execution_mode','account_id'}
+    assert set(application['us_pipeline']) == {'steps','steps_friday','execution_mode','account_id','run_other_paper_accounts'}
+    assert type(application['us_pipeline']['run_other_paper_accounts']) is bool
     assert application['us_pipeline']['execution_mode'] == 'paper'
     assert application['us_pipeline']['account_id'] == 'default'
     from service.forward_pit.us_pipeline import selected_steps

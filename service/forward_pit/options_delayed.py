@@ -21,6 +21,7 @@ import requests
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from service.alpaca.sip_reference import historical_sip_snapshots
+from service.forward_pit.outcomes import BatchRunError, preserve_outcome
 
 LOGGER = logging.getLogger(__name__)
 ALPACA_DATA_URL = "https://data.alpaca.markets"
@@ -162,7 +163,7 @@ def options_delayed_bars_sync(engine: Engine, cfg: dict[str, Any], run_id: str, 
     prices: dict[str, float] = {}
     contracts: list[dict[str, Any]] = []
     covered_underlyings: set[str] = set()
-    with requests.Session() as session, engine.begin() as conn:
+    with preserve_outcome(outcome), requests.Session() as session, engine.begin() as conn:
         shared._configure_alpaca_session(session, use_system_trust_store=bool(cfg.get("use_system_trust_store", True)))
         for chunk_no, chunk in enumerate(shared._chunks(symbols, int(cfg.get("stock_snapshot_batch_size", 100))), 1):
             payload, status = historical_sip_snapshots(session,chunk,headers,shared._request_json)
@@ -172,6 +173,13 @@ def options_delayed_bars_sync(engine: Engine, cfg: dict[str, Any], run_id: str, 
                 price = shared._underlying_price(item) if isinstance(item, dict) else None
                 if price:
                     prices[str(symbol).upper()] = price
+        from service.forward_pit.yahoo_option_references import recover_references
+        outcome.details['symbols_with_alpaca_spot']=len(prices)
+        prices=recover_references(engine,cfg,prices=prices,symbols=symbols,day=session_date,
+            run_id=run_id,batch_name='options_delayed_bars_sync',outcome=outcome,session=session,dry=dry)
+        observed=shared._utcnow()
+        outcome.details['symbols_with_spot']=len(prices)
+        outcome.details['symbols_without_spot']=len(symbols)-len(prices)
         for index, symbol in enumerate(symbols, 1):
             spot = prices.get(symbol)
             if not spot:
@@ -237,12 +245,12 @@ def options_delayed_bars_sync(engine: Engine, cfg: dict[str, Any], run_id: str, 
     coverage = len(covered_underlyings) / len(symbols) if symbols else 0.0
     outcome.details.update({"session_date": session_date.isoformat(), "timeframe": timeframe, "selected_contracts": len(contracts), "covered_underlyings": len(covered_underlyings), "underlying_coverage": coverage, "provenance_status": "UNVERIFIED_OPRA"})
     if not contracts or not outcome.received:
-        raise RuntimeError("Aucune barre d'option Alpaca retardée collectée")
+        raise BatchRunError("Aucune barre d'option Alpaca retardée collectée",outcome)
     minimum_coverage = float(cfg.get("min_underlying_coverage", 0.0))
     if coverage < minimum_coverage:
         message = f"Couverture sous-jacents options insuffisante: {coverage:.1%} < {minimum_coverage:.1%}"
         if bool(cfg.get("fail_on_quality_gate", False)):
-            raise RuntimeError(message)
+            raise BatchRunError(message,outcome)
         outcome.warnings.append(message)
     return outcome
 

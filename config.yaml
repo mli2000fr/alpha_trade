@@ -19,6 +19,7 @@ database:
 # SL7 / trailing20 / H20 / sans TP
 # +19,40 % en 2025 et +32,80 % en 2026. Pire DD annuel de 24,13 %. Candidat intéressant pour examiner l'effet de laisser courir les gains.
 winner_pyramiding:
+  # Actif : actions entières imposées au risque (11) et à l'exécution (12), même si l'option fractionnaire est cochée.
   enabled: true
   initial_position_fraction: 1.0  # 0.5 = demi-position ; 1.0 = complète.
   reinforcement_enabled: false  # Un seul ajout gagnant, jamais de moyenne à la baisse.
@@ -90,7 +91,7 @@ sentiment_news_ingestion:
 options_directional_filter:
   enabled: true  # Filtre expérimental options après Oracle ; IHM et us_pipeline, PAPER uniquement.
   # Sélection commune aux comptes PAPER ; risque/exécution/claims séparés par compte.
-  oracle_top_n: 50  # Nombre de titres, pas 20 % ; TOP fixé avant disponibilité des options.
+  oracle_top_n: 20  # Nombre de titres, pas 20 % ; TOP fixé avant disponibilité des options.
   min_combined_score: 0.5  # Retenir LONG si score strictement supérieur ; ce n'est pas une probabilité.
   min_covered: 4  # Moins de 4 titres avec volume ET OI frais : aucun retenu, sans fallback.
   min_oracle_coverage_ratio: 0.90
@@ -557,11 +558,14 @@ risk_management:
   enable_factor_model: true
   use_factor_correlation_filter: true    # remplace Pearson par la corrélation implicite
   factor_correlation_threshold: 0.70     # seuil de corrélation implicite max
-  max_portfolio_beta: 1.2                # plafond de l'exposition bêta selon la base ci-dessous
+  max_portfolio_beta: 3.5                # plafond de l'exposition bêta selon la base ci-dessous
   beta_exposure_basis: account_equity   # somme |notionnel × bêta| / equity ; liquidités et levier pris en compte
                                         # invested_capital = ancien bêta moyen du seul capital investi
   max_factor_concentration_pct: 0.60     # max 60% du risque venant d'un seul facteur
   min_factor_diversification: 2          # au moins 2 facteurs avec contribution > 10%
+  factor_diversification_check_enabled: false  # Minimum factoriel seul ; bêta/concentration restent contrôlés.
+  factor_diversification_small_account_threshold: 100000.0  # equity réelle strictement < seuil ; null désactive la règle
+  factor_diversification_small_account_min: 1  # minimum sous le seuil ; à partir de 100 000 $, minimum normal ci-dessus
   factor_ewma_half_life: 60              # demi-vie EWMA en jours
   factor_lookback_days: 252              # fenêtre d'estimation en jours
 

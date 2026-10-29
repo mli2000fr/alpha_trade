@@ -374,6 +374,7 @@ def _wire_covariance_to_optimizer(
     operational_snapshot: object | None,
     directional_win_rates: dict[str | tuple[str, str], object],
     config: object,
+    selection_policy: str = 'directional',
 ) -> None:
     """Transmet la covariance PIT au ``PortfolioOptimizer`` (Point 9).
 
@@ -385,6 +386,12 @@ def _wire_covariance_to_optimizer(
     reste inactif et le contrôleur incrémental continue de fonctionner
     (fallback nominal).
     """
+    if selection_policy not in {'directional', 'oracle_pure_long', 'oracle_web_llm_directional'}:
+        raise ValueError(f'Politique de risque inconnue : {selection_policy}')
+    if selection_policy != 'directional':
+        LOGGER.info('Optimiseur edge non appliqué : policy=%s sans edge directionnel calibré ; '
+                    'contrôles factoriels/corrélation/sizing conservés', selection_policy)
+        return
     if factor_cov_live is None:
         return
     set_opt = getattr(builder, "set_portfolio_optimization", None)
@@ -2432,6 +2439,8 @@ def main(args: list[str] | None = None) -> None:
             operational_snapshot=operational_snapshot,
             directional_win_rates=directional_win_rates,
             config=config,
+            selection_policy=('oracle_web_llm_directional' if args.llm_filter_run_id else
+                              'oracle_pure_long' if _path_amplitude_policy else 'directional'),
         )
         builder.progress_callback = emit_run_summary
 
@@ -2537,7 +2546,7 @@ def main(args: list[str] | None = None) -> None:
             # ── Boost batch diagnostics : score prefer AVANT sizing ──
             _bt_boosted = 0
             _bt_batch_id: str | None = None
-            if candidates and not args.llm_filter_run_id:
+            if candidates and not args.llm_filter_run_id and not _path_amplitude_policy:
                 try:
                     _bt_boosted, _bt_batch_id = boost_candidate_scores(
                         candidates, getattr(repo, "engine", None),
@@ -2552,6 +2561,10 @@ def main(args: list[str] | None = None) -> None:
                 validate_current_broker_snapshot(operational_snapshot,trade_date)
             if args.llm_filter_run_id:
                 from service.llm_directional.risk_adapter import build_entries
+                entries = build_entries(builder, candidates, prices, _sector_map_for_builder,
+                                        trade_date, return_matrix)
+            elif _path_amplitude_policy:
+                from risk_management.oracle_path_contract import build_entries
                 entries = build_entries(builder, candidates, prices, _sector_map_for_builder,
                                         trade_date, return_matrix)
             else:
@@ -2787,6 +2800,19 @@ def main(args: list[str] | None = None) -> None:
         "universe_preset_source": universe_preset_source,
         "llm_filter_run_id": args.llm_filter_run_id,
         "options_filter_run_id": args.options_filter_run_id,
+        "portfolio_selection_policy": ('oracle_web_llm_directional' if args.llm_filter_run_id else
+            'oracle_pure_long' if _path_amplitude_policy else 'directional'),
+        "edge_optimizer_applicable": not bool(args.llm_filter_run_id or _path_amplitude_policy),
+        "allow_fractional_shares": bool(config.allow_fractional_shares),
+        "quantity_policy": 'fractional' if config.allow_fractional_shares else 'whole_shares',
+        "factor_diversification_policy": {
+            "enabled": config.factor_diversification_check_enabled,
+            "effective_minimum": config.effective_min_factor_diversification,
+            "normal_minimum": config.min_factor_diversification,
+            "small_account_equity_threshold": config.factor_diversification_small_account_threshold,
+            "small_account_minimum": config.factor_diversification_small_account_min,
+            "account_equity": config.account_equity,
+        },
         "targeted_symbols": len(entries),
         "accepted_symbols": len(accepted_entries),
         "reduced_symbols": len(reduced_entries),

@@ -285,6 +285,8 @@ class ExecutionConfig:
     def __post_init__(self) -> None:
         if not isinstance(self.winner_pyramiding, WinnerPyramidingConfig):
             raise ValueError('winner_pyramiding doit être une WinnerPyramidingConfig validée.')
+        if self.winner_pyramiding.enabled:
+            object.__setattr__(self, 'allow_fractional_shares', False)
         if self.broker_mode not in ("paper", "live"):
             raise ValueError("broker_mode doit être 'paper' ou 'live'.")
         if self.llm_protection_profile is not None:

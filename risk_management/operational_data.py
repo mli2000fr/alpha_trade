@@ -215,7 +215,14 @@ def _normalize_account(
 def _normalize_position(raw: Mapping[str, Any]) -> OpenPosition:
     symbol = str(raw.get("symbol") or "").strip().upper()
     side = str(raw.get("side") or "").strip().lower()
-    quantity = abs(_required_positive_float(raw, "qty"))
+    signed_quantity = _optional_float(raw.get('qty'), default=0.)
+    # Alpaca signs short holdings negatively; downstream risk uses magnitude
+    # plus the explicit side. A negative LONG is inconsistent, not a short.
+    import math
+    if (isinstance(raw.get('qty'),bool) or not math.isfinite(signed_quantity)
+            or signed_quantity == 0 or side == 'long' and signed_quantity < 0):
+        raise OperationalDataUnavailable('champ broker invalide: qty/side')
+    quantity = abs(signed_quantity)
     if not symbol or side not in {"long", "short"}:
         raise OperationalDataUnavailable(f"position broker invalide pour {symbol or 'symbole absent'}")
     entry_price = _optional_float(raw.get("avg_entry_price"), default=0.0)

@@ -1762,6 +1762,10 @@ def _build_chained_ps_commands(
 
 def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> list[str]:
     """Construit la commande subprocess correspondant à une étape."""
+    if step_key in ('risk_management', 'execution') and options.allow_fractional_shares:
+        from common.winner_pyramiding import load_winner_pyramiding_config
+        if load_winner_pyramiding_config().enabled:
+            options = replace(options, allow_fractional_shares=False)
     if step_key == 'sync_latest_quotes':
         from ihm.services.pipeline_quote_scope import resolve_quote_scope
         options = resolve_quote_scope(options)

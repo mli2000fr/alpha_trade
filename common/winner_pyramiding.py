@@ -102,9 +102,10 @@ def due_open(opened_at, policy, calendar=None):
 def initial_quantities(approved_full, price, risk_budget, policy):
     if not policy.enabled:
         return int(approved_full), int(approved_full)
-    if not all(type(v) in (int, float) and math.isfinite(float(v)) and float(v) > 0
+    if not all(not isinstance(v, bool) and math.isfinite(float(v)) and float(v) > 0
             for v in (approved_full, price, risk_budget)):
         raise ValueError('Qualified approved quantity, price and campaign risk budget required')
+    approved_full, price, risk_budget = map(float, (approved_full, price, risk_budget))
     unit = price * (policy.stop_loss_pct+2.05*policy.fee)
     full = min(math.floor(approved_full), math.floor(risk_budget/unit))
     return full, math.floor(full*policy.initial_position_fraction)

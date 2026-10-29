@@ -10,6 +10,32 @@ import pandas as pd
 from sqlalchemy import bindparam, text
 
 
+def build_entries(builder, candidates, prices, sector_map, trade_date, return_matrix):
+    """Explicit LONG amplitude strategy, with native risk and real account state.
+
+    Oracle ranks and options activity are not probabilities or expected edges.
+    The existing oracle_pure_long contract preserves sizing, held/pending
+    exposure, correlation, factor and account limits without an edge optimizer.
+    """
+    from risk_management.models import SelectionScore
+    from service.market.new_entry_data_guard import validate_entry_prices
+    if any(c.side != 'long' or c.trade_date != trade_date or
+           c.lineage.get('score_semantics') != 'amplitude_rank_not_directional_probability'
+           for c in candidates):
+        raise ValueError('Candidat hors contrat Oracle amplitude LONG/date')
+    rejected = validate_entry_prices(prices, [c.symbol for c in candidates], trade_date)
+    if rejected:
+        raise ValueError(f'Prix/ATR/ADV J non qualifié: {rejected}')
+    selections = [SelectionScore(symbol=c.symbol,sector=sector_map.get(c.symbol,'Unknown'),
+        score_used=c.p_side,score_source='oracle_amplitude_rank',snapshot_date=trade_date,
+        selection_rank=c.side_rank,side='buy',selector_signal_mode='oracle_pure_long',
+        universe_run_id=c.universe_run_id,
+        selection_explanation='Oracle amplitude LONG strategy; not a directional probability or expected edge')
+        for c in candidates]
+    return builder.build(selections,prices,return_matrix=return_matrix,trade_date=trade_date,
+                         selection_policy='oracle_pure_long')
+
+
 def check_compatibility(engine, predictions, *, batch_id, trade_date,
                         artifacts_dir='artifacts/models', now=None):
     result = dict(compatible=False, issues=[], champion_count=0, model_versions={},

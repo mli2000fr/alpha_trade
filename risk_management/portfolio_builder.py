@@ -980,7 +980,8 @@ class PortfolioBuilder:
                         "beta_exposure_basis": self._cfg.beta_exposure_basis,
                         "max_size_concentration": self._cfg.max_factor_concentration_pct,
                         "max_momentum_concentration": self._cfg.max_factor_concentration_pct,
-                        "min_factor_diversification": self._cfg.min_factor_diversification,
+                        "min_factor_diversification": self._cfg.effective_min_factor_diversification,
+                        "factor_diversification_check_enabled": self._cfg.factor_diversification_check_enabled,
                     },
                 )
                 factor_check_performed = True
@@ -1523,7 +1524,8 @@ class PortfolioBuilder:
                         max_portfolio_beta=self._cfg.max_portfolio_beta,
                         beta_exposure_basis=self._cfg.beta_exposure_basis,
                         max_factor_concentration=self._cfg.max_factor_concentration_pct,
-                        min_factor_diversification=self._cfg.min_factor_diversification,
+                        min_factor_diversification=self._cfg.effective_min_factor_diversification,
+                        factor_diversification_check_enabled=self._cfg.factor_diversification_check_enabled,
                     )
                     if factor_violations:
                         LOGGER.warning(

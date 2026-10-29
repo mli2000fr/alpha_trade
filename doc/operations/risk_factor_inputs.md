@@ -70,11 +70,12 @@ attente et entrée proposée. Son approbation conserve l'empreinte du contexte
 et les motifs de refus. Les contrôles de capital réel, liquidité applicables,
 concentration, régime, perte quotidienne et drawdown restent en place.
 
-| Limite dans `risk_management` | Valeur conservée |
+| Limite dans `risk_management` | Valeur actuelle |
 | --- | ---: |
-| `max_portfolio_beta` | 1,20 |
+| `max_portfolio_beta` | 3,50 (modifié à la demande de l'utilisateur le 29 octobre) |
 | `max_factor_concentration_pct` | 0,60 |
-| `min_factor_diversification` | 2 |
+| `factor_diversification_check_enabled` | `false` : minimum seul désactivé, données/bêta/concentration conservés |
+| `min_factor_diversification` | Si contrôle actif : 2, ramené à 1 sous 100 000 $ d'equity |
 | `factor_correlation_threshold` | 0,70 |
 | `factor_lookback_days` | 252 |
 | `factor_ewma_half_life` | 60 |
@@ -83,7 +84,8 @@ Le premier correctif utilisait encore le poids normalisé du portefeuille
 investi. L'adaptation ensuite demandée le 28 octobre sélectionne désormais
 `beta_exposure_basis: account_equity` : somme des contributions absolues
 notionnel × bêta, divisée par le capital total. Le plafond numérique reste
-1,20 et les autres limites restent actives. Voir
+1,20 à cette date, puis a été porté à 3,50 le 29 octobre. Les autres limites
+restent actives, avec [la nouvelle règle de diversification des petits comptes](factor_diversification_small_accounts.md). Voir
 [le budget bêta rapporté au compte](risk_beta_budget.md).
 
 ## Vérification initiale du 28 octobre, avant adaptation de la base bêta

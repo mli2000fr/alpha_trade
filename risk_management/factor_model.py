@@ -736,6 +736,7 @@ def check_factor_constraints(
         - ``max_size_concentration`` : part max du risque venant du size (défaut 0.60)
         - ``max_momentum_concentration`` : part max du risque venant du momentum (défaut 0.50)
         - ``min_factor_diversification`` : nb min de facteurs avec contrib > 10% (défaut 2)
+        - ``factor_diversification_check_enabled`` : active uniquement ce minimum (défaut True)
     weights : dict[str, float] | None
         Poids existants du portefeuille (si construction incrémentale).
 
@@ -748,10 +749,14 @@ def check_factor_constraints(
         "max_size_concentration": DEFAULT_MAX_FACTOR_CONCENTRATION,
         "max_momentum_concentration": 0.50,
         "min_factor_diversification": DEFAULT_MIN_FACTOR_DIVERSIFICATION,
+        "factor_diversification_check_enabled": True,
     }
     if constraints:
         _constraints.update(constraints)
     beta_basis = _constraints.get('beta_exposure_basis', 'invested_capital')
+    diversification_enabled = _constraints['factor_diversification_check_enabled']
+    if type(diversification_enabled) is not bool:
+        raise ValueError('factor_diversification_check_enabled must be a boolean')
     if beta_basis not in ('account_equity', 'invested_capital'):
         raise ValueError('Unknown beta_exposure_basis')
 
@@ -807,7 +812,7 @@ def check_factor_constraints(
     significant_factors = sum(
         1 for pct in decomp.factor_contribution_pct.values() if pct > 10.0
     )
-    if significant_factors < min_div:
+    if diversification_enabled and significant_factors < min_div:
         violations.append(
             f"Diversification factorielle insuffisante : {significant_factors} facteur(s) > 10% "
             f"(min requis: {min_div})"
@@ -861,6 +866,7 @@ def check_factor_constraints_on_sized_weights(
     max_portfolio_beta: float = DEFAULT_MAX_PORTFOLIO_BETA,
     max_factor_concentration: float = DEFAULT_MAX_FACTOR_CONCENTRATION,
     min_factor_diversification: int = DEFAULT_MIN_FACTOR_DIVERSIFICATION,
+    factor_diversification_check_enabled: bool = True,
     beta_exposure_basis: str = 'invested_capital',
 ) -> list[str]:
     """Valide les contraintes factorielles sur les poids FINALS du portefeuille.
@@ -888,6 +894,8 @@ def check_factor_constraints_on_sized_weights(
         Part maximale du risque venant d'un seul facteur (défaut 0.60).
     min_factor_diversification : int
         Nombre minimum de facteurs avec contribution > 10% (défaut 2).
+    factor_diversification_check_enabled : bool
+        Désactive seulement ce minimum ; bêta et concentration restent vérifiés.
 
     Returns
     -------
@@ -897,6 +905,8 @@ def check_factor_constraints_on_sized_weights(
     import numpy as np
 
     violations: list[str] = []
+    if type(factor_diversification_check_enabled) is not bool:
+        raise ValueError('factor_diversification_check_enabled must be a boolean')
     try:
         beta_exposure = portfolio_beta_exposure(weights, exposures, basis=beta_exposure_basis)
     except ValueError as exc:
@@ -938,7 +948,7 @@ def check_factor_constraints_on_sized_weights(
     significant = sum(
         1 for pct in decomp.factor_contribution_pct.values() if pct > 10.0
     )
-    if significant < min_factor_diversification:
+    if factor_diversification_check_enabled and significant < min_factor_diversification:
         violations.append(
             f"final_factor_diversification:{significant}<{min_factor_diversification}"
         )

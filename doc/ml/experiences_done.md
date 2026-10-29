@@ -1,5 +1,39 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-29 — US : quatre signaux faibles, TOP20/TOP50 titres, 2020–2024 terminés
+
+2023 complétée128→250séances :122dates Jul10–Dec29 scorées avec le LightGBM
+figéJan5 2023, train disponibleJul6 2022/validationJan4 2023. Cours/features
+déjà archivés ; nouvelle extension causale explicitée, pasnouveauxfoldsOOF.
+1258séances2020–24,25160candidatsTOP20/62900TOP50, rangs figés avant labels,
+aucunremplacementN+1.84featuresoriginales ; déciles terminauxH20 globaux
+sur1580–1790titres, couverture≥95%, pas des déciles recalculés dansTOP50.
+Huitvariantes achevées sanséchec/année manquante, deuxworkers simultanés max.
+
+AUCquotidiennesmoyennes TOP20/TOP50 : VOL60D10/D1 **0,4904/0,4926** ;
+E2LONGterminalH3≥3% **0,5092/0,5170**, cinqannées>0,50desdeuxcôtés ;
+E3LONGnetpositif **0,4973/0,5185**,2/5et4/5années>0,50 ;
+P-MATHclassifieurD1/reste **0,4897/0,4987**. E2/E3TOP50 indices faibles,
+pasdémonstrationéconomique ni promotion. HespacéE2TOP50 0,5196/409dates,
+E3TOP50 0,5201/57dates ; E3TOP20 0,5528/48dates n'effacepas sa série entière
+à0,4973. Six tâchesP-MATH nonopérationnelles ; Holmcommun24comparaisons,
+archivesindividuellesinchangées. Pas d'inversion du score ou choixde seuil aprèsrésultats.
+
+Campagnereconstruite, pas réplicationidentique : trainminimum252dates/val63
+figés faute504+126avant2020 ; toutesmaturités purgées, modèlesannuels passés.
+E3 corrigeATRduJ+1contenantdufutur etbougied'entrée ignorée : ATR14jusqu'àJ,
+SL2,5ATR/TPmin3ATRou7%, entréeopenJ+1,20séancesentréeincluse,sortieclose20,
+gap≤3%, coûts16pballerretour. Cibles E2/VOL/P-MATH terminales distinctes
+du signe du picH20 etde l'économieE3. Pasun backtestdeportefeuille/Winner.
+
+52tests passent ; relecture séparéeparassistant, pasrevuehumaine :20empreintes,
+41preuveschronologiques,10cas/28recalculsdecibles,40AUCannuelles reproduites
+écartmax1,67e−16,huit sceauxvalables. Sourcesrevérifiées, aucuneécritureSQL,
+API/LLM/ordre/changementmodèle/batchdeproduction. Annéesdéjàvues, universsurvivant
+etajustementsrétrospectifsréservés. Racine `artifacts/research/us_weak_topn_2020_2024/20261029-v1`,
+bilansannuels/principauxdans `summary/`.
+[Protocole, résultats annuels et limites](signaux_faibles_top20_top50_2020_2024_20261029.md).
+
 ## 2026-10-28 — US : spread IEX contre SIP dans TOP10/20/50 Oracle
 
 Audit de qualité des quotes, sans entraînement/inférence/backtest économique.
