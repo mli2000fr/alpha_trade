@@ -66,7 +66,7 @@ def reapprove_campaign(state, version, proposed, snapshot, now, kind, *, context
     effective_type, effective_limit = (standard_order_terms(state, quote_check_enabled=quote_required)
         if kind == 'ENTRY' and standard_initial(state) else ('limit', price))
     cfg = context['risk_config']
-    if cfg.enforce_net_exposure or cfg.max_long_short_correlation is not None:
+    if cfg.enforce_net_exposure or (cfg.correlation_check_enabled and cfg.max_long_short_correlation is not None):
         raise ValueError('Campaign adapter does not qualify market-neutral / cross-leg overlays')
     if abs(float(context['equity'])-cfg.account_equity) > .005:
         raise ValueError('Native risk equity differs from captured account')
@@ -103,7 +103,7 @@ def reapprove_campaign(state, version, proposed, snapshot, now, kind, *, context
     own_notional, own_quantity = 0., 0.
     positions = context['positions']
     returns = context['return_matrix']
-    correlations = returns.corr(min_periods=cfg.correlation_min_overlap) if not returns.empty else pd.DataFrame()
+    correlations = returns.corr(min_periods=cfg.correlation_min_overlap) if cfg.correlation_check_enabled and not returns.empty else pd.DataFrame()
     side_by_symbol = {}
     for position in positions:
         held = position['symbol']
@@ -132,7 +132,7 @@ def reapprove_campaign(state, version, proposed, snapshot, now, kind, *, context
         portfolio.add_position(notional=pending['notional'], sector=sector_map[pending['symbol']],
             side=pending['side'], symbol=pending['symbol'])
         side_by_symbol[pending['symbol']] = pending['side']
-    for held, side in side_by_symbol.items():
+    for held, side in (side_by_symbol.items() if cfg.correlation_check_enabled else ()):
         if held == symbol:
             continue
         if symbol not in correlations or held not in correlations or pd.isna(correlations.loc[symbol, held]):

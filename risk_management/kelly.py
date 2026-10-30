@@ -107,11 +107,11 @@ class KellySizer:
         kelly_shares = math.floor(kelly_notional / price)
 
         # ── 6. Cap ATR ──────────────────────────────────────────────────
-        if price_info.atr_20 is not None and price_info.atr_20 > 0:
+        if cfg.fixed_stop_pct is not None or (price_info.atr_20 is not None and price_info.atr_20 > 0):
             risk_budget = (
                 cfg.account_equity * cfg.risk_per_trade_pct * max(0.0, cfg.risk_multiplier)
             )
-            risk_per_share = price_info.atr_20 * cfg.atr_stop_multiple
+            risk_per_share = cfg.stop_distance(price, price_info.atr_20)
             if risk_per_share > 0:
                 atr_shares_cap = math.floor(risk_budget / risk_per_share)
             else:

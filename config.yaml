@@ -456,6 +456,16 @@ selector:
 # (TrailingStopConfig) via ``service.market.parse_trailing_stop``.
 # ---------------------------------------------------------------------------
 risk_management:
+  # false : désactive seulement le nombre maximal de titres par secteur.
+  # Cet interrupteur ne modifie pas les poids sectoriels ni les corrélations.
+  sector_ticker_limit_enabled: false
+  # false : pas de plafond de poids/exposition par secteur.
+  sector_weight_limit_enabled: false
+  # false : pas de plafond de contribution du facteur marché au risque.
+  # Le plafond bêta et les concentrations size/momentum restent actifs.
+  market_factor_concentration_check_enabled: false
+  # false : pas de veto de corrélation Pearson, factorielle ou intra-sectorielle.
+  correlation_check_enabled: false
   # Étape 11 uniquement : false = pas d'appel aux dernières quotes SIP ni de veto bid/ask.
   # ADV, participation, slippage estimé, borrow et contrôles d'exécution restent distincts.
   quote_spread_check_enabled: false

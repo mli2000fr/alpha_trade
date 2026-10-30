@@ -59,7 +59,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Comportement si les données quotes/spread sont indisponibles: block ou warn_skip_filter.",
     )
-    parser.add_argument("--earnings-blackout-days", type=int, default=None, help="Exclut les titres dont les résultats tombent dans les N prochains jours")
+    parser.add_argument("--earnings-blackout-days", type=int, default=None, help="Fenêtre earnings en jours : -1 désactive le contrôle ; 0 = jour même")
     parser.add_argument(
         "--earnings-data-quality-mode",
         choices=sorted(SUPPORTED_DATA_QUALITY_MODES),

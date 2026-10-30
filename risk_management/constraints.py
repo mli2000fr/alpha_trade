@@ -205,17 +205,17 @@ class ConstraintChecker:
         _cap_mode = str(getattr(self._cfg, "sector_cap_mode", "count") or "count").strip().lower()
         if _cap_mode == "exposure":
             _expo_after = (state.sector_notional.get(sector, 0.0) + proposed_shares * price) / equity
-            if _expo_after > float(self._cfg.sector_exposure_cap_pct) + 1e-12:
+            if self._cfg.sector_weight_limit_enabled and _expo_after > float(self._cfg.sector_exposure_cap_pct) + 1e-12:
                 return 0.0, "sector_exposure_cap atteint"
         elif _cap_mode == "hybrid":
             _current_n = state.sector_ticker_count.get(sector, 0)
-            if _current_n >= 3:
+            if self._cfg.sector_ticker_limit_enabled and _current_n >= 3:
                 return 0.0, "max_tickers_per_sector atteint"
-            if _current_n == 2:
+            if _current_n >= 2:
                 _expo_after = (state.sector_notional.get(sector, 0.0) + proposed_shares * price) / equity
-                if _expo_after > float(self._cfg.sector_exposure_cap_pct) + 1e-12:
+                if self._cfg.sector_weight_limit_enabled and _expo_after > float(self._cfg.sector_exposure_cap_pct) + 1e-12:
                     return 0.0, "sector_exposure_cap atteint"
-                if not self._hybrid_corr_ok(state, sector, symbol):
+                if self._cfg.correlation_check_enabled and not self._hybrid_corr_ok(state, sector, symbol):
                     return 0.0, "sector_corr_threshold atteint"
                 LOGGER.info(
                     "smart_sector_cap hybrid: 3e ticker accepté secteur=%s symbol=%s rank=%s",
@@ -223,7 +223,7 @@ class ConstraintChecker:
                 )
         else:
             # C0 / "count" : comportement actuel inchangé
-            if self._cfg.max_tickers_per_sector is not None:
+            if self._cfg.sector_ticker_limit_enabled and self._cfg.max_tickers_per_sector is not None:
                 current_n = state.sector_ticker_count.get(sector, 0)
                 if current_n >= self._cfg.max_tickers_per_sector:
                     return 0.0, "max_tickers_per_sector atteint"
@@ -271,7 +271,7 @@ class ConstraintChecker:
         # max sector weight
         current_sector = state.sector_notional.get(sector, 0.0)
         max_sector_notional = equity * self._cfg.max_sector_weight
-        if (current_sector + notional) > max_sector_notional:
+        if self._cfg.sector_weight_limit_enabled and (current_sector + notional) > max_sector_notional:
             remaining = max_sector_notional - current_sector
             if remaining <= 0:
                 return 0.0, "max_sector_weight atteint"
@@ -392,14 +392,14 @@ class ConstraintChecker:
         # 5. Secteur
         max_sector_notional = equity * self._cfg.max_sector_weight
         for sector_name, sector_notional in state.sector_notional.items():
-            if sector_notional > max_sector_notional + 1e-8:
+            if self._cfg.sector_weight_limit_enabled and sector_notional > max_sector_notional + 1e-8:
                 violations.append(
                     f"sector_weight_exceeded:{sector_name}:"
                     f"{sector_notional:.0f}>{max_sector_notional:.0f}"
                 )
 
         # 6. Tickers par secteur
-        if self._cfg.max_tickers_per_sector is not None:
+        if self._cfg.sector_ticker_limit_enabled and self._cfg.max_tickers_per_sector is not None:
             for sector_name, count in state.sector_ticker_count.items():
                 if count > self._cfg.max_tickers_per_sector:
                     violations.append(

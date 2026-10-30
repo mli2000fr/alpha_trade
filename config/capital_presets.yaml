@@ -1,5 +1,7 @@
 # Les justifications et clés *_iex ci-dessous sont historiques/compatibilité.
 # Depuis le 17/10/2026, elles ne relâchent plus le spread : seuil SIP strict.
+# selector_earnings_blackout_days : fenêtre ±N jours calendaires, bornes incluses.
+# -1 = contrôle désactivé ; 0 = jour de l'annonce uniquement.
 presets:
 - key: capital_0_2000
   label: 0 → 2 000 $ (micro-compte)
@@ -32,15 +34,14 @@ presets:
       ont moins d'alternatives liquides.
     selector_max_spread_bps_iex: Version IEX alignée sur le relâchement de spread
       pour éviter une exclusion excessive.
-    selector_earnings_blackout_days: Fenêtre earnings réduite à 2 jours pour ne
-      pas neutraliser trop longtemps un univers déjà étroit.
+    selector_earnings_blackout_days: Contrôle désactivé explicitement à la demande utilisateur (-1).
   values:
     risk_account_equity: __DETECTED_EQUITY__
     risk_per_trade_pct: 0.01
     risk_max_positions: 20
     risk_max_position_weight: 0.35
     risk_max_sector_weight: 0.55
-    risk_min_position_notional: 70.0
+    risk_min_position_notional: 50.0
     risk_max_drawdown_pct: 0.15
     risk_max_daily_loss_pct: 0.025
     risk_drawdown_rolling_peak_window_days: 252
@@ -110,7 +111,7 @@ presets:
     selector_min_beta_126: 0.65
     selector_max_spread_bps: 80.0
     selector_max_spread_bps_iex: 100.0
-    selector_earnings_blackout_days: 2
+    selector_earnings_blackout_days: -1
     selector_max_anomaly_count: 15
     selector_require_above_ma200: true
 - key: capital_2001_5000
@@ -143,15 +144,14 @@ presets:
       titres exécutables en petite taille.
     selector_max_spread_bps_iex: Relâchement IEX cohérent avec l'assouplissement
       du spread principal.
-    selector_earnings_blackout_days: Fenêtre blackout réduite à 2 jours pour éviter
-      un assèchement excessif de l'univers.
+    selector_earnings_blackout_days: Contrôle désactivé explicitement à la demande utilisateur (-1).
   values:
     risk_account_equity: __DETECTED_EQUITY__
     risk_per_trade_pct: 0.0125
     risk_max_positions: 20
     risk_max_position_weight: 0.25
     risk_max_sector_weight: 0.5
-    risk_min_position_notional: 70.0
+    risk_min_position_notional: 50.0
     risk_max_drawdown_pct: 0.15
     risk_max_daily_loss_pct: 0.03
     risk_drawdown_rolling_peak_window_days: 252
@@ -221,7 +221,7 @@ presets:
     selector_min_beta_126: 0.7
     selector_max_spread_bps: 60.0
     selector_max_spread_bps_iex: 80.0
-    selector_earnings_blackout_days: 2
+    selector_earnings_blackout_days: -1
     selector_max_anomaly_count: 16
     selector_require_above_ma200: true
 - key: capital_5001_10000
@@ -253,6 +253,7 @@ presets:
       trop pauvre.
     selector_max_spread_bps_iex: IEX relâché à 75 bps pour rester cohérent avec
       le spread principal.
+    selector_earnings_blackout_days: Contrôle désactivé explicitement à la demande utilisateur (-1).
   values:
     risk_account_equity: __DETECTED_EQUITY__
     risk_per_trade_pct: 0.0175
@@ -329,7 +330,7 @@ presets:
     selector_min_beta_126: 0.75
     selector_max_spread_bps: 55.0
     selector_max_spread_bps_iex: 75.0
-    selector_earnings_blackout_days: 3
+    selector_earnings_blackout_days: -1
     selector_max_anomaly_count: 18
     selector_require_above_ma200: true
 - key: capital_10001_25000
@@ -352,6 +353,7 @@ presets:
       de capital.
     selector_max_spread_bps_iex: IEX à 70 bps pour rester aligné avec le relâchement
       du spread global.
+    selector_earnings_blackout_days: Contrôle désactivé explicitement à la demande utilisateur (-1).
   values:
     risk_account_equity: __DETECTED_EQUITY__
     risk_per_trade_pct: 0.015
@@ -428,7 +430,7 @@ presets:
     selector_min_beta_126: 0.8
     selector_max_spread_bps: 50.0
     selector_max_spread_bps_iex: 70.0
-    selector_earnings_blackout_days: 3
+    selector_earnings_blackout_days: -1
     selector_max_anomaly_count: 20
     selector_require_above_ma200: true
 - key: capital_25001_50000
@@ -449,6 +451,7 @@ presets:
       parfait ne raréfie trop les candidats.
     selector_max_spread_bps: Spreads jusqu'à 45 bps tolérés, assouplissement marginal
       par rapport au strict.
+    selector_earnings_blackout_days: Contrôle désactivé explicitement à la demande utilisateur (-1).
   values:
     risk_account_equity: __DETECTED_EQUITY__
     risk_per_trade_pct: 0.0125
@@ -526,7 +529,7 @@ presets:
     selector_min_beta_126: 0.8
     selector_max_spread_bps: 45.0
     selector_max_spread_bps_iex: 65.0
-    selector_earnings_blackout_days: 3
+    selector_earnings_blackout_days: -1
     selector_max_anomaly_count: 21
     selector_require_above_ma200: true
 - key: capital_50001_100000
@@ -540,6 +543,7 @@ presets:
       l'effet univers vide d'un score weekly fixé à 1.0.
     selector_max_spread_bps_iex: IEX conservé à 60 bps pour absorber le bruit des
       snapshots quotes tout en restant strict.
+    selector_earnings_blackout_days: Contrôle désactivé explicitement à la demande utilisateur (-1).
   values:
     risk_account_equity: __DETECTED_EQUITY__
     risk_per_trade_pct: 0.01
@@ -618,7 +622,7 @@ presets:
     selector_min_beta_126: 0.8
     selector_max_spread_bps: 40.0
     selector_max_spread_bps_iex: 60.0
-    selector_earnings_blackout_days: 3
+    selector_earnings_blackout_days: -1
     selector_max_anomaly_count: 22
     selector_require_above_ma200: true
 - key: capital_100001_plus
@@ -651,8 +655,7 @@ presets:
       qualité d'exécution.
     selector_max_spread_bps_iex: Spread IEX abaissé à 55 bps pour conserver une
       discipline de liquidité cohérente.
-    selector_earnings_blackout_days: Blackout étendu à 4 jours pour réduire davantage
-      le risque événementiel sur gros compte.
+    selector_earnings_blackout_days: Contrôle désactivé explicitement à la demande utilisateur (-1).
   values:
     risk_account_equity: __DETECTED_EQUITY__
     risk_per_trade_pct: 0.008
@@ -727,6 +730,6 @@ presets:
     selector_min_beta_126: 0.9
     selector_max_spread_bps: 35.0
     selector_max_spread_bps_iex: 55.0
-    selector_earnings_blackout_days: 4
+    selector_earnings_blackout_days: -1
     selector_max_anomaly_count: 23
     selector_require_above_ma200: true

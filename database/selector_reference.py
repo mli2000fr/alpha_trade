@@ -278,18 +278,35 @@ def upsert_earnings_calendar(records: Iterable[dict[str, Any]]) -> int:
         return 0
 
     table = get_stock_earnings_calendar_table()
+    archive = None
+    if any(row.get("_calendar_evidence") for row in rows):
+        from database.earnings_calendar_reconciliation import correction_table
+        archive = correction_table()
+        # DDL hors transaction métier ; aucun retrait si l'archive est indisponible.
+        archive.create(get_sqlalchemy_engine(), checkfirst=True)
     session = SessionLocal()
     try:
+        if archive is not None:
+            from database.earnings_calendar_reconciliation import filter_superseded_forecasts
+            rows = filter_superseded_forecasts(session.connection(), table, archive, rows)
+        evidence_rows = [dict(row) for row in rows if row.get("_calendar_evidence")]
+        rows = [{key: value for key, value in row.items() if key != "_calendar_evidence"} for row in rows]
+        if not rows:
+            session.commit()
+            return 0
         stmt = mysql_insert(table).values(rows)
         update_dict = {
             "eps_estimate": stmt.inserted.eps_estimate,
-            "eps_actual": stmt.inserted.eps_actual,
+            "eps_actual": func.coalesce(stmt.inserted.eps_actual, table.c.eps_actual),
             "revenue_estimate": stmt.inserted.revenue_estimate,
-            "revenue_actual": stmt.inserted.revenue_actual,
+            "revenue_actual": func.coalesce(stmt.inserted.revenue_actual, table.c.revenue_actual),
             "fiscal_period": stmt.inserted.fiscal_period,
             "last_updated": func.current_timestamp(),
         }
         session.execute(stmt.on_duplicate_key_update(**update_dict))
+        if archive is not None:
+            from database.earnings_calendar_reconciliation import reconcile_confirmed_dates
+            reconcile_confirmed_dates(session.connection(), table, archive, evidence_rows)
         session.commit()
         return len(rows)
     except Exception:

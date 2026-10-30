@@ -118,9 +118,10 @@ def factor_violations(context, weights, cfg, *, candidate, other_sides=None):
         max_portfolio_beta=cfg.max_portfolio_beta,
         beta_exposure_basis=cfg.beta_exposure_basis,
         max_factor_concentration=cfg.max_factor_concentration_pct,
+        market_factor_concentration_check_enabled=cfg.market_factor_concentration_check_enabled,
         min_factor_diversification=cfg.effective_min_factor_diversification,
         factor_diversification_check_enabled=cfg.factor_diversification_check_enabled)
-    if cfg.use_factor_correlation_filter:
+    if cfg.correlation_check_enabled and cfg.use_factor_correlation_filter:
         for held,side in (other_sides or {}).items():
             if held == candidate:
                 continue

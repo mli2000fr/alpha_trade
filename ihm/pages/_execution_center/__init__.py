@@ -2235,7 +2235,8 @@ def _render_selector_block() -> dict[str, Any]:
         selector_earnings_blackout_days = int(
             st.number_input(
                 "Alpha Scanner — earnings blackout (jours)",
-                min_value=0,
+                min_value=-1,
+                help="-1 : contrôle désactivé ; 0 : jour de l'annonce uniquement ; N : fenêtre en jours.",
                 value=_session_state_int(
                     "pipeline_selector_earnings_blackout_days",
                     DEFAULT_SELECTOR_EARNINGS_BLACKOUT_DAYS,

@@ -867,6 +867,7 @@ def check_factor_constraints_on_sized_weights(
     max_factor_concentration: float = DEFAULT_MAX_FACTOR_CONCENTRATION,
     min_factor_diversification: int = DEFAULT_MIN_FACTOR_DIVERSIFICATION,
     factor_diversification_check_enabled: bool = True,
+    market_factor_concentration_check_enabled: bool = True,
     beta_exposure_basis: str = 'invested_capital',
 ) -> list[str]:
     """Valide les contraintes factorielles sur les poids FINALS du portefeuille.
@@ -896,6 +897,9 @@ def check_factor_constraints_on_sized_weights(
         Nombre minimum de facteurs avec contribution > 10% (défaut 2).
     factor_diversification_check_enabled : bool
         Désactive seulement ce minimum ; bêta et concentration restent vérifiés.
+    market_factor_concentration_check_enabled : bool
+        Désactive seulement le plafond de contribution du facteur marché ; le
+        plafond bêta et les concentrations des autres facteurs restent actifs.
 
     Returns
     -------
@@ -907,6 +911,8 @@ def check_factor_constraints_on_sized_weights(
     violations: list[str] = []
     if type(factor_diversification_check_enabled) is not bool:
         raise ValueError('factor_diversification_check_enabled must be a boolean')
+    if type(market_factor_concentration_check_enabled) is not bool:
+        raise ValueError('market_factor_concentration_check_enabled must be a boolean')
     try:
         beta_exposure = portfolio_beta_exposure(weights, exposures, basis=beta_exposure_basis)
     except ValueError as exc:
@@ -938,6 +944,8 @@ def check_factor_constraints_on_sized_weights(
 
     # 3. Concentration factorielle
     for factor_name, contrib_pct in decomp.factor_contribution_pct.items():
+        if factor_name == 'market' and not market_factor_concentration_check_enabled:
+            continue
         if contrib_pct > max_factor_concentration * 100.0:
             violations.append(
                 f"final_factor_concentration:{factor_name}:"

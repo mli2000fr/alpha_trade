@@ -224,6 +224,8 @@ class ProtectionTransitionWatcher:
             account_id=account_id, exec_run_id=exec_run_id, limit=limit)
 
         for item in items:
+            if (item.account_id, item.broker_mode, str(item.symbol).upper()) in managed_symbols:
+                continue  # Winner owns its SL/TP; never promote it under a legacy trailing policy.
             run_metrics = metrics_by_run[item.source_exec_run_id]
             run_metrics["source_exec_run_id"] = item.source_exec_run_id
             run_metrics["trade_date"] = item.trade_date.isoformat()
@@ -239,6 +241,10 @@ class ProtectionTransitionWatcher:
         # appeler `_submit_children`). On arme les enfants manquants ici.
         # ------------------------------------------------------------------
         for row in unprotected_rows:
+            key = (str(row.get('account_id') or account_id or 'default'),
+                   str(row.get('broker_mode') or 'paper'), str(row.get('symbol') or '').upper())
+            if key in managed_symbols:
+                continue  # Missing Winner protections must retain the frozen campaign terms.
             source_exec_run_id = str(row.get("exec_run_id") or "")
             run_metrics = metrics_by_run[source_exec_run_id]
             run_metrics.setdefault("source_exec_run_id", source_exec_run_id)

@@ -497,6 +497,15 @@ python -u -m dataIntegrityEngine.sync_latest_quotes --symbol-source universe-fil
 python -u -m dataIntegrityEngine.sync_earnings_calendar --symbol-source universe-file:config/univers_batch/univers_filtred_tradable.txt --batch-size 50 --sleep-seconds 1.1 --log-every 25 --from-date YYYY-MM-DD --to-date YYYY-MM-DD --resume
 ```
 
+Depuis le 30/10/2026, les anciennes dates estimées sont archivées puis retirées
+lorsqu'une annonce Finnhub réalisée et non ambiguë confirme leur remplacement.
+`selector_earnings_blackout_days: 0` conserve le blocage le jour même de l'annonce.
+La valeur `-1` désactive ce contrôle ; elle est désormais configurée dans les
+sept presets de capital. Le champ IHM accepte cette valeur. Les anciens
+snapshots restent figés ; republier l'univers avant de renouveler la sélection
+et le risque.
+Voir [le rapprochement des dates et ses limites](earnings_calendar_date_reconciliation.md).
+
 Remplacer les dates avant lancement. Le launcher quotes respecte `enabled: false`, même avec `-Force` ; utiliser directement son collecteur pour une intervention manuelle. Le launcher historique earnings ignore la planification désactivée, mais conserve son lancement manuel explicite `-Force`, hors blocage juridique. Le batch Pipeline ne contourne aucun statut fournisseur bloqué.
 
 Le sentiment utilise notamment le scoring standard + contextuel, les checkpoints de reprise et les valeurs partagées de taille de lots. Les poids de l'agrégateur restent ceux des défauts Pipeline ; activer la collecte/scoring ne signifie pas augmenter automatiquement le poids du sentiment dans la sélection.
