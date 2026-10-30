@@ -7,7 +7,8 @@ from ihm.services.oracle_path_diagnostics import period_rows,top_k_rows
 
 def render_periods(view,sql):
     rows=period_rows(view,sql)
-    st.caption('Oracle parcours H20 : prédictions SQL et tests OOF du training sont deux sources distinctes, jamais fusionnées.')
+    horizon=(view.get('protocol') or {}).get('horizon',20)
+    st.caption(f'Oracle parcours H{horizon} : prédictions SQL et tests OOF du training sont deux sources distinctes, jamais fusionnées.')
     if rows:st.dataframe(pd.DataFrame(rows),use_container_width=True,hide_index=True)
     if not (sql.get('coverage') or {}).get('n_rows') and not sql.get('errors'):
         st.info("Aucune prédiction SQL pour ce batch : cela n'efface pas ses tests OOF. Lancer ML Predict pour alimenter les scores servis.")
@@ -26,8 +27,9 @@ def _number(value,fmt='.3f'):
 
 
 def render_model(view,sql):
-    st.subheader('🔮 Oracle Extreme parcours H20 — amplitude')
-    st.info('Cible : véritable TOP20 % de l’amplitude absolue maximale entre J+1 et J+20, depuis le close ajusté J. '
+    horizon=(view.get('protocol') or {}).get('horizon',20)
+    st.subheader(f'🔮 Oracle Extreme parcours H{horizon} — amplitude')
+    st.info(f'Cible : véritable TOP20 % de l’amplitude absolue maximale entre J+1 et J+{horizon}, depuis le close ajusté J. '
         'Le modèle ne prédit ni LONG/SHORT, ni le rendement au seul vingtième jour, ni un gain exécutable.')
     for message in view.get('errors',[]):st.error('Artefacts parcours non qualifiés : '+message)
     for message in view.get('warnings',[]):st.warning(message)

@@ -1,4 +1,4 @@
-"""Independent H20 path-amplitude classifier, causal WF and local artifacts only.
+"""Independent H10/H15/H20 path classifier, causal WF and local artifacts only.
 
 The Model Factory campaign journal is managed by the caller. This module makes
 no SQL writes and never uses terminal Oracle labels/predictions/champions.
@@ -24,7 +24,7 @@ from modelFactory.oracle.dataset import build_feature_matrix, deduplicate_oracle
 from modelFactory.oracle.security_continuity import load_security_discontinuities
 from modelFactory.oracle.train import precision_recall_at_top_pct, roc_auc
 from modelFactory.oracle.walk_forward import build_folds_adaptive
-from modelFactory.oracle_path import HORIZON, MODE, SCORE, TARGET
+from modelFactory.oracle_path import HORIZON, MODE, SCORE, TARGET, target_name, mode_name, validate_horizon
 from modelFactory.oracle_path.backend import resolve_backend, candidates_for, selection_policy, DECLARATIONS, NAMES
 from modelFactory.oracle_path.labels import classify, load_bars, symbol_paths
 from modelFactory.runtime_status import update_runtime_status
@@ -68,8 +68,9 @@ def is_path_batch(artifacts_dir, batch_id):
 
 
 def format_report(report):
-    lines = ["# Oracle Extreme parcours H20", "", "Classifieur d'amplitude séparé, raccordé à predict/backtest/live ; aucune activation de compte automatique.",
-             "Cible : TOP20 % de l'amplitude absolue maximale entre J+1 et J+20, depuis le close ajusté J.",
+    horizon = report.get('horizon', HORIZON)
+    lines = [f"# Oracle Extreme parcours H{horizon}", "", "Classifieur d'amplitude séparé, raccordé à predict/backtest/live ; aucune activation de compte automatique.",
+             f"Cible : TOP20 % de l'amplitude absolue maximale entre J+1 et J+{horizon}, depuis le close ajusté J.",
              "Ce score ne donne ni la direction ni un prix de sortie exécutable.", "",
              f"Batch : {report['batch_id']} ; features : {report['n_features']} ; folds : {report['n_folds']}.", "",
              (f"Algorithme imposé : {report['training_backend']}. Aucun choix du modèle sur validation/test."
@@ -124,7 +125,7 @@ def feature_columns(features, options, whitelist=None):
     return candidates
 
 
-def qualify_feature_membership(labels, features):
+def qualify_feature_membership(labels, features, *, horizon=HORIZON):
     """Eligibility is decided using only features at J, before future label ranks.
 
     New listings without historical warm-up cannot be scored. Their paths remain
@@ -135,18 +136,19 @@ def qualify_feature_membership(labels, features):
     labels = labels.copy()
     labels["feature_eligible"] = pd.MultiIndex.from_frame(labels[["date", "symbol"]]).isin(
         pd.MultiIndex.from_frame(features[["date", "symbol"]]))
-    eligible = classify(labels[labels.feature_eligible])
-    columns = ["date", "symbol", "daily_count", "daily_coverage", TARGET, "path_amplitude_rank"]
+    eligible = classify(labels[labels.feature_eligible], horizon=horizon)
+    columns = ["date", "symbol", "daily_count", "daily_coverage", target_name(horizon), "path_amplitude_rank"]
     return labels.merge(eligible[columns], on=["date", "symbol"], how="left", validate="one_to_one")
 
 
-def metrics(frame):
-    result = {"auc": roc_auc(frame[TARGET].to_numpy(), frame[SCORE].to_numpy()),
-              "prevalence": float(frame[TARGET].mean()), "rows": len(frame),
+def metrics(frame, *, horizon=HORIZON):
+    target = target_name(horizon)
+    result = {"auc": roc_auc(frame[target].to_numpy(), frame[SCORE].to_numpy()),
+              "prevalence": float(frame[target].mean()), "rows": len(frame),
               "dates": int(frame.date.nunique())}
     for fraction in (.1, .2):
         label = int(fraction * 100)
-        pr = precision_recall_at_top_pct(frame, SCORE, pct=fraction, target_col=TARGET)
+        pr = precision_recall_at_top_pct(frame, SCORE, pct=fraction, target_col=target)
         result[f"precision_at_{label}pct"] = pr["precision"]
         result[f"recall_at_{label}pct"] = pr["recall"]
         selected = []
@@ -163,7 +165,7 @@ def metrics(frame):
     for count in (10, 20, 50):
         selected = [g.sort_values([SCORE, "symbol"], ascending=[False, True]).head(count)
                     for _, g in frame.groupby("date") if len(g) >= count]
-        result[f"precision_top_{count}_titles"] = float(np.mean([g[TARGET].mean() for g in selected])) if selected else None
+        result[f"precision_top_{count}_titles"] = float(np.mean([g[target].mean() for g in selected])) if selected else None
         result[f"mean_path_amplitude_top_{count}_titles_pct"] = 100 * float(np.mean(
             [g.path_amplitude.mean() for g in selected])) if selected else None
         result[f"dates_top_{count}_titles"] = len(selected)
@@ -181,8 +183,9 @@ def train_model(train, val, columns, cfg):
               "bagging_freq": 1, "feature_fraction": b.lgbm_colsample_bytree,
               "seed": cfg.reproducibility.seed, "num_threads": cfg.max_workers,
               "verbosity": -1, "device_type": "cpu", "force_col_wise": True}
-    training = lgb.Dataset(train[columns], label=train[TARGET].astype(int))
-    validation = lgb.Dataset(val[columns], label=val[TARGET].astype(int), reference=training)
+    target = target_name(cfg.oracle_horizon)
+    training = lgb.Dataset(train[columns], label=train[target].astype(int))
+    validation = lgb.Dataset(val[columns], label=val[target].astype(int), reference=training)
     callbacks = [lgb.log_evaluation(50)]
     if b.lgbm_early_stopping_rounds > 0:
         callbacks.append(lgb.early_stopping(b.lgbm_early_stopping_rounds, verbose=False))
@@ -201,8 +204,9 @@ def train_catboost(train, val, columns, cfg):
         od_type=b.catboost_od_type, od_wait=b.catboost_od_wait, loss_function="Logloss",
         eval_metric="AUC", random_seed=cfg.reproducibility.seed, thread_count=cfg.max_workers,
         task_type="CPU", allow_writing_files=False, verbose=False)
-    model.fit(train[columns], train[TARGET].astype(int),
-              eval_set=(val[columns], val[TARGET].astype(int)), use_best_model=True)
+    target = target_name(cfg.oracle_horizon)
+    model.fit(train[columns], train[target].astype(int),
+              eval_set=(val[columns], val[target].astype(int)), use_best_model=True)
     return model
 
 
@@ -225,6 +229,8 @@ def select_champion(validation):
 def fit_folds(dataset, columns, cfg, root, progress):
     """Checkpoint each complete model/OOS pair; bad/missing artifacts are not reused."""
     wf = cfg.walk_forward
+    horizon = validate_horizon(cfg.oracle_horizon)
+    target = target_name(horizon)
     requested=cfg.oracle_path_backend
     backend_mode=resolve_backend(requested,enable_catboost=cfg.baseline.enable_catboost)
     required=candidates_for(backend_mode)
@@ -234,7 +240,7 @@ def fit_folds(dataset, columns, cfg, root, progress):
         raise ValueError("Oracle parcours : wf step doit être >= wf test (pas de tests OOF dupliqués)")
     folds = build_folds_adaptive(dataset, min_train_dates=wf.min_train_size,
         val_dates=wf.val_size, test_dates=wf.test_size, step_dates=wf.step_size,
-        max_splits=wf.max_splits, forecast_horizon=HORIZON, materialize=False)
+        max_splits=wf.max_splits, forecast_horizon=horizon, materialize=False)
     if not folds:
         raise ValueError("Oracle parcours : historique insuffisant pour les folds demandés")
     parts, summaries, skipped = [], [], []
@@ -261,7 +267,7 @@ def fit_folds(dataset, columns, cfg, root, progress):
         val = dataset[dataset.date.isin(fold["val_dates"])
                       & (dataset.oracle_available_date < pd.Timestamp(fold["t_start"]))]
         test = dataset[dataset.date.isin(fold["test_dates"])]
-        if test.empty or any(frame.empty or frame[TARGET].nunique() < 2 for frame in (train, val)):
+        if test.empty or any(frame.empty or frame[target].nunique() < 2 for frame in (train, val)):
             skipped.append({"fold_start": str(fold["t_start"]), "reason": "EMPTY_OR_CONSTANT_TARGET"})
             continue
         progress("training_fold", number, len(folds), str(fold["t_start"]))
@@ -273,14 +279,14 @@ def fit_folds(dataset, columns, cfg, root, progress):
             models["catboost"] = train_catboost(train, val, columns, cfg)
         validation = {}
         for backend, model in models.items():
-            frame = val[["date", "symbol", TARGET, "path_amplitude"]].copy()
+            frame = val[["date", "symbol", target, "path_amplitude"]].copy()
             frame[SCORE] = model_probabilities(model, backend, val[columns])
-            validation[backend] = metrics(frame)
+            validation[backend] = metrics(frame, horizon=horizon)
         champion = select_champion(validation) if backend_mode=='auto' else backend_mode
         model_files = {"lightgbm": "path_model.txt", "catboost": "catboost_model.cbm"}
         for backend, model in models.items():
             model.save_model(str(folder / model_files[backend]))
-        oof = test[["date", "symbol", TARGET, "path_amplitude", "terminal_return",
+        oof = test[["date", "symbol", target, "path_amplitude", "terminal_return",
                     "up_excursion", "down_excursion", "oracle_available_date"]].copy()
         for backend, model in models.items():
             oof[f"score_{backend}"] = model_probabilities(model, backend, test[columns])
@@ -293,8 +299,8 @@ def fit_folds(dataset, columns, cfg, root, progress):
             "val_start": str(fold["val_start"]), "val_available_max": str(val.oracle_available_date.max()),
             "test_start": str(fold["t_start"]), "test_end": str(fold["t_end"]),
             "selected_backend": champion, "validation_candidates": validation,
-            "test_candidates": {backend: metrics(oof.assign(**{SCORE: oof[f"score_{backend}"]}))
-                                for backend in models}, **metrics(oof)}
+            "test_candidates": {backend: metrics(oof.assign(**{SCORE: oof[f"score_{backend}"]}), horizon=horizon)
+                                for backend in models}, **metrics(oof, horizon=horizon)}
         atomic_json(complete, {"metrics": summary,
             "champion": {"backend": champion, "model_file": model_files[champion],
                          "selection": selection},
@@ -310,9 +316,9 @@ def fit_folds(dataset, columns, cfg, root, progress):
     if oof.duplicated(["date", "symbol"]).any():
         raise ValueError("Oracle parcours : doublons OOF")
     oof.to_parquet(root / "oof_predictions.parquet", index=False)
-    candidates = {backend: metrics(oof.assign(**{SCORE: oof[f"score_{backend}"]}))
+    candidates = {backend: metrics(oof.assign(**{SCORE: oof[f"score_{backend}"]}), horizon=horizon)
                   for backend in ("lightgbm", "catboost") if f"score_{backend}" in oof}
-    return {"folds": summaries, "skipped_folds": skipped, "overall": metrics(oof),
+    return {"folds": summaries, "skipped_folds": skipped, "overall": metrics(oof, horizon=horizon),
             "comparison_oof": candidates, "selection": selection, 'training_backend':backend_mode,
             "n_folds": len(summaries)}
 
@@ -321,6 +327,8 @@ def train_oracle_path(cfg, engine, batch_id, symbols):
     from modelFactory.orchestrator import _oracle_generator_options
     from modelFactory.feature_profiles import load_feature_profile
 
+    horizon = validate_horizon(cfg.oracle_horizon)
+    target, mode = target_name(horizon), mode_name(horizon)
     root = Path(cfg.artifacts_dir) / "oracle_path"
     if root.parent.exists() and any(child.name != "oracle_path" for child in root.parent.iterdir()):
         raise ValueError("Oracle parcours : dossier de campagne déjà occupé ; aucun artefact existant ne sera remplacé")
@@ -339,12 +347,12 @@ def train_oracle_path(cfg, engine, batch_id, symbols):
     if cfg.oracle_path_backend is None:
         # Keep the pre-existing legacy protocol fingerprint on resume.
         training_config.pop('oracle_path_backend',None)
-    protocol = {"schema_version": 1, "mode": MODE, "batch_id": batch_id, "serving_ready": True,
-        "target": TARGET, "score": SCORE, "horizon": HORIZON, "top_fraction": .2,
+    protocol = {"schema_version": 1, "mode": mode, "batch_id": batch_id, "serving_ready": True,
+        "target": target, "score": SCORE, "horizon": horizon, "top_fraction": .2,
         "min_daily_coverage": .95, "min_daily_universe": 20, "universe": symbols,
         "training_config": training_config, "generator_options": options, "profile": profile,
         "security_discontinuities": {s: [asdict(e) for e in events] for s, events in registry.items()},
-        "price_basis": "adjusted_close_J; adjusted_high_low_J+1..J+20; adj_close_fallback=close; available_J+21",
+        "price_basis": f"adjusted_close_J; adjusted_high_low_J+1..J+{horizon}; adj_close_fallback=close; available_J+{horizon+1}",
         "universe_bias": "static_current_file; not historical PIT membership",
         "backend": DECLARATIONS[backend]}
     if backend=='auto':
@@ -365,7 +373,7 @@ def train_oracle_path(cfg, engine, batch_id, symbols):
         atomic_json(root / "progress.json", {"status": "RUNNING", "phase": phase,
                                              "completed": current, "total": total, "item": item})
         update_runtime_status(current_phase=f"oracle_path_{phase}", progress_current=current,
-            progress_total=total, progress_item=item, progress_label="Oracle parcours H20")
+            progress_total=total, progress_item=item, progress_label=f"Oracle parcours H{horizon}")
         LOGGER.info("Oracle parcours %s %d/%d %s", phase, current, total, item)
 
     try:
@@ -387,7 +395,7 @@ def train_oracle_path(cfg, engine, batch_id, symbols):
                 bars = load_bars(engine, chunk, start, end)
                 labels, memberships = [], []
                 for _, group in bars.groupby("symbol"):
-                    paths, membership = symbol_paths(group, sessions, start=start, end=end, registry=registry)
+                    paths, membership = symbol_paths(group, sessions, start=start, end=end, registry=registry, horizon=horizon)
                     labels.append(paths)
                     memberships.append(membership)
                 if not labels:
@@ -406,27 +414,27 @@ def train_oracle_path(cfg, engine, batch_id, symbols):
             feature_parts.append(pd.read_parquet(folder / "features.parquet"))
             label_parts.append(pd.read_parquet(folder / "labels.parquet"))
         features = restore_ranks(pd.concat(feature_parts, ignore_index=True), options)
-        labels = qualify_feature_membership(pd.concat(label_parts, ignore_index=True), features)
+        labels = qualify_feature_membership(pd.concat(label_parts, ignore_index=True), features, horizon=horizon)
         labels.to_parquet(root / "labels.parquet", index=False)
         quality = {"requested_symbols": len(symbols), "observed_symbols": int(labels.symbol.nunique()),
                    "missing_symbols": sorted(set(symbols) - set(labels.symbol)),
                    "rows": len(labels), "qualified_paths": int(labels.path_qualified.sum()),
                    "feature_ineligible_at_j": int((~labels.feature_eligible).sum()),
-                   "eligible_targets": int(labels[TARGET].notna().sum()),
+                   "eligible_targets": int(labels[target].notna().sum()),
                    "reasons": labels.path_quality_reason.value_counts().to_dict()}
         atomic_json(root / "quality.json", quality)
         del feature_parts, label_parts
         whitelist = profile.get("feature_whitelist") if profile else (
             cfg.data.feature_whitelist if cfg.data.feature_whitelist_enabled else None)
         columns = feature_columns(features, options, whitelist)
-        feature_profile={"mode": MODE, "serving_ready": True,
-            "feature_columns": columns, "generator_options": options, "target": TARGET}
+        feature_profile={"mode": mode, "serving_ready": True,
+            "feature_columns": columns, "generator_options": options, "target": target}
         if cfg.oracle_path_backend is not None:feature_profile['training_backend']=backend
         atomic_json(root / "feature_profile.json",feature_profile)
         if features.duplicated(["date", "symbol"]).any():
             raise ValueError("Oracle parcours : doublons de features")
         dataset = features[["date", "symbol", *columns]].merge(
-            labels.dropna(subset=[TARGET]), on=["date", "symbol"], validate="one_to_one")
+            labels.dropna(subset=[target]), on=["date", "symbol"], validate="one_to_one")
         del features, labels
         for col in columns:
             dataset[col] = pd.to_numeric(dataset[col], errors="coerce").replace([np.inf, -np.inf], np.nan).astype(np.float32)
@@ -434,7 +442,7 @@ def train_oracle_path(cfg, engine, batch_id, symbols):
         if len(dataset) != quality["eligible_targets"]:
             raise ValueError("Oracle parcours : features manquantes pour des labels éligibles ; voir quality.json")
         result = fit_folds(dataset, columns, cfg, root, progress)
-        report = {"status": "completed", "mode": MODE, "batch_id": batch_id, "serving_ready": True,
+        report = {"status": "completed", "mode": mode, "horizon": horizon, "batch_id": batch_id, "serving_ready": True,
                   "artifact_root": str(root), "quality": quality, "n_features": len(columns), **result}
         atomic_json(root / "report.json", report)
         (root / "report.md").write_text(format_report(report), encoding="utf-8")

@@ -3713,7 +3713,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
                     if bool(getattr(args, "extreme_gate_shorts", False)):
                         raise SystemExit("Oracle parcours : aucune direction SHORT implicite; utiliser un filtre directionnel qualifié.")
                     args.extreme_gate_per_symbol = "bypass"
-                    _safe_print("   Oracle parcours H20 : score d'amplitude seul, politique LONG-only explicite (pas de probabilité directionnelle).\n")
+                    _safe_print("   Oracle parcours : score d'amplitude seul, politique LONG-only explicite (pas de probabilité directionnelle).\n")
                 # ── Calibration optionnelle de proba_extreme (oracle.calibration) ──
                 _cal_flag = str(getattr(args, "oracle_calibration", "none") or "none").strip().lower()
                 if (

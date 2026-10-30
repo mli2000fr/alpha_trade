@@ -6,7 +6,7 @@ import pandas as pd
 from numpy.lib.stride_tricks import sliding_window_view
 from sqlalchemy import bindparam, text
 
-from modelFactory.oracle_path import HORIZON, TARGET
+from modelFactory.oracle_path import HORIZON, target_name, validate_horizon
 
 PRICE_COLUMNS = ["open", "high", "low", "close", "adj_close", "volume", "is_filled"]
 LINEAGE_COLUMNS = ["instrument_id", "data_source", "data_adjustment"]
@@ -23,12 +23,13 @@ def load_bars(engine, symbols, start, end):
                            parse_dates=["date"])
 
 
-def symbol_paths(bars, sessions, *, start, end, registry):
-    """J close adjusted baseline, future HIGH/LOW in exactly J+1..J+20.
+def symbol_paths(bars, sessions, *, start, end, registry, horizon=HORIZON):
+    """J close adjusted baseline, future HIGH/LOW in exactly J+1..J+H.
 
     Prices are on the same adjustment basis. Even an early peak is not an early
-    available label: the full window matures only at J+21. No forward filling.
+    available label: the full window matures only at J+H+1. No forward filling.
     """
+    horizon = validate_horizon(horizon)
     symbol = str(bars.symbol.iloc[0])
     bars = bars.copy()
     bars["date"] = pd.to_datetime(bars.date).dt.normalize()
@@ -47,14 +48,14 @@ def symbol_paths(bars, sessions, *, start, end, registry):
     # Membership/ranks at J do NOT depend on future missing bars.
     membership = pd.DataFrame({"date": sessions[good], "symbol": symbol})
     membership = membership[membership.date.between(pd.Timestamp(start), pd.Timestamp(end))]
-    n = len(sessions) - HORIZON
+    n = len(sessions) - horizon
     if n <= 0:
-        raise ValueError("Calendar too short for H20")
+        raise ValueError(f"Calendar too short for H{horizon}")
     dates = sessions[:n]
     with np.errstate(divide="ignore", invalid="ignore"):
-        closes = sliding_window_view(adjusted.to_numpy(float), HORIZON + 1)
-        highs = sliding_window_view((raw.high * factor).to_numpy(float), HORIZON + 1)[:, 1:]
-        lows = sliding_window_view((raw.low * factor).to_numpy(float), HORIZON + 1)[:, 1:]
+        closes = sliding_window_view(adjusted.to_numpy(float), horizon + 1)
+        highs = sliding_window_view((raw.high * factor).to_numpy(float), horizon + 1)[:, 1:]
+        lows = sliding_window_view((raw.low * factor).to_numpy(float), horizon + 1)[:, 1:]
         up = np.maximum(0, highs.max(axis=1) / closes[:, 0] - 1)
         down = np.maximum(0, 1 - lows.min(axis=1) / closes[:, 0])
         ratios = closes[:, 1:] / closes[:, :-1]
@@ -64,23 +65,23 @@ def symbol_paths(bars, sessions, *, start, end, registry):
     def reject(mask, reason):
         reasons[(reasons == "") & mask] = reason
 
-    reject(~sliding_window_view(good.to_numpy(), HORIZON + 1).all(axis=1), "INVALID_OR_MISSING_PATH")
+    reject(~sliding_window_view(good.to_numpy(), horizon + 1).all(axis=1), "INVALID_OR_MISSING_PATH")
     for col in LINEAGE_COLUMNS:
         codes = pd.factorize(grid[col])[0]
-        windows = sliding_window_view(codes, HORIZON + 1)
+        windows = sliding_window_view(codes, horizon + 1)
         stable = (windows == windows[:, :1]).all(axis=1) & (windows[:, 0] >= 0)
         if col != "instrument_id":
             stable &= ~grid[col].iloc[:n].astype(str).str.upper().isin(["UNKNOWN", ""]).to_numpy()
         reject(~stable, f"UNKNOWN_OR_CHANGED_{col.upper()}")
     reject(((ratios >= 20) | (ratios <= .05)).any(axis=1), "UNEXPLAINED_20X_PRICE_BREAK")
     for event in registry.get(symbol, ()):
-        reject((dates <= event.last_predecessor_date) & (sessions[HORIZON:] >= event.first_successor_date),
+        reject((dates <= event.last_predecessor_date) & (sessions[horizon:] >= event.first_successor_date),
                "KNOWN_IDENTITY_BREAK")
-    available = pd.Series(sessions).shift(-(HORIZON + 1)).iloc[:n].to_numpy()
+    available = pd.Series(sessions).shift(-(horizon + 1)).iloc[:n].to_numpy()
     reject(pd.isna(available) | (available > np.datetime64(pd.Timestamp(end))), "IMMATURE_WINDOW")
     result = pd.DataFrame({"date": dates, "symbol": symbol,
         "path_qualified": reasons == "", "path_quality_reason": reasons,
-        "oracle_exit_date": sessions[HORIZON:], "oracle_available_date": available,
+        "oracle_exit_date": sessions[horizon:], "oracle_available_date": available,
         "up_excursion": up, "down_excursion": down, "path_amplitude": np.maximum(up, down),
         "terminal_return": terminal})
     result = result[result.date.between(pd.Timestamp(start), pd.Timestamp(end)) & good.iloc[:n].to_numpy()]
@@ -89,7 +90,7 @@ def symbol_paths(bars, sessions, *, start, end, registry):
     return result.reset_index(drop=True), membership.reset_index(drop=True)
 
 
-def classify(labels, min_universe=20, min_coverage=.95):
+def classify(labels, min_universe=20, min_coverage=.95, *, horizon=HORIZON):
     """Daily TOP20% by absolute path amplitude; ties never get arbitrary symbol labels.
 
     Threshold ties are all included (prevalence can exceed 20%); a constant
@@ -104,6 +105,6 @@ def classify(labels, min_universe=20, min_coverage=.95):
     distinct = grouped.path_amplitude.transform("nunique")
     eligible = (result.path_qualified & result.daily_count.ge(min_universe)
                 & result.daily_coverage.ge(min_coverage) & distinct.gt(1))
-    result[TARGET] = (rank > .8).astype(float).where(eligible)
+    result[target_name(horizon)] = (rank > .8).astype(float).where(eligible)
     result["path_amplitude_rank"] = rank
     return result

@@ -60,8 +60,10 @@ class SqlIntradaySource:
         return frame
 
 
-def validate_scores(frame, *, profile_hash, folds, expected_days, top_n):
+def validate_scores(frame, *, profile_hash, folds, expected_days, top_n, horizon=20):
     """Validate the complete scoring set BEFORE ranking; never read labels."""
+    from modelFactory.oracle_path import target_name
+    target = target_name(horizon)
     if frame.empty or frame.duplicated(['trade_date', 'symbol']).any():
         raise ValueError('Empty or duplicate Oracle predictions')
     days = pd.to_datetime(frame.trade_date)
@@ -69,7 +71,7 @@ def validate_scores(frame, *, profile_hash, folds, expected_days, top_n):
     expected_hash = pd.to_datetime(frame.fold_start).dt.strftime('%Y-%m-%d').map(
         {k: v['model_sha256'] for k, v in folds.items()})
     if (not scores.between(0, 1).all() or not pd.to_datetime(frame.model_available_date).lt(days).all()
-            or not frame.target_name.eq('oracle_path_extreme20').all() or not frame.target_horizon.eq(20).all()
+            or not frame.target_name.eq(target).all() or not frame.target_horizon.eq(horizon).all()
             or not frame.feature_profile_sha256.eq(profile_hash).all()
             or expected_hash.isna().any() or not frame.model_sha256.eq(expected_hash).all()
             or not pd.to_datetime(frame.fold_start).eq(pd.to_datetime(frame.lineage_fold_start)).all()):
@@ -175,7 +177,7 @@ def run(args):
             scores = pd.read_sql(query, conn, params=dict(batch=args.oracle_batch_id, start=prior,
                 end=actual[-1], symbols=universe))
             selected = validate_scores(scores, profile_hash=digest(root/'feature_profile.json'),
-                folds=folds, expected_days=signal_days, top_n=args.top_n)
+                folds=folds, expected_days=signal_days, top_n=args.top_n, horizon=protocol['horizon'])
             symbols = sorted(set(selected.symbol)|{'SPY'})
             bars = pd.read_sql(text('SELECT symbol, date, open, high, low, close, volume '
                 'FROM stock_bars_daily WHERE symbol IN :symbols AND date BETWEEN :start AND :end '

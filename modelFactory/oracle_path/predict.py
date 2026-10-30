@@ -9,7 +9,7 @@ import pandas as pd
 from sqlalchemy import text
 
 from modelFactory.oracle.dataset import build_feature_matrix
-from modelFactory.oracle_path import MODE, TARGET, HORIZON
+from modelFactory.oracle_path import HORIZON, target_name, mode_name, validate_horizon
 from modelFactory.oracle_path.train import digest, restore_ranks, model_probabilities, select_champion
 from modelFactory.oracle_path.backend import CHOICES, NAMES, DECLARATIONS, candidates_for, selection_policy
 
@@ -31,14 +31,17 @@ def load_contract(artifacts_dir, batch_id):
     frozen = {k: v for k, v in protocol.items() if k != 'fingerprint'}
     if protocol.get('fingerprint') != sha256(json.dumps(frozen, sort_keys=True, default=str).encode()).hexdigest():
         raise ValueError('Empreinte du protocole Oracle parcours invalide')
-    if (protocol.get('batch_id') != batch_id or protocol.get('mode') != MODE
-            or protocol.get('target') != TARGET or protocol.get('horizon') != HORIZON
+    horizon = validate_horizon(protocol.get('horizon'))
+    target, mode = target_name(horizon), mode_name(horizon)
+    if (protocol.get('batch_id') != batch_id or protocol.get('mode') != mode
+            or protocol.get('target') != target
             or report.get('status') != 'completed' or report.get('batch_id') != batch_id
-            or report.get('mode') != MODE or profile.get('mode') != MODE
+            or report.get('mode') != mode or profile.get('mode') != mode
+            or report.get('horizon', horizon) != horizon
             or any(p.get('serving_ready') is not True for p in (protocol, profile, report))):
-        raise ValueError('Contrat Oracle parcours terminé H20 requis')
+        raise ValueError(f'Contrat Oracle parcours terminé H{horizon} requis')
     columns = profile.get('feature_columns') or []
-    if not columns or len(columns) != len(set(columns)) or profile.get('target') != TARGET:
+    if not columns or len(columns) != len(set(columns)) or profile.get('target') != target:
         raise ValueError('Profil Oracle parcours invalide')
     if profile.get('generator_options') != protocol.get('generator_options'):
         raise ValueError('Générateur du profil différent du training')
@@ -142,11 +145,12 @@ _LINEAGE_DDL = """CREATE TABLE IF NOT EXISTS alpha_trade.oracle_path_prediction_
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"""
 
 
-def write_path_predictions(engine, scores, batch_id):
+def write_path_predictions(engine, scores, batch_id, *, horizon=HORIZON):
     """Score and lineage commit atomically; terminal labels always NULL."""
     from modelFactory.oracle.predictions_store import ensure_oracle_predictions_table, _INSERT
     if scores.empty:
         return 0
+    target = target_name(horizon)
     rows = []
     for r in scores.to_dict('records'):
         if not 0 <= float(r['proba_extreme']) <= 1 or pd.Timestamp(r['model_available_date']) >= pd.Timestamp(r['date']):
@@ -154,7 +158,7 @@ def write_path_predictions(engine, scores, batch_id):
         rows.append(dict(prediction_date=str(r['date'])[:10], symbol=r['symbol'], batch_id=batch_id,
             proba_extreme=float(r['proba_extreme']), future_return=None, oracle_extreme10=None,
             fold_start=r['fold_start'], model_available_date=r['model_available_date'],
-            target_name=TARGET, target_horizon=HORIZON, model_sha256=r['model_sha256'],
+            target_name=target, target_horizon=horizon, model_sha256=r['model_sha256'],
             feature_profile_sha256=r['feature_profile_sha256']))
     ensure_oracle_predictions_table(engine)
     with engine.begin() as conn:
@@ -175,8 +179,9 @@ def write_path_predictions(engine, scores, batch_id):
 def predict_oracle_path_history(engine, batch_id, start_date, end_date, *, artifacts_dir='artifacts/models',
                                 symbols=None, horizon=None, persist_chunk_dates=20):
     root, protocol, profile, folds = load_contract(artifacts_dir, batch_id)
-    if horizon not in (None, HORIZON):
-        raise ValueError('Oracle parcours : horizon H20 fixe')
+    trained_horizon = protocol['horizon']
+    if horizon is not None and validate_horizon(horizon) != trained_horizon:
+        raise ValueError(f'Oracle parcours : horizon demandé H{horizon} incompatible avec le modèle H{trained_horizon}')
     if pd.Timestamp(start_date) > pd.Timestamp(end_date):
         raise ValueError('Plage Oracle parcours inversée')
     if getattr(getattr(engine, 'url', None), 'database', None) not in (None, 'alpha_trade'):
@@ -228,9 +233,9 @@ def predict_oracle_path_history(engine, batch_id, start_date, end_date, *, artif
             scores.loc[group.index, 'model_available_date'] = str(available.date())
             scores.loc[group.index, 'model_sha256'] = folds[name]['model_sha256']
         scores['feature_profile_sha256'] = profile_hash
-        persisted += write_path_predictions(engine, scores, batch_id)
+        persisted += write_path_predictions(engine, scores, batch_id, horizon=trained_horizon)
         observed.update(scores.symbol)
         LOGGER.info('Oracle parcours batch=%s dates=%s/%s persistés=%s', batch_id,
             min(offset+len(chunk), len(sessions)), len(sessions), persisted)
     return dict(status='completed', batch_id=batch_id, n_rows=persisted, n_dates=len(sessions),
-        n_symbols=len(observed), target=TARGET, horizon=HORIZON, directional=False)
+        n_symbols=len(observed), target=protocol['target'], horizon=trained_horizon, directional=False)

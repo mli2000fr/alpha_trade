@@ -411,7 +411,7 @@ class PipelineLaunchOptions:
     ml_exclude_per_symbol_per_sector: bool = DEFAULT_ML_EXCLUDE_PER_SYMBOL_PER_SECTOR  # 2026-08-28
     ml_enable_oracle_model: bool = DEFAULT_ML_ENABLE_ORACLE_MODEL  # 2026-08-20 : Oracle Extreme (O0)
     ml_oracle_model_only: bool = DEFAULT_ML_ORACLE_MODEL_ONLY      # 2026-08-20 : Oracle ONLY
-    ml_oracle_path_model_only: bool = False  # modèle parcours H20 distinct ; défaut IHM True
+    ml_oracle_path_model_only: bool = False  # modèle parcours H10/H15/H20 distinct ; défaut IHM True
     ml_oracle_path_backend: str | None = None  # explicite IHM ; None conserve les anciens flags.
     ml_oracle_barrier_model_only: bool = False  # modèle TP avant SL, recherche
     ml_oracle_barrier_tp_pct: float | None = None  # None = config.yaml
@@ -2582,7 +2582,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         elif options.ml_oracle_path_model_only:
             if options.ml_directional_profiles_enabled:
                 raise ValueError("Choisir Oracle parcours OU le bundle Oracle terminal.")
-            command.extend(["--oracle-path-model-only", "--oracle-horizon", "20"])
+            from modelFactory.oracle_path import validate_horizon
+            command.extend(["--oracle-path-model-only", "--oracle-horizon", str(validate_horizon(options.ml_oracle_horizon))])
             if options.ml_oracle_path_backend is not None:
                 command.extend(['--oracle-path-backend',path_backend])
             if options.ml_standalone_oracle_feature_profile != "dynamic":

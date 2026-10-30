@@ -53,14 +53,16 @@ def _load_oracle_rows(conn, *, dialect, batch_id, day, symbols, cutoff):
     return rows
 
 
-def validate_oracle_lineage(rows, day, profile_hash, folds):
+def validate_oracle_lineage(rows, day, profile_hash, folds, *, horizon=20):
+    from modelFactory.oracle_path import target_name
+    target = target_name(horizon)
     for row in rows:
         fold_name = str(pd.Timestamp(row['fold_start']).date())
         fold = folds.get(fold_name)
         if fold is None:
             raise ValueError('Fold Oracle absent du contrat')
         available = max(pd.Timestamp(fold['metrics'][k]) for k in ('train_available_max', 'val_available_max'))
-        if (row['target_name'] != 'oracle_path_extreme20' or row['target_horizon'] != 20
+        if (row['target_name'] != target or row['target_horizon'] != horizon
                 or pd.Timestamp(row['lineage_fold_start']) != pd.Timestamp(row['fold_start'])
                 or not available < pd.Timestamp(day)
                 or pd.Timestamp(fold_name) > pd.Timestamp(day)
@@ -82,7 +84,7 @@ def load_inputs(engine, *, batch_id, trade_date, symbol_source, capital_preset_k
         raise ValueError('Univers Oracle vide')
     # Validate the serving contract without a historical loader that reads labels
     # or creates missing tables on read errors. This service issues SELECT only.
-    root, _, _, folds = load_contract(artifacts_dir, batch_id)
+    root, protocol, _, folds = load_contract(artifacts_dir, batch_id)
     profile_hash = file_digest(root/'feature_profile.json')
     day = date.fromisoformat(str(trade_date))
     start = datetime.combine(day, datetime.min.time(), ZoneInfo('America/New_York')).astimezone(timezone.utc)
@@ -95,7 +97,7 @@ def load_inputs(engine, *, batch_id, trade_date, symbol_source, capital_preset_k
         if len(oracle) / len(symbols) < config.min_oracle_coverage_ratio:
             raise OracleCoverageError(rows=oracle, symbols=symbols, batch_id=batch_id, trade_date=day,
                                       required_ratio=config.min_oracle_coverage_ratio)
-        validate_oracle_lineage(oracle, day, profile_hash, folds)
+        validate_oracle_lineage(oracle, day, profile_hash, folds, horizon=protocol['horizon'])
         # Validate the complete ranking before limiting, never backfill N+1 for missing options.
         select_top(oracle, {}, config)
         top = [r['symbol'] for r in oracle[:config.oracle_top_n]]
