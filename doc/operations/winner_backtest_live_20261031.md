@@ -35,8 +35,35 @@ vente peut les remplacer pour ce replay. Le taux de financement est séparé
 et porte sur le débit de marge. La réserve de sizing Winner n'est pas une
 commission supplémentaire. Le capital reste commun à toutes les positions.
 
-Accepter les limites OHLC avant lancement. Ce consentement concerne les
-hypothèses de simulation ; il ne permet pas d'envoyer un ordre.
+Le profil **« replay prudent disponible, proche du fonctionnement en production »**
+est coché par défaut. Ce choix active les hypothèses conservatrices réellement
+supportées : bougies SIP 5m, délai de publication configuré, aucun achat
+rétroactif, limite d'achat respectée et priorité à la sortie défavorable si
+SL et TP sont touchés dans la même bougie. Il n'existe pas de bouton capable
+de reconstruire le carnet ou les secteurs historiques absents : les secteurs
+actuels restent une approximation et le rapport garde sa qualification
+exploratoire. Ce profil ne permet pas d'envoyer un ordre.
+
+Les paramètres utiles du moteur intraday sont accessibles dans des blocs
+dédiés : protections/confirmation/renforcement Winner, risque par entrée,
+montant minimum, poids par titre et secteur, plafonds de titres, corrélations,
+drawdown/perte quotidienne, liquidation au coupe-circuit, volatilité cible,
+répétition des entrées/exclusions et plafond bêta. Le capital, les positions
+maximales, les frais et le levier restent dans le formulaire principal.
+Les valeurs sont préremplies depuis `config.yaml` et le preset du capital.
+Un bouton **« Reprendre les réglages de production »** remet les contrôles
+de simulation à ces valeurs sans changer les dates, le modèle ni le capital.
+Validation du formulaire enrichi : **359 tests réussis**, dont édition des
+valeurs, retour aux paramètres de production, transmission JSON au CLI,
+replay SQL en lecture seule et vérification que le budget modifie les
+quantités. Les paramètres effectifs et les différences locales figurent
+dans le rapport.
+
+Les modifications ne concernent que ce replay et sont transmises explicitement
+dans `--risk-overrides-json` / `--policy-overrides-json`, contrôlées par liste
+de champs raccordés, puis figées dans `protocol.json`. Aucun fichier YAML,
+plan existant ou compte courtier n'est modifié. Les paramètres daily non
+raccordés à Winner ne sont pas présentés comme des commandes actives.
 
 ## Réglages réellement utilisés
 
@@ -44,6 +71,14 @@ Le processus relit `config.yaml` au lancement et fige sa politique dans
 `protocol.json` : confirmation, fraction initiale, renforcement, seuil d'ajout,
 SL/TP/trailing, durée et expiration du plan, limites de fraîcheur et réserve.
 Les modifications de formulaire concernent uniquement ce replay.
+La configuration du coupe-circuit reprend désormais explicitement
+`risk_management.prod_force_close_on_breaker` / `prod_force_close_pct`
+(avec fallback legacy), au lieu d'ignorer ces clés. Le réglage de travail
+est actif, liquidation de 50 % des positions lors du déclenchement ; cela
+ne garantit pas un drawdown maximal de 15 %. Le capital initial réel du
+replay est aussi injecté dans la configuration de risque, et un SL Winner
+modifié localement est répercuté dans le sizing. Winner étant LONG-only,
+le plafond LONG suit le nombre de positions choisi dans le formulaire.
 
 Au contrôle du 31 octobre : position complète, deux confirmations 5m,
 renforcement désactivé, **SL 5 %, aucun TP ni trailing, horizon 10 séances**.
@@ -138,6 +173,13 @@ Le sizing se fonde sur ce plafond, et le fill réel peut être plus bas.
 Il n'y a pas de bid/ask temps réel inventé ni d'appel SIP latest pour ce chemin.
 Au-dessus de la limite, aucun achat n'est garanti. `market_data_delay_seconds: 0`
 conserve le chemin temps réel et ses contrôles. Aucun fallback IEX n'est ajouté.
+
+Le délai accepte **tout entier entre 900 et 3 600 secondes**, sans obligation
+de multiple de cinq minutes : `930` représente quinze minutes et trente
+secondes et conserve une marge de publication. Le fichier de travail est
+actuellement réglé à `930`. La grille temporelle des bougies reste cinq minutes.
+Une valeur invalide est signalée dans la page Backtest, sans lancement ni
+remplacement silencieux de la politique par une valeur par défaut.
 
 Le délai est aussi reproduit dans le backtest : disponibilité après le délai,
 achat à une ouverture 5m observée à partir de cette disponibilité, jamais

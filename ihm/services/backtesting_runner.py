@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import json
 from dataclasses import dataclass
 from typing import Literal
 
@@ -167,6 +168,8 @@ class BacktestRunOptions:
     winner_research_assumptions: bool = False
     winner_min_oracle_coverage: float = .9
     winner_options_filter_enabled: bool | None = None
+    winner_risk_overrides: dict[str,object] | None = None
+    winner_policy_overrides: dict[str,object] | None = None
 
     @property
     def ml_first_selection_contract(self) -> MLFirstSelectionContract:
@@ -351,6 +354,11 @@ def build_backtesting_command(
                 command.append('--factor-model' if options.winner_factor_model else '--no-factor-model')
             if options.winner_options_filter_enabled is not None:
                 command.append('--options-filter' if options.winner_options_filter_enabled else '--no-options-filter')
+            from backtesting.winner_settings import risk_overrides, policy_overrides
+            for flag,value,validate in [('--risk-overrides-json',options.winner_risk_overrides,risk_overrides),
+                                       ('--policy-overrides-json',options.winner_policy_overrides,policy_overrides)]:
+                if value:
+                    command.extend([flag,json.dumps(validate(value),allow_nan=False)])
             return command
         command.append('--no-winner-pyramiding')
         if options.no_shorts and options.no_longs:

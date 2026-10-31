@@ -140,6 +140,7 @@ def run(args):
     from modelFactory.oracle_path.predict import load_contract
     from modelFactory.oracle_path.train import digest
     from risk_management.config import load_risk_config
+    from backtesting.winner_settings import production_risk_defaults, apply_risk_settings, apply_policy_settings, mapping
 
     if not args.research_assumptions:
         raise ValueError('--research-assumptions required: no historical bid/ask/fill/sector-PIT certification')
@@ -158,7 +159,8 @@ def run(args):
             options_enabled=options_config.enabled
         if options_enabled:
             options_config=replace(options_config,enabled=True,oracle_top_n=args.top_n)
-        policy = replace(load_winner_pyramiding_config(), enabled=True)
+        policy = apply_policy_settings(replace(load_winner_pyramiding_config(), enabled=True),
+            getattr(args,'policy_overrides_json',None))
         leverage = load_leverage_config_from_yaml()
         # An explicit limit may LOWER production leverage, never grant more.
         allowed = min(args.max_leverage, leverage.max_leverage if leverage.enabled else 1.,
@@ -168,13 +170,18 @@ def run(args):
         exec_cfg = ExecutionConfig(winner_pyramiding=policy, account_type=args.account_type,
             dry_run=True, simulated_account_equity=args.initial_equity, leverage=leverage,
             simulated_margin_buying_power_multiplier=allowed)
-        risk = load_risk_config(equity=args.initial_equity)
+        risk = production_risk_defaults(load_risk_config(equity=args.initial_equity,
+            cli_overrides={'account_equity':args.initial_equity}))
+        risk = apply_risk_settings(risk,getattr(args,'risk_overrides_json',None))
+        risk = replace(risk,fixed_stop_pct=policy.stop_loss_pct,disable_price_take_profit=True,
+                       allow_fractional_shares=False)
         if getattr(args, 'factor_model', None) is not None:
             risk = replace(risk, enable_factor_model=args.factor_model)
         if getattr(args, 'max_positions', None) is not None:
             if args.max_positions < 1:
                 raise ValueError('Maximum positions must be positive')
-            risk = replace(risk, max_positions=args.max_positions)
+            risk = replace(risk, max_positions=args.max_positions,max_long_positions=args.max_positions,
+                           effective_max_positions_override=None)
         risk = replace(risk, max_gross_exposure=min(risk.max_gross_exposure, allowed))
         cfg = BacktestConfig(start_date=args.start_date, end_date=args.end_date, initial_equity=args.initial_equity,
             risk_config=risk, exec_config=exec_cfg, use_canonical_costs=True,
@@ -226,6 +233,10 @@ def run(args):
             factors = HistoricalFactorSource(conn, pivots['close']) if risk.enable_factor_model else None
             options_source=HistoricalOptionsSource(conn,options_config) if options_enabled else None
             frozen = dict(arguments=vars(args), winner_policy=asdict(policy), risk=asdict(risk),
+                settings_profile='production_defaults_with_explicit_replay_overrides',
+                execution_assumptions='conservative 5m OHLC, adverse collision first, no retroactive fill; current non-PIT sectors',
+                risk_overrides=mapping(getattr(args,'risk_overrides_json',None)),
+                policy_overrides=mapping(getattr(args,'policy_overrides_json',None)),
                 leverage=asdict(leverage), costs='canonical BacktestEngine cost model',
                 requested_max_leverage=args.max_leverage, allowed_max_leverage=allowed,
                 selection='Oracle TOP-N -> CALL/PUT + OI -> risque -> Winner' if options_enabled else 'Oracle TOP-N -> risque -> Winner',
@@ -331,6 +342,8 @@ def build_parser():
     parser.add_argument('--cost-per-leg-bps', type=float, default=None,
         help='Explicit total commission + slippage per leg; omitted = canonical costs')
     parser.add_argument('--max-positions', type=int, default=None, help='Omitted = production risk preset')
+    parser.add_argument('--risk-overrides-json',default=None,help='Réglages de risque propres à ce replay')
+    parser.add_argument('--policy-overrides-json',default=None,help='Réglages Winner propres à ce replay')
     parser.add_argument('--factor-model', action=argparse.BooleanOptionalAction, default=None,
         help='Omitted = production risk config; requires genuinely archived factor inputs')
     parser.add_argument('--options-filter',action=argparse.BooleanOptionalAction,default=None,

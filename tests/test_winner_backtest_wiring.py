@@ -130,8 +130,8 @@ def test_real_form_default_policy_and_independent_dates(monkeypatch):
     assert not at.exception
     assert at.session_state['winner_options']['winner_enabled'] is True
     assert at.session_state['winner_options']['winner_options_filter_enabled'] is True
-    assert at.session_state['winner_options']['winner_research_assumptions'] is False
+    assert at.session_state['winner_options']['winner_research_assumptions'] is True
     assert at.date_input[0].min==date(2021,7,6)  # NYSE closed July 5.
-    at.checkbox(key='bt_winner_assumptions').check().run(timeout=30)
-    assert not at.exception and at.session_state['winner_options']['winner_research_assumptions'] is True
+    at.checkbox(key='bt_winner_prudent_replay').uncheck().run(timeout=30)
+    assert not at.exception and at.session_state['winner_options']['winner_research_assumptions'] is False
     assert at.session_state['winner_options']['winner_factor_model'] is True

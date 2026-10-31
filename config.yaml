@@ -36,7 +36,7 @@ winner_pyramiding:
   entry_valid_sessions: 20  # Attente maximale après le signal, distincte de la détention.
   max_quote_age_seconds: 60
   max_bar_delay_seconds: 60
-  market_data_delay_seconds: 930  # Confirmations SIP disponibles avec 15 min de retard ; jamais de fill rétroactif.
+  market_data_delay_seconds: 930  # 15 min 30 s : délai SIP + marge ; jamais de fill rétroactif.
   delayed_entry_limit_buffer_pct: 0.01  # Ordre IOC plafonné à +1% du dernier close retardé ; pas un cours temps réel.
   cost_reserve_bps_per_leg: 25  # Réserve de sizing, pas le tarif comptable réel.
 

@@ -1532,8 +1532,13 @@ def _build_overlay_options(
 def _build_run_options() -> BacktestRunOptions:
     st.subheader("▶️ Lancer un backtest")
     from common.winner_pyramiding import load_winner_pyramiding_config
+    try:
+        winner_policy = load_winner_pyramiding_config()
+    except ValueError as exc:
+        st.error(f'Configuration Winner invalide dans config.yaml : {exc}')
+        st.stop()  # Never substitute a default execution policy for invalid settings.
     if st.checkbox('Utiliser Winner — Oracle parcours et replay intraday',
-                   value=load_winner_pyramiding_config().enabled, key='bt_use_winner'):
+                   value=winner_policy.enabled, key='bt_use_winner'):
         from ihm.components.winner_backtest import render_winner_backtest
         return render_winner_backtest()
     st.caption(

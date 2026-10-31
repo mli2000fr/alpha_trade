@@ -327,13 +327,20 @@ def test_cli_complete_readonly_run_exports_reports_without_api_or_prediction(tmp
     options = Namespace(start_date=cfg.start_date, end_date=cfg.end_date, initial_equity=4000.,
         top_n=1, research_assumptions=True, output_dir=str(tmp_path/'replay'), artifacts_dir=str(root),
         oracle_batch_id='model', symbol_source='universe-file:fixture.txt', max_leverage=1.,
-        account_type='margin', margin_interest_annual=.065)
+        account_type='margin', margin_interest_annual=.065,max_positions=12,
+        risk_overrides_json='{"risk_per_trade_pct":0.02,"min_position_notional":20.0}',
+        policy_overrides_json='{"stop_loss_pct":0.07,"horizon_sessions":10}')
     report = run(options)
     assert report['status'] == 'COMPLETED_EXPLORATORY' and report['costs'] > 0
     assert (tmp_path/'replay'/'annual-summary.csv').is_file()
     assert (tmp_path/'replay'/'equity_curve.csv').is_file()
     assert report['summary']['final_value'] == report['final_equity']
     assert report['run_metadata']['engine'] == 'winner_campaign_replay'
+    assert report['params']['risk']['risk_per_trade_pct']==.02
+    assert report['params']['risk']['min_position_notional']==20.
+    assert report['params']['risk']['fixed_stop_pct']==.07
+    assert report['params']['risk']['max_positions']==report['params']['risk']['max_long_positions']==12
+    assert report['params']['winner_policy']['horizon_sessions']==10
     assert json.loads((tmp_path/'replay'/'progress.json').read_text())['completed'] == 2
     with pytest.raises(FileExistsError):
         run(options)  # Never overwrite a completed run.

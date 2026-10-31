@@ -32,8 +32,12 @@ class WinnerPyramidingConfig:
     cost_reserve_bps_per_leg: float = 25.
 
     def __post_init__(self):
-        if (type(self.market_data_delay_seconds) is not int or self.market_data_delay_seconds not in (0,900,1200,1500,1800,2100,2400,2700,3000,3300,3600)):
-            raise ValueError('market_data_delay_seconds: 0 ou 900..3600 par pas de 300 secondes')
+        delay = self.market_data_delay_seconds
+        # Publication delay is independent of the five-minute candle grid.
+        # E.g. 930s adds a legitimate 30s safety margin to delayed SIP access.
+        if type(delay) is not int or not (delay == 0 or 900 <= delay <= 3600):
+            raise ValueError('winner_pyramiding.market_data_delay_seconds : '
+                f'0 ou un entier de 900 à 3600 secondes requis (reçu {delay!r})')
         if (type(self.delayed_entry_limit_buffer_pct) not in (int,float)
                 or not math.isfinite(self.delayed_entry_limit_buffer_pct) or not 0 <= self.delayed_entry_limit_buffer_pct <= .05):
             raise ValueError('delayed_entry_limit_buffer_pct: fraction entre 0 et 0.05')
