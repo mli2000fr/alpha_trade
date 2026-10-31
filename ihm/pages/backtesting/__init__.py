@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import re
+from datetime import date as iso_date
 from pathlib import Path
 from typing import Any, cast
 
@@ -568,32 +570,49 @@ def _extract_run_oracle_batch_id(run: dict[str, object]) -> str | None:
 
 
 def _extract_run_dates(run: dict[str, object]) -> tuple[str | None, str | None]:
-    """Extrait les dates --start/--end de la commande du run (list ou command_display)."""
-    start = end = None
+    """Read whole date flags: Winner uses --start-date, classic uses --start."""
+    dates: dict[str,str] = {}
+    aliases={'--start':'start','--start-date':'start','--end':'end','--end-date':'end'}
+    def accept(flag,value):
+        try:dates[aliases[flag]]=iso_date.fromisoformat(value.strip('\"\' ')).isoformat()
+        except (ValueError,KeyError):pass
     raw = run.get("command")
     if isinstance(raw, list):
         tokens = [str(x) for x in raw]
-        for flag in ("--start", "--end"):
-            if flag in tokens:
-                idx = tokens.index(flag)
-                if idx + 1 < len(tokens) and tokens[idx + 1] and not tokens[idx + 1].startswith("--"):
-                    if flag == "--start":
-                        start = tokens[idx + 1]
-                    else:
-                        end = tokens[idx + 1]
-    if not start and not end:
-        text_ = str(run.get("command_display") or "").strip()
-        for flag in ("--start", "--end"):
-            pos = text_.find(flag)
-            if pos != -1:
-                rest = text_[pos + len(flag):].lstrip()
-                tok = rest.split(None, 1)[0] if rest.split(None, 1) else ""
-                if tok and not tok.startswith("--"):
-                    if flag == "--start":
-                        start = tok
-                    else:
-                        end = tok
-    return start, end
+        for index,token in enumerate(tokens):
+            flag,separator,value=token.partition('=')
+            if flag in aliases:
+                accept(flag,value if separator else tokens[index+1] if index+1<len(tokens) else '')
+    if len(dates)<2:
+        pattern=r'''(?<!\S)(--(?:start|end)(?:-date)?)(?:=|\s+)["']?(\d{4}-\d{2}-\d{2})(?=["']?(?:\s|$))'''
+        for flag,value in re.findall(pattern,str(run.get('command_display') or '')):
+            if aliases[flag] not in dates:accept(flag,value)
+    return dates.get('start'),dates.get('end')
+
+
+def _run_qualification_status(run: dict[str,object]) -> str | None:
+    """Process exit and replay qualification are separate; preserve history."""
+    if run.get('status')!='completed':return None
+    command=run.get('command')
+    tokens=[str(t) for t in command] if isinstance(command,list) else str(run.get('command_display') or '').split()
+    if 'backtesting.winner_campaign_replay' not in tokens:return None
+    directory=_resolve_run_dir(run)
+    if directory is None:return None
+    for filename in ('progress.json','report.json'):
+        signature=_file_cache_signature(_resolve_run_artifact_path(directory,filename))
+        if signature is None:continue
+        payload=_read_cached_json_file(*signature)
+        if isinstance(payload,dict):
+            value=payload.get('status')
+            if value in ('INCOMPLETE_COVERAGE','COMPLETED_EXPLORATORY','FAILED'):return str(value)
+    return None
+
+
+def _run_status_badge(run: dict[str,object]) -> str:
+    qualified=_run_qualification_status(run)
+    if qualified=='INCOMPLETE_COVERAGE':return '🟠 Terminé — couverture incomplète'
+    if qualified=='FAILED':return '🔴 Rapport en échec'
+    return _status_badge(str(run.get('status','')))
 
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -621,7 +640,7 @@ def _format_run_inspect_label(run: dict[str, object], batch_comments: dict[str, 
         prefix = str(run.get("run_label", run.get("run_kind", "")))
     base = (
         f"{prefix} | {run.get('run_id')} | "
-        f"{_status_badge(str(run.get('status', '')))} | {run.get('executed_at', '')}"
+        f"{_run_status_badge(run)} | {run.get('executed_at', '')}"
     )
     batch_id = _extract_run_batch_id(run)
     if not batch_id:
@@ -4276,6 +4295,12 @@ def _render_report_summary(run_record: dict[str, object]) -> bool:
     if report_payload.get('run_metadata', {}).get('engine') == 'winner_campaign_replay':
         if diagnostics.get('status') == 'INCOMPLETE_COVERAGE':
             st.warning('Winner : couverture incomplète. Ces résultats ne constituent pas un backtest complètement qualifié.')
+            gaps=diagnostics.get('coverage_gaps',[])
+            if isinstance(gaps,list) and gaps and report_payload.get('campaigns')==0:
+                options_days={str(gap.get('date')) for gap in gaps if isinstance(gap,dict)
+                              and gap.get('reason')=='OPTIONS_COHORT_INCOMPLETE'}
+                if options_days and len(options_days)==len(gaps):
+                    st.info(f'Aucune entrée : le filtre CALL/PUT + open interest ne disposait pas d’une couverture historique qualifiée sur les {len(options_days)} séances. Aucun candidat n’a atteint le risque ni la confirmation Winner. Un rendement de 0 % dans ce cas ne mesure pas la performance de la stratégie.')
         else:
             st.info('Winner : replay exploratoire OHLC, avec les limites consignées dans le rapport.')
         with st.expander('Couverture et limites Winner'):
@@ -5754,7 +5779,12 @@ def _render_runtime_center_body(*, auto_refresh_enabled: bool) -> None:
         return
 
     status = str(selected_run.get("status", ""))
-    if status == "completed":
+    qualification=_run_qualification_status(selected_run)
+    if qualification=='INCOMPLETE_COVERAGE':
+        st.warning(f'Run sélectionné : {_run_status_badge(selected_run)}. Le programme a fini, mais les données historiques nécessaires manquent ; ce résultat n’est pas un backtest qualifié.')
+    elif qualification=='FAILED':
+        st.error(f'Run sélectionné : {_run_status_badge(selected_run)}')
+    elif status == "completed":
         st.success(f"Run sélectionné : {_status_badge(status)}")
     elif status in {"failed", "timeout", "stopped"}:
         st.error(f"Run sélectionné : {_status_badge(status)}")

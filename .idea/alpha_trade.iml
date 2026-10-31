@@ -54,6 +54,20 @@
       <excludeFolder url="file://$MODULE_DIR$/.test_pycache_suite3/projets/.venv" />
       <excludeFolder url="file://$MODULE_DIR$/.test_pycache_ui19/projets/.venv" />
       <excludeFolder url="file://$MODULE_DIR$/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-command-v1/migration0/source/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-command-v1/test_active_target_and_existin0/target/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-progress-v1/migration0/source/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-progress-v1/test_active_target_and_existin0/target/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-progress-v2/migration0/source/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-progress-v2/test_active_target_and_existin0/target/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-test-final/migration0/source/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-test-final/test_active_target_and_existin0/target/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-test-v1/migration0/source/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-test-v1/test_active_target_and_existin0/target/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-test-v2/migration0/source/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-test-v2/test_active_target_and_existin0/target/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-test-v3/migration0/source/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-test-v3/test_active_target_and_existin0/target/.venv" />
     </content>
     <orderEntry type="jdk" jdkName="Python 3.14 (projets)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />

@@ -28,3 +28,6 @@ scripts/windows/protection_watcher.env
 scripts/windows/*.secrets.json
 !scripts/windows/protection_watcher.env.example
 work/
+# Local T5.6 process receipts/OS guard and restored-instance notice.
+/.alpha_trade_migration.*
+/.alpha_trade_restore_pending.json

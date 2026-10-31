@@ -32,6 +32,10 @@ de trading ni disponibilité des données.
 
 ## Parcours conseillé pour un nouvel arrivant
 
+[T5.6 — Sauvegarde complète et restauration sur un autre PC](operations/migration_complete_t56.md) :
+trois bases, modèles, source et variables chiffrées ; copie à chaud pour
+résilience sans arrêt du PC source.
+
 Nouvelle collecte US : [barres intraday Alpaca / EODHD — page, table et reprise](operations/backfill_intraday_us.md),
 intervalle 5 minutes par défaut, indépendante des barres journalières.
 Nouvelle collecte du 11 octobre : [consensus EODHD prospectif](operations/eodhd_consensus_snapshot.md),

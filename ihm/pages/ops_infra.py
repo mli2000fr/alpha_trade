@@ -681,6 +681,11 @@ def render() -> None:
     with st.container(border=True):
         _render_reset_ml_panel()
 
+    # T5.6 uses its own worker: no credentials in the generic ops argv/history.
+    from ihm.components.migration_panel import render_migration_panel
+    with st.container(border=True):
+        render_migration_panel()
+
     # ── Guide rapide opérateur ────────────────────────────────────────────────
     with st.expander("📋 Guide rapide opérateur — automatisation quotidienne", expanded=False):
         st.markdown("""

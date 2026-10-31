@@ -196,6 +196,42 @@ volume seul ou avec les snapshots d'aujourd'hui : bilan incomplet et aucune
 entrée pour les cohortes insuffisantes. L'option peut être décochée pour un
 témoin Oracle brut, différence explicitement consignée dans le protocole.
 
+### Diagnostic du premier semestre 2025, run 20261031_125841_66dcce61
+
+La commande demande le 01/01/2025–30/06/2025, modèle parcours H10
+`model-factory-20261030213826-eda503`, TOP20, 4 000 $, sans levier,
+confirmation de deux bougies, filtre options et contrôle factoriel activés.
+Les artefacts du run établissent :
+
+- 122 séances, 2 440 lignes dans `signals.csv` ;
+- 2 440 lignes dans `options-selection.csv`, toutes refusées avec
+  `MISSING_OR_STALE_OPTIONS` ;
+- 122 cohortes `covered: 0`, `incomplete: true` dans `options-receipts.json` ;
+- 122 lacunes `OPTIONS_COHORT_INCOMPLETE`, aucune campagne et aucun achat ;
+- reçus intraday et facteurs vides : ces contrôles n'ont pas été atteints ;
+- rapport `INCOMPLETE_COVERAGE`, capital inchangé 4 000 $ ; le rendement 0 %
+  ne constitue pas une performance économique mesurée.
+
+Ce constat provient des artefacts enregistrés, pas d'une nouvelle lecture SQL
+de toute la couverture options. L'accès direct MySQL était indisponible pour
+ce diagnostic ; aucune borne globale d'historique en base n'est affirmée.
+Les reçus postérieurs au cutoff ne peuvent pas être antidatés pour débloquer
+le test. Un témoin sans options est une autre expérience explicite ; le
+contrôle factoriel requiert également ses propres archives qualifiées.
+
+L'historique IHM lit désormais les flags complets `--start-date`/`--end-date`
+et les anciens `--start`/`--end`, sans confondre `-date` avec une valeur. Pour
+les runs Winner terminés, le badge consulte le statut du rapport/progress :
+`INCOMPLETE_COVERAGE` devient **orange, couverture incomplète**, même lorsque
+le processus est sorti normalement avec le code zéro. Le journal d'exécution
+et les résultats historiques ne sont pas réécrits. L'avertissement apparaît
+avant le chargement facultatif du rapport détaillé ; le résumé explique aussi
+le cas où le filtre options a bloqué toutes les entrées.
+
+Régressions ciblées : 59 tests réussis (dates/labels, page Backtesting et
+sélection options historique). Aucun ordre, appel fournisseur, modification
+SQL ni nouveau replay n'a été exécuté pour ce correctif d'affichage.
+
 Redémarrer le watcher pour charger ce nouveau contrat avant une nouvelle
 étape 12. Le contrôle d'ancienneté du code refuse l'ancien processus.
 Les anciennes campagnes gardent leurs paramètres figés, y compris le délai
