@@ -7,7 +7,7 @@ from backtesting.winner_settings import apply_risk_settings, apply_policy_settin
 
 def reset_execution_settings():
     for key in list(st.session_state):
-        if (key.startswith(('bt_wr_','bt_wp_')) or key in ('bt_winner_positions','bt_winner_factors',
+        if (key.startswith(('bt_wr_','bt_wp_')) or key in ('bt_winner_positions','bt_winner_factors','bt_winner_factor_cap','bt_winner_excluded_symbols','bt_winner_ignore_missing_intraday',
                 'bt_winner_custom_costs','bt_winner_costs','bt_winner_interest','bt_winner_options_filter',
                 'bt_winner_coverage','bt_winner_top')):
             del st.session_state[key]

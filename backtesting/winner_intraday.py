@@ -615,7 +615,11 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
                         raise
                     ctx.update(factor_context=context,factor_asof_date=prior_day,
                                factor_qualified=context.get('qualified') is True)
-                return reapprove_campaign(state, version, quantity, snapshot, now, kind, context=ctx)
+                reconstructed=(ctx.get('factor_context') or {}).get('evidence_kind')=='RECONSTRUCTED_HISTORICAL_INPUTS'
+                reduced=(ctx.get('factor_context') or {}).get('market_cap_check_enabled') is False
+                return reapprove_campaign(state, version, quantity, snapshot, now, kind, context=ctx,
+                    **({'replay_reconstructed_factors':True} if reconstructed else {}),
+                    **({'replay_factor_market_cap_disabled':True} if reduced else {}))
 
             if records:
                 # At observed opens, fills/protections/deadlines always run.

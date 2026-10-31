@@ -305,6 +305,35 @@ Aucun nouveau dump n'a été lancé par ce nettoyage.
 
 ## Qualification effectuée
 
+### Incident du 31 octobre 2026 à 18:58 Paris : cache Finnhub CON
+
+Le worker `9ae59d555d684ac98dfb2160a2673e05` a échoué pendant le package
+`etats-et-archives`, après environ 2 h 10, sur un nom réservé Windows :
+`artifacts/finnhub_cache/CON.json`. L'extension `.json` ne rend pas le nom
+de périphérique `CON` portable. Le journal du worker conserve le motif
+`Nom de fichier Windows non sûr` ; le dernier avancement publié à 18:58:53
+ne désignait pas nécessairement le fichier fautif, le suivi étant cadencé.
+
+Le contrôle complet de 1 060 309 chemins n'a trouvé qu'un nom incompatible.
+Le contenu de ce cache (539 octets) a été conservé, avec nom corrigé
+`artifacts/finnhub_cache/symbol=CON.json`. Reçu et empreinte SHA-256 :
+`artifacts/operations/migration_windows_cache_20261031/repair.json`.
+Le producteur Finnhub utilise désormais un préfixe distinct pour les
+symboles réservés Windows, sans changer le nommage des autres titres.
+
+L'inventaire et l'export valident désormais les noms avant les accès aux
+bases et les dumps, avec le chemin exact dans le message de refus. Les
+protections de restauration contre les noms réservés, traversées de chemins
+et liens restent actives.
+
+La tentative `backups/migrations/alpha-trade-20261031T154810Z` reste en
+échec, sans manifeste final. Ses fragments sont conservés ; elle ne doit
+pas être utilisée pour restaurer. L'export actuel ne reprend pas un
+package partiel : une nouvelle tentative exige un nouveau répertoire et
+recommence les exports. Aucun service, batch ou watcher du PC source n'a
+été arrêté, aucun fragment n'a été supprimé et aucun nouvel export réel
+n'a été démarré par ce correctif.
+
 Tests automatisés avec bases simulées et secrets fictifs : export/vérification,
 restauration des trois bases, absence de mélange de modèles, conservation des
 claims, retour arrière SQL/fichiers/environnement, récupération de préimage,

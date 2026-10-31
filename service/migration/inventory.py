@@ -66,12 +66,23 @@ def scan(root,*,on_progress=None,cancel=None):
     return result
 
 
+def validate_portable_names(entries,*,cancel=None):
+    from .storage import validate_relative_name
+    for records in entries.values():
+        for index,row in enumerate(records):
+            if index%1024==0 and cancel and cancel():raise InterruptedError('Inventaire interrompu')
+            try:validate_relative_name(row['path'])
+            except ValueError as exc:
+                raise ValueError(f"Fichier non portable à corriger avant sauvegarde : {row['path']} ({exc})") from exc
+
+
 def preview(root,*,on_progress=None,cancel=None):
     """Only metadata leaves this function; no SQL or provider dependency."""
     from . import environment
     from .tracking import emit
     emit(on_progress,'INVENTORY_SCAN')
     entries=scan(root,on_progress=on_progress,cancel=cancel)
+    validate_portable_names(entries,cancel=cancel)
     names=[r['path'] for records in entries.values() for r in records]
     emit(on_progress,'ENVIRONMENT_INVENTORY')
     captured=environment.capture(root,names,on_progress=on_progress,cancel=cancel)

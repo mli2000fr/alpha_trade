@@ -90,6 +90,12 @@ def test_real_form_edits_and_reset_round_trip_without_changing_yaml(monkeypatch,
     initial=at.session_state['settings_result']
     assert initial['winner_research_assumptions'] is True
     assert initial['winner_risk_overrides']=={} and initial['winner_policy_overrides']=={}
+    assert initial['winner_ignore_missing_intraday'] is True
+    assert initial['winner_factor_market_cap_check'] is False
+    at.checkbox(key='bt_winner_ignore_missing_intraday').uncheck().run(timeout=30)
+    assert at.session_state['settings_result']['winner_ignore_missing_intraday'] is False
+    at.checkbox(key='bt_winner_factor_cap').check().run(timeout=30)
+    assert at.session_state['settings_result']['winner_factor_market_cap_check'] is True
     at.number_input(key='bt_wr_budget').set_value(2.)
     at.number_input(key='bt_wr_minimum').set_value(35.)
     at.number_input(key='bt_wp_sl').set_value(7.)
@@ -104,3 +110,5 @@ def test_real_form_edits_and_reset_round_trip_without_changing_yaml(monkeypatch,
     assert not at.exception
     assert at.session_state['settings_result']['winner_risk_overrides']=={}
     assert at.session_state['settings_result']['winner_policy_overrides']=={}
+    assert at.session_state['settings_result']['winner_ignore_missing_intraday'] is True
+    assert at.session_state['settings_result']['winner_factor_market_cap_check'] is False

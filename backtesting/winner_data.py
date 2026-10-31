@@ -22,35 +22,58 @@ def daily_bars(conn, symbols, start, end):
 
 
 class HistoricalFactorSource:
-    """No refresh, CREATE, invented timestamps or current-cap historical fallback."""
-    def __init__(self,conn,close):
+    """Archive first, optional run-local reconstruction; never production SQL writes."""
+    def __init__(self,conn,close, *, universe=None,start=None,end=None,output=None,market_cap_check=True):
         self.conn,self.close=conn,close
         self.cache={};self.receipts=[]
+        self.cache_day=None
+        self.market_cap_check=market_cap_check
+        self.reconstruction=None
+        if universe is not None:
+            from backtesting.winner_factor_reconstruction import FactorReconstruction
+            if not universe or start is None or end is None:
+                raise ValueError('Frozen universe and historical price interval required for reconstruction')
+            self.reconstruction=FactorReconstruction(conn,universe,start,end,output=output,market_cap_check=market_cap_check)
 
     def __call__(self,day,required,now,cfg):
         from risk_management.live_factor_context import qualify_factor_context
         required=tuple(sorted(set(required)))
-        key=(day,required)
+        if self.cache_day!=day:
+            # Positive contexts contain full-universe exposures. Retain only
+            # today's contexts instead of multiplying years of large objects.
+            self.cache.clear();self.cache_day=day
+        key=(day,required,cfg.factor_lookback_days,cfg.factor_ewma_half_life)
         if key not in self.cache:
             try:
                 query=text('SELECT * FROM stock_risk_factor_inputs WHERE asof_date=:day '
                     'AND observed_at<=:cutoff ORDER BY observed_at DESC,id DESC')
                 frame=pd.DataFrame([dict(r) for r in self.conn.execute(query,dict(day=day,
-                    cutoff=pd.Timestamp(now).tz_convert('UTC').tz_localize(None).to_pydatetime())).mappings()])
-                if frame.empty:raise ValueError(f'Aucun snapshot factoriel reçu avant décision pour {day}')
-                frame['asof_date']=pd.to_datetime(frame.asof_date).dt.date
-                proxies=self.close.loc[self.close.index<=pd.Timestamp(day),['SPY','IWM','MTUM']].tail(cfg.factor_lookback_days+1)
+                    cutoff=pd.Timestamp(now).tz_convert('UTC').tz_localize(None).to_pydatetime())).mappings()]) if self.market_cap_check else pd.DataFrame()
+                if frame.empty and self.reconstruction is None:
+                    raise ValueError(f'Aucun snapshot factoriel reçu avant décision pour {day}')
+                names=['SPY','IWM','MTUM'] if self.market_cap_check else ['SPY','MTUM']
+                proxies=self.close.loc[self.close.index<=pd.Timestamp(day),names].tail(cfg.factor_lookback_days+1)
                 returns=self.close.loc[self.close.index<=pd.Timestamp(day),list(required)].pct_change(fill_method=None).iloc[1:]
-                candidates=frame.groupby(['run_id','universe_sha256'],sort=False)
-                errors=[];context=None
-                for _,part in candidates:
-                    try:
-                        context=qualify_factor_context(part,proxies,returns,required,day,now,cfg)
-                        break
-                    except ValueError as exc:errors.append(str(exc))
-                if context is None:raise ValueError('; '.join(errors[:3]))
+                errors=[];context=None;archive_error=None
+                if not frame.empty:
+                    frame['asof_date']=pd.to_datetime(frame.asof_date).dt.date
+                    for _,part in frame.groupby(['run_id','universe_sha256'],sort=False):
+                        try:
+                            context=qualify_factor_context(part,proxies,returns,required,day,now,cfg)
+                            break
+                        except ValueError as exc:errors.append(str(exc))
+                if context is None:
+                    archive_error=('SIZE_FACTOR_DISABLED: reconstruction technique sans capitalisation' if not self.market_cap_check
+                        else '; '.join(errors[:3]) or f'Aucun snapshot factoriel reçu avant décision pour {day}')
+                    if self.reconstruction is None:
+                        raise ValueError(archive_error)
+                    rebuilt=self.reconstruction.inputs(day,now)
+                    context=qualify_factor_context(rebuilt,proxies,returns,required,day,now,cfg,reconstructed=True,
+                        include_size=self.market_cap_check)
                 self.cache[key]=context
                 self.receipts.append(dict(day=str(day),symbols=list(required),qualified=True,
+                    mode=context['evidence_kind'],archive_error=archive_error,
+                    input_available_at=str(context['input_available_at']),
                     snapshot_hash=context['snapshot_hash'],observed_at=str(context['observed_at'])))
             except Exception as exc:
                 self.cache[key]=str(exc)

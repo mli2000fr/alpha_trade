@@ -32,7 +32,7 @@ def render_winner_backtest():
         st.stop()
     options_config=load_options_filter_config()
     filter_options=st.checkbox('Appliquer le filtre CALL/PUT + OI du pipeline',
-        value=options_config.enabled,key='bt_winner_options_filter')
+        value=False,key='bt_winner_options_filter')
     if not filter_options:
         if options_config.enabled:
             st.warning('Témoin Oracle brut : ce replay n’applique pas la sélection options du pipeline.')
@@ -97,6 +97,13 @@ def render_winner_backtest():
                         min_value=first, key=f'bt_winner_end_{batch}')
     source = st.text_input('Univers Winner',
         value='universe-file:config/univers_batch/univers_filtred_tradable.txt', key='bt_winner_universe')
+    ignore_missing=st.checkbox('Ignorer automatiquement les titres aux données intraday manquantes',
+        value=True,key='bt_winner_ignore_missing_intraday',
+        help='Contrôle les fenêtres potentielles d’entrée et de détention avant la simulation. Un titre incomplet est exclu sur toute la période, sans remplacement dans le TOP Oracle.')
+    if ignore_missing:
+        st.warning('Mode diagnostic : exclusion préalable des titres incomplets sur toute la période. '
+                   'Ce contrôle utilise la disponibilité future des données et peut biaiser le résultat. '
+                   'Les titres et dates exclus seront consignés dans le rapport et le log final.')
     top = st.number_input('Nombre de premiers titres Oracle', min_value=1, max_value=1000,
                           value=options_config.oracle_top_n, key='bt_winner_top')
     equity = st.number_input('Capital initial ($)', min_value=1., value=4000., key='bt_winner_equity')
@@ -129,10 +136,18 @@ def render_winner_backtest():
                                value=6.5, key='bt_winner_interest')
     factors = st.checkbox('Appliquer le contrôle factoriel de production',
                           value=risk.enable_factor_model, key='bt_winner_factors')
-    if factors:
-        st.caption('Exige des snapshots factoriels réellement disponibles à chaque décision. '
-                   'Sans archive qualifiée, entrée bloquée et bilan incomplet.')
-    else:
+    cap_check=st.checkbox('Contrôler la capitalisation historique — facteur taille',value=False,
+        disabled=not factors,key='bt_winner_factor_cap',
+        help='Décocher retire le facteur taille dans ce backtest. Le bêta, le momentum et les autres protections restent contrôlés.')
+    if factors and not cap_check:
+        st.warning('Replay sans facteur taille : aucune capitalisation requise ni substituée. '
+                   'Le risque est calculé sur les facteurs marché et momentum ; ce résultat diffère du modèle factoriel complet.')
+    if factors and cap_check:
+        st.caption('Utilise les snapshots historiques qualifiés ; sinon, reconstruit automatiquement les facteurs '
+                   'depuis les bougies passées et les capitalisations datées connues à l’époque. '
+                   'Les reconstructions sont identifiées dans le rapport. Si les sources nécessaires manquent, '
+                   'l’entrée reste bloquée et le bilan incomplet.')
+    elif not factors:
         if risk.enable_factor_model:
             st.warning('Contrôle factoriel désactivé uniquement dans ce replay : différence explicite avec la production.')
         else:
@@ -150,8 +165,9 @@ def render_winner_backtest():
         winner_max_leverage=leverage, winner_cost_per_leg_bps=costs,
         winner_min_oracle_coverage=coverage/100.,
         winner_options_filter_enabled=filter_options,
+        winner_ignore_missing_intraday=ignore_missing,
         winner_risk_overrides=risk_changes,winner_policy_overrides=policy_changes,
-        winner_factor_model=factors, winner_research_assumptions=assumptions,
+        winner_factor_model=factors,winner_factor_market_cap_check=cap_check, winner_research_assumptions=assumptions,
         oracle_batch_id=batch, max_positions=int(positions), account_type=account,
         margin_interest_rate=interest/100.,
         output_dir=f'artifacts/winner_replays/ihm-{uuid.uuid4().hex}')

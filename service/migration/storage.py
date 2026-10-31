@@ -60,7 +60,8 @@ def open_manifest(path,password):
     return doc['payload']
 
 
-def safe_path(root,name):
+def validate_relative_name(name):
+    """Lexical portability check, also run before hours of database export."""
     path=PurePosixPath(name)
     if (not name or '\\' in name or ':' in name or '\x00' in name or path.is_absolute()
             or any(p in ('..','.') for p in name.split('/'))):
@@ -69,6 +70,11 @@ def safe_path(root,name):
         if (not part or part.endswith((' ','.')) or any(c in part for c in '<>"|?*')
                 or re.fullmatch(r'(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?',part,re.I)):
             raise ValueError('Nom de fichier Windows non sûr')
+    return path
+
+
+def safe_path(root,name):
+    path=validate_relative_name(name)
     root=Path(root).resolve();target=root.joinpath(*path.parts)
     if not target.resolve().is_relative_to(root):raise ValueError('Chemin hors du répertoire autorisé')
     current=target

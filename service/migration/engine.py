@@ -126,6 +126,7 @@ def export(root,output,password,db,*,quiet=inventory.quiescent,cancel=None,versi
             model_checks(root)
             progress('INVENTORY_SCAN')
             entries=inventory.scan(root,on_progress=on_progress,cancel=cancel);names=[r['path'] for records in entries.values() for r in records]
+            inventory.validate_portable_names(entries,cancel=cancel)
             progress('ENVIRONMENT_INVENTORY')
             env=captured if captured is not None else environment.capture(root,names,on_progress=on_progress,cancel=cancel)
             metadata={};packages=[]

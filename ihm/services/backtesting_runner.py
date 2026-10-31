@@ -165,6 +165,9 @@ class BacktestRunOptions:
     winner_max_leverage: float = 1.0
     winner_cost_per_leg_bps: float | None = None
     winner_factor_model: bool | None = None
+    winner_factor_market_cap_check: bool = True
+    winner_excluded_symbols: str = ''
+    winner_ignore_missing_intraday: bool = False
     winner_research_assumptions: bool = False
     winner_min_oracle_coverage: float = .9
     winner_options_filter_enabled: bool | None = None
@@ -352,6 +355,11 @@ def build_backtesting_command(
                 command.extend(['--cost-per-leg-bps', str(options.winner_cost_per_leg_bps)])
             if options.winner_factor_model is not None:
                 command.append('--factor-model' if options.winner_factor_model else '--no-factor-model')
+            command.append('--factor-market-cap-check' if options.winner_factor_market_cap_check else '--no-factor-market-cap-check')
+            from backtesting.winner_exclusions import excluded_symbols
+            excluded=excluded_symbols(options.winner_excluded_symbols)
+            if excluded:command.extend(['--exclude-symbols',','.join(excluded)])
+            if options.winner_ignore_missing_intraday:command.append('--ignore-missing-intraday')
             if options.winner_options_filter_enabled is not None:
                 command.append('--options-filter' if options.winner_options_filter_enabled else '--no-options-filter')
             from backtesting.winner_settings import risk_overrides, policy_overrides

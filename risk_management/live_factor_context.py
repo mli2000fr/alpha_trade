@@ -19,23 +19,26 @@ from risk_management.factor_model import (build_exposures_from_score_frame,
     _compute_factor_implied_correlation)
 
 
-def observed_factor_returns(prices):
-    required = ['SPY','IWM','MTUM']
+def observed_factor_returns(prices, *, include_size=True):
+    required = ['SPY','IWM','MTUM'] if include_size else ['SPY','MTUM']
     if set(required)-set(prices.columns) or not prices.index.is_unique or not prices.index.is_monotonic_increasing:
         raise ValueError('Observed SPY/IWM/MTUM factor prices required')
     values = prices[required].astype(float)
     if not np.isfinite(values.to_numpy()).all() or (values <= 0).any().any():
         raise ValueError('Factor proxy price missing/invalid; no forward fill')
     returns = values.pct_change(fill_method=None).iloc[1:]
-    factors = pd.DataFrame(dict(market=returns.SPY, size=returns.IWM-returns.SPY,
-        momentum=returns.MTUM-returns.SPY), index=returns.index)
+    factors = pd.DataFrame(dict(market=returns.SPY,momentum=returns.MTUM-returns.SPY),index=returns.index)
+    if include_size:
+        factors.insert(1,'size',returns.IWM-returns.SPY)
     if len(factors) < 126 or not np.isfinite(factors.to_numpy()).all() or (factors.var() <= 1e-14).any():
         raise ValueError('Insufficient/nonvarying observed factor returns')
     return factors
 
 
-def qualify_factor_context(frame, prices, stock_returns, required, asof, cutoff, cfg):
+def qualify_factor_context(frame, prices, stock_returns, required, asof, cutoff, cfg, *, reconstructed=False,include_size=True):
     """Pure qualification; supplied inputs must carry their actual availability."""
+    if type(reconstructed) is not bool or type(include_size) is not bool:
+        raise ValueError('Explicit boolean reconstruction mode required')
     if frame.empty or frame.symbol.duplicated().any():
         raise ValueError('Risk factor input snapshot absent/duplicated')
     stock_returns = stock_returns.copy()
@@ -46,24 +49,44 @@ def qualify_factor_context(frame, prices, stock_returns, required, asof, cutoff,
     cutoff = pd.Timestamp(cutoff)
     if cutoff.tzinfo is None:
         raise ValueError('Factor context cutoff requires timezone')
-    available = pd.to_datetime(frame.observed_at, utc=True)
+    observed = pd.to_datetime(frame.observed_at, utc=True)
+    if reconstructed:
+        if ('input_available_at' not in frame or 'reconstructed_at' not in frame or 'evidence_kind' not in frame
+                or not frame.evidence_kind.eq('RECONSTRUCTED_HISTORICAL_INPUTS').all()):
+            raise ValueError('Explicit historical reconstruction provenance required')
+        available = pd.to_datetime(frame.input_available_at, utc=True)
+        computed = pd.to_datetime(frame.reconstructed_at, utc=True)
+        if computed.isna().any() or not computed.eq(observed).all() or (computed < available).any():
+            raise ValueError('Invalid actual reconstruction timestamp')
+    else:
+        available = observed
+    if available.isna().any() or observed.isna().any():
+        raise ValueError('Factor availability timestamp missing')
     if (available > cutoff).any() or not frame.asof_date.eq(asof).all():
         raise ValueError('Future or wrong-session risk factor snapshot')
     complete = frame.loc[frame.quality.eq('QUALIFIED')].copy()
     if len(complete) < 20 or set(required)-set(complete.symbol):
         missing = sorted(set(required)-set(complete.symbol))
         raise ValueError(f'Factor inputs not qualified: missing={missing}, cross_section={len(complete)}<20')
-    values = complete[['beta_126','market_cap','trend_score']].astype(float)
-    if (not np.isfinite(values.to_numpy()).all() or (values.market_cap <= 0).any()
+    values = complete[['beta_126','market_cap','trend_score'] if include_size else ['beta_126','trend_score']].astype(float)
+    if (not np.isfinite(values.to_numpy()).all()
             or not values.trend_score.between(0,1).all()
-            or np.log(values.market_cap).std(ddof=0) <= 1e-9 or values.trend_score.std(ddof=0) <= 1e-9):
+            or values.trend_score.std(ddof=0) <= 1e-9
+            or include_size and ((values.market_cap <= 0).any() or np.log(values.market_cap).std(ddof=0)<=1e-9)):
         raise ValueError('Unqualified factor inputs; no neutral imputation')
-    exposures = build_exposures_from_score_frame(complete, asof)
+    if include_size:
+        exposures = build_exposures_from_score_frame(complete, asof)
+    else:
+        from risk_management.factor_model import _cross_sectional_zscore
+        from risk_management.models import FactorExposures
+        momentum=_cross_sectional_zscore(complete.set_index('symbol').trend_score)
+        exposures={r.symbol:FactorExposures(r.symbol,asof,float(r.beta_126),0.,float(momentum[r.symbol]))
+            for r in complete.itertuples()}
     # Preserve observed market betas at the guard boundary, rather than clipping
     # a high-beta candidate below its real configured risk threshold.
     for row in complete.itertuples():
         exposures[row.symbol] = replace(exposures[row.symbol], market_beta=float(row.beta_126))
-    factors = observed_factor_returns(prices)
+    factors = observed_factor_returns(prices,include_size=include_size)
     if factors.index.max().date() != asof:
         raise ValueError('Stale factor proxy series')
     residuals = {}
@@ -74,12 +97,14 @@ def qualify_factor_context(frame, prices, stock_returns, required, asof, cutoff,
         if len(joined) < 126 or joined.index.max().date() != asof:
             raise ValueError('Insufficient factor residual observations: '+symbol)
         exp = exposures[symbol]
-        residuals[symbol] = joined.asset-(exp.market_beta*joined.market+
-            exp.size_exposure*joined['size']+exp.momentum_exposure*joined.momentum)
+        fitted=exp.market_beta*joined.market+exp.momentum_exposure*joined.momentum
+        if include_size:fitted=fitted+exp.size_exposure*joined['size']
+        residuals[symbol] = joined.asset-fitted
     covariance = estimate_factor_covariance(factors, lookback_days=cfg.factor_lookback_days,
         ewma_half_life=cfg.factor_ewma_half_life, estimation_date=asof,
         stock_returns=pd.DataFrame(residuals))
-    if (covariance is None or covariance.factor_names != ['market','size','momentum']
+    factor_names=['market','size','momentum'] if include_size else ['market','momentum']
+    if (covariance is None or covariance.factor_names != factor_names
             or not np.isfinite(covariance.factor_cov).all()
             or (np.diag(covariance.factor_cov) <= 0).any()
             or np.linalg.eigvalsh(covariance.factor_cov).min() < -1e-10
@@ -88,10 +113,13 @@ def qualify_factor_context(frame, prices, stock_returns, required, asof, cutoff,
         raise ValueError('Factor covariance/residual variance unqualified')
     fingerprint = hashlib.sha256(json.dumps(dict(protocol=PROTOCOL,asof=str(asof),
         run_ids=sorted(complete.run_id.unique()), required=sorted(required),
-        covariance=covariance.factor_cov.tolist()),sort_keys=True).encode()).hexdigest()
+        covariance=covariance.factor_cov.tolist(),reconstructed=reconstructed,include_size=include_size),sort_keys=True).encode()).hexdigest()
     return dict(qualified=True, asof_date=asof, captured_at=cutoff.to_pydatetime(),
-        observed_at=available.max().to_pydatetime(), exposures=exposures, covariance=covariance,
+        observed_at=observed.max().to_pydatetime(), exposures=exposures, covariance=covariance,
+        input_available_at=available.max().to_pydatetime(),
+        evidence_kind='RECONSTRUCTED_HISTORICAL_INPUTS' if reconstructed else 'ARCHIVED_OBSERVATIONS',
         snapshot_hash=fingerprint, universe_count=len(complete), factor_names=covariance.factor_names,
+        market_cap_check_enabled=include_size,disabled_factors=[] if include_size else ['size'],
         value_factor='NOT_MODELED_NO_QUALIFIED_VALUE_INPUTS')
 
 

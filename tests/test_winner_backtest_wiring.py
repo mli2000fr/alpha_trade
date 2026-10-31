@@ -129,7 +129,13 @@ def test_real_form_default_policy_and_independent_dates(monkeypatch):
     at=AppTest.from_function(app).run(timeout=30)
     assert not at.exception
     assert at.session_state['winner_options']['winner_enabled'] is True
-    assert at.session_state['winner_options']['winner_options_filter_enabled'] is True
+    assert at.session_state['winner_options']['winner_options_filter_enabled'] is False
+    assert at.session_state['winner_options']['winner_factor_market_cap_check'] is False
+    assert at.session_state['winner_options']['winner_ignore_missing_intraday'] is True
+    at.checkbox(key='bt_winner_factor_cap').check().run(timeout=30)
+    assert not at.exception and at.session_state['winner_options']['winner_factor_market_cap_check'] is True
+    at.checkbox(key='bt_winner_options_filter').check().run(timeout=30)
+    assert not at.exception and at.session_state['winner_options']['winner_options_filter_enabled'] is True
     assert at.session_state['winner_options']['winner_research_assumptions'] is True
     assert at.date_input[0].min==date(2021,7,6)  # NYSE closed July 5.
     at.checkbox(key='bt_winner_prudent_replay').uncheck().run(timeout=30)

@@ -17,7 +17,8 @@ from risk_management.constraints import PortfolioState
 from risk_management.risk_checker import RiskCheckerImpl
 
 
-def reapprove_campaign(state, version, proposed, snapshot, now, kind, *, context):
+def reapprove_campaign(state, version, proposed, snapshot, now, kind, *, context, replay_reconstructed_factors=False,
+                       replay_factor_market_cap_disabled=False):
     """Pure decision over an explicitly captured native risk context.
 
     Reuses RiskCheckerImpl / its ConstraintChecker / persistent CircuitBreaker.
@@ -80,9 +81,16 @@ def reapprove_campaign(state, version, proposed, snapshot, now, kind, *, context
         raise ValueError('Factor model enabled but fresh exposures are unqualified')
     if cfg.enable_factor_model:
         factor_context = context.get('factor_context')
+        if (factor_context or {}).get('market_cap_check_enabled') is False and replay_factor_market_cap_disabled is not True:
+            raise ValueError('Factor model without size/capitalization is restricted to explicit replay')
+        factor_time = (factor_context or {}).get('observed_at')
+        if (factor_context or {}).get('evidence_kind') == 'RECONSTRUCTED_HISTORICAL_INPUTS':
+            if replay_reconstructed_factors is not True:
+                raise ValueError('Reconstructed historical factors are restricted to the explicit replay adapter')
+            factor_time = factor_context.get('input_available_at')
         if (not factor_context or factor_context.get('asof_date') != context.get('factor_asof_date')
                 or factor_context['covariance'].estimation_date != context.get('factor_asof_date')
-                or aware(factor_context['observed_at']) > now
+                or factor_time is None or aware(factor_time) > now
                 or not 0 <= (now-aware(factor_context['captured_at'])).total_seconds() <= 60):
             raise ValueError('Native factor context absent, future, stale or wrong-session')
     if context.get('concentration_allowed') is not True:
