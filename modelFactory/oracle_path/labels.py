@@ -13,14 +13,16 @@ LINEAGE_COLUMNS = ["instrument_id", "data_source", "data_adjustment"]
 
 
 def load_bars(engine, symbols, start, end):
-    """Archive actual source/identity columns, unlike the minimal feature loader."""
+    """Use the same whole-row provider priority as features; retain identity columns."""
+    from common.daily_bar_sources import select_daily_bars
     query = text("SELECT symbol, `date`, `open`, high, low, `close`, adj_close, volume, "
                  "is_filled, instrument_id, data_source, data_adjustment FROM stock_bars_daily "
                  "WHERE symbol IN :symbols AND `date` BETWEEN :start AND :end ORDER BY symbol, `date`"
                  ).bindparams(bindparam("symbols", expanding=True))
     with engine.connect() as conn:
-        return pd.read_sql(query, conn, params={"symbols": symbols, "start": start, "end": end},
-                           parse_dates=["date"])
+        frame = pd.read_sql(query, conn, params={"symbols": symbols, "start": start, "end": end},
+                            parse_dates=["date"])
+    return select_daily_bars(frame)
 
 
 def symbol_paths(bars, sessions, *, start, end, registry, horizon=HORIZON):

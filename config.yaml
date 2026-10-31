@@ -30,12 +30,14 @@ winner_pyramiding:
   # Confirmation 5m, renforcement, SL/TP/trailing et verrous restent indépendants.
   standard_entry_quote_check_enabled: false
   stop_loss_pct: 0.05
-  take_profit_pct: null  # Profil Winner SL5/H20 : aucun TP en prix.
-  trailing_stop_pct: null # Profil Winner SL5/H20 : aucun trailing ; SL et sortie temporelle conservés.
-  horizon_sessions: 10  # Entrée incluse ; sortie à l'ouverture de la 21e séance.
+  take_profit_pct: null  # Aucun TP en prix.
+  trailing_stop_pct: null # Aucun trailing ; SL et sortie temporelle conservés.
+  horizon_sessions: 10  # Entrée incluse ; sortie à l'ouverture suivante après cet horizon (ici 11e séance).
   entry_valid_sessions: 20  # Attente maximale après le signal, distincte de la détention.
   max_quote_age_seconds: 60
   max_bar_delay_seconds: 60
+  market_data_delay_seconds: 930  # Confirmations SIP disponibles avec 15 min de retard ; jamais de fill rétroactif.
+  delayed_entry_limit_buffer_pct: 0.01  # Ordre IOC plafonné à +1% du dernier close retardé ; pas un cours temps réel.
   cost_reserve_bps_per_leg: 25  # Réserve de sizing, pas le tarif comptable réel.
 
 intraday_backfill:

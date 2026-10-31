@@ -107,6 +107,19 @@ def discover_path_batches(artifacts_dir='artifacts/models'):
     return sorted(result)
 
 
+def first_causal_date(folds):
+    """Earliest date bound; no model may see a label available on its signal day."""
+    bounds = []
+    for fold in folds.values():
+        metrics = fold['metrics']
+        dates = [pd.Timestamp(metrics.get(k)) for k in ('fold_start', 'train_available_max', 'val_available_max')]
+        if all(pd.notna(value) for value in dates):
+            bounds.append(max(dates[0].normalize(), max(dates[1:]).normalize() + pd.Timedelta(days=1)))
+    if not bounds:
+        raise ValueError('Aucun fold Oracle parcours avec disponibilité qualifiée')
+    return min(bounds)
+
+
 def select_fold(day, folds):
     day = pd.Timestamp(day)
     eligible = []
@@ -117,7 +130,9 @@ def select_fold(day, folds):
             for k in ('train_available_max', 'val_available_max')):
             eligible.append(name)
     if not eligible:
-        raise ValueError(f'Aucun fold causal avant {day.date()}; avancer le début du backtest')
+        first = first_causal_date(folds)
+        raise ValueError(f'Aucun fold causal avant {day.date()}; début minimal compatible : {first.date()}. '
+                         "La période antérieure sert à l'entraînement/validation, pas à une prédiction hors échantillon.")
     return max(eligible, key=pd.Timestamp)
 
 

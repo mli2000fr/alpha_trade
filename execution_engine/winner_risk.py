@@ -40,9 +40,15 @@ def reapprove_campaign(state, version, proposed, snapshot, now, kind, *, context
     from service.market.live_quotes import validate_campaign_quote
     from execution_engine.winner_standard_entry import standard_initial, standard_risk_price
     quote_required = context.get('standard_entry_quote_check_enabled', True)
+    from common.winner_delayed import delayed_entry, delayed_price_limit
+    delayed=delayed_entry(state,kind) and context.get('delayed_sip_allowed') is True
     if type(quote_required) is not bool:
         raise ValueError('Quote check policy must be boolean')
-    if quote_required:
+    if delayed:
+        if quote_required:
+            raise ValueError('Approbation SIP retardée incompatible avec quote temps réel')
+        price=delayed_price_limit(state,snapshot,now)
+    elif quote_required:
         validate_campaign_quote(snapshot, now=now, max_age_seconds=policy.max_quote_age_seconds)
         bid, ask = float(snapshot['bid']), float(snapshot['ask'])
         if (not all(math.isfinite(x) and x > 0 for x in (bid, ask)) or bid > ask
@@ -63,7 +69,7 @@ def reapprove_campaign(state, version, proposed, snapshot, now, kind, *, context
     if kind == 'ENTRY' and standard_initial(state):
         price = standard_risk_price(state, price, quote_check_enabled=quote_required)
     from execution_engine.winner_standard_entry import standard_order_terms
-    effective_type, effective_limit = (standard_order_terms(state, quote_check_enabled=quote_required)
+    effective_type, effective_limit = (('limit',price) if delayed else standard_order_terms(state, quote_check_enabled=quote_required)
         if kind == 'ENTRY' and standard_initial(state) else ('limit', price))
     cfg = context['risk_config']
     if cfg.enforce_net_exposure or (cfg.correlation_check_enabled and cfg.max_long_short_correlation is not None):
@@ -189,7 +195,9 @@ def reapprove_campaign(state, version, proposed, snapshot, now, kind, *, context
         account_id=state['account_id'], broker_mode=state['broker_mode'], state_version=version,
         side='buy', entry_data_qualified=True, realtime_sip_qualified=quote_required, regime_qualified=True,
         standard_entry_quote_check_enabled=quote_required,
-        price_basis='realtime_quote' if quote_required else 'bounded_standard_limit',
+        price_basis='bounded_delayed_sip_limit' if delayed else 'realtime_quote' if quote_required else 'bounded_standard_limit',
+        delayed_sip_qualified=delayed, delayed_evidence=(dict(snapshot,bars=snapshot['bars'][
+            -max(policy.confirmation_bars+1,3):]) if delayed else None),
         order_type=effective_type, order_limit_price=effective_limit,
         realtime_gap_checked=(quote_required and kind == 'ENTRY' and standard_initial(state)
             and float(state['entry_policy']['max_entry_gap_pct']) > 0),

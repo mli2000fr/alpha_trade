@@ -46,6 +46,7 @@ from ihm.services.pipeline_runner import (
     PAGE_SENTIMENT_DEFAULTS,
     DEFAULT_PIPELINE_CAPITAL_PRESET_KEY,
     DEFAULT_ML_PREDICT_SYMBOL_SOURCE,
+    DEFAULT_ML_TRAIN_SYMBOL_SOURCE,
 )
 from modelFactory.feature_profiles import (
     DIRECTIONAL_TARGET_DOWN_THRESHOLD,
@@ -3411,7 +3412,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             )
 
         st.caption("Chaque lancement ML Train crée une campagne complète et isolée.")
-        ml_train_symbol_source = default_universe_file_source_or("tradable-universe")
+        ml_train_symbol_source = DEFAULT_ML_TRAIN_SYMBOL_SOURCE
         ml_predict_symbol_source = DEFAULT_ML_PREDICT_SYMBOL_SOURCE
         from service.llm_directional.config import load_filter_config
         _llm_config = load_filter_config()

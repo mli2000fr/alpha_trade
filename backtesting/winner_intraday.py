@@ -13,7 +13,7 @@ import math
 import pandas as pd
 
 from common.market_calendar import get_market_calendar
-from common.winner_pyramiding import aware, resolve_bar_exit, regular_bounds
+from common.winner_pyramiding import aware, resolve_bar_exit, regular_bounds, WinnerPyramidingConfig
 from common.winner_risk_state import CampaignRiskState
 from execution_engine.models import ExecutionTarget
 from execution_engine.winner_plans import stage_targets
@@ -279,7 +279,8 @@ class ReplayBroker:
 
 
 def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=None,
-        sector_map=None, intraday_source=None, research_assumptions=False, progress=None, corporate_actions=None):
+        sector_map=None, intraday_source=None, research_assumptions=False, progress=None, corporate_actions=None,
+        factor_context_source=None,selection_source=None):
     from backtesting.simulator import BacktestResult
     if not research_assumptions:
         raise ValueError('Winner intraday: historical quotes/sector/CA are not certified. '
@@ -316,9 +317,9 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
     store = MemoryCampaignStore()
     repo = SimpleNamespace(acquire_execution_lock=lambda **kw: True, release_execution_lock=lambda **kw: None)
     base_risk = cfg.risk_config or load_risk_config(equity=cfg.initial_equity)
-    if base_risk.enable_factor_model:
+    if base_risk.enable_factor_model and factor_context_source is None:
         raise ValueError('Winner replay requires qualified factor tapes when factor model is enabled')
-    if base_risk.enforce_net_exposure or base_risk.max_long_short_correlation is not None:
+    if base_risk.enforce_net_exposure or (base_risk.correlation_check_enabled and base_risk.max_long_short_correlation is not None):
         raise ValueError('Winner replay does not qualify market-neutral / cross-leg overlays')
     # No fake calendar history: the initial equity is an explicit replay deposit.
     from backtesting.regime_trailing import compute_regime
@@ -363,10 +364,17 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
         return group is not None and len(group) == int((closing-opening).total_seconds()/300)
 
     def admit(signal_day, stamp):
-        if liquidation.blocks_entries:
-            return
         rows = selected.loc[selected.trade_date.eq(signal_day)]
         if rows.empty:
+            return
+        if selection_source is not None:
+            filtered=selection_source(signal_day,rows,stamp)
+            if filtered['incomplete']:
+                coverage.add((str(signal_day),'*','OPTIONS_COHORT_INCOMPLETE'))
+            rows=rows.loc[rows.symbol.isin(filtered['selected'])]
+            if rows.empty:
+                return
+        if liquidation.blocks_entries:
             return
         risk = replace(base_risk, account_equity=book.equity())
         targets = []
@@ -400,11 +408,16 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
         day, opening, closing = session.session_date, session.open_at_utc, session.close_at_utc
         book.settle(day)
         prior_day = previous if index == 0 else sessions[index-1].session_date
-        if liquidation.resume(opening,book):
+        resumed=liquidation.resume(opening,book)
+        if resumed:
             # Only the cycle risk episode is reset. Global DD/peak never reset.
             guard=CampaignRiskState(base_risk,observations=[(prior_day,book.equity())],
                 regimes={prior_day:regimes.get(prior_day)})
             # No stale pre-pause plans: only the latest prior-session signal.
+            admit(prior_day,opening-timedelta(seconds=1))
+        elif selection_source is not None and index>0:
+            # Nightly options receipts are known before the next open, not
+            # one second after the signal close. No future trade-day data.
             admit(prior_day,opening-timedelta(seconds=1))
         records = store.rows()
         symbols = sorted({r['state']['symbol'] for r in records})
@@ -460,11 +473,22 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
                     raise ValueError('EX_DATE_ENTRY_BLOCKED_RAW_REFERENCE')
                 if symbol not in bars:
                     raise ValueError('CANDIDATE_5M_BAR_MISSING')
-                tail = groups[symbol].loc[groups[symbol].index+pd.Timedelta(minutes=5) <= pd.Timestamp(now)].tail(
+                delay=timedelta(seconds=state['policy'].get('market_data_delay_seconds',0))
+                tail = groups[symbol].loc[groups[symbol].index+pd.Timedelta(minutes=5) <= pd.Timestamp(now-delay)].tail(
                     max(state['policy']['confirmation_bars']+1, 3))
                 if not full_session(priors.get(symbol), prior_day):
                     raise ValueError('Prior raw session high unavailable')
-                return dict(bars=[dict(row, timestamp=t.to_pydatetime(), session_tag='regular') for t, row in tail.iterrows()],
+                evidence=[dict(row,timestamp=t.to_pydatetime(),session_tag='regular') for t,row in tail.iterrows()]
+                from common.winner_delayed import delayed_entry
+                if delayed_entry(state,'ADD' if state['lots'] else 'ENTRY'):
+                    from common.winner_delayed import delayed_snapshot
+                    return delayed_snapshot(evidence,WinnerPyramidingConfig(**state['policy']),now) | dict(
+                        prior_session_high=float(priors[symbol]['high'].max()),prior_session=prior_day,
+                        available_cash=book.capacity())
+                if state['policy']['confirmation_bars']==0 and not state['lots'] and not state['policy']['standard_entry_quote_check_enabled']:
+                    return dict(bars=[],prior_session=prior_day,prior_session_high=None,
+                        ask=None,bid=None,feed='sip',standard_entry_quote_check_enabled=False)
+                return dict(bars=evidence,
                     prior_session_high=float(priors[symbol]['high'].max()),
                     ask=book.marks[symbol], bid=book.marks[symbol], feed='sip', quote_time=now,
                     available_cash=book.capacity())
@@ -517,6 +541,21 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
                     entry_data_qualified=daily_ok, regime_qualified=True, concentration_qualified=True,
                     concentration_allowed=concentration, corporate_actions_qualified=True,
                     factor_qualified=True, entries_allowed=not exec_cfg.blocks_new_entries)
+                from common.winner_delayed import delayed_entry
+                if delayed_entry(state,kind):
+                    ctx.update(delayed_sip_allowed=True,standard_entry_quote_check_enabled=False)
+                elif snapshot.get('standard_entry_quote_check_enabled') is False:
+                    ctx.update(standard_entry_quote_check_enabled=False,
+                        reference_price=float(priors[candidate].iloc[-1]['close']),reference_price_asof=prior_day)
+                if current.enable_factor_model:
+                    required={candidate}|{p['symbol'] for p in positions}|{p['symbol'] for p in ctx['pending_entries']}
+                    try:
+                        context=factor_context_source(prior_day,required,now,current)
+                    except ValueError as exc:
+                        coverage.add((str(day),candidate,'FACTOR_CONTEXT_UNAVAILABLE: '+str(exc)[:300]))
+                        raise
+                    ctx.update(factor_context=context,factor_asof_date=prior_day,
+                               factor_qualified=context.get('qualified') is True)
                 return reapprove_campaign(state, version, quantity, snapshot, now, kind, context=ctx)
 
             if records:
@@ -550,7 +589,8 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
         book.interest += charge
         book.events.append(dict(time=closing, event='FINANCING', costs=charge))
         daily_equity.append((pd.Timestamp(day), book.equity()))
-        admit(day, closing+timedelta(seconds=1))
+        if selection_source is None:
+            admit(day, closing+timedelta(seconds=1))
         cache = {k: v for k, v in cache.items() if k[0] >= day}
         if progress:
             progress(index+1, len(sessions), str(day))

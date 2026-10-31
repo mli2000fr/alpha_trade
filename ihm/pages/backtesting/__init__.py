@@ -1531,6 +1531,11 @@ def _build_overlay_options(
 
 def _build_run_options() -> BacktestRunOptions:
     st.subheader("▶️ Lancer un backtest")
+    from common.winner_pyramiding import load_winner_pyramiding_config
+    if st.checkbox('Utiliser Winner — Oracle parcours et replay intraday',
+                   value=load_winner_pyramiding_config().enabled, key='bt_use_winner'):
+        from ihm.components.winner_backtest import render_winner_backtest
+        return render_winner_backtest()
     st.caption(
         "Le backtest exécute `python -m backtesting run ...` en arrière-plan. "
         "Tous les paramètres CLI sont exposés ci-dessous et les logs sont visibles plus bas dans la page."
@@ -4263,6 +4268,13 @@ def _render_report_summary(run_record: dict[str, object]) -> bool:
     params = cast(dict[str, object], report_payload.get("params", {}))
     artifacts = cast(dict[str, object], report_payload.get("artifacts", {}))
     diagnostics = cast(dict[str, object], report_payload.get("diagnostics", {}))
+    if report_payload.get('run_metadata', {}).get('engine') == 'winner_campaign_replay':
+        if diagnostics.get('status') == 'INCOMPLETE_COVERAGE':
+            st.warning('Winner : couverture incomplète. Ces résultats ne constituent pas un backtest complètement qualifié.')
+        else:
+            st.info('Winner : replay exploratoire OHLC, avec les limites consignées dans le rapport.')
+        with st.expander('Couverture et limites Winner'):
+            st.json(diagnostics)
     fidelity = cast(dict[str, object], report_payload.get("fidelity", {}))
     corporate_actions = cast(dict[str, object], report_payload.get("corporate_actions", {}))
     trade_export = cast(dict[str, object], report_payload.get("trade_export", {}))
@@ -6125,12 +6137,13 @@ def render() -> None:
             key="launch_backtest_run",
             type="primary",
             use_container_width=True,
-            disabled=bool(active_backtest_runs) or missing_ml_batch,
+            disabled=bool(active_backtest_runs) or missing_ml_batch or
+                (run_options.winner_enabled and not run_options.winner_research_assumptions),
         )
         if launch_backtest_clicked:
             try:
                 record = start_backtesting_run("run", "Backtest complet", run_options, db_config=db_config)
-            except RuntimeError as exc:
+            except (RuntimeError, ValueError) as exc:
                 st.warning(str(exc))
             else:
                 st.session_state[PENDING_SELECTED_RUN_KEY] = record.run_id
