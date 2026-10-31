@@ -4,6 +4,8 @@ No table or state is created merely by importing or leaving the feature off.
 Never delete history to allow a retry. Ambiguous submissions remain reserved.
 """
 import json
+import hashlib
+from copy import deepcopy
 from datetime import UTC, datetime
 
 from sqlalchemy import Column, Integer, MetaData, String, Table, Text, inspect, select, update
@@ -109,7 +111,7 @@ class WinnerCampaignStore:
             old = json.loads(previous['state_json'])
             # A trailing update or restart must not change the risk admission.
             for key in ('campaign_id', 'symbol', 'account_id', 'broker_mode', 'risk_run_id',
-                    'policy', 'account_policy', 'entry_policy', 'full_quantity', 'initial_quantity', 'risk_budget', 'target',
+                    'policy', 'policy_amendments', 'account_policy', 'entry_policy', 'full_quantity', 'initial_quantity', 'risk_budget', 'target',
                     'exec_run_id', 'signal_date', 'created_at', 'earliest_entry_open', 'entry_expires_at'):
                 if json.dumps(old.get(key), sort_keys=True, default=str) != json.dumps(state.get(key), sort_keys=True, default=str):
                     raise ValueError(f'Frozen campaign field cannot change: {key}')
@@ -131,3 +133,46 @@ class WinnerCampaignStore:
         if changed != 1:
             raise RuntimeError('Campaign changed concurrently; broker submission forbidden')
         return version+1
+
+    def disable_trailing(self, campaign_id, version, *, account_id, authorization,
+            protection_proof_sha256):
+        """Explicit audited PAPER amendment; only trailing -> None may change.
+
+        Caller holds the canonical account lock and verifies standing broker
+        protections first. Current lot stops (including earlier ratchets), TP,
+        quantities, deadlines and all other frozen admission terms are retained.
+        Ordinary save() still rejects arbitrary policy or audit mutations.
+        """
+        if (not isinstance(authorization,str) or not authorization.strip()
+                or not isinstance(protection_proof_sha256,str) or len(protection_proof_sha256)!=64
+                or any(c not in '0123456789abcdef' for c in protection_proof_sha256)):
+            raise ValueError('Explicit authorization and protection evidence required')
+        from common.winner_pyramiding import WinnerPyramidingConfig
+        with self.engine.begin() as conn:
+            row=conn.execute(select(campaigns).where(campaigns.c.campaign_id==campaign_id)
+                .with_for_update()).mappings().first()
+            if row is None or row['version']!=version:
+                raise RuntimeError('Campaign changed; trailing amendment refused')
+            old=json.loads(row['state_json'])
+            if (old['broker_mode']!='paper' or old['account_id']!=account_id or old['status']!='OPEN'
+                    or not any(l['remaining']>0 for l in old['lots'])
+                    or any(o['status'] in ('RESERVED','UNKNOWN','SUBMITTED') for o in old['operations'])):
+                raise ValueError('Open, reconciled PAPER campaign for exact account required')
+            if old['policy']['trailing_stop_pct'] is None:
+                return dict(changed=False,version=version,state=old)
+            new=deepcopy(old)
+            new['policy']['trailing_stop_pct']=None
+            WinnerPyramidingConfig(**new['policy'])
+            stamp=datetime.now(UTC).isoformat()
+            policy_hash=lambda value:hashlib.sha256(json.dumps(value,sort_keys=True).encode()).hexdigest()
+            new.setdefault('policy_amendments',[]).append(dict(kind='DISABLE_TRAILING',
+                previous_trailing_stop_pct=old['policy']['trailing_stop_pct'],trailing_stop_pct=None,
+                observed_at=stamp,authorization=authorization.strip(),
+                previous_policy_sha256=policy_hash(old['policy']),new_policy_sha256=policy_hash(new['policy']),
+                protection_proof_sha256=protection_proof_sha256))
+            result=conn.execute(update(campaigns).where(campaigns.c.campaign_id==campaign_id,
+                campaigns.c.version==version).values(version=version+1,
+                state_json=json.dumps(new,allow_nan=False),updated_at_utc=stamp))
+            if result.rowcount!=1:
+                raise RuntimeError('Campaign changed; trailing amendment refused')
+        return dict(changed=True,version=version+1,state=new)

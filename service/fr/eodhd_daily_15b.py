@@ -1,5 +1,7 @@
-"""Daily FR EODHD observations, versioned on disk, never canonical SQL bars."""
+"""Daily FR EODHD observations, SQL primary in operational sessions, never canonical bars."""
 from __future__ import annotations
+
+from service.fr.collection_storage import (active, read_bytes, read_text, exists, paths, write_bytes, identity_rows, take_lock, release_lock)
 
 import gzip
 import hashlib
@@ -19,6 +21,9 @@ from service.fr.load_eodhd_staging import classify_bar
 
 
 def atomic(path: Path, payload: dict):
+    if active():
+        from service.fr.collection_storage import write_json
+        return write_json(path,payload)
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
     try:
@@ -43,8 +48,7 @@ def atomic(path: Path, payload: dict):
 
 
 def symbols_from_identities(path: Path) -> list[str]:
-    with gzip.open(path, 'rt', encoding='utf-8') as stream:
-        rows = [json.loads(line) for line in stream if line.strip()]
+    rows = identity_rows(path)
     symbols = sorted({r['provider_symbol'] for r in rows if r.get('identity_state') == 'VERIFIED_RESEARCH'
                       and r.get('provider_status_current') == 'active'})
     if not symbols or any(not s.endswith('.PA') or '/' in s or '\\' in s for s in symbols):
@@ -78,8 +82,7 @@ def symbol_windows(path, start, end, migrations=None, *, excluded_symbols=None):
         return exclude_symbols(windows, excluded_symbols)
     if not isinstance(migrations, list):
         raise ValueError('provider_symbol_migrations doit être une liste')
-    with gzip.open(path, 'rt', encoding='utf-8') as stream:
-        records = [json.loads(line) for line in stream if line.strip()]
+    records = identity_rows(path)
     seen = set()
     replacements = set()
     for migration in migrations:
@@ -141,7 +144,7 @@ def collect(cfg: dict, result: dict, *, root: Path, identities: Path, dry_run=Fa
         raise ValueError('Univers au-delà du budget de requêtes configuré')
     result.update(requested_count=len(symbols), window=[str(start), str(end)],
                   requested_unit='symbols', received_unit='symbols', persisted_unit='bar_rows',
-                  sql_writes=False, universe_sha256=hashlib.sha256(identities.read_bytes()).hexdigest(),
+                  sql_writes=False, universe_sha256=hashlib.sha256(read_bytes(identities)).hexdigest(),
                   unchanged_rows=0, changed_rows=0, resumed_symbols=0, errors=[],
                   universe_basis='FROZEN_S6C_CURRENT_ACTIVE_NOT_DAILY_MASTER')
     if cfg.get('excluded_symbols'):
@@ -154,17 +157,11 @@ def collect(cfg: dict, result: dict, *, root: Path, identities: Path, dry_run=Fa
     token = os.environ.get('EODHD_API_TOKEN')
     if not token:
         raise ValueError('EODHD_API_TOKEN absent')
-    root.mkdir(parents=True, exist_ok=True)
-    lock = root/'.lock'
-    try:
-        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError:
-        raise RuntimeError('Collecte FR déjà verrouillée ; vérifier le processus avant de retirer .lock') from None
-    with os.fdopen(fd, 'w') as stream:
-        stream.write(json.dumps({'pid':os.getpid(),'started_at':datetime.now(UTC).isoformat()}))
+    root.mkdir(parents=True, exist_ok=True) if not active() else None
+    lock = take_lock(root/'.lock')
     try:
         state_path = root/'windows'/f'{start}_{end}.json'
-        state = json.loads(state_path.read_text(encoding='utf-8')) if state_path.exists() else {'symbols': {}}
+        state = json.loads(read_text(state_path,encoding='utf-8')) if exists(state_path) else {'symbols': {}}
         state.update(window=[str(start),str(end)], market_code='FR_EQ')
         calendar = get_market_calendar('FR_EQ')
         for index, symbol in enumerate(symbols, 1):
@@ -177,10 +174,10 @@ def collect(cfg: dict, result: dict, *, root: Path, identities: Path, dry_run=Fa
                     and prior.get('coverage_complete') is True):
                 raw = root/'raw'/f"{prior['sha256']}.json"
                 latest = root/'latest'/f'{key}.json'
-                if (raw.exists() and latest.exists()
-                    and hashlib.sha256(raw.read_bytes()).hexdigest() == prior['sha256']
-                    and hashlib.sha256(latest.read_bytes()).hexdigest() == prior.get('latest_sha256')
-                    and json.loads(raw.read_text(encoding='utf-8')).get('window') == [str(symbol_start),str(symbol_end)]):
+                if (exists(raw) and exists(latest)
+                    and hashlib.sha256(read_bytes(raw)).hexdigest() == prior['sha256']
+                    and hashlib.sha256(read_bytes(latest)).hexdigest() == prior.get('latest_sha256')
+                    and json.loads(read_text(raw,encoding='utf-8')).get('window') == [str(symbol_start),str(symbol_end)]):
                     result['resumed_symbols'] += 1
                     continue
             try:
@@ -191,10 +188,10 @@ def collect(cfg: dict, result: dict, *, root: Path, identities: Path, dry_run=Fa
                 payload = json.dumps(raw_content, ensure_ascii=False, sort_keys=True, default=str).encode()
                 digest = hashlib.sha256(payload).hexdigest()
                 raw = root/'raw'/f'{digest}.json'
-                raw.parent.mkdir(parents=True, exist_ok=True)
-                if not raw.exists():
+                raw.parent.mkdir(parents=True, exist_ok=True) if not active() else None
+                if not exists(raw):
                     atomic(raw, raw_content)
-                if hashlib.sha256(raw.read_bytes()).hexdigest() != digest:
+                if hashlib.sha256(read_bytes(raw)).hexdigest() != digest:
                     raise ValueError('Archive brute corrompue')
                 atomic(root/'observations'/key/f'{datetime.now(UTC):%Y%m%dT%H%M%S%fZ}-{uuid.uuid4().hex[:8]}.json',
                        {'symbol':symbol,'window':[str(symbol_start),str(symbol_end)],'observed_at':observed,
@@ -214,7 +211,7 @@ def collect(cfg: dict, result: dict, *, root: Path, identities: Path, dry_run=Fa
                     result['warning_count'] += 1
                     result.setdefault('coverage_warnings', []).append({'symbol':symbol,'missing_sessions':missing})
                 latest_path = root/'latest'/f'{key}.json'
-                latest = json.loads(latest_path.read_text(encoding='utf-8')) if latest_path.exists() else {'symbol':symbol,'market_code':'FR_EQ','bars':{}}
+                latest = json.loads(read_text(latest_path,encoding='utf-8')) if exists(latest_path) else {'symbol':symbol,'market_code':'FR_EQ','bars':{}}
                 persisted = changed = unchanged = 0
                 for session, item in prepared.items():
                     old = latest['bars'].get(session)
@@ -235,7 +232,7 @@ def collect(cfg: dict, result: dict, *, root: Path, identities: Path, dry_run=Fa
                 state['symbols'][symbol] = {'status':'COMPLETED_WITH_GAPS' if missing else 'COMPLETED',
                     'coverage_complete': not missing, 'missing_sessions': missing,
                     'sha256':digest,'rows':len(rows),'observed_at':observed,
-                    'latest_sha256':hashlib.sha256(latest_path.read_bytes()).hexdigest()}
+                    'latest_sha256':hashlib.sha256(read_bytes(latest_path)).hexdigest()}
             except Exception as exc:
                 # _fetch strips signed URLs/tokens from its errors.
                 message = str(exc)[:240]
@@ -248,4 +245,4 @@ def collect(cfg: dict, result: dict, *, root: Path, identities: Path, dry_run=Fa
         if result['failed_count']:
             raise RuntimeError(f'{result["failed_count"]} titre(s) en échec ; reprise disponible')
     finally:
-        lock.unlink(missing_ok=True)
+        release_lock(lock)

@@ -51,10 +51,10 @@ class QueuedBroker(Broker):
         return (SimpleNamespace(broker_order_id=tp_intent.intent_id) if tp_intent else None), stop
 
 
-def setup_standard(order_type='market', **policy):
+def setup_standard(order_type='market', *, max_entry_gap_pct=0., **policy):
     cfg = ExecutionConfig(winner_pyramiding=WinnerPyramidingConfig(enabled=True,
         confirmation_bars=0, stop_loss_pct=.07, take_profit_pct=.20, trailing_stop_pct=.15, **policy),
-        entry_order_type=order_type, limit_price_buffer_bps=-100)
+        entry_order_type=order_type, limit_price_buffer_bps=-100, max_entry_gap_pct=max_entry_gap_pct)
     store = WinnerCampaignStore(create_engine('sqlite://'))
     target = ExecutionTarget('risk-zero', date(2026, 10, 16), 'TEST', 20, 100., .25,
         'Technology', .8, 'native', None, risk_budget_dollars=200., side='long')
@@ -292,6 +292,6 @@ def test_zero_initial_market_source_does_not_download_breakout_bars(monkeypatch)
     monkeypatch.setattr('service.alpaca.intraday_bars.fetch_intraday',
                         lambda *a, **kw: pytest.fail('No initial 5m confirmation required'))
     monkeypatch.setattr('service.alpaca.clientAlpaca.fetch_latest_quotes', lambda *a, **kw:
-        {'TEST': dict(ap=101, bp=100.9, **{'as': 10, 'bs': 10}, t=QUEUED.isoformat())})
+        {'TEST': dict(ap=101, bp=100.9, **{'as': 10, 'bs': 10}, t=datetime.now(UTC).isoformat())})
     snapshot = NativeWinnerMarket(None, 'default')(parts[1].rows()[0]['state'], QUEUED)
     assert snapshot['bars'] == [] and snapshot['feed'] == 'sip' and snapshot['ask'] == 101

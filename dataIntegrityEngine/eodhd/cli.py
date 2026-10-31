@@ -124,8 +124,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         from dataIntegrityEngine.eodhd.readiness import wait_for_publication
         wait_for_publication(date.fromisoformat(args.target_date), cfg)
     import_symbols = symbols
+    from common.risk_factor_proxies import required_factor_proxies
+    proxies = required_factor_proxies(cfg) if args.require_target_coverage else ()
     if args.require_target_coverage:
-        import_symbols = list(dict.fromkeys([*symbols, args.benchmark_symbol.strip().upper()]))
+        import_symbols = list(dict.fromkeys([*symbols, args.benchmark_symbol.strip().upper(), *proxies]))
     summary = run_eodhd_ingestion(
         dry_run=dry_run,
         target_date=args.target_date,
@@ -142,6 +144,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         try:
             gate = target_coverage(get_sqlalchemy_engine(), symbols, args.target_date,
                 benchmark=args.benchmark_symbol, minimum=args.min_target_coverage)
+            if proxies:
+                proxy_gate = target_coverage(get_sqlalchemy_engine(), list(proxies), args.target_date,
+                    benchmark='SPY', minimum=1.)
+                summary['factor_proxy_coverage'] = proxy_gate
+                if proxy_gate['status'] != 'PASSED':
+                    summary['errors'] = int(summary.get('errors', 0)) + 1
+                    summary['stopped_reason'] = 'factor_proxy_coverage_insufficient'
+                    summary['error_message'] = 'Cours J SPY/IWM/MTUM incomplets ; qualification factorielle bloquée'
         except Exception as exc:
             # Preserve import counters even when the read-only qualification fails.
             summary['errors'] = int(summary.get('errors', 0)) + 1

@@ -579,8 +579,15 @@ oracle_options_indicative_snapshot:
   run_days: "1,2,3,4,5"
   symbols_file: config/univers_batch/stock_bars_daily.txt
   universe_scope: config/univers_batch/stock_bars_daily.txt
+  yahoo_reference_recovery:
+    enabled: true  # Après Alpaca, uniquement prix de découverte d'options, pas quotes d'exécution.
+    symbols_file: config/univers_batch/univers_filtred_tradable.txt
+    pause_min_seconds: 1.0
+    pause_max_seconds: 5.0
+    timeout_seconds: 20.0
   target_dtes: "5,10,20"
-  dte_tolerance_days: 4
+  dte_tolerance_days: 5  # Inclut J+25, comme le filtre volume/OI et le batch de volumes.
+  ensure_directional_oi_pair: true  # Compléter la surface avec une paire CALL/PUT au même strike, après contrôles.
   moneyness_min: 0.80
   moneyness_max: 1.20
   # Un contrat le plus proche de chaque cible, par CALL/PUT et expiration.
@@ -617,6 +624,12 @@ options_delayed_bars_sync:
   run_days: "1,2,3,4,5"
   symbols_file: config/univers_batch/stock_bars_daily.txt
   universe_scope: config/univers_batch/stock_bars_daily.txt
+  yahoo_reference_recovery:
+    enabled: true  # Cache partagé avec oracle_options_indicative_snapshot ; arrêt sur 401/403/429.
+    symbols_file: config/univers_batch/univers_filtred_tradable.txt
+    pause_min_seconds: 1.0
+    pause_max_seconds: 5.0
+    timeout_seconds: 20.0
   target_dtes: "5,10,20"
   dte_tolerance_days: 5
   timeframe: 30Min

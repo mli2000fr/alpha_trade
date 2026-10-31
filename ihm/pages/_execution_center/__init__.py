@@ -45,6 +45,8 @@ from common.universe_files import default_universe_file_source_or
 from ihm.services.pipeline_runner import (
     PAGE_SENTIMENT_DEFAULTS,
     DEFAULT_PIPELINE_CAPITAL_PRESET_KEY,
+    DEFAULT_ML_PREDICT_SYMBOL_SOURCE,
+    DEFAULT_ML_TRAIN_SYMBOL_SOURCE,
 )
 from modelFactory.feature_profiles import (
     DIRECTIONAL_TARGET_DOWN_THRESHOLD,
@@ -503,7 +505,7 @@ def _render_options_filter_toggle(config, *, llm_enabled=False, paper_allowed=Tr
     if llm_enabled:
         st.caption('Filtre options non appliqué : le cumul avec GPT/DeepSeek n’est pas qualifié.')
     elif not paper_allowed:
-        st.caption('Filtre options non appliqué : sélectionner le compte principal default en mode paper.')
+        st.caption('Filtre options non appliqué : sélectionner un compte déclaré en mode paper.')
     return bool(config.enabled and selected and not llm_enabled and paper_allowed)
 
 
@@ -2234,7 +2236,8 @@ def _render_selector_block() -> dict[str, Any]:
         selector_earnings_blackout_days = int(
             st.number_input(
                 "Alpha Scanner — earnings blackout (jours)",
-                min_value=0,
+                min_value=-1,
+                help="-1 : contrôle désactivé ; 0 : jour de l'annonce uniquement ; N : fenêtre en jours.",
                 value=_session_state_int(
                     "pipeline_selector_earnings_blackout_days",
                     DEFAULT_SELECTOR_EARNINGS_BLACKOUT_DAYS,
@@ -2893,12 +2896,16 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             )
         with col2:
             risk_account_equity = st.number_input(
-                "Equity pour le module Risk",
+                "Capital de recherche pour le risque (shadow)",
                 min_value=0.0,
                 value=_session_state_float("pipeline_risk_account_equity", 100_000.0),
                 step=1_000.0,
                 format="%.2f",
                 key="pipeline_risk_account_equity",
+                disabled=not st.session_state.get('pipeline_risk_dry_run',False),
+                help="Utilisé seulement en recherche shadow / dry-run. Le planning PAPER/LIVE relit "
+                     "l'equity réelle du compte sélectionné, même si les ordres de l'étape 12 sont simulés. "
+                     "Si le broker est indisponible, aucune nouvelle cible n'est publiée.",
             )
         with col3:
             execution_mode = cast(
@@ -3405,8 +3412,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             )
 
         st.caption("Chaque lancement ML Train crée une campagne complète et isolée.")
-        ml_train_symbol_source = default_universe_file_source_or("tradable-universe")
-        ml_predict_symbol_source = "tradable-universe"
+        ml_train_symbol_source = DEFAULT_ML_TRAIN_SYMBOL_SOURCE
+        ml_predict_symbol_source = DEFAULT_ML_PREDICT_SYMBOL_SOURCE
         from service.llm_directional.config import load_filter_config
         _llm_config = load_filter_config()
         llm_filter_enabled = _render_llm_filter_toggle(_llm_config)
@@ -3414,9 +3421,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         _options_config = load_options_filter_config()
         options_filter_enabled = _render_options_filter_toggle(_options_config,
             llm_enabled=llm_filter_enabled,
-            paper_allowed=execution_mode == 'paper' and selected_account_id == 'default')
-        if options_filter_enabled:
-            ml_predict_symbol_source = default_universe_file_source_or('tradable-universe')
+            paper_allowed=execution_mode == 'paper')
         llm_filter_run_id = None
         llm_oracle_batch_id = None
         llm_specific_protections = False
@@ -3502,11 +3507,11 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     "Dates de début ET fin à renseigner dans 9. ML Train. Paramètres dans config.yaml/oracle_barrier. "
                     "Artefacts oracle_barrier séparés ; aucune promotion PAPER/LIVE.")
         ml_oracle_path_model_only = st.checkbox(
-            "🔮 Oracle Extreme parcours H20 — modèle séparé",
+            "🔮 Oracle Extreme parcours — modèle séparé",
             value=_session_state_bool("pipeline_ml_oracle_path_model_only", True),
             key="pipeline_ml_oracle_path_model_only",
             disabled=ml_oracle_barrier_model_only,
-            help="Un seul classifieur : amplitude maximale, hausse ou baisse, pendant J+1 à J+20. Utilisable avec ML Predict/backtest/live ; ne prédit pas la direction.",
+            help="Un seul classifieur : amplitude maximale, hausse ou baisse, pendant J+1 à J+H. Choisir H10, H15 ou H20 ci-dessous. Utilisable avec ML Predict/backtest/live ; ne prédit pas la direction.",
         )
         ml_oracle_research_only = ml_oracle_path_model_only or ml_oracle_barrier_model_only
         if ml_oracle_research_only:
@@ -3517,8 +3522,23 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             for _unused_global_key in ("pipeline_ml_enable_global_model", "pipeline_ml_global_champion",
                                        "pipeline_ml_global_model_only", "pipeline_ml_enable_global_stacking"):
                 st.session_state[_unused_global_key] = False
+        ml_oracle_horizon = 20
         if ml_oracle_path_model_only:
-            st.info("Oracle parcours : H20 fixe, LightGBM/CatBoost CPU selon le choix ci-dessous, validation walk-forward obligatoire. "
+            from modelFactory.config import load_oracle_path_horizon
+            from modelFactory.oracle_path import HORIZONS
+            _path_horizon_default = load_oracle_path_horizon()
+            _path_horizon_saved = _session_state_int('pipeline_ml_oracle_path_horizon', _path_horizon_default)
+            if _path_horizon_saved not in HORIZONS:
+                _path_horizon_saved = _path_horizon_default
+                st.session_state['pipeline_ml_oracle_path_horizon'] = _path_horizon_saved
+            ml_oracle_horizon = int(st.selectbox(
+                'Horizon — Oracle Extreme parcours', options=list(HORIZONS),
+                index=list(HORIZONS).index(_path_horizon_saved), key='pipeline_ml_oracle_path_horizon',
+                format_func=lambda h: f'H{h} — {h} séances',
+                help="Cible d'entraînement : plus grand mouvement absolu pendant ces séances, pas seulement le dernier cours. "
+                     "Un modèle distinct doit être entraîné pour chaque horizon. Predict reprend l'horizon du modèle choisi ; "
+                     "la durée de détention Winner reste configurée séparément."))
+            st.info(f"Oracle parcours : H{ml_oracle_horizon}, LightGBM/CatBoost CPU selon le choix ci-dessous, validation walk-forward obligatoire. "
                     "Choisir les dates de début ET fin dans 9. ML Train. "
                     "Les options Global/per-symbol et les cibles directionnelles ne sont pas utilisées. "
                     "Modèles et labels séparés dans oracle_path. Scores raccordés à ML Predict/backtest/live, "
@@ -3528,7 +3548,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             _path_choices=['lightgbm','catboost','auto']
             _path_default=load_oracle_path_training_backend()
             ml_oracle_path_backend=st.selectbox(
-                'Algorithme — Oracle Extreme parcours H20',_path_choices,
+                f'Algorithme — Oracle Extreme parcours H{ml_oracle_horizon}',_path_choices,
                 index=_path_choices.index(_path_default),key='pipeline_ml_oracle_path_backend',
                 format_func=lambda choice:dict(lightgbm='LightGBM',catboost='CatBoost',auto='Comparaison automatique')[choice],
                 help='LightGBM/CatBoost : entraîne uniquement ce modèle. Automatique : entraîne les deux et choisit chaque fold sur la validation. Le choix est figé dans les artefacts et repris par Predict/backtest/live.')
@@ -3549,7 +3569,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         ml_short_feature_profile = "short.json" if "short.json" in short_profiles else short_profiles[0]
         ml_standalone_oracle_feature_profile = "dynamic"
         ml_oracle_universe_mode = "static_bars"
-        ml_oracle_horizon = 20
+        ml_oracle_horizon = ml_oracle_horizon if ml_oracle_path_model_only else 20
         if ml_directional_profiles_enabled:
             profile_col0, profile_col1, profile_col2, profile_col3 = st.columns(4)
             with profile_col0:

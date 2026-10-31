@@ -285,6 +285,8 @@ class ExecutionConfig:
     def __post_init__(self) -> None:
         if not isinstance(self.winner_pyramiding, WinnerPyramidingConfig):
             raise ValueError('winner_pyramiding doit être une WinnerPyramidingConfig validée.')
+        if self.winner_pyramiding.enabled:
+            object.__setattr__(self, 'allow_fractional_shares', False)
         if self.broker_mode not in ("paper", "live"):
             raise ValueError("broker_mode doit être 'paper' ou 'live'.")
         if self.llm_protection_profile is not None:
@@ -447,7 +449,7 @@ class ProtectionWatcherServiceConfig:
 
     interval_seconds: float = 30.0
     idle_interval_seconds: float = 120.0
-    heartbeat_interval_seconds: float = 300.0
+    heartbeat_interval_seconds: float = 60.0
     max_iterations: int | None = None
     stop_when_idle: bool = False
     max_consecutive_failures: int = 3

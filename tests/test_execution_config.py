@@ -52,7 +52,7 @@ class TestExecutionConfig:
 
         assert cfg.interval_seconds == 30.0
         assert cfg.idle_interval_seconds == 120.0
-        assert cfg.heartbeat_interval_seconds == 300.0
+        assert cfg.heartbeat_interval_seconds == 60.0
         assert cfg.max_iterations is None
         assert cfg.stop_when_idle is False
         assert cfg.max_consecutive_failures == 3

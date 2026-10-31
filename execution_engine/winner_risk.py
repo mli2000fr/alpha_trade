@@ -37,26 +37,54 @@ def reapprove_campaign(state, version, proposed, snapshot, now, kind, *, context
         raise ValueError('Unqualified native entry data / regime / concentration / corporate actions')
     if context.get('entries_allowed') is not True:
         raise ValueError('Native regime blocks new LONG entries')
-    if snapshot.get('feed') != 'sip' or snapshot.get('quote_error'):
-        raise ValueError('Real-time SIP quote required')
-    bid, ask = float(snapshot['bid']), float(snapshot['ask'])
-    if (not all(math.isfinite(x) and x > 0 for x in (bid, ask)) or bid > ask
-            or not 0 <= (now-aware(snapshot['quote_time'])).total_seconds() <= policy.max_quote_age_seconds):
-        raise ValueError('SIP quote invalid, future or stale')
-    spread = 10000*(ask-bid)/((bid+ask)/2)
-    if spread > context['max_spread_bps']:
-        raise ValueError('Native maximum spread exceeded')
-    price = entry_limit(ask)
+    from service.market.live_quotes import validate_campaign_quote
     from execution_engine.winner_standard_entry import standard_initial, standard_risk_price
+    quote_required = context.get('standard_entry_quote_check_enabled', True)
+    from common.winner_delayed import delayed_entry, delayed_price_limit
+    delayed=delayed_entry(state,kind) and context.get('delayed_sip_allowed') is True
+    if type(quote_required) is not bool:
+        raise ValueError('Quote check policy must be boolean')
+    if delayed:
+        if quote_required:
+            raise ValueError('Approbation SIP retardée incompatible avec quote temps réel')
+        price=delayed_price_limit(state,snapshot,now)
+    elif quote_required:
+        validate_campaign_quote(snapshot, now=now, max_age_seconds=policy.max_quote_age_seconds)
+        bid, ask = float(snapshot['bid']), float(snapshot['ask'])
+        if (not all(math.isfinite(x) and x > 0 for x in (bid, ask)) or bid > ask
+                or not 0 <= (now-aware(snapshot['quote_time'])).total_seconds() <= policy.max_quote_age_seconds):
+            raise ValueError('SIP quote invalid, future or stale')
+        spread = 10000*(ask-bid)/((bid+ask)/2)
+        if spread > context['max_spread_bps']:
+            raise ValueError('Native maximum spread exceeded')
+        price = entry_limit(ask)
+    else:
+        if kind != 'ENTRY' or not standard_initial(state) or policy.standard_entry_quote_check_enabled:
+            raise ValueError('No-quote mode only permits standard initial entries')
+        reference = float(context['reference_price'])
+        if (context.get('reference_price_asof') != snapshot['prior_session']
+                or not math.isfinite(reference) or reference <= 0):
+            raise ValueError('Qualified prior-session reference required; no invented real-time price')
+        price = entry_limit(max(reference, float(state['target']['entry_price'])))
     if kind == 'ENTRY' and standard_initial(state):
-        price = standard_risk_price(state, price)
+        price = standard_risk_price(state, price, quote_check_enabled=quote_required)
+    from execution_engine.winner_standard_entry import standard_order_terms
+    effective_type, effective_limit = (('limit',price) if delayed else standard_order_terms(state, quote_check_enabled=quote_required)
+        if kind == 'ENTRY' and standard_initial(state) else ('limit', price))
     cfg = context['risk_config']
-    if cfg.enforce_net_exposure or cfg.max_long_short_correlation is not None:
+    if cfg.enforce_net_exposure or (cfg.correlation_check_enabled and cfg.max_long_short_correlation is not None):
         raise ValueError('Campaign adapter does not qualify market-neutral / cross-leg overlays')
     if abs(float(context['equity'])-cfg.account_equity) > .005:
         raise ValueError('Native risk equity differs from captured account')
     if cfg.enable_factor_model and context.get('factor_qualified') is not True:
         raise ValueError('Factor model enabled but fresh exposures are unqualified')
+    if cfg.enable_factor_model:
+        factor_context = context.get('factor_context')
+        if (not factor_context or factor_context.get('asof_date') != context.get('factor_asof_date')
+                or factor_context['covariance'].estimation_date != context.get('factor_asof_date')
+                or aware(factor_context['observed_at']) > now
+                or not 0 <= (now-aware(factor_context['captured_at'])).total_seconds() <= 60):
+            raise ValueError('Native factor context absent, future, stale or wrong-session')
     if context.get('concentration_allowed') is not True:
         raise ValueError('Native concentration rule blocks this campaign')
     breaker = context['circuit_breaker']
@@ -81,7 +109,7 @@ def reapprove_campaign(state, version, proposed, snapshot, now, kind, *, context
     own_notional, own_quantity = 0., 0.
     positions = context['positions']
     returns = context['return_matrix']
-    correlations = returns.corr(min_periods=cfg.correlation_min_overlap) if not returns.empty else pd.DataFrame()
+    correlations = returns.corr(min_periods=cfg.correlation_min_overlap) if cfg.correlation_check_enabled and not returns.empty else pd.DataFrame()
     side_by_symbol = {}
     for position in positions:
         held = position['symbol']
@@ -110,7 +138,7 @@ def reapprove_campaign(state, version, proposed, snapshot, now, kind, *, context
         portfolio.add_position(notional=pending['notional'], sector=sector_map[pending['symbol']],
             side=pending['side'], symbol=pending['symbol'])
         side_by_symbol[pending['symbol']] = pending['side']
-    for held, side in side_by_symbol.items():
+    for held, side in (side_by_symbol.items() if cfg.correlation_check_enabled else ()):
         if held == symbol:
             continue
         if symbol not in correlations or held not in correlations or pd.isna(correlations.loc[symbol, held]):
@@ -141,13 +169,50 @@ def reapprove_campaign(state, version, proposed, snapshot, now, kind, *, context
     if quantity > 0:
         quantity = math.floor(checker.check_position_size(symbol, quantity, price, side='buy',
             adv_usd=context.get('adv_usd'), selection_rank=state['target'].get('selection_rank')))
+    factor_rejections = []
+    factor_beta_exposure = None
+    if quantity > 0 and cfg.enable_factor_model:
+        from risk_management.live_factor_context import factor_violations
+        weights = {}
+        for position in positions:
+            sign = -1 if position['side'] in ('short','sell') else 1
+            weights[position['symbol']] = weights.get(position['symbol'],0.)+sign*float(position['quantity'])*float(position['mark'])/cfg.account_equity
+        for pending in context['pending_entries']:
+            sign = -1 if pending['side'] in ('short','sell') else 1
+            weights[pending['symbol']] = weights.get(pending['symbol'],0.)+sign*pending['notional']/cfg.account_equity
+        weights[symbol] = weights.get(symbol,0.)+quantity*price/cfg.account_equity
+        from risk_management.factor_model import portfolio_beta_exposure
+        factor_beta_exposure = portfolio_beta_exposure(weights,context['factor_context']['exposures'],
+            basis=cfg.beta_exposure_basis)
+        factor_rejections = factor_violations(context['factor_context'],weights,cfg,candidate=symbol,
+            other_sides=side_by_symbol)
+        if factor_rejections:
+            quantity = 0
     fingerprint = hashlib.sha256(json.dumps({k: context[k] for k in
         ('account_id', 'broker_mode', 'captured_at', 'equity', 'positions', 'pending_entries')},
         sort_keys=True, default=str).encode()).hexdigest()
     return dict(producer='native_intraday_risk', campaign_id=state['campaign_id'],
         account_id=state['account_id'], broker_mode=state['broker_mode'], state_version=version,
-        side='buy', entry_data_qualified=True, realtime_sip_qualified=True, regime_qualified=True,
+        side='buy', entry_data_qualified=True, realtime_sip_qualified=quote_required, regime_qualified=True,
+        standard_entry_quote_check_enabled=quote_required,
+        price_basis='bounded_delayed_sip_limit' if delayed else 'realtime_quote' if quote_required else 'bounded_standard_limit',
+        delayed_sip_qualified=delayed, delayed_evidence=(dict(snapshot,bars=snapshot['bars'][
+            -max(policy.confirmation_bars+1,3):]) if delayed else None),
+        order_type=effective_type, order_limit_price=effective_limit,
+        realtime_gap_checked=(quote_required and kind == 'ENTRY' and standard_initial(state)
+            and float(state['entry_policy']['max_entry_gap_pct']) > 0),
+        reference_price_asof=str(context.get('reference_price_asof')) if not quote_required else None,
+        factor_model_checked=cfg.enable_factor_model,
+        factor_beta_basis=cfg.beta_exposure_basis if cfg.enable_factor_model else None,
+        factor_beta_exposure=factor_beta_exposure,
+        factor_beta_limit=cfg.max_portfolio_beta if cfg.enable_factor_model else None,
+        factor_diversification_check_enabled=cfg.enable_factor_model and cfg.factor_diversification_check_enabled,
+        factor_min_diversification=(cfg.effective_min_factor_diversification
+            if cfg.enable_factor_model and cfg.factor_diversification_check_enabled else None),
+        factor_snapshot_hash=context['factor_context']['snapshot_hash'] if cfg.enable_factor_model else None,
+        factor_rejections=factor_rejections,
         qualified=True, max_quantity=quantity, limit_price=price, config_hash=cfg.fingerprint,
         portfolio_hash=fingerprint, available_at=now.isoformat(),
         valid_until=(now+timedelta(seconds=min(30, policy.max_quote_age_seconds))).isoformat(),
-        reason=checker.get_last_decision_reason() if quantity else 'CAMPAIGN_RISK_OR_CAPACITY_EXHAUSTED')
+        reason=('FACTOR_RISK_REJECTED: '+'; '.join(factor_rejections) if factor_rejections
+            else (checker.get_last_decision_reason() if quantity else 'CAMPAIGN_RISK_OR_CAPACITY_EXHAUSTED')))

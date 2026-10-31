@@ -29,6 +29,54 @@ def context(cfg=None):
         cost_reserve_pct=.0025, volatility_allocation_scale=1., adv_usd=10000000.)
 
 
+def test_campaign_risk_uses_observed_equity_for_both_preset_and_sizing():
+    from execution_engine.winner_live_risk import campaign_risk_config
+    low = campaign_risk_config(1974.30)
+    high = campaign_risk_config(100000.)
+    assert low.account_equity == 1974.30 and high.account_equity == 100000.
+    assert low.fingerprint != high.fingerprint
+    # The budget must scale from actual equity, not a hidden 100k default.
+    assert low.account_equity*low.risk_per_trade_pct < high.account_equity*high.risk_per_trade_pct
+
+
+def test_native_factor_context_checks_final_quantity_and_keeps_rejection_reason():
+    from risk_management.models import FactorExposures
+    from risk_management.factor_model import FactorCovariance
+    state,snap=data()
+    cfg=replace(context()['risk_config'],enable_factor_model=True)
+    factor=dict(qualified=True,asof_date=NOW.date(),captured_at=NOW,observed_at=NOW,snapshot_hash='qualified',
+        exposures={'TEST':FactorExposures('TEST',NOW.date(),2.,1.,1.)},
+        covariance=FactorCovariance(np.eye(3),['market','size','momentum'],{'TEST':.05},NOW.date()))
+    ctx=context(cfg)|dict(factor_qualified=True,factor_asof_date=NOW.date(),factor_context=factor)
+    result=reapprove_campaign(state,0,10,snap,NOW,'ENTRY',context=ctx)
+    assert result['max_quantity']==0 and result['factor_model_checked']
+    assert any('beta' in r for r in result['factor_rejections'])
+    assert result['reason'].startswith('FACTOR_RISK_REJECTED')
+    factor['exposures']['TEST']=FactorExposures('TEST',NOW.date(),.4,1.,1.)
+    accepted=reapprove_campaign(state,0,10,snap,NOW,'ENTRY',context=ctx)
+    assert accepted['max_quantity']>0 and accepted['factor_snapshot_hash']=='qualified'
+
+
+def test_native_account_beta_uses_real_sized_notional_and_records_its_basis():
+    from risk_management.models import FactorExposures
+    from risk_management.factor_model import FactorCovariance
+    state,snap=data()
+    cfg=replace(context()['risk_config'],enable_factor_model=True,beta_exposure_basis='account_equity')
+    factor=dict(qualified=True,asof_date=NOW.date(),captured_at=NOW,observed_at=NOW,snapshot_hash='qualified',
+        exposures={'TEST':FactorExposures('TEST',NOW.date(),3.,3.,3.)},
+        covariance=FactorCovariance(np.eye(3),['market','size','momentum'],{'TEST':.05},NOW.date()))
+    ctx=context(cfg)|dict(factor_qualified=True,factor_asof_date=NOW.date(),factor_context=factor)
+    accepted=reapprove_campaign(state,0,10,snap,NOW,'ENTRY',context=ctx)
+    assert accepted['max_quantity']>0
+    assert accepted['factor_beta_basis']=='account_equity'
+    assert accepted['factor_beta_exposure']==pytest.approx(accepted['max_quantity']*accepted['limit_price']/4000.*3.)
+    assert accepted['factor_beta_limit']==1.2
+    stricter=replace(cfg,max_portfolio_beta=.01)
+    refused=reapprove_campaign(state,0,10,snap,NOW,'ENTRY',context=context(stricter)|dict(
+        factor_qualified=True,factor_asof_date=NOW.date(),factor_context=factor))
+    assert refused['max_quantity']==0 and any('beta' in r for r in refused['factor_rejections'])
+
+
 def data():
     cfg, store, _, _ = setup()
     state = store.rows()[0]['state']

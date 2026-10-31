@@ -633,6 +633,18 @@ class AlphaScanner:
             )
 
             self.update_database(selected, scored_for_persistence)
+            # Risk inputs must cover Oracle's universe, including stocks which
+            # fail this selector. Publish separately, at actual observation time;
+            # do not rewrite old stock_scores_history with hindsight values.
+            if getattr(getattr(self.engine, 'url', None), 'database', None) == 'alpha_trade':
+                from common.config_loader import load_config
+                if (load_config().get('risk_management') or {}).get('enable_factor_model', False):
+                    from risk_management.factor_inputs import refresh_inputs
+                    from service.forward_pit.market_cap_calculations import reference_session
+                    day = getattr(self, 'snapshot_date_override', None) or reference_session(datetime.now(UTC))
+                    factor_frame = refresh_inputs(self.engine, day)
+                    LOGGER.info('Risk factor inputs published: universe=%s qualified=%s incomplete=%s', len(factor_frame),
+                        int(factor_frame.quality.eq('QUALIFIED').sum()), int(factor_frame.quality.ne('QUALIFIED').sum()))
 
             elapsed = (datetime.now(UTC) - started_at).total_seconds()
 

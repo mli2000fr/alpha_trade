@@ -304,6 +304,32 @@ La taille d’une soumission complète est plafonnée par `max_submission_bytes`
 
 Les batchs P3/P4 relisent ce RAW local : aucun second téléchargement SEC. P3 extrait les items 8‑K/6‑K. P4 normalise les holdings XML embarqués des 13F et conserve une ligne de dépôt lorsque la table d’information n’est pas analysable. Les champs non fiables restent `NULL` plutôt que d’être inventés.
 
+**Identité des dépôts (correctif du 27 octobre 2026).** Une accession déjà
+enregistrée conserve son CIK, son symbole non nul et son `instrument_id` pendant
+un enrichissement/retry. Un nouveau snapshot de security master ne constitue
+pas une autorisation de migration de ticker. L'incident
+`0001477932-26-006377` venait d'un dépôt `GLTKD` (instrument 67338) que l'upsert
+tentait de renommer `GLTK` tout en gardant l'ancien identifiant ; le trigger SQL
+refusait correctement cette combinaison. Les triggers restent actifs et aucun
+identifiant n'est effacé pour contourner la contrainte.
+
+Pour une nouvelle accession, un CIK associé à plusieurs symboles au dernier
+snapshot disponible n'est plus résolu par ordre arbitraire des lignes SQL :
+le dépôt émetteur est conservé avec symbole `NULL`. Les diagnostics
+`ambiguous_cik_symbols` et `preserved_symbol_changes` rendent ces cas visibles.
+Seul un symbole précédemment nul peut être complété automatiquement par une
+association unique. Un conflit de CIK pour une même accession est bloquant.
+
+Une erreur d'identité/persistance est isolée par accession, les dépôts suivants
+sont traités, puis le run finit **FAILED** avec les compteurs conservés et
+`persistence_errors` / `persistence_error_count` dans son bilan. Ce n'est pas un
+succès complet. Les diagnostics détaillés sont plafonnés à 50 entrées, mais les
+compteurs portent sur tous les échecs. `filings_persisted` compte des dépôts,
+pas la valeur MySQL `rowcount=2` d'une mise à jour ; `persisted` inclut aussi les
+annexes selon le contrat existant. Les autres erreurs de téléchargement gardent
+leur politique d'avertissement actuelle. Aucun relancement automatique n'est
+introduit par ce correctif.
+
 #### Annexes SEC EX-99
 
 Les annexes sont un flux distinct, activé prospectivement avec
@@ -351,12 +377,18 @@ actif, et non un pilote Business Quant à activer.
 Le collecteur options réduit le volume au niveau **des contrats**, pas au niveau
 des actions :
 
-- cours du sous-jacent obtenu par snapshots actions Alpaca IEX, par lots de 100 ;
+- cours du sous-jacent obtenu par référence historique actions Alpaca SIP, par lots de 100 ;
 - fenêtre de strikes comprise par défaut entre 80 % et 120 % du sous-jacent ;
 - expirations interrogées autour de DTE 5, 10 et 20, puis conservation de
   l'expiration disponible la plus proche de chacun de ces trois horizons ;
 - pour chaque expiration et côté CALL/PUT, un contrat est retenu au plus près
   de chaque moneyness cible 0,85/0,90/0,95/1,00/1,05/1,10/1,15 ;
+- depuis le correctif du 27 octobre 2026, `dte_tolerance_days: 5` inclut J+25.
+  `ensure_directional_oi_pair: true` garantit que la fenêtre interrogée couvre
+  au moins J+15 à J+25 et complète l'échantillon, après contrôles, par au plus
+  une paire CALL/PUT de même strike/échéance avec OI connue, à moins de 5 %
+  du cours de référence. Les compteurs avec/sans paire et les contrats ajoutés
+  permettent de vérifier la couverture réellement obtenue ;
 - quote bid/ask bilatérale, bid d'au moins 0,01 USD et spread relatif maximal de
   100 % ;
 - open interest d'au moins 10 lorsqu'Alpaca le fournit ; une valeur manquante ne

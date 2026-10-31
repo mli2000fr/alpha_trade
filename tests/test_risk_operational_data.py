@@ -87,3 +87,22 @@ def test_live_adapter_fails_closed_when_broker_read_fails() -> None:
             account_id="paper-account",
             broker_mode="paper",
         ).capture()
+
+
+@pytest.mark.parametrize('quantity',['-335','335','-0.25'])
+def test_signed_short_positions_preserve_side_and_full_risk_exposure(quantity):
+    snapshot=BacktestOperationalDataAdapter.build(account_id='test1',account=_account(),
+        positions=[dict(_position(),symbol='BW',side='short',qty=quantity)],
+        as_of=datetime(2026,10,29,tzinfo=timezone.utc))
+    position=snapshot.positions[0]
+    assert position.side=='short' and position.quantity==abs(float(quantity))
+    assert snapshot.holdings[0].side=='short'
+
+
+@pytest.mark.parametrize('side,quantity',[('long','-1'),('short','0'),('short','NaN'),
+    ('short','Infinity'),('long',None),('short',True)])
+def test_bad_position_quantities_still_fail_closed(side,quantity):
+    with pytest.raises(OperationalDataUnavailable):
+        BacktestOperationalDataAdapter.build(account_id='test1',account=_account(),
+            positions=[dict(_position(),side=side,qty=quantity)],
+            as_of=datetime(2026,10,29,tzinfo=timezone.utc))

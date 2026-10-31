@@ -53,7 +53,7 @@ def test_real_booster_inference_preserves_scope_causality_and_no_targets(model, 
         calls.append(all_symbols)
         return features(all_symbols, start, end)
     monkeypatch.setattr(module, 'build_inference_features', build)
-    monkeypatch.setattr(module, 'write_path_predictions', lambda e, f, b: saved.append(f.copy()) or len(f))
+    monkeypatch.setattr(module, 'write_path_predictions', lambda e, f, b, **kw: saved.append(f.copy()) or len(f))
     engine = SimpleNamespace(url=SimpleNamespace(database='alpha_trade'))
     result = module.predict_oracle_path_history(engine, 'batch', '2024-01-02', '2024-01-03',
         artifacts_dir=parent, symbols=universe[:2], persist_chunk_dates=1)

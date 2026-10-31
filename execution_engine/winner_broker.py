@@ -17,9 +17,18 @@ def client_key(value):
     return 'wp-'+hashlib.sha256(value.encode()).hexdigest()[:36]
 
 
+def request_key(value):
+    """OMS request IDs and parent/fill FKs are VARCHAR(32).
+
+    The broker's stable client_order_id remains unchanged (39 characters).
+    Separate namespaces preserve broker reconciliation across this correction.
+    """
+    return hashlib.sha256(('winner-oms:'+value).encode()).hexdigest()[:32]
+
+
 def make_intent(state, key, *, quantity, side='buy', role=IntentRole.ENTRY,
         order_type='limit', price=None, stop=None, parent=None, tif=None, entry_mode=None):
-    return OrderIntent(intent_id=client_key(key), risk_run_id=state['risk_run_id'],
+    return OrderIntent(intent_id=request_key(key), risk_run_id=state['risk_run_id'],
         exec_run_id=state['exec_run_id'], symbol=state['symbol'], side=side,
         qty=quantity, order_type=order_type, limit_price=price if order_type == 'limit' else None,
         trail_percent=None, broker_mode=state['broker_mode'], parent_intent_id=parent,
@@ -47,6 +56,12 @@ class NativeWinnerBroker:
         return self.client._request('GET', f'/v2/orders/{broker_id}', params={'nested': 'true'})
 
     def submit(self, state, intent):
+        if intent.winner_entry_mode == 'standard':
+            from execution_engine.winner_standard_entry import standard_quote_check_required, standard_order_terms
+            if not standard_quote_check_required(state, config=self.config):
+                expected_type, cap = standard_order_terms(state, quote_check_enabled=False)
+                if intent.order_type != expected_type or intent.limit_price != cap or intent.time_in_force != 'day':
+                    raise ValueError('Unchecked standard entry differs from its bounded frozen terms')
         self.repo.upsert_execution_order_request_from_intent(intent,
             account_id=state['account_id'], status='NEW')
         try:

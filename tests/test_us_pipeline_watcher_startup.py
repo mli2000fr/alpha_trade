@@ -130,7 +130,7 @@ def test_heartbeat_pid_must_identify_paper_account_wide_service(environment, mon
     repo.is_watcher_healthy.return_value = True
     repo.engine.connect.return_value.__enter__.return_value.execute.return_value.mappings.return_value.first.return_value = {
         'pid': 123, 'hostname': startup.socket.gethostname()}
-    monkeypatch.setattr('psutil.Process', lambda pid: SimpleNamespace(cmdline=lambda: command))
+    monkeypatch.setattr('psutil.Process', lambda pid: SimpleNamespace(cmdline=lambda: command, create_time=lambda: float('inf')))
     if acceptable:
         assert startup.healthy_service(repo, 'default')
     else:
@@ -147,6 +147,19 @@ def test_dead_heartbeat_process_is_not_healthy(environment, monkeypatch):
         raise psutil.NoSuchProcess(pid)
     monkeypatch.setattr(psutil, 'Process', dead)
     assert not startup.healthy_service(repo, 'default')
+
+
+def test_healthy_heartbeat_does_not_reuse_obsolete_code(environment, monkeypatch):
+    repo = environment[2]
+    repo.is_watcher_healthy.return_value = True
+    repo.engine.connect.return_value.__enter__.return_value.execute.return_value.mappings.return_value.first.return_value = {
+        'pid': 123, 'hostname': startup.socket.gethostname()}
+    command = [str(startup.PROJECT_ROOT/'execution_engine/protection_watcher.py'),
+               '--mode', 'service', '--account', 'default', '--broker-mode', 'paper']
+    monkeypatch.setattr('psutil.Process', lambda pid: SimpleNamespace(cmdline=lambda: command, create_time=lambda: 0))
+    with pytest.raises(ValueError, match='Redémarrer le watcher'):
+        run(environment)
+    environment[4].assert_not_called()
 
 
 def test_process_inventory_does_not_confuse_accounts(monkeypatch):

@@ -3258,7 +3258,8 @@ def _render_batch_detail(batch: pd.Series) -> None:
 
     with col2:
         if _is_path:
-            st.metric("Modèle", "Oracle parcours H20")
+            _path_horizon = resolve_oracle_artifact_horizon(batch_id, get_model_artifacts_dir()) or 20
+            st.metric("Modèle", f"Oracle parcours H{_path_horizon}")
             st.metric("Cible", "Amplitude maximale — TOP20 %")
             st.metric("Direction apprise", "Aucune")
         # IC Rank du Global Ranking Model
@@ -4286,7 +4287,7 @@ def render() -> None:
     display_df = batches_df.copy()
     if "batch_id" in display_df.columns:
         display_df["type_oracle"] = [
-            "Parcours H20" if _is_path_model(str(item["batch_id"]), item) else "Autre / historique"
+            "Parcours" if _is_path_model(str(item["batch_id"]), item) else "Autre / historique"
             for _, item in batches_df.iterrows()
         ]
         display_df["oracle_horizon"] = [

@@ -11,7 +11,7 @@ pytestmark = pytest.mark.usefixtures('isolated_winner_config')
 from execution_engine.config import ExecutionConfig
 from execution_engine.models import IntentRole
 from execution_engine.order_intents import build_oco_protection_payload, intent_to_alpaca_payload
-from execution_engine.winner_broker import NativeWinnerBroker, make_intent
+from execution_engine.winner_broker import NativeWinnerBroker, make_intent, client_key, request_key
 from service.alpaca.trading_client import AlpacaTradingClient, BrokerApiError
 
 
@@ -24,6 +24,48 @@ def bridge():
     repo.load_cumulative_filled_qty.return_value = 0.
     cfg = ExecutionConfig()
     return NativeWinnerBroker(repo, broker, cfg), repo, broker
+
+
+def test_oms_identity_fits_schema_without_changing_broker_idempotency():
+    key='wp-92e5c4eaa6d6365742c3f7e84633255a03827604-entry'
+    first=make_intent(STATE,key,quantity=1,price=142.89,tif='day',entry_mode='standard')
+    again=make_intent(STATE,key,quantity=1,price=142.89,tif='day',entry_mode='standard')
+    assert first==again
+    assert len(first.intent_id)==32 and first.intent_id==request_key(key)
+    assert first.submission_key==first.idempotency_key==client_key(key)
+    assert first.submission_key=='wp-201e493bb116ce0822af4fa0a6c81ead44da'
+    assert intent_to_alpaca_payload(first,ExecutionConfig())['client_order_id']==first.submission_key
+    assert request_key(key+'-stop')!=request_key(key)
+
+
+def test_entry_protection_and_fill_lineage_fit_real_oms_width_and_foreign_keys():
+    import sqlite3
+    db=sqlite3.connect(':memory:')
+    db.execute('PRAGMA foreign_keys=ON')
+    db.execute('CREATE TABLE requests (id TEXT PRIMARY KEY CHECK(length(id)<=32), '
+        'parent TEXT REFERENCES requests(id), submission TEXT CHECK(length(submission)<=64))')
+    db.execute('CREATE TABLE fills (request_id TEXT REFERENCES requests(id) CHECK(length(request_id)<=32))')
+    parent=make_intent(STATE,'parent',quantity=1,price=101.,tif='ioc')
+    stop=make_intent(STATE,'stop',quantity=1,side='sell',role=IntentRole.INITIAL_STOP,
+        order_type='stop',stop=95.,parent=parent.intent_id)
+    take=make_intent(STATE,'tp',quantity=1,side='sell',role=IntentRole.TAKE_PROFIT,
+        price=120.,parent=parent.intent_id)
+    for intent in (parent,stop,take):
+        db.execute('INSERT INTO requests VALUES(?,?,?)',(intent.intent_id,intent.parent_intent_id,intent.submission_key))
+        db.execute('INSERT INTO fills VALUES(?)',(intent.intent_id,))
+    assert db.execute('SELECT COUNT(*) FROM fills JOIN requests ON request_id=id').fetchone()[0]==3
+    assert db.execute('SELECT COUNT(*) FROM requests WHERE parent=?',(parent.intent_id,)).fetchone()[0]==2
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute('INSERT INTO requests VALUES(?,NULL,?)',(client_key('legacy'),client_key('legacy')))
+    db.close()
+
+
+def test_local_sql_failure_never_reaches_broker_submission():
+    adapter,repo,broker=bridge()
+    repo.upsert_execution_order_request_from_intent.side_effect=RuntimeError('local SQL failed')
+    with pytest.raises(RuntimeError,match='local SQL failed'):
+        adapter.submit(STATE,make_intent(STATE,'entry',quantity=1,price=101,tif='ioc'))
+    broker.submit_intent.assert_not_called()
 
 
 def test_terminal_protection_cancel_is_observation_not_second_delete():

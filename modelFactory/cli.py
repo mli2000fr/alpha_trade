@@ -37,6 +37,7 @@ from modelFactory.config import (
     TrainingConfig,
     WalkForwardConfig,
     load_oracle_barrier_config,
+    load_oracle_path_horizon,
     OracleBarrierConfig,
 )
 from modelFactory.reproducibility import apply_reproducibility
@@ -779,7 +780,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--oracle-model-only", action="store_true", default=False,
                    help="Entraîne UNIQUEMENT le modèle Oracle Extreme (O0). Skip le Global Model, le per-symbol et le per-sector. Active implicitement --enable-oracle-model.")
     p.add_argument("--oracle-path-model-only", action="store_true", default=False,
-                   help="Oracle parcours H20 séparé : TOP20%% du maximum absolu des excursions J+1..J+20. Recherche uniquement, aucun remplacement de l'Oracle terminal.")
+                   help="Oracle parcours séparé H10/H15/H20 : TOP20%% du maximum absolu des excursions J+1..J+H. Horizon via --oracle-horizon ; aucun remplacement de l'Oracle terminal.")
     p.add_argument('--oracle-path-backend',choices=['lightgbm','catboost','auto'],default=None,
                    help='Oracle parcours : algorithme unique ou comparaison automatique sur validation. Prioritaire sur les flags challengers legacy.')
     p.add_argument("--oracle-barrier-model-only", action="store_true", default=False,
@@ -1094,7 +1095,8 @@ def main(args: list[str] | None = None) -> None:
         oracle_feature_profile=opts.oracle_feature_profile,
         standalone_oracle_feature_profile=opts.standalone_oracle_feature_profile,
         oracle_universe_mode=opts.oracle_universe_mode,
-        oracle_horizon=int(opts.oracle_horizon or 20),
+        oracle_horizon=(opts.oracle_horizon if opts.oracle_horizon is not None else
+            (load_oracle_path_horizon() if opts.oracle_path_model_only else 20)),
         oracle_path_backend=opts.oracle_path_backend,
         oracle_barrier=barrier_config,
         long_feature_profile=opts.long_feature_profile,
@@ -1345,7 +1347,7 @@ def main(args: list[str] | None = None) -> None:
             from modelFactory.oracle_path.train import is_path_batch
             _is_path_oracle = is_path_batch(Path(opts.artifacts_dir), _batch_id)
             if _is_path_oracle and (opts.market_code != "US_EQ" or bool(getattr(opts, "oracle_shadow", False))):
-                raise ValueError("Oracle parcours H20 : US uniquement, pas de mode Oracle shadow dynamique.")
+                raise ValueError("Oracle parcours : US uniquement, pas de mode Oracle shadow dynamique.")
             from modelFactory.oracle_barrier.train import is_barrier_batch
             if is_barrier_batch(Path(opts.artifacts_dir), _batch_id):
                 raise ValueError("Oracle TP avant SL est un modèle de recherche distinct, non raccordé au predict/live terminal.")

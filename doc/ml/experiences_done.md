@@ -1,5 +1,121 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-30 — US : ajout du consensus au filtre options TOP20, intersection non mûre
+
+Nouvelle lecture SQL bornée : reçus consensus EODHD disponibles depuis11octobre,
+aucun consensus disponible avant les décisions septembre de l'audit options.
+Intersection récente volume30Min+OI+révisionsEPS30/EPS30 : **9/13/12cas** sur les
+27/28/29octobre, soit34couples/17sociétés, dont12retenusoptions. Hash/raw,
+normalisation, runs terminés, disponibilité conservative, fraîcheur72h, ancrage0q
+et>=3analystes vérifiés ; réserves comptables RESEARCH_ONLY maintenues.
+**Zéroissuecommune mûre H5/H10/H15/H20** : aucuneAUC ou performance combinée.
+Les premières fenêtresH5 finissent aux clôturesUS3/4/5novembre. Pas de
+rétrodatation des lookbacksJ−30 d'octobre vers septembre, pas d'assouplissement
+du minimum4couverts du filtre. Aucunfit/LLM/API/ordre/écritureSQL/changementprod.
+Troistests réussis. [Intersection et suite mesurable](options_consensus_intersection_20261030.md).
+
+## 2026-10-30 — US : filtre CALL/PUT du batch, nouvel audit exact TOP20 H5/H10/H15/H20
+
+Branchement effectif vérifié : dernier `us_pipeline` du 29 octobre, étape10 via
+`service.options_directional.pipeline`, même run options transmis à11/12 ;
+13/20couverts, BAND/COHU/UCTT/SIMO retenus. LLM désactivé. Parité des20lignes
+de sélection avec la relecture, aucun écart de motifs/features/scores.
+
+Audit SQL READ ONLY, filtre actuel réutilisé (volume30Min+OIindicative,
+rangs50/50, TOP20 initial, score>0,5, moitié supérieure, minimum4couverts).
+19séances Oracle qualifiées/380couples, 99doublementcouverts (26,05%),89scorés,
+36retenus. Résultats mûrs : septséances22–30septembre,50issues départagées,
+dont21retenus sur10sociétés. Cible : excursion dominante avant SL10 propre à
+chaquesens, parcours complet Hn ; ambiguïtés OHLC non forcées.
+
+AUCquotidiennemoyenne mélange H5/H10/H15/H20 : **0,894/0,734/0,610/0,610**.
+PartLONGdominant avant→après filtre : **68→85,71% / 68→80,95% /
+62→66,67% / 62→66,67%**. Ce ne sont pas des taux de trades gagnants.
+Sansstop,AUC **0,817/0,738/0,527/0,545** ; l'indice ne démontre pas une tendance
+haussière persistante sur20séances. Volume seul dépasse le mélange àH10/15/20.
+
+**EXPLORATOIRE / PAS DE CONFIRMATION PROSPECTIVE / PAS DE MODIFICATION.**
+Scoresseptembre recalculés enoctobre, fenêtreschevauchantes, sociétésrépétées,
+trèsfaible couverture.14retenus récents nonmûrs ; zéroissuemûre avec scoreOracle
+physiquement disponible avantdécision.21testsréussis ; aucunfit/LLM/téléchargement/
+ordre/écritureSQL. [Résultats et limites](options_top20_actualisation_20261030.md).
+
+## 2026-10-29 — US : quatre signaux faibles, TOP20/TOP50 titres, 2020–2024 terminés
+
+2023 complétée128→250séances :122dates Jul10–Dec29 scorées avec le LightGBM
+figéJan5 2023, train disponibleJul6 2022/validationJan4 2023. Cours/features
+déjà archivés ; nouvelle extension causale explicitée, pasnouveauxfoldsOOF.
+1258séances2020–24,25160candidatsTOP20/62900TOP50, rangs figés avant labels,
+aucunremplacementN+1.84featuresoriginales ; déciles terminauxH20 globaux
+sur1580–1790titres, couverture≥95%, pas des déciles recalculés dansTOP50.
+Huitvariantes achevées sanséchec/année manquante, deuxworkers simultanés max.
+
+AUCquotidiennesmoyennes TOP20/TOP50 : VOL60D10/D1 **0,4904/0,4926** ;
+E2LONGterminalH3≥3% **0,5092/0,5170**, cinqannées>0,50desdeuxcôtés ;
+E3LONGnetpositif **0,4973/0,5185**,2/5et4/5années>0,50 ;
+P-MATHclassifieurD1/reste **0,4897/0,4987**. E2/E3TOP50 indices faibles,
+pasdémonstrationéconomique ni promotion. HespacéE2TOP50 0,5196/409dates,
+E3TOP50 0,5201/57dates ; E3TOP20 0,5528/48dates n'effacepas sa série entière
+à0,4973. Six tâchesP-MATH nonopérationnelles ; Holmcommun24comparaisons,
+archivesindividuellesinchangées. Pas d'inversion du score ou choixde seuil aprèsrésultats.
+
+Campagnereconstruite, pas réplicationidentique : trainminimum252dates/val63
+figés faute504+126avant2020 ; toutesmaturités purgées, modèlesannuels passés.
+E3 corrigeATRduJ+1contenantdufutur etbougied'entrée ignorée : ATR14jusqu'àJ,
+SL2,5ATR/TPmin3ATRou7%, entréeopenJ+1,20séancesentréeincluse,sortieclose20,
+gap≤3%, coûts16pballerretour. Cibles E2/VOL/P-MATH terminales distinctes
+du signe du picH20 etde l'économieE3. Pasun backtestdeportefeuille/Winner.
+
+52tests passent ; relecture séparéeparassistant, pasrevuehumaine :20empreintes,
+41preuveschronologiques,10cas/28recalculsdecibles,40AUCannuelles reproduites
+écartmax1,67e−16,huit sceauxvalables. Sourcesrevérifiées, aucuneécritureSQL,
+API/LLM/ordre/changementmodèle/batchdeproduction. Annéesdéjàvues, universsurvivant
+etajustementsrétrospectifsréservés. Racine `artifacts/research/us_weak_topn_2020_2024/20261029-v1`,
+bilansannuels/principauxdans `summary/`.
+[Protocole, résultats annuels et limites](signaux_faibles_top20_top50_2020_2024_20261029.md).
+
+## 2026-10-28 — US : spread IEX contre SIP dans TOP10/20/50 Oracle
+
+Audit de qualité des quotes, sans entraînement/inférence/backtest économique.
+Oracle parcours `model-factory-20261016180250-3b0515`, univers tradable 1790.
+Classements préexistants avant ouverture, signaux16/23/26oct → quotes19/26/27oct,
+09h35/12h00/15h55NY. 62titres distincts,450couples,900réponsesHTTP200 archivées,
+zéroerreurtechnique ; cotations au même cutoff historique, jamais postérieures.
+Critères watcher quote≤60s,tailles>0,spread≤0,50% :TOP10 SIP60/90 IEX21/90 ;
+TOP20 SIP128/180 IEX35/180 ;TOP50 SIP316/450 IEX92/450. RefusIEX parmi acceptéesSIP :
+65,00%/72,66%/70,89%. TOP50 224refus supplémentaires :220spread,4fraîcheur ;
+zéroIEXaccepté/SIPrefusé. Sixabsences communes aux deux flux, jamais spreadzéro.
+Spreads médians propres aux flux TOP50 :IEX6,18%,SIP0,27% sur444quotesvalides ;
+sur412couples frais≤60s,excèsmédianIEX−SIP5,18pointsde%. Critères30/300s concordants.
+Réserve :23/26oct scores92,01%univers<95%contrat. Sur seul19oct qualifié97,37%,
+TOP50 SIP105/150 vsIEX36/150,69refus supplémentaires :mêmeconclusion pratique.
+Troisséances répétées/corrélées,aucunPnL ni bénéfice supposé des occasions exclues.
+12tests ;recalcul séparé mêmeassistant4500cellules,900réponses scellées,7sources
+inchangées ;pasrevuehumaineindépendante. AucunSQLécrit/LLM/ordre/changementproduction.
+**PAS_DE_REMPLACEMENT_DIRECT_SIP_PAR_IEX** pour le contrôle des entrées Oracle.
+[Protocole, résultats et limites](audit_spread_iex_sip_oracle_20261028.md).
+
+## 2026-10-27 — US : consensus dans TOP10/20/50 Oracle et complément volume/OI
+
+Audit borné hors ligne sur les mêmes cohortes scellées que l'audit options :
+16 dates de scores >=95 % de l'univers1790 ; rangs des 27982 lignes reproduits
+depuis les scores bruts. Consensus disponible dans l'intersection sur une seule
+entrée,19octobre. RévisionsEPS30 couvertes8/16/43cas enTOP10/20/50 ; EPSactuel
+vsJ−30:8/16/42 ; variationrevenus réellementobservée:9/17/43. Reçus/hash/raw,
+ancrage0q,cutoff09:25NY,comptages/valeurscohérents ; réservesEODHD conservées.
+H5SIP :AUC révisions30 noncalculableTOP10(huitSHORT),0,654TOP20(16cas),
+0,315TOP50(43). EPS30:noncalculable/0,821(16)/0,487(42) ; revenus:
+0,563(9)/0,567(17)/0,543(42). Une seule date,TOP20seulementtroisLONGsur16,
+pas validation. EODHDprimaire sansbarres19–23octdansl'archive,pasfallback.
+Mélangeunique50%options/50%révisions30 :couverturecommuneSIP0/1/5cas ;
+TOP50AUC0,750options→0,875mélange surCINQcas/UNEdate,nonconfirmatoire.
+H10/H20:zéroissuemûre ; aucunPnL ni tauxgagnant extrapolé. Dixréférencessources
+parentsontévolué:réserveexplicite,archivesintactes,ancienssceauxinchangés.
+35tests(11nouveaux) ;relecturemêmeassistant:15fichiers,7680lignes,72comptages,
+144AUCpairwise. AucunSQL/API/LLM/fit/inférence/ordre/changementproduction.
+PAS_DE_PROMOTION_CONSENSUS_OPTIONS ;petitindiceEPS30TOP20àobserverhorséchantillon.
+[Bilan, tableaux et limites](consensus_options_topn_resultats_20261027.md).
+
 ## 2026-10-26 — US : classement par périmètre, pas de relance ancienne qualifiée
 
 37familles scientifiques classées ;288rubriques du registre indexées comme

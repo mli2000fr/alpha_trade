@@ -100,6 +100,8 @@ def test_winner_zero_step12_submits_standard_path_but_not_legacy_buy_or_protecti
     assert result['submitted'] == 1
     if needs_review:
         assert result['status'] == 'FAILED'
+        assert result['error_type'] == 'RuntimeError'
+        assert 'requires broker reconciliation' in result['error_message']
     else:
         assert result['winner_plans_armed'] == 1 and result['status'] == 'COMPLETED'
     broker.submit_intent.assert_not_called()  # No duplicate through the legacy loop.

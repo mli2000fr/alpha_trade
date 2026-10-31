@@ -19,6 +19,7 @@ class WinnerPyramidingConfig:
     reinforcement_enabled: bool = False
     reinforcement_trigger_pct: float = .05
     confirmation_bars: int = 2
+    standard_entry_quote_check_enabled: bool = True
     stop_loss_pct: float = .05
     take_profit_pct: float | None = None
     trailing_stop_pct: float | None = .15
@@ -26,10 +27,17 @@ class WinnerPyramidingConfig:
     entry_valid_sessions: int = 20
     max_quote_age_seconds: int = 60
     max_bar_delay_seconds: int = 60
+    market_data_delay_seconds: int = 0
+    delayed_entry_limit_buffer_pct: float = .01
     cost_reserve_bps_per_leg: float = 25.
 
     def __post_init__(self):
-        for key in ('enabled', 'reinforcement_enabled'):
+        if (type(self.market_data_delay_seconds) is not int or self.market_data_delay_seconds not in (0,900,1200,1500,1800,2100,2400,2700,3000,3300,3600)):
+            raise ValueError('market_data_delay_seconds: 0 ou 900..3600 par pas de 300 secondes')
+        if (type(self.delayed_entry_limit_buffer_pct) not in (int,float)
+                or not math.isfinite(self.delayed_entry_limit_buffer_pct) or not 0 <= self.delayed_entry_limit_buffer_pct <= .05):
+            raise ValueError('delayed_entry_limit_buffer_pct: fraction entre 0 et 0.05')
+        for key in ('enabled', 'reinforcement_enabled', 'standard_entry_quote_check_enabled'):
             if type(getattr(self, key)) is not bool:
                 raise ValueError(f'winner_pyramiding.{key}: boolean required')
         if type(self.initial_position_fraction) not in (int, float) or self.initial_position_fraction not in (.5, 1.):
@@ -65,6 +73,16 @@ def load_winner_pyramiding_config(raw=None):
     return WinnerPyramidingConfig(**section)
 
 
+def held_market_data_required(state):
+    """Held campaigns need market signals only for trailing or reinforcement.
+
+    Broker fill/protection reconciliation and the frozen horizon remain the
+    runtime's responsibility even when no five-minute market data is needed.
+    """
+    policy = WinnerPyramidingConfig(**state['policy'])
+    return policy.trailing_stop_pct is not None or policy.reinforcement_enabled
+
+
 def aware(value):
     value = datetime.fromisoformat(value.replace('Z', '+00:00')) if isinstance(value, str) else value
     if not isinstance(value, datetime) or value.tzinfo is None:
@@ -91,9 +109,10 @@ def due_open(opened_at, policy, calendar=None):
 def initial_quantities(approved_full, price, risk_budget, policy):
     if not policy.enabled:
         return int(approved_full), int(approved_full)
-    if not all(type(v) in (int, float) and math.isfinite(float(v)) and float(v) > 0
+    if not all(not isinstance(v, bool) and math.isfinite(float(v)) and float(v) > 0
             for v in (approved_full, price, risk_budget)):
         raise ValueError('Qualified approved quantity, price and campaign risk budget required')
+    approved_full, price, risk_budget = map(float, (approved_full, price, risk_budget))
     unit = price * (policy.stop_loss_pct+2.05*policy.fee)
     full = min(math.floor(approved_full), math.floor(risk_budget/unit))
     return full, math.floor(full*policy.initial_position_fraction)
@@ -143,6 +162,11 @@ def fresh_completed_bars(bars, policy, *, now, count):
         return []
     opening, closing = bounds
     if not opening <= now < closing:
+        return []
+    # Availability clock differs from wall-clock only under an explicit frozen
+    # delayed-data contract. Orders and fills always retain real wall time.
+    now = now-timedelta(seconds=policy.market_data_delay_seconds)
+    if now < opening:
         return []
     completed = sorted((b for b in bars if aware(b['timestamp'])+timedelta(minutes=5) <= now),
         key=lambda b: aware(b['timestamp']))

@@ -19,6 +19,12 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline, 'validate_window', lambda *a, **k: None)
     monkeypatch.setattr(pipeline, 'load_options_filter_config', lambda: OptionsFilterConfig(enabled=True))
     monkeypatch.setattr('service.llm_directional.runner.assert_paper_account', lambda *a: None)
+    def resolve_account(account_id):
+        if account_id not in ('default', 'test1', 'test2', 'live-account'):
+            raise ValueError('Compte incompatible ou inconnu')
+        return SimpleNamespace(account_id=account_id, mode='live' if account_id=='live-account' else 'paper')
+    monkeypatch.setattr('service.alpaca.accounts.AccountRegistry.get',
+        lambda: SimpleNamespace(resolve=resolve_account))
     monkeypatch.setattr('common.us_signal_date.resolve_us_signal_date', lambda *a: date(2026,10,16))
     engine = SimpleNamespace(url=SimpleNamespace(database='alpha_trade'))
     monkeypatch.setattr('database.connection.get_sqlalchemy_engine', lambda: engine)
@@ -30,21 +36,22 @@ def env(monkeypatch, tmp_path):
     # Freeze the reader clock, not the qualification/hash implementation.
     real_qualified = store.qualified
     monkeypatch.setattr(store, 'qualified', lambda run_id, **kwargs: real_qualified(run_id, now=NOW, **kwargs))
-    monkeypatch.setattr(pipeline, 'qualified', store.qualified)
     calls = []
     def fake_subprocess(command, check):
         assert check is True
         calls.append(command)
         if 'risk_management' in command:
             path = command[command.index('--summary-path')+1]
-            store.write_new(__import__('pathlib').Path(path), dict(run_id='risk-exact', run_mode='paper',
+            account = command[command.index('--account')+1]
+            risk_id = 'risk-exact' if account=='default' else 'risk-'+account
+            store.write_new(__import__('pathlib').Path(path), dict(run_id=risk_id, account_id=account, run_mode='paper',
                 dry_run=False, options_filter_run_id=RUN))
     monkeypatch.setattr(pipeline.subprocess, 'run', fake_subprocess)
-    def invoke(phase, command, run_id=RUN):
+    def invoke(phase, command, run_id=RUN, account_id='default'):
         import sys
         monkeypatch.setattr(sys, 'argv', ['options', '--phase',phase,'--run-id',run_id,
             '--trade-date','2026-10-16','--batch-id','model-test','--symbol-source','universe-file:test.txt',
-            '--command-json',json.dumps(command)])
+            '--account',account_id,'--command-json',json.dumps(command)])
         pipeline.main()
     return invoke, calls, engine, report
 
@@ -125,6 +132,26 @@ def test_technical_prediction_failure_never_runs_filter(env, monkeypatch):
     monkeypatch.setattr('service.options_directional.runner.analyze',lambda **k:pytest.fail('filter called'))
     with pytest.raises(subprocess.CalledProcessError):
         invoke('predict',['python','-u','-m','modelFactory'],run_id='opt-'+'c'*32)
+
+
+def test_failed_coverage_keeps_diagnostics_without_publishing_or_reusing_old_selection(env, monkeypatch):
+    from service.options_directional.runner import OracleCoverageError
+    invoke,calls,_,_ = env
+    failed_id = 'opt-'+'e'*32
+    def fail(*args, **kwargs):
+        raise OracleCoverageError(rows=[dict(symbol='A')], symbols=['A','B'],
+            batch_id='model-test', trade_date='2026-10-16', required_ratio=.95)
+    monkeypatch.setattr('service.options_directional.runner.analyze', fail)
+    with pytest.raises(OracleCoverageError):
+        invoke('predict', ['python','-u','-m','modelFactory'], run_id=failed_id)
+    folder = store.directory(failed_id)
+    failure = json.loads((folder/'failure.json').read_text(encoding='utf-8'))
+    assert failure['status'] == 'FAILED' and not failure['selection_published']
+    assert failure['diagnostics']['missing_symbols'] == ['B']
+    assert not (folder/'report.json').exists() and not (folder/'risk.claim.json').exists()
+    with pytest.raises(ValueError, match='Dernière analyse options échouée'):
+        store.latest_matching(trade_date='2026-10-16',batch_id='model-test',account_id='default',
+            symbol_source='universe-file:test.txt',capital_preset_key='capital_2001_5000')
 
 
 def test_latest_exact_run_is_not_replaced_by_older_if_corrupted(env):

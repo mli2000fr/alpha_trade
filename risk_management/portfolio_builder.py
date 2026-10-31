@@ -729,6 +729,9 @@ class PortfolioBuilder:
                     and operational.account.source == 'broker:paper:llm'):
                 from risk_management.operational_data import validate_llm_paper_snapshot
                 validate_llm_paper_snapshot(operational, trade_date)
+            elif operational.account.source in {'broker:paper:risk','broker:live:risk'}:
+                from risk_management.operational_data import validate_current_broker_snapshot
+                validate_current_broker_snapshot(operational,trade_date)
             elif operational.account.as_of.date() != trade_date:
                 raise ValueError('Oracle operational snapshot must match decision date')
             if not np.isfinite(operational.account.equity) or operational.account.equity <= 0:
@@ -881,7 +884,9 @@ class PortfolioBuilder:
             and self._factor_covariance is not None
             and bool(self._factor_exposures)
         )
-        if use_factor_filter:
+        if not self._cfg.correlation_check_enabled:
+            retained = enriched
+        elif use_factor_filter:
             # Phase E : filtre de corrélation basé sur le modèle factoriel
             from risk_management.factor_model import (
                 FactorCovariance,
@@ -974,9 +979,11 @@ class PortfolioBuilder:
                     fc,
                     constraints={
                         "max_portfolio_beta": self._cfg.max_portfolio_beta,
+                        "beta_exposure_basis": self._cfg.beta_exposure_basis,
                         "max_size_concentration": self._cfg.max_factor_concentration_pct,
                         "max_momentum_concentration": self._cfg.max_factor_concentration_pct,
-                        "min_factor_diversification": self._cfg.min_factor_diversification,
+                        "min_factor_diversification": self._cfg.effective_min_factor_diversification,
+                        "factor_diversification_check_enabled": self._cfg.factor_diversification_check_enabled,
                     },
                 )
                 factor_check_performed = True
@@ -1498,20 +1505,30 @@ class PortfolioBuilder:
                     sign = -1.0 if e.side == "sell" else 1.0
                     sized_weights[e.symbol] = sign * e.target_notional / equity
 
-            if sized_weights:
+            factor_input_error = None
+            if self._cfg.beta_exposure_basis == 'account_equity':
+                from risk_management.factor_account import projected_factor_weights
+                try:
+                    sized_weights = projected_factor_weights(entries,equity,self.operational_snapshot)
+                except ValueError as exc:
+                    factor_input_error = 'factor_account_inputs_unqualified:'+str(exc)
+            if sized_weights or factor_input_error:
                 fc = self._factor_covariance
                 if isinstance(fc, FactorCovariance):
                     typed_exposures: dict[str, FactorExposures] = {}
                     for sym, exp in self._factor_exposures.items():
                         if isinstance(exp, FactorExposures):
                             typed_exposures[str(sym)] = exp
-                    factor_violations = check_factor_constraints_on_sized_weights(
+                    factor_violations = [factor_input_error] if factor_input_error else check_factor_constraints_on_sized_weights(
                         sized_weights,
                         typed_exposures,
                         fc,
                         max_portfolio_beta=self._cfg.max_portfolio_beta,
+                        beta_exposure_basis=self._cfg.beta_exposure_basis,
                         max_factor_concentration=self._cfg.max_factor_concentration_pct,
-                        min_factor_diversification=self._cfg.min_factor_diversification,
+                        market_factor_concentration_check_enabled=self._cfg.market_factor_concentration_check_enabled,
+                        min_factor_diversification=self._cfg.effective_min_factor_diversification,
+                        factor_diversification_check_enabled=self._cfg.factor_diversification_check_enabled,
                     )
                     if factor_violations:
                         LOGGER.warning(
@@ -1519,6 +1536,15 @@ class PortfolioBuilder:
                             len(factor_violations),
                             "; ".join(factor_violations[:10]),
                         )
+                        # A final-sized book which exceeds configured factor
+                        # limits cannot publish executable targets. Do not turn
+                        # this check into a warning-only bypass of the watcher.
+                        reason = ('FACTOR_RISK_REJECTED: '+'; '.join(factor_violations))[:255]
+                        entries = [replace(e, approved_shares=0., target_notional=0., target_weight=0.,
+                            initial_risk_dollars=0., decision=Decision.REJECTED,
+                            decision_reason=reason, decision_reason_code=DecisionReasonCode.FACTOR_CONSTRAINT_VIOLATION)
+                            if e.decision in (Decision.ACCEPTED, Decision.REDUCED) and e.approved_shares > 0 else e
+                            for e in entries]
 
         return entries
 

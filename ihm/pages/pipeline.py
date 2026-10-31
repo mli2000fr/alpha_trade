@@ -112,6 +112,8 @@ from ihm.pages._workflow import (
 from ihm.services.db import get_runtime_db_config
 from ihm.services.ml_artifacts import list_ml_artifact_symbols
 from ihm.services.pipeline_runner import (
+    DEFAULT_ML_PREDICT_SYMBOL_SOURCE,
+    DEFAULT_ML_TRAIN_SYMBOL_SOURCE,
     build_pipeline_command,
     format_command_for_display,
     resolve_step_display_name,
@@ -124,6 +126,8 @@ from ihm.services.queries import get_execution_live_guard
 UNIVERSE_FILE_SOURCES = list_universe_file_sources()
 DEFAULT_UNIVERSE_FILE_SOURCE = UNIVERSE_FILE_SOURCES[0] if UNIVERSE_FILE_SOURCES else "tradable-universe"
 ML_PREDICT_BATCH_SOURCE_SYNC_KEY = "pipeline_ml_predict_source_synced_batch_id"
+ML_PREDICT_SOURCE_DEFAULT_VERSION_KEY = "pipeline_ml_predict_source_default_v2"
+ML_TRAIN_SOURCE_DEFAULT_VERSION_KEY = "pipeline_ml_train_source_default_v2"
 ML_TRAIN_SYMBOL_SOURCE_OPTIONS = (
     "stock-bars-daily",
     "tradable-universe",
@@ -1270,6 +1274,7 @@ def _render_ml_train_scope_block(
     db_config: dict[str, str | None],
     all_runs: list[dict[str, object]],
 ) -> None:
+    _prime_ml_train_symbol_source()
     _render_ml_scope_block(
         options,
         workflow_active=workflow_active,
@@ -1288,6 +1293,65 @@ def _render_ml_train_scope_block(
     )
 
 
+def _prime_ml_train_symbol_source() -> None:
+    """Replace the former automatic training default once, preserving manual choices."""
+    key = 'pipeline_ml_train_symbol_source'
+    if not st.session_state.get(ML_TRAIN_SOURCE_DEFAULT_VERSION_KEY):
+        if st.session_state.get(key) in (None, '', 'universe-file:oracle_balanced_400_202512.txt'):
+            st.session_state[key] = DEFAULT_ML_TRAIN_SYMBOL_SOURCE
+        st.session_state[ML_TRAIN_SOURCE_DEFAULT_VERSION_KEY] = True
+    st.session_state.setdefault(key, DEFAULT_ML_TRAIN_SYMBOL_SOURCE)
+
+
+def _prime_ml_predict_symbol_source() -> None:
+    """Migrate the former automatic default once; keep subsequent manual choices."""
+    key = "pipeline_ml_predict_symbol_source"
+    if not st.session_state.get(ML_PREDICT_SOURCE_DEFAULT_VERSION_KEY):
+        if st.session_state.get(key) in (None, "", "universe-file:oracle_balanced_400_202512.txt"):
+            st.session_state[key] = DEFAULT_ML_PREDICT_SYMBOL_SOURCE
+        st.session_state[ML_PREDICT_SOURCE_DEFAULT_VERSION_KEY] = True
+    st.session_state.setdefault(key, DEFAULT_ML_PREDICT_SYMBOL_SOURCE)
+
+
+def _path_prediction_date_options(options: PipelineLaunchOptions, batch_id: str) -> PipelineLaunchOptions | None:
+    """Historical path inference has its own dates; never backdate a trained fold."""
+    from modelFactory.oracle_path.train import is_path_batch
+    root = Path(options.ml_artifacts_dir or 'artifacts/models')
+    if not batch_id:
+        from modelFactory.cli import _resolve_predict_batch_id
+        batch_id = (options.ml_predict_batch_id or options.ml_live_predict_batch_id
+                    or _resolve_predict_batch_id(root, historical=True) or '')
+    if not batch_id or not is_path_batch(root, batch_id):
+        return options
+    from modelFactory.oracle_path.predict import load_contract, first_causal_date
+    try:
+        _, protocol, _, folds = load_contract(root, batch_id)
+        minimum = first_causal_date(folds).date()
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        st.error(f'Contrat de prédiction Oracle parcours indisponible : {exc}')
+        return None
+    requested = _coerce_ui_date(options.ml_training_start_date, fallback=minimum)
+    end_default = _coerce_ui_date(options.ml_training_end_date, fallback=_trade_date_or_today(options))
+    start_key = f'pipeline_ml_path_predict_start_{batch_id}'
+    end_key = f'pipeline_ml_path_predict_end_{batch_id}'
+    st.session_state.setdefault(start_key, max(requested, minimum))
+    st.session_state.setdefault(end_key, end_default)
+    st.caption(f"Oracle parcours H{protocol['horizon']} : début minimal de prédiction compatible `{minimum}`. "
+               "Les dates ci-dessous sont indépendantes des dates du training ; les folds antérieurs "
+               "nécessaires à l'entraînement et à la validation ne permettent pas de prédire cette période.")
+    if requested < minimum:
+        st.caption(f"Le début du training `{requested}` n'est pas repris pour ce bouton : "
+                   f"le début de prédiction proposé est `{minimum}`.")
+    start = st.date_input('Début des prédictions historiques — Oracle parcours',
+        min_value=minimum, key=start_key)
+    end = st.date_input('Fin des prédictions historiques — Oracle parcours', key=end_key)
+    if not isinstance(start, date) or not isinstance(end, date) or start < minimum or end < start:
+        st.error(f'Choisir une période de prédiction commençant au plus tôt le {minimum}, avec fin >= début.')
+        return None
+    return replace(options, ml_predict_batch_id=batch_id,
+                   ml_training_start_date=start.isoformat(), ml_training_end_date=end.isoformat())
+
+
 def _render_ml_predict_scope_block(
     options: PipelineLaunchOptions,
     *,
@@ -1298,6 +1362,8 @@ def _render_ml_predict_scope_block(
 ) -> None:
     # ── Sélecteur de batch ML ──
     from ihm.services.queries import safe_query
+
+    _prime_ml_predict_symbol_source()
 
     # Tous les batchs complétés (pas de LIMIT : l'utilisateur veut pouvoir
     # rejouer un backtest avec un batch ancien, ex. B25 ou plus vieux).
@@ -1312,7 +1378,7 @@ def _render_ml_predict_scope_block(
         for _, _row in _batches_df.iterrows():
             _bid = str(_row["batch_id"])
             from modelFactory.oracle_path.train import is_path_batch
-            _path_badge = "Parcours H20" if is_path_batch(Path("artifacts/models"), _bid) else ""
+            _path_badge = f"Parcours {oracle_horizon_badge(_bid)}" if is_path_batch(Path("artifacts/models"), _bid) else ""
             from modelFactory.oracle_barrier.train import is_barrier_batch
             if is_barrier_batch(Path("artifacts/models"), _bid):
                 continue  # first-touch research must not become a terminal/live Oracle
@@ -1374,10 +1440,8 @@ def _render_ml_predict_scope_block(
             _dynamic_oracle_batch = False
     _last_synced_batch = str(st.session_state.get(ML_PREDICT_BATCH_SOURCE_SYNC_KEY, ""))
     if _selected_batch and _last_synced_batch != str(_selected_batch):
-        if _normalized_batch_source in ML_TRAIN_SYMBOL_SOURCE_OPTIONS:
-            st.session_state["pipeline_ml_predict_symbol_source"] = _normalized_batch_source
-        else:
-            st.session_state["pipeline_ml_predict_symbol_source"] = DEFAULT_UNIVERSE_FILE_SOURCE
+        # The training registry is informative, not an instruction to replace
+        # the requested prediction universe (its file may have changed since training).
         st.session_state["pipeline_ml_oracle_shadow"] = _dynamic_oracle_batch
         st.session_state[ML_PREDICT_BATCH_SOURCE_SYNC_KEY] = str(_selected_batch)
 
@@ -1411,14 +1475,15 @@ def _render_ml_predict_scope_block(
     if _selected_batch and _normalized_batch_source:
         if _normalized_batch_source in ML_TRAIN_SYMBOL_SOURCE_OPTIONS:
             st.caption(
-                "🌐 Univers d’entraînement repris par défaut : "
-                f"`{ML_TRAIN_SYMBOL_SOURCE_LABELS.get(_normalized_batch_source, _normalized_batch_source)}`."
+                "🌐 Univers enregistré à l’entraînement (informatif) : "
+                f"`{ML_TRAIN_SYMBOL_SOURCE_LABELS.get(_normalized_batch_source, _normalized_batch_source)}`. "
+                "Il ne remplace pas l’univers de prédiction sélectionné ci-dessous."
             )
         else:
             st.warning(
                 "L’univers d’entraînement enregistré pour ce batch n’est plus disponible : "
-                f"`{_batch_source}`. Le premier fichier disponible est sélectionné par défaut : "
-                f"`{ML_TRAIN_SYMBOL_SOURCE_LABELS.get(DEFAULT_UNIVERSE_FILE_SOURCE, DEFAULT_UNIVERSE_FILE_SOURCE)}`."
+                f"`{_batch_source}`. L’univers de prédiction sélectionné ci-dessous est conservé ; "
+                "sa compatibilité avec le contrat du modèle reste obligatoire."
             )
 
     _predict_workers = st.number_input(
@@ -1428,6 +1493,9 @@ def _render_ml_predict_scope_block(
         help="Nombre de dates traitées en parallèle lors du predict historique. 4 = ~4× plus rapide.",
     )
 
+    options = _path_prediction_date_options(options, str(_selected_batch or ''))
+    if options is None:
+        return
     _render_ml_scope_block(
         options,
         workflow_active=workflow_active,
@@ -1526,10 +1594,9 @@ def _load_risk_prediction_review_cached(**scope):
 def _render_options_filter_review(options: PipelineLaunchOptions, all_runs) -> None:
     import pandas as pd
     from common.us_signal_date import resolve_us_signal_date
-    from service.options_directional.store import qualified
+    from ihm.services.options_prediction_review import load_options_prediction_review
     st.markdown('#### TOP Oracle — filtre volume options + OI')
     records = [r for r in all_runs if r.get('step_key') == 'ml_predict'
-               and (r.get('account_id') or 'default') == (options.account_id or 'default')
                and not r.get('history_deleted')]
     source = max(records, key=lambda r: str(r.get('executed_at') or r.get('actual_started_at') or ''), default={})
     run_id = (source.get('run_summary') or {}).get('options_filter_run_id')
@@ -1539,15 +1606,16 @@ def _render_options_filter_review(options: PipelineLaunchOptions, all_runs) -> N
     try:
         from service.options_directional.config import load_options_filter_config
         batch = options.ml_live_predict_batch_id or options.ml_predict_batch_id or load_options_filter_config().default_oracle_batch_id
-        report = qualified(run_id, trade_date=resolve_us_signal_date(options.trade_date or None),
+        report = load_options_prediction_review(run_id, trade_date=resolve_us_signal_date(options.trade_date or None),
                            batch_id=batch, account_id=options.account_id or 'default',
                            symbol_source=options.ml_predict_symbol_source,
-                           capital_preset_key=options.capital_preset_key or 'capital_2001_5000')
-    except (ValueError, KeyError, OSError):
-        st.warning('Résultat options expiré ou incompatible avec la date/modèle/univers courant. Aucun remplacement implicite.')
+                           capital_preset_key=options.capital_preset_key or 'capital_2001_5000',shared_selection=True)
+    except (ValueError, KeyError, OSError) as exc:
+        st.warning(f'Résultat options non affichable : {exc}. Aucun ancien run substitué.')
         return
     st.caption(f"Run `{run_id}` · séance {report['trade_date']} · cutoff {report['cutoff_utc']} · "
                f"couverts {report['covered']}/{len(report['rows'])} · retenus LONG {len(report['selected'])}.")
+    st.caption(f"Sélection commune aux comptes PAPER ; risque et exécution pour `{options.account_id or 'default'}`.")
     reasons = {'MISSING_OR_STALE_OPTIONS': 'Options absentes/périmées',
                'INSUFFICIENT_COVERED_COHORT': 'Trop peu de titres couverts',
                'SCORE_NOT_ABOVE_THRESHOLD': 'Score insuffisant ou neutre',
@@ -1562,7 +1630,11 @@ def _render_options_filter_review(options: PipelineLaunchOptions, all_runs) -> N
 
 def _render_risk_prediction_review(options: PipelineLaunchOptions, all_runs) -> None:
     from common.us_signal_date import resolve_us_signal_date
-    st.markdown('#### Décisions du risque — Oracle / LLM et portefeuille cible')
+    st.markdown('#### Décisions du risque — Oracle / filtres et portefeuille cible')
+    from common.winner_pyramiding import load_winner_pyramiding_config
+    if load_winner_pyramiding_config().enabled:
+        st.caption('Winner actif : actions entières uniquement aux étapes 11 et 12 ; '
+                   'l’option de quantités fractionnaires est ignorée pendant son activation.')
     account = options.account_id or 'default'
     llm_id = options.llm_filter_run_id if options.llm_filter_enabled else None
     risk_id = None
@@ -1584,8 +1656,10 @@ def _render_risk_prediction_review(options: PipelineLaunchOptions, all_runs) -> 
     except Exception:
         st.warning('Résultats risque indisponibles ou liaison/date/compte incompatibles. Aucun autre run n’est utilisé à leur place.')
         return
+    selection_label=(f"filtre options `{review['options_filter_run_id']}`" if review.get('options_filter_run_id')
+                     else f"analyse LLM `{review['llm_run_id'] or 'sans filtre'}`")
     st.caption(f"Séance {review['trade_date']} · compte `{review['account_id']}` · risque `{review['run_id'] or 'non encore lié'}` · "
-               f"analyse LLM `{review['llm_run_id'] or 'sans filtre'}` · état {review['status']}.")
+               f"{selection_label} · état {review['status']}.")
     if review['status'] != 'COMPLETED':
         st.warning('Risque non confirmé terminé : résultats partiels ou en attente, aucune cible présentée comme publiée.')
     if not review['rows']:
@@ -1601,11 +1675,15 @@ def _render_risk_prediction_review(options: PipelineLaunchOptions, all_runs) -> 
     if review.get('separate_trend_evidence'):
         st.caption('Tendance et qualité des preuves relues dans l’analyse exacte de l’étape 10. '
                    'Une tendance estimée n’est pas une autorisation d’ordre ; les contrôles de risque restent distincts.')
-    st.caption(('Lecture seule du run exact : uniquement les titres retenus à l’étape 10, même si le risque les refuse ensuite. '
-                if review['llm_run_id'] else 'Lecture seule des décisions/cibles du run risque sans filtre LLM. ')
+    st.caption(('Lecture seule du run exact : tous les titres retenus à l’étape 10, y compris les exclusions avant sizing. '
+                if review['llm_run_id'] or review.get('options_filter_run_id') else 'Lecture seule des décisions/cibles du run risque sans filtre LLM. ')
                +
                'Cible publiée = portefeuille cible, pas un ordre exécuté ; montant et prix sont ceux du sizing, pas un prix de fill. '
-               'Score d’orientation (ou confiance historique) non calibré ; dernier prix LLM archivé, pas temps réel. '
+               +
+               ('Scores Oracle/options relatifs, pas des probabilités ; dernier cours J archivé, pas temps réel. '
+                if review.get('options_filter_run_id') else
+                'Score d’orientation (ou confiance historique) non calibré ; dernier prix LLM archivé, pas temps réel. ')
+               +
                'Nom de l’entreprise : libellé actuel de stock_metadata. '
                'Une protection absente reste vide (une sortie à durée fixe n’est pas un TP de prix). Aucun appel LLM, broker ou ordre.')
 

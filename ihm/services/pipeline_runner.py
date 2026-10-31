@@ -178,6 +178,8 @@ from ihm.services.pipeline_ml_defaults import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_ML_TRAIN_SYMBOL_SOURCE = "universe-file:univers_filtred_tradable.txt"
+DEFAULT_ML_PREDICT_SYMBOL_SOURCE = "universe-file:univers_filtred_tradable.txt"
 DEFAULT_SCREENER_CONFIG = ScreenerConfig.strict_swing_cash()
 
 
@@ -410,7 +412,7 @@ class PipelineLaunchOptions:
     ml_exclude_per_symbol_per_sector: bool = DEFAULT_ML_EXCLUDE_PER_SYMBOL_PER_SECTOR  # 2026-08-28
     ml_enable_oracle_model: bool = DEFAULT_ML_ENABLE_ORACLE_MODEL  # 2026-08-20 : Oracle Extreme (O0)
     ml_oracle_model_only: bool = DEFAULT_ML_ORACLE_MODEL_ONLY      # 2026-08-20 : Oracle ONLY
-    ml_oracle_path_model_only: bool = False  # modèle parcours H20 distinct ; défaut IHM True
+    ml_oracle_path_model_only: bool = False  # modèle parcours H10/H15/H20 distinct ; défaut IHM True
     ml_oracle_path_backend: str | None = None  # explicite IHM ; None conserve les anciens flags.
     ml_oracle_barrier_model_only: bool = False  # modèle TP avant SL, recherche
     ml_oracle_barrier_tp_pct: float | None = None  # None = config.yaml
@@ -485,10 +487,10 @@ class PipelineLaunchOptions:
     ml_mode: MLMode = DEFAULT_ML_MODE
     ml_training_start_date: str = DEFAULT_ML_TRAINING_START_DATE
     ml_training_end_date: str = DEFAULT_ML_TRAINING_END_DATE
-    ml_train_symbol_source: MLTrainSymbolSource = default_universe_file_source_or("tradable-universe")
+    ml_train_symbol_source: MLTrainSymbolSource = DEFAULT_ML_TRAIN_SYMBOL_SOURCE
     ml_train_start_symbol: str | None = None
     ml_comment: str | None = None
-    ml_predict_symbol_source: MLTrainSymbolSource = default_universe_file_source_or("tradable-universe")
+    ml_predict_symbol_source: MLTrainSymbolSource = DEFAULT_ML_PREDICT_SYMBOL_SOURCE
     ml_predict_use_historical_range: bool = False
     ml_predict_batch_id: str | None = None
     ml_live_predict_batch_id: str | None = None
@@ -1761,6 +1763,10 @@ def _build_chained_ps_commands(
 
 def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> list[str]:
     """Construit la commande subprocess correspondant à une étape."""
+    if step_key in ('risk_management', 'execution') and options.allow_fractional_shares:
+        from common.winner_pyramiding import load_winner_pyramiding_config
+        if load_winner_pyramiding_config().enabled:
+            options = replace(options, allow_fractional_shares=False)
     if step_key == 'sync_latest_quotes':
         from ihm.services.pipeline_quote_scope import resolve_quote_scope
         options = resolve_quote_scope(options)
@@ -2577,7 +2583,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         elif options.ml_oracle_path_model_only:
             if options.ml_directional_profiles_enabled:
                 raise ValueError("Choisir Oracle parcours OU le bundle Oracle terminal.")
-            command.extend(["--oracle-path-model-only", "--oracle-horizon", "20"])
+            from modelFactory.oracle_path import validate_horizon
+            command.extend(["--oracle-path-model-only", "--oracle-horizon", str(validate_horizon(options.ml_oracle_horizon))])
             if options.ml_oracle_path_backend is not None:
                 command.extend(['--oracle-path-backend',path_backend])
             if options.ml_standalone_oracle_feature_profile != "dynamic":
@@ -2783,11 +2790,17 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
         return _wrap_directional_command('predict', command, options)
 
     if step_key == "risk_management":
+        # Risk planning uses the selected broker environment even when step 12
+        # simulates the orders. Only an explicit risk dry-run uses research capital.
+        risk_mode = ('shadow' if options.risk_dry_run else
+                     'live' if options.execution_mode == 'live' else 'paper')
         command = [
             sys.executable,
             "-u",
             "-m",
             "risk_management",
+            "--run-mode",
+            risk_mode,
             "--account-equity",
             str(options.risk_account_equity),
             "--risk-per-trade-pct",
@@ -2950,9 +2963,9 @@ def _wrap_directional_command(phase: str, command: list[str], options: PipelineL
     config = load_options_filter_config()
     if not config.enabled:
         raise ValueError('Filtre options désactivé dans config.yaml')
-    if (options.execution_mode != 'paper' or (options.account_id or 'default') != 'default'
+    if (options.execution_mode != 'paper'
             or options.allow_outside_rth or options.auto_rebalance):
-        raise ValueError('Filtre options : compte principal PAPER, sans rééquilibrage automatique ni hors séance')
+        raise ValueError('Filtre options : PAPER, sans rééquilibrage automatique ni hors séance')
     if options.ml_predict_use_historical_range or options.ml_oracle_shadow:
         raise ValueError('Filtre options prospectif uniquement, pas historique/shadow')
     if options.risk_enable_kelly:
@@ -2963,6 +2976,7 @@ def _wrap_directional_command(phase: str, command: list[str], options: PipelineL
     command = pin_command_date(command, phase, day)
     return [sys.executable, '-u', '-m', 'service.options_directional.pipeline',
             '--phase', phase, '--run-id', options.options_filter_run_id or 'auto',
+            '--account',options.account_id or 'default',
             '--trade-date', day, '--batch-id', batch,
             '--symbol-source', options.ml_predict_symbol_source,
             '--capital-preset-key', options.capital_preset_key or 'capital_2001_5000',

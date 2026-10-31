@@ -1,6 +1,7 @@
 """Shared outcomes independent of the runner's __main__ module identity."""
 from dataclasses import dataclass, field
 from typing import Any
+from contextlib import contextmanager
 
 
 @dataclass
@@ -19,3 +20,14 @@ class BatchRunError(RuntimeError):
     def __init__(self, message: str, outcome: Outcome):
         super().__init__(message)
         self.outcome = outcome
+
+
+@contextmanager
+def preserve_outcome(outcome):
+    """Keep nested provider counters on a subsequent collector/SQL failure."""
+    try:
+        yield
+    except BatchRunError:
+        raise
+    except Exception as exc:
+        raise BatchRunError(str(exc),outcome) from exc

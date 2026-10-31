@@ -103,7 +103,7 @@ def test_real_tiny_training_serving_resume_and_corruption(tmp_path,monkeypatch,b
     f=trainer.restore_ranks(f,profile['generator_options'])
     monkeypatch.setattr(serving,'build_inference_features',lambda *a:f[['date','symbol',*columns]].copy())
     saved=[]
-    monkeypatch.setattr(serving,'write_path_predictions',lambda e,f,b:saved.append(f.copy()) or len(f))
+    monkeypatch.setattr(serving,'write_path_predictions',lambda e,f,b,**kw:saved.append(f.copy()) or len(f))
     out=serving.predict_oracle_path_history(SimpleNamespace(url=SimpleNamespace(database='alpha_trade')),
         'batch',fold,fold,artifacts_dir=tmp_path)
     assert out['n_rows']==20

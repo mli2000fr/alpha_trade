@@ -26,6 +26,22 @@ def require_runtime_ready():
             'aucun ordre autorisé. Conserver enabled: false.')
 
 
+def require_current_watcher_code(process):
+    """Reject a running interpreter which has not loaded the current campaign code."""
+    from pathlib import Path
+    root = Path(__file__).parent
+    files = ['winner_runtime.py', 'winner_live_risk.py', 'winner_risk.py', 'winner_broker.py',
+        'winner_market.py', 'winner_campaign_store.py', 'winner_plans.py', 'winner_standard_entry.py',
+        'protection_watcher.py']
+    dependencies = [root / name for name in files] + [
+        root.parent / 'risk_management' / name for name in
+        ('live_factor_context.py', 'factor_inputs.py', 'factor_model.py', 'config.py')]
+    dependencies.append(root.parent/'common'/'winner_pyramiding.py')
+    dependencies.append(root.parent/'common'/'winner_delayed.py')
+    if process.create_time() < max(path.stat().st_mtime for path in dependencies):
+        raise ValueError('Redémarrer le watcher : son processus est antérieur à la mise à jour Winner')
+
+
 def require_campaign_watcher(repo, config):
     """Require the actual local account-wide process, not merely an old heartbeat."""
     import socket
@@ -49,11 +65,7 @@ def require_campaign_watcher(repo, config):
     if (not script_ok or flag('--mode') != 'service' or flag('--account', 'default') != config.resolved_account_id
             or flag('--broker-mode', 'paper') != config.broker_mode or '--exec-run-id' in command):
         raise ValueError('Campaign watcher process has incompatible mode/account/scope')
-    files = ['winner_runtime.py', 'winner_live_risk.py', 'winner_risk.py', 'winner_broker.py',
-        'winner_market.py', 'winner_campaign_store.py', 'winner_plans.py', 'winner_standard_entry.py',
-        'protection_watcher.py']
-    if process.create_time() < max(expected.with_name(n).stat().st_mtime for n in files):
-        raise ValueError('Restart watcher: process predates the campaign implementation')
+    require_current_watcher_code(process)
 
 
 def plan_from_target(target, config, exec_run_id, *, now=None, calendar=None):
@@ -67,6 +79,9 @@ def plan_from_target(target, config, exec_run_id, *, now=None, calendar=None):
     symbol = str(target.symbol).strip().upper()
     if not symbol or not target.risk_run_id or not exec_run_id:
         raise ValueError('Approved target lineage missing')
+    if (not math.isfinite(float(target.target_shares)) or target.target_shares <= 0
+            or not float(target.target_shares).is_integer()):
+        raise ValueError('Winner requires a whole-share step11 target; rerun risk with Winner active')
     risk_budget = target.risk_budget_dollars
     if risk_budget is None or not math.isfinite(float(risk_budget)) or risk_budget <= 0:
         raise ValueError('Missing explicit step11 campaign risk budget')
@@ -91,12 +106,13 @@ def plan_from_target(target, config, exec_run_id, *, now=None, calendar=None):
         created_at=now.isoformat(), earliest_entry_open=aware(sessions[1].open_at_utc).isoformat(),
         entry_expires_at=expires.isoformat(), target=asdict(target), parents={}, operations=[],
         admission='STEP11_APPROVED_RECHECK_REQUIRED')
-    if policy.confirmation_bars == 0:
+    if policy.confirmation_bars == 0 or policy.market_data_delay_seconds > 0:
         state['entry_policy'] = dict(order_type=config.entry_order_type,
             limit_price_buffer_bps=config.limit_price_buffer_bps,
             max_entry_gap_pct=config.max_entry_gap_pct, submission_window=config.submission_window)
+    if policy.confirmation_bars == 0:
         from execution_engine.winner_standard_entry import standard_order_terms
-        standard_order_terms(state)  # Validate before persisting any plans.
+        standard_order_terms(state, quote_check_enabled=policy.standard_entry_quote_check_enabled)
     return state
 
 
@@ -183,6 +199,29 @@ def reserve_operation(store, state, version, *, action, quantity, approval, now)
             raise ValueError('Outside approved campaign entry window')
     if any(o['status'] in ('RESERVED', 'UNKNOWN', 'SUBMITTED') for o in state['operations']):
         raise ValueError('Unresolved operation; reconcile before retry')
+    from execution_engine.winner_standard_entry import standard_initial
+    no_quote_approval = (action == 'ENTRY' and standard_initial(state)
+        and state['policy'].get('standard_entry_quote_check_enabled', True) is False
+        and approval.get('standard_entry_quote_check_enabled') is False
+        and approval.get('realtime_sip_qualified') is False
+        and approval.get('price_basis') == 'bounded_standard_limit'
+        and bool(approval.get('reference_price_asof')))
+    if no_quote_approval:
+        from execution_engine.winner_standard_entry import standard_order_terms
+        order_type, cap = standard_order_terms(state, quote_check_enabled=False)
+        no_quote_approval = (approval.get('order_type') == order_type
+            and approval.get('order_limit_price') == cap
+            and float(approval.get('limit_price', 0)) >= cap)
+    from common.winner_delayed import delayed_entry, delayed_price_limit
+    delayed_approval=False
+    if (approval.get('delayed_sip_qualified') is True and delayed_entry(state,action)
+            and approval.get('realtime_sip_qualified') is False
+            and approval.get('price_basis')=='bounded_delayed_sip_limit'):
+        cap=delayed_price_limit(state,approval.get('delayed_evidence') or {},now)
+        delayed_approval=(approval.get('order_type')=='limit'
+            and approval.get('order_limit_price')==cap and approval.get('limit_price')==cap)
+    if delayed_entry(state,action) and not delayed_approval:
+        raise ValueError('Preuve native SIP retardée et plafond explicite requis')
     if (approval.get('producer') != 'native_intraday_risk'
             or approval.get('campaign_id') != state['campaign_id']
             or approval.get('account_id') != state['account_id']
@@ -190,7 +229,7 @@ def reserve_operation(store, state, version, *, action, quantity, approval, now)
             or approval.get('state_version') != version
             or approval.get('side') != 'buy'
             or approval.get('entry_data_qualified') is not True
-            or approval.get('realtime_sip_qualified') is not True
+            or not (approval.get('realtime_sip_qualified') is True or no_quote_approval or delayed_approval)
             or approval.get('regime_qualified') is not True
             or not approval.get('config_hash') or not approval.get('portfolio_hash')
             or approval.get('qualified') is not True

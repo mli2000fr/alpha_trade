@@ -15,7 +15,7 @@ from typing import cast
 import numpy as np
 import yaml
 
-from core.filter_profiles import STRICT_SWING_CASH_FILTERS, StrictFilterProfile
+from core.filter_profiles import STRICT_SWING_CASH_FILTERS, StrictFilterProfile, normalize_earnings_blackout_days
 
 RUN_SUMMARY_PREFIX = "::alpha_trade_run_summary::"
 PRICE_COLUMNS = ["symbol", "date", "close", "volume", "high", "low"]
@@ -412,8 +412,7 @@ class AlphaScannerConfig:
             raise ValueError("min_quote_size doit être positif ou nul lorsqu'il est renseigné.")
         if self.market_cap_max_age_days is not None and self.market_cap_max_age_days < 0:
             raise ValueError("market_cap_max_age_days doit être positif ou nul lorsqu'il est renseigné.")
-        if self.earnings_blackout_days is not None and self.earnings_blackout_days < 0:
-            raise ValueError("earnings_blackout_days doit être positif ou nul lorsqu'il est renseigné.")
+        object.__setattr__(self, "earnings_blackout_days", normalize_earnings_blackout_days(self.earnings_blackout_days))
         for field_name, field_value in (
             ("spread_data_quality_mode", self.spread_data_quality_mode),
             ("earnings_data_quality_mode", self.earnings_data_quality_mode),

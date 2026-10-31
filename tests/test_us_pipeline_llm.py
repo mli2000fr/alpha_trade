@@ -122,7 +122,8 @@ def test_scheduler_wires_llm_before_plan_and_workflow(monkeypatch, tmp_path, con
     monkeypatch.setattr(us_pipeline, 'ROOT', tmp_path)
     monkeypatch.setattr(us_pipeline, 'session_plan', lambda now: (date(2026, 10, 16), None))
     monkeypatch.setattr(us_pipeline, 'load_pipeline_policy', lambda: dict(
-        steps=[1], steps_friday=[10, 11, 12], execution_mode='paper', account_id='default'))
+        steps=[1], steps_friday=[10, 11, 12], execution_mode='paper', account_id='default',
+        run_other_paper_accounts=False))
     monkeypatch.setattr(us_pipeline, 'load_filter_config', lambda: config)
     monkeypatch.setattr('service.llm_directional.config.load_filter_config', lambda: config)
     monkeypatch.setattr('common.us_signal_date.resolve_us_signal_date', lambda *a: date(2026, 10, 16))

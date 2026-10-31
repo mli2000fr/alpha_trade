@@ -224,6 +224,8 @@ class ProtectionTransitionWatcher:
             account_id=account_id, exec_run_id=exec_run_id, limit=limit)
 
         for item in items:
+            if (item.account_id, item.broker_mode, str(item.symbol).upper()) in managed_symbols:
+                continue  # Winner owns its SL/TP; never promote it under a legacy trailing policy.
             run_metrics = metrics_by_run[item.source_exec_run_id]
             run_metrics["source_exec_run_id"] = item.source_exec_run_id
             run_metrics["trade_date"] = item.trade_date.isoformat()
@@ -239,6 +241,10 @@ class ProtectionTransitionWatcher:
         # appeler `_submit_children`). On arme les enfants manquants ici.
         # ------------------------------------------------------------------
         for row in unprotected_rows:
+            key = (str(row.get('account_id') or account_id or 'default'),
+                   str(row.get('broker_mode') or 'paper'), str(row.get('symbol') or '').upper())
+            if key in managed_symbols:
+                continue  # Missing Winner protections must retain the frozen campaign terms.
             source_exec_run_id = str(row.get("exec_run_id") or "")
             run_metrics = metrics_by_run[source_exec_run_id]
             run_metrics.setdefault("source_exec_run_id", source_exec_run_id)
@@ -2149,7 +2155,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--trailing-activation-profit-pct", type=float, default=0.03)
     parser.add_argument("--service-interval-seconds", type=float, default=30.0)
     parser.add_argument("--idle-interval-seconds", type=float, default=120.0)
-    parser.add_argument("--heartbeat-interval-seconds", type=float, default=300.0)
+    parser.add_argument("--heartbeat-interval-seconds", type=float, default=60.0)
     parser.add_argument("--max-iterations", type=int, default=None)
     parser.add_argument("--stop-when-idle", action="store_true")
     parser.add_argument("--max-consecutive-failures", type=int, default=3)
@@ -2184,7 +2190,8 @@ def main(argv: list[str] | None = None) -> None:
         config = config_factory(broker_mode, account_id)
         from execution_engine.broker_router import BrokerRouter
         BrokerRouter.validate(config)
-        client = AlpacaTradingClient(broker_mode=broker_mode, account_id=account_id)
+        from common.verified_http import verified_session
+        client = AlpacaTradingClient(broker_mode=broker_mode, account_id=account_id, session=verified_session())
         return BrokerRouter(us_factory=lambda cfg: BrokerAdapter(client, cfg)).resolve(config)
 
     repo = ExecutionRepository()

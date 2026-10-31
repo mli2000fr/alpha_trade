@@ -1,5 +1,10 @@
 # Consensus FR — EODHD, snapshots prospectifs de recherche
 
+> **28 octobre 2026 : [stockage SQL principal](stockage_sql_principal_20261028.md).**
+> Les réponses et données normalisées sont en SQL, ainsi que le budget journalier,
+> le checkpoint et le bilan. Aucun fichier de collecte n'est créé ou relu par le batch.
+> Le dry-run effectue des lectures SQL de contrôle mais aucun appel API ni écriture.
+
 État vérifié le **15 octobre 2026**. Le batch `fr_consensus_snapshot` conserve
 son nom et son launcher FR mais **remplace Yahoo par EODHD**. Aucun fallback
 Yahoo ou vers une cotation US. L'ancien pilote Yahoo reste une preuve historique,
@@ -126,7 +131,7 @@ le runner, le verrou et les rapports de la planification.
 python -u -m service.fr.operational_batch_15a --batch fr_consensus_snapshot --dry-run
 ```
 
-Le dry-run contrôle le périmètre sans API, SQL ni fichier métier. Smoke réel
+Le dry-run du runner contrôle le périmètre par lectures SQL, sans API ni écriture métier. Smoke réel
 explicite limité à cinq titres maximum, sans activer la planification :
 
 ```powershell

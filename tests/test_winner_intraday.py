@@ -68,6 +68,37 @@ def test_actual_runtime_risk_cash_and_costs_are_connected():
     assert not result.drawdown_breaker_df.empty
 
 
+def test_missing_archived_factors_blocks_entries_and_marks_incomplete():
+    cfg, args, _ = fixture()
+    cfg.risk_config = replace(cfg.risk_config, enable_factor_model=True)
+    def unavailable(*a):
+        raise ValueError('No causal factor observations')
+    result = BacktestEngine(cfg).run(**args, winner_factor_source=unavailable)
+    meta = result.tracker_snapshot['winner_replay']
+    assert meta['status'] == 'INCOMPLETE_COVERAGE'
+    assert any('FACTOR_CONTEXT_UNAVAILABLE' in str(gap) for gap in meta['coverage_gaps'])
+    assert not result.trade_events_df.event.eq('BUY_FILL').any()
+
+
+def test_replay_archived_context_reaches_real_factor_guard(monkeypatch):
+    from types import SimpleNamespace
+    cfg, args, _ = fixture()
+    cfg.risk_config = replace(cfg.risk_config, enable_factor_model=True)
+    checks=[]
+    def context(day, required, now, risk):
+        assert required=={'AAA'}
+        return dict(qualified=True, asof_date=day, captured_at=now, observed_at=now,
+            exposures={'AAA': SimpleNamespace(market_beta=10.)},
+            covariance=SimpleNamespace(estimation_date=day))
+    def reject(context, weights, risk, **kwargs):
+        checks.append((context,weights,kwargs))
+        return ['beta cap']
+    monkeypatch.setattr('risk_management.live_factor_context.factor_violations',reject)
+    result=BacktestEngine(cfg).run(**args,winner_factor_source=context)
+    assert checks and checks[0][2]['candidate']=='AAA'
+    assert not result.trade_events_df.event.eq('BUY_FILL').any()
+
+
 def test_zero_market_entry_fills_first_open_without_confirmation_and_still_exits_open21():
     cfg, args, _ = fixture(last=date(2026, 11, 18), confirmation_bars=0)
     result = BacktestEngine(cfg).run(**args)
@@ -197,7 +228,8 @@ def test_score_ranking_is_not_realized_return_and_noncausal_model_is_refused():
         fold_start='2026-01-01', lineage_fold_start='2026-01-01', model_available_date='2025-12-31',
         target_name='oracle_path_extreme20', target_horizon=20, model_sha256='model',
         feature_profile_sha256='profile') for s, p in [('ZZZ', .8), ('AAA', .8), ('TOP', .9)]])
-    kwargs = dict(profile_hash='profile', folds={'2026-01-01': {'model_sha256': 'model'}},
+    kwargs = dict(profile_hash='profile', folds={'2026-01-01': {'model_sha256': 'model',
+        'metrics': dict(train_available_max='2025-12-30',val_available_max='2025-12-31')}},
         expected_days=[date(2026, 10, 16)], top_n=2)
     assert validate_scores(rows, **kwargs).symbol.tolist() == ['TOP', 'AAA']
     rows.loc[0, 'model_available_date'] = '2026-10-16'
@@ -252,6 +284,7 @@ def test_cli_complete_readonly_run_exports_reports_without_api_or_prediction(tmp
         daily[field] = daily.close+delta
     daily['date'] = daily.date.dt.date
     daily['volume'], daily['is_filled'], daily['data_adjustment'] = 1000000, 0, 'split'
+    daily['data_source'] = 'alpaca_sip'
     daily.to_sql('stock_bars_daily', engine, index=False)
     frame = pd.concat(raw.values(), ignore_index=True).rename(columns={'timestamp': 'bar_timestamp'})
     frame['trade_date'] = frame.bar_timestamp.dt.date
@@ -279,7 +312,8 @@ def test_cli_complete_readonly_run_exports_reports_without_api_or_prediction(tmp
     lineage.to_sql('oracle_path_prediction_lineage', engine, index=False)
     monkeypatch.setattr('database.connection.get_sqlalchemy_engine', lambda **kw: engine)
     monkeypatch.setattr('modelFactory.oracle_path.predict.load_contract',
-        lambda *a: (root, {}, {}, {'2026-01-01': {'model_sha256': 'm'*64}}))
+        lambda *a: (root, {'horizon':20}, {}, {'2026-01-01': {'model_sha256': 'm'*64,
+            'metrics':dict(train_available_max='2025-12-30',val_available_max='2025-12-31')}}))
     monkeypatch.setattr('common.universe_files.load_universe_file_symbols', lambda *a: ['AAA'])
     monkeypatch.setattr('risk_management.config.load_risk_config', lambda **kw: cfg.risk_config)
     def select_only(conn, cursor, sql, parameters, *unused):
@@ -297,6 +331,9 @@ def test_cli_complete_readonly_run_exports_reports_without_api_or_prediction(tmp
     report = run(options)
     assert report['status'] == 'COMPLETED_EXPLORATORY' and report['costs'] > 0
     assert (tmp_path/'replay'/'annual-summary.csv').is_file()
+    assert (tmp_path/'replay'/'equity_curve.csv').is_file()
+    assert report['summary']['final_value'] == report['final_equity']
+    assert report['run_metadata']['engine'] == 'winner_campaign_replay'
     assert json.loads((tmp_path/'replay'/'progress.json').read_text())['completed'] == 2
     with pytest.raises(FileExistsError):
         run(options)  # Never overwrite a completed run.

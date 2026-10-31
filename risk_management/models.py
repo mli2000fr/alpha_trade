@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 
 from risk_management.enums import Decision, DecisionReasonCode, SizingMethod
 
@@ -292,6 +292,7 @@ class AccountRiskSnapshot:
     daily_unrealized_pnl: float | None = None
     daily_total_pnl: float | None = None
     source: str | None = None
+    captured_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -17,6 +17,7 @@ class RiskConfig:
     account_equity: float = 100_000.0
     risk_per_trade_pct: float = 0.01
     atr_window: int = 20
+    quote_spread_check_enabled: bool = False  # Step 11 only; execution checks are separate.
 
     # ── V1 Multi-Horizon Risk (2026-08-09) ──
     # Stop = ATR × atr_stop_multiple[H]
@@ -26,7 +27,7 @@ class RiskConfig:
     # doivent être utilisées dans tout le code.
     atr_stop_multiple: float = 2.0  # fallback scalaire (rétrocompatibilité)
     best_horizon: int = 10  # horizon cible pour sizing/TP ; 10 = défaut conservateur
-    fixed_stop_pct: float | None = None  # Only injected from a frozen GPT PAPER run.
+    fixed_stop_pct: float | None = None  # Winner actif ou protections LLM figées.
     disable_price_take_profit: bool = False
 
     # Multiples ATR par horizon (stop loss)
@@ -41,6 +42,7 @@ class RiskConfig:
     max_short_positions: int = 2
     max_position_weight: float = 0.10
     max_sector_weight: float = 0.30
+    sector_weight_limit_enabled: bool = True  # Compatibility for older snapshots; operational switch in YAML.
     max_gross_exposure: float = 1.0
     # CP-V2 — budgets par side appliqués pendant capital_preservation (via apply_snapshot)
     max_long_exposure: float | None = None
@@ -173,6 +175,7 @@ class RiskConfig:
 
     # --- Correlation filter V2 ---
     correlation_threshold: float = 0.80
+    correlation_check_enabled: bool = True  # Legacy snapshots keep their guard; YAML controls new runs.
     correlation_lookback_days: int = 60
     correlation_min_overlap: int = 40
 
@@ -184,12 +187,22 @@ class RiskConfig:
     use_factor_correlation_filter: bool = False
     # Seuil de corrélation implicite max pour le filtre factoriel (Phase E).
     factor_correlation_threshold: float = 0.70
-    # Beta moyen pondéré maximum du portefeuille (Phase D).
+    # Market-beta budget, relative to account equity or legacy invested capital.
     max_portfolio_beta: float = 1.2
+    # Preserve old serialized/research defaults; production YAML explicitly
+    # selects account_equity without implicitly rewriting historical replays.
+    beta_exposure_basis: str = 'invested_capital'
     # Part maximale du risque total venant d'un seul facteur (Phase D).
     max_factor_concentration_pct: float = 0.60
+    market_factor_concentration_check_enabled: bool = True
     # Nombre minimum de facteurs avec contribution > 10% (Phase D).
     min_factor_diversification: int = 2
+    # Historic snapshots retain the gate; production YAML can disable only it.
+    factor_diversification_check_enabled: bool = True
+    # Optional prospective rule, evaluated against current account equity.
+    # None preserves serialized historical configurations without this rule.
+    factor_diversification_small_account_threshold: float | None = None
+    factor_diversification_small_account_min: int = 1
     # Demi-vie EWMA pour l'estimation de la covariance factorielle (Phase B).
     factor_ewma_half_life: int = 60
     # Fenêtre de lookback pour l'estimation factorielle en jours (Phase B).
@@ -222,6 +235,7 @@ class RiskConfig:
     effective_max_positions_override: int | None = None
     # Maximum 2 tickers par secteur (en complément de ``max_sector_weight``).
     max_tickers_per_sector: int | None = None
+    sector_ticker_limit_enabled: bool = True  # Legacy snapshots retain their count guard; YAML may opt out.
     allow_fractional_shares: bool = False
     # ── Chantier research smart_sector_cap (2026-08-27) ────────────────
     # Variantes structurelles du cap sectoriel, derrière un mode (défaut
@@ -265,6 +279,8 @@ class RiskConfig:
     max_long_short_correlation: float | None = None
 
     def __post_init__(self) -> None:
+        if type(self.quote_spread_check_enabled) is not bool:
+            raise ValueError('quote_spread_check_enabled doit être booléen')
         if self.account_equity <= 0:
             raise ValueError("account_equity doit être > 0.")
         if not 0 < self.risk_per_trade_pct < 1:
@@ -304,6 +320,8 @@ class RiskConfig:
         # --- V2 validations ---
         if not (0 < self.correlation_threshold <= 1):
             raise ValueError("correlation_threshold doit être dans ]0, 1].")
+        if type(self.correlation_check_enabled) is not bool:
+            raise ValueError('correlation_check_enabled doit être un booléen.')
         if self.correlation_lookback_days < self.correlation_min_overlap:
             raise ValueError("correlation_lookback_days doit être >= correlation_min_overlap.")
         if self.correlation_min_overlap < 1:
@@ -337,15 +355,33 @@ class RiskConfig:
             raise ValueError("effective_max_positions_override doit être >= 0 quand renseigné.")
         if self.max_tickers_per_sector is not None and self.max_tickers_per_sector < 1:
             raise ValueError("max_tickers_per_sector doit être >= 1 quand renseigné.")
+        if type(self.sector_ticker_limit_enabled) is not bool:
+            raise ValueError('sector_ticker_limit_enabled doit être un booléen.')
+        if type(self.sector_weight_limit_enabled) is not bool:
+            raise ValueError('sector_weight_limit_enabled doit être un booléen.')
+        if type(self.market_factor_concentration_check_enabled) is not bool:
+            raise ValueError('market_factor_concentration_check_enabled doit être un booléen.')
         # --- Factor model validations (Priorité 3) ---
         if self.factor_correlation_threshold <= 0 or self.factor_correlation_threshold > 1:
             raise ValueError("factor_correlation_threshold doit être dans ]0, 1].")
-        if self.max_portfolio_beta <= 0:
+        import math
+        if not math.isfinite(self.max_portfolio_beta) or self.max_portfolio_beta <= 0:
             raise ValueError("max_portfolio_beta doit être > 0.")
+        if self.beta_exposure_basis not in ('account_equity', 'invested_capital'):
+            raise ValueError('beta_exposure_basis doit être account_equity ou invested_capital.')
         if not (0 < self.max_factor_concentration_pct <= 1):
             raise ValueError("max_factor_concentration_pct doit être dans ]0, 1].")
-        if self.min_factor_diversification < 1:
+        if type(self.min_factor_diversification) is not int or self.min_factor_diversification < 1:
             raise ValueError("min_factor_diversification doit être >= 1.")
+        if type(self.factor_diversification_check_enabled) is not bool:
+            raise ValueError('factor_diversification_check_enabled doit être un booléen.')
+        if (type(self.factor_diversification_small_account_min) is not int
+                or self.factor_diversification_small_account_min < 1):
+            raise ValueError('factor_diversification_small_account_min doit être un entier >= 1.')
+        threshold = self.factor_diversification_small_account_threshold
+        if threshold is not None and (isinstance(threshold, bool)
+                or not isinstance(threshold, (int,float)) or not math.isfinite(threshold) or threshold <= 0):
+            raise ValueError('factor_diversification_small_account_threshold doit être positif fini ou null.')
         if self.factor_ewma_half_life < 2:
             raise ValueError("factor_ewma_half_life doit être >= 2.")
         if self.factor_lookback_days < 20:
@@ -415,6 +451,18 @@ class RiskConfig:
         payload = self.to_dict(exclude_defaults=False)
         canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+    @property
+    def effective_min_factor_diversification(self) -> int:
+        """Strictly below the configured equity threshold; no buying-power basis."""
+        threshold = self.factor_diversification_small_account_threshold
+        if threshold is not None:
+            import math
+            if not math.isfinite(self.account_equity) or self.account_equity <= 0:
+                raise ValueError('Capital du compte non qualifié pour la diversification factorielle')
+            if self.account_equity < threshold:
+                return self.factor_diversification_small_account_min
+        return self.min_factor_diversification
 
     def to_dict(self, *, exclude_defaults: bool = True) -> dict[str, object]:
         """Sérialise la config en dictionnaire.
@@ -721,6 +769,23 @@ def load_risk_config(
         equity=equity,
         **overrides,
     )
+
+    # Winner's broker protections and MOO exits require whole shares. Apply
+    # this before sizing, even if a preset or CLI requested fractions.
+    from common.winner_pyramiding import load_winner_pyramiding_config
+    winner_policy = load_winner_pyramiding_config(full_cfg)
+    if winner_policy.enabled:
+        if config.allow_fractional_shares:
+            _logger.info('Winner actif : quantités entières imposées avant le sizing ; option fractionnaire ignorée.')
+        config = config.with_overrides(allow_fractional_shares=False,
+            fixed_stop_pct=winner_policy.stop_loss_pct, disable_price_take_profit=True)
+        _logger.info('Winner actif : sizing et stop initial alignés sur SL fixe %.2f%% ; ATR non utilisé pour la distance du stop.',
+                     100*winner_policy.stop_loss_pct)
+
+    _logger.info('Diversification factorielle : contrôle_actif=%s capital=%.2f minimum_effectif=%d '
+                 'minimum_normal=%d seuil_petit_compte=%s', config.factor_diversification_check_enabled, config.account_equity,
+                 config.effective_min_factor_diversification, config.min_factor_diversification,
+                 config.factor_diversification_small_account_threshold)
 
     # 3. Logguer le fingerprint pour audit
     _logger.info(

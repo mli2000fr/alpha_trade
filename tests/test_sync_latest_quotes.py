@@ -11,6 +11,7 @@ from datetime import date, datetime, timezone
 
 import pytest
 
+
 from dataIntegrityEngine import sync_latest_quotes
 from dataIntegrityEngine.sync_latest_quotes import (
     _fetch_near_close_quote_for_session,
@@ -19,6 +20,13 @@ from dataIntegrityEngine.sync_latest_quotes import (
     _parse_alpaca_timestamp,
     estimate_sync_latest_quotes_cost,
 )
+
+
+@pytest.fixture(autouse=True)
+def isolated_http_session(monkeypatch):
+    # These tests mock provider calls; never initialize a real TLS/proxy session.
+    from unittest.mock import MagicMock
+    monkeypatch.setattr(sync_latest_quotes, 'verified_session', MagicMock)
 
 
 @pytest.fixture(autouse=True)

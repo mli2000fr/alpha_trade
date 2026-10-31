@@ -1,9 +1,11 @@
-"""Publish archived daily EODHD versions to FR research staging only.
+"""Publish daily EODHD versions from primary SQL (or offline archives) to FR staging.
 
 No network or broker. Transactions commit one payload at a time. Existing
 versions/timestamps are never replaced, and raw observations are not PIT releases.
 """
 from __future__ import annotations
+
+from service.fr.collection_storage import (active, read_bytes, read_text, exists, paths, write_bytes, identity_rows, take_lock, release_lock)
 
 import argparse
 import hashlib
@@ -43,9 +45,9 @@ def prepare(root, symbols, start, end, *, windows=None):
     first = {}; errors = []; empty = 0
     for symbol in sorted(symbols):
         key = hashlib.sha256(symbol.encode()).hexdigest()
-        for observation in sorted((root/'observations'/key).glob('*.json')):
+        for observation in sorted(paths(root/'observations'/key)):
             try:
-                meta = json.loads(observation.read_text(encoding='utf-8'))
+                meta = json.loads(read_text(observation,encoding='utf-8'))
                 if meta['symbol'] != symbol:
                     raise ValueError('Observation identity mismatch')
                 window = [date.fromisoformat(x) for x in meta['window']]
@@ -72,7 +74,7 @@ def prepare(root, symbols, start, end, *, windows=None):
     for digest, meta in sorted(first.items(), key=lambda pair:(pair[1]['available'],pair[0])):
         try:
             raw = root/'raw'/f'{digest}.json'
-            content = raw.read_bytes()
+            content = read_bytes(raw)
             if hashlib.sha256(content).hexdigest() != digest:
                 raise ValueError('Raw hash mismatch')
             payload = json.loads(content)
@@ -160,12 +162,10 @@ def run(*, start, end, write=False, root=None, identities=None, output=None, sel
         raise ValueError('Daily publication source outside FR artifacts')
     if output is not None:
         output = output.resolve()
-        if not output.is_relative_to((ROOT/'artifacts/fr').resolve()) or output.exists():
+        if not output.is_relative_to((ROOT/'artifacts/fr').resolve()) or exists(output):
             raise ValueError('New FR report path required')
-    root.mkdir(parents=True,exist_ok=True)
-    lock=root/'.publish.lock'
-    fd=os.open(lock,os.O_CREAT|os.O_EXCL|os.O_WRONLY)
-    with os.fdopen(fd,'w') as stream: stream.write(str(os.getpid()))
+    root.mkdir(parents=True,exist_ok=True) if not active() else None
+    lock=take_lock(root/'.publish.lock')
     engine=None; run_id='fr-daily-staging-'+uuid.uuid4().hex
     result={'market_code':'FR_EQ','database':'alpha_trade_fr','sql_writes':write,
             'canonical_writes':False,'serving_enabled':False,'run_id':run_id,
@@ -205,7 +205,7 @@ def run(*, start, end, write=False, root=None, identities=None, output=None, sel
         engine=get_market_engine('FR_EQ',database_alias='fr_primary')
         now=datetime.now(UTC).replace(tzinfo=None)
         config_hash=hashlib.sha256(json.dumps({'classifier':CLASSIFIER,'window':result['window'],'symbols':symbols,
-                     'universe_sha256':hashlib.sha256(identities.read_bytes()).hexdigest(),
+                     'universe_sha256':hashlib.sha256(read_bytes(identities)).hexdigest(),
                      'provider_symbol_migrations':symbol_migrations,
                      'excluded_symbols':excluded_symbols},sort_keys=True).encode()).hexdigest()
         with engine.begin() as conn:
@@ -254,7 +254,7 @@ def run(*, start, end, write=False, root=None, identities=None, output=None, sel
         raise RuntimeError('FR staging publication failed: '+type(exc).__name__) from None
     finally:
         if engine: engine.dispose()
-        lock.unlink(missing_ok=True)
+        release_lock(lock)
         if output: atomic(output,result)
 
 

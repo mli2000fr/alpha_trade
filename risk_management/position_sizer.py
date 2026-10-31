@@ -36,7 +36,7 @@ class PositionSizer:
             return SizingResult(symbol=symbol, proposed_shares=0, method=SizingMethod.REJECTED_INVALID_PRICE)
 
         # --- ATR-based sizing strict ---
-        if price_info.atr_20 is None or price_info.atr_20 <= 0:
+        if self._cfg.fixed_stop_pct is None and (price_info.atr_20 is None or price_info.atr_20 <= 0):
             LOGGER.info("ATR indisponible pour %s — rejet explicite.", symbol)
             return SizingResult(symbol=symbol, proposed_shares=0, method=SizingMethod.REJECTED_ATR_MISSING)
 

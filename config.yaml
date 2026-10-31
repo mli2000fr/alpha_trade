@@ -19,18 +19,25 @@ database:
 # SL7 / trailing20 / H20 / sans TP
 # +19,40 % en 2025 et +32,80 % en 2026. Pire DD annuel de 24,13 %. Candidat intéressant pour examiner l'effet de laisser courir les gains.
 winner_pyramiding:
+  # Actif : actions entières imposées au risque (11) et à l'exécution (12), même si l'option fractionnaire est cochée.
   enabled: true
   initial_position_fraction: 1.0  # 0.5 = demi-position ; 1.0 = complète.
   reinforcement_enabled: false  # Un seul ajout gagnant, jamais de moyenne à la baisse.
   reinforcement_trigger_pct: 0.05
-  confirmation_bars: 0  # 0 = ordre standard DAY sans confirmation ; 1–12 = clôtures 5m de cassure.
+  confirmation_bars: 2  # Deux clôtures 5m de confirmation après cassure ; 0 = entrée standard sans confirmation.
+  # Entrée standard uniquement : false = ordre limite DAY, sans contrôle bid/ask temps réel.
+  # Plafond issu du gap maximal figé (sinon buffer limite), sizing au prix maximal.
+  # Confirmation 5m, renforcement, SL/TP/trailing et verrous restent indépendants.
+  standard_entry_quote_check_enabled: false
   stop_loss_pct: 0.05
-  take_profit_pct: 0.18  # null = pas de TP en prix.
-  trailing_stop_pct: 0.1  # Ne peut jamais desserrer le stop initial.
-  horizon_sessions: 20  # Entrée incluse ; sortie à l'ouverture de la 21e séance.
+  take_profit_pct: null  # Aucun TP en prix.
+  trailing_stop_pct: null # Aucun trailing ; SL et sortie temporelle conservés.
+  horizon_sessions: 10  # Entrée incluse ; sortie à l'ouverture suivante après cet horizon (ici 11e séance).
   entry_valid_sessions: 20  # Attente maximale après le signal, distincte de la détention.
   max_quote_age_seconds: 60
   max_bar_delay_seconds: 60
+  market_data_delay_seconds: 930  # Confirmations SIP disponibles avec 15 min de retard ; jamais de fill rétroactif.
+  delayed_entry_limit_buffer_pct: 0.01  # Ordre IOC plafonné à +1% du dernier close retardé ; pas un cours temps réel.
   cost_reserve_bps_per_leg: 25  # Réserve de sizing, pas le tarif comptable réel.
 
 intraday_backfill:
@@ -39,10 +46,11 @@ intraday_backfill:
   account_id: default  # Clés du compte principal via le registre Alpaca existant.
 
 oracle_path:
+  horizon: 10  # Défaut IHM/entraînement : 10, 15 ou 20 séances ; Predict suit le modèle choisi.
   # Entraînement : lightgbm | catboost | auto (comparaison sur validation).
   # Défaut IHM seulement ; un batch déjà entraîné conserve son contrat archivé.
   training_backend: auto
-  # Oracle unique : TOP20 % des amplitudes maximales durant J+1..J+20, sans direction.
+  # Oracle unique : TOP20 % des amplitudes maximales durant J+1..J+H, sans direction.
   # Politique explicite sans filtre directionnel : long_only | abstain.
   # LONG-only est une stratégie, pas une probabilité de hausse. LLM reste optionnel/PAPER.
   direction_policy: long_only
@@ -69,6 +77,7 @@ us_pipeline:
   # Aucune insertion automatique des étapes omises ; leurs prérequis doivent exister.
   execution_mode: paper  # Aucun ordre sans étape 12 sélectionnée.
   account_id: default    # 11/12 en PAPER et 13/14 (même en simulation) exigent un compte paper.
+  run_other_paper_accounts: true  # Après succès du compte principal : 11 puis 12 sur chaque autre compte PAPER, sans refaire 10.
   steps: [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12]  # Séances US lundi–jeudi.
   steps_friday: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]  # Séance US vendredi, liste figée même après minuit.
 
@@ -84,10 +93,11 @@ sentiment_news_ingestion:
 
 options_directional_filter:
   enabled: true  # Filtre expérimental options après Oracle ; IHM et us_pipeline, PAPER uniquement.
-  oracle_top_n: 50  # Nombre de titres, pas 20 % ; TOP fixé avant disponibilité des options.
+  # Sélection commune aux comptes PAPER ; risque/exécution/claims séparés par compte.
+  oracle_top_n: 20  # Nombre de titres, pas 20 % ; TOP fixé avant disponibilité des options.
   min_combined_score: 0.5  # Retenir LONG si score strictement supérieur ; ce n'est pas une probabilité.
   min_covered: 4  # Moins de 4 titres avec volume ET OI frais : aucun retenu, sans fallback.
-  min_oracle_coverage_ratio: 0.95
+  min_oracle_coverage_ratio: 0.90
   max_age_hours: 72  # Fenêtre clôture J -> ouverture J+1 toujours obligatoire, week-end inclus.
   default_oracle_batch_id: model-factory-20261016180250-3b0515
 
@@ -276,7 +286,7 @@ leverage:
 market_regimes:
   enabled: true                             # bascule globale (off par défaut)
   cache_ttl_seconds: 300
-  enforce_min_notional: 155                  # cf. plan §C16, compatible Alpaca
+  enforce_min_notional: 70                  # cf. plan §C16, compatible Alpaca
   allow_neutral_fallback_on_missing_macro_data: true
   macro_pit_mode_backtest: asof_inclusive    # asof_inclusive | j_minus_1_strict
   # Source des donnees macro (VIX, 10Y) : `stooq` (gratuit, sans cle),
@@ -383,7 +393,7 @@ market_regimes:
 
   sector_limits:
     enabled: true
-    max_tickers_per_sector: 2
+    max_tickers_per_sector: 4
 
   earnings_shield:
     enabled: false
@@ -449,6 +459,19 @@ selector:
 # (TrailingStopConfig) via ``service.market.parse_trailing_stop``.
 # ---------------------------------------------------------------------------
 risk_management:
+  # false : désactive seulement le nombre maximal de titres par secteur.
+  # Cet interrupteur ne modifie pas les poids sectoriels ni les corrélations.
+  sector_ticker_limit_enabled: false
+  # false : pas de plafond de poids/exposition par secteur.
+  sector_weight_limit_enabled: false
+  # false : pas de plafond de contribution du facteur marché au risque.
+  # Le plafond bêta et les concentrations size/momentum restent actifs.
+  market_factor_concentration_check_enabled: false
+  # false : pas de veto de corrélation Pearson, factorielle ou intra-sectorielle.
+  correlation_check_enabled: false
+  # Étape 11 uniquement : false = pas d'appel aux dernières quotes SIP ni de veto bid/ask.
+  # ADV, participation, slippage estimé, borrow et contrôles d'exécution restent distincts.
+  quote_spread_check_enabled: false
   empirical_calibration:
     # Politique de fallback live pour `weights_calibration_runs`.
     # Chaque niveau tente de résoudre un segment éligible (`eligible_for_live=1`).
@@ -548,9 +571,14 @@ risk_management:
   enable_factor_model: true
   use_factor_correlation_filter: true    # remplace Pearson par la corrélation implicite
   factor_correlation_threshold: 0.70     # seuil de corrélation implicite max
-  max_portfolio_beta: 1.2                # beta moyen pondéré maximum du book
+  max_portfolio_beta: 3.5                # plafond de l'exposition bêta selon la base ci-dessous
+  beta_exposure_basis: account_equity   # somme |notionnel × bêta| / equity ; liquidités et levier pris en compte
+                                        # invested_capital = ancien bêta moyen du seul capital investi
   max_factor_concentration_pct: 0.60     # max 60% du risque venant d'un seul facteur
   min_factor_diversification: 2          # au moins 2 facteurs avec contribution > 10%
+  factor_diversification_check_enabled: false  # Minimum factoriel seul ; bêta/concentration restent contrôlés.
+  factor_diversification_small_account_threshold: 100000.0  # equity réelle strictement < seuil ; null désactive la règle
+  factor_diversification_small_account_min: 1  # minimum sous le seuil ; à partir de 100 000 $, minimum normal ci-dessus
   factor_ewma_half_life: 60              # demi-vie EWMA en jours
   factor_lookback_days: 252              # fenêtre d'estimation en jours
 
@@ -587,11 +615,14 @@ market_data:
   alpaca_backfill_feed: sip  # SIP pour les téléchargements Alpaca ; aucun fallback IEX.
 
   # ── Provider quotes live (mode latest) ──
-  # `quotes_provider_live` : provider principal pour les snapshots bid/ask temps réel.
-  #   Politique courante : 'alpaca', SIP explicite, droits temps réel requis.
-  # `quotes_provider_live_second` reste vide : un refus SIP doit rester visible.
+  # Quotes bid/ask risque, pré-soumission et watcher : alpaca (SIP) | tradier (consolidé).
+  # Garder alpaca jusqu'au test du jeton Tradier de production. Ne change pas le broker d'ordres.
   quotes_provider_live: alpaca  # SIP explicite ; HTTP 403 si le compte n'a pas les droits temps réel.
   quotes_provider_live_second: null  # Aucun fallback de fournisseur/flux pour masquer un refus SIP.
+  tradier:
+    environment: production  # Le sandbox est différé et interdit pour qualifier une entrée.
+    token_env: TRADIER_API_TOKEN  # Jeton de production dans l'environnement, jamais dans ce fichier.
+    batch_size: 100  # Requêtes groupées GET /v1/markets/quotes ; aucun ordre Tradier.
   # Quotes historiques de clôture (étape 4) : SIP consolidé, end vieux de >=15 min.
   # Aucun fallback IEX ; les lignes sans ce flux/provenance seront requalifiées.
   quotes_historical_feed: sip

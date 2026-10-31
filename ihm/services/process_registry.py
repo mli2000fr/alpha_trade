@@ -1301,6 +1301,31 @@ def _sync_child_logs_to_workflow(
         _append_workflow_chunk(managed, "stderr", stderr_chunk, prefix=f"[stderr][{step_label}] ")
 
 
+def _bind_options_workflow_run(options, steps):
+    """Create an analysis ID only with step 10; otherwise pin an existing exact run."""
+    from dataclasses import replace
+    from common.us_signal_date import resolve_us_signal_date
+    from service.options_directional.config import load_options_filter_config
+    from service.options_directional.accounts import shared_latest_matching, shared_qualified
+
+    signal_day = resolve_us_signal_date(options.trade_date).isoformat()
+    keys = {step.key for step in steps}
+    run_id = options.options_filter_run_id
+    if 'ml_predict' in keys:
+        if not run_id or run_id == 'auto':
+            run_id = f'opt-{uuid.uuid4().hex}'
+    elif keys.intersection({'risk_management', 'execution'}):
+        config = load_options_filter_config()
+        context = dict(trade_date=signal_day, account_id=options.account_id or 'default',
+            batch_id=options.ml_live_predict_batch_id or options.ml_predict_batch_id or config.default_oracle_batch_id,
+            symbol_source=options.ml_predict_symbol_source,
+            capital_preset_key=options.capital_preset_key or 'capital_2001_5000')
+        report = shared_qualified(run_id, **context) if run_id and run_id != 'auto' else shared_latest_matching(**context)
+        run_id = report['run_id']
+    return replace(options, trade_date=signal_day, options_filter_run_id=run_id,
+                   force_trade_date_to_latest_snapshot=False)
+
+
 def _run_pipeline_workflow(
     managed: _ManagedWorkflow,
     options: PipelineLaunchOptions,
@@ -1365,13 +1390,8 @@ def _run_pipeline_workflow(
 
         completed_steps = 0
         if options.options_filter_enabled:
-            from dataclasses import replace as _options_replace
-            from common.us_signal_date import resolve_us_signal_date
-            signal_day = resolve_us_signal_date(options.trade_date).isoformat()
-            options = _options_replace(options, trade_date=signal_day,
-                options_filter_run_id=options.options_filter_run_id or f'opt-{uuid.uuid4().hex}',
-                force_trade_date_to_latest_snapshot=False)
-            _append_workflow_event(managed, f'Séance Oracle / filtre options figée : {signal_day}, run={options.options_filter_run_id}.')
+            options = _bind_options_workflow_run(options, steps)
+            _append_workflow_event(managed, f'Séance Oracle / filtre options figée : {options.trade_date}, run={options.options_filter_run_id}.')
         if options.llm_filter_enabled:
             from dataclasses import replace as _llm_replace
             from common.us_signal_date import resolve_us_signal_date

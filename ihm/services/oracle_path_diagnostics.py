@@ -25,7 +25,8 @@ def is_path_model(batch_id,metadata,artifacts_root):
     training=meta.get('training_config') or {}
     data=(training.get('data') or {}) if isinstance(training,dict) else {}
     declared=(isinstance(cli,dict) and cli.get('oracle_path_model_only') is True) or (
-        isinstance(data,dict) and data.get('oracle_path_model_only') is True) or meta.get('mode')==MODE
+        isinstance(data,dict) and data.get('oracle_path_model_only') is True) or meta.get('mode') in (
+            'oracle_path_h10','oracle_path_h15',MODE)
     batch=str(batch_id)
     if not batch or Path(batch).name!=batch or '/' in batch or '\\' in batch:return False
     root=Path(artifacts_root)
@@ -71,7 +72,7 @@ def load_path_artifacts(batch_id,artifacts_root):
             oof=verified_root/'folds'/name/'oof.parquet'
             if done['files'].get('oof.parquet')!=digest(oof):raise ValueError('Prédictions OOF corrompues : '+name)
             from pyarrow.parquet import read_schema
-            if not {'date','symbol',TARGET,'proba_path_extreme','path_amplitude'}.issubset(read_schema(oof).names):
+            if not {'date','symbol',protocol['target'],'proba_path_extreme','path_amplitude'}.issubset(read_schema(oof).names):
                 raise ValueError('Schéma OOF différent de la cible parcours : '+name)
             keys=pd.read_parquet(oof,columns=['date','symbol'])
             keys['date']=pd.to_datetime(keys.date,errors='raise').dt.normalize()
@@ -127,7 +128,9 @@ def read_sql_periods(engine,batch_id,view):
             result['errors'].append('Lecture des prédictions SQL impossible ('+type(exc).__name__+').')
             return result
         if not result['coverage']['n_rows'] or not view.get('ready'):return result
-        conditions=[];params=dict(batch_id=batch_id,profile=view['profile_sha256'],target=TARGET)
+        protocol=view.get('protocol') or {}
+        conditions=[];params=dict(batch_id=batch_id,profile=view['profile_sha256'],
+            target=protocol.get('target',TARGET),horizon=protocol.get('horizon',20))
         for i,(name,fold) in enumerate(view['folds'].items()):
             conditions.append(f'(l.fold_start=:fold{i} AND l.model_sha256=:hash{i} AND l.model_available_date=:available{i})')
             params.update({f'fold{i}':name,f'hash{i}':fold['model_sha256'],f'available{i}':str(max(
@@ -137,7 +140,7 @@ JOIN alpha_trade.oracle_path_prediction_lineage l ON l.batch_id=p.batch_id
 AND l.prediction_date=p.prediction_date AND l.symbol=p.symbol
 WHERE p.batch_id=:batch_id AND p.fold_start=l.fold_start
 AND p.future_return IS NULL AND p.oracle_extreme10 IS NULL
-AND p.proba_extreme BETWEEN 0 AND 1 AND l.target_name=:target AND l.target_horizon=20
+AND p.proba_extreme BETWEEN 0 AND 1 AND l.target_name=:target AND l.target_horizon=:horizon
 AND l.feature_profile_sha256=:profile AND l.model_available_date<p.prediction_date
 AND ('''+ ' OR '.join(conditions)+')'
         try:result['matching_lineage_rows']=int(conn.execute(text(sql),params).scalar_one())

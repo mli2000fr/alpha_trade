@@ -155,6 +155,8 @@ class OpenOrder:
     quantity: float
     filled_quantity: float = 0.0
     status: str = "open"  # "open", "partially_filled", "pending"
+    limit_price: float | None = None
+    stop_price: float | None = None
 
     def __post_init__(self) -> None:
         if self.side not in ("buy", "sell"):

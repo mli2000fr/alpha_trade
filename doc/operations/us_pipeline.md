@@ -6,6 +6,33 @@
 
 ## Périmètre
 
+**28 octobre 2026 : enchaînement sur les comptes PAPER secondaires.**
+`config.yaml → us_pipeline.run_other_paper_accounts: true` est activé par défaut.
+Le workflow configuré s'exécute d'abord sur `us_pipeline.account_id`, puis, après
+succès complet, les seules étapes **11 → 12** s'exécutent séquentiellement pour
+chaque autre compte PAPER déclaré. La sélection Oracle/options exacte est
+réutilisée ; les données et l'étape 10 ne sont pas recalculées. Chaque compte
+garde son capital broker, son risque, ses cibles, ses claims et son watcher.
+Le watcher est vérifié avant chaque 12, avec réutilisation d'un service sain.
+Les comptes LIVE sont exclus. Le premier échec ou suivi perdu arrête la chaîne
+sans relancer un compte déjà traité. Le bilan additionne les étapes du compte
+principal et des secondaires, et précise le compte fautif.
+
+`false` limite le batch au compte configuré. La répétition ne s'applique que si
+11 **et** 12 sont sélectionnées et `execution_mode: paper` ; aucune étape omise
+n'est insérée. La liste des comptes et le plan sont figés au départ, y compris
+le vendredi. Avec le filtre LLM, encore limité à `default`, mettre cette option
+à `false` : le batch refuse un enchaînement non qualifié au lieu de supprimer
+le filtre pour les comptes secondaires. Les lancements déjà en cours ne sont
+pas modifiés rétroactivement.
+[Contrat et stockage multi-comptes](options_filter_multi_account.md).
+
+**28 octobre 2026 : [capital broker obligatoire à l'étape 11](risque_capital_broker_20261028.md).**
+En PAPER/LIVE, le risque relit le compte sélectionné, ses positions et ses
+ordres ouverts. Aucun repli sur les 100 000 $ par défaut. Le mode du calcul
+risque est transmis explicitement par le Pipeline ; le capital saisi est réservé
+à la recherche shadow/dry-run. Aucun assouplissement des contrôles SIP.
+
 Le **26 octobre 2026**, ajout du filtre options expérimental après Oracle,
 activé par défaut dans la page et le batch :
 `options_directional_filter.enabled: true`, défaut de code TOP20.
@@ -469,6 +496,15 @@ Les collecteurs CLI restent utilisables manuellement en cas de besoin :
 python -u -m dataIntegrityEngine.sync_latest_quotes --symbol-source universe-file:config/univers_batch/univers_filtred_tradable.txt --batch-size 200 --from-date YYYY-MM-DD --to-date YYYY-MM-DD
 python -u -m dataIntegrityEngine.sync_earnings_calendar --symbol-source universe-file:config/univers_batch/univers_filtred_tradable.txt --batch-size 50 --sleep-seconds 1.1 --log-every 25 --from-date YYYY-MM-DD --to-date YYYY-MM-DD --resume
 ```
+
+Depuis le 30/10/2026, les anciennes dates estimées sont archivées puis retirées
+lorsqu'une annonce Finnhub réalisée et non ambiguë confirme leur remplacement.
+`selector_earnings_blackout_days: 0` conserve le blocage le jour même de l'annonce.
+La valeur `-1` désactive ce contrôle ; elle est désormais configurée dans les
+sept presets de capital. Le champ IHM accepte cette valeur. Les anciens
+snapshots restent figés ; republier l'univers avant de renouveler la sélection
+et le risque.
+Voir [le rapprochement des dates et ses limites](earnings_calendar_date_reconciliation.md).
 
 Remplacer les dates avant lancement. Le launcher quotes respecte `enabled: false`, même avec `-Force` ; utiliser directement son collecteur pour une intervention manuelle. Le launcher historique earnings ignore la planification désactivée, mais conserve son lancement manuel explicite `-Force`, hors blocage juridique. Le batch Pipeline ne contourne aucun statut fournisseur bloqué.
 

@@ -264,7 +264,8 @@ def test_cli_module_executes_main_with_help() -> None:
     assert "Module de gestion de risque Alpha Trade" in result.stdout
 
 
-def test_cli_shadow_mode_forces_dry_run_and_shadow_compare(monkeypatch, tmp_path) -> None:
+@pytest.mark.parametrize('account', ['test1','test2'])
+def test_cli_shadow_mode_forces_dry_run_and_shadow_compare(monkeypatch, tmp_path, account) -> None:
     captured: dict[str, object] = {}
 
     class _FakeRepo(_BaseFakeRepo):
@@ -303,12 +304,13 @@ def test_cli_shadow_mode_forces_dry_run_and_shadow_compare(monkeypatch, tmp_path
         lambda **kwargs: captured.setdefault("shadow_compare", kwargs) or {"status": "compared"},
     )
 
-    cli.main(["--trade-date", "2026-05-01", "--run-mode", "shadow"])
+    cli.main(["--trade-date", "2026-05-01", "--run-mode", "shadow", "--account", account])
 
     assert captured["shadow_compare"]["enabled"] is True
     assert captured["shadow_compare"]["dry_run"] is True
     assert captured["summary"]["run_mode"] == "shadow"
     assert captured["summary"]["dry_run"] is True
+    assert captured["summary"]["account_id"] == account
 
 
 def test_cli_blocks_new_targets_when_mlops_gate_is_closed(monkeypatch, tmp_path) -> None:
@@ -350,7 +352,7 @@ def test_cli_blocks_new_targets_when_mlops_gate_is_closed(monkeypatch, tmp_path)
     )
     monkeypatch.setattr(ml_gate, "apply_ml_gate_to_risk_config", lambda config, gate_state: config)
 
-    cli.main(["--trade-date", "2026-05-01"])
+    cli.main(["--run-mode", "shadow", "--trade-date", "2026-05-01"])
 
     assert captured["summary"]["targeted_symbols"] == 0
     assert captured["summary"]["entries_blocked_by_mlops"] == 1
@@ -410,7 +412,7 @@ def test_cli_main_falls_back_to_account_equity_without_account_snapshot(monkeypa
     monkeypatch.setattr(cli, "persist_run_business_summary", lambda **kwargs: captured.setdefault("summary", kwargs["summary"]))
     monkeypatch.setattr(cli, "emit_run_summary", lambda summary: None)
 
-    cli.main(["--trade-date", "2026-05-01"])
+    cli.main(["--run-mode", "shadow", "--trade-date", "2026-05-01"])
 
     assert captured["config"].account_equity == pytest.approx(100_000.0)
     assert captured["pnl"].portfolio_high_watermark == pytest.approx(100_000.0)
@@ -565,10 +567,13 @@ def test_cli_main_passes_ternary_short_predictions_without_pre_tagging(monkeypat
         lambda config, market_regimes_config=None, equity=None: replace(
             config,
             short_selling_enabled=True,
+            # This routing test supplies no factor data or SQL repository.
+            # Actual enabled-factor qualification is exercised separately.
+            enable_factor_model=False,
         ),
     )
 
-    cli.main(["--trade-date", "2026-05-01", "--dry-run"])
+    cli.main(["--run-mode", "shadow", "--trade-date", "2026-05-01", "--dry-run"])
 
     assert captured["selection_sides"] == {"AAPL": "short", "MSFT": "short"}
     assert captured["prediction_sides"] == {"AAPL": "short", "MSFT": "short"}
@@ -576,8 +581,8 @@ def test_cli_main_passes_ternary_short_predictions_without_pre_tagging(monkeypat
     assert captured["summary"]["regime_mode"] == "capital_preservation"
 
 
-def test_cli_main_treats_default_account_as_implicit_and_falls_back(monkeypatch) -> None:
-    """L'IHM transmet toujours `--account default` ; sans snapshot on doit fallback."""
+def test_simulation_treats_default_account_as_implicit_and_falls_back(monkeypatch) -> None:
+    """Simulation explicite : un capital utilisateur est autorisé sans snapshot broker."""
     captured: dict[str, object] = {}
 
     class _FakeRepo(_BaseFakeRepo):
@@ -631,7 +636,7 @@ def test_cli_main_treats_default_account_as_implicit_and_falls_back(monkeypatch)
     monkeypatch.setattr(cli, "persist_run_business_summary", lambda **kwargs: captured.setdefault("summary", kwargs["summary"]))
     monkeypatch.setattr(cli, "emit_run_summary", lambda summary: None)
 
-    cli.main(["--trade-date", "2026-05-01", "--account", "default"])
+    cli.main(["--run-mode", "shadow", "--trade-date", "2026-05-01", "--account", "default"])
 
     # `default` doit Ãªtre traitÃ© comme un compte implicite -> requested_account_id None cÃ´tÃ© repo.
     assert captured["requested_account_id"] is None
@@ -696,7 +701,7 @@ def test_cli_main_explicit_account_falls_back_when_no_snapshot(monkeypatch) -> N
     monkeypatch.setattr(cli, "emit_run_summary", lambda summary: None)
 
     # Doit s'exÃ©cuter sans lever RuntimeError, en fallback sur --account-equity.
-    cli.main([
+    cli.main(["--run-mode", "shadow",
         "--trade-date", "2026-05-01",
         "--account", "test1",
         "--account-equity", "50000",
@@ -762,7 +767,7 @@ def test_cli_main_accepts_min_position_notional_argument(monkeypatch) -> None:
     monkeypatch.setattr(cli, "persist_run_business_summary", lambda **kwargs: None)
     monkeypatch.setattr(cli, "emit_run_summary", lambda summary: None)
 
-    cli.main([
+    cli.main(["--run-mode", "shadow",
         "--trade-date", "2026-05-01",
         "--account-equity", "2000",
         "--min-position-notional", "150",
@@ -831,7 +836,7 @@ def test_cli_main_caps_stale_snapshot_with_lower_requested_equity(monkeypatch) -
     monkeypatch.setattr(cli, "persist_run_business_summary", lambda **kwargs: captured.setdefault("summary", kwargs["summary"]))
     monkeypatch.setattr(cli, "emit_run_summary", lambda summary: None)
 
-    cli.main([
+    cli.main(["--run-mode", "shadow",
         "--trade-date", "2026-05-01",
         "--account", "test1",
         "--account-equity", "2000",
@@ -909,7 +914,7 @@ def test_cli_main_emits_live_progress_payloads(monkeypatch) -> None:
     monkeypatch.setattr(cli, "persist_run_business_summary", lambda **kwargs: None)
     monkeypatch.setattr(cli, "emit_run_summary", lambda summary: emitted_payloads.append(dict(summary)))
 
-    cli.main(["--trade-date", "2026-05-01", "--dry-run"])
+    cli.main(["--run-mode", "shadow", "--trade-date", "2026-05-01", "--dry-run"])
 
     live_payloads = [payload for payload in emitted_payloads if payload.get("progress_live")]
     final_payload = next(payload for payload in reversed(emitted_payloads) if not payload.get("progress_live"))
@@ -976,7 +981,7 @@ def test_cli_main_applies_market_regime_overrides_to_builder(monkeypatch) -> Non
         ),
     )
 
-    cli.main(["--trade-date", "2026-05-01", "--dry-run"])
+    cli.main(["--run-mode", "shadow", "--trade-date", "2026-05-01", "--dry-run"])
 
     assert captured["config"].risk_multiplier == pytest.approx(0.5)
     assert captured["config"].effective_max_positions == 2
@@ -1042,7 +1047,7 @@ def test_cli_main_persists_market_macro_snapshot(monkeypatch) -> None:
         ),
     )
 
-    cli.main(["--trade-date", "2026-05-01", "--dry-run"])
+    cli.main(["--run-mode", "shadow", "--trade-date", "2026-05-01", "--dry-run"])
 
     assert captured["persist_macro_call"] == {
         "trade_date": date(2026, 5, 1),
@@ -1106,7 +1111,7 @@ def test_cli_main_blocks_new_entries_when_regime_disallows_them(monkeypatch) -> 
         ),
     )
 
-    cli.main(["--trade-date", "2026-05-01", "--dry-run"])
+    cli.main(["--run-mode", "shadow", "--trade-date", "2026-05-01", "--dry-run"])
 
     assert captured["build_called"] is False
     assert captured["summary"]["entries_blocked_by_regime"] == 2
@@ -1167,7 +1172,7 @@ def test_cli_main_blocks_run_when_ml_coverage_is_below_threshold(monkeypatch) ->
     monkeypatch.setattr(ml_gate_module, "apply_ml_gate_to_risk_config", lambda config, gate_state: config)
 
     with pytest.raises(SystemExit, match="Couverture ML insuffisante"):
-        cli.main([
+        cli.main(["--run-mode", "shadow",
             "--trade-date",
             "2026-05-01",
             "--dry-run",
@@ -1221,7 +1226,7 @@ def test_cli_main_applies_vol_targeting_and_exposes_summary(monkeypatch) -> None
     monkeypatch.setattr(cli, "emit_run_summary", lambda summary: None)
     monkeypatch.setattr(cli, "_resolve_market_regime_snapshot", lambda trade_date, effective_equity, repo: None)
 
-    cli.main([
+    cli.main(["--run-mode", "shadow",
         "--trade-date",
         "2026-05-01",
         "--dry-run",
@@ -1334,7 +1339,7 @@ def test_cli_main_exposes_shadow_compare_and_postmortem_artifacts(monkeypatch) -
         },
     )
 
-    cli.main(["--trade-date", "2026-05-01", "--dry-run", "--enable-shadow-compare"])
+    cli.main(["--run-mode", "shadow", "--trade-date", "2026-05-01", "--dry-run", "--enable-shadow-compare"])
 
     shadow_compare = captured["summary"]["shadow_compare"]
     assert shadow_compare["status"] == "compared"
@@ -1442,7 +1447,7 @@ def test_cli_main_applies_empirical_risk_calibration_from_repository(monkeypatch
     monkeypatch.setattr(cli, "persist_run_business_summary", lambda **kwargs: captured.setdefault("summary", kwargs["summary"]))
     monkeypatch.setattr(cli, "emit_run_summary", lambda summary: None)
 
-    cli.main(["--trade-date", "2026-05-01", "--dry-run", "--enable-kelly-sizing"])
+    cli.main(["--run-mode", "shadow", "--trade-date", "2026-05-01", "--dry-run", "--enable-kelly-sizing"])
 
     assert captured["config"].score_weight == pytest.approx(0.25)
     assert captured["config"].prediction_weight == pytest.approx(0.75)
@@ -1539,7 +1544,7 @@ def test_cli_main_does_not_apply_empirical_risk_calibration_when_blocked_by_gove
     monkeypatch.setattr(cli, "persist_run_business_summary", lambda **kwargs: captured.setdefault("summary", kwargs["summary"]))
     monkeypatch.setattr(cli, "emit_run_summary", lambda summary: None)
 
-    cli.main(["--trade-date", "2026-05-01", "--dry-run", "--enable-kelly-sizing"])
+    cli.main(["--run-mode", "shadow", "--trade-date", "2026-05-01", "--dry-run", "--enable-kelly-sizing"])
 
     assert captured["config"].score_weight == pytest.approx(0.4)
     assert captured["config"].prediction_weight == pytest.approx(0.6)

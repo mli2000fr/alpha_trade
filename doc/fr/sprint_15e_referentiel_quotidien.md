@@ -9,6 +9,11 @@ uniquement. Ce n'est ni une promotion SQL ni une réparation de l'historique.
 
 ## Périmètre et architecture
 
+Actualisation du **27 octobre 2026** : les versions ESMA et leurs archives sont
+aussi stockées dans [les tables SQL de recherche FR](batchs_stockage_sql_20261027.md),
+notamment `fr_reference_versions_research`. Il ne s'agit toujours pas de remplir
+`instruments`, de réparer l'historique ou de rendre les titres tradables.
+
 Service : `service/fr/security_master_daily_15e.py`, raccordé au runner FR
 `operational_batch_15a` et au launcher commun (logs, email/Telegram).
 Configuration exclusivement `batch_fr.yaml/fr_security_master_sync`.

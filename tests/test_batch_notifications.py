@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+import pytest
 
 from ihm.pages.batches import (
     _batch_title,
@@ -39,6 +40,43 @@ def test_notification_metrics_are_read_from_normalized_summary() -> None:
         "alerts": 1,
         "error_message": "HTTP 429",
     }
+
+
+@pytest.mark.parametrize('status,http,icon',[
+    ('COMPLETED',None,'✅'),('STOPPED_ACCESS_DENIED',403,'⛔'),('STOPPED_RATE_LIMIT',429,'🚦')])
+def test_yahoo_recovery_notification_has_calls_duration_and_visible_stop(monkeypatch,status,http,icon):
+    import json
+    recovery=dict(enabled=True,status=status,stop_http_status=http,calls=7,elapsed_seconds=23.5,
+        recovered=4,cache_hits=1,remaining=3)
+    log=notifier.RUN_SUMMARY_PREFIX+json.dumps(dict(requested=10,received=8,persisted=8,failed=0,
+        details={'yahoo_reference_recovery':recovery}))
+    metrics=notifier._build_metrics(_args(status='OK'),log)
+    text=notifier._yahoo_recovery_message(metrics)
+    assert icon in text and '7 appels en 23.5 s' in text and '3 titres restant' in text
+    assert '(pauses incluses)' in text
+    sent=[]
+    monkeypatch.setattr('service.telegram.is_telegram_configured',lambda:True)
+    monkeypatch.setattr('service.telegram.send_telegram_message',lambda message:sent.append(message) or True)
+    args=SimpleNamespace(status='OK',event='options_delayed_bars_sync',duration='3m',exit_code=0,warning=[],
+        passage='principal',metrics=metrics)
+    assert notifier._send_telegram_status(args)
+    assert text in sent[0]
+
+
+def test_yahoo_recovery_is_in_email_payload(monkeypatch,tmp_path):
+    import json
+    recovery=dict(enabled=True,status='STOPPED_RATE_LIMIT',stop_http_status=429,calls=2,
+        elapsed_seconds=5.2,recovered=0,cache_hits=0,remaining=144)
+    log=tmp_path/'run.log'
+    log.write_text(notifier.RUN_SUMMARY_PREFIX+json.dumps(dict(details={'yahoo_reference_recovery':recovery})),encoding='utf-8')
+    sent=[]
+    monkeypatch.setattr('ihm.services.email_notifier.send_notification',lambda **kwargs:sent.append(kwargs) or True)
+    monkeypatch.setattr(notifier,'_send_telegram_status',lambda args:True)
+    monkeypatch.setattr('sys.argv',['send_batch_email.py','--event','options_delayed_bars_sync','--status','OK',
+        '--log-file',str(log)])
+    assert notifier.main()==0
+    assert sent[0]['payload']['yahoo_reference_recovery']==recovery
+    assert '🚦' in sent[0]['payload']['yahoo_reference_recovery_message']
 
 
 def test_notification_keeps_summary_after_verbose_log_truncation(tmp_path) -> None:

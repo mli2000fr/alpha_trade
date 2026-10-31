@@ -432,19 +432,37 @@ def _prepare_workflow_child_run_state(
 # ── Cache de l'historique disque uniquement (lecture de history_index.json
 #    1.5 Mo + recovery scan).  Les runs actifs (in-memory) sont toujours
 #    lus en direct pour que les logs et statuts se mettent à jour sans délai.
-@st.cache_data(ttl=60, show_spinner=False)
-def _cached_history() -> list[dict[str, object]]:
+def _history_revision() -> tuple[str, int, int]:
+    from ihm.services import process_registry
+    path = process_registry.HISTORY_INDEX_PATH
+    try:
+        stat = path.stat()
+        return str(path), stat.st_mtime_ns, stat.st_size
+    except OSError:
+        return str(path), 0, 0
+
+
+@st.cache_data(ttl=60, max_entries=4, show_spinner=False)
+def _cached_history(revision: tuple[str, int, int]) -> list[dict[str, object]]:
+    # revision is intentionally part of the cache key: a fast run can start AND
+    # finish between two fragment ticks, so active-runs polling alone is insufficient.
     return load_pipeline_history()
 
 
 def _merge_runs() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     active_runs = list_active_pipeline_runs()
-    merged: dict[str, dict[str, object]] = {str(run["run_id"]): run for run in _cached_history()}
+    merged: dict[str, dict[str, object]] = {str(run["run_id"]): run for run in _cached_history(_history_revision())}
     for run in active_runs:
         merged[str(run["run_id"])] = run
+    pending = st.session_state.get(PENDING_SELECTED_RUN_KEY)
+    if isinstance(pending, str) and pending not in merged:
+        pending_record = get_pipeline_run_record(pending)
+        if pending_record is not None:
+            merged[pending] = pending_record
     all_runs = sorted(
         merged.values(),
-        key=lambda item: str(item.get("finished_at") or item.get("executed_at") or ""),
+        key=lambda item: (str(item.get("executed_at") or item.get("actual_started_at") or ""),
+                          str(item.get("run_id") or "")),
         reverse=True,
     )
     return active_runs, all_runs
@@ -526,8 +544,10 @@ def _resolve_runtime_center_default_selected_run_id(all_runs: list[dict[str, obj
 
 
 def _prime_runtime_center_state(all_runs: list[dict[str, object]], run_ids: list[str], labels: dict[str, str]) -> list[str]:
-    pending_selected = st.session_state.pop(PENDING_SELECTED_RUN_KEY, None)
-    if isinstance(pending_selected, str) and pending_selected in labels:
+    pending_selected = st.session_state.get(PENDING_SELECTED_RUN_KEY)
+    explicit_pending = isinstance(pending_selected, str) and pending_selected in labels
+    if explicit_pending:
+        st.session_state.pop(PENDING_SELECTED_RUN_KEY, None)
         st.session_state[SELECTED_RUN_KEY] = pending_selected
         st.session_state[WORKFLOW_RUNTIME_AUTO_SELECTED_RUN_KEY] = pending_selected
 
@@ -536,6 +556,10 @@ def _prime_runtime_center_state(all_runs: list[dict[str, object]], run_ids: list
         st.session_state[COMPARE_RUNS_KEY] = _sanitize_compare_ids(run_ids, labels, pending_compare)
 
     preferred_selected = _resolve_runtime_center_default_selected_run_id(all_runs, run_ids)
+    if explicit_pending and pending_selected != preferred_selected:
+        # "Inspecter ce run" in history is an intentional historical choice,
+        # unlike the pending selection of a newly launched run.
+        st.session_state[WORKFLOW_RUNTIME_AUTO_SELECTED_RUN_KEY] = ""
     default_selected = st.session_state.get(SELECTED_RUN_KEY)
     if default_selected not in labels:
         st.session_state[SELECTED_RUN_KEY] = preferred_selected
@@ -550,8 +574,15 @@ def _prime_runtime_center_state(all_runs: list[dict[str, object]], run_ids: list
         selected_run = run_by_id.get(str(default_selected))
         selected_parent_run_id = str(selected_run.get("parent_run_id") or "").strip() if isinstance(selected_run, dict) else ""
         auto_selected_run_id = st.session_state.get(WORKFLOW_RUNTIME_AUTO_SELECTED_RUN_KEY)
+        if (not explicit_pending and default_selected == auto_selected_run_id
+                and preferred_selected != default_selected):
+            # Follow new launches only while the viewer is in automatic mode.
+            # A manual historical choice differs from the last automatic ID.
+            st.session_state[SELECTED_RUN_KEY] = preferred_selected
+            st.session_state[WORKFLOW_RUNTIME_AUTO_SELECTED_RUN_KEY] = preferred_selected
         if (
-            active_workflow_run_id is not None
+            not explicit_pending
+            and active_workflow_run_id is not None
             and selected_parent_run_id == active_workflow_run_id
             and (auto_selected_run_id is None or auto_selected_run_id == default_selected)
         ):
@@ -823,6 +854,7 @@ def _render_runtime_center() -> None:
     )
 
     if st.button(" Rafraîchir maintenant", key="pipeline_manual_refresh", use_container_width=False):
+        _cached_history.clear()
         _rerun_app()
 
     if active_runs:
@@ -915,6 +947,14 @@ def _render_runtime_center() -> None:
     stream_map = {"tout": "all", "stdout": "stdout", "stderr": "stderr"}
     selected_run = get_pipeline_run_record(selected_label)
     if selected_run is not None:
+        st.caption(f"Journal affiché : `{selected_label}` | "
+                   f"Lancement : `{selected_run.get('executed_at') or '—'}`")
+        preferred_run_id = _resolve_runtime_center_default_selected_run_id(all_runs, run_ids)
+        if selected_label != preferred_run_id:
+            st.info("Vous consultez un run précédent. Le journal d'un nouveau lancement est distinct.")
+            if st.button("Afficher le run le plus récent / actif", key="pipeline_show_latest_logs"):
+                st.session_state[PENDING_SELECTED_RUN_KEY] = preferred_run_id
+                _rerun_app()
         selected_logs = read_pipeline_logs(selected_label, stream=cast(Any, stream_map[log_filter]))
         status = str(selected_run.get("status", ""))
         if status == "completed":

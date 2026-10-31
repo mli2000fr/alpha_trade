@@ -10,6 +10,23 @@ from execution_engine import protection_watcher as protection_watcher_module
 from execution_engine.protection_watcher import ProtectionTransitionWatcher, ProtectionWatcherService, parse_args
 
 
+def test_service_broker_uses_verified_system_certificates(monkeypatch):
+    session = MagicMock(name='verified_tls_session')
+    factory = MagicMock()
+    client = MagicMock()
+    monkeypatch.setattr('common.verified_http.verified_session', lambda: session)
+    monkeypatch.setattr(protection_watcher_module, 'configure_root_logging', lambda **kw: None)
+    monkeypatch.setattr(protection_watcher_module, 'ExecutionRepository', MagicMock())
+    monkeypatch.setattr(protection_watcher_module, 'ProtectionTransitionWatcher', factory)
+    monkeypatch.setattr(protection_watcher_module, 'ProtectionWatcherService', MagicMock())
+    monkeypatch.setattr(protection_watcher_module, 'AlpacaTradingClient', client)
+    monkeypatch.setattr('execution_engine.broker_router.BrokerRouter.validate', lambda cfg: None)
+    monkeypatch.setattr('execution_engine.broker_router.BrokerRouter.resolve', lambda self, cfg: object())
+    protection_watcher_module.main(['--mode', 'service', '--account', 'default'])
+    factory.call_args.kwargs['broker_factory']('paper', 'default')
+    client.assert_called_once_with(broker_mode='paper', account_id='default', session=session)
+
+
 def _item() -> ProtectionWatchItem:
     return ProtectionWatchItem(
         source_exec_run_id="exec-1",
