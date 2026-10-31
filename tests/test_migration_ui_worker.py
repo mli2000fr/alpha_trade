@@ -10,6 +10,8 @@ from service.migration import cli,engine,environment
 
 
 def test_worker_launch_keeps_credentials_off_disk_and_argv(tmp_path,monkeypatch):
+    from service.migration.locking import os_guard
+    monkeypatch.setattr(migration_runner,'os_guard',lambda root:os_guard(tmp_path))
     calls=[]
     class Pipe(io.BytesIO):
         def close(self):self.contents=self.getvalue();super().close()

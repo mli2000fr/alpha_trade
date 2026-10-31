@@ -22,6 +22,9 @@ def build_restore_command(backup_dir):
 
 
 def start_job(request,*,job_parent=None):
+    # Metadata inventory neither claims a migration nor mutates its packages.
+    # It remains available while a long database backup holds the project guard.
+    if request.get('action')=='inventory':return _start_job(request,job_parent=job_parent)
     with os_guard(PROJECT_ROOT):
         return _start_job(request,job_parent=job_parent)
 

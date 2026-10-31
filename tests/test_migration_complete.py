@@ -236,7 +236,10 @@ def test_cancel_never_publishes_complete(tmp_path):
     assert json.loads((output/'progress.json').read_text())['status']=='CANCELED'
 
 
-def test_real_detached_worker_verifies_synthetic_package(backup,tmp_path):
+def test_real_detached_worker_verifies_synthetic_package(backup,tmp_path,monkeypatch):
+    from service.migration.locking import os_guard
+    from ihm.services import migration_runner
+    monkeypatch.setattr(migration_runner,'os_guard',lambda root:os_guard(tmp_path))
     from ihm.services.migration_runner import start_job,job_state
     job=start_job(dict(action='verify',folder=str(backup[1]),password=PASSWORD),job_parent=tmp_path/'jobs')
     deadline=time.monotonic()+30

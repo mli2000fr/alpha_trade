@@ -32,9 +32,11 @@ def run_request(request,job,*,tracker=None):
     """No subprocess arguments or persistent request JSON contain credentials."""
     job=Path(job).resolve();job.mkdir(parents=True,exist_ok=True)
     cancel=lambda:(job/'cancel.request').exists()
-    action=request['action'];password=request['password']
+    action=request['action'];password=request.get('password')
     tracker=tracker or Progress(job,action,mirror=request.get('output') if action=='export' else request.get('report_dir'))
     report=tracker.update
+    if action=='inventory':
+        return inventory.preview(request['root'],on_progress=report,cancel=cancel)
     if action=='verify':
         result=engine.verify(request['folder'],password,cancel=cancel,on_progress=report)
         emit(report,'FINISHED')

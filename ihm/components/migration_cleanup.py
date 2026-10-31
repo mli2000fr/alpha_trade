@@ -12,7 +12,7 @@ def _apply(root):
         st.session_state.pop('t56_cleanup_error',None)
         st.session_state['t56_cleanup_result']=result
         for key in ('t56_cleanup_plan','t56_cleanup_confirm','t56_job','t56_jobs','t56_follow',
-                    't56_plan','t56_plan_context','t56_output'):
+                    't56_plan','t56_plan_context','t56_output','t56_inventory_job','t56_inventory_result'):
             st.session_state.pop(key,None)
     except (ValueError,OSError) as exc:st.session_state['t56_cleanup_error']=str(exc)
 

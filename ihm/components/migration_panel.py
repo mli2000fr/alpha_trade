@@ -5,7 +5,6 @@ from pathlib import Path
 import streamlit as st
 
 from ihm.services import migration_runner as jobs
-from service.migration import environment,inventory
 from service.migration.mysql import Connection,DATABASES
 from dataclasses import asdict
 from ihm.components.migration_command import render_restore_command
@@ -17,7 +16,10 @@ def _launch(request,parent=None):
         st.session_state['t56_job']=path
         st.session_state['t56_follow']=path
         st.session_state['t56_jobs']=list(dict.fromkeys([path,*st.session_state.get('t56_jobs',[])]))[:20]
-        st.session_state['t56_clear_secrets']=True
+        if request['action']=='inventory':
+            st.session_state['t56_inventory_job']=path
+            st.session_state.pop('t56_inventory_result',None)
+        else:st.session_state['t56_clear_secrets']=True
         st.rerun()
     except (ValueError,OSError) as exc:st.error(str(exc))
 
@@ -42,12 +44,11 @@ def render_migration_panel():
         mysql=st.text_input('Client mysql.exe',r'C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe',key='t56_mysql')
         st.caption('Sauvegarde à chaud : une transaction par base. Les bases et fichiers ne constituent pas un instantané global unique. Un fichier modifié pendant sa lecture peut faire échouer la sauvegarde, sans interrompre le travail du PC source.')
         if st.button('Inventorier les fichiers et les variables',key='t56_inventory'):
-            try:
-                entries=inventory.scan(root)
-                st.session_state['t56_inventory_result']={
-                    'packages':[dict(package=k,fichiers=len(v),octets=sum(f['size'] for f in v)) for k,v in entries.items()],
-                    'variables':environment.capture(root,[f['path'] for v in entries.values() for f in v])['variables']}
-            except (ValueError,OSError) as exc:st.error(str(exc))
+            _launch(dict(action='inventory',root=str(root)))
+        inventory_job=st.session_state.get('t56_inventory_job')
+        if inventory_job and (Path(inventory_job)/'progress.json').is_file():
+            from ihm.components.migration_inventory import render_inventory_result
+            render_inventory_result(inventory_job)
         result=st.session_state.get('t56_inventory_result')
         if result:
             st.dataframe(result['packages'],hide_index=True)

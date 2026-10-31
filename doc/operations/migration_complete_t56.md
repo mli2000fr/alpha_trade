@@ -88,6 +88,28 @@ de lignes identique. Aucun mode ne suspend automatiquement la source.
 5. Dans **Suivi et packages**, actualiser jusqu'à `COMPLETE`, puis copier le
    dossier entier et le vérifier depuis la copie.
 
+Le bouton **Inventorier les fichiers et les variables** lance un worker de
+lecture seul, sans mot de passe ni accès SQL. Le bloc sous le bouton se
+rafraîchit toutes les deux secondes : fichiers parcourus, taille recensée,
+dossier courant, temps écoulé, puis les tableaux finaux. **Arrêter cet
+inventaire** ne vise que ce worker. L'inventaire reste utilisable pendant une
+sauvegarde ; un nettoyage protège également ses journaux actifs ou en démarrage.
+
+Correctif du 31 octobre : le parcours utilise `scandir` et ses attributs mis
+en cache, avec contrôle des liens/jonctions, plutôt qu'une résolution Windows
+de chaque chemin. La découverte des variables analyse seulement code et
+configurations : ni les JSON sous `artifacts`, ni les résultats de recherche,
+logs, tests, documentation ou fichiers de couverture ne sont lus pour cela.
+Ces fichiers restent dans le périmètre de sauvegarde selon l'inventaire normal.
+Les noms de variables des `.env` et des fichiers `*.env` sont également recensés,
+sans afficher leurs valeurs.
+
+Vérification locale : 1 060 287 fichiers parcourus en 21,01 s, puis 1 879
+fichiers source/config analysés ; 30,73 s au total. Cette mesure n'est pas un
+engagement de durée, notamment pendant les écritures d'autres opérations.
+Un inventaire déjà lancé avec l'ancien code doit être relancé depuis la page
+rechargée pour bénéficier du worker et de son suivi.
+
 AES-256-GCM authentifie les blocs et la fin de chaque flux ; Scrypt dérive les
 clés du mot de passe. Le manifeste est authentifié par HMAC et contient les
 empreintes SHA-256 des fragments et outils portables. Les fichiers ne sont pas

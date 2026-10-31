@@ -64,7 +64,7 @@ def _inventory(root,*,workers=_live_workers):
                 identity=dict(pid=pid,started_at=progress.get('updated_at'))
                 if progress.get('process_created_at') is not None:identity['process_created_at']=progress['process_created_at']
                 if owner_state(identity)!='dead':raise MigrationLockError('LOCK_OWNER_UNVERIFIED',pid)
-            elif progress.get('status') not in TERMINAL and job:
+            elif progress.get('status') not in TERMINAL and (job or parent.name=='migration_jobs'):
                 raise MigrationLockError('LOCK_OWNER_UNVERIFIED')
             files=[]
             for current,dirs,names in os.walk(path,followlinks=False):

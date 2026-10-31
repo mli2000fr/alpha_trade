@@ -118,3 +118,10 @@ def test_cleanup_detects_worker_with_forward_slash_backup_path(tmp_path,monkeypa
     process=SimpleNamespace(pid=101,info={'name':'python.exe','cmdline':[module,'--backup-dir',root.as_posix()+'/archive'],'cwd':str(tmp_path)})
     monkeypatch.setattr(cleaning.psutil,'process_iter',lambda *a:[process])
     assert cleaning._live_workers([root])==[101]
+
+
+def test_cleanup_preserves_inventory_worker_still_starting(tmp_path):
+    folder=tmp_path/'backups/migration_jobs/inventory';folder.mkdir(parents=True)
+    (folder/'progress.json').write_text('{"status":"STARTING"}')
+    with pytest.raises(locking.MigrationLockError):cleaning.preview_cleanup(tmp_path)
+    assert folder.is_dir()

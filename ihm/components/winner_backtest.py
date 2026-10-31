@@ -53,6 +53,13 @@ def render_winner_backtest():
         st.caption(f'Délai SIP : {policy.market_data_delay_seconds//60} min '
                    f'{policy.market_data_delay_seconds%60:02d} s ; marge limite retardée : '
                    f'{100*policy.delayed_entry_limit_buffer_pct:g} %. Un cours retardé ne devient pas une quote actuelle.')
+        from backtesting.winner_clock import observation_offset
+        if observation_offset(policy):
+            st.caption('Le signal retardé est évalué à son heure de disponibilité. Faute de prix à cet instant '
+                       'dans les bougies 5m, le replay tente un seul achat à l’ouverture 5m suivante, '
+                       'avec capital réservé et plafond de prix conservé. Si cette ouverture manque ou dépasse '
+                       'la limite, cet ordre simulé est annulé. Cette approximation ne reproduit pas un IOC réel. '
+                       'Un ajustement de stop prend aussi effet à l’ouverture suivante ; l’ancien stop reste actif jusque-là.')
         st.caption('Entrée incluse dans la détention ; vente à l’ouverture suivante après '
                    'l’horizon. Les cours OHLC ne reproduisent pas le carnet, le spread et les '
                    'exécutions réelles. Les secteurs sont les métadonnées actuelles.')

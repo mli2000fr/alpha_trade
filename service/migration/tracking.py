@@ -8,6 +8,8 @@ from .storage import atomic_json
 from .locking import MESSAGES
 
 LABELS={
+    'INVENTORY_SCAN':'Inventaire des fichiers du projet',
+    'ENVIRONMENT_INVENTORY':'Recherche des variables dans le code et les configurations',
     'LOCK_RECOVERED':'Ancien verrou archivé — son processus est terminé',
     'STARTING':'Préparation de l’opération', 'ONLINE_BACKUP':'Inventaire des fichiers et modèles',
     'QUIESCENCE':'Contrôle de disponibilité', 'DATABASE_INVENTORY':'Inventaire des bases',
@@ -27,13 +29,14 @@ LABELS={
     'RECOVERING':'Récupération de l’état précédent', 'RECOVERED_PAUSED':'État précédent récupéré',
 }
 EXPORT={'ONLINE_BACKUP':(0,5),'QUIESCENCE':(0,5),'DATABASE_INVENTORY':(5,10),
+        'INVENTORY_SCAN':(0,4),'ENVIRONMENT_INVENTORY':(4,5),
         'DATABASE_EXPORT':(10,55),'FILES_EXPORT':(55,82),'ENVIRONMENT_EXPORT':(82,85),
         'DATABASE_RECHECK':(85,90),'VERIFYING':(90,99)}
 RESTORE={'VERIFYING':(0,12),'RESTORE_PREFLIGHT':(12,18),'STAGING':(18,35),
          'BACKUP_EXISTING':(35,55),'DATABASE_REPLACEMENT':(55,78),'DATABASE_VALIDATION':(78,85),
          'FILE_REPLACEMENT':(85,93),'USER_ENVIRONMENT':(93,95),'FINALIZING':(95,97),
          'RESTORED_PAUSED':(97,97),'BUILDING_PYTHON':(97,99)}
-NUMBERS={'completed','total','part_index','parts_total','files_done','files_total','processed_bytes','total_bytes','owner_pid'}
+NUMBERS={'completed','total','part_index','parts_total','files_done','files_total','processed_bytes','total_bytes','owner_pid','directories_done','inventory_files','inventory_bytes'}
 TEXT={'database','package','item','unit','error_code'}
 TERMINAL={'COMPLETE','FINISHED','FAILED','CANCELED','FAILED_ROLLED_BACK','FAILED_ROLLBACK_INCOMPLETE','RECOVERED_PAUSED'}
 
@@ -53,7 +56,7 @@ class Progress:
         if phase in TERMINAL and phase==old['phase'] and fields.get('error_code',old.get('error_code'))==old.get('error_code'):return
         context_change=(phase!=old['phase'] or any(k in fields and fields[k]!=old.get(k) for k in ('database','package')))
         if context_change:
-            for key in NUMBERS|TEXT:self.state.pop(key,None)
+            for key in (NUMBERS|TEXT)-{'inventory_files','inventory_bytes'}:self.state.pop(key,None)
         self.state['phase']=phase
         for key,value in fields.items():
             if key in NUMBERS and (value is None or type(value) in (int,float) and value>=0):self.state[key]=value
@@ -61,7 +64,9 @@ class Progress:
                 if key!='error_code' or value in MESSAGES:self.state[key]=' '.join(value.split())[:180]
         self.state['status']=phase if phase in TERMINAL else 'RUNNING'
         if fields.get('warning') is True:self.state['warning']=True
-        ranges=EXPORT if self.operation=='export' else RESTORE if self.operation=='restore' else {'VERIFYING':(0,99),'RESTORE_PREFLIGHT':(90,99)}
+        ranges=(EXPORT if self.operation=='export' else RESTORE if self.operation=='restore' else
+            {'INVENTORY_SCAN':(0,70),'ENVIRONMENT_INVENTORY':(70,99)} if self.operation=='inventory' else
+            {'VERIFYING':(0,99),'RESTORE_PREFLIGHT':(90,99)})
         low,high=ranges.get(phase,(self.state['percent'],self.state['percent']))
         fraction=0.
         if self.state.get('total'):

@@ -232,9 +232,15 @@ def run(args):
             source = SqlIntradaySource(conn)
             factors = HistoricalFactorSource(conn, pivots['close']) if risk.enable_factor_model else None
             options_source=HistoricalOptionsSource(conn,options_config) if options_enabled else None
+            from backtesting.winner_clock import observation_offset
             frozen = dict(arguments=vars(args), winner_policy=asdict(policy), risk=asdict(risk),
                 settings_profile='production_defaults_with_explicit_replay_overrides',
                 execution_assumptions='conservative 5m OHLC, adverse collision first, no retroactive fill; current non-PIT sectors',
+                replay_clock=dict(observation_offset_seconds=observation_offset(policy),
+                    execution='Off-grid delayed decisions: one IOC proxy at next SAME-session observed 5m open; '
+                              'reserve capital and frozen limit, cancel if missing/unfillable; no later retry of this order',
+                    stop_amendments='Off-grid amendment effective at next observed open; old stop until then',
+                    full_live_parity=False),
                 risk_overrides=mapping(getattr(args,'risk_overrides_json',None)),
                 policy_overrides=mapping(getattr(args,'policy_overrides_json',None)),
                 leverage=asdict(leverage), costs='canonical BacktestEngine cost model',
@@ -293,6 +299,8 @@ def run(args):
         pd.DataFrame(annual).to_csv(output/'annual-summary.csv', index=False)
         report.update(allowed_max_leverage=allowed, elapsed_seconds=time.monotonic()-started,
             limitations=['OHLC prices + configurable costs, no historical quotes/fill queue',
+                'Off-grid delayed signals: next observed 5m open is an IOC execution proxy, not a historical live fill; '
+                'off-grid stop amendments take effect at the next observed open, with old stop retained until then',
                 'Current non-PIT sectors; canonical daily history may be revised',
                 'Stops can gap; risk caps do not guarantee maximum drawdown',
                 'Cash dividends require USD/amount/payment date; share actions abort while held; coverage not certified',

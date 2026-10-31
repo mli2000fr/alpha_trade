@@ -124,8 +124,10 @@ def export(root,output,password,db,*,quiet=inventory.quiescent,cancel=None,versi
                 observed()
                 return original_cancel() if original_cancel else False
             model_checks(root)
-            entries=inventory.scan(root);names=[r['path'] for records in entries.values() for r in records]
-            env=captured if captured is not None else environment.capture(root,names)
+            progress('INVENTORY_SCAN')
+            entries=inventory.scan(root,on_progress=on_progress,cancel=cancel);names=[r['path'] for records in entries.values() for r in records]
+            progress('ENVIRONMENT_INVENTORY')
+            env=captured if captured is not None else environment.capture(root,names,on_progress=on_progress,cancel=cancel)
             metadata={};packages=[]
             for index,name in enumerate(DATABASES):
                 check_cancel(cancel);progress('DATABASE_INVENTORY',database=name,completed=index,total=3)

@@ -232,6 +232,86 @@ Régressions ciblées : 59 tests réussis (dates/labels, page Backtesting et
 sélection options historique). Aucun ordre, appel fournisseur, modification
 SQL ni nouveau replay n'a été exécuté pour ce correctif d'affichage.
 
+### Run 20261031_151056_45eba031 : anomalie d'horloge SIP retardée
+
+Période demandée 06/07/2021–29/10/2026, 1 337 séances, même Oracle H10,
+TOP20, 4 000 $, confirmation 2, délai 930 s, fraîcheur résiduelle 60 s,
+filtre options désactivé, contrôle factoriel activé. Les artefacts indiquent
+26 740 sélections et 2 409 campagnes/plans créés, sans aucun fill d'achat.
+
+`events.csv` contient 3 204 761 refus `DELAYED_SIP_UNQUALIFIED`, 479 001
+refus de référence de séance précédente, 60 022 absences de bougie candidate
+et 44 budgets de signal insuffisants. Les lacunes distinctes du rapport se
+répartissent en 5 619 `SIGNAL_RAW_5M_INCOMPLETE`, 7 192
+`CANDIDATE_RAW_5M_INCOMPLETE` et 6 802 `PRIOR_RAW_5M_INCOMPLETE`.
+Les reçus factoriels sont vides : la réapprobation factorielle n'a pas été
+atteinte, ce qui ne qualifie pas sa disponibilité historique.
+
+L'ancien replay ne testait les campagnes qu'aux ouvertures 5m. Avec
+930 secondes de délai, le cutoff tombe 30 secondes avant une borne 5m : la
+dernière bougie achevée a donc 270 secondes d'ancienneté résiduelle, contre
+60 autorisées. Cela bloque même une série de données parfaitement complète.
+Reproduction synthétique sur la séance officielle du 06/07/2021 : 74/78
+instants qualifiés avec un délai 900 s, **0/78 avec 930 s** ; le même jeu
+de bougies devient frais à l'instant de disponibilité décalé de 30 secondes.
+
+Le paramètre 930 s est valide en exploitation avec un watcher au bon instant.
+Le défaut venait du raccordement à l'horloge du replay ; ce résultat ne
+prouvait pas une absence d'occasions de trading.
+
+### Correctif du replay SIP décalé, 31 octobre 2026
+
+`backtesting/winner_clock.py` sépare l'horloge de disponibilité des preuves
+de celle des prix observés. Avec un délai de 930 secondes, les confirmations
+sont évaluées aux bornes 5m décalées de 30 secondes. Le délai figé, la
+fraîcheur résiduelle de 60 secondes et les cutoffs historiques sont conservés.
+
+Les bougies 5m ne donnent pas le prix exact trente secondes après leur
+ouverture. Pour un signal entre deux bornes, le replay réserve le capital,
+fige la quantité et la limite approuvées, puis tente une seule exécution à
+l'ouverture 5m suivante de la même séance. Une ouverture absente, un cours
+au-dessus de la limite ou une capacité insuffisante annulent cet ordre.
+Une nouvelle décision ultérieure reste possible, mais cet ordre précis ne
+peut attendre une ouverture plus favorable, exploiter un low futur ou être
+reporté au lendemain. C'est un **proxy d'exécution IOC pour la recherche**,
+pas la reproduction d'un véritable IOC envoyé au moment du signal.
+
+Les décisions et exécutions ont leurs horodatages distincts dans `events.csv`
+(`DELAYED_ENTRY_DECISION`, `BUY_FILL`, `DELAYED_ENTRY_CANCELED`). Le contrat
+`replay_clock` est conservé dans le protocole et le rapport ; la page IHM
+explique cette approximation. `full_live_parity` reste faux. Les ajustements
+de stop décidés entre deux bornes prennent effet à l'ouverture suivante ;
+l'ancien stop reste actif jusque-là, sans appliquer le nouveau seuil au low
+déjà passé. À la fin de séance, le dernier ajustement ne peut affecter la
+bougie qui le précède ; son seuil est applicable à l'ouverture suivante.
+
+Le coordinateur traite séparément la réconciliation, la protection des lots,
+l'expiration et l'échéance sur l'horloge des prix. L'entrée standard sans
+confirmation conserve son exécution à l'ouverture. Les fills différés sont
+réconciliés avant le contrôle de liquidation globale ; une coupure déjà
+connue annule l'achat en attente avant son exécution. Le budget partagé,
+les frais, les limites de levier et les contrôles natifs restent appliqués.
+
+Validation hors ligne sur un échantillon synthétique : signal qualifié à
+14:00:30 UTC, achat au prix de **103 $ à 14:05 UTC**, sans utiliser ni le cours
+de 102 $ de la preuve retardée, ni l'ouverture de 101 $ à 14:00. Les cas
+de limite dépassée, ouverture manquante, réservation de capital, absence de
+facteurs historiques, liquidation, clôture anticipée et échéances H10/H20
+sont couverts dans `tests/test_winner_replay_clock.py`.
+Suite Winner : 326 tests réussis lors de la passe élargie ; après le dernier
+raccordement de réconciliation avant liquidation, 69 tests ciblés réussis
+(horloge, replay intraday, SIP retardé et liquidation globale).
+
+Les archives d'origine restent inchangées. Le prochain processus de
+backtest chargera le correctif. Aucun replay économique sur cinq ans, ordre,
+appel fournisseur ou changement des services en fonctionnement n'a été lancé.
+Les lacunes de bougies du run d'origine restent à qualifier. Le contrôle
+factoriel peut désormais être atteint : son absence éventuelle doit encore
+produire un refus et un bilan incomplet, jamais un facteur antidaté ou un
+contrôle désactivé implicitement.
+
+### Contrat SIP du watcher en exploitation (rappel)
+
 Redémarrer le watcher pour charger ce nouveau contrat avant une nouvelle
 étape 12. Le contrôle d'ancienneté du code refuse l'ancien processus.
 Les anciennes campagnes gardent leurs paramètres figés, y compris le délai

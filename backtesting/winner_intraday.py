@@ -8,6 +8,7 @@ from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 import math
 
 import pandas as pd
@@ -21,6 +22,7 @@ from execution_engine.winner_risk import reapprove_campaign
 from execution_engine.winner_runtime import WinnerCampaignRuntime
 from risk_management.config import load_risk_config
 from risk_management.live_pipeline_guards import evaluate_vol_target
+from backtesting.winner_clock import observation_offset,next_observed_open,at_observed_open
 
 
 class MemoryCampaignStore:
@@ -77,7 +79,7 @@ class ReplayBroker:
         return [dict(symbol=r['symbol'], side='buy',
             notional=float(r['qty'])*float(r['limit_price'])) for k, r in self.orders.items()
             if k != exclude and r.get('side') == 'buy' and r['status'] == 'new'
-            and r.get('time_in_force') == 'day' and r.get('limit_price') is not None]
+            and (r.get('time_in_force') == 'day' or r.get('replay_next_open')) and r.get('limit_price') is not None]
 
     def capacity(self, exclude=None):
         available = self.engine._resolve_available_entry_budget(constraints=self.constraints,
@@ -136,17 +138,28 @@ class ReplayBroker:
             side=intent.side, symbol=intent.symbol, time_in_force=intent.time_in_force,
             stop_price=intent.stop_price, limit_price=intent.limit_price)
         self.orders[intent.intent_id] = raw
-        price = self.marks[intent.symbol]
         if intent.side == 'buy':
-            self.fill_buy(intent, raw, price, state['campaign_id'])
-            if raw['status'] == 'new' and intent.time_in_force != 'day':
-                raw['status'] = 'canceled'  # IOC: no deferred or retroactive fill.
+            if not at_observed_open(self.now):
+                from common.winner_delayed import delayed_entry
+                if not delayed_entry(state,'ADD' if state['lots'] else 'ENTRY'):
+                    raise ValueError('Off-grid replay buy requires an explicit delayed evidence contract')
+                following=next_observed_open(self.now)
+                raw.update(replay_next_open=following.isoformat() if following else None,
+                    replay_decision_at=self.now.isoformat(),replay_ioc_proxy=True)
+                if following is None:raw['status']='canceled'
+                self.events.append(dict(time=self.now,symbol=intent.symbol,event='DELAYED_ENTRY_DECISION',
+                    execution_open=raw['replay_next_open'],quantity=intent.qty,limit_price=intent.limit_price))
+            else:
+                self.fill_buy(intent, raw, self.marks[intent.symbol], state['campaign_id'])
+                if raw['status'] == 'new' and intent.time_in_force != 'day':
+                    raw['status'] = 'canceled'
         elif intent.intent_role == 'exit':
             if intent.time_in_force == 'opg':
                 raw['queued_moo'] = True
             else:
+                if not at_observed_open(self.now):raise ValueError('Replay market exit requires an observed price open')
                 reason=next((o.get('exit_reason') for o in state['operations'] if o['key']==intent.intent_id),None)
-                self.close(intent.symbol, intent.qty, price, intent.intent_id, reason or 'HORIZON_LATE_MARKET')
+                self.close(intent.symbol, intent.qty, self.marks[intent.symbol], intent.intent_id, reason or 'HORIZON_LATE_MARKET')
         elif intent.order_type != 'stop':
             raise ValueError('Unsupported replay order')
         return SimpleNamespace(broker_order_id=intent.intent_id)
@@ -161,13 +174,22 @@ class ReplayBroker:
             remaining=intent.qty, entry=price, entry_time=self.now, entry_fee=intent.qty*price*self.fee,
             campaign_id=campaign_id)
         self.events.append(dict(time=self.now, symbol=intent.symbol, event='BUY_FILL',
-            quantity=intent.qty, price=price, costs=intent.qty*price*self.fee))
+            quantity=intent.qty, price=price, costs=intent.qty*price*self.fee,
+            decision_time=raw.get('replay_decision_at',self.now.isoformat()),
+            execution_proxy='NEXT_OBSERVED_5M_OPEN' if raw.get('replay_ioc_proxy') else 'OBSERVED_5M_OPEN'))
         self.filled(raw, intent.qty, price)
 
     def expire_day_entries(self):
         for raw in self.orders.values():
-            if raw.get('side') == 'buy' and raw.get('time_in_force') == 'day' and raw['status'] == 'new':
+            if raw.get('side') == 'buy' and (raw.get('time_in_force') == 'day' or raw.get('replay_next_open')) and raw['status'] == 'new':
                 raw['status'] = 'expired'
+
+    def cancel_deferred_entries(self, reason):
+        for raw in self.orders.values():
+            if raw.get('replay_next_open') and raw['status']=='new':
+                raw['status']='canceled'
+                self.events.append(dict(time=self.now,symbol=raw['symbol'],event='DELAYED_ENTRY_CANCELED',
+                    reason=reason,decision_time=raw['replay_decision_at']))
 
     def filled(self, raw, qty, price):
         raw.update(status='filled', filled_qty=str(qty), filled_avg_price=str(price), filled_at=self.now.isoformat())
@@ -189,11 +211,18 @@ class ReplayBroker:
             raise ValueError('Unqualified replay stop replacement')
         updated = deepcopy(raw)
         updated.update(id=intent.intent_id, stop_price=intent.stop_price)
+        if not at_observed_open(self.now):
+            # Only the next open supplies an execution price. Keep the old stop
+            # throughout this bar; never apply a new level to its earlier low.
+            following=next_observed_open(self.now)
+            updated.update(replay_old_stop=raw['stop_price'],
+                replay_stop_from=(following or regular_bounds(self.now.astimezone(
+                    ZoneInfo('America/New_York')).date())[1]).isoformat())
         self.orders[intent.intent_id], self.intents[intent.intent_id] = updated, intent
         raw['status'] = 'replaced'
         if updated.get('peer') in self.orders:
             self.orders[updated['peer']]['peer'] = intent.intent_id
-        if self.marks[intent.symbol] <= intent.stop_price:
+        if at_observed_open(self.now) and self.marks[intent.symbol] <= intent.stop_price:
             self.close(intent.symbol, intent.qty, self.marks[intent.symbol], intent.intent_id,
                 'TIGHTENED_STOP_GAP', parent=updated['parent'])
         return SimpleNamespace(broker_order_id=intent.intent_id)
@@ -249,6 +278,17 @@ class ReplayBroker:
             if raw['status'] != 'new':
                 continue
             intent = self.intents[key]
+            if opening and raw.get('replay_next_open'):
+                expected=aware(raw['replay_next_open'])
+                if self.now<expected:continue
+                if self.now==expected and intent.symbol in bars:
+                    self.fill_buy(intent,raw,float(bars[intent.symbol]['open']),intent.winner_campaign_id)
+                if raw['status']=='new':
+                    raw['status']='canceled'
+                    self.events.append(dict(time=self.now,symbol=intent.symbol,event='DELAYED_ENTRY_CANCELED',
+                        reason='NEXT_OPEN_MISSING' if self.now!=expected or intent.symbol not in bars else 'LIMIT_OR_CAPACITY',
+                        decision_time=raw['replay_decision_at']))
+                continue  # Exactly one execution proxy; never wait for a later favorable open.
             if intent.symbol not in bars:
                 continue
             bar = bars[intent.symbol]
@@ -269,7 +309,11 @@ class ReplayBroker:
             if raw['type'] != 'stop':
                 continue
             peer = self.orders.get(raw.get('peer'), {})
-            levels = dict(stop=float(raw['stop_price']), tp=peer.get('limit_price'))
+            stop=raw['stop_price']
+            if raw.get('replay_stop_from') and (self.now<aware(raw['replay_stop_from'])
+                    or not opening and self.now==aware(raw['replay_stop_from'])):
+                stop=raw['replay_old_stop']
+            levels = dict(stop=float(stop), tp=peer.get('limit_price'))
             result = resolve_bar_exit(levels, bar)
             if result is None or (result[2] == 'OPEN') != opening:
                 continue
@@ -290,6 +334,7 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
         from execution_engine.config import ExecutionConfig
         exec_cfg = ExecutionConfig()
     policy = exec_cfg.winner_pyramiding
+    availability_offset=observation_offset(policy)
     if not policy.enabled:
         raise ValueError('Explicit enabled campaign replay policy required')
     if cfg.trading_constraints.swing_only:
@@ -460,7 +505,21 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
                         raise ValueError('Pre-open exit reconciliation failed: '+str(preopen))
                     book.now = opening
             book.marks.update({s: float(b['open']) for s, b in bars.items()})
+            if liquidation.pending is not None or liquidation.blocks_entries:
+                # An already known close-triggered liquidation must cancel the
+                # execution proxy before any next-open buy can fill.
+                book.cancel_deferred_entries('GLOBAL_DRAWDOWN_BEFORE_EXECUTION')
+            deferred_pending=any(r.get('replay_next_open') and r['status']=='new' for r in book.orders.values())
             book.resolve(bars, opening=True)
+            if deferred_pending:
+                # A gap can trip the global breaker at THIS opening. Publish
+                # just-filled lots/protections to the coordinator first so the
+                # liquidation sees exactly the same holdings as the broker.
+                synchronized=WinnerCampaignRuntime(store,repo,book,exec_cfg,market=lambda *_: {},
+                    risk=lambda *a: {},now=stamp,lifecycle_only=True).run(store.rows())
+                audit.extend(dict(time=stamp,**r) for r in synchronized['winner_details'])
+                if synchronized['winner_failures']:
+                    raise ValueError('Deferred fill reconciliation failed: '+str(synchronized['winner_details']))
             risk = replace(base_risk, account_equity=book.equity())
             evaluated = guard.evaluate(day, book.equity(), regimes.get(prior_day), daily_pnl=book.equity()-
                 (daily_equity[-1][1] if daily_equity else cfg.initial_equity))
@@ -559,10 +618,26 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
                 return reapprove_campaign(state, version, quantity, snapshot, now, kind, context=ctx)
 
             if records:
-                result = WinnerCampaignRuntime(store, repo, book, exec_cfg, market=source, risk=recheck, now=stamp).run(records)
-                audit.extend(dict(time=stamp, **r) for r in result['winner_details'])
-                if result['winner_failures']:
-                    raise ValueError('Campaign replay requires reconciliation: '+str(result['winner_details']))
+                # At observed opens, fills/protections/deadlines always run.
+                # Zero-confirmation standard entries retain their original clock.
+                from execution_engine.winner_standard_entry import standard_initial
+                batches=([(records,False)] if not availability_offset else
+                    [([r for r in records if standard_initial(r['state'])],False),
+                     ([r for r in records if not standard_initial(r['state'])],True)])
+                for rows,lifecycle_only in batches:
+                    result = WinnerCampaignRuntime(store, repo, book, exec_cfg, market=source, risk=recheck,
+                        now=stamp,lifecycle_only=lifecycle_only).run(rows)
+                    audit.extend(dict(time=stamp, **r) for r in result['winner_details'])
+                    if result['winner_failures']:
+                        raise ValueError('Campaign replay requires reconciliation: '+str(result['winner_details']))
+            if availability_offset:
+                observed=stamp+timedelta(seconds=availability_offset)
+                book.now=observed
+                from common.winner_delayed import delayed_entry
+                rows=[r for r in store.rows() if delayed_entry(r['state'],'ADD' if r['state']['lots'] else 'ENTRY')]
+                result=WinnerCampaignRuntime(store,repo,book,exec_cfg,market=source,risk=recheck,now=observed).run(rows)
+                audit.extend(dict(time=observed,**r) for r in result['winner_details'])
+                if result['winner_failures']:raise ValueError('Campaign replay requires reconciliation: '+str(result['winner_details']))
             # Intrabar touch time is unknowable from OHLC. Record the closing
             # bound, not an invented earlier timestamp usable by another buy.
             book.now = stamp+timedelta(minutes=5)
@@ -605,6 +680,10 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
         unsettled_cash=sum(v for _, v in book.unsettled), gross=book.gross(),
         open_positions=book.positions(), campaigns=len(store.records), policy=policy.__dict__))
     result.tracker_snapshot['winner_replay']['global_liquidation']=liquidation.summary()
+    result.tracker_snapshot['winner_replay']['replay_clock']=dict(observation_offset_seconds=availability_offset,
+        evidence='ACTUAL_BAR_END_PLUS_FROZEN_DELAY',execution='NEXT_OBSERVED_5M_OPEN_IF_OFF_GRID',
+        ioc_proxy=bool(availability_offset),intrabar_execution_certified=False,
+        stop_amendments='NEXT_OBSERVED_5M_OPEN_IF_OFF_GRID; OLD_STOP_UNTIL_THEN')
     if policy.confirmation_bars == 0:
         result.tracker_snapshot['winner_replay']['standard_entry_assumptions'] = (
             'Regular-session observed 5m opens only; no historical pre-open SIP quotes; '

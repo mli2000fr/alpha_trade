@@ -5,6 +5,7 @@ from pathlib import Path
 import platform
 import re
 import subprocess
+import time
 
 SKIP_ROOT={'.git','.venv','.codex','.continue','.idea','.vscode','backups','tmp','htmlcov',
     '.pytest_cache','.ruff_cache','.hypothesis','.benchmarks','_norton_','catboost_info'}
@@ -32,22 +33,51 @@ def category(relative):
     return 'application'
 
 
-def scan(root):
+def scan(root,*,on_progress=None,cancel=None):
     root=Path(root).resolve();result={k:[] for k in ('application','configuration','modeles','etats-et-archives')}
-    def fail(error):raise error
-    for current,dirs,files in os.walk(root,onerror=fail,followlinks=False):
-        current=Path(current)
-        for name in list(dirs):
-            path=current/name;relative=path.relative_to(root)
-            if excluded(relative):dirs.remove(name);continue
-            if path.is_symlink() or path.is_junction():raise ValueError('Lien/jonction externe à traiter avant sauvegarde : '+str(relative))
-        for name in sorted(files):
-            path=current/name;relative=path.relative_to(root)
-            if excluded(relative):continue
-            if path.is_symlink() or not path.resolve().is_relative_to(root):raise ValueError('Fichier hors projet')
-            stat=path.stat()
-            result[category(relative)].append(dict(path=relative.as_posix(),size=stat.st_size,mtime_ns=stat.st_mtime_ns))
+    pending=[root];files=0;size=0;directories=0;last_tick=-1.
+    def tick(current,force=False):
+        nonlocal last_tick
+        if cancel and cancel():raise InterruptedError('Inventaire interrompu')
+        now=time.monotonic()
+        if on_progress and (force or now-last_tick>=.5):
+            on_progress(None,item=current.relative_to(root).as_posix(),files_done=files,
+                processed_bytes=size,inventory_files=files,inventory_bytes=size,
+                directories_done=directories,unit='fichiers inventoriés',checkpoint=force)
+            last_tick=now
+    while pending:
+        current=pending.pop();directories+=1;tick(current)
+        with os.scandir(current) as entries:
+            for entry in entries:
+                relative=(current/entry.name).relative_to(root)
+                if excluded(relative):continue
+                # Scandir caches attributes. Check each ancestor and entry for
+                # links instead of resolving every single file through Windows.
+                junction=entry.is_junction() if hasattr(entry,'is_junction') else Path(entry.path).is_junction()
+                if entry.is_symlink() or junction:raise ValueError('Lien/jonction à traiter avant sauvegarde : '+str(relative))
+                if entry.is_dir(follow_symlinks=False):pending.append(Path(entry.path));continue
+                if not entry.is_file(follow_symlinks=False):raise ValueError('Fichier spécial non pris en charge')
+                stat=entry.stat(follow_symlinks=False)
+                result[category(relative)].append(dict(path=relative.as_posix(),size=stat.st_size,mtime_ns=stat.st_mtime_ns))
+                files+=1;size+=stat.st_size
+                if files%128==0:tick(current)
+    tick(root,force=True)
+    for records in result.values():records.sort(key=lambda r:r['path'])
     return result
+
+
+def preview(root,*,on_progress=None,cancel=None):
+    """Only metadata leaves this function; no SQL or provider dependency."""
+    from . import environment
+    from .tracking import emit
+    emit(on_progress,'INVENTORY_SCAN')
+    entries=scan(root,on_progress=on_progress,cancel=cancel)
+    names=[r['path'] for records in entries.values() for r in records]
+    emit(on_progress,'ENVIRONMENT_INVENTORY')
+    captured=environment.capture(root,names,on_progress=on_progress,cancel=cancel)
+    emit(on_progress,'FINISHED')
+    return dict(status='INVENTORIED',packages=[dict(package=k,fichiers=len(v),octets=sum(f['size'] for f in v))
+        for k,v in entries.items()],variables=captured['variables'])
 
 
 def installed_versions(root):
