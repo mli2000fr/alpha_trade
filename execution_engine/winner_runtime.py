@@ -24,9 +24,10 @@ LIVE = {'new', 'accepted', 'pending_new', 'held', 'partially_filled'}
 
 
 class WinnerCampaignRuntime:
-    def __init__(self, store, repo, broker, config, *, market, risk, now=None):
+    def __init__(self, store, repo, broker, config, *, market, risk, now=None, lifecycle_only=False):
         self.store, self.repo, self.broker, self.config = store, repo, broker, config
         self.market, self.risk = market, risk
+        self.lifecycle_only = lifecycle_only
         self.clock = (lambda: aware(now)) if now is not None else lambda: datetime.now(UTC)
         self.now = self.clock()
         self.metrics = dict(winner_plans_watched=0, winner_buys_submitted=0,
@@ -106,6 +107,11 @@ class WinnerCampaignRuntime:
         if not self.state['lots'] and self.now >= aware(self.state['entry_expires_at']):
             self.state['status'] = 'EXPIRED'
             self.save()
+            return
+        if self.lifecycle_only:
+            # Replay observation clocks may fall between observed price opens.
+            # Still reconcile fills, attach protections and honor deadlines,
+            # without fabricating market evidence or a new risk decision.
             return
         from common.winner_pyramiding import held_market_data_required
         if self.state['lots'] and not held_market_data_required(self.state):

@@ -140,6 +140,7 @@ def run(args):
     from modelFactory.oracle_path.predict import load_contract
     from modelFactory.oracle_path.train import digest
     from risk_management.config import load_risk_config
+    from backtesting.winner_settings import production_risk_defaults, apply_risk_settings, apply_policy_settings, mapping
 
     if not args.research_assumptions:
         raise ValueError('--research-assumptions required: no historical bid/ask/fill/sector-PIT certification')
@@ -148,6 +149,7 @@ def run(args):
     output = Path(args.output_dir)
     output.mkdir(parents=True, exist_ok=False)
     started = time.monotonic()
+    missing_audit=None
     atomic_json(output/'progress.json', dict(status='RUNNING', completed=0, phase='READ_ONLY_INPUTS'))
     try:
         root, protocol, _, folds = load_contract(args.artifacts_dir, args.oracle_batch_id)
@@ -158,7 +160,8 @@ def run(args):
             options_enabled=options_config.enabled
         if options_enabled:
             options_config=replace(options_config,enabled=True,oracle_top_n=args.top_n)
-        policy = replace(load_winner_pyramiding_config(), enabled=True)
+        policy = apply_policy_settings(replace(load_winner_pyramiding_config(), enabled=True),
+            getattr(args,'policy_overrides_json',None))
         leverage = load_leverage_config_from_yaml()
         # An explicit limit may LOWER production leverage, never grant more.
         allowed = min(args.max_leverage, leverage.max_leverage if leverage.enabled else 1.,
@@ -168,13 +171,18 @@ def run(args):
         exec_cfg = ExecutionConfig(winner_pyramiding=policy, account_type=args.account_type,
             dry_run=True, simulated_account_equity=args.initial_equity, leverage=leverage,
             simulated_margin_buying_power_multiplier=allowed)
-        risk = load_risk_config(equity=args.initial_equity)
+        risk = production_risk_defaults(load_risk_config(equity=args.initial_equity,
+            cli_overrides={'account_equity':args.initial_equity}))
+        risk = apply_risk_settings(risk,getattr(args,'risk_overrides_json',None))
+        risk = replace(risk,fixed_stop_pct=policy.stop_loss_pct,disable_price_take_profit=True,
+                       allow_fractional_shares=False)
         if getattr(args, 'factor_model', None) is not None:
             risk = replace(risk, enable_factor_model=args.factor_model)
         if getattr(args, 'max_positions', None) is not None:
             if args.max_positions < 1:
                 raise ValueError('Maximum positions must be positive')
-            risk = replace(risk, max_positions=args.max_positions)
+            risk = replace(risk, max_positions=args.max_positions,max_long_positions=args.max_positions,
+                           effective_max_positions_override=None)
         risk = replace(risk, max_gross_exposure=min(risk.max_gross_exposure, allowed))
         cfg = BacktestConfig(start_date=args.start_date, end_date=args.end_date, initial_equity=args.initial_equity,
             risk_config=risk, exec_config=exec_cfg, use_canonical_costs=True,
@@ -191,6 +199,10 @@ def run(args):
         universe = load_universe_file_symbols(args.symbol_source)
         if not universe:
             raise ValueError('Empty universe')
+        from backtesting.winner_exclusions import excluded_symbols,apply_exclusions
+        exclusions=excluded_symbols(getattr(args,'exclude_symbols',''))
+        if set(exclusions)-set(universe):
+            raise ValueError('Titres exclus hors de l’univers demandé : '+', '.join(sorted(set(exclusions)-set(universe))))
         engine = get_sqlalchemy_engine(db_name='alpha_trade')
         with engine.connect() as conn, conn.begin():
             # Database-enforced, next transaction read-only; no ensure_table or
@@ -210,8 +222,32 @@ def run(args):
             selected = validate_scores(scores, profile_hash=digest(root/'feature_profile.json'),
                 folds=folds, expected_days=signal_days, top_n=args.top_n, horizon=protocol['horizon'],
                 universe_size=len(universe), min_coverage=getattr(args,'min_oracle_coverage',.9))
+            original_selection_hash=hashlib.sha256(selected.to_csv(index=False).encode()).hexdigest()
+            selected,excluded_signals=apply_exclusions(selected,exclusions)
+            LOG.info('Exclusions Winner sur toute la période : %s ; %d signaux retirés, aucun remplacement',
+                ','.join(exclusions) or 'aucune',len(excluded_signals))
+            manual_exclusions=list(exclusions)
+            if getattr(args,'ignore_missing_intraday',False):
+                from backtesting.winner_missing_intraday import screen_missing_intraday
+                def audit_progress(done,total):
+                    atomic_json(output/'progress.json',dict(status='RUNNING',phase='AUDIT_INTRADAY_COVERAGE',
+                        completed=done,total=total,elapsed_seconds=time.monotonic()-started))
+                audit_progress(0,int(selected.symbol.nunique()))
+                missing_audit=screen_missing_intraday(conn,selected,args.end_date,policy,progress=audit_progress)
+                selected,auto_excluded=apply_exclusions(selected,missing_audit['excluded_symbols'])
+                auto_excluded['exclusion_reason']='AUTOMATIC_POST_HOC_INTRADAY_COVERAGE_EXCLUSION'
+                excluded_signals=pd.concat([excluded_signals,auto_excluded],ignore_index=True)
+                exclusions=sorted(set(exclusions)|set(missing_audit['excluded_symbols']))
+                missing_audit['removed_signals']=len(auto_excluded)
+                atomic_json(output/'missing-intraday.json',missing_audit)
+                pd.DataFrame(missing_audit['gaps'],columns=['symbol','date','expected_bars','qualified_bars',
+                    'missing_bars','reason','first_bar','last_bar']).to_csv(output/'missing-intraday.csv',index=False)
+                LOG.warning('Mode diagnostic : %d titres exclus automatiquement ; connaissance future de la couverture, aucun remplacement Oracle',
+                    len(missing_audit['excluded_symbols']))
             from backtesting.winner_data import daily_bars, HistoricalFactorSource, HistoricalOptionsSource
-            symbols = sorted(set(selected.symbol)|({'SPY','IWM','MTUM'} if risk.enable_factor_model else {'SPY'}))
+            cap_check=getattr(args,'factor_market_cap_check',True)
+            proxies=({'SPY','IWM','MTUM'} if cap_check else {'SPY','MTUM'}) if risk.enable_factor_model else {'SPY'}
+            symbols = sorted(set(selected.symbol)|proxies)
             bars = daily_bars(conn, symbols, prior-timedelta(days=650), actual[-1])
             pivots = {k: bars.pivot(index='date', columns='symbol', values=k).astype(float)
                 for k in ('open', 'high', 'low', 'close', 'volume')}
@@ -223,9 +259,27 @@ def run(args):
                 'WHERE symbol IN :symbols AND ex_date BETWEEN :start AND :end').bindparams(
                 bindparam('symbols', expanding=True)), conn, params=dict(symbols=symbols, start=prior, end=args.end_date))
             source = SqlIntradaySource(conn)
-            factors = HistoricalFactorSource(conn, pivots['close']) if risk.enable_factor_model else None
+            factors = HistoricalFactorSource(conn,pivots['close'],universe=universe,
+                start=prior-timedelta(days=650),end=actual[-1],output=output,market_cap_check=cap_check) if risk.enable_factor_model else None
             options_source=HistoricalOptionsSource(conn,options_config) if options_enabled else None
+            from backtesting.winner_clock import observation_offset
             frozen = dict(arguments=vars(args), winner_policy=asdict(policy), risk=asdict(risk),
+                settings_profile='production_defaults_with_explicit_replay_overrides',
+                selection_exclusions=dict(symbols=exclusions,removed_signals=len(excluded_signals),
+                    manual_symbols=manual_exclusions,
+                    policy='AFTER_ORACLE_TOP_N_NO_REFILL',original_selection_sha256=original_selection_hash,
+                    qualification='USER_DEFINED_SUBUNIVERSE_POSSIBLE_POST_HOC_SELECTION_BIAS'),
+                missing_intraday_screen={k:v for k,v in missing_audit.items() if k!='gaps'} if missing_audit else dict(enabled=False),
+                factor_input_policy='QUALIFIED_ARCHIVE_ELSE_CAUSAL_RECONSTRUCTION' if cap_check else 'RECONSTRUCT_PRICE_FACTORS_NO_SIZE',
+                factor_market_cap_check=cap_check,disabled_risk_factors=[] if cap_check else ['size'],
+                execution_assumptions='conservative 5m OHLC, adverse collision first, no retroactive fill; current non-PIT sectors',
+                replay_clock=dict(observation_offset_seconds=observation_offset(policy),
+                    execution='Off-grid delayed decisions: one IOC proxy at next SAME-session observed 5m open; '
+                              'reserve capital and frozen limit, cancel if missing/unfillable; no later retry of this order',
+                    stop_amendments='Off-grid amendment effective at next observed open; old stop until then',
+                    full_live_parity=False),
+                risk_overrides=mapping(getattr(args,'risk_overrides_json',None)),
+                policy_overrides=mapping(getattr(args,'policy_overrides_json',None)),
                 leverage=asdict(leverage), costs='canonical BacktestEngine cost model',
                 requested_max_leverage=args.max_leverage, allowed_max_leverage=allowed,
                 selection='Oracle TOP-N -> CALL/PUT + OI -> risque -> Winner' if options_enabled else 'Oracle TOP-N -> risque -> Winner',
@@ -240,6 +294,9 @@ def run(args):
                 signals_sha256=hashlib.sha256(selected.to_csv(index=False).encode()).hexdigest())
             atomic_json(output/'protocol.json', frozen)
             selected.to_csv(output/'signals.csv', index=False)
+            excluded_signals.to_csv(output/'excluded-signals.csv',index=False)
+            atomic_json(output/'progress.json',dict(status='RUNNING',phase='SIMULATION',completed=0,total=len(actual),
+                elapsed_seconds=time.monotonic()-started))
             def progress(done, total, day):
                 elapsed = time.monotonic()-started
                 atomic_json(output/'progress.json', dict(status='RUNNING', completed=done, total=total,
@@ -250,8 +307,17 @@ def run(args):
                 sector_map=sectors.set_index('symbol').sector.to_dict(), intraday_source=source,
                 winner_research_assumptions=True, winner_progress=progress, winner_corporate_actions=ca.to_dict('records'),
                 winner_factor_source=factors,winner_selection_source=options_source)
+            if missing_audit and missing_audit['excluded_symbols']:
+                meta=result.tracker_snapshot['winner_replay']
+                meta['status']='INCOMPLETE_COVERAGE'
+                meta['coverage_gaps'].extend(dict(date=r['date'],symbol=r['symbol'],reason='AUTO_EXCLUDED_MISSING_INTRADAY')
+                    for r in missing_audit['gaps'])
             atomic_json(output/'data-receipts.json', source.receipts)
             atomic_json(output/'factor-receipts.json', factors.receipts if factors else [])
+            atomic_json(output/'factor-reconstruction-receipts.json',
+                factors.reconstruction.receipts if factors and factors.reconstruction else [])
+            atomic_json(output/'sec-capitalization-receipts.json',
+                factors.reconstruction.sec.receipts if factors and factors.reconstruction and factors.reconstruction.sec else [])
             atomic_json(output/'options-receipts.json',options_source.receipts if options_source else [])
             if options_source:
                 pd.DataFrame([dict(trade_date=r['trade_date'],cutoff_utc=r['cutoff_utc'],**row)
@@ -262,6 +328,17 @@ def run(args):
         result.equity_curve.to_csv(output/'equity-daily.csv')
         result.drawdown_breaker_df.to_csv(output/'risk-5m.csv', index=False)
         report = metrics(result, args.initial_equity)
+        report['selection_exclusions']=frozen['selection_exclusions']
+        report['missing_intraday_screen']=frozen['missing_intraday_screen']
+        report['factor_inputs']=dict(enabled=risk.enable_factor_model,
+            policy='ARCHIVE_THEN_RECONSTRUCT' if cap_check else 'RECONSTRUCT_PRICE_FACTORS_NO_SIZE',
+            market_cap_check=cap_check,disabled_factors=[] if cap_check else ['size'],
+            archived_contexts=sum(r.get('qualified') and r.get('mode')=='ARCHIVED_OBSERVATIONS'
+                for r in factors.receipts) if factors else 0,
+            reconstructed_contexts=sum(r.get('qualified') and r.get('mode')=='RECONSTRUCTED_HISTORICAL_INPUTS'
+                for r in factors.receipts) if factors else 0,
+            rejected_contexts=sum(not r.get('qualified') for r in factors.receipts) if factors else 0,
+            reconstruction_sessions=len(factors.reconstruction.receipts) if factors and factors.reconstruction else 0)
         from backtesting.simulator import BacktestResult
         annual, opening_equity = [], args.initial_equity
         intraday = result.intraday_equity_curve
@@ -282,20 +359,36 @@ def run(args):
         pd.DataFrame(annual).to_csv(output/'annual-summary.csv', index=False)
         report.update(allowed_max_leverage=allowed, elapsed_seconds=time.monotonic()-started,
             limitations=['OHLC prices + configurable costs, no historical quotes/fill queue',
+                'Off-grid delayed signals: next observed 5m open is an IOC execution proxy, not a historical live fill; '
+                'off-grid stop amendments take effect at the next observed open, with old stop retained until then',
                 'Current non-PIT sectors; canonical daily history may be revised',
+                'Reconstructed factors use current canonical historical prices and a frozen current universe; '
+                'capitalizations are dated observations or public as-reported SEC shares times a contemporaneous raw 5m close; '
+                'SEC current extracts and CIK mapping are not a complete archived historical security master; '
+                'reconstructions are research artifacts, never backdated live snapshots',
                 'Stops can gap; risk caps do not guarantee maximum drawdown',
                 'Cash dividends require USD/amount/payment date; share actions abort while held; coverage not certified',
                 'Final equity includes marked open holdings; no forced terminal liquidation',
+                'User-defined symbol exclusions apply to the entire run after Oracle TOP-N with no refill; '
+                'post-hoc data-driven exclusions change the tested population and may introduce selection bias',
+                'Automatic missing-intraday exclusions, when enabled, screen future data availability over potential campaign windows; '
+                'this is a post-hoc diagnostic population, not a causal/live-compatible selection rule',
                 'Native breaker, sizing/constraints, correlation/concentration and vol target; no full macro tape'])
         export_ui_report(result, report, frozen, output, args.initial_equity)
         atomic_json(output/'report.json', report)
         atomic_json(output/'progress.json', dict(status=report['status'], completed=len(actual), total=len(actual),
             elapsed_seconds=report['elapsed_seconds']))
         LOG.info('Replay %s; final equity %.2f', report['status'], report['final_equity'])
+        if missing_audit is not None:
+            from backtesting.winner_missing_intraday import log_missing_summary
+            log_missing_summary(missing_audit)
         return report
     except Exception as exc:
         atomic_json(output/'progress.json', dict(status='FAILED', error_type=type(exc).__name__, error=str(exc),
             elapsed_seconds=time.monotonic()-started))
+        if missing_audit is not None:
+            from backtesting.winner_missing_intraday import log_missing_summary
+            log_missing_summary(missing_audit)
         raise
 
 
@@ -323,6 +416,9 @@ def build_parser():
     parser.add_argument('--end-date', type=date.fromisoformat, required=True)
     parser.add_argument('--symbol-source', default='universe-file:config/univers_batch/univers_filtred_tradable.txt')
     parser.add_argument('--top-n', type=int, default=20)
+    parser.add_argument('--exclude-symbols',default='',help='Run-wide symbol exclusions after Oracle TOP-N, no refill, e.g. SDGR,APP')
+    parser.add_argument('--ignore-missing-intraday',action=argparse.BooleanOptionalAction,default=False,
+        help='Post-hoc audit of potential campaign windows; exclude incomplete tickers for the entire run and log them')
     parser.add_argument('--min-oracle-coverage', type=float, default=.9)
     parser.add_argument('--initial-equity', type=float, default=4000.)
     parser.add_argument('--account-type', choices=['cash', 'margin'], default='margin')
@@ -331,8 +427,12 @@ def build_parser():
     parser.add_argument('--cost-per-leg-bps', type=float, default=None,
         help='Explicit total commission + slippage per leg; omitted = canonical costs')
     parser.add_argument('--max-positions', type=int, default=None, help='Omitted = production risk preset')
+    parser.add_argument('--risk-overrides-json',default=None,help='Réglages de risque propres à ce replay')
+    parser.add_argument('--policy-overrides-json',default=None,help='Réglages Winner propres à ce replay')
     parser.add_argument('--factor-model', action=argparse.BooleanOptionalAction, default=None,
         help='Omitted = production risk config; requires genuinely archived factor inputs')
+    parser.add_argument('--factor-market-cap-check',action=argparse.BooleanOptionalAction,default=True,
+        help='Disable only capitalization/size factor in the replay; market and momentum risk stay active')
     parser.add_argument('--options-filter',action=argparse.BooleanOptionalAction,default=None,
         help='Omitted = options_directional_filter.enabled in config.yaml; no historical OI imputation')
     parser.add_argument('--research-assumptions', action='store_true')

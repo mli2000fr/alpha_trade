@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -40,6 +41,10 @@ def _cache_path(symbol: str) -> Path:
     safe = "".join(ch for ch in symbol.strip().upper() if ch.isalnum() or ch in "._-")
     if not safe:
         raise ValueError("symbol invalide pour cache Finnhub.")
+    # CON.json, AUX.json, etc. still name Windows devices. '=' cannot
+    # appear in the normalized symbol namespace, so this prefix cannot collide.
+    if re.fullmatch(r'(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?',safe,re.I):
+        safe='symbol='+safe
     return _cache_root() / f"{safe}.json"
 
 

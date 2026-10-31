@@ -114,6 +114,44 @@ Preuves dans `artifacts/operations/factor_input_remediation_20261028/` :
 
 ## Maintenance et validation
 
+### Reconstruction automatique dans le backtest Winner
+
+Depuis le 31 octobre 2026, le replay Winner essaie d'abord un snapshot
+archivé qualifié, puis calcule les entrées historiques manquantes à partir
+des sources locales. Cette reconstruction est isolée de `refresh_inputs` :
+elle ne publie rien dans `stock_risk_factor_inputs` et n'antidate aucune
+observation. Son heure de calcul réelle et la borne historique d'utilisation
+des sources restent séparées.
+
+Les capitalisations peuvent être des observations datées déjà enregistrées
+avant la décision ou des reconstructions depuis des faits SEC bruts publics
+à l'époque et un close intraday raw de la séance. Les faits conservent leur
+accession, mesure et publication ; la date de collecte actuelle n'est pas
+transformée en réception historique. Les ADR/classes ambiguës, sources
+incomplètes et splits connus depuis la mesure restent refusés. Les prix sont
+l'historique canonique actuel (révisions possibles), sur le fichier d'univers
+figé : cela reste un replay de recherche, pas une archive complète des
+données reçues à l'époque. Un manque de capitalisations/prix/proxys qualifiés
+bloque toujours l'entrée et marque la couverture incomplète.
+
+Le formulaire Winner propose également **Contrôler la capitalisation
+historique — facteur taille**, coché par défaut. Décoché, le replay n'utilise
+plus le facteur taille ni les capitalisations : marché et momentum restent
+calculés et contrôlés, avec une covariance réduite à ces deux facteurs.
+Cette option ne change ni les protections Winner ni la configuration de
+production. Le protocole signale explicitement le facteur retiré. Un tel
+contexte est refusé en exploitation et ne peut être autorisé que par
+l'adaptateur de replay.
+
+Les fichiers comprimés et les reçus sont stockés dans le dossier du run.
+Le risque natif conserve ses limites ; l'autorisation explicite de données
+reconstruites appartient au seul adaptateur de backtest. Le watcher et les
+étapes de risque/exécution opérationnelles continuent à exiger leurs
+observations réellement publiées. Voir le
+[contrat du replay Winner](winner_backtest_live_20261031.md).
+
+### Publication opérationnelle
+
 Installation additive et publication, si nécessaire :
 
 ```powershell
