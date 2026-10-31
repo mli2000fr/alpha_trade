@@ -83,7 +83,7 @@ def check_compatibility(engine, predictions, *, batch_id, trade_date,
         if (len(rows) != len(symbols) or {r['symbol'] for r in rows} != set(symbols)
                 or len(policies) != len(symbols) or {r['symbol'] for r in policies} != set(symbols)):
             raise ValueError('Scores/lineage/politique Oracle manquants, dupliqués ou futurs')
-        validate_oracle_lineage(rows, day, digest(root/'feature_profile.json'), folds)
+        validate_oracle_lineage(rows, day, digest(root/'feature_profile.json'), folds, horizon=protocol['horizon'])
         for row in rows:
             if (str(pd.Timestamp(row['fold_start']).date()) != eligible_fold
                     or not math.isfinite(float(row['proba_extreme']))
@@ -93,7 +93,7 @@ def check_compatibility(engine, predictions, *, batch_id, trade_date,
             if row['source'] != 'oracle_path_policy' or row['predicted_side'] != predictions[row['symbol']].predicted_side:
                 raise ValueError('Origine ou direction de la politique Oracle incompatible')
         result.update(compatible=True, champion_count=1, validated_fold_count=len(folds), fold_start=eligible_fold,
-                      protocol_sha256=protocol['fingerprint'], horizon=20,
+                      protocol_sha256=protocol['fingerprint'], horizon=protocol['horizon'],
                       score_semantics='amplitude_rank_not_directional_probability',
                       session_freshness=dict(allowed=True, signal_date=str(day),
                                              checked_at_utc=now.isoformat(),

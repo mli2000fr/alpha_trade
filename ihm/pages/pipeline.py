@@ -113,6 +113,7 @@ from ihm.services.db import get_runtime_db_config
 from ihm.services.ml_artifacts import list_ml_artifact_symbols
 from ihm.services.pipeline_runner import (
     DEFAULT_ML_PREDICT_SYMBOL_SOURCE,
+    DEFAULT_ML_TRAIN_SYMBOL_SOURCE,
     build_pipeline_command,
     format_command_for_display,
     resolve_step_display_name,
@@ -126,6 +127,7 @@ UNIVERSE_FILE_SOURCES = list_universe_file_sources()
 DEFAULT_UNIVERSE_FILE_SOURCE = UNIVERSE_FILE_SOURCES[0] if UNIVERSE_FILE_SOURCES else "tradable-universe"
 ML_PREDICT_BATCH_SOURCE_SYNC_KEY = "pipeline_ml_predict_source_synced_batch_id"
 ML_PREDICT_SOURCE_DEFAULT_VERSION_KEY = "pipeline_ml_predict_source_default_v2"
+ML_TRAIN_SOURCE_DEFAULT_VERSION_KEY = "pipeline_ml_train_source_default_v2"
 ML_TRAIN_SYMBOL_SOURCE_OPTIONS = (
     "stock-bars-daily",
     "tradable-universe",
@@ -1272,6 +1274,7 @@ def _render_ml_train_scope_block(
     db_config: dict[str, str | None],
     all_runs: list[dict[str, object]],
 ) -> None:
+    _prime_ml_train_symbol_source()
     _render_ml_scope_block(
         options,
         workflow_active=workflow_active,
@@ -1290,6 +1293,16 @@ def _render_ml_train_scope_block(
     )
 
 
+def _prime_ml_train_symbol_source() -> None:
+    """Replace the former automatic training default once, preserving manual choices."""
+    key = 'pipeline_ml_train_symbol_source'
+    if not st.session_state.get(ML_TRAIN_SOURCE_DEFAULT_VERSION_KEY):
+        if st.session_state.get(key) in (None, '', 'universe-file:oracle_balanced_400_202512.txt'):
+            st.session_state[key] = DEFAULT_ML_TRAIN_SYMBOL_SOURCE
+        st.session_state[ML_TRAIN_SOURCE_DEFAULT_VERSION_KEY] = True
+    st.session_state.setdefault(key, DEFAULT_ML_TRAIN_SYMBOL_SOURCE)
+
+
 def _prime_ml_predict_symbol_source() -> None:
     """Migrate the former automatic default once; keep subsequent manual choices."""
     key = "pipeline_ml_predict_symbol_source"
@@ -1298,6 +1311,45 @@ def _prime_ml_predict_symbol_source() -> None:
             st.session_state[key] = DEFAULT_ML_PREDICT_SYMBOL_SOURCE
         st.session_state[ML_PREDICT_SOURCE_DEFAULT_VERSION_KEY] = True
     st.session_state.setdefault(key, DEFAULT_ML_PREDICT_SYMBOL_SOURCE)
+
+
+def _path_prediction_date_options(options: PipelineLaunchOptions, batch_id: str) -> PipelineLaunchOptions | None:
+    """Historical path inference has its own dates; never backdate a trained fold."""
+    from modelFactory.oracle_path.train import is_path_batch
+    root = Path(options.ml_artifacts_dir or 'artifacts/models')
+    if not batch_id:
+        from modelFactory.cli import _resolve_predict_batch_id
+        batch_id = (options.ml_predict_batch_id or options.ml_live_predict_batch_id
+                    or _resolve_predict_batch_id(root, historical=True) or '')
+    if not batch_id or not is_path_batch(root, batch_id):
+        return options
+    from modelFactory.oracle_path.predict import load_contract, first_causal_date
+    try:
+        _, protocol, _, folds = load_contract(root, batch_id)
+        minimum = first_causal_date(folds).date()
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        st.error(f'Contrat de prédiction Oracle parcours indisponible : {exc}')
+        return None
+    requested = _coerce_ui_date(options.ml_training_start_date, fallback=minimum)
+    end_default = _coerce_ui_date(options.ml_training_end_date, fallback=_trade_date_or_today(options))
+    start_key = f'pipeline_ml_path_predict_start_{batch_id}'
+    end_key = f'pipeline_ml_path_predict_end_{batch_id}'
+    st.session_state.setdefault(start_key, max(requested, minimum))
+    st.session_state.setdefault(end_key, end_default)
+    st.caption(f"Oracle parcours H{protocol['horizon']} : début minimal de prédiction compatible `{minimum}`. "
+               "Les dates ci-dessous sont indépendantes des dates du training ; les folds antérieurs "
+               "nécessaires à l'entraînement et à la validation ne permettent pas de prédire cette période.")
+    if requested < minimum:
+        st.caption(f"Le début du training `{requested}` n'est pas repris pour ce bouton : "
+                   f"le début de prédiction proposé est `{minimum}`.")
+    start = st.date_input('Début des prédictions historiques — Oracle parcours',
+        min_value=minimum, key=start_key)
+    end = st.date_input('Fin des prédictions historiques — Oracle parcours', key=end_key)
+    if not isinstance(start, date) or not isinstance(end, date) or start < minimum or end < start:
+        st.error(f'Choisir une période de prédiction commençant au plus tôt le {minimum}, avec fin >= début.')
+        return None
+    return replace(options, ml_predict_batch_id=batch_id,
+                   ml_training_start_date=start.isoformat(), ml_training_end_date=end.isoformat())
 
 
 def _render_ml_predict_scope_block(
@@ -1326,7 +1378,7 @@ def _render_ml_predict_scope_block(
         for _, _row in _batches_df.iterrows():
             _bid = str(_row["batch_id"])
             from modelFactory.oracle_path.train import is_path_batch
-            _path_badge = "Parcours H20" if is_path_batch(Path("artifacts/models"), _bid) else ""
+            _path_badge = f"Parcours {oracle_horizon_badge(_bid)}" if is_path_batch(Path("artifacts/models"), _bid) else ""
             from modelFactory.oracle_barrier.train import is_barrier_batch
             if is_barrier_batch(Path("artifacts/models"), _bid):
                 continue  # first-touch research must not become a terminal/live Oracle
@@ -1441,6 +1493,9 @@ def _render_ml_predict_scope_block(
         help="Nombre de dates traitées en parallèle lors du predict historique. 4 = ~4× plus rapide.",
     )
 
+    options = _path_prediction_date_options(options, str(_selected_batch or ''))
+    if options is None:
+        return
     _render_ml_scope_block(
         options,
         workflow_active=workflow_active,

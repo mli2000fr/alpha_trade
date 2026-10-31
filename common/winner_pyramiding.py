@@ -27,9 +27,16 @@ class WinnerPyramidingConfig:
     entry_valid_sessions: int = 20
     max_quote_age_seconds: int = 60
     max_bar_delay_seconds: int = 60
+    market_data_delay_seconds: int = 0
+    delayed_entry_limit_buffer_pct: float = .01
     cost_reserve_bps_per_leg: float = 25.
 
     def __post_init__(self):
+        if (type(self.market_data_delay_seconds) is not int or self.market_data_delay_seconds not in (0,900,1200,1500,1800,2100,2400,2700,3000,3300,3600)):
+            raise ValueError('market_data_delay_seconds: 0 ou 900..3600 par pas de 300 secondes')
+        if (type(self.delayed_entry_limit_buffer_pct) not in (int,float)
+                or not math.isfinite(self.delayed_entry_limit_buffer_pct) or not 0 <= self.delayed_entry_limit_buffer_pct <= .05):
+            raise ValueError('delayed_entry_limit_buffer_pct: fraction entre 0 et 0.05')
         for key in ('enabled', 'reinforcement_enabled', 'standard_entry_quote_check_enabled'):
             if type(getattr(self, key)) is not bool:
                 raise ValueError(f'winner_pyramiding.{key}: boolean required')
@@ -155,6 +162,11 @@ def fresh_completed_bars(bars, policy, *, now, count):
         return []
     opening, closing = bounds
     if not opening <= now < closing:
+        return []
+    # Availability clock differs from wall-clock only under an explicit frozen
+    # delayed-data contract. Orders and fills always retain real wall time.
+    now = now-timedelta(seconds=policy.market_data_delay_seconds)
+    if now < opening:
         return []
     completed = sorted((b for b in bars if aware(b['timestamp'])+timedelta(minutes=5) <= now),
         key=lambda b: aware(b['timestamp']))

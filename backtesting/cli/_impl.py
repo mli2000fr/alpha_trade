@@ -1097,6 +1097,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "--margin-interest-rate", type=float, default=0.075,
         help="P2-4 : intérêts de marge annuels sur débit cash (Alpaca ≈ 7.5%%). 0 = désactivé.",
     )
+    run_p.add_argument('--no-winner-pyramiding', dest='winner_pyramiding', action='store_false', default=None,
+        help='Désactive Winner dans ce run daily. Pour Winner intraday, utiliser backtesting.winner_campaign_replay.')
     run_p.add_argument(
         "--atr-ts", type=float, default=0.0,
         help="Multiplicateur ATR pour trailing stop adaptatif (0 = désactivé, utilise --ts fixe). "
@@ -2774,6 +2776,16 @@ def _risk_tp_overrides(args: argparse.Namespace) -> dict:
     return out
 
 
+def _without_winner_risk_policy(config, *, equity, preset_key, allow_fractional_shares):
+    """Undo only Winner's three loader overrides for an explicit daily replay."""
+    from common.config_loader import load_config
+    standard = type(config).from_yaml_section((load_config() or {}).get('risk_management', {}),
+        equity=equity, preset_key=preset_key, allow_fractional_shares=allow_fractional_shares)
+    return config.with_overrides(fixed_stop_pct=standard.fixed_stop_pct,
+        disable_price_take_profit=standard.disable_price_take_profit,
+        allow_fractional_shares=standard.allow_fractional_shares)
+
+
 def _run_backtest(args: argparse.Namespace) -> None:
     """Exécute le backtest complet."""
     from datetime import datetime
@@ -2967,6 +2979,10 @@ def _run_backtest(args: argparse.Namespace) -> None:
         )
 
         # Flag CLI pour exclure les sélections sans ML.
+        if getattr(args, 'winner_pyramiding', None) is False:
+            phase2_risk_config = _without_winner_risk_policy(phase2_risk_config,
+                equity=float(args.equity), preset_key=str(getattr(effective_preset,'key','') or '') or None,
+                allow_fractional_shares=bool(args.allow_fractional_shares))
         if getattr(args, "filter_no_ml", False):
             phase2_risk_config = phase2_risk_config.with_overrides(
                 filter_unmodeled_selections=True,
@@ -3713,7 +3729,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
                     if bool(getattr(args, "extreme_gate_shorts", False)):
                         raise SystemExit("Oracle parcours : aucune direction SHORT implicite; utiliser un filtre directionnel qualifié.")
                     args.extreme_gate_per_symbol = "bypass"
-                    _safe_print("   Oracle parcours H20 : score d'amplitude seul, politique LONG-only explicite (pas de probabilité directionnelle).\n")
+                    _safe_print("   Oracle parcours : score d'amplitude seul, politique LONG-only explicite (pas de probabilité directionnelle).\n")
                 # ── Calibration optionnelle de proba_extreme (oracle.calibration) ──
                 _cal_flag = str(getattr(args, "oracle_calibration", "none") or "none").strip().lower()
                 if (
@@ -4094,6 +4110,9 @@ def _run_backtest(args: argparse.Namespace) -> None:
         leverage=load_leverage_config_from_yaml(),
         time_stop=load_time_stop_config_from_yaml(),
     )
+    if getattr(args, 'winner_pyramiding', None) is not None:
+        execution_config = replace(execution_config, winner_pyramiding=replace(
+            execution_config.winner_pyramiding, enabled=args.winner_pyramiding))
     if phase2_mode == "off":
         research_signals_df = replay_signals(
             preds_df,

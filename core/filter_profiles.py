@@ -32,6 +32,15 @@ from dataclasses import dataclass, replace
 import pandas as pd
 
 
+def normalize_earnings_blackout_days(value: int | None) -> int | None:
+    """-1/None désactivent le contrôle ; 0 conserve le jour de l'annonce."""
+    if value is None or value == -1:
+        return None
+    if value < 0:
+        raise ValueError("earnings_blackout_days doit être -1 (désactivé), zéro ou positif.")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class StrictFilterProfile:
     """Profil de seuils partagé entre scanner live, backfill PIT et reruns backtest."""
@@ -84,8 +93,7 @@ class StrictFilterProfile:
             raise ValueError("max_spread_bps_iex doit être strictement positif lorsqu'il est renseigné.")
         if self.min_quote_size is not None and self.min_quote_size < 0:
             raise ValueError("min_quote_size doit être >= 0 lorsqu'il est renseigné.")
-        if self.earnings_blackout_days is not None and self.earnings_blackout_days < 0:
-            raise ValueError("earnings_blackout_days doit être positif ou nul lorsqu'il est renseigné.")
+        object.__setattr__(self, "earnings_blackout_days", normalize_earnings_blackout_days(self.earnings_blackout_days))
         if self.market_cap_max_age_days is not None and self.market_cap_max_age_days < 0:
             raise ValueError("market_cap_max_age_days doit être positif ou nul lorsqu'il est renseigné.")
         if (

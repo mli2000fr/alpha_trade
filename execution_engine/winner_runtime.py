@@ -137,8 +137,16 @@ class WinnerCampaignRuntime:
             return
         if self.pending():
             return
+        from common.winner_delayed import delayed_entry, delayed_price_limit
+        reference=snapshot.get('ask')
+        try:
+            if delayed_entry(self.state,'ADD' if self.state['lots'] else 'ENTRY',self.config):
+                reference=delayed_price_limit(self.state,snapshot,self.now)
+        except ValueError as exc:
+            self.blocked('DELAYED_SIP_UNQUALIFIED: '+str(exc))
+            return
         action = next_plan_action(self.state, snapshot['bars'], now=self.now,
-            prior_session_high=snapshot.get('prior_session_high'), price=snapshot.get('ask'),
+            prior_session_high=snapshot.get('prior_session_high'), price=reference,
             available_cash=snapshot.get('available_cash', float('inf')),
             capacity_quantity=self.state['full_quantity'],
             new_entries_enabled=self.config.winner_pyramiding.enabled and not self.config.blocks_new_entries)

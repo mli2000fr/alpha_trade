@@ -10,6 +10,7 @@ from datetime import UTC, date, datetime, timedelta
 import hashlib
 import json
 import logging
+import math
 from pathlib import Path
 import time
 import uuid
@@ -60,26 +61,43 @@ class SqlIntradaySource:
         return frame
 
 
-def validate_scores(frame, *, profile_hash, folds, expected_days, top_n):
+def validate_scores(frame, *, profile_hash, folds, expected_days, top_n, horizon=20,
+                    universe_size=None, min_coverage=.9):
     """Validate the complete scoring set BEFORE ranking; never read labels."""
+    from modelFactory.oracle_path import target_name
+    target = target_name(horizon)
     if frame.empty or frame.duplicated(['trade_date', 'symbol']).any():
         raise ValueError('Empty or duplicate Oracle predictions')
     days = pd.to_datetime(frame.trade_date)
     scores = pd.to_numeric(frame.proba_extreme, errors='coerce')
     expected_hash = pd.to_datetime(frame.fold_start).dt.strftime('%Y-%m-%d').map(
         {k: v['model_sha256'] for k, v in folds.items()})
+    # SQL lineage must agree with the immutable training receipt, not merely
+    # assert an arbitrary past availability for future-trained weights.
+    availability = {}
+    for name, fold in folds.items():
+        metrics = fold.get('metrics', {})
+        bounds = [pd.Timestamp(metrics.get(k)) for k in ('train_available_max', 'val_available_max')]
+        if any(pd.isna(value) for value in bounds):
+            raise ValueError('Oracle-path lineage: archived availability missing')
+        availability[name] = max(bounds).normalize()
+    expected_available = pd.to_datetime(frame.fold_start).dt.strftime('%Y-%m-%d').map(availability)
     if (not scores.between(0, 1).all() or not pd.to_datetime(frame.model_available_date).lt(days).all()
-            or not frame.target_name.eq('oracle_path_extreme20').all() or not frame.target_horizon.eq(20).all()
+            or not frame.target_name.eq(target).all() or not frame.target_horizon.eq(horizon).all()
             or not frame.feature_profile_sha256.eq(profile_hash).all()
             or expected_hash.isna().any() or not frame.model_sha256.eq(expected_hash).all()
+            or not pd.to_datetime(frame.model_available_date).eq(expected_available).all()
+            or not pd.to_datetime(frame.fold_start).le(days).all()
             or not pd.to_datetime(frame.fold_start).eq(pd.to_datetime(frame.lineage_fold_start)).all()):
         raise ValueError('Oracle-path lineage absent, non-causal or inconsistent with archived model')
     frame = frame.copy()
     frame['trade_date'] = days.dt.date
     counts = frame.groupby('trade_date').size()
-    missing = [str(day) for day in expected_days if counts.get(day, 0) < top_n]
+    minimum = max(top_n, math.ceil((universe_size or top_n)*min_coverage))
+    missing = [f'{day} ({counts.get(day,0)}/{universe_size or top_n})'
+               for day in expected_days if counts.get(day, 0) < minimum]
     if missing:
-        raise ValueError('Fewer than TOP-N causal scores for sessions: '+', '.join(missing[:30]))
+        raise ValueError(f'Couverture Oracle insuffisante (minimum {minimum}) : '+', '.join(missing[:30]))
     ordered = frame.sort_values(['trade_date', 'proba_extreme', 'symbol'], ascending=[True, False, True])
     ordered['rank'] = ordered.groupby('trade_date').cumcount()+1
     ordered['selected'] = ordered['rank'] <= top_n
@@ -116,6 +134,7 @@ def run(args):
     from common.market_calendar import get_market_calendar
     from common.universe_files import load_universe_file_symbols
     from common.winner_pyramiding import load_winner_pyramiding_config
+    from common.daily_bar_sources import preferred_daily_source
     from database.connection import get_sqlalchemy_engine
     from execution_engine.config import ExecutionConfig, load_leverage_config_from_yaml
     from modelFactory.oracle_path.predict import load_contract
@@ -132,6 +151,13 @@ def run(args):
     atomic_json(output/'progress.json', dict(status='RUNNING', completed=0, phase='READ_ONLY_INPUTS'))
     try:
         root, protocol, _, folds = load_contract(args.artifacts_dir, args.oracle_batch_id)
+        from service.options_directional.config import load_options_filter_config
+        options_config=load_options_filter_config()
+        options_enabled=getattr(args,'options_filter',False)
+        if options_enabled is None:
+            options_enabled=options_config.enabled
+        if options_enabled:
+            options_config=replace(options_config,enabled=True,oracle_top_n=args.top_n)
         policy = replace(load_winner_pyramiding_config(), enabled=True)
         leverage = load_leverage_config_from_yaml()
         # An explicit limit may LOWER production leverage, never grant more.
@@ -143,10 +169,17 @@ def run(args):
             dry_run=True, simulated_account_equity=args.initial_equity, leverage=leverage,
             simulated_margin_buying_power_multiplier=allowed)
         risk = load_risk_config(equity=args.initial_equity)
+        if getattr(args, 'factor_model', None) is not None:
+            risk = replace(risk, enable_factor_model=args.factor_model)
+        if getattr(args, 'max_positions', None) is not None:
+            if args.max_positions < 1:
+                raise ValueError('Maximum positions must be positive')
+            risk = replace(risk, max_positions=args.max_positions)
         risk = replace(risk, max_gross_exposure=min(risk.max_gross_exposure, allowed))
         cfg = BacktestConfig(start_date=args.start_date, end_date=args.end_date, initial_equity=args.initial_equity,
             risk_config=risk, exec_config=exec_cfg, use_canonical_costs=True,
             margin_interest_rate_annual=args.margin_interest_annual,
+            cost_round_trip_bps=(2*args.cost_per_leg_bps if getattr(args, 'cost_per_leg_bps', None) is not None else 0.),
             trading_constraints=TradingConstraintConfig(account_type=args.account_type, swing_only=False))
         cal = get_market_calendar('US_EQ', allow_us_weekday_fallback=False)
         sessions = [s.session_date for s in cal.sessions(args.start_date-timedelta(days=14), args.end_date) if s.is_open]
@@ -175,16 +208,11 @@ def run(args):
             scores = pd.read_sql(query, conn, params=dict(batch=args.oracle_batch_id, start=prior,
                 end=actual[-1], symbols=universe))
             selected = validate_scores(scores, profile_hash=digest(root/'feature_profile.json'),
-                folds=folds, expected_days=signal_days, top_n=args.top_n)
-            symbols = sorted(set(selected.symbol)|{'SPY'})
-            bars = pd.read_sql(text('SELECT symbol, date, open, high, low, close, volume '
-                'FROM stock_bars_daily WHERE symbol IN :symbols AND date BETWEEN :start AND :end '
-                "AND is_filled=0 AND data_adjustment='split' ORDER BY date, symbol").bindparams(
-                bindparam('symbols', expanding=True)), conn,
-                params=dict(symbols=symbols, start=prior-timedelta(days=650), end=actual[-1]))
-            if bars.duplicated(['date', 'symbol']).any():
-                raise ValueError('Ambiguous daily source')
-            bars['date'] = pd.to_datetime(bars.date)
+                folds=folds, expected_days=signal_days, top_n=args.top_n, horizon=protocol['horizon'],
+                universe_size=len(universe), min_coverage=getattr(args,'min_oracle_coverage',.9))
+            from backtesting.winner_data import daily_bars, HistoricalFactorSource, HistoricalOptionsSource
+            symbols = sorted(set(selected.symbol)|({'SPY','IWM','MTUM'} if risk.enable_factor_model else {'SPY'}))
+            bars = daily_bars(conn, symbols, prior-timedelta(days=650), actual[-1])
             pivots = {k: bars.pivot(index='date', columns='symbol', values=k).astype(float)
                 for k in ('open', 'high', 'low', 'close', 'volume')}
             sectors = pd.read_sql(text('SELECT symbol, sector FROM stock_metadata WHERE symbol IN :symbols').bindparams(
@@ -195,9 +223,18 @@ def run(args):
                 'WHERE symbol IN :symbols AND ex_date BETWEEN :start AND :end').bindparams(
                 bindparam('symbols', expanding=True)), conn, params=dict(symbols=symbols, start=prior, end=args.end_date))
             source = SqlIntradaySource(conn)
+            factors = HistoricalFactorSource(conn, pivots['close']) if risk.enable_factor_model else None
+            options_source=HistoricalOptionsSource(conn,options_config) if options_enabled else None
             frozen = dict(arguments=vars(args), winner_policy=asdict(policy), risk=asdict(risk),
                 leverage=asdict(leverage), costs='canonical BacktestEngine cost model',
                 requested_max_leverage=args.max_leverage, allowed_max_leverage=allowed,
+                selection='Oracle TOP-N -> CALL/PUT + OI -> risque -> Winner' if options_enabled else 'Oracle TOP-N -> risque -> Winner',
+                options_filter=options_config.snapshot() if options_enabled else None,
+                options_decision_cutoff='next_entry_session_open_minus_1_second',
+                daily_bars_preference=preferred_daily_source(), daily_rows=len(bars),
+                daily_sha256=hashlib.sha256(bars.to_csv(index=False).encode()).hexdigest(),
+                sectors_sha256=hashlib.sha256(sectors.to_csv(index=False).encode()).hexdigest(),
+                corporate_actions_sha256=hashlib.sha256(ca.to_csv(index=False).encode()).hexdigest(),
                 current_sectors_non_pit=True, observed_at_utc=datetime.now(UTC),
                 model_protocol_sha256=digest(root/'protocol.json'),
                 signals_sha256=hashlib.sha256(selected.to_csv(index=False).encode()).hexdigest())
@@ -211,8 +248,14 @@ def run(args):
             result = BacktestEngine(cfg).run(open_df=pivots['open'], close=pivots['close'], high=pivots['high'],
                 low=pivots['low'], volume=pivots['volume'], signals_df=selected,
                 sector_map=sectors.set_index('symbol').sector.to_dict(), intraday_source=source,
-                winner_research_assumptions=True, winner_progress=progress, winner_corporate_actions=ca.to_dict('records'))
+                winner_research_assumptions=True, winner_progress=progress, winner_corporate_actions=ca.to_dict('records'),
+                winner_factor_source=factors,winner_selection_source=options_source)
             atomic_json(output/'data-receipts.json', source.receipts)
+            atomic_json(output/'factor-receipts.json', factors.receipts if factors else [])
+            atomic_json(output/'options-receipts.json',options_source.receipts if options_source else [])
+            if options_source:
+                pd.DataFrame([dict(trade_date=r['trade_date'],cutoff_utc=r['cutoff_utc'],**row)
+                    for r in options_source.receipts for row in r['rows']]).to_csv(output/'options-selection.csv',index=False)
         result.closed_trades_df.to_csv(output/'trades.csv', index=False)
         result.trade_events_df.to_csv(output/'events.csv', index=False)
         result.intraday_equity_curve.to_csv(output/'equity-5m.csv', index=False)
@@ -244,6 +287,7 @@ def run(args):
                 'Cash dividends require USD/amount/payment date; share actions abort while held; coverage not certified',
                 'Final equity includes marked open holdings; no forced terminal liquidation',
                 'Native breaker, sizing/constraints, correlation/concentration and vol target; no full macro tape'])
+        export_ui_report(result, report, frozen, output, args.initial_equity)
         atomic_json(output/'report.json', report)
         atomic_json(output/'progress.json', dict(status=report['status'], completed=len(actual), total=len(actual),
             elapsed_seconds=report['elapsed_seconds']))
@@ -255,23 +299,56 @@ def run(args):
         raise
 
 
-def main():
+def export_ui_report(result, report, protocol, output, initial_equity):
+    """Keep research metrics and add the standard Backtest page manifest."""
+    from backtesting.report import generate_report, save_equity_curve_csv, save_equity_curve
+    summary = generate_report(result, initial_equity).to_serializable_dict()
+    # Winner observes drawdown intraday, unlike the generic daily summary.
+    summary['max_drawdown_pct'] = abs(report['max_drawdown_pct'])
+    artifacts = dict(equity_curve_csv=str(save_equity_curve_csv(result, output)),
+        equity_curve_png=str(save_equity_curve(result, output)), trades_csv=str(output/'trades.csv'),
+        annual_summary_csv=str(output/'annual-summary.csv'))
+    report.update(summary=summary, artifacts=artifacts, params=protocol,
+        diagnostics=dict(status=report['status'], coverage_gaps=report.get('coverage_gaps', []),
+                         limitations=report['limitations']),
+        run_metadata=dict(engine='winner_campaign_replay', full_live_parity=False,
+                          observed_at_utc=protocol['observed_at_utc']))
+
+
+def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--oracle-batch-id', required=True)
     parser.add_argument('--artifacts-dir', default='artifacts/models')
     parser.add_argument('--start-date', type=date.fromisoformat, required=True)
     parser.add_argument('--end-date', type=date.fromisoformat, required=True)
     parser.add_argument('--symbol-source', default='universe-file:config/univers_batch/univers_filtred_tradable.txt')
-    parser.add_argument('--top-n', type=int, default=10)
+    parser.add_argument('--top-n', type=int, default=20)
+    parser.add_argument('--min-oracle-coverage', type=float, default=.9)
     parser.add_argument('--initial-equity', type=float, default=4000.)
     parser.add_argument('--account-type', choices=['cash', 'margin'], default='margin')
     parser.add_argument('--max-leverage', type=float, choices=[1., 2.], default=2.)
     parser.add_argument('--margin-interest-annual', type=float, default=.065)
+    parser.add_argument('--cost-per-leg-bps', type=float, default=None,
+        help='Explicit total commission + slippage per leg; omitted = canonical costs')
+    parser.add_argument('--max-positions', type=int, default=None, help='Omitted = production risk preset')
+    parser.add_argument('--factor-model', action=argparse.BooleanOptionalAction, default=None,
+        help='Omitted = production risk config; requires genuinely archived factor inputs')
+    parser.add_argument('--options-filter',action=argparse.BooleanOptionalAction,default=None,
+        help='Omitted = options_directional_filter.enabled in config.yaml; no historical OI imputation')
     parser.add_argument('--research-assumptions', action='store_true')
     parser.add_argument('--output-dir', required=True)
+    return parser
+
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
+    if not 0 < args.min_oracle_coverage <= 1:
+        parser.error('Oracle coverage must be in (0,1]')
     if not 0 <= args.margin_interest_annual <= 1:
         parser.error('Invalid annual financing rate')
+    if args.cost_per_leg_bps is not None and not 0 < args.cost_per_leg_bps <= 1000:
+        parser.error('Cost per leg must be positive and <=1000 bps')
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
     run(args)
 

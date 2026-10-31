@@ -37,6 +37,7 @@ def require_current_watcher_code(process):
         root.parent / 'risk_management' / name for name in
         ('live_factor_context.py', 'factor_inputs.py', 'factor_model.py', 'config.py')]
     dependencies.append(root.parent/'common'/'winner_pyramiding.py')
+    dependencies.append(root.parent/'common'/'winner_delayed.py')
     if process.create_time() < max(path.stat().st_mtime for path in dependencies):
         raise ValueError('Redémarrer le watcher : son processus est antérieur à la mise à jour Winner')
 
@@ -105,10 +106,11 @@ def plan_from_target(target, config, exec_run_id, *, now=None, calendar=None):
         created_at=now.isoformat(), earliest_entry_open=aware(sessions[1].open_at_utc).isoformat(),
         entry_expires_at=expires.isoformat(), target=asdict(target), parents={}, operations=[],
         admission='STEP11_APPROVED_RECHECK_REQUIRED')
-    if policy.confirmation_bars == 0:
+    if policy.confirmation_bars == 0 or policy.market_data_delay_seconds > 0:
         state['entry_policy'] = dict(order_type=config.entry_order_type,
             limit_price_buffer_bps=config.limit_price_buffer_bps,
             max_entry_gap_pct=config.max_entry_gap_pct, submission_window=config.submission_window)
+    if policy.confirmation_bars == 0:
         from execution_engine.winner_standard_entry import standard_order_terms
         standard_order_terms(state, quote_check_enabled=policy.standard_entry_quote_check_enabled)
     return state
@@ -210,6 +212,16 @@ def reserve_operation(store, state, version, *, action, quantity, approval, now)
         no_quote_approval = (approval.get('order_type') == order_type
             and approval.get('order_limit_price') == cap
             and float(approval.get('limit_price', 0)) >= cap)
+    from common.winner_delayed import delayed_entry, delayed_price_limit
+    delayed_approval=False
+    if (approval.get('delayed_sip_qualified') is True and delayed_entry(state,action)
+            and approval.get('realtime_sip_qualified') is False
+            and approval.get('price_basis')=='bounded_delayed_sip_limit'):
+        cap=delayed_price_limit(state,approval.get('delayed_evidence') or {},now)
+        delayed_approval=(approval.get('order_type')=='limit'
+            and approval.get('order_limit_price')==cap and approval.get('limit_price')==cap)
+    if delayed_entry(state,action) and not delayed_approval:
+        raise ValueError('Preuve native SIP retardée et plafond explicite requis')
     if (approval.get('producer') != 'native_intraday_risk'
             or approval.get('campaign_id') != state['campaign_id']
             or approval.get('account_id') != state['account_id']
@@ -217,7 +229,7 @@ def reserve_operation(store, state, version, *, action, quantity, approval, now)
             or approval.get('state_version') != version
             or approval.get('side') != 'buy'
             or approval.get('entry_data_qualified') is not True
-            or not (approval.get('realtime_sip_qualified') is True or no_quote_approval)
+            or not (approval.get('realtime_sip_qualified') is True or no_quote_approval or delayed_approval)
             or approval.get('regime_qualified') is not True
             or not approval.get('config_hash') or not approval.get('portfolio_hash')
             or approval.get('qualified') is not True

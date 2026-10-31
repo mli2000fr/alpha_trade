@@ -380,6 +380,7 @@ def resolve_adaptive_liquidity_threshold(
 
 
 def build_selector_config_kwargs_from_preset(preset: CapitalPreset) -> dict[str, Any]:
+    from core.filter_profiles import normalize_earnings_blackout_days
     values = preset.values
     rs_threshold = values.get(SELECTOR_RS_ALIAS_KEY)
     if rs_threshold is None:
@@ -403,7 +404,7 @@ def build_selector_config_kwargs_from_preset(preset: CapitalPreset) -> dict[str,
         "min_beta_126": float(values.get("selector_min_beta_126", 0.8)),
         "max_spread_bps": float(values.get("selector_max_spread_bps", 40.0)),
         "max_spread_bps_iex": float(values.get("selector_max_spread_bps_iex", 60.0)),
-        "earnings_blackout_days": int(values.get("selector_earnings_blackout_days", 3)),
+        "earnings_blackout_days": normalize_earnings_blackout_days(int(values.get("selector_earnings_blackout_days", 3))),
         "max_anomaly_count": int(values.get("selector_max_anomaly_count", 20)),
         "require_above_ma200": bool(values.get("selector_require_above_ma200", True)),
     }

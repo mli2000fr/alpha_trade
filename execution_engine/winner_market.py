@@ -39,14 +39,19 @@ class NativeWinnerMarket:
             return dict(bars=[], prior_session=previous_day, prior_session_high=None,
                 ask=None, bid=None, feed=None, market_data_required=False,
                 market_data_skip_reason='TRAILING_AND_REINFORCEMENT_DISABLED')
+        from common.winner_pyramiding import WinnerPyramidingConfig
+        policy=WinnerPyramidingConfig(**state['policy'])
+        cutoff=now-timedelta(seconds=policy.market_data_delay_seconds)
         # An after-close scan may tighten an existing stop, but cannot qualify
         # a new entry: the shared confirmation contract requires an open RTH.
         lookback = timedelta(minutes=5*(state['policy']['confirmation_bars']+2))
         earliest = (min((aware(l.get('last_bar_end') or l['filled_at'])-lookback for l in state['lots']),
             default=now.replace(hour=0, minute=0, second=0, microsecond=0))
-            if state['policy']['trailing_stop_pct'] else now-lookback)
+            if state['policy']['trailing_stop_pct'] else cutoff-lookback)
+        if earliest>=cutoff:
+            earliest=cutoff-lookback
         rows = fetch_intraday(state['symbol'], start_epoch=earliest.timestamp(),
-            end_epoch=now.timestamp(), interval='5m', feed='sip', account_id=self.account_id)
+            end_epoch=cutoff.timestamp(), interval='5m', feed='sip', account_id=self.account_id)
         bounds = {s.session_date: s for s in cal.sessions(
             earliest.astimezone(ZoneInfo('America/New_York')).date(), day) if s.is_open}
         bars, seen = [], set()
@@ -62,7 +67,7 @@ class NativeWinnerMarket:
             if (not all(math.isfinite(v) and v > 0 for v in (op, hi, lo, cl, vol))
                     or not lo <= min(op, cl) <= max(op, cl) <= hi):
                 raise ValueError('Invalid real SIP campaign OHLCV')
-            if stamp+timedelta(minutes=5) <= now:
+            if stamp+timedelta(minutes=5) <= cutoff:
                 bars.append(dict(timestamp=stamp, open=op, high=hi, low=lo, close=cl,
                     volume=vol, session_tag='regular'))
         # Same RAW basis as today's five-minute bars. Fully split-adjusted
@@ -83,6 +88,9 @@ class NativeWinnerMarket:
             self.prior_highs[key] = max(float(r['high']) for r in selected)
         snapshot = dict(bars=bars, prior_session_high=self.prior_highs.get(key),
             prior_session=previous_day, ask=None, bid=None, feed='sip')
+        if policy.market_data_delay_seconds:
+            from common.winner_delayed import delayed_snapshot
+            return snapshot | delayed_snapshot(bars,policy,now)
         return self.with_quote(state, snapshot)
 
     def with_quote(self, state, snapshot):

@@ -1,5 +1,45 @@
 # Registre des expériences ML réalisées
 
+## 2026-10-30 — US : ajout du consensus au filtre options TOP20, intersection non mûre
+
+Nouvelle lecture SQL bornée : reçus consensus EODHD disponibles depuis11octobre,
+aucun consensus disponible avant les décisions septembre de l'audit options.
+Intersection récente volume30Min+OI+révisionsEPS30/EPS30 : **9/13/12cas** sur les
+27/28/29octobre, soit34couples/17sociétés, dont12retenusoptions. Hash/raw,
+normalisation, runs terminés, disponibilité conservative, fraîcheur72h, ancrage0q
+et>=3analystes vérifiés ; réserves comptables RESEARCH_ONLY maintenues.
+**Zéroissuecommune mûre H5/H10/H15/H20** : aucuneAUC ou performance combinée.
+Les premières fenêtresH5 finissent aux clôturesUS3/4/5novembre. Pas de
+rétrodatation des lookbacksJ−30 d'octobre vers septembre, pas d'assouplissement
+du minimum4couverts du filtre. Aucunfit/LLM/API/ordre/écritureSQL/changementprod.
+Troistests réussis. [Intersection et suite mesurable](options_consensus_intersection_20261030.md).
+
+## 2026-10-30 — US : filtre CALL/PUT du batch, nouvel audit exact TOP20 H5/H10/H15/H20
+
+Branchement effectif vérifié : dernier `us_pipeline` du 29 octobre, étape10 via
+`service.options_directional.pipeline`, même run options transmis à11/12 ;
+13/20couverts, BAND/COHU/UCTT/SIMO retenus. LLM désactivé. Parité des20lignes
+de sélection avec la relecture, aucun écart de motifs/features/scores.
+
+Audit SQL READ ONLY, filtre actuel réutilisé (volume30Min+OIindicative,
+rangs50/50, TOP20 initial, score>0,5, moitié supérieure, minimum4couverts).
+19séances Oracle qualifiées/380couples, 99doublementcouverts (26,05%),89scorés,
+36retenus. Résultats mûrs : septséances22–30septembre,50issues départagées,
+dont21retenus sur10sociétés. Cible : excursion dominante avant SL10 propre à
+chaquesens, parcours complet Hn ; ambiguïtés OHLC non forcées.
+
+AUCquotidiennemoyenne mélange H5/H10/H15/H20 : **0,894/0,734/0,610/0,610**.
+PartLONGdominant avant→après filtre : **68→85,71% / 68→80,95% /
+62→66,67% / 62→66,67%**. Ce ne sont pas des taux de trades gagnants.
+Sansstop,AUC **0,817/0,738/0,527/0,545** ; l'indice ne démontre pas une tendance
+haussière persistante sur20séances. Volume seul dépasse le mélange àH10/15/20.
+
+**EXPLORATOIRE / PAS DE CONFIRMATION PROSPECTIVE / PAS DE MODIFICATION.**
+Scoresseptembre recalculés enoctobre, fenêtreschevauchantes, sociétésrépétées,
+trèsfaible couverture.14retenus récents nonmûrs ; zéroissuemûre avec scoreOracle
+physiquement disponible avantdécision.21testsréussis ; aucunfit/LLM/téléchargement/
+ordre/écritureSQL. [Résultats et limites](options_top20_actualisation_20261030.md).
+
 ## 2026-10-29 — US : quatre signaux faibles, TOP20/TOP50 titres, 2020–2024 terminés
 
 2023 complétée128→250séances :122dates Jul10–Dec29 scorées avec le LightGBM

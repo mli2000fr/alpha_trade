@@ -193,6 +193,8 @@ class ProductionExecutor:
             "trade_date": trade_date.isoformat() if hasattr(trade_date, "isoformat") else trade_date,
             "status": "RUNNING",
             "standard_entry_quote_check_enabled": self._cfg.winner_pyramiding.standard_entry_quote_check_enabled,
+            "winner_market_data_delay_seconds": self._cfg.winner_pyramiding.market_data_delay_seconds,
+            "winner_delayed_entry_limit_buffer_pct": self._cfg.winner_pyramiding.delayed_entry_limit_buffer_pct,
             "targets": 0, "submitted": 0, "filled": 0, "failed": 0, "skipped": 0,
             "rebalance_submitted": 0, "rebalance_failed": 0,
             "constraint_blocked": 0, "children_deferred": 0,

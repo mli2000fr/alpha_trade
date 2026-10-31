@@ -135,6 +135,30 @@ def _members() -> list[UniverseMember]:
     ]
 
 
+@pytest.mark.parametrize("window, expected", [(-1, set()), (0, {"BAND"}), (1, {"BAND", "COHU", "SIMO"}), (2, {"BAND", "COHU", "SIMO", "UCTT"})])
+def test_calendar_blackout_zero_means_announcement_day_only(engine, window, expected):
+    from common.publish_tradable_universe import _load_objective_context
+    symbols = ["BAND", "COHU", "SIMO", "UCTT"]
+    with engine.begin() as connection:
+        connection.execute(text("INSERT INTO stock_earnings_calendar(symbol, earnings_date) VALUES (:symbol, :day)"), [
+            dict(symbol="BAND", day="2026-10-29"), dict(symbol="COHU", day="2026-10-28"),
+            dict(symbol="SIMO", day="2026-10-28"), dict(symbol="UCTT", day="2026-10-27"),
+        ])
+    *_, blocked = _load_objective_context(engine, symbols, date(2026, 10, 29), window)
+    assert blocked == expected
+
+
+def test_disabled_earnings_needs_no_calendar_table(engine):
+    from common.publish_tradable_universe import _load_objective_context, _require_tables
+    with engine.begin() as connection:
+        connection.execute(text("DROP TABLE stock_earnings_calendar"))
+    _require_tables(engine, earnings_enabled=False)
+    *_, blocked = _load_objective_context(engine, ["BAND"], date(2026, 10, 29), -1)
+    assert blocked == set()
+    with pytest.raises(RuntimeError, match="stock_earnings_calendar"):
+        _require_tables(engine)
+
+
 def _publish(engine, run_id: str, snapshot_date: date, preset: str = "small") -> None:
     begin_universe_run(
         engine,

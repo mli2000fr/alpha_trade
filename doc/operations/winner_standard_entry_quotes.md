@@ -4,6 +4,12 @@ Les cotations SIP donnent les prix acheteur/vendeur consolidés et leurs
 horodatages. Elles permettent de vérifier le spread, la fraîcheur et le prix
 avant achat. Leur lecture est distincte de l'appel broker qui transmet l'ordre.
 
+Depuis le 31 octobre, une **entrée avec confirmation** peut utiliser le mode
+SIP retardé explicite (`market_data_delay_seconds: 900`), avec ordre IOC
+plafonné et sizing à ce plafond, sans prétendre disposer d'une quote actuelle.
+Ce contrat est distinct de l'entrée standard zéro confirmation décrite ici.
+Voir [raccordement et limites](winner_backtest_live_20261031.md).
+
 ## Réglage dans config.yaml
 
 ```yaml

@@ -24,7 +24,7 @@ from database.connection import get_sqlalchemy_engine
 from common.quote_quality import PROVENANCE_COLUMNS, qualified_quote
 
 
-def _require_tables(engine: Engine) -> None:
+def _require_tables(engine: Engine, *, earnings_enabled: bool = True) -> None:
     required = {
         "tradable_universe_runs",
         "tradable_universe_history",
@@ -33,6 +33,8 @@ def _require_tables(engine: Engine) -> None:
         "stock_metadata",
         "stock_fundamentals_daily",
     }
+    if not earnings_enabled:
+        required.discard("stock_earnings_calendar")
     available = set(inspect(engine).get_table_names())
     missing = sorted(required - available)
     if missing:
@@ -83,10 +85,12 @@ def _load_objective_context(
     engine: Engine,
     symbols: list[str],
     snapshot_date: date,
-    blackout_days: int,
+    blackout_days: int | None,
     max_quote_age_days: int = 5,
     market_cap_provider: str = "sec_edgar",
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, set[str]]:
+    from core.filter_profiles import normalize_earnings_blackout_days
+    blackout_days = normalize_earnings_blackout_days(blackout_days)
     if not symbols:
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), set()
     symbol_params = {f"symbol_{index}": symbol for index, symbol in enumerate(symbols)}
@@ -197,7 +201,7 @@ def _load_objective_context(
             connection,
             params=symbol_params,
         )
-        earnings_rows = connection.execute(
+        earnings_rows = [] if blackout_days is None else connection.execute(
             text(
                 f"""
                 SELECT DISTINCT symbol
@@ -267,9 +271,9 @@ def publish_full_tradable_universe(
     """Publish an immutable full-quality run from the exact screener run."""
     if str(market_code).strip().upper() != "US_EQ":
         raise ValueError("Ce publieur de quotes SIP est réservé au marché US_EQ")
-    _require_tables(engine)
     preset = require_capital_preset(capital_preset_key)
     thresholds = build_selector_config_kwargs_from_preset(preset)
+    _require_tables(engine, earnings_enabled=thresholds["earnings_blackout_days"] is not None)
     market_cap_config = load_market_cap_config(
         provider_override=market_cap_provider,
         max_age_days_override=market_cap_max_age_days,
@@ -281,7 +285,7 @@ def publish_full_tradable_universe(
         engine,
         symbols,
         snapshot_date,
-        int(thresholds["earnings_blackout_days"]),
+        thresholds["earnings_blackout_days"],
         max_quote_age_days=max_quote_age_days,
         market_cap_provider=(
             market_cap_config.provider

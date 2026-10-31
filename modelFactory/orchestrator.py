@@ -1189,7 +1189,7 @@ def run_training_batch(
             outcome = train_oracle_path(cfg, engine, batch_id, _global_symbols)
             results.append(TrainResult("__ORACLE_PATH__", batch_id, "completed", metrics=outcome))
         except Exception as exc:
-            LOGGER.exception("Oracle parcours H20 failed")
+            LOGGER.exception("Oracle parcours H%s failed", cfg.oracle_horizon)
             results.append(TrainResult("__ORACLE_PATH__", batch_id, "failed", skip_reason=str(exc)))
         update_runtime_status(current_phase="batch_completed" if results[0].status == "completed" else "batch_failed",
                               progress_current=1, progress_total=1)

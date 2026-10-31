@@ -157,6 +157,16 @@ class BacktestRunOptions:
     # Conviction/Kelly calibration (opt-in, Phase 2 only)
     conviction_calibration_mode: Literal["off", "auto", "pinned"] = "off"
     conviction_calibration_run_id: str | None = None
+    # Dedicated intraday route; legacy positional arguments keep their order.
+    winner_enabled: bool = False
+    winner_top_n: int = 20
+    winner_symbol_source: str = 'universe-file:config/univers_batch/univers_filtred_tradable.txt'
+    winner_max_leverage: float = 1.0
+    winner_cost_per_leg_bps: float | None = None
+    winner_factor_model: bool | None = None
+    winner_research_assumptions: bool = False
+    winner_min_oracle_coverage: float = .9
+    winner_options_filter_enabled: bool | None = None
 
     @property
     def ml_first_selection_contract(self) -> MLFirstSelectionContract:
@@ -321,6 +331,28 @@ def build_backtesting_command(
     if kind == "run":
         if not isinstance(options, BacktestRunOptions):
             raise TypeError("options doit être une instance de BacktestRunOptions pour kind='run'.")
+        if options.winner_enabled:
+            if not options.oracle_batch_id or not options.end or not options.output_dir:
+                raise ValueError('Winner : modèle Oracle, date de fin et dossier neuf requis')
+            if not options.winner_research_assumptions:
+                raise ValueError('Winner : accepter explicitement les limites du replay OHLC')
+            command = [sys.executable, '-u', '-m', 'backtesting.winner_campaign_replay',
+                '--oracle-batch-id', options.oracle_batch_id, '--artifacts-dir', options.artifacts_dir,
+                '--start-date', options.start, '--end-date', options.end,
+                '--symbol-source', options.winner_symbol_source, '--top-n', str(options.winner_top_n),
+                '--min-oracle-coverage', str(options.winner_min_oracle_coverage),
+                '--initial-equity', str(options.equity), '--max-positions', str(options.max_positions),
+                '--account-type', options.account_type, '--max-leverage', str(options.winner_max_leverage),
+                '--margin-interest-annual', str(options.margin_interest_rate),
+                '--research-assumptions', '--output-dir', options.output_dir]
+            if options.winner_cost_per_leg_bps is not None:
+                command.extend(['--cost-per-leg-bps', str(options.winner_cost_per_leg_bps)])
+            if options.winner_factor_model is not None:
+                command.append('--factor-model' if options.winner_factor_model else '--no-factor-model')
+            if options.winner_options_filter_enabled is not None:
+                command.append('--options-filter' if options.winner_options_filter_enabled else '--no-options-filter')
+            return command
+        command.append('--no-winner-pyramiding')
         if options.no_shorts and options.no_longs:
             raise ValueError("Long only et Short only ne peuvent pas être activés simultanément.")
         command.extend(["--start", options.start])

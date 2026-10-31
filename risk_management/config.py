@@ -27,7 +27,7 @@ class RiskConfig:
     # doivent être utilisées dans tout le code.
     atr_stop_multiple: float = 2.0  # fallback scalaire (rétrocompatibilité)
     best_horizon: int = 10  # horizon cible pour sizing/TP ; 10 = défaut conservateur
-    fixed_stop_pct: float | None = None  # Only injected from a frozen GPT PAPER run.
+    fixed_stop_pct: float | None = None  # Winner actif ou protections LLM figées.
     disable_price_take_profit: bool = False
 
     # Multiples ATR par horizon (stop loss)
@@ -42,6 +42,7 @@ class RiskConfig:
     max_short_positions: int = 2
     max_position_weight: float = 0.10
     max_sector_weight: float = 0.30
+    sector_weight_limit_enabled: bool = True  # Compatibility for older snapshots; operational switch in YAML.
     max_gross_exposure: float = 1.0
     # CP-V2 — budgets par side appliqués pendant capital_preservation (via apply_snapshot)
     max_long_exposure: float | None = None
@@ -174,6 +175,7 @@ class RiskConfig:
 
     # --- Correlation filter V2 ---
     correlation_threshold: float = 0.80
+    correlation_check_enabled: bool = True  # Legacy snapshots keep their guard; YAML controls new runs.
     correlation_lookback_days: int = 60
     correlation_min_overlap: int = 40
 
@@ -192,6 +194,7 @@ class RiskConfig:
     beta_exposure_basis: str = 'invested_capital'
     # Part maximale du risque total venant d'un seul facteur (Phase D).
     max_factor_concentration_pct: float = 0.60
+    market_factor_concentration_check_enabled: bool = True
     # Nombre minimum de facteurs avec contribution > 10% (Phase D).
     min_factor_diversification: int = 2
     # Historic snapshots retain the gate; production YAML can disable only it.
@@ -232,6 +235,7 @@ class RiskConfig:
     effective_max_positions_override: int | None = None
     # Maximum 2 tickers par secteur (en complément de ``max_sector_weight``).
     max_tickers_per_sector: int | None = None
+    sector_ticker_limit_enabled: bool = True  # Legacy snapshots retain their count guard; YAML may opt out.
     allow_fractional_shares: bool = False
     # ── Chantier research smart_sector_cap (2026-08-27) ────────────────
     # Variantes structurelles du cap sectoriel, derrière un mode (défaut
@@ -316,6 +320,8 @@ class RiskConfig:
         # --- V2 validations ---
         if not (0 < self.correlation_threshold <= 1):
             raise ValueError("correlation_threshold doit être dans ]0, 1].")
+        if type(self.correlation_check_enabled) is not bool:
+            raise ValueError('correlation_check_enabled doit être un booléen.')
         if self.correlation_lookback_days < self.correlation_min_overlap:
             raise ValueError("correlation_lookback_days doit être >= correlation_min_overlap.")
         if self.correlation_min_overlap < 1:
@@ -349,6 +355,12 @@ class RiskConfig:
             raise ValueError("effective_max_positions_override doit être >= 0 quand renseigné.")
         if self.max_tickers_per_sector is not None and self.max_tickers_per_sector < 1:
             raise ValueError("max_tickers_per_sector doit être >= 1 quand renseigné.")
+        if type(self.sector_ticker_limit_enabled) is not bool:
+            raise ValueError('sector_ticker_limit_enabled doit être un booléen.')
+        if type(self.sector_weight_limit_enabled) is not bool:
+            raise ValueError('sector_weight_limit_enabled doit être un booléen.')
+        if type(self.market_factor_concentration_check_enabled) is not bool:
+            raise ValueError('market_factor_concentration_check_enabled doit être un booléen.')
         # --- Factor model validations (Priorité 3) ---
         if self.factor_correlation_threshold <= 0 or self.factor_correlation_threshold > 1:
             raise ValueError("factor_correlation_threshold doit être dans ]0, 1].")
@@ -761,10 +773,14 @@ def load_risk_config(
     # Winner's broker protections and MOO exits require whole shares. Apply
     # this before sizing, even if a preset or CLI requested fractions.
     from common.winner_pyramiding import load_winner_pyramiding_config
-    if load_winner_pyramiding_config(full_cfg).enabled:
+    winner_policy = load_winner_pyramiding_config(full_cfg)
+    if winner_policy.enabled:
         if config.allow_fractional_shares:
             _logger.info('Winner actif : quantités entières imposées avant le sizing ; option fractionnaire ignorée.')
-        config = config.with_overrides(allow_fractional_shares=False)
+        config = config.with_overrides(allow_fractional_shares=False,
+            fixed_stop_pct=winner_policy.stop_loss_pct, disable_price_take_profit=True)
+        _logger.info('Winner actif : sizing et stop initial alignés sur SL fixe %.2f%% ; ATR non utilisé pour la distance du stop.',
+                     100*winner_policy.stop_loss_pct)
 
     _logger.info('Diversification factorielle : contrôle_actif=%s capital=%.2f minimum_effectif=%d '
                  'minimum_normal=%d seuil_petit_compte=%s', config.factor_diversification_check_enabled, config.account_equity,

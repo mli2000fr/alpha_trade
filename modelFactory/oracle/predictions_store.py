@@ -163,7 +163,7 @@ def load_oracle_predictions(
         if is_path_batch(artifacts_dir, batch_id):
             from modelFactory.oracle_path.predict import load_contract
             from modelFactory.oracle_path.train import digest
-            root, _, _, folds = load_contract(artifacts_dir, batch_id)
+            root, protocol, _, folds = load_contract(artifacts_dir, batch_id)
             lineage_sql = sql.replace(
                 "SELECT prediction_date AS `date`, symbol, proba_extreme, future_return, "
                 "       oracle_extreme10, fold_start ",
@@ -175,8 +175,8 @@ def load_oracle_predictions(
             merged = df.merge(lineage, on=["date", "symbol"], how="left", validate="one_to_one",
                 suffixes=("", "_lineage"))
             if (len(merged) != len(df) or merged.model_available_date.isna().any()
-                    or not merged.target_name.eq("oracle_path_extreme20").all()
-                    or not merged.target_horizon.eq(20).all()
+                    or not merged.target_name.eq(protocol['target']).all()
+                    or not merged.target_horizon.eq(protocol['horizon']).all()
                     or not pd.to_datetime(merged.model_available_date).lt(merged.date).all()
                     or not merged.feature_profile_sha256.eq(digest(root/"feature_profile.json")).all()
                     or not pd.to_datetime(merged.fold_start).eq(pd.to_datetime(merged.fold_start_lineage)).all()

@@ -32,8 +32,11 @@ def resolve_oracle_artifact_horizon(
     if path_protocol.is_file():
         try:
             payload = json.loads(path_protocol.read_text(encoding="utf-8"))
-            if payload.get("mode") == "oracle_path_h20" and payload.get("batch_id") == normalized:
-                return _positive_horizon(payload.get("horizon"))
+            from modelFactory.oracle_path import validate_horizon, mode_name, target_name
+            horizon = validate_horizon(payload.get('horizon'))
+            if (payload.get("mode") == mode_name(horizon) and payload.get("batch_id") == normalized
+                    and payload.get('target', target_name(horizon)) == target_name(horizon)):
+                return horizon
         except (OSError, ValueError, TypeError):
             return None
     candidates = (

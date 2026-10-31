@@ -884,7 +884,9 @@ class PortfolioBuilder:
             and self._factor_covariance is not None
             and bool(self._factor_exposures)
         )
-        if use_factor_filter:
+        if not self._cfg.correlation_check_enabled:
+            retained = enriched
+        elif use_factor_filter:
             # Phase E : filtre de corrélation basé sur le modèle factoriel
             from risk_management.factor_model import (
                 FactorCovariance,
@@ -1524,6 +1526,7 @@ class PortfolioBuilder:
                         max_portfolio_beta=self._cfg.max_portfolio_beta,
                         beta_exposure_basis=self._cfg.beta_exposure_basis,
                         max_factor_concentration=self._cfg.max_factor_concentration_pct,
+                        market_factor_concentration_check_enabled=self._cfg.market_factor_concentration_check_enabled,
                         min_factor_diversification=self._cfg.effective_min_factor_diversification,
                         factor_diversification_check_enabled=self._cfg.factor_diversification_check_enabled,
                     )

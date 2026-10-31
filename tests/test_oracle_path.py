@@ -121,7 +121,7 @@ def test_restored_cross_sectional_ranks_include_future_bad_symbols():
     assert ranked.momentum_20_xs_rank.to_list() == pytest.approx([1/3, 2/3, 1])
 
 
-@pytest.mark.parametrize("changes", [dict(oracle_horizon=10), dict(oracle_universe_mode="pit_dynamic_bars"),
+@pytest.mark.parametrize("changes", [dict(oracle_horizon=5), dict(oracle_universe_mode="pit_dynamic_bars"),
     dict(data=DataConfig(oracle_path_model_only=True, enable_oracle_model=True)),
     dict(directional_profiles_enabled=True), dict(walk_forward=WalkForwardConfig(enabled=False)),
     dict(walk_forward=WalkForwardConfig(enabled=True, step_size=1, test_size=2))])

@@ -24,18 +24,20 @@ winner_pyramiding:
   initial_position_fraction: 1.0  # 0.5 = demi-position ; 1.0 = complète.
   reinforcement_enabled: false  # Un seul ajout gagnant, jamais de moyenne à la baisse.
   reinforcement_trigger_pct: 0.05
-  confirmation_bars: 0  # 0 = ordre standard DAY sans confirmation ; 1–12 = clôtures 5m de cassure.
+  confirmation_bars: 2  # Deux clôtures 5m de confirmation après cassure ; 0 = entrée standard sans confirmation.
   # Entrée standard uniquement : false = ordre limite DAY, sans contrôle bid/ask temps réel.
   # Plafond issu du gap maximal figé (sinon buffer limite), sizing au prix maximal.
   # Confirmation 5m, renforcement, SL/TP/trailing et verrous restent indépendants.
   standard_entry_quote_check_enabled: false
   stop_loss_pct: 0.05
-  take_profit_pct: 0.18  # null = pas de TP en prix.
-  trailing_stop_pct: null # Trailing désactivé ; SL, TP et sortie temporelle conservés.
-  horizon_sessions: 20  # Entrée incluse ; sortie à l'ouverture de la 21e séance.
+  take_profit_pct: null  # Aucun TP en prix.
+  trailing_stop_pct: null # Aucun trailing ; SL et sortie temporelle conservés.
+  horizon_sessions: 10  # Entrée incluse ; sortie à l'ouverture suivante après cet horizon (ici 11e séance).
   entry_valid_sessions: 20  # Attente maximale après le signal, distincte de la détention.
   max_quote_age_seconds: 60
   max_bar_delay_seconds: 60
+  market_data_delay_seconds: 930  # Confirmations SIP disponibles avec 15 min de retard ; jamais de fill rétroactif.
+  delayed_entry_limit_buffer_pct: 0.01  # Ordre IOC plafonné à +1% du dernier close retardé ; pas un cours temps réel.
   cost_reserve_bps_per_leg: 25  # Réserve de sizing, pas le tarif comptable réel.
 
 intraday_backfill:
@@ -44,10 +46,11 @@ intraday_backfill:
   account_id: default  # Clés du compte principal via le registre Alpaca existant.
 
 oracle_path:
+  horizon: 10  # Défaut IHM/entraînement : 10, 15 ou 20 séances ; Predict suit le modèle choisi.
   # Entraînement : lightgbm | catboost | auto (comparaison sur validation).
   # Défaut IHM seulement ; un batch déjà entraîné conserve son contrat archivé.
   training_backend: auto
-  # Oracle unique : TOP20 % des amplitudes maximales durant J+1..J+20, sans direction.
+  # Oracle unique : TOP20 % des amplitudes maximales durant J+1..J+H, sans direction.
   # Politique explicite sans filtre directionnel : long_only | abstain.
   # LONG-only est une stratégie, pas une probabilité de hausse. LLM reste optionnel/PAPER.
   direction_policy: long_only
@@ -456,6 +459,16 @@ selector:
 # (TrailingStopConfig) via ``service.market.parse_trailing_stop``.
 # ---------------------------------------------------------------------------
 risk_management:
+  # false : désactive seulement le nombre maximal de titres par secteur.
+  # Cet interrupteur ne modifie pas les poids sectoriels ni les corrélations.
+  sector_ticker_limit_enabled: false
+  # false : pas de plafond de poids/exposition par secteur.
+  sector_weight_limit_enabled: false
+  # false : pas de plafond de contribution du facteur marché au risque.
+  # Le plafond bêta et les concentrations size/momentum restent actifs.
+  market_factor_concentration_check_enabled: false
+  # false : pas de veto de corrélation Pearson, factorielle ou intra-sectorielle.
+  correlation_check_enabled: false
   # Étape 11 uniquement : false = pas d'appel aux dernières quotes SIP ni de veto bid/ask.
   # ADV, participation, slippage estimé, borrow et contrôles d'exécution restent distincts.
   quote_spread_check_enabled: false

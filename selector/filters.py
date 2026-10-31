@@ -91,6 +91,9 @@ def apply_filters_with_stats(
         return merged_df.copy(), empty_stats
 
     filtered = merged_df.copy()
+    if config.earnings_blackout_days is None:
+        # Ne pas transmettre un ancien flag actif au veto du module risque.
+        filtered["earnings_blackout"] = 0
     before_count = len(filtered)
 
     # Exclusion ETF / crypto : seules les actions us_equity actives et tradables sont retenues.

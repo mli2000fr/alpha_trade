@@ -52,6 +52,11 @@ class NativeWinnerRisk:
         from service.market.live_quotes import validate_campaign_quote
         from execution_engine.winner_standard_entry import standard_quote_check_required
         quote_required = standard_quote_check_required(state, config=self.config, kind=kind)
+        from common.winner_delayed import delayed_entry, delayed_price_limit
+        delayed=delayed_entry(state,kind,self.config)
+        if delayed:
+            delayed_price_limit(state,snapshot,now)
+            quote_required=False
         if quote_required:
             validate_campaign_quote(snapshot, now=now, max_age_seconds=state['policy']['max_quote_age_seconds'])
             if not 0 <= (now-aware(snapshot['quote_time'])).total_seconds() <= state['policy']['max_quote_age_seconds']:
@@ -152,7 +157,7 @@ class NativeWinnerRisk:
         if state['symbol'] not in prices:
             raise ValueError('Prior-session native price/ATR/ADV unavailable')
         price_info = prices[state['symbol']]
-        if not quote_required and (price_info.price_asof_date != prior
+        if not quote_required and not delayed and (price_info.price_asof_date != prior
                 or not math.isfinite(float(price_info.last_close)) or price_info.last_close <= 0):
             raise ValueError('Standard entry requires a qualified prior-session close')
         returns = risk_repo.load_return_matrix_asof(sorted(set(symbols+['SPY'])), prior,
@@ -201,6 +206,7 @@ class NativeWinnerRisk:
         if regime is not None:
             allowed = allowed and not regime.blocks_entry_for(state['symbol'], sector_map.get(state['symbol'], ''), side='buy')[0]
         return dict(account_id=account, broker_mode=mode, captured_at=account_observed_at, equity=capacity.equity,
+            delayed_sip_allowed=delayed,
             standard_entry_quote_check_enabled=quote_required,
             reference_price=price_info.last_close, reference_price_asof=price_info.price_asof_date,
             available_buying_power=available, positions=positions, pending_entries=pending,

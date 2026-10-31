@@ -1752,6 +1752,11 @@ def main(args: list[str] | None = None) -> None:
         if protection is not None:
             config = config.with_overrides(fixed_stop_pct=protection.stop_loss_pct,
                 disable_price_take_profit=True)
+        from common.winner_pyramiding import load_winner_pyramiding_config
+        winner_policy = load_winner_pyramiding_config()
+        if winner_policy.enabled:
+            config = config.with_overrides(fixed_stop_pct=winner_policy.stop_loss_pct,
+                allow_fractional_shares=False, disable_price_take_profit=True)
     # Ré-assert long_only APRÈS les guards structurels : aucun chemin ne doit
     # réactiver les shorts pour un compte configuré long-only.
     if account_long_only:
@@ -2826,6 +2831,8 @@ def main(args: list[str] | None = None) -> None:
         "max_target_weight": round(max_target_weight, 4),
         "max_sector_weight_realized": round(max_sector_weight_realized, 4),
         "total_initial_risk_dollars": round(total_initial_risk_dollars, 2),
+        "sizing_stop_basis": "fixed_pct" if config.fixed_stop_pct is not None else "atr",
+        "sizing_fixed_stop_pct": config.fixed_stop_pct,
         "total_risk_budget_dollars": round(total_risk_budget_dollars, 2),
         "atr_available_symbols": atr_available_symbols,
         "prediction_available_symbols": prediction_available_symbols,
@@ -2856,6 +2863,10 @@ def main(args: list[str] | None = None) -> None:
         "vol_targeting": vol_target_state.to_summary(),
         "ml_coverage_gate": ml_coverage_gate.to_summary(),
         "risk_controls_effective": {
+            "correlation_check_enabled": config.correlation_check_enabled,
+            "sector_ticker_limit_enabled": config.sector_ticker_limit_enabled,
+            "sector_weight_limit_enabled": config.sector_weight_limit_enabled,
+            "market_factor_concentration_check_enabled": config.market_factor_concentration_check_enabled,
             "risk_multiplier": float(config.risk_multiplier),
             "effective_max_positions": int(config.effective_max_positions),
             "effective_min_notional": float(config.effective_min_notional),

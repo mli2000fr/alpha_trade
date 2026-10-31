@@ -679,7 +679,7 @@ def fetch_next_earnings(
     *,
     reference_date: date | None = None,
 ) -> pd.DataFrame:
-    if not symbols:
+    if not symbols or config.earnings_blackout_days is None:
         return pd.DataFrame(columns=["symbol", "earnings_date", "days_to_earnings", "earnings_blackout"])
     effective_reference_date = reference_date or date.today()
     stmt = text(

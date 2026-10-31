@@ -52,6 +52,32 @@ def test_valid_contract_passes_without_legacy_registry(serving):
     assert result['session_freshness']['signal_date'] == '2024-01-02'
 
 
+@pytest.mark.parametrize('horizon',[10,15])
+def test_shorter_path_contract_preserves_all_risk_checks(serving,horizon):
+    import json
+    from hashlib import sha256
+    from modelFactory.oracle_path import target_name,mode_name
+    engine,_,_,root,_=serving
+    protocol_path=root/'protocol.json'
+    protocol=json.loads(protocol_path.read_text())
+    protocol.update(horizon=horizon,target=target_name(horizon),mode=mode_name(horizon))
+    frozen={k:v for k,v in protocol.items() if k!='fingerprint'}
+    protocol['fingerprint']=sha256(json.dumps(frozen,sort_keys=True,default=str).encode()).hexdigest()
+    protocol_path.write_text(json.dumps(protocol))
+    for name in ['feature_profile.json','report.json']:
+        path=root/name;data=json.loads(path.read_text());data['mode']=mode_name(horizon)
+        if name=='feature_profile.json':data['target']=target_name(horizon)
+        path.write_text(json.dumps(data))
+    with engine.begin() as conn:
+        conn.execute(text('UPDATE oracle_path_prediction_lineage SET target_horizon=:h,target_name=:target,'
+            'feature_profile_sha256=:profile'),dict(h=horizon,target=target_name(horizon),profile=digest(root/'feature_profile.json')))
+    result=check(serving)
+    assert result['compatible'] and result['horizon']==horizon
+    with engine.begin() as conn:
+        conn.execute(text('UPDATE oracle_path_prediction_lineage SET target_horizon=20'))
+    assert not check(serving)['compatible']
+
+
 @pytest.mark.parametrize('sql', [
     'DELETE FROM oracle_path_prediction_lineage',
     "UPDATE oracle_path_prediction_lineage SET model_sha256='wrong'",

@@ -152,6 +152,10 @@ def _normalize_rows(rows: list[dict[str, Any]]) -> list[dict[str, object]]:
                 "revenue_estimate": row.get("revenueEstimate"),
                 "revenue_actual": row.get("revenueActual"),
                 "fiscal_period": row.get("quarter") or row.get("fiscalPeriod"),
+                "_calendar_evidence": {
+                    "provider": "finnhub", "fiscal_year": row.get("year"),
+                    "observed_at": datetime.now(timezone.utc).isoformat(),
+                },
             }
         )
     return normalized_rows

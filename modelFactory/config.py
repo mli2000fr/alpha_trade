@@ -49,6 +49,17 @@ def load_oracle_path_training_backend(path=None) -> str:
     return resolve_backend(requested)
 
 
+def load_oracle_path_horizon(path=None) -> int:
+    from common.config_loader import load_config
+    from modelFactory.oracle_path import validate_horizon
+    values = (load_config(path) or {}).get('oracle_path', {})
+    if values is None:
+        values = {}
+    if not isinstance(values, dict):
+        raise ValueError('oracle_path doit être un objet YAML.')
+    return validate_horizon(values.get('horizon', 20))
+
+
 @dataclass(frozen=True, slots=True)
 class DataConfig:
     """Paramètres de chargement et préparation des données."""
@@ -96,7 +107,7 @@ class DataConfig:
     #  strict (anti-leakage T2) après la séquence globale.
     enable_oracle_model: bool = False  # entraîne AUSSI l'Oracle Extreme (O0) en fin de séquence
     oracle_model_only: bool = False    # entraîne UNIQUEMENT l'Oracle Extreme — skip global, per-symbol, per-sector
-    oracle_path_model_only: bool = False  # cible parcours H20, artefacts distincts et inférence d'amplitude
+    oracle_path_model_only: bool = False  # cible parcours H10/H15/H20, artefacts distincts et inférence d'amplitude
     oracle_barrier_model_only: bool = False  # TP avant SL, deux cibles LONG/SHORT indépendantes
     sector_use_symbol_feature: bool = True  # D1 (2026-08-15) : per-sector, False = ablation de la feature catégorielle 'symbol'
     enable_cross_sectional_features: bool = False  # percentiles + secteur (momentum, alpha intra-secteur)
@@ -599,8 +610,10 @@ class TrainingConfig:
         if self.data.oracle_path_model_only:
             if self.data.enable_oracle_model or self.data.oracle_model_only or self.directional_profiles_enabled or self.data.oracle_barrier_model_only:
                 raise ValueError("Oracle parcours et Oracle terminal/bundle sont des modes séparés.")
-            if self.oracle_horizon != 20 or self.oracle_universe_mode != "static_bars":
-                raise ValueError("Oracle parcours requiert H20 et un univers statique explicite.")
+            from modelFactory.oracle_path import validate_horizon
+            validate_horizon(self.oracle_horizon)
+            if self.oracle_universe_mode != "static_bars":
+                raise ValueError("Oracle parcours requiert un univers statique explicite.")
             if not self.walk_forward.enabled:
                 raise ValueError("Oracle parcours requiert --walkforward (validation hors échantillon).")
             if self.walk_forward.step_size < self.walk_forward.test_size:
