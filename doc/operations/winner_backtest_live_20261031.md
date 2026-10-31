@@ -20,6 +20,11 @@ actuellement) ; disposer de vingt scores ne suffit pas si le reste de
 l'univers demandé n'est pas suffisamment couvert. La disponibilité SQL de
 chaque fold est recoupée avec les reçus immuables de training/validation.
 
+Dans ce formulaire de backtest, **Appliquer le filtre CALL/PUT + OI du
+pipeline** est désormais décoché par défaut, indépendamment de son activation
+dans le pipeline de production. Le cocher applique toujours le filtre
+historique strict. Le bouton de réinitialisation reprend ce défaut décoché.
+
 La date minimale est calculée depuis les folds du modèle : le premier signal
 doit être causal et disponible avant la séance d'entrée. Pour le modèle
 `model-factory-20261030213826-eda503`, premier signal le 2 juillet 2021,
@@ -35,8 +40,35 @@ vente peut les remplacer pour ce replay. Le taux de financement est séparé
 et porte sur le débit de marge. La réserve de sizing Winner n'est pas une
 commission supplémentaire. Le capital reste commun à toutes les positions.
 
-Accepter les limites OHLC avant lancement. Ce consentement concerne les
-hypothèses de simulation ; il ne permet pas d'envoyer un ordre.
+Le profil **« replay prudent disponible, proche du fonctionnement en production »**
+est coché par défaut. Ce choix active les hypothèses conservatrices réellement
+supportées : bougies SIP 5m, délai de publication configuré, aucun achat
+rétroactif, limite d'achat respectée et priorité à la sortie défavorable si
+SL et TP sont touchés dans la même bougie. Il n'existe pas de bouton capable
+de reconstruire le carnet ou les secteurs historiques absents : les secteurs
+actuels restent une approximation et le rapport garde sa qualification
+exploratoire. Ce profil ne permet pas d'envoyer un ordre.
+
+Les paramètres utiles du moteur intraday sont accessibles dans des blocs
+dédiés : protections/confirmation/renforcement Winner, risque par entrée,
+montant minimum, poids par titre et secteur, plafonds de titres, corrélations,
+drawdown/perte quotidienne, liquidation au coupe-circuit, volatilité cible,
+répétition des entrées/exclusions et plafond bêta. Le capital, les positions
+maximales, les frais et le levier restent dans le formulaire principal.
+Les valeurs sont préremplies depuis `config.yaml` et le preset du capital.
+Un bouton **« Reprendre les réglages de production »** remet les contrôles
+de simulation à ces valeurs sans changer les dates, le modèle ni le capital.
+Validation du formulaire enrichi : **359 tests réussis**, dont édition des
+valeurs, retour aux paramètres de production, transmission JSON au CLI,
+replay SQL en lecture seule et vérification que le budget modifie les
+quantités. Les paramètres effectifs et les différences locales figurent
+dans le rapport.
+
+Les modifications ne concernent que ce replay et sont transmises explicitement
+dans `--risk-overrides-json` / `--policy-overrides-json`, contrôlées par liste
+de champs raccordés, puis figées dans `protocol.json`. Aucun fichier YAML,
+plan existant ou compte courtier n'est modifié. Les paramètres daily non
+raccordés à Winner ne sont pas présentés comme des commandes actives.
 
 ## Réglages réellement utilisés
 
@@ -44,6 +76,14 @@ Le processus relit `config.yaml` au lancement et fige sa politique dans
 `protocol.json` : confirmation, fraction initiale, renforcement, seuil d'ajout,
 SL/TP/trailing, durée et expiration du plan, limites de fraîcheur et réserve.
 Les modifications de formulaire concernent uniquement ce replay.
+La configuration du coupe-circuit reprend désormais explicitement
+`risk_management.prod_force_close_on_breaker` / `prod_force_close_pct`
+(avec fallback legacy), au lieu d'ignorer ces clés. Le réglage de travail
+est actif, liquidation de 50 % des positions lors du déclenchement ; cela
+ne garantit pas un drawdown maximal de 15 %. Le capital initial réel du
+replay est aussi injecté dans la configuration de risque, et un SL Winner
+modifié localement est répercuté dans le sizing. Winner étant LONG-only,
+le plafond LONG suit le nombre de positions choisi dans le formulaire.
 
 Au contrôle du 31 octobre : position complète, deux confirmations 5m,
 renforcement désactivé, **SL 5 %, aucun TP ni trailing, horizon 10 séances**.
@@ -67,10 +107,157 @@ Alpaca SIP, US_EQ, séance régulière, 5m raw, non rempli, avec provenance.
 ## Risque factoriel et données manquantes
 
 Le contrôle factoriel reprend la configuration de production par défaut.
-Il exige les observations réellement archivées dans `stock_risk_factor_inputs`
-et connues avant la décision, avec les prix historiques SPY/IWM/MTUM.
-Le replay ne lance pas le rafraîchissement live, ne rétrodatera pas une
-capitalisation actuelle et ne remplace pas les facteurs par zéro.
+Il cherche d'abord les observations qualifiées réellement archivées dans
+`stock_risk_factor_inputs` et connues avant la décision. À défaut d'archive
+qualifiée, il reconstruit automatiquement les entrées depuis l'historique
+local, sur l'univers complet figé du backtest, indépendamment du classement
+Oracle. Les prix SPY/IWM/MTUM restent nécessaires au modèle factoriel complet.
+
+La reconstruction partage le calcul de production : 272 séances complètes,
+préférence des fournisseurs daily, bêta/tendance et capitalisation datée.
+Les lignes de `stock_market_cap_daily` doivent avoir une observation vieille
+de 30 jours au maximum, une devise USD et une source SEC × cours ou Finnhub.
+Leur date de disponibilité et leur heure réelle de calcul doivent précéder
+le cutoff historique des sources. Ce cutoff est fixé à l'ouverture de la
+séance officielle suivante : les publications de la nuit sont admises,
+et les cours de clôture ont dépassé leur délai SIP de 30 minutes. Il ne
+se déplace pas vers une décision intraday ultérieure. Moins de vingt capitalisations qualifiées
+empêchent la reconstruction transversale. À défaut d'observations de l'époque,
+le replay peut maintenant calculer une capitalisation depuis les faits SEC
+bruts locaux et un prix brut contemporain, selon le contrat détaillé plus bas.
+Aucune capitalisation actuelle ni valeur neutre ne remplace une source manquante.
+
+### Option sans dépendance à la capitalisation
+
+Sous le formulaire Winner, **Contrôler la capitalisation historique — facteur
+taille** est décoché par défaut. Ce choix transmet
+`--no-factor-market-cap-check` au vrai moteur de replay. La réinitialisation
+du formulaire restaure ce défaut décoché. Le réglage concerne ce backtest et
+ne modifie pas `config.yaml`, l'étape 11 ni le watcher.
+
+Dans ce mode, le contexte de risque est reconstruit depuis les facteurs
+**marché et momentum**, sans lecture de capitalisation ni des fichiers SEC.
+Le facteur taille est absent de la covariance, des résidus et de la
+décomposition ; aucune série de taille factice à zéro n'est présentée comme
+un facteur observé. IWM n'est plus requis. Le minimum transversal de vingt
+titres porte alors sur les facteurs techniques qualifiés. Les contrôles
+natifs de bêta, concentration/diversification des facteurs restants,
+capital, sizing, drawdown, frais et protections Winner restent actifs.
+
+Le protocole et `report.json.factor_inputs` consignent
+`market_cap_check=false` et `disabled_factors=['size']`. Le modèle réduit
+peut prendre des décisions différentes du modèle complet ; le comparer ne
+revient pas à tester une simple absence de données avec les mêmes facteurs.
+Un contexte sans taille est refusé en exploitation ; son utilisation exige
+l'autorisation explicite propre à l'adaptateur de replay.
+
+### Reconstruction SEC des capitalisations
+
+`backtesting/historical_sec_capitalization.py` utilise uniquement les fichiers
+déjà présents sous `artifacts/sec_cache/companyfacts`, avec le mapping CIK
+local. Il ne réutilise pas aveuglément `stock_fundamentals_daily` : le mapper
+agrégé a parfois associé une date de dépôt à une période comparative plus
+ancienne, et de nombreuses lignes n'ont pas de référence de dépôt.
+
+Les faits instantanés `dei:EntityCommonStockSharesOutstanding` et
+`us-gaap:CommonStockSharesOutstanding`, unité `shares`, sont conservés
+individuellement avec leur accession, date de mesure et date de dépôt.
+Les moyennes pondérées d'actions ne sont pas substituées. Le fait admissible
+est la mesure la plus récente, puis sa publication/révision la plus récente
+connue au cutoff ; des valeurs contradictoires équivalentes sont refusées.
+Un dépôt sans heure est disponible après la fin de sa journée civile à
+New York : cette borne prudente n'est pas une heure d'acceptation inventée.
+Les mesures plus âgées que `market_cap.max_age_days` sont rejetées.
+
+Le nombre d'actions est multiplié par le **dernier close régulier 5m raw
+Alpaca SIP de la séance**, avec ses horodatages et son hash de payload.
+L'absence de cette bougie bloque le calcul ; un daily ajusté des splits
+futurs ne la remplace pas. Cette valeur reste un proxy du prix de clôture,
+pas le fixing officiel. Les prix raw évitent notamment de multiplier un
+nombre d'actions antérieur à un split par le prix ajusté après ce split.
+
+Les ADR/classes ambiguës, instruments non-actions/non-USD, CIK absents ou
+incohérents, ruptures d'identité connues et splits connus depuis la mesure
+des actions sont refusés. Le mapping CIK actuel et le registre des ruptures
+ne sont pas un référentiel exhaustif des identités historiques ; les
+événements de split conservés ne constituent pas une couverture certifiée.
+Les capitalisations sont des estimations à partir du dernier nombre public
+d'actions, pas des nombres d'actions exacts pour chaque journée.
+
+Les nouvelles lignes portent `evidence_kind=RECONSTRUCTED_SEC_FACT`, l'heure
+réelle de calcul et une disponibilité historique distincte. Elles restent
+des fichiers de recherche dans le run et ne sont pas publiées en SQL.
+`sec-capitalization-receipts.json` explique la couverture et les refus ; les
+preuves complètes sont incluses dans les fichiers comprimés de reconstruction.
+
+La [documentation officielle SEC](https://www.sec.gov/search-filings/edgar-application-programming-interfaces)
+décrit CompanyFacts comme l'agrégation des concepts standards applicables à
+l'entité entière. Les règles ci-dessus de sélection, délai prudent et
+qualification de prix sont celles du replay Alpha Trade.
+
+Audit local READ ONLY dans
+`artifacts/research/historical_sec_capitalization_20261031-v2/report.json` :
+
+| Séance de référence | Capitalisations reconstruites / 1 790 | TOP20 Oracle couverts |
+| --- | ---: | ---: |
+| 02/07/2021 | 1 151 | 11/20 |
+| 30/06/2022 | 1 165 | 6/20 |
+| 30/06/2023 | 1 199 | 11/20 |
+| 28/06/2024 | 1 218 | 10/20 |
+| 27/06/2025 | 1 237 | 16/20 |
+| 30/09/2026 | 1 256 | 14/20 |
+
+La base comptait 39 232 observations de capitalisation, du 18 au 31 octobre
+2026 ; les dépôts bruts SQL commencent le 3 septembre 2026. L'historique
+`stock_fundamentals_daily` contient 154 175 lignes SEC avec des actions
+positives, mais les fichiers CompanyFacts bruts sont nécessaires pour
+qualifier individuellement les faits et périodes. Le cache local compte
+5 774 fichiers ; aucun téléchargement n'a été fait pour cet audit.
+
+Validation sur la séance du 30/06/2025, Oracle TOP20, 4 000 $, cash 1×,
+SL5, H10, sans TP/trailing, confirmation 2 et SIP retardé 930 s : cinq
+achats simulés avec modèle factoriel complet, et cinq dans le mode sans
+taille (sélections différentes). Les deux bilans restent incomplets à
+cause des lacunes de prix, ainsi que des preuves factorielles manquantes
+pour certains titres dans le mode complet. Cela valide le raccordement,
+pas la rentabilité de l'un des deux modèles. Artefacts sous
+`artifacts/research/winner_sec_cap_20261031/` ; aucune reprise des cinq
+années, aucun ordre broker et aucune écriture SQL.
+Validation finale du mode sans taille et de la reconstruction SEC : 362 tests
+de la suite Winner/qualification réussis, complétés par 17 tests ciblés du
+flux factoriel de production, des sources SEC et de l'option. Les versions
+opérationnelles du calcul et du risque conservent leurs défauts stricts.
+
+Les bougies sont l'historique canonique disponible aujourd'hui, susceptible
+d'avoir été révisé : cette reconstruction ne prétend pas disposer des
+versions de prix effectivement reçues à l'époque. L'univers de fichier
+reste aussi un univers courant figé, sans certification de survie historique.
+Ces limites de recherche restent enregistrées ; `full_live_parity=false`.
+
+Un calcul est mutualisé entre les candidats d'une même séance. Les
+reconstructions et leurs raisons d'incomplétude sont conservées dans le
+dossier du run : `factor-reconstruction-receipts.json` et
+`factor-reconstructions/YYYY-MM-DD.json.gz` lorsque le calcul des entrées
+a abouti. Les dates `observed_at` et `reconstructed_at` restent les dates
+réelles d'aujourd'hui ; `input_available_at` identifie séparément la borne
+historique modélisée. Les reçus de contexte indiquent
+`ARCHIVED_OBSERVATIONS` ou `RECONSTRUCTED_HISTORICAL_INPUTS`, et le rapport
+compte les contextes archivés, reconstruits et refusés.
+
+Cette branche est propre au replay : aucun rafraîchissement live, appel
+fournisseur ou écriture SQL. Les snapshots opérationnels ne sont pas
+antidatés ni enrichis par ces fichiers. La réapprobation de production
+refuse une reconstruction historique ; seul l'adaptateur du replay
+l'autorise explicitement, en conservant les limites natives sur les
+quantités finales, le bêta, la concentration et la diversification actifs.
+
+Validation du raccordement : 348 tests Winner/qualification factorielle
+réussis lors de la passe élargie. Les tests de reconstruction passent par
+le vrai calcul, une base SQLite surveillée en SELECT-only et le moteur
+intraday jusqu'à un achat simulé. Ils couvrent aussi l'archive prioritaire,
+les sources futures/manquantes, la mutualisation par séance, l'export des
+preuves et le maintien des refus de risque. Aucun replay économique sur
+cinq ans ni ordre n'a été lancé par ce changement.
 
 Sans contexte qualifié, la nouvelle entrée est bloquée et le bilan est
 `INCOMPLETE_COVERAGE`, avec motifs et reçus. Le traitement des positions
@@ -139,6 +326,13 @@ Il n'y a pas de bid/ask temps réel inventé ni d'appel SIP latest pour ce chemi
 Au-dessus de la limite, aucun achat n'est garanti. `market_data_delay_seconds: 0`
 conserve le chemin temps réel et ses contrôles. Aucun fallback IEX n'est ajouté.
 
+Le délai accepte **tout entier entre 900 et 3 600 secondes**, sans obligation
+de multiple de cinq minutes : `930` représente quinze minutes et trente
+secondes et conserve une marge de publication. Le fichier de travail est
+actuellement réglé à `930`. La grille temporelle des bougies reste cinq minutes.
+Une valeur invalide est signalée dans la page Backtest, sans lancement ni
+remplacement silencieux de la politique par une valeur par défaut.
+
 Le délai est aussi reproduit dans le backtest : disponibilité après le délai,
 achat à une ouverture 5m observée à partir de cette disponibilité, jamais
 au cours historique de la bougie de confirmation. La sortie temporelle
@@ -153,6 +347,249 @@ inputs. Un historique d'OI absent ne peut pas être reconstitué avec du
 volume seul ou avec les snapshots d'aujourd'hui : bilan incomplet et aucune
 entrée pour les cohortes insuffisantes. L'option peut être décochée pour un
 témoin Oracle brut, différence explicitement consignée dans le protocole.
+
+### Diagnostic du premier semestre 2025, run 20261031_125841_66dcce61
+
+La commande demande le 01/01/2025–30/06/2025, modèle parcours H10
+`model-factory-20261030213826-eda503`, TOP20, 4 000 $, sans levier,
+confirmation de deux bougies, filtre options et contrôle factoriel activés.
+Les artefacts du run établissent :
+
+- 122 séances, 2 440 lignes dans `signals.csv` ;
+- 2 440 lignes dans `options-selection.csv`, toutes refusées avec
+  `MISSING_OR_STALE_OPTIONS` ;
+- 122 cohortes `covered: 0`, `incomplete: true` dans `options-receipts.json` ;
+- 122 lacunes `OPTIONS_COHORT_INCOMPLETE`, aucune campagne et aucun achat ;
+- reçus intraday et facteurs vides : ces contrôles n'ont pas été atteints ;
+- rapport `INCOMPLETE_COVERAGE`, capital inchangé 4 000 $ ; le rendement 0 %
+  ne constitue pas une performance économique mesurée.
+
+Ce constat provient des artefacts enregistrés, pas d'une nouvelle lecture SQL
+de toute la couverture options. L'accès direct MySQL était indisponible pour
+ce diagnostic ; aucune borne globale d'historique en base n'est affirmée.
+Les reçus postérieurs au cutoff ne peuvent pas être antidatés pour débloquer
+le test. Un témoin sans options est une autre expérience explicite ; le
+contrôle factoriel requiert également ses propres archives qualifiées.
+
+L'historique IHM lit désormais les flags complets `--start-date`/`--end-date`
+et les anciens `--start`/`--end`, sans confondre `-date` avec une valeur. Pour
+les runs Winner terminés, le badge consulte le statut du rapport/progress :
+`INCOMPLETE_COVERAGE` devient **orange, couverture incomplète**, même lorsque
+le processus est sorti normalement avec le code zéro. Le journal d'exécution
+et les résultats historiques ne sont pas réécrits. L'avertissement apparaît
+avant le chargement facultatif du rapport détaillé ; le résumé explique aussi
+le cas où le filtre options a bloqué toutes les entrées.
+
+Régressions ciblées : 59 tests réussis (dates/labels, page Backtesting et
+sélection options historique). Aucun ordre, appel fournisseur, modification
+SQL ni nouveau replay n'a été exécuté pour ce correctif d'affichage.
+
+### Run 20261031_151056_45eba031 : anomalie d'horloge SIP retardée
+
+Période demandée 06/07/2021–29/10/2026, 1 337 séances, même Oracle H10,
+TOP20, 4 000 $, confirmation 2, délai 930 s, fraîcheur résiduelle 60 s,
+filtre options désactivé, contrôle factoriel activé. Les artefacts indiquent
+26 740 sélections et 2 409 campagnes/plans créés, sans aucun fill d'achat.
+
+`events.csv` contient 3 204 761 refus `DELAYED_SIP_UNQUALIFIED`, 479 001
+refus de référence de séance précédente, 60 022 absences de bougie candidate
+et 44 budgets de signal insuffisants. Les lacunes distinctes du rapport se
+répartissent en 5 619 `SIGNAL_RAW_5M_INCOMPLETE`, 7 192
+`CANDIDATE_RAW_5M_INCOMPLETE` et 6 802 `PRIOR_RAW_5M_INCOMPLETE`.
+Les reçus factoriels sont vides : la réapprobation factorielle n'a pas été
+atteinte, ce qui ne qualifie pas sa disponibilité historique.
+
+L'ancien replay ne testait les campagnes qu'aux ouvertures 5m. Avec
+930 secondes de délai, le cutoff tombe 30 secondes avant une borne 5m : la
+dernière bougie achevée a donc 270 secondes d'ancienneté résiduelle, contre
+60 autorisées. Cela bloque même une série de données parfaitement complète.
+Reproduction synthétique sur la séance officielle du 06/07/2021 : 74/78
+instants qualifiés avec un délai 900 s, **0/78 avec 930 s** ; le même jeu
+de bougies devient frais à l'instant de disponibilité décalé de 30 secondes.
+
+Le paramètre 930 s est valide en exploitation avec un watcher au bon instant.
+Le défaut venait du raccordement à l'horloge du replay ; ce résultat ne
+prouvait pas une absence d'occasions de trading.
+
+### Correctif du replay SIP décalé, 31 octobre 2026
+
+`backtesting/winner_clock.py` sépare l'horloge de disponibilité des preuves
+de celle des prix observés. Avec un délai de 930 secondes, les confirmations
+sont évaluées aux bornes 5m décalées de 30 secondes. Le délai figé, la
+fraîcheur résiduelle de 60 secondes et les cutoffs historiques sont conservés.
+
+Les bougies 5m ne donnent pas le prix exact trente secondes après leur
+ouverture. Pour un signal entre deux bornes, le replay réserve le capital,
+fige la quantité et la limite approuvées, puis tente une seule exécution à
+l'ouverture 5m suivante de la même séance. Une ouverture absente, un cours
+au-dessus de la limite ou une capacité insuffisante annulent cet ordre.
+Une nouvelle décision ultérieure reste possible, mais cet ordre précis ne
+peut attendre une ouverture plus favorable, exploiter un low futur ou être
+reporté au lendemain. C'est un **proxy d'exécution IOC pour la recherche**,
+pas la reproduction d'un véritable IOC envoyé au moment du signal.
+
+Les décisions et exécutions ont leurs horodatages distincts dans `events.csv`
+(`DELAYED_ENTRY_DECISION`, `BUY_FILL`, `DELAYED_ENTRY_CANCELED`). Le contrat
+`replay_clock` est conservé dans le protocole et le rapport ; la page IHM
+explique cette approximation. `full_live_parity` reste faux. Les ajustements
+de stop décidés entre deux bornes prennent effet à l'ouverture suivante ;
+l'ancien stop reste actif jusque-là, sans appliquer le nouveau seuil au low
+déjà passé. À la fin de séance, le dernier ajustement ne peut affecter la
+bougie qui le précède ; son seuil est applicable à l'ouverture suivante.
+
+Le coordinateur traite séparément la réconciliation, la protection des lots,
+l'expiration et l'échéance sur l'horloge des prix. L'entrée standard sans
+confirmation conserve son exécution à l'ouverture. Les fills différés sont
+réconciliés avant le contrôle de liquidation globale ; une coupure déjà
+connue annule l'achat en attente avant son exécution. Le budget partagé,
+les frais, les limites de levier et les contrôles natifs restent appliqués.
+
+Validation hors ligne sur un échantillon synthétique : signal qualifié à
+14:00:30 UTC, achat au prix de **103 $ à 14:05 UTC**, sans utiliser ni le cours
+de 102 $ de la preuve retardée, ni l'ouverture de 101 $ à 14:00. Les cas
+de limite dépassée, ouverture manquante, réservation de capital, absence de
+facteurs historiques, liquidation, clôture anticipée et échéances H10/H20
+sont couverts dans `tests/test_winner_replay_clock.py`.
+Suite Winner : 326 tests réussis lors de la passe élargie ; après le dernier
+raccordement de réconciliation avant liquidation, 69 tests ciblés réussis
+(horloge, replay intraday, SIP retardé et liquidation globale).
+
+Les archives d'origine restent inchangées. Le prochain processus de
+backtest chargera le correctif. Aucun replay économique sur cinq ans, ordre,
+appel fournisseur ou changement des services en fonctionnement n'a été lancé.
+Les lacunes de bougies du run d'origine restent à qualifier. Le contrôle
+factoriel peut désormais être atteint : son absence éventuelle doit encore
+produire un refus et un bilan incomplet, jamais un facteur antidaté ou un
+contrôle désactivé implicitement.
+
+### Run 20261031_173004_6b225c2c : risque factoriel sans archives historiques
+
+Le run suivant, terminé en `INCOMPLETE_COVERAGE`, utilise bien la nouvelle
+horloge (décalage de 30 secondes). Son protocole indique `options_filter=false`,
+`factor_model=true`, 4 000 $, TOP20 et la période du 06/07/2021 au 29/10/2026.
+Il a créé 2 409 campagnes, sans achat ni frais ; capital final 4 000 $.
+
+Les 22 722 événements `NATIVE_RISK_REJECTED` portent tous le motif
+`Aucun snapshot factoriel reçu avant décision`. Le fichier
+`factor-receipts.json` contient 12 038 contrôles distincts jour/périmètre,
+tous non qualifiés. Ces nombres sont des tentatives/contrôles, pas des
+trades indépendants. Les requêtes de `HistoricalFactorSource` cherchent dans
+`stock_risk_factor_inputs` un snapshot à la date de référence, avec
+`observed_at <= cutoff` : un snapshot collecté ultérieurement ne peut servir
+de preuve historique. Le correctif d'horloge permet désormais d'atteindre
+ce contrôle ; aucune approbation d'entrée n'a pu le franchir.
+
+Les autres lacunes subsistent : 5 619 `SIGNAL_RAW_5M_INCOMPLETE`, 7 192
+`CANDIDATE_RAW_5M_INCOMPLETE` et 6 802 `PRIOR_RAW_5M_INCOMPLETE`. Le statut
+incomplet et les zéro achat ne constituent pas une mesure de performance
+économique de la stratégie.
+
+Pour un témoin historique sans ces archives factorielles, l'utilisateur peut
+décocher **Appliquer le contrôle factoriel de production** dans le formulaire.
+Cette différence de protocole est explicite ; elle ne désactive ni SL,
+budget de risque, capital partagé, frais ni autres contrôles actifs. Le
+défaut factoriel de production reste inchangé. Aucun nouveau replay ni
+changement de configuration de production n'a été lancé pour ce diagnostic.
+L'évolution suivante ajoute le calcul automatique décrit ci-dessus. Elle
+ne garantit pas de débloquer ce run : une capitalisation historique absente
+reste absente même lorsque les facteurs techniques sont recalculables.
+
+### Incident SDGR : une bougie détenue absente le 31/01/2025
+
+Le run `20261031_211630_0f9ddba2`, du 01/01 au 30/06/2025, a atteint une
+position SDGR puis s'est arrêté sur l'intervalle 17:00–17:05 UTC du
+31/01/2025 (18:00–18:05 Paris). La base contient 77 des 78 bougies régulières
+attendues ce jour-là. La ligne n'existe dans aucun autre flux local à cet
+instant ; elle n'est pas simplement exclue par le filtre qualité du replay.
+
+Deux vérifications GET auprès d'Alpaca SIP, en raw, ont confirmé zéro bougie
+5m et zéro bougie 1m à l'intérieur de cet intervalle. Le serveur retourne
+aussi la borne de fin de requête : une ligne à 17:05 ne répare pas la
+période manquante 17:00–17:05. Cette absence ne démontre à elle seule ni
+un arrêt de cotation, ni l'absence de transactions éligibles, ni une panne
+de fournisseur.
+
+Le moteur reste strict : pas de cours inventé, de remplissage au cours
+précédent, de suppression rétrospective de SDGR du classement ni de SL
+ignoré pendant le trou. Un simple relancement sur ces mêmes données peut
+donc rencontrer le même arrêt. Les vérifications n'ont écrit aucune ligne
+SQL et n'ont pas relancé le backtest. Preuves :
+`artifacts/operations/sdgr_intraday_gap_20261031/report.json`, avec les deux
+réponses fournisseur locales.
+
+Dans ce run, `factor_market_cap_check=false` : « 0 capitalisations datées »
+est donc attendu et ne constitue pas un refus d'entrée. La réduction de
+CLMT à zéro est un refus de sizing au minimum de position de 50 $, distinct
+du défaut de couverture SDGR.
+
+### Ignorer automatiquement les titres aux données intraday manquantes
+
+Le formulaire Winner propose **Ignorer automatiquement les titres aux données
+intraday manquantes**, **coché par défaut**. Il remplace la saisie manuelle
+des titres exclus. La commande équivalente est `--ignore-missing-intraday`.
+Le bouton de reprise des réglages de production rétablit cette option cochée ; aucun
+fichier d'univers ni paramètre live n'est modifié. Sans cette option, le
+moteur conserve son arrêt strict sur une bougie détenue absente.
+
+Avant la simulation, le contrôle compte les bougies SIP raw régulières 5m
+qualifiées sur le calendrier officiel, y compris les séances raccourcies.
+Pour chaque signal Oracle, il examine la fenêtre potentielle allant du signal
+à la dernière sortie possible selon l'attente d'entrée et l'horizon de
+détention, bornée par la fin du replay. Sans horizon, la fenêtre va jusqu'à
+la fin du replay. Les fenêtres qui se chevauchent sont regroupées. Il ne
+contrôle pas les années antérieures au premier signal d'un titre.
+
+Une séance incomplète dans ces fenêtres exclut automatiquement le titre de
+**tout le nouveau run**, avant toute ouverture de position. Ce contrôle est
+conservateur : une lacune peut exclure un titre même si le replay n'aurait
+finalement pas détenu sa position ce jour-là.
+
+La validation des scores, leur traçabilité et la couverture Oracle portent
+toujours sur l'univers demandé. L'exclusion intervient après le classement
+TOP-N, avant le filtre options éventuel, le risque et la création des plans.
+Elle conserve les rangs d'origine, **sans reprendre le rang N+1**. Une liste
+qui retire tous les candidats laisse le portefeuille en liquidités.
+
+Le protocole et le rapport conservent les symboles exclus, le nombre de
+signaux retirés, le hash de la sélection d'origine et le reçu du contrôle de
+couverture. `excluded-signals.csv` liste les signaux écartés ;
+`missing-intraday.json` et `missing-intraday.csv` détaillent les titres,
+dates et nombres de bougies absentes/non qualifiées. Le journal final liste
+chaque titre exclu, le nombre de séances incomplètes et leurs premières
+dates, également si une autre erreur termine ensuite le replay. Le suivi
+affiche d'abord la phase de contrôle, puis la simulation.
+
+Avec au moins une exclusion automatique, le résultat reste
+`INCOMPLETE_COVERAGE` (orange), avec les résultats du sous-ensemble retenu.
+Ce mode utilise **la disponibilité future des données**, connue après coup :
+il introduit un biais de sélection possible et n'est pas une règle live
+causale. Le résultat ne prouve pas ce qu'aurait donné le protocole initial
+complet.
+
+Le moteur ne fait jamais disparaître une position déjà ouverte quand un
+trou survient et ne remplit pas une bougie absente. Les contrôles de prix
+daily, d'identité, d'actions sur titres et de risque restent actifs : cette
+option concerne uniquement la couverture intraday. Elle nécessite un
+nouveau run ; elle ne répare ni ne reprend automatiquement le run échoué.
+
+Vérification locale SELECT-only sur les signaux de janvier, jusqu'au
+31/01/2025 : **43 titres contrôlés, 21 exclus, 202 séances incomplètes**,
+dont la lacune SDGR du 31 janvier. Ce constat de couverture n'est pas une
+mesure de performance. Preuves :
+`artifacts/operations/winner_ignore_missing_intraday_20261031/january-screen.json`
+et `january-missing-intraday.csv` dans le même dossier. Aucun fournisseur
+n'a été appelé et aucune ligne SQL n'a été écrite pour ce contrôle.
+
+La commande manuelle `--exclude-symbols SDGR` reste disponible pour les
+anciens scripts ; elle n'est plus proposée dans le formulaire. Un symbole
+manuel invalide ou absent de l'univers demandé est refusé explicitement.
+
+Validation de cette option : **52 tests distincts réussis**, couvrant le
+formulaire et sa remise à zéro, le défaut strict, le contrôle SELECT-only,
+les demi-séances, la conservation des rangs, le replay avec les autres titres
+et les exports complets lorsque tous les candidats sont exclus.
+
+### Contrat SIP du watcher en exploitation (rappel)
 
 Redémarrer le watcher pour charger ce nouveau contrat avant une nouvelle
 étape 12. Le contrôle d'ancienneté du code refuse l'ancien processus.

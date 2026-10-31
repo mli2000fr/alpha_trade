@@ -10,7 +10,15 @@ ne prouve pas une restauration qualifiée ; vérifier le rapport du drill concer
 
 ## Périmètre et vérité exécutable
 
-Une reprise complète peut exiger base MySQL, schéma Alembic, configuration, artefacts ML compatibles, manifests et secrets recréés. Les scripts courants sont `scripts/backup_db.py`, `scripts/backup_ml_artifacts.py`, `scripts/restore_from_backup.py` et `scripts/prune_artifacts.py`. Les secrets ne doivent jamais être placés dans les archives ni dans les rapports.
+Une reprise complète peut exiger base MySQL, schéma Alembic, configuration, artefacts ML compatibles, manifests et secrets recréés. Les scripts courants sont `scripts/backup_db.py`, `scripts/backup_ml_artifacts.py`, `scripts/restore_from_backup.py` et `scripts/prune_artifacts.py`. Les secrets ne doivent jamais être placés en clair dans les archives ni dans les rapports.
+
+Depuis le 31 octobre 2026, **Infra & Backups → T5.6** ajoute une
+[sauvegarde complète chiffrée et un restaurateur portable](migration_complete_t56.md)
+des trois bases, modèles, source, configuration, archives et variables de
+l'application. La sauvegarde à chaud laisse le PC source fonctionner. La
+restauration exige l'arrêt des seuls services du PC cible, sauvegarde son
+existant avant remplacement, et ne relance aucun automatisme. Elle n'utilise
+pas le restaurateur legacy US ni son upgrade Alembic automatique.
 
 ## Sauvegardes MySQL planifiées
 

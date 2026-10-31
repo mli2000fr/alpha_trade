@@ -49,7 +49,7 @@ def expected_sessions(asof):
     return days[-HISTORY_SESSIONS:]
 
 
-def select_caps(rows, asof, cutoff):
+def select_caps(rows, asof, cutoff, *, allow_reconstructed=False):
     """No metadata fallback: dated currency/provenance/availability are required."""
     cutoff = utc(cutoff)
     valid = []
@@ -57,9 +57,14 @@ def select_caps(rows, asof, cutoff):
         row = dict(raw)
         stamp = row['computed_at']
         stamp = stamp.replace(tzinfo=UTC) if stamp.tzinfo is None else utc(stamp)
+        available=stamp
+        if row.get('evidence_kind')=='RECONSTRUCTED_SEC_FACT':
+            if allow_reconstructed is not True:
+                continue
+            available=utc(row['input_available_at'])
         if (row['source'] not in ('SEC_X_CLOSE', 'FINNHUB') or row['currency'] != 'USD'
                 or not 0 <= (asof-row['observation_date']).days <= CAP_MAX_AGE_DAYS
-                or row['available_date'] > cutoff.date() or stamp > cutoff
+                or row['available_date'] > cutoff.date() or available > cutoff
                 or not np.isfinite(float(row['market_cap'])) or row['market_cap'] <= 0):
             continue
         valid.append(row)
@@ -71,14 +76,15 @@ def select_caps(rows, asof, cutoff):
     return selected
 
 
-def calculate_inputs(bars, cap_rows, symbols, asof, cutoff, sessions, *, config=None):
+def calculate_inputs(bars, cap_rows, symbols, asof, cutoff, sessions, *, config=None,require_market_cap=True,
+                     allow_reconstructed_caps=False):
     """Pure feature computation, before any Alpha Scanner eligibility filter."""
     data = bars.copy()
     data['date'] = pd.to_datetime(data['date'])
     data = data.loc[data['date'].dt.date.le(asof)]
     data = select_daily_bars(data, config=config)
     data = data.loc[data['date'].dt.date.isin(sessions)].sort_values(['symbol','date'])
-    caps = select_caps(cap_rows, asof, cutoff)
+    caps = select_caps(cap_rows, asof, cutoff,allow_reconstructed=allow_reconstructed_caps) if require_market_cap else {}
     spy = data.loc[data.symbol.eq('SPY')].set_index('date')['close'].astype(float)
     spy_filled = data.loc[data.symbol.eq('SPY'),'is_filled']
     if (list(spy.index.date) != list(sessions) or not np.isfinite(spy).all() or (spy <= 0).any()
@@ -102,7 +108,7 @@ def calculate_inputs(bars, cap_rows, symbols, asof, cutoff, sessions, *, config=
                 errors.append('INVALID_DAILY_BAR')
             else:
                 qualified_frames.append(frame)
-        if symbol not in caps:
+        if require_market_cap and symbol not in caps:
             errors.append('DATED_CAP_UNAVAILABLE')
         reasons[symbol] = errors
     if qualified_frames:
@@ -130,7 +136,9 @@ def calculate_inputs(bars, cap_rows, symbols, asof, cutoff, sessions, *, config=
             benchmark_hash=hashlib.sha256(pd.util.hash_pandas_object(spy,index=True).values.tobytes()).hexdigest(),
             cap_record_id=cap['id'] if cap else None, cap_source=cap['source'] if cap else None,
             cap_available_date=str(cap['available_date']) if cap else None,
-            cap_observation_date=str(cap['observation_date']) if cap else None)
+            cap_observation_date=str(cap['observation_date']) if cap else None,
+            cap_evidence_kind=cap.get('evidence_kind','OBSERVED') if cap else None,
+            cap_input_sha256=cap.get('input_sha256') if cap else None)
         output.append(dict(symbol=symbol, beta_126=beta, trend_score=trend,
             market_cap=float(cap['market_cap']) if cap else None, quality='INCOMPLETE' if errors else 'QUALIFIED',
             details_json=json.dumps(details,sort_keys=True), input_sha256=hashlib.sha256(

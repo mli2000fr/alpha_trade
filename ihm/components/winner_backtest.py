@@ -17,27 +17,49 @@ def render_winner_backtest():
     from risk_management.config import load_risk_config
     from execution_engine.config import load_leverage_config_from_yaml
     from service.options_directional.config import load_options_filter_config
+    from backtesting.winner_settings import production_risk_defaults
+    from ihm.components.winner_backtest_settings import (render_policy_settings,render_risk_settings,
+                                                         reset_execution_settings)
 
     policy = load_winner_pyramiding_config()
-    st.info('Winner : mêmes règles de confirmation, SL/TP/trailing, renforcement et durée '
-            'que dans config.yaml. Replay LONG sur les bougies SIP 5 minutes enregistrées.')
+    st.info('Profil par défaut : réglages de production et exécution prudente sur les bougies SIP 5m. '
+            'Les ajustements dans ce formulaire restent propres au backtest.')
+    st.button('Reprendre les réglages de production',on_click=reset_execution_settings,key='bt_winner_reset_settings')
+    try:
+        policy,policy_changes=render_policy_settings(policy)
+    except ValueError as exc:
+        st.error(f'Réglages Winner invalides : {exc}')
+        st.stop()
     options_config=load_options_filter_config()
     filter_options=st.checkbox('Appliquer le filtre CALL/PUT + OI du pipeline',
-        value=options_config.enabled,key='bt_winner_options_filter')
+        value=False,key='bt_winner_options_filter')
     if not filter_options:
-        st.warning('Témoin Oracle brut : ce replay n’applique pas la sélection options du pipeline.')
+        if options_config.enabled:
+            st.warning('Témoin Oracle brut : ce replay n’applique pas la sélection options du pipeline.')
+        else:
+            st.caption('Filtre options désactivé conformément à la configuration de production.')
     st.caption('TOP Oracle → filtre options si activé → risque → Winner. Même calcul et '
                'mêmes seuils que le pipeline, avec les données connues au cutoff historique. Aucun appel GPT.')
     with st.expander('Réglages Winner et limites du replay', expanded=True):
-        st.json(dict(confirmation_bars=policy.confirmation_bars,
-            initial_position_fraction=policy.initial_position_fraction,
-            reinforcement_enabled=policy.reinforcement_enabled,
-            reinforcement_trigger_pct=policy.reinforcement_trigger_pct,
-            stop_loss_pct=policy.stop_loss_pct, take_profit_pct=policy.take_profit_pct,
-            trailing_stop_pct=policy.trailing_stop_pct, horizon_sessions=policy.horizon_sessions,
-            entry_valid_sessions=policy.entry_valid_sessions))
-        st.caption(f'Délai SIP : {policy.market_data_delay_seconds//60} min ; marge limite retardée : '
+        st.table([{'Paramètre':name,'Valeur':value} for name,value in [
+            ('SL initial',f'{100*policy.stop_loss_pct:g} %'),
+            ('TP',f'{100*policy.take_profit_pct:g} %' if policy.take_profit_pct else 'Désactivé'),
+            ('Trailing',f'{100*policy.trailing_stop_pct:g} %' if policy.trailing_stop_pct else 'Désactivé'),
+            ('Détention maximale',f'{policy.horizon_sessions} séances' if policy.horizon_sessions else 'Sans échéance'),
+            ('Position initiale','Complète' if policy.initial_position_fraction==1 else 'Demi-position'),
+            ('Renforcement','Activé' if policy.reinforcement_enabled else 'Désactivé'),
+            ('Confirmation',f'{policy.confirmation_bars} clôtures de cinq minutes'),
+            ('Attente maximale',f'{policy.entry_valid_sessions} séances')]])
+        st.caption(f'Délai SIP : {policy.market_data_delay_seconds//60} min '
+                   f'{policy.market_data_delay_seconds%60:02d} s ; marge limite retardée : '
                    f'{100*policy.delayed_entry_limit_buffer_pct:g} %. Un cours retardé ne devient pas une quote actuelle.')
+        from backtesting.winner_clock import observation_offset
+        if observation_offset(policy):
+            st.caption('Le signal retardé est évalué à son heure de disponibilité. Faute de prix à cet instant '
+                       'dans les bougies 5m, le replay tente un seul achat à l’ouverture 5m suivante, '
+                       'avec capital réservé et plafond de prix conservé. Si cette ouverture manque ou dépasse '
+                       'la limite, cet ordre simulé est annulé. Cette approximation ne reproduit pas un IOC réel. '
+                       'Un ajustement de stop prend aussi effet à l’ouverture suivante ; l’ancien stop reste actif jusque-là.')
         st.caption('Entrée incluse dans la détention ; vente à l’ouverture suivante après '
                    'l’horizon. Les cours OHLC ne reproduisent pas le carnet, le spread et les '
                    'exécutions réelles. Les secteurs sont les métadonnées actuelles.')
@@ -75,15 +97,29 @@ def render_winner_backtest():
                         min_value=first, key=f'bt_winner_end_{batch}')
     source = st.text_input('Univers Winner',
         value='universe-file:config/univers_batch/univers_filtred_tradable.txt', key='bt_winner_universe')
+    ignore_missing=st.checkbox('Ignorer automatiquement les titres aux données intraday manquantes',
+        value=True,key='bt_winner_ignore_missing_intraday',
+        help='Contrôle les fenêtres potentielles d’entrée et de détention avant la simulation. Un titre incomplet est exclu sur toute la période, sans remplacement dans le TOP Oracle.')
+    if ignore_missing:
+        st.warning('Mode diagnostic : exclusion préalable des titres incomplets sur toute la période. '
+                   'Ce contrôle utilise la disponibilité future des données et peut biaiser le résultat. '
+                   'Les titres et dates exclus seront consignés dans le rapport et le log final.')
     top = st.number_input('Nombre de premiers titres Oracle', min_value=1, max_value=1000,
                           value=options_config.oracle_top_n, key='bt_winner_top')
     equity = st.number_input('Capital initial ($)', min_value=1., value=4000., key='bt_winner_equity')
-    risk = load_risk_config(equity=float(equity))
+    risk = production_risk_defaults(load_risk_config(equity=float(equity),
+        cli_overrides={'account_equity':float(equity)}))
+    try:
+        risk,risk_changes=render_risk_settings(risk)
+    except ValueError as exc:
+        st.error(f'Réglages de risque invalides : {exc}')
+        st.stop()
     coverage = st.number_input('Couverture minimale des prédictions dans l’univers (%)',
         min_value=1., max_value=100., value=100.*options_config.min_oracle_coverage_ratio,
         key='bt_winner_coverage')
     positions = st.number_input('Positions simultanées maximales', min_value=1,
-                                value=risk.max_positions, key='bt_winner_positions')
+                                value=risk.effective_max_positions, key='bt_winner_positions',
+                                help='Winner est LONG uniquement : le plafond LONG est aligné sur ce nombre.')
     account = st.selectbox('Type de compte simulé', ['cash','margin'], key='bt_winner_account')
     leverage_cfg = load_leverage_config_from_yaml()
     allowed = [1.]
@@ -100,13 +136,27 @@ def render_winner_backtest():
                                value=6.5, key='bt_winner_interest')
     factors = st.checkbox('Appliquer le contrôle factoriel de production',
                           value=risk.enable_factor_model, key='bt_winner_factors')
-    if factors:
-        st.caption('Exige des snapshots factoriels réellement disponibles à chaque décision. '
-                   'Sans archive qualifiée, entrée bloquée et bilan incomplet.')
-    else:
-        st.warning('Contrôle factoriel désactivé uniquement dans ce replay : différence explicite avec la production.')
-    assumptions = st.checkbox('J’accepte les limites historiques du replay OHLC et des secteurs actuels',
-                               key='bt_winner_assumptions')
+    cap_check=st.checkbox('Contrôler la capitalisation historique — facteur taille',value=False,
+        disabled=not factors,key='bt_winner_factor_cap',
+        help='Décocher retire le facteur taille dans ce backtest. Le bêta, le momentum et les autres protections restent contrôlés.')
+    if factors and not cap_check:
+        st.warning('Replay sans facteur taille : aucune capitalisation requise ni substituée. '
+                   'Le risque est calculé sur les facteurs marché et momentum ; ce résultat diffère du modèle factoriel complet.')
+    if factors and cap_check:
+        st.caption('Utilise les snapshots historiques qualifiés ; sinon, reconstruit automatiquement les facteurs '
+                   'depuis les bougies passées et les capitalisations datées connues à l’époque. '
+                   'Les reconstructions sont identifiées dans le rapport. Si les sources nécessaires manquent, '
+                   'l’entrée reste bloquée et le bilan incomplet.')
+    elif not factors:
+        if risk.enable_factor_model:
+            st.warning('Contrôle factoriel désactivé uniquement dans ce replay : différence explicite avec la production.')
+        else:
+            st.caption('Contrôle factoriel désactivé conformément à la configuration de production.')
+    assumptions = st.checkbox('Utiliser le replay prudent disponible, proche du fonctionnement en production',
+                               value=True,key='bt_winner_prudent_replay')
+    st.caption('En cas de SL et TP touchés dans la même bougie, priorité à la sortie défavorable ; '
+               'aucun achat rétroactif. Les secteurs actuels restent une approximation historique '
+               'et ne deviennent pas des secteurs connus à l’époque. Le rapport reste exploratoire.')
     if end < start:
         st.error('La date de fin doit suivre la date de début.')
         st.stop()
@@ -115,7 +165,9 @@ def render_winner_backtest():
         winner_max_leverage=leverage, winner_cost_per_leg_bps=costs,
         winner_min_oracle_coverage=coverage/100.,
         winner_options_filter_enabled=filter_options,
-        winner_factor_model=factors, winner_research_assumptions=assumptions,
+        winner_ignore_missing_intraday=ignore_missing,
+        winner_risk_overrides=risk_changes,winner_policy_overrides=policy_changes,
+        winner_factor_model=factors,winner_factor_market_cap_check=cap_check, winner_research_assumptions=assumptions,
         oracle_batch_id=batch, max_positions=int(positions), account_type=account,
         margin_interest_rate=interest/100.,
         output_dir=f'artifacts/winner_replays/ihm-{uuid.uuid4().hex}')
