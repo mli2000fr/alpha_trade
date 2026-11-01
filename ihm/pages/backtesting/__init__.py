@@ -2664,7 +2664,7 @@ def _build_run_options() -> BacktestRunOptions:
         "oracle_filter": "🧪 Global Rank sélectionne → Oracle filtre la qualité (S6.1-B)",
         "oracle_pool": "🧪 Pool Global Rank élargi → Oracle sélectionne le top % (S6.1-C)",
         "oracle_rerank": "🧪 Pool Global Rank → Oracle réordonne (S6.1-D)",
-        "extreme_gate": "🚪 Extreme Gate : Oracle seul, LONG-only, top 20% (E6-E13)",
+        "extreme_gate": "🚪 Extreme Gate : Oracle seul, LONG-only, sélection configurable",
         "extreme_gate_directional": "🧭 Extreme Gate directionnel : Oracle amplitude + Per-Symbol LONG/SHORT",
         "random": "🎲 Rangs aléatoires (placebo)",
     }
@@ -2682,7 +2682,8 @@ def _build_run_options() -> BacktestRunOptions:
     )
     oracle_batch_id: str | None = None
     oracle_calibration = "none"
-    extreme_gate_pct = float(st.session_state.get("bt_run_extreme_gate_pct", 0.20) or 0.20)
+    from ihm.components.backtest_oracle_scope import render_oracle_scope
+    extreme_gate_pct, extreme_gate_top_n = render_oracle_scope(_cascade_rank_mode)
     extreme_gate_per_symbol = "filter"
     oracle_tradable_policy = "off"
     directional_bundle_gate = "strict"
@@ -2735,17 +2736,6 @@ def _build_run_options() -> BacktestRunOptions:
                 help="`none` consomme le score OOS brut. En backtest PIT strict, isotonic exige un calibrateur antérieur gelé.",
             ))
         if _cascade_rank_mode in ("extreme_gate", "extreme_gate_directional"):
-            with _oracle_cfg_col2:
-                extreme_gate_pct = float(st.number_input(
-                    "Pool Oracle Extreme (fraction)",
-                    min_value=0.01,
-                    max_value=0.50,
-                    value=extreme_gate_pct,
-                    step=0.01,
-                    format="%.2f",
-                    key="bt_run_extreme_gate_pct",
-                    help="0.20 = les 20 % de symboles ayant la plus forte probabilité de mouvement extrême chaque jour.",
-                ))
             _eg_contract_col1, _eg_contract_col2, _eg_contract_col3 = st.columns(3)
             with _eg_contract_col1:
                 extreme_gate_per_symbol = cast(str, st.selectbox(
@@ -2867,7 +2857,7 @@ def _build_run_options() -> BacktestRunOptions:
 - **oracle_filter** (S6.1-B) — le rang global **sélectionne** le top/bottom, puis Oracle **filtre** la qualité (`P_extreme ≥ 0.80`).
 - **oracle_pool** (S6.1-C) — pool du rang global **élargi** (top 20%), puis Oracle **sélectionne** le top 10% dedans.
 - **oracle_rerank** (S6.1-D) — pool du rang global identique, Oracle **réordonne** (score = `P_extreme × proba per-symbol`).
-- **extreme_gate** (E6-E13) — Oracle **seul**, **LONG-only**, top 20% du jour par `proba_extreme` (percentile intra-date). Indépendant du rang global.
+- **extreme_gate** — Oracle **seul**, **LONG-only** : TOP 10 % / 20 % ou TOP 10 / 20 / 50 titres du jour par score Oracle. Indépendant du rang global ; les filtres actifs peuvent réduire la sélection.
 - **extreme_gate_directional** — Oracle sélectionne l'amplitude extrême, puis le modèle Per-Symbol choisit **LONG ou SHORT** selon la probabilité directionnelle la plus forte. Le score vaut `percentile Oracle × probabilité directionnelle`.
 - **random** — rangs aléatoires (placebo, isole l'edge du ranking).
 
@@ -3011,6 +3001,7 @@ def _build_run_options() -> BacktestRunOptions:
         batch_diagnostics_batch_id=selected_ml_batch_id,
         cascade_top_pct=float(st.session_state.get("bt_run_cascade_top_pct", 0.10) or 0.10),
         extreme_gate_pct=float(extreme_gate_pct),
+        extreme_gate_top_n=extreme_gate_top_n,
         cascade_min_prob=cascade_min_prob,
         # Persistent Rank DIP filter — valeurs UI = défauts config.yaml. Seuls
         # les champs explicitement modifiés génèrent un flag --dip-* ; sinon la

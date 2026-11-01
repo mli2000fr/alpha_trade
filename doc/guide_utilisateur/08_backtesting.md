@@ -59,6 +59,28 @@ La page détecte une campagne manquante et peut désactiver le lancement. Même 
 le bouton est disponible, contrôler la couverture effective sur toute la
 période.
 
+### Sélection Oracle sans Winner
+
+Dans **Mode de cascade**, le champ **Sélection Oracle par séance** propose
+**TOP 10 %**, **TOP 20 %**, **TOP 10 titres**,
+**TOP 20 titres** (défaut) et **TOP 50 titres**. Ce choix s’applique à Extreme Gate
+ainsi qu’à une campagne Oracle seule détectée automatiquement en mode standard.
+Il ne modifie pas le classement Global Rank des autres campagnes.
+
+Les pourcentages conservent le seuil historique inclusif sur les percentiles du
+jour ; les égalités peuvent donner un nombre légèrement supérieur à la fraction
+nominale. Les nombres fixes sélectionnent au plus N premiers titres par score
+Oracle décroissant (égalité départagée par symbole). La politique tradable
+choisie détermine si l’éligibilité est filtrée avant ou après ce classement.
+Les filtres ATR ou Per-Symbol activés peuvent ensuite éliminer des candidats,
+sans les remplacer par les rangs suivants. Les limites de risque et de capital
+continuent de s’appliquer : TOP 20 titres ne garantit donc pas vingt achats.
+
+La commande et le registre du run conservent le choix :
+`--extreme-gate-pct 0.10` / `0.20`, ou `--extreme-gate-top-n 10` / `20` / `50`.
+`report.json → run_metadata.oracle_selection` indique la sélection effective.
+Le formulaire Winner conserve son propre nombre de premiers titres.
+
 #### Ablation « macro entièrement absente »
 
 La case **Simuler la macro entièrement absente (diagnostic)** ignore le provider

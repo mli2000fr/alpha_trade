@@ -571,7 +571,7 @@ risk_management:
   enable_factor_model: true
   use_factor_correlation_filter: true    # remplace Pearson par la corrélation implicite
   factor_correlation_threshold: 0.70     # seuil de corrélation implicite max
-  max_portfolio_beta: 3.5                # plafond de l'exposition bêta selon la base ci-dessous
+  max_portfolio_beta: 5.0                # plafond de l'exposition bêta selon la base ci-dessous
   beta_exposure_basis: account_equity   # somme |notionnel × bêta| / equity ; liquidités et levier pris en compte
                                         # invested_capital = ancien bêta moyen du seul capital investi
   max_factor_concentration_pct: 0.60     # max 60% du risque venant d'un seul facteur
