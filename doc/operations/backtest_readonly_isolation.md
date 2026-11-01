@@ -7,6 +7,23 @@ verrous et contrôles habituels. Aucun ordre réel ou PAPER n'est passé par un 
 
 ## Audit des écritures avant modification du verrou
 
+### Caches de compilation PyTorch — 1er novembre 2026
+
+Les variables `TORCHINDUCTOR_CACHE_DIR`, `TRITON_CACHE_DIR`,
+`TORCH_EXTENSIONS_DIR` et `CUDA_CACHE_PATH` sont forcées vers des
+sous-dossiers `.runtime` propres au run, comme les caches Matplotlib/Numba.
+Cela inclut les chemins déjà définis dans le processus IHM et hérités par son
+enfant. `TORCH_HOME` seul ne redirige pas le cache Inductor.
+
+L'incident `20261101_220227_43bae712` avait d'abord enregistré une tentative
+d'écriture dans le répertoire temporaire partagé `torchinductor_*`, puis une
+erreur d'import `precompile already registered`. Le correctif redirige le
+cache avant l'import ML ; il ne vide aucun registre PyTorch et ne désactive
+aucune protection. La validation importe réellement `backtesting.resilience`,
+Lightning et Dynamo dans un processus neuf avec des caches partagés hérités,
+et vérifie le reçu sans violation ainsi que l'absence de création de ces
+caches partagés. Les valeurs d'environnement sont restaurées à la sortie.
+
 | Chemin | Constat et traitement |
 | --- | --- |
 | CLI `backtesting run`, chargement OHLCV/scores/prédictions, cascade Oracle | Lectures SQL historiques. Le cache Parquet était partagé ; il est maintenant propre au run isolé. |
