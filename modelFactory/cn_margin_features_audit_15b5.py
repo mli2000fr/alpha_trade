@@ -1,9 +1,10 @@
 """Read-only final integrity and coverage audit of 15-B5 artifacts."""
 from __future__ import annotations
 
+from service.market import cn_collection_storage as cn_storage
 import argparse
 import json
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 
 import pandas as pd
 
@@ -39,7 +40,7 @@ def run(root: Path, dataset_root: Path = OUTPUT) -> dict:
             {"source_session": day, "margin_available_at": sessions[i + lag][1]}
             for i, (day, _) in enumerate(sessions)
             if day in state["sessions"] and i + lag < len(sessions) and sessions[i + lag][1]])
-        if not pd.read_parquet(root / f"calendar-lag{lag}.parquet").equals(expected_calendar):
+        if not cn_storage.read_parquet(root / f"calendar-lag{lag}.parquet").equals(expected_calendar):
             raise ValueError(f"Altered availability calendar lag{lag}")
     result = {"status": "PASS_ASOF_AND_COVERAGE_PROXY_ONLY", "folds": {},
               "report_sha256": _sha(root / "report.json"), "training_ready": False,
@@ -51,7 +52,7 @@ def run(root: Path, dataset_root: Path = OUTPUT) -> dict:
         path = root / f"{key}.parquet"
         if _sha(path) != entry["joined_sha256"]:
             raise ValueError(f"Changed join {key}")
-        frame = pd.read_parquet(path)
+        frame = cn_storage.read_parquet(path)
         if len(frame) != entry["xshe_pool_rows"] or frame.duplicated(builder.KEYS).any():
             raise ValueError(f"Wrong event count or duplicate {key}")
         decision = pd.to_datetime(frame["decision_at"], utc=True)
@@ -68,7 +69,7 @@ def run(root: Path, dataset_root: Path = OUTPUT) -> dict:
         if frame.loc[frame["oracle_decile"].isna(), "target_d10"].notna().any():
             raise ValueError(f"Unknown targets imputed {key}")
         lag = int(key.rsplit("lag", 1)[1])
-        calendar = pd.read_parquet(root / f"calendar-lag{lag}.parquet")
+        calendar = cn_storage.read_parquet(root / f"calendar-lag{lag}.parquet")
         expected = builder.strict_join(
             frame[["instrument_id", "decision_at"]].assign(event_index=frame.index),
             pd.DataFrame(columns=["source_session", "instrument_id", *builder.FEATURES]),

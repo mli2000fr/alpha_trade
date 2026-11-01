@@ -1,4 +1,4 @@
-"""Focused Winner backtest form; no broker, prediction or provider call."""
+"""Focused Winner backtest form; recovery may call historical data providers."""
 from datetime import date, timedelta
 from pathlib import Path
 import json
@@ -24,12 +24,9 @@ def render_winner_backtest():
     policy = load_winner_pyramiding_config()
     st.info('Profil par défaut : réglages de production et exécution prudente sur les bougies SIP 5m. '
             'Les ajustements dans ce formulaire restent propres au backtest.')
+    st.caption('Simulation isolée : base en lecture seule, rapports et caches dans son dossier. '
+               'Les nouveaux runs peuvent fonctionner en parallèle du pipeline. Les anciens runs gardent leur verrou initial.')
     st.button('Reprendre les réglages de production',on_click=reset_execution_settings,key='bt_winner_reset_settings')
-    try:
-        policy,policy_changes=render_policy_settings(policy)
-    except ValueError as exc:
-        st.error(f'Réglages Winner invalides : {exc}')
-        st.stop()
     options_config=load_options_filter_config()
     filter_options=st.checkbox('Appliquer le filtre CALL/PUT + OI du pipeline',
         value=False,key='bt_winner_options_filter')
@@ -41,15 +38,11 @@ def render_winner_backtest():
     st.caption('TOP Oracle → filtre options si activé → risque → Winner. Même calcul et '
                'mêmes seuils que le pipeline, avec les données connues au cutoff historique. Aucun appel GPT.')
     with st.expander('Réglages Winner et limites du replay', expanded=True):
-        st.table([{'Paramètre':name,'Valeur':value} for name,value in [
-            ('SL initial',f'{100*policy.stop_loss_pct:g} %'),
-            ('TP',f'{100*policy.take_profit_pct:g} %' if policy.take_profit_pct else 'Désactivé'),
-            ('Trailing',f'{100*policy.trailing_stop_pct:g} %' if policy.trailing_stop_pct else 'Désactivé'),
-            ('Détention maximale',f'{policy.horizon_sessions} séances' if policy.horizon_sessions else 'Sans échéance'),
-            ('Position initiale','Complète' if policy.initial_position_fraction==1 else 'Demi-position'),
-            ('Renforcement','Activé' if policy.reinforcement_enabled else 'Désactivé'),
-            ('Confirmation',f'{policy.confirmation_bars} clôtures de cinq minutes'),
-            ('Attente maximale',f'{policy.entry_valid_sessions} séances')]])
+        try:
+            policy,policy_changes=render_policy_settings(policy)
+        except ValueError as exc:
+            st.error(f'Réglages Winner invalides : {exc}')
+            st.stop()
         st.caption(f'Délai SIP : {policy.market_data_delay_seconds//60} min '
                    f'{policy.market_data_delay_seconds%60:02d} s ; marge limite retardée : '
                    f'{100*policy.delayed_entry_limit_buffer_pct:g} %. Un cours retardé ne devient pas une quote actuelle.')
@@ -99,11 +92,12 @@ def render_winner_backtest():
         value='universe-file:config/univers_batch/univers_filtred_tradable.txt', key='bt_winner_universe')
     ignore_missing=st.checkbox('Ignorer automatiquement les titres aux données intraday manquantes',
         value=True,key='bt_winner_ignore_missing_intraday',
-        help='Contrôle les fenêtres potentielles d’entrée et de détention avant la simulation. Un titre incomplet est exclu sur toute la période, sans remplacement dans le TOP Oracle.')
+        help='Tente Alpaca SIP, puis Yahoo, puis EODHD. Si les bougies restent manquantes, bloque uniquement les dates d’entrée dont la détention pourrait traverser ces lacunes ; aucun remplacement Oracle.')
     if ignore_missing:
-        st.warning('Mode diagnostic : exclusion préalable des titres incomplets sur toute la période. '
+        st.warning('Rattrapage des bougies manquantes : Alpaca SIP → Yahoo → EODHD. '
+                   'Les entrées incompatibles avec les lacunes restantes sont écartées par date, sans exclure le titre sur toute la période. '
                    'Ce contrôle utilise la disponibilité future des données et peut biaiser le résultat. '
-                   'Les titres et dates exclus seront consignés dans le rapport et le log final.')
+                   'Les appels utilisent tes comptes et quotas existants. Les titres et dates exclus seront consignés dans le rapport et le log final.')
     top = st.number_input('Nombre de premiers titres Oracle', min_value=1, max_value=1000,
                           value=options_config.oracle_top_n, key='bt_winner_top')
     equity = st.number_input('Capital initial ($)', min_value=1., value=4000., key='bt_winner_equity')

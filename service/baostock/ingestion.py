@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import date, timedelta
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from typing import Any
 
 from sqlalchemy.engine import Engine
@@ -35,15 +35,22 @@ def historical_windows(start: date, end: date, *, years: int = 3) -> list[tuple[
 
 class BaoStockResumeState:
     def __init__(self, path: Path) -> None:
-        self.path = path
+        self.path = Path(path)
         self.payload: dict[str, Any] = {}
-        if path.exists():
-            self.payload = json.loads(path.read_text(encoding="utf-8"))
+        self.loaded = False
+
+    def _load(self) -> None:
+        if not self.loaded:
+            if self.path.exists():
+                self.payload = json.loads(self.path.read_text(encoding="utf-8"))
+            self.loaded = True
 
     def completed(self, key: str) -> bool:
+        self._load()
         return self.payload.get(key, {}).get("status") == "COMPLETED"
 
     def mark_completed(self, key: str) -> None:
+        self._load()
         self.payload[key] = {"status": "COMPLETED"}
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix(".tmp")

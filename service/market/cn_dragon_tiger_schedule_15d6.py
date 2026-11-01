@@ -7,7 +7,7 @@ import json
 import os
 import uuid
 from datetime import UTC, date, datetime, time, timedelta
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from zoneinfo import ZoneInfo
 
 import yaml
@@ -112,7 +112,7 @@ def execute(batch_name: str, batch_config: Path, calendar_path: Path,
         return {"status": decision["status"], "batch": batch_name}
     root = Path(cfg["output_root"])
     if not root.is_absolute():
-        root = batch_config.resolve().parent / root
+        root = Path(batch_config.resolve().parent) / root
     target = date.fromisoformat(decision["target_session"])
     previous = prior_observations(root / target.isoformat())
     same_phase = [

@@ -10,7 +10,7 @@ from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from typing import Any
 from zoneinfo import ZoneInfo
 

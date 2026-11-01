@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from datetime import date
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 
 from modelFactory.cn_feature_panel import build_panel
 

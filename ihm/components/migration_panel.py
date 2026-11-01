@@ -19,12 +19,19 @@ def _launch(request,parent=None):
         if request['action']=='inventory':
             st.session_state['t56_inventory_job']=path
             st.session_state.pop('t56_inventory_result',None)
-        else:st.session_state['t56_clear_secrets']=True
+        elif request['action'] in ('export','restore','recover'):
+            st.session_state['t56_clear_secrets']=True
+        if request['action']=='plan':
+            st.session_state['t56_plan_job']=path
         st.rerun()
     except (ValueError,OSError) as exc:st.error(str(exc))
 
 
 def render_migration_panel():
+    # Older versions used this widget key for the resulting plan as well.
+    # Discard that stale value before Streamlit creates the button.
+    if isinstance(st.session_state.get('t56_plan'),dict):
+        st.session_state.pop('t56_plan',None)
     if st.session_state.pop('t56_clear_secrets',False):
         for name in ('t56_password','t56_password_confirm','t56_db_password'):st.session_state[name]=''
     root=jobs.PROJECT_ROOT
@@ -32,7 +39,8 @@ def render_migration_panel():
     st.caption('Trois bases US/FR/CN, code actuel, modèles, configuration, archives et variables d’environnement de l’application. Tous les packages sont chiffrés.')
     st.info('La sauvegarde laisse le PC source fonctionner. Seule la restauration impose de fermer les services et de désactiver les tâches planifiées du PC cible. Rien ne redémarre automatiquement.')
     st.caption('Barres de progression et journal en direct dans l’onglet « Suivi et packages ».')
-    password=st.text_input('Mot de passe de sauvegarde (12 caractères minimum)',type='password',key='t56_password')
+    password=st.text_input('Mot de passe des packages — sauvegarde ou restauration (12 caractères minimum)',
+        type='password',key='t56_password',help='Pour restaurer, saisir le mot de passe utilisé lors de la création de cette sauvegarde. Il est différent du mot de passe MySQL cible.')
     export_tab,restore_tab,follow_tab=st.tabs(['Créer une sauvegarde','Vérifier / restaurer','Suivi et packages'])
     with export_tab:
         base=root/'backups'/'migrations'
@@ -61,22 +69,33 @@ def render_migration_panel():
         render_restore_command(folder)
         target=st.text_input('Projet sur le PC cible',r'C:\AlphaTrade',key='t56_target')
         st.caption('Sur un PC vierge, copier le répertoire complet puis lancer restaurer.ps1. Python et MySQL doivent être installés. Les versions requises sont inscrites dans le manifeste.')
-        if st.button('Vérifier les packages sans restaurer',key='t56_verify',disabled=not folder or len(password)<12):
-            _launch(dict(action='verify',folder=folder,password=password))
         user=st.text_input('Utilisateur MySQL local cible (pour les trois bases)',value='root',key='t56_db_user')
         db_password=st.text_input('Mot de passe MySQL cible',type='password',key='t56_db_password')
         connections={n:asdict(Connection(user=user,password=db_password)) for n in DATABASES}
+        # All input widgets must render before an action can rerun the page;
+        # otherwise Streamlit cleans up a later widget's entered password.
+        if st.button('Vérifier les packages sans restaurer',key='t56_verify',disabled=not folder or len(password)<12):
+            _launch(dict(action='verify',folder=folder,password=password))
         context=dict(folder=folder,target=target,user=user,mysqldump=dump,mysql=mysql)
-        if st.button('Prévisualiser la restauration',key='t56_plan',disabled=not folder or len(password)<12 or not db_password):
-            st.session_state.pop('t56_plan',None)
-            st.session_state['t56_plan_context']=context
-            _launch(dict(action='plan',folder=folder,target=target,password=password,connections=connections,mysqldump=dump,mysql=mysql))
-        job=st.session_state.get('t56_job')
+        missing=restore_preview_requirements(folder,target,password,user,db_password)
+        if missing:
+            st.info('Pour prévisualiser, renseigner : '+ ' ; '.join(missing)+'.')
+        st.caption('La prévisualisation vérifie les packages et le PC cible sans restaurer ni remplacer de données.')
+        if st.button('Prévisualiser la restauration',key='t56_plan'):
+            if missing:
+                st.error('Prévisualisation non lancée : '+ ' ; '.join(missing)+'.')
+            else:
+                st.session_state.pop('t56_plan_result',None)
+                st.session_state.pop('t56_plan_job',None)
+                st.session_state['t56_replace']=False
+                st.session_state['t56_plan_context']=context
+                _launch(dict(action='plan',folder=folder,target=target,password=password,connections=connections,mysqldump=dump,mysql=mysql))
+        job=st.session_state.get('t56_plan_job')
         state=jobs.job_state(job) if job else {}
         plan=state.get('result')
-        if plan and 'fingerprint' in plan:
-            st.session_state['t56_plan']=plan
-        plan=st.session_state.get('t56_plan')
+        if isinstance(plan,dict) and 'fingerprint' in plan:
+            st.session_state['t56_plan_result']=plan
+        plan=st.session_state.get('t56_plan_result')
         if plan and context==st.session_state.get('t56_plan_context'):
             st.json(plan)
             st.warning('La restauration remplace les trois bases et les fichiers gérés, après sauvegarde chiffrée de l’existant. Aucun mélange avec les anciens modèles. Un .venv existant doit être renommé manuellement ; il est préservé.')
@@ -102,3 +121,14 @@ def render_migration_panel():
         render_migration_cleanup(root)
     if (root/'.alpha_trade_restore_pending.json').exists():
         st.warning('Ce projet a été restauré : vérifier les comptes, chemins, données et ordres avant une reprise manuelle. Ce message est informatif et ne bloque pas le moteur opérationnel.')
+
+
+def restore_preview_requirements(folder,target,password,user,db_password):
+    """Explain unmet prerequisites without exposing or persisting credentials."""
+    missing=[]
+    if not folder.strip():missing.append('le répertoire contenant manifest.json')
+    if len(password)<12:missing.append('le mot de passe des packages en haut de la page (12 caractères minimum)')
+    if not target.strip():missing.append('le projet sur le PC cible')
+    if not user.strip():missing.append('l’utilisateur MySQL cible')
+    if not db_password:missing.append('le mot de passe MySQL cible')
+    return missing

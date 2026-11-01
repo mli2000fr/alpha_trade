@@ -1,16 +1,18 @@
-"""Sprint S2 / A-014 — verrou cross-process pipeline ↔ backtesting.
+"""Locks for pipeline/writing backtests; guarded read-only replays coexist.
 
-Empêche qu'un workflow pipeline (``start_pipeline_workflow``) et un run
-backtesting (``start_backtesting_run``) tournent simultanément, ce qui
-provoquait des conflits sur ``stock_scores``, ``stock_bars_daily`` et les
+Empêche qu'un workflow pipeline et un backtest susceptible d'écrire tournent
+simultanément. Les simulations via ``backtesting.isolated_run`` utilisent
+``backtesting_readonly`` et peuvent coexister avec le pipeline. L'ancien verrou
+reste conservateur pour les processus déjà démarrés. Les écritures partagées
+non isolées provoquaient des conflits sur ``stock_scores``, ``stock_bars_daily`` et les
 artefacts ML. Implémentation fichier-lock JSON dans
 ``artifacts/ihm_pipeline_runs/.locks/<scope>.lock``.
 
 Stratégie :
 - Le lock contient ``{scope, owner, run_id, pid, acquired_at}``.
 - Si un lock existant pointe vers un PID mort, il est récupéré (stale).
-- ``acquire_lock`` lève :class:`PipelineLockBusy` si un autre scope est
-  actif (ou le même scope avec PID vivant).
+- ``acquire_lock`` lève :class:`PipelineLockBusy` si un scope incompatible
+  est actif (ou le même scope avec PID vivant).
 - ``release_lock`` est idempotent.
 """
 from __future__ import annotations
@@ -19,6 +21,7 @@ import json
 import logging
 import os
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -26,8 +29,8 @@ from typing import Literal
 
 LOGGER = logging.getLogger(__name__)
 
-LockScope = Literal["pipeline", "backtesting"]
-_VALID_SCOPES: tuple[str, ...] = ("pipeline", "backtesting")
+LockScope = Literal["pipeline", "backtesting", "backtesting_readonly"]
+_VALID_SCOPES: tuple[str, ...] = ("pipeline", "backtesting", "backtesting_readonly")
 
 
 def _default_locks_dir() -> Path:
@@ -47,6 +50,32 @@ _LOCAL_MUTEX = threading.Lock()
 # Streamlit reste up, bloquant tout nouveau workflow/backtesting jusqu'au
 # redémarrage manuel de l'IHM.
 _HELD_LOCKS: dict[str, "LockHandle"] = {}
+
+
+@contextmanager
+def _file_mutex():
+    """Serialize check/create across IHM processes, not only local threads."""
+    root=_locks_dir();root.mkdir(parents=True,exist_ok=True)
+    with (root/'.registry.guard').open('a+b') as stream:
+        stream.seek(0)
+        if not stream.read(1):stream.write(b'0');stream.flush()
+        stream.seek(0)
+        if os.name=='nt':
+            import msvcrt
+            msvcrt.locking(stream.fileno(),msvcrt.LK_LOCK,1)
+        else:
+            import fcntl
+            fcntl.flock(stream.fileno(),fcntl.LOCK_EX)
+        try:yield
+        finally:
+            stream.seek(0)
+            if os.name=='nt':msvcrt.locking(stream.fileno(),msvcrt.LK_UNLCK,1)
+            else:fcntl.flock(stream.fileno(),fcntl.LOCK_UN)
+
+
+def _conflicts(requested,existing):
+    if requested==existing:return True
+    return 'backtesting_readonly' not in (requested,existing)
 
 
 def set_locks_dir_for_tests(path: Path | None) -> None:
@@ -230,16 +259,17 @@ def list_active_locks() -> list[dict[str, object]]:
     locks_dir = _locks_dir()
     if not locks_dir.exists():
         return out
-    for entry in locks_dir.glob("*.lock"):
-        payload = _read_lock(entry)
-        if _is_lock_active(payload) and payload is not None:
-            out.append(dict(payload))
-        elif payload is not None:
-            try:
-                entry.unlink(missing_ok=True)
-                LOGGER.info("Lock obsolete supprime lors du listing | path=%s pid=%s", entry, payload.get("pid"))
-            except Exception:
-                LOGGER.warning("Echec suppression lock obsolete %s", entry, exc_info=True)
+    with _LOCAL_MUTEX,_file_mutex():
+        for entry in locks_dir.glob("*.lock"):
+            payload = _read_lock(entry)
+            if _is_lock_active(payload) and payload is not None:
+                out.append(dict(payload))
+            elif payload is not None:
+                try:
+                    entry.unlink(missing_ok=True)
+                    LOGGER.info("Lock obsolete supprime lors du listing | path=%s pid=%s", entry, payload.get("pid"))
+                except Exception:
+                    LOGGER.warning("Echec suppression lock obsolete %s", entry, exc_info=True)
     return out
 
 
@@ -254,8 +284,8 @@ def acquire_lock(
 
     Conflits :
     - même scope déjà tenu (PID vivant).
-    - autre scope déjà tenu (PID vivant) -> exclusion mutuelle pipeline ↔
-      backtesting.
+    - pipeline et backtesting susceptible d'écrire s'excluent.
+    - backtesting_readonly n'exclut que son propre scope.
     """
     if scope not in _VALID_SCOPES:
         raise ValueError(f"scope invalide : {scope!r}")
@@ -264,7 +294,7 @@ def acquire_lock(
     locks_dir = _locks_dir()
     locks_dir.mkdir(parents=True, exist_ok=True)
 
-    with _LOCAL_MUTEX:
+    with _LOCAL_MUTEX,_file_mutex():
         for other in _VALID_SCOPES:
             payload = _read_lock(_lock_path(other))
             if _is_lock_active(payload) and payload is not None:
@@ -276,7 +306,7 @@ def acquire_lock(
                     and int(payload.get("pid") or 0) == pid_int
                 ):
                     continue
-                raise PipelineLockBusy(other, payload)
+                if _conflicts(scope,other):raise PipelineLockBusy(other, payload)
             if payload and not _is_lock_active(payload):
                 # Stale : nettoyage opportuniste.
                 try:
@@ -309,7 +339,7 @@ def release_lock(handle: LockHandle | None) -> None:
     """Libère le verrou (idempotent). N'agit que si le run_id correspond."""
     if handle is None:
         return
-    with _LOCAL_MUTEX:
+    with _LOCAL_MUTEX,_file_mutex():
         # Toujours retirer la table en mémoire d'abord : même si la
         # suppression du fichier échoue (AV Windows, droits…), le prochain
         # ``acquire_lock`` détectera l'orphelin via ``_is_lock_active``.
@@ -341,7 +371,7 @@ def rebind_lock_pid(handle: LockHandle | None, *, pid: int) -> LockHandle | None
         raise ValueError(f"pid invalide : {pid!r}")
 
     process_started_at = _get_process_started_at(pid_int)
-    with _LOCAL_MUTEX:
+    with _LOCAL_MUTEX,_file_mutex():
         payload = _read_lock(handle.path)
         if not payload or str(payload.get("run_id")) != handle.run_id:
             raise FileNotFoundError(f"Lock introuvable ou run_id mismatch pour {handle.path}")

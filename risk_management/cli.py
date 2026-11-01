@@ -2411,8 +2411,20 @@ def main(args: list[str] | None = None) -> None:
             if operational_snapshot is not None:
                 factor_symbols.update(p.symbol for p in operational_snapshot.positions)
                 factor_symbols.update(o.symbol for o in operational_snapshot.open_orders)
-            factor_context = load_live_factor_context(repo.engine, sorted(factor_symbols),
-                trade_date, datetime.now(timezone.utc), config)
+            try:
+                factor_context = load_live_factor_context(repo.engine, sorted(factor_symbols),
+                    trade_date, datetime.now(timezone.utc), config)
+            except Exception as exc:
+                # No risk run/decision/target has been created at this checkpoint.
+                attempt_id=getattr(args,'options_risk_attempt_id',None)
+                if options_filter_report is not None and attempt_id and args.summary_path:
+                    from service.options_directional.risk_attempts import record_factor_lookup_failure
+                    try:
+                        record_factor_lookup_failure(Path(args.summary_path).parent,attempt_id,
+                            options_filter_report,exc,account_id=effective_account_id or resolved_account_scope or 'default')
+                    except Exception:
+                        LOGGER.exception('Impossible de sceller la preuve de reprise factorielle ; verrou conservé')
+                raise
             factor_cov_live = factor_context['covariance']
             builder = PortfolioBuilder(config, pnl=pnl_snapshot, circuit_breaker=circuit_breaker,
                 regime_snapshot=regime_snapshot, regime_transition=regime_transition,

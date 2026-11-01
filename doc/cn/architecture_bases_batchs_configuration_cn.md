@@ -1,5 +1,11 @@
 # Architecture Chine — Bases, batchs et configurations `_cn`
 
+> Mise à jour stockage du 1er novembre 2026 : voir le
+> [contrat SQL des collectes CN](stockage_sql_collectes.md). Les données et
+> états de collecte sont dans `alpha_trade_cn` ; les anciens chemins
+> d'artefacts métier sont des clés SQL. Les modèles et sauvegardes MySQL
+> conservent leur stockage d'infrastructure.
+
 <!-- doc-status:start -->
 > Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
 <!-- doc-status:end -->

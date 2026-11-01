@@ -116,6 +116,11 @@ def screen_missing_intraday(conn,selected,end,policy,*,progress=None,batch_size=
 
 
 def log_missing_summary(report):
+    if report.get('exclusion_policy')=='PER_ENTRY_DAY_HOLDING_WINDOW_NO_ORACLE_REFILL':
+        LOG.warning('Bilan intraday : %d séances réparées ; %d séances encore incomplètes sur %d titres ; '
+            'voir entry-exclusions.csv pour le tableau des entrées exclues par date',
+            report['repaired_sessions'],report['missing_sessions'],report['symbols_checked'])
+        return
     LOG.warning('Bilan titres ignorés pour données intraday absentes : %d/%d titres ; %d séances incomplètes',
         len(report['excluded_symbols']),report['symbols_checked'],report['missing_sessions'])
     for symbol in report['excluded_symbols']:

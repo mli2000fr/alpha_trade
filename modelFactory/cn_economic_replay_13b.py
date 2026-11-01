@@ -6,6 +6,7 @@ ce rapport n'est ni un holdout indépendant, ni une autorisation de live.
 
 from __future__ import annotations
 
+from service.market import cn_collection_storage as cn_storage
 import argparse
 import gzip
 import hashlib
@@ -14,7 +15,7 @@ import math
 from collections import Counter
 from datetime import date
 from decimal import Decimal
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from typing import Any
 
 import numpy as np
@@ -255,7 +256,7 @@ def run(*, output_root: Path = DEFAULT_OUTPUT, evidence_path: Path = DEFAULT_EVI
                 raise RuntimeError("Sprint 13-B interdit hors alpha_trade_cn")
             for semester in selected_semesters:
                 path, source = _source(semester)
-                frame = pd.read_parquet(path, columns=SAFE_COLUMNS)
+                frame = cn_storage.read_parquet(path, columns=SAFE_COLUMNS)
                 year, half = int(semester[:4]), int(semester[-1])
                 start = date(year, 1 if half == 1 else 7, 1)
                 end = date(year, 6, 30) if half == 1 else date(year, 12, 31)
@@ -312,10 +313,10 @@ def run(*, output_root: Path = DEFAULT_OUTPUT, evidence_path: Path = DEFAULT_EVI
                                                "evidence_sha256": a2_report["evidence_sha256"],
                                                "csi300_contextual": overview["csi300"][semester]})
                                 target.mkdir(parents=True, exist_ok=True)
-                                with gzip.open(target / "journal.jsonl.gz", "wt", encoding="utf-8") as stream:
+                                with cn_storage.gzip_open(target / "journal.jsonl.gz", "wt", encoding="utf-8") as stream:
                                     for entry in result.journal:
                                         stream.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
-                                pd.DataFrame(result.daily).to_parquet(target / "daily.parquet", index=False)
+                                cn_storage.write_parquet(pd.DataFrame(result.daily),target / "daily.parquet", index=False)
                                 report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
                                 overview["runs"][key] = report
                                 print(f"Sprint 13-B {key}: {report['status']} return={report['marked_return_proxy']:+.3%}", flush=True)

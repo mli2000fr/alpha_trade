@@ -41,6 +41,19 @@ def test_qualification_requires_actual_inputs_and_residuals():
     assert context['value_factor'].startswith('NOT_MODELED')
 
 
+def test_missing_candidate_message_does_not_claim_cross_section_is_too_small():
+    import json
+    frame,prices,returns=evidence()
+    frame['details_json']='{}'
+    frame.loc[0,'quality']='INCOMPLETE'
+    frame.loc[0,'details_json']=json.dumps(dict(reasons=['INVALID_DAILY_BAR']))
+    with pytest.raises(ValueError) as exc:
+        qualify_factor_context(frame,prices,returns,['S0'],DAY,NOW,RiskConfig())
+    message=str(exc.value)
+    assert 'qualified_cross_section=24, minimum=20' in message
+    assert 'INVALID_DAILY_BAR' in message and '24<20' not in message
+
+
 def test_sql_date_return_index_joins_same_observed_sessions_as_timestamp_index():
     frame,prices,returns=evidence()
     original=qualify_factor_context(frame,prices,returns,['S0'],DAY,NOW,RiskConfig())

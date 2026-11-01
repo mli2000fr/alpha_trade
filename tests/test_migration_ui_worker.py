@@ -75,6 +75,68 @@ def test_restore_command_quotes_paths_without_expanding_powershell(tmp_path):
     assert 'password' not in command.lower()
 
 
+def test_preview_button_explains_missing_fields_without_launch(tmp_path,monkeypatch):
+    monkeypatch.setattr(migration_runner,'PROJECT_ROOT',tmp_path)
+    calls=[]
+    monkeypatch.setattr(migration_runner,'start_job',lambda *a,**k:calls.append(a))
+    app=AppTest.from_string('from ihm.components.migration_panel import render_migration_panel\nrender_migration_panel()').run()
+    assert not app.button(key='t56_plan').disabled
+    app.button(key='t56_plan').click().run()
+    assert not app.exception and calls==[]
+    message=' '.join(str(x.value) for x in app.error)
+    assert 'manifest.json' in message and 'mot de passe des packages' in message and 'MySQL cible' in message
+
+
+def test_verify_then_preview_keeps_credentials_and_plan_is_not_widget_state(tmp_path,monkeypatch):
+    monkeypatch.setattr(migration_runner,'PROJECT_ROOT',tmp_path)
+    calls=[]
+    def launch(request,**kw):
+        calls.append(request)
+        return str(tmp_path/request['action'])
+    plan=dict(fingerprint='synthetic-plan',target=str(tmp_path/'target'),databases=['alpha_trade','alpha_trade_fr','alpha_trade_cn'])
+    def state(path):return dict(result=plan if str(path).endswith('plan') else dict(status='VERIFIED'))
+    monkeypatch.setattr(migration_runner,'start_job',launch)
+    monkeypatch.setattr(migration_runner,'job_state',state)
+    app=AppTest.from_string('from ihm.components.migration_panel import render_migration_panel\nrender_migration_panel()').run()
+    package_password='fixture-package-password-123'
+    mysql_password='fixture-mysql-password-456'
+    app.text_input(key='t56_password').set_value(package_password)
+    app.text_input(key='t56_folder').set_value(str(tmp_path/'backup'))
+    app.text_input(key='t56_target').set_value(str(tmp_path/'target'))
+    app.text_input(key='t56_db_password').set_value(mysql_password)
+    app.run()
+    app.button(key='t56_verify').click().run()
+    assert not app.exception and calls[-1]['action']=='verify'
+    assert app.text_input(key='t56_password').value==package_password
+    assert app.text_input(key='t56_db_password').value==mysql_password
+    app.button(key='t56_plan').click().run()
+    assert not app.exception
+    assert calls[-1]['action']=='plan' and calls[-1]['password']==package_password
+    assert all(c['password']==mysql_password for c in calls[-1]['connections'].values())
+    assert app.text_input(key='t56_password').value==package_password
+    assert app.text_input(key='t56_db_password').value==mysql_password
+    assert app.session_state['t56_plan_result']==plan
+    assert isinstance(app.session_state['t56_plan'],bool)
+    assert app.button(key='t56_restore').disabled
+    app.checkbox(key='t56_replace').check().run()
+    assert not app.exception and not app.button(key='t56_restore').disabled
+    # Another preview always requires a fresh approval, without changing data.
+    app.button(key='t56_plan').click().run()
+    assert not app.exception and not app.checkbox(key='t56_replace').value
+    assert all(r['action'] in ('verify','plan') for r in calls)
+    assert package_password not in ' '.join(str(x.value) for x in app.json)
+
+
+def test_legacy_plan_widget_collision_is_discarded(tmp_path,monkeypatch):
+    monkeypatch.setattr(migration_runner,'PROJECT_ROOT',tmp_path)
+    app=AppTest.from_string('from ihm.components.migration_panel import render_migration_panel\nrender_migration_panel()')
+    app.session_state['t56_plan']={'fingerprint':'old-plan'}
+    app.run()
+    assert not app.exception and not app.button(key='t56_plan').disabled
+    assert isinstance(app.session_state['t56_plan'],bool)
+    assert all(b.key!='t56_restore' for b in app.button)
+
+
 def test_restore_command_rejects_multiline_path():
     import pytest
     with pytest.raises(ValueError):migration_runner.build_restore_command("F:/backup\nWrite-Host bad")

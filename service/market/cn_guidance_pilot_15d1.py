@@ -7,6 +7,7 @@ Neither current archive is claimed to be a certified historical PIT vintage.
 
 from __future__ import annotations
 
+from service.market import cn_collection_storage as cn_storage
 import argparse
 import hashlib
 import json
@@ -19,7 +20,7 @@ import time
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from typing import Any
 
 import pandas as pd
@@ -142,7 +143,7 @@ def load_oracle_top20(oracle_root: Path) -> tuple[pd.DataFrame, list[dict[str, s
         if len(matches) != 1:
             raise RuntimeError(f"Expected exactly one H20 LightGBM OOF file for {semester}, found {len(matches)}")
         path = matches[0]
-        part = pd.read_parquet(path, columns=columns)
+        part = cn_storage.read_parquet(path, columns=columns)
         part["session_date"] = pd.to_datetime(part["session_date"]).dt.normalize()
         top = select_top20(part)
         top["semester"] = semester
@@ -261,10 +262,12 @@ def cninfo_sample(out: Path, *, max_pdfs: int = 8) -> list[dict[str, Any]]:
         row["pdf_bytes"] = len(data)
         if text_bin:
             extracted = target.with_suffix(".txt")
-            process = subprocess.run([text_bin, "-layout", str(target), str(extracted)],
-                                     capture_output=True, text=True, timeout=30)
+            # pdftotext reads stdin and writes stdout: no second local copy.
+            process = subprocess.run([text_bin, "-layout", "-", "-"],input=data,
+                                     capture_output=True, timeout=30)
             if process.returncode != 0:
                 raise RuntimeError(f"pdftotext failed for {target}: {process.stderr[:250]}")
+            extracted.write_bytes(process.stdout)
             row["text_path"] = str(extracted)
             row["text_sha256"] = _sha256(extracted)
             row.update(classify_document(row["title"], extracted.read_text(encoding="utf-8", errors="replace")))
@@ -279,10 +282,10 @@ def run(*, output: Path, max_pages_per_period: int = 40, max_pdfs: int = 8,
         raise FileExistsError(f"Refusing to overwrite nonempty output: {output}")
     output.mkdir(parents=True, exist_ok=True)
     discovery, provider_pages = discover_eastmoney(max_pages_per_period=max_pages_per_period)
-    discovery.to_parquet(output / "eastmoney_discovery_metadata.parquet", index=False)
+    cn_storage.write_parquet(discovery,output / "eastmoney_discovery_metadata.parquet", index=False)
     top, oracle_sources = load_oracle_top20(oracle_root)
     joined = join_prior_announcements(top, discovery)
-    joined.to_parquet(output / "oracle_top20_guidance_coverage.parquet", index=False)
+    cn_storage.write_parquet(joined,output / "oracle_top20_guidance_coverage.parquet", index=False)
     samples = cninfo_sample(output, max_pdfs=max_pdfs)
     report = {"status": "RESEARCH_PROXY_ONLY", "generated_at_utc": datetime.now(timezone.utc).isoformat(),
               "market_code": "CN_A", "oracle_horizon": 20, "oracle_model": "lightgbm",

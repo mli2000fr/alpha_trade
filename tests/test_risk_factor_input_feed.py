@@ -75,3 +75,46 @@ def test_bad_duplicate_bars_cannot_be_published_as_qualified():
     bars=pd.concat([bars,bars.iloc[[0]]],ignore_index=True)
     with pytest.raises(ValueError,match='duplicate'):
         calculate_inputs(bars,caps,['TEST'],DAY,CUTOFF,sessions,config={})
+
+
+def test_bad_preferred_volume_uses_whole_qualified_sip_row_without_changing_sources():
+    from risk_management.factor_inputs import select_factor_bars
+    bars,caps,sessions=data()
+    bars['data_adjustment']='split'
+    match=bars.symbol.eq('TEST') & bars.date.eq(sessions[30])
+    original=bars.loc[match].copy()
+    preferred=original.assign(data_source='eodhd_eod',volume=0)
+    # Distinct prices make a provider mixture observable.
+    preferred.loc[:,['open','high','low','close']]*=1.1
+    inputs=pd.concat([bars,preferred],ignore_index=True)
+    before=inputs.copy(deep=True)
+    selected,receipts=select_factor_bars(inputs,config={})
+    row=selected.loc[selected.symbol.eq('TEST') & selected.date.eq(sessions[30])].iloc[0]
+    assert row.close==original.close.iloc[0] and row.volume==original.volume.iloc[0]
+    assert row.data_source=='alpaca_sip'
+    assert receipts['TEST'][0]['selected_source']=='alpaca_sip'
+    result=calculate_inputs(inputs,caps,['TEST'],DAY,CUTOFF,sessions,config={})[0]
+    assert result['quality']=='QUALIFIED'
+    assert json.loads(result['details_json'])['daily_bar_fallbacks'][0]['date']==str(sessions[30])
+    pd.testing.assert_frame_equal(inputs,before)
+
+
+@pytest.mark.parametrize('kind',['valid_preferred','both_bad','different_adjustment','duplicate_alternative'])
+def test_factor_provider_priority_and_qualification_are_not_bypassed(kind):
+    from risk_management.factor_inputs import select_factor_bars
+    bars,_,sessions=data();bars['data_adjustment']='split'
+    match=bars.symbol.eq('TEST') & bars.date.eq(sessions[30])
+    preferred=bars.loc[match].assign(data_source='eodhd_eod',volume=0)
+    if kind=='valid_preferred':preferred['volume']=12345
+    elif kind=='both_bad':bars.loc[match,'is_filled']=True
+    elif kind=='different_adjustment':bars.loc[match,'data_adjustment']='raw'
+    else:bars=pd.concat([bars,bars.loc[match]],ignore_index=True)
+    inputs=pd.concat([bars,preferred],ignore_index=True)
+    if kind=='duplicate_alternative':
+        with pytest.raises(ValueError,match='duplicate'):
+            select_factor_bars(inputs,config={})
+        return
+    selected,receipts=select_factor_bars(inputs,config={})
+    chosen=selected.loc[selected.symbol.eq('TEST') & selected.date.eq(sessions[30])].iloc[0]
+    assert chosen.data_source=='eodhd_eod' and receipts=={}
+    assert chosen.volume==(12345 if kind=='valid_preferred' else 0)

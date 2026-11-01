@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from service.market import cn_collection_storage as cn_storage
 import argparse
 import hashlib
 import json
 from collections import defaultdict
 from datetime import date
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from typing import Any
 
 import numpy as np
@@ -222,7 +223,7 @@ def run(*, config_path: Path = DEFAULT_CONFIG, output_root: Path = DEFAULT_OUTPU
     }
     pooled: dict[str, list[dict[str, Any]]] = {name: [] for name in POLICIES}
     for semester, path, source_report in sources:
-        frame = pd.read_parquet(path, columns=SAFE_COLUMNS)
+        frame = cn_storage.read_parquet(path, columns=SAFE_COLUMNS)
         year, half = int(semester[:4]), int(semester[-1])
         begin = date(year, 1 if half == 1 else 7, 1)
         end = date(year, 6 if half == 1 else 12, 30 if half == 1 else 31)

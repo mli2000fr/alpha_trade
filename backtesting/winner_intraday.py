@@ -430,6 +430,11 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
                 raise ValueError('Signal daily price / current sector missing: '+symbol)
             if not full_session(raw.get(symbol), signal_day):
                 coverage.add((str(signal_day), symbol, 'SIGNAL_RAW_5M_INCOMPLETE'))
+                gate=getattr(intraday_source,'entry_allowed',None)
+                if gate is not None:
+                    following=calendar.session_dates(signal_day+timedelta(days=1),signal_day+timedelta(days=14))[0]
+                    if following<=cfg.end_date:
+                        gate(symbol,following)
                 continue
             # Sizing and breakout levels share raw prices with actual fills;
             # never compare a split-adjusted daily level with raw five-minute bars.
@@ -470,6 +475,14 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
         daily_days = [pd.Timestamp(s.session_date) for s in calendar.sessions(
             prior_day-timedelta(days=150), prior_day) if s.is_open][-61:]
         groups, priors = raw_groups(day, symbols), raw_groups(prior_day, symbols)
+        # Research-only per-entry gate: never delete held lots or skip their
+        # protection processing. Pending plans can try again on another date.
+        allowed_entry=getattr(intraday_source,'entry_allowed',None)
+        blocked_today={r['state']['symbol'] for r in records
+            if not r['state']['lots'] and allowed_entry is not None
+            and not allowed_entry(r['state']['symbol'],day)}
+        for symbol in blocked_today:
+            coverage.add((str(day),symbol,'UNRESOLVED_INTRADAY_ENTRY_GATE'))
         held_symbols = {p['symbol'] for p in book.positions()}
         for symbol in symbols:
             if not full_session(groups.get(symbol), day):
@@ -528,6 +541,8 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
             records = store.rows()
             def source(state, now):
                 symbol = state['symbol']
+                if symbol in blocked_today and not state['lots']:
+                    raise ValueError('UNRESOLVED_INTRADAY_ENTRY_GATE')
                 if symbol in action_symbols:
                     raise ValueError('EX_DATE_ENTRY_BLOCKED_RAW_REFERENCE')
                 if symbol not in bars:

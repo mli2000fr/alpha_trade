@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 
 
 def summarize_deciles(source: dict, window: int) -> dict:

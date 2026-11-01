@@ -11,7 +11,7 @@ import json
 import sys
 import uuid
 from datetime import UTC, datetime, time
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from zoneinfo import ZoneInfo
 
 import yaml
@@ -28,7 +28,7 @@ BATCH_NAME = "cn_dragon_tiger_daily_match"
 
 def _path(value: str | Path, base: Path) -> Path:
     path = Path(value)
-    return path if path.is_absolute() else base / path
+    return path if path.is_absolute() else Path(base) / path
 
 
 def plan(now: datetime, calendar: dict) -> dict:

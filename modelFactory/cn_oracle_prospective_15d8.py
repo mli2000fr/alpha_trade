@@ -1,10 +1,11 @@
 """Research-only, genuinely prospective CN Oracle H20 TOP20 candidate export.
 
-No training, database writes, serving registration, or historical score backfill.
+No training, canonical market writes, serving registration, or historical score backfill.
 """
 
 from __future__ import annotations
 
+from service.market import cn_collection_storage as cn_storage
 import argparse
 import hashlib
 import json
@@ -12,7 +13,7 @@ import math
 import uuid
 from dataclasses import asdict
 from datetime import UTC, date, datetime, time
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -313,7 +314,7 @@ def run(*, decision_day: date, contract_path: Path = DEFAULT_CONFIG,
                              calendar=load_calendar(_path(raw["calendar"])))
     if contract["trained_through"] >= decision_day:
         raise RuntimeError("Oracle model is not out-of-time for this decision")
-    root = output_root or _path(raw["output_root"])
+    root = Path(output_root) if output_root is not None else _path(raw["output_root"])
     folder = root / decision_day.isoformat()
     if folder.exists():
         raise FileExistsError(f"Prospective Oracle output already exists: {folder}")
@@ -374,7 +375,7 @@ def run(*, decision_day: date, contract_path: Path = DEFAULT_CONFIG,
         temporary = root / f".{decision_day.isoformat()}-{uuid.uuid4().hex}.partial"
         temporary.mkdir()
         temporary_export = temporary / "oracle_top20.parquet"
-        result.to_parquet(temporary_export, index=False)
+        cn_storage.write_parquet(result,temporary_export, index=False)
         export = folder / "oracle_top20.parquet"
         report = {
             "status": "PROSPECTIVE_RESEARCH_ONLY", "decision_date": decision_day.isoformat(),

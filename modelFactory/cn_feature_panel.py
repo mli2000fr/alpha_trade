@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from service.market import cn_collection_storage as cn_storage
 import hashlib
 import json
 from dataclasses import dataclass
 from datetime import date
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from typing import Any
 
 import numpy as np
@@ -296,7 +297,7 @@ def build_panel(*, start: date, end: date, profile_path: Path = DEFAULT_PROFILE,
     destination = (output_root or ROOT / "artifacts" / "cn" / "features") / "cn_price_v1" / f"cn-feature-{start:%Y%m%d}-{end:%Y%m%d}-{identity[:12]}"
     destination.mkdir(parents=True, exist_ok=True)
     temp = destination / "panel.tmp.parquet"
-    panel.to_parquet(temp, index=False)
+    cn_storage.write_parquet(panel,temp, index=False)
     def file_sha(path: Path) -> str:
         digest = hashlib.sha256()
         with path.open("rb") as stream:

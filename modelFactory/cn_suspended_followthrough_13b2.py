@@ -6,11 +6,12 @@ semestriel et n'entre pas dans le classement des politiques Sprint 13-B.
 
 from __future__ import annotations
 
+from service.market import cn_collection_storage as cn_storage
 import argparse
 import json
 from datetime import date
 from decimal import Decimal
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 
 import pandas as pd
 from sqlalchemy import text
@@ -37,7 +38,7 @@ def run(*, evidence_path: Path = EVIDENCE, original: Path = ORIGINAL,
     protocol = load_protocol(DEFAULT_CONFIG)
     evidence = load_verified_action_evidence(evidence_path)
     source_path, source = _source("2025H1")
-    frame = pd.read_parquet(source_path, columns=SAFE_COLUMNS)
+    frame = cn_storage.read_parquet(source_path, columns=SAFE_COLUMNS)
     pool, masks = select_policies(frame, minimum=protocol["portfolio"]["min_oracle_pool_per_session"])
     selected = pool.loc[masks["lightgbm_long_top20"]]
     required = sorted({int(value) for value in selected["instrument_id"]})
@@ -73,7 +74,7 @@ def run(*, evidence_path: Path = EVIDENCE, original: Path = ORIGINAL,
             )
     finally:
         engine.dispose()
-    old = pd.read_parquet(original / "daily.parquet")
+    old = cn_storage.read_parquet(original / "daily.parquet")
     original_report = json.loads((original / "report.json").read_text(encoding="utf-8"))
     if original_report.get("open_lots", {}).get(str(HELD_ID)) != 800:
         raise RuntimeError("Position suspendue B2 différente du diagnostic initial")

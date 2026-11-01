@@ -51,6 +51,60 @@ def test_backtesting_blocks_pipeline():
         release_lock(handle)
 
 
+def test_isolated_backtest_and_pipeline_can_coexist_both_orders():
+    for first,second in [('pipeline','backtesting_readonly'),('backtesting_readonly','pipeline')]:
+        a=acquire_lock(first,owner='test',run_id='first')
+        b=acquire_lock(second,owner='test',run_id='second')
+        try:assert {r['scope'] for r in list_active_locks()}=={'pipeline','backtesting_readonly'}
+        finally:release_lock(b);release_lock(a)
+
+
+def test_readonly_does_not_remove_exclusion_between_mutating_jobs():
+    reader=acquire_lock('backtesting_readonly',owner='guarded',run_id='reader')
+    writer=acquire_lock('backtesting',owner='backfill',run_id='writer')
+    try:
+        with pytest.raises(PipelineLockBusy):acquire_lock('pipeline',owner='test',run_id='pipeline')
+    finally:release_lock(writer);release_lock(reader)
+
+
+def test_mutating_lock_check_and_create_is_serialized_between_processes(tmp_path):
+    import subprocess
+    import sys
+    import time
+    script="""
+import sys,time
+from pathlib import Path
+from ihm.services import pipeline_lock as locks
+root=Path(sys.argv[1]);scope=sys.argv[2]
+locks.set_locks_dir_for_tests(root/'locks')
+locks._is_pid_alive=lambda pid:True
+(root/(scope+'.ready')).touch()
+while not (root/'start').exists():time.sleep(.01)
+try:
+    handle=locks.acquire_lock(scope,owner='test',run_id=scope)
+except locks.PipelineLockBusy:
+    print('BUSY',flush=True)
+else:
+    print('ACQUIRED',flush=True)
+    time.sleep(1)
+    locks.release_lock(handle)
+"""
+    children=[subprocess.Popen([sys.executable,'-B','-c',script,str(tmp_path),scope],
+        stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True) for scope in ('pipeline','backtesting')]
+    try:
+        deadline=time.monotonic()+10
+        while not all((tmp_path/(s+'.ready')).exists() for s in ('pipeline','backtesting')):
+            assert time.monotonic()<deadline,'lock test children failed to start'
+            time.sleep(.02)
+        (tmp_path/'start').touch()
+        results=[p.communicate(timeout=10) for p in children]
+        assert all(p.returncode==0 for p in children),results
+        assert sorted(out.strip() for out,err in results)==['ACQUIRED','BUSY']
+    finally:
+        for process in children:
+            if process.poll() is None:process.kill();process.wait()
+
+
 def test_release_allows_reacquisition():
     h1 = acquire_lock("pipeline", owner="t", run_id="r1")
     release_lock(h1)

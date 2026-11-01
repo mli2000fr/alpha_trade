@@ -11,7 +11,7 @@ import argparse
 import hashlib
 import json
 import re
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 
 
 def classify(title: str, content: str) -> dict[str, object]:
@@ -48,7 +48,7 @@ def review(report_path: Path, output_path: Path) -> dict[str, object]:
         digest = hashlib.sha256(pdf_path.read_bytes()).hexdigest()
         if digest != sample["pdf_sha256"]:
             raise ValueError(f"PDF checksum mismatch: {pdf_path}")
-        reader = PdfReader(str(pdf_path))
+        reader = PdfReader(__import__("io").BytesIO(pdf_path.read_bytes()))
         text_by_page = [page.extract_text() or "" for page in reader.pages]
         extracted = "\n\n".join(text_by_page)
         text_path = output_path.parent / f"{sample['code']}-{sample['announcement_id']}.txt"

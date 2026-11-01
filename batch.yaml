@@ -51,6 +51,7 @@ us_pipeline:
 # Le planificateur Windows utilise son identifiant de fuseau China Standard
 # Time ; le calcul et le calendrier métier restent en Asia/Shanghai.
 cn_dragon_tiger_after_close:
+  storage_backend: sql
   priority: P2
   # Suspension de précaution (audit du 06/10/2026), pas constat d'illégalité.
   enabled: false
@@ -63,7 +64,7 @@ cn_dragon_tiger_after_close:
   run_hours: "17"
   run_minutes: "30"
   description: "Observer les listes Dragon/Tiger officielles SSE/SZSE après la clôture CN ; journal de recherche uniquement."
-  tables: "fichiers:artifacts/research/cn_dragon_tiger_15d6"
+  tables: "cn_dragon_tiger_snapshots,cn_dragon_tiger_events,cn_collection_reports,cn_collection_resources"
   provider: sse_szse_official
   universe_scope: cn_a_exchange_disclosures
   output_root: artifacts/research/cn_dragon_tiger_15d6/observations
@@ -73,6 +74,7 @@ cn_dragon_tiger_after_close:
   log_file: log/batch/cn_dragon_tiger_after_close.txt
 
 cn_dragon_tiger_before_open:
+  storage_backend: sql
   priority: P2
   # Même réserve que le passage après clôture ; aucune réactivation implicite.
   enabled: false
@@ -85,7 +87,7 @@ cn_dragon_tiger_before_open:
   run_hours: "8"
   run_minutes: "30"
   description: "Réobserver avant l'ouverture CN la liste Dragon/Tiger de la précédente séance ouverte ; détecter ajouts et corrections."
-  tables: "fichiers:artifacts/research/cn_dragon_tiger_15d6"
+  tables: "cn_dragon_tiger_snapshots,cn_dragon_tiger_events,cn_collection_reports,cn_collection_resources"
   provider: sse_szse_official
   universe_scope: cn_a_exchange_disclosures
   output_root: artifacts/research/cn_dragon_tiger_15d6/observations
@@ -97,6 +99,7 @@ cn_dragon_tiger_before_open:
 # Sprint 15-D9 : journal Oracle CN prospectif après clôture, recherche seulement.
 # Une décision manquée ne doit jamais être reconstruite après son cutoff.
 cn_oracle_prospective_daily:
+  storage_backend: sql
   priority: P1
   # BaoStock documente API/stockage local ; portée ML/live à confirmer par écrit.
   enabled: false
@@ -110,7 +113,7 @@ cn_oracle_prospective_daily:
   run_hours: "18"
   run_minutes: "15"
   description: "Collecter la séance CN close, vérifier les 209 lots environ, puis publier Oracle TOP20 pour la prochaine ouverture avant 09:15 Shanghai."
-  tables: "cn_staging_rows,market_sessions,stock_bars_daily,instrument_adjustment_factors; fichiers:artifacts/research/cn_oracle_prospective_15d8"
+  tables: "cn_raw_payloads,cn_staging_rows,market_sessions,stock_bars_daily,instrument_adjustment_factors,cn_oracle_prospective_candidates,cn_collection_reports,cn_collection_resources"
   provider: baostock,oracle_cn_frozen_lightgbm
   universe_scope: cn_a_all_equities_pit
   calendar: config/research_cn/sprint15d6_cn_calendar_2026.yaml
@@ -128,6 +131,7 @@ cn_oracle_prospective_daily:
 
 # Sprint 15-D10 : appariement D7 prospectif, sans lecture des rendements futurs.
 cn_dragon_tiger_daily_match:
+  storage_backend: sql
   priority: P2
   enabled: true
   status: RESEARCH_ONLY
@@ -135,7 +139,7 @@ cn_dragon_tiger_daily_match:
   run_hours: "9"
   run_minutes: "30"
   description: "Apparier après 09:15 les candidats Oracle de la séance avec le dernier snapshot Dragon/Tiger officiellement observé à temps."
-  tables: "fichiers:artifacts/research/cn_dragon_tiger_15d10; aucune écriture de table métier"
+  tables: "cn_dragon_tiger_matches,cn_collection_reports,cn_collection_resources; aucune écriture canonique de marché"
   provider: oracle_cn_frozen_lightgbm,sse_szse_official
   universe_scope: oracle_cn_prospective_top20
   calendar: config/research_cn/sprint15d6_cn_calendar_2026.yaml

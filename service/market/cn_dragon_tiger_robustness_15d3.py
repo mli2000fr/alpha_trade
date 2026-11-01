@@ -9,7 +9,7 @@ import re
 import urllib.parse
 from collections import defaultdict
 from datetime import date, datetime, timezone
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from typing import Any
 
 from sqlalchemy import text

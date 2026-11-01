@@ -88,5 +88,5 @@ def render_migration_progress(paths):
     if active:
         if st.button('Demander l’arrêt à un point sûr',key='t56_cancel'):
             (Path(selected)/'cancel.request').touch();st.info('Arrêt demandé ; les services du PC source restent actifs.')
-    if selected==st.session_state.get('t56_job') and 'fingerprint' in result and st.session_state.get('t56_plan')!=result:
-        st.session_state['t56_plan']=result;st.rerun()
+    if selected==st.session_state.get('t56_plan_job') and 'fingerprint' in result and st.session_state.get('t56_plan_result')!=result:
+        st.session_state['t56_plan_result']=result;st.rerun()

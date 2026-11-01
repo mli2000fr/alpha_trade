@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from service.market import cn_collection_storage as cn_storage
 import argparse
 import hashlib
 import json
 import logging
 import math
 from dataclasses import dataclass
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from typing import Any
 
 import numpy as np
@@ -152,7 +153,7 @@ def _load_frame(sources: dict[int, tuple[Path, Path]], *, horizon: int,
     last_year = int(semester[:4])
     prior_dates = set()
     for year in range(2018, last_year + 1):
-        dates = pd.read_parquet(sources[year][0], columns=["session_date"])["session_date"]
+        dates = cn_storage.read_parquet(sources[year][0], columns=["session_date"])["session_date"]
         prior_dates.update(pd.to_datetime(dates.loc[dates < test_start]).unique())
     ordered_dates = sorted(prior_dates)
     if len(ordered_dates) < validation_sessions:
@@ -163,8 +164,8 @@ def _load_frame(sources: dict[int, tuple[Path, Path]], *, horizon: int,
     pieces = []
     for year in range(2018, last_year + 1):
         feature_path, labels_folder = sources[year]
-        feature = pd.read_parquet(feature_path, columns=META + features)
-        label = pd.read_parquet(labels_folder / f"h{horizon}.parquet", columns=LABEL)
+        feature = cn_storage.read_parquet(feature_path, columns=META + features)
+        label = cn_storage.read_parquet(labels_folder / f"h{horizon}.parquet", columns=LABEL)
         if len(feature) != len(label):
             raise RuntimeError(f"{year} H{horizon}: population différente")
         part = feature.merge(label, on=["session_date", "instrument_id"], validate="one_to_one")
@@ -205,7 +206,7 @@ def _fit(model_name: str, train: pd.DataFrame, val: pd.DataFrame,
         )
         model.fit(x_train, y_train, eval_set=[(x_val, y_val)], eval_metric="auc",
                   callbacks=[lgb.early_stopping(stop, verbose=False)])
-        model.booster_.save_model(str(model_path.with_suffix(".txt")))
+        model.booster_.save_model(str(cn_storage.model_file(model_path.with_suffix(".txt"))))
     elif model_name == "catboost":
         from catboost import CatBoostClassifier
 
@@ -218,7 +219,7 @@ def _fit(model_name: str, train: pd.DataFrame, val: pd.DataFrame,
             allow_writing_files=False,
         )
         model.fit(x_train, y_train, eval_set=(x_val, y_val), use_best_model=True)
-        model.save_model(str(model_path.with_suffix(".cbm")))
+        model.save_model(str(cn_storage.model_file(model_path.with_suffix(".cbm"))))
     else:
         raise ValueError(f"Modèle non pré-enregistré: {model_name}")
     return model.predict_proba(x_test)[:, 1].astype("float32")
@@ -335,7 +336,7 @@ def run(*, config_path: Path = DEFAULT_CONFIG, output_root: Path = DEFAULT_OUTPU
     prediction_path, report_path = folder / "predictions.parquet", folder / "report.json"
     if prediction_path.exists() or report_path.exists():
         raise RuntimeError(f"Artefact OOS existant, écrasement refusé: {folder}")
-    predictions.to_parquet(prediction_path, index=False)
+    cn_storage.write_parquet(predictions,prediction_path, index=False)
     report["predictions_sha256"] = _sha(prediction_path)
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return report

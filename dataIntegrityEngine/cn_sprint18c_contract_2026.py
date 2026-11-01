@@ -6,7 +6,7 @@ import argparse
 import json
 from datetime import date
 from decimal import Decimal
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 
 from sqlalchemy import text
 

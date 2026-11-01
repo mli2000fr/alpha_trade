@@ -8,7 +8,7 @@ import json
 import logging
 import math
 from datetime import datetime, timezone
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 
 import pandas as pd
 from sqlalchemy import text

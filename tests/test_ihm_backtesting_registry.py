@@ -129,11 +129,13 @@ def test_start_backtesting_run_rebinds_pipeline_lock_to_child_pid(tmp_path: Path
             BacktestRunOptions(start="2026-01-01"),
         )
 
-        lock_path = locks_dir / "backtesting.lock"
+        lock_path = locks_dir / "backtesting_readonly.lock"
         payload = json.loads(lock_path.read_text(encoding="utf-8"))
         assert record.run_id == payload["run_id"]
         assert payload["owner"] == "backtesting:run"
         assert payload["pid"] == 4242
+        assert record.isolation_mode=='READ_ONLY_ISOLATED'
+        assert record.command[4]=='backtesting.isolated_run'
     finally:
         pipeline_lock.set_locks_dir_for_tests(None)
 
@@ -181,7 +183,32 @@ def test_start_backtesting_run_fails_fast_when_db_preflight_fails(tmp_path: Path
     assert popen_called is False
 
 
-def test_list_active_backtesting_runs_recovers_live_locked_run_after_restart(tmp_path: Path, monkeypatch) -> None:
+def test_guarded_simulation_starts_while_pipeline_is_locked(tmp_path,monkeypatch):
+    from ihm.services import backtesting_registry as registry,pipeline_lock
+    from ihm.services.backtesting_runner import BacktestRunOptions
+    monkeypatch.setattr(registry,'RUNS_DIR',tmp_path/'runs')
+    monkeypatch.setattr(registry,'HISTORY_INDEX_PATH',tmp_path/'runs/history_index.json')
+    monkeypatch.setattr(registry,'_ACTIVE_RUNS',{})
+    monkeypatch.setattr(registry,'build_subprocess_env',lambda **kw:{})
+    monkeypatch.setattr(registry.subprocess,'Popen',lambda *a,**k:_FakeProcess())
+    monkeypatch.setattr(registry.threading,'Thread',_FakeThread)
+    pipeline_lock.set_locks_dir_for_tests(tmp_path/'locks')
+    writer=pipeline_lock.acquire_lock('pipeline',owner='pipeline',run_id='pipeline')
+    try:
+        record=registry.start_backtesting_run('run','Simulation',BacktestRunOptions(start='2026-01-01'))
+        assert record.isolation_mode=='READ_ONLY_ISOLATED'
+        assert '--workspace' in record.command and record.command[4]=='backtesting.isolated_run'
+        pipeline_lock.release_lock(registry._ACTIVE_RUNS[record.run_id].pipeline_lock)
+        with pytest.raises(RuntimeError,match='Verrou pipeline actif'):
+            registry._ACTIVE_RUNS.clear()
+            registry.start_backtesting_run('run','Rebuild',BacktestRunOptions(start='2026-01-01',ml_mode='rebuild-missing'))
+    finally:
+        pipeline_lock.release_lock(writer)
+        pipeline_lock.set_locks_dir_for_tests(None)
+
+
+@pytest.mark.parametrize('scope',['backtesting','backtesting_readonly'])
+def test_list_active_backtesting_runs_recovers_live_locked_run_after_restart(tmp_path: Path, monkeypatch,scope) -> None:
     from ihm.services import backtesting_registry, pipeline_lock
 
     run_id = "20260614_110349_17710755"
@@ -233,10 +260,10 @@ def test_list_active_backtesting_runs_recovers_live_locked_run_after_restart(tmp
     monkeypatch.setattr(pipeline_lock, "_is_pid_alive", lambda pid: pid == 4242)
     try:
         locks_dir.mkdir(parents=True, exist_ok=True)
-        (locks_dir / "backtesting.lock").write_text(
+        (locks_dir / (scope+".lock")).write_text(
             json.dumps(
                 {
-                    "scope": "backtesting",
+                    "scope": scope,
                     "owner": "backtesting:run",
                     "run_id": run_id,
                     "pid": 4242,

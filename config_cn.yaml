@@ -2,6 +2,8 @@ schema_version: 1
 market_codes: [CN_A, CN_BJ]
 database_alias: cn_primary
 database_name: alpha_trade_cn
+storage_backend: sql
+# Les chemins d'artefacts de collecte sont des clés logiques SQL, sans fallback disque.
 provider: baostock
 provider_token_env: null
 canonical_writes_enabled: false

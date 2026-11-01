@@ -72,6 +72,8 @@ def test_conditional_metrics_use_oracle_pool_and_paired_population() -> None:
 
 def test_oracle_top20_is_selected_before_labels(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from modelFactory import cn_global_ranking_walk_forward as module
+    # This unit test supplies its own parent scores; no production SQL audit.
+    monkeypatch.setattr(module, '_sha', lambda path: 'test')
 
     candidate = pd.DataFrame({
         "session_date": [pd.Timestamp("2022-01-03")] * 20,

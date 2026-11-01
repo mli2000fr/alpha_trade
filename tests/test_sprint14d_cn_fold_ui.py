@@ -57,6 +57,7 @@ def test_cn_fold_preflight_requires_both_oracle_parents(cn_contract, monkeypatch
     import modelFactory.cn_oracle_walk_forward as oracle
 
     monkeypatch.setattr(oracle, "_sources", lambda protocol: ({}, {}))
+    monkeypatch.setattr(oracle, "_sha", lambda path: "fixture-source-hash")
     monkeypatch.setattr(aggregate, "_find_run", lambda *args, **kwargs: None)
     with pytest.raises(ValueError, match="Oracle OOS CN manquant"):
         cn_fold_launch.preflight_cn_fold(replace(cn_fold_launch.CNResearchFoldOptions(), task="ranking"))

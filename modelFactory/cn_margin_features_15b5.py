@@ -4,6 +4,7 @@ Research proxy only, no training, network access or database writes.
 """
 from __future__ import annotations
 
+from service.market import cn_collection_storage as cn_storage
 import argparse
 import gzip
 import json
@@ -11,7 +12,7 @@ import logging
 import os
 from collections import Counter, deque
 from datetime import UTC, datetime
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 
 import numpy as np
 import pandas as pd
@@ -126,7 +127,7 @@ def build_features(root: Path, output: Path, snapshot: dict, state: dict) -> dic
         if frame.duplicated(["source_session", "instrument_id"]).any():
             raise ValueError("Duplicate rolling key")
         path = output / f"margin-{year}.parquet"
-        frame.to_parquet(path, index=False)
+        cn_storage.write_parquet(frame,path, index=False)
         years[year] = {"rows": len(frame), "common_valid": int(frame[FEATURES].notna().all(axis=1).sum()),
                        "sha256": _sha(path)}
         rows.clear()
@@ -143,7 +144,7 @@ def build_features(root: Path, output: Path, snapshot: dict, state: dict) -> dic
         path = root / f"{day}.jsonl.gz"
         if _sha(path) != state["sessions"][day]["partition_sha256"]:
             raise ValueError(f"Changed margin partition {day}")
-        with gzip.open(path, "rt", encoding="utf-8") as stream:
+        with cn_storage.gzip_open(path, "rt", encoding="utf-8") as stream:
             for line in stream:
                 row = json.loads(line)
                 history = histories.setdefault(row["instrument_id"], deque(maxlen=21))
@@ -154,7 +155,7 @@ def build_features(root: Path, output: Path, snapshot: dict, state: dict) -> dic
             LOG.info("rolling sessions=%s/%s", index + 1, len(state["sessions"]))
     flush(current_year)
     for lag, values in calendar.items():
-        pd.DataFrame(values).to_parquet(output / f"calendar-lag{lag}.parquet", index=False)
+        cn_storage.write_parquet(pd.DataFrame(values),output / f"calendar-lag{lag}.parquet", index=False)
     return {"years": years, "quality_reasons": dict(reasons)}
 
 
@@ -217,7 +218,7 @@ def run(root: Path = OUTPUT, output: Path = DEST) -> dict:
     for year in range(2022, 2026):
         feature_path, label_folder = sources[year]
         columns = ["session_date", "instrument_id", "decision_at", *protocol.raw["features"]]
-        price = pd.read_parquet(feature_path, columns=columns)
+        price = cn_storage.read_parquet(feature_path, columns=columns)
         price = price.loc[price["instrument_id"].isin(ids)]
         price["log_amount_mean20_cny"] = np.log(
             price["amount_mean20_cny"].where(price["amount_mean20_cny"] > 0))
@@ -225,13 +226,13 @@ def run(root: Path = OUTPUT, output: Path = DEST) -> dict:
         expected_hash = next(y for y in label_audit["yearly"] if y["year"] == year)["horizons"]["20"]["sha256"]
         if _sha(label_path) != expected_hash:
             raise ValueError(f"Changed labels {year}")
-        labels = pd.read_parquet(label_path, columns=[*KEYS, "available_at_utc"])
+        labels = cn_storage.read_parquet(label_path, columns=[*KEYS, "available_at_utc"])
         price = price.merge(labels, on=KEYS, validate="one_to_one")
-        margin = pd.concat([pd.read_parquet(output / f"margin-{y}.parquet")
+        margin = pd.concat([cn_storage.read_parquet(output / f"margin-{y}.parquet")
                             for y in (year - 1, year)], ignore_index=True)
         for semester in (f"{year}H1", f"{year}H2"):
             path, source_report = reports[semester]
-            predictions = pd.read_parquet(path)
+            predictions = cn_storage.read_parquet(path)
             if (set(predictions["market_code"]) != {"CN_A"}
                     or set(predictions["horizon"]) != {20}
                     or set(predictions["test_semester"]) != {semester}):
@@ -241,7 +242,7 @@ def run(root: Path = OUTPUT, output: Path = DEST) -> dict:
             if len(events) != int(pool["instrument_id"].isin(ids).sum()):
                 raise ValueError("Price/label join lost events")
             for lag in (2, 3, 5):
-                calendar = pd.read_parquet(output / f"calendar-lag{lag}.parquet")
+                calendar = cn_storage.read_parquet(output / f"calendar-lag{lag}.parquet")
                 joined = strict_join(events, margin, calendar)
                 joined["price_valid"] = np.isfinite(joined[protocol.raw["features"]]).all(axis=1)
                 joined["price_valid"] &= np.isfinite(joined["log_amount_mean20_cny"])
@@ -256,7 +257,7 @@ def run(root: Path = OUTPUT, output: Path = DEST) -> dict:
                 joined["historical_vintage_proven"] = False
                 key = f"{semester}-lag{lag}"
                 destination = output / f"{key}.parquet"
-                joined.to_parquet(destination, index=False)
+                cn_storage.write_parquet(joined,destination, index=False)
                 common = joined.loc[joined["evaluation_common_valid"]]
                 before = len(history_dates[lag])
                 minimum = cfg["minimum_train_sessions"] + cfg["validation_sessions"]

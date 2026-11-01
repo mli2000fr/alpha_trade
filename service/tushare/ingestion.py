@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 from datetime import date
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from typing import Any
 
 from sqlalchemy.engine import Engine
@@ -52,7 +52,7 @@ def _parameter_variants(endpoint: str) -> list[dict[str, Any]]:
 
 class ResumeState:
     def __init__(self, path: Path) -> None:
-        self.path = path
+        self.path = Path(path)
         self.payload: dict[str, Any] = {}
         if path.exists():
             self.payload = json.loads(path.read_text(encoding="utf-8"))

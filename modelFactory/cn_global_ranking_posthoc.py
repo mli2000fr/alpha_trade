@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from service.market import cn_collection_storage as cn_storage
 import argparse
 import json
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 
 import pandas as pd
 
@@ -33,7 +34,7 @@ def diagnose(*, config_path: Path = DEFAULT_CONFIG, root: Path = DEFAULT_OUTPUT)
             if item is None:
                 raise RuntimeError(f"OOS H{horizon}/{semester} manquant")
             path, _ = item
-            frames.append(pd.read_parquet(path))
+            frames.append(cn_storage.read_parquet(path))
         frame = pd.concat(frames, ignore_index=True)
         frame["reversal_score"] = -frame["baseline_score"]
         paired = frame.loc[frame["target_quality_valid"] & frame["baseline_score"].notna()]

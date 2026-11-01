@@ -6,12 +6,13 @@ Only immutable D8 exports and D10 daily matching artifacts are admitted.
 
 from __future__ import annotations
 
+from service.market import cn_collection_storage as cn_storage
 import argparse
 import hashlib
 import json
 import math
 from datetime import UTC, datetime
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -49,6 +50,7 @@ def _standardized_difference(pairs: pd.DataFrame, column: str) -> float | None:
 
 def inspect(*, daily_root: Path, oracle_root: Path, protocol_path: Path,
             now: datetime | None = None) -> dict:
+    daily_root, oracle_root = Path(daily_root), Path(oracle_root)
     now = now or datetime.now(UTC)
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
@@ -107,7 +109,7 @@ def inspect(*, daily_root: Path, oracle_root: Path, protocol_path: Path,
                 or ledger.get("d7_pairs_sha256") != _digest(pairs_path)
                 or ledger.get("candidate_sha256") != available[day]["candidate_export_sha256"]):
             raise RuntimeError(f"D10 immutable file ledger mismatch: {day}")
-        pairs = pd.read_parquet(pairs_path)
+        pairs = cn_storage.read_parquet(pairs_path)
         leaked = [column for column in pairs.columns
                   if str(column).lower() in FORBIDDEN
                   or str(column).lower().startswith(("future_", "realized_", "target_", "label_"))]

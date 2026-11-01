@@ -11,7 +11,7 @@ import hashlib
 import json
 import math
 from collections import Counter
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from statistics import mean, median
 from typing import Any
 

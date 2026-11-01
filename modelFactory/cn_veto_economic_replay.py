@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from service.market import cn_collection_storage as cn_storage
 import argparse
 import hashlib
 import json
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from typing import Any
 
 import numpy as np
@@ -219,7 +220,7 @@ def run(*, config_path: Path = DEFAULT_CONFIG, ranking_root: Path = RANKING_OUTP
             expected = label_audit["yearly"][year - 2018]["horizons"][str(horizon)]["sha256"]
             if _sha(label_path) != expected:
                 raise RuntimeError(f"Labels CN altérés: {label_path}")
-            labels = pd.read_parquet(label_path, columns=LABEL_COLUMNS)
+            labels = cn_storage.read_parquet(label_path, columns=LABEL_COLUMNS)
             for semester in (f"{year}H1", f"{year}H2"):
                 frames = {}
                 for model in ("lightgbm", "catboost"):
@@ -230,7 +231,7 @@ def run(*, config_path: Path = DEFAULT_CONFIG, ranking_root: Path = RANKING_OUTP
                     if item is None:
                         raise RuntimeError(f"Ranking OOS CN manquant: H{horizon}/{semester}/{model}")
                     path, source_report = item
-                    frames[model] = pd.read_parquet(path, columns=PREDICTION_COLUMNS)
+                    frames[model] = cn_storage.read_parquet(path, columns=PREDICTION_COLUMNS)
                     provenance.append({
                         "horizon": horizon, "semester": semester, "model": model,
                         "predictions_sha256": source_report["predictions_sha256"],

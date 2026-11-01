@@ -20,8 +20,10 @@ def percent(label,value,key,*,disabled=False,maximum=100.):
 
 def render_policy_settings(policy):
     values={}
-    with st.expander('Protections et confirmation Winner',expanded=False):
-        st.caption('Valeurs de production préremplies. Les changements ci-dessous concernent ce backtest uniquement.')
+    with st.container():
+        st.caption('Valeurs par défaut : section winner_pyramiding de config.yaml. '
+                   'Ces réglages sont modifiables pour ce backtest uniquement. '
+                   '« Reprendre les réglages de production » recharge les valeurs de configuration.')
         values['stop_loss_pct']=percent('SL initial (%)',policy.stop_loss_pct,'bt_wp_sl',maximum=99.99)
         tp=st.checkbox('Activer un TP en prix',value=policy.take_profit_pct is not None,key='bt_wp_tp_enabled')
         values['take_profit_pct']=percent('TP (%)',policy.take_profit_pct or .20,'bt_wp_tp',

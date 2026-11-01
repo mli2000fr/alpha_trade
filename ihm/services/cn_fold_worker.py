@@ -7,7 +7,7 @@ import json
 import logging
 import threading
 import time
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 
 PROGRESS_PREFIX = "::cn_fold_progress::"
 

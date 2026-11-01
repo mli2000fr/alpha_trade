@@ -268,13 +268,17 @@ def test_metrics_and_sql_source_are_read_only_and_keep_provider_scope():
     assert report['average_gross_capital'] > 0
 
 
-@pytest.mark.parametrize('ignore_missing,missing_bar',[(False,False),(True,False),(True,True)])
-def test_cli_complete_readonly_run_exports_reports_without_api_or_prediction(tmp_path, monkeypatch,ignore_missing,missing_bar):
+@pytest.mark.parametrize('ignore_missing,missing_bar,isolated',[(False,False,False),(True,False,False),(True,True,False),
+                                                            (True,False,True),(True,True,True)])
+def test_cli_complete_readonly_run_exports_reports_without_api_or_prediction(tmp_path, monkeypatch,ignore_missing,missing_bar,isolated):
     from argparse import Namespace
     from hashlib import sha256
     import json
     from sqlalchemy import create_engine, event
     from backtesting.winner_campaign_replay import run
+    from backtesting.winner_intraday_recovery import RecoveringIntradaySource
+    monkeypatch.setattr('backtesting.winner_intraday_recovery.RecoveringIntradaySource',
+        lambda *a,**kw:RecoveringIntradaySource(*a,**kw,cache_dir=tmp_path/'recovery',fetcher=lambda *unused:[]))
     cfg, args, raw = fixture()
     engine = create_engine('sqlite://')
     daily = args['close'].copy()
@@ -333,19 +337,27 @@ def test_cli_complete_readonly_run_exports_reports_without_api_or_prediction(tmp
         account_type='margin', margin_interest_annual=.065,max_positions=12,
         risk_overrides_json='{"risk_per_trade_pct":0.02,"min_position_notional":20.0}',
         policy_overrides_json='{"stop_loss_pct":0.07,"horizon_sessions":10}',ignore_missing_intraday=ignore_missing)
-    report = run(options)
+    if isolated:
+        from backtesting.isolation import ReadOnlyReplay
+        with ReadOnlyReplay(tmp_path).install():
+            report=run(options)
+        assert json.loads((tmp_path/'isolation.json').read_text())['violations']==[]
+    else:
+        report = run(options)
     assert report['status'] == ('INCOMPLETE_COVERAGE' if missing_bar else 'COMPLETED_EXPLORATORY')
     assert report['costs'] == 0 if missing_bar else report['costs'] > 0
     assert report['missing_intraday_screen']['enabled'] is ignore_missing
     if ignore_missing:
         audit=json.loads((tmp_path/'replay'/'missing-intraday.json').read_text())
-        assert audit['excluded_symbols']==(['AAA'] if missing_bar else [])
+        assert audit['excluded_symbols']==[]  # No whole-run ticker exclusion.
+        assert audit['affected_symbols']==(['AAA'] if missing_bar else [])
         assert audit['uses_future_data_availability'] is True
         assert (tmp_path/'replay'/'missing-intraday.csv').is_file()
-        assert len(pd.read_csv(tmp_path/'replay'/'excluded-signals.csv'))==(2 if missing_bar else 0)
+        assert len(pd.read_csv(tmp_path/'replay'/'excluded-signals.csv'))==0
+        assert len(pd.read_csv(tmp_path/'replay'/'entry-exclusions.csv'))==(2 if missing_bar else 0)
         if missing_bar:
             assert report['final_equity']==4000.
-            assert any(r['reason']=='AUTO_EXCLUDED_MISSING_INTRADAY' for r in report['coverage_gaps'])
+            assert any(r['reason']=='UNRESOLVED_INTRADAY_ENTRY_GATE' for r in report['coverage_gaps'])
     assert (tmp_path/'replay'/'annual-summary.csv').is_file()
     assert (tmp_path/'replay'/'equity_curve.csv').is_file()
     assert report['summary']['final_value'] == report['final_equity']

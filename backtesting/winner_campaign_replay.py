@@ -1,8 +1,8 @@
-"""Read-only US Oracle-path -> five-minute campaign replay, no broker/provider.
+"""US Oracle-path -> five-minute campaign replay, no broker or SQL writes.
 
 Example: python -m backtesting.winner_campaign_replay --help
 Outputs are local, new-directory-only. Existing predictions are required; no
-training, automatic prediction, missing-bar download or production SQL write.
+training or automatic prediction. Optional missing-data recovery calls providers.
 """
 import argparse
 from dataclasses import asdict, replace
@@ -38,8 +38,9 @@ def atomic_json(path, value):
 
 
 class SqlIntradaySource:
-    def __init__(self, conn):
+    def __init__(self, conn, *, discard_unqualified=False):
         self.conn = conn
+        self.discard_unqualified=discard_unqualified
         self.receipts = []
 
     def __call__(self, day, symbols):
@@ -52,6 +53,9 @@ class SqlIntradaySource:
             "AND session_tag='regular' AND data_adjustment='raw' AND is_filled=0 "
             'ORDER BY symbol, bar_timestamp').bindparams(bindparam('symbols', expanding=True))
         frame = pd.read_sql(query, self.conn, params={'day': day, 'symbols': symbols})
+        if self.discard_unqualified and not frame.empty:
+            from backtesting.winner_intraday_recovery import qualified_frame
+            frame=pd.concat([qualified_frame(frame.loc[frame.symbol.eq(s)],s,day) for s in symbols],ignore_index=True)
         if not frame.empty:
             start, end = pd.to_datetime(frame.timestamp, utc=True), pd.to_datetime(frame.bar_end_timestamp, utc=True)
             if not (end-start).eq(pd.Timedelta(minutes=5)).all() or frame.payload_hash.isna().any():
@@ -150,6 +154,7 @@ def run(args):
     output.mkdir(parents=True, exist_ok=False)
     started = time.monotonic()
     missing_audit=None
+    recovery=None
     atomic_json(output/'progress.json', dict(status='RUNNING', completed=0, phase='READ_ONLY_INPUTS'))
     try:
         root, protocol, _, folds = load_contract(args.artifacts_dir, args.oracle_batch_id)
@@ -227,6 +232,7 @@ def run(args):
             LOG.info('Exclusions Winner sur toute la période : %s ; %d signaux retirés, aucun remplacement',
                 ','.join(exclusions) or 'aucune',len(excluded_signals))
             manual_exclusions=list(exclusions)
+            source = SqlIntradaySource(conn,discard_unqualified=getattr(args,'ignore_missing_intraday',False))
             if getattr(args,'ignore_missing_intraday',False):
                 from backtesting.winner_missing_intraday import screen_missing_intraday
                 def audit_progress(done,total):
@@ -234,16 +240,19 @@ def run(args):
                         completed=done,total=total,elapsed_seconds=time.monotonic()-started))
                 audit_progress(0,int(selected.symbol.nunique()))
                 missing_audit=screen_missing_intraday(conn,selected,args.end_date,policy,progress=audit_progress)
-                selected,auto_excluded=apply_exclusions(selected,missing_audit['excluded_symbols'])
-                auto_excluded['exclusion_reason']='AUTOMATIC_POST_HOC_INTRADAY_COVERAGE_EXCLUSION'
-                excluded_signals=pd.concat([excluded_signals,auto_excluded],ignore_index=True)
-                exclusions=sorted(set(exclusions)|set(missing_audit['excluded_symbols']))
-                missing_audit['removed_signals']=len(auto_excluded)
+                from backtesting.winner_intraday_recovery import RecoveringIntradaySource
+                def repair_progress(done,total):
+                    atomic_json(output/'progress.json',dict(status='RUNNING',phase='RECOVER_INTRADAY',
+                        completed=done,total=total,elapsed_seconds=time.monotonic()-started))
+                recovery=RecoveringIntradaySource(source,args.end_date,policy,progress=repair_progress)
+                missing_audit=recovery.prepare(missing_audit)
+                source=recovery
+                recovery.export(output)
                 atomic_json(output/'missing-intraday.json',missing_audit)
                 pd.DataFrame(missing_audit['gaps'],columns=['symbol','date','expected_bars','qualified_bars',
                     'missing_bars','reason','first_bar','last_bar']).to_csv(output/'missing-intraday.csv',index=False)
-                LOG.warning('Mode diagnostic : %d titres exclus automatiquement ; connaissance future de la couverture, aucun remplacement Oracle',
-                    len(missing_audit['excluded_symbols']))
+                LOG.warning('Mode diagnostic : %d séances réparées ; %d lacunes restantes ; exclusion par date d’entrée, aucun remplacement Oracle',
+                    missing_audit['repaired_sessions'],missing_audit['missing_sessions'])
             from backtesting.winner_data import daily_bars, HistoricalFactorSource, HistoricalOptionsSource
             cap_check=getattr(args,'factor_market_cap_check',True)
             proxies=({'SPY','IWM','MTUM'} if cap_check else {'SPY','MTUM'}) if risk.enable_factor_model else {'SPY'}
@@ -258,7 +267,6 @@ def run(args):
             ca = pd.read_sql(text('SELECT symbol, ca_type, ex_date, payable_date, amount_per_share, currency FROM corporate_actions_events '
                 'WHERE symbol IN :symbols AND ex_date BETWEEN :start AND :end').bindparams(
                 bindparam('symbols', expanding=True)), conn, params=dict(symbols=symbols, start=prior, end=args.end_date))
-            source = SqlIntradaySource(conn)
             factors = HistoricalFactorSource(conn,pivots['close'],universe=universe,
                 start=prior-timedelta(days=650),end=actual[-1],output=output,market_cap_check=cap_check) if risk.enable_factor_model else None
             options_source=HistoricalOptionsSource(conn,options_config) if options_enabled else None
@@ -307,10 +315,16 @@ def run(args):
                 sector_map=sectors.set_index('symbol').sector.to_dict(), intraday_source=source,
                 winner_research_assumptions=True, winner_progress=progress, winner_corporate_actions=ca.to_dict('records'),
                 winner_factor_source=factors,winner_selection_source=options_source)
-            if missing_audit and missing_audit['excluded_symbols']:
+            if recovery is not None:
+                recovery.export(output)
+                missing_audit['blocked_entry_dates']=len(recovery.exclusions)
+                frozen['missing_intraday_screen']['blocked_entry_dates']=len(recovery.exclusions)
+                atomic_json(output/'missing-intraday.json',missing_audit)
+                atomic_json(output/'protocol.json',frozen)
+            if missing_audit and missing_audit['missing_sessions']:
                 meta=result.tracker_snapshot['winner_replay']
                 meta['status']='INCOMPLETE_COVERAGE'
-                meta['coverage_gaps'].extend(dict(date=r['date'],symbol=r['symbol'],reason='AUTO_EXCLUDED_MISSING_INTRADAY')
+                meta['coverage_gaps'].extend(dict(date=r['date'],symbol=r['symbol'],reason='UNRESOLVED_INTRADAY_ENTRY_GATE')
                     for r in missing_audit['gaps'])
             atomic_json(output/'data-receipts.json', source.receipts)
             atomic_json(output/'factor-receipts.json', factors.receipts if factors else [])
@@ -371,8 +385,10 @@ def run(args):
                 'Final equity includes marked open holdings; no forced terminal liquidation',
                 'User-defined symbol exclusions apply to the entire run after Oracle TOP-N with no refill; '
                 'post-hoc data-driven exclusions change the tested population and may introduce selection bias',
-                'Automatic missing-intraday exclusions, when enabled, screen future data availability over potential campaign windows; '
+                'Automatic missing-intraday recovery/gating, when enabled, screens future data availability per entry/holding window; '
                 'this is a post-hoc diagnostic population, not a causal/live-compatible selection rule',
+                'Recovery tries SIP then Yahoo then EODHD, only missing timestamps; fallback needs same-day SIP price anchors. '
+                'Recovery responses are cached with actual retrieval time; SQL unchanged; fallback is not SIP or historical PIT evidence',
                 'Native breaker, sizing/constraints, correlation/concentration and vol target; no full macro tape'])
         export_ui_report(result, report, frozen, output, args.initial_equity)
         atomic_json(output/'report.json', report)
@@ -389,6 +405,8 @@ def run(args):
         if missing_audit is not None:
             from backtesting.winner_missing_intraday import log_missing_summary
             log_missing_summary(missing_audit)
+        if recovery is not None:
+            recovery.export(output)
         raise
 
 
@@ -418,7 +436,7 @@ def build_parser():
     parser.add_argument('--top-n', type=int, default=20)
     parser.add_argument('--exclude-symbols',default='',help='Run-wide symbol exclusions after Oracle TOP-N, no refill, e.g. SDGR,APP')
     parser.add_argument('--ignore-missing-intraday',action=argparse.BooleanOptionalAction,default=False,
-        help='Post-hoc audit of potential campaign windows; exclude incomplete tickers for the entire run and log them')
+        help='Try SIP -> Yahoo -> EODHD for missing 5m bars; block only entry dates crossing residual gaps, post-hoc audit')
     parser.add_argument('--min-oracle-coverage', type=float, default=.9)
     parser.add_argument('--initial-equity', type=float, default=4000.)
     parser.add_argument('--account-type', choices=['cash', 'margin'], default='margin')

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from service.market import cn_collection_storage as cn_storage
 import argparse
 import hashlib
 import json
 import logging
 from dataclasses import dataclass
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from typing import Any
 
 import numpy as np
@@ -82,7 +83,7 @@ def _attach_oracle_pool(test: pd.DataFrame, *, horizon: int, semester: str,
         if item is None:
             raise RuntimeError(f"Oracle OOS manquant: H{horizon} {semester} {model}")
         path, report = item
-        prediction = pd.read_parquet(path, columns=["session_date", "instrument_id", "market_code",
+        prediction = cn_storage.read_parquet(path, columns=["session_date", "instrument_id", "market_code",
                                                     "target_quality_valid", "oracle_score"])
         if prediction.duplicated(["session_date", "instrument_id"]).any() or set(prediction["market_code"]) != {"CN_A"}:
             raise RuntimeError("Oracle OOS CN dupliqué ou marché erroné")
@@ -124,7 +125,7 @@ def _fit(model_name: str, train: pd.DataFrame, val: pd.DataFrame, test: pd.DataF
                                   n_jobs=4, verbosity=-1, deterministic=True, force_col_wise=True)
         model.fit(x_train, y_train, eval_set=[(x_val, y_val)], eval_metric="l2",
                   callbacks=[lgb.early_stopping(stop, verbose=False)])
-        model.booster_.save_model(str(model_path.with_suffix(".txt")))
+        model.booster_.save_model(str(cn_storage.model_file(model_path.with_suffix(".txt"))))
     elif model_name == "catboost":
         from catboost import CatBoostRegressor
 
@@ -136,7 +137,7 @@ def _fit(model_name: str, train: pd.DataFrame, val: pd.DataFrame, test: pd.DataF
             verbose=False, allow_writing_files=False,
         )
         model.fit(x_train, y_train, eval_set=(x_val, y_val), use_best_model=True)
-        model.save_model(str(model_path.with_suffix(".cbm")))
+        model.save_model(str(cn_storage.model_file(model_path.with_suffix(".cbm"))))
     else:
         raise ValueError(f"Modèle ranking non pré-enregistré: {model_name}")
     return np.asarray(model.predict(x_test), dtype="float32")
@@ -272,7 +273,7 @@ def run(*, horizon: int, semester: str, model_name: str,
         "serving_enabled": False, "backtest_executed": False,
     }
     prediction_path, report_path = folder / "predictions.parquet", folder / "report.json"
-    prediction.to_parquet(prediction_path, index=False)
+    cn_storage.write_parquet(prediction,prediction_path, index=False)
     report["predictions_sha256"] = _sha(prediction_path)
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return report

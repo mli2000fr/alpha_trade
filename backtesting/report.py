@@ -817,6 +817,8 @@ def save_equity_curve(pf, output_dir: Path | None = None) -> Path:
     out.mkdir(parents=True, exist_ok=True)
     filepath = out / "equity_curve.png"
     try:
+        from backtesting.isolation import active
+        if active():raise RuntimeError('Isolated replay uses in-process matplotlib export')
         fig = pf.plot_value()
         fig.update_layout(
             title="Alpha Trade — Equity Curve (Backtest)",

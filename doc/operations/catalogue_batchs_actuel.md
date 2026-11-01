@@ -109,7 +109,7 @@ pour obtenir les mêmes collectes deux fois sans besoin explicite.
 | --- | --- | --- |
 | cn_db_backup | batch_cn.yaml | Actif ; alpha_trade_cn → backups/cn/db, keep=3 |
 | cn_daily_quality_17c | batch_cn.yaml | Actif, lecture seule ; bloquant tant que D9 requis est désactivé |
-| cn_dragon_tiger_daily_match | batch.yaml | Recherche active, artefacts D10 ; ne peut inventer D6/Oracle manquants |
+| cn_dragon_tiger_daily_match | batch.yaml | Recherche active, appariements et bilans SQL CN ; ne peut inventer D6/Oracle manquants |
 | cn_oracle_prospective_daily | batch.yaml | ⛔ BLOCKED_BAOSTOCK_RIGHTS ; collecte/promotion D9 arrêtée |
 | cn_dragon_tiger_after_close | batch.yaml | ⛔ BLOCKED_SSE_SZSE_AUTOMATION |
 | cn_dragon_tiger_before_open | batch.yaml | ⛔ BLOCKED_SSE_SZSE_AUTOMATION |
@@ -119,9 +119,14 @@ pour obtenir les mêmes collectes deux fois sans besoin explicite.
 | cn_tushare_optional | batch_cn.yaml | Désactivé/non qualifié ; fournisseur optionnel, pas une dépendance active |
 
 Quatre noms de recherche restent dans batch.yaml en attendant la bascule
-contrôlée 17-D. Doublon entre catalogues refusé. Historique CN : fichiers
-de runs et artefacts CN, pas pit_collection_runs US. D10/17-C activés ne
+contrôlée 17-D. Doublon entre catalogues refusé. Historique CN : tables de
+collecte de `alpha_trade_cn`, pas pit_collection_runs US. D10/17-C activés ne
 signifient pas chaîne quotidienne CN opérationnelle.
+
+Depuis le 1er novembre 2026 : [stockage principal SQL CN](../cn/stockage_sql_collectes.md).
+Les anciennes clés d'artefacts désignent des ressources SQL ; les données,
+checkpoints et bilans n'ont pas de fallback disque. Les modèles et les
+sauvegardes MySQL restent des éléments d'infrastructure distincts.
 
 ## FR — batch_fr.yaml, 14 entrées, 11 actives
 

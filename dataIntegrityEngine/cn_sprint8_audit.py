@@ -6,7 +6,7 @@ import argparse
 import json
 from dataclasses import asdict
 from datetime import date
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 
 from sqlalchemy import text
 

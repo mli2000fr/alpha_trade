@@ -6,6 +6,7 @@ barre que post-clôture. Aucune règle/coût 2025 n'est prolongée en 2026.
 
 from __future__ import annotations
 
+from service.market import cn_collection_storage as cn_storage
 import argparse
 import hashlib
 import json
@@ -13,7 +14,7 @@ from collections import Counter
 from dataclasses import asdict
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from typing import Any
 
 import pandas as pd
@@ -92,7 +93,7 @@ def _validate_export(folder: Path, decision: date, now: datetime) -> tuple[dict,
     cutoff = _iso(report["decision_cutoff_utc"])
     if not published <= now < cutoff:
         raise RuntimeError("Plan shadow impossible hors fenêtre prospective pré-cutoff")
-    frame = pd.read_parquet(folder / "oracle_top20.parquet")
+    frame = cn_storage.read_parquet(folder / "oracle_top20.parquet")
     required = {"decision_date", "exchange", "code", "board_code", "oracle_top20",
                 "oracle_oos", "score_available_at_utc", "model_trained_through"}
     if (not required.issubset(frame.columns) or frame.empty
@@ -271,7 +272,7 @@ def load_frozen_plan(path: Path, *, now: datetime | None = None) -> dict:
     plans = [_decode_plan(item) for item in raw["plans"]]
     if len(plans) != int(raw["sample_size"]) or len({p.intent.intent_id for p in plans}) != len(plans):
         raise RuntimeError("Échantillon du plan altéré")
-    frame = pd.read_parquet(report_path.parent / "oracle_top20.parquet")
+    frame = cn_storage.read_parquet(report_path.parent / "oracle_top20.parquet")
     expected = sorted(
         (_symbol(str(item["exchange"]), str(item["code"]))[0] for item in frame.to_dict("records")),
         key=lambda symbol: (
