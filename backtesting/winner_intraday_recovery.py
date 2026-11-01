@@ -110,9 +110,12 @@ def rows_from_payload(provider, payload, symbol):
 
 class RecoveringIntradaySource:
     """Complete SQL SIP first; overlay only missing timestamps in provider order."""
-    def __init__(self, base, end, policy, *, cache_dir=Path('artifacts/winner_intraday_recovery'),
+    def __init__(self, base, end, policy, *, cache_dir=None,
                  fetcher=None, now=None, progress=None):
         self.base, self.end, self.policy = base, end, policy
+        if cache_dir is None:
+            from backtesting.isolation import active,local_path
+            cache_dir=local_path('intraday-recovery-cache') if active() else Path('artifacts/winner_intraday_recovery')
         self.cache_dir, self.fetcher = Path(cache_dir), fetcher or provider_payload
         self.now = now or (lambda:datetime.now(UTC))
         self.progress = progress

@@ -1,6 +1,6 @@
 # Facteurs de risque US : alimentation et qualification
 
-État vérifié le 28 octobre 2026. Cette correction concerne l'étape 7 Alpha
+État complété le 1er novembre 2026. Cette correction concerne l'étape 7 Alpha
 Scanner, l'étape 11 Risk Management et la revalidation des entrées Winner par
 le watcher. Les limites du risque dans `config.yaml` restent inchangées.
 
@@ -35,6 +35,48 @@ capitalisation USD datée SEC × cours ou Finnhub, âgée de 30 jours au maximum
 La préférence quotidienne configurée EODHD/SIP s'applique à chaque bougie.
 Aucune capitalisation de métadonnées non datée ni bêta par défaut ne remplace
 une donnée manquante.
+
+### Ligne prioritaire invalide : secours qualifié pour les facteurs
+
+Depuis le 1er novembre, le calcul factoriel conserve la ligne prioritaire si
+elle est valide. Si ses OHLCV ou son marqueur de remplissage sont invalides,
+une autre ligne **complète**, déjà en base, EODHD/SIP peut être utilisée pour
+le même symbole, la même séance et le même ajustement `split`. Elle doit
+passer tous les contrôles de prix, volume positif et `is_filled=0`. Les
+doublons ambigus, deux lignes invalides ou des ajustements différents restent
+refusés. Aucun mélange cours EODHD/volume SIP, aucune interpolation.
+
+Cette règle est propre aux entrées factorielles : elle ne change pas la
+préférence quotidienne générale ni les autres contrôles d'admission. Les
+tables de bougies ne sont pas modifiées. Chaque substitution figure dans
+`details_json.daily_bar_fallbacks` avec sa séance, les deux sources et son
+motif. Le protocole `daily-risk-inputs-qualified-provider-fallback-v3` crée
+une nouvelle identité de cache ; les publications antérieures sont conservées.
+
+Incident corrigé : étape 11 du compte `default`, signal du 30/10/2026,
+sélection `opt-1593e7178d7d4cc3bd74a6792cc0eab5`. Pour **BAND le 18/06/2026**,
+la ligne EODHD avait un volume nul ; la ligne Alpaca SIP avait les mêmes
+OHLC et un volume de **1 997 939**. Le recalcul du 01/11 à **09:49:07 UTC**
+publie `risk-inputs-08c533e44cd7411b825c5ad5fc18bc68` : 1 522 titres
+qualifiés et un contexte valide pour BAND/ICHR/SIMO/SITM/FN. Il s'agit d'une
+qualification des données, pas d'une approbation d'achat ou de sizing.
+
+Le diagnostic d'erreur sépare désormais les titres manquants, l'effectif
+qualifié et le minimum requis : il n'affiche plus une fausse inégalité
+`1521<20` lorsque seul un titre nécessaire manque.
+
+Une erreur au chargement des facteurs, avant création des décisions/cibles,
+peut sceller une preuve de reprise de la tentative options. Une sortie risque,
+un lien d'exécution ou un claim d'exécution existant interdit toujours cette
+reprise. Pour l'ancien échec exact `bace6fe9689b4e9fa922bf6230a0e2ab`, l'état
+terminal, la trace, le compte, les empreintes et l'absence de sorties ont été
+vérifiés avant de créer cette preuve ; le claim original reste conservé et
+sera archivé par la prochaine tentative. Aucun ordre ni étape 12 lancé.
+
+Reçus : `artifacts/operations/factor_band_remediation_20261101/qualification.json`
+et `retry-qualification.json`. **66 tests ciblés réussis**, dont secours par
+ligne complète, priorité valide conservée, échecs sans secours, doublons,
+ajustements, historique causal, covariance et reprise des tentatives.
 
 Les publications sont immuables et disponibles à leur véritable heure de
 production. Un recalcul aujourd'hui ne devient pas une observation connue

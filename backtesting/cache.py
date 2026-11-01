@@ -31,6 +31,9 @@ class ParquetCache:
 
     def __init__(self, cache_dir: Path | str = DEFAULT_CACHE_DIR, enabled: bool = True) -> None:
         self.cache_dir = Path(cache_dir)
+        from backtesting.isolation import active,local_path
+        if active():
+            self.cache_dir=local_path('data-cache',hashlib.sha256(str(self.cache_dir.resolve()).encode()).hexdigest()[:16])
         self.enabled = enabled
         if self.enabled:
             self.cache_dir.mkdir(parents=True, exist_ok=True)

@@ -5,6 +5,11 @@ de rentabilité, aucun ordre, aucune activation d'un compte en argent réel.
 
 ## Depuis l'IHM
 
+Depuis le 1er novembre, les nouveaux replays Winner sont exécutés avec
+[isolation des écritures et SQL en lecture seule](backtest_readonly_isolation.md).
+Ils peuvent coexister avec le pipeline ; leurs caches et rapports restent
+dans leur propre dossier. Les anciens processus gardent leur verrou initial.
+
 Page **Backtesting**, onglet **Backtest**, cocher **Utiliser Winner — Oracle
 parcours et replay intraday**. Cette case reprend `winner_pyramiding.enabled`
 au premier affichage. Le formulaire dédié remplace les paramètres du moteur
@@ -30,10 +35,13 @@ doit être causal et disponible avant la séance d'entrée. Pour le modèle
 `model-factory-20261030213826-eda503`, premier signal le 2 juillet 2021,
 première entrée possible le 6 juillet (NYSE fermé le 5 juillet).
 
-Les prédictions causales et les bougies SIP 5m doivent déjà être en base.
+Les prédictions causales doivent déjà être en base ; le replay part des
+bougies SIP 5m enregistrées.
 Générer au besoin les prédictions avec le bouton historique de la page Pipeline,
 sur une période comprenant la séance précédente du début du replay. Le
-lancement du backtest ne fait ni prédiction automatique ni téléchargement.
+lancement du backtest ne fait pas de prédiction automatique. L'option
+d'ignorance des données intraday manquantes active le rattrapage fournisseur
+décrit plus bas ; sans cette option, aucun téléchargement de bougies.
 
 Les frais canoniques s'appliquent par défaut ; un coût explicite par achat et
 vente peut les remplacer pour ce replay. Le taux de financement est séparé
@@ -71,6 +79,21 @@ plan existant ou compte courtier n'est modifié. Les paramètres daily non
 raccordés à Winner ne sont pas présentés comme des commandes actives.
 
 ## Réglages réellement utilisés
+
+Depuis le 1er novembre, le bloc ouvert **Réglages Winner et limites du replay**
+contient directement les champs modifiables ; il remplace l'ancien tableau de
+lecture seule et le panneau replié séparé. SL, activation/valeur du TP et du
+trailing, horizon, position complète/demi-position, renforcement et son seuil,
+confirmation 5m, attente d'entrée, retard SIP, marge limite et réserve de sizing
+sont modifiables à cet endroit. Les valeurs initiales viennent de
+`config.yaml → winner_pyramiding` ; `null` laisse TP/trailing/horizon désactivés.
+Le bouton **Reprendre les réglages de production** recharge les valeurs de
+configuration. Les modifications restent dans les options de ce run, sont
+transmises au moteur et conservées dans son protocole, sans écrire `config.yaml`.
+
+Validation de l'édition dans ce bloc : **41 tests ciblés réussis**, dont lecture
+d'un YAML de contrôle, édition des protections et paramètres d'entrée, passage
+exact dans la commande et remise aux valeurs de configuration.
 
 Le processus relit `config.yaml` au lancement et fige sa politique dans
 `protocol.json` : confirmation, fraction initiale, renforcement, seuil d'ajout,

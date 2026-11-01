@@ -24,12 +24,9 @@ def render_winner_backtest():
     policy = load_winner_pyramiding_config()
     st.info('Profil par défaut : réglages de production et exécution prudente sur les bougies SIP 5m. '
             'Les ajustements dans ce formulaire restent propres au backtest.')
+    st.caption('Simulation isolée : base en lecture seule, rapports et caches dans son dossier. '
+               'Les nouveaux runs peuvent fonctionner en parallèle du pipeline. Les anciens runs gardent leur verrou initial.')
     st.button('Reprendre les réglages de production',on_click=reset_execution_settings,key='bt_winner_reset_settings')
-    try:
-        policy,policy_changes=render_policy_settings(policy)
-    except ValueError as exc:
-        st.error(f'Réglages Winner invalides : {exc}')
-        st.stop()
     options_config=load_options_filter_config()
     filter_options=st.checkbox('Appliquer le filtre CALL/PUT + OI du pipeline',
         value=False,key='bt_winner_options_filter')
@@ -41,15 +38,11 @@ def render_winner_backtest():
     st.caption('TOP Oracle → filtre options si activé → risque → Winner. Même calcul et '
                'mêmes seuils que le pipeline, avec les données connues au cutoff historique. Aucun appel GPT.')
     with st.expander('Réglages Winner et limites du replay', expanded=True):
-        st.table([{'Paramètre':name,'Valeur':value} for name,value in [
-            ('SL initial',f'{100*policy.stop_loss_pct:g} %'),
-            ('TP',f'{100*policy.take_profit_pct:g} %' if policy.take_profit_pct else 'Désactivé'),
-            ('Trailing',f'{100*policy.trailing_stop_pct:g} %' if policy.trailing_stop_pct else 'Désactivé'),
-            ('Détention maximale',f'{policy.horizon_sessions} séances' if policy.horizon_sessions else 'Sans échéance'),
-            ('Position initiale','Complète' if policy.initial_position_fraction==1 else 'Demi-position'),
-            ('Renforcement','Activé' if policy.reinforcement_enabled else 'Désactivé'),
-            ('Confirmation',f'{policy.confirmation_bars} clôtures de cinq minutes'),
-            ('Attente maximale',f'{policy.entry_valid_sessions} séances')]])
+        try:
+            policy,policy_changes=render_policy_settings(policy)
+        except ValueError as exc:
+            st.error(f'Réglages Winner invalides : {exc}')
+            st.stop()
         st.caption(f'Délai SIP : {policy.market_data_delay_seconds//60} min '
                    f'{policy.market_data_delay_seconds%60:02d} s ; marge limite retardée : '
                    f'{100*policy.delayed_entry_limit_buffer_pct:g} %. Un cours retardé ne devient pas une quote actuelle.')

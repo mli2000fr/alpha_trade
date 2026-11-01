@@ -3186,7 +3186,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
     if use_cache:
         from backtesting.cache import ParquetCache
         cache = ParquetCache(cache_dir=getattr(args, "cache_dir", "artifacts/backtest_cache"), enabled=True)
-        _safe_print(f"   cache=enabled dir={getattr(args, 'cache_dir', 'artifacts/backtest_cache')}\n")
+        _safe_print(f"   cache=enabled dir={cache.cache_dir}\n")
     else:
         from backtesting.cache import ParquetCache
         cache = ParquetCache(enabled=False)

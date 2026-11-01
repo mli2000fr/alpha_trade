@@ -1564,6 +1564,8 @@ def _build_run_options() -> BacktestRunOptions:
         "Le backtest exécute `python -m backtesting run ...` en arrière-plan. "
         "Tous les paramètres CLI sont exposés ci-dessous et les logs sont visibles plus bas dans la page."
     )
+    st.caption('Sans reconstruction ML/sentiment, les nouveaux runs sont isolés en lecture seule et peuvent '
+               'coexister avec le pipeline. Les reconstructions et les autres traitements gardent un verrou exclusif.')
     fractional_prefs = load_persisted_fractional_trading_preferences()
     if BT_RUN_ALLOW_FRACTIONAL_SHARES_KEY not in st.session_state:
         st.session_state[BT_RUN_ALLOW_FRACTIONAL_SHARES_KEY] = bool(fractional_prefs.backtest_enabled)

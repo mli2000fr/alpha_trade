@@ -69,6 +69,7 @@ class BacktestingRunRecord:
     stop_requested: bool = False
     screener_artifacts_dir: str | None = None
     screener_artifact_summary: dict[str, object] | None = None
+    isolation_mode: str = 'EXCLUSIVE_LEGACY'
 
     def to_state(self) -> dict[str, object]:
         return asdict(self)
@@ -216,7 +217,7 @@ def _find_active_backtesting_lock(run_id: str | None = None) -> dict[str, object
     from ihm.services.pipeline_lock import list_active_locks as _list_active_locks
 
     for payload in _list_active_locks():
-        if str(payload.get("scope") or "") != "backtesting":
+        if str(payload.get("scope") or "") not in ("backtesting","backtesting_readonly"):
             continue
         if run_id is not None and str(payload.get("run_id") or "") != str(run_id):
             continue
@@ -264,6 +265,7 @@ def _build_recovered_snapshot_from_lock(payload: dict[str, object]) -> dict[str,
         "is_active": True,
         "recovered_from_lock": True,
         "lock_pid": int(str(payload.get("pid") or 0)),
+        "lock_scope": str(payload.get('scope') or 'backtesting'),
     }
     return snapshot
 
@@ -491,13 +493,9 @@ def start_backtesting_run(
     )
 
     run_id = f"{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}"
-    try:
-        backtest_lock = _acquire_lock("backtesting", owner=f"backtesting:{run_kind}", run_id=run_id)
-    except PipelineLockBusy as exc:
-        raise RuntimeError(
-            f"Verrou pipeline actif : {exc}. "
-            "Attendez la fin du workflow pipeline avant de lancer un backtesting."
-        ) from exc
+    from backtesting.isolation import readonly_run_options
+    isolated=readonly_run_options(run_kind,options)
+    scope='backtesting_readonly' if isolated else 'backtesting'
     env = build_subprocess_env(db_config=db_config)
 
     run_dir = _run_dir_for(run_kind, run_id)
@@ -518,8 +516,23 @@ def start_backtesting_run(
         options = replace(options, output_root=str(artifacts_dir))
 
     command = build_backtesting_command(run_kind, options)
+    if isolated:
+        # Wrapper installs the guards BEFORE importing the actual simulation.
+        command=[command[0],'-B','-u','-m','backtesting.isolated_run',
+            '--workspace',str(run_dir),'--module',command[3],'--',*command[4:]]
+        env['PYTHONDONTWRITEBYTECODE']='1'
     command_display = format_command_for_display(command)
     screener_artifacts_dir = _resolve_screener_artifacts_dir(run_kind, options)
+
+    # Command validation/output preparation must not leave a held lock if they
+    # fail. No simulation has started before this acquisition.
+    try:
+        backtest_lock = _acquire_lock(scope, owner=f"backtesting:{run_kind}", run_id=run_id)
+    except PipelineLockBusy as exc:
+        raise RuntimeError(
+            f"Verrou pipeline actif : {exc}. "
+            "Attendez la fin du workflow pipeline avant de lancer ce backtesting."
+        ) from exc
 
     try:
         process = subprocess.Popen(
@@ -563,6 +576,7 @@ def start_backtesting_run(
         combined_path=str(combined_path),
         timeout_seconds=timeout_seconds,
         screener_artifacts_dir=screener_artifacts_dir,
+        isolation_mode='READ_ONLY_ISOLATED' if isolated else 'EXCLUSIVE_MUTATING_OR_UNQUALIFIED',
     )
     managed = _ManagedRun(
         record=record,
@@ -587,8 +601,9 @@ def list_active_backtesting_runs() -> list[dict[str, object]]:
         if snapshot is not None:
             snapshots.append(snapshot)
 
-    recovered_lock = _find_active_backtesting_lock()
-    if recovered_lock is not None:
+    from ihm.services.pipeline_lock import list_active_locks
+    for recovered_lock in list_active_locks():
+        if recovered_lock.get('scope') not in ('backtesting','backtesting_readonly'):continue
         recovered_run_id = str(recovered_lock.get("run_id") or "")
         if recovered_run_id and all(str(item.get("run_id") or "") != recovered_run_id for item in snapshots):
             snapshots.append(_build_recovered_snapshot_from_lock(recovered_lock))
@@ -638,11 +653,11 @@ def stop_backtesting_run(run_id: str) -> bool:
 
             _release_lock(
                 LockHandle(
-                    scope="backtesting",
+                    scope=active_lock.get('scope') or 'backtesting',
                     owner=str(active_lock.get("owner") or "backtesting:recovered"),
                     run_id=run_id,
                     pid=pid,
-                    path=_lock_path("backtesting"),
+                    path=_lock_path(active_lock.get('scope') or 'backtesting'),
                 )
             )
 

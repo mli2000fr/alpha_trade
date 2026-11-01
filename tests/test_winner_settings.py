@@ -112,3 +112,67 @@ def test_real_form_edits_and_reset_round_trip_without_changing_yaml(monkeypatch,
     assert at.session_state['settings_result']['winner_policy_overrides']=={}
     assert at.session_state['settings_result']['winner_ignore_missing_intraday'] is True
     assert at.session_state['settings_result']['winner_factor_market_cap_check'] is False
+
+
+def test_visible_settings_block_reads_yaml_edits_replay_command_and_resets(tmp_path,monkeypatch):
+    """Controls live in the named block, rather than a closed duplicate panel."""
+    from pathlib import Path
+    import yaml
+    from streamlit.testing.v1 import AppTest
+    from execution_engine.config import LeverageConfig
+    from ihm.services.backtesting_runner import BacktestRunOptions,build_backtesting_command
+    from backtesting.winner_campaign_replay import build_parser
+    configured=WinnerPyramidingConfig(enabled=True,stop_loss_pct=.08,take_profit_pct=.16,
+        trailing_stop_pct=.12,horizon_sessions=15,initial_position_fraction=.5,
+        reinforcement_enabled=True,reinforcement_trigger_pct=.06,confirmation_bars=3,
+        entry_valid_sessions=8,market_data_delay_seconds=930,delayed_entry_limit_buffer_pct=.02,
+        cost_reserve_bps_per_leg=37,standard_entry_quote_check_enabled=False)
+    config_path=tmp_path/'config.yaml'
+    config_path.write_text(yaml.safe_dump(dict(winner_pyramiding=asdict(configured))),encoding='utf-8')
+    original_config=config_path.read_bytes()
+    monkeypatch.setenv('ALPHA_TRADE_CONFIG_PATH',str(config_path))
+    model_root=tmp_path/'models';receipt=model_root/'fixture-model'/'oracle_path'/'report.json'
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text(json.dumps(dict(status='completed',serving_ready=True,horizon=10)))
+    monkeypatch.setattr('ihm.components.winner_backtest.Path',lambda p:model_root if p=='artifacts/models' else Path(p))
+    monkeypatch.setattr('risk_management.config.load_risk_config',lambda **kw:RiskConfig(account_equity=kw['equity']))
+    monkeypatch.setattr('execution_engine.config.load_leverage_config_from_yaml',lambda:LeverageConfig(enabled=False))
+    monkeypatch.setattr('modelFactory.oracle_path.predict.load_contract',lambda *a:(None,{'horizon':10},None,
+        {'2021-07-02':{'metrics':dict(fold_start='2021-07-02',train_available_max='2020-12-30',val_available_max='2021-07-01')}}))
+    def app():
+        from dataclasses import asdict
+        import streamlit as st
+        from ihm.components.winner_backtest import render_winner_backtest
+        st.session_state['settings_result']=asdict(render_winner_backtest())
+    at=AppTest.from_function(app).run(timeout=30)
+    assert not at.exception
+    panel=next(e for e in at.expander if e.label=='Réglages Winner et limites du replay')
+    assert panel.number_input(key='bt_wp_sl').value==8.
+    assert panel.number_input(key='bt_wp_tp').value==16.
+    assert panel.number_input(key='bt_wp_trailing').value==12.
+    assert panel.number_input(key='bt_wp_horizon').value==15
+    assert panel.number_input(key='bt_wp_confirmation').value==3
+    assert panel.number_input(key='bt_wp_validity').value==8
+    assert panel.number_input(key='bt_wp_delay').value==930
+    assert panel.number_input(key='bt_wp_reserve').value==37.
+    assert not any(e.label=='Protections et confirmation Winner' for e in at.expander)
+    assert at.session_state['settings_result']['winner_policy_overrides']=={}
+    for key,value in [('bt_wp_sl',6.),('bt_wp_tp',18.),('bt_wp_trailing',9.),('bt_wp_horizon',10),
+                      ('bt_wp_confirmation',0),('bt_wp_validity',12),('bt_wp_delay',1200),
+                      ('bt_wp_delayed_buffer',.5),('bt_wp_reserve',40.)]:
+        at.number_input(key=key).set_value(value)
+    at.selectbox(key='bt_wp_fraction').select(1.)
+    at.checkbox(key='bt_wp_add').uncheck().run(timeout=30)
+    assert not at.exception
+    options=BacktestRunOptions(**at.session_state['settings_result'])
+    parsed=build_parser().parse_args(build_backtesting_command('run',options)[4:])
+    changes=json.loads(parsed.policy_overrides_json)
+    assert changes==dict(stop_loss_pct=.06,take_profit_pct=.18,trailing_stop_pct=.09,
+        horizon_sessions=10,initial_position_fraction=1.,reinforcement_enabled=False,
+        confirmation_bars=0,entry_valid_sessions=12,market_data_delay_seconds=1200,
+        delayed_entry_limit_buffer_pct=.005,cost_reserve_bps_per_leg=40.)
+    at.button(key='bt_winner_reset_settings').click().run(timeout=30)
+    assert not at.exception and at.session_state['settings_result']['winner_policy_overrides']=={}
+    assert at.number_input(key='bt_wp_sl').value==8.
+    assert at.number_input(key='bt_wp_horizon').value==15
+    assert config_path.read_bytes()==original_config

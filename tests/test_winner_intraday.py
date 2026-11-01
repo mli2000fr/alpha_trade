@@ -268,8 +268,9 @@ def test_metrics_and_sql_source_are_read_only_and_keep_provider_scope():
     assert report['average_gross_capital'] > 0
 
 
-@pytest.mark.parametrize('ignore_missing,missing_bar',[(False,False),(True,False),(True,True)])
-def test_cli_complete_readonly_run_exports_reports_without_api_or_prediction(tmp_path, monkeypatch,ignore_missing,missing_bar):
+@pytest.mark.parametrize('ignore_missing,missing_bar,isolated',[(False,False,False),(True,False,False),(True,True,False),
+                                                            (True,False,True),(True,True,True)])
+def test_cli_complete_readonly_run_exports_reports_without_api_or_prediction(tmp_path, monkeypatch,ignore_missing,missing_bar,isolated):
     from argparse import Namespace
     from hashlib import sha256
     import json
@@ -336,7 +337,13 @@ def test_cli_complete_readonly_run_exports_reports_without_api_or_prediction(tmp
         account_type='margin', margin_interest_annual=.065,max_positions=12,
         risk_overrides_json='{"risk_per_trade_pct":0.02,"min_position_notional":20.0}',
         policy_overrides_json='{"stop_loss_pct":0.07,"horizon_sessions":10}',ignore_missing_intraday=ignore_missing)
-    report = run(options)
+    if isolated:
+        from backtesting.isolation import ReadOnlyReplay
+        with ReadOnlyReplay(tmp_path).install():
+            report=run(options)
+        assert json.loads((tmp_path/'isolation.json').read_text())['violations']==[]
+    else:
+        report = run(options)
     assert report['status'] == ('INCOMPLETE_COVERAGE' if missing_bar else 'COMPLETED_EXPLORATORY')
     assert report['costs'] == 0 if missing_bar else report['costs'] > 0
     assert report['missing_intraday_screen']['enabled'] is ignore_missing

@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime, timedelta
 import argparse
 import hashlib
 import json
+import logging
 from pathlib import Path
 import uuid
 
@@ -21,10 +22,50 @@ from database.risk_factor_inputs import snapshots, require_schema
 from selector.config import AlphaScannerConfig
 from selector.factors import compute_factor_frame
 
-PROTOCOL = 'daily-risk-inputs-unfiltered-v2'
+PROTOCOL = 'daily-risk-inputs-qualified-provider-fallback-v3'
 UNIVERSE = 'universe-file:config/univers_batch/univers_filtred_tradable.txt'
 HISTORY_SESSIONS = 272
 CAP_MAX_AGE_DAYS = 30
+LOG=logging.getLogger(__name__)
+
+
+def qualified_daily_rows(frame):
+    numbers=frame[['open','high','low','close','volume']].apply(pd.to_numeric,errors='coerce')
+    return (np.isfinite(numbers.to_numpy(dtype=float)).all(axis=1) & numbers.gt(0).all(axis=1)
+        & numbers.high.ge(numbers[['open','close']].max(axis=1))
+        & numbers.low.le(numbers[['open','close']].min(axis=1))
+        & pd.to_numeric(frame.is_filled,errors='coerce').eq(0))
+
+
+def select_factor_bars(frame, *, config=None):
+    """Preferred complete row first; a qualified known alternative if invalid.
+
+    Does not modify canonical bars or mix one provider's prices with another's
+    volume. The same declared adjustment is required for any substitution.
+    Ambiguous duplicates still fail in the shared selector.
+    """
+    selected=select_daily_bars(frame,config=config)
+    fallbacks={}
+    if selected.empty or 'data_source' not in frame or 'data_adjustment' not in frame:
+        return selected,fallbacks
+    for index,row in selected.loc[~qualified_daily_rows(selected)].iterrows():
+        if row.data_source not in ('alpaca_sip','eodhd_eod') or row.data_adjustment!='split':
+            continue
+        alternative=frame.loc[frame.symbol.eq(row.symbol) & frame.date.eq(row.date)
+            & frame.data_source.isin(['alpaca_sip','eodhd_eod']) & frame.data_source.ne(row.data_source)
+            & frame.data_adjustment.eq(row.data_adjustment)]
+        alternative=alternative.loc[qualified_daily_rows(alternative)]
+        if len(alternative)!=1:
+            continue
+        replacement=alternative.iloc[0]
+        selected.loc[index,:]=replacement[selected.columns]
+        receipt=dict(date=pd.Timestamp(row.date).date().isoformat(),
+            rejected_source=row.data_source,selected_source=replacement.data_source,
+            reason='PREFERRED_DAILY_OHLCV_OR_FILL_INVALID')
+        fallbacks.setdefault(row.symbol,[]).append(receipt)
+        LOG.warning('Facteurs %s %s : ligne %s invalide ; ligne complète %s qualifiée utilisée',
+            row.symbol,receipt['date'],row.data_source,replacement.data_source)
+    return selected,fallbacks
 
 
 def utc(value):
@@ -82,7 +123,7 @@ def calculate_inputs(bars, cap_rows, symbols, asof, cutoff, sessions, *, config=
     data = bars.copy()
     data['date'] = pd.to_datetime(data['date'])
     data = data.loc[data['date'].dt.date.le(asof)]
-    data = select_daily_bars(data, config=config)
+    data,bar_fallbacks = select_factor_bars(data, config=config)
     data = data.loc[data['date'].dt.date.isin(sessions)].sort_values(['symbol','date'])
     caps = select_caps(cap_rows, asof, cutoff,allow_reconstructed=allow_reconstructed_caps) if require_market_cap else {}
     spy = data.loc[data.symbol.eq('SPY')].set_index('date')['close'].astype(float)
@@ -133,6 +174,7 @@ def calculate_inputs(bars, cap_rows, symbols, asof, cutoff, sessions, *, config=
         prices_hash = (hashlib.sha256(pd.util.hash_pandas_object(frame, index=False).values.tobytes()).hexdigest()
                        if frame is not None else None)
         details = dict(protocol=PROTOCOL, reasons=errors, sessions=len(sessions), price_hash=prices_hash,
+            daily_bar_fallbacks=bar_fallbacks.get(symbol,[]),
             benchmark_hash=hashlib.sha256(pd.util.hash_pandas_object(spy,index=True).values.tobytes()).hexdigest(),
             cap_record_id=cap['id'] if cap else None, cap_source=cap['source'] if cap else None,
             cap_available_date=str(cap['available_date']) if cap else None,
@@ -175,7 +217,7 @@ def refresh_inputs(engine, asof, *, required=(), symbols=None, cutoff=None, forc
     if not force and not cached.empty:
         return cached
     sessions = expected_sessions(asof)
-    query = text('SELECT symbol,date,open,high,low,close,volume,data_source,is_filled FROM stock_bars_daily '
+    query = text('SELECT symbol,date,open,high,low,close,volume,data_source,is_filled,data_adjustment FROM stock_bars_daily '
         'WHERE symbol IN :symbols AND date BETWEEN :start AND :end').bindparams(bindparam('symbols', expanding=True))
     caps_query = text('SELECT id,symbol,market_cap,source,currency,observation_date,available_date,computed_at '
         'FROM stock_market_cap_daily WHERE symbol IN :symbols AND observation_date BETWEEN :start AND :end '
