@@ -1,4 +1,4 @@
-"""Focused Winner backtest form; no broker, prediction or provider call."""
+"""Focused Winner backtest form; recovery may call historical data providers."""
 from datetime import date, timedelta
 from pathlib import Path
 import json
@@ -99,11 +99,12 @@ def render_winner_backtest():
         value='universe-file:config/univers_batch/univers_filtred_tradable.txt', key='bt_winner_universe')
     ignore_missing=st.checkbox('Ignorer automatiquement les titres aux données intraday manquantes',
         value=True,key='bt_winner_ignore_missing_intraday',
-        help='Contrôle les fenêtres potentielles d’entrée et de détention avant la simulation. Un titre incomplet est exclu sur toute la période, sans remplacement dans le TOP Oracle.')
+        help='Tente Alpaca SIP, puis Yahoo, puis EODHD. Si les bougies restent manquantes, bloque uniquement les dates d’entrée dont la détention pourrait traverser ces lacunes ; aucun remplacement Oracle.')
     if ignore_missing:
-        st.warning('Mode diagnostic : exclusion préalable des titres incomplets sur toute la période. '
+        st.warning('Rattrapage des bougies manquantes : Alpaca SIP → Yahoo → EODHD. '
+                   'Les entrées incompatibles avec les lacunes restantes sont écartées par date, sans exclure le titre sur toute la période. '
                    'Ce contrôle utilise la disponibilité future des données et peut biaiser le résultat. '
-                   'Les titres et dates exclus seront consignés dans le rapport et le log final.')
+                   'Les appels utilisent tes comptes et quotas existants. Les titres et dates exclus seront consignés dans le rapport et le log final.')
     top = st.number_input('Nombre de premiers titres Oracle', min_value=1, max_value=1000,
                           value=options_config.oracle_top_n, key='bt_winner_top')
     equity = st.number_input('Capital initial ($)', min_value=1., value=4000., key='bt_winner_equity')

@@ -539,25 +539,60 @@ détention, bornée par la fin du replay. Sans horizon, la fenêtre va jusqu'à
 la fin du replay. Les fenêtres qui se chevauchent sont regroupées. Il ne
 contrôle pas les années antérieures au premier signal d'un titre.
 
-Une séance incomplète dans ces fenêtres exclut automatiquement le titre de
-**tout le nouveau run**, avant toute ouverture de position. Ce contrôle est
-conservateur : une lacune peut exclure un titre même si le replay n'aurait
-finalement pas détenu sa position ce jour-là.
+**Évolution du 1er novembre 2026 :** les nouveaux runs tentent un rattrapage
+**Alpaca SIP → Yahoo → EODHD**, uniquement sur les séances incomplètes. Les
+réponses sont requalifiées : grille 5m, séance officielle, OHLCV positifs,
+absence de doublons, durée et provenance. Les cours SIP existants sont
+prioritaires ; seuls leurs timestamps manquants peuvent être ajoutés.
+
+Yahoo/EODHD ne sont pas renommés SIP. Avant un complément, il faut au moins
+trois bougies communes de la même séance avec le SIP brut, et tous les OHLC
+communs doivent être à moins de 1 %. Sinon la base de prix est jugée
+incompatible ou non vérifiable et le complément est refusé. Une séance
+entièrement absente sans ancrage SIP ne peut donc pas être réparée par un
+autre fournisseur sur la seule foi de sa réponse.
+
+Un échec fournisseur passe au suivant ; aucun achat d'abonnement, contournement
+de refus d'accès ou remplacement par IEX/daily. Un 401/403/429 ou circuit/quota
+épuisé suspend ce fournisseur pour le run ; les autres restent essayés.
+Yahoo est interrogé avec une pause aléatoire de 1 à 5 secondes. Lorsqu'il
+annonce explicitement sa limite glissante de 60 jours, les dates plus anciennes
+ne provoquent plus d'appels Yahoo répétés. Ses bougies 5m ne constituent pas un
+historique sur plusieurs années.
+
+Si une lacune subsiste, **le titre n'est plus exclu de tout le run**. Le replay
+bloque une entrée à une date donnée si la séance précédente (référence), la
+séance d'entrée ou sa détention possible jusqu'à l'ouverture de sortie contient
+cette lacune. Un même trou peut donc bloquer plusieurs dates d'entrée voisines,
+mais pas toutes les années. Le plan non exécuté peut retenter plus tard dans
+sa validité initiale. Sans horizon, le contrôle porte jusqu'à la fin du replay.
 
 La validation des scores, leur traçabilité et la couverture Oracle portent
-toujours sur l'univers demandé. L'exclusion intervient après le classement
-TOP-N, avant le filtre options éventuel, le risque et la création des plans.
+toujours sur l'univers demandé. Le blocage intervient après le classement
+TOP-N et le filtre options éventuel, à l'admission d'entrée par le replay.
 Elle conserve les rangs d'origine, **sans reprendre le rang N+1**. Une liste
 qui retire tous les candidats laisse le portefeuille en liquidités.
 
-Le protocole et le rapport conservent les symboles exclus, le nombre de
-signaux retirés, le hash de la sélection d'origine et le reçu du contrôle de
-couverture. `excluded-signals.csv` liste les signaux écartés ;
+Le protocole et le rapport conservent les lacunes restantes, le hash de la
+sélection d'origine et le reçu du contrôle de couverture.
+`entry-exclusions.csv` donne **symbole, date d'entrée interdite, dates des
+lacunes et motif** ; le même tableau est écrit intégralement dans le journal
+final, y compris après un échec. Il recense les plans bloqués, sans prétendre
+qu'ils auraient tous donné un trade. `excluded-signals.csv` reste réservé aux
+exclusions manuelles sur toute la période ;
 `missing-intraday.json` et `missing-intraday.csv` détaillent les titres,
 dates et nombres de bougies absentes/non qualifiées. Le journal final liste
-chaque titre exclu, le nombre de séances incomplètes et leurs premières
-dates, également si une autre erreur termine ensuite le replay. Le suivi
-affiche d'abord la phase de contrôle, puis la simulation.
+les dates d'entrée écartées. Le suivi affiche d'abord le contrôle, puis le
+rattrapage (`RECOVER_INTRADAY`), puis la simulation.
+
+`intraday-recovery.json` détaille essais, erreurs, fournisseurs suspendus et
+compléments utilisés. Les réponses natives sont conservées avec SHA256 et
+heure réelle de téléchargement sous `artifacts/winner_intraday_recovery`,
+avec objets immuables par contenu. Le cache d'une requête est réutilisé 24 h,
+puis rafraîchissable sans supprimer les anciens objets cités par les reçus.
+Les compléments constituent une surcouche du replay, **aucune écriture SQL
+ni modification des tables canoniques**. Un backtest ultérieur réutilise le
+cache sans confondre ces réponses avec des archives connues à l'époque.
 
 Avec au moins une exclusion automatique, le résultat reste
 `INCOMPLETE_COVERAGE` (orange), avec les résultats du sous-ensemble retenu.
@@ -570,9 +605,10 @@ Le moteur ne fait jamais disparaître une position déjà ouverte quand un
 trou survient et ne remplit pas une bougie absente. Les contrôles de prix
 daily, d'identité, d'actions sur titres et de risque restent actifs : cette
 option concerne uniquement la couverture intraday. Elle nécessite un
-nouveau run ; elle ne répare ni ne reprend automatiquement le run échoué.
+nouveau run ; elle ne reprend pas automatiquement le run échoué.
 
-Vérification locale SELECT-only sur les signaux de janvier, jusqu'au
+**Constat antérieur au changement de politique** : vérification locale
+SELECT-only sur les signaux de janvier, jusqu'au
 31/01/2025 : **43 titres contrôlés, 21 exclus, 202 séances incomplètes**,
 dont la lacune SDGR du 31 janvier. Ce constat de couverture n'est pas une
 mesure de performance. Preuves :
@@ -584,10 +620,24 @@ La commande manuelle `--exclude-symbols SDGR` reste disponible pour les
 anciens scripts ; elle n'est plus proposée dans le formulaire. Un symbole
 manuel invalide ou absent de l'univers demandé est refusé explicitement.
 
-Validation de cette option : **52 tests distincts réussis**, couvrant le
+Validation initiale de l'ancienne politique : **52 tests distincts réussis**, couvrant le
 formulaire et sa remise à zéro, le défaut strict, le contrôle SELECT-only,
 les demi-séances, la conservation des rangs, le replay avec les autres titres
 et les exports complets lorsque tous les candidats sont exclus.
+
+Validation du raccordement du 1er novembre : **101 tests réussis** (rattrapage,
+cache/provenance, erreurs et limites fournisseurs, TLS vérifié EODHD,
+reprise du même titre à une date ultérieure, positions/protections conservées,
+options, horloge retardée, formulaire et export complet en SQL lecture seule).
+
+Essai fournisseur borné réel : **SDGR, 31/01/2025**. Alpaca SIP renvoie
+toujours 77/78 bougies ; Yahoo refuse la plage (HTTP 422). Après correction
+de la session TLS du nouvel appel, EODHD répond `EodhdPermissionError` :
+la bougie reste non récupérée. Reçus initiaux dans
+`artifacts/operations/winner_recovery_probe_20261101/intraday-recovery.json`,
+et vérification EODHD finale dans le sous-dossier `verified-output`.
+Cet essai porte sur la récupération, sans replay économique ni écriture SQL.
+Les précédents résultats de backtest ne sont pas modifiés ni recalculés.
 
 ### Contrat SIP du watcher en exploitation (rappel)
 

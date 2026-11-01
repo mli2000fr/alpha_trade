@@ -206,8 +206,19 @@ leur ancien script interactif ; la commande simple reste utilisable.
 
 Depuis une IHM déjà installée : renseigner **Vérifier / restaurer**, lancer la
 prévisualisation, examiner les bases/racines remplacées, puis confirmer le
-remplacement. Les champs de mots de passe sont effacés après chaque opération :
-les ressaisir pour la restauration. Le worker détaché attend au maximum quinze
+remplacement. Le mot de passe des packages se renseigne **en haut de T5.6** ;
+il s'agit du mot de passe choisi lors de la sauvegarde, distinct du mot de
+passe MySQL du PC cible. La prévisualisation demande aussi le répertoire
+contenant `manifest.json`, le projet cible, l'utilisateur et le mot de passe
+MySQL cible. Son bouton reste cliquable : si un champ manque, l'IHM le précise
+et ne lance aucun worker. Aucun remplacement n'est effectué par cette étape.
+
+Les mots de passe restent en mémoire de session après **Vérifier les packages**
+et **Prévisualiser** pour permettre leur enchaînement. Ils sont effacés après
+le lancement d'une sauvegarde, restauration ou récupération ; aucune valeur
+n'est inscrite dans le journal ou la commande. Un nouveau plan remet à zéro
+la confirmation du remplacement et son résultat possède un état distinct de
+celui du bouton. Le worker détaché attend au maximum quinze
 minutes la fermeture des services du PC cible. Il ne ferme rien lui-même.
 
 L'opération :
