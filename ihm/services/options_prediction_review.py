@@ -8,6 +8,24 @@ from service.options_directional import store
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
+def execution_publication_block_reason(options, records):
+    if not options.options_filter_enabled:
+        return None
+    run_id=options.options_filter_run_id
+    if not run_id or run_id=='auto':
+        predictions=[r for r in records if r.get('step_key')=='ml_predict' and not r.get('history_deleted')]
+        source=max(predictions,key=lambda r:str(r.get('actual_started_at') or r.get('executed_at') or ''),default={})
+        run_id=(source.get('run_summary') or {}).get('options_filter_run_id')
+    if not run_id:
+        return None  # The ordinary context/CLI checks still apply.
+    try:
+        from service.options_directional.accounts import load_risk_publication
+        load_risk_publication(store.sealed_report(run_id),options.account_id or 'default')
+    except (ValueError,OSError,KeyError) as exc:
+        return str(exc)
+    return None
+
+
 def load_options_prediction_review(run_id, *, symbol_source, project_root=None,shared_selection=False, **context):
     """Accept a display alias only when both files match the sealed universe.
 

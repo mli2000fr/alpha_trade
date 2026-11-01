@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import pytest
 from ihm.services import watcher_runtime
+
+
+@pytest.fixture(autouse=True)
+def no_real_lease_cleanup(monkeypatch):
+    monkeypatch.setattr(watcher_runtime,'_force_release_local_watcher_leader_lock',lambda *a:None)
 
 
 class _Record:

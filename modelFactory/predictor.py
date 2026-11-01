@@ -3157,6 +3157,7 @@ def cascade_select(
     oracle_filter_pct: float | None = None,
     oracle_pool_pct: float | None = None,
     extreme_gate_pct: float | None = None,
+    extreme_gate_top_n: int | None = None,
     extreme_gate_per_symbol: str = "filter",
     extreme_gate_shorts: bool = False,
     extreme_gate_direction_margin: float = 0.02,
@@ -3215,6 +3216,10 @@ def cascade_select(
     _mode_extreme_gate_legacy = rank_mode == "extreme_gate"
     _mode_extreme_gate_directional = rank_mode == "extreme_gate_directional"
     _mode_extreme_gate = _mode_extreme_gate_legacy or _mode_extreme_gate_directional
+    if extreme_gate_top_n is not None and (
+        isinstance(extreme_gate_top_n, bool) or extreme_gate_top_n not in (10, 20, 50)
+    ):
+        raise ValueError("TOP Oracle : choisir 10, 20 ou 50 titres")
     _tradable_policy = str(oracle_tradable_policy or "off").strip().lower()
     # E17 : rôle du modèle per-symbol dans la branche extreme_gate.
     #   "filter"    = A actuel : veto long_prob > _min_prob + score = rank × long_prob
@@ -3239,6 +3244,16 @@ def cascade_select(
             tradable_symbols=oracle_tradable_symbols,
             policy=_tradable_policy,
         )
+        # Fix the Oracle pool before ATR and per-symbol vetoes. Rejected
+        # candidates do not cause rank N+1 to enter the requested TOP N.
+        _fixed_oracle_pool = None
+        if extreme_gate_top_n is not None:
+            _pool_scores = _oracle_pct_map
+            if _tradable_policy == "top20_then_filter":
+                _pool_scores, _ = prepare_oracle_tradable_percentiles(oracle_rank_map[trade_date])
+            _fixed_oracle_pool = set(sorted(
+                _pool_scores, key=lambda s: (-_pool_scores[s], s),
+            )[:extreme_gate_top_n])
         from common.oracle_atr import resolve_oracle_atr_enabled, load_oracle_atr_by_date, filter_oracle_atr_percentiles
         _atr_enabled = resolve_oracle_atr_enabled(
             _cfg.get("oracle_atr_enabled", False) if oracle_atr_enabled is None else oracle_atr_enabled
@@ -3248,8 +3263,14 @@ def cascade_select(
             if _atr_values is None:
                 _atr_values = load_oracle_atr_by_date(engine, list(_oracle_pct_map), [trade_date]).get(trade_date, {})
             _oracle_pct_map, _atr_diag = filter_oracle_atr_percentiles(
-                _oracle_pct_map, _atr_values, oracle_pool_pct=_extreme_gate_pct, trade_date=trade_date,
+                _oracle_pct_map, _atr_values,
+                oracle_pool_pct=(1.0 if _fixed_oracle_pool is not None else _extreme_gate_pct),
+                trade_date=trade_date,
             )
+        if _fixed_oracle_pool is not None:
+            _oracle_pct_map = {s: _oracle_pct_map[s] for s in sorted(
+                _oracle_pct_map, key=lambda s: (-_oracle_pct_map[s], s),
+            ) if s in _fixed_oracle_pool}
         _oracle_symbols = list(_oracle_pct_map)
         _oracle_pct_values = list(_oracle_pct_map.values())
         ranks_df = pd.DataFrame({
@@ -3262,8 +3283,9 @@ def cascade_select(
         if _extreme_gate_cfg.get("min_prob") is not None:
             _min_prob = float(_extreme_gate_cfg["min_prob"])
         LOGGER.info(
-            "cascade_select: EXTREME_GATE top %d%% par proba_extreme (%d symbols, percentile du jour)",
-            int(round(_extreme_gate_pct * 100)), len(ranks_df),
+            "cascade_select: EXTREME_GATE %s par proba_extreme (%d symbols, percentile du jour)",
+            (f"TOP {extreme_gate_top_n}" if extreme_gate_top_n is not None
+             else f"top {int(round(_extreme_gate_pct * 100))}%"), len(ranks_df),
         )
         if _tradable_policy != "off":
             LOGGER.info(
@@ -3447,7 +3469,8 @@ def cascade_select(
         # Filtre top/bottom N% — EXTREME GATE : univers = top pool_pct par proba_extreme
         # (percentile du jour), LONG-only, indépendant de B25.
         if _mode_extreme_gate:
-            is_top = rank is not None and rank >= (1.0 - _extreme_gate_pct)
+            is_top = (symbol in _fixed_oracle_pool if _fixed_oracle_pool is not None
+                      else rank >= (1.0 - _extreme_gate_pct))
             is_bottom = False  # LONG-only
         elif _mode_oracle_pool:
             _in_top_pool = rank > (1.0 - _pool_top_pct)
@@ -3774,6 +3797,7 @@ def apply_cascade_to_predictions(
     oracle_filter_pct: float | None = None,
     oracle_pool_pct: float | None = None,
     extreme_gate_pct: float | None = None,
+    extreme_gate_top_n: int | None = None,
     extreme_gate_per_symbol: str = "filter",
     extreme_gate_shorts: bool = False,
     extreme_gate_direction_margin: float = 0.02,
@@ -3996,6 +4020,7 @@ def apply_cascade_to_predictions(
             oracle_filter_pct=oracle_filter_pct,
             oracle_pool_pct=oracle_pool_pct,
             extreme_gate_pct=extreme_gate_pct,
+            extreme_gate_top_n=extreme_gate_top_n,
             extreme_gate_per_symbol=_eg_ps_mode,
             extreme_gate_shorts=_eg_shorts,
             extreme_gate_direction_margin=extreme_gate_direction_margin,

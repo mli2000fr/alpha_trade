@@ -62,3 +62,17 @@ def validate_risk_binding(report,binding,summary,account_id):
         raise ValueError('Lien risque/options hors compte ou altéré')
     if account_id!='default' and binding.get('binding_protocol')!=BINDING_PROTOCOL:
         raise ValueError('Lien risque multicomptes non qualifié')
+
+
+def load_risk_publication(report,account_id):
+    """Only the current publication, never a manually invalidated archive."""
+    import json
+    folder=consumer_directory(report['run_id'],account_id)
+    try:
+        binding,summary=[json.loads((folder/name).read_text(encoding='utf-8'))
+                         for name in ('risk_binding.json','risk_summary.json')]
+    except FileNotFoundError as exc:
+        raise ValueError(f'Étape 11 absente ou réinitialisée pour le compte {account_id}. '
+                         'Relancer l’étape 11, puis l’étape 12. Aucun ancien résultat risque restauré automatiquement.') from exc
+    validate_risk_binding(report,binding,summary,account_id)
+    return binding,summary

@@ -112,6 +112,8 @@ def ensure_watcher(engine, options, *, directory, stop_event, timeout_seconds=ST
                 raise RuntimeError('Watcher déjà démarré mais non sain ; étape 12 bloquée sans nouveau démarrage')
             stop_event.wait(.5)
         raise RuntimeError('Attente watcher annulée ; aucune étape 12 lancée')
+    from execution_engine.watcher_lease import release_dead_local_watcher_lease
+    release_dead_local_watcher_lease(engine, account)
     directory = Path(directory)/f'watcher-{uuid.uuid4().hex[:8]}'
     directory.mkdir(parents=True, exist_ok=False)
     command = build_watcher_command(mode='service', account_id=account, broker_mode='paper',

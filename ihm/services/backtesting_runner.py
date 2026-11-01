@@ -84,6 +84,7 @@ class BacktestRunOptions:
     cascade_min_prob: float | None = None
     # Pool Oracle Extreme (indépendant de cascade.top_pct / Global Rank).
     extreme_gate_pct: float | None = 0.20
+    extreme_gate_top_n: int | None = None
     # Persistent Rank DIP filter — overrides config.yaml
     # (persistent_dip_filter_long.backtest_*). None = lire config.yaml. L'IHM
     # préremplit ces champs avec les valeurs par défaut du config.yaml (l'utilisateur
@@ -469,12 +470,15 @@ def build_backtesting_command(
             "extreme_gate", "extreme_gate_directional",
         ):
             command.extend(["--oracle-calibration", options.oracle_calibration])
-        if (
-            options.cascade_rank_mode in ("extreme_gate", "extreme_gate_directional")
-            and options.extreme_gate_pct is not None
-            and float(options.extreme_gate_pct) > 0
-        ):
+        # Also pass the scope in standard mode: Oracle-only campaigns are
+        # detected by the CLI and switch to Extreme Gate there.
+        if options.extreme_gate_top_n is not None:
+            if options.extreme_gate_top_n not in (10, 20, 50):
+                raise ValueError("TOP Oracle : choisir 10, 20 ou 50 titres")
+            command.extend(["--extreme-gate-top-n", str(options.extreme_gate_top_n)])
+        elif options.extreme_gate_pct is not None and float(options.extreme_gate_pct) > 0:
             command.extend(["--extreme-gate-pct", str(float(options.extreme_gate_pct))])
+        if options.cascade_rank_mode in ("extreme_gate", "extreme_gate_directional"):
             command.extend(["--extreme-gate-per-symbol", options.extreme_gate_per_symbol])
             command.extend([
                 "--oracle-tradable-policy",

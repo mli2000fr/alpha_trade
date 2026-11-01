@@ -1683,6 +1683,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="E6-E13 : pool_pct du gate Extreme pour --cascade-rank-mode extreme_gate (défaut 0.20).",
     )
     run_p.add_argument(
+        "--extreme-gate-top-n",
+        type=int,
+        choices=[10, 20, 50],
+        default=None,
+        help="Nombre fixe de premiers titres Oracle par séance ; prioritaire sur --extreme-gate-pct. "
+             "Les filtres suivants peuvent réduire cette sélection, sans remplacement.",
+    )
+    run_p.add_argument(
         "--extreme-gate-per-symbol",
         choices=["filter", "no_filter", "bypass"],
         default="filter",
@@ -3894,6 +3902,7 @@ def _run_backtest(args: argparse.Namespace) -> None:
                 oracle_filter_pct=getattr(args, "cascade_oracle_filter_pct", None),
                 oracle_pool_pct=getattr(args, "cascade_oracle_pool_pct", None),
                 extreme_gate_pct=getattr(args, "extreme_gate_pct", None),
+                extreme_gate_top_n=getattr(args, "extreme_gate_top_n", None),
                 extreme_gate_per_symbol=getattr(args, "extreme_gate_per_symbol", "filter"),
                 extreme_gate_shorts=bool(getattr(args, "extreme_gate_shorts", False)),
                 extreme_gate_direction_margin=float(getattr(args, "extreme_gate_direction_margin", 0.02) or 0.0),
@@ -4798,6 +4807,14 @@ def _run_backtest(args: argparse.Namespace) -> None:
             "predictions": preds_df if isinstance(preds_df, pd.DataFrame) else None,
         },
     )
+    if _rank_mode_eff in ("extreme_gate", "extreme_gate_directional"):
+        run_metadata["oracle_selection"] = {
+            "mode": "top_n" if getattr(args, "extreme_gate_top_n", None) is not None else "percentile",
+            "top_n": getattr(args, "extreme_gate_top_n", None),
+            "pool_pct": (None if getattr(args, "extreme_gate_top_n", None) is not None
+                         else getattr(args, "extreme_gate_pct", None)),
+            "rank_mode": _rank_mode_eff,
+        }
 
     if output_dir is not None:
         _safe_print("📝 Sauvegarde du rapport structuré...")

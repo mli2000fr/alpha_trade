@@ -1949,6 +1949,9 @@ def _render_launchable_step_panel(
             state_machine_lock_reason = _pipeline_state_machine_lock_reason(step.key, latest_by_step)
             if llm_handoff is not None and llm_handoff.error:
                 state_machine_lock_reason = llm_handoff.error
+            if step.key == 'execution' and options.options_filter_enabled:
+                from ihm.services.options_prediction_review import execution_publication_block_reason
+                state_machine_lock_reason = execution_publication_block_reason(options,all_runs) or state_machine_lock_reason
             live_guard_lock_reason = (
                 "Gel IHM actif : un run d'exécution live est encore en cours."
                 if bool(live_guard.get("active", False))
@@ -2161,7 +2164,6 @@ def render() -> None:
         if st.button('Consulter la sélection et les motifs', key='llm_directional_audit_load',
                      disabled=not bool(_llm_audit_id.strip())):
             try:
-                from database.connection import get_sqlalchemy_engine
                 from service.llm_directional.report import report as _llm_report
                 _llm_audit = _llm_report(get_sqlalchemy_engine(), _llm_audit_id.strip())
                 st.caption(f"{_llm_audit['status']} · {_llm_audit['trade_date']} · batch {_llm_audit['batch_id']}")
@@ -2184,6 +2186,9 @@ def render() -> None:
 
     _render_workflow_launcher(options, live_confirmed, db_config)
     _render_runtime_center()
+    from ihm.components.pipeline_unlock import render_pipeline_unlock
+    _, unlock_records, _, _, _ = _build_pipeline_run_context()
+    render_pipeline_unlock(get_sqlalchemy_engine, options, unlock_records)
     _render_step_panels(options, live_confirmed, db_config, live_guard)
     # Keep the dialog independent from the 2-second polling fragment: its
     # period widgets must remain registered after each pipeline refresh.

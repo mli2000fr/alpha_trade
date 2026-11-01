@@ -78,6 +78,29 @@ def test_winner_step12_stages_approved_budget_not_immediate_broker_buy():
     assert store.rows()[0]['state']['risk_budget'] == 1000.
 
 
+def test_winner_unfundable_target_is_reported_without_aborting_fundable_campaign():
+    from common.winner_pyramiding import WinnerPyramidingConfig
+    from execution_engine.winner_campaign_store import WinnerCampaignStore
+    from sqlalchemy import create_engine
+    cfg = ExecutionConfig(dry_run=False, allow_outside_rth=True,
+        winner_pyramiding=WinnerPyramidingConfig(enabled=True, initial_position_fraction=1.))
+    funded = replace(_target('FUNDED'), trade_date=date(2026, 10, 16))
+    unfunded = replace(funded, symbol='UNFUNDED', target_shares=1, risk_budget_dollars=1.)
+    executor, repo, broker, _ = _make_executor(cfg, [funded, unfunded])
+    broker.get_all_positions.return_value = []
+    store = WinnerCampaignStore(create_engine('sqlite://'))
+    with patch('execution_engine.winner_plans.require_campaign_watcher'), patch(
+            'execution_engine.winner_campaign_store.WinnerCampaignStore', return_value=store):
+        metrics = executor.execute_run('r1', date(2026, 10, 16))
+    assert metrics['status'] == 'COMPLETED', metrics
+    assert metrics['winner_plans_armed'] == 1
+    assert metrics['winner_plans_existing'] == 0
+    assert metrics['winner_plans_insufficient_budget'] == 1
+    assert metrics['skipped'] == 1
+    assert {r['state']['symbol'] for r in store.rows()} == {'FUNDED'}
+    broker.submit_intent.assert_not_called()
+
+
 @pytest.mark.parametrize('needs_review', [False, True])
 def test_winner_zero_step12_submits_standard_path_but_not_legacy_buy_or_protections(needs_review):
     from common.winner_pyramiding import WinnerPyramidingConfig

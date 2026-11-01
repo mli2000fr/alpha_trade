@@ -36,8 +36,8 @@ RESTORE={'VERIFYING':(0,12),'RESTORE_PREFLIGHT':(12,18),'STAGING':(18,35),
          'BACKUP_EXISTING':(35,55),'DATABASE_REPLACEMENT':(55,78),'DATABASE_VALIDATION':(78,85),
          'FILE_REPLACEMENT':(85,93),'USER_ENVIRONMENT':(93,95),'FINALIZING':(95,97),
          'RESTORED_PAUSED':(97,97),'BUILDING_PYTHON':(97,99)}
-NUMBERS={'completed','total','part_index','parts_total','files_done','files_total','processed_bytes','total_bytes','owner_pid','directories_done','inventory_files','inventory_bytes'}
-TEXT={'database','package','item','unit','error_code'}
+NUMBERS={'completed','total','part_index','parts_total','files_done','files_total','processed_bytes','total_bytes','owner_pid','directories_done','inventory_files','inventory_bytes','filesystem_errno','filesystem_winerror'}
+TEXT={'database','package','item','unit','error_code','failed_path','file_error','failure_reason','cause_type','recovery_source'}
 TERMINAL={'COMPLETE','FINISHED','FAILED','CANCELED','FAILED_ROLLED_BACK','FAILED_ROLLBACK_INCOMPLETE','RECOVERED_PAUSED'}
 
 
@@ -55,13 +55,13 @@ class Progress:
         phase=phase or self.state['phase'];old=self.state
         if phase in TERMINAL and phase==old['phase'] and fields.get('error_code',old.get('error_code'))==old.get('error_code'):return
         context_change=(phase!=old['phase'] or any(k in fields and fields[k]!=old.get(k) for k in ('database','package')))
-        if context_change:
+        if context_change and phase not in ('FAILED','CANCELED'):
             for key in (NUMBERS|TEXT)-{'inventory_files','inventory_bytes'}:self.state.pop(key,None)
         self.state['phase']=phase
         for key,value in fields.items():
             if key in NUMBERS and (value is None or type(value) in (int,float) and value>=0):self.state[key]=value
             elif key in TEXT and isinstance(value,str):
-                if key!='error_code' or value in MESSAGES:self.state[key]=' '.join(value.split())[:180]
+                if key!='error_code' or value in MESSAGES:self.state[key]=' '.join(value.split())[:1024 if key in ('item','failed_path','recovery_source','failure_reason') else 180]
         self.state['status']=phase if phase in TERMINAL else 'RUNNING'
         if fields.get('warning') is True:self.state['warning']=True
         ranges=(EXPORT if self.operation=='export' else RESTORE if self.operation=='restore' else
@@ -86,6 +86,8 @@ class Progress:
         message=LABELS[phase]
         for key in ('database','package','item'):
             if self.state.get(key):message+=' — '+self.state[key]
+        if self.state.get('failure_reason'):message+=' — '+self.state['failure_reason']
+        if self.state.get('recovery_source'):message+=' — version archivée vérifiée : '+self.state['recovery_source']
         if self.state.get('error_code') in MESSAGES:message+=' — '+MESSAGES[self.state['error_code']]
         if self.state.get('owner_pid'):message+=f" — PID {self.state['owner_pid']}"
         if self.state.get('processed_bytes') is not None:
