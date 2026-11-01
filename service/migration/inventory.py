@@ -19,6 +19,9 @@ def excluded(relative):
     if any(p in SKIP_DIR for p in parts):return True
     if relative.name.startswith(('.alpha_trade_migration','.alpha_trade_restore')):return True
     if relative.name.endswith(('.pyc','.pid','.lock')):return True
+    # Atomic JSON writers replace these short-lived siblings; they are not
+    # committed data and can disappear between inventory and compression.
+    if re.search(r'\.json\.[a-f0-9]{8,64}\.tmp$',relative.name) or relative.name.endswith('.json.tmp'):return True
     if parts[0]=='artifacts' and len(parts)>1:
         if parts[1] in TRANSIENT|{'backups','migration_jobs'}:return True
         if relative.name in ('service_state.json','heartbeat.json'):return True

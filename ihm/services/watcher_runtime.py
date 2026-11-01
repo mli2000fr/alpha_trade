@@ -47,16 +47,15 @@ def _force_release_local_watcher_leader_lock(account_id: str | None = None) -> N
     try:
         from execution_engine.db_io import ExecutionRepository
 
-        released = ExecutionRepository().force_release_execution_lock(
-            account_id=_watcher_leader_lock_account(account_id),
-        )
+        from execution_engine.watcher_lease import release_dead_local_watcher_lease
+        released = release_dead_local_watcher_lease(ExecutionRepository().engine, account_id)
         if released:
             LOGGER.info(
                 "Verrou leader watcher local IHM nettoyé après arrêt forcé: %s",
                 _watcher_leader_lock_account(account_id),
             )
     except Exception:
-        LOGGER.debug("Nettoyage verrou leader watcher local IHM impossible", exc_info=True)
+        LOGGER.warning("Nettoyage verrou leader watcher local IHM impossible ; verrou conservé", exc_info=True)
 
 
 def build_watcher_doc_reference() -> dict[str, str]:
@@ -285,6 +284,7 @@ def start_local_watcher_service(
         raise RuntimeError("Un service watcher local IHM est déjà actif.")
     if get_active_watcher_once_run(account_id=account_id) is not None:
         raise RuntimeError("Un run watcher once est déjà actif. Attendez sa fin avant de démarrer un service local.")
+    _force_release_local_watcher_leader_lock(account_id)
     return start_managed_run(
         step_key=WATCHER_SERVICE_STEP_KEY,
         step_label="Watcher protections — service local IHM",

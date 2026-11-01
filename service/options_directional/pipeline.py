@@ -123,9 +123,8 @@ def main():
                 account_id=account_id,binding_protocol=BINDING_PROTOCOL,
                 summary_sha256=digest(summary), report_sha256=digest(report)))
     else:
-        binding = json.loads((folder/'risk_binding.json').read_text(encoding='utf-8'))
-        summary = json.loads((folder/'risk_summary.json').read_text(encoding='utf-8'))
-        validate_risk_binding(report,binding,summary,account_id)
+        from .accounts import load_risk_publication
+        binding,summary = load_risk_publication(report,account_id)
         from sqlalchemy import text
         with engine.connect() as conn:
             targets = [dict(r) for r in conn.execute(text('''SELECT symbol,side,shares,trade_date,account_id

@@ -39,6 +39,7 @@ def test_pages_pipeline_importable():
 
 
 def test_pipeline_render_renders_import_news_panel_outside_auto_refresh_fragment(monkeypatch) -> None:
+    from ihm.components import pipeline_unlock
     panel_calls: list[tuple[bool, dict[str, list[dict[str, object]]], list[dict[str, object]], dict[str, dict[str, object]]]] = []
     render_markers: list[str] = []
 
@@ -50,6 +51,7 @@ def test_pipeline_render_renders_import_news_panel_outside_auto_refresh_fragment
     monkeypatch.setattr(pipeline, "get_runtime_db_config", lambda: {})
     monkeypatch.setattr(pipeline, "_render_workflow_launcher", lambda *args, **kwargs: None)
     monkeypatch.setattr(pipeline, "_render_runtime_center", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline_unlock, "render_pipeline_unlock", lambda *args: render_markers.append("unlock-outside-fragment"))
     monkeypatch.setattr(pipeline, "_render_step_panels", lambda *args, **kwargs: render_markers.append("fragment"))
     monkeypatch.setattr(pipeline, "render_pending_local_symbol_bars_dialog",
                         lambda: render_markers.append("dialog-outside-fragment"))
@@ -66,7 +68,7 @@ def test_pipeline_render_renders_import_news_panel_outside_auto_refresh_fragment
 
     pipeline.render()
 
-    assert render_markers == ["fragment", "dialog-outside-fragment"]
+    assert render_markers == ["unlock-outside-fragment", "fragment", "dialog-outside-fragment"]
     assert panel_calls == [
         (
             False,
