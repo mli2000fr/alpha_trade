@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 
 import yaml
 

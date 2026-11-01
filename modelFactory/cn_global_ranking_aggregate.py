@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from service.market import cn_collection_storage as cn_storage
 import argparse
 import json
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from typing import Any
 
 import numpy as np
@@ -128,7 +129,7 @@ def aggregate(*, config_path: Path = DEFAULT_CONFIG, root: Path = DEFAULT_OUTPUT
                     result["missing"].append(f"H{horizon}/{semester}/{model}")
                     continue
                 path, report = item
-                frame = pd.read_parquet(path)
+                frame = cn_storage.read_parquet(path)
                 if (set(frame["market_code"]) != {"CN_A"} or not frame["test_semester"].eq(semester).all()
                         or frame.duplicated(["session_date", "instrument_id"]).any()):
                     raise RuntimeError(f"Fold ranking OOS CN corrompu: {path}")

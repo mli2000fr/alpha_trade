@@ -7,7 +7,7 @@ import json
 import sys
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 
 import yaml
 

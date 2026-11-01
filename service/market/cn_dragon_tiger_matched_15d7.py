@@ -1,17 +1,18 @@
 """Pre-registered, outcome-blind CN Dragon/Tiger matching audit.
 
 The journal is research-only. This module never loads future labels, trains a
-model, writes to a database, or marks historical data as PIT-certified.
+model, alters canonical market tables, or marks historical data as PIT-certified.
 """
 
 from __future__ import annotations
 
+from service.market import cn_collection_storage as cn_storage
 import argparse
 import hashlib
 import json
 import math
 from datetime import date, datetime, time, timezone
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -77,6 +78,7 @@ def load_timely_snapshots(root: Path, calendar: dict, *, now: datetime | None = 
     the matching audit uses the fail-closed default.
     """
     now = now or datetime.now(timezone.utc)
+    root = Path(root)
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
     selected: dict[str, dict] = {}
@@ -146,7 +148,8 @@ def load_timely_snapshots(root: Path, calendar: dict, *, now: datetime | None = 
 
 
 def load_candidates(path: Path, protocol: dict, snapshots: dict) -> pd.DataFrame:
-    frame = pd.read_parquet(path) if path.suffix.lower() == ".parquet" else pd.read_csv(path)
+    path = Path(path)
+    frame = cn_storage.read_parquet(path) if path.suffix.lower() == ".parquet" else cn_storage.read_csv(path)
     missing = REQUIRED_CANDIDATE_COLUMNS - set(frame.columns)
     if missing:
         raise ValueError(f"Candidate columns missing: {sorted(missing)}")
@@ -231,6 +234,8 @@ def match_candidates(frame: pd.DataFrame, protocol: dict) -> tuple[pd.DataFrame,
 def audit(*, snapshot_root: Path, calendar_path: Path, protocol_path: Path,
           output: Path, candidates_path: Path | None = None,
           now: datetime | None = None) -> dict:
+    snapshot_root, output = Path(snapshot_root), Path(output)
+    candidates_path = Path(candidates_path) if candidates_path is not None else None
     if output.exists() and any(output.iterdir()):
         raise FileExistsError(f"Refusing to overwrite existing D7 output: {output}")
     protocol = load_protocol(protocol_path)
@@ -277,7 +282,7 @@ def audit(*, snapshot_root: Path, calendar_path: Path, protocol_path: Path,
             report["status"] = "INSUFFICIENT_MATCH_BALANCE"
     output.mkdir(parents=True, exist_ok=True)
     if matches is not None:
-        matches.to_parquet(output / "outcome_blind_matches.parquet", index=False)
+        cn_storage.write_parquet(matches,output / "outcome_blind_matches.parquet", index=False)
     (output / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2,
                                                   default=str), encoding="utf-8")
     return report

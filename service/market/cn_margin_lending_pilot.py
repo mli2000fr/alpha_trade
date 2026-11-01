@@ -17,7 +17,7 @@ import subprocess
 import time
 import zipfile
 from datetime import UTC, date, datetime
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from urllib.parse import urlencode
 from xml.etree import ElementTree as ET
 

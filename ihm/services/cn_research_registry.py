@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from typing import Any
 
 import yaml

@@ -10,7 +10,7 @@ import argparse
 import hashlib
 import json
 from collections import Counter, defaultdict
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from typing import Any
 
 from modelFactory.cn_feature_panel import ROOT

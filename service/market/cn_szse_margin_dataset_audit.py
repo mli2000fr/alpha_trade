@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import argparse
+from service.market import cn_collection_storage as cn_storage
 import gzip
 import json
 import logging
 import math
 from collections import Counter
 from datetime import date, datetime
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 
 from service.market.cn_margin_lending_contract_audit import proxy_available_at
 from service.market.cn_szse_margin_dataset import CONFIG, OUTPUT, checkpoint, sha
@@ -93,7 +94,7 @@ def run(root: Path, report_path: Path) -> dict:
                 report["proxy_missing_days"].append(day)
             ids = set()
             daily = Counter()
-            with gzip.open(partition, "rt", encoding="utf-8") as stream:
+            with cn_storage.gzip_open(partition, "rt", encoding="utf-8") as stream:
                 for line in stream:
                     row = json.loads(line)
                     validate_row(row, day, proxy, reference)

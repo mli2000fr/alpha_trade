@@ -15,7 +15,7 @@ import time
 import uuid
 from dataclasses import asdict
 from datetime import UTC, date, datetime, timedelta
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from zoneinfo import ZoneInfo
 
 from database.router import get_market_engine
@@ -185,44 +185,32 @@ def run_all(engine, *, start: date, end: date, chunks_root: Path,
         raise ValueError("Incremental resume state belongs to another campaign")
     output_root.mkdir(parents=True, exist_ok=True)
     lock_path = output_root / "run-all.lock"
-    with lock_path.open("a+b") as lock:
-        lock.seek(0, 2)
-        if lock.tell() == 0:
-            lock.write(b"0")
-            lock.flush()
-        lock.seek(0)
-        try:
-            msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
-        except OSError as exc:
-            raise RuntimeError("Another CN Sprint 7-C catch-up is running") from exc
-        try:
-            for index_number in range(start_chunk, stop):
-                key = str(index_number)
-                if state["chunks"].get(key, {}).get("status") in {"COMPLETED", "COMPLETED_WITH_WARNINGS"}:
-                    continue
-                manifest = chunks_root / index["chunks"][index_number]
-                if manifest.resolve().parent != chunks_root.resolve():
-                    raise ValueError("Chunk path escapes configured directory")
-                state["chunks"][key] = {"status": "RUNNING", "started_at_utc": datetime.now(UTC).isoformat()}
+    from service.market.cn_collection_storage import campaign_lock
+    with campaign_lock(lock_path):
+        for index_number in range(start_chunk, stop):
+            key = str(index_number)
+            if state["chunks"].get(key, {}).get("status") in {"COMPLETED", "COMPLETED_WITH_WARNINGS"}:
+                continue
+            manifest = chunks_root / index["chunks"][index_number]
+            if manifest.resolve().parent != chunks_root.resolve():
+                raise ValueError("Chunk path escapes configured directory")
+            state["chunks"][key] = {"status": "RUNNING", "started_at_utc": datetime.now(UTC).isoformat()}
+            _atomic_state(state_path, state)
+            LOG.info("cn_s7c chunk=%d/%d symbols=%d", index_number + 1, total,
+                     len(read_pilot_manifest(manifest)))
+            try:
+                chunk_kwargs = {"allow_same_day_after_close": True} if allow_same_day_after_close else {}
+                result = run_chunk(engine, start=start, end=end, manifest=manifest, **chunk_kwargs)
+                report_path = _write_new_report(output_root, f"chunk-{index_number:04d}", result)
+                state["chunks"][key] = {"status": result["status"],
+                                        "report": str(report_path),
+                                        "finished_at_utc": datetime.now(UTC).isoformat()}
+            except Exception as exc:
+                state["chunks"][key] = {"status": "FAILED", "error": f"{type(exc).__name__}: {exc}",
+                                        "finished_at_utc": datetime.now(UTC).isoformat()}
                 _atomic_state(state_path, state)
-                LOG.info("cn_s7c chunk=%d/%d symbols=%d", index_number + 1, total,
-                         len(read_pilot_manifest(manifest)))
-                try:
-                    chunk_kwargs = {"allow_same_day_after_close": True} if allow_same_day_after_close else {}
-                    result = run_chunk(engine, start=start, end=end, manifest=manifest, **chunk_kwargs)
-                    report_path = _write_new_report(output_root, f"chunk-{index_number:04d}", result)
-                    state["chunks"][key] = {"status": result["status"],
-                                            "report": str(report_path),
-                                            "finished_at_utc": datetime.now(UTC).isoformat()}
-                except Exception as exc:
-                    state["chunks"][key] = {"status": "FAILED", "error": f"{type(exc).__name__}: {exc}",
-                                            "finished_at_utc": datetime.now(UTC).isoformat()}
-                    _atomic_state(state_path, state)
-                    raise
-                _atomic_state(state_path, state)
-        finally:
-            lock.seek(0)
-            msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+                raise
+            _atomic_state(state_path, state)
     completed = sum(item["status"] in {"COMPLETED", "COMPLETED_WITH_WARNINGS"}
                     for item in state["chunks"].values())
     return {"status": "COMPLETED" if completed == total else "PARTIAL",

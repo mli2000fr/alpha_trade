@@ -5,10 +5,11 @@ change to the 10-B, 15-B4, 15-B5 and 15-B6 frozen campaigns.
 """
 from __future__ import annotations
 
+from service.market import cn_collection_storage as cn_storage
 import argparse
 import json
 import logging
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 
 import numpy as np
 import pandas as pd
@@ -102,7 +103,7 @@ def validated_sources(b5_root: Path, b6_root: Path) -> tuple[dict, dict, dict]:
 def decision_calendar(sources: dict) -> dict[pd.Timestamp, pd.Timestamp]:
     result = {}
     for year in range(2021, 2026):
-        frame = pd.read_parquet(sources[year][0], columns=["session_date", "decision_at"])
+        frame = cn_storage.read_parquet(sources[year][0], columns=["session_date", "decision_at"])
         frame["session_date"] = pd.to_datetime(frame["session_date"])
         frame["decision_at"] = pd.to_datetime(frame["decision_at"], utc=True)
         uniqueness = frame.groupby("session_date")["decision_at"].nunique()
@@ -120,7 +121,7 @@ def join_2021(semester: str, *, sources: dict, label_audit: dict,
     feature_path, label_folder = sources[2021]
     from modelFactory.cn_oracle_walk_forward import Protocol as OracleProtocol
     oracle = OracleProtocol.load(DEFAULT_CONFIG)
-    price = pd.read_parquet(feature_path, columns=[
+    price = cn_storage.read_parquet(feature_path, columns=[
         "session_date", "instrument_id", "decision_at", *oracle.raw["features"]])
     b5_report = json.loads((b5_root / "report.json").read_text(encoding="utf-8"))
     ids = historical_xshe_ids(b5_root)
@@ -137,9 +138,9 @@ def join_2021(semester: str, *, sources: dict, label_audit: dict,
                                if item["year"] == 2021)["horizons"]["20"]["sha256"]
     if _sha(labels_path) != expected_label_hash:
         raise ValueError("Changed 2021 H20 labels")
-    labels = pd.read_parquet(labels_path, columns=[*KEYS, "available_at_utc"])
+    labels = cn_storage.read_parquet(labels_path, columns=[*KEYS, "available_at_utc"])
     price = price.merge(labels, on=KEYS, validate="one_to_one")
-    predictions = pd.read_parquet(report["path"])
+    predictions = cn_storage.read_parquet(report["path"])
     if (set(predictions["market_code"]) != {"CN_A"} or set(predictions["horizon"]) != {20}
             or set(predictions["test_semester"]) != {semester}
             or set(predictions["model_name"]) != {"lightgbm"}
@@ -150,13 +151,13 @@ def join_2021(semester: str, *, sources: dict, label_audit: dict,
     events = join_price(selected, price)
     if len(events) != len(selected):
         raise ValueError(f"2021 price/label join lost events {semester}")
-    margins = pd.concat([pd.read_parquet(b5_root / f"margin-{year}.parquet")
+    margins = pd.concat([cn_storage.read_parquet(b5_root / f"margin-{year}.parquet")
                          for year in (2020, 2021)], ignore_index=True)
     result = {"oracle_all_rows": len(predictions), "oracle_top20_rows": len(pool),
               "xshe_pool_rows": len(events), "joins": {}}
     for lag in (2, 3, 5):
         calendar_path = b5_root / f"calendar-lag{lag}.parquet"
-        joined = strict_join(events, margins, pd.read_parquet(calendar_path))
+        joined = strict_join(events, margins, cn_storage.read_parquet(calendar_path))
         joined["price_valid"] = np.isfinite(joined[oracle.raw["features"]]).all(axis=1)
         joined["price_valid"] &= np.isfinite(joined["log_amount_mean20_cny"])
         joined["evaluation_common_valid"] = (
@@ -168,7 +169,7 @@ def join_2021(semester: str, *, sources: dict, label_audit: dict,
         joined["strict_ml_allowed"] = False
         joined["historical_vintage_proven"] = False
         path = output / f"{semester}-lag{lag}.parquet"
-        joined.to_parquet(path, index=False)
+        cn_storage.write_parquet(joined,path, index=False)
         valid = joined.loc[joined["evaluation_common_valid"]]
         result["joins"][str(lag)] = {
             "rows": len(joined), "margin_four_features_valid": int(joined["margin_common_valid"].sum()),
@@ -282,7 +283,7 @@ def run(*, b5_root: Path = B5_ROOT, b6_root: Path = B6_ROOT, output: Path = OUTP
                         expected = inputs["b5"]["folds"][f"{name}-lag2"]["joined_sha256"]
                     if _sha(path) != expected:
                         raise ValueError(f"Changed joined source: {path}")
-                    parts.append(pd.read_parquet(path, columns=[
+                    parts.append(cn_storage.read_parquet(path, columns=[
                         "session_date", "decision_at", "instrument_id", "available_at_utc",
                         "evaluation_common_valid", *TASKS.values()]))
             history = pd.concat(parts, ignore_index=True)

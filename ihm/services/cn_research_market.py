@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from typing import Any, Literal
 
 import streamlit as st

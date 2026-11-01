@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 from datetime import UTC, date, datetime
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from urllib.parse import urlencode
 
 from sqlalchemy import text

@@ -13,7 +13,7 @@ import sys
 import uuid
 from contextlib import suppress
 from datetime import UTC, date, datetime, time, timedelta
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from zoneinfo import ZoneInfo
 
 import yaml
@@ -31,7 +31,7 @@ BATCH_NAME = "cn_daily_quality_17c"
 
 def _path(base: Path, value: str) -> Path:
     candidate = Path(value)
-    return candidate if candidate.is_absolute() else base / candidate
+    return candidate if candidate.is_absolute() else Path(base) / candidate
 
 
 def plan(now: datetime, calendar: dict, *, earliest: time = time(23, 30),

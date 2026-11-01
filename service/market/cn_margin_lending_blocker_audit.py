@@ -10,7 +10,7 @@ import re
 import time
 import zipfile
 from datetime import UTC, date, datetime
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from urllib.parse import urlencode, urljoin
 from xml.etree import ElementTree as ET
 
@@ -109,6 +109,7 @@ def szse_summary(raw: bytes) -> dict:
 
 def archive(root: Path, name: str, url: str, report: dict) -> bytes:
     """Cache one immutable observation; reject altered bytes on subsequent runs."""
+    root = Path(root)
     path = root / name
     receipt = root / (name + ".receipt.json")
     if path.exists() != receipt.exists():
