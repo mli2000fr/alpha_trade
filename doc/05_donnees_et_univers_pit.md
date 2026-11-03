@@ -6,6 +6,7 @@
 
 ## Documents spécialisés
 
+- [Univers texte US : fichier unique et archives des anciennes listes](operations/univers_fichier_unique.md)
 - [Ingestion EODHD et backfill](data/ingestion_eodhd.md)
 - [Sanitizer daily et audits qualité](data/sanitizer_daily.md)
 - [Univers tradable PIT et gate d'entrée](data/univers_pit.md)

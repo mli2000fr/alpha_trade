@@ -1296,8 +1296,11 @@ def _render_ml_train_scope_block(
 def _prime_ml_train_symbol_source() -> None:
     """Replace the former automatic training default once, preserving manual choices."""
     key = 'pipeline_ml_train_symbol_source'
+    from common.universe_files import is_retired_universe_source
+    if is_retired_universe_source(st.session_state.get(key)):
+        st.session_state[key] = DEFAULT_ML_TRAIN_SYMBOL_SOURCE
     if not st.session_state.get(ML_TRAIN_SOURCE_DEFAULT_VERSION_KEY):
-        if st.session_state.get(key) in (None, '', 'universe-file:oracle_balanced_400_202512.txt'):
+        if st.session_state.get(key) in (None, ''):
             st.session_state[key] = DEFAULT_ML_TRAIN_SYMBOL_SOURCE
         st.session_state[ML_TRAIN_SOURCE_DEFAULT_VERSION_KEY] = True
     st.session_state.setdefault(key, DEFAULT_ML_TRAIN_SYMBOL_SOURCE)
@@ -1306,8 +1309,11 @@ def _prime_ml_train_symbol_source() -> None:
 def _prime_ml_predict_symbol_source() -> None:
     """Migrate the former automatic default once; keep subsequent manual choices."""
     key = "pipeline_ml_predict_symbol_source"
+    from common.universe_files import is_retired_universe_source
+    if is_retired_universe_source(st.session_state.get(key)):
+        st.session_state[key] = DEFAULT_ML_PREDICT_SYMBOL_SOURCE
     if not st.session_state.get(ML_PREDICT_SOURCE_DEFAULT_VERSION_KEY):
-        if st.session_state.get(key) in (None, "", "universe-file:oracle_balanced_400_202512.txt"):
+        if st.session_state.get(key) in (None, ""):
             st.session_state[key] = DEFAULT_ML_PREDICT_SYMBOL_SOURCE
         st.session_state[ML_PREDICT_SOURCE_DEFAULT_VERSION_KEY] = True
     st.session_state.setdefault(key, DEFAULT_ML_PREDICT_SYMBOL_SOURCE)

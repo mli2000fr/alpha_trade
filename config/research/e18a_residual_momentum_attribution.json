@@ -6,7 +6,7 @@
   "validation_class": "post_discovery_attribution_not_oos",
   "oracle_used": false,
   "source_artifact": "artifacts/research/directional_alpha_book/directional-alpha-book-20260911194051/alpha_panel.parquet",
-  "symbol_source": "universe-file:univers_filtred_equities.txt",
+  "symbol_source": "universe-file:univers_filtred_tradable.txt",
   "period": ["2018-07-01", "2025-12-31"],
   "signal": "residual_momentum_120_10",
   "score_column": "score_residual_momentum_120_10",
