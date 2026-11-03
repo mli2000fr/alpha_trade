@@ -1,5 +1,88 @@
 # Registre des expériences ML réalisées
 
+## 2026-11-03 — Oracle H10 TOP20 → spécialistes LONG par symbole → TOP10 → Winner
+
+**TERMINÉ TECHNIQUEMENT — 9/9 simulations, zéro échec ; couverture intraday incomplète.**
+Oracle choisi par l'utilisateur : `model-factory-20261030213826-eda503`.
+Winner config figée SL5/sansTP/sansTR/H10, positioncomplète, confirmation2×5m,
+délai930s ; 4kUSD par compte/année, marge cap2x conditionnel, risque natif.
+Trois bras2024/2025/2026jusqu'au29octobre : TOP20,TOP10Oracle,TOP10LONGduTOP20.
+398 modèlesLightGBM indépendants avec Platt propre au titre ; refit annuel,
+calibration2023/24/25 et labels connus au plus tard28déc2023/30déc2024/30déc2025.
+Huit tests passent ; zéro fuite de date constatée sur les398fits.
+Cibleproxy dailyLONGnetSL5/timeopen11 ; confirmationsWinner réelles au replay.
+TOP20 restauré avant les anciennes exclusions globales : **+122,38% ancien
+non réutilisable comme référence identique**. Lacunes5m traitées par date
+d'entrée avec réserve de sélection rétrospective, pas de suppression annuelle.
+Rendements2024/2025/2026 : TOP20 **−7,28/−11,44/−14,37%**, TOP10Oracle
+**−15,83/−22,94/+8,29%**, TOP10parsymbole **−16,09/−4,61/−2,74%**.
+DD du filtre **−20,88/−18,64/−24,09%**, tauxgagnants **36,48/31,52/22,07%**,
+159/184/145tradesclos ; capitauxfinaux3356,50/3815,46/3890,32USD.
+Filtre meilleur queTOP20 en2025/26 seulement, queTOP10 en2025 seulement ;
+ses trois années restent négatives. **Aucun avantage économique régulier démontré,
+pas de promotion.** Les neuf comptes sont `INCOMPLETE_COVERAGE` : exclusions
+de dates d'entrée fondées sur disponibilité future des données, pas filtretradable.
+Rapports/empreintes/isolement/vérification arithmétique contrôlés sur9comptes,
+zéro violation d'isolement ; même assistant, pas revue indépendante.
+Deuxworkers max ; aucunLLM/fournisseur/broker/écritureSQL/promotion/modificationconfig.
+[Protocole et suivi](winner_per_symbol_top20_top10_20261103.md).
+
+## 2026-11-02 — US TOP20 : liens clients/fournisseurs, faisabilité partielle
+
+**COMPLETED_DOCUMENTARY_FEASIBILITY — test économique en attente de couverture.**
+Audit gratuit des archives SQL/locales : TOP20 originaux du30octobre,
+modèle`model-factory-20261016180250-3b0515`, cutoff1novembre09:26UTC.
+32soumissions SEC vérifiées couvrent14/20sociétés. Quatre liens commerciaux
+explicites sur3/20titres : UCTT→AMAT/LRCX (22,3/38,8% du CA trimestriel),
+FMC→Corteva (200MUSD de prépaiement, revenu différé), TSEM→Semtech (capacité
+SiGe). SITM→Avnet exclu : les13,2% concernent l'activité Renesas acquise,
+pas SiTime consolidé ; continuité contractuelle non prouvée. Deux partenariats
+séparés, faux alias et relations bancaires exclus. Revue24couples/10témoins,
+écart au plafond initial20 documenté ; même assistant, pas revue indépendante.
+
+60associations news pour les quatre contreparties sur7jours, sans certification
+sémantique/novelty ; pas60articles distincts garantis. Preuves retenues reçues
+enoctobre : **0/13780couples historiquesTOP20 2024–septembre2026 couverts à temps**.
+Ce n'est ni un échec d'AUC ni un audit exhaustif des237sociétés historiques.
+Différent du graphe de cours P-MATH-1 déjàNO_GO. AucunLLM/API/prixfutur/fit/
+backtest/ordre/écritureSQL/changementproduction, coût0USD.20tests ciblés passent.
+[Sources, périmètres, dates et limites](economic_links_feasibility_20261102.md).
+
+## 2026-11-02 — US TOP20 : embeddings des news, petit signal H5 non confirmé économiquement
+
+**COMPLETED_EXPLORATORY_NOT_PIT — pas de promotion.** GO payant <=3 USD,
+`text-embedding-3-large`, 256 dimensions ; 24 244 extraits uniques, 11 013 120
+tokens, **1,43170560 USD**, 190 lots réussis, un rejet429 repris avec reçu,
+zéro appel ambigu. Cache SQLite de recherche conservé ; pas de nouvel avis GPT,
+Web, collecte news, SQL de production, ordre ou modification de batch/config.
+
+TOP20 originaux CatBoost annuels 2024/2025/2026, 13 780 couples dont5 827 avec
+textes. Train2024, choix de régularisation sur2025, évaluation2026 jusqu'au
+30septembre ; purge des labels et exclusion des textes exacts traversant les
+splits. Cible principale : signe de l'excursion maximale absolue de J+1 à J+20,
+pas seul closeH20 ; H5/H10 secondaires. Trois bras prix/rang/news-count, texte,
+combinaison. Aucun réentraînement Oracle. Textes historiques non certifiés PIT,
+18 377 associations déjà tronquées, périodes déjà examinées : pas de holdout vierge.
+
+AUC prix→prix+texte H5 **0,5179→0,5485** (2 170cas), H10 **0,4475→0,5238**
+(2 141), H20 **0,4577→0,4997** (2 038). Dates sans chevauchement choisies avant
+outcomes : **0,5100→0,5374** (674), **0,4309→0,4670** (445),
+**0,4243→0,5327** (281). Texte seul H20 **0,5072** global et0,5651 sur281 :
+ne pas choisir après coup ce sous-échantillon comme preuve positive.
+
+H5 : précision du sens LONG 52,35% tous→54,75% retenus, contrôle50,30→51,72%.
+Ce n'est pas le taux de trades gagnants. Diagnostic unitaire LONG TP10/SL10,
+13bps/opération : moyenne nette H5 +0,233→+0,400%, mais sans chevauchement
+**+0,134→+0,096%** ; H10 contrôle+0,305→−0,003%, H20+1,085→+0,959%.
+Pas de rendement/DD de portefeuille calculé, pas de replay Winner. Les petits
+gains apparents ne sont pas économiquement confirmés par ce contrôle.
+
+16tests ciblés passent ; neuf modèles/19 047 probabilités reproduits à1,12e−16
+max, cache et facturation vérifiés. Même assistant, pas revue indépendante.
+Artefacts `artifacts/research/us_news_embeddings/20261102-v1`, cache
+`artifacts/research/us_news_embeddings/cache.sqlite` réutilisable sans API.
+[Protocole, résultats, coûts et limites](news_embeddings_pilote_20261102.md).
+
 ## 2026-10-30 — US : ajout du consensus au filtre options TOP20, intersection non mûre
 
 Nouvelle lecture SQL bornée : reçus consensus EODHD disponibles depuis11octobre,

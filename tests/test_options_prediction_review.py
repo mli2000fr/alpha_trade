@@ -8,6 +8,7 @@ from test_options_directional_filter import report,RUN,DAY,NOW
 
 def setup(tmp_path,monkeypatch):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(store,'PROJECT_ROOT',tmp_path)
     monkeypatch.setattr(store,'validate_window',lambda *a:None)
     a=tmp_path/'config/univers/test.txt';b=tmp_path/'config/univers_batch/test.txt'
     a.parent.mkdir(parents=True);b.parent.mkdir(parents=True)
@@ -18,14 +19,14 @@ def setup(tmp_path,monkeypatch):
     return root,a,b
 
 
-def test_display_alias_is_allowed_but_execution_stays_exact(tmp_path,monkeypatch):
+def test_display_and_trading_aliases_require_the_same_sealed_universe(tmp_path,monkeypatch):
     root,a,b=setup(tmp_path,monkeypatch)
     review=load_options_prediction_review(RUN,symbol_source='universe-file:test.txt',
         project_root=tmp_path,root=root,trade_date=DAY,now=NOW,batch_id='model-test')
     assert review['symbol_source']=='universe-file:config/univers_batch/test.txt'
     assert review['selected']==['A']
-    with pytest.raises(ValueError,match='symbol_source'):
-        store.qualified(RUN,symbol_source='universe-file:test.txt',root=root,trade_date=DAY,now=NOW)
+    assert store.qualified(RUN,symbol_source='universe-file:test.txt',root=root,
+        trade_date=DAY,now=NOW)==review
 
 
 @pytest.mark.parametrize('changed',['display','saved','both'])
