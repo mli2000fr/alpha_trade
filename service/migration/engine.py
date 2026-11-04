@@ -20,6 +20,7 @@ import uuid
 from . import environment,inventory
 from .mysql import DATABASES
 from .tracking import emit,CountingWriter
+from .file_capture import open_source,failure_details
 from .locking import LOCK,migration_lock,MigrationLockError
 from .storage import (BLOCK,atomic_json,canonical,decrypted_input,encrypted_output,open_manifest,
                       safe_path,seal_manifest,sha_file,checked_directory)
@@ -112,8 +113,10 @@ def pack_files(root,folder,label,files,password,limit,cancel,*,live=False,on_pro
             for index,record in enumerate(files):
                 check_cancel(cancel)
                 emit(on_progress,item=record['path'],files_done=index,files_total=len(files))
-                path=safe_path(root,record['path'])
-                with path.open('rb') as stream:
+                stream,recovered_from,expected_hash=open_source(root,record,live=live)
+                if recovered_from:
+                    emit(on_progress,warning=True,recovery_source=recovered_from,checkpoint=True)
+                with stream:
                     before=os.fstat(stream.fileno())
                     if not live and (before.st_size,before.st_mtime_ns)!=(record['size'],record['mtime_ns']):raise ValueError('Fichier modifié pendant la sauvegarde')
                     info=tarfile.TarInfo(record['path']);info.size=before.st_size;info.mode=0o600;info.mtime=int(before.st_mtime)
@@ -121,7 +124,12 @@ def pack_files(root,folder,label,files,password,limit,cancel,*,live=False,on_pro
                     after=os.fstat(stream.fileno())
                 append_log=live and Path(record['path']).parts[0] in ('log','logs') and after.st_size>=before.st_size
                 if not append_log and (after.st_size,after.st_mtime_ns)!=(before.st_size,before.st_mtime_ns):raise ValueError('Fichier modifié pendant la sauvegarde')
-                records.append(dict(path=record['path'],size=info.size,sha256=hashed.digest.hexdigest()))
+                content_hash=hashed.digest.hexdigest()
+                if expected_hash and content_hash!=expected_hash:raise ValueError('Version archivée modifiée pendant la sauvegarde : '+record['path'])
+                captured=dict(path=record['path'],size=info.size,sha256=content_hash)
+                if recovered_from:captured['source_recovered_from']=recovered_from
+                records.append(captured)
+                if recovered_from:emit(on_progress,recovery_source='')
                 emit(on_progress,files_done=index+1)
     emit(on_progress,files_done=len(files),checkpoint=True)
     return dict(label=label,parts=parts,files=records,kind='files')
@@ -199,6 +207,7 @@ def export(root,output,password,db,*,quiet=inventory.quiescent,cancel=None,versi
                 exclusions=sorted(inventory.SKIP_ROOT),services_auto_restart=False)
             payload.update(source_mode=source_mode,cross_database_atomic=False,
                 row_counts_authoritative=not online,source_services_unchanged=True)
+            payload['archived_file_versions_recovered']=sum('source_recovered_from' in f for p in packages for f in p.get('files',[]))
             payload['dependency_review_count']=private['versions'].get('unportable_requirement_count',0)
             if guard:payload['portable_files']=install_portable_tools(output)
             atomic_json(output/'manifest.json',seal_manifest(payload,password))
@@ -212,10 +221,11 @@ def export(root,output,password,db,*,quiet=inventory.quiescent,cancel=None,versi
         # Error text can contain secrets from providers/SQL. Keep only a bounded
         # local operation class; UI shows typed validation errors separately.
         atomic_json(output/'progress.json',dict(status='CANCELED' if isinstance(exc,InterruptedError) else 'FAILED',
-            error_type=type(exc).__name__,finished_at=utc()))
+            error_type=type(exc).__name__,finished_at=utc(),**failure_details(exc,root=root)))
         if (output/'manifest.json').exists():os.replace(output/'manifest.json',output/'manifest.incomplete.json')
         extra=dict(error_code=exc.code,owner_pid=exc.owner_pid) if isinstance(exc,MigrationLockError) else {}
-        emit(on_progress,'CANCELED' if isinstance(exc,InterruptedError) else 'FAILED',**extra)
+        emit(on_progress,'CANCELED' if isinstance(exc,InterruptedError) else 'FAILED',**extra,
+             **failure_details(exc,root=root),failure_reason=getattr(exc,'public_message',''))
         raise
 
 

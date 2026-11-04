@@ -1,5 +1,140 @@
 # Registre des expériences ML réalisées
 
+## 2026-11-04 — Actions ordinaires : réduction des trois listes à TOP100
+
+**TERMINÉ — aucune amélioration de fiabilité démontrée ; intersections non qualifiables.**
+Variante demandée après le TOP1500 : 100 premiers des classements modèles
+2023–2025 figés, deux cibles séparées, même contrôle 2026 non chevauchant
+jusqu'au 2 novembre. Aucun réentraînement des 21 944 modèles ni classement sur2026.
+AUC médiane TOP100 : **0,4800 H10 / 0,5000 parcours H20**, contre
+0,5111/0,5000 pour TOP1500 ; 44,33 %/44,00 % des titres avec AUC>0,5.
+Fenêtres LONG positives : 201/552 (36,41 %) H10, 119/271 (43,91 %) H20 ;
+fréquences sans sélection 37,06 %/46,67 %. Pas de trades Winner ni de PnL de
+portefeuille : H10 proxy daily SL5/open11, H20 dominance du pic haussier.
+Sources options/consensus toujours sous le minimum de20 fenêtres indépendantes
+matures : aucune liste de fiabilité inventée, deux intersections vides et reçus
+actualisés TOP100. Listes modèles seules disponibles, aucune promotion.
+Vérification PASS, métriques TOP1500 reproduites, archives et source inchangées,
+aucun appel fournisseur/LLM, SQL ou ordre. Même assistant, pas revue indépendante.
+[Protocole, résultats et fichiers TOP100](univers_predictibilite_top100_20261104.md).
+Complément demandé : tri AUC2023–2025 des titres qualifiés, TOP10 par cible,
+contrôle2026 séparé. Meilleurs historiques AG H10(0,748), LAUR H20(0,857) ;
+contrôles2026 respectifs0,378/0,944. Seulement8–9 observations de contrôle H20,
+10–19 H10 ; pas de taux gagnant déduit de l'AUC, pas de promotion.
+Filtre supplémentaire demandé : AUC historique ET2026 strictement>0,60.
+TOP100 par AUC historique :32H10/37H20 ; TOP100 initial de fiabilité :7/20.
+Listes TXT et détails CSV séparés sauvegardés, égalité0,60 exclue.
+Sélection rétrospective utilisant2026 : cette période ne valide plus les noms
+retenus, confirmation future nécessaire. Pas de changement de production.
+
+## 2026-11-04 — Actions ordinaires : univers de fiabilité LONG par symbole, options et consensus
+
+**TERMINÉ — pas d'univers fiable à promouvoir ; intersections non qualifiables faute d'historique des deux autres sources.**
+5 254 symboles d'action_ordinaire.txt, indépendamment du TOP Oracle. PFBC ajouté
+après correction documentée du nom Preferred Bank pris à tort pour un type préféré.
+21 944modèles annuels locaux, zéro erreur de modélisation. Deux cas
+demandés séparément : proxy daily LONG SL5/sansTP/sansTR/H10 net positif ;
+pic haussier dominant le pic baissier absolu durantH20, deux pics et ordre conservés.
+Fit/calibration propres au titre renouvelés annuellement, classement sur2023–2025
+OOS et contrôle2026 jusqu'au2novembre exclu de la sélection. TOP1500 au maximum
+par source, intersection stricte, aucune promotion automatique.
+Inventaire courant : snapshots3 021titres depuisseptembre2026 ; volume30Min3 085 ; consensus4 585
+depuis11octobre2026. Borne optimiste de fenêtres matures non chevauchantes :
+insuffisante pour établir une fiabilité par titre, minimum préalable20fenêtres.
+Pas de classement inventé ni de faux recul via les valeursEPSJ−7/30/60/90.
+Prix qualifiésOOS2 392H10 et1 996H20 ; deux listes modèles de1 500.
+Contrôle2026 non chevauchant : AUC médianeTOP1500 0,5111H10 /0,5000H20,
+contre0,5000/0,5000dans les autres titres qualifiés ; médiane18/9fenêtres par titre.
+Deux candidats cohérents exploratoiresH10 (FTS,HOMB), mais seulement3/2signaux
+LONG indépendants2026 ; pas de robustesse démontrée. Aucun candidat cohérentH20.
+CHRD/WFRD en quarantaine d'identité ; dates/empreintes21 944fits vérifiées,
+72probabilités reproduites, dix tests passent. Les deux symbol_trade restent
+vides avec reçu nonqualifié. SQL lectureseule, aucun fournisseur/LLM/ordre.
+[Protocole, couverture et suivi](univers_predictibilite_20261103.md).
+
+## 2026-11-03 — Oracle H10 TOP20 → spécialistes LONG par symbole → TOP10 → Winner
+
+**TERMINÉ TECHNIQUEMENT — 9/9 simulations, zéro échec ; couverture intraday incomplète.**
+Oracle choisi par l'utilisateur : `model-factory-20261030213826-eda503`.
+Winner config figée SL5/sansTP/sansTR/H10, positioncomplète, confirmation2×5m,
+délai930s ; 4kUSD par compte/année, marge cap2x conditionnel, risque natif.
+Trois bras2024/2025/2026jusqu'au29octobre : TOP20,TOP10Oracle,TOP10LONGduTOP20.
+398 modèlesLightGBM indépendants avec Platt propre au titre ; refit annuel,
+calibration2023/24/25 et labels connus au plus tard28déc2023/30déc2024/30déc2025.
+Huit tests passent ; zéro fuite de date constatée sur les398fits.
+Cibleproxy dailyLONGnetSL5/timeopen11 ; confirmationsWinner réelles au replay.
+TOP20 restauré avant les anciennes exclusions globales : **+122,38% ancien
+non réutilisable comme référence identique**. Lacunes5m traitées par date
+d'entrée avec réserve de sélection rétrospective, pas de suppression annuelle.
+Rendements2024/2025/2026 : TOP20 **−7,28/−11,44/−14,37%**, TOP10Oracle
+**−15,83/−22,94/+8,29%**, TOP10parsymbole **−16,09/−4,61/−2,74%**.
+DD du filtre **−20,88/−18,64/−24,09%**, tauxgagnants **36,48/31,52/22,07%**,
+159/184/145tradesclos ; capitauxfinaux3356,50/3815,46/3890,32USD.
+Filtre meilleur queTOP20 en2025/26 seulement, queTOP10 en2025 seulement ;
+ses trois années restent négatives. **Aucun avantage économique régulier démontré,
+pas de promotion.** Les neuf comptes sont `INCOMPLETE_COVERAGE` : exclusions
+de dates d'entrée fondées sur disponibilité future des données, pas filtretradable.
+Rapports/empreintes/isolement/vérification arithmétique contrôlés sur9comptes,
+zéro violation d'isolement ; même assistant, pas revue indépendante.
+Deuxworkers max ; aucunLLM/fournisseur/broker/écritureSQL/promotion/modificationconfig.
+[Protocole et suivi](winner_per_symbol_top20_top10_20261103.md).
+
+## 2026-11-02 — US TOP20 : liens clients/fournisseurs, faisabilité partielle
+
+**COMPLETED_DOCUMENTARY_FEASIBILITY — test économique en attente de couverture.**
+Audit gratuit des archives SQL/locales : TOP20 originaux du30octobre,
+modèle`model-factory-20261016180250-3b0515`, cutoff1novembre09:26UTC.
+32soumissions SEC vérifiées couvrent14/20sociétés. Quatre liens commerciaux
+explicites sur3/20titres : UCTT→AMAT/LRCX (22,3/38,8% du CA trimestriel),
+FMC→Corteva (200MUSD de prépaiement, revenu différé), TSEM→Semtech (capacité
+SiGe). SITM→Avnet exclu : les13,2% concernent l'activité Renesas acquise,
+pas SiTime consolidé ; continuité contractuelle non prouvée. Deux partenariats
+séparés, faux alias et relations bancaires exclus. Revue24couples/10témoins,
+écart au plafond initial20 documenté ; même assistant, pas revue indépendante.
+
+60associations news pour les quatre contreparties sur7jours, sans certification
+sémantique/novelty ; pas60articles distincts garantis. Preuves retenues reçues
+enoctobre : **0/13780couples historiquesTOP20 2024–septembre2026 couverts à temps**.
+Ce n'est ni un échec d'AUC ni un audit exhaustif des237sociétés historiques.
+Différent du graphe de cours P-MATH-1 déjàNO_GO. AucunLLM/API/prixfutur/fit/
+backtest/ordre/écritureSQL/changementproduction, coût0USD.20tests ciblés passent.
+[Sources, périmètres, dates et limites](economic_links_feasibility_20261102.md).
+
+## 2026-11-02 — US TOP20 : embeddings des news, petit signal H5 non confirmé économiquement
+
+**COMPLETED_EXPLORATORY_NOT_PIT — pas de promotion.** GO payant <=3 USD,
+`text-embedding-3-large`, 256 dimensions ; 24 244 extraits uniques, 11 013 120
+tokens, **1,43170560 USD**, 190 lots réussis, un rejet429 repris avec reçu,
+zéro appel ambigu. Cache SQLite de recherche conservé ; pas de nouvel avis GPT,
+Web, collecte news, SQL de production, ordre ou modification de batch/config.
+
+TOP20 originaux CatBoost annuels 2024/2025/2026, 13 780 couples dont5 827 avec
+textes. Train2024, choix de régularisation sur2025, évaluation2026 jusqu'au
+30septembre ; purge des labels et exclusion des textes exacts traversant les
+splits. Cible principale : signe de l'excursion maximale absolue de J+1 à J+20,
+pas seul closeH20 ; H5/H10 secondaires. Trois bras prix/rang/news-count, texte,
+combinaison. Aucun réentraînement Oracle. Textes historiques non certifiés PIT,
+18 377 associations déjà tronquées, périodes déjà examinées : pas de holdout vierge.
+
+AUC prix→prix+texte H5 **0,5179→0,5485** (2 170cas), H10 **0,4475→0,5238**
+(2 141), H20 **0,4577→0,4997** (2 038). Dates sans chevauchement choisies avant
+outcomes : **0,5100→0,5374** (674), **0,4309→0,4670** (445),
+**0,4243→0,5327** (281). Texte seul H20 **0,5072** global et0,5651 sur281 :
+ne pas choisir après coup ce sous-échantillon comme preuve positive.
+
+H5 : précision du sens LONG 52,35% tous→54,75% retenus, contrôle50,30→51,72%.
+Ce n'est pas le taux de trades gagnants. Diagnostic unitaire LONG TP10/SL10,
+13bps/opération : moyenne nette H5 +0,233→+0,400%, mais sans chevauchement
+**+0,134→+0,096%** ; H10 contrôle+0,305→−0,003%, H20+1,085→+0,959%.
+Pas de rendement/DD de portefeuille calculé, pas de replay Winner. Les petits
+gains apparents ne sont pas économiquement confirmés par ce contrôle.
+
+16tests ciblés passent ; neuf modèles/19 047 probabilités reproduits à1,12e−16
+max, cache et facturation vérifiés. Même assistant, pas revue indépendante.
+Artefacts `artifacts/research/us_news_embeddings/20261102-v1`, cache
+`artifacts/research/us_news_embeddings/cache.sqlite` réutilisable sans API.
+[Protocole, résultats, coûts et limites](news_embeddings_pilote_20261102.md).
+
 ## 2026-10-30 — US : ajout du consensus au filtre options TOP20, intersection non mûre
 
 Nouvelle lecture SQL bornée : reçus consensus EODHD disponibles depuis11octobre,

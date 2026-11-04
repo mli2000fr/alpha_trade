@@ -583,7 +583,7 @@ def run(*, symbol_source: str, output_root: Path, config: E19BConfig) -> Path:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--symbol-source", default="universe-file:univers_filtred_equities.txt")
+    parser.add_argument("--symbol-source", default="universe-file:univers_filtred_tradable.txt")
     parser.add_argument("--start-date", default="2018-07-01")
     parser.add_argument("--end-date", default="2025-12-31")
     parser.add_argument("--bootstrap-samples", type=int, default=2_000)

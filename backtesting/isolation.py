@@ -125,9 +125,12 @@ class ReadOnlyReplay:
         runtime=self.root/'.runtime';runtime.mkdir(exist_ok=True)
         old_env={name:os.environ.get(name) for name in (
             'TMP','TEMP','TMPDIR','MPLCONFIGDIR','NUMBA_CACHE_DIR','TORCH_HOME','XDG_CACHE_HOME',
+            'TORCHINDUCTOR_CACHE_DIR','TRITON_CACHE_DIR','TORCH_EXTENSIONS_DIR','CUDA_CACHE_PATH',
             'PYTHONDONTWRITEBYTECODE','GIT_OPTIONAL_LOCKS','ALPHA_BACKTEST_ISOLATION_ROOT')}
         for name,folder in [('TMP','tmp'),('TEMP','tmp'),('TMPDIR','tmp'),('MPLCONFIGDIR','matplotlib'),
-                            ('NUMBA_CACHE_DIR','numba'),('TORCH_HOME','torch'),('XDG_CACHE_HOME','cache')]:
+                            ('NUMBA_CACHE_DIR','numba'),('TORCH_HOME','torch'),('XDG_CACHE_HOME','cache'),
+                            ('TORCHINDUCTOR_CACHE_DIR','torchinductor'),('TRITON_CACHE_DIR','triton'),
+                            ('TORCH_EXTENSIONS_DIR','torch-extensions'),('CUDA_CACHE_PATH','cuda')]:
             path=runtime/folder;path.mkdir(exist_ok=True);os.environ[name]=str(path)
         os.environ.update(PYTHONDONTWRITEBYTECODE='1',GIT_OPTIONAL_LOCKS='0',ALPHA_BACKTEST_ISOLATION_ROOT=str(self.root))
         import tempfile

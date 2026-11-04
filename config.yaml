@@ -588,11 +588,11 @@ risk_management:
 # Si `custom_universe_file` pointe vers un fichier existant, le Stock Screener
 # (étape 3) utilisera les symboles de ce fichier plutôt que de requêter
 # stock_metadata. Le fichier doit contenir des symboles séparés par des virgules.
-# Exemple : "config/univers/univers_filtred_equities.txt"
+# Exemple : "config/univers/univers_filtred_tradable.txt"
 # Laissez vide ou commenté pour utiliser l'univers tradable standard.
 # ---------------------------------------------------------------------------
 screener:
-  custom_universe_file: "config/univers/univers_filtred_equities.txt"
+  custom_universe_file: "config/univers/univers_filtred_tradable.txt"
 
 
 # ---------------------------------------------------------------------------
@@ -736,9 +736,9 @@ batch_diagnostics:
   backtest_horizon:
 
   # Garde-fou « breadth » : part minimale de l'univers de référence
-  # (config/ticket_recherche.txt, 400 symboles) requise pour générer les
-  # prédictions ML live. 75% × 400 = 300 symboles (borne basse du backtest
-  # validé : 311-391). En dessous → prédictions live BLOQUÉES.
+  # (config/univers/univers_filtred_tradable.txt) requise pour générer les
+  # prédictions ML live. Le seuil s’applique au périmètre de référence courant.
+  # En dessous → prédictions live BLOQUÉES.
   ml_min_universe_pct: 75
 
   # ── §7.0 (analyse_ml.md) — filtres additionnels par seuils absolus de F1 ──

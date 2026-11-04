@@ -1169,7 +1169,7 @@ def load_stock_scores_all_symbols(engine: Engine) -> list[str]:
 
 
 def _load_ticket_recherche_symbols() -> list[str]:
-    """Compatibilité : ``ticket-recherche`` désigne le premier fichier de ``config/univers``."""
+    """Compatibilité : ``ticket-recherche`` utilise le défaut tradable explicite."""
     return load_universe_file_symbols("ticket-recherche")
 
 

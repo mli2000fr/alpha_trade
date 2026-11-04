@@ -700,3 +700,20 @@ Voir aussi [entrée standard](winner_standard_entry.md),
 [cotations standard](winner_standard_entry_quotes.md),
 [alignement SL/sizing](winner_sl_sizing_alignment_20261030.md) et
 [risque factoriel](risk_factor_inputs.md).
+
+### Cible trop petite pour une action entière — 1er novembre 2026
+
+Le budget Winner inclut le SL et la réserve de frais configurée :
+`prix × (stop_loss_pct + 2,05 × cost_reserve_bps_per_leg / 10 000)` par action.
+Une cible de l'étape 11 peut donc être entière mais non finançable après cette
+réserve. L'admission écarte alors uniquement cette cible avec le motif
+`INSUFFICIENT_CAMPAIGN_BUDGET`, son budget et le minimum nécessaire. Elle ne
+crée aucun plan pour ce titre et ne le transmet pas au circuit d'achat standard.
+Les autres plans restent admissibles. Les quantités ne sont jamais arrondies
+à la hausse et les budgets ne sont jamais augmentés.
+
+Le bilan d'exécution expose `winner_plans_insufficient_budget`, la liste
+`winner_plans` et le compteur `skipped`. Un contrat malformé (budget absent,
+fractions interdites, date invalide) continue de faire échouer la validation
+complète avant toute création de plan. Ce correctif ne modifie pas les
+protections ni les paramètres des campagnes existantes.

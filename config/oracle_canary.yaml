@@ -1,6 +1,6 @@
 enabled: true
 batch_id: model-factory-20260909051302-323684
-symbols_file: config/univers/univers_filtred.txt
+symbols_file: config/univers/univers_filtred_tradable.txt
 baseline_shadow_dir: artifacts/models/oracle/shadow/model-factory-20260909051302-323684/oracle-shadow-20260909091757-323684
 artifact_root: artifacts/models/oracle/canary
 horizon: 20

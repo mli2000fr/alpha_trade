@@ -730,11 +730,15 @@ class ProductionExecutor:
                                 'durable campaign preserved, no automatic resubmission authorized')
                 metrics['winner_plans'] = plans
                 metrics['winner_plans_armed'] = sum(p['outcome'] == 'PLAN_ARMED' for p in plans)
-                metrics['winner_plans_existing'] = len(plans)-metrics['winner_plans_armed']
+                metrics['winner_plans_existing'] = sum(p['outcome'] == 'EXISTING_PLAN_NOT_OVERWRITTEN' for p in plans)
+                metrics['winner_plans_insufficient_budget'] = sum(p['outcome'] == 'INSUFFICIENT_CAMPAIGN_BUDGET' for p in plans)
+                metrics['skipped'] += metrics['winner_plans_insufficient_budget']
                 for plan in plans:
-                    events.append(make_event(exec_run_id, EventType.PRECHECK_OK,
+                    insufficient = plan['outcome'] == 'INSUFFICIENT_CAMPAIGN_BUDGET'
+                    events.append(make_event(exec_run_id, EventType.PRECHECK_FAILED if insufficient else EventType.PRECHECK_OK,
                         f"Winner {plan['outcome']}: {plan['symbol']} ; "
-                        + ('entrée standard sans confirmation (voir bilan de soumission)'
+                        + (f"budget {plan['risk_budget']:.4f} < minimum {plan['minimum_risk_budget']:.4f} ; aucune entrée"
+                           if insufficient else 'entrée standard sans confirmation (voir bilan de soumission)'
                            if self._cfg.winner_pyramiding.confirmation_bars == 0 else 'attente de confirmation'),
                         symbol=plan['symbol'], payload=plan))
                 target_by_symbol = {t.symbol: t for t in targets}

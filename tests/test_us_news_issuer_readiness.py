@@ -53,3 +53,5 @@ def test_backfill_request_filters_subject_mismatch_and_respects_current_session_
     assert request['deferred_dates']==['2026-10-16']
     assert request['requires_explicit_collection_go'] and not request['universe_file_created']
     assert not request['creates_historical_news_availability']
+    assert request['proposed_universe_file']=='config/univers/univers_filtred_tradable.txt'
+    assert request['requires_scope_review_before_collection']

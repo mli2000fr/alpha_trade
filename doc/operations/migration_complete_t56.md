@@ -62,6 +62,26 @@ Pour les journaux append-only sous `log`/`logs`, la portion présente à l'ouver
 est archivée. Une modification en place pendant la lecture d'un autre fichier
 fait échouer la sauvegarde. Ce refus n'interrompt pas le travail du PC source.
 La présence de fichiers nouvellement créés après l'inventaire n'est pas garantie.
+Les fichiers temporaires d'écriture atomique `*.json.<identifiant hexadécimal>.tmp`
+et `*.json.tmp` sont exclus : leur disparition ne doit pas invalider l'export
+d'une version JSON publiée.
+
+Depuis le 1er novembre 2026, si un fichier d'état du filtre options a été
+déplacé après l'inventaire dans une archive de reprise locale, l'export en ligne
+peut lire cette copie sans la restaurer sur le PC source. Cette récupération
+est bornée aux fichiers de claims, résumés, bindings et reçus d'exécution du
+même compte/run. Elle exige la taille et la date de l'inventaire, le journal
+d'archivage du même compte/run, puis son SHA-256 vérifié à la lecture.
+Une ambiguïté, une empreinte incohérente ou l'absence de copie vérifiable
+fait échouer la sauvegarde ; aucun fichier durable n'est silencieusement omis.
+Le manifeste et le résultat exposent `archived_file_versions_recovered` et les
+fichiers concernés portent `source_recovered_from`. Le suivi signale ces
+récupérations. Ce mécanisme ne transforme pas l'export en instantané global.
+
+En cas d'échec de lecture, les rapports conservent désormais le package, le
+dernier fichier, le chemin exact en échec et la classe/code système disponibles
+(`failed_path`, `cause_type`, `filesystem_errno`, `filesystem_winerror`). Aucun
+contenu de fichier ou message brut de fournisseur n'est enregistré.
 Si un entraînement/une collecte est actif, une sauvegarde ultérieure peut donc
 être utile pour conserver sa version terminée.
 

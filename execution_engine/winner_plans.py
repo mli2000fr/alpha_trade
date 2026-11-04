@@ -8,6 +8,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 import hashlib
 import math
+import logging
 
 from common.winner_pyramiding import (WinnerPyramidingConfig, aware,
     confirmed_breakout, confirmed_winner, initial_quantities, new_campaign,
@@ -18,6 +19,18 @@ from common.winner_pyramiding import (WinnerPyramidingConfig, aware,
 # is NOT operational approval: YAML stays off and admissions require a healthy
 # matching watcher. A data/permission failure still rejects every new buy.
 RUNTIME_READY = True
+LOGGER = logging.getLogger(__name__)
+
+
+class InsufficientCampaignBudget(ValueError):
+    """Valid approval whose frozen budget cannot fund a whole initial lot."""
+
+    def __init__(self, symbol, budget, minimum_budget, full, initial):
+        self.details = dict(symbol=symbol, outcome='INSUFFICIENT_CAMPAIGN_BUDGET',
+            campaign_id=None, risk_budget=float(budget), minimum_risk_budget=float(minimum_budget),
+            full_quantity=full, initial_quantity=initial)
+        super().__init__(f'{symbol}: Campaign budget cannot fund one whole initial share '
+                         f'(budget={budget:.4f}, minimum={minimum_budget:.4f})')
 
 
 def require_runtime_ready():
@@ -56,8 +69,14 @@ def require_campaign_watcher(repo, config):
             {'account': config.resolved_account_id}).mappings().first()
     if not row or str(row['hostname']).lower() != socket.gethostname().lower():
         raise ValueError('Campaign watcher must be verifiable on this computer')
-    process = psutil.Process(int(row['pid']))
-    command = process.cmdline()
+    try:
+        process = psutil.Process(int(row['pid']))
+        command = process.cmdline()
+    except psutil.NoSuchProcess as exc:
+        raise ValueError('Watcher protections arrêté : ancien heartbeat sans processus actif ; '
+                         'démarrer le service local avant de relancer l’étape 12') from exc
+    except (psutil.AccessDenied, TypeError, ValueError) as exc:
+        raise ValueError('Identité du watcher non vérifiable ; aucune nouvelle entrée autorisée') from exc
     def flag(name, default=None):
         return command[command.index(name)+1] if name in command else default
     expected = Path(__file__).with_name('protection_watcher.py').resolve()
@@ -97,7 +116,9 @@ def plan_from_target(target, config, exec_run_id, *, now=None, calendar=None):
         raise ValueError('Expired step11 approval; a fresh risk run is required')
     full, initial = initial_quantities(target.target_shares, target.entry_price, risk_budget, policy)
     if initial < 1:
-        raise ValueError('Campaign budget cannot fund one whole initial share')
+        minimum = math.ceil(1 / policy.initial_position_fraction) * target.entry_price * (
+            policy.stop_loss_pct + 2.05 * policy.fee)
+        raise InsufficientCampaignBudget(symbol, risk_budget, minimum, full, initial)
     lineage = '|'.join((config.resolved_account_id, config.broker_mode, target.risk_run_id, symbol))
     key = 'wp-'+hashlib.sha256(lineage.encode()).hexdigest()[:40]
     state = new_campaign(key, symbol, full, initial, risk_budget, policy)
@@ -127,9 +148,19 @@ def stage_targets(store, targets, config, exec_run_id, *, now=None, calendar=Non
     # Validate the complete input before writing any plans.
     longs = [t for t in targets if str(t.side or 'long').lower() in ('long', 'buy')]
     others = [t for t in targets if t not in longs]
-    candidates = [plan_from_target(t, config, exec_run_id, now=now, calendar=calendar) for t in longs]
+    candidates = []
+    for target in longs:
+        try:
+            candidates.append((plan_from_target(target, config, exec_run_id, now=now, calendar=calendar), None))
+        except InsufficientCampaignBudget as error:
+            candidates.append((None, error.details))
     staged = []
-    for state in candidates:
+    for state, skipped in candidates:
+        if skipped is not None:
+            LOGGER.warning('Winner cible ignorée: %s budget=%.4f minimum=%.4f (SL et réserve de frais conservés)',
+                skipped['symbol'], skipped['risk_budget'], skipped['minimum_risk_budget'])
+            staged.append(skipped)
+            continue
         created = store.create(state, config.resolved_account_id, config.broker_mode,
             state['target']['risk_run_id'])
         staged.append(dict(campaign_id=state['campaign_id'], symbol=state['symbol'],

@@ -15,6 +15,7 @@ from .mysql import Connection, DATABASES, MySQL
 from .storage import atomic_json
 from .tracking import Progress,ConsoleProgress,emit
 from .locking import MigrationLockError,worker_identity
+from .file_capture import failure_details
 
 
 def worker_status(job,status,**fields):
@@ -45,7 +46,8 @@ def run_request(request,job,*,tracker=None):
     db.on_progress=report
     if action=='export':
         result=engine.export(request['root'],request['output'],password,db,cancel=cancel,on_progress=report)
-        return dict(status='COMPLETE',folder=request['output'],backup_id=result['id'],source_mode='online')
+        return dict(status='COMPLETE',folder=request['output'],backup_id=result['id'],source_mode='online',
+            archived_file_versions_recovered=result.get('archived_file_versions_recovered',0))
     if action=='plan':
         result=engine.inspect_restore(request['folder'],request['target'],password,db,on_progress=report)
         emit(report,'FINISHED');return result
@@ -168,7 +170,10 @@ def main(argv=None):
         except (NameError,KeyError,OSError,ValueError):pass
         pending=report_progress.get('status')=='FILES_PENDING'
         atomic_json(job/'progress.json',dict(status='FILES_PENDING' if pending else 'CANCELED' if isinstance(exc,InterruptedError) else 'FAILED',
-            error_type=type(exc).__name__,message=str(exc) if type(exc) is ValueError or isinstance(exc,(MigrationLockError,engine.FileInstallError)) else 'Consulter le rapport de phase ; aucune relance automatique.',updated_at=engine.utc()))
+            error_type=type(exc).__name__,message=getattr(exc,'public_message',None) or (
+                str(exc) if type(exc) is ValueError or isinstance(exc,(MigrationLockError,engine.FileInstallError))
+                else 'Consulter le rapport de phase ; aucune relance automatique.'),
+            updated_at=engine.utc(),**failure_details(exc)))
         if tracker and tracker.state.get('phase') not in ('FAILED_ROLLED_BACK','FAILED_ROLLBACK_INCOMPLETE',
                                                         'FILES_PENDING','FILES_ROLLBACK_INCOMPLETE','DATABASE_CHECK_FAILED'):
             extra=dict(error_code=exc.code,owner_pid=exc.owner_pid) if isinstance(exc,MigrationLockError) else {}

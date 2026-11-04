@@ -1,5 +1,11 @@
 # Guide de renouvellement des univers ML et Oracle
 
+> **3 novembre 2026 — consolidation des sources :** les anciens chemins et
+> commandes ci-dessous décrivent les campagnes historiques. Les lancements
+> courants lisent `config/univers/univers_filtred_tradable.txt`. Les générateurs
+> exportent leurs sous-univers sous `artifacts/research/universe_exports/`.
+> Voir [la procédure courante et les archives](../operations/univers_fichier_unique.md).
+
 <!-- doc-status:start -->
 > Statut documentaire au 2026-10-10 — Guide courant : lire aussi les contrats transverses actualisés. Les inventaires générés localisent le code ; ils ne prouvent ni état en base ni réussite opérationnelle. [Référence actuelle](../ETAT_ACTUEL_IMPLEMENTATION.md).
 <!-- doc-status:end -->

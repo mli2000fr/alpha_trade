@@ -1,0 +1,8 @@
+{
+  "status": "UNQUALIFIED_EMPTY_DO_NOT_USE_FOR_TRADING",
+  "target": "parcours_h20",
+  "top_n": 100,
+  "symbols": 0,
+  "reason": "Options/consensus histories below the same20 independent-window minimum",
+  "report": "F:\\projets\\artifacts\\research\\us_predictable_symbols\\20261104-top100-v1\\report.json"
+}

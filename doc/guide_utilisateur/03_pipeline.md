@@ -6,6 +6,14 @@
 
 ## Repères actuels US/CN/FR et filtre GPT
 
+**01/11/2026 — reprise sécurisée :** sous le centre d'exécution, le panneau
+**🔓 Déverrouiller une reprise — étapes 11/12 et watchers** apparaît seulement
+si un verrou concerné existe. Choisir le verrou, vérifier, puis confirmer.
+Les processus actifs et les ordres déjà engagés restent protégés ; les
+tentatives libérées sont archivées. Le panneau couvre les étapes 11/12 du
+filtre options et les verrous de watchers arrêtés.
+[Procédure et contrôles](../operations/pipeline_unlock.md).
+
 **19/10/2026 — filtre LLM :** le libellé indique le fournisseur et le mode choisi
 dans `config.yaml → llm_directional_filter.analysis_mode` (`web_search` ou
 `local_data_only`). Le mode local ne recherche rien sur Internet. Les deux modes

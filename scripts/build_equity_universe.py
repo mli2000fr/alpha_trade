@@ -15,11 +15,12 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from common.instrument_policy import excluded_collective_instrument_reason
+from common.universe_files import validate_universe_export_destination
 from database.connection import get_sqlalchemy_engine
 
 
-DEFAULT_SOURCE = Path("config/univers/univers_filtred.txt")
-DEFAULT_OUTPUT = Path("config/univers/univers_filtred_equities.txt")
+DEFAULT_SOURCE = Path("config/univers/univers_filtred_tradable.txt")
+DEFAULT_OUTPUT = Path("artifacts/research/universe_exports/equities.txt")
 
 
 def read_symbols(path: Path) -> list[str]:
@@ -67,6 +68,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
+    if not args.dry_run:
+        validate_universe_export_destination(args.source, args.output)
 
     symbols = read_symbols(args.source)
     metadata = load_metadata(get_sqlalchemy_engine(), symbols)
