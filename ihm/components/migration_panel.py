@@ -117,7 +117,13 @@ def render_migration_panel():
                 value=False,key='t56_skip_existing_backup')
             if skip_existing_backup:
                 st.error('Sans sauvegarde de l’existant, un échec pendant la restauration SQL ne pourra pas revenir automatiquement aux anciennes bases. Après validation SQL, une erreur de fichiers conservera les bases restaurées.')
-            if st.button('Restaurer après fermeture des services du PC cible',key='t56_restore',disabled=not ready or len(password)<12 or not db_password):
+            restore_missing=[]
+            if not ready:restore_missing.append('cocher la confirmation du remplacement des trois bases')
+            if len(password)<12:restore_missing.append('ressaisir le mot de passe des packages en haut de la page')
+            if not db_password:restore_missing.append('ressaisir le mot de passe MySQL cible')
+            if restore_missing:
+                st.info('Pour activer « Restaurer », '+ ' ; '.join(restore_missing)+'.')
+            if st.button('Restaurer après fermeture des services du PC cible',key='t56_restore',disabled=bool(restore_missing)):
                 stamp=datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
                 report=Path(folder).resolve()/'journaux'/('restauration-'+stamp)
                 _launch(dict(action='restore',folder=folder,target=target,password=password,connections=connections,

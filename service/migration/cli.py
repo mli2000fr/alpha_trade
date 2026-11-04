@@ -169,15 +169,17 @@ def main(argv=None):
                 report_progress=json.loads((Path(request['report_dir'])/'progress.json').read_text(encoding='utf-8'))
         except (NameError,KeyError,OSError,ValueError):pass
         pending=report_progress.get('status')=='FILES_PENDING'
+        public_message=getattr(exc,'public_message',None) or (
+            str(exc) if type(exc) is ValueError or isinstance(exc,(MigrationLockError,engine.FileInstallError))
+            else 'Consulter le rapport de phase ; aucune relance automatique.')
         atomic_json(job/'progress.json',dict(status='FILES_PENDING' if pending else 'CANCELED' if isinstance(exc,InterruptedError) else 'FAILED',
-            error_type=type(exc).__name__,message=getattr(exc,'public_message',None) or (
-                str(exc) if type(exc) is ValueError or isinstance(exc,(MigrationLockError,engine.FileInstallError))
-                else 'Consulter le rapport de phase ; aucune relance automatique.'),
+            error_type=type(exc).__name__,message=public_message,
             updated_at=engine.utc(),**failure_details(exc)))
         if tracker and tracker.state.get('phase') not in ('FAILED_ROLLED_BACK','FAILED_ROLLBACK_INCOMPLETE',
                                                         'FILES_PENDING','FILES_ROLLBACK_INCOMPLETE','DATABASE_CHECK_FAILED'):
             extra=dict(error_code=exc.code,owner_pid=exc.owner_pid) if isinstance(exc,MigrationLockError) else {}
-            emit(tracker.update,'CANCELED' if isinstance(exc,InterruptedError) else 'FAILED',**extra)
+            emit(tracker.update,'CANCELED' if isinstance(exc,InterruptedError) else 'FAILED',
+                 failure_reason=public_message,**extra)
         return 1
 
 

@@ -240,6 +240,7 @@ def test_changed_plan_rejected(backup,tmp_path,monkeypatch):
     db=FakeDB('old');target=tmp_path/'target';target.mkdir()
     plan=engine.inspect_restore(backup[1],target,PASSWORD,db,quiet=quiet)
     db.state['alpha_trade']['rows']+=1
+    monkeypatch.setattr(engine,'verify',lambda *a,**k:pytest.fail('Un plan périmé ne doit pas relire tous les packages'))
     with pytest.raises(ValueError,match='Plan'):
         engine.restore(backup[1],target,PASSWORD,db,tmp_path/'report',approved_plan=plan['fingerprint'],quiet=quiet)
     assert not db.calls

@@ -44,6 +44,14 @@ def test_cli_worker_failure_has_no_secret_traceback(tmp_path,monkeypatch):
     assert secret not in (tmp_path/'progress.json').read_text()
 
 
+def test_cli_worker_log_explains_stale_plan(tmp_path,monkeypatch):
+    monkeypatch.setattr(cli.sys,'stdin',io.StringIO(json.dumps({'action':'restore','report_dir':str(tmp_path/'report')})))
+    def fail(*args,**kwargs):raise ValueError('Plan de restauration changé : refaire la prévisualisation')
+    monkeypatch.setattr(cli,'run_request',fail)
+    assert cli.main(['--request-stdin','--job-dir',str(tmp_path)])==1
+    assert 'refaire la prévisualisation' in (tmp_path/'events.jsonl').read_text(encoding='utf-8')
+
+
 def test_ui_renders_without_exporting_secrets(tmp_path,monkeypatch):
     monkeypatch.setattr(migration_runner,'PROJECT_ROOT',tmp_path)
     app=AppTest.from_string('from ihm.components.migration_panel import render_migration_panel\nrender_migration_panel()').run()
