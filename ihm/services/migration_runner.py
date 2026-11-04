@@ -86,7 +86,9 @@ def latest_files_pending(folder,target):
     except OSError:return None
     for report in reports:
         progress=read_external(report/'progress.json') or {}
-        checkpoint=(read_external(report/'database-ready.json') or {}).get('payload') or {}
+        sealed=read_external(report/'database-ready.json') or {}
+        checkpoint=sealed.get('payload') if isinstance(sealed,dict) else {}
+        if not isinstance(checkpoint,dict):continue
         if (progress.get('status')=='FILES_PENDING' and checkpoint.get('phase')=='DATABASE_VALIDATED'
                 and checkpoint.get('backup_folder')==str(backup) and checkpoint.get('target')==str(destination)
                 and checkpoint.get('report_dir')==str(report.resolve())):

@@ -166,6 +166,8 @@ def render_migration_panel():
         except (OSError,ValueError,AttributeError):reason=None
         if reason=='FILES_PENDING':
             st.warning('Bases restaurées et validées ; l’installation des fichiers reste à reprendre. Ne pas reprendre l’activité avant sa fin.')
+        elif reason=='FILES_ROLLBACK_INCOMPLETE':
+            st.error('Bases conservées, mais le retour des fichiers est incomplet. Examiner les dossiers du rapport avant toute nouvelle tentative.')
         elif reason=='RESTORE_FAILED_REVIEW_REQUIRED':
             st.error('Restauration interrompue : la base peut être incomplète. Relancer une restauration complète avant toute reprise opérationnelle.')
         else:

@@ -251,6 +251,8 @@ L'opération :
 4. recrée puis importe les trois schémas, sans fusion et sans `alembic upgrade` ;
 5. vérifie schémas/objets et compte les lignes après import ; en mode online,
    les comptes ne peuvent pas être comparés à un compte source atomique ;
+   écrit ensuite `database-ready.json` dans le rapport, authentifié par le mot
+   de passe de la sauvegarde et lié au backup, au projet cible et au manifeste ;
 6. remplace les racines gérées et l'arbre d'artefacts, empêchant le mélange de
    vieux modèles avec les nouveaux ; les répertoires hors périmètre restent ;
 7. restaure les variables dans **HKCU Environment**, adapte leur préfixe de
@@ -281,10 +283,27 @@ sur les mêmes comptes pendant que le PC source les gère encore.
 
 ## Échec et récupération
 
-Une erreur pendant le remplacement tente automatiquement de restaurer les
-trois anciennes bases, les anciens fichiers et les variables modifiées.
-Statuts : `FAILED_ROLLED_BACK` ou `FAILED_ROLLBACK_INCOMPLETE`. Aucun de ces
-statuts ne déclenche de reprise des services.
+Avant la validation des trois bases, une erreur tente de remettre les anciennes
+bases et les fichiers en place. Statuts : `FAILED_ROLLED_BACK` ou
+`FAILED_ROLLBACK_INCOMPLETE`.
+
+Après `DATABASE_READY`, une erreur d'installation ne réimporte **pas** les
+anciennes bases : les trois bases validées sont conservées. Seuls les fichiers
+déjà déplacés et les variables utilisateur modifiées sont remis en place.
+Si ce retour des fichiers réussit, le rapport passe à `FILES_PENDING` et
+**Vérifier / restaurer** propose **Reprendre uniquement les fichiers et modèles**.
+Renseigner à nouveau les mots de passe, corriger la cause indiquée dans
+`failure.json`, puis cliquer ce bouton. Le worker vérifie le point de reprise
+authentifié et l'état des trois bases, réextrait les packages de fichiers et
+réessaie leur installation, sans `DROP`, import SQL ni sauvegarde de l'existant.
+Un nouvel échec des fichiers laisse le même bouton disponible. Si le retour
+des fichiers est incomplet (`FILES_ROLLBACK_INCOMPLETE`) ou que les bases ne
+passent plus leur contrôle (`DATABASE_CHECK_FAILED`), la reprise automatique
+des fichiers est refusée et un examen manuel est nécessaire. Aucun de ces
+statuts ne redémarre les services.
+
+Une tentative lancée avec une ancienne version du moteur ne possède pas ce
+point de reprise : elle exige une nouvelle restauration complète des bases.
 
 Les rapports sont sous le dossier choisi dans `journaux`. Ils contiennent le
 chemin `existant-chiffre/recovery.json`, les archives chiffrées, ainsi que

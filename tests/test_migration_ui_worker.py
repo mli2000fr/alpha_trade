@@ -235,3 +235,21 @@ def test_file_resume_report_is_discovered_after_refresh(tmp_path):
         target=str(target.resolve()),report_dir=str(report.resolve())))))
     assert migration_runner.latest_files_pending(str(backup),str(target))==str(report)
     assert migration_runner.latest_files_pending(str(backup),str(tmp_path/'other')) is None
+
+
+def test_worker_routes_file_resume_without_full_database_restore(tmp_path,monkeypatch):
+    calls=[]
+    class DB:pass
+    monkeypatch.setattr(cli,'adapter',lambda request:DB())
+    monkeypatch.setattr(cli.inventory,'quiescent',lambda *args,**kwargs:[])
+    monkeypatch.setattr(cli.engine,'restore',lambda *args,**kwargs:(_ for _ in ()).throw(
+        AssertionError('Full SQL restore must not run')))
+    def resume(*args,**kwargs):
+        calls.append((args,kwargs));return dict(status='RESTORED_PAUSED',source_requirements='')
+    monkeypatch.setattr(cli.engine,'restore_files',resume)
+    report=tmp_path/'report';report.mkdir()
+    request=dict(action='restore_files',folder=str(tmp_path/'backup'),target=str(tmp_path/'target'),
+        report_dir=str(report),password='fixture-only-password-443',rebuild_venv=False)
+    result=cli.run_request(request,tmp_path/'job')
+    assert result['status']=='RESTORED_PAUSED'
+    assert len(calls)==1 and calls[0][0][4]==str(report)
