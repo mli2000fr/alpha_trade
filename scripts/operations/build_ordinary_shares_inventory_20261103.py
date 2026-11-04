@@ -41,7 +41,10 @@ def classify(symbol, metadata, nasdaq, business, finnhub, eodhd=None):
         return 'EXCLUDE_ETP', 'Explicit ETF/ETN description'
     if (nasdaq or {}).get('etf_flag'):
         return 'EXCLUDE_ETP', 'Nasdaq ETF flag'
-    if matches(r'\b(preferred|preference|prefs?|depositary preferred)\b', names) or matches(r'\.PR[A-Z]+$', symbol):
+    ordinary_named = kind == 'Common Stock' and matches(r'\bcommon stock\b|\bordinary shares?\b', name)
+    preferred_instrument = matches(r'\b(?:preferred|preference)\s+(?:stock|shares?|securities)\b|\bprefs?\b', names)
+    preferred_hint = matches(r'\b(preferred|preference|prefs?|depositary preferred)\b', names)
+    if (preferred_hint and (not ordinary_named or preferred_instrument)) or matches(r'\.PR[A-Z]+$', symbol):
         return 'EXCLUDE_PREFERRED', 'Preferred share description or series symbol'
     if matches(r'\bwarrants?\b', names) or matches(r'\.(WS|WT)(\.[A-Z])?$', symbol):
         return 'EXCLUDE_WARRANT', 'Warrant instrument (not underlying common shares)'

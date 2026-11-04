@@ -1,5 +1,57 @@
 # Registre des expériences ML réalisées
 
+## 2026-11-04 — Actions ordinaires : réduction des trois listes à TOP100
+
+**TERMINÉ — aucune amélioration de fiabilité démontrée ; intersections non qualifiables.**
+Variante demandée après le TOP1500 : 100 premiers des classements modèles
+2023–2025 figés, deux cibles séparées, même contrôle 2026 non chevauchant
+jusqu'au 2 novembre. Aucun réentraînement des 21 944 modèles ni classement sur2026.
+AUC médiane TOP100 : **0,4800 H10 / 0,5000 parcours H20**, contre
+0,5111/0,5000 pour TOP1500 ; 44,33 %/44,00 % des titres avec AUC>0,5.
+Fenêtres LONG positives : 201/552 (36,41 %) H10, 119/271 (43,91 %) H20 ;
+fréquences sans sélection 37,06 %/46,67 %. Pas de trades Winner ni de PnL de
+portefeuille : H10 proxy daily SL5/open11, H20 dominance du pic haussier.
+Sources options/consensus toujours sous le minimum de20 fenêtres indépendantes
+matures : aucune liste de fiabilité inventée, deux intersections vides et reçus
+actualisés TOP100. Listes modèles seules disponibles, aucune promotion.
+Vérification PASS, métriques TOP1500 reproduites, archives et source inchangées,
+aucun appel fournisseur/LLM, SQL ou ordre. Même assistant, pas revue indépendante.
+[Protocole, résultats et fichiers TOP100](univers_predictibilite_top100_20261104.md).
+Complément demandé : tri AUC2023–2025 des titres qualifiés, TOP10 par cible,
+contrôle2026 séparé. Meilleurs historiques AG H10(0,748), LAUR H20(0,857) ;
+contrôles2026 respectifs0,378/0,944. Seulement8–9 observations de contrôle H20,
+10–19 H10 ; pas de taux gagnant déduit de l'AUC, pas de promotion.
+Filtre supplémentaire demandé : AUC historique ET2026 strictement>0,60.
+TOP100 par AUC historique :32H10/37H20 ; TOP100 initial de fiabilité :7/20.
+Listes TXT et détails CSV séparés sauvegardés, égalité0,60 exclue.
+Sélection rétrospective utilisant2026 : cette période ne valide plus les noms
+retenus, confirmation future nécessaire. Pas de changement de production.
+
+## 2026-11-04 — Actions ordinaires : univers de fiabilité LONG par symbole, options et consensus
+
+**TERMINÉ — pas d'univers fiable à promouvoir ; intersections non qualifiables faute d'historique des deux autres sources.**
+5 254 symboles d'action_ordinaire.txt, indépendamment du TOP Oracle. PFBC ajouté
+après correction documentée du nom Preferred Bank pris à tort pour un type préféré.
+21 944modèles annuels locaux, zéro erreur de modélisation. Deux cas
+demandés séparément : proxy daily LONG SL5/sansTP/sansTR/H10 net positif ;
+pic haussier dominant le pic baissier absolu durantH20, deux pics et ordre conservés.
+Fit/calibration propres au titre renouvelés annuellement, classement sur2023–2025
+OOS et contrôle2026 jusqu'au2novembre exclu de la sélection. TOP1500 au maximum
+par source, intersection stricte, aucune promotion automatique.
+Inventaire courant : snapshots3 021titres depuisseptembre2026 ; volume30Min3 085 ; consensus4 585
+depuis11octobre2026. Borne optimiste de fenêtres matures non chevauchantes :
+insuffisante pour établir une fiabilité par titre, minimum préalable20fenêtres.
+Pas de classement inventé ni de faux recul via les valeursEPSJ−7/30/60/90.
+Prix qualifiésOOS2 392H10 et1 996H20 ; deux listes modèles de1 500.
+Contrôle2026 non chevauchant : AUC médianeTOP1500 0,5111H10 /0,5000H20,
+contre0,5000/0,5000dans les autres titres qualifiés ; médiane18/9fenêtres par titre.
+Deux candidats cohérents exploratoiresH10 (FTS,HOMB), mais seulement3/2signaux
+LONG indépendants2026 ; pas de robustesse démontrée. Aucun candidat cohérentH20.
+CHRD/WFRD en quarantaine d'identité ; dates/empreintes21 944fits vérifiées,
+72probabilités reproduites, dix tests passent. Les deux symbol_trade restent
+vides avec reçu nonqualifié. SQL lectureseule, aucun fournisseur/LLM/ordre.
+[Protocole, couverture et suivi](univers_predictibilite_20261103.md).
+
 ## 2026-11-03 — Oracle H10 TOP20 → spécialistes LONG par symbole → TOP10 → Winner
 
 **TERMINÉ TECHNIQUEMENT — 9/9 simulations, zéro échec ; couverture intraday incomplète.**
