@@ -64,7 +64,10 @@ def render_migration_progress(paths):
             last=datetime.fromisoformat(tracking['updated_at']).astimezone(ZoneInfo('Europe/Paris')).strftime('%H:%M:%S')
             st.caption('Dernier avancement enregistré à '+last+' (Paris).')
         except ValueError:pass
-    if status=='FAILED':st.error(worker.get('message') or 'Opération échouée. Consulter les derniers événements et le rapport.')
+    if status=='FILES_PENDING':
+        st.warning('Les bases sont validées. Corriger le problème de fichiers indiqué dans le rapport, puis utiliser « Reprendre uniquement les fichiers et modèles » dans Vérifier / restaurer.')
+        if worker.get('message'):st.caption(worker['message'])
+    elif status=='FAILED':st.error(worker.get('message') or 'Opération échouée. Consulter les derniers événements et le rapport.')
     elif status=='CANCELED':st.warning('Opération interrompue. Consulter le journal pour le résultat du retour arrière éventuel.')
     elif status=='FINISHED':
         if tracking.get('warning'):st.warning('Données restaurées ; la construction de l’environnement Python reste à vérifier.')

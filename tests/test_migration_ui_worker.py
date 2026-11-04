@@ -185,3 +185,53 @@ def test_database_cli_uses_transaction_and_env_not_password_arg(monkeypatch):
     assert '--skip-lock-tables' in command
     assert 'not-a-real-secret' not in ' '.join(command)
     assert kwargs['env']['MYSQL_PWD']=='not-a-real-secret'
+
+
+def test_completed_plan_survives_new_session_without_secrets(tmp_path,monkeypatch):
+    monkeypatch.setattr(migration_runner,'PROJECT_ROOT',tmp_path)
+    job=tmp_path/'backups'/'migration_jobs'/'completed'
+    job.mkdir(parents=True)
+    context=dict(folder='F:/backup',target='D:/Projet',user='root',
+                 mysqldump='dump.exe',mysql='mysql.exe')
+    (job/'job.json').write_text(json.dumps(dict(action='plan',plan_context=context)))
+    (job/'progress.json').write_text(json.dumps(dict(status='FINISHED')))
+    (job/'result.json').write_text(json.dumps(dict(fingerprint='plan-1')))
+    assert migration_runner.latest_completed_plan()==(str(job),context,dict(fingerprint='plan-1'))
+    assert migration_runner.completed_plan_for(context)==(str(job),dict(fingerprint='plan-1'))
+    assert migration_runner.completed_plan_for(context | dict(target='D:/Other')) is None
+
+
+def test_restore_quiescence_ignores_ui_and_scheduler_but_blocks_batch(tmp_path,monkeypatch):
+    from service.migration import inventory
+    class Process:
+        def __init__(self,pid,cmd):
+            self.pid=pid
+            self.info=dict(name='python.exe',cmdline=['python.exe',*cmd],exe='C:/Python/python.exe')
+        def cwd(self):return str(tmp_path)
+    processes=[Process(90001,['-m','streamlit','run',str(tmp_path/'ihm/app.py')]),
+               Process(90002,[str(tmp_path/'run.py')]),
+               Process(90003,['-m','service.forward_pit.batch','--batch','daily_bars_sync'])]
+    import psutil
+    monkeypatch.setattr(psutil,'process_iter',lambda *args:processes)
+    assert [item['pid'] for item in inventory.running_processes(tmp_path)]==[90003]
+
+
+def test_active_restore_precedes_old_plan_after_refresh(tmp_path):
+    restore=tmp_path/'restore';plan=tmp_path/'plan'
+    restore.mkdir();plan.mkdir()
+    (restore/'job.json').write_text(json.dumps(dict(action='restore')))
+    (restore/'progress.json').write_text(json.dumps(dict(status='WAITING_FOR_TARGET_STOP')))
+    (plan/'job.json').write_text(json.dumps(dict(action='plan')))
+    (plan/'progress.json').write_text(json.dumps(dict(status='FINISHED')))
+    assert migration_runner.order_follow_jobs([str(plan),str(restore)])[0]==str(restore)
+
+
+def test_file_resume_report_is_discovered_after_refresh(tmp_path):
+    backup=tmp_path/'backup';target=tmp_path/'target';target.mkdir()
+    report=backup/'journaux'/'restauration-20261104T010000Z';report.mkdir(parents=True)
+    (report/'progress.json').write_text(json.dumps(dict(status='FILES_PENDING')))
+    (report/'database-ready.json').write_text(json.dumps(dict(payload=dict(
+        phase='DATABASE_VALIDATED',backup_folder=str(backup.resolve()),
+        target=str(target.resolve()),report_dir=str(report.resolve())))))
+    assert migration_runner.latest_files_pending(str(backup),str(target))==str(report)
+    assert migration_runner.latest_files_pending(str(backup),str(tmp_path/'other')) is None

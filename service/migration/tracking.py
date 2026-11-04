@@ -19,7 +19,12 @@ LABELS={
     'WAITING_FOR_TARGET_STOP':'Attente de la fermeture des services du PC cible',
     'STAGING':'Extraction et préparation des fichiers', 'BACKUP_EXISTING':'Sauvegarde de l’existant sur le PC cible',
     'DATABASE_REPLACEMENT':'Restauration des bases', 'DATABASE_VALIDATION':'Validation des bases restaurées',
+    'DATABASE_READY':'Bases validées — installation des fichiers à suivre',
     'FILE_REPLACEMENT':'Installation des fichiers et modèles', 'USER_ENVIRONMENT':'Restauration des variables utilisateur',
+    'FILE_ROLLBACK':'Retour des fichiers à leur état précédent (bases conservées)',
+    'FILES_PENDING':'Bases validées — installation des fichiers à reprendre',
+    'FILES_ROLLBACK_INCOMPLETE':'Bases conservées — retour des fichiers incomplet',
+    'DATABASE_CHECK_FAILED':'Vérification des bases échouée — reprise des fichiers interdite',
     'FINALIZING':'Vérifications finales', 'RESTORED_PAUSED':'Données restaurées, services laissés arrêtés',
     'BUILDING_PYTHON':'Création de l’environnement Python et installation des dépendances',
     'ROLLBACK':'Retour à l’état précédant la restauration', 'FAILED_ROLLED_BACK':'Échec — état précédent rétabli',
@@ -34,11 +39,12 @@ EXPORT={'ONLINE_BACKUP':(0,5),'QUIESCENCE':(0,5),'DATABASE_INVENTORY':(5,10),
         'DATABASE_RECHECK':(85,90),'VERIFYING':(90,99)}
 RESTORE={'VERIFYING':(0,12),'RESTORE_PREFLIGHT':(12,18),'STAGING':(18,35),
          'BACKUP_EXISTING':(35,55),'DATABASE_REPLACEMENT':(55,78),'DATABASE_VALIDATION':(78,85),
-         'FILE_REPLACEMENT':(85,93),'USER_ENVIRONMENT':(93,95),'FINALIZING':(95,97),
+         'DATABASE_READY':(85,85),'FILE_REPLACEMENT':(85,93),'USER_ENVIRONMENT':(93,95),'FINALIZING':(95,97),
          'RESTORED_PAUSED':(97,97),'BUILDING_PYTHON':(97,99)}
 NUMBERS={'completed','total','part_index','parts_total','files_done','files_total','processed_bytes','total_bytes','owner_pid','directories_done','inventory_files','inventory_bytes'}
 TEXT={'database','package','item','unit','error_code'}
-TERMINAL={'COMPLETE','FINISHED','FAILED','CANCELED','FAILED_ROLLED_BACK','FAILED_ROLLBACK_INCOMPLETE','RECOVERED_PAUSED'}
+TERMINAL={'COMPLETE','FINISHED','FAILED','CANCELED','FAILED_ROLLED_BACK','FAILED_ROLLBACK_INCOMPLETE',
+          'FILES_PENDING','FILES_ROLLBACK_INCOMPLETE','DATABASE_CHECK_FAILED','RECOVERED_PAUSED'}
 
 
 class Progress:
