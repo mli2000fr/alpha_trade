@@ -112,6 +112,28 @@ def test_file_install_names_blocked_root_and_system_code(tmp_path,monkeypatch):
             operation='mise de côté',check=lambda:None,timeout=0)
 
 
+def test_locked_doc_root_uses_in_place_mirror_with_rollback(tmp_path,monkeypatch):
+    target=tmp_path/'target';stage=tmp_path/'stage';previous=tmp_path/'previous'
+    (target/'doc').mkdir(parents=True);(stage/'doc').mkdir(parents=True)
+    (target/'doc/keep.md').write_text('old');(target/'doc/stale.md').write_text('old only')
+    (stage/'doc/keep.md').write_text('new');(stage/'doc/new.md').write_text('new only')
+    original=engine.replace_with_retry
+    def locked_root(source,destination,*,item,operation,check,timeout=60):
+        if item=='doc' and operation=='mise de côté':raise engine.FileInstallError(item,operation,5)
+        return original(source,destination,item=item,operation=operation,check=check,timeout=timeout)
+    monkeypatch.setattr(engine,'replace_with_retry',locked_root)
+    moves=[]
+    engine.install_managed_roots(target,stage,previous,['doc'],moves,lambda:None)
+    assert moves[0][3]=='in_place'
+    assert (target/'doc/keep.md').read_text()=='new'
+    assert (target/'doc/new.md').read_text()=='new only'
+    assert not (target/'doc/stale.md').exists()
+    engine.rollback_managed_roots(moves,tmp_path/'failed')
+    assert (target/'doc/keep.md').read_text()=='old'
+    assert (target/'doc/stale.md').read_text()=='old only'
+    assert not (target/'doc/new.md').exists()
+
+
 @pytest.fixture(scope='module')
 def backup(tmp_path_factory):
     base=tmp_path_factory.mktemp('migration');source=base/'source';source.mkdir()
