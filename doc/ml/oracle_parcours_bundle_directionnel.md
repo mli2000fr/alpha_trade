@@ -88,6 +88,9 @@ modèle, est cochée par défaut pour un bundle compatible. Quand elle est coch�
 - **Top N Oracle** définit la taille du pool, entre 1 et la taille de l'univers ;
 - **LONG** et **SHORT** activent séparément les classements ;
 - **Top X Long** et **Top Y Short** définissent les nombres retenus par branche.
+- **Score LONG minimum — strictement supérieur**, défaut IHM **0,60**, filtre
+  ensuite les TOP X LONG. Un score égal au seuil est exclu ; aucun remplacement
+  depuis les rangs suivants, aucune vente forcée d'une position détenue.
 
 Défaut : N=20, LONG coché, X=5, SHORT décoché, Y=5. Les nombres sont préremplis
 depuis le contrat entraîné. X/Y ne peuvent pas dépasser N ; au moins une branche
@@ -109,7 +112,9 @@ conformément à la décision utilisateur du 4 novembre :
 
 La commande émet `--per-symbol-long` (flag historique d'activation), puis
 `--[no-]per-symbol-longs`, `--[no-]per-symbol-shorts`, `--per-symbol-top-long X`,
-`--per-symbol-top-short Y` et `--top-n N`. Décocher per-symbol émet
+`--per-symbol-top-short Y`, `--top-n N` et, depuis l'IHM,
+`--per-symbol-min-long-probability 0.6` (valeur modifiable). Les anciennes
+commandes sans ce dernier paramètre restent sans seuil. Décocher per-symbol émet
 `--no-per-symbol-long` pour un témoin Oracle seul. Les anciennes commandes
 conservent l'auto-détection du bundle. L'option reste indisponible sans branches.
 
@@ -122,8 +127,12 @@ doit avoir calculé les scores historiques nécessaires auparavant. Aucun modèl
 ne s'entraîne dans le replay. Les limites OHLC et de couverture restent celles
 du moteur. L'utilisation de N/X/Y différents s'applique seulement à ce backtest.
 
-Un fichier d'univers existant correspondant exactement au contrat est proposé,
-avec des champs propres à chaque batch. Les dates par défaut prennent l'année
+L'univers est sélectionné automatiquement depuis le contrat du batch ; le
+champ **Univers Winner** est grisé et le bouton de reprise a été supprimé.
+La commande `--symbol-source model-universe` utilise la liste figée, sans lire
+un fichier externe mutable. Cela s'applique aussi à Oracle seul. Les anciennes
+commandes avec un fichier conservent leurs contrôles ; N/X/Y et le seuil LONG
+restent paramétrables. Les dates par défaut prennent l'année
 qui suit la fin configurée du training : le batch `model-factory-20261104153014-49a6da`
 propose donc **2022**, son univers de **32 titres** et le parcours **TOP20 → TOP5**.
 Pour couvrir toute cette année, le signal du **31/12/2021** est nécessaire pour

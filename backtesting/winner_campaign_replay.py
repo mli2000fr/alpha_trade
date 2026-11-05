@@ -108,7 +108,10 @@ def validate_scores(frame, *, profile_hash, folds, expected_days, top_n, horizon
     missing = [f'{day} ({counts.get(day,0)}/{universe_size or top_n})'
                for day in expected_days if counts.get(day, 0) < minimum]
     if missing:
-        raise ValueError(f'Couverture Oracle insuffisante (minimum {minimum}) : '+', '.join(missing[:30]))
+        raise ValueError(f'Couverture Oracle insuffisante (minimum {minimum}) : '+', '.join(missing[:30])+
+            '. Dates de signal J, pour une entrée à la séance suivante J+1 : prévoir la dernière séance '
+            'précédant la première entrée, même dans l’année précédente. Compléter ML Predict sur les '
+            'dates manquantes pour ce batch ; le backtest reste en lecture seule et ne les invente pas.')
     ordered = frame.sort_values(['trade_date', 'proba_extreme', 'symbol'], ascending=[True, False, True])
     ordered['rank'] = ordered.groupby('trade_date').cumcount()+1
     ordered['selected'] = ordered['rank'] <= top_n
@@ -245,11 +248,15 @@ def run(args):
             raise ValueError('No requested US sessions')
         prior = max(d for d in sessions if d < actual[0])
         signal_days = [prior]+actual[:-1]
-        universe = load_universe_file_symbols(args.symbol_source)
+        from backtesting.winner_universe import MODEL_UNIVERSE_SOURCE,universe_from_model
+        universe=(universe_from_model(protocol) if args.symbol_source==MODEL_UNIVERSE_SOURCE
+            else load_universe_file_symbols(args.symbol_source))
         if not universe:
             raise ValueError('Empty universe')
         if directional_bundle and set(universe)!=set(protocol['universe']):
-            raise ValueError('Bundle parcours : choisir le fichier contenant l’univers entier du batch avant le classement per-symbol')
+            raise ValueError('Bundle parcours : choisir le fichier contenant l’univers entier du batch avant le classement per-symbol. '
+                f'Fichier choisi : {len(set(universe))} titres ; modèle : {len(set(protocol["universe"]))} titres. '
+                'Top N Oracle ne modifie pas l’univers d’entraînement.')
         from backtesting.winner_exclusions import excluded_symbols,apply_exclusions
         exclusions=excluded_symbols(getattr(args,'exclude_symbols',''))
         if set(exclusions)-set(universe):
@@ -364,6 +371,10 @@ def run(args):
                 requested_max_leverage=args.max_leverage, allowed_max_leverage=allowed,
                 per_symbol_long_enabled=directional_bundle,
                 per_symbol_selection=directional_selection.snapshot() if directional_selection else None,
+                universe_resolution=dict(source=args.symbol_source,
+                    mode='MODEL_CONTRACT' if args.symbol_source==MODEL_UNIVERSE_SOURCE else 'EXPLICIT_FILE',
+                    symbol_count=len(universe),symbols=universe,
+                    sha256=hashlib.sha256(json.dumps(sorted(universe)).encode()).hexdigest()),
                 selection=(directional_selection.describe()+' -> risque -> Winner' if directional_bundle else
                     ('Oracle TOP-N -> CALL/PUT + OI -> risque -> Winner' if options_enabled else 'Oracle TOP-N -> risque -> Winner')),
                 options_filter=options_config.snapshot() if options_enabled else None,
@@ -530,7 +541,8 @@ def build_parser():
     parser.add_argument('--artifacts-dir', default='artifacts/models')
     parser.add_argument('--start-date', type=date.fromisoformat, required=True)
     parser.add_argument('--end-date', type=date.fromisoformat, required=True)
-    parser.add_argument('--symbol-source', default='universe-file:config/univers_batch/univers_filtred_tradable.txt')
+    parser.add_argument('--symbol-source', default='universe-file:config/univers_batch/univers_filtred_tradable.txt',
+        help='model-universe : liste figée du batch (IHM automatique) ; anciens chemins universe-file conservés.')
     parser.add_argument('--top-n', type=int, default=20)
     parser.add_argument('--per-symbol-long',action=argparse.BooleanOptionalAction,default=None,
         help='Activer le classement per-symbol ; défaut automatique selon le contrat du batch')

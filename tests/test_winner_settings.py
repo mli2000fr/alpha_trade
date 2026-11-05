@@ -99,7 +99,7 @@ def test_real_form_edits_and_reset_round_trip_without_changing_yaml(monkeypatch,
     monkeypatch.setattr('ihm.components.winner_backtest.load_winner_pyramiding_config',lambda:base_policy)
     monkeypatch.setattr('risk_management.config.load_risk_config',lambda **kw:base_risk)
     monkeypatch.setattr('execution_engine.config.load_leverage_config_from_yaml',lambda:LeverageConfig(enabled=False))
-    monkeypatch.setattr('modelFactory.oracle_path.predict.load_contract',lambda *a:(None,{'horizon':10},None,
+    monkeypatch.setattr('modelFactory.oracle_path.predict.load_contract',lambda *a:(None,{'horizon':10,'universe':['AAA']},None,
         {'2021-07-02':{'metrics':dict(fold_start='2021-07-02',train_available_max='2020-12-30',val_available_max='2021-07-01')}}))
     def app():
         from dataclasses import asdict
@@ -199,7 +199,7 @@ def test_visible_settings_block_reads_yaml_edits_replay_command_and_resets(tmp_p
     monkeypatch.setattr('ihm.components.winner_backtest.Path',lambda p:model_root if p=='artifacts/models' else Path(p))
     monkeypatch.setattr('risk_management.config.load_risk_config',lambda **kw:RiskConfig(account_equity=kw['equity']))
     monkeypatch.setattr('execution_engine.config.load_leverage_config_from_yaml',lambda:LeverageConfig(enabled=False))
-    monkeypatch.setattr('modelFactory.oracle_path.predict.load_contract',lambda *a:(None,{'horizon':10},None,
+    monkeypatch.setattr('modelFactory.oracle_path.predict.load_contract',lambda *a:(None,{'horizon':10,'universe':['AAA']},None,
         {'2021-07-02':{'metrics':dict(fold_start='2021-07-02',train_available_max='2020-12-30',val_available_max='2021-07-01')}}))
     def app():
         from dataclasses import asdict

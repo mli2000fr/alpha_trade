@@ -13,17 +13,20 @@ from ihm.services.backtesting_runner import BacktestRunOptions, build_backtestin
 MODEL_ROOT=Path('artifacts/models')
 
 
-def matching_universe_source(contract):
-    """Prefill an existing file only if its symbol set matches the trained scope."""
-    from common.universe_files import list_universe_file_sources,load_universe_file_symbols
-    wanted=set(contract.get('universe',[]))
-    if wanted:
-        for source in list_universe_file_sources():
-            try:
-                if set(load_universe_file_symbols(source))==wanted:return source
-            except (ValueError,OSError):
-                continue
-    return 'universe-file:config/univers_batch/univers_filtred_tradable.txt'
+def render_universe_selection(contract,batch):
+    """Always use the selected batch's frozen symbols, including Oracle-only mode."""
+    from backtesting.winner_universe import MODEL_UNIVERSE_SOURCE,universe_from_model
+    try:
+        symbols=universe_from_model(contract)
+    except ValueError as exc:
+        st.error(str(exc))
+        st.stop()
+    st.text_input('Univers Winner',value=f'Univers du modèle sélectionné — {len(symbols)} titres',
+        key=f'bt_winner_universe_auto_{batch}',disabled=True,
+        help='Choix automatique depuis les symboles enregistrés dans le batch. '
+             'Changer de modèle change son univers ; Top N règle uniquement le classement.')
+    st.caption(f'Univers figé du batch {batch} : {len(symbols)} titres, avant classement Oracle et per-symbol.')
+    return MODEL_UNIVERSE_SOURCE
 
 
 def render_model_selection():
@@ -197,8 +200,7 @@ def render_winner_backtest():
         if days:
             st.caption(f'Prédictions nécessaires : signal du {cal.previous_session(days[0])} au '
                        f'{cal.previous_session(days[-1])}, pour les achats simulés du {days[0]} au {days[-1]}.')
-    source = st.text_input('Univers Winner',
-        value=matching_universe_source(contract), key=f'bt_winner_universe_{batch}')
+    source=render_universe_selection(contract,batch)
     ignore_missing=st.checkbox('Ignorer automatiquement les titres aux données intraday manquantes',
         value=True,key='bt_winner_ignore_missing_intraday',disabled=daily_entry,
         help='Tente Alpaca SIP, puis Yahoo, puis EODHD. Si les bougies restent manquantes, bloque uniquement les dates d’entrée dont la détention pourrait traverser ces lacunes ; aucun remplacement Oracle.')

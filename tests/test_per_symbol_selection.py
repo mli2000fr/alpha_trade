@@ -116,3 +116,21 @@ def test_long_threshold_does_not_change_short_or_resurrect_losing_branch():
 @pytest.mark.parametrize('value',[-.01,1.01,float('nan'),float('inf'),True,'0.6'])
 def test_invalid_long_threshold_is_rejected(value):
     with pytest.raises(ValueError,match='Seuil LONG'):PerSymbolSelection(min_long_probability=value)
+
+
+@pytest.mark.usefixtures('isolated_winner_config')
+@pytest.mark.parametrize('probability,expected_buys',[(.59,0),(.60,0),(.61,1)])
+def test_thresholded_candidates_reach_the_real_winner_book(probability,expected_buys):
+    from tests.test_winner_intraday import fixture
+    from backtesting.simulator import BacktestEngine
+    cfg,args,_=fixture(confirmation_bars=0,initial_position_fraction=1.)
+    cfg.winner_daily_entry_enabled=True
+    cfg.winner_drawdown_controller_enabled=False
+    frame=args['signals_df'].rename(columns={'trade_date':'date'}).assign(
+        proba_extreme=.8,long_probability=probability,short_probability=.2)
+    ranked=select_per_symbol(frame,PerSymbolSelection(1,True,False,1,1,min_long_probability=.6))
+    args['signals_df']=ranked.loc[ranked.selected].rename(columns={'date':'trade_date'})
+    result=BacktestEngine(cfg).run(**args)
+    assert result.trade_events_df.event.eq('BUY_FILL').sum()==expected_buys
+    if not expected_buys:
+        assert result.final_value()==4000. and result.tracker_snapshot['winner_replay']['costs']==0.

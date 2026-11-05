@@ -98,6 +98,61 @@ Le résultat +130,57 % concernait les modèles de recherche annuels et la pério
 2024–19 octobre 2026, pas le nouveau modèle 2022. Aucun nouveau rendement ni
 backtest économique n'est produit par cette évolution d'écran.
 
+## Univers du modèle sélectionné automatiquement
+
+Le champ **Univers Winner**, juste sous les dates, est **grisé et non modifiable**.
+Il affiche le nombre de titres enregistré dans le contrat du batch choisi.
+Changer de modèle sélectionne automatiquement son univers, avec ou sans
+per-symbol. Les anciennes valeurs de fichier mémorisées dans le formulaire
+sont ignorées ; le bouton de reprise de l'univers a été supprimé.
+
+Le formulaire transmet `--symbol-source model-universe`. Le replay utilise
+directement la liste figée dans le contrat, sans dépendre du contenu actuel
+d'un fichier externe et sans en créer un nouveau. La source, le nombre,
+les symboles et leur empreinte sont conservés dans `protocol.json.universe_resolution`.
+Un univers de modèle absent, invalide ou dupliqué est refusé explicitement.
+
+Les anciennes commandes `universe-file:...` restent utilisables hors IHM et
+conservent leurs contrôles. Pour un univers différent dans le formulaire,
+choisir un modèle entraîné sur cet univers. **Top N Oracle** change la taille
+du classement, pas celle de l'univers d'entraînement. Aucun modèle, fichier,
+N/X/Y, seuil LONG ou ancien run n'est modifié par ce choix automatique.
+
+## Dates de signal nécessaires à une année de backtest
+
+La période saisie décrit les séances d'exécution. Un achat à l'ouverture J+1
+nécessite les scores de J : par exemple le premier achat de 2023, le 3 janvier,
+utilise le signal du **30 décembre 2022**. Lancer ML Predict uniquement sur les
+dates calendaires 2023 laisse donc cette première séance sans signal.
+Il faut inclure la dernière séance précédant la première entrée demandée,
+avec le même batch et des poids disponibles avant la date du signal. Le replay
+valide la couverture et la traçabilité ; il ne saute pas silencieusement la
+première séance et ne calcule pas de prédictions avec écriture SQL dans son
+exécution isolée. Le message d'erreur précise désormais cette règle J→J+1.
+
+## Seuil LONG per-symbol avant les achats
+
+Lorsque **per-symbol** est coché, le formulaire propose **Score LONG minimum —
+strictement supérieur**, par défaut **0,60**, sous les choix TOP N / TOP X / TOP Y.
+Le pool Oracle est figé, puis les TOP X LONG sont classés, puis seuls les scores
+**strictement supérieurs** au seuil sont retenus. À 0,60, un score 0,6000 est
+exclu et 0,6001 passe. Aucun rang suivant n'est promu après ce filtre.
+Le filtre ne déclenche pas la vente des positions déjà détenues et ne modifie
+pas leurs protections ou renforcements. Il n'ajoute aucun SHORT automatique.
+
+Commande : `--per-symbol-min-long-probability 0.6`. Le choix est enregistré dans
+`protocol.json.per_symbol_selection.min_long_probability` et les paramètres du
+rapport. `per-symbol-ranking.csv` conserve les scores, les rangs initiaux,
+`long_selected_before_threshold`, `long_threshold_passed`, `long_score_threshold`
+et le motif `LONG_SCORE_NOT_ABOVE_THRESHOLD`. `signals.csv` ne contient que
+les candidats retenus après ce filtre, avant les refus du risque/détention.
+Une séance sans candidat au-dessus du seuil ne produit aucune nouvelle entrée.
+
+Le défaut 0,60 appartient à l'IHM ; les appels Python/CLI existants sans ce
+nouveau paramètre restent sans seuil. Le pipeline et le trading réel ne sont
+pas modifiés. Aucun modèle n'est réentraîné et aucun avantage économique de ce
+seuil n'est supposé sans comparaison séparée.
+
 ## Entrée journalière à l'ouverture J+1
 
 Dans **Réglages Winner et limites du replay**, la case **Entrée journalière à

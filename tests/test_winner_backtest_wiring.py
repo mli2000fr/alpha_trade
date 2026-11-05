@@ -108,11 +108,46 @@ def test_old_commands_keep_bundle_auto_detection():
         use_long_selection({},True)
 
 
-def test_universe_prefill_matches_entire_scope_not_first_file(monkeypatch):
-    from ihm.components.winner_backtest import matching_universe_source
-    monkeypatch.setattr('common.universe_files.list_universe_file_sources',lambda:('universe-file:large.txt','universe-file:scope.txt'))
-    monkeypatch.setattr('common.universe_files.load_universe_file_symbols',lambda s:['A','B','C'] if 'large' in s else ['B','A'])
-    assert matching_universe_source({'universe':['A','B']})=='universe-file:scope.txt'
+@pytest.mark.parametrize('symbols',[None,[],['AAA','AAA'],['aaa'],['AAA',None]])
+def test_invalid_frozen_universe_is_rejected(symbols):
+    from backtesting.winner_universe import universe_from_model
+    with pytest.raises(ValueError):universe_from_model({'universe':symbols})
+
+
+@pytest.mark.parametrize('chosen',['universe-file:large.txt','universe-file:missing.txt'])
+def test_form_automatically_ignores_old_file_choice_and_locks_universe(monkeypatch,chosen):
+    from streamlit.testing.v1 import AppTest
+    def forbidden(*unused):raise AssertionError('The model universe must not depend on a mutable file')
+    monkeypatch.setattr('common.universe_files.load_universe_file_symbols',forbidden)
+    def app():
+        import streamlit as st
+        from ihm.components.winner_backtest import render_universe_selection
+        st.session_state['universe_result']=render_universe_selection(
+            {'universe':['AAA','BBB']},'fixture')
+    at=AppTest.from_function(app)
+    at.session_state['bt_winner_universe_fixture']=chosen
+    at.run(timeout=30)
+    assert not at.exception and not at.error
+    assert at.session_state['universe_result']=='model-universe'
+    field=at.text_input(key='bt_winner_universe_auto_fixture')
+    assert field.disabled and '2 titres' in field.value
+    assert not at.button
+
+
+def test_universe_follows_selected_batch_including_oracle_only():
+    from streamlit.testing.v1 import AppTest
+    def app():
+        import streamlit as st
+        from ihm.components.winner_backtest import render_universe_selection
+        batch=st.selectbox('Batch',['two','five'],key='model_choice')
+        symbols=['AAA','BBB'] if batch=='two' else ['CCC','DDD','EEE','FFF','GGG']
+        st.session_state['universe_result']=render_universe_selection({'universe':symbols},batch)
+    at=AppTest.from_function(app).run(timeout=30)
+    assert not at.exception and not at.error
+    assert '2 titres' in at.text_input[0].value and at.text_input[0].disabled
+    at.selectbox(key='model_choice').select('five').run(timeout=30)
+    assert not at.exception and '5 titres' in at.text_input[0].value and at.text_input[0].disabled
+    assert at.session_state['universe_result']=='model-universe'
 
 
 def test_configurable_selection_widgets_and_clamping(tmp_path,monkeypatch):
@@ -167,7 +202,6 @@ def test_bundle_form_2022_top20_to_top5_and_command(tmp_path,monkeypatch):
     monkeypatch.setattr(ui,'MODEL_ROOT',tmp_path)
     monkeypatch.setattr('modelFactory.oracle_path.predict.load_contract',lambda *a:(folder,contract,None,folds))
     monkeypatch.setattr('modelFactory.oracle_path.directional.load_manifest',lambda *a:(dict(models=[dict(side='long',year=2021),dict(side='long',year=2022)]),'hash'))
-    monkeypatch.setattr(ui,'matching_universe_source',lambda c:'universe-file:symbols_h10_auc_gt060.txt')
     monkeypatch.setattr('risk_management.config.load_risk_config',lambda **kw:RiskConfig(account_equity=kw['equity'],enable_factor_model=False))
     monkeypatch.setattr('execution_engine.config.load_leverage_config_from_yaml',lambda:LeverageConfig(enabled=True,mode='regt_swing',max_leverage=2.))
     def app():
@@ -184,11 +218,12 @@ def test_bundle_form_2022_top20_to_top5_and_command(tmp_path,monkeypatch):
     assert result['oracle_batch_id']==bid and result['winner_per_symbol_long_enabled'] is True
     assert result['winner_per_symbol_min_long_probability']==.6
     assert result['start']=='2022-01-01' and result['end']=='2022-12-31'
-    assert result['winner_top_n']==20 and result['winner_symbol_source']=='universe-file:symbols_h10_auc_gt060.txt'
+    assert result['winner_top_n']==20 and result['winner_symbol_source']=='model-universe'
     assert result['winner_options_filter_enabled'] is False
     assert result['account_type']=='margin' and result['winner_max_leverage']==2.
     parsed=build_parser().parse_args(build_backtesting_command('run',BacktestRunOptions(**result))[4:])
     assert parsed.account_type=='margin' and parsed.max_leverage==2.
+    assert parsed.symbol_source=='model-universe'
     assert parsed.per_symbol_min_long_probability==.6
     at.number_input(key=f'bt_per_symbol_min_long_probability_{bid}').set_value(.7).run(timeout=30)
     assert not at.exception and at.session_state['result']['winner_per_symbol_min_long_probability']==.7
@@ -230,6 +265,21 @@ def test_forged_past_sql_availability_cannot_serve_future_weights():
     with pytest.raises(ValueError,match='Couverture Oracle insuffisante'):
         validate_scores(rows,profile_hash='profile',folds=folds,expected_days=[date(2025,1,2)],
                         top_n=1,horizon=10,universe_size=100,min_coverage=.9)
+
+
+def test_new_year_requires_prior_year_signal_and_explains_j_plus_one():
+    from backtesting.winner_campaign_replay import validate_scores
+    rows=pd.DataFrame([dict(trade_date='2023-01-03',symbol='AAA',proba_extreme=.9,
+        fold_start='2022-01-04',lineage_fold_start='2022-01-04',model_available_date='2021-12-31',
+        model_sha256='weights',feature_profile_sha256='profile',target_name='oracle_path_extreme10',target_horizon=10)])
+    folds={'2022-01-04':dict(model_sha256='weights',metrics=dict(
+        train_available_max='2021-06-30',val_available_max='2021-12-31'))}
+    with pytest.raises(ValueError,match='2022-12-30.*Dates de signal J'):
+        validate_scores(rows,profile_hash='profile',folds=folds,
+            expected_days=[date(2022,12,30),date(2023,1,3)],top_n=1,horizon=10)
+    prior=rows.assign(trade_date='2022-12-30')
+    assert len(validate_scores(pd.concat([prior,rows]),profile_hash='profile',folds=folds,
+        expected_days=[date(2022,12,30),date(2023,1,3)],top_n=1,horizon=10))==2
 
 
 def test_daily_whole_row_priority_and_invalid_preferred_not_replaced(monkeypatch):
@@ -276,7 +326,7 @@ def test_real_form_default_policy_and_independent_dates(monkeypatch):
     monkeypatch.setattr('ihm.components.winner_backtest.load_winner_pyramiding_config',lambda:
         WinnerPyramidingConfig(enabled=True,horizon_sessions=10,stop_loss_pct=.05,trailing_stop_pct=None))
     monkeypatch.setattr('modelFactory.oracle_path.predict.load_contract',lambda *a:
-        (None,{'horizon':10},None,{'2021-07-02':{'metrics':dict(fold_start='2021-07-02',
+        (None,{'horizon':10,'universe':['AAA']},None,{'2021-07-02':{'metrics':dict(fold_start='2021-07-02',
              train_available_max='2020-12-30',val_available_max='2021-07-01')}}))
     monkeypatch.setattr('risk_management.config.load_risk_config',lambda **kw:RiskConfig(
         account_equity=kw['equity'],enable_factor_model=True))

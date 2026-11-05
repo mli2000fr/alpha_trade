@@ -1,5 +1,79 @@
 # Registre des expériences ML réalisées
 
+## 2026-11-05 — Univers Winner automatique et champ non modifiable
+
+**ÉVOLUTION IHM — aucun nouveau résultat économique.** Suite à la demande,
+suppression du bouton de reprise de l'univers ; champ **Univers Winner** grisé,
+nombre de titres dynamique selon le batch. Le replay reçoit `model-universe`
+et lit la liste figée du contrat, avec ou sans per-symbol. Aucune dépendance
+au fichier d'univers courant, aucune création de fichier ; anciennes saisies
+ignorées. Source, symboles, nombre et empreinte enregistrés dans le protocole.
+Les commandes historiques avec fichier conservent leur fonctionnement et
+leur contrôle de contrat. Aucun modèle, fichier d'univers, paramètre de
+production, classement N/X/Y ou ancien run n'est modifié.
+Validation ciblée : **75 tests réussis**, dont changement de batch (2/5 titres),
+champ grisé sans bouton, anciennes saisies ignorées, exécution isolée SQL
+lecture seule sans chargeur de fichier et compatibilité des anciennes commandes.
+
+## 2026-11-05 — Contrôle de l'univers du bundle avant lancement IHM
+
+**CORRECTIF IHM — aucun nouveau résultat économique.** Run
+`20261105_205846_3e2777e2` : batch `model-factory-20261104153034-f213a0`
+entraîné sur 32 titres, mais fichier tradable 1790 titres sélectionné. Le
+TOP32 demandé est une taille de classement, pas un changement d'univers.
+Contrôle du contenu désormais effectué dans le formulaire avant lancement,
+avec bouton **Reprendre l’univers du modèle** si un fichier compatible existe.
+Vérification réelle : `universe-file:symbols_h10_auc_gt060.txt`, 32/32 symboles
+identiques au contrat. Le contrôle backend est conservé, son message précise
+les tailles. Aucun fichier, modèle ou classement n'est modifié ; N/X/Y et
+seuil inchangés. Validation ciblée : **45 tests réussis**, dont fichier erroné,
+fichier absent, bouton de restauration et maintien du mode Oracle seul.
+
+## 2026-11-05 — Complément du signal de veille pour le backtest 2024
+
+**RÉPARATION DE DONNÉES — aucun nouveau résultat économique.** Run
+`20261105_201044_e2afa619`, batch `model-factory-20261104153034-f213a0` : signal
+du 29 décembre 2023 absent, nécessaire à l'entrée du 2 janvier 2024.
+Complément limité à cette date : 32 lignes Oracle, 32 de traçabilité et
+32 directionnelles (31 probabilités LONG disponibles). Fold Oracle causal
+`2023-01-05`, modèles per-symbol de l'année du signal **2023**, disponibles
+au plus tard le 30 décembre 2022 ; aucun poids annuel 2024 appliqué avant sa
+disponibilité. Contrôle READ ONLY de toute la plage 2024 : **252 dates,
+8064 lignes Oracle (32/date) et 8064 lignes directionnelles validées**.
+Aucun modèle réentraîné, appel LLM, téléchargement fournisseur, ordre ou
+backtest économique lancé. Rapport et validation :
+`artifacts/operations/oracle_prediction_repairs/20261105-dec29-98b9d8c1/`.
+
+## 2026-11-05 — Complément du signal de veille pour le backtest 2023
+
+**RÉPARATION DE DONNÉES — aucun nouveau résultat économique.** Le run
+`20261105_184648_cec46d9c` utilisait le batch `model-factory-20261104153023-05a036`
+sur 2023, mais ses prédictions commençaient au 3 janvier. Le signal du
+30 décembre 2022, nécessaire à l'achat du 3 janvier 2023, était absent.
+Complément local limité à cette date : 32 lignes Oracle, 32 de traçabilité,
+32 directionnelles dont 30 probabilités LONG disponibles ; classement archivé
+vérifié. Fold Oracle `2022-01-04` et modèles per-symbol annuels 2022 disponibles
+avant le signal : aucun poids annuel 2023 utilisé sur décembre 2022.
+Contrôle READ ONLY de toute la période : 250 dates de signal, 8000 lignes
+Oracle (32/date) et 8000 lignes directionnelles validées. Aucun réentraînement,
+appel LLM, ordre ou replay économique. Message de couverture enrichi avec
+l'explication J→J+1 ; contrôle conservé.
+Rapports : `artifacts/operations/oracle_prediction_repairs/20261105-dec30-48ebc2a3/`.
+
+## 2026-11-05 — Seuil minimum LONG per-symbol dans le backtest Winner
+
+**ÉVOLUTION TECHNIQUE — aucun nouveau résultat économique.** Champ IHM
+**Score LONG minimum — strictement supérieur**, défaut **0,60**. Le classement
+TOP N Oracle → TOP X LONG reste figé ; le seuil est ensuite appliqué sans
+promouvoir les rangs suivants. Égalité au seuil exclue, positions détenues
+inchangées, aucun SHORT automatique. Choix transmis à la CLI, figé dans le
+protocole/rapport, scores et motifs conservés dans `per-symbol-ranking.csv`.
+Les anciens appels sans paramètre, modèles et pipeline restent inchangés.
+Validation ciblée : **130 tests réussis**, incluant égalité au seuil, absence
+de remplacement, sélection vide sans achat dans le moteur réel, IHM→commande,
+et régressions du replay journalier/intraday. Aucun nouveau backtest économique.
+[Fonctionnement](../backtesting/winner_reference_defaults.md#seuil-long-per-symbol-avant-les-achats).
+
 ## 2026-11-05 — Plafond d'exposition du risque modifiable dans l'IHM Winner
 
 **ÉVOLUTION TECHNIQUE — aucun nouveau résultat économique.** Le run

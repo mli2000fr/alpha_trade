@@ -322,7 +322,7 @@ def test_cli_complete_readonly_run_exports_reports_without_api_or_prediction(tmp
     lineage.to_sql('oracle_path_prediction_lineage', engine, index=False)
     monkeypatch.setattr('database.connection.get_sqlalchemy_engine', lambda **kw: engine)
     monkeypatch.setattr('modelFactory.oracle_path.predict.load_contract',
-        lambda *a: (root, {'horizon':20}, {}, {'2026-01-01': {'model_sha256': 'm'*64,
+        lambda *a: (root, {'horizon':20,'universe':['AAA']}, {}, {'2026-01-01': {'model_sha256': 'm'*64,
             'metrics':dict(train_available_max='2025-12-30',val_available_max='2025-12-31')}}))
     monkeypatch.setattr('common.universe_files.load_universe_file_symbols', lambda *a: ['AAA'])
     monkeypatch.setattr('risk_management.config.load_risk_config', lambda **kw: cfg.risk_config)
@@ -341,11 +341,14 @@ def test_cli_complete_readonly_run_exports_reports_without_api_or_prediction(tmp
         risk_overrides_json='{"risk_per_trade_pct":0.02,"min_position_notional":20.0}',
         policy_overrides_json='{"stop_loss_pct":0.07,"horizon_sessions":10}',ignore_missing_intraday=ignore_missing)
     if not drawdown:options.drawdown_controller=False  # Old Namespace omission retains enabled behavior.
-    if daily_entry:options.daily_entry=True
+    if daily_entry:
+        options.daily_entry=True
+        options.symbol_source='model-universe'
     if daily_entry:
         def forbidden(*unused,**kwargs):raise AssertionError('No future coverage screening/provider recovery in daily mode')
         monkeypatch.setattr('backtesting.winner_missing_intraday.screen_missing_intraday',forbidden)
         monkeypatch.setattr('backtesting.winner_intraday_recovery.RecoveringIntradaySource',forbidden)
+        monkeypatch.setattr('common.universe_files.load_universe_file_symbols',forbidden)
     if isolated:
         from backtesting.isolation import ReadOnlyReplay
         with ReadOnlyReplay(tmp_path).install():
@@ -383,6 +386,8 @@ def test_cli_complete_readonly_run_exports_reports_without_api_or_prediction(tmp
     assert report['summary']['gross_exposure_avg_pct']==pytest.approx(100*report['average_gross_equity_ratio'])
     assert report['run_metadata']['engine'] == 'winner_campaign_replay'
     assert report['params']['risk']['risk_per_trade_pct']==.02
+    assert report['params']['universe_resolution']['symbols']==['AAA']
+    assert report['params']['universe_resolution']['mode']==('MODEL_CONTRACT' if daily_entry else 'EXPLICIT_FILE')
     assert report['params']['risk']['min_position_notional']==20.
     assert report['params']['risk']['fixed_stop_pct']==.07
     assert report['params']['risk']['max_positions']==report['params']['risk']['max_long_positions']==12
