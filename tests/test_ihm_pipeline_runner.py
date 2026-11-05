@@ -1116,7 +1116,6 @@ def test_build_pipeline_command_ml_steps() -> None:
 
     # Drapeaux booléens activés par défaut.
     for flag in (
-        "--exclude-per-symbol-per-sector",
         "--walkforward",  # walk-forward activé par défaut en swing
         "--include-short-score",
         "--include-factors",
@@ -1128,6 +1127,7 @@ def test_build_pipeline_command_ml_steps() -> None:
 
     # Drapeaux désactivés par défaut
     for flag in (
+        "--exclude-per-symbol-per-sector",
         "--global-champion",
         "--include-sentiment",
         "--optimize-thresholds",

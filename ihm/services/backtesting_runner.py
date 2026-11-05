@@ -172,8 +172,16 @@ class BacktestRunOptions:
     winner_research_assumptions: bool = False
     winner_min_oracle_coverage: float = .9
     winner_options_filter_enabled: bool | None = None
+    winner_per_symbol_long_enabled: bool | None = None
+    winner_per_symbol_allow_long: bool = True
+    winner_per_symbol_allow_short: bool = False
+    winner_per_symbol_top_long: int | None = None
+    winner_per_symbol_top_short: int | None = None
+    winner_per_symbol_min_long_probability: float | None = None
     winner_risk_overrides: dict[str,object] | None = None
     winner_policy_overrides: dict[str,object] | None = None
+    winner_drawdown_controller_enabled: bool = True  # Existing commands keep their controller; UI sets its own default.
+    winner_daily_entry_enabled: bool = False
 
     @property
     def ml_first_selection_contract(self) -> MLFirstSelectionContract:
@@ -356,6 +364,12 @@ def build_backtesting_command(
                 command.extend(['--cost-per-leg-bps', str(options.winner_cost_per_leg_bps)])
             if options.winner_factor_model is not None:
                 command.append('--factor-model' if options.winner_factor_model else '--no-factor-model')
+            if type(options.winner_drawdown_controller_enabled) is not bool:
+                raise ValueError('Winner drawdown controller: boolean required')
+            command.append('--drawdown-controller' if options.winner_drawdown_controller_enabled else '--no-drawdown-controller')
+            if type(options.winner_daily_entry_enabled) is not bool:
+                raise ValueError('Winner daily entry: boolean required')
+            command.append('--daily-entry' if options.winner_daily_entry_enabled else '--no-daily-entry')
             command.append('--factor-market-cap-check' if options.winner_factor_market_cap_check else '--no-factor-market-cap-check')
             from backtesting.winner_exclusions import excluded_symbols
             excluded=excluded_symbols(options.winner_excluded_symbols)
@@ -363,6 +377,19 @@ def build_backtesting_command(
             if options.winner_ignore_missing_intraday:command.append('--ignore-missing-intraday')
             if options.winner_options_filter_enabled is not None:
                 command.append('--options-filter' if options.winner_options_filter_enabled else '--no-options-filter')
+            if options.winner_per_symbol_long_enabled is not None:
+                command.append('--per-symbol-long' if options.winner_per_symbol_long_enabled else '--no-per-symbol-long')
+            if options.winner_per_symbol_long_enabled:
+                command.append('--per-symbol-longs' if options.winner_per_symbol_allow_long else '--no-per-symbol-longs')
+                command.append('--per-symbol-shorts' if options.winner_per_symbol_allow_short else '--no-per-symbol-shorts')
+                for flag,count in [('--per-symbol-top-long',options.winner_per_symbol_top_long),
+                                   ('--per-symbol-top-short',options.winner_per_symbol_top_short)]:
+                    if count is not None:command.extend([flag,str(count)])
+                threshold=options.winner_per_symbol_min_long_probability
+                if threshold is not None:
+                    from backtesting.per_symbol_selection import PerSymbolSelection
+                    PerSymbolSelection(min_long_probability=threshold)  # Validate before spawning a run.
+                    command.extend(['--per-symbol-min-long-probability',str(threshold)])
             from backtesting.winner_settings import risk_overrides, policy_overrides
             for flag,value,validate in [('--risk-overrides-json',options.winner_risk_overrides,risk_overrides),
                                        ('--policy-overrides-json',options.winner_policy_overrides,policy_overrides)]:

@@ -32,6 +32,15 @@ def test_rank_is_preserved_without_probabilities_or_kelly():
     assert entry.score_used == .9
 
 
+def test_bundle_long_probability_passes_same_native_account_limits():
+    c=candidate(p_side=.4,p_long=.4,lineage={'score_semantics':'per_symbol_long_net_profit_probability'})
+    entry=build(setup(),c)[0]
+    assert entry.approved_shares>0 and entry.side=='buy' and entry.score_used==.4
+    assert entry.score_source=='per_symbol_long_net_profit_probability'
+    assert entry.kelly_fraction is None
+    assert all(e.approved_shares==0 for e in build(setup(buying_power=0),c))
+
+
 @pytest.mark.parametrize('params', [dict(buying_power=0),dict(max_positions=1, positions=[
     {'symbol':'HELD','qty':10,'side':'long','avg_entry_price':100.,'current_price':100.}]),
     dict(max_positions=1, orders=[{'id':'pending','symbol':'PENDING','side':'buy','qty':1.,'type':'market','status':'open'}])])

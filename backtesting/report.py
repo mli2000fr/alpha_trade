@@ -438,8 +438,10 @@ class BacktestReport:
     turnover_pct: float = 0.0
     # Sprint 5 — corrélation inter-jambes long/short
     long_short_correlation: float | None = None
+    average_gross_capital: float | None = None
+    capital_observation_basis: str | None = None
 
-    def to_serializable_dict(self) -> dict[str, float | int | str]:
+    def to_serializable_dict(self) -> dict[str, float | int | str | None]:
         # Phase A.7 — conserver +inf comme sentinel JSON-friendly ("inf").
         def _serialize_float(value: float) -> float | str:
             if math.isinf(value):
@@ -475,6 +477,8 @@ class BacktestReport:
             "short_pnl_total": float(self.short_pnl_total),
             "pnl_net": float(self.pnl_net),
             "gross_exposure_avg_pct": float(self.gross_exposure_avg_pct),
+            "average_gross_capital": self.average_gross_capital,
+            "capital_observation_basis": self.capital_observation_basis,
             "net_exposure_avg_pct": float(self.net_exposure_avg_pct),
             "turnover_pct": float(self.turnover_pct),
             "long_short_correlation": float(self.long_short_correlation) if self.long_short_correlation is not None else None,
@@ -687,12 +691,19 @@ def generate_report(
         # ``daily_leverage_snapshot`` + turnover annualisé (notional tradé /
         # equity moyenne / années).
         gross_exposure_avg_pct = 0.0
+        average_gross_capital = None
+        capital_observation_basis = None
         net_exposure_avg_pct = 0.0
         turnover_pct = 0.0
         events = _extract_trade_events_df(pf)
         if events is not None and not events.empty and "event_type" in events.columns:
             snapshots = events[events["event_type"] == "daily_leverage_snapshot"]
             if not snapshots.empty:
+                if "current_gross_notional" in snapshots:
+                    capital = pd.to_numeric(snapshots["current_gross_notional"], errors="coerce")
+                    if capital.notna().all() and np.isfinite(capital).all() and capital.ge(0).all():
+                        average_gross_capital = float(capital.mean())
+                        capital_observation_basis = "DAILY_BEFORE_ENTRIES"
                 gross = pd.to_numeric(snapshots.get("gross_exposure_before_pct"), errors="coerce")
                 # Les événements stockent des fractions d'equity (ex. 1.51 = 151%) → ×100.
                 gross_exposure_avg_pct = float(gross.mean()) * 100.0 if gross.notna().any() else 0.0
@@ -745,6 +756,8 @@ def generate_report(
             # Sprint 0 — exposition et turnover
             pnl_net=long_pnl_total + short_pnl_total,
             gross_exposure_avg_pct=gross_exposure_avg_pct,
+            average_gross_capital=average_gross_capital,
+            capital_observation_basis=capital_observation_basis,
             net_exposure_avg_pct=net_exposure_avg_pct,
             turnover_pct=turnover_pct,
         )

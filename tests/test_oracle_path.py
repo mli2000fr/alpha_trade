@@ -267,6 +267,8 @@ def test_full_training_widget_path_mode_and_command():
     assert "--oracle-path-model-only" in at.session_state["test_path_command"]
     assert "--enable-oracle-model" not in at.session_state["test_path_command"]
     assert "--directional-feature-profiles" not in at.session_state["test_path_command"]
+    assert "--oracle-path-directional" in at.session_state["test_path_command"]
+    assert at.checkbox(key='pipeline_ml_oracle_path_model_only').label=='🔮 Oracle Extreme parcours'
     assert at.checkbox(key="pipeline_ml_walkforward").disabled
     at.checkbox(key="pipeline_ml_oracle_path_model_only").uncheck().run(timeout=30)
     assert not at.exception

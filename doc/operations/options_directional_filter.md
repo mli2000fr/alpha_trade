@@ -3,8 +3,11 @@
 ## Activation et périmètre
 
 `config.yaml → options_directional_filter.enabled: true` active le défaut du
-batch `us_pipeline` et de la case **📊 Filtrage options — volume CALL/PUT + OI
-après Oracle — PAPER uniquement**. Le compte doit être déclaré en mode PAPER.
+batch `us_pipeline` et autorise la case **📊 Filtrage options — volume CALL/PUT + OI
+après Oracle — PAPER uniquement**. Depuis le 4 novembre 2026, cette case est
+**décochée par défaut dans l'IHM**. Le compte doit être déclaré en mode PAPER.
+Ce défaut est appliqué une fois aux sessions déjà ouvertes, avec l'exclusion
+per-symbol/per-sector également décochée ; les choix manuels suivants sont conservés.
 La sélection peut être réutilisée pour les autres comptes PAPER ; le risque et
 l'exécution sont calculés séparément, voir [le parcours multi-comptes](options_filter_multi_account.md).
 Une case décochée désactive le filtre pour le lancement IHM, pas pour le batch.

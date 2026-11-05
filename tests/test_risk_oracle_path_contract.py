@@ -52,6 +52,28 @@ def test_valid_contract_passes_without_legacy_registry(serving):
     assert result['session_freshness']['signal_date'] == '2024-01-02'
 
 
+def test_bundle_uses_verified_long_probability_not_amplitude_rank(serving,monkeypatch):
+    import pandas as pd
+    from dataclasses import replace
+    from modelFactory.oracle_path import predict,directional
+    engine,proxy,parent,root,pred=serving
+    original=predict.load_contract
+    def contract(*a):
+        r,p,f,folds=original(*a)
+        return r,dict(p,training_config={'oracle_path_directional_enabled':True}),f,folds
+    monkeypatch.setattr(predict,'load_contract',contract)
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE model_predictions SET source='oracle_path_long'"))
+    monkeypatch.setattr(directional,'read_predictions',lambda *a,**kw:pd.DataFrame(
+        dict(symbol=['S00'],selected=[True],long_probability=[.4])))
+    pred=replace(pred,proba_long=.4)
+    result=check_compatibility(proxy,{'S00':pred},batch_id='batch',trade_date=DAY,artifacts_dir=parent,now=NOW)
+    assert result['compatible']
+    forged=replace(pred,proba_long=.9)
+    result=check_compatibility(proxy,{'S00':forged},batch_id='batch',trade_date=DAY,artifacts_dir=parent,now=NOW)
+    assert not result['compatible'] and 'TOP LONG' in str(result['issues'])
+
+
 @pytest.mark.parametrize('horizon',[10,15])
 def test_shorter_path_contract_preserves_all_risk_checks(serving,horizon):
     import json

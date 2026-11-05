@@ -413,6 +413,7 @@ class PipelineLaunchOptions:
     ml_enable_oracle_model: bool = DEFAULT_ML_ENABLE_ORACLE_MODEL  # 2026-08-20 : Oracle Extreme (O0)
     ml_oracle_model_only: bool = DEFAULT_ML_ORACLE_MODEL_ONLY      # 2026-08-20 : Oracle ONLY
     ml_oracle_path_model_only: bool = False  # modèle parcours H10/H15/H20 distinct ; défaut IHM True
+    ml_oracle_path_directional_enabled: bool = False
     ml_oracle_path_backend: str | None = None  # explicite IHM ; None conserve les anciens flags.
     ml_oracle_barrier_model_only: bool = False  # modèle TP avant SL, recherche
     ml_oracle_barrier_tp_pct: float | None = None  # None = config.yaml
@@ -1761,8 +1762,26 @@ def _build_chained_ps_commands(
     return ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_script]
 
 
+def path_directional_options(options: PipelineLaunchOptions) -> PipelineLaunchOptions:
+    """A selected signed path bundle owns its selection, not an options/LLM batch."""
+    batch=(options.ml_predict_batch_id if options.ml_predict_use_historical_range else
+           options.ml_live_predict_batch_id) or options.ml_predict_batch_id
+    if batch:
+        from modelFactory.oracle_path.directional import requested
+        if requested(options.ml_artifacts_dir,batch):
+            day=options.trade_date
+            if not options.ml_predict_use_historical_range:
+                from common.us_signal_date import resolve_us_signal_date
+                day=resolve_us_signal_date(day or None).isoformat()
+            return replace(options,llm_filter_enabled=False,llm_filter_run_id=None,
+                llm_specific_protections=False,options_filter_enabled=False,options_filter_run_id=None,
+                force_trade_date_to_latest_snapshot=False,trade_date=day)
+    return options
+
+
 def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> list[str]:
     """Construit la commande subprocess correspondant à une étape."""
+    options=path_directional_options(options)
     if step_key in ('risk_management', 'execution') and options.allow_fractional_shares:
         from common.winner_pyramiding import load_winner_pyramiding_config
         if load_winner_pyramiding_config().enabled:
@@ -2460,7 +2479,7 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
             ])
         elif effective_target_mode == "regression":
             command.extend(["--num-classes", "1"])
-        if options.ml_training_mode != "per_symbol":
+        if options.ml_training_mode != "per_symbol" and not options.ml_oracle_path_directional_enabled:
             command.extend(["--training-mode", options.ml_training_mode])
         command.extend([
             "--forecast-horizon" if effective_forecast_horizon != 0 else "--forecast-horizons",
@@ -2585,6 +2604,8 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
                 raise ValueError("Choisir Oracle parcours OU le bundle Oracle terminal.")
             from modelFactory.oracle_path import validate_horizon
             command.extend(["--oracle-path-model-only", "--oracle-horizon", str(validate_horizon(options.ml_oracle_horizon))])
+            if options.ml_oracle_path_directional_enabled:
+                command.append('--oracle-path-directional')
             if options.ml_oracle_path_backend is not None:
                 command.extend(['--oracle-path-backend',path_backend])
             if options.ml_standalone_oracle_feature_profile != "dynamic":
@@ -2953,6 +2974,12 @@ def build_pipeline_command(step_key: str, options: PipelineLaunchOptions) -> lis
 
 
 def _wrap_directional_command(phase: str, command: list[str], options: PipelineLaunchOptions) -> list[str]:
+    batch=options.ml_live_predict_batch_id or options.ml_predict_batch_id
+    if batch and not options.ml_predict_use_historical_range:
+        from modelFactory.oracle_path.directional import requested
+        if requested(options.ml_artifacts_dir,batch):
+            from common.us_signal_date import pin_command_date,resolve_us_signal_date
+            return pin_command_date(command,phase,resolve_us_signal_date(options.trade_date or None).isoformat())
     if options.llm_filter_enabled and options.options_filter_enabled:
         raise ValueError('Choisir un seul filtre après Oracle : LLM ou options ; cumul non qualifié')
     if options.llm_filter_enabled:

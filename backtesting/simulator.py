@@ -102,6 +102,8 @@ class BacktestConfig:
     winner_hard_drawdown_pct: float | None = None  # Optional historical-peak emergency stop, replay only.
     winner_cycle_drawdown_pct: float | None = None  # Optional cycle liquidation + calendar cooldown.
     winner_drawdown_cooldown_months: int = 0
+    winner_drawdown_controller_enabled: bool = True  # Replay-only opt-out; old commands retain all controller checks.
+    winner_daily_entry_enabled: bool = False  # Explicit replay-only J+1 daily-open entry; preserve existing callers.
     exec_config: ExecutionConfig | None = None
 
     # Paramètres bracket (défauts = production)

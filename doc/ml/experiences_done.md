@@ -1,5 +1,283 @@
 # Registre des expériences ML réalisées
 
+## 2026-11-05 — Univers Winner automatique et champ non modifiable
+
+**ÉVOLUTION IHM — aucun nouveau résultat économique.** Suite à la demande,
+suppression du bouton de reprise de l'univers ; champ **Univers Winner** grisé,
+nombre de titres dynamique selon le batch. Le replay reçoit `model-universe`
+et lit la liste figée du contrat, avec ou sans per-symbol. Aucune dépendance
+au fichier d'univers courant, aucune création de fichier ; anciennes saisies
+ignorées. Source, symboles, nombre et empreinte enregistrés dans le protocole.
+Les commandes historiques avec fichier conservent leur fonctionnement et
+leur contrôle de contrat. Aucun modèle, fichier d'univers, paramètre de
+production, classement N/X/Y ou ancien run n'est modifié.
+Validation ciblée : **75 tests réussis**, dont changement de batch (2/5 titres),
+champ grisé sans bouton, anciennes saisies ignorées, exécution isolée SQL
+lecture seule sans chargeur de fichier et compatibilité des anciennes commandes.
+
+## 2026-11-05 — Contrôle de l'univers du bundle avant lancement IHM
+
+**CORRECTIF IHM — aucun nouveau résultat économique.** Run
+`20261105_205846_3e2777e2` : batch `model-factory-20261104153034-f213a0`
+entraîné sur 32 titres, mais fichier tradable 1790 titres sélectionné. Le
+TOP32 demandé est une taille de classement, pas un changement d'univers.
+Contrôle du contenu désormais effectué dans le formulaire avant lancement,
+avec bouton **Reprendre l’univers du modèle** si un fichier compatible existe.
+Vérification réelle : `universe-file:symbols_h10_auc_gt060.txt`, 32/32 symboles
+identiques au contrat. Le contrôle backend est conservé, son message précise
+les tailles. Aucun fichier, modèle ou classement n'est modifié ; N/X/Y et
+seuil inchangés. Validation ciblée : **45 tests réussis**, dont fichier erroné,
+fichier absent, bouton de restauration et maintien du mode Oracle seul.
+
+## 2026-11-05 — Complément du signal de veille pour le backtest 2024
+
+**RÉPARATION DE DONNÉES — aucun nouveau résultat économique.** Run
+`20261105_201044_e2afa619`, batch `model-factory-20261104153034-f213a0` : signal
+du 29 décembre 2023 absent, nécessaire à l'entrée du 2 janvier 2024.
+Complément limité à cette date : 32 lignes Oracle, 32 de traçabilité et
+32 directionnelles (31 probabilités LONG disponibles). Fold Oracle causal
+`2023-01-05`, modèles per-symbol de l'année du signal **2023**, disponibles
+au plus tard le 30 décembre 2022 ; aucun poids annuel 2024 appliqué avant sa
+disponibilité. Contrôle READ ONLY de toute la plage 2024 : **252 dates,
+8064 lignes Oracle (32/date) et 8064 lignes directionnelles validées**.
+Aucun modèle réentraîné, appel LLM, téléchargement fournisseur, ordre ou
+backtest économique lancé. Rapport et validation :
+`artifacts/operations/oracle_prediction_repairs/20261105-dec29-98b9d8c1/`.
+
+## 2026-11-05 — Complément du signal de veille pour le backtest 2023
+
+**RÉPARATION DE DONNÉES — aucun nouveau résultat économique.** Le run
+`20261105_184648_cec46d9c` utilisait le batch `model-factory-20261104153023-05a036`
+sur 2023, mais ses prédictions commençaient au 3 janvier. Le signal du
+30 décembre 2022, nécessaire à l'achat du 3 janvier 2023, était absent.
+Complément local limité à cette date : 32 lignes Oracle, 32 de traçabilité,
+32 directionnelles dont 30 probabilités LONG disponibles ; classement archivé
+vérifié. Fold Oracle `2022-01-04` et modèles per-symbol annuels 2022 disponibles
+avant le signal : aucun poids annuel 2023 utilisé sur décembre 2022.
+Contrôle READ ONLY de toute la période : 250 dates de signal, 8000 lignes
+Oracle (32/date) et 8000 lignes directionnelles validées. Aucun réentraînement,
+appel LLM, ordre ou replay économique. Message de couverture enrichi avec
+l'explication J→J+1 ; contrôle conservé.
+Rapports : `artifacts/operations/oracle_prediction_repairs/20261105-dec30-48ebc2a3/`.
+
+## 2026-11-05 — Seuil minimum LONG per-symbol dans le backtest Winner
+
+**ÉVOLUTION TECHNIQUE — aucun nouveau résultat économique.** Champ IHM
+**Score LONG minimum — strictement supérieur**, défaut **0,60**. Le classement
+TOP N Oracle → TOP X LONG reste figé ; le seuil est ensuite appliqué sans
+promouvoir les rangs suivants. Égalité au seuil exclue, positions détenues
+inchangées, aucun SHORT automatique. Choix transmis à la CLI, figé dans le
+protocole/rapport, scores et motifs conservés dans `per-symbol-ranking.csv`.
+Les anciens appels sans paramètre, modèles et pipeline restent inchangés.
+Validation ciblée : **130 tests réussis**, incluant égalité au seuil, absence
+de remplacement, sélection vide sans achat dans le moteur réel, IHM→commande,
+et régressions du replay journalier/intraday. Aucun nouveau backtest économique.
+[Fonctionnement](../backtesting/winner_reference_defaults.md#seuil-long-per-symbol-avant-les-achats).
+
+## 2026-11-05 — Plafond d'exposition du risque modifiable dans l'IHM Winner
+
+**ÉVOLUTION TECHNIQUE — aucun nouveau résultat économique.** Le run
+`20261105_173402_38dfd2c4` demandait 2× mais conservait un plafond risque à
+1× (engagement moyen 2730,56 $, soit 74,96 % du capital courant). Nouveau
+champ **Plafond d’exposition brute du risque (× capital)**, réglable jusqu'à
+2,00 dans le formulaire. Défaut chargé inchangé, copie propre au backtest,
+bornée par le compte et le levier autorisé ; indication du plafond combiné.
+La sélection, la concentration, les fractions et les comptes de production
+ne sont pas modifiés. Un plafond 2× n'est pas un objectif d'exposition forcé.
+Réglage ultérieur demandé : défaut IHM porté à **2,00×**, y compris par migration
+unique des sessions ouvertes ; les modifications manuelles suivantes restent
+conservées. Rappel production : valeur configurée ; rappel référence : 2,00×.
+Validation ciblée : **72 tests réussis**, dont valeur IHM→commande, validation
+des bornes, dimensionnement natif 1×/2× et maintien du plafond du compte.
+[Mode d'emploi](../backtesting/winner_reference_defaults.md#autoriser-réellement-2-dans-un-backtest-winner).
+
+## 2026-11-05 — Correction : les lacunes 5m ne filtrent plus l'entrée journalière
+
+**CORRECTIF TECHNIQUE — aucun nouveau résultat économique.** Le run IHM
+`20261105_150201_dc8ec544` avait exclu 953/1255 occasions via le contrôle de
+couverture intraday future, malgré son mode d'entrée J+1 daily. Ce raccordement
+était trop restrictif pour la demande. Ce filtre et le rattrapage fournisseur
+sont désormais désactivés en mode journalier. Entrée à l'ouverture daily,
+risque et capital inchangés ; séance 5m complète/compatible sinon protections
+sur les OHLC daily. SL prioritaire sur collision inconnue, cash de sortie
+intraday inconnu disponible seulement à la clôture, trailing ajusté pour la
+séance suivante, pas de confirmation/renforcement 5m inventé. Horizon daily
+maintenu, liquidation DD sans prix intraday différée jusqu'au prochain open.
+Daily et intraday manquants pour une position : arrêt explicite. Logs/table
+`daily-protection-fallback.csv`, précision mixte signalée dans le rapport et
+la mesure du capital engagé. Le run précédent reste inchangé ; relance requise.
+Validation hors réseau : **167 tests réussis**, incluant absence totale de 5m,
+lacune future, collision SL/TP, gaps, trailing sans anticipation, horizon,
+capital partagé, liquidation DD différée, SQL lecture seule, IHM et régression
+du mode intraday. Aucun backtest économique ni téléchargement relancé.
+[Protocole et limites](../backtesting/winner_reference_defaults.md#entrée-journalière-à-louverture-j1).
+
+## 2026-11-05 — Entrée journalière J+1 dans le replay Winner
+
+**ÉVOLUTION TECHNIQUE — aucun nouveau rendement.** Case IHM cochée par défaut :
+achat initial au cours journalier d'ouverture de la prochaine séance officielle,
+sans confirmation 5m ou attente d'un prix limite. Capital partagé, frais,
+dimensionnement, limites de risque et levier conservés. Aucune reprise ultérieure
+d'une entrée refusée. Les bougies 5m restent utilisées pour les protections,
+la valorisation et l'horizon depuis le fill ; leur journée J n'est plus requise
+pour préparer l'achat. Première version : ouverture intraday absente ou base
+incompatible conduisaient encore à une exclusion ; ce comportement a été
+remplacé par le correctif décrit ci-dessus, sans conversion de prix inventée.
+Mode figé dans protocole/rapport/fills, appels CLI antérieurs inchangés,
+aucun changement de production. Validation hors réseau : **118 tests réussis**
+(116 du périmètre complet puis 2 contrôles de renforcement différé), dont
+commandes/rapports en SQL lecture seule, IHM, compatibilité intraday, capital,
+levier, SL immédiat et horizon. [Fonctionnement et limites](../backtesting/winner_reference_defaults.md#entrée-journalière-à-louverture-j1).
+
+## 2026-11-05 — Défauts IHM Winner de référence et contrôleur DD/B4 désactivable
+
+**ÉVOLUTION TECHNIQUE — aucun nouveau résultat économique.** Formulaire :
+confirmation 0, délai SIP 0, poids maximal 20 %, liquidation et facteurs
+décochés. Nouvelle case contrôleur DD/perte quotidienne/B4, décochée par défaut :
+son arrêt retire aussi la réduction d'allocation et la liquidation associée,
+mais conserve la mesure du DD, le dimensionnement et les protections des titres.
+Interrupteur propre au replay, tracé dans la commande et les rapports ; anciens
+CLI sans flag inchangés. Boutons de rappel production/référence et migration
+unique de l'état IHM. Pas de changement du live/config.yaml, ni de lancement
+économique. Validation ciblée : **202 tests réussis**, dont passage IHM→commande→
+rapport, contrôleur actif/inactif, SL conservé et rappel des deux profils.
+Les données 5m, limites d'entrée, dates et modèles restent des
+différences avec l'ancien +130,57 %. SHORT toujours isolé.
+[Guide opérateur et portée](../backtesting/winner_reference_defaults.md).
+
+## 2026-11-04 — Winner SHORT : prototype conservé isolé, raccordement différé
+
+**PROTOTYPE TECHNIQUE — aucune performance historique.** Composants SHORT
+locaux : confirmation baissière, SL/TP/trailing, renforcement gagnant, horizon,
+rachat et comptabilité signée, frais d'emprunt et dividendes dus. Tests mixtes
+avec le runtime LONG et le risque natif : même capital et ordre de sélection,
+limites 1×/2×, comparaison LONG exacte. **18 tests dédiés**, **74 avec les
+régressions du moteur et du risque**, **172 dans la validation finale incluant
+IHM, classement et bundle**. La disponibilité historique de l'emprunt reste une
+hypothèse non démontrée. La revue automatique refuse le raccordement au moteur
+existant ; l'utilisateur choisit **« Garder le SHORT isolé pour l'instant »**.
+Aucun changement du live ou du replay LONG, aucun lancement économique,
+entraînement, API ou SQL. La case SHORT reste bloquante pour le lancement.
+[Composants, validation, limites et reprise](winner_short_isole_20261104.md).
+
+## 2026-11-04 — Classement per-symbol configurable dans le backtest Winner
+
+**ÉVOLUTION IHM — aucun nouveau résultat économique.** La case fixe TOP20→TOP5
+est remplacée par **per-symbol** : TOP N Oracle, cases LONG/SHORT indépendantes,
+TOP X LONG et TOP Y SHORT. Défaut 20/5, LONG seul. Le replay vérifie les archives
+originales puis recalcule localement le classement, sans modifier les modèles,
+la sélection du pipeline ou SQL. Conflit LONG/SHORT d'un même titre : garder la
+probabilité supérieure ; égalité : abstention, sans remplacement. Le classement
+SHORT est testé mais son exécution reste **non raccordée au moteur Winner LONG** :
+l'IHM et le CLI empêchent son lancement, sans ignorer les candidats. Aucun
+backtest économique, entraînement, téléchargement ni ordre lancé pour cette
+évolution. [Réglages et limite SHORT](oracle_parcours_bundle_directionnel.md).
+
+## 2026-11-04 — Raccordement du bundle Oracle parcours H10 + per-symbol LONG/SHORT
+
+**IMPLÉMENTATION — aucun nouveau résultat économique.** La case Oracle parcours
+reste cochée par défaut, sans le suffixe « modèle séparé ». La case bundle peut
+rester cochée : entraînement Oracle parcours et deux branches annuelles par titre
+dans le même batch. Cibles nettes SL5/open11, calibration chronologique purgée ;
+SHORT archivé seulement. Predict puis risque et replay Winner utilisent TOP20
+Oracle figé → TOP5 selon la probabilité LONG, sans rang21, sans substitution
+options/GPT, avec les contrôles et protections du compte. Les anciens batches
+restent inchangés ; les trois Oracle seuls du 4 novembre doivent être distingués
+des nouveaux bundles. Stockage SQL dédié des probabilités/rangs/motifs et
+empreintes, projection `model_predictions.source=oracle_path_long`. Aucun
+entraînement de production, ordre ou performance du nouveau bundle lancé.
+[Réglages IHM, contrats, stockage et limites](oracle_parcours_bundle_directionnel.md).
+
+## 2026-11-04 — Correction : Oracle TOP20 → scores LONG per-symbol quotidiens → TOP5
+
+**TERMINÉ —72simulations vérifiées, rétrospectives ; aucune promotion.**
+Après constat que les campagnes précédentes achetaient lesTOP5 d'amplitude,
+l'utilisateur confirme TOP20Oracle puisTOP5LONGper-symbol. Mêmes univers32H10/
+37H20,6Oracles annuels.207modèles per-symbol annuels causaux réutilisés, fit
+avantY−1/calibrationY−1/labels purgés avantY ;47 555scores réinférés sur toutes
+les dates de décision, sans exiger un label futur ;46 088anciens scores reproduits.
+Tri LONG décroissant dans leTOP20 figé, aucun rang21, priorité d'achat LONG,
+sans seuil de probabilité supplémentaire.3 357/3 510signaux H10 et2 605/3 510H20
+diffèrent duTOP5Oracle seul. Cibles conservées : H10profitnetSL5/open11 ;
+H20pic haussier dominant, pas probabilité de gainSL5.
+Daily4kUSD/1x/frais8bps/jambe/SL5/sansTP/TR/open11ou21 : rendements annuels
+H10 **+27,33/+33,62/+14,11 %**, H20 **+15,27/+55,04/−32,85 %**.
+Continu H10 **9 222,83 $ /+130,57 % /DD−15,52 %**,543trades,49,36 % gagnants,
+contreTOP5Oracle2 999,50$/−25,01%/DD−58,68%. H20 **5 039,42 $ /+25,99 % /
+DD−36,50 %**,423trades,29,31 % gagnants, contre10 684,29$/+167,11%/DD−45,17%.
+Intraday nouvelle sélection BASE/WINNER/DD15/lesdeux : H10 **+34,97/+7,94/
++34,97/+7,94 %**, DD−12,58/−10,89/−12,58/−10,89% ; aucun trip DD15 H10.
+H20 **−7,79/−15,11/−0,03/−12,45 %**, DD−28,20/−22,10/−21,17/−18,04%.
+64replays5m incluent32contrôlesOracle : tous les anciens contrôles reproduits
+à1e−8près. Même fonction financière, mêmes données et règles entre sélections.
+Couverture5m qualifiée nouvelle sélection :23,35/26,16/39,50 % H10 et
+20,08/9,04/25,00 % H20 en2024/25/26 ; masque futur strict, pas univers complet.
+Les listes restent choisies avec2026 : pas de validation indépendante ni de
+conclusion live. 2026 limité au19octobre. Snapshot SQL lecture seule,12nouveaux
+historiques SIP récupérés et caches précédents réutilisés ; aucune écritureSQL,
+aucunLLM/ordre/changementconfig ou promotion. Vérification72comptes/5 767trades,
+52tests ciblés passent. Même assistant, pas revue humaine indépendante.
+[Protocole, tableaux, sélections quotidiennes et courbes](univers_auc_per_symbol_top5_20261104.md).
+Diagnostic complémentaire daily : univers presque disjoints (WHFseul commun),
+cibleH10rentabilitéSL5 contreH20picdominant sansSL. ATR20 médian des TOP5
+2,83/4,25 %, SL5=1,76/1,18ATR ; sorties SL183/543 contre287/423.
+Parmi233labels de parcours réellementLONGH20 matures,111trades sont perdants
+avecSL5/open21 : décalage cible/exécution, pas taux d'erreur du modèle.
+Pas de causalité pure de l'horizon établie ; diagnosticJSON archivé, aucun nouveau fit.
+
+## 2026-11-04 — Univers AUC : confirmation Winner × DD15/B4, couverture intraday limitée
+
+**32/32 simulations terminées — comparaison partielle, aucune promotion.**
+Mêmes scores annuels des32titres H10/37H20, TOP5 LONG,4kUSD,1x,SL5/sansTP/TR,
+open11/open21, positions complètes, frais8bps/jambe. Trois variantes demandées
+(confirmation,DD15,lesdeux) plus référence5m commune ; trois années séparées
+et compte continu. DD confirmé par l'utilisateur : liquidation50 % des positions
+et reprise B4, pas arrêt définitif ni plafond garanti15 %.
+Confirmation native : cassure du high précédent puis deux closes5m, délai930s,
+un IOC à l'ouverture observée suivante plafonné+1 %, aucune exécution rétroactive.
+Pas de renforcement ni de plans anciens attendant20séances : confirmation seule.
+H10 continu rendements BASE/WINNER/DD15/lesdeux : **+4,44/+17,74/−3,75/+15,68 %** ;
+DD **−27,10/−17,67/−22,73/−15,89 %**,190/95/185/94trades.
+H20 : **+3,04/−13,80/−15,30/−19,10 %** ; DD **−30,42/−21,38/−20,66/−20,75 %**,
+95/47/95/47trades. Référence recalculée sur mêmes fenêtres qualifiées :
+**ne pas comparer directement aux anciens−25,01/+167,11 % daily**.
+SQL SELECT-only418 092bars ;23historiques SIP manquants récupérés en recherche
+(1 008 328bars régulières,379réponses), queues complétées3 240bars ; trois
+transitions de split raw/split identifiées, fenêtres exclues sans faux rendement.
+Malgré récupération, seulement10,52/20,64/30,90 % des occasionsH10 et
+4,30/11,68/20,50 % H20 qualifiées en2024/25/26. Masque futur strict identique
+entre bras : biais rétrospectif, faible exposition ; **pas de résultat des
+univers complets ni de validation indépendante des listes choisies avec2026**.
+Vérification PASS_WITH_MATERIAL_COVERAGE_LIMIT,32comptes/1 693trades contrôlés,
+46tests ciblés passent, aucune divergence avant premier trip DD. SQL nonécrit,
+zéroLLM/ordre/promotion/changementconfig. Même assistant, pas revue indépendante.
+[Tableaux annuels, continus, couverture et sources](univers_auc_winner_dd15_20261104.md).
+
+## 2026-11-04 — Univers AUC >0,60 : deux Oracles dédiés et achat TOP5 LONG
+
+**TERMINÉ — simulation rétrospective ; aucune promotion.** Six modèles LightGBM
+amplitude natifs H10/H20 sur les32/37titres des deux listes AUC>0,60.
+Réentraînement avant2024/25/26 : fit avant Y−1, validation Y−1 avec labels
+matures avant Y, test Y.24features archivées, TOP20 % d'amplitude dans chaque
+univers, TOP5 quotidien au next open LONG imposé. Pas un modèle directionnel.
+SL5/sansTP/sansTR, sortie open11/open21 confirmée par l'utilisateur.
+Daily,4kUSD,1x,entiers,20 % maximum par position,20positions,50USD minimum,
+frais8bps par jambe, sans rachat détenu ni remplacement depuis rang6.
+Pas de confirmation Winner ni moteur risque/coupe-circuit DD15 de production.
+2026 borné au19octobre, dernière date récente commune des archives.
+Rendements annuels H10 : **+9,81/−28,47/+8,59 %** ; H20 : **+62,01/+65,76/−6,10 %**.
+Comptes continus : H10 **2 999,50 $ /−25,01 % /DD−58,68 %**,747trades,23,69 % gagnants ;
+H20 **10 684,29 $ /+167,11 % /DD−45,17 %**,534trades,17,60 % gagnants.
+Capital engagé moyen2 993,11$/6 969,48$,81,34/86,37 % de l'equity courante.
+Positions finales valorisées, pas de liquidation anticipée de fin.
+2026/continu INCOMPLETE_COVERAGE :37exclusions H10,82annuelles/76continues H20,
+toutes liées à un changement de fournisseur dans la fenêtre, pas à des trous de prix.
+Gate de qualité futur par date d'entrée : réserve rétrospective supplémentaire.
+Les listes sont choisies avec2023–2026 : **aucune preuve indépendante de rendement**.
+Vérification PASS :6modèles,47 555scores reproduits,8replays/2 557trades contrôlés,
+12tests passent, archives inchangées, zéro SQL/API/LLM/ordre/promotion.
+[Protocole, résultats complets et courbes](univers_auc_oracles_top5_20261104.md).
+
 ## 2026-11-04 — Actions ordinaires : réduction des trois listes à TOP100
 
 **TERMINÉ — aucune amélioration de fiabilité démontrée ; intersections non qualifiables.**

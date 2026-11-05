@@ -783,6 +783,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Oracle parcours séparé H10/H15/H20 : TOP20%% du maximum absolu des excursions J+1..J+H. Horizon via --oracle-horizon ; aucun remplacement de l'Oracle terminal.")
     p.add_argument('--oracle-path-backend',choices=['lightgbm','catboost','auto'],default=None,
                    help='Oracle parcours : algorithme unique ou comparaison automatique sur validation. Prioritaire sur les flags challengers legacy.')
+    p.add_argument('--oracle-path-directional', action='store_true',
+                   help='Ajoute deux modèles annuels par titre LONG/SHORT au parcours H10 ; sélection TOP20 -> TOP5 LONG uniquement.')
     p.add_argument("--oracle-barrier-model-only", action="store_true", default=False,
                    help="Modèle séparé TP avant SL, LONG/SHORT ; entrée J+1 open. Paramètres oracle_barrier dans config.yaml ; recherche uniquement.")
     p.add_argument("--oracle-barrier-tp-pct", type=float, default=None, help="Fraction TP (0.20 = 20%%). Défaut config.yaml.")
@@ -1098,6 +1100,7 @@ def main(args: list[str] | None = None) -> None:
         oracle_horizon=(opts.oracle_horizon if opts.oracle_horizon is not None else
             (load_oracle_path_horizon() if opts.oracle_path_model_only else 20)),
         oracle_path_backend=opts.oracle_path_backend,
+        oracle_path_directional_enabled=opts.oracle_path_directional,
         oracle_barrier=barrier_config,
         long_feature_profile=opts.long_feature_profile,
         short_feature_profile=opts.short_feature_profile,
