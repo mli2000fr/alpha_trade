@@ -1557,7 +1557,9 @@ def _build_run_options() -> BacktestRunOptions:
         st.error(f'Configuration Winner invalide dans config.yaml : {exc}')
         st.stop()  # Never substitute a default execution policy for invalid settings.
     if st.checkbox('Utiliser Winner — Oracle parcours et replay intraday',
-                   value=winner_policy.enabled, key='bt_use_winner'):
+                   value=winner_policy.enabled, key='bt_use_winner',
+                   help='Inclut le parcours TOP Oracle → TOP LONG per-symbol pour les bundles compatibles. '
+                        'La confirmation avant achat reste réglable dans les paramètres Winner (0 = sans confirmation).'):
         from ihm.components.winner_backtest import render_winner_backtest
         return render_winner_backtest()
     st.caption(
@@ -4276,6 +4278,45 @@ def _resolve_phase2_risk_summary(
     return _load_json_artifact_from_paths(artifacts, "phase2_risk_summary_json") or {}
 
 
+def _average_committed_capital(report: dict[str, object]) -> tuple[float | None,float | None,str | None]:
+    """Read observed gross exposure, never estimate it from initial capital."""
+    import math
+    def number(value):
+        if isinstance(value,bool):return None
+        try:value=float(value)
+        except (TypeError,ValueError):return None
+        return value if math.isfinite(value) and value>=0 else None
+    summary=report.get('summary') or {}
+    if not isinstance(summary,dict):summary={}
+    amount=number(report.get('average_gross_capital'))
+    if amount is None:amount=number(summary.get('average_gross_capital'))
+    ratio=number(report.get('average_gross_equity_ratio'))
+    basis=report.get('capital_observation_basis') or summary.get('capital_observation_basis')
+    pct=100.*ratio if ratio is not None else number(summary.get('gross_exposure_avg_pct'))
+    metadata=report.get('run_metadata') or {}
+    if not basis and ratio is not None and isinstance(metadata,dict) and metadata.get('engine')=='winner_campaign_replay':
+        basis='REGULAR_5M_MARKS'
+    # Older generic reports use zero as a default even without observations.
+    if pct==0 and ratio is None and amount!=0 and not basis:pct=None
+    return amount,pct,basis
+
+
+def _render_average_committed_capital(report: dict[str, object]) -> None:
+    amount,pct,basis=_average_committed_capital(report)
+    left,right=st.columns(2)
+    left.metric('Capital engagé moyen',f'${amount:,.2f}' if amount is not None else '—')
+    right.metric('Engagement moyen / capital du compte',f'{pct:.2f} %' if pct is not None else '—')
+    st.caption('Exposition brute : valeur des positions LONG + SHORT en montant absolu. '
+               'Moyenne des observations enregistrées, y compris celles sans position. '
+               'Le pourcentage est la moyenne des ratios au capital du compte à chaque observation, pas au capital initial.')
+    if basis=='REGULAR_5M_MARKS':st.caption('Mesure sur les relevés réguliers de cinq minutes du replay Winner.')
+    elif basis=='MIXED_5M_AND_DAILY_KNOWN_MARKS':
+        st.caption('Mesure mixte : cours 5m disponibles ; pour les séances traitées en daily, '
+                   'ouverture conservée jusqu’à la clôture connue. Ce n’est pas une trajectoire intraday observée complète.')
+    elif basis=='DAILY_BEFORE_ENTRIES':st.caption('Mesure sur les relevés quotidiens avant les nouvelles entrées.')
+    if amount is None:st.caption('Le montant engagé moyen n’a pas été enregistré dans cet ancien rapport ; il n’est pas estimé.')
+
+
 def _render_report_summary(run_record: dict[str, object]) -> bool:
     report_payload = _load_run_report(run_record)
     if not report_payload:
@@ -4351,6 +4392,7 @@ def _render_report_summary(run_record: dict[str, object]) -> bool:
         f"{_to_float(summary.get('risk_free_rate')) * 100:.2f}%",
     )
     extra_col8.metric("Capital initial", f"${_to_float(summary.get('initial_equity')):,.0f}")
+    _render_average_committed_capital(report_payload)
 
     # ── E46 — Répartition LONG / SHORT (2026-08-22) ──
     _long_trades = _to_int(summary.get("long_trades"))
@@ -6166,7 +6208,8 @@ def render() -> None:
             type="primary",
             use_container_width=True,
             disabled=bool(active_backtest_runs) or missing_ml_batch or
-                (run_options.winner_enabled and not run_options.winner_research_assumptions),
+                (run_options.winner_enabled and (not run_options.winner_research_assumptions or
+                 (run_options.winner_per_symbol_long_enabled and run_options.winner_per_symbol_allow_short))),
         )
         if launch_backtest_clicked:
             try:

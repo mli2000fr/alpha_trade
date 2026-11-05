@@ -44,6 +44,10 @@ def render_model(view,sql):
         render_periods(view,sql)
         return
     report=view['report'];overall=report['overall'];protocol=view['protocol']
+    if protocol.get('training_config',{}).get('oracle_path_directional_enabled'):
+        st.info(f'Bundle parcours : {report.get("directional_models",0)} modèles annuels LONG/SHORT par titre. '
+                'Seul LONG est utilisé : TOP20 Oracle → TOP5 LONG → risque → Winner. '
+                'Les métriques ci-dessous concernent l’amplitude Oracle, pas la rentabilité des branches par titre.')
     columns=st.columns(4)
     columns[0].metric('AUC amplitude — OOF',_number(overall.get('auc')))
     columns[1].metric('Précision 10 premiers titres',_number(overall.get('precision_top_10_titles'),'.1%'))

@@ -2006,6 +2006,7 @@ def main(args: list[str] | None = None) -> None:
 
     candidates: list[MLRankedCandidate] = []
     _path_amplitude_policy = False
+    _path_long_bundle = False
     _oracle_live_batch = ''
     spread_snapshots: dict[str, object] = {}
     borrow_snapshots: dict[str, object] = {}
@@ -2046,6 +2047,11 @@ def main(args: list[str] | None = None) -> None:
             _prediction_symbols = list(universe_symbols)
             from modelFactory.oracle_path.train import is_path_batch
             _path_amplitude_policy = bool(_oracle_live_batch) and is_path_batch(args.oracle_artifacts_dir, _oracle_live_batch)
+            if _path_amplitude_policy:
+                from modelFactory.oracle_path.predict import load_contract
+                from modelFactory.oracle_path.directional import enabled
+                _path_root,_path_protocol,_,_=load_contract(args.oracle_artifacts_dir,_oracle_live_batch)
+                _path_long_bundle=enabled(_path_protocol)
             if _path_amplitude_policy and _oracle_live_policy == "off":
                 raise SystemExit("Oracle parcours live exige une politique Oracle/tradable explicite, pas off.")
             if _path_amplitude_policy and args.enable_kelly_sizing:
@@ -2076,7 +2082,7 @@ def main(args: list[str] | None = None) -> None:
                 _oracle_scores = repo.load_oracle_scores_asof(
                     trade_date,
                     batch_id=_oracle_live_batch,
-                    symbols=(None if _oracle_live_policy == "top20_then_filter" else universe_symbols),
+                    symbols=(None if _oracle_live_policy == "top20_then_filter" or _path_long_bundle else universe_symbols),
                     **({"artifacts_dir": args.oracle_artifacts_dir} if _path_amplitude_policy else {}),
                 )
                 if not _oracle_scores:
@@ -2090,7 +2096,7 @@ def main(args: list[str] | None = None) -> None:
                     policy=_oracle_live_policy,
                 )
                 from common.oracle_atr import resolve_oracle_atr_enabled, load_oracle_atr_by_date, filter_oracle_atr_percentiles
-                if resolve_oracle_atr_enabled(_cascade_live_config.get("oracle_atr_enabled", True)):
+                if not _path_long_bundle and resolve_oracle_atr_enabled(_cascade_live_config.get("oracle_atr_enabled", True)):
                     _live_atr_values = load_oracle_atr_by_date(
                         getattr(repo, "engine", None), list(_oracle_percentiles), [str(trade_date)],
                     ).get(str(trade_date), {})
@@ -2103,6 +2109,17 @@ def main(args: list[str] | None = None) -> None:
                     symbol for symbol, percentile in _oracle_percentiles.items()
                     if float(percentile) >= _oracle_cutoff
                 )
+                if _path_long_bundle:
+                    import pandas as _pd
+                    from modelFactory.oracle_path.directional import read_predictions
+                    _ranked=read_predictions(repo.engine,_path_root,
+                        _pd.DataFrame([dict(date=trade_date,symbol=s,proba_extreme=p)
+                            for s,p in _oracle_scores.items()]),_oracle_live_batch)
+                    _prediction_symbols=[r.symbol for r in _ranked.loc[_ranked.selected].sort_values('long_rank').itertuples()
+                                         if r.symbol in set(universe_symbols)]
+                    LOGGER.info('Parcours bundle : TOP%d Oracle -> TOP%d LONG, %d tradables, aucun remplacement ; SHORT non exécuté',
+                        _path_protocol['directional_contract']['oracle_top_n'],
+                        _path_protocol['directional_contract']['selected_n'],len(_prediction_symbols))
                 LOGGER.info(
                     "Oracle/tradable live policy=%s batch=%s oracle=%d tradable=%d ranked=%d top=%d",
                     _oracle_live_policy,
@@ -2117,18 +2134,20 @@ def main(args: list[str] | None = None) -> None:
                     _prediction_symbols,
                     trade_date,
                     batch_id=(_oracle_live_batch or None),
-                    sources=(["oracle_path_policy"] if _path_amplitude_policy else
-                             (["per_symbol"] if _oracle_live_policy != "off" else None)),
+                    sources=(["oracle_path_long"] if _path_long_bundle else (["oracle_path_policy"] if _path_amplitude_policy else
+                             (["per_symbol"] if _oracle_live_policy != "off" else None))),
                 )
                 if ml_gate_state.enabled else {}
             )
             if _path_amplitude_policy:
-                _path_direction_policy = str((_root_live_config.get("oracle_path") or {}).get("direction_policy", "abstain"))
+                _path_direction_policy = 'long_only' if _path_long_bundle else str((_root_live_config.get("oracle_path") or {}).get("direction_policy", "abstain"))
                 if _path_direction_policy not in ("long_only", "abstain"):
                     raise SystemExit("Politique Oracle parcours inconnue.")
                 # No stale fallback or another batch/source may create an entry.
                 predictions = {s: p for s, p in predictions.items() if p.prediction_date == trade_date
                     and p.predicted_side in ("long", "flat") and _path_direction_policy == "long_only"}
+                if _path_long_bundle:
+                    predictions={s:predictions[s] for s in _prediction_symbols if s in predictions}
             LOGGER.info("Predictions chargees pour %d symboles.", len(predictions))
 
             ml_coverage_gate = evaluate_ml_coverage_gate(
@@ -2159,10 +2178,10 @@ def main(args: list[str] | None = None) -> None:
                         symbol=symbol,
                         trade_date=trade_date,
                         predicted_side=pred.predicted_side,
-                        proba_long=float(_oracle_percentiles[symbol]) if _path_amplitude_policy and pred.predicted_side == "long" else pred.proba_long,
+                        proba_long=float(_oracle_percentiles[symbol]) if _path_amplitude_policy and not _path_long_bundle and pred.predicted_side == "long" else pred.proba_long,
                         proba_flat=pred.proba_flat,
                         proba_short=pred.proba_short,
-                        proba=float(_oracle_percentiles[symbol]) if _path_amplitude_policy and pred.predicted_side == "long" else pred.predicted_proba,
+                        proba=float(_oracle_percentiles[symbol]) if _path_amplitude_policy and not _path_long_bundle and pred.predicted_side == "long" else pred.predicted_proba,
                         model_run_id=pred.run_id,
                         universe_run_id=universe_run_id,
                         research_only=pred.research_only,
@@ -2173,7 +2192,7 @@ def main(args: list[str] | None = None) -> None:
                 if candidate.is_actionable():
                     if _path_amplitude_policy:
                         candidate = replace(candidate, lineage={**candidate.lineage,
-                            "score_semantics": "amplitude_rank_not_directional_probability",
+                            "score_semantics": "per_symbol_long_net_profit_probability" if _path_long_bundle else "amplitude_rank_not_directional_probability",
                             "direction_policy": "long_only", "oracle_batch_id": _oracle_live_batch})
                     candidates.append(candidate)
             # Apply ML rankings (longs then shorts, each by p_side descending)

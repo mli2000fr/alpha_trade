@@ -46,6 +46,14 @@ intraday_backfill:
   account_id: default  # Clés du compte principal via le registre Alpaca existant.
 
 oracle_path:
+  min_prediction_coverage_ratio: 0.93  # Inférence du bundle : 30/32 titres suffisent ; cible d'entraînement inchangée.
+  directional:
+    enabled: true  # Défaut de la case bundle parcours ; les anciens batches restent inchangés.
+    oracle_top_n: 20
+    selected_n: 5
+    stop_loss_pct: 0.05
+    horizon_sessions: 10
+    fee_per_leg: 0.0008
   horizon: 10  # Défaut IHM/entraînement : 10, 15 ou 20 séances ; Predict suit le modèle choisi.
   # Entraînement : lightgbm | catboost | auto (comparaison sur validation).
   # Défaut IHM seulement ; un batch déjà entraîné conserve son contrat archivé.
@@ -496,7 +504,7 @@ risk_management:
   # Concentration : maximum de nouvelles entrées sur un même titre,
   # dans une fenêtre glissante exprimée en jours calendaires.
   concentration_max_trades_per_symbol: 10
-  concentration_window_calendar_days: 180
+  concentration_window_calendar_days: 90
   # ── E46 (2026-08-22) : multiplicateur d'exposition PUR — PROD vs BACKTEST ──
   # Scale le sizing des entrées LONG et SHORT SANS toucher CP-V2 / B4 / WORST_50 / 6L/2S.
   #   1.0  = comportement inchangé (rollback).

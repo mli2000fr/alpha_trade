@@ -2089,7 +2089,10 @@ def _render_launchable_step_panel(
 
         if step.key == 'ml_predict':
             st.divider()
-            if options.options_filter_enabled:
+            from ihm.components.oracle_path_directional_review import render as render_path_directions
+            if render_path_directions(options):
+                pass
+            elif options.options_filter_enabled:
                 _render_options_filter_review(options, all_runs)
             else:
                 _render_ml_predict_review(options)
@@ -2164,6 +2167,12 @@ def render() -> None:
         return
 
     options, live_confirmed = _build_launch_options()
+    from ihm.services.pipeline_runner import path_directional_options
+    raw_options=options
+    options=path_directional_options(options)
+    if options is not raw_options:
+        st.info('Bundle parcours sélectionné : TOP Oracle → TOP LONG par titre → risque → Winner. '
+                'Les sélections options/GPT sont ignorées pour ce batch ; aucun cumul de filtres.')
     with st.expander(f'🌐 Audit des sélections {load_filter_config().provider_label} — {load_filter_config().mode_label} — PAPER'):
         _llm_audit_id = st.text_input('Identifiant analyse à consulter',
             value=options.llm_filter_run_id or '', key='llm_directional_audit_id')

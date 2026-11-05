@@ -268,9 +268,10 @@ def test_metrics_and_sql_source_are_read_only_and_keep_provider_scope():
     assert report['average_gross_capital'] > 0
 
 
-@pytest.mark.parametrize('ignore_missing,missing_bar,isolated',[(False,False,False),(True,False,False),(True,True,False),
-                                                            (True,False,True),(True,True,True)])
-def test_cli_complete_readonly_run_exports_reports_without_api_or_prediction(tmp_path, monkeypatch,ignore_missing,missing_bar,isolated):
+@pytest.mark.parametrize('ignore_missing,missing_bar,isolated,drawdown,daily_entry',[(False,False,False,True,False),(True,False,False,True,False),(True,True,False,True,False),
+    (True,False,True,True,False),(True,True,True,True,False),(False,False,True,False,False),
+    (True,False,True,False,True),(True,True,True,False,True)])
+def test_cli_complete_readonly_run_exports_reports_without_api_or_prediction(tmp_path, monkeypatch,ignore_missing,missing_bar,isolated,drawdown,daily_entry):
     from argparse import Namespace
     from hashlib import sha256
     import json
@@ -298,6 +299,8 @@ def test_cli_complete_readonly_run_exports_reports_without_api_or_prediction(tmp
     frame['bar_end_timestamp'] = frame.bar_end_timestamp.dt.tz_localize(None)
     if missing_bar:
         frame=frame.loc[~frame.bar_timestamp.eq(pd.Timestamp('2026-10-20T14:00:00'))].copy()
+    if daily_entry:
+        frame=frame.loc[frame.trade_date.ge(cfg.start_date)].copy()  # Prior 5m tape is unnecessary in daily mode.
     for key, val in dict(interval_code='5m', data_source='alpaca_sip', provider='alpaca', market_code='US_EQ',
             session_tag='regular', data_adjustment='raw', is_filled=0, payload_hash='x'*64).items():
         frame[key] = val
@@ -337,6 +340,12 @@ def test_cli_complete_readonly_run_exports_reports_without_api_or_prediction(tmp
         account_type='margin', margin_interest_annual=.065,max_positions=12,
         risk_overrides_json='{"risk_per_trade_pct":0.02,"min_position_notional":20.0}',
         policy_overrides_json='{"stop_loss_pct":0.07,"horizon_sessions":10}',ignore_missing_intraday=ignore_missing)
+    if not drawdown:options.drawdown_controller=False  # Old Namespace omission retains enabled behavior.
+    if daily_entry:options.daily_entry=True
+    if daily_entry:
+        def forbidden(*unused,**kwargs):raise AssertionError('No future coverage screening/provider recovery in daily mode')
+        monkeypatch.setattr('backtesting.winner_missing_intraday.screen_missing_intraday',forbidden)
+        monkeypatch.setattr('backtesting.winner_intraday_recovery.RecoveringIntradaySource',forbidden)
     if isolated:
         from backtesting.isolation import ReadOnlyReplay
         with ReadOnlyReplay(tmp_path).install():
@@ -345,9 +354,18 @@ def test_cli_complete_readonly_run_exports_reports_without_api_or_prediction(tmp
     else:
         report = run(options)
     assert report['status'] == ('INCOMPLETE_COVERAGE' if missing_bar else 'COMPLETED_EXPLORATORY')
-    assert report['costs'] == 0 if missing_bar else report['costs'] > 0
-    assert report['missing_intraday_screen']['enabled'] is ignore_missing
-    if ignore_missing:
+    assert report['costs'] == 0 if missing_bar and not daily_entry else report['costs'] > 0
+    assert report['missing_intraday_screen']['enabled'] is (ignore_missing and not daily_entry)
+    assert report['initial_entry']['mode']==('DAILY_OPEN_J_PLUS_1' if daily_entry else 'INTRADAY_WINNER')
+    assert json.loads((tmp_path/'replay'/'protocol.json').read_text())['initial_entry']==report['initial_entry']
+    if daily_entry:
+        assert report['missing_intraday_screen']['uses_future_data_availability'] is False
+        assert report['protection_resolution']['fallback_symbol_sessions']==(1 if missing_bar else 0)
+        assert (tmp_path/'replay'/'daily-protection-fallback.csv').exists()
+        assert not (tmp_path/'replay'/'entry-exclusions.csv').exists()
+        if missing_bar:
+            assert report['summary']['capital_observation_basis']=='MIXED_5M_AND_DAILY_KNOWN_MARKS'
+    if ignore_missing and not daily_entry:
         audit=json.loads((tmp_path/'replay'/'missing-intraday.json').read_text())
         assert audit['excluded_symbols']==[]  # No whole-run ticker exclusion.
         assert audit['affected_symbols']==(['AAA'] if missing_bar else [])
@@ -361,12 +379,19 @@ def test_cli_complete_readonly_run_exports_reports_without_api_or_prediction(tmp
     assert (tmp_path/'replay'/'annual-summary.csv').is_file()
     assert (tmp_path/'replay'/'equity_curve.csv').is_file()
     assert report['summary']['final_value'] == report['final_equity']
+    assert report['summary']['average_gross_capital']==report['average_gross_capital']
+    assert report['summary']['gross_exposure_avg_pct']==pytest.approx(100*report['average_gross_equity_ratio'])
     assert report['run_metadata']['engine'] == 'winner_campaign_replay'
     assert report['params']['risk']['risk_per_trade_pct']==.02
     assert report['params']['risk']['min_position_notional']==20.
     assert report['params']['risk']['fixed_stop_pct']==.07
     assert report['params']['risk']['max_positions']==report['params']['risk']['max_long_positions']==12
     assert report['params']['winner_policy']['horizon_sessions']==10
+    assert report['drawdown_controller']['enabled'] is drawdown
+    assert report['params']['drawdown_controller']['enabled'] is drawdown
+    if not drawdown:
+        assert not report['global_liquidation']['enabled']
+        assert report['params']['risk']['force_close_on_breaker'] is False
     assert json.loads((tmp_path/'replay'/'progress.json').read_text())['completed'] == 2
     with pytest.raises(FileExistsError):
         run(options)  # Never overwrite a completed run.

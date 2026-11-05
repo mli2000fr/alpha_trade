@@ -104,6 +104,27 @@ def synthesize(
         return {"status": "error", "reason": "no rows in oracle_extreme_predictions", "run_id": run_id}
     ensure_synthetic_run(engine, batch_id=batch_id, run_id=run_id, symbol="__ORACLE_SYNTH__")
 
+    if path_mode:
+        from modelFactory.oracle_path.directional import enabled, read_predictions, SOURCE
+        root,protocol,_,_=load_contract(artifacts_dir,batch_id)
+        if enabled(protocol):
+            ranked=read_predictions(engine,root,df,batch_id)
+            params=[]
+            for r in ranked.itertuples():
+                p=float(r.long_probability) if pd.notna(r.long_probability) else 0.
+                side='long' if r.selected else 'flat'
+                params.append(dict(symbol=r.symbol,prediction_date=str(r.date.date()),
+                    predicted_proba=p if r.selected else 1-p,predicted_class=1 if r.selected else 0,
+                    run_id=run_id,selected_model='oracle_path_per_symbol_long',decision_threshold=0.,
+                    signal_label='path_long_top_n',calibration_method='platt',predicted_side=side,
+                    proba_long=p,proba_flat=1-p,proba_short=0.,source=SOURCE))
+            for i in range(0,len(params),_CHUNK):
+                with engine.begin() as conn:conn.execute(_INSERT_PRED,params[i:i+_CHUNK])
+            return dict(status='completed',run_id=run_id,inserted=len(params),
+                long_count=sum(r['predicted_side']=='long' for r in params),
+                flat_count=sum(r['predicted_side']=='flat' for r in params),
+                selection='Oracle TOP20 -> per-symbol TOP5 LONG; SHORT archived only')
+
     # 3. Mapping fidèle Extreme Gate : percentile intra-date (PIT) >= 1-pool_pct → LONG
     df["_date"] = df["prediction_date"].astype(str).str[:10]
     df["_pct"] = df.groupby("_date")["proba_extreme"].rank(pct=True)
