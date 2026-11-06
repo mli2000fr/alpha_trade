@@ -384,13 +384,66 @@ def install_managed_roots(target,stage,old_files,managed,moves,check,on_progress
         previous=safe_path(old_files,name)
         if destination.exists():
             previous.parent.mkdir(parents=True,exist_ok=True)
-            replace_with_retry(destination,previous,item=name,operation='mise de côté',check=check)
-        moves.append((destination,previous,incoming.exists()))
+            try:replace_with_retry(destination,previous,item=name,operation='mise de côté',check=check,
+                                   timeout=5 if name=='doc' and incoming.is_dir() else 60)
+            except FileInstallError as exc:
+                if name!='doc' or exc.code not in (5,32,33) or not destination.is_dir() or not incoming.is_dir():raise
+                # An open Windows directory handle can prevent renaming doc even
+                # though its files remain writable. Keep the root and replace
+                # its contents only after taking a local rollback copy.
+                emit(on_progress,'FILE_REPLACEMENT',item='doc : installation fichier par fichier',checkpoint=True)
+                _directory_entries(destination)
+                try:shutil.copytree(destination,previous,copy_function=shutil.copy2)
+                except OSError as copy_error:
+                    raise FileInstallError(name,'copie de retour arrière',
+                        getattr(copy_error,'winerror',None) or copy_error.errno) from copy_error
+                moves.append((destination,previous,True,'in_place'))
+                try:_mirror_directory_contents(incoming,destination,check,item=name)
+                except OSError as copy_error:
+                    raise FileInstallError(name,'copie en place',
+                        getattr(copy_error,'winerror',None) or copy_error.errno) from copy_error
+                continue
+        moves.append((destination,previous,incoming.exists(),'renamed'))
         if incoming.exists():replace_with_retry(incoming,destination,item=name,operation='installation',check=check)
 
 
+def _directory_entries(root):
+    entries=list(root.rglob('*'))
+    if any(path.is_symlink() for path in entries):raise ValueError('Lien dans le dossier doc cible : copie en place refusée')
+    return entries
+
+
+def _mirror_directory_contents(source,destination,check,*,item):
+    """Mirror a small locked root with per-file atomic replacements."""
+    source_entries=_directory_entries(source)
+    _directory_entries(destination)
+    directories={path.relative_to(source) for path in source_entries if path.is_dir()}
+    files={path.relative_to(source) for path in source_entries if path.is_file()}
+    for relative in sorted(directories,key=lambda path:(len(path.parts),str(path))):
+        check();path=safe_path(destination,relative.as_posix())
+        if path.is_file():path.unlink()
+        path.mkdir(parents=True,exist_ok=True)
+    for relative in sorted(files,key=str):
+        check();path=safe_path(destination,relative.as_posix())
+        if path.is_dir():shutil.rmtree(path)
+        path.parent.mkdir(parents=True,exist_ok=True)
+        temporary=path.with_name('.alpha-migration-'+uuid.uuid4().hex)
+        try:
+            shutil.copy2(source/relative,temporary)
+            replace_with_retry(temporary,path,item=item,operation='remplacement de '+relative.as_posix(),check=check)
+        finally:
+            if temporary.exists():temporary.unlink()
+    for path in sorted(_directory_entries(destination),key=lambda entry:len(entry.parts),reverse=True):
+        check();relative=path.relative_to(destination)
+        if path.is_file() and relative not in files:path.unlink()
+        elif path.is_dir() and relative not in directories:path.rmdir()
+
+
 def rollback_managed_roots(moves,failed_files):
-    for destination,previous,installed in reversed(moves):
+    for destination,previous,installed,mode in reversed(moves):
+        if mode=='in_place':
+            _mirror_directory_contents(previous,destination,lambda:None,item=destination.name)
+            continue
         if destination.exists():
             failed=failed_files/destination.name;failed.parent.mkdir(exist_ok=True,mode=0o700)
             replace_with_retry(destination,failed,item=destination.name,operation='mise en quarantaine',check=lambda:None)
