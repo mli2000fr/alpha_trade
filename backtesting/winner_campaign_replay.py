@@ -155,7 +155,8 @@ def per_symbol_settings(protocol,args):
         allow_long=getattr(args,'per_symbol_longs',True),allow_short=getattr(args,'per_symbol_shorts',False),
         long_top_n=selected_n if long_count is None else long_count,
         short_top_n=selected_n if short_count is None else short_count,
-        min_long_probability=getattr(args,'per_symbol_min_long_probability',None))
+        min_long_probability=getattr(args,'per_symbol_min_long_probability',None),
+        min_long_auc=getattr(args,'per_symbol_min_long_auc',None))
     if settings.oracle_top_n>len(protocol['universe']):
         raise ValueError('TOP Oracle supérieur à l’univers du modèle')
     return settings
@@ -284,11 +285,20 @@ def run(args):
             if directional_bundle:
                 ranked=read_predictions(engine,root,scores,args.oracle_batch_id)
                 from backtesting.per_symbol_selection import select_per_symbol
+                if directional_selection.min_long_auc is not None and directional_selection.allow_long:
+                    from backtesting.per_symbol_selection import attach_calibration_auc
+                    ranked=attach_calibration_auc(ranked,root)
                 ranked=select_per_symbol(ranked,directional_selection)
-                LOG.info('Sélection per-symbol : %d LONG dans le TOP avant seuil, %d refusés par seuil, %d retenus ; seuil=%s (strict >)',
+                LOG.info('Sélection per-symbol : %d LONG dans le TOP avant seuil, %d refusés par score, %d avant filtre AUC ; seuil=%s (strict >)',
                     int(ranked.long_selected_before_threshold.sum()),
-                    int(ranked.reason.eq('LONG_SCORE_NOT_ABOVE_THRESHOLD').sum()),int(ranked.selected.sum()),
+                    int(ranked.reason.eq('LONG_SCORE_NOT_ABOVE_THRESHOLD').sum()),int(ranked.long_selected_before_auc.sum()),
                     directional_selection.min_long_probability)
+                if directional_selection.min_long_auc is not None:
+                    LOG.info('Filtre AUC LONG calibration >= %s : %d sous le seuil, %d AUC absentes, '
+                        '%d AUC futures ; %d LONG retenus, aucun remplacement',directional_selection.min_long_auc,
+                        int(ranked.reason.eq('LONG_AUC_BELOW_THRESHOLD').sum()),
+                        int(ranked.reason.eq('MISSING_LONG_CALIBRATION_AUC').sum()),
+                        int(ranked.reason.eq('LONG_AUC_NOT_YET_AVAILABLE').sum()),int(ranked.retain_long.sum()))
                 ranked.to_csv(output/'per-symbol-ranking.csv',index=False)
                 # Historical report consumers still read this alias.
                 ranked.to_csv(output/'oracle-long-ranking.csv',index=False)
@@ -553,6 +563,9 @@ def build_parser():
     parser.add_argument('--per-symbol-min-long-probability',type=float,default=None,
         help='Retenir uniquement les LONG de score strictement supérieur à ce seuil, après TOP-N ; aucun remplacement. '
              'Anciennes commandes sans option : aucun seuil.')
+    parser.add_argument('--per-symbol-min-long-auc',type=float,default=None,
+        help='AUC LONG de calibration >= seuil, connue avant la décision ; après TOP-N, aucun remplacement. '
+             'AUC absente/future : exclusion. Jamais l’AUC du test de la même année.')
     parser.add_argument('--exclude-symbols',default='',help='Run-wide symbol exclusions after Oracle TOP-N, no refill, e.g. SDGR,APP')
     parser.add_argument('--ignore-missing-intraday',action=argparse.BooleanOptionalAction,default=False,
         help='Try SIP -> Yahoo -> EODHD for missing 5m bars; block only entry dates crossing residual gaps, post-hoc audit')

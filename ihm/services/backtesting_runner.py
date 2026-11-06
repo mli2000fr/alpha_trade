@@ -178,6 +178,7 @@ class BacktestRunOptions:
     winner_per_symbol_top_long: int | None = None
     winner_per_symbol_top_short: int | None = None
     winner_per_symbol_min_long_probability: float | None = None
+    winner_per_symbol_min_long_auc: float | None = None
     winner_risk_overrides: dict[str,object] | None = None
     winner_policy_overrides: dict[str,object] | None = None
     winner_drawdown_controller_enabled: bool = True  # Existing commands keep their controller; UI sets its own default.
@@ -390,6 +391,11 @@ def build_backtesting_command(
                     from backtesting.per_symbol_selection import PerSymbolSelection
                     PerSymbolSelection(min_long_probability=threshold)  # Validate before spawning a run.
                     command.extend(['--per-symbol-min-long-probability',str(threshold)])
+                auc=options.winner_per_symbol_min_long_auc
+                if auc is not None:
+                    from backtesting.per_symbol_selection import PerSymbolSelection
+                    PerSymbolSelection(min_long_auc=auc)
+                    command.extend(['--per-symbol-min-long-auc',str(auc)])
             from backtesting.winner_settings import risk_overrides, policy_overrides
             for flag,value,validate in [('--risk-overrides-json',options.winner_risk_overrides,risk_overrides),
                                        ('--policy-overrides-json',options.winner_policy_overrides,policy_overrides)]:

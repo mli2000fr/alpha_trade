@@ -82,8 +82,8 @@ def render_model_selection():
         help='Classe les candidats Oracle avec les probabilités LONG/SHORT des modèles par titre du même batch. '
              'Les nombres et directions choisis ici restent propres à ce backtest.')
     active=bool(bundle and active)
-    selection=dict(oracle_top_n=pool,allow_long=True,allow_short=False,long_top_n=count,short_top_n=count,
-        min_long_probability=None)
+    selection=dict(oracle_top_n=pool,allow_long=True,allow_short=False,long_top_n=10,short_top_n=count,
+        min_long_probability=None,min_long_auc=None)
     if active:
         pool=render_oracle_pool_size(len(contract['universe']),pool,
             key=f'bt_per_symbol_pool_{batch}',label='Top N Oracle')
@@ -92,9 +92,14 @@ def render_model_selection():
             with column:
                 selection['allow_'+side]=st.checkbox(label,value=side=='long',key=f'bt_per_symbol_allow_{side}_{batch}')
                 key=f'bt_per_symbol_top_{side}_{batch}'
+                default=10 if side=='long' else count
+                migration=f'{key}_default10'
+                if side=='long' and not st.session_state.get(migration):
+                    if st.session_state.get(key)==min(count,pool):st.session_state[key]=min(10,pool)
+                    st.session_state[migration]=True
                 if st.session_state.get(key,1)>pool:st.session_state[key]=pool
                 selection[side+'_top_n']=int(st.number_input('Top '+('X Long' if side=='long' else 'Y Short'),
-                    min_value=1,max_value=pool,value=min(count,pool),disabled=not selection['allow_'+side],key=key))
+                    min_value=1,max_value=pool,value=min(default,pool),disabled=not selection['allow_'+side],key=key))
         selection['oracle_top_n']=pool
         threshold=float(st.number_input('Score LONG minimum — strictement supérieur',min_value=0.,max_value=1.,
             value=.60,step=.01,format='%.2f',disabled=not selection['allow_long'],
@@ -102,6 +107,22 @@ def render_model_selection():
             help='Exemple : 0,60 conserve les scores > 0,60 ; un score exactement égal à 0,60 est exclu. '
                  'Filtre appliqué aux TOP X LONG, sans remplacement depuis les rangs suivants.'))
         selection['min_long_probability']=threshold if selection['allow_long'] else None
+        auc_key=f'bt_per_symbol_auc_enabled_{batch}'
+        if not st.session_state.get(auc_key+'_default_on'):
+            st.session_state[auc_key]=True
+            st.session_state[auc_key+'_default_on']=True
+        use_auc=st.checkbox('Filtrer les titres selon leur AUC LONG',value=True,
+            disabled=not selection['allow_long'],key=auc_key)
+        auc=float(st.number_input('AUC LONG minimum du titre (≥)',min_value=0.,max_value=1.,value=.60,
+            step=.01,format='%.2f',disabled=not (selection['allow_long'] and use_auc),
+            key=f'bt_per_symbol_min_long_auc_{batch}',
+            help='AUC de calibration du modèle annuel du titre, connue avant l’année testée. '
+                 'Distincte du score LONG de l’entrée. AUC absente ou future : titre exclu, sans remplacement. '
+                 'La calibration sert à ajuster le score : son AUC n’est pas un test indépendant.'))
+        selection['min_long_auc']=auc if selection['allow_long'] and use_auc else None
+        if selection['min_long_auc'] is not None:
+            st.caption(f'Filtre supplémentaire : AUC LONG de calibration ≥ {auc:.2f}, disponible avant la décision. '
+                'Les AUC du test de la même année ne sont pas utilisées pour choisir ses entrées.')
         if not selection['allow_long'] and not selection['allow_short']:
             st.error('Cocher LONG ou SHORT pour appliquer per-symbol.')
             st.stop()
@@ -315,6 +336,7 @@ def render_winner_backtest():
         winner_per_symbol_top_long=per_symbol_selection['long_top_n'],
         winner_per_symbol_top_short=per_symbol_selection['short_top_n'],
         winner_per_symbol_min_long_probability=per_symbol_selection['min_long_probability'],
+        winner_per_symbol_min_long_auc=per_symbol_selection['min_long_auc'],
         winner_ignore_missing_intraday=ignore_missing,
         winner_risk_overrides=risk_changes,winner_policy_overrides=policy_changes,
         winner_drawdown_controller_enabled=controller_enabled,

@@ -121,9 +121,34 @@ modèle, est cochée par défaut pour un bundle compatible. Quand elle est coch�
 - **Score LONG minimum — strictement supérieur**, défaut IHM **0,60**, filtre
   ensuite les TOP X LONG. Un score égal au seuil est exclu ; aucun remplacement
   depuis les rangs suivants, aucune vente forcée d'une position détenue.
+- **Filtrer les titres selon leur AUC LONG**, coché par défaut, active le
+  champ **AUC LONG minimum du titre (≥)**, valeur proposée **0,60**. Ce filtre
+  est distinct du score d'entrée : il utilise l'AUC de **calibration du modèle
+  annuel du titre**, disponible avant la date de décision, pas son AUC de test
+  sur la même année. La calibration ajuste le score ; son AUC n'est pas une
+  validation indépendante de rentabilité.
 
-Défaut : N=20, LONG coché, X=5, SHORT décoché, Y=5. Les nombres sont préremplis
-depuis le contrat entraîné. X/Y ne peuvent pas dépasser N ; au moins une branche
+Le filtre AUC s'applique après le TOP X LONG, les conflits de direction et le
+seuil du score LONG, sans remplacement des exclusions. Il exige l'empreinte
+du modèle LONG correspondant au symbole et à l'année, une AUC de calibration
+admissible et une date de disponibilité strictement antérieure à la décision.
+AUC absente/future : exclusion. Diagnostics absents pour tout le batch : arrêt
+explicite avant simulation avec demande de compléter les diagnostics, sans
+remplacer l'AUC manquante par zéro ou par l'AUC du test.
+
+Pour les nouveaux modèles, l'AUC est dans les métriques du manifeste ; pour
+les anciens batches enrichis, elle est lue dans
+`oracle_path/directional/diagnostics/report.json`, avec vérification du lien
+au manifeste/protocole, des modèles, des périodes et effectifs de calibration.
+Le seuil est propre au backtest, conservé dans ses paramètres et transmis par
+`--per-symbol-min-long-auc`. Aucune sélection de production n'est modifiée.
+Le CSV `per-symbol-ranking.csv` conserve l'AUC, sa source, sa disponibilité,
+l'empreinte du modèle et le motif de rejet ; les compteurs sont dans les logs.
+
+Défaut du formulaire : N=20, LONG coché, **X=10**, SHORT décoché, Y prérempli
+depuis le contrat (habituellement 5), **filtre AUC LONG coché, seuil 0,60**.
+Le pool et le nombre SHORT sont préremplis depuis le contrat entraîné ; le
+défaut LONG du formulaire est 10. X/Y ne peuvent pas dépasser N ; au moins une branche
 doit être cochée. Chaque classement reste dans le pool Oracle, sans promouvoir
 un titre au-delà de ce pool en cas de score manquant. Si un titre est retenu des
 deux côtés, garder la probabilité la plus élevée ; égalité : abstention, sans

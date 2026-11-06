@@ -18,6 +18,7 @@ class PerSymbolSelection:
     long_top_n: int = 5
     short_top_n: int = 5
     min_long_probability: float | None = None  # None preserves previous replay/CLI selections.
+    min_long_auc: float | None = None  # Calibration AUC known before the decision; never same-year test AUC.
 
     def __post_init__(self):
         if type(self.allow_long) is not bool or type(self.allow_short) is not bool:
@@ -33,6 +34,9 @@ class PerSymbolSelection:
         value=self.min_long_probability
         if value is not None and (type(value) not in (int,float) or not math.isfinite(value) or not 0<=value<=1):
             raise ValueError('Seuil LONG : nombre fini entre 0 et 1 requis')
+        value=self.min_long_auc
+        if value is not None and (type(value) not in (int,float) or not math.isfinite(value) or not 0<=value<=1):
+            raise ValueError('Seuil AUC LONG : nombre fini entre 0 et 1 requis')
 
     def snapshot(self):return asdict(self)
 
@@ -41,6 +45,7 @@ class PerSymbolSelection:
         if self.allow_long:
             branch=f'TOP{self.long_top_n} LONG'
             if self.min_long_probability is not None:branch+=f' (score > {self.min_long_probability:g})'
+            if self.min_long_auc is not None:branch+=f' (AUC calibration >= {self.min_long_auc:g})'
             branches.append(branch)
         if self.allow_short:branches.append(f'TOP{self.short_top_n} SHORT')
         return f'TOP{self.oracle_top_n} Oracle -> '+ ' + '.join(branches)+' per-symbol'
@@ -79,6 +84,25 @@ def select_per_symbol(verified,settings):
         else a.long_probability.gt(settings.min_long_probability))
     below_long_threshold=a.retain_long&~a.long_threshold_passed
     a.loc[below_long_threshold,'retain_long']=False
+    a['long_selected_before_auc']=a.retain_long.copy()
+    a['long_auc_threshold']=settings.min_long_auc
+    below_auc=pd.Series(False,index=a.index);missing_auc=below_auc.copy();future_auc=below_auc.copy()
+    a['long_auc_threshold_passed']=True
+    if settings.min_long_auc is not None and settings.allow_long:
+        needed={'long_auc','long_auc_available_date','long_auc_model_sha256','long_model_sha256','long_auc_source'}
+        if not needed.issubset(a):raise ValueError('Diagnostics AUC LONG non chargés pour ce batch')
+        auc=pd.to_numeric(a.long_auc,errors='coerce')
+        if (a.long_auc.notna()&~auc.between(0,1)).any():raise ValueError('AUC LONG invalide')
+        available=pd.to_datetime(a.long_auc_available_date,errors='coerce')
+        missing_auc=a.retain_long&(auc.isna()|available.isna())
+        future_auc=a.retain_long&available.notna()&available.ge(a.date)
+        known=auc.notna()&available.notna()
+        if (known&a.long_probability.notna()&(~a.long_auc_source.eq('calibration')|
+                ~a.long_auc_model_sha256.eq(a.long_model_sha256))).any():
+            raise ValueError('AUC LONG issue d’un autre modèle ou échantillon')
+        a['long_auc_threshold_passed']=known&available.lt(a.date)&auc.ge(settings.min_long_auc)
+        below_auc=a.retain_long&known&available.lt(a.date)&auc.lt(settings.min_long_auc)
+        a.loc[missing_auc|future_auc|below_auc,'retain_long']=False
     a['side']=np.where(a.retain_long,'long',np.where(a.retain_short,'short','flat'))
     a['selected']=a.retain_long|a.retain_short
     a['selection_probability']=np.where(a.retain_long,a.long_probability,np.where(a.retain_short,a.short_probability,np.nan))
@@ -89,4 +113,45 @@ def select_per_symbol(verified,settings):
         np.where(tie,'DIRECTION_TIE_ABSTAIN',np.where(a.selected,'SELECTED_'+a.side.str.upper(),'BELOW_TOP_OR_MISSING_BRANCH')))
     a.loc[conflict&~tie,'reason']='DIRECTION_CONFLICT_KEEP_HIGHER_PROBABILITY'
     a.loc[below_long_threshold,'reason']='LONG_SCORE_NOT_ABOVE_THRESHOLD'
+    a.loc[below_auc,'reason']='LONG_AUC_BELOW_THRESHOLD'
+    a.loc[missing_auc,'reason']='MISSING_LONG_CALIBRATION_AUC'
+    a.loc[future_auc,'reason']='LONG_AUC_NOT_YET_AVAILABLE'
     return a
+
+
+def attach_calibration_auc(verified,root):
+    """Attach the matching annual model's calibration AUC, without future tests."""
+    import json
+    from pathlib import Path
+    from modelFactory.oracle_path.directional import load_manifest
+    from modelFactory.oracle_path.train import digest
+    root=Path(root);manifest,checksum=load_manifest(root)
+    records=manifest['models'];metrics={}
+    for row in records:
+        if row.get('metrics'):metrics[(row['symbol'],row['year'],row['side'])]=row['metrics']
+    file=root/'directional/diagnostics/report.json'
+    if file.is_file():
+        extra=json.loads(file.read_text(encoding='utf-8'))
+        expected={(r['symbol'],r['year'],r['side']):r['sha256'] for r in records}
+        actual={(r['symbol'],r['year'],r['side']):r['model_sha256'] for r in extra.get('models',[])}
+        if (extra.get('status')!='COMPLETED' or extra.get('manifest_sha256')!=checksum
+                or extra.get('oracle_protocol_sha256')!=digest(root/'protocol.json')
+                or extra.get('source_hashes')!=manifest['source_hashes'] or actual!=expected
+                or len(actual)!=len(extra['models'])):
+            raise ValueError('Diagnostics AUC incompatibles avec le batch')
+        metrics.update({(r['symbol'],r['year'],r['side']):r['metrics'] for r in extra['models']})
+    rows=[]
+    for record in records:
+        if record['side']!='long':continue
+        cal=metrics.get((record['symbol'],record['year'],'long'),{}).get('calibration')
+        if cal is None:continue
+        if (cal.get('n')!=record['calibration_rows'] or cal.get('first_date')!=record['calibration_start']
+                or cal.get('last_date')!=record['calibration_end'] or cal.get('independent_test') is not False):
+            raise ValueError('Période AUC de calibration différente du modèle')
+        rows.append(dict(symbol=record['symbol'],_auc_year=record['year'],long_auc=cal.get('auc'),
+            long_auc_available_date=record['available'],long_auc_model_sha256=record['sha256'],
+            long_auc_source='calibration'))
+    if not rows:raise ValueError('Aucune AUC de calibration disponible ; compléter les diagnostics per-symbol du batch')
+    a=verified.copy();a['date']=pd.to_datetime(a.date);a['_auc_year']=a.date.dt.year
+    attached=a.merge(pd.DataFrame(rows),on=['symbol','_auc_year'],how='left',validate='many_to_one')
+    return attached.drop(columns='_auc_year')

@@ -78,7 +78,7 @@ def test_settings_override_frozen_numbers_without_rewriting_training_contract():
         universe=list(range(32)),directional_contract=dict(oracle_top_n=20,selected_n=5))
     before=deepcopy(protocol)
     assert per_symbol_settings(protocol,args).snapshot()==dict(oracle_top_n=12,
-        allow_long=False,allow_short=True,long_top_n=3,short_top_n=2,min_long_probability=None)
+        allow_long=False,allow_short=True,long_top_n=3,short_top_n=2,min_long_probability=None,min_long_auc=None)
     assert protocol==before
     args.per_symbol_top_short=0
     with pytest.raises(ValueError,match='entier positif'):per_symbol_settings(protocol,args)
@@ -182,7 +182,7 @@ def test_configurable_selection_widgets_and_clamping(tmp_path,monkeypatch):
     at.run(timeout=30)
     assert not at.exception
     assert at.session_state['choice']==dict(oracle_top_n=12,allow_long=True,allow_short=True,long_top_n=3,short_top_n=2,
-        min_long_probability=.6)
+        min_long_probability=.6,min_long_auc=.6)
     at.number_input(key=f'bt_per_symbol_pool_{bid}').set_value(1).run(timeout=30)
     assert not at.exception
     assert at.session_state['choice']['long_top_n']==at.session_state['choice']['short_top_n']==1
@@ -239,6 +239,7 @@ def test_bundle_form_2022_top20_to_top5_and_command(tmp_path,monkeypatch):
     result=at.session_state['result']
     assert result['oracle_batch_id']==bid and result['winner_per_symbol_long_enabled'] is True
     assert result['winner_per_symbol_min_long_probability']==.6
+    assert result['winner_per_symbol_top_long']==10
     assert result['start']=='2022-01-01' and result['end']=='2022-12-31'
     assert result['winner_top_n']==20 and result['winner_symbol_source']=='model-universe'
     assert result['winner_options_filter_enabled'] is False
@@ -249,11 +250,19 @@ def test_bundle_form_2022_top20_to_top5_and_command(tmp_path,monkeypatch):
     assert parsed.per_symbol_min_long_probability==.6
     at.number_input(key=f'bt_per_symbol_min_long_probability_{bid}').set_value(.7).run(timeout=30)
     assert not at.exception and at.session_state['result']['winner_per_symbol_min_long_probability']==.7
+    assert at.session_state['result']['winner_per_symbol_min_long_auc']==.6
+    assert at.checkbox(key=f'bt_per_symbol_auc_enabled_{bid}').value
+    at.checkbox(key=f'bt_per_symbol_auc_enabled_{bid}').check().run(timeout=30)
+    at.number_input(key=f'bt_per_symbol_min_long_auc_{bid}').set_value(.65).run(timeout=30)
+    assert not at.exception and at.session_state['result']['winner_per_symbol_min_long_auc']==.65
+    with_auc=build_parser().parse_args(build_backtesting_command('run',BacktestRunOptions(**at.session_state['result']))[4:])
+    assert with_auc.per_symbol_min_long_auc==.65
     assert at.checkbox(key='bt_winner_options_filter').disabled
     assert '--per-symbol-long' in build_backtesting_command('run',BacktestRunOptions(**result))
     at.checkbox(key=f'bt_winner_per_symbol_long_{bid}').uncheck().run(timeout=30)
     assert not at.exception and at.session_state['result']['winner_per_symbol_long_enabled'] is False
     assert '--per-symbol-min-long-probability' not in build_backtesting_command('run',BacktestRunOptions(**at.session_state['result']))
+    assert '--per-symbol-min-long-auc' not in build_backtesting_command('run',BacktestRunOptions(**at.session_state['result']))
     at.selectbox(key='bt_winner_leverage_margin').select(1.).run(timeout=30)
     assert not at.exception and at.session_state['result']['winner_max_leverage']==1.
     at.selectbox(key='bt_winner_account').select('cash').run(timeout=30)

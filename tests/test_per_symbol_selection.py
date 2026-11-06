@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from backtesting.per_symbol_selection import PerSymbolSelection,select_per_symbol
+from backtesting.per_symbol_selection import PerSymbolSelection,select_per_symbol,attach_calibration_auc
 
 
 def scores():
@@ -118,6 +118,66 @@ def test_invalid_long_threshold_is_rejected(value):
     with pytest.raises(ValueError,match='Seuil LONG'):PerSymbolSelection(min_long_probability=value)
 
 
+def auc_scores():
+    return scores().assign(long_auc=[.9,.6,.59,.99],long_auc_available_date='2021-12-31',
+        long_auc_model_sha256='model',long_model_sha256='model',long_auc_source='calibration')
+
+
+def test_auc_gate_is_separate_inclusive_after_topn_and_never_refills():
+    a=auc_scores()
+    result=select_per_symbol(a,PerSymbolSelection(3,True,False,2,1,min_long_auc=.6,min_long_probability=.6))
+    assert selected(result)==[['B','long']]
+    assert result.set_index('symbol').loc['C','reason']=='LONG_AUC_BELOW_THRESHOLD'
+    assert not result.set_index('symbol').loc['A','selected']  # No refill from lower LONG rank.
+    assert not result.set_index('symbol').loc['D','selected']  # No refill outside Oracle.
+    assert result.long_selected_before_auc.sum()==2
+    assert 'AUC calibration >= 0.6' in PerSymbolSelection(min_long_auc=.6).describe()
+
+
+def test_missing_future_or_mismatched_auc_is_not_allowed():
+    a=auc_scores();a.loc[a.symbol.eq('C'),'long_auc']=np.nan
+    a.loc[a.symbol.eq('B'),'long_auc_available_date']='2022-01-03'
+    result=select_per_symbol(a,PerSymbolSelection(3,True,False,2,1,min_long_auc=.6))
+    assert not result.selected.any()
+    assert result.set_index('symbol').loc['C','reason']=='MISSING_LONG_CALIBRATION_AUC'
+    assert result.set_index('symbol').loc['B','reason']=='LONG_AUC_NOT_YET_AVAILABLE'
+    for column,value in [('long_auc_source','oos'),('long_auc_model_sha256','another-model')]:
+        a=auc_scores();a[column]=value
+        with pytest.raises(ValueError,match='autre modèle ou échantillon'):
+            select_per_symbol(a,PerSymbolSelection(3,True,False,2,1,min_long_auc=.6))
+    with pytest.raises(ValueError,match='non chargés'):
+        select_per_symbol(scores(),PerSymbolSelection(min_long_auc=.6))
+
+
+def test_disabled_auc_gate_preserves_prior_selection_without_requiring_metrics():
+    assert selected(select_per_symbol(scores(),PerSymbolSelection()))==selected(
+        select_per_symbol(scores(),PerSymbolSelection(min_long_auc=None)))
+
+
+def test_auc_for_a_model_without_observable_score_does_not_block_other_candidates():
+    a=auc_scores();a.loc[a.symbol.eq('A'),['long_probability','long_model_sha256']]=[np.nan,None]
+    result=select_per_symbol(a,PerSymbolSelection(3,True,False,2,1,min_long_auc=.6))
+    assert selected(result)==[['B','long']]
+
+
+@pytest.mark.parametrize('value',[-.1,1.1,float('nan'),float('inf'),True,'0.6'])
+def test_invalid_auc_threshold_is_rejected(value):
+    with pytest.raises(ValueError,match='AUC LONG'):PerSymbolSelection(min_long_auc=value)
+
+
+def test_attach_uses_matching_year_calibration_and_ignores_same_year_test_auc(tmp_path,monkeypatch):
+    record=dict(symbol='A',year=2022,side='long',sha256='model',available='2021-12-31',
+        calibration_rows=200,calibration_start='2021-01-04',calibration_end='2021-12-15',metrics={
+            'calibration':dict(n=200,first_date='2021-01-04',last_date='2021-12-15',
+                independent_test=False,auc=.61),'oos':dict(auc=.99)})
+    manifest=dict(models=[record])
+    monkeypatch.setattr('modelFactory.oracle_path.directional.load_manifest',lambda root:(manifest,'manifest'))
+    a=attach_calibration_auc(scores(),tmp_path)
+    assert a.set_index('symbol').loc['A','long_auc']==.61
+    assert pd.isna(a.set_index('symbol').loc['B','long_auc'])
+    assert a.set_index('symbol').loc['A','long_auc_available_date']=='2021-12-31'
+
+
 @pytest.mark.usefixtures('isolated_winner_config')
 @pytest.mark.parametrize('probability,expected_buys',[(.59,0),(.60,0),(.61,1)])
 def test_thresholded_candidates_reach_the_real_winner_book(probability,expected_buys):
@@ -134,3 +194,21 @@ def test_thresholded_candidates_reach_the_real_winner_book(probability,expected_
     assert result.trade_events_df.event.eq('BUY_FILL').sum()==expected_buys
     if not expected_buys:
         assert result.final_value()==4000. and result.tracker_snapshot['winner_replay']['costs']==0.
+
+
+@pytest.mark.usefixtures('isolated_winner_config')
+@pytest.mark.parametrize('auc,expected_buys',[(.59,0),(.60,1),(.61,1)])
+def test_auc_gate_reaches_the_real_winner_book(auc,expected_buys):
+    from tests.test_winner_intraday import fixture
+    from backtesting.simulator import BacktestEngine
+    cfg,args,_=fixture(confirmation_bars=0,initial_position_fraction=1.)
+    cfg.winner_daily_entry_enabled=True;cfg.winner_drawdown_controller_enabled=False
+    frame=args['signals_df'].rename(columns={'trade_date':'date'}).assign(
+        proba_extreme=.8,long_probability=.8,short_probability=.2,long_auc=auc,
+        long_auc_model_sha256='model',long_model_sha256='model',long_auc_source='calibration')
+    frame['long_auc_available_date']=pd.Timestamp(frame.date.min())-pd.Timedelta(days=1)
+    ranked=select_per_symbol(frame,PerSymbolSelection(1,True,False,1,1,min_long_probability=.6,min_long_auc=.6))
+    args['signals_df']=ranked.loc[ranked.selected].rename(columns={'date':'trade_date'})
+    result=BacktestEngine(cfg).run(**args)
+    assert result.trade_events_df.event.eq('BUY_FILL').sum()==expected_buys
+    if not expected_buys:assert result.final_value()==4000.
