@@ -6,6 +6,8 @@ Le benchmark utilise les constituants connus avant la séance et publie J+1.
 
 from __future__ import annotations
 
+from service.fr import firds_storage
+
 import argparse
 import gzip
 import io
@@ -34,7 +36,7 @@ def resolve_path(value: str | Path) -> Path:
 
 
 def load_policy(path: Path) -> dict[str, Any]:
-    policy = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    policy = yaml.safe_load(firds_storage.read_text(path, encoding="utf-8")) or {}
     if (policy.get("schema_version"), policy.get("market_code"), policy.get("database_alias")) != (
         1,
         "FR_EQ",
@@ -242,7 +244,7 @@ def _write_rows(path: Path, rows: list[dict]) -> None:
 
 def build_artifact(policy: dict, output: Path) -> dict:
     paths = {key: resolve_path(policy[key]) for key in ("source_report", "identity_history", "liquidity_report")}
-    source, history, liquidity = [json.loads(paths[key].read_text(encoding="utf-8")) for key in paths]
+    source, history, liquidity = [json.loads(firds_storage.read_text(paths[key], encoding="utf-8")) for key in paths]
     if source.get("verdict") != "GO_RESEARCH_J1" or source.get("canonical_writes_performed") is not False:
         raise ValueError("Source Sprint 5 incompatible")
     if liquidity.get("verdict") != "GO_6B_TRAINING_UNIVERSE":

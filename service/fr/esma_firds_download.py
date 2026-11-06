@@ -20,7 +20,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 from pathlib import Path
 
-from service.fr.eodhd_backfill import _atomic_json
+from service.fr.firds_storage import write_json as _atomic_json
+from service.fr import firds_storage
+from contextvars import copy_context
 
 INDEX_URL = "https://registers.esma.europa.eu/solr/esma_registers_firds_files/select"
 ARCHIVE_HOST = "firds.esma.europa.eu"
@@ -93,22 +95,27 @@ def list_files(start: date, end: date, full_date: date,
 def _check(path: Path, expected_md5: str | None) -> dict:
     sha = hashlib.sha256()
     md5 = hashlib.md5()  # noqa: S324 - vérification d'une empreinte publiée par ESMA
-    with path.open("rb") as stream:
+    with firds_storage.open_binary(path) as stream:
+        size = 0
         for block in iter(lambda: stream.read(1024 * 1024), b""):
+            size += len(block)
             sha.update(block)
             md5.update(block)
-    if expected_md5 and md5.hexdigest().lower() != expected_md5.lower():
-        raise ValueError(f"MD5 ESMA incorrect : {path.name}")
-    with zipfile.ZipFile(path) as archive:
-        members = archive.namelist()
-        if len(members) != 1 or not members[0].endswith(".xml") or archive.testzip():
-            raise ValueError(f"ZIP ESMA corrompu/inattendu : {path.name}")
+        if expected_md5 and md5.hexdigest().lower() != expected_md5.lower():
+            raise ValueError(f"MD5 ESMA incorrect : {path.name}")
+        stream.seek(0)
+        with zipfile.ZipFile(stream) as archive:
+            members = archive.namelist()
+            if len(members) != 1 or not members[0].endswith(".xml") or archive.testzip():
+                raise ValueError(f"ZIP ESMA corrompu/inattendu : {path.name}")
     return {"sha256": sha.hexdigest(), "md5": md5.hexdigest(),
-            "official_md5_available": bool(expected_md5), "bytes": path.stat().st_size}
+            "official_md5_available": bool(expected_md5), "bytes": size}
 
 
 def _download(item: dict, root: Path, context: ssl.SSLContext) -> dict:
     target = root / item["date"][:4] / item["file"]
+    if firds_storage.repository(target) is not None:
+        return firds_storage.download(item, root, context)
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.is_file():
         try:
@@ -137,7 +144,8 @@ def run(start: date, end: date, full_date: date, root: Path,
         *, max_files: int | None = None, workers: int = 3) -> dict:
     context = _tls_context()
     index = list_files(start, end, full_date, context)
-    root.mkdir(parents=True, exist_ok=True)
+    if firds_storage.repository(root) is None:
+        root.mkdir(parents=True, exist_ok=True)
     _atomic_json(root / "index.json", {"start": start.isoformat(),
                                       "end": end.isoformat(), "full_date": full_date.isoformat(),
                                       "files": index})
@@ -145,7 +153,7 @@ def run(start: date, end: date, full_date: date, root: Path,
     results = []
     failures = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(_download, item, root, context): item for item in selected}
+        futures = {pool.submit(copy_context().run, _download, item, root, context): item for item in selected}
         for future in as_completed(futures):
             item = futures[future]
             try:

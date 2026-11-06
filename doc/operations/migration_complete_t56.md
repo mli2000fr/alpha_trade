@@ -400,3 +400,35 @@ de cette installation ; les tests simulés ne prouvent pas son RTO réel.
 Sources : `service/migration/`, `ihm/services/migration_runner.py`,
 `ihm/components/migration_panel.py`, tests `test_migration_complete.py` et
 `test_migration_ui_worker.py`.
+
+## Restauration autonome des fichiers uniquement — 5 novembre 2026
+
+Dans **T5.6 → Vérifier / restaurer**, renseigner le dossier contenant
+`manifest.json`, le projet cible et le mot de passe des packages. Cliquer
+**Prévisualiser les fichiers uniquement**, vérifier les dossiers annoncés,
+cocher la confirmation puis **Restaurer uniquement les fichiers et modèles**.
+Les identifiants MySQL ne sont pas nécessaires pour ce parcours.
+
+Ce mode restaure le code, les modèles, les configurations et les archives des
+packages de fichiers. Il ne construit aucun adaptateur MySQL, n'ouvre aucun
+package SQL et n'effectue aucune lecture, purge, import, validation ou remise à
+zéro des verrous SQL. Il n'exige pas de restauration préalable des bases.
+Les variables système/utilisateur, les fichiers `.env*` à la racine du projet
+et le `.venv` existant sont conservés ; aucun nouvel environnement Python ni
+service n'est lancé. Vérifier la compatibilité du code restauré avec les bases
+conservées avant la reprise manuelle.
+
+Le manifeste authentifié, les empreintes des fichiers et les contrats des
+modèles sont contrôlés. Les fichiers sont préparés dans un dossier voisin de
+la cible ; les anciennes racines remplacées sont déplacées dans
+`.alpha-migration-previous-*`, dont le chemin figure au rapport. Un échec
+d'installation déclenche un retour arrière des fichiers uniquement. Les
+dossiers étrangers au périmètre annoncé ne sont pas remplacés. Les tâches
+actives du projet cible doivent se terminer ; aucun processus source n'est
+arrêté. La progression et les logs utilisent le suivi T5.6 habituel.
+
+Les actions worker sont `plan_files_only` et `restore_files_only`, distinctes
+de `restore_files` : cette dernière reste la **reprise après validation SQL**
+d'une restauration complète interrompue et utilise son checkpoint existant.
+Le nouveau mode ne demande aucun checkpoint SQL. Aucun lancement réel de
+restauration n'est effectué par l'ajout de ces boutons.

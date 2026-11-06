@@ -6,6 +6,8 @@ de 2016 : le premier Full du replay date de 2018.
 """
 from __future__ import annotations
 
+from service.fr import firds_storage
+
 import argparse
 import json
 import logging
@@ -15,7 +17,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from service.fr.eodhd_backfill import _atomic_json
+from service.fr.firds_storage import write_json as _atomic_json
 from service.fr.esma_firds_download import _check
 
 EVENTS = {"NewRcrd", "ModfdRcrd", "TermntdRcrd", "CancRcrd"}
@@ -170,8 +172,8 @@ def _trading_episodes(versions: list[dict]) -> list[dict]:
 def replay(index_path: Path, subset_path: Path, root: Path, *, end: date,
            mics: set[str] = DEFAULT_MICS, require_complete: bool = True,
            resume_from: Path | None = None) -> dict:
-    index = json.loads(index_path.read_text(encoding="utf-8"))
-    subset = json.loads(subset_path.read_text(encoding="utf-8"))
+    index = json.loads(firds_storage.read_text(index_path, encoding="utf-8"))
+    subset = json.loads(firds_storage.read_text(subset_path, encoding="utf-8"))
     if subset.get("rule_version") != "fr_s5_subset_v1":
         raise ValueError("pool Sprint 5 inattendu")
     first_day = date.fromisoformat(index["full_date"])
@@ -182,7 +184,7 @@ def replay(index_path: Path, subset_path: Path, root: Path, *, end: date,
     missing = []
     for item in selected:
         path = root / item["date"][:4] / item["file"]
-        (present if path.is_file() else missing).append(item)
+        (present if firds_storage.is_file(path) else missing).append(item)
     indexed_days = {row["date"] for row in selected if row["type"] == "DLTINS"}
     missing_days = []
     day = first_day + timedelta(days=1)
@@ -196,7 +198,7 @@ def replay(index_path: Path, subset_path: Path, root: Path, *, end: date,
     anomalies: list[dict] = []
     evidence: list[dict] = []
     if resume_from is not None:
-        prior = json.loads(resume_from.read_text(encoding="utf-8"))
+        prior = json.loads(firds_storage.read_text(resume_from, encoding="utf-8"))
         prior_files = prior.get("files", [])
         prior_symbols = {row["isin"] for row in prior.get("symbols", [])}
         if (not prior.get("complete") or prior.get("start") != first_day.isoformat()

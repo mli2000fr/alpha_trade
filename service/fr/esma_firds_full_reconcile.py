@@ -1,13 +1,15 @@
 """Recoupe l'état FIRDS rejoué avec un Full ultérieur officiel, sans promotion."""
 from __future__ import annotations
 
+from service.fr import firds_storage
+
 import argparse
 import json
 from collections import Counter
 from datetime import UTC, date, datetime
 from pathlib import Path
 
-from service.fr.eodhd_backfill import _atomic_json
+from service.fr.firds_storage import write_json as _atomic_json
 from service.fr.esma_firds_history import DEFAULT_MICS, archive_records
 
 FIELDS = ("currency", "cfi", "first_trade_reported", "termination_reported")
@@ -119,10 +121,10 @@ def main() -> None:
     parser.add_argument("--output", type=Path,
                         default=Path("artifacts/fr/esma_firds/replay_2018/full_reconciliation_2018.json"))
     args = parser.parse_args()
-    archives = sorted(args.full_root.glob(f"FULINS_E_{args.full_date:%Y%m%d}_*.zip"))
+    archives = sorted(firds_storage.paths(args.full_root, f"FULINS_E_{args.full_date:%Y%m%d}_*.zip"))
     if not archives:
         parser.error("aucun Full officiel à la date demandée")
-    history = json.loads(args.history.read_text(encoding="utf-8"))
+    history = json.loads(firds_storage.read_text(args.history, encoding="utf-8"))
     if history["end"] < args.full_date.isoformat():
         parser.error("rejeu arrêté avant la date du Full")
     report = reconcile(history, archives, args.full_date)

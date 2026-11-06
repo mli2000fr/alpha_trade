@@ -229,7 +229,7 @@ def export(root,output,password,db,*,quiet=inventory.quiescent,cancel=None,versi
         raise
 
 
-def verify(folder,password,*,cancel=None,_in_progress=False,on_progress=None):
+def verify(folder,password,*,cancel=None,_in_progress=False,on_progress=None,files_only=False):
     emit(on_progress,'VERIFYING')
     folder=Path(folder).resolve();payload=open_manifest(folder/'manifest.json',password)
     if not _in_progress:
@@ -242,6 +242,7 @@ def verify(folder,password,*,cancel=None,_in_progress=False,on_progress=None):
     for item in payload.get('portable_files',[]):
         if sha_file(safe_path(folder,item['path']))!=item['sha256']:raise ValueError('Outil portable altéré')
     for index,package in enumerate(payload['packages']):
+        if files_only and package['kind']!='files':continue
         check_cancel(cancel)
         emit(on_progress,'VERIFYING',package=package['folder'],part_index=index,parts_total=len(payload['packages']),
             total_bytes=sum(f['size'] for f in package.get('files',[])) or None,processed_bytes=0)

@@ -6,6 +6,8 @@ canonique n'est modifiée.
 """
 from __future__ import annotations
 
+from service.fr import firds_storage
+
 import argparse
 import json
 import logging
@@ -17,7 +19,7 @@ import urllib.parse
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from service.fr.eodhd_backfill import _atomic_json
+from service.fr.firds_storage import write_json as _atomic_json
 from service.fr.esma_firds_download import INDEX_URL, _get_json, _tls_context
 
 LOGGER = logging.getLogger(__name__)
@@ -25,9 +27,9 @@ FULL_PATTERN = re.compile(r"^FULINS_E_(\d{8})_\d+of\d+\.zip$")
 
 
 def validate_history(path: Path, expected_end: date) -> dict:
-    if not path.is_file():
+    if not firds_storage.is_file(path):
         raise FileNotFoundError(f"rapport annuel absent : {path}")
-    report = json.loads(path.read_text(encoding="utf-8"))
+    report = json.loads(firds_storage.read_text(path, encoding="utf-8"))
     if report.get("end") != expected_end.isoformat():
         raise ValueError(f"borne annuelle inattendue : {path}")
     if report.get("complete") is not True:
@@ -95,7 +97,7 @@ def _run(command: list[str], log_dir: Path, label: str) -> None:
 
 def _wait_for_report(path: Path, expected_end: date, timeout_hours: float) -> dict:
     deadline = time.monotonic() + timeout_hours * 3600
-    while not path.is_file():
+    while not firds_storage.is_file(path):
         if time.monotonic() >= deadline:
             raise TimeoutError(f"attente du rapport expirée : {path}")
         time.sleep(30)
@@ -122,7 +124,7 @@ def run_chain(*, start_year: int, end_date: date, replay_root: Path,
             state["years"][str(year)] = row
             _atomic_json(state_path, state)
 
-            if history_path.is_file():
+            if firds_storage.is_file(history_path):
                 history = validate_history(history_path, year_end)
                 row["replay"] = "REUSED"
             elif year == start_year and wait_for_first:
@@ -163,7 +165,7 @@ def run_chain(*, start_year: int, end_date: date, replay_root: Path,
                 "--output", str(reconciliation_path),
             ], log_root / str(year), "full_reconcile")
             reconciliation = json.loads(
-                reconciliation_path.read_text(encoding="utf-8"))
+                firds_storage.read_text(reconciliation_path, encoding="utf-8"))
             if reconciliation.get("candidate_pairs_reconciled") is not True:
                 raise ValueError(f"réconciliation Full divergente pour {year}")
             row.update({

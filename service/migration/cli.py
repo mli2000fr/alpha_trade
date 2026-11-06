@@ -42,6 +42,20 @@ def run_request(request,job,*,tracker=None):
         result=engine.verify(request['folder'],password,cancel=cancel,on_progress=report)
         emit(report,'FINISHED')
         return dict(status='VERIFIED',backup_id=result['id'],source_mode=result.get('source_mode'))
+    if action in ('plan_files_only','restore_files_only'):
+        # Deliberately before adapter(): no MySQL client, credentials or connection.
+        from .files_only import inspect_files_only,restore_files_only
+        if action=='plan_files_only':
+            result=inspect_files_only(request['folder'],request['target'],password,on_progress=report)
+        else:
+            deadline=time.monotonic()+int(request.get('wait_seconds',900))
+            while inventory.quiescent(request['target'],allow_ui=False):
+                engine.check_cancel(cancel)
+                if time.monotonic()>=deadline:raise ValueError('Le PC cible est toujours utilisé : fichiers non restaurés')
+                worker_status(job,'WAITING_FOR_TARGET_STOP');emit(report,'WAITING_FOR_TARGET_STOP');time.sleep(2)
+            result=restore_files_only(request['folder'],request['target'],password,request['report_dir'],
+                approved_plan=request['approved_plan'],cancel=cancel,on_progress=report)
+        emit(report,'FINISHED');return result
     db=adapter(request)
     db.on_progress=report
     if action=='export':

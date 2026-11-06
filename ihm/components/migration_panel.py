@@ -20,10 +20,12 @@ def _launch(request,parent=None):
         if request['action']=='inventory':
             st.session_state['t56_inventory_job']=path
             st.session_state.pop('t56_inventory_result',None)
-        elif request['action'] in ('export','restore','restore_files','recover'):
+        elif request['action'] in ('export','restore','restore_files','restore_files_only','recover'):
             st.session_state['t56_clear_secrets']=True
         if request['action']=='plan':
             st.session_state['t56_plan_job']=path
+        if request['action']=='plan_files_only':
+            st.session_state['t56_files_job']=path
         st.rerun()
     except (ValueError,OSError) as exc:st.error(str(exc))
 
@@ -75,6 +77,8 @@ def render_migration_panel():
         folder=st.text_input('Répertoire contenant manifest.json',key='t56_folder')
         render_restore_command(folder)
         target=st.text_input('Projet sur le PC cible',r'C:\AlphaTrade',key='t56_target')
+        from ihm.components.migration_files_only import render_files_only_restore
+        render_files_only_restore(folder,target,password,_launch)
         st.caption('Sur un PC vierge, copier le répertoire complet puis lancer restaurer.ps1. Python et MySQL doivent être installés. Les versions requises sont inscrites dans le manifeste.')
         user=st.text_input('Utilisateur MySQL local cible (pour les trois bases)',value='root',key='t56_db_user')
         db_password=st.text_input('Mot de passe MySQL cible',type='password',key='t56_db_password')

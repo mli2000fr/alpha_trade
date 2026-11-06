@@ -1,5 +1,44 @@
 # Registre des expériences ML réalisées
 
+## 2026-11-05 — Actualisation des collectes US : options et consensus TOP10/20/50
+
+**DIAGNOSTIC EXPLORATOIRE — PAS DE CONFIRMATION NI PROMOTION.** Extraction SQL
+US en lecture seule au 5 novembre 22:09 UTC, univers tradable 1790 ; 39 jours
+de réception options et 26 consensus. Oracle H20 préexistant : 25 dates avec
+couverture >=90 % actuelle ; seulement dix classements intégralement présents
+avant décision. Septembre reconstruit en octobre conservé séparément, pas
+présenté comme validation prospective. Rangs TOP fixés avant manques/labels,
+aucun remplacement ni nouvelle prédiction.
+
+Cible : excursion dominante durant H5/H10/H15/H20 avant SL propre à chaque
+sens de 10 %, ambiguïtés OHLC non forcées ; pics sans stop et clôture finale
+conservés séparément. Sur les classements déjà observables, AUC quotidienne
+H5 TOP10/TOP20/TOP50 : volume **0,289/0,370/0,479** ; OI
+**0,375/0,304/0,461** ; mix options **0,350/0,281/0,438** ; révisions EPS30
+**0,415/0,470/0,362** ; EPS/J-30 **0,438/0,460/0,415** ; variation revenus
+observée **0,504/0,491/0,481**. Mix options TOP20 : 30 issues/19 sociétés,
+trois dates dont deux informatives ; filtre exact 12 retenus mûrs, un parcours
+dominant LONG, contre cinq/30 au départ. Ce ne sont pas des trades gagnants.
+Sur intersection commune 27 cas/deux dates informatives : options 0,180,
+révisions 0,367, mélange 0,157 ; aucune amélioration cumulée confirmée.
+
+H10 récent : zéro issue options TOP20 ; cinq TOP50 sur une date. Consensus
+TOP20 EPS30 AUC0,821 sur 16 cas/une date seulement. H15/H20 récents non mûrs.
+L'AUC options TOP20 toutes dates H5=0,741 est portée par septembre reconstruit,
+pas une preuve prospective. News mutables : seuls états modifiés avant la
+décision admis ; TOP20 H5 11 cas/une date, insuffisant. Borrow/contexte/SEC
+inventoriés sans fabriquer de signe directionnel.
+
+5782 lignes consensus contrôlées sans erreur de normalisation/hash intégré,
+réception/run complets ; réserves EODHD sur base EPS, devise et contributeurs
+conservées. 41 tests ; 710 couples identiques aux features de production,
+88 AUC recalculées par paires (écart max2,22e-16),20 parcours vérifiés et
+12 fichiers scellés. Même assistant, pas revue humaine indépendante.
+Aucun API/LLM/fit/ordre/écriture SQL/changement production.
+Racine `artifacts/research/us_collected_directional_refresh/20261105-v2/`,
+résultat final `analysis-v2/report.json` et `summary.csv`.
+[Protocole, tableaux, autres collectes et limites](audit_collectes_us_directionnel_20261105.md).
+
 ## 2026-11-05 — Univers Winner automatique et champ non modifiable
 
 **ÉVOLUTION IHM — aucun nouveau résultat économique.** Suite à la demande,

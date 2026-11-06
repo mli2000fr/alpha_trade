@@ -32,7 +32,7 @@ def start_job(request,*,job_parent=None):
 def _start_job(request,*,job_parent=None):
     parent=Path(job_parent or PROJECT_ROOT/'backups'/'migration_jobs').resolve()
     target=Path(request.get('target',parent.parent/'unused')).resolve()
-    if request['action'] in ('restore','restore_files','recover') and parent.is_relative_to(target):
+    if request['action'] in ('restore','restore_files','restore_files_only','recover') and parent.is_relative_to(target):
         raise ValueError('Les journaux doivent être hors du projet à remplacer')
     job=parent/uuid.uuid4().hex;job.mkdir(parents=True,mode=0o700)
     runtime=job/'runtime';tool=runtime/'portable_migration';tool.mkdir(parents=True)
@@ -103,7 +103,7 @@ def order_follow_jobs(paths):
         job=Path(path)
         record=read_external(job/'job.json') or {}
         progress=read_external(job/'progress.json') or {}
-        restore=record.get('action') in ('restore','restore_files')
+        restore=record.get('action') in ('restore','restore_files','restore_files_only')
         running=progress.get('status') in active
         try:modified=job.stat().st_mtime
         except OSError:modified=0
