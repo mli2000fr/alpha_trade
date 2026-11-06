@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 from scripts.research.us_predictable_symbols_review_20261104 import summarize
+from common.symbol_artifact_paths import symbol_directory
 
 ROOT=Path(__file__).resolve().parents[2]
 BASE=ROOT/'artifacts/research/us_predictable_symbols/20261103-v1'
@@ -31,7 +32,7 @@ def independent_outcomes(symbols,target):
     horizon=10 if target=='winner_h10' else 20
     frames=[]
     for symbol in symbols:
-        file=BASE/'symbols'/symbol/(target+'-predictions.parquet')
+        file=symbol_directory(BASE/'symbols',symbol)/(target+'-predictions.parquet')
         if not file.exists():continue
         a=pd.read_parquet(file)
         a=a[a.year.eq(2026)&a.session_index.mod(horizon).eq(0)].copy()

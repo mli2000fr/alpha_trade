@@ -169,13 +169,21 @@ def test_real_annual_training_both_branches_reload_and_own_history(tmp_path,monk
     root=tmp_path/'oracle_path';chunk=root/'chunks/0000';chunk.mkdir(parents=True)
     a[a.date.le('2023-12-31')].to_parquet(chunk/'bars.parquet',index=False)
     atomic_json(root/'protocol.json',dict(universe=['ABC'],horizon=10,directional_contract=vars(d.Settings()),
-        training_config=dict(oracle_path_directional_enabled=True,data=dict(benchmark_symbol='SPY'))))
+        training_config=dict(oracle_path_directional_enabled=True,data=dict(benchmark_symbol='SPY',
+            training_start_date='2016-01-01',training_end_date='2023-12-31'))))
     cfg=SimpleNamespace(data=SimpleNamespace(training_start_date='2016-01-01',training_end_date='2023-12-31',
         benchmark_symbol='SPY'),reproducibility=SimpleNamespace(seed=42))
     result=d.train(cfg,None,root,lambda *a:None)
     assert {(r['side'],r['year']) for r in result['models']} >= {('long',2024),('short',2024)}
     assert all(pd.Timestamp(r['available'])<pd.Timestamp(f"{r['year']}-01-01") for r in result['models'])
     assert d.load_manifest(root)[0]==result
+    assert all('calibration' in r['metrics'] and 'oos' in r['metrics'] for r in result['models'])
+    from modelFactory.oracle_path.evaluate_directional import evaluate
+    diagnostics=evaluate(root,output=tmp_path/'diagnostics')
+    assert diagnostics['status']=='COMPLETED' and not diagnostics['benchmark_reconstructed_from_SQL']
+    assert diagnostics['training_launched'] is diagnostics['SQL_writes'] is False
+    expected={(r['symbol'],r['year'],r['side']):r['metrics'] for r in result['models']}
+    assert all(r['metrics']==expected[(r['symbol'],r['year'],r['side'])] for r in diagnostics['models'])
     from modelFactory.oracle_path import labels as mod
     monkeypatch.setattr(mod,'load_bars',lambda *args:a[a.date.le(pd.Timestamp(args[-1]))])
     scores=pd.DataFrame(dict(date=pd.to_datetime(['2024-01-02']),symbol=['ABC'],proba_extreme=[.9]))

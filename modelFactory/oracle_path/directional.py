@@ -168,13 +168,15 @@ def train(cfg,engine,root,progress):
     start,end=pd.Timestamp(cfg.data.training_start_date),pd.Timestamp(cfg.data.training_end_date)
     calendar=nyse_sessions(start.date(),end.date())
     bench=load_benchmark_bars(engine,benchmark_symbol=cfg.data.benchmark_symbol,start_date=str(start.date()),end_date=str(end.date()))
+    benchmark_file=folder/'benchmark.parquet'
+    bench.to_parquet(benchmark_file,index=False)
     registry=load_security_discontinuities()
-    records=[];sources={};skipped=[]
+    records=[];sources={};skipped=[];oos_files=[]
     files=sorted((root/'chunks').glob('*/bars.parquet'))
     total=len(protocol['universe']);done=0
     for file in files:
         sources[str(file.relative_to(root))]=digest(file)
-        bars=pd.read_parquet(file)
+        bars=pd.read_parquet(file);chunk_predictions=[]
         for symbol,g in bars.groupby('symbol'):
             if not re.fullmatch(r'[A-Z0-9.^_-]+',symbol):raise ValueError('Symbole de modèle invalide')
             progress('directional',done,total,symbol);done+=1
@@ -203,16 +205,28 @@ def train(cfg,engine,root,progress):
                     calibrator=LogisticRegression(C=1.,random_state=cfg.reproducibility.seed)
                     calibrator.fit(np.log(cp/(1-cp)).reshape(-1,1),cal[side].astype(int))
                     path=folder/symbol/f'{side}-{year}.joblib';path.parent.mkdir(exist_ok=True)
-                    joblib.dump(dict(model=model,calibrator=calibrator,lo=lo,hi=hi),path,compress=3)
-                    records.append(dict(symbol=symbol,year=year,side=side,file=str(path.relative_to(root)),
+                    weights=dict(model=model,calibrator=calibrator,lo=lo,hi=hi)
+                    joblib.dump(weights,path,compress=3)
+                    record=dict(symbol=symbol,year=year,side=side,file=str(path.relative_to(root)),
                         sha256=digest(path),fit_start=str(fit.date.min().date()),fit_end=str(fit.date.max().date()),
                         fit_available_max=str(fit.available.max().date()),calibration_start=str(cal.date.min().date()),
                         calibration_end=str(cal.date.max().date()),available=str(cal.available.max().date()),
-                        fit_rows=len(fit),calibration_rows=len(cal)))
+                        fit_rows=len(fit),calibration_rows=len(cal))
+                    from .directional_metrics import model_metrics
+                    record['metrics'],predictions=model_metrics(panel,weights,record,calendar,end)
+                    if len(predictions):chunk_predictions.append(predictions)
+                    records.append(record)
                     LOG.info('Parcours per-symbol %s %s %d entraîné fit=%d cal=%d',symbol,side,year,len(fit),len(cal))
+        if chunk_predictions:
+            frame=pd.concat(chunk_predictions,ignore_index=True)
+            path=folder/'oos'/f'{file.parent.name}.parquet';path.parent.mkdir(exist_ok=True)
+            frame.to_parquet(path,index=False)
+            oos_files.append(dict(path=str(path.relative_to(root)),sha256=digest(path),rows=len(frame)))
     if not any(r['side']=='long' for r in records):raise ValueError('Aucun modèle LONG annuel qualifié')
     result=dict(status='COMPLETED',schema_version=1,contract=asdict(contract),features=INPUTS,
         oracle_protocol_sha256=digest(root/'protocol.json'),source_hashes=sources,models=records,skipped=skipped,
+        benchmark_file=str(benchmark_file.relative_to(root)),benchmark_sha256=digest(benchmark_file),
+        oos_files=oos_files,
         selection_policy='ORACLE_TOP_N_THEN_LONG_TOP_N_NO_REFILL',serving_side='long',
         short_limitations='No borrow, locate or dividend costs; archived branch only')
     atomic_json(marker,result)
@@ -229,6 +243,10 @@ def load_manifest(root):
         or m.get('serving_side')!='long'):
         raise ValueError('Bundle parcours directionnel absent/incomplet/incompatible')
     Settings(**m['contract'])
+    if m.get('benchmark_file'):
+        benchmark=(root/m['benchmark_file']).resolve()
+        if not benchmark.is_relative_to(root.resolve()) or digest(benchmark)!=m.get('benchmark_sha256'):
+            raise ValueError('Benchmark directionnel absent/corrompu')
     keys=set()
     for r in m['models']:
         key=(r['symbol'],r['year'],r['side'])

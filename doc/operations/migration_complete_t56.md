@@ -432,3 +432,28 @@ de `restore_files` : cette dernière reste la **reprise après validation SQL**
 d'une restauration complète interrompue et utilise son checkpoint existant.
 Le nouveau mode ne demande aucun checkpoint SQL. Aucun lancement réel de
 restauration n'est effectué par l'ajout de ces boutons.
+
+## Symboles portant un nom réservé Windows — 6 novembre 2026
+
+Un symbole valide tel que `CON` ne doit pas devenir directement un nom de
+dossier. Le contrôle de portabilité reste strict : ne pas l'ignorer ni exclure
+ces fichiers de la sauvegarde. `common.symbol_artifact_paths.symbol_directory`
+conserve les noms ordinaires et préfixe les noms réservés par `symbol=`
+(`CON` → `symbol=CON`, idem pour `NUL`, `PRN`, `AUX`, `COM1`…). Le symbole
+contenu dans les données reste inchangé. Les séparateurs et entrées ambiguës
+sont refusés, sans remplacement silencieux pouvant fusionner deux symboles.
+
+La campagne `artifacts/research/us_predictable_symbols/20261103-v1/symbols/CON`
+a été déplacée dans `symbols/symbol=CON` : **4 fichiers, 228 919 octets**, mêmes
+SHA-256. Le producteur, la reprise et les lecteurs de classement ont été
+raccordés. Un aller-retour chiffré des quatre vrais fichiers a été vérifié
+sans base de données, ainsi que **93 tests**. Aucun fichier n'est écarté de
+la sauvegarde. Les preuves et les sources antérieures à la correction sont
+conservées dans `artifacts/operations/migration_portability_repair/20261106-v1`.
+
+Les résultats et protocoles de recherche figés ne sont pas réécrits pour
+changer leurs empreintes de code : la modification porte sur les chemins de
+stockage. Une nouvelle exécution d'une campagne avec sources figées doit
+utiliser un nouveau protocole ; les sources originales restent disponibles
+dans le dossier de preuve. Aucun entraînement ni recalcul de résultats
+n'a été exécuté pour réparer la sauvegarde.

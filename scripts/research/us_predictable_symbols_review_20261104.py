@@ -16,6 +16,7 @@ import pandas as pd
 from sklearn.metrics import roc_auc_score
 
 from modelFactory.oracle.security_continuity import load_security_discontinuities
+from common.symbol_artifact_paths import symbol_directory
 
 ROOT=Path(__file__).resolve().parents[2]
 OUT=ROOT/'artifacts/research/us_predictable_symbols/20261103-v1'
@@ -105,7 +106,7 @@ def review():
     if errors:save(OUT/'integrity-errors.json',errors);raise ValueError('Integrity review failed')
     reproduced=[]
     for symbol in p['prediction_reproduction_sample']:
-        folder=OUT/'symbols'/symbol
+        folder=symbol_directory(OUT/'symbols',symbol)
         for target in ('winner_h10','parcours_h20'):
             sf=folder/(target+'-predictions.parquet')
             if not sf.exists():continue

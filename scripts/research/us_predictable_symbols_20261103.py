@@ -30,6 +30,7 @@ from lightgbm import LGBMClassifier
 from common.daily_bar_sources import select_daily_bars
 from common.market_calendar import get_market_calendar
 from common.trading_costs import TradingCostModel
+from common.symbol_artifact_paths import symbol_directory
 from database.connection import get_sqlalchemy_engine
 from modelFactory.features import compute_features
 from modelFactory.oracle.security_continuity import load_security_discontinuities
@@ -201,7 +202,7 @@ def make_panel(raw,bench,calendar,breaks):
 
 
 def stock(symbol,raw,bench,calendar,breaks):
-    folder=OUT/'symbols'/symbol;folder.mkdir(parents=True,exist_ok=True)
+    folder=symbol_directory(OUT/'symbols',symbol);folder.mkdir(parents=True,exist_ok=True)
     receipt=folder/'result.json'
     if receipt.exists():return json.loads(receipt.read_text(encoding='utf-8'))
     result=dict(symbol=symbol,targets={},status='PROCESSED',models=0)
@@ -387,7 +388,7 @@ def run(workers=3):
     registry=load_security_discontinuities();start=time.monotonic();done=0;fitted=0
     chunks=[symbols[i:i+50] for i in range(0,len(symbols),50)]
     def chunk(group):
-        remaining=[s for s in group if not (OUT/'symbols'/s/'result.json').exists()]
+        remaining=[s for s in group if not (symbol_directory(OUT/'symbols',s)/'result.json').exists()]
         data=load_bars(engine,remaining) if remaining else pd.DataFrame()
         results=[]
         for symbol in group:
@@ -398,7 +399,7 @@ def run(workers=3):
             except Exception as exc:
                 LOG.exception('Symbol %s failed',symbol)
                 r=dict(symbol=symbol,status='ERROR',error_type=type(exc).__name__,targets={},models=0)
-                save(OUT/'symbols'/symbol/'result.json',r);results.append(r)
+                save(symbol_directory(OUT/'symbols',symbol)/'result.json',r);results.append(r)
         return results
     with ThreadPoolExecutor(max_workers=workers) as pool:
         jobs=[pool.submit(chunk,group) for group in chunks]

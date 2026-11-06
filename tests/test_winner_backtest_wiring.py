@@ -11,6 +11,11 @@ from ihm.services.backtesting_runner import BacktestRunOptions, build_backtestin
 from backtesting.winner_campaign_replay import build_parser
 
 
+@pytest.fixture(autouse=True)
+def no_actual_batch_comment_queries(monkeypatch):
+    monkeypatch.setattr('ihm.services.queries.get_ml_training_batch_comments',lambda:{})
+
+
 def options(**changes):
     return replace(BacktestRunOptions(start='2025-01-02', end='2025-03-31',
         winner_enabled=True, oracle_batch_id='fixture-h10', output_dir='artifacts/fixture-new',
@@ -185,6 +190,23 @@ def test_configurable_selection_widgets_and_clamping(tmp_path,monkeypatch):
     assert not at.exception and not at.session_state['choice']['allow_long']
     at.checkbox(key=f'bt_per_symbol_allow_short_{bid}').uncheck().run(timeout=30)
     assert not at.exception and any('Cocher LONG ou SHORT' in e.value for e in at.error)
+
+
+@pytest.mark.parametrize('size,percent,expected',[(1790,10.,179),(32,10.,4),(1,.1,1),(20,100.,20)])
+def test_percentage_pool_uses_frozen_universe_and_reaches_replay(size,percent,expected):
+    from streamlit.testing.v1 import AppTest
+    app=AppTest.from_string('''import streamlit as st
+from ihm.components.winner_backtest import render_oracle_pool_size
+st.session_state['pool_result']=render_oracle_pool_size(st.session_state['size'],20,key='pool',label='Top N Oracle')
+''')
+    app.session_state['size']=size
+    app.run(timeout=30)
+    assert not app.exception and app.session_state['pool_result']==min(20,size)
+    app.radio(key='pool_mode').set_value('Pourcentage de l’univers').run(timeout=30)
+    app.number_input(key='pool_pct').set_value(percent).run(timeout=30)
+    assert not app.exception and app.session_state['pool_result']==expected
+    command=build_backtesting_command('run',options(winner_top_n=app.session_state['pool_result']))
+    assert build_parser().parse_args(command[4:]).top_n==expected
 
 
 def test_bundle_form_2022_top20_to_top5_and_command(tmp_path,monkeypatch):

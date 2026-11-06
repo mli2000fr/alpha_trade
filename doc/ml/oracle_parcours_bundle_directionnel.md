@@ -21,6 +21,25 @@ Le CLI ajoute `--oracle-path-model-only --oracle-horizon 10
 restent des Oracle seuls : ils ne reçoivent aucun modèle ni nouveau contrat
 rétroactivement. Il faut un nouveau batch pour ce bundle.
 
+Les diagnostics ajoutés le 6 novembre sont enregistrés automatiquement aux
+prochains entraînements : AUC et mesures de classification par titre, avec
+séparation entraînement/calibration/test annuel, prédictions de test et
+benchmark figé. Les anciens poids n'ont pas besoin d'être réentraînés pour
+compléter leurs diagnostics depuis les archives ; voir
+[métriques et périodes per-symbol](diagnostic_oracle_parcours_h20.md).
+
+La taille du pool Oracle et le nombre final retenu règlent la sélection,
+pas les modèles à entraîner. Dans le replay, **TOP10 % d'un univers de 1 790
+titres → TOP10 LONG** se règle par **Mode du TOP Oracle → Pourcentage de
+l’univers**, **TOP Oracle (%)=10**, puis **Top X Long=10**. L'écran calcule
+179 candidats et transmet ce nombre au replay. Le dénominateur est l'univers
+figé du modèle ; arrondi supérieur, minimum un candidat. Le nombre reste fixe
+sur le backtest, sans réduction du pool pour compenser les scores manquants.
+Le mode **Nombre de titres** conserve la saisie Top N Oracle et reste le défaut.
+Les branches restent entraînées sur les historiques propres de tous les
+titres qualifiés. Le pipeline Predict conserve le contrat de sélection gelé
+de son batch tant qu'un paramétrage d'inférence distinct n'est pas raccordé.
+
 ## Cibles et chronologie
 
 - Oracle : TOP20 % de l'amplitude maximale absolue pendant J+1..J+10, depuis
@@ -42,6 +61,15 @@ rétroactivement. Il faut un nouveau batch pour ce bundle.
   cinq séances ; winsorisation et imputation apprises sur le train seulement.
   Les branches apprennent sur l'historique propre du titre, pas sur le rendement
   futur du TOP Oracle. Pas de news, options ou consensus ajoutés à ces branches.
+
+Ces modèles par titre sont des LightGBM peu profonds : 120 arbres, profondeur
+maximale 3, sept feuilles et calibration logistique Platt. Les réglages LSTM
+du formulaire général ne correspondent pas à l'algorithme de cette branche.
+Leur entraînement peut donc être beaucoup plus rapide que celui des modèles
+neuronaux historiques ; les dossiers/manifeste font foi pour confirmer ce qui
+a réellement été entraîné. Diagnostic ML affiche désormais leur couverture,
+dates et motifs d'absence dans un bloc distinct (voir
+[le diagnostic parcours](diagnostic_oracle_parcours_h20.md)).
 
 `oracle_path.directional` fige les nombres 20/5, SL, horizon et frais au training.
 Changer le YAML n'altère pas un batch existant. Le champ `enabled` règle le défaut
@@ -85,7 +113,9 @@ d'idempotence. Le raccordement n'envoie aucun ordre par lui-même.
 Le backtest Winner reconnaît ce bundle. La case **per-symbol**, sous le choix du
 modèle, est cochée par défaut pour un bundle compatible. Quand elle est cochée :
 
-- **Top N Oracle** définit la taille du pool, entre 1 et la taille de l'univers ;
+- **Mode du TOP Oracle** choisit nombre ou pourcentage de l'univers du modèle ;
+- **Top N Oracle** fixe le nombre de candidats, ou **TOP Oracle (%)** calcule
+  ce nombre depuis le pourcentage (10 % de 1 790 = 179) ;
 - **LONG** et **SHORT** activent séparément les classements ;
 - **Top X Long** et **Top Y Short** définissent les nombres retenus par branche.
 - **Score LONG minimum — strictement supérieur**, défaut IHM **0,60**, filtre

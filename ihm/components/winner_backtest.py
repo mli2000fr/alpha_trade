@@ -2,6 +2,7 @@
 from datetime import date, timedelta
 from pathlib import Path
 import json
+from math import ceil
 import subprocess
 import uuid
 
@@ -11,6 +12,23 @@ from common.winner_pyramiding import load_winner_pyramiding_config
 from ihm.services.backtesting_runner import BacktestRunOptions, build_backtesting_command
 
 MODEL_ROOT=Path('artifacts/models')
+
+
+def render_oracle_pool_size(universe_size,default,*,key,label):
+    mode=st.radio('Mode du TOP Oracle',['Nombre de titres','Pourcentage de l’univers'],
+        horizontal=True,key=key+'_mode')
+    if mode=='Pourcentage de l’univers':
+        pct=float(st.number_input('TOP Oracle (%)',min_value=.1,max_value=100.,value=10.,step=.5,
+            key=key+'_pct',help='Pourcentage de l’univers figé du modèle sélectionné. '
+                'Arrondi au nombre entier supérieur, avec au minimum un candidat.'))
+        count=min(universe_size,max(1,ceil(universe_size*pct/100)))
+        st.caption(f'{pct:g} % des {universe_size:,} titres du modèle = {count:,} candidats Oracle '
+            '(arrondi supérieur). Ce nombre reste fixe pendant le backtest, même si des scores sont manquants.')
+        return count
+    if st.session_state.get(key,default)>universe_size:
+        st.session_state[key]=universe_size
+    return int(st.number_input(label,min_value=1,max_value=universe_size,
+        value=min(int(default),universe_size),key=key))
 
 
 def render_universe_selection(contract,batch):
@@ -32,13 +50,18 @@ def render_universe_selection(contract,batch):
 def render_model_selection():
     from modelFactory.oracle_path.predict import load_contract
     from modelFactory.oracle_path.directional import enabled,load_manifest
+    from ihm.services.queries import get_ml_training_batch_comments
+    comments=get_ml_training_batch_comments()
     choices={}
     for path in sorted(MODEL_ROOT.glob('*/oracle_path/report.json'),reverse=True):
         try:
             report=json.loads(path.read_text(encoding='utf-8'))
             if report.get('status')=='completed' and report.get('serving_ready') is True:
                 badge=' + per-symbol LONG/SHORT' if report.get('directional_models') else ' — Oracle seul'
-                choices[path.parent.parent.name]=f'{path.parent.parent.name} — parcours H{report.get("horizon",20)}{badge}'
+                batch_id=path.parent.parent.name
+                comment=comments.get(batch_id)
+                prefix=f'{comment} — ' if comment else ''
+                choices[batch_id]=f'{prefix}{batch_id} — parcours H{report.get("horizon",20)}{badge}'
         except (OSError,ValueError):
             continue
     if not choices:
@@ -62,8 +85,8 @@ def render_model_selection():
     selection=dict(oracle_top_n=pool,allow_long=True,allow_short=False,long_top_n=count,short_top_n=count,
         min_long_probability=None)
     if active:
-        pool=int(st.number_input('Top N Oracle',min_value=1,max_value=len(contract['universe']),
-            value=min(pool,len(contract['universe'])),key=f'bt_per_symbol_pool_{batch}'))
+        pool=render_oracle_pool_size(len(contract['universe']),pool,
+            key=f'bt_per_symbol_pool_{batch}',label='Top N Oracle')
         left,right=st.columns(2)
         for column,side,label in [(left,'long','LONG'),(right,'short','SHORT')]:
             with column:
@@ -216,8 +239,8 @@ def render_winner_backtest():
     if directional_bundle:
         top=per_symbol_selection['oracle_top_n']
     else:
-        top=st.number_input('Nombre de premiers titres Oracle',min_value=1,max_value=1000,
-            value=options_config.oracle_top_n,key=f'bt_winner_top_{batch}_{directional_bundle}')
+        top=render_oracle_pool_size(len(contract['universe']),options_config.oracle_top_n,
+            key=f'bt_winner_top_{batch}_{directional_bundle}',label='Nombre de premiers titres Oracle')
     equity = st.number_input('Capital initial ($)', min_value=1., value=4000., key='bt_winner_equity')
     risk = production_risk_defaults(load_risk_config(equity=float(equity),
         cli_overrides={'account_equity':float(equity)}))
