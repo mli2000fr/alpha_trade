@@ -77,8 +77,14 @@ def validate_scores(frame, *, profile_hash, folds, expected_days, top_n, horizon
     """Validate the complete scoring set BEFORE ranking; never read labels."""
     from modelFactory.oracle_path import target_name
     target = target_name(horizon)
-    if frame.empty or frame.duplicated(['trade_date', 'symbol']).any():
-        raise ValueError('Empty or duplicate Oracle predictions')
+    if frame.empty:
+        requested = sorted(expected_days)
+        bounds = f'{requested[0]} → {requested[-1]}' if requested else 'la période demandée'
+        raise ValueError(f'Aucune prédiction Oracle enregistrée pour les signaux {bounds}. '
+            'Lancer ML Predict sur ces dates avec le même batch avant de relancer le backtest ; '
+            'aucune prédiction n’est générée par cette simulation en lecture seule.')
+    if frame.duplicated(['trade_date', 'symbol']).any():
+        raise ValueError('Prédictions Oracle dupliquées par date et symbole ; corriger les scores avant le replay.')
     days = pd.to_datetime(frame.trade_date)
     scores = pd.to_numeric(frame.proba_extreme, errors='coerce')
     expected_hash = pd.to_datetime(frame.fold_start).dt.strftime('%Y-%m-%d').map(

@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 
 from .directional import INPUTS, split
+from .named_prediction import predict_proba as named_predict_proba
 
 
 def classification_metrics(labels, probabilities):
@@ -24,7 +25,7 @@ def classification_metrics(labels, probabilities):
 
 def predict(weights,frame):
     x=frame[INPUTS].replace([np.inf,-np.inf],np.nan).clip(weights['lo'],weights['hi'],axis=1)
-    raw=np.clip(weights['model'].predict_proba(x)[:,1],1e-6,1-1e-6)
+    raw=np.clip(named_predict_proba(weights['model'],x,INPUTS)[:,1],1e-6,1-1e-6)
     return weights['calibrator'].predict_proba(np.log(raw/(1-raw)).reshape(-1,1))[:,1]
 
 

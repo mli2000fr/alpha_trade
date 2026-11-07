@@ -155,6 +155,7 @@ def test_probability_storage_and_synthetic_projection_is_long_only(monkeypatch):
     assert a['source']==d.SOURCE
 
 
+@pytest.mark.filterwarnings('error:.*does not have valid feature names.*:UserWarning')
 def test_real_annual_training_both_branches_reload_and_own_history(tmp_path,monkeypatch):
     from modelFactory import data_loader
     from modelFactory.oracle_path.train import atomic_json,digest

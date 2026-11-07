@@ -114,6 +114,27 @@ Le lancement construit une commande explicite et crée un répertoire sous les
 artefacts IHM. Le centre fusionne runs actifs et historique, suit les processus,
 permet arrêt, inspection/téléchargement des logs et suppression ciblée.
 
+Depuis le 7 novembre 2026, les sorties du programme sont écrites directement
+dans `stdout.log` et `stderr.log` sous
+`artifacts/ihm_backtesting_runs/<commande>/<run_id>/`. Elles continuent d'être
+enregistrées si la page est fermée ou l'IHM redémarre. Un suivi en arrière-plan
+met à jour le statut, les compteurs de lignes et les délais d'exécution sans
+attendre une consultation de la page. Le journal combiné regroupe les flux
+selon leur observation ; il ne prouve pas l'ordre exact entre stdout et stderr.
+
+Le centre affiche aussi la progression du replay Winner (phase, séances
+traitées et dernière date), indépendamment du chargement des rapports détaillés.
+En cas d'arrêt, le motif de `artifacts/progress.json` est affiché directement.
+Un historique resté « en cours » peut être réconcilié avec un reçu terminal
+uniquement après vérification de l'absence de processus/verrou actif. Le reçu
+`status_recovery.json` conserve alors l'ancien état ; un message de diagnostic
+récupéré est identifié comme tel, sans inventer les logs ni le code de sortie.
+
+Si les prédictions Oracle sont absentes, le replay reste en échec : exécuter
+ML Predict pour le même batch et les dates de signal nécessaires, y compris
+la séance précédant la première entrée, avant de relancer. Le suivi ne relance
+aucune simulation ni prédiction automatiquement.
+
 Une fin de processus réussie signifie que la commande a retourné sans erreur ;
 vérifier ensuite rapport, nombre de trades, couverture, tickets filtrés,
 paramètres et éventuels avertissements.

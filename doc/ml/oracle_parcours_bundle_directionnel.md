@@ -227,3 +227,17 @@ manquantes/changement de fournisseur, tri TOP20/TOP5 sans remplacement, empreint
 corrompues, projection SQL LONG/FLAT, contrôle de probabilité dans le risque,
 limites natives, commandes IHM/CLI, horloges et compatibilité des anciens modes.
 Les tests ne passent aucun ordre et n'entraînent aucun batch de production.
+
+### Noms des variables LightGBM (7 novembre 2026)
+
+Les anciens modèles per-symbol utilisent un imputer qui transforme les colonnes
+nommées en tableau NumPy ; leur LightGBM a donc mémorisé des noms génériques
+`Column_0`, `Column_1`, etc. La prédiction vérifie désormais l'ordre des variables
+à l'entrée, la correspondance après imputation et les noms attendus par le
+classifieur, puis lui transmet un tableau avec ces noms. Les scores bruts et
+calibrés restent identiques ; aucun poids ou manifeste existant n'est modifié.
+Les nouveaux entraînements conservent aussi les noms après imputation.
+Le même chemin est utilisé par Predict, la calibration et les diagnostics :
+l'avertissement sklearn n'est pas masqué ; une incompatibilité réelle de
+colonnes provoque une erreur explicite. Aucun réentraînement n'est nécessaire
+pour les modèles déjà présents.

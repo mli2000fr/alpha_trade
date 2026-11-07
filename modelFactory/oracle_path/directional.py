@@ -13,6 +13,8 @@ import numpy as np
 import pandas as pd
 from sqlalchemy import bindparam, text
 
+from .named_prediction import predict_proba as named_predict_proba
+
 LOG = logging.getLogger(__name__)
 FEATURES = ['return_5d','return_10d','return_20d','momentum_60','rsi_14','adx_14',
     'atr20_pct','ema20_slope_10','ema50_slope_20','distance_ema20','distance_ema50',
@@ -193,12 +195,12 @@ def train(cfg,engine,root,progress):
                     lo,hi=fit[INPUTS].quantile(.01),fit[INPUTS].quantile(.99)
                     x=fit[INPUTS].replace([np.inf,-np.inf],np.nan).clip(lo,hi,axis=1)
                     z=cal[INPUTS].replace([np.inf,-np.inf],np.nan).clip(lo,hi,axis=1)
-                    model=make_pipeline(SimpleImputer(strategy='median'),LGBMClassifier(
+                    model=make_pipeline(SimpleImputer(strategy='median').set_output(transform='pandas'),LGBMClassifier(
                         n_estimators=120,max_depth=3,num_leaves=7,learning_rate=.03,
                         min_child_samples=60,reg_alpha=1.,reg_lambda=10.,verbosity=-1,n_jobs=1,
                         random_state=cfg.reproducibility.seed))
                     model.fit(x,fit[side].astype(int))
-                    cp=np.clip(model.predict_proba(z)[:,1],1e-6,1-1e-6)
+                    cp=np.clip(named_predict_proba(model,z,INPUTS)[:,1],1e-6,1-1e-6)
                     if np.std(cp)<=1e-6:
                         skipped.append(dict(symbol=symbol,year=year,side=side,reason='CONSTANT_CALIBRATION'))
                         continue
@@ -310,7 +312,7 @@ def infer(engine,root,scores):
                     if record['file'] not in cache:cache[record['file']]=joblib.load(Path(root)/record['file'])
                     weights=cache[record['file']]
                     x=f.loc[[row.date],INPUTS].replace([np.inf,-np.inf],np.nan).clip(weights['lo'],weights['hi'],axis=1)
-                    prob=np.clip(weights['model'].predict_proba(x)[:,1],1e-6,1-1e-6)
+                    prob=np.clip(named_predict_proba(weights['model'],x,INPUTS)[:,1],1e-6,1-1e-6)
                     item[side+'_probability']=float(weights['calibrator'].predict_proba(np.log(prob/(1-prob)).reshape(-1,1))[0,1])
                     item[side+'_model_sha256']=record['sha256']
                 out.append(item)

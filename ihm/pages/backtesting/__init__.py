@@ -5826,6 +5826,9 @@ def _render_runtime_center_body(*, auto_refresh_enabled: bool) -> None:
     else:
         st.warning(f"Run sélectionné : {_status_badge(status)}")
 
+    from ihm.components.backtesting_progress import render_backtesting_progress
+    render_backtesting_progress(selected_run)
+
     metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
     metric_col1.metric("Commande", str(selected_run.get("run_kind", "—")))
     metric_col2.metric("Durée", format_duration_hhmmss(selected_run.get("duration_seconds")))
