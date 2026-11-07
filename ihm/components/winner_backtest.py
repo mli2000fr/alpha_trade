@@ -77,6 +77,8 @@ def render_model_selection():
         st.stop()
     count=contract.get('directional_contract',{}).get('selected_n',5)
     pool=contract.get('directional_contract',{}).get('oracle_top_n',20)
+    from ihm.components.winner_backtest_profiles import initialize_research_selection
+    initialize_research_selection(batch,bundle)
     active=st.checkbox('per-symbol',
         value=bundle,disabled=not bundle,key=f'bt_winner_per_symbol_long_{batch}',
         help='Classe les candidats Oracle avec les probabilités LONG/SHORT des modèles par titre du même batch. '
@@ -152,19 +154,15 @@ def render_winner_backtest():
     from service.options_directional.config import load_options_filter_config
     from backtesting.winner_settings import production_risk_defaults
     from ihm.components.winner_backtest_settings import (render_policy_settings,render_risk_settings,
-                                                         reset_execution_settings,initialize_reference_profile)
+                                                         initialize_reference_profile)
+    from ihm.components.winner_backtest_profiles import render_profile_selector
 
     policy = load_winner_pyramiding_config()
     profile=initialize_reference_profile()
+    profile=render_profile_selector(profile)
     reference_defaults=profile=='reference'
-    st.info(('Profil par défaut : réglages du test de référence pour la confirmation, le poids des positions, '
-             'le contrôleur DD et les facteurs. ' if reference_defaults else 'Profil : réglages de production. ')+
-            'Les ajustements dans ce formulaire restent propres au backtest.')
     st.caption('Simulation isolée : base en lecture seule, rapports et caches dans son dossier. '
                'Les nouveaux runs peuvent fonctionner en parallèle du pipeline. Les anciens runs gardent leur verrou initial.')
-    st.button('Reprendre les réglages de production',on_click=reset_execution_settings,key='bt_winner_reset_settings')
-    st.button('Reprendre les réglages du test de référence',on_click=reset_execution_settings,
-              args=('reference',),key='bt_winner_reset_reference')
     batch,contract,folds,manifest,directional_bundle,per_symbol_selection=render_model_selection()
     options_config=load_options_filter_config()
     if directional_bundle:

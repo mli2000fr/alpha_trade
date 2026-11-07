@@ -107,6 +107,7 @@ def test_real_form_edits_and_reset_round_trip_without_changing_yaml(monkeypatch,
         from ihm.components.winner_backtest import render_winner_backtest
         st.session_state['settings_result']=asdict(render_winner_backtest())
     at=AppTest.from_function(app)
+    at.session_state['bt_winner_q088_size125_b4dd15_defaults_20261107']=True  # Explicit legacy reference profile.
     # Existing open browser sessions receive the requested defaults once.
     for key,value in dict(bt_wp_confirmation=2,bt_wp_delay=930,bt_wr_weight=25.,bt_wr_gross=1.,
                           bt_wr_close=True,bt_winner_factors=True).items():at.session_state[key]=value
@@ -151,7 +152,7 @@ def test_real_form_edits_and_reset_round_trip_without_changing_yaml(monkeypatch,
     assert edited['winner_risk_overrides']['min_position_notional']==35.
     assert edited['winner_policy_overrides']==dict(stop_loss_pct=.07,horizon_sessions=15,confirmation_bars=0,entry_valid_sessions=1)
     assert base_policy.stop_loss_pct==.05 and base_risk.risk_per_trade_pct==.01
-    at.button(key='bt_winner_reset_settings').click().run(timeout=30)
+    at.selectbox(key='bt_winner_profile_choice').select('production').run(timeout=30)
     assert not at.exception
     assert at.session_state['settings_result']['winner_risk_overrides']=={}
     assert at.number_input(key='bt_wr_gross').value==base_risk.max_gross_exposure
@@ -162,7 +163,7 @@ def test_real_form_edits_and_reset_round_trip_without_changing_yaml(monkeypatch,
     assert at.session_state['settings_result']['winner_daily_entry_enabled'] is False
     assert not at.number_input(key='bt_wp_confirmation').disabled
     assert at.number_input(key='bt_wp_confirmation').value==base_policy.confirmation_bars
-    at.button(key='bt_winner_reset_reference').click().run(timeout=30)
+    at.selectbox(key='bt_winner_profile_choice').select('reference').run(timeout=30)
     assert not at.exception and at.session_state['settings_result']['winner_drawdown_controller_enabled'] is False
     assert at.number_input(key='bt_wr_weight').value==20.
     assert at.number_input(key='bt_wr_gross').value==2.
@@ -206,7 +207,9 @@ def test_visible_settings_block_reads_yaml_edits_replay_command_and_resets(tmp_p
         import streamlit as st
         from ihm.components.winner_backtest import render_winner_backtest
         st.session_state['settings_result']=asdict(render_winner_backtest())
-    at=AppTest.from_function(app).run(timeout=30)
+    at=AppTest.from_function(app)
+    at.session_state['bt_winner_q088_size125_b4dd15_defaults_20261107']=True  # Test YAML/reference opt-in.
+    at.run(timeout=30)
     assert not at.exception
     panel=next(e for e in at.expander if e.label=='Réglages Winner et limites du replay')
     assert panel.number_input(key='bt_wp_sl').value==8.
@@ -235,7 +238,7 @@ def test_visible_settings_block_reads_yaml_edits_replay_command_and_resets(tmp_p
         horizon_sessions=10,initial_position_fraction=1.,reinforcement_enabled=False,
         confirmation_bars=0,entry_valid_sessions=12,market_data_delay_seconds=1200,
         delayed_entry_limit_buffer_pct=.005,cost_reserve_bps_per_leg=40.)
-    at.button(key='bt_winner_reset_settings').click().run(timeout=30)
+    at.selectbox(key='bt_winner_profile_choice').select('production').run(timeout=30)
     assert not at.exception and at.session_state['settings_result']['winner_policy_overrides']=={}
     assert at.number_input(key='bt_wp_sl').value==8.
     assert at.number_input(key='bt_wp_horizon').value==15

@@ -20,9 +20,10 @@ serveur ; un autre modèle chargé ne le remplace pas automatiquement.
 Le prompt de connectivité est distinct :
 `config/ia/prompt/local/connectivity/v1/system.txt`, identifiant
 `local.connectivity.v1.system` dans le catalogue. Aucun prompt financier cloud
-n'a été réutilisé. Le modèle local n'est pas encore raccordé au filtre après
-Oracle ni au risque, au backtest ou aux ordres ; ce changement n'active aucun
-appel de trading et ne modifie pas `config.yaml`.
+n'a été réutilisé. Un test A/B financier séparé est maintenant préparé :
+[Qwen après per-symbol sur 2025](../ml/llm_local_winner_ab_2025.md).
+Le modèle local reste absent du pipeline de production et des ordres ; aucun
+appel de trading ni modification de `config.yaml`.
 
 Pour refaire uniquement le test, laisser le serveur LM Studio démarré puis lancer :
 

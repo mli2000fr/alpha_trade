@@ -233,6 +233,7 @@ def test_bundle_form_2022_top20_to_top5_and_command(tmp_path,monkeypatch):
         st.session_state['result']=asdict(render_winner_backtest())
     at=AppTest.from_function(app)
     at.session_state['bt_winner_account']='cash'
+    at.session_state['bt_winner_q088_size125_b4dd15_defaults_20261107']=True  # Explicit reference profile.
     at.session_state['bt_winner_leverage_margin']=1.
     at.run(timeout=30)
     assert not at.exception
@@ -367,7 +368,9 @@ def test_real_form_default_policy_and_independent_dates(monkeypatch):
         import streamlit as st
         from ihm.components.winner_backtest import render_winner_backtest
         st.session_state['winner_options']=asdict(render_winner_backtest())
-    at=AppTest.from_function(app).run(timeout=30)
+    at=AppTest.from_function(app)
+    at.session_state['bt_winner_q088_size125_b4dd15_defaults_20261107']=True  # Explicit reference profile.
+    at.run(timeout=30)
     assert not at.exception
     assert at.session_state['winner_options']['winner_enabled'] is True
     assert at.session_state['winner_options']['winner_options_filter_enabled'] is False

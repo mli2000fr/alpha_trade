@@ -19,6 +19,13 @@ PROJECT=Path(__file__).resolve().parents[2]
 CONFIG_PATH=PROJECT/'config/ia/connections/lm_studio.yaml'
 
 
+class IncompleteResponse(RuntimeError):
+    """Keep the raw server response for research audit, even without final text."""
+    def __init__(self, result):
+        super().__init__('LM Studio a répondu sans texte final ; vérifier la limite de tokens et le mode de raisonnement')
+        self.result=result
+
+
 @dataclass(frozen=True)
 class Connection:
     base_url: str='http://127.0.0.1:1234/v1'
@@ -79,21 +86,26 @@ class Client:
         if not isinstance(result.get('data'),list):raise RuntimeError('LM Studio : liste de modèles invalide')
         return [row['id'] for row in result['data'] if isinstance(row,dict) and isinstance(row.get('id'),str)]
 
-    def chat(self,messages):
+    def chat(self,messages,*,response_format=None):
         if not messages or any(not isinstance(m,dict) or m.get('role') not in ('system','user','assistant')
                 or not isinstance(m.get('content'),str) for m in messages):raise ValueError('Messages locaux invalides')
         request=dict(model=self.config.model,messages=messages,temperature=self.config.temperature,
                      max_tokens=self.config.max_output_tokens,stream=False)
+        if response_format is not None:
+            if not isinstance(response_format,dict) or response_format.get('type')!='json_schema':
+                raise ValueError('Format local : schéma JSON explicite requis')
+            request['response_format']=response_format
         raw=self._request('POST','/chat/completions',request)
         choices=raw.get('choices')
         if not isinstance(choices,list) or not choices or not isinstance(choices[0],dict):
             raise RuntimeError('LM Studio : réponse sans choix exploitable')
         message=choices[0].get('message') or {}
         content=message.get('content')
-        if not isinstance(content,str) or not content.strip():
-            raise RuntimeError('LM Studio a répondu sans texte final ; vérifier la limite de tokens et le mode de raisonnement')
-        return dict(content=content,model=raw.get('model'),finish_reason=choices[0].get('finish_reason'),
+        result=dict(content=content,model=raw.get('model'),finish_reason=choices[0].get('finish_reason'),
                     usage=raw.get('usage'),request=request,response=raw)
+        if not isinstance(content,str) or not content.strip():
+            raise IncompleteResponse(result)
+        return result
 
 
 def connectivity_test(client=None):

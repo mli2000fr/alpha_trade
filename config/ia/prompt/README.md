@@ -2,8 +2,10 @@
 
 `cloud/` contient les prompts transmis aux API externes GPT/OpenAI et DeepSeek.
 `local/` contient les prompts des modèles exécutés sur le PC. La connectivité
-LM Studio dispose de son propre prompt ; aucun filtre financier local n'est
-encore raccordé. [Connexion et test](../../../doc/operations/lm_studio_connexion_locale.md).
+LM Studio dispose de son propre prompt ; un veto financier local séparé est
+préparé pour un test A/B de recherche, sans activation en production.
+[Connexion et test](../../../doc/operations/lm_studio_connexion_locale.md).
+[Protocole A/B 2025](../../../doc/ml/llm_local_winner_ab_2025.md).
 
 **`local_data_only` décrit les données fournies, pas le lieu d'exécution du
 modèle.** Le prompt actuel reste donc sous `cloud/`, même sans recherche Web.
@@ -14,6 +16,10 @@ modèle.** Le prompt actuel reste donc sous `cloud/`, même sans recherche Web.
 - `cloud/oracle_directional/v9/web_search.txt` : analyse cloud avec recherche Web et données locales.
 - `cloud/oracle_directional/output/v9.txt` : consigne finale du format de réponse.
 - `cloud/oracle_directional/deepseek/` : compléments de transport propres à DeepSeek.
+- `local/oracle_directional/v1/research_veto.txt` : veto news Qwen après per-symbol, recherche seulement.
+- `cloud/oracle_directional/v1/research_veto_comparison.txt` : copie explicitement
+  identique au prompt local pour le comparatif contrôlé GPT/Qwen, recherche
+  uniquement ; ne remplace pas le prompt cloud v9 de production.
 
 Les fichiers `v4` à `v8` conservent les contrats historiques. Ils ne sont pas
 convertis vers v9. Les textes ont été extraits sans changer les requêtes.
@@ -43,9 +49,9 @@ tous les titres d'un run.
 2. Pour une évolution de contrat (champs de réponse, sens d'un score, nouvelles
    contraintes), ajouter une nouvelle version et adapter explicitement le
    protocole/validateur avant de l'utiliser.
-3. Pour le futur modèle local, créer ses propres fichiers sous
+3. Pour une nouvelle version locale, créer ses propres fichiers sous
    `local/oracle_directional/<version>/`, puis une entrée de catalogue avec
-   `runtime: local`. Son futur client devra demander explicitement ce runtime.
+   `runtime: local`. Le client doit demander explicitement ce runtime.
    L'ajout d'un fichier seul ne raccorde ni n'active un moteur local.
 
 Les requêtes et réponses déjà archivées en SQL restent inchangées. Certains

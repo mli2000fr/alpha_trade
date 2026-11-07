@@ -1,5 +1,101 @@
 # Registre des expériences ML réalisées
 
+## 2026-11-07 — GPT/Qwen : filtre B avec prompt et données identiques
+
+**GPT TERMINÉ, QUALIFICATION INCOMPLÈTE — AUCUN REPLAY ÉCONOMIQUE.** Go utilisateur
+pour refaire B avec GPT et comparer Qwen, plafond2 USD ; C exclu. Même référence
+2025, 204 candidatures/24 sociétés, 166 appels avec news et 38 dossiers sans news
+conservés. Instructions, dossier, schéma et règle de veto identiques, aucun Web.
+GPT-6 Luna, raisonnementmedium, sortie16 384, service standard ; runtime distinct
+de Qwen, donc pas une expérience isolant uniquement les poids du modèle.
+Réservation conservatrice1,788514875 USD avant appel, journal payant avant HTTP,
+pas de retry automatique, cache OpenAI séparé. 71 tests passent ; premiers
+14 appels GPT valides (technique seulement). Replays A/B GPT conditionnés à la
+validation complète et à la reproduction du témoin. Le suivi des accords exclut
+les absences de news et rapporte les rejets séparément. Les réserves historiques
+et mémoire future du LLM empêchent une certification PIT/OOS indépendante.
+Suivi : `artifacts/research/us_gpt_winner_ab/20261107-v1/progress.json`.
+[Protocole et coûts](gpt_qwen_meme_prompt_winner_20261107.md).
+Incident réseau à21 h02 sur VAC21/11/2025 après155 réponses. Reprise utilisateur
+autorisée à22 h03 :155 reçus conservés, VAC réessayé une fois puis dix requêtes
+restantes ; réserve globale1,800196250 USD incluant le coût maximal ambigu de
+l'ancienne tentative. Ancien protocole et journaux conservés, onze tests de
+reprise passent. Le reçu VAC est valide ; les réponses invalides ne sont pas
+automatiquement rachetées ni présentées comme un comparatif financier complet.
+Rattrapage achevé à22 h05 :166 réponses reçues,155 valides et11 invalides ;
+38 dossiers sans news conservés, soit193/204 dossiers qualifiés et34 vetoes.
+Coût estimé des reçus0,1606705 USD (borne conservatrice0,176604375 USD), hors
+coût inconnu de la première tentative VAC. Les onze erreurs bloquent les
+replays A/B ; Qwen encore en cours, pas de conclusion économique comparative.
+
+## 2026-11-07 — Q051/Q088 : baisse du risque, étude ciblée en cours
+
+**LANCÉ — PAS ENCORE DE RÉSULTAT.** À la suite de la grille 2025, les deux profils
+à +57,53/+58,87 % ont un DD de −35,69/−40,02 % et leur contrôleur est désactivé.
+Seize comparaisons, même sélection et mêmes protections : risque/poids
+2,5/40 % contre 1,25/20 %, plafond des nouvelles entrées 2× contre 1×, B4/DD15
+avec liquidation50 et perte quotidienne3 % activé ou désactivé. Deux BASE
+reproduits avant les quatorze variantes. Capital4 000 USD, SL5/H10/open11,
+entrée journalière sans confirmation, mêmes frais et bande figée.
+DD15 est un seuil d'action, pas un plafond ; aucun nouveau filtre de sélection.
+Exposition/quantités/financement et parcours complet rejoués, pas une division
+arithmétique des rendements. Quatre processus, huit tests techniques passent,
+aucune modification de production. Optimisation après consultation de 2025,
+donc exploratoire. Suivi :
+`artifacts/research/us_winner_risk_tradeoff/20261107-v1/progress.json`.
+[Protocole et limites](winner_risque_q051_q088_20261107.md).
+
+## 2026-11-07 — Qwen local après per-symbol : préparation A/B 2025
+
+**PRÉPARÉ — AUCUN RÉSULTAT ÉCONOMIQUE NI AVANTAGE DÉMONTRÉ.** Référence Winner
+`20261107_095041_0b38b8de`, Oracle H10
+`model-factory-20261106203103-91b063`, TOP10 % → TOP10 LONG, probabilité >0,70,
+AUC calibration ≥0,60. 204 candidatures/24 titres, pas seulement les 59 trades.
+A : référence ; B : même stratégie avec veto Qwen3.5-9b après per-symbol, sans
+remplacement des exclus. SL5/H10/open11, entrée J+1 sans confirmation, capital
+4 000 USD, levier maximal 2×, mêmes frais et risques que la référence figée.
+
+166 dossiers avec news sur les sept jours précédant J, 38 sans news conservés.
+896 associations extraites en lecture seule ; fenêtres partitionnées, aucune
+troncature SQL. Maximum six extraits par dossier, omissions explicites. Prix et
+volumes passés sur soixante observations, SPY ; aucun consensus/options 2025
+inventé. Prompt local dédié, appréciation séparée des preuves, citations exactes
+et attribution à l'émetteur ; veto défavorable seulement si critères explicites.
+Cache SQLite isolé des tables cloud/MySQL, requêtes/réponses exactes, reprise
+sans rappeler les réponses valides. Un pilote réel à 8 192 tokens a terminé en
+259,43 secondes : 7 005 tokens générés, dont 6 576 de raisonnement. JSON et deux
+citations validés, après normalisation d'un saut de paragraphe en espace ; pas
+de nouvel appel pour cette revalidation. La tentative initiale à 4 096 tokens
+sans texte final reste en échec explicite. 165 analyses avec news restent à faire.
+Estimation très provisoire sur un dossier : environ douze heures pour 166 appels
+séquentiels ; ni campagne complète ni replay économique démarré.
+Validation finale : 98 tests passent (cache, bornes temporelles, citations,
+réponses tronquées, absence de repli cloud et contrats des prompts existants).
+Chronométrage complémentaire, contexte réduit par l'utilisateur de 112 591 à
+34 186 : même requête, mêmes tokens et même texte final, **181,91 s contre
+259,43 s (−29,88 %)**. Extrapolation provisoire : 8 h 23 pour 166 appels
+séquentiels, sur un seul couple de mesures ; aucun replay ni avantage économique
+évalué dans cette comparaison de vitesse.
+
+Sources rétrospectives mutables et mémoire future du LLM non exclue : **pas de
+certification PIT, ni de validation hors échantillon indépendante**. Les anciens
+tests de scoring/veto GPT et d'embeddings restent au registre ; ce pilote local
+ne constitue pas une nouvelle information de marché. Ni entraînement, ni appel
+cloud, ni ordre, ni changement du pipeline ou de la grille en cours.
+Archive à poursuivre : `artifacts/research/us_local_llm_winner_ab/20261107-v6`.
+Campagne **A/B lancée le 7 novembre à 16 h 56 Paris**, 165 analyses locales
+restantes puis replays conditionnés à leur validation complète. Test C exclu.
+Suivi dans `campaign/progress.json`, bilan terminal dans `campaign/report.json`.
+Aucun résultat économique A/B disponible au lancement.
+Reprise autorisée à **16 384 tokens** le 7 novembre, **18 h 29 Paris**, après
+épuisement des 8 192 tokens par le raisonnement de BAND (signal 08/01/2025).
+Nouveau dossier **`20261107-v7`**, délai 600 s ; trois réponses LLM valides et
+38 absences de news conservées avec leurs clés exactes. 163 appels restants,
+ancienne tentative conservée, corpus/prompt/risque inchangés, aucun replay lancé
+avant validation complète. **101 tests passent.** Suivi désormais dans
+`artifacts/research/us_local_llm_winner_ab/20261107-v7/campaign/progress.json`.
+[Protocole, cache et commandes](llm_local_winner_ab_2025.md).
+
 ## 2026-11-05 — Actualisation des collectes US : options et consensus TOP10/20/50
 
 **DIAGNOSTIC EXPLORATOIRE — PAS DE CONFIRMATION NI PROMOTION.** Extraction SQL

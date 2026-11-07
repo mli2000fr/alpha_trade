@@ -125,6 +125,20 @@
       "path": "cloud/oracle_directional/deepseek/search_suffix.txt",
       "kind": "template"
     },
+    "cloud.oracle_directional.v1.research_veto_comparison": {
+      "runtime": "cloud",
+      "family": "oracle_directional",
+      "path": "cloud/oracle_directional/v1/research_veto_comparison.txt",
+      "kind": "system",
+      "version": "v1-identical-local-comparison"
+    },
+    "local.oracle_directional.v1.research_veto": {
+      "runtime": "local",
+      "family": "oracle_directional",
+      "path": "local/oracle_directional/v1/research_veto.txt",
+      "kind": "system",
+      "version": "v1"
+    },
     "local.connectivity.v1.system": {
       "runtime": "local",
       "family": "connectivity",

@@ -3,7 +3,7 @@ import json
 import pytest
 import requests
 
-from service.local_ai.lm_studio import Client,Connection,connectivity_test,load_connection
+from service.local_ai.lm_studio import Client,Connection,IncompleteResponse,connectivity_test,load_connection
 
 
 class Session:
@@ -58,8 +58,18 @@ def test_failure_has_no_retry_redirect_or_cloud_fallback(reply):
 
 def test_reasoning_without_final_text_is_not_a_successful_answer():
     session=Session([(200,dict(choices=[dict(message=dict(content='',reasoning_content='still thinking'),finish_reason='length')]))])
-    with pytest.raises(RuntimeError,match='sans texte final'):
+    with pytest.raises(IncompleteResponse,match='sans texte final') as caught:
         Client(Connection(),session=session).chat([dict(role='user',content='test')])
+    assert caught.value.result['finish_reason']=='length'
+    assert caught.value.result['response']['choices'][0]['message']['reasoning_content']=='still thinking'
+
+
+def test_explicit_structured_format_is_forwarded_without_changing_default_calls():
+    schema=dict(type='json_schema',json_schema=dict(name='test',schema=dict(type='object')))
+    session=Session([(200,dict(choices=[dict(message=dict(content='{}'),finish_reason='stop')]))])
+    value=Client(Connection(),session=session).chat([dict(role='user',content='test')],response_format=schema)
+    assert value['request']['response_format']==schema
+    assert session.calls[0][2]['json']['response_format']==schema
 
 
 def test_unexpected_answer_is_distinct_from_successful_exact_response():

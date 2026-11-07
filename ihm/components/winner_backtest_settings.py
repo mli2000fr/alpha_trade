@@ -10,7 +10,7 @@ GROSS_DEFAULTS_MARKER='bt_winner_gross_default_2_20261105'
 
 
 def initialize_reference_profile():
-    """Apply the six newly requested defaults once, including open sessions."""
+    """Migrate open sessions to the requested Q088 defaults once."""
     if not st.session_state.get(REFERENCE_DEFAULTS_MARKER):
         for key in ('bt_wp_confirmation','bt_wp_delay','bt_wr_weight','bt_wr_close',
                     'bt_winner_factors','bt_wr_controller_enabled'):
@@ -20,18 +20,25 @@ def initialize_reference_profile():
     if not st.session_state.get(GROSS_DEFAULTS_MARKER):
         st.session_state['bt_wr_gross']=2.
         st.session_state[GROSS_DEFAULTS_MARKER]=True
-    return st.session_state.get('bt_winner_settings_profile','reference')
+    from ihm.components.winner_backtest_profiles import Q088_MARKER,apply_q088_defaults
+    if not st.session_state.get(Q088_MARKER):
+        apply_q088_defaults()
+    return st.session_state.get('bt_winner_settings_profile','q088')
 
 
 def reset_execution_settings(profile='production'):
     for key in list(st.session_state):
-        if (key.startswith(('bt_wr_','bt_wp_')) or key in ('bt_winner_positions','bt_winner_factors','bt_winner_factor_cap','bt_winner_excluded_symbols','bt_winner_ignore_missing_intraday',
+        if (key.startswith(('bt_wr_','bt_wp_','bt_per_symbol_','bt_q088_selection_','bt_research_selection_','bt_winner_top_','bt_winner_per_symbol_long_')) or key in ('bt_winner_positions','bt_winner_factors','bt_winner_factor_cap','bt_winner_excluded_symbols','bt_winner_ignore_missing_intraday',
                 'bt_winner_custom_costs','bt_winner_costs','bt_winner_interest','bt_winner_options_filter',
                 'bt_winner_coverage','bt_winner_top','bt_winner_daily_entry')):
             del st.session_state[key]
     st.session_state['bt_winner_settings_profile']=profile
     st.session_state['bt_winner_daily_entry']=profile!='production'
     st.session_state[REFERENCE_DEFAULTS_MARKER]=True
+    from ihm.components.winner_backtest_profiles import Q088_MARKER,apply_research_defaults
+    st.session_state[Q088_MARKER]=True
+    if profile in ('q088','q051'):
+        apply_research_defaults(profile)
 
 
 def percent(label,value,key,*,disabled=False,maximum=100.):
@@ -42,11 +49,14 @@ def percent(label,value,key,*,disabled=False,maximum=100.):
 def render_policy_settings(policy,*,reference_defaults=False,daily_entry_enabled=False):
     values={}
     with st.container():
-        st.caption(('Défauts du test de référence : aucune confirmation et aucun délai SIP. '
+        profile=st.session_state.get('bt_winner_settings_profile')
+        st.caption((f'Profil {profile.upper()} : SL5 %, sans TP/trailing, H10, position complète, sans confirmation. '
+                    if profile in ('q088','q051') else
+                    'Défauts du test de référence : aucune confirmation et aucun délai SIP. '
                     'Les autres protections viennent de config.yaml. ' if reference_defaults else
                     'Valeurs par défaut : section winner_pyramiding de config.yaml. ')+
                    'Ces réglages sont modifiables pour ce backtest uniquement. '
-                   '« Reprendre les réglages de production » recharge les valeurs de configuration.')
+                   'Le profil « Réglages de production » recharge les valeurs de configuration.')
         values['stop_loss_pct']=percent('SL initial (%)',policy.stop_loss_pct,'bt_wp_sl',maximum=99.99)
         tp=st.checkbox('Activer un TP en prix',value=policy.take_profit_pct is not None,key='bt_wp_tp_enabled')
         values['take_profit_pct']=percent('TP (%)',policy.take_profit_pct or .20,'bt_wp_tp',
