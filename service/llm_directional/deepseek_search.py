@@ -6,6 +6,7 @@ claim that the chat model invoked a Responses tool or independently browsed.
 from datetime import datetime, timedelta, timezone
 import ipaddress
 import json
+from common.ia_prompts import render_prompt
 import re
 import time
 from urllib.parse import urlsplit
@@ -63,12 +64,8 @@ def build_request(context,config,base_schema):
         max_web_calls=config.max_tool_calls,text_chars=config.deepseek_web_text_chars,
         analysis_model=config.deepseek_model,analysis_max_tokens=config.max_output_tokens,
         analysis_instructions=instructions('web_search',context['analysis_protocol'])+output_policy(context,config)+
-            '\nSearch and optional Fetch were performed separately through DeepSeek. '
-            'Use ONLY the supplied data and Web evidence. Search summaries are not full page reads. '
-            'A fetched page is marked explicitly. Do not claim you independently browsed. '
-            'Copy published_at exactly from the supplied provider_date (null if unknown); '
-            'retrieval time, upcoming event dates and page updates are NOT publication dates. '
-            'Return json matching: '+json.dumps(response_schema(base_schema,context['analysis_protocol'])),context=context)
+            render_prompt('cloud.oracle_directional.deepseek.search_suffix',
+                variables={'response_schema':json.dumps(response_schema(base_schema,context['analysis_protocol']))},runtime='cloud'),context=context)
     if fresh_protocol(context['analysis_protocol']):
         request['web_freshness']=dict(cutoff_utc=cutoff.isoformat(),max_age_days=max_age)
     return request

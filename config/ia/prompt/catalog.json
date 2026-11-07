@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "prompts": {
+    "cloud.oracle_directional.v5.local_data_only": {
+      "runtime": "cloud",
+      "family": "oracle_directional",
+      "path": "cloud/oracle_directional/v5/local_data_only.txt",
+      "kind": "system",
+      "protocol": "oracle-local-evidence-trend-v5",
+      "analysis_mode": "local_data_only"
+    },
+    "cloud.oracle_directional.v5.web_search": {
+      "runtime": "cloud",
+      "family": "oracle_directional",
+      "path": "cloud/oracle_directional/v5/web_search.txt",
+      "kind": "system",
+      "protocol": "oracle-local-evidence-trend-v5",
+      "analysis_mode": "web_search"
+    },
+    "cloud.oracle_directional.v6.local_data_only": {
+      "runtime": "cloud",
+      "family": "oracle_directional",
+      "path": "cloud/oracle_directional/v6/local_data_only.txt",
+      "kind": "system",
+      "protocol": "oracle-deepseek-search-trend-v6",
+      "analysis_mode": "local_data_only"
+    },
+    "cloud.oracle_directional.v6.web_search": {
+      "runtime": "cloud",
+      "family": "oracle_directional",
+      "path": "cloud/oracle_directional/v6/web_search.txt",
+      "kind": "system",
+      "protocol": "oracle-deepseek-search-trend-v6",
+      "analysis_mode": "web_search"
+    },
+    "cloud.oracle_directional.v7.local_data_only": {
+      "runtime": "cloud",
+      "family": "oracle_directional",
+      "path": "cloud/oracle_directional/v7/local_data_only.txt",
+      "kind": "system",
+      "protocol": "oracle-fresh-evidence-trend-v7",
+      "analysis_mode": "local_data_only"
+    },
+    "cloud.oracle_directional.v7.web_search": {
+      "runtime": "cloud",
+      "family": "oracle_directional",
+      "path": "cloud/oracle_directional/v7/web_search.txt",
+      "kind": "system",
+      "protocol": "oracle-fresh-evidence-trend-v7",
+      "analysis_mode": "web_search"
+    },
+    "cloud.oracle_directional.v8.local_data_only": {
+      "runtime": "cloud",
+      "family": "oracle_directional",
+      "path": "cloud/oracle_directional/v8/local_data_only.txt",
+      "kind": "system",
+      "protocol": "oracle-fresh-evidence-direction-score-v8",
+      "analysis_mode": "local_data_only"
+    },
+    "cloud.oracle_directional.v8.web_search": {
+      "runtime": "cloud",
+      "family": "oracle_directional",
+      "path": "cloud/oracle_directional/v8/web_search.txt",
+      "kind": "system",
+      "protocol": "oracle-fresh-evidence-direction-score-v8",
+      "analysis_mode": "web_search"
+    },
+    "cloud.oracle_directional.v9.local_data_only": {
+      "runtime": "cloud",
+      "family": "oracle_directional",
+      "path": "cloud/oracle_directional/v9/local_data_only.txt",
+      "kind": "system",
+      "protocol": "oracle-direction-evidence-v9",
+      "analysis_mode": "local_data_only"
+    },
+    "cloud.oracle_directional.v9.web_search": {
+      "runtime": "cloud",
+      "family": "oracle_directional",
+      "path": "cloud/oracle_directional/v9/web_search.txt",
+      "kind": "system",
+      "protocol": "oracle-direction-evidence-v9",
+      "analysis_mode": "web_search"
+    },
+    "cloud.oracle_directional.v4.web_search": {
+      "runtime": "cloud",
+      "family": "oracle_directional",
+      "path": "cloud/oracle_directional/v4/web_search.txt",
+      "kind": "system",
+      "protocol": "oracle-web-directional-v4",
+      "analysis_mode": "web_search"
+    },
+    "cloud.oracle_directional.output.v8": {
+      "runtime": "cloud",
+      "family": "oracle_directional",
+      "path": "cloud/oracle_directional/output/v8.txt",
+      "kind": "output_policy"
+    },
+    "cloud.oracle_directional.output.v9": {
+      "runtime": "cloud",
+      "family": "oracle_directional",
+      "path": "cloud/oracle_directional/output/v9.txt",
+      "kind": "output_policy"
+    },
+    "cloud.oracle_directional.output.legacy_long_only": {
+      "runtime": "cloud",
+      "family": "oracle_directional",
+      "path": "cloud/oracle_directional/output/legacy_long_only.txt",
+      "kind": "output_policy"
+    },
+    "cloud.oracle_directional.output.legacy_long_short": {
+      "runtime": "cloud",
+      "family": "oracle_directional",
+      "path": "cloud/oracle_directional/output/legacy_long_short.txt",
+      "kind": "output_policy"
+    },
+    "cloud.oracle_directional.deepseek.local_json": {
+      "runtime": "cloud",
+      "family": "oracle_directional",
+      "path": "cloud/oracle_directional/deepseek/local_json.txt",
+      "kind": "template"
+    },
+    "cloud.oracle_directional.deepseek.search_suffix": {
+      "runtime": "cloud",
+      "family": "oracle_directional",
+      "path": "cloud/oracle_directional/deepseek/search_suffix.txt",
+      "kind": "template"
+    },
+    "local.connectivity.v1.system": {
+      "runtime": "local",
+      "family": "connectivity",
+      "path": "local/connectivity/v1/system.txt",
+      "kind": "system",
+      "version": "v1"
+    }
+  }
+}
