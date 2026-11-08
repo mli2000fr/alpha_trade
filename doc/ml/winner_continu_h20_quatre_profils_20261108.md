@@ -104,7 +104,23 @@ annuels conservés. Les résultats H10 précédents restent distincts et intacts
 10 tests passent sur les profils H20, l'échéance open21 officielle, la couverture
 Oracle/directionnelle, les prix, les dates et l'import IHM ; le témoin annuel
 reste utilisable après suppression simulée de l'export IHM initial.
-État : attente des prédictions2024–2026. Aucun résultat H20 continu publié.
+État final : quatre replays terminés, aucun échec, imports IHM vérifiés le
+8 novembre 2026 à 21h26, heure de Paris. Le témoin annuel a été reproduit avant
+les replays. Capital initial 4 000 USD, sans remise à zéro annuelle.
+
+| Profil H20 | Capital final USD | Rendement | DD maximal | Trades | Taux gagnant | Capital engagé moyen USD |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Q051 score>0,60/AUC≥0,60 | 7 411,04 | +85,28 % | −29,88 % | 404 | 27,72 % | 2 481,63 |
+| Q051 score>0,50/AUC≥0,50 | 7 774,29 | +94,36 % | −45,58 % | 763 | 26,61 % | 3 429,19 |
+| Q088 score>0,60/AUC≥0,60 | 4 944,12 | +23,60 % | −30,66 % | 900 | 32,33 % | 2 800,15 |
+| Q088 score>0,50/AUC≥0,50 | 3 714,25 | −7,14 % | −49,24 % | 1 566 | 29,44 % | 3 356,20 |
+
+Les quatre bilans natifs conservent `INCOMPLETE_COVERAGE` ; le badge IHM doit
+rester orange. Q051_060 offre moins de rendement que Q051_050, avec un DD
+nettement inférieur. Les profils diffèrent aussi par pool Oracle, nombre de
+LONG, plafond d'achat et contrôleur : la comparaison Q051/Q088 ne permet pas
+d'attribuer leurs écarts à B4 seul. Le test H10 Q051_050 B4 séparé isole ce point.
+
 Étude rétrospective exploratoire : secteurs actuels et versions historiques non
 certifiées PIT, parcours OHLC de couverture variable, absence de parité live
 complète. Pas de choix de paramètres après observation des rendements H20.

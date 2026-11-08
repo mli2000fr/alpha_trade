@@ -138,3 +138,8 @@ Q051 déjà ouvertes reçoivent une seule fois les nouveaux seuils ; les modific
 manuelles suivantes sont conservées, sauf réapplication explicite du profil.
 Les dates et le modèle restent ceux choisis par l'utilisateur : sélectionner ce
 profil seul ne recrée pas la succession des six modèles annuels du replay continu.
+
+La liste « Profil de paramètres du backtest » présélectionne désormais Q051
+seuils 0,50 (demande du 8 novembre). Le libellé porte « défaut » ; Q088 reste
+sélectionnable. Les anciennes sessions restées sur le défaut Q088 sont basculées
+une fois, puis les choix explicites et modifications suivants sont conservés.

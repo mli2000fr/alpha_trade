@@ -1,4 +1,4 @@
-"""Q088 form defaults must reach the actual replay command and stay editable."""
+"""Default Q051 and selectable Q088 reach the replay command and stay editable."""
 from dataclasses import asdict
 import json
 import pytest
@@ -25,7 +25,7 @@ def test_existing_q051_session_migrates_once_and_keeps_later_edits(monkeypatch):
     assert (state[score_key], state[auc_key]) == (.5, .5)
 
 
-def test_q088_full_form_matches_frozen_case_and_preserves_edits(tmp_path,monkeypatch):
+def test_default_q051_and_selected_q088_match_frozen_settings_and_preserve_edits(tmp_path,monkeypatch):
     from common.winner_pyramiding import WinnerPyramidingConfig
     from execution_engine.config import LeverageConfig
     from risk_management.config import RiskConfig
@@ -66,7 +66,7 @@ def test_q088_full_form_matches_frozen_case_and_preserves_edits(tmp_path,monkeyp
         st.session_state['result']=asdict(render_winner_backtest())
 
     at=AppTest.from_function(app)
-    # Previously opened pages receive Q088 exactly once, including batch-specific controls.
+    # Fresh pages receive Q051, then Q088 remains explicitly selectable.
     at.session_state['bt_wp_sl']=9.
     at.session_state['bt_winner_q088_defaults_20261107']=True  # Original Q088 migrated, too.
     at.session_state['bt_wr_budget']=2.5
@@ -74,6 +74,15 @@ def test_q088_full_form_matches_frozen_case_and_preserves_edits(tmp_path,monkeyp
     at.session_state[f'bt_per_symbol_min_long_probability_{batch}']=.8
     at.session_state[f'bt_per_symbol_pool_{batch}_mode']='Nombre de titres'
     at.run(timeout=30)
+    assert not at.exception
+    initial=at.session_state['result']
+    assert at.selectbox(key='bt_winner_profile_choice').value=='q051'
+    assert initial['winner_top_n']==179 and initial['winner_per_symbol_top_long']==5
+    assert initial['winner_per_symbol_min_long_probability']==.5
+    assert initial['winner_per_symbol_min_long_auc']==.5
+    assert not initial['winner_drawdown_controller_enabled']
+    assert at.number_input(key='bt_wr_gross').value==1.
+    at.selectbox(key='bt_winner_profile_choice').select('q088').run(timeout=30)
     assert not at.exception
     result=at.session_state['result']
     assert result['winner_top_n']==358
@@ -157,3 +166,19 @@ def test_q088_full_form_matches_frozen_case_and_preserves_edits(tmp_path,monkeyp
     assert at.number_input(key='bt_wp_sl').value==pytest.approx(7.)
     assert at.session_state['result']['winner_policy_overrides']=={}
     assert asdict(policy)==before_policy and asdict(risk)==before_risk
+
+
+def test_old_q088_default_migrates_once_without_overriding_later_selection(monkeypatch):
+    from ihm.components import winner_backtest_settings as settings
+    from ihm.components.winner_backtest_profiles import Q088_MARKER
+    state={settings.REFERENCE_DEFAULTS_MARKER:True,settings.GROSS_DEFAULTS_MARKER:True,
+        Q088_MARKER:True,'bt_winner_settings_profile':'q088','bt_winner_profile_choice':'q088',
+        'bt_wr_gross':2.,'bt_wr_controller_enabled':True}
+    monkeypatch.setattr(settings.st,'session_state',state)
+    assert settings.initialize_reference_profile()=='q051'
+    assert state['bt_winner_profile_choice']=='q051'
+    assert state['bt_wr_gross']==1. and not state['bt_wr_controller_enabled']
+    settings.reset_execution_settings('q088')
+    state['bt_winner_profile_choice']='q088'
+    assert settings.initialize_reference_profile()=='q088'
+    assert state['bt_wr_gross']==2. and state['bt_wr_controller_enabled']

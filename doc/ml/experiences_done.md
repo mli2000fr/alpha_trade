@@ -1,20 +1,62 @@
 # Registre des expériences ML réalisées
 
+## 2026-11-08 — Consensus EODHD avant résiliation : H5/H10/H20 et dépendances
+
+**TERMINÉ — PAS DE GAIN DIRECTIONNEL DÉMONTRÉ, AUCUNE PROMOTION.** Snapshots réels
+du 11/10 au 07/11 ; 106 067 lignes 0q pertinentes, 1 725 titres parmi 1 790,
+33 875 décisions sur 20 séances. Règles séparées : EPS30 positif, révisions30
+positives, hausse observée du consensus revenus à nombre d'analystes inchangé.
+LONG TP10/SL10, sinon clôture H, frais 16 bps, daily adverse-first : révisions
+positives 55,31 % H5, 60,09 % H10, 58,00 % H20 contre témoins 60,04 %, 65,06 %,
+63,90 %. H20 n'a qu'une date mûre ; revenus aucun H20. Dominance des pics
+révisions : 57,39 % / 60,11 % / 62,04 %, également sous témoins.
+Contrôle TOP10/20/50 via modèle annuel H10 encore présent sur 4 dates seulement :
+TOP20 révisions positives 16,33 % H5 (49 cas), 4,08 % H10 (49), 9,09 % H20 (11),
+sans gain contre témoins. Ancien H20 supprimé, aucune prédiction générée.
+Audit des batchs : EODHD encore configuré pour consensus US/FR, IPO US, cours et
+corporate actions FR, et réseau macro volatilité US derrière SQL. Cours US et
+intraday Alpaca, earnings Finnhub, capitalisation SEC/Finnhub, pas EODHD principal.
+Le consensus n'alimente pas le filtre options actif ; LLM désactivé.
+Snapshots et résultats figés v5, contrôle de 30 chemins et 36 synthèses, 3 tests.
+Réserves de conventions fournisseur, dates corrélées et couverture maintenues.
+Aucun appel fournisseur/LLM, entraînement, ordre, écriture SQL ou configuration
+modifiée. [Bilan et dépendances](eodhd_consensus_utilite_et_dependances_20261108.md).
+
+## 2026-11-08 — Q051 H10 0,50 sans B4 : régime marché ou plafond 2×
+
+**TERMINÉ — DEUX REPLAYS IMPORTÉS EN IHM.** Témoin continu 2021–01/10/2026 à +206,51 %,
+DD −36,89 %, 4 000 USD initiaux. REGIME : seul filtre d'entrée SPY activé, clôture
+précédente > 98 % de SMA200, plafond d'achat 1×, sans B4 ni liquidation forcée.
+Positions détenues protégées par SL5/open11, pas de remplacement des candidats.
+GROSS2 : seul plafond d'achat passe à 2× le capital courant (8 000 USD de capacité
+initiale), margin 2× déjà présent, sans B4 ni filtre régime. Autres paramètres et
+archives identiques : TOP10 % Oracle → TOP5 LONG, score>0,50/AUC≥0,50, SL5/open11,
+risque 1,25 %, poids 20 %, frais et financement inclus. Trois tests du filtre et
+comparaison intégrale des configurations passent. Résultats : REGIME 10 805,53 USD,
++170,14 %, DD −30,44 %, 1 077 trades, 35,28 % gagnants ; GROSS2 13 706,18 USD,
++242,65 %, DD −49,49 %, 1 516 trades, 35,36 % gagnants. Le régime réduit le DD
+de 6,45 points contre 36,37 points de rendement abandonnés ; plafond 2× augmente
+le rendement mais dégrade le DD. Couverture incomplète conservée. Aucun appel
+fournisseur, modèle entraîné, ordre ou écriture SQL. Imports IHM vérifiés.
+[Protocole](winner_q051_regime_plafond2_20261108.md).
+
 ## 2026-11-08 — Q051 seuils 0,50 avec B4/DD15, comparaison isolée
 
-**LANCÉ — REPLAY EN COURS.** Reprise exacte du Q051_050 H10 continu à +206,51 %,
+**TERMINÉ — IMPORTÉ DANS L'HISTORIQUE IHM.** Reprise exacte du Q051_050 H10 continu à +206,51 %,
 DD −36,89 %, sur 2021–01/10/2026 avec 4 000 USD. Seules différences : contrôleur
 B4/DD15 activé et liquidation partielle 50 % activée. TOP10 % Oracle → TOP5 LONG,
 score>0,50/AUC≥0,50, SL5/open11, entrée quotidienne J+1, risque 1,25 %, poids 20 %,
 plafond d'entrée 1× et capacité margin 2× conservés. Archives et configuration du
 témoin vérifiées ; aucun téléchargement, inférence, ordre ou écriture SQL.
-Comparaison et import IHM automatiques à la fin. Même couverture incomplète que
-le témoin ; pas de résultat anticipé.
+Résultat : 4 797,17 USD, +19,93 %, DD −28,21 %, 1 290 trades, 36,05 % gagnants,
+capital engagé moyen 2 190,31 USD. Contre +206,51 % / DD −36,89 % pour le témoin :
+DD réduit de 8,69 points, rendement fortement diminué. Même couverture incomplète
+que le témoin, sans plafond garanti à DD15. Import IHM vérifié.
 [Protocole](winner_q051_050_b4_dd15_20261108.md).
 
 ## 2026-11-08 — Quatre profils continus H20, six modèles annuels
 
-**LANCÉ — QUATRE REPLAYS EN COURS.** Modèles fournis par l'utilisateur,
+**TERMINÉ — QUATRE REPLAYS IMPORTÉS DANS L'HISTORIQUE IHM.** Modèles fournis par l'utilisateur,
 fin d'entraînement N−1 pour chaque année d'entrée2021–2026.4 000 USD,
 01/01/2021–01/10/2026, capital/positions conservés entre années.
 Q088 TOP20 %→TOP10 et Q051 TOP10 %→TOP5, chacun en score>0,60/AUC≥0,60
@@ -22,10 +64,12 @@ et score>0,50/AUC≥0,50. SL5 sans TP/trailing, position complète, entrée J+1,
 20 séances puis open21. Q088 plafond2× et B4/DD15 ; Q051 plafond1× et
 contrôleur/liquidation off. Capacité margin2×, risque1,25 %, poids20 %.
 Prévisions2021–2026 finalisées, données qualifiées et témoin annuel H20 IHM2021
-reproduit. Les quatre simulations continues sont en cours en parallèle ; import
-historique automatique pour chaque réussite.
+reproduit. Les quatre simulations continues et leurs imports sont terminés sans
+échec : Q051_060 +85,28 % / DD −29,88 % ; Q051_050 +94,36 % / DD −45,58 % ;
+Q088_060 +23,60 % / DD −30,66 % ; Q088_050 −7,14 % / DD −49,24 %.
 Pas de nouvelle formation de modèle ni ordre. Les scores sont persistés par
-ML Predict ; prix SQL/replays en lecture seule. Aucun résultat continu disponible.
+ML Predict ; prix SQL/replays en lecture seule. Les limites de couverture restent
+visibles dans les quatre résultats natifs `INCOMPLETE_COVERAGE`.
 [Protocole et modèles](winner_continu_h20_quatre_profils_20261108.md).
 
 ## 2026-11-08 — Continu Q051 0,60 et variantes Q051/Q088 0,50

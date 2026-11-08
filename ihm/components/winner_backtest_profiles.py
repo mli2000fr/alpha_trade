@@ -7,6 +7,8 @@ No production configuration or model contract is modified.
 import streamlit as st
 
 Q088_MARKER = 'bt_winner_q088_size125_b4dd15_defaults_20261107'
+DEFAULT_PROFILE = 'q051'
+DEFAULT_PROFILE_MARKER = 'bt_winner_q051_default_20261108'
 Q088_WIDGETS = {
     'bt_winner_daily_entry': True,
     'bt_wp_sl': 5., 'bt_wp_tp_enabled': False, 'bt_wp_trailing_enabled': False,
@@ -40,8 +42,8 @@ Q051_WIDGETS = {
 }
 
 PROFILE_LABELS = {
-    'q088': 'Q088 — risque réduit + B4/DD15 (défaut)',
-    'q051': 'Q051 — seuils 0,50, plafond de risque 1×',
+    'q051': 'Q051 — seuils 0,50, plafond de risque 1× (défaut)',
+    'q088': 'Q088 — risque réduit + B4/DD15',
     'production': 'Réglages de production — config.yaml',
     'reference': 'Ancien test de référence',
 }
