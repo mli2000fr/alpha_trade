@@ -4,11 +4,12 @@ Consumes B5/B7 immutable joins; never writes to databases or model serving paths
 """
 from __future__ import annotations
 
+from service.market import cn_collection_storage as cn_storage
 import argparse
 import json
 import logging
 import math
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 
 import lightgbm as lgb
 import numpy as np
@@ -79,7 +80,7 @@ def load_history(*, semester: str, lag: int, columns: list[str], roots: dict,
                 expected = inputs["b5"]["folds"][f"{name}-lag{lag}"]["joined_sha256"]
             if _sha(path) != expected:
                 raise ValueError(f"Changed joined input {path}")
-            pieces.append(pd.read_parquet(path, columns=columns))
+            pieces.append(cn_storage.read_parquet(path, columns=columns))
     frame = pd.concat(pieces, ignore_index=True)
     if frame.duplicated(["session_date", "instrument_id"]).any():
         raise ValueError("Duplicate oracle-margin event")
@@ -186,7 +187,7 @@ def train_fold(*, task: str, semester: str, model_name: str, inputs: dict,
         if predictions.duplicated(["session_date", "instrument_id"]).any():
             raise ValueError("Duplicate OOF prediction")
         path = output / "predictions.parquet"
-        predictions.to_parquet(path, index=False)
+        cn_storage.write_parquet(predictions,path, index=False)
         outcome.update(status="OOS_RESEARCH_PROXY_ONLY", predictions_sha256=_sha(path),
                        predictions_rows=len(predictions), training_executed=True,
                        serving_enabled=False, strict_ml_allowed=False)
@@ -261,7 +262,7 @@ def aggregate(*, output: Path, inputs: dict) -> dict:
                 if (report["status"] != "OOS_RESEARCH_PROXY_ONLY"
                         or report["predictions_sha256"] != _sha(path)):
                     raise ValueError(f"Incomplete B8 fold {folder}")
-                frame = pd.read_parquet(path)
+                frame = cn_storage.read_parquet(path)
                 frame["session_date"] = pd.to_datetime(frame["session_date"])
                 if len(frame) != report["predictions_rows"]:
                     raise ValueError("OOF row count changed")

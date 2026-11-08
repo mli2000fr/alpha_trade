@@ -5,12 +5,40 @@ import streamlit as st
 from backtesting.winner_settings import apply_risk_settings, apply_policy_settings
 
 
-def reset_execution_settings():
+REFERENCE_DEFAULTS_MARKER='bt_winner_reference_defaults_20261105'
+GROSS_DEFAULTS_MARKER='bt_winner_gross_default_2_20261105'
+
+
+def initialize_reference_profile():
+    """Migrate open sessions to the requested Q088 defaults once."""
+    if not st.session_state.get(REFERENCE_DEFAULTS_MARKER):
+        for key in ('bt_wp_confirmation','bt_wp_delay','bt_wr_weight','bt_wr_close',
+                    'bt_winner_factors','bt_wr_controller_enabled'):
+            st.session_state.pop(key,None)
+        st.session_state['bt_winner_settings_profile']='reference'
+        st.session_state[REFERENCE_DEFAULTS_MARKER]=True
+    if not st.session_state.get(GROSS_DEFAULTS_MARKER):
+        st.session_state['bt_wr_gross']=2.
+        st.session_state[GROSS_DEFAULTS_MARKER]=True
+    from ihm.components.winner_backtest_profiles import Q088_MARKER,apply_q088_defaults
+    if not st.session_state.get(Q088_MARKER):
+        apply_q088_defaults()
+    return st.session_state.get('bt_winner_settings_profile','q088')
+
+
+def reset_execution_settings(profile='production'):
     for key in list(st.session_state):
-        if (key.startswith(('bt_wr_','bt_wp_')) or key in ('bt_winner_positions','bt_winner_factors','bt_winner_factor_cap','bt_winner_excluded_symbols','bt_winner_ignore_missing_intraday',
+        if (key.startswith(('bt_wr_','bt_wp_','bt_per_symbol_','bt_q088_selection_','bt_research_selection_','bt_winner_top_','bt_winner_per_symbol_long_')) or key in ('bt_winner_positions','bt_winner_factors','bt_winner_factor_cap','bt_winner_excluded_symbols','bt_winner_ignore_missing_intraday',
                 'bt_winner_custom_costs','bt_winner_costs','bt_winner_interest','bt_winner_options_filter',
-                'bt_winner_coverage','bt_winner_top')):
+                'bt_winner_coverage','bt_winner_top','bt_winner_daily_entry')):
             del st.session_state[key]
+    st.session_state['bt_winner_settings_profile']=profile
+    st.session_state['bt_winner_daily_entry']=profile!='production'
+    st.session_state[REFERENCE_DEFAULTS_MARKER]=True
+    from ihm.components.winner_backtest_profiles import Q088_MARKER,apply_research_defaults
+    st.session_state[Q088_MARKER]=True
+    if profile in ('q088','q051'):
+        apply_research_defaults(profile)
 
 
 def percent(label,value,key,*,disabled=False,maximum=100.):
@@ -18,10 +46,17 @@ def percent(label,value,key,*,disabled=False,maximum=100.):
         format='%.2f',key=key,disabled=disabled))/100.
 
 
-def render_policy_settings(policy):
+def render_policy_settings(policy,*,reference_defaults=False,daily_entry_enabled=False):
     values={}
-    with st.expander('Protections et confirmation Winner',expanded=False):
-        st.caption('Valeurs de production préremplies. Les changements ci-dessous concernent ce backtest uniquement.')
+    with st.container():
+        profile=st.session_state.get('bt_winner_settings_profile')
+        st.caption((f'Profil {profile.upper()} : SL5 %, sans TP/trailing, H10, position complète, sans confirmation. '
+                    if profile in ('q088','q051') else
+                    'Défauts du test de référence : aucune confirmation et aucun délai SIP. '
+                    'Les autres protections viennent de config.yaml. ' if reference_defaults else
+                    'Valeurs par défaut : section winner_pyramiding de config.yaml. ')+
+                   'Ces réglages sont modifiables pour ce backtest uniquement. '
+                   'Le profil « Réglages de production » recharge les valeurs de configuration.')
         values['stop_loss_pct']=percent('SL initial (%)',policy.stop_loss_pct,'bt_wp_sl',maximum=99.99)
         tp=st.checkbox('Activer un TP en prix',value=policy.take_profit_pct is not None,key='bt_wp_tp_enabled')
         values['take_profit_pct']=percent('TP (%)',policy.take_profit_pct or .20,'bt_wp_tp',
@@ -44,11 +79,15 @@ def render_policy_settings(policy):
                 policy.reinforcement_trigger_pct,'bt_wp_add_trigger',maximum=99.99)
             st.caption('Un seul ajout, dans le budget initial. Aucun ajout avec une position initiale déjà complète.')
         values['confirmation_bars']=int(st.number_input('Clôtures 5m de confirmation',min_value=0,max_value=12,
-            value=policy.confirmation_bars,key='bt_wp_confirmation'))
+            value=0 if reference_defaults else policy.confirmation_bars,key='bt_wp_confirmation',disabled=daily_entry_enabled))
         values['entry_valid_sessions']=int(st.number_input('Séances maximales pour attendre l’entrée',min_value=1,max_value=60,
-            value=policy.entry_valid_sessions,key='bt_wp_validity'))
+            value=policy.entry_valid_sessions,key='bt_wp_validity',disabled=daily_entry_enabled))
+        if daily_entry_enabled:
+            values['entry_valid_sessions']=1
+            st.caption('Entrée initiale uniquement à l’ouverture J+1, sans confirmation 5m ni nouvelle tentative. '
+                       'Le délai SIP et les confirmations restent applicables au suivi et au renforcement éventuel.')
         values['market_data_delay_seconds']=int(st.number_input('Retard SIP accepté (secondes)',min_value=0,max_value=3600,
-            value=policy.market_data_delay_seconds,step=1,key='bt_wp_delay',
+            value=0 if reference_defaults else policy.market_data_delay_seconds,step=1,key='bt_wp_delay',
             help='0 = temps réel ; de 900 à 3600 = mode retardé. Les bougies restent sur leur grille 5m.'))
         values['delayed_entry_limit_buffer_pct']=float(st.number_input('Marge du prix limite retardé (%)',min_value=0.,
             max_value=5.,value=100.*policy.delayed_entry_limit_buffer_pct,key='bt_wp_delayed_buffer'))/100.
@@ -59,16 +98,21 @@ def render_policy_settings(policy):
     return apply_policy_settings(policy,changes),changes
 
 
-def render_risk_settings(risk):
+def render_risk_settings(risk,*,reference_defaults=False):
     values={}
     with st.expander('Dimensionnement et limites du portefeuille',expanded=True):
+        values['max_gross_exposure']=float(st.number_input('Plafond d’exposition brute du risque (× capital)',
+            min_value=.01,max_value=2.,value=2. if reference_defaults else min(2.,float(risk.max_gross_exposure)),step=.1,
+            format='%.2f',key='bt_wr_gross',
+            help='Propre à ce backtest : 1 = 100 % du capital courant ; 2 = 200 %. '
+                 'La limite effective reste bornée par le compte simulé et le levier autorisé.'))
         values['risk_per_trade_pct']=percent('Risque budgété par entrée (%)',risk.risk_per_trade_pct,'bt_wr_budget',maximum=99.99)
         minimum=float(st.number_input('Montant minimum par position ($)',min_value=.01,
             value=risk.effective_min_notional,key='bt_wr_minimum'))
         values['min_position_notional']=minimum
         if risk.enforce_min_notional is not None:
             values['enforce_min_notional']=minimum
-        values['max_position_weight']=percent('Poids maximal par position (%)',risk.max_position_weight,'bt_wr_weight')
+        values['max_position_weight']=percent('Poids maximal par position (%)',.20 if reference_defaults else risk.max_position_weight,'bt_wr_weight')
         sector=st.checkbox('Limiter le poids par secteur',value=risk.sector_weight_limit_enabled,key='bt_wr_sector_weight_enabled')
         values['sector_weight_limit_enabled']=sector
         values['max_sector_weight']=percent('Poids maximal par secteur (%)',risk.max_sector_weight,'bt_wr_sector_weight',disabled=not sector)
@@ -78,14 +122,19 @@ def render_risk_settings(risk):
             value=risk.max_tickers_per_sector or 0,key='bt_wr_sector_count',disabled=not count))
         values['max_tickers_per_sector']=(cap or None) if count else risk.max_tickers_per_sector
     with st.expander('Drawdown, pertes quotidiennes et volatilité'):
-        st.caption(f'Contrôleur de risque : {risk.policy.upper()}, comme en production. '
-                   'Les seuils déclenchent une réaction ; un gap peut les dépasser.')
-        values['max_portfolio_drawdown_pct']=percent('Seuil de drawdown (%)',risk.max_portfolio_drawdown_pct,'bt_wr_dd',maximum=99.99)
-        values['max_daily_loss_pct']=percent('Seuil de perte quotidienne (%)',risk.max_daily_loss_pct,'bt_wr_dayloss',maximum=99.99)
+        controller=st.checkbox('Appliquer le contrôleur DD / perte quotidienne / B4',
+            value=not reference_defaults,key='bt_wr_controller_enabled',
+            help='Propre au backtest : désactive les blocages DD/perte quotidienne, la réduction B4 et leur liquidation. '
+                 'Le SL, le TP, le trailing et les limites de dimensionnement restent applicables.')
+        st.caption((f'Contrôleur de risque actif : {risk.policy.upper()}. Les seuils déclenchent une réaction ; '
+                    'un gap peut les dépasser.' if controller else
+                    'Contrôleur DD/perte quotidienne/B4 désactivé pour ce backtest. Le drawdown reste mesuré dans le rapport.'))
+        values['max_portfolio_drawdown_pct']=percent('Seuil de drawdown (%)',risk.max_portfolio_drawdown_pct,'bt_wr_dd',maximum=99.99,disabled=not controller)
+        values['max_daily_loss_pct']=percent('Seuil de perte quotidienne (%)',risk.max_daily_loss_pct,'bt_wr_dayloss',maximum=99.99,disabled=not controller)
         close=st.checkbox('Liquider des positions au déclenchement du coupe-circuit',
-            value=risk.force_close_on_breaker,key='bt_wr_close')
-        values['force_close_on_breaker']=close
-        values['force_close_pct']=percent('Part des positions à liquider (%)',risk.force_close_pct,'bt_wr_close_pct',disabled=not close)
+            value=False if reference_defaults else risk.force_close_on_breaker,key='bt_wr_close',disabled=not controller)
+        values['force_close_on_breaker']=bool(controller and close)
+        values['force_close_pct']=percent('Part des positions à liquider (%)',risk.force_close_pct,'bt_wr_close_pct',disabled=not(controller and close))
         vol=st.checkbox('Appliquer une cible de volatilité',value=risk.target_annual_vol is not None,key='bt_wr_vol')
         values['target_annual_vol']=percent('Volatilité annuelle cible (%)',risk.target_annual_vol or .13,'bt_wr_vol_pct') if vol else None
         if vol:
@@ -113,4 +162,4 @@ def render_risk_settings(risk):
         st.json(asdict(edited))
         st.caption('Les champs affichés en lecture seule ne sont pas des commandes supplémentaires du replay. '
                    'La qualification complète et les limites sont consignées dans le rapport.')
-    return edited,changes
+    return edited,changes,controller

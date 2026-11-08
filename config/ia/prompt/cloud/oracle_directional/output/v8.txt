@@ -1,0 +1,2 @@
+
+Return direction_score 1..10; the application derives direction using the frozen direction_score_policy. Do not output decision.

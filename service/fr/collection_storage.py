@@ -2,7 +2,8 @@
 
 Logical resource keys retain old names to reuse existing SQL history. They are
 not filesystem paths in SQL mode. Missing SQL data never falls back to disk.
-The file adapter is for historical/offline tools outside an operational session.
+Historical FIRDS paths also route to SQL outside an operational session. Other
+offline folders keep their file adapter.
 """
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -141,7 +142,7 @@ class Repository:
         return [self.root/key for key in sorted(keys) if key.startswith(prefix)
                 and '/' not in key[len(prefix):] and fnmatch.fnmatch(key[len(prefix):],pattern)]
 
-    def put(self,path,raw,*,is_json=False):
+    def put(self,path,raw,*,is_json=False,preserve_existing_head=False):
         from service.fr import batch_research_store as typed
         batch,rel,key = self.identity(path)
         content, now = sha(raw), clock()
@@ -195,7 +196,7 @@ class Repository:
                 raise ValueError('Collision de clé de ressource SQL')
             if current is None:
                 c.execute(text('INSERT INTO fr_collection_heads VALUES (:batch,:key,:hash,:rel,:now)'),values)
-            else:
+            elif not preserve_existing_head:
                 c.execute(text('UPDATE fr_collection_heads SET content_sha256=:hash,updated_at=:now '
                     'WHERE batch_name=:batch AND resource_sha256=:key'),values)
         if getattr(self,'current_result',None):
@@ -246,7 +247,10 @@ class Repository:
 
 
 def read_bytes(path):
-    return active().get(path) if active() else Path(path).read_bytes()
+    if active():
+        return active().get(path)
+    from service.fr.firds_storage import read_bytes as read_firds
+    return read_firds(path)
 
 
 def read_text(path,encoding='utf-8'):
@@ -254,11 +258,17 @@ def read_text(path,encoding='utf-8'):
 
 
 def exists(path):
-    return active().exists(path) if active() else Path(path).exists()
+    if active():
+        return active().exists(path)
+    from service.fr.firds_storage import repository, is_file
+    return is_file(path) if repository(path) is not None else Path(path).exists()
 
 
 def paths(folder,pattern='*.json'):
-    return active().paths(folder,pattern) if active() else list(Path(folder).glob(pattern))
+    if active():
+        return active().paths(folder,pattern)
+    from service.fr.firds_storage import paths as firds_paths
+    return firds_paths(folder,pattern)
 
 
 def write_bytes(path,raw):
@@ -298,7 +308,10 @@ def release_lock(path):
 
 
 def zip_source(path):
-    return io.BytesIO(read_bytes(path)) if active() else path
+    if active():
+        return io.BytesIO(read_bytes(path))
+    from service.fr.firds_storage import zip_source as firds_zip
+    return firds_zip(path)
 
 
 def esma_download(item,root,context):

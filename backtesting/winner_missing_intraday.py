@@ -17,7 +17,7 @@ from common.winner_pyramiding import regular_bounds
 LOG=logging.getLogger(__name__)
 
 
-def required_windows(selected,end,policy):
+def required_windows(selected,end,policy,*,daily_entry=False):
     """Merged potential entry/holding windows, not years before a ticker's signal."""
     if selected.empty:return {}
     calendar=get_market_calendar('US_EQ',allow_us_weekday_fallback=False)
@@ -29,16 +29,17 @@ def required_windows(selected,end,policy):
         ranges=[]
         for day in pd.to_datetime(rows.trade_date).dt.date:
             if day not in indices:raise ValueError('Oracle signal outside official screening sessions')
-            start=indices[day]
+            start=indices[day]+(1 if daily_entry else 0)
+            if start>=len(days):continue
             last=(len(days)-1 if policy.horizon_sessions is None else
-                min(len(days)-1,start+policy.entry_valid_sessions+policy.horizon_sessions))
+                min(len(days)-1,start+(0 if daily_entry else policy.entry_valid_sessions)+policy.horizon_sessions))
             ranges.append((start,last))
         merged=[]
         for start,last in sorted(ranges):
             if merged and start<=merged[-1][1]+1:
                 merged[-1]=(merged[-1][0],max(last,merged[-1][1]))
             else:merged.append((start,last))
-        windows[symbol]=[(days[start],days[last]) for start,last in merged]
+        if merged:windows[symbol]=[(days[start],days[last]) for start,last in merged]
     return windows
 
 
@@ -70,8 +71,8 @@ def classify_missing(windows,counts):
     return missing
 
 
-def screen_missing_intraday(conn,selected,end,policy,*,progress=None,batch_size=32):
-    windows=required_windows(selected,end,policy)
+def screen_missing_intraday(conn,selected,end,policy,*,progress=None,batch_size=32,daily_entry=False):
+    windows=required_windows(selected,end,policy,daily_entry=daily_entry)
     symbols=sorted(windows)
     counts=[]
     # Counts only qualified raw SIP regular 5m rows, on the official candle grid.
@@ -116,6 +117,11 @@ def screen_missing_intraday(conn,selected,end,policy,*,progress=None,batch_size=
 
 
 def log_missing_summary(report):
+    if report.get('exclusion_policy')=='PER_ENTRY_DAY_HOLDING_WINDOW_NO_ORACLE_REFILL':
+        LOG.warning('Bilan intraday : %d séances réparées ; %d séances encore incomplètes sur %d titres ; '
+            'voir entry-exclusions.csv pour le tableau des entrées exclues par date',
+            report['repaired_sessions'],report['missing_sessions'],report['symbols_checked'])
+        return
     LOG.warning('Bilan titres ignorés pour données intraday absentes : %d/%d titres ; %d séances incomplètes',
         len(report['excluded_symbols']),report['symbols_checked'],report['missing_sessions'])
     for symbol in report['excluded_symbols']:

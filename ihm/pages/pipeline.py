@@ -1296,8 +1296,11 @@ def _render_ml_train_scope_block(
 def _prime_ml_train_symbol_source() -> None:
     """Replace the former automatic training default once, preserving manual choices."""
     key = 'pipeline_ml_train_symbol_source'
+    from common.universe_files import is_retired_universe_source
+    if is_retired_universe_source(st.session_state.get(key)):
+        st.session_state[key] = DEFAULT_ML_TRAIN_SYMBOL_SOURCE
     if not st.session_state.get(ML_TRAIN_SOURCE_DEFAULT_VERSION_KEY):
-        if st.session_state.get(key) in (None, '', 'universe-file:oracle_balanced_400_202512.txt'):
+        if st.session_state.get(key) in (None, ''):
             st.session_state[key] = DEFAULT_ML_TRAIN_SYMBOL_SOURCE
         st.session_state[ML_TRAIN_SOURCE_DEFAULT_VERSION_KEY] = True
     st.session_state.setdefault(key, DEFAULT_ML_TRAIN_SYMBOL_SOURCE)
@@ -1306,8 +1309,11 @@ def _prime_ml_train_symbol_source() -> None:
 def _prime_ml_predict_symbol_source() -> None:
     """Migrate the former automatic default once; keep subsequent manual choices."""
     key = "pipeline_ml_predict_symbol_source"
+    from common.universe_files import is_retired_universe_source
+    if is_retired_universe_source(st.session_state.get(key)):
+        st.session_state[key] = DEFAULT_ML_PREDICT_SYMBOL_SOURCE
     if not st.session_state.get(ML_PREDICT_SOURCE_DEFAULT_VERSION_KEY):
-        if st.session_state.get(key) in (None, "", "universe-file:oracle_balanced_400_202512.txt"):
+        if st.session_state.get(key) in (None, ""):
             st.session_state[key] = DEFAULT_ML_PREDICT_SYMBOL_SOURCE
         st.session_state[ML_PREDICT_SOURCE_DEFAULT_VERSION_KEY] = True
     st.session_state.setdefault(key, DEFAULT_ML_PREDICT_SYMBOL_SOURCE)
@@ -1949,6 +1955,9 @@ def _render_launchable_step_panel(
             state_machine_lock_reason = _pipeline_state_machine_lock_reason(step.key, latest_by_step)
             if llm_handoff is not None and llm_handoff.error:
                 state_machine_lock_reason = llm_handoff.error
+            if step.key == 'execution' and options.options_filter_enabled:
+                from ihm.services.options_prediction_review import execution_publication_block_reason
+                state_machine_lock_reason = execution_publication_block_reason(options,all_runs) or state_machine_lock_reason
             live_guard_lock_reason = (
                 "Gel IHM actif : un run d'exécution live est encore en cours."
                 if bool(live_guard.get("active", False))
@@ -2080,7 +2089,10 @@ def _render_launchable_step_panel(
 
         if step.key == 'ml_predict':
             st.divider()
-            if options.options_filter_enabled:
+            from ihm.components.oracle_path_directional_review import render as render_path_directions
+            if render_path_directions(options):
+                pass
+            elif options.options_filter_enabled:
                 _render_options_filter_review(options, all_runs)
             else:
                 _render_ml_predict_review(options)
@@ -2155,13 +2167,18 @@ def render() -> None:
         return
 
     options, live_confirmed = _build_launch_options()
+    from ihm.services.pipeline_runner import path_directional_options
+    raw_options=options
+    options=path_directional_options(options)
+    if options is not raw_options:
+        st.info('Bundle parcours sélectionné : TOP Oracle → TOP LONG par titre → risque → Winner. '
+                'Les sélections options/GPT sont ignorées pour ce batch ; aucun cumul de filtres.')
     with st.expander(f'🌐 Audit des sélections {load_filter_config().provider_label} — {load_filter_config().mode_label} — PAPER'):
         _llm_audit_id = st.text_input('Identifiant analyse à consulter',
             value=options.llm_filter_run_id or '', key='llm_directional_audit_id')
         if st.button('Consulter la sélection et les motifs', key='llm_directional_audit_load',
                      disabled=not bool(_llm_audit_id.strip())):
             try:
-                from database.connection import get_sqlalchemy_engine
                 from service.llm_directional.report import report as _llm_report
                 _llm_audit = _llm_report(get_sqlalchemy_engine(), _llm_audit_id.strip())
                 st.caption(f"{_llm_audit['status']} · {_llm_audit['trade_date']} · batch {_llm_audit['batch_id']}")
@@ -2184,6 +2201,9 @@ def render() -> None:
 
     _render_workflow_launcher(options, live_confirmed, db_config)
     _render_runtime_center()
+    from ihm.components.pipeline_unlock import render_pipeline_unlock
+    _, unlock_records, _, _, _ = _build_pipeline_run_context()
+    render_pipeline_unlock(get_sqlalchemy_engine, options, unlock_records)
     _render_step_panels(options, live_confirmed, db_config, live_guard)
     # Keep the dialog independent from the 2-second polling fragment: its
     # period widgets must remain registered after each pipeline refresh.

@@ -1,6 +1,8 @@
 """Reconstruct pre-anchor reference coverage in research only, never release serving."""
 from __future__ import annotations
 
+from service.fr import firds_storage
+
 import argparse
 from datetime import UTC, date, datetime, timedelta
 import hashlib
@@ -54,7 +56,7 @@ def qualify(history, candidates, sessions, anomalies):
 def run(packet_path, output_dir, *, root=ROOT, full_date='2026-09-12'):
     packet_path, output = [scoped_path(str(p), root) for p in (packet_path, output_dir)]
     output.mkdir(parents=True, exist_ok=False)
-    data = packet_path.read_bytes()
+    data = firds_storage.read_bytes(packet_path)
     packet = json.loads(data)
     if packet['market_code'] != 'FR_EQ' or packet.get('serving_allowed') is not False:
         raise ValueError('Non-serving FR packet required')
@@ -89,7 +91,7 @@ def run(packet_path, output_dir, *, root=ROOT, full_date='2026-09-12'):
     reusable = root / 'artifacts/fr/esma_firds/replay_2018'
     for number, item in enumerate(index, 1):
         local = reusable / '2026' / item['file']
-        if local.is_file():
+        if firds_storage.is_file(local):
             proof = _check(local, item.get('md5'))
             reused = True
         else:

@@ -13,7 +13,7 @@ import msvcrt
 import sys
 import uuid
 from datetime import UTC, date, datetime, time
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from zoneinfo import ZoneInfo
 
 import yaml
@@ -33,7 +33,7 @@ BATCH_NAME = "cn_oracle_prospective_daily"
 
 def _path(value: str | Path, *, base: Path) -> Path:
     path = Path(value)
-    return path if path.is_absolute() else base / path
+    return path if path.is_absolute() else Path(base) / path
 
 
 def plan(now: datetime, calendar: dict, *, earliest: time = time(18, 0)) -> dict:
@@ -61,6 +61,7 @@ def _digest(path: Path) -> str:
 
 
 def verify_published(folder: Path, *, decision: date) -> dict:
+    folder = Path(folder)
     report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
     export = folder / "oracle_top20.parquet"
     if (report.get("status") != "PROSPECTIVE_RESEARCH_ONLY"
@@ -133,21 +134,11 @@ def execute(*, batch_config: Path = ROOT / "batch.yaml", now: datetime | None = 
     oracle_folder = _path(cfg["oracle_output_root"], base=base) / decision["decision"]
     output_root.mkdir(parents=True, exist_ok=True)
     lock_path = output_root / f"{session}.lock"
-    with lock_path.open("a+b") as lock:
-        if lock.seek(0, 2) == 0:
-            lock.write(b"0")
-            lock.flush()
-        lock.seek(0)
-        try:
-            msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
-        except OSError as exc:
-            raise RuntimeError("Another CN Oracle daily run is active") from exc
-        try:
-            return _execute_locked(cfg, base, output_root, oracle_folder,
-                                   session, decision_day, decision, catalog_identity)
-        finally:
-            lock.seek(0)
-            msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+    from service.market.cn_collection_storage import campaign_lock
+    with campaign_lock(lock_path):
+        return _execute_locked(cfg, base, output_root, oracle_folder,
+                               session, decision_day, decision, catalog_identity)
+
 
 
 def _execute_locked(cfg: dict, base: Path, output_root: Path, oracle_folder: Path,

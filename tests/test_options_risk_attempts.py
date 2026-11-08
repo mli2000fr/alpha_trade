@@ -108,3 +108,18 @@ def test_parallel_risk_attempt_is_refused(env):
             with risk_attempt(folder, report):
                 pytest.fail('parallel risk entered')
     assert not (folder/'risk.claim.json').exists()
+
+
+def test_factor_checkpoint_can_retry_but_publication_still_prevents_it(env):
+    from service.options_directional.risk_attempts import record_factor_lookup_failure
+    _,_,_,report=env
+    folder=store.directory(RUN)
+    with risk_attempt(folder,report) as old:
+        record_factor_lookup_failure(folder,old['attempt_id'],report,ValueError('BAND unqualified'))
+    with risk_attempt(folder,report) as new:
+        assert new['attempt_id']!=old['attempt_id']
+        store.write_new(folder/'risk_summary.json',{'partial':True})
+        with pytest.raises(FileExistsError,match='aucune preuve'):
+            record_factor_lookup_failure(folder,new['attempt_id'],report,ValueError('late'))
+    with pytest.raises(FileExistsError,match='issue ambiguë'):
+        with risk_attempt(folder,report):pytest.fail('output must block retry')

@@ -567,7 +567,7 @@ class RiskRepository:
         if sources is None and _has_source:
             # An amplitude policy is not a per-symbol directional model. It
             # requires an explicitly selected Oracle batch/gate upstream.
-            source_condition = " AND COALESCE(prediction.source, '') <> 'oracle_path_policy'"
+            source_condition = " AND COALESCE(prediction.source, '') NOT IN ('oracle_path_policy','oracle_path_long')"
         if sources:
             unique_sources = sorted({str(s).strip().lower() for s in sources if s})
             if unique_sources:

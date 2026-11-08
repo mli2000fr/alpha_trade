@@ -6,6 +6,8 @@ reconstruction as-of complète exige FULINS initial et DLTINS successifs.
 """
 from __future__ import annotations
 
+from service.fr import firds_storage
+
 import argparse
 import hashlib
 import json
@@ -15,7 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from service.fr.eodhd_backfill import _atomic_json
+from service.fr.firds_storage import write_json as _atomic_json
 
 
 def _value(parent: ET.Element | None, path: str) -> str | None:
@@ -31,11 +33,11 @@ def extract_reference_files(archives: list[Path], target_isins: set[str],
         expected = expected_md5.get(archive.name)
         if not expected:
             raise ValueError(f"checksum ESMA manquant : {archive.name}")
-        actual = hashlib.md5(archive.read_bytes()).hexdigest()  # noqa: S324 - empreinte publiée ESMA
+        actual = hashlib.md5(firds_storage.read_bytes(archive)).hexdigest()  # noqa: S324 - empreinte publiée ESMA
         if actual.lower() != expected.lower():
             raise ValueError(f"checksum ESMA incorrect : {archive.name}")
         file_count = 0
-        with zipfile.ZipFile(archive) as compressed:
+        with zipfile.ZipFile(firds_storage.zip_source(archive)) as compressed:
             members = compressed.namelist()
             if len(members) != 1 or not members[0].endswith(".xml"):
                 raise ValueError(f"archive ESMA inattendue : {archive.name}")
@@ -116,12 +118,12 @@ def main() -> None:
                         default=Path("artifacts/fr/esma_firds/sprint5_reference_pilot.json"))
     args = parser.parse_args()
     checksums = dict(item.split("=", 1) for item in args.md5)
-    subset = json.loads(args.subset.read_text(encoding="utf-8"))
+    subset = json.loads(firds_storage.read_text(args.subset, encoding="utf-8"))
     if subset.get("rule_version") != "fr_s5_subset_v1":
         raise ValueError("version du pool Sprint 5 inattendue")
     target_isins = {row["isin_reported"] for row in subset["symbols"]
                     if row["status"] == "CANDIDATE_REQUIRES_EXTERNAL_PROOFS"}
-    archives = sorted(args.archives.rglob("FULINS_E_*.zip"))
+    archives = sorted(firds_storage.paths(args.archives, "FULINS_E_*.zip", recursive=True))
     if not archives:
         raise ValueError("aucune archive ESMA FULINS_E")
     matches, files = extract_reference_files(archives, target_isins, checksums)

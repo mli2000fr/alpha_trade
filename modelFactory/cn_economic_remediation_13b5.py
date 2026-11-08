@@ -13,7 +13,7 @@ import json
 from collections import defaultdict
 from datetime import date
 from decimal import Decimal
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from typing import Any
 
 from sqlalchemy import text

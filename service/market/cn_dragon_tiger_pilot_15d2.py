@@ -16,7 +16,7 @@ import time
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from typing import Any
 
 LOG = logging.getLogger(__name__)

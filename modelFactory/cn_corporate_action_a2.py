@@ -6,13 +6,14 @@ sont gardées par symbole/année afin qu'un long backfill soit reprenable.
 
 from __future__ import annotations
 
+from service.market import cn_collection_storage as cn_storage
 import argparse
 import hashlib
 import json
 from collections import Counter, defaultdict
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from typing import Any
 
 import pandas as pd
@@ -352,7 +353,7 @@ def _audit_gate(
         if item is None:
             raise RuntimeError(f"Prédictions OOS verrouillées absentes: {semester}")
         path, source = item
-        frame = pd.read_parquet(path, columns=SAFE_COLUMNS)
+        frame = cn_storage.read_parquet(path, columns=SAFE_COLUMNS)
         pool, masks = select_policies(frame, minimum=protocol["portfolio"]["min_oracle_pool_per_session"])
         provenance.append({"semester": semester, "predictions_sha256": source["predictions_sha256"]})
         for policy in POLICIES:

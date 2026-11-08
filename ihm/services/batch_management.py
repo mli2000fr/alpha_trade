@@ -579,12 +579,14 @@ def read_batch_log_tail(spec: BatchSpec, max_lines: int = 80) -> str:
 
 
 def latest_cn_dragon_research_run(spec: BatchSpec) -> dict[str, Any] | None:
-    """Read CN research status from its file ledger, never the US PIT table."""
+    """Read CN research status from CN SQL resources, never the US PIT table."""
     if spec.name not in CN_RESEARCH_BATCHES:
         return None
+    from service.market.cn_collection_storage import DataPath
     root = Path(str(spec.raw_config.get("output_root") or ""))
     if not root.is_absolute():
         root = PROJECT_ROOT / root
+    root = DataPath(root)
     for path in sorted((root / "runs").glob("run-*.json"), reverse=True):
         try:
             report = json.loads(path.read_text(encoding="utf-8"))
@@ -616,6 +618,8 @@ def read_cn_daily_quality_history(spec: BatchSpec, *, limit: int = 7) -> tuple[d
     root = Path(str(spec.raw_config.get("output_root") or ""))
     if not root.is_absolute():
         root = PROJECT_ROOT / root
+    from service.market.cn_collection_storage import DataPath
+    root = DataPath(root)
     rows: list[dict[str, Any]] = []
     seen_sessions: set[str] = set()
     for path in sorted((root / "runs").glob("run-*.json"), reverse=True):

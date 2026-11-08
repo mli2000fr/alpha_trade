@@ -12,7 +12,7 @@ INT_FIELDS={'max_tickers_per_sector','correlation_lookback_days','correlation_mi
     'concentration_max_consecutive_losses','concentration_blacklist_duration_days'}
 FLOAT_FIELDS={'risk_per_trade_pct','min_position_notional','enforce_min_notional','max_position_weight',
     'max_sector_weight','correlation_threshold','max_portfolio_drawdown_pct','max_daily_loss_pct',
-    'force_close_pct','target_annual_vol','max_portfolio_beta'}
+    'force_close_pct','target_annual_vol','max_portfolio_beta','max_gross_exposure'}
 NULLABLE={'max_tickers_per_sector','enforce_min_notional','target_annual_vol'}
 POLICY_FIELDS={f.name for f in fields(WinnerPyramidingConfig)}-{'enabled'}
 
@@ -40,7 +40,9 @@ def risk_overrides(value):
             valid=type(v) is int and v>=1
         else:
             valid=type(v) in (int,float) and math.isfinite(v) and v>0
-            if key not in ('min_position_notional','enforce_min_notional','max_portfolio_beta'):
+            if key=='max_gross_exposure':
+                valid=valid and v<=2
+            elif key not in ('min_position_notional','enforce_min_notional','max_portfolio_beta'):
                 valid=valid and v<=1
             if key in ('risk_per_trade_pct','max_portfolio_drawdown_pct','max_daily_loss_pct'):
                 valid=valid and v<1

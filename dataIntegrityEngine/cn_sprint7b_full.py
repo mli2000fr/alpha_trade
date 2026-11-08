@@ -7,7 +7,7 @@ import json
 import logging
 from dataclasses import asdict
 from datetime import UTC, date, datetime
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from typing import Any
 
 from database.router import get_market_engine

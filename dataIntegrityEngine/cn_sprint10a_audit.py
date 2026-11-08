@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from service.market import cn_collection_storage as cn_storage
 import argparse
 import hashlib
 import json
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from typing import Any
 
 import pandas as pd
@@ -57,7 +58,7 @@ def audit(root: Path, *, start_year: int = 2018, end_year: int = 2025) -> dict[s
             if not path.exists() or _sha256(path) != item["panel_sha256"]:
                 errors.append(f"{year} H{horizon}: Parquet absent ou SHA différent")
                 continue
-            labels = pd.read_parquet(path, columns=list(AUDIT_COLUMNS))
+            labels = cn_storage.read_parquet(path, columns=list(AUDIT_COLUMNS))
             if len(labels) != expected_rows or len(labels) != int(item["rows"]):
                 errors.append(f"{year} H{horizon}: population différente du panel source")
             if labels.duplicated(["session_date", "instrument_id"]).any():

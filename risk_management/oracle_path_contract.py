@@ -20,17 +20,18 @@ def build_entries(builder, candidates, prices, sector_map, trade_date, return_ma
     from risk_management.models import SelectionScore
     from service.market.new_entry_data_guard import validate_entry_prices
     if any(c.side != 'long' or c.trade_date != trade_date or
-           c.lineage.get('score_semantics') != 'amplitude_rank_not_directional_probability'
+           c.lineage.get('score_semantics') not in ('amplitude_rank_not_directional_probability','per_symbol_long_net_profit_probability')
            for c in candidates):
         raise ValueError('Candidat hors contrat Oracle amplitude LONG/date')
     rejected = validate_entry_prices(prices, [c.symbol for c in candidates], trade_date)
     if rejected:
         raise ValueError(f'Prix/ATR/ADV J non qualifié: {rejected}')
     selections = [SelectionScore(symbol=c.symbol,sector=sector_map.get(c.symbol,'Unknown'),
-        score_used=c.p_side,score_source='oracle_amplitude_rank',snapshot_date=trade_date,
+        score_used=c.p_side,score_source=('per_symbol_long_net_profit_probability' if
+            c.lineage.get('score_semantics')=='per_symbol_long_net_profit_probability' else 'oracle_amplitude_rank'),snapshot_date=trade_date,
         selection_rank=c.side_rank,side='buy',selector_signal_mode='oracle_pure_long',
         universe_run_id=c.universe_run_id,
-        selection_explanation='Oracle amplitude LONG strategy; not a directional probability or expected edge')
+        selection_explanation='Oracle LONG selection; no expected-return edge manufactured from probability/rank')
         for c in candidates]
     return builder.build(selections,prices,return_matrix=return_matrix,trade_date=trade_date,
                          selection_policy='oracle_pure_long')
@@ -61,6 +62,8 @@ def check_compatibility(engine, predictions, *, batch_id, trade_date,
         entry_sessions(day, now=now, min_sessions=21)
         validate_window(day, now=now)
         root, protocol, profile, folds = load_contract(artifacts_dir, batch_id)
+        from modelFactory.oracle_path.directional import enabled, read_predictions, SOURCE
+        directional=enabled(protocol)
         eligible_fold = select_fold(day, folds)
         symbols = sorted(predictions)
         if not symbols or set(symbols)-set(protocol['universe']):
@@ -90,8 +93,18 @@ def check_compatibility(engine, predictions, *, batch_id, trade_date,
                     or not 0 <= float(row['proba_extreme']) <= 1):
                 raise ValueError('Fold ou score Oracle différent du contrat causal')
         for row in policies:
-            if row['source'] != 'oracle_path_policy' or row['predicted_side'] != predictions[row['symbol']].predicted_side:
+            if row['source'] != (SOURCE if directional else 'oracle_path_policy') or row['predicted_side'] != predictions[row['symbol']].predicted_side:
                 raise ValueError('Origine ou direction de la politique Oracle incompatible')
+        if directional:
+            with engine.connect() as conn:
+                full=_load_oracle_rows(conn,dialect=engine.dialect.name,batch_id=batch_id,day=day,
+                    symbols=protocol['universe'],cutoff=now)
+            ranked=read_predictions(engine,root,pd.DataFrame(full).assign(date=day),batch_id,cutoff=now)
+            selected={r.symbol:r for r in ranked[ranked.selected].itertuples()}
+            for symbol,pred in predictions.items():
+                if (symbol not in selected or pred.predicted_side!='long'
+                    or abs(float(pred.proba_long)-selected[symbol].long_probability)>1e-6):
+                    raise ValueError('Prédiction différente du TOP LONG par titre archivé')
         result.update(compatible=True, champion_count=1, validated_fold_count=len(folds), fold_start=eligible_fold,
                       protocol_sha256=protocol['fingerprint'], horizon=protocol['horizon'],
                       score_semantics='amplitude_rank_not_directional_probability',

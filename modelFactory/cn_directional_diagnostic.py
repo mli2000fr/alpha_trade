@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from service.market import cn_collection_storage as cn_storage
 import argparse
 import hashlib
 import json
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from typing import Any
 
 import numpy as np
@@ -280,7 +281,7 @@ def run(*, config_path: Path = DEFAULT_CONFIG, ranking_root: Path = RANKING_OUTP
                 if item is None:
                     raise RuntimeError(f"Artefact Sprint 10-C manquant: H{horizon}/{semester}/{model}")
                 path, report = item
-                frames[model] = pd.read_parquet(path, columns=REQUIRED_COLUMNS)
+                frames[model] = cn_storage.read_parquet(path, columns=REQUIRED_COLUMNS)
                 provenance.append({
                     "horizon": horizon, "semester": semester, "model": model,
                     "predictions_sha256": report["predictions_sha256"],

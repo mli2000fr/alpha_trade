@@ -1,4 +1,4 @@
-"""Exclusive risk attempt; retry only a proven pre-publication lookup failure."""
+"""Exclusive risk attempt; retry only proven pre-publication lookup failures."""
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
@@ -42,6 +42,20 @@ def _failure_path(folder, attempt_id):
 
 def record_universe_lookup_failure(folder, attempt_id, report, error,*,account_id='default'):
     """Called ONLY at the universe-loading checkpoint, never after publication."""
+    _record_lookup_failure(folder,attempt_id,report,error,account_id=account_id,
+                           phase='universe_lookup_before_publication')
+
+
+def record_factor_lookup_failure(folder,attempt_id,report,error,*,account_id='default'):
+    """Called ONLY at factor loading, before decisions/targets are created."""
+    _record_lookup_failure(folder,attempt_id,report,error,account_id=account_id,
+                           phase='factor_lookup_before_publication')
+
+
+def _record_lookup_failure(folder,attempt_id,report,error,*,account_id,phase):
+    for name in ('risk_summary.json','risk_binding.json','execution.claim.json'):
+        if (folder/name).exists():
+            raise FileExistsError('Sortie risque/exécution existante : aucune preuve de reprise créée')
     path = _failure_path(folder, attempt_id)
     claim = json.loads((folder/'risk.claim.json').read_text(encoding='utf-8'))
     if (claim.get('attempt_id') != attempt_id or claim.get('run_id') != report['run_id']
@@ -50,7 +64,7 @@ def record_universe_lookup_failure(folder, attempt_id, report, error,*,account_i
         raise ValueError('Tentative risque incompatible avec le snapshot options')
     write_new(path, dict(attempt_id=attempt_id, run_id=report['run_id'],account_id=account_id,
         claim_sha256=digest(claim), report_sha256=digest(report),
-        phase='universe_lookup_before_publication', retryable=True,
+        phase=phase, retryable=True,
         error_type=type(error).__name__, error=str(error),
         failed_at=datetime.now(timezone.utc).isoformat()))
 
@@ -77,7 +91,7 @@ def risk_attempt(folder, report,*,account_id='default'):
                     or old.get('account_id','default')!=account_id
                     or failure.get('account_id','default')!=account_id
                     or failure.get('attempt_id') != attempt_id or failure.get('run_id') != report['run_id']
-                    or failure.get('phase') != 'universe_lookup_before_publication'
+                    or failure.get('phase') not in ('universe_lookup_before_publication','factor_lookup_before_publication')
                     or failure.get('retryable') is not True
                     or failure.get('claim_sha256') != digest(old)
                     or failure.get('report_sha256') != digest(report)):

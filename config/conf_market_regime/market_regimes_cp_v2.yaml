@@ -233,7 +233,7 @@ risk_management:
   factor_ewma_half_life: 60
   factor_lookback_days: 252
 screener:
-  custom_universe_file: config/ticket_mid_cap_400.txt
+  custom_universe_file: config/univers/univers_filtred_tradable.txt
 market_data:
   bars_provider: eodhd
   quotes_provider_live: yahoo

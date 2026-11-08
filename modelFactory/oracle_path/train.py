@@ -344,6 +344,8 @@ def train_oracle_path(cfg, engine, batch_id, symbols):
     registry = load_security_discontinuities()
     backend=resolve_backend(cfg.oracle_path_backend,enable_catboost=cfg.baseline.enable_catboost)
     training_config=asdict(cfg)
+    if not cfg.oracle_path_directional_enabled:
+        training_config.pop('oracle_path_directional_enabled',None)  # legacy checkpoint fingerprints
     if cfg.oracle_path_backend is None:
         # Keep the pre-existing legacy protocol fingerprint on resume.
         training_config.pop('oracle_path_backend',None)
@@ -360,6 +362,9 @@ def train_oracle_path(cfg, engine, batch_id, symbols):
     if cfg.oracle_path_backend is not None:
         protocol.update(training_backend=backend,champion_selection=selection_policy(backend))
         if backend=='catboost':protocol.update(catboost_objective='Logloss')
+    if cfg.oracle_path_directional_enabled:
+        from .directional import settings
+        protocol['directional_contract']=asdict(settings(horizon=horizon))
     fingerprint = sha256(json.dumps(protocol, sort_keys=True, default=str).encode()).hexdigest()
     protocol_path = root / "protocol.json"
     if protocol_path.exists():
@@ -442,6 +447,13 @@ def train_oracle_path(cfg, engine, batch_id, symbols):
         if len(dataset) != quality["eligible_targets"]:
             raise ValueError("Oracle parcours : features manquantes pour des labels éligibles ; voir quality.json")
         result = fit_folds(dataset, columns, cfg, root, progress)
+        if cfg.oracle_path_directional_enabled:
+            from .directional import train as train_directions
+            directions=train_directions(cfg,engine,root,progress)
+            result['directional_models']=len(directions['models'])
+            result['directional_skipped']=len(directions['skipped'])
+            result['directional_manifest_sha256']=digest(root/'directional/manifest.json')
+            result['directional_selection']='TOP20 Oracle -> TOP5 LONG -> risque -> Winner'
         report = {"status": "completed", "mode": mode, "horizon": horizon, "batch_id": batch_id, "serving_ready": True,
                   "artifact_root": str(root), "quality": quality, "n_features": len(columns), **result}
         atomic_json(root / "report.json", report)

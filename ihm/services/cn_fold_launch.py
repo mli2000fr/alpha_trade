@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 import uuid
 from dataclasses import dataclass, replace
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 
 from database.router import resolve_database_route
 from ihm.services.pipeline_runner import PROJECT_ROOT

@@ -493,7 +493,7 @@ def _render_options_filter_toggle(config, *, llm_enabled=False, paper_allowed=Tr
     if not config.enabled:
         st.session_state[key] = False
     selected = st.checkbox('📊 Filtrage options — volume CALL/PUT + OI après Oracle — PAPER uniquement',
-        value=_session_state_bool(key, config.enabled), key=key,
+        value=_session_state_bool(key, False), key=key,
         disabled=not config.enabled or llm_enabled or not paper_allowed,
         help='config.yaml → options_directional_filter. TOP fixé avant disponibilité des options ; '
              'moitié supérieure couverte en LONG uniquement, aucun SHORT automatique.')
@@ -2767,6 +2767,10 @@ def _render_corporate_actions_block(trade_date: str) -> dict[str, Any]:
 
 
 def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
+    if not st.session_state.get('pipeline_unchecked_defaults_20261104',False):
+        st.session_state['pipeline_options_filter_enabled']=False
+        st.session_state['pipeline_ml_exclude_per_symbol_per_sector']=False
+        st.session_state['pipeline_unchecked_defaults_20261104']=True
     selected_account_id = cast(str | None, st.session_state.get("selected_account_id"))
     execution_defaults = _apply_execution_prefills(selected_account_id)
     fractional_prefs = load_persisted_fractional_trading_preferences()
@@ -3507,7 +3511,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                     "Dates de début ET fin à renseigner dans 9. ML Train. Paramètres dans config.yaml/oracle_barrier. "
                     "Artefacts oracle_barrier séparés ; aucune promotion PAPER/LIVE.")
         ml_oracle_path_model_only = st.checkbox(
-            "🔮 Oracle Extreme parcours — modèle séparé",
+            "🔮 Oracle Extreme parcours",
             value=_session_state_bool("pipeline_ml_oracle_path_model_only", True),
             key="pipeline_ml_oracle_path_model_only",
             disabled=ml_oracle_barrier_model_only,
@@ -3515,7 +3519,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         )
         ml_oracle_research_only = ml_oracle_path_model_only or ml_oracle_barrier_model_only
         if ml_oracle_research_only:
-            st.session_state["pipeline_ml_directional_profiles_enabled"] = False
+            if ml_oracle_barrier_model_only:
+                st.session_state["pipeline_ml_directional_profiles_enabled"] = False
             st.session_state["pipeline_ml_enable_oracle_model"] = False
             st.session_state["pipeline_ml_oracle_model_only"] = False
             st.session_state["pipeline_ml_walkforward"] = True
@@ -3539,8 +3544,9 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                      "Un modèle distinct doit être entraîné pour chaque horizon. Predict reprend l'horizon du modèle choisi ; "
                      "la durée de détention Winner reste configurée séparément."))
             st.info(f"Oracle parcours : H{ml_oracle_horizon}, LightGBM/CatBoost CPU selon le choix ci-dessous, validation walk-forward obligatoire. "
-                    "Choisir les dates de début ET fin dans 9. ML Train. "
-                    "Les options Global/per-symbol et les cibles directionnelles ne sont pas utilisées. "
+                    "Choisir les dates de début ET fin dans T1. ML Train. "
+                    f"Le bundle ci-dessous peut ajouter deux modèles LONG/SHORT par titre en H{ml_oracle_horizon}. "
+                    + "Global reste désactivé. "
                     "Modèles et labels séparés dans oracle_path. Scores raccordés à ML Predict/backtest/live, "
                     "mais sans direction : LONG-only est une politique explicite, ou utiliser un filtre directionnel. "
                     "Aucun compte ni ordre n'est activé par cette case.")
@@ -3554,13 +3560,23 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 help='LightGBM/CatBoost : entraîne uniquement ce modèle. Automatique : entraîne les deux et choisit chaque fold sur la validation. Le choix est figé dans les artefacts et repris par Predict/backtest/live.')
         else:
             ml_oracle_path_backend=None
+        from modelFactory.oracle_path.directional import settings as path_directional_settings
         ml_directional_profiles_enabled = st.checkbox(
             "🧭 Bundle Oracle + deux modèles Per-Symbol LONG/SHORT",
-            value=_session_state_bool("pipeline_ml_directional_profiles_enabled", False),
+            value=_session_state_bool("pipeline_ml_directional_profiles_enabled",
+                path_directional_settings().enabled if ml_oracle_path_model_only else False),
             key="pipeline_ml_directional_profiles_enabled",
-            disabled=ml_oracle_research_only,
-            help="Entraîne dans un seul batch l'Oracle Extreme global puis deux champions par symbole, avec des contrats de features LONG et SHORT indépendants.",
+            disabled=ml_oracle_barrier_model_only,
+            help="Avec Oracle parcours H10/H15/H20 : branches par titre de rentabilité LONG et SHORT au même horizon, puis classement LONG. Sans parcours : ancien bundle directionnel H20.",
         )
+        ml_oracle_path_directional_enabled = bool(ml_oracle_path_model_only and ml_directional_profiles_enabled)
+        if ml_oracle_path_directional_enabled:
+            _path_directional=path_directional_settings(horizon=ml_oracle_horizon)
+            st.info(f'Même batch : Oracle parcours H{ml_oracle_horizon} + modèles annuels LONG et SHORT par titre en H{ml_oracle_horizon}. '
+                    f'Sélection enregistrée : TOP{_path_directional.oracle_top_n} Oracle → TOP{_path_directional.selected_n} selon la probabilité de gain LONG → risque → Winner. '
+                    f'SHORT est entraîné et archivé, sans ordre SHORT. Cibles : SL{100*_path_directional.stop_loss_pct:g} %, sans TP/trailing, sortie open{ml_oracle_horizon+1} ; '
+                    'paramètres dans config.yaml/oracle_path.directional. Les protections Winner restent indépendantes.')
+            ml_directional_profiles_enabled = False  # the terminal-H20 bundle below is a different contract
         oracle_profiles = discover_feature_profiles("oracle") or ["oracle.json"]
         long_profiles = discover_feature_profiles("long") or ["long.json"]
         short_profiles = discover_feature_profiles("short") or ["short.json"]
@@ -4063,7 +4079,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 "🚫 Exclude per-symbol et per-sector (garde Global Ranking + Oracle)",
                 value=_session_state_bool("pipeline_ml_exclude_per_symbol_per_sector", DEFAULT_ML_EXCLUDE_PER_SYMBOL_PER_SECTOR),
                 key="pipeline_ml_exclude_per_symbol_per_sector",
-                help="Ajoute `--exclude-per-symbol-per-sector`. Saute l'entraînement des modèles par ticker (per-symbol) et par secteur (per-sector), mais continue d'entraîner le Global Ranking et l'Oracle Extreme s'ils sont activés ci-dessous/au-dessus. Coché par défaut.",
+                help="Ajoute `--exclude-per-symbol-per-sector`. Saute l'entraînement des modèles par ticker (per-symbol) et par secteur (per-sector), mais continue d'entraîner le Global Ranking et l'Oracle Extreme s'ils sont activés ci-dessous/au-dessus. Décoché par défaut.",
             )
             st.caption("L'option ci-dessous nécessite que le modèle global soit activé.")
 
@@ -4298,6 +4314,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             )
 
         # ── Mode d'entraînement (Sprint 2026-08-03) ──
+        if ml_oracle_path_directional_enabled:
+            st.session_state['pipeline_ml_training_mode']='per_symbol'
         ml_training_mode = cast(
             str,
             st.selectbox(
@@ -4305,6 +4323,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                 options=["per_symbol", "per_sector"],
                 index=1 if st.session_state.get("pipeline_ml_training_mode", "per_symbol") != "per_symbol" else 0,
                 key="pipeline_ml_training_mode",
+                disabled=ml_oracle_path_directional_enabled,
                 help="`per_symbol` = 1 modèle par symbole (legacy). `per_sector` = 1 modèle par secteur GICS (~11 modèles, plus de données).",
             ),
         )
@@ -5292,6 +5311,7 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
             ml_oracle_model_only=bool(ml_oracle_model_only),
             ml_oracle_path_model_only=bool(ml_oracle_path_model_only),
             ml_oracle_path_backend=ml_oracle_path_backend,
+            ml_oracle_path_directional_enabled=ml_oracle_path_directional_enabled,
             ml_oracle_barrier_model_only=bool(ml_oracle_barrier_model_only),
             ml_oracle_barrier_tp_pct=_barrier_config.take_profit_pct if _barrier_config else None,
             ml_oracle_barrier_sl_pct=_barrier_config.stop_loss_pct if _barrier_config else None,

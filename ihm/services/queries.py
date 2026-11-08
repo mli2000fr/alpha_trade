@@ -2034,6 +2034,20 @@ def get_training_runs(limit: int = 20) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
+def get_ml_training_batch_comments() -> dict[str, str]:
+    """Labels for all completed US batches, including standalone Oracles."""
+    rows = safe_query("""
+        SELECT batch_id, comment FROM model_training_batch
+        WHERE status = 'completed' AND market_code = 'US_EQ'
+          AND comment IS NOT NULL AND TRIM(comment) <> ''
+    """)
+    if rows.empty or not {'batch_id', 'comment'}.issubset(rows.columns):
+        return {}
+    return {str(row.batch_id): ' '.join(str(row.comment).split())
+            for row in rows.dropna(subset=['batch_id', 'comment']).itertuples()}
+
+
+@st.cache_data(ttl=60, show_spinner=False)
 def get_completed_ml_training_batches(limit: int = 100) -> pd.DataFrame:
     """Campagnes ML exploitables pour le backtest.
 

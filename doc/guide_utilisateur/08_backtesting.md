@@ -59,6 +59,28 @@ La page détecte une campagne manquante et peut désactiver le lancement. Même 
 le bouton est disponible, contrôler la couverture effective sur toute la
 période.
 
+### Sélection Oracle sans Winner
+
+Dans **Mode de cascade**, le champ **Sélection Oracle par séance** propose
+**TOP 10 %**, **TOP 20 %**, **TOP 10 titres**,
+**TOP 20 titres** (défaut) et **TOP 50 titres**. Ce choix s’applique à Extreme Gate
+ainsi qu’à une campagne Oracle seule détectée automatiquement en mode standard.
+Il ne modifie pas le classement Global Rank des autres campagnes.
+
+Les pourcentages conservent le seuil historique inclusif sur les percentiles du
+jour ; les égalités peuvent donner un nombre légèrement supérieur à la fraction
+nominale. Les nombres fixes sélectionnent au plus N premiers titres par score
+Oracle décroissant (égalité départagée par symbole). La politique tradable
+choisie détermine si l’éligibilité est filtrée avant ou après ce classement.
+Les filtres ATR ou Per-Symbol activés peuvent ensuite éliminer des candidats,
+sans les remplacer par les rangs suivants. Les limites de risque et de capital
+continuent de s’appliquer : TOP 20 titres ne garantit donc pas vingt achats.
+
+La commande et le registre du run conservent le choix :
+`--extreme-gate-pct 0.10` / `0.20`, ou `--extreme-gate-top-n 10` / `20` / `50`.
+`report.json → run_metadata.oracle_selection` indique la sélection effective.
+Le formulaire Winner conserve son propre nombre de premiers titres.
+
 #### Ablation « macro entièrement absente »
 
 La case **Simuler la macro entièrement absente (diagnostic)** ignore le provider
@@ -91,6 +113,27 @@ supposer qu’ils sont identiques au live.
 Le lancement construit une commande explicite et crée un répertoire sous les
 artefacts IHM. Le centre fusionne runs actifs et historique, suit les processus,
 permet arrêt, inspection/téléchargement des logs et suppression ciblée.
+
+Depuis le 7 novembre 2026, les sorties du programme sont écrites directement
+dans `stdout.log` et `stderr.log` sous
+`artifacts/ihm_backtesting_runs/<commande>/<run_id>/`. Elles continuent d'être
+enregistrées si la page est fermée ou l'IHM redémarre. Un suivi en arrière-plan
+met à jour le statut, les compteurs de lignes et les délais d'exécution sans
+attendre une consultation de la page. Le journal combiné regroupe les flux
+selon leur observation ; il ne prouve pas l'ordre exact entre stdout et stderr.
+
+Le centre affiche aussi la progression du replay Winner (phase, séances
+traitées et dernière date), indépendamment du chargement des rapports détaillés.
+En cas d'arrêt, le motif de `artifacts/progress.json` est affiché directement.
+Un historique resté « en cours » peut être réconcilié avec un reçu terminal
+uniquement après vérification de l'absence de processus/verrou actif. Le reçu
+`status_recovery.json` conserve alors l'ancien état ; un message de diagnostic
+récupéré est identifié comme tel, sans inventer les logs ni le code de sortie.
+
+Si les prédictions Oracle sont absentes, le replay reste en échec : exécuter
+ML Predict pour le même batch et les dates de signal nécessaires, y compris
+la séance précédant la première entrée, avant de relancer. Le suivi ne relance
+aucune simulation ni prédiction automatiquement.
 
 Une fin de processus réussie signifie que la commande a retourné sans erreur ;
 vérifier ensuite rapport, nombre de trades, couverture, tickets filtrés,

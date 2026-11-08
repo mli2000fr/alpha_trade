@@ -1,4 +1,4 @@
-"""Research-only exchange Dragon/Tiger observation ledger; no serving or DB writes.
+"""Research-only exchange Dragon/Tiger observation ledger; SQL-primary, no serving or canonical market writes.
 
 An observed timestamp is evidence of *this* retrieval, never a reconstructed
 historical publication timestamp. Historical-date calls remain retrospective.
@@ -12,7 +12,7 @@ import json
 import re
 import uuid
 from datetime import date, datetime, timezone
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from zoneinfo import ZoneInfo
 
 from service.market.cn_dragon_tiger_pilot_15d2 import official_sse, official_szse
@@ -47,6 +47,7 @@ def sanitize_official(sse: list[dict], szse: list[dict]) -> list[dict]:
 
 
 def prior_observations(folder: Path) -> list[dict]:
+    folder = Path(folder)
     result = []
     if folder.exists():
         for path in sorted(folder.glob("snapshot-*.json")):
@@ -114,6 +115,7 @@ def build_snapshot(day: date, sse: list[dict], szse: list[dict],
 
 
 def run(day: date, root: Path, *, collection_context: dict | None = None) -> Path:
+    root = Path(root)
     folder = root / day.isoformat()
     prior = prior_observations(folder)
     sse, sse_meta = official_sse(day.isoformat())

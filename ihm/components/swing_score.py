@@ -128,7 +128,7 @@ def render_swing_score_block() -> None:
                 "Fichier de symboles (séparés par `,`)",
                 type=["txt", "csv"],
                 key=_UPLOADER_KEY,
-                help="Ex. config/ticket_mid_cap_400.txt — un symbole par ligne ou liste séparée par des virgules.",
+                help="Ex. config/univers/univers_filtred_tradable.txt — un symbole par ligne ou liste séparée par des virgules.",
             )
 
         top_n = st.number_input(

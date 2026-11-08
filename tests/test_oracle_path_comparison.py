@@ -108,7 +108,7 @@ def test_real_catboost_serving_champion_no_silent_fallback(tmp_path, monkeypatch
     monkeypatch.setattr(serving, "build_inference_features", lambda *a: pd.DataFrame(
         dict(date=pd.Timestamp(day), symbol=universe, x=np.arange(20, dtype=float))))
     saved = []
-    monkeypatch.setattr(serving, "write_path_predictions", lambda e, f, b: saved.append(f.copy()) or len(f))
+    monkeypatch.setattr(serving, "write_path_predictions", lambda e, f, b, **kw: saved.append(f.copy()) or len(f))
     report = serving.predict_oracle_path_history(SimpleNamespace(url=SimpleNamespace(database="alpha_trade")),
         "batch", day, day, artifacts_dir=tmp_path)
     assert report["n_rows"] == 20 and report["directional"] is False

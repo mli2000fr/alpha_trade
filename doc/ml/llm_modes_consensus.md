@@ -1,5 +1,13 @@
 # Oracle → filtre LLM : Web ou données locales
 
+Depuis le 7 novembre 2026, les textes des prompts sont dans
+`config/ia/prompt/cloud/oracle_directional/`, avec un catalogue versionné.
+Le Python conserve le routage, les schémas JSON et les validations. Le dossier
+`config/ia/prompt/local/oracle_directional/` est réservé à un futur modèle local,
+sans moteur activé ni repli entre runtimes. **`local_data_only` reste un appel
+cloud** utilisant uniquement les données locales fournies.
+[Organisation et modifications](../../config/ia/prompt/README.md).
+
 **Contrat courant — v9 :** `separate_trend_evidence: true` distingue tendance
 1–10 ou indéterminable, qualité des preuves et sélection, pour GPT/DeepSeek dans
 les deux modes. [Contrat v9](llm_tendance_preuves_v9.md). Sans l'option dans une
@@ -17,7 +25,7 @@ nouveau branchement opérationnel effectué par cet audit.
 
 Livraison du 19 octobre 2026. Les nouvelles analyses opérationnelles de l’étape
 10 figent le contexte local puis utilisent l’un des **deux prompts distincts**
-de `service/llm_directional/prompts.py`. Le protocole courant est désormais
+chargés par `service/llm_directional/prompts.py`. Le protocole courant est désormais
 `oracle-fresh-evidence-trend-v7` pour les quatre parcours. Il ajoute le calendrier,
 les extraits SEC et les résumés prix/volume/fondamentaux, avec contrôles de fraîcheur
 par famille. [Contrat v7 et aperçu réel](llm_preuves_fraiches_20261019.md).

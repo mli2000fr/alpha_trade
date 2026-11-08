@@ -1557,13 +1557,17 @@ def _build_run_options() -> BacktestRunOptions:
         st.error(f'Configuration Winner invalide dans config.yaml : {exc}')
         st.stop()  # Never substitute a default execution policy for invalid settings.
     if st.checkbox('Utiliser Winner — Oracle parcours et replay intraday',
-                   value=winner_policy.enabled, key='bt_use_winner'):
+                   value=winner_policy.enabled, key='bt_use_winner',
+                   help='Inclut le parcours TOP Oracle → TOP LONG per-symbol pour les bundles compatibles. '
+                        'La confirmation avant achat reste réglable dans les paramètres Winner (0 = sans confirmation).'):
         from ihm.components.winner_backtest import render_winner_backtest
         return render_winner_backtest()
     st.caption(
         "Le backtest exécute `python -m backtesting run ...` en arrière-plan. "
         "Tous les paramètres CLI sont exposés ci-dessous et les logs sont visibles plus bas dans la page."
     )
+    st.caption('Sans reconstruction ML/sentiment, les nouveaux runs sont isolés en lecture seule et peuvent '
+               'coexister avec le pipeline. Les reconstructions et les autres traitements gardent un verrou exclusif.')
     fractional_prefs = load_persisted_fractional_trading_preferences()
     if BT_RUN_ALLOW_FRACTIONAL_SHARES_KEY not in st.session_state:
         st.session_state[BT_RUN_ALLOW_FRACTIONAL_SHARES_KEY] = bool(fractional_prefs.backtest_enabled)
@@ -2662,7 +2666,7 @@ def _build_run_options() -> BacktestRunOptions:
         "oracle_filter": "🧪 Global Rank sélectionne → Oracle filtre la qualité (S6.1-B)",
         "oracle_pool": "🧪 Pool Global Rank élargi → Oracle sélectionne le top % (S6.1-C)",
         "oracle_rerank": "🧪 Pool Global Rank → Oracle réordonne (S6.1-D)",
-        "extreme_gate": "🚪 Extreme Gate : Oracle seul, LONG-only, top 20% (E6-E13)",
+        "extreme_gate": "🚪 Extreme Gate : Oracle seul, LONG-only, sélection configurable",
         "extreme_gate_directional": "🧭 Extreme Gate directionnel : Oracle amplitude + Per-Symbol LONG/SHORT",
         "random": "🎲 Rangs aléatoires (placebo)",
     }
@@ -2680,7 +2684,8 @@ def _build_run_options() -> BacktestRunOptions:
     )
     oracle_batch_id: str | None = None
     oracle_calibration = "none"
-    extreme_gate_pct = float(st.session_state.get("bt_run_extreme_gate_pct", 0.20) or 0.20)
+    from ihm.components.backtest_oracle_scope import render_oracle_scope
+    extreme_gate_pct, extreme_gate_top_n = render_oracle_scope(_cascade_rank_mode)
     extreme_gate_per_symbol = "filter"
     oracle_tradable_policy = "off"
     directional_bundle_gate = "strict"
@@ -2733,17 +2738,6 @@ def _build_run_options() -> BacktestRunOptions:
                 help="`none` consomme le score OOS brut. En backtest PIT strict, isotonic exige un calibrateur antérieur gelé.",
             ))
         if _cascade_rank_mode in ("extreme_gate", "extreme_gate_directional"):
-            with _oracle_cfg_col2:
-                extreme_gate_pct = float(st.number_input(
-                    "Pool Oracle Extreme (fraction)",
-                    min_value=0.01,
-                    max_value=0.50,
-                    value=extreme_gate_pct,
-                    step=0.01,
-                    format="%.2f",
-                    key="bt_run_extreme_gate_pct",
-                    help="0.20 = les 20 % de symboles ayant la plus forte probabilité de mouvement extrême chaque jour.",
-                ))
             _eg_contract_col1, _eg_contract_col2, _eg_contract_col3 = st.columns(3)
             with _eg_contract_col1:
                 extreme_gate_per_symbol = cast(str, st.selectbox(
@@ -2865,7 +2859,7 @@ def _build_run_options() -> BacktestRunOptions:
 - **oracle_filter** (S6.1-B) — le rang global **sélectionne** le top/bottom, puis Oracle **filtre** la qualité (`P_extreme ≥ 0.80`).
 - **oracle_pool** (S6.1-C) — pool du rang global **élargi** (top 20%), puis Oracle **sélectionne** le top 10% dedans.
 - **oracle_rerank** (S6.1-D) — pool du rang global identique, Oracle **réordonne** (score = `P_extreme × proba per-symbol`).
-- **extreme_gate** (E6-E13) — Oracle **seul**, **LONG-only**, top 20% du jour par `proba_extreme` (percentile intra-date). Indépendant du rang global.
+- **extreme_gate** — Oracle **seul**, **LONG-only** : TOP 10 % / 20 % ou TOP 10 / 20 / 50 titres du jour par score Oracle. Indépendant du rang global ; les filtres actifs peuvent réduire la sélection.
 - **extreme_gate_directional** — Oracle sélectionne l'amplitude extrême, puis le modèle Per-Symbol choisit **LONG ou SHORT** selon la probabilité directionnelle la plus forte. Le score vaut `percentile Oracle × probabilité directionnelle`.
 - **random** — rangs aléatoires (placebo, isole l'edge du ranking).
 
@@ -3009,6 +3003,7 @@ def _build_run_options() -> BacktestRunOptions:
         batch_diagnostics_batch_id=selected_ml_batch_id,
         cascade_top_pct=float(st.session_state.get("bt_run_cascade_top_pct", 0.10) or 0.10),
         extreme_gate_pct=float(extreme_gate_pct),
+        extreme_gate_top_n=extreme_gate_top_n,
         cascade_min_prob=cascade_min_prob,
         # Persistent Rank DIP filter — valeurs UI = défauts config.yaml. Seuls
         # les champs explicitement modifiés génèrent un flag --dip-* ; sinon la
@@ -4283,6 +4278,45 @@ def _resolve_phase2_risk_summary(
     return _load_json_artifact_from_paths(artifacts, "phase2_risk_summary_json") or {}
 
 
+def _average_committed_capital(report: dict[str, object]) -> tuple[float | None,float | None,str | None]:
+    """Read observed gross exposure, never estimate it from initial capital."""
+    import math
+    def number(value):
+        if isinstance(value,bool):return None
+        try:value=float(value)
+        except (TypeError,ValueError):return None
+        return value if math.isfinite(value) and value>=0 else None
+    summary=report.get('summary') or {}
+    if not isinstance(summary,dict):summary={}
+    amount=number(report.get('average_gross_capital'))
+    if amount is None:amount=number(summary.get('average_gross_capital'))
+    ratio=number(report.get('average_gross_equity_ratio'))
+    basis=report.get('capital_observation_basis') or summary.get('capital_observation_basis')
+    pct=100.*ratio if ratio is not None else number(summary.get('gross_exposure_avg_pct'))
+    metadata=report.get('run_metadata') or {}
+    if not basis and ratio is not None and isinstance(metadata,dict) and metadata.get('engine')=='winner_campaign_replay':
+        basis='REGULAR_5M_MARKS'
+    # Older generic reports use zero as a default even without observations.
+    if pct==0 and ratio is None and amount!=0 and not basis:pct=None
+    return amount,pct,basis
+
+
+def _render_average_committed_capital(report: dict[str, object]) -> None:
+    amount,pct,basis=_average_committed_capital(report)
+    left,right=st.columns(2)
+    left.metric('Capital engagé moyen',f'${amount:,.2f}' if amount is not None else '—')
+    right.metric('Engagement moyen / capital du compte',f'{pct:.2f} %' if pct is not None else '—')
+    st.caption('Exposition brute : valeur des positions LONG + SHORT en montant absolu. '
+               'Moyenne des observations enregistrées, y compris celles sans position. '
+               'Le pourcentage est la moyenne des ratios au capital du compte à chaque observation, pas au capital initial.')
+    if basis=='REGULAR_5M_MARKS':st.caption('Mesure sur les relevés réguliers de cinq minutes du replay Winner.')
+    elif basis=='MIXED_5M_AND_DAILY_KNOWN_MARKS':
+        st.caption('Mesure mixte : cours 5m disponibles ; pour les séances traitées en daily, '
+                   'ouverture conservée jusqu’à la clôture connue. Ce n’est pas une trajectoire intraday observée complète.')
+    elif basis=='DAILY_BEFORE_ENTRIES':st.caption('Mesure sur les relevés quotidiens avant les nouvelles entrées.')
+    if amount is None:st.caption('Le montant engagé moyen n’a pas été enregistré dans cet ancien rapport ; il n’est pas estimé.')
+
+
 def _render_report_summary(run_record: dict[str, object]) -> bool:
     report_payload = _load_run_report(run_record)
     if not report_payload:
@@ -4358,6 +4392,7 @@ def _render_report_summary(run_record: dict[str, object]) -> bool:
         f"{_to_float(summary.get('risk_free_rate')) * 100:.2f}%",
     )
     extra_col8.metric("Capital initial", f"${_to_float(summary.get('initial_equity')):,.0f}")
+    _render_average_committed_capital(report_payload)
 
     # ── E46 — Répartition LONG / SHORT (2026-08-22) ──
     _long_trades = _to_int(summary.get("long_trades"))
@@ -5791,6 +5826,9 @@ def _render_runtime_center_body(*, auto_refresh_enabled: bool) -> None:
     else:
         st.warning(f"Run sélectionné : {_status_badge(status)}")
 
+    from ihm.components.backtesting_progress import render_backtesting_progress
+    render_backtesting_progress(selected_run)
+
     metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
     metric_col1.metric("Commande", str(selected_run.get("run_kind", "—")))
     metric_col2.metric("Durée", format_duration_hhmmss(selected_run.get("duration_seconds")))
@@ -6173,7 +6211,8 @@ def render() -> None:
             type="primary",
             use_container_width=True,
             disabled=bool(active_backtest_runs) or missing_ml_batch or
-                (run_options.winner_enabled and not run_options.winner_research_assumptions),
+                (run_options.winner_enabled and (not run_options.winner_research_assumptions or
+                 (run_options.winner_per_symbol_long_enabled and run_options.winner_per_symbol_allow_short))),
         )
         if launch_backtest_clicked:
             try:

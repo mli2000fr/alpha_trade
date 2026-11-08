@@ -12,6 +12,7 @@ from service.forward_pit import watcher_startup as startup
 
 @pytest.fixture
 def environment(monkeypatch, tmp_path):
+    monkeypatch.setattr('execution_engine.watcher_lease.release_dead_local_watcher_lease',lambda *a:False)
     engine = SimpleNamespace(url=SimpleNamespace(database='alpha_trade', host='localhost'))
     options = replace(pipeline_page_default_options(trade_date='2026-10-09'),
                       execution_mode='paper', account_id='default')

@@ -5,11 +5,12 @@ when --mode train is explicitly provided.
 """
 from __future__ import annotations
 
+from service.market import cn_collection_storage as cn_storage
 import argparse
 import json
 import logging
 import math
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 
 import numpy as np
 import pandas as pd
@@ -116,8 +117,8 @@ def load_frame(sources: dict, label_audit: dict, end_year: int, features: list[s
         expected = next(item for item in label_audit["yearly"] if item["year"] == year)["horizons"]["20"]["sha256"]
         if _sha(label_path) != expected:
             raise ValueError(f"Changed H20 labels {year}")
-        feature = pd.read_parquet(feature_path, columns=[*META, *features])
-        label = pd.read_parquet(label_path, columns=LABEL)
+        feature = cn_storage.read_parquet(feature_path, columns=[*META, *features])
+        label = cn_storage.read_parquet(label_path, columns=LABEL)
         part = feature.merge(label, on=["session_date", "instrument_id"], validate="one_to_one")
         if len(part) != len(feature) or len(label) != len(feature) or set(part["market_code"]) != {"CN_A"}:
             raise ValueError("Different candidate population")
@@ -181,7 +182,7 @@ def audit(config: Path = CONFIG, output: Path = OUTPUT) -> dict:
     # Calendar upper bound, NOT a replacement for the missing 2021 scored pool.
     dates = []
     for year in range(2021, 2026):
-        dates.extend(pd.read_parquet(sources[year][0], columns=["session_date"])["session_date"].unique())
+        dates.extend(cn_storage.read_parquet(sources[year][0], columns=["session_date"])["session_date"].unique())
     for semester in (cfg["directional"]["development_semesters"]
                      + cfg["directional"]["historical_confirmation_semesters"]):
         result["directional_calendar"][semester] = directional_calendar(dates, semester)
@@ -237,7 +238,7 @@ def train_extension(semester: str, config: Path = CONFIG, output: Path = OUTPUT)
         predictions["baseline_score"] = test[upstream.raw["baseline_score"]].to_numpy()
         predictions["horizon"], predictions["test_semester"], predictions["model_name"] = 20, semester, "lightgbm"
         path = folder / "predictions.parquet"
-        predictions.to_parquet(path, index=False)
+        cn_storage.write_parquet(predictions,path, index=False)
         report.update(status="OOS_RESEARCH_ONLY", predictions_sha256=_sha(path))
         checkpoint(folder / "report.json", report)
     except Exception as exc:

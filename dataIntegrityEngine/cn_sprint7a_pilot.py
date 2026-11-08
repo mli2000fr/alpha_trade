@@ -8,7 +8,7 @@ import logging
 import uuid
 from dataclasses import asdict
 from datetime import UTC, date, datetime
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 
 from database.router import get_market_engine
 from service.baostock.client import BaoStockClient

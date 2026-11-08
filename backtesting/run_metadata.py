@@ -43,7 +43,9 @@ def _safe_git_command(args: list[str]) -> str | None:
 def collect_git_info() -> dict[str, Any]:
     sha = _safe_git_command(["rev-parse", "HEAD"]) or None
     branch = _safe_git_command(["rev-parse", "--abbrev-ref", "HEAD"]) or None
-    dirty_status = _safe_git_command(["status", "--porcelain"])
+    from backtesting.isolation import active
+    # git status may refresh the index or invoke a configured fsmonitor.
+    dirty_status = None if active() else _safe_git_command(["status", "--porcelain"])
     dirty = bool(dirty_status) if dirty_status is not None else None
     return {"git_commit_sha": sha, "git_branch": branch, "git_dirty": dirty}
 

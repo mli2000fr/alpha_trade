@@ -334,6 +334,7 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
         from execution_engine.config import ExecutionConfig
         exec_cfg = ExecutionConfig()
     policy = exec_cfg.winner_pyramiding
+    daily_entry=getattr(cfg,'winner_daily_entry_enabled',False)
     availability_offset=observation_offset(policy)
     if not policy.enabled:
         raise ValueError('Explicit enabled campaign replay policy required')
@@ -362,6 +363,14 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
     store = MemoryCampaignStore()
     repo = SimpleNamespace(acquire_execution_lock=lambda **kw: True, release_execution_lock=lambda **kw: None)
     base_risk = cfg.risk_config or load_risk_config(equity=cfg.initial_equity)
+    from backtesting.winner_drawdown_control import effective_drawdown_settings,create_drawdown_state,controller_snapshot
+    drawdown_enabled=getattr(cfg,'winner_drawdown_controller_enabled',True)
+    base_risk,exec_cfg=effective_drawdown_settings(base_risk,exec_cfg,drawdown_enabled)
+    if not drawdown_enabled and (getattr(cfg,'winner_global_drawdown_halt',False)
+            or getattr(cfg,'winner_hard_drawdown_pct',None) is not None
+            or getattr(cfg,'winner_cycle_drawdown_pct',None) is not None
+            or getattr(cfg,'winner_drawdown_cooldown_months',0)):
+        raise ValueError('Replay drawdown controller off conflicts with explicit global/cycle drawdown liquidation')
     if base_risk.enable_factor_model and factor_context_source is None:
         raise ValueError('Winner replay requires qualified factor tapes when factor model is enabled')
     if base_risk.enforce_net_exposure or (base_risk.correlation_check_enabled and base_risk.max_long_short_correlation is not None):
@@ -372,12 +381,14 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
     regimes = {pd.Timestamp(k).date(): str(v) for k, v in spy_regimes.items()}
     first_seed = [s.session_date for s in calendar.sessions(cfg.start_date-timedelta(days=14), cfg.start_date)
         if s.is_open and s.session_date < sessions[0].session_date][-1]
-    if base_risk.policy != 'b0' and first_seed not in regimes:
+    if drawdown_enabled and base_risk.policy != 'b0' and first_seed not in regimes:
         raise ValueError('Adaptive risk requires prior SPY SMA50/200 history')
-    guard = CampaignRiskState(base_risk, observations=[(first_seed, cfg.initial_equity)], regimes=regimes)
+    guard=create_drawdown_state(base_risk,first_seed,cfg.initial_equity,regimes,drawdown_enabled)
     from backtesting.winner_global_liquidation import GlobalLiquidation
     liquidation=GlobalLiquidation(cfg,base_risk,exec_cfg)
     daily_equity, marks, audit, breaker_marks, coverage = [], [], [], [], set()
+    daily_resolution=[]
+    daily_mark_counts=[]
     returns = close.pct_change(fill_method=None)
     cache = {}
 
@@ -391,9 +402,9 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
             if not frame.empty:
                 frame = frame.copy()
                 frame['timestamp'] = pd.to_datetime(frame['timestamp'], utc=True)
-                if frame.duplicated(['symbol', 'timestamp']).any() or set(frame.symbol)-set(symbols):
+                if (not daily_entry and frame.duplicated(['symbol', 'timestamp']).any()) or set(frame.symbol)-set(symbols):
                     raise ValueError('Ambiguous/unsolicited intraday rows')
-                for row in frame.to_dict('records'):
+                for row in ([] if daily_entry else frame.to_dict('records')):
                     stamp = row['timestamp'].to_pydatetime()
                     values = [float(row[k]) for k in ('open', 'high', 'low', 'close', 'volume')]
                     if (not opening <= stamp < closing or (stamp-opening).total_seconds() % 300
@@ -430,6 +441,11 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
                 raise ValueError('Signal daily price / current sector missing: '+symbol)
             if not full_session(raw.get(symbol), signal_day):
                 coverage.add((str(signal_day), symbol, 'SIGNAL_RAW_5M_INCOMPLETE'))
+                gate=getattr(intraday_source,'entry_allowed',None)
+                if gate is not None:
+                    following=calendar.session_dates(signal_day+timedelta(days=1),signal_day+timedelta(days=14))[0]
+                    if following<=cfg.end_date:
+                        gate(symbol,following)
                 continue
             # Sizing and breakout levels share raw prices with actual fills;
             # never compare a split-adjusted daily level with raw five-minute bars.
@@ -448,7 +464,8 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
     # Signals dated before the requested start can be admitted only if their
     # next official session is the first replay session.
     previous = first_seed
-    admit(previous, sessions[0].open_at_utc-timedelta(seconds=1))
+    if not daily_entry:
+        admit(previous, sessions[0].open_at_utc-timedelta(seconds=1))
     for index, session in enumerate(sessions):
         day, opening, closing = session.session_date, session.open_at_utc, session.close_at_utc
         book.settle(day)
@@ -459,22 +476,41 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
             guard=CampaignRiskState(base_risk,observations=[(prior_day,book.equity())],
                 regimes={prior_day:regimes.get(prior_day)})
             # No stale pre-pause plans: only the latest prior-session signal.
-            admit(prior_day,opening-timedelta(seconds=1))
-        elif selection_source is not None and index>0:
+            if not daily_entry:admit(prior_day,opening-timedelta(seconds=1))
+        elif not daily_entry and selection_source is not None and index>0:
             # Nightly options receipts are known before the next open, not
             # one second after the signal close. No future trade-day data.
             admit(prior_day,opening-timedelta(seconds=1))
         records = store.rows()
-        symbols = sorted({r['state']['symbol'] for r in records})
+        daily_rows=selected.loc[selected.trade_date.eq(prior_day)].copy() if daily_entry else selected.iloc[:0]
+        if daily_entry and selection_source is not None and not daily_rows.empty:
+            filtered=selection_source(prior_day,daily_rows,opening-timedelta(seconds=1))
+            if filtered['incomplete']:coverage.add((str(prior_day),'*','OPTIONS_COHORT_INCOMPLETE'))
+            daily_rows=daily_rows.loc[daily_rows.symbol.isin(filtered['selected'])]
+        symbols = sorted({r['state']['symbol'] for r in records}|set(daily_rows.symbol))
         prior_day = previous if index == 0 else sessions[index-1].session_date
         daily_days = [pd.Timestamp(s.session_date) for s in calendar.sessions(
             prior_day-timedelta(days=150), prior_day) if s.is_open][-61:]
-        groups, priors = raw_groups(day, symbols), raw_groups(prior_day, symbols)
+        groups = raw_groups(day, symbols)
+        fallback={}
+        if daily_entry:
+            from backtesting.winner_daily_protection import prepare_protection_day,opening_prints,tighten_after_daily_close
+            groups,fallback=prepare_protection_day(day,symbols,groups,open_df=open_df,high=high,low=low,close=close)
+        fallback_used=set()
+        priors = {} if daily_entry else raw_groups(prior_day, symbols)
+        # Research-only per-entry gate: never delete held lots or skip their
+        # protection processing. Pending plans can try again on another date.
+        allowed_entry=None if daily_entry else getattr(intraday_source,'entry_allowed',None)
+        blocked_today={r['state']['symbol'] for r in records
+            if not r['state']['lots'] and allowed_entry is not None
+            and not allowed_entry(r['state']['symbol'],day)}
+        for symbol in blocked_today:
+            coverage.add((str(day),symbol,'UNRESOLVED_INTRADAY_ENTRY_GATE'))
         held_symbols = {p['symbol'] for p in book.positions()}
         for symbol in symbols:
-            if not full_session(groups.get(symbol), day):
+            if not daily_entry and not full_session(groups.get(symbol), day):
                 coverage.add((str(day), symbol, 'CANDIDATE_RAW_5M_INCOMPLETE'))
-            if not full_session(priors.get(symbol), prior_day):
+            if not daily_entry and not full_session(priors.get(symbol), prior_day):
                 coverage.add((str(day), symbol, 'PRIOR_RAW_5M_INCOMPLETE'))
         actions = [a for a in corporate_actions if str(a['ex_date'])[:10] == day.isoformat() and a['symbol'] in symbols]
         for action in actions:
@@ -490,9 +526,14 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
             stamp = opening+timedelta(minutes=5*offset)
             book.now = stamp
             bars = {s: g.loc[pd.Timestamp(stamp)].to_dict() for s, g in groups.items() if pd.Timestamp(stamp) in g.index}
+            if daily_entry and offset==0:
+                bars.update(opening_prints(fallback))
             held = {p['symbol'] for p in book.positions()}
-            if held-set(bars):
+            if held-set(bars)-set(fallback):
                 raise ValueError(f'Missing held-position 5m bar {day}/{stamp}: {sorted(held-set(bars))}')
+            if offset==0 and held-set(bars):
+                raise ValueError(f'Missing daily opening for held positions {day}: {sorted(held-set(bars))}')
+            fallback_used.update(held&set(fallback))
             # Pre-open exit staging must not see the future opening print.
             records = store.rows()
             if offset == 0:
@@ -510,7 +551,12 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
                 # execution proxy before any next-open buy can fill.
                 book.cancel_deferred_entries('GLOBAL_DRAWDOWN_BEFORE_EXECUTION')
             deferred_pending=any(r.get('replay_next_open') and r['status']=='new' for r in book.orders.values())
+            opening_events=len(book.events)
             book.resolve(bars, opening=True)
+            for event in book.events[opening_events:]:
+                if event.get('event')=='SELL_FILL' and event.get('symbol') in fallback:
+                    event.update(execution_proxy='DAILY_SESSION_OPEN',price_source='CANONICAL_DAILY_OPEN',
+                        exact_intraday_time_known=True)
             if deferred_pending:
                 # A gap can trip the global breaker at THIS opening. Publish
                 # just-filled lots/protections to the coordinator first so the
@@ -524,10 +570,18 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
             evaluated = guard.evaluate(day, book.equity(), regimes.get(prior_day), daily_pnl=book.equity()-
                 (daily_equity[-1][1] if daily_equity else cfg.initial_equity))
             liquidation.observe(stamp,book.equity(),book,evaluated)
-            liquidation.execute(stamp,store,repo,book,exec_cfg)
+            # A fallback symbol has no executable price between daily opens.
+            # Defer a basket liquidation, never sell it at a carried/stale mark.
+            pending_fallback=liquidation.pending and set(liquidation.pending['symbols'])&set(fallback)
+            if offset==0 or not pending_fallback:
+                liquidation.execute(stamp,store,repo,book,exec_cfg)
             records = store.rows()
             def source(state, now):
                 symbol = state['symbol']
+                if symbol in fallback:
+                    raise ValueError('DAILY_OHLC_FALLBACK_NO_5M_CONFIRMATION')
+                if symbol in blocked_today and not state['lots']:
+                    raise ValueError('UNRESOLVED_INTRADAY_ENTRY_GATE')
                 if symbol in action_symbols:
                     raise ValueError('EX_DATE_ENTRY_BLOCKED_RAW_REFERENCE')
                 if symbol not in bars:
@@ -535,26 +589,27 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
                 delay=timedelta(seconds=state['policy'].get('market_data_delay_seconds',0))
                 tail = groups[symbol].loc[groups[symbol].index+pd.Timedelta(minutes=5) <= pd.Timestamp(now-delay)].tail(
                     max(state['policy']['confirmation_bars']+1, 3))
-                if not full_session(priors.get(symbol), prior_day):
+                if not daily_entry and not full_session(priors.get(symbol), prior_day):
                     raise ValueError('Prior raw session high unavailable')
+                prior_high=None if daily_entry else float(priors[symbol]['high'].max())
                 evidence=[dict(row,timestamp=t.to_pydatetime(),session_tag='regular') for t,row in tail.iterrows()]
                 from common.winner_delayed import delayed_entry
                 if delayed_entry(state,'ADD' if state['lots'] else 'ENTRY'):
                     from common.winner_delayed import delayed_snapshot
                     return delayed_snapshot(evidence,WinnerPyramidingConfig(**state['policy']),now) | dict(
-                        prior_session_high=float(priors[symbol]['high'].max()),prior_session=prior_day,
+                        prior_session_high=prior_high,prior_session=prior_day,
                         available_cash=book.capacity())
                 if state['policy']['confirmation_bars']==0 and not state['lots'] and not state['policy']['standard_entry_quote_check_enabled']:
                     return dict(bars=[],prior_session=prior_day,prior_session_high=None,
                         ask=None,bid=None,feed='sip',standard_entry_quote_check_enabled=False)
                 return dict(bars=evidence,
-                    prior_session_high=float(priors[symbol]['high'].max()),
+                    prior_session_high=prior_high,
                     ask=book.marks[symbol], bid=book.marks[symbol], feed='sip', quote_time=now,
                     available_cash=book.capacity())
 
             def recheck(state, version, quantity, snapshot, now, kind):
                 from execution_engine.winner_live_risk import concentration_allowed
-                if liquidation.blocks_entries:
+                if liquidation.blocks_entries or (daily_entry and liquidation.pending is not None):
                     raise ValueError('Global drawdown emergency halt blocks all new entries and additions')
                 vol = 1.
                 if risk.target_annual_vol:
@@ -590,7 +645,7 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
                 fills += [dict(fill_timestamp=t['exit_date'], filled_qty=t['quantity'], avg_fill_price=t['exit_price'],
                     side='sell', intent_role='exit') for t in book.trades if t['symbol'] == candidate]
                 fills.sort(key=lambda f: f['fill_timestamp'])
-                concentration = concentration_allowed(fills, current, candidate, day, kind)
+                concentration = concentration_allowed(fills, current, candidate, day,'ENTRY' if kind=='DAILY_ENTRY' else kind)
                 ctx = dict(account_id=state['account_id'], broker_mode=state['broker_mode'], captured_at=now,
                     equity=book.equity(), available_buying_power=book.capacity(), positions=positions,
                     pending_entries=book.pending_entries(), sector_map=sectors, risk_config=current,
@@ -601,7 +656,7 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
                     concentration_allowed=concentration, corporate_actions_qualified=True,
                     factor_qualified=True, entries_allowed=not exec_cfg.blocks_new_entries)
                 from common.winner_delayed import delayed_entry
-                if delayed_entry(state,kind):
+                if kind!='DAILY_ENTRY' and delayed_entry(state,kind):
                     ctx.update(delayed_sip_allowed=True,standard_entry_quote_check_enabled=False)
                 elif snapshot.get('standard_entry_quote_check_enabled') is False:
                     ctx.update(standard_entry_quote_check_enabled=False,
@@ -617,17 +672,30 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
                                factor_qualified=context.get('qualified') is True)
                 reconstructed=(ctx.get('factor_context') or {}).get('evidence_kind')=='RECONSTRUCTED_HISTORICAL_INPUTS'
                 reduced=(ctx.get('factor_context') or {}).get('market_cap_check_enabled') is False
+                if kind=='DAILY_ENTRY':
+                    from backtesting.winner_daily_entry import approve_daily_open
+                    return approve_daily_open(state,version,quantity,snapshot,now,context=ctx)
                 return reapprove_campaign(state, version, quantity, snapshot, now, kind, context=ctx,
                     **({'replay_reconstructed_factors':True} if reconstructed else {}),
                     **({'replay_factor_market_cap_disabled':True} if reduced else {}))
 
+            if daily_entry and offset==0 and not liquidation.blocks_entries:
+                from backtesting.winner_daily_entry import enter_daily_candidates
+                enter_daily_candidates(daily_rows,signal_day=prior_day,day=day,opening=opening,
+                    open_df=open_df,book=book,store=store,repo=repo,execution=exec_cfg,
+                    risk_config=base_risk,recheck=recheck,calendar=calendar,coverage=coverage,audit=audit,
+                    sector_map=sectors)
+                records=store.rows()
+                fallback_used.update({p['symbol'] for p in book.positions()}&set(fallback))
             if records:
                 # At observed opens, fills/protections/deadlines always run.
                 # Zero-confirmation standard entries retain their original clock.
                 from execution_engine.winner_standard_entry import standard_initial
-                batches=([(records,False)] if not availability_offset else
-                    [([r for r in records if standard_initial(r['state'])],False),
-                     ([r for r in records if not standard_initial(r['state'])],True)])
+                intraday_records=[r for r in records if r['state']['symbol'] not in fallback]
+                batches=([(intraday_records,False)] if not availability_offset else
+                    [([r for r in intraday_records if standard_initial(r['state'])],False),
+                     ([r for r in intraday_records if not standard_initial(r['state'])],True)])
+                batches.append(([r for r in records if r['state']['symbol'] in fallback],True))
                 for rows,lifecycle_only in batches:
                     result = WinnerCampaignRuntime(store, repo, book, exec_cfg, market=source, risk=recheck,
                         now=stamp,lifecycle_only=lifecycle_only).run(rows)
@@ -638,7 +706,8 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
                 observed=stamp+timedelta(seconds=availability_offset)
                 book.now=observed
                 from common.winner_delayed import delayed_entry
-                rows=[r for r in store.rows() if delayed_entry(r['state'],'ADD' if r['state']['lots'] else 'ENTRY')]
+                rows=[r for r in store.rows() if r['state']['symbol'] not in fallback
+                    and delayed_entry(r['state'],'ADD' if r['state']['lots'] else 'ENTRY')]
                 result=WinnerCampaignRuntime(store,repo,book,exec_cfg,market=source,risk=recheck,now=observed).run(rows)
                 audit.extend(dict(time=observed,**r) for r in result['winner_details'])
                 if result['winner_failures']:raise ValueError('Campaign replay requires reconciliation: '+str(result['winner_details']))
@@ -647,11 +716,38 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
             book.now = stamp+timedelta(minutes=5)
             book.resolve(bars, opening=False)
             book.marks.update({s: float(b['close']) for s, b in bars.items()})
+            if daily_entry and book.now==closing:
+                fallback_held={p['symbol'] for p in book.positions()}&set(fallback)
+                missing=[s for s in fallback_held if fallback[s]['bar'] is None]
+                if missing:
+                    raise ValueError(f'Missing/invalid daily protection OHLC for held positions {day}: {sorted(missing)}')
+                daily_bars={s:fallback[s]['bar'] for s in fallback_used if fallback[s]['bar'] is not None}
+                # The full daily high/low become usable only now. Proceeds from
+                # an unknown intraday stop time cannot fund any earlier entry.
+                before=len(book.events);before_trades=len(book.trades)
+                book.resolve(daily_bars,opening=False)
+                for event in book.events[before:]:
+                    if event.get('event')=='SELL_FILL':
+                        event.update(execution_proxy='DAILY_OHLC_CLOSE_BOUND',price_source='CANONICAL_DAILY_OHLC',
+                            exact_intraday_time_known=False)
+                for trade in book.trades[before_trades:]:
+                    trade.update(execution_resolution='DAILY_OHLC',exit_time_is_close_bound=True)
+                book.marks.update({s:b['close'] for s,b in daily_bars.items()})
+                tighten_after_daily_close(store,repo,book,exec_cfg,daily_bars,day,closing)
+                for symbol in sorted(fallback_used):
+                    detail=dict(date=str(day),symbol=symbol,reason=fallback[symbol]['reason'],
+                        evidence='CANONICAL_DAILY_OHLC',intraday_timing_known=False,
+                        reinforcement_available=False,entry_excluded=False)
+                    daily_resolution.append(detail)
+                    coverage.add((str(day),symbol,'DAILY_OHLC_FALLBACK: '+detail['reason']))
+                    audit.append(dict(time=closing,event='DAILY_OHLC_FALLBACK',**detail))
             if liquidation.enabled:
                 close_evaluation=guard.evaluate(day,book.equity(),regimes.get(prior_day),daily_pnl=book.equity()-
                     (daily_equity[-1][1] if daily_equity else cfg.initial_equity))
                 liquidation.observe(stamp+timedelta(minutes=5),book.equity(),book,close_evaluation)
             marks.append((stamp+timedelta(minutes=5), book.equity(), book.gross()))
+            if daily_entry:
+                daily_mark_counts.append(len({p['symbol'] for p in book.positions()}&set(fallback)))
             breaker_marks.append(dict(timestamp=stamp, peak=evaluated['reference_peak'],
                 allocation=evaluated['allocation_scale'], active=evaluated['active'],
                 global_halted=liquidation.halted,cycle_stopped=liquidation.cycle_stopped,cycle=liquidation.cycle))
@@ -668,7 +764,7 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
         book.interest += charge
         book.events.append(dict(time=closing, event='FINANCING', costs=charge))
         daily_equity.append((pd.Timestamp(day), book.equity()))
-        if selection_source is None:
+        if not daily_entry and selection_source is None:
             admit(day, closing+timedelta(seconds=1))
         cache = {k: v for k, v in cache.items() if k[0] >= day}
         if progress:
@@ -684,11 +780,28 @@ def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=N
         unsettled_cash=sum(v for _, v in book.unsettled), gross=book.gross(),
         open_positions=book.positions(), campaigns=len(store.records), policy=policy.__dict__))
     result.tracker_snapshot['winner_replay']['global_liquidation']=liquidation.summary()
+    result.tracker_snapshot['winner_replay']['drawdown_controller']=controller_snapshot(drawdown_enabled,base_risk,exec_cfg)
+    result.tracker_snapshot['winner_replay']['initial_entry']=dict(
+        mode='DAILY_OPEN_J_PLUS_1' if daily_entry else 'INTRADAY_WINNER',
+        price_source='CANONICAL_DAILY_OPEN' if daily_entry else 'OBSERVED_5M_OPEN',
+        confirmation_required=not daily_entry and policy.confirmation_bars>0,
+        intraday_coverage_required_for_entry=not daily_entry)
+    if daily_entry:
+        result.intraday_equity_curve['daily_fallback_positions']=daily_mark_counts
+        result.tracker_snapshot['winner_replay']['protection_resolution']=dict(
+            mode='COMPLETE_COMPATIBLE_5M_ELSE_DAILY_OHLC',future_intraday_entry_gate=False,
+            daily_raw_open_basis_tolerance_pct=1.,fallback_symbol_sessions=len(daily_resolution),
+            sessions=daily_resolution,collision_policy='SL_FIRST',
+            daily_extrema_available_at='OFFICIAL_SESSION_CLOSE',daily_trailing_effective='NEXT_SESSION_OPEN',
+            missing_both_daily_and_intraday_for_held='FAIL_EXPLICITLY',
+            global_liquidation_without_intraday_price='DEFER_TO_NEXT_OFFICIAL_OPEN')
+        if daily_resolution:
+            result.tracker_snapshot['winner_replay']['capital_observation_basis']='MIXED_5M_AND_DAILY_KNOWN_MARKS'
     result.tracker_snapshot['winner_replay']['replay_clock']=dict(observation_offset_seconds=availability_offset,
         evidence='ACTUAL_BAR_END_PLUS_FROZEN_DELAY',execution='NEXT_OBSERVED_5M_OPEN_IF_OFF_GRID',
         ioc_proxy=bool(availability_offset),intrabar_execution_certified=False,
         stop_amendments='NEXT_OBSERVED_5M_OPEN_IF_OFF_GRID; OLD_STOP_UNTIL_THEN')
-    if policy.confirmation_bars == 0:
+    if not daily_entry and policy.confirmation_bars == 0:
         result.tracker_snapshot['winner_replay']['standard_entry_assumptions'] = (
             'Regular-session observed 5m opens only; no historical pre-open SIP quotes; '
             'DAY limits expire at session close; no intrabar limit-fill inference.')

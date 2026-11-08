@@ -14,16 +14,19 @@ import platform
 import shutil
 import tarfile
 import threading
+import time
 import uuid
 
 from . import environment,inventory
 from .mysql import DATABASES
 from .tracking import emit,CountingWriter
+from .file_capture import open_source,failure_details
 from .locking import LOCK,migration_lock,MigrationLockError
 from .storage import (BLOCK,atomic_json,canonical,decrypted_input,encrypted_output,open_manifest,
                       safe_path,seal_manifest,sha_file,checked_directory)
 
 PENDING='.alpha_trade_restore_pending.json'
+DB_READY='database-ready.json'
 PROTOCOL='alpha-trade-migration-v1'
 
 
@@ -32,6 +35,24 @@ def utc():return datetime.now(timezone.utc).isoformat()
 
 def check_cancel(cancel):
     if cancel and cancel():raise InterruptedError('Opération interrompue à un point sûr')
+
+
+class FileInstallError(ValueError):
+    def __init__(self,item,operation,code):
+        self.item=item;self.operation=operation;self.code=code
+        super().__init__(f'Installation des fichiers bloquée sur {item} ({operation}, code système {code})')
+
+
+def replace_with_retry(source,destination,*,item,operation,check,timeout=60):
+    """Windows scanners/readers can hold a directory briefly during a rename."""
+    deadline=time.monotonic()+timeout
+    while True:
+        try:return os.replace(source,destination)
+        except OSError as exc:
+            code=getattr(exc,'winerror',None) or exc.errno
+            if os.name!='nt' or code not in (5,32,33) or time.monotonic()>=deadline:
+                raise FileInstallError(item,operation,code) from exc
+            check();time.sleep(1)
 
 
 @contextmanager
@@ -45,18 +66,31 @@ def maintenance(root,quiet,*,allow_ui,on_progress=None):
 
 
 @contextmanager
-def observe(root,quiet,*,allow_ui):
+def observe(root,quiet,*,allow_ui,poll_interval=2):
     """Abort this migration on new workers; never stop/block operational code."""
-    stopped=threading.Event();problems=[]
+    stopped=threading.Event();problems=[];scan_errors=0
     def poll():
-        while not stopped.wait(2):
+        nonlocal scan_errors
+        while not stopped.wait(poll_interval):
             try:
                 scanner=inventory.running_processes if quiet is inventory.quiescent else quiet
-                if scanner(root,allow_ui=allow_ui):problems.append(True);return
-            except Exception:problems.append(True);return
+                active=scanner(root,allow_ui=allow_ui)
+            except Exception as exc:
+                # A transient process-inventory error is not evidence of a batch.
+                scan_errors+=1
+                if scan_errors>=3:
+                    problems.append(('SCAN_ERROR',type(exc).__name__));return
+                continue
+            scan_errors=0
+            if active:
+                pids=sorted({str(p['pid']) for p in active if type(p.get('pid')) is int})
+                problems.append(('ACTIVE_BATCH',','.join(pids[:8])));return
     thread=threading.Thread(target=poll,daemon=True);thread.start()
     def check():
-        if problems:raise ValueError('Activité concurrente détectée ; migration interrompue')
+        if problems:
+            kind,detail=problems[0]
+            if kind=='SCAN_ERROR':raise ValueError('Inventaire des batchs impossible après trois essais ('+detail+') ; migration interrompue')
+            raise ValueError('Batch actif détecté pendant la migration'+(' (PID '+detail+')' if detail else '')+' ; migration interrompue')
     try:yield check
     finally:stopped.set();thread.join(timeout=35)
 
@@ -79,8 +113,10 @@ def pack_files(root,folder,label,files,password,limit,cancel,*,live=False,on_pro
             for index,record in enumerate(files):
                 check_cancel(cancel)
                 emit(on_progress,item=record['path'],files_done=index,files_total=len(files))
-                path=safe_path(root,record['path'])
-                with path.open('rb') as stream:
+                stream,recovered_from,expected_hash=open_source(root,record,live=live)
+                if recovered_from:
+                    emit(on_progress,warning=True,recovery_source=recovered_from,checkpoint=True)
+                with stream:
                     before=os.fstat(stream.fileno())
                     if not live and (before.st_size,before.st_mtime_ns)!=(record['size'],record['mtime_ns']):raise ValueError('Fichier modifié pendant la sauvegarde')
                     info=tarfile.TarInfo(record['path']);info.size=before.st_size;info.mode=0o600;info.mtime=int(before.st_mtime)
@@ -88,7 +124,12 @@ def pack_files(root,folder,label,files,password,limit,cancel,*,live=False,on_pro
                     after=os.fstat(stream.fileno())
                 append_log=live and Path(record['path']).parts[0] in ('log','logs') and after.st_size>=before.st_size
                 if not append_log and (after.st_size,after.st_mtime_ns)!=(before.st_size,before.st_mtime_ns):raise ValueError('Fichier modifié pendant la sauvegarde')
-                records.append(dict(path=record['path'],size=info.size,sha256=hashed.digest.hexdigest()))
+                content_hash=hashed.digest.hexdigest()
+                if expected_hash and content_hash!=expected_hash:raise ValueError('Version archivée modifiée pendant la sauvegarde : '+record['path'])
+                captured=dict(path=record['path'],size=info.size,sha256=content_hash)
+                if recovered_from:captured['source_recovered_from']=recovered_from
+                records.append(captured)
+                if recovered_from:emit(on_progress,recovery_source='')
                 emit(on_progress,files_done=index+1)
     emit(on_progress,files_done=len(files),checkpoint=True)
     return dict(label=label,parts=parts,files=records,kind='files')
@@ -166,6 +207,7 @@ def export(root,output,password,db,*,quiet=inventory.quiescent,cancel=None,versi
                 exclusions=sorted(inventory.SKIP_ROOT),services_auto_restart=False)
             payload.update(source_mode=source_mode,cross_database_atomic=False,
                 row_counts_authoritative=not online,source_services_unchanged=True)
+            payload['archived_file_versions_recovered']=sum('source_recovered_from' in f for p in packages for f in p.get('files',[]))
             payload['dependency_review_count']=private['versions'].get('unportable_requirement_count',0)
             if guard:payload['portable_files']=install_portable_tools(output)
             atomic_json(output/'manifest.json',seal_manifest(payload,password))
@@ -179,14 +221,15 @@ def export(root,output,password,db,*,quiet=inventory.quiescent,cancel=None,versi
         # Error text can contain secrets from providers/SQL. Keep only a bounded
         # local operation class; UI shows typed validation errors separately.
         atomic_json(output/'progress.json',dict(status='CANCELED' if isinstance(exc,InterruptedError) else 'FAILED',
-            error_type=type(exc).__name__,finished_at=utc()))
+            error_type=type(exc).__name__,finished_at=utc(),**failure_details(exc,root=root)))
         if (output/'manifest.json').exists():os.replace(output/'manifest.json',output/'manifest.incomplete.json')
         extra=dict(error_code=exc.code,owner_pid=exc.owner_pid) if isinstance(exc,MigrationLockError) else {}
-        emit(on_progress,'CANCELED' if isinstance(exc,InterruptedError) else 'FAILED',**extra)
+        emit(on_progress,'CANCELED' if isinstance(exc,InterruptedError) else 'FAILED',**extra,
+             **failure_details(exc,root=root),failure_reason=getattr(exc,'public_message',''))
         raise
 
 
-def verify(folder,password,*,cancel=None,_in_progress=False,on_progress=None):
+def verify(folder,password,*,cancel=None,_in_progress=False,on_progress=None,files_only=False):
     emit(on_progress,'VERIFYING')
     folder=Path(folder).resolve();payload=open_manifest(folder/'manifest.json',password)
     if not _in_progress:
@@ -199,6 +242,7 @@ def verify(folder,password,*,cancel=None,_in_progress=False,on_progress=None):
     for item in payload.get('portable_files',[]):
         if sha_file(safe_path(folder,item['path']))!=item['sha256']:raise ValueError('Outil portable altéré')
     for index,package in enumerate(payload['packages']):
+        if files_only and package['kind']!='files':continue
         check_cancel(cancel)
         emit(on_progress,'VERIFYING',package=package['folder'],part_index=index,parts_total=len(payload['packages']),
             total_bytes=sum(f['size'] for f in package.get('files',[])) or None,processed_bytes=0)
@@ -276,13 +320,17 @@ def model_checks(stage):
                     if sha_file(safe_path(checkpoint.parent,name))!=digest:raise ValueError('Poids de modèle corrompus')
 
 
-def inspect_restore(folder,target,password,db,*,quiet=inventory.quiescent,on_progress=None):
+def inspect_restore(folder,target,password,db,*,quiet=inventory.quiescent,on_progress=None,
+                    verify_packages=True):
     folder=Path(folder).resolve();target=checked_directory(target)
     if target==Path(target.anchor) or folder==target or folder.is_relative_to(target):
         raise ValueError('La sauvegarde doit être hors de la destination à remplacer')
     if target.is_symlink() or target.is_junction():raise ValueError('Destination lien/jonction interdite')
     if (target/'.venv').exists():raise ValueError('Renommer manuellement le .venv existant avant restauration ; il ne sera pas remplacé')
-    payload=verify(folder,password,on_progress=on_progress)
+    # A restore first compares its approved plan against the current target.
+    # This cheap pass opens the authenticated manifest; the full package scan
+    # still runs before any database or file is replaced.
+    payload=verify(folder,password,on_progress=on_progress) if verify_packages else open_manifest(folder/'manifest.json',password)
     emit(on_progress,'RESTORE_PREFLIGHT')
     runtime=private_json(folder,payload,'runtime',password)
     if runtime['versions']['python'].split('.')[:2]!=platform.python_version().split('.')[:2]:
@@ -320,18 +368,100 @@ def sql_restore(folder,payload,runtime,password,db,check,on_progress=None):
             db.load(package['database'],stream,check)
         emit(on_progress,completed=DATABASES.index(package['database'])+1,checkpoint=True)
     for index,name in enumerate(DATABASES):
+        check()
         emit(on_progress,'DATABASE_VALIDATION',database=name,completed=index,total=3)
         db.load_events_disabled(name,runtime['databases'][name].get('event_definitions',[]))
         db.validate(name,runtime['databases'][name])
+        check()
         emit(on_progress,completed=index+1,checkpoint=True)
+
+
+def install_managed_roots(target,stage,old_files,managed,moves,check,on_progress=None):
+    for index,name in enumerate(managed):
+        check()
+        emit(on_progress,'FILE_REPLACEMENT',item=name,completed=index,total=len(managed))
+        destination=safe_path(target,name);incoming=safe_path(stage,name)
+        previous=safe_path(old_files,name)
+        if destination.exists():
+            previous.parent.mkdir(parents=True,exist_ok=True)
+            try:replace_with_retry(destination,previous,item=name,operation='mise de côté',check=check,
+                                   timeout=5 if name=='doc' and incoming.is_dir() else 60)
+            except FileInstallError as exc:
+                if name!='doc' or exc.code not in (5,32,33) or not destination.is_dir() or not incoming.is_dir():raise
+                # An open Windows directory handle can prevent renaming doc even
+                # though its files remain writable. Keep the root and replace
+                # its contents only after taking a local rollback copy.
+                emit(on_progress,'FILE_REPLACEMENT',item='doc : installation fichier par fichier',checkpoint=True)
+                _directory_entries(destination)
+                try:shutil.copytree(destination,previous,copy_function=shutil.copy2)
+                except OSError as copy_error:
+                    raise FileInstallError(name,'copie de retour arrière',
+                        getattr(copy_error,'winerror',None) or copy_error.errno) from copy_error
+                moves.append((destination,previous,True,'in_place'))
+                try:_mirror_directory_contents(incoming,destination,check,item=name)
+                except OSError as copy_error:
+                    raise FileInstallError(name,'copie en place',
+                        getattr(copy_error,'winerror',None) or copy_error.errno) from copy_error
+                continue
+        moves.append((destination,previous,incoming.exists(),'renamed'))
+        if incoming.exists():replace_with_retry(incoming,destination,item=name,operation='installation',check=check)
+
+
+def _directory_entries(root):
+    entries=list(root.rglob('*'))
+    if any(path.is_symlink() for path in entries):raise ValueError('Lien dans le dossier doc cible : copie en place refusée')
+    return entries
+
+
+def _mirror_directory_contents(source,destination,check,*,item):
+    """Mirror a small locked root with per-file atomic replacements."""
+    source_entries=_directory_entries(source)
+    _directory_entries(destination)
+    directories={path.relative_to(source) for path in source_entries if path.is_dir()}
+    files={path.relative_to(source) for path in source_entries if path.is_file()}
+    for relative in sorted(directories,key=lambda path:(len(path.parts),str(path))):
+        check();path=safe_path(destination,relative.as_posix())
+        if path.is_file():path.unlink()
+        path.mkdir(parents=True,exist_ok=True)
+    for relative in sorted(files,key=str):
+        check();path=safe_path(destination,relative.as_posix())
+        if path.is_dir():shutil.rmtree(path)
+        path.parent.mkdir(parents=True,exist_ok=True)
+        temporary=path.with_name('.alpha-migration-'+uuid.uuid4().hex)
+        try:
+            shutil.copy2(source/relative,temporary)
+            replace_with_retry(temporary,path,item=item,operation='remplacement de '+relative.as_posix(),check=check)
+        finally:
+            if temporary.exists():temporary.unlink()
+    for path in sorted(_directory_entries(destination),key=lambda entry:len(entry.parts),reverse=True):
+        check();relative=path.relative_to(destination)
+        if path.is_file() and relative not in files:path.unlink()
+        elif path.is_dir() and relative not in directories:path.rmdir()
+
+
+def rollback_managed_roots(moves,failed_files):
+    for destination,previous,installed,mode in reversed(moves):
+        if mode=='in_place':
+            _mirror_directory_contents(previous,destination,lambda:None,item=destination.name)
+            continue
+        if destination.exists():
+            failed=failed_files/destination.name;failed.parent.mkdir(exist_ok=True,mode=0o700)
+            replace_with_retry(destination,failed,item=destination.name,operation='mise en quarantaine',check=lambda:None)
+        if previous.exists():replace_with_retry(previous,destination,item=destination.name,
+            operation='retour arrière',check=lambda:None)
 
 
 def restore(folder,target,password,db,report_dir,*,approved_plan,quiet=inventory.quiescent,
             env_writer=environment.write_user,env_reader=lambda:environment.registry_values('User'),
-            cancel=None,install_environment=True,guard=True,on_progress=None):
+            cancel=None,install_environment=True,guard=True,on_progress=None,skip_existing_backup=False):
     folder=Path(folder).resolve();target=checked_directory(target);reports=checked_directory(report_dir)
     if reports==target or reports.is_relative_to(target):raise ValueError('Le journal de restauration doit être hors destination')
-    plan=inspect_restore(folder,target,password,db,quiet=quiet,on_progress=on_progress)
+    plan=inspect_restore(folder,target,password,db,quiet=quiet,verify_packages=False)
+    if plan['fingerprint']!=approved_plan:raise ValueError('Plan de restauration changé : refaire la prévisualisation')
+    if plan['active_processes']:raise ValueError('Fermer les processus du projet cible avant restauration')
+    verify(folder,password,cancel=cancel,on_progress=on_progress)
+    # The target can change during the package scan; reject that change too.
+    plan=inspect_restore(folder,target,password,db,quiet=quiet,on_progress=on_progress,verify_packages=False)
     if plan['fingerprint']!=approved_plan:raise ValueError('Plan de restauration changé : refaire la prévisualisation')
     if plan['active_processes']:raise ValueError('Fermer les processus du projet cible avant restauration')
     reports.mkdir(parents=True,exist_ok=False,mode=0o700)
@@ -348,7 +478,8 @@ def restore(folder,target,password,db,report_dir,*,approved_plan,quiet=inventory
     failed_files=target.parent/('.alpha-migration-failed-'+uuid.uuid4().hex)
     preimage=reports/'existant-chiffre'
     atomic_json(reports/'local-directories.json',dict(staging=str(stage),previous=str(old_files),failed=str(failed_files)))
-    old_env=env_reader();changed=[];moves=[];database_started=False;env_started=False
+    old_env=env_reader();changed=[];moves=[];database_started=False;database_ready=False;env_started=False
+    old_meta={};old_packages=[];old_file_packages=[]
     def check():check_cancel(cancel)
     def progress(phase,**extra):
         atomic_json(reports/'progress.json',dict(status='RESTORING',phase=phase,updated_at=utc()))
@@ -362,43 +493,47 @@ def restore(folder,target,password,db,report_dir,*,approved_plan,quiet=inventory
             progress('STAGING');extract_files(folder,payload,stage,password,cancel,on_progress);model_checks(stage)
             if shutil.disk_usage(reports).free < plan['estimated_staging_bytes']*.05:
                 raise ValueError('Espace de sécurité insuffisant après extraction')
-            progress('BACKUP_EXISTING')
-            # A full encrypted preimage of existing schemas AND managed files
-            # precedes the first DROP. Missing schemas are explicitly recorded.
-            old_meta={n:db.inspect(n,allow_missing=True) for n in DATABASES}
-            preimage.mkdir(mode=0o700);old_packages=[]
-            old_file_packages=[]
-            old_entries=inventory.scan(target)
-            for index,(name,records) in enumerate(old_entries.items()):
-                progress('BACKUP_EXISTING',package=name,part_index=index,parts_total=len(old_entries)+3,
-                    total_bytes=sum(f['size'] for f in records),files_total=len(records))
-                package=pack_files(target,preimage/('files-'+name),name+'.tar.gz',records,password,2*1024**3,cancel,on_progress=on_progress)
-                old_file_packages.append(dict(package,folder='files-'+name))
-            for index,(name,meta) in enumerate(old_meta.items()):
-                if meta is None:continue
-                progress('BACKUP_EXISTING',database=name,part_index=len(old_entries)+index,parts_total=len(old_entries)+3,processed_bytes=0)
-                with encrypted_output(preimage/name,name+'.sql.gz',password) as (stream,parts):db.dump(name,CountingWriter(stream,on_progress),check)
-                old_packages.append(dict(database=name,folder=name,label=name+'.sql.gz',parts=parts))
-            # Store original user variables encrypted, even when not exporting all
-            # application names. This is rollback material, never public JSON.
-            rollback_names=set(exported_env['values'])|{prefix+suffix for prefix in ('DB_HOST','LOGIN_DB','PASSWORD_DB') for suffix in ('','_FR','_CN')}
-            previous_environment=write_private_json(preimage,'previous-environment.enc',{n:old_env.get(n) for n in rollback_names},password,2*1024**3)
-            recovery=write_private_json(preimage,'recovery.enc',dict(databases=old_meta,environment=previous_environment,
-                packages=old_packages,file_packages=old_file_packages,managed_roots=plan['managed_roots'],
-                target=str(target)),password,2*1024**3)
-            atomic_json(preimage/'recovery.json',seal_manifest(dict(protocol=PROTOCOL,recovery=recovery),password))
+            if not skip_existing_backup:
+                progress('BACKUP_EXISTING')
+                # A full encrypted preimage of existing schemas AND managed files
+                # precedes the first DROP. Missing schemas are explicitly recorded.
+                old_meta={n:db.inspect(n,allow_missing=True) for n in DATABASES}
+                preimage.mkdir(mode=0o700);old_packages=[]
+                old_file_packages=[]
+                old_entries=inventory.scan(target)
+                for index,(name,records) in enumerate(old_entries.items()):
+                    progress('BACKUP_EXISTING',package=name,part_index=index,parts_total=len(old_entries)+3,
+                        total_bytes=sum(f['size'] for f in records),files_total=len(records))
+                    package=pack_files(target,preimage/('files-'+name),name+'.tar.gz',records,password,2*1024**3,cancel,on_progress=on_progress)
+                    old_file_packages.append(dict(package,folder='files-'+name))
+                for index,(name,meta) in enumerate(old_meta.items()):
+                    if meta is None:continue
+                    progress('BACKUP_EXISTING',database=name,part_index=len(old_entries)+index,parts_total=len(old_entries)+3,processed_bytes=0)
+                    with encrypted_output(preimage/name,name+'.sql.gz',password) as (stream,parts):db.dump(name,CountingWriter(stream,on_progress),check)
+                    old_packages.append(dict(database=name,folder=name,label=name+'.sql.gz',parts=parts))
+                # Store original user variables encrypted, even when not exporting all
+                # application names. This is rollback material, never public JSON.
+                rollback_names=set(exported_env['values'])|{prefix+suffix for prefix in ('DB_HOST','LOGIN_DB','PASSWORD_DB') for suffix in ('','_FR','_CN')}
+                previous_environment=write_private_json(preimage,'previous-environment.enc',{n:old_env.get(n) for n in rollback_names},password,2*1024**3)
+                recovery=write_private_json(preimage,'recovery.enc',dict(databases=old_meta,environment=previous_environment,
+                    packages=old_packages,file_packages=old_file_packages,managed_roots=plan['managed_roots'],
+                    target=str(target)),password,2*1024**3)
+                atomic_json(preimage/'recovery.json',seal_manifest(dict(protocol=PROTOCOL,recovery=recovery),password))
             if quiet(target,allow_ui=False):raise ValueError('Une tâche cible est apparue avant remplacement')
             progress('DATABASE_REPLACEMENT');check();database_started=True
             sql_restore(folder,payload,runtime,password,db,check,on_progress)
-            progress('FILE_REPLACEMENT');check()
-            for index,name in enumerate(plan['managed_roots']):
-                emit(on_progress,'FILE_REPLACEMENT',item=name,completed=index,total=len(plan['managed_roots']))
-                destination=safe_path(target,name);incoming=safe_path(stage,name)
-                previous=safe_path(old_files,name)
-                if destination.exists():
-                    previous.parent.mkdir(parents=True,exist_ok=True);os.replace(destination,previous)
-                moves.append((destination,previous,incoming.exists()))
-                if incoming.exists():os.replace(incoming,destination)
+            check()
+            checkpoint=dict(protocol=PROTOCOL,phase='DATABASE_VALIDATED',backup_id=payload['id'],
+                backup_folder=str(folder),target=str(target),report_dir=str(reports),
+                manifest_sha256=sha_file(folder/'manifest.json'),managed_roots=plan['managed_roots'],
+                preimage_skipped=skip_existing_backup)
+            atomic_json(reports/DB_READY,seal_manifest(checkpoint,password))
+            database_ready=True
+            atomic_json(target/PENDING,dict(protocol=PROTOCOL,backup_id=payload['id'],
+                report_dir=str(reports),reason='FILES_PENDING'))
+            progress('DATABASE_READY')
+            check();progress('FILE_REPLACEMENT')
+            install_managed_roots(target,stage,old_files,plan['managed_roots'],moves,check,on_progress)
             values=environment.rebase(exported_env['values'],payload['source_root'],target)
             # Connections selected by the operator remain authoritative on the
             # new PC, instead of restoring old passwords pointing elsewhere.
@@ -414,8 +549,10 @@ def restore(folder,target,password,db,report_dir,*,approved_plan,quiet=inventory
                 report_dir=str(reports),reason='VALIDATION_AND_MANUAL_RESUME_REQUIRED'))
             atomic_json(reports/'restore-report.json',dict(status='RESTORED_PAUSED',backup_id=payload['id'],
                 databases=list(DATABASES),validated=True,environment_names=sorted(values) if install_environment else [],
-                events_restored_disabled=True,services_auto_restart=False,preimage=str(preimage),
-                recovery_command='python -m portable_migration.cli recover',
+                events_restored_disabled=True,services_auto_restart=False,
+                preimage=None if skip_existing_backup else str(preimage),
+                preimage_skipped=skip_existing_backup,
+                recovery_command=None if skip_existing_backup else 'python -m portable_migration.cli recover',
                 local_previous_files=str(old_files),local_staging=str(stage),
                 dependency_review_count=runtime['versions'].get('unportable_requirement_count',0),
                 external_path_variables=[v['name'] for v in exported_env['variables'] if v.get('external_path')],
@@ -423,19 +560,20 @@ def restore(folder,target,password,db,report_dir,*,approved_plan,quiet=inventory
             atomic_json(reports/'progress.json',dict(status='RESTORED_PAUSED',finished_at=utc()))
             emit(on_progress,'RESTORED_PAUSED')
     except BaseException as exc:
-        # Rollback uses preimages, not the source migration. Never label a partial
-        # restoration completed, and never restart a watcher after a failure.
+        # Once the databases have passed validation, only files/environment roll back.
+        # The authenticated checkpoint allows a separate file-only retry.
         ok=True
-        emit(on_progress,'ROLLBACK')
+        if isinstance(exc,FileInstallError):
+            try:atomic_json(reports/'failure.json',dict(phase='FILE_REPLACEMENT',root=exc.item,
+                operation=exc.operation,system_code=exc.code,error_type=type(exc).__name__,failed_at=utc()))
+            except OSError:pass
+        emit(on_progress,'FILE_ROLLBACK' if database_ready else 'ROLLBACK',
+            item=exc.item if isinstance(exc,FileInstallError) else None)
         try:
             if env_started:env_writer({name:old_env.get(name) for name in changed})
-            for destination,previous,installed in reversed(moves):
-                if destination.exists():
-                    # Keep failed incoming files for diagnosis, no recursive delete.
-                    failed=failed_files/destination.name;failed.parent.mkdir(exist_ok=True,mode=0o700)
-                    os.replace(destination,failed)
-                if previous.exists():os.replace(previous,destination)
-            if database_started:
+            rollback_managed_roots(moves,failed_files)
+            if database_started and not database_ready and skip_existing_backup:ok=False
+            if database_started and not database_ready and not skip_existing_backup:
                 for index,(name,meta) in enumerate(old_meta.items()):
                     emit(on_progress,'ROLLBACK',database=name,completed=index,total=3)
                     if meta is None:db.drop(name)
@@ -445,10 +583,104 @@ def restore(folder,target,password,db,report_dir,*,approved_plan,quiet=inventory
                         with decrypted_input(preimage/name,package,password) as stream:db.load(name,stream)
                         db.load_events_disabled(name,meta.get('event_definitions',[]));db.validate(name,meta)
         except BaseException:ok=False
-        atomic_json(target/PENDING,dict(reason='RESTORE_FAILED_REVIEW_REQUIRED',report_dir=str(reports)))
-        atomic_json(reports/'progress.json',dict(status='FAILED_ROLLED_BACK' if ok else 'FAILED_ROLLBACK_INCOMPLETE',
+        state=('FILES_PENDING' if ok else 'FILES_ROLLBACK_INCOMPLETE') if database_ready else (
+            'FAILED_ROLLED_BACK' if ok else 'FAILED_ROLLBACK_INCOMPLETE')
+        atomic_json(target/PENDING,dict(reason=state if database_ready else 'RESTORE_FAILED_REVIEW_REQUIRED',
+            report_dir=str(reports),preimage_skipped=skip_existing_backup))
+        atomic_json(reports/'progress.json',dict(status=state,database_ready=database_ready,
             error_type=type(exc).__name__,finished_at=utc(),services_auto_restart=False))
-        emit(on_progress,'FAILED_ROLLED_BACK' if ok else 'FAILED_ROLLBACK_INCOMPLETE')
+        emit(on_progress,state)
+        raise
+    return json.loads((reports/'restore-report.json').read_text(encoding='utf-8'))
+
+
+def restore_files(folder,target,password,db,report_dir,*,quiet=inventory.quiescent,
+                  env_writer=environment.write_user,env_reader=lambda:environment.registry_values('User'),
+                  cancel=None,install_environment=True,guard=True,on_progress=None):
+    """Resume only the file/environment phase from a validated SQL checkpoint."""
+    folder=Path(folder).resolve();target=checked_directory(target);reports=checked_directory(report_dir)
+    if reports==target or reports.is_relative_to(target):raise ValueError('Le rapport doit être hors destination')
+    checkpoint=open_manifest(reports/DB_READY,password)
+    payload=open_manifest(folder/'manifest.json',password)
+    if (checkpoint.get('phase')!='DATABASE_VALIDATED' or checkpoint.get('backup_id')!=payload['id']
+            or checkpoint.get('backup_folder')!=str(folder) or checkpoint.get('target')!=str(target)
+            or checkpoint.get('report_dir')!=str(reports)
+            or checkpoint.get('manifest_sha256')!=sha_file(folder/'manifest.json')):
+        raise ValueError('Point de reprise non lié à cette sauvegarde et à ce projet')
+    state=json.loads((reports/'progress.json').read_text(encoding='utf-8'))
+    marker=json.loads((target/PENDING).read_text(encoding='utf-8'))
+    if state.get('status')!='FILES_PENDING' or marker.get('reason')!='FILES_PENDING' or marker.get('report_dir')!=str(reports):
+        raise ValueError('Installation des fichiers non prête à reprendre')
+    runtime=private_json(folder,payload,'runtime',password)
+    exported_env=private_json(folder,payload,'environment',password)
+    expected=sorted({Path(f['path']).parts[0] for p in payload['packages'] if p['kind']=='files' for f in p['files']})
+    managed=checkpoint.get('managed_roots')
+    if not isinstance(managed,list) or managed!=sorted(set(managed)) or not set(expected).issubset(managed):
+        raise ValueError('Périmètre de fichiers du point de reprise invalide')
+    size=sum(f['size'] for p in payload['packages'] if p['kind']=='files' for f in p['files'])
+    if shutil.disk_usage(target.parent).free<size*1.2:raise ValueError('Espace insuffisant pour préparer les fichiers')
+    stage=target.parent/('.alpha-migration-stage-'+uuid.uuid4().hex);stage.mkdir(mode=0o700)
+    old_files=target.parent/('.alpha-migration-previous-'+uuid.uuid4().hex);old_files.mkdir(mode=0o700)
+    failed_files=target.parent/('.alpha-migration-failed-'+uuid.uuid4().hex)
+    atomic_json(reports/'local-directories.json',dict(staging=str(stage),previous=str(old_files),failed=str(failed_files)))
+    old_env=env_reader();changed=[];moves=[];env_started=False;db_verified=False
+    def progress(phase,**extra):
+        atomic_json(reports/'progress.json',dict(status='RESTORING',phase=phase,updated_at=utc()))
+        emit(on_progress,phase,**extra)
+    @contextmanager
+    def noop():yield
+    try:
+        with (maintenance(target,quiet,allow_ui=False,on_progress=on_progress) if guard else noop()), observe(target,quiet,allow_ui=False) as observed:
+            def check():observed();check_cancel(cancel)
+            progress('DATABASE_VALIDATION')
+            for index,name in enumerate(DATABASES):
+                check();emit(on_progress,'DATABASE_VALIDATION',database=name,completed=index,total=3)
+                db.validate(name,runtime['databases'][name]);check()
+                emit(on_progress,completed=index+1,checkpoint=True)
+            db_verified=True
+            progress('STAGING');extract_files(folder,payload,stage,password,cancel,on_progress);model_checks(stage)
+            check();progress('FILE_REPLACEMENT')
+            install_managed_roots(target,stage,old_files,managed,moves,check,on_progress)
+            values=environment.rebase(exported_env['values'],payload['source_root'],target)
+            for dbname,suffix in [('alpha_trade',''),('alpha_trade_fr','_FR'),('alpha_trade_cn','_CN')]:
+                c=db.connections[dbname]
+                values.update({'DB_HOST'+suffix:c.host,'LOGIN_DB'+suffix:c.user,'PASSWORD_DB'+suffix:c.password,
+                    'DB_NAME'+suffix:dbname})
+            if install_environment:
+                progress('USER_ENVIRONMENT');env_started=True;changed=list(values);env_writer(values)
+            progress('FINALIZING');db.reset_runtime_locks();sanitize_local_status(target)
+            atomic_json(target/PENDING,dict(protocol=PROTOCOL,backup_id=payload['id'],restored_at=utc(),
+                report_dir=str(reports),reason='VALIDATION_AND_MANUAL_RESUME_REQUIRED'))
+            preimage=reports/'existant-chiffre'
+            atomic_json(reports/'restore-report.json',dict(status='RESTORED_PAUSED',backup_id=payload['id'],
+                databases=list(DATABASES),validated=True,environment_names=sorted(values) if install_environment else [],
+                events_restored_disabled=True,services_auto_restart=False,
+                preimage=str(preimage) if preimage.is_dir() and not checkpoint['preimage_skipped'] else None,
+                preimage_skipped=checkpoint['preimage_skipped'],
+                recovery_command='python -m portable_migration.cli recover' if preimage.is_dir() and not checkpoint['preimage_skipped'] else None,
+                local_previous_files=str(old_files),local_staging=str(stage),
+                dependency_review_count=runtime['versions'].get('unportable_requirement_count',0),
+                external_path_variables=[v['name'] for v in exported_env['variables'] if v.get('external_path')],
+                source_requirements=runtime['versions']['requirements'],python=runtime['versions']['python']))
+            atomic_json(reports/'progress.json',dict(status='RESTORED_PAUSED',finished_at=utc()))
+            emit(on_progress,'RESTORED_PAUSED')
+    except BaseException as exc:
+        ok=True
+        if isinstance(exc,FileInstallError):
+            try:atomic_json(reports/'failure.json',dict(phase='FILE_REPLACEMENT',root=exc.item,
+                operation=exc.operation,system_code=exc.code,error_type=type(exc).__name__,failed_at=utc()))
+            except OSError:pass
+        emit(on_progress,'FILE_ROLLBACK',item=exc.item if isinstance(exc,FileInstallError) else None)
+        try:
+            if env_started:env_writer({name:old_env.get(name) for name in changed})
+            rollback_managed_roots(moves,failed_files)
+        except BaseException:ok=False
+        status='FILES_PENDING' if ok and db_verified else 'FILES_ROLLBACK_INCOMPLETE' if not ok else 'DATABASE_CHECK_FAILED'
+        atomic_json(target/PENDING,dict(reason=status if status=='FILES_PENDING' else 'RESTORE_FAILED_REVIEW_REQUIRED',
+            report_dir=str(reports),preimage_skipped=checkpoint['preimage_skipped']))
+        atomic_json(reports/'progress.json',dict(status=status,database_ready=db_verified,
+            error_type=type(exc).__name__,finished_at=utc(),services_auto_restart=False))
+        emit(on_progress,status)
         raise
     return json.loads((reports/'restore-report.json').read_text(encoding='utf-8'))
 

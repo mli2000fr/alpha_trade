@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 
 from modelFactory.cn_global_ranking_aggregate import _find_run, aggregate
 from modelFactory.cn_global_ranking_walk_forward import (

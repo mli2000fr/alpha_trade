@@ -116,3 +116,18 @@ de données marché ou des checkpoints de collecte FR.
 `fr_db_backup` sauvegarde aussi les nouvelles tables. `fr_artifacts_backup`
 reste utile pour les anciens dossiers de recherche et modèles. Les horaires
 des batchs, le fournisseur des barres FR et les règles de trading ne changent pas.
+
+## Complément du 6 novembre 2026 — historique FIRDS
+
+Les ZIP et métadonnées auparavant présents sous `artifacts/fr/esma_firds` ont
+également été importés dans le stockage SQL existant : **5 671 fichiers,
+59 903 375 259 octets, zéro erreur**, contrôle final `VERIFIED_COMPLETE`.
+5 665 objets uniques, 62 904 blocs, neuf ZIP relus depuis SQL sans lire les
+fichiers locaux. Les versions disponibles n’ont pas été antidatées et les
+tables canoniques ne sont pas modifiées. Après raccordement des lecteurs
+historiques, 117 tests et validation réelle avec le dossier absent, les
+**59,903 Go de copies locales ont été supprimés** le 06/11 à 18:56 Paris.
+Les chemins FIRDS sont désormais des clés logiques résolues automatiquement
+vers SQL, y compris dans les outils historiques lancés séparément. Les
+sauvegardes de la base FR incluent ces objets ; celles des seuls fichiers non.
+[Procédure, compteurs et preuves](import_archives_firds_sql_20261106.md).

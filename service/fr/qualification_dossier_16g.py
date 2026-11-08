@@ -1,6 +1,8 @@
 """Build an offline, non-serving qualification matrix from a frozen FR opening audit."""
 from __future__ import annotations
 
+from service.fr import firds_storage
+
 import argparse
 from collections import Counter
 from datetime import UTC, datetime
@@ -17,7 +19,7 @@ GLOBAL_GATES = [CONTINUITY, 'INDEPENDENT_REFERENCE_QUALIFICATION',
 
 
 def read_proof(path):
-    raw = path.read_bytes()
+    raw = firds_storage.read_bytes(path)
     return json.loads(raw), hashlib.sha256(raw).hexdigest()
 
 

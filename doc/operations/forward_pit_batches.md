@@ -480,6 +480,36 @@ En cas d'échec, le message d'erreur est joint aux deux canaux. Les résumés de
 
 Un batch désactivé ou ignoré parce qu’une instance est déjà active ne génère pas de fausse notification de succès. Dans **Workflow & Orchestration → Batch**, le titre d'un batch dont le dernier run enregistré est en échec apparaît en rouge et en gras ; pour les batchs historiques sans ligne dans `pit_collection_runs`, le code retour de la dernière tâche Windows sert de fallback. Le panneau conserve les compteurs et le détail de l'erreur.
 
+## Diagnostic HTTP des références options — 5 novembre 2026
+
+`oracle_options_indicative_snapshot` charge d'abord les cours de référence des
+sous-jacents via les barres SIP historiques Alpaca, puis les chaînes d'options
+`indicative`. Un échec sur `/v2/stocks/bars` concerne donc cette première phase,
+pas nécessairement l'accès aux options.
+
+L'ancien transport pouvait afficher « erreur inconnue » après quatre réponses
+429 ou 5xx : leur code n'était pas conservé. Le transport utilise désormais les
+reprises partagées, avec quatre tentatives par défaut, attentes bornées et prise
+en compte de `Retry-After` dans la limite de 60 secondes. Les refus permanents
+comme 401/403 échouent immédiatement ; le dernier statut ou type d'exception est
+conservé, avec masquage des secrets dans les URL. Une réponse JSON invalide reste
+un échec explicite, jamais une collecte vide réussie. Le lecteur de texte utilise
+le même transport ; ses seuls statuts d'absence optionnelle restent 403/404.
+
+Les détails du bilan indiquent la phase (`UNDERLYING_SIP_REFERENCES`, puis
+`OPTIONS_CHAIN_SNAPSHOTS`), le nombre de symboles de référence traités/restants
+et la taille du lot en échec. Une erreur technique ne devient pas une absence
+normale de cours ; le batch conserve son statut d'échec.
+
+Validation : 145 tests de transport, collecte, reprise Yahoo et politique SIP
+réussis. Le contrôle réel du 5 novembre à 21:39 UTC a effectué un seul appel,
+sans écriture SQL : HTTP 200, 63 références retournées sur 100 symboles demandés.
+Il ne valide pas la couverture des 13 105 symboles et ne relance pas le batch.
+Rapport :
+`artifacts/operations/options_snapshot_http_diagnostic/20261105T213921Z/report.json`.
+Les codes précis des deux anciens échecs restent inconnus, car masqués dans
+leurs journaux. Aucun changement d'univers, de flux ou de planification.
+
 ## Mise en service
 
 1. Appliquer `alembic upgrade head` avant le premier lancement.

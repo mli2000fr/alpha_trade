@@ -62,6 +62,26 @@ Pour les journaux append-only sous `log`/`logs`, la portion présente à l'ouver
 est archivée. Une modification en place pendant la lecture d'un autre fichier
 fait échouer la sauvegarde. Ce refus n'interrompt pas le travail du PC source.
 La présence de fichiers nouvellement créés après l'inventaire n'est pas garantie.
+Les fichiers temporaires d'écriture atomique `*.json.<identifiant hexadécimal>.tmp`
+et `*.json.tmp` sont exclus : leur disparition ne doit pas invalider l'export
+d'une version JSON publiée.
+
+Depuis le 1er novembre 2026, si un fichier d'état du filtre options a été
+déplacé après l'inventaire dans une archive de reprise locale, l'export en ligne
+peut lire cette copie sans la restaurer sur le PC source. Cette récupération
+est bornée aux fichiers de claims, résumés, bindings et reçus d'exécution du
+même compte/run. Elle exige la taille et la date de l'inventaire, le journal
+d'archivage du même compte/run, puis son SHA-256 vérifié à la lecture.
+Une ambiguïté, une empreinte incohérente ou l'absence de copie vérifiable
+fait échouer la sauvegarde ; aucun fichier durable n'est silencieusement omis.
+Le manifeste et le résultat exposent `archived_file_versions_recovered` et les
+fichiers concernés portent `source_recovered_from`. Le suivi signale ces
+récupérations. Ce mécanisme ne transforme pas l'export en instantané global.
+
+En cas d'échec de lecture, les rapports conservent désormais le package, le
+dernier fichier, le chemin exact en échec et la classe/code système disponibles
+(`failed_path`, `cause_type`, `filesystem_errno`, `filesystem_winerror`). Aucun
+contenu de fichier ou message brut de fournisseur n'est enregistré.
 Si un entraînement/une collecte est actif, une sauvegarde ultérieure peut donc
 être utile pour conserver sa version terminée.
 
@@ -206,8 +226,19 @@ leur ancien script interactif ; la commande simple reste utilisable.
 
 Depuis une IHM déjà installée : renseigner **Vérifier / restaurer**, lancer la
 prévisualisation, examiner les bases/racines remplacées, puis confirmer le
-remplacement. Les champs de mots de passe sont effacés après chaque opération :
-les ressaisir pour la restauration. Le worker détaché attend au maximum quinze
+remplacement. Le mot de passe des packages se renseigne **en haut de T5.6** ;
+il s'agit du mot de passe choisi lors de la sauvegarde, distinct du mot de
+passe MySQL du PC cible. La prévisualisation demande aussi le répertoire
+contenant `manifest.json`, le projet cible, l'utilisateur et le mot de passe
+MySQL cible. Son bouton reste cliquable : si un champ manque, l'IHM le précise
+et ne lance aucun worker. Aucun remplacement n'est effectué par cette étape.
+
+Les mots de passe restent en mémoire de session après **Vérifier les packages**
+et **Prévisualiser** pour permettre leur enchaînement. Ils sont effacés après
+le lancement d'une sauvegarde, restauration ou récupération ; aucune valeur
+n'est inscrite dans le journal ou la commande. Un nouveau plan remet à zéro
+la confirmation du remplacement et son résultat possède un état distinct de
+celui du bouton. Le worker détaché attend au maximum quinze
 minutes la fermeture des services du PC cible. Il ne ferme rien lui-même.
 
 L'opération :
@@ -220,6 +251,8 @@ L'opération :
 4. recrée puis importe les trois schémas, sans fusion et sans `alembic upgrade` ;
 5. vérifie schémas/objets et compte les lignes après import ; en mode online,
    les comptes ne peuvent pas être comparés à un compte source atomique ;
+   écrit ensuite `database-ready.json` dans le rapport, authentifié par le mot
+   de passe de la sauvegarde et lié au backup, au projet cible et au manifeste ;
 6. remplace les racines gérées et l'arbre d'artefacts, empêchant le mélange de
    vieux modèles avec les nouveaux ; les répertoires hors périmètre restent ;
 7. restaure les variables dans **HKCU Environment**, adapte leur préfixe de
@@ -250,10 +283,27 @@ sur les mêmes comptes pendant que le PC source les gère encore.
 
 ## Échec et récupération
 
-Une erreur pendant le remplacement tente automatiquement de restaurer les
-trois anciennes bases, les anciens fichiers et les variables modifiées.
-Statuts : `FAILED_ROLLED_BACK` ou `FAILED_ROLLBACK_INCOMPLETE`. Aucun de ces
-statuts ne déclenche de reprise des services.
+Avant la validation des trois bases, une erreur tente de remettre les anciennes
+bases et les fichiers en place. Statuts : `FAILED_ROLLED_BACK` ou
+`FAILED_ROLLBACK_INCOMPLETE`.
+
+Après `DATABASE_READY`, une erreur d'installation ne réimporte **pas** les
+anciennes bases : les trois bases validées sont conservées. Seuls les fichiers
+déjà déplacés et les variables utilisateur modifiées sont remis en place.
+Si ce retour des fichiers réussit, le rapport passe à `FILES_PENDING` et
+**Vérifier / restaurer** propose **Reprendre uniquement les fichiers et modèles**.
+Renseigner à nouveau les mots de passe, corriger la cause indiquée dans
+`failure.json`, puis cliquer ce bouton. Le worker vérifie le point de reprise
+authentifié et l'état des trois bases, réextrait les packages de fichiers et
+réessaie leur installation, sans `DROP`, import SQL ni sauvegarde de l'existant.
+Un nouvel échec des fichiers laisse le même bouton disponible. Si le retour
+des fichiers est incomplet (`FILES_ROLLBACK_INCOMPLETE`) ou que les bases ne
+passent plus leur contrôle (`DATABASE_CHECK_FAILED`), la reprise automatique
+des fichiers est refusée et un examen manuel est nécessaire. Aucun de ces
+statuts ne redémarre les services.
+
+Une tentative lancée avec une ancienne version du moteur ne possède pas ce
+point de reprise : elle exige une nouvelle restauration complète des bases.
 
 Les rapports sont sous le dossier choisi dans `journaux`. Ils contiennent le
 chemin `existant-chiffre/recovery.json`, les archives chiffrées, ainsi que
@@ -350,3 +400,60 @@ de cette installation ; les tests simulés ne prouvent pas son RTO réel.
 Sources : `service/migration/`, `ihm/services/migration_runner.py`,
 `ihm/components/migration_panel.py`, tests `test_migration_complete.py` et
 `test_migration_ui_worker.py`.
+
+## Restauration autonome des fichiers uniquement — 5 novembre 2026
+
+Dans **T5.6 → Vérifier / restaurer**, renseigner le dossier contenant
+`manifest.json`, le projet cible et le mot de passe des packages. Cliquer
+**Prévisualiser les fichiers uniquement**, vérifier les dossiers annoncés,
+cocher la confirmation puis **Restaurer uniquement les fichiers et modèles**.
+Les identifiants MySQL ne sont pas nécessaires pour ce parcours.
+
+Ce mode restaure le code, les modèles, les configurations et les archives des
+packages de fichiers. Il ne construit aucun adaptateur MySQL, n'ouvre aucun
+package SQL et n'effectue aucune lecture, purge, import, validation ou remise à
+zéro des verrous SQL. Il n'exige pas de restauration préalable des bases.
+Les variables système/utilisateur, les fichiers `.env*` à la racine du projet
+et le `.venv` existant sont conservés ; aucun nouvel environnement Python ni
+service n'est lancé. Vérifier la compatibilité du code restauré avec les bases
+conservées avant la reprise manuelle.
+
+Le manifeste authentifié, les empreintes des fichiers et les contrats des
+modèles sont contrôlés. Les fichiers sont préparés dans un dossier voisin de
+la cible ; les anciennes racines remplacées sont déplacées dans
+`.alpha-migration-previous-*`, dont le chemin figure au rapport. Un échec
+d'installation déclenche un retour arrière des fichiers uniquement. Les
+dossiers étrangers au périmètre annoncé ne sont pas remplacés. Les tâches
+actives du projet cible doivent se terminer ; aucun processus source n'est
+arrêté. La progression et les logs utilisent le suivi T5.6 habituel.
+
+Les actions worker sont `plan_files_only` et `restore_files_only`, distinctes
+de `restore_files` : cette dernière reste la **reprise après validation SQL**
+d'une restauration complète interrompue et utilise son checkpoint existant.
+Le nouveau mode ne demande aucun checkpoint SQL. Aucun lancement réel de
+restauration n'est effectué par l'ajout de ces boutons.
+
+## Symboles portant un nom réservé Windows — 6 novembre 2026
+
+Un symbole valide tel que `CON` ne doit pas devenir directement un nom de
+dossier. Le contrôle de portabilité reste strict : ne pas l'ignorer ni exclure
+ces fichiers de la sauvegarde. `common.symbol_artifact_paths.symbol_directory`
+conserve les noms ordinaires et préfixe les noms réservés par `symbol=`
+(`CON` → `symbol=CON`, idem pour `NUL`, `PRN`, `AUX`, `COM1`…). Le symbole
+contenu dans les données reste inchangé. Les séparateurs et entrées ambiguës
+sont refusés, sans remplacement silencieux pouvant fusionner deux symboles.
+
+La campagne `artifacts/research/us_predictable_symbols/20261103-v1/symbols/CON`
+a été déplacée dans `symbols/symbol=CON` : **4 fichiers, 228 919 octets**, mêmes
+SHA-256. Le producteur, la reprise et les lecteurs de classement ont été
+raccordés. Un aller-retour chiffré des quatre vrais fichiers a été vérifié
+sans base de données, ainsi que **93 tests**. Aucun fichier n'est écarté de
+la sauvegarde. Les preuves et les sources antérieures à la correction sont
+conservées dans `artifacts/operations/migration_portability_repair/20261106-v1`.
+
+Les résultats et protocoles de recherche figés ne sont pas réécrits pour
+changer leurs empreintes de code : la modification porte sur les chemins de
+stockage. Une nouvelle exécution d'une campagne avec sources figées doit
+utiliser un nouveau protocole ; les sources originales restent disponibles
+dans le dossier de preuve. Aucun entraînement ni recalcul de résultats
+n'a été exécuté pour réparer la sauvegarde.

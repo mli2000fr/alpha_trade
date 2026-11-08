@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta, date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2] / 'artifacts' / 'options_directional'
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PROTOCOL = 'options-volume-oi-equal-rank-v1'
 
 
@@ -70,14 +71,52 @@ def sealed_report(run_id, *, root=None):
     return report
 
 
+def _file_symbols(source):
+    from common.universe_files import is_universe_file_source, load_universe_file_symbols
+    if not is_universe_file_source(source):
+        raise ValueError('Source non fichier')
+    return set(load_universe_file_symbols(source, directory=PROJECT_ROOT/'config/univers', root=PROJECT_ROOT))
+
+
+def _same_source(left, right):
+    """Candidate lookup only; qualification still checks the sealed membership.
+
+    Do not use a basename match or silently substitute a missing file. Keep this
+    separate from seal validation so a newer corrupt candidate blocks fallback.
+    """
+    if left == right:
+        return True
+    try:
+        members = _file_symbols(left)
+        return bool(members) and members == _file_symbols(right)
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def _qualify_source(report, requested, folder):
+    if requested is None or requested == report['symbol_source']:
+        return
+    if not _same_source(report['symbol_source'], requested):
+        raise ValueError('Filtre options incompatible : symbol_source')
+    inputs = json.loads((folder/'inputs.json').read_text(encoding='utf-8'))
+    if digest(inputs) != report['inputs_sha256']:
+        raise ValueError('Archive filtre options altérée')
+    frozen = inputs.get('universe')
+    if (not isinstance(frozen, list) or not frozen
+            or set(frozen) != _file_symbols(requested)
+            or set(frozen) != _file_symbols(report['symbol_source'])):
+        raise ValueError('Filtre options incompatible : le contenu des univers diffère du snapshot')
+
+
 def qualified(run_id, *, trade_date, batch_id=None, account_id='default', symbol_source=None,
               capital_preset_key=None, now=None, root=None):
     report = sealed_report(run_id, root=root)
     for key, value in [('trade_date', str(trade_date)), ('account_id', account_id),
-                       ('batch_id', batch_id), ('symbol_source', symbol_source),
+                       ('batch_id', batch_id),
                        ('capital_preset_key', capital_preset_key)]:
         if value is not None and report[key] != value:
             raise ValueError(f'Filtre options incompatible : {key}')
+    _qualify_source(report, symbol_source, directory(run_id, root))
     now = now or datetime.now(timezone.utc)
     cutoff = datetime.fromisoformat(report['cutoff_utc'])
     if not cutoff <= now <= cutoff + timedelta(hours=report['config']['max_age_hours']):
@@ -95,8 +134,10 @@ def latest_matching(**kwargs):
             report = json.loads(file.read_text(encoding='utf-8'))
         except (FileNotFoundError, json.JSONDecodeError):
             continue
-        if all(value is None or report.get(key) == str(value) for key, value in kwargs.items()
-               if key in ('trade_date', 'batch_id', 'account_id', 'symbol_source', 'capital_preset_key')):
+        if (all(value is None or report.get(key) == str(value) for key, value in kwargs.items()
+                if key in ('trade_date', 'batch_id', 'account_id', 'capital_preset_key'))
+                and (kwargs.get('symbol_source') is None
+                     or _same_source(report.get('symbol_source'), kwargs['symbol_source']))):
             matches.append(report)
     if not matches:
         raise ValueError('Aucun filtre options terminé pour cette date/modèle/univers ; lancer étape 10')

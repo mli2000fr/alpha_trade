@@ -1,0 +1,2 @@
+
+Allowed decisions: LONG, ABSTAIN (SHORT forbidden)

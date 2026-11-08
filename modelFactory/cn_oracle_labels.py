@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from service.market import cn_collection_storage as cn_storage
 import hashlib
 import json
 from dataclasses import dataclass
 from datetime import date, timedelta
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 from typing import Any
 
 import numpy as np
@@ -332,7 +333,7 @@ def build_year(
         raise ValueError("Sprint 10-A borné aux données CN 2018–2025")
     policy = CNLabelPolicy.from_yaml(config_path)
     panel_path, panel_report = _resolve_feature_panel(year, feature_root)
-    candidates = pd.read_parquet(panel_path, columns=list(FEATURE_COLUMNS))
+    candidates = cn_storage.read_parquet(panel_path, columns=list(FEATURE_COLUMNS))
     candidates["session_date"] = pd.to_datetime(candidates["session_date"])
     candidates["decision_at"] = pd.to_datetime(candidates["decision_at"])
     start, end = start_date or date(year, 1, 1), end_date or date(year, 12, 31)
@@ -363,7 +364,7 @@ def build_year(
         )
         temp = directory / f"h{horizon}.tmp.parquet"
         final = directory / f"h{horizon}.parquet"
-        labels.to_parquet(temp, index=False)
+        cn_storage.write_parquet(labels,temp, index=False)
         new_sha = _file_sha(temp)
         if final.exists():
             temp.unlink()

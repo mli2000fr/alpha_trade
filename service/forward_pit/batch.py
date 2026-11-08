@@ -39,6 +39,7 @@ from database.connection import get_sqlalchemy_engine
 from risk_management.liquidity import BorrowStatus, alpaca_borrow_status
 from service.alpaca.clientAlpaca import fetch_alpaca_assets, get_alpaca_credentials
 from service.alpaca.sip_reference import historical_sip_snapshots
+from service._http_retry import RetryPolicy, request_with_retry
 from service.forward_pit.options_delayed import (
     option_contract_adjustment_sync,
     options_delayed_bars_sync,
@@ -504,26 +505,44 @@ def _secret(cfg: dict[str, Any], default_env: str) -> str:
 def _safe_error_message(error: Exception) -> str:
     """Redact credentials carried in request URLs before logging/persisting."""
     return re.sub(
-        r"(?i)(api[_-]?key|access[_-]?token|token|secret|password)=([^&\s]+)",
+        r"(?i)(api[_-]?key|api[_-]?token|access[_-]?token|token|key|secret|password)=([^&\s]+)",
         r"\1=***",
         str(error),
     )
 
 
+def _request_forward_response(session, url, *, timeout, attempts, optional_statuses=(), **kwargs):
+    """Bounded shared retries; keep the last HTTP code, never hide 429/5xx."""
+    if type(attempts) is not int or attempts<1:
+        raise ValueError('attempts doit être un entier strictement positif')
+    last=None
+    try:
+        return request_with_retry(session,'GET',url,timeout=timeout,
+            policy=RetryPolicy(max_attempts=attempts,base_delay_seconds=1.,max_delay_seconds=60.,
+                               timeout_seconds=timeout),
+            breaker=None,  # Preserve this collector's per-call budget, without changing shared live clients.
+            retry_response=lambda response:response.status_code>=500,**kwargs)
+    except requests.HTTPError as exc:
+        response=exc.response
+        if response is not None and response.status_code in optional_statuses:
+            return response
+        last=exc
+    except requests.RequestException as exc:
+        last=exc
+    safe_url=_safe_error_message(RuntimeError(url))
+    detail=_safe_error_message(last) or type(last).__name__
+    raise RuntimeError(f'Echec HTTP {safe_url}: {type(last).__name__}: {detail}') from None
+
+
 def _request_json(session: requests.Session, url: str, *, params: dict[str, Any], headers: dict[str, str] | None = None, timeout: float = 45, attempts: int = 4) -> tuple[Any, int]:
-    last: Exception | None = None
-    for attempt in range(attempts):
-        try:
-            response = session.get(url, params=params, headers=headers, timeout=timeout)
-            if response.status_code == 429 or response.status_code >= 500:
-                time.sleep(min(20, 2 ** attempt)); continue
-            response.raise_for_status()
-            return response.json(), response.status_code
-        except (requests.RequestException, ValueError) as exc:
-            last = exc
-            if attempt + 1 < attempts:
-                time.sleep(min(20, 2 ** attempt))
-    raise RuntimeError(f"Echec HTTP {url}: {_safe_error_message(last or RuntimeError('erreur inconnue'))}")
+    response=_request_forward_response(session,url,params=params,headers=headers,timeout=timeout,attempts=attempts)
+    try:
+        try:return response.json(),response.status_code
+        except ValueError:
+            raise RuntimeError(f'Echec HTTP {_safe_error_message(RuntimeError(url))}: '
+                               f'HTTP {response.status_code}, réponse JSON invalide') from None
+    finally:
+        response.close()
 
 
 def _paginated_json(
@@ -750,22 +769,11 @@ def configure_alpaca_session(
 def _request_text_optional(
     session: requests.Session, url: str, *, timeout: float = 45, attempts: int = 4
 ) -> tuple[str | None, int]:
-    last: Exception | None = None
-    for attempt in range(attempts):
-        try:
-            response = session.get(url, timeout=timeout)
-            if response.status_code in {403, 404}:
-                return None, response.status_code
-            if response.status_code == 429 or response.status_code >= 500:
-                time.sleep(min(20, 2 ** attempt))
-                continue
-            response.raise_for_status()
-            return response.text, response.status_code
-        except requests.RequestException as exc:
-            last = exc
-            if attempt + 1 < attempts:
-                time.sleep(min(20, 2 ** attempt))
-    raise RuntimeError(f"Echec HTTP {url}: {_safe_error_message(last or RuntimeError('erreur inconnue'))}")
+    response=_request_forward_response(session,url,timeout=timeout,attempts=attempts,optional_statuses=(403,404))
+    try:
+        return (None if response.status_code in (403,404) else response.text),response.status_code
+    finally:
+        response.close()
 
 
 def _parse_finra_short_volume(content: str) -> list[dict[str, Any]]:
@@ -1633,6 +1641,8 @@ def options_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool
         "directional_pair_contracts_added": 0, "contracts_rejected_liquidity": 0,
         "contracts_rejected_open_interest": 0,
     }
+    outcome.details.update(phase='UNDERLYING_SIP_REFERENCES',reference_symbols_processed=0,
+                           reference_symbols_pending=len(symbols))
     with preserve_outcome(outcome), requests.Session() as session, engine.begin() as conn:
         _configure_alpaca_session(
             session,
@@ -1642,7 +1652,14 @@ def options_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool
         for chunk in _chunks(symbols, stock_chunk_size):
             if request_pause > 0:
                 time.sleep(request_pause)
-            payload, status = historical_sip_snapshots(session,chunk,headers,_request_json)
+            try:
+                payload, status = historical_sip_snapshots(session,chunk,headers,_request_json)
+            except RuntimeError as exc:
+                outcome.details.update(reference_chunk_failed_symbols=len(chunk),
+                                       reference_error=_safe_error_message(exc))
+                raise
+            outcome.details['reference_symbols_processed']+=len(chunk)
+            outcome.details['reference_symbols_pending']=len(symbols)-outcome.details['reference_symbols_processed']
             if not dry:
                 _raw(
                     conn, run_id, "oracle_options_indicative_snapshot", "alpaca",
@@ -1663,6 +1680,7 @@ def options_snapshot(engine: Engine, cfg: dict[str, Any], run_id: str, dry: bool
         outcome.details['symbols_with_alpaca_spot']=alpaca_prices_count
         details["symbols_with_spot"] = len(prices)
         details["symbols_without_spot"] = len(symbols) - len(prices)
+        outcome.details['phase']='OPTIONS_CHAIN_SNAPSHOTS'
 
         consecutive_failures = 0
         for symbol_index, symbol in enumerate(symbols, start=1):

@@ -8,7 +8,7 @@
   "discovery_artifact": "artifacts/research/directional_alpha_book/directional-alpha-book-20260911194051",
   "discovery_end_date": "2025-12-31",
   "confirmation_start_date": "2026-09-14",
-  "symbol_source": "universe-file:univers_filtred_equities.txt",
+  "symbol_source": "universe-file:univers_filtred_tradable.txt",
   "signal": "residual_momentum_120_10",
   "signal_definition": "sum over J-119..J-10 of stock_return - rolling_beta_126_lagged_inputs * SPY_return",
   "signal_time": "close J",

@@ -1,6 +1,7 @@
 schema_version: 2
 defaults:
   database_alias: cn_primary
+  storage_backend: sql
   provider: baostock
   timezone: Asia/Shanghai
   scheduler_timezone: Europe/Paris
@@ -70,7 +71,7 @@ cn_daily_quality_17c:
   run_days: "1,2,3,4,5"
   description: "Contrôler chaque séance ouverte CN après la fenêtre de collecte D9 : lots, barres, facteurs, limites, Oracle, snapshots D6 et appariement D10. Aucune collecte."
   provider: local_quality
-  tables: "lecture seule:market_sessions,cn_staging_rows,stock_bars_daily,instrument_adjustment_factors,cn_daily_price_limits; fichiers:D6/D9/D10"
+  tables: "lecture seule:market_sessions,cn_staging_rows,stock_bars_daily,instrument_adjustment_factors,cn_daily_price_limits,cn_dragon_tiger_snapshots,cn_dragon_tiger_events,cn_oracle_prospective_candidates,cn_dragon_tiger_matches; bilans:cn_collection_reports"
   universe_scope: cn_a_all_equities_pit
   calendar: config/research_cn/sprint15d6_cn_calendar_2026.yaml
   d6_snapshot_root: artifacts/research/cn_dragon_tiger_15d6/observations

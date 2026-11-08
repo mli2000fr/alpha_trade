@@ -16,7 +16,7 @@ import subprocess
 import tempfile
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 
 from sqlalchemy import create_engine, text
 

@@ -175,6 +175,27 @@ def test_invalid_approval_never_staged(kw):
         plan_from_target(target(**kw), config(), 'exec-1', now=NOW)
 
 
+def test_budget_reserve_rejects_only_unfundable_target_and_preserves_other_plans():
+    store = WinnerCampaignStore(create_engine('sqlite://'))
+    cfg = config(initial_position_fraction=1.)
+    budget = 1893.85 * .0125
+    targets = [target(symbol='ICHR', target_shares=12, entry_price=38.9, risk_budget_dollars=budget),
+        target(symbol='SITM', target_shares=1, entry_price=447.06, risk_budget_dollars=budget),
+        target(symbol='FN', target_shares=1, entry_price=327.29, risk_budget_dollars=budget)]
+    remaining, results = stage_targets(store, targets, cfg, 'exec-1', now=NOW)
+    assert remaining == []  # Skipped LONG must never reach the legacy buy loop.
+    assert [(p['symbol'],p['outcome']) for p in results] == [
+        ('ICHR','PLAN_ARMED'),('SITM','INSUFFICIENT_CAMPAIGN_BUDGET'),('FN','PLAN_ARMED')]
+    assert results[0]['full_quantity'] == 11
+    assert results[1]['minimum_risk_budget'] == pytest.approx(24.6441825)
+    assert {row['state']['symbol'] for row in store.rows()} == {'ICHR','FN'}
+    assert all(row['state']['risk_budget'] == budget for row in store.rows())
+    _, repeated = stage_targets(store, targets, cfg, 'exec-2', now=NOW)
+    assert [p['outcome'] for p in repeated] == [
+        'EXISTING_PLAN_NOT_OVERWRITTEN','INSUFFICIENT_CAMPAIGN_BUDGET','EXISTING_PLAN_NOT_OVERWRITTEN']
+    assert len(store.rows()) == 2
+
+
 def test_plan_clock_signals_do_not_authorize_orders_and_off_switch_keeps_deadline():
     _, state = admitted()
     b = bars([99, 101, 102])

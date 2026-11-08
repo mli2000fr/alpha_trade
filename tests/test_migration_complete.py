@@ -8,6 +8,7 @@ from pathlib import Path
 import platform
 import shutil
 import tarfile
+import threading
 import time
 
 import pytest
@@ -53,6 +54,86 @@ class FakeDB:
 def quiet(*args,**kwargs):return []
 
 
+def test_observe_retries_transient_inventory_error(tmp_path):
+    scanned=threading.Event();attempts=[]
+    def scanner(*args,**kwargs):
+        attempts.append(1)
+        if len(attempts)==1:raise OSError('temporary inventory failure')
+        scanned.set();return []
+    with engine.observe(tmp_path,scanner,allow_ui=False,poll_interval=.01) as check:
+        assert scanned.wait(1)
+        check()
+    assert len(attempts)>=2
+
+
+def test_observe_reports_confirmed_batch_pid(tmp_path):
+    scanned=threading.Event()
+    def scanner(*args,**kwargs):
+        scanned.set();return [dict(pid=12345,name='python.exe')]
+    with engine.observe(tmp_path,scanner,allow_ui=False,poll_interval=.01) as check:
+        assert scanned.wait(1)
+        time.sleep(.02)
+        with pytest.raises(ValueError,match='PID 12345'):check()
+
+
+def test_observe_reports_persistent_inventory_error(tmp_path):
+    scanned=threading.Event();attempts=[]
+    def scanner(*args,**kwargs):
+        attempts.append(1)
+        if len(attempts)>=3:scanned.set()
+        raise OSError('sensitive details should not be logged')
+    with engine.observe(tmp_path,scanner,allow_ui=False,poll_interval=.01) as check:
+        assert scanned.wait(1)
+        time.sleep(.02)
+        with pytest.raises(ValueError,match='trois essais'):check()
+
+
+def test_file_install_retries_windows_sharing_violation(tmp_path,monkeypatch):
+    if os.name!='nt':pytest.skip('Windows sharing violation')
+    source=tmp_path/'source';destination=tmp_path/'destination';source.write_text('ready')
+    original=engine.os.replace;attempts=[]
+    def busy_once(src,dst):
+        attempts.append(1)
+        if len(attempts)==1:
+            error=PermissionError(13,'sharing violation');error.winerror=32
+            raise error
+        return original(src,dst)
+    monkeypatch.setattr(engine.os,'replace',busy_once)
+    monkeypatch.setattr(engine.time,'sleep',lambda seconds:None)
+    engine.replace_with_retry(source,destination,item='doc',operation='installation',check=lambda:None,timeout=1)
+    assert len(attempts)==2 and destination.read_text()=='ready'
+
+
+def test_file_install_names_blocked_root_and_system_code(tmp_path,monkeypatch):
+    def denied(src,dst):raise PermissionError(13,'access denied')
+    monkeypatch.setattr(engine.os,'replace',denied)
+    with pytest.raises(engine.FileInstallError,match='doc.*mise de côté.*code système'):
+        engine.replace_with_retry(tmp_path/'doc',tmp_path/'old-doc',item='doc',
+            operation='mise de côté',check=lambda:None,timeout=0)
+
+
+def test_locked_doc_root_uses_in_place_mirror_with_rollback(tmp_path,monkeypatch):
+    target=tmp_path/'target';stage=tmp_path/'stage';previous=tmp_path/'previous'
+    (target/'doc').mkdir(parents=True);(stage/'doc').mkdir(parents=True)
+    (target/'doc/keep.md').write_text('old');(target/'doc/stale.md').write_text('old only')
+    (stage/'doc/keep.md').write_text('new');(stage/'doc/new.md').write_text('new only')
+    original=engine.replace_with_retry
+    def locked_root(source,destination,*,item,operation,check,timeout=60):
+        if item=='doc' and operation=='mise de côté':raise engine.FileInstallError(item,operation,5)
+        return original(source,destination,item=item,operation=operation,check=check,timeout=timeout)
+    monkeypatch.setattr(engine,'replace_with_retry',locked_root)
+    moves=[]
+    engine.install_managed_roots(target,stage,previous,['doc'],moves,lambda:None)
+    assert moves[0][3]=='in_place'
+    assert (target/'doc/keep.md').read_text()=='new'
+    assert (target/'doc/new.md').read_text()=='new only'
+    assert not (target/'doc/stale.md').exists()
+    engine.rollback_managed_roots(moves,tmp_path/'failed')
+    assert (target/'doc/keep.md').read_text()=='old'
+    assert (target/'doc/stale.md').read_text()=='old only'
+    assert not (target/'doc/new.md').exists()
+
+
 @pytest.fixture(scope='module')
 def backup(tmp_path_factory):
     base=tmp_path_factory.mktemp('migration');source=base/'source';source.mkdir()
@@ -77,7 +158,7 @@ def backup(tmp_path_factory):
     return source,output,db
 
 
-def plan_and_restore(backup,tmp_path,monkeypatch,db=None,writer=None,on_progress=None):
+def plan_and_restore(backup,tmp_path,monkeypatch,db=None,writer=None,on_progress=None,skip_existing_backup=False):
     source,folder,_=backup;target=tmp_path/'target';target.mkdir()
     (target/'app.py').write_text('old code')
     (target/'unrelated').mkdir();(target/'unrelated/preserved.txt').write_text('untouched')
@@ -92,7 +173,8 @@ def plan_and_restore(backup,tmp_path,monkeypatch,db=None,writer=None,on_progress
             if v is None:values.pop(n,None)
             else:values[n]=v
     result=engine.restore(folder,target,PASSWORD,db,tmp_path/'report',approved_plan=plan['fingerprint'],
-        quiet=quiet,env_writer=writer or write,env_reader=lambda:{},on_progress=on_progress)
+        quiet=quiet,env_writer=writer or write,env_reader=lambda:{},on_progress=on_progress,
+        skip_existing_backup=skip_existing_backup)
     return target,db,result,values
 
 
@@ -133,14 +215,15 @@ def test_import_failure_rolls_back_all_three_databases(backup,tmp_path,monkeypat
     assert json.loads((tmp_path/'report/progress.json').read_text())['status']=='FAILED_ROLLED_BACK'
 
 
-def test_environment_failure_rolls_back_files_and_database(backup,tmp_path,monkeypatch):
-    db=FakeDB('old');before=deepcopy(db.state);calls=[]
+def test_environment_failure_rolls_back_files_but_keeps_validated_database(backup,tmp_path,monkeypatch):
+    db=FakeDB('old');calls=[]
     def fail_once(values):
         calls.append(dict(values))
         if len(calls)==1:raise OSError('Synthetic registry failure')
     with pytest.raises(OSError):plan_and_restore(backup,tmp_path,monkeypatch,db=db,writer=fail_once)
-    assert db.state==before and len(calls)==2
+    assert all(db.state[name]['tag']=='source' for name in DATABASES) and len(calls)==2
     assert (tmp_path/'target/app.py').read_text()=='old code'
+    assert json.loads((tmp_path/'report/progress.json').read_text())['status']=='FILES_PENDING'
 
 
 @pytest.mark.parametrize('damage',['missing','ciphertext','manifest','password','incomplete','tool'])
@@ -179,6 +262,7 @@ def test_changed_plan_rejected(backup,tmp_path,monkeypatch):
     db=FakeDB('old');target=tmp_path/'target';target.mkdir()
     plan=engine.inspect_restore(backup[1],target,PASSWORD,db,quiet=quiet)
     db.state['alpha_trade']['rows']+=1
+    monkeypatch.setattr(engine,'verify',lambda *a,**k:pytest.fail('Un plan périmé ne doit pas relire tous les packages'))
     with pytest.raises(ValueError,match='Plan'):
         engine.restore(backup[1],target,PASSWORD,db,tmp_path/'report',approved_plan=plan['fingerprint'],quiet=quiet)
     assert not db.calls
@@ -293,3 +377,70 @@ def test_restore_failure_reports_rollback_without_false_completion(backup,tmp_pa
     with pytest.raises(RuntimeError):plan_and_restore(backup,tmp_path,monkeypatch,db=db,on_progress=tracker.update)
     assert tracker.state['phase']=='FAILED_ROLLED_BACK' and tracker.state['percent']<100
     assert any(json.loads(line)['phase']=='ROLLBACK' for line in (job/'events.jsonl').read_text().splitlines())
+
+
+def test_restore_can_skip_existing_backup(backup,tmp_path,monkeypatch):
+    db=FakeDB('old')
+    def no_dump(*args):raise AssertionError('Existing database dump must be skipped')
+    db.dump=no_dump
+    target,db,result,_=plan_and_restore(backup,tmp_path,monkeypatch,db=db,skip_existing_backup=True)
+    assert result['status']=='RESTORED_PAUSED'
+    assert result['preimage_skipped'] is True
+    assert result['preimage'] is None and result['recovery_command'] is None
+    assert not (tmp_path/'report/existant-chiffre').exists()
+    assert (target/'app.py').read_text()=='# uncommitted current code\n'
+
+
+def test_skip_existing_backup_marks_partial_database_failure(backup,tmp_path,monkeypatch):
+    db=FakeDB('old');db.fail_load='alpha_trade_fr'
+    with pytest.raises(RuntimeError,match='Synthetic import failure'):
+        plan_and_restore(backup,tmp_path,monkeypatch,db=db,skip_existing_backup=True)
+    progress=json.loads((tmp_path/'report/progress.json').read_text())
+    assert progress['status']=='FAILED_ROLLBACK_INCOMPLETE'
+    assert not (tmp_path/'report/existant-chiffre').exists()
+    assert db.state['alpha_trade']['tag']=='source'
+
+
+@pytest.mark.parametrize('skip_existing_backup',[False,True])
+def test_file_failure_keeps_validated_databases_and_resumes_files_only(
+        backup,tmp_path,monkeypatch,skip_existing_backup):
+    db=FakeDB('old');original=engine.replace_with_retry;failed=[]
+    def blocked_once(source,destination,*,item,operation,check,timeout=60):
+        if item=='artifacts' and operation=='mise de côté' and not failed:
+            failed.append(True)
+            raise engine.FileInstallError(item,operation,32)
+        return original(source,destination,item=item,operation=operation,check=check,timeout=timeout)
+    monkeypatch.setattr(engine,'replace_with_retry',blocked_once)
+    with pytest.raises(engine.FileInstallError,match='artifacts'):
+        plan_and_restore(backup,tmp_path,monkeypatch,db=db,skip_existing_backup=skip_existing_backup)
+    target=tmp_path/'target';report=tmp_path/'report'
+    assert all(db.state[name]['tag']=='source' for name in DATABASES)
+    assert (target/'app.py').read_text()=='old code'
+    assert json.loads((report/'progress.json').read_text())['status']=='FILES_PENDING'
+    assert (report/engine.DB_READY).is_file()
+    assert json.loads((target/engine.PENDING).read_text())['reason']=='FILES_PENDING'
+    assert json.loads((report/'failure.json').read_text())['root']=='artifacts'
+    def no_sql(*args,**kwargs):raise AssertionError('SQL import must not run during file resume')
+    db.recreate=no_sql;db.load=no_sql;db.dump=no_sql
+    source,folder,_=backup
+    result=engine.restore_files(folder,target,PASSWORD,db,report,quiet=quiet,
+        env_writer=lambda values:None,env_reader=lambda:{},install_environment=False)
+    assert result['status']=='RESTORED_PAUSED'
+    assert (target/'app.py').read_text()=='# uncommitted current code\n'
+    assert json.loads((target/engine.PENDING).read_text())['reason']=='VALIDATION_AND_MANUAL_RESUME_REQUIRED'
+
+
+def test_file_resume_rejects_tampered_checkpoint(backup,tmp_path,monkeypatch):
+    db=FakeDB('old');original=engine.replace_with_retry
+    def blocked(source,destination,*,item,operation,check,timeout=60):
+        if item=='artifacts' and operation=='mise de côté':
+            raise engine.FileInstallError(item,operation,32)
+        return original(source,destination,item=item,operation=operation,check=check,timeout=timeout)
+    monkeypatch.setattr(engine,'replace_with_retry',blocked)
+    with pytest.raises(engine.FileInstallError):plan_and_restore(backup,tmp_path,monkeypatch,db=db)
+    report=tmp_path/'report';path=report/engine.DB_READY
+    checkpoint=json.loads(path.read_text());checkpoint['payload']['target']='different target'
+    path.write_text(json.dumps(checkpoint))
+    source,folder,_=backup
+    with pytest.raises(ValueError,match='manifeste altéré'):
+        engine.restore_files(folder,tmp_path/'target',PASSWORD,db,report,quiet=quiet)

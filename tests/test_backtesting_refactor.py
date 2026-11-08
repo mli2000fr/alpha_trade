@@ -8,6 +8,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
+# These legacy daily-engine fixtures must not inherit the user's live Winner
+# switch; otherwise they enter the unrelated intraday replay without its data.
+pytestmark=pytest.mark.usefixtures('isolated_winner_config')
+
 
 # ---------------------------------------------------------------------------
 # Phase A

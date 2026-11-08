@@ -58,16 +58,21 @@ def render_migration_progress(paths):
         what='tables' if tracking.get('unit')=='tables' else 'fichiers'
         st.caption(f"{tracking.get('files_done',0):,} / {tracking['files_total']:,} {what}")
     if tracking.get('item'):st.caption('En cours : '+tracking['item'])
+    if tracking.get('failed_path'):st.error('Fichier en échec : '+tracking['failed_path'])
     if tracking.get('unit') in ('octets SQL','octets compressés'):st.caption('Compteur : '+tracking['unit'])
     if tracking.get('updated_at'):
         try:
             last=datetime.fromisoformat(tracking['updated_at']).astimezone(ZoneInfo('Europe/Paris')).strftime('%H:%M:%S')
             st.caption('Dernier avancement enregistré à '+last+' (Paris).')
         except ValueError:pass
-    if status=='FAILED':st.error(worker.get('message') or 'Opération échouée. Consulter les derniers événements et le rapport.')
+    if status=='FILES_PENDING':
+        st.warning('Les bases sont validées. Corriger le problème de fichiers indiqué dans le rapport, puis utiliser « Reprendre uniquement les fichiers et modèles » dans Vérifier / restaurer.')
+        if worker.get('message'):st.caption(worker['message'])
+    elif status=='FAILED':st.error(worker.get('message') or 'Opération échouée. Consulter les derniers événements et le rapport.')
     elif status=='CANCELED':st.warning('Opération interrompue. Consulter le journal pour le résultat du retour arrière éventuel.')
     elif status=='FINISHED':
-        if tracking.get('warning'):st.warning('Données restaurées ; la construction de l’environnement Python reste à vérifier.')
+        if tracking.get('warning') and tracking.get('operation')=='export':st.warning('Sauvegarde vérifiée avec des versions de fichiers récupérées dans les archives locales ; voir le rapport.')
+        elif tracking.get('warning'):st.warning('Données restaurées ; la construction de l’environnement Python reste à vérifier.')
         else:st.success(label)
     result=state.get('result') or {}
     if result.get('folder') and result.get('status')=='COMPLETE':
@@ -88,5 +93,5 @@ def render_migration_progress(paths):
     if active:
         if st.button('Demander l’arrêt à un point sûr',key='t56_cancel'):
             (Path(selected)/'cancel.request').touch();st.info('Arrêt demandé ; les services du PC source restent actifs.')
-    if selected==st.session_state.get('t56_job') and 'fingerprint' in result and st.session_state.get('t56_plan')!=result:
-        st.session_state['t56_plan']=result;st.rerun()
+    if selected==st.session_state.get('t56_plan_job') and 'fingerprint' in result and st.session_state.get('t56_plan_result')!=result:
+        st.session_state['t56_plan_result']=result;st.rerun()

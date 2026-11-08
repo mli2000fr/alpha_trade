@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import sys
 from dataclasses import dataclass
-from pathlib import Path
+from service.market.cn_collection_storage import DataPath as Path
 
 from sqlalchemy import text
 

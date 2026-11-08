@@ -67,7 +67,15 @@ def qualify_factor_context(frame, prices, stock_returns, required, asof, cutoff,
     complete = frame.loc[frame.quality.eq('QUALIFIED')].copy()
     if len(complete) < 20 or set(required)-set(complete.symbol):
         missing = sorted(set(required)-set(complete.symbol))
-        raise ValueError(f'Factor inputs not qualified: missing={missing}, cross_section={len(complete)}<20')
+        details={}
+        for symbol in missing:
+            rows=frame.loc[frame.symbol.eq(symbol)]
+            try:
+                details[symbol]=json.loads(rows.iloc[0]['details_json']).get('reasons',[]) if len(rows) else ['NO_INPUT_ROW']
+            except (KeyError,TypeError,ValueError):
+                details[symbol]=['INCOMPLETE_FACTOR_INPUTS']
+        raise ValueError(f'Factor inputs not qualified: missing={missing}, '
+            f'qualified_cross_section={len(complete)}, minimum=20, reasons={details}')
     values = complete[['beta_126','market_cap','trend_score'] if include_size else ['beta_126','trend_score']].astype(float)
     if (not np.isfinite(values.to_numpy()).all()
             or not values.trend_score.between(0,1).all()

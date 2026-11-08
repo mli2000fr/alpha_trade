@@ -7,6 +7,8 @@ Le manifeste sépare strictement :
 """
 from __future__ import annotations
 
+from service.fr import firds_storage
+
 import argparse
 import gzip
 import hashlib
@@ -27,7 +29,7 @@ TERMINAL_EVENTS = {"TermntdRcrd", "CancRcrd"}
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as stream:
+    with firds_storage.open_binary(path) as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
@@ -53,7 +55,7 @@ def _price_windows(yahoo_report: dict, euronext_dir: Path,
                                  <= len(result.get("price_difference_examples", [])),
         })
     for path in sorted(euronext_dir.glob("*_price_audit.json")):
-        report = json.loads(path.read_text(encoding="utf-8"))
+        report = json.loads(firds_storage.read_text(path, encoding="utf-8"))
         first, last = report.get("first_overlap"), report.get("last_overlap")
         if not first or not last:
             continue
@@ -139,9 +141,9 @@ def passes_survivorship_gate(status_counts: Counter, total: int, *,
 def _bar_rows(root: Path, symbol: str) -> Iterable[dict]:
     key = hashlib.sha256(symbol.encode("utf-8")).hexdigest()[:16]
     metadata_path = root / "symbols" / f"{key}.json"
-    if not metadata_path.is_file():
+    if not firds_storage.is_file(metadata_path):
         raise FileNotFoundError(f"archive symbole absente : {symbol}")
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata = json.loads(firds_storage.read_text(metadata_path, encoding="utf-8"))
     if metadata.get("symbol") != symbol or metadata.get("status") != "COMPLETED":
         raise ValueError(f"archive symbole incomplète : {symbol}")
     with gzip.open(root / metadata["payloads"]["eod"]["file"], "rt", encoding="utf-8") as stream:
@@ -335,14 +337,14 @@ def main() -> None:
     parser.add_argument("--output-root", type=Path, default=Path(
         "artifacts/fr/sprint5_limited_2018_2026"))
     args = parser.parse_args()
-    history = json.loads(args.history.read_text(encoding="utf-8"))
-    subset = json.loads(args.subset.read_text(encoding="utf-8"))
-    yahoo_report = json.loads(args.yahoo_report.read_text(encoding="utf-8"))
+    history = json.loads(firds_storage.read_text(args.history, encoding="utf-8"))
+    subset = json.loads(firds_storage.read_text(args.subset, encoding="utf-8"))
+    yahoo_report = json.loads(firds_storage.read_text(args.yahoo_report, encoding="utf-8"))
     euronext_delisted_report = (
-        json.loads(args.euronext_delisted_report.read_text(encoding="utf-8"))
-        if args.euronext_delisted_report.is_file() else {}
+        json.loads(firds_storage.read_text(args.euronext_delisted_report, encoding="utf-8"))
+        if firds_storage.is_file(args.euronext_delisted_report) else {}
     )
-    policy = yaml.safe_load(args.policy.read_text(encoding="utf-8"))
+    policy = yaml.safe_load(firds_storage.read_text(args.policy, encoding="utf-8"))
     manifest_path = args.output_root / "bar_manifest.jsonl.gz"
     report = build_manifest(
         history=history, subset=subset, archive_root=args.archive_root,
@@ -356,7 +358,7 @@ def main() -> None:
         "euronext_delisted_report": {
             "path": str(args.euronext_delisted_report),
             "sha256": _sha256(args.euronext_delisted_report)
-            if args.euronext_delisted_report.is_file() else None,
+            if firds_storage.is_file(args.euronext_delisted_report) else None,
         },
         "policy": {"path": str(args.policy), "sha256": _sha256(args.policy)},
     }

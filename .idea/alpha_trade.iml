@@ -91,6 +91,34 @@
       <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-windows-cache-fix/test_inventory_worker_needs_no0/project/.venv" />
       <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-windows-cache-fix/test_scan_and_environment_disc0/project/.venv" />
       <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-windows-cache-fix/test_scan_counts_preserves_mod0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-preview-20261101/test_discovery_does_not_open_a0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-preview-20261101/test_inventory_button_launches0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-preview-20261101/test_inventory_worker_needs_no0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-preview-20261101/test_scan_and_environment_disc0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-preview-20261101/test_scan_counts_preserves_mod0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-preview-v2-20261101/test_discovery_does_not_open_a0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-preview-v2-20261101/test_inventory_button_launches0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-preview-v2-20261101/test_inventory_worker_needs_no0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-preview-v2-20261101/test_scan_and_environment_disc0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-preview-v2-20261101/test_scan_counts_preserves_mod0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-live-capture-20261101/migration0/source/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-live-capture-20261101/test_active_target_and_existin0/target/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-live-capture-20261101/test_discovery_does_not_open_a0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-live-capture-20261101/test_inventory_button_launches0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-live-capture-20261101/test_inventory_worker_needs_no0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-live-capture-20261101/test_scan_and_environment_disc0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-live-capture-20261101/test_scan_counts_preserves_mod0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-live-capture-final-20261101/migration0/source/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-live-capture-final-20261101/test_active_target_and_existin0/target/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-live-capture-final-20261101/test_discovery_does_not_open_a0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-live-capture-final-20261101/test_inventory_button_launches0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-live-capture-final-20261101/test_inventory_worker_needs_no0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-live-capture-final-20261101/test_scan_and_environment_disc0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/tmp/migration-live-capture-final-20261101/test_scan_counts_preserves_mod0/project/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/test_tmp/portable-symbol-tests-v1/migration0/source/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/test_tmp/portable-symbol-tests-v1/migration1/source/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/test_tmp/portable-symbol-tests-v1/test_active_target_and_existin0/target/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/artifacts/test_tmp/portable-symbol-tests-v1/test_standalone_files_restore_0/target/.venv" />
     </content>
     <orderEntry type="jdk" jdkName="Python 3.14 (projets)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />

@@ -38,6 +38,12 @@ def artifact_signature(batch_id,artifacts_root):
     root=Path(artifacts_root)
     folder=(root if root.name==batch_id else root/batch_id)/'oracle_path'
     files=[folder/name for name in ('protocol.json','report.json','feature_profile.json','progress.json')]
+    files.append(folder/'directional/manifest.json')
+    files.append(folder/'directional/benchmark.parquet')
+    files.extend((folder/'directional/diagnostics').glob('*'))
+    files.extend((folder/'directional/oos').glob('*.parquet'))
+    if (folder/'directional').is_dir():
+        files.extend((folder/'directional').glob('*/*.joblib'))
     if (folder/'folds').is_dir():
         files.extend(p for p in (folder/'folds').glob('*/*')
             if p.name in ('done.json','path_model.txt','catboost_model.cbm','oof.parquet'))
@@ -96,9 +102,111 @@ def load_path_artifacts(batch_id,artifacts_root):
         view.update(ready=True,protocol=protocol,profile=profile,report=report,folds=folds,fold_rows=fold_rows,
             profile_sha256=digest(verified_root/'feature_profile.json'),
             oof_coverage=dict(min_date=min(days),max_date=max(days),nb_dates=len(days),nb_symbols=len(symbols),n_rows=rows))
+        if protocol.get('training_config',{}).get('oracle_path_directional_enabled'):
+            # load_contract has already verified this manifest, every model hash
+            # and their causal availability. Do not deserialize weights in UI.
+            manifest=json.loads((verified_root/'directional/manifest.json').read_text(encoding='utf-8'))
+            summary=directional_summary(protocol,manifest)
+            if (summary['models']!=report.get('directional_models')
+                    or summary['skipped']!=report.get('directional_skipped')):
+                raise ValueError('Compteurs per-symbol différents du manifeste vérifié')
+            summary['manifest_sha256']=digest(verified_root/'directional/manifest.json')
+            supplemental=verified_root/'directional/diagnostics/report.json'
+            metrics_records=manifest['models']
+            oos_files=manifest.get('oos_files',[]);oos_root=verified_root
+            if supplemental.is_file():
+                evaluation=json.loads(supplemental.read_text(encoding='utf-8'))
+                if (evaluation.get('status')!='COMPLETED'
+                        or evaluation.get('manifest_sha256')!=summary['manifest_sha256']
+                        or evaluation.get('oracle_protocol_sha256')!=digest(verified_root/'protocol.json')
+                        or evaluation.get('source_hashes')!=manifest['source_hashes']):
+                    raise ValueError('Diagnostics per-symbol absents/incompatibles avec les modèles')
+                expected={(r['symbol'],r['year'],r['side']):r['sha256'] for r in manifest['models']}
+                actual={(r['symbol'],r['year'],r['side']):r['model_sha256'] for r in evaluation['models']}
+                if actual!=expected or len(actual)!=len(evaluation['models']):
+                    raise ValueError('Couverture des diagnostics per-symbol incomplète')
+                for file in [dict(path=evaluation['benchmark_file'],sha256=evaluation['benchmark_sha256']),*evaluation['oos_files']]:
+                    path=(supplemental.parent/file['path']).resolve()
+                    if not path.is_relative_to(supplemental.parent.resolve()) or digest(path)!=file['sha256']:
+                        raise ValueError('Fichier de diagnostic per-symbol corrompu')
+                metrics_records=evaluation['models']
+                oos_files=evaluation['oos_files'];oos_root=supplemental.parent
+                summary['benchmark_reconstructed_from_SQL']=evaluation.get('benchmark_reconstructed_from_SQL',False)
+            summary['metrics_rows']=directional_metric_rows(metrics_records)
+            summary['oos_coverage']=directional_oos_coverage(oos_root,oos_files)
+            progress_file=verified_root/'directional/diagnostics/progress.json'
+            if progress_file.is_file():
+                summary['diagnostic_progress']=json.loads(progress_file.read_text(encoding='utf-8'))
+            view['directional']=summary
     except (OSError,ValueError,KeyError,TypeError) as exc:
+        view['ready']=False
         view['errors'].append(str(exc))
     return view
+
+
+def directional_summary(protocol,manifest):
+    """Describe trained artifacts, never present fit counts as predictive skill."""
+    models=manifest['models'];skipped=manifest['skipped'];universe=set(protocol['universe'])
+    years=sorted({int(r['year']) for r in [*models,*skipped]})
+    details=[];coverage=[];omissions=[]
+    for row in models:
+        details.append({'Symbole':row['symbol'],'Année d’utilisation':int(row['year']),
+            'Direction':row['side'].upper(),'Début entraînement':row['fit_start'],
+            'Fin entraînement':row['fit_end'],'Début calibration':row['calibration_start'],
+            'Fin calibration':row['calibration_end'],'Disponible après':row['available'],
+            'Séances entraînement':row['fit_rows'],'Séances calibration':row['calibration_rows'],
+            'Fichier':row['file'],'SHA-256':row['sha256']})
+    for year in years:
+        selected=[r for r in models if int(r['year'])==year]
+        long={r['symbol'] for r in selected if r['side']=='long'}
+        short={r['symbol'] for r in selected if r['side']=='short'}
+        coverage.append({'Année d’utilisation':year,'Titres de l’univers':len(universe),
+            'Titres avec LONG':len(long),'Titres avec SHORT':len(short),
+            'Sans modèle LONG':len(universe-long),'Sans modèle SHORT':len(universe-short)})
+    reasons={'INSUFFICIENT_HISTORY_OR_CLASSES':'Historique ou exemples de chaque classe insuffisants',
+             'CONSTANT_CALIBRATION':'Prédictions constantes sur la calibration'}
+    for row in skipped:
+        omissions.append({'Symbole':row['symbol'],'Année d’utilisation':int(row['year']),
+            'Direction':row['side'].upper(),'Motif':reasons.get(row['reason'],row['reason'])})
+    return dict(models=len(models),long_models=sum(r['side']=='long' for r in models),
+        short_models=sum(r['side']=='short' for r in models),skipped=len(skipped),
+        universe_size=len(universe),features=len(manifest['features']),contract=manifest['contract'],
+        serving_side=manifest['serving_side'],coverage=coverage,details=details,omissions=omissions)
+
+
+def directional_metric_rows(records):
+    rows=[]
+    for record in records:
+        for stage,metrics in record.get('metrics',{}).items():
+            rows.append({'Symbole':record['symbol'],'Année d’utilisation':int(record['year']),
+                'Direction':record['side'].upper(),'Échantillon':stage,
+                'Observations':metrics['n'],'AUC':metrics.get('auc'),
+                'Exactitude — seuil 0,5':metrics.get('accuracy'),
+                'Exactitude équilibrée':metrics.get('balanced_accuracy'),
+                'Précision des scores ≥ 0,5':metrics.get('precision_at_05'),
+                'Scores ≥ 0,5':metrics.get('selected_at_05'),
+                'Fréquence de gains dans les labels':metrics.get('positive_rate'),
+                'Brier':metrics.get('brier')})
+    return rows
+
+
+def directional_oos_coverage(root,files):
+    from modelFactory.oracle_path.train import digest
+    root=Path(root).resolve();counts={side:dict(days=set(),symbols=set(),rows=0) for side in ('long','short')}
+    for record in files:
+        path=(root/record['path']).resolve()
+        if not path.is_relative_to(root) or digest(path)!=record['sha256']:
+            raise ValueError('Prédictions test per-symbol manquantes/corrompues')
+        keys=pd.read_parquet(path,columns=['date','symbol','side'])
+        if (len(keys)!=record['rows'] or keys.isna().any().any() or keys.duplicated().any()
+                or not keys.side.isin(counts).all()):
+            raise ValueError('Clés test per-symbol invalides')
+        for side,part in keys.groupby('side'):
+            counts[side]['days'].update(pd.to_datetime(part.date))
+            counts[side]['symbols'].update(part.symbol);counts[side]['rows']+=len(part)
+    return {side:dict(min_date=min(c['days']) if c['days'] else None,
+        max_date=max(c['days']) if c['days'] else None,nb_dates=len(c['days']),
+        nb_symbols=len(c['symbols']),n_rows=c['rows']) for side,c in counts.items()}
 
 
 SQL_PERIODS='''SELECT MIN(prediction_date) AS min_date,MAX(prediction_date) AS max_date,
@@ -107,7 +215,7 @@ COUNT(*) AS n_rows FROM alpha_trade.oracle_extreme_predictions WHERE batch_id=:b
 
 
 def read_sql_periods(engine,batch_id,view):
-    result=dict(coverage={},matching_lineage_rows=None,errors=[])
+    result=dict(coverage={},matching_lineage_rows=None,errors=[],directional={})
     if engine is None:
         result['errors'].append('Connexion SQL indisponible ; les périodes OOF locales restent distinctes.')
         return result
@@ -127,6 +235,23 @@ def read_sql_periods(engine,batch_id,view):
         except Exception as exc:
             result['errors'].append('Lecture des prédictions SQL impossible ('+type(exc).__name__+').')
             return result
+        if view.get('directional'):
+            for side in ('long','short'):
+                # Count actual scores, not placeholder rows with NULL probability.
+                query=f'''SELECT MIN(prediction_date) AS min_date,MAX(prediction_date) AS max_date,
+COUNT(DISTINCT prediction_date) AS nb_dates,COUNT(DISTINCT symbol) AS nb_symbols,COUNT(*) AS n_rows,
+SUM(CASE WHEN manifest_sha256=:manifest AND {side}_probability BETWEEN 0 AND 1
+AND {side}_model_sha256 IS NOT NULL THEN 1 ELSE 0 END) AS matching_manifest_rows
+FROM alpha_trade.oracle_path_directional_predictions
+WHERE batch_id=:batch_id AND {side}_probability IS NOT NULL'''
+                try:
+                    coverage=dict(conn.execute(text(query),dict(batch_id=batch_id,
+                        manifest=view['directional']['manifest_sha256'])).mappings().one())
+                    result['directional'][side]=coverage
+                    if coverage['n_rows'] and coverage['matching_manifest_rows']!=coverage['n_rows']:
+                        result['errors'].append(f'Scores per-symbol {side.upper()} : manifeste/probabilités non qualifiés.')
+                except Exception as exc:
+                    result['errors'].append(f'Lecture des périodes per-symbol {side.upper()} impossible ({type(exc).__name__}).')
         if not result['coverage']['n_rows'] or not view.get('ready'):return result
         protocol=view.get('protocol') or {}
         conditions=[];params=dict(batch_id=batch_id,profile=view['profile_sha256'],
@@ -159,6 +284,28 @@ def period_rows(view,sql):
         rows.append({'Source':label,'Période':f'{pd.Timestamp(first).date()} → {pd.Timestamp(last).date()}',
             'Séances':int(coverage['nb_dates']),'Symboles':int(coverage['nb_symbols']),
             'Lignes':int(coverage['n_rows']),'Détail':source})
+    if view.get('directional'):
+        for side in ('long','short'):
+            coverage=(sql.get('directional') or {}).get(side)
+            if coverage is None:
+                detail='Période SQL non vérifiable ; consulter les erreurs.'
+            elif not coverage.get('n_rows'):
+                detail=f'Modèles entraînés ; aucune prédiction {side.upper()} enregistrée en SQL pour ce batch.'
+            else:
+                detail='oracle_path_directional_predictions — scores non NULL, distincts des tests Oracle OOF'
+            first,last=(coverage or {}).get('min_date'),(coverage or {}).get('max_date')
+            period=(f'{pd.Timestamp(first).date()} → {pd.Timestamp(last).date()}'
+                    if first is not None and last is not None else '—')
+            rows.append({'Source':f'Per-symbol {side.upper()} — SQL','Période':period,
+                'Séances':int((coverage or {}).get('nb_dates') or 0),
+                'Symboles':int((coverage or {}).get('nb_symbols') or 0),
+                'Lignes':int((coverage or {}).get('n_rows') or 0),'Détail':detail})
+            oos=(view['directional'].get('oos_coverage') or {}).get(side) or {}
+            if oos.get('n_rows'):
+                rows.append({'Source':f'Tests OOS per-symbol {side.upper()}',
+                    'Période':f"{pd.Timestamp(oos['min_date']).date()} → {pd.Timestamp(oos['max_date']).date()}",
+                    'Séances':int(oos['nb_dates']),'Symboles':int(oos['nb_symbols']),'Lignes':int(oos['n_rows']),
+                    'Détail':'Fichiers de test par titre, vérifiés ; distincts des prédictions SQL et de l’OOF Oracle'})
     return rows
 
 

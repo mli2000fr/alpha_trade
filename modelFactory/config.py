@@ -579,6 +579,7 @@ class TrainingConfig:
     # Horizon propre à l'Oracle Extreme. H20 reste le contrat par défaut.
     oracle_horizon: int = 20
     oracle_path_backend: str | None = None  # None preserves legacy --enable-catboost behaviour.
+    oracle_path_directional_enabled: bool = False
     oracle_barrier: OracleBarrierConfig = field(default_factory=OracleBarrierConfig)
     long_feature_profile: str = "long.json"
     short_feature_profile: str = "short.json"
@@ -607,6 +608,8 @@ class TrainingConfig:
             resolve_backend(self.oracle_path_backend)
             if not self.data.oracle_path_model_only:
                 raise ValueError('Oracle parcours : backend explicite réservé au mode parcours.')
+        if self.oracle_path_directional_enabled and (not self.data.oracle_path_model_only or self.oracle_horizon not in (10,15,20)):
+            raise ValueError('Bundle parcours LONG/SHORT : Oracle parcours H10, H15 ou H20 requis.')
         if self.data.oracle_path_model_only:
             if self.data.enable_oracle_model or self.data.oracle_model_only or self.directional_profiles_enabled or self.data.oracle_barrier_model_only:
                 raise ValueError("Oracle parcours et Oracle terminal/bundle sont des modes séparés.")
