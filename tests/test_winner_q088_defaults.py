@@ -6,6 +6,25 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 
+def test_existing_q051_session_migrates_once_and_keeps_later_edits(monkeypatch):
+    from ihm.components import winner_backtest_profiles as profiles
+    batch = 'existing-q051'
+    score_key = f'bt_per_symbol_min_long_probability_{batch}'
+    auc_key = f'bt_per_symbol_min_long_auc_{batch}'
+    state = {'bt_winner_settings_profile': 'q051',
+             f'bt_research_selection_q051_{batch}': True,
+             score_key: .6, auc_key: .6}
+    monkeypatch.setattr(profiles.st, 'session_state', state)
+    profiles.initialize_research_selection(batch, True)
+    assert (state[score_key], state[auc_key]) == (.5, .5)
+    state[score_key] = .7
+    profiles.initialize_research_selection(batch, True)
+    assert state[score_key] == .7
+    profiles.apply_research_defaults('q051')
+    profiles.initialize_research_selection(batch, True)
+    assert (state[score_key], state[auc_key]) == (.5, .5)
+
+
 def test_q088_full_form_matches_frozen_case_and_preserves_edits(tmp_path,monkeypatch):
     from common.winner_pyramiding import WinnerPyramidingConfig
     from execution_engine.config import LeverageConfig
@@ -95,17 +114,19 @@ def test_q088_full_form_matches_frozen_case_and_preserves_edits(tmp_path,monkeyp
     assert not at.exception
     selected=at.session_state['result']
     assert selected['winner_top_n']==179 and selected['winner_per_symbol_top_long']==5
-    assert selected['winner_per_symbol_min_long_probability']==.6
-    assert selected['winner_per_symbol_min_long_auc']==.6
+    assert selected['winner_per_symbol_min_long_probability']==.5
+    assert selected['winner_per_symbol_min_long_auc']==.5
     assert selected['winner_risk_overrides']['risk_per_trade_pct']==.0125
     assert selected['winner_risk_overrides']['max_position_weight']==.2
     assert at.number_input(key='bt_wr_gross').value==1.
     assert selected['account_type']=='margin' and selected['winner_max_leverage']==2.
     assert not selected['winner_drawdown_controller_enabled'] and not at.checkbox(key='bt_wr_close').value
-    assert any('+31,67 %' in message.value and '−18,04 %' in message.value for message in at.info)
+    assert any('+206,51 %' in message.value and '−36,89 %' in message.value for message in at.info)
     assert (selected['oracle_batch_id'],selected['start'],selected['end'])==(result['oracle_batch_id'],result['start'],result['end'])
     q051_args=build_parser().parse_args(build_backtesting_command('run',BacktestRunOptions(**selected))[4:])
     assert q051_args.top_n==179 and q051_args.per_symbol_top_long==5
+    assert q051_args.per_symbol_min_long_probability==.5
+    assert q051_args.per_symbol_min_long_auc==.5
     assert not q051_args.drawdown_controller
     assert json.loads(q051_args.risk_overrides_json)['force_close_on_breaker'] is False
     at.number_input(key=f'bt_per_symbol_min_long_probability_{batch}').set_value(.7).run(timeout=30)

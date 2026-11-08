@@ -1,5 +1,58 @@
 # Registre des expériences ML réalisées
 
+## 2026-11-08 — Q051 seuils 0,50 avec B4/DD15, comparaison isolée
+
+**LANCÉ — REPLAY EN COURS.** Reprise exacte du Q051_050 H10 continu à +206,51 %,
+DD −36,89 %, sur 2021–01/10/2026 avec 4 000 USD. Seules différences : contrôleur
+B4/DD15 activé et liquidation partielle 50 % activée. TOP10 % Oracle → TOP5 LONG,
+score>0,50/AUC≥0,50, SL5/open11, entrée quotidienne J+1, risque 1,25 %, poids 20 %,
+plafond d'entrée 1× et capacité margin 2× conservés. Archives et configuration du
+témoin vérifiées ; aucun téléchargement, inférence, ordre ou écriture SQL.
+Comparaison et import IHM automatiques à la fin. Même couverture incomplète que
+le témoin ; pas de résultat anticipé.
+[Protocole](winner_q051_050_b4_dd15_20261108.md).
+
+## 2026-11-08 — Quatre profils continus H20, six modèles annuels
+
+**LANCÉ — QUATRE REPLAYS EN COURS.** Modèles fournis par l'utilisateur,
+fin d'entraînement N−1 pour chaque année d'entrée2021–2026.4 000 USD,
+01/01/2021–01/10/2026, capital/positions conservés entre années.
+Q088 TOP20 %→TOP10 et Q051 TOP10 %→TOP5, chacun en score>0,60/AUC≥0,60
+et score>0,50/AUC≥0,50. SL5 sans TP/trailing, position complète, entrée J+1,
+20 séances puis open21. Q088 plafond2× et B4/DD15 ; Q051 plafond1× et
+contrôleur/liquidation off. Capacité margin2×, risque1,25 %, poids20 %.
+Prévisions2021–2026 finalisées, données qualifiées et témoin annuel H20 IHM2021
+reproduit. Les quatre simulations continues sont en cours en parallèle ; import
+historique automatique pour chaque réussite.
+Pas de nouvelle formation de modèle ni ordre. Les scores sont persistés par
+ML Predict ; prix SQL/replays en lecture seule. Aucun résultat continu disponible.
+[Protocole et modèles](winner_continu_h20_quatre_profils_20261108.md).
+
+## 2026-11-08 — Continu Q051 0,60 et variantes Q051/Q088 0,50
+
+**TERMINÉ — TROIS VARIANTES IMPORTÉES DANS L'HISTORIQUE IHM.** Trois demandes figées : Q051 TOP10 %→TOP5
+LONG score>0,60/AUC≥0,60 ; Q088 TOP20 %→TOP10 score>0,50/AUC≥0,50 ;
+Q051 TOP10 %→TOP5 score>0,50/AUC≥0,50. Même période2021–01/10/2026,
+4 000 USD, six modèles annuels, SL5/open11, position complète et mêmes frais.
+Q051 plafond d'entrée1× et B4/DD/liquidation off ; Q088 plafond2× et contrôleur
+identique au témoin. Capacité du compte margin2× dans les trois cas.
+Prix source v6 conservés ; nouveaux symboles et scores2026 récupérés en SQL
+lecture seule, aucun appel fournisseur, nouvelle inférence ou ordre.
+Reproduction des5 606 candidatures témoins et contrôle Q0512025 avant les replays.
+Import IHM automatique à chaque réussite, résultats et limites conservés.
+Sélections figées : Q051_060 :2 178 candidatures, Q088_050 :13 283,
+Q051_050 :6 073.286 symboles supplémentaires archivés depuis SQL, prix de base
+inchangés. Préparation v2 après normalisation des dates CSV/SQL ;6 tests passent.
+Témoin Q0512025 reproduit :+31,67375 %, DD−18,03995 %, onze indicateurs
+financiers identiques. Q051_060 terminé et importé en IHM :6 361,85 USD,
++59,05 %, DD−25,94 %,551 trades,34,30 % gagnants, capital engagé moyen1 958,05 USD.
+Q051_050 terminé :12 260,32 USD,+206,51 %, DD−36,89 %,1 234 trades,
+35,01 % gagnants, capital engagé moyen5 461,32 USD. Q088_050 terminé :
+4 907,72 USD,+22,69 %, DD−50,37 %,2 525 trades,37,15 % gagnants,
+capital engagé moyen5 463,75 USD. Aucun échec, trois imports IHM confirmés.
+Couverture intraday incomplète conservée ; résultats exploratoires.
+[Protocole et suivi](winner_continu_variantes_q051_q088_20261108.md).
+
 ## 2026-11-08 — Qwen local contre GPT et Winner sans LLM, mêmes dossiers 2025
 
 **TERMINÉ — AUCUN FILTRE N'AMÉLIORE LE RENDEMENT DU TÉMOIN.**
@@ -16,7 +69,7 @@ une conclusion générale sur les modèles. Données rétrospectives non certifi
 
 ## 2026-11-08 — Winner continu 2021–2026, modèles annuels de l'IHM
 
-**TRAITEMENT LANCÉ — PRÉPARATION EN COURS, PAS DE RÉSULTAT.** Demande utilisateur :4 000 USD,
+**TERMINÉ — EXPLORATOIRE, COUVERTURE INTRADAY PARTIELLE.** Demande utilisateur :4 000 USD,
 du01/01/2021 au01/10/2026, six bundles annuels indiqués par les runs IHM,
 sans remise à zéro des positions/capital/DD/B4. SL5/open11, risque1,25 %,
 poids20 %, capacité2×, DD15/B4 avec liquidation50 %, frais et financement
@@ -24,17 +77,33 @@ identiques. L'utilisateur a confirmé TOP20 % Oracle sur toutes les années,
 soit 358 candidats avant TOP10 LONG, y compris en2026. Scores existants, modèles et AUC vérifiés,
 prix SQL en lecture seule, aucun entraînement, téléchargement ou ordre.
 Trois tests de périmètre et calendrier passent.
-Les six sélections sources sont reproduites. Un coordinateur local attend
-les prix figés puis lance le portefeuille continu `uniform20pct`. La demande
+Les six sélections sources sont reproduites. Un coordinateur local a attendu
+les prix figés puis lancé le portefeuille continu `uniform20pct`. La demande
 a été actualisée avant le départ du replay, sans recommencer le gel des prix.
-5 606 candidatures, dont1 078 en2026, avant risque et capital ; aucun résultat
-économique disponible à ce stade.
+5 606 candidatures, dont1 078 en2026, avant risque et capital.
 [Protocole et modèles](winner_continu_modeles_annuels_2021_2026_20261108.md).
 v2 s'est arrêté pour TPB le18/06/2026 : ouverture rejetée avec le volume nul.
-v4 est relancé depuis2021 avec125 lignes OHLC valides à volume nul ajoutées ;
+v4 a été relancé depuis2021 avec125 lignes OHLC valides à volume nul ajoutées ;
 toutes les lignes initiales et autres entrées restent identiques. Aucun nouvel
 appel fournisseur, modèle ou ordre. Les anciennes archives restent intactes.
-Suivi actif : `artifacts/research/us_winner_continuous_annual_models/20261108-v4/progress.json`.
+v4 a ensuite échoué après1 035 séances (14/02/2025), registre de marchés vide
+pendant le suivi d'EGO. Registre désormais validé/archivé une fois puis conservé
+pendant le replay ;67 tests et témoin2025 identique sur18 indicateurs (+6,90 %).
+v6 terminé le08/11/2026 à15h15 Europe/Paris, mêmes prix, signaux et règles.
+Capital final6 186,50 USD, rendement+54,66 %, DD maximal−29,65 %,
+1 254 trades clôturés dont485 gagnants/769 perdants, taux38,68 %.
+Capital engagé moyen3 229,12 USD (57,36 % du capital courant en moyenne),
+maximum15 266,35 USD. Frais1 123,21 USD et financement221,97 USD inclus.
+Capital continu, aucune remise à zéro annuelle. Les rendements par année du même
+portefeuille :2021+7,45 %,2022+0,20 %,2023+24,42 %,2024−0,88 %,2025+11,96 %,2026+4,04 %.
+3 719 couples date/symbole signalent une couverture partielle ; protections OHLC
+daily utilisées selon le contrat. DD15 est un déclencheur de liquidation50 %,
+pas un plafond garanti. Pas de certification PIT complète ni de parité live.
+Bilan : `artifacts/research/us_winner_continuous_annual_models/20261108-v6/continuous-uniform20pct/report.json`.
+Résultat importé dans l'historique IHM sans recalcul, identifiant
+`20261108_continu_2021_2026_v6`, libellé « Continu 2021–2026 — modèles annuels ».
+Courbe, trades, bilan annuel et six modèles accessibles. Badge de couverture
+incomplète conservé ;13 tests et lecture réelle des valeurs par l'IHM vérifiés.
 
 ## 2026-11-08 — GPT : favorables taille5, neutres à taille normale
 

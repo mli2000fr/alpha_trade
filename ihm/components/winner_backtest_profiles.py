@@ -1,7 +1,7 @@
 """UI-only replay profiles, expressed in widget units (percent, dollars, days).
 
 Source: us_winner_risk_tradeoff/20261107-v1/cases/Q088_SIZE125_B4DD15/configuration.json.
-Q051: same campaign, cases/Q051_SIZE125_GROSS1/configuration.json.
+Q051: same risk settings, selection thresholds from continuous Q051_050 (20261108-v2).
 No production configuration or model contract is modified.
 """
 import streamlit as st
@@ -41,7 +41,7 @@ Q051_WIDGETS = {
 
 PROFILE_LABELS = {
     'q088': 'Q088 — risque réduit + B4/DD15 (défaut)',
-    'q051': 'Q051 — risque réduit, plafond de risque 1×',
+    'q051': 'Q051 — seuils 0,50, plafond de risque 1×',
     'production': 'Réglages de production — config.yaml',
     'reference': 'Ancien test de référence',
 }
@@ -54,13 +54,16 @@ PROFILE_DESCRIPTIONS = {
         'sans TP ni trailing, sortie open11. Facteurs, corrélation et limites sectorielles désactivés. '
         'Résultat exploratoire 2025 : +35,13 %, DD −17,20 % ; DD15 est un seuil d’action, pas un plafond garanti.'),
     'q051': (
-        'TOP10 % Oracle → TOP5 LONG per-symbol, score > 0,60 et AUC ≥ 0,60. '
+        'TOP10 % Oracle → TOP5 LONG per-symbol, score > 0,50 et AUC ≥ 0,50. '
         'Risque par entrée 1,25 %, poids maximal 20 %, plafond de risque 1× sur les nouvelles entrées. '
         'B4/DD15 et liquidation globale désactivés. Position complète, entrée à l’ouverture J+1 '
         'sans confirmation, SL5 %, sans TP ni trailing, sortie open11. '
         'Facteurs, corrélation et limites sectorielles désactivés. '
         'Le compte margin conserve une capacité 2×, bornée par le plafond de risque 1× pour les achats. '
-        'Résultat exploratoire 2025 : +31,67 %, DD −18,04 %.'),
+        'Replay continu H10 du 01/01/2021 au 01/10/2026, modèles annuels, capital initial 4 000 $ : '
+        '12 260,32 $ finaux, +206,51 %, DD −36,89 %, taux gagnant 35,01 %. '
+        'Frais et financement inclus. Couverture intraday incomplète ; résultat rétrospectif exploratoire, '
+        'sans garantie de reproduction sur une autre période ou un autre modèle.'),
     'production': (
         'Recharge les protections Winner et les limites de risque de config.yaml et du preset de capital. '
         'La confirmation, le délai SIP et les contrôles reprennent ces valeurs de production. '
@@ -93,7 +96,9 @@ def initialize_research_selection(batch, bundle):
     profile = st.session_state.get('bt_winner_settings_profile')
     if profile not in ('q088', 'q051'):
         return
-    marker = f'bt_research_selection_{profile}_{batch}'
+    # Migrate the previous Q051 0.60 defaults once, then preserve manual edits.
+    version = '_050_20261108' if profile == 'q051' else ''
+    marker = f'bt_research_selection_{profile}_{batch}{version}'
     if st.session_state.get(marker):
         return
     pool_key = f'bt_per_symbol_pool_{batch}' if bundle else f'bt_winner_top_{batch}_False'
@@ -101,16 +106,17 @@ def initialize_research_selection(batch, bundle):
     st.session_state[pool_key+'_pct'] = 10. if profile == 'q051' else 20.
     if bundle:
         count = 5 if profile == 'q051' else 10
+        threshold = .5 if profile == 'q051' else .6
         st.session_state.update({
             f'bt_winner_per_symbol_long_{batch}': True,
             f'bt_per_symbol_allow_long_{batch}': True,
             f'bt_per_symbol_allow_short_{batch}': False,
             f'bt_per_symbol_top_long_{batch}': count,
             f'bt_per_symbol_top_long_{batch}_default10': True,
-            f'bt_per_symbol_min_long_probability_{batch}': .6,
+            f'bt_per_symbol_min_long_probability_{batch}': threshold,
             f'bt_per_symbol_auc_enabled_{batch}': True,
             f'bt_per_symbol_auc_enabled_{batch}_default_on': True,
-            f'bt_per_symbol_min_long_auc_{batch}': .6,
+            f'bt_per_symbol_min_long_auc_{batch}': threshold,
         })
     st.session_state[marker] = True
 

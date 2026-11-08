@@ -12,6 +12,7 @@ Comportement :
 from __future__ import annotations
 
 from contextlib import contextmanager
+from contextvars import ContextVar
 import logging
 import os
 import re
@@ -29,6 +30,7 @@ _DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
 _DEFAULT_BATCH_CONFIG_PATH = Path(__file__).resolve().parent.parent / "batch.yaml"
 MARKETS_CONFIG_DIR_ENV = "ALPHA_TRADE_MARKETS_CONFIG_DIR"
 _DEFAULT_MARKETS_CONFIG_DIR = Path(__file__).resolve().parent.parent / "config" / "markets"
+_REPLAY_MARKET_REGISTRY: ContextVar[Any] = ContextVar('replay_market_registry', default=None)
 
 
 def resolve_config_path(path: str | os.PathLike[str] | None = None) -> Path:
@@ -103,7 +105,23 @@ def load_market_registry(
     """Charge un registre immuable depuis config/markets par défaut."""
     from common.market_context import MarketRegistry
 
+    scoped = _REPLAY_MARKET_REGISTRY.get()
+    if path is None and scoped is not None:
+        return scoped
     return MarketRegistry.from_directory(resolve_markets_config_dir(path))
+
+
+@contextmanager
+def replay_market_registry(registry):
+    """Pin a validated immutable registry in this replay context only."""
+    from common.market_context import MarketRegistry
+    if not isinstance(registry, MarketRegistry):
+        raise TypeError('Registre de marchés validé requis pour le replay')
+    token = _REPLAY_MARKET_REGISTRY.set(registry)
+    try:
+        yield registry
+    finally:
+        _REPLAY_MARKET_REGISTRY.reset(token)
 
 
 def resolve_market_context(
@@ -214,6 +232,7 @@ __all__ = [
     "load_market_registry",
     "load_config",
     "override_config_path",
+    "replay_market_registry",
     "resolve_batch_config_path",
     "resolve_config_path",
     "resolve_market_context",

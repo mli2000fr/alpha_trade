@@ -322,6 +322,10 @@ class ReplayBroker:
             self.close(intent.symbol, parent['remaining'], price, selected_id, reason, parent=raw['parent'])
 
 
+from backtesting.frozen_market_registry import frozen_market_registry
+
+
+@frozen_market_registry
 def run_winner_replay(engine, *, open_df, close, high, low, signals_df, volume=None,
         sector_map=None, intraday_source=None, research_assumptions=False, progress=None, corporate_actions=None,
         factor_context_source=None,selection_source=None):
