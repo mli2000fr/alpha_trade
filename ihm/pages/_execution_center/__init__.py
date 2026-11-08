@@ -3545,7 +3545,8 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
                      "la durée de détention Winner reste configurée séparément."))
             st.info(f"Oracle parcours : H{ml_oracle_horizon}, LightGBM/CatBoost CPU selon le choix ci-dessous, validation walk-forward obligatoire. "
                     "Choisir les dates de début ET fin dans 9. ML Train. "
-                    "Le bundle ci-dessous peut ajouter deux modèles par titre en H10 ; Global reste désactivé. "
+                    f"Le bundle ci-dessous peut ajouter deux modèles LONG/SHORT par titre en H{ml_oracle_horizon}. "
+                    + "Global reste désactivé. "
                     "Modèles et labels séparés dans oracle_path. Scores raccordés à ML Predict/backtest/live, "
                     "mais sans direction : LONG-only est une politique explicite, ou utiliser un filtre directionnel. "
                     "Aucun compte ni ordre n'est activé par cette case.")
@@ -3560,25 +3561,22 @@ def _build_launch_options() -> tuple[PipelineLaunchOptions, bool]:
         else:
             ml_oracle_path_backend=None
         from modelFactory.oracle_path.directional import settings as path_directional_settings
-        if ml_oracle_path_model_only and ml_oracle_horizon!=10:
-            st.session_state['pipeline_ml_directional_profiles_enabled']=False
         ml_directional_profiles_enabled = st.checkbox(
             "🧭 Bundle Oracle + deux modèles Per-Symbol LONG/SHORT",
             value=_session_state_bool("pipeline_ml_directional_profiles_enabled",
                 path_directional_settings().enabled if ml_oracle_path_model_only else False),
             key="pipeline_ml_directional_profiles_enabled",
-            disabled=ml_oracle_barrier_model_only or (ml_oracle_path_model_only and ml_oracle_horizon!=10),
-            help="Avec Oracle parcours H10 : branches par titre de rentabilité LONG et SHORT, puis TOP5 LONG uniquement. Sans parcours : ancien bundle directionnel H20.",
+            disabled=ml_oracle_barrier_model_only,
+            help="Avec Oracle parcours H10/H15/H20 : branches par titre de rentabilité LONG et SHORT au même horizon, puis classement LONG. Sans parcours : ancien bundle directionnel H20.",
         )
         ml_oracle_path_directional_enabled = bool(ml_oracle_path_model_only and ml_directional_profiles_enabled)
         if ml_oracle_path_directional_enabled:
-            st.info('Même batch : Oracle parcours H10 + modèles annuels LONG et SHORT par titre. '
-                    'Sélection utilisée : TOP20 Oracle → TOP5 selon la probabilité de gain LONG → risque → Winner. '
-                    'SHORT est entraîné et archivé, sans ordre SHORT. Cibles : SL5, sans TP/trailing, sortie open11 ; '
+            _path_directional=path_directional_settings(horizon=ml_oracle_horizon)
+            st.info(f'Même batch : Oracle parcours H{ml_oracle_horizon} + modèles annuels LONG et SHORT par titre en H{ml_oracle_horizon}. '
+                    f'Sélection enregistrée : TOP{_path_directional.oracle_top_n} Oracle → TOP{_path_directional.selected_n} selon la probabilité de gain LONG → risque → Winner. '
+                    f'SHORT est entraîné et archivé, sans ordre SHORT. Cibles : SL{100*_path_directional.stop_loss_pct:g} %, sans TP/trailing, sortie open{ml_oracle_horizon+1} ; '
                     'paramètres dans config.yaml/oracle_path.directional. Les protections Winner restent indépendantes.')
             ml_directional_profiles_enabled = False  # the terminal-H20 bundle below is a different contract
-        elif ml_oracle_path_model_only and ml_oracle_horizon!=10:
-            st.caption('Le bundle par titre SL5/open11 est disponible en H10. H15/H20 restent des Oracle parcours seuls.')
         oracle_profiles = discover_feature_profiles("oracle") or ["oracle.json"]
         long_profiles = discover_feature_profiles("long") or ["long.json"]
         short_profiles = discover_feature_profiles("short") or ["short.json"]

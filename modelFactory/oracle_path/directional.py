@@ -39,17 +39,21 @@ class Settings:
         if type(self.enabled) is not bool or any(type(v) is not int for v in
                 (self.oracle_top_n,self.selected_n,self.horizon_sessions)):
             raise ValueError('Bundle parcours : booléen et nombres entiers requis')
-        if not 1 <= self.selected_n <= self.oracle_top_n or self.oracle_top_n < 20 or self.horizon_sessions != 10:
-            raise ValueError('Bundle parcours : pool >=20, TOP final <= pool, H10 requis')
+        if not 1 <= self.selected_n <= self.oracle_top_n or self.oracle_top_n < 20 or self.horizon_sessions not in (10,15,20):
+            raise ValueError('Bundle parcours : pool >=20, TOP final <= pool, H10/H15/H20 requis')
         for name,lo,hi in [('stop_loss_pct',0,1),('fee_per_leg',0,.1)]:
             v=getattr(self,name)
             if isinstance(v,bool) or not np.isfinite(v) or not lo <= v < hi or (name=='stop_loss_pct' and v==0):
                 raise ValueError('Bundle parcours : '+name+' invalide')
 
 
-def settings():
+def settings(horizon=None):
     from common.config_loader import load_config
-    return Settings(**((load_config().get('oracle_path') or {}).get('directional') or {}))
+    values=dict((load_config().get('oracle_path') or {}).get('directional') or {})
+    if horizon is not None:
+        from . import validate_horizon
+        values['horizon_sessions']=validate_horizon(horizon)
+    return Settings(**values)
 
 
 def enabled(protocol):
@@ -96,10 +100,10 @@ def panels(bars,benchmark,calendar):
 
 
 def labels(bars,calendar,contract,breaks=()):
-    """Net outcome after SL or open11, fully mature and identity/source qualified.
+    """Net outcome after SL or open(H+1), fully mature and identity/source qualified.
 
     SHORT excludes borrow/dividend/locate costs and is archived, never traded.
-    Even an early stop label is conservatively available only on open11.
+    Even an early stop label is conservatively available only on open(H+1).
     """
     a=bars.set_index('date').reindex(calendar)
     k=contract.horizon_sessions
@@ -160,6 +164,8 @@ def train(cfg,engine,root,progress):
     root=Path(root)
     protocol=json.loads((root/'protocol.json').read_text())
     contract=Settings(**protocol['directional_contract'])
+    if contract.horizon_sessions!=protocol['horizon']:
+        raise ValueError('Horizon du bundle différent de l’Oracle parcours')
     folder=root/'directional';folder.mkdir(exist_ok=True)
     marker=folder/'manifest.json'
     if marker.exists():
@@ -215,7 +221,8 @@ def train(cfg,engine,root,progress):
                         calibration_end=str(cal.date.max().date()),available=str(cal.available.max().date()),
                         fit_rows=len(fit),calibration_rows=len(cal))
                     from .directional_metrics import model_metrics
-                    record['metrics'],predictions=model_metrics(panel,weights,record,calendar,end)
+                    record['metrics'],predictions=model_metrics(panel,weights,record,calendar,end,
+                        horizon_sessions=contract.horizon_sessions)
                     if len(predictions):chunk_predictions.append(predictions)
                     records.append(record)
                     LOG.info('Parcours per-symbol %s %s %d entraîné fit=%d cal=%d',symbol,side,year,len(fit),len(cal))
@@ -240,7 +247,9 @@ def load_manifest(root):
     root=Path(root);path=root/'directional/manifest.json'
     m=json.loads(path.read_text(encoding='utf-8'))
     p=json.loads((root/'protocol.json').read_text(encoding='utf-8'))
-    if (not enabled(p) or p.get('horizon')!=10 or m.get('status')!='COMPLETED' or m.get('oracle_protocol_sha256')!=digest(root/'protocol.json')
+    if (not enabled(p) or p.get('horizon') not in (10,15,20)
+        or m.get('contract',{}).get('horizon_sessions')!=p.get('horizon')
+        or m.get('status')!='COMPLETED' or m.get('oracle_protocol_sha256')!=digest(root/'protocol.json')
         or m.get('features')!=INPUTS or m.get('contract')!=p.get('directional_contract')
         or m.get('serving_side')!='long'):
         raise ValueError('Bundle parcours directionnel absent/incomplet/incompatible')

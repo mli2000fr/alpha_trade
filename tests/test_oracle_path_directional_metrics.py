@@ -34,9 +34,9 @@ class Calibrator:
         p=1/(1+np.exp(-x[:,0]));return np.c_[1-p,p]
 
 
-def fixture():
+def fixture(horizon=10):
     calendar=pd.bdate_range('2020-01-02','2024-12-31')
-    a=pd.DataFrame(dict(date=calendar,available=calendar+pd.offsets.BDay(11)))
+    a=pd.DataFrame(dict(date=calendar,available=calendar+pd.offsets.BDay(horizon+1)))
     a['long']=np.arange(len(a))%2
     for name in INPUTS:a[name]=np.where(a.long.eq(1),.8,.2)
     fit,cal=split(a,2024,'long')
@@ -66,3 +66,12 @@ def test_frozen_training_membership_and_causality_are_checked():
         model_metrics(a.iloc[1:],w,r,calendar,pd.Timestamp('2024-12-31'))
     with pytest.raises(ValueError,match='Noncausal'):
         model_metrics(a,w,{**r,'available':'2024-03-01'},calendar,pd.Timestamp('2024-12-31'))
+
+
+@pytest.mark.parametrize('horizon',[10,15,20])
+def test_nonoverlap_phase_follows_directional_target(horizon):
+    a,r,w,calendar=fixture(horizon)
+    metrics,pred=model_metrics(a,w,r,calendar,pd.Timestamp('2024-12-31'),horizon_sessions=horizon)
+    expected=calendar.get_indexer(pred.date)%(horizon+1)==0
+    assert np.array_equal(pred.nonoverlap.to_numpy(),expected)
+    assert metrics['oos_nonoverlap']['n']==int(expected.sum())

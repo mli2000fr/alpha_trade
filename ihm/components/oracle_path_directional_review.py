@@ -25,7 +25,8 @@ def render(options):
         names={'symbol':'Symbole','oracle_rank':'Rang Oracle','proba_extreme':'Score amplitude',
                'long_probability':'Probabilité gain LONG','short_probability':'Probabilité gain SHORT — non utilisée',
                'long_rank':'Rang LONG','selected':'Retenu LONG','reason':'Motif'}
-        st.caption(f'Séance {day} · batch {batch} · TOP{protocol["directional_contract"]["selected_n"]} LONG au maximum. '
+        st.caption(f'Séance {day} · batch {batch} · Oracle et modèles par titre H{protocol["directional_contract"]["horizon_sessions"]} · '
+                   f'TOP{protocol["directional_contract"]["selected_n"]} LONG au maximum. '
                    'Le risque peut ensuite refuser une entrée ; un titre déjà détenu n’est pas remplacé.')
         st.dataframe(ranked[list(names)].rename(columns=names),hide_index=True,use_container_width=True)
     except (OSError,ValueError,KeyError) as exc:

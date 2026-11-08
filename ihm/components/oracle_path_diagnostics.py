@@ -72,7 +72,7 @@ def render_directional_metrics(view,summary):
         f'Exactitude : classe prédite avec un seuil de 0,5. Labels : résultat net H{horizon}, SL{100*sl:g} %, '
         f'sans TP/trailing, sortie open{horizon+1}. '
         'Ces mesures ne sont pas le taux de trades gagnants du portefeuille Winner. '
-        'Les fenêtres quotidiennes se chevauchent ; la variante sans chevauchement utilise une phase fixe de 11 séances.')
+        f'Les fenêtres quotidiennes se chevauchent ; la variante sans chevauchement utilise une phase fixe de {horizon+1} séances.')
     if summary.get('benchmark_reconstructed_from_SQL'):
         st.caption('Diagnostic reconstitué depuis les barres archivées et les poids d’origine ; '
             'le benchmark SPY a été relu en SQL et figé pour ce diagnostic. Son état exact au jour du training ancien n’était pas archivé.')

@@ -784,7 +784,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument('--oracle-path-backend',choices=['lightgbm','catboost','auto'],default=None,
                    help='Oracle parcours : algorithme unique ou comparaison automatique sur validation. Prioritaire sur les flags challengers legacy.')
     p.add_argument('--oracle-path-directional', action='store_true',
-                   help='Ajoute deux modèles annuels par titre LONG/SHORT au parcours H10 ; sélection TOP20 -> TOP5 LONG uniquement.')
+                   help='Ajoute deux modèles annuels par titre LONG/SHORT au même horizon que le parcours H10/H15/H20 ; sélection TOP20 -> TOP5 LONG uniquement.')
     p.add_argument("--oracle-barrier-model-only", action="store_true", default=False,
                    help="Modèle séparé TP avant SL, LONG/SHORT ; entrée J+1 open. Paramètres oracle_barrier dans config.yaml ; recherche uniquement.")
     p.add_argument("--oracle-barrier-tp-pct", type=float, default=None, help="Fraction TP (0.20 = 20%%). Défaut config.yaml.")

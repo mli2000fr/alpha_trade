@@ -29,12 +29,14 @@ def predict(weights,frame):
     return weights['calibrator'].predict_proba(np.log(raw/(1-raw)).reshape(-1,1))[:,1]
 
 
-def model_metrics(panel,weights,record,calendar,end):
+def model_metrics(panel,weights,record,calendar,end,*,horizon_sessions=10):
     """Evaluate only this model's held-out calendar year with mature outcomes.
 
     Train and calibration rows are separately marked non-independent. The fixed
     global phase modulo H+1 reports a second, non-overlapping OOS diagnostic.
     """
+    from . import validate_horizon
+    stride=validate_horizon(horizon_sessions)+1
     side=record['side'];year=int(record['year'])
     fit,cal=split(panel,year,side)
     if (len(fit)!=record['fit_rows'] or len(cal)!=record['calibration_rows']
@@ -58,10 +60,10 @@ def model_metrics(panel,weights,record,calendar,end):
             test_predictions['label']=frame[side].to_numpy();test_predictions['probability']=p
             test_predictions['symbol']=record['symbol'];test_predictions['side']=side
             test_predictions['model_year']=year;test_predictions['model_sha256']=record['sha256']
-            # The label observes the path to open11; fixed phase avoids overlapping paths.
+            # The label observes the path to open(H+1); fixed phase avoids overlapping paths.
             positions=pd.DatetimeIndex(calendar).get_indexer(frame.date)
             if (positions<0).any():raise ValueError('Test dates outside frozen calendar')
-            independent=positions%11==0
+            independent=positions%stride==0
             metrics['oos_nonoverlap']=classification_metrics(frame[side].to_numpy()[independent],p[independent])
             test_predictions['nonoverlap']=independent
     return metrics,test_predictions

@@ -364,7 +364,7 @@ def train_oracle_path(cfg, engine, batch_id, symbols):
         if backend=='catboost':protocol.update(catboost_objective='Logloss')
     if cfg.oracle_path_directional_enabled:
         from .directional import settings
-        protocol['directional_contract']=asdict(settings())
+        protocol['directional_contract']=asdict(settings(horizon=horizon))
     fingerprint = sha256(json.dumps(protocol, sort_keys=True, default=str).encode()).hexdigest()
     protocol_path = root / "protocol.json"
     if protocol_path.exists():

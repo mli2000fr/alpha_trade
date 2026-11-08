@@ -1,5 +1,54 @@
 # Registre des expériences ML réalisées
 
+## 2026-11-08 — GPT : achat sur avis FAVORABLE uniquement
+
+**TERMINÉ — TAUX GAGNANT EN HAUSSE SUR UN ÉCHANTILLON TRÈS PETIT.** Demande utilisateur : comparer taux gagnant et
+rendement en achetant uniquement sur avis GPT favorable.17 candidatures valides,
+dont16 avec preuves suffisantes ; deux bras distincts, sans nouveau choix de
+seuil ni nouvel appel. Invalides, indéterminables et absence de news exclus.
+Même référence2025 TOP10 % Oracle → TOP10 LONG, score >0,70, SL5/open11, capital
+4 000 USD, capacité2×, frais et financement. Témoin et veto déjà calculés réutilisés
+après vérification d'identité ; replays natifs des deux nouvelles sélections.
+Échantillon favorable très petit ; étude rétrospective non certifiée PIT/OOS.
+FAVORABLE uniquement :9 trades,5 gagnants/4 perdants,55,56 %, rendement+2,80 %,
+DD−4,58 %, capital final4 111,96 $. Avec preuves SUFFICIENT :8 trades,5/3,
+62,50 %, +3,80 %, DD−3,52 %, capital final4 152,15 $. Témoin :45,76 %, +6,90 %,
+DD−10,86 %. Capital engagé moyen211,31/191,20 $, contre1 334,04 $ pour le témoin.
+Le taux gagnant descriptif augmente, mais la baisse d'exposition et les8/9 trades
+empêchent de conclure à un avantage stable. Aucun appel GPT supplémentaire.
+[Protocole](gpt_favorable_uniquement_winner_20261108.md).
+Suivi : `artifacts/research/us_gpt_winner_favorable_only/20261108-v1/progress.json`.
+
+## 2026-11-08 — Reprise Qwen local après saturation GPU
+
+**REPRISE LANCÉE, PAS DE NOUVEAU RÉSULTAT ÉCONOMIQUE.** Serveur de nouveau
+accessible ; contexte remis de4 096 à34 186 tokens, parallélisme ramené à1,
+même modèle Qwen3.5-9b Q8_0, prompt, dossier et sortie16 384.
+Une nouvelle tentative de la requête FLR interrompue, puis48 dossiers restants.
+Cache et bilans précédents sauvegardés ; anciennes réponses et erreurs conservées.
+Les56 autres erreurs de validation ne sont pas retentées. Aucun appel cloud,
+ordre ou replay financier automatique avec des avis invalides. Deux tests passent.
+[Protocole de reprise](qwen_local_reprise_20261108.md).
+
+## 2026-11-08 — GPT : onze réponses invalides exclues des achats
+
+**TERMINÉ — FILTRE DÉFAVORABLE SUR CE REPLAY 2025.** Variante demandée par l'utilisateur :
+exclure les11 réponses invalides, en plus des34 vetoes validés, sans remplacement.
+159 candidatures sur204 conservées, dont38 sans news. Même référence2025 que
+l'expérience GPT/Qwen : TOP10 % Oracle → TOP10 LONG, score >0,70, AUC ≥0,60,
+SL5/H10/open11, capital4 000 USD, capacité2×, frais et financement identiques.
+Reproduction du témoin exigée avant restitution. Aucun nouvel appel LLM,
+fournisseur ou broker ; sources originales inchangées. Deux tests passent.
+Protocole modifié explicitement après validation technique, exploratoire sans
+certification PIT/OOS. Le rejet des invalides n'est pas une prédiction baissière.
+Témoin reproduit à l'identique : capital final4 275,95 $, +6,90 %, DD−10,86 %,
+59 trades dont27 gagnants (45,76 %). Avec GPT et invalides exclus :3 971,82 $,
+−0,70 %, DD−12,98 %,53 trades dont21 gagnants (39,62 %). Capital engagé moyen
+1 334,04 $ contre1 081,80 $. Écart de capital final−304,14 $. Ce résultat mélange
+les34 vetoes et11 exclusions techniques et n'isole pas leur effet respectif.
+[Protocole](gpt_invalides_exclus_winner_20261108.md).
+Suivi : `artifacts/research/us_gpt_winner_invalid_excluded/20261108-v2/progress.json`.
+
 ## 2026-11-07 — GPT/Qwen : filtre B avec prompt et données identiques
 
 **GPT TERMINÉ, QUALIFICATION INCOMPLÈTE — AUCUN REPLAY ÉCONOMIQUE.** Go utilisateur

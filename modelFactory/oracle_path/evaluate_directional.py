@@ -61,7 +61,8 @@ def evaluate(root,*,engine=None,output=None):
                         on='date',validate='one_to_one')
                     for record in by_symbol[symbol]:
                         weights=joblib.load(root/record['file'])
-                        metrics,predictions=model_metrics(panel,weights,record,calendar,end)
+                        metrics,predictions=model_metrics(panel,weights,record,calendar,end,
+                            horizon_sessions=manifest['contract']['horizon_sessions'])
                         records.append(dict(symbol=symbol,year=record['year'],side=record['side'],
                             model_sha256=record['sha256'],metrics=metrics))
                         if len(predictions):chunk_predictions.append(predictions)
@@ -80,7 +81,8 @@ def evaluate(root,*,engine=None,output=None):
             models=records,source_hashes=manifest['source_hashes'],oos_files=files,
             benchmark_file='benchmark.parquet',benchmark_sha256=digest(out/'benchmark.parquet'),
             benchmark_reconstructed_from_SQL=reconstructed,
-            calibration_is_independent_test=False,score_threshold=.5,nonoverlap_phase='global calendar index modulo11 ==0',
+            calibration_is_independent_test=False,score_threshold=.5,
+            nonoverlap_phase=f"global calendar index modulo{manifest['contract']['horizon_sessions']+1} ==0",
             training_launched=False,SQL_writes=False,portfolio_replay=False,provider_calls=0)
         atomic_json(out/'report.json',report)
         state['status']='COMPLETED';progress()
