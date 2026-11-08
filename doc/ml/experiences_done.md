@@ -1,5 +1,19 @@
 # Registre des expériences ML réalisées
 
+## 2026-11-08 — Qwen local contre GPT et Winner sans LLM, mêmes dossiers 2025
+
+**TERMINÉ — AUCUN FILTRE N'AMÉLIORE LE RENDEMENT DU TÉMOIN.**
+204 candidatures, mêmes contextes et prompt, prix figés ; aucun nouvel appel.
+Qwen : 88 réponses valides, 38 sans news, 78 invalides. Témoin reproduit :
++6,90 %, DD−10,86 %, 27/59 gagnants (45,76 %). Veto Qwen + invalides exclus :
++0,41 %, DD−15,97 %, 19/49 gagnants (38,78 %). GPT équivalent :−0,70 %,
+DD−12,98 %, 21/53 (39,62 %). Favorables Qwen uniquement : 4 signaux, 3 trades,
+0 gagnant,−2,27 %, DD−2,89 %, capital final3 909,34 $. GPT favorable :+2,80 %,
+5/9 gagnants (55,56 %) ; avec preuves suffisantes :+3,80 %,5/8 (62,50 %).
+Le petit nombre de favorables et la forte différence de couverture empêchent
+une conclusion générale sur les modèles. Données rétrospectives non certifiées PIT.
+[Protocole et résultats](qwen_gpt_winner_comparaison_20261108.md).
+
 ## 2026-11-08 — Winner continu 2021–2026, modèles annuels de l'IHM
 
 **TRAITEMENT LANCÉ — PRÉPARATION EN COURS, PAS DE RÉSULTAT.** Demande utilisateur :4 000 USD,
@@ -16,7 +30,11 @@ a été actualisée avant le départ du replay, sans recommencer le gel des prix
 5 606 candidatures, dont1 078 en2026, avant risque et capital ; aucun résultat
 économique disponible à ce stade.
 [Protocole et modèles](winner_continu_modeles_annuels_2021_2026_20261108.md).
-Suivi : `artifacts/research/us_winner_continuous_annual_models/20261108-v2/progress.json`.
+v2 s'est arrêté pour TPB le18/06/2026 : ouverture rejetée avec le volume nul.
+v4 est relancé depuis2021 avec125 lignes OHLC valides à volume nul ajoutées ;
+toutes les lignes initiales et autres entrées restent identiques. Aucun nouvel
+appel fournisseur, modèle ou ordre. Les anciennes archives restent intactes.
+Suivi actif : `artifacts/research/us_winner_continuous_annual_models/20261108-v4/progress.json`.
 
 ## 2026-11-08 — GPT : favorables taille5, neutres à taille normale
 

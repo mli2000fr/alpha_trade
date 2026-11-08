@@ -67,7 +67,8 @@ protections daily prudentes lorsqu'une séance5m est incomplète, sans exclusion
 fondée sur la disponibilité future des bougies. Secteurs actuels, non PIT.
 
 Programme : `scripts/research/us_winner_continuous_annual_models_20261108.py`.
-Dossier : `artifacts/research/us_winner_continuous_annual_models/20261108-v2`.
+Dossier actif : `artifacts/research/us_winner_continuous_annual_models/20261108-v4`.
+Archives précédentes conservées dans `20261108-v2` et `20261108-v3`.
 Trois tests couvrent les tailles de pool, les frontières annuelles signal/entrée
 et le refus de fusionner des conditions de portefeuille différentes.
 
@@ -90,6 +91,31 @@ hérité de l'année précédente ; les trades sont attribués à leur année de
 Statut initial : préparation des entrées en cours. Étude exploratoire, sans
 certification PIT complète ni parité live. Aucun ordre ou paramètre de
 production modifié.
+
+## Reprise après volume nul, 8 novembre
+
+v2 s'est arrêté le 18 juin 2026 pour TPB : les prix figés avant le correctif
+rejetaient ses OHLC parce que le volume EODHD vaut zéro. Le lecteur daily
+qualifie maintenant les prix séparément, sans changer le volume ni inventer
+de bougies. Voir `doc/operations/winner_daily_volume_nul_20261108.md`.
+
+v4 ajoute 125 lignes OHLC canoniques valides à volume nul, lues dans une
+transaction SQL READ ONLY. Toutes les lignes initiales ont été comparées
+champ par champ et restent identiques. Les autres entrées figées sont
+réutilisées avec leurs empreintes exactes. Aucune nouvelle prédiction,
+collecte fournisseur ou écriture SQL. La différence de code de fond est limitée
+au lecteur daily ; les autres différences d'empreinte sont exclusivement des
+fins de ligne Windows, vérifiées sur les octets normalisés.
+
+`added-zero-volume-daily-prices.csv`, `protocol.json` et `inputs/manifest.json`
+documentent la correction. v3 est une préparation interrompue avant la lecture
+des prix par le garde SQL ; v4 a été scellé après correction de la génération
+du manifeste. Le portefeuille v4 est rejoué depuis 2021, faute de checkpoint
+complet du book et de B4 permettant une reprise exacte en juin 2026.
+Commande :
+`python -m scripts.research.us_winner_continuous_annual_models_20261108 replay --output-dir artifacts/research/us_winner_continuous_annual_models/20261108-v4 --selection-policy uniform20pct`.
+
+Statut v4 au lancement : replay en cours, aucun résultat final publié.
 
 Le coordinateur local `scripts/research/us_winner_continuous_annual_models_followup.py`
 attend le manifeste complet des entrées puis lance le replay choisi. Il ne
